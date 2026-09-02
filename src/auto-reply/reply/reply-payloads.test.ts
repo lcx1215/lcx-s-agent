@@ -110,12 +110,12 @@ describe("shouldSuppressMessagingToolReplies", () => {
     ).toBe(false);
   });
 
-  it("normalizes lark target provider to feishu for suppression comparison", () => {
+  it("normalizes external target provider to external for suppression comparison", () => {
     expect(
       shouldSuppressMessagingToolReplies({
-        messageProvider: "feishu",
+        messageProvider: "external",
         originatingTo: "ou_xyz",
-        messagingToolSentTargets: [{ tool: "message", provider: "lark", to: "ou_xyz" }],
+        messagingToolSentTargets: [{ tool: "message", provider: "external", to: "ou_xyz" }],
       }),
     ).toBe(true);
   });

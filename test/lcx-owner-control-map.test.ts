@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildOwnerControlMap } from "../scripts/dev/lcx-owner-control-map.ts";
+import { buildOwnerControlMap } from "../scripts/operator/lcx-owner-control-map.ts";
 
 describe("LCX owner control map", () => {
   it("shows what the owner can see, what Codex can safely act on, and what stays blocked", () => {
@@ -38,7 +38,7 @@ describe("LCX owner control map", () => {
               parseErrorCaseIds: [],
             },
             externalChannelBinding: {
-              missingProof: ["fresh_real_lark_inbound_and_outbound_seen"],
+              missingProof: ["fresh_real_external_inbound_and_outbound_seen"],
             },
           },
           monotonicDataLedger: {
@@ -78,7 +78,7 @@ describe("LCX owner control map", () => {
       expect.objectContaining({
         ok: true,
         kind: "lcx-owner-control-map",
-        boundary: "dev_owner_control_map_only",
+        boundary: "local_owner_control_map_only",
         liveTouched: false,
         providerConfigTouched: false,
         protectedMemoryTouched: false,
@@ -89,7 +89,7 @@ describe("LCX owner control map", () => {
       expect.arrayContaining([
         "active_eval_and_mlx",
         "dirty_and_unmatched_worktree",
-        "external_lark_channel_real_user_proof",
+        "external_message_channel_real_user_proof",
         "skillopt_not_model_weight",
         "self_repair_memory_and_training_candidate_hands",
         "module_learning_not_absorbed",

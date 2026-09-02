@@ -6,7 +6,6 @@ import {
 } from "../commands/capabilities.js";
 import { l5BaselineDoctorCommand } from "../commands/capabilities/l5-baseline-doctor.js";
 import { l5SystemEvalCommand } from "../commands/capabilities/l5-system-eval.js";
-import { larkLoopDiagnoseCommand } from "../commands/capabilities/lark-loop-diagnose.js";
 import { defaultRuntime } from "../runtime.js";
 import { runCommandWithRuntime } from "./cli-utils.js";
 import { formatHelpExamples } from "./help-format.js";
@@ -88,10 +87,10 @@ export function registerCapabilitiesCli(program: Command) {
   capabilities
     .command("l5-baseline-doctor")
     .description(
-      "Run a read-only L5 baseline doctor across Lark, language, brain, finance, math, and safety gates",
+      "Run a read-only L5 baseline doctor across language, brain, finance, math, and safety gates",
     )
     .option("--agent <id>", "Agent id whose workspace should be checked")
-    .option("--workspace <dir>", "Workspace to inspect for live Lark handoff receipts")
+    .option("--workspace <dir>", "Workspace for local loop receipts and artifacts")
     .option("--fixture-dir <dir>", "Fixture directory with local finance learning sources")
     .option("--json", "Output JSON", false)
     .addHelpText(
@@ -104,7 +103,7 @@ export function registerCapabilitiesCli(program: Command) {
           ],
           [
             "openclaw capabilities l5-baseline-doctor --workspace ~/.openclaw/workspace",
-            "Check a specific agent workspace for Lark receipts and language replay artifacts.",
+            "Check a specific workspace for local receipts and language replay artifacts.",
           ],
         ])}`,
     )
@@ -112,7 +111,6 @@ export function registerCapabilitiesCli(program: Command) {
       await runCapabilitiesCli(async () => {
         await l5BaselineDoctorCommand(
           {
-            agent: typeof opts.agent === "string" ? opts.agent : undefined,
             workspaceDir: typeof opts.workspace === "string" ? opts.workspace : undefined,
             fixtureDir: typeof opts.fixtureDir === "string" ? opts.fixtureDir : undefined,
             json: Boolean(opts.json || command.parent?.opts().json),
@@ -125,10 +123,10 @@ export function registerCapabilitiesCli(program: Command) {
   capabilities
     .command("l5-system-eval")
     .description(
-      "Run a fixed L5 eval across language, learning, finance, math, memory, Lark receipts, and review arbitration",
+      "Run a fixed L5 eval across language, learning, finance, math, memory, and review arbitration",
     )
     .option("--agent <id>", "Agent id whose workspace should be checked")
-    .option("--workspace <dir>", "Workspace to inspect for live Lark handoff receipts")
+    .option("--workspace <dir>", "Workspace for local loop receipts and artifacts")
     .option("--fixture-dir <dir>", "Fixture directory with local finance learning sources")
     .option("--write-receipt", "Write an L5 eval receipt into memory/l5-system-eval-receipts")
     .option("--json", "Output JSON", false)
@@ -154,7 +152,6 @@ export function registerCapabilitiesCli(program: Command) {
       await runCapabilitiesCli(async () => {
         await l5SystemEvalCommand(
           {
-            agent: typeof opts.agent === "string" ? opts.agent : undefined,
             workspaceDir: typeof opts.workspace === "string" ? opts.workspace : undefined,
             fixtureDir: typeof opts.fixtureDir === "string" ? opts.fixtureDir : undefined,
             writeReceipt: Boolean(opts.writeReceipt),
@@ -191,41 +188,6 @@ export function registerCapabilitiesCli(program: Command) {
           {
             fixtureDir: typeof opts.fixtureDir === "string" ? opts.fixtureDir : undefined,
             workspaceDir: typeof opts.workspace === "string" ? opts.workspace : undefined,
-            json: Boolean(opts.json || command.parent?.opts().json),
-          },
-          defaultRuntime,
-        );
-      });
-    });
-
-  capabilities
-    .command("lark-loop-diagnose")
-    .description("Diagnose local LCX loop readiness and live Lark handoff receipt status")
-    .option("--agent <id>", "Agent id whose workspace should be checked")
-    .option("--workspace <dir>", "Workspace to inspect for live Lark handoff receipts")
-    .option("--fixture-dir <dir>", "Fixture directory with local finance learning sources")
-    .option("--json", "Output JSON", false)
-    .addHelpText(
-      "after",
-      () =>
-        `\nExamples:\n${formatHelpExamples([
-          [
-            "openclaw capabilities lark-loop-diagnose --json",
-            "Run local loop smoke and report whether live Lark handoff receipts exist.",
-          ],
-          [
-            "openclaw capabilities lark-loop-diagnose --workspace ~/.openclaw/workspace",
-            "Inspect a specific live agent workspace.",
-          ],
-        ])}`,
-    )
-    .action(async (opts, command) => {
-      await runCapabilitiesCli(async () => {
-        await larkLoopDiagnoseCommand(
-          {
-            agent: typeof opts.agent === "string" ? opts.agent : undefined,
-            workspaceDir: typeof opts.workspace === "string" ? opts.workspace : undefined,
-            fixtureDir: typeof opts.fixtureDir === "string" ? opts.fixtureDir : undefined,
             json: Boolean(opts.json || command.parent?.opts().json),
           },
           defaultRuntime,

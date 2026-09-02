@@ -38,7 +38,7 @@ struct LobsterWorkfacePanelTests {
         - Weakest Domain: technical_daily
         - Hallucination Watch: macro narrative drift
 
-        ## Feishu Lane Panel
+        ## External Message Lane Panel
         - Active Lanes: 3
         - control_room · session main · healthy
 

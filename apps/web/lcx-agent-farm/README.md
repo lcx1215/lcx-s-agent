@@ -9,7 +9,7 @@ into the only surface.
 Run it from the repo root:
 
 ```bash
-node --import tsx scripts/dev/lcx-farm-web-server.ts --port 4788
+node --import tsx scripts/operator/lcx-farm-web-server.ts --port 4788
 ```
 
 Then open:
@@ -21,6 +21,6 @@ http://127.0.0.1:4788
 Boundary:
 
 - Owner JSON remains the source of truth.
-- This dashboard does not start training, write live config, touch provider
-  config, or claim live/model-weight proof.
+- This dashboard does not start training, write external-channel or provider
+  config, or claim user-visible or model-weight proof.
 - It is safe to use with Codex in-app browser for visual debugging.

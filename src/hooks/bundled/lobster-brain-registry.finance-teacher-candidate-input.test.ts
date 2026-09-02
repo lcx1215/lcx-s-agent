@@ -1,19 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
-  parseFeishuFinanceDoctrineTeacherCandidateInputArtifact,
-  renderFeishuFinanceDoctrineTeacherCandidateInputArtifact,
+  parseExternalFinanceDoctrineTeacherCandidateInputArtifact,
+  renderExternalFinanceDoctrineTeacherCandidateInputArtifact,
 } from "./lobster-brain-registry.js";
 
 describe("finance doctrine teacher candidate input artifact", () => {
   it("round-trips the bounded teacher candidate-input artifact contract", () => {
-    const rendered = renderFeishuFinanceDoctrineTeacherCandidateInputArtifact({
+    const rendered = renderExternalFinanceDoctrineTeacherCandidateInputArtifact({
       createdAt: "2026-04-16T23:10:00.000Z",
       sourceTeacherElevationHandoffArtifact:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-elevation-handoffs.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-elevation-handoffs.md",
       sourceTeacherFeedbackArtifact:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-feedback.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-feedback.md",
       sourceTeacherReviewArtifact:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-review.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-review.md",
       candidateInputs: [
         {
           candidateInputId: "finance-teacher-candidate-input-2026-04-16-feedback-1",
@@ -27,21 +27,21 @@ describe("finance doctrine teacher candidate input artifact", () => {
             "Need repeated calibration artifacts showing the same omitted chain weakens later review quality.",
           riskOfAdopting: "Could overcorrect into boilerplate macro narration.",
           targetGovernancePath:
-            "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-promotion-candidates.md",
+            "memory/external-work-receipts/2026-04-16-external-finance-doctrine-promotion-candidates.md",
           operatorNextAction:
             "Review this converted teacher critique against the same-day finance governance candidate flow before any later governance action.",
         },
       ],
     });
 
-    expect(parseFeishuFinanceDoctrineTeacherCandidateInputArtifact(rendered)).toEqual({
+    expect(parseExternalFinanceDoctrineTeacherCandidateInputArtifact(rendered)).toEqual({
       createdAt: "2026-04-16T23:10:00.000Z",
       sourceTeacherElevationHandoffArtifact:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-elevation-handoffs.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-elevation-handoffs.md",
       sourceTeacherFeedbackArtifact:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-feedback.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-feedback.md",
       sourceTeacherReviewArtifact:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-review.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-review.md",
       candidateInputs: [
         {
           candidateInputId: "finance-teacher-candidate-input-2026-04-16-feedback-1",
@@ -55,7 +55,7 @@ describe("finance doctrine teacher candidate input artifact", () => {
             "Need repeated calibration artifacts showing the same omitted chain weakens later review quality.",
           riskOfAdopting: "Could overcorrect into boilerplate macro narration.",
           targetGovernancePath:
-            "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-promotion-candidates.md",
+            "memory/external-work-receipts/2026-04-16-external-finance-doctrine-promotion-candidates.md",
           operatorNextAction:
             "Review this converted teacher critique against the same-day finance governance candidate flow before any later governance action.",
         },

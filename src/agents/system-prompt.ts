@@ -109,7 +109,7 @@ function buildMemorySection(params: {
       : []),
     ...(params.availableTools.has("finance_learning_retrieval_review")
       ? [
-          "When finance learning runs need same-day quality inspection, use finance_learning_retrieval_review. It reads finance-learning retrieval receipts, writes a finance-only retrieval review, links apply usage receipts/reviews when present, flags weak learning that did not become retrievable or did not become application-ready, and does not touch Lark language corpus, protected memory, doctrine cards, or execution authority.",
+          "When finance learning runs need same-day quality inspection, use finance_learning_retrieval_review. It reads finance-learning retrieval receipts, writes a finance-only retrieval review, links apply usage receipts/reviews when present, flags weak learning that did not become retrievable or did not become application-ready, and does not touch language routing, protected memory, doctrine cards, or execution authority.",
         ]
       : []),
     ...(params.availableTools.has("module_learning_pipeline_plan")
@@ -119,7 +119,7 @@ function buildMemorySection(params: {
       : []),
     ...(params.availableTools.has("module_learning_pipeline_review")
       ? [
-          "When checking whether module learning is usable across factors, options, indexes, macro, fundamentals, valuation/modeling QC, thesis/catalyst lifecycle, data provenance, research artifact QC, Lark/Feishu workflow, memory, ops, or skills, use module_learning_pipeline_review. It reads module-learning plan receipts, flags incomplete statuses, and keeps live, provider config, protected memory, and language corpus untouched.",
+          "When checking whether module learning is usable across factors, options, indexes, macro, fundamentals, valuation/modeling QC, thesis/catalyst lifecycle, data provenance, research artifact QC, external-channel workflow, memory, ops, or skills, use module_learning_pipeline_review. It reads module-learning plan receipts, flags incomplete statuses, and keeps live, provider config, protected memory, and language corpus untouched.",
         ]
       : []),
     ...(params.availableTools.has("finance_learning_capability_apply")
@@ -130,7 +130,7 @@ function buildMemorySection(params: {
     "For complex finance tasks, first form a module plan across macro/rates, ETF regime, company fundamentals, technical timing, portfolio risk, quant_math, options/volatility, credit/liquidity, commodities, FX/dollar, event-driven catalysts, causal map, and retained finance learning. Use deterministic local math through quant_math when numbers are present, run portfolio risk gates before any add/reduce language, and use review_tier or review_panel before high-risk operator-facing conclusions.",
     ...(params.availableTools.has("github_project_capability_intake")
       ? [
-          "When a GitHub project or trending repo feature should be considered for LCX Agent, use github_project_capability_intake first. It maps the selected feature to a capability family, existing internal embryos, and a bounded adoption target, writes an optional receipt, never fetches remote content, never installs or executes repo code, never touches live Feishu/Lark surfaces, and keeps protected memory untouched.",
+          "When a GitHub project or trending repo feature should be considered for LCX Agent, use github_project_capability_intake first. It maps the selected feature to a capability family, existing internal embryos, and a bounded adoption target, writes an optional receipt, never fetches remote content, never installs or executes repo code, never touches live external surfaces, and keeps protected memory untouched.",
         ]
       : []),
     ...(params.availableTools.has("finance_research_source_workbench")
@@ -146,11 +146,6 @@ function buildMemorySection(params: {
     ...(params.availableTools.has("finance_promotion_review")
       ? [
           "When finance doctrine promotion candidates already exist and you need to record a bounded governance decision, use finance_promotion_review with the exact dateKey and candidateKey instead of hand-editing generated promotion artifacts. It records deferred, rejected, or ready_for_manual_promotion state without auto-promoting anything.",
-        ]
-      : []),
-    ...(params.availableTools.has("lark_language_corpus_review")
-      ? [
-          "When pending Lark language-routing candidates need batch review, use lark_language_corpus_review. It reads memory/lark-language-routing-candidates, writes review and patch artifacts under memory/lark-language-routing-reviews, and does not mutate the formal routing corpus or finance learning artifacts automatically.",
         ]
       : []),
     ...(params.availableTools.has("finance_promotion_candidates")
@@ -228,12 +223,7 @@ function buildMemorySection(params: {
         ]
       : []),
     "After current-research-line, MEMORY.md, the latest carryover cue, and correction notes, prefer at most two active local durable memory cards whose subject or 'Use This Card When' section matches the current ask before older drill-down artifacts. If no card clearly matches, treat that as 'no matching local durable memory loaded' instead of pretending medium-term memory was used.",
-    "When diagnosing operator-phrasing drift, routing mistakes, or repeated repair issues, inspect memory/feishu-work-receipts/repair-queue.md and index.md first, then only the specific recent receipt files you need before replaying whole chats. Treat those receipts as bounded workflow evidence, not as protected truth.",
-    ...(params.availableTools.has("feishu_live_probe")
-      ? [
-          "When validating a Feishu/Lark live repair or checking whether the active chat path still drifts, prefer feishu_live_probe over manual send/read loops. Feishu is the API namespace and Lark is the visible app surface for the same integration. The tool leaves a bounded receipt under memory/feishu-live-probes and refreshes memory/feishu-live-probes/index.md instead of forcing chat replay from memory.",
-        ]
-      : []),
+    "When diagnosing operator-phrasing drift, routing mistakes, or repeated repair issues, inspect the relevant external-channel repair receipt before replaying whole chats. Treat those receipts as bounded workflow evidence, not as protected truth.",
     "Do not use local_memory_record to overwrite memory/current-research-line.md, memory/unified-risk-view.md, or MEMORY.md. Protected summaries remain the canonical current-state anchors.",
     "Use a decision-convergence loop for broad, ambiguous, or repair-heavy tasks: 1. state the current bracket, 2. rule out obvious bad-fit interpretations, 3. choose the single highest-information next check, 4. stop once the actionable range is tight enough. Do not jump from a broad ask to a fake precise answer.",
     "If the operator says the prior answer was imprecise, missed the ask, or felt 词不达意, narrow first on requested action, scope, timeframe, and output shape before rewriting content.",
@@ -371,10 +361,10 @@ function buildProductDoctrineSection(isMinimal: boolean) {
     "Default user experience: one main control room, multi-role internal orchestration, simple summary first, specialist detail only on demand.",
     "The user should be able to speak natural language in one main control room while the system decides which roles need to work.",
     "Return one clear, simple summary first. Expose specialist detail only when asked or when it materially changes the decision.",
-    "Treat natural-language asks like 继续做智能体, 继续提升智能体, 修 Lark 对话理解, 让它会分类干活, or keep improving the agent as one semantic family: agent/control-room capability improvement.",
+    "Treat natural-language asks like 继续做智能体, 继续提升智能体, 修外部通道对话理解, 让它会分类干活, or keep improving the agent as one semantic family: agent/control-room capability improvement.",
     "For that family, classify the requested capability first, pick the highest-leverage bounded repair, implement it when code changes are allowed, verify it, and state the next macro step. Do not answer with generic encouragement or stop after one tiny example sentence.",
     "For system-improvement goals, proactively run or request the relevant owner/radar/recovery checks before waiting for the user to name the next error. The target is fewer manual reminders: detect stale snapshots, drift, repairable problem clusters, and owner gates from existing evidence, then repair the bounded lane or report the exact blocking owner.",
-    "Accept that the current local brain may be limited, but keep the architecture upgrade-ready for future new technologies: route new models, papers, tools, skills, benchmarks, and desktop/CLI-control upgrades through skill-harvester, source/license/write-scope review, external upgrade radar, existing-owner mapping, eval or receipt proof, and dev/live gates before trusting them.",
+    "Accept that the current local brain may be limited, but keep the architecture upgrade-ready for future new technologies: route new models, papers, tools, skills, benchmarks, and desktop/CLI-control upgrades through skill-harvester, source/license/write-scope review, external upgrade radar, existing-owner mapping, eval or receipt proof, and the one-system/factory worktree plus external-channel gates before trusting them. Feature branches are a GitHub/GitLab collaboration concern, not a local runtime authority.",
     "If the ask says to broaden by family or cover more semantics, generalize by intent family and routing contract, not by adding brittle one-off phrase matches.",
     "",
   ];
@@ -707,7 +697,7 @@ export function buildAgentSystemPrompt(params: {
     finance_learning_pipeline_orchestrator:
       "Run one bounded finance learning pipeline from safe source intake through extraction, capability attachment, evidence-gated retention, inspect-ready output, a retrieval receipt, an auto-refreshed same-day retrieval review, and optional read-only apply validation proving whether learning became retrievable and application-ready; pass learningIntent for retrieval-first capability-card recall, pass applicationValidationQuery when the user expects proof the capability can shape a bounded research answer, surface learningInternalizationStatus plus retrievalFirstLearning.failedReason, applicationReadyCandidateCount, applicationValidationStatus, weakLearningIntents.failedReason, usageReceiptPath, and usageReviewPath in replies, only call it internalized when status is application_ready, fail closed on the first broken step, and never fetch remote content automatically",
     finance_learning_retrieval_review:
-      "Summarize finance learning retrieval receipts into a same-day per-run quality review, link apply usage receipts/reviews when present, flag weak learning that did not become retrievable or application-ready, and keep Lark language corpus plus protected memory untouched",
+      "Summarize finance learning retrieval receipts into a same-day per-run quality review, link apply usage receipts/reviews when present, flag weak learning that did not become retrievable or application-ready, and keep language routing plus protected memory untouched",
     module_learning_pipeline_plan:
       "Plan and optionally receipt one evidence-gated module-learning chain across source registry, reading scope, retrieval, application validation, eval/training absorption, fresh adjacent application, and keep/downrank/discard decision; weak alternative finance sources must include reliability, transcript/source, follow-up, follow-through, and weak-evidence policy gates before absorption; do not describe storage or a summary alone as module learning",
     module_learning_pipeline_review:
@@ -750,10 +740,6 @@ export function buildAgentSystemPrompt(params: {
       "Create a durable operator-facing doctrine-edit handoff for one finance proposal already marked accepted_for_manual_edit; does not edit doctrine cards automatically",
     finance_promotion_review:
       "Record deferred, rejected, or ready_for_manual_promotion governance actions for one finance promotion candidate by dateKey and candidateKey; updates the durable review state without auto-promoting anything",
-    feishu_live_probe:
-      "Send a bounded Feishu/Lark live acceptance probe, wait, read recent chat messages back, evaluate simple checks, and leave a receipt under memory/feishu-live-probes",
-    lark_language_corpus_review:
-      "Review pending Lark language-routing candidate artifacts, write review JSON and patch text under memory/lark-language-routing-reviews, and never mutate the formal corpus automatically",
     lobster_workface_app:
       "Build or refresh a bounded Lobster daily-work dashboard app from the latest lobster-workface artifact, optionally on the Desktop and optionally presented in Canvas",
     nodes: "List/describe/notify/camera/screen on paired nodes",
@@ -821,8 +807,6 @@ export function buildAgentSystemPrompt(params: {
     "finance_promotion_proposal_status",
     "finance_promotion_doctrine_edit_handoff",
     "finance_promotion_review",
-    "feishu_live_probe",
-    "lark_language_corpus_review",
     "lobster_workface_app",
     "nodes",
     "cron",

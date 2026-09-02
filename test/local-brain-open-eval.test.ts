@@ -23,7 +23,7 @@ describe("local-brain-open-eval", () => {
     }
     const { stdout } = await execFileAsync(
       process.execPath,
-      ["--import", "tsx", "scripts/dev/local-brain-open-eval.ts", ...command],
+      ["--import", "tsx", "scripts/operator/local-brain-open-eval.ts", ...command],
       { cwd: process.cwd(), maxBuffer: 1024 * 1024 },
     ).catch((error): RunResult => {
       const failure = error as ExecFailure;
@@ -68,7 +68,7 @@ describe("local-brain-open-eval", () => {
     expect(byId["quant_math_missing_inputs"]).toBe(
       "open eval quant planning request missing weights and return series.",
     );
-    expect(byId["lark_context_pollution_ops_first"]).toBe(
+    expect(byId["external_context_pollution_ops_first"]).toBe(
       "open eval ops audit request, explicitly not a finance research request.",
     );
   });
@@ -83,7 +83,7 @@ describe("local-brain-open-eval", () => {
         [
           "--import",
           "tsx",
-          "scripts/dev/local-brain-open-eval.ts",
+          "scripts/operator/local-brain-open-eval.ts",
           "--json",
           "--provider-command",
           `node --import tsx test/fixtures/local-brain-open-eval-provider.ts; touch ${marker}`,
@@ -124,7 +124,7 @@ describe("local-brain-open-eval", () => {
         "source_missing_learning_gate",
         "agent_skill_distillation_safety",
         "quant_math_missing_inputs",
-        "lark_context_pollution_ops_first",
+        "external_context_pollution_ops_first",
       ],
     });
     expect(result.summary.failedCaseIds).toEqual([
@@ -132,7 +132,7 @@ describe("local-brain-open-eval", () => {
       "source_missing_learning_gate",
       "agent_skill_distillation_safety",
       "quant_math_missing_inputs",
-      "lark_context_pollution_ops_first",
+      "external_context_pollution_ops_first",
     ]);
     const errors = result.cases.map((entry) => entry.acceptance.error);
     expect(errors.every((entry) => typeof entry === "string")).toBe(true);
@@ -154,7 +154,7 @@ describe("local-brain-open-eval", () => {
         "source_missing_learning_gate",
         "agent_skill_distillation_safety",
         "quant_math_missing_inputs",
-        "lark_context_pollution_ops_first",
+        "external_context_pollution_ops_first",
       ],
     });
     expect(result.summary.failedCaseIds).toEqual([
@@ -162,7 +162,7 @@ describe("local-brain-open-eval", () => {
       "source_missing_learning_gate",
       "agent_skill_distillation_safety",
       "quant_math_missing_inputs",
-      "lark_context_pollution_ops_first",
+      "external_context_pollution_ops_first",
     ]);
     expect(result.cases[0].acceptance.error).toContain("provider timed out after");
   });
@@ -172,7 +172,7 @@ describe("local-brain-open-eval", () => {
       execFileAsync(process.execPath, [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-open-eval.ts",
+        "scripts/operator/local-brain-open-eval.ts",
         "--provider-timeout-ms",
         "-1",
       ]),
@@ -183,7 +183,7 @@ describe("local-brain-open-eval", () => {
       execFileAsync(process.execPath, [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-open-eval.ts",
+        "scripts/operator/local-brain-open-eval.ts",
         "--provider-timeout-ms",
         "abc",
       ]),
@@ -194,7 +194,7 @@ describe("local-brain-open-eval", () => {
       execFileAsync(process.execPath, [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-open-eval.ts",
+        "scripts/operator/local-brain-open-eval.ts",
         "--provider-timeout-ms",
         "0",
       ]),

@@ -22,7 +22,7 @@ Turn an ML research task into a bounded, auditable loop:
 6. record expected artifacts and acceptance criteria
 7. write a report handoff with limitations and next steps
 
-The output should improve LCX Agent's research judgment. It should not silently start GPU jobs, install packages, clone-run repositories, or mutate production Lark/Feishu behavior.
+The output should improve LCX Agent's research judgment. It should not silently start GPU jobs, install packages, clone-run repositories, or mutate production external-message behavior.
 
 ## When To Use
 
@@ -34,7 +34,7 @@ Use this skill for requests like:
 - "compare a model-evaluation technique and decide whether it belongs in our learning brain"
 - "produce a research handoff from papers, datasets, code structure, and results"
 
-Do not use it for ordinary Lark language routing, daily finance summaries, or direct trading recommendations.
+Do not use it for ordinary external-message language routing, daily finance summaries, or direct trading recommendations.
 
 ## Safe Intake
 
@@ -75,7 +75,7 @@ End every run with one status:
 
 ## Boundaries
 
-- Do not claim live Lark/Feishu verification from this skill.
+- Do not claim live external-message verification from this skill.
 - Do not claim a model was trained unless a real local or approved remote run produced a receipt.
 - Do not install dependencies, clone-run repos, start GPU jobs, or call paid APIs without explicit operator approval.
 - Do not write to `memory/current-research-line.md` or `memory/unified-risk-view.md`.

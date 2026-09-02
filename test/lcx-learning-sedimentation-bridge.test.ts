@@ -20,7 +20,7 @@ async function runBridge(workspaceDir: string, extraArgs: string[] = []) {
     [
       "--import",
       "tsx",
-      "scripts/dev/lcx-learning-sedimentation-bridge.ts",
+      "scripts/operator/lcx-learning-sedimentation-bridge.ts",
       "--workspace",
       workspaceDir,
       "--json",
@@ -90,7 +90,7 @@ describe("LCX learning sedimentation bridge", () => {
     expect(payload).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_learning_sedimentation_bridge_only",
+        boundary: "local_learning_sedimentation_bridge_only",
         writePlanReceipts: false,
         candidateCount: 1,
         existingPlanReceiptCount: 0,
@@ -140,7 +140,7 @@ describe("LCX learning sedimentation bridge", () => {
     );
     expect(receipt).toEqual(
       expect.objectContaining({
-        boundary: "dev_module_learning_pipeline_plan",
+        boundary: "local_module_learning_pipeline_plan",
         targetModule: "portfolio_risk_gates",
         status: "application_ready",
         learningIntent: expect.stringContaining("Convert existing finance-learning sedimentation"),

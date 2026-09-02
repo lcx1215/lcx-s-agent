@@ -11,21 +11,21 @@ import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import type { HookHandler } from "../../hooks.js";
 import { resolveMemorySessionContext } from "../artifact-memory.js";
 import {
-  buildFeishuFinanceDoctrinePromotionCandidatesFilename,
-  buildFeishuFinanceDoctrinePromotionReviewFilename,
+  buildExternalFinanceDoctrinePromotionCandidatesFilename,
+  buildExternalFinanceDoctrinePromotionReviewFilename,
   buildLobsterWorkfaceFilename,
   buildKnowledgeArtifactDir,
   extractIsoDateKey,
-  isFeishuFinanceDoctrineCalibrationFilename,
-  isFeishuFinanceDoctrinePromotionCandidatesFilename,
-  isFeishuFinanceDoctrinePromotionReviewFilename,
-  isFeishuWorkReceiptFilename,
+  isExternalFinanceDoctrineCalibrationFilename,
+  isExternalFinanceDoctrinePromotionCandidatesFilename,
+  isExternalFinanceDoctrinePromotionReviewFilename,
+  isExternalWorkReceiptFilename,
   isLearningCouncilAdoptionLedgerFilename,
-  parseFeishuFinanceDoctrineCalibrationArtifact,
-  parseFeishuFinanceDoctrinePromotionCandidateArtifact,
-  parseFeishuFinanceDoctrinePromotionReviewArtifact,
-  parseFeishuSurfaceLanePanelArtifact,
-  parseFeishuWorkReceiptArtifact,
+  parseExternalFinanceDoctrineCalibrationArtifact,
+  parseExternalFinanceDoctrinePromotionCandidateArtifact,
+  parseExternalFinanceDoctrinePromotionReviewArtifact,
+  parseExternalSurfaceLanePanelArtifact,
+  parseExternalWorkReceiptArtifact,
   parseLearningCouncilAdoptionLedger,
   isLearningCouncilMemoryNoteFilename,
   isLearningReviewNoteFilename,
@@ -43,8 +43,8 @@ import {
   parseLearningCouncilRuntimeArtifact,
   parsePortfolioAnswerScorecardArtifact,
   parseWatchtowerAnomalyRecord,
-  renderFeishuFinanceDoctrinePromotionCandidateArtifact,
-  renderFeishuFinanceDoctrinePromotionReviewArtifact,
+  renderExternalFinanceDoctrinePromotionCandidateArtifact,
+  renderExternalFinanceDoctrinePromotionReviewArtifact,
   renderLearningCouncilAdoptionLedger,
   renderLobsterWorkfaceArtifact,
   buildWatchtowerArtifactDir,
@@ -131,12 +131,12 @@ type OperatingWeekView = {
   busiestTokenDay: string;
 };
 
-type FeishuSurfaceLanePanel = {
+type ExternalSurfaceLanePanel = {
   activeLanes: number;
   laneMeter: string[];
 };
 
-type FeishuWorkReceipt = {
+type ExternalWorkReceipt = {
   name: string;
   handledAt: string;
   requestedAction: string;
@@ -373,19 +373,19 @@ async function loadExistingFinanceDoctrinePromotionCandidates(params: {
   memoryDir: string;
   targetDateKey: string;
 }): Promise<FinanceDoctrinePromotionCandidateArtifactView | undefined> {
-  const receiptsDir = path.join(params.memoryDir, "feishu-work-receipts");
+  const receiptsDir = path.join(params.memoryDir, "external-work-receipts");
   try {
     const entries = await fs.readdir(receiptsDir, { withFileTypes: true });
     const matching = entries.find(
       (entry) =>
         entry.isFile() &&
-        isFeishuFinanceDoctrinePromotionCandidatesFilename(entry.name) &&
+        isExternalFinanceDoctrinePromotionCandidatesFilename(entry.name) &&
         entry.name.startsWith(`${params.targetDateKey}-`),
     );
     if (!matching) {
       return undefined;
     }
-    const parsed = parseFeishuFinanceDoctrinePromotionCandidateArtifact(
+    const parsed = parseExternalFinanceDoctrinePromotionCandidateArtifact(
       await fs.readFile(path.join(receiptsDir, matching.name), "utf-8"),
     );
     if (!parsed) {
@@ -418,19 +418,19 @@ async function loadExistingFinanceDoctrinePromotionReview(params: {
   memoryDir: string;
   targetDateKey: string;
 }): Promise<FinanceDoctrinePromotionReview | undefined> {
-  const receiptsDir = path.join(params.memoryDir, "feishu-work-receipts");
+  const receiptsDir = path.join(params.memoryDir, "external-work-receipts");
   try {
     const entries = await fs.readdir(receiptsDir, { withFileTypes: true });
     const matching = entries.find(
       (entry) =>
         entry.isFile() &&
-        isFeishuFinanceDoctrinePromotionReviewFilename(entry.name) &&
+        isExternalFinanceDoctrinePromotionReviewFilename(entry.name) &&
         entry.name.startsWith(`${params.targetDateKey}-`),
     );
     if (!matching) {
       return undefined;
     }
-    const parsed = parseFeishuFinanceDoctrinePromotionReviewArtifact(
+    const parsed = parseExternalFinanceDoctrinePromotionReviewArtifact(
       await fs.readFile(path.join(receiptsDir, matching.name), "utf-8"),
     );
     if (!parsed) {
@@ -791,19 +791,19 @@ async function loadYesterdayCorrectionNotes(params: {
   }
 }
 
-async function loadYesterdayFeishuWorkReceipts(params: {
+async function loadYesterdayExternalWorkReceipts(params: {
   memoryDir: string;
   targetDateKey: string;
-}): Promise<FeishuWorkReceipt[]> {
-  const receiptsDir = path.join(params.memoryDir, "feishu-work-receipts");
+}): Promise<ExternalWorkReceipt[]> {
+  const receiptsDir = path.join(params.memoryDir, "external-work-receipts");
   try {
     const entries = await fs.readdir(receiptsDir, { withFileTypes: true });
     const parsed = await Promise.all(
       entries
-        .filter((entry) => entry.isFile() && isFeishuWorkReceiptFilename(entry.name))
-        .map(async (entry): Promise<FeishuWorkReceipt | undefined> => {
+        .filter((entry) => entry.isFile() && isExternalWorkReceiptFilename(entry.name))
+        .map(async (entry): Promise<ExternalWorkReceipt | undefined> => {
           const content = await fs.readFile(path.join(receiptsDir, entry.name), "utf-8");
-          const parsedReceipt = parseFeishuWorkReceiptArtifact(content);
+          const parsedReceipt = parseExternalWorkReceiptArtifact(content);
           if (
             !parsedReceipt ||
             extractIsoDateKey(parsedReceipt.handledAt) !== params.targetDateKey
@@ -826,11 +826,11 @@ async function loadYesterdayFeishuWorkReceipts(params: {
                   doctrineFieldsUsed: parsedReceipt.financeDoctrineProof.doctrineFieldsUsed,
                 }
               : undefined,
-          } satisfies FeishuWorkReceipt;
+          } satisfies ExternalWorkReceipt;
         }),
     );
     return parsed
-      .filter((entry): entry is FeishuWorkReceipt => Boolean(entry))
+      .filter((entry): entry is ExternalWorkReceipt => Boolean(entry))
       .toSorted((a, b) => a.handledAt.localeCompare(b.handledAt));
   } catch {
     return [];
@@ -841,15 +841,17 @@ async function loadYesterdayFinanceDoctrineCalibrations(params: {
   memoryDir: string;
   targetDateKey: string;
 }): Promise<FinanceDoctrineCalibration[]> {
-  const receiptsDir = path.join(params.memoryDir, "feishu-work-receipts");
+  const receiptsDir = path.join(params.memoryDir, "external-work-receipts");
   try {
     const entries = await fs.readdir(receiptsDir, { withFileTypes: true });
     const parsed = await Promise.all(
       entries
-        .filter((entry) => entry.isFile() && isFeishuFinanceDoctrineCalibrationFilename(entry.name))
+        .filter(
+          (entry) => entry.isFile() && isExternalFinanceDoctrineCalibrationFilename(entry.name),
+        )
         .map(async (entry) => {
           const content = await fs.readFile(path.join(receiptsDir, entry.name), "utf-8");
-          const parsedCalibration = parseFeishuFinanceDoctrineCalibrationArtifact(content);
+          const parsedCalibration = parseExternalFinanceDoctrineCalibrationArtifact(content);
           if (
             !parsedCalibration ||
             extractIsoDateKey(parsedCalibration.reviewDate) !== params.targetDateKey
@@ -882,7 +884,7 @@ async function loadRecentFinanceDoctrineCalibrationSummary(params: {
   targetDateKey: string;
   windowDays: number;
 }): Promise<FinanceDoctrineCalibrationRollingSummary | undefined> {
-  const receiptsDir = path.join(params.memoryDir, "feishu-work-receipts");
+  const receiptsDir = path.join(params.memoryDir, "external-work-receipts");
   const targetDate = parseUtcDateKey(params.targetDateKey);
   if (!targetDate) {
     return undefined;
@@ -895,10 +897,12 @@ async function loadRecentFinanceDoctrineCalibrationSummary(params: {
     const entries = await fs.readdir(receiptsDir, { withFileTypes: true });
     const parsed = await Promise.all(
       entries
-        .filter((entry) => entry.isFile() && isFeishuFinanceDoctrineCalibrationFilename(entry.name))
+        .filter(
+          (entry) => entry.isFile() && isExternalFinanceDoctrineCalibrationFilename(entry.name),
+        )
         .map(async (entry) => {
           const content = await fs.readFile(path.join(receiptsDir, entry.name), "utf-8");
-          const parsedCalibration = parseFeishuFinanceDoctrineCalibrationArtifact(content);
+          const parsedCalibration = parseExternalFinanceDoctrineCalibrationArtifact(content);
           if (
             !parsedCalibration ||
             !allowedDateKeys.has(extractIsoDateKey(parsedCalibration.reviewDate))
@@ -935,23 +939,23 @@ async function loadRecentFinanceDoctrineCalibrationSummary(params: {
   }
 }
 
-async function ensureFeishuWorkReceiptArtifacts(memoryDir: string): Promise<void> {
-  const receiptsDir = path.join(memoryDir, "feishu-work-receipts");
+async function ensureExternalWorkReceiptArtifacts(memoryDir: string): Promise<void> {
+  const receiptsDir = path.join(memoryDir, "external-work-receipts");
   await fs.mkdir(receiptsDir, { recursive: true });
 
   const indexPath = path.join(receiptsDir, "index.md");
   const repairQueuePath = path.join(receiptsDir, "repair-queue.md");
   const emptyIndex = [
-    "# Feishu Work Receipt Index",
+    "# External Work Receipt Index",
     "",
     "- **Tracked Receipts**: 0",
     "",
     "## Recent Receipts",
-    "- No Feishu work receipts are recorded yet.",
+    "- No External work receipts are recorded yet.",
     "",
   ].join("\n");
   const emptyRepairQueue = [
-    "# Feishu Work Repair Queue",
+    "# External Work Repair Queue",
     "",
     "- **Active Repair Clusters**: 0",
     "",
@@ -1253,13 +1257,13 @@ async function loadOperatingWeekView(params: {
   };
 }
 
-async function loadFeishuSurfaceLanePanel(
+async function loadExternalSurfaceLanePanel(
   memoryDir: string,
-): Promise<FeishuSurfaceLanePanel | undefined> {
-  const panelPath = path.join(memoryDir, "feishu-surface-lines", "index.md");
+): Promise<ExternalSurfaceLanePanel | undefined> {
+  const panelPath = path.join(memoryDir, "external-surface-lines", "index.md");
   try {
     const content = await fs.readFile(panelPath, "utf-8");
-    const parsed = parseFeishuSurfaceLanePanelArtifact(content);
+    const parsed = parseExternalSurfaceLanePanelArtifact(content);
     if (!parsed) {
       return undefined;
     }
@@ -1277,7 +1281,7 @@ function renderWorkface(params: {
   sessionKey: string;
   learningReviews: LearningReview[];
   learningCouncilArtifacts: LearningCouncilArtifact[];
-  workReceipts: FeishuWorkReceipt[];
+  workReceipts: ExternalWorkReceipt[];
   financeDoctrineCalibrations: FinanceDoctrineCalibration[];
   recentFinanceDoctrineCalibrationSummary?: FinanceDoctrineCalibrationRollingSummary;
   financeDoctrinePromotionCandidates: FinanceDoctrinePromotionCandidate[];
@@ -1287,7 +1291,7 @@ function renderWorkface(params: {
   scorecard?: PortfolioScorecardSummary;
   validationWeekly?: KnowledgeValidationWeeklySummary;
   operatingWeekView: OperatingWeekView;
-  surfaceLanePanel?: FeishuSurfaceLanePanel;
+  surfaceLanePanel?: ExternalSurfaceLanePanel;
   tokenStats: {
     totalTokens: number;
     totalCost: number;
@@ -1385,12 +1389,12 @@ function renderWorkface(params: {
           `- Hallucination Watch: ${params.validationWeekly.hallucinationDomain}`,
         ]
       : ["- No weekly validation radar is available yet."],
-    feishuLanePanelLines: params.surfaceLanePanel
+    externalLanePanelLines: params.surfaceLanePanel
       ? [
           `- Active Lanes: ${params.surfaceLanePanel.activeLanes}`,
           ...params.surfaceLanePanel.laneMeter,
         ]
-      : ["- No active Feishu surface lanes are recorded yet."],
+      : ["- No active External surface lanes are recorded yet."],
     sevenDayOperatingViewLines: [
       `- Learning Items (7d): ${params.operatingWeekView.learningItems}`,
       `- Correction Notes (7d): ${params.operatingWeekView.correctionNotes}`,
@@ -1550,7 +1554,7 @@ function renderWorkface(params: {
     readingGuideLines: [
       "- Active brain path: read memory/current-research-line.md first, then MEMORY.md, then memory/unified-risk-view.md when present, then the latest carryover and correction notes before drilling into older artifacts.",
       "- Keep one brain, not two: the distillation chain serves both Lobster's general agent meta-capability and the full finance research pipeline.",
-      "- Treat memory/local-memory/*.md as reusable durable cards; treat ops/live-handoff/*.md as drill-down or migration history, not as the first active brain to read.",
+      "- Treat memory/local-memory/*.md as reusable durable cards; treat ops/external-channel-history/*.md as drill-down or migration history, not as the first active brain to read.",
       "- If learning count is high but correction count is also high, Lobster is learning but not transferring cleanly enough yet.",
       "- If token use rises without stronger learning or correction quality, the system is burning context without enough improvement.",
       "- Use this artifact to supervise daily usefulness, not to reward activity theater.",
@@ -1567,7 +1571,7 @@ const handler: HookHandler = async (event) => {
     const { workspaceDir, memoryDir, displaySessionKey, cfg } = await resolveMemorySessionContext({
       event,
     });
-    await ensureFeishuWorkReceiptArtifacts(memoryDir);
+    await ensureExternalWorkReceiptArtifacts(memoryDir);
     const now = new Date(event.timestamp ?? Date.now());
     const targetDateKey = toUtcDateKey(shiftUtcDays(now, -1));
 
@@ -1585,7 +1589,7 @@ const handler: HookHandler = async (event) => {
     ] = await Promise.all([
       loadYesterdayLearningReviews({ memoryDir, targetDateKey }),
       loadYesterdayLearningCouncilArtifacts({ workspaceDir, memoryDir, targetDateKey }),
-      loadYesterdayFeishuWorkReceipts({ memoryDir, targetDateKey }),
+      loadYesterdayExternalWorkReceipts({ memoryDir, targetDateKey }),
       loadYesterdayFinanceDoctrineCalibrations({ memoryDir, targetDateKey }),
       loadRecentFinanceDoctrineCalibrationSummary({
         memoryDir,
@@ -1616,7 +1620,7 @@ const handler: HookHandler = async (event) => {
         tokenStats,
       }),
     ]);
-    const surfaceLanePanel = await loadFeishuSurfaceLanePanel(memoryDir);
+    const surfaceLanePanel = await loadExternalSurfaceLanePanel(memoryDir);
     const existingFinanceDoctrinePromotionReview = await loadExistingFinanceDoctrinePromotionReview(
       {
         memoryDir,
@@ -1677,10 +1681,10 @@ const handler: HookHandler = async (event) => {
         ? [
             {
               filename: path.join(
-                "feishu-work-receipts",
-                buildFeishuFinanceDoctrinePromotionCandidatesFilename(targetDateKey),
+                "external-work-receipts",
+                buildExternalFinanceDoctrinePromotionCandidatesFilename(targetDateKey),
               ),
-              content: renderFeishuFinanceDoctrinePromotionCandidateArtifact({
+              content: renderExternalFinanceDoctrinePromotionCandidateArtifact({
                 generatedAt: now.toISOString(),
                 consumer: "holdings_thesis_revalidation",
                 windowDays: recentFinanceDoctrineCalibrationSummary.windowDays,
@@ -1692,13 +1696,13 @@ const handler: HookHandler = async (event) => {
             },
             {
               filename: path.join(
-                "feishu-work-receipts",
-                buildFeishuFinanceDoctrinePromotionReviewFilename(targetDateKey),
+                "external-work-receipts",
+                buildExternalFinanceDoctrinePromotionReviewFilename(targetDateKey),
               ),
-              content: renderFeishuFinanceDoctrinePromotionReviewArtifact({
+              content: renderExternalFinanceDoctrinePromotionReviewArtifact({
                 reviewedAt: existingFinanceDoctrinePromotionReview?.reviewedAt ?? now.toISOString(),
                 consumer: "holdings_thesis_revalidation",
-                linkedCandidateArtifact: `memory/feishu-work-receipts/${buildFeishuFinanceDoctrinePromotionCandidatesFilename(targetDateKey)}`,
+                linkedCandidateArtifact: `memory/external-work-receipts/${buildExternalFinanceDoctrinePromotionCandidatesFilename(targetDateKey)}`,
                 reviews: financeDoctrinePromotionCandidates.map((candidate) => ({
                   candidateKey: candidate.candidateKey,
                   reviewState: candidate.reviewState,

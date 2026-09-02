@@ -2,10 +2,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  buildFeishuFinanceDoctrineTeacherCandidateInputsFilename,
-  buildFeishuFinanceDoctrineTeacherElevationHandoffsFilename,
-  parseFeishuFinanceDoctrineTeacherCandidateInputArtifact,
-  renderFeishuFinanceDoctrineTeacherElevationHandoffArtifact,
+  buildExternalFinanceDoctrineTeacherCandidateInputsFilename,
+  buildExternalFinanceDoctrineTeacherElevationHandoffsFilename,
+  parseExternalFinanceDoctrineTeacherCandidateInputArtifact,
+  renderExternalFinanceDoctrineTeacherElevationHandoffArtifact,
 } from "../../hooks/bundled/lobster-brain-registry.js";
 import { makeTempWorkspace } from "../../test-helpers/workspace.js";
 import { createFinanceDoctrineTeacherFeedbackCandidateInputTool } from "./finance-doctrine-teacher-feedback-candidate-input-tool.js";
@@ -23,18 +23,18 @@ describe("finance_doctrine_teacher_feedback_candidate_input tool", () => {
   async function seedElevationHandoff(
     status: "open" | "converted_to_candidate_input" | "superseded" = "converted_to_candidate_input",
   ) {
-    const receiptsDir = path.join(workspaceDir!, "memory", "feishu-work-receipts");
+    const receiptsDir = path.join(workspaceDir!, "memory", "external-work-receipts");
     await fs.mkdir(receiptsDir, { recursive: true });
     const dateKey = "2026-04-16";
     const handoffId = "finance-teacher-elevation-handoff-2026-04-16-feedback-1";
     await fs.writeFile(
-      path.join(receiptsDir, buildFeishuFinanceDoctrineTeacherElevationHandoffsFilename(dateKey)),
-      renderFeishuFinanceDoctrineTeacherElevationHandoffArtifact({
+      path.join(receiptsDir, buildExternalFinanceDoctrineTeacherElevationHandoffsFilename(dateKey)),
+      renderExternalFinanceDoctrineTeacherElevationHandoffArtifact({
         handedOffAt: "2026-04-16T22:30:00.000Z",
         sourceTeacherFeedbackArtifact:
-          "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-feedback.md",
+          "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-feedback.md",
         sourceTeacherReviewArtifact:
-          "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-review.md",
+          "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-review.md",
         handoffs: [
           {
             handoffId,
@@ -47,7 +47,7 @@ describe("finance_doctrine_teacher_feedback_candidate_input tool", () => {
               "Need repeated calibration artifacts showing the same omitted chain weakens later review quality.",
             riskOfAdopting: "Could overcorrect into boilerplate macro narration.",
             targetGovernancePath:
-              "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-promotion-candidates.md",
+              "memory/external-work-receipts/2026-04-16-external-finance-doctrine-promotion-candidates.md",
             operatorNextAction:
               "Review this elevated teacher critique against the same-day finance governance candidate flow and convert it into explicit candidate input manually only if the scope and evidence hold.",
             status,
@@ -78,22 +78,22 @@ describe("finance_doctrine_teacher_feedback_candidate_input tool", () => {
       candidateInputId:
         "finance-teacher-candidate-input-2026-04-16-finance-teacher-elevation-handoff-2026-04-16-feedback-1",
       teacherElevationHandoffPath:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-elevation-handoffs.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-elevation-handoffs.md",
       teacherCandidateInputPath:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-candidate-inputs.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-candidate-inputs.md",
       targetGovernancePath:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-promotion-candidates.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-promotion-candidates.md",
       action:
         "This creates a bounded finance governance candidate-input artifact only. It does not create promotion candidates automatically, does not promote doctrine, and does not mutate doctrine cards automatically.",
     });
 
-    const parsed = parseFeishuFinanceDoctrineTeacherCandidateInputArtifact(
+    const parsed = parseExternalFinanceDoctrineTeacherCandidateInputArtifact(
       await fs.readFile(
         path.join(
           workspaceDir,
           "memory",
-          "feishu-work-receipts",
-          buildFeishuFinanceDoctrineTeacherCandidateInputsFilename(dateKey),
+          "external-work-receipts",
+          buildExternalFinanceDoctrineTeacherCandidateInputsFilename(dateKey),
         ),
         "utf8",
       ),
@@ -124,9 +124,9 @@ describe("finance_doctrine_teacher_feedback_candidate_input tool", () => {
       handoffId,
       handoffStatus: "open",
       teacherElevationHandoffPath:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-elevation-handoffs.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-elevation-handoffs.md",
       targetGovernancePath:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-promotion-candidates.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-promotion-candidates.md",
       action:
         "Only teacher-elevation handoffs already marked converted_to_candidate_input can create a finance candidate-input artifact.",
     });
@@ -149,7 +149,7 @@ describe("finance_doctrine_teacher_feedback_candidate_input tool", () => {
       dateKey,
       handoffId: "handoff-does-not-exist",
       teacherElevationHandoffPath:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-elevation-handoffs.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-elevation-handoffs.md",
       availableHandoffIds: [handoffId],
       action:
         "Use finance_promotion_candidates with this dateKey to inspect current teacher-elevation handoff ids before retrying finance_doctrine_teacher_feedback_candidate_input.",

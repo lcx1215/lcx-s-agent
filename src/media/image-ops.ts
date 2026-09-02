@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { runExec } from "../process/exec.js";
 
-type Sharp = typeof import("sharp");
+type SharpFactory = (typeof import("sharp"))["default"];
 
 export type ImageMetadata = {
   width: number;
@@ -30,10 +30,10 @@ function prefersSips(): boolean {
   );
 }
 
-async function loadSharp(): Promise<(buffer: Buffer) => ReturnType<Sharp>> {
-  const mod = (await import("sharp")) as unknown as { default?: Sharp };
-  const sharp = mod.default ?? (mod as unknown as Sharp);
-  return (buffer) => sharp(buffer, { failOnError: false });
+async function loadSharp(): Promise<(buffer: Buffer) => ReturnType<SharpFactory>> {
+  const mod = (await import("sharp")) as unknown as { default?: SharpFactory };
+  const sharp = mod.default ?? (mod as unknown as SharpFactory);
+  return (buffer) => sharp(buffer, { failOn: "none" });
 }
 
 /**

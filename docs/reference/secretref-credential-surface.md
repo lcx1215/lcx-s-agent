@@ -65,10 +65,10 @@ Scope intent:
 - `channels.irc.accounts.*.nickserv.password`
 - `channels.bluebubbles.password`
 - `channels.bluebubbles.accounts.*.password`
-- `channels.feishu.appSecret`
-- `channels.feishu.verificationToken`
-- `channels.feishu.accounts.*.appSecret`
-- `channels.feishu.accounts.*.verificationToken`
+- `channels.external.inboundToken`
+- `channels.external.outboundToken`
+- `channels.external.accounts.*.inboundToken`
+- `channels.external.accounts.*.outboundToken`
 - `channels.msteams.appPassword`
 - `channels.mattermost.botToken`
 - `channels.mattermost.accounts.*.botToken`

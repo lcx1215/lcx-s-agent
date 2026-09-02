@@ -4,7 +4,7 @@ import type { ReplyToMode } from "../../config/types.js";
 import { INTERNAL_MESSAGE_CHANNEL, normalizeMessageChannel } from "../../utils/message-channel.js";
 import type { OriginatingChannelType } from "../templating.js";
 import type { ReplyPayload } from "../types.js";
-import { isFeishuFamilyChannel, resolveReplyRouteChannel } from "./reply-routing-helpers.js";
+import { resolveReplyRouteChannel } from "./reply-routing-helpers.js";
 
 export function resolveReplyToMode(
   cfg: OpenClawConfig,
@@ -55,19 +55,18 @@ export function createReplyToModeFilterForChannel(
   mode: ReplyToMode,
   channel?: OriginatingChannelType,
 ) {
-  const provider =
-    resolveReplyRouteChannel(channel) ?? (isFeishuFamilyChannel(channel) ? "feishu" : undefined);
+  const provider = resolveReplyRouteChannel(channel);
   const normalized = normalizeMessageChannel(channel);
   const isWebchat = normalized === INTERNAL_MESSAGE_CHANNEL;
   // Default: allow explicit reply tags/directives even when replyToMode is "off".
-  // Unknown channels fail closed; internal webchat and feishu-family channels stay allowed.
+  // Unknown channels fail closed; internal webchat and registered channels stay allowed.
   const dock = provider ? getChannelDock(provider) : undefined;
   const allowExplicitReplyTagsWhenOff =
     (provider
       ? (dock?.threading?.allowExplicitReplyTagsWhenOff ?? dock?.threading?.allowTagsWhenOff)
       : undefined) ??
     (provider ? true : undefined) ??
-    (isFeishuFamilyChannel(channel) || isWebchat);
+    isWebchat;
   return createReplyToModeFilter(mode, {
     allowExplicitReplyTagsWhenOff,
   });

@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const scriptPath = path.join(repoRoot, "scripts/dev/lcx-skillopt-lite.ts");
+const scriptPath = path.join(repoRoot, "scripts/operator/lcx-skillopt-lite.ts");
 
 async function seedAutopilot(workspaceDir: string) {
   const statePath = path.join(workspaceDir, "state", "lcx-governance-autopilot-latest.json");
@@ -86,7 +86,7 @@ describe("lcx-skillopt-lite CLI", () => {
     expect(parsed).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_skillopt_lite_only",
+        boundary: "local_skillopt_lite_only",
         updated: false,
         skillId: "single_stock_curve_technical_timing_preflight",
         activeProcessCount: 3,
@@ -201,11 +201,13 @@ describe("lcx-skillopt-lite CLI", () => {
     );
     expect(parsed.proofChain).toEqual(
       expect.objectContaining({
-        boundary: "dev_skillopt_proof_chain_only",
+        boundary: "local_skillopt_proof_chain_only",
       }),
     );
-    expect(parsed.nextIdleCommand).toContain("--adapter latest-passing");
+    expect(parsed.nextIdleCommand).toContain("--adapter '/adapters/candidate-r6'");
+    expect(parsed.nextIdleCommand).not.toContain("--adapter latest-passing");
     expect(parsed.nextIdleCommand).toContain("--hardened");
+    expect(parsed.nextIdleCommand).toContain("--receipt");
     expect(parsed.absorptionPlan).toEqual(
       expect.objectContaining({
         status: "not_absorbed_until_training_and_promotion_truth",
@@ -239,9 +241,9 @@ describe("lcx-skillopt-lite CLI", () => {
     await fs.writeFile(
       path.join(skillRoot, "best_skill.md"),
       [
-        "# Lark External Channel Boundary Preflight",
+        "# External External Channel Boundary Preflight",
         "",
-        "boundary: dev_skillopt_lite_only",
+        "boundary: local_skillopt_lite_only",
         "",
         "## Purpose",
         "Old external-channel proof text requires selected clean adapter and fresh real inbound/outbound evidence.",
@@ -275,14 +277,16 @@ describe("lcx-skillopt-lite CLI", () => {
 
     const bestSkill = await fs.readFile(path.join(skillRoot, "best_skill.md"), "utf8");
     expect(bestSkill).toContain("## Current Static Contract Terms");
-    expect(bestSkill).toContain("lark_external_channel_binding");
-    expect(bestSkill).toContain("dev_ready_not_user_visible_observed");
+    expect(bestSkill).toContain("external_message_channel_binding");
+    expect(bestSkill).toContain("local_ready_not_user_visible_observed");
     expect(bestSkill).toContain("channel_probe_as_user_visible_observed");
     expect(bestSkill).toContain("dirty_candidate_external_channel_binding");
     expect(bestSkill).toContain("external_channel_source_drift_zero_after_selected_adapter");
-    expect(bestSkill).toContain("lark_external_channel_gateway_restarted_after_selected_adapter");
-    expect(bestSkill).toContain("lark_external_channel_diagnose_ok_after_restart");
-    expect(bestSkill).toContain("fresh_real_lark_inbound_and_outbound_user_visible_observed");
+    expect(bestSkill).toContain(
+      "external_message_channel_gateway_restarted_after_selected_adapter",
+    );
+    expect(bestSkill).toContain("external_message_channel_status_ok_after_restart");
+    expect(bestSkill).toContain("fresh_real_external_inbound_and_outbound_user_visible_observed");
   });
 
   it("builds an immediate deterministic preflight packet without claiming absorption or user-visible proof", async () => {
@@ -300,11 +304,10 @@ describe("lcx-skillopt-lite CLI", () => {
     expect(instantPreflight).toEqual(
       expect.objectContaining({
         status: "ready_for_context_injection",
-        boundary: "dev_skillopt_preflight_only",
+        boundary: "local_skillopt_preflight_only",
         canUseImmediately: true,
         modelWeightAbsorbed: false,
         externalChannelApplied: false,
-        liveLarkApplied: false,
       }),
     );
     expect(instantPreflight.matchedSkillIds).toEqual(
@@ -316,6 +319,5 @@ describe("lcx-skillopt-lite CLI", () => {
         status: "blocked_by_active_training_or_eval",
       }),
     );
-    expect(parsed.liveLarkProofPlan).toEqual(parsed.externalChannelProofPlan);
   });
 });

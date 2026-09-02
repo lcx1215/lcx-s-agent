@@ -4,7 +4,7 @@ const sourceSummary =
   process.env.LCX_OPEN_EVAL_SOURCE_SUMMARY?.trim() ||
   "open_source_eval_provider_no_live_side_effects";
 
-const plan = prompt.includes("Lark 上下文污染")
+const plan = prompt.includes("External 上下文污染")
   ? {
       task_family: "ops_audit",
       primary_modules: ["ops_audit"],
@@ -12,8 +12,8 @@ const plan = prompt.includes("Lark 上下文污染")
       required_tools: [],
       missing_data: [],
       risk_boundaries: ["research_only"],
-      next_step: "inspect_lark_context",
-      rejected_context: ["old_lark_conversation_history"],
+      next_step: "inspect_external_context",
+      rejected_context: ["old_external_conversation_history"],
       source_summary_from_provider: sourceSummary,
     }
   : {
@@ -67,7 +67,7 @@ const plan = prompt.includes("Lark 上下文污染")
         "no_external_channel_sender_change",
       ],
       next_step: "review_plan",
-      rejected_context: ["old_lark_conversation_history"],
+      rejected_context: ["old_external_conversation_history"],
       source_summary_from_provider: sourceSummary,
     };
 

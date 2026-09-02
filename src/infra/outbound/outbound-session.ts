@@ -793,65 +793,55 @@ function resolveTlonSession(
   };
 }
 
-/**
- * Feishu ID formats:
- * - oc_xxx: chat_id (can be group or DM, use chat_mode to distinguish or explicit dm:/group: prefix)
- * - ou_xxx: user open_id (DM)
- * - on_xxx: user union_id (DM)
- * - cli_xxx: app_id (not a valid send target)
- */
-function resolveFeishuSession(
+function resolveExternalSession(
   params: ResolveOutboundSessionRouteParams,
 ): OutboundSessionRoute | null {
-  let trimmed = stripProviderPrefix(params.target, "feishu");
-  trimmed = stripProviderPrefix(trimmed, "lark").trim();
+  let trimmed = stripProviderPrefix(params.target, "external").trim();
   if (!trimmed) {
     return null;
   }
 
   const lower = trimmed.toLowerCase();
-  let isGroup = false;
-  let typeExplicit = false;
-
-  if (lower.startsWith("group:") || lower.startsWith("chat:")) {
-    trimmed = trimmed.replace(/^(group|chat):/i, "").trim();
-    isGroup = true;
-    typeExplicit = true;
-  } else if (lower.startsWith("user:") || lower.startsWith("dm:")) {
-    trimmed = trimmed.replace(/^(user|dm):/i, "").trim();
-    isGroup = false;
-    typeExplicit = true;
+  const explicitKind =
+    lower.startsWith("group:") || lower.startsWith("room:")
+      ? "group"
+      : lower.startsWith("channel:")
+        ? "channel"
+        : lower.startsWith("dm:") || lower.startsWith("user:") || lower.startsWith("direct:")
+          ? "direct"
+          : undefined;
+  const resolvedKind =
+    params.resolvedTarget?.kind === "user"
+      ? "direct"
+      : params.resolvedTarget?.kind === "group"
+        ? "group"
+        : params.resolvedTarget?.kind === "channel"
+          ? "channel"
+          : undefined;
+  const peerKind = explicitKind ?? resolvedKind ?? "direct";
+  const peerId = stripKindPrefix(trimmed);
+  if (!peerId) {
+    return null;
   }
 
-  const idLower = trimmed.toLowerCase();
-  // Only infer type from ID prefix if not explicitly specified
-  // Note: oc_ is a chat_id and can be either group or DM (must check chat_mode from API)
-  // Only ou_/on_ can be reliably identified as user IDs (always DM)
-  if (!typeExplicit) {
-    if (idLower.startsWith("ou_") || idLower.startsWith("on_")) {
-      isGroup = false;
-    }
-    // oc_ requires explicit prefix: dm:oc_xxx or group:oc_xxx
-  }
-
-  const peer: RoutePeer = {
-    kind: isGroup ? "group" : "direct",
-    id: trimmed,
-  };
+  const peer: RoutePeer = { kind: peerKind, id: peerId };
   const baseSessionKey = buildBaseSessionKey({
     cfg: params.cfg,
     agentId: params.agentId,
-    channel: "feishu",
+    channel: "external",
     accountId: params.accountId,
     peer,
   });
+  const threadId = normalizeThreadId(params.replyToId ?? params.threadId);
+  const threadKeys = resolveThreadSessionKeys({ baseSessionKey, threadId });
   return {
-    sessionKey: baseSessionKey,
+    sessionKey: threadKeys.sessionKey,
     baseSessionKey,
     peer,
-    chatType: isGroup ? "group" : "direct",
-    from: isGroup ? `feishu:group:${trimmed}` : `feishu:${trimmed}`,
-    to: trimmed,
+    chatType: peerKind,
+    from: peerKind === "direct" ? `external:${peerId}` : `external:${peerKind}:${peerId}`,
+    to: peerId,
+    threadId,
   };
 }
 
@@ -913,7 +903,7 @@ const OUTBOUND_SESSION_RESOLVERS: Partial<Record<ChannelId, OutboundSessionResol
   zalouser: resolveZalouserSession,
   nostr: resolveNostrSession,
   tlon: resolveTlonSession,
-  feishu: resolveFeishuSession,
+  external: resolveExternalSession,
 };
 
 export async function resolveOutboundSessionRoute(

@@ -475,7 +475,7 @@ function renderWeeklyReview(params: {
     "## Active Brain Spine",
     "- Read memory/current-research-line.md first, then MEMORY.md, then memory/unified-risk-view.md when present, then the newest carryover and correction notes before older drill-down artifacts.",
     "- Keep one brain, not two: the distillation chain serves both Lobster's general meta-capability and the full finance research pipeline.",
-    "- Treat memory/local-memory/*.md as reusable durable cards; treat ops/live-handoff/*.md as drill-down or migration history, not as the first active brain to read.",
+    "- Treat memory/local-memory/*.md as reusable durable cards; treat ops/external-channel-history/*.md as drill-down or migration history, not as the first active brain to read.",
     "",
     "## Next Repair Priorities",
     ...(strongestTicket

@@ -2,13 +2,13 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
 import {
-  buildFeishuFinanceDoctrineEditHandoffsFilename,
-  parseFeishuFinanceDoctrineEditHandoffArtifact,
-  parseFeishuFinanceDoctrinePromotionCandidateArtifact,
-  parseFeishuFinanceDoctrinePromotionDecisionArtifact,
-  parseFeishuFinanceDoctrinePromotionProposalArtifact,
-  parseFeishuFinanceDoctrinePromotionReviewArtifact,
-  renderFeishuFinanceDoctrineEditHandoffArtifact,
+  buildExternalFinanceDoctrineEditHandoffsFilename,
+  parseExternalFinanceDoctrineEditHandoffArtifact,
+  parseExternalFinanceDoctrinePromotionCandidateArtifact,
+  parseExternalFinanceDoctrinePromotionDecisionArtifact,
+  parseExternalFinanceDoctrinePromotionProposalArtifact,
+  parseExternalFinanceDoctrinePromotionReviewArtifact,
+  renderExternalFinanceDoctrineEditHandoffArtifact,
 } from "../../hooks/bundled/lobster-brain-registry.js";
 import { resolveWorkspaceRoot } from "../workspace-dir.js";
 import type { AnyAgentTool } from "./common.js";
@@ -74,12 +74,12 @@ export function createFinancePromotionDoctrineEditHandoffTool(options?: {
       const dateKey = assertDateKey(readStringParam(params, "dateKey", { required: true }));
       const proposalId = readStringParam(params, "proposalId", { required: true });
 
-      const receiptsDir = path.join(workspaceDir, "memory", "feishu-work-receipts");
+      const receiptsDir = path.join(workspaceDir, "memory", "external-work-receipts");
       const proposalRelPath = path
         .join(
           "memory",
-          "feishu-work-receipts",
-          `${dateKey}-feishu-finance-doctrine-promotion-proposals.md`,
+          "external-work-receipts",
+          `${dateKey}-external-finance-doctrine-promotion-proposals.md`,
         )
         .replace(/\\/gu, "/");
       const proposalAbsPath = path.join(workspaceDir, proposalRelPath);
@@ -98,7 +98,8 @@ export function createFinancePromotionDoctrineEditHandoffTool(options?: {
         });
       }
 
-      const parsedProposals = parseFeishuFinanceDoctrinePromotionProposalArtifact(proposalContent);
+      const parsedProposals =
+        parseExternalFinanceDoctrinePromotionProposalArtifact(proposalContent);
       if (!parsedProposals) {
         return jsonResult({
           ok: false,
@@ -179,7 +180,7 @@ export function createFinancePromotionDoctrineEditHandoffTool(options?: {
         });
       }
       const parsedCandidates =
-        parseFeishuFinanceDoctrinePromotionCandidateArtifact(candidateContent);
+        parseExternalFinanceDoctrinePromotionCandidateArtifact(candidateContent);
       if (!parsedCandidates) {
         return jsonResult({
           ok: false,
@@ -227,7 +228,7 @@ export function createFinancePromotionDoctrineEditHandoffTool(options?: {
             "Restore the linked finance promotion review artifact before retrying finance_promotion_doctrine_edit_handoff.",
         });
       }
-      const parsedReview = parseFeishuFinanceDoctrinePromotionReviewArtifact(reviewContent);
+      const parsedReview = parseExternalFinanceDoctrinePromotionReviewArtifact(reviewContent);
       if (!parsedReview) {
         return jsonResult({
           ok: false,
@@ -290,7 +291,8 @@ export function createFinancePromotionDoctrineEditHandoffTool(options?: {
             "Restore the linked finance promotion decision artifact before retrying finance_promotion_doctrine_edit_handoff.",
         });
       }
-      const parsedDecisions = parseFeishuFinanceDoctrinePromotionDecisionArtifact(decisionContent);
+      const parsedDecisions =
+        parseExternalFinanceDoctrinePromotionDecisionArtifact(decisionContent);
       if (!parsedDecisions) {
         return jsonResult({
           ok: false,
@@ -345,17 +347,17 @@ export function createFinancePromotionDoctrineEditHandoffTool(options?: {
       const handoffRelPath = path
         .join(
           "memory",
-          "feishu-work-receipts",
-          buildFeishuFinanceDoctrineEditHandoffsFilename(dateKey),
+          "external-work-receipts",
+          buildExternalFinanceDoctrineEditHandoffsFilename(dateKey),
         )
         .replace(/\\/gu, "/");
       const handoffAbsPath = path.join(workspaceDir, handoffRelPath);
       let parsedHandoffs = undefined as
-        | ReturnType<typeof parseFeishuFinanceDoctrineEditHandoffArtifact>
+        | ReturnType<typeof parseExternalFinanceDoctrineEditHandoffArtifact>
         | undefined;
       const handoffContent = await readUtf8OrMissing(handoffAbsPath);
       if (handoffContent != null) {
-        parsedHandoffs = parseFeishuFinanceDoctrineEditHandoffArtifact(handoffContent);
+        parsedHandoffs = parseExternalFinanceDoctrineEditHandoffArtifact(handoffContent);
         if (!parsedHandoffs) {
           return jsonResult({
             ok: false,
@@ -418,7 +420,7 @@ export function createFinancePromotionDoctrineEditHandoffTool(options?: {
       await fs.mkdir(receiptsDir, { recursive: true });
       await fs.writeFile(
         handoffAbsPath,
-        renderFeishuFinanceDoctrineEditHandoffArtifact({
+        renderExternalFinanceDoctrineEditHandoffArtifact({
           handedOffAt: new Date().toISOString(),
           consumer: parsedHandoffs?.consumer ?? parsedProposals.consumer,
           sourceProposalArtifact: parsedHandoffs?.sourceProposalArtifact ?? proposalRelPath,

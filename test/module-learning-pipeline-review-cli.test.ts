@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const scriptPath = path.join(repoRoot, "scripts/dev/module-learning-pipeline-review.ts");
+const scriptPath = path.join(repoRoot, "scripts/operator/module-learning-pipeline-review.ts");
 
 async function seedJson(workspaceDir: string, relativePath: string, payload: unknown) {
   const absolutePath = path.join(workspaceDir, relativePath);
@@ -48,7 +48,7 @@ describe("module-learning-pipeline-review CLI", () => {
       workspaceDir,
       "memory/module-learning-pipeline-plan-receipts/2026-05-12/options.json",
       {
-        boundary: "dev_module_learning_pipeline_plan",
+        boundary: "local_module_learning_pipeline_plan",
         targetModule: "options_volatility",
         moduleFamily: "finance_research",
         status: "application_ready",
@@ -121,7 +121,7 @@ describe("module-learning-pipeline-review CLI", () => {
       defaultWorkspaceDir,
       "memory/module-learning-pipeline-plan-receipts/2026-05-12/risk.json",
       {
-        boundary: "dev_module_learning_pipeline_plan",
+        boundary: "local_module_learning_pipeline_plan",
         targetModule: "portfolio_risk_gates",
         moduleFamily: "finance_research",
         status: "application_ready",
@@ -165,7 +165,7 @@ describe("module-learning-pipeline-review CLI", () => {
       workspaceDir,
       "memory/module-learning-pipeline-plan-receipts/2026-05-12/old.json",
       {
-        boundary: "dev_module_learning_pipeline_plan",
+        boundary: "local_module_learning_pipeline_plan",
         targetModule: "portfolio_risk_gates",
         moduleFamily: "finance_research",
         status: "application_ready",
@@ -186,7 +186,7 @@ describe("module-learning-pipeline-review CLI", () => {
       workspaceDir,
       "memory/module-learning-pipeline-plan-receipts/2026-05-12/new.json",
       {
-        boundary: "dev_module_learning_pipeline_plan",
+        boundary: "local_module_learning_pipeline_plan",
         targetModule: "portfolio_risk_gates",
         moduleFamily: "finance_research",
         status: "eval_absorbed",

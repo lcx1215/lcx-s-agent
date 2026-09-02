@@ -37,7 +37,7 @@ const ROUTABLE_TEST_CHANNELS = new Set([
   "signal",
   "imessage",
   "whatsapp",
-  "feishu",
+  "external",
 ]);
 
 beforeEach(() => {
@@ -441,8 +441,8 @@ describe("createFollowupRunner messaging tool dedupe", () => {
     const { onBlockReply } = await runMessagingCase({
       agentResult: { payloads: [{ text: "hello world!" }] },
       queued: {
-        ...baseQueuedRun(" Feishu "),
-        originatingChannel: "FEISHU",
+        ...baseQueuedRun(" External "),
+        originatingChannel: "EXTERNAL",
         originatingTo: "ou_abc123",
       } as FollowupRun,
     });

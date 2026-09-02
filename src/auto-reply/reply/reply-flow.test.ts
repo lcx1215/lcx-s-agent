@@ -768,8 +768,8 @@ describe("followup queue deduplication", () => {
     expect(second).toBe(true);
   });
 
-  it("deduplicates message id across feishu/lark-family alias variants", async () => {
-    const key = `test-dedup-lark-feishu-alias-${Date.now()}`;
+  it("deduplicates message id across external/external-family alias variants", async () => {
+    const key = `test-dedup-external-external-alias-${Date.now()}`;
     const settings: QueueSettings = {
       mode: "collect",
       debounceMs: 0,
@@ -782,7 +782,7 @@ describe("followup queue deduplication", () => {
       createRun({
         prompt: "dup with alias",
         messageId: "m-alias",
-        originatingChannel: "lark:dm:ou_abc",
+        originatingChannel: "external:dm:ou_abc",
         originatingTo: "ou_abc",
       }),
       settings,
@@ -794,7 +794,7 @@ describe("followup queue deduplication", () => {
       createRun({
         prompt: "dup with alias",
         messageId: "m-alias",
-        originatingChannel: "feishu",
+        originatingChannel: "external",
         originatingTo: "ou_abc",
       }),
       settings,
@@ -925,8 +925,8 @@ describe("followup queue collect routing", () => {
     expect(calls[0]?.originatingTo).toBe("channel:A");
   });
 
-  it("collects when lark-family aliases are routed to the same feishu channel", async () => {
-    const key = `test-collect-lark-feishu-alias-${Date.now()}`;
+  it("collects when external-family aliases are routed to the same external channel", async () => {
+    const key = `test-collect-external-external-alias-${Date.now()}`;
     const calls: FollowupRun[] = [];
     const done = createDeferred<void>();
     const expectedCalls = 1;
@@ -947,7 +947,7 @@ describe("followup queue collect routing", () => {
       key,
       createRun({
         prompt: "one",
-        originatingChannel: "lark:dm:ou_abc",
+        originatingChannel: "external:dm:ou_abc",
         originatingTo: "ou_abc",
       }),
       settings,
@@ -956,7 +956,7 @@ describe("followup queue collect routing", () => {
       key,
       createRun({
         prompt: "two",
-        originatingChannel: "feishu",
+        originatingChannel: "external",
         originatingTo: "ou_abc",
       }),
       settings,
@@ -965,7 +965,7 @@ describe("followup queue collect routing", () => {
     scheduleFollowupDrain(key, runFollowup);
     await done.promise;
     expect(calls[0]?.prompt).toContain("[Queued messages while agent was busy]");
-    expect(calls[0]?.originatingChannel).toBe("lark:dm:ou_abc");
+    expect(calls[0]?.originatingChannel).toBe("external:dm:ou_abc");
     expect(calls[0]?.originatingTo).toBe("ou_abc");
   });
 

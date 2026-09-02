@@ -43,7 +43,7 @@ Do not use for ordinary code review unless the object being reviewed is an Agent
    - no opaque binaries or large vendored payloads
 5. Check operational fit:
    - does not duplicate an existing LCX skill
-   - improves Lark, research, finance learning, eval, or workflow reliability
+   - improves external-message routing, research, finance learning, eval, or workflow reliability
    - has an uninstall path
 
 ## Decision

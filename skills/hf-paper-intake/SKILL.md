@@ -19,7 +19,7 @@ Use when the user provides:
 - an arXiv ID such as `2602.08025`
 - a request like "learn this paper", "check the linked repo/dataset", or "is this paper worth adding to the learning loop"
 
-Do not use for ordinary market commentary, position sizing, or Lark utterance routing.
+Do not use for ordinary market commentary, position sizing, or external-message utterance routing.
 
 ## Safe Workflow
 

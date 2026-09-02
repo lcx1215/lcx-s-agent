@@ -19,7 +19,7 @@ function exampleLine(): string {
       missing_data: [],
       risk_boundaries: ["research_only", "no_execution_authority"],
       next_step: "continue_health_digest",
-      rejected_context: ["old_lark_conversation_history"],
+      rejected_context: ["old_external_conversation_history"],
     }),
     meta: { sourcePath: "test.json", sourceKind: "curated_seed" },
   });
@@ -35,7 +35,7 @@ async function writeValidSplits(dataDir: string): Promise<void> {
 describe("local brain distill smoke", () => {
   it("streams JSONL splits instead of loading the full training file into memory", async () => {
     const source = await fs.readFile(
-      path.resolve(import.meta.dirname, "..", "scripts/dev/local-brain-distill-smoke.ts"),
+      path.resolve(import.meta.dirname, "..", "scripts/operator/local-brain-distill-smoke.ts"),
       "utf8",
     );
 
@@ -59,7 +59,7 @@ describe("local brain distill smoke", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-smoke.ts",
+        "scripts/operator/local-brain-distill-smoke.ts",
         "--data",
         dataDir,
         "--min-train",

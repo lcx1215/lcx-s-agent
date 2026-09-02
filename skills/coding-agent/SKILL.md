@@ -232,7 +232,7 @@ git worktree remove /tmp/issue-99
 6. **vanilla for reviewing** - no special flags needed
 7. **Parallel is OK** - run many Codex processes at once for batch work
 8. **NEVER start Codex in ~/.openclaw/** - it'll read your soul docs and get weird ideas about the org chart!
-9. **NEVER checkout branches in ~/.openclaw/live-sidecars/lcx-s-openclaw/** - that's the LIVE LCX Agent sidecar!
+9. **NEVER checkout branches in ~/.openclaw/external-channel-runtime/lcx-s-openclaw/** - that path is a deployment runtime checkout, not the canonical repository or source authority.
 
 ---
 

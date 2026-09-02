@@ -485,23 +485,6 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     includeInOpenClawGroup: true,
   },
   {
-    id: "feishu_live_probe",
-    label: "feishu_live_probe",
-    description: "Send/read bounded Feishu/Lark live acceptance probes",
-    sectionId: "messaging",
-    profiles: ["coding", "messaging"],
-    includeInOpenClawGroup: true,
-  },
-  {
-    id: "lark_language_corpus_review",
-    label: "lark_language_corpus_review",
-    description:
-      "Review pending Lark language-routing candidates and write review/patch artifacts without mutating the formal corpus",
-    sectionId: "memory",
-    profiles: ["coding", "messaging"],
-    includeInOpenClawGroup: true,
-  },
-  {
     id: "sessions_list",
     label: "sessions_list",
     description: "List sessions",

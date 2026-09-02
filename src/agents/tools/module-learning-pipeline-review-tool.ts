@@ -257,7 +257,10 @@ function newerReceipt(
 async function readReceiptFile(receiptPath: string): Promise<ReceiptReadResult> {
   try {
     const parsed = JSON.parse(await fs.readFile(receiptPath, "utf8")) as ModuleLearningPlanReceipt;
-    if (parsed.boundary !== "dev_module_learning_pipeline_plan") {
+    if (
+      parsed.boundary !== "local_module_learning_pipeline_plan" &&
+      parsed.boundary !== "dev_module_learning_pipeline_plan"
+    ) {
       return {
         ok: false,
         path: receiptPath,
@@ -587,7 +590,7 @@ export function createModuleLearningPipelineReviewTool(options?: {
     label: "Module Learning Pipeline Review",
     name: "module_learning_pipeline_review",
     description:
-      "Review module_learning_pipeline_plan receipts for one day, flag incomplete module-learning claims, and optionally write a dev/local review without touching live/provider/protected-memory state.",
+      "Review module_learning_pipeline_plan receipts for one day, flag incomplete module-learning claims, and optionally write a local review without touching live/provider/protected-memory state.",
     parameters: ModuleLearningPipelineReviewSchema,
     execute: async (_toolCallId, args) => {
       const params = args as Record<string, unknown>;

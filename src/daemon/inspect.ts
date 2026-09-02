@@ -139,12 +139,12 @@ function isKnownOpenClawCompanionLaunchdService(label: string, contents: string)
   const lowerContents = contents.toLowerCase();
   if (
     [
-      "ai.openclaw.feishu.proxy",
+      "ai.openclaw.external.proxy",
       "ai.openclaw.lobster.host_watchdog",
       "ai.openclaw.lobster.scheduler",
     ].includes(lowerLabel)
   ) {
-    return lowerContents.includes("/.openclaw/live-sidecars/");
+    return lowerContents.includes("/.openclaw/external-channel-runtime/");
   }
   if (lowerLabel === "com.openclaw.cloudflared") {
     return (
@@ -198,8 +198,16 @@ function appendDetailPart(parts: string[], label: string, value: string | undefi
 }
 
 function isWithinPath(child: string, parent: string): boolean {
-  const relative = path.relative(parent, child);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  const implementation = child.startsWith("/") && parent.startsWith("/") ? path.posix : path;
+  const relative = implementation.relative(parent, child);
+  return relative === "" || (!relative.startsWith("..") && !implementation.isAbsolute(relative));
+}
+
+function resolveProbePath(value: string): string {
+  const trimmed = value.trim();
+  return trimmed.startsWith("/") && !/^[A-Za-z]:[\\/]/u.test(trimmed)
+    ? path.posix.resolve(trimmed)
+    : path.resolve(trimmed);
 }
 
 export function inferOpenClawRootFromGatewayCommand(
@@ -210,12 +218,13 @@ export function inferOpenClawRootFromGatewayCommand(
     return workingDirectory;
   }
   for (const arg of command?.programArguments ?? []) {
-    const normalized = path.resolve(arg);
-    if (normalized.endsWith(path.join("dist", "index.js"))) {
-      return path.dirname(path.dirname(normalized));
+    const normalized = resolveProbePath(arg);
+    const implementation = normalized.startsWith("/") ? path.posix : path;
+    if (normalized.endsWith(implementation.join("dist", "index.js"))) {
+      return implementation.dirname(implementation.dirname(normalized));
     }
-    if (normalized.endsWith(path.join("src", "index.ts"))) {
-      return path.dirname(path.dirname(normalized));
+    if (normalized.endsWith(implementation.join("src", "index.ts"))) {
+      return implementation.dirname(implementation.dirname(normalized));
     }
   }
   return undefined;
@@ -238,10 +247,10 @@ function renderRootDriftDetail(params: {
   if (!expectedRoot) {
     return undefined;
   }
-  const normalizedExpected = path.resolve(expectedRoot);
+  const normalizedExpected = resolveProbePath(expectedRoot);
   const drifted = collectRootDriftCandidates(params.command)
     .filter((candidate) => candidate.includes("openclaw"))
-    .map((candidate) => path.resolve(candidate))
+    .map((candidate) => resolveProbePath(candidate))
     .filter((candidate) => !isWithinPath(candidate, normalizedExpected));
   if (drifted.length === 0) {
     return undefined;

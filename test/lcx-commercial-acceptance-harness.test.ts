@@ -2,8 +2,8 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-import { buildCommercialAcceptanceHarness } from "../scripts/dev/lcx-commercial-acceptance-harness.js";
-import { parseJsonObjectFromOutput } from "../scripts/dev/smoke-json-output.js";
+import { buildCommercialAcceptanceHarness } from "../scripts/operator/lcx-commercial-acceptance-harness.js";
+import { parseJsonObjectFromOutput } from "../scripts/operator/smoke-json-output.js";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
@@ -24,7 +24,7 @@ function baseInputs() {
       ok: true,
       summary: { passed: 34, failed: 0, total: 34 },
       contractFilters: [
-        "real_lark_short_canary_suite_required",
+        "real_external_short_canary_suite_required",
         "short_intent_family_fuzzer_required",
         "unknown_short_intent_clean_failure_required",
         "provider_council_evidence_required",
@@ -58,9 +58,9 @@ function baseInputs() {
       },
       actionableFailures: [],
     }),
-    shortIntentFuzzer: owner("lcx-lark-short-intent-fuzzer", {
+    shortIntentFuzzer: owner("lcx-external-short-intent-fuzzer", {
       ok: true,
-      boundary: "dev_lark_short_intent_fuzzer_only",
+      boundary: "local_external_short_intent_fuzzer_only",
       macroContract: {
         notWhitelist: true,
         unknownShortIntentBehavior:
@@ -84,7 +84,7 @@ function baseInputs() {
     }),
     visibleAnswerQualityFuzzer: owner("lcx-visible-answer-quality-fuzzer", {
       ok: true,
-      boundary: "dev_visible_answer_quality_fuzzer_only",
+      boundary: "local_visible_answer_quality_fuzzer_only",
       macroContract: {
         positiveAcceptanceNotOnlyRejection: true,
         conciseDirectAnswerRequired: true,
@@ -113,32 +113,9 @@ function baseInputs() {
         },
       ],
     }),
-    larkLoopDiagnose: owner("lark-loop-diagnose", {
-      ok: true,
-      liveHandoffReceipts: {
-        count: 8,
-        latestPath: "memory/lark-language-handoff-receipts/2026-06-01/om_clean.json",
-      },
-      languageCandidates: {
-        candidateArtifactCount: 4,
-        candidateCount: 12,
-        latestCandidatePath: "memory/lark-language-routing-candidates/2026-06-01/om_clean.json",
-        latestCandidateGeneratedAt: "2026-06-01T12:00:00.000Z",
-        currentReplay: {
-          source: "candidate_artifacts",
-          candidateCount: 12,
-        },
-        autodataLoop: {
-          status: "ready_for_reviewed_batch_absorption",
-          currentReplayRejectedRate: 0.08,
-          topRejectedReason: null,
-          topRejectedSemanticFamily: null,
-        },
-      },
-    }),
     directedDailyResearchBrief: owner("lcx-directed-daily-research-brief", {
       ok: true,
-      boundary: "dev_directed_daily_research_brief_only",
+      boundary: "local_directed_daily_research_brief_only",
       productMode: "focused_daily_research_product_not_open_ended_chat",
       focus: {
         primary: "index_options_and_semiconductor_ai_compute_chain",
@@ -214,7 +191,7 @@ function baseInputs() {
         acceptanceMatched: false,
       },
       devLiveDrift: {
-        liveMatchesCurrentDev: true,
+        liveMatchesCurrentCanonical: true,
       },
     }),
     externalChannelBindingStatus: owner("lcx-external-channel-binding", {
@@ -222,6 +199,25 @@ function baseInputs() {
         status: "channel_runtime_probe_ok_user_visible_pending",
         userVisibleObserved: true,
         missingProof: [],
+      },
+    }),
+    externalCandidateCapture: owner("lcx-external-channel-status", {
+      externalCandidateCapture: {
+        handoffReceiptCount: 8,
+        candidateArtifactCount: 4,
+        candidateCount: 12,
+        latestCandidatePath: "memory/external-message-intent-candidates/2026-05-31/clean.json",
+        latestCandidateGeneratedAt: "2026-05-31T12:00:00.000Z",
+        currentReplay: {
+          source: "candidate_artifacts",
+          candidateCount: 12,
+          rejectedRate: 0.08,
+        },
+        replayLoop: {
+          status: "ready_for_reviewed_batch_absorption",
+          topRejectedReason: null,
+          topRejectedSemanticFamily: null,
+        },
       },
     }),
     trainingPlan: owner("local-brain-training-plan", {
@@ -338,7 +334,7 @@ describe("lcx-commercial-acceptance-harness", () => {
       expect.objectContaining({
         ok: true,
         readyForCommercialRelease: true,
-        boundary: "dev_commercial_acceptance_harness_only",
+        boundary: "local_commercial_acceptance_harness_only",
         liveTouched: false,
         providerConfigTouched: false,
         protectedMemoryTouched: false,
@@ -349,11 +345,12 @@ describe("lcx-commercial-acceptance-harness", () => {
     );
     expect(result.canaryPlan.map((entry) => entry.id)).toEqual([
       "natural_plain_probe",
+      "external_message_channel_contract",
       "optional_fixed_receipt_anchor",
       "finance_research_prompt",
       "directed_daily_research_brief",
-      "real_lark_candidate_capture_replay",
-      "real_short_lark_canary_suite",
+      "real_external_candidate_capture_replay",
+      "real_short_external_canary_suite",
       "short_intent_family_fuzzer",
       "visible_answer_quality_fuzzer",
       "three_provider_council_receipt",
@@ -415,7 +412,7 @@ describe("lcx-commercial-acceptance-harness", () => {
       ok: true,
       summary: { passed: 34, failed: 0, total: 34 },
       contractFilters: [
-        "real_lark_short_canary_suite_required",
+        "real_external_short_canary_suite_required",
         "short_intent_family_fuzzer_required",
         "unknown_short_intent_clean_failure_required",
         "provider_council_evidence_required",
@@ -459,7 +456,7 @@ describe("lcx-commercial-acceptance-harness", () => {
     );
   });
 
-  it("blocks release when live runtime is updated but no post-migration Lark canary is visible", () => {
+  it("blocks release when live runtime is updated but no post-migration External canary is visible", () => {
     const inputs = baseInputs();
     inputs.externalChannelStatus = owner("lcx-external-channel-status", {
       operatorStatus: {
@@ -471,7 +468,7 @@ describe("lcx-commercial-acceptance-harness", () => {
         userVisibleObserved: false,
       },
       visibleProof: {
-        status: "waiting_for_real_lark",
+        status: "waiting_for_real_external",
         freshInboundCount: 0,
         freshOutboundResultCount: 0,
         acceptanceMatched: false,
@@ -481,18 +478,18 @@ describe("lcx-commercial-acceptance-harness", () => {
       externalChannelBinding: {
         status: "channel_runtime_probe_ok_user_visible_pending",
         userVisibleObserved: false,
-        missingProof: ["fresh_real_lark_inbound_and_outbound_user_visible_observed"],
+        missingProof: ["fresh_real_external_inbound_and_outbound_user_visible_observed"],
       },
     });
 
     const result = buildCommercialAcceptanceHarness(inputs);
 
     expect(result.ok).toBe(false);
-    expect(result.blockedGates).toContain("post_migration_lark_canary_missing");
+    expect(result.blockedGates).toContain("post_migration_external_canary_missing");
     expect(result.gates).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: "post_migration_lark_canary_missing",
+          id: "post_migration_external_canary_missing",
           status: "blocked",
           severity: "P2",
         }),
@@ -512,20 +509,20 @@ describe("lcx-commercial-acceptance-harness", () => {
         userVisibleObserved: false,
       },
       visibleProof: {
-        status: "waiting_for_real_lark",
+        status: "waiting_for_real_external",
         freshInboundCount: 0,
         freshOutboundResultCount: 0,
         acceptanceMatched: false,
       },
       devLiveDrift: {
-        liveMatchesCurrentDev: false,
+        liveMatchesCurrentCanonical: false,
       },
     });
     inputs.externalChannelBindingStatus = owner("lcx-external-channel-binding", {
       externalChannelBinding: {
         status: "channel_runtime_probe_ok_user_visible_pending",
         userVisibleObserved: false,
-        missingProof: ["fresh_real_lark_inbound_and_outbound_user_visible_observed"],
+        missingProof: ["fresh_real_external_inbound_and_outbound_user_visible_observed"],
       },
     });
 
@@ -533,7 +530,7 @@ describe("lcx-commercial-acceptance-harness", () => {
 
     expect(result.ok).toBe(false);
     expect(result.blockedGates).not.toContain("external_channel_not_bound");
-    expect(result.blockedGates).toContain("post_migration_lark_canary_missing");
+    expect(result.blockedGates).toContain("post_migration_external_canary_missing");
   });
 
   it("falls back to the canonical binding owner when external-channel status is unavailable", () => {
@@ -541,7 +538,7 @@ describe("lcx-commercial-acceptance-harness", () => {
     inputs.externalChannelStatus = {
       ok: false,
       owner: "lcx-external-channel-status",
-      command: "node --import tsx scripts/dev/lcx-external-channel-status.ts --json",
+      command: "node --import tsx scripts/operator/lcx-external-channel-status.ts --json",
       error: "legacy status probe unavailable",
     };
     inputs.externalChannelBindingStatus = owner("lcx-external-channel-binding", {
@@ -566,7 +563,7 @@ describe("lcx-commercial-acceptance-harness", () => {
     );
   });
 
-  it("blocks release when the Lark external channel is not bound", () => {
+  it("blocks release when the external message channel is not bound", () => {
     const inputs = baseInputs();
     inputs.externalChannelStatus = owner("lcx-external-channel-status", {
       operatorStatus: {
@@ -578,20 +575,20 @@ describe("lcx-commercial-acceptance-harness", () => {
         userVisibleObserved: false,
       },
       visibleProof: {
-        status: "waiting_for_real_lark",
+        status: "waiting_for_real_external",
         freshInboundCount: 0,
         freshOutboundResultCount: 0,
         acceptanceMatched: false,
       },
       devLiveDrift: {
-        liveMatchesCurrentDev: false,
+        liveMatchesCurrentCanonical: false,
       },
     });
     inputs.externalChannelBindingStatus = owner("lcx-external-channel-binding", {
       externalChannelBinding: {
         status: "ready_for_channel_bind_apply",
         userVisibleObserved: false,
-        missingProof: ["lark_external_channel_gateway_restarted_after_selected_adapter"],
+        missingProof: ["external_message_channel_gateway_restarted_after_selected_adapter"],
       },
     });
 
@@ -637,7 +634,7 @@ describe("lcx-commercial-acceptance-harness", () => {
 
   it("blocks release when the short-intent family fuzzer regresses beyond fixed canaries", () => {
     const inputs = baseInputs();
-    inputs.shortIntentFuzzer = owner("lcx-lark-short-intent-fuzzer", {
+    inputs.shortIntentFuzzer = owner("lcx-external-short-intent-fuzzer", {
       ok: true,
       summary: {
         families: 10,
@@ -700,42 +697,6 @@ describe("lcx-commercial-acceptance-harness", () => {
     );
   });
 
-  it("blocks release when real Lark handoffs exist but candidate capture is missing", () => {
-    const inputs = baseInputs();
-    inputs.larkLoopDiagnose = owner("lark-loop-diagnose", {
-      ok: true,
-      liveHandoffReceipts: {
-        count: 12,
-        latestPath: "memory/lark-language-handoff-receipts/2026-06-01/om_real.json",
-      },
-      languageCandidates: {
-        candidateArtifactCount: 0,
-        candidateCount: 0,
-        currentReplay: {
-          source: "handoff_receipt_derived",
-          candidateCount: 24,
-        },
-        autodataLoop: {
-          status: "needs_candidate_capture",
-        },
-      },
-    });
-
-    const result = buildCommercialAcceptanceHarness(inputs);
-
-    expect(result.ok).toBe(false);
-    expect(result.blockedGates).toContain("real_lark_candidate_capture_missing");
-    expect(result.gates).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "real_lark_candidate_capture_missing",
-          status: "blocked",
-          severity: "P1",
-        }),
-      ]),
-    );
-  });
-
   it("blocks release when the focused daily research product loses its finance evidence contract", () => {
     const inputs = baseInputs();
     inputs.directedDailyResearchBrief = owner("lcx-directed-daily-research-brief", {
@@ -767,6 +728,66 @@ describe("lcx-commercial-acceptance-harness", () => {
           id: "directed_daily_research_brief_regression",
           status: "failed",
           severity: "P1",
+        }),
+      ]),
+    );
+  });
+
+  it("blocks release when external handoffs exist but candidate capture is missing", () => {
+    const inputs = baseInputs();
+    inputs.externalCandidateCapture = owner("lcx-external-channel-status", {
+      externalCandidateCapture: {
+        handoffReceiptCount: 12,
+        latestHandoffPath: "memory/external-message-handoff-receipts/2026-06-01/real.json",
+        candidateArtifactCount: 0,
+        candidateCount: 0,
+        currentReplay: {
+          source: "handoff_receipt_derived",
+          candidateCount: 24,
+        },
+        replayLoop: {
+          status: "needs_candidate_capture",
+        },
+      },
+    });
+
+    const result = buildCommercialAcceptanceHarness(inputs);
+
+    expect(result.ok).toBe(false);
+    expect(result.blockedGates).toContain("external_candidate_capture_missing");
+    expect(result.gates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "external_candidate_capture_missing",
+          status: "blocked",
+          severity: "P1",
+        }),
+      ]),
+    );
+  });
+
+  it("watches release when no real external candidates have been observed", () => {
+    const inputs = baseInputs();
+    inputs.externalCandidateCapture = owner("lcx-external-channel-status", {
+      externalCandidateCapture: {
+        handoffReceiptCount: 0,
+        candidateArtifactCount: 0,
+        candidateCount: 0,
+        currentReplay: { source: "none", candidateCount: 0, rejectedRate: 0 },
+        replayLoop: { status: "not_observed" },
+      },
+    });
+
+    const result = buildCommercialAcceptanceHarness(inputs);
+
+    expect(result.ok).toBe(true);
+    expect(result.watchGates).toContain("external_candidate_capture_not_observed");
+    expect(result.gates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "external_candidate_capture_not_observed",
+          status: "watch",
+          severity: "P2",
         }),
       ]),
     );
@@ -820,8 +841,8 @@ describe("lcx-commercial-acceptance-harness", () => {
     );
   });
 
-  it("runs against the current repo without sending Lark messages or touching external channel sender", async () => {
-    const { stdout } = await runJsonScript("scripts/dev/lcx-commercial-acceptance-harness.ts");
+  it("runs against the current repo without sending External messages or touching external channel sender", async () => {
+    const { stdout } = await runJsonScript("scripts/operator/lcx-commercial-acceptance-harness.ts");
     const payload = JSON.parse(stdout) as {
       boundary: string;
       liveTouched: boolean;
@@ -830,18 +851,17 @@ describe("lcx-commercial-acceptance-harness", () => {
       ownerCommands: string[];
     };
 
-    expect(payload.boundary).toBe("dev_commercial_acceptance_harness_only");
+    expect(payload.boundary).toBe("local_commercial_acceptance_harness_only");
     expect(payload.liveTouched).toBe(false);
     expect(payload.providerConfigTouched).toBe(false);
     expect(payload.protectedMemoryTouched).toBe(false);
     expect(payload.ownerCommands).toEqual(
       expect.arrayContaining([
-        "node --import tsx scripts/dev/lcx-commercial-answer-pipeline.ts --json",
-        "node --import tsx scripts/dev/lcx-lark-short-intent-fuzzer.ts --json",
-        "node --import tsx scripts/dev/lcx-visible-answer-quality-fuzzer.ts --json",
-        "pnpm --silent openclaw capabilities lark-loop-diagnose --json",
-        "node --import tsx scripts/dev/lcx-directed-daily-research-brief.ts --json",
-        "node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json",
+        "node --import tsx scripts/operator/lcx-commercial-answer-pipeline.ts --json",
+        "node --import tsx scripts/operator/lcx-external-short-intent-fuzzer.ts --json",
+        "node --import tsx scripts/operator/lcx-visible-answer-quality-fuzzer.ts --json",
+        "node --import tsx scripts/operator/lcx-directed-daily-research-brief.ts --json",
+        "node --import tsx scripts/operator/lcx-problem-cluster-radar.ts --json",
       ]),
     );
   }, 240_000);

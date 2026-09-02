@@ -954,6 +954,7 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
           ctx: ctxPayload,
           cfg,
           dispatcher,
+          globalEvidenceProjectionInput: { adapterId: "mattermost-monitor" },
           replyOptions: {
             ...replyOptions,
             disableBlockStreaming:

@@ -2,14 +2,17 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import { LCX_USER_HOME } from "../scripts/operator/lcx-local-paths.ts";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
+const skillEntrypoint = (name: string) =>
+  path.join(LCX_USER_HOME, ".codex", "skills", name, "SKILL.md");
 
 async function runRadar() {
   const { stdout } = await execFileAsync(
     process.execPath,
-    ["--import", "tsx", "scripts/dev/lcx-external-agent-upgrade-radar.ts", "--json"],
+    ["--import", "tsx", "scripts/operator/lcx-external-agent-upgrade-radar.ts", "--json"],
     {
       cwd: repoRoot,
       env: process.env,
@@ -23,10 +26,14 @@ async function runRadar() {
       failed: number;
       registeredCandidateCount: number;
       architectureIntegratedCount: number;
+      sourceRegistrationOnlyCount: number;
+      sourceReceiptVerifiedCount: number;
+      sourceReceiptMissingCount: number;
+      sourceVerificationClaim: boolean;
       runtimeAuthorityGrantedCount: number;
       blacktechMechanismCount: number;
-      blacktechReadyDevOnlyCount: number;
-      blacktechPartialDevOnlyCount: number;
+      blacktechReadyLocalOnlyCount: number;
+      blacktechPartialLocalOnlyCount: number;
       blacktechRuntimeAuthorityGrantedCount: number;
       blacktechAutopilotRoutedCount: number;
       perfectIntegrationClaim: boolean;
@@ -46,6 +53,11 @@ async function runRadar() {
       requiredReceipts: string[];
       requiredFilters: string[];
       riskBoundaries: string[];
+      sourceEvidence: {
+        registration: string;
+        status: string;
+        receipts: Record<string, { status: string; receiptId: string }>;
+      };
     }>;
     blacktechMechanisms: Array<{
       id: string;
@@ -57,7 +69,7 @@ async function runRadar() {
       ownerGate: string;
       autopilotSurface: string;
       currentStatus: string;
-      nextSafeDevProbe: string;
+      nextSafeLocalProbe: string;
       nextAutomationAction: string;
       blockedUntilIdle?: string;
       requiredProofChain: string[];
@@ -73,7 +85,7 @@ async function runRadar() {
       automaticTrigger: string;
       ownerGate: string;
       autopilotSurface: string;
-      nextSafeDevProbe: string;
+      nextSafeLocalProbe: string;
       nextAutomationAction: string;
       blockedUntilIdle?: string;
     }>;
@@ -90,7 +102,7 @@ describe("lcx-external-agent-upgrade-radar", () => {
     expect(payload).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_external_agent_upgrade_radar_only",
+        boundary: "local_external_agent_upgrade_radar_only",
         architectureFit: "fully_integrated_into_existing_lcx_owner_stack",
         liveTouched: false,
         providerConfigTouched: false,
@@ -102,10 +114,14 @@ describe("lcx-external-agent-upgrade-radar", () => {
         failed: 0,
         registeredCandidateCount: 13,
         architectureIntegratedCount: 13,
+        sourceRegistrationOnlyCount: 13,
+        sourceReceiptVerifiedCount: 0,
+        sourceReceiptMissingCount: 52,
+        sourceVerificationClaim: false,
         runtimeAuthorityGrantedCount: 0,
         blacktechMechanismCount: 7,
-        blacktechReadyDevOnlyCount: 2,
-        blacktechPartialDevOnlyCount: 5,
+        blacktechReadyLocalOnlyCount: 2,
+        blacktechPartialLocalOnlyCount: 5,
         blacktechRuntimeAuthorityGrantedCount: 0,
         blacktechAutopilotRoutedCount: 7,
         perfectIntegrationClaim: false,
@@ -117,6 +133,8 @@ describe("lcx-external-agent-upgrade-radar", () => {
         expect.objectContaining({ id: "expected_external_candidates_registered", ok: true }),
         expect.objectContaining({ id: "all_candidates_map_to_existing_owners", ok: true }),
         expect.objectContaining({ id: "automatic_use_triggers_present", ok: true }),
+        expect.objectContaining({ id: "source_registration_and_receipt_state_explicit", ok: true }),
+        expect.objectContaining({ id: "source_receipts_not_claimed_verified", ok: true }),
         expect.objectContaining({ id: "direct_runtime_adoption_blocked", ok: true }),
         expect.objectContaining({ id: "expected_blacktech_mechanisms_registered", ok: true }),
         expect.objectContaining({ id: "blacktech_sources_map_to_candidates", ok: true }),
@@ -143,47 +161,47 @@ describe("lcx-external-agent-upgrade-radar", () => {
       expect.arrayContaining([
         expect.objectContaining({
           label: "AutoSkill / Skills-Coach",
-          ownerEntrypoint: "scripts/dev/lcx-skillopt-lite.ts",
+          ownerEntrypoint: "scripts/operator/lcx-skillopt-lite.ts",
         }),
         expect.objectContaining({
           label: "Agent Lightning",
-          ownerEntrypoint: "scripts/dev/lcx-problem-cluster-radar.ts",
+          ownerEntrypoint: "scripts/operator/lcx-problem-cluster-radar.ts",
         }),
         expect.objectContaining({
           label: "LongMemEval-V2 / AgentRunbook",
-          ownerEntrypoint: "scripts/dev/lcx-context-recovery-exam.ts",
+          ownerEntrypoint: "scripts/operator/lcx-context-recovery-exam.ts",
         }),
         expect.objectContaining({
           label: "MemX / ground-truth-preserving memory",
-          ownerEntrypoint: "scripts/dev/lcx-learning-sedimentation-audit.ts",
+          ownerEntrypoint: "scripts/operator/lcx-learning-sedimentation-audit.ts",
         }),
         expect.objectContaining({
           label: "LightMem / LycheeMemory",
-          ownerEntrypoint: "scripts/dev/lcx-learning-sedimentation-audit.ts",
+          ownerEntrypoint: "scripts/operator/lcx-learning-sedimentation-audit.ts",
         }),
         expect.objectContaining({
           label: "OpenTelemetry GenAI / AgentSight",
-          ownerEntrypoint: "scripts/dev/lcx-governance-autopilot.ts",
+          ownerEntrypoint: "scripts/operator/lcx-governance-autopilot.ts",
         }),
         expect.objectContaining({
           label: "OWASP Agentic Top 10 / SMCP",
-          ownerEntrypoint: "/Users/liuchengxu/.codex/skills/security-threat-model/SKILL.md",
+          ownerEntrypoint: skillEntrypoint("security-threat-model"),
         }),
         expect.objectContaining({
           label: "ClawBench / WildClawBench",
-          ownerEntrypoint: "scripts/dev/lcx-commercial-acceptance-harness.ts",
+          ownerEntrypoint: "scripts/operator/lcx-commercial-acceptance-harness.ts",
         }),
         expect.objectContaining({
           label: "Agent S / HKUDS CLI-Anything",
-          ownerEntrypoint: "/Users/liuchengxu/.codex/skills/cli-anything-harvester/SKILL.md",
+          ownerEntrypoint: skillEntrypoint("cli-anything-harvester"),
         }),
         expect.objectContaining({
           label: "GitHub CLI / GitHub Agentic Workflows",
-          ownerEntrypoint: "/Users/liuchengxu/.codex/skills/cli-anything-harvester/SKILL.md",
+          ownerEntrypoint: skillEntrypoint("cli-anything-harvester"),
         }),
         expect.objectContaining({
           label: "LangGraph / OpenAI Agents / CrewAI / Microsoft Agent Framework",
-          ownerEntrypoint: "scripts/dev/lcx-flow-graph.ts",
+          ownerEntrypoint: "scripts/operator/lcx-flow-graph.ts",
         }),
         expect.objectContaining({
           label: "Polymarket research intake tools",
@@ -191,7 +209,7 @@ describe("lcx-external-agent-upgrade-radar", () => {
         }),
         expect.objectContaining({
           label: "PolyBench / PolySwarm prediction-market strategy audit",
-          ownerEntrypoint: "scripts/dev/lcx-commercial-acceptance-harness.ts",
+          ownerEntrypoint: "scripts/operator/lcx-commercial-acceptance-harness.ts",
         }),
       ]),
     );
@@ -208,6 +226,19 @@ describe("lcx-external-agent-upgrade-radar", () => {
       expect(candidate.autocueTerms.length, candidate.id).toBeGreaterThan(0);
       expect(candidate.runtimeAuthority, candidate.id).toBe("not_granted");
       expect(candidate.blockedDirectAdoption, candidate.id).toBe(true);
+      expect(candidate.sourceEvidence, candidate.id).toEqual({
+        registration: "static",
+        status: "static_registration_only",
+        receipts: {
+          freshness: { status: "missing", receiptId: "source_freshness_receipt" },
+          version: { status: "missing", receiptId: "source_version_receipt" },
+          license_scope: { status: "missing", receiptId: "source_license_scope_receipt" },
+          actual_reading_scope: {
+            status: "missing",
+            receiptId: "actual_reading_scope_receipt",
+          },
+        },
+      });
       expect(candidate.riskBoundaries, candidate.id).toEqual(
         expect.arrayContaining(["no_provider_config_change"]),
       );
@@ -233,7 +264,7 @@ describe("lcx-external-agent-upgrade-radar", () => {
       expect.arrayContaining([
         expect.objectContaining({
           id: "skillopt_v2_lifecycle",
-          ownerEntrypoint: "scripts/dev/lcx-skillopt-lite.ts",
+          ownerEntrypoint: "scripts/operator/lcx-skillopt-lite.ts",
           automaticTrigger: expect.stringContaining("SkillOpt"),
           ownerGate: expect.stringContaining("eval/MLX"),
           autopilotSurface: expect.stringContaining("lcx-governance-autopilot"),
@@ -242,19 +273,19 @@ describe("lcx-external-agent-upgrade-radar", () => {
           requiredProofChain: expect.arrayContaining([
             "targeted_eval_clean",
             "train_slice_contains_skillopt_evidence",
-            "fresh_real_lark_inbound_and_outbound_seen",
+            "fresh_real_external_inbound_and_outbound_seen",
           ]),
         }),
         expect.objectContaining({
           id: "real_runtime_battery",
-          ownerEntrypoint: "scripts/dev/lcx-commercial-acceptance-harness.ts",
+          ownerEntrypoint: "scripts/operator/lcx-commercial-acceptance-harness.ts",
           automaticTrigger: expect.stringContaining("commercial acceptance"),
           autopilotSurface: expect.stringContaining("commercialAcceptance"),
           requiredProofChain: expect.arrayContaining(["side_effect_audit"]),
         }),
         expect.objectContaining({
           id: "unified_trajectory_schema",
-          ownerEntrypoint: "scripts/dev/lcx-governance-autopilot.ts",
+          ownerEntrypoint: "scripts/operator/lcx-governance-autopilot.ts",
           ownerGate: expect.stringContaining("offline evidence"),
           nextAutomationAction: expect.stringContaining("trace_schema"),
           forbiddenAuthorities: expect.arrayContaining(["runtime_rl_server"]),
@@ -385,7 +416,7 @@ describe("lcx-external-agent-upgrade-radar", () => {
 
     expect(strategyAudit).toEqual(
       expect.objectContaining({
-        firstDevProbe: expect.stringContaining("failure log"),
+        firstLocalProbe: expect.stringContaining("failure log"),
       }),
     );
     expect(strategyAudit?.requiredFilters).toEqual(

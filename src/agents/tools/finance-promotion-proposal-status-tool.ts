@@ -2,9 +2,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
 import {
-  buildFeishuFinanceDoctrinePromotionProposalsFilename,
-  parseFeishuFinanceDoctrinePromotionProposalArtifact,
-  renderFeishuFinanceDoctrinePromotionProposalArtifact,
+  buildExternalFinanceDoctrinePromotionProposalsFilename,
+  parseExternalFinanceDoctrinePromotionProposalArtifact,
+  renderExternalFinanceDoctrinePromotionProposalArtifact,
 } from "../../hooks/bundled/lobster-brain-registry.js";
 import { stringEnum } from "../schema/typebox.js";
 import { resolveWorkspaceRoot } from "../workspace-dir.js";
@@ -56,8 +56,8 @@ export function createFinancePromotionProposalStatusTool(options?: {
 
       const proposalRelPath = path.join(
         "memory",
-        "feishu-work-receipts",
-        buildFeishuFinanceDoctrinePromotionProposalsFilename(dateKey),
+        "external-work-receipts",
+        buildExternalFinanceDoctrinePromotionProposalsFilename(dateKey),
       );
       const proposalAbsPath = path.join(workspaceDir, proposalRelPath);
 
@@ -80,7 +80,8 @@ export function createFinancePromotionProposalStatusTool(options?: {
         throw error;
       }
 
-      const parsedProposals = parseFeishuFinanceDoctrinePromotionProposalArtifact(proposalContent);
+      const parsedProposals =
+        parseExternalFinanceDoctrinePromotionProposalArtifact(proposalContent);
       if (!parsedProposals) {
         return jsonResult({
           ok: false,
@@ -132,7 +133,7 @@ export function createFinancePromotionProposalStatusTool(options?: {
 
       await fs.writeFile(
         proposalAbsPath,
-        renderFeishuFinanceDoctrinePromotionProposalArtifact({
+        renderExternalFinanceDoctrinePromotionProposalArtifact({
           ...parsedProposals,
           proposals: nextProposals,
         }),

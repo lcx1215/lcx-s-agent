@@ -38,9 +38,9 @@ struct LCXAgentControlRoomSnapshot: Equatable {
     let blockedClusters: [String]
     let blockedGates: [String]
     let fastestSafeNextAction: String
-    let liveBindingStatus: String
-    let liveBindingMissingProof: [String]
-    let liveUserSeen: Bool
+    let externalChannelStatus: String
+    let externalChannelMissingProof: [String]
+    let userVisibleObserved: Bool
     let skillOptStatus: String
     let skillOptMatchedSkillIds: [String]
     let skillOptNextIdleAction: String
@@ -77,7 +77,7 @@ struct LCXAgentControlRoomSnapshot: Equatable {
         let digestAutopilotSummary = JSONPath.dictionary(digest, "autopilot", "summary")
         let summary = autopilotSummary.isEmpty ? digestAutopilotSummary : autopilotSummary
         let material = JSONPath.dictionary(digest, "material")
-        let liveBinding = JSONPath.dictionary(digest, "liveLarkBrainBinding")
+        let externalChannelBinding = JSONPath.dictionary(digest, "externalChannelBinding")
         let latestCandidate = JSONPath.dictionary(material, "latestCandidateEval")
         let repo = JSONPath.dictionary(digest, "repo")
 
@@ -96,7 +96,7 @@ struct LCXAgentControlRoomSnapshot: Equatable {
             ?? JSONPath.bool(summary, "activeTrainingOrEval")
             ?? false
         let selectedCleanAdapter = JSONPath.string(material, "selectedCleanAdapter")
-            ?? JSONPath.string(liveBinding, "selectedCleanAdapter")
+            ?? JSONPath.string(externalChannelBinding, "selectedCleanAdapter")
             ?? JSONPath.string(summary, "activeNonIdleProgress", "selectedCleanAdapter")
             ?? "not selected"
         let latestCandidateAdapter = JSONPath.string(latestCandidate, "adapterPath")
@@ -107,8 +107,8 @@ struct LCXAgentControlRoomSnapshot: Equatable {
         let structuralOwnerFailures = JSONPath.stringArray(summary, "structuralOwnerFailures")
         let blockedClusters = JSONPath.stringArray(summary, "blockedClusters")
         let blockedGates = JSONPath.stringArray(summary, "blockedGates")
-        let liveMissingProof = JSONPath.stringArray(material, "liveBindingMissingProof")
-            .ifEmpty(JSONPath.stringArray(liveBinding, "missingProof"))
+        let externalChannelMissingProof = JSONPath.stringArray(material, "externalChannelMissingProof")
+            .ifEmpty(JSONPath.stringArray(externalChannelBinding, "missingProof"))
         let hardBlocks = JSONPath.stringArray(material, "providerCouncilAccelerationHardBlocks")
         let handoffLines = Self.parseHandoffHeader(handoff)
         let snapshot = LCXAgentControlRoomSnapshot(
@@ -130,11 +130,11 @@ struct LCXAgentControlRoomSnapshot: Equatable {
             fastestSafeNextAction: JSONPath.string(summary, "fastestSafeNextAction")
                 ?? JSONPath.string(material, "fastestSafeNextAction")
                 ?? "refresh owner state",
-            liveBindingStatus: JSONPath.string(material, "liveLarkBrainBindingStatus")
-                ?? JSONPath.string(liveBinding, "status")
+            externalChannelStatus: JSONPath.string(material, "externalChannelBindingStatus")
+                ?? JSONPath.string(externalChannelBinding, "status")
                 ?? "unknown",
-            liveBindingMissingProof: liveMissingProof,
-            liveUserSeen: JSONPath.bool(liveBinding, "liveUserSeen") ?? false,
+            externalChannelMissingProof: externalChannelMissingProof,
+            userVisibleObserved: JSONPath.bool(externalChannelBinding, "userVisibleObserved") ?? false,
             skillOptStatus: JSONPath.string(material, "skillOptLiteStatus")
                 ?? JSONPath.string(summary, "skillOptLiteStatus")
                 ?? "unknown",
@@ -148,7 +148,9 @@ struct LCXAgentControlRoomSnapshot: Equatable {
             blacktechRoutedCount: JSONPath.int(material, "externalUpgradeBlacktechAutopilotRoutedCount")
                 ?? JSONPath.int(summary, "externalUpgradeBlacktechAutopilotRoutedCount")
                 ?? 0,
-            blacktechRuntimeAuthorityCount: JSONPath.int(material, "externalUpgradeBlacktechRuntimeAuthorityGrantedCount")
+            blacktechRuntimeAuthorityCount: JSONPath.int(
+                material,
+                "externalUpgradeBlacktechRuntimeAuthorityGrantedCount")
                 ?? JSONPath.int(summary, "externalUpgradeBlacktechRuntimeAuthorityGrantedCount")
                 ?? 0,
             blacktechPerfectIntegrationClaim: JSONPath.bool(material, "externalUpgradePerfectIntegrationClaim")
@@ -164,14 +166,15 @@ struct LCXAgentControlRoomSnapshot: Equatable {
             handoffPath: handoffPath,
             handoffGeneratedAt: handoffLines["generatedAt"] ?? "not available",
             handoffBoundary: handoffLines["boundary"] ?? "not available",
-            sourceReadStatus: autopilot.isEmpty && digest.isEmpty ? "owner snapshots missing" : "owner snapshots loaded",
+            sourceReadStatus: autopilot.isEmpty && digest
+                .isEmpty ? "owner snapshots missing" : "owner snapshots loaded",
             departments: [])
         return snapshot.withDepartments()
     }
 
     private func withDepartments() -> LCXAgentControlRoomSnapshot {
         let activeTotal = self.activePidCounts.values.reduce(0, +)
-        let liveTone: LCXAgentDepartment.Tone = self.liveBindingStatus.contains("deferred") ? .waiting : .good
+        let channelTone: LCXAgentDepartment.Tone = self.externalChannelStatus.contains("deferred") ? .waiting : .good
         let skillTone: LCXAgentDepartment.Tone = self.skillOptStatus.contains("pending") ? .waiting : .good
         let providerTone: LCXAgentDepartment.Tone = self.providerCouncilHardBlocks.isEmpty ? .good : .blocked
         let departments = [
@@ -200,19 +203,20 @@ struct LCXAgentControlRoomSnapshot: Equatable {
                 status: self.skillOptStatus,
                 detail: self.skillOptMatchedSkillIds.isEmpty
                     ? "等待错题、用户反馈或 owner 候选。"
-                    : "把错题锻造成工具: \(self.skillOptMatchedSkillIds.joined(separator: ", ")); 下一步: \(self.skillOptNextIdleAction)。",
+                    :
+                    "把错题锻造成工具: \(self.skillOptMatchedSkillIds.joined(separator: ", ")); 下一步: \(self.skillOptNextIdleAction)。",
                 systemImage: "hammer",
                 tone: skillTone),
             LCXAgentDepartment(
-                id: "live",
-                title: "LiveLark 渔港",
-                subtitle: "Real Lark Shipping Dock",
-                status: self.liveBindingStatus,
-                detail: self.liveUserSeen
+                id: "external-channel",
+                title: "通用外部消息通道",
+                subtitle: "Real External Message Shipping Dock",
+                status: self.externalChannelStatus,
+                detail: self.userVisibleObserved
                     ? "已有真实 inbound/outbound 证据。"
-                    : "还缺 \(self.liveBindingMissingProof.count) 张出港单，不能冒充 live-fixed。",
+                    : "还缺 \(self.externalChannelMissingProof.count) 张出港单，不能冒充已观测。",
                 systemImage: "sailboat",
-                tone: liveTone),
+                tone: channelTone),
             LCXAgentDepartment(
                 id: "module-learning",
                 title: "知识谷仓",
@@ -242,7 +246,7 @@ struct LCXAgentControlRoomSnapshot: Equatable {
             LCXAgentDepartment(
                 id: "safety",
                 title: "安全栅栏",
-                subtitle: "Live / Provider / Protected Fence",
+                subtitle: "External Channel / Provider / Protected Fence",
                 status: self.blockedGates.isEmpty ? "边界清楚" : "\(self.blockedGates.count) 个 gate 阻塞",
                 detail: self.fastestSafeNextAction,
                 systemImage: "lock.shield",
@@ -265,9 +269,9 @@ struct LCXAgentControlRoomSnapshot: Equatable {
             blockedClusters: self.blockedClusters,
             blockedGates: self.blockedGates,
             fastestSafeNextAction: self.fastestSafeNextAction,
-            liveBindingStatus: self.liveBindingStatus,
-            liveBindingMissingProof: self.liveBindingMissingProof,
-            liveUserSeen: self.liveUserSeen,
+            externalChannelStatus: self.externalChannelStatus,
+            externalChannelMissingProof: self.externalChannelMissingProof,
+            userVisibleObserved: self.userVisibleObserved,
             skillOptStatus: self.skillOptStatus,
             skillOptMatchedSkillIds: self.skillOptMatchedSkillIds,
             skillOptNextIdleAction: self.skillOptNextIdleAction,
@@ -376,22 +380,34 @@ private enum JSONPath {
             let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? nil : trimmed
         }
-        if let number = value as? NSNumber { return number.stringValue }
+        if let number = value as? NSNumber {
+            return number.stringValue
+        }
         return nil
     }
 
     static func int(_ root: [String: Any], _ path: String...) -> Int? {
         let value = self.value(root, path)
-        if let int = value as? Int { return int }
-        if let number = value as? NSNumber { return number.intValue }
-        if let string = value as? String { return Int(string.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        if let int = value as? Int {
+            return int
+        }
+        if let number = value as? NSNumber {
+            return number.intValue
+        }
+        if let string = value as? String {
+            return Int(string.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
         return nil
     }
 
     static func bool(_ root: [String: Any], _ path: String...) -> Bool? {
         let value = self.value(root, path)
-        if let bool = value as? Bool { return bool }
-        if let number = value as? NSNumber { return number.boolValue }
+        if let bool = value as? Bool {
+            return bool
+        }
+        if let number = value as? NSNumber {
+            return number.boolValue
+        }
         if let string = value as? String {
             switch string.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
             case "true", "yes", "1": return true
@@ -409,7 +425,9 @@ private enum JSONPath {
                 let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
                 return trimmed.isEmpty ? nil : trimmed
             }
-            if let number = value as? NSNumber { return number.stringValue }
+            if let number = value as? NSNumber {
+                return number.stringValue
+            }
             return nil
         }
     }
@@ -435,8 +453,8 @@ private enum JSONPath {
     }
 }
 
-private extension Array where Element == String {
-    func ifEmpty(_ fallback: [String]) -> [String] {
+extension [String] {
+    fileprivate func ifEmpty(_ fallback: [String]) -> [String] {
         self.isEmpty ? fallback : self
     }
 }

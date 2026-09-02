@@ -10,19 +10,19 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 describe("LCX head-tail consistency doctor", () => {
   it("is wired into the main system doctor", async () => {
     const source = await fs.readFile(
-      path.join(repoRoot, "scripts/dev/lcx-system-doctor.ts"),
+      path.join(repoRoot, "scripts/operator/lcx-system-doctor.ts"),
       "utf8",
     );
 
     expect(source).toContain("head-tail-consistency");
-    expect(source).toContain("scripts/dev/lcx-change-impact-plan.ts");
-    expect(source).toContain("scripts/dev/lcx-head-tail-consistency.ts");
+    expect(source).toContain("scripts/operator/lcx-change-impact-plan.ts");
+    expect(source).toContain("scripts/operator/lcx-head-tail-consistency.ts");
   });
 
   it("passes current macro doctrine and local-brain micro surfaces", async () => {
     const { stdout } = await execFileAsync(
       process.execPath,
-      ["--import", "tsx", "scripts/dev/lcx-head-tail-consistency.ts", "--json"],
+      ["--import", "tsx", "scripts/operator/lcx-head-tail-consistency.ts", "--json"],
       {
         cwd: repoRoot,
         env: process.env,
@@ -46,7 +46,7 @@ describe("LCX head-tail consistency doctor", () => {
     expect(payload).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_head_tail_consistency_only",
+        boundary: "local_head_tail_consistency_only",
         liveTouched: false,
         providerConfigTouched: false,
         protectedMemoryTouched: false,
@@ -81,12 +81,12 @@ describe("LCX head-tail consistency doctor", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/lcx-change-impact-plan.ts",
+        "scripts/operator/lcx-change-impact-plan.ts",
         "--json",
         "--changed",
         "src/agents/tools/module-learning-pipeline-plan-tool.ts",
         "--changed",
-        "extensions/feishu/src/bot.test.ts",
+        "extensions/external/src/protocol.test.ts",
       ],
       {
         cwd: repoRoot,
@@ -113,14 +113,14 @@ describe("LCX head-tail consistency doctor", () => {
     expect(payload).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_change_impact_plan_only",
+        boundary: "local_change_impact_plan_only",
         liveTouched: false,
         providerConfigTouched: false,
         protectedMemoryTouched: false,
       }),
     );
     expect(payload.affectedLanes).toEqual(
-      expect.arrayContaining(["memory_sedimentation", "lark_feishu_visible_reply"]),
+      expect.arrayContaining(["memory_sedimentation", "external_message_visible_reply"]),
     );
     expect(payload.impacts).toEqual(
       expect.arrayContaining([
@@ -130,16 +130,16 @@ describe("LCX head-tail consistency doctor", () => {
           requiredChecks: expect.arrayContaining(["head-tail-consistency"]),
         }),
         expect.objectContaining({
-          id: "lark_feishu_visible_surface",
+          id: "external_message_visible_surface",
           risk: "elevated",
         }),
       ]),
     );
     expect(payload.recommendedFastCommands.join("\n")).toContain(
-      "scripts/dev/lcx-head-tail-consistency.ts",
+      "scripts/operator/lcx-head-tail-consistency.ts",
     );
     expect(payload.recommendedFastCommands.join("\n")).toContain(
-      "extensions/feishu/src/bot.test.ts",
+      "extensions/external/src/protocol.test.ts",
     );
   });
 });

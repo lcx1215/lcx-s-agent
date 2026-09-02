@@ -382,17 +382,17 @@ describe("chat directive tag stripping for non-streaming final payloads", () => 
     );
   });
 
-  it("chat.send inherits Feishu routing metadata from session delivery context", async () => {
-    createTranscriptFixture("openclaw-chat-send-feishu-origin-routing-");
+  it("chat.send inherits External routing metadata from session delivery context", async () => {
+    createTranscriptFixture("openclaw-chat-send-external-origin-routing-");
     mockState.finalText = "ok";
     mockState.sessionEntry = {
       deliveryContext: {
-        channel: "feishu",
-        to: "ou_feishu_direct_123",
+        channel: "external",
+        to: "ou_external_direct_123",
         accountId: "default",
       },
-      lastChannel: "feishu",
-      lastTo: "ou_feishu_direct_123",
+      lastChannel: "external",
+      lastTo: "ou_external_direct_123",
       lastAccountId: "default",
     };
     const respond = vi.fn();
@@ -401,15 +401,15 @@ describe("chat directive tag stripping for non-streaming final payloads", () => 
     await runNonStreamingChatSend({
       context,
       respond,
-      idempotencyKey: "idem-feishu-origin-routing",
-      sessionKey: "agent:main:feishu:direct:ou_feishu_direct_123",
+      idempotencyKey: "idem-external-origin-routing",
+      sessionKey: "agent:main:external:direct:ou_external_direct_123",
       expectBroadcast: false,
     });
 
     expect(mockState.lastDispatchCtx).toEqual(
       expect.objectContaining({
-        OriginatingChannel: "feishu",
-        OriginatingTo: "ou_feishu_direct_123",
+        OriginatingChannel: "external",
+        OriginatingTo: "ou_external_direct_123",
         AccountId: "default",
       }),
     );

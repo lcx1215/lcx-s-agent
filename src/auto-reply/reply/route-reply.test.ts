@@ -14,7 +14,7 @@ import { createIMessageTestPlugin } from "../../test-utils/imessage-test-plugin.
 import { SILENT_REPLY_TOKEN } from "../tokens.js";
 
 const mocks = vi.hoisted(() => ({
-  sendMessageFeishu: vi.fn(async (_params: unknown) => ({ messageId: "f1" })),
+  sendMessageExternal: vi.fn(async (_params: unknown) => ({ messageId: "f1" })),
   sendMessageDiscord: vi.fn(async () => ({ messageId: "m1", channelId: "c1" })),
   sendMessageIMessage: vi.fn(async () => ({ messageId: "ok" })),
   sendMessageMSTeams: vi.fn(async (_params: unknown) => ({
@@ -89,15 +89,15 @@ const createMSTeamsOutbound = (): ChannelOutboundAdapter => ({
   },
 });
 
-const createFeishuOutbound = (): ChannelOutboundAdapter => ({
+const createExternalOutbound = (): ChannelOutboundAdapter => ({
   deliveryMode: "direct",
   sendText: async ({ cfg, to, text }) => {
-    const result = await mocks.sendMessageFeishu({ cfg, to, text });
-    return { channel: "feishu", ...result };
+    const result = await mocks.sendMessageExternal({ cfg, to, text });
+    return { channel: "external", ...result };
   },
   sendMedia: async ({ cfg, to, text, mediaUrl }) => {
-    const result = await mocks.sendMessageFeishu({ cfg, to, text, mediaUrl });
-    return { channel: "feishu", ...result };
+    const result = await mocks.sendMessageExternal({ cfg, to, text, mediaUrl });
+    return { channel: "external", ...result };
   },
 });
 
@@ -414,37 +414,37 @@ describe("routeReply", () => {
     expect(isRoutableChannel("teams")).toBe(true);
   });
 
-  it("maps lark channel label to feishu routing target", async () => {
+  it("maps external channel label to external routing target", async () => {
     setActivePluginRegistry(
       createRegistry([
         {
-          pluginId: "feishu",
+          pluginId: "external",
           source: "test",
           plugin: createOutboundTestPlugin({
-            id: "feishu",
-            outbound: createFeishuOutbound(),
-            label: "Feishu",
+            id: "external",
+            outbound: createExternalOutbound(),
+            label: "External",
           }),
         },
       ]),
     );
     const cfg = {
       channels: {
-        feishu: { enabled: true },
+        external: { enabled: true },
       },
     } as unknown as OpenClawConfig;
 
-    mocks.sendMessageFeishu.mockClear();
+    mocks.sendMessageExternal.mockClear();
     const result = await routeReply({
       payload: { text: "hi" },
-      channel: "lark" as never,
+      channel: "external" as never,
       to: "ou_xyz",
       cfg,
     });
 
     expect(result.ok).toBe(true);
-    expect(isRoutableChannel("lark")).toBe(true);
-    expect(mocks.sendMessageFeishu).toHaveBeenCalledWith(
+    expect(isRoutableChannel("external")).toBe(true);
+    expect(mocks.sendMessageExternal).toHaveBeenCalledWith(
       expect.objectContaining({
         cfg,
         to: "ou_xyz",
@@ -453,37 +453,37 @@ describe("routeReply", () => {
     );
   });
 
-  it("maps lark chain label channel to feishu routing target", async () => {
+  it("maps external chain label channel to external routing target", async () => {
     setActivePluginRegistry(
       createRegistry([
         {
-          pluginId: "feishu",
+          pluginId: "external",
           source: "test",
           plugin: createOutboundTestPlugin({
-            id: "feishu",
-            outbound: createFeishuOutbound(),
-            label: "Feishu",
+            id: "external",
+            outbound: createExternalOutbound(),
+            label: "External",
           }),
         },
       ]),
     );
     const cfg = {
       channels: {
-        feishu: { enabled: true },
+        external: { enabled: true },
       },
     } as unknown as OpenClawConfig;
 
-    mocks.sendMessageFeishu.mockClear();
+    mocks.sendMessageExternal.mockClear();
     const result = await routeReply({
       payload: { text: "hi" },
-      channel: "lark:dm:ou_xyz" as never,
+      channel: "external:dm:ou_xyz" as never,
       to: "ou_xyz",
       cfg,
     });
 
     expect(result.ok).toBe(true);
-    expect(isRoutableChannel("lark:dm:ou_xyz" as never)).toBe(true);
-    expect(mocks.sendMessageFeishu).toHaveBeenCalledWith(
+    expect(isRoutableChannel("external:dm:ou_xyz" as never)).toBe(true);
+    expect(mocks.sendMessageExternal).toHaveBeenCalledWith(
       expect.objectContaining({
         cfg,
         to: "ou_xyz",
@@ -492,16 +492,16 @@ describe("routeReply", () => {
     );
   });
 
-  it("applies feishu family responsePrefix for lark chain channel", async () => {
+  it("applies external family responsePrefix for external chain channel", async () => {
     setActivePluginRegistry(
       createRegistry([
         {
-          pluginId: "feishu",
+          pluginId: "external",
           source: "test",
           plugin: createOutboundTestPlugin({
-            id: "feishu",
-            outbound: createFeishuOutbound(),
-            label: "Feishu",
+            id: "external",
+            outbound: createExternalOutbound(),
+            label: "External",
           }),
         },
       ]),
@@ -511,49 +511,49 @@ describe("routeReply", () => {
         responsePrefix: "[global] ",
       },
       channels: {
-        feishu: {
-          responsePrefix: "[feishu] ",
+        external: {
+          responsePrefix: "[external] ",
         },
       },
     } as unknown as OpenClawConfig;
 
-    mocks.sendMessageFeishu.mockClear();
+    mocks.sendMessageExternal.mockClear();
     const result = await routeReply({
       payload: { text: "hi" },
-      channel: "lark:dm:ou_xyz" as never,
+      channel: "external:dm:ou_xyz" as never,
       to: "ou_xyz",
       cfg,
     });
 
     expect(result.ok).toBe(true);
-    expect(mocks.sendMessageFeishu).toHaveBeenCalledWith(
+    expect(mocks.sendMessageExternal).toHaveBeenCalledWith(
       expect.objectContaining({
         cfg,
         to: "ou_xyz",
-        text: "[feishu] hi",
+        text: "[external] hi",
       }),
     );
   });
 
-  it("fails cleanly for lark family routing when feishu outbound is missing", async () => {
-    mocks.sendMessageFeishu.mockClear();
+  it("fails cleanly for external family routing when external outbound is missing", async () => {
+    mocks.sendMessageExternal.mockClear();
     const cfg = {
       channels: {},
     } as unknown as OpenClawConfig;
 
     const result = await routeReply({
       payload: { text: "hi" },
-      channel: "lark" as never,
+      channel: "external" as never,
       to: "ou_xyz",
       cfg,
     });
 
     expect(result.ok).toBe(false);
     expect(result.error).toBe(
-      "Failed to route reply to lark: Outbound not configured for channel: feishu",
+      "Failed to route reply to external: Outbound not configured for channel: external",
     );
-    expect(isRoutableChannel("lark")).toBe(true);
-    expect(mocks.sendMessageFeishu).not.toHaveBeenCalled();
+    expect(isRoutableChannel("external")).toBe(true);
+    expect(mocks.sendMessageExternal).not.toHaveBeenCalled();
   });
 
   it("does not mark unknown channels as routable", async () => {

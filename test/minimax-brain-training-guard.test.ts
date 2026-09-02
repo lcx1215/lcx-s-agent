@@ -110,7 +110,7 @@ async function resolveCurrentAdapter(
     [
       "--import",
       "tsx",
-      "scripts/dev/minimax-brain-training-guard.ts",
+      "scripts/operator/minimax-brain-training-guard.ts",
       "--resolve-current-adapter",
       "--model",
       "Qwen/Qwen3-0.6B",
@@ -130,7 +130,7 @@ async function resolveCurrentAdapter(
 describe("minimax brain training guard adapter resolution", () => {
   it("keeps MiniMax teacher generation decoupled from slow Qwen eval/train work", async () => {
     const source = await fs.readFile(
-      path.resolve(import.meta.dirname, "..", "scripts/dev/minimax-brain-training-guard.ts"),
+      path.resolve(import.meta.dirname, "..", "scripts/operator/minimax-brain-training-guard.ts"),
       "utf8",
     );
 
@@ -139,7 +139,7 @@ describe("minimax brain training guard adapter resolution", () => {
     expect(source).toContain('reason: "teacher_sidecar_active"');
     expect(source).toContain('reason: "teacher_sidecar_completed"');
     expect(source).toContain("teacher_sidecar_failed_fallback_to_serial_teacher");
-    expect(source).toContain("scripts/dev/minimax-quota-brain-saturator.ts");
+    expect(source).toContain("scripts/operator/minimax-quota-brain-saturator.ts");
     expect(source).toContain("--adaptive");
     expect(source).toContain("--allow-partial-write");
     expect(source).toContain("--provider-cooldown-seconds");
@@ -152,11 +152,11 @@ describe("minimax brain training guard adapter resolution", () => {
 
   it("uses the shared balanced JSON output parser for guard and quota child steps", async () => {
     const guardSource = await fs.readFile(
-      path.resolve(import.meta.dirname, "..", "scripts/dev/minimax-brain-training-guard.ts"),
+      path.resolve(import.meta.dirname, "..", "scripts/operator/minimax-brain-training-guard.ts"),
       "utf8",
     );
     const quotaSource = await fs.readFile(
-      path.resolve(import.meta.dirname, "..", "scripts/dev/minimax-quota-brain-saturator.ts"),
+      path.resolve(import.meta.dirname, "..", "scripts/operator/minimax-quota-brain-saturator.ts"),
       "utf8",
     );
 
@@ -168,7 +168,7 @@ describe("minimax brain training guard adapter resolution", () => {
 
   it("backs off MiniMax sidecar pressure on transport instability, not only rate limits", async () => {
     const source = await fs.readFile(
-      path.resolve(import.meta.dirname, "..", "scripts/dev/minimax-quota-brain-saturator.ts"),
+      path.resolve(import.meta.dirname, "..", "scripts/operator/minimax-quota-brain-saturator.ts"),
       "utf8",
     );
 
@@ -181,7 +181,7 @@ describe("minimax brain training guard adapter resolution", () => {
 
   it("backs off the guard loop when local MLX training is resource-gated", async () => {
     const source = await fs.readFile(
-      path.resolve(import.meta.dirname, "..", "scripts/dev/minimax-brain-training-guard.ts"),
+      path.resolve(import.meta.dirname, "..", "scripts/operator/minimax-brain-training-guard.ts"),
       "utf8",
     );
 
@@ -192,7 +192,7 @@ describe("minimax brain training guard adapter resolution", () => {
 
   it("keeps a per-round evolution window instead of immediately pressuring the next round", async () => {
     const source = await fs.readFile(
-      path.resolve(import.meta.dirname, "..", "scripts/dev/minimax-brain-training-guard.ts"),
+      path.resolve(import.meta.dirname, "..", "scripts/operator/minimax-brain-training-guard.ts"),
       "utf8",
     );
 
@@ -205,7 +205,7 @@ describe("minimax brain training guard adapter resolution", () => {
 
   it("trains local Qwen from a bounded balanced slice instead of the full noisy corpus", async () => {
     const source = await fs.readFile(
-      path.resolve(import.meta.dirname, "..", "scripts/dev/minimax-brain-training-guard.ts"),
+      path.resolve(import.meta.dirname, "..", "scripts/operator/minimax-brain-training-guard.ts"),
       "utf8",
     );
 
@@ -218,7 +218,7 @@ describe("minimax brain training guard adapter resolution", () => {
 
   it("continues local Qwen training from an existing adapter instead of restarting from base", async () => {
     const source = await fs.readFile(
-      path.resolve(import.meta.dirname, "..", "scripts/dev/minimax-brain-training-guard.ts"),
+      path.resolve(import.meta.dirname, "..", "scripts/operator/minimax-brain-training-guard.ts"),
       "utf8",
     );
 
@@ -237,7 +237,7 @@ describe("minimax brain training guard adapter resolution", () => {
 
   it("bounds hardened eval child steps so a stuck candidate cannot stall training", async () => {
     const source = await fs.readFile(
-      path.resolve(import.meta.dirname, "..", "scripts/dev/minimax-brain-training-guard.ts"),
+      path.resolve(import.meta.dirname, "..", "scripts/operator/minimax-brain-training-guard.ts"),
       "utf8",
     );
 
@@ -256,7 +256,7 @@ describe("minimax brain training guard adapter resolution", () => {
     expect(source).toContain('"stable_hardened_eval_timeout_continue_guard"');
     expect(source).toContain('"stable_hardened_eval_non_passing_continue_guard"');
     expect(source).toMatch(
-      /"candidate_hardened_eval"[\s\S]*scripts\/dev\/local-brain-distill-eval\.ts[\s\S]*allowFailure: true[\s\S]*timeoutMs: HARDENED_EVAL_STEP_TIMEOUT_MS[\s\S]*idleTimeoutMs: HARDENED_EVAL_IDLE_TIMEOUT_MS/u,
+      /"candidate_hardened_eval"[\s\S]*scripts\/operator\/local-brain-distill-eval\.ts[\s\S]*allowFailure: true[\s\S]*timeoutMs: HARDENED_EVAL_STEP_TIMEOUT_MS[\s\S]*idleTimeoutMs: HARDENED_EVAL_IDLE_TIMEOUT_MS/u,
     );
     expect(source).toMatch(
       /const evalName = currentAdapter \? "stable_hardened_eval"[\s\S]*runJsonStep\([\s\S]*evalName[\s\S]*allowFailure: true[\s\S]*const backoff = stableEvalBackoff\(stableEval\)[\s\S]*await sleep\(backoff\.durationMs\)[\s\S]*continue;/u,
@@ -265,7 +265,7 @@ describe("minimax brain training guard adapter resolution", () => {
 
   it("honors train-every when a best-effort training seed exists but no adapter is promotion-ready", async () => {
     const source = await fs.readFile(
-      path.resolve(import.meta.dirname, "..", "scripts/dev/minimax-brain-training-guard.ts"),
+      path.resolve(import.meta.dirname, "..", "scripts/operator/minimax-brain-training-guard.ts"),
       "utf8",
     );
 
@@ -285,7 +285,7 @@ describe("minimax brain training guard adapter resolution", () => {
 
   it("backs off local training when a candidate collapses to a near-zero eval score", async () => {
     const source = await fs.readFile(
-      path.resolve(import.meta.dirname, "..", "scripts/dev/minimax-brain-training-guard.ts"),
+      path.resolve(import.meta.dirname, "..", "scripts/operator/minimax-brain-training-guard.ts"),
       "utf8",
     );
 
@@ -541,7 +541,7 @@ describe("minimax brain training guard adapter resolution", () => {
           event: "guard_failed",
           currentAdapter: adapter,
           error:
-            'Error: node --import tsx scripts/dev/local-brain-distill-eval.ts --hardened exited 1\n{"summary":{"passed":48,"total":50,"failedCaseIds":["source_coverage_actual_reading_scope"],"promotionReady":false}}',
+            'Error: node --import tsx scripts/operator/local-brain-distill-eval.ts --hardened exited 1\n{"summary":{"passed":48,"total":50,"failedCaseIds":["source_coverage_actual_reading_scope"],"promotionReady":false}}',
         },
       ];
     });
@@ -580,6 +580,29 @@ describe("minimax brain training guard adapter resolution", () => {
     );
     await fs.mkdir(seedAdapter, { recursive: true });
     await fs.writeFile(path.join(seedAdapter, "adapter_config.json"), "{}\n");
+
+    await expect(resolveCurrentAdapter(fixture)).rejects.toMatchObject({
+      stderr: expect.stringContaining("no promotion-ready adapter found"),
+    });
+  });
+
+  it("invalidates a passing adapter when a later hardened eval times out", async () => {
+    const fixture = await makeGuardFixture((adapterPrefix) => {
+      const adapter = `${adapterPrefix}-2026-05-11T19-59-45-470Z-r2`;
+      return [
+        passingEval("2026-05-11T20:12:34.085Z", "stable_hardened_eval", adapter, 72),
+        {
+          at: "2026-05-12T03:34:35.887Z",
+          event: "step_timeout",
+          name: "stable_hardened_eval",
+          result: {
+            adapterPath: adapter,
+            timeoutReason: "idle_timeout",
+            summary: { passed: 0, total: 0, failedCaseIds: [] },
+          },
+        },
+      ];
+    });
 
     await expect(resolveCurrentAdapter(fixture)).rejects.toMatchObject({
       stderr: expect.stringContaining("no promotion-ready adapter found"),
@@ -705,9 +728,9 @@ describe("minimax brain training guard adapter resolution", () => {
             train: 9263,
           },
           {
-            lark_language_handoff_receipt: 63,
+            external_language_handoff_receipt: 63,
             finance_learning_capability_apply_receipt: 14,
-            feishu_work_receipt: 61,
+            external_work_receipt: 61,
             brain_distillation_review: 8991,
             curated_seed: 160,
           },
@@ -720,9 +743,9 @@ describe("minimax brain training guard adapter resolution", () => {
             train: 4603,
           },
           {
-            lark_language_handoff_receipt: 63,
+            external_language_handoff_receipt: 63,
             finance_learning_capability_apply_receipt: 14,
-            feishu_work_receipt: 61,
+            external_work_receipt: 61,
             brain_distillation_review: 4331,
             curated_seed: 160,
           },

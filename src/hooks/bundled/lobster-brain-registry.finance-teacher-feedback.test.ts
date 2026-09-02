@@ -1,20 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
-  parseFeishuFinanceDoctrineTeacherFeedbackArtifact,
-  renderFeishuFinanceDoctrineTeacherFeedbackArtifact,
+  parseExternalFinanceDoctrineTeacherFeedbackArtifact,
+  renderExternalFinanceDoctrineTeacherFeedbackArtifact,
 } from "./lobster-brain-registry.js";
 
 describe("finance doctrine teacher feedback artifact", () => {
   it("round-trips the bounded teacher-feedback artifact contract", () => {
-    const rendered = renderFeishuFinanceDoctrineTeacherFeedbackArtifact({
+    const rendered = renderExternalFinanceDoctrineTeacherFeedbackArtifact({
       generatedAt: "2026-03-25T21:30:00.000Z",
       teacherTask: "finance_calibration_audit",
       feedbacks: [
         {
           feedbackId:
-            "finance-teacher-feedback-2026-03-25-feishu-finance-doctrine-calibration-190000-000z-control-room-missing_bear_case",
+            "finance-teacher-feedback-2026-03-25-external-finance-doctrine-calibration-190000-000z-control-room-missing_bear_case",
           sourceArtifact:
-            "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-calibration-190000-000Z-control-room.md",
+            "memory/external-work-receipts/2026-03-25-external-finance-doctrine-calibration-190000-000Z-control-room.md",
           teacherModel: "openai/gpt-5.2",
           critiqueType: "missing_bear_case",
           critiqueText:
@@ -31,15 +31,15 @@ describe("finance doctrine teacher feedback artifact", () => {
       ],
     });
 
-    expect(parseFeishuFinanceDoctrineTeacherFeedbackArtifact(rendered)).toEqual({
+    expect(parseExternalFinanceDoctrineTeacherFeedbackArtifact(rendered)).toEqual({
       generatedAt: "2026-03-25T21:30:00.000Z",
       teacherTask: "finance_calibration_audit",
       feedbacks: [
         {
           feedbackId:
-            "finance-teacher-feedback-2026-03-25-feishu-finance-doctrine-calibration-190000-000z-control-room-missing_bear_case",
+            "finance-teacher-feedback-2026-03-25-external-finance-doctrine-calibration-190000-000z-control-room-missing_bear_case",
           sourceArtifact:
-            "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-calibration-190000-000Z-control-room.md",
+            "memory/external-work-receipts/2026-03-25-external-finance-doctrine-calibration-190000-000Z-control-room.md",
           teacherModel: "openai/gpt-5.2",
           critiqueType: "missing_bear_case",
           critiqueText:
@@ -59,8 +59,8 @@ describe("finance doctrine teacher feedback artifact", () => {
 
   it("fails closed on invalid critique types", () => {
     expect(
-      parseFeishuFinanceDoctrineTeacherFeedbackArtifact(`\
-# Feishu Finance Doctrine Teacher Feedback
+      parseExternalFinanceDoctrineTeacherFeedbackArtifact(`\
+# External Finance Doctrine Teacher Feedback
 
 - **Generated At**: 2026-03-25T21:30:00.000Z
 - **Teacher Task**: finance_calibration_audit
@@ -68,7 +68,7 @@ describe("finance doctrine teacher feedback artifact", () => {
 ## Feedback
 ### Feedback 1
 - **Feedback ID**: feedback-1
-- **Source Artifact**: memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-calibration-190000-000Z-control-room.md
+- **Source Artifact**: memory/external-work-receipts/2026-03-25-external-finance-doctrine-calibration-190000-000Z-control-room.md
 - **Teacher Model**: openai/gpt-5.2
 - **Critique Type**: stale_memory
 - **Critique Text**: critique text

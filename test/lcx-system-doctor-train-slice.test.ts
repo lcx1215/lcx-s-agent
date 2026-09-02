@@ -7,12 +7,12 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 describe("LCX system doctor train slice observability", () => {
   it("surfaces the latest balanced Qwen train slice in the guard summary", async () => {
     const source = await fs.readFile(
-      path.join(repoRoot, "scripts/dev/lcx-system-doctor.ts"),
+      path.join(repoRoot, "scripts/operator/lcx-system-doctor.ts"),
       "utf8",
     );
 
     const trainingPlanSource = await fs.readFile(
-      path.join(repoRoot, "scripts/dev/local-brain-training-plan.ts"),
+      path.join(repoRoot, "scripts/operator/local-brain-training-plan.ts"),
       "utf8",
     );
 
@@ -25,11 +25,11 @@ describe("LCX system doctor train slice observability", () => {
 
   it("surfaces MiniMax quota sidecar status separately from teacher quality", async () => {
     const source = await fs.readFile(
-      path.join(repoRoot, "scripts/dev/lcx-system-doctor.ts"),
+      path.join(repoRoot, "scripts/operator/lcx-system-doctor.ts"),
       "utf8",
     );
     const trainingPlanSource = await fs.readFile(
-      path.join(repoRoot, "scripts/dev/local-brain-training-plan.ts"),
+      path.join(repoRoot, "scripts/operator/local-brain-training-plan.ts"),
       "utf8",
     );
 
@@ -42,7 +42,7 @@ describe("LCX system doctor train slice observability", () => {
 
   it("delegates local-brain runtime truth to local-brain-training-plan", async () => {
     const source = await fs.readFile(
-      path.join(repoRoot, "scripts/dev/lcx-system-doctor.ts"),
+      path.join(repoRoot, "scripts/operator/lcx-system-doctor.ts"),
       "utf8",
     );
 
@@ -54,7 +54,7 @@ describe("LCX system doctor train slice observability", () => {
 
   it("classifies the MiniMax saturator before matching its guard-log argument", async () => {
     const source = await fs.readFile(
-      path.join(repoRoot, "scripts/dev/local-brain-training-plan.ts"),
+      path.join(repoRoot, "scripts/operator/local-brain-training-plan.ts"),
       "utf8",
     );
     const roleMap = source.slice(source.indexOf("function activeTrainingRole"));
@@ -68,11 +68,11 @@ describe("LCX system doctor train slice observability", () => {
 
   it("does not count resolver-only adapter checks as active training guards", async () => {
     const doctorSource = await fs.readFile(
-      path.join(repoRoot, "scripts/dev/lcx-system-doctor.ts"),
+      path.join(repoRoot, "scripts/operator/lcx-system-doctor.ts"),
       "utf8",
     );
     const trainingPlanSource = await fs.readFile(
-      path.join(repoRoot, "scripts/dev/local-brain-training-plan.ts"),
+      path.join(repoRoot, "scripts/operator/local-brain-training-plan.ts"),
       "utf8",
     );
 
@@ -85,32 +85,31 @@ describe("LCX system doctor train slice observability", () => {
     expect(trainingPlanSource).toContain('!line.includes("--resolve-current-adapter")');
   });
 
-  it("bounds live Lark probes so a stuck channel check cannot look successful", async () => {
+  it("bounds live External probes so a stuck channel check cannot look successful", async () => {
     const source = await fs.readFile(
-      path.join(repoRoot, "scripts/dev/lcx-system-doctor.ts"),
+      path.join(repoRoot, "scripts/operator/lcx-system-doctor.ts"),
       "utf8",
     );
 
-    expect(source).toContain("LIVE_LARK_DIAGNOSE_TIMEOUT_MS");
     expect(source).toContain("LIVE_CHANNEL_PROBE_TIMEOUT_MS");
     expect(source).toContain("DEFAULT_LIVE_CHANNEL_PROBE_TIMEOUT_MS = 90_000");
     expect(source).toContain("LIVE_CHANNEL_STATUS_STEP_TIMEOUT_MS");
     expect(source).toContain("async function liveOpenClawInvocation");
     expect(source).toContain("LIVE_SIDECAR_DIST_ENTRY");
-    expect(source).toContain('source: "live-sidecar-dist"');
+    expect(source).toContain('source: "external-channel-runtime-dist"');
     expect(source).toContain("String(LIVE_CHANNEL_STATUS_STEP_TIMEOUT_MS)");
     expect(source).toContain("error: `${params.name} timed out after ${params.timeoutMs}ms`");
     expect(source).toMatch(
       /name: "channels-status-probe"[\s\S]*timeoutMs: LIVE_CHANNEL_PROBE_TIMEOUT_MS/u,
     );
     expect(source).toMatch(
-      /name: "lark-loop-diagnose"[\s\S]*timeoutMs: LIVE_LARK_DIAGNOSE_TIMEOUT_MS/u,
+      /name: "external-channel-status"[\s\S]*timeoutMs: EXTERNAL_CHANNEL_BINDING_TIMEOUT_MS/u,
     );
   });
 
   it("includes module-learning receipt review without writing review files by default", async () => {
     const source = await fs.readFile(
-      path.join(repoRoot, "scripts/dev/lcx-system-doctor.ts"),
+      path.join(repoRoot, "scripts/operator/lcx-system-doctor.ts"),
       "utf8",
     );
 
@@ -119,11 +118,11 @@ describe("LCX system doctor train slice observability", () => {
     expect(source).toContain('name: "module-learning-pipeline-review"');
     expect(source).toContain('name: "problem-cluster-radar"');
     expect(source).toContain('name: "live-fadeout-audit"');
-    expect(source).toContain("scripts/dev/lcx-problem-cluster-radar.ts");
-    expect(source).toContain("scripts/dev/lcx-live-fadeout-audit.ts");
-    expect(source).toContain("scripts/dev/local-brain-promotion-audit.ts");
-    expect(source).toContain("scripts/dev/lcx-agent-exam.ts");
-    expect(source).toContain("scripts/dev/module-learning-pipeline-review.ts");
+    expect(source).toContain("scripts/operator/lcx-problem-cluster-radar.ts");
+    expect(source).toContain("scripts/operator/lcx-live-fadeout-audit.ts");
+    expect(source).toContain("scripts/operator/local-brain-promotion-audit.ts");
+    expect(source).toContain("scripts/operator/lcx-agent-exam.ts");
+    expect(source).toContain("scripts/operator/module-learning-pipeline-review.ts");
     expect(source).toContain("writeReview: false");
     expect(source).toContain("boundaryViolations === 0");
   });

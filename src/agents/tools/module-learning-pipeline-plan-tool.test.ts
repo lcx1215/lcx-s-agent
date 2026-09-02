@@ -20,7 +20,7 @@ describe("module learning pipeline plan tool", () => {
     expect(result.details).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_module_learning_pipeline_plan",
+        boundary: "local_module_learning_pipeline_plan",
         targetModule: "options_volatility",
         moduleFamily: "finance_research",
         status: "missing_evidence",
@@ -62,18 +62,18 @@ describe("module learning pipeline plan tool", () => {
     );
   });
 
-  it("keeps Lark/Feishu learning on module-specific receipts instead of finance-only attach", async () => {
+  it("keeps external message learning on module-specific receipts instead of finance-only attach", async () => {
     const tool = createModuleLearningPipelinePlanTool();
 
-    const result = await tool.execute("lark-plan", {
-      targetModule: "lark_feishu_workflow",
-      learningIntent: "Learn a readable Lark reply workflow from a visible reply receipt.",
+    const result = await tool.execute("external-plan", {
+      targetModule: "external_message_workflow",
+      learningIntent: "Learn a readable External reply workflow from a visible reply receipt.",
     });
 
     expect(result.details).toEqual(
       expect.objectContaining({
         ok: true,
-        targetModule: "lark_feishu_workflow",
+        targetModule: "external_message_workflow",
         moduleFamily: "agent_workflow",
         financePipelineArgs: null,
       }),
@@ -81,7 +81,7 @@ describe("module learning pipeline plan tool", () => {
     expect(result.details).toEqual(
       expect.objectContaining({
         existingToolBridge: expect.objectContaining({
-          primaryTool: "lark_loop_diagnose",
+          primaryTool: "external_channel_status",
           bridgeStatus: "module_specific_receipt_required",
         }),
         safetyBoundaries: expect.arrayContaining([
@@ -148,7 +148,7 @@ describe("module learning pipeline plan tool", () => {
           ok: true,
           targetModule,
           moduleFamily: "finance_research",
-          boundary: "dev_module_learning_pipeline_plan",
+          boundary: "local_module_learning_pipeline_plan",
           liveTouched: false,
           providerConfigTouched: false,
           protectedMemoryTouched: false,

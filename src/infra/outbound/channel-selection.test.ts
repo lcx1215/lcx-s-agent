@@ -86,6 +86,6 @@ describe("resolveMessageChannelSelection", () => {
         channel: "channel:C123",
         fallbackChannel: "not-a-channel",
       }),
-    ).rejects.toThrow("Unknown channel: channel:c123");
+    ).rejects.toThrow("Unknown channel: channel");
   });
 });

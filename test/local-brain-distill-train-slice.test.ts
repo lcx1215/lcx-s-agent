@@ -52,7 +52,7 @@ describe("local brain distill train slice", () => {
       [
         line("curated_seed", "curated-1"),
         line("curated_seed", "curated-2"),
-        line("feishu_work_receipt", "receipt-1"),
+        line("external_work_receipt", "receipt-1"),
         line("finance_learning_capability_apply_receipt", "receipt-2"),
         line("brain_distillation_review", "review-1"),
         line("brain_distillation_review", "review-2"),
@@ -70,7 +70,7 @@ describe("local brain distill train slice", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-train-slice.ts",
+        "scripts/operator/local-brain-distill-train-slice.ts",
         "--data",
         dataDir,
         "--out",
@@ -152,7 +152,7 @@ describe("local brain distill train slice", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-train-slice.ts",
+        "scripts/operator/local-brain-distill-train-slice.ts",
         "--data",
         dataDir,
         "--out",

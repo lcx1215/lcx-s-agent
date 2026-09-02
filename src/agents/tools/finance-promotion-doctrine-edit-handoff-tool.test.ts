@@ -2,16 +2,16 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  buildFeishuFinanceDoctrineEditHandoffsFilename,
-  buildFeishuFinanceDoctrinePromotionCandidatesFilename,
-  buildFeishuFinanceDoctrinePromotionDecisionsFilename,
-  buildFeishuFinanceDoctrinePromotionProposalsFilename,
-  buildFeishuFinanceDoctrinePromotionReviewFilename,
-  parseFeishuFinanceDoctrineEditHandoffArtifact,
-  renderFeishuFinanceDoctrinePromotionCandidateArtifact,
-  renderFeishuFinanceDoctrinePromotionDecisionArtifact,
-  renderFeishuFinanceDoctrinePromotionProposalArtifact,
-  renderFeishuFinanceDoctrinePromotionReviewArtifact,
+  buildExternalFinanceDoctrineEditHandoffsFilename,
+  buildExternalFinanceDoctrinePromotionCandidatesFilename,
+  buildExternalFinanceDoctrinePromotionDecisionsFilename,
+  buildExternalFinanceDoctrinePromotionProposalsFilename,
+  buildExternalFinanceDoctrinePromotionReviewFilename,
+  parseExternalFinanceDoctrineEditHandoffArtifact,
+  renderExternalFinanceDoctrinePromotionCandidateArtifact,
+  renderExternalFinanceDoctrinePromotionDecisionArtifact,
+  renderExternalFinanceDoctrinePromotionProposalArtifact,
+  renderExternalFinanceDoctrinePromotionReviewArtifact,
 } from "../../hooks/bundled/lobster-brain-registry.js";
 import { makeTempWorkspace } from "../../test-helpers/workspace.js";
 import { createFinancePromotionDoctrineEditHandoffTool } from "./finance-promotion-doctrine-edit-handoff-tool.js";
@@ -27,12 +27,12 @@ describe("finance_promotion_doctrine_edit_handoff tool", () => {
   });
 
   async function seedAcceptedProposal(dateKey: string) {
-    const receiptsDir = path.join(workspaceDir!, "memory", "feishu-work-receipts");
+    const receiptsDir = path.join(workspaceDir!, "memory", "external-work-receipts");
     await fs.mkdir(receiptsDir, { recursive: true });
 
     await fs.writeFile(
-      path.join(receiptsDir, buildFeishuFinanceDoctrinePromotionCandidatesFilename(dateKey)),
-      renderFeishuFinanceDoctrinePromotionCandidateArtifact({
+      path.join(receiptsDir, buildExternalFinanceDoctrinePromotionCandidatesFilename(dateKey)),
+      renderExternalFinanceDoctrinePromotionCandidateArtifact({
         generatedAt: "2026-03-25T15:00:00.000Z",
         consumer: "holdings_thesis_revalidation",
         windowDays: 7,
@@ -56,11 +56,11 @@ describe("finance_promotion_doctrine_edit_handoff tool", () => {
       "utf8",
     );
     await fs.writeFile(
-      path.join(receiptsDir, buildFeishuFinanceDoctrinePromotionReviewFilename(dateKey)),
-      renderFeishuFinanceDoctrinePromotionReviewArtifact({
+      path.join(receiptsDir, buildExternalFinanceDoctrinePromotionReviewFilename(dateKey)),
+      renderExternalFinanceDoctrinePromotionReviewArtifact({
         reviewedAt: "2026-03-25T18:00:00.000Z",
         consumer: "holdings_thesis_revalidation",
-        linkedCandidateArtifact: `memory/feishu-work-receipts/${buildFeishuFinanceDoctrinePromotionCandidatesFilename(dateKey)}`,
+        linkedCandidateArtifact: `memory/external-work-receipts/${buildExternalFinanceDoctrinePromotionCandidatesFilename(dateKey)}`,
         reviews: [
           {
             candidateKey: "closest_scenario:base_case",
@@ -72,12 +72,12 @@ describe("finance_promotion_doctrine_edit_handoff tool", () => {
       "utf8",
     );
     await fs.writeFile(
-      path.join(receiptsDir, buildFeishuFinanceDoctrinePromotionDecisionsFilename(dateKey)),
-      renderFeishuFinanceDoctrinePromotionDecisionArtifact({
+      path.join(receiptsDir, buildExternalFinanceDoctrinePromotionDecisionsFilename(dateKey)),
+      renderExternalFinanceDoctrinePromotionDecisionArtifact({
         decidedAt: "2026-03-25T19:10:00.000Z",
         consumer: "holdings_thesis_revalidation",
-        linkedCandidateArtifact: `memory/feishu-work-receipts/${buildFeishuFinanceDoctrinePromotionCandidatesFilename(dateKey)}`,
-        linkedReviewArtifact: `memory/feishu-work-receipts/${buildFeishuFinanceDoctrinePromotionReviewFilename(dateKey)}`,
+        linkedCandidateArtifact: `memory/external-work-receipts/${buildExternalFinanceDoctrinePromotionCandidatesFilename(dateKey)}`,
+        linkedReviewArtifact: `memory/external-work-receipts/${buildExternalFinanceDoctrinePromotionReviewFilename(dateKey)}`,
         decisions: [
           {
             candidateKey: "closest_scenario:base_case",
@@ -90,13 +90,13 @@ describe("finance_promotion_doctrine_edit_handoff tool", () => {
       "utf8",
     );
     await fs.writeFile(
-      path.join(receiptsDir, buildFeishuFinanceDoctrinePromotionProposalsFilename(dateKey)),
-      renderFeishuFinanceDoctrinePromotionProposalArtifact({
+      path.join(receiptsDir, buildExternalFinanceDoctrinePromotionProposalsFilename(dateKey)),
+      renderExternalFinanceDoctrinePromotionProposalArtifact({
         draftedAt: "2026-03-25T20:00:00.000Z",
         consumer: "holdings_thesis_revalidation",
-        sourceDecisionArtifact: `memory/feishu-work-receipts/${buildFeishuFinanceDoctrinePromotionDecisionsFilename(dateKey)}`,
-        linkedCandidateArtifact: `memory/feishu-work-receipts/${buildFeishuFinanceDoctrinePromotionCandidatesFilename(dateKey)}`,
-        linkedReviewArtifact: `memory/feishu-work-receipts/${buildFeishuFinanceDoctrinePromotionReviewFilename(dateKey)}`,
+        sourceDecisionArtifact: `memory/external-work-receipts/${buildExternalFinanceDoctrinePromotionDecisionsFilename(dateKey)}`,
+        linkedCandidateArtifact: `memory/external-work-receipts/${buildExternalFinanceDoctrinePromotionCandidatesFilename(dateKey)}`,
+        linkedReviewArtifact: `memory/external-work-receipts/${buildExternalFinanceDoctrinePromotionReviewFilename(dateKey)}`,
         proposals: [
           {
             proposalId: "finance-doctrine-proposal-2026-03-25-closest-scenario-base-case",
@@ -140,27 +140,27 @@ describe("finance_promotion_doctrine_edit_handoff tool", () => {
         "finance-doctrine-edit-handoff-2026-03-25-finance-doctrine-proposal-2026-03-25-closest-scenario-base-case",
       handoffStatus: "open",
       proposalPath:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-proposals.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-proposals.md",
       decisionPath:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-decisions.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-decisions.md",
       candidatePath:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-candidates.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-candidates.md",
       reviewPath:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-review.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-review.md",
       handoffPath:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-edit-handoffs.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-edit-handoffs.md",
       targetDoctrineOrCard: "memory/local-memory/holding-holdings-thesis-revalidation.md",
       action:
         "This creates an operator-facing doctrine-edit handoff only. It does not edit doctrine cards and does not promote doctrine automatically.",
     });
 
-    const parsed = parseFeishuFinanceDoctrineEditHandoffArtifact(
+    const parsed = parseExternalFinanceDoctrineEditHandoffArtifact(
       await fs.readFile(
         path.join(
           workspaceDir,
           "memory",
-          "feishu-work-receipts",
-          buildFeishuFinanceDoctrineEditHandoffsFilename(dateKey),
+          "external-work-receipts",
+          buildExternalFinanceDoctrineEditHandoffsFilename(dateKey),
         ),
         "utf8",
       ),
@@ -182,20 +182,20 @@ describe("finance_promotion_doctrine_edit_handoff tool", () => {
     const proposalPath = path.join(
       workspaceDir,
       "memory",
-      "feishu-work-receipts",
-      buildFeishuFinanceDoctrinePromotionProposalsFilename(dateKey),
+      "external-work-receipts",
+      buildExternalFinanceDoctrinePromotionProposalsFilename(dateKey),
     );
     await fs.writeFile(
       proposalPath,
-      renderFeishuFinanceDoctrinePromotionProposalArtifact({
+      renderExternalFinanceDoctrinePromotionProposalArtifact({
         draftedAt: "2026-03-25T20:00:00.000Z",
         consumer: "holdings_thesis_revalidation",
         sourceDecisionArtifact:
-          "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-decisions.md",
+          "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-decisions.md",
         linkedCandidateArtifact:
-          "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-candidates.md",
+          "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-candidates.md",
         linkedReviewArtifact:
-          "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-review.md",
+          "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-review.md",
         proposals: [
           {
             proposalId: "finance-doctrine-proposal-2026-03-25-closest-scenario-base-case",
@@ -231,7 +231,7 @@ describe("finance_promotion_doctrine_edit_handoff tool", () => {
       proposalId: "finance-doctrine-proposal-2026-03-25-closest-scenario-base-case",
       proposalStatus: "draft",
       proposalPath:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-proposals.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-proposals.md",
       action:
         "Only finance promotion proposals already marked accepted_for_manual_edit can create a manual doctrine-edit handoff.",
     });
@@ -255,7 +255,7 @@ describe("finance_promotion_doctrine_edit_handoff tool", () => {
       dateKey,
       proposalId: "finance-doctrine-proposal-2026-03-25-unknown",
       proposalPath:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-proposals.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-proposals.md",
       availableProposalIds: ["finance-doctrine-proposal-2026-03-25-closest-scenario-base-case"],
       action:
         "Use finance_promotion_candidates with this dateKey to inspect the current proposal ids before retrying finance_promotion_doctrine_edit_handoff.",
@@ -269,18 +269,18 @@ describe("finance_promotion_doctrine_edit_handoff tool", () => {
     const decisionPath = path.join(
       workspaceDir,
       "memory",
-      "feishu-work-receipts",
-      buildFeishuFinanceDoctrinePromotionDecisionsFilename(dateKey),
+      "external-work-receipts",
+      buildExternalFinanceDoctrinePromotionDecisionsFilename(dateKey),
     );
     await fs.writeFile(
       decisionPath,
-      renderFeishuFinanceDoctrinePromotionDecisionArtifact({
+      renderExternalFinanceDoctrinePromotionDecisionArtifact({
         decidedAt: "2026-03-25T19:10:00.000Z",
         consumer: "holdings_thesis_revalidation",
         linkedCandidateArtifact:
-          "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-candidates-other.md",
+          "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-candidates-other.md",
         linkedReviewArtifact:
-          "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-review.md",
+          "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-review.md",
         decisions: [
           {
             candidateKey: "closest_scenario:base_case",
@@ -307,13 +307,13 @@ describe("finance_promotion_doctrine_edit_handoff tool", () => {
       proposalId: "finance-doctrine-proposal-2026-03-25-closest-scenario-base-case",
       candidateKey: "closest_scenario:base_case",
       candidatePath:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-candidates.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-candidates.md",
       reviewPath:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-review.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-review.md",
       decisionPath:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-decisions.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-decisions.md",
       proposalPath:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-proposals.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-proposals.md",
       action:
         "Repair the linked decision artifact before retrying finance_promotion_doctrine_edit_handoff.",
     });

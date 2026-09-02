@@ -3,7 +3,6 @@ node_modules
 .env
 docker-compose.extra.yml
 dist
-pnpm-lock.yaml
 bun.lock
 bun.lockb
 coverage
@@ -49,7 +48,6 @@ apps/ios/*.xcworkspace/
 apps/ios/.swiftpm/
 apps/ios/.derivedData/
 apps/ios/.local-signing.xcconfig
-vendor/
 apps/ios/Clawdbot.xcodeproj/
 apps/ios/Clawdbot.xcodeproj/**
 apps/macos/.build/**
@@ -114,8 +112,7 @@ dist/protocol.schema.json
 .ant-colony/
 
 # Generated extension declaration output
-extensions/feishu/src/*.d.ts
-ops/live-handoff/promotions/
+ops/external-channel-artifacts/promotions/
 
 # Eclipse
 **/.project

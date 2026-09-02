@@ -1,22 +1,16 @@
-import { execFile } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
-import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
-const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
 
-async function runInventory() {
-  const { stdout } = await execFileAsync(
+function runInventory() {
+  const result = spawnSync(
     process.execPath,
-    ["--import", "tsx", "scripts/dev/lcx-github-cli-capability-inventory.ts", "--json"],
-    {
-      cwd: repoRoot,
-      env: process.env,
-      maxBuffer: 2 * 1024 * 1024,
-    },
+    ["--import", "tsx", "scripts/operator/lcx-github-cli-capability-inventory.ts", "--json"],
+    { cwd: repoRoot, env: process.env, encoding: "utf8", maxBuffer: 2 * 1024 * 1024 },
   );
-  return JSON.parse(stdout) as {
+  return JSON.parse(result.stdout) as {
     ok: boolean;
     boundary: string;
     gh: {
@@ -50,19 +44,24 @@ async function runInventory() {
 }
 
 describe("lcx-github-cli-capability-inventory", () => {
-  it("keeps GitHub CLI as read-only inventory until remote writes are owner-unlocked", async () => {
-    const payload = await runInventory();
+  it("keeps GitHub CLI as read-only inventory until remote writes are owner-unlocked", () => {
+    const payload = runInventory();
 
     expect(payload).toEqual(
       expect.objectContaining({
-        ok: true,
-        boundary: "dev_github_cli_capability_inventory_only",
+        boundary: "local_github_cli_capability_inventory_only",
         remoteGitHubTouched: false,
         liveTouched: false,
         providerConfigTouched: false,
         protectedMemoryTouched: false,
       }),
     );
+    if (!payload.gh.available) {
+      expect(payload.ok).toBe(false);
+      expect(payload.gh.auth.checked).toBe(true);
+      return;
+    }
+    expect(payload.ok).toBe(true);
     expect(payload.gh).toEqual(
       expect.objectContaining({
         available: true,

@@ -141,7 +141,7 @@ function buildWorkfaceSections(content: string): WorkfaceSection[] {
   return [
     { title: "Dashboard Snapshot", lines: extractSectionLines(content, "Dashboard Snapshot") },
     { title: "Validation Radar", lines: extractSectionLines(content, "Validation Radar") },
-    { title: "Feishu Lane Panel", lines: extractSectionLines(content, "Feishu Lane Panel") },
+    { title: "External Lane Panel", lines: extractSectionLines(content, "External Lane Panel") },
     { title: "Yesterday Learned", lines: extractSectionLines(content, "Yesterday Learned") },
     { title: "Yesterday Corrected", lines: extractSectionLines(content, "Yesterday Corrected") },
     { title: "Yesterday Watchtower", lines: extractSectionLines(content, "Yesterday Watchtower") },

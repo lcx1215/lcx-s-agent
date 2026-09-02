@@ -2,11 +2,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  buildFeishuFinanceDoctrineTeacherFeedbackFilename,
-  buildFeishuFinanceDoctrineTeacherReviewFilename,
-  parseFeishuFinanceDoctrineTeacherReviewArtifact,
-  renderFeishuFinanceDoctrineTeacherFeedbackArtifact,
-  renderFeishuFinanceDoctrineTeacherReviewArtifact,
+  buildExternalFinanceDoctrineTeacherFeedbackFilename,
+  buildExternalFinanceDoctrineTeacherReviewFilename,
+  parseExternalFinanceDoctrineTeacherReviewArtifact,
+  renderExternalFinanceDoctrineTeacherFeedbackArtifact,
+  renderExternalFinanceDoctrineTeacherReviewArtifact,
 } from "../../hooks/bundled/lobster-brain-registry.js";
 import { makeTempWorkspace } from "../../test-helpers/workspace.js";
 import { createFinanceDoctrineTeacherFeedbackReviewTool } from "./finance-doctrine-teacher-feedback-review-tool.js";
@@ -22,17 +22,17 @@ describe("finance_doctrine_teacher_feedback_review tool", () => {
   });
 
   async function seedTeacherFeedback(params?: { sourceArtifact?: string }) {
-    const receiptsDir = path.join(workspaceDir!, "memory", "feishu-work-receipts");
+    const receiptsDir = path.join(workspaceDir!, "memory", "external-work-receipts");
     await fs.mkdir(receiptsDir, { recursive: true });
     const dateKey = "2026-04-16";
     const sourceArtifact =
       params?.sourceArtifact ??
-      "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-calibration-190000-000Z-control-room-msg-1.md";
+      "memory/external-work-receipts/2026-04-16-external-finance-doctrine-calibration-190000-000Z-control-room-msg-1.md";
     const feedbackId =
-      "finance-teacher-feedback-2026-04-16-feishu-finance-doctrine-calibration-190000-000z-control-room-msg-1-missing_causal_chain";
+      "finance-teacher-feedback-2026-04-16-external-finance-doctrine-calibration-190000-000z-control-room-msg-1-missing_causal_chain";
     await fs.writeFile(
-      path.join(receiptsDir, buildFeishuFinanceDoctrineTeacherFeedbackFilename(dateKey)),
-      renderFeishuFinanceDoctrineTeacherFeedbackArtifact({
+      path.join(receiptsDir, buildExternalFinanceDoctrineTeacherFeedbackFilename(dateKey)),
+      renderExternalFinanceDoctrineTeacherFeedbackArtifact({
         generatedAt: "2026-04-16T13:00:00.000Z",
         teacherTask: "finance_calibration_audit",
         feedbacks: [
@@ -78,26 +78,26 @@ describe("finance_doctrine_teacher_feedback_review tool", () => {
       sourceArtifact,
       reviewOutcome: "elevated_for_governance_review",
       teacherFeedbackPath:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-feedback.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-feedback.md",
       teacherReviewPath:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-review.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-review.md",
       action:
         "This records bounded teacher review state only. It does not adopt knowledge, does not promote doctrine, and does not mutate doctrine cards automatically.",
     });
 
-    const parsed = parseFeishuFinanceDoctrineTeacherReviewArtifact(
+    const parsed = parseExternalFinanceDoctrineTeacherReviewArtifact(
       await fs.readFile(
         path.join(
           workspaceDir,
           "memory",
-          "feishu-work-receipts",
-          buildFeishuFinanceDoctrineTeacherReviewFilename(dateKey),
+          "external-work-receipts",
+          buildExternalFinanceDoctrineTeacherReviewFilename(dateKey),
         ),
         "utf8",
       ),
     );
     expect(parsed?.sourceTeacherFeedbackArtifact).toBe(
-      "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-feedback.md",
+      "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-feedback.md",
     );
     expect(parsed?.reviews).toEqual([
       {
@@ -126,7 +126,7 @@ describe("finance_doctrine_teacher_feedback_review tool", () => {
       dateKey,
       feedbackId: "feedback-does-not-exist",
       teacherFeedbackPath:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-feedback.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-feedback.md",
       availableFeedbackIds: [feedbackId],
       action:
         "Use finance_promotion_candidates with this dateKey to inspect current teacher feedback ids before retrying finance_doctrine_teacher_feedback_review.",
@@ -136,13 +136,13 @@ describe("finance_doctrine_teacher_feedback_review tool", () => {
   it("fails closed on invalid review transitions", async () => {
     workspaceDir = await makeTempWorkspace("openclaw-finance-teacher-review-");
     const { dateKey, feedbackId, sourceArtifact } = await seedTeacherFeedback();
-    const receiptsDir = path.join(workspaceDir, "memory", "feishu-work-receipts");
+    const receiptsDir = path.join(workspaceDir, "memory", "external-work-receipts");
     await fs.writeFile(
-      path.join(receiptsDir, buildFeishuFinanceDoctrineTeacherReviewFilename(dateKey)),
-      renderFeishuFinanceDoctrineTeacherReviewArtifact({
+      path.join(receiptsDir, buildExternalFinanceDoctrineTeacherReviewFilename(dateKey)),
+      renderExternalFinanceDoctrineTeacherReviewArtifact({
         reviewedAt: "2026-04-16T13:45:00.000Z",
         sourceTeacherFeedbackArtifact:
-          "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-feedback.md",
+          "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-feedback.md",
         reviews: [
           {
             feedbackId,
@@ -171,9 +171,9 @@ describe("finance_doctrine_teacher_feedback_review tool", () => {
       currentOutcome: "deferred",
       requestedOutcome: "rejected",
       teacherFeedbackPath:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-feedback.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-feedback.md",
       teacherReviewPath:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-review.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-review.md",
       action:
         "Teacher feedback entries can only move once from pending into deferred, rejected, or elevated_for_governance_review.",
     });
@@ -183,7 +183,7 @@ describe("finance_doctrine_teacher_feedback_review tool", () => {
     workspaceDir = await makeTempWorkspace("openclaw-finance-teacher-review-");
     const { dateKey, feedbackId } = await seedTeacherFeedback({
       sourceArtifact:
-        "memory/feishu-work-receipts/2026-04-15-feishu-finance-doctrine-calibration-190000-000Z-control-room-msg-1.md",
+        "memory/external-work-receipts/2026-04-15-external-finance-doctrine-calibration-190000-000Z-control-room-msg-1.md",
     });
     const tool = createFinanceDoctrineTeacherFeedbackReviewTool({ workspaceDir });
 
@@ -200,9 +200,9 @@ describe("finance_doctrine_teacher_feedback_review tool", () => {
       dateKey,
       feedbackId,
       sourceArtifact:
-        "memory/feishu-work-receipts/2026-04-15-feishu-finance-doctrine-calibration-190000-000Z-control-room-msg-1.md",
+        "memory/external-work-receipts/2026-04-15-external-finance-doctrine-calibration-190000-000Z-control-room-msg-1.md",
       teacherFeedbackPath:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-feedback.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-feedback.md",
       action:
         "Repair the teacher feedback source-artifact linkage before retrying finance_doctrine_teacher_feedback_review.",
     });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { selectLocalBrainContractHints } from "../scripts/dev/local-brain-taxonomy.js";
+import { selectLocalBrainContractHints } from "../scripts/operator/local-brain-taxonomy.js";
 
 describe("local brain contract hint selection", () => {
   it("keeps base finance and safety contracts for ordinary asks", () => {
@@ -12,7 +12,7 @@ describe("local brain contract hint selection", () => {
   });
 
   it("adds short-language abstraction rules for simple visible user asks", () => {
-    const hints = selectLocalBrainContractHints("Lark 回复看不懂，用户只说学习大宗商品");
+    const hints = selectLocalBrainContractHints("External 回复看不懂，用户只说学习大宗商品");
     const text = hints.join(" ");
 
     expect(text).toContain("Plain-language hidden-complexity intake");

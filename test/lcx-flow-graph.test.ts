@@ -30,7 +30,7 @@ async function runJsonScript(script: string) {
 
 describe("LCX flow graph exam", () => {
   it("passes current task waterflow contracts", async () => {
-    const { stdout } = await runJsonScript("scripts/dev/lcx-flow-graph.ts");
+    const { stdout } = await runJsonScript("scripts/operator/lcx-flow-graph.ts");
     const payload = JSON.parse(stdout) as {
       ok: boolean;
       boundary: string;
@@ -93,7 +93,7 @@ describe("LCX flow graph exam", () => {
     expect(payload).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_flow_graph_only",
+        boundary: "local_flow_graph_only",
         liveTouched: false,
         providerConfigTouched: false,
         protectedMemoryTouched: false,
@@ -133,7 +133,7 @@ describe("LCX flow graph exam", () => {
     expect(payload.scenarios).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: "lark_finance_research_waterflow",
+          id: "external_finance_research_waterflow",
           requiredFilters: expect.arrayContaining([
             "source_evidence_gate",
             "no_trade_advice",
@@ -171,11 +171,11 @@ describe("LCX flow graph exam", () => {
           ]),
         }),
         expect.objectContaining({
-          id: "dev_to_external_channel_lark_waterflow",
+          id: "local_to_external_channel_external_waterflow",
           requiredFilters: expect.arrayContaining([
-            "dev_ready_not_user_visible_observed",
+            "local_ready_not_user_visible_observed",
             "external_channel_probe_required",
-            "real_lark_inbound_required",
+            "real_external_inbound_required",
           ]),
         }),
         expect.objectContaining({
@@ -190,9 +190,9 @@ describe("LCX flow graph exam", () => {
             "skillopt_best_skill_required",
             "skillopt_context_not_weight_absorption",
             "skillopt_external_channel_proof_required",
-            "dev_ready_not_user_visible_observed",
+            "local_ready_not_user_visible_observed",
             "external_channel_probe_required",
-            "real_lark_inbound_required",
+            "real_external_inbound_required",
           ]),
         }),
         expect.objectContaining({
@@ -213,7 +213,7 @@ describe("LCX flow graph exam", () => {
           ]),
         }),
         expect.objectContaining({
-          id: "lark_visible_language_waterflow",
+          id: "external_visible_language_waterflow",
           requiredFilters: expect.arrayContaining([
             "visible_text_no_internal_labels",
             "no_internal_runtime_details_visible",
@@ -250,13 +250,13 @@ describe("LCX flow graph exam", () => {
           receipts: expect.arrayContaining([
             "commercial_acceptance_harness",
             "lcx-problem-cluster-radar",
-            "feishu-reply-flow",
+            "external-message-channel",
           ]),
           requiredFilters: expect.arrayContaining([
             "commercial_error_budget_required",
             "product_canary_suite_required",
             "single_owner_required",
-            "real_lark_inbound_required",
+            "real_external_inbound_required",
           ]),
         }),
         expect.objectContaining({
@@ -320,6 +320,18 @@ describe("LCX flow graph exam", () => {
             "model_weight_absorption_not_claimed",
             "tool_permission_audit_required",
           ]),
+        }),
+        expect.objectContaining({
+          id: "multi_agent_pattern_shadow_evaluation_waterflow",
+          requiredFilters: expect.arrayContaining([
+            "same_case_required",
+            "replay_before_isolated_executor_required",
+            "shadow_tool_permission_audit_required",
+            "no_shadow_external_side_effects",
+            "shadow_recovery_receipt_required",
+            "wide_trial_not_production",
+          ]),
+          receipts: expect.arrayContaining(["lcx-multi-agent-pattern-shadow"]),
         }),
         expect.objectContaining({
           id: "prediction_market_research_only_waterflow",
@@ -421,7 +433,7 @@ describe("LCX flow graph exam", () => {
         expect.objectContaining({
           id: "architecture_supervision_entrypoints",
           ownerCluster: "architecture_supervision_cluster",
-          ownerPath: "scripts/dev/lcx-mind-model.ts",
+          ownerPath: "scripts/operator/lcx-mind-model.ts",
           watchedPathTerms: expect.arrayContaining([
             "lcx-flow-graph",
             "lcx-head-tail-consistency",
@@ -431,10 +443,10 @@ describe("LCX flow graph exam", () => {
         expect.objectContaining({
           id: "universe_inventory_entrypoints",
           ownerCluster: "universe_inventory_cluster",
-          ownerPath: "scripts/dev/lcx-universe-index.ts",
+          ownerPath: "scripts/operator/lcx-universe-index.ts",
           watchedPathTerms: expect.arrayContaining(["lcx-universe-index", "garbageCandidates"]),
           allowedPaths: expect.arrayContaining([
-            "scripts/dev/lcx-universe-index.ts",
+            "scripts/operator/lcx-universe-index.ts",
             "test/lcx-universe-index.test.ts",
           ]),
         }),
@@ -444,7 +456,7 @@ describe("LCX flow graph exam", () => {
           watchedPathTerms: expect.arrayContaining(["module-learning", "learning-sedimentation"]),
         }),
         expect.objectContaining({
-          id: "lark_visible_reply_audit_entrypoints",
+          id: "external_visible_reply_audit_entrypoints",
           ownerCluster: "commercial_answer_pipeline_cluster",
           watchedPathTerms: expect.arrayContaining([
             "reply-flow-audit",
@@ -454,8 +466,8 @@ describe("LCX flow graph exam", () => {
             "skillopt-autocue",
           ]),
           allowedPaths: expect.arrayContaining([
-            "extensions/feishu/src/visible-answer-adoption-gate.ts",
-            "extensions/feishu/src/visible-answer-adoption-gate.test.ts",
+            "src/agents/visible-answer-adoption-gate.ts",
+            "src/agents/visible-answer-adoption-gate.test.ts",
             "src/auto-reply/reply/skill-autocue.ts",
             "src/auto-reply/reply/skill-autocue.test.ts",
             "src/auto-reply/reply/skillopt-autocue.ts",
@@ -465,7 +477,7 @@ describe("LCX flow graph exam", () => {
         expect.objectContaining({
           id: "commercial_acceptance_harness_entrypoints",
           ownerCluster: "commercial_acceptance_harness_cluster",
-          ownerPath: "scripts/dev/lcx-commercial-acceptance-harness.ts",
+          ownerPath: "scripts/operator/lcx-commercial-acceptance-harness.ts",
           watchedPathTerms: expect.arrayContaining(["commercial-acceptance"]),
         }),
         expect.objectContaining({
@@ -484,13 +496,13 @@ describe("LCX flow graph exam", () => {
         expect.objectContaining({
           id: "external_skill_learning_entrypoints",
           ownerCluster: "external_skill_learning_cluster",
-          ownerPath: "scripts/dev/lcx-external-agent-upgrade-radar.ts",
+          ownerPath: "scripts/operator/lcx-external-agent-upgrade-radar.ts",
           watchedPathTerms: expect.arrayContaining([
             "external-agent-upgrade",
             "github-project-capability-intake",
           ]),
           allowedPaths: expect.arrayContaining([
-            "scripts/dev/lcx-external-agent-upgrade-radar.ts",
+            "scripts/operator/lcx-external-agent-upgrade-radar.ts",
             "src/agents/tools/github-project-capability-intake-tool.ts",
           ]),
         }),
@@ -502,9 +514,9 @@ describe("LCX flow graph exam", () => {
         expect.objectContaining({
           id: "focused_daily_research_product_entrypoints",
           ownerCluster: "focused_daily_research_product_cluster",
-          ownerPath: "scripts/dev/lcx-directed-daily-research-brief.ts",
+          ownerPath: "scripts/operator/lcx-directed-daily-research-brief.ts",
           allowedPaths: expect.arrayContaining([
-            "scripts/dev/lcx-directed-daily-research-brief.ts",
+            "scripts/operator/lcx-directed-daily-research-brief.ts",
             "test/lcx-directed-daily-research-brief.test.ts",
           ]),
         }),
@@ -513,17 +525,10 @@ describe("LCX flow graph exam", () => {
     expect(payload.sharedEntrypointOwnerRules).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          path: "src/commands/capabilities/lark-loop-diagnose.ts",
+          path: "scripts/operator/lcx-external-channel-status.ts",
           familyIds: expect.arrayContaining([
-            "dev_live_evidence_entrypoints",
-            "lark_visible_reply_audit_entrypoints",
-          ]),
-        }),
-        expect.objectContaining({
-          path: "src/commands/capabilities.lark-loop-diagnose.test.ts",
-          familyIds: expect.arrayContaining([
-            "dev_live_evidence_entrypoints",
-            "lark_visible_reply_audit_entrypoints",
+            "local_live_evidence_entrypoints",
+            "external_visible_reply_audit_entrypoints",
           ]),
         }),
       ]),
@@ -532,18 +537,18 @@ describe("LCX flow graph exam", () => {
       expect.arrayContaining([
         expect.objectContaining({
           scenarioId: "module_learning_internalization_waterflow",
-          ownerEntrypoint: "scripts/dev/module-learning-pipeline-review.ts",
-          fastCheck: "node --import tsx scripts/dev/module-learning-pipeline-review.ts --json",
+          ownerEntrypoint: "scripts/operator/module-learning-pipeline-review.ts",
+          fastCheck: "node --import tsx scripts/operator/module-learning-pipeline-review.ts --json",
           evidenceReceipts: expect.arrayContaining(["module_learning_pipeline_review"]),
           failureSignals: expect.arrayContaining([
             "missing_or_skipped_filter:retrieval_apply_eval_review_required",
           ]),
-          boundary: "dev_flow_graph_only",
+          boundary: "local_flow_graph_only",
         }),
         expect.objectContaining({
           scenarioId: "training_failure_feedback_waterflow",
-          ownerEntrypoint: "scripts/dev/local-brain-training-plan.ts",
-          fastCheck: "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
+          ownerEntrypoint: "scripts/operator/local-brain-training-plan.ts",
+          fastCheck: "node --import tsx scripts/operator/local-brain-training-plan.ts --json",
           failureSignals: expect.arrayContaining([
             "missing_or_skipped_filter:training_overlap_guard",
             "missing_or_skipped_filter:work_then_evolve_cooldown_required",
@@ -552,9 +557,9 @@ describe("LCX flow graph exam", () => {
         }),
         expect.objectContaining({
           scenarioId: "skillopt_runtime_self_use_waterflow",
-          ownerEntrypoint: "scripts/dev/lcx-skillopt-lite.ts",
+          ownerEntrypoint: "scripts/operator/lcx-skillopt-lite.ts",
           fastCheck:
-            "node --import tsx scripts/dev/lcx-skillopt-lite.ts --phase candidate-edit --no-write --json",
+            "node --import tsx scripts/operator/lcx-skillopt-lite.ts --phase candidate-edit --no-write --json",
           evidenceReceipts: expect.arrayContaining([
             "lcx-skillopt-lite",
             "skillopt-autocue",
@@ -567,8 +572,8 @@ describe("LCX flow graph exam", () => {
         }),
         expect.objectContaining({
           scenarioId: "universe_index_total_coverage_waterflow",
-          ownerEntrypoint: "scripts/dev/lcx-universe-index.ts",
-          fastCheck: "node --import tsx scripts/dev/lcx-universe-index.ts --json",
+          ownerEntrypoint: "scripts/operator/lcx-universe-index.ts",
+          fastCheck: "node --import tsx scripts/operator/lcx-universe-index.ts --json",
           evidenceReceipts: expect.arrayContaining(["lcx-universe-index-latest"]),
           failureSignals: expect.arrayContaining([
             "missing_or_skipped_filter:inventory_only_no_delete",
@@ -577,8 +582,8 @@ describe("LCX flow graph exam", () => {
         }),
         expect.objectContaining({
           scenarioId: "commercial_answer_pipeline_waterflow",
-          ownerEntrypoint: "scripts/dev/lcx-commercial-answer-pipeline.ts",
-          fastCheck: "node --import tsx scripts/dev/lcx-commercial-answer-pipeline.ts --json",
+          ownerEntrypoint: "scripts/operator/lcx-commercial-answer-pipeline.ts",
+          fastCheck: "node --import tsx scripts/operator/lcx-commercial-answer-pipeline.ts --json",
           evidenceReceipts: expect.arrayContaining(["commercial_answer_pipeline"]),
           failureSignals: expect.arrayContaining([
             "missing_or_skipped_filter:candidate_answer_not_final_authority",
@@ -587,8 +592,9 @@ describe("LCX flow graph exam", () => {
         }),
         expect.objectContaining({
           scenarioId: "directed_daily_research_brief_waterflow",
-          ownerEntrypoint: "scripts/dev/lcx-directed-daily-research-brief.ts",
-          fastCheck: "node --import tsx scripts/dev/lcx-directed-daily-research-brief.ts --json",
+          ownerEntrypoint: "scripts/operator/lcx-directed-daily-research-brief.ts",
+          fastCheck:
+            "node --import tsx scripts/operator/lcx-directed-daily-research-brief.ts --json",
           evidenceReceipts: expect.arrayContaining(["lcx-directed-daily-research-brief-latest"]),
           failureSignals: expect.arrayContaining([
             "missing_or_skipped_filter:focused_daily_product_required",
@@ -597,8 +603,9 @@ describe("LCX flow graph exam", () => {
         }),
         expect.objectContaining({
           scenarioId: "commercial_acceptance_harness_waterflow",
-          ownerEntrypoint: "scripts/dev/lcx-commercial-acceptance-harness.ts",
-          fastCheck: "node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json",
+          ownerEntrypoint: "scripts/operator/lcx-commercial-acceptance-harness.ts",
+          fastCheck:
+            "node --import tsx scripts/operator/lcx-commercial-acceptance-harness.ts --json",
           evidenceReceipts: expect.arrayContaining(["commercial_acceptance_harness"]),
           failureSignals: expect.arrayContaining([
             "missing_or_skipped_filter:commercial_error_budget_required",
@@ -607,8 +614,8 @@ describe("LCX flow graph exam", () => {
         }),
         expect.objectContaining({
           scenarioId: "self_repair_hands_waterflow",
-          ownerEntrypoint: "scripts/dev/lcx-self-repair-hands.ts",
-          fastCheck: "node --import tsx scripts/dev/lcx-self-repair-hands.ts --json",
+          ownerEntrypoint: "scripts/operator/lcx-self-repair-hands.ts",
+          fastCheck: "node --import tsx scripts/operator/lcx-self-repair-hands.ts --json",
           evidenceReceipts: expect.arrayContaining([
             "lcx-self-repair-hands-latest",
             "lcx-owner-control-map-latest",
@@ -620,14 +627,27 @@ describe("LCX flow graph exam", () => {
         }),
         expect.objectContaining({
           scenarioId: "external_agent_skill_distillation_waterflow",
-          ownerEntrypoint: "scripts/dev/lcx-external-agent-upgrade-radar.ts",
-          fastCheck: "node --import tsx scripts/dev/lcx-external-agent-upgrade-radar.ts --json",
+          ownerEntrypoint: "scripts/operator/lcx-external-agent-upgrade-radar.ts",
+          fastCheck:
+            "node --import tsx scripts/operator/lcx-external-agent-upgrade-radar.ts --json",
           evidenceReceipts: expect.arrayContaining(["lcx-external-agent-upgrade-radar"]),
         }),
         expect.objectContaining({
+          scenarioId: "multi_agent_pattern_shadow_evaluation_waterflow",
+          ownerEntrypoint: "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
+          fastCheck:
+            "node --import tsx scripts/operator/lcx-multi-agent-pattern-shadow.ts --mode replay --pattern all --case single_stock_loss_recovery_risk_triage --json",
+          evidenceReceipts: expect.arrayContaining(["lcx-multi-agent-pattern-shadow"]),
+          failureSignals: expect.arrayContaining([
+            "missing_or_skipped_filter:same_case_required",
+            "missing_or_skipped_filter:shadow_recovery_receipt_required",
+          ]),
+        }),
+        expect.objectContaining({
           scenarioId: "prediction_market_research_only_waterflow",
-          ownerEntrypoint: "scripts/dev/lcx-external-agent-upgrade-radar.ts",
-          fastCheck: "node --import tsx scripts/dev/lcx-external-agent-upgrade-radar.ts --json",
+          ownerEntrypoint: "scripts/operator/lcx-external-agent-upgrade-radar.ts",
+          fastCheck:
+            "node --import tsx scripts/operator/lcx-external-agent-upgrade-radar.ts --json",
           evidenceReceipts: expect.arrayContaining([
             "lcx-external-agent-upgrade-radar",
             "finance-data-gateway",
@@ -643,15 +663,15 @@ describe("LCX flow graph exam", () => {
 
   it("is visible from doctor, mind model, head-tail, and runbook surfaces", async () => {
     const [doctorSource, mindModelSource, headTailSource, agents, runbook] = await Promise.all([
-      fs.readFile(path.join(repoRoot, "scripts/dev/lcx-system-doctor.ts"), "utf8"),
-      fs.readFile(path.join(repoRoot, "scripts/dev/lcx-mind-model.ts"), "utf8"),
-      fs.readFile(path.join(repoRoot, "scripts/dev/lcx-head-tail-consistency.ts"), "utf8"),
+      fs.readFile(path.join(repoRoot, "scripts/operator/lcx-system-doctor.ts"), "utf8"),
+      fs.readFile(path.join(repoRoot, "scripts/operator/lcx-mind-model.ts"), "utf8"),
+      fs.readFile(path.join(repoRoot, "scripts/operator/lcx-head-tail-consistency.ts"), "utf8"),
       fs.readFile(path.join(repoRoot, "AGENTS.md"), "utf8"),
       fs.readFile(path.join(repoRoot, "ops/local-brain/README.md"), "utf8"),
     ]);
 
     expect(doctorSource).toContain('name: "flow-graph-exam"');
-    expect(doctorSource).toContain("scripts/dev/lcx-flow-graph.ts");
+    expect(doctorSource).toContain("scripts/operator/lcx-flow-graph.ts");
     expect(mindModelSource).toContain("flow_graph");
     expect(headTailSource).toContain("flow_graph_boundary");
     expect(agents).toContain("LCX Agent Flow Graph");

@@ -19,7 +19,7 @@ async function parseJsonl(filePath: string): Promise<unknown[]> {
 describe("local brain distill dataset", () => {
   it("publishes dataset files only after atomic same-directory writes", async () => {
     const source = await fs.readFile(
-      path.join(repoRoot, "scripts/dev/local-brain-distill-dataset.ts"),
+      path.join(repoRoot, "scripts/operator/local-brain-distill-dataset.ts"),
       "utf8",
     );
 
@@ -35,7 +35,7 @@ describe("local brain distill dataset", () => {
 
   it("teaches Qwen no-think compact JSON prompts in every generated dataset example", async () => {
     const source = await fs.readFile(
-      path.join(repoRoot, "scripts/dev/local-brain-distill-dataset.ts"),
+      path.join(repoRoot, "scripts/operator/local-brain-distill-dataset.ts"),
       "utf8",
     );
 
@@ -49,7 +49,7 @@ describe("local brain distill dataset", () => {
 
   it("includes current real-market stress families as high-weight Qwen curated seeds", async () => {
     const source = await fs.readFile(
-      path.join(repoRoot, "scripts/dev/local-brain-distill-dataset.ts"),
+      path.join(repoRoot, "scripts/operator/local-brain-distill-dataset.ts"),
       "utf8",
     );
 
@@ -71,7 +71,7 @@ describe("local brain distill dataset", () => {
     const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-local-brain-dataset-"));
     const workspaceDir = path.join(fixtureRoot, "workspace");
     const outDir = path.join(fixtureRoot, "dataset");
-    const receiptsDir = path.join(workspaceDir, "memory", "feishu-work-receipts");
+    const receiptsDir = path.join(workspaceDir, "memory", "external-work-receipts");
     await fs.mkdir(receiptsDir, { recursive: true });
     await Promise.all(
       Array.from({ length: 12 }, (_, index) =>
@@ -96,7 +96,7 @@ describe("local brain distill dataset", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-dataset.ts",
+        "scripts/operator/local-brain-distill-dataset.ts",
         "--workspace",
         workspaceDir,
         "--out",
@@ -149,7 +149,14 @@ describe("local brain distill dataset", () => {
 
     const { stdout } = await execFileAsync(
       process.execPath,
-      ["--import", "tsx", "scripts/dev/local-brain-distill-smoke.ts", "--data", outDir, "--json"],
+      [
+        "--import",
+        "tsx",
+        "scripts/operator/local-brain-distill-smoke.ts",
+        "--data",
+        outDir,
+        "--json",
+      ],
       {
         cwd: repoRoot,
         env: { ...process.env, HOME: fixtureRoot },
@@ -168,11 +175,11 @@ describe("local brain distill dataset", () => {
     const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-local-brain-handoff-"));
     const workspaceDir = path.join(fixtureRoot, "workspace");
     const outDir = path.join(fixtureRoot, "dataset");
-    const receiptsDir = path.join(workspaceDir, "memory", "feishu-work-receipts");
+    const receiptsDir = path.join(workspaceDir, "memory", "external-work-receipts");
     const handoffDir = path.join(
       workspaceDir,
       "memory",
-      "lark-language-handoff-receipts",
+      "external-message-handoff-receipts",
       "2026-06-02",
     );
     await fs.mkdir(receiptsDir, { recursive: true });
@@ -226,7 +233,7 @@ describe("local brain distill dataset", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-dataset.ts",
+        "scripts/operator/local-brain-distill-dataset.ts",
         "--workspace",
         workspaceDir,
         "--out",
@@ -250,7 +257,7 @@ describe("local brain distill dataset", () => {
       meta?: { sourceKind?: string };
     }>;
     const handoffExample = splitExamples.find(
-      (entry) => entry.meta?.sourceKind === "lark_language_handoff_receipt",
+      (entry) => entry.meta?.sourceKind === "external_language_handoff_receipt",
     );
     expect(handoffExample).toBeTruthy();
     const completion = JSON.parse(handoffExample?.completion ?? "{}") as {
@@ -262,7 +269,14 @@ describe("local brain distill dataset", () => {
 
     const { stdout } = await execFileAsync(
       process.execPath,
-      ["--import", "tsx", "scripts/dev/local-brain-distill-smoke.ts", "--data", outDir, "--json"],
+      [
+        "--import",
+        "tsx",
+        "scripts/operator/local-brain-distill-smoke.ts",
+        "--data",
+        outDir,
+        "--json",
+      ],
       {
         cwd: repoRoot,
         env: { ...process.env, HOME: fixtureRoot },
@@ -278,7 +292,7 @@ describe("local brain distill dataset", () => {
     const reviewDir = path.join(
       workspaceDir,
       "memory",
-      "lark-brain-distillation-reviews",
+      "external-brain-distillation-reviews",
       "2026-05-06",
     );
     await fs.mkdir(reviewDir, { recursive: true });
@@ -323,7 +337,7 @@ describe("local brain distill dataset", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-dataset.ts",
+        "scripts/operator/local-brain-distill-dataset.ts",
         "--workspace",
         workspaceDir,
         "--out",
@@ -413,7 +427,7 @@ describe("local brain distill dataset", () => {
       path.join(planDir, "options.json"),
       JSON.stringify({
         ok: true,
-        boundary: "dev_module_learning_pipeline_plan",
+        boundary: "local_module_learning_pipeline_plan",
         ...row,
         applicationValidationTask:
           "Use options volatility learning on a fresh QQQ/TLT/NVDA portfolio-risk research task.",
@@ -436,7 +450,7 @@ describe("local brain distill dataset", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-dataset.ts",
+        "scripts/operator/local-brain-distill-dataset.ts",
         "--workspace",
         workspaceDir,
         "--out",
@@ -491,7 +505,7 @@ describe("local brain distill dataset", () => {
     const reviewDir = path.join(
       workspaceDir,
       "memory",
-      "lark-brain-distillation-reviews",
+      "external-brain-distillation-reviews",
       "2026-05-08",
     );
     await fs.mkdir(reviewDir, { recursive: true });
@@ -567,7 +581,7 @@ describe("local brain distill dataset", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-dataset.ts",
+        "scripts/operator/local-brain-distill-dataset.ts",
         "--workspace",
         workspaceDir,
         "--out",
@@ -598,7 +612,7 @@ describe("local brain distill dataset", () => {
     const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-local-brain-unreadable-"));
     const workspaceDir = path.join(fixtureRoot, "workspace");
     const outDir = path.join(fixtureRoot, "dataset");
-    const readableDir = path.join(workspaceDir, "memory", "feishu-work-receipts");
+    const readableDir = path.join(workspaceDir, "memory", "external-work-receipts");
     const unreadableDir = path.join(workspaceDir, "private");
     await fs.mkdir(readableDir, { recursive: true });
     await fs.mkdir(unreadableDir, { recursive: true });
@@ -615,7 +629,7 @@ describe("local brain distill dataset", () => {
         [
           "--import",
           "tsx",
-          "scripts/dev/local-brain-distill-dataset.ts",
+          "scripts/operator/local-brain-distill-dataset.ts",
           "--workspace",
           workspaceDir,
           "--out",

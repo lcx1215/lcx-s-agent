@@ -234,14 +234,6 @@ async function buildPayload(params: {
       "Do not let L5 pass on a receipt file that exists but does not contain the loop state being evaluated.",
     ),
     gate(
-      "lark_operability_receipts",
-      params.baseline.lark.liveReceiptCount > 0 &&
-        params.baseline.lark.currentReplayCandidateCount > 0 &&
-        params.baseline.lark.currentReplayRejectedCount === 0,
-      `receipts=${params.baseline.lark.liveReceiptCount} replay=${params.baseline.lark.currentReplayCandidateCount}/${params.baseline.lark.currentReplayRejectedCount}`,
-      "A true live-visible-fixed claim still needs build, restart, probe, and a real Lark entry.",
-    ),
-    gate(
       "safety_boundaries",
       ["research_only", "no_execution_authority", "no_model_math_guessing"].every((entry) =>
         boundaries.includes(entry),

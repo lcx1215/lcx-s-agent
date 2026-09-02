@@ -76,7 +76,7 @@ const AUTO_CUE_RULES: SkillAutoCueRule[] = [
   {
     skillName: "lcx-commercial-answer-pipeline-operator",
     reason:
-      "the request is about commercial answer adoption, short Lark intent expansion, bounded review, or visible reply failed reasons",
+      "the request is about commercial answer adoption, short External intent expansion, bounded review, or visible reply failed reasons",
     patterns: [
       /商用.{0,12}(回答|回复|流水线|pipeline)/,
       /回答.{0,12}流水线/,
@@ -132,33 +132,11 @@ const AUTO_CUE_RULES: SkillAutoCueRule[] = [
     ],
   },
   {
-    skillName: "lark-post-migration-probe",
-    reason:
-      "the request asks for post-migration Lark/Feishu live proof or live-user-seen validation",
-    patterns: [
-      /lark.{0,16}(迁移|probe|验收|live)/i,
-      /feishu.{0,16}(迁移|probe|验收|live)/i,
-      /飞书.{0,16}(迁移|探针|验收|真实)/,
-      /live-user-seen/i,
-      /真实.{0,8}(发消息|收消息|验证|验收)/,
-    ],
-  },
-  {
-    skillName: "lark-live-loop-debugger",
-    reason: "the request is about Lark/Feishu reply-flow debugging or visible reply behavior",
-    patterns: [
-      /lark.{0,16}(回复|消息|回路|debug|weird|bug)/i,
-      /feishu.{0,16}(回复|消息|回路|debug|weird|bug)/i,
-      /飞书.{0,16}(回复|消息|回路|调试|异常)/,
-      /可见.{0,8}回复/,
-      /reply-flow/i,
-    ],
-  },
-  {
     skillName: "agent-runtime-drift-auditor",
     reason:
-      "the request is about dev/live/runtime drift, sidecar sync, or migration boundary checks",
+      "the request is about runtime drift, sidecar sync, external-channel status, or visible reply proof",
     patterns: [
+      // Keep legacy input aliases for routing old requests; current architecture remains one local system/factory.
       /dev.{0,8}live/i,
       /live.{0,12}sidecar/i,
       /runtime.{0,8}drift/i,
@@ -166,6 +144,14 @@ const AUTO_CUE_RULES: SkillAutoCueRule[] = [
       /同步.{0,8}live/,
       /迁移.{0,8}live/,
       /漂移/,
+      /external.{0,16}(迁移|probe|验收|live)/i,
+      /外部消息通道.{0,16}(迁移|探针|验收|真实)/,
+      /user-visible-observed/i,
+      /真实.{0,8}(发消息|收消息|验证|验收)/,
+      /external.{0,16}(回复|消息|回路|debug|weird|bug)/i,
+      /外部消息通道.{0,16}(回复|消息|回路|调试|异常)/,
+      /可见.{0,8}回复/,
+      /reply-flow/i,
     ],
   },
   {

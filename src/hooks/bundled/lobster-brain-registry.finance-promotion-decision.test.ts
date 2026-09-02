@@ -1,18 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
-  parseFeishuFinanceDoctrinePromotionDecisionArtifact,
-  renderFeishuFinanceDoctrinePromotionDecisionArtifact,
+  parseExternalFinanceDoctrinePromotionDecisionArtifact,
+  renderExternalFinanceDoctrinePromotionDecisionArtifact,
 } from "./lobster-brain-registry.js";
 
 describe("finance promotion decision artifact", () => {
   it("round-trips the bounded promotion decision artifact contract", () => {
-    const rendered = renderFeishuFinanceDoctrinePromotionDecisionArtifact({
+    const rendered = renderExternalFinanceDoctrinePromotionDecisionArtifact({
       decidedAt: "2026-03-25T19:10:00.000Z",
       consumer: "holdings_thesis_revalidation",
       linkedCandidateArtifact:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-candidates.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-candidates.md",
       linkedReviewArtifact:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-review.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-review.md",
       decisions: [
         {
           candidateKey: "closest_scenario:base_case",
@@ -23,13 +23,13 @@ describe("finance promotion decision artifact", () => {
       ],
     });
 
-    expect(parseFeishuFinanceDoctrinePromotionDecisionArtifact(rendered)).toEqual({
+    expect(parseExternalFinanceDoctrinePromotionDecisionArtifact(rendered)).toEqual({
       decidedAt: "2026-03-25T19:10:00.000Z",
       consumer: "holdings_thesis_revalidation",
       linkedCandidateArtifact:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-candidates.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-candidates.md",
       linkedReviewArtifact:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-review.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-review.md",
       decisions: [
         {
           candidateKey: "closest_scenario:base_case",
@@ -43,13 +43,13 @@ describe("finance promotion decision artifact", () => {
 
   it("fails closed when reviewStateAtDecision is invalid", () => {
     expect(
-      parseFeishuFinanceDoctrinePromotionDecisionArtifact(`\
-# Feishu Finance Doctrine Promotion Decisions
+      parseExternalFinanceDoctrinePromotionDecisionArtifact(`\
+# External Finance Doctrine Promotion Decisions
 
 - **Decided At**: 2026-03-25T19:10:00.000Z
 - **Consumer**: holdings_thesis_revalidation
-- **Linked Candidate Artifact**: memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-candidates.md
-- **Linked Review Artifact**: memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-review.md
+- **Linked Candidate Artifact**: memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-candidates.md
+- **Linked Review Artifact**: memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-review.md
 
 ## Decisions
 ### Decision 1
@@ -62,9 +62,9 @@ describe("finance promotion decision artifact", () => {
       decidedAt: "2026-03-25T19:10:00.000Z",
       consumer: "holdings_thesis_revalidation",
       linkedCandidateArtifact:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-candidates.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-candidates.md",
       linkedReviewArtifact:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-review.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-review.md",
       decisions: [],
     });
   });

@@ -217,7 +217,7 @@ function buildCarryoverCueStatusLine(learning: LearningEvidence): string | undef
 
 function readLatestLearningTimeboxEvidence(cfg?: OpenClawConfig): LearningTimeboxEvidence {
   const workspaceDir = resolveWorkspaceRoot(cfg?.agents?.defaults?.workspace);
-  const timeboxDir = path.join(workspaceDir, "memory", "feishu-learning-timeboxes");
+  const timeboxDir = path.join(workspaceDir, "memory", "learning-timeboxes");
   try {
     const latest = fs
       .readdirSync(timeboxDir)
@@ -272,11 +272,7 @@ function readLatestWriteFailureEvidence(cfg?: OpenClawConfig): WriteFailureEvide
         return parsed ? [parsed] : [];
       })
       .filter(
-        (entry) =>
-          entry.category === "write_edit_failure" &&
-          (entry.source === "feishu.surface_memory" ||
-            entry.source === "feishu.work_receipts" ||
-            entry.source.startsWith("feishu.")),
+        (entry) => entry.category === "write_edit_failure" && entry.source.startsWith("channel."),
       )
       .toSorted((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt))[0];
     if (latest) {
@@ -308,7 +304,7 @@ function readLatestSearchHealthEvidence(cfg?: OpenClawConfig): SearchHealthEvide
       .filter(
         (entry) =>
           entry.category === "provider_degradation" &&
-          (entry.source.startsWith("feishu.") || entry.source.startsWith("provider.")),
+          (entry.source.startsWith("channel.") || entry.source.startsWith("provider.")),
       )
       .toSorted((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt))[0];
     if (latest) {
@@ -341,7 +337,7 @@ function readLatestLearningWorkflowRiskEvidence(
       })
       .filter(
         (entry) =>
-          entry.source === "feishu.learning_command" &&
+          entry.source === "channel.learning_command" &&
           (entry.category === "write_edit_failure" ||
             entry.category === "learning_quality_drift" ||
             entry.category === "provider_degradation"),
@@ -367,7 +363,6 @@ export function buildProtocolInfoReply(params: {
   provider?: string;
   model?: string;
   sessionEntry?: ProtocolInfoSessionState;
-  feishuReplyFlowEvidence?: string;
 }) {
   const kind = resolveProtocolInfoQuestionKind(params.text);
   if (!kind) {
@@ -446,10 +441,10 @@ export function buildProtocolInfoReply(params: {
     const writeFailure = readLatestWriteFailureEvidence(params.cfg);
     const workflowRisk = readLatestLearningWorkflowRiskEvidence(params.cfg);
     const lines = [
-      "当前状态回读：先看本地证据，再看通道是否接上，最后看真实 Lark 入站和回复。",
+      "当前状态回读：先看本地证据，再看通道是否接上，最后看真实外部通道入站和回复。",
       "本地修好：只代表代码和测试过了。",
-      "通道接上：只代表 Lark 运输层已重启并探活，不等于你已经看到了正确答案。",
-      "你这边真的可见：必须有真实 Lark 入站、最终回复发送成功、回复内容命中验收语义，三者缺一不可。",
+      "通道接上：只代表外部运输层已重启并探活，不等于你已经看到了正确答案。",
+      "你这边真的可见：必须有真实外部通道入站、最终回复发送成功、回复内容命中验收语义，三者缺一不可。",
     ];
     if (learning.source === "lobster-workface") {
       lines.push(`最近持久学习 artifact: 有 (${learning.date ?? "unknown date"})`);
@@ -471,7 +466,7 @@ export function buildProtocolInfoReply(params: {
     }
     if (writeFailure.source === "anomaly") {
       lines.push(
-        `最近写入异常: ${writeFailure.sourceSystem ?? "feishu"}${writeFailure.lastSeenAt ? ` @ ${writeFailure.lastSeenAt}` : ""}`,
+        `最近写入异常: ${writeFailure.sourceSystem ?? "channel"}${writeFailure.lastSeenAt ? ` @ ${writeFailure.lastSeenAt}` : ""}`,
       );
       if (writeFailure.problem) {
         lines.push(`写入异常问题: ${writeFailure.problem}`);
@@ -481,18 +476,13 @@ export function buildProtocolInfoReply(params: {
     }
     if (workflowRisk.source === "anomaly") {
       lines.push(
-        `最近工作流风险: ${workflowRisk.sourceSystem ?? "feishu"}${workflowRisk.lastSeenAt ? ` @ ${workflowRisk.lastSeenAt}` : ""}`,
+        `最近工作流风险: ${workflowRisk.sourceSystem ?? "channel"}${workflowRisk.lastSeenAt ? ` @ ${workflowRisk.lastSeenAt}` : ""}`,
       );
       if (workflowRisk.problem) {
         lines.push(`工作流风险问题: ${workflowRisk.problem}`);
       }
     }
-    if (params.feishuReplyFlowEvidence?.trim()) {
-      lines.push("可见 Lark/Feishu reply-flow 证据: 已提供。");
-      lines.push(params.feishuReplyFlowEvidence.trim());
-    } else {
-      lines.push("可见回复证据: 本次回复发出前无法自证，必须看随后真实出站回执。");
-    }
+    lines.push("可见回复证据: 本次回复发出前无法自证，必须看随后真实出站回执。");
     lines.push(
       "下一步检查: 找第一层缺失证据，不能把本地修好、通道接上、你已看见混成一个成功结论。",
     );
@@ -816,7 +806,7 @@ export function buildProtocolInfoReply(params: {
       lines.push(buildCarryoverCueStatusLine(learning) ?? "Carryover cue: unavailable");
       if (writeFailureRelevant) {
         lines.push(
-          `Latest explicit write failure: ${writeFailure.sourceSystem ?? "feishu"}${writeFailure.lastSeenAt ? ` @ ${writeFailure.lastSeenAt}` : ""}`,
+          `Latest explicit write failure: ${writeFailure.sourceSystem ?? "channel"}${writeFailure.lastSeenAt ? ` @ ${writeFailure.lastSeenAt}` : ""}`,
         );
         if (writeFailure.problem) {
           lines.push(`Failure problem: ${writeFailure.problem}`);
@@ -836,7 +826,7 @@ export function buildProtocolInfoReply(params: {
       }
       if (writeFailure.source === "anomaly") {
         lines.push(
-          `Latest explicit write failure: ${writeFailure.sourceSystem ?? "feishu"}${writeFailure.lastSeenAt ? ` @ ${writeFailure.lastSeenAt}` : ""}`,
+          `Latest explicit write failure: ${writeFailure.sourceSystem ?? "channel"}${writeFailure.lastSeenAt ? ` @ ${writeFailure.lastSeenAt}` : ""}`,
         );
       }
       lines.push(
@@ -846,7 +836,7 @@ export function buildProtocolInfoReply(params: {
       lines.push("Durable artifact: none recent");
       if (writeFailure.source === "anomaly") {
         lines.push(
-          `Latest explicit write failure: ${writeFailure.sourceSystem ?? "feishu"}${writeFailure.lastSeenAt ? ` @ ${writeFailure.lastSeenAt}` : ""}`,
+          `Latest explicit write failure: ${writeFailure.sourceSystem ?? "channel"}${writeFailure.lastSeenAt ? ` @ ${writeFailure.lastSeenAt}` : ""}`,
         );
       }
       lines.push(
@@ -874,7 +864,7 @@ export function buildProtocolInfoReply(params: {
       lines.push("Current-session understanding: yes");
       if (writeFailureRelevant) {
         lines.push(
-          `Latest explicit write failure: ${writeFailure.sourceSystem ?? "feishu"}${writeFailure.lastSeenAt ? ` @ ${writeFailure.lastSeenAt}` : ""}`,
+          `Latest explicit write failure: ${writeFailure.sourceSystem ?? "channel"}${writeFailure.lastSeenAt ? ` @ ${writeFailure.lastSeenAt}` : ""}`,
         );
         if (writeFailure.problem) {
           lines.push(`Failure problem: ${writeFailure.problem}`);
@@ -890,7 +880,7 @@ export function buildProtocolInfoReply(params: {
       lines.push("Current-session understanding: yes");
       if (writeFailure.source === "anomaly") {
         lines.push(
-          `Latest explicit write failure: ${writeFailure.sourceSystem ?? "feishu"}${writeFailure.lastSeenAt ? ` @ ${writeFailure.lastSeenAt}` : ""}`,
+          `Latest explicit write failure: ${writeFailure.sourceSystem ?? "channel"}${writeFailure.lastSeenAt ? ` @ ${writeFailure.lastSeenAt}` : ""}`,
         );
         if (writeFailure.problem) {
           lines.push(`Failure problem: ${writeFailure.problem}`);
@@ -912,7 +902,7 @@ export function buildProtocolInfoReply(params: {
       );
       if (writeFailure.source === "anomaly") {
         lines.push(
-          `Latest explicit write failure: ${writeFailure.sourceSystem ?? "feishu"}${writeFailure.lastSeenAt ? ` @ ${writeFailure.lastSeenAt}` : ""}`,
+          `Latest explicit write failure: ${writeFailure.sourceSystem ?? "channel"}${writeFailure.lastSeenAt ? ` @ ${writeFailure.lastSeenAt}` : ""}`,
         );
         if (writeFailure.problem) {
           lines.push(`Failure problem: ${writeFailure.problem}`);
@@ -1056,10 +1046,10 @@ export function buildProtocolInfoReply(params: {
       text: [
         "🧠 Agent architecture",
         "Short answer: not pure API chat. This is a main control-room agent with routed working surfaces, learning-council lanes, tools, memory/artifact receipts, and optional subagent/session-spawn capability.",
-        "Current structure: control_room routes ordinary Lark/Feishu language into specialist surfaces such as learning_command, technical_daily, fundamental_research, knowledge_maintenance, ops_audit, and watchtower.",
+        "Current structure: control_room routes ordinary external-channel language into specialist surfaces such as learning_command, technical_daily, fundamental_research, knowledge_maintenance, ops_audit, and watchtower.",
         "Learning path: learning_command can run a three-lane council with stable Kimi / MiniMax / DeepSeek role labels; those labels are structural receipts, not a claim that every reply always used three live providers.",
         "Subagents: OpenClaw also exposes sessions_spawn / subagents capability for real spawned work, but ordinary answers do not automatically become a persistent multi-agent swarm.",
-        "Boundary: this answer is runtime/protocol truth, not marketing. Live Lark proof still requires build, restart, probe, and visible reply evidence.",
+        "Boundary: this answer is runtime/protocol truth, not marketing. Live external-channel proof still requires build, restart, probe, and visible reply evidence.",
         lobsterLine,
       ]
         .filter(Boolean)
@@ -1070,12 +1060,12 @@ export function buildProtocolInfoReply(params: {
     return {
       text: [
         "🧪 Learning capability state",
-        "Dev truth: learning_command routing, the finance learning pipeline concept, capability candidate attachment / inspect paths, and finance-learning maintenance language families are wired in the repo surface.",
+        "Core truth: learning_command routing, the finance learning pipeline concept, capability candidate attachment / inspect paths, and finance-learning maintenance language families are wired in the canonical repository surface.",
         "Backend paths to look for: finance_learning_pipeline_orchestrator, finance_learning_capability_inspect, finance_learning_capability_attach, finance_article_extract_capability_input, and learning_command council routing.",
-        "What this means: the system can classify Lark language into the learning surface and has internal tool paths for bounded finance-learning artifacts; it should preserve existing candidates and receipts instead of restarting from blank learning.",
+        "What this means: the system can classify external-channel language into the learning surface and has internal tool paths for bounded finance-learning artifacts; it should preserve existing candidates and receipts instead of restarting from blank learning.",
         "Current acceptance gate: a finance-learning run is not treated as internalized just because it became retrievable. The pipeline distinguishes application_ready, retrievable_but_not_application_ready, and not_retrievable through retrievalFirstLearning.learningInternalizationStatus.",
-        "What it does not prove: this is not live-visible-fixed by itself. It does not prove the current deployed Lark bot rebuilt, restarted, routed a real message, or visibly invoked the pipeline in production.",
-        "Required live proof: build, restart, probe, one real Lark phrase for this family, visible reply naming target surface=learning_command plus the intended finance-learning tool path and learningInternalizationStatus, and no fake claim that a background learning swarm started.",
+        "What it does not prove: this is not user-visible-observed by itself. It does not prove the current channel runtime rebuilt, restarted, routed a real message, or visibly invoked the pipeline.",
+        "Required external-channel proof: build, restart, probe, one real channel phrase for this family, visible reply naming target surface=learning_command plus the intended finance-learning tool path and learningInternalizationStatus, and no fake claim that a background learning swarm started.",
         lobsterLine,
       ]
         .filter(Boolean)

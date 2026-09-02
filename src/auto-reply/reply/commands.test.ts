@@ -99,10 +99,6 @@ vi.mock("./session-updates.js", () => ({
   incrementCompactionCount: vi.fn(),
 }));
 
-vi.mock("./feishu-reply-flow-evidence.js", () => ({
-  summarizeRecentFeishuReplyFlowEvidence: vi.fn().mockResolvedValue(undefined),
-}));
-
 const callGatewayMock = vi.fn();
 vi.mock("../../gateway/call.js", () => ({
   callGateway: (opts: unknown) => callGatewayMock(opts),
@@ -110,7 +106,6 @@ vi.mock("../../gateway/call.js", () => ({
 
 import type { HandleCommandsParams } from "./commands-types.js";
 import { buildCommandContext, handleCommands } from "./commands.js";
-import { summarizeRecentFeishuReplyFlowEvidence } from "./feishu-reply-flow-evidence.js";
 
 // Avoid expensive workspace scans during /context tests.
 vi.mock("./commands-context-report.js", () => ({
@@ -981,7 +976,6 @@ describe("handleCommands hooks", () => {
 describe("handleCommands context", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(summarizeRecentFeishuReplyFlowEvidence).mockResolvedValue(undefined);
   });
 
   it("returns expected details for /context commands", async () => {
@@ -1052,13 +1046,12 @@ describe("handleCommands context", () => {
       expect(result.shouldContinue).toBe(false);
       expect(result.reply?.text).toContain("当前状态回读：先看本地证据");
       expect(result.reply?.text).toContain(
-        "通道接上：只代表 Lark 运输层已重启并探活，不等于你已经看到了正确答案。",
+        "通道接上：只代表外部运输层已重启并探活，不等于你已经看到了正确答案。",
       );
-      expect(result.reply?.text).toContain("你这边真的可见：必须有真实 Lark 入站");
+      expect(result.reply?.text).toContain("你这边真的可见：必须有真实外部通道入站");
       expect(result.reply?.text).toContain(
         "可见回复证据: 本次回复发出前无法自证，必须看随后真实出站回执。",
       );
-      expect(vi.mocked(summarizeRecentFeishuReplyFlowEvidence)).not.toHaveBeenCalled();
       expect(result.reply?.text).toContain("下一步检查: 找第一层缺失证据");
       expect(result.reply?.text).not.toContain("Dev-fixed:");
       expect(result.reply?.text).not.toContain("Probe-fixed:");
@@ -1066,148 +1059,6 @@ describe("handleCommands context", () => {
       expect(result.reply?.text).not.toContain("ℹ️ Help");
     },
   );
-
-  it("includes Feishu reply-flow evidence in Feishu status-readback replies", async () => {
-    vi.mocked(summarizeRecentFeishuReplyFlowEvidence).mockResolvedValueOnce(
-      [
-        "## Recent Feishu/Lark Reply Flow Evidence",
-        "Reply-path status evidence: visible_reply_delivered",
-        "Boundary: this proves only the recorded reply delivery layer.",
-      ].join("\n"),
-    );
-    const cfg = {
-      commands: { text: true },
-      channels: { whatsapp: { allowFrom: ["*"] } },
-      agents: {
-        defaults: {
-          workspace: testWorkspaceDir,
-          model: { primary: "moonshot/kimi-k2.6" },
-        },
-      },
-    } as unknown as OpenClawConfig;
-    const params = buildParams("现在修到哪了", cfg, {
-      OriginatingChannel: "feishu",
-      OriginatingTo: "oc-control",
-      Provider: "feishu",
-      Surface: "feishu",
-    });
-    params.provider = "feishu";
-
-    const result = await handleCommands(params);
-
-    expect(result.shouldContinue).toBe(false);
-    expect(vi.mocked(summarizeRecentFeishuReplyFlowEvidence)).toHaveBeenCalledOnce();
-    expect(result.reply?.text).toContain("当前状态回读：先看本地证据");
-    expect(result.reply?.text).toContain("可见 Lark/Feishu reply-flow 证据: 已提供。");
-    expect(result.reply?.text).toContain("Reply-path status evidence: visible_reply_delivered");
-    expect(result.reply?.text).toContain(
-      "Boundary: this proves only the recorded reply delivery layer.",
-    );
-  });
-
-  it("includes Lark reply-flow evidence in Lark status-readback replies", async () => {
-    vi.mocked(summarizeRecentFeishuReplyFlowEvidence).mockResolvedValueOnce(
-      [
-        "## Recent Feishu/Lark Reply Flow Evidence",
-        "Reply-path status evidence: visible_reply_delivered",
-        "Boundary: this proves only the recorded reply delivery layer.",
-      ].join("\n"),
-    );
-    const cfg = {
-      commands: { text: true },
-      channels: { whatsapp: { allowFrom: ["*"] } },
-      agents: {
-        defaults: {
-          workspace: testWorkspaceDir,
-          model: { primary: "moonshot/kimi-k2.6" },
-        },
-      },
-    } as unknown as OpenClawConfig;
-    const params = buildParams("现在修到哪了", cfg, {
-      OriginatingChannel: "lark",
-      OriginatingTo: "oc-control",
-      Provider: "lark",
-      Surface: "lark",
-    });
-    params.provider = "lark";
-
-    const result = await handleCommands(params);
-
-    expect(result.shouldContinue).toBe(false);
-    expect(vi.mocked(summarizeRecentFeishuReplyFlowEvidence)).toHaveBeenCalledOnce();
-    expect(result.reply?.text).toContain("当前状态回读：先看本地证据");
-    expect(result.reply?.text).toContain("可见 Lark/Feishu reply-flow 证据: 已提供。");
-    expect(result.reply?.text).toContain("Reply-path status evidence: visible_reply_delivered");
-    expect(result.reply?.text).toContain(
-      "Boundary: this proves only the recorded reply delivery layer.",
-    );
-  });
-
-  it("keeps Lark status-readback deterministic when reply-flow evidence read fails", async () => {
-    vi.mocked(summarizeRecentFeishuReplyFlowEvidence).mockRejectedValueOnce(
-      new Error("log unavailable"),
-    );
-    const cfg = {
-      commands: { text: true },
-      channels: { whatsapp: { allowFrom: ["*"] } },
-      agents: {
-        defaults: {
-          workspace: testWorkspaceDir,
-          model: { primary: "moonshot/kimi-k2.6" },
-        },
-      },
-    } as unknown as OpenClawConfig;
-    const params = buildParams("现在能用了吗", cfg, {
-      OriginatingChannel: "lark",
-      OriginatingTo: "oc-control",
-      Provider: "lark",
-      Surface: "lark",
-    });
-    params.provider = "lark";
-
-    const result = await handleCommands(params);
-
-    expect(result.shouldContinue).toBe(false);
-    expect(vi.mocked(summarizeRecentFeishuReplyFlowEvidence)).toHaveBeenCalledOnce();
-    expect(result.reply?.text).toContain("当前状态回读：先看本地证据");
-    expect(result.reply?.text).toContain(
-      "可见回复证据: 本次回复发出前无法自证，必须看随后真实出站回执。",
-    );
-    expect(result.reply?.text).toContain("下一步检查: 找第一层缺失证据");
-  });
-
-  it("keeps Feishu status-readback deterministic when reply-flow evidence read fails", async () => {
-    vi.mocked(summarizeRecentFeishuReplyFlowEvidence).mockRejectedValueOnce(
-      new Error("log unavailable"),
-    );
-    const cfg = {
-      commands: { text: true },
-      channels: { whatsapp: { allowFrom: ["*"] } },
-      agents: {
-        defaults: {
-          workspace: testWorkspaceDir,
-          model: { primary: "moonshot/kimi-k2.6" },
-        },
-      },
-    } as unknown as OpenClawConfig;
-    const params = buildParams("现在能用了吗", cfg, {
-      OriginatingChannel: "feishu",
-      OriginatingTo: "oc-control",
-      Provider: "feishu",
-      Surface: "feishu",
-    });
-    params.provider = "feishu";
-
-    const result = await handleCommands(params);
-
-    expect(result.shouldContinue).toBe(false);
-    expect(vi.mocked(summarizeRecentFeishuReplyFlowEvidence)).toHaveBeenCalledOnce();
-    expect(result.reply?.text).toContain("当前状态回读：先看本地证据");
-    expect(result.reply?.text).toContain(
-      "可见回复证据: 本次回复发出前无法自证，必须看随后真实出站回执。",
-    );
-    expect(result.reply?.text).toContain("下一步检查: 找第一层缺失证据");
-  });
 
   it.each(["lobster开了吗？", "is lobster on"])(
     "answers lobster state question %s with a short direct reply",
@@ -1343,7 +1194,7 @@ describe("handleCommands context", () => {
         occurrenceCount: 2,
         severity: "medium",
         category: "provider_degradation",
-        source: "feishu.monitor.transport",
+        source: "external.monitor.transport",
         problem: "web search degraded under current provider path",
         impact: "search-backed answers may narrow or fail",
         suggestedScope: "smallest safe patch only",
@@ -1377,7 +1228,7 @@ describe("handleCommands context", () => {
     expect(result.shouldContinue).toBe(false);
     expect(result.reply?.text).toContain("🔎 Search and provider health");
     expect(result.reply?.text).toContain(
-      "Recent degradation record: feishu.monitor.transport @ 2026-04-23T12:20:00.000Z",
+      "Recent degradation record: external.monitor.transport @ 2026-04-23T12:20:00.000Z",
     );
     expect(result.reply?.text).toContain(
       "Recent degradation problem: web search degraded under current provider path",
@@ -1614,7 +1465,7 @@ describe("handleCommands context", () => {
   it.each(["学习 session 现在还活着吗", "你刚才真的开始学那篇论文了吗"])(
     "answers learning-receipt question %s from recorded workflow and durable evidence instead of vibes",
     async (question) => {
-      await fs.mkdir(path.join(testWorkspaceDir, "memory", "feishu-learning-timeboxes"), {
+      await fs.mkdir(path.join(testWorkspaceDir, "memory", "external-learning-timeboxes"), {
         recursive: true,
       });
       await fs.writeFile(
@@ -1636,7 +1487,7 @@ describe("handleCommands context", () => {
         path.join(
           testWorkspaceDir,
           "memory",
-          "feishu-learning-timeboxes",
+          "external-learning-timeboxes",
           "2026-04-23T10-00-00.000Z__oc-learning.json",
         ),
         JSON.stringify({
@@ -1710,7 +1561,7 @@ describe("handleCommands context", () => {
         occurrenceCount: 1,
         severity: "medium",
         category: "learning_quality_drift",
-        source: "feishu.learning_command",
+        source: "external.learning_command",
         problem: "background learning timebox iteration failed",
         impact: "fewer study passes than requested may have completed",
         suggestedScope: "smallest safe patch only",
@@ -1760,14 +1611,14 @@ describe("handleCommands context", () => {
           }),
         ),
       );
-      await fs.mkdir(path.join(testWorkspaceDir, "memory", "feishu-learning-timeboxes"), {
+      await fs.mkdir(path.join(testWorkspaceDir, "memory", "external-learning-timeboxes"), {
         recursive: true,
       });
       await fs.writeFile(
         path.join(
           testWorkspaceDir,
           "memory",
-          "feishu-learning-timeboxes",
+          "external-learning-timeboxes",
           "2026-04-23T10-00-00.000Z__oc-learning.json",
         ),
         JSON.stringify({
@@ -1814,15 +1665,15 @@ describe("handleCommands context", () => {
         .filter((name) => /^\d{4}-\d{2}-\d{2}-lobster-workface\.md$/u.test(name))
         .map((name) => fs.rm(path.join(testWorkspaceDir, "memory", name), { force: true })),
     );
-    await fs.mkdir(path.join(testWorkspaceDir, "memory", "feishu-learning-timeboxes"), {
+    await fs.mkdir(path.join(testWorkspaceDir, "memory", "external-learning-timeboxes"), {
       recursive: true,
     });
     const timeboxEntries = await fs
-      .readdir(path.join(testWorkspaceDir, "memory", "feishu-learning-timeboxes"))
+      .readdir(path.join(testWorkspaceDir, "memory", "external-learning-timeboxes"))
       .catch(() => []);
     await Promise.all(
       timeboxEntries.map((name) =>
-        fs.rm(path.join(testWorkspaceDir, "memory", "feishu-learning-timeboxes", name), {
+        fs.rm(path.join(testWorkspaceDir, "memory", "external-learning-timeboxes", name), {
           force: true,
         }),
       ),
@@ -1868,7 +1719,7 @@ describe("handleCommands context", () => {
         occurrenceCount: 1,
         severity: "medium",
         category: "write_edit_failure",
-        source: "feishu.learning_command",
+        source: "external.learning_command",
         problem: "failed to start learning timebox because workspace dir is unavailable",
         impact: "the request was downgraded to a single learning pass",
         suggestedScope: "smallest safe patch only",
@@ -2050,8 +1901,8 @@ describe("handleCommands context", () => {
         occurrenceCount: 1,
         severity: "high",
         category: "write_edit_failure",
-        source: "feishu.work_receipts",
-        problem: "failed to persist feishu work receipt artifacts",
+        source: "external.work_receipts",
+        problem: "failed to persist external work receipt artifacts",
         impact: "structured work receipt missing",
         suggestedScope: "smallest safe patch only",
         evidence: ["surface=control_room"],
@@ -2077,10 +1928,10 @@ describe("handleCommands context", () => {
     expect(result.reply?.text).toContain("🧱 Write outcome");
     expect(result.reply?.text).toContain("Durable write: no fresh learning artifact");
     expect(result.reply?.text).toContain(
-      "Latest explicit write failure: feishu.work_receipts @ 2026-04-23T12:10:00.000Z",
+      "Latest explicit write failure: external.work_receipts @ 2026-04-23T12:10:00.000Z",
     );
     expect(result.reply?.text).toContain(
-      "Failure problem: failed to persist feishu work receipt artifacts",
+      "Failure problem: failed to persist external work receipt artifacts",
     );
     expect(result.reply?.text).not.toContain("ℹ️ Help");
   });

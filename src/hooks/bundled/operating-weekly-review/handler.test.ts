@@ -143,7 +143,7 @@ describe("operating-weekly-review hook", () => {
           occurrenceCount: 2,
           severity: "medium",
           category: "provider_degradation",
-          source: "feishu.monitor.startup",
+          source: "external.monitor.startup",
           foundationTemplate: "risk-transmission",
           problem: "startup bot-info probe timed out",
           impact: "startup health was degraded",
@@ -207,7 +207,7 @@ describe("operating-weekly-review hook", () => {
     expect(content).toContain("outcome-review: 1 correction note");
     expect(content).toContain("provider_or_freshness / abcd1234");
     expect(content).toContain(
-      "provider_degradation / feishu.monitor.startup: startup bot-info probe timed out (foundation risk-transmission, occurrences 2)",
+      "provider_degradation / external.monitor.startup: startup bot-info probe timed out (foundation risk-transmission, occurrences 2)",
     );
     expect(content).toContain("## Active Codex Escalations");
     expect(content).toContain(

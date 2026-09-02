@@ -6,9 +6,10 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const PYTHON = process.platform === "win32" ? "python" : "python3";
 
 function runPython(args: string[], options: { env?: NodeJS.ProcessEnv } = {}) {
-  return spawnSync("python3", args, {
+  return spawnSync(PYTHON, args, {
     cwd: repoRoot,
     encoding: "utf8",
     env: { ...process.env, ...options.env },
@@ -16,12 +17,12 @@ function runPython(args: string[], options: { env?: NodeJS.ProcessEnv } = {}) {
 }
 
 describe("scheduler clean-root entrypoints", () => {
-  it("exposes orchestrator status without Feishu/Lark or remote side effects", () => {
+  it("exposes orchestrator status without external message or remote side effects", () => {
     const result = runPython(["lobster_orchestrator.py", "status", "--json"]);
     expect(result.status).toBe(0);
     const payload = JSON.parse(result.stdout);
     expect(payload.status).toBe("scheduler_entrypoint_ready");
-    expect(payload.boundary.noFeishuLarkSend).toBe(true);
+    expect(payload.boundary.noExternalMessageSend).toBe(true);
     expect(payload.boundary.noRemoteFetch).toBe(true);
     expect(payload.boundary.noTradingExecution).toBe(true);
   });
@@ -50,7 +51,7 @@ describe("scheduler clean-root entrypoints", () => {
     fs.rmSync(reportPath, { force: true });
     fs.rmSync(failurePath, { force: true });
     const command = [
-      "python3",
+      PYTHON,
       "-c",
       JSON.stringify(
         "import json; print(json.dumps({'ok': True, 'scope': 'test_cycle', 'checks': [{'name': 'stub', 'ok': True, 'durationMs': 1}], 'liveTouched': False, 'providerConfigTouched': False, 'protectedMemoryTouched': False, 'remoteFetchOccurred': False, 'executionAuthorityGranted': False, 'summary': 'stub cycle passed'}))",
@@ -66,7 +67,7 @@ describe("scheduler clean-root entrypoints", () => {
     const payload = JSON.parse(result.stdout);
     expect(payload.status).toBe("cycle_completed");
     expect(payload.cycleResult.scope).toBe("test_cycle");
-    expect(payload.boundary.liveFeishuLarkSend).toBe(false);
+    expect(payload.boundary.liveExternalMessageSend).toBe(false);
     expect(fs.existsSync(reportPath)).toBe(true);
     expect(fs.existsSync(failurePath)).toBe(false);
     fs.rmSync(reportPath, { force: true });

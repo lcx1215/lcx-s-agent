@@ -160,13 +160,13 @@ describe("memory cli", () => {
     expect(close).toHaveBeenCalled();
   });
 
-  it("lists Lark language handoff receipts from a workspace override", async () => {
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-cli-lark-handoffs-"));
+  it("lists External language handoff receipts from a workspace override", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-cli-external-handoffs-"));
     try {
       const receiptPath = path.join(
         tmpDir,
         "memory",
-        "lark-language-handoff-receipts",
+        "external-message-handoff-receipts",
         "2026-04-30",
         "om_123.json",
       );
@@ -178,7 +178,7 @@ describe("memory cli", () => {
           boundary: "language_handoff_only",
           handoff: {
             family: "learning_external_source",
-            source: "real_lark_turn",
+            source: "real_external_turn",
             confidence: 0.9,
             backendToolContract: { toolName: "github_project_capability_intake" },
             missingBeforeExecution: ["repo_url_or_readme_summary_required"],
@@ -188,13 +188,13 @@ describe("memory cli", () => {
       );
       const log = spyRuntimeLogs();
 
-      await runMemoryCli(["receipts", "lark-handoffs", "--workspace", tmpDir, "--json"]);
+      await runMemoryCli(["receipts", "external-handoffs", "--workspace", tmpDir, "--json"]);
 
       const payload = firstLoggedJson(log);
       expect(payload.workspaceDir).toBe(tmpDir);
       expect(payload.receipts).toEqual([
         expect.objectContaining({
-          path: "memory/lark-language-handoff-receipts/2026-04-30/om_123.json",
+          path: "memory/external-message-handoff-receipts/2026-04-30/om_123.json",
           boundary: "language_handoff_only",
           family: "learning_external_source",
           backendTool: "github_project_capability_intake",

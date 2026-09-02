@@ -46,10 +46,10 @@ struct LCXAgentControlRoomTests {
                             "case_b",
                         ],
                     ],
-                    "liveLarkBrainBindingStatus": "deferred_active_training_or_eval",
-                    "liveBindingMissingProof": [
+                    "externalChannelBindingStatus": "deferred_active_training_or_eval",
+                    "externalChannelMissingProof": [
                         "current_training_eval_or_mlx_finished",
-                        "fresh_real_lark_inbound_and_outbound_seen",
+                        "fresh_real_external_inbound_and_outbound_seen",
                     ],
                     "skillOptLiteStatus": "candidate_edit_static_accepted_pending_eval",
                     "skillOptLiteMatchedSkillIds": [
@@ -78,11 +78,11 @@ struct LCXAgentControlRoomTests {
         #expect(snapshot.blacktechMechanismCount == 6)
         #expect(snapshot.blacktechRoutedCount == 6)
         #expect(snapshot.blacktechRuntimeAuthorityCount == 0)
-        #expect(snapshot.liveBindingMissingProof.count == 2)
+        #expect(snapshot.externalChannelMissingProof.count == 2)
         #expect(snapshot.handoffGeneratedAt == "2026-05-27T22:44:40.279Z")
         #expect(snapshot.departments.count == 8)
         #expect(snapshot.departments.contains { $0.id == "skillopt" && $0.detail.contains("finance_data_provenance_preflight") })
-        #expect(snapshot.departments.contains { $0.id == "live" && $0.status == "deferred_active_training_or_eval" })
+        #expect(snapshot.departments.contains { $0.id == "external-channel" && $0.status == "deferred_active_training_or_eval" })
     }
 
     @Test
@@ -95,7 +95,7 @@ struct LCXAgentControlRoomTests {
 
         #expect(snapshot.sourceReadStatus == "owner snapshots missing")
         #expect(snapshot.fastestSafeNextAction == "refresh owner state")
-        #expect(snapshot.liveBindingStatus == "unknown")
+        #expect(snapshot.externalChannelStatus == "unknown")
         #expect(snapshot.departments.count == 8)
     }
 }

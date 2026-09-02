@@ -665,6 +665,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
             ctx: ctxPayload,
             cfg,
             dispatcher,
+            globalEvidenceProjectionInput: { adapterId: "matrix-monitor" },
             replyOptions: {
               ...replyOptions,
               skillFilter: roomConfig?.skills,

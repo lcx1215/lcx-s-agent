@@ -208,7 +208,7 @@ describe("planFinanceBrainOrchestration", () => {
 
   it("does not mistake live learning audit identifiers for earnings or IV finance signals", () => {
     const plan = planFinanceBrainOrchestration({
-      text: "只复盘 lark-live-learning-20260502-2 的结果，不重新学习，必须可见 handoff receipt 和 audit_handoff_ready。",
+      text: "只复盘 external-live-learning-20260502-2 的结果，不重新学习，必须可见 handoff receipt 和 audit_handoff_ready。",
     });
 
     expect(plan.primaryModules).toEqual([]);

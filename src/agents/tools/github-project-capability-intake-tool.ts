@@ -75,7 +75,7 @@ function detectCapabilityFamily(text: string): GitHubCapabilityFamily {
     ],
     [
       "language_interface",
-      /(lark|feishu|utterance|intent|router|routing|corpus|dialog|conversation)/u,
+      /(external|webhook|message channel|utterance|intent|router|routing|corpus|dialog|conversation)/u,
     ],
     ["skills_runtime", /(skill|plugin|hook|extension|recipe|workflow pack|capability pack)/u],
     ["tool_runtime", /(tool call|tool-call|tool registry|function call|mcp|provider|api adapter)/u],
@@ -108,13 +108,13 @@ function existingEmbryosForFamily(family: GitHubCapabilityFamily): ExistingEmbry
     case "language_interface":
       return [
         {
-          surface: "Lark language routing corpus",
-          path: "extensions/feishu/src/lark-routing-corpus.ts",
+          surface: "external message routing contract",
+          path: "extensions/external/src/protocol.ts",
           fit: "strong",
         },
         {
-          surface: "Lark candidate review",
-          path: "src/agents/tools/lark-language-corpus-review-tool.ts",
+          surface: "external channel monitor",
+          path: "extensions/external/src/monitor.ts",
           fit: "strong",
         },
       ];
@@ -163,13 +163,13 @@ function existingEmbryosForFamily(family: GitHubCapabilityFamily): ExistingEmbry
     case "eval_trace":
       return [
         {
-          surface: "dev full-system smoke",
-          path: "scripts/dev/agent-system-loop-smoke.ts",
+          surface: "local full-system smoke",
+          path: "scripts/operator/agent-system-loop-smoke.ts",
           fit: "partial",
         },
         {
-          surface: "Feishu live probe",
-          path: "src/agents/tools/feishu-live-probe-tool.ts",
+          surface: "external channel contract tests",
+          path: "extensions/external/src/monitor.test.ts",
           fit: "partial",
         },
       ];
@@ -182,7 +182,7 @@ function existingEmbryosForFamily(family: GitHubCapabilityFamily): ExistingEmbry
         },
         {
           surface: "learning council",
-          path: "extensions/feishu/src/learning-council.ts",
+          path: "src/agents/provider-learning-council.ts",
           fit: "partial",
         },
       ];
@@ -202,8 +202,8 @@ function existingEmbryosForFamily(family: GitHubCapabilityFamily): ExistingEmbry
     case "ui_control_room":
       return [
         {
-          surface: "Feishu control-room surfaces",
-          path: "extensions/feishu/src/surfaces.ts",
+          surface: "external control-room surfaces",
+          path: "extensions/external/src/channel.ts",
           fit: "partial",
         },
         {
@@ -301,7 +301,7 @@ function buildNextPatch(params: {
   }
   switch (params.adoptionTarget) {
     case "routing_corpus_candidate":
-      return "Create pending Lark routing candidates, then run lark_language_corpus_review before touching the formal corpus.";
+      return "Create pending external routing candidates, then run the bounded routing review before touching any formal corpus.";
     case "skill_candidate":
       return "Draft one isolated skill note with uninstall/disable instructions before any runtime integration.";
     case "tool_candidate":
@@ -317,7 +317,7 @@ function buildNextPatch(params: {
     case "finance_learning_source_candidate":
       return "Route only safe local/manual finance content through finance_learning_pipeline_orchestrator.";
     case "control_room_design_candidate":
-      return "Prototype as a bounded local surface or artifact; do not change Feishu external channel sender until verified.";
+      return "Prototype as a bounded local surface or artifact; do not change the external channel sender until verified.";
     default:
       return params.family === "unknown"
         ? "Capture a clearer feature summary before implementation."

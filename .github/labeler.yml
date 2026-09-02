@@ -14,12 +14,11 @@
       - any-glob-to-any-file:
           - "extensions/irc/**"
           - "docs/channels/irc.md"
-"channel: feishu":
+"channel: external":
   - changed-files:
       - any-glob-to-any-file:
-          - "src/feishu/**"
-          - "extensions/feishu/**"
-          - "docs/channels/feishu.md"
+          - "extensions/external/**"
+          - "docs/channels/external.md"
 "channel: googlechat":
   - changed-files:
       - any-glob-to-any-file:

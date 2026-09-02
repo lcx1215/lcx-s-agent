@@ -2,11 +2,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  buildFeishuFinanceDoctrinePromotionCandidatesFilename,
-  buildFeishuFinanceDoctrinePromotionReviewFilename,
-  parseFeishuFinanceDoctrinePromotionCandidateArtifact,
-  parseFeishuFinanceDoctrinePromotionReviewArtifact,
-  renderFeishuFinanceDoctrinePromotionCandidateArtifact,
+  buildExternalFinanceDoctrinePromotionCandidatesFilename,
+  buildExternalFinanceDoctrinePromotionReviewFilename,
+  parseExternalFinanceDoctrinePromotionCandidateArtifact,
+  parseExternalFinanceDoctrinePromotionReviewArtifact,
+  renderExternalFinanceDoctrinePromotionCandidateArtifact,
 } from "../../hooks/bundled/lobster-brain-registry.js";
 import { makeTempWorkspace } from "../../test-helpers/workspace.js";
 import { createFinancePromotionReviewTool } from "./finance-promotion-review-tool.js";
@@ -23,13 +23,13 @@ describe("finance_promotion_review tool", () => {
 
   it("records a bounded review action and mirrors it into the candidate artifact", async () => {
     workspaceDir = await makeTempWorkspace("openclaw-finance-promotion-review-");
-    const receiptsDir = path.join(workspaceDir, "memory", "feishu-work-receipts");
+    const receiptsDir = path.join(workspaceDir, "memory", "external-work-receipts");
     await fs.mkdir(receiptsDir, { recursive: true });
     const dateKey = "2026-03-25";
 
     await fs.writeFile(
-      path.join(receiptsDir, buildFeishuFinanceDoctrinePromotionCandidatesFilename(dateKey)),
-      renderFeishuFinanceDoctrinePromotionCandidateArtifact({
+      path.join(receiptsDir, buildExternalFinanceDoctrinePromotionCandidatesFilename(dateKey)),
+      renderExternalFinanceDoctrinePromotionCandidateArtifact({
         generatedAt: "2026-03-25T15:00:00.000Z",
         consumer: "holdings_thesis_revalidation",
         windowDays: 7,
@@ -85,13 +85,13 @@ describe("finance_promotion_review tool", () => {
     expect(details.previousReviewState).toBe("unreviewed");
     expect(details.reviewNotes).toBe("wait for one more cycle before considering manual promotion");
     expect(details.candidatePath).toBe(
-      "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-candidates.md",
+      "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-candidates.md",
     );
     expect(details.reviewPath).toBe(
-      "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-review.md",
+      "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-review.md",
     );
 
-    const parsedCandidates = parseFeishuFinanceDoctrinePromotionCandidateArtifact(
+    const parsedCandidates = parseExternalFinanceDoctrinePromotionCandidateArtifact(
       await fs.readFile(path.join(workspaceDir, details.candidatePath), "utf8"),
     );
     expect(parsedCandidates?.candidates).toEqual(
@@ -108,9 +108,9 @@ describe("finance_promotion_review tool", () => {
       ]),
     );
 
-    const parsedReview = parseFeishuFinanceDoctrinePromotionReviewArtifact(
+    const parsedReview = parseExternalFinanceDoctrinePromotionReviewArtifact(
       await fs.readFile(
-        path.join(receiptsDir, buildFeishuFinanceDoctrinePromotionReviewFilename(dateKey)),
+        path.join(receiptsDir, buildExternalFinanceDoctrinePromotionReviewFilename(dateKey)),
         "utf8",
       ),
     );
@@ -127,13 +127,13 @@ describe("finance_promotion_review tool", () => {
 
   it("fails closed when the candidate key does not exist in the same-day candidate artifact", async () => {
     workspaceDir = await makeTempWorkspace("openclaw-finance-promotion-review-");
-    const receiptsDir = path.join(workspaceDir, "memory", "feishu-work-receipts");
+    const receiptsDir = path.join(workspaceDir, "memory", "external-work-receipts");
     await fs.mkdir(receiptsDir, { recursive: true });
     const dateKey = "2026-03-25";
 
     await fs.writeFile(
-      path.join(receiptsDir, buildFeishuFinanceDoctrinePromotionCandidatesFilename(dateKey)),
-      renderFeishuFinanceDoctrinePromotionCandidateArtifact({
+      path.join(receiptsDir, buildExternalFinanceDoctrinePromotionCandidatesFilename(dateKey)),
+      renderExternalFinanceDoctrinePromotionCandidateArtifact({
         generatedAt: "2026-03-25T15:00:00.000Z",
         consumer: "holdings_thesis_revalidation",
         windowDays: 7,
@@ -170,7 +170,7 @@ describe("finance_promotion_review tool", () => {
       candidateKey: "conviction_looks:too_high",
       dateKey,
       candidatePath:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-candidates.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-candidates.md",
       availableCandidateKeys: ["closest_scenario:base_case"],
       action:
         "Use finance_promotion_candidates with this dateKey to discover the current candidateKey values before retrying finance_promotion_review.",

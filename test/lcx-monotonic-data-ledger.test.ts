@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildMonotonicDataLedgerSnapshot } from "../scripts/dev/lcx-monotonic-data-ledger.js";
+import { buildMonotonicDataLedgerSnapshot } from "../scripts/operator/lcx-monotonic-data-ledger.js";
 
 describe("LCX monotonic data ledger", () => {
   it("records dataset, train-slice, SkillOpt, rejected/downranked, and promotion truth", () => {
@@ -126,7 +126,7 @@ describe("LCX monotonic data ledger", () => {
 
     expect(payload).toMatchObject({
       ok: true,
-      boundary: "dev_monotonic_data_ledger_only",
+      boundary: "local_monotonic_data_ledger_only",
       appendDecision: "append_latest_entry",
       guaranteeLevel: "data_accounting_not_model_capability_guarantee",
       dataset: {
@@ -167,7 +167,7 @@ describe("LCX monotonic data ledger", () => {
         runtimeMonotonicNotEveryTrainingRound: true,
         modelWeightAbsorptionRequiresPromotionProof: true,
         externalChannelRequiresSeparateUserVisibleProof: true,
-        liveLarkRequiresSeparateLiveProof: true,
+        liveExternalRequiresSeparateLiveProof: true,
       },
       liveTouched: false,
       providerConfigTouched: false,

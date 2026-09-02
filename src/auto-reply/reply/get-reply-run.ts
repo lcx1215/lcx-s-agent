@@ -37,13 +37,11 @@ import { runReplyAgent } from "./agent-runner.js";
 import { applySessionHints } from "./body.js";
 import type { buildCommandContext } from "./commands.js";
 import type { InlineDirectives } from "./directive-handling.js";
-import { summarizeRecentFeishuReplyFlowEvidence } from "./feishu-reply-flow-evidence.js";
 import { buildGroupChatContext, buildGroupIntro } from "./groups.js";
 import { buildInboundMetaSystemPrompt, buildInboundUserContextPrefix } from "./inbound-meta.js";
 import type { createModelSelectionState } from "./model-selection.js";
 import { resolveOriginMessageProvider } from "./origin-routing.js";
 import { resolveQueueSettings } from "./queue.js";
-import { isFeishuFamilyChannel } from "./reply-routing-helpers.js";
 import { routeReply } from "./route-reply.js";
 import { buildBareSessionResetPrompt } from "./session-reset-prompt.js";
 import { buildQueuedSystemPrompt, ensureSkillSnapshot } from "./session-updates.js";
@@ -56,15 +54,6 @@ import { appendUntrustedContext } from "./untrusted-context.js";
 
 type AgentDefaults = NonNullable<OpenClawConfig["agents"]>["defaults"];
 type ExecOverrides = Pick<ExecToolDefaults, "host" | "security" | "ask" | "node">;
-
-function shouldInjectFeishuReplyFlowEvidence(params: {
-  originatingChannel?: string;
-  provider?: string;
-}): boolean {
-  const isFeishuFamilyOriginatingChannel = isFeishuFamilyChannel(params.originatingChannel);
-  const isFeishuFamilyProvider = isFeishuFamilyChannel(params.provider);
-  return isFeishuFamilyOriginatingChannel || isFeishuFamilyProvider;
-}
 
 function buildResetSessionNoticeText(params: {
   provider: string;
@@ -286,21 +275,6 @@ export async function runPreparedReply(
     groupIntro,
     groupSystemPrompt,
   ].filter(Boolean);
-  if (
-    shouldInjectFeishuReplyFlowEvidence({
-      originatingChannel: ctx.OriginatingChannel ?? sessionCtx.OriginatingChannel,
-      provider: sessionCtx.Provider,
-    })
-  ) {
-    try {
-      const feishuReplyFlowEvidence = await summarizeRecentFeishuReplyFlowEvidence();
-      if (feishuReplyFlowEvidence) {
-        extraSystemPromptParts.push(feishuReplyFlowEvidence);
-      }
-    } catch (error) {
-      logVerbose(`Skipping Feishu reply-flow evidence injection: ${String(error)}`);
-    }
-  }
   const baseBody = sessionCtx.BodyStripped ?? sessionCtx.Body ?? "";
   // Use CommandBody/RawBody for bare reset detection (clean message without structural context).
   const rawBodyTrimmed = (ctx.CommandBody ?? ctx.RawBody ?? ctx.Body ?? "").trim();

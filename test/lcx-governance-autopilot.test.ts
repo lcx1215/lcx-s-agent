@@ -7,11 +7,14 @@ import { describe, expect, it } from "vitest";
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const EXEC_MAX_BUFFER = 64 * 1024 * 1024;
+const lcxUserHome = process.env.LCX_USER_HOME ?? "/Users/liuchengxu";
+const lcxWorkspace = path.join(lcxUserHome, ".openclaw", "workspace");
+const localOperatorPath = path.join(lcxUserHome, ".openclaw", "bin", "lcx-local-operator-loop.sh");
 
 async function runAutopilot() {
   const { stdout } = await execFileAsync(
     process.execPath,
-    ["--import", "tsx", "scripts/dev/lcx-governance-autopilot.ts", "--json"],
+    ["--import", "tsx", "scripts/operator/lcx-governance-autopilot.ts", "--json"],
     {
       cwd: repoRoot,
       env: process.env,
@@ -33,6 +36,14 @@ async function runAutopilot() {
     ownerControlMapLatestJsonPath: string;
     ownerControlMapLatestMarkdownPath: string;
     handoffLatestPath: string;
+    multiAgentPatternShadowLatestPath: string;
+    multiAgentPatternShadow: { status: string; reason: string };
+    globalEvidenceProjectionReader: {
+      contractVersion: string;
+      adapterId: string;
+      readStatus: string;
+      blocked: boolean;
+    };
     autoTriggeredOwnerCommands: string[];
     ownerCommands: Array<{ id: string; parsed: boolean; command: string }>;
     triggerPolicy: {
@@ -66,13 +77,17 @@ async function runAutopilot() {
       activeTrainingOrEval: boolean;
       externalChannelBindingStatus?: string;
       externalChannelStatusModel?: string;
+      multiAgentPatternShadowStatus?: string;
+      multiAgentPatternShadowTrialDecision?: string;
       externalChannelBound?: boolean;
       userVisibleObserved?: boolean;
-      legacyLiveLarkBrainBindingStatus?: string;
       evolutionCooldownActive?: boolean;
       latestEvolutionCooldown?: unknown;
       latestGuardEvent?: unknown;
       affectedLanes: string[];
+      projectionReaderCoverageStatus?: string;
+      projectionReaderContractReadyForAllAdapters?: boolean;
+      projectionReaderMissingCount?: number;
       selfRepairHandsAutoWriteTriggered?: boolean;
       selfRepairHandsAutoSignal?: unknown;
       selfRepairHandsOwnerWritePolicy?: {
@@ -84,6 +99,13 @@ async function runAutopilot() {
     };
     owners: {
       mindModel?: { summary?: unknown };
+      projectionReaderAudit?: {
+        coverageStatus?: string;
+        bound?: number;
+        missingReaderContract?: number;
+        readerContractReadyForAllAdapters?: boolean;
+        nextAction?: string;
+      };
       flowGraph?: { summary?: unknown };
       headTail?: { summary?: unknown };
       contextRecovery?: { compressedContextRecovered?: boolean };
@@ -117,7 +139,7 @@ async function runAutopilot() {
         externalChannelBound?: boolean;
         userVisibleObserved?: boolean;
       };
-      liveLarkBrainBinding?: { status?: string };
+      liveExternalBrainBinding?: { status?: string };
       problemRadar?: { actionableClusters?: string[] };
       changeImpact?: { affectedLanes?: string[] };
       universeIndex?: {
@@ -146,11 +168,20 @@ describe("LCX governance autopilot", () => {
     expect(payload).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_governance_autopilot_only",
+        boundary: "local_governance_autopilot_only",
         liveTouched: false,
         providerConfigTouched: false,
         protectedMemoryTouched: false,
       }),
+    );
+    expect(payload.multiAgentPatternShadowLatestPath).toContain(
+      "lcx-multi-agent-pattern-shadow-latest.json",
+    );
+    expect(["fresh", "stale", "missing", "blocked"]).toContain(
+      payload.multiAgentPatternShadow.status,
+    );
+    expect(payload.summary.multiAgentPatternShadowStatus).toBe(
+      payload.multiAgentPatternShadow.status,
     );
     expect(payload.triggerPolicy).toEqual(
       expect.objectContaining({
@@ -219,6 +250,7 @@ describe("LCX governance autopilot", () => {
         "problemRadar",
         "commercialAcceptance",
         "changeImpact",
+        "projectionReaderAudit",
         "universeIndex",
         "externalAgentUpgrade",
         "liveFadeoutAudit",
@@ -238,6 +270,21 @@ describe("LCX governance autopilot", () => {
     expect(payload.summary.parsedOwners).toBe(payload.summary.ownerCount);
     expect(payload.ownerCommands.every((owner) => owner.parsed)).toBe(true);
     expect(payload.owners.mindModel?.summary).toBeTruthy();
+    expect(payload.owners.projectionReaderAudit).toEqual(
+      expect.objectContaining({
+        coverageStatus: "complete",
+        bound: expect.any(Number),
+        missingReaderContract: 0,
+        readerContractReadyForAllAdapters: true,
+        nextAction: expect.stringContaining("neutral answer boundary"),
+      }),
+    );
+    expect(payload.globalEvidenceProjectionReader).toEqual({
+      contractVersion: "global_evidence_projection_reader_v1",
+      adapterId: "governance-autopilot",
+      readStatus: expect.any(String),
+      blocked: expect.any(Boolean),
+    });
     expect(payload.owners.flowGraph?.summary).toBeTruthy();
     expect(payload.owners.headTail?.summary).toBeTruthy();
     expect(Array.isArray(payload.owners.trainingPlan?.decisionIds)).toBe(true);
@@ -262,9 +309,12 @@ describe("LCX governance autopilot", () => {
           /^(append_latest_entry|duplicate_latest_entry_not_appended)$/,
         ),
         guaranteeLevel: "data_accounting_not_model_capability_guarantee",
-        datasetExamples: expect.any(Number),
-        trainSliceWritten: expect.any(Number),
         acceptedSkillOptPackets: expect.any(Number),
+        materialChangeSignalCount: expect.any(Number),
+        proofBoundaries: expect.objectContaining({
+          dataIncreaseIsNotCapabilityIncrease: true,
+          modelWeightAbsorptionRequiresPromotionProof: true,
+        }),
       }),
     );
     expect(payload.owners.universeIndex?.trackedFiles).toEqual(expect.any(Number));
@@ -279,7 +329,7 @@ describe("LCX governance autopilot", () => {
     expect(payload.owners.providerCouncilAcceleration?.action).toEqual(expect.any(String));
     expect(payload.owners.externalChannelStatus).toEqual(
       expect.objectContaining({
-        statusModel: "dev-ready -> external-channel-bound -> user-visible-observed",
+        statusModel: "core-ready -> external-channel-bound -> user-visible-observed",
         externalChannelBound: expect.any(Boolean),
         userVisibleObserved: expect.any(Boolean),
       }),
@@ -289,51 +339,54 @@ describe("LCX governance autopilot", () => {
     );
     expect(payload.owners.contextRecovery?.compressedContextRecovered).toEqual(expect.any(Boolean));
     expect(payload.latestStatePath).toBe(
-      "/Users/liuchengxu/.openclaw/workspace/state/lcx-governance-autopilot-latest.json",
+      path.join(lcxWorkspace, "state", "lcx-governance-autopilot-latest.json"),
     );
     expect(payload.universeIndexLatestPath).toBe(
-      "/Users/liuchengxu/.openclaw/workspace/state/lcx-universe-index-latest.json",
+      path.join(lcxWorkspace, "state", "lcx-universe-index-latest.json"),
     );
     expect(payload.evolutionPromotionDigestPath).toBe(
-      "/Users/liuchengxu/.openclaw/workspace/state/lcx-evolution-promotion-digest-latest.json",
+      path.join(lcxWorkspace, "state", "lcx-evolution-promotion-digest-latest.json"),
     );
     expect(payload.monotonicDataLedgerLatestPath).toBe(
-      "/Users/liuchengxu/.openclaw/workspace/state/lcx-monotonic-data-ledger-latest.json",
+      path.join(lcxWorkspace, "state", "lcx-monotonic-data-ledger-latest.json"),
     );
     expect(payload.monotonicDataLedgerJsonlPath).toBe(
-      "/Users/liuchengxu/.openclaw/workspace/logs/lcx-monotonic-data-ledger.jsonl",
+      path.join(lcxWorkspace, "logs", "lcx-monotonic-data-ledger.jsonl"),
     );
     expect(payload.localFailureTraceLatestPath).toBe(
-      "/Users/liuchengxu/.openclaw/workspace/state/lcx-local-failure-trace-latest.json",
+      path.join(lcxWorkspace, "state", "lcx-local-failure-trace-latest.json"),
     );
     expect(payload.localFailureTraceJsonlPath).toBe(
-      "/Users/liuchengxu/.openclaw/workspace/logs/lcx-local-failure-trace.jsonl",
+      path.join(lcxWorkspace, "logs", "lcx-local-failure-trace.jsonl"),
     );
     expect(payload.ownerBriefLatestJsonPath).toBe(
-      "/Users/liuchengxu/.openclaw/workspace/state/lcx-owner-brief-latest.json",
+      path.join(lcxWorkspace, "state", "lcx-owner-brief-latest.json"),
     );
     expect(payload.ownerBriefLatestMarkdownPath).toBe(
-      "/Users/liuchengxu/.openclaw/workspace/state/lcx-owner-brief-latest.md",
+      path.join(lcxWorkspace, "state", "lcx-owner-brief-latest.md"),
     );
     expect(payload.ownerControlMapLatestJsonPath).toBe(
-      "/Users/liuchengxu/.openclaw/workspace/state/lcx-owner-control-map-latest.json",
+      path.join(lcxWorkspace, "state", "lcx-owner-control-map-latest.json"),
     );
     expect(payload.ownerControlMapLatestMarkdownPath).toBe(
-      "/Users/liuchengxu/.openclaw/workspace/state/lcx-owner-control-map-latest.md",
+      path.join(lcxWorkspace, "state", "lcx-owner-control-map-latest.md"),
     );
     expect(payload.handoffLatestPath).toBe(
-      "/Users/liuchengxu/.openclaw/workspace/state/lcx-context-recovery-handoff-latest.md",
+      path.join(lcxWorkspace, "state", "lcx-context-recovery-handoff-latest.md"),
     );
 
     const latest = JSON.parse(await fs.readFile(payload.latestStatePath, "utf8")) as {
       boundary: string;
       autoTriggeredOwnerCommands: string[];
     };
-    expect(latest.boundary).toBe("dev_governance_autopilot_only");
+    expect(latest.boundary).toBe("local_governance_autopilot_only");
     expect(latest.autoTriggeredOwnerCommands).toEqual(payload.autoTriggeredOwnerCommands);
 
-    const digestPath =
-      "/Users/liuchengxu/.openclaw/workspace/state/lcx-evolution-promotion-digest-latest.json";
+    const digestPath = path.join(
+      lcxWorkspace,
+      "state",
+      "lcx-evolution-promotion-digest-latest.json",
+    );
     const digest = JSON.parse(await fs.readFile(digestPath, "utf8")) as {
       boundary: string;
       autopilot?: { ok?: boolean; summary?: { activeTrainingOrEval?: boolean } };
@@ -344,10 +397,12 @@ describe("LCX governance autopilot", () => {
         externalChannelStatusModel?: string;
         externalChannelBound?: boolean;
         userVisibleObserved?: boolean;
-        legacyLiveLarkBrainBindingStatus?: string;
         evolutionCooldownActive?: boolean;
         latestEvolutionCooldown?: unknown;
         latestGuardEvent?: unknown;
+        projectionReaderCoverageStatus?: string;
+        projectionReaderContractReadyForAllAdapters?: boolean;
+        projectionReaderMissingCount?: number;
         skillOptLiteStatus?: string;
         selfRepairHandsAutoWriteTriggered?: boolean;
         selfRepairHandsOwnerWritePolicy?: {
@@ -368,7 +423,7 @@ describe("LCX governance autopilot", () => {
       providerConfigTouched?: boolean;
       protectedMemoryTouched?: boolean;
     };
-    expect(digest.boundary).toBe("dev_evolution_promotion_digest_only");
+    expect(digest.boundary).toBe("local_evolution_promotion_digest_only");
     expect(digest.autopilot?.ok).toBe(payload.ok);
     expect(digest.autopilot?.summary?.activeTrainingOrEval).toBe(
       payload.summary.activeTrainingOrEval,
@@ -391,14 +446,20 @@ describe("LCX governance autopilot", () => {
     );
     expect(digest.material?.externalChannelBound).toBe(payload.summary.externalChannelBound);
     expect(digest.material?.userVisibleObserved).toBe(payload.summary.userVisibleObserved);
-    expect(digest.material?.legacyLiveLarkBrainBindingStatus).toBe(
-      payload.summary.legacyLiveLarkBrainBindingStatus,
-    );
     expect(digest.material?.evolutionCooldownActive).toBe(payload.summary.evolutionCooldownActive);
     expect(digest.material?.latestEvolutionCooldown).toEqual(
       payload.summary.latestEvolutionCooldown,
     );
     expect(digest.material?.latestGuardEvent).toEqual(payload.summary.latestGuardEvent);
+    expect(digest.material?.projectionReaderCoverageStatus).toBe(
+      payload.summary.projectionReaderCoverageStatus,
+    );
+    expect(digest.material?.projectionReaderContractReadyForAllAdapters).toBe(
+      payload.summary.projectionReaderContractReadyForAllAdapters,
+    );
+    expect(digest.material?.projectionReaderMissingCount).toBe(
+      payload.summary.projectionReaderMissingCount,
+    );
     expect(digest.material?.skillOptLiteStatus).toBe(payload.owners.skillOptLite?.status);
     expect(digest.material?.selfRepairHandsAutoWriteTriggered).toBe(
       payload.summary.selfRepairHandsAutoWriteTriggered,
@@ -437,7 +498,7 @@ describe("LCX governance autopilot", () => {
 
     const handoff = await fs.readFile(payload.handoffLatestPath, "utf8");
     expect(handoff).toContain("# LCX Context Recovery Handoff");
-    expect(handoff).toContain("boundary: dev_context_recovery_handoff_only");
+    expect(handoff).toContain("boundary: local_context_recovery_handoff_only");
     expect(handoff).toContain("activeTrainingOrEval");
     expect(handoff).toContain("evolutionCooldownActive");
     expect(handoff).toContain("latestEvolutionCooldown");
@@ -452,18 +513,20 @@ describe("LCX governance autopilot", () => {
     expect(handoff).toContain("candidate_eval_dirty_cases");
     expect(handoff).toContain("module_learning_incomplete_evidence");
     expect(handoff).toContain("skillopt_static_or_parse_gap");
-    expect(handoff).toContain("dev_monotonic_data_ledger_only");
+    expect(handoff).toContain("local_monotonic_data_ledger_only");
     expect(handoff).toContain("## Local Failure Trace");
-    expect(handoff).toContain("dev_local_failure_trace_index_only");
+    expect(handoff).toContain("local_failure_trace_index_only");
     expect(handoff).toContain("## Universe Index");
-    expect(handoff).toContain("dev_universe_index_only");
-    expect(handoff).toContain("dev_skillopt_lite_only");
+    expect(handoff).toContain("local_universe_index_only");
+    expect(handoff).toContain("local_skillopt_lite_only");
     expect(handoff).toContain("## Blacktech Upgrade Radar");
-    expect(handoff).toContain("dev_external_agent_upgrade_radar_only");
+    expect(handoff).toContain("## Projection Reader Audit");
+    expect(handoff).toContain("readerContractReadyForAllAdapters");
+    expect(handoff).toContain("local_external_agent_upgrade_radar_only");
     expect(handoff).toContain("## Provider Council Acceleration");
-    expect(handoff).toContain("dev_provider_council_acceleration_only");
+    expect(handoff).toContain("local_provider_council_acceleration_only");
     expect(handoff).toContain("## External Channel Status");
-    expect(handoff).toContain("dev_external_channel_status_only");
+    expect(handoff).toContain("local_external_channel_status_only");
     expect(handoff).toContain("liveTouched: false");
     expect(handoff).toContain("providerConfigTouched: false");
     expect(handoff).toContain("protectedMemoryTouched: false");
@@ -486,33 +549,46 @@ describe("LCX governance autopilot", () => {
 
   it("is wired into recovery, flow graph, mind model, doctor entrypoint inventory, and local operator", async () => {
     const [recovery, flowGraph, mindModel, doctor, localOperator, runbook] = await Promise.all([
-      fs.readFile(path.join(repoRoot, "scripts/dev/lcx-context-recovery-exam.ts"), "utf8"),
-      fs.readFile(path.join(repoRoot, "scripts/dev/lcx-flow-graph.ts"), "utf8"),
-      fs.readFile(path.join(repoRoot, "scripts/dev/lcx-mind-model.ts"), "utf8"),
-      fs.readFile(path.join(repoRoot, "scripts/dev/lcx-system-doctor.ts"), "utf8"),
-      fs.readFile("/Users/liuchengxu/.openclaw/bin/lcx-local-operator-loop.sh", "utf8"),
+      fs.readFile(path.join(repoRoot, "scripts/operator/lcx-context-recovery-exam.ts"), "utf8"),
+      fs.readFile(path.join(repoRoot, "scripts/operator/lcx-flow-graph.ts"), "utf8"),
+      fs.readFile(path.join(repoRoot, "scripts/operator/lcx-mind-model.ts"), "utf8"),
+      fs.readFile(path.join(repoRoot, "scripts/operator/lcx-system-doctor.ts"), "utf8"),
+      fs.readFile(localOperatorPath, "utf8").catch(() => ""),
       fs.readFile(path.join(repoRoot, "ops/local-brain/README.md"), "utf8"),
     ]);
 
-    expect(recovery).toContain("scripts/dev/lcx-governance-autopilot.ts --json");
-    expect(recovery).toContain("scripts/dev/lcx-universe-index.ts --json");
-    expect(recovery).toContain("scripts/dev/lcx-external-agent-upgrade-radar.ts --json");
-    expect(recovery).toContain("scripts/dev/lcx-live-fadeout-audit.ts --json");
+    expect(recovery).toContain("scripts/operator/lcx-governance-autopilot.ts --json");
+    expect(recovery).toContain("scripts/operator/lcx-universe-index.ts --json");
+    expect(recovery).toContain("scripts/operator/lcx-external-agent-upgrade-radar.ts --json");
+    expect(recovery).toContain("scripts/operator/lcx-live-fadeout-audit.ts --json");
     expect(flowGraph).toContain("governance_autopilot");
     expect(flowGraph).toContain("universe_index");
     expect(flowGraph).toContain("lcx-governance-autopilot-latest");
     expect(mindModel).toContain("governance_autopilot_auto_update");
     expect(mindModel).toContain("universe_index_total_coverage");
     expect(mindModel).toContain("autoTriggeredOwnerCommands");
-    expect(doctor).toContain("scripts/dev/lcx-governance-autopilot.ts");
-    expect(doctor).toContain("scripts/dev/lcx-live-fadeout-audit.ts");
-    expect(localOperator).toContain("governance_file");
-    expect(localOperator).toContain("governanceAutopilot");
-    expect(localOperator).toContain("NODE_GOVERNANCE_FILE");
+    expect(doctor).toContain("scripts/operator/lcx-governance-autopilot.ts");
+    expect(doctor).toContain("scripts/operator/lcx-live-fadeout-audit.ts");
+    if (localOperator) {
+      expect(localOperator).toContain("governance_file");
+      expect(localOperator).toContain("governanceAutopilot");
+      expect(localOperator).toContain("NODE_GOVERNANCE_FILE");
+    }
     expect(runbook).toContain("Governance Autopilot");
     expect(runbook).toContain("lcx-governance-autopilot-latest.json");
     expect(runbook).toContain("lcx-local-failure-trace-latest.json");
     expect(runbook).toContain("lcx-owner-brief-latest.md");
     expect(runbook).toContain("lcx-owner-control-map-latest.md");
+  });
+
+  it("uses a platform-compatible active process snapshot", async () => {
+    const source = await fs.readFile(
+      path.join(repoRoot, "scripts/operator/lcx-governance-autopilot.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain('"powershell.exe"');
+    expect(source).toContain("Get-CimInstance Win32_Process");
+    expect(source).toContain('execFileAsync("ps", ["-axo", "pid,etime,command"]');
   });
 });

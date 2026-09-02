@@ -243,7 +243,7 @@ describe("runReplyAgent reply tracing", () => {
 
     const typing = createMockTypingController();
     const sessionCtx = {
-      Provider: "feishu",
+      Provider: "external",
       OriginatingTo: "chat:1",
       AccountId: "default",
       MessageSid: "msg",
@@ -255,7 +255,7 @@ describe("runReplyAgent reply tracing", () => {
       run: {
         sessionId: "session",
         sessionKey: "main",
-        messageProvider: "feishu",
+        messageProvider: "external",
         sessionFile: "/tmp/session.jsonl",
         workspaceDir: "/tmp",
         config: {

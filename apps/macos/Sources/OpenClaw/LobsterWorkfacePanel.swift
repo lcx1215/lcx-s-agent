@@ -73,7 +73,9 @@ enum LobsterWorkfacePanel {
     @MainActor
     static func openInCanvas() throws -> LobsterWorkfacePanelArtifacts {
         let canvasDirectory = try CanvasManager.shared.show(sessionKey: self.sessionKey, path: "/")
-        let artifacts = try self.prepareArtifacts(outputDirectoryURL: URL(fileURLWithPath: canvasDirectory, isDirectory: true))
+        let artifacts = try self.prepareArtifacts(outputDirectoryURL: URL(
+            fileURLWithPath: canvasDirectory,
+            isDirectory: true))
         _ = try CanvasManager.shared.show(sessionKey: self.sessionKey, path: "/")
         return artifacts
     }
@@ -243,20 +245,25 @@ enum LobsterWorkfacePanel {
             watchtowerSignals: self.extractTopLevelValue(from: normalized, label: "Watchtower Signals") ?? "0",
             codexEscalations: self.extractTopLevelValue(from: normalized, label: "Codex Escalations") ?? "0",
             activeSurfaceLanes: self.extractTopLevelValue(from: normalized, label: "Active Surface Lanes")
-                ?? self.extractSectionValue(from: self.extractSectionLines(from: normalized, heading: "Feishu Lane Panel"), label: "Active Lanes")
+                ?? self.extractSectionValue(
+                    from: self.extractSectionLines(from: normalized, heading: "External Message Lane Panel"),
+                    label: "Active Lanes")
                 ?? "0",
-            portfolioScorecard: self.extractTopLevelValue(from: normalized, label: "Portfolio Scorecard") ?? "not scored",
+            portfolioScorecard: self
+                .extractTopLevelValue(from: normalized, label: "Portfolio Scorecard") ?? "not scored",
             totalTokens: self.extractTopLevelValue(from: normalized, label: "Total Tokens") ?? "0",
             estimatedCost: self.extractTopLevelValue(from: normalized, label: "Estimated Cost") ?? "$0.0000",
-            strongestDomain: self.extractSectionValue(from: validationLines, label: "Strongest Domain") ?? "Not recorded",
+            strongestDomain: self
+                .extractSectionValue(from: validationLines, label: "Strongest Domain") ?? "Not recorded",
             weakestDomain: self.extractSectionValue(from: validationLines, label: "Weakest Domain") ?? "Not recorded",
-            hallucinationWatch: self.extractSectionValue(from: validationLines, label: "Hallucination Watch") ?? "Not recorded",
+            hallucinationWatch: self
+                .extractSectionValue(from: validationLines, label: "Hallucination Watch") ?? "Not recorded",
             learningKeep: self.extractSectionValue(from: learnedLines, label: "keep") ?? "Not recorded yet",
             learningDiscard: self.extractSectionValue(from: learnedLines, label: "discard") ?? "Not recorded yet",
             learningReplay: self.extractSectionValue(from: learnedLines, label: "replay") ?? "Not recorded yet",
             learningNextEval: self.extractSectionValue(from: learnedLines, label: "next eval") ?? "Not recorded yet",
             dashboardSnapshotLines: self.extractSectionLines(from: normalized, heading: "Dashboard Snapshot"),
-            lanePanelLines: self.extractSectionLines(from: normalized, heading: "Feishu Lane Panel"),
+            lanePanelLines: self.extractSectionLines(from: normalized, heading: "External Message Lane Panel"),
             yesterdayLearnedLines: learnedLines,
             yesterdayCorrectedLines: self.extractSectionLines(from: normalized, heading: "Yesterday Corrected"),
             yesterdayWatchtowerLines: self.extractSectionLines(from: normalized, heading: "Yesterday Watchtower"),
@@ -297,7 +304,8 @@ enum LobsterWorkfacePanel {
             recallOrder: recallOrder,
             continuousImprovementLines: self.extractSectionLines(from: normalized, heading: "Continuous Improvement"),
             memoryBudgetLines: self.extractSectionLines(from: normalized, heading: "Memory Budget"),
-            verifiedAnchorLines: Array(self.extractSectionLines(from: normalized, heading: "Verified Anchors").prefix(8)))
+            verifiedAnchorLines: Array(self.extractSectionLines(from: normalized, heading: "Verified Anchors")
+                .prefix(8)))
     }
 
     private static func extractTopLevelValue(from content: String, label: String) -> String? {
@@ -521,7 +529,9 @@ enum LobsterWorkfacePanel {
                 <div class="eyebrow">Lobster Panel</div>
                 <h1>\(self.escapeHTML(title))</h1>
                 <p class="hero-copy">
-                  Stable in-app workface panel generated from \(self.escapeHTML(sourceLabel)). This stays bounded to Lobster's daily research artifact instead of pretending to be a general app builder.
+                  Stable in-app workface panel generated from \(self
+            .escapeHTML(
+                sourceLabel)). This stays bounded to Lobster's daily research artifact instead of pretending to be a general app builder.
                 </p>
                 <div class="hero-actions">
                   <a class="action-link" href="openclaw://lobster-panel">Refresh Panel</a>
@@ -564,7 +574,7 @@ enum LobsterWorkfacePanel {
                     "\($0.present ? "present" : "missing"): \($0.path)"
                 }))
                 \(self.renderListPanel(title: "Dashboard Snapshot", lines: parsed.dashboardSnapshotLines))
-                \(self.renderListPanel(title: "Feishu Lane Panel", lines: parsed.lanePanelLines))
+                \(self.renderListPanel(title: "External Message Lane Panel", lines: parsed.lanePanelLines))
                 \(self.renderListPanel(title: "Yesterday Learned", lines: parsed.yesterdayLearnedLines))
                 \(self.renderListPanel(title: "Yesterday Corrected", lines: parsed.yesterdayCorrectedLines))
                 \(self.renderListPanel(title: "Yesterday Watchtower", lines: parsed.yesterdayWatchtowerLines))
@@ -722,7 +732,8 @@ enum LobsterWorkfacePanel {
                 <h1>\(self.escapeHTML(title))</h1>
                 <div class="status-pill">\(self.escapeHTML(statusLine))</div>
                 <p class="hero-copy">
-                  No daily workface artifact is available yet, so this panel is bootstrapping from \(self.escapeHTML(sourceLabel)) instead of leaving you with an empty shell.
+                  No daily workface artifact is available yet, so this panel is bootstrapping from \(self
+            .escapeHTML(sourceLabel)) instead of leaving you with an empty shell.
                 </p>
                 <div class="hero-actions">
                   <a class="action-link" href="openclaw://lobster-panel">Refresh Panel</a>
@@ -734,7 +745,10 @@ enum LobsterWorkfacePanel {
                 \(self.renderMetricCard(label: "Current Focus", value: parsed.currentFocus, tone: "accent"))
                 \(self.renderMetricCard(label: "Freshness", value: parsed.freshness, tone: "accent"))
                 \(self.renderMetricCard(label: "Primary Anchor", value: parsed.primaryAnchor, tone: "accent"))
-                \(self.renderMetricCard(label: "Protected Anchors", value: "\(presentAnchors) present / \(missingAnchors) missing", tone: "accent"))
+                \(self.renderMetricCard(
+                    label: "Protected Anchors",
+                    value: "\(presentAnchors) present / \(missingAnchors) missing",
+                    tone: "accent"))
               </section>
 
               <section class="section-grid" style="margin-top: 20px;">
@@ -932,11 +946,10 @@ enum LobsterWorkfacePanel {
     }
 
     private static func renderListPanel(title: String, lines: [String]) -> String {
-        let renderedLines: String
-        if lines.isEmpty {
-            renderedLines = "<li class=\"panel-line muted\">No entries recorded.</li>"
+        let renderedLines: String = if lines.isEmpty {
+            "<li class=\"panel-line muted\">No entries recorded.</li>"
         } else {
-            renderedLines = lines
+            lines
                 .map { "<li class=\"panel-line\">\(self.escapeHTML(self.normalizeListLine($0)))</li>" }
                 .joined(separator: "")
         }

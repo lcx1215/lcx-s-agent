@@ -569,6 +569,7 @@ export function createMSTeamsMessageHandler(deps: MSTeamsMessageHandlerDeps) {
             ctx: ctxPayload,
             cfg,
             dispatcher,
+            globalEvidenceProjectionInput: { adapterId: "msteams-monitor" },
             replyOptions,
           }),
       });

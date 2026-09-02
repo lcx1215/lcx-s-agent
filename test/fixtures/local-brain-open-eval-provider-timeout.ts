@@ -16,7 +16,7 @@ setTimeout(() => {
       missing_data: [],
       risk_boundaries: ["research_only"],
       next_step: "retry_with_real_provider",
-      rejected_context: ["old_lark_conversation_history"],
+      rejected_context: ["old_external_conversation_history"],
     }),
   );
 }, 1_000_000);

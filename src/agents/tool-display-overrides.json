@@ -242,9 +242,9 @@
       "title": "Doctrine Edit Handoff",
       "detailKeys": ["dateKey", "proposalId"]
     },
-    "feishu_live_probe": {
+    "external_live_probe": {
       "emoji": "🧪",
-      "title": "Feishu Probe",
+      "title": "External Probe",
       "detailKeys": ["surface", "chatId", "waitMs", "limit"]
     },
     "lobster_workface_app": {

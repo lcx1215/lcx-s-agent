@@ -1,9 +1,9 @@
 // Track B: turn the finance answer path from "audit-only" into "compose -> audit".
 //
-// Today `scripts/dev/lcx-commercial-answer-pipeline.ts` only AUDITS a
+// Today `scripts/operator/lcx-commercial-answer-pipeline.ts` only AUDITS a
 // `candidateAnswer` that is passed in — nothing in the repo actually composes
 // one from a model + real data. The runtime reply path calls a model, but the
-// dev answer pipeline has no compose step, so its scenario suite hard-codes
+// the legacy answer pipeline had no compose step, so its scenario suite hard-codes
 // answers.
 //
 // This module adds a testable composer that:
@@ -14,7 +14,7 @@
 //      it is testable offline, then
 //   3. returns a candidate answer to be handed to the existing audit gate.
 //
-// It deliberately does NOT send Lark messages, mutate provider config, write
+// It deliberately does NOT send External messages, mutate provider config, write
 // protected memory, or claim user-visible-observed. It only produces a
 // candidate answer object plus the grounding it used, so the existing audit
 // (buildPipelineResult) stays the terminal authority.
@@ -25,7 +25,7 @@ import type { FinanceDataGatewaySnapshot } from "./finance-data-gateway.js";
  * Minimal shape of the real gateway model call the agent already uses
  * (`callGateway({ method: "agent", params: { model, message, ... } })`).
  * Injecting it keeps this module offline-testable and avoids a hard import of
- * the feishu extension into the agents layer.
+ * the external extension into the agents layer.
  */
 export type FinanceModelCaller = (request: {
   model: string;

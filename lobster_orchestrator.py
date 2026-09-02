@@ -12,7 +12,7 @@ from scripts.lobster_paths import ROOT, load_state_json, save_state_json
 
 ENABLE_CYCLE_ENV = "OPENCLAW_SCHEDULER_ENABLE_CYCLE"
 CYCLE_COMMAND_ENV = "OPENCLAW_SCHEDULER_CYCLE_COMMAND"
-DEFAULT_CYCLE_COMMAND = "pnpm exec tsx scripts/dev/agent-system-loop-smoke.ts"
+DEFAULT_CYCLE_COMMAND = "pnpm exec tsx scripts/operator/agent-system-loop-smoke.ts"
 
 
 def utc_now_iso() -> str:
@@ -44,7 +44,7 @@ def build_status_payload() -> dict[str, Any]:
             "branchSchedulerPresent": bool(branch_scheduler),
         },
         "boundary": {
-            "noFeishuLarkSend": True,
+            "noExternalMessageSend": True,
             "noRemoteFetch": True,
             "noTradingExecution": True,
         },
@@ -84,7 +84,7 @@ def run_cycle(args: argparse.Namespace) -> int:
     payload["cycleDurationMs"] = result["duration_ms"]
     payload["cycleResult"] = result["summary"]
     payload["boundary"]["cycleReceiptOnly"] = True
-    payload["boundary"]["liveFeishuLarkSend"] = False
+    payload["boundary"]["liveExternalMessageSend"] = False
     if args.write_receipt:
         save_state_json(
             "scheduler_cycle_report.json" if result["ok"] else "scheduler_cycle_failure.json",

@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const scriptPath = path.join(repoRoot, "scripts/dev/lcx-provider-council-acceleration.ts");
+const scriptPath = path.join(repoRoot, "scripts/operator/lcx-provider-council-acceleration.ts");
 
 async function seedAutopilot(workspaceDir: string) {
   const statePath = path.join(workspaceDir, "state", "lcx-governance-autopilot-latest.json");
@@ -90,7 +90,7 @@ describe("lcx-provider-council-acceleration CLI", () => {
     expect(parsed).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_provider_council_acceleration_only",
+        boundary: "local_provider_council_acceleration_only",
         status: "ready_plan",
         action: "dry_run_plan_only",
         write: false,
@@ -124,7 +124,7 @@ describe("lcx-provider-council-acceleration CLI", () => {
     await seedAutopilot(workspaceDir);
     const pidFixture = await writePidFixture(
       workspaceDir,
-      "123 00:01 node --import tsx scripts/dev/local-brain-distill-eval.ts --json\n",
+      "123 00:01 node --import tsx scripts/operator/local-brain-distill-eval.ts --json\n",
     );
 
     const result = runCli(["--json", "--write"], workspaceDir, pidFixture);

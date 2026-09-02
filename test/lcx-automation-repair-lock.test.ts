@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const scriptPath = path.join(repoRoot, "scripts/dev/lcx-automation-repair-lock.ts");
+const scriptPath = path.join(repoRoot, "scripts/operator/lcx-automation-repair-lock.ts");
 
 async function runLock(args: string[], cwd: string, home: string) {
   const result = await execFileAsync(

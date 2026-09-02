@@ -519,6 +519,8 @@ public struct AgentParams: Codable, Sendable {
     public let replyto: String?
     public let sessionid: String?
     public let sessionkey: String?
+    public let model: String?
+    public let modelonce: Bool?
     public let thinking: String?
     public let deliver: Bool?
     public let attachments: [AnyCodable]?
@@ -547,6 +549,8 @@ public struct AgentParams: Codable, Sendable {
         replyto: String?,
         sessionid: String?,
         sessionkey: String?,
+        model: String?,
+        modelonce: Bool?,
         thinking: String?,
         deliver: Bool?,
         attachments: [AnyCodable]?,
@@ -574,6 +578,8 @@ public struct AgentParams: Codable, Sendable {
         self.replyto = replyto
         self.sessionid = sessionid
         self.sessionkey = sessionkey
+        self.model = model
+        self.modelonce = modelonce
         self.thinking = thinking
         self.deliver = deliver
         self.attachments = attachments
@@ -603,6 +609,8 @@ public struct AgentParams: Codable, Sendable {
         case replyto = "replyTo"
         case sessionid = "sessionId"
         case sessionkey = "sessionKey"
+        case model
+        case modelonce = "modelOnce"
         case thinking
         case deliver
         case attachments
@@ -3305,6 +3313,28 @@ public struct ChatEvent: Codable, Sendable {
         case errormessage = "errorMessage"
         case usage
         case stopreason = "stopReason"
+    }
+}
+
+public struct UpdateCheckParams: Codable, Sendable {
+    public let timeoutms: Int?
+    public let fetchgit: Bool?
+    public let includeregistry: Bool?
+
+    public init(
+        timeoutms: Int?,
+        fetchgit: Bool?,
+        includeregistry: Bool?)
+    {
+        self.timeoutms = timeoutms
+        self.fetchgit = fetchgit
+        self.includeregistry = includeregistry
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case timeoutms = "timeoutMs"
+        case fetchgit = "fetchGit"
+        case includeregistry = "includeRegistry"
     }
 }
 

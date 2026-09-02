@@ -328,7 +328,7 @@ export function createFinanceLearningRetrievalReviewTool(options?: {
     label: "Finance Learning Retrieval Review",
     name: "finance_learning_retrieval_review",
     description:
-      "Summarize finance learning retrieval receipts into a same-day per-run quality review without touching Lark language corpus or protected memory.",
+      "Summarize finance learning retrieval receipts into a same-day per-run quality review without touching External language corpus or protected memory.",
     parameters: FinanceLearningRetrievalReviewSchema,
     execute: async (_toolCallId, args) => {
       const params = args as Record<string, unknown>;

@@ -1,16 +1,6 @@
-import type { FinanceFrameworkCoreDomain } from "../hooks/bundled/lobster-brain-registry.js";
+import type { LcxOntologyModuleId } from "../shared/lcx-ontology.js";
 
-export type FinanceBrainModuleId =
-  | FinanceFrameworkCoreDomain
-  | "technical_timing"
-  | "cross_asset_liquidity"
-  | "fx_currency_liquidity"
-  | "global_index_regime"
-  | "us_equity_market_structure"
-  | "china_a_share_policy_flow"
-  | "crypto_market_structure"
-  | "quant_math"
-  | "finance_learning_memory";
+export type FinanceBrainModuleId = LcxOntologyModuleId;
 
 type FinanceBrainModuleDefinition = {
   id: FinanceBrainModuleId;
@@ -287,7 +277,10 @@ export function planFinanceBrainOrchestration(
 
   const primaryModules = seeded.filter((id) => id !== "finance_learning_memory");
   const supportingModules = seeded.filter((id) => id === "finance_learning_memory");
-  const moduleById = new Map(FINANCE_BRAIN_MODULES.map((module) => [module.id, module]));
+  const moduleById = new Map<FinanceBrainModuleId, FinanceBrainModuleDefinition>();
+  for (const module of FINANCE_BRAIN_MODULES) {
+    moduleById.set(module.id, module);
+  }
   const moduleTools: string[] = seeded.flatMap((id) => moduleById.get(id)?.requiredTools ?? []);
   const dataGatewayTools =
     financeTask &&

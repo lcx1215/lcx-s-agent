@@ -25,7 +25,7 @@ async function runAudit(workspaceDir: string) {
     [
       "--import",
       "tsx",
-      "scripts/dev/lcx-learning-sedimentation-audit.ts",
+      "scripts/operator/lcx-learning-sedimentation-audit.ts",
       "--workspace",
       workspaceDir,
       "--json",
@@ -74,7 +74,7 @@ async function runAuditText(workspaceDir: string) {
     [
       "--import",
       "tsx",
-      "scripts/dev/lcx-learning-sedimentation-audit.ts",
+      "scripts/operator/lcx-learning-sedimentation-audit.ts",
       "--workspace",
       workspaceDir,
     ],
@@ -106,7 +106,7 @@ async function seedGeneralLearningEvidence(workspaceDir: string): Promise<void> 
   await writeJson(path.join(memoryDir, "finance-learning-apply-usage-reviews", "day.json"), {
     ok: true,
   });
-  await writeJson(path.join(memoryDir, "lark-brain-distillation-reviews", "day", "b.json"), {
+  await writeJson(path.join(memoryDir, "external-brain-distillation-reviews", "day", "b.json"), {
     acceptedCandidates: [
       {
         boundary: "brain_distillation_candidate",
@@ -131,7 +131,7 @@ describe("LCX learning sedimentation audit", () => {
     expect(payload).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_learning_sedimentation_audit_only",
+        boundary: "local_learning_sedimentation_audit_only",
         assessment: "usable_but_module_specific_certification_gap",
         sufficientForCurrentUse: true,
         liveTouched: false,
@@ -366,7 +366,7 @@ describe("LCX learning sedimentation audit", () => {
         ok: true,
       },
     );
-    await writeJson(path.join(memoryDir, "lark-brain-distillation-reviews", "day", "b.json"), {
+    await writeJson(path.join(memoryDir, "external-brain-distillation-reviews", "day", "b.json"), {
       acceptedCandidates: [
         {
           boundary: "brain_distillation_candidate",

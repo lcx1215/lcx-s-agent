@@ -11,12 +11,12 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 describe("LCX doctrine consistency doctor", () => {
   it("is wired into the main system doctor", async () => {
     const source = await fs.readFile(
-      path.join(repoRoot, "scripts/dev/lcx-system-doctor.ts"),
+      path.join(repoRoot, "scripts/operator/lcx-system-doctor.ts"),
       "utf8",
     );
 
     expect(source).toContain("doctrine-consistency");
-    expect(source).toContain("scripts/dev/lcx-doctrine-consistency.ts");
+    expect(source).toContain("scripts/operator/lcx-doctrine-consistency.ts");
   });
 
   it("passes current active doctrine entrypoints", async () => {
@@ -73,7 +73,7 @@ describe("LCX doctrine consistency doctor", () => {
 
     const { stdout } = await execFileAsync(
       process.execPath,
-      ["--import", "tsx", "scripts/dev/lcx-doctrine-consistency.ts", "--json"],
+      ["--import", "tsx", "scripts/operator/lcx-doctrine-consistency.ts", "--json"],
       {
         cwd: repoRoot,
         env: { ...process.env, LCX_CODEX_SKILLS_ROOT: skillsRoot },

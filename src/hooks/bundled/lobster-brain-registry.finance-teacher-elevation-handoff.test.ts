@@ -1,17 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
-  parseFeishuFinanceDoctrineTeacherElevationHandoffArtifact,
-  renderFeishuFinanceDoctrineTeacherElevationHandoffArtifact,
+  parseExternalFinanceDoctrineTeacherElevationHandoffArtifact,
+  renderExternalFinanceDoctrineTeacherElevationHandoffArtifact,
 } from "./lobster-brain-registry.js";
 
 describe("finance doctrine teacher elevation handoff artifact", () => {
   it("round-trips the bounded teacher-elevation handoff artifact contract", () => {
-    const rendered = renderFeishuFinanceDoctrineTeacherElevationHandoffArtifact({
+    const rendered = renderExternalFinanceDoctrineTeacherElevationHandoffArtifact({
       handedOffAt: "2026-04-16T22:30:00.000Z",
       sourceTeacherFeedbackArtifact:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-feedback.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-feedback.md",
       sourceTeacherReviewArtifact:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-review.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-review.md",
       handoffs: [
         {
           handoffId: "finance-teacher-elevation-handoff-2026-04-16-feedback-1",
@@ -24,7 +24,7 @@ describe("finance doctrine teacher elevation handoff artifact", () => {
             "Need repeated calibration artifacts showing the same omitted chain weakens later review quality.",
           riskOfAdopting: "Could overcorrect into boilerplate macro narration.",
           targetGovernancePath:
-            "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-promotion-candidates.md",
+            "memory/external-work-receipts/2026-04-16-external-finance-doctrine-promotion-candidates.md",
           operatorNextAction:
             "Review this elevated teacher critique against the same-day finance governance candidate flow and convert it into explicit candidate input manually only if the scope and evidence hold.",
           status: "open",
@@ -32,12 +32,12 @@ describe("finance doctrine teacher elevation handoff artifact", () => {
       ],
     });
 
-    expect(parseFeishuFinanceDoctrineTeacherElevationHandoffArtifact(rendered)).toEqual({
+    expect(parseExternalFinanceDoctrineTeacherElevationHandoffArtifact(rendered)).toEqual({
       handedOffAt: "2026-04-16T22:30:00.000Z",
       sourceTeacherFeedbackArtifact:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-feedback.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-feedback.md",
       sourceTeacherReviewArtifact:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-review.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-review.md",
       handoffs: [
         {
           handoffId: "finance-teacher-elevation-handoff-2026-04-16-feedback-1",
@@ -50,7 +50,7 @@ describe("finance doctrine teacher elevation handoff artifact", () => {
             "Need repeated calibration artifacts showing the same omitted chain weakens later review quality.",
           riskOfAdopting: "Could overcorrect into boilerplate macro narration.",
           targetGovernancePath:
-            "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-promotion-candidates.md",
+            "memory/external-work-receipts/2026-04-16-external-finance-doctrine-promotion-candidates.md",
           operatorNextAction:
             "Review this elevated teacher critique against the same-day finance governance candidate flow and convert it into explicit candidate input manually only if the scope and evidence hold.",
           status: "open",
@@ -61,12 +61,12 @@ describe("finance doctrine teacher elevation handoff artifact", () => {
 
   it("fails closed on invalid handoff statuses", () => {
     expect(
-      parseFeishuFinanceDoctrineTeacherElevationHandoffArtifact(`\
-# Feishu Finance Doctrine Teacher Elevation Handoffs
+      parseExternalFinanceDoctrineTeacherElevationHandoffArtifact(`\
+# External Finance Doctrine Teacher Elevation Handoffs
 
 - **Handed Off At**: 2026-04-16T22:30:00.000Z
-- **Source Teacher Feedback Artifact**: memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-feedback.md
-- **Source Teacher Review Artifact**: memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-review.md
+- **Source Teacher Feedback Artifact**: memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-feedback.md
+- **Source Teacher Review Artifact**: memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-review.md
 
 ## Handoffs
 ### Handoff 1
@@ -77,16 +77,16 @@ describe("finance doctrine teacher elevation handoff artifact", () => {
 - **Suggested Candidate Text**: suggested candidate
 - **Evidence Needed**: evidence
 - **Risk Of Adopting**: risk
-- **Target Governance Path**: memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-promotion-candidates.md
+- **Target Governance Path**: memory/external-work-receipts/2026-04-16-external-finance-doctrine-promotion-candidates.md
 - **Operator Next Action**: next action
 - **Status**: pending
 `),
     ).toEqual({
       handedOffAt: "2026-04-16T22:30:00.000Z",
       sourceTeacherFeedbackArtifact:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-feedback.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-feedback.md",
       sourceTeacherReviewArtifact:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-review.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-review.md",
       handoffs: [],
     });
   });

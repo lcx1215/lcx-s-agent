@@ -88,6 +88,9 @@ const unitIsolatedFilesRaw = [
   "src/imessage/monitor.shutdown.unhandled-rejection.test.ts",
 ];
 const unitIsolatedFiles = unitIsolatedFilesRaw.filter((file) => fs.existsSync(file));
+const legacyCompatibilityFiles = ["src/plugins/loader-legacy-root.test.ts"].filter((file) =>
+  fs.existsSync(file),
+);
 
 const children = new Set();
 const isCI = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true";
@@ -124,6 +127,7 @@ const runs = [
             "--pool=vmForks",
             ...(disableIsolation ? ["--isolate=false"] : []),
             ...unitIsolatedFiles.flatMap((file) => ["--exclude", file]),
+            ...legacyCompatibilityFiles.flatMap((file) => ["--exclude", file]),
           ],
         },
         {
@@ -141,9 +145,30 @@ const runs = [
     : [
         {
           name: "unit",
-          args: ["vitest", "run", "--config", "vitest.unit.config.ts"],
+          args: [
+            "vitest",
+            "run",
+            "--config",
+            "vitest.unit.config.ts",
+            ...legacyCompatibilityFiles.flatMap((file) => ["--exclude", file]),
+          ],
         },
       ]),
+  ...(legacyCompatibilityFiles.length > 0
+    ? [
+        {
+          name: "unit-legacy-compat",
+          args: [
+            "vitest",
+            "run",
+            "--config",
+            "vitest.unit.config.ts",
+            "--pool=forks",
+            ...legacyCompatibilityFiles,
+          ],
+        },
+      ]
+    : []),
   ...(includeExtensionsSuite
     ? [
         {
@@ -226,8 +251,14 @@ const keepGatewaySerial =
   process.env.OPENCLAW_TEST_SERIAL_GATEWAY === "1" ||
   testProfile === "serial" ||
   !parallelGatewayEnabled;
-const parallelRuns = keepGatewaySerial ? runs.filter((entry) => entry.name !== "gateway") : runs;
-const serialRuns = keepGatewaySerial ? runs.filter((entry) => entry.name === "gateway") : [];
+const parallelRuns = runs.filter(
+  (entry) =>
+    entry.name !== "unit-legacy-compat" && (!keepGatewaySerial || entry.name !== "gateway"),
+);
+const serialRuns = [
+  ...(keepGatewaySerial ? runs.filter((entry) => entry.name === "gateway") : []),
+  ...runs.filter((entry) => entry.name === "unit-legacy-compat"),
+];
 const baseLocalWorkers = Math.max(4, Math.min(16, hostCpuCount));
 const loadAwareDisabledRaw = process.env.OPENCLAW_TEST_LOAD_AWARE?.trim().toLowerCase();
 const loadAwareDisabled = loadAwareDisabledRaw === "0" || loadAwareDisabledRaw === "false";
@@ -287,6 +318,9 @@ const defaultWorkerBudget =
 // Keep worker counts predictable for local runs; trim macOS CI workers to avoid worker crashes/OOM.
 // In CI on linux/windows, prefer Vitest defaults to avoid cross-test interference from lower worker counts.
 const maxWorkersForRun = (name) => {
+  if (name === "unit-legacy-compat") {
+    return 1;
+  }
   if (resolvedOverride) {
     return resolvedOverride;
   }
@@ -383,6 +417,12 @@ const runOnce = (entry, extraArgs = []) =>
   });
 
 const run = async (entry) => {
+  if (entry.name === "unit-legacy-compat") {
+    if (shardIndexOverride !== null && shardIndexOverride !== 1) {
+      return 0;
+    }
+    return runOnce(entry);
+  }
   if (shardCount <= 1) {
     return runOnce(entry);
   }

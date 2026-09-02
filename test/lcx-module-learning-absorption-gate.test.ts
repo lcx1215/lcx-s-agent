@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const scriptPath = path.join(repoRoot, "scripts/dev/lcx-module-learning-absorption-gate.ts");
+const scriptPath = path.join(repoRoot, "scripts/operator/lcx-module-learning-absorption-gate.ts");
 
 async function seedJson(workspaceDir: string, relativePath: string, payload: unknown) {
   const absolutePath = path.join(workspaceDir, relativePath);
@@ -38,7 +38,7 @@ function runReviewCli(args: string[], workspaceDir: string) {
     [
       "--import",
       "tsx",
-      path.join(repoRoot, "scripts/dev/module-learning-pipeline-review.ts"),
+      path.join(repoRoot, "scripts/operator/module-learning-pipeline-review.ts"),
       "--workspace",
       workspaceDir,
       ...args,
@@ -123,7 +123,7 @@ describe("lcx-module-learning-absorption-gate", () => {
     expect(parsed).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_module_learning_absorption_gate_only",
+        boundary: "local_module_learning_absorption_gate_only",
         absorptionReady: false,
         gateDecision: "hold_at_application_ready",
         notPromoted: true,
@@ -360,7 +360,7 @@ describe("lcx-module-learning-absorption-gate", () => {
       workspaceDir,
       "memory/module-learning-pipeline-plan-receipts/2026-05-14/options.json",
       {
-        boundary: "dev_module_learning_pipeline_plan",
+        boundary: "local_module_learning_pipeline_plan",
         targetModule: "options_volatility",
         status: "application_ready",
       },
@@ -414,7 +414,7 @@ describe("lcx-module-learning-absorption-gate", () => {
       workspaceDir,
       "memory/module-learning-pipeline-plan-receipts/2026-05-14/options.json",
       {
-        boundary: "dev_module_learning_pipeline_plan",
+        boundary: "local_module_learning_pipeline_plan",
         targetModule: "options_volatility",
         moduleFamily: "finance_research",
         status: "application_ready",

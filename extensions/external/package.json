@@ -1,0 +1,29 @@
+{
+  "name": "@openclaw/external",
+  "version": "2026.3.3",
+  "description": "Vendor-neutral HTTP JSON channel plugin for OpenClaw",
+  "type": "module",
+  "dependencies": {
+    "zod": "^4.3.6"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "channel": {
+      "id": "external",
+      "label": "External",
+      "selectionLabel": "External (HTTP JSON)",
+      "docsPath": "/channels/external",
+      "docsLabel": "external",
+      "blurb": "Connect any software through a standard JSON webhook and HTTP endpoint.",
+      "order": 35,
+      "quickstartAllowFrom": true
+    },
+    "install": {
+      "npmSpec": "@openclaw/external",
+      "localPath": "extensions/external",
+      "defaultChoice": "npm"
+    }
+  }
+}

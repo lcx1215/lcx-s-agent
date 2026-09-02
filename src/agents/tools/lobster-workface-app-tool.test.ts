@@ -43,7 +43,7 @@ function buildWorkfaceContent() {
       "- Weakest Domain: technical_daily",
       "- Hallucination Watch: macro narrative drift",
     ],
-    feishuLanePanelLines: [
+    externalLanePanelLines: [
       "- Active Lanes: 3",
       "- control_room · session main · healthy",
       "- technical_daily · session td-1 · learning carryover fresh",

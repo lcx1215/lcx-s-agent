@@ -8,10 +8,10 @@ import { withEnvAsync } from "../../../test-utils/env.js";
 import { createHookEvent } from "../../hooks.js";
 import type { HookHandler } from "../../hooks.js";
 import {
-  buildFeishuFinanceDoctrineCalibrationFilename,
-  buildFeishuFinanceDoctrinePromotionCandidatesFilename,
-  buildFeishuFinanceDoctrinePromotionReviewFilename,
-  buildFeishuWorkReceiptFilename,
+  buildExternalFinanceDoctrineCalibrationFilename,
+  buildExternalFinanceDoctrinePromotionCandidatesFilename,
+  buildExternalFinanceDoctrinePromotionReviewFilename,
+  buildExternalWorkReceiptFilename,
   buildCorrectionNoteFilename,
   buildLearningCouncilAdoptionLedgerFilename,
   buildLearningCouncilArtifactJsonRelativePath,
@@ -20,11 +20,11 @@ import {
   buildKnowledgeValidationWeeklyArtifactFilename,
   buildOperatingWeeklyArtifactFilename,
   buildWatchtowerArtifactDir,
-  renderFeishuFinanceDoctrineCalibrationArtifact,
-  parseFeishuFinanceDoctrinePromotionCandidateArtifact,
-  parseFeishuFinanceDoctrinePromotionReviewArtifact,
-  renderFeishuFinanceDoctrinePromotionReviewArtifact,
-  renderFeishuWorkReceiptArtifact,
+  renderExternalFinanceDoctrineCalibrationArtifact,
+  parseExternalFinanceDoctrinePromotionCandidateArtifact,
+  parseExternalFinanceDoctrinePromotionReviewArtifact,
+  renderExternalFinanceDoctrinePromotionReviewArtifact,
+  renderExternalWorkReceiptArtifact,
   renderLearningCouncilAdoptionLedger,
   parseLearningCouncilAdoptionLedger,
   renderLearningCouncilRuntimeArtifact,
@@ -96,17 +96,17 @@ describe("operating-daily-workface hook", () => {
     await runReset(tempDir, stateDir);
 
     const receiptIndex = await fs.readFile(
-      path.join(memoryDir, "feishu-work-receipts", "index.md"),
+      path.join(memoryDir, "external-work-receipts", "index.md"),
       "utf-8",
     );
     const repairQueue = await fs.readFile(
-      path.join(memoryDir, "feishu-work-receipts", "repair-queue.md"),
+      path.join(memoryDir, "external-work-receipts", "repair-queue.md"),
       "utf-8",
     );
-    expect(receiptIndex).toContain("# Feishu Work Receipt Index");
+    expect(receiptIndex).toContain("# External Work Receipt Index");
     expect(receiptIndex).toContain("- **Tracked Receipts**: 0");
-    expect(receiptIndex).toContain("No Feishu work receipts are recorded yet.");
-    expect(repairQueue).toContain("# Feishu Work Repair Queue");
+    expect(receiptIndex).toContain("No External work receipts are recorded yet.");
+    expect(repairQueue).toContain("# External Work Repair Queue");
     expect(repairQueue).toContain("- **Active Repair Clusters**: 0");
     expect(repairQueue).toContain("No repair-minded work receipts are queued right now.");
   });
@@ -199,36 +199,36 @@ describe("operating-daily-workface hook", () => {
         ],
       }),
     });
-    const surfaceLinesDir = path.join(memoryDir, "feishu-surface-lines");
+    const surfaceLinesDir = path.join(memoryDir, "external-surface-lines");
     await fs.mkdir(surfaceLinesDir, { recursive: true });
     await writeWorkspaceFile({
       dir: surfaceLinesDir,
       name: "index.md",
       content: [
-        "# Feishu Surface Lane Panel",
+        "# External Surface Lane Panel",
         "",
         "- **Active Lanes**: 2",
         "",
         "## Lane Meter",
-        "- learning_command / oc-learning: 3 turns · session agent:main:feishu:group:oc-learning:surface:learning_command · updated 2026-03-25T16:00:00.000Z",
-        "- fundamental_research / oc-fundamental: 2 turns · session agent:main:feishu:group:oc-fundamental:surface:fundamental_research · updated 2026-03-25T15:00:00.000Z",
+        "- learning_command / oc-learning: 3 turns · session agent:main:external:group:oc-learning:surface:learning_command · updated 2026-03-25T16:00:00.000Z",
+        "- fundamental_research / oc-fundamental: 2 turns · session agent:main:external:group:oc-fundamental:surface:fundamental_research · updated 2026-03-25T15:00:00.000Z",
         "",
       ].join("\n"),
     });
-    const workReceiptsDir = path.join(memoryDir, "feishu-work-receipts");
+    const workReceiptsDir = path.join(memoryDir, "external-work-receipts");
     await fs.mkdir(workReceiptsDir, { recursive: true });
     await writeWorkspaceFile({
       dir: workReceiptsDir,
-      name: buildFeishuWorkReceiptFilename({
+      name: buildExternalWorkReceiptFilename({
         handledAt: "2026-03-25T11:00:00.000Z",
         surface: "control_room",
         messageId: "msg-work-1",
       }),
-      content: renderFeishuWorkReceiptArtifact({
+      content: renderExternalWorkReceiptArtifact({
         handledAt: "2026-03-25T11:00:00.000Z",
         surface: "control_room",
         chatId: "oc-control-room",
-        sessionKey: "agent:main:feishu:dm:oc-control-room",
+        sessionKey: "agent:main:external:dm:oc-control-room",
         messageId: "msg-work-1",
         userMessage: "打开我的浏览器分析，然后生成几个你未来半年最看好的股票",
         requestedAction: "analyze_or_summarize",
@@ -265,16 +265,16 @@ describe("operating-daily-workface hook", () => {
     });
     await writeWorkspaceFile({
       dir: workReceiptsDir,
-      name: buildFeishuWorkReceiptFilename({
+      name: buildExternalWorkReceiptFilename({
         handledAt: "2026-03-25T11:30:00.000Z",
         surface: "control_room",
         messageId: "msg-work-repair-1",
       }),
-      content: renderFeishuWorkReceiptArtifact({
+      content: renderExternalWorkReceiptArtifact({
         handledAt: "2026-03-25T11:30:00.000Z",
         surface: "control_room",
         chatId: "oc-control-room",
-        sessionKey: "agent:main:feishu:dm:oc-control-room",
+        sessionKey: "agent:main:external:dm:oc-control-room",
         messageId: "msg-work-repair-1",
         userMessage: "你刚才那段还是词不达意。我让你先说动作和范围，不是直接重写长文。",
         requestedAction: "repair_previous_answer",
@@ -292,37 +292,37 @@ describe("operating-daily-workface hook", () => {
     });
     await writeWorkspaceFile({
       dir: workReceiptsDir,
-      name: buildFeishuFinanceDoctrineCalibrationFilename({
+      name: buildExternalFinanceDoctrineCalibrationFilename({
         reviewDate: "2026-03-25T14:30:00.000Z",
         consumer: "holdings_thesis_revalidation",
-        linkedReceipt: "2026-03-25-feishu-work-receipt-110000-000Z-control_room-msg-work-1.md",
+        linkedReceipt: "2026-03-25-external-work-receipt-110000-000Z-control_room-msg-work-1.md",
       }),
-      content: renderFeishuFinanceDoctrineCalibrationArtifact({
+      content: renderExternalFinanceDoctrineCalibrationArtifact({
         reviewDate: "2026-03-25T14:30:00.000Z",
         consumer: "holdings_thesis_revalidation",
         linkedReceipt:
-          "memory/feishu-work-receipts/2026-03-25-feishu-work-receipt-110000-000Z-control_room-msg-work-1.md",
+          "memory/external-work-receipts/2026-03-25-external-work-receipt-110000-000Z-control_room-msg-work-1.md",
         observedOutcome: "到目前为止更像弱修复而不是强兑现，结果离原来的 base case 更近。",
         scenarioClosestToOutcome: "base_case",
         baseCaseDirectionallyCloser: "yes",
         changeMyMindTriggered: "no",
         convictionLooksTooHighOrLow: "too_high",
         notes:
-          "derived from later holdings_thesis_revalidation reply in memory/feishu-work-receipts/2026-03-25-feishu-work-receipt-143000-000Z-control_room-msg-work-3.md",
+          "derived from later holdings_thesis_revalidation reply in memory/external-work-receipts/2026-03-25-external-work-receipt-143000-000Z-control_room-msg-work-3.md",
       }),
     });
     await writeWorkspaceFile({
       dir: workReceiptsDir,
-      name: buildFeishuFinanceDoctrineCalibrationFilename({
+      name: buildExternalFinanceDoctrineCalibrationFilename({
         reviewDate: "2026-03-25T16:30:00.000Z",
         consumer: "holdings_thesis_revalidation",
-        linkedReceipt: "2026-03-25-feishu-work-receipt-110000-000Z-control_room-msg-work-1.md",
+        linkedReceipt: "2026-03-25-external-work-receipt-110000-000Z-control_room-msg-work-1.md",
       }),
-      content: renderFeishuFinanceDoctrineCalibrationArtifact({
+      content: renderExternalFinanceDoctrineCalibrationArtifact({
         reviewDate: "2026-03-25T16:30:00.000Z",
         consumer: "holdings_thesis_revalidation",
         linkedReceipt:
-          "memory/feishu-work-receipts/2026-03-25-feishu-work-receipt-110000-000Z-control_room-msg-work-1.md",
+          "memory/external-work-receipts/2026-03-25-external-work-receipt-110000-000Z-control_room-msg-work-1.md",
         observedOutcome: "后续传导更像 thesis 破损，结果离 bear case 更近。",
         scenarioClosestToOutcome: "bear_case",
         baseCaseDirectionallyCloser: "no",
@@ -334,16 +334,16 @@ describe("operating-daily-workface hook", () => {
     });
     await writeWorkspaceFile({
       dir: workReceiptsDir,
-      name: buildFeishuFinanceDoctrineCalibrationFilename({
+      name: buildExternalFinanceDoctrineCalibrationFilename({
         reviewDate: "2026-03-22T12:00:00.000Z",
         consumer: "holdings_thesis_revalidation",
-        linkedReceipt: "2026-03-22-feishu-work-receipt-100000-000Z-control_room-msg-work-old.md",
+        linkedReceipt: "2026-03-22-external-work-receipt-100000-000Z-control_room-msg-work-old.md",
       }),
-      content: renderFeishuFinanceDoctrineCalibrationArtifact({
+      content: renderExternalFinanceDoctrineCalibrationArtifact({
         reviewDate: "2026-03-22T12:00:00.000Z",
         consumer: "holdings_thesis_revalidation",
         linkedReceipt:
-          "memory/feishu-work-receipts/2026-03-22-feishu-work-receipt-100000-000Z-control_room-msg-work-old.md",
+          "memory/external-work-receipts/2026-03-22-external-work-receipt-100000-000Z-control_room-msg-work-old.md",
         observedOutcome: "旧 thesis 仍然更接近 base case，而且 change-my-mind 还没被触发。",
         scenarioClosestToOutcome: "base_case",
         baseCaseDirectionallyCloser: "yes",
@@ -354,16 +354,17 @@ describe("operating-daily-workface hook", () => {
     });
     await writeWorkspaceFile({
       dir: workReceiptsDir,
-      name: buildFeishuFinanceDoctrineCalibrationFilename({
-        reviewDate: "2026-03-15T12:00:00.000Z",
-        consumer: "holdings_thesis_revalidation",
-        linkedReceipt: "2026-03-15-feishu-work-receipt-100000-000Z-control_room-msg-work-stale.md",
-      }),
-      content: renderFeishuFinanceDoctrineCalibrationArtifact({
+      name: buildExternalFinanceDoctrineCalibrationFilename({
         reviewDate: "2026-03-15T12:00:00.000Z",
         consumer: "holdings_thesis_revalidation",
         linkedReceipt:
-          "memory/feishu-work-receipts/2026-03-15-feishu-work-receipt-100000-000Z-control_room-msg-work-stale.md",
+          "2026-03-15-external-work-receipt-100000-000Z-control_room-msg-work-stale.md",
+      }),
+      content: renderExternalFinanceDoctrineCalibrationArtifact({
+        reviewDate: "2026-03-15T12:00:00.000Z",
+        consumer: "holdings_thesis_revalidation",
+        linkedReceipt:
+          "memory/external-work-receipts/2026-03-15-external-work-receipt-100000-000Z-control_room-msg-work-stale.md",
         observedOutcome: "这条太旧，不该进入最近 7 天聚合。",
         scenarioClosestToOutcome: "base_case",
         baseCaseDirectionallyCloser: "yes",
@@ -402,7 +403,7 @@ describe("operating-daily-workface hook", () => {
           lastSeenAt: "2026-03-25T14:00:00.000Z",
           category: "hallucination_risk",
           severity: "medium",
-          source: "feishu.learning_command",
+          source: "external.learning_command",
           problem: "mutable fact was not clearly labelled provisional",
           foundationTemplate: "outcome-review",
         },
@@ -543,8 +544,8 @@ describe("operating-daily-workface hook", () => {
     );
     expect(content).not.toContain("这条太旧，不该进入最近 7 天聚合。");
     const promotionCandidateFilename =
-      buildFeishuFinanceDoctrinePromotionCandidatesFilename("2026-03-25");
-    const parsedPromotionCandidates = parseFeishuFinanceDoctrinePromotionCandidateArtifact(
+      buildExternalFinanceDoctrinePromotionCandidatesFilename("2026-03-25");
+    const parsedPromotionCandidates = parseExternalFinanceDoctrinePromotionCandidateArtifact(
       await fs.readFile(path.join(workReceiptsDir, promotionCandidateFilename), "utf-8"),
     );
     expect(parsedPromotionCandidates).toMatchObject({
@@ -586,14 +587,15 @@ describe("operating-daily-workface hook", () => {
         }),
       ]),
     );
-    const promotionReviewFilename = buildFeishuFinanceDoctrinePromotionReviewFilename("2026-03-25");
-    const parsedPromotionReview = parseFeishuFinanceDoctrinePromotionReviewArtifact(
+    const promotionReviewFilename =
+      buildExternalFinanceDoctrinePromotionReviewFilename("2026-03-25");
+    const parsedPromotionReview = parseExternalFinanceDoctrinePromotionReviewArtifact(
       await fs.readFile(path.join(workReceiptsDir, promotionReviewFilename), "utf-8"),
     );
     expect(parsedPromotionReview).toMatchObject({
       consumer: "holdings_thesis_revalidation",
       linkedCandidateArtifact:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-candidates.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-candidates.md",
     });
     expect(parsedPromotionReview?.reviews).toEqual(
       expect.arrayContaining([
@@ -620,7 +622,7 @@ describe("operating-daily-workface hook", () => {
     expect(content).toContain("Strongest Domain: bounded repair planning");
     expect(content).toContain("Weakest Domain: position management");
     expect(content).toContain("Hallucination Watch: position management: 1 risky validation note");
-    expect(content).toContain("## Feishu Lane Panel");
+    expect(content).toContain("## External Lane Panel");
     expect(content).toContain("- **Active Surface Lanes**: 2");
     expect(content).toContain("learning_command / oc-learning: 3 turns");
     expect(content).toContain("fundamental_research / oc-fundamental: 2 turns");
@@ -642,7 +644,7 @@ describe("operating-daily-workface hook", () => {
       "the distillation chain serves both Lobster's general agent meta-capability and the full finance research pipeline",
     );
     expect(content).toContain(
-      "Treat memory/local-memory/*.md as reusable durable cards; treat ops/live-handoff/*.md as drill-down or migration history",
+      "Treat memory/local-memory/*.md as reusable durable cards; treat ops/external-channel-history/*.md as drill-down or migration history",
     );
   });
 
@@ -925,21 +927,21 @@ describe("operating-daily-workface hook", () => {
     const tempDir = await createCaseWorkspace("workspace");
     const stateDir = await createCaseWorkspace("state");
     const memoryDir = path.join(tempDir, "memory");
-    const workReceiptsDir = path.join(memoryDir, "feishu-work-receipts");
+    const workReceiptsDir = path.join(memoryDir, "external-work-receipts");
     await fs.mkdir(workReceiptsDir, { recursive: true });
 
     await writeWorkspaceFile({
       dir: workReceiptsDir,
-      name: buildFeishuFinanceDoctrineCalibrationFilename({
+      name: buildExternalFinanceDoctrineCalibrationFilename({
         reviewDate: "2026-03-25T14:30:00.000Z",
         consumer: "holdings_thesis_revalidation",
-        linkedReceipt: "2026-03-25-feishu-work-receipt-110000-000Z-control_room-msg-work-1.md",
+        linkedReceipt: "2026-03-25-external-work-receipt-110000-000Z-control_room-msg-work-1.md",
       }),
-      content: renderFeishuFinanceDoctrineCalibrationArtifact({
+      content: renderExternalFinanceDoctrineCalibrationArtifact({
         reviewDate: "2026-03-25T14:30:00.000Z",
         consumer: "holdings_thesis_revalidation",
         linkedReceipt:
-          "memory/feishu-work-receipts/2026-03-25-feishu-work-receipt-110000-000Z-control_room-msg-work-1.md",
+          "memory/external-work-receipts/2026-03-25-external-work-receipt-110000-000Z-control_room-msg-work-1.md",
         observedOutcome: "结果依然更像 base case。",
         scenarioClosestToOutcome: "base_case",
         baseCaseDirectionallyCloser: "yes",
@@ -950,16 +952,16 @@ describe("operating-daily-workface hook", () => {
     });
     await writeWorkspaceFile({
       dir: workReceiptsDir,
-      name: buildFeishuFinanceDoctrineCalibrationFilename({
+      name: buildExternalFinanceDoctrineCalibrationFilename({
         reviewDate: "2026-03-22T12:00:00.000Z",
         consumer: "holdings_thesis_revalidation",
-        linkedReceipt: "2026-03-22-feishu-work-receipt-100000-000Z-control_room-msg-work-old.md",
+        linkedReceipt: "2026-03-22-external-work-receipt-100000-000Z-control_room-msg-work-old.md",
       }),
-      content: renderFeishuFinanceDoctrineCalibrationArtifact({
+      content: renderExternalFinanceDoctrineCalibrationArtifact({
         reviewDate: "2026-03-22T12:00:00.000Z",
         consumer: "holdings_thesis_revalidation",
         linkedReceipt:
-          "memory/feishu-work-receipts/2026-03-22-feishu-work-receipt-100000-000Z-control_room-msg-work-old.md",
+          "memory/external-work-receipts/2026-03-22-external-work-receipt-100000-000Z-control_room-msg-work-old.md",
         observedOutcome: "第二条也更像 base case。",
         scenarioClosestToOutcome: "base_case",
         baseCaseDirectionallyCloser: "yes",
@@ -970,12 +972,12 @@ describe("operating-daily-workface hook", () => {
     });
     await writeWorkspaceFile({
       dir: workReceiptsDir,
-      name: buildFeishuFinanceDoctrinePromotionReviewFilename("2026-03-25"),
-      content: renderFeishuFinanceDoctrinePromotionReviewArtifact({
+      name: buildExternalFinanceDoctrinePromotionReviewFilename("2026-03-25"),
+      content: renderExternalFinanceDoctrinePromotionReviewArtifact({
         reviewedAt: "2026-03-25T18:00:00.000Z",
         consumer: "holdings_thesis_revalidation",
         linkedCandidateArtifact:
-          "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-candidates.md",
+          "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-candidates.md",
         reviews: [
           {
             candidateKey: "closest_scenario:base_case",
@@ -997,11 +999,11 @@ describe("operating-daily-workface hook", () => {
       "reviewed: ready_for_manual_promotion / closest_scenario repeated base_case in 2/2 recent calibration notes",
     );
     expect(content).toContain("note: repeat pattern is stable enough to consider manual promotion");
-    const parsedPromotionCandidates = parseFeishuFinanceDoctrinePromotionCandidateArtifact(
+    const parsedPromotionCandidates = parseExternalFinanceDoctrinePromotionCandidateArtifact(
       await fs.readFile(
         path.join(
           workReceiptsDir,
-          buildFeishuFinanceDoctrinePromotionCandidatesFilename("2026-03-25"),
+          buildExternalFinanceDoctrinePromotionCandidatesFilename("2026-03-25"),
         ),
         "utf-8",
       ),
@@ -1027,9 +1029,12 @@ describe("operating-daily-workface hook", () => {
         }),
       ]),
     );
-    const parsedPromotionReview = parseFeishuFinanceDoctrinePromotionReviewArtifact(
+    const parsedPromotionReview = parseExternalFinanceDoctrinePromotionReviewArtifact(
       await fs.readFile(
-        path.join(workReceiptsDir, buildFeishuFinanceDoctrinePromotionReviewFilename("2026-03-25")),
+        path.join(
+          workReceiptsDir,
+          buildExternalFinanceDoctrinePromotionReviewFilename("2026-03-25"),
+        ),
         "utf-8",
       ),
     );

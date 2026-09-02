@@ -28,7 +28,7 @@ describe("finance_framework_core_inspect tool", () => {
           {
             domain: "macro_rates_inflation",
             sourceArtifacts: [
-              "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-calibration-190000-000Z-control-room-msg-1.md",
+              "memory/external-work-receipts/2026-04-16-external-finance-doctrine-calibration-190000-000Z-control-room-msg-1.md",
             ],
             evidenceCategories: ["macro_rates_evidence", "inflation_evidence"],
             evidenceSummary:
@@ -52,7 +52,7 @@ describe("finance_framework_core_inspect tool", () => {
           },
           {
             domain: "credit_liquidity",
-            sourceArtifacts: ["memory/feishu-work-receipts/2026-04-16-credit-stress.md"],
+            sourceArtifacts: ["memory/external-work-receipts/2026-04-16-credit-stress.md"],
             evidenceCategories: ["credit_evidence", "liquidity_evidence"],
             evidenceSummary:
               "Credit spread and liquidity evidence support the bounded credit-liquidity monitoring view.",

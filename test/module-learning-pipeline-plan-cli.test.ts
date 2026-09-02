@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 const repoRoot = path.resolve(__dirname, "..");
-const scriptPath = path.join(repoRoot, "scripts/dev/module-learning-pipeline-plan.ts");
+const scriptPath = path.join(repoRoot, "scripts/operator/module-learning-pipeline-plan.ts");
 
 function runCli(args: string[]) {
   return spawnSync(process.execPath, ["--import", "tsx", scriptPath, ...args], {
@@ -62,7 +62,7 @@ describe("module-learning-pipeline-plan CLI", () => {
       "--actual-reading-scope",
       "Read local-brain module-learning chain and options eval gates.",
       "--existing-artifact",
-      "scripts/dev/local-brain-distill-eval.ts",
+      "scripts/operator/local-brain-distill-eval.ts",
       "--json",
     ]);
 
@@ -71,7 +71,7 @@ describe("module-learning-pipeline-plan CLI", () => {
     expect(parsed).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_module_learning_pipeline_plan",
+        boundary: "local_module_learning_pipeline_plan",
         targetModule: "options_volatility",
         receiptWritten: false,
         liveTouched: false,
@@ -93,15 +93,15 @@ describe("module-learning-pipeline-plan CLI", () => {
       "--target-module",
       "global_index_regime",
       "--source",
-      "scripts/dev/local-brain-distill-eval.ts",
+      "scripts/operator/local-brain-distill-eval.ts",
       "--actual-reading-scope",
       "Read index concentration and all-domain finance eval cases.",
       "--existing-artifact",
-      "scripts/dev/local-brain-distill-eval.ts",
+      "scripts/operator/local-brain-distill-eval.ts",
       "--source-registry-record",
-      "scripts/dev/local-brain-distill-eval.ts",
+      "scripts/operator/local-brain-distill-eval.ts",
       "--retrieval-receipt",
-      "scripts/dev/local-brain-distill-eval.ts",
+      "scripts/operator/local-brain-distill-eval.ts",
       "--application-validation-receipt",
       "test/local-brain-distill-eval.test.ts",
       "--training-or-eval-absorption-evidence",
@@ -140,7 +140,7 @@ describe("module-learning-pipeline-plan CLI", () => {
         "--actual-reading-scope",
         "Read module learning workspace default rules.",
         "--existing-artifact",
-        "scripts/dev/module-learning-pipeline-plan.ts",
+        "scripts/operator/module-learning-pipeline-plan.ts",
         "--write",
         "--json",
       ],
@@ -176,7 +176,7 @@ describe("module-learning-pipeline-plan CLI", () => {
       "--actual-reading-scope",
       "Read artifact QC and number provenance workflow.",
       "--existing-artifact",
-      "scripts/dev/local-brain-distill-eval.ts",
+      "scripts/operator/local-brain-distill-eval.ts",
       "--json",
     ]);
 
@@ -185,7 +185,7 @@ describe("module-learning-pipeline-plan CLI", () => {
     expect(parsed).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_module_learning_pipeline_plan",
+        boundary: "local_module_learning_pipeline_plan",
         targetModule: "research_artifact_qc",
         moduleFamily: "finance_research",
         receiptWritten: false,

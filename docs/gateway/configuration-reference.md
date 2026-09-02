@@ -644,7 +644,7 @@ Run multiple accounts per channel (each with its own `accountId`):
 
 ### Other extension channels
 
-Many extension channels are configured as `channels.<id>` and documented in their dedicated channel pages (for example Feishu, Matrix, LINE, Nostr, Zalo, Nextcloud Talk, Synology Chat, and Twitch).
+Many extension channels are configured as `channels.<id>` and documented in their dedicated channel pages (for example External Message Channel, Matrix, LINE, Nostr, Zalo, Nextcloud Talk, Synology Chat, and Twitch).
 See the full channel index: [Channels](/channels).
 
 ### Group chat mention gating

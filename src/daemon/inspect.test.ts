@@ -130,18 +130,18 @@ describe("findExtraGatewayServices (darwin)", () => {
     const home = tempDir ?? "";
     const launchAgentsDir = path.join(home, "Library", "LaunchAgents");
     await fs.mkdir(launchAgentsDir, { recursive: true });
-    const plistPath = path.join(launchAgentsDir, "ai.openclaw.feishu.proxy.plist");
+    const plistPath = path.join(launchAgentsDir, "ai.openclaw.external.proxy.plist");
     await fs.writeFile(
       plistPath,
       `<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
   <dict>
     <key>Label</key>
-    <string>ai.openclaw.feishu.proxy</string>
+    <string>ai.openclaw.external.proxy</string>
     <key>ProgramArguments</key>
     <array>
       <string>/opt/homebrew/bin/python3</string>
-      <string>/Users/example/Desktop/openclaw/feishu_event_proxy.py</string>
+      <string>/Users/example/Desktop/openclaw/external_event_proxy.py</string>
     </array>
     <key>WorkingDirectory</key>
     <string>/Users/example/Desktop/openclaw</string>
@@ -150,7 +150,7 @@ describe("findExtraGatewayServices (darwin)", () => {
       <key>OPENCLAW_ROOT</key>
       <string>/Users/example/Desktop/openclaw</string>
       <key>OPENCLAW_BIN</key>
-      <string>/Users/example/Desktop/openclaw/send_feishu_reply.sh</string>
+      <string>/Users/example/Desktop/openclaw/send_external_reply.sh</string>
     </dict>
   </dict>
 </plist>`,
@@ -165,19 +165,19 @@ describe("findExtraGatewayServices (darwin)", () => {
     expect(result).toEqual([
       expect.objectContaining({
         platform: "darwin",
-        label: "ai.openclaw.feishu.proxy",
+        label: "ai.openclaw.external.proxy",
         scope: "user",
         marker: "openclaw",
         legacy: false,
         detail: expect.stringContaining(
-          "program: /Users/example/Desktop/openclaw/feishu_event_proxy.py",
+          "program: /Users/example/Desktop/openclaw/external_event_proxy.py",
         ),
       }),
     ]);
     expect(result[0]?.detail).toContain("cwd: /Users/example/Desktop/openclaw");
     expect(result[0]?.detail).toContain("OPENCLAW_ROOT: /Users/example/Desktop/openclaw");
     expect(result[0]?.detail).toContain(
-      "OPENCLAW_BIN: /Users/example/Desktop/openclaw/send_feishu_reply.sh",
+      "OPENCLAW_BIN: /Users/example/Desktop/openclaw/send_external_reply.sh",
     );
     expect(result[0]?.detail).toContain(
       "root-drift: expected /Users/example/Desktop/lcx-s-openclaw",
@@ -190,19 +190,19 @@ describe("findExtraGatewayServices (darwin)", () => {
     const launchAgentsDir = path.join(home, "Library", "LaunchAgents");
     await fs.mkdir(launchAgentsDir, { recursive: true });
     await fs.writeFile(
-      path.join(launchAgentsDir, "ai.openclaw.feishu.proxy.plist"),
+      path.join(launchAgentsDir, "ai.openclaw.external.proxy.plist"),
       `<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
   <dict>
     <key>Label</key>
-    <string>ai.openclaw.feishu.proxy</string>
+    <string>ai.openclaw.external.proxy</string>
     <key>ProgramArguments</key>
     <array>
       <string>/opt/homebrew/bin/python3</string>
-      <string>/Users/example/.openclaw/live-sidecars/lcx-s-openclaw/feishu_event_proxy.py</string>
+      <string>/Users/example/.openclaw/external-channel-runtime/lcx-s-openclaw/external_event_proxy.py</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/Users/example/.openclaw/live-sidecars/lcx-s-openclaw</string>
+    <string>/Users/example/.openclaw/external-channel-runtime/lcx-s-openclaw</string>
   </dict>
 </plist>`,
       "utf8",

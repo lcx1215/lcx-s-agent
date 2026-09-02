@@ -151,7 +151,7 @@ describe("sanitizeUserFacingText", () => {
     );
   });
 
-  it("strips Feishu wrapper metadata artifacts", () => {
+  it("strips External wrapper metadata artifacts", () => {
     const input = [
       "Conversation info (untrusted metadata):",
       "```json",

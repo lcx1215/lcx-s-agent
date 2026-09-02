@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const scriptPath = path.join(repoRoot, "scripts/dev/lcx-system-memory-sedimentation-gate.ts");
+const scriptPath = path.join(repoRoot, "scripts/operator/lcx-system-memory-sedimentation-gate.ts");
 
 async function seedFile(workspaceDir: string, relativePath: string, body = "x") {
   const absolutePath = path.join(workspaceDir, relativePath);
@@ -58,7 +58,7 @@ describe("lcx-system-memory-sedimentation-gate", () => {
     expect(parsed).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_system_memory_sedimentation_gate_only",
+        boundary: "local_system_memory_sedimentation_gate_only",
         recallReady: true,
         recallClaimReady: true,
         freshEnoughForRecallClaim: true,

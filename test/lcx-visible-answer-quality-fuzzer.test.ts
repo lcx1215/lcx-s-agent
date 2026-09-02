@@ -9,7 +9,7 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 async function runQualityFuzzer(args: string[] = []) {
   const { stdout } = await execFileAsync(
     process.execPath,
-    ["--import", "tsx", "scripts/dev/lcx-visible-answer-quality-fuzzer.ts", ...args, "--json"],
+    ["--import", "tsx", "scripts/operator/lcx-visible-answer-quality-fuzzer.ts", ...args, "--json"],
     {
       cwd: repoRoot,
       env: process.env,
@@ -26,7 +26,7 @@ describe("lcx-visible-answer-quality-fuzzer", () => {
     expect(payload).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_visible_answer_quality_fuzzer_only",
+        boundary: "local_visible_answer_quality_fuzzer_only",
         liveTouched: false,
         providerConfigTouched: false,
         protectedMemoryTouched: false,

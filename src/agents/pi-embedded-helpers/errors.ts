@@ -291,7 +291,7 @@ function normalizeBookkeepingFailureLines(text: string): string {
     );
 }
 
-function stripFeishuAgentWrapperArtifacts(text: string): string {
+function stripExternalAgentWrapperArtifacts(text: string): string {
   if (!text) {
     return text;
   }
@@ -620,7 +620,7 @@ export function sanitizeUserFacingText(text: string, opts?: { errorContext?: boo
   }
   const errorContext = opts?.errorContext ?? false;
   const stripped = normalizeBookkeepingFailureLines(
-    stripFeishuAgentWrapperArtifacts(stripInternalArtifactSections(stripFinalTagsFromText(text))),
+    stripExternalAgentWrapperArtifacts(stripInternalArtifactSections(stripFinalTagsFromText(text))),
   );
   const trimmed = stripped.trim();
   if (!trimmed) {

@@ -93,7 +93,7 @@ describe("discoverOpenClawPlugins", () => {
     const globalExt = path.join(stateDir, "extensions");
     fs.mkdirSync(globalExt, { recursive: true });
 
-    const backupDir = path.join(globalExt, "feishu.backup-20260222");
+    const backupDir = path.join(globalExt, "external.backup-20260222");
     fs.mkdirSync(backupDir, { recursive: true });
     fs.writeFileSync(path.join(backupDir, "index.ts"), "export default function () {}", "utf-8");
 
@@ -115,7 +115,7 @@ describe("discoverOpenClawPlugins", () => {
 
     const ids = candidates.map((candidate) => candidate.idHint);
     expect(ids).toContain("live");
-    expect(ids).not.toContain("feishu.backup-20260222");
+    expect(ids).not.toContain("external.backup-20260222");
     expect(ids).not.toContain("telegram.disabled.20260222");
     expect(ids).not.toContain("discord.bak");
   });

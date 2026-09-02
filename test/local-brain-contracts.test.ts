@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hardenLocalBrainPlanForAsk } from "../scripts/dev/local-brain-contracts.js";
+import { hardenLocalBrainPlanForAsk } from "../scripts/operator/local-brain-contracts.js";
 
 describe("hardenLocalBrainPlanForAsk", () => {
   it("expands short recent-market asks into scoped research preflight", () => {
@@ -346,6 +346,61 @@ describe("hardenLocalBrainPlanForAsk", () => {
     );
   });
 
+  it("hardens Mag7 concentration prompts with breadth, valuation, index, and portfolio inputs", () => {
+    const plan = hardenLocalBrainPlanForAsk(
+      {},
+      {
+        ask: "纳指和标普如果越来越集中在 Mag7，我持有 QQQ 和 NVDA 时，怎么拆指数权重、市场宽度、估值、组合暴露和反方论证？",
+      },
+    );
+
+    expect(plan.task_family).toBe("cross_market_finance_research_planning");
+    expect(plan.primary_modules).toEqual(
+      expect.arrayContaining([
+        "us_equity_market_structure",
+        "global_index_regime",
+        "company_fundamentals_value",
+        "quant_math",
+        "portfolio_risk_gates",
+      ]),
+    );
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "us_equity_breadth_earnings_and_valuation_inputs",
+        "index_constituents_weights_and_technical_regime_inputs",
+        "position_weights_and_return_series",
+        "portfolio_weights_and_risk_limits",
+      ]),
+    );
+    expect(plan.risk_boundaries).toEqual(
+      expect.arrayContaining(["research_only", "no_trade_advice"]),
+    );
+  });
+
+  it("canonicalizes case-variant Mag7 missing-data identifiers before eval", () => {
+    const plan = hardenLocalBrainPlanForAsk(
+      {
+        missing_data: [
+          "US_equity_breadth_earnings_and_valuation_inputs",
+          "INDEX-CONSTITUENTS/WEIGHTS and TECHNICAL REGIME INPUTS",
+        ],
+      },
+      {
+        ask: "纳指和标普如果越来越集中在 Mag7，我持有 QQQ 和 NVDA 时，怎么拆指数权重、市场宽度、估值、组合暴露和反方论证？",
+        sourceSummary:
+          "index concentration and mega-cap exposure research loop for QQQ/NVDA portfolio.",
+      },
+    );
+
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "us_equity_breadth_earnings_and_valuation_inputs",
+        "index_constituents_weights_and_technical_regime_inputs",
+      ]),
+    );
+    expect(plan.missing_data).not.toContain("US_equity_breadth_earnings_and_valuation_inputs");
+  });
+
   it("canonicalizes weak high-leverage crypto boundary variants", () => {
     const plan = hardenLocalBrainPlanForAsk(
       {
@@ -566,7 +621,7 @@ describe("hardenLocalBrainPlanForAsk", () => {
         next_step:
           "reject_execution_or_high_leverage_language_then_analyze_crypto_as_risk_sentiment_and_liquidity_input_only",
         rejected_context: [
-          "old_lark_conversation_history",
+          "old_external_conversation_history",
           "execution_or_high_leverage_crypto_instruction",
           "trade_recommendation_without_evidence",
         ],
@@ -888,7 +943,7 @@ describe("hardenLocalBrainPlanForAsk", () => {
     expect(plan.risk_boundaries).not.toContain("no_high_leverage_crypto");
   });
 
-  it("turns repeat-only Lark fragments into context-pollution clarification", () => {
+  it("turns repeat-only External fragments into context-pollution clarification", () => {
     const plan = hardenLocalBrainPlanForAsk(
       {},
       {
@@ -1210,7 +1265,7 @@ describe("hardenLocalBrainPlanForAsk", () => {
   it("routes named non-factor modules into the same internalization chain", () => {
     for (const ask of [
       "还有期权、指数、宏观和基本面等模块，也要这种 source registry、retrieval receipt、apply validation、Qwen eval 吸收的链条。",
-      "Lark/Feishu 工作流、记忆模块、ops 模块和 skill 模块同样都要这条学习内化链，不能只给因子模块。",
+      "external message 工作流、记忆模块、ops 模块和 skill 模块同样都要这条学习内化链，不能只给因子模块。",
     ]) {
       const plan = hardenLocalBrainPlanForAsk({}, { ask });
 
@@ -1237,7 +1292,7 @@ describe("hardenLocalBrainPlanForAsk", () => {
     const plan = hardenLocalBrainPlanForAsk(
       {},
       {
-        ask: "如果我只说一个例子，比如大宗商品学习失败或者 Lark 回复看不懂，你要有人的抽象能力：先找 original example，再抽象成 failure family，覆盖 adjacent non-identical scenario，改 shared contract，并留下 regression proof。",
+        ask: "如果我只说一个例子，比如大宗商品学习失败或者 External 回复看不懂，你要有人的抽象能力：先找 original example，再抽象成 failure family，覆盖 adjacent non-identical scenario，改 shared contract，并留下 regression proof。",
       },
     );
 

@@ -1,7 +1,7 @@
 # Local Brain Open Evals
 
 LCX local-brain training can be checked with open-source eval tools without
-touching live Lark, live sender, provider config, protected memory, language
+touching a live external channel, live sender, provider config, protected memory, intent
 corpus, or finance doctrine.
 
 ## Local Bridge
@@ -10,13 +10,13 @@ Run the repo-native bridge first. It uses the same cases as the Promptfoo and
 Inspect configs and fails fast without requiring external packages:
 
 ```bash
-node --import tsx scripts/dev/local-brain-open-eval.ts --json
+node --import tsx scripts/operator/local-brain-open-eval.ts --json
 ```
 
 If a provider is slow or hangs, add a timeout so the run stays bounded:
 
 ```bash
-node --import tsx scripts/dev/local-brain-open-eval.ts --json --provider-timeout-ms 20000
+node --import tsx scripts/operator/local-brain-open-eval.ts --json --provider-timeout-ms 20000
 ```
 
 ## Promptfoo
@@ -36,7 +36,7 @@ this dev eval work.
 This eval calls:
 
 ```bash
-node --import tsx scripts/dev/local-brain-open-eval-provider.ts "<user ask>"
+node --import tsx scripts/operator/local-brain-open-eval-provider.ts "<user ask>"
 ```
 
 ## Inspect AI
@@ -56,9 +56,9 @@ available. Do not add it to the runtime package dependencies.
 - source-gated finance learning
 - isolated agent-skill distillation from SKILL.md/local skill patterns
 - quant math missing-input refusal
-- Lark context-pollution audit staying ops-first
+- external-channel context-pollution audit staying ops-first
 
-These evals are dev checks. They are not live Lark proof.
+These evals are dev checks. They are not live external-channel proof.
 
 ## Skill Learning Config
 

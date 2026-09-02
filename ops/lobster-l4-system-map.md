@@ -1,6 +1,6 @@
 # Lobster L4 System Map
 
-This file is the shortest useful map of the current Lobster system in the dev repo.
+This file is the shortest useful map of the current Lobster system in the canonical repository.
 It exists to reduce future maintenance cost, stop duplicate seams from growing, and
 make it obvious where new work belongs.
 
@@ -28,8 +28,8 @@ Not mainline:
 
 These are where real operator input enters:
 
-- `extensions/feishu/src/*`
-  - main Feishu control-room and specialist surfaces
+- `extensions/external/src/*`
+  - vendor-neutral JSON webhook ingress and HTTP JSON delivery
 - `src/commands/channels/status.ts`
   - operator-facing channel/runtime status
 - `src/auto-reply/reply/agent-runner.ts`
@@ -102,33 +102,34 @@ These are the places that should keep the system clean and repairable:
 
 - `src/hooks/bundled/fundamental-artifact-errors.ts`
 - `src/infra/operational-anomalies.ts`
-- Feishu monitor / probe / reply-dispatch surfaces under `extensions/feishu/src/*`
+- External channel monitor / protocol / security / delivery surfaces under
+  `extensions/external/src/*`
 
-## 3. Feishu Surface Contracts
+## 3. External Message Channel Contract
 
-Current surface registry lives in:
+The channel transport contract lives in:
 
-- `extensions/feishu/src/surfaces.ts`
+- `extensions/external/src/protocol.ts`
+- `extensions/external/src/monitor.ts`
+- `extensions/external/src/send.ts`
 
-Active surfaces:
+The adapter supports:
 
-- `control_room`
-- `technical_daily`
-- `fundamental_research`
-- `knowledge_maintenance`
-- `learning_command`
-- `ops_audit`
-- `watchtower`
+- direct, group, and channel conversations
+- JSON webhook inbound messages with token or network-boundary authentication
+- JSON HTTP outbound replies with idempotency, reply, thread, and media fields
+- normal OpenClaw routing and reply dispatch through the shared agent runtime
 
 Rule:
 
-- control-room first
-- specialist surfaces only when the question genuinely belongs there
-- do not let new surfaces become hidden specialist silos
+- the external adapter transports messages; the shared agent runtime owns intent
+  routing and specialist selection
+- keep the wire contract vendor-neutral and explicit
+- do not let a connector become a second brain or a second source of truth
 
-## 4. What Counts As The L4 Brain In Dev
+## 4. What Counts As The L4 Brain In The Local System
 
-The dev-brain is not one file. It is the combination of:
+The local system brain is not one file or repository. It is the combination of:
 
 - `src/agents/system-prompt.ts`
 - durable learning hooks
@@ -156,7 +157,7 @@ These are the real blockers, not vague ambition:
 - active state surfaces must stay single-source and non-contradictory
 - learning outputs must become durable and callable, not just archived
 - specialist chains must remain ordered and non-overlapping
-- Feishu must stay human-readable and route into the same brain
+- the External Message Channel must stay human-readable and route into the same brain
 - anomaly / artifact-error surfaces must keep failure explicit
 
 ## 7. Rule For Future Contributors

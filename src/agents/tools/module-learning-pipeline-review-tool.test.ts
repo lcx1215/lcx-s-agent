@@ -33,7 +33,7 @@ describe("module learning pipeline review tool", () => {
       workspaceDir,
       "memory/module-learning-pipeline-plan-receipts/2026-05-12/a.json",
       {
-        boundary: "dev_module_learning_pipeline_plan",
+        boundary: "local_module_learning_pipeline_plan",
         targetModule: "options_volatility",
         moduleFamily: "finance_research",
         status: "eval_absorbed",
@@ -60,7 +60,7 @@ describe("module learning pipeline review tool", () => {
       workspaceDir,
       "memory/module-learning-pipeline-plan-receipts/2026-05-12/b.json",
       {
-        boundary: "dev_module_learning_pipeline_plan",
+        boundary: "local_module_learning_pipeline_plan",
         targetModule: "global_index_regime",
         moduleFamily: "finance_research",
         status: "stored_only",
@@ -183,7 +183,7 @@ describe("module learning pipeline review tool", () => {
       workspaceDir,
       "memory/module-learning-pipeline-plan-receipts/2026-05-12/old.json",
       {
-        boundary: "dev_module_learning_pipeline_plan",
+        boundary: "local_module_learning_pipeline_plan",
         targetModule: "portfolio_risk_gates",
         moduleFamily: "finance_research",
         status: "stored_only",
@@ -206,7 +206,7 @@ describe("module learning pipeline review tool", () => {
       workspaceDir,
       "memory/module-learning-pipeline-plan-receipts/2026-05-12/discard.json",
       {
-        boundary: "dev_module_learning_pipeline_plan",
+        boundary: "local_module_learning_pipeline_plan",
         targetModule: "portfolio_risk_gates",
         moduleFamily: "finance_research",
         status: "stored_only",
@@ -262,7 +262,7 @@ describe("module learning pipeline review tool", () => {
       workspaceDir,
       "memory/module-learning-pipeline-plan-receipts/2026-05-12/advanced.json",
       {
-        boundary: "dev_module_learning_pipeline_plan",
+        boundary: "local_module_learning_pipeline_plan",
         targetModule: "data_provenance_quality",
         moduleFamily: "finance_research",
         status: "eval_absorbed",
@@ -326,7 +326,7 @@ describe("module learning pipeline review tool", () => {
       workspaceDir,
       "memory/module-learning-pipeline-plan-receipts/2026-05-12/bad-data.json",
       {
-        boundary: "dev_module_learning_pipeline_plan",
+        boundary: "local_module_learning_pipeline_plan",
         targetModule: "data_provenance_quality",
         moduleFamily: "finance_research",
         status: "eval_absorbed",

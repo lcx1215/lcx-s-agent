@@ -1,6 +1,6 @@
 ---
 name: semantic-routing
-description: Design or improve semantic intent routing for agents, Lark/Feishu messages, tool selection, specialist handoffs, or utterance-family classification. Use this before adding many regex phrases or one-off natural-language matchers.
+description: Design or improve semantic intent routing for agents, external messages, tool selection, specialist handoffs, or utterance-family classification. Use this before adding many regex phrases or one-off natural-language matchers.
 metadata: { "openclaw": { "emoji": "🧭" } }
 ---
 
@@ -47,7 +47,7 @@ For every family, write down:
 - `near_misses`
 - `fallback`
 - `proof_test`
-- `live_acceptance_phrase` if Feishu/Lark-visible
+- `live_acceptance_phrase` if external-message-visible
 
 ## Guardrails
 
