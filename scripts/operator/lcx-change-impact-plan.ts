@@ -173,6 +173,26 @@ const PATH_RULES: PathRule[] = [
     risk: "elevated",
   },
   {
+    id: "logical_agent_pool",
+    lane: "agent_workflow_memory",
+    patterns: [
+      /^src\/agents\/logical-agent-pool\.ts$/u,
+      /^src\/agents\/logical-agent-pool\.test\.ts$/u,
+      /^scripts\/operator\/lcx-logical-agent-pool\.ts$/u,
+      /^ops\/local-brain\/logical-agent-pool\.md$/u,
+    ],
+    requiredChecks: ["logical-agent-pool-tests", "head-tail-consistency"],
+    commands: [
+      "node --import tsx scripts/operator/lcx-logical-agent-pool.ts --demo --json",
+      "pnpm vitest run src/agents/logical-agent-pool.test.ts",
+      "node --import tsx scripts/operator/lcx-head-tail-consistency.ts --json",
+    ],
+    safetyNotes: [
+      "The pool is local orchestration only: one model slot by default, no provider calls, external sender, protected-memory, or trading authority.",
+    ],
+    headTailRequired: true,
+  },
+  {
     id: "runtime_skill_package",
     lane: "skill_runtime",
     patterns: [/^skills\//u],
