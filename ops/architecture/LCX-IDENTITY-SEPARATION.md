@@ -95,8 +95,9 @@ classified as a compatibility adapter, a migration fixture, or a real writer.
 Profile state-root derivation in `src/cli/profile.ts` and `src/daemon/paths.ts`
 now delegates to `resolveNewStateDirForProfile` in `src/config/paths.ts`; this
 is centralization only and still returns the current `.openclaw[-profile]`
-compatibility root. The first remaining core hotspots are
-`src/agents/workspace.ts`, `src/utils.ts`, `src/infra/exec-approvals.ts`,
+compatibility root. `src/infra/exec-approvals.ts` likewise derives its default
+file/socket paths from `resolveNewStateDir` while retaining the same filenames.
+The first remaining core hotspots are `src/agents/workspace.ts`, `src/utils.ts`,
 `src/gateway/session-utils.fs.ts`, `src/plugins/discovery.ts`, and the doctor
 state/config flows. Any unclassified reference blocks the default switch.
 

@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { resolveNewStateDir } from "../config/paths.js";
 import { DEFAULT_AGENT_ID } from "../routing/session-key.js";
 import { expandHomePrefix } from "./home-dir.js";
 import { requestJsonlSocket } from "./jsonl-socket.js";
@@ -117,8 +118,8 @@ const DEFAULT_SECURITY: ExecSecurity = "deny";
 const DEFAULT_ASK: ExecAsk = "on-miss";
 const DEFAULT_ASK_FALLBACK: ExecSecurity = "deny";
 const DEFAULT_AUTO_ALLOW_SKILLS = false;
-const DEFAULT_SOCKET = "~/.openclaw/exec-approvals.sock";
-const DEFAULT_FILE = "~/.openclaw/exec-approvals.json";
+const DEFAULT_SOCKET_FILENAME = "exec-approvals.sock";
+const DEFAULT_FILE_FILENAME = "exec-approvals.json";
 
 function hashExecApprovalsRaw(raw: string | null): string {
   return crypto
@@ -128,11 +129,11 @@ function hashExecApprovalsRaw(raw: string | null): string {
 }
 
 export function resolveExecApprovalsPath(): string {
-  return expandHomePrefix(DEFAULT_FILE);
+  return path.join(resolveNewStateDir(), DEFAULT_FILE_FILENAME);
 }
 
 export function resolveExecApprovalsSocketPath(): string {
-  return expandHomePrefix(DEFAULT_SOCKET);
+  return path.join(resolveNewStateDir(), DEFAULT_SOCKET_FILENAME);
 }
 
 function normalizeAllowlistPattern(value: string | undefined): string | null {
