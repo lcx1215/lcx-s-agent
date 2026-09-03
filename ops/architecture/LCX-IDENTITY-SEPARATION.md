@@ -97,9 +97,13 @@ now delegates to `resolveNewStateDirForProfile` in `src/config/paths.ts`; this
 is centralization only and still returns the current `.openclaw[-profile]`
 compatibility root. `src/infra/exec-approvals.ts` likewise derives its default
 file/socket paths from `resolveNewStateDir` while retaining the same filenames.
-The first remaining core hotspots are `src/agents/workspace.ts`, `src/utils.ts`,
-`src/gateway/session-utils.fs.ts`, `src/plugins/discovery.ts`, and the doctor
-state/config flows. Any unclassified reference blocks the default switch.
+`src/utils.ts`, `src/agents/workspace.ts`, and the session legacy fallback in
+`src/gateway/session-utils.fs.ts` now use the same compatibility state-root
+owner; behavior is unchanged. The first remaining core hotspots are the
+workspace-local plugin directory in `src/plugins/discovery.ts` and the doctor
+state/config flows, which must be classified separately because they are
+workspace compatibility and migration behavior rather than generic state-root
+resolution. Any unclassified reference blocks the default switch.
 
 ### Compatibility retained intentionally
 

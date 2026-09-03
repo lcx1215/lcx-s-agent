@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resolveOAuthDir } from "./config/paths.js";
+import { resolveNewStateDir, resolveOAuthDir } from "./config/paths.js";
 import { logVerbose, shouldLogVerbose } from "./globals.js";
 import {
   expandHomePrefix,
@@ -309,7 +309,7 @@ export function resolveConfigDir(
   if (override) {
     return resolveUserPath(override);
   }
-  const newDir = path.join(resolveRequiredHomeDir(env, homedir), ".openclaw");
+  const newDir = resolveNewStateDir(() => resolveRequiredHomeDir(env, homedir));
   try {
     const hasNew = fs.existsSync(newDir);
     if (hasNew) {
