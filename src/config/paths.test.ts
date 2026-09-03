@@ -6,6 +6,9 @@ import {
   resolveDefaultConfigCandidates,
   resolveConfigPathCandidate,
   resolveConfigPath,
+  resolveLcxConfigPath,
+  resolveLcxIdentityMigrationPlan,
+  resolveLcxStateDir,
   resolveOAuthDir,
   resolveOAuthPath,
   resolveStateDir,
@@ -148,5 +151,117 @@ describe("state + config path candidates", () => {
       const resolved = resolveConfigPath(env, overrideDir, () => root);
       expect(resolved).toBe(path.join(overrideDir, "openclaw.json"));
     });
+  });
+});
+
+describe("LCX identity migration plan", () => {
+  async function withTempRoot(prefix: string, run: (root: string) => Promise<void>): Promise<void> {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+    try {
+      await run(root);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  }
+
+  it("defines LCX as the write target without changing current runtime defaults", async () => {
+    await withTempRoot("lcx-identity-empty-", async (root) => {
+      const env = {} as NodeJS.ProcessEnv;
+      const plan = resolveLcxIdentityMigrationPlan({ env, homedir: () => root });
+
+      expect(resolveLcxStateDir(() => root)).toBe(path.join(root, ".lcx"));
+      expect(resolveLcxConfigPath(plan.canonicalStateDir)).toBe(
+        path.join(root, ".lcx", "lcx.json"),
+      );
+      expect(plan.mode).toBe("canonical-default");
+      expect(plan.source).toBe("none");
+      expect(plan.readStateDir).toBe(path.join(root, ".lcx"));
+      expect(plan.readConfigPath).toBe(path.join(root, ".lcx", "lcx.json"));
+      expect(plan.writeStateDir).toBe(path.join(root, ".lcx"));
+      expect(plan.writeConfigPath).toBe(path.join(root, ".lcx", "lcx.json"));
+      await expect(fs.stat(path.join(root, ".lcx"))).rejects.toThrow();
+    });
+  });
+
+  it("reads an existing legacy config but keeps the canonical LCX write target", async () => {
+    await withTempRoot("lcx-identity-legacy-", async (root) => {
+      const legacyStateDir = path.join(root, ".openclaw");
+      const legacyConfigPath = path.join(legacyStateDir, "openclaw.json");
+      await fs.mkdir(legacyStateDir, { recursive: true });
+      await fs.writeFile(legacyConfigPath, "{}", "utf8");
+
+      const plan = resolveLcxIdentityMigrationPlan({
+        env: {} as NodeJS.ProcessEnv,
+        homedir: () => root,
+      });
+
+      expect(plan.source).toBe("legacy");
+      expect(plan.readStateDir).toBe(legacyStateDir);
+      expect(plan.readConfigPath).toBe(legacyConfigPath);
+      expect(plan.writeStateDir).toBe(path.join(root, ".lcx"));
+      expect(plan.writeConfigPath).toBe(path.join(root, ".lcx", "lcx.json"));
+      expect(plan.readConfigCandidates[0]).toBe(path.join(root, ".lcx", "lcx.json"));
+      expect(plan.readConfigCandidates).toContain(legacyConfigPath);
+      await expect(fs.stat(path.join(root, ".lcx"))).rejects.toThrow();
+    });
+  });
+
+  it("prefers an existing canonical LCX config over every legacy candidate", async () => {
+    await withTempRoot("lcx-identity-canonical-", async (root) => {
+      const canonicalConfigPath = path.join(root, ".lcx", "lcx.json");
+      const legacyConfigPath = path.join(root, ".openclaw", "openclaw.json");
+      await fs.mkdir(path.dirname(canonicalConfigPath), { recursive: true });
+      await fs.mkdir(path.dirname(legacyConfigPath), { recursive: true });
+      await fs.writeFile(canonicalConfigPath, "{}", "utf8");
+      await fs.writeFile(legacyConfigPath, "{}", "utf8");
+
+      const plan = resolveLcxIdentityMigrationPlan({
+        env: {} as NodeJS.ProcessEnv,
+        homedir: () => root,
+      });
+
+      expect(plan.source).toBe("canonical");
+      expect(plan.readStateDir).toBe(path.join(root, ".lcx"));
+      expect(plan.readConfigPath).toBe(canonicalConfigPath);
+      expect(plan.writeConfigPath).toBe(canonicalConfigPath);
+    });
+  });
+
+  it("does not let an empty canonical state dir split the legacy read source", async () => {
+    await withTempRoot("lcx-identity-partial-", async (root) => {
+      const canonicalStateDir = path.join(root, ".lcx");
+      const legacyStateDir = path.join(root, ".openclaw");
+      const legacyConfigPath = path.join(legacyStateDir, "openclaw.json");
+      await fs.mkdir(canonicalStateDir, { recursive: true });
+      await fs.mkdir(legacyStateDir, { recursive: true });
+      await fs.writeFile(legacyConfigPath, "{}", "utf8");
+
+      const plan = resolveLcxIdentityMigrationPlan({
+        env: {} as NodeJS.ProcessEnv,
+        homedir: () => root,
+      });
+
+      expect(plan.readStateDir).toBe(legacyStateDir);
+      expect(plan.readConfigPath).toBe(legacyConfigPath);
+      expect(plan.writeStateDir).toBe(canonicalStateDir);
+      expect(plan.writeConfigPath).toBe(path.join(canonicalStateDir, "lcx.json"));
+    });
+  });
+
+  it("keeps explicit legacy overrides authoritative for both reads and writes", () => {
+    const env = {
+      OPENCLAW_STATE_DIR: "~/legacy-state",
+      OPENCLAW_CONFIG_PATH: "~/legacy-state/openclaw.json",
+    } as NodeJS.ProcessEnv;
+    const plan = resolveLcxIdentityMigrationPlan({ env, homedir: () => "/home/test" });
+
+    expect(plan.mode).toBe("explicit-config-override");
+    expect(plan.source).toBe("explicit");
+    expect(plan.readStateDirs).toEqual([path.join("/home/test", "legacy-state")]);
+    expect(plan.readConfigCandidates).toEqual([
+      path.join("/home/test", "legacy-state", "openclaw.json"),
+    ]);
+    expect(plan.writeStateDir).toBe(path.join("/home/test", "legacy-state"));
+    expect(plan.writeConfigPath).toBe(path.join("/home/test", "legacy-state", "openclaw.json"));
   });
 });

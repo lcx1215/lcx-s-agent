@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { CANONICAL_CONFIG_FILENAME, CANONICAL_STATE_DIRNAME } from "../infra/canonical-identity.js";
 import { expandHomePrefix, resolveRequiredHomeDir } from "../infra/home-dir.js";
 import type { OpenClawConfig } from "./types.js";
 
@@ -22,6 +23,16 @@ const LEGACY_STATE_DIRNAMES = [".clawdbot", ".moldbot", ".moltbot"] as const;
 const NEW_STATE_DIRNAME = ".openclaw";
 const CONFIG_FILENAME = "openclaw.json";
 const LEGACY_CONFIG_FILENAMES = ["clawdbot.json", "moldbot.json", "moltbot.json"] as const;
+const IDENTITY_MIGRATION_STATE_DIRNAMES = [
+  CANONICAL_STATE_DIRNAME,
+  NEW_STATE_DIRNAME,
+  ...LEGACY_STATE_DIRNAMES,
+] as const;
+const IDENTITY_MIGRATION_CONFIG_FILENAMES = [
+  CANONICAL_CONFIG_FILENAME,
+  CONFIG_FILENAME,
+  ...LEGACY_CONFIG_FILENAMES,
+] as const;
 
 function resolveDefaultHomeDir(): string {
   return resolveRequiredHomeDir(process.env, os.homedir);
@@ -50,6 +61,120 @@ export function resolveLegacyStateDirs(homedir: () => string = resolveDefaultHom
 
 export function resolveNewStateDir(homedir: () => string = resolveDefaultHomeDir): string {
   return newStateDir(homedir);
+}
+
+/**
+ * Canonical LCX state target for the staged identity migration.
+ *
+ * This is intentionally not used by resolveStateDir yet. The current runtime
+ * still reads from the compatibility path until the read-old/write-new plan
+ * is wired into every state writer and its rollback checks.
+ */
+export function resolveLcxStateDir(homedir: () => string = resolveDefaultHomeDir): string {
+  return path.join(homedir(), CANONICAL_STATE_DIRNAME);
+}
+
+/** Canonical LCX config target under a supplied state directory. */
+export function resolveLcxConfigPath(stateDir: string = resolveLcxStateDir()): string {
+  return path.join(stateDir, CANONICAL_CONFIG_FILENAME);
+}
+
+export type LcxIdentityMigrationPlan = Readonly<{
+  mode: "canonical-default" | "explicit-state-override" | "explicit-config-override";
+  canonicalStateDir: string;
+  canonicalConfigPath: string;
+  readStateDirs: readonly string[];
+  readStateDir: string;
+  readConfigCandidates: readonly string[];
+  readConfigPath: string;
+  writeStateDir: string;
+  writeConfigPath: string;
+  source: "none" | "canonical" | "legacy" | "explicit";
+}>;
+
+/**
+ * Compute the reversible identity migration boundary without changing the
+ * active runtime defaults or touching the filesystem.
+ *
+ * With no explicit override, LCX is the write target while existing legacy
+ * state/config paths remain readable. Explicit OPENCLAW/CLAWDBOT overrides are
+ * treated as operator authority and are therefore both read and write targets.
+ */
+export function resolveLcxIdentityMigrationPlan(
+  params: {
+    env?: NodeJS.ProcessEnv;
+    homedir?: () => string;
+    existsSync?: (candidate: string) => boolean;
+  } = {},
+): LcxIdentityMigrationPlan {
+  const env = params.env ?? process.env;
+  const homedir = params.homedir ?? envHomedir(env);
+  const effectiveHomedir = () => resolveRequiredHomeDir(env, homedir);
+  const existsSync = params.existsSync ?? fs.existsSync;
+  const explicitState = env.OPENCLAW_STATE_DIR?.trim() || env.CLAWDBOT_STATE_DIR?.trim();
+  const explicitConfig = env.OPENCLAW_CONFIG_PATH?.trim() || env.CLAWDBOT_CONFIG_PATH?.trim();
+  const canonicalStateDir = resolveLcxStateDir(effectiveHomedir);
+  const canonicalConfigPath = resolveLcxConfigPath(canonicalStateDir);
+  const writeStateDir = explicitState
+    ? resolveUserPath(explicitState, env, effectiveHomedir)
+    : canonicalStateDir;
+  const writeConfigPath = explicitConfig
+    ? resolveUserPath(explicitConfig, env, effectiveHomedir)
+    : resolveLcxConfigPath(writeStateDir);
+  const mode = explicitConfig
+    ? "explicit-config-override"
+    : explicitState
+      ? "explicit-state-override"
+      : "canonical-default";
+
+  const readStateDirs = explicitState
+    ? [writeStateDir]
+    : IDENTITY_MIGRATION_STATE_DIRNAMES.map((dirname) => path.join(effectiveHomedir(), dirname));
+  const readConfigCandidates = explicitConfig
+    ? [writeConfigPath]
+    : readStateDirs.flatMap((stateDir) =>
+        IDENTITY_MIGRATION_CONFIG_FILENAMES.map((filename) => path.join(stateDir, filename)),
+      );
+  const existingConfigPath = readConfigCandidates.find((candidate) => {
+    try {
+      return existsSync(candidate);
+    } catch {
+      return false;
+    }
+  });
+  // Keep the selected state and config source together. A newly-created empty
+  // canonical directory must not hide a still-authoritative legacy config.
+  const readStateDir = existingConfigPath
+    ? path.dirname(existingConfigPath)
+    : (readStateDirs.find((candidate) => {
+        try {
+          return existsSync(candidate);
+        } catch {
+          return false;
+        }
+      }) ?? writeStateDir);
+  const readConfigPath = existingConfigPath ?? writeConfigPath;
+  const source =
+    explicitConfig || explicitState
+      ? "explicit"
+      : existingConfigPath === canonicalConfigPath
+        ? "canonical"
+        : existingConfigPath
+          ? "legacy"
+          : "none";
+
+  return Object.freeze({
+    mode,
+    canonicalStateDir,
+    canonicalConfigPath,
+    readStateDirs: Object.freeze(readStateDirs),
+    readStateDir,
+    readConfigCandidates: Object.freeze(readConfigCandidates),
+    readConfigPath,
+    writeStateDir,
+    writeConfigPath,
+    source,
+  });
 }
 
 /**

@@ -58,6 +58,21 @@ is no longer needed and that existing users or extensions have a migration path.
 - Config and state names are approved targets but deliberately remain on the
   compatibility path until their own read-old/write-new migration is tested.
 
+### Config/state migration design in progress
+
+- `src/config/paths.ts` now exposes `resolveLcxIdentityMigrationPlan` as a
+  pure, filesystem-read-only planning boundary.
+- With no explicit override, the plan reads the canonical candidates first,
+  falls back to existing OpenClaw-era state/config candidates, and selects
+  `~/.lcx/lcx.json` as the write target.
+- An explicit `OPENCLAW_*` or `CLAWDBOT_*` state/config override remains the
+  operator's read/write authority for compatibility and rollback.
+- The active `resolveStateDir` and `resolveConfigPath` defaults are unchanged;
+  this slice does not activate `~/.lcx` or create migration state.
+- Activation still requires config I/O and every state writer (sessions,
+  credentials, queues, backups, and audit) to share the same read/write plan,
+  plus focused rollback tests proving no split state.
+
 ### Compatibility retained intentionally
 
 The following still require a dedicated migration before removal:
