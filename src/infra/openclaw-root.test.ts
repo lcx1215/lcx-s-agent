@@ -113,6 +113,13 @@ describe("resolveOpenClawPackageRoot", () => {
     expect(resolveOpenClawPackageRootSync({ argv1 })).toBe(pkgRoot);
   });
 
+  it("resolves the canonical LCX package root", async () => {
+    const pkgRoot = fx("lcx-agent");
+    setFile(path.join(pkgRoot, "package.json"), JSON.stringify({ name: "lcx-agent" }));
+
+    expect(resolveOpenClawPackageRootSync({ cwd: pkgRoot })).toBe(pkgRoot);
+  });
+
   it("resolves package root via symlinked argv1", async () => {
     const project = fx("symlink-scenario");
     const bin = path.join(project, "bin", "openclaw");

@@ -3,7 +3,7 @@ import {
   TtsConfigSchema,
   TtsModeSchema,
   TtsProviderSchema,
-} from "openclaw/plugin-sdk";
+} from "lcx-agent/plugin-sdk";
 import { z } from "zod";
 
 // -----------------------------------------------------------------------------

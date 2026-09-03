@@ -2,7 +2,7 @@ import type {
   ChannelAccountSnapshot,
   ChannelGatewayContext,
   OpenClawConfig,
-} from "openclaw/plugin-sdk";
+} from "lcx-agent/plugin-sdk";
 import { vi } from "vitest";
 import { createRuntimeEnv } from "./runtime-env.js";
 

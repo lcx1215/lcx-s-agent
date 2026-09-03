@@ -2,8 +2,8 @@ import {
   formatInboundFromLabel as formatInboundFromLabelShared,
   resolveThreadSessionKeys as resolveThreadSessionKeysShared,
   type OpenClawConfig,
-} from "openclaw/plugin-sdk";
-export { createDedupeCache, rawDataToString } from "openclaw/plugin-sdk";
+} from "lcx-agent/plugin-sdk";
+export { createDedupeCache, rawDataToString } from "lcx-agent/plugin-sdk";
 
 export type ResponsePrefixContext = {
   model?: string;

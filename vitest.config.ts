@@ -11,50 +11,50 @@ const ciWorkers = isWindows ? 2 : 3;
 
 export default defineConfig({
   resolve: {
-    // Keep this ordered: the base `openclaw/plugin-sdk` alias is a prefix match.
+    // Keep this ordered: the base `lcx-agent/plugin-sdk` alias is a prefix match.
     alias: [
       {
-        find: "openclaw/plugin-sdk/account-id",
+        find: "lcx-agent/plugin-sdk/account-id",
         replacement: path.join(repoRoot, "src", "plugin-sdk", "account-id.ts"),
       },
       {
-        find: "openclaw/plugin-sdk/core",
+        find: "lcx-agent/plugin-sdk/core",
         replacement: path.join(repoRoot, "src", "plugin-sdk", "core.ts"),
       },
       {
-        find: "openclaw/plugin-sdk/telegram",
+        find: "lcx-agent/plugin-sdk/telegram",
         replacement: path.join(repoRoot, "src", "plugin-sdk", "telegram.ts"),
       },
       {
-        find: "openclaw/plugin-sdk/discord",
+        find: "lcx-agent/plugin-sdk/discord",
         replacement: path.join(repoRoot, "src", "plugin-sdk", "discord.ts"),
       },
       {
-        find: "openclaw/plugin-sdk/slack",
+        find: "lcx-agent/plugin-sdk/slack",
         replacement: path.join(repoRoot, "src", "plugin-sdk", "slack.ts"),
       },
       {
-        find: "openclaw/plugin-sdk/signal",
+        find: "lcx-agent/plugin-sdk/signal",
         replacement: path.join(repoRoot, "src", "plugin-sdk", "signal.ts"),
       },
       {
-        find: "openclaw/plugin-sdk/imessage",
+        find: "lcx-agent/plugin-sdk/imessage",
         replacement: path.join(repoRoot, "src", "plugin-sdk", "imessage.ts"),
       },
       {
-        find: "openclaw/plugin-sdk/whatsapp",
+        find: "lcx-agent/plugin-sdk/whatsapp",
         replacement: path.join(repoRoot, "src", "plugin-sdk", "whatsapp.ts"),
       },
       {
-        find: "openclaw/plugin-sdk/line",
+        find: "lcx-agent/plugin-sdk/line",
         replacement: path.join(repoRoot, "src", "plugin-sdk", "line.ts"),
       },
       {
-        find: "openclaw/plugin-sdk/keyed-async-queue",
+        find: "lcx-agent/plugin-sdk/keyed-async-queue",
         replacement: path.join(repoRoot, "src", "plugin-sdk", "keyed-async-queue.ts"),
       },
       {
-        find: "openclaw/plugin-sdk",
+        find: "lcx-agent/plugin-sdk",
         replacement: path.join(repoRoot, "src", "plugin-sdk", "index.ts"),
       },
     ],

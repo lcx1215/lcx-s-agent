@@ -1,4 +1,4 @@
-import type { SecretInput } from "openclaw/plugin-sdk";
+import type { SecretInput } from "lcx-agent/plugin-sdk";
 
 export type ExternalChatType = "direct" | "group" | "channel";
 export type ExternalDmPolicy = "allowlist" | "open" | "disabled";

@@ -1,5 +1,5 @@
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk/line";
-import { emptyPluginConfigSchema } from "openclaw/plugin-sdk/line";
+import type { OpenClawPluginApi } from "lcx-agent/plugin-sdk/line";
+import { emptyPluginConfigSchema } from "lcx-agent/plugin-sdk/line";
 import { registerLineCardCommand } from "./src/card-command.js";
 import { linePlugin } from "./src/channel.js";
 import { setLineRuntime } from "./src/runtime.js";

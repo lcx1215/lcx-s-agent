@@ -1,5 +1,5 @@
 {
-  "name": "openclaw",
+  "name": "lcx-agent",
   "version": "2026.3.3",
   "description": "LCX Agent personal AI research operating system with an external message channel, Harness/Hermes routing, durable memory, evidence audit, and finance research workflows",
   "keywords": [
@@ -11,7 +11,6 @@
     "harness",
     "hermes",
     "lcx-agent",
-    "openclaw-runtime",
     "webhook"
   ],
   "homepage": "https://github.com/lcx1215/lcx-s-agent#readme",
@@ -25,6 +24,7 @@
     "url": "git+https://github.com/lcx1215/lcx-s-agent.git"
   },
   "bin": {
+    "lcx": "lcx.mjs",
     "openclaw": "openclaw.mjs"
   },
   "directories": {
@@ -34,6 +34,7 @@
   "files": [
     "CHANGELOG.md",
     "LICENSE",
+    "lcx.mjs",
     "openclaw.mjs",
     "README-header.png",
     "README.md",
@@ -91,7 +92,8 @@
       "types": "./dist/plugin-sdk/keyed-async-queue.d.ts",
       "default": "./dist/plugin-sdk/keyed-async-queue.js"
     },
-    "./cli-entry": "./openclaw.mjs"
+    "./cli-entry": "./lcx.mjs",
+    "./legacy-cli-entry": "./openclaw.mjs"
   },
   "scripts": {
     "android:assemble": "cd apps/android && ./gradlew :app:assembleDebug",
@@ -144,6 +146,7 @@
     "ios:gen": "bash -lc './scripts/ios-configure-signing.sh && cd apps/ios && xcodegen generate'",
     "ios:open": "bash -lc './scripts/ios-configure-signing.sh && cd apps/ios && xcodegen generate && open OpenClaw.xcodeproj'",
     "ios:run": "bash -lc './scripts/ios-configure-signing.sh && cd apps/ios && xcodegen generate && xcodebuild -project OpenClaw.xcodeproj -scheme OpenClaw -destination \"${IOS_DEST:-platform=iOS Simulator,name=iPhone 17}\" -configuration Debug build && xcrun simctl boot \"${IOS_SIM:-iPhone 17}\" || true && xcrun simctl launch booted ai.openclaw.ios'",
+    "lcx": "node scripts/run-node.mjs",
     "lcx:commercial:acceptance": "node --import tsx scripts/operator/lcx-commercial-acceptance-harness.ts",
     "lcx:external-channel": "node --import tsx scripts/operator/lcx-external-channel-binding.ts --apply --json",
     "lcx:external-channel:compat": "node --import tsx scripts/operator/lcx-external-channel-compat.ts",
@@ -154,6 +157,7 @@
     "lcx:multi-agent:shadow": "node --import tsx scripts/operator/lcx-multi-agent-pattern-shadow.ts --mode replay --pattern all --case single_stock_loss_recovery_risk_triage --json",
     "lcx:ontology": "node --import tsx scripts/operator/lcx-ontology.ts --json",
     "lcx:projection-reader-audit": "node --import tsx scripts/operator/lcx-projection-reader-audit.ts --json",
+    "lcx:rpc": "node scripts/run-node.mjs agent --mode rpc --json",
     "lint": "oxlint --type-aware",
     "lint:agent:ingress-owner": "node scripts/check-ingress-agent-owner-context.mjs",
     "lint:all": "pnpm lint && pnpm lint:swift",

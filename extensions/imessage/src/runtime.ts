@@ -1,4 +1,4 @@
-import type { PluginRuntime } from "openclaw/plugin-sdk/imessage";
+import type { PluginRuntime } from "lcx-agent/plugin-sdk/imessage";
 
 let runtime: PluginRuntime | null = null;
 

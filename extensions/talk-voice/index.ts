@@ -1,4 +1,4 @@
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
+import type { OpenClawPluginApi } from "lcx-agent/plugin-sdk/core";
 
 type ElevenLabsVoice = {
   voice_id: string;

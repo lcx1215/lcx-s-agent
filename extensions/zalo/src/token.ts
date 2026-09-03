@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
-import type { BaseTokenResolution } from "openclaw/plugin-sdk";
-import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "openclaw/plugin-sdk/account-id";
+import type { BaseTokenResolution } from "lcx-agent/plugin-sdk";
+import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "lcx-agent/plugin-sdk/account-id";
 import { normalizeResolvedSecretInputString, normalizeSecretInputString } from "./secret-input.js";
 import type { ZaloConfig } from "./types.js";
 

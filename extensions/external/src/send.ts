@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { fetchWithSsrFGuard } from "openclaw/plugin-sdk";
+import { fetchWithSsrFGuard } from "lcx-agent/plugin-sdk";
 import type { ResolvedExternalAccount } from "./types.js";
 
 export type ExternalFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;

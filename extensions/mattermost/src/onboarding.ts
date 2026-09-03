@@ -5,8 +5,8 @@ import {
   type OpenClawConfig,
   type SecretInput,
   type WizardPrompter,
-} from "openclaw/plugin-sdk";
-import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "openclaw/plugin-sdk/account-id";
+} from "lcx-agent/plugin-sdk";
+import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "lcx-agent/plugin-sdk/account-id";
 import {
   listMattermostAccountIds,
   resolveDefaultMattermostAccountId,

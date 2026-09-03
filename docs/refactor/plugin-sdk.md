@@ -34,7 +34,7 @@ Contents (examples):
 
 Delivery:
 
-- Publish as `openclaw/plugin-sdk` (or export from core under `openclaw/plugin-sdk`).
+- Publish as `lcx-agent/plugin-sdk` (or export from core under `lcx-agent/plugin-sdk`).
 - Semver with explicit stability guarantees.
 
 ### 2) Plugin Runtime (execution surface, injected)
@@ -154,7 +154,7 @@ Notes:
 
 ### Phase 0: scaffolding
 
-- Introduce `openclaw/plugin-sdk`.
+- Introduce `lcx-agent/plugin-sdk`.
 - Add `api.runtime` to `OpenClawPluginApi` with the surface above.
 - Maintain existing imports during a transition window (deprecation warnings).
 

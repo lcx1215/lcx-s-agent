@@ -1,6 +1,6 @@
 import os from "node:os";
 import path from "node:path";
-import { createPersistentDedupe } from "openclaw/plugin-sdk";
+import { createPersistentDedupe } from "lcx-agent/plugin-sdk";
 
 const DEFAULT_REPLAY_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_MEMORY_MAX_SIZE = 1_000;

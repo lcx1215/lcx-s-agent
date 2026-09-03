@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
-import { normalizeResolvedSecretInputString } from "openclaw/plugin-sdk";
+import { normalizeResolvedSecretInputString } from "lcx-agent/plugin-sdk";
 import {
   DEFAULT_ACCOUNT_ID,
   normalizeAccountId,
   normalizeOptionalAccountId,
-} from "openclaw/plugin-sdk/account-id";
+} from "lcx-agent/plugin-sdk/account-id";
 import type { CoreConfig, IrcAccountConfig, IrcNickServConfig } from "./types.js";
 
 const TRUTHY_ENV = new Set(["true", "1", "yes", "on"]);

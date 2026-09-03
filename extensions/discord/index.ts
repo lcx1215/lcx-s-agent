@@ -1,5 +1,5 @@
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk/discord";
-import { emptyPluginConfigSchema } from "openclaw/plugin-sdk/discord";
+import type { OpenClawPluginApi } from "lcx-agent/plugin-sdk/discord";
+import { emptyPluginConfigSchema } from "lcx-agent/plugin-sdk/discord";
 import { discordPlugin } from "./src/channel.js";
 import { setDiscordRuntime } from "./src/runtime.js";
 import { registerDiscordSubagentHooks } from "./src/subagent-hooks.js";

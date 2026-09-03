@@ -3,6 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { type CommandOptions, runCommandWithTimeout } from "../process/exec.js";
 import {
+  CANONICAL_PACKAGE_NAME,
+  CORE_PACKAGE_NAMES,
+  PACKAGE_NAME_ALIASES,
+} from "./canonical-identity.js";
+import {
   resolveControlUiDistIndexHealth,
   resolveControlUiDistIndexPathForRoot,
 } from "./control-ui-assets.js";
@@ -85,8 +90,7 @@ const DEFAULT_TIMEOUT_MS = 20 * 60_000;
 const MAX_LOG_CHARS = 8000;
 const PREFLIGHT_MAX_COMMITS = 10;
 const START_DIRS = ["cwd", "argv1", "process"];
-const DEFAULT_PACKAGE_NAME = "openclaw";
-const CORE_PACKAGE_NAMES = new Set([DEFAULT_PACKAGE_NAME]);
+const DEFAULT_PACKAGE_NAME = CANONICAL_PACKAGE_NAME;
 
 function normalizeDir(value?: string | null) {
   if (!value) {
@@ -241,6 +245,19 @@ async function detectPackageManager(root: string) {
   return (await detectPackageManagerImpl(root)) ?? "npm";
 }
 
+async function resolveCliEntry(root: string): Promise<{ path: string; name: string } | null> {
+  for (const name of ["lcx", "openclaw"]) {
+    const entryPath = path.join(root, `${name}.mjs`);
+    try {
+      await fs.stat(entryPath);
+      return { path: entryPath, name };
+    } catch {
+      // Try the legacy entry only when the canonical entry is absent.
+    }
+  }
+  return null;
+}
+
 type RunStepOptions = {
   runCommand: CommandRunner;
   name: string;
@@ -314,7 +331,7 @@ function managerInstallArgs(manager: "pnpm" | "bun" | "npm") {
 }
 
 function normalizeTag(tag?: string) {
-  return normalizePackageTagInput(tag, ["openclaw", DEFAULT_PACKAGE_NAME]) ?? "latest";
+  return normalizePackageTagInput(tag, PACKAGE_NAME_ALIASES) ?? "latest";
 }
 
 export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<UpdateRunResult> {
@@ -740,19 +757,15 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
       };
     }
 
-    const doctorEntry = path.join(gitRoot, "openclaw.mjs");
-    const doctorEntryExists = await fs
-      .stat(doctorEntry)
-      .then(() => true)
-      .catch(() => false);
-    if (!doctorEntryExists) {
+    const doctorEntry = await resolveCliEntry(gitRoot);
+    if (!doctorEntry) {
       steps.push({
-        name: "openclaw doctor entry",
-        command: `verify ${doctorEntry}`,
+        name: "lcx doctor entry",
+        command: `verify ${path.join(gitRoot, "lcx.mjs")}`,
         cwd: gitRoot,
         durationMs: 0,
         exitCode: 1,
-        stderrTail: `missing ${doctorEntry}`,
+        stderrTail: `missing ${path.join(gitRoot, "lcx.mjs")} (legacy openclaw.mjs also absent)`,
       });
       return {
         status: "error",
@@ -768,9 +781,11 @@ export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<
     // Use --fix so that doctor auto-strips unknown config keys introduced by
     // schema changes between versions, preventing a startup validation crash.
     const doctorNodePath = await resolveStableNodePath(process.execPath);
-    const doctorArgv = [doctorNodePath, doctorEntry, "doctor", "--non-interactive", "--fix"];
+    const doctorArgv = [doctorNodePath, doctorEntry.path, "doctor", "--non-interactive", "--fix"];
     const doctorStep = await runStep(
-      step("openclaw doctor", doctorArgv, gitRoot, { OPENCLAW_UPDATE_IN_PROGRESS: "1" }),
+      step(`${doctorEntry.name} doctor`, doctorArgv, gitRoot, {
+        OPENCLAW_UPDATE_IN_PROGRESS: "1",
+      }),
     );
     steps.push(doctorStep);
 

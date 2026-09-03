@@ -508,19 +508,24 @@ export function loadOpenClawPlugins(options: PluginLoadOptions = {}): PluginRegi
     const pluginSdkIMessageAlias = resolvePluginSdkIMessageAlias();
     const pluginSdkWhatsAppAlias = resolvePluginSdkWhatsAppAlias();
     const pluginSdkLineAlias = resolvePluginSdkLineAlias();
+    const addPluginSdkAliases = (suffix: string, target: string | null) =>
+      target
+        ? {
+            [`lcx-agent/plugin-sdk${suffix}`]: target,
+            [`openclaw/plugin-sdk${suffix}`]: target,
+          }
+        : {};
     const aliasMap = {
-      ...(pluginSdkAlias ? { "openclaw/plugin-sdk": pluginSdkAlias } : {}),
-      ...(pluginSdkCoreAlias ? { "openclaw/plugin-sdk/core": pluginSdkCoreAlias } : {}),
-      ...(pluginSdkTelegramAlias ? { "openclaw/plugin-sdk/telegram": pluginSdkTelegramAlias } : {}),
-      ...(pluginSdkDiscordAlias ? { "openclaw/plugin-sdk/discord": pluginSdkDiscordAlias } : {}),
-      ...(pluginSdkSlackAlias ? { "openclaw/plugin-sdk/slack": pluginSdkSlackAlias } : {}),
-      ...(pluginSdkSignalAlias ? { "openclaw/plugin-sdk/signal": pluginSdkSignalAlias } : {}),
-      ...(pluginSdkIMessageAlias ? { "openclaw/plugin-sdk/imessage": pluginSdkIMessageAlias } : {}),
-      ...(pluginSdkWhatsAppAlias ? { "openclaw/plugin-sdk/whatsapp": pluginSdkWhatsAppAlias } : {}),
-      ...(pluginSdkLineAlias ? { "openclaw/plugin-sdk/line": pluginSdkLineAlias } : {}),
-      ...(pluginSdkAccountIdAlias
-        ? { "openclaw/plugin-sdk/account-id": pluginSdkAccountIdAlias }
-        : {}),
+      ...addPluginSdkAliases("", pluginSdkAlias),
+      ...addPluginSdkAliases("/core", pluginSdkCoreAlias),
+      ...addPluginSdkAliases("/telegram", pluginSdkTelegramAlias),
+      ...addPluginSdkAliases("/discord", pluginSdkDiscordAlias),
+      ...addPluginSdkAliases("/slack", pluginSdkSlackAlias),
+      ...addPluginSdkAliases("/signal", pluginSdkSignalAlias),
+      ...addPluginSdkAliases("/imessage", pluginSdkIMessageAlias),
+      ...addPluginSdkAliases("/whatsapp", pluginSdkWhatsAppAlias),
+      ...addPluginSdkAliases("/line", pluginSdkLineAlias),
+      ...addPluginSdkAliases("/account-id", pluginSdkAccountIdAlias),
     };
     jitiLoader = createJiti(import.meta.url, {
       interopDefault: true,
