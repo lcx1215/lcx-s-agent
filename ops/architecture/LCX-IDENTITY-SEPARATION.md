@@ -105,6 +105,17 @@ state/config flows, which must be classified separately because they are
 workspace compatibility and migration behavior rather than generic state-root
 resolution. Any unclassified reference blocks the default switch.
 
+The two remaining classes are intentionally bounded:
+
+- `workspace/.openclaw/extensions` in plugin discovery/source display is a
+  workspace-local plugin ABI. Its owner is the plugin discovery/loader path;
+  it must not be treated as the user's global `~/.openclaw` state root.
+- `src/commands/doctor-config-flow.ts`, `src/commands/doctor-state-integrity.ts`,
+  and `src/infra/state-migrations.ts` contain migration targets and diagnostic
+  probes for the current compatibility layout. Their `.openclaw` targets stay
+  unchanged until a versioned migration owner supplies activation, rollback,
+  and no-split-state evidence.
+
 ### Compatibility retained intentionally
 
 The following still require a dedicated migration before removal:
