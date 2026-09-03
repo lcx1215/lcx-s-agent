@@ -64,6 +64,22 @@ export function resolveNewStateDir(homedir: () => string = resolveDefaultHomeDir
 }
 
 /**
+ * Resolve the current compatibility state root for a named profile.
+ *
+ * Keep profile suffix derivation beside the state-root owner so callers do not
+ * grow independent `.openclaw[-profile]` implementations. The returned path
+ * intentionally remains on the current compatibility root until activation.
+ */
+export function resolveNewStateDirForProfile(
+  profile: string | undefined,
+  homedir: () => string = resolveDefaultHomeDir,
+): string {
+  const normalized = profile?.trim();
+  const suffix = normalized && normalized.toLowerCase() !== "default" ? `-${normalized}` : "";
+  return `${resolveNewStateDir(homedir)}${suffix}`;
+}
+
+/**
  * Canonical LCX state target for the staged identity migration.
  *
  * This is intentionally not used by resolveStateDir yet. The current runtime

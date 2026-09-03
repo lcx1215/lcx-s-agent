@@ -1,5 +1,6 @@
 import os from "node:os";
 import path from "node:path";
+import { resolveNewStateDirForProfile } from "../config/paths.js";
 import { resolveRequiredHomeDir } from "../infra/home-dir.js";
 import { isValidProfileName } from "./profile-utils.js";
 
@@ -93,8 +94,9 @@ function resolveProfileStateDir(
   env: Record<string, string | undefined>,
   homedir: () => string,
 ): string {
-  const suffix = profile.toLowerCase() === "default" ? "" : `-${profile}`;
-  return path.join(resolveRequiredHomeDir(env as NodeJS.ProcessEnv, homedir), `.openclaw${suffix}`);
+  return resolveNewStateDirForProfile(profile, () =>
+    resolveRequiredHomeDir(env as NodeJS.ProcessEnv, homedir),
+  );
 }
 
 export function applyCliProfileEnv(params: {

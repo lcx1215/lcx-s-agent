@@ -1,4 +1,5 @@
 import path from "node:path";
+import { resolveNewStateDirForProfile } from "../config/paths.js";
 import { resolveGatewayProfileSuffix } from "./constants.js";
 
 const windowsAbsolutePath = /^[a-zA-Z]:[\\/]/;
@@ -38,5 +39,6 @@ export function resolveGatewayStateDir(env: Record<string, string | undefined>):
   }
   const home = resolveHomeDir(env);
   const suffix = resolveGatewayProfileSuffix(env.OPENCLAW_PROFILE);
-  return path.join(home, `.openclaw${suffix}`);
+  const profile = suffix ? env.OPENCLAW_PROFILE : undefined;
+  return resolveNewStateDirForProfile(profile, () => home);
 }

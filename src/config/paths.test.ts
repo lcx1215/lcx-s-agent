@@ -9,6 +9,7 @@ import {
   resolveLcxConfigPath,
   resolveLcxIdentityMigrationPlan,
   resolveLcxStateDir,
+  resolveNewStateDirForProfile,
   resolveOAuthDir,
   resolveOAuthPath,
   resolveStateDir,
@@ -67,6 +68,18 @@ describe("state + config path candidates", () => {
     } as NodeJS.ProcessEnv;
 
     expect(resolveStateDir(env, () => "/home/test")).toBe(path.resolve("/new/state"));
+  });
+
+  it("centralizes compatibility profile state roots", () => {
+    expect(resolveNewStateDirForProfile(undefined, () => "/home/test")).toBe(
+      path.join("/home/test", ".openclaw"),
+    );
+    expect(resolveNewStateDirForProfile("default", () => "/home/test")).toBe(
+      path.join("/home/test", ".openclaw"),
+    );
+    expect(resolveNewStateDirForProfile("Dev", () => "/home/test")).toBe(
+      path.join("/home/test", ".openclaw-Dev"),
+    );
   });
 
   it("uses OPENCLAW_HOME for default state/config locations", () => {

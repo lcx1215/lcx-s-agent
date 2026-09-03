@@ -92,8 +92,11 @@ not treated as runtime writers.
 
 Before activation, the remaining direct legacy path references must be
 classified as a compatibility adapter, a migration fixture, or a real writer.
-The first core hotspots are `src/agents/workspace.ts`, `src/cli/profile.ts`,
-`src/daemon/paths.ts`, `src/utils.ts`, `src/infra/exec-approvals.ts`,
+Profile state-root derivation in `src/cli/profile.ts` and `src/daemon/paths.ts`
+now delegates to `resolveNewStateDirForProfile` in `src/config/paths.ts`; this
+is centralization only and still returns the current `.openclaw[-profile]`
+compatibility root. The first remaining core hotspots are
+`src/agents/workspace.ts`, `src/utils.ts`, `src/infra/exec-approvals.ts`,
 `src/gateway/session-utils.fs.ts`, `src/plugins/discovery.ts`, and the doctor
 state/config flows. Any unclassified reference blocks the default switch.
 
