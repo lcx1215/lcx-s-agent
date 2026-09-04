@@ -23,6 +23,7 @@ export type LcxIdentityWriterName =
   | "nostr-profile"
   | "discord-bindings"
   | "telegram-offset"
+  | "telegram-sticker-cache"
   | "update-check";
 
 export type LcxIdentityWriterPathContract = Readonly<{
