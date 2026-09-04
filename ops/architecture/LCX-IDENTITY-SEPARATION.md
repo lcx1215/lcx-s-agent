@@ -79,8 +79,9 @@ is no longer needed and that existing users or extensions have a migration path.
   missing prior target is rolled back by removing only the newly written file;
   an existing target is restored from its verified `.bak` bytes.
 - Activation still requires config I/O and every state writer (sessions,
-  credentials, queues, backups, and audit) to share the same read/write plan,
-  plus focused rollback tests proving no split state.
+  credentials, queues, backups, audit, device identity/auth, and pairing) to
+  share the same read/write plan, plus focused rollback tests proving no split
+  state.
 
 ### Shared state-writer contract in progress
 
@@ -100,10 +101,18 @@ The following bounded adapters are implemented and locally tested:
 - outbound queue: `src/infra/outbound/delivery-queue.identity-migration.ts`;
 - cron jobs and cron run audit: `src/cron/identity-migration.ts` and the
   explicit `identityMigration` option on `saveCronStore`.
+- device identity: the explicit read/write/rollback adapter in
+  `src/infra/device-identity.ts`, including key validation and secret-free
+  audit records;
+- device auth: the explicit token store/clear adapter in
+  `src/infra/device-auth-store.ts`, with token values excluded from audit;
+- device and node pairing: the shared two-file transaction in
+  `src/infra/pairing-files.ts`, wired into the pairing request/update writers
+  and rejecting partial canonical/legacy roots.
 
-These adapters are migration writers, not activation. Session transcripts,
-session maintenance/repair, agent workspace and subagent state, device and
-pairing state, channel-local stores, and any remaining direct writers still
+These adapters are migration writers, not activation. Session maintenance/repair,
+agent workspace and subagent state,
+`exec-approvals`, channel-local stores, and any remaining direct writers still
 need their own adapter and rollback evidence before the default state root can
 change.
 
@@ -117,10 +126,10 @@ not treated as runtime writers.
 | surface                 | path/owner                                                                                                                    | current write surfaces                                                                         | activation proof still required                                                                          |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | Config root             | `src/config/io.ts`                                                                                                            | config file, `.bak` rotation, config audit                                                     | One selected config path for read, write, backup, audit, expected-path checks, and rollback              |
-| Sessions                | `src/config/sessions/paths.ts`, `src/config/sessions/store.ts`, `src/config/sessions/transcript.ts`                           | session store, transcripts, session cleanup/repair; store adapter implemented                  | Read legacy stores, write one canonical store under lock, and prove no dual-write or split session state |
+| Sessions                | `src/config/sessions/paths.ts`, `src/config/sessions/store.ts`, `src/config/sessions/transcript.ts`                           | session store and transcript adapters; cleanup/repair remains                                  | Read legacy stores, write one canonical store under lock, and prove no dual-write or split session state |
 | Agent workspace/auth    | `src/config/agent-dirs.ts`, `src/agents/agent-paths.ts`, `src/agents/auth-profiles/`, `src/agents/subagent-registry.store.ts` | agent files, auth profiles, subagent registry, model/workspace state; auth adapter implemented | Canonical root propagation, legacy read fallback, permission checks, and token/non-duplication rollback  |
 | Delivery/schedule state | `src/infra/outbound/delivery-queue.ts`, `src/cron/store.ts`, `src/infra/restart-sentinel.ts`                                  | outbound queue, cron store, restart sentinel; queue/cron adapters implemented                  | Durable queue/cron migration with one target root and replay/rollback evidence                           |
-| Device/security/pairing | `src/infra/device-identity.ts`, `src/infra/device-auth-store.ts`, `src/infra/exec-approvals.ts`, `src/infra/pairing-files.ts` | device identity/auth, exec approvals, pairing files                                            | Read-old/write-new with file modes, secret boundary, and recovery proof                                  |
+| Device/security/pairing | `src/infra/device-identity.ts`, `src/infra/device-auth-store.ts`, `src/infra/exec-approvals.ts`, `src/infra/pairing-files.ts` | device identity/auth and device/node pairing adapters; exec approvals remains                  | Add exec-approvals adapter; retain file modes, secret boundary, and recovery proof across the family     |
 | Channel-local state     | Telegram/Discord/Web stores plus `src/plugins/services.ts`                                                                    | offsets, sticker cache, thread bindings, OAuth and plugin service state                        | Adapter-specific path injection; this does not prove external-channel binding or visible delivery        |
 | Operator/runtime state  | `scripts/operator/` owners and `~/.openclaw/workspace`                                                                        | governance snapshots, receipts, training and external-channel artifacts                        | Separate owner migration and fresh receipts; never silently mix this with core config activation         |
 
@@ -130,12 +139,13 @@ Profile state-root derivation in `src/cli/profile.ts` and `src/daemon/paths.ts`
 now delegates to `resolveNewStateDirForProfile` in `src/config/paths.ts`; this
 is centralization only and still returns the current `.openclaw[-profile]`
 compatibility root. `src/infra/exec-approvals.ts` likewise derives its default
-file/socket paths from `resolveNewStateDir` while retaining the same filenames.
+file/socket paths from `resolveNewStateDir` while retaining the same filenames;
+its writer is still not on the migration contract.
 `src/utils.ts`, `src/agents/workspace.ts`, and the session legacy fallback in
 `src/gateway/session-utils.fs.ts` now use the same compatibility state-root
-owner; behavior is unchanged. The first remaining core hotspots are the
-workspace-local plugin directory in `src/plugins/discovery.ts` and the doctor
-state/config flows, which must be classified separately because they are
+owner; behavior is unchanged. The first remaining core hotspots are exec
+approvals, the workspace-local plugin directory in `src/plugins/discovery.ts`,
+and the doctor state/config flows, which must be classified separately because they are
 workspace compatibility and migration behavior rather than generic state-root
 resolution. Any unclassified reference blocks the default switch.
 
