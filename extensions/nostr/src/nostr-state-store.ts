@@ -2,6 +2,15 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import {
+  readLcxIdentityWriterRaw,
+  resolveLcxIdentityStateWriterPathContract,
+  rollbackLcxIdentityWriter,
+  writeLcxIdentityWriterRawWithReceipt,
+  type LcxIdentityWriteReceipt,
+  type LcxIdentityWriterPathContract,
+} from "../../../src/config/identity-migration.js";
+import type { LcxIdentityMigrationPlan } from "../../../src/config/paths.js";
 import { getNostrRuntime } from "./runtime.js";
 
 const STORE_VERSION = 2;
@@ -15,7 +24,7 @@ type NostrBusStateV1 = {
   gatewayStartedAt: number | null;
 };
 
-type NostrBusState = {
+export type NostrBusState = {
   version: 2;
   /** Unix timestamp (seconds) of the last processed event */
   lastProcessedAt: number | null;
@@ -35,6 +44,20 @@ export type NostrProfileState = {
   /** Per-relay publish results from last attempt */
   lastPublishResults: Record<string, "ok" | "failed" | "timeout"> | null;
 };
+
+export type LcxIdentityNostrBusMigration = Readonly<{
+  pathContract: LcxIdentityWriterPathContract & Readonly<{ writer: "nostr-bus" }>;
+  relativePath: string;
+  readStatePath: string;
+  writeStatePath: string;
+}>;
+
+export type LcxIdentityNostrProfileMigration = Readonly<{
+  pathContract: LcxIdentityWriterPathContract & Readonly<{ writer: "nostr-profile" }>;
+  relativePath: string;
+  readStatePath: string;
+  writeStatePath: string;
+}>;
 
 function normalizeAccountId(accountId?: string): string {
   const trimmed = accountId?.trim();
@@ -57,6 +80,72 @@ function resolveNostrProfileStatePath(
   const stateDir = getNostrRuntime().state.resolveStateDir(env, os.homedir);
   const normalized = normalizeAccountId(accountId);
   return path.join(stateDir, "nostr", `profile-state-${normalized}.json`);
+}
+
+function resolveCurrentNostrPathContract<T extends "nostr-bus" | "nostr-profile">(params: {
+  migration: LcxIdentityNostrBusMigration | LcxIdentityNostrProfileMigration;
+  writer: T;
+}): LcxIdentityWriterPathContract & Readonly<{ writer: T }> {
+  const plan = params.migration.pathContract.migrationPlan;
+  if (!plan) {
+    return params.migration.pathContract as LcxIdentityWriterPathContract & Readonly<{ writer: T }>;
+  }
+  return resolveLcxIdentityStateWriterPathContract({
+    writer: params.writer,
+    migrationPlan: plan,
+    relativePath: params.migration.relativePath,
+    backupPath: params.migration.pathContract.backupPath,
+    auditPath: params.migration.pathContract.auditPath,
+  });
+}
+
+export function createLcxIdentityNostrBusMigration(params: {
+  migrationPlan: LcxIdentityMigrationPlan;
+  accountId?: string;
+  existsSync?: (candidate: string) => boolean;
+}): LcxIdentityNostrBusMigration {
+  if (params.migrationPlan.mode === "explicit-config-override") {
+    throw new Error("Nostr bus migration requires a state-root authority");
+  }
+  const relativePath = path.join("nostr", `bus-state-${normalizeAccountId(params.accountId)}.json`);
+  const pathContract = resolveLcxIdentityStateWriterPathContract({
+    writer: "nostr-bus",
+    migrationPlan: params.migrationPlan,
+    relativePath,
+    existsSync: params.existsSync,
+  });
+  return Object.freeze({
+    pathContract,
+    relativePath,
+    readStatePath: pathContract.readPath,
+    writeStatePath: pathContract.writePath,
+  });
+}
+
+export function createLcxIdentityNostrProfileMigration(params: {
+  migrationPlan: LcxIdentityMigrationPlan;
+  accountId?: string;
+  existsSync?: (candidate: string) => boolean;
+}): LcxIdentityNostrProfileMigration {
+  if (params.migrationPlan.mode === "explicit-config-override") {
+    throw new Error("Nostr profile migration requires a state-root authority");
+  }
+  const relativePath = path.join(
+    "nostr",
+    `profile-state-${normalizeAccountId(params.accountId)}.json`,
+  );
+  const pathContract = resolveLcxIdentityStateWriterPathContract({
+    writer: "nostr-profile",
+    migrationPlan: params.migrationPlan,
+    relativePath,
+    existsSync: params.existsSync,
+  });
+  return Object.freeze({
+    pathContract,
+    relativePath,
+    readStatePath: pathContract.readPath,
+    writeStatePath: pathContract.writePath,
+  });
 }
 
 function safeParseState(raw: string): NostrBusState | null {
@@ -131,6 +220,43 @@ export async function writeNostrBusState(params: {
   });
   await fs.chmod(tmp, 0o600);
   await fs.rename(tmp, filePath);
+}
+
+export async function readNostrBusStateForIdentityMigration(
+  migration: LcxIdentityNostrBusMigration,
+): Promise<NostrBusState | null> {
+  const pathContract = resolveCurrentNostrPathContract({ migration, writer: "nostr-bus" });
+  const raw = await readLcxIdentityWriterRaw(pathContract);
+  return raw === null ? null : safeParseState(raw);
+}
+
+export async function writeNostrBusStateForIdentityMigration(
+  migration: LcxIdentityNostrBusMigration,
+  state: Pick<NostrBusState, "lastProcessedAt" | "gatewayStartedAt"> & {
+    recentEventIds?: readonly string[];
+  },
+  options?: { expectedReadPath?: string; expectedWritePath?: string },
+): Promise<LcxIdentityWriteReceipt> {
+  const pathContract = resolveCurrentNostrPathContract({ migration, writer: "nostr-bus" });
+  const payload: NostrBusState = {
+    version: STORE_VERSION,
+    lastProcessedAt: state.lastProcessedAt,
+    gatewayStartedAt: state.gatewayStartedAt,
+    recentEventIds: (state.recentEventIds ?? []).filter(
+      (value): value is string => typeof value === "string",
+    ),
+  };
+  return await writeLcxIdentityWriterRawWithReceipt(
+    pathContract,
+    `${JSON.stringify(payload, null, 2)}\n`,
+    options,
+  );
+}
+
+export async function rollbackNostrBusIdentityMigration(
+  receipt: LcxIdentityWriteReceipt,
+): Promise<void> {
+  await rollbackLcxIdentityWriter(receipt);
 }
 
 /**
@@ -223,4 +349,32 @@ export async function writeNostrProfileState(params: {
   });
   await fs.chmod(tmp, 0o600);
   await fs.rename(tmp, filePath);
+}
+
+export async function readNostrProfileStateForIdentityMigration(
+  migration: LcxIdentityNostrProfileMigration,
+): Promise<NostrProfileState | null> {
+  const pathContract = resolveCurrentNostrPathContract({ migration, writer: "nostr-profile" });
+  const raw = await readLcxIdentityWriterRaw(pathContract);
+  return raw === null ? null : safeParseProfileState(raw);
+}
+
+export async function writeNostrProfileStateForIdentityMigration(
+  migration: LcxIdentityNostrProfileMigration,
+  state: Omit<NostrProfileState, "version">,
+  options?: { expectedReadPath?: string; expectedWritePath?: string },
+): Promise<LcxIdentityWriteReceipt> {
+  const pathContract = resolveCurrentNostrPathContract({ migration, writer: "nostr-profile" });
+  const payload: NostrProfileState = { version: PROFILE_STATE_VERSION, ...state };
+  return await writeLcxIdentityWriterRawWithReceipt(
+    pathContract,
+    `${JSON.stringify(payload, null, 2)}\n`,
+    options,
+  );
+}
+
+export async function rollbackNostrProfileIdentityMigration(
+  receipt: LcxIdentityWriteReceipt,
+): Promise<void> {
+  await rollbackLcxIdentityWriter(receipt);
 }
