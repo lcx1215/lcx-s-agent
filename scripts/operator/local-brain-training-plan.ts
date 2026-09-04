@@ -454,6 +454,18 @@ const normalizeWorkspaceDir = (value?: string): string => {
   const trimmed = typeof value === "string" ? value.trim() : "";
   return trimmed.length > 0 ? path.resolve(trimmed) : DEFAULT_WORKSPACE_DIR;
 };
+async function readRegisteredEvalCaseIds(worktree: string): Promise<ReadonlySet<string>> {
+  const sourcePath = path.join(worktree, "scripts", "operator", "local-brain-distill-eval.ts");
+  const source = await fs.readFile(sourcePath, "utf8").catch(() => "");
+  const start = source.indexOf("const EVAL_CASES: EvalCase[] = [");
+  const end = source.indexOf("const EVAL_CASE_BY_ID", start);
+  if (start < 0 || end <= start) {
+    return new Set();
+  }
+  return new Set(
+    [...source.slice(start, end).matchAll(/^\s+id: "([^"]+)"/gmu)].map((match) => match[1]),
+  );
+}
 const buildRepairLockCommand = (worktree: string): string =>
   `node --import tsx scripts/operator/lcx-automation-repair-lock.ts --mode acquire --lane local-brain-training-plan --worktree ${quoteShellArg(worktree)} --json`;
 const buildMediumTrainingCommand = (logPath: string): string =>
@@ -811,6 +823,7 @@ function qwenCapabilityConsolidationSnapshot(params: {
   events: JsonRecord[];
   latestPassingEval?: EvalSnapshot;
   latestCandidateEval?: EvalSnapshot;
+  registeredEvalCaseIds: ReadonlySet<string>;
 }): QwenCapabilityConsolidationSnapshot {
   const latestVerdictByAdapter = new Map(
     latestAdapterVerdictSnapshots(params.events)
@@ -864,7 +877,12 @@ function qwenCapabilityConsolidationSnapshot(params: {
       ]),
     );
   }
-  const targetedEvalFirstCaseIds = latestBlockedHarvestCaseIds.slice(0, 8);
+  // Candidate logs can outlive the current eval registry. Keep their harvest
+  // history visible, but never emit an invocation that the eval runner will
+  // reject before starting; this is especially important after case renames.
+  const targetedEvalFirstCaseIds = latestBlockedHarvestCaseIds
+    .filter((caseId) => params.registeredEvalCaseIds.has(caseId))
+    .slice(0, 8);
   const targetedEvalReceiptPath = path.join(
     DEFAULT_WORKSPACE_DIR,
     "state",
@@ -2594,6 +2612,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
   const quotaLogPath = options.quotaLogPath ?? (await latestQuotaLogPath());
   const quotaEvents = await readJsonl(quotaLogPath);
   const worktree = normalizeWorktree(options.worktree);
+  const registeredEvalCaseIds = await readRegisteredEvalCaseIds(worktree);
   const workspaceDir = normalizeWorkspaceDir(options.workspaceDir);
   const activeProcesses = await activeTrainingProcesses(options.processCheck);
   const latestGuardEvent = latestEvent(guardEvents, () => true);
@@ -2643,6 +2662,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     events: guardEvents,
     latestPassingEval,
     latestCandidateEval,
+    registeredEvalCaseIds,
   });
   const latestPromotion = latestEvent(
     guardEvents,
