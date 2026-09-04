@@ -14,7 +14,8 @@ export type LcxIdentityWriterName =
   | "device"
   | "device-auth"
   | "device-pairing"
-  | "node-pairing";
+  | "node-pairing"
+  | "exec-approvals";
 
 export type LcxIdentityWriterPathContract = Readonly<{
   writer: LcxIdentityWriterName;
