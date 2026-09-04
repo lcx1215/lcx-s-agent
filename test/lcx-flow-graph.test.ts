@@ -674,23 +674,24 @@ describe("LCX flow graph exam", () => {
   });
 
   it("is visible from doctor, mind model, head-tail, and runbook surfaces", async () => {
-    const [doctorSource, mindModelSource, headTailSource, agents, runbook] = await Promise.all([
-      fs.readFile(path.join(repoRoot, "scripts/operator/lcx-system-doctor.ts"), "utf8"),
-      fs.readFile(path.join(repoRoot, "scripts/operator/lcx-mind-model.ts"), "utf8"),
-      fs.readFile(path.join(repoRoot, "scripts/operator/lcx-head-tail-consistency.ts"), "utf8"),
-      fs.readFile(path.join(repoRoot, "AGENTS.md"), "utf8"),
-      fs.readFile(path.join(repoRoot, "ops/local-brain/README.md"), "utf8"),
-    ]);
+    const [doctorSource, mindModelSource, headTailSource, architectureMap, runbook] =
+      await Promise.all([
+        fs.readFile(path.join(repoRoot, "scripts/operator/lcx-system-doctor.ts"), "utf8"),
+        fs.readFile(path.join(repoRoot, "scripts/operator/lcx-mind-model.ts"), "utf8"),
+        fs.readFile(path.join(repoRoot, "scripts/operator/lcx-head-tail-consistency.ts"), "utf8"),
+        fs.readFile(path.join(repoRoot, "ops/architecture/LCX-SYSTEM-ARCHITECTURE.md"), "utf8"),
+        fs.readFile(path.join(repoRoot, "ops/local-brain/README.md"), "utf8"),
+      ]);
 
     expect(doctorSource).toContain('name: "flow-graph-exam"');
     expect(doctorSource).toContain("scripts/operator/lcx-flow-graph.ts");
     expect(mindModelSource).toContain("flow_graph");
     expect(headTailSource).toContain("flow_graph_boundary");
-    expect(agents).toContain("LCX Agent Flow Graph");
-    expect(agents).toContain("LCX Agent Universe Index Doctrine");
-    expect(agents).toContain("wrong-flow");
-    expect(agents).toContain("same_philosophy_merge_required");
-    expect(agents).toContain("finance_data_gateway_snapshot");
+    expect(architectureMap).toContain("LCX Agent Flow Graph");
+    expect(architectureMap).toContain("LCX Agent Universe Index Doctrine");
+    expect(architectureMap).toContain("wrong-flow");
+    expect(architectureMap).toContain("same_philosophy_merge_required");
+    expect(architectureMap).toContain("finance_data_gateway_snapshot");
     expect(runbook).toContain("LCX Agent Flow Graph");
     expect(runbook).toContain("flow_graph_exam");
     expect(runbook).toContain("same-philosophy");

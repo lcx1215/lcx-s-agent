@@ -93,6 +93,31 @@ describe("lcx-change-impact-plan", () => {
     );
   });
 
+  it("gives architecture and engineering governance docs one owner lane", async () => {
+    const payload = await runPlanArgs([
+      "--files",
+      "ops/architecture/LCX-SYSTEM-ARCHITECTURE.md",
+      "ops/engineering/LCX-GIT-DELIVERY-STANDARD.md",
+    ]);
+
+    expect(payload.ok).toBe(true);
+    expect(payload.unmatchedFiles).toEqual([]);
+    expect(payload.affectedLanes).toEqual(["global_doctrine_and_runbook"]);
+    expect(payload.impacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "doctrine_or_runbook",
+          lane: "global_doctrine_and_runbook",
+          matchedFiles: [
+            "ops/architecture/LCX-SYSTEM-ARCHITECTURE.md",
+            "ops/engineering/LCX-GIT-DELIVERY-STANDARD.md",
+          ],
+          headTailRequired: true,
+        }),
+      ]),
+    );
+  });
+
   it("routes multi-agent pattern shadow artifacts through the dedicated owner lane", async () => {
     const payload = await runPlan("scripts/operator/lcx-multi-agent-pattern-shadow.ts");
 

@@ -70,6 +70,7 @@ const CRITICAL_OWNER_FILES = [
   "skills/agent-runtime-drift-auditor/SKILL.md",
   "AGENTS.md",
   "README.md",
+  "ops/architecture/LCX-SYSTEM-ARCHITECTURE.md",
   "ops/local-brain/README.md",
 ] as const;
 
@@ -256,6 +257,7 @@ export async function buildLcxLiveFadeoutAudit() {
   const [
     agents,
     readme,
+    architectureMap,
     runbook,
     packageJsonText,
     bindingOwner,
@@ -274,6 +276,7 @@ export async function buildLcxLiveFadeoutAudit() {
   ] = await Promise.all([
     readText("AGENTS.md"),
     readText("README.md"),
+    readText("ops/architecture/LCX-SYSTEM-ARCHITECTURE.md"),
     readText("ops/local-brain/README.md"),
     readText("package.json"),
     readText("scripts/operator/lcx-external-channel-binding.ts"),
@@ -297,6 +300,7 @@ export async function buildLcxLiveFadeoutAudit() {
   const activeOwnerText = [
     agents,
     readme,
+    architectureMap,
     runbook,
     bindingOwner,
     statusOwner,
@@ -356,7 +360,7 @@ export async function buildLcxLiveFadeoutAudit() {
       file: "doctrine_docs",
       requiredTerms: CANONICAL_TERMS,
       summary: "doctrine documents must teach future agents the new status model",
-      text: `${agents}\n${readme}\n${runbook}`,
+      text: `${agents}\n${readme}\n${architectureMap}\n${runbook}`,
       nextAction:
         "restore core-ready/cloud-runtime-ready/external-channel-bound/user-visible-observed wording",
     }),
@@ -376,7 +380,7 @@ export async function buildLcxLiveFadeoutAudit() {
       ],
       summary:
         "cloud migration must keep one local system/factory and one canonical repository; local isolation uses linked worktrees",
-      text: `${agents}\n${readme}\n${runbook}`,
+      text: `${agents}\n${readme}\n${architectureMap}\n${runbook}`,
       nextAction:
         "restore cloud-runtime-ready wording and the single-core/source-of-truth boundary",
     }),

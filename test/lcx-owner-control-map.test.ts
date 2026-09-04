@@ -54,6 +54,13 @@ describe("LCX owner control map", () => {
           universeIndex: {
             dirtyFiles: 40,
             unmatchedChangedFiles: 11,
+            governanceScope: "repo_tracked_and_visible_files",
+            governanceStatus: "incomplete",
+            governanceTotalComponents: 8080,
+            governanceReviewRequiredComponents: 2,
+            governanceCoverageRate: 0.9997,
+            governanceUnknownComponents: ["src/new-ownerless.ts"],
+            governanceMissingRouteOwners: ["scripts/operator/missing-owner.ts"],
           },
         },
         liveTouched: false,
@@ -89,6 +96,7 @@ describe("LCX owner control map", () => {
       expect.arrayContaining([
         "active_eval_and_mlx",
         "dirty_and_unmatched_worktree",
+        "total_component_governance",
         "external_message_channel_real_user_proof",
         "skillopt_not_model_weight",
         "self_repair_memory_and_training_candidate_hands",

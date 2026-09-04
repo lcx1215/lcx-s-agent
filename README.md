@@ -4,11 +4,12 @@
 
 [![LCX Agent progress](docs/assets/lcx-agent-daily-progress-wave.svg)](docs/assets/lcx-agent-daily-progress-wave.svg)
 
-LCX Agent is a personal AI research operating system built on top of the
-OpenClaw runtime. It exposes a vendor-neutral External Message Channel for
-connecting any software over HTTP, routes natural-language requests into
-specialist workflows, and keeps durable evidence about what was read, tested,
-learned, promoted, or blocked.
+LCX Agent is a standalone personal AI research operating system. It exposes a
+vendor-neutral External Message Channel for connecting software over HTTP,
+routes natural-language requests into specialist workflows, and keeps durable
+evidence about what was read, tested, learned, promoted, or blocked. Historical
+runtime identifiers remain only at explicit compatibility boundaries while the
+implementation is being separated.
 
 The project is not an autonomous trading bot. Its finance scope is research
 only: ETF, major asset, macro, large-cap company, risk, and timing discipline.
@@ -70,12 +71,12 @@ node --import tsx scripts/operator/lcx-governance-autopilot.ts --json
 ```
 
 The governance autopilot writes the latest machine-readable and one-screen
-handoff snapshots:
+handoff snapshots under the active LCX state root:
 
 ```text
-/Users/liuchengxu/.openclaw/workspace/state/lcx-governance-autopilot-latest.json
-/Users/liuchengxu/.openclaw/workspace/state/lcx-evolution-promotion-digest-latest.json
-/Users/liuchengxu/.openclaw/workspace/state/lcx-context-recovery-handoff-latest.md
+<LCX_STATE_ROOT>/workspace/state/lcx-governance-autopilot-latest.json
+<LCX_STATE_ROOT>/workspace/state/lcx-evolution-promotion-digest-latest.json
+<LCX_STATE_ROOT>/workspace/state/lcx-context-recovery-handoff-latest.md
 ```
 
 Use those files for orientation, then rerun owner commands before acting on
@@ -167,7 +168,7 @@ treat the channel as bound while still blocking release on
 `post_migration_external_canary_missing` until fresh real inbound/outbound
 evidence proves `user-visible-observed`.
 
-The system-wide fadeout audit is:
+The system-wide compatibility audit is:
 
 ```bash
 node --import tsx scripts/operator/lcx-live-fadeout-audit.ts --json
@@ -175,8 +176,8 @@ node --import tsx scripts/operator/lcx-live-fadeout-audit.ts --json
 
 It verifies that major LCX owners, package aliases, docs, governance, doctor,
 and recovery surfaces prefer external-channel/user-visible proof while keeping
-upstream OpenClaw live tests and historical receipts as allowed compatibility
-uses.
+legacy runtime tests and historical receipts only where compatibility requires
+them.
 
 ## Cloud Migration Model
 
@@ -192,7 +193,7 @@ local LCX core
 ```
 
 `cloud-runtime-ready` means the cloud control machine has one canonical
-repository checkout, one canonical `~/.openclaw` state root, copied/synced operator skills,
+repository checkout, one canonical state root, copied/synced operator skills,
 receipts, logs, selected-clean adapter proof, and governance owners. It does not
 mean external-channel delivery, user-visible-observed, or model-weight absorption.
 Local system/factory rule: the local machine has one LCX system and one factory/runtime,
@@ -201,8 +202,9 @@ use linked Git worktrees only; no second repository or deployment checkout is
 authoritative. Feature branches belong to GitHub/GitLab collaboration, review, and
 release, not to the local runtime model.
 
-The preferred repo path after migration is `/srv/lcx/lcx-s-openclaw`; the
-preferred state root is `~/.openclaw`. External software, WeChat, SMS, Slack, or
+The deployment path is resolved from the current deployment profile rather than
+hardcoded here; the current implementation state root is a legacy compatibility
+detail to be migrated. External software, WeChat, SMS, Slack, or
 any future channel are communication adapters on top of the same answer path.
 China cloud
 may mirror backup, static status, dashboard, or domestic helper surfaces, but it
@@ -284,18 +286,17 @@ corepack pnpm exec vitest run extensions/external/src/send.test.ts
 | `src/agents/`              | Agent runtime, system prompt, tools, routing, and review surfaces.                 |
 | `src/auto-reply/`          | User-visible command replies, truth surfaces, and reply-flow evidence.             |
 | `ops/local-brain/`         | Operator runbook for local-brain training, eval, guard, and recovery.              |
-| `docs/`                    | Broader OpenClaw and LCX Agent documentation.                                      |
+| `docs/`                    | LCX Agent documentation and compatibility notes.                                   |
 
-## Project Lineage
+## Identity and compatibility
 
-This repository keeps OpenClaw as the runtime and gateway foundation while LCX
-Agent adds a personal research operating layer: external message control room,
-durable learning, finance research discipline, local-brain promotion, and
-governance proof surfaces.
-
-Historical `lobster_*` names, scripts, hook labels, and runtime handles may
-remain as compatibility artifacts until each path is migrated with external-channel
-proof and fresh user-visible evidence.
+LCX Agent is the standalone product, codebase, and repository authority.
+Historical runtime names, environment variables, package paths, app identifiers,
+and `lobster_*` handles may remain only as explicit compatibility artifacts.
+Each such surface needs a canonical LCX replacement, a migration/rollback note,
+and focused verification before it is removed. Historical changelog entries and
+wire-level compatibility names are not rewritten merely to make search results
+look clean.
 
 ## License
 
