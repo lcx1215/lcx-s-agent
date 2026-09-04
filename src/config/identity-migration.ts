@@ -22,6 +22,7 @@ export type LcxIdentityWriterName =
   | "nostr-bus"
   | "nostr-profile"
   | "discord-bindings"
+  | "discord-model-picker"
   | "telegram-offset"
   | "telegram-sticker-cache"
   | "update-check";

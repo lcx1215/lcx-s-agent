@@ -1,7 +1,15 @@
 import os from "node:os";
 import path from "node:path";
 import { normalizeProviderId } from "../../agents/model-selection.js";
-import { resolveStateDir } from "../../config/paths.js";
+import {
+  readLcxIdentityWriterRaw,
+  resolveLcxIdentityStateWriterPathContract,
+  rollbackLcxIdentityWriter,
+  writeLcxIdentityWriterRawWithReceipt,
+  type LcxIdentityWriteReceipt,
+  type LcxIdentityWriterPathContract,
+} from "../../config/identity-migration.js";
+import { resolveStateDir, type LcxIdentityMigrationPlan } from "../../config/paths.js";
 import { withFileLock } from "../../infra/file-lock.js";
 import { resolveRequiredHomeDir } from "../../infra/home-dir.js";
 import { readJsonFileWithFallback, writeJsonFileAtomically } from "../../plugin-sdk/json-store.js";
@@ -25,10 +33,17 @@ type ModelPickerPreferencesEntry = {
   updatedAt: string;
 };
 
-type ModelPickerPreferencesStore = {
+export type DiscordModelPickerPreferencesStore = {
   version: 1;
   entries: Record<string, ModelPickerPreferencesEntry>;
 };
+
+export type LcxIdentityDiscordModelPickerPreferencesMigration = Readonly<{
+  pathContract: LcxIdentityWriterPathContract & Readonly<{ writer: "discord-model-picker" }>;
+  relativePath: string;
+  readPreferencesPath: string;
+  writePreferencesPath: string;
+}>;
 
 export type DiscordModelPickerPreferenceScope = {
   accountId?: string;
@@ -39,6 +54,44 @@ export type DiscordModelPickerPreferenceScope = {
 function resolvePreferencesStorePath(env: NodeJS.ProcessEnv = process.env): string {
   const stateDir = resolveStateDir(env, () => resolveRequiredHomeDir(env, os.homedir));
   return path.join(stateDir, "discord", "model-picker-preferences.json");
+}
+
+export function createLcxIdentityDiscordModelPickerPreferencesMigration(params: {
+  migrationPlan: LcxIdentityMigrationPlan;
+  existsSync?: (candidate: string) => boolean;
+}): LcxIdentityDiscordModelPickerPreferencesMigration {
+  if (params.migrationPlan.mode === "explicit-config-override") {
+    throw new Error("Discord model picker migration requires a state-root authority");
+  }
+  const relativePath = path.join("discord", "model-picker-preferences.json");
+  const pathContract = resolveLcxIdentityStateWriterPathContract({
+    writer: "discord-model-picker",
+    migrationPlan: params.migrationPlan,
+    relativePath,
+    existsSync: params.existsSync,
+  });
+  return Object.freeze({
+    pathContract,
+    relativePath,
+    readPreferencesPath: pathContract.readPath,
+    writePreferencesPath: pathContract.writePath,
+  });
+}
+
+function resolveCurrentDiscordModelPickerPathContract(
+  migration: LcxIdentityDiscordModelPickerPreferencesMigration,
+): LcxIdentityWriterPathContract & Readonly<{ writer: "discord-model-picker" }> {
+  const plan = migration.pathContract.migrationPlan;
+  if (!plan) {
+    return migration.pathContract;
+  }
+  return resolveLcxIdentityStateWriterPathContract({
+    writer: "discord-model-picker",
+    migrationPlan: plan,
+    relativePath: migration.relativePath,
+    backupPath: migration.pathContract.backupPath,
+    auditPath: migration.pathContract.auditPath,
+  });
 }
 
 function normalizeId(value?: string): string {
@@ -94,8 +147,8 @@ function sanitizeRecentModels(models: string[] | undefined, limit: number): stri
   return deduped;
 }
 
-async function readPreferencesStore(filePath: string): Promise<ModelPickerPreferencesStore> {
-  const { value } = await readJsonFileWithFallback<ModelPickerPreferencesStore>(filePath, {
+async function readPreferencesStore(filePath: string): Promise<DiscordModelPickerPreferencesStore> {
+  const { value } = await readJsonFileWithFallback<DiscordModelPickerPreferencesStore>(filePath, {
     version: 1,
     entries: {},
   });
@@ -106,6 +159,72 @@ async function readPreferencesStore(filePath: string): Promise<ModelPickerPrefer
     version: 1,
     entries: value.entries && typeof value.entries === "object" ? value.entries : {},
   };
+}
+
+export async function readDiscordModelPickerPreferencesForIdentityMigration(
+  migration: LcxIdentityDiscordModelPickerPreferencesMigration,
+): Promise<DiscordModelPickerPreferencesStore> {
+  const raw = await readLcxIdentityWriterRaw(
+    resolveCurrentDiscordModelPickerPathContract(migration),
+  );
+  if (raw === null) {
+    return { version: 1, entries: {} };
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { version: 1, entries: {} };
+    }
+    const store = parsed as Partial<DiscordModelPickerPreferencesStore>;
+    return {
+      version: 1,
+      entries: store.entries && typeof store.entries === "object" ? store.entries : {},
+    };
+  } catch {
+    return { version: 1, entries: {} };
+  }
+}
+
+export async function writeDiscordModelPickerPreferencesForIdentityMigration(
+  migration: LcxIdentityDiscordModelPickerPreferencesMigration,
+  store: DiscordModelPickerPreferencesStore,
+  options?: { expectedReadPath?: string; expectedWritePath?: string },
+): Promise<LcxIdentityWriteReceipt> {
+  return await writeLcxIdentityWriterRawWithReceipt(
+    resolveCurrentDiscordModelPickerPathContract(migration),
+    `${JSON.stringify(store, null, 2)}\n`,
+    options,
+  );
+}
+
+export async function recordDiscordModelPickerRecentModelForIdentityMigration(params: {
+  migration: LcxIdentityDiscordModelPickerPreferencesMigration;
+  scope: DiscordModelPickerPreferenceScope;
+  modelRef: string;
+  limit?: number;
+}): Promise<LcxIdentityWriteReceipt | null> {
+  const key = buildDiscordModelPickerPreferenceKey(params.scope);
+  const normalizedModelRef = normalizeModelRef(params.modelRef);
+  if (!key || !normalizedModelRef) {
+    return null;
+  }
+  const limit = Math.max(1, Math.min(params.limit ?? DEFAULT_RECENT_LIMIT, 10));
+  const store = await readDiscordModelPickerPreferencesForIdentityMigration(params.migration);
+  const existing = sanitizeRecentModels(store.entries[key]?.recent, limit);
+  store.entries[key] = {
+    recent: [normalizedModelRef, ...existing.filter((entry) => entry !== normalizedModelRef)].slice(
+      0,
+      limit,
+    ),
+    updatedAt: new Date().toISOString(),
+  };
+  return await writeDiscordModelPickerPreferencesForIdentityMigration(params.migration, store);
+}
+
+export async function rollbackDiscordModelPickerIdentityMigration(
+  receipt: LcxIdentityWriteReceipt,
+): Promise<void> {
+  await rollbackLcxIdentityWriter(receipt);
 }
 
 export async function readDiscordModelPickerRecentModels(params: {
