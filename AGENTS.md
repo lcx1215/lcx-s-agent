@@ -126,5 +126,7 @@ Stop after the requested end-state predicates are proven.
 - Use the current context-recovery route for long tasks. Keep a short state
   card with objective, scope, decisions, evidence, blockers, and one next
   action; never store secrets or full transcripts.
+- Use `lcx-context-recovery-exam` to verify that a new window can recover
+  durable system state before making non-trivial changes.
 - Finish with a concise evidence-backed report: what changed, what was checked,
   what remains unknown, and the next safe action.

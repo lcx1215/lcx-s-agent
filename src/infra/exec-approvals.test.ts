@@ -167,10 +167,10 @@ describe("resolve exec approvals defaults", () => {
     try {
       process.env.OPENCLAW_HOME = dir;
       expect(path.normalize(resolveExecApprovalsPath())).toBe(
-        path.normalize(path.join(dir, ".openclaw", "exec-approvals.json")),
+        path.normalize(path.join(dir, ".lcx", "exec-approvals.json")),
       );
       expect(path.normalize(resolveExecApprovalsSocketPath())).toBe(
-        path.normalize(path.join(dir, ".openclaw", "exec-approvals.sock")),
+        path.normalize(path.join(dir, ".lcx", "exec-approvals.sock")),
       );
     } finally {
       if (prevOpenClawHome === undefined) {
