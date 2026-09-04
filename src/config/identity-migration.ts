@@ -12,7 +12,9 @@ export type LcxIdentityWriterName =
   | "audit"
   | "cron"
   | "device"
-  | "device-auth";
+  | "device-auth"
+  | "device-pairing"
+  | "node-pairing";
 
 export type LcxIdentityWriterPathContract = Readonly<{
   writer: LcxIdentityWriterName;
