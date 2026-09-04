@@ -16,7 +16,8 @@ export type LcxIdentityWriterName =
   | "device-pairing"
   | "node-pairing"
   | "exec-approvals"
-  | "restart-sentinel";
+  | "restart-sentinel"
+  | "subagents";
 
 export type LcxIdentityWriterPathContract = Readonly<{
   writer: LcxIdentityWriterName;
