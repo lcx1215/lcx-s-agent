@@ -13,8 +13,8 @@ Approved canonical runtime names:
 | --------------- | ----------- | --------------------------------------------------------------- |
 | package         | `lcx-agent` | `openclaw` package imports only through a named loader boundary |
 | CLI             | `lcx`       | `openclaw` wrapper                                              |
-| config file     | `lcx.json`  | `openclaw.json` until read-old/write-new migration              |
-| state directory | `~/.lcx`    | `~/.openclaw` until read-old/write-new migration                |
+| config file     | `lcx.json`  | `openclaw.json` at the compatibility boundary                   |
+| state directory | `~/.lcx`    | `~/.openclaw` at the compatibility boundary                     |
 
 LCX Agent is independent. No upstream repository, vendor, provider, model, or
 runtime project is a second authority for source, state, routing, or release.
@@ -48,17 +48,17 @@ is no longer needed and that existing users or extensions have a migration path.
 - The repository's only configured Git remote is `origin` pointing to the LCX
   Agent repository.
 
-### Canonical package/CLI slice completed
+### Canonical package/CLI/state slice completed
 
 - `package.json` now declares `lcx-agent`, publishes the `lcx` bin and points
   `./cli-entry` at `lcx.mjs`.
 - `openclaw.mjs` remains a thin legacy wrapper into `lcx.mjs`.
 - Current source and tests use `lcx-agent/plugin-sdk`; the plugin loader also
   aliases the old `openclaw/plugin-sdk` paths for existing plugin source.
-- Config and state names are approved targets but deliberately remain on the
-  compatibility path until their own read-old/write-new migration is tested.
+- Config and state names are now active LCX defaults. The OpenClaw-era names
+  remain only as explicit compatibility overrides and migration inputs.
 
-### Config/state migration design in progress
+### Config/state migration and activation
 
 - `src/config/paths.ts` now exposes `resolveLcxIdentityMigrationPlan` as a
   pure, filesystem-read-only planning boundary.
@@ -67,8 +67,9 @@ is no longer needed and that existing users or extensions have a migration path.
   `~/.lcx/lcx.json` as the write target.
 - An explicit `OPENCLAW_*` or `CLAWDBOT_*` state/config override remains the
   operator's read/write authority for compatibility and rollback.
-- The active `resolveStateDir` and `resolveConfigPath` defaults are unchanged;
-  this slice does not activate `~/.lcx` or create migration state.
+- The active `resolveStateDir` and `resolveConfigPath` defaults now resolve to
+  `~/.lcx` and `~/.lcx/lcx.json`; explicit `OPENCLAW_*`/`CLAWDBOT_*` overrides
+  remain available for compatibility.
 - `src/config/io.ts` now exposes an explicit `createLcxIdentityMigrationConfigIO`
   adapter. It reuses the migration plan to keep one read path, one write path,
   write-target backup, audit path, expected-path guards, and rollback receipt;
@@ -78,12 +79,12 @@ is no longer needed and that existing users or extensions have a migration path.
   split-state plans, and refuses rollback after the target has changed. A
   missing prior target is rolled back by removing only the newly written file;
   an existing target is restored from its verified `.bak` bytes.
-- Activation still requires config I/O and every state writer (sessions,
-  credentials, queues, backups, audit, device identity/auth, and pairing) to
-  share the same read/write plan, plus focused rollback tests proving no split
-  state.
+- The local activation bridge is enabled only after config I/O and the
+  repository-owned state writers (sessions, credentials, queues, backups,
+  audit, device identity/auth, pairing, workspace, and channel-local stores)
+  received the shared contract and focused rollback/no-split tests.
 
-### Shared state-writer contract in progress
+### Shared state-writer contract completed
 
 `src/config/identity-migration.ts` now owns the common writer contract and raw
 receipt/rollback primitives. The contract is explicit about read path, write
@@ -153,48 +154,45 @@ The following bounded adapters are implemented and locally tested:
   `extensions/phone-control/identity-migration.ts` migrates config and armed
   state together and rolls back in reverse order.
 
-These adapters are migration writers, not activation. The current local writer
-inventory is now classified: state-root writers have an explicit adapter or use
-the central state-root owner; workspace-local plugin files, temporary/browser
-artifacts, generated media, and diagnostic/doctor probes are not identity state;
-custom workspace paths, custom auth directories, external OAuth/keychain
-surfaces, and provider-owned state require an explicit owner before migration.
-No default state-root switch is implied by these adapters.
+These adapters remain available for explicit migration and rollback. The local
+default resolver is now active on `~/.lcx`; state-root writers have an explicit
+adapter or use the central state-root owner. Workspace-local plugin files,
+temporary/browser artifacts, generated media, and diagnostic/doctor probes are
+not identity state. Custom workspace paths, custom auth directories, external
+OAuth/keychain surfaces, and provider-owned state require an explicit owner
+before migration.
 
-### Activation-gate writer inventory (first pass)
+### Post-activation writer inventory
 
-This is an owner map for the next migration slice, not a claim that the
-runtime has already switched. The paths below were verified against current
-source call sites; tests and historical migration fixtures are deliberately
-not treated as runtime writers.
+This is an owner map for follow-up coverage and compatibility removal. The
+paths below were verified against current source call sites; tests and
+historical migration fixtures are deliberately not treated as runtime writers.
 
-| surface                 | path/owner                                                                                                                                                                                                                                                       | current write surfaces                                                                                                                                                                                                                  | activation proof still required                                                                          |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| Config root             | `src/config/io.ts`                                                                                                                                                                                                                                               | config file, `.bak` rotation, config audit                                                                                                                                                                                              | One selected config path for read, write, backup, audit, expected-path checks, and rollback              |
-| Sessions                | `src/config/sessions/paths.ts`, `src/config/sessions/store.ts`, `src/config/sessions/transcript.ts`, `src/config/sessions/store-maintenance.ts`, `src/agents/session-file-repair.ts`, `src/gateway/session-utils.fs.ts`                                          | session store/transcript/repair/rotation/archive/cleanup adapters; default runtime remains unchanged                                                                                                                                    | Read legacy stores, write one canonical store under lock, and prove no dual-write or split session state |
-| Agent workspace/auth    | `src/config/agent-dirs.ts`, `src/agents/agent-paths.ts`, `src/agents/auth-profiles/`, `src/agents/subagent-registry.store.ts`, `src/agents/workspace.ts`                                                                                                         | auth, subagent registry, workspace state, and whole default workspace directory adapters                                                                                                                                                | Canonical root propagation, legacy read fallback, permission checks, and token/non-duplication rollback  |
-| Delivery/schedule state | `src/infra/outbound/delivery-queue.ts`, `src/cron/store.ts`, `src/infra/restart-sentinel.ts`                                                                                                                                                                     | outbound queue, cron store, restart sentinel adapters; replay/cleanup remains                                                                                                                                                           | Durable queue/cron migration with one target root and replay/rollback evidence                           |
-| Device/security/pairing | `src/infra/device-identity.ts`, `src/infra/device-auth-store.ts`, `src/infra/exec-approvals.ts`, `src/infra/pairing-files.ts`                                                                                                                                    | device identity/auth, exec approvals, and device/node pairing adapters                                                                                                                                                                  | Retain file modes, secret boundary, and recovery proof across the family                                 |
-| Channel-local state     | Telegram/Discord/Web stores, channel pairing, MSTeams, external replay, voice-call, plus `src/plugins/services.ts`, `extensions/nostr/src/nostr-state-store.ts`, `extensions/matrix/src/matrix/credentials.ts`, `extensions/matrix/src/matrix/client/storage.ts` | Nostr, Matrix credentials/storage, Telegram offset/sticker/command-hash cache, Discord binding/model-picker, channel pairing, WhatsApp Web auth, MSTeams, external replay, and voice-call adapters; custom/provider-owned state remains | Adapter-specific path injection; this does not prove external-channel binding or visible delivery        |
-| Operator/runtime state  | `scripts/operator/` owners and `~/.openclaw/workspace`                                                                                                                                                                                                           | governance snapshots, receipts, training and external-channel artifacts                                                                                                                                                                 | Separate owner migration and fresh receipts; never silently mix this with core config activation         |
+| surface                 | path/owner                                                                                                                                                                                                                                                       | current write surfaces                                                                                                                                                                                                                  | activation proof still required                                                                         |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| Config root             | `src/config/io.ts`                                                                                                                                                                                                                                               | canonical `lcx.json`, `.bak` rotation, config audit                                                                                                                                                                                     | Keep explicit legacy override and rollback evidence                                                     |
+| Sessions                | `src/config/sessions/paths.ts`, `src/config/sessions/store.ts`, `src/config/sessions/transcript.ts`, `src/config/sessions/store-maintenance.ts`, `src/agents/session-file-repair.ts`, `src/gateway/session-utils.fs.ts`                                          | session store/transcript/repair/rotation/archive/cleanup adapters; default runtime uses canonical root                                                                                                                                  | Keep legacy fallback isolated and prove no dual-write or split session state                            |
+| Agent workspace/auth    | `src/config/agent-dirs.ts`, `src/agents/agent-paths.ts`, `src/agents/auth-profiles/`, `src/agents/subagent-registry.store.ts`, `src/agents/workspace.ts`                                                                                                         | auth, subagent registry, workspace state, and whole default workspace directory adapters                                                                                                                                                | Canonical root propagation, legacy read fallback, permission checks, and token/non-duplication rollback |
+| Delivery/schedule state | `src/infra/outbound/delivery-queue.ts`, `src/cron/store.ts`, `src/infra/restart-sentinel.ts`                                                                                                                                                                     | outbound queue, cron store, restart sentinel adapters; replay/cleanup remains                                                                                                                                                           | Durable canonical queue/cron state and replay/rollback evidence                                         |
+| Device/security/pairing | `src/infra/device-identity.ts`, `src/infra/device-auth-store.ts`, `src/infra/exec-approvals.ts`, `src/infra/pairing-files.ts`                                                                                                                                    | device identity/auth, exec approvals, and device/node pairing adapters                                                                                                                                                                  | Retain file modes, secret boundary, and recovery proof across the family                                |
+| Channel-local state     | Telegram/Discord/Web stores, channel pairing, MSTeams, external replay, voice-call, plus `src/plugins/services.ts`, `extensions/nostr/src/nostr-state-store.ts`, `extensions/matrix/src/matrix/credentials.ts`, `extensions/matrix/src/matrix/client/storage.ts` | Nostr, Matrix credentials/storage, Telegram offset/sticker/command-hash cache, Discord binding/model-picker, channel pairing, WhatsApp Web auth, MSTeams, external replay, and voice-call adapters; custom/provider-owned state remains | Adapter-specific path injection; this does not prove external-channel binding or visible delivery       |
+| Operator/runtime state  | `scripts/operator/` owners and `~/.lcx/workspace`                                                                                                                                                                                                                | governance snapshots, receipts, training and external-channel artifacts                                                                                                                                                                 | Separate owner migration and fresh receipts; never silently mix this with core config activation        |
 
-Before activation, the remaining direct legacy path references must be
-classified as a compatibility adapter, a migration fixture, or a real writer.
+After activation, remaining direct legacy path references must be classified
+as a compatibility adapter, a migration fixture, or a real writer.
 An external communication surface is intentionally modeled as a replaceable
 channel adapter. SMS, visualization, Feishu, or another transport may be
 selected later by an explicit binding decision; none is the default identity
 or runtime authority for this repository.
 Profile state-root derivation in `src/cli/profile.ts` and `src/daemon/paths.ts`
 now delegates to `resolveNewStateDirForProfile` in `src/config/paths.ts`; this
-is centralization only and still returns the current `.openclaw[-profile]`
-compatibility root. `src/infra/exec-approvals.ts` likewise derives its default
-file/socket paths from `resolveNewStateDir` while retaining the same filenames;
-its writer is now on the migration contract; the default path remains unchanged.
+keeps profile roots on the canonical `.lcx[-profile]` family. `src/infra/exec-approvals.ts`
+likewise derives its default file/socket paths from `resolveNewStateDir` while
+retaining the same filenames; its writer is now on the migration contract.
 `src/utils.ts` and the session legacy fallback in
-`src/gateway/session-utils.fs.ts` now use the same compatibility state-root
-owner; behavior is unchanged. Session maintenance/archives now have explicit
-receipt-backed migration entrypoints, but ordinary runtime calls still use the
-compatibility root until activation is separately authorized. The default
+`src/gateway/session-utils.fs.ts` now use the same canonical state-root owner.
+Session maintenance/archives now have explicit receipt-backed migration
+entrypoints, and ordinary runtime calls use the canonical root. The default
 workspace directory has an explicit whole-directory move/rollback boundary;
 custom `agents.defaults.workspace` paths remain operator-owned inputs. The
 workspace-local plugin directory in `src/plugins/discovery.ts` and the doctor
@@ -209,8 +207,8 @@ The two remaining classes are intentionally bounded:
 - `src/commands/doctor-config-flow.ts`, `src/commands/doctor-state-integrity.ts`,
   and `src/infra/state-migrations.ts` contain migration targets and diagnostic
   probes for the current compatibility layout. Their `.openclaw` targets stay
-  unchanged until a versioned migration owner supplies activation, rollback,
-  and no-split-state evidence.
+  unchanged until a versioned migration owner supplies a narrower compatibility
+  removal, rollback, and no-split-state evidence.
 
 ### Compatibility retained intentionally
 

@@ -20,12 +20,12 @@ export const isNixMode = resolveIsNixMode();
 
 // Support historical (and occasionally misspelled) legacy state dirs.
 const LEGACY_STATE_DIRNAMES = [".clawdbot", ".moldbot", ".moltbot"] as const;
-const NEW_STATE_DIRNAME = ".openclaw";
+const COMPATIBILITY_STATE_DIRNAME = ".openclaw";
 const CONFIG_FILENAME = "openclaw.json";
 const LEGACY_CONFIG_FILENAMES = ["clawdbot.json", "moldbot.json", "moltbot.json"] as const;
 const IDENTITY_MIGRATION_STATE_DIRNAMES = [
   CANONICAL_STATE_DIRNAME,
-  NEW_STATE_DIRNAME,
+  COMPATIBILITY_STATE_DIRNAME,
   ...LEGACY_STATE_DIRNAMES,
 ] as const;
 const IDENTITY_MIGRATION_CONFIG_FILENAMES = [
@@ -48,7 +48,7 @@ function legacyStateDirs(homedir: () => string = resolveDefaultHomeDir): string[
 }
 
 function newStateDir(homedir: () => string = resolveDefaultHomeDir): string {
-  return path.join(homedir(), NEW_STATE_DIRNAME);
+  return path.join(homedir(), CANONICAL_STATE_DIRNAME);
 }
 
 export function resolveLegacyStateDir(homedir: () => string = resolveDefaultHomeDir): string {
@@ -64,11 +64,10 @@ export function resolveNewStateDir(homedir: () => string = resolveDefaultHomeDir
 }
 
 /**
- * Resolve the current compatibility state root for a named profile.
+ * Resolve the canonical LCX state root for a named profile.
  *
  * Keep profile suffix derivation beside the state-root owner so callers do not
- * grow independent `.openclaw[-profile]` implementations. The returned path
- * intentionally remains on the current compatibility root until activation.
+ * grow independent `.lcx[-profile]` implementations.
  */
 export function resolveNewStateDirForProfile(
   profile: string | undefined,
@@ -80,11 +79,7 @@ export function resolveNewStateDirForProfile(
 }
 
 /**
- * Canonical LCX state target for the staged identity migration.
- *
- * This is intentionally not used by resolveStateDir yet. The current runtime
- * still reads from the compatibility path until the read-old/write-new plan
- * is wired into every state writer and its rollback checks.
+ * Canonical LCX state target for identity migration and normal runtime use.
  */
 export function resolveLcxStateDir(homedir: () => string = resolveDefaultHomeDir): string {
   return path.join(homedir(), CANONICAL_STATE_DIRNAME);
@@ -109,8 +104,8 @@ export type LcxIdentityMigrationPlan = Readonly<{
 }>;
 
 /**
- * Compute the reversible identity migration boundary without changing the
- * active runtime defaults or touching the filesystem.
+ * Compute the reversible identity migration boundary without touching the
+ * filesystem. The normal runtime defaults are now canonical LCX paths.
  *
  * With no explicit override, LCX is the write target while existing legacy
  * state/config paths remain readable. Explicit OPENCLAW/CLAWDBOT overrides are
@@ -196,7 +191,7 @@ export function resolveLcxIdentityMigrationPlan(
 /**
  * State directory for mutable data (sessions, logs, caches).
  * Can be overridden via OPENCLAW_STATE_DIR.
- * Default: ~/.openclaw
+ * Default: ~/.lcx
  */
 export function resolveStateDir(
   env: NodeJS.ProcessEnv = process.env,
@@ -207,26 +202,7 @@ export function resolveStateDir(
   if (override) {
     return resolveUserPath(override, env, effectiveHomedir);
   }
-  const newDir = newStateDir(effectiveHomedir);
-  if (env.OPENCLAW_TEST_FAST === "1") {
-    return newDir;
-  }
-  const legacyDirs = legacyStateDirs(effectiveHomedir);
-  const hasNew = fs.existsSync(newDir);
-  if (hasNew) {
-    return newDir;
-  }
-  const existingLegacy = legacyDirs.find((dir) => {
-    try {
-      return fs.existsSync(dir);
-    } catch {
-      return false;
-    }
-  });
-  if (existingLegacy) {
-    return existingLegacy;
-  }
-  return newDir;
+  return newStateDir(effectiveHomedir);
 }
 
 function resolveUserPath(
@@ -254,42 +230,44 @@ export const STATE_DIR = resolveStateDir();
 /**
  * Config file path (JSON5).
  * Can be overridden via OPENCLAW_CONFIG_PATH.
- * Default: ~/.openclaw/openclaw.json (or $OPENCLAW_STATE_DIR/openclaw.json)
+ * Default: ~/.lcx/lcx.json (or $OPENCLAW_STATE_DIR/openclaw.json)
  */
 export function resolveCanonicalConfigPath(
   env: NodeJS.ProcessEnv = process.env,
   stateDir: string = resolveStateDir(env, envHomedir(env)),
+  homedir: () => string = envHomedir(env),
 ): string {
+  const effectiveHomedir = () => resolveRequiredHomeDir(env, homedir);
   const override = env.OPENCLAW_CONFIG_PATH?.trim() || env.CLAWDBOT_CONFIG_PATH?.trim();
   if (override) {
-    return resolveUserPath(override, env, envHomedir(env));
+    return resolveUserPath(override, env, effectiveHomedir);
+  }
+  const canonicalStateDir = resolveLcxStateDir(effectiveHomedir);
+  if (path.resolve(stateDir) === path.resolve(canonicalStateDir)) {
+    return path.join(stateDir, CANONICAL_CONFIG_FILENAME);
   }
   return path.join(stateDir, CONFIG_FILENAME);
 }
 
 /**
- * Resolve the active config path by preferring existing config candidates
- * before falling back to the canonical path.
+ * Resolve the active config path.
+ *
+ * The canonical default is authoritative. Explicit state/config overrides
+ * retain compatibility filename discovery inside the selected root.
  */
 export function resolveConfigPathCandidate(
   env: NodeJS.ProcessEnv = process.env,
   homedir: () => string = envHomedir(env),
 ): string {
-  if (env.OPENCLAW_TEST_FAST === "1") {
-    return resolveCanonicalConfigPath(env, resolveStateDir(env, homedir));
+  const configOverride = env.OPENCLAW_CONFIG_PATH?.trim() || env.CLAWDBOT_CONFIG_PATH?.trim();
+  if (configOverride) {
+    return resolveUserPath(configOverride, env, homedir);
   }
-  const candidates = resolveDefaultConfigCandidates(env, homedir);
-  const existing = candidates.find((candidate) => {
-    try {
-      return fs.existsSync(candidate);
-    } catch {
-      return false;
-    }
-  });
-  if (existing) {
-    return existing;
+  const stateOverride = env.OPENCLAW_STATE_DIR?.trim() || env.CLAWDBOT_STATE_DIR?.trim();
+  if (!stateOverride) {
+    return resolveLcxConfigPath(resolveLcxStateDir(() => resolveRequiredHomeDir(env, homedir)));
   }
-  return resolveCanonicalConfigPath(env, resolveStateDir(env, homedir));
+  return resolveCanonicalConfigPath(env, resolveStateDir(env, homedir), homedir);
 }
 
 /**
@@ -300,36 +278,11 @@ export function resolveConfigPath(
   stateDir: string = resolveStateDir(env, envHomedir(env)),
   homedir: () => string = envHomedir(env),
 ): string {
-  const override = env.OPENCLAW_CONFIG_PATH?.trim();
+  const override = env.OPENCLAW_CONFIG_PATH?.trim() || env.CLAWDBOT_CONFIG_PATH?.trim();
   if (override) {
     return resolveUserPath(override, env, homedir);
   }
-  if (env.OPENCLAW_TEST_FAST === "1") {
-    return path.join(stateDir, CONFIG_FILENAME);
-  }
-  const stateOverride = env.OPENCLAW_STATE_DIR?.trim();
-  const candidates = [
-    path.join(stateDir, CONFIG_FILENAME),
-    ...LEGACY_CONFIG_FILENAMES.map((name) => path.join(stateDir, name)),
-  ];
-  const existing = candidates.find((candidate) => {
-    try {
-      return fs.existsSync(candidate);
-    } catch {
-      return false;
-    }
-  });
-  if (existing) {
-    return existing;
-  }
-  if (stateOverride) {
-    return path.join(stateDir, CONFIG_FILENAME);
-  }
-  const defaultStateDir = resolveStateDir(env, homedir);
-  if (path.resolve(stateDir) === path.resolve(defaultStateDir)) {
-    return resolveConfigPathCandidate(env, homedir);
-  }
-  return path.join(stateDir, CONFIG_FILENAME);
+  return resolveCanonicalConfigPath(env, stateDir, homedir);
 }
 
 export const CONFIG_PATH = resolveConfigPathCandidate();
@@ -356,8 +309,16 @@ export function resolveDefaultConfigCandidates(
     candidates.push(...LEGACY_CONFIG_FILENAMES.map((name) => path.join(resolved, name)));
   }
 
-  const defaultDirs = [newStateDir(effectiveHomedir), ...legacyStateDirs(effectiveHomedir)];
-  for (const dir of defaultDirs) {
+  const canonicalDir = newStateDir(effectiveHomedir);
+  candidates.push(path.join(canonicalDir, CANONICAL_CONFIG_FILENAME));
+  candidates.push(path.join(canonicalDir, CONFIG_FILENAME));
+  candidates.push(...LEGACY_CONFIG_FILENAMES.map((name) => path.join(canonicalDir, name)));
+
+  const compatibilityDirs = [
+    path.join(effectiveHomedir(), COMPATIBILITY_STATE_DIRNAME),
+    ...legacyStateDirs(effectiveHomedir),
+  ];
+  for (const dir of compatibilityDirs) {
     candidates.push(path.join(dir, CONFIG_FILENAME));
     candidates.push(...LEGACY_CONFIG_FILENAMES.map((name) => path.join(dir, name)));
   }

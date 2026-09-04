@@ -620,8 +620,8 @@ export type ConfigIoDeps = {
   homedir?: () => string;
   configPath?: string;
   /**
-   * Explicit opt-in migration plan. The active compatibility defaults remain
-   * unchanged when this is omitted.
+   * Explicit opt-in migration plan for a legacy read-old/canonical write-new
+   * operation. The normal runtime defaults are canonical LCX paths.
    */
   lcxIdentityMigrationPlan?: LcxIdentityMigrationPlan | null;
   logger?: Pick<typeof console, "error" | "warn">;
@@ -686,7 +686,7 @@ function resolveConfigPathForDeps(deps: Required<ConfigIoDeps>): string {
   if (deps.configPath) {
     return deps.configPath;
   }
-  return resolveConfigPath(deps.env, resolveStateDir(deps.env, deps.homedir));
+  return resolveConfigPath(deps.env, resolveStateDir(deps.env, deps.homedir), deps.homedir);
 }
 
 function normalizeDeps(overrides: ConfigIoDeps = {}): Required<ConfigIoDeps> {
@@ -1630,11 +1630,11 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
 }
 
 /**
- * Opt-in config I/O adapter for the staged LCX identity migration.
+ * Opt-in config I/O adapter for an explicit legacy-to-LCX migration.
  *
- * The normal createConfigIO() path remains on the active compatibility
- * defaults. This adapter only makes the migration plan executable for an
- * isolated caller that is prepared to handle the returned rollback receipt.
+ * The normal createConfigIO() path already uses the canonical LCX defaults.
+ * This adapter makes the read-old/write-new plan executable for an isolated
+ * caller that is prepared to handle the returned rollback receipt.
  */
 export function createLcxIdentityMigrationConfigIO(
   overrides: Omit<ConfigIoDeps, "lcxIdentityMigrationPlan"> = {},

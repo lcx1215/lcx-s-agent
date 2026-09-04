@@ -50,16 +50,16 @@ describe("state + config path candidates", () => {
     }
   }
 
-  function expectOpenClawHomeDefaults(env: NodeJS.ProcessEnv): void {
+  function expectLcxHomeDefaults(env: NodeJS.ProcessEnv): void {
     const configuredHome = env.OPENCLAW_HOME;
     if (!configuredHome) {
       throw new Error("OPENCLAW_HOME must be set for this assertion helper");
     }
     const resolvedHome = path.resolve(configuredHome);
-    expect(resolveStateDir(env)).toBe(path.join(resolvedHome, ".openclaw"));
+    expect(resolveStateDir(env)).toBe(path.join(resolvedHome, ".lcx"));
 
     const candidates = resolveDefaultConfigCandidates(env);
-    expect(candidates[0]).toBe(path.join(resolvedHome, ".openclaw", "openclaw.json"));
+    expect(candidates[0]).toBe(path.join(resolvedHome, ".lcx", "lcx.json"));
   }
 
   it("uses OPENCLAW_STATE_DIR when set", () => {
@@ -72,13 +72,13 @@ describe("state + config path candidates", () => {
 
   it("centralizes compatibility profile state roots", () => {
     expect(resolveNewStateDirForProfile(undefined, () => "/home/test")).toBe(
-      path.join("/home/test", ".openclaw"),
+      path.join("/home/test", ".lcx"),
     );
     expect(resolveNewStateDirForProfile("default", () => "/home/test")).toBe(
-      path.join("/home/test", ".openclaw"),
+      path.join("/home/test", ".lcx"),
     );
     expect(resolveNewStateDirForProfile("Dev", () => "/home/test")).toBe(
-      path.join("/home/test", ".openclaw-Dev"),
+      path.join("/home/test", ".lcx-Dev"),
     );
   });
 
@@ -86,7 +86,7 @@ describe("state + config path candidates", () => {
     const env = {
       OPENCLAW_HOME: "/srv/openclaw-home",
     } as NodeJS.ProcessEnv;
-    expectOpenClawHomeDefaults(env);
+    expectLcxHomeDefaults(env);
   });
 
   it("prefers OPENCLAW_HOME over HOME for default state/config locations", () => {
@@ -94,7 +94,7 @@ describe("state + config path candidates", () => {
       OPENCLAW_HOME: "/srv/openclaw-home",
       HOME: "/home/other",
     } as NodeJS.ProcessEnv;
-    expectOpenClawHomeDefaults(env);
+    expectLcxHomeDefaults(env);
   });
 
   it("orders default config candidates in a stable order", () => {
@@ -102,6 +102,11 @@ describe("state + config path candidates", () => {
     const resolvedHome = path.resolve(home);
     const candidates = resolveDefaultConfigCandidates({} as NodeJS.ProcessEnv, () => home);
     const expected = [
+      path.join(resolvedHome, ".lcx", "lcx.json"),
+      path.join(resolvedHome, ".lcx", "openclaw.json"),
+      path.join(resolvedHome, ".lcx", "clawdbot.json"),
+      path.join(resolvedHome, ".lcx", "moldbot.json"),
+      path.join(resolvedHome, ".lcx", "moltbot.json"),
       path.join(resolvedHome, ".openclaw", "openclaw.json"),
       path.join(resolvedHome, ".openclaw", "clawdbot.json"),
       path.join(resolvedHome, ".openclaw", "moldbot.json"),
@@ -122,25 +127,25 @@ describe("state + config path candidates", () => {
     expect(candidates).toEqual(expected);
   });
 
-  it("prefers ~/.openclaw when it exists and legacy dir is missing", async () => {
+  it("uses ~/.lcx even when the compatibility dir exists", async () => {
     await withTempRoot("openclaw-state-", async (root) => {
-      const newDir = path.join(root, ".openclaw");
-      await fs.mkdir(newDir, { recursive: true });
+      const compatibilityDir = path.join(root, ".openclaw");
+      await fs.mkdir(compatibilityDir, { recursive: true });
       const resolved = resolveStateDir({} as NodeJS.ProcessEnv, () => root);
-      expect(resolved).toBe(newDir);
+      expect(resolved).toBe(path.join(root, ".lcx"));
     });
   });
 
-  it("falls back to existing legacy state dir when ~/.openclaw is missing", async () => {
+  it("does not fall back to a legacy state dir after activation", async () => {
     await withTempRoot("openclaw-state-legacy-", async (root) => {
       const legacyDir = path.join(root, ".clawdbot");
       await fs.mkdir(legacyDir, { recursive: true });
       const resolved = resolveStateDir({} as NodeJS.ProcessEnv, () => root);
-      expect(resolved).toBe(legacyDir);
+      expect(resolved).toBe(path.join(root, ".lcx"));
     });
   });
 
-  it("CONFIG_PATH prefers existing config when present", async () => {
+  it("CONFIG_PATH stays canonical when a compatibility config exists", async () => {
     await withTempRoot("openclaw-config-", async (root) => {
       const legacyDir = path.join(root, ".openclaw");
       await fs.mkdir(legacyDir, { recursive: true });
@@ -148,7 +153,7 @@ describe("state + config path candidates", () => {
       await fs.writeFile(legacyPath, "{}", "utf-8");
 
       const resolved = resolveConfigPathCandidate({} as NodeJS.ProcessEnv, () => root);
-      expect(resolved).toBe(legacyPath);
+      expect(resolved).toBe(path.join(root, ".lcx", "lcx.json"));
     });
   });
 
@@ -177,7 +182,7 @@ describe("LCX identity migration plan", () => {
     }
   }
 
-  it("defines LCX as the write target without changing current runtime defaults", async () => {
+  it("defines LCX as the active default runtime target", async () => {
     await withTempRoot("lcx-identity-empty-", async (root) => {
       const env = {} as NodeJS.ProcessEnv;
       const plan = resolveLcxIdentityMigrationPlan({ env, homedir: () => root });
@@ -192,6 +197,8 @@ describe("LCX identity migration plan", () => {
       expect(plan.readConfigPath).toBe(path.join(root, ".lcx", "lcx.json"));
       expect(plan.writeStateDir).toBe(path.join(root, ".lcx"));
       expect(plan.writeConfigPath).toBe(path.join(root, ".lcx", "lcx.json"));
+      expect(resolveStateDir(env, () => root)).toBe(path.join(root, ".lcx"));
+      expect(resolveConfigPathCandidate(env, () => root)).toBe(path.join(root, ".lcx", "lcx.json"));
       await expect(fs.stat(path.join(root, ".lcx"))).rejects.toThrow();
     });
   });
