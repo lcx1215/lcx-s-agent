@@ -1,7 +1,17 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import {
+  readLcxIdentityWriterRaw,
+  resolveLcxIdentityStateWriterPathContract,
+  rollbackLcxIdentityWriter,
+  writeLcxIdentityWriterRawWithReceipt,
+  LcxIdentityWriterContractError,
+  type LcxIdentityWriteReceipt,
+  type LcxIdentityWriterPathContract,
+} from "../config/identity-migration.js";
 import { resolveStateDir } from "../config/paths.js";
+import type { LcxIdentityMigrationPlan } from "../config/paths.js";
 
 export type DeviceIdentity = {
   deviceId: string;
@@ -9,7 +19,7 @@ export type DeviceIdentity = {
   privateKeyPem: string;
 };
 
-type StoredIdentity = {
+export type StoredDeviceIdentity = {
   version: 1;
   deviceId: string;
   publicKeyPem: string;
@@ -68,7 +78,7 @@ export function loadOrCreateDeviceIdentity(
   try {
     if (fs.existsSync(filePath)) {
       const raw = fs.readFileSync(filePath, "utf8");
-      const parsed = JSON.parse(raw) as StoredIdentity;
+      const parsed = JSON.parse(raw) as StoredDeviceIdentity;
       if (
         parsed?.version === 1 &&
         typeof parsed.deviceId === "string" &&
@@ -77,7 +87,7 @@ export function loadOrCreateDeviceIdentity(
       ) {
         const derivedId = fingerprintPublicKey(parsed.publicKeyPem);
         if (derivedId && derivedId !== parsed.deviceId) {
-          const updated: StoredIdentity = {
+          const updated: StoredDeviceIdentity = {
             ...parsed,
             deviceId: derivedId,
           };
@@ -106,7 +116,7 @@ export function loadOrCreateDeviceIdentity(
 
   const identity = generateIdentity();
   ensureDir(filePath);
-  const stored: StoredIdentity = {
+  const stored: StoredDeviceIdentity = {
     version: 1,
     deviceId: identity.deviceId,
     publicKeyPem: identity.publicKeyPem,
@@ -120,6 +130,127 @@ export function loadOrCreateDeviceIdentity(
     // best-effort
   }
   return identity;
+}
+
+export type LcxIdentityDeviceMigration = Readonly<{
+  pathContract: LcxIdentityWriterPathContract & Readonly<{ writer: "device" }>;
+  readIdentityPath: string;
+  writeIdentityPath: string;
+}>;
+
+const DEVICE_IDENTITY_RELATIVE_PATH = path.join("identity", "device.json");
+
+export function createLcxIdentityDeviceMigration(params: {
+  migrationPlan: LcxIdentityMigrationPlan;
+  existsSync?: (candidate: string) => boolean;
+}): LcxIdentityDeviceMigration {
+  const pathContract = resolveLcxIdentityStateWriterPathContract({
+    writer: "device",
+    migrationPlan: params.migrationPlan,
+    relativePath: DEVICE_IDENTITY_RELATIVE_PATH,
+    existsSync: params.existsSync,
+  });
+  return Object.freeze({
+    pathContract,
+    readIdentityPath: pathContract.readPath,
+    writeIdentityPath: pathContract.writePath,
+  });
+}
+
+function resolveCurrentDeviceIdentityPathContract(
+  migration: LcxIdentityDeviceMigration,
+): LcxIdentityWriterPathContract & Readonly<{ writer: "device" }> {
+  const plan = migration.pathContract.migrationPlan;
+  if (!plan) {
+    return migration.pathContract;
+  }
+  return resolveLcxIdentityStateWriterPathContract({
+    writer: "device",
+    migrationPlan: plan,
+    relativePath: DEVICE_IDENTITY_RELATIVE_PATH,
+    backupPath: migration.pathContract.backupPath,
+    auditPath: migration.pathContract.auditPath,
+  });
+}
+
+function parseStoredDeviceIdentity(raw: string): StoredDeviceIdentity | null {
+  try {
+    const parsed = JSON.parse(raw) as StoredDeviceIdentity;
+    if (
+      parsed?.version !== 1 ||
+      typeof parsed.deviceId !== "string" ||
+      typeof parsed.publicKeyPem !== "string" ||
+      typeof parsed.privateKeyPem !== "string" ||
+      typeof parsed.createdAtMs !== "number"
+    ) {
+      return null;
+    }
+    const derivedId = fingerprintPublicKey(parsed.publicKeyPem);
+    return derivedId ? { ...parsed, deviceId: derivedId } : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function readDeviceIdentityForIdentityMigration(
+  migration: LcxIdentityDeviceMigration,
+): Promise<DeviceIdentity | null> {
+  const pathContract = resolveCurrentDeviceIdentityPathContract(migration);
+  const raw = await readLcxIdentityWriterRaw(pathContract);
+  const stored = raw === null ? null : parseStoredDeviceIdentity(raw);
+  if (!stored) {
+    return null;
+  }
+  return {
+    deviceId: stored.deviceId,
+    publicKeyPem: stored.publicKeyPem,
+    privateKeyPem: stored.privateKeyPem,
+  };
+}
+
+export async function writeDeviceIdentityForIdentityMigration(
+  migration: LcxIdentityDeviceMigration,
+  identity: DeviceIdentity,
+  options?: { expectedReadPath?: string; expectedWritePath?: string },
+): Promise<LcxIdentityWriteReceipt> {
+  let derivedId: string | null = null;
+  try {
+    derivedId = fingerprintPublicKey(identity.publicKeyPem);
+    crypto.createPrivateKey(identity.privateKeyPem);
+  } catch {
+    throw new LcxIdentityWriterContractError(
+      "Device identity keys are invalid",
+      "LCX_IDENTITY_DEVICE_KEYS_INVALID",
+    );
+  }
+  if (!derivedId) {
+    throw new LcxIdentityWriterContractError(
+      "Device identity public key is invalid",
+      "LCX_IDENTITY_DEVICE_PUBLIC_KEY_INVALID",
+    );
+  }
+
+  const pathContract = resolveCurrentDeviceIdentityPathContract(migration);
+  const previousRaw = await readLcxIdentityWriterRaw(pathContract);
+  const previous = previousRaw === null ? null : parseStoredDeviceIdentity(previousRaw);
+  const stored: StoredDeviceIdentity = {
+    version: 1,
+    deviceId: derivedId,
+    publicKeyPem: identity.publicKeyPem,
+    privateKeyPem: identity.privateKeyPem,
+    createdAtMs: previous?.createdAtMs ?? Date.now(),
+  };
+  return await writeLcxIdentityWriterRawWithReceipt(
+    pathContract,
+    `${JSON.stringify(stored, null, 2)}\n`,
+    options,
+  );
+}
+
+export async function rollbackDeviceIdentityMigration(
+  receipt: LcxIdentityWriteReceipt,
+): Promise<void> {
+  await rollbackLcxIdentityWriter(receipt);
 }
 
 export function signDevicePayload(privateKeyPem: string, payload: string): string {

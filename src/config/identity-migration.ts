@@ -10,7 +10,8 @@ export type LcxIdentityWriterName =
   | "queues"
   | "backups"
   | "audit"
-  | "cron";
+  | "cron"
+  | "device";
 
 export type LcxIdentityWriterPathContract = Readonly<{
   writer: LcxIdentityWriterName;
