@@ -1,3 +1,15 @@
+import fs from "node:fs";
+import path from "node:path";
+import {
+  createLcxIdentityWriterPathContract,
+  readLcxIdentityWriterRaw,
+  rollbackLcxIdentityWriter,
+  writeLcxIdentityWriterRawWithReceipt,
+  LcxIdentityWriterContractError,
+  type LcxIdentityWriteReceipt,
+  type LcxIdentityWriterPathContract,
+} from "../../../src/config/identity-migration.js";
+import type { LcxIdentityMigrationPlan } from "../../../src/config/paths.js";
 import type {
   MSTeamsConversationStore,
   MSTeamsConversationStoreEntry,
@@ -6,7 +18,7 @@ import type {
 import { resolveMSTeamsStorePath } from "./storage.js";
 import { readJsonFile, withFileLock, writeJsonFile } from "./store-fs.js";
 
-type ConversationStoreData = {
+export type MSTeamsConversationStoreData = {
   version: 1;
   conversations: Record<string, StoredConversationReference & { lastSeenAt?: string }>;
 };
@@ -83,10 +95,10 @@ export function createMSTeamsConversationStoreFs(params?: {
     storePath: params?.storePath,
   });
 
-  const empty: ConversationStoreData = { version: 1, conversations: {} };
+  const empty: MSTeamsConversationStoreData = { version: 1, conversations: {} };
 
-  const readStore = async (): Promise<ConversationStoreData> => {
-    const { value } = await readJsonFile<ConversationStoreData>(filePath, empty);
+  const readStore = async (): Promise<MSTeamsConversationStoreData> => {
+    const { value } = await readJsonFile<MSTeamsConversationStoreData>(filePath, empty);
     if (
       value.version !== 1 ||
       !value.conversations ||
@@ -162,4 +174,126 @@ export function createMSTeamsConversationStoreFs(params?: {
   };
 
   return { upsert, get, list, remove, findByUserId };
+}
+
+export type LcxIdentityMSTeamsConversationMigration = Readonly<{
+  pathContract: LcxIdentityWriterPathContract & Readonly<{ writer: "channel-local" }>;
+  readStorePath: string;
+  writeStorePath: string;
+}>;
+
+function resolveMSTeamsMigrationReadRoot(
+  migrationPlan: LcxIdentityMigrationPlan,
+  existsSync: (candidate: string) => boolean,
+): string {
+  const writePath = path.join(migrationPlan.writeStateDir, STORE_FILENAME);
+  if (existsSync(writePath)) {
+    return migrationPlan.writeStateDir;
+  }
+  const legacyRoots = migrationPlan.readStateDirs.filter((root) => {
+    if (path.resolve(root) === path.resolve(migrationPlan.writeStateDir)) {
+      return false;
+    }
+    return existsSync(path.join(root, STORE_FILENAME));
+  });
+  if (legacyRoots.length > 1) {
+    throw new LcxIdentityWriterContractError(
+      `MSTeams conversation state exists in multiple legacy roots: ${legacyRoots.join(", ")}`,
+      "LCX_IDENTITY_SPLIT_STATE",
+    );
+  }
+  return legacyRoots[0] ?? migrationPlan.readStateDir;
+}
+
+function resolveCurrentMSTeamsMigration(
+  migration: LcxIdentityMSTeamsConversationMigration,
+): LcxIdentityWriterPathContract & Readonly<{ writer: "channel-local" }> {
+  const plan = migration.pathContract.migrationPlan;
+  if (!plan) {
+    return migration.pathContract;
+  }
+  const readRoot = resolveMSTeamsMigrationReadRoot(plan, fs.existsSync);
+  return createLcxIdentityWriterPathContract({
+    writer: "channel-local",
+    migrationPlan: plan,
+    readPath: path.join(readRoot, STORE_FILENAME),
+    writePath: migration.writeStorePath,
+    backupPath: migration.pathContract.backupPath,
+    auditPath: migration.pathContract.auditPath,
+  });
+}
+
+export function createLcxIdentityMSTeamsConversationMigration(params: {
+  migrationPlan: LcxIdentityMigrationPlan;
+  existsSync?: (candidate: string) => boolean;
+}): LcxIdentityMSTeamsConversationMigration {
+  if (params.migrationPlan.mode === "explicit-config-override") {
+    throw new Error("MSTeams conversation migration requires a state-root authority");
+  }
+  const existsSync = params.existsSync ?? fs.existsSync;
+  const readRoot = resolveMSTeamsMigrationReadRoot(params.migrationPlan, existsSync);
+  const writeStorePath = path.join(params.migrationPlan.writeStateDir, STORE_FILENAME);
+  const pathContract = createLcxIdentityWriterPathContract({
+    writer: "channel-local",
+    migrationPlan: params.migrationPlan,
+    readPath: path.join(readRoot, STORE_FILENAME),
+    writePath: writeStorePath,
+  });
+  return Object.freeze({
+    pathContract,
+    readStorePath: pathContract.readPath,
+    writeStorePath,
+  });
+}
+
+function parseMSTeamsConversationStore(raw: string | null): MSTeamsConversationStoreData {
+  if (raw === null) {
+    return { version: 1, conversations: {} };
+  }
+  try {
+    const parsed = JSON.parse(raw) as Partial<MSTeamsConversationStoreData>;
+    if (
+      parsed.version !== 1 ||
+      !parsed.conversations ||
+      typeof parsed.conversations !== "object" ||
+      Array.isArray(parsed.conversations)
+    ) {
+      return { version: 1, conversations: {} };
+    }
+    return {
+      version: 1,
+      conversations: parsed.conversations as MSTeamsConversationStoreData["conversations"],
+    };
+  } catch {
+    return { version: 1, conversations: {} };
+  }
+}
+
+export async function readMSTeamsConversationStoreForIdentityMigration(
+  migration: LcxIdentityMSTeamsConversationMigration,
+): Promise<MSTeamsConversationStoreData> {
+  const raw = await readLcxIdentityWriterRaw(resolveCurrentMSTeamsMigration(migration));
+  return parseMSTeamsConversationStore(raw);
+}
+
+export async function writeMSTeamsConversationStoreForIdentityMigration(
+  migration: LcxIdentityMSTeamsConversationMigration,
+  store: MSTeamsConversationStoreData,
+  options?: { expectedReadPath?: string; expectedWritePath?: string },
+): Promise<LcxIdentityWriteReceipt> {
+  const normalized: MSTeamsConversationStoreData = {
+    version: 1,
+    conversations: store.conversations,
+  };
+  return await writeLcxIdentityWriterRawWithReceipt(
+    resolveCurrentMSTeamsMigration(migration),
+    `${JSON.stringify(normalized, null, 2)}\n`,
+    options,
+  );
+}
+
+export async function rollbackMSTeamsConversationIdentityMigration(
+  receipt: LcxIdentityWriteReceipt,
+): Promise<void> {
+  await rollbackLcxIdentityWriter(receipt);
 }

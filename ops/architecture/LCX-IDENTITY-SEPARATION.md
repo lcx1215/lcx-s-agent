@@ -121,8 +121,9 @@ The following bounded adapters are implemented and locally tested:
 - subagent registry: the explicit v1/v2 registry adapter in
   `src/agents/subagent-registry.store.ts`;
 - workspace onboarding state: the explicit state JSON adapter in
-  `src/agents/workspace.ts`; bootstrap files and user workspace data remain a
-  separate surface;
+  `src/agents/workspace.ts`; the whole default workspace directory, including
+  bootstrap files and user data, has a separate directory move/rollback adapter
+  in the same module;
 - Nostr channel-local bus/profile state: the explicit adapters in
   `extensions/nostr/src/nostr-state-store.ts`.
 - Matrix credentials: the explicit credentials read/write/remove adapter in
@@ -135,11 +136,30 @@ The following bounded adapters are implemented and locally tested:
 - Telegram sticker cache and Discord model-picker preferences: explicit
   single-file adapters in `src/telegram/sticker-cache.ts` and
   `src/discord/monitor/model-picker-preferences.ts`.
+- WhatsApp Web multi-file auth state: the explicit directory migration adapter in
+  `src/web/auth-store.ts`; custom `authDir` and provider-owned keychain state
+  remain outside the state-root authority.
+- channel pairing requests and allowlists: the explicit file adapter in
+  `src/pairing/identity-migration.ts`, covering both request and account-scoped
+  `allowFrom` files.
+- Telegram command-menu hash and external replay dedupe: explicit channel-local
+  adapters in `src/telegram/bot-native-command-menu.ts` and
+  `extensions/external/src/replay-guard.ts`.
+- Microsoft Teams conversation/poll stores and voice-call history: explicit
+  channel-local adapters in `extensions/msteams/src/conversation-store-fs.ts`,
+  `extensions/msteams/src/polls.ts`, and
+  `extensions/voice-call/src/manager/store.ts`.
+- phone-control: an explicit two-authority transaction in
+  `extensions/phone-control/identity-migration.ts` migrates config and armed
+  state together and rolls back in reverse order.
 
-These adapters are migration writers, not activation. Workspace bootstrap/user
-data, other channel-local stores, external OAuth/keychain surfaces, and any
-remaining direct writers still need their own adapter and
-rollback evidence before the default state root can change.
+These adapters are migration writers, not activation. The current local writer
+inventory is now classified: state-root writers have an explicit adapter or use
+the central state-root owner; workspace-local plugin files, temporary/browser
+artifacts, generated media, and diagnostic/doctor probes are not identity state;
+custom workspace paths, custom auth directories, external OAuth/keychain
+surfaces, and provider-owned state require an explicit owner before migration.
+No default state-root switch is implied by these adapters.
 
 ### Activation-gate writer inventory (first pass)
 
@@ -148,15 +168,15 @@ runtime has already switched. The paths below were verified against current
 source call sites; tests and historical migration fixtures are deliberately
 not treated as runtime writers.
 
-| surface                 | path/owner                                                                                                                                                                                                              | current write surfaces                                                                                                                             | activation proof still required                                                                          |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| Config root             | `src/config/io.ts`                                                                                                                                                                                                      | config file, `.bak` rotation, config audit                                                                                                         | One selected config path for read, write, backup, audit, expected-path checks, and rollback              |
-| Sessions                | `src/config/sessions/paths.ts`, `src/config/sessions/store.ts`, `src/config/sessions/transcript.ts`, `src/config/sessions/store-maintenance.ts`, `src/agents/session-file-repair.ts`, `src/gateway/session-utils.fs.ts` | session store/transcript/repair/rotation/archive/cleanup adapters; default runtime remains unchanged                                               | Read legacy stores, write one canonical store under lock, and prove no dual-write or split session state |
-| Agent workspace/auth    | `src/config/agent-dirs.ts`, `src/agents/agent-paths.ts`, `src/agents/auth-profiles/`, `src/agents/subagent-registry.store.ts`, `src/agents/workspace.ts`                                                                | auth, subagent registry, and workspace state adapters; bootstrap/user data remains                                                                 | Canonical root propagation, legacy read fallback, permission checks, and token/non-duplication rollback  |
-| Delivery/schedule state | `src/infra/outbound/delivery-queue.ts`, `src/cron/store.ts`, `src/infra/restart-sentinel.ts`                                                                                                                            | outbound queue, cron store, restart sentinel adapters; replay/cleanup remains                                                                      | Durable queue/cron migration with one target root and replay/rollback evidence                           |
-| Device/security/pairing | `src/infra/device-identity.ts`, `src/infra/device-auth-store.ts`, `src/infra/exec-approvals.ts`, `src/infra/pairing-files.ts`                                                                                           | device identity/auth, exec approvals, and device/node pairing adapters                                                                             | Retain file modes, secret boundary, and recovery proof across the family                                 |
-| Channel-local state     | Telegram/Discord/Web stores plus `src/plugins/services.ts`, `extensions/nostr/src/nostr-state-store.ts`, `extensions/matrix/src/matrix/credentials.ts`, `extensions/matrix/src/matrix/client/storage.ts`                | Nostr, Matrix credentials/storage, Telegram offset/sticker cache, and Discord binding/model-picker adapters; OAuth and plugin service state remain | Adapter-specific path injection; this does not prove external-channel binding or visible delivery        |
-| Operator/runtime state  | `scripts/operator/` owners and `~/.openclaw/workspace`                                                                                                                                                                  | governance snapshots, receipts, training and external-channel artifacts                                                                            | Separate owner migration and fresh receipts; never silently mix this with core config activation         |
+| surface                 | path/owner                                                                                                                                                                                                                                                       | current write surfaces                                                                                                                                                                                                                  | activation proof still required                                                                          |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Config root             | `src/config/io.ts`                                                                                                                                                                                                                                               | config file, `.bak` rotation, config audit                                                                                                                                                                                              | One selected config path for read, write, backup, audit, expected-path checks, and rollback              |
+| Sessions                | `src/config/sessions/paths.ts`, `src/config/sessions/store.ts`, `src/config/sessions/transcript.ts`, `src/config/sessions/store-maintenance.ts`, `src/agents/session-file-repair.ts`, `src/gateway/session-utils.fs.ts`                                          | session store/transcript/repair/rotation/archive/cleanup adapters; default runtime remains unchanged                                                                                                                                    | Read legacy stores, write one canonical store under lock, and prove no dual-write or split session state |
+| Agent workspace/auth    | `src/config/agent-dirs.ts`, `src/agents/agent-paths.ts`, `src/agents/auth-profiles/`, `src/agents/subagent-registry.store.ts`, `src/agents/workspace.ts`                                                                                                         | auth, subagent registry, workspace state, and whole default workspace directory adapters                                                                                                                                                | Canonical root propagation, legacy read fallback, permission checks, and token/non-duplication rollback  |
+| Delivery/schedule state | `src/infra/outbound/delivery-queue.ts`, `src/cron/store.ts`, `src/infra/restart-sentinel.ts`                                                                                                                                                                     | outbound queue, cron store, restart sentinel adapters; replay/cleanup remains                                                                                                                                                           | Durable queue/cron migration with one target root and replay/rollback evidence                           |
+| Device/security/pairing | `src/infra/device-identity.ts`, `src/infra/device-auth-store.ts`, `src/infra/exec-approvals.ts`, `src/infra/pairing-files.ts`                                                                                                                                    | device identity/auth, exec approvals, and device/node pairing adapters                                                                                                                                                                  | Retain file modes, secret boundary, and recovery proof across the family                                 |
+| Channel-local state     | Telegram/Discord/Web stores, channel pairing, MSTeams, external replay, voice-call, plus `src/plugins/services.ts`, `extensions/nostr/src/nostr-state-store.ts`, `extensions/matrix/src/matrix/credentials.ts`, `extensions/matrix/src/matrix/client/storage.ts` | Nostr, Matrix credentials/storage, Telegram offset/sticker/command-hash cache, Discord binding/model-picker, channel pairing, WhatsApp Web auth, MSTeams, external replay, and voice-call adapters; custom/provider-owned state remains | Adapter-specific path injection; this does not prove external-channel binding or visible delivery        |
+| Operator/runtime state  | `scripts/operator/` owners and `~/.openclaw/workspace`                                                                                                                                                                                                           | governance snapshots, receipts, training and external-channel artifacts                                                                                                                                                                 | Separate owner migration and fresh receipts; never silently mix this with core config activation         |
 
 Before activation, the remaining direct legacy path references must be
 classified as a compatibility adapter, a migration fixture, or a real writer.
@@ -174,11 +194,12 @@ its writer is now on the migration contract; the default path remains unchanged.
 `src/gateway/session-utils.fs.ts` now use the same compatibility state-root
 owner; behavior is unchanged. Session maintenance/archives now have explicit
 receipt-backed migration entrypoints, but ordinary runtime calls still use the
-compatibility root until activation is separately authorized. The first
-remaining core hotspots are workspace bootstrap/user data, the workspace-local plugin directory in
-`src/plugins/discovery.ts`, and the doctor state/config flows, which must be classified separately because they are
-workspace compatibility and migration behavior rather than generic state-root
-resolution. Any unclassified reference blocks the default switch.
+compatibility root until activation is separately authorized. The default
+workspace directory has an explicit whole-directory move/rollback boundary;
+custom `agents.defaults.workspace` paths remain operator-owned inputs. The
+workspace-local plugin directory in `src/plugins/discovery.ts` and the doctor
+state/config flows are compatibility/migration surfaces, not generic state-root
+writers, and remain unchanged.
 
 The two remaining classes are intentionally bounded:
 

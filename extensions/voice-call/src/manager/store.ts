@@ -1,7 +1,129 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import {
+  createLcxIdentityWriterPathContract,
+  readLcxIdentityWriterRaw,
+  rollbackLcxIdentityWriter,
+  writeLcxIdentityWriterRawWithReceipt,
+  LcxIdentityWriterContractError,
+  type LcxIdentityWriteReceipt,
+  type LcxIdentityWriterPathContract,
+} from "../../../../src/config/identity-migration.js";
+import type { LcxIdentityMigrationPlan } from "../../../../src/config/paths.js";
 import { CallRecordSchema, TerminalStates, type CallId, type CallRecord } from "../types.js";
+
+const VOICE_CALL_STORE_RELATIVE_PATH = path.join("voice-calls", "calls.jsonl");
+
+export type LcxIdentityVoiceCallStoreMigration = Readonly<{
+  pathContract: LcxIdentityWriterPathContract & Readonly<{ writer: "channel-local" }>;
+  readStorePath: string;
+  writeStorePath: string;
+}>;
+
+function resolveVoiceCallReadRoot(
+  migrationPlan: LcxIdentityMigrationPlan,
+  existsSync: (candidate: string) => boolean,
+): string {
+  const writePath = path.join(migrationPlan.writeStateDir, VOICE_CALL_STORE_RELATIVE_PATH);
+  if (existsSync(writePath)) {
+    return migrationPlan.writeStateDir;
+  }
+  const legacyRoots = migrationPlan.readStateDirs.filter((root) => {
+    if (path.resolve(root) === path.resolve(migrationPlan.writeStateDir)) {
+      return false;
+    }
+    return existsSync(path.join(root, VOICE_CALL_STORE_RELATIVE_PATH));
+  });
+  if (legacyRoots.length > 1) {
+    throw new LcxIdentityWriterContractError(
+      `Voice-call store exists in multiple legacy roots: ${legacyRoots.join(", ")}`,
+      "LCX_IDENTITY_SPLIT_STATE",
+    );
+  }
+  return legacyRoots[0] ?? migrationPlan.readStateDir;
+}
+
+function resolveCurrentVoiceCallMigration(
+  migration: LcxIdentityVoiceCallStoreMigration,
+): LcxIdentityWriterPathContract & Readonly<{ writer: "channel-local" }> {
+  const plan = migration.pathContract.migrationPlan;
+  if (!plan) {
+    return migration.pathContract;
+  }
+  const readRoot = resolveVoiceCallReadRoot(plan, fs.existsSync);
+  return createLcxIdentityWriterPathContract({
+    writer: "channel-local",
+    migrationPlan: plan,
+    readPath: path.join(readRoot, VOICE_CALL_STORE_RELATIVE_PATH),
+    writePath: migration.writeStorePath,
+    backupPath: migration.pathContract.backupPath,
+    auditPath: migration.pathContract.auditPath,
+  });
+}
+
+export function createLcxIdentityVoiceCallStoreMigration(params: {
+  migrationPlan: LcxIdentityMigrationPlan;
+  existsSync?: (candidate: string) => boolean;
+}): LcxIdentityVoiceCallStoreMigration {
+  if (params.migrationPlan.mode === "explicit-config-override") {
+    throw new Error("Voice-call store migration requires a state-root authority");
+  }
+  const readRoot = resolveVoiceCallReadRoot(
+    params.migrationPlan,
+    params.existsSync ?? fs.existsSync,
+  );
+  const writeStorePath = path.join(
+    params.migrationPlan.writeStateDir,
+    VOICE_CALL_STORE_RELATIVE_PATH,
+  );
+  const pathContract = createLcxIdentityWriterPathContract({
+    writer: "channel-local",
+    migrationPlan: params.migrationPlan,
+    readPath: path.join(readRoot, VOICE_CALL_STORE_RELATIVE_PATH),
+    writePath: writeStorePath,
+  });
+  return Object.freeze({
+    pathContract,
+    readStorePath: pathContract.readPath,
+    writeStorePath,
+  });
+}
+
+export async function readVoiceCallStoreForIdentityMigration(
+  migration: LcxIdentityVoiceCallStoreMigration,
+): Promise<string | null> {
+  return await readLcxIdentityWriterRaw(resolveCurrentVoiceCallMigration(migration));
+}
+
+export async function writeVoiceCallStoreForIdentityMigration(
+  migration: LcxIdentityVoiceCallStoreMigration,
+  callsJsonl: string,
+  options?: { expectedReadPath?: string; expectedWritePath?: string },
+): Promise<LcxIdentityWriteReceipt> {
+  return await writeLcxIdentityWriterRawWithReceipt(
+    resolveCurrentVoiceCallMigration(migration),
+    callsJsonl,
+    options,
+  );
+}
+
+export async function appendCallRecordForIdentityMigration(
+  migration: LcxIdentityVoiceCallStoreMigration,
+  call: CallRecord,
+): Promise<LcxIdentityWriteReceipt> {
+  const current = (await readVoiceCallStoreForIdentityMigration(migration)) ?? "";
+  return await writeVoiceCallStoreForIdentityMigration(
+    migration,
+    `${current}${JSON.stringify(call)}\n`,
+  );
+}
+
+export async function rollbackVoiceCallStoreIdentityMigration(
+  receipt: LcxIdentityWriteReceipt,
+): Promise<void> {
+  await rollbackLcxIdentityWriter(receipt);
+}
 
 export function persistCallRecord(storePath: string, call: CallRecord): void {
   const logPath = path.join(storePath, "calls.jsonl");

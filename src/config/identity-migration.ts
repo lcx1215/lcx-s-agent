@@ -26,7 +26,10 @@ export type LcxIdentityWriterName =
   | "telegram-offset"
   | "telegram-sticker-cache"
   | "update-check"
-  | "matrix-storage";
+  | "matrix-storage"
+  | "channel-local"
+  | "channel-pairing"
+  | "phone-control";
 
 export type LcxIdentityWriterPathContract = Readonly<{
   writer: LcxIdentityWriterName;

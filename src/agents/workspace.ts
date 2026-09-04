@@ -3,10 +3,15 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
+  createLcxIdentityWriterPathContract,
+  LcxIdentityWriterContractError,
+  moveLcxIdentityPathWithReceipt,
   readLcxIdentityWriterRaw,
+  rollbackLcxIdentityPathMove,
   resolveLcxIdentityStateWriterPathContract,
   rollbackLcxIdentityWriter,
   writeLcxIdentityWriterRawWithReceipt,
+  type LcxIdentityPathMoveReceipt,
   type LcxIdentityWriteReceipt,
   type LcxIdentityWriterPathContract,
 } from "../config/identity-migration.js";
@@ -376,6 +381,124 @@ export async function rollbackWorkspaceOnboardingStateIdentityMigration(
   receipt: LcxIdentityWriteReceipt,
 ): Promise<void> {
   await rollbackLcxIdentityWriter(receipt);
+}
+
+export type LcxIdentityWorkspaceDirectoryMigration = Readonly<{
+  profile: string | null;
+  relativePath: string;
+  pathContract: LcxIdentityWriterPathContract & Readonly<{ writer: "workspace" }>;
+  readWorkspaceDir: string;
+  writeWorkspaceDir: string;
+}>;
+
+function workspaceDirectoryRelativePath(profile?: string): string {
+  const normalized = profile?.trim();
+  return path.join(
+    normalized && normalized.toLowerCase() !== "default" ? `workspace-${normalized}` : "workspace",
+  );
+}
+
+function resolveWorkspaceDirectoryReadRoot(
+  migrationPlan: LcxIdentityMigrationPlan,
+  relativePath: string,
+  existsSync: (candidate: string) => boolean,
+): string {
+  const writePath = path.join(migrationPlan.writeStateDir, relativePath);
+  if (existsSync(writePath)) {
+    return migrationPlan.writeStateDir;
+  }
+  const legacyRoots = migrationPlan.readStateDirs.filter((root) => {
+    if (path.resolve(root) === path.resolve(migrationPlan.writeStateDir)) {
+      return false;
+    }
+    return existsSync(path.join(root, relativePath));
+  });
+  if (legacyRoots.length > 1) {
+    throw new LcxIdentityWriterContractError(
+      `Workspace exists in multiple legacy roots: ${legacyRoots.join(", ")}`,
+      "LCX_IDENTITY_SPLIT_STATE",
+    );
+  }
+  return legacyRoots[0] ?? migrationPlan.readStateDir;
+}
+
+export function createLcxIdentityWorkspaceDirectoryMigration(params: {
+  migrationPlan: LcxIdentityMigrationPlan;
+  profile?: string;
+  existsSync?: (candidate: string) => boolean;
+}): LcxIdentityWorkspaceDirectoryMigration {
+  if (params.migrationPlan.mode === "explicit-config-override") {
+    throw new Error("Workspace directory migration requires a state-root authority");
+  }
+  const relativePath = workspaceDirectoryRelativePath(params.profile);
+  if (
+    path.isAbsolute(relativePath) ||
+    relativePath === ".." ||
+    relativePath.startsWith(`..${path.sep}`)
+  ) {
+    throw new LcxIdentityWriterContractError(
+      `Workspace profile must remain relative to its state root: ${params.profile ?? "default"}`,
+      "LCX_IDENTITY_WRITER_RELATIVE_PATH",
+    );
+  }
+  const readRoot = resolveWorkspaceDirectoryReadRoot(
+    params.migrationPlan,
+    relativePath,
+    params.existsSync ?? syncFs.existsSync,
+  );
+  const writeWorkspaceDir = path.join(params.migrationPlan.writeStateDir, relativePath);
+  const pathContract = createLcxIdentityWriterPathContract({
+    writer: "workspace",
+    migrationPlan: params.migrationPlan,
+    readPath: path.join(readRoot, relativePath),
+    writePath: writeWorkspaceDir,
+  });
+  return Object.freeze({
+    profile: params.profile?.trim() || null,
+    relativePath,
+    pathContract,
+    readWorkspaceDir: pathContract.readPath,
+    writeWorkspaceDir,
+  });
+}
+
+export async function readWorkspaceDirectoryForIdentityMigration(
+  migration: LcxIdentityWorkspaceDirectoryMigration,
+): Promise<{ exists: boolean; workspaceDir: string; entries: string[] }> {
+  try {
+    const entries = await fs.readdir(migration.readWorkspaceDir);
+    return { exists: true, workspaceDir: migration.readWorkspaceDir, entries: entries.toSorted() };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return { exists: false, workspaceDir: migration.readWorkspaceDir, entries: [] };
+    }
+    throw error;
+  }
+}
+
+export async function migrateWorkspaceDirectoryForIdentityMigration(
+  migration: LcxIdentityWorkspaceDirectoryMigration,
+): Promise<{
+  status: "missing" | "already-canonical" | "migrated";
+  receipt?: LcxIdentityPathMoveReceipt;
+}> {
+  const state = await readWorkspaceDirectoryForIdentityMigration(migration);
+  if (!state.exists) {
+    return { status: "missing" };
+  }
+  if (path.resolve(migration.readWorkspaceDir) === path.resolve(migration.writeWorkspaceDir)) {
+    return { status: "already-canonical" };
+  }
+  return {
+    status: "migrated",
+    receipt: await moveLcxIdentityPathWithReceipt(migration.pathContract),
+  };
+}
+
+export async function rollbackWorkspaceDirectoryIdentityMigration(
+  receipt: LcxIdentityPathMoveReceipt,
+): Promise<void> {
+  await rollbackLcxIdentityPathMove(receipt);
 }
 
 async function hasGitRepo(dir: string): Promise<boolean> {

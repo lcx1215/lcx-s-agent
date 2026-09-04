@@ -1,9 +1,20 @@
 import { createHash } from "node:crypto";
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { Bot } from "grammy";
+import {
+  createLcxIdentityWriterPathContract,
+  readLcxIdentityWriterRaw,
+  rollbackLcxIdentityWriter,
+  writeLcxIdentityWriterRawWithReceipt,
+  LcxIdentityWriterContractError,
+  type LcxIdentityWriteReceipt,
+  type LcxIdentityWriterPathContract,
+} from "../config/identity-migration.js";
 import { resolveStateDir } from "../config/paths.js";
+import type { LcxIdentityMigrationPlan } from "../config/paths.js";
 import {
   normalizeTelegramCommandName,
   TELEGRAM_COMMAND_NAME_PATTERN,
@@ -121,11 +132,119 @@ function hashBotIdentity(botIdentity?: string): string {
   return createHash("sha256").update(normalized).digest("hex").slice(0, 16);
 }
 
-function resolveCommandHashPath(accountId?: string, botIdentity?: string): string {
-  const stateDir = resolveStateDir(process.env, os.homedir);
+function resolveCommandHashRelativePath(accountId?: string, botIdentity?: string): string {
   const normalizedAccount = accountId?.trim().replace(/[^a-z0-9._-]+/gi, "_") || "default";
   const botHash = hashBotIdentity(botIdentity);
-  return path.join(stateDir, "telegram", `command-hash-${normalizedAccount}-${botHash}.txt`);
+  return path.join("telegram", `command-hash-${normalizedAccount}-${botHash}.txt`);
+}
+
+function resolveCommandHashPath(accountId?: string, botIdentity?: string): string {
+  return path.join(
+    resolveStateDir(process.env, os.homedir),
+    resolveCommandHashRelativePath(accountId, botIdentity),
+  );
+}
+
+export type LcxIdentityTelegramCommandHashMigration = Readonly<{
+  pathContract: LcxIdentityWriterPathContract & Readonly<{ writer: "channel-local" }>;
+  readHashPath: string;
+  writeHashPath: string;
+}>;
+
+function resolveTelegramCommandHashReadRoot(
+  migrationPlan: LcxIdentityMigrationPlan,
+  relativePath: string,
+  existsSync: (candidate: string) => boolean,
+): string {
+  const writePath = path.join(migrationPlan.writeStateDir, relativePath);
+  if (existsSync(writePath)) {
+    return migrationPlan.writeStateDir;
+  }
+  const legacyRoots = migrationPlan.readStateDirs.filter((root) => {
+    if (path.resolve(root) === path.resolve(migrationPlan.writeStateDir)) {
+      return false;
+    }
+    return existsSync(path.join(root, relativePath));
+  });
+  if (legacyRoots.length > 1) {
+    throw new LcxIdentityWriterContractError(
+      `Telegram command hash exists in multiple legacy roots: ${legacyRoots.join(", ")}`,
+      "LCX_IDENTITY_SPLIT_STATE",
+    );
+  }
+  return legacyRoots[0] ?? migrationPlan.readStateDir;
+}
+
+export function createLcxIdentityTelegramCommandHashMigration(params: {
+  migrationPlan: LcxIdentityMigrationPlan;
+  accountId?: string;
+  botIdentity?: string;
+  existsSync?: (candidate: string) => boolean;
+}): LcxIdentityTelegramCommandHashMigration {
+  if (params.migrationPlan.mode === "explicit-config-override") {
+    throw new Error("Telegram command hash migration requires a state-root authority");
+  }
+  const relativePath = resolveCommandHashRelativePath(params.accountId, params.botIdentity);
+  const readRoot = resolveTelegramCommandHashReadRoot(
+    params.migrationPlan,
+    relativePath,
+    params.existsSync ?? fsSync.existsSync,
+  );
+  const writeHashPath = path.join(params.migrationPlan.writeStateDir, relativePath);
+  const pathContract = createLcxIdentityWriterPathContract({
+    writer: "channel-local",
+    migrationPlan: params.migrationPlan,
+    readPath: path.join(readRoot, relativePath),
+    writePath: writeHashPath,
+  });
+  return Object.freeze({
+    pathContract,
+    readHashPath: pathContract.readPath,
+    writeHashPath,
+  });
+}
+
+function resolveCurrentTelegramCommandHashMigration(
+  migration: LcxIdentityTelegramCommandHashMigration,
+): LcxIdentityWriterPathContract & Readonly<{ writer: "channel-local" }> {
+  const plan = migration.pathContract.migrationPlan;
+  if (!plan) {
+    return migration.pathContract;
+  }
+  const relativePath = path.relative(plan.writeStateDir, migration.writeHashPath);
+  const readRoot = resolveTelegramCommandHashReadRoot(plan, relativePath, fsSync.existsSync);
+  return createLcxIdentityWriterPathContract({
+    writer: "channel-local",
+    migrationPlan: plan,
+    readPath: path.join(readRoot, relativePath),
+    writePath: migration.writeHashPath,
+    backupPath: migration.pathContract.backupPath,
+    auditPath: migration.pathContract.auditPath,
+  });
+}
+
+export async function readTelegramCommandHashForIdentityMigration(
+  migration: LcxIdentityTelegramCommandHashMigration,
+): Promise<string | null> {
+  return await readLcxIdentityWriterRaw(resolveCurrentTelegramCommandHashMigration(migration));
+}
+
+export async function writeTelegramCommandHashForIdentityMigration(
+  migration: LcxIdentityTelegramCommandHashMigration,
+  hash: string,
+  options?: { expectedReadPath?: string; expectedWritePath?: string },
+): Promise<LcxIdentityWriteReceipt> {
+  return await writeLcxIdentityWriterRawWithReceipt(
+    resolveCurrentTelegramCommandHashMigration(migration),
+    `${hash.trim()}\n`,
+    options,
+  );
+}
+
+export async function rollbackTelegramCommandHashIdentityMigration(
+  receipt: LcxIdentityWriteReceipt,
+): Promise<void> {
+  await rollbackLcxIdentityWriter(receipt);
 }
 
 async function readCachedCommandHash(
