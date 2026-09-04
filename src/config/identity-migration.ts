@@ -11,7 +11,8 @@ export type LcxIdentityWriterName =
   | "backups"
   | "audit"
   | "cron"
-  | "device";
+  | "device"
+  | "device-auth";
 
 export type LcxIdentityWriterPathContract = Readonly<{
   writer: LcxIdentityWriterName;
