@@ -5,6 +5,10 @@ import { withFileLock } from "../../infra/file-lock.js";
 import { loadJsonFile, saveJsonFile } from "../../infra/json-file.js";
 import { AUTH_STORE_LOCK_OPTIONS, AUTH_STORE_VERSION, log } from "./constants.js";
 import { syncExternalCliCredentials } from "./external-cli-sync.js";
+import {
+  writeAuthProfileStoreForIdentityMigration,
+  type LcxIdentityAuthProfileMigration,
+} from "./identity-migration.js";
 import { ensureAuthStoreFile, resolveAuthStorePath, resolveLegacyAuthStorePath } from "./paths.js";
 import type { AuthProfileCredential, AuthProfileStore, ProfileUsageStats } from "./types.js";
 
@@ -481,8 +485,7 @@ export function ensureAuthProfileStore(
   return merged;
 }
 
-export function saveAuthProfileStore(store: AuthProfileStore, agentDir?: string): void {
-  const authPath = resolveAuthStorePath(agentDir);
+function buildPersistedAuthProfileStore(store: AuthProfileStore): AuthProfileStore {
   const profiles = Object.fromEntries(
     Object.entries(store.profiles).map(([profileId, credential]) => {
       if (credential.type === "api_key" && credential.keyRef && credential.key !== undefined) {
@@ -498,12 +501,30 @@ export function saveAuthProfileStore(store: AuthProfileStore, agentDir?: string)
       return [profileId, credential];
     }),
   ) as AuthProfileStore["profiles"];
-  const payload = {
+  return {
     version: AUTH_STORE_VERSION,
     profiles,
     order: store.order ?? undefined,
     lastGood: store.lastGood ?? undefined,
     usageStats: store.usageStats ?? undefined,
   } satisfies AuthProfileStore;
+}
+
+export function saveAuthProfileStore(store: AuthProfileStore, agentDir?: string): void {
+  const payload = buildPersistedAuthProfileStore(store);
+  const authPath = resolveAuthStorePath(agentDir);
   saveJsonFile(authPath, payload);
+}
+
+export async function saveAuthProfileStoreForIdentityMigration(
+  store: AuthProfileStore,
+  migration: LcxIdentityAuthProfileMigration,
+): Promise<void> {
+  await writeAuthProfileStoreForIdentityMigration(
+    migration,
+    buildPersistedAuthProfileStore(store),
+    {
+      expectedWritePath: migration.writeAuthStorePath,
+    },
+  );
 }

@@ -10,6 +10,13 @@ export { resolveApiKeyForProfile } from "./auth-profiles/oauth.js";
 export { resolveAuthProfileEligibility, resolveAuthProfileOrder } from "./auth-profiles/order.js";
 export { resolveAuthStorePathForDisplay } from "./auth-profiles/paths.js";
 export {
+  createLcxIdentityAuthProfileMigration,
+  readAuthProfileStoreForIdentityMigration,
+  rollbackAuthProfileIdentityMigration,
+  writeAuthProfileStoreForIdentityMigration,
+} from "./auth-profiles/identity-migration.js";
+export type { LcxIdentityAuthProfileMigration } from "./auth-profiles/identity-migration.js";
+export {
   dedupeProfileIds,
   listProfilesForProvider,
   markAuthProfileGood,
@@ -29,6 +36,7 @@ export {
   replaceRuntimeAuthProfileStoreSnapshots,
   loadAuthProfileStore,
   saveAuthProfileStore,
+  saveAuthProfileStoreForIdentityMigration,
 } from "./auth-profiles/store.js";
 export type {
   ApiKeyCredential,
