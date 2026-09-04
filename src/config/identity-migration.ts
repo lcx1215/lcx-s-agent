@@ -472,11 +472,11 @@ export async function moveLcxIdentityPathWithReceipt(
       "LCX_IDENTITY_MOVE_DESTINATION_EXISTS",
     );
   }
+  const sourceRaw = sourceStat.isFile()
+    ? await fs.promises.readFile(contract.readPath, "utf8")
+    : null;
   await fs.promises.mkdir(path.dirname(contract.writePath), { recursive: true, mode: 0o700 });
   await fs.promises.rename(contract.readPath, contract.writePath);
-  const sourceRaw = sourceStat.isFile()
-    ? await fs.promises.readFile(contract.writePath, "utf8")
-    : null;
   const receipt: LcxIdentityPathMoveReceipt = Object.freeze({
     pathContract: contract,
     previous: Object.freeze({
