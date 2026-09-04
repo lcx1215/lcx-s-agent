@@ -14,6 +14,7 @@ import type { AuthProfileStore } from "./types.js";
 
 export type LcxIdentityAuthProfileMigration = Readonly<{
   pathContract: LcxIdentityWriterPathContract & Readonly<{ writer: "credentials" }>;
+  relativePath: string;
   agentId: string;
   readAgentDir: string;
   writeAgentDir: string;
@@ -39,6 +40,7 @@ export function createLcxIdentityAuthProfileMigration(params: {
   });
   return Object.freeze({
     pathContract,
+    relativePath,
     agentId,
     readAgentDir: path.dirname(pathContract.readPath),
     writeAgentDir: path.dirname(pathContract.writePath),
@@ -47,10 +49,28 @@ export function createLcxIdentityAuthProfileMigration(params: {
   });
 }
 
+export function resolveCurrentAuthProfileIdentityPathContract(
+  migration: LcxIdentityAuthProfileMigration,
+): LcxIdentityWriterPathContract & Readonly<{ writer: "credentials" }> {
+  const plan = migration.pathContract.migrationPlan;
+  if (!plan) {
+    return migration.pathContract;
+  }
+  return resolveLcxIdentityStateWriterPathContract({
+    writer: "credentials",
+    migrationPlan: plan,
+    relativePath: migration.relativePath,
+    backupPath: migration.pathContract.backupPath,
+    auditPath: migration.pathContract.auditPath,
+  });
+}
+
 export async function readAuthProfileStoreForIdentityMigration(
   migration: LcxIdentityAuthProfileMigration,
 ): Promise<AuthProfileStore | null> {
-  const raw = await readLcxIdentityWriterRaw(migration.pathContract);
+  const raw = await readLcxIdentityWriterRaw(
+    resolveCurrentAuthProfileIdentityPathContract(migration),
+  );
   if (raw === null) {
     return null;
   }
@@ -70,8 +90,9 @@ export async function writeAuthProfileStoreForIdentityMigration(
   store: AuthProfileStore,
   options?: { expectedReadPath?: string; expectedWritePath?: string },
 ): Promise<LcxIdentityWriteReceipt> {
+  const pathContract = resolveCurrentAuthProfileIdentityPathContract(migration);
   return await writeLcxIdentityWriterRawWithReceipt(
-    migration.pathContract,
+    pathContract,
     `${JSON.stringify(store, null, 2)}\n`,
     options,
   );

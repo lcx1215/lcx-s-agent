@@ -13,6 +13,7 @@ import type { CronStoreFile } from "./types.js";
 
 export type LcxIdentityCronStoreMigration = Readonly<{
   pathContract: LcxIdentityWriterPathContract & Readonly<{ writer: "cron" }>;
+  relativePath: string;
   readStorePath: string;
   writeStorePath: string;
 }>;
@@ -21,23 +22,46 @@ export function createLcxIdentityCronStoreMigration(params: {
   migrationPlan: LcxIdentityMigrationPlan;
   existsSync?: (candidate: string) => boolean;
 }): LcxIdentityCronStoreMigration {
+  if (params.migrationPlan.mode === "explicit-config-override") {
+    throw new Error("Cron identity migration requires a state-root authority");
+  }
+  const relativePath = path.join("cron", "jobs.json");
   const pathContract = resolveLcxIdentityStateWriterPathContract({
     writer: "cron",
     migrationPlan: params.migrationPlan,
-    relativePath: path.join("cron", "jobs.json"),
+    relativePath,
     existsSync: params.existsSync,
   });
   return Object.freeze({
     pathContract,
+    relativePath,
     readStorePath: pathContract.readPath,
     writeStorePath: pathContract.writePath,
+  });
+}
+
+export function resolveCurrentCronStoreIdentityPathContract(
+  migration: LcxIdentityCronStoreMigration,
+): LcxIdentityWriterPathContract & Readonly<{ writer: "cron" }> {
+  const plan = migration.pathContract.migrationPlan;
+  if (!plan) {
+    return migration.pathContract;
+  }
+  return resolveLcxIdentityStateWriterPathContract({
+    writer: "cron",
+    migrationPlan: plan,
+    relativePath: migration.relativePath,
+    backupPath: migration.pathContract.backupPath,
+    auditPath: migration.pathContract.auditPath,
   });
 }
 
 export async function readCronStoreForIdentityMigration(
   migration: LcxIdentityCronStoreMigration,
 ): Promise<CronStoreFile> {
-  const raw = await readLcxIdentityWriterRaw(migration.pathContract);
+  const raw = await readLcxIdentityWriterRaw(
+    resolveCurrentCronStoreIdentityPathContract(migration),
+  );
   if (raw === null) {
     return { version: 1, jobs: [] };
   }
@@ -61,8 +85,9 @@ export async function writeCronStoreForIdentityMigration(
   store: CronStoreFile,
   options?: { expectedReadPath?: string; expectedWritePath?: string },
 ): Promise<LcxIdentityWriteReceipt> {
+  const pathContract = resolveCurrentCronStoreIdentityPathContract(migration);
   return await writeLcxIdentityWriterRawWithReceipt(
-    migration.pathContract,
+    pathContract,
     `${JSON.stringify(store, null, 2)}\n`,
     options,
   );
@@ -76,6 +101,7 @@ export async function rollbackCronStoreIdentityMigration(
 
 export type LcxIdentityCronRunLogMigration = Readonly<{
   pathContract: LcxIdentityWriterPathContract & Readonly<{ writer: "audit" }>;
+  relativePath: string;
   readLogPath: string;
   writeLogPath: string;
 }>;
@@ -94,16 +120,34 @@ export function createLcxIdentityCronRunLogMigration(params: {
   ) {
     throw new Error("invalid cron run log job id");
   }
+  const relativePath = path.join("cron", "runs", `${safeJobId}.jsonl`);
   const pathContract = resolveLcxIdentityStateWriterPathContract({
     writer: "audit",
     migrationPlan: params.migrationPlan,
-    relativePath: path.join("cron", "runs", `${safeJobId}.jsonl`),
+    relativePath,
     existsSync: params.existsSync,
   });
   return Object.freeze({
     pathContract,
+    relativePath,
     readLogPath: pathContract.readPath,
     writeLogPath: pathContract.writePath,
+  });
+}
+
+export function resolveCurrentCronRunLogIdentityPathContract(
+  migration: LcxIdentityCronRunLogMigration,
+): LcxIdentityWriterPathContract & Readonly<{ writer: "audit" }> {
+  const plan = migration.pathContract.migrationPlan;
+  if (!plan) {
+    return migration.pathContract;
+  }
+  return resolveLcxIdentityStateWriterPathContract({
+    writer: "audit",
+    migrationPlan: plan,
+    relativePath: migration.relativePath,
+    backupPath: migration.pathContract.backupPath,
+    auditPath: migration.pathContract.auditPath,
   });
 }
 
@@ -111,9 +155,10 @@ export async function appendCronRunLogForIdentityMigration(
   migration: LcxIdentityCronRunLogMigration,
   entry: CronRunLogEntry,
 ): Promise<LcxIdentityWriteReceipt> {
-  const previousRaw = await readLcxIdentityWriterRaw(migration.pathContract);
+  const pathContract = resolveCurrentCronRunLogIdentityPathContract(migration);
+  const previousRaw = await readLcxIdentityWriterRaw(pathContract);
   const raw = `${previousRaw ?? ""}${JSON.stringify(entry)}\n`;
-  return await writeLcxIdentityWriterRawWithReceipt(migration.pathContract, raw);
+  return await writeLcxIdentityWriterRawWithReceipt(pathContract, raw);
 }
 
 export async function rollbackCronRunLogIdentityMigration(

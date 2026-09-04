@@ -66,19 +66,46 @@ describe("LCX identity migration cron and audit writers", () => {
         migrationPlan: migrationPlan(root),
         jobId: "job-1",
       });
-      const receipt = await appendCronRunLogForIdentityMigration(migration, {
+      const firstReceipt = await appendCronRunLogForIdentityMigration(migration, {
         ts: 1,
         jobId: "job-1",
         action: "finished",
         status: "ok",
       });
-      expect(receipt.pathContract).toMatchObject({
+      expect(firstReceipt.pathContract).toMatchObject({
         writer: "audit",
         noSplitState: "single-write-target",
       });
       expect(await fs.readFile(migration.writeLogPath, "utf8")).toContain('"jobId":"job-1"');
-      await rollbackCronRunLogIdentityMigration(receipt);
-      await expect(fs.access(migration.writeLogPath)).rejects.toMatchObject({ code: "ENOENT" });
+      const secondReceipt = await appendCronRunLogForIdentityMigration(migration, {
+        ts: 2,
+        jobId: "job-1",
+        action: "finished",
+        status: "error",
+      });
+      expect(secondReceipt.pathContract.readPath).toBe(migration.writeLogPath);
+      expect((await fs.readFile(migration.writeLogPath, "utf8")).trim().split("\n")).toHaveLength(
+        2,
+      );
+      await rollbackCronRunLogIdentityMigration(secondReceipt);
+      expect((await fs.readFile(migration.writeLogPath, "utf8")).trim().split("\n")).toHaveLength(
+        1,
+      );
+    });
+  });
+
+  it("rejects a config-only override for the cron state writer", async () => {
+    await withTempRoot(async (root) => {
+      const plan = resolveLcxIdentityMigrationPlan({
+        env: {
+          OPENCLAW_CONFIG_PATH: path.join(root, "operator", "openclaw.json"),
+        } as NodeJS.ProcessEnv,
+        homedir: () => root,
+        existsSync: nodeFs.existsSync,
+      });
+      expect(() => createLcxIdentityCronStoreMigration({ migrationPlan: plan })).toThrow(
+        /state-root authority/,
+      );
     });
   });
 });

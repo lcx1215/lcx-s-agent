@@ -101,4 +101,34 @@ describe("LCX identity migration credentials writer", () => {
       );
     });
   });
+
+  it("refreshes the read path after the first canonical write", async () => {
+    await withTempRoot(async (root) => {
+      const legacyPath = path.join(
+        root,
+        ".openclaw",
+        "agents",
+        "main",
+        "agent",
+        "auth-profiles.json",
+      );
+      await writeJson(legacyPath, { version: 1, profiles: {} });
+      const migration = createLcxIdentityAuthProfileMigration({
+        migrationPlan: migrationPlan(root),
+      });
+
+      await writeAuthProfileStoreForIdentityMigration(migration, { version: 1, profiles: {} });
+      const secondReceipt = await writeAuthProfileStoreForIdentityMigration(migration, {
+        version: 1,
+        profiles: {},
+        lastGood: { openai: "openai:default" },
+      });
+
+      expect(secondReceipt.pathContract.readPath).toBe(migration.writeAuthStorePath);
+      expect(await readAuthProfileStoreForIdentityMigration(migration)).toMatchObject({
+        lastGood: { openai: "openai:default" },
+      });
+      expect(await fs.readFile(legacyPath, "utf8")).toContain('"profiles": {}');
+    });
+  });
 });
