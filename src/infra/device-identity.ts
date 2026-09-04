@@ -144,6 +144,9 @@ export function createLcxIdentityDeviceMigration(params: {
   migrationPlan: LcxIdentityMigrationPlan;
   existsSync?: (candidate: string) => boolean;
 }): LcxIdentityDeviceMigration {
+  if (params.migrationPlan.mode === "explicit-config-override") {
+    throw new Error("Device identity migration requires a state-root authority");
+  }
   const pathContract = resolveLcxIdentityStateWriterPathContract({
     writer: "device",
     migrationPlan: params.migrationPlan,

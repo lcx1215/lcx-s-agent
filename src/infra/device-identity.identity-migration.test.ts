@@ -101,4 +101,16 @@ describe("device identity migration writer", () => {
       }),
     ).rejects.toMatchObject({ code: "LCX_IDENTITY_READ_PATH_MISMATCH" });
   });
+
+  it("rejects config-only authority because device state needs a state root", async () => {
+    const root = await createRoot();
+
+    expect(() =>
+      createLcxIdentityDeviceMigration({
+        migrationPlan: migrationPlan(root, {
+          OPENCLAW_CONFIG_PATH: path.join(root, "lcx.json"),
+        }),
+      }),
+    ).toThrow("state-root authority");
+  });
 });
