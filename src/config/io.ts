@@ -35,6 +35,10 @@ import {
 } from "./env-substitution.js";
 import { applyConfigEnvVars } from "./env-vars.js";
 import {
+  createLcxIdentityWriterPathContract,
+  type LcxIdentityWriterPathContract,
+} from "./identity-migration.js";
+import {
   ConfigIncludeError,
   readConfigIncludeFileWithGuards,
   resolveConfigIncludes,
@@ -91,17 +95,7 @@ const loggedInvalidConfigs = new Set<string>();
 
 type ConfigWriteAuditResult = "rename" | "copy-fallback" | "failed";
 
-export type ConfigIoPathContract = Readonly<{
-  migrationPlan: LcxIdentityMigrationPlan | null;
-  readPath: string;
-  writePath: string;
-  backupPath: string;
-  auditPath: string;
-  expectedReadPath: string;
-  expectedWritePath: string;
-  rollbackPath: string;
-  noSplitState: "single-write-target";
-}>;
+export type ConfigIoPathContract = LcxIdentityWriterPathContract & Readonly<{ writer: "config" }>;
 
 export type ConfigWriteReceipt = Readonly<{
   pathContract: ConfigIoPathContract;
@@ -721,16 +715,13 @@ function createConfigIoPathContract(params: {
       : migrationPlan.writeStateDir
     : resolveStateDir(deps.env, deps.homedir);
   const auditPath = resolveConfigAuditLogPath(deps.env, deps.homedir, auditStateDir);
-  return Object.freeze({
+  return createLcxIdentityWriterPathContract({
+    writer: "config",
     migrationPlan,
     readPath,
     writePath,
     backupPath: `${writePath}.bak`,
     auditPath,
-    expectedReadPath: readPath,
-    expectedWritePath: writePath,
-    rollbackPath: `${writePath}.bak`,
-    noSplitState: "single-write-target" as const,
   });
 }
 

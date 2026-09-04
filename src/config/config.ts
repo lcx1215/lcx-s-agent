@@ -16,6 +16,7 @@ export {
   writeConfigFileWithReceipt,
 } from "./io.js";
 export { migrateLegacyConfig } from "./legacy-migrate.js";
+export * from "./identity-migration.js";
 export * from "./paths.js";
 export * from "./runtime-overrides.js";
 export * from "./types.js";
