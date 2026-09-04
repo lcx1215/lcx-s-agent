@@ -21,6 +21,7 @@ export type LcxIdentityWriterName =
   | "workspace"
   | "nostr-bus"
   | "nostr-profile"
+  | "telegram-offset"
   | "update-check";
 
 export type LcxIdentityWriterPathContract = Readonly<{
