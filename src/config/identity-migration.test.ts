@@ -5,6 +5,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { resolveLcxIdentityMigrationPlan } from "./paths.js";
 import {
+  appendSessionTranscriptForIdentityMigration,
   createLcxIdentitySessionMigration,
   readSessionStoreForIdentityMigration,
   rollbackSessionStoreIdentityMigration,
@@ -142,6 +143,48 @@ describe("LCX identity migration writer contract", () => {
           expect.objectContaining({ writer: "sessions", event: "identity.write" }),
         ]),
       );
+    });
+  });
+
+  it("appends a transcript through SessionManager before committing the canonical raw file", async () => {
+    await withTempRoot(async (root) => {
+      const legacyTranscriptPath = path.join(
+        root,
+        ".openclaw",
+        "agents",
+        "main",
+        "sessions",
+        "s-3.jsonl",
+      );
+      const legacyRaw =
+        '{"type":"session","version":1,"id":"s-3","timestamp":"2026-09-04T00:00:00.000Z","cwd":"/tmp"}\n';
+      await writeRaw(legacyTranscriptPath, legacyRaw);
+      const migration = createLcxIdentitySessionMigration({ migrationPlan: migrationPlan(root) });
+
+      const result = await appendSessionTranscriptForIdentityMigration({
+        migration,
+        sessionId: "s-3",
+        text: "canonical transcript message",
+      });
+      expect(result.sessionFile).toBe(
+        path.join(root, ".lcx", "agents", "main", "sessions", "s-3.jsonl"),
+      );
+      const nextLines = (await fs.readFile(result.sessionFile, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      expect(nextLines.at(-1)).toMatchObject({
+        type: "message",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "canonical transcript message" }],
+        },
+      });
+      expect(nextLines.at(-1)?.parentId).toBeDefined();
+      expect(await fs.readFile(legacyTranscriptPath, "utf8")).toBe(legacyRaw);
+
+      await rollbackSessionStoreIdentityMigration(result.receipt);
+      await expect(fs.access(result.sessionFile)).rejects.toMatchObject({ code: "ENOENT" });
     });
   });
 
