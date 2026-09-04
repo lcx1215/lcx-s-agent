@@ -392,3 +392,14 @@ const PERMANENT_ERROR_PATTERNS: readonly RegExp[] = [
 export function isPermanentDeliveryError(error: string): boolean {
   return PERMANENT_ERROR_PATTERNS.some((re) => re.test(error));
 }
+
+export {
+  createLcxIdentityDeliveryQueueMigration,
+  enqueueDeliveryForIdentityMigration,
+  readPendingDeliveriesForIdentityMigration,
+  rollbackDeliveryQueueIdentityMigration,
+} from "./delivery-queue.identity-migration.js";
+export type {
+  IdentityQueuedDelivery,
+  LcxIdentityDeliveryQueueMigration,
+} from "./delivery-queue.identity-migration.js";
