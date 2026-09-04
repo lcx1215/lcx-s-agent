@@ -20,7 +20,8 @@ export type LcxIdentityWriterName =
   | "subagents"
   | "workspace"
   | "nostr-bus"
-  | "nostr-profile";
+  | "nostr-profile"
+  | "update-check";
 
 export type LcxIdentityWriterPathContract = Readonly<{
   writer: LcxIdentityWriterName;
