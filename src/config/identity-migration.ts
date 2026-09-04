@@ -100,14 +100,14 @@ export function createLcxIdentityWriterPathContract<T extends LcxIdentityWriterN
   });
 }
 
-export function resolveLcxIdentityStateWriterPathContract(params: {
-  writer: LcxIdentityWriterName;
+export function resolveLcxIdentityStateWriterPathContract<T extends LcxIdentityWriterName>(params: {
+  writer: T;
   migrationPlan: LcxIdentityMigrationPlan;
   relativePath: string;
   backupPath?: string;
   auditPath?: string;
   existsSync?: (candidate: string) => boolean;
-}): LcxIdentityWriterPathContract {
+}): LcxIdentityWriterPathContract & Readonly<{ writer: T }> {
   const existsSync = params.existsSync ?? fs.existsSync;
   const existingReadRoot = params.migrationPlan.readStateDirs.find((candidate) =>
     existsSync(resolveRelativeStatePath(candidate, params.relativePath)),
