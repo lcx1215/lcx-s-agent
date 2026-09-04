@@ -1,6 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
+import {
+  readLcxIdentityWriterRaw,
+  resolveLcxIdentityStateWriterPathContract,
+  rollbackLcxIdentityWriter,
+  writeLcxIdentityWriterRawWithReceipt,
+  type LcxIdentityWriteReceipt,
+  type LcxIdentityWriterPathContract,
+} from "../../config/identity-migration.js";
 import { resolveStateDir } from "../../config/paths.js";
+import type { LcxIdentityMigrationPlan } from "../../config/paths.js";
 import { loadJsonFile, saveJsonFile } from "../../infra/json-file.js";
 import { normalizeAccountId, resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import {
@@ -97,6 +106,51 @@ export function shouldDefaultPersist(): boolean {
 
 export function resolveThreadBindingsPath(): string {
   return path.join(resolveStateDir(process.env), "discord", "thread-bindings.json");
+}
+
+export type LcxIdentityDiscordThreadBindingsMigration = Readonly<{
+  pathContract: LcxIdentityWriterPathContract & Readonly<{ writer: "discord-bindings" }>;
+  relativePath: string;
+  readBindingsPath: string;
+  writeBindingsPath: string;
+}>;
+
+export function createLcxIdentityDiscordThreadBindingsMigration(params: {
+  migrationPlan: LcxIdentityMigrationPlan;
+  existsSync?: (candidate: string) => boolean;
+}): LcxIdentityDiscordThreadBindingsMigration {
+  if (params.migrationPlan.mode === "explicit-config-override") {
+    throw new Error("Discord thread bindings migration requires a state-root authority");
+  }
+  const relativePath = path.join("discord", "thread-bindings.json");
+  const pathContract = resolveLcxIdentityStateWriterPathContract({
+    writer: "discord-bindings",
+    migrationPlan: params.migrationPlan,
+    relativePath,
+    existsSync: params.existsSync,
+  });
+  return Object.freeze({
+    pathContract,
+    relativePath,
+    readBindingsPath: pathContract.readPath,
+    writeBindingsPath: pathContract.writePath,
+  });
+}
+
+function resolveCurrentDiscordThreadBindingsPathContract(
+  migration: LcxIdentityDiscordThreadBindingsMigration,
+): LcxIdentityWriterPathContract & Readonly<{ writer: "discord-bindings" }> {
+  const plan = migration.pathContract.migrationPlan;
+  if (!plan) {
+    return migration.pathContract;
+  }
+  return resolveLcxIdentityStateWriterPathContract({
+    writer: "discord-bindings",
+    migrationPlan: plan,
+    relativePath: migration.relativePath,
+    backupPath: migration.pathContract.backupPath,
+    auditPath: migration.pathContract.auditPath,
+  });
 }
 
 export function normalizeTargetKind(
@@ -448,16 +502,63 @@ export function saveBindingsToDisk(params: { force?: boolean; minIntervalMs?: nu
   ) {
     return;
   }
+  const payload = buildPersistedThreadBindingsPayload();
+  saveJsonFile(resolveThreadBindingsPath(), payload);
+  THREAD_BINDINGS_STATE.lastPersistedAtMs = now;
+}
+
+function buildPersistedThreadBindingsPayload(): PersistedThreadBindingsPayload {
   const bindings: Record<string, PersistedThreadBindingRecord> = {};
   for (const [bindingKey, record] of BINDINGS_BY_THREAD_ID.entries()) {
     bindings[bindingKey] = { ...record };
   }
-  const payload: PersistedThreadBindingsPayload = {
+  return {
     version: THREAD_BINDINGS_VERSION,
     bindings,
   };
-  saveJsonFile(resolveThreadBindingsPath(), payload);
-  THREAD_BINDINGS_STATE.lastPersistedAtMs = now;
+}
+
+export async function readThreadBindingsForIdentityMigration(
+  migration: LcxIdentityDiscordThreadBindingsMigration,
+): Promise<PersistedThreadBindingsPayload | null> {
+  const raw = await readLcxIdentityWriterRaw(
+    resolveCurrentDiscordThreadBindingsPathContract(migration),
+  );
+  if (raw === null) {
+    return null;
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    const payload = parsed as Partial<PersistedThreadBindingsPayload>;
+    if (payload.version !== THREAD_BINDINGS_VERSION || !payload.bindings) {
+      return null;
+    }
+    return payload as PersistedThreadBindingsPayload;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveBindingsToDiskForIdentityMigration(
+  migration: LcxIdentityDiscordThreadBindingsMigration,
+  options?: { expectedReadPath?: string; expectedWritePath?: string },
+): Promise<LcxIdentityWriteReceipt> {
+  const receipt = await writeLcxIdentityWriterRawWithReceipt(
+    resolveCurrentDiscordThreadBindingsPathContract(migration),
+    `${JSON.stringify(buildPersistedThreadBindingsPayload(), null, 2)}\n`,
+    options,
+  );
+  THREAD_BINDINGS_STATE.lastPersistedAtMs = Date.now();
+  return receipt;
+}
+
+export async function rollbackDiscordThreadBindingsIdentityMigration(
+  receipt: LcxIdentityWriteReceipt,
+): Promise<void> {
+  await rollbackLcxIdentityWriter(receipt);
 }
 
 export function ensureBindingsLoaded() {

@@ -21,6 +21,7 @@ export type LcxIdentityWriterName =
   | "workspace"
   | "nostr-bus"
   | "nostr-profile"
+  | "discord-bindings"
   | "telegram-offset"
   | "update-check";
 
