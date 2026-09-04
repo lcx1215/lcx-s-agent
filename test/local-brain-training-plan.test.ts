@@ -7,6 +7,7 @@ import {
   activeGuardEvolutionCooldownSnapshot,
   buildLocalBrainTrainingPlan,
   buildQwenBaseModelMigrationPlan,
+  inspectMiniMaxTeacherRuntimeConfig,
 } from "../scripts/operator/local-brain-training-plan.js";
 
 async function writeJsonl(prefix: string, lines: unknown[]): Promise<string> {
@@ -27,6 +28,29 @@ async function writeJson(
 }
 
 describe("local-brain-training-plan", () => {
+  it("does not re-enable MiniMax training after its runtime references are removed", () => {
+    expect(
+      inspectMiniMaxTeacherRuntimeConfig({
+        models: { providers: { moonshot: { models: [{ id: "kimi-k2.6" }] } } },
+        agents: { defaults: { model: { primary: "moonshot/kimi-k2.6" } } },
+        plugins: { entries: { feishu: { enabled: true } } },
+      }),
+    ).toMatchObject({
+      boundary: "local_minimax_teacher_runtime_status_only",
+      enabled: false,
+      configuredRefs: [],
+    });
+
+    expect(
+      inspectMiniMaxTeacherRuntimeConfig({
+        models: { providers: { "minimax-portal": { baseUrl: "https://example.invalid" } } },
+      }),
+    ).toMatchObject({
+      enabled: true,
+      configuredRefs: ["models.providers.minimax-portal"],
+    });
+  });
+
   it("only treats an adapter mismatch as active when a guard process is observed", () => {
     const active = activeGuardAdapterTruthSnapshot({
       activeProcesses: [

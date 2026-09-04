@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { createModuleLearningPipelineReviewTool } from "../../src/agents/tools/module-learning-pipeline-review-tool.ts";
+import { resolveLcxIdentityMigrationPlan } from "../../src/config/paths.ts";
 import { buildLearningSedimentationBridge } from "./lcx-learning-sedimentation-bridge.ts";
 import {
   DEFAULT_GUARD_LOG_PATH,
@@ -308,6 +309,14 @@ type QuotaStatusSnapshot = {
   finalConcurrency?: number;
 };
 
+export type MiniMaxTeacherRuntimeSnapshot = {
+  boundary: "local_minimax_teacher_runtime_status_only";
+  enabled: boolean;
+  configPath: string;
+  configuredRefs: string[];
+  reason: string;
+};
+
 export type ActiveTrainingProcess = {
   pid?: number;
   ppid?: number;
@@ -380,6 +389,72 @@ type TrainingDecision = {
   codexRepairEligible: boolean;
   nextCommand?: string;
 };
+
+function isRecord(value: unknown): value is JsonRecord {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Inspect only the runtime configuration surface. Historical source code,
+ * receipts, and adapters are intentionally outside this enablement decision.
+ */
+export function inspectMiniMaxTeacherRuntimeConfig(
+  config: unknown,
+): Omit<MiniMaxTeacherRuntimeSnapshot, "configPath"> {
+  const configuredRefs: string[] = [];
+  const visit = (value: unknown, pathParts: string[]): void => {
+    if (pathParts.length > 0 && /minimax/i.test(pathParts.at(-1) ?? "")) {
+      configuredRefs.push(pathParts.join("."));
+    }
+    if (typeof value === "string" && /minimax/i.test(value)) {
+      configuredRefs.push(pathParts.join("."));
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((entry, index) => visit(entry, [...pathParts, String(index)]));
+      return;
+    }
+    if (isRecord(value)) {
+      Object.entries(value).forEach(([key, entry]) => visit(entry, [...pathParts, key]));
+    }
+  };
+  visit(config, []);
+  const uniqueRefs = [...new Set(configuredRefs)];
+  return {
+    boundary: "local_minimax_teacher_runtime_status_only",
+    enabled: uniqueRefs.length > 0,
+    configuredRefs: uniqueRefs,
+    reason:
+      uniqueRefs.length > 0
+        ? "MiniMax runtime references remain in configuration."
+        : "MiniMax provider, auth, agent, plugin, and model references are absent from runtime configuration.",
+  };
+}
+
+async function readMiniMaxTeacherRuntimeSnapshot(): Promise<MiniMaxTeacherRuntimeSnapshot> {
+  const configPath = resolveLcxIdentityMigrationPlan().readConfigPath;
+  const raw = await fs.readFile(configPath, "utf8").catch(() => undefined);
+  if (raw === undefined) {
+    return {
+      boundary: "local_minimax_teacher_runtime_status_only",
+      enabled: false,
+      configPath,
+      configuredRefs: [],
+      reason: "Runtime configuration is unavailable; MiniMax auto-start is disabled fail-closed.",
+    };
+  }
+  try {
+    return { ...inspectMiniMaxTeacherRuntimeConfig(JSON.parse(raw) as unknown), configPath };
+  } catch {
+    return {
+      boundary: "local_minimax_teacher_runtime_status_only",
+      enabled: false,
+      configPath,
+      configuredRefs: [],
+      reason: "Runtime configuration is invalid; MiniMax auto-start is disabled fail-closed.",
+    };
+  }
+}
 
 type EvolutionAccelerationStep = {
   id: string;
@@ -1901,6 +1976,7 @@ function buildDecisions(params: {
   stableEvalTimeoutCountAfterLatestStart?: number;
   latestTeacher?: TeacherSnapshot;
   latestQuotaStatus?: QuotaStatusSnapshot;
+  miniMaxTeacherRuntime: MiniMaxTeacherRuntimeSnapshot;
   qwenBaseModelMigration?: QwenBaseModelMigrationSnapshot;
   activeGuardAdapterTruth?: ActiveGuardAdapterTruthSnapshot;
   liveExternalBrainBinding?: LegacyLiveExternalBrainBindingSnapshot;
@@ -1914,17 +1990,28 @@ function buildDecisions(params: {
   const decisions: TrainingDecision[] = [];
   const active = params.activeProcesses.length > 0;
   const activeGuardEvolutionCooldown = activeGuardEvolutionCooldownSnapshot(params.activeProcesses);
-  decisions.push({
-    id: active ? "training_already_active" : "training_not_active",
-    lane: "training",
-    severity: "info",
-    action: active ? "do_not_start_overlapping_guard" : "start_medium_training_guard",
-    reason: active
-      ? "A local-brain guard or child process is already active."
-      : "No active local-brain training process was detected.",
-    codexRepairEligible: false,
-    nextCommand: active ? undefined : buildMediumTrainingCommand(params.guardLogPath),
-  });
+  if (!params.miniMaxTeacherRuntime.enabled) {
+    decisions.push({
+      id: "training_provider_disabled",
+      lane: "training",
+      severity: "info",
+      action: "do_not_start_disabled_minimax_training",
+      reason: params.miniMaxTeacherRuntime.reason,
+      codexRepairEligible: false,
+    });
+  } else {
+    decisions.push({
+      id: active ? "training_already_active" : "training_not_active",
+      lane: "training",
+      severity: "info",
+      action: active ? "do_not_start_overlapping_guard" : "start_medium_training_guard",
+      reason: active
+        ? "A local-brain guard or child process is already active."
+        : "No active local-brain training process was detected.",
+      codexRepairEligible: false,
+      nextCommand: active ? undefined : buildMediumTrainingCommand(params.guardLogPath),
+    });
+  }
 
   if (params.overlappingHeavyEval) {
     decisions.push({
@@ -2164,7 +2251,16 @@ function buildDecisions(params: {
     });
   }
 
-  if (params.latestTeacher && params.latestTeacher.failures > 0) {
+  const latestTeacherHasQuotaFailure = Boolean(
+    params.latestTeacher?.failureErrors.some((error) =>
+      /429|rate_limit_error|Token Plan usage limit reached/iu.test(error),
+    ),
+  );
+  if (
+    params.latestTeacher &&
+    params.latestTeacher.failures > 0 &&
+    (params.miniMaxTeacherRuntime.enabled || !latestTeacherHasQuotaFailure)
+  ) {
     decisions.push({
       id: "teacher_sample_quality_failure",
       lane: "teacher_quality",
@@ -2704,6 +2800,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
   });
   const latestTeacher = latestTeacherSnapshot(quotaEvents);
   const latestQuotaStatus = latestQuotaStatusSnapshot(quotaEvents);
+  const miniMaxTeacherRuntime = await readMiniMaxTeacherRuntimeSnapshot();
   const latestGuardStartAt = eventTime(latestGuardStart);
   const stableEvalTimeoutCountAfterLatestStart = countEvalTimeoutsAfter(
     guardEvents,
@@ -2726,6 +2823,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     stableEvalTimeoutCountAfterLatestStart,
     latestTeacher,
     latestQuotaStatus,
+    miniMaxTeacherRuntime,
     qwenBaseModelMigration,
     activeGuardAdapterTruth,
     externalChannelBinding,
@@ -2797,6 +2895,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     selectedCleanEval: qwenCapabilityConsolidation.selectedCleanEval,
     latestTeacher,
     latestQuotaStatus,
+    miniMaxTeacherRuntime,
     qwenBaseModelMigration,
     moduleLearningReview,
     learningSedimentationBridge,
