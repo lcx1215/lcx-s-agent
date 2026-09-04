@@ -2,14 +2,18 @@ export {
   clearConfigCache,
   clearRuntimeConfigSnapshot,
   createConfigIO,
+  createLcxIdentityMigrationConfigIO,
+  ConfigWriteContractError,
   getRuntimeConfigSnapshot,
   loadConfig,
   parseConfigJson5,
   readConfigFileSnapshot,
   readConfigFileSnapshotForWrite,
   resolveConfigSnapshotHash,
+  rollbackConfigFileWrite,
   setRuntimeConfigSnapshot,
   writeConfigFile,
+  writeConfigFileWithReceipt,
 } from "./io.js";
 export { migrateLegacyConfig } from "./legacy-migrate.js";
 export * from "./paths.js";

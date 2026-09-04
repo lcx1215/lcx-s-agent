@@ -43,7 +43,13 @@ import { findLegacyConfigIssues } from "./legacy.js";
 import { applyMergePatch } from "./merge-patch.js";
 import { normalizeExecSafeBinProfilesInConfig } from "./normalize-exec-safe-bin.js";
 import { normalizeConfigPaths } from "./normalize-paths.js";
-import { resolveConfigPath, resolveDefaultConfigCandidates, resolveStateDir } from "./paths.js";
+import {
+  resolveConfigPath,
+  resolveDefaultConfigCandidates,
+  resolveLcxIdentityMigrationPlan,
+  resolveStateDir,
+} from "./paths.js";
+import type { LcxIdentityMigrationPlan } from "./paths.js";
 import { isBlockedObjectKey } from "./prototype-keys.js";
 import { applyConfigOverrides } from "./runtime-overrides.js";
 import type { OpenClawConfig, ConfigFileSnapshot, LegacyConfigIssue } from "./types.js";
@@ -85,12 +91,47 @@ const loggedInvalidConfigs = new Set<string>();
 
 type ConfigWriteAuditResult = "rename" | "copy-fallback" | "failed";
 
+export type ConfigIoPathContract = Readonly<{
+  migrationPlan: LcxIdentityMigrationPlan | null;
+  readPath: string;
+  writePath: string;
+  backupPath: string;
+  auditPath: string;
+  expectedReadPath: string;
+  expectedWritePath: string;
+  rollbackPath: string;
+  noSplitState: "single-write-target";
+}>;
+
+export type ConfigWriteReceipt = Readonly<{
+  pathContract: ConfigIoPathContract;
+  previous: Readonly<{
+    exists: boolean;
+    hash: string | null;
+    bytes: number | null;
+  }>;
+  next: Readonly<{
+    hash: string;
+    bytes: number;
+  }>;
+  rollback: Readonly<{
+    path: string;
+    strategy: "restore-backup" | "remove-written-target";
+  }>;
+}>;
+
 type ConfigWriteAuditRecord = {
   ts: string;
   source: "config-io";
   event: "config.write";
   result: ConfigWriteAuditResult;
   configPath: string;
+  readConfigPath: string;
+  writeConfigPath: string;
+  backupPath: string;
+  auditPath: string;
+  rollbackPath: string;
+  noSplitState: "single-write-target";
   pid: number;
   ppid: number;
   cwd: string;
@@ -114,6 +155,25 @@ type ConfigWriteAuditRecord = {
   errorMessage?: string;
 };
 
+type ConfigRollbackAuditRecord = {
+  ts: string;
+  source: "config-io";
+  event: "config.rollback";
+  result: "restored" | "removed" | "failed";
+  readConfigPath: string;
+  writeConfigPath: string;
+  rollbackPath: string;
+  auditPath: string;
+  noSplitState: "single-write-target";
+  previousExists: boolean;
+  expectedNextHash: string;
+  restoredHash: string | null;
+  errorCode?: string;
+  errorMessage?: string;
+};
+
+type ConfigAuditRecord = ConfigWriteAuditRecord | ConfigRollbackAuditRecord;
+
 export type ParseConfigJson5Result = { ok: true; parsed: unknown } | { ok: false; error: string };
 export type ConfigWriteOptions = {
   /**
@@ -127,6 +187,16 @@ export type ConfigWriteOptions = {
    */
   expectedConfigPath?: string;
   /**
+   * Migration contract guard for the path read when this write context was
+   * captured. A mismatch fails closed before any write is attempted.
+   */
+  expectedReadPath?: string;
+  /**
+   * Migration contract guard for the single path that may be written. A
+   * mismatch fails closed before any write is attempted.
+   */
+  expectedWritePath?: string;
+  /**
    * Paths that must be explicitly removed from the persisted file payload,
    * even if schema/default normalization reintroduces them.
    */
@@ -137,6 +207,16 @@ export type ReadConfigFileSnapshotForWriteResult = {
   snapshot: ConfigFileSnapshot;
   writeOptions: ConfigWriteOptions;
 };
+
+export class ConfigWriteContractError extends Error {
+  readonly code: string;
+
+  constructor(message: string, code = "CONFIG_WRITE_CONTRACT_VIOLATION") {
+    super(message);
+    this.name = "ConfigWriteContractError";
+    this.code = code;
+  }
+}
 
 function hashConfigRaw(raw: string | null): string {
   return crypto
@@ -486,8 +566,12 @@ function restoreEnvRefsFromMap(
   return value;
 }
 
-function resolveConfigAuditLogPath(env: NodeJS.ProcessEnv, homedir: () => string): string {
-  return path.join(resolveStateDir(env, homedir), "logs", CONFIG_AUDIT_LOG_FILENAME);
+function resolveConfigAuditLogPath(
+  env: NodeJS.ProcessEnv,
+  homedir: () => string,
+  stateDir = resolveStateDir(env, homedir),
+): string {
+  return path.join(stateDir, "logs", CONFIG_AUDIT_LOG_FILENAME);
 }
 
 function resolveConfigWriteSuspiciousReasons(params: {
@@ -519,12 +603,12 @@ function resolveConfigWriteSuspiciousReasons(params: {
   return reasons;
 }
 
-async function appendConfigWriteAuditRecord(
+async function appendConfigAuditRecord(
   deps: Required<ConfigIoDeps>,
-  record: ConfigWriteAuditRecord,
+  auditPath: string,
+  record: ConfigAuditRecord,
 ): Promise<void> {
   try {
-    const auditPath = resolveConfigAuditLogPath(deps.env, deps.homedir);
     await deps.fs.promises.mkdir(path.dirname(auditPath), { recursive: true, mode: 0o700 });
     await deps.fs.promises.appendFile(auditPath, `${JSON.stringify(record)}\n`, {
       encoding: "utf-8",
@@ -541,6 +625,11 @@ export type ConfigIoDeps = {
   env?: NodeJS.ProcessEnv;
   homedir?: () => string;
   configPath?: string;
+  /**
+   * Explicit opt-in migration plan. The active compatibility defaults remain
+   * unchanged when this is omitted.
+   */
+  lcxIdentityMigrationPlan?: LcxIdentityMigrationPlan | null;
   logger?: Pick<typeof console, "error" | "warn">;
 };
 
@@ -588,6 +677,18 @@ function warnIfConfigFromFuture(cfg: OpenClawConfig, logger: Pick<typeof console
 }
 
 function resolveConfigPathForDeps(deps: Required<ConfigIoDeps>): string {
+  if (deps.lcxIdentityMigrationPlan) {
+    if (
+      deps.configPath &&
+      path.resolve(deps.configPath) !== path.resolve(deps.lcxIdentityMigrationPlan.readConfigPath)
+    ) {
+      throw new ConfigWriteContractError(
+        `Config read path override does not match the migration plan: ${deps.configPath} !== ${deps.lcxIdentityMigrationPlan.readConfigPath}`,
+        "CONFIG_READ_PATH_MISMATCH",
+      );
+    }
+    return deps.lcxIdentityMigrationPlan.readConfigPath;
+  }
   if (deps.configPath) {
     return deps.configPath;
   }
@@ -602,8 +703,35 @@ function normalizeDeps(overrides: ConfigIoDeps = {}): Required<ConfigIoDeps> {
     homedir:
       overrides.homedir ?? (() => resolveRequiredHomeDir(overrides.env ?? process.env, os.homedir)),
     configPath: overrides.configPath ?? "",
+    lcxIdentityMigrationPlan: overrides.lcxIdentityMigrationPlan ?? null,
     logger: overrides.logger ?? console,
   };
+}
+
+function createConfigIoPathContract(params: {
+  deps: Required<ConfigIoDeps>;
+  migrationPlan: LcxIdentityMigrationPlan | null;
+  readPath: string;
+  writePath: string;
+}): ConfigIoPathContract {
+  const { deps, migrationPlan, readPath, writePath } = params;
+  const auditStateDir = migrationPlan
+    ? migrationPlan.mode === "explicit-config-override"
+      ? path.dirname(writePath)
+      : migrationPlan.writeStateDir
+    : resolveStateDir(deps.env, deps.homedir);
+  const auditPath = resolveConfigAuditLogPath(deps.env, deps.homedir, auditStateDir);
+  return Object.freeze({
+    migrationPlan,
+    readPath,
+    writePath,
+    backupPath: `${writePath}.bak`,
+    auditPath,
+    expectedReadPath: readPath,
+    expectedWritePath: writePath,
+    rollbackPath: `${writePath}.bak`,
+    noSplitState: "single-write-target" as const,
+  });
 }
 
 function maybeLoadDotEnvForConfig(env: NodeJS.ProcessEnv): void {
@@ -672,12 +800,25 @@ type ReadConfigFileSnapshotInternalResult = {
 
 export function createConfigIO(overrides: ConfigIoDeps = {}) {
   const deps = normalizeDeps(overrides);
+  const migrationPlan = deps.lcxIdentityMigrationPlan ?? null;
   const requestedConfigPath = resolveConfigPathForDeps(deps);
-  const candidatePaths = deps.configPath
+  const candidatePaths = migrationPlan
     ? [requestedConfigPath]
-    : resolveDefaultConfigCandidates(deps.env, deps.homedir);
-  const configPath =
+    : deps.configPath
+      ? [requestedConfigPath]
+      : resolveDefaultConfigCandidates(deps.env, deps.homedir);
+  let configPath =
     candidatePaths.find((candidate) => deps.fs.existsSync(candidate)) ?? requestedConfigPath;
+  const writePath = migrationPlan?.writeConfigPath ?? configPath;
+
+  function getPathContract(): ConfigIoPathContract {
+    return createConfigIoPathContract({
+      deps,
+      migrationPlan,
+      readPath: configPath,
+      writePath: writePath,
+    });
+  }
 
   function loadConfig(): OpenClawConfig {
     try {
@@ -1029,11 +1170,165 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
       writeOptions: {
         envSnapshotForRestore: result.envSnapshotForRestore,
         expectedConfigPath: configPath,
+        expectedReadPath: configPath,
+        expectedWritePath: writePath,
       },
     };
   }
 
-  async function writeConfigFile(cfg: OpenClawConfig, options: ConfigWriteOptions = {}) {
+  function assertExpectedPath(
+    actualPath: string,
+    expectedPath: string | undefined,
+    label: string,
+  ): void {
+    if (expectedPath === undefined || path.resolve(expectedPath) === path.resolve(actualPath)) {
+      return;
+    }
+    throw new ConfigWriteContractError(
+      `Config ${label} does not match the active path contract: ${expectedPath} !== ${actualPath}`,
+      `CONFIG_${label.toUpperCase()}_PATH_MISMATCH`,
+    );
+  }
+
+  function assertWriteContract(options: ConfigWriteOptions): ConfigIoPathContract {
+    const contract = getPathContract();
+    assertExpectedPath(configPath, options.expectedReadPath, "read");
+    assertExpectedPath(writePath, options.expectedWritePath, "write");
+    if (contract.readPath !== contract.writePath && deps.fs.existsSync(contract.writePath)) {
+      throw new ConfigWriteContractError(
+        `Config migration would create split state: read ${contract.readPath}, write target already exists at ${contract.writePath}`,
+        "CONFIG_SPLIT_STATE",
+      );
+    }
+    return contract;
+  }
+
+  async function readOptionalRaw(targetPath: string): Promise<string | null> {
+    try {
+      return await deps.fs.promises.readFile(targetPath, "utf-8");
+    } catch (err) {
+      if ((err as { code?: string }).code === "ENOENT") {
+        return null;
+      }
+      throw err;
+    }
+  }
+
+  async function replaceRawFile(
+    targetPath: string,
+    raw: string,
+  ): Promise<"rename" | "copy-fallback"> {
+    const dir = path.dirname(targetPath);
+    await deps.fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
+    const tmp = path.join(
+      dir,
+      `${path.basename(targetPath)}.${process.pid}.${crypto.randomUUID()}.rollback.tmp`,
+    );
+    try {
+      await deps.fs.promises.writeFile(tmp, raw, { encoding: "utf-8", mode: 0o600 });
+      try {
+        await deps.fs.promises.rename(tmp, targetPath);
+        return "rename";
+      } catch (err) {
+        const code = (err as { code?: string }).code;
+        if (code !== "EPERM" && code !== "EEXIST") {
+          throw err;
+        }
+        await deps.fs.promises.copyFile(tmp, targetPath);
+        await deps.fs.promises.chmod(targetPath, 0o600).catch(() => {
+          // best-effort
+        });
+        await deps.fs.promises.unlink(tmp).catch(() => {
+          // best-effort
+        });
+        return "copy-fallback";
+      }
+    } finally {
+      await deps.fs.promises.unlink(tmp).catch(() => {
+        // best-effort
+      });
+    }
+  }
+
+  async function rollbackConfigFileWrite(receipt: ConfigWriteReceipt): Promise<void> {
+    const { pathContract } = receipt;
+    const auditBase = {
+      ts: new Date().toISOString(),
+      source: "config-io" as const,
+      event: "config.rollback" as const,
+      readConfigPath: pathContract.readPath,
+      writeConfigPath: pathContract.writePath,
+      rollbackPath: pathContract.rollbackPath,
+      auditPath: pathContract.auditPath,
+      noSplitState: pathContract.noSplitState,
+      previousExists: receipt.previous.exists,
+      expectedNextHash: receipt.next.hash,
+      restoredHash: null as string | null,
+    };
+
+    try {
+      const currentRaw = await readOptionalRaw(pathContract.writePath);
+      const currentHash = hashConfigRaw(currentRaw);
+      if (currentRaw === null || currentHash !== receipt.next.hash) {
+        throw new ConfigWriteContractError(
+          `Config rollback refused because the write target changed: expected ${receipt.next.hash}, found ${currentRaw === null ? "missing" : currentHash}`,
+          "CONFIG_ROLLBACK_TARGET_MISMATCH",
+        );
+      }
+      if (receipt.rollback.strategy === "restore-backup") {
+        const backupRaw = await readOptionalRaw(receipt.rollback.path);
+        if (backupRaw === null || hashConfigRaw(backupRaw) !== receipt.previous.hash) {
+          throw new ConfigWriteContractError(
+            `Config rollback backup is missing or changed at ${receipt.rollback.path}`,
+            "CONFIG_ROLLBACK_BACKUP_MISMATCH",
+          );
+        }
+        await replaceRawFile(pathContract.writePath, backupRaw);
+        await appendConfigAuditRecord(deps, pathContract.auditPath, {
+          ...auditBase,
+          result: "restored",
+          restoredHash: hashConfigRaw(backupRaw),
+        });
+      } else {
+        await deps.fs.promises.unlink(pathContract.writePath);
+        await appendConfigAuditRecord(deps, pathContract.auditPath, {
+          ...auditBase,
+          result: "removed",
+        });
+      }
+      if (
+        configPath === pathContract.writePath &&
+        pathContract.readPath !== pathContract.writePath
+      ) {
+        configPath = pathContract.readPath;
+      }
+    } catch (err) {
+      await appendConfigAuditRecord(deps, pathContract.auditPath, {
+        ...auditBase,
+        result: "failed",
+        errorCode:
+          err && typeof err === "object" && "code" in err && typeof err.code === "string"
+            ? err.code
+            : undefined,
+        errorMessage:
+          err && typeof err === "object" && "message" in err && typeof err.message === "string"
+            ? err.message
+            : String(err),
+      });
+      throw err;
+    }
+  }
+
+  async function writeConfigFileWithReceipt(
+    cfg: OpenClawConfig,
+    options: ConfigWriteOptions = {},
+  ): Promise<ConfigWriteReceipt> {
+    const writeContract = assertWriteContract(options);
+    const previousWriteRaw = await readOptionalRaw(writePath);
+    const previousWriteExists = previousWriteRaw !== null;
+    const previousWriteHash = previousWriteRaw === null ? null : hashConfigRaw(previousWriteRaw);
+    const previousWriteBytes =
+      previousWriteRaw === null ? null : Buffer.byteLength(previousWriteRaw, "utf-8");
     clearConfigCache();
     let persistCandidate: unknown = cfg;
     const { snapshot } = await readConfigFileSnapshotInternal();
@@ -1110,7 +1405,7 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
       // If reading the current file fails, write cfg as-is (no env restoration)
     }
 
-    const dir = path.dirname(configPath);
+    const dir = path.dirname(writePath);
     await deps.fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
     const outputConfigBase =
       envRefMap && changedPaths
@@ -1133,17 +1428,20 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
     const stampedOutputConfig = stampConfigVersion(outputConfig);
     const json = JSON.stringify(stampedOutputConfig, null, 2).trimEnd().concat("\n");
     const nextHash = hashConfigRaw(json);
-    const previousHash = resolveConfigSnapshotHash(snapshot);
+    const previousHash = previousWriteHash;
     const changedPathCount = changedPaths?.size;
-    const previousBytes =
-      typeof snapshot.raw === "string" ? Buffer.byteLength(snapshot.raw, "utf-8") : null;
+    const previousBytes = previousWriteBytes;
     const nextBytes = Buffer.byteLength(json, "utf-8");
-    const hasMetaBefore = hasConfigMeta(snapshot.parsed);
+    const hasMetaBefore =
+      previousWriteExists && configPath === writePath ? hasConfigMeta(snapshot.parsed) : false;
     const hasMetaAfter = hasConfigMeta(stampedOutputConfig);
-    const gatewayModeBefore = resolveGatewayMode(snapshot.resolved);
+    const gatewayModeBefore =
+      previousWriteExists && configPath === writePath
+        ? resolveGatewayMode(snapshot.resolved)
+        : null;
     const gatewayModeAfter = resolveGatewayMode(stampedOutputConfig);
     const suspiciousReasons = resolveConfigWriteSuspiciousReasons({
-      existsBefore: snapshot.exists,
+      existsBefore: previousWriteExists,
       previousBytes,
       nextBytes,
       hasMetaBefore,
@@ -1151,7 +1449,7 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
       gatewayModeAfter,
     });
     const logConfigOverwrite = () => {
-      if (!snapshot.exists) {
+      if (!previousWriteExists) {
         return;
       }
       const isVitest = deps.env.VITEST === "true";
@@ -1162,7 +1460,7 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
       const changeSummary =
         typeof changedPathCount === "number" ? `, changedPaths=${changedPathCount}` : "";
       deps.logger.warn(
-        `Config overwrite: ${configPath} (sha256 ${previousHash ?? "unknown"} -> ${nextHash}, backup=${configPath}.bak${changeSummary})`,
+        `Config overwrite: ${writePath} (sha256 ${previousHash ?? "unknown"} -> ${nextHash}, backup=${writeContract.backupPath}${changeSummary})`,
       );
     };
     const logConfigWriteAnomalies = () => {
@@ -1175,13 +1473,19 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
       if (isVitest && !shouldLogInVitest) {
         return;
       }
-      deps.logger.warn(`Config write anomaly: ${configPath} (${suspiciousReasons.join(", ")})`);
+      deps.logger.warn(`Config write anomaly: ${writePath} (${suspiciousReasons.join(", ")})`);
     };
     const auditRecordBase = {
       ts: new Date().toISOString(),
       source: "config-io" as const,
       event: "config.write" as const,
-      configPath,
+      configPath: writePath,
+      readConfigPath: writeContract.readPath,
+      writeConfigPath: writeContract.writePath,
+      backupPath: writeContract.backupPath,
+      auditPath: writeContract.auditPath,
+      rollbackPath: writeContract.rollbackPath,
+      noSplitState: writeContract.noSplitState,
       pid: process.pid,
       ppid: process.ppid,
       cwd: process.cwd(),
@@ -1198,7 +1502,7 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
         deps.env.OPENCLAW_WATCH_COMMAND.trim().length > 0
           ? deps.env.OPENCLAW_WATCH_COMMAND.trim()
           : null,
-      existsBefore: snapshot.exists,
+      existsBefore: previousWriteExists,
       previousHash: previousHash ?? null,
       nextHash,
       previousBytes,
@@ -1210,6 +1514,22 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
       gatewayModeAfter,
       suspicious: suspiciousReasons,
     };
+    const receipt: ConfigWriteReceipt = Object.freeze({
+      pathContract: writeContract,
+      previous: Object.freeze({
+        exists: previousWriteExists,
+        hash: previousWriteHash,
+        bytes: previousWriteBytes,
+      }),
+      next: Object.freeze({
+        hash: nextHash,
+        bytes: nextBytes,
+      }),
+      rollback: Object.freeze({
+        path: writeContract.rollbackPath,
+        strategy: previousWriteExists ? "restore-backup" : "remove-written-target",
+      }),
+    });
     const appendWriteAudit = async (result: ConfigWriteAuditResult, err?: unknown) => {
       const errorCode =
         err && typeof err === "object" && "code" in err && typeof err.code === "string"
@@ -1219,7 +1539,7 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
         err && typeof err === "object" && "message" in err && typeof err.message === "string"
           ? err.message
           : undefined;
-      await appendConfigWriteAuditRecord(deps, {
+      await appendConfigAuditRecord(deps, writeContract.auditPath, {
         ...auditRecordBase,
         result,
         nextHash: result === "failed" ? null : auditRecordBase.nextHash,
@@ -1231,7 +1551,7 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
 
     const tmp = path.join(
       dir,
-      `${path.basename(configPath)}.${process.pid}.${crypto.randomUUID()}.tmp`,
+      `${path.basename(writePath)}.${process.pid}.${crypto.randomUUID()}.tmp`,
     );
 
     try {
@@ -1240,18 +1560,24 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
         mode: 0o600,
       });
 
-      if (deps.fs.existsSync(configPath)) {
-        await maintainConfigBackups(configPath, deps.fs.promises);
+      if (previousWriteExists) {
+        await maintainConfigBackups(writePath, deps.fs.promises);
+        if (migrationPlan && !deps.fs.existsSync(writeContract.backupPath)) {
+          throw new ConfigWriteContractError(
+            `Config backup was not created at ${writeContract.backupPath}; refusing migration write`,
+            "CONFIG_BACKUP_MISSING",
+          );
+        }
       }
 
       try {
-        await deps.fs.promises.rename(tmp, configPath);
+        await deps.fs.promises.rename(tmp, writePath);
       } catch (err) {
         const code = (err as { code?: string }).code;
         // Windows doesn't reliably support atomic replace via rename when dest exists.
         if (code === "EPERM" || code === "EEXIST") {
-          await deps.fs.promises.copyFile(tmp, configPath);
-          await deps.fs.promises.chmod(configPath, 0o600).catch(() => {
+          await deps.fs.promises.copyFile(tmp, writePath);
+          await deps.fs.promises.chmod(writePath, 0o600).catch(() => {
             // best-effort
           });
           await deps.fs.promises.unlink(tmp).catch(() => {
@@ -1260,7 +1586,10 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
           logConfigOverwrite();
           logConfigWriteAnomalies();
           await appendWriteAudit("copy-fallback");
-          return;
+          if (configPath !== writePath) {
+            configPath = writePath;
+          }
+          return receipt;
         }
         await deps.fs.promises.unlink(tmp).catch(() => {
           // best-effort
@@ -1270,19 +1599,65 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
       logConfigOverwrite();
       logConfigWriteAnomalies();
       await appendWriteAudit("rename");
+      if (configPath !== writePath) {
+        configPath = writePath;
+      }
+      return receipt;
     } catch (err) {
+      await deps.fs.promises.unlink(tmp).catch(() => {
+        // best-effort
+      });
       await appendWriteAudit("failed", err);
       throw err;
     }
   }
 
+  async function writeConfigFile(
+    cfg: OpenClawConfig,
+    options: ConfigWriteOptions = {},
+  ): Promise<void> {
+    await writeConfigFileWithReceipt(cfg, options);
+  }
+
   return {
-    configPath,
+    get configPath() {
+      return configPath;
+    },
+    get writeConfigPath() {
+      return writePath;
+    },
+    get pathContract() {
+      return getPathContract();
+    },
     loadConfig,
     readConfigFileSnapshot,
     readConfigFileSnapshotForWrite,
     writeConfigFile,
+    writeConfigFileWithReceipt,
+    rollbackConfigFileWrite,
   };
+}
+
+/**
+ * Opt-in config I/O adapter for the staged LCX identity migration.
+ *
+ * The normal createConfigIO() path remains on the active compatibility
+ * defaults. This adapter only makes the migration plan executable for an
+ * isolated caller that is prepared to handle the returned rollback receipt.
+ */
+export function createLcxIdentityMigrationConfigIO(
+  overrides: Omit<ConfigIoDeps, "lcxIdentityMigrationPlan"> = {},
+) {
+  const deps = normalizeDeps(overrides);
+  const migrationPlan = resolveLcxIdentityMigrationPlan({
+    env: deps.env,
+    homedir: deps.homedir,
+    existsSync: deps.fs.existsSync,
+  });
+  return createConfigIO({
+    ...overrides,
+    lcxIdentityMigrationPlan: migrationPlan,
+  });
 }
 
 // NOTE: These wrappers intentionally do *not* cache the resolved config path at
@@ -1380,10 +1755,10 @@ export async function readConfigFileSnapshotForWrite(): Promise<ReadConfigFileSn
   return await createConfigIO().readConfigFileSnapshotForWrite();
 }
 
-export async function writeConfigFile(
+export async function writeConfigFileWithReceipt(
   cfg: OpenClawConfig,
   options: ConfigWriteOptions = {},
-): Promise<void> {
+): Promise<ConfigWriteReceipt> {
   const io = createConfigIO();
   let nextCfg = cfg;
   if (runtimeConfigSnapshot && runtimeConfigSourceSnapshot) {
@@ -1392,8 +1767,26 @@ export async function writeConfigFile(
   }
   const sameConfigPath =
     options.expectedConfigPath === undefined || options.expectedConfigPath === io.configPath;
-  await io.writeConfigFile(nextCfg, {
+  return await io.writeConfigFileWithReceipt(nextCfg, {
     envSnapshotForRestore: sameConfigPath ? options.envSnapshotForRestore : undefined,
+    expectedReadPath: options.expectedReadPath,
+    expectedWritePath: options.expectedWritePath,
     unsetPaths: options.unsetPaths,
   });
+}
+
+export async function writeConfigFile(
+  cfg: OpenClawConfig,
+  options: ConfigWriteOptions = {},
+): Promise<void> {
+  await writeConfigFileWithReceipt(cfg, options);
+}
+
+export async function rollbackConfigFileWrite(receipt: ConfigWriteReceipt): Promise<void> {
+  const migrationPlan = receipt.pathContract.migrationPlan ?? undefined;
+  const io = createConfigIO({
+    configPath: migrationPlan ? undefined : receipt.pathContract.readPath,
+    lcxIdentityMigrationPlan: migrationPlan,
+  });
+  await io.rollbackConfigFileWrite(receipt);
 }

@@ -69,6 +69,15 @@ is no longer needed and that existing users or extensions have a migration path.
   operator's read/write authority for compatibility and rollback.
 - The active `resolveStateDir` and `resolveConfigPath` defaults are unchanged;
   this slice does not activate `~/.lcx` or create migration state.
+- `src/config/io.ts` now exposes an explicit `createLcxIdentityMigrationConfigIO`
+  adapter. It reuses the migration plan to keep one read path, one write path,
+  write-target backup, audit path, expected-path guards, and rollback receipt;
+  `writeConfigFileWithReceipt` is the only new writer surface.
+- The adapter reads an existing legacy config while writing only the selected
+  canonical target, switches subsequent writes to that target, rejects stale
+  split-state plans, and refuses rollback after the target has changed. A
+  missing prior target is rolled back by removing only the newly written file;
+  an existing target is restored from its verified `.bak` bytes.
 - Activation still requires config I/O and every state writer (sessions,
   credentials, queues, backups, and audit) to share the same read/write plan,
   plus focused rollback tests proving no split state.

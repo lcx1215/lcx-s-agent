@@ -152,7 +152,7 @@ answer path; they do not become the brain or the control plane.
 The **Local system/factory rule** is one core, one repository, and one state authority. **Feature branches belong to GitHub/GitLab collaboration** for review and release; they do not create another local runtime. **System-wide live fadeout truth belongs** to the neutral external-channel status and binding owners, with legacy live terms retained only as compatibility evidence.
 
 ```text
-one LCX Agent core | supported-region control machine | canonical repo | canonical `~/.openclaw` state | not a second live system | not a second runtime truth source | External, WeChat, SMS | System-wide live fadeout truth belongs
+one LCX Agent core | supported-region control machine | canonical repo | one canonical state root | not a second live system | not a second runtime truth source | External, WeChat, SMS | System-wide live fadeout truth belongs
 ```
 
 ## What surrounds the planes
