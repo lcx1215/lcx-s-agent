@@ -2,7 +2,16 @@ import syncFs from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import {
+  readLcxIdentityWriterRaw,
+  resolveLcxIdentityStateWriterPathContract,
+  rollbackLcxIdentityWriter,
+  writeLcxIdentityWriterRawWithReceipt,
+  type LcxIdentityWriteReceipt,
+  type LcxIdentityWriterPathContract,
+} from "../config/identity-migration.js";
 import { resolveNewStateDir } from "../config/paths.js";
+import type { LcxIdentityMigrationPlan } from "../config/paths.js";
 import { openBoundaryFile } from "../infra/boundary-file-read.js";
 import { resolveRequiredHomeDir } from "../infra/home-dir.js";
 import { runCommandWithTimeout } from "../process/exec.js";
@@ -161,7 +170,7 @@ export type ExtraBootstrapLoadDiagnostic = {
   detail: string;
 };
 
-type WorkspaceOnboardingState = {
+export type WorkspaceOnboardingState = {
   version: typeof WORKSPACE_STATE_VERSION;
   bootstrapSeededAt?: string;
   onboardingCompletedAt?: string;
@@ -275,6 +284,98 @@ async function writeWorkspaceOnboardingState(
     await fs.unlink(tmpPath).catch(() => {});
     throw err;
   }
+}
+
+const WORKSPACE_STATE_RELATIVE_PATH = path.join(
+  "workspace",
+  WORKSPACE_STATE_DIRNAME,
+  WORKSPACE_STATE_FILENAME,
+);
+
+export type LcxIdentityWorkspaceMigration = Readonly<{
+  pathContract: LcxIdentityWriterPathContract & Readonly<{ writer: "workspace" }>;
+  relativePath: string;
+  readWorkspaceStatePath: string;
+  writeWorkspaceStatePath: string;
+}>;
+
+export function createLcxIdentityWorkspaceMigration(params: {
+  migrationPlan: LcxIdentityMigrationPlan;
+  profile?: string;
+  existsSync?: (candidate: string) => boolean;
+}): LcxIdentityWorkspaceMigration {
+  if (params.migrationPlan.mode === "explicit-config-override") {
+    throw new Error("Workspace state migration requires a state-root authority");
+  }
+  const profile = params.profile?.trim();
+  const relativePath =
+    profile && profile.toLowerCase() !== "default"
+      ? path.join(`workspace-${profile}`, WORKSPACE_STATE_DIRNAME, WORKSPACE_STATE_FILENAME)
+      : WORKSPACE_STATE_RELATIVE_PATH;
+  const pathContract = resolveLcxIdentityStateWriterPathContract({
+    writer: "workspace",
+    migrationPlan: params.migrationPlan,
+    relativePath,
+    existsSync: params.existsSync,
+  });
+  return Object.freeze({
+    pathContract,
+    relativePath,
+    readWorkspaceStatePath: pathContract.readPath,
+    writeWorkspaceStatePath: pathContract.writePath,
+  });
+}
+
+function resolveCurrentWorkspacePathContract(
+  migration: LcxIdentityWorkspaceMigration,
+): LcxIdentityWriterPathContract & Readonly<{ writer: "workspace" }> {
+  const plan = migration.pathContract.migrationPlan;
+  if (!plan) {
+    return migration.pathContract;
+  }
+  return resolveLcxIdentityStateWriterPathContract({
+    writer: "workspace",
+    migrationPlan: plan,
+    relativePath: migration.relativePath,
+    backupPath: migration.pathContract.backupPath,
+    auditPath: migration.pathContract.auditPath,
+  });
+}
+
+export async function readWorkspaceOnboardingStateForIdentityMigration(
+  migration: LcxIdentityWorkspaceMigration,
+): Promise<WorkspaceOnboardingState> {
+  const pathContract = resolveCurrentWorkspacePathContract(migration);
+  const raw = await readLcxIdentityWriterRaw(pathContract);
+  return raw === null
+    ? { version: WORKSPACE_STATE_VERSION }
+    : (parseWorkspaceOnboardingState(raw) ?? {
+        version: WORKSPACE_STATE_VERSION,
+      });
+}
+
+export async function writeWorkspaceOnboardingStateForIdentityMigration(
+  migration: LcxIdentityWorkspaceMigration,
+  state: WorkspaceOnboardingState,
+  options?: { expectedReadPath?: string; expectedWritePath?: string },
+): Promise<LcxIdentityWriteReceipt> {
+  const pathContract = resolveCurrentWorkspacePathContract(migration);
+  const normalizedState: WorkspaceOnboardingState = {
+    version: WORKSPACE_STATE_VERSION,
+    bootstrapSeededAt: state.bootstrapSeededAt,
+    onboardingCompletedAt: state.onboardingCompletedAt,
+  };
+  return await writeLcxIdentityWriterRawWithReceipt(
+    pathContract,
+    `${JSON.stringify(normalizedState, null, 2)}\n`,
+    options,
+  );
+}
+
+export async function rollbackWorkspaceOnboardingStateIdentityMigration(
+  receipt: LcxIdentityWriteReceipt,
+): Promise<void> {
+  await rollbackLcxIdentityWriter(receipt);
 }
 
 async function hasGitRepo(dir: string): Promise<boolean> {
