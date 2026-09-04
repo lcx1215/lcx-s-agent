@@ -92,8 +92,9 @@ readers and writers are unchanged.
 
 The following bounded adapters are implemented and locally tested:
 
-- session store: `src/config/sessions/identity-migration.ts` and the explicit
-  `identityMigration` option on `saveSessionStore`;
+- session store and transcript append: `src/config/sessions/identity-migration.ts`,
+  the explicit `identityMigration` option on `saveSessionStore`, and the
+  `appendSessionTranscriptForIdentityMigration` adapter;
 - credentials: `src/agents/auth-profiles/identity-migration.ts` and the
   explicit `saveAuthProfileStoreForIdentityMigration` writer;
 - outbound queue: `src/infra/outbound/delivery-queue.identity-migration.ts`;
