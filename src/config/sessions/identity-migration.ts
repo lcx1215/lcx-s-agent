@@ -31,6 +31,9 @@ export function createLcxIdentitySessionMigration(params: {
   agentId?: string;
   existsSync?: (candidate: string) => boolean;
 }): LcxIdentitySessionMigration {
+  if (params.migrationPlan.mode === "explicit-config-override") {
+    throw new Error("Session migration requires a state-root authority");
+  }
   const agentId = normalizeAgentId(params.agentId ?? DEFAULT_AGENT_ID);
   const relativePath = path.join("agents", agentId, "sessions", "sessions.json");
   const pathContract = resolveLcxIdentityStateWriterPathContract({
