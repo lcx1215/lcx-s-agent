@@ -18,6 +18,7 @@ import type { SessionEntry } from "./types.js";
 
 export type LcxIdentitySessionMigration = Readonly<{
   pathContract: LcxIdentityWriterPathContract & Readonly<{ writer: "sessions" }>;
+  relativePath: string;
   agentId: string;
   readSessionsDir: string;
   writeSessionsDir: string;
@@ -40,6 +41,7 @@ export function createLcxIdentitySessionMigration(params: {
   });
   return Object.freeze({
     pathContract,
+    relativePath,
     agentId,
     readSessionsDir: path.dirname(pathContract.readPath),
     writeSessionsDir: path.dirname(pathContract.writePath),
@@ -48,10 +50,26 @@ export function createLcxIdentitySessionMigration(params: {
   });
 }
 
+export function resolveCurrentSessionIdentityPathContract(
+  migration: LcxIdentitySessionMigration,
+): LcxIdentityWriterPathContract & Readonly<{ writer: "sessions" }> {
+  const plan = migration.pathContract.migrationPlan;
+  if (!plan) {
+    return migration.pathContract;
+  }
+  return resolveLcxIdentityStateWriterPathContract({
+    writer: "sessions",
+    migrationPlan: plan,
+    relativePath: migration.relativePath,
+    backupPath: migration.pathContract.backupPath,
+    auditPath: migration.pathContract.auditPath,
+  });
+}
+
 export async function readSessionStoreForIdentityMigration(
   migration: LcxIdentitySessionMigration,
 ): Promise<Record<string, SessionEntry>> {
-  const raw = await readLcxIdentityWriterRaw(migration.pathContract);
+  const raw = await readLcxIdentityWriterRaw(resolveCurrentSessionIdentityPathContract(migration));
   if (raw === null) {
     return {};
   }
@@ -71,8 +89,9 @@ export async function writeSessionStoreForIdentityMigration(
   store: Record<string, SessionEntry>,
   options?: { expectedReadPath?: string; expectedWritePath?: string },
 ): Promise<LcxIdentityWriteReceipt> {
+  const pathContract = resolveCurrentSessionIdentityPathContract(migration);
   const raw = JSON.stringify(store, null, 2);
-  return await writeLcxIdentityWriterRawWithReceipt(migration.pathContract, raw, options);
+  return await writeLcxIdentityWriterRawWithReceipt(pathContract, raw, options);
 }
 
 export async function rollbackSessionStoreIdentityMigration(
@@ -86,7 +105,12 @@ export function resolveIdentityMigrationTranscriptPath(
   sessionId: string,
   topicId?: string | number,
 ): string {
-  return resolveSessionTranscriptPathInDir(sessionId, migration.writeSessionsDir, topicId);
+  const pathContract = resolveCurrentSessionIdentityPathContract(migration);
+  return resolveSessionTranscriptPathInDir(
+    sessionId,
+    path.dirname(pathContract.writePath),
+    topicId,
+  );
 }
 
 export async function appendSessionTranscriptForIdentityMigration(params: {
@@ -100,9 +124,10 @@ export async function appendSessionTranscriptForIdentityMigration(params: {
     params.sessionId,
     params.topicId,
   );
+  const pathContract = resolveCurrentSessionIdentityPathContract(params.migration);
   const legacySessionFile = resolveSessionTranscriptPathInDir(
     params.sessionId,
-    params.migration.readSessionsDir,
+    path.dirname(pathContract.readPath),
     params.topicId,
   );
   const writeExists = await fs
@@ -112,7 +137,7 @@ export async function appendSessionTranscriptForIdentityMigration(params: {
   const readPath = writeExists ? sessionFile : legacySessionFile;
   const transcriptContract = createLcxIdentityWriterPathContract({
     writer: "sessions",
-    migrationPlan: params.migration.pathContract.migrationPlan,
+    migrationPlan: pathContract.migrationPlan,
     readPath,
     writePath: sessionFile,
     auditPath: params.migration.pathContract.auditPath,

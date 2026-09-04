@@ -18,6 +18,7 @@ import {
 import { getFileStatSnapshot, isCacheEnabled, resolveCacheTtlMs } from "../cache-utils.js";
 import { enforceSessionDiskBudget, type SessionDiskBudgetSweepResult } from "./disk-budget.js";
 import {
+  resolveCurrentSessionIdentityPathContract,
   writeSessionStoreForIdentityMigration,
   type LcxIdentitySessionMigration,
 } from "./identity-migration.js";
@@ -470,9 +471,10 @@ async function saveSessionStoreUnlocked(
 
   const json = JSON.stringify(store, null, 2);
   if (opts?.identityMigration) {
+    const pathContract = resolveCurrentSessionIdentityPathContract(opts.identityMigration);
     await writeSessionStoreForIdentityMigration(opts.identityMigration, store, {
-      expectedReadPath: storePath,
-      expectedWritePath: opts.identityMigration.writeStorePath,
+      expectedReadPath: pathContract.readPath,
+      expectedWritePath: pathContract.writePath,
     });
     updateSessionStoreWriteCaches({
       storePath: opts.identityMigration.writeStorePath,

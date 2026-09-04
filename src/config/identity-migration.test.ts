@@ -146,6 +146,42 @@ describe("LCX identity migration writer contract", () => {
     });
   });
 
+  it("refreshes the session path contract after the first canonical write", async () => {
+    await withTempRoot(async (root) => {
+      const legacyStorePath = path.join(
+        root,
+        ".openclaw",
+        "agents",
+        "main",
+        "sessions",
+        "sessions.json",
+      );
+      await writeRaw(legacyStorePath, "{}\n");
+      const migration = createLcxIdentitySessionMigration({ migrationPlan: migrationPlan(root) });
+
+      await saveSessionStore(
+        legacyStorePath,
+        { "agent:main": { sessionId: "s-4", updatedAt: 1 } },
+        { skipMaintenance: true, identityMigration: migration },
+      );
+      await saveSessionStore(
+        legacyStorePath,
+        { "agent:main": { sessionId: "s-4", updatedAt: 2 } },
+        { skipMaintenance: true, identityMigration: migration },
+      );
+
+      expect(
+        JSON.parse(
+          await fs.readFile(
+            path.join(root, ".lcx", "agents", "main", "sessions", "sessions.json"),
+            "utf8",
+          ),
+        ),
+      ).toMatchObject({ "agent:main": { updatedAt: 2 } });
+      expect(await fs.readFile(legacyStorePath, "utf8")).toBe("{}\n");
+    });
+  });
+
   it("appends a transcript through SessionManager before committing the canonical raw file", async () => {
     await withTempRoot(async (root) => {
       const legacyTranscriptPath = path.join(
@@ -188,7 +224,7 @@ describe("LCX identity migration writer contract", () => {
     });
   });
 
-  it("fails closed on stale split state and external rollback changes", async () => {
+  it("refreshes the active target and fails closed on external rollback changes", async () => {
     await withTempRoot(async (root) => {
       const legacyStorePath = path.join(
         root,
@@ -209,9 +245,7 @@ describe("LCX identity migration writer contract", () => {
       await writeRaw(legacyStorePath, "{}\n");
       const migration = createLcxIdentitySessionMigration({ migrationPlan: migrationPlan(root) });
       await writeRaw(canonicalStorePath, "{}\n");
-      await expect(writeSessionStoreForIdentityMigration(migration, {})).rejects.toMatchObject({
-        code: "LCX_IDENTITY_SPLIT_STATE",
-      });
+      await expect(writeSessionStoreForIdentityMigration(migration, {})).resolves.toBeDefined();
 
       await fs.rm(canonicalStorePath);
       const receipt = await writeSessionStoreForIdentityMigration(migration, {});
