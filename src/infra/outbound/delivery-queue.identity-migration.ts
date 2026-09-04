@@ -3,9 +3,12 @@ import path from "node:path";
 import type { ReplyPayload } from "../../auto-reply/types.js";
 import {
   createLcxIdentityWriterPathContract,
+  removeLcxIdentityWriterWithReceipt,
   resolveLcxIdentityStateWriterPathContract,
+  rollbackLcxIdentityRemoval,
   rollbackLcxIdentityWriter,
   writeLcxIdentityWriterRawWithReceipt,
+  type LcxIdentityRemovalReceipt,
   type LcxIdentityWriteReceipt,
   type LcxIdentityWriterPathContract,
 } from "../../config/identity-migration.js";
@@ -42,6 +45,13 @@ export type IdentityQueuedDelivery = {
   lastAttemptAt?: number;
   lastError?: string;
 };
+
+export type LcxIdentityDeliveryQueueMutationReceipt = Readonly<{
+  write: LcxIdentityWriteReceipt;
+  removedSource?: LcxIdentityRemovalReceipt;
+}>;
+
+export type LcxIdentityDeliveryQueueRemovalReceipt = LcxIdentityRemovalReceipt;
 
 export function createLcxIdentityDeliveryQueueMigration(params: {
   migrationPlan: LcxIdentityMigrationPlan;
@@ -81,6 +91,70 @@ function resolveEntryContract(
     writePath: path.join(failed ? migration.writeFailedDir : migration.writeQueueDir, fileName),
     auditPath: migration.pathContract.auditPath,
   });
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  return await fs
+    .access(filePath)
+    .then(() => true)
+    .catch(() => false);
+}
+
+async function resolveActiveEntryPaths(params: {
+  migration: LcxIdentityDeliveryQueueMigration;
+  id: string;
+  failed?: boolean;
+}): Promise<{ readPath: string; writePath: string }> {
+  if (!SAFE_QUEUE_ENTRY_ID_RE.test(params.id)) {
+    throw new Error(`Invalid delivery queue entry ID: ${params.id}`);
+  }
+  const fileName = `${params.id}.json`;
+  const canonicalPath = path.join(
+    params.failed ? params.migration.writeFailedDir : params.migration.writeQueueDir,
+    fileName,
+  );
+  const legacyPath = path.join(
+    params.failed ? params.migration.readFailedDir : params.migration.readQueueDir,
+    fileName,
+  );
+  const [canonicalExists, legacyExists] = await Promise.all([
+    pathExists(canonicalPath),
+    pathExists(legacyPath),
+  ]);
+  if (canonicalExists && legacyExists) {
+    throw new Error(`Delivery queue migration found split entry state for ${params.id}`);
+  }
+  return {
+    readPath: canonicalExists ? canonicalPath : legacyPath,
+    writePath: canonicalPath,
+  };
+}
+
+function createQueueEntryContract(params: {
+  migration: LcxIdentityDeliveryQueueMigration;
+  readPath: string;
+  writePath: string;
+}): LcxIdentityWriterPathContract & Readonly<{ writer: "queues" }> {
+  return createLcxIdentityWriterPathContract({
+    writer: "queues",
+    migrationPlan: params.migration.pathContract.migrationPlan,
+    readPath: params.readPath,
+    writePath: params.writePath,
+    auditPath: params.migration.pathContract.auditPath,
+  });
+}
+
+async function removeQueueEntryWithReceipt(params: {
+  migration: LcxIdentityDeliveryQueueMigration;
+  filePath: string;
+}): Promise<LcxIdentityDeliveryQueueRemovalReceipt> {
+  return await removeLcxIdentityWriterWithReceipt(
+    createQueueEntryContract({
+      migration: params.migration,
+      readPath: params.filePath,
+      writePath: params.filePath,
+    }),
+  );
 }
 
 export async function readPendingDeliveriesForIdentityMigration(
@@ -166,6 +240,93 @@ export async function enqueueDeliveryForIdentityMigration(params: {
     JSON.stringify(entry, null, 2),
   );
   return { id, receipt };
+}
+
+export async function ackDeliveryForIdentityMigration(params: {
+  migration: LcxIdentityDeliveryQueueMigration;
+  id: string;
+}): Promise<LcxIdentityDeliveryQueueRemovalReceipt | null> {
+  const paths = await resolveActiveEntryPaths(params);
+  if (!(await pathExists(paths.readPath))) {
+    return null;
+  }
+  return await removeQueueEntryWithReceipt({
+    migration: params.migration,
+    filePath: paths.readPath,
+  });
+}
+
+export async function failDeliveryForIdentityMigration(params: {
+  migration: LcxIdentityDeliveryQueueMigration;
+  id: string;
+  error: string;
+  nowMs?: number;
+}): Promise<LcxIdentityDeliveryQueueMutationReceipt> {
+  const paths = await resolveActiveEntryPaths(params);
+  const raw = await fs.readFile(paths.readPath, "utf8");
+  const entry = JSON.parse(raw) as IdentityQueuedDelivery;
+  const next: IdentityQueuedDelivery = {
+    ...entry,
+    retryCount: entry.retryCount + 1,
+    lastAttemptAt: params.nowMs ?? Date.now(),
+    lastError: params.error,
+  };
+  const write = await writeLcxIdentityWriterRawWithReceipt(
+    createQueueEntryContract({
+      migration: params.migration,
+      readPath: paths.readPath,
+      writePath: paths.writePath,
+    }),
+    JSON.stringify(next, null, 2),
+  );
+  const removedSource =
+    paths.readPath === paths.writePath
+      ? undefined
+      : await removeQueueEntryWithReceipt({
+          migration: params.migration,
+          filePath: paths.readPath,
+        });
+  return Object.freeze({ write, removedSource });
+}
+
+export async function moveDeliveryToFailedForIdentityMigration(params: {
+  migration: LcxIdentityDeliveryQueueMigration;
+  id: string;
+}): Promise<LcxIdentityDeliveryQueueMutationReceipt | null> {
+  const source = await resolveActiveEntryPaths(params);
+  if (!(await pathExists(source.readPath))) {
+    return null;
+  }
+  const destination = await resolveActiveEntryPaths({ ...params, failed: true });
+  const raw = await fs.readFile(source.readPath, "utf8");
+  const write = await writeLcxIdentityWriterRawWithReceipt(
+    createQueueEntryContract({
+      migration: params.migration,
+      readPath: source.readPath,
+      writePath: destination.writePath,
+    }),
+    raw,
+  );
+  const removedSource = await removeQueueEntryWithReceipt({
+    migration: params.migration,
+    filePath: source.readPath,
+  });
+  return Object.freeze({ write, removedSource });
+}
+
+export async function rollbackDeliveryQueueMutation(
+  receipt: LcxIdentityDeliveryQueueMutationReceipt,
+): Promise<void> {
+  if (receipt.removedSource) {
+    await rollbackLcxIdentityRemoval(receipt.removedSource);
+  }
+  await rollbackLcxIdentityWriter(receipt.write);
+}
+
+export async function rollbackDeliveryQueueRemoval(
+  receipt: LcxIdentityDeliveryQueueRemovalReceipt,
+): Promise<void> {
+  await rollbackLcxIdentityRemoval(receipt);
 }
 
 export async function rollbackDeliveryQueueIdentityMigration(

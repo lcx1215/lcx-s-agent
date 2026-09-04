@@ -5,9 +5,14 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { resolveLcxIdentityMigrationPlan } from "../../config/paths.js";
 import {
+  ackDeliveryForIdentityMigration,
   createLcxIdentityDeliveryQueueMigration,
   enqueueDeliveryForIdentityMigration,
+  failDeliveryForIdentityMigration,
+  moveDeliveryToFailedForIdentityMigration,
   readPendingDeliveriesForIdentityMigration,
+  rollbackDeliveryQueueMutation,
+  rollbackDeliveryQueueRemoval,
   rollbackDeliveryQueueIdentityMigration,
 } from "./delivery-queue.identity-migration.js";
 
@@ -96,6 +101,113 @@ describe("LCX identity migration delivery queue writer", () => {
       expect(() => createLcxIdentityDeliveryQueueMigration({ migrationPlan: plan })).toThrow(
         /state-root authority/,
       );
+    });
+  });
+
+  it("migrates fail and ack operations without leaving a legacy duplicate", async () => {
+    await withTempRoot(async (root) => {
+      const legacyQueueDir = path.join(root, ".openclaw", "delivery-queue");
+      const entry = {
+        id: "legacy-entry",
+        enqueuedAt: 1,
+        retryCount: 0,
+        channel: "telegram" as const,
+        to: "1",
+        payloads: [],
+      };
+      await fs.mkdir(legacyQueueDir, { recursive: true });
+      await fs.writeFile(path.join(legacyQueueDir, "legacy-entry.json"), JSON.stringify(entry));
+      const migration = createLcxIdentityDeliveryQueueMigration({
+        migrationPlan: migrationPlan(root),
+      });
+
+      const failed = await failDeliveryForIdentityMigration({
+        migration,
+        id: entry.id,
+        error: "network",
+        nowMs: 2,
+      });
+      expect(
+        JSON.parse(
+          await fs.readFile(path.join(migration.writeQueueDir, "legacy-entry.json"), "utf8"),
+        ),
+      ).toMatchObject({ retryCount: 1, lastError: "network", lastAttemptAt: 2 });
+      await expect(fs.access(path.join(legacyQueueDir, "legacy-entry.json"))).rejects.toMatchObject(
+        {
+          code: "ENOENT",
+        },
+      );
+      await rollbackDeliveryQueueMutation(failed);
+      await expect(
+        fs.access(path.join(migration.writeQueueDir, "legacy-entry.json")),
+      ).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await expect(
+        fs.access(path.join(legacyQueueDir, "legacy-entry.json")),
+      ).resolves.toBeUndefined();
+
+      const { id } = await enqueueDeliveryForIdentityMigration({
+        migration,
+        channel: "telegram",
+        to: "2",
+        payloads: [],
+      });
+      const ack = await ackDeliveryForIdentityMigration({ migration, id });
+      expect(ack).not.toBeNull();
+      await expect(
+        fs.access(path.join(migration.writeQueueDir, `${id}.json`)),
+      ).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await rollbackDeliveryQueueRemoval(ack!);
+      await expect(
+        fs.access(path.join(migration.writeQueueDir, `${id}.json`)),
+      ).resolves.toBeUndefined();
+    });
+  });
+
+  it("moves a legacy entry to canonical failed storage and rolls back both files", async () => {
+    await withTempRoot(async (root) => {
+      const legacyQueueDir = path.join(root, ".openclaw", "delivery-queue");
+      const entry = {
+        id: "failed-entry",
+        enqueuedAt: 1,
+        retryCount: 5,
+        channel: "telegram" as const,
+        to: "1",
+        payloads: [],
+      };
+      await fs.mkdir(legacyQueueDir, { recursive: true });
+      await fs.writeFile(path.join(legacyQueueDir, "failed-entry.json"), JSON.stringify(entry));
+      const migration = createLcxIdentityDeliveryQueueMigration({
+        migrationPlan: migrationPlan(root),
+      });
+
+      const receipt = await moveDeliveryToFailedForIdentityMigration({
+        migration,
+        id: entry.id,
+      });
+      expect(receipt).not.toBeNull();
+      expect(
+        JSON.parse(
+          await fs.readFile(path.join(migration.writeFailedDir, "failed-entry.json"), "utf8"),
+        ),
+      ).toMatchObject(entry);
+      await expect(fs.access(path.join(legacyQueueDir, "failed-entry.json"))).rejects.toMatchObject(
+        {
+          code: "ENOENT",
+        },
+      );
+      await rollbackDeliveryQueueMutation(receipt!);
+      await expect(
+        fs.access(path.join(migration.writeFailedDir, "failed-entry.json")),
+      ).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await expect(
+        fs.access(path.join(legacyQueueDir, "failed-entry.json")),
+      ).resolves.toBeUndefined();
     });
   });
 });
