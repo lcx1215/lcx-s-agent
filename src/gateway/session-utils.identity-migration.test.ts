@@ -7,7 +7,9 @@ import { formatSessionArchiveTimestamp } from "../config/sessions/artifacts.js";
 import { createLcxIdentitySessionMigration } from "../config/sessions/identity-migration.js";
 import {
   archiveSessionTranscriptForIdentityMigration,
+  cleanupArchivedSessionTranscriptsForIdentityMigration,
   rollbackSessionTranscriptIdentityArchive,
+  rollbackSessionArchiveCleanupIdentityMigration,
 } from "./session-utils.fs.js";
 
 const tempRoots: string[] = [];
@@ -78,5 +80,34 @@ describe("LCX session transcript archive identity migration", () => {
         reason: "reset",
       }),
     ).rejects.toMatchObject({ code: "LCX_IDENTITY_SPLIT_STATE" });
+  });
+
+  it("cleans old archives through backup receipts and restores them on rollback", async () => {
+    const migration = await createLegacyMigration();
+    await fs.mkdir(migration.writeSessionsDir, { recursive: true });
+    const nowMs = Date.parse("2026-09-04T10:20:30.000Z");
+    const oldArchive = path.join(
+      migration.writeSessionsDir,
+      `session-3.jsonl.deleted.${formatSessionArchiveTimestamp(nowMs - 10_000)}`,
+    );
+    const freshArchive = path.join(
+      migration.writeSessionsDir,
+      `session-4.jsonl.deleted.${formatSessionArchiveTimestamp(nowMs - 100)}`,
+    );
+    await fs.writeFile(oldArchive, "old", "utf8");
+    await fs.writeFile(freshArchive, "fresh", "utf8");
+
+    const cleanup = await cleanupArchivedSessionTranscriptsForIdentityMigration({
+      migration,
+      olderThanMs: 1_000,
+      nowMs,
+    });
+    expect(cleanup.result).toEqual({ removed: 1, scanned: 2 });
+    expect(cleanup.receipt.removed).toHaveLength(1);
+    await expect(fs.access(oldArchive)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.readFile(freshArchive, "utf8")).resolves.toBe("fresh");
+
+    await rollbackSessionArchiveCleanupIdentityMigration(cleanup.receipt);
+    await expect(fs.readFile(oldArchive, "utf8")).resolves.toBe("old");
   });
 });

@@ -191,6 +191,10 @@ export type LcxIdentitySessionArchiveReceipt = Readonly<{
   sourceRemoval: LcxIdentityRemovalReceipt;
 }>;
 
+export type LcxIdentitySessionArchiveCleanupReceipt = Readonly<{
+  removed: readonly LcxIdentityRemovalReceipt[];
+}>;
+
 async function identityFileExists(filePath: string): Promise<boolean> {
   return await fs.promises
     .stat(filePath)
@@ -408,6 +412,76 @@ export async function cleanupArchivedSessionTranscripts(opts: {
   }
 
   return { removed, scanned };
+}
+
+export async function cleanupArchivedSessionTranscriptsForIdentityMigration(params: {
+  migration: LcxIdentitySessionMigration;
+  olderThanMs: number;
+  reason?: ArchiveFileReason;
+  nowMs?: number;
+}): Promise<{
+  result: { removed: number; scanned: number };
+  receipt: LcxIdentitySessionArchiveCleanupReceipt;
+}> {
+  if (!Number.isFinite(params.olderThanMs) || params.olderThanMs < 0) {
+    return { result: { removed: 0, scanned: 0 }, receipt: { removed: [] } };
+  }
+  const now = params.nowMs ?? Date.now();
+  const reason = params.reason ?? "deleted";
+  const directories = Array.from(
+    new Set(
+      [params.migration.readSessionsDir, params.migration.writeSessionsDir].map((dir) =>
+        path.resolve(dir),
+      ),
+    ),
+  );
+  const removed: LcxIdentityRemovalReceipt[] = [];
+  let scanned = 0;
+  try {
+    for (const dir of directories) {
+      const entries = await fs.promises.readdir(dir).catch(() => []);
+      for (const entry of entries) {
+        const timestamp = parseSessionArchiveTimestamp(entry, reason);
+        if (timestamp == null) {
+          continue;
+        }
+        scanned += 1;
+        if (now - timestamp <= params.olderThanMs) {
+          continue;
+        }
+        const fullPath = path.join(dir, entry);
+        if (!(await identityFileExists(fullPath))) {
+          continue;
+        }
+        removed.push(
+          await removeLcxIdentityWriterWithReceipt(
+            createSessionArchiveContract({
+              migration: params.migration,
+              writer: "backups",
+              filePath: fullPath,
+            }),
+          ),
+        );
+      }
+    }
+  } catch (error) {
+    for (const receipt of removed.toReversed()) {
+      await rollbackLcxIdentityRemoval(receipt);
+    }
+    throw error;
+  }
+  return {
+    result: { removed: removed.length, scanned },
+    receipt: Object.freeze({ removed: Object.freeze(removed) }),
+  };
+}
+
+export async function rollbackSessionArchiveCleanupIdentityMigration(
+  receipt: LcxIdentitySessionArchiveCleanupReceipt,
+): Promise<void> {
+  for (const removed of receipt.removed.toReversed()) {
+    await rollbackLcxIdentityRemoval(removed);
+  }
 }
 
 export function capArrayByJsonBytes<T>(
