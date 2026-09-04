@@ -15,7 +15,8 @@ export type LcxIdentityWriterName =
   | "device-auth"
   | "device-pairing"
   | "node-pairing"
-  | "exec-approvals";
+  | "exec-approvals"
+  | "restart-sentinel";
 
 export type LcxIdentityWriterPathContract = Readonly<{
   writer: LcxIdentityWriterName;
@@ -44,6 +45,19 @@ export type LcxIdentityWriteReceipt = Readonly<{
   rollback: Readonly<{
     path: string;
     strategy: "restore-backup" | "remove-written-target";
+  }>;
+}>;
+
+export type LcxIdentityRemovalReceipt = Readonly<{
+  pathContract: LcxIdentityWriterPathContract;
+  previous: Readonly<{
+    exists: true;
+    hash: string;
+    bytes: number;
+  }>;
+  rollback: Readonly<{
+    path: string;
+    strategy: "restore-removed-target";
   }>;
 }>;
 
@@ -308,6 +322,86 @@ export async function rollbackLcxIdentityWriter(receipt: LcxIdentityWriteReceipt
     noSplitState: pathContract.noSplitState,
     result: receipt.rollback.strategy === "restore-backup" ? "restored" : "removed",
     expectedNextHash: receipt.next.hash,
+    restoredHash: receipt.previous.hash,
+  });
+}
+
+export async function removeLcxIdentityWriterWithReceipt(
+  contract: LcxIdentityWriterPathContract,
+  options?: { expectedReadPath?: string; expectedWritePath?: string },
+): Promise<LcxIdentityRemovalReceipt> {
+  assertLcxIdentityWriterPathContract(contract, options);
+  const previousRaw = await readOptionalRaw(contract.writePath);
+  if (previousRaw === null) {
+    throw new LcxIdentityWriterContractError(
+      `${contract.writer} remove target is missing at ${contract.writePath}`,
+      "LCX_IDENTITY_REMOVE_TARGET_MISSING",
+    );
+  }
+  const previousHash = hashRaw(previousRaw);
+  await writeRawAtomically(contract.backupPath, previousRaw);
+  await fs.promises.unlink(contract.writePath);
+  const receipt: LcxIdentityRemovalReceipt = Object.freeze({
+    pathContract: contract,
+    previous: Object.freeze({
+      exists: true as const,
+      hash: previousHash,
+      bytes: Buffer.byteLength(previousRaw, "utf8"),
+    }),
+    rollback: Object.freeze({
+      path: contract.rollbackPath,
+      strategy: "restore-removed-target" as const,
+    }),
+  });
+  await appendIdentityAudit(contract, {
+    ts: new Date().toISOString(),
+    source: "lcx-identity-migration",
+    event: "identity.remove",
+    writer: contract.writer,
+    readPath: contract.readPath,
+    writePath: contract.writePath,
+    backupPath: contract.backupPath,
+    auditPath: contract.auditPath,
+    rollbackPath: contract.rollbackPath,
+    noSplitState: contract.noSplitState,
+    previousHash,
+    previousBytes: receipt.previous.bytes,
+  });
+  return receipt;
+}
+
+export async function rollbackLcxIdentityRemoval(
+  receipt: LcxIdentityRemovalReceipt,
+): Promise<void> {
+  const { pathContract } = receipt;
+  const currentRaw = await readOptionalRaw(pathContract.writePath);
+  if (currentRaw !== null) {
+    throw new LcxIdentityWriterContractError(
+      `${pathContract.writer} removal rollback refused because the target changed`,
+      "LCX_IDENTITY_ROLLBACK_TARGET_MISMATCH",
+    );
+  }
+  const backupRaw = await readOptionalRaw(receipt.rollback.path);
+  if (backupRaw === null || hashRaw(backupRaw) !== receipt.previous.hash) {
+    throw new LcxIdentityWriterContractError(
+      `${pathContract.writer} removal rollback backup is missing or changed at ${receipt.rollback.path}`,
+      "LCX_IDENTITY_ROLLBACK_BACKUP_MISMATCH",
+    );
+  }
+  await writeRawAtomically(pathContract.writePath, backupRaw);
+  await appendIdentityAudit(pathContract, {
+    ts: new Date().toISOString(),
+    source: "lcx-identity-migration",
+    event: "identity.rollback",
+    writer: pathContract.writer,
+    readPath: pathContract.readPath,
+    writePath: pathContract.writePath,
+    backupPath: pathContract.backupPath,
+    auditPath: pathContract.auditPath,
+    rollbackPath: pathContract.rollbackPath,
+    noSplitState: pathContract.noSplitState,
+    result: "restored-after-remove",
+    removedHash: receipt.previous.hash,
     restoredHash: receipt.previous.hash,
   });
 }
