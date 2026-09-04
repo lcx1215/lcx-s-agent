@@ -25,7 +25,8 @@ export type LcxIdentityWriterName =
   | "discord-model-picker"
   | "telegram-offset"
   | "telegram-sticker-cache"
-  | "update-check";
+  | "update-check"
+  | "matrix-storage";
 
 export type LcxIdentityWriterPathContract = Readonly<{
   writer: LcxIdentityWriterName;
@@ -67,6 +68,22 @@ export type LcxIdentityRemovalReceipt = Readonly<{
   rollback: Readonly<{
     path: string;
     strategy: "restore-removed-target";
+  }>;
+}>;
+
+export type LcxIdentityPathMoveReceipt = Readonly<{
+  pathContract: LcxIdentityWriterPathContract;
+  previous: Readonly<{
+    exists: true;
+    kind: "file" | "directory";
+    bytes: number | null;
+    contentHash: string | null;
+    dev: number;
+    ino: number;
+  }>;
+  rollback: Readonly<{
+    path: string;
+    strategy: "move-written-target-back";
   }>;
 }>;
 
@@ -412,5 +429,134 @@ export async function rollbackLcxIdentityRemoval(
     result: "restored-after-remove",
     removedHash: receipt.previous.hash,
     restoredHash: receipt.previous.hash,
+  });
+}
+
+export async function moveLcxIdentityPathWithReceipt(
+  contract: LcxIdentityWriterPathContract,
+): Promise<LcxIdentityPathMoveReceipt> {
+  assertLcxIdentityWriterPathContract(contract);
+  if (contract.readPath === contract.writePath) {
+    throw new LcxIdentityWriterContractError(
+      `${contract.writer} path move requires distinct read and write paths`,
+      "LCX_IDENTITY_MOVE_SAME_PATH",
+    );
+  }
+  const sourceStat = await fs.promises.lstat(contract.readPath).catch((err) => {
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return null;
+    }
+    throw err;
+  });
+  if (!sourceStat) {
+    throw new LcxIdentityWriterContractError(
+      `${contract.writer} move source is missing at ${contract.readPath}`,
+      "LCX_IDENTITY_MOVE_SOURCE_MISSING",
+    );
+  }
+  if (!sourceStat.isFile() && !sourceStat.isDirectory()) {
+    throw new LcxIdentityWriterContractError(
+      `${contract.writer} move source must be a file or directory at ${contract.readPath}`,
+      "LCX_IDENTITY_MOVE_UNSUPPORTED_SOURCE",
+    );
+  }
+  const destinationStat = await fs.promises.lstat(contract.writePath).catch((err) => {
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return null;
+    }
+    throw err;
+  });
+  if (destinationStat) {
+    throw new LcxIdentityWriterContractError(
+      `${contract.writer} move destination already exists at ${contract.writePath}`,
+      "LCX_IDENTITY_MOVE_DESTINATION_EXISTS",
+    );
+  }
+  await fs.promises.mkdir(path.dirname(contract.writePath), { recursive: true, mode: 0o700 });
+  await fs.promises.rename(contract.readPath, contract.writePath);
+  const sourceRaw = sourceStat.isFile()
+    ? await fs.promises.readFile(contract.writePath, "utf8")
+    : null;
+  const receipt: LcxIdentityPathMoveReceipt = Object.freeze({
+    pathContract: contract,
+    previous: Object.freeze({
+      exists: true as const,
+      kind: sourceStat.isDirectory() ? "directory" : "file",
+      bytes: sourceStat.isFile() ? sourceStat.size : null,
+      contentHash: sourceRaw === null ? null : hashRaw(sourceRaw),
+      dev: sourceStat.dev,
+      ino: sourceStat.ino,
+    }),
+    rollback: Object.freeze({
+      path: contract.rollbackPath,
+      strategy: "move-written-target-back" as const,
+    }),
+  });
+  await appendIdentityAudit(contract, {
+    ts: new Date().toISOString(),
+    source: "lcx-identity-migration",
+    event: "identity.move",
+    writer: contract.writer,
+    readPath: contract.readPath,
+    writePath: contract.writePath,
+    backupPath: contract.backupPath,
+    auditPath: contract.auditPath,
+    rollbackPath: contract.rollbackPath,
+    noSplitState: contract.noSplitState,
+    previousKind: receipt.previous.kind,
+    previousBytes: receipt.previous.bytes,
+  });
+  return receipt;
+}
+
+export async function rollbackLcxIdentityPathMove(
+  receipt: LcxIdentityPathMoveReceipt,
+): Promise<void> {
+  const { pathContract } = receipt;
+  const sourceStat = await fs.promises.lstat(pathContract.readPath).catch((err) => {
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return null;
+    }
+    throw err;
+  });
+  const destinationStat = await fs.promises.lstat(pathContract.writePath).catch((err) => {
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return null;
+    }
+    throw err;
+  });
+  const destinationRaw = destinationStat?.isFile()
+    ? await fs.promises.readFile(pathContract.writePath, "utf8")
+    : null;
+  if (
+    sourceStat ||
+    !destinationStat ||
+    (receipt.previous.kind === "directory" && !destinationStat.isDirectory()) ||
+    (receipt.previous.kind === "file" && !destinationStat.isFile()) ||
+    destinationStat.dev !== receipt.previous.dev ||
+    destinationStat.ino !== receipt.previous.ino ||
+    (receipt.previous.contentHash !== null &&
+      (destinationRaw === null || hashRaw(destinationRaw) !== receipt.previous.contentHash))
+  ) {
+    throw new LcxIdentityWriterContractError(
+      `${pathContract.writer} move rollback refused because the moved target changed`,
+      "LCX_IDENTITY_ROLLBACK_TARGET_MISMATCH",
+    );
+  }
+  await fs.promises.mkdir(path.dirname(pathContract.readPath), { recursive: true, mode: 0o700 });
+  await fs.promises.rename(pathContract.writePath, pathContract.readPath);
+  await appendIdentityAudit(pathContract, {
+    ts: new Date().toISOString(),
+    source: "lcx-identity-migration",
+    event: "identity.move.rollback",
+    writer: pathContract.writer,
+    readPath: pathContract.readPath,
+    writePath: pathContract.writePath,
+    backupPath: pathContract.backupPath,
+    auditPath: pathContract.auditPath,
+    rollbackPath: pathContract.rollbackPath,
+    noSplitState: pathContract.noSplitState,
+    result: "restored",
+    restoredKind: receipt.previous.kind,
   });
 }
