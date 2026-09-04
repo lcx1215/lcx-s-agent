@@ -37,6 +37,9 @@ import {
   pruneStaleEntries,
   resolveMaintenanceConfig,
   rotateSessionFile,
+  rotateSessionFileForIdentityMigration,
+  rollbackSessionFileIdentityRotation,
+  type LcxIdentitySessionRotationReceipt,
   type ResolvedSessionMaintenanceConfig,
   type SessionMaintenanceWarning,
 } from "./store-maintenance.js";
@@ -306,8 +309,14 @@ export {
   pruneStaleEntries,
   resolveMaintenanceConfig,
   rotateSessionFile,
+  rotateSessionFileForIdentityMigration,
+  rollbackSessionFileIdentityRotation,
 };
-export type { ResolvedSessionMaintenanceConfig, SessionMaintenanceWarning };
+export type {
+  LcxIdentitySessionRotationReceipt,
+  ResolvedSessionMaintenanceConfig,
+  SessionMaintenanceWarning,
+};
 
 export type SaveSessionStoreOptions = {
   /** Skip pruning, capping, and rotation (e.g. during one-time migrations). */
