@@ -68,6 +68,12 @@ describe("LCX identity migration delivery queue writer", () => {
         JSON.parse(await fs.readFile(path.join(migration.writeQueueDir, `${id}.json`), "utf8")),
       ).toMatchObject({ id, channel: "telegram", to: "2" });
       expect(await fs.readdir(legacyQueueDir)).toEqual(["legacy-entry.json"]);
+      await expect(readPendingDeliveriesForIdentityMigration(migration)).resolves.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: "legacy-entry", to: "1" }),
+          expect.objectContaining({ id, to: "2" }),
+        ]),
+      );
 
       await rollbackDeliveryQueueIdentityMigration(receipt);
       await expect(
@@ -75,6 +81,21 @@ describe("LCX identity migration delivery queue writer", () => {
       ).rejects.toMatchObject({
         code: "ENOENT",
       });
+    });
+  });
+
+  it("rejects a config-only override because the queue needs a state root", async () => {
+    await withTempRoot(async (root) => {
+      const plan = resolveLcxIdentityMigrationPlan({
+        env: {
+          OPENCLAW_CONFIG_PATH: path.join(root, "operator", "openclaw.json"),
+        } as NodeJS.ProcessEnv,
+        homedir: () => root,
+        existsSync: nodeFs.existsSync,
+      });
+      expect(() => createLcxIdentityDeliveryQueueMigration({ migrationPlan: plan })).toThrow(
+        /state-root authority/,
+      );
     });
   });
 });

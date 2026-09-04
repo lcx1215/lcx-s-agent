@@ -47,6 +47,9 @@ export function createLcxIdentityDeliveryQueueMigration(params: {
   migrationPlan: LcxIdentityMigrationPlan;
   existsSync?: (candidate: string) => boolean;
 }): LcxIdentityDeliveryQueueMigration {
+  if (params.migrationPlan.mode === "explicit-config-override") {
+    throw new Error("Delivery queue migration requires a state-root authority");
+  }
   const pathContract = resolveLcxIdentityStateWriterPathContract({
     writer: "queues",
     migrationPlan: params.migrationPlan,
@@ -83,22 +86,41 @@ function resolveEntryContract(
 export async function readPendingDeliveriesForIdentityMigration(
   migration: LcxIdentityDeliveryQueueMigration,
 ): Promise<IdentityQueuedDelivery[]> {
-  let files: string[];
-  try {
-    files = await fs.readdir(migration.readQueueDir);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
-      return [];
+  const files = new Set<string>();
+  for (const queueDir of [migration.writeQueueDir, migration.readQueueDir]) {
+    try {
+      for (const file of await fs.readdir(queueDir)) {
+        if (file.endsWith(".json")) {
+          files.add(file);
+        }
+      }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") {
+        throw err;
+      }
     }
-    throw err;
   }
   const entries: IdentityQueuedDelivery[] = [];
   for (const file of files) {
-    if (!file.endsWith(".json")) {
-      continue;
-    }
+    const candidatePaths = [
+      path.join(migration.writeQueueDir, file),
+      path.join(migration.readQueueDir, file),
+    ];
     try {
-      const raw = await fs.readFile(path.join(migration.readQueueDir, file), "utf8");
+      let raw: string | null = null;
+      for (const candidatePath of candidatePaths) {
+        try {
+          raw = await fs.readFile(candidatePath, "utf8");
+          break;
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") {
+            throw err;
+          }
+        }
+      }
+      if (raw === null) {
+        continue;
+      }
       const parsed: unknown = JSON.parse(raw);
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         entries.push(parsed as IdentityQueuedDelivery);
