@@ -127,25 +127,29 @@ describe("state + config path candidates", () => {
     expect(candidates).toEqual(expected);
   });
 
-  it("uses ~/.lcx even when the compatibility dir exists", async () => {
+  it("keeps a legacy root active when it is the existing state source", async () => {
     await withTempRoot("openclaw-state-", async (root) => {
       const compatibilityDir = path.join(root, ".openclaw");
       await fs.mkdir(compatibilityDir, { recursive: true });
       const resolved = resolveStateDir({} as NodeJS.ProcessEnv, () => root);
-      expect(resolved).toBe(path.join(root, ".lcx"));
+      expect(resolved).toBe(compatibilityDir);
     });
   });
 
-  it("does not fall back to a legacy state dir after activation", async () => {
+  it("keeps legacy config and state on one active root", async () => {
     await withTempRoot("openclaw-state-legacy-", async (root) => {
-      const legacyDir = path.join(root, ".clawdbot");
+      const legacyDir = path.join(root, ".openclaw");
       await fs.mkdir(legacyDir, { recursive: true });
+      await fs.writeFile(path.join(legacyDir, "openclaw.json"), "{}", "utf8");
       const resolved = resolveStateDir({} as NodeJS.ProcessEnv, () => root);
-      expect(resolved).toBe(path.join(root, ".lcx"));
+      expect(resolved).toBe(legacyDir);
+      expect(resolveConfigPath({} as NodeJS.ProcessEnv, resolved, () => root)).toBe(
+        path.join(legacyDir, "openclaw.json"),
+      );
     });
   });
 
-  it("CONFIG_PATH stays canonical when a compatibility config exists", async () => {
+  it("keeps CONFIG_PATH on the legacy root until migration is explicit", async () => {
     await withTempRoot("openclaw-config-", async (root) => {
       const legacyDir = path.join(root, ".openclaw");
       await fs.mkdir(legacyDir, { recursive: true });
@@ -153,7 +157,21 @@ describe("state + config path candidates", () => {
       await fs.writeFile(legacyPath, "{}", "utf-8");
 
       const resolved = resolveConfigPathCandidate({} as NodeJS.ProcessEnv, () => root);
-      expect(resolved).toBe(path.join(root, ".lcx", "lcx.json"));
+      expect(resolved).toBe(legacyPath);
+    });
+  });
+
+  it("discovers non-openclaw legacy config filenames in the active root", async () => {
+    await withTempRoot("legacy-config-name-", async (root) => {
+      const legacyDir = path.join(root, ".openclaw");
+      const legacyPath = path.join(legacyDir, "clawdbot.json");
+      await fs.mkdir(legacyDir, { recursive: true });
+      await fs.writeFile(legacyPath, "{}", "utf8");
+
+      const env = {} as NodeJS.ProcessEnv;
+      const stateDir = resolveStateDir(env, () => root);
+      expect(resolveConfigPath(env, stateDir, () => root)).toBe(legacyPath);
+      expect(resolveConfigPathCandidate(env, () => root)).toBe(legacyPath);
     });
   });
 

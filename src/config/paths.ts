@@ -202,7 +202,9 @@ export function resolveStateDir(
   if (override) {
     return resolveUserPath(override, env, effectiveHomedir);
   }
-  return newStateDir(effectiveHomedir);
+  // Keep all normal writers on the same root as an existing compatibility
+  // config/state source until the explicit migration adapter moves it.
+  return resolveLcxIdentityMigrationPlan({ env, homedir }).readStateDir;
 }
 
 function resolveUserPath(
@@ -242,6 +244,18 @@ export function resolveCanonicalConfigPath(
   if (override) {
     return resolveUserPath(override, env, effectiveHomedir);
   }
+  const existing = IDENTITY_MIGRATION_CONFIG_FILENAMES.map((filename) =>
+    path.join(stateDir, filename),
+  ).find((candidate) => {
+    try {
+      return fs.existsSync(candidate);
+    } catch {
+      return false;
+    }
+  });
+  if (existing) {
+    return existing;
+  }
   const canonicalStateDir = resolveLcxStateDir(effectiveHomedir);
   if (path.resolve(stateDir) === path.resolve(canonicalStateDir)) {
     return path.join(stateDir, CANONICAL_CONFIG_FILENAME);
@@ -262,10 +276,6 @@ export function resolveConfigPathCandidate(
   const configOverride = env.OPENCLAW_CONFIG_PATH?.trim() || env.CLAWDBOT_CONFIG_PATH?.trim();
   if (configOverride) {
     return resolveUserPath(configOverride, env, homedir);
-  }
-  const stateOverride = env.OPENCLAW_STATE_DIR?.trim() || env.CLAWDBOT_STATE_DIR?.trim();
-  if (!stateOverride) {
-    return resolveLcxConfigPath(resolveLcxStateDir(() => resolveRequiredHomeDir(env, homedir)));
   }
   return resolveCanonicalConfigPath(env, resolveStateDir(env, homedir), homedir);
 }

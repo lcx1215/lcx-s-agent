@@ -1,0 +1,66 @@
+{
+  "name": "openclaw",
+  "version": "2026.3.3",
+  "description": "Compatibility package for LCX Agent integrations that still resolve openclaw",
+  "license": "MIT",
+  "bin": {
+    "openclaw": "./openclaw.mjs"
+  },
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./plugin-sdk": {
+      "types": "./plugin-sdk.d.ts",
+      "default": "./plugin-sdk.js"
+    },
+    "./plugin-sdk/core": {
+      "types": "./plugin-sdk/core.d.ts",
+      "default": "./plugin-sdk/core.js"
+    },
+    "./plugin-sdk/telegram": {
+      "types": "./plugin-sdk/telegram.d.ts",
+      "default": "./plugin-sdk/telegram.js"
+    },
+    "./plugin-sdk/discord": {
+      "types": "./plugin-sdk/discord.d.ts",
+      "default": "./plugin-sdk/discord.js"
+    },
+    "./plugin-sdk/slack": {
+      "types": "./plugin-sdk/slack.d.ts",
+      "default": "./plugin-sdk/slack.js"
+    },
+    "./plugin-sdk/signal": {
+      "types": "./plugin-sdk/signal.d.ts",
+      "default": "./plugin-sdk/signal.js"
+    },
+    "./plugin-sdk/imessage": {
+      "types": "./plugin-sdk/imessage.d.ts",
+      "default": "./plugin-sdk/imessage.js"
+    },
+    "./plugin-sdk/whatsapp": {
+      "types": "./plugin-sdk/whatsapp.d.ts",
+      "default": "./plugin-sdk/whatsapp.js"
+    },
+    "./plugin-sdk/line": {
+      "types": "./plugin-sdk/line.d.ts",
+      "default": "./plugin-sdk/line.js"
+    },
+    "./plugin-sdk/account-id": {
+      "types": "./plugin-sdk/account-id.d.ts",
+      "default": "./plugin-sdk/account-id.js"
+    },
+    "./plugin-sdk/keyed-async-queue": {
+      "types": "./plugin-sdk/keyed-async-queue.d.ts",
+      "default": "./plugin-sdk/keyed-async-queue.js"
+    },
+    "./cli-entry": "./openclaw.mjs",
+    "./package.json": "./package.json"
+  },
+  "dependencies": {
+    "lcx-agent": "2026.3.3"
+  }
+}
