@@ -149,6 +149,16 @@ describe("resolveConfigDir", () => {
       await fs.promises.rm(root, { recursive: true, force: true });
     }
   });
+
+  it("keeps an existing compatibility config root active", () => {
+    withTempDirSync("openclaw-config-legacy-", (root) => {
+      const legacyDir = path.join(root, ".openclaw");
+      fs.mkdirSync(legacyDir, { recursive: true });
+      fs.writeFileSync(path.join(legacyDir, "openclaw.json"), "{}", "utf8");
+
+      expect(resolveConfigDir({} as NodeJS.ProcessEnv, () => root)).toBe(legacyDir);
+    });
+  });
 });
 
 describe("resolveHomeDir", () => {

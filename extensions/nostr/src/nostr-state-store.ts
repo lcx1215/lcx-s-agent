@@ -9,8 +9,8 @@ import {
   writeLcxIdentityWriterRawWithReceipt,
   type LcxIdentityWriteReceipt,
   type LcxIdentityWriterPathContract,
-} from "../../../src/config/identity-migration.js";
-import type { LcxIdentityMigrationPlan } from "../../../src/config/paths.js";
+  type LcxIdentityMigrationPlan,
+} from "lcx-agent/plugin-sdk";
 import { getNostrRuntime } from "./runtime.js";
 
 const STORE_VERSION = 2;

@@ -7,6 +7,7 @@
     "@twurple/api": "^8.0.3",
     "@twurple/auth": "^8.0.3",
     "@twurple/chat": "^8.0.3",
+    "lcx-agent": "workspace:*",
     "zod": "^4.3.6"
   },
   "openclaw": {

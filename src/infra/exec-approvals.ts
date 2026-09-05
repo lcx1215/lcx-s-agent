@@ -9,7 +9,7 @@ import {
   type LcxIdentityWriteReceipt,
   type LcxIdentityWriterPathContract,
 } from "../config/identity-migration.js";
-import { resolveNewStateDir } from "../config/paths.js";
+import { resolveStateDir } from "../config/paths.js";
 import type { LcxIdentityMigrationPlan } from "../config/paths.js";
 import { DEFAULT_AGENT_ID } from "../routing/session-key.js";
 import { expandHomePrefix } from "./home-dir.js";
@@ -139,11 +139,11 @@ function hashExecApprovalsRaw(raw: string | null): string {
 }
 
 export function resolveExecApprovalsPath(): string {
-  return path.join(resolveNewStateDir(), DEFAULT_FILE_FILENAME);
+  return path.join(resolveStateDir(), DEFAULT_FILE_FILENAME);
 }
 
 export function resolveExecApprovalsSocketPath(): string {
-  return path.join(resolveNewStateDir(), DEFAULT_SOCKET_FILENAME);
+  return path.join(resolveStateDir(), DEFAULT_SOCKET_FILENAME);
 }
 
 function normalizeAllowlistPattern(value: string | undefined): string | null {

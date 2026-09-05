@@ -15,7 +15,7 @@ import {
   type LcxIdentityWriteReceipt,
   type LcxIdentityWriterPathContract,
 } from "../config/identity-migration.js";
-import { resolveNewStateDir } from "../config/paths.js";
+import { resolveStateDir } from "../config/paths.js";
 import type { LcxIdentityMigrationPlan } from "../config/paths.js";
 import { openBoundaryFile } from "../infra/boundary-file-read.js";
 import { resolveRequiredHomeDir } from "../infra/home-dir.js";
@@ -29,7 +29,7 @@ export function resolveDefaultAgentWorkspaceDir(
   homedir: () => string = os.homedir,
 ): string {
   const home = resolveRequiredHomeDir(env, homedir);
-  const stateDir = resolveNewStateDir(() => home);
+  const stateDir = resolveStateDir(env, () => home);
   const profile = env.OPENCLAW_PROFILE?.trim();
   if (profile && profile.toLowerCase() !== "default") {
     return path.join(stateDir, `workspace-${profile}`);

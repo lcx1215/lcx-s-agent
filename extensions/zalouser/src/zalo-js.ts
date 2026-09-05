@@ -14,8 +14,8 @@ import {
   type LcxIdentityRemovalReceipt,
   type LcxIdentityWriteReceipt,
   type LcxIdentityWriterPathContract,
-} from "../../../src/config/identity-migration.js";
-import type { LcxIdentityMigrationPlan } from "../../../src/config/paths.js";
+  type LcxIdentityMigrationPlan,
+} from "lcx-agent/plugin-sdk";
 import { normalizeZaloReactionIcon } from "./reaction.js";
 import { getZalouserRuntime } from "./runtime.js";
 import type {

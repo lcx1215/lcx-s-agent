@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "lcx-agent/plugin-sdk/account-id";
 import {
   readLcxIdentityWriterRaw,
   removeLcxIdentityWriterWithReceipt,
@@ -12,8 +11,9 @@ import {
   type LcxIdentityRemovalReceipt,
   type LcxIdentityWriteReceipt,
   type LcxIdentityWriterPathContract,
-} from "../../../../src/config/identity-migration.js";
-import type { LcxIdentityMigrationPlan } from "../../../../src/config/paths.js";
+  type LcxIdentityMigrationPlan,
+} from "lcx-agent/plugin-sdk";
+import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "lcx-agent/plugin-sdk/account-id";
 import { getMatrixRuntime } from "../runtime.js";
 
 export type MatrixStoredCredentials = {

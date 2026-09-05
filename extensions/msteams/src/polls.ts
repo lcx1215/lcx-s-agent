@@ -9,8 +9,8 @@ import {
   LcxIdentityWriterContractError,
   type LcxIdentityWriteReceipt,
   type LcxIdentityWriterPathContract,
-} from "../../../src/config/identity-migration.js";
-import type { LcxIdentityMigrationPlan } from "../../../src/config/paths.js";
+  type LcxIdentityMigrationPlan,
+} from "lcx-agent/plugin-sdk";
 import { resolveMSTeamsStorePath } from "./storage.js";
 import { readJsonFile, withFileLock, writeJsonFile } from "./store-fs.js";
 

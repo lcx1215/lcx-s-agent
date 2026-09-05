@@ -10,8 +10,8 @@ import {
   LcxIdentityWriterContractError,
   type LcxIdentityWriteReceipt,
   type LcxIdentityWriterPathContract,
-} from "../../../src/config/identity-migration.js";
-import type { LcxIdentityMigrationPlan } from "../../../src/config/paths.js";
+  type LcxIdentityMigrationPlan,
+} from "lcx-agent/plugin-sdk";
 
 const DEFAULT_REPLAY_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_MEMORY_MAX_SIZE = 1_000;

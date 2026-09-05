@@ -12,7 +12,7 @@ import {
   type LcxIdentityRemovalReceipt,
   type LcxIdentityWriteReceipt,
 } from "../config/identity-migration.js";
-import { resolveNewStateDir } from "../config/paths.js";
+import { resolveStateDir } from "../config/paths.js";
 import {
   formatSessionArchiveTimestamp,
   parseSessionArchiveTimestamp,
@@ -175,7 +175,7 @@ export function resolveSessionTranscriptCandidates(
 
   const home = resolveRequiredHomeDir(process.env, os.homedir);
   const legacyDir = path.join(
-    resolveNewStateDir(() => home),
+    resolveStateDir(process.env, () => home),
     "sessions",
   );
   pushCandidate(() => resolveSessionTranscriptPathInDir(sessionId, legacyDir));
