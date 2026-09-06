@@ -4398,6 +4398,11 @@ function maxTokensForEvalCase(
   evalCase: EvalCase,
   mode: "standard" | "blind" | "timeout_retry" | "parse_retry",
 ): string {
+  if (mode === "blind") {
+    // Neutral contract evals must stay compact without giving the model room to
+    // drift into a prose answer. This is a generation bound, not a repair path.
+    return LOCAL_BRAIN_EVAL_TIMEOUT_RETRY_MAX_TOKENS;
+  }
   if (mode === "timeout_retry" || mode === "parse_retry") {
     return LOCAL_BRAIN_EVAL_TIMEOUT_RETRY_MAX_TOKENS;
   }

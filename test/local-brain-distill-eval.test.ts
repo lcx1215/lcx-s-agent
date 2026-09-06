@@ -1143,6 +1143,7 @@ describe.skipIf(process.platform === "win32")("local-brain-distill-eval", () => 
       expect(prompt).not.toContain("Required risk_boundaries for this case");
       expect(prompt).not.toContain("Relevant compact contract hints");
       expect(prompt).not.toContain("source_summary:");
+      expect(records[0]?.[records[0]?.indexOf("--max-tokens") + 1]).toBe("320");
       expect(records[0]).not.toContain("--prefill-response");
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
