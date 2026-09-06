@@ -127,6 +127,20 @@ const LOCAL_BRAIN_EVAL_PROMPT_CACHE_PREFIX =
     "For finance tasks, choose concrete recommended module ids instead of generic finance labels or the full taxonomy.",
     "Return only JSON with keys: task_family, primary_modules, supporting_modules, required_tools, missing_data, risk_boundaries, next_step, rejected_context.",
   ].join("\n") + "\n";
+const LOCAL_BRAIN_BLIND_PROMPT_CACHE_PREFIX =
+  [
+    "You are the LCX Agent local auxiliary thought-flow model.",
+    "Blind neutral raw-contract eval: infer the contract from only the user/task.",
+    "/no_think",
+    "No prose, no markdown, no <think>, no explanations, no nested objects.",
+    '{"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_external_conversation_history"]}',
+    "Return one single-line JSON object only; close the final brace and do not echo an answer template.",
+    `Allowed module ids (choose only those justified by the task): ${LOCAL_BRAIN_MODULE_TAXONOMY.join(", ")}.`,
+    `Allowed risk_boundary ids (choose only those justified by the task): ${LOCAL_BRAIN_RISK_BOUNDARIES.join(", ")}.`,
+    "Infer missing_data ids yourself from the task; no case-specific checklist or expected id is provided.",
+    "Do not invent current or timestamped market data, execution approval, probabilities, or durable memory writes.",
+    "For scenario probabilities with missing samples, weights, returns, or macro inputs, do not guess; route to data-gated research preflight.",
+  ].join("\n") + "\n";
 const TIMEOUT_PRONE_COMPACT_EVAL_CASE_IDS = new Set([
   "single_company_fundamental_risk",
   "plain_single_stock_position_sizing_preflight",
@@ -4455,21 +4469,14 @@ function buildPrompt(evalCase: EvalCase): string {
   return `${LOCAL_BRAIN_EVAL_PROMPT_CACHE_PREFIX}${buildPromptSuffix(evalCase)}`;
 }
 
+function buildBlindPromptSuffix(evalCase: EvalCase): string {
+  return `user_or_task: ${evalCase.userAsk}`;
+}
+
 function buildBlindPrompt(evalCase: EvalCase): string {
-  return [
-    "You are the LCX Agent local auxiliary thought-flow model.",
-    "Blind neutral raw-contract eval: infer the contract from only the user/task.",
-    "/no_think",
-    "No prose, no markdown, no <think>, no explanations, no nested objects.",
-    '{"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_external_conversation_history"]}',
-    "Return one single-line JSON object only; close the final brace and do not echo an answer template.",
-    `Allowed module ids (choose only those justified by the task): ${LOCAL_BRAIN_MODULE_TAXONOMY.join(", ")}.`,
-    `Allowed risk_boundary ids (choose only those justified by the task): ${LOCAL_BRAIN_RISK_BOUNDARIES.join(", ")}.`,
-    "Infer missing_data ids yourself from the task; no case-specific checklist or expected id is provided.",
-    "Do not invent current or timestamped market data, execution approval, probabilities, or durable memory writes.",
-    "For scenario probabilities with missing samples, weights, returns, or macro inputs, do not guess; route to data-gated research preflight.",
-    `user_or_task: ${evalCase.userAsk}`,
-  ].join("\n");
+  return [LOCAL_BRAIN_BLIND_PROMPT_CACHE_PREFIX.trimEnd(), buildBlindPromptSuffix(evalCase)].join(
+    "\n",
+  );
 }
 
 function buildRetryPrompt(
@@ -4534,7 +4541,10 @@ function cacheSafeSlug(value: string): string {
   );
 }
 
-function promptCacheFileFor(options: CliOptions): string | undefined {
+function promptCacheFileFor(
+  options: CliOptions,
+  promptPrefix = LOCAL_BRAIN_EVAL_PROMPT_CACHE_PREFIX,
+): string | undefined {
   if (process.env.LOCAL_BRAIN_EVAL_PROMPT_CACHE === "0") {
     return undefined;
   }
@@ -4545,7 +4555,7 @@ function promptCacheFileFor(options: CliOptions): string | undefined {
     LOCAL_BRAIN_EVAL_PROMPT_CACHE_VERSION,
     cacheSafeSlug(options.model),
     adapterKey,
-    hashText(LOCAL_BRAIN_EVAL_PROMPT_CACHE_PREFIX),
+    hashText(promptPrefix),
   ].join("-");
   return path.join(LOCAL_BRAIN_EVAL_PROMPT_CACHE_DIR, `${cacheName}.safetensors`);
 }
@@ -4598,7 +4608,11 @@ function runChildCapture(command: string, args: string[], timeoutMs: number): Pr
   });
 }
 
-async function ensurePromptCache(options: CliOptions, promptCacheFile: string): Promise<void> {
+async function ensurePromptCache(
+  options: CliOptions,
+  promptCacheFile: string,
+  promptPrefix: string,
+): Promise<void> {
   if (existsSync(promptCacheFile)) {
     return;
   }
@@ -4612,7 +4626,7 @@ async function ensurePromptCache(options: CliOptions, promptCacheFile: string): 
     "--prompt-cache-file",
     promptCacheFile,
     "--prompt",
-    LOCAL_BRAIN_EVAL_PROMPT_CACHE_PREFIX,
+    promptPrefix,
   ];
   if (options.adapterPath) {
     args.splice(5, 0, "--adapter-path", options.adapterPath);
@@ -4625,18 +4639,22 @@ async function runGenerate(
   evalCase: EvalCase,
   mode: "standard" | "blind" | "timeout_retry" | "parse_retry" = "standard",
 ): Promise<string> {
+  const promptPrefix =
+    mode === "blind" ? LOCAL_BRAIN_BLIND_PROMPT_CACHE_PREFIX : LOCAL_BRAIN_EVAL_PROMPT_CACHE_PREFIX;
   const promptCacheFile =
-    mode === "standard" && !isParseStabilityOnlyEvalCase(evalCase)
-      ? promptCacheFileFor(options)
+    (mode === "standard" || mode === "blind") && !isParseStabilityOnlyEvalCase(evalCase)
+      ? promptCacheFileFor(options, promptPrefix)
       : undefined;
   if (promptCacheFile) {
-    await ensurePromptCache(options, promptCacheFile);
+    await ensurePromptCache(options, promptCacheFile, promptPrefix);
   }
   const prompt =
     mode === "timeout_retry" || mode === "parse_retry"
       ? buildRetryPrompt(evalCase, mode)
       : mode === "blind"
-        ? buildBlindPrompt(evalCase)
+        ? promptCacheFile
+          ? buildBlindPromptSuffix(evalCase)
+          : buildBlindPrompt(evalCase)
         : isParseStabilityOnlyEvalCase(evalCase)
           ? buildRetryPrompt(evalCase, "standard_compact")
           : promptCacheFile
