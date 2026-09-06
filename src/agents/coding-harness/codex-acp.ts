@@ -42,6 +42,7 @@ export type CodingHarnessVerification = {
 export type CodingHarnessWorkspaceSnapshot = {
   root: string;
   branch: string;
+  headSha?: string;
   statusPorcelain: string;
   changedPaths: string[];
 };
@@ -141,6 +142,14 @@ function parseGitStatusPaths(statusPorcelain: string): string[] {
   return [...paths].toSorted();
 }
 
+function resolveChangedPathsSince(
+  before: CodingHarnessWorkspaceSnapshot,
+  after: CodingHarnessWorkspaceSnapshot,
+): string[] {
+  const beforePaths = new Set(before.changedPaths);
+  return after.changedPaths.filter((candidate) => !beforePaths.has(candidate));
+}
+
 async function runGit(cwd: string, args: string[]): Promise<string> {
   const result = await execFileAsync("git", ["-C", cwd, ...args], {
     cwd,
@@ -161,10 +170,12 @@ export async function inspectCodingWorkspace(
   }
   const root = await runGit(cwd, ["rev-parse", "--show-toplevel"]);
   const branch = await runGit(cwd, ["branch", "--show-current"]);
+  const headSha = await runGit(cwd, ["rev-parse", "HEAD"]);
   const statusPorcelain = await runGit(cwd, ["status", "--porcelain=v1", "--untracked-files=all"]);
   return {
     root,
     branch,
+    headSha,
     statusPorcelain,
     changedPaths: parseGitStatusPaths(statusPorcelain),
   };
@@ -279,6 +290,48 @@ function buildReceipt(params: {
   };
 }
 
+async function cleanupAcceptedChildSession(params: {
+  deps: CodingHarnessDeps;
+  spawn: SpawnAcpResult;
+  trajectory: AppendOnlyCodingTrajectory;
+  now: () => string;
+  phase: "timeout-cleanup" | "wait-cleanup";
+}): Promise<"confirmed" | "failed"> {
+  try {
+    await params.deps.callGateway({
+      method: "sessions.delete",
+      params: {
+        key: params.spawn.childSessionKey,
+        deleteTranscript: false,
+        emitLifecycleHooks: false,
+      },
+      timeoutMs: 20_000,
+    });
+    return "confirmed";
+  } catch (error) {
+    params.trajectory.append(
+      "run/failed",
+      { phase: params.phase, error: String(error) },
+      params.now(),
+    );
+    return "failed";
+  }
+}
+
+async function resolveChangedPathsSinceRun(
+  cwd: string,
+  before: CodingHarnessWorkspaceSnapshot,
+  after: CodingHarnessWorkspaceSnapshot,
+): Promise<string[]> {
+  const paths = new Set(resolveChangedPathsSince(before, after));
+  if (before.headSha && after.headSha && before.headSha !== after.headSha) {
+    throw new Error(
+      "post-run HEAD changed; refusing committed-path attribution without an exclusive executor ownership proof",
+    );
+  }
+  return [...paths].toSorted();
+}
+
 export async function runCodexCodingHarness(
   input: RunCodexCodingHarnessInput,
   overrides: Partial<CodingHarnessDeps> = {},
@@ -378,6 +431,9 @@ export async function runCodexCodingHarness(
         cwd,
         mode: "run",
         thread: false,
+        // ACP sessions run on the host and do not support sandbox="require".
+        // The clean named-worktree preflight and postflight attribution remain
+        // the harness boundary; use the supported inherited ACP mode here.
         sandbox: "inherit",
       },
       input.context ?? {},
@@ -432,6 +488,13 @@ export async function runCodexCodingHarness(
     });
   } catch (error) {
     trajectory.append("run/failed", { phase: "wait", error: String(error) }, deps.now());
+    const cleanup = await cleanupAcceptedChildSession({
+      deps,
+      spawn,
+      trajectory,
+      now: deps.now,
+      phase: "wait-cleanup",
+    });
     return buildReceipt({
       trajectory,
       status: "failed",
@@ -439,6 +502,7 @@ export async function runCodexCodingHarness(
       task: input.task,
       branch: workspace.branch,
       spawn,
+      cleanup,
       error: `Codex ACP wait failed: ${String(error)}`,
     });
   }
@@ -451,22 +515,13 @@ export async function runCodexCodingHarness(
     deps.now(),
   );
   if (wait.status === "timeout") {
-    let cleanup: CodingHarnessReceipt["cleanup"] = "requested";
-    try {
-      await deps.callGateway({
-        method: "sessions.delete",
-        params: { key: spawn.childSessionKey, deleteTranscript: false, emitLifecycleHooks: false },
-        timeoutMs: 20_000,
-      });
-      cleanup = "confirmed";
-    } catch (error) {
-      cleanup = "failed";
-      trajectory.append(
-        "run/failed",
-        { phase: "timeout-cleanup", error: String(error) },
-        deps.now(),
-      );
-    }
+    const cleanup = await cleanupAcceptedChildSession({
+      deps,
+      spawn,
+      trajectory,
+      now: deps.now,
+      phase: "timeout-cleanup",
+    });
     trajectory.append("run/timed-out", { timeoutMs, cleanup }, deps.now());
     return buildReceipt({
       trajectory,
@@ -485,6 +540,13 @@ export async function runCodexCodingHarness(
       { phase: "wait", status: wait.status, error: wait.error },
       deps.now(),
     );
+    const cleanup = await cleanupAcceptedChildSession({
+      deps,
+      spawn,
+      trajectory,
+      now: deps.now,
+      phase: "wait-cleanup",
+    });
     return buildReceipt({
       trajectory,
       status: "failed",
@@ -492,6 +554,7 @@ export async function runCodexCodingHarness(
       task: input.task,
       branch: workspace.branch,
       spawn,
+      cleanup,
       error: wait.error ?? `Codex ACP run ended with status ${wait.status ?? "unknown"}`,
     });
   }
@@ -578,16 +641,38 @@ export async function runCodexCodingHarness(
       task: input.task,
       branch: afterWorkspace.branch,
       spawn,
-      changedPaths: afterWorkspace.changedPaths,
+      changedPaths: [],
       reply,
       error: "coding harness detected that the worktree identity changed during the run",
+    });
+  }
+  let changedPaths: string[];
+  try {
+    changedPaths = await resolveChangedPathsSinceRun(cwd, workspace, afterWorkspace);
+  } catch (error) {
+    const message = String(error);
+    trajectory.append(
+      "run/failed",
+      { phase: "workspace-postflight", reason: "unsafe-commit-attribution", error: message },
+      deps.now(),
+    );
+    return buildReceipt({
+      trajectory,
+      status: "failed",
+      cwd,
+      task: input.task,
+      branch: afterWorkspace.branch,
+      spawn,
+      changedPaths: [],
+      reply,
+      error: message,
     });
   }
   trajectory.append(
     "workspace/observed",
     {
       branch: afterWorkspace.branch,
-      changedPaths: afterWorkspace.changedPaths,
+      changedPaths,
       statusClean: afterWorkspace.statusPorcelain.trim() === "",
     },
     deps.now(),
@@ -614,7 +699,7 @@ export async function runCodexCodingHarness(
       task: input.task,
       branch: afterWorkspace.branch,
       spawn,
-      changedPaths: afterWorkspace.changedPaths,
+      changedPaths,
       verification,
       reply,
       error: verification.error ?? "coding verification did not pass",
@@ -622,12 +707,12 @@ export async function runCodexCodingHarness(
     });
   }
 
-  const verified = afterWorkspace.changedPaths.length > 0 && verification.status === "passed";
+  const verified = changedPaths.length > 0 && verification.status === "passed";
   trajectory.append(
     "run/completed",
     {
       verified,
-      changedPaths: afterWorkspace.changedPaths,
+      changedPaths,
       verification: verification.status,
     },
     deps.now(),
@@ -639,7 +724,7 @@ export async function runCodexCodingHarness(
     task: input.task,
     branch: afterWorkspace.branch,
     spawn,
-    changedPaths: afterWorkspace.changedPaths,
+    changedPaths,
     verification,
     reply,
     cleanup: "not-needed",
@@ -648,5 +733,6 @@ export async function runCodexCodingHarness(
 
 export const __testing = {
   parseGitStatusPaths,
+  resolveChangedPathsSince,
   runSafeVerification,
 };

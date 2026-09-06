@@ -1,5 +1,5 @@
 import path from "node:path";
-import { resolveNewStateDirForProfile } from "../config/paths.js";
+import { resolveStateDirForProfile } from "../config/paths.js";
 
 const windowsAbsolutePath = /^[a-zA-Z]:[\\/]/;
 const windowsUncPath = /^\\\\/;
@@ -31,11 +31,11 @@ export function resolveUserPathWithHome(input: string, home?: string): string {
 }
 
 export function resolveGatewayStateDir(env: Record<string, string | undefined>): string {
-  const override = env.OPENCLAW_STATE_DIR?.trim();
+  const override = env.OPENCLAW_STATE_DIR?.trim() || env.CLAWDBOT_STATE_DIR?.trim();
   if (override) {
     const home = override.startsWith("~") ? resolveHomeDir(env) : undefined;
     return resolveUserPathWithHome(override, home);
   }
   const home = resolveHomeDir(env);
-  return resolveNewStateDirForProfile(env.OPENCLAW_PROFILE, () => home);
+  return resolveStateDirForProfile(env.OPENCLAW_PROFILE, env as NodeJS.ProcessEnv, () => home);
 }

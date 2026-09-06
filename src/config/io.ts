@@ -47,12 +47,7 @@ import { findLegacyConfigIssues } from "./legacy.js";
 import { applyMergePatch } from "./merge-patch.js";
 import { normalizeExecSafeBinProfilesInConfig } from "./normalize-exec-safe-bin.js";
 import { normalizeConfigPaths } from "./normalize-paths.js";
-import {
-  resolveConfigPath,
-  resolveDefaultConfigCandidates,
-  resolveLcxIdentityMigrationPlan,
-  resolveStateDir,
-} from "./paths.js";
+import { resolveConfigPath, resolveLcxIdentityMigrationPlan, resolveStateDir } from "./paths.js";
 import type { LcxIdentityMigrationPlan } from "./paths.js";
 import { isBlockedObjectKey } from "./prototype-keys.js";
 import { applyConfigOverrides } from "./runtime-overrides.js";
@@ -621,7 +616,8 @@ export type ConfigIoDeps = {
   configPath?: string;
   /**
    * Explicit opt-in migration plan for a legacy read-old/canonical write-new
-   * operation. The normal runtime defaults are canonical LCX paths.
+   * operation. The normal runtime resolver keeps an existing legacy root
+   * active until the complete writer set is migrated.
    */
   lcxIdentityMigrationPlan?: LcxIdentityMigrationPlan | null;
   logger?: Pick<typeof console, "error" | "warn">;
@@ -793,11 +789,10 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
   const deps = normalizeDeps(overrides);
   const migrationPlan = deps.lcxIdentityMigrationPlan ?? null;
   const requestedConfigPath = resolveConfigPathForDeps(deps);
-  const candidatePaths = migrationPlan
-    ? [requestedConfigPath]
-    : deps.configPath
-      ? [requestedConfigPath]
-      : resolveDefaultConfigCandidates(deps.env, deps.homedir);
+  // The active state/config resolver already performs compatibility discovery
+  // inside one selected root. Do not scan every default root here: that could
+  // reactivate an early canonical config while legacy state is still active.
+  const candidatePaths = [requestedConfigPath];
   let configPath =
     candidatePaths.find((candidate) => deps.fs.existsSync(candidate)) ?? requestedConfigPath;
   const writePath = migrationPlan?.writeConfigPath ?? configPath;
@@ -1632,7 +1627,8 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
 /**
  * Opt-in config I/O adapter for an explicit legacy-to-LCX migration.
  *
- * The normal createConfigIO() path already uses the canonical LCX defaults.
+ * The normal createConfigIO() path uses the same active root as resolveStateDir:
+ * canonical for new installs and an existing legacy root until migration.
  * This adapter makes the read-old/write-new plan executable for an isolated
  * caller that is prepared to handle the returned rollback receipt.
  */

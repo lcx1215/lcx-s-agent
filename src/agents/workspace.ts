@@ -15,7 +15,13 @@ import {
   type LcxIdentityWriteReceipt,
   type LcxIdentityWriterPathContract,
 } from "../config/identity-migration.js";
-import { resolveNewStateDir } from "../config/paths.js";
+import {
+  resolveLegacyStateDirs,
+  resolveNewStateDir,
+  resolveNewStateDirForProfile,
+  resolveStateDir,
+  resolveStateDirForProfile,
+} from "../config/paths.js";
 import type { LcxIdentityMigrationPlan } from "../config/paths.js";
 import { openBoundaryFile } from "../infra/boundary-file-read.js";
 import { resolveRequiredHomeDir } from "../infra/home-dir.js";
@@ -29,12 +35,41 @@ export function resolveDefaultAgentWorkspaceDir(
   homedir: () => string = os.homedir,
 ): string {
   const home = resolveRequiredHomeDir(env, homedir);
-  const stateDir = resolveNewStateDir(() => home);
   const profile = env.OPENCLAW_PROFILE?.trim();
-  if (profile && profile.toLowerCase() !== "default") {
-    return path.join(stateDir, `workspace-${profile}`);
+  const isNamedProfile = Boolean(profile && profile.toLowerCase() !== "default");
+  if (!isNamedProfile) {
+    return path.join(
+      resolveStateDir(env, () => home),
+      "workspace",
+    );
   }
-  return path.join(stateDir, "workspace");
+
+  const relativePath = `workspace-${profile}`;
+  const canonicalStateDir = resolveNewStateDir(() => home);
+  const canonicalWorkspaceDir = path.join(canonicalStateDir, relativePath);
+  const activeProfileStateDir = resolveStateDirForProfile(profile, env, () => home);
+  const canonicalProfileStateDir = resolveNewStateDirForProfile(profile, () => home);
+  const compatibilityWorkspaceDirs = [
+    path.join(home, ".openclaw", relativePath),
+    ...resolveLegacyStateDirs(() => home).map((stateDir) => path.join(stateDir, relativePath)),
+  ];
+  if (path.resolve(activeProfileStateDir) === path.resolve(canonicalProfileStateDir)) {
+    if (syncFs.existsSync(canonicalWorkspaceDir)) {
+      return canonicalWorkspaceDir;
+    }
+    return (
+      compatibilityWorkspaceDirs.find((candidate) => syncFs.existsSync(candidate)) ??
+      canonicalWorkspaceDir
+    );
+  }
+  if (env.OPENCLAW_STATE_DIR?.trim() || env.CLAWDBOT_STATE_DIR?.trim()) {
+    return path.join(activeProfileStateDir, relativePath);
+  }
+  return (
+    [path.join(activeProfileStateDir, relativePath), ...compatibilityWorkspaceDirs].find(
+      (candidate) => syncFs.existsSync(candidate),
+    ) ?? path.join(activeProfileStateDir, relativePath)
+  );
 }
 
 export const DEFAULT_AGENT_WORKSPACE_DIR = resolveDefaultAgentWorkspaceDir();

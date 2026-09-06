@@ -3,6 +3,12 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+  createLcxIdentityWriterPathContract,
+  rollbackLcxIdentityWriter,
+  writeLcxIdentityMigrationCompletionMarker,
+  writeLcxIdentityWriterRawWithReceipt,
+} from "./identity-migration.js";
 import { resolveLcxIdentityMigrationPlan } from "./paths.js";
 import {
   appendSessionTranscriptForIdentityMigration,
@@ -36,6 +42,46 @@ function migrationPlan(root: string) {
 }
 
 describe("LCX identity migration writer contract", () => {
+  it("writes a canonical completion marker atomically", async () => {
+    await withTempRoot(async (root) => {
+      const plan = migrationPlan(root);
+      const marker = await writeLcxIdentityMigrationCompletionMarker({
+        migrationPlan: plan,
+        now: () => "2026-09-06T00:00:00.000Z",
+      });
+
+      expect(marker).toEqual({
+        schemaVersion: 1,
+        canonicalStateDir: path.join(root, ".lcx"),
+        completedAt: "2026-09-06T00:00:00.000Z",
+      });
+      expect(
+        JSON.parse(
+          await fs.readFile(path.join(root, ".lcx", "identity-migration.complete.json"), "utf8"),
+        ),
+      ).toEqual(marker);
+    });
+  });
+
+  it("returns a rollback receipt when audit persistence fails", async () => {
+    await withTempRoot(async (root) => {
+      const contract = createLcxIdentityWriterPathContract({
+        writer: "audit",
+        migrationPlan: migrationPlan(root),
+        readPath: path.join(root, ".openclaw", "audit.json"),
+        writePath: path.join(root, ".lcx", "audit.json"),
+        auditPath: path.join("/dev/null", "lcx-audit.jsonl"),
+      });
+
+      const receipt = await writeLcxIdentityWriterRawWithReceipt(contract, '{"ok":true}\n');
+      expect(receipt.audit.status).toBe("failed");
+      expect(await fs.readFile(contract.writePath, "utf8")).toBe('{"ok":true}\n');
+
+      await rollbackLcxIdentityWriter(receipt);
+      await expect(fs.access(contract.writePath)).rejects.toMatchObject({ code: "ENOENT" });
+    });
+  });
+
   it("selects an existing legacy session store for read and the canonical store for write", async () => {
     await withTempRoot(async (root) => {
       const legacyStorePath = path.join(

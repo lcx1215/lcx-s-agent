@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { formatCliCommand } from "./command-format.js";
@@ -52,6 +54,23 @@ describe("parseCliProfileArgs", () => {
 });
 
 describe("applyCliProfileEnv", () => {
+  it("keeps an existing legacy profile root active", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-profile-"));
+    try {
+      const legacyStateDir = path.join(home, ".openclaw-work");
+      await fs.mkdir(legacyStateDir, { recursive: true });
+      await fs.writeFile(path.join(legacyStateDir, "openclaw.json"), "{}", "utf8");
+
+      const env: Record<string, string | undefined> = {};
+      applyCliProfileEnv({ profile: "work", env, homedir: () => home });
+
+      expect(env.OPENCLAW_STATE_DIR).toBe(legacyStateDir);
+      expect(env.OPENCLAW_CONFIG_PATH).toBe(path.join(legacyStateDir, "openclaw.json"));
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
   it("fills env defaults for dev profile", () => {
     const env: Record<string, string | undefined> = {};
     applyCliProfileEnv({
@@ -62,7 +81,7 @@ describe("applyCliProfileEnv", () => {
     const expectedStateDir = path.join(path.resolve("/home/peter"), ".lcx-dev");
     expect(env.OPENCLAW_PROFILE).toBe("dev");
     expect(env.OPENCLAW_STATE_DIR).toBe(expectedStateDir);
-    expect(env.OPENCLAW_CONFIG_PATH).toBe(path.join(expectedStateDir, "openclaw.json"));
+    expect(env.OPENCLAW_CONFIG_PATH).toBe(path.join(expectedStateDir, "lcx.json"));
     expect(env.OPENCLAW_GATEWAY_PORT).toBe("19001");
   });
 
@@ -94,7 +113,7 @@ describe("applyCliProfileEnv", () => {
 
     const resolvedHome = path.resolve("/srv/openclaw-home");
     expect(env.OPENCLAW_STATE_DIR).toBe(path.join(resolvedHome, ".lcx-work"));
-    expect(env.OPENCLAW_CONFIG_PATH).toBe(path.join(resolvedHome, ".lcx-work", "openclaw.json"));
+    expect(env.OPENCLAW_CONFIG_PATH).toBe(path.join(resolvedHome, ".lcx-work", "lcx.json"));
   });
 });
 

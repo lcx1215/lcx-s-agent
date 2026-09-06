@@ -180,6 +180,44 @@ describe("resolve exec approvals defaults", () => {
       }
     }
   });
+
+  it("uses the active compatibility state root for approval files", () => {
+    const dir = makeTempDir();
+    const compatibilityDir = path.join(dir, ".openclaw");
+    fs.mkdirSync(compatibilityDir, { recursive: true });
+    const previous = {
+      home: process.env.OPENCLAW_HOME,
+      state: process.env.OPENCLAW_STATE_DIR,
+      legacyState: process.env.CLAWDBOT_STATE_DIR,
+    };
+    try {
+      process.env.OPENCLAW_HOME = dir;
+      delete process.env.OPENCLAW_STATE_DIR;
+      delete process.env.CLAWDBOT_STATE_DIR;
+      expect(path.normalize(resolveExecApprovalsPath())).toBe(
+        path.normalize(path.join(compatibilityDir, "exec-approvals.json")),
+      );
+      expect(path.normalize(resolveExecApprovalsSocketPath())).toBe(
+        path.normalize(path.join(compatibilityDir, "exec-approvals.sock")),
+      );
+    } finally {
+      if (previous.home === undefined) {
+        delete process.env.OPENCLAW_HOME;
+      } else {
+        process.env.OPENCLAW_HOME = previous.home;
+      }
+      if (previous.state === undefined) {
+        delete process.env.OPENCLAW_STATE_DIR;
+      } else {
+        process.env.OPENCLAW_STATE_DIR = previous.state;
+      }
+      if (previous.legacyState === undefined) {
+        delete process.env.CLAWDBOT_STATE_DIR;
+      } else {
+        process.env.CLAWDBOT_STATE_DIR = previous.legacyState;
+      }
+    }
+  });
 });
 
 describe("exec approvals safe shell command builder", () => {

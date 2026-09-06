@@ -149,6 +149,17 @@ describe("resolveConfigDir", () => {
       await fs.promises.rm(root, { recursive: true, force: true });
     }
   });
+
+  it("uses the active compatibility state dir for config-owned files", async () => {
+    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "openclaw-config-dir-"));
+    try {
+      const compatibilityDir = path.join(root, ".openclaw");
+      await fs.promises.mkdir(compatibilityDir, { recursive: true });
+      expect(resolveConfigDir({} as NodeJS.ProcessEnv, () => root)).toBe(compatibilityDir);
+    } finally {
+      await fs.promises.rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("resolveHomeDir", () => {

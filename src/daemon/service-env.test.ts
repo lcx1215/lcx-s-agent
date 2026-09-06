@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -462,6 +463,20 @@ describe("resolveGatewayStateDir", () => {
   it("treats default profiles as the base state dir", () => {
     const env = { HOME: "/Users/test", OPENCLAW_PROFILE: "Default" };
     expect(resolveGatewayStateDir(env)).toBe(path.join("/Users/test", ".lcx"));
+  });
+
+  it("keeps an existing compatibility profile root active", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-daemon-profile-"));
+    try {
+      const compatibilityStateDir = path.join(home, ".openclaw-rescue");
+      await fs.mkdir(compatibilityStateDir, { recursive: true });
+
+      expect(resolveGatewayStateDir({ HOME: home, OPENCLAW_PROFILE: "rescue" })).toBe(
+        compatibilityStateDir,
+      );
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
   });
 
   it("uses OPENCLAW_STATE_DIR when provided", () => {

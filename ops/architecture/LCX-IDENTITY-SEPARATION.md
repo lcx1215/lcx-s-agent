@@ -55,8 +55,15 @@ is no longer needed and that existing users or extensions have a migration path.
 - `openclaw.mjs` remains a thin legacy wrapper into `lcx.mjs`.
 - Current source and tests use `lcx-agent/plugin-sdk`; the plugin loader also
   aliases the old `openclaw/plugin-sdk` paths for existing plugin source.
-- Config and state names are now active LCX defaults. The OpenClaw-era names
-  remain only as explicit compatibility overrides and migration inputs.
+- Config and state names are active LCX defaults for new installs. An existing
+  OpenClaw-era root remains the single normal runtime root until an explicit
+  migration switches the complete writer set; legacy names remain compatibility
+  inputs and overrides.
+- Writing the canonical config alone does not activate the canonical root. If a
+  compatibility root still exists, activation is held until every state writer
+  has completed its receipt-backed migration and
+  `writeLcxIdentityMigrationCompletionMarker` has atomically written the
+  validated `identity-migration.complete.json` marker.
 
 ### Config/state migration and activation
 
@@ -67,9 +74,10 @@ is no longer needed and that existing users or extensions have a migration path.
   `~/.lcx/lcx.json` as the write target.
 - An explicit `OPENCLAW_*` or `CLAWDBOT_*` state/config override remains the
   operator's read/write authority for compatibility and rollback.
-- The active `resolveStateDir` and `resolveConfigPath` defaults now resolve to
-  `~/.lcx` and `~/.lcx/lcx.json`; explicit `OPENCLAW_*`/`CLAWDBOT_*` overrides
-  remain available for compatibility.
+- The active `resolveStateDir` and `resolveConfigPath` defaults resolve to
+  `~/.lcx` and `~/.lcx/lcx.json` for new installs. When an existing legacy
+  config/state root is detected, both remain on that root until explicit
+  migration; `OPENCLAW_*`/`CLAWDBOT_*` overrides remain available.
 - `src/config/io.ts` now exposes an explicit `createLcxIdentityMigrationConfigIO`
   adapter. It reuses the migration plan to keep one read path, one write path,
   write-target backup, audit path, expected-path guards, and rollback receipt;
@@ -162,8 +170,9 @@ The following bounded adapters are implemented and locally tested:
   state together and rolls back in reverse order.
 
 These adapters remain available for explicit migration and rollback. The local
-default resolver is now active on `~/.lcx`; state-root writers have an explicit
-adapter or use the central state-root owner. Workspace-local plugin files,
+default resolver uses `~/.lcx` for new installs and keeps an existing legacy
+root active until migration; state-root writers have an explicit adapter or use
+the central state-root owner. Workspace-local plugin files,
 temporary/browser artifacts, generated media, and diagnostic/doctor probes are
 not identity state. Custom workspace paths, custom auth directories, external
 OAuth/keychain surfaces, and provider-owned state require an explicit owner
@@ -178,7 +187,7 @@ historical migration fixtures are deliberately not treated as runtime writers.
 | surface                 | path/owner                                                                                                                                                                                                                                                                                             | current write surfaces                                                                                                                                                                                                                                    | activation proof still required                                                                         |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | Config root             | `src/config/io.ts`                                                                                                                                                                                                                                                                                     | canonical `lcx.json`, `.bak` rotation, config audit                                                                                                                                                                                                       | Keep explicit legacy override and rollback evidence                                                     |
-| Sessions                | `src/config/sessions/paths.ts`, `src/config/sessions/store.ts`, `src/config/sessions/transcript.ts`, `src/config/sessions/store-maintenance.ts`, `src/agents/session-file-repair.ts`, `src/gateway/session-utils.fs.ts`                                                                                | session store/transcript/repair/rotation/archive/cleanup adapters; default runtime uses canonical root                                                                                                                                                    | Keep legacy fallback isolated and prove no dual-write or split session state                            |
+| Sessions                | `src/config/sessions/paths.ts`, `src/config/sessions/store.ts`, `src/config/sessions/transcript.ts`, `src/config/sessions/store-maintenance.ts`, `src/agents/session-file-repair.ts`, `src/gateway/session-utils.fs.ts`                                                                                | session store/transcript/repair/rotation/archive/cleanup adapters; new installs use canonical root and existing legacy installs stay on one active root                                                                                                   | Keep legacy fallback isolated and prove no dual-write or split session state                            |
 | Agent workspace/auth    | `src/config/agent-dirs.ts`, `src/agents/agent-paths.ts`, `src/agents/auth-profiles/`, `src/agents/subagent-registry.store.ts`, `src/agents/workspace.ts`                                                                                                                                               | auth, subagent registry, workspace state, and whole default workspace directory adapters                                                                                                                                                                  | Canonical root propagation, legacy read fallback, permission checks, and token/non-duplication rollback |
 | Delivery/schedule state | `src/infra/outbound/delivery-queue.ts`, `src/cron/store.ts`, `src/infra/restart-sentinel.ts`                                                                                                                                                                                                           | outbound queue, cron store, restart sentinel adapters; replay/cleanup remains                                                                                                                                                                             | Durable canonical queue/cron state and replay/rollback evidence                                         |
 | Device/security/pairing | `src/infra/device-identity.ts`, `src/infra/device-auth-store.ts`, `src/infra/exec-approvals.ts`, `src/infra/pairing-files.ts`, `src/node-host/config.ts`, `src/infra/voicewake.ts`, `extensions/device-pair/notify.ts`                                                                                 | device identity/auth, node-host config, exec approvals, device/node pairing, voice-wake settings, and pairing-notify adapters                                                                                                                             | Retain file modes, secret boundary, and recovery proof across the family                                |
@@ -192,15 +201,16 @@ channel adapter. SMS, visualization, Feishu, or another transport may be
 selected later by an explicit binding decision; none is the default identity
 or runtime authority for this repository.
 Profile state-root derivation in `src/cli/profile.ts` and `src/daemon/paths.ts`
-now delegates to `resolveNewStateDirForProfile` in `src/config/paths.ts`; this
-keeps profile roots on the canonical `.lcx[-profile]` family. `src/infra/exec-approvals.ts`
-likewise derives its default file/socket paths from `resolveNewStateDir` while
+now delegates to the active state-root resolver in `src/config/paths.ts`; new
+profiles use the canonical `.lcx[-profile]` family while existing compatibility
+profiles stay on one active legacy root. `src/infra/exec-approvals.ts`
+likewise derives its default file/socket paths from the active state root while
 retaining the same filenames; its writer is now on the migration contract.
 `src/utils.ts` and the session legacy fallback in
 `src/gateway/session-utils.fs.ts` now use the same canonical state-root owner.
 Session maintenance/archives now have explicit receipt-backed migration
-entrypoints, and ordinary runtime calls use the canonical root. The default
-workspace directory has an explicit whole-directory move/rollback boundary;
+entrypoints, and ordinary runtime calls use the active root selected by the
+central resolver. The default workspace directory has an explicit whole-directory move/rollback boundary;
 custom `agents.defaults.workspace` paths remain operator-owned inputs. The
 workspace-local plugin directory in `src/plugins/discovery.ts` and the doctor
 state/config flows are compatibility/migration surfaces, not generic state-root

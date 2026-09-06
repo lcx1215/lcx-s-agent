@@ -43,6 +43,33 @@ describe("config io paths", () => {
     });
   });
 
+  it("prefers lcx.json when a compatibility root contains both config names", async () => {
+    await withTempHome(async (home) => {
+      const canonicalCompatibilityPath = await writeConfig(home, ".openclaw", 20006, "lcx.json");
+      await writeConfig(home, ".openclaw", 20007, "openclaw.json");
+
+      const io = createIoForHome(home);
+      expect(io.configPath).toBe(canonicalCompatibilityPath);
+      expect(io.loadConfig().gateway?.port).toBe(20006);
+    });
+  });
+
+  it("does not reactivate an early canonical config while legacy state is active", async () => {
+    await withTempHome(async (home) => {
+      await fs.mkdir(path.join(home, ".lcx"), { recursive: true });
+      await fs.mkdir(path.join(home, ".openclaw", "sessions"), { recursive: true });
+      await fs.writeFile(
+        path.join(home, ".lcx", "lcx.json"),
+        JSON.stringify({ gateway: { port: 20008 } }),
+        "utf8",
+      );
+
+      const io = createIoForHome(home);
+      expect(io.configPath).toBe(path.join(home, ".openclaw", "openclaw.json"));
+      expect(io.loadConfig().gateway?.port).not.toBe(20008);
+    });
+  });
+
   it("defaults to ~/.lcx/lcx.json when config is missing", async () => {
     await withTempHome(async (home) => {
       const io = createIoForHome(home);
@@ -75,6 +102,27 @@ describe("config io paths", () => {
       const io = createIoForHome(home, { CLAWDBOT_CONFIG_PATH: customPath } as NodeJS.ProcessEnv);
       expect(io.configPath).toBe(customPath);
       expect(io.loadConfig().gateway?.port).toBe(20003);
+    });
+  });
+
+  it("prefers the canonical config in an explicit state directory", async () => {
+    await withTempHome(async (home) => {
+      const stateDir = path.join(home, "operator-state");
+      await fs.mkdir(stateDir, { recursive: true });
+      await fs.writeFile(
+        path.join(stateDir, "lcx.json"),
+        JSON.stringify({ gateway: { port: 20004 } }),
+        "utf8",
+      );
+      await fs.writeFile(
+        path.join(stateDir, "openclaw.json"),
+        JSON.stringify({ gateway: { port: 20005 } }),
+        "utf8",
+      );
+
+      const io = createIoForHome(home, { OPENCLAW_STATE_DIR: stateDir } as NodeJS.ProcessEnv);
+      expect(io.configPath).toBe(path.join(stateDir, "lcx.json"));
+      expect(io.loadConfig().gateway?.port).toBe(20004);
     });
   });
 

@@ -1195,7 +1195,7 @@ detect_openclaw_checkout() {
     if [[ ! -f "$dir/pnpm-workspace.yaml" ]]; then
         return 1
     fi
-    if ! grep -q '"name"[[:space:]]*:[[:space:]]*"openclaw"' "$dir/package.json" 2>/dev/null; then
+    if ! grep -Eq '"name"[[:space:]]*:[[:space:]]*"(openclaw|lcx-agent)"' "$dir/package.json" 2>/dev/null; then
         return 1
     fi
     echo "$dir"

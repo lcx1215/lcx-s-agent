@@ -1,7 +1,16 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import type { LcxIdentityMigrationPlan } from "./paths.js";
+import {
+  resolveLcxIdentityMigrationCompletionPath,
+  type LcxIdentityMigrationPlan,
+} from "./paths.js";
+
+export type LcxIdentityMigrationCompletionMarker = Readonly<{
+  schemaVersion: 1;
+  canonicalStateDir: string;
+  completedAt: string;
+}>;
 
 export type LcxIdentityWriterName =
   | "config"
@@ -47,6 +56,11 @@ export type LcxIdentityWriterPathContract = Readonly<{
   noSplitState: "single-write-target";
 }>;
 
+export type LcxIdentityAuditResult = Readonly<{
+  status: "written" | "failed";
+  error?: string;
+}>;
+
 export type LcxIdentityWriteReceipt = Readonly<{
   pathContract: LcxIdentityWriterPathContract;
   previous: Readonly<{
@@ -62,6 +76,7 @@ export type LcxIdentityWriteReceipt = Readonly<{
     path: string;
     strategy: "restore-backup" | "remove-written-target";
   }>;
+  audit: LcxIdentityAuditResult;
 }>;
 
 export type LcxIdentityRemovalReceipt = Readonly<{
@@ -75,6 +90,7 @@ export type LcxIdentityRemovalReceipt = Readonly<{
     path: string;
     strategy: "restore-removed-target";
   }>;
+  audit: LcxIdentityAuditResult;
 }>;
 
 export type LcxIdentityPathMoveReceipt = Readonly<{
@@ -91,6 +107,7 @@ export type LcxIdentityPathMoveReceipt = Readonly<{
     path: string;
     strategy: "move-written-target-back";
   }>;
+  audit: LcxIdentityAuditResult;
 }>;
 
 export class LcxIdentityWriterContractError extends Error {
@@ -248,6 +265,32 @@ async function writeRawAtomically(filePath: string, raw: string): Promise<void> 
   }
 }
 
+export async function writeLcxIdentityMigrationCompletionMarker(params: {
+  migrationPlan: LcxIdentityMigrationPlan;
+  now?: () => string;
+}): Promise<LcxIdentityMigrationCompletionMarker> {
+  const { migrationPlan } = params;
+  if (
+    migrationPlan.mode !== "canonical-default" ||
+    path.resolve(migrationPlan.writeStateDir) !== path.resolve(migrationPlan.canonicalStateDir)
+  ) {
+    throw new LcxIdentityWriterContractError(
+      "Identity migration completion requires the canonical default write target",
+      "LCX_IDENTITY_COMPLETION_TARGET",
+    );
+  }
+  const marker = Object.freeze({
+    schemaVersion: 1 as const,
+    canonicalStateDir: path.resolve(migrationPlan.canonicalStateDir),
+    completedAt: (params.now ?? (() => new Date().toISOString()))(),
+  });
+  await writeRawAtomically(
+    resolveLcxIdentityMigrationCompletionPath(migrationPlan.canonicalStateDir),
+    `${JSON.stringify(marker)}\n`,
+  );
+  return marker;
+}
+
 async function appendIdentityAudit(
   contract: LcxIdentityWriterPathContract,
   record: Record<string, unknown>,
@@ -257,6 +300,18 @@ async function appendIdentityAudit(
     encoding: "utf8",
     mode: 0o600,
   });
+}
+
+async function appendIdentityAuditBestEffort(
+  contract: LcxIdentityWriterPathContract,
+  record: Record<string, unknown>,
+): Promise<LcxIdentityAuditResult> {
+  try {
+    await appendIdentityAudit(contract, record);
+    return { status: "written" };
+  } catch (error) {
+    return { status: "failed", error: String(error) };
+  }
 }
 
 export async function readLcxIdentityWriterRaw(
@@ -284,7 +339,7 @@ export async function writeLcxIdentityWriterRawWithReceipt(
   }
   await writeRawAtomically(contract.writePath, raw);
 
-  const receipt: LcxIdentityWriteReceipt = Object.freeze({
+  const receipt = Object.freeze({
     pathContract: contract,
     previous: Object.freeze({
       exists: previousExists,
@@ -298,7 +353,7 @@ export async function writeLcxIdentityWriterRawWithReceipt(
     }),
   });
 
-  await appendIdentityAudit(contract, {
+  const audit = await appendIdentityAuditBestEffort(contract, {
     ts: new Date().toISOString(),
     source: "lcx-identity-migration",
     event: "identity.write",
@@ -315,7 +370,7 @@ export async function writeLcxIdentityWriterRawWithReceipt(
     previousBytes: receipt.previous.bytes,
     nextBytes: receipt.next.bytes,
   });
-  return receipt;
+  return Object.freeze({ ...receipt, audit });
 }
 
 export async function rollbackLcxIdentityWriter(receipt: LcxIdentityWriteReceipt): Promise<void> {
@@ -341,7 +396,7 @@ export async function rollbackLcxIdentityWriter(receipt: LcxIdentityWriteReceipt
     await fs.promises.unlink(pathContract.writePath);
   }
 
-  await appendIdentityAudit(pathContract, {
+  await appendIdentityAuditBestEffort(pathContract, {
     ts: new Date().toISOString(),
     source: "lcx-identity-migration",
     event: "identity.rollback",
@@ -373,7 +428,7 @@ export async function removeLcxIdentityWriterWithReceipt(
   const previousHash = hashRaw(previousRaw);
   await writeRawAtomically(contract.backupPath, previousRaw);
   await fs.promises.unlink(contract.writePath);
-  const receipt: LcxIdentityRemovalReceipt = Object.freeze({
+  const receipt = Object.freeze({
     pathContract: contract,
     previous: Object.freeze({
       exists: true as const,
@@ -385,7 +440,7 @@ export async function removeLcxIdentityWriterWithReceipt(
       strategy: "restore-removed-target" as const,
     }),
   });
-  await appendIdentityAudit(contract, {
+  const audit = await appendIdentityAuditBestEffort(contract, {
     ts: new Date().toISOString(),
     source: "lcx-identity-migration",
     event: "identity.remove",
@@ -399,7 +454,7 @@ export async function removeLcxIdentityWriterWithReceipt(
     previousHash,
     previousBytes: receipt.previous.bytes,
   });
-  return receipt;
+  return Object.freeze({ ...receipt, audit });
 }
 
 export async function rollbackLcxIdentityRemoval(
@@ -421,7 +476,7 @@ export async function rollbackLcxIdentityRemoval(
     );
   }
   await writeRawAtomically(pathContract.writePath, backupRaw);
-  await appendIdentityAudit(pathContract, {
+  await appendIdentityAuditBestEffort(pathContract, {
     ts: new Date().toISOString(),
     source: "lcx-identity-migration",
     event: "identity.rollback",
@@ -483,7 +538,7 @@ export async function moveLcxIdentityPathWithReceipt(
     : null;
   await fs.promises.mkdir(path.dirname(contract.writePath), { recursive: true, mode: 0o700 });
   await fs.promises.rename(contract.readPath, contract.writePath);
-  const receipt: LcxIdentityPathMoveReceipt = Object.freeze({
+  const receipt = Object.freeze({
     pathContract: contract,
     previous: Object.freeze({
       exists: true as const,
@@ -498,7 +553,7 @@ export async function moveLcxIdentityPathWithReceipt(
       strategy: "move-written-target-back" as const,
     }),
   });
-  await appendIdentityAudit(contract, {
+  const audit = await appendIdentityAuditBestEffort(contract, {
     ts: new Date().toISOString(),
     source: "lcx-identity-migration",
     event: "identity.move",
@@ -512,7 +567,7 @@ export async function moveLcxIdentityPathWithReceipt(
     previousKind: receipt.previous.kind,
     previousBytes: receipt.previous.bytes,
   });
-  return receipt;
+  return Object.freeze({ ...receipt, audit });
 }
 
 export async function rollbackLcxIdentityPathMove(
@@ -551,7 +606,7 @@ export async function rollbackLcxIdentityPathMove(
   }
   await fs.promises.mkdir(path.dirname(pathContract.readPath), { recursive: true, mode: 0o700 });
   await fs.promises.rename(pathContract.writePath, pathContract.readPath);
-  await appendIdentityAudit(pathContract, {
+  await appendIdentityAuditBestEffort(pathContract, {
     ts: new Date().toISOString(),
     source: "lcx-identity-migration",
     event: "identity.move.rollback",
