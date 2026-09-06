@@ -885,13 +885,13 @@ describe.skipIf(process.platform === "win32")("local-brain-distill-eval", () => 
         .map((line) => JSON.parse(line) as string[]);
       const targetRecords = records.filter((args) => {
         const prompt = args[args.indexOf("--prompt") + 1] ?? "";
-        return prompt.includes("Parse-stability compact eval");
+        return prompt.includes("Compact contract mode");
       });
       expect(targetRecords.length).toBeGreaterThanOrEqual(9);
       for (const args of targetRecords) {
         const prompt = args[args.indexOf("--prompt") + 1] ?? "";
-        expect(args[args.indexOf("--max-tokens") + 1]).toBe("360");
-        expect(prompt).toContain("Parse-stability compact eval");
+        expect(args[args.indexOf("--max-tokens") + 1]).toBe("700");
+        expect(prompt).toContain("Compact contract mode");
         expect(prompt).toContain("missing_data <=");
         expect(prompt).toContain("risk_boundaries <=");
       }

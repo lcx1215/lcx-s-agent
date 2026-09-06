@@ -101,6 +101,7 @@ const DEFAULT_GUARD_LOG = path.join(
 const LOCAL_BRAIN_EVAL_MAX_TOKENS = "700";
 const LOCAL_BRAIN_EVAL_TIMEOUT_RETRY_MAX_TOKENS = "320";
 const LOCAL_BRAIN_EVAL_TIMEOUT_PRONE_MAX_TOKENS = "360";
+const LOCAL_BRAIN_EVAL_PARSE_STABILITY_MAX_TOKENS = "700";
 const LOCAL_BRAIN_EVAL_CONTRACT_HINT_MAX_COUNT = 5;
 const LOCAL_BRAIN_EVAL_CONTRACT_HINT_CHAR_BUDGET = 1_600;
 const LOCAL_BRAIN_EVAL_SINGLE_HINT_CHAR_BUDGET = 360;
@@ -149,7 +150,12 @@ let activeGenerateChild: ChildProcessWithoutNullStreams | undefined;
 
 function isParseStabilityCompactEvalCase(evalCase: EvalCase): boolean {
   return (
-    TIMEOUT_PRONE_COMPACT_EVAL_CASE_IDS.has(evalCase.id) ||
+    TIMEOUT_PRONE_COMPACT_EVAL_CASE_IDS.has(evalCase.id) || isParseStabilityOnlyEvalCase(evalCase)
+  );
+}
+
+function isParseStabilityOnlyEvalCase(evalCase: EvalCase): boolean {
+  return (
     PARSE_STABILITY_COMPACT_EVAL_CASE_IDS.has(evalCase.id) ||
     PARSE_STABILITY_COMPACT_EVAL_CASE_PREFIXES.some((prefix) =>
       evalCase.id.startsWith(`${prefix}_`),
@@ -4393,7 +4399,10 @@ function maxTokensForEvalCase(
   if (mode === "timeout_retry" || mode === "parse_retry") {
     return LOCAL_BRAIN_EVAL_TIMEOUT_RETRY_MAX_TOKENS;
   }
-  return isParseStabilityCompactEvalCase(evalCase)
+  if (isParseStabilityOnlyEvalCase(evalCase)) {
+    return LOCAL_BRAIN_EVAL_PARSE_STABILITY_MAX_TOKENS;
+  }
+  return TIMEOUT_PRONE_COMPACT_EVAL_CASE_IDS.has(evalCase.id)
     ? LOCAL_BRAIN_EVAL_TIMEOUT_PRONE_MAX_TOKENS
     : LOCAL_BRAIN_EVAL_MAX_TOKENS;
 }
@@ -4456,7 +4465,10 @@ function buildBlindPrompt(evalCase: EvalCase): string {
   ].join("\n");
 }
 
-function buildRetryPrompt(evalCase: EvalCase, mode: "timeout_retry" | "parse_retry"): string {
+function buildRetryPrompt(
+  evalCase: EvalCase,
+  mode: "standard_compact" | "timeout_retry" | "parse_retry",
+): string {
   const promptModuleIds = normalizeLocalBrainModuleList([
     ...evalCase.requiredModules,
     ...CORE_PROMPT_MODULES,
@@ -4465,17 +4477,35 @@ function buildRetryPrompt(evalCase: EvalCase, mode: "timeout_retry" | "parse_ret
   const requiredRiskBoundaries = evalCase.requiredRiskBoundaries ?? [];
   return [
     "You are the LCX Agent local auxiliary thought-flow model.",
-    `${mode === "parse_retry" ? "Parse" : "Timeout"} retry compact mode: output one single-line JSON object only.`,
+    `${
+      mode === "standard_compact"
+        ? "Compact contract mode"
+        : mode === "parse_retry"
+          ? "Parse retry compact mode"
+          : "Timeout retry compact mode"
+    }: output one single-line JSON object only.`,
     "/no_think",
     "No prose, no markdown, no <think>, no explanations, no nested objects.",
     'Exact shape: {"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_external_conversation_history"]}',
+    mode === "standard_compact"
+      ? outputContractHintsFor(evalCase).find((hint) => hint.startsWith("Hard output budget:"))
+      : undefined,
     "Keep arrays short; use only compact snake_case ids.",
-    `Allowed module ids: ${promptModuleIds.join(", ")}.`,
+    mode === "standard_compact"
+      ? "Even for broad cases, select only the highest-signal ids; never enumerate the full vocabulary, and close the JSON object before adding detail."
+      : undefined,
+    mode === "standard_compact"
+      ? `Recommended module ids for this case: ${promptModuleIds.join(", ")}.`
+      : `Allowed module ids: ${promptModuleIds.join(", ")}.`,
     requiredMissingData.length > 0
-      ? `Required missing_data ids: ${requiredMissingData.join(", ")}.`
+      ? mode === "standard_compact"
+        ? `Required missing_data ids for this case: ${requiredMissingData.join(", ")}. Include these ids exactly; do not paraphrase or expand them.`
+        : `Required missing_data ids: ${requiredMissingData.join(", ")}.`
       : "Keep missing_data compact.",
     requiredRiskBoundaries.length > 0
-      ? `Required risk_boundaries: research_only, ${requiredRiskBoundaries.join(", ")}.`
+      ? mode === "standard_compact"
+        ? `Required risk_boundaries for this case: ${requiredRiskBoundaries.join(", ")}. Include research_only plus these ids exactly; do not paraphrase.`
+        : `Required risk_boundaries: research_only, ${requiredRiskBoundaries.join(", ")}.`
       : "Required risk_boundaries: research_only.",
     "For scenario probabilities with missing sample, weights, returns, or macro inputs, do not invent probabilities; route to data-gated research preflight.",
     `user_or_task: ${evalCase.userAsk}`,
@@ -4588,7 +4618,10 @@ async function runGenerate(
   evalCase: EvalCase,
   mode: "standard" | "blind" | "timeout_retry" | "parse_retry" = "standard",
 ): Promise<string> {
-  const promptCacheFile = mode === "standard" ? promptCacheFileFor(options) : undefined;
+  const promptCacheFile =
+    mode === "standard" && !isParseStabilityOnlyEvalCase(evalCase)
+      ? promptCacheFileFor(options)
+      : undefined;
   if (promptCacheFile) {
     await ensurePromptCache(options, promptCacheFile);
   }
@@ -4597,9 +4630,11 @@ async function runGenerate(
       ? buildRetryPrompt(evalCase, mode)
       : mode === "blind"
         ? buildBlindPrompt(evalCase)
-        : promptCacheFile
-          ? buildPromptSuffix(evalCase)
-          : buildPrompt(evalCase);
+        : isParseStabilityOnlyEvalCase(evalCase)
+          ? buildRetryPrompt(evalCase, "standard_compact")
+          : promptCacheFile
+            ? buildPromptSuffix(evalCase)
+            : buildPrompt(evalCase);
   const maxTokens = maxTokensForEvalCase(evalCase, mode);
   // This is only a decode aid for the opening delimiter. The receipt records
   // it separately; a prefilled run is never a self-start proof.
