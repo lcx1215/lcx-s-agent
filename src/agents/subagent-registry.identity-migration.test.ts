@@ -68,7 +68,9 @@ describe("subagent registry identity migration writer", () => {
 
     const first = await writeSubagentRegistryForIdentityMigration(migration, legacyRuns);
     const canonicalPath = path.join(root, ".lcx", "subagents", "runs.json");
-    expect((await stat(canonicalPath)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await stat(canonicalPath)).mode & 0o777).toBe(0o600);
+    }
     expect(JSON.parse(await readFile(canonicalPath, "utf8"))).toMatchObject({ version: 2 });
 
     const replacementRuns = new Map(legacyRuns);

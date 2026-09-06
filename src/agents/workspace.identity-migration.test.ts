@@ -49,7 +49,9 @@ describe("workspace onboarding state identity migration writer", () => {
 
     const first = await writeWorkspaceOnboardingStateForIdentityMigration(migration, legacyState);
     const canonicalPath = path.join(root, ".lcx", "workspace", ".openclaw", "workspace-state.json");
-    expect((await stat(canonicalPath)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await stat(canonicalPath)).mode & 0o777).toBe(0o600);
+    }
 
     const replacementState = {
       version: 1 as const,

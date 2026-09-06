@@ -52,7 +52,9 @@ describe("session file repair identity migration writer", () => {
     expect(result.receipt?.rollback.strategy).toBe("remove-written-target");
 
     const canonicalPath = path.join(root, ".lcx", "agents", "main", "sessions", "s-1.jsonl");
-    expect((await stat(canonicalPath)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await stat(canonicalPath)).mode & 0o777).toBe(0o600);
+    }
     expect(await readFile(legacyTranscriptPath, "utf8")).toBe(legacyRaw);
     expect(await readFile(canonicalPath, "utf8")).not.toContain("secret-transcript-content");
     const audit = await readFile(migration.pathContract.auditPath, "utf8");

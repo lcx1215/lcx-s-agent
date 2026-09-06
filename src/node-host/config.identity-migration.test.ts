@@ -44,7 +44,9 @@ describe("node host identity migration writer", () => {
     const first = await writeNodeHostConfigForIdentityMigration(migration, legacyConfig);
     const canonicalPath = path.join(root, ".lcx", "node.json");
     expect(first.previous.exists).toBe(false);
-    expect((await stat(canonicalPath)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await stat(canonicalPath)).mode & 0o777).toBe(0o600);
+    }
 
     const replacement = { ...legacyConfig, displayName: "canonical-node" };
     const second = await writeNodeHostConfigForIdentityMigration(migration, replacement);

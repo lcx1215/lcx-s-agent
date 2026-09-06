@@ -16,9 +16,12 @@ function envWith(overrides: Record<string, string | undefined>): NodeJS.ProcessE
   return { ...overrides };
 }
 
-function loadConfigForHome(home: string) {
+function loadConfigForHome(home: string, configPath?: string) {
   return createConfigIO({
-    env: envWith({ OPENCLAW_HOME: home }),
+    env: envWith({
+      OPENCLAW_HOME: home,
+      ...(configPath ? { OPENCLAW_CONFIG_PATH: configPath } : {}),
+    }),
     homedir: () => home,
   }).loadConfig();
 }
@@ -177,7 +180,7 @@ describe("Nix integration (U3, U5, U9)", () => {
           "utf-8",
         );
 
-        const cfg = loadConfigForHome(home);
+        const cfg = loadConfigForHome(home, path.join(configDir, "lcx.json"));
 
         expect(cfg.plugins?.load?.paths?.[0]).toBe(path.join(home, "plugins", "demo-plugin"));
         expect(cfg.agents?.defaults?.workspace).toBe(path.join(home, "ws-default"));
