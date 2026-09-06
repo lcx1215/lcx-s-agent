@@ -402,6 +402,7 @@ function isRecord(value: unknown): value is JsonRecord {
  */
 export function inspectMiniMaxTeacherRuntimeConfig(
   config: unknown,
+  options?: { authProfileStore?: unknown },
 ): Omit<MiniMaxTeacherRuntimeSnapshot, "configPath"> {
   const configuredRefs: string[] = [];
   const usableAuthorityRefs: string[] = [];
@@ -436,6 +437,30 @@ export function inspectMiniMaxTeacherRuntimeConfig(
         : false,
     );
   };
+  const hasUsableMiniMaxStoredCredential = (value: unknown): boolean => {
+    if (!isRecord(value) || typeof value.type !== "string") {
+      return false;
+    }
+    if (value.type === "oauth") {
+      return hasUsableCredential(value.access) || hasUsableCredential(value.refresh);
+    }
+    if (value.type === "token") {
+      return hasUsableCredential(value.token);
+    }
+    if (value.type === "api_key") {
+      return hasUsableCredential(value.key) || hasUsableCredential(value.keyRef);
+    }
+    return false;
+  };
+  const authProfileStore = isRecord(options?.authProfileStore) ? options.authProfileStore : {};
+  const storedProfiles = isRecord(authProfileStore.profiles) ? authProfileStore.profiles : {};
+  const hasUsablePortalProfile = Object.values(storedProfiles).some(
+    (profile) =>
+      isRecord(profile) &&
+      typeof profile.provider === "string" &&
+      /minimax-portal/i.test(profile.provider) &&
+      hasUsableMiniMaxStoredCredential(profile),
+  );
   const models = isRecord(root.models) ? root.models : {};
   const providers = isRecord(models.providers) ? models.providers : {};
   for (const [providerId, providerConfig] of Object.entries(providers)) {
@@ -457,7 +482,16 @@ export function inspectMiniMaxTeacherRuntimeConfig(
       if (hasProviderShape) {
         add(providerPath);
       }
-      if (["apiKey", "headers"].some((key) => hasUsableCredential(providerConfig[key]))) {
+      const hasUsableProviderCredential = ["apiKey", "headers"].some((key) => {
+        if (key === "apiKey" && providerConfig.apiKey === "minimax-oauth") {
+          return false;
+        }
+        return hasUsableCredential(providerConfig[key]);
+      });
+      if (
+        hasUsableProviderCredential ||
+        (/minimax-portal/i.test(providerId) && hasUsablePortalProfile)
+      ) {
         addUsable(providerPath);
       }
     }
@@ -562,7 +596,8 @@ export function inspectMiniMaxTeacherRuntimeConfig(
 }
 
 async function readMiniMaxTeacherRuntimeSnapshot(): Promise<MiniMaxTeacherRuntimeSnapshot> {
-  const configPath = resolveLcxIdentityMigrationPlan().readConfigPath;
+  const migrationPlan = resolveLcxIdentityMigrationPlan();
+  const configPath = migrationPlan.readConfigPath;
   const raw = await fs.readFile(configPath, "utf8").catch(() => undefined);
   if (raw === undefined) {
     return {
@@ -575,7 +610,25 @@ async function readMiniMaxTeacherRuntimeSnapshot(): Promise<MiniMaxTeacherRuntim
     };
   }
   try {
-    return { ...inspectMiniMaxTeacherRuntimeConfig(JSON5.parse(raw)), configPath };
+    const configuredAgentDir =
+      process.env.OPENCLAW_AGENT_DIR?.trim() || process.env.PI_CODING_AGENT_DIR?.trim();
+    const agentDir =
+      configuredAgentDir || path.join(migrationPlan.readStateDir, "agents", "main", "agent");
+    const authProfileRaw = await fs
+      .readFile(path.join(agentDir, "auth-profiles.json"), "utf8")
+      .catch(() => undefined);
+    let authProfileStore: unknown;
+    if (authProfileRaw !== undefined) {
+      try {
+        authProfileStore = JSON5.parse(authProfileRaw);
+      } catch {
+        authProfileStore = undefined;
+      }
+    }
+    return {
+      ...inspectMiniMaxTeacherRuntimeConfig(JSON5.parse(raw), { authProfileStore }),
+      configPath,
+    };
   } catch {
     return {
       boundary: "local_minimax_teacher_runtime_status_only",

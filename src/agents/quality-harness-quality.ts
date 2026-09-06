@@ -71,10 +71,10 @@ function normalizedNumber(value: string): string {
   return value.replace(/[$€£¥,%\s]/g, "").replace(/,/g, "");
 }
 
-function hasEvidenceTimestamp(evidence: QualityHarnessEvidence): boolean {
+function hasEvidenceSourceAndTimestamp(evidence: QualityHarnessEvidence): boolean {
   return Boolean(
-    evidence.source?.trim() ||
-    /\b20\d{2}[-/]\d{1,2}(?:[-/]\d{1,2})?(?:[T ]\d{1,2}:\d{2})?\b|\b(?:UTC|北京时间|as of)\b/iu.test(
+    evidence.source?.trim() &&
+    /\b20\d{2}[-/]\d{1,2}(?:[-/]\d{1,2})?(?:[T ]\d{1,2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2})?)?\b/iu.test(
       evidence.text,
     ),
   );
@@ -112,8 +112,10 @@ function validateFinanceAnswerSafety(
           `final finance answer contains current-data numbers without matching cited evidence: ${unsupportedNumbers.join(", ")}`,
         );
       }
-      if (!citedEvidence.some(hasEvidenceTimestamp)) {
-        problems.push("current finance numbers require cited evidence with a source or timestamp");
+      if (!citedEvidence.some(hasEvidenceSourceAndTimestamp)) {
+        problems.push(
+          "current finance numbers require cited evidence with both a source and timestamp",
+        );
       }
     }
   }

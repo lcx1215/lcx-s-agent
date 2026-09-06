@@ -122,8 +122,6 @@ export type LcxIdentityWriteReceipt = Readonly<{
   audit: LcxIdentityAuditResult;
 }>;
 
-export type LcxIdentityMigrationWriterReceipt = LcxIdentityWriteReceipt;
-
 export type LcxIdentityRemovalReceipt = Readonly<{
   pathContract: LcxIdentityWriterPathContract;
   previous: Readonly<{
@@ -154,6 +152,21 @@ export type LcxIdentityPathMoveReceipt = Readonly<{
   }>;
   audit: LcxIdentityAuditResult;
 }>;
+
+// Config I/O exposes the same durable write shape without the identity
+// writer's best-effort audit result. Path moves are a separate durable
+// migration primitive and do not fabricate a next-content hash.
+export type LcxIdentityConfigWriteReceipt = Readonly<{
+  pathContract: LcxIdentityWriterPathContract;
+  previous: LcxIdentityWriteReceipt["previous"];
+  next: LcxIdentityWriteReceipt["next"];
+  rollback: LcxIdentityWriteReceipt["rollback"];
+}>;
+
+export type LcxIdentityMigrationWriterReceipt =
+  | LcxIdentityWriteReceipt
+  | LcxIdentityConfigWriteReceipt
+  | LcxIdentityPathMoveReceipt;
 
 export class LcxIdentityWriterContractError extends Error {
   readonly code: string;
@@ -244,19 +257,42 @@ export function resolveLcxIdentityStateWriterPathContract<T extends LcxIdentityW
   existsSync?: (candidate: string) => boolean;
 }): LcxIdentityWriterPathContract & Readonly<{ writer: T }> {
   const existsSync = params.existsSync ?? fs.existsSync;
-  const activeReadRoot = path.resolve(params.migrationPlan.readStateDir);
   const writeRoot = path.resolve(params.migrationPlan.writeStateDir);
   const orderedReadRoots = [
     params.migrationPlan.readStateDir,
-    ...params.migrationPlan.readStateDirs.filter(
-      (candidate) =>
-        path.resolve(candidate) !== activeReadRoot && path.resolve(candidate) !== writeRoot,
-    ),
-  ];
-  const existingReadRoot = orderedReadRoots.find((candidate) =>
-    existsSync(resolveRelativeStatePath(candidate, params.relativePath)),
+    ...params.migrationPlan.readStateDirs,
+  ].filter(
+    (candidate, index, candidates) =>
+      path.resolve(candidate) !== writeRoot &&
+      candidates.findIndex((other) => path.resolve(other) === path.resolve(candidate)) === index,
   );
   const canonicalTarget = resolveRelativeStatePath(writeRoot, params.relativePath);
+  const existingReadRoots = orderedReadRoots.filter((candidate) =>
+    existsSync(resolveRelativeStatePath(candidate, params.relativePath)),
+  );
+  if (existingReadRoots.length > 1) {
+    throw new LcxIdentityWriterContractError(
+      params.writer +
+        " state exists in multiple compatibility roots: " +
+        existingReadRoots.join(", "),
+      "LCX_IDENTITY_SPLIT_STATE",
+    );
+  }
+  const existingReadRoot = existingReadRoots[0];
+  if (
+    existingReadRoot &&
+    existsSync(canonicalTarget) &&
+    !isOwnedWriteTarget(params.writer, canonicalTarget, existsSync)
+  ) {
+    throw new LcxIdentityWriterContractError(
+      params.writer +
+        " split state exists in both a compatibility root and the canonical target: " +
+        existingReadRoot +
+        " and " +
+        canonicalTarget,
+      "LCX_IDENTITY_SPLIT_STATE",
+    );
+  }
   const readRoot =
     isOwnedWriteTarget(params.writer, canonicalTarget, existsSync) ||
     (!existingReadRoot && existsSync(canonicalTarget))
@@ -327,6 +363,13 @@ function isOwnedWriteTarget(
   } catch {
     return false;
   }
+}
+
+function resolveReceiptBackupPath(contract: LcxIdentityWriterPathContract): string {
+  if (!fs.existsSync(contract.backupPath)) {
+    return contract.backupPath;
+  }
+  return contract.backupPath + "." + process.pid + "." + crypto.randomUUID();
 }
 
 async function readOptionalRaw(filePath: string): Promise<string | null> {
@@ -431,20 +474,9 @@ export async function writeLcxIdentityMigrationCompletionMarker(params: {
         "LCX_IDENTITY_COMPLETION_DUPLICATE_TARGET",
       );
     }
-    if (receipt.audit.status !== "written") {
+    if (!receipt.rollback.path) {
       throw new LcxIdentityWriterContractError(
-        `Identity migration completion requires a durable receipt for ${receipt.pathContract.writer}`,
-        "LCX_IDENTITY_COMPLETION_RECEIPT_NOT_DURABLE",
-      );
-    }
-    if (
-      !/^[a-f0-9]{64}$/i.test(receipt.next.hash) ||
-      !Number.isInteger(receipt.next.bytes) ||
-      receipt.next.bytes < 0 ||
-      !receipt.rollback.path
-    ) {
-      throw new LcxIdentityWriterContractError(
-        `Identity migration receipt for ${receipt.pathContract.writer} is malformed`,
+        "Identity migration receipt is missing a rollback path",
         "LCX_IDENTITY_COMPLETION_RECEIPT_MALFORMED",
       );
     }
@@ -459,17 +491,7 @@ export async function writeLcxIdentityMigrationCompletionMarker(params: {
         "LCX_IDENTITY_COMPLETION_RECEIPT_TARGET",
       );
     }
-    const currentRaw = await readOptionalRaw(receipt.pathContract.writePath);
-    if (
-      currentRaw === null ||
-      hashRaw(currentRaw) !== receipt.next.hash ||
-      Buffer.byteLength(currentRaw, "utf8") !== receipt.next.bytes
-    ) {
-      throw new LcxIdentityWriterContractError(
-        `Identity migration receipt for ${receipt.pathContract.writer} no longer matches its canonical target`,
-        "LCX_IDENTITY_COMPLETION_RECEIPT_STALE",
-      );
-    }
+    await assertDurableMigrationReceipt(receipt);
     receiptsByTarget.set(targetKey, receipt);
   }
   const missingTargets = [...requiredTargetsByKey.keys()].filter(
@@ -493,6 +515,76 @@ export async function writeLcxIdentityMigrationCompletionMarker(params: {
     `${JSON.stringify(marker)}\n`,
   );
   return marker;
+}
+
+function isRawMigrationReceipt(
+  receipt: LcxIdentityMigrationWriterReceipt,
+): receipt is LcxIdentityWriteReceipt | LcxIdentityConfigWriteReceipt {
+  return "next" in receipt;
+}
+
+async function assertDurableMigrationReceipt(
+  receipt: LcxIdentityMigrationWriterReceipt,
+): Promise<void> {
+  if ("audit" in receipt && receipt.audit.status !== "written") {
+    throw new LcxIdentityWriterContractError(
+      "Identity migration receipt has no durable audit for " + receipt.pathContract.writer,
+      "LCX_IDENTITY_COMPLETION_RECEIPT_NOT_DURABLE",
+    );
+  }
+  if (isRawMigrationReceipt(receipt)) {
+    if (
+      !/^[a-f0-9]{64}$/i.test(receipt.next.hash) ||
+      !Number.isInteger(receipt.next.bytes) ||
+      receipt.next.bytes < 0
+    ) {
+      throw new LcxIdentityWriterContractError(
+        "Identity migration receipt is malformed for " + receipt.pathContract.writer,
+        "LCX_IDENTITY_COMPLETION_RECEIPT_MALFORMED",
+      );
+    }
+    const currentRaw = await readOptionalRaw(receipt.pathContract.writePath);
+    if (
+      currentRaw === null ||
+      hashRaw(currentRaw) !== receipt.next.hash ||
+      Buffer.byteLength(currentRaw, "utf8") !== receipt.next.bytes
+    ) {
+      throw new LcxIdentityWriterContractError(
+        "Identity migration receipt no longer matches its canonical target for " +
+          receipt.pathContract.writer,
+        "LCX_IDENTITY_COMPLETION_RECEIPT_STALE",
+      );
+    }
+    return;
+  }
+
+  const targetStat = await fs.promises.lstat(receipt.pathContract.writePath).catch((err) => {
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return null;
+    }
+    throw err;
+  });
+  const expected = receipt.previous;
+  const currentRaw =
+    targetStat?.isFile() === true
+      ? await fs.promises.readFile(receipt.pathContract.writePath, "utf8")
+      : null;
+  if (
+    !targetStat ||
+    (expected.kind === "directory" && !targetStat.isDirectory()) ||
+    (expected.kind === "file" && !targetStat.isFile()) ||
+    targetStat.dev !== expected.dev ||
+    targetStat.ino !== expected.ino ||
+    (expected.kind === "file" && targetStat.size !== expected.bytes) ||
+    (expected.contentHash !== null &&
+      (currentRaw === null || hashRaw(currentRaw) !== expected.contentHash))
+  ) {
+    throw new LcxIdentityWriterContractError(
+      "Identity migration move receipt no longer matches its canonical target for " +
+        receipt.pathContract.writer,
+      "LCX_IDENTITY_COMPLETION_RECEIPT_STALE",
+    );
+  }
 }
 
 async function appendIdentityAudit(
@@ -537,9 +629,10 @@ export async function writeLcxIdentityWriterRawWithReceipt(
   const previousExists = previousRaw !== null;
   const previousHash = previousExists ? hashRaw(previousRaw) : null;
   const nextHash = hashRaw(raw);
+  const rollbackPath = previousExists ? resolveReceiptBackupPath(contract) : contract.rollbackPath;
 
   if (previousExists) {
-    await writeRawAtomically(contract.backupPath, previousRaw);
+    await writeRawAtomically(rollbackPath, previousRaw);
   }
   await writeRawAtomically(contract.writePath, raw);
   ownedWriteTargetHashes.set(`${contract.writer}:${contract.writePath}`, nextHash);
@@ -553,7 +646,7 @@ export async function writeLcxIdentityWriterRawWithReceipt(
     }),
     next: Object.freeze({ hash: nextHash, bytes: Buffer.byteLength(raw, "utf8") }),
     rollback: Object.freeze({
-      path: contract.rollbackPath,
+      path: rollbackPath,
       strategy: previousExists ? "restore-backup" : "remove-written-target",
     }),
   });
@@ -565,9 +658,9 @@ export async function writeLcxIdentityWriterRawWithReceipt(
     writer: contract.writer,
     readPath: contract.readPath,
     writePath: contract.writePath,
-    backupPath: contract.backupPath,
+    backupPath: rollbackPath,
     auditPath: contract.auditPath,
-    rollbackPath: contract.rollbackPath,
+    rollbackPath,
     noSplitState: contract.noSplitState,
     previousExists,
     previousHash,
@@ -613,9 +706,9 @@ export async function rollbackLcxIdentityWriter(receipt: LcxIdentityWriteReceipt
     writer: pathContract.writer,
     readPath: pathContract.readPath,
     writePath: pathContract.writePath,
-    backupPath: pathContract.backupPath,
+    backupPath: receipt.rollback.path,
     auditPath: pathContract.auditPath,
-    rollbackPath: pathContract.rollbackPath,
+    rollbackPath: receipt.rollback.path,
     noSplitState: pathContract.noSplitState,
     result: receipt.rollback.strategy === "restore-backup" ? "restored" : "removed",
     expectedNextHash: receipt.next.hash,
@@ -636,7 +729,8 @@ export async function removeLcxIdentityWriterWithReceipt(
     );
   }
   const previousHash = hashRaw(previousRaw);
-  await writeRawAtomically(contract.backupPath, previousRaw);
+  const rollbackPath = resolveReceiptBackupPath(contract);
+  await writeRawAtomically(rollbackPath, previousRaw);
   await fs.promises.unlink(contract.writePath);
   const receipt = Object.freeze({
     pathContract: contract,
@@ -646,7 +740,7 @@ export async function removeLcxIdentityWriterWithReceipt(
       bytes: Buffer.byteLength(previousRaw, "utf8"),
     }),
     rollback: Object.freeze({
-      path: contract.rollbackPath,
+      path: rollbackPath,
       strategy: "restore-removed-target" as const,
     }),
   });
@@ -657,9 +751,9 @@ export async function removeLcxIdentityWriterWithReceipt(
     writer: contract.writer,
     readPath: contract.readPath,
     writePath: contract.writePath,
-    backupPath: contract.backupPath,
+    backupPath: rollbackPath,
     auditPath: contract.auditPath,
-    rollbackPath: contract.rollbackPath,
+    rollbackPath,
     noSplitState: contract.noSplitState,
     previousHash,
     previousBytes: receipt.previous.bytes,
@@ -697,9 +791,9 @@ export async function rollbackLcxIdentityRemoval(
     writer: pathContract.writer,
     readPath: pathContract.readPath,
     writePath: pathContract.writePath,
-    backupPath: pathContract.backupPath,
+    backupPath: receipt.rollback.path,
     auditPath: pathContract.auditPath,
-    rollbackPath: pathContract.rollbackPath,
+    rollbackPath: receipt.rollback.path,
     noSplitState: pathContract.noSplitState,
     result: "restored-after-remove",
     removedHash: receipt.previous.hash,

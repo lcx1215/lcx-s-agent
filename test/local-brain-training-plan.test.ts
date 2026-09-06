@@ -56,6 +56,52 @@ describe("local-brain-training-plan", () => {
           providers: {
             "minimax-portal": {
               baseUrl: "https://example.invalid",
+              apiKey: "minimax-oauth",
+            },
+          },
+        },
+      }),
+    ).toMatchObject({
+      enabled: false,
+      configuredRefs: ["models.providers.minimax-portal"],
+      usableAuthorityRefs: [],
+    });
+
+    expect(
+      inspectMiniMaxTeacherRuntimeConfig(
+        {
+          models: {
+            providers: {
+              "minimax-portal": {
+                baseUrl: "https://example.invalid",
+                apiKey: "minimax-oauth",
+              },
+            },
+          },
+        },
+        {
+          authProfileStore: {
+            profiles: {
+              "minimax-portal:default": {
+                type: "oauth",
+                provider: "minimax-portal",
+                refresh: "refresh-token",
+              },
+            },
+          },
+        },
+      ),
+    ).toMatchObject({
+      enabled: true,
+      usableAuthorityRefs: ["models.providers.minimax-portal"],
+    });
+
+    expect(
+      inspectMiniMaxTeacherRuntimeConfig({
+        models: {
+          providers: {
+            "minimax-portal": {
+              baseUrl: "https://example.invalid",
               apiKey: "sk-minimax-test",
             },
           },

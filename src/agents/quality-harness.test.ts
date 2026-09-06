@@ -231,6 +231,29 @@ describe("quality harness", () => {
     ).toMatchObject({ passed: false });
   });
 
+  it("requires both a source and timestamp for current finance numbers", async () => {
+    const result = await runQualityHarness({
+      request: {
+        ...financeRequest,
+        evidence: [
+          {
+            id: "market",
+            text: "公开行情材料记录 NVDA 的价格为 480 美元。",
+            source: "market-feed-test",
+          },
+        ],
+      },
+      maxAttempts: 1,
+      modelInvoker: demoInvoker({ answer: "NVDA 当前价格为 480 美元。" }),
+      verify: async () => ({ status: "passed", summary: "should not run", details: [] }),
+    });
+
+    expect(result.status).toBe("quality-failed");
+    expect(
+      result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
+    ).toMatchObject({ passed: false });
+  });
+
   it("aborts a verifier that exceeds its independent timeout", async () => {
     let aborted = false;
     const result = await runQualityHarness({
