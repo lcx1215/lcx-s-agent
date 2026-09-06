@@ -325,10 +325,10 @@ export function resolveLcxIdentityMigrationPlan(
   const readStateDir =
     explicitConfig && !explicitState
       ? canonicalStateDir
-      : !canonicalActivationComplete && compatibilityStateDir
-        ? compatibilityStateDir
-        : existingConfigPath
-          ? path.dirname(existingConfigPath)
+      : existingConfigPath
+        ? path.dirname(existingConfigPath)
+        : !canonicalActivationComplete && compatibilityStateDir
+          ? compatibilityStateDir
           : (readStateDirs.find((candidate) => {
               try {
                 return existsSync(candidate);

@@ -121,7 +121,7 @@ async function resolveActiveEntryPaths(params: {
     pathExists(canonicalPath),
     pathExists(legacyPath),
   ]);
-  if (canonicalExists && legacyExists) {
+  if (canonicalPath !== legacyPath && canonicalExists && legacyExists) {
     throw new Error(`Delivery queue migration found split entry state for ${params.id}`);
   }
   return {
@@ -279,13 +279,19 @@ export async function failDeliveryForIdentityMigration(params: {
     }),
     JSON.stringify(next, null, 2),
   );
-  const removedSource =
-    paths.readPath === paths.writePath
-      ? undefined
-      : await removeQueueEntryWithReceipt({
-          migration: params.migration,
-          filePath: paths.readPath,
-        });
+  let removedSource: LcxIdentityRemovalReceipt | undefined;
+  try {
+    removedSource =
+      paths.readPath === paths.writePath
+        ? undefined
+        : await removeQueueEntryWithReceipt({
+            migration: params.migration,
+            filePath: paths.readPath,
+          });
+  } catch (error) {
+    await rollbackLcxIdentityWriter(write);
+    throw error;
+  }
   return Object.freeze({ write, removedSource });
 }
 
@@ -307,10 +313,16 @@ export async function moveDeliveryToFailedForIdentityMigration(params: {
     }),
     raw,
   );
-  const removedSource = await removeQueueEntryWithReceipt({
-    migration: params.migration,
-    filePath: source.readPath,
-  });
+  let removedSource: LcxIdentityRemovalReceipt;
+  try {
+    removedSource = await removeQueueEntryWithReceipt({
+      migration: params.migration,
+      filePath: source.readPath,
+    });
+  } catch (error) {
+    await rollbackLcxIdentityWriter(write);
+    throw error;
+  }
   return Object.freeze({ write, removedSource });
 }
 

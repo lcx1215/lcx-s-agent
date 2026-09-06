@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import JSON5 from "json5";
 import { createModuleLearningPipelineReviewTool } from "../../src/agents/tools/module-learning-pipeline-review-tool.ts";
 import { resolveLcxIdentityMigrationPlan } from "../../src/config/paths.ts";
 import { buildLearningSedimentationBridge } from "./lcx-learning-sedimentation-bridge.ts";
@@ -402,23 +403,97 @@ export function inspectMiniMaxTeacherRuntimeConfig(
   config: unknown,
 ): Omit<MiniMaxTeacherRuntimeSnapshot, "configPath"> {
   const configuredRefs: string[] = [];
-  const visit = (value: unknown, pathParts: string[]): void => {
-    if (pathParts.length > 0 && /minimax/i.test(pathParts.at(-1) ?? "")) {
-      configuredRefs.push(pathParts.join("."));
+  const add = (pathParts: string[]) => configuredRefs.push(pathParts.join("."));
+  const root = isRecord(config) ? config : {};
+  const models = isRecord(root.models) ? root.models : {};
+  const providers = isRecord(models.providers) ? models.providers : {};
+  for (const [providerId, providerConfig] of Object.entries(providers)) {
+    if (
+      /minimax/i.test(providerId) &&
+      isRecord(providerConfig) &&
+      providerConfig.enabled !== false &&
+      ["baseUrl", "apiKey", "auth", "api", "headers", "authHeader", "models"].some((key) =>
+        Object.prototype.hasOwnProperty.call(providerConfig, key),
+      )
+    ) {
+      add(["models", "providers", providerId]);
     }
+  }
+
+  const collectModelRefs = (value: unknown, pathParts: string[]): void => {
     if (typeof value === "string" && /minimax/i.test(value)) {
-      configuredRefs.push(pathParts.join("."));
+      add(pathParts);
       return;
     }
     if (Array.isArray(value)) {
-      value.forEach((entry, index) => visit(entry, [...pathParts, String(index)]));
+      value.forEach((entry, index) => collectModelRefs(entry, [...pathParts, String(index)]));
       return;
     }
     if (isRecord(value)) {
-      Object.entries(value).forEach(([key, entry]) => visit(entry, [...pathParts, key]));
+      for (const [key, entry] of Object.entries(value)) {
+        if (key === "primary" || key === "fallbacks" || key === "model") {
+          collectModelRefs(entry, [...pathParts, key]);
+        }
+      }
     }
   };
-  visit(config, []);
+  const agents = isRecord(root.agents) ? root.agents : {};
+  if (isRecord(agents.defaults)) {
+    collectModelRefs(agents.defaults.model, ["agents", "defaults", "model"]);
+    if (isRecord(agents.defaults.subagents)) {
+      collectModelRefs(agents.defaults.subagents.model, [
+        "agents",
+        "defaults",
+        "subagents",
+        "model",
+      ]);
+    }
+  }
+  if (Array.isArray(agents.list)) {
+    agents.list.forEach((agent, index) => {
+      if (!isRecord(agent)) {
+        return;
+      }
+      collectModelRefs(agent.model, ["agents", "list", String(index), "model"]);
+      if (isRecord(agent.subagents)) {
+        collectModelRefs(agent.subagents.model, [
+          "agents",
+          "list",
+          String(index),
+          "subagents",
+          "model",
+        ]);
+      }
+    });
+  }
+
+  const auth = isRecord(root.auth) ? root.auth : {};
+  const profiles = isRecord(auth.profiles) ? auth.profiles : {};
+  for (const [profileId, profile] of Object.entries(profiles)) {
+    if (
+      isRecord(profile) &&
+      typeof profile.provider === "string" &&
+      /minimax/i.test(profile.provider)
+    ) {
+      add(["auth", "profiles", profileId]);
+    }
+  }
+
+  const plugins = isRecord(root.plugins) ? root.plugins : {};
+  const pluginEntries = isRecord(plugins.entries) ? plugins.entries : {};
+  for (const [pluginId, entry] of Object.entries(pluginEntries)) {
+    if (/minimax/i.test(pluginId) && isRecord(entry) && entry.enabled !== false) {
+      add(["plugins", "entries", pluginId]);
+    }
+  }
+
+  const env = isRecord(root.env) ? root.env : {};
+  const envVars = isRecord(env.vars) ? env.vars : {};
+  for (const [key, value] of Object.entries(envVars)) {
+    if (/minimax/i.test(key) && typeof value === "string" && value.trim()) {
+      add(["env", "vars", key]);
+    }
+  }
   const uniqueRefs = [...new Set(configuredRefs)];
   return {
     boundary: "local_minimax_teacher_runtime_status_only",
@@ -444,7 +519,7 @@ async function readMiniMaxTeacherRuntimeSnapshot(): Promise<MiniMaxTeacherRuntim
     };
   }
   try {
-    return { ...inspectMiniMaxTeacherRuntimeConfig(JSON.parse(raw) as unknown), configPath };
+    return { ...inspectMiniMaxTeacherRuntimeConfig(JSON5.parse(raw)), configPath };
   } catch {
     return {
       boundary: "local_minimax_teacher_runtime_status_only",

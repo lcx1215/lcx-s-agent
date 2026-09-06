@@ -193,6 +193,7 @@ export type LcxIdentitySessionArchiveReceipt = Readonly<{
 
 export type LcxIdentitySessionArchiveCleanupReceipt = Readonly<{
   removed: readonly LcxIdentityRemovalReceipt[];
+  rollbackAvailable: boolean;
 }>;
 
 async function identityFileExists(filePath: string): Promise<boolean> {
@@ -424,7 +425,10 @@ export async function cleanupArchivedSessionTranscriptsForIdentityMigration(para
   receipt: LcxIdentitySessionArchiveCleanupReceipt;
 }> {
   if (!Number.isFinite(params.olderThanMs) || params.olderThanMs < 0) {
-    return { result: { removed: 0, scanned: 0 }, receipt: { removed: [] } };
+    return {
+      result: { removed: 0, scanned: 0 },
+      receipt: { removed: [], rollbackAvailable: false },
+    };
   }
   const now = params.nowMs ?? Date.now();
   const reason = params.reason ?? "deleted";
@@ -470,15 +474,24 @@ export async function cleanupArchivedSessionTranscriptsForIdentityMigration(para
     }
     throw error;
   }
+  for (const receipt of removed) {
+    await fs.promises.unlink(receipt.rollback.path).catch(() => undefined);
+  }
   return {
     result: { removed: removed.length, scanned },
-    receipt: Object.freeze({ removed: Object.freeze(removed) }),
+    receipt: Object.freeze({ removed: Object.freeze(removed), rollbackAvailable: false }),
   };
 }
 
 export async function rollbackSessionArchiveCleanupIdentityMigration(
   receipt: LcxIdentitySessionArchiveCleanupReceipt,
 ): Promise<void> {
+  if (!receipt.rollbackAvailable) {
+    throw new LcxIdentityWriterContractError(
+      "session archive cleanup rollback window has been closed after committed cleanup",
+      "LCX_IDENTITY_CLEANUP_ROLLBACK_CLOSED",
+    );
+  }
   for (const removed of receipt.removed.toReversed()) {
     await rollbackLcxIdentityRemoval(removed);
   }

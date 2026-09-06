@@ -82,7 +82,7 @@ describe("LCX session transcript archive identity migration", () => {
     ).rejects.toMatchObject({ code: "LCX_IDENTITY_SPLIT_STATE" });
   });
 
-  it("cleans old archives through backup receipts and restores them on rollback", async () => {
+  it("cleans old archives and removes the transient rollback backup after commit", async () => {
     const migration = await createLegacyMigration();
     await fs.mkdir(migration.writeSessionsDir, { recursive: true });
     const nowMs = Date.parse("2026-09-04T10:20:30.000Z");
@@ -105,9 +105,14 @@ describe("LCX session transcript archive identity migration", () => {
     expect(cleanup.result).toEqual({ removed: 1, scanned: 2 });
     expect(cleanup.receipt.removed).toHaveLength(1);
     await expect(fs.access(oldArchive)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.access(`${oldArchive}.bak`)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(fs.readFile(freshArchive, "utf8")).resolves.toBe("fresh");
 
-    await rollbackSessionArchiveCleanupIdentityMigration(cleanup.receipt);
-    await expect(fs.readFile(oldArchive, "utf8")).resolves.toBe("old");
+    expect(cleanup.receipt.rollbackAvailable).toBe(false);
+    await expect(
+      rollbackSessionArchiveCleanupIdentityMigration(cleanup.receipt),
+    ).rejects.toMatchObject({
+      code: "LCX_IDENTITY_CLEANUP_ROLLBACK_CLOSED",
+    });
   });
 });

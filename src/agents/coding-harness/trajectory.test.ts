@@ -56,6 +56,22 @@ describe("AppendOnlyCodingTrajectory", () => {
     expect(restored.events[0]?.schemaVersion).toBe(CODING_HARNESS_TRAJECTORY_SCHEMA_VERSION);
   });
 
+  it("redacts secrets embedded in arbitrary trajectory strings", () => {
+    const trajectory = new AppendOnlyCodingTrajectory("run-secret-text");
+    trajectory.append("run/failed", {
+      error:
+        'Authorization: Bearer bearer-secret, signed=https://example.test/callback?token=url-secret&sig=signature-secret --api-key cli-secret; nested={"authorization":"Bearer nested-secret"}',
+    });
+
+    const jsonl = trajectory.toJSONL();
+    expect(jsonl).not.toContain("bearer-secret");
+    expect(jsonl).not.toContain("url-secret");
+    expect(jsonl).not.toContain("signature-secret");
+    expect(jsonl).not.toContain("cli-secret");
+    expect(jsonl).not.toContain("nested-secret");
+    expect(jsonl).toContain("[redacted]");
+  });
+
   it("fails closed on a sequence gap", () => {
     expect(
       () =>

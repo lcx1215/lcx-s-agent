@@ -181,8 +181,8 @@ export type QualityHarnessReceipt = Readonly<{
     backend: "injected_model_invoker";
     modelId: string;
     realModelInferenceObserved: false;
-    providerCallsMade: false;
-    externalSideEffects: false;
+    providerCallsMade: "not-observed" | "caller-attested";
+    externalSideEffects: "not-observed" | "caller-attested";
   }>;
   plannedStages: readonly QualityHarnessStage[];
   attempts: readonly QualityHarnessAttemptReceipt[];
@@ -190,7 +190,7 @@ export type QualityHarnessReceipt = Readonly<{
   verification: QualityHarnessVerification;
   quality: Readonly<{
     passed: boolean;
-    independentRoleReviewCount: 3;
+    independentRoleReviewCount: number;
     reviewAgents: readonly QualityHarnessReviewAgentId[];
   }>;
   repair: Readonly<{

@@ -94,6 +94,27 @@ describe("LCX identity migration cron and audit writers", () => {
     });
   });
 
+  it("reads JSON5 cron stores without dropping migrated jobs", async () => {
+    await withTempRoot(async (root) => {
+      const legacyPath = path.join(root, ".openclaw", "cron", "jobs.json");
+      await fs.mkdir(path.dirname(legacyPath), { recursive: true });
+      await fs.writeFile(
+        legacyPath,
+        `{
+          // Keep comments and trailing commas compatible with the main cron loader.
+          version: 1,
+          jobs: [{ id: "job-json5", enabled: true, schedule: { kind: "at", at: 1 }, payload: { kind: "systemEvent", text: "x" } }],
+        }`,
+        "utf8",
+      );
+      const migration = createLcxIdentityCronStoreMigration({ migrationPlan: migrationPlan(root) });
+
+      await expect(readCronStoreForIdentityMigration(migration)).resolves.toMatchObject({
+        jobs: [expect.objectContaining({ id: "job-json5" })],
+      });
+    });
+  });
+
   it("rejects a config-only override for the cron state writer", async () => {
     await withTempRoot(async (root) => {
       const plan = resolveLcxIdentityMigrationPlan({
@@ -106,6 +127,9 @@ describe("LCX identity migration cron and audit writers", () => {
       expect(() => createLcxIdentityCronStoreMigration({ migrationPlan: plan })).toThrow(
         /state-root authority/,
       );
+      expect(() =>
+        createLcxIdentityCronRunLogMigration({ migrationPlan: plan, jobId: "job-1" }),
+      ).toThrow(/state-root authority/);
     });
   });
 });

@@ -64,14 +64,36 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function redactString(value: string): string {
+  return value
+    .replace(
+      /(authorization\s*["']?\s*[:=]\s*)(?:bearer\s+)?(?:"[^"]*"|'[^']*'|[^\s,;"']+)/gi,
+      `$1${REDACTED}`,
+    )
+    .replace(/(bearer\s+)[^\s,;"']+/gi, `$1${REDACTED}`)
+    .replace(
+      /(api[_-]?key|token|secret|password)["']?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+      `$1=${REDACTED}`,
+    )
+    .replace(
+      /([?&](?:token|sig|signature|api[_-]?key|access[_-]?token|auth)=)[^&#\s"']+/gi,
+      `$1${REDACTED}`,
+    )
+    .replace(
+      /((?:^|\s)--?(?:api[_-]?key|token|secret|password)(?:=|\s+))(?:"[^"]*"|'[^']*'|[^\s]+)/gi,
+      `$1${REDACTED}`,
+    );
+}
+
 function sanitizeValue(value: unknown, key?: string): unknown {
   if (key && SENSITIVE_KEY.test(key)) {
     return REDACTED;
   }
   if (typeof value === "string") {
-    return value.length > MAX_STRING_LENGTH
-      ? `${value.slice(0, MAX_STRING_LENGTH)}…[truncated]`
-      : value;
+    const redacted = redactString(value);
+    return redacted.length > MAX_STRING_LENGTH
+      ? `${redacted.slice(0, MAX_STRING_LENGTH)}…[truncated]`
+      : redacted;
   }
   if (Array.isArray(value)) {
     return value.slice(0, MAX_ARRAY_ITEMS).map((entry) => sanitizeValue(entry));

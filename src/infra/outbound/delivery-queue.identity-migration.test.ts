@@ -210,4 +210,37 @@ describe("LCX identity migration delivery queue writer", () => {
       ).resolves.toBeUndefined();
     });
   });
+
+  it("treats identical explicit queue paths as one active entry", async () => {
+    await withTempRoot(async (root) => {
+      const queueDir = path.join(root, "operator-state", "delivery-queue");
+      const plan = resolveLcxIdentityMigrationPlan({
+        env: {
+          OPENCLAW_STATE_DIR: path.join(root, "operator-state"),
+        } as NodeJS.ProcessEnv,
+        homedir: () => root,
+        existsSync: nodeFs.existsSync,
+      });
+      const migration = createLcxIdentityDeliveryQueueMigration({ migrationPlan: plan });
+      await fs.mkdir(queueDir, { recursive: true });
+      await fs.writeFile(
+        path.join(queueDir, "same-path.json"),
+        JSON.stringify({
+          id: "same-path",
+          retryCount: 0,
+          channel: "telegram",
+          to: "1",
+          payloads: [],
+        }),
+        "utf8",
+      );
+
+      await expect(
+        ackDeliveryForIdentityMigration({ migration, id: "same-path" }),
+      ).resolves.not.toBeNull();
+      await expect(fs.access(path.join(queueDir, "same-path.json"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    });
+  });
 });

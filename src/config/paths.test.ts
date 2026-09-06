@@ -407,6 +407,25 @@ describe("LCX identity migration plan", () => {
     });
   });
 
+  it("keeps state and config together when a later compatibility root owns the config", async () => {
+    await withTempRoot("lcx-identity-multiple-compat-", async (root) => {
+      const firstCompatibilityDir = path.join(root, ".openclaw");
+      const owningCompatibilityDir = path.join(root, ".clawdbot");
+      const owningConfigPath = path.join(owningCompatibilityDir, "openclaw.json");
+      await fs.mkdir(firstCompatibilityDir, { recursive: true });
+      await fs.mkdir(owningCompatibilityDir, { recursive: true });
+      await fs.writeFile(owningConfigPath, "{}", "utf8");
+
+      const plan = resolveLcxIdentityMigrationPlan({
+        env: {} as NodeJS.ProcessEnv,
+        homedir: () => root,
+      });
+
+      expect(plan.readStateDir).toBe(owningCompatibilityDir);
+      expect(plan.readConfigPath).toBe(owningConfigPath);
+    });
+  });
+
   it("keeps explicit legacy overrides authoritative for both reads and writes", () => {
     const env = {
       OPENCLAW_STATE_DIR: "~/legacy-state",

@@ -5,6 +5,9 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   createLcxIdentityWriterPathContract,
+  LCX_IDENTITY_WRITER_NAMES,
+  assertLcxIdentityWriterPathContract,
+  resolveLcxIdentityStateWriterPathContract,
   rollbackLcxIdentityWriter,
   writeLcxIdentityMigrationCompletionMarker,
   writeLcxIdentityWriterRawWithReceipt,
@@ -47,6 +50,24 @@ describe("LCX identity migration writer contract", () => {
       const plan = migrationPlan(root);
       const marker = await writeLcxIdentityMigrationCompletionMarker({
         migrationPlan: plan,
+        writerReceipts: LCX_IDENTITY_WRITER_NAMES.map((writer) => {
+          const pathContract = createLcxIdentityWriterPathContract({
+            writer,
+            migrationPlan: plan,
+            readPath: path.join(root, ".openclaw", `${writer}.state`),
+            writePath: path.join(root, ".lcx", `${writer}.state`),
+          });
+          return {
+            pathContract,
+            previous: { exists: false, hash: null, bytes: null },
+            next: { hash: "a".repeat(64), bytes: 1 },
+            rollback: {
+              path: pathContract.rollbackPath,
+              strategy: "remove-written-target" as const,
+            },
+            audit: { status: "written" as const },
+          };
+        }),
         now: () => "2026-09-06T00:00:00.000Z",
       });
 
@@ -60,6 +81,20 @@ describe("LCX identity migration writer contract", () => {
           await fs.readFile(path.join(root, ".lcx", "identity-migration.complete.json"), "utf8"),
         ),
       ).toEqual(marker);
+    });
+  });
+
+  it("refuses to activate the canonical root without every durable writer receipt", async () => {
+    await withTempRoot(async (root) => {
+      await expect(
+        writeLcxIdentityMigrationCompletionMarker({
+          migrationPlan: migrationPlan(root),
+          writerReceipts: [],
+        }),
+      ).rejects.toMatchObject({ code: "LCX_IDENTITY_COMPLETION_WRITERS_INCOMPLETE" });
+      await expect(
+        fs.access(path.join(root, ".lcx", "identity-migration.complete.json")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
     });
   });
 
@@ -125,6 +160,32 @@ describe("LCX identity migration writer contract", () => {
       await rollbackSessionStoreIdentityMigration(receipt);
       await expect(fs.access(migration.writeStorePath)).rejects.toMatchObject({ code: "ENOENT" });
       expect(await fs.readFile(legacyStorePath, "utf8")).toContain('"sessionId":"s-1"');
+    });
+  });
+
+  it("keeps the active legacy writer read when a stale canonical target exists", async () => {
+    await withTempRoot(async (root) => {
+      const legacyPath = path.join(
+        root,
+        ".openclaw",
+        "agents",
+        "main",
+        "sessions",
+        "sessions.json",
+      );
+      const canonicalPath = path.join(root, ".lcx", "agents", "main", "sessions", "sessions.json");
+      await writeRaw(legacyPath, '{"source":"legacy"}\n');
+      const plan = migrationPlan(root);
+      await writeRaw(canonicalPath, '{"source":"stale-canonical"}\n');
+      const contract = resolveLcxIdentityStateWriterPathContract({
+        writer: "sessions",
+        migrationPlan: plan,
+        relativePath: path.join("agents", "main", "sessions", "sessions.json"),
+      });
+
+      expect(contract.readPath).toBe(legacyPath);
+      expect(contract.writePath).toBe(canonicalPath);
+      expect(() => assertLcxIdentityWriterPathContract(contract)).toThrow(/split state/i);
     });
   });
 
@@ -194,7 +255,7 @@ describe("LCX identity migration writer contract", () => {
     });
   });
 
-  it("refreshes the session path contract after the first canonical write", async () => {
+  it("refuses a second legacy write while the canonical target is already populated", async () => {
     await withTempRoot(async (root) => {
       const legacyStorePath = path.join(
         root,
@@ -212,20 +273,13 @@ describe("LCX identity migration writer contract", () => {
         { "agent:main": { sessionId: "s-4", updatedAt: 1 } },
         { skipMaintenance: true, identityMigration: migration },
       );
-      await saveSessionStore(
-        legacyStorePath,
-        { "agent:main": { sessionId: "s-4", updatedAt: 2 } },
-        { skipMaintenance: true, identityMigration: migration },
-      );
-
-      expect(
-        JSON.parse(
-          await fs.readFile(
-            path.join(root, ".lcx", "agents", "main", "sessions", "sessions.json"),
-            "utf8",
-          ),
+      await expect(
+        saveSessionStore(
+          legacyStorePath,
+          { "agent:main": { sessionId: "s-4", updatedAt: 2 } },
+          { skipMaintenance: true, identityMigration: migration },
         ),
-      ).toMatchObject({ "agent:main": { updatedAt: 2 } });
+      ).rejects.toMatchObject({ code: "LCX_IDENTITY_SPLIT_STATE" });
       expect(await fs.readFile(legacyStorePath, "utf8")).toBe("{}\n");
     });
   });
@@ -292,10 +346,6 @@ describe("LCX identity migration writer contract", () => {
       );
       await writeRaw(legacyStorePath, "{}\n");
       const migration = createLcxIdentitySessionMigration({ migrationPlan: migrationPlan(root) });
-      await writeRaw(canonicalStorePath, "{}\n");
-      await expect(writeSessionStoreForIdentityMigration(migration, {})).resolves.toBeDefined();
-
-      await fs.rm(canonicalStorePath);
       const receipt = await writeSessionStoreForIdentityMigration(migration, {});
       await writeRaw(canonicalStorePath, "external\n");
       await expect(rollbackSessionStoreIdentityMigration(receipt)).rejects.toMatchObject({

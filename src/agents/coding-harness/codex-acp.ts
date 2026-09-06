@@ -42,6 +42,7 @@ export type CodingHarnessVerification = {
 export type CodingHarnessWorkspaceSnapshot = {
   root: string;
   branch: string;
+  defaultBranch?: string;
   headSha?: string;
   statusPorcelain: string;
   changedPaths: string[];
@@ -164,17 +165,21 @@ async function runGit(cwd: string, args: string[]): Promise<string> {
 export async function inspectCodingWorkspace(
   cwdInput: string,
 ): Promise<CodingHarnessWorkspaceSnapshot> {
-  const cwd = path.resolve(cwdInput);
   if (!path.isAbsolute(cwdInput)) {
     throw new Error("Coding harness cwd must be an absolute path.");
   }
+  const cwd = path.resolve(cwdInput);
   const root = await runGit(cwd, ["rev-parse", "--show-toplevel"]);
   const branch = await runGit(cwd, ["branch", "--show-current"]);
+  const defaultBranch = (await runGit(cwd, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]))
+    .replace(/^origin\//, "")
+    .trim();
   const headSha = await runGit(cwd, ["rev-parse", "HEAD"]);
   const statusPorcelain = await runGit(cwd, ["status", "--porcelain=v1", "--untracked-files=all"]);
   return {
     root,
     branch,
+    defaultBranch,
     headSha,
     statusPorcelain,
     changedPaths: parseGitStatusPaths(statusPorcelain),
@@ -319,7 +324,6 @@ async function cleanupAcceptedChildSession(params: {
 }
 
 async function resolveChangedPathsSinceRun(
-  cwd: string,
   before: CodingHarnessWorkspaceSnapshot,
   after: CodingHarnessWorkspaceSnapshot,
 ): Promise<string[]> {
@@ -330,6 +334,70 @@ async function resolveChangedPathsSinceRun(
     );
   }
   return [...paths].toSorted();
+}
+
+async function observeAcceptedRunExitWorkspace(params: {
+  deps: CodingHarnessDeps;
+  cwd: string;
+  before: CodingHarnessWorkspaceSnapshot;
+  trajectory: AppendOnlyCodingTrajectory;
+  now: () => string;
+  phase: "wait-failure-postflight" | "timeout-postflight" | "verification-postflight";
+}): Promise<{ changedPaths: string[]; error?: string }> {
+  let after: CodingHarnessWorkspaceSnapshot;
+  try {
+    after = await params.deps.inspectWorkspace(params.cwd);
+  } catch (error) {
+    const message = `workspace ${params.phase} failed: ${String(error)}`;
+    params.trajectory.append(
+      "run/failed",
+      { phase: params.phase, reason: "workspace-observation-failed", error: String(error) },
+      params.now(),
+    );
+    return { changedPaths: [], error: message };
+  }
+  if (
+    after.root !== params.before.root ||
+    after.branch !== params.before.branch ||
+    (params.before.defaultBranch && after.defaultBranch !== params.before.defaultBranch)
+  ) {
+    const message = "coding harness detected that the worktree identity changed during the run";
+    params.trajectory.append(
+      "run/failed",
+      {
+        phase: params.phase,
+        reason: "workspace-identity-changed",
+        beforeRoot: params.before.root,
+        afterRoot: after.root,
+        beforeBranch: params.before.branch,
+        afterBranch: after.branch,
+      },
+      params.now(),
+    );
+    return { changedPaths: [], error: message };
+  }
+  try {
+    const changedPaths = await resolveChangedPathsSinceRun(params.before, after);
+    params.trajectory.append(
+      "workspace/observed",
+      {
+        phase: params.phase,
+        branch: after.branch,
+        changedPaths,
+        statusClean: after.statusPorcelain.trim() === "",
+      },
+      params.now(),
+    );
+    return { changedPaths };
+  } catch (error) {
+    const message = String(error);
+    params.trajectory.append(
+      "run/failed",
+      { phase: params.phase, reason: "unsafe-commit-attribution", error: message },
+      params.now(),
+    );
+    return { changedPaths: [], error: message };
+  }
 }
 
 export async function runCodexCodingHarness(
@@ -346,7 +414,7 @@ export async function runCodexCodingHarness(
     ...overrides,
   };
   const runId = deps.createRunId();
-  const cwd = path.resolve(input.cwd);
+  const cwd = path.isAbsolute(input.cwd) ? path.resolve(input.cwd) : input.cwd;
   const trajectory = new AppendOnlyCodingTrajectory(runId);
   trajectory.append(
     "run/requested",
@@ -358,6 +426,15 @@ export async function runCodexCodingHarness(
     },
     deps.now(),
   );
+  if (!path.isAbsolute(input.cwd)) {
+    const error = "coding harness cwd must be an absolute path";
+    trajectory.append(
+      "run/failed",
+      { phase: "workspace-preflight", reason: "relative-cwd" },
+      deps.now(),
+    );
+    return buildReceipt({ trajectory, status: "forbidden", cwd, task: input.task, error });
+  }
 
   let workspace: CodingHarnessWorkspaceSnapshot;
   try {
@@ -376,13 +453,18 @@ export async function runCodexCodingHarness(
       error: `workspace preflight failed: ${String(error)}`,
     });
   }
-  if (!workspace.branch || workspace.branch === "main" || workspace.branch === "master") {
+  if (
+    !workspace.branch ||
+    !workspace.defaultBranch ||
+    workspace.branch === workspace.defaultBranch
+  ) {
     trajectory.append(
       "run/failed",
       {
         phase: "workspace-preflight",
         reason: "protected-branch",
         branch: workspace.branch || "detached",
+        defaultBranch: workspace.defaultBranch,
       },
       deps.now(),
     );
@@ -392,7 +474,7 @@ export async function runCodexCodingHarness(
       cwd,
       task: input.task,
       branch: workspace.branch,
-      error: "coding harness requires a named non-main, non-master worktree branch",
+      error: "coding harness requires a named branch different from the repository default branch",
     });
   }
   if (workspace.statusPorcelain.trim()) {
@@ -495,6 +577,14 @@ export async function runCodexCodingHarness(
       now: deps.now,
       phase: "wait-cleanup",
     });
+    const observation = await observeAcceptedRunExitWorkspace({
+      deps,
+      cwd,
+      before: workspace,
+      trajectory,
+      now: deps.now,
+      phase: "wait-failure-postflight",
+    });
     return buildReceipt({
       trajectory,
       status: "failed",
@@ -503,7 +593,10 @@ export async function runCodexCodingHarness(
       branch: workspace.branch,
       spawn,
       cleanup,
-      error: `Codex ACP wait failed: ${String(error)}`,
+      changedPaths: observation.changedPaths,
+      error: [`Codex ACP wait failed: ${String(error)}`, observation.error]
+        .filter(Boolean)
+        .join("; "),
     });
   }
   trajectory.append(
@@ -522,6 +615,14 @@ export async function runCodexCodingHarness(
       now: deps.now,
       phase: "timeout-cleanup",
     });
+    const observation = await observeAcceptedRunExitWorkspace({
+      deps,
+      cwd,
+      before: workspace,
+      trajectory,
+      now: deps.now,
+      phase: "timeout-postflight",
+    });
     trajectory.append("run/timed-out", { timeoutMs, cleanup }, deps.now());
     return buildReceipt({
       trajectory,
@@ -530,8 +631,11 @@ export async function runCodexCodingHarness(
       task: input.task,
       branch: workspace.branch,
       spawn,
+      changedPaths: observation.changedPaths,
       cleanup,
-      error: wait.error ?? `Codex ACP run exceeded ${timeoutMs}ms`,
+      error: [wait.error ?? `Codex ACP run exceeded ${timeoutMs}ms`, observation.error]
+        .filter(Boolean)
+        .join("; "),
     });
   }
   if (wait.status !== "ok") {
@@ -547,6 +651,14 @@ export async function runCodexCodingHarness(
       now: deps.now,
       phase: "wait-cleanup",
     });
+    const observation = await observeAcceptedRunExitWorkspace({
+      deps,
+      cwd,
+      before: workspace,
+      trajectory,
+      now: deps.now,
+      phase: "wait-failure-postflight",
+    });
     return buildReceipt({
       trajectory,
       status: "failed",
@@ -554,8 +666,14 @@ export async function runCodexCodingHarness(
       task: input.task,
       branch: workspace.branch,
       spawn,
+      changedPaths: observation.changedPaths,
       cleanup,
-      error: wait.error ?? `Codex ACP run ended with status ${wait.status ?? "unknown"}`,
+      error: [
+        wait.error ?? `Codex ACP run ended with status ${wait.status ?? "unknown"}`,
+        observation.error,
+      ]
+        .filter(Boolean)
+        .join("; "),
     });
   }
 
@@ -590,6 +708,21 @@ export async function runCodexCodingHarness(
     );
   } catch (error) {
     trajectory.append("run/failed", { phase: "history", error: String(error) }, deps.now());
+    const cleanup = await cleanupAcceptedChildSession({
+      deps,
+      spawn,
+      trajectory,
+      now: deps.now,
+      phase: "wait-cleanup",
+    });
+    const observation = await observeAcceptedRunExitWorkspace({
+      deps,
+      cwd,
+      before: workspace,
+      trajectory,
+      now: deps.now,
+      phase: "wait-failure-postflight",
+    });
     return buildReceipt({
       trajectory,
       status: "failed",
@@ -597,7 +730,11 @@ export async function runCodexCodingHarness(
       task: input.task,
       branch: workspace.branch,
       spawn,
-      error: `Codex ACP history could not be observed: ${String(error)}`,
+      changedPaths: observation.changedPaths,
+      cleanup,
+      error: [`Codex ACP history could not be observed: ${String(error)}`, observation.error]
+        .filter(Boolean)
+        .join("; "),
     });
   }
 
@@ -621,7 +758,11 @@ export async function runCodexCodingHarness(
       error: `workspace postflight failed: ${String(error)}`,
     });
   }
-  if (afterWorkspace.root !== workspace.root || afterWorkspace.branch !== workspace.branch) {
+  if (
+    afterWorkspace.root !== workspace.root ||
+    afterWorkspace.branch !== workspace.branch ||
+    afterWorkspace.defaultBranch !== workspace.defaultBranch
+  ) {
     trajectory.append(
       "run/failed",
       {
@@ -631,6 +772,8 @@ export async function runCodexCodingHarness(
         afterRoot: afterWorkspace.root,
         beforeBranch: workspace.branch,
         afterBranch: afterWorkspace.branch,
+        beforeDefaultBranch: workspace.defaultBranch,
+        afterDefaultBranch: afterWorkspace.defaultBranch,
       },
       deps.now(),
     );
@@ -648,7 +791,7 @@ export async function runCodexCodingHarness(
   }
   let changedPaths: string[];
   try {
-    changedPaths = await resolveChangedPathsSinceRun(cwd, workspace, afterWorkspace);
+    changedPaths = await resolveChangedPathsSinceRun(workspace, afterWorkspace);
   } catch (error) {
     const message = String(error);
     trajectory.append(
@@ -682,6 +825,33 @@ export async function runCodexCodingHarness(
     ? await deps.runVerification({ cwd, command: input.verify })
     : ({ status: "not-requested" } satisfies CodingHarnessVerification);
   trajectory.append("verification/observed", verification, deps.now());
+
+  if (input.verify?.length) {
+    const verificationPostflight = await observeAcceptedRunExitWorkspace({
+      deps,
+      cwd,
+      before: workspace,
+      trajectory,
+      now: deps.now,
+      phase: "verification-postflight",
+    });
+    changedPaths = verificationPostflight.changedPaths;
+    if (verificationPostflight.error) {
+      return buildReceipt({
+        trajectory,
+        status: "failed",
+        cwd,
+        task: input.task,
+        branch: afterWorkspace.branch,
+        spawn,
+        changedPaths,
+        verification,
+        reply,
+        error: verificationPostflight.error,
+        cleanup: "not-needed",
+      });
+    }
+  }
   if (verification.status === "failed" || verification.status === "blocked") {
     trajectory.append(
       "run/failed",

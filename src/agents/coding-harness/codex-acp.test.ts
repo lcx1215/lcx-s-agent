@@ -10,11 +10,12 @@ function workspace(
   branch: string,
   statusPorcelain = "",
   changedPaths: string[] = [],
-  options: { root?: string; headSha?: string } = {},
+  options: { root?: string; headSha?: string; defaultBranch?: string } = {},
 ): CodingHarnessWorkspaceSnapshot {
   return {
     root: options.root ?? "/tmp/codex-harness-fixture",
     branch,
+    defaultBranch: options.defaultBranch ?? "main",
     headSha: options.headSha,
     statusPorcelain,
     changedPaths,
@@ -48,7 +49,13 @@ describe("runCodexCodingHarness", () => {
     const inspectWorkspace = vi
       .fn<() => Promise<CodingHarnessWorkspaceSnapshot>>()
       .mockResolvedValueOnce(workspace("feature/coding"))
-      .mockResolvedValueOnce(workspace("feature/coding", " M src/example.ts", ["src/example.ts"]));
+      .mockResolvedValueOnce(workspace("feature/coding", " M src/example.ts", ["src/example.ts"]))
+      .mockResolvedValueOnce(
+        workspace("feature/coding", " M src/example.ts\n M verifier-output.ts", [
+          "src/example.ts",
+          "verifier-output.ts",
+        ]),
+      );
     const result = await runCodexCodingHarness(
       {
         task: "add the feature",
@@ -83,7 +90,7 @@ describe("runCodexCodingHarness", () => {
 
     expect(result.status).toBe("verified");
     expect(result.actualExecutor).toBe(true);
-    expect(result.changedPaths).toEqual(["src/example.ts"]);
+    expect(result.changedPaths).toEqual(["src/example.ts", "verifier-output.ts"]);
     expect(result.verification.status).toBe("passed");
     expect(result.trajectory.projection.status).toBe("completed");
     expect(result.trajectory.projection.historyObserved).toBe(true);
@@ -108,8 +115,41 @@ describe("runCodexCodingHarness", () => {
 
     expect(result.status).toBe("forbidden");
     expect(result.actualExecutor).toBe(false);
-    expect(result.error).toMatch(/non-main|clean/i);
+    expect(result.error).toMatch(/default branch|clean/i);
     expect(spawnAcp).not.toHaveBeenCalled();
+  });
+
+  it("protects the repository's actual default branch instead of only main/master", async () => {
+    const spawnAcp = vi.fn(async () => acceptedSpawn());
+    const result = await runCodexCodingHarness(
+      { task: "edit code", cwd: "/tmp/codex-harness-fixture" },
+      {
+        inspectWorkspace: async () => workspace("trunk", "", [], { defaultBranch: "trunk" }),
+        spawnAcp,
+        createRunId: () => "harness-run-default-branch",
+        now: () => "2026-09-03T00:00:00.000Z",
+      },
+    );
+
+    expect(result.status).toBe("forbidden");
+    expect(result.error).toMatch(/default branch/i);
+    expect(spawnAcp).not.toHaveBeenCalled();
+  });
+
+  it("rejects a relative cwd before workspace resolution", async () => {
+    const inspectWorkspace = vi.fn();
+    const result = await runCodexCodingHarness(
+      { task: "edit code", cwd: "relative/worktree" },
+      {
+        inspectWorkspace,
+        createRunId: () => "harness-run-relative-cwd",
+        now: () => "2026-09-03T00:00:00.000Z",
+      },
+    );
+
+    expect(result.status).toBe("forbidden");
+    expect(result.cwd).toBe("relative/worktree");
+    expect(inspectWorkspace).not.toHaveBeenCalled();
   });
 
   it("times out and requests cleanup instead of claiming completion", async () => {
@@ -136,6 +176,31 @@ describe("runCodexCodingHarness", () => {
     expect(result.cleanup).toBe("confirmed");
     expect(calls).toEqual(["agent.wait", "sessions.delete"]);
     expect(result.trajectory.projection.status).toBe("timed-out");
+  });
+
+  it("retains safely attributable partial edits on timeout", async () => {
+    const inspectWorkspace = vi
+      .fn<() => Promise<CodingHarnessWorkspaceSnapshot>>()
+      .mockResolvedValueOnce(workspace("feature/coding"))
+      .mockResolvedValueOnce(workspace("feature/coding", " M partial.ts", ["partial.ts"]));
+    const result = await runCodexCodingHarness(
+      { task: "edit code", cwd: "/tmp/codex-harness-fixture", timeoutMs: 1_000 },
+      {
+        inspectWorkspace,
+        spawnAcp: vi.fn(async () => acceptedSpawn()),
+        callGateway: async <T>(options: { method: string }): Promise<T> => {
+          if (options.method === "agent.wait") {
+            return { status: "timeout" } as T;
+          }
+          return { ok: true } as T;
+        },
+        createRunId: () => "harness-run-timeout-partial",
+        now: () => "2026-09-03T00:00:00.000Z",
+      },
+    );
+
+    expect(result.status).toBe("timed-out");
+    expect(result.changedPaths).toEqual(["partial.ts"]);
   });
 
   it("cleans up an accepted child when waiting fails", async () => {

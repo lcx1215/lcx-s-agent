@@ -60,8 +60,8 @@ function createQualityReceipt(params: {
       backend: "injected_model_invoker",
       modelId: params.pool.modelId,
       realModelInferenceObserved: false,
-      providerCallsMade: false,
-      externalSideEffects: false,
+      providerCallsMade: "not-observed",
+      externalSideEffects: "not-observed",
     }),
     plannedStages: QUALITY_HARNESS_STAGES,
     attempts: Object.freeze([...params.attempts]),
@@ -69,7 +69,13 @@ function createQualityReceipt(params: {
     verification: params.verification,
     quality: Object.freeze({
       passed: last?.gates.every((gate) => gate.passed) === true,
-      independentRoleReviewCount: 3,
+      independentRoleReviewCount:
+        last?.stages.filter(
+          (stage) =>
+            stage.outputKind === "review" &&
+            stage.status === "completed" &&
+            (QUALITY_HARNESS_REVIEW_AGENTS as readonly string[]).includes(stage.agentId),
+        ).length ?? 0,
       reviewAgents: QUALITY_HARNESS_REVIEW_AGENTS,
     }),
     repair: Object.freeze({

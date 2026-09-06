@@ -5624,7 +5624,8 @@ const strictModelProofRequired = !options.contractOnly && (options.hardened || o
 const modelContractFailureCaseIds = strictModelProofRequired
   ? caseResults.filter((entry) => !entry.modelContractReady).map((entry) => entry.id)
   : [];
-const strictNeutralPromotionGate = options.hardened && options.blind && !options.contractOnly;
+const strictNeutralPromotionGate =
+  options.hardened && options.blind && !options.contractOnly && !options.responsePrefill;
 const promotionReady =
   (!options.blind || strictNeutralPromotionGate) &&
   failedCases.length === 0 &&

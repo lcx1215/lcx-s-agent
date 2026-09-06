@@ -1,4 +1,5 @@
 import path from "node:path";
+import JSON5 from "json5";
 import {
   readLcxIdentityWriterRaw,
   resolveLcxIdentityStateWriterPathContract,
@@ -65,19 +66,22 @@ export async function readCronStoreForIdentityMigration(
   if (raw === null) {
     return { version: 1, jobs: [] };
   }
+  let parsed: unknown;
   try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return { version: 1, jobs: [] };
-    }
-    const record = parsed as Record<string, unknown>;
-    return {
-      version: 1,
-      jobs: Array.isArray(record.jobs) ? (record.jobs as CronStoreFile["jobs"]) : [],
-    };
-  } catch {
+    parsed = JSON5.parse(raw);
+  } catch (error) {
+    throw new Error(`Failed to parse migrated cron store at ${migration.readStorePath}`, {
+      cause: error,
+    });
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     return { version: 1, jobs: [] };
   }
+  const record = parsed as Record<string, unknown>;
+  return {
+    version: 1,
+    jobs: Array.isArray(record.jobs) ? (record.jobs as CronStoreFile["jobs"]) : [],
+  };
 }
 
 export async function writeCronStoreForIdentityMigration(
@@ -111,6 +115,9 @@ export function createLcxIdentityCronRunLogMigration(params: {
   jobId: string;
   existsSync?: (candidate: string) => boolean;
 }): LcxIdentityCronRunLogMigration {
+  if (params.migrationPlan.mode === "explicit-config-override") {
+    throw new Error("Cron run-log migration requires a state-root authority");
+  }
   const safeJobId = params.jobId.trim();
   if (
     !safeJobId ||

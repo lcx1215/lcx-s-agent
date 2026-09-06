@@ -49,6 +49,13 @@ describe("local-brain-training-plan", () => {
       enabled: true,
       configuredRefs: ["models.providers.minimax-portal"],
     });
+
+    expect(
+      inspectMiniMaxTeacherRuntimeConfig({
+        prompts: ["MiniMax is disabled and must not start training"],
+        metadata: { note: "minimax is only mentioned in documentation" },
+      }),
+    ).toMatchObject({ enabled: false, configuredRefs: [] });
   });
 
   it("only treats an adapter mismatch as active when a guard process is observed", () => {

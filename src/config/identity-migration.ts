@@ -43,6 +43,38 @@ export type LcxIdentityWriterName =
   | "channel-pairing"
   | "phone-control";
 
+export const LCX_IDENTITY_WRITER_NAMES: readonly LcxIdentityWriterName[] = [
+  "config",
+  "sessions",
+  "credentials",
+  "queues",
+  "backups",
+  "audit",
+  "cron",
+  "device",
+  "device-auth",
+  "node-host",
+  "device-pairing",
+  "device-pair-notify",
+  "node-pairing",
+  "exec-approvals",
+  "restart-sentinel",
+  "subagents",
+  "workspace",
+  "nostr-bus",
+  "nostr-profile",
+  "discord-bindings",
+  "discord-model-picker",
+  "telegram-offset",
+  "telegram-sticker-cache",
+  "update-check",
+  "voicewake",
+  "matrix-storage",
+  "channel-local",
+  "channel-pairing",
+  "phone-control",
+];
+
 export type LcxIdentityWriterPathContract = Readonly<{
   writer: LcxIdentityWriterName;
   migrationPlan: LcxIdentityMigrationPlan | null;
@@ -78,6 +110,8 @@ export type LcxIdentityWriteReceipt = Readonly<{
   }>;
   audit: LcxIdentityAuditResult;
 }>;
+
+export type LcxIdentityMigrationWriterReceipt = LcxIdentityWriteReceipt;
 
 export type LcxIdentityRemovalReceipt = Readonly<{
   pathContract: LcxIdentityWriterPathContract;
@@ -177,7 +211,16 @@ export function resolveLcxIdentityStateWriterPathContract<T extends LcxIdentityW
   existsSync?: (candidate: string) => boolean;
 }): LcxIdentityWriterPathContract & Readonly<{ writer: T }> {
   const existsSync = params.existsSync ?? fs.existsSync;
-  const existingReadRoot = params.migrationPlan.readStateDirs.find((candidate) =>
+  const activeReadRoot = path.resolve(params.migrationPlan.readStateDir);
+  const writeRoot = path.resolve(params.migrationPlan.writeStateDir);
+  const orderedReadRoots = [
+    params.migrationPlan.readStateDir,
+    ...params.migrationPlan.readStateDirs.filter(
+      (candidate) =>
+        path.resolve(candidate) !== activeReadRoot && path.resolve(candidate) !== writeRoot,
+    ),
+  ];
+  const existingReadRoot = orderedReadRoots.find((candidate) =>
     existsSync(resolveRelativeStatePath(candidate, params.relativePath)),
   );
   const readRoot = existingReadRoot ?? params.migrationPlan.readStateDir;
@@ -267,6 +310,7 @@ async function writeRawAtomically(filePath: string, raw: string): Promise<void> 
 
 export async function writeLcxIdentityMigrationCompletionMarker(params: {
   migrationPlan: LcxIdentityMigrationPlan;
+  writerReceipts: readonly LcxIdentityMigrationWriterReceipt[];
   now?: () => string;
 }): Promise<LcxIdentityMigrationCompletionMarker> {
   const { migrationPlan } = params;
@@ -277,6 +321,52 @@ export async function writeLcxIdentityMigrationCompletionMarker(params: {
     throw new LcxIdentityWriterContractError(
       "Identity migration completion requires the canonical default write target",
       "LCX_IDENTITY_COMPLETION_TARGET",
+    );
+  }
+  const receiptsByWriter = new Map<LcxIdentityWriterName, LcxIdentityMigrationWriterReceipt>();
+  for (const receipt of params.writerReceipts) {
+    if (receiptsByWriter.has(receipt.pathContract.writer)) {
+      throw new LcxIdentityWriterContractError(
+        `Identity migration completion has duplicate receipt for ${receipt.pathContract.writer}`,
+        "LCX_IDENTITY_COMPLETION_DUPLICATE_WRITER",
+      );
+    }
+    if (receipt.audit.status !== "written") {
+      throw new LcxIdentityWriterContractError(
+        `Identity migration completion requires a durable receipt for ${receipt.pathContract.writer}`,
+        "LCX_IDENTITY_COMPLETION_RECEIPT_NOT_DURABLE",
+      );
+    }
+    if (
+      !/^[a-f0-9]{64}$/i.test(receipt.next.hash) ||
+      !Number.isInteger(receipt.next.bytes) ||
+      receipt.next.bytes < 0 ||
+      !receipt.rollback.path
+    ) {
+      throw new LcxIdentityWriterContractError(
+        `Identity migration receipt for ${receipt.pathContract.writer} is malformed`,
+        "LCX_IDENTITY_COMPLETION_RECEIPT_MALFORMED",
+      );
+    }
+    if (
+      !path
+        .resolve(receipt.pathContract.writePath)
+        .startsWith(`${path.resolve(migrationPlan.canonicalStateDir)}${path.sep}`)
+    ) {
+      throw new LcxIdentityWriterContractError(
+        `Identity migration receipt for ${receipt.pathContract.writer} does not target the canonical state root`,
+        "LCX_IDENTITY_COMPLETION_RECEIPT_TARGET",
+      );
+    }
+    receiptsByWriter.set(receipt.pathContract.writer, receipt);
+  }
+  const missingWriters = LCX_IDENTITY_WRITER_NAMES.filter(
+    (writer) => !receiptsByWriter.has(writer),
+  );
+  if (missingWriters.length > 0) {
+    throw new LcxIdentityWriterContractError(
+      `Identity migration completion requires receipts for every writer; missing: ${missingWriters.join(", ")}`,
+      "LCX_IDENTITY_COMPLETION_WRITERS_INCOMPLETE",
     );
   }
   const marker = Object.freeze({
