@@ -416,11 +416,11 @@ describe("LCX identity migration plan", () => {
 
     expect(plan.mode).toBe("explicit-config-override");
     expect(plan.source).toBe("explicit");
-    expect(plan.readStateDirs).toEqual([path.join("/home/test", "legacy-state")]);
+    expect(plan.readStateDirs).toEqual([path.resolve("/home/test", "legacy-state")]);
     expect(plan.readConfigCandidates).toEqual([
-      path.join("/home/test", "legacy-state", "openclaw.json"),
+      path.resolve("/home/test", "legacy-state", "openclaw.json"),
     ]);
-    expect(plan.writeStateDir).toBe(path.join("/home/test", "legacy-state"));
-    expect(plan.writeConfigPath).toBe(path.join("/home/test", "legacy-state", "openclaw.json"));
+    expect(plan.writeStateDir).toBe(path.resolve("/home/test", "legacy-state"));
+    expect(plan.writeConfigPath).toBe(path.resolve("/home/test", "legacy-state", "openclaw.json"));
   });
 });
