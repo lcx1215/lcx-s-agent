@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import nodeFs from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -48,26 +49,31 @@ describe("LCX identity migration writer contract", () => {
   it("writes a canonical completion marker atomically", async () => {
     await withTempRoot(async (root) => {
       const plan = migrationPlan(root);
+      const raw = "x";
+      const nextHash = crypto.createHash("sha256").update(raw).digest("hex");
       const marker = await writeLcxIdentityMigrationCompletionMarker({
         migrationPlan: plan,
-        writerReceipts: LCX_IDENTITY_WRITER_NAMES.map((writer) => {
-          const pathContract = createLcxIdentityWriterPathContract({
-            writer,
-            migrationPlan: plan,
-            readPath: path.join(root, ".openclaw", `${writer}.state`),
-            writePath: path.join(root, ".lcx", `${writer}.state`),
-          });
-          return {
-            pathContract,
-            previous: { exists: false, hash: null, bytes: null },
-            next: { hash: "a".repeat(64), bytes: 1 },
-            rollback: {
-              path: pathContract.rollbackPath,
-              strategy: "remove-written-target" as const,
-            },
-            audit: { status: "written" as const },
-          };
-        }),
+        writerReceipts: await Promise.all(
+          LCX_IDENTITY_WRITER_NAMES.map(async (writer) => {
+            const pathContract = createLcxIdentityWriterPathContract({
+              writer,
+              migrationPlan: plan,
+              readPath: path.join(root, ".openclaw", `${writer}.state`),
+              writePath: path.join(root, ".lcx", `${writer}.state`),
+            });
+            await writeRaw(pathContract.writePath, raw);
+            return {
+              pathContract,
+              previous: { exists: false, hash: null, bytes: null },
+              next: { hash: nextHash, bytes: Buffer.byteLength(raw, "utf8") },
+              rollback: {
+                path: pathContract.rollbackPath,
+                strategy: "remove-written-target" as const,
+              },
+              audit: { status: "written" as const },
+            };
+          }),
+        ),
         now: () => "2026-09-06T00:00:00.000Z",
       });
 
@@ -255,7 +261,7 @@ describe("LCX identity migration writer contract", () => {
     });
   });
 
-  it("refuses a second legacy write while the canonical target is already populated", async () => {
+  it("refuses a legacy write after an external canonical replacement", async () => {
     await withTempRoot(async (root) => {
       const legacyStorePath = path.join(
         root,
@@ -273,6 +279,7 @@ describe("LCX identity migration writer contract", () => {
         { "agent:main": { sessionId: "s-4", updatedAt: 1 } },
         { skipMaintenance: true, identityMigration: migration },
       );
+      await writeRaw(migration.writeStorePath, '{"source":"external"}\n');
       await expect(
         saveSessionStore(
           legacyStorePath,

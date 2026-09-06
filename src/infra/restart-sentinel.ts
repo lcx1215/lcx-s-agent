@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { formatCliCommand } from "../cli/command-format.js";
 import {
+  createLcxIdentityWriterPathContract,
   readLcxIdentityWriterRaw,
   removeLcxIdentityWriterWithReceipt,
   resolveLcxIdentityStateWriterPathContract,
@@ -178,9 +179,19 @@ export async function consumeRestartSentinelForIdentityMigration(
     return null;
   }
   const pathContract = resolveCurrentRestartSentinelPathContract(migration);
-  const receipt = await removeLcxIdentityWriterWithReceipt(pathContract, {
-    expectedReadPath: pathContract.readPath,
-    expectedWritePath: pathContract.writePath,
+  const removalContract =
+    pathContract.readPath === pathContract.writePath
+      ? pathContract
+      : createLcxIdentityWriterPathContract({
+          writer: "restart-sentinel",
+          migrationPlan: pathContract.migrationPlan,
+          readPath: pathContract.readPath,
+          writePath: pathContract.readPath,
+          auditPath: pathContract.auditPath,
+        });
+  const receipt = await removeLcxIdentityWriterWithReceipt(removalContract, {
+    expectedReadPath: removalContract.readPath,
+    expectedWritePath: removalContract.writePath,
   });
   return { sentinel: snapshot.sentinel, receipt };
 }

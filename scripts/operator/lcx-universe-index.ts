@@ -46,6 +46,12 @@ type Options = {
   write: boolean;
 };
 
+type ExecLinesResult = {
+  ok: boolean;
+  lines: string[];
+  error?: string;
+};
+
 function usage(): never {
   throw new Error(
     [
@@ -92,6 +98,30 @@ async function execLines(
       .filter(Boolean);
   } catch {
     return [];
+  }
+}
+
+async function execLinesWithStatus(
+  command: string,
+  args: string[],
+  cwd = repoRoot,
+  trimLines = true,
+): Promise<ExecLinesResult> {
+  try {
+    const { stdout } = await execFileAsync(command, args, {
+      cwd,
+      env: process.env,
+      maxBuffer: EXEC_MAX_BUFFER,
+    });
+    return {
+      ok: true,
+      lines: stdout
+        .split("\n")
+        .map((line) => (trimLines ? line.trim() : line))
+        .filter(Boolean),
+    };
+  } catch (error) {
+    return { ok: false, lines: [], error: String(error) };
   }
 }
 
@@ -669,11 +699,12 @@ function staleLatestSnapshot(latest: Record<string, unknown> | undefined, maxAge
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const nowMs = Date.now();
-  const [trackedFiles, rgFilesRaw, gitStatusLines] = await Promise.all([
-    execLines("git", ["ls-files"]),
+  const [trackedInventory, rgFilesRaw, gitStatusLines] = await Promise.all([
+    execLinesWithStatus("git", ["ls-files"]),
     execLines("rg", ["--files", "--hidden", "-g", "!.git", "-g", "!node_modules"]),
     execLines("git", ["status", "--short", "--branch"], repoRoot, false),
   ]);
+  const trackedFiles = trackedInventory.lines;
   const rgFiles = rgFilesRaw.length > 0 ? rgFilesRaw : trackedFiles;
   const repoComponentFiles = [...new Set([...trackedFiles, ...rgFiles])].toSorted();
   const gitStatus = parseGitStatus(gitStatusLines);
@@ -796,6 +827,7 @@ async function main() {
   const reviewRequiredComponents = governanceCoverage.summary.reviewRequiredComponents;
   const result = {
     ok:
+      trackedInventory.ok &&
       changeImpact.ok &&
       unmatchedChangedFiles.length === 0 &&
       governanceCoverage.status === "complete",
@@ -825,6 +857,9 @@ async function main() {
     repo: {
       branch: gitStatus.branch,
       trackedFileCount: trackedFiles.length,
+      trackedInventory: trackedInventory.ok
+        ? { ok: true }
+        : { ok: false, error: trackedInventory.error },
       visibleFileCount: rgFiles.length,
       trackedAndVisibleFileCount: repoComponentFiles.length,
       dirtyFileCount: gitStatus.changedFiles.length,
@@ -855,8 +890,9 @@ async function main() {
       largeRuntimeFiles,
       staleSnapshots,
     },
-    nextSafeCommands:
-      unmatchedChangedFiles.length > 0
+    nextSafeCommands: !trackedInventory.ok
+      ? ["repair Git access, verify git ls-files succeeds, then rerun universe index"]
+      : unmatchedChangedFiles.length > 0
         ? [
             "extend scripts/operator/lcx-change-impact-plan.ts for unmatched files, then rerun universe index",
           ]

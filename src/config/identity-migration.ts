@@ -154,6 +154,12 @@ export class LcxIdentityWriterContractError extends Error {
   }
 }
 
+// Keep ownership local to this process so a writer may perform a follow-up
+// update after its first migration write, while a fresh process still fails
+// closed when it encounters a pre-existing canonical target beside legacy
+// state. The content hash lets us reject an intervening external change.
+const ownedWriteTargetHashes = new Map<string, string>();
+
 function resolveRelativeStatePath(root: string, relativePath: string): string {
   const normalized = path.normalize(relativePath.trim());
   if (
@@ -223,7 +229,12 @@ export function resolveLcxIdentityStateWriterPathContract<T extends LcxIdentityW
   const existingReadRoot = orderedReadRoots.find((candidate) =>
     existsSync(resolveRelativeStatePath(candidate, params.relativePath)),
   );
-  const readRoot = existingReadRoot ?? params.migrationPlan.readStateDir;
+  const canonicalTarget = resolveRelativeStatePath(writeRoot, params.relativePath);
+  const readRoot =
+    isOwnedWriteTarget(params.writer, canonicalTarget, existsSync) ||
+    (!existingReadRoot && existsSync(canonicalTarget))
+      ? writeRoot
+      : (existingReadRoot ?? params.migrationPlan.readStateDir);
   return createLcxIdentityWriterPathContract({
     writer: params.writer,
     migrationPlan: params.migrationPlan,
@@ -258,6 +269,9 @@ export function assertLcxIdentityWriterPathContract(
   }
   const existsSync = options?.existsSync ?? fs.existsSync;
   if (contract.readPath !== contract.writePath && existsSync(contract.writePath)) {
+    if (isOwnedWriteTarget(contract.writer, contract.writePath, existsSync)) {
+      return;
+    }
     throw new LcxIdentityWriterContractError(
       `${contract.writer} migration would create split state: read ${contract.readPath}, write target already exists at ${contract.writePath}`,
       "LCX_IDENTITY_SPLIT_STATE",
@@ -270,6 +284,22 @@ function hashRaw(raw: string | null): string {
     .createHash("sha256")
     .update(raw ?? "")
     .digest("hex");
+}
+
+function isOwnedWriteTarget(
+  writer: LcxIdentityWriterName,
+  writePath: string,
+  existsSync: (candidate: string) => boolean,
+): boolean {
+  const ownedHash = ownedWriteTargetHashes.get(`${writer}:${writePath}`);
+  if (!ownedHash || !existsSync(writePath)) {
+    return false;
+  }
+  try {
+    return hashRaw(fs.readFileSync(writePath, "utf8")) === ownedHash;
+  } catch {
+    return false;
+  }
 }
 
 async function readOptionalRaw(filePath: string): Promise<string | null> {
@@ -358,6 +388,17 @@ export async function writeLcxIdentityMigrationCompletionMarker(params: {
         "LCX_IDENTITY_COMPLETION_RECEIPT_TARGET",
       );
     }
+    const currentRaw = await readOptionalRaw(receipt.pathContract.writePath);
+    if (
+      currentRaw === null ||
+      hashRaw(currentRaw) !== receipt.next.hash ||
+      Buffer.byteLength(currentRaw, "utf8") !== receipt.next.bytes
+    ) {
+      throw new LcxIdentityWriterContractError(
+        `Identity migration receipt for ${receipt.pathContract.writer} no longer matches its canonical target`,
+        "LCX_IDENTITY_COMPLETION_RECEIPT_STALE",
+      );
+    }
     receiptsByWriter.set(receipt.pathContract.writer, receipt);
   }
   const missingWriters = LCX_IDENTITY_WRITER_NAMES.filter(
@@ -428,6 +469,7 @@ export async function writeLcxIdentityWriterRawWithReceipt(
     await writeRawAtomically(contract.backupPath, previousRaw);
   }
   await writeRawAtomically(contract.writePath, raw);
+  ownedWriteTargetHashes.set(`${contract.writer}:${contract.writePath}`, nextHash);
 
   const receipt = Object.freeze({
     pathContract: contract,
@@ -482,8 +524,13 @@ export async function rollbackLcxIdentityWriter(receipt: LcxIdentityWriteReceipt
       );
     }
     await writeRawAtomically(pathContract.writePath, backupRaw);
+    ownedWriteTargetHashes.set(
+      `${pathContract.writer}:${pathContract.writePath}`,
+      receipt.previous.hash ?? hashRaw(backupRaw),
+    );
   } else {
     await fs.promises.unlink(pathContract.writePath);
+    ownedWriteTargetHashes.delete(`${pathContract.writer}:${pathContract.writePath}`);
   }
 
   await appendIdentityAuditBestEffort(pathContract, {
@@ -566,6 +613,10 @@ export async function rollbackLcxIdentityRemoval(
     );
   }
   await writeRawAtomically(pathContract.writePath, backupRaw);
+  ownedWriteTargetHashes.set(
+    `${pathContract.writer}:${pathContract.writePath}`,
+    receipt.previous.hash,
+  );
   await appendIdentityAuditBestEffort(pathContract, {
     ts: new Date().toISOString(),
     source: "lcx-identity-migration",

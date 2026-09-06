@@ -48,6 +48,8 @@ export type CodingHarnessWorkspaceSnapshot = {
   changedPaths: string[];
 };
 
+export type CodingHarnessWorkspaceScope = "confined" | "host-unconfined" | "unobserved";
+
 export type CodingHarnessReceipt = {
   schemaVersion: 1;
   harness: "codex";
@@ -60,6 +62,7 @@ export type CodingHarnessReceipt = {
   branch?: string;
   task: { sha256: string; length: number };
   actualExecutor: boolean;
+  workspaceScope: CodingHarnessWorkspaceScope;
   changedPaths: string[];
   verification: CodingHarnessVerification;
   reply?: string;
@@ -266,6 +269,7 @@ function buildReceipt(params: {
   reply?: string;
   error?: string;
   cleanup?: CodingHarnessReceipt["cleanup"];
+  workspaceScope?: CodingHarnessWorkspaceScope;
 }): CodingHarnessReceipt {
   const projection = params.trajectory.replay();
   return {
@@ -280,6 +284,7 @@ function buildReceipt(params: {
     ...(params.branch ? { branch: params.branch } : {}),
     task: summarizeTrajectoryText(params.task),
     actualExecutor: params.spawn?.status === "accepted",
+    workspaceScope: params.workspaceScope ?? params.spawn?.workspaceScope ?? "unobserved",
     changedPaths: params.changedPaths ?? [],
     verification: params.verification ?? { status: "not-requested" },
     ...(params.reply ? { reply: redactText(params.reply) } : {}),
@@ -877,7 +882,21 @@ export async function runCodexCodingHarness(
     });
   }
 
-  const verified = changedPaths.length > 0 && verification.status === "passed";
+  const workspaceScope = spawn.workspaceScope ?? "unobserved";
+  const workspaceScopeProven = workspaceScope === "confined";
+  if (!workspaceScopeProven) {
+    trajectory.append(
+      "run/failed",
+      {
+        phase: "workspace-scope",
+        reason: "executor-workspace-scope-unproven",
+        workspaceScope,
+      },
+      deps.now(),
+    );
+  }
+  const verified =
+    workspaceScopeProven && changedPaths.length > 0 && verification.status === "passed";
   trajectory.append(
     "run/completed",
     {
@@ -897,6 +916,13 @@ export async function runCodexCodingHarness(
     changedPaths,
     verification,
     reply,
+    workspaceScope,
+    ...(workspaceScopeProven
+      ? {}
+      : {
+          error:
+            "accepted ACP executor did not provide a confined workspace proof; result is not certifiable",
+        }),
     cleanup: "not-needed",
   });
 }

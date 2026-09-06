@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -98,5 +98,26 @@ describe("restart sentinel identity migration writer", () => {
         }),
       }),
     ).toThrow("state-root authority");
+  });
+
+  it("consumes a legacy sentinel at the selected active path", async () => {
+    const root = await createRoot();
+    const legacyPath = path.join(root, ".openclaw", "restart-sentinel.json");
+    await mkdir(path.dirname(legacyPath), { recursive: true });
+    await writeFile(legacyPath, `${JSON.stringify({ version: 1, payload }, null, 2)}\n`, "utf8");
+
+    const migration = createLcxIdentityRestartSentinelMigration({
+      migrationPlan: migrationPlan(root),
+    });
+    const consumed = await consumeRestartSentinelForIdentityMigration(migration);
+
+    expect(consumed?.sentinel.payload).toEqual(payload);
+    expect(await readFile(legacyPath).catch(() => null)).toBeNull();
+    if (!consumed) {
+      throw new Error("expected legacy sentinel to be consumed");
+    }
+    await rollbackConsumedRestartSentinelMigration(consumed.receipt);
+    await expect(readFile(legacyPath, "utf8")).resolves.toContain("migration-complete");
+    await rm(root, { recursive: true, force: true });
   });
 });

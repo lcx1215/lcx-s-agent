@@ -28,8 +28,13 @@ function acceptedSpawn(): SpawnAcpResult {
     childSessionKey: "agent:codex:acp:child-1",
     runId: "child-run-1",
     mode: "run",
+    workspaceScope: "confined",
     note: "accepted",
   };
+}
+
+function unconfinedAcceptedSpawn(): SpawnAcpResult {
+  return { ...acceptedSpawn(), workspaceScope: "host-unconfined" };
 }
 
 describe("runCodexCodingHarness", () => {
@@ -253,6 +258,37 @@ describe("runCodexCodingHarness", () => {
     expect(result.status).toBe("completed-unverified");
     expect(result.verification.status).toBe("not-requested");
     expect(result.trajectory.projection.status).toBe("completed-unverified");
+  });
+
+  it("does not certify a host ACP run without a confined workspace proof", async () => {
+    const result = await runCodexCodingHarness(
+      { task: "edit code", cwd: "/tmp/codex-harness-fixture", verify: ["pnpm", "test"] },
+      {
+        inspectWorkspace: vi
+          .fn<() => Promise<CodingHarnessWorkspaceSnapshot>>()
+          .mockResolvedValueOnce(workspace("feature/coding"))
+          .mockResolvedValueOnce(
+            workspace("feature/coding", " M src/example.ts", ["src/example.ts"]),
+          )
+          .mockResolvedValueOnce(
+            workspace("feature/coding", " M src/example.ts", ["src/example.ts"]),
+          ),
+        spawnAcp: vi.fn(async () => unconfinedAcceptedSpawn()),
+        callGateway: async <T>(options: { method: string }): Promise<T> => {
+          if (options.method === "agent.wait") {
+            return { status: "ok" } as T;
+          }
+          return { messages: [] } as T;
+        },
+        runVerification: vi.fn(async () => ({ status: "passed" as const })),
+        createRunId: () => "harness-run-unconfined",
+        now: () => "2026-09-03T00:00:00.000Z",
+      },
+    );
+
+    expect(result.status).toBe("completed-unverified");
+    expect(result.workspaceScope).toBe("host-unconfined");
+    expect(result.error).toMatch(/confined workspace proof/i);
   });
 
   it("returns an identity-change receipt before attributing committed paths", async () => {
