@@ -39,7 +39,9 @@ describe("update-check identity migration writer", () => {
 
     const first = await writeUpdateCheckStateForIdentityMigration(migration, legacyState);
     const canonicalPath = path.join(root, ".lcx", "update-check.json");
-    expect((await stat(canonicalPath)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await stat(canonicalPath)).mode & 0o777).toBe(0o600);
+    }
     const second = await writeUpdateCheckStateForIdentityMigration(migration, {
       ...legacyState,
       lastCheckedAt: "2026-09-04T11:00:00.000Z",

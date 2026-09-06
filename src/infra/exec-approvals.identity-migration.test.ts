@@ -51,7 +51,9 @@ describe("exec approvals identity migration writer", () => {
     const ensured = await ensureExecApprovalsForIdentityMigration(migration);
     const canonicalPath = path.join(root, ".lcx", "exec-approvals.json");
     expect(ensured.file.socket?.token).toBe(legacyToken);
-    expect((await stat(canonicalPath)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await stat(canonicalPath)).mode & 0o777).toBe(0o600);
+    }
     expect(migration.writeSocketPath).toBe(path.join(root, ".lcx", "exec-approvals.sock"));
     expect(await readFile(migration.writeSocketPath).catch(() => null)).toBeNull();
 

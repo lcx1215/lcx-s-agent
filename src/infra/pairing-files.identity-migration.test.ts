@@ -82,8 +82,10 @@ describe("pairing identity migration writer", () => {
 
     const canonicalPending = path.join(root, ".lcx", "devices", "pending.json");
     const canonicalPaired = path.join(root, ".lcx", "devices", "paired.json");
-    expect((await stat(canonicalPending)).mode & 0o777).toBe(0o600);
-    expect((await stat(canonicalPaired)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await stat(canonicalPending)).mode & 0o777).toBe(0o600);
+      expect((await stat(canonicalPaired)).mode & 0o777).toBe(0o600);
+    }
     await expect(listDevicePairing(migration)).resolves.toMatchObject({
       pending: [expect.objectContaining({ deviceId: "new-device" })],
       paired: [expect.objectContaining({ deviceId: "legacy-device" })],

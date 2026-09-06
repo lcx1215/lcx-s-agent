@@ -47,7 +47,9 @@ describe("restart sentinel identity migration writer", () => {
     });
 
     const first = await writeRestartSentinelForIdentityMigration(migration, payload);
-    expect((await stat(migration.writeSentinelPath)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await stat(migration.writeSentinelPath)).mode & 0o777).toBe(0o600);
+    }
     const replacement = { ...payload, ts: 2, message: "replacement" };
     const second = await writeRestartSentinelForIdentityMigration(migration, replacement);
     expect(JSON.parse(await readFile(`${migration.writeSentinelPath}.bak`, "utf8"))).toMatchObject({

@@ -65,12 +65,14 @@ describe("LCX identity migration writer contract", () => {
 
   it("returns a rollback receipt when audit persistence fails", async () => {
     await withTempRoot(async (root) => {
+      const failingAuditPath = path.join(root, "audit-directory");
+      await fs.mkdir(failingAuditPath);
       const contract = createLcxIdentityWriterPathContract({
         writer: "audit",
         migrationPlan: migrationPlan(root),
         readPath: path.join(root, ".openclaw", "audit.json"),
         writePath: path.join(root, ".lcx", "audit.json"),
-        auditPath: path.join("/dev/null", "lcx-audit.jsonl"),
+        auditPath: failingAuditPath,
       });
 
       const receipt = await writeLcxIdentityWriterRawWithReceipt(contract, '{"ok":true}\n');

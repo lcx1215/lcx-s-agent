@@ -38,7 +38,9 @@ describe("voice wake identity migration writer", () => {
     const first = await writeVoiceWakeConfigForIdentityMigration(migration, legacyConfig);
     const canonicalPath = path.join(root, ".lcx", "settings", "voicewake.json");
     expect(first.previous.exists).toBe(false);
-    expect((await stat(canonicalPath)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await stat(canonicalPath)).mode & 0o777).toBe(0o600);
+    }
 
     const second = await writeVoiceWakeConfigForIdentityMigration(migration, {
       triggers: ["new-trigger"],

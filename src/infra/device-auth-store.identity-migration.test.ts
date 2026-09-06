@@ -60,7 +60,9 @@ describe("device auth store migration writer", () => {
       role: "operator",
       scopes: ["operator.read", "operator.write"],
     });
-    expect((await stat(canonicalPath)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await stat(canonicalPath)).mode & 0o777).toBe(0o600);
+    }
 
     const second = await storeDeviceAuthTokenForIdentityMigration({
       migration,

@@ -164,8 +164,12 @@ describe("resolve exec approvals defaults", () => {
   it("expands home-prefixed default file and socket paths", () => {
     const dir = makeTempDir();
     const prevOpenClawHome = process.env.OPENCLAW_HOME;
+    const prevOpenClawStateDir = process.env.OPENCLAW_STATE_DIR;
+    const prevClawdbotStateDir = process.env.CLAWDBOT_STATE_DIR;
     try {
       process.env.OPENCLAW_HOME = dir;
+      delete process.env.OPENCLAW_STATE_DIR;
+      delete process.env.CLAWDBOT_STATE_DIR;
       expect(path.normalize(resolveExecApprovalsPath())).toBe(
         path.normalize(path.join(dir, ".lcx", "exec-approvals.json")),
       );
@@ -177,6 +181,16 @@ describe("resolve exec approvals defaults", () => {
         delete process.env.OPENCLAW_HOME;
       } else {
         process.env.OPENCLAW_HOME = prevOpenClawHome;
+      }
+      if (prevOpenClawStateDir === undefined) {
+        delete process.env.OPENCLAW_STATE_DIR;
+      } else {
+        process.env.OPENCLAW_STATE_DIR = prevOpenClawStateDir;
+      }
+      if (prevClawdbotStateDir === undefined) {
+        delete process.env.CLAWDBOT_STATE_DIR;
+      } else {
+        process.env.CLAWDBOT_STATE_DIR = prevClawdbotStateDir;
       }
     }
   });

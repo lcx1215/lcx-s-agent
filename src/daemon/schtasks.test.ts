@@ -89,7 +89,7 @@ describe("resolveTaskScriptPath", () => {
     {
       name: "falls back to HOME when USERPROFILE is not set",
       env: { HOME: "/home/test", OPENCLAW_PROFILE: "default" },
-      expected: path.join("/home/test", ".lcx", "gateway.cmd"),
+      expected: path.resolve("/home/test", ".lcx", "gateway.cmd"),
     },
   ])("$name", ({ env, expected }) => {
     expect(resolveTaskScriptPath(env)).toBe(expected);

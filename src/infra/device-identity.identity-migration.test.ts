@@ -39,7 +39,9 @@ describe("device identity migration writer", () => {
       publicKeyPem: identity.publicKeyPem,
       privateKeyPem: identity.privateKeyPem,
     });
-    expect((await stat(canonicalPath)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await stat(canonicalPath)).mode & 0o777).toBe(0o600);
+    }
 
     const audit = await readFile(migration.pathContract.auditPath, "utf8");
     expect(audit).toContain('"writer":"device"');

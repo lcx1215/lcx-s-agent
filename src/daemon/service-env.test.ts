@@ -452,17 +452,17 @@ describe("shared Node TLS env defaults", () => {
 describe("resolveGatewayStateDir", () => {
   it("uses the default state dir when no overrides are set", () => {
     const env = { HOME: "/Users/test" };
-    expect(resolveGatewayStateDir(env)).toBe(path.join("/Users/test", ".lcx"));
+    expect(resolveGatewayStateDir(env)).toBe(path.resolve("/Users/test", ".lcx"));
   });
 
   it("appends the profile suffix when set", () => {
     const env = { HOME: "/Users/test", OPENCLAW_PROFILE: "rescue" };
-    expect(resolveGatewayStateDir(env)).toBe(path.join("/Users/test", ".lcx-rescue"));
+    expect(resolveGatewayStateDir(env)).toBe(path.resolve("/Users/test", ".lcx-rescue"));
   });
 
   it("treats default profiles as the base state dir", () => {
     const env = { HOME: "/Users/test", OPENCLAW_PROFILE: "Default" };
-    expect(resolveGatewayStateDir(env)).toBe(path.join("/Users/test", ".lcx"));
+    expect(resolveGatewayStateDir(env)).toBe(path.resolve("/Users/test", ".lcx"));
   });
 
   it("keeps an existing compatibility profile root active", async () => {
