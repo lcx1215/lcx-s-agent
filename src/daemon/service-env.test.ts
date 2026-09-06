@@ -470,6 +470,7 @@ describe("resolveGatewayStateDir", () => {
     try {
       const compatibilityStateDir = path.join(home, ".openclaw-rescue");
       await fs.mkdir(compatibilityStateDir, { recursive: true });
+      await fs.writeFile(path.join(compatibilityStateDir, "openclaw.json"), "{}\n", "utf8");
 
       expect(resolveGatewayStateDir({ HOME: home, OPENCLAW_PROFILE: "rescue" })).toBe(
         compatibilityStateDir,

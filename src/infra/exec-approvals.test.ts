@@ -199,6 +199,7 @@ describe("resolve exec approvals defaults", () => {
     const dir = makeTempDir();
     const compatibilityDir = path.join(dir, ".openclaw");
     fs.mkdirSync(compatibilityDir, { recursive: true });
+    fs.writeFileSync(path.join(compatibilityDir, "openclaw.json"), "{}\n", "utf8");
     const previous = {
       home: process.env.OPENCLAW_HOME,
       state: process.env.OPENCLAW_STATE_DIR,
