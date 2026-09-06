@@ -19,7 +19,7 @@ const pluginSdkEntrypoints = [
 ] as const;
 
 describe("openclaw compatibility package", () => {
-  it("retains the legacy package and plugin-sdk entrypoints", async () => {
+  it("retains the legacy package, CLI, and plugin-sdk entrypoints", async () => {
     const manifest = JSON.parse(
       await fs.readFile(path.join(packageDir, "package.json"), "utf8"),
     ) as {
@@ -33,15 +33,27 @@ describe("openclaw compatibility package", () => {
     expect(manifest.exports).toMatchObject({
       ".": { types: "./index.d.ts", default: "./index.js" },
     });
-    for (const entry of [
+
+    const entries = [
       ".",
       "./plugin-sdk",
       "./plugin-sdk/core",
       "./plugin-sdk/telegram",
+      "./plugin-sdk/discord",
+      "./plugin-sdk/slack",
+      "./plugin-sdk/signal",
+      "./plugin-sdk/imessage",
+      "./plugin-sdk/whatsapp",
+      "./plugin-sdk/line",
+      "./plugin-sdk/account-id",
+      "./plugin-sdk/keyed-async-queue",
       "./cli-entry",
-    ]) {
+      "./package.json",
+    ];
+    for (const entry of entries) {
       expect(manifest.exports).toHaveProperty(entry);
     }
+
     await expect(fs.readFile(path.join(packageDir, "openclaw.mjs"), "utf8")).resolves.toContain(
       'import("lcx-agent/cli-entry")',
     );

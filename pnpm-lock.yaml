@@ -264,14 +264,24 @@ importers:
       acpx:
         specifier: 0.1.15
         version: 0.1.15(zod@4.5.4)
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
 
   extensions/bluebubbles:
     dependencies:
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
       zod:
         specifier: ^4.3.6
         version: 4.5.4
 
-  extensions/copilot-proxy: {}
+  extensions/copilot-proxy:
+    dependencies:
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
 
   extensions/diagnostics-otel:
     dependencies:
@@ -308,6 +318,9 @@ importers:
       '@opentelemetry/semantic-conventions':
         specifier: ^1.40.0
         version: 1.43.0
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
 
   extensions/diffs:
     dependencies:
@@ -317,38 +330,66 @@ importers:
       '@sinclair/typebox':
         specifier: 0.34.48
         version: 0.34.48
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
       playwright-core:
         specifier: 1.58.2
         version: 1.58.2
 
-  extensions/discord: {}
+  extensions/discord:
+    dependencies:
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
 
   extensions/external:
     dependencies:
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
       zod:
         specifier: ^4.3.6
         version: 4.5.4
 
-  extensions/google-gemini-cli-auth: {}
+  extensions/google-gemini-cli-auth:
+    dependencies:
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
 
   extensions/googlechat:
     dependencies:
       google-auth-library:
         specifier: ^10.6.1
         version: 10.9.1
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
       openclaw:
         specifier: '>=2026.3.2'
         version: 2026.8.1(@aws-sdk/credential-provider-node@3.972.82)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))(@smithy/signature-v4@5.7.3)
 
-  extensions/imessage: {}
+  extensions/imessage:
+    dependencies:
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
 
   extensions/irc:
     dependencies:
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
       zod:
         specifier: ^4.3.6
         version: 4.5.4
 
-  extensions/line: {}
+  extensions/line:
+    dependencies:
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
 
   extensions/llm-task:
     dependencies:
@@ -358,12 +399,18 @@ importers:
       ajv:
         specifier: ^8.18.0
         version: 8.20.0
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
 
   extensions/lobster:
     dependencies:
       '@sinclair/typebox':
         specifier: 0.34.48
         version: 0.34.48
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
 
   extensions/matrix:
     dependencies:
@@ -376,6 +423,9 @@ importers:
       '@vector-im/matrix-bot-sdk':
         specifier: 0.8.0-element.3
         version: 0.8.0-element.3(@cypress/request@3.0.10)
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
       markdown-it:
         specifier: 14.2.0
         version: 14.2.0
@@ -388,6 +438,9 @@ importers:
 
   extensions/mattermost:
     dependencies:
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
       ws:
         specifier: 8.21.3
         version: 8.21.3
@@ -397,6 +450,9 @@ importers:
 
   extensions/memory-core:
     dependencies:
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
       openclaw:
         specifier: '>=2026.3.2'
         version: 2026.8.1(@aws-sdk/credential-provider-node@3.972.82)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))(@smithy/signature-v4@5.7.3)
@@ -409,11 +465,18 @@ importers:
       '@sinclair/typebox':
         specifier: 0.34.48
         version: 0.34.48
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
       openai:
         specifier: ^6.25.0
         version: 6.49.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.3)(ws@8.21.3)(zod@4.5.4)
 
-  extensions/minimax-portal-auth: {}
+  extensions/minimax-portal-auth:
+    dependencies:
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
 
   extensions/msteams:
     dependencies:
@@ -423,15 +486,24 @@ importers:
       express:
         specifier: ^5.2.1
         version: 5.2.1
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
 
   extensions/nextcloud-talk:
     dependencies:
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
       zod:
         specifier: ^4.3.6
         version: 4.5.4
 
   extensions/nostr:
     dependencies:
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
       nostr-tools:
         specifier: ^2.23.3
         version: 2.25.1(typescript@6.0.3)
@@ -441,17 +513,32 @@ importers:
 
   extensions/open-prose: {}
 
-  extensions/signal: {}
+  extensions/signal:
+    dependencies:
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
 
-  extensions/slack: {}
+  extensions/slack:
+    dependencies:
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
 
   extensions/synology-chat:
     dependencies:
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
       zod:
         specifier: ^4.3.6
         version: 4.5.4
 
-  extensions/telegram: {}
+  extensions/telegram:
+    dependencies:
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
 
   extensions/tlon:
     dependencies:
@@ -467,6 +554,9 @@ importers:
       '@urbit/http-api':
         specifier: ^3.0.0
         version: 3.0.0
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
       zod:
         specifier: ^4.3.6
         version: 4.5.4
@@ -482,6 +572,9 @@ importers:
       '@twurple/chat':
         specifier: ^8.0.3
         version: 8.1.4(@twurple/auth@8.1.4)
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
       zod:
         specifier: ^4.3.6
         version: 4.5.4
@@ -494,6 +587,9 @@ importers:
       commander:
         specifier: ^14.0.3
         version: 14.0.3
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
       ws:
         specifier: 8.21.3
         version: 8.21.3
@@ -501,10 +597,17 @@ importers:
         specifier: ^4.3.6
         version: 4.5.4
 
-  extensions/whatsapp: {}
+  extensions/whatsapp:
+    dependencies:
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
 
   extensions/zalo:
     dependencies:
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
       undici:
         specifier: 7.29.0
         version: 7.29.0
@@ -517,6 +620,9 @@ importers:
       '@sinclair/typebox':
         specifier: 0.34.48
         version: 0.34.48
+      lcx-agent:
+        specifier: workspace:*
+        version: link:../..
       zca-js:
         specifier: 2.1.1
         version: 2.1.1

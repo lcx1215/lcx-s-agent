@@ -1,8 +1,8 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { resolveLcxIdentityMigrationPlan } from "lcx-agent/plugin-sdk";
 import { afterEach, describe, expect, it } from "vitest";
-import { resolveLcxIdentityMigrationPlan } from "../../../src/config/paths.js";
 import {
   createLcxIdentityMSTeamsConversationMigration,
   readMSTeamsConversationStoreForIdentityMigration,

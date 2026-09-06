@@ -9,8 +9,8 @@ import {
   LcxIdentityWriterContractError,
   type LcxIdentityWriteReceipt,
   type LcxIdentityWriterPathContract,
-} from "../../../../src/config/identity-migration.js";
-import type { LcxIdentityMigrationPlan } from "../../../../src/config/paths.js";
+  type LcxIdentityMigrationPlan,
+} from "lcx-agent/plugin-sdk";
 import { CallRecordSchema, TerminalStates, type CallId, type CallRecord } from "../types.js";
 
 const VOICE_CALL_STORE_RELATIVE_PATH = path.join("voice-calls", "calls.jsonl");

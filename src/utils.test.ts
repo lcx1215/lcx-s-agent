@@ -155,6 +155,7 @@ describe("resolveConfigDir", () => {
     try {
       const compatibilityDir = path.join(root, ".openclaw");
       await fs.promises.mkdir(compatibilityDir, { recursive: true });
+      await fs.promises.writeFile(path.join(compatibilityDir, "openclaw.json"), "{}", "utf8");
       expect(resolveConfigDir({} as NodeJS.ProcessEnv, () => root)).toBe(compatibilityDir);
     } finally {
       await fs.promises.rm(root, { recursive: true, force: true });

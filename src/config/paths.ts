@@ -380,6 +380,8 @@ export function resolveStateDir(
   if (override) {
     return resolveUserPath(override, env, effectiveHomedir);
   }
+  // Keep all normal writers on the same root as an existing compatibility
+  // config/state source until the explicit migration adapter moves it.
   return resolveLcxIdentityMigrationPlan({ env, homedir }).readStateDir;
 }
 

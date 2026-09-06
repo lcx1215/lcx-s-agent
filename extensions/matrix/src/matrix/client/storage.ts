@@ -11,8 +11,8 @@ import {
   LcxIdentityWriterContractError,
   type LcxIdentityPathMoveReceipt,
   type LcxIdentityWriteReceipt,
-} from "../../../../../src/config/identity-migration.js";
-import type { LcxIdentityMigrationPlan } from "../../../../../src/config/paths.js";
+  type LcxIdentityMigrationPlan,
+} from "lcx-agent/plugin-sdk";
 import { getMatrixRuntime } from "../../runtime.js";
 import type { MatrixStoragePaths } from "./types.js";
 
