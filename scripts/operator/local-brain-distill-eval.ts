@@ -216,13 +216,15 @@ function usage(): never {
       "       node --import tsx scripts/operator/local-brain-distill-eval.ts --adapter latest-passing [--model MODEL] [--json] [--summary-only]",
       "       node --import tsx scripts/operator/local-brain-distill-eval.ts --contract-only [--json] [--summary-only] [--case-id ID[,ID...]]",
       "       add --blind (or --neutral) for a raw contract eval with no case-specific hints, hardening, or retry",
+      "       combine --hardened --blind --no-response-prefill for the strict neutral promotion gate",
       "       add --case-file JSONL with --blind to score generated cases without putting labels in prompts",
       "       add --no-response-prefill to measure self-started JSON separately from structural prefill",
       "",
       "Runs one local inference acceptance check for the auxiliary thought-flow adapter.",
       "Use --adapter latest-passing to resolve the current adapter through minimax-brain-training-guard; this may fall back to the best-evidence training seed and reports that status separately.",
       "Use --contract-only for a fast hardened contract check that does not start MLX.",
-      "Use --blind/--neutral for a neutral raw contract check; it never reports promotion readiness.",
+      "Use --blind/--neutral for a neutral raw contract check; without --hardened it never reports promotion readiness.",
+      "The strict neutral promotion gate never applies hardening, retries, recovery, or case labels; it only changes the gate decision.",
       "Use --case-file only with --blind; rows must be generalization-harness JSONL and labels stay scorer-side.",
       "Use --receipt PATH to explicitly write a compact case-level receipt; it never proves promotion readiness.",
     ].join("\n"),
@@ -318,7 +320,7 @@ function parseArgs(args: string[]): CliOptions {
   if (!options.contractOnly && options.noAdapter && options.adapterPath) {
     usage();
   }
-  if (options.blind && (options.hardened || options.contractOnly)) {
+  if (options.blind && options.contractOnly) {
     usage();
   }
   if (options.caseFile && !options.blind) {
@@ -4745,6 +4747,7 @@ async function runGenerateWithTimeoutRetry(
   } catch (error) {
     const timeoutRetryEligible =
       options.hardened &&
+      !options.blind &&
       (isEmptyTimeoutGenerateError(error) ||
         (isParseStabilityCompactEvalCase(evalCase) &&
           error instanceof LocalBrainGenerateError &&
@@ -5375,6 +5378,7 @@ for (const evalCase of evalCases) {
         initialGenerationStatus ??= "invalid_json";
         const canRetryParse =
           options.hardened &&
+          !options.blind &&
           !generateResult.parseRecovered &&
           isParseStabilityCompactEvalCase(evalCase);
         if (!canRetryParse) {
@@ -5399,7 +5403,7 @@ for (const evalCase of evalCases) {
       }
     }
     const parsed = finalizeModuleFields(
-      options.hardened
+      options.hardened && !options.blind
         ? hardenLocalBrainPlanForAsk(rawParsed, {
             ask: evalCase.userAsk,
             sourceSummary: evalCase.sourceSummary,
@@ -5416,7 +5420,7 @@ for (const evalCase of evalCases) {
       : { applied: false, changedFields: [] };
     const isParseRecovered = generateResult.parseRecovered || parseRetryUsed;
     const delta =
-      options.hardened && !resolvedOptions.contractOnly
+      options.hardened && !options.blind && !resolvedOptions.contractOnly
         ? hardeningDelta(rawContractParsed, parsed)
         : { applied: false, changedFields: [] };
     caseResults.push({
@@ -5439,9 +5443,12 @@ for (const evalCase of evalCases) {
       rawContractNormalizationChangedFields: !resolvedOptions.contractOnly
         ? normalizationDelta.changedFields
         : [],
-      hardeningApplied: options.hardened && !resolvedOptions.contractOnly ? delta.applied : false,
+      hardeningApplied:
+        options.hardened && !options.blind && !resolvedOptions.contractOnly ? delta.applied : false,
       hardeningChangedFields:
-        options.hardened && !resolvedOptions.contractOnly ? delta.changedFields : [],
+        options.hardened && !options.blind && !resolvedOptions.contractOnly
+          ? delta.changedFields
+          : [],
       parseRetryUsed: parseRetryUsed || undefined,
       parseErrorKind,
       generationRetryKind,
@@ -5481,7 +5488,9 @@ for (const evalCase of evalCases) {
     }
     rawOutput = capturedErrorOutput;
     const recoveredRawParsed =
-      options.hardened && !resolvedOptions.contractOnly ? recoverPartialJsonPlan(rawOutput) : null;
+      options.hardened && !options.blind && !resolvedOptions.contractOnly
+        ? recoverPartialJsonPlan(rawOutput)
+        : null;
     if (recoveredRawParsed) {
       const rawContractParsed = finalizeModuleFields(recoveredRawParsed);
       const parsed = finalizeModuleFields(
@@ -5505,9 +5514,14 @@ for (const evalCase of evalCases) {
         modelContractReady: false,
         rawContractNormalizationApplied: normalizationDelta.applied,
         rawContractNormalizationChangedFields: normalizationDelta.changedFields,
-        hardeningApplied: options.hardened && !resolvedOptions.contractOnly ? delta.applied : false,
+        hardeningApplied:
+          options.hardened && !options.blind && !resolvedOptions.contractOnly
+            ? delta.applied
+            : false,
         hardeningChangedFields:
-          options.hardened && !resolvedOptions.contractOnly ? delta.changedFields : [],
+          options.hardened && !options.blind && !resolvedOptions.contractOnly
+            ? delta.changedFields
+            : [],
         parseRetryUsed: parseRetryUsed || undefined,
         parseErrorKind,
         generationRetryKind,
@@ -5524,15 +5538,16 @@ for (const evalCase of evalCases) {
       }
       continue;
     }
-    const fallbackParsed = options.hardened
-      ? hardenLocalBrainPlanForAsk(
-          {},
-          {
-            ask: evalCase.userAsk,
-            sourceSummary: evalCase.sourceSummary,
-          },
-        )
-      : null;
+    const fallbackParsed =
+      options.hardened && !options.blind
+        ? hardenLocalBrainPlanForAsk(
+            {},
+            {
+              ask: evalCase.userAsk,
+              sourceSummary: evalCase.sourceSummary,
+            },
+          )
+        : null;
     caseResults.push({
       id: evalCase.id,
       featureSignature: evalCase.featureSignature,
@@ -5586,8 +5601,9 @@ const strictModelProofRequired = !options.contractOnly && (options.hardened || o
 const modelContractFailureCaseIds = strictModelProofRequired
   ? caseResults.filter((entry) => !entry.modelContractReady).map((entry) => entry.id)
   : [];
+const strictNeutralPromotionGate = options.hardened && options.blind && !options.contractOnly;
 const promotionReady =
-  !options.blind &&
+  (!options.blind || strictNeutralPromotionGate) &&
   failedCases.length === 0 &&
   parseRecoveredCases.length === 0 &&
   modelContractFailureCaseIds.length === 0;
@@ -5632,7 +5648,9 @@ const result = {
   evaluationMode: options.contractOnly
     ? "contract_only"
     : options.blind
-      ? "blind_raw_contract"
+      ? options.hardened
+        ? "strict_neutral_hardened_raw_contract"
+        : "blind_raw_contract"
       : options.hardened
         ? "assisted_hardened_challenger"
         : "raw_contract",

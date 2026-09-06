@@ -1057,6 +1057,98 @@ describe.skipIf(process.platform === "win32")("local-brain-distill-eval", () => 
     }
   });
 
+  it("allows promotion proof only in strict neutral hardened mode", () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-strict-neutral-"));
+    const fakePython = path.join(tempDir, "python");
+    const argLog = path.join(tempDir, "python-args.jsonl");
+    writeFileSync(
+      fakePython,
+      [
+        "#!/usr/bin/env node",
+        "const fs = require('node:fs');",
+        `const argLog = ${JSON.stringify(argLog)};`,
+        "const args = process.argv.slice(2);",
+        "const prompt = args[args.indexOf('--prompt') + 1] || '';",
+        "fs.appendFileSync(argLog, `${JSON.stringify(args)}\\n`);",
+        "if (prompt.includes('Recommended module ids for this case') || prompt.includes('Required missing_data ids for this case') || prompt.includes('Required risk_boundaries for this case') || prompt.includes('Relevant compact contract hints') || prompt.includes('source_summary:')) process.exit(23);",
+        "console.log(JSON.stringify({task_family:'portfolio_research_preflight',primary_modules:['macro_rates_inflation','credit_liquidity','etf_regime','company_fundamentals_value','portfolio_risk_gates'],supporting_modules:[],required_tools:[],missing_data:[],risk_boundaries:['research_only'],next_step:'route_to_review',rejected_context:['old_external_conversation_history']}));",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          "scripts/operator/local-brain-distill-eval.ts",
+          "--no-adapter",
+          "--python",
+          fakePython,
+          "--hardened",
+          "--blind",
+          "--no-response-prefill",
+          "--case-id",
+          "portfolio_mixed_q_t_nvda",
+          "--summary-only",
+          "--json",
+        ],
+        {
+          cwd: path.resolve(__dirname, ".."),
+          encoding: "utf8",
+          env: { ...process.env, LOCAL_BRAIN_EVAL_PROMPT_CACHE: "0" },
+        },
+      );
+
+      expect(result.status).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        evaluationMode: string;
+        promptMode: string;
+        labelDisclosure: boolean;
+        responsePrefill: string | null;
+        modelSelfStartMode: string | null;
+        summary: {
+          promotionReady: boolean;
+          modelContractReadyCaseIds: string[];
+          hardeningAppliedCaseIds: string[];
+          parseRetryCaseIds: string[];
+          timeoutRetryCaseIds: string[];
+        };
+      };
+      expect(payload).toMatchObject({
+        evaluationMode: "strict_neutral_hardened_raw_contract",
+        promptMode: "neutral",
+        labelDisclosure: false,
+        responsePrefill: null,
+        modelSelfStartMode: "unassisted",
+      });
+      expect(payload.summary).toMatchObject({
+        promotionReady: true,
+        modelContractReadyCaseIds: ["portfolio_mixed_q_t_nvda"],
+        hardeningAppliedCaseIds: [],
+        parseRetryCaseIds: [],
+        timeoutRetryCaseIds: [],
+      });
+
+      const records = readFileSync(argLog, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as string[]);
+      expect(records).toHaveLength(1);
+      const prompt = records[0]?.[records[0]?.indexOf("--prompt") + 1] ?? "";
+      expect(prompt).toContain("Blind neutral raw-contract eval");
+      expect(prompt).not.toContain("Recommended module ids for this case");
+      expect(prompt).not.toContain("Required missing_data ids for this case");
+      expect(prompt).not.toContain("Required risk_boundaries for this case");
+      expect(prompt).not.toContain("Relevant compact contract hints");
+      expect(prompt).not.toContain("source_summary:");
+      expect(records[0]).not.toContain("--prefill-response");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("keeps blind malformed output as a parse failure without retry or recovery", () => {
     const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-blind-parse-"));
     const fakePython = path.join(tempDir, "python");
