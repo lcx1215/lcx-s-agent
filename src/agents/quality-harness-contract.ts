@@ -100,6 +100,7 @@ export type QualityHarnessVerifier = (params: {
   request: QualityHarnessRequest;
   artifact: QualityHarnessArtifact;
   attempt: number;
+  signal: AbortSignal;
 }) => QualityHarnessVerification | Promise<QualityHarnessVerification>;
 
 export type QualityHarnessOptions = Readonly<{
@@ -109,6 +110,7 @@ export type QualityHarnessOptions = Readonly<{
   maxConcurrency?: 1 | 2;
   memoryBudgetMb?: number;
   taskTimeoutMs?: number;
+  verifierTimeoutMs?: number;
   maxAttempts?: 1 | 2;
   verify?: QualityHarnessVerifier;
   createRunId?: () => string;
@@ -132,6 +134,7 @@ export type QualityHarnessGate = Readonly<{
     | "evidence_integrity_review"
     | "adversarial_review"
     | "final_precheck"
+    | "finance_answer_safety"
     | "no_forbidden_side_effects";
   passed: boolean;
   reason: string;

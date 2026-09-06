@@ -128,7 +128,13 @@ export async function runQualityHarness(
       details: [],
     });
     if (quality.passed && quality.artifact && options.verify) {
-      verification = await runQualityVerifier(options.verify, request, quality.artifact, attempt);
+      verification = await runQualityVerifier(
+        options.verify,
+        request,
+        quality.artifact,
+        attempt,
+        options.verifierTimeoutMs,
+      );
     }
     const status = qualityAttemptStatus({
       planStatus: plan.status,

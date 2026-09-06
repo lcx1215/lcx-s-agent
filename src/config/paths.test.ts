@@ -17,6 +17,8 @@ import {
   resolveStateDir,
 } from "./paths.js";
 
+const completeTargetKeys = Array.from({ length: 29 }, (_, index) => `target-${index}`);
+
 describe("oauth paths", () => {
   it("prefers OPENCLAW_OAUTH_DIR over OPENCLAW_STATE_DIR", () => {
     const env = {
@@ -125,6 +127,8 @@ describe("state + config path candidates", () => {
           schemaVersion: 1,
           canonicalStateDir,
           completedAt: "2026-09-07T00:00:00.000Z",
+          inventory: "lcx-identity-writer-inventory-v1",
+          targetKeys: completeTargetKeys,
         })}\n`,
         "utf8",
       );
@@ -160,7 +164,7 @@ describe("state + config path candidates", () => {
     });
   });
 
-  it("prefers an existing compatibility profile root when both roots are empty", async () => {
+  it("ignores an empty compatibility profile root created by a plugin", async () => {
     await withTempRoot("lcx-profile-empty-roots-", async (root) => {
       const canonicalStateDir = path.join(root, ".lcx-work");
       const legacyStateDir = path.join(root, ".openclaw-work");
@@ -168,7 +172,7 @@ describe("state + config path candidates", () => {
       await fs.mkdir(legacyStateDir, { recursive: true });
 
       expect(resolveStateDirForProfile("work", {} as NodeJS.ProcessEnv, () => root)).toBe(
-        legacyStateDir,
+        canonicalStateDir,
       );
     });
   });
@@ -222,12 +226,12 @@ describe("state + config path candidates", () => {
     expect(candidates).toEqual(expected);
   });
 
-  it("keeps a legacy root active when it is the existing state source", async () => {
+  it("ignores an empty legacy root when it is not an existing state source", async () => {
     await withTempRoot("openclaw-state-", async (root) => {
       const compatibilityDir = path.join(root, ".openclaw");
       await fs.mkdir(compatibilityDir, { recursive: true });
       const resolved = resolveStateDir({} as NodeJS.ProcessEnv, () => root);
-      expect(resolved).toBe(compatibilityDir);
+      expect(resolved).toBe(path.join(root, ".lcx"));
     });
   });
 
@@ -368,6 +372,8 @@ describe("LCX identity migration plan", () => {
           schemaVersion: 1,
           canonicalStateDir: path.join(root, ".lcx"),
           completedAt: "2026-09-06T00:00:00.000Z",
+          inventory: "lcx-identity-writer-inventory-v1",
+          targetKeys: completeTargetKeys,
         }),
         "utf8",
       );

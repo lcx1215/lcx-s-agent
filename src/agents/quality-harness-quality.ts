@@ -54,6 +54,72 @@ function validateGrounding(
   return problems;
 }
 
+const FINANCE_REQUEST_PATTERN =
+  /股票|股价|投资|金融|市场|组合|持仓|ETF|基金|期权|收益|估值|财报|半导体|(?:stock|equity|portfolio|finance|market|invest|etf|fund|option|yield|valuation|earnings)/iu;
+const CURRENT_DATA_PATTERN =
+  /当前|最新|今天|今日|现在|截至|实时|股价|价格|市值|收益率|行情|current|latest|today|now|as of|price|market cap|yield/iu;
+const DIRECT_TRADE_ACTION_PATTERN =
+  /(?:\b(?:you\s+should|i\s+(?:recommend|would)|recommend(?:ed)?|consider|please)\b[^.!?\n]{0,60}\b(?:buy|sell|add|reduce|go long|go short)\b|\b(?:buy|sell|add|reduce|go long|go short)\b\s+(?:now|today|shares?|position|[A-Z]{1,6}\b)|(?:建议|应该|推荐|考虑|立即|现在)[^\n。！？]{0,30}(?:买入|卖出|加仓|减仓|做多|做空|增持|减持)|(?:买入|卖出|加仓|减仓|做多|做空|增持|减持)[^\n。！？]{0,12}(?:股票|仓位|标的|[A-Z]{1,6}\b))/iu;
+
+function extractDataNumbers(text: string): string[] {
+  return (text.match(/[$€£¥]?\s*\d[\d,]*(?:\.\d+)?%?/g) ?? []).map((value) =>
+    value.replace(/\s+/g, ""),
+  );
+}
+
+function normalizedNumber(value: string): string {
+  return value.replace(/[$€£¥,%\s]/g, "").replace(/,/g, "");
+}
+
+function hasEvidenceTimestamp(evidence: QualityHarnessEvidence): boolean {
+  return Boolean(
+    evidence.source?.trim() ||
+    /\b20\d{2}[-/]\d{1,2}(?:[-/]\d{1,2})?(?:[T ]\d{1,2}:\d{2})?\b|\b(?:UTC|北京时间|as of)\b/iu.test(
+      evidence.text,
+    ),
+  );
+}
+
+function validateFinanceAnswerSafety(
+  artifact: QualityHarnessArtifact | undefined,
+  request: QualityHarnessRequest,
+): string[] {
+  if (!artifact || !FINANCE_REQUEST_PATTERN.test(request.task)) {
+    return [];
+  }
+  const problems: string[] = [];
+  if (DIRECT_TRADE_ACTION_PATTERN.test(artifact.answer)) {
+    problems.push("final finance answer contains a direct trade action or recommendation");
+  }
+
+  if (CURRENT_DATA_PATTERN.test(request.task) || CURRENT_DATA_PATTERN.test(artifact.answer)) {
+    const answerNumbers = extractDataNumbers(artifact.answer);
+    if (answerNumbers.length > 0) {
+      const evidenceById = new Map(request.evidence.map((entry) => [entry.id, entry]));
+      const citedEvidence = artifact.claims
+        .filter((claim) => claim.status === "supported")
+        .flatMap((claim) => claim.evidenceIds)
+        .map((id) => evidenceById.get(id))
+        .filter((entry): entry is QualityHarnessEvidence => entry !== undefined);
+      const citedNumbers = new Set(
+        citedEvidence.flatMap((entry) => extractDataNumbers(entry.text).map(normalizedNumber)),
+      );
+      const unsupportedNumbers = answerNumbers.filter(
+        (number) => !citedNumbers.has(normalizedNumber(number)),
+      );
+      if (unsupportedNumbers.length > 0) {
+        problems.push(
+          `final finance answer contains current-data numbers without matching cited evidence: ${unsupportedNumbers.join(", ")}`,
+        );
+      }
+      if (!citedEvidence.some(hasEvidenceTimestamp)) {
+        problems.push("current finance numbers require cited evidence with a source or timestamp");
+      }
+    }
+  }
+  return problems;
+}
+
 function reviewPassed(
   result: LogicalAgentTaskResult<QualityHarnessStageOutput> | undefined,
   stage: QualityHarnessStage,
@@ -88,6 +154,7 @@ export function evaluateQuality(
       ? format.output.artifact
       : undefined;
   const groundingProblems = validateGrounding(artifact, request.evidence);
+  const financeSafetyProblems = validateFinanceAnswerSafety(artifact, request);
   const evidenceReview = reviewPassed(
     findQualityStageResult(result, "evidence_integrity"),
     "evidence",
@@ -150,6 +217,14 @@ export function evaluateQuality(
     },
     { id: "final_precheck", passed: precheck.passed, reason: precheck.reason },
     {
+      id: "finance_answer_safety",
+      passed: financeSafetyProblems.length === 0,
+      reason:
+        financeSafetyProblems.length === 0
+          ? "final finance answer contains no direct trade instruction or ungrounded current-data number"
+          : financeSafetyProblems.join("; "),
+    },
+    {
       id: "no_forbidden_side_effects",
       passed: sideEffects.length === 0,
       reason:
@@ -160,6 +235,7 @@ export function evaluateQuality(
   ];
   const feedback = normalizeFeedback([
     ...groundingProblems,
+    ...financeSafetyProblems,
     ...supportingReviews.flatMap((review) => review.feedback),
     ...evidenceReview.feedback,
     ...adversarialReview.feedback,
@@ -217,15 +293,42 @@ export async function runQualityVerifier(
   request: QualityHarnessRequest,
   artifact: QualityHarnessArtifact,
   attempt: number,
+  timeoutMs = 30_000,
 ): Promise<QualityHarnessVerification> {
+  const boundedTimeoutMs =
+    Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.min(timeoutMs, 2_147_483_647) : 30_000;
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    return normalizeQualityVerification(await verifier({ request, artifact, attempt }));
+    const result = await Promise.race([
+      Promise.resolve()
+        .then(() => verifier({ request, artifact, attempt, signal: controller.signal }))
+        .then((value) => ({ kind: "result" as const, value })),
+      new Promise<{ kind: "timeout" }>((resolve) => {
+        timer = setTimeout(() => {
+          controller.abort();
+          resolve({ kind: "timeout" });
+        }, boundedTimeoutMs);
+      }),
+    ]);
+    if (result.kind === "timeout") {
+      return Object.freeze({
+        status: "blocked",
+        summary: `quality verifier timed out after ${boundedTimeoutMs}ms`,
+        details: ["verifier was aborted after exceeding its bounded timeout"],
+      });
+    }
+    return normalizeQualityVerification(result.value);
   } catch (error: unknown) {
     return Object.freeze({
       status: "failed",
       summary: error instanceof Error ? error.message : String(error),
       details: [],
     });
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
   }
 }
 

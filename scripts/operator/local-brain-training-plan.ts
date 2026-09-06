@@ -315,6 +315,7 @@ export type MiniMaxTeacherRuntimeSnapshot = {
   enabled: boolean;
   configPath: string;
   configuredRefs: string[];
+  usableAuthorityRefs: string[];
   reason: string;
 };
 
@@ -403,20 +404,62 @@ export function inspectMiniMaxTeacherRuntimeConfig(
   config: unknown,
 ): Omit<MiniMaxTeacherRuntimeSnapshot, "configPath"> {
   const configuredRefs: string[] = [];
+  const usableAuthorityRefs: string[] = [];
   const add = (pathParts: string[]) => configuredRefs.push(pathParts.join("."));
+  const addUsable = (pathParts: string[]) => usableAuthorityRefs.push(pathParts.join("."));
   const root = isRecord(config) ? config : {};
+
+  const isUsableSecretString = (value: string): boolean => {
+    const trimmed = value.trim();
+    if (!trimmed || /^(?:undefined|null|example|changeme|replace[-_ ]?me)$/i.test(trimmed)) {
+      return false;
+    }
+    const envRef = /^\$\{([A-Z][A-Z0-9_]*)\}$/.exec(trimmed);
+    return envRef ? Boolean(process.env[envRef[1]]?.trim()) : true;
+  };
+  const hasUsableCredential = (value: unknown): boolean => {
+    if (typeof value === "string") {
+      return isUsableSecretString(value);
+    }
+    if (Array.isArray(value)) {
+      return value.some((entry) => hasUsableCredential(entry));
+    }
+    if (!isRecord(value)) {
+      return false;
+    }
+    if (value.source === "env" && typeof value.id === "string") {
+      return Boolean(process.env[value.id.trim()]?.trim());
+    }
+    return Object.entries(value).some(([key, entry]) =>
+      /api[-_]?key|token|secret|password|credential|authorization|auth|key/i.test(key)
+        ? hasUsableCredential(entry)
+        : false,
+    );
+  };
   const models = isRecord(root.models) ? root.models : {};
   const providers = isRecord(models.providers) ? models.providers : {};
   for (const [providerId, providerConfig] of Object.entries(providers)) {
     if (
       /minimax/i.test(providerId) &&
       isRecord(providerConfig) &&
-      providerConfig.enabled !== false &&
-      ["baseUrl", "apiKey", "auth", "api", "headers", "authHeader", "models"].some((key) =>
-        Object.prototype.hasOwnProperty.call(providerConfig, key),
-      )
+      providerConfig.enabled !== false
     ) {
-      add(["models", "providers", providerId]);
+      const providerPath = ["models", "providers", providerId];
+      const hasProviderShape = [
+        "baseUrl",
+        "apiKey",
+        "auth",
+        "api",
+        "headers",
+        "authHeader",
+        "models",
+      ].some((key) => Object.prototype.hasOwnProperty.call(providerConfig, key));
+      if (hasProviderShape) {
+        add(providerPath);
+      }
+      if (["apiKey", "headers"].some((key) => hasUsableCredential(providerConfig[key]))) {
+        addUsable(providerPath);
+      }
     }
   }
 
@@ -475,7 +518,11 @@ export function inspectMiniMaxTeacherRuntimeConfig(
       typeof profile.provider === "string" &&
       /minimax/i.test(profile.provider)
     ) {
-      add(["auth", "profiles", profileId]);
+      const profilePath = ["auth", "profiles", profileId];
+      add(profilePath);
+      if (hasUsableCredential(profile)) {
+        addUsable(profilePath);
+      }
     }
   }
 
@@ -491,18 +538,26 @@ export function inspectMiniMaxTeacherRuntimeConfig(
   const envVars = isRecord(env.vars) ? env.vars : {};
   for (const [key, value] of Object.entries(envVars)) {
     if (/minimax/i.test(key) && typeof value === "string" && value.trim()) {
-      add(["env", "vars", key]);
+      const envPath = ["env", "vars", key];
+      add(envPath);
+      if (/(?:api[-_]?key|token|secret|password|auth)/i.test(key) && hasUsableCredential(value)) {
+        addUsable(envPath);
+      }
     }
   }
   const uniqueRefs = [...new Set(configuredRefs)];
+  const uniqueUsableAuthorityRefs = [...new Set(usableAuthorityRefs)];
   return {
     boundary: "local_minimax_teacher_runtime_status_only",
-    enabled: uniqueRefs.length > 0,
+    enabled: uniqueUsableAuthorityRefs.length > 0,
     configuredRefs: uniqueRefs,
+    usableAuthorityRefs: uniqueUsableAuthorityRefs,
     reason:
-      uniqueRefs.length > 0
-        ? "MiniMax runtime references remain in configuration."
-        : "MiniMax provider, auth, agent, plugin, and model references are absent from runtime configuration.",
+      uniqueUsableAuthorityRefs.length > 0
+        ? "MiniMax runtime references have usable provider or auth authority."
+        : uniqueRefs.length > 0
+          ? "MiniMax runtime references exist, but no usable provider credential or auth authority is configured."
+          : "MiniMax provider, auth, agent, plugin, and model references are absent from runtime configuration.",
   };
 }
 
@@ -515,6 +570,7 @@ async function readMiniMaxTeacherRuntimeSnapshot(): Promise<MiniMaxTeacherRuntim
       enabled: false,
       configPath,
       configuredRefs: [],
+      usableAuthorityRefs: [],
       reason: "Runtime configuration is unavailable; MiniMax auto-start is disabled fail-closed.",
     };
   }
@@ -526,6 +582,7 @@ async function readMiniMaxTeacherRuntimeSnapshot(): Promise<MiniMaxTeacherRuntim
       enabled: false,
       configPath,
       configuredRefs: [],
+      usableAuthorityRefs: [],
       reason: "Runtime configuration is invalid; MiniMax auto-start is disabled fail-closed.",
     };
   }

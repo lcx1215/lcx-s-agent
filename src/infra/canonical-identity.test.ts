@@ -64,5 +64,12 @@ describe("canonical LCX identity", () => {
     expect(installer).toContain('cat > "$HOME/.local/bin/lcx"');
     expect(installer).toContain('"$npm_root/lcx-agent/lcx.mjs"');
     expect(installer).toContain('exec "$HOME/.local/bin/lcx"');
+    expect(installer).toContain(
+      "for legacy_state_dir in .openclaw .clawdbot .moldbot .moltbot; do",
+    );
+    expect(installer).toContain(
+      'compatibility_workspace="${HOME}/${legacy_state_dir}/workspace${workspace_suffix}"',
+    );
+    expect(installer).toContain('if [[ -f "${compatibility_workspace}/BOOTSTRAP.md" ]]');
   });
 });

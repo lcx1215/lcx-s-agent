@@ -2066,11 +2066,25 @@ maybe_open_dashboard() {
 
 resolve_workspace_dir() {
     local profile="${OPENCLAW_PROFILE:-default}"
+    local workspace_suffix=""
     if [[ "${profile}" != "default" ]]; then
-        echo "${HOME}/.lcx/workspace-${profile}"
-    else
-        echo "${HOME}/.lcx/workspace"
+        workspace_suffix="-${profile}"
     fi
+
+    # Resume an interrupted compatibility installation before falling back to
+    # the canonical workspace. The state root may have been created before its
+    # config was written, so BOOTSTRAP.md is the durable onboarding marker.
+    local legacy_state_dir
+    local compatibility_workspace
+    for legacy_state_dir in .openclaw .clawdbot .moldbot .moltbot; do
+        compatibility_workspace="${HOME}/${legacy_state_dir}/workspace${workspace_suffix}"
+        if [[ -f "${compatibility_workspace}/BOOTSTRAP.md" ]]; then
+            echo "${compatibility_workspace}"
+            return
+        fi
+    done
+
+    echo "${HOME}/.lcx/workspace${workspace_suffix}"
 }
 
 run_bootstrap_onboarding_if_needed() {

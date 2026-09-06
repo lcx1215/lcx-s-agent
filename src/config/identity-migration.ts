@@ -6,10 +6,14 @@ import {
   type LcxIdentityMigrationPlan,
 } from "./paths.js";
 
+export const LCX_IDENTITY_MIGRATION_INVENTORY = "lcx-identity-writer-inventory-v1" as const;
+
 export type LcxIdentityMigrationCompletionMarker = Readonly<{
   schemaVersion: 1;
   canonicalStateDir: string;
   completedAt: string;
+  inventory: typeof LCX_IDENTITY_MIGRATION_INVENTORY;
+  targetKeys: readonly string[];
 }>;
 
 export type LcxIdentityWriterName =
@@ -408,6 +412,16 @@ export async function writeLcxIdentityMigrationCompletionMarker(params: {
     requiredTargetsByKey.set(targetKey, Object.freeze({ ...target, targetKey, writePath }));
   }
 
+  const missingWriterFamilies = LCX_IDENTITY_WRITER_NAMES.filter(
+    (writer) => ![...requiredTargetsByKey.values()].some((target) => target.writer === writer),
+  );
+  if (missingWriterFamilies.length > 0) {
+    throw new LcxIdentityWriterContractError(
+      `Identity migration target manifest is incomplete; missing writer families: ${missingWriterFamilies.join(", ")}`,
+      "LCX_IDENTITY_COMPLETION_TARGETS_INCOMPLETE",
+    );
+  }
+
   const receiptsByTarget = new Map<string, LcxIdentityMigrationWriterReceipt>();
   for (const receipt of params.writerReceipts) {
     const targetKey = receipt.pathContract.targetKey.trim();
@@ -471,6 +485,8 @@ export async function writeLcxIdentityMigrationCompletionMarker(params: {
     schemaVersion: 1 as const,
     canonicalStateDir: path.resolve(migrationPlan.canonicalStateDir),
     completedAt: (params.now ?? (() => new Date().toISOString()))(),
+    inventory: LCX_IDENTITY_MIGRATION_INVENTORY,
+    targetKeys: Object.freeze([...requiredTargetsByKey.keys()]),
   });
   await writeRawAtomically(
     resolveLcxIdentityMigrationCompletionPath(migrationPlan.canonicalStateDir),

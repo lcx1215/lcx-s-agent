@@ -82,11 +82,13 @@ describe("LCX identity migration writer contract", () => {
         now: () => "2026-09-06T00:00:00.000Z",
       });
 
-      expect(marker).toEqual({
+      expect(marker).toMatchObject({
         schemaVersion: 1,
         canonicalStateDir: path.join(root, ".lcx"),
         completedAt: "2026-09-06T00:00:00.000Z",
+        inventory: "lcx-identity-writer-inventory-v1",
       });
+      expect(marker.targetKeys).toHaveLength(LCX_IDENTITY_WRITER_NAMES.length);
       expect(
         JSON.parse(
           await fs.readFile(path.join(root, ".lcx", "identity-migration.complete.json"), "utf8"),
@@ -114,14 +116,24 @@ describe("LCX identity migration writer contract", () => {
     await withTempRoot(async (root) => {
       const plan = migrationPlan(root);
       const raw = "credentials\n";
-      const contracts = ["auth-profiles.json", "github-copilot.token.json"].map((filename) =>
-        createLcxIdentityWriterPathContract({
-          writer: "credentials",
-          migrationPlan: plan,
-          readPath: path.join(root, ".openclaw", "credentials", filename),
-          writePath: path.join(root, ".lcx", "credentials", filename),
-        }),
-      );
+      const contracts = [
+        ...LCX_IDENTITY_WRITER_NAMES.filter((writer) => writer !== "credentials").map((writer) =>
+          createLcxIdentityWriterPathContract({
+            writer,
+            migrationPlan: plan,
+            readPath: path.join(root, ".openclaw", `${writer}.state`),
+            writePath: path.join(root, ".lcx", `${writer}.state`),
+          }),
+        ),
+        ...["auth-profiles.json", "github-copilot.token.json"].map((filename) =>
+          createLcxIdentityWriterPathContract({
+            writer: "credentials",
+            migrationPlan: plan,
+            readPath: path.join(root, ".openclaw", "credentials", filename),
+            writePath: path.join(root, ".lcx", "credentials", filename),
+          }),
+        ),
+      ];
       const receipts = await Promise.all(
         contracts.map(async (pathContract) => {
           await writeRaw(pathContract.writePath, raw);

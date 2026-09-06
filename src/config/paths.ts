@@ -36,6 +36,38 @@ const IDENTITY_MIGRATION_CONFIG_FILENAMES = [
   CONFIG_FILENAME,
   ...LEGACY_CONFIG_FILENAMES,
 ] as const;
+// A compatibility root is only authoritative when it contains a config or a
+// known core state namespace. Plugin-owned directories such as `.openclaw`
+// itself, `memory`, and `voice-calls` must not keep the legacy root active.
+const IDENTITY_MIGRATION_CORE_STATE_DIRNAMES = [
+  "agents",
+  "credentials",
+  "cron",
+  "devices",
+  "exec-approvals",
+  "queues",
+  "sessions",
+  "subagents",
+  "workspace",
+] as const;
+
+function hasAuthoritativeCompatibilityState(
+  stateDir: string,
+  existsSync: (candidate: string) => boolean = fs.existsSync,
+): boolean {
+  try {
+    return (
+      IDENTITY_MIGRATION_CONFIG_FILENAMES.some((filename) =>
+        existsSync(path.join(stateDir, filename)),
+      ) ||
+      IDENTITY_MIGRATION_CORE_STATE_DIRNAMES.some((dirname) =>
+        existsSync(path.join(stateDir, dirname)),
+      )
+    );
+  } catch {
+    return false;
+  }
+}
 
 function resolveDefaultHomeDir(): string {
   return resolveRequiredHomeDir(process.env, os.homedir);
@@ -130,11 +162,7 @@ export function resolveStateDirForProfile(
     (dirname) => path.join(effectiveHomedir(), `${dirname}${suffix}`),
   );
   const compatibilityStateDir = compatibilityStateDirs.find((candidate) => {
-    try {
-      return fs.existsSync(candidate);
-    } catch {
-      return false;
-    }
+    return hasAuthoritativeCompatibilityState(candidate);
   });
   const canonicalActivationComplete =
     !compatibilityStateDir ||
@@ -169,13 +197,7 @@ export function resolveStateDirForProfile(
     return path.dirname(configPath);
   }
   return (
-    [...compatibilityStateDirs, canonicalStateDir].find((candidate) => {
-      try {
-        return fs.existsSync(candidate);
-      } catch {
-        return false;
-      }
-    }) ?? canonicalStateDir
+    (canonicalActivationComplete ? canonicalStateDir : compatibilityStateDir) ?? canonicalStateDir
   );
 }
 
@@ -242,13 +264,29 @@ export function isLcxIdentityMigrationComplete(
   try {
     const marker = JSON.parse(
       fs.readFileSync(resolveLcxIdentityMigrationCompletionPath(canonicalStateDir), "utf8"),
-    ) as { schemaVersion?: unknown; canonicalStateDir?: unknown; completedAt?: unknown };
+    ) as {
+      schemaVersion?: unknown;
+      canonicalStateDir?: unknown;
+      completedAt?: unknown;
+      inventory?: unknown;
+      targetKeys?: unknown;
+    };
     return (
       marker.schemaVersion === 1 &&
       typeof marker.canonicalStateDir === "string" &&
       path.resolve(marker.canonicalStateDir) === path.resolve(canonicalStateDir) &&
       typeof marker.completedAt === "string" &&
-      marker.completedAt.length > 0
+      marker.completedAt.length > 0 &&
+      marker.inventory === "lcx-identity-writer-inventory-v1" &&
+      Array.isArray(marker.targetKeys) &&
+      // The v1 inventory covers every registered writer family. Keep this
+      // lower bound here so a hand-written marker cannot activate the root
+      // with a single caller-selected target.
+      marker.targetKeys.length >= 29 &&
+      marker.targetKeys.every(
+        (targetKey) => typeof targetKey === "string" && targetKey.length > 0,
+      ) &&
+      new Set(marker.targetKeys).size === marker.targetKeys.length
     );
   } catch {
     return false;
@@ -309,11 +347,7 @@ export function resolveLcxIdentityMigrationPlan(
     : IDENTITY_MIGRATION_STATE_DIRNAMES.map((dirname) => path.join(effectiveHomedir(), dirname));
   const compatibilityStateDirs = explicitState ? [] : readStateDirs.slice(1);
   const compatibilityStateDir = compatibilityStateDirs.find((candidate) => {
-    try {
-      return existsSync(candidate);
-    } catch {
-      return false;
-    }
+    return hasAuthoritativeCompatibilityState(candidate, existsSync);
   });
   const canonicalActivationComplete =
     mode !== "canonical-default" ||
@@ -347,13 +381,7 @@ export function resolveLcxIdentityMigrationPlan(
         ? path.dirname(existingConfigPath)
         : !canonicalActivationComplete && compatibilityStateDir
           ? compatibilityStateDir
-          : (readStateDirs.find((candidate) => {
-              try {
-                return existsSync(candidate);
-              } catch {
-                return false;
-              }
-            }) ?? writeStateDir);
+          : writeStateDir;
   const readConfigPath =
     existingConfigPath ??
     (!canonicalActivationComplete && compatibilityStateDir

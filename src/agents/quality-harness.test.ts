@@ -38,9 +38,21 @@ function artifact(evidenceId: string): QualityHarnessStageOutput {
   };
 }
 
+const financeRequest: QualityHarnessRequest = {
+  task: "请根据最新证据判断 NVDA 当前股价和投资风险。",
+  evidence: [
+    {
+      id: "market",
+      text: "截至 2026-09-06，公开行情材料记录 NVDA 的价格为 480 美元。",
+      source: "market-feed-test",
+    },
+  ],
+};
+
 function demoInvoker(params: {
   weakFormat?: boolean;
   adversarialFinding?: boolean;
+  answer?: string;
   requests?: QualityHarnessModelRequest[];
 }) {
   return async (raw: unknown): Promise<unknown> => {
@@ -62,6 +74,22 @@ function demoInvoker(params: {
     }
     if (current.stage === "draft" || current.stage === "format") {
       const weak = params.weakFormat && current.stage === "format" && current.attempt === 1;
+      if (params.answer && current.stage === "format") {
+        return {
+          kind: "artifact",
+          artifact: {
+            answer: params.answer,
+            claims: [
+              {
+                id: "claim-1",
+                text: "材料记录了一个项目状态。",
+                status: "supported",
+                evidenceIds: ["market"],
+              },
+            ],
+          },
+        };
+      }
       return artifact(weak ? "missing-evidence" : "brief");
     }
     return passReview();
@@ -187,5 +215,40 @@ describe("quality harness", () => {
     expect(result.status).toBe("verification-failed");
     expect(verificationCalls).toBe(2);
     expect(result.attempts).toHaveLength(2);
+  });
+
+  it("deterministically rejects direct trade actions and ungrounded current numbers", async () => {
+    const result = await runQualityHarness({
+      request: financeRequest,
+      maxAttempts: 1,
+      modelInvoker: demoInvoker({ answer: "Buy NVDA now at 500 dollars." }),
+      verify: async () => ({ status: "passed", summary: "should not run", details: [] }),
+    });
+
+    expect(result.status).toBe("quality-failed");
+    expect(
+      result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
+    ).toMatchObject({ passed: false });
+  });
+
+  it("aborts a verifier that exceeds its independent timeout", async () => {
+    let aborted = false;
+    const result = await runQualityHarness({
+      request,
+      maxAttempts: 1,
+      verifierTimeoutMs: 10,
+      modelInvoker: demoInvoker({}),
+      verify: ({ signal }) =>
+        new Promise(() => {
+          signal.addEventListener("abort", () => {
+            aborted = true;
+          });
+        }),
+    });
+
+    expect(result.status).toBe("blocked");
+    expect(aborted).toBe(true);
+    expect(result.verification.status).toBe("blocked");
+    expect(result.verification.summary).toContain("timed out");
   });
 });
