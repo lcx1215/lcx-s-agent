@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  createLcxIdentityMigrationTarget,
   createLcxIdentityWriterPathContract,
   LCX_IDENTITY_WRITER_NAMES,
   assertLcxIdentityWriterPathContract,
@@ -51,29 +52,33 @@ describe("LCX identity migration writer contract", () => {
       const plan = migrationPlan(root);
       const raw = "x";
       const nextHash = crypto.createHash("sha256").update(raw).digest("hex");
+      const writerReceipts = await Promise.all(
+        LCX_IDENTITY_WRITER_NAMES.map(async (writer) => {
+          const pathContract = createLcxIdentityWriterPathContract({
+            writer,
+            migrationPlan: plan,
+            readPath: path.join(root, ".openclaw", `${writer}.state`),
+            writePath: path.join(root, ".lcx", `${writer}.state`),
+          });
+          await writeRaw(pathContract.writePath, raw);
+          return {
+            pathContract,
+            previous: { exists: false, hash: null, bytes: null },
+            next: { hash: nextHash, bytes: Buffer.byteLength(raw, "utf8") },
+            rollback: {
+              path: pathContract.rollbackPath,
+              strategy: "remove-written-target" as const,
+            },
+            audit: { status: "written" as const },
+          };
+        }),
+      );
       const marker = await writeLcxIdentityMigrationCompletionMarker({
         migrationPlan: plan,
-        writerReceipts: await Promise.all(
-          LCX_IDENTITY_WRITER_NAMES.map(async (writer) => {
-            const pathContract = createLcxIdentityWriterPathContract({
-              writer,
-              migrationPlan: plan,
-              readPath: path.join(root, ".openclaw", `${writer}.state`),
-              writePath: path.join(root, ".lcx", `${writer}.state`),
-            });
-            await writeRaw(pathContract.writePath, raw);
-            return {
-              pathContract,
-              previous: { exists: false, hash: null, bytes: null },
-              next: { hash: nextHash, bytes: Buffer.byteLength(raw, "utf8") },
-              rollback: {
-                path: pathContract.rollbackPath,
-                strategy: "remove-written-target" as const,
-              },
-              audit: { status: "written" as const },
-            };
-          }),
+        requiredTargets: writerReceipts.map(({ pathContract }) =>
+          createLcxIdentityMigrationTarget(pathContract),
         ),
+        writerReceipts,
         now: () => "2026-09-06T00:00:00.000Z",
       });
 
@@ -95,12 +100,54 @@ describe("LCX identity migration writer contract", () => {
       await expect(
         writeLcxIdentityMigrationCompletionMarker({
           migrationPlan: migrationPlan(root),
+          requiredTargets: [],
           writerReceipts: [],
         }),
-      ).rejects.toMatchObject({ code: "LCX_IDENTITY_COMPLETION_WRITERS_INCOMPLETE" });
+      ).rejects.toMatchObject({ code: "LCX_IDENTITY_COMPLETION_TARGETS_INCOMPLETE" });
       await expect(
         fs.access(path.join(root, ".lcx", "identity-migration.complete.json")),
       ).rejects.toMatchObject({ code: "ENOENT" });
+    });
+  });
+
+  it("tracks distinct targets even when adapters share a writer family", async () => {
+    await withTempRoot(async (root) => {
+      const plan = migrationPlan(root);
+      const raw = "credentials\n";
+      const contracts = ["auth-profiles.json", "github-copilot.token.json"].map((filename) =>
+        createLcxIdentityWriterPathContract({
+          writer: "credentials",
+          migrationPlan: plan,
+          readPath: path.join(root, ".openclaw", "credentials", filename),
+          writePath: path.join(root, ".lcx", "credentials", filename),
+        }),
+      );
+      const receipts = await Promise.all(
+        contracts.map(async (pathContract) => {
+          await writeRaw(pathContract.writePath, raw);
+          return {
+            pathContract,
+            previous: { exists: false, hash: null, bytes: null },
+            next: {
+              hash: crypto.createHash("sha256").update(raw).digest("hex"),
+              bytes: Buffer.byteLength(raw, "utf8"),
+            },
+            rollback: {
+              path: pathContract.rollbackPath,
+              strategy: "remove-written-target" as const,
+            },
+            audit: { status: "written" as const },
+          };
+        }),
+      );
+
+      await expect(
+        writeLcxIdentityMigrationCompletionMarker({
+          migrationPlan: plan,
+          requiredTargets: contracts.map(createLcxIdentityMigrationTarget),
+          writerReceipts: receipts,
+        }),
+      ).resolves.toMatchObject({ schemaVersion: 1 });
     });
   });
 
@@ -330,6 +377,44 @@ describe("LCX identity migration writer contract", () => {
 
       await rollbackSessionStoreIdentityMigration(result.receipt);
       await expect(fs.access(result.sessionFile)).rejects.toMatchObject({ code: "ENOENT" });
+    });
+  });
+
+  it("keeps the original legacy transcript directory after the store switches canonical", async () => {
+    await withTempRoot(async (root) => {
+      const legacyStorePath = path.join(
+        root,
+        ".openclaw",
+        "agents",
+        "main",
+        "sessions",
+        "sessions.json",
+      );
+      const legacyTranscriptPath = path.join(
+        root,
+        ".openclaw",
+        "agents",
+        "main",
+        "sessions",
+        "s-legacy.jsonl",
+      );
+      const legacyRaw =
+        '{"type":"session","version":1,"id":"s-legacy","timestamp":"2026-09-04T00:00:00.000Z","cwd":"/legacy-original"}\n';
+      await writeRaw(legacyStorePath, "{}\n");
+      await writeRaw(legacyTranscriptPath, legacyRaw);
+      const migration = createLcxIdentitySessionMigration({ migrationPlan: migrationPlan(root) });
+
+      await writeSessionStoreForIdentityMigration(migration, {});
+      const result = await appendSessionTranscriptForIdentityMigration({
+        migration,
+        sessionId: "s-legacy",
+        text: "preserve the legacy transcript",
+      });
+
+      const canonicalRaw = await fs.readFile(result.sessionFile, "utf8");
+      expect(canonicalRaw).toContain("/legacy-original");
+      expect(canonicalRaw).toContain("preserve the legacy transcript");
+      expect(await fs.readFile(legacyTranscriptPath, "utf8")).toBe(legacyRaw);
     });
   });
 

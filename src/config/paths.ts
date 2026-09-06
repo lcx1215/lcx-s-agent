@@ -113,9 +113,9 @@ export function resolveNewStateDirForProfile(
 
 /**
  * Resolve a profile state root without splitting an existing installation.
- * Canonical profile roots win when they already contain a config; otherwise
- * an existing compatibility profile root remains the active root until an
- * explicit migration moves that profile's complete writer set.
+ * A canonical profile root becomes active only after its completion marker is
+ * present. Until then, an existing compatibility profile root remains the
+ * active root even when a partial canonical config has been written.
  */
 export function resolveStateDirForProfile(
   profile: string | undefined,
@@ -129,6 +129,20 @@ export function resolveStateDirForProfile(
   const compatibilityStateDirs = [COMPATIBILITY_STATE_DIRNAME, ...LEGACY_STATE_DIRNAMES].map(
     (dirname) => path.join(effectiveHomedir(), `${dirname}${suffix}`),
   );
+  const compatibilityStateDir = compatibilityStateDirs.find((candidate) => {
+    try {
+      return fs.existsSync(candidate);
+    } catch {
+      return false;
+    }
+  });
+  const canonicalActivationComplete =
+    !compatibilityStateDir ||
+    isLcxIdentityMigrationComplete({
+      env,
+      homedir: effectiveHomedir,
+      stateDir: canonicalStateDir,
+    });
   const explicitStateDir = env.OPENCLAW_STATE_DIR?.trim() || env.CLAWDBOT_STATE_DIR?.trim();
   const explicitConfigPath = env.OPENCLAW_CONFIG_PATH?.trim() || env.CLAWDBOT_CONFIG_PATH?.trim();
   if (explicitStateDir) {
@@ -137,7 +151,9 @@ export function resolveStateDirForProfile(
   if (explicitConfigPath && !explicitStateDir) {
     return canonicalStateDir;
   }
-  const stateDirs = [canonicalStateDir, ...compatibilityStateDirs];
+  const stateDirs = canonicalActivationComplete
+    ? [canonicalStateDir, ...compatibilityStateDirs]
+    : [...compatibilityStateDirs, canonicalStateDir];
   const configPath = stateDirs
     .flatMap((stateDir) =>
       IDENTITY_MIGRATION_CONFIG_FILENAMES.map((filename) => path.join(stateDir, filename)),
@@ -216,11 +232,13 @@ export function resolveLcxIdentityMigrationCompletionPath(
  * active while a compatibility root still exists on disk.
  */
 export function isLcxIdentityMigrationComplete(
-  params: { env?: NodeJS.ProcessEnv; homedir?: () => string } = {},
+  params: { env?: NodeJS.ProcessEnv; homedir?: () => string; stateDir?: string } = {},
 ): boolean {
   const env = params.env ?? process.env;
   const homedir = params.homedir ?? envHomedir(env);
-  const canonicalStateDir = resolveLcxStateDir(() => resolveRequiredHomeDir(env, homedir));
+  const canonicalStateDir = path.resolve(
+    params.stateDir ?? resolveLcxStateDir(() => resolveRequiredHomeDir(env, homedir)),
+  );
   try {
     const marker = JSON.parse(
       fs.readFileSync(resolveLcxIdentityMigrationCompletionPath(canonicalStateDir), "utf8"),

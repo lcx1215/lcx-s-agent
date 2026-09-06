@@ -55,4 +55,14 @@ describe("canonical LCX identity", () => {
     expect(LEGACY_PACKAGE_NAME).toBe("openclaw");
     expect(LEGACY_CLI_NAME).toBe("openclaw");
   });
+
+  it("makes the installer install the canonical package and CLI", async () => {
+    const installer = await fs.readFile(path.join(process.cwd(), "scripts/install.sh"), "utf8");
+    expect(installer).toContain('local package_name="lcx-agent"');
+    expect(installer).toContain("npm view lcx-agent dist-tags.beta");
+    expect(installer).toContain("https://github.com/lcx1215/lcx-s-agent.git");
+    expect(installer).toContain('cat > "$HOME/.local/bin/lcx"');
+    expect(installer).toContain('"$npm_root/lcx-agent/lcx.mjs"');
+    expect(installer).toContain('exec "$HOME/.local/bin/lcx"');
+  });
 });

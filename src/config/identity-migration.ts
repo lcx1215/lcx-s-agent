@@ -77,6 +77,7 @@ export const LCX_IDENTITY_WRITER_NAMES: readonly LcxIdentityWriterName[] = [
 
 export type LcxIdentityWriterPathContract = Readonly<{
   writer: LcxIdentityWriterName;
+  targetKey: string;
   migrationPlan: LcxIdentityMigrationPlan | null;
   readPath: string;
   writePath: string;
@@ -86,6 +87,12 @@ export type LcxIdentityWriterPathContract = Readonly<{
   expectedWritePath: string;
   rollbackPath: string;
   noSplitState: "single-write-target";
+}>;
+
+export type LcxIdentityMigrationTarget = Readonly<{
+  targetKey: string;
+  writer: LcxIdentityWriterName;
+  writePath: string;
 }>;
 
 export type LcxIdentityAuditResult = Readonly<{
@@ -194,8 +201,14 @@ export function createLcxIdentityWriterPathContract<T extends LcxIdentityWriterN
       "logs",
       "identity-migration-audit.jsonl",
     );
+  const targetRoot = migrationPlan?.canonicalStateDir ?? path.dirname(writePath);
+  const relativeTarget = path.relative(path.resolve(targetRoot), writePath);
+  const targetKey = relativeTarget
+    ? relativeTarget.split(path.sep).join("/")
+    : path.basename(writePath);
   return Object.freeze({
     writer: params.writer,
+    targetKey,
     migrationPlan,
     readPath,
     writePath,
@@ -205,6 +218,16 @@ export function createLcxIdentityWriterPathContract<T extends LcxIdentityWriterN
     expectedWritePath: writePath,
     rollbackPath: params.backupPath ?? `${writePath}.bak`,
     noSplitState: "single-write-target" as const,
+  });
+}
+
+export function createLcxIdentityMigrationTarget(
+  contract: LcxIdentityWriterPathContract,
+): LcxIdentityMigrationTarget {
+  return Object.freeze({
+    targetKey: contract.targetKey,
+    writer: contract.writer,
+    writePath: contract.writePath,
   });
 }
 
@@ -340,6 +363,7 @@ async function writeRawAtomically(filePath: string, raw: string): Promise<void> 
 
 export async function writeLcxIdentityMigrationCompletionMarker(params: {
   migrationPlan: LcxIdentityMigrationPlan;
+  requiredTargets: readonly LcxIdentityMigrationTarget[];
   writerReceipts: readonly LcxIdentityMigrationWriterReceipt[];
   now?: () => string;
 }): Promise<LcxIdentityMigrationCompletionMarker> {
@@ -353,12 +377,44 @@ export async function writeLcxIdentityMigrationCompletionMarker(params: {
       "LCX_IDENTITY_COMPLETION_TARGET",
     );
   }
-  const receiptsByWriter = new Map<LcxIdentityWriterName, LcxIdentityMigrationWriterReceipt>();
-  for (const receipt of params.writerReceipts) {
-    if (receiptsByWriter.has(receipt.pathContract.writer)) {
+  if (params.requiredTargets.length === 0) {
+    throw new LcxIdentityWriterContractError(
+      "Identity migration completion requires a concrete target manifest",
+      "LCX_IDENTITY_COMPLETION_TARGETS_INCOMPLETE",
+    );
+  }
+  const requiredTargetsByKey = new Map<string, LcxIdentityMigrationTarget>();
+  for (const target of params.requiredTargets) {
+    const targetKey = target.targetKey.trim();
+    const writePath = path.resolve(target.writePath);
+    if (!targetKey || requiredTargetsByKey.has(targetKey)) {
       throw new LcxIdentityWriterContractError(
-        `Identity migration completion has duplicate receipt for ${receipt.pathContract.writer}`,
-        "LCX_IDENTITY_COMPLETION_DUPLICATE_WRITER",
+        `Identity migration completion has duplicate or empty target key: ${targetKey || "<empty>"}`,
+        "LCX_IDENTITY_COMPLETION_DUPLICATE_TARGET",
+      );
+    }
+    if (
+      !writePath.startsWith(`${path.resolve(migrationPlan.canonicalStateDir)}${path.sep}`) ||
+      path
+        .relative(path.resolve(migrationPlan.canonicalStateDir), writePath)
+        .split(path.sep)
+        .join("/") !== targetKey
+    ) {
+      throw new LcxIdentityWriterContractError(
+        `Identity migration target ${targetKey} does not resolve inside the canonical state root`,
+        "LCX_IDENTITY_COMPLETION_TARGET",
+      );
+    }
+    requiredTargetsByKey.set(targetKey, Object.freeze({ ...target, targetKey, writePath }));
+  }
+
+  const receiptsByTarget = new Map<string, LcxIdentityMigrationWriterReceipt>();
+  for (const receipt of params.writerReceipts) {
+    const targetKey = receipt.pathContract.targetKey.trim();
+    if (receiptsByTarget.has(targetKey)) {
+      throw new LcxIdentityWriterContractError(
+        `Identity migration completion has duplicate receipt for target ${targetKey}`,
+        "LCX_IDENTITY_COMPLETION_DUPLICATE_TARGET",
       );
     }
     if (receipt.audit.status !== "written") {
@@ -378,13 +434,14 @@ export async function writeLcxIdentityMigrationCompletionMarker(params: {
         "LCX_IDENTITY_COMPLETION_RECEIPT_MALFORMED",
       );
     }
+    const requiredTarget = requiredTargetsByKey.get(targetKey);
     if (
-      !path
-        .resolve(receipt.pathContract.writePath)
-        .startsWith(`${path.resolve(migrationPlan.canonicalStateDir)}${path.sep}`)
+      !requiredTarget ||
+      path.resolve(receipt.pathContract.writePath) !== requiredTarget.writePath ||
+      receipt.pathContract.writer !== requiredTarget.writer
     ) {
       throw new LcxIdentityWriterContractError(
-        `Identity migration receipt for ${receipt.pathContract.writer} does not target the canonical state root`,
+        `Identity migration receipt for ${receipt.pathContract.writer} does not match a concrete migration target`,
         "LCX_IDENTITY_COMPLETION_RECEIPT_TARGET",
       );
     }
@@ -399,15 +456,15 @@ export async function writeLcxIdentityMigrationCompletionMarker(params: {
         "LCX_IDENTITY_COMPLETION_RECEIPT_STALE",
       );
     }
-    receiptsByWriter.set(receipt.pathContract.writer, receipt);
+    receiptsByTarget.set(targetKey, receipt);
   }
-  const missingWriters = LCX_IDENTITY_WRITER_NAMES.filter(
-    (writer) => !receiptsByWriter.has(writer),
+  const missingTargets = [...requiredTargetsByKey.keys()].filter(
+    (targetKey) => !receiptsByTarget.has(targetKey),
   );
-  if (missingWriters.length > 0) {
+  if (missingTargets.length > 0) {
     throw new LcxIdentityWriterContractError(
-      `Identity migration completion requires receipts for every writer; missing: ${missingWriters.join(", ")}`,
-      "LCX_IDENTITY_COMPLETION_WRITERS_INCOMPLETE",
+      `Identity migration completion requires receipts for every concrete target; missing: ${missingTargets.join(", ")}`,
+      "LCX_IDENTITY_COMPLETION_TARGETS_INCOMPLETE",
     );
   }
   const marker = Object.freeze({

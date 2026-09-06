@@ -130,7 +130,7 @@ export async function appendSessionTranscriptForIdentityMigration(params: {
   const pathContract = resolveCurrentSessionIdentityPathContract(params.migration);
   const legacySessionFile = resolveSessionTranscriptPathInDir(
     params.sessionId,
-    path.dirname(pathContract.readPath),
+    params.migration.readSessionsDir,
     params.topicId,
   );
   const writeExists = await fs

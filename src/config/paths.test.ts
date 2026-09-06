@@ -96,6 +96,45 @@ describe("state + config path candidates", () => {
     });
   });
 
+  it("keeps a partial canonical profile root inactive until its completion marker exists", async () => {
+    await withTempRoot("lcx-profile-partial-canonical-", async (root) => {
+      const canonicalStateDir = path.join(root, ".lcx-work");
+      const legacyStateDir = path.join(root, ".openclaw-work");
+      await fs.mkdir(canonicalStateDir, { recursive: true });
+      await fs.mkdir(legacyStateDir, { recursive: true });
+      await fs.writeFile(path.join(canonicalStateDir, "lcx.json"), "{}\n", "utf8");
+      await fs.writeFile(path.join(legacyStateDir, "openclaw.json"), "{}\n", "utf8");
+
+      expect(resolveStateDirForProfile("work", {} as NodeJS.ProcessEnv, () => root)).toBe(
+        legacyStateDir,
+      );
+    });
+  });
+
+  it("activates a named canonical profile only with its own completion marker", async () => {
+    await withTempRoot("lcx-profile-complete-", async (root) => {
+      const canonicalStateDir = path.join(root, ".lcx-work");
+      const legacyStateDir = path.join(root, ".openclaw-work");
+      await fs.mkdir(canonicalStateDir, { recursive: true });
+      await fs.mkdir(legacyStateDir, { recursive: true });
+      await fs.writeFile(path.join(canonicalStateDir, "lcx.json"), "{}\n", "utf8");
+      await fs.writeFile(path.join(legacyStateDir, "openclaw.json"), "{}\n", "utf8");
+      await fs.writeFile(
+        path.join(canonicalStateDir, "identity-migration.complete.json"),
+        `${JSON.stringify({
+          schemaVersion: 1,
+          canonicalStateDir,
+          completedAt: "2026-09-07T00:00:00.000Z",
+        })}\n`,
+        "utf8",
+      );
+
+      expect(resolveStateDirForProfile("work", {} as NodeJS.ProcessEnv, () => root)).toBe(
+        canonicalStateDir,
+      );
+    });
+  });
+
   it("keeps profile state canonical when only config is explicitly overridden", async () => {
     await withTempRoot("lcx-profile-config-only-", async (root) => {
       const legacyStateDir = path.join(root, ".openclaw-work");

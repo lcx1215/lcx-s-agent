@@ -60,8 +60,9 @@ is no longer needed and that existing users or extensions have a migration path.
   migration switches the complete writer set; legacy names remain compatibility
   inputs and overrides.
 - Writing the canonical config alone does not activate the canonical root. If a
-  compatibility root still exists, activation is held until every state writer
-  has completed its receipt-backed migration and
+  compatibility root still exists, activation is held until a concrete target
+  manifest accounts for every state path and each target has completed its
+  receipt-backed migration, and
   `writeLcxIdentityMigrationCompletionMarker` has atomically written the
   validated `identity-migration.complete.json` marker.
 

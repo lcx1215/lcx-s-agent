@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { createPersistentDedupe } from "lcx-agent/plugin-sdk";
 import {
@@ -11,6 +10,7 @@ import {
   type LcxIdentityWriteReceipt,
   type LcxIdentityWriterPathContract,
   type LcxIdentityMigrationPlan,
+  resolveLcxIdentityMigrationPlan,
 } from "lcx-agent/plugin-sdk";
 
 const DEFAULT_REPLAY_TTL_MS = 24 * 60 * 60 * 1000;
@@ -23,12 +23,7 @@ function sanitizeSegment(value: string): string {
 }
 
 function resolveDefaultStateDir(): string {
-  const configured =
-    process.env.OPENCLAW_STATE_DIR?.trim() || process.env.CLAWDBOT_STATE_DIR?.trim();
-  if (configured) {
-    return path.resolve(configured.replace(/^~(?=$|\/)/u, os.homedir()));
-  }
-  return path.join(os.homedir(), ".openclaw");
+  return resolveLcxIdentityMigrationPlan().readStateDir;
 }
 
 export type ExternalReplayGuardOptions = {
