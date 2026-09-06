@@ -11,6 +11,7 @@ type PackResult = { files?: PackFile[] };
 
 const requiredPathGroups = [
   ["dist/index.js", "dist/index.mjs"],
+  "dist/index.d.ts",
   ["dist/entry.js", "dist/entry.mjs"],
   "dist/plugin-sdk/index.js",
   "dist/plugin-sdk/index.d.ts",
@@ -40,6 +41,7 @@ const laneFloorAdoptionDateKey = 20260227;
 type PackageJson = {
   name?: string;
   version?: string;
+  dependencies?: Record<string, string>;
 };
 
 function normalizePluginSyncVersion(version: string): string {
@@ -94,6 +96,27 @@ function checkPluginVersions() {
     if (normalizePluginSyncVersion(pkg.version) !== targetBaseVersion) {
       mismatches.push(`${pkg.name} (${pkg.version})`);
     }
+  }
+
+  const compatibilityPackagePath = resolve("packages", "openclaw", "package.json");
+  try {
+    const compatibilityPackage = JSON.parse(
+      readFileSync(compatibilityPackagePath, "utf8"),
+    ) as PackageJson;
+    if (compatibilityPackage.name === "openclaw") {
+      if (normalizePluginSyncVersion(compatibilityPackage.version ?? "") !== targetBaseVersion) {
+        mismatches.push(
+          `${compatibilityPackage.name} (${compatibilityPackage.version ?? "missing"})`,
+        );
+      }
+      if (compatibilityPackage.dependencies?.["lcx-agent"] !== targetVersion) {
+        mismatches.push(
+          `${compatibilityPackage.name} lcx-agent dependency (${compatibilityPackage.dependencies?.["lcx-agent"] ?? "missing"})`,
+        );
+      }
+    }
+  } catch {
+    // Compatibility package is optional in older source trees.
   }
 
   if (mismatches.length > 0) {
@@ -185,7 +208,7 @@ function checkAppcastSparkleVersions() {
   }
 }
 
-// Critical functions that channel extension plugins import from openclaw/plugin-sdk.
+// Critical functions that channel extension plugins import from lcx-agent/plugin-sdk.
 // If any are missing from the compiled output, plugins crash at runtime (#27569).
 const requiredPluginSdkExports = [
   "isDangerousNameMatchingEnabled",

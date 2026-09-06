@@ -1,7 +1,7 @@
 /**
  * Upload an image from a URL to Tlon storage.
  */
-import { fetchWithSsrFGuard } from "openclaw/plugin-sdk";
+import { fetchWithSsrFGuard } from "lcx-agent/plugin-sdk";
 import { getDefaultSsrFPolicy } from "./context.js";
 
 const TLON_API_PACKAGE = "@tloncorp/api";

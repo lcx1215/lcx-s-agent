@@ -1,5 +1,5 @@
-import type { PluginRuntime } from "openclaw/plugin-sdk";
-import { removeAckReactionAfterReply, shouldAckReaction } from "openclaw/plugin-sdk";
+import type { PluginRuntime } from "lcx-agent/plugin-sdk";
+import { removeAckReactionAfterReply, shouldAckReaction } from "lcx-agent/plugin-sdk";
 import { vi } from "vitest";
 
 type DeepPartial<T> = {

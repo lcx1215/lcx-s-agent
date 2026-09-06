@@ -7,6 +7,7 @@ import {
   activeGuardEvolutionCooldownSnapshot,
   buildLocalBrainTrainingPlan,
   buildQwenBaseModelMigrationPlan,
+  inspectMiniMaxTeacherRuntimeConfig,
 } from "../scripts/operator/local-brain-training-plan.js";
 
 async function writeJsonl(prefix: string, lines: unknown[]): Promise<string> {
@@ -27,6 +28,109 @@ async function writeJson(
 }
 
 describe("local-brain-training-plan", () => {
+  it("does not re-enable MiniMax training after its runtime references are removed", () => {
+    expect(
+      inspectMiniMaxTeacherRuntimeConfig({
+        models: { providers: { moonshot: { models: [{ id: "kimi-k2.6" }] } } },
+        agents: { defaults: { model: { primary: "moonshot/kimi-k2.6" } } },
+        plugins: { entries: { feishu: { enabled: true } } },
+      }),
+    ).toMatchObject({
+      boundary: "local_minimax_teacher_runtime_status_only",
+      enabled: false,
+      configuredRefs: [],
+    });
+
+    expect(
+      inspectMiniMaxTeacherRuntimeConfig({
+        models: { providers: { "minimax-portal": { baseUrl: "https://example.invalid" } } },
+      }),
+    ).toMatchObject({
+      enabled: false,
+      configuredRefs: ["models.providers.minimax-portal"],
+    });
+
+    expect(
+      inspectMiniMaxTeacherRuntimeConfig({
+        models: {
+          providers: {
+            "minimax-portal": {
+              baseUrl: "https://example.invalid",
+              apiKey: "minimax-oauth",
+            },
+          },
+        },
+      }),
+    ).toMatchObject({
+      enabled: false,
+      configuredRefs: ["models.providers.minimax-portal"],
+      usableAuthorityRefs: [],
+    });
+
+    expect(
+      inspectMiniMaxTeacherRuntimeConfig(
+        {
+          models: {
+            providers: {
+              "minimax-portal": {
+                baseUrl: "https://example.invalid",
+                apiKey: "minimax-oauth",
+              },
+            },
+          },
+        },
+        {
+          authProfileStore: {
+            profiles: {
+              "minimax-portal:default": {
+                type: "oauth",
+                provider: "minimax-portal",
+                refresh: "refresh-token",
+              },
+            },
+          },
+        },
+      ),
+    ).toMatchObject({
+      enabled: true,
+      usableAuthorityRefs: ["models.providers.minimax-portal"],
+    });
+
+    expect(
+      inspectMiniMaxTeacherRuntimeConfig({
+        models: {
+          providers: {
+            "minimax-portal": {
+              baseUrl: "https://example.invalid",
+              apiKey: "sk-minimax-test",
+            },
+          },
+        },
+      }),
+    ).toMatchObject({
+      enabled: true,
+      usableAuthorityRefs: ["models.providers.minimax-portal"],
+    });
+
+    expect(
+      inspectMiniMaxTeacherRuntimeConfig({
+        agents: { defaults: { model: { primary: "minimax/minimax-m2.5" } } },
+        models: {
+          providers: {
+            minimax: { baseUrl: "https://example.invalid", auth: "api-key", models: [] },
+          },
+        },
+      }),
+    ).toMatchObject({ enabled: false });
+
+    expect(
+      inspectMiniMaxTeacherRuntimeConfig({
+        prompts: ["MiniMax is disabled and must not start training"],
+        metadata: { note: "minimax is only mentioned in documentation" },
+      }),
+    ).toMatchObject({ enabled: false, configuredRefs: [] });
+  });
+
   it("only treats an adapter mismatch as active when a guard process is observed", () => {
     const active = activeGuardAdapterTruthSnapshot({
       activeProcesses: [
@@ -540,7 +644,10 @@ describe("local-brain-training-plan", () => {
             passRate: 0.986,
             failedCaseIds: ["index_concentration_mag7_portfolio_risk"],
             parseErrorCaseIds: ["index_concentration_mag7_portfolio_risk"],
-            parseRecoveredCaseIds: ["short_external_commodity_scope_01"],
+            parseRecoveredCaseIds: [
+              "short_lark_commodity_scope_01",
+              "private_credit_nonbank_leverage_stress_waterflow",
+            ],
             promotionReady: false,
           },
         },
@@ -574,11 +681,14 @@ describe("local-brain-training-plan", () => {
       sourceBlockedAdapter: "/tmp/adapter-r8",
       targetedEvalFirstCaseIds: [
         "index_concentration_mag7_portfolio_risk",
-        "short_external_commodity_scope_01",
+        "private_credit_nonbank_leverage_stress_waterflow",
       ],
     });
     expect(plan.qwenCapabilityConsolidation.capabilityHarvest.targetedEvalCommand).toContain(
-      "--case-id index_concentration_mag7_portfolio_risk,short_external_commodity_scope_01",
+      "--case-id index_concentration_mag7_portfolio_risk,private_credit_nonbank_leverage_stress_waterflow",
+    );
+    expect(plan.qwenCapabilityConsolidation.capabilityHarvest.targetedEvalCommand).not.toContain(
+      "short_lark_commodity_scope_01",
     );
     expect(plan.qwenCapabilityConsolidation.capabilityHarvest.targetedEvalCommand).toContain(
       "--adapter '/tmp/adapter-r8'",

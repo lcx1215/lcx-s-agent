@@ -62,16 +62,25 @@ describe("LCX live fadeout audit", () => {
   });
 
   it("is wired into doctor, governance autopilot, context recovery, package aliases, and docs", async () => {
-    const [doctor, governance, recovery, packageJsonText, readme, agents, runbook] =
-      await Promise.all([
-        fs.readFile(path.join(repoRoot, "scripts/operator/lcx-system-doctor.ts"), "utf8"),
-        fs.readFile(path.join(repoRoot, "scripts/operator/lcx-governance-autopilot.ts"), "utf8"),
-        fs.readFile(path.join(repoRoot, "scripts/operator/lcx-context-recovery-exam.ts"), "utf8"),
-        fs.readFile(path.join(repoRoot, "package.json"), "utf8"),
-        fs.readFile(path.join(repoRoot, "README.md"), "utf8"),
-        fs.readFile(path.join(repoRoot, "AGENTS.md"), "utf8"),
-        fs.readFile(path.join(repoRoot, "ops/local-brain/README.md"), "utf8"),
-      ]);
+    const [
+      doctor,
+      governance,
+      recovery,
+      packageJsonText,
+      readme,
+      agents,
+      architectureMap,
+      runbook,
+    ] = await Promise.all([
+      fs.readFile(path.join(repoRoot, "scripts/operator/lcx-system-doctor.ts"), "utf8"),
+      fs.readFile(path.join(repoRoot, "scripts/operator/lcx-governance-autopilot.ts"), "utf8"),
+      fs.readFile(path.join(repoRoot, "scripts/operator/lcx-context-recovery-exam.ts"), "utf8"),
+      fs.readFile(path.join(repoRoot, "package.json"), "utf8"),
+      fs.readFile(path.join(repoRoot, "README.md"), "utf8"),
+      fs.readFile(path.join(repoRoot, "AGENTS.md"), "utf8"),
+      fs.readFile(path.join(repoRoot, "ops/architecture/LCX-SYSTEM-ARCHITECTURE.md"), "utf8"),
+      fs.readFile(path.join(repoRoot, "ops/local-brain/README.md"), "utf8"),
+    ]);
     const packageJson = JSON.parse(packageJsonText) as { scripts: Record<string, string> };
     const normalizedAgents = agents.replace(/\s+/gu, " ");
 
@@ -93,11 +102,15 @@ describe("LCX live fadeout audit", () => {
     expect(readme).toContain("one canonical repository");
     expect(readme).toContain("Local system/factory rule");
     expect(readme).toContain("Feature branches belong to GitHub/GitLab collaboration");
-    expect(agents).toContain("System-wide live fadeout truth belongs");
-    expect(agents).toContain("Cloud migration must not resurrect a dual-repository model");
-    expect(agents).toContain("Local system/factory rule");
-    expect(normalizedAgents).toContain("Feature branches belong to");
-    expect(normalizedAgents).toContain("GitHub/GitLab collaboration");
+    expect(architectureMap).toContain("local LCX core -> cloud-runtime-ready");
+    expect(architectureMap).toContain("System-wide live fadeout truth belongs");
+    expect(architectureMap).toContain("cloud-runtime-ready");
+    expect(architectureMap).toContain("one canonical Git repository");
+    expect(architectureMap).toContain("not a second runtime truth source");
+    expect(architectureMap).toContain("Local system/factory rule");
+    expect(architectureMap).toContain("Feature branches belong to GitHub/GitLab collaboration");
+    expect(agents).toContain("one canonical");
+    expect(normalizedAgents).toContain("main");
     expect(runbook).toContain("whole-system fadeout audit");
     expect(runbook).toContain("cloud-runtime-ready");
   });

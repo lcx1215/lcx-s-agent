@@ -3,7 +3,16 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { formatCliCommand } from "../cli/command-format.js";
 import type { loadConfig } from "../config/config.js";
+import {
+  readLcxIdentityWriterRaw,
+  resolveLcxIdentityStateWriterPathContract,
+  rollbackLcxIdentityWriter,
+  writeLcxIdentityWriterRawWithReceipt,
+  type LcxIdentityWriteReceipt,
+  type LcxIdentityWriterPathContract,
+} from "../config/identity-migration.js";
 import { resolveStateDir } from "../config/paths.js";
+import type { LcxIdentityMigrationPlan } from "../config/paths.js";
 import { runCommandWithTimeout } from "../process/exec.js";
 import { VERSION } from "../version.js";
 import { writeJsonAtomic } from "./json-files.js";
@@ -11,7 +20,7 @@ import { resolveOpenClawPackageRoot } from "./openclaw-root.js";
 import { normalizeUpdateChannel, DEFAULT_PACKAGE_CHANNEL } from "./update-channels.js";
 import { compareSemverStrings, resolveNpmChannelTag, checkUpdateStatus } from "./update-check.js";
 
-type UpdateCheckState = {
+export type UpdateCheckState = {
   lastCheckedAt?: string;
   lastNotifiedVersion?: string;
   lastNotifiedTag?: string;
@@ -126,6 +135,88 @@ async function readState(statePath: string): Promise<UpdateCheckState> {
 
 async function writeState(statePath: string, state: UpdateCheckState): Promise<void> {
   await writeJsonAtomic(statePath, state);
+}
+
+export type LcxIdentityUpdateCheckMigration = Readonly<{
+  pathContract: LcxIdentityWriterPathContract & Readonly<{ writer: "update-check" }>;
+  relativePath: string;
+  readStatePath: string;
+  writeStatePath: string;
+}>;
+
+export function createLcxIdentityUpdateCheckMigration(params: {
+  migrationPlan: LcxIdentityMigrationPlan;
+  existsSync?: (candidate: string) => boolean;
+}): LcxIdentityUpdateCheckMigration {
+  if (params.migrationPlan.mode === "explicit-config-override") {
+    throw new Error("Update check migration requires a state-root authority");
+  }
+  const relativePath = UPDATE_CHECK_FILENAME;
+  const pathContract = resolveLcxIdentityStateWriterPathContract({
+    writer: "update-check",
+    migrationPlan: params.migrationPlan,
+    relativePath,
+    existsSync: params.existsSync,
+  });
+  return Object.freeze({
+    pathContract,
+    relativePath,
+    readStatePath: pathContract.readPath,
+    writeStatePath: pathContract.writePath,
+  });
+}
+
+function resolveCurrentUpdateCheckPathContract(
+  migration: LcxIdentityUpdateCheckMigration,
+): LcxIdentityWriterPathContract & Readonly<{ writer: "update-check" }> {
+  const plan = migration.pathContract.migrationPlan;
+  if (!plan) {
+    return migration.pathContract;
+  }
+  return resolveLcxIdentityStateWriterPathContract({
+    writer: "update-check",
+    migrationPlan: plan,
+    relativePath: migration.relativePath,
+    backupPath: migration.pathContract.backupPath,
+    auditPath: migration.pathContract.auditPath,
+  });
+}
+
+export async function readUpdateCheckStateForIdentityMigration(
+  migration: LcxIdentityUpdateCheckMigration,
+): Promise<UpdateCheckState> {
+  const pathContract = resolveCurrentUpdateCheckPathContract(migration);
+  const raw = await readLcxIdentityWriterRaw(pathContract);
+  if (raw === null) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as UpdateCheckState)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+export async function writeUpdateCheckStateForIdentityMigration(
+  migration: LcxIdentityUpdateCheckMigration,
+  state: UpdateCheckState,
+  options?: { expectedReadPath?: string; expectedWritePath?: string },
+): Promise<LcxIdentityWriteReceipt> {
+  const pathContract = resolveCurrentUpdateCheckPathContract(migration);
+  return await writeLcxIdentityWriterRawWithReceipt(
+    pathContract,
+    `${JSON.stringify(state, null, 2)}\n`,
+    options,
+  );
+}
+
+export async function rollbackUpdateCheckIdentityMigration(
+  receipt: LcxIdentityWriteReceipt,
+): Promise<void> {
+  await rollbackLcxIdentityWriter(receipt);
 }
 
 function sameUpdateAvailable(a: UpdateAvailable | null, b: UpdateAvailable | null): boolean {

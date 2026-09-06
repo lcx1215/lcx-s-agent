@@ -480,7 +480,8 @@ cleanup_npm_openclaw_paths() {
     if [[ -z "$npm_root" || "$npm_root" != *node_modules* ]]; then
         return 1
     fi
-    rm -rf "$npm_root"/.openclaw-* "$npm_root"/openclaw 2>/dev/null || true
+    rm -rf "$npm_root"/.lcx-agent-* "$npm_root"/lcx-agent \
+        "$npm_root"/.openclaw-* "$npm_root"/openclaw 2>/dev/null || true
 }
 
 extract_openclaw_conflict_path() {
@@ -504,9 +505,9 @@ cleanup_openclaw_bin_conflict() {
     fi
     local npm_bin=""
     npm_bin="$(npm_global_bin_dir 2>/dev/null || true)"
-    if [[ -n "$npm_bin" && "$bin_path" != "$npm_bin/openclaw" ]]; then
+    if [[ -n "$npm_bin" && "$bin_path" != "$npm_bin/lcx" && "$bin_path" != "$npm_bin/openclaw" ]]; then
         case "$bin_path" in
-            "/opt/homebrew/bin/openclaw"|"/usr/local/bin/openclaw")
+            "/opt/homebrew/bin/lcx"|"/usr/local/bin/lcx"|"/opt/homebrew/bin/openclaw"|"/usr/local/bin/openclaw")
                 ;;
             *)
                 return 1
@@ -516,9 +517,9 @@ cleanup_openclaw_bin_conflict() {
     if [[ -L "$bin_path" ]]; then
         local target=""
         target="$(readlink "$bin_path" 2>/dev/null || true)"
-        if [[ "$target" == *"/node_modules/openclaw/"* ]]; then
+        if [[ "$target" == *"/node_modules/lcx-agent/"* || "$target" == *"/node_modules/openclaw/"* ]]; then
             rm -f "$bin_path"
-            ui_info "Removed stale openclaw symlink at ${bin_path}"
+            ui_info "Removed stale LCX compatibility symlink at ${bin_path}"
             return 0
         fi
         return 1
@@ -526,7 +527,7 @@ cleanup_openclaw_bin_conflict() {
     local backup=""
     backup="${bin_path}.bak-$(date +%Y%m%d-%H%M%S)"
     if mv "$bin_path" "$backup"; then
-        ui_info "Moved existing openclaw binary to ${backup}"
+        ui_info "Moved existing LCX binary to ${backup}"
         return 0
     fi
     return 1
@@ -791,7 +792,7 @@ install_openclaw_npm() {
             attempted_build_tool_fix=true
             ui_info "Retrying npm install after build tools setup"
             if run_npm_global_install "$spec" "$log"; then
-                ui_success "OpenClaw npm package installed"
+                ui_success "LCX Agent npm package installed"
                 return 0
             fi
         fi
@@ -807,11 +808,11 @@ install_openclaw_npm() {
             tail -n 80 "$log" >&2 || true
         fi
 
-        if grep -q "ENOTEMPTY: directory not empty, rename .*openclaw" "$log"; then
+        if grep -Eq "ENOTEMPTY: directory not empty, rename .*(lcx-agent|openclaw)" "$log"; then
             ui_warn "npm left stale directory; cleaning and retrying"
             cleanup_npm_openclaw_paths
             if run_npm_global_install "$spec" "$log"; then
-                ui_success "OpenClaw npm package installed"
+                ui_success "LCX Agent npm package installed"
                 return 0
             fi
             return 1
@@ -821,12 +822,12 @@ install_openclaw_npm() {
             conflict="$(extract_openclaw_conflict_path "$log" || true)"
             if [[ -n "$conflict" ]] && cleanup_openclaw_bin_conflict "$conflict"; then
                 if run_npm_global_install "$spec" "$log"; then
-                    ui_success "OpenClaw npm package installed"
+                    ui_success "LCX Agent npm package installed"
                     return 0
                 fi
                 return 1
             fi
-            ui_error "npm failed because an openclaw binary already exists"
+            ui_error "npm failed because an LCX binary already exists"
             if [[ -n "$conflict" ]]; then
                 ui_info "Remove or move ${conflict}, then retry"
             fi
@@ -834,7 +835,7 @@ install_openclaw_npm() {
         fi
         return 1
     fi
-    ui_success "OpenClaw npm package installed"
+    ui_success "LCX Agent npm package installed"
     return 0
 }
 
@@ -987,7 +988,7 @@ DRY_RUN=${OPENCLAW_DRY_RUN:-0}
 INSTALL_METHOD=${OPENCLAW_INSTALL_METHOD:-}
 OPENCLAW_VERSION=${OPENCLAW_VERSION:-latest}
 USE_BETA=${OPENCLAW_BETA:-0}
-GIT_DIR_DEFAULT="${HOME}/openclaw"
+GIT_DIR_DEFAULT="${HOME}/lcx"
 GIT_DIR=${OPENCLAW_GIT_DIR:-$GIT_DIR_DEFAULT}
 GIT_UPDATE=${OPENCLAW_GIT_UPDATE:-1}
 SHARP_IGNORE_GLOBAL_LIBVIPS="${SHARP_IGNORE_GLOBAL_LIBVIPS:-1}"
@@ -1195,7 +1196,7 @@ detect_openclaw_checkout() {
     if [[ ! -f "$dir/pnpm-workspace.yaml" ]]; then
         return 1
     fi
-    if ! grep -q '"name"[[:space:]]*:[[:space:]]*"openclaw"' "$dir/package.json" 2>/dev/null; then
+    if ! grep -Eq '"name"[[:space:]]*:[[:space:]]*"(openclaw|lcx-agent)"' "$dir/package.json" 2>/dev/null; then
         return 1
     fi
     echo "$dir"
@@ -1605,7 +1606,7 @@ fix_npm_permissions() {
 ensure_openclaw_bin_link() {
     local npm_root=""
     npm_root="$(npm root -g 2>/dev/null || true)"
-    if [[ -z "$npm_root" || ! -d "$npm_root/openclaw" ]]; then
+    if [[ -z "$npm_root" || ! -d "$npm_root/lcx-agent" ]]; then
         return 1
     fi
     local npm_bin=""
@@ -1614,17 +1615,21 @@ ensure_openclaw_bin_link() {
         return 1
     fi
     mkdir -p "$npm_bin"
+    if [[ ! -x "${npm_bin}/lcx" ]]; then
+        ln -sf "$npm_root/lcx-agent/lcx.mjs" "${npm_bin}/lcx"
+        ui_info "Created canonical lcx bin link at ${npm_bin}/lcx"
+    fi
     if [[ ! -x "${npm_bin}/openclaw" ]]; then
-        ln -sf "$npm_root/openclaw/dist/entry.js" "${npm_bin}/openclaw"
-        ui_info "Created openclaw bin link at ${npm_bin}/openclaw"
+        ln -sf "$npm_root/lcx-agent/openclaw.mjs" "${npm_bin}/openclaw"
+        ui_info "Created legacy openclaw compatibility link at ${npm_bin}/openclaw"
     fi
     return 0
 }
 
 # Check for existing OpenClaw installation
 check_existing_openclaw() {
-    if [[ -n "$(type -P openclaw 2>/dev/null || true)" ]]; then
-        ui_info "Existing OpenClaw installation detected, upgrading"
+    if [[ -n "$(type -P lcx 2>/dev/null || true)" || -n "$(type -P openclaw 2>/dev/null || true)" ]]; then
+        ui_info "Existing LCX Agent installation detected, upgrading"
         return 0
     fi
     return 1
@@ -1853,55 +1858,71 @@ warn_openclaw_not_found() {
     fi
 }
 
-resolve_openclaw_bin() {
+resolve_lcx_bin() {
     refresh_shell_command_cache
     local resolved=""
-    resolved="$(type -P openclaw 2>/dev/null || true)"
-    if [[ -n "$resolved" && -x "$resolved" ]]; then
-        echo "$resolved"
-        return 0
-    fi
+    local cli_name=""
+    for cli_name in lcx openclaw; do
+        resolved="$(type -P "$cli_name" 2>/dev/null || true)"
+        if [[ -n "$resolved" && -x "$resolved" ]]; then
+            echo "$resolved"
+            return 0
+        fi
+    done
 
     ensure_npm_global_bin_on_path
     refresh_shell_command_cache
-    resolved="$(type -P openclaw 2>/dev/null || true)"
-    if [[ -n "$resolved" && -x "$resolved" ]]; then
-        echo "$resolved"
-        return 0
-    fi
+    for cli_name in lcx openclaw; do
+        resolved="$(type -P "$cli_name" 2>/dev/null || true)"
+        if [[ -n "$resolved" && -x "$resolved" ]]; then
+            echo "$resolved"
+            return 0
+        fi
+    done
 
     local npm_bin=""
     npm_bin="$(npm_global_bin_dir || true)"
-    if [[ -n "$npm_bin" && -x "${npm_bin}/openclaw" ]]; then
-        echo "${npm_bin}/openclaw"
-        return 0
-    fi
+    for cli_name in lcx openclaw; do
+        if [[ -n "$npm_bin" && -x "${npm_bin}/${cli_name}" ]]; then
+            echo "${npm_bin}/${cli_name}"
+            return 0
+        fi
+    done
 
     maybe_nodenv_rehash
     refresh_shell_command_cache
-    resolved="$(type -P openclaw 2>/dev/null || true)"
-    if [[ -n "$resolved" && -x "$resolved" ]]; then
-        echo "$resolved"
-        return 0
-    fi
+    for cli_name in lcx openclaw; do
+        resolved="$(type -P "$cli_name" 2>/dev/null || true)"
+        if [[ -n "$resolved" && -x "$resolved" ]]; then
+            echo "$resolved"
+            return 0
+        fi
+    done
 
-    if [[ -n "$npm_bin" && -x "${npm_bin}/openclaw" ]]; then
-        echo "${npm_bin}/openclaw"
-        return 0
-    fi
+    for cli_name in lcx openclaw; do
+        if [[ -n "$npm_bin" && -x "${npm_bin}/${cli_name}" ]]; then
+            echo "${npm_bin}/${cli_name}"
+            return 0
+        fi
+    done
 
     echo ""
     return 1
 }
 
+# Compatibility name retained for installer callers and older integrations.
+resolve_openclaw_bin() {
+    resolve_lcx_bin "$@"
+}
+
 install_openclaw_from_git() {
     local repo_dir="$1"
-    local repo_url="https://github.com/openclaw/openclaw.git"
+    local repo_url="https://github.com/lcx1215/lcx-s-agent.git"
 
     if [[ -d "$repo_dir/.git" ]]; then
-        ui_info "Installing OpenClaw from git checkout: ${repo_dir}"
+        ui_info "Installing LCX Agent from git checkout: ${repo_dir}"
     else
-        ui_info "Installing OpenClaw from GitHub (${repo_url})"
+        ui_info "Installing LCX Agent from GitHub (${repo_url})"
     fi
 
     if ! check_git; then
@@ -1934,20 +1955,27 @@ install_openclaw_from_git() {
 
     ensure_user_local_bin_on_path
 
-    cat > "$HOME/.local/bin/openclaw" <<EOF
+    cat > "$HOME/.local/bin/lcx" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 exec node "${repo_dir}/dist/entry.js" "\$@"
 EOF
+    chmod +x "$HOME/.local/bin/lcx"
+    cat > "$HOME/.local/bin/openclaw" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+exec "$HOME/.local/bin/lcx" "\$@"
+EOF
     chmod +x "$HOME/.local/bin/openclaw"
-    ui_success "OpenClaw wrapper installed to \$HOME/.local/bin/openclaw"
+    ui_success "LCX wrapper installed to \$HOME/.local/bin/lcx"
+    ui_info "Legacy openclaw compatibility wrapper installed alongside it"
     ui_info "This checkout uses pnpm — run pnpm install (or corepack pnpm install) for deps"
 }
 
 # Install OpenClaw
 resolve_beta_version() {
     local beta=""
-    beta="$(npm view openclaw dist-tags.beta 2>/dev/null || true)"
+    beta="$(npm view lcx-agent dist-tags.beta 2>/dev/null || true)"
     if [[ -z "$beta" || "$beta" == "undefined" || "$beta" == "null" ]]; then
         return 1
     fi
@@ -1955,14 +1983,14 @@ resolve_beta_version() {
 }
 
 install_openclaw() {
-    local package_name="openclaw"
+    local package_name="lcx-agent"
     if [[ "$USE_BETA" == "1" ]]; then
         local beta_version=""
         beta_version="$(resolve_beta_version || true)"
         if [[ -n "$beta_version" ]]; then
             OPENCLAW_VERSION="$beta_version"
             ui_info "Beta tag detected (${beta_version})"
-            package_name="openclaw"
+            package_name="lcx-agent"
         else
             OPENCLAW_VERSION="latest"
             ui_info "No beta tag found; using latest"
@@ -1976,9 +2004,9 @@ install_openclaw() {
     local resolved_version=""
     resolved_version="$(npm view "${package_name}@${OPENCLAW_VERSION}" version 2>/dev/null || true)"
     if [[ -n "$resolved_version" ]]; then
-        ui_info "Installing OpenClaw v${resolved_version}"
+        ui_info "Installing LCX Agent v${resolved_version}"
     else
-        ui_info "Installing OpenClaw (${OPENCLAW_VERSION})"
+        ui_info "Installing LCX Agent (${OPENCLAW_VERSION})"
     fi
     local install_spec=""
     if [[ "${OPENCLAW_VERSION}" == "latest" ]]; then
@@ -1993,17 +2021,17 @@ install_openclaw() {
         install_openclaw_npm "${install_spec}"
     fi
 
-    if [[ "${OPENCLAW_VERSION}" == "latest" && "${package_name}" == "openclaw" ]]; then
-        if ! resolve_openclaw_bin &> /dev/null; then
-            ui_warn "npm install openclaw@latest failed; retrying openclaw@next"
+    if [[ "${OPENCLAW_VERSION}" == "latest" && "${package_name}" == "lcx-agent" ]]; then
+        if ! resolve_lcx_bin &> /dev/null; then
+            ui_warn "npm install lcx-agent@latest failed; retrying lcx-agent@next"
             cleanup_npm_openclaw_paths
-            install_openclaw_npm "openclaw@next"
+            install_openclaw_npm "lcx-agent@next"
         fi
     fi
 
     ensure_openclaw_bin_link || true
 
-    ui_success "OpenClaw installed"
+    ui_success "LCX Agent installed"
 }
 
 # Run doctor for migrations (safe, non-interactive)
@@ -2038,11 +2066,25 @@ maybe_open_dashboard() {
 
 resolve_workspace_dir() {
     local profile="${OPENCLAW_PROFILE:-default}"
+    local workspace_suffix=""
     if [[ "${profile}" != "default" ]]; then
-        echo "${HOME}/.openclaw/workspace-${profile}"
-    else
-        echo "${HOME}/.openclaw/workspace"
+        workspace_suffix="-${profile}"
     fi
+
+    # Resume an interrupted compatibility installation before falling back to
+    # the canonical workspace. The state root may have been created before its
+    # config was written, so BOOTSTRAP.md is the durable onboarding marker.
+    local legacy_state_dir
+    local compatibility_workspace
+    for legacy_state_dir in .openclaw .clawdbot .moldbot .moltbot; do
+        compatibility_workspace="${HOME}/${legacy_state_dir}/workspace${workspace_suffix}"
+        if [[ -f "${compatibility_workspace}/BOOTSTRAP.md" ]]; then
+            echo "${compatibility_workspace}"
+            return
+        fi
+    done
+
+    echo "${HOME}/.lcx/workspace${workspace_suffix}"
 }
 
 run_bootstrap_onboarding_if_needed() {
@@ -2050,7 +2092,7 @@ run_bootstrap_onboarding_if_needed() {
         return
     fi
 
-    local config_path="${OPENCLAW_CONFIG_PATH:-$HOME/.openclaw/openclaw.json}"
+    local config_path="${OPENCLAW_CONFIG_PATH:-$HOME/.lcx/lcx.json}"
     if [[ -f "${config_path}" || -f "$HOME/.clawdbot/clawdbot.json" || -f "$HOME/.moltbot/moltbot.json" || -f "$HOME/.moldbot/moldbot.json" ]]; then
         return
     fi
@@ -2064,7 +2106,7 @@ run_bootstrap_onboarding_if_needed() {
     fi
 
     if [[ ! -r /dev/tty || ! -w /dev/tty ]]; then
-        ui_info "BOOTSTRAP.md found but no TTY; run openclaw onboard to finish setup"
+        ui_info "BOOTSTRAP.md found but no TTY; run lcx onboard to finish setup"
         return
     fi
 
@@ -2074,13 +2116,13 @@ run_bootstrap_onboarding_if_needed() {
         claw="$(resolve_openclaw_bin || true)"
     fi
     if [[ -z "$claw" ]]; then
-        ui_info "BOOTSTRAP.md found but openclaw not on PATH; skipping onboarding"
+        ui_info "BOOTSTRAP.md found but lcx is not on PATH; skipping onboarding"
         warn_openclaw_not_found
         return
     fi
 
     "$claw" onboard || {
-        ui_error "Onboarding failed; run openclaw onboard to retry"
+        ui_error "Onboarding failed; run lcx onboard to retry"
         return
     }
 }
@@ -2088,8 +2130,8 @@ run_bootstrap_onboarding_if_needed() {
 resolve_openclaw_version() {
     local version=""
     local claw="${OPENCLAW_BIN:-}"
-    if [[ -z "$claw" ]] && command -v openclaw &> /dev/null; then
-        claw="$(command -v openclaw)"
+    if [[ -z "$claw" ]]; then
+        claw="$(resolve_lcx_bin || true)"
     fi
     if [[ -n "$claw" ]]; then
         version=$("$claw" --version 2>/dev/null | head -n 1 | tr -d '\r')
@@ -2097,7 +2139,9 @@ resolve_openclaw_version() {
     if [[ -z "$version" ]]; then
         local npm_root=""
         npm_root=$(npm root -g 2>/dev/null || true)
-        if [[ -n "$npm_root" && -f "$npm_root/openclaw/package.json" ]]; then
+        if [[ -n "$npm_root" && -f "$npm_root/lcx-agent/package.json" ]]; then
+            version=$(node -e "console.log(require('${npm_root}/lcx-agent/package.json').version)" 2>/dev/null || true)
+        elif [[ -n "$npm_root" && -f "$npm_root/openclaw/package.json" ]]; then
             version=$(node -e "console.log(require('${npm_root}/openclaw/package.json').version)" 2>/dev/null || true)
         fi
     fi
@@ -2233,14 +2277,14 @@ main() {
         exit 1
     fi
 
-    ui_stage "Installing OpenClaw"
+    ui_stage "Installing LCX Agent"
 
     local final_git_dir=""
     if [[ "$INSTALL_METHOD" == "git" ]]; then
-        # Clean up npm global install if switching to git
-        if npm list -g openclaw &>/dev/null; then
+        # Clean up the canonical npm install if switching to git.
+        if npm list -g lcx-agent &>/dev/null; then
             ui_info "Removing npm global install (switching to git)"
-            npm uninstall -g openclaw 2>/dev/null || true
+            npm uninstall -g lcx-agent 2>/dev/null || true
             ui_success "npm global install removed"
         fi
 
@@ -2251,11 +2295,14 @@ main() {
         final_git_dir="$repo_dir"
         install_openclaw_from_git "$repo_dir"
     else
-        # Clean up git wrapper if switching to npm
-        if [[ -x "$HOME/.local/bin/openclaw" ]]; then
+        # Clean up git wrappers if switching to npm.
+        if [[ -x "$HOME/.local/bin/lcx" ]]; then
             ui_info "Removing git wrapper (switching to npm)"
-            rm -f "$HOME/.local/bin/openclaw"
+            rm -f "$HOME/.local/bin/lcx"
             ui_success "git wrapper removed"
+        fi
+        if [[ -x "$HOME/.local/bin/openclaw" ]]; then
+            rm -f "$HOME/.local/bin/openclaw"
         fi
 
         # Step 3: Git (required for npm installs that may fetch from git or apply patches)
@@ -2281,7 +2328,7 @@ main() {
         warn_shell_path_missing_dir "$npm_bin" "npm global bin dir"
     fi
     if [[ "$INSTALL_METHOD" == "git" ]]; then
-        if [[ -x "$HOME/.local/bin/openclaw" ]]; then
+        if [[ -x "$HOME/.local/bin/lcx" ]]; then
             warn_shell_path_missing_dir "$HOME/.local/bin" "user-local bin dir (~/.local/bin)"
         fi
     fi
@@ -2306,9 +2353,9 @@ main() {
 
     echo ""
     if [[ -n "$installed_version" ]]; then
-        ui_celebrate "🦞 OpenClaw installed successfully (${installed_version})!"
+        ui_celebrate "🦞 LCX Agent installed successfully (${installed_version})!"
     else
-        ui_celebrate "🦞 OpenClaw installed successfully!"
+        ui_celebrate "🦞 LCX Agent installed successfully!"
     fi
     if [[ "$is_upgrade" == "true" ]]; then
         local update_messages=(
@@ -2358,8 +2405,8 @@ main() {
     if [[ "$INSTALL_METHOD" == "git" && -n "$final_git_dir" ]]; then
         ui_section "Source install details"
         ui_kv "Checkout" "$final_git_dir"
-        ui_kv "Wrapper" "$HOME/.local/bin/openclaw"
-        ui_kv "Update command" "openclaw update --restart"
+        ui_kv "Wrapper" "$HOME/.local/bin/lcx"
+        ui_kv "Update command" "lcx update --restart"
         ui_kv "Switch to npm" "curl -fsSL --proto '=https' --tlsv1.2 https://openclaw.ai/install.sh | bash -s -- --install-method npm"
     elif [[ "$is_upgrade" == "true" ]]; then
         ui_info "Upgrade complete"
@@ -2427,20 +2474,20 @@ main() {
         fi
     fi
 
-    if command -v openclaw &> /dev/null; then
+    if [[ -n "$OPENCLAW_BIN" ]]; then
         local claw="${OPENCLAW_BIN:-}"
         if [[ -z "$claw" ]]; then
             claw="$(resolve_openclaw_bin || true)"
         fi
         if [[ -n "$claw" ]] && is_gateway_daemon_loaded "$claw"; then
             if [[ "$DRY_RUN" == "1" ]]; then
-                ui_info "Gateway daemon detected; would restart (openclaw daemon restart)"
+                ui_info "Gateway daemon detected; would restart (lcx daemon restart)"
             else
                 ui_info "Gateway daemon detected; restarting"
                 if OPENCLAW_UPDATE_IN_PROGRESS=1 "$claw" daemon restart >/dev/null 2>&1; then
                     ui_success "Gateway restarted"
                 else
-                    ui_warn "Gateway restart failed; try: openclaw daemon restart"
+                    ui_warn "Gateway restart failed; try: lcx daemon restart"
                 fi
             fi
         fi

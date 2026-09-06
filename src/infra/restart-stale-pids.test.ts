@@ -103,6 +103,18 @@ describe.skipIf(isWindows)("restart-stale-pids", () => {
       expect(pids).not.toContain(process.pid);
     });
 
+    it("parses canonical lcx gateway process titles", () => {
+      const stalePid = process.pid + 2;
+      mockSpawnSync.mockReturnValue({
+        error: null,
+        status: 0,
+        stdout: lsofOutput([{ pid: stalePid, cmd: "lcx-gateway" }]),
+        stderr: "",
+      });
+
+      expect(findGatewayPidsOnPortSync(18789)).toEqual([stalePid]);
+    });
+
     it("excludes pids whose command does not include 'openclaw'", () => {
       const otherPid = process.pid + 2;
       mockSpawnSync.mockReturnValue({

@@ -17,6 +17,11 @@ import {
 } from "../../utils/delivery-context.js";
 import { getFileStatSnapshot, isCacheEnabled, resolveCacheTtlMs } from "../cache-utils.js";
 import { enforceSessionDiskBudget, type SessionDiskBudgetSweepResult } from "./disk-budget.js";
+import {
+  resolveCurrentSessionIdentityPathContract,
+  writeSessionStoreForIdentityMigration,
+  type LcxIdentitySessionMigration,
+} from "./identity-migration.js";
 import { deriveSessionMetaPatch } from "./metadata.js";
 import {
   clearSessionStoreCaches,
@@ -32,6 +37,9 @@ import {
   pruneStaleEntries,
   resolveMaintenanceConfig,
   rotateSessionFile,
+  rotateSessionFileForIdentityMigration,
+  rollbackSessionFileIdentityRotation,
+  type LcxIdentitySessionRotationReceipt,
   type ResolvedSessionMaintenanceConfig,
   type SessionMaintenanceWarning,
 } from "./store-maintenance.js";
@@ -301,10 +309,16 @@ export {
   pruneStaleEntries,
   resolveMaintenanceConfig,
   rotateSessionFile,
+  rotateSessionFileForIdentityMigration,
+  rollbackSessionFileIdentityRotation,
 };
-export type { ResolvedSessionMaintenanceConfig, SessionMaintenanceWarning };
+export type {
+  LcxIdentitySessionRotationReceipt,
+  ResolvedSessionMaintenanceConfig,
+  SessionMaintenanceWarning,
+};
 
-type SaveSessionStoreOptions = {
+export type SaveSessionStoreOptions = {
   /** Skip pruning, capping, and rotation (e.g. during one-time migrations). */
   skipMaintenance?: boolean;
   /** Active session key for warn-only maintenance. */
@@ -315,6 +329,8 @@ type SaveSessionStoreOptions = {
   onMaintenanceApplied?: (report: SessionMaintenanceApplyReport) => void | Promise<void>;
   /** Optional overrides used by maintenance commands. */
   maintenanceOverride?: Partial<ResolvedSessionMaintenanceConfig>;
+  /** Explicit read-old/write-new migration adapter; never enabled by defaults. */
+  identityMigration?: LcxIdentitySessionMigration;
 };
 
 function updateSessionStoreWriteCaches(params: {
@@ -342,6 +358,9 @@ async function saveSessionStoreUnlocked(
   store: Record<string, SessionEntry>,
   opts?: SaveSessionStoreOptions,
 ): Promise<void> {
+  if (opts?.identityMigration && !opts.skipMaintenance) {
+    throw new Error("Session identity migration requires skipMaintenance=true");
+  }
   normalizeSessionStore(store);
 
   if (!opts?.skipMaintenance) {
@@ -459,8 +478,21 @@ async function saveSessionStoreUnlocked(
     }
   }
 
-  await fs.promises.mkdir(path.dirname(storePath), { recursive: true });
   const json = JSON.stringify(store, null, 2);
+  if (opts?.identityMigration) {
+    const pathContract = resolveCurrentSessionIdentityPathContract(opts.identityMigration);
+    await writeSessionStoreForIdentityMigration(opts.identityMigration, store, {
+      expectedReadPath: pathContract.readPath,
+      expectedWritePath: pathContract.writePath,
+    });
+    updateSessionStoreWriteCaches({
+      storePath: opts.identityMigration.writeStorePath,
+      store,
+      serialized: json,
+    });
+    return;
+  }
+  await fs.promises.mkdir(path.dirname(storePath), { recursive: true });
   if (getSerializedSessionStore(storePath) === json) {
     updateSessionStoreWriteCaches({ storePath, store, serialized: json });
     return;

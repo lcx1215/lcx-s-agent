@@ -8,6 +8,7 @@ import { createAgentsListTool } from "./tools/agents-list-tool.js";
 import { createAiderTool } from "./tools/aider-tool.js";
 import { createBrowserTool } from "./tools/browser-tool.js";
 import { createCanvasTool } from "./tools/canvas-tool.js";
+import { createCodexCodingHarnessTool } from "./tools/codex-coding-harness-tool.js";
 import type { AnyAgentTool } from "./tools/common.js";
 import { createCronTool } from "./tools/cron-tool.js";
 import { createFinanceArticleExtractCapabilityInputTool } from "./tools/finance-article-extract-capability-input-tool.js";
@@ -308,6 +309,15 @@ export function createOpenClawTools(options?: {
     }),
     createAiderTool({
       workspaceDir,
+    }),
+    createCodexCodingHarnessTool({
+      workspaceDir,
+      agentSessionKey: options?.agentSessionKey,
+      agentChannel: options?.agentChannel,
+      agentAccountId: options?.agentAccountId,
+      agentTo: options?.agentTo,
+      agentThreadId: options?.agentThreadId,
+      sandboxed: options?.sandboxed,
     }),
     createAgentsListTool({
       agentSessionKey: options?.agentSessionKey,

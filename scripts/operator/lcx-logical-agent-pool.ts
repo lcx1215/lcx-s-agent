@@ -4,11 +4,17 @@ import {
   LogicalAgentPool,
   runLogicalAgentPlan,
 } from "../../src/agents/logical-agent-pool.ts";
+import {
+  runQualityHarness,
+  type QualityHarnessModelRequest,
+  type QualityHarnessStageOutput,
+} from "../../src/agents/quality-harness.ts";
 
 type Options = {
   ask: string;
   concurrency: 1 | 2;
   demo: boolean;
+  qualityDemo: boolean;
   json: boolean;
 };
 
@@ -25,6 +31,7 @@ function parseArgs(args: readonly string[]): Options {
     ask: "生成一份研究级风险审阅包",
     concurrency: 1,
     demo: false,
+    qualityDemo: false,
     json: false,
   };
   for (let index = 0; index < args.length; index += 1) {
@@ -45,17 +52,45 @@ function parseArgs(args: readonly string[]): Options {
       index += 1;
     } else if (arg === "--demo") {
       options.demo = true;
+    } else if (arg === "--quality-demo") {
+      options.qualityDemo = true;
     } else if (arg === "--json") {
       options.json = true;
     } else if (arg === "--help" || arg === "-h") {
       throw new Error(
-        "Usage: node --import tsx scripts/operator/lcx-logical-agent-pool.ts [--json] [--demo] [--concurrency 1|2] [--ask TEXT]",
+        "Usage: node --import tsx scripts/operator/lcx-logical-agent-pool.ts [--json] [--demo] [--quality-demo] [--concurrency 1|2] [--ask TEXT]",
       );
     } else {
       throw new Error(`unknown argument: ${arg}`);
     }
   }
   return options;
+}
+
+function qualityDemoResponse(request: QualityHarnessModelRequest): QualityHarnessStageOutput {
+  if (request.stage === "intake") {
+    return { kind: "plan", requirements: ["answer with evidence"], missingEvidence: [] };
+  }
+  if (request.stage === "draft" || request.stage === "format") {
+    return {
+      kind: "artifact",
+      artifact: {
+        answer: "确定性 demo 输出：保留已给材料边界。",
+        claims: [
+          {
+            id: "demo-claim",
+            text: "demo evidence supports a bounded claim.",
+            status: "supported",
+            evidenceIds: ["demo-evidence"],
+          },
+        ],
+      },
+    };
+  }
+  return {
+    kind: "review",
+    review: { verdict: "pass", criticalFindings: [], evidenceGaps: [], notes: [] },
+  };
 }
 
 export async function buildLogicalAgentPoolPayload(options: Options) {
@@ -75,6 +110,25 @@ export async function buildLogicalAgentPoolPayload(options: Options) {
         }),
       })
     : null;
+  const qualityHarness = options.qualityDemo
+    ? await runQualityHarness({
+        request: {
+          task: options.ask,
+          evidence: [{ id: "demo-evidence", text: "deterministic operator demo evidence" }],
+        },
+        modelId: "deterministic-demo-model",
+        maxConcurrency: options.concurrency,
+        maxAttempts: 1,
+        modelInvoker: (request) =>
+          Promise.resolve(qualityDemoResponse(request as QualityHarnessModelRequest)),
+        verify: async () => ({
+          status: "passed",
+          summary: "deterministic local verifier passed",
+          details: [],
+        }),
+        createRunId: () => "logical-agent-quality-demo",
+      })
+    : null;
   return {
     boundary: "local_logical_agent_pool_only",
     modelPool: {
@@ -86,12 +140,14 @@ export async function buildLogicalAgentPoolPayload(options: Options) {
     agents: LOGICAL_AGENT_DEFINITIONS,
     plan: plan.map(({ id, agentId, dependsOn }) => ({ id, agentId, dependsOn: dependsOn ?? [] })),
     execution,
+    qualityHarness,
     claims: {
       logicalAgentCount: 10,
       maxLoadedModelSlots: 1,
       defaultConcurrency: 1,
       maxConcurrency: 2,
       realModelInference: false,
+      qualityHarness: options.qualityDemo,
     },
     liveTouched: false,
     providerConfigTouched: false,
@@ -109,8 +165,8 @@ async function main() {
   process.stdout.write(
     [
       `10 个逻辑 Agent / 1 个共享模型槽位 / 并发上限 ${options.concurrency}`,
-      `模式：${options.demo ? "本地确定性 demo（不调用模型）" : "只输出编排计划"}`,
-      `下一步：注入真实本地 executor 后才会执行模型推理。`,
+      `模式：${options.qualityDemo ? "质量闭环 demo（复用十角色 DAG，不调用模型）" : options.demo ? "本地确定性 demo（不调用模型）" : "只输出编排计划"}`,
+      `下一步：注入真实本地 modelInvoker 后才会执行模型推理；receipt 仍需真实 verifier 才能标 verified。`,
     ].join("\n") + "\n",
   );
 }

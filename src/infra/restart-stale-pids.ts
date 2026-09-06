@@ -51,16 +51,20 @@ function sleepSync(ms: number): void {
 }
 
 /**
- * Parse openclaw gateway PIDs from lsof -Fpc stdout.
+ * Parse LCX/OpenClaw gateway PIDs from lsof -Fpc stdout.
  * Pure function — no I/O. Excludes the current process.
  */
+function isLcxGatewayCommand(command: string): boolean {
+  return /\b(?:openclaw|lcx)(?:-gateway)?\b/i.test(command);
+}
+
 function parsePidsFromLsofOutput(stdout: string): number[] {
   const pids: number[] = [];
   let currentPid: number | undefined;
   let currentCmd: string | undefined;
   for (const line of stdout.split(/\r?\n/).filter(Boolean)) {
     if (line.startsWith("p")) {
-      if (currentPid != null && currentCmd && currentCmd.toLowerCase().includes("openclaw")) {
+      if (currentPid != null && currentCmd && isLcxGatewayCommand(currentCmd)) {
         pids.push(currentPid);
       }
       const parsed = Number.parseInt(line.slice(1), 10);
@@ -70,7 +74,7 @@ function parsePidsFromLsofOutput(stdout: string): number[] {
       currentCmd = line.slice(1);
     }
   }
-  if (currentPid != null && currentCmd && currentCmd.toLowerCase().includes("openclaw")) {
+  if (currentPid != null && currentCmd && isLcxGatewayCommand(currentCmd)) {
     pids.push(currentPid);
   }
   // Deduplicate: dual-stack listeners (IPv4 + IPv6) cause lsof to emit the
@@ -80,7 +84,7 @@ function parsePidsFromLsofOutput(stdout: string): number[] {
 
 /**
  * Find PIDs of gateway processes listening on the given port using synchronous lsof.
- * Returns only PIDs that belong to openclaw gateway processes (not the current process).
+ * Returns only PIDs that belong to LCX/OpenClaw gateway processes (not the current process).
  */
 export function findGatewayPidsOnPortSync(
   port: number,

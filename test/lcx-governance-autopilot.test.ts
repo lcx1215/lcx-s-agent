@@ -84,6 +84,17 @@ async function runAutopilot() {
       evolutionCooldownActive?: boolean;
       latestEvolutionCooldown?: unknown;
       latestGuardEvent?: unknown;
+      universeIndexGovernanceScope?: string;
+      universeIndexGovernanceStatus?: string;
+      universeIndexGovernanceTotalComponents?: number;
+      universeIndexGovernanceGovernedComponents?: number;
+      universeIndexGovernanceInventoryOnlyComponents?: number;
+      universeIndexGovernanceReviewRequiredComponents?: number;
+      universeIndexGovernanceCoverageRate?: number;
+      universeIndexGovernanceUnknownComponents?: string[];
+      universeIndexGovernanceMissingRouteOwners?: string[];
+      universeIndexGovernanceInventoryAreaCount?: number;
+      universeIndexGovernanceInventoryAreaComponentCount?: number;
       affectedLanes: string[];
       projectionReaderCoverageStatus?: string;
       projectionReaderContractReadyForAllAdapters?: boolean;
@@ -146,6 +157,17 @@ async function runAutopilot() {
         trackedFiles?: number;
         dirtyFiles?: number;
         unmatchedChangedFiles?: number;
+        governanceScope?: string;
+        governanceStatus?: string;
+        governanceTotalComponents?: number;
+        governanceGovernedComponents?: number;
+        governanceInventoryOnlyComponents?: number;
+        governanceReviewRequiredComponents?: number;
+        governanceCoverageRate?: number;
+        governanceUnknownComponents?: string[];
+        governanceMissingRouteOwners?: string[];
+        governanceInventoryAreaCount?: number;
+        governanceInventoryAreaComponentCount?: number;
       };
       externalAgentUpgrade?: {
         blacktechMechanismCount?: number;
@@ -320,6 +342,23 @@ describe("LCX governance autopilot", () => {
     expect(payload.owners.universeIndex?.trackedFiles).toEqual(expect.any(Number));
     expect(payload.owners.universeIndex?.dirtyFiles).toEqual(expect.any(Number));
     expect(payload.owners.universeIndex?.unmatchedChangedFiles).toEqual(expect.any(Number));
+    expect(payload.owners.universeIndex?.governanceScope).toBe("repo_tracked_and_visible_files");
+    expect(payload.owners.universeIndex?.governanceStatus).toBe("complete");
+    expect(payload.owners.universeIndex?.governanceTotalComponents).toEqual(expect.any(Number));
+    expect(payload.owners.universeIndex?.governanceGovernedComponents).toEqual(expect.any(Number));
+    expect(payload.owners.universeIndex?.governanceInventoryOnlyComponents).toEqual(
+      expect.any(Number),
+    );
+    expect(payload.owners.universeIndex?.governanceReviewRequiredComponents).toBe(0);
+    expect(payload.owners.universeIndex?.governanceCoverageRate).toBe(1);
+    expect(payload.owners.universeIndex?.governanceUnknownComponents).toEqual([]);
+    expect(payload.owners.universeIndex?.governanceMissingRouteOwners).toEqual([]);
+    expect(payload.summary.universeIndexGovernanceStatus).toBe(
+      payload.owners.universeIndex?.governanceStatus,
+    );
+    expect(payload.summary.universeIndexGovernanceTotalComponents).toBe(
+      payload.owners.universeIndex?.governanceTotalComponents,
+    );
     expect(payload.owners.externalAgentUpgrade?.blacktechMechanismCount).toBe(7);
     expect(payload.owners.externalAgentUpgrade?.blacktechRuntimeAuthorityGrantedCount).toBe(0);
     expect(payload.owners.externalAgentUpgrade?.blacktechAutopilotRoutedCount).toBe(7);
@@ -518,6 +557,8 @@ describe("LCX governance autopilot", () => {
     expect(handoff).toContain("local_failure_trace_index_only");
     expect(handoff).toContain("## Universe Index");
     expect(handoff).toContain("local_universe_index_only");
+    expect(handoff).toContain("governanceStatus: complete");
+    expect(handoff).toContain("governanceReviewRequiredComponents: 0");
     expect(handoff).toContain("local_skillopt_lite_only");
     expect(handoff).toContain("## Blacktech Upgrade Radar");
     expect(handoff).toContain("## Projection Reader Audit");
@@ -536,6 +577,7 @@ describe("LCX governance autopilot", () => {
     expect(ownerBrief).toContain("# LCX 老板总览");
     expect(ownerBrief).toContain("一句话：");
     expect(ownerBrief).toContain("今天进展");
+    expect(ownerBrief).toContain("全量部件治理");
     expect(ownerBrief).toContain("卡在哪里");
     expect(ownerBrief).toContain("下一步");
     expect(ownerBrief).toContain("风险边界");

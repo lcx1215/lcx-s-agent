@@ -74,6 +74,7 @@ const OPTIONAL_LOCAL_OPERATOR_SURFACES = new Set([LOCAL_OPERATOR_LOOP, LOCAL_COD
 const HEAD_SURFACES = [
   "AGENTS.md",
   "README.md",
+  "ops/architecture/LCX-SYSTEM-ARCHITECTURE.md",
   "ops/local-brain/README.md",
   "src/agents/system-prompt.ts",
 ] as const;
@@ -176,6 +177,7 @@ const PROOF_SURFACES = [
 const BOUNDARY_SURFACES = [
   "AGENTS.md",
   "README.md",
+  "ops/architecture/LCX-SYSTEM-ARCHITECTURE.md",
   "ops/local-brain/README.md",
   "src/agents/system-prompt.ts",
   "src/shared/lcx-ontology.ts",
@@ -461,22 +463,32 @@ const MIND_MODEL_LANES: MindModelLane[] = [
       "LCX Agent Universe Index Doctrine",
       "all files, all code, all artifacts",
       "lcx-universe-index",
+      "total component governance",
+      "lcx_component_governance_v1",
+      "review_required",
     ],
     workflowTerms: [
       "lcx-universe-index",
       "local_universe_index_only",
       "garbageCandidates",
       "ownerCoverage",
+      "governanceCoverage",
+      "repo_tracked_and_visible_files",
     ],
     proofTerms: [
       "test/lcx-universe-index.test.ts",
       "universe_index_recovers_total_inventory",
       "local_universe_index_only",
+      "reviewRequiredComponents",
+      "coverageRate",
+      "unknownComponents",
     ],
     boundaryTerms: [
       "inventory and cleanup candidates only",
       "no delete/migration/live authority",
       "liveTouched",
+      "inventory_only",
+      "governed_source",
     ],
     nextAction:
       "Run lcx-universe-index before broad cleanup or full-system review; route any candidate to its owner instead of deleting or migrating directly.",

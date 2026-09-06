@@ -101,6 +101,7 @@ const DEFAULT_GUARD_LOG = path.join(
 const LOCAL_BRAIN_EVAL_MAX_TOKENS = "700";
 const LOCAL_BRAIN_EVAL_TIMEOUT_RETRY_MAX_TOKENS = "320";
 const LOCAL_BRAIN_EVAL_TIMEOUT_PRONE_MAX_TOKENS = "360";
+const LOCAL_BRAIN_EVAL_PARSE_STABILITY_MAX_TOKENS = "700";
 const LOCAL_BRAIN_EVAL_CONTRACT_HINT_MAX_COUNT = 5;
 const LOCAL_BRAIN_EVAL_CONTRACT_HINT_CHAR_BUDGET = 1_600;
 const LOCAL_BRAIN_EVAL_SINGLE_HINT_CHAR_BUDGET = 360;
@@ -126,6 +127,20 @@ const LOCAL_BRAIN_EVAL_PROMPT_CACHE_PREFIX =
     "For finance tasks, choose concrete recommended module ids instead of generic finance labels or the full taxonomy.",
     "Return only JSON with keys: task_family, primary_modules, supporting_modules, required_tools, missing_data, risk_boundaries, next_step, rejected_context.",
   ].join("\n") + "\n";
+const LOCAL_BRAIN_BLIND_PROMPT_CACHE_PREFIX =
+  [
+    "You are the LCX Agent local auxiliary thought-flow model.",
+    "Blind neutral raw-contract eval: infer the contract from only the user/task.",
+    "/no_think",
+    "No prose, no markdown, no <think>, no explanations, no nested objects.",
+    '{"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_external_conversation_history"]}',
+    "Return one single-line JSON object only; close the final brace and do not echo an answer template.",
+    `Allowed module ids (choose only those justified by the task): ${LOCAL_BRAIN_MODULE_TAXONOMY.join(", ")}.`,
+    `Allowed risk_boundary ids (choose only those justified by the task): ${LOCAL_BRAIN_RISK_BOUNDARIES.join(", ")}.`,
+    "Infer missing_data ids yourself from the task; no case-specific checklist or expected id is provided.",
+    "Do not invent current or timestamped market data, execution approval, probabilities, or durable memory writes.",
+    "For scenario probabilities with missing samples, weights, returns, or macro inputs, do not guess; route to data-gated research preflight.",
+  ].join("\n") + "\n";
 const TIMEOUT_PRONE_COMPACT_EVAL_CASE_IDS = new Set([
   "single_company_fundamental_risk",
   "plain_single_stock_position_sizing_preflight",
@@ -149,7 +164,12 @@ let activeGenerateChild: ChildProcessWithoutNullStreams | undefined;
 
 function isParseStabilityCompactEvalCase(evalCase: EvalCase): boolean {
   return (
-    TIMEOUT_PRONE_COMPACT_EVAL_CASE_IDS.has(evalCase.id) ||
+    TIMEOUT_PRONE_COMPACT_EVAL_CASE_IDS.has(evalCase.id) || isParseStabilityOnlyEvalCase(evalCase)
+  );
+}
+
+function isParseStabilityOnlyEvalCase(evalCase: EvalCase): boolean {
+  return (
     PARSE_STABILITY_COMPACT_EVAL_CASE_IDS.has(evalCase.id) ||
     PARSE_STABILITY_COMPACT_EVAL_CASE_PREFIXES.some((prefix) =>
       evalCase.id.startsWith(`${prefix}_`),
@@ -210,13 +230,15 @@ function usage(): never {
       "       node --import tsx scripts/operator/local-brain-distill-eval.ts --adapter latest-passing [--model MODEL] [--json] [--summary-only]",
       "       node --import tsx scripts/operator/local-brain-distill-eval.ts --contract-only [--json] [--summary-only] [--case-id ID[,ID...]]",
       "       add --blind (or --neutral) for a raw contract eval with no case-specific hints, hardening, or retry",
+      "       combine --hardened --blind --no-response-prefill for the strict neutral promotion gate",
       "       add --case-file JSONL with --blind to score generated cases without putting labels in prompts",
       "       add --no-response-prefill to measure self-started JSON separately from structural prefill",
       "",
       "Runs one local inference acceptance check for the auxiliary thought-flow adapter.",
       "Use --adapter latest-passing to resolve the current adapter through minimax-brain-training-guard; this may fall back to the best-evidence training seed and reports that status separately.",
       "Use --contract-only for a fast hardened contract check that does not start MLX.",
-      "Use --blind/--neutral for a neutral raw contract check; it never reports promotion readiness.",
+      "Use --blind/--neutral for a neutral raw contract check; without --hardened it never reports promotion readiness.",
+      "The strict neutral promotion gate never applies hardening, retries, recovery, or case labels; it only changes the gate decision.",
       "Use --case-file only with --blind; rows must be generalization-harness JSONL and labels stay scorer-side.",
       "Use --receipt PATH to explicitly write a compact case-level receipt; it never proves promotion readiness.",
     ].join("\n"),
@@ -312,7 +334,7 @@ function parseArgs(args: string[]): CliOptions {
   if (!options.contractOnly && options.noAdapter && options.adapterPath) {
     usage();
   }
-  if (options.blind && (options.hardened || options.contractOnly)) {
+  if (options.blind && options.contractOnly) {
     usage();
   }
   if (options.caseFile && !options.blind) {
@@ -4390,10 +4412,18 @@ function maxTokensForEvalCase(
   evalCase: EvalCase,
   mode: "standard" | "blind" | "timeout_retry" | "parse_retry",
 ): string {
+  if (mode === "blind") {
+    // Neutral contract evals must stay compact without giving the model room to
+    // drift into a prose answer. This is a generation bound, not a repair path.
+    return LOCAL_BRAIN_EVAL_TIMEOUT_RETRY_MAX_TOKENS;
+  }
   if (mode === "timeout_retry" || mode === "parse_retry") {
     return LOCAL_BRAIN_EVAL_TIMEOUT_RETRY_MAX_TOKENS;
   }
-  return isParseStabilityCompactEvalCase(evalCase)
+  if (isParseStabilityOnlyEvalCase(evalCase)) {
+    return LOCAL_BRAIN_EVAL_PARSE_STABILITY_MAX_TOKENS;
+  }
+  return TIMEOUT_PRONE_COMPACT_EVAL_CASE_IDS.has(evalCase.id)
     ? LOCAL_BRAIN_EVAL_TIMEOUT_PRONE_MAX_TOKENS
     : LOCAL_BRAIN_EVAL_MAX_TOKENS;
 }
@@ -4439,24 +4469,20 @@ function buildPrompt(evalCase: EvalCase): string {
   return `${LOCAL_BRAIN_EVAL_PROMPT_CACHE_PREFIX}${buildPromptSuffix(evalCase)}`;
 }
 
-function buildBlindPrompt(evalCase: EvalCase): string {
-  return [
-    "You are the LCX Agent local auxiliary thought-flow model.",
-    "Blind neutral raw-contract eval: infer the contract from only the user/task.",
-    "/no_think",
-    "No prose, no markdown, no <think>, no explanations, no nested objects.",
-    '{"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_external_conversation_history"]}',
-    "Return one single-line JSON object only; close the final brace and do not echo an answer template.",
-    `Allowed module ids (choose only those justified by the task): ${LOCAL_BRAIN_MODULE_TAXONOMY.join(", ")}.`,
-    `Allowed risk_boundary ids (choose only those justified by the task): ${LOCAL_BRAIN_RISK_BOUNDARIES.join(", ")}.`,
-    "Infer missing_data ids yourself from the task; no case-specific checklist or expected id is provided.",
-    "Do not invent current or timestamped market data, execution approval, probabilities, or durable memory writes.",
-    "For scenario probabilities with missing samples, weights, returns, or macro inputs, do not guess; route to data-gated research preflight.",
-    `user_or_task: ${evalCase.userAsk}`,
-  ].join("\n");
+function buildBlindPromptSuffix(evalCase: EvalCase): string {
+  return `user_or_task: ${evalCase.userAsk}`;
 }
 
-function buildRetryPrompt(evalCase: EvalCase, mode: "timeout_retry" | "parse_retry"): string {
+function buildBlindPrompt(evalCase: EvalCase): string {
+  return [LOCAL_BRAIN_BLIND_PROMPT_CACHE_PREFIX.trimEnd(), buildBlindPromptSuffix(evalCase)].join(
+    "\n",
+  );
+}
+
+function buildRetryPrompt(
+  evalCase: EvalCase,
+  mode: "standard_compact" | "timeout_retry" | "parse_retry",
+): string {
   const promptModuleIds = normalizeLocalBrainModuleList([
     ...evalCase.requiredModules,
     ...CORE_PROMPT_MODULES,
@@ -4465,17 +4491,35 @@ function buildRetryPrompt(evalCase: EvalCase, mode: "timeout_retry" | "parse_ret
   const requiredRiskBoundaries = evalCase.requiredRiskBoundaries ?? [];
   return [
     "You are the LCX Agent local auxiliary thought-flow model.",
-    `${mode === "parse_retry" ? "Parse" : "Timeout"} retry compact mode: output one single-line JSON object only.`,
+    `${
+      mode === "standard_compact"
+        ? "Compact contract mode"
+        : mode === "parse_retry"
+          ? "Parse retry compact mode"
+          : "Timeout retry compact mode"
+    }: output one single-line JSON object only.`,
     "/no_think",
     "No prose, no markdown, no <think>, no explanations, no nested objects.",
     'Exact shape: {"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_external_conversation_history"]}',
+    mode === "standard_compact"
+      ? outputContractHintsFor(evalCase).find((hint) => hint.startsWith("Hard output budget:"))
+      : undefined,
     "Keep arrays short; use only compact snake_case ids.",
-    `Allowed module ids: ${promptModuleIds.join(", ")}.`,
+    mode === "standard_compact"
+      ? "Even for broad cases, select only the highest-signal ids; never enumerate the full vocabulary, and close the JSON object before adding detail."
+      : undefined,
+    mode === "standard_compact"
+      ? `Recommended module ids for this case: ${promptModuleIds.join(", ")}.`
+      : `Allowed module ids: ${promptModuleIds.join(", ")}.`,
     requiredMissingData.length > 0
-      ? `Required missing_data ids: ${requiredMissingData.join(", ")}.`
+      ? mode === "standard_compact"
+        ? `Required missing_data ids for this case: ${requiredMissingData.join(", ")}. Include these ids exactly; do not paraphrase or expand them.`
+        : `Required missing_data ids: ${requiredMissingData.join(", ")}.`
       : "Keep missing_data compact.",
     requiredRiskBoundaries.length > 0
-      ? `Required risk_boundaries: research_only, ${requiredRiskBoundaries.join(", ")}.`
+      ? mode === "standard_compact"
+        ? `Required risk_boundaries for this case: ${requiredRiskBoundaries.join(", ")}. Include research_only plus these ids exactly; do not paraphrase.`
+        : `Required risk_boundaries: research_only, ${requiredRiskBoundaries.join(", ")}.`
       : "Required risk_boundaries: research_only.",
     "For scenario probabilities with missing sample, weights, returns, or macro inputs, do not invent probabilities; route to data-gated research preflight.",
     `user_or_task: ${evalCase.userAsk}`,
@@ -4497,7 +4541,10 @@ function cacheSafeSlug(value: string): string {
   );
 }
 
-function promptCacheFileFor(options: CliOptions): string | undefined {
+function promptCacheFileFor(
+  options: CliOptions,
+  promptPrefix = LOCAL_BRAIN_EVAL_PROMPT_CACHE_PREFIX,
+): string | undefined {
   if (process.env.LOCAL_BRAIN_EVAL_PROMPT_CACHE === "0") {
     return undefined;
   }
@@ -4508,7 +4555,7 @@ function promptCacheFileFor(options: CliOptions): string | undefined {
     LOCAL_BRAIN_EVAL_PROMPT_CACHE_VERSION,
     cacheSafeSlug(options.model),
     adapterKey,
-    hashText(LOCAL_BRAIN_EVAL_PROMPT_CACHE_PREFIX),
+    hashText(promptPrefix),
   ].join("-");
   return path.join(LOCAL_BRAIN_EVAL_PROMPT_CACHE_DIR, `${cacheName}.safetensors`);
 }
@@ -4561,7 +4608,11 @@ function runChildCapture(command: string, args: string[], timeoutMs: number): Pr
   });
 }
 
-async function ensurePromptCache(options: CliOptions, promptCacheFile: string): Promise<void> {
+async function ensurePromptCache(
+  options: CliOptions,
+  promptCacheFile: string,
+  promptPrefix: string,
+): Promise<void> {
   if (existsSync(promptCacheFile)) {
     return;
   }
@@ -4575,7 +4626,7 @@ async function ensurePromptCache(options: CliOptions, promptCacheFile: string): 
     "--prompt-cache-file",
     promptCacheFile,
     "--prompt",
-    LOCAL_BRAIN_EVAL_PROMPT_CACHE_PREFIX,
+    promptPrefix,
   ];
   if (options.adapterPath) {
     args.splice(5, 0, "--adapter-path", options.adapterPath);
@@ -4588,18 +4639,27 @@ async function runGenerate(
   evalCase: EvalCase,
   mode: "standard" | "blind" | "timeout_retry" | "parse_retry" = "standard",
 ): Promise<string> {
-  const promptCacheFile = mode === "standard" ? promptCacheFileFor(options) : undefined;
+  const promptPrefix =
+    mode === "blind" ? LOCAL_BRAIN_BLIND_PROMPT_CACHE_PREFIX : LOCAL_BRAIN_EVAL_PROMPT_CACHE_PREFIX;
+  const promptCacheFile =
+    (mode === "standard" || mode === "blind") && !isParseStabilityOnlyEvalCase(evalCase)
+      ? promptCacheFileFor(options, promptPrefix)
+      : undefined;
   if (promptCacheFile) {
-    await ensurePromptCache(options, promptCacheFile);
+    await ensurePromptCache(options, promptCacheFile, promptPrefix);
   }
   const prompt =
     mode === "timeout_retry" || mode === "parse_retry"
       ? buildRetryPrompt(evalCase, mode)
       : mode === "blind"
-        ? buildBlindPrompt(evalCase)
-        : promptCacheFile
-          ? buildPromptSuffix(evalCase)
-          : buildPrompt(evalCase);
+        ? promptCacheFile
+          ? buildBlindPromptSuffix(evalCase)
+          : buildBlindPrompt(evalCase)
+        : isParseStabilityOnlyEvalCase(evalCase)
+          ? buildRetryPrompt(evalCase, "standard_compact")
+          : promptCacheFile
+            ? buildPromptSuffix(evalCase)
+            : buildPrompt(evalCase);
   const maxTokens = maxTokensForEvalCase(evalCase, mode);
   // This is only a decode aid for the opening delimiter. The receipt records
   // it separately; a prefilled run is never a self-start proof.
@@ -4710,6 +4770,7 @@ async function runGenerateWithTimeoutRetry(
   } catch (error) {
     const timeoutRetryEligible =
       options.hardened &&
+      !options.blind &&
       (isEmptyTimeoutGenerateError(error) ||
         (isParseStabilityCompactEvalCase(evalCase) &&
           error instanceof LocalBrainGenerateError &&
@@ -5340,6 +5401,7 @@ for (const evalCase of evalCases) {
         initialGenerationStatus ??= "invalid_json";
         const canRetryParse =
           options.hardened &&
+          !options.blind &&
           !generateResult.parseRecovered &&
           isParseStabilityCompactEvalCase(evalCase);
         if (!canRetryParse) {
@@ -5364,7 +5426,7 @@ for (const evalCase of evalCases) {
       }
     }
     const parsed = finalizeModuleFields(
-      options.hardened
+      options.hardened && !options.blind
         ? hardenLocalBrainPlanForAsk(rawParsed, {
             ask: evalCase.userAsk,
             sourceSummary: evalCase.sourceSummary,
@@ -5381,7 +5443,7 @@ for (const evalCase of evalCases) {
       : { applied: false, changedFields: [] };
     const isParseRecovered = generateResult.parseRecovered || parseRetryUsed;
     const delta =
-      options.hardened && !resolvedOptions.contractOnly
+      options.hardened && !options.blind && !resolvedOptions.contractOnly
         ? hardeningDelta(rawContractParsed, parsed)
         : { applied: false, changedFields: [] };
     caseResults.push({
@@ -5404,9 +5466,12 @@ for (const evalCase of evalCases) {
       rawContractNormalizationChangedFields: !resolvedOptions.contractOnly
         ? normalizationDelta.changedFields
         : [],
-      hardeningApplied: options.hardened && !resolvedOptions.contractOnly ? delta.applied : false,
+      hardeningApplied:
+        options.hardened && !options.blind && !resolvedOptions.contractOnly ? delta.applied : false,
       hardeningChangedFields:
-        options.hardened && !resolvedOptions.contractOnly ? delta.changedFields : [],
+        options.hardened && !options.blind && !resolvedOptions.contractOnly
+          ? delta.changedFields
+          : [],
       parseRetryUsed: parseRetryUsed || undefined,
       parseErrorKind,
       generationRetryKind,
@@ -5446,7 +5511,9 @@ for (const evalCase of evalCases) {
     }
     rawOutput = capturedErrorOutput;
     const recoveredRawParsed =
-      options.hardened && !resolvedOptions.contractOnly ? recoverPartialJsonPlan(rawOutput) : null;
+      options.hardened && !options.blind && !resolvedOptions.contractOnly
+        ? recoverPartialJsonPlan(rawOutput)
+        : null;
     if (recoveredRawParsed) {
       const rawContractParsed = finalizeModuleFields(recoveredRawParsed);
       const parsed = finalizeModuleFields(
@@ -5470,9 +5537,14 @@ for (const evalCase of evalCases) {
         modelContractReady: false,
         rawContractNormalizationApplied: normalizationDelta.applied,
         rawContractNormalizationChangedFields: normalizationDelta.changedFields,
-        hardeningApplied: options.hardened && !resolvedOptions.contractOnly ? delta.applied : false,
+        hardeningApplied:
+          options.hardened && !options.blind && !resolvedOptions.contractOnly
+            ? delta.applied
+            : false,
         hardeningChangedFields:
-          options.hardened && !resolvedOptions.contractOnly ? delta.changedFields : [],
+          options.hardened && !options.blind && !resolvedOptions.contractOnly
+            ? delta.changedFields
+            : [],
         parseRetryUsed: parseRetryUsed || undefined,
         parseErrorKind,
         generationRetryKind,
@@ -5489,15 +5561,16 @@ for (const evalCase of evalCases) {
       }
       continue;
     }
-    const fallbackParsed = options.hardened
-      ? hardenLocalBrainPlanForAsk(
-          {},
-          {
-            ask: evalCase.userAsk,
-            sourceSummary: evalCase.sourceSummary,
-          },
-        )
-      : null;
+    const fallbackParsed =
+      options.hardened && !options.blind
+        ? hardenLocalBrainPlanForAsk(
+            {},
+            {
+              ask: evalCase.userAsk,
+              sourceSummary: evalCase.sourceSummary,
+            },
+          )
+        : null;
     caseResults.push({
       id: evalCase.id,
       featureSignature: evalCase.featureSignature,
@@ -5551,8 +5624,10 @@ const strictModelProofRequired = !options.contractOnly && (options.hardened || o
 const modelContractFailureCaseIds = strictModelProofRequired
   ? caseResults.filter((entry) => !entry.modelContractReady).map((entry) => entry.id)
   : [];
+const strictNeutralPromotionGate =
+  options.hardened && options.blind && !options.contractOnly && !options.responsePrefill;
 const promotionReady =
-  !options.blind &&
+  (!options.blind || strictNeutralPromotionGate) &&
   failedCases.length === 0 &&
   parseRecoveredCases.length === 0 &&
   modelContractFailureCaseIds.length === 0;
@@ -5597,7 +5672,9 @@ const result = {
   evaluationMode: options.contractOnly
     ? "contract_only"
     : options.blind
-      ? "blind_raw_contract"
+      ? options.hardened
+        ? "strict_neutral_hardened_raw_contract"
+        : "blind_raw_contract"
       : options.hardened
         ? "assisted_hardened_challenger"
         : "raw_contract",

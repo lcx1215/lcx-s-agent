@@ -74,9 +74,11 @@ const PATH_RULES: PathRule[] = [
     lane: "global_doctrine_and_runbook",
     patterns: [
       /^AGENTS\.md$/u,
+      /^CONTRIBUTING\.md$/u,
       /^MEMORY\.md$/u,
       /^\.gitignore$/u,
       /^README\.md$/u,
+      /^ops\/(?:architecture|engineering)\//u,
       /^ops\/local-brain\/README\.md$/u,
       /^ops\/codex_handoff\.md$/u,
       /^ops\/automation\/repair-lock-protocol\.md$/u,

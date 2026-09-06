@@ -1,6 +1,6 @@
 import os from "node:os";
 import path from "node:path";
-import { resolveRequiredHomeDir } from "../infra/home-dir.js";
+import { resolveConfigPathForProfile, resolveStateDirForProfile } from "../config/paths.js";
 import { isValidProfileName } from "./profile-utils.js";
 
 export type CliProfileParseResult =
@@ -93,8 +93,7 @@ function resolveProfileStateDir(
   env: Record<string, string | undefined>,
   homedir: () => string,
 ): string {
-  const suffix = profile.toLowerCase() === "default" ? "" : `-${profile}`;
-  return path.join(resolveRequiredHomeDir(env as NodeJS.ProcessEnv, homedir), `.openclaw${suffix}`);
+  return resolveStateDirForProfile(profile, env as NodeJS.ProcessEnv, homedir);
 }
 
 export function applyCliProfileEnv(params: {
@@ -112,13 +111,22 @@ export function applyCliProfileEnv(params: {
   // Convenience only: fill defaults, never override explicit env values.
   env.OPENCLAW_PROFILE = profile;
 
-  const stateDir = env.OPENCLAW_STATE_DIR?.trim() || resolveProfileStateDir(profile, env, homedir);
-  if (!env.OPENCLAW_STATE_DIR?.trim()) {
+  const explicitStateDir = env.OPENCLAW_STATE_DIR?.trim() || env.CLAWDBOT_STATE_DIR?.trim();
+  const hasExplicitStateDir = Boolean(explicitStateDir);
+  const stateDir = hasExplicitStateDir
+    ? explicitStateDir!
+    : resolveProfileStateDir(profile, env, homedir);
+  if (!hasExplicitStateDir) {
     env.OPENCLAW_STATE_DIR = stateDir;
   }
 
-  if (!env.OPENCLAW_CONFIG_PATH?.trim()) {
-    env.OPENCLAW_CONFIG_PATH = path.join(stateDir, "openclaw.json");
+  const hasExplicitConfigPath = Boolean(
+    env.OPENCLAW_CONFIG_PATH?.trim() || env.CLAWDBOT_CONFIG_PATH?.trim(),
+  );
+  if (!hasExplicitConfigPath) {
+    env.OPENCLAW_CONFIG_PATH = hasExplicitStateDir
+      ? path.join(stateDir, "openclaw.json")
+      : resolveConfigPathForProfile(profile, env as NodeJS.ProcessEnv, homedir);
   }
 
   if (profile === "dev" && !env.OPENCLAW_GATEWAY_PORT?.trim()) {

@@ -17,6 +17,7 @@ const entrypoints = [
   "whatsapp",
   "line",
   "account-id",
+  "keyed-async-queue",
 ] as const;
 for (const entry of entrypoints) {
   const out = path.join(process.cwd(), `dist/plugin-sdk/${entry}.d.ts`);

@@ -1,6 +1,6 @@
 import path from "node:path";
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
-import { resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk/core";
+import type { OpenClawPluginApi } from "lcx-agent/plugin-sdk/core";
+import { resolvePreferredOpenClawTmpDir } from "lcx-agent/plugin-sdk/core";
 import {
   diffsPluginConfigSchema,
   resolveDiffsPluginDefaults,

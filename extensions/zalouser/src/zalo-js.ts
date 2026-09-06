@@ -3,7 +3,19 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { loadOutboundMediaFromUrl } from "openclaw/plugin-sdk";
+import { loadOutboundMediaFromUrl } from "lcx-agent/plugin-sdk";
+import {
+  readLcxIdentityWriterRaw,
+  removeLcxIdentityWriterWithReceipt,
+  resolveLcxIdentityStateWriterPathContract,
+  rollbackLcxIdentityRemoval,
+  rollbackLcxIdentityWriter,
+  writeLcxIdentityWriterRawWithReceipt,
+  type LcxIdentityRemovalReceipt,
+  type LcxIdentityWriteReceipt,
+  type LcxIdentityWriterPathContract,
+  type LcxIdentityMigrationPlan,
+} from "lcx-agent/plugin-sdk";
 import { normalizeZaloReactionIcon } from "./reaction.js";
 import { getZalouserRuntime } from "./runtime.js";
 import type {
@@ -70,7 +82,7 @@ type ApiTypingCapability = {
   ) => Promise<unknown>;
 };
 
-type StoredZaloCredentials = {
+export type StoredZaloCredentials = {
   imei: string;
   cookie: Credentials["cookie"];
   userAgent: string;
@@ -97,6 +109,121 @@ function credentialsFilename(profile: string): string {
 
 function resolveCredentialsPath(profile: string, env: NodeJS.ProcessEnv = process.env): string {
   return path.join(resolveCredentialsDir(env), credentialsFilename(profile));
+}
+
+export type LcxIdentityZaloCredentialsMigration = Readonly<{
+  profile: string;
+  pathContract: LcxIdentityWriterPathContract & Readonly<{ writer: "credentials" }>;
+  readCredentialsPath: string;
+  writeCredentialsPath: string;
+}>;
+
+export function createLcxIdentityZaloCredentialsMigration(params: {
+  migrationPlan: LcxIdentityMigrationPlan;
+  profile?: string;
+  existsSync?: (candidate: string) => boolean;
+}): LcxIdentityZaloCredentialsMigration {
+  if (params.migrationPlan.mode === "explicit-config-override") {
+    throw new Error("Zalo credentials migration requires a state-root authority");
+  }
+  const profile = normalizeProfile(params.profile);
+  const relativePath = path.join("credentials", "zalouser", credentialsFilename(profile));
+  const pathContract = resolveLcxIdentityStateWriterPathContract({
+    writer: "credentials",
+    migrationPlan: params.migrationPlan,
+    relativePath,
+    existsSync: params.existsSync,
+  });
+  return Object.freeze({
+    profile,
+    pathContract,
+    readCredentialsPath: pathContract.readPath,
+    writeCredentialsPath: pathContract.writePath,
+  });
+}
+
+function resolveCurrentZaloCredentialsPathContract(
+  migration: LcxIdentityZaloCredentialsMigration,
+): LcxIdentityWriterPathContract & Readonly<{ writer: "credentials" }> {
+  const plan = migration.pathContract.migrationPlan;
+  if (!plan) {
+    return migration.pathContract;
+  }
+  return resolveLcxIdentityStateWriterPathContract({
+    writer: "credentials",
+    migrationPlan: plan,
+    relativePath: path.relative(plan.writeStateDir, migration.writeCredentialsPath),
+    backupPath: migration.pathContract.backupPath,
+    auditPath: migration.pathContract.auditPath,
+  });
+}
+
+function parseStoredZaloCredentials(raw: string): StoredZaloCredentials | null {
+  try {
+    const parsed = JSON.parse(raw) as Partial<StoredZaloCredentials>;
+    if (
+      typeof parsed.imei !== "string" ||
+      !parsed.imei ||
+      !parsed.cookie ||
+      typeof parsed.userAgent !== "string" ||
+      !parsed.userAgent
+    ) {
+      return null;
+    }
+    return {
+      imei: parsed.imei,
+      cookie: parsed.cookie as Credentials["cookie"],
+      userAgent: parsed.userAgent,
+      language: typeof parsed.language === "string" ? parsed.language : undefined,
+      createdAt: typeof parsed.createdAt === "string" ? parsed.createdAt : new Date().toISOString(),
+      lastUsedAt: typeof parsed.lastUsedAt === "string" ? parsed.lastUsedAt : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function readZaloCredentialsForIdentityMigration(
+  migration: LcxIdentityZaloCredentialsMigration,
+): Promise<StoredZaloCredentials | null> {
+  const raw = await readLcxIdentityWriterRaw(resolveCurrentZaloCredentialsPathContract(migration));
+  return raw === null ? null : parseStoredZaloCredentials(raw);
+}
+
+export async function writeZaloCredentialsForIdentityMigration(
+  migration: LcxIdentityZaloCredentialsMigration,
+  credentials: StoredZaloCredentials,
+  options?: { expectedReadPath?: string; expectedWritePath?: string },
+): Promise<LcxIdentityWriteReceipt> {
+  return await writeLcxIdentityWriterRawWithReceipt(
+    resolveCurrentZaloCredentialsPathContract(migration),
+    `${JSON.stringify(credentials, null, 2)}\n`,
+    options,
+  );
+}
+
+export async function clearZaloCredentialsForIdentityMigration(
+  migration: LcxIdentityZaloCredentialsMigration,
+  options?: { expectedReadPath?: string; expectedWritePath?: string },
+): Promise<LcxIdentityRemovalReceipt | null> {
+  const contract = resolveCurrentZaloCredentialsPathContract(migration);
+  const current = await readLcxIdentityWriterRaw(contract);
+  if (current === null) {
+    return null;
+  }
+  return await removeLcxIdentityWriterWithReceipt(contract, options);
+}
+
+export async function rollbackZaloCredentialsWrite(
+  receipt: LcxIdentityWriteReceipt,
+): Promise<void> {
+  await rollbackLcxIdentityWriter(receipt);
+}
+
+export async function rollbackZaloCredentialsRemoval(
+  receipt: LcxIdentityRemovalReceipt,
+): Promise<void> {
+  await rollbackLcxIdentityRemoval(receipt);
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
@@ -338,24 +465,7 @@ function readCredentials(profile: string): StoredZaloCredentials | null {
       return null;
     }
     const raw = fs.readFileSync(filePath, "utf-8");
-    const parsed = JSON.parse(raw) as Partial<StoredZaloCredentials>;
-    if (
-      typeof parsed.imei !== "string" ||
-      !parsed.imei ||
-      !parsed.cookie ||
-      typeof parsed.userAgent !== "string" ||
-      !parsed.userAgent
-    ) {
-      return null;
-    }
-    return {
-      imei: parsed.imei,
-      cookie: parsed.cookie as Credentials["cookie"],
-      userAgent: parsed.userAgent,
-      language: typeof parsed.language === "string" ? parsed.language : undefined,
-      createdAt: typeof parsed.createdAt === "string" ? parsed.createdAt : new Date().toISOString(),
-      lastUsedAt: typeof parsed.lastUsedAt === "string" ? parsed.lastUsedAt : undefined,
-    };
+    return parseStoredZaloCredentials(raw);
   } catch {
     return null;
   }

@@ -5,7 +5,7 @@ import {
   type ParsedChatTarget,
   resolveServicePrefixedAllowTarget,
   resolveServicePrefixedTarget,
-} from "openclaw/plugin-sdk";
+} from "lcx-agent/plugin-sdk";
 
 export type BlueBubblesService = "imessage" | "sms" | "auto";
 

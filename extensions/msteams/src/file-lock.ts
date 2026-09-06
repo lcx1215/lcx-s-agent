@@ -1,1 +1,1 @@
-export { withFileLock } from "openclaw/plugin-sdk";
+export { withFileLock } from "lcx-agent/plugin-sdk";

@@ -15,7 +15,7 @@ async function withTempHome(run: (home: string) => Promise<void>): Promise<void>
 
 async function writeConfig(
   home: string,
-  dirname: ".openclaw",
+  dirname: ".lcx" | ".openclaw",
   port: number,
   filename: string = "openclaw.json",
 ) {
@@ -34,19 +34,46 @@ function createIoForHome(home: string, env: NodeJS.ProcessEnv = {} as NodeJS.Pro
 }
 
 describe("config io paths", () => {
-  it("uses ~/.openclaw/openclaw.json when config exists", async () => {
+  it("uses ~/.lcx/lcx.json when canonical config exists", async () => {
     await withTempHome(async (home) => {
-      const configPath = await writeConfig(home, ".openclaw", 19001);
+      const configPath = await writeConfig(home, ".lcx", 19001, "lcx.json");
       const io = createIoForHome(home);
       expect(io.configPath).toBe(configPath);
       expect(io.loadConfig().gateway?.port).toBe(19001);
     });
   });
 
-  it("defaults to ~/.openclaw/openclaw.json when config is missing", async () => {
+  it("prefers lcx.json when a compatibility root contains both config names", async () => {
     await withTempHome(async (home) => {
+      const canonicalCompatibilityPath = await writeConfig(home, ".openclaw", 20006, "lcx.json");
+      await writeConfig(home, ".openclaw", 20007, "openclaw.json");
+
+      const io = createIoForHome(home);
+      expect(io.configPath).toBe(canonicalCompatibilityPath);
+      expect(io.loadConfig().gateway?.port).toBe(20006);
+    });
+  });
+
+  it("does not reactivate an early canonical config while legacy state is active", async () => {
+    await withTempHome(async (home) => {
+      await fs.mkdir(path.join(home, ".lcx"), { recursive: true });
+      await fs.mkdir(path.join(home, ".openclaw", "sessions"), { recursive: true });
+      await fs.writeFile(
+        path.join(home, ".lcx", "lcx.json"),
+        JSON.stringify({ gateway: { port: 20008 } }),
+        "utf8",
+      );
+
       const io = createIoForHome(home);
       expect(io.configPath).toBe(path.join(home, ".openclaw", "openclaw.json"));
+      expect(io.loadConfig().gateway?.port).not.toBe(20008);
+    });
+  });
+
+  it("defaults to ~/.lcx/lcx.json when config is missing", async () => {
+    await withTempHome(async (home) => {
+      const io = createIoForHome(home);
+      expect(io.configPath).toBe(path.join(home, ".lcx", "lcx.json"));
     });
   });
 
@@ -56,7 +83,7 @@ describe("config io paths", () => {
         env: { OPENCLAW_HOME: path.join(home, "svc-home") } as NodeJS.ProcessEnv,
         homedir: () => path.join(home, "ignored-home"),
       });
-      expect(io.configPath).toBe(path.join(home, "svc-home", ".openclaw", "openclaw.json"));
+      expect(io.configPath).toBe(path.join(home, "svc-home", ".lcx", "lcx.json"));
     });
   });
 
@@ -78,11 +105,32 @@ describe("config io paths", () => {
     });
   });
 
+  it("prefers the canonical config in an explicit state directory", async () => {
+    await withTempHome(async (home) => {
+      const stateDir = path.join(home, "operator-state");
+      await fs.mkdir(stateDir, { recursive: true });
+      await fs.writeFile(
+        path.join(stateDir, "lcx.json"),
+        JSON.stringify({ gateway: { port: 20004 } }),
+        "utf8",
+      );
+      await fs.writeFile(
+        path.join(stateDir, "openclaw.json"),
+        JSON.stringify({ gateway: { port: 20005 } }),
+        "utf8",
+      );
+
+      const io = createIoForHome(home, { OPENCLAW_STATE_DIR: stateDir } as NodeJS.ProcessEnv);
+      expect(io.configPath).toBe(path.join(stateDir, "lcx.json"));
+      expect(io.loadConfig().gateway?.port).toBe(20004);
+    });
+  });
+
   it("normalizes safe-bin config entries at config load time", async () => {
     await withTempHome(async (home) => {
-      const configDir = path.join(home, ".openclaw");
+      const configDir = path.join(home, ".lcx");
       await fs.mkdir(configDir, { recursive: true });
-      const configPath = path.join(configDir, "openclaw.json");
+      const configPath = path.join(configDir, "lcx.json");
       await fs.writeFile(
         configPath,
         JSON.stringify(

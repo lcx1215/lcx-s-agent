@@ -2,6 +2,17 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import {
+  createLcxIdentityWriterPathContract,
+  moveLcxIdentityPathWithReceipt,
+  rollbackLcxIdentityPathMove,
+  rollbackLcxIdentityWriter,
+  writeLcxIdentityWriterRawWithReceipt,
+  LcxIdentityWriterContractError,
+  type LcxIdentityPathMoveReceipt,
+  type LcxIdentityWriteReceipt,
+  type LcxIdentityMigrationPlan,
+} from "lcx-agent/plugin-sdk";
 import { getMatrixRuntime } from "../../runtime.js";
 import type { MatrixStoragePaths } from "./types.js";
 
@@ -44,21 +55,19 @@ function resolveLegacyStoragePaths(env: NodeJS.ProcessEnv = process.env): {
   };
 }
 
-export function resolveMatrixStoragePaths(params: {
+function resolveMatrixStoragePathsInStateDir(params: {
+  stateDir: string;
   homeserver: string;
   userId: string;
   accessToken: string;
   accountId?: string | null;
-  env?: NodeJS.ProcessEnv;
 }): MatrixStoragePaths {
-  const env = params.env ?? process.env;
-  const stateDir = getMatrixRuntime().state.resolveStateDir(env, os.homedir);
   const accountKey = sanitizePathSegment(params.accountId ?? DEFAULT_ACCOUNT_KEY);
   const userKey = sanitizePathSegment(params.userId);
   const serverKey = resolveHomeserverKey(params.homeserver);
   const tokenHash = hashAccessToken(params.accessToken);
   const rootDir = path.join(
-    stateDir,
+    params.stateDir,
     "matrix",
     "accounts",
     accountKey,
@@ -73,6 +82,176 @@ export function resolveMatrixStoragePaths(params: {
     accountKey,
     tokenHash,
   };
+}
+
+export function resolveMatrixStoragePaths(params: {
+  homeserver: string;
+  userId: string;
+  accessToken: string;
+  accountId?: string | null;
+  env?: NodeJS.ProcessEnv;
+}): MatrixStoragePaths {
+  const env = params.env ?? process.env;
+  const stateDir = getMatrixRuntime().state.resolveStateDir(env, os.homedir);
+  return resolveMatrixStoragePathsInStateDir({ ...params, stateDir });
+}
+
+export function resolveMatrixStoragePathsForIdentityMigration(params: {
+  homeserver: string;
+  userId: string;
+  accessToken: string;
+  accountId?: string | null;
+  migrationPlan: LcxIdentityMigrationPlan;
+}): MatrixStoragePaths {
+  if (params.migrationPlan.mode === "explicit-config-override") {
+    throw new Error("Matrix storage migration requires a state-root authority");
+  }
+  return resolveMatrixStoragePathsInStateDir({
+    ...params,
+    stateDir: params.migrationPlan.writeStateDir,
+  });
+}
+
+export type LcxIdentityMatrixStorageMigrationReceipt = Readonly<{
+  storage?: LcxIdentityPathMoveReceipt;
+  crypto?: LcxIdentityPathMoveReceipt;
+}>;
+
+function resolveIdentityLegacyStoragePaths(plan: LcxIdentityMigrationPlan): {
+  storagePath: string;
+  cryptoPath: string;
+} | null {
+  const candidates = plan.readStateDirs.map((stateDir) => ({
+    storagePath: path.join(stateDir, "matrix", "bot-storage.json"),
+    cryptoPath: path.join(stateDir, "matrix", "crypto"),
+  }));
+  const existing = candidates.filter(
+    (candidate) => fs.existsSync(candidate.storagePath) || fs.existsSync(candidate.cryptoPath),
+  );
+  if (existing.length > 1) {
+    throw new LcxIdentityWriterContractError(
+      `Matrix storage migration found split legacy roots: ${existing.map((candidate) => path.dirname(candidate.storagePath)).join(" and ")}`,
+      "LCX_IDENTITY_SPLIT_STATE",
+    );
+  }
+  return existing[0] ?? null;
+}
+
+function createMatrixStoragePathContract(params: {
+  migrationPlan: LcxIdentityMigrationPlan;
+  sourcePath: string;
+  destinationPath: string;
+}): ReturnType<typeof createLcxIdentityWriterPathContract> {
+  return createLcxIdentityWriterPathContract({
+    writer: "matrix-storage",
+    migrationPlan: params.migrationPlan,
+    readPath: params.sourcePath,
+    writePath: params.destinationPath,
+    auditPath: path.join(
+      params.migrationPlan.writeStateDir,
+      "logs",
+      "identity-migration-audit.jsonl",
+    ),
+  });
+}
+
+export async function migrateMatrixStorageForIdentityMigration(params: {
+  storagePaths: MatrixStoragePaths;
+  migrationPlan: LcxIdentityMigrationPlan;
+}): Promise<LcxIdentityMatrixStorageMigrationReceipt | null> {
+  const legacy = resolveIdentityLegacyStoragePaths(params.migrationPlan);
+  if (!legacy) {
+    return null;
+  }
+  const hasCanonicalStorage = fs.existsSync(params.storagePaths.storagePath);
+  const hasCanonicalCrypto = fs.existsSync(params.storagePaths.cryptoPath);
+  if (hasCanonicalStorage || hasCanonicalCrypto) {
+    throw new LcxIdentityWriterContractError(
+      "Matrix storage migration found canonical and legacy state together",
+      "LCX_IDENTITY_SPLIT_STATE",
+    );
+  }
+
+  let storage: LcxIdentityPathMoveReceipt | undefined;
+  let cryptoStorage: LcxIdentityPathMoveReceipt | undefined;
+  try {
+    if (fs.existsSync(legacy.storagePath)) {
+      storage = await moveLcxIdentityPathWithReceipt(
+        createMatrixStoragePathContract({
+          migrationPlan: params.migrationPlan,
+          sourcePath: legacy.storagePath,
+          destinationPath: params.storagePaths.storagePath,
+        }),
+      );
+    }
+    if (fs.existsSync(legacy.cryptoPath)) {
+      cryptoStorage = await moveLcxIdentityPathWithReceipt(
+        createMatrixStoragePathContract({
+          migrationPlan: params.migrationPlan,
+          sourcePath: legacy.cryptoPath,
+          destinationPath: params.storagePaths.cryptoPath,
+        }),
+      );
+    }
+  } catch (error) {
+    if (cryptoStorage) {
+      await rollbackLcxIdentityPathMove(cryptoStorage);
+    }
+    if (storage) {
+      await rollbackLcxIdentityPathMove(storage);
+    }
+    throw error;
+  }
+  return Object.freeze({ storage, crypto: cryptoStorage });
+}
+
+export async function rollbackMatrixStorageIdentityMigration(
+  receipt: LcxIdentityMatrixStorageMigrationReceipt,
+): Promise<void> {
+  if (receipt.crypto) {
+    await rollbackLcxIdentityPathMove(receipt.crypto);
+  }
+  if (receipt.storage) {
+    await rollbackLcxIdentityPathMove(receipt.storage);
+  }
+}
+
+function buildStorageMetaPayload(params: {
+  storagePaths: MatrixStoragePaths;
+  homeserver: string;
+  userId: string;
+  accountId?: string | null;
+}) {
+  return {
+    homeserver: params.homeserver,
+    userId: params.userId,
+    accountId: params.accountId ?? DEFAULT_ACCOUNT_KEY,
+    accessTokenHash: params.storagePaths.tokenHash,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+export async function writeStorageMetaForIdentityMigration(params: {
+  storagePaths: MatrixStoragePaths;
+  migrationPlan: LcxIdentityMigrationPlan;
+  homeserver: string;
+  userId: string;
+  accountId?: string | null;
+}): Promise<LcxIdentityWriteReceipt> {
+  return await writeLcxIdentityWriterRawWithReceipt(
+    createMatrixStoragePathContract({
+      migrationPlan: params.migrationPlan,
+      sourcePath: params.storagePaths.metaPath,
+      destinationPath: params.storagePaths.metaPath,
+    }),
+    `${JSON.stringify(buildStorageMetaPayload(params), null, 2)}\n`,
+  );
+}
+
+export async function rollbackStorageMetaIdentityMigration(
+  receipt: LcxIdentityWriteReceipt,
+): Promise<void> {
+  await rollbackLcxIdentityWriter(receipt);
 }
 
 export function maybeMigrateLegacyStorage(params: {
@@ -116,13 +295,7 @@ export function writeStorageMeta(params: {
   accountId?: string | null;
 }): void {
   try {
-    const payload = {
-      homeserver: params.homeserver,
-      userId: params.userId,
-      accountId: params.accountId ?? DEFAULT_ACCOUNT_KEY,
-      accessTokenHash: params.storagePaths.tokenHash,
-      createdAt: new Date().toISOString(),
-    };
+    const payload = buildStorageMetaPayload(params);
     fs.mkdirSync(params.storagePaths.rootDir, { recursive: true });
     fs.writeFileSync(params.storagePaths.metaPath, JSON.stringify(payload, null, 2), "utf-8");
   } catch {

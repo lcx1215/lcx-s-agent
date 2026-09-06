@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 type PackageJson = {
   name?: string;
   version?: string;
+  dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
 };
 
@@ -89,6 +90,32 @@ export function syncPluginVersions(rootDir = resolve(".")) {
     pkg.version = targetVersion;
     writeFileSync(packagePath, `${JSON.stringify(pkg, null, 2)}\n`);
     updated.push(pkg.name);
+  }
+
+  const compatibilityPackagePath = join(rootDir, "packages", "openclaw", "package.json");
+  if (existsSync(compatibilityPackagePath)) {
+    const compatibilityPackage = JSON.parse(
+      readFileSync(compatibilityPackagePath, "utf8"),
+    ) as PackageJson;
+    if (compatibilityPackage.name === "openclaw") {
+      const dependencyVersion = compatibilityPackage.dependencies?.["lcx-agent"];
+      const versionChanged = compatibilityPackage.version !== targetVersion;
+      const dependencyChanged = dependencyVersion !== targetVersion;
+      if (versionChanged || dependencyChanged) {
+        compatibilityPackage.version = targetVersion;
+        compatibilityPackage.dependencies = {
+          ...compatibilityPackage.dependencies,
+          "lcx-agent": targetVersion,
+        };
+        writeFileSync(
+          compatibilityPackagePath,
+          `${JSON.stringify(compatibilityPackage, null, 2)}\n`,
+        );
+        updated.push(compatibilityPackage.name);
+      } else {
+        skipped.push(compatibilityPackage.name);
+      }
+    }
   }
 
   return {
