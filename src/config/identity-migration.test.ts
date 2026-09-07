@@ -148,7 +148,14 @@ describe("LCX identity migration writer contract", () => {
       await expect(
         writeLcxIdentityMigrationCompletionMarker({
           migrationPlan: migrationPlan(root),
-          requiredTargets: [],
+          requiredTargets: [
+            createLcxIdentityWriterPathContract({
+              writer: "config",
+              migrationPlan: migrationPlan(root),
+              readPath: path.join(root, ".openclaw", "openclaw.json"),
+              writePath: path.join(root, ".lcx", "lcx.json"),
+            }),
+          ].map(createLcxIdentityMigrationTarget),
           writerReceipts: [],
         }),
       ).rejects.toMatchObject({ code: "LCX_IDENTITY_COMPLETION_TARGETS_INCOMPLETE" });

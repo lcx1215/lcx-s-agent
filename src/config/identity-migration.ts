@@ -424,9 +424,9 @@ export async function writeLcxIdentityMigrationCompletionMarker(params: {
       "LCX_IDENTITY_COMPLETION_TARGET",
     );
   }
-  if (params.requiredTargets.length === 0) {
+  if (params.requiredTargets.length < LCX_IDENTITY_WRITER_NAMES.length) {
     throw new LcxIdentityWriterContractError(
-      "Identity migration completion requires a concrete target manifest",
+      `Identity migration completion requires the full target manifest (${LCX_IDENTITY_WRITER_NAMES.length} writer families)`,
       "LCX_IDENTITY_COMPLETION_TARGETS_INCOMPLETE",
     );
   }

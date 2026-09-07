@@ -59,16 +59,33 @@ const FINANCE_REQUEST_PATTERN =
 const CURRENT_DATA_PATTERN =
   /当前|最新|今天|今日|现在|截至|实时|股价|价格|市值|收益率|行情|current|latest|today|now|as of|price|market cap|yield/iu;
 const DIRECT_TRADE_ACTION_PATTERN =
-  /(?:\b(?:you\s+should|i\s+(?:recommend|would)|recommend(?:ed)?|consider|please)\b[^.!?\n]{0,60}\b(?:buy|sell|add|reduce|go long|go short)\b|\b(?:buy|sell|add|reduce|go long|go short)\b\s+(?:now|today|shares?|position|[A-Z]{1,6}\b)|(?:建议|应该|推荐|考虑|立即|现在)[^\n。！？]{0,30}(?:买入|卖出|加仓|减仓|做多|做空|增持|减持)|(?:买入|卖出|加仓|减仓|做多|做空|增持|减持)[^\n。！？]{0,12}(?:股票|仓位|标的|[A-Z]{1,6}\b))/iu;
+  /(?:^|[.!?\n:]\s*)(?:buy|sell|add|reduce|go long|go short)\b[^.!?\n]{0,120}(?:[.!?\n]|$)|\b(?:you\s+should|i\s+(?:recommend|would)|recommend(?:ed)?|consider|please)\b[^.!?\n]{0,60}\b(?:buy|sell|add|reduce|go long|go short)\b|(?:建议|应该|推荐|考虑|立即|现在)[^\n。！？]{0,30}(?:买入|卖出|加仓|减仓|做多|做空|增持|减持)|(?:买入|卖出|加仓|减仓|做多|做空|增持|减持)[^\n。！？]{0,12}(?:股票|仓位|标的|[A-Z]{1,6}\b)/imu;
 
 function extractDataNumbers(text: string): string[] {
-  return (text.match(/[$€£¥]?\s*\d[\d,]*(?:\.\d+)?%?/g) ?? []).map((value) =>
-    value.replace(/\s+/g, ""),
-  );
+  return (
+    text.match(
+      /(?:[$€£¥]\s*)?\d[\d,]*(?:\.\d+)?(?:\s*%|\s*(?:USD|EUR|GBP|CNY|JPY|美元|欧元|英镑|人民币|日元|元))?/giu,
+    ) ?? []
+  ).map((value) => value.replace(/\s+/g, ""));
 }
 
 function normalizedNumber(value: string): string {
-  return value.replace(/[$€£¥,%\s]/g, "").replace(/,/g, "");
+  const compact = value.replace(/\s+/g, "").replace(/,/g, "").toLowerCase();
+  const number = compact.match(/\d+(?:\.\d+)?/)?.[0] ?? compact;
+  const unit = compact.includes("%")
+    ? "percent"
+    : /(?:\$|usd|美元)/u.test(compact)
+      ? "usd"
+      : /(?:€|eur|欧元)/u.test(compact)
+        ? "eur"
+        : /(?:£|gbp|英镑)/u.test(compact)
+          ? "gbp"
+          : /(?:¥|cny|人民币|元)/u.test(compact)
+            ? "cny"
+            : /(?:jpy|日元)/u.test(compact)
+              ? "jpy"
+              : "unitless";
+  return `${number}|${unit}`;
 }
 
 function hasEvidenceSourceAndTimestamp(evidence: QualityHarnessEvidence): boolean {
@@ -101,20 +118,18 @@ function validateFinanceAnswerSafety(
         .flatMap((claim) => claim.evidenceIds)
         .map((id) => evidenceById.get(id))
         .filter((entry): entry is QualityHarnessEvidence => entry !== undefined);
-      const citedNumbers = new Set(
-        citedEvidence.flatMap((entry) => extractDataNumbers(entry.text).map(normalizedNumber)),
-      );
-      const unsupportedNumbers = answerNumbers.filter(
-        (number) => !citedNumbers.has(normalizedNumber(number)),
-      );
+      const unsupportedNumbers = answerNumbers.filter((number) => {
+        const normalized = normalizedNumber(number);
+        return !citedEvidence.some(
+          (entry) =>
+            extractDataNumbers(entry.text).some(
+              (value) => normalizedNumber(value) === normalized,
+            ) && hasEvidenceSourceAndTimestamp(entry),
+        );
+      });
       if (unsupportedNumbers.length > 0) {
         problems.push(
-          `final finance answer contains current-data numbers without matching cited evidence: ${unsupportedNumbers.join(", ")}`,
-        );
-      }
-      if (!citedEvidence.some(hasEvidenceSourceAndTimestamp)) {
-        problems.push(
-          "current finance numbers require cited evidence with both a source and timestamp",
+          `final finance answer contains current-data numbers without matching cited evidence with the same unit and timestamp: ${unsupportedNumbers.join(", ")}`,
         );
       }
     }
@@ -351,7 +366,7 @@ export function qualityAttemptStatus(params: {
   if (params.verification.status === "blocked") {
     return "verification-blocked";
   }
-  return "quality-passed";
+  return params.verification.status === "not-requested" ? "verification-blocked" : "quality-passed";
 }
 
 export function qualityFeedback(params: {

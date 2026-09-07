@@ -257,7 +257,18 @@ export async function writePairingStateForIdentityMigration<TPending, TPaired>(p
     return Object.freeze({ pending: pendingReceipt, paired: pairedReceipt });
   } catch (error) {
     if (pendingReceipt) {
-      await rollbackLcxIdentityWriter(pendingReceipt).catch(() => undefined);
+      try {
+        await rollbackLcxIdentityWriter(pendingReceipt);
+      } catch (rollbackError) {
+        // AggregateError's third constructor option preserves the original write error;
+        // keep both errors in the aggregate so callers can recover the partial mutation.
+        // oxlint-disable-next-line preserve-caught-error
+        throw new AggregateError(
+          [error, rollbackError],
+          "Pairing state write failed and pending-state rollback also failed",
+          { cause: error },
+        );
+      }
     }
     throw error;
   }

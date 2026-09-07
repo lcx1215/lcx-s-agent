@@ -279,10 +279,10 @@ export function isLcxIdentityMigrationComplete(
       marker.completedAt.length > 0 &&
       marker.inventory === "lcx-identity-writer-inventory-v1" &&
       Array.isArray(marker.targetKeys) &&
-      // The v1 inventory covers every registered writer family. Keep this
+      // The v1 inventory covers the 31 registered writer families. Keep this
       // lower bound here so a hand-written marker cannot activate the root
       // with a single caller-selected target.
-      marker.targetKeys.length >= 29 &&
+      marker.targetKeys.length >= 31 &&
       marker.targetKeys.every(
         (targetKey) => typeof targetKey === "string" && targetKey.length > 0,
       ) &&

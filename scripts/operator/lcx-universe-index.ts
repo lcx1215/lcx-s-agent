@@ -699,15 +699,15 @@ function staleLatestSnapshot(latest: Record<string, unknown> | undefined, maxAge
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const nowMs = Date.now();
-  const [trackedInventory, rgFilesRaw, gitStatusLines] = await Promise.all([
+  const [trackedInventory, rgFilesRaw, gitStatusInventory] = await Promise.all([
     execLinesWithStatus("git", ["ls-files"]),
     execLines("rg", ["--files", "--hidden", "-g", "!.git", "-g", "!node_modules"]),
-    execLines("git", ["status", "--short", "--branch"], repoRoot, false),
+    execLinesWithStatus("git", ["status", "--short", "--branch"], repoRoot, false),
   ]);
   const trackedFiles = trackedInventory.lines;
   const rgFiles = rgFilesRaw.length > 0 ? rgFilesRaw : trackedFiles;
   const repoComponentFiles = [...new Set([...trackedFiles, ...rgFiles])].toSorted();
-  const gitStatus = parseGitStatus(gitStatusLines);
+  const gitStatus = parseGitStatus(gitStatusInventory.lines);
   const [
     changeImpact,
     workspaceState,
@@ -828,6 +828,7 @@ async function main() {
   const result = {
     ok:
       trackedInventory.ok &&
+      gitStatusInventory.ok &&
       changeImpact.ok &&
       unmatchedChangedFiles.length === 0 &&
       governanceCoverage.status === "complete",
@@ -860,6 +861,9 @@ async function main() {
       trackedInventory: trackedInventory.ok
         ? { ok: true }
         : { ok: false, error: trackedInventory.error },
+      gitStatusInventory: gitStatusInventory.ok
+        ? { ok: true }
+        : { ok: false, error: gitStatusInventory.error },
       visibleFileCount: rgFiles.length,
       trackedAndVisibleFileCount: repoComponentFiles.length,
       dirtyFileCount: gitStatus.changedFiles.length,
@@ -892,18 +896,20 @@ async function main() {
     },
     nextSafeCommands: !trackedInventory.ok
       ? ["repair Git access, verify git ls-files succeeds, then rerun universe index"]
-      : unmatchedChangedFiles.length > 0
-        ? [
-            "extend scripts/operator/lcx-change-impact-plan.ts for unmatched files, then rerun universe index",
-          ]
-        : reviewRequiredComponents > 0
+      : !gitStatusInventory.ok
+        ? ["repair Git access, verify git status succeeds, then rerun universe index"]
+        : unmatchedChangedFiles.length > 0
           ? [
-              "add an explicit governance component rule for every review-required repo component, then rerun universe index",
+              "extend scripts/operator/lcx-change-impact-plan.ts for unmatched files, then rerun universe index",
             ]
-          : [
-              "node --import tsx scripts/operator/lcx-governance-autopilot.ts --json",
-              "node --import tsx scripts/operator/lcx-context-recovery-exam.ts --json",
-            ],
+          : reviewRequiredComponents > 0
+            ? [
+                "add an explicit governance component rule for every review-required repo component, then rerun universe index",
+              ]
+            : [
+                "node --import tsx scripts/operator/lcx-governance-autopilot.ts --json",
+                "node --import tsx scripts/operator/lcx-context-recovery-exam.ts --json",
+              ],
     note: "Inventory and governance coverage only: this owner finds files, classifies every repo-visible component, records artifacts, coverage gaps, and cleanup candidates; it never deletes, migrates live runtime, changes provider config, or touches protected memory.",
     liveTouched: false,
     providerConfigTouched: false,

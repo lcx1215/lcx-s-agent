@@ -305,7 +305,7 @@ async function cleanupAcceptedChildSession(params: {
   spawn: SpawnAcpResult;
   trajectory: AppendOnlyCodingTrajectory;
   now: () => string;
-  phase: "timeout-cleanup" | "wait-cleanup";
+  phase: "timeout-cleanup" | "wait-cleanup" | "scope-cleanup";
 }): Promise<"confirmed" | "failed"> {
   try {
     await params.deps.callGateway({
@@ -347,7 +347,11 @@ async function observeAcceptedRunExitWorkspace(params: {
   before: CodingHarnessWorkspaceSnapshot;
   trajectory: AppendOnlyCodingTrajectory;
   now: () => string;
-  phase: "wait-failure-postflight" | "timeout-postflight" | "verification-postflight";
+  phase:
+    | "wait-failure-postflight"
+    | "timeout-postflight"
+    | "verification-postflight"
+    | "scope-postflight";
 }): Promise<{ changedPaths: string[]; error?: string }> {
   let after: CodingHarnessWorkspaceSnapshot;
   try {
@@ -565,6 +569,49 @@ export async function runCodexCodingHarness(
     },
     deps.now(),
   );
+
+  if (spawn.workspaceScope !== "confined") {
+    trajectory.append(
+      "run/failed",
+      {
+        phase: "workspace-scope",
+        reason: "executor-workspace-scope-unproven",
+        workspaceScope: spawn.workspaceScope ?? "unobserved",
+      },
+      deps.now(),
+    );
+    const cleanup = await cleanupAcceptedChildSession({
+      deps,
+      spawn,
+      trajectory,
+      now: deps.now,
+      phase: "scope-cleanup",
+    });
+    const observation = await observeAcceptedRunExitWorkspace({
+      deps,
+      cwd,
+      before: workspace,
+      trajectory,
+      now: deps.now,
+      phase: "scope-postflight",
+    });
+    return buildReceipt({
+      trajectory,
+      status: "forbidden",
+      cwd,
+      task: input.task,
+      branch: workspace.branch,
+      spawn,
+      changedPaths: observation.changedPaths,
+      cleanup,
+      error: [
+        "coding harness requires a confined executor workspace proof before starting a coding run",
+        observation.error,
+      ]
+        .filter(Boolean)
+        .join("; "),
+    });
+  }
 
   let wait: { status?: string; error?: string };
   try {
@@ -884,17 +931,6 @@ export async function runCodexCodingHarness(
 
   const workspaceScope = spawn.workspaceScope ?? "unobserved";
   const workspaceScopeProven = workspaceScope === "confined";
-  if (!workspaceScopeProven) {
-    trajectory.append(
-      "run/failed",
-      {
-        phase: "workspace-scope",
-        reason: "executor-workspace-scope-unproven",
-        workspaceScope,
-      },
-      deps.now(),
-    );
-  }
   const verified =
     workspaceScopeProven && changedPaths.length > 0 && verification.status === "passed";
   trajectory.append(

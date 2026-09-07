@@ -12,6 +12,7 @@ import type { OpenClawConfig } from "../config/config.js";
 import { CONFIG_PATH, migrateLegacyConfig, readConfigFileSnapshot } from "../config/config.js";
 import { collectProviderDangerousNameMatchingScopes } from "../config/dangerous-name-matching.js";
 import { formatConfigIssueLines } from "../config/issue-format.js";
+import { resolveLcxIdentityMigrationPlan } from "../config/paths.js";
 import { applyPluginAutoEnable } from "../config/plugin-auto-enable.js";
 import { parseToolsBySenderTypedKey } from "../config/types.tools.js";
 import { OpenClawSchema } from "../config/zod-schema.js";
@@ -1738,8 +1739,15 @@ async function maybeMigrateLegacyConfig(): Promise<string[]> {
     return changes;
   }
 
-  const targetDir = path.join(home, ".openclaw");
-  const targetPath = path.join(targetDir, "openclaw.json");
+  const migrationPlan = resolveLcxIdentityMigrationPlan({
+    env: process.env,
+    homedir: () => home,
+  });
+  if (migrationPlan.mode !== "canonical-default") {
+    return changes;
+  }
+  const targetPath = migrationPlan.writeConfigPath;
+  const targetDir = path.dirname(targetPath);
   try {
     await fs.access(targetPath);
     return changes;

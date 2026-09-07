@@ -221,7 +221,7 @@ describe("quality harness", () => {
     const result = await runQualityHarness({
       request: financeRequest,
       maxAttempts: 1,
-      modelInvoker: demoInvoker({ answer: "Buy NVDA now at 500 dollars." }),
+      modelInvoker: demoInvoker({ answer: "Sell Microsoft." }),
       verify: async () => ({ status: "passed", summary: "should not run", details: [] }),
     });
 
@@ -229,6 +229,95 @@ describe("quality harness", () => {
     expect(
       result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
     ).toMatchObject({ passed: false });
+  });
+
+  it("does not equate a percentage with a currency amount", async () => {
+    const result = await runQualityHarness({
+      request: {
+        ...financeRequest,
+        evidence: [
+          {
+            id: "market",
+            text: "截至 2026-09-06，公开材料记录利润率为 10%。",
+            source: "market-feed-test",
+          },
+        ],
+      },
+      maxAttempts: 1,
+      modelInvoker: demoInvoker({ answer: "当前价格为 $10。" }),
+      verify: async () => ({ status: "passed", summary: "should not run", details: [] }),
+    });
+
+    expect(result.status).toBe("quality-failed");
+    expect(
+      result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
+    ).toMatchObject({ passed: false });
+  });
+
+  it("requires the evidence carrying each current number to have its own timestamp", async () => {
+    const result = await runQualityHarness({
+      request: {
+        ...financeRequest,
+        evidence: [
+          {
+            id: "market",
+            text: "NVDA 的价格为 480 美元。",
+            source: "market-feed-test",
+          },
+          {
+            id: "fresh",
+            text: "截至 2026-09-06，市场材料已更新。",
+            source: "market-feed-test",
+          },
+        ],
+      },
+      maxAttempts: 1,
+      modelInvoker: async (raw) => {
+        const current = raw as QualityHarnessModelRequest;
+        if (current.stage === "intake") {
+          return { kind: "plan", requirements: ["回答问题"], missingEvidence: [] };
+        }
+        if (current.stage === "draft" || current.stage === "format") {
+          return {
+            kind: "artifact",
+            artifact: {
+              answer: "NVDA 当前价格为 480 美元。",
+              claims: [
+                {
+                  id: "claim-1",
+                  text: "市场记录了 NVDA 价格。",
+                  status: "supported",
+                  evidenceIds: ["market", "fresh"],
+                },
+              ],
+            },
+          };
+        }
+        return passReview();
+      },
+      verify: async () => ({ status: "passed", summary: "should not run", details: [] }),
+    });
+
+    expect(result.status).toBe("quality-failed");
+    expect(
+      result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
+    ).toMatchObject({ passed: false });
+  });
+
+  it("blocks an invoked verifier that returns not-requested", async () => {
+    const result = await runQualityHarness({
+      request,
+      maxAttempts: 1,
+      modelInvoker: demoInvoker({}),
+      verify: async () => ({
+        status: "not-requested",
+        summary: "verifier declined to run",
+        details: [],
+      }),
+    });
+
+    expect(result.status).toBe("blocked");
+    expect(result.attempts[0]?.status).toBe("verification-blocked");
   });
 
   it("requires both a source and timestamp for current finance numbers", async () => {

@@ -260,7 +260,7 @@ describe("runCodexCodingHarness", () => {
     expect(result.trajectory.projection.status).toBe("completed-unverified");
   });
 
-  it("does not certify a host ACP run without a confined workspace proof", async () => {
+  it("refuses a host ACP run without a confined workspace proof", async () => {
     const result = await runCodexCodingHarness(
       { task: "edit code", cwd: "/tmp/codex-harness-fixture", verify: ["pnpm", "test"] },
       {
@@ -286,9 +286,10 @@ describe("runCodexCodingHarness", () => {
       },
     );
 
-    expect(result.status).toBe("completed-unverified");
+    expect(result.status).toBe("forbidden");
     expect(result.workspaceScope).toBe("host-unconfined");
-    expect(result.error).toMatch(/confined workspace proof/i);
+    expect(result.error).toMatch(/confined (?:executor )?workspace proof/i);
+    expect(result.cleanup).toBe("confirmed");
   });
 
   it("returns an identity-change receipt before attributing committed paths", async () => {

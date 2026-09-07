@@ -17,7 +17,7 @@ import {
   resolveStateDir,
 } from "./paths.js";
 
-const completeTargetKeys = Array.from({ length: 29 }, (_, index) => `target-${index}`);
+const completeTargetKeys = Array.from({ length: 31 }, (_, index) => `target-${index}`);
 
 describe("oauth paths", () => {
   it("prefers OPENCLAW_OAUTH_DIR over OPENCLAW_STATE_DIR", () => {
