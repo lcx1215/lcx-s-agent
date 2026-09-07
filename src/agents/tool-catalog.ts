@@ -201,6 +201,15 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     includeInOpenClawGroup: true,
   },
   {
+    id: "finance_market_collection_refresh",
+    label: "finance_market_collection_refresh",
+    description:
+      "Inspect or explicitly fetch US-market news, options, corporate actions, and official macro collections with provenance receipts",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
     id: "geospatial_source_refresh",
     label: "geospatial_source_refresh",
     description:

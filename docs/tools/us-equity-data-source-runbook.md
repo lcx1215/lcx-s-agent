@@ -39,9 +39,40 @@ environment values are already present at runtime:
 | `TWELVE_DATA_API_KEY`                         | Twelve Data quote   | quote, change, session range and volume                    |
 
 The existing optional variables remain supported for Alpha Vantage, CoinGecko,
-and CoinCap. Secrets are never accepted in the tool input schema and are not
-written into source URLs or receipts. A missing or partial credential is an
-unavailable adapter, not a fake success.
+and CoinCap. `FRED_API_KEY` enables the official FRED macro-series adapter;
+FRED requires a registered key for its JSON API. Secrets are never accepted in
+the tool input schema and are not written into source URLs or receipts. A
+missing or partial credential is an unavailable adapter, not a fake success.
+
+## Collection path
+
+Collection-shaped data does not fit a single `last_price` field, so it uses the
+same source/time/conflict discipline in a record-oriented receipt:
+
+| Collection      | Sources                                      | Coverage                                                                            |
+| --------------- | -------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `news`          | Massive; Finnhub cross-check when keyed      | article id, title/body metadata, publisher, tickers, sentiment fields when supplied |
+| `options_chain` | Massive when keyed                           | contract details, quote/trade, greeks, IV, open interest, underlying snapshot       |
+| `dividends`     | Massive when keyed                           | declaration, ex-dividend, record/pay dates, amount and frequency                    |
+| `splits`        | Massive when keyed                           | execution date, ratio and adjustment metadata                                       |
+| `macro_series`  | BLS, Treasury debt-to-penny, FRED when keyed | official time-series records with observation dates                                 |
+
+The built-in tool is `finance_market_collection_refresh`. The CLI counterpart
+is:
+
+```bash
+node --import tsx scripts/operator/us-market-collection-live-smoke.ts \
+  --live --collection macro_series --series-id CUSR0000SA0 --json
+node --import tsx scripts/operator/us-market-collection-live-smoke.ts \
+  --live --collection macro_series --series-id debt_to_penny --json
+node --import tsx scripts/operator/us-market-collection-live-smoke.ts \
+  --live --collection news --symbol AAPL --json
+```
+
+The first two commands work without credentials. The news/options/corporate
+action commands remain explicitly blocked until a permitted provider key is
+available; the receipt exposes that missing capability rather than substituting
+web search or invented records.
 
 ## Local verification
 

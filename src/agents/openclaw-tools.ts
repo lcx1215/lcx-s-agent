@@ -34,6 +34,7 @@ import { createFinanceLearningCapabilityAttachTool } from "./tools/finance-learn
 import { createFinanceLearningCapabilityInspectTool } from "./tools/finance-learning-capability-inspect-tool.js";
 import { createFinanceLearningPipelineOrchestratorTool } from "./tools/finance-learning-pipeline-orchestrator-tool.js";
 import { createFinanceLearningRetrievalReviewTool } from "./tools/finance-learning-retrieval-review-tool.js";
+import { createFinanceMarketCollectionRefreshTool } from "./tools/finance-market-collection-refresh-tool.js";
 import { createFinancePromotionBulkReviewTool } from "./tools/finance-promotion-bulk-review-tool.js";
 import { createFinancePromotionCandidatesTool } from "./tools/finance-promotion-candidates-tool.js";
 import { createFinancePromotionDecisionTool } from "./tools/finance-promotion-decision-tool.js";
@@ -214,6 +215,7 @@ export function createOpenClawTools(options?: {
       workspaceDir,
       ...resolveFinanceRealtimeSourceRegistryOptionsFromEnv(),
     }),
+    createFinanceMarketCollectionRefreshTool({ workspaceDir }),
     createGeospatialSourceRefreshTool({
       workspaceDir,
     }),

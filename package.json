@@ -165,6 +165,8 @@
     "lcx:ontology": "node --import tsx scripts/operator/lcx-ontology.ts --json",
     "lcx:projection-reader-audit": "node --import tsx scripts/operator/lcx-projection-reader-audit.ts --json",
     "lcx:rpc": "node scripts/run-node.mjs agent --mode rpc --json",
+    "lcx:us-market:collection": "node --import tsx scripts/operator/us-market-collection-live-smoke.ts",
+    "lcx:us-market:quote": "node --import tsx scripts/operator/finance-data-gateway-live-smoke.ts",
     "lint": "oxlint --type-aware",
     "lint:agent:ingress-owner": "node scripts/check-ingress-agent-owner-context.mjs",
     "lint:all": "pnpm lint && pnpm lint:swift",
