@@ -122,6 +122,7 @@ const PATH_RULES: PathRule[] = [
       /^scripts\/operator\/lcx-ontology\.ts$/u,
       /^scripts\/operator\/lcx-projection-reader-audit\.ts$/u,
       /^src\/shared\/lcx-ontology\.ts$/u,
+      /^src\/shared\/lcx-run-receipt(?:\.test)?\.ts$/u,
       /^scripts\/generate-lcx-agent-progress-wave\.mjs$/u,
       /^package\.json$/u,
       /^test\/lcx-commercial-acceptance-harness\.test\.ts$/u,

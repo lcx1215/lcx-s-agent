@@ -384,6 +384,7 @@ export function buildOwnerControlMap(input: OwnerControlInput) {
     kind: "lcx-owner-control-map",
     boundary: "local_owner_control_map_only",
     checkedAt: input.checkedAt,
+    runReceipt: input.governance.runReceipt,
     summary: {
       totalItems: items.length,
       unmanagedCount: ownerInvisible.length,

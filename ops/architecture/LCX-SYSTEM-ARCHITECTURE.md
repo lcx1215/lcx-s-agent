@@ -24,14 +24,14 @@ writer, or delivery authority.
 
 ## The six architectural planes
 
-| Plane                   | Responsibility                                                                                  | Canonical owner or surface                                                                                                                                                                       | Must not become                                                                                       |
-| ----------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
-| Semantics               | Entity, relation, module, workflow, evidence, learning, delivery, and boundary vocabulary       | `src/shared/lcx-ontology.ts`; audit `scripts/operator/lcx-ontology.ts`                                                                                                                           | A second registry or ad-hoc cross-layer vocabulary                                                    |
-| Control                 | Intent classification, routing, orchestration, safety gates, recovery, and visible-flow control | TypeScript under `src/agents/`, `src/auto-reply/`, and the named operator entrypoints                                                                                                            | A model-specific workflow or a Python workflow authority                                              |
-| Waterflow               | Start/end nodes, required modules, filters, receipts, and bounded feedback edges                | `scripts/operator/lcx-flow-graph.ts`                                                                                                                                                             | A loose list of features or an unguarded feedback loop                                                |
-| Capability              | Finance research, data gateway, modules, source registry, tools, and reviewable domain work     | Existing capability owners under `src/agents/` and their operator/test surfaces                                                                                                                  | A direct trading executor, unsourced current-data answer, or unreviewed claim                         |
-| Evidence and governance | Projection, receipts, audits, recovery, impact planning, and problem routing                    | `scripts/operator/lcx-mind-model.ts`, `lcx-head-tail-consistency.ts`, `lcx-problem-cluster-radar.ts`, `lcx-context-recovery-exam.ts`, `lcx-universe-index.ts`, and `lcx-governance-autopilot.ts` | A second truth owner, a completion slogan, or a promotion shortcut                                    |
-| Delivery                | Connect a proven answer path to an external communication adapter and collect visible proof     | `scripts/operator/lcx-external-channel-binding.ts`, `lcx-external-channel-status.ts`, and adapter code                                                                                           | A second brain, provider authority, or `user-visible-observed` without real inbound/outbound evidence |
+| Plane                   | Responsibility                                                                                  | Canonical owner or surface                                                                                                                                                                                                        | Must not become                                                                                       |
+| ----------------------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Semantics               | Entity, relation, module, workflow, evidence, learning, delivery, and boundary vocabulary       | `src/shared/lcx-ontology.ts`; audit `scripts/operator/lcx-ontology.ts`                                                                                                                                                            | A second registry or ad-hoc cross-layer vocabulary                                                    |
+| Control                 | Intent classification, routing, orchestration, safety gates, recovery, and visible-flow control | TypeScript under `src/agents/`, `src/auto-reply/`, and the named operator entrypoints                                                                                                                                             | A model-specific workflow or a Python workflow authority                                              |
+| Waterflow               | Start/end nodes, required modules, filters, receipts, and bounded feedback edges                | `scripts/operator/lcx-flow-graph.ts`                                                                                                                                                                                              | A loose list of features or an unguarded feedback loop                                                |
+| Capability              | Finance research, data gateway, modules, source registry, tools, and reviewable domain work     | Existing capability owners under `src/agents/` and their operator/test surfaces                                                                                                                                                   | A direct trading executor, unsourced current-data answer, or unreviewed claim                         |
+| Evidence and governance | Projection, receipts, audits, recovery, impact planning, and problem routing                    | `src/shared/lcx-run-receipt.ts`; `scripts/operator/lcx-mind-model.ts`, `lcx-head-tail-consistency.ts`, `lcx-problem-cluster-radar.ts`, `lcx-context-recovery-exam.ts`, `lcx-universe-index.ts`, and `lcx-governance-autopilot.ts` | A second truth owner, a completion slogan, or a promotion shortcut                                    |
+| Delivery                | Connect a proven answer path to an external communication adapter and collect visible proof     | `scripts/operator/lcx-external-channel-binding.ts`, `lcx-external-channel-status.ts`, and adapter code                                                                                                                            | A second brain, provider authority, or `user-visible-observed` without real inbound/outbound evidence |
 
 The six planes are architectural responsibilities, not maturity levels. “High,
 middle, and low” quality or model labels belong inside a capability or an
@@ -256,6 +256,28 @@ must have all four surfaces:
 3. **Proof surface** — a test, receipt, eval, or audit owned by that lane.
 4. **Boundary flag** — an explicit statement of what the lane cannot prove or
    mutate.
+
+### Shared execution receipt
+
+Owner-specific receipts remain authoritative for their domain, but every
+governance child run can expose the same join envelope from
+`src/shared/lcx-run-receipt.ts`:
+
+```text
+root run
+  -> parentRunId
+  -> child runId + owner + phase + status
+  -> boundary { externalSender, training, providerConfig, protectedMemory }
+  -> evidence[] + nextAction
+```
+
+The envelope is a correlation and handoff contract, not a new workflow owner.
+`passed` means the owner execution produced a valid result; `blocked` means the
+owner ran and reported a domain gate; `failed` means the owner could not
+produce a parseable result. A blocked commercial/readiness gate therefore does
+not masquerade as an infrastructure execution failure. Challenger evals,
+training receipts, promotion, external binding, and user-visible observation
+remain separate proof gates.
 
 The relevant proof is the owner command, not this map. Use the smallest route
 that answers the question:

@@ -1,7 +1,12 @@
-import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import {
+  boundaryFromFlags,
+  buildLcxRunReceipt,
+  createLcxRunId,
+  type LcxRunReceipt,
+} from "../../src/shared/lcx-run-receipt.ts";
 import {
   DEFAULT_WORKSPACE_DIR,
   LOCAL_FAILURE_TRACE_JSONL_PATH,
@@ -24,6 +29,7 @@ export type FailureTraceOwnerCommand = {
   exitCode: number;
   parsed: boolean;
   ok?: boolean;
+  runReceipt?: LcxRunReceipt;
 };
 
 export type FailureTraceInput = {
@@ -85,19 +91,6 @@ function activeCounts(activePidSummary: FailureTraceActivePidSummary) {
     teacher: activePidSummary.teacher.length,
     quota: activePidSummary.quota.length,
   };
-}
-
-function sanitizeIdPart(value: string): string {
-  return value
-    .replace(/[^a-zA-Z0-9_]+/gu, "-")
-    .replace(/^-|-$/gu, "")
-    .toLowerCase();
-}
-
-function buildRunId(checkedAt: string, source: string, key: string): string {
-  const timePart = checkedAt.replace(/[^0-9TZ]+/gu, "-").replace(/[:-]/gu, "-");
-  const hash = crypto.createHash("sha256").update(key).digest("hex").slice(0, 8);
-  return `${timePart}-${sanitizeIdPart(source)}-${hash}`;
 }
 
 function inferFirstFailedGate(params: {
@@ -211,12 +204,41 @@ export function buildLocalFailureTraceReceipt(input: FailureTraceInput) {
     input.writtenArtifacts.join(","),
   ].join("|");
 
+  const runId = createLcxRunId({ checkedAt: input.checkedAt, owner: input.source, key });
+  const nextAction =
+    stringifySafe(input.summary.fastestSafeNextAction) ?? "review_first_failed_gate";
+  const runReceipt = buildLcxRunReceipt({
+    runId,
+    owner: input.source,
+    phase: "handoff",
+    status: result,
+    checkedAt: input.checkedAt,
+    boundary: boundaryFromFlags({
+      scope: "local_failure_trace_index_only",
+      externalSenderTouched: input.boundaryFlags.liveTouched,
+      providerConfigTouched: input.boundaryFlags.providerConfigTouched,
+      protectedMemoryTouched: input.boundaryFlags.protectedMemoryTouched,
+    }),
+    evidence: input.ownerCommands.map((owner) => ({
+      id: `owner:${owner.id}`,
+      kind: "proof" as const,
+      status: owner.parsed ? "present" : "missing",
+      owner: input.source,
+      locator: owner.command,
+      detail: owner.parsed
+        ? `exitCode=${owner.exitCode}; ok=${String(owner.ok ?? "unknown")}`
+        : "owner output was not parsed",
+    })),
+    nextAction,
+  });
+
   return {
     ok: true,
     kind: "lcx-local-failure-trace",
     boundary: "local_failure_trace_index_only",
     checkedAt: input.checkedAt,
-    runId: buildRunId(input.checkedAt, input.source, key),
+    runId,
+    runReceipt,
     source: input.source,
     result,
     firstFailedGate,
@@ -224,8 +246,7 @@ export function buildLocalFailureTraceReceipt(input: FailureTraceInput) {
     trainingMaterialReason: canBecomeTrainingMaterial
       ? "blocked_or_failed_owner_output_can_seed_targeted_eval_or_sop"
       : "passed_run_has_no_failure_material",
-    nextSafeAction:
-      stringifySafe(input.summary.fastestSafeNextAction) ?? "review_first_failed_gate",
+    nextSafeAction: nextAction,
     repo: input.repo,
     processSummary: {
       activeHeavy: input.activePidSummary.eval.length > 0 || input.activePidSummary.mlx.length > 0,
@@ -238,6 +259,7 @@ export function buildLocalFailureTraceReceipt(input: FailureTraceInput) {
       ok: owner.ok,
       exitCode: owner.exitCode,
       command: owner.command,
+      ...(owner.runReceipt ? { runReceipt: owner.runReceipt } : {}),
     })),
     blockers: {
       structuralOwnerFailures,
