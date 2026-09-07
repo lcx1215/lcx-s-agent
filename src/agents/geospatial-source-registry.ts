@@ -1,4 +1,5 @@
 import { resolveFinanceFetch, type FetchImpl } from "./finance-live-market-source.js";
+import { createNwsCurrentWeatherAdapter } from "./geospatial-official-source-adapters.js";
 
 export const GEOSPATIAL_SOURCE_KINDS = ["geocode", "weather", "earthquake"] as const;
 export type GeospatialSourceKind = (typeof GEOSPATIAL_SOURCE_KINDS)[number];
@@ -53,6 +54,7 @@ export type GeospatialSourceAttempt = Readonly<{
   providerName: string;
   providerRole: GeospatialSourceRole;
   status: "succeeded" | "failed";
+  latencyMs: number;
   error?: string;
 }>;
 
@@ -529,6 +531,7 @@ export function createGeospatialSourceRegistry(
       minIntervalMs: options.nominatimMinIntervalMs,
     }),
     createOpenMeteoWeatherAdapter({ fetchImpl: options.fetchImpl }),
+    createNwsCurrentWeatherAdapter({ fetchImpl: options.fetchImpl }),
     createUsGSEarthquakeAdapter({ fetchImpl: options.fetchImpl }),
   ];
 }
@@ -619,6 +622,7 @@ export async function runGeospatialRefresh(options: {
   const sourceAttempts: GeospatialSourceAttempt[] = [];
   const observations: GeospatialSourceObservation[] = [];
   for (const adapter of selected) {
+    const startedAt = Date.now();
     try {
       observations.push(await collectWithTimeout(adapter, request, timeoutMs, options.signal));
       sourceAttempts.push({
@@ -626,6 +630,7 @@ export async function runGeospatialRefresh(options: {
         providerName: adapter.providerName,
         providerRole: adapter.providerRole,
         status: "succeeded",
+        latencyMs: Math.max(0, Date.now() - startedAt),
       });
     } catch (error) {
       sourceAttempts.push({
@@ -633,6 +638,7 @@ export async function runGeospatialRefresh(options: {
         providerName: adapter.providerName,
         providerRole: adapter.providerRole,
         status: "failed",
+        latencyMs: Math.max(0, Date.now() - startedAt),
         error: errorText(error),
       });
     }

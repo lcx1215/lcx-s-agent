@@ -177,12 +177,15 @@ describe("finance realtime source registry", () => {
       }),
     });
 
-    expect(registry).toHaveLength(9);
+    expect(registry).toHaveLength(12);
     expect(registry.map((adapter) => adapter.id)).toEqual([
       "yahoo_public_chart",
       "binance_public_crypto_ticker",
       "kraken_public_crypto_ticker",
       "coinbase_exchange_public_crypto_ticker",
+      "bybit_public_crypto_ticker",
+      "okx_public_crypto_ticker",
+      "bitstamp_public_crypto_ticker",
       "coincap_public_crypto_asset",
       "nasdaq_exchange_quote",
       "stooq_public_daily",
@@ -208,6 +211,9 @@ describe("finance realtime source registry", () => {
       "binance_public_crypto_ticker",
       "kraken_public_crypto_ticker",
       "coinbase_exchange_public_crypto_ticker",
+      "bybit_public_crypto_ticker",
+      "okx_public_crypto_ticker",
+      "bitstamp_public_crypto_ticker",
       "coincap_public_crypto_asset",
     ]);
   });

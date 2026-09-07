@@ -7,6 +7,11 @@ import {
   createStooqDelayedMarketAdapter,
 } from "./finance-additional-source-adapters.js";
 import {
+  createBitstampCryptoTickerAdapter,
+  createBybitCryptoTickerAdapter,
+  createOkxCryptoTickerAdapter,
+} from "./finance-crypto-fast-source-adapters.js";
+import {
   createBinanceCryptoTickerAdapter,
   createCoinbaseCryptoTickerAdapter,
   createCoinCapCryptoAssetAdapter,
@@ -55,6 +60,7 @@ export type FinanceRealtimeSourceAttempt = Readonly<{
   providerRole: FinanceRealtimeSourceAdapter["providerRole"];
   priority: number;
   status: "succeeded" | "failed";
+  latencyMs: number;
   error?: string;
 }>;
 
@@ -240,6 +246,7 @@ export async function runFinanceRealtimeRefresh(options: {
   const observations: FinanceDataGatewayObservationInput[] = [];
 
   for (const adapter of selected) {
+    const startedAt = Date.now();
     try {
       const observation = await collectWithTimeout(adapter, request, timeoutMs, options.signal);
       observations.push(observation);
@@ -249,6 +256,7 @@ export async function runFinanceRealtimeRefresh(options: {
         providerRole: adapter.providerRole,
         priority: adapter.priority,
         status: "succeeded",
+        latencyMs: Math.max(0, Date.now() - startedAt),
       });
     } catch (error) {
       sourceAttempts.push({
@@ -257,6 +265,7 @@ export async function runFinanceRealtimeRefresh(options: {
         providerRole: adapter.providerRole,
         priority: adapter.priority,
         status: "failed",
+        latencyMs: Math.max(0, Date.now() - startedAt),
         error: errorText(error),
       });
     }
@@ -312,6 +321,7 @@ export async function runFinanceRealtimeRefresh(options: {
           providerRole: "primary_market_data",
           priority: Number.MAX_SAFE_INTEGER,
           status: "failed",
+          latencyMs: 0,
           error: errorText(error),
         },
       ],
@@ -368,6 +378,9 @@ export function createFinanceRealtimeSourceRegistry(
     createBinanceCryptoTickerAdapter({ fetchImpl: options.fetchImpl }),
     createKrakenCryptoTickerAdapter({ fetchImpl: options.fetchImpl }),
     createCoinbaseCryptoTickerAdapter({ fetchImpl: options.fetchImpl }),
+    createBybitCryptoTickerAdapter({ fetchImpl: options.fetchImpl }),
+    createOkxCryptoTickerAdapter({ fetchImpl: options.fetchImpl }),
+    createBitstampCryptoTickerAdapter({ fetchImpl: options.fetchImpl }),
     createCoinCapCryptoAssetAdapter({
       apiKey: options.coinCapApiKey,
       fetchImpl: options.fetchImpl,

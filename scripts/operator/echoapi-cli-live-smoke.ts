@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 
-import { runEchoApiCliCase } from "../../src/agents/echoapi-cli-runner.ts";
+import {
+  ensureCanonicalEchoApiCli,
+  runEchoApiCliCase,
+} from "../../src/agents/echoapi-cli-runner.ts";
 
 function readFlag(args: string[], flag: string): string | undefined {
   const index = args.indexOf(flag);
@@ -10,10 +13,16 @@ function readFlag(args: string[], flag: string): string | undefined {
 async function main() {
   const args = process.argv.slice(2);
   const ciUrl = readFlag(args, "--ci-url");
+  if (args.includes("--ensure")) {
+    const installation = await ensureCanonicalEchoApiCli();
+    process.stdout.write(`${JSON.stringify(installation, null, 2)}\n`);
+    return 0;
+  }
   if (!args.includes("--live")) {
     process.stdout.write(
       [
         "echoapi-cli-live-smoke: dry mode (no EchoAPI case executed).",
+        "Run pnpm lcx:echoapi:ensure to install or reuse the exact CLI in the active LCX state root.",
         "Pass --live --ci-url <EchoAPI CI case URL> to execute one real case iteration.",
         "The runner sends no webhook, does not inherit secret environment variables, and does not grant finance or trading authority.",
       ].join("\n"),

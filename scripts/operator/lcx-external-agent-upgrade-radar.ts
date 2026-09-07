@@ -879,12 +879,12 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "finance external source adapter, realtime source registry, and adapter contract tests",
     ownerEntrypoint: "src/agents/echoapi-cli-runner.ts",
     ownerUseTrigger:
-      "When a future task supplies an EchoAPI CI case URL for a public read-only API, run one real case through the EchoAPI CLI runner and route the status/report receipt into the existing source owners; use the collection/export surface for reviewed adapter contracts.",
+      "When a task supplies an EchoAPI CI case URL for a public read-only API, ensure the exact CLI is present under the canonical state-root runtime, run one real case through the LCX CLI runner, and route the status/report receipt into the existing source owners; use the collection/export surface for reviewed adapter contracts.",
     autocueTerms: ["EchoAPI", "API collection import", "SSE API test", "response assertion"],
     distilledPattern:
       "separate real public-case execution and response testing from the financial data authority; retain URL host/path, status, timing/report hash, schema evidence, and explicit no-webhook/no-secret-env policy",
     firstLocalProbe:
-      "run one public read-only EchoAPI CI case with one iteration, JSON/CLI report, no webhook, minimal environment, and then map its actual status into a reviewed local source receipt",
+      "ensure echoapi-cli@3.0.0 in the canonical state root, run one public read-only case with one iteration, JSON/CLI report, no webhook, minimal environment, and then map its actual status into a reviewed local source receipt",
     requiredReceipts: [
       "finance-external-source-adapter",
       "finance-realtime-source-registry",
