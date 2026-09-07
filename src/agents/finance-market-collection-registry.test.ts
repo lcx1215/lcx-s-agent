@@ -4,11 +4,16 @@ import {
   createBlsMacroSeriesCollectionAdapter,
   createFinnhubNewsCollectionAdapter,
   createFredMacroSeriesCollectionAdapter,
+  createFmpFreeBasicEodCollectionAdapter,
+  createFmpFreeBasicProfileCollectionAdapter,
+  createGdeltPublicNewsCollectionAdapter,
+  createSecFilingsCollectionAdapter,
   createMassiveDividendsCollectionAdapter,
   createMassiveNewsCollectionAdapter,
   createMassiveOptionsChainCollectionAdapter,
   createMassiveSplitsCollectionAdapter,
   createTreasuryDebtCollectionAdapter,
+  createTreasuryAverageInterestRatesCollectionAdapter,
   createFinanceMarketCollectionRegistry,
   inspectFinanceMarketCollectionRegistry,
   resolveFinanceMarketCollectionRegistryOptionsFromEnv,
@@ -100,6 +105,36 @@ function fakeFetch(url: string): ReturnType<FetchImpl> {
       text: async () => JSON.stringify([{ id: 2, headline: "cross-check", datetime: 1788780000 }]),
     });
   }
+  if (url.includes("api.gdeltproject.org/api/v2/doc/doc")) {
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          articles: [
+            {
+              url: "https://example.test/aapl-news",
+              title: "AAPL public news",
+              seendate: "20260907T130000Z",
+            },
+          ],
+        }),
+    });
+  }
+  if (url.includes("financialmodelingprep.com/api/v3/profile/AAPL")) {
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify([{ symbol: "AAPL", companyName: "Apple Inc." }]),
+    });
+  }
+  if (url.includes("financialmodelingprep.com/api/v3/historical-price-full/AAPL")) {
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ historical: [{ date: "2026-09-04", close: 250 }] }),
+    });
+  }
   if (url.includes("api.bls.gov")) {
     return Promise.resolve({
       ok: true,
@@ -116,11 +151,58 @@ function fakeFetch(url: string): ReturnType<FetchImpl> {
     });
   }
   if (url.includes("fiscaldata.treasury.gov")) {
+    if (url.includes("avg_interest_rates")) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({
+            data: [
+              {
+                record_date: "2026-09-04",
+                security_desc: "Treasury Bills",
+                avg_interest_rate_amt: "3.788",
+              },
+            ],
+          }),
+      });
+    }
     return Promise.resolve({
       ok: true,
       status: 200,
       text: async () =>
         JSON.stringify({ data: [{ record_date: "2026-09-04", tot_pub_debt_out_amt: "100" }] }),
+    });
+  }
+  if (url.includes("www.sec.gov/files/company_tickers.json")) {
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ 0: { cik_str: 320193, ticker: "AAPL" } }),
+    });
+  }
+  if (url.includes("data.sec.gov/submissions/CIK0000320193.json")) {
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          name: "Apple Inc.",
+          filings: {
+            recent: {
+              accessionNumber: ["0000320193-26-000001"],
+              filingDate: ["2026-08-01"],
+              reportDate: ["2026-06-30"],
+              acceptanceDateTime: ["2026-08-01T16:00:00.000Z"],
+              form: ["10-Q"],
+              primaryDocument: ["aapl-20260630.htm"],
+              primaryDocDescription: ["Quarterly report"],
+              act: ["34"],
+              fileNumber: ["001-36743"],
+              filmNumber: ["261234567"],
+            },
+          },
+        }),
     });
   }
   return Promise.resolve({
@@ -177,6 +259,43 @@ describe("finance market collection registry", () => {
     expect(fred[0]?.sourceUrlOrArtifact).not.toContain("fred-secret");
   });
 
+  it("collects official Treasury average rates and SEC filing metadata", async () => {
+    const rates = await createTreasuryAverageInterestRatesCollectionAdapter({
+      fetchImpl: fakeFetch,
+    }).collect(
+      { ...MACRO_REQUEST, instrument: "avg_interest_rates", seriesId: "avg_interest_rates" },
+      new AbortController().signal,
+    );
+    const filings = await createSecFilingsCollectionAdapter({ fetchImpl: fakeFetch }).collect(
+      { ...EQUITY_REQUEST, collection: "sec_filings" },
+      new AbortController().signal,
+    );
+    expect(rates[0]?.providerName).toBe("treasury-fiscal-average-interest-rates");
+    expect(rates[0]?.sourceFamily).toBe("official_macro_data");
+    expect(filings[0]?.providerName).toBe("sec-edgar-filings");
+    expect(filings[0]?.sourceFamily).toBe("official_filing");
+    expect(filings[0]?.sourceUrlOrArtifact).toContain("sec.gov/Archives/edgar/data/320193");
+  });
+
+  it("collects public GDELT news and only the free FMP Basic surfaces", async () => {
+    const gdelt = await createGdeltPublicNewsCollectionAdapter({ fetchImpl: fakeFetch }).collect(
+      EQUITY_REQUEST,
+      new AbortController().signal,
+    );
+    const profile = await createFmpFreeBasicProfileCollectionAdapter({
+      apiKey: "fmp-secret",
+      fetchImpl: fakeFetch,
+    }).collect({ ...EQUITY_REQUEST, collection: "company_profile" }, new AbortController().signal);
+    const eod = await createFmpFreeBasicEodCollectionAdapter({
+      apiKey: "fmp-secret",
+      fetchImpl: fakeFetch,
+    }).collect({ ...EQUITY_REQUEST, collection: "eod_history" }, new AbortController().signal);
+    expect(gdelt[0]?.sourceTimestamp).toBe("2026-09-07T13:00:00.000Z");
+    expect(profile[0]?.delayStatus).toBe("manual_or_unknown");
+    expect(eod[0]?.delayStatus).toBe("end_of_day");
+    expect(eod[0]?.sourceUrlOrArtifact).not.toContain("fmp-secret");
+  });
+
   it("keeps collection failures visible instead of declaring a partial run ready", async () => {
     const receipt = await runFinanceMarketCollectionRefresh({
       request: EQUITY_REQUEST,
@@ -207,6 +326,7 @@ describe("finance market collection registry", () => {
       MASSIVE_API_KEY: "massive-secret",
       FINNHUB_API_KEY: "finnhub-secret",
       FRED_API_KEY: "fred-secret",
+      FMP_API_KEY: "fmp-secret",
     });
     const inspection = inspectFinanceMarketCollectionRegistry(
       EQUITY_REQUEST,
@@ -215,13 +335,21 @@ describe("finance market collection registry", () => {
     expect(inspection.candidateAdapters.map((adapter) => adapter.id)).toEqual([
       "massive_us_equity_news",
       "finnhub_us_equity_news",
+      "gdelt_public_news",
     ]);
     expect(JSON.stringify(inspection)).not.toContain("secret");
+    const fmpInspection = inspectFinanceMarketCollectionRegistry(
+      { ...EQUITY_REQUEST, collection: "company_profile" },
+      createFinanceMarketCollectionRegistry(options),
+    );
+    expect(fmpInspection.candidateAdapters.map((adapter) => adapter.id)).toEqual([
+      "fmp_free_basic_company_profile",
+    ]);
   });
 
   it("returns a blocked receipt when no optional collection provider is configured", async () => {
     const receipt = await runFinanceMarketCollectionRefresh({
-      request: EQUITY_REQUEST,
+      request: { ...EQUITY_REQUEST, collection: "options_chain" },
       adapters: createFinanceMarketCollectionRegistry(),
     });
     expect(receipt.status).toBe("blocked");
@@ -236,6 +364,16 @@ describe("finance market collection registry", () => {
     );
     expect(inspection.candidateAdapters.map((adapter) => adapter.id)).toEqual([
       "treasury_fiscal_debt_to_penny",
+    ]);
+  });
+
+  it("routes Treasury average rates only to Treasury rather than BLS", () => {
+    const inspection = inspectFinanceMarketCollectionRegistry(
+      { ...MACRO_REQUEST, instrument: "avg_interest_rates", seriesId: "avg_interest_rates" },
+      createFinanceMarketCollectionRegistry(),
+    );
+    expect(inspection.candidateAdapters.map((adapter) => adapter.id)).toEqual([
+      "treasury_fiscal_average_interest_rates",
     ]);
   });
 });

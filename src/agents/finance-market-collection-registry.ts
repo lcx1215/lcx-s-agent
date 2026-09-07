@@ -3,7 +3,20 @@ import type {
   FinanceDataProviderRole,
   FinanceDataSourceFamily,
 } from "./finance-data-gateway.js";
+import {
+  createFmpFreeBasicEodCollectionAdapter,
+  createFmpFreeBasicProfileCollectionAdapter,
+  createGdeltPublicNewsCollectionAdapter,
+} from "./finance-free-market-collection-adapters.js";
 import { resolveFinanceFetch, type FetchImpl } from "./finance-live-market-source.js";
+
+export {
+  createFmpFreeBasicEodCollectionAdapter,
+  createFmpFreeBasicProfileCollectionAdapter,
+  createGdeltPublicNewsCollectionAdapter,
+} from "./finance-free-market-collection-adapters.js";
+
+const SEC_USER_AGENT = "LCX Agent research-only contact=local";
 
 export const FINANCE_MARKET_COLLECTION_SCHEMA_VERSION = "lcx_finance_market_collection_v1" as const;
 
@@ -13,6 +26,9 @@ export const FINANCE_MARKET_COLLECTION_KINDS = [
   "dividends",
   "splits",
   "macro_series",
+  "sec_filings",
+  "company_profile",
+  "eod_history",
 ] as const;
 export type FinanceMarketCollectionKind = (typeof FINANCE_MARKET_COLLECTION_KINDS)[number];
 
@@ -96,6 +112,7 @@ export type FinanceMarketCollectionRegistryOptions = Readonly<{
   massiveApiKey?: string;
   finnhubApiKey?: string;
   fredApiKey?: string;
+  fmpApiKey?: string;
   additionalAdapters?: readonly FinanceMarketCollectionAdapter[];
 }>;
 
@@ -553,7 +570,7 @@ export function createBlsMacroSeriesCollectionAdapter(
     supports: (request) =>
       isMacroSeries(request) &&
       Boolean(request.seriesId ?? request.instrument) &&
-      (request.seriesId ?? request.instrument) !== "debt_to_penny",
+      !["debt_to_penny", "avg_interest_rates"].includes(request.seriesId ?? request.instrument),
     collect: async (request) => {
       const seriesId = requiredText(request.seriesId ?? request.instrument, "BLS seriesId");
       const baseUrl = `https://api.bls.gov/publicAPI/v2/timeseries/data/${encodeURIComponent(seriesId)}`;
@@ -632,6 +649,194 @@ export function createTreasuryDebtCollectionAdapter(
           data: record,
         }),
       );
+    },
+  };
+}
+
+export function createTreasuryAverageInterestRatesCollectionAdapter(
+  options: {
+    fetchImpl?: FetchImpl;
+  } = {},
+): FinanceMarketCollectionAdapter {
+  return {
+    id: "treasury_fiscal_average_interest_rates",
+    providerName: "treasury-fiscal-average-interest-rates",
+    providerRole: "official_or_issuer_reference",
+    priority: 21,
+    supports: (request) =>
+      isMacroSeries(request) && (request.seriesId ?? request.instrument) === "avg_interest_rates",
+    collect: async (request) => {
+      const baseUrl =
+        "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v2/accounting/od/avg_interest_rates";
+      const params = { "page[size]": request.limit ?? 20, sort: "-record_date" };
+      const sourceUrlOrArtifact = safeMassiveUrl(baseUrl, params);
+      const payload = (await fetchJson(
+        resolveFinanceFetch(options.fetchImpl),
+        sourceUrlOrArtifact,
+      )) as {
+        data?: Array<Record<string, unknown>>;
+      };
+      const data = payload.data ?? [];
+      if (data.length === 0) {
+        throw new FinanceMarketCollectionAdapterError(
+          "Treasury avg_interest_rates returned no observations",
+        );
+      }
+      return data.slice(0, request.limit).map((record, index) =>
+        macroItem(request, {
+          itemId: `avg_interest_rates-${textValue(record.record_date) || index}-${textValue(record.security_desc) || "unknown"}`,
+          providerName: "treasury-fiscal-average-interest-rates",
+          providerRole: "official_or_issuer_reference",
+          sourceFamily: "official_macro_data",
+          sourceTimestamp: isoDate(record.record_date, "Treasury interest-rate record date"),
+          delayStatus: "official_lagged",
+          sourceUrlOrArtifact,
+          data: record,
+        }),
+      );
+    },
+  };
+}
+
+type SecRecentFilings = Readonly<{
+  accessionNumber?: unknown[];
+  filingDate?: unknown[];
+  reportDate?: unknown[];
+  acceptanceDateTime?: unknown[];
+  form?: unknown[];
+  primaryDocument?: unknown[];
+  primaryDocDescription?: unknown[];
+  act?: unknown[];
+  fileNumber?: unknown[];
+  filmNumber?: unknown[];
+}>;
+
+type SecSubmissionsPayload = Readonly<{
+  cik?: unknown;
+  name?: unknown;
+  tickers?: unknown[];
+  filings?: { recent?: SecRecentFilings };
+}>;
+
+type SecTickerRecord = Readonly<{
+  cik_str?: unknown;
+  ticker?: unknown;
+}>;
+
+async function resolveSecCikForFilings(instrument: string, fetchImpl: FetchImpl): Promise<string> {
+  const symbol = instrument.trim().toUpperCase();
+  if (/^\d{1,10}$/u.test(symbol)) {
+    return symbol.padStart(10, "0");
+  }
+  try {
+    const payload = (await fetchJson(fetchImpl, "https://www.sec.gov/files/company_tickers.json", {
+      "User-Agent": SEC_USER_AGENT,
+    })) as Record<string, SecTickerRecord>;
+    const match = Object.values(payload).find(
+      (record) => textValue(record.ticker).toUpperCase() === symbol,
+    );
+    const cik = match?.cik_str;
+    if (cik !== undefined && /^\d{1,10}$/u.test(textValue(cik))) {
+      return textValue(cik).padStart(10, "0");
+    }
+  } catch {
+    // The SEC www host can reject automated requests while the official EDGAR
+    // search index and data.sec.gov remain available. Fall through below.
+  }
+  const searchUrl = `https://efts.sec.gov/LATEST/search-index?q=${encodeURIComponent(symbol)}&forms=10-K&from=0&size=100`;
+  const searchPayload = (await fetchJson(fetchImpl, searchUrl, {
+    "User-Agent": SEC_USER_AGENT,
+  })) as {
+    hits?: { hits?: Array<{ _source?: { ciks?: unknown; display_names?: unknown } }> };
+  };
+  const marker = `(${symbol})`;
+  const hit = searchPayload.hits?.hits?.find((candidate) =>
+    (Array.isArray(candidate._source?.display_names) ? candidate._source.display_names : []).some(
+      (name) => typeof name === "string" && name.toUpperCase().includes(marker),
+    ),
+  );
+  const ciks = hit && Array.isArray(hit._source?.ciks) ? hit._source.ciks : [];
+  const cik = ciks.find(
+    (candidate): candidate is string =>
+      typeof candidate === "string" && /^\d{1,10}$/u.test(candidate),
+  );
+  if (!cik) {
+    throw new FinanceMarketCollectionAdapterError(
+      `SEC EDGAR search index has no CIK for ${symbol}`,
+    );
+  }
+  return cik.padStart(10, "0");
+}
+
+function filingArchiveUrl(cik: string, accessionNumber: string, primaryDocument: string): string {
+  const accessionPath = accessionNumber.replace(/-/gu, "");
+  return `https://www.sec.gov/Archives/edgar/data/${Number(cik)}/${accessionPath}/${encodeURIComponent(primaryDocument)}`;
+}
+
+export function createSecFilingsCollectionAdapter(
+  options: {
+    fetchImpl?: FetchImpl;
+  } = {},
+): FinanceMarketCollectionAdapter {
+  return {
+    id: "sec_edgar_filings",
+    providerName: "sec-edgar-filings",
+    providerRole: "official_or_issuer_reference",
+    priority: 12,
+    supports: (request) => isUsEquity(request.assetClass) && request.collection === "sec_filings",
+    collect: async (request) => {
+      const fetchImpl = resolveFinanceFetch(options.fetchImpl);
+      const cik = await resolveSecCikForFilings(request.instrument, fetchImpl);
+      const submissionsUrl = `https://data.sec.gov/submissions/CIK${cik}.json`;
+      const payload = (await fetchJson(fetchImpl, submissionsUrl, {
+        "User-Agent": SEC_USER_AGENT,
+      })) as SecSubmissionsPayload;
+      const recent = payload.filings?.recent;
+      if (!recent) {
+        throw new FinanceMarketCollectionAdapterError(
+          `SEC submissions has no recent filings for ${request.instrument.toUpperCase()}`,
+        );
+      }
+      const rowCount = Math.max(
+        recent.accessionNumber?.length ?? 0,
+        recent.filingDate?.length ?? 0,
+        recent.form?.length ?? 0,
+      );
+      const sourceUrlOrArtifact = submissionsUrl;
+      const limit = request.limit ?? 20;
+      return Array.from({ length: Math.min(rowCount, limit) }, (_, index) => {
+        const accessionNumber = textValue(recent.accessionNumber?.[index]);
+        const primaryDocument = textValue(recent.primaryDocument?.[index]);
+        const filingDate = textValue(recent.filingDate?.[index]);
+        const form = textValue(recent.form?.[index]);
+        const data = {
+          cik,
+          issuerName: textValue(payload.name),
+          form,
+          filingDate,
+          reportDate: textValue(recent.reportDate?.[index]),
+          acceptanceDateTime: textValue(recent.acceptanceDateTime?.[index]),
+          accessionNumber,
+          primaryDocument,
+          primaryDocDescription: textValue(recent.primaryDocDescription?.[index]),
+          act: textValue(recent.act?.[index]),
+          fileNumber: textValue(recent.fileNumber?.[index]),
+          filmNumber: textValue(recent.filmNumber?.[index]),
+        };
+        return buildItem(request, {
+          itemId: `${cik}-${accessionNumber || filingDate || index}`,
+          providerName: "sec-edgar-filings",
+          providerRole: "official_or_issuer_reference",
+          sourceFamily: "official_filing",
+          sourceTimestamp: isoDate(data.acceptanceDateTime || filingDate, "SEC filing date"),
+          delayStatus: "official_lagged",
+          sourceUrlOrArtifact:
+            accessionNumber && primaryDocument
+              ? filingArchiveUrl(cik, accessionNumber, primaryDocument)
+              : sourceUrlOrArtifact,
+          data,
+        });
+      });
     },
   };
 }
@@ -866,6 +1071,7 @@ export function resolveFinanceMarketCollectionRegistryOptionsFromEnv(
     massiveApiKey: env.MASSIVE_API_KEY?.trim() || undefined,
     finnhubApiKey: env.FINNHUB_API_KEY?.trim() || undefined,
     fredApiKey: env.FRED_API_KEY?.trim() || undefined,
+    fmpApiKey: env.FMP_API_KEY?.trim() || undefined,
   };
 }
 
@@ -873,8 +1079,11 @@ export function createFinanceMarketCollectionRegistry(
   options: FinanceMarketCollectionRegistryOptions = {},
 ): readonly FinanceMarketCollectionAdapter[] {
   const adapters: FinanceMarketCollectionAdapter[] = [
-    createBlsMacroSeriesCollectionAdapter(),
-    createTreasuryDebtCollectionAdapter(),
+    createBlsMacroSeriesCollectionAdapter({ fetchImpl: options.fetchImpl }),
+    createTreasuryDebtCollectionAdapter({ fetchImpl: options.fetchImpl }),
+    createTreasuryAverageInterestRatesCollectionAdapter({ fetchImpl: options.fetchImpl }),
+    createSecFilingsCollectionAdapter({ fetchImpl: options.fetchImpl }),
+    createGdeltPublicNewsCollectionAdapter({ fetchImpl: options.fetchImpl }),
   ];
   if (options.massiveApiKey?.trim()) {
     adapters.push(
@@ -908,6 +1117,18 @@ export function createFinanceMarketCollectionRegistry(
     adapters.push(
       createFredMacroSeriesCollectionAdapter({
         apiKey: options.fredApiKey,
+        fetchImpl: options.fetchImpl,
+      }),
+    );
+  }
+  if (options.fmpApiKey?.trim()) {
+    adapters.push(
+      createFmpFreeBasicProfileCollectionAdapter({
+        apiKey: options.fmpApiKey,
+        fetchImpl: options.fetchImpl,
+      }),
+      createFmpFreeBasicEodCollectionAdapter({
+        apiKey: options.fmpApiKey,
         fetchImpl: options.fetchImpl,
       }),
     );

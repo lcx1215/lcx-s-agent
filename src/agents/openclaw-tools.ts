@@ -57,6 +57,7 @@ import { createModuleLearningPipelineReviewTool } from "./tools/module-learning-
 import { createNodesTool } from "./tools/nodes-tool.js";
 import { createPdfTool } from "./tools/pdf-tool.js";
 import { createQuantMathTool } from "./tools/quant-math-tool.js";
+import { createResearchDataAutopilotTool } from "./tools/research-data-autopilot-tool.js";
 import { createReviewPanelTool } from "./tools/review-panel-tool.js";
 import { createReviewTierTool } from "./tools/review-tier-tool.js";
 import { createSessionStatusTool } from "./tools/session-status-tool.js";
@@ -216,6 +217,7 @@ export function createOpenClawTools(options?: {
       ...resolveFinanceRealtimeSourceRegistryOptionsFromEnv(),
     }),
     createFinanceMarketCollectionRefreshTool({ workspaceDir }),
+    createResearchDataAutopilotTool({ workspaceDir }),
     createGeospatialSourceRefreshTool({
       workspaceDir,
     }),

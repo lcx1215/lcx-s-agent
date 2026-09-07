@@ -1,9 +1,10 @@
 # US equity data source runbook
 
 This runbook is the durable entry point for the LCX US-market research data
-plane. It covers public price checks, official SEC fundamentals, and optional
-keyed market-data providers. It does not add order, account, wallet, or broker
-authority.
+plane. It covers public price checks, official SEC/macro references, public
+news discovery, and optional free-tier registered providers. It does not add
+order, account, wallet, or broker authority. The broader source matrix lives in
+[`free-finance-api-catalog.md`](./free-finance-api-catalog.md).
 
 ## Current source path
 
@@ -27,6 +28,8 @@ For a US common stock, use `assetClass=us_equity` (or `stock`, `equity`, or
 | Stooq daily            | independent cross-check   | end-of-day daily CSV when available                 | none       |
 | SEC EDGAR companyfacts | official/issuer reference | XBRL fundamentals and shares outstanding            | none       |
 | SEC EDGAR submissions  | official/issuer reference | filing date/form for configured issuer/ETF mappings | none       |
+| Treasury Fiscal Data   | official/issuer reference | debt-to-penny and average Treasury interest rates   | none       |
+| GDELT DOC              | independent cross-check   | public article discovery and publication metadata   | none       |
 
 The optional keyed path is enabled only when the corresponding process
 environment values are already present at runtime:
@@ -37,6 +40,7 @@ environment values are already present at runtime:
 | `ALPACA_API_KEY_ID` + `ALPACA_API_SECRET_KEY` | Alpaca latest quote | bid/ask/size and midpoint; `ALPACA_DATA_FEED` selects feed |
 | `FINNHUB_API_KEY`                             | Finnhub quote       | current/delayed quote, change, session high/low/open       |
 | `TWELVE_DATA_API_KEY`                         | Twelve Data quote   | quote, change, session range and volume                    |
+| `FMP_API_KEY`                                 | FMP Basic           | free-tier company profile and historical EOD only          |
 
 The existing optional variables remain supported for Alpha Vantage, CoinGecko,
 and CoinCap. `FRED_API_KEY` enables the official FRED macro-series adapter;
@@ -49,13 +53,16 @@ missing or partial credential is an unavailable adapter, not a fake success.
 Collection-shaped data does not fit a single `last_price` field, so it uses the
 same source/time/conflict discipline in a record-oriented receipt:
 
-| Collection      | Sources                                      | Coverage                                                                            |
-| --------------- | -------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `news`          | Massive; Finnhub cross-check when keyed      | article id, title/body metadata, publisher, tickers, sentiment fields when supplied |
-| `options_chain` | Massive when keyed                           | contract details, quote/trade, greeks, IV, open interest, underlying snapshot       |
-| `dividends`     | Massive when keyed                           | declaration, ex-dividend, record/pay dates, amount and frequency                    |
-| `splits`        | Massive when keyed                           | execution date, ratio and adjustment metadata                                       |
-| `macro_series`  | BLS, Treasury debt-to-penny, FRED when keyed | official time-series records with observation dates                                 |
+| Collection        | Sources                                              | Coverage                                                                            |
+| ----------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `news`            | GDELT public; Massive/Finnhub cross-check when keyed | article id, title/body metadata, publisher, tickers, sentiment fields when supplied |
+| `options_chain`   | Massive when keyed                                   | contract details, quote/trade, greeks, IV, open interest, underlying snapshot       |
+| `dividends`       | Massive when keyed                                   | declaration, ex-dividend, record/pay dates, amount and frequency                    |
+| `splits`          | Massive when keyed                                   | execution date, ratio and adjustment metadata                                       |
+| `macro_series`    | BLS, Treasury debt/average rates, FRED when keyed    | official time-series records with observation dates                                 |
+| `sec_filings`     | SEC EDGAR submissions                                | public filing form, filing/report dates, and primary document metadata              |
+| `company_profile` | FMP Basic when keyed                                 | free-tier reference/profile fields; timestamp is explicitly unknown                 |
+| `eod_history`     | FMP Basic when keyed                                 | historical end-of-day records with date and OHLCV fields                            |
 
 The built-in tool is `finance_market_collection_refresh`. The CLI counterpart
 is:
@@ -67,12 +74,33 @@ node --import tsx scripts/operator/us-market-collection-live-smoke.ts \
   --live --collection macro_series --series-id debt_to_penny --json
 node --import tsx scripts/operator/us-market-collection-live-smoke.ts \
   --live --collection news --symbol AAPL --json
+node --import tsx scripts/operator/us-market-collection-live-smoke.ts \
+  --live --collection sec_filings --symbol AAPL --json
+node --import tsx scripts/operator/us-market-collection-live-smoke.ts \
+  --live --collection eod_history --symbol AAPL --json
 ```
 
-The first two commands work without credentials. The news/options/corporate
-action commands remain explicitly blocked until a permitted provider key is
-available; the receipt exposes that missing capability rather than substituting
-web search or invented records.
+The macro, SEC, and public-news commands need no credentials. Options and
+corporate-action collections remain blocked until a permitted provider key is
+available. FMP profile/EOD collections become candidates only after
+`FMP_API_KEY` is supplied; the adapter does not claim that paid FMP endpoints
+are free.
+
+## Agent-owned routing
+
+The agent-facing entry point is `research_data_autopilot`. It accepts an intent
+such as `quote`, `crypto_quote`, `news`, `sec_filings`, `eod_history`,
+`macro_series`, `geocode`, `weather`, or `earthquake`, plus one target. It
+automatically loads every public adapter and every registered-key adapter
+available in the process environment, calls all supporting sources, and
+returns the canonical receipt. Provider URLs and `sourceIds` are intentionally
+not part of this entry point: source priority, fallback, cross-checking, and
+failure visibility stay inside the registries.
+
+The autopilot defaults to a read-only live fetch when the agent calls it. It
+still returns `blocked` or `needs_review` when evidence is absent or a source
+fails, and its boundary explicitly excludes trading, broker, wallet, order,
+message-sender, and protected-memory authority.
 
 ## Local verification
 

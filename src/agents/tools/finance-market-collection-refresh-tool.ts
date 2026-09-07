@@ -66,13 +66,14 @@ export function createFinanceMarketCollectionRefreshTool(options?: {
   massiveApiKey?: string;
   finnhubApiKey?: string;
   fredApiKey?: string;
+  fmpApiKey?: string;
 }): AnyAgentTool {
   const workspaceDir = resolveWorkspaceRoot(options?.workspaceDir);
   return {
     label: "Finance Market Collection Refresh",
     name: "finance_market_collection_refresh",
     description:
-      "Inspect or explicitly fetch structured US-market collections such as news, options chains, dividends, splits, and official macro series. Results retain source, timestamp, delay, raw record fields, and failed attempts; this tool has no trading or order authority.",
+      "Inspect or explicitly fetch structured US-market collections such as public news, options chains, dividends, splits, official macro series, SEC filings, company profiles, and free-tier EOD history. Results retain source, timestamp, delay, raw record fields, and failed attempts; this tool has no trading or order authority.",
     parameters: FinanceMarketCollectionRefreshSchema,
     execute: async (_toolCallId, args) => {
       const params = args as {
@@ -108,6 +109,7 @@ export function createFinanceMarketCollectionRefreshTool(options?: {
           massiveApiKey: options?.massiveApiKey ?? envRegistryOptions.massiveApiKey,
           finnhubApiKey: options?.finnhubApiKey ?? envRegistryOptions.finnhubApiKey,
           fredApiKey: options?.fredApiKey ?? envRegistryOptions.fredApiKey,
+          fmpApiKey: options?.fmpApiKey ?? envRegistryOptions.fmpApiKey,
         };
         const registry = createFinanceMarketCollectionRegistry(registryOptions);
         const selectedSourceIds = params.sourceIds?.map((sourceId) => sourceId.trim());

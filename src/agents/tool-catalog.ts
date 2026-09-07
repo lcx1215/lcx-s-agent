@@ -204,7 +204,16 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     id: "finance_market_collection_refresh",
     label: "finance_market_collection_refresh",
     description:
-      "Inspect or explicitly fetch US-market news, options, corporate actions, and official macro collections with provenance receipts",
+      "Inspect or explicitly fetch public US-market news, options, corporate actions, official macro, SEC filings, company profiles, and free-tier EOD collections with provenance receipts",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    id: "research_data_autopilot",
+    label: "research_data_autopilot",
+    description:
+      "Autonomously route read-only research requests across all canonical finance, crypto, macro, SEC, news, geospatial, weather, and seismic adapters with automatic source selection and provenance",
     sectionId: "memory",
     profiles: ["coding"],
     includeInOpenClawGroup: true,
