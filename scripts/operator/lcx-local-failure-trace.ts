@@ -6,6 +6,7 @@ import {
   buildLcxRunReceipt,
   createLcxRunId,
   type LcxRunReceipt,
+  type LcxRunSnapshot,
 } from "../../src/shared/lcx-run-receipt.ts";
 import {
   DEFAULT_WORKSPACE_DIR,
@@ -34,6 +35,7 @@ export type FailureTraceOwnerCommand = {
 
 export type FailureTraceInput = {
   checkedAt: string;
+  snapshot?: LcxRunSnapshot;
   workspaceDir: string;
   repo: {
     cwd: string;
@@ -213,6 +215,7 @@ export function buildLocalFailureTraceReceipt(input: FailureTraceInput) {
     phase: "handoff",
     status: result,
     checkedAt: input.checkedAt,
+    snapshot: input.snapshot,
     boundary: boundaryFromFlags({
       scope: "local_failure_trace_index_only",
       externalSenderTouched: input.boundaryFlags.liveTouched,
@@ -237,6 +240,7 @@ export function buildLocalFailureTraceReceipt(input: FailureTraceInput) {
     kind: "lcx-local-failure-trace",
     boundary: "local_failure_trace_index_only",
     checkedAt: input.checkedAt,
+    snapshot: runReceipt.snapshot,
     runId,
     runReceipt,
     source: input.source,

@@ -33,6 +33,11 @@ export const GOVERNANCE_AUTOPILOT_LATEST_PATH = path.join(
   "state",
   "lcx-governance-autopilot-latest.json",
 );
+export const CONTROL_ROOM_LATEST_PATH = path.join(
+  DEFAULT_WORKSPACE_DIR,
+  "state",
+  "lcx-control-room-latest.json",
+);
 export const EVOLUTION_PROMOTION_DIGEST_LATEST_PATH = path.join(
   DEFAULT_WORKSPACE_DIR,
   "state",

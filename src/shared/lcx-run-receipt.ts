@@ -12,7 +12,7 @@ import type {
  * Existing owners may keep their legacy top-level fields. The receipt is the
  * stable cross-owner join surface for automation, handoffs, and human views.
  */
-export const LCX_RUN_RECEIPT_CONTRACT_VERSION = "lcx_run_receipt_v1" as const;
+export const LCX_RUN_RECEIPT_CONTRACT_VERSION = "lcx_run_receipt_v2" as const;
 
 export const LCX_RUN_PHASES = ["observe", "repair", "verify", "handoff"] as const;
 export type LcxRunPhase = (typeof LCX_RUN_PHASES)[number];
@@ -26,6 +26,19 @@ export type LcxRunBoundary = {
   training: LcxOntologyBoundaryStatus;
   providerConfig: LcxOntologyBoundaryStatus;
   protectedMemory: LcxOntologyBoundaryStatus;
+};
+
+/**
+ * The one observation context shared by all receipts emitted in one control
+ * room cycle. Source evidence may be older, but every derived owner result
+ * must point back to this same snapshot before it can be shown as current.
+ */
+export type LcxRunSnapshot = {
+  snapshotId: string;
+  observedAt: string;
+  sourceCommit: string;
+  sourceBranch: string;
+  authorityOwner: string;
 };
 
 export type LcxRunEvidence = {
@@ -45,12 +58,17 @@ export type LcxRunReceipt = {
   phase: LcxRunPhase;
   status: LcxRunStatus;
   checkedAt: string;
+  snapshot: LcxRunSnapshot;
   boundary: LcxRunBoundary;
   evidence: LcxRunEvidence[];
   nextAction: string;
 };
 
-export type BuildLcxRunReceiptParams = Omit<LcxRunReceipt, "contractVersion" | "evidence"> & {
+export type BuildLcxRunReceiptParams = Omit<
+  LcxRunReceipt,
+  "contractVersion" | "evidence" | "snapshot"
+> & {
+  snapshot?: LcxRunSnapshot;
   evidence?: readonly LcxRunEvidence[];
 };
 
@@ -64,6 +82,47 @@ function nonEmpty(value: string, field: string): string {
 
 function isTimestamp(value: string): boolean {
   return value.trim().length > 0 && Number.isFinite(Date.parse(value));
+}
+
+function normalizeSnapshot(snapshot: LcxRunSnapshot): LcxRunSnapshot {
+  if (!isTimestamp(snapshot.observedAt)) {
+    throw new Error("run receipt snapshot observedAt must be a valid timestamp");
+  }
+  return {
+    snapshotId: nonEmpty(snapshot.snapshotId, "snapshot.snapshotId"),
+    observedAt: snapshot.observedAt.trim(),
+    sourceCommit: nonEmpty(snapshot.sourceCommit, "snapshot.sourceCommit"),
+    sourceBranch: nonEmpty(snapshot.sourceBranch, "snapshot.sourceBranch"),
+    authorityOwner: nonEmpty(snapshot.authorityOwner, "snapshot.authorityOwner"),
+  };
+}
+
+export function createLcxRunSnapshot(params: {
+  observedAt: string;
+  sourceCommit: string;
+  sourceBranch: string;
+  authorityOwner: string;
+  snapshotId?: string;
+}): LcxRunSnapshot {
+  if (!isTimestamp(params.observedAt)) {
+    throw new Error("run snapshot observedAt must be a valid timestamp");
+  }
+  const snapshotId =
+    params.snapshotId?.trim() ||
+    crypto
+      .createHash("sha256")
+      .update(
+        `${params.observedAt}|${params.sourceCommit}|${params.sourceBranch}|${params.authorityOwner}`,
+      )
+      .digest("hex")
+      .slice(0, 16);
+  return normalizeSnapshot({
+    snapshotId,
+    observedAt: params.observedAt,
+    sourceCommit: params.sourceCommit,
+    sourceBranch: params.sourceBranch,
+    authorityOwner: params.authorityOwner,
+  });
 }
 
 function normalizeBoundary(boundary: LcxRunBoundary): LcxRunBoundary {
@@ -97,6 +156,18 @@ export function buildLcxRunReceipt(params: BuildLcxRunReceiptParams): LcxRunRece
   if (!isTimestamp(params.checkedAt)) {
     throw new Error("run receipt checkedAt must be a valid timestamp");
   }
+  const snapshot = normalizeSnapshot(
+    params.snapshot ??
+      createLcxRunSnapshot({
+        observedAt: params.checkedAt,
+        sourceCommit: "unknown",
+        sourceBranch: "unknown",
+        authorityOwner: params.owner,
+      }),
+  );
+  if (snapshot.observedAt !== params.checkedAt.trim()) {
+    throw new Error("run receipt checkedAt must match snapshot.observedAt");
+  }
   const evidence = (params.evidence ?? []).map((item) => ({
     id: nonEmpty(item.id, "evidence.id"),
     kind: item.kind,
@@ -116,6 +187,7 @@ export function buildLcxRunReceipt(params: BuildLcxRunReceiptParams): LcxRunRece
     phase: params.phase,
     status: params.status,
     checkedAt: params.checkedAt.trim(),
+    snapshot,
     boundary: normalizeBoundary(params.boundary),
     evidence,
     nextAction: nonEmpty(params.nextAction, "nextAction"),

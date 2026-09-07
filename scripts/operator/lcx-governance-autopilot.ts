@@ -11,8 +11,10 @@ import {
   boundaryFromFlags,
   buildLcxRunReceipt,
   createLcxRunId,
+  createLcxRunSnapshot,
   type LcxRunPhase,
   type LcxRunReceipt,
+  type LcxRunSnapshot,
 } from "../../src/shared/lcx-run-receipt.ts";
 import {
   buildLocalFailureTraceReceipt,
@@ -22,6 +24,7 @@ import {
 } from "./lcx-local-failure-trace.ts";
 import {
   CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
+  CONTROL_ROOM_LATEST_PATH,
   DEFAULT_WORKSPACE_DIR,
   EVOLUTION_PROMOTION_DIGEST_LATEST_PATH,
   GOVERNANCE_AUTOPILOT_LATEST_PATH,
@@ -33,6 +36,7 @@ import {
   OWNER_BRIEF_LATEST_MARKDOWN_PATH,
   OWNER_CONTROL_MAP_LATEST_JSON_PATH,
   OWNER_CONTROL_MAP_LATEST_MARKDOWN_PATH,
+  REAL_COST_LEDGER_LATEST_JSON_PATH,
   MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH,
   SELF_REPAIR_HANDS_JSONL_PATH,
   SELF_REPAIR_HANDS_LATEST_PATH,
@@ -761,10 +765,11 @@ function buildOwnerRunReceipt(params: {
   ok?: boolean;
   payload?: Record<string, unknown>;
   parentRunId?: string;
+  snapshot: LcxRunSnapshot;
   phase: LcxRunPhase;
   error?: string;
 }): LcxRunReceipt {
-  const checkedAt = new Date().toISOString();
+  const checkedAt = params.snapshot.observedAt;
   return buildLcxRunReceipt({
     runId: createLcxRunId({
       checkedAt,
@@ -776,6 +781,7 @@ function buildOwnerRunReceipt(params: {
     phase: params.phase,
     status: ownerRunStatus(params),
     checkedAt,
+    snapshot: params.snapshot,
     boundary: ownerBoundary(params.payload),
     evidence: ownerEvidence({
       id: params.command.id,
@@ -790,7 +796,7 @@ function buildOwnerRunReceipt(params: {
 
 async function runOwner(
   command: OwnerCommand,
-  params: { parentRunId?: string; phase?: LcxRunPhase } = {},
+  params: { parentRunId?: string; phase?: LcxRunPhase; snapshot: LcxRunSnapshot },
 ): Promise<OwnerRun> {
   const args = ["--import", "tsx", command.script, ...(command.args ?? [])];
   const renderedCommand = `node ${args.join(" ")}`;
@@ -819,6 +825,7 @@ async function runOwner(
         ok,
         payload,
         parentRunId: params.parentRunId,
+        snapshot: params.snapshot,
         phase: params.phase ?? "observe",
       }),
     };
@@ -849,6 +856,7 @@ async function runOwner(
           ok,
           payload,
           parentRunId: params.parentRunId,
+          snapshot: params.snapshot,
           phase: params.phase ?? "observe",
           error: details.stderr?.trim() || details.message,
         }),
@@ -870,6 +878,7 @@ async function runOwner(
           parsed: false,
           exitCode,
           parentRunId: params.parentRunId,
+          snapshot: params.snapshot,
           phase: params.phase ?? "observe",
           error: [details.message, details.stderr].filter(Boolean).join("\n"),
         }),
@@ -882,6 +891,7 @@ async function runOwner(
 async function runSelfRepairAutoWrite(
   signal: SelfRepairAutoSignal,
   parentRunId: string,
+  snapshot: LcxRunSnapshot,
 ): Promise<OwnerRun> {
   return runOwner(
     {
@@ -903,7 +913,7 @@ async function runSelfRepairAutoWrite(
       ],
       required: true,
     },
-    { parentRunId, phase: "repair" },
+    { parentRunId, phase: "repair", snapshot },
   );
 }
 
@@ -1061,6 +1071,38 @@ async function gitStatusShortBranch() {
     .trim()
     .split("\n")
     .filter((line) => line.length > 0);
+}
+
+async function gitSourceIdentity(): Promise<{ sourceCommit: string; sourceBranch: string }> {
+  try {
+    const [{ stdout: sourceCommit }, { stdout: sourceBranch }] = await Promise.all([
+      execFileAsync("git", ["rev-parse", "HEAD"], {
+        cwd: repoRoot,
+        maxBuffer: EXEC_MAX_BUFFER,
+      }),
+      execFileAsync("git", ["branch", "--show-current"], {
+        cwd: repoRoot,
+        maxBuffer: EXEC_MAX_BUFFER,
+      }),
+    ]);
+    return {
+      sourceCommit: sourceCommit.trim() || "unknown",
+      sourceBranch: sourceBranch.trim() || "detached",
+    };
+  } catch {
+    return { sourceCommit: "unknown", sourceBranch: "unknown" };
+  }
+}
+
+async function readJsonRecord(filePath: string): Promise<Record<string, unknown>> {
+  try {
+    const parsed: unknown = JSON.parse(await fs.readFile(filePath, "utf8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
 }
 
 async function activePidSummary(): Promise<ActivePidSummary> {
@@ -1432,12 +1474,21 @@ function buildContextRecoveryHandoff({
 
 const options = parseArgs(process.argv.slice(2));
 const governanceStartedAt = new Date().toISOString();
+const sourceIdentity = await gitSourceIdentity();
+const governanceSnapshot = createLcxRunSnapshot({
+  observedAt: governanceStartedAt,
+  sourceCommit: sourceIdentity.sourceCommit,
+  sourceBranch: sourceIdentity.sourceBranch,
+  authorityOwner: "lcx-governance-autopilot",
+});
 const governanceRunId = createLcxRunId({
   checkedAt: governanceStartedAt,
   owner: "lcx-governance-autopilot",
 });
 let owners = await Promise.all(
-  OWNER_COMMANDS.map((command) => runOwner(command, { parentRunId: governanceRunId })),
+  OWNER_COMMANDS.map((command) =>
+    runOwner(command, { parentRunId: governanceRunId, snapshot: governanceSnapshot }),
+  ),
 );
 let byOwner = ownerMap(owners);
 const multiAgentPatternShadow = await readLatestShadowSnapshot();
@@ -1447,7 +1498,11 @@ const selfRepairAutoWriteNeeded =
   selfRepairLatestSignalKey(byOwner.selfRepairHands?.compact) !== selfRepairAutoSignal.signalKey;
 let selfRepairAutoWriteRun: OwnerRun | undefined;
 if (selfRepairAutoWriteNeeded && selfRepairAutoSignal) {
-  selfRepairAutoWriteRun = await runSelfRepairAutoWrite(selfRepairAutoSignal, governanceRunId);
+  selfRepairAutoWriteRun = await runSelfRepairAutoWrite(
+    selfRepairAutoSignal,
+    governanceRunId,
+    governanceSnapshot,
+  );
   owners = owners.map((owner) =>
     owner.id === "selfRepairHands" ? selfRepairAutoWriteRun! : owner,
   );
@@ -1465,7 +1520,7 @@ const releaseBlocked =
   stringArray(byOwner.problemRadar?.compact.actionableClusters).length > 0 ||
   stringArray(byOwner.problemRadar?.compact.blockedClusters).length > 0 ||
   universeIndexGovernanceIncomplete;
-const governanceCheckedAt = new Date().toISOString();
+const governanceCheckedAt = governanceSnapshot.observedAt;
 const globalEvidenceProjectionReader = readGlobalEvidenceProjectionForAdapter(
   byOwner.mindModel?.projection,
   governanceCheckedAt,
@@ -1490,6 +1545,7 @@ const governanceRunReceipt = buildLcxRunReceipt({
   phase: "observe",
   status: governanceRunStatus,
   checkedAt: governanceCheckedAt,
+  snapshot: governanceSnapshot,
   boundary: boundaryFromFlags({
     scope: "local_governance_autopilot_only",
     externalSenderTouched: hasBoundaryTouch(owners, "liveTouched"),
@@ -1512,6 +1568,7 @@ const receipt = {
   ok: requiredParseFailures.length === 0,
   boundary: "local_governance_autopilot_only",
   checkedAt: governanceCheckedAt,
+  snapshot: governanceSnapshot,
   runId: governanceRunId,
   runReceipt: governanceRunReceipt,
   workspaceDir: DEFAULT_WORKSPACE_DIR,
@@ -1529,6 +1586,7 @@ const receipt = {
   ownerBriefLatestMarkdownPath: OWNER_BRIEF_LATEST_MARKDOWN_PATH,
   ownerControlMapLatestJsonPath: OWNER_CONTROL_MAP_LATEST_JSON_PATH,
   ownerControlMapLatestMarkdownPath: OWNER_CONTROL_MAP_LATEST_MARKDOWN_PATH,
+  controlRoomLatestPath: CONTROL_ROOM_LATEST_PATH,
   handoffLatestPath: CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
   multiAgentPatternShadowLatestPath: MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH,
   multiAgentPatternShadow,
@@ -1845,6 +1903,7 @@ const evolutionPromotionDigest = {
 };
 const localFailureTrace = buildLocalFailureTraceReceipt({
   checkedAt: receipt.checkedAt,
+  snapshot: governanceSnapshot,
   workspaceDir: DEFAULT_WORKSPACE_DIR,
   repo: {
     cwd: repoRoot,
@@ -1873,6 +1932,7 @@ const localFailureTrace = buildLocalFailureTraceReceipt({
     OWNER_BRIEF_LATEST_MARKDOWN_PATH,
     OWNER_CONTROL_MAP_LATEST_JSON_PATH,
     OWNER_CONTROL_MAP_LATEST_MARKDOWN_PATH,
+    CONTROL_ROOM_LATEST_PATH,
   ],
   ownerCommands: receipt.ownerCommands,
   summary: receipt.summary,
@@ -1884,6 +1944,7 @@ const localFailureTrace = buildLocalFailureTraceReceipt({
 });
 const ownerControlMap = buildOwnerControlMap({
   checkedAt: receipt.checkedAt,
+  snapshot: governanceSnapshot,
   governance: receipt,
   localFailureTrace,
   paths: {
@@ -1901,6 +1962,7 @@ const ownerControlMap = buildOwnerControlMap({
 });
 const ownerBrief = buildOwnerBrief({
   checkedAt: receipt.checkedAt,
+  snapshot: governanceSnapshot,
   governance: receipt,
   localFailureTrace,
   paths: {
@@ -1917,6 +1979,53 @@ const ownerBrief = buildOwnerBrief({
     ],
   },
 });
+const realCostLedger = await readJsonRecord(REAL_COST_LEDGER_LATEST_JSON_PATH);
+const monotonicDataLedger = await readJsonRecord(MONOTONIC_DATA_LEDGER_LATEST_PATH);
+const controlRoom = {
+  schemaVersion: "lcx_control_room_v1",
+  kind: "lcx-control-room",
+  boundary: "local_control_room_projection_only",
+  generatedAt: governanceSnapshot.observedAt,
+  snapshot: governanceSnapshot,
+  sourceAuthority: {
+    owner: "lcx-governance-autopilot",
+    sourcePath: GOVERNANCE_AUTOPILOT_LATEST_PATH,
+    rule: "governance snapshot is the only current-cycle fact; all other surfaces are projections",
+  },
+  governance: receipt,
+  evolutionPromotionDigest,
+  localFailureTrace,
+  monotonicDataLedger,
+  ownerBrief,
+  ownerControlMap,
+  realCostLedger,
+  views: {
+    ownerBrief: {
+      role: "text_projection",
+      path: OWNER_BRIEF_LATEST_JSON_PATH,
+    },
+    ownerControlMap: {
+      role: "control_projection",
+      path: OWNER_CONTROL_MAP_LATEST_JSON_PATH,
+    },
+    webDashboard: {
+      role: "canonical_lcx_control_room_view",
+      endpoint: "/api/farm-snapshot",
+      source: CONTROL_ROOM_LATEST_PATH,
+    },
+  },
+  externalSchedulerBoundary: {
+    codexDesktopHourlyAutomation: "external_trigger_only",
+    greenFixMarkers: "not_lcx_agent_evidence",
+    schedulerSuccessDoesNotProve: [
+      "agent_receipt",
+      "dashboard_currentness",
+      "model_learning",
+      "commit_or_pull_request",
+      "user_visible_delivery",
+    ],
+  },
+};
 
 await fs.mkdir(path.dirname(GOVERNANCE_AUTOPILOT_LATEST_PATH), { recursive: true });
 await fs.writeFile(GOVERNANCE_AUTOPILOT_LATEST_PATH, `${JSON.stringify(receipt, null, 2)}\n`);
@@ -1925,6 +2034,9 @@ await fs.writeFile(
   EVOLUTION_PROMOTION_DIGEST_LATEST_PATH,
   `${JSON.stringify(evolutionPromotionDigest, null, 2)}\n`,
 );
+const controlRoomTempPath = `${CONTROL_ROOM_LATEST_PATH}.${process.pid}.tmp`;
+await fs.writeFile(controlRoomTempPath, `${JSON.stringify(controlRoom, null, 2)}\n`);
+await fs.rename(controlRoomTempPath, CONTROL_ROOM_LATEST_PATH);
 await fs.mkdir(path.dirname(CONTEXT_RECOVERY_HANDOFF_LATEST_PATH), { recursive: true });
 await fs.writeFile(
   CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,

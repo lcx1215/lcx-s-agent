@@ -195,6 +195,20 @@ describe("planFinanceBrainOrchestration", () => {
     );
   });
 
+  it("keeps ordinary currency requests from fanning into two overlapping FX owners", () => {
+    const plan = planFinanceBrainOrchestration({
+      text: "美元流动性变化会怎样影响我的组合？",
+      hasHoldingsOrPortfolioContext: true,
+    });
+
+    expect(plan.primaryModules).toContain("fx_currency_liquidity");
+    expect(plan.primaryModules).not.toContain("fx_dollar");
+    expect(plan.selectionTrace.suppressedModules).toEqual([
+      expect.objectContaining({ id: "fx_dollar" }),
+    ]);
+    expect(plan.selectionTrace.dataGatewayReason).toBe("holdings_or_portfolio_context");
+  });
+
   it("does not invent a heavy finance plan for non-finance text", () => {
     const plan = planFinanceBrainOrchestration({
       text: "帮我整理一下今天的 marketing meeting 标题和 security risk 待办。",

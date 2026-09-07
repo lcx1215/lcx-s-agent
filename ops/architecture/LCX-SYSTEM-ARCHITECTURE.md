@@ -293,6 +293,37 @@ visible delivery        -> lcx-external-channel-binding/status
 training or promotion   -> local-brain-training-plan and its owners
 ```
 
+### One current-cycle fact and one LCX control room
+
+Every governance cycle creates one `LcxRunSnapshot` with one `observedAt`, one
+source commit, one source branch, and one authority owner. The root receipt,
+all child receipts, the failure trace, the evolution digest, and the control
+room must carry that same snapshot. Older source logs remain evidence with
+their own age; they cannot silently become the current-cycle timestamp.
+
+The durable current-cycle data surface is:
+
+```text
+lcx-governance-autopilot
+  -> lcx-control-room-latest.json
+      -> canonical browser control-room view
+      -> owner brief projection
+      -> owner control-map projection
+      -> evolution / failure / cost projections
+```
+
+`lcx-control-room-latest.json` is the only LCX Agent dashboard data source.
+The standalone JSON and Markdown files remain compatibility exports and human
+readouts, not competing facts or dashboard versions. The generic macOS host
+surface and Codex Desktop UI are outside this authority. In particular, the
+Codex hourly scheduler is an external trigger only: its green or `fix` marker
+does not prove an LCX receipt, current dashboard state, commit, CI, model
+learning, or user-visible delivery.
+
+The control-room snapshot is written atomically. A missing or invalid snapshot
+is a stale/unknown control-room state, not permission to fall back to a mixed
+set of independently timestamped files.
+
 ## Current convergence order
 
 Work from large to small and stop at the first unclosed interface:

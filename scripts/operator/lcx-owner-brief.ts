@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import type { LcxRunSnapshot } from "../../src/shared/lcx-run-receipt.ts";
 import {
   GOVERNANCE_AUTOPILOT_LATEST_PATH,
   LOCAL_FAILURE_TRACE_LATEST_PATH,
@@ -12,6 +13,7 @@ type JsonRecord = Record<string, unknown>;
 
 type OwnerBriefInput = {
   checkedAt: string;
+  snapshot?: LcxRunSnapshot;
   governance: JsonRecord;
   localFailureTrace: JsonRecord;
   paths: {
@@ -219,6 +221,7 @@ export function buildOwnerBrief(input: OwnerBriefInput) {
     kind: "lcx-owner-brief",
     boundary: "local_owner_brief_readable_summary_only",
     checkedAt: input.checkedAt,
+    ...(input.snapshot ? { snapshot: input.snapshot } : {}),
     runReceipt: input.governance.runReceipt,
     title: "LCX 老板总览",
     headline: headlineText,

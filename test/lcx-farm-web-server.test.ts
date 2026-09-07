@@ -18,5 +18,11 @@ describe("LCX farm web projection view", () => {
     expect(source).toContain('sourceOwner: "farm-web-server"');
     expect(source).toContain("globalEvidenceProjection,");
     expect(source).toContain("Projection status is display-only");
+    expect(source).toContain("CONTROL_ROOM_LATEST_PATH");
+    expect(source).toContain("const controlRoom = readJson(CONTROL_ROOM_LATEST_PATH)");
+    expect(source).toContain("canonicalSource: CONTROL_ROOM_LATEST_PATH");
+    expect(source).toContain("externalSchedulerBoundary");
+    expect(source).not.toContain("stateRoot");
+    expect(source).not.toContain("lcx-governance-autopilot-latest.json");
   });
 });

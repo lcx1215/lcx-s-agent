@@ -20,6 +20,13 @@ export type FinanceBrainOrchestrationInput = {
 export type FinanceBrainOrchestrationPlan = {
   primaryModules: FinanceBrainModuleId[];
   supportingModules: FinanceBrainModuleId[];
+  selectionTrace: {
+    financeTask: boolean;
+    rawMatchedModules: FinanceBrainModuleId[];
+    suppressedModules: Array<{ id: FinanceBrainModuleId; reason: string }>;
+    focus: "none" | "focused" | "broad";
+    dataGatewayReason: string;
+  };
   requiredTools: string[];
   reviewTools: string[];
   handoffOrder: string[];
@@ -246,6 +253,36 @@ function needsFinanceDataGateway(text: string): boolean {
   );
 }
 
+function arbitrateFinanceModules(text: string, rawMatched: FinanceBrainModuleId[]) {
+  const suppressedModules: Array<{ id: FinanceBrainModuleId; reason: string }> = [];
+  const broadTaxonomyRequest = rawMatched.length >= 15;
+  const selected = [...rawMatched];
+  // fx_currency_liquidity owns the common cross-market currency lane. Keep
+  // the legacy fx_dollar module only for an explicitly broad taxonomy request;
+  // otherwise one user phrase must not route the same evidence to two owners.
+  if (
+    !broadTaxonomyRequest &&
+    selected.includes("fx_currency_liquidity") &&
+    selected.includes("fx_dollar")
+  ) {
+    const index = selected.indexOf("fx_dollar");
+    selected.splice(index, 1);
+    suppressedModules.push({
+      id: "fx_dollar",
+      reason: "covered_by_fx_currency_liquidity_for_non_broad_request",
+    });
+  }
+  return {
+    selected,
+    suppressedModules,
+    focus: broadTaxonomyRequest
+      ? ("broad" as const)
+      : selected.length > 0
+        ? ("focused" as const)
+        : ("none" as const),
+  };
+}
+
 export function planFinanceBrainOrchestration(
   input: FinanceBrainOrchestrationInput,
 ): FinanceBrainOrchestrationPlan {
@@ -259,7 +296,10 @@ export function planFinanceBrainOrchestration(
       (id) =>
         !["event_driven", "causal_map", "technical_timing", "finance_learning_memory"].includes(id),
     );
-  const matched = financeTask ? rawMatched : [];
+  const arbitration = financeTask
+    ? arbitrateFinanceModules(text, rawMatched)
+    : { selected: [], suppressedModules: [], focus: "none" as const };
+  const matched = financeTask ? arbitration.selected : [];
   const seeded = financeTask ? unique<FinanceBrainModuleId>([...matched, "causal_map"]) : matched;
 
   if (input.hasHoldingsOrPortfolioContext && !seeded.includes("portfolio_risk_gates")) {
@@ -289,6 +329,15 @@ export function planFinanceBrainOrchestration(
       input.highStakesConclusion === true)
       ? ["finance_data_gateway_snapshot"]
       : [];
+  const dataGatewayReason = !financeTask
+    ? "not_a_finance_task"
+    : dataGatewayTools.length > 0
+      ? input.hasHoldingsOrPortfolioContext === true
+        ? "holdings_or_portfolio_context"
+        : input.highStakesConclusion === true
+          ? "high_stakes_conclusion"
+          : "fresh_or_vendor_number_signal"
+      : "no_fresh_number_or_portfolio_signal";
   const requiredTools = unique([...moduleTools, ...dataGatewayTools, "review_tier"]);
   const needsPanel =
     input.highStakesConclusion ||
@@ -300,6 +349,13 @@ export function planFinanceBrainOrchestration(
   return {
     primaryModules,
     supportingModules,
+    selectionTrace: {
+      financeTask,
+      rawMatchedModules: rawMatched,
+      suppressedModules: arbitration.suppressedModules,
+      focus: arbitration.focus,
+      dataGatewayReason,
+    },
     requiredTools: unique([...requiredTools, ...reviewTools]),
     reviewTools,
     handoffOrder: [

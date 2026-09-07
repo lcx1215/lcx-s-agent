@@ -3,14 +3,13 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readGlobalEvidenceProjectionForAdapter } from "../../src/shared/global-evidence-projection-read.ts";
-import { DEFAULT_WORKSPACE_DIR, LCX_USER_HOME } from "./lcx-local-paths.ts";
+import { CONTROL_ROOM_LATEST_PATH, LCX_USER_HOME } from "./lcx-local-paths.ts";
 
 type JsonObject = Record<string, unknown>;
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "../..");
 const staticRoot = path.join(repoRoot, "apps/web/lcx-agent-farm");
-const stateRoot = path.join(DEFAULT_WORKSPACE_DIR, "state");
 
 function argValue(name: string, fallback: string): string {
   const index = process.argv.indexOf(name);
@@ -107,22 +106,25 @@ function sshConfigStatus(): string {
 }
 
 function loadSnapshot(): JsonObject {
-  const autopilot = readJson(path.join(stateRoot, "lcx-governance-autopilot-latest.json"));
+  const controlRoom = readJson(CONTROL_ROOM_LATEST_PATH);
+  const autopilot = objectAt(controlRoom, "governance");
+  const checkedAt =
+    stringAt(controlRoom, "generatedAt") ?? stringAt(autopilot, "checkedAt") ?? "not_available";
   const globalEvidenceProjectionReader = readGlobalEvidenceProjectionForAdapter(
     autopilot.globalEvidenceProjection,
-    new Date().toISOString(),
+    checkedAt,
     {
       adapterId: "farm-web-server",
       sourceOwner: "farm-web-server",
     },
   );
   const globalEvidenceProjection = globalEvidenceProjectionReader.view;
-  const digest = readJson(path.join(stateRoot, "lcx-evolution-promotion-digest-latest.json"));
-  const ownerBrief = readJson(path.join(stateRoot, "lcx-owner-brief-latest.json"));
-  const ownerControlMap = readJson(path.join(stateRoot, "lcx-owner-control-map-latest.json"));
-  const localFailureTrace = readJson(path.join(stateRoot, "lcx-local-failure-trace-latest.json"));
-  const monotonicLedger = readJson(path.join(stateRoot, "lcx-monotonic-data-ledger-latest.json"));
-  const realCostLedger = readJson(path.join(stateRoot, "lcx-real-cost-ledger-latest.json"));
+  const digest = objectAt(controlRoom, "evolutionPromotionDigest");
+  const ownerBrief = objectAt(controlRoom, "ownerBrief");
+  const ownerControlMap = objectAt(controlRoom, "ownerControlMap");
+  const localFailureTrace = objectAt(controlRoom, "localFailureTrace");
+  const monotonicLedger = objectAt(controlRoom, "monotonicDataLedger");
+  const realCostLedger = objectAt(controlRoom, "realCostLedger");
   const summary = objectAt(autopilot, "summary");
   const owners = objectAt(autopilot, "owners");
   const providerCouncilOwner = objectAt(owners, "providerCouncilAcceleration");
@@ -140,7 +142,9 @@ function loadSnapshot(): JsonObject {
   const controlItems = Array.isArray(ownerControlMap.items) ? ownerControlMap.items : [];
 
   return {
-    checkedAt: stringAt(digest, "checkedAt") ?? stringAt(autopilot, "checkedAt") ?? "not_available",
+    checkedAt,
+    snapshot: objectAt(controlRoom, "snapshot"),
+    canonicalSource: CONTROL_ROOM_LATEST_PATH,
     globalEvidenceProjection,
     globalEvidenceProjectionReader: {
       contractVersion: globalEvidenceProjectionReader.contractVersion,
@@ -178,10 +182,10 @@ function loadSnapshot(): JsonObject {
     ownerBriefHeadline: stringAt(ownerBrief, "headline") ?? "老板总览暂未生成",
     ownerBriefMarkdownPath:
       stringAt(ownerBrief, "latestMarkdownPath") ??
-      path.join(stateRoot, "lcx-owner-brief-latest.md"),
+      path.join(path.dirname(CONTROL_ROOM_LATEST_PATH), "lcx-owner-brief-latest.md"),
     ownerControlMarkdownPath:
       stringAt(ownerControlMap, "latestMarkdownPath") ??
-      path.join(stateRoot, "lcx-owner-control-map-latest.md"),
+      path.join(path.dirname(CONTROL_ROOM_LATEST_PATH), "lcx-owner-control-map-latest.md"),
     controlSummary: objectAt(ownerControlMap, "summary"),
     controlItems,
     realCostLedger: {
@@ -189,7 +193,7 @@ function loadSnapshot(): JsonObject {
       byModel: Array.isArray(realCostLedger.byModel) ? realCostLedger.byModel : [],
       latestMarkdownPath:
         stringAt(realCostLedger, "latestMarkdownPath") ??
-        path.join(stateRoot, "lcx-real-cost-ledger-latest.md"),
+        path.join(path.dirname(CONTROL_ROOM_LATEST_PATH), "lcx-real-cost-ledger-latest.md"),
     },
     failureTrace: {
       result: stringAt(localFailureTrace, "result") ?? "unknown",
@@ -228,7 +232,8 @@ function loadSnapshot(): JsonObject {
     webFrontendRole:
       "browser-testable farm dashboard for Codex in-app browser, mobile remote review, screenshots, and read-only control-room visibility",
     notAuthority:
-      "Web dashboard is read-only visualization. Projection status is display-only; owner JSON remains the truth; no external-channel/provider/protected memory authority.",
+      "This is the canonical LCX control-room view over one control-room snapshot. It is still read-only: Codex scheduler markers, owner Markdown, and Projection status is display-only, not LCX Agent completion evidence; no external-channel/provider/protected-memory authority.",
+    externalSchedulerBoundary: objectAt(controlRoom, "externalSchedulerBoundary"),
   };
 }
 

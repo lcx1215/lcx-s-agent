@@ -3,6 +3,7 @@ import {
   boundaryFromFlags,
   buildLcxRunReceipt,
   createLcxRunId,
+  createLcxRunSnapshot,
   LCX_RUN_RECEIPT_CONTRACT_VERSION,
 } from "./lcx-run-receipt.js";
 
@@ -19,6 +20,12 @@ describe("LCX run receipt", () => {
       phase: "observe",
       status: "blocked",
       checkedAt: "2026-09-07T07:00:00.000Z",
+      snapshot: createLcxRunSnapshot({
+        observedAt: "2026-09-07T07:00:00.000Z",
+        sourceCommit: "abc123",
+        sourceBranch: "main",
+        authorityOwner: "governance",
+      }),
       boundary: boundaryFromFlags({
         scope: "local_governance_only",
         externalSenderTouched: false,
@@ -42,6 +49,10 @@ describe("LCX run receipt", () => {
         parentRunId: "parent-run",
         phase: "observe",
         status: "blocked",
+        snapshot: expect.objectContaining({
+          observedAt: "2026-09-07T07:00:00.000Z",
+          sourceCommit: "abc123",
+        }),
         boundary: expect.objectContaining({
           scope: "local_governance_only",
           externalSender: "not_touched_by_projection",
@@ -81,5 +92,25 @@ describe("LCX run receipt", () => {
     expect(() => buildLcxRunReceipt({ ...params, evidence: [], nextAction: " " })).toThrow(
       "nextAction must not be empty",
     );
+  });
+
+  it("rejects a receipt whose visible time diverges from its snapshot", () => {
+    expect(() =>
+      buildLcxRunReceipt({
+        runId: "run",
+        owner: "owner",
+        phase: "observe",
+        status: "passed",
+        checkedAt: "2026-09-07T07:00:00.000Z",
+        snapshot: createLcxRunSnapshot({
+          observedAt: "2026-09-07T07:01:00.000Z",
+          sourceCommit: "abc123",
+          sourceBranch: "main",
+          authorityOwner: "owner",
+        }),
+        boundary: boundaryFromFlags({ scope: "local_only" }),
+        nextAction: "continue",
+      }),
+    ).toThrow("checkedAt must match snapshot.observedAt");
   });
 });

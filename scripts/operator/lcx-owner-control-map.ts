@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import type { LcxRunSnapshot } from "../../src/shared/lcx-run-receipt.ts";
 import {
   GOVERNANCE_AUTOPILOT_LATEST_PATH,
   LOCAL_FAILURE_TRACE_LATEST_PATH,
@@ -12,6 +13,7 @@ type JsonRecord = Record<string, unknown>;
 
 type OwnerControlInput = {
   checkedAt: string;
+  snapshot?: LcxRunSnapshot;
   governance: JsonRecord;
   localFailureTrace: JsonRecord;
   paths: {
@@ -384,6 +386,7 @@ export function buildOwnerControlMap(input: OwnerControlInput) {
     kind: "lcx-owner-control-map",
     boundary: "local_owner_control_map_only",
     checkedAt: input.checkedAt,
+    ...(input.snapshot ? { snapshot: input.snapshot } : {}),
     runReceipt: input.governance.runReceipt,
     summary: {
       totalItems: items.length,
