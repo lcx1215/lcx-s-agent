@@ -18,6 +18,7 @@ const FinanceRealtimeRefreshSchema = Type.Object({
   useCase: Type.String(),
   asOf: Type.Optional(Type.String()),
   freshnessMaxMinutes: Type.Optional(Type.Number()),
+  crossSourceSkewMaxMinutes: Type.Optional(Type.Number()),
   requireOfficialReference: Type.Optional(Type.Boolean()),
   sourceIds: Type.Optional(Type.Array(Type.String())),
   liveFetch: Type.Optional(Type.Boolean()),
@@ -69,6 +70,7 @@ export function createFinanceRealtimeRefreshTool(options?: {
         useCase: string;
         asOf?: string;
         freshnessMaxMinutes?: number;
+        crossSourceSkewMaxMinutes?: number;
         requireOfficialReference?: boolean;
         sourceIds?: string[];
         liveFetch?: boolean;
@@ -83,6 +85,7 @@ export function createFinanceRealtimeRefreshTool(options?: {
           useCase: params.useCase,
           asOf: params.asOf ?? new Date().toISOString(),
           freshnessMaxMinutes: params.freshnessMaxMinutes,
+          crossSourceSkewMaxMinutes: params.crossSourceSkewMaxMinutes,
           requireOfficialReference: params.requireOfficialReference,
         };
         const registry = createFinanceRealtimeSourceRegistry({ fetchImpl: options?.fetchImpl });

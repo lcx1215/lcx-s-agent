@@ -22,6 +22,7 @@ type CandidateId =
   | "finrobot_financial_research"
   | "openbb_finance_data_platform"
   | "agent_reach_source_adapter"
+  | "echoapi_api_test_harness"
   | "finnews_hunter_realtime_intelligence"
   | "openfr_finance_research"
   | "amplio_crash_resume_harness"
@@ -861,6 +862,52 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     ],
     liveBoundary:
       "the adapter contract may run an explicitly authorized public source; it cannot import cookies, credentials, external senders, or a second source of truth",
+  },
+  {
+    id: "echoapi_api_test_harness",
+    label: "EchoAPI API request/response harness",
+    sourceUrls: [
+      "https://www.echoapi.com/wiki/docs/start",
+      "https://www.echoapi.com/wiki/docs/http_debug/script",
+      "https://github.com/EchoAPI-Team/echoapi-for-vscode-support/blob/main/LICENSE",
+    ],
+    sourceKind: "docs_product_and_paper",
+    claimedCapability:
+      "API client and test surface for HTTP, SSE, and TCP requests with environments, scripts, cookies, and response assertions",
+    adoptionMode: "finance_agent_architecture_probe",
+    existingOwner:
+      "finance external source adapter, realtime source registry, and adapter contract tests",
+    ownerEntrypoint: "src/agents/tools/finance-external-source-adapter-tool.ts",
+    ownerUseTrigger:
+      "When a future task asks for EchoAPI, API collection import, response assertions, SSE/TCP testing, or environment switching, use it only to produce a reviewed request/response fixture for the existing source adapter owner.",
+    autocueTerms: ["EchoAPI", "API collection import", "SSE API test", "response assertion"],
+    distilledPattern:
+      "separate request authoring and response testing from the financial data authority; import only redacted fixtures with URL, timestamp, schema, and license evidence",
+    firstLocalProbe:
+      "import one public market or SEC cURL request into a local fixture, run schema/provenance assertions, and prove cookies, environment secrets, and post-request scripts are excluded",
+    requiredReceipts: [
+      "finance-external-source-adapter",
+      "finance-realtime-source-registry",
+      "source_license_scope_receipt",
+      "response_schema_receipt",
+    ],
+    requiredFilters: [
+      "fixture_first",
+      "no_cookie_import",
+      "no_environment_secret_import",
+      "no_post_request_external_write",
+      "single_finance_truth_gateway",
+    ],
+    riskBoundaries: [
+      "api_client_not_finance_truth_source",
+      "no_cookie_or_token_import",
+      "no_unreviewed_script_execution",
+      "no_provider_config_change",
+      "no_external_channel_sender_change",
+      "protected_memory_guard",
+    ],
+    liveBoundary:
+      "EchoAPI may help test a separately authorized adapter; its environments, cookies, scripts, and remote writes never become LCX runtime authority",
   },
   {
     id: "finnews_hunter_realtime_intelligence",
@@ -1740,6 +1787,7 @@ function buildChecks(verdicts: readonly CandidateVerdict[]): RadarCheck[] {
     "finrobot_financial_research",
     "openbb_finance_data_platform",
     "agent_reach_source_adapter",
+    "echoapi_api_test_harness",
     "finnews_hunter_realtime_intelligence",
     "openfr_finance_research",
     "amplio_crash_resume_harness",

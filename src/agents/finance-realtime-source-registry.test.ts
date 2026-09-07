@@ -177,8 +177,14 @@ describe("finance realtime source registry", () => {
       }),
     });
 
-    expect(registry).toHaveLength(1);
-    expect(registry[0]?.id).toBe("yahoo_public_chart");
+    expect(registry).toHaveLength(5);
+    expect(registry.map((adapter) => adapter.id)).toEqual([
+      "yahoo_public_chart",
+      "nasdaq_exchange_quote",
+      "stooq_public_daily",
+      "sec_edgar_official_reference",
+      "invesco_qqq_issuer_reference",
+    ]);
     expect(registry[0]?.providerRole).toBe("primary_market_data");
   });
 });

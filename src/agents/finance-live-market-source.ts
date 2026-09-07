@@ -65,6 +65,11 @@ function defaultFinanceFetch(): FetchImpl {
   };
 }
 
+/** Resolve the repository's proxy-aware public HTTP path for source adapters. */
+export function resolveFinanceFetch(fetchImpl?: FetchImpl): FetchImpl {
+  return fetchImpl ?? defaultFinanceFetch();
+}
+
 export class LiveMarketFetchError extends Error {
   constructor(
     message: string,
@@ -141,7 +146,7 @@ export async function fetchYahooQuote(
   symbol: string,
   options: { fetchImpl?: FetchImpl } = {},
 ): Promise<LiveMarketQuote> {
-  const fetchImpl = options.fetchImpl ?? defaultFinanceFetch();
+  const fetchImpl = resolveFinanceFetch(options.fetchImpl);
   let lastError: LiveMarketFetchError | undefined;
   for (const host of YAHOO_CHART_HOSTS) {
     const url = YAHOO_CHART_URL(symbol, host);

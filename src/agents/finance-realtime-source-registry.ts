@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
 import {
+  createAlphaVantageMarketAdapter,
+  createInvescoIssuerReferenceAdapter,
+  createNasdaqExchangeMarketAdapter,
+  createSecOfficialReferenceAdapter,
+  createStooqDelayedMarketAdapter,
+} from "./finance-additional-source-adapters.js";
+import {
   buildFinanceDataGatewaySnapshot,
   type FinanceDataGatewayInput,
   type FinanceDataGatewayObservationInput,
@@ -19,6 +26,7 @@ export type FinanceRealtimeSourceRequest = Readonly<{
   useCase: string;
   asOf: string;
   freshnessMaxMinutes?: number;
+  crossSourceSkewMaxMinutes?: number;
   requireOfficialReference?: boolean;
 }>;
 
@@ -71,6 +79,12 @@ export type FinanceRealtimeRegistryInspection = Readonly<{
   noNetworkCalled: true;
 }>;
 
+export type FinanceRealtimeSourceRegistryOptions = Readonly<{
+  fetchImpl?: FetchImpl;
+  alphaVantageApiKey?: string;
+  additionalAdapters?: readonly FinanceRealtimeSourceAdapter[];
+}>;
+
 function requiredText(value: string, label: string): string {
   const normalized = value.trim();
   if (!normalized) {
@@ -94,6 +108,7 @@ function normalizeRequest(request: FinanceRealtimeSourceRequest): FinanceRealtim
     useCase: requiredText(request.useCase, "useCase"),
     asOf: assertIsoTimestamp(request.asOf, "asOf"),
     freshnessMaxMinutes: request.freshnessMaxMinutes,
+    crossSourceSkewMaxMinutes: request.crossSourceSkewMaxMinutes,
     requireOfficialReference: request.requireOfficialReference,
   };
 }
@@ -337,9 +352,23 @@ export function createYahooDelayedMarketAdapter(
 }
 
 export function createFinanceRealtimeSourceRegistry(
-  options: {
-    fetchImpl?: FetchImpl;
-  } = {},
+  options: FinanceRealtimeSourceRegistryOptions = {},
 ): readonly FinanceRealtimeSourceAdapter[] {
-  return [createYahooDelayedMarketAdapter(options)];
+  const adapters: FinanceRealtimeSourceAdapter[] = [
+    createYahooDelayedMarketAdapter(options),
+    createNasdaqExchangeMarketAdapter({ fetchImpl: options.fetchImpl }),
+    createStooqDelayedMarketAdapter({ fetchImpl: options.fetchImpl }),
+    createSecOfficialReferenceAdapter({ fetchImpl: options.fetchImpl }),
+    createInvescoIssuerReferenceAdapter({ fetchImpl: options.fetchImpl }),
+  ];
+  if (options.alphaVantageApiKey?.trim()) {
+    adapters.push(
+      createAlphaVantageMarketAdapter({
+        apiKey: options.alphaVantageApiKey,
+        fetchImpl: options.fetchImpl,
+      }),
+    );
+  }
+  adapters.push(...(options.additionalAdapters ?? []));
+  return adapters;
 }
