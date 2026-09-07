@@ -108,6 +108,8 @@ export function createOpenClawTools(options?: {
   hasRepliedRef?: { value: boolean };
   /** If true, the model has native vision capability */
   modelHasVision?: boolean;
+  /** Effective model reference for native vision provenance receipts. */
+  nativeVisionModelRef?: string;
   /** Explicit agent ID override for cron/hook sessions. */
   requesterAgentIdOverride?: string;
   /** Require explicit message targets (no implicit last-route sends). */
@@ -223,6 +225,7 @@ export function createOpenClawTools(options?: {
     createFinanceChartAnalysisTool({
       workspaceDir,
       modelHasVision: options?.modelHasVision,
+      nativeVisionModelRef: options?.nativeVisionModelRef,
       visionTool: imageTool,
     }),
     createResearchWebAutopilotTool({

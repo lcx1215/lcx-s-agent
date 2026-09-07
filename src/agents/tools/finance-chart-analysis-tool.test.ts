@@ -103,6 +103,7 @@ describe("finance_chart_analysis tool", () => {
     const tool = createFinanceChartAnalysisTool({
       workspaceDir: "/tmp/lcx-chart-tool",
       modelHasVision: true,
+      nativeVisionModelRef: "openai/gpt-5-mini",
     });
     const result = await tool.execute("image-1", {
       instrument: "AAPL",
@@ -114,6 +115,16 @@ describe("finance_chart_analysis tool", () => {
         visual: expect.objectContaining({
           imageAttached: true,
           handoff: "native_vision_can_review_the_attached_image",
+          provenance: expect.objectContaining({
+            schemaVersion: "lcx_finance_chart_visual_provenance_v1",
+            imageSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+            promptContract: "lcx_finance_chart_native_handoff_v1",
+            execution: "native_vision_handoff",
+            provider: "openai",
+            model: "gpt-5-mini",
+            latencyMs: null,
+            uncertainty: "pending_native_model_review",
+          }),
         }),
       }),
     );
@@ -151,6 +162,16 @@ describe("finance_chart_analysis tool", () => {
           imageAttached: false,
           handoff: "configured_vision_tool_completed",
           visionAnalysis: expect.objectContaining({ text: "visible chart context" }),
+          provenance: expect.objectContaining({
+            schemaVersion: "lcx_finance_chart_visual_provenance_v1",
+            imageSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+            promptContract: "lcx_finance_chart_visual_review_v1",
+            execution: "configured_vision_tool",
+            provider: null,
+            model: "test-vlm",
+            latencyMs: expect.any(Number),
+            uncertainty: "reported_in_unstructured_model_text",
+          }),
         }),
       }),
     );

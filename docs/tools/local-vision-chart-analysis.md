@@ -77,6 +77,13 @@ The finance path is then available through the existing `finance_chart_analysis`
 tool. Pass both a symbol/bars source and an image when available: the tool
 returns deterministic OHLCV features plus a separate visual handoff/result.
 
+When an image is loaded, the visual lane carries a
+`lcx_finance_chart_visual_provenance_v1` receipt: SHA-256 image hash, resolved
+image reference, MIME/byte size, `asOf` and source timestamp range, prompt
+contract, effective provider/model when known, latency when the configured
+image tool ran, and an explicit uncertainty state. Native-vision results are
+marked as a handoff until the selected model returns its own observation.
+
 For a non-agent smoke test, the CLI reports `runtime=local`, the resolved model,
 the Python executable, and the actual generated text. A successful process
 start alone is not considered a visual-proof receipt.

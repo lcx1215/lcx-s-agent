@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
@@ -53,6 +54,11 @@ const FinanceChartAnalysisSchema = Type.Object({
 });
 
 const FINANCE_CHART_TOOL_SCHEMA_VERSION = "lcx_finance_chart_analysis_tool_v1" as const;
+const FINANCE_CHART_VISUAL_PROVENANCE_SCHEMA = "lcx_finance_chart_visual_provenance_v1" as const;
+const FINANCE_CHART_VISUAL_PROMPT_CONTRACT = "lcx_finance_chart_visual_review_v1" as const;
+const FINANCE_CHART_NATIVE_PROMPT_CONTRACT = "lcx_finance_chart_native_handoff_v1" as const;
+const FINANCE_CHART_VISUAL_PROMPT =
+  "Analyze this financial market chart as research context. Return concise labeled observations for visible text/axes, series, directional visual trend (rising, falling, sideways, or uncertain), levels, formations, timeframe, and uncertainty. Keep trend as a direction word, never a price value. Use only pixels; if text is unreadable, say so. Do not repeat phrases and do not issue buy/sell, order, sizing, or execution instructions.";
 
 function optionalText(value: string | undefined): string | undefined {
   const normalized = value?.trim();
@@ -60,6 +66,36 @@ function optionalText(value: string | undefined): string | undefined {
     return undefined;
   }
   return normalized;
+}
+
+function modelIdentity(modelRef: string | undefined): {
+  provider: string | null;
+  model: string | null;
+} {
+  const normalized = modelRef?.trim();
+  if (!normalized) {
+    return { provider: null, model: null };
+  }
+  const separator = normalized.indexOf("/");
+  if (separator <= 0 || separator === normalized.length - 1) {
+    return { provider: null, model: normalized };
+  }
+  return {
+    provider: normalized.slice(0, separator),
+    model: normalized.slice(separator + 1),
+  };
+}
+
+function visionModelRefFromDetails(details: unknown): string | undefined {
+  if (!details || typeof details !== "object" || Array.isArray(details)) {
+    return undefined;
+  }
+  const model = (details as { model?: unknown }).model;
+  return typeof model === "string" && model.trim() ? model.trim() : undefined;
+}
+
+function sha256Base64(base64: string): string {
+  return createHash("sha256").update(Buffer.from(base64, "base64")).digest("hex");
 }
 
 function safeReceiptStem(value: string): string {
@@ -145,7 +181,7 @@ function toolContentText(result: unknown): string {
 async function loadChartImage(
   imageInput: string,
   workspaceDir: string,
-): Promise<{ data: string; mimeType: string; resolvedImage: string }> {
+): Promise<{ data: string; mimeType: string; resolvedImage: string; byteLength: number }> {
   const resolvedImage = imageInput.replace(/^@/u, "").trim();
   if (!resolvedImage) {
     throw new Error("image must not be empty");
@@ -156,6 +192,7 @@ async function loadChartImage(
       data: decoded.buffer.toString("base64"),
       mimeType: decoded.mimeType,
       resolvedImage: "data-url",
+      byteLength: decoded.buffer.length,
     };
   }
   const media = await loadWebMedia(resolvedImage, {
@@ -169,6 +206,7 @@ async function loadChartImage(
     data: media.buffer.toString("base64"),
     mimeType: media.contentType ?? "image/png",
     resolvedImage,
+    byteLength: media.buffer.length,
   };
 }
 
@@ -181,6 +219,7 @@ export function createFinanceChartAnalysisTool(options?: {
   workspaceDir?: string;
   fetchImpl?: FetchImpl;
   modelHasVision?: boolean;
+  nativeVisionModelRef?: string;
   visionTool?: AnyAgentTool | null;
 }): AnyAgentTool {
   const workspaceDir = resolveWorkspaceRoot(options?.workspaceDir);
@@ -271,12 +310,15 @@ export function createFinanceChartAnalysisTool(options?: {
               })
             : undefined;
         const includeImage = params.includeImage ?? true;
-        let imagePayload: { data: string; mimeType: string; resolvedImage: string } | undefined;
+        let imagePayload:
+          | { data: string; mimeType: string; resolvedImage: string; byteLength: number }
+          | undefined;
         let imageError: string | undefined;
         let visionAnalysis:
           | { status: "completed"; text: string; details?: unknown }
           | { status: "failed"; error: string }
           | undefined;
+        let visualLatencyMs: number | undefined;
         if (imageInput && includeImage) {
           try {
             imagePayload = await loadChartImage(imageInput, workspaceDir);
@@ -285,11 +327,11 @@ export function createFinanceChartAnalysisTool(options?: {
           }
         }
         if (imagePayload && !options?.modelHasVision && options?.visionTool) {
+          const visualStartedAt = Date.now();
           try {
             const visionResult = await options.visionTool.execute("finance-chart-vision", {
               image: imageInput,
-              prompt:
-                "Analyze this financial market chart as research context. Return concise labeled observations for visible text/axes, series, directional visual trend (rising, falling, sideways, or uncertain), levels, formations, timeframe, and uncertainty. Keep trend as a direction word, never a price value. Use only pixels; if text is unreadable, say so. Do not repeat phrases and do not issue buy/sell, order, sizing, or execution instructions.",
+              prompt: FINANCE_CHART_VISUAL_PROMPT,
             });
             visionAnalysis = {
               status: "completed",
@@ -301,9 +343,45 @@ export function createFinanceChartAnalysisTool(options?: {
               status: "failed",
               error: error instanceof Error ? error.message : String(error),
             };
+          } finally {
+            visualLatencyMs = Date.now() - visualStartedAt;
           }
         }
         const includeBars = params.includeBars === true;
+
+        const configuredVisionModelRef = visionModelRefFromDetails(
+          visionAnalysis?.status === "completed" ? visionAnalysis.details : undefined,
+        );
+        const effectiveVisionModelRef =
+          configuredVisionModelRef ?? options?.nativeVisionModelRef?.trim();
+        const identity = modelIdentity(effectiveVisionModelRef);
+        const visualProvenance = imagePayload
+          ? {
+              schemaVersion: FINANCE_CHART_VISUAL_PROVENANCE_SCHEMA,
+              imageSha256: sha256Base64(imagePayload.data),
+              imagePath: imagePayload.resolvedImage,
+              mimeType: imagePayload.mimeType,
+              byteLength: imagePayload.byteLength,
+              asOf,
+              sourceTimestampRange: sourceReceipt.sourceTimestampRange ?? null,
+              promptContract: options?.modelHasVision
+                ? FINANCE_CHART_NATIVE_PROMPT_CONTRACT
+                : FINANCE_CHART_VISUAL_PROMPT_CONTRACT,
+              execution: options?.modelHasVision
+                ? "native_vision_handoff"
+                : visionAnalysis
+                  ? "configured_vision_tool"
+                  : "not_executed",
+              provider: identity.provider,
+              model: identity.model,
+              latencyMs: visualLatencyMs ?? null,
+              uncertainty: visionAnalysis
+                ? "reported_in_unstructured_model_text"
+                : options?.modelHasVision
+                  ? "pending_native_model_review"
+                  : "visual_review_not_completed",
+            }
+          : null;
 
         const status = analysis
           ? collectionStatus === "needs_review"
@@ -332,6 +410,7 @@ export function createFinanceChartAnalysisTool(options?: {
             imagePath: imagePayload?.resolvedImage,
             modelHasVision: options?.modelHasVision ?? false,
             visionAnalysis,
+            provenance: visualProvenance,
             handoff:
               visionAnalysis?.status === "completed"
                 ? "configured_vision_tool_completed"
