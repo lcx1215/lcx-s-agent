@@ -16,6 +16,7 @@ import { createFinanceArticleExtractCapabilityInputTool } from "./tools/finance-
 import { createFinanceArticleSourceCollectionPreflightTool } from "./tools/finance-article-source-collection-preflight-tool.js";
 import { createFinanceArticleSourceRegistryInspectTool } from "./tools/finance-article-source-registry-inspect-tool.js";
 import { createFinanceArticleSourceRegistryRecordTool } from "./tools/finance-article-source-registry-record-tool.js";
+import { createFinanceChartAnalysisTool } from "./tools/finance-chart-analysis-tool.js";
 import { createFinanceDataGatewaySnapshotTool } from "./tools/finance-data-gateway-tool.js";
 import { createFinanceDoctrineTeacherFeedbackCandidateInputReconciliationStatusTool } from "./tools/finance-doctrine-teacher-feedback-candidate-input-reconciliation-status-tool.js";
 import { createFinanceDoctrineTeacherFeedbackCandidateInputReconciliationTool } from "./tools/finance-doctrine-teacher-feedback-candidate-input-reconciliation-tool.js";
@@ -58,6 +59,7 @@ import { createNodesTool } from "./tools/nodes-tool.js";
 import { createPdfTool } from "./tools/pdf-tool.js";
 import { createQuantMathTool } from "./tools/quant-math-tool.js";
 import { createResearchDataAutopilotTool } from "./tools/research-data-autopilot-tool.js";
+import { createResearchWebAutopilotTool } from "./tools/research-web-autopilot-tool.js";
 import { createReviewPanelTool } from "./tools/review-panel-tool.js";
 import { createReviewTierTool } from "./tools/review-tier-tool.js";
 import { createSessionStatusTool } from "./tools/session-status-tool.js";
@@ -218,6 +220,16 @@ export function createOpenClawTools(options?: {
     }),
     createFinanceMarketCollectionRefreshTool({ workspaceDir }),
     createResearchDataAutopilotTool({ workspaceDir }),
+    createFinanceChartAnalysisTool({
+      workspaceDir,
+      modelHasVision: options?.modelHasVision,
+      visionTool: imageTool,
+    }),
+    createResearchWebAutopilotTool({
+      workspaceDir,
+      config: options?.config,
+      sandboxed: options?.sandboxed,
+    }),
     createGeospatialSourceRefreshTool({
       workspaceDir,
     }),

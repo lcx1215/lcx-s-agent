@@ -8,6 +8,7 @@ import {
   createFmpFreeBasicProfileCollectionAdapter,
   createGoogleNewsRssCollectionAdapter,
   createGdeltPublicNewsCollectionAdapter,
+  createYahooPublicEodHistoryCollectionAdapter,
   createYahooFinanceRssCollectionAdapter,
 } from "./finance-free-market-collection-adapters.js";
 import { resolveFinanceFetch, type FetchImpl } from "./finance-live-market-source.js";
@@ -17,6 +18,7 @@ export {
   createFmpFreeBasicProfileCollectionAdapter,
   createGoogleNewsRssCollectionAdapter,
   createGdeltPublicNewsCollectionAdapter,
+  createYahooPublicEodHistoryCollectionAdapter,
   createYahooFinanceRssCollectionAdapter,
 } from "./finance-free-market-collection-adapters.js";
 
@@ -1087,6 +1089,7 @@ export function createFinanceMarketCollectionRegistry(
     createTreasuryDebtCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createTreasuryAverageInterestRatesCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createSecFilingsCollectionAdapter({ fetchImpl: options.fetchImpl }),
+    createYahooPublicEodHistoryCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createGdeltPublicNewsCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createGoogleNewsRssCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createYahooFinanceRssCollectionAdapter({ fetchImpl: options.fetchImpl }),

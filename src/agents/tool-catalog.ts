@@ -114,6 +114,15 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     includeInOpenClawGroup: true,
   },
   {
+    id: "research_web_autopilot",
+    label: "research_web_autopilot",
+    description:
+      "Search, open original web documents, cross-check likely primary references, and retain timestamped failures in a read-only evidence receipt",
+    sectionId: "web",
+    profiles: [],
+    includeInOpenClawGroup: true,
+  },
+  {
     id: "memory_search",
     label: "memory_search",
     description: "Broad memory recall",
@@ -214,6 +223,15 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     label: "research_data_autopilot",
     description:
       "Autonomously route read-only research requests across all canonical finance, crypto, macro, SEC, news, geospatial, weather, and seismic adapters with automatic source selection and provenance",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    id: "finance_chart_analysis",
+    label: "finance_chart_analysis",
+    description:
+      "Analyze canonical OHLCV history deterministically and optionally attach a chart image for vision review without trade or order authority",
     sectionId: "memory",
     profiles: ["coding"],
     includeInOpenClawGroup: true,

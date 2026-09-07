@@ -22,7 +22,7 @@ and target; the registry chooses all supporting providers automatically.
 | GDELT DOC 2.0              | public, no API key                               | cross-check news/article discovery                                                      | not a price feed; public service may rate-limit high traffic                   |
 | Google News RSS            | public feed, no API key                          | news metadata cross-check                                                               | public RSS metadata only; not issuer or price authority                        |
 | Yahoo Finance RSS          | public feed, no API key                          | finance-news metadata cross-check                                                       | public RSS metadata only; endpoint availability and terms may change           |
-| Yahoo Finance chart        | public endpoint                                  | delayed quote fallback                                                                  | unofficial/public chart path; delayed and subject to endpoint drift            |
+| Yahoo Finance chart        | public endpoint                                  | delayed quote and daily OHLCV history                                                   | unofficial/public chart path; delayed and subject to endpoint drift            |
 | Nasdaq public quote        | public endpoint                                  | exchange/session cross-check                                                            | endpoint and access policy can change                                          |
 | Stooq                      | public CSV endpoint                              | end-of-day cross-check                                                                  | may challenge automated traffic; failure is recorded, never hidden             |
 | Invesco issuer reference   | public issuer endpoint                           | QQQ issuer/performance reference                                                        | issuer-specific, not a general market feed                                     |
@@ -72,6 +72,44 @@ The durable internal CLI reuses the same autopilot owner:
 ```bash
 pnpm lcx:research:data --live --intent news --target AAPL --json
 pnpm lcx:research:data --live --intent crypto_quote --target BTCUSDT --json
+```
+
+## Web retrieval and chart/image analysis
+
+`research_web_autopilot` is the durable agent-facing equivalent of a
+search-to-source workflow: it calls the configured guarded `web_search`, opens
+the top original URLs with `web_fetch`, marks likely government/issuer
+references, and returns a receipt containing candidates, opened documents,
+timestamps, failures, missing primary evidence, and a `ready`/
+`needs_review`/`blocked` status. It does not claim an internal Codex network
+connection; a search provider must be configured and its absence remains
+visible.
+
+```bash
+pnpm lcx:research:web --query "AAPL latest SEC filing" --require-primary
+pnpm lcx:research:web --live --query "AAPL latest SEC filing" --require-primary --json
+```
+
+`finance_chart_analysis` makes charts useful even when the primary API/model
+has no multimodal input:
+
+- The numeric lane fetches keyless Yahoo daily OHLCV through the canonical
+  `eod_history` collection and computes auditable trend, return, drawdown,
+  moving-average, RSI14, ATR14, support/resistance, volatility, and volume
+  features.
+- The visual lane accepts an image path, URL, or data URL and returns a guarded
+  image content block. A native vision model can inspect it directly; when the
+  primary model is text-only, the chart tool automatically invokes the existing
+  configured `image`/VLM tool when available.
+- Numeric and visual conclusions stay separate, and neither lane grants
+  buy/sell, order, sizing, broker, wallet, or external-message authority.
+
+The permanent operator entry point for the numeric lane is:
+
+```bash
+pnpm exec tsx scripts/operator/research-data-autopilot-live-smoke.ts \
+  --live --intent eod_history --target AAPL --limit 250 --json
+pnpm lcx:research:chart --live --symbol AAPL --limit 250 --json
 ```
 
 ## Researched but intentionally not durable-wired

@@ -200,6 +200,196 @@ function createPublicRssNewsCollectionAdapter(options: {
   };
 }
 
+type YahooChartHistoryResult = {
+  timestamp?: unknown;
+  indicators?: {
+    quote?: Array<{
+      open?: unknown[];
+      high?: unknown[];
+      low?: unknown[];
+      close?: unknown[];
+      volume?: unknown[];
+    }>;
+  };
+};
+
+function optionalFiniteNumber(value: unknown): number | undefined {
+  if (value === null || value === undefined || (typeof value === "string" && !value.trim())) {
+    return undefined;
+  }
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function yahooSourceTimestamp(value: unknown, fallback: string): string {
+  const numeric = optionalFiniteNumber(value);
+  if (numeric !== undefined) {
+    const milliseconds = numeric > 10_000_000_000 ? numeric : numeric * 1_000;
+    const timestamp = new Date(milliseconds);
+    if (Number.isFinite(timestamp.getTime())) {
+      return timestamp.toISOString();
+    }
+  }
+  return sourceTimestamp(value, fallback);
+}
+
+function utcDayEpoch(value: string, label: string): number {
+  const normalized = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(normalized)) {
+    throw new FreeMarketCollectionAdapterError(`${label} must be YYYY-MM-DD`);
+  }
+  const epoch = Date.parse(`${normalized}T00:00:00.000Z`);
+  if (!Number.isFinite(epoch)) {
+    throw new FreeMarketCollectionAdapterError(`${label} must be a valid date`);
+  }
+  return epoch;
+}
+
+function yahooHistoryWindow(request: FinanceMarketCollectionRequest): {
+  period1: number;
+  period2: number;
+} {
+  const asOfDay = new Date(request.asOf);
+  const asOfEpoch = Date.parse(`${asOfDay.toISOString().slice(0, 10)}T00:00:00.000Z`);
+  if (!Number.isFinite(asOfEpoch)) {
+    throw new FreeMarketCollectionAdapterError("request asOf must be a valid timestamp");
+  }
+  const period2 = request.toDate
+    ? utcDayEpoch(request.toDate, "toDate") + 24 * 60 * 60 * 1_000
+    : asOfEpoch + 24 * 60 * 60 * 1_000;
+  const period1 = request.fromDate
+    ? utcDayEpoch(request.fromDate, "fromDate")
+    : period2 - 365 * 24 * 60 * 60 * 1_000;
+  if (period1 >= period2) {
+    throw new FreeMarketCollectionAdapterError("fromDate must be before toDate");
+  }
+  return { period1: Math.floor(period1 / 1_000), period2: Math.floor(period2 / 1_000) };
+}
+
+function parseYahooHistory(body: string, symbol: string): YahooChartHistoryResult {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(body) as unknown;
+  } catch {
+    throw new FreeMarketCollectionAdapterError("Yahoo history response is not valid JSON");
+  }
+  const chart = (payload as { chart?: { error?: unknown; result?: unknown[] } }).chart;
+  if (!chart || chart.error || !Array.isArray(chart.result) || chart.result.length === 0) {
+    throw new FreeMarketCollectionAdapterError(`Yahoo history returned no result for ${symbol}`);
+  }
+  const result = chart.result[0];
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    throw new FreeMarketCollectionAdapterError(`Yahoo history result is invalid for ${symbol}`);
+  }
+  return result as YahooChartHistoryResult;
+}
+
+/**
+ * Yahoo's public chart endpoint is keyless and delayed/end-of-day. It is the
+ * default history source for chart analysis; optional keyed sources remain
+ * cross-checks rather than being silently treated as the same fact.
+ */
+export function createYahooPublicEodHistoryCollectionAdapter(
+  options: {
+    fetchImpl?: FetchImpl;
+  } = {},
+): FinanceMarketCollectionAdapter {
+  return {
+    id: "yahoo_public_eod_history",
+    providerName: "yahoo-public-eod-history",
+    providerRole: "primary_market_data",
+    priority: 20,
+    supports: (request) => isUsEquity(request.assetClass) && request.collection === "eod_history",
+    collect: async (request) => {
+      const symbol = request.instrument.toUpperCase();
+      const limit = request.limit ?? 20;
+      const { period1, period2 } = yahooHistoryWindow(request);
+      const fetchImpl = resolveFinanceFetch(options.fetchImpl);
+      let lastError: unknown;
+      let body = "";
+      let sourceUrlOrArtifact = "";
+      for (const host of ["query2", "query1"] as const) {
+        const candidateUrl = apiUrl(
+          `https://${host}.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`,
+          {
+            interval: "1d",
+            period1,
+            period2,
+            events: "div,splits",
+          },
+        );
+        try {
+          body = await fetchText(fetchImpl, candidateUrl, {
+            "User-Agent": "Mozilla/5.0 (LCX Agent research-only market history)",
+          });
+          sourceUrlOrArtifact = candidateUrl;
+          break;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      if (!body || !sourceUrlOrArtifact) {
+        throw lastError ?? new FreeMarketCollectionAdapterError("Yahoo history request failed");
+      }
+      const result = parseYahooHistory(body, symbol);
+      const timestamps = Array.isArray(result.timestamp) ? result.timestamp : [];
+      const quote = result.indicators?.quote?.[0];
+      if (!quote || timestamps.length === 0) {
+        throw new FreeMarketCollectionAdapterError(`Yahoo history has no OHLCV rows for ${symbol}`);
+      }
+      const rows = timestamps
+        .map((timestamp, index) => {
+          const rowTimestamp = yahooSourceTimestamp(timestamp, request.asOf);
+          const date = rowTimestamp.slice(0, 10);
+          const open = optionalFiniteNumber(quote.open?.[index]);
+          const high = optionalFiniteNumber(quote.high?.[index]);
+          const low = optionalFiniteNumber(quote.low?.[index]);
+          const close = optionalFiniteNumber(quote.close?.[index]);
+          if (
+            open === undefined ||
+            high === undefined ||
+            low === undefined ||
+            close === undefined
+          ) {
+            return null;
+          }
+          const volume = optionalFiniteNumber(quote.volume?.[index]);
+          return {
+            sourceTimestamp: rowTimestamp,
+            date,
+            data: {
+              symbol,
+              date,
+              open,
+              high,
+              low,
+              close,
+              ...(volume === undefined ? {} : { volume }),
+            },
+          };
+        })
+        .filter((row): row is NonNullable<typeof row> => row !== null);
+      if (rows.length === 0) {
+        throw new FreeMarketCollectionAdapterError(
+          `Yahoo history has no usable OHLCV rows for ${symbol}`,
+        );
+      }
+      return rows.slice(-limit).map((row) =>
+        buildItem(request, {
+          itemId: `${symbol}-yahoo-eod-${row.date}`,
+          providerName: "yahoo-public-eod-history",
+          providerRole: "primary_market_data",
+          sourceFamily: "market_data_api",
+          sourceTimestamp: row.sourceTimestamp,
+          delayStatus: "end_of_day",
+          sourceUrlOrArtifact,
+          data: row.data,
+        }),
+      );
+    },
+  };
+}
+
 /** Public Google News RSS search; metadata-only and cross-check role. */
 export function createGoogleNewsRssCollectionAdapter(
   options: {

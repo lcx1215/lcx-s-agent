@@ -15,6 +15,7 @@ import {
   createMassiveSplitsCollectionAdapter,
   createTreasuryDebtCollectionAdapter,
   createTreasuryAverageInterestRatesCollectionAdapter,
+  createYahooPublicEodHistoryCollectionAdapter,
   createYahooFinanceRssCollectionAdapter,
   createFinanceMarketCollectionRegistry,
   inspectFinanceMarketCollectionRegistry,
@@ -121,6 +122,34 @@ function fakeFetch(url: string): ReturnType<FetchImpl> {
       status: 200,
       text: async () =>
         `<?xml version="1.0"?><rss><channel><item><title>Yahoo AAPL</title><link>https://example.test/yahoo-aapl</link><description>Yahoo description</description><pubDate>Mon, 07 Sep 2026 12:00:00 GMT</pubDate><source>Yahoo Finance</source></item></channel></rss>`,
+    });
+  }
+  if (url.includes("query2.finance.yahoo.com/v8/finance/chart/AAPL")) {
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          chart: {
+            result: [
+              {
+                timestamp: [1788523200, 1788609600, 1788696000],
+                indicators: {
+                  quote: [
+                    {
+                      open: [245, 248, null],
+                      high: [250, 252, 255],
+                      low: [244, 247, 251],
+                      close: [249, 251, 254],
+                      volume: [1000, 1100, 1200],
+                    },
+                  ],
+                },
+              },
+            ],
+            error: null,
+          },
+        }),
     });
   }
   if (url.includes("api.gdeltproject.org/api/v2/doc/doc")) {
@@ -328,6 +357,19 @@ describe("finance market collection registry", () => {
     expect(google[0]?.data).toEqual(expect.objectContaining({ title: "Google AAPL" }));
     expect(yahoo[0]?.providerName).toBe("yahoo-finance-rss");
     expect(yahoo[0]?.sourceTimestamp).toBe("2026-09-07T12:00:00.000Z");
+  });
+
+  it("collects public Yahoo EOD bars and drops incomplete rows", async () => {
+    const bars = await createYahooPublicEodHistoryCollectionAdapter({
+      fetchImpl: fakeFetch,
+    }).collect({ ...EQUITY_REQUEST, collection: "eod_history" }, new AbortController().signal);
+    expect(bars).toHaveLength(2);
+    expect(bars[0]?.providerName).toBe("yahoo-public-eod-history");
+    expect(bars[0]?.delayStatus).toBe("end_of_day");
+    expect(bars[0]?.data).toEqual(
+      expect.objectContaining({ symbol: "AAPL", open: 245, close: 249, volume: 1000 }),
+    );
+    expect(bars[0]?.sourceUrlOrArtifact).toContain("period1=");
   });
 
   it("keeps collection failures visible instead of declaring a partial run ready", async () => {

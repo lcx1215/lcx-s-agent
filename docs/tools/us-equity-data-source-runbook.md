@@ -21,17 +21,18 @@ finance_realtime_source_refresh
 For a US common stock, use `assetClass=us_equity` (or `stock`, `equity`, or
 `common_stock`). The default public/official path is:
 
-| Source                 | Role                      | Coverage                                            | Credential |
-| ---------------------- | ------------------------- | --------------------------------------------------- | ---------- |
-| Yahoo chart            | primary market data       | delayed daily/latest chart quote                    | none       |
-| Nasdaq public quote    | independent cross-check   | public exchange quote and session metadata          | none       |
-| Stooq daily            | independent cross-check   | end-of-day daily CSV when available                 | none       |
-| SEC EDGAR companyfacts | official/issuer reference | XBRL fundamentals and shares outstanding            | none       |
-| SEC EDGAR submissions  | official/issuer reference | filing date/form for configured issuer/ETF mappings | none       |
-| Treasury Fiscal Data   | official/issuer reference | debt-to-penny and average Treasury interest rates   | none       |
-| GDELT DOC              | independent cross-check   | public article discovery and publication metadata   | none       |
-| Google News RSS        | independent cross-check   | public article metadata search                      | none       |
-| Yahoo Finance RSS      | independent cross-check   | public finance-news metadata                        | none       |
+| Source                     | Role                      | Coverage                                            | Credential |
+| -------------------------- | ------------------------- | --------------------------------------------------- | ---------- |
+| Yahoo chart                | primary market data       | delayed daily/latest chart quote                    | none       |
+| Nasdaq public quote        | independent cross-check   | public exchange quote and session metadata          | none       |
+| Stooq daily                | independent cross-check   | end-of-day daily CSV when available                 | none       |
+| SEC EDGAR companyfacts     | official/issuer reference | XBRL fundamentals and shares outstanding            | none       |
+| SEC EDGAR submissions      | official/issuer reference | filing date/form for configured issuer/ETF mappings | none       |
+| Treasury Fiscal Data       | official/issuer reference | debt-to-penny and average Treasury interest rates   | none       |
+| GDELT DOC                  | independent cross-check   | public article discovery and publication metadata   | none       |
+| Google News RSS            | independent cross-check   | public article metadata search                      | none       |
+| Yahoo Finance RSS          | independent cross-check   | public finance-news metadata                        | none       |
+| Yahoo public chart history | primary market data       | delayed daily OHLCV for chart analysis              | none       |
 
 The optional keyed path is enabled only when the corresponding process
 environment values are already present at runtime:
@@ -64,7 +65,7 @@ same source/time/conflict discipline in a record-oriented receipt:
 | `macro_series`    | BLS, Treasury debt/average rates, FRED when keyed                     | official time-series records with observation dates                                        |
 | `sec_filings`     | SEC EDGAR submissions                                                 | public filing form, filing/report dates, and primary document metadata                     |
 | `company_profile` | FMP Basic when keyed                                                  | free-tier reference/profile fields; timestamp is explicitly unknown                        |
-| `eod_history`     | FMP Basic when keyed                                                  | historical end-of-day records with date and OHLCV fields                                   |
+| `eod_history`     | Yahoo public chart; FMP Basic when keyed                              | historical end-of-day records with date and OHLCV fields; Yahoo is the keyless baseline    |
 
 The built-in tool is `finance_market_collection_refresh`. The CLI counterpart
 is:
@@ -112,6 +113,47 @@ pnpm lcx:research:data --intent news --target AAPL
 pnpm lcx:research:data --live --intent eod_history --target AAPL --limit 3 --json
 pnpm lcx:research:data --live --intent weather --target 31.23,121.47 --json
 ```
+
+## Web evidence and chart analysis
+
+`research_web_autopilot` is the LCX web-evidence entry point. It composes the
+existing guarded `web_search` and `web_fetch` owners into one loop:
+
+```text
+query -> search leads -> deduplicate URLs -> open original pages
+      -> mark likely official references -> retain failures/timestamps
+      -> ready | needs_review | blocked receipt
+```
+
+Search snippets are leads, not facts. The tool only calls a page “opened
+evidence” after `web_fetch` returns content, leaves external text marked
+untrusted, and reports missing search/fetch provider configuration instead of
+pretending to have Codex's internal network. The provider still comes from the
+configured LCX web-search adapter (Brave/Perplexity/Grok/Gemini/Kimi as
+available); `--live` is explicit in the CLI:
+
+```bash
+pnpm lcx:research:web --query "AAPL latest SEC filing" --require-primary
+pnpm lcx:research:web --live --query "AAPL latest SEC filing" --require-primary --json
+pnpm lcx:research:chart --live --symbol AAPL --limit 250 --json
+```
+
+`finance_chart_analysis` has two separate lanes. With a symbol it fetches
+keyless Yahoo daily OHLCV through `eod_history`, keeps optional FMP results as a
+cross-check, and computes deterministic total return, trend slope, drawdown,
+SMA20/50/200 when covered, RSI14, ATR14, support/resistance, volatility, and
+volume ratio. With `image`, a native vision model receives a guarded image
+block; when the primary model is text-only, the tool automatically invokes the
+configured image/VLM tool when one is available. Pixel-only annotations remain
+a visual-model responsibility; the numeric path never invents them.
+
+```text
+structured OHLCV -> deterministic features -> sourced research context
+chart image      -> image block -> native/configured vision review
+```
+
+Both lanes remain research-only: they do not produce orders, sizing, broker,
+wallet, or sender actions.
 
 ## Local verification
 
