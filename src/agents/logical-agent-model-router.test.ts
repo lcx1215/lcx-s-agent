@@ -320,3 +320,19 @@ describe("role model execution receipts", () => {
     ).rejects.toThrow("fingerprint mismatch");
   });
 });
+
+it("does not dispatch an adapter when cancellation lands between queue admission and invocation", async () => {
+  const controller = new AbortController();
+  const invoke = vi.fn(async () => "unexpected");
+  const pool = new LogicalAgentPool<string, unknown>({
+    modelRouting: routing({ adapters: [adapter("small", { invoke })] }),
+  });
+  const result = await pool.submit(task, async ({ modelSlot }) => {
+    const invocation = modelSlot.invoke(task.input, controller.signal);
+    controller.abort();
+    return { output: await invocation, sideEffects: [] };
+  });
+  expect(result.status).toBe("failed");
+  expect(invoke).not.toHaveBeenCalled();
+  expect(result.modelCalls?.[0]).toMatchObject({ outcome: "aborted", adapterInvoked: false });
+});

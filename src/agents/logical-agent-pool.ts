@@ -799,6 +799,9 @@ export class LogicalAgentPool<TInput, TResult> {
   }
 
   async #invokeModelWithinBudget(job: ModelInvocationJob): Promise<unknown> {
+    if (job.signal.aborted) {
+      throw new Error("logical-agent model invocation aborted before adapter dispatch");
+    }
     const beforeBytes = measuredProcessMemoryBytes();
     let result: unknown;
     let invocationError: unknown;
