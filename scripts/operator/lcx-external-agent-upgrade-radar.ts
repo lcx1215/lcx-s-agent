@@ -21,6 +21,10 @@ type CandidateId =
   | "trading_agents_finance_multi_agent"
   | "finrobot_financial_research"
   | "openbb_finance_data_platform"
+  | "agent_reach_source_adapter"
+  | "finnews_hunter_realtime_intelligence"
+  | "openfr_finance_research"
+  | "amplio_crash_resume_harness"
   | "cameron_personal_finance_approval"
   | "cents_thesis_research"
   | "openalice_full_lifecycle_trading"
@@ -821,6 +825,168 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "provider adapters remain read-only research inputs until separately audited, authenticated, and bound; this candidate cannot create a second finance truth source",
   },
   {
+    id: "agent_reach_source_adapter",
+    label: "Panniantong/Agent-Reach",
+    sourceUrls: ["https://github.com/Panniantong/Agent-Reach"],
+    sourceKind: "github",
+    claimedCapability:
+      "individual-built capability layer with preferred and fallback backends, a doctor command, and explicit cookie/credential boundaries",
+    adoptionMode: "finance_agent_architecture_probe",
+    existingOwner: "finance realtime source registry and source health receipts",
+    ownerEntrypoint: "src/agents/finance-realtime-source-registry.ts",
+    ownerUseTrigger:
+      "When a future task asks for Agent-Reach, preferred/fallback web capabilities, source doctor, or backend health, route it through the finance realtime source registry and skill-harvester before adding any connector or credential path.",
+    autocueTerms: ["Agent-Reach", "preferred fallback adapter", "source doctor", "backend health"],
+    distilledPattern:
+      "represent a capability as an ordered adapter set with observable health, fallback reasons, and a separate credential boundary",
+    firstLocalProbe:
+      "run the local finance source registry with a failing preferred fixture and a succeeding fallback fixture, then preserve both attempts in one gateway receipt",
+    requiredReceipts: [
+      "finance-realtime-source-registry",
+      "finance-data-gateway",
+      "adapter_health_receipt",
+    ],
+    requiredFilters: [
+      "no_cookie_import",
+      "no_credential_write",
+      "preferred_fallback_order_explicit",
+      "single_finance_truth_gateway",
+    ],
+    riskBoundaries: [
+      "no_unreviewed_installer",
+      "no_cookie_or_token_import",
+      "no_provider_config_change",
+      "no_external_channel_sender_change",
+      "protected_memory_guard",
+    ],
+    liveBoundary:
+      "the adapter contract may run an explicitly authorized public source; it cannot import cookies, credentials, external senders, or a second source of truth",
+  },
+  {
+    id: "finnews_hunter_realtime_intelligence",
+    label: "DemonDamon/FinnewsHunter",
+    sourceUrls: ["https://github.com/DemonDamon/FinnewsHunter"],
+    sourceKind: "github",
+    claimedCapability:
+      "personal multi-agent financial intelligence project combining news collection, sentiment fusion, factor mining, market data, and a realtime search surface",
+    adoptionMode: "finance_agent_architecture_probe",
+    existingOwner:
+      "finance article source registry, realtime source registry, and news-classification logical worker",
+    ownerEntrypoint: "src/agents/finance-realtime-source-registry.ts",
+    ownerUseTrigger:
+      "When a future task asks for FinnewsHunter, realtime finance news, sentiment fusion, or alpha-factor mining, ingest only timestamped source packets and classification fixtures through existing finance owners; never import its collection or execution surface directly.",
+    autocueTerms: [
+      "FinnewsHunter",
+      "realtime finance news",
+      "sentiment fusion",
+      "financial news agent",
+    ],
+    distilledPattern:
+      "collect source packets before analysis, keep publication and retrieval timestamps, deduplicate event evidence, and route sentiment through adversarial review",
+    firstLocalProbe:
+      "replay a local news packet fixture with duplicate headlines, conflicting timestamps, and missing issuer confirmation through the article registry and review panel",
+    requiredReceipts: [
+      "finance-article-source-registry",
+      "finance-realtime-source-registry",
+      "data_provenance_quality",
+      "review_panel",
+    ],
+    requiredFilters: [
+      "source_timestamp_required",
+      "duplicate_event_review_required",
+      "sentiment_is_not_forecast",
+      "no_trade_advice",
+    ],
+    riskBoundaries: [
+      "source_code_license_receipt_required",
+      "no_unreviewed_scraper_install",
+      "no_broker_or_order_execution",
+      "no_provider_config_change",
+      "no_external_channel_sender_change",
+    ],
+    liveBoundary:
+      "news collection may feed research-only evidence after source and license review; sentiment, factor names, and realtime labels never become trading authority",
+  },
+  {
+    id: "openfr_finance_research",
+    label: "oujingzhou/openfr",
+    sourceUrls: ["https://github.com/oujingzhou/openfr"],
+    sourceKind: "github",
+    claimedCapability:
+      "lightweight financial research agent using market-data adapters, multi-model analysis, caching, retry/fallback, and market-hours awareness",
+    adoptionMode: "finance_agent_architecture_probe",
+    existingOwner:
+      "finance realtime source registry, finance data gateway, and logical-agent research DAG",
+    ownerEntrypoint: "src/agents/finance-realtime-source-registry.ts",
+    ownerUseTrigger:
+      "When a future task asks for OpenFR, AKShare, quote caching, retry/fallback, or market-hours handling, map the pattern into the source registry and gateway; audit provider and dependency scope before any adapter is added.",
+    autocueTerms: ["OpenFR", "AKShare finance agent", "quote cache", "market-hours guard"],
+    distilledPattern:
+      "cache by source freshness, retry bounded failures, understand market-hours limitations, and keep provider fallback visible in the research receipt",
+    firstLocalProbe:
+      "add a deterministic adapter fixture with cache-age, retry, market-hours, and stale-data labels, then verify the canonical gateway never treats cache presence as freshness proof",
+    requiredReceipts: [
+      "finance-realtime-source-registry",
+      "finance-data-gateway",
+      "adapter_health_receipt",
+      "data_provenance_quality",
+    ],
+    requiredFilters: [
+      "cache_age_required",
+      "market_hours_boundary_required",
+      "retry_limit_required",
+      "provider_conflict_preserved",
+    ],
+    riskBoundaries: [
+      "dependency_license_review_required",
+      "no_unreviewed_provider_install",
+      "no_broker_or_order_execution",
+      "no_provider_config_change",
+      "no_external_channel_sender_change",
+    ],
+    liveBoundary:
+      "cache and retry patterns are local adapter behavior only; no AKShare, broker, wallet, or live trade surface is imported by the radar",
+  },
+  {
+    id: "amplio_crash_resume_harness",
+    label: "google-deepmind/amplio",
+    sourceUrls: ["https://github.com/google-deepmind/amplio"],
+    sourceKind: "github",
+    claimedCapability:
+      "lightweight agent harness emphasizing crash-resume, agent/user/environment coordination, and run-start source snapshots",
+    adoptionMode: "multi_agent_orchestration_probe",
+    existingOwner: "LogicalAgentPool, canonical state-root checkpoint store, and context recovery",
+    ownerEntrypoint: "src/agents/logical-agent-pool-checkpoint-store.ts",
+    ownerUseTrigger:
+      "When a future task asks for Amplio, crash-resume, run-start source snapshots, or environment coordination, compare the pattern with the canonical checkpoint store and context recovery before changing persistence.",
+    autocueTerms: [
+      "Amplio",
+      "crash resume",
+      "run-start snapshot",
+      "agent environment coordination",
+    ],
+    distilledPattern:
+      "capture the run's source snapshot and safe resume boundary once, then let all workers inherit the same evidence without creating another state root",
+    firstLocalProbe:
+      "restart one logical-agent run from the canonical state-root checkpoint and prove the resumed plan fingerprint and source boundary remain unchanged",
+    requiredReceipts: ["logical-agent-checkpoint", "context-recovery-exam", "plan_fingerprint"],
+    requiredFilters: [
+      "canonical_state_root_only",
+      "atomic_checkpoint_write",
+      "resume_plan_fingerprint_required",
+      "no_second_truth_store",
+    ],
+    riskBoundaries: [
+      "no_new_state_root",
+      "no_parallel_persistence_authority",
+      "no_provider_config_change",
+      "no_external_channel_sender_change",
+      "protected_memory_guard",
+    ],
+    liveBoundary:
+      "crash-resume patterns strengthen local orchestration only; they do not prove model learning, external binding, or user-visible completion",
+  },
+  {
     id: "cameron_personal_finance_approval",
     label: "agentailor/cameron",
     sourceUrls: ["https://github.com/agentailor/cameron"],
@@ -1394,6 +1560,9 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
       "trading_agents_finance_multi_agent",
       "finrobot_financial_research",
       "openbb_finance_data_platform",
+      "agent_reach_source_adapter",
+      "finnews_hunter_realtime_intelligence",
+      "openfr_finance_research",
       "cameron_personal_finance_approval",
       "cents_thesis_research",
       "openalice_full_lifecycle_trading",
@@ -1570,6 +1739,10 @@ function buildChecks(verdicts: readonly CandidateVerdict[]): RadarCheck[] {
     "trading_agents_finance_multi_agent",
     "finrobot_financial_research",
     "openbb_finance_data_platform",
+    "agent_reach_source_adapter",
+    "finnews_hunter_realtime_intelligence",
+    "openfr_finance_research",
+    "amplio_crash_resume_harness",
     "cameron_personal_finance_approval",
     "cents_thesis_research",
     "openalice_full_lifecycle_trading",

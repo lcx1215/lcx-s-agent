@@ -40,6 +40,7 @@ import { createFinancePromotionDoctrineEditHandoffTool } from "./tools/finance-p
 import { createFinancePromotionProposalDraftTool } from "./tools/finance-promotion-proposal-draft-tool.js";
 import { createFinancePromotionProposalStatusTool } from "./tools/finance-promotion-proposal-status-tool.js";
 import { createFinancePromotionReviewTool } from "./tools/finance-promotion-review-tool.js";
+import { createFinanceRealtimeRefreshTool } from "./tools/finance-realtime-refresh-tool.js";
 import { createFinanceResearchSourceWorkbenchTool } from "./tools/finance-research-source-workbench-tool.js";
 import { createGatewayTool } from "./tools/gateway-tool.js";
 import { createGitHubProjectCapabilityIntakeTool } from "./tools/github-project-capability-intake-tool.js";
@@ -205,6 +206,9 @@ export function createOpenClawTools(options?: {
       workspaceDir,
     }),
     createFinanceDataGatewaySnapshotTool({
+      workspaceDir,
+    }),
+    createFinanceRealtimeRefreshTool({
       workspaceDir,
     }),
     createFinanceArticleSourceRegistryRecordTool({

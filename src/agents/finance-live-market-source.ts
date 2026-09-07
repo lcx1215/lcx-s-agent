@@ -13,6 +13,7 @@
 // fetch implementation is injectable so the mapping logic is testable offline
 // and so the live path can fail closed when the network or data is unavailable.
 
+import { EnvHttpProxyAgent, fetch as undiciFetch } from "undici";
 import type {
   FinanceDataGatewayInput,
   FinanceDataGatewayObservationInput,
@@ -37,13 +38,32 @@ export type FetchImpl = (
   init?: { headers?: Record<string, string> },
 ) => Promise<{ ok: boolean; status: number; text: () => Promise<string> }>;
 
-const YAHOO_CHART_URL = (symbol: string): string =>
-  `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
+const YAHOO_CHART_URL = (symbol: string, host = "query2"): string =>
+  `https://${host}.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
     symbol.toUpperCase(),
   )}?interval=1d&range=1d`;
 
+const YAHOO_CHART_HOSTS = ["query2", "query1"] as const;
+
 // Yahoo returns 429/403 without a browser-like UA; keep it explicit and honest.
 const YAHOO_HEADERS = { "User-Agent": "Mozilla/5.0 (LCX Agent research-only market snapshot)" };
+
+let defaultFinanceProxyAgent: EnvHttpProxyAgent | undefined;
+
+function defaultFinanceFetch(): FetchImpl {
+  return async (url, init) => {
+    defaultFinanceProxyAgent ??= new EnvHttpProxyAgent();
+    const response = await undiciFetch(url, {
+      dispatcher: defaultFinanceProxyAgent,
+      headers: init?.headers,
+    });
+    return {
+      ok: response.ok,
+      status: response.status,
+      text: () => response.text(),
+    };
+  };
+}
 
 export class LiveMarketFetchError extends Error {
   constructor(
@@ -64,7 +84,11 @@ export class LiveMarketFetchError extends Error {
 // Yahoo chart JSON shape (trimmed):
 // { chart: { result: [ { meta: { currency, symbol, regularMarketPrice,
 //   regularMarketTime, exchangeTimezoneName } } ], error: null } }
-export function parseYahooChart(body: string, requestedSymbol: string): LiveMarketQuote {
+export function parseYahooChart(
+  body: string,
+  requestedSymbol: string,
+  sourceUrlOrArtifact = YAHOO_CHART_URL(requestedSymbol),
+): LiveMarketQuote {
   const text = body.trim();
   if (!text) {
     throw new LiveMarketFetchError("yahoo returned an empty body", "empty_body");
@@ -109,7 +133,7 @@ export function parseYahooChart(body: string, requestedSymbol: string): LiveMark
     currency,
     // The public chart endpoint is delayed, not realtime execution-grade.
     delayStatus: "delayed",
-    sourceUrlOrArtifact: YAHOO_CHART_URL(requestedSymbol),
+    sourceUrlOrArtifact,
   };
 }
 
@@ -117,25 +141,38 @@ export async function fetchYahooQuote(
   symbol: string,
   options: { fetchImpl?: FetchImpl } = {},
 ): Promise<LiveMarketQuote> {
-  const fetchImpl = options.fetchImpl ?? (globalThis.fetch as FetchImpl | undefined);
-  if (!fetchImpl) {
-    throw new LiveMarketFetchError("no fetch implementation available", "network_error");
+  const fetchImpl = options.fetchImpl ?? defaultFinanceFetch();
+  let lastError: LiveMarketFetchError | undefined;
+  for (const host of YAHOO_CHART_HOSTS) {
+    const url = YAHOO_CHART_URL(symbol, host);
+    let response: { ok: boolean; status: number; text: () => Promise<string> };
+    try {
+      response = await fetchImpl(url, { headers: YAHOO_HEADERS });
+    } catch (error) {
+      lastError = new LiveMarketFetchError(
+        `yahoo request failed on ${host}: ${(error as Error).message}`,
+        "network_error",
+      );
+      continue;
+    }
+    if (!response.ok) {
+      lastError = new LiveMarketFetchError(
+        `yahoo http status ${response.status} on ${host}`,
+        "http_error",
+      );
+      continue;
+    }
+    try {
+      const body = await response.text();
+      return parseYahooChart(body, symbol, url);
+    } catch (error) {
+      if (!(error instanceof LiveMarketFetchError)) {
+        throw error;
+      }
+      lastError = error;
+    }
   }
-  const url = YAHOO_CHART_URL(symbol);
-  let response: { ok: boolean; status: number; text: () => Promise<string> };
-  try {
-    response = await fetchImpl(url, { headers: YAHOO_HEADERS });
-  } catch (error) {
-    throw new LiveMarketFetchError(
-      `yahoo request failed: ${(error as Error).message}`,
-      "network_error",
-    );
-  }
-  if (!response.ok) {
-    throw new LiveMarketFetchError(`yahoo http status ${response.status}`, "http_error");
-  }
-  const body = await response.text();
-  return parseYahooChart(body, symbol);
+  throw lastError ?? new LiveMarketFetchError("yahoo request failed", "network_error");
 }
 
 // Map a fetched quote into the gateway's observation contract, preserving full

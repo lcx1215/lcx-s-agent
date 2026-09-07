@@ -35,6 +35,18 @@ function fakeFetch(body: string, init?: { ok?: boolean; status?: number }): Fetc
   });
 }
 
+function sequenceFetch(responses: Array<{ ok: boolean; status: number; body: string }>): FetchImpl {
+  let index = 0;
+  return async () => {
+    const response = responses[Math.min(index++, responses.length - 1)];
+    return {
+      ok: response.ok,
+      status: response.status,
+      text: async () => response.body,
+    };
+  };
+}
+
 describe("parseYahooChart", () => {
   it("parses a real-shaped yahoo chart response into a quote with provenance", () => {
     const quote = parseYahooChart(SAMPLE_JSON, "qqq");
@@ -89,6 +101,17 @@ describe("fetchYahooQuote", () => {
     await expect(fetchYahooQuote("QQQ", { fetchImpl: throwingFetch })).rejects.toMatchObject({
       reason: "network_error",
     });
+  });
+
+  it("falls back from a blocked Yahoo host to the healthy public chart host", async () => {
+    const quote = await fetchYahooQuote("QQQ", {
+      fetchImpl: sequenceFetch([
+        { ok: false, status: 403, body: "" },
+        { ok: true, status: 200, body: SAMPLE_JSON },
+      ]),
+    });
+    expect(quote.price).toBe(725.17);
+    expect(quote.sourceUrlOrArtifact).toContain("query1.finance.yahoo.com");
   });
 });
 

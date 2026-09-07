@@ -192,6 +192,15 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     includeInOpenClawGroup: true,
   },
   {
+    id: "finance_realtime_source_refresh",
+    label: "finance_realtime_source_refresh",
+    description:
+      "Inspect or explicitly fetch an authorized public finance source through the preferred/fallback registry and pass it into the canonical finance data gateway",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
     id: "finance_learning_pipeline_orchestrator",
     label: "finance_learning_pipeline_orchestrator",
     description:
