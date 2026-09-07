@@ -153,4 +153,26 @@ describe("geospatial API transport governance", () => {
     expect(httpSignal?.aborted).toBe(true);
     expect(receipt.sourceAttempts[0].apiCalls?.every((r) => r.status === "timed_out")).toBe(true);
   });
+
+  it("labels public source calls and preserves a per-adapter idempotency key", async () => {
+    const fetchImpl: FetchImpl = async () => ({
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({ current: { time: "2026-09-07T10:30", temperature_2m: 26.7 } }),
+    });
+    const receipt = await runGeospatialRefresh({
+      request: { kind: "weather", query: "31,121", asOf: AS_OF },
+      adapters: [createOpenMeteoWeatherAdapter({ fetchImpl })],
+      correlationId: "geospatial-test",
+    });
+    expect(receipt.sourceAttempts[0].apiCalls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          authScopeLabel: "public",
+          idempotencyKey: "geospatial-test:open_meteo_current_weather",
+        }),
+      ]),
+    );
+  });
 });

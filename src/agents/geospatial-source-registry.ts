@@ -599,6 +599,8 @@ export async function runGeospatialRefresh(options: {
   signal?: AbortSignal;
   correlationId?: string;
   retry?: ApiTransportOptions["retry"];
+  authScopeLabel?: ApiTransportOptions["authScopeLabel"];
+  idempotencyKey?: string;
 }): Promise<GeospatialRefreshReceipt> {
   const request = normalizeRequest(options.request);
   const timeoutMs = options.timeoutMs ?? 15_000;
@@ -626,6 +628,8 @@ export async function runGeospatialRefresh(options: {
           signal: options.signal,
           correlationId,
           retry: options.retry,
+          authScopeLabel: options.authScopeLabel ?? "public",
+          idempotencyKey: options.idempotencyKey ?? `${correlationId}:${adapter.id}`,
           onReceipt: (receipt) => apiCalls.push(receipt),
         }),
       );
