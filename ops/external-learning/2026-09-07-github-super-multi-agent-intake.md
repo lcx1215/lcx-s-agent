@@ -62,7 +62,10 @@ adapter may advance only when it supplies:
 6. separate evidence for runtime, model quality, promotion, external binding,
    and user-visible observation.
 
-The next safe expansion is a canonical file-backed checkpoint adapter owned by
-the existing control-room/state-root contract. It must be implemented there,
-not inside a vendored framework, and it must pass the current head-tail and
-governance checks before any live workflow uses it.
+The canonical file-backed checkpoint adapter is now implemented at
+`src/agents/logical-agent-pool-checkpoint-store.ts`. It uses the existing
+`resolveStateDir()` owner, writes atomically below
+`agents/logical-agent-checkpoints/`, hashes run ids into path components, and
+has a restart-style test that loads the prefix through a fresh store instance.
+It still requires a real local-model execution receipt before any claim about
+model quality or finance-agent capability is made.

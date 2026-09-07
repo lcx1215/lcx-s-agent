@@ -36,6 +36,21 @@ Run the deterministic, no-network demo:
 node --import tsx scripts/operator/lcx-logical-agent-pool.ts --demo --json
 ```
 
+To persist completed-task checkpoints under the active state-root owner and
+replay a run from a fresh process, use an explicit run id:
+
+```bash
+node --import tsx scripts/operator/lcx-logical-agent-pool.ts \
+  --demo --persist-checkpoint --run-id logical-agent-demo --json
+node --import tsx scripts/operator/lcx-logical-agent-pool.ts \
+  --demo --resume --run-id logical-agent-demo --json
+```
+
+The file owner is `src/agents/logical-agent-pool-checkpoint-store.ts`; it uses
+the existing `resolveStateDir()` authority and writes below
+`agents/logical-agent-checkpoints/`. This is restart persistence evidence, not
+model-learning or live-delivery evidence.
+
 The demo only proves role wiring, dependency ordering, and resource limits. It
 does not prove model quality, training absorption, promotion, external-channel
 binding, or user-visible delivery.

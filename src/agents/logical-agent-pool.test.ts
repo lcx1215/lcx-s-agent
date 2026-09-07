@@ -1,4 +1,11 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+  createCanonicalStateRootLogicalAgentCheckpointStore,
+  resolveLogicalAgentCheckpointPath,
+} from "./logical-agent-pool-checkpoint-store.js";
 import {
   buildDefaultLogicalAgentPlan,
   createInMemoryLogicalAgentCheckpointStore,
@@ -668,6 +675,59 @@ describe("logical agent pool", () => {
         checkpointStore: store,
       }),
     ).rejects.toThrow("fingerprint mismatch");
+  });
+
+  it("persists checkpoints below the active state root and resumes from a fresh store instance", async () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "lcx-logical-agent-state-"));
+    const firstStore = createCanonicalStateRootLogicalAgentCheckpointStore<string>({ stateDir });
+    const tasks: Array<LogicalAgentTask<{ ask: string }>> = [
+      { id: "root", agentId: "data_cleaning", input: { ask: "persist" } },
+      { id: "final", agentId: "final_precheck", input: { ask: "persist" }, dependsOn: ["root"] },
+    ];
+    let rootRuns = 0;
+    let finalRuns = 0;
+    const executor = ({ task }: { task: LogicalAgentTask<{ ask: string }> }) => {
+      if (task.id === "root") {
+        rootRuns += 1;
+      }
+      if (task.id === "final") {
+        finalRuns += 1;
+        if (finalRuns === 1) {
+          throw new Error("stop after durable prefix");
+        }
+      }
+      return { output: task.id, sideEffects: [] } as const;
+    };
+
+    const first = await runLogicalAgentPlan({
+      runId: "durable-restart-run",
+      tasks,
+      executor,
+      checkpointStore: firstStore,
+    });
+    expect(first.status).toBe("failed");
+
+    const checkpointPath = resolveLogicalAgentCheckpointPath("durable-restart-run", stateDir);
+    expect(fs.existsSync(checkpointPath)).toBe(true);
+    expect(path.dirname(checkpointPath)).toBe(
+      path.join(stateDir, "agents", "logical-agent-checkpoints"),
+    );
+    expect(() => fs.statSync(checkpointPath)).not.toThrow();
+
+    const restartedStore = createCanonicalStateRootLogicalAgentCheckpointStore<string>({
+      stateDir,
+    });
+    const resumed = await runLogicalAgentPlan({
+      runId: "durable-restart-run",
+      resume: true,
+      tasks,
+      executor,
+      checkpointStore: restartedStore,
+    });
+    expect(resumed.status).toBe("completed");
+    expect(resumed.resumed).toBe(true);
+    expect(rootRuns).toBe(1);
+    expect(finalRuns).toBe(2);
   });
 
   it("runs input and output guardrails inside the shared pool boundary", async () => {

@@ -1096,9 +1096,9 @@ describe("lcx-problem-cluster-radar", () => {
           registeredCandidateCount: 13,
           architectureIntegratedCount: 13,
           runtimeAuthorityGrantedCount: 0,
-          blacktechMechanismCount: 7,
+          blacktechMechanismCount: 8,
           blacktechRuntimeAuthorityGrantedCount: 0,
-          blacktechAutopilotRoutedCount: 7,
+          blacktechAutopilotRoutedCount: 8,
           perfectIntegrationClaim: false,
         },
         candidates: [
