@@ -65,6 +65,13 @@ selected adapters succeeded, `needs_review` means records exist but one or
 more selected sources failed, and `blocked` means no usable records were
 collected.
 
+The durable internal CLI reuses the same autopilot owner:
+
+```bash
+pnpm lcx:research:data --live --intent news --target AAPL --json
+pnpm lcx:research:data --live --intent crypto_quote --target BTCUSDT --json
+```
+
 ## Researched but intentionally not durable-wired
 
 - **Tiingo**: useful free/evaluation quote, IEX, and news surfaces, but the

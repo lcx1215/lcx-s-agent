@@ -27,7 +27,7 @@ import { resolveWorkspaceRoot } from "../workspace-dir.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult, ToolInputError } from "./common.js";
 
-const RESEARCH_DATA_AUTOPILOT_INTENTS = [
+export const RESEARCH_DATA_AUTOPILOT_INTENTS = [
   "quote",
   "crypto_quote",
   "news",
@@ -51,6 +51,7 @@ const ResearchDataAutopilotSchema = Type.Object({
   seriesId: Type.Optional(Type.String()),
   fromDate: Type.Optional(Type.String()),
   toDate: Type.Optional(Type.String()),
+  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 250 })),
   asOf: Type.Optional(Type.String()),
   liveFetch: Type.Optional(Type.Boolean()),
   timeoutMs: Type.Optional(Type.Number()),
@@ -132,6 +133,7 @@ export function createResearchDataAutopilotTool(options?: {
         seriesId?: string;
         fromDate?: string;
         toDate?: string;
+        limit?: number;
         asOf?: string;
         liveFetch?: boolean;
         timeoutMs?: number;
@@ -194,6 +196,7 @@ export function createResearchDataAutopilotTool(options?: {
             seriesId: params.seriesId ?? (collection === "macro_series" ? target : undefined),
             fromDate: params.fromDate,
             toDate: params.toDate,
+            limit: params.limit,
             asOf,
           } as const;
           const envOptions = resolveFinanceMarketCollectionRegistryOptionsFromEnv();

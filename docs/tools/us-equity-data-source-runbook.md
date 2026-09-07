@@ -102,6 +102,15 @@ still returns `blocked` or `needs_review` when evidence is absent or a source
 fails, and its boundary explicitly excludes trading, broker, wallet, order,
 message-sender, and protected-memory authority.
 
+The same owner is permanently available through the internal CLI; dry mode is
+the default and `--live` is explicit:
+
+```bash
+pnpm lcx:research:data --intent news --target AAPL
+pnpm lcx:research:data --live --intent eod_history --target AAPL --limit 3 --json
+pnpm lcx:research:data --live --intent weather --target 31.23,121.47 --json
+```
+
 ## Local verification
 
 Dry inspection, with no network call:
