@@ -8,9 +8,51 @@ const execFileAsync = promisify(execFile);
 
 export const LOCAL_VISION_PROVIDER = "mlx-vlm" as const;
 export const LOCAL_VISION_MODEL_REF = `${LOCAL_VISION_PROVIDER}/local` as const;
-export const DEFAULT_LOCAL_VISION_MODEL = "mlx-community/Qwen3-VL-2B-Instruct-3bit" as const;
+/**
+ * Quality-first profile proven on the current M3/8 GB host. Keep the model id
+ * replaceable: the adapter is the authority for routing, not the weights.
+ */
+export const DEFAULT_LOCAL_VISION_MODEL = "mlx-community/Qwen3-VL-4B-Instruct-4bit" as const;
+/** Smaller profile for constrained hosts or an explicit operator override. */
+export const LOW_MEMORY_LOCAL_VISION_MODEL = "mlx-community/Qwen3-VL-2B-Instruct-3bit" as const;
 export const DEFAULT_LOCAL_VISION_TIMEOUT_MS = 180_000;
 export const DEFAULT_LOCAL_VISION_MAX_TOKENS = 512;
+
+export type LocalVisionModelProfile = {
+  id: string;
+  family: "Qwen3-VL";
+  quantization: "3bit" | "4bit";
+  approximateWeightGb?: number;
+  role: "quality_default" | "low_memory_fallback" | "larger_host_candidate";
+};
+
+/**
+ * The local candidate registry is deliberately small and evidence-bounded.
+ * It records selectable profiles without turning a model into a second
+ * runtime authority. Promotion still requires a real local smoke/eval.
+ */
+export const LOCAL_VISION_MODEL_PROFILES: readonly LocalVisionModelProfile[] = Object.freeze([
+  {
+    id: DEFAULT_LOCAL_VISION_MODEL,
+    family: "Qwen3-VL",
+    quantization: "4bit",
+    approximateWeightGb: 3.09,
+    role: "quality_default",
+  },
+  {
+    id: LOW_MEMORY_LOCAL_VISION_MODEL,
+    family: "Qwen3-VL",
+    quantization: "3bit",
+    approximateWeightGb: 1.58,
+    role: "low_memory_fallback",
+  },
+  {
+    id: "mlx-community/Qwen3-VL-8B-Instruct-4bit",
+    family: "Qwen3-VL",
+    quantization: "4bit",
+    role: "larger_host_candidate",
+  },
+]);
 
 export type LocalVisionRuntimeConfig = {
   enabled: boolean;
@@ -33,6 +75,14 @@ function isTruthy(value: string | undefined): boolean {
 
 function defaultPythonPath(): string {
   return path.join(os.homedir(), ".openclaw", "local-brain-trainer", ".venv", "bin", "python");
+}
+
+function rejectCloudLocalVisionRuntime(): void {
+  if (isTruthy(process.env.LCX_CLOUD_RUNTIME) && process.platform !== "darwin") {
+    throw new Error(
+      "mlx-vlm/local is a Mac-local vision adapter and is unavailable in the cloud runtime; configure a hosted or GPU vision model",
+    );
+  }
 }
 
 export function resolveLocalVisionRuntimeConfig(
@@ -172,6 +222,7 @@ export async function runLocalVisionVlm(params: {
   timeoutMs?: number;
   maxTokens?: number;
 }): Promise<{ text: string; model: string; pythonPath: string }> {
+  rejectCloudLocalVisionRuntime();
   if (params.images.length === 0) {
     throw new Error("local vision requires at least one image");
   }

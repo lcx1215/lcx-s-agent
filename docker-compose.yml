@@ -4,6 +4,13 @@ services:
     environment:
       HOME: /home/node
       TERM: xterm-256color
+      # Keep the container's state authority explicit. Cloud deployments can
+      # mount one persistent host volume at /home/node/.openclaw while the
+      # application still resolves one canonical state root.
+      OPENCLAW_STATE_DIR: ${OPENCLAW_CONTAINER_STATE_DIR:-/home/node/.openclaw}
+      OPENCLAW_CONFIG_PATH: ${OPENCLAW_CONTAINER_CONFIG_PATH:-/home/node/.openclaw/openclaw.json}
+      LCX_CLOUD_RUNTIME: ${LCX_CLOUD_RUNTIME:-0}
+      LCX_LOCAL_VISION_ENABLED: ${LCX_LOCAL_VISION_ENABLED:-0}
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
       OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: ${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}
       CLAUDE_AI_SESSION_KEY: ${CLAUDE_AI_SESSION_KEY:-}
@@ -59,6 +66,10 @@ services:
     environment:
       HOME: /home/node
       TERM: xterm-256color
+      OPENCLAW_STATE_DIR: ${OPENCLAW_CONTAINER_STATE_DIR:-/home/node/.openclaw}
+      OPENCLAW_CONFIG_PATH: ${OPENCLAW_CONTAINER_CONFIG_PATH:-/home/node/.openclaw/openclaw.json}
+      LCX_CLOUD_RUNTIME: ${LCX_CLOUD_RUNTIME:-0}
+      LCX_LOCAL_VISION_ENABLED: ${LCX_LOCAL_VISION_ENABLED:-0}
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
       OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: ${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}
       BROWSER: echo

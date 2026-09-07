@@ -289,7 +289,7 @@ export function createFinanceChartAnalysisTool(options?: {
             const visionResult = await options.visionTool.execute("finance-chart-vision", {
               image: imageInput,
               prompt:
-                "Analyze this financial market chart as research context. Concisely describe visible text, axes, series, trend, levels, formations, timeframe, and uncertainty only when supported by pixels. If text is unreadable, say so. Do not repeat phrases and do not issue buy/sell, order, sizing, or execution instructions.",
+                "Analyze this financial market chart as research context. Return concise labeled observations for visible text/axes, series, directional visual trend (rising, falling, sideways, or uncertain), levels, formations, timeframe, and uncertainty. Keep trend as a direction word, never a price value. Use only pixels; if text is unreadable, say so. Do not repeat phrases and do not issue buy/sell, order, sizing, or execution instructions.",
             });
             visionAnalysis = {
               status: "completed",

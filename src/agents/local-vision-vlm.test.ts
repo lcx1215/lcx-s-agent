@@ -3,6 +3,8 @@ import {
   DEFAULT_LOCAL_VISION_MODEL,
   collapseRepeatedVisionText,
   isLocalVisionModelRef,
+  LOCAL_VISION_MODEL_PROFILES,
+  LOW_MEMORY_LOCAL_VISION_MODEL,
   LOCAL_VISION_MODEL_REF,
   resolveLocalVisionModelId,
   resolveLocalVisionRuntimeConfig,
@@ -17,6 +19,17 @@ describe("local vision VLM runtime", () => {
       timeoutMs: 180_000,
       maxTokens: 512,
     });
+  });
+
+  it("keeps a quality default and an explicit low-memory fallback profile", () => {
+    expect(DEFAULT_LOCAL_VISION_MODEL).toBe("mlx-community/Qwen3-VL-4B-Instruct-4bit");
+    expect(LOW_MEMORY_LOCAL_VISION_MODEL).toBe("mlx-community/Qwen3-VL-2B-Instruct-3bit");
+    expect(LOCAL_VISION_MODEL_PROFILES).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: DEFAULT_LOCAL_VISION_MODEL, role: "quality_default" }),
+        expect.objectContaining({ id: LOW_MEMORY_LOCAL_VISION_MODEL, role: "low_memory_fallback" }),
+      ]),
+    );
   });
 
   it("accepts explicit local model refs without treating them as remote providers", () => {

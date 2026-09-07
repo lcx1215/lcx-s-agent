@@ -38,7 +38,7 @@ async function main(): Promise<number> {
   }
   const prompt =
     valueAfter(args, "--prompt") ??
-    "Analyze this image for chart or dashboard structure. Concisely describe visible text, axes, series, trend, and uncertainty only when supported by pixels. If text is unreadable, say so. Do not repeat phrases and do not give trading instructions.";
+    "Analyze this image for chart or dashboard structure. Return concise labeled observations for visible text, axes, series, and directional visual trend (rising, falling, sideways, or uncertain). Keep trend as a direction word, never a price value. Use only pixels; if text is unreadable, say so. Do not repeat phrases and do not give trading instructions.";
   const modelId = valueAfter(args, "--model");
   const maxTokensRaw = valueAfter(args, "--max-tokens");
   const timeoutRaw = valueAfter(args, "--timeout-ms");

@@ -152,6 +152,7 @@
     "ios:open": "bash -lc './scripts/ios-configure-signing.sh && cd apps/ios && xcodegen generate && open OpenClaw.xcodeproj'",
     "ios:run": "bash -lc './scripts/ios-configure-signing.sh && cd apps/ios && xcodegen generate && xcodebuild -project OpenClaw.xcodeproj -scheme OpenClaw -destination \"${IOS_DEST:-platform=iOS Simulator,name=iPhone 17}\" -configuration Debug build && xcrun simctl boot \"${IOS_SIM:-iPhone 17}\" || true && xcrun simctl launch booted ai.openclaw.ios'",
     "lcx": "node scripts/run-node.mjs",
+    "lcx:cloud:preflight": "node --import tsx scripts/operator/lcx-cloud-preflight.ts",
     "lcx:commercial:acceptance": "node --import tsx scripts/operator/lcx-commercial-acceptance-harness.ts",
     "lcx:echoapi": "node --import tsx scripts/operator/echoapi-cli-live-smoke.ts",
     "lcx:echoapi:ensure": "node --import tsx scripts/operator/echoapi-cli-live-smoke.ts --ensure",
