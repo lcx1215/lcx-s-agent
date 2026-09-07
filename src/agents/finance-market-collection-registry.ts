@@ -1,3 +1,10 @@
+import { randomUUID } from "node:crypto";
+import {
+  apiSourceErrorText,
+  runApiSourceCall,
+  type ApiCallReceipt,
+  type ApiTransportOptions,
+} from "./api-call-contract.js";
 import type {
   FinanceDataDelayStatus,
   FinanceDataProviderRole,
@@ -83,6 +90,7 @@ export type FinanceMarketCollectionAttempt = Readonly<{
   recordCount: number;
   latencyMs: number;
   error?: string;
+  apiCalls?: readonly ApiCallReceipt[];
 }>;
 
 export type FinanceMarketCollectionReceipt = Readonly<{
@@ -180,7 +188,7 @@ function normalizeRequest(request: FinanceMarketCollectionRequest): FinanceMarke
 }
 
 function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return apiSourceErrorText(error);
 }
 
 function isUsEquity(assetClass: string): boolean {
@@ -957,32 +965,21 @@ export function inspectFinanceMarketCollectionRegistry(
 async function collectWithTimeout(
   adapter: FinanceMarketCollectionAdapter,
   request: FinanceMarketCollectionRequest,
-  timeoutMs: number,
-  parentSignal?: AbortSignal,
+  options: ApiTransportOptions,
+  onCollect: () => void,
 ): Promise<readonly FinanceMarketCollectionItem[]> {
-  const controller = new AbortController();
-  const abortFromParent = () => controller.abort(parentSignal?.reason);
-  if (parentSignal?.aborted) {
-    abortFromParent();
-  } else {
-    parentSignal?.addEventListener("abort", abortFromParent, { once: true });
-  }
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await Promise.race([
-      adapter.collect(request, controller.signal),
-      new Promise<readonly FinanceMarketCollectionItem[]>((_, reject) => {
-        controller.signal.addEventListener(
-          "abort",
-          () => reject(new Error(`adapter ${adapter.id} timed out or was cancelled`)),
-          { once: true },
-        );
-      }),
-    ]);
-  } finally {
-    clearTimeout(timeout);
-    parentSignal?.removeEventListener("abort", abortFromParent);
-  }
+  return runApiSourceCall(
+    {
+      ...options,
+      provider: adapter.providerName,
+      source: adapter.id,
+      operation: "collect",
+    },
+    (signal) => {
+      onCollect();
+      return adapter.collect(request, signal);
+    },
+  );
 }
 
 export async function runFinanceMarketCollectionRefresh(options: {
@@ -991,6 +988,8 @@ export async function runFinanceMarketCollectionRefresh(options: {
   maxSources?: number;
   timeoutMs?: number;
   signal?: AbortSignal;
+  correlationId?: string;
+  retry?: ApiTransportOptions["retry"];
 }): Promise<FinanceMarketCollectionReceipt> {
   const request = normalizeRequest(options.request);
   validateAdapters(options.adapters);
@@ -1009,10 +1008,26 @@ export async function runFinanceMarketCollectionRefresh(options: {
     options.maxSources === undefined ? candidates : candidates.slice(0, options.maxSources);
   const sourceAttempts: FinanceMarketCollectionAttempt[] = [];
   const records: FinanceMarketCollectionItem[] = [];
+  let adaptersCalled = false;
+  const correlationId = options.correlationId ?? randomUUID();
   for (const adapter of selected) {
+    const apiCalls: ApiCallReceipt[] = [];
     const startedAt = Date.now();
     try {
-      const collected = await collectWithTimeout(adapter, request, timeoutMs, options.signal);
+      const collected = await collectWithTimeout(
+        adapter,
+        request,
+        {
+          timeoutMs,
+          signal: options.signal,
+          correlationId,
+          retry: options.retry,
+          onReceipt: (receipt) => apiCalls.push(receipt),
+        },
+        () => {
+          adaptersCalled = true;
+        },
+      );
       records.push(...collected);
       sourceAttempts.push({
         adapterId: adapter.id,
@@ -1022,6 +1037,7 @@ export async function runFinanceMarketCollectionRefresh(options: {
         status: "succeeded",
         recordCount: collected.length,
         latencyMs: Math.max(0, Date.now() - startedAt),
+        apiCalls: [...apiCalls],
       });
     } catch (error) {
       sourceAttempts.push({
@@ -1032,6 +1048,7 @@ export async function runFinanceMarketCollectionRefresh(options: {
         status: "failed",
         recordCount: 0,
         latencyMs: Math.max(0, Date.now() - startedAt),
+        apiCalls: [...apiCalls],
         error: errorText(error),
       });
     }
@@ -1045,7 +1062,7 @@ export async function runFinanceMarketCollectionRefresh(options: {
     records,
     sourceAttempts,
     selectedSourceIds: selected.map((adapter) => adapter.id),
-    adaptersCalled: selected.length > 0,
+    adaptersCalled,
     notTouched: [
       "provider_config",
       "external_channel_sender",

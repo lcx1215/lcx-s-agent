@@ -1,3 +1,10 @@
+import { randomUUID } from "node:crypto";
+import {
+  apiSourceErrorText,
+  runApiSourceCall,
+  type ApiCallReceipt,
+  type ApiTransportOptions,
+} from "./api-call-contract.js";
 import { resolveFinanceFetch, type FetchImpl } from "./finance-live-market-source.js";
 import { createNwsCurrentWeatherAdapter } from "./geospatial-official-source-adapters.js";
 
@@ -56,6 +63,7 @@ export type GeospatialSourceAttempt = Readonly<{
   status: "succeeded" | "failed";
   latencyMs: number;
   error?: string;
+  apiCalls?: readonly ApiCallReceipt[];
 }>;
 
 export type GeospatialRefreshReceipt = Readonly<{
@@ -562,33 +570,17 @@ export function inspectGeospatialSourceRegistry(
 async function collectWithTimeout(
   adapter: GeospatialSourceAdapter,
   request: GeospatialSourceRequest,
-  timeoutMs: number,
-  parentSignal?: AbortSignal,
+  options: ApiTransportOptions,
 ): Promise<GeospatialSourceObservation> {
-  const controller = new AbortController();
-  const abortFromParent = () => controller.abort(parentSignal?.reason);
-  if (parentSignal?.aborted) {
-    abortFromParent();
-  } else {
-    parentSignal?.addEventListener("abort", abortFromParent, { once: true });
-  }
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await Promise.race([
-      adapter.collect(request, controller.signal),
-      new Promise<GeospatialSourceObservation>((_, reject) => {
-        controller.signal.addEventListener(
-          "abort",
-          () =>
-            reject(new GeospatialSourceError(`adapter ${adapter.id} timed out or was cancelled`)),
-          { once: true },
-        );
-      }),
-    ]);
-  } finally {
-    clearTimeout(timeout);
-    parentSignal?.removeEventListener("abort", abortFromParent);
-  }
+  return runApiSourceCall(
+    {
+      ...options,
+      provider: adapter.providerName,
+      source: adapter.id,
+      operation: "collect",
+    },
+    (signal) => adapter.collect(request, signal),
+  );
 }
 
 function unique<T>(values: readonly T[]): T[] {
@@ -596,7 +588,7 @@ function unique<T>(values: readonly T[]): T[] {
 }
 
 function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return apiSourceErrorText(error);
 }
 
 export async function runGeospatialRefresh(options: {
@@ -605,6 +597,8 @@ export async function runGeospatialRefresh(options: {
   maxSources?: number;
   timeoutMs?: number;
   signal?: AbortSignal;
+  correlationId?: string;
+  retry?: ApiTransportOptions["retry"];
 }): Promise<GeospatialRefreshReceipt> {
   const request = normalizeRequest(options.request);
   const timeoutMs = options.timeoutMs ?? 15_000;
@@ -621,16 +615,27 @@ export async function runGeospatialRefresh(options: {
   const selected = candidates.slice(0, maxSources);
   const sourceAttempts: GeospatialSourceAttempt[] = [];
   const observations: GeospatialSourceObservation[] = [];
+  const correlationId = options.correlationId ?? randomUUID();
   for (const adapter of selected) {
+    const apiCalls: ApiCallReceipt[] = [];
     const startedAt = Date.now();
     try {
-      observations.push(await collectWithTimeout(adapter, request, timeoutMs, options.signal));
+      observations.push(
+        await collectWithTimeout(adapter, request, {
+          timeoutMs,
+          signal: options.signal,
+          correlationId,
+          retry: options.retry,
+          onReceipt: (receipt) => apiCalls.push(receipt),
+        }),
+      );
       sourceAttempts.push({
         adapterId: adapter.id,
         providerName: adapter.providerName,
         providerRole: adapter.providerRole,
         status: "succeeded",
         latencyMs: Math.max(0, Date.now() - startedAt),
+        apiCalls: [...apiCalls],
       });
     } catch (error) {
       sourceAttempts.push({
@@ -639,6 +644,7 @@ export async function runGeospatialRefresh(options: {
         providerRole: adapter.providerRole,
         status: "failed",
         latencyMs: Math.max(0, Date.now() - startedAt),
+        apiCalls: [...apiCalls],
         error: errorText(error),
       });
     }

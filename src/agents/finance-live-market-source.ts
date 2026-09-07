@@ -14,6 +14,12 @@
 // and so the live path can fail closed when the network or data is unavailable.
 
 import { EnvHttpProxyAgent, fetch as undiciFetch } from "undici";
+import {
+  ApiCallError,
+  governApiFetch,
+  type ApiFetch,
+  type ApiTransportOptions,
+} from "./api-call-contract.js";
 import type {
   FinanceDataGatewayInput,
   FinanceDataGatewayObservationInput,
@@ -33,10 +39,7 @@ export type LiveMarketQuote = {
   sourceUrlOrArtifact: string;
 };
 
-export type FetchImpl = (
-  url: string,
-  init?: { headers?: Record<string, string> },
-) => Promise<{ ok: boolean; status: number; text: () => Promise<string> }>;
+export type FetchImpl = ApiFetch;
 
 const YAHOO_CHART_URL = (symbol: string, host = "query2"): string =>
   `https://${host}.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
@@ -56,18 +59,23 @@ function defaultFinanceFetch(): FetchImpl {
     const response = await undiciFetch(url, {
       dispatcher: defaultFinanceProxyAgent,
       headers: init?.headers,
+      signal: init?.signal,
     });
     return {
       ok: response.ok,
       status: response.status,
+      headers: response.headers,
       text: () => response.text(),
     };
   };
 }
 
 /** Resolve the repository's proxy-aware public HTTP path for source adapters. */
-export function resolveFinanceFetch(fetchImpl?: FetchImpl): FetchImpl {
-  return fetchImpl ?? defaultFinanceFetch();
+export function resolveFinanceFetch(
+  fetchImpl?: FetchImpl,
+  options: ApiTransportOptions = {},
+): FetchImpl {
+  return governApiFetch(fetchImpl ?? defaultFinanceFetch(), options);
 }
 
 export class LiveMarketFetchError extends Error {
@@ -144,9 +152,9 @@ export function parseYahooChart(
 
 export async function fetchYahooQuote(
   symbol: string,
-  options: { fetchImpl?: FetchImpl } = {},
+  options: ApiTransportOptions & { fetchImpl?: FetchImpl } = {},
 ): Promise<LiveMarketQuote> {
-  const fetchImpl = resolveFinanceFetch(options.fetchImpl);
+  const fetchImpl = resolveFinanceFetch(options.fetchImpl, options);
   let lastError: LiveMarketFetchError | undefined;
   for (const host of YAHOO_CHART_HOSTS) {
     const url = YAHOO_CHART_URL(symbol, host);
@@ -154,6 +162,18 @@ export async function fetchYahooQuote(
     try {
       response = await fetchImpl(url, { headers: YAHOO_HEADERS });
     } catch (error) {
+      if (error instanceof ApiCallError) {
+        if (error.kind === "timeout" || error.kind === "cancelled") {
+          throw error;
+        }
+        if (error.kind === "http_error" && error.httpStatus === 403) {
+          lastError = new LiveMarketFetchError(error.message, "http_error");
+          continue;
+        }
+        if (error.kind === "http_error") {
+          throw new LiveMarketFetchError(error.message, "http_error");
+        }
+      }
       lastError = new LiveMarketFetchError(
         `yahoo request failed on ${host}: ${(error as Error).message}`,
         "network_error",

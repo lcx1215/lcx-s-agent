@@ -455,3 +455,65 @@ describe("finance market collection registry", () => {
     ]);
   });
 });
+
+describe("market collection API transport governance", () => {
+  it("aborts keyed HTTP and keeps credentials out of the failed receipt", async () => {
+    let httpSignal: AbortSignal | undefined;
+    const source = createMassiveNewsCollectionAdapter({
+      apiKey: "fake-private-key",
+      fetchImpl: async (_url, init) => {
+        httpSignal = init?.signal;
+        return new Promise(() => {});
+      },
+    });
+    const receipt = await runFinanceMarketCollectionRefresh({
+      request: EQUITY_REQUEST,
+      adapters: [source],
+      timeoutMs: 10,
+    });
+    expect(httpSignal?.aborted).toBe(true);
+    expect(receipt.sourceAttempts[0].apiCalls).toEqual([
+      expect.objectContaining({ operation: "http_get", status: "timed_out" }),
+      expect.objectContaining({ operation: "collect", status: "timed_out" }),
+    ]);
+    expect(JSON.stringify(receipt)).not.toContain("fake-private-key");
+  });
+
+  it("records HTTP success separately from invalid source data", async () => {
+    const source = createMassiveNewsCollectionAdapter({
+      apiKey: "fake-private-key",
+      fetchImpl: async () => ({ ok: true, status: 200, text: async () => "invalid" }),
+    });
+    const receipt = await runFinanceMarketCollectionRefresh({
+      request: EQUITY_REQUEST,
+      adapters: [source],
+    });
+    expect(receipt.status).toBe("blocked");
+    expect(receipt.sourceAttempts[0].apiCalls).toEqual([
+      expect.objectContaining({ operation: "http_get", status: "succeeded", httpStatus: 200 }),
+      expect.objectContaining({
+        operation: "collect",
+        status: "failed",
+        transportError: "source_error",
+      }),
+    ]);
+  });
+
+  it("redacts arbitrary adapter errors and does not enable keyed adapters without keys", async () => {
+    expect(
+      createFinanceMarketCollectionRegistry({}).some((a) => a.id === "massive_us_equity_news"),
+    ).toBe(false);
+    const source = {
+      ...createMassiveNewsCollectionAdapter({ apiKey: "fake-private-key" }),
+      collect: async () => {
+        throw new Error("https://example.test?token=fake-private-key");
+      },
+    };
+    const receipt = await runFinanceMarketCollectionRefresh({
+      request: EQUITY_REQUEST,
+      adapters: [source],
+    });
+    expect(JSON.stringify(receipt)).not.toContain("fake-private-key");
+    expect(receipt.sourceAttempts[0].error).toBe("source_error");
+  });
+});

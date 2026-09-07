@@ -1,4 +1,10 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  apiSourceErrorText,
+  runApiSourceCall,
+  type ApiCallReceipt,
+  type ApiTransportOptions,
+} from "./api-call-contract.js";
 import {
   createAlphaVantageMarketAdapter,
   createInvescoIssuerReferenceAdapter,
@@ -69,6 +75,7 @@ export type FinanceRealtimeSourceAttempt = Readonly<{
   status: "succeeded" | "failed";
   latencyMs: number;
   error?: string;
+  apiCalls?: readonly ApiCallReceipt[];
 }>;
 
 export type FinanceRealtimeRefreshReceipt = Readonly<{
@@ -176,7 +183,7 @@ function orderedAdapters(
 }
 
 function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return apiSourceErrorText(error);
 }
 
 function refreshId(request: FinanceRealtimeSourceRequest, adapterIds: readonly string[]): string {
@@ -224,32 +231,21 @@ export function inspectFinanceRealtimeSourceRegistry(
 async function collectWithTimeout(
   adapter: FinanceRealtimeSourceAdapter,
   request: FinanceRealtimeSourceRequest,
-  timeoutMs: number,
-  parentSignal?: AbortSignal,
+  options: ApiTransportOptions,
+  onCollect: () => void,
 ): Promise<FinanceDataGatewayObservationInput> {
-  const controller = new AbortController();
-  const abortFromParent = () => controller.abort(parentSignal?.reason);
-  if (parentSignal?.aborted) {
-    abortFromParent();
-  } else {
-    parentSignal?.addEventListener("abort", abortFromParent, { once: true });
-  }
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await Promise.race([
-      adapter.collect(request, controller.signal),
-      new Promise<FinanceDataGatewayObservationInput>((_, reject) => {
-        controller.signal.addEventListener(
-          "abort",
-          () => reject(new Error(`adapter ${adapter.id} timed out or was cancelled`)),
-          { once: true },
-        );
-      }),
-    ]);
-  } finally {
-    clearTimeout(timeout);
-    parentSignal?.removeEventListener("abort", abortFromParent);
-  }
+  return runApiSourceCall(
+    {
+      ...options,
+      provider: adapter.providerName,
+      source: adapter.id,
+      operation: "collect",
+    },
+    (signal) => {
+      onCollect();
+      return adapter.collect(request, signal);
+    },
+  );
 }
 
 export async function runFinanceRealtimeRefresh(options: {
@@ -258,6 +254,8 @@ export async function runFinanceRealtimeRefresh(options: {
   maxSources?: number;
   timeoutMs?: number;
   signal?: AbortSignal;
+  correlationId?: string;
+  retry?: ApiTransportOptions["retry"];
 }): Promise<FinanceRealtimeRefreshReceipt> {
   const request = normalizeRequest(options.request);
   validateAdapters(options.adapters);
@@ -274,10 +272,26 @@ export async function runFinanceRealtimeRefresh(options: {
   const sourceAttempts: FinanceRealtimeSourceAttempt[] = [];
   const observations: FinanceDataGatewayObservationInput[] = [];
 
+  let adaptersCalled = false;
+  const correlationId = options.correlationId ?? randomUUID();
   for (const adapter of selected) {
+    const apiCalls: ApiCallReceipt[] = [];
     const startedAt = Date.now();
     try {
-      const observation = await collectWithTimeout(adapter, request, timeoutMs, options.signal);
+      const observation = await collectWithTimeout(
+        adapter,
+        request,
+        {
+          timeoutMs,
+          signal: options.signal,
+          correlationId,
+          retry: options.retry,
+          onReceipt: (receipt) => apiCalls.push(receipt),
+        },
+        () => {
+          adaptersCalled = true;
+        },
+      );
       observations.push(observation);
       sourceAttempts.push({
         adapterId: adapter.id,
@@ -286,6 +300,7 @@ export async function runFinanceRealtimeRefresh(options: {
         priority: adapter.priority,
         status: "succeeded",
         latencyMs: Math.max(0, Date.now() - startedAt),
+        apiCalls: [...apiCalls],
       });
     } catch (error) {
       sourceAttempts.push({
@@ -295,6 +310,7 @@ export async function runFinanceRealtimeRefresh(options: {
         priority: adapter.priority,
         status: "failed",
         latencyMs: Math.max(0, Date.now() - startedAt),
+        apiCalls: [...apiCalls],
         error: errorText(error),
       });
     }
@@ -310,7 +326,7 @@ export async function runFinanceRealtimeRefresh(options: {
     request,
     sourceAttempts,
     selectedSourceIds: selected.map((adapter) => adapter.id),
-    adaptersCalled: selected.length > 0,
+    adaptersCalled,
     notTouched: [
       "provider_config",
       "external_channel_sender",
@@ -386,7 +402,10 @@ export function createYahooDelayedMarketAdapter(
       if (signal.aborted) {
         throw new Error("yahoo adapter cancelled before fetch");
       }
-      const quote = await fetchYahooQuote(request.instrument, { fetchImpl: options.fetchImpl });
+      const quote = await fetchYahooQuote(request.instrument, {
+        fetchImpl: options.fetchImpl,
+        signal,
+      });
       if (signal.aborted) {
         throw new Error("yahoo adapter cancelled after fetch");
       }

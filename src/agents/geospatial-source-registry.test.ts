@@ -115,3 +115,42 @@ describe("geospatial source registry", () => {
     expect(adapter.sourceFamily).toBe("geospatial_reference");
   });
 });
+
+describe("geospatial API transport governance", () => {
+  it("propagates cancellation to an active built-in weather HTTP request", async () => {
+    const controller = new AbortController();
+    let httpSignal: AbortSignal | undefined;
+    const fetchImpl: FetchImpl = async (_url, init) => {
+      httpSignal = init?.signal;
+      controller.abort("private-reason");
+      return new Promise(() => {});
+    };
+    const receipt = await runGeospatialRefresh({
+      request: { kind: "weather", query: "31,121", asOf: AS_OF },
+      adapters: [createOpenMeteoWeatherAdapter({ fetchImpl })],
+      signal: controller.signal,
+    });
+    expect(httpSignal?.aborted).toBe(true);
+    expect(receipt.status).toBe("blocked");
+    expect(receipt.sourceAttempts[0].apiCalls).toEqual([
+      expect.objectContaining({ operation: "http_get", status: "cancelled" }),
+      expect.objectContaining({ operation: "collect", status: "cancelled" }),
+    ]);
+    expect(JSON.stringify(receipt)).not.toContain("private-reason");
+  });
+
+  it("aborts an in-flight weather request at the registry timeout", async () => {
+    let httpSignal: AbortSignal | undefined;
+    const fetchImpl: FetchImpl = async (_url, init) => {
+      httpSignal = init?.signal;
+      return new Promise(() => {});
+    };
+    const receipt = await runGeospatialRefresh({
+      request: { kind: "weather", query: "31,121", asOf: AS_OF },
+      adapters: [createOpenMeteoWeatherAdapter({ fetchImpl })],
+      timeoutMs: 10,
+    });
+    expect(httpSignal?.aborted).toBe(true);
+    expect(receipt.sourceAttempts[0].apiCalls?.every((r) => r.status === "timed_out")).toBe(true);
+  });
+});

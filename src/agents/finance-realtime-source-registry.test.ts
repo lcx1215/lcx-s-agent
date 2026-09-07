@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { FinanceDataGatewayObservationInput } from "./finance-data-gateway.js";
 import {
   createFinanceRealtimeSourceRegistry,
@@ -239,5 +239,58 @@ describe("finance realtime source registry", () => {
       finnhubApiKey: "finnhub-secret",
       twelveDataApiKey: "twelve-secret",
     });
+  });
+});
+
+describe("realtime API transport governance", () => {
+  it("aborts the built-in Yahoo HTTP request at the registry deadline", async () => {
+    let httpSignal: AbortSignal | undefined;
+    let calls = 0;
+    const adapters = createFinanceRealtimeSourceRegistry({
+      fetchImpl: async (_url, init) => {
+        calls += 1;
+        httpSignal = init?.signal;
+        return new Promise(() => {});
+      },
+    }).filter((entry) => entry.id === "yahoo_public_chart");
+    const receipt = await runFinanceRealtimeRefresh({
+      request,
+      adapters,
+      timeoutMs: 10,
+      correlationId: "refresh-test",
+    });
+    expect(httpSignal?.aborted).toBe(true);
+    expect(calls).toBe(1);
+    expect(receipt.status).toBe("blocked");
+    expect(receipt.sourceAttempts[0].apiCalls).toEqual([
+      expect.objectContaining({
+        operation: "http_get",
+        status: "timed_out",
+        correlationId: "refresh-test",
+      }),
+      expect.objectContaining({ operation: "collect", status: "timed_out" }),
+    ]);
+  });
+
+  it("does not invoke any adapter when refresh is already cancelled", async () => {
+    const collect = vi.fn();
+    const source = {
+      ...adapter({
+        id: "cancel-test",
+        providerRole: "primary_market_data",
+        priority: 1,
+        result: new Error("unused"),
+      }),
+      collect,
+    };
+    const receipt = await runFinanceRealtimeRefresh({
+      request,
+      adapters: [source],
+      signal: AbortSignal.abort("secret-reason"),
+    });
+    expect(collect).not.toHaveBeenCalled();
+    expect(receipt.adaptersCalled).toBe(false);
+    expect(receipt.sourceAttempts[0].apiCalls?.[0].status).toBe("cancelled");
+    expect(JSON.stringify(receipt)).not.toContain("secret-reason");
   });
 });

@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { fetch as undiciFetch } from "undici";
+import { describe, expect, it, vi } from "vitest";
 import { buildFinanceDataGatewaySnapshot } from "./finance-data-gateway.js";
 import {
   collectLiveFinanceGatewayInput,
+  resolveFinanceFetch,
   fetchYahooQuote,
   LiveMarketFetchError,
   parseYahooChart,
@@ -169,5 +171,22 @@ describe("collectLiveFinanceGatewayInput", () => {
         fetchImpl: fakeFetch("", { ok: false, status: 500 }),
       }),
     ).rejects.toBeInstanceOf(LiveMarketFetchError);
+  });
+});
+
+vi.mock("undici", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("undici")>();
+  return { ...actual, fetch: vi.fn() };
+});
+
+describe("default proxy-aware transport", () => {
+  it("passes the deadline signal to undici without making a network call", async () => {
+    vi.mocked(undiciFetch).mockImplementationOnce(async () => new Promise(() => {}));
+    await expect(
+      resolveFinanceFetch(undefined, { timeoutMs: 10 })("https://example.test"),
+    ).rejects.toMatchObject({ kind: "timeout" });
+    const init = vi.mocked(undiciFetch).mock.calls.at(-1)?.[1];
+    expect(init?.signal?.aborted).toBe(true);
+    expect(init?.dispatcher).toBeDefined();
   });
 });
