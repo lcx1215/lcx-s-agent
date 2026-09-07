@@ -3,6 +3,7 @@ import type { FinanceDataGatewayObservationInput } from "./finance-data-gateway.
 import {
   createFinanceRealtimeSourceRegistry,
   inspectFinanceRealtimeSourceRegistry,
+  resolveFinanceRealtimeSourceRegistryOptionsFromEnv,
   runFinanceRealtimeRefresh,
   type FinanceRealtimeSourceAdapter,
 } from "./finance-realtime-source-registry.js";
@@ -177,7 +178,7 @@ describe("finance realtime source registry", () => {
       }),
     });
 
-    expect(registry).toHaveLength(12);
+    expect(registry).toHaveLength(13);
     expect(registry.map((adapter) => adapter.id)).toEqual([
       "yahoo_public_chart",
       "binance_public_crypto_ticker",
@@ -190,6 +191,7 @@ describe("finance realtime source registry", () => {
       "nasdaq_exchange_quote",
       "stooq_public_daily",
       "sec_edgar_official_reference",
+      "sec_edgar_companyfacts",
       "invesco_qqq_issuer_reference",
     ]);
     expect(registry[0]?.providerRole).toBe("primary_market_data");
@@ -216,5 +218,26 @@ describe("finance realtime source registry", () => {
       "bitstamp_public_crypto_ticker",
       "coincap_public_crypto_asset",
     ]);
+  });
+
+  it("resolves optional provider credentials by name without exposing their values", () => {
+    const options = resolveFinanceRealtimeSourceRegistryOptionsFromEnv({
+      MASSIVE_API_KEY: "massive-secret",
+      ALPACA_API_KEY_ID: "alpaca-id",
+      ALPACA_API_SECRET_KEY: "alpaca-secret",
+      FINNHUB_API_KEY: "finnhub-secret",
+      TWELVE_DATA_API_KEY: "twelve-secret",
+    });
+    expect(options).toEqual({
+      alphaVantageApiKey: undefined,
+      coinGeckoApiKey: undefined,
+      coinCapApiKey: undefined,
+      massiveApiKey: "massive-secret",
+      alpacaApiKeyId: "alpaca-id",
+      alpacaApiSecretKey: "alpaca-secret",
+      alpacaFeed: undefined,
+      finnhubApiKey: "finnhub-secret",
+      twelveDataApiKey: "twelve-secret",
+    });
   });
 });

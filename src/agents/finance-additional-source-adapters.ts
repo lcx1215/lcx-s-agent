@@ -180,7 +180,9 @@ export function createNasdaqExchangeMarketAdapter(
     priority: 12,
     supports: (request) => request.assetClass.trim().toLowerCase() !== "crypto",
     collect: async (request) => {
-      const sourceUrlOrArtifact = `https://api.nasdaq.com/api/quote/${encodeURIComponent(request.instrument.toUpperCase())}/info?assetclass=${encodeURIComponent(request.assetClass.toLowerCase())}`;
+      const assetClass = request.assetClass.trim().toLowerCase();
+      const nasdaqAssetClass = assetClass === "etf" ? "etfs" : "stocks";
+      const sourceUrlOrArtifact = `https://api.nasdaq.com/api/quote/${encodeURIComponent(request.instrument.toUpperCase())}/info?assetclass=${nasdaqAssetClass}`;
       const payload = (await fetchJson(
         resolveFinanceFetch(options.fetchImpl),
         sourceUrlOrArtifact,
@@ -303,7 +305,9 @@ export function createSecOfficialReferenceAdapter(
     providerName: "sec-edgar-official",
     providerRole: "official_or_issuer_reference",
     priority: 10,
-    supports: (request) => request.assetClass.trim().toLowerCase() !== "crypto",
+    supports: (request) =>
+      request.assetClass.trim().toLowerCase() !== "crypto" &&
+      Boolean(cikByInstrument[request.instrument.trim().toUpperCase()]),
     collect: async (request) => {
       const fetchImpl = resolveFinanceFetch(options.fetchImpl);
       const cik = cikByInstrument[request.instrument.trim().toUpperCase()];

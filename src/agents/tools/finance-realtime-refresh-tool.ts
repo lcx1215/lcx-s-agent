@@ -58,6 +58,12 @@ export function createFinanceRealtimeRefreshTool(options?: {
   alphaVantageApiKey?: string;
   coinGeckoApiKey?: string;
   coinCapApiKey?: string;
+  massiveApiKey?: string;
+  alpacaApiKeyId?: string;
+  alpacaApiSecretKey?: string;
+  alpacaFeed?: string;
+  finnhubApiKey?: string;
+  twelveDataApiKey?: string;
 }): AnyAgentTool {
   const workspaceDir = resolveWorkspaceRoot(options?.workspaceDir);
   return {
@@ -96,6 +102,12 @@ export function createFinanceRealtimeRefreshTool(options?: {
           alphaVantageApiKey: options?.alphaVantageApiKey,
           coinGeckoApiKey: options?.coinGeckoApiKey,
           coinCapApiKey: options?.coinCapApiKey,
+          massiveApiKey: options?.massiveApiKey,
+          alpacaApiKeyId: options?.alpacaApiKeyId,
+          alpacaApiSecretKey: options?.alpacaApiSecretKey,
+          alpacaFeed: options?.alpacaFeed,
+          finnhubApiKey: options?.finnhubApiKey,
+          twelveDataApiKey: options?.twelveDataApiKey,
         });
         const selectedSourceIds = params.sourceIds?.map((sourceId) => sourceId.trim());
         const adapters = selectedSourceIds

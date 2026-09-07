@@ -29,6 +29,13 @@ import {
   quoteToObservation,
   type FetchImpl,
 } from "./finance-live-market-source.js";
+import {
+  createAlpacaUsEquityQuoteAdapter,
+  createFinnhubUsEquityQuoteAdapter,
+  createMassiveUsEquitySnapshotAdapter,
+  createSecCompanyFactsAdapter,
+  createTwelveDataUsEquityQuoteAdapter,
+} from "./finance-us-equity-source-adapters.js";
 
 export const FINANCE_REALTIME_REFRESH_SCHEMA_VERSION = "lcx_finance_realtime_refresh_v1" as const;
 
@@ -97,8 +104,30 @@ export type FinanceRealtimeSourceRegistryOptions = Readonly<{
   alphaVantageApiKey?: string;
   coinGeckoApiKey?: string;
   coinCapApiKey?: string;
+  massiveApiKey?: string;
+  alpacaApiKeyId?: string;
+  alpacaApiSecretKey?: string;
+  alpacaFeed?: string;
+  finnhubApiKey?: string;
+  twelveDataApiKey?: string;
   additionalAdapters?: readonly FinanceRealtimeSourceAdapter[];
 }>;
+
+export function resolveFinanceRealtimeSourceRegistryOptionsFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): FinanceRealtimeSourceRegistryOptions {
+  return {
+    alphaVantageApiKey: env.ALPHA_VANTAGE_API_KEY?.trim() || undefined,
+    coinGeckoApiKey: env.COINGECKO_API_KEY?.trim() || undefined,
+    coinCapApiKey: env.COINCAP_API_KEY?.trim() || undefined,
+    massiveApiKey: env.MASSIVE_API_KEY?.trim() || undefined,
+    alpacaApiKeyId: env.ALPACA_API_KEY_ID?.trim() || undefined,
+    alpacaApiSecretKey: env.ALPACA_API_SECRET_KEY?.trim() || undefined,
+    alpacaFeed: env.ALPACA_DATA_FEED?.trim() || undefined,
+    finnhubApiKey: env.FINNHUB_API_KEY?.trim() || undefined,
+    twelveDataApiKey: env.TWELVE_DATA_API_KEY?.trim() || undefined,
+  };
+}
 
 function requiredText(value: string, label: string): string {
   const normalized = value.trim();
@@ -388,6 +417,7 @@ export function createFinanceRealtimeSourceRegistry(
     createNasdaqExchangeMarketAdapter({ fetchImpl: options.fetchImpl }),
     createStooqDelayedMarketAdapter({ fetchImpl: options.fetchImpl }),
     createSecOfficialReferenceAdapter({ fetchImpl: options.fetchImpl }),
+    createSecCompanyFactsAdapter({ fetchImpl: options.fetchImpl }),
     createInvescoIssuerReferenceAdapter({ fetchImpl: options.fetchImpl }),
   ];
   if (options.alphaVantageApiKey?.trim()) {
@@ -402,6 +432,40 @@ export function createFinanceRealtimeSourceRegistry(
     adapters.push(
       createCoinGeckoCryptoPriceAdapter({
         apiKey: options.coinGeckoApiKey,
+        fetchImpl: options.fetchImpl,
+      }),
+    );
+  }
+  if (options.massiveApiKey?.trim()) {
+    adapters.push(
+      createMassiveUsEquitySnapshotAdapter({
+        apiKey: options.massiveApiKey,
+        fetchImpl: options.fetchImpl,
+      }),
+    );
+  }
+  if (options.alpacaApiKeyId?.trim() && options.alpacaApiSecretKey?.trim()) {
+    adapters.push(
+      createAlpacaUsEquityQuoteAdapter({
+        apiKeyId: options.alpacaApiKeyId,
+        apiSecretKey: options.alpacaApiSecretKey,
+        feed: options.alpacaFeed,
+        fetchImpl: options.fetchImpl,
+      }),
+    );
+  }
+  if (options.finnhubApiKey?.trim()) {
+    adapters.push(
+      createFinnhubUsEquityQuoteAdapter({
+        apiKey: options.finnhubApiKey,
+        fetchImpl: options.fetchImpl,
+      }),
+    );
+  }
+  if (options.twelveDataApiKey?.trim()) {
+    adapters.push(
+      createTwelveDataUsEquityQuoteAdapter({
+        apiKey: options.twelveDataApiKey,
         fetchImpl: options.fetchImpl,
       }),
     );

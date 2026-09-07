@@ -16,6 +16,7 @@
 
 import {
   createFinanceRealtimeSourceRegistry,
+  resolveFinanceRealtimeSourceRegistryOptionsFromEnv,
   runFinanceRealtimeRefresh,
 } from "../../src/agents/finance-realtime-source-registry.ts";
 
@@ -65,7 +66,9 @@ async function main() {
         freshnessMaxMinutes: options.assetClass === "crypto" ? 60 : 60 * 24 * 5,
         crossSourceSkewMaxMinutes: options.assetClass === "crypto" ? 30 : 60 * 24,
       },
-      adapters: createFinanceRealtimeSourceRegistry(),
+      adapters: createFinanceRealtimeSourceRegistry(
+        resolveFinanceRealtimeSourceRegistryOptionsFromEnv(),
+      ),
     });
   } catch (error) {
     // Fail closed: a live source that is unavailable must not produce a fake or

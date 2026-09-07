@@ -2,6 +2,7 @@ import type { OpenClawConfig } from "../config/config.js";
 import { resolvePluginTools } from "../plugins/tools.js";
 import type { GatewayMessageChannel } from "../utils/message-channel.js";
 import { resolveSessionAgentId } from "./agent-scope.js";
+import { resolveFinanceRealtimeSourceRegistryOptionsFromEnv } from "./finance-realtime-source-registry.js";
 import type { SandboxFsBridge } from "./sandbox/fs-bridge.js";
 import type { ToolFsPolicy } from "./tool-fs-policy.js";
 import { createAgentsListTool } from "./tools/agents-list-tool.js";
@@ -211,6 +212,7 @@ export function createOpenClawTools(options?: {
     }),
     createFinanceRealtimeRefreshTool({
       workspaceDir,
+      ...resolveFinanceRealtimeSourceRegistryOptionsFromEnv(),
     }),
     createGeospatialSourceRefreshTool({
       workspaceDir,
