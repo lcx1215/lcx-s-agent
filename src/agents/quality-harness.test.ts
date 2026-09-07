@@ -97,6 +97,31 @@ function demoInvoker(params: {
 }
 
 describe("quality harness", () => {
+  it("passes one shared fact packet to every specialist and reviewer", async () => {
+    const requests: QualityHarnessModelRequest[] = [];
+    await runQualityHarness({
+      request: {
+        ...request,
+        sharedContext: {
+          snapshotId: "snapshot-20260907",
+          decisionMode: "conditional_trade_candidate",
+          sourceTimestamp: "2026-09-07T09:00:00+08:00",
+        },
+      },
+      maxAttempts: 1,
+      modelInvoker: demoInvoker({ requests }),
+      createRunId: () => "shared-context-run",
+    });
+
+    expect(requests).toHaveLength(10);
+    expect(new Set(requests.map((entry) => entry.sharedContext.snapshotId))).toEqual(
+      new Set(["snapshot-20260907"]),
+    );
+    expect(
+      requests.every((entry) => entry.sharedContext.decisionMode === "conditional_trade_candidate"),
+    ).toBe(true);
+  });
+
   it("derives its ten-stage plan from the existing default logical-agent DAG", () => {
     const plan = buildQualityHarnessPlan({ runId: "run-1", attempt: 1, request });
     expect(plan).toHaveLength(10);

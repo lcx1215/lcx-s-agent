@@ -297,6 +297,12 @@ export type LogicalAgentRequest = {
   metadata?: Readonly<Record<string, unknown>>;
 };
 
+/**
+ * Immutable facts shared by every role in one run. This is part of the plan
+ * fingerprint so a resumed run cannot silently mix two fact snapshots.
+ */
+export type LogicalAgentSharedContext = Readonly<Record<string, unknown>>;
+
 export type LogicalAgentTask<TInput = LogicalAgentRequest> = {
   id: string;
   agentId: LogicalAgentId;
@@ -323,6 +329,7 @@ export type LogicalAgentExecutionContext<TInput, TResult> = {
   task: LogicalAgentTask<TInput>;
   agent: LogicalAgentDefinition;
   input: TInput;
+  sharedContext: LogicalAgentSharedContext;
   dependencyResults: Readonly<Record<string, LogicalAgentTaskResult<TResult>>>;
   modelPool: LocalModelPoolConfig;
   modelSlot: LogicalAgentModelSlot;
@@ -372,6 +379,7 @@ export type LogicalAgentPlanResult<TResult> = {
 
 type QueueJob<TInput, TResult> = {
   task: LogicalAgentTask<TInput>;
+  sharedContext: LogicalAgentSharedContext;
   dependencyResults: Readonly<Record<string, LogicalAgentTaskResult<TResult>>>;
   executor: LogicalAgentExecutor<TInput, TResult>;
   resolve: (result: LogicalAgentTaskResult<TResult>) => void;
@@ -479,6 +487,7 @@ export class LogicalAgentPool<TInput, TResult> {
     task: LogicalAgentTask<TInput>,
     executor: LogicalAgentExecutor<TInput, TResult>,
     dependencyResults: Readonly<Record<string, LogicalAgentTaskResult<TResult>>> = {},
+    sharedContext: LogicalAgentSharedContext = {},
   ): Promise<LogicalAgentTaskResult<TResult>> {
     getLogicalAgentDefinition(task.agentId);
     const taskSnapshot = snapshotTask(task);
@@ -486,6 +495,7 @@ export class LogicalAgentPool<TInput, TResult> {
     return new Promise((resolve) => {
       this.#queue.push({
         task: taskSnapshot,
+        sharedContext: cloneAndFreeze(sharedContext),
         dependencyResults: dependencySnapshot,
         executor,
         resolve,
@@ -527,6 +537,7 @@ export class LogicalAgentPool<TInput, TResult> {
             task: job.task,
             agent,
             input: job.task.input,
+            sharedContext: job.sharedContext,
             dependencyResults: job.dependencyResults,
             modelPool: this.#config,
             modelSlot,
@@ -1090,6 +1101,7 @@ export function fingerprintLogicalAgentPlan<TInput>(
   tasks: readonly LogicalAgentTask<TInput>[],
   handoffs: readonly LogicalAgentHandoff[] = [],
   finalTaskId?: string | null,
+  sharedContext: LogicalAgentSharedContext = {},
 ): string {
   const canonicalTasks = tasks.map((task) => ({
     id: task.id,
@@ -1098,7 +1110,14 @@ export function fingerprintLogicalAgentPlan<TInput>(
     dependsOn: task.dependsOn ?? [],
   }));
   return createHash("sha256")
-    .update(stableStringify({ tasks: canonicalTasks, handoffs, finalTaskId: finalTaskId ?? null }))
+    .update(
+      stableStringify({
+        tasks: canonicalTasks,
+        handoffs,
+        finalTaskId: finalTaskId ?? null,
+        sharedContext,
+      }),
+    )
     .digest("hex");
 }
 
@@ -1250,13 +1269,15 @@ export async function runLogicalAgentPlan<TInput, TResult>(params: {
   checkpointStore?: LogicalAgentCheckpointStore<TResult>;
   resume?: boolean;
   handoffs?: readonly LogicalAgentHandoff[];
+  sharedContext?: LogicalAgentSharedContext;
 }): Promise<LogicalAgentPlanResult<TResult>> {
   const tasks = params.tasks.map(snapshotTask);
   validatePlan(tasks);
   const finalTaskId = resolveFinalTaskId(tasks, params.finalTaskId);
   const pool = params.pool ?? new LogicalAgentPool<TInput, TResult>();
   const handoffs = validateHandoffs(tasks, params.handoffs ?? []);
-  const planFingerprint = fingerprintLogicalAgentPlan(tasks, handoffs, finalTaskId);
+  const sharedContext = cloneAndFreeze(params.sharedContext ?? {});
+  const planFingerprint = fingerprintLogicalAgentPlan(tasks, handoffs, finalTaskId, sharedContext);
   const runId = params.runId?.trim() || createLogicalAgentRunId();
   const events: LogicalAgentRunEvent[] = [];
   let eventSequence = 0;
@@ -1439,31 +1460,33 @@ export async function runLogicalAgentPlan<TInput, TResult>(params: {
             dependsOn: dependencies,
           });
           changed = true;
-          void pool.submit(task, params.executor, dependencyResults).then((result) => {
-            if (finished) {
-              return;
-            }
-            try {
-              state.set(task.id, result.status);
-              results.set(task.id, result);
-              emit(result.status === "completed" ? "task_completed" : "task_failed", task.id, {
-                agentId: task.agentId,
-                status: result.status,
-                ...(result.capabilityViolation === undefined
-                  ? {}
-                  : { capabilityViolation: result.capabilityViolation }),
-              });
-              remaining -= 1;
-              if (result.status === "completed") {
-                saveCheckpoint();
+          void pool
+            .submit(task, params.executor, dependencyResults, sharedContext)
+            .then((result) => {
+              if (finished) {
+                return;
               }
-              schedule();
-              finish();
-            } catch (error: unknown) {
-              finished = true;
-              reject(error);
-            }
-          });
+              try {
+                state.set(task.id, result.status);
+                results.set(task.id, result);
+                emit(result.status === "completed" ? "task_completed" : "task_failed", task.id, {
+                  agentId: task.agentId,
+                  status: result.status,
+                  ...(result.capabilityViolation === undefined
+                    ? {}
+                    : { capabilityViolation: result.capabilityViolation }),
+                });
+                remaining -= 1;
+                if (result.status === "completed") {
+                  saveCheckpoint();
+                }
+                schedule();
+                finish();
+              } catch (error: unknown) {
+                finished = true;
+                reject(error);
+              }
+            });
         }
       }
       finish();

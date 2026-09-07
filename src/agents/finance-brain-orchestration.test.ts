@@ -63,6 +63,19 @@ describe("planFinanceBrainOrchestration", () => {
     expect(plan.boundaries).toContain("research_only");
   });
 
+  it("makes the relaxed finance mode explicit without removing execution separation", () => {
+    const plan = planFinanceBrainOrchestration({
+      text: "给出一个带条件的 NVDA 买入候选",
+      decisionMode: "conditional_trade_candidate",
+      highStakesConclusion: true,
+    });
+
+    expect(plan.boundaries).toEqual(
+      expect.arrayContaining(["conditional_trade_candidate", "no_execution_authority"]),
+    );
+    expect(plan.boundaries).not.toContain("no_trade_advice");
+  });
+
   it("routes advanced chart-line learning into technical timing", () => {
     const plan = planFinanceBrainOrchestration({
       text: "学习高级图线分析技术",

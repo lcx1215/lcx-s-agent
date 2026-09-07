@@ -9,6 +9,7 @@ import {
 import {
   buildDefaultLogicalAgentPlan,
   createInMemoryLogicalAgentCheckpointStore,
+  fingerprintLogicalAgentPlan,
   LOGICAL_AGENT_DEFINITIONS,
   LOGICAL_AGENT_CHECKPOINT_SCHEMA_VERSION,
   type LogicalAgentExecutionResult,
@@ -18,6 +19,13 @@ import {
 } from "./logical-agent-pool.js";
 
 describe("logical agent pool", () => {
+  it("changes the plan fingerprint when the shared fact packet changes", () => {
+    const plan = buildDefaultLogicalAgentPlan({ ask: "共享事实包指纹测试" });
+    expect(fingerprintLogicalAgentPlan(plan, [], "final_precheck", { snapshotId: "a" })).not.toBe(
+      fingerprintLogicalAgentPlan(plan, [], "final_precheck", { snapshotId: "b" }),
+    );
+  });
+
   it("defines ten logical roles while binding every role to one shared local model", () => {
     expect(LOGICAL_AGENT_DEFINITIONS).toHaveLength(10);
     expect(new Set(LOGICAL_AGENT_DEFINITIONS.map((agent) => agent.modelBinding))).toEqual(

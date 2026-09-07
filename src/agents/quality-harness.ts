@@ -117,6 +117,7 @@ export async function runQualityHarness(
       tasks: buildQualityHarnessPlan({ runId, attempt, request, repairFeedback: feedback }),
       finalTaskId: "final_precheck",
       executor: createQualityHarnessStageExecutor,
+      sharedContext: request.sharedContext ?? {},
     });
     const quality = evaluateQuality(plan, request);
     finalArtifact = quality.artifact ?? finalArtifact;

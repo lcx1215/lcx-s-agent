@@ -1,4 +1,5 @@
 import type { LcxOntologyModuleId } from "../shared/lcx-ontology.js";
+import type { FinanceDecisionMode } from "./finance-decision-policy.js";
 
 export type FinanceBrainModuleId = LcxOntologyModuleId;
 
@@ -15,6 +16,7 @@ export type FinanceBrainOrchestrationInput = {
   hasLocalMathInputs?: boolean;
   highStakesConclusion?: boolean;
   writesDurableMemory?: boolean;
+  decisionMode?: FinanceDecisionMode;
 };
 
 export type FinanceBrainOrchestrationPlan = {
@@ -345,6 +347,15 @@ export function planFinanceBrainOrchestration(
     primaryModules.includes("portfolio_risk_gates") ||
     primaryModules.includes("quant_math");
   const reviewTools = needsPanel ? ["review_tier", "review_panel"] : ["review_tier"];
+  const decisionMode = input.decisionMode ?? "research_only";
+  const boundaries = [
+    decisionMode,
+    "no_execution_authority",
+    "evidence_required",
+    "no_model_math_guessing",
+    "risk_gate_before_action_language",
+    ...(decisionMode === "research_only" ? ["no_trade_advice"] : []),
+  ];
 
   return {
     primaryModules,
@@ -370,12 +381,6 @@ export function planFinanceBrainOrchestration(
       "review_tier_or_panel",
       "control_room_summary",
     ],
-    boundaries: [
-      "research_only",
-      "no_execution_authority",
-      "evidence_required",
-      "no_model_math_guessing",
-      "risk_gate_before_action_language",
-    ],
+    boundaries,
   };
 }

@@ -40,6 +40,8 @@ export type QualityHarnessEvidence = Readonly<{
 export type QualityHarnessRequest = Readonly<{
   task: string;
   evidence: readonly QualityHarnessEvidence[];
+  /** One immutable fact packet visible to every specialist and reviewer. */
+  sharedContext?: Readonly<Record<string, unknown>>;
 }>;
 
 export type QualityHarnessClaim = Readonly<{
@@ -85,6 +87,7 @@ export type QualityHarnessModelRequest = Readonly<{
   agentId: string;
   task: string;
   evidence: readonly QualityHarnessEvidence[];
+  sharedContext: Readonly<Record<string, unknown>>;
   dependencyOutputs: Readonly<Record<string, unknown>>;
   repairFeedback: readonly string[];
   instructions: string;
@@ -284,7 +287,30 @@ export function normalizeQualityRequest(request: QualityHarnessRequest): Quality
       ...(source ? { source } : {}),
     });
   });
-  return Object.freeze({ task, evidence: Object.freeze(evidence) });
+  const sharedContext =
+    request.sharedContext === undefined
+      ? undefined
+      : normalizeQualitySharedContext(request.sharedContext);
+  return Object.freeze({
+    task,
+    evidence: Object.freeze(evidence),
+    ...(sharedContext === undefined ? {} : { sharedContext }),
+  });
+}
+
+function normalizeQualitySharedContext(
+  value: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("quality harness sharedContext must be an object");
+  }
+  let cloned: Readonly<Record<string, unknown>>;
+  try {
+    cloned = structuredClone(value);
+  } catch {
+    throw new Error("quality harness sharedContext must be structured-cloneable");
+  }
+  return Object.freeze(cloned);
 }
 
 function normalizeFeedback(feedback: readonly string[]): string[] {
@@ -384,6 +410,7 @@ function buildModelRequest(
     agentId: context.agent.id,
     task: context.input.request.task,
     evidence: context.input.request.evidence,
+    sharedContext: context.sharedContext,
     dependencyOutputs: Object.freeze(dependencyOutputs),
     repairFeedback: context.input.repairFeedback,
     instructions: stageInstructions(context.input.stage),
