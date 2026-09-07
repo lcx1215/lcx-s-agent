@@ -559,12 +559,13 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
   },
   {
     id: "multi_agent_framework_orchestration_guardrails",
-    label: "LangGraph / OpenAI Agents / CrewAI / Microsoft Agent Framework",
+    label: "LangGraph / OpenAI Agents / CrewAI / Microsoft Agent Framework / OpenHands",
     sourceUrls: [
       "https://docs.langchain.com/oss/python/langchain/multi-agent",
       "https://openai.github.io/openai-agents-python/handoffs/",
       "https://docs.crewai.com/introduction",
       "https://learn.microsoft.com/agent-framework/overview/agent-framework-overview",
+      "https://github.com/OpenHands/OpenHands",
     ],
     sourceKind: "docs_product_and_paper",
     claimedCapability:
@@ -579,6 +580,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "OpenAI Agents handoffs",
       "CrewAI",
       "Microsoft Agent Framework",
+      "OpenHands",
       "multi-agent",
       "supervisor routing",
     ],

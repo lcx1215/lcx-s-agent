@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { LCX_ONTOLOGY_AGENT_ROLES, type LcxOntologyAgentRole } from "../shared/lcx-ontology.js";
+import { stableStringify } from "./stable-stringify.js";
 
 export const LOGICAL_AGENT_IDS = [
   "data_cleaning",
@@ -39,6 +41,94 @@ export type LogicalAgentModelSlot = Readonly<{
   modelId: string;
   maxLoadedModels: 1;
   invoke: LogicalAgentModelInvoker;
+}>;
+
+export const LOGICAL_AGENT_CHECKPOINT_SCHEMA_VERSION = "lcx_logical_agent_checkpoint_v1" as const;
+
+export type LogicalAgentRunEventKind =
+  | "run_started"
+  | "run_resumed"
+  | "handoff"
+  | "task_dispatched"
+  | "task_completed"
+  | "task_failed"
+  | "task_blocked"
+  | "checkpoint_saved"
+  | "run_completed";
+
+export type LogicalAgentRunEvent = Readonly<{
+  schemaVersion: typeof LOGICAL_AGENT_CHECKPOINT_SCHEMA_VERSION;
+  eventId: string;
+  runId: string;
+  sequence: number;
+  kind: LogicalAgentRunEventKind;
+  taskId?: string;
+  atMs: number;
+  payload?: Readonly<Record<string, unknown>>;
+}>;
+
+/** Event sinks are observers only; the in-memory event list remains the run's local proof. */
+export type LogicalAgentEventSink = (event: LogicalAgentRunEvent) => void;
+
+export type LogicalAgentCheckpoint<TResult> = Readonly<{
+  schemaVersion: typeof LOGICAL_AGENT_CHECKPOINT_SCHEMA_VERSION;
+  runId: string;
+  planFingerprint: string;
+  completedTaskIds: readonly string[];
+  results: readonly LogicalAgentTaskResult<TResult>[];
+  lastEventSequence: number;
+}>;
+
+/**
+ * Persistence is injected by the caller so the pool cannot create a second
+ * state root. Implementations must atomically replace a checkpoint by runId.
+ */
+export type LogicalAgentCheckpointStore<TResult> = Readonly<{
+  load: (runId: string) => LogicalAgentCheckpoint<TResult> | undefined;
+  save: (checkpoint: LogicalAgentCheckpoint<TResult>) => void;
+}>;
+
+export function createInMemoryLogicalAgentCheckpointStore<
+  TResult,
+>(): LogicalAgentCheckpointStore<TResult> {
+  const checkpoints = new Map<string, LogicalAgentCheckpoint<TResult>>();
+  return {
+    load: (runId) => {
+      const checkpoint = checkpoints.get(runId);
+      return checkpoint === undefined ? undefined : snapshotCheckpoint(checkpoint);
+    },
+    save: (checkpoint) => {
+      checkpoints.set(checkpoint.runId, snapshotCheckpoint(checkpoint));
+    },
+  };
+}
+
+export type LogicalAgentHandoff = Readonly<{
+  fromTaskId: string;
+  toTaskId: string;
+  contextScope: "dependency_results";
+  ownership: "transferred";
+  reason?: string;
+}>;
+
+export type LogicalAgentInputGuardrailContext<TInput> = Readonly<{
+  task: LogicalAgentTask<TInput>;
+  agent: LogicalAgentDefinition;
+  input: TInput;
+  capabilities: LogicalAgentCapabilities;
+}>;
+
+export type LogicalAgentOutputGuardrailContext<TInput, TResult> = Readonly<{
+  task: LogicalAgentTask<TInput>;
+  agent: LogicalAgentDefinition;
+  output: TResult;
+  sideEffects: readonly LogicalAgentSideEffect[];
+  capabilities: LogicalAgentCapabilities;
+}>;
+
+export type LogicalAgentGuardrails<TInput, TResult> = Readonly<{
+  input?: (context: LogicalAgentInputGuardrailContext<TInput>) => void | Promise<void>;
+  output?: (context: LogicalAgentOutputGuardrailContext<TInput, TResult>) => void | Promise<void>;
 }>;
 
 export const LOGICAL_AGENT_LOCAL_CAPABILITIES: LogicalAgentCapabilities = Object.freeze({
@@ -184,8 +274,12 @@ export type LocalModelPoolConfig = Readonly<{
   taskTimeoutMs: number;
 }>;
 
-export type LocalModelPoolOptions = Partial<LocalModelPoolConfig> & {
+export type LocalModelPoolOptions<
+  TInput = unknown,
+  TResult = unknown,
+> = Partial<LocalModelPoolConfig> & {
   modelInvoker?: LogicalAgentModelInvoker;
+  guardrails?: LogicalAgentGuardrails<TInput, TResult>;
 };
 
 export const DEFAULT_LOCAL_MODEL_POOL: LocalModelPoolConfig = Object.freeze({
@@ -269,6 +363,11 @@ export type LogicalAgentPlanResult<TResult> = {
   finalTaskId: string | null;
   tasks: Array<LogicalAgentTaskResult<TResult>>;
   pool: LogicalAgentPoolStatus;
+  runId: string;
+  planFingerprint: string;
+  resumed: boolean;
+  events: readonly LogicalAgentRunEvent[];
+  handoffs: readonly LogicalAgentHandoff[];
 };
 
 type QueueJob<TInput, TResult> = {
@@ -335,6 +434,7 @@ function normalizePoolConfig(config?: Partial<LocalModelPoolConfig>): LocalModel
 export class LogicalAgentPool<TInput, TResult> {
   #config: LocalModelPoolConfig;
   #modelInvoker: LogicalAgentModelInvoker;
+  #guardrails: LogicalAgentGuardrails<TInput, TResult>;
   #modelSlot: LogicalAgentModelSlot;
   #queue: Array<QueueJob<TInput, TResult>> = [];
   #modelInvocationQueue: ModelInvocationJob[] = [];
@@ -343,9 +443,10 @@ export class LogicalAgentPool<TInput, TResult> {
   #activeModelInvocations = 0;
   #maxObservedModelConcurrency = 0;
 
-  constructor(options?: LocalModelPoolOptions) {
+  constructor(options?: LocalModelPoolOptions<TInput, TResult>) {
     this.#config = normalizePoolConfig(options);
     this.#modelInvoker = options?.modelInvoker ?? UNAVAILABLE_MODEL_INVOKER;
+    this.#guardrails = options?.guardrails ?? {};
     this.#modelSlot = Object.freeze({
       modelId: this.#config.modelId,
       maxLoadedModels: 1,
@@ -416,6 +517,12 @@ export class LogicalAgentPool<TInput, TResult> {
       const modelSlot = this.#createTaskModelSlot(modelScope);
       const attempt = executeWithTimeout(async (signal) => {
         try {
+          await this.#guardrails.input?.({
+            task: job.task,
+            agent,
+            input: job.task.input,
+            capabilities,
+          });
           const execution = await job.executor({
             task: job.task,
             agent,
@@ -425,6 +532,13 @@ export class LogicalAgentPool<TInput, TResult> {
             modelSlot,
             capabilities,
             signal,
+          });
+          await this.#guardrails.output?.({
+            task: job.task,
+            agent,
+            output: execution.output,
+            sideEffects: execution.sideEffects,
+            capabilities,
           });
           modelScope.closed = true;
           await this.#waitForTaskModelInvocations(modelScope);
@@ -586,6 +700,19 @@ function snapshotTaskResult<TResult>(
     ...result,
     ...(result.output === undefined ? {} : { output: cloneAndFreeze(result.output) }),
     sideEffects: Object.freeze([...result.sideEffects]),
+  });
+}
+
+function snapshotCheckpoint<TResult>(
+  checkpoint: LogicalAgentCheckpoint<TResult>,
+): LogicalAgentCheckpoint<TResult> {
+  return Object.freeze({
+    schemaVersion: checkpoint.schemaVersion,
+    runId: checkpoint.runId,
+    planFingerprint: checkpoint.planFingerprint,
+    completedTaskIds: Object.freeze([...checkpoint.completedTaskIds]),
+    results: Object.freeze(checkpoint.results.map(snapshotTaskResult)),
+    lastEventSequence: checkpoint.lastEventSequence,
   });
 }
 
@@ -959,6 +1086,144 @@ function validatePlan<TInput>(tasks: readonly LogicalAgentTask<TInput>[]) {
   }
 }
 
+export function fingerprintLogicalAgentPlan<TInput>(
+  tasks: readonly LogicalAgentTask<TInput>[],
+  handoffs: readonly LogicalAgentHandoff[] = [],
+  finalTaskId?: string | null,
+): string {
+  const canonicalTasks = tasks.map((task) => ({
+    id: task.id,
+    agentId: task.agentId,
+    input: task.input,
+    dependsOn: task.dependsOn ?? [],
+  }));
+  return createHash("sha256")
+    .update(stableStringify({ tasks: canonicalTasks, handoffs, finalTaskId: finalTaskId ?? null }))
+    .digest("hex");
+}
+
+function validateHandoffs<TInput>(
+  tasks: readonly LogicalAgentTask<TInput>[],
+  handoffs: readonly LogicalAgentHandoff[],
+): LogicalAgentHandoff[] {
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const targets = new Set<string>();
+  for (const handoff of handoffs) {
+    const from = taskById.get(handoff.fromTaskId);
+    const to = taskById.get(handoff.toTaskId);
+    if (!from || !to) {
+      throw new Error(
+        `logical-agent handoff must reference existing tasks: ${handoff.fromTaskId} -> ${handoff.toTaskId}`,
+      );
+    }
+    if (handoff.fromTaskId === handoff.toTaskId) {
+      throw new Error(`logical-agent handoff cannot target itself: ${handoff.toTaskId}`);
+    }
+    if (!(to.dependsOn ?? []).includes(handoff.fromTaskId)) {
+      throw new Error(
+        `logical-agent handoff source must be a dependency: ${handoff.fromTaskId} -> ${handoff.toTaskId}`,
+      );
+    }
+    if (targets.has(handoff.toTaskId)) {
+      throw new Error(`logical-agent task has multiple handoffs: ${handoff.toTaskId}`);
+    }
+    if (handoff.contextScope !== "dependency_results" || handoff.ownership !== "transferred") {
+      throw new Error(
+        `logical-agent handoff has unsupported transfer semantics: ${handoff.toTaskId}`,
+      );
+    }
+    targets.add(handoff.toTaskId);
+  }
+  return handoffs.map((handoff) => Object.freeze({ ...handoff }));
+}
+
+function createLogicalAgentRunId(): string {
+  return `logical-agent-run-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function checkpointForResults<TInput, TResult>(params: {
+  runId: string;
+  planFingerprint: string;
+  tasks: readonly LogicalAgentTask<TInput>[];
+  results: ReadonlyMap<string, LogicalAgentTaskResult<TResult>>;
+  lastEventSequence: number;
+}): LogicalAgentCheckpoint<TResult> {
+  const completedTaskIds: string[] = [];
+  const completedResults: LogicalAgentTaskResult<TResult>[] = [];
+  for (const task of params.tasks) {
+    const result = params.results.get(task.id);
+    if (result?.status !== "completed") {
+      continue;
+    }
+    completedTaskIds.push(task.id);
+    completedResults.push(snapshotTaskResult(result));
+  }
+  return snapshotCheckpoint({
+    schemaVersion: LOGICAL_AGENT_CHECKPOINT_SCHEMA_VERSION,
+    runId: params.runId,
+    planFingerprint: params.planFingerprint,
+    completedTaskIds,
+    results: completedResults,
+    lastEventSequence: params.lastEventSequence,
+  });
+}
+
+function restoreCheckpoint<TInput, TResult>(params: {
+  checkpoint: LogicalAgentCheckpoint<TResult>;
+  runId: string;
+  planFingerprint: string;
+  tasks: readonly LogicalAgentTask<TInput>[];
+}): Map<string, LogicalAgentTaskResult<TResult>> {
+  const { checkpoint } = params;
+  if (checkpoint.schemaVersion !== LOGICAL_AGENT_CHECKPOINT_SCHEMA_VERSION) {
+    throw new Error("logical-agent checkpoint schema is incompatible");
+  }
+  if (checkpoint.runId !== params.runId) {
+    throw new Error("logical-agent checkpoint runId mismatch; refuse to resume another run");
+  }
+  if (checkpoint.planFingerprint !== params.planFingerprint) {
+    throw new Error("logical-agent checkpoint fingerprint mismatch; refuse to resume another plan");
+  }
+  const taskIds = new Set(params.tasks.map((task) => task.id));
+  const completedIds = new Set<string>();
+  const results = new Map<string, LogicalAgentTaskResult<TResult>>();
+  for (const taskId of checkpoint.completedTaskIds) {
+    if (!taskIds.has(taskId) || completedIds.has(taskId)) {
+      throw new Error(`logical-agent checkpoint contains an invalid completed task: ${taskId}`);
+    }
+    completedIds.add(taskId);
+  }
+  for (const result of checkpoint.results) {
+    if (!completedIds.has(result.taskId) || result.status !== "completed") {
+      throw new Error(`logical-agent checkpoint contains an invalid result: ${result.taskId}`);
+    }
+    const task = params.tasks.find((candidate) => candidate.id === result.taskId);
+    if (!task || task.agentId !== result.agentId) {
+      throw new Error(`logical-agent checkpoint result does not match its task: ${result.taskId}`);
+    }
+    if (results.has(result.taskId)) {
+      throw new Error(`logical-agent checkpoint contains duplicate result: ${result.taskId}`);
+    }
+    results.set(result.taskId, snapshotTaskResult(result));
+  }
+  if (results.size !== completedIds.size) {
+    throw new Error("logical-agent checkpoint completed task/result indexes disagree");
+  }
+  for (const task of params.tasks) {
+    if (!completedIds.has(task.id)) {
+      continue;
+    }
+    for (const dependency of task.dependsOn ?? []) {
+      if (!completedIds.has(dependency)) {
+        throw new Error(
+          `logical-agent checkpoint completed ${task.id} before dependency ${dependency}`,
+        );
+      }
+    }
+  }
+  return results;
+}
+
 function blockedResult<TResult>(
   task: LogicalAgentTask<unknown>,
   modelId: string,
@@ -980,22 +1245,114 @@ export async function runLogicalAgentPlan<TInput, TResult>(params: {
   executor: LogicalAgentExecutor<TInput, TResult>;
   pool?: LogicalAgentPool<TInput, TResult>;
   finalTaskId?: string;
+  runId?: string;
+  eventSink?: LogicalAgentEventSink;
+  checkpointStore?: LogicalAgentCheckpointStore<TResult>;
+  resume?: boolean;
+  handoffs?: readonly LogicalAgentHandoff[];
 }): Promise<LogicalAgentPlanResult<TResult>> {
   const tasks = params.tasks.map(snapshotTask);
   validatePlan(tasks);
   const finalTaskId = resolveFinalTaskId(tasks, params.finalTaskId);
   const pool = params.pool ?? new LogicalAgentPool<TInput, TResult>();
+  const handoffs = validateHandoffs(tasks, params.handoffs ?? []);
+  const planFingerprint = fingerprintLogicalAgentPlan(tasks, handoffs, finalTaskId);
+  const runId = params.runId?.trim() || createLogicalAgentRunId();
+  const events: LogicalAgentRunEvent[] = [];
+  let eventSequence = 0;
+  const emit = (
+    kind: LogicalAgentRunEventKind,
+    taskId?: string,
+    payload?: Readonly<Record<string, unknown>>,
+  ) => {
+    const event = Object.freeze({
+      schemaVersion: LOGICAL_AGENT_CHECKPOINT_SCHEMA_VERSION,
+      eventId: `${runId}:${eventSequence + 1}`,
+      runId,
+      sequence: ++eventSequence,
+      kind,
+      ...(taskId === undefined ? {} : { taskId }),
+      atMs: Date.now(),
+      ...(payload === undefined ? {} : { payload }),
+    }) satisfies LogicalAgentRunEvent;
+    events.push(event);
+    try {
+      params.eventSink?.(event);
+    } catch {
+      // A passive observer cannot change execution truth or block recovery.
+    }
+  };
+
+  if (params.resume && !params.checkpointStore) {
+    throw new Error("logical-agent resume requires an injected checkpoint store");
+  }
+  if (params.resume && !params.runId?.trim()) {
+    throw new Error("logical-agent resume requires an explicit runId");
+  }
+
+  const restoredResults = params.resume
+    ? restoreCheckpoint({
+        checkpoint:
+          params.checkpointStore?.load(runId) ??
+          (() => {
+            throw new Error(`logical-agent checkpoint not found for runId: ${runId}`);
+          })(),
+        runId,
+        planFingerprint,
+        tasks,
+      })
+    : new Map<string, LogicalAgentTaskResult<TResult>>();
+  if (params.resume) {
+    emit("run_resumed", undefined, {
+      completedTaskCount: restoredResults.size,
+      planFingerprint,
+    });
+  } else {
+    emit("run_started", undefined, { taskCount: tasks.length, planFingerprint });
+  }
+
   if (tasks.length === 0) {
-    return { status: "completed", finalTaskId: null, tasks: [], pool: pool.status };
+    emit("run_completed", undefined, { status: "completed" });
+    return {
+      status: "completed",
+      finalTaskId: null,
+      tasks: [],
+      pool: pool.status,
+      runId,
+      planFingerprint,
+      resumed: Boolean(params.resume),
+      events: Object.freeze([...events]),
+      handoffs: Object.freeze(handoffs),
+    };
   }
 
   type PlanState = "pending" | "queued" | "completed" | "failed" | "blocked";
-  const state = new Map<string, PlanState>(tasks.map((task) => [task.id, "pending"]));
-  const results = new Map<string, LogicalAgentTaskResult<TResult>>();
+  const state = new Map<string, PlanState>(
+    tasks.map((task) => [task.id, restoredResults.has(task.id) ? "completed" : "pending"]),
+  );
+  const results = restoredResults;
 
-  return new Promise((resolve) => {
-    let remaining = tasks.length;
+  return new Promise((resolve, reject) => {
+    let remaining = tasks.length - restoredResults.size;
     let finished = false;
+
+    const saveCheckpoint = () => {
+      if (!params.checkpointStore) {
+        return;
+      }
+      const checkpoint = checkpointForResults({
+        runId,
+        planFingerprint,
+        tasks,
+        results,
+        lastEventSequence: eventSequence,
+      });
+      params.checkpointStore.save(checkpoint);
+      emit("checkpoint_saved", undefined, {
+        completedTaskCount: checkpoint.completedTaskIds.length,
+        checkpointEventSequence: checkpoint.lastEventSequence,
+      });
+    };
 
     const finish = () => {
       if (remaining !== 0 || finished) {
@@ -1012,11 +1369,18 @@ export async function runLogicalAgentPlan<TInput, TResult>(params: {
       }
       const hasFailure = orderedResults.some((result) => result.status === "failed");
       const hasBlocked = orderedResults.some((result) => result.status === "blocked");
+      const status = hasFailure ? "failed" : hasBlocked ? "blocked" : "completed";
+      emit("run_completed", undefined, { status });
       resolve({
-        status: hasFailure ? "failed" : hasBlocked ? "blocked" : "completed",
+        status,
         finalTaskId,
         tasks: orderedResults,
         pool: pool.status,
+        runId,
+        planFingerprint,
+        resumed: Boolean(params.resume),
+        events: Object.freeze([...events]),
+        handoffs: Object.freeze(handoffs),
       });
     };
 
@@ -1035,7 +1399,12 @@ export async function runLogicalAgentPlan<TInput, TResult>(params: {
           });
           if (failedDependencies.length > 0) {
             state.set(task.id, "blocked");
-            results.set(task.id, blockedResult(task, pool.config.modelId, failedDependencies));
+            const result = blockedResult<TResult>(task, pool.config.modelId, failedDependencies);
+            results.set(task.id, result);
+            emit("task_blocked", task.id, {
+              agentId: task.agentId,
+              dependencies: failedDependencies,
+            });
             remaining -= 1;
             changed = true;
             continue;
@@ -1054,14 +1423,46 @@ export async function runLogicalAgentPlan<TInput, TResult>(params: {
             }
             dependencyResults[dependency] = result;
           }
+          for (const handoff of handoffs) {
+            if (handoff.toTaskId === task.id) {
+              emit("handoff", task.id, {
+                fromTaskId: handoff.fromTaskId,
+                contextScope: handoff.contextScope,
+                ownership: handoff.ownership,
+                ...(handoff.reason === undefined ? {} : { reason: handoff.reason }),
+              });
+            }
+          }
           state.set(task.id, "queued");
+          emit("task_dispatched", task.id, {
+            agentId: task.agentId,
+            dependsOn: dependencies,
+          });
           changed = true;
           void pool.submit(task, params.executor, dependencyResults).then((result) => {
-            state.set(task.id, result.status);
-            results.set(task.id, result);
-            remaining -= 1;
-            schedule();
-            finish();
+            if (finished) {
+              return;
+            }
+            try {
+              state.set(task.id, result.status);
+              results.set(task.id, result);
+              emit(result.status === "completed" ? "task_completed" : "task_failed", task.id, {
+                agentId: task.agentId,
+                status: result.status,
+                ...(result.capabilityViolation === undefined
+                  ? {}
+                  : { capabilityViolation: result.capabilityViolation }),
+              });
+              remaining -= 1;
+              if (result.status === "completed") {
+                saveCheckpoint();
+              }
+              schedule();
+              finish();
+            } catch (error: unknown) {
+              finished = true;
+              reject(error);
+            }
           });
         }
       }

@@ -200,7 +200,7 @@ describe("lcx-external-agent-upgrade-radar", () => {
           ownerEntrypoint: skillEntrypoint("cli-anything-harvester"),
         }),
         expect.objectContaining({
-          label: "LangGraph / OpenAI Agents / CrewAI / Microsoft Agent Framework",
+          label: "LangGraph / OpenAI Agents / CrewAI / Microsoft Agent Framework / OpenHands",
           ownerEntrypoint: "scripts/operator/lcx-flow-graph.ts",
         }),
         expect.objectContaining({

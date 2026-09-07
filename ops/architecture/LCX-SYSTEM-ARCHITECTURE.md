@@ -53,7 +53,7 @@ different views of the same system, not competing top-level systems:
 | **Learning sedimentation / internalization**        | `scripts/operator/module-learning-pipeline-plan.ts`, `module-learning-pipeline-review.ts`, and the `lcx-learning-sedimentation-*` owners                                                  | Did a source become an applied and reviewed capability, rather than merely a stored artifact?                | A bounded learning loop around capabilities; it does not redefine runtime truth.                |
 | **Continuity, inventory, and governance autopilot** | `lcx-context-recovery-exam.ts`, `lcx-universe-index.ts`, `lcx-problem-cluster-radar.ts`, and `lcx-governance-autopilot.ts`                                                                | Can a new window recover current state, route a problem to its owner, and refresh one compact evidence view? | Operational supervision and recovery; inventory and radar are not deletion or repair authority. |
 | **Core / host / delivery boundary**                 | Current LCX control and answer path plus `lcx-external-channel-binding.ts` and `lcx-external-channel-status.ts`                                                                           | Which part is product/control authority, which part is an execution host, and which part is transport?       | Boundary and delivery plane; a host or channel is never a second LCX brain.                     |
-| **Optional model and logical-agent implementation** | Qwen/MiniMax/adapters and the bounded logical-agent pool                                                                                                                                  | Can an implementation candidate execute, be evaluated, and possibly be promoted?                             | A subordinate implementation loop; it cannot redefine semantics, governance, or delivery proof. |
+| **Optional model and logical-agent implementation** | Qwen/MiniMax/adapters and `src/agents/logical-agent-pool.ts`                                                                                                                              | Can an implementation candidate execute, be evaluated, and possibly be promoted?                             | A subordinate implementation loop; it cannot redefine semantics, governance, or delivery proof. |
 
 ### Macro--micro unified capability rule
 
@@ -174,6 +174,29 @@ This loop is subordinate to the control plane. It cannot redefine ontology,
 skip workflow filters, claim learning from stored text, bind a delivery adapter,
 or modify provider/protected-memory authority by naming a model or passing one
 local check.
+
+### Native multi-agent execution contract
+
+The logical-agent pool absorbs generic multi-agent mechanics behind the same
+TypeScript control owner. Its event stream is a receipt surface, not a second
+runtime; its checkpoint store is injected by the canonical state owner, not
+created as a hidden state root. A plan fingerprint binds resume to the same
+task ids, agent ids, inputs, and dependency graph. Handoffs transfer declared
+dependency context and ownership metadata only; they do not transfer provider,
+external-channel, protected-memory, training, or trading authority.
+
+```text
+task DAG
+  -> bounded shared-model pool
+  -> input/output/capability guardrails
+  -> task events and completed-prefix checkpoint
+  -> fingerprint-checked resume or terminal receipt
+```
+
+This is a native LCX protocol slice inspired by reviewed open-source patterns.
+LCX does not vendor LangGraph, OpenHands, AutoGen, Microsoft Agent Framework,
+or OpenAI Agents as another orchestration runtime. AutoGen is specifically not
+the adoption base while its official project is in maintenance mode.
 
 ### Learning and memory loop
 

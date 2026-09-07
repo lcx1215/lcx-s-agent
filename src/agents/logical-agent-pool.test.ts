@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   buildDefaultLogicalAgentPlan,
+  createInMemoryLogicalAgentCheckpointStore,
   LOGICAL_AGENT_DEFINITIONS,
+  LOGICAL_AGENT_CHECKPOINT_SCHEMA_VERSION,
   type LogicalAgentExecutionResult,
   type LogicalAgentTask,
   LogicalAgentPool,
@@ -573,5 +575,152 @@ describe("logical agent pool", () => {
 
     expect(result.status).toBe("failed");
     expect(result.tasks[0]?.error).toContain("must declare sideEffects");
+  });
+
+  it("emits a trace, checkpoints completed work, and resumes only the unfinished suffix", async () => {
+    const store = createInMemoryLogicalAgentCheckpointStore<string>();
+    const events: string[] = [];
+    let rootRuns = 0;
+    let specialistRuns = 0;
+    const tasks: Array<LogicalAgentTask<{ ask: string }>> = [
+      { id: "root", agentId: "data_cleaning", input: { ask: "recover" } },
+      {
+        id: "specialist",
+        agentId: "risk_check",
+        input: { ask: "recover" },
+        dependsOn: ["root"],
+      },
+      {
+        id: "final",
+        agentId: "final_precheck",
+        input: { ask: "recover" },
+        dependsOn: ["specialist"],
+      },
+    ];
+    const executor = ({ task }: { task: LogicalAgentTask<{ ask: string }> }) => {
+      if (task.id === "root") {
+        rootRuns += 1;
+      }
+      if (task.id === "specialist") {
+        specialistRuns += 1;
+        if (specialistRuns === 1) {
+          throw new Error("transient specialist failure");
+        }
+      }
+      return { output: task.id, sideEffects: [] } as const;
+    };
+
+    const first = await runLogicalAgentPlan({
+      runId: "recoverable-run",
+      tasks,
+      executor,
+      checkpointStore: store,
+      eventSink: (event) => events.push(event.kind),
+      handoffs: [
+        {
+          fromTaskId: "root",
+          toTaskId: "specialist",
+          contextScope: "dependency_results",
+          ownership: "transferred",
+          reason: "risk specialist owns the next decision",
+        },
+      ],
+    });
+
+    expect(first.status).toBe("failed");
+    expect(first.events.map((event) => event.kind)).toContain("checkpoint_saved");
+    expect(first.events.map((event) => event.kind)).toContain("handoff");
+    expect(store.load("recoverable-run")).toMatchObject({
+      schemaVersion: LOGICAL_AGENT_CHECKPOINT_SCHEMA_VERSION,
+      completedTaskIds: ["root"],
+    });
+
+    const resumed = await runLogicalAgentPlan({
+      runId: "recoverable-run",
+      resume: true,
+      tasks,
+      executor,
+      checkpointStore: store,
+      eventSink: (event) => events.push(event.kind),
+      handoffs: [
+        {
+          fromTaskId: "root",
+          toTaskId: "specialist",
+          contextScope: "dependency_results",
+          ownership: "transferred",
+          reason: "risk specialist owns the next decision",
+        },
+      ],
+    });
+
+    expect(resumed.status).toBe("completed");
+    expect(resumed.resumed).toBe(true);
+    expect(resumed.events[0]?.kind).toBe("run_resumed");
+    expect(rootRuns).toBe(1);
+    expect(specialistRuns).toBe(2);
+    expect(events).toContain("run_completed");
+    await expect(
+      runLogicalAgentPlan({
+        runId: "recoverable-run",
+        resume: true,
+        tasks: tasks.map((task) => ({ ...task, input: { ask: "different-plan" } })),
+        executor,
+        checkpointStore: store,
+      }),
+    ).rejects.toThrow("fingerprint mismatch");
+  });
+
+  it("runs input and output guardrails inside the shared pool boundary", async () => {
+    const inputBlocked = await runLogicalAgentPlan({
+      pool: new LogicalAgentPool({
+        guardrails: {
+          input: ({ input }) => {
+            if (typeof input === "object" && input !== null && "ask" in input) {
+              throw new Error("input guardrail blocked unsafe request");
+            }
+          },
+        },
+      }),
+      tasks: [{ id: "input-blocked", agentId: "data_cleaning", input: { ask: "unsafe" } }],
+      executor: () => ({ output: "never", sideEffects: [] }),
+    });
+    expect(inputBlocked.status).toBe("failed");
+    expect(inputBlocked.tasks[0]?.error).toBe("input guardrail blocked unsafe request");
+
+    const outputBlocked = await runLogicalAgentPlan({
+      pool: new LogicalAgentPool({
+        guardrails: {
+          output: ({ output }) => {
+            if (output === "unsafe-output") {
+              throw new Error("output guardrail blocked unsafe result");
+            }
+          },
+        },
+      }),
+      tasks: [{ id: "output-blocked", agentId: "data_cleaning", input: { ask: "safe" } }],
+      executor: () => ({ output: "unsafe-output", sideEffects: [] }),
+    });
+    expect(outputBlocked.status).toBe("failed");
+    expect(outputBlocked.tasks[0]?.error).toBe("output guardrail blocked unsafe result");
+  });
+
+  it("rejects a handoff that is not backed by a dependency edge", async () => {
+    await expect(
+      runLogicalAgentPlan({
+        tasks: [
+          { id: "root", agentId: "data_cleaning", input: { ask: "x" } },
+          { id: "specialist", agentId: "risk_check", input: { ask: "x" } },
+        ],
+        executor: () => ({ output: "never", sideEffects: [] }),
+        handoffs: [
+          {
+            fromTaskId: "root",
+            toTaskId: "specialist",
+            contextScope: "dependency_results",
+            ownership: "transferred",
+          },
+        ],
+      }),
+    ).rejects.toThrow("must be a dependency");
   });
 });
