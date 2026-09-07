@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApiCallError,
+  createApiCircuitBreaker,
   governApiFetch,
   parseApiRetryAfter,
   runApiSourceCall,
@@ -235,5 +236,38 @@ describe("API call governance", () => {
     ).toBe(1000);
     expect(parseApiRetryAfter("not-a-date")).toBeUndefined();
     expect(parseApiRetryAfter(" ")).toBeUndefined();
+  });
+
+  it("records idempotency labels and opens an injected circuit after repeated failures", async () => {
+    const receipts: ApiCallReceipt[] = [];
+    const breaker = createApiCircuitBreaker({ failureThreshold: 2, resetAfterMs: 60_000 });
+    const fetch = vi.fn<ApiFetch>().mockResolvedValue(response(503));
+    const governed = governApiFetch(fetch, {
+      circuitBreaker: breaker,
+      idempotencyKey: "research-read-1",
+      onReceipt: (receipt) => receipts.push(receipt),
+      retry: { attempts: 1 },
+    });
+
+    await expect(governed("https://example.test")).rejects.toMatchObject({ httpStatus: 503 });
+    await expect(governed("https://example.test")).rejects.toMatchObject({ httpStatus: 503 });
+    await expect(governed("https://example.test")).rejects.toMatchObject({
+      kind: "circuit_open",
+    });
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(receipts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          idempotencyKey: "research-read-1",
+          circuitState: "closed",
+        }),
+        expect.objectContaining({
+          transportError: "circuit_open",
+          circuitState: "open",
+          idempotencyKey: "research-read-1",
+        }),
+      ]),
+    );
   });
 });

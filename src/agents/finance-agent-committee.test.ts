@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildFinanceCommitteeContext, runFinanceCommittee } from "./finance-agent-committee.js";
+import type { LogicalAgentModelAdapter } from "./logical-agent-model-router.js";
 import { LogicalAgentPool } from "./logical-agent-pool.js";
 
 const input = {
@@ -56,6 +57,48 @@ describe("finance agent committee", () => {
         (context) =>
           (context as { schemaVersion: string }).schemaVersion ===
           "lcx_finance_committee_context_v1",
+      ),
+    ).toBe(true);
+  });
+
+  it("routes the production committee owner through an injected role policy", async () => {
+    const adapter: LogicalAgentModelAdapter = {
+      id: "committee-test-adapter",
+      provider: "local-fixture",
+      modelId: "committee-fixture-v1",
+      mode: "deterministic",
+      capabilities: ["json"],
+      requiredTools: [],
+      requiredSideEffects: ["local_compute"],
+      invoke: async ({ payload }) => payload,
+    };
+    const result = await runFinanceCommittee({
+      input,
+      modelRouting: {
+        revision: "committee-test-v1",
+        adapters: [adapter],
+        defaultPolicy: {
+          primary: adapter.id,
+          requiredCapabilities: ["json"],
+          maxInputBytes: 64_000,
+          timeoutMs: 1_000,
+        },
+      },
+      executor: async ({ modelSlot, signal, task }) => ({
+        output: await modelSlot.invoke({ taskId: task.id }, signal),
+        sideEffects: [],
+      }),
+      runId: "finance-committee-routed",
+    });
+
+    expect(result.execution.status).toBe("completed");
+    expect(result.execution.tasks).toHaveLength(10);
+    expect(
+      result.execution.tasks.every(
+        (task) =>
+          task.modelCalls?.length === 1 &&
+          task.modelCalls[0]?.adapterId === adapter.id &&
+          task.modelCalls[0]?.evidence === "not-observed",
       ),
     ).toBe(true);
   });

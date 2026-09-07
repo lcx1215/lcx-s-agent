@@ -1,10 +1,12 @@
 import type { FinanceDecisionMode } from "./finance-decision-policy.js";
 import {
   buildDefaultLogicalAgentPlan,
+  LogicalAgentPool,
   runLogicalAgentPlan,
   type LogicalAgentExecutor,
+  type LogicalAgentModelInvoker,
+  type LogicalAgentModelRouting,
   type LogicalAgentPlanResult,
-  type LogicalAgentPool,
   type LogicalAgentRequest,
   type LogicalAgentSharedContext,
 } from "./logical-agent-pool.js";
@@ -159,6 +161,10 @@ export async function runFinanceCommittee<TResult>(params: {
   input: FinanceCommitteeInput;
   executor: LogicalAgentExecutor<LogicalAgentRequest, TResult>;
   pool?: LogicalAgentPool<LogicalAgentRequest, TResult>;
+  /** Optional role router for the canonical finance committee owner path. */
+  modelRouting?: LogicalAgentModelRouting;
+  /** Compatibility injection for deterministic/local adapters without a router. */
+  modelInvoker?: LogicalAgentModelInvoker;
   runId?: string;
 }): Promise<{
   execution: LogicalAgentPlanResult<TResult>;
@@ -176,10 +182,16 @@ export async function runFinanceCommittee<TResult>(params: {
       financeCommitteeContext: context.schemaVersion,
     },
   };
+  const pool =
+    params.pool ??
+    new LogicalAgentPool<LogicalAgentRequest, TResult>({
+      ...(params.modelRouting === undefined ? {} : { modelRouting: params.modelRouting }),
+      ...(params.modelInvoker === undefined ? {} : { modelInvoker: params.modelInvoker }),
+    });
   const execution = await runLogicalAgentPlan({
     tasks: buildDefaultLogicalAgentPlan(request),
     executor: params.executor,
-    ...(params.pool === undefined ? {} : { pool: params.pool }),
+    pool,
     ...(params.runId === undefined ? {} : { runId: params.runId }),
     finalTaskId: "final_precheck",
     sharedContext: context,

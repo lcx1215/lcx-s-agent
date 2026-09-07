@@ -4,6 +4,7 @@ import { retryAsync, type RetryConfig } from "../infra/retry.js";
 
 /** Labels only: never include credentials, URLs, headers, bodies or raw errors. */
 export type ApiAuthScopeLabel = "public" | "configured_read_only" | "unspecified";
+export type ApiCircuitState = "closed" | "open" | "half_open";
 export type ApiCallReceipt = Readonly<{
   schemaVersion: "lcx_api_call_v1";
   callId: string;
@@ -17,8 +18,15 @@ export type ApiCallReceipt = Readonly<{
   attempt: number;
   status: "succeeded" | "failed" | "timed_out" | "cancelled";
   httpStatus?: number;
-  transportError?: "network_error" | "http_error" | "timeout" | "cancelled" | "source_error";
+  transportError?:
+    | "network_error"
+    | "http_error"
+    | "timeout"
+    | "cancelled"
+    | "circuit_open"
+    | "source_error";
   timeoutMs: number;
+  circuitState: ApiCircuitState;
   retryAfterMs?: number;
   rateLimited?: boolean;
   authScopeLabel: ApiAuthScopeLabel;
@@ -33,8 +41,66 @@ export type ApiTransportOptions = {
   correlationId?: string;
   retry?: RetryConfig;
   authScopeLabel?: ApiAuthScopeLabel;
+  idempotencyKey?: string;
+  circuitBreaker?: ApiCircuitBreaker;
   onReceipt?: (receipt: ApiCallReceipt) => void;
 };
+
+export type ApiCircuitBreaker = Readonly<{
+  beforeRequest: () => ApiCircuitState;
+  recordSuccess: () => void;
+  recordFailure: () => void;
+}>;
+
+export function createApiCircuitBreaker(
+  options: {
+    failureThreshold?: number;
+    resetAfterMs?: number;
+  } = {},
+): ApiCircuitBreaker {
+  const failureThreshold = options.failureThreshold ?? 3;
+  const resetAfterMs = options.resetAfterMs ?? 30_000;
+  if (!Number.isSafeInteger(failureThreshold) || failureThreshold <= 0) {
+    throw new Error("failureThreshold must be a positive integer");
+  }
+  if (!Number.isFinite(resetAfterMs) || resetAfterMs <= 0) {
+    throw new Error("resetAfterMs must be positive");
+  }
+  let failures = 0;
+  let openedAt: number | undefined;
+  let halfOpen = false;
+  return {
+    beforeRequest: () => {
+      if (openedAt === undefined) {
+        return "closed";
+      }
+      if (Date.now() - openedAt < resetAfterMs) {
+        return "open";
+      }
+      if (halfOpen) {
+        return "open";
+      }
+      halfOpen = true;
+      return "half_open";
+    },
+    recordSuccess: () => {
+      failures = 0;
+      openedAt = undefined;
+      halfOpen = false;
+    },
+    recordFailure: () => {
+      if (halfOpen) {
+        halfOpen = false;
+        openedAt = Date.now();
+        return;
+      }
+      failures += 1;
+      if (failures >= failureThreshold) {
+        openedAt = Date.now();
+      }
+    },
+  };
+}
 export type ApiFetchResponse = {
   ok: boolean;
   status: number;
@@ -115,10 +181,12 @@ async function boundedCall<T>(
       latencyMs: Math.max(0, Date.now() - started),
       attempt: 1,
       timeoutMs,
+      circuitState: details.circuitState ?? "closed",
       authScopeLabel:
         options.authScopeLabel === "public" || options.authScopeLabel === "configured_read_only"
           ? options.authScopeLabel
           : "unspecified",
+      ...(options.idempotencyKey?.trim() ? { idempotencyKey: options.idempotencyKey.trim() } : {}),
       ...details,
       status:
         kind === "timeout"
@@ -204,13 +272,23 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
       operation: "http_get",
       signal: signals.length ? AbortSignal.any(signals) : undefined,
     };
+    const circuitState = scope.circuitBreaker?.beforeRequest() ?? "closed";
+    if (circuitState === "open") {
+      return boundedCall(
+        { ...scope, operation: "http_get", onReceipt: scope.onReceipt },
+        async () => {
+          throw new ApiCallError("circuit_open");
+        },
+        { circuitState },
+      );
+    }
     let lastAttemptStatus: ApiCallReceipt["status"] | undefined;
     const emitAttempt = (receipt: ApiCallReceipt) => {
       lastAttemptStatus = receipt.status;
       scope.onReceipt?.(receipt);
     };
     // One total budget covers attempts and backoff, not a fresh budget for each retry.
-    return boundedCall(
+    const result = boundedCall(
       {
         ...scope,
         operation: "http_get_total",
@@ -227,59 +305,74 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
       },
       async (signal) => {
         let attempt = 0;
-        return retryAsync(
-          async () => {
-            signal.throwIfAborted();
-            const details: { -readonly [K in keyof ApiCallReceipt]?: ApiCallReceipt[K] } = {
-              attempt: ++attempt,
-            };
-            return boundedCall(
-              { ...scope, signal, onReceipt: emitAttempt },
-              async (attemptSignal) => {
-                let response: ApiFetchResponse;
-                let body: string;
-                try {
-                  response = await fetchImpl(url, { ...init, signal: attemptSignal });
-                  details.httpStatus = response.status;
-                  details.retryAfterMs = parseApiRetryAfter(response.headers?.get("retry-after"));
-                  details.rateLimited = response.status === 429;
-                  body = await response.text();
-                } catch {
-                  attemptSignal.throwIfAborted();
-                  throw new ApiCallError("network_error");
-                }
-                if (!response.ok) {
-                  throw new ApiCallError("http_error", response.status, details.retryAfterMs);
-                }
-                return {
-                  ok: response.ok,
-                  status: response.status,
-                  headers: response.headers,
-                  text: async () => body,
-                };
-              },
-              details,
-            );
-          },
-          {
-            attempts: 2,
-            minDelayMs: 300,
-            maxDelayMs: 30_000,
-            ...scope.retry,
-            jitter: 0,
-            shouldRetry: (error) =>
-              !signal.aborted &&
-              error instanceof ApiCallError &&
-              error.kind === "http_error" &&
-              [408, 429, 500, 502, 503, 504].includes(error.httpStatus ?? 0) &&
-              // Never shorten a server's Retry-After to the local backoff cap.
-              (error.retryAfterMs === undefined ||
-                error.retryAfterMs <= (scope.retry?.maxDelayMs ?? 30_000)),
-            retryAfterMs: (error) =>
-              error instanceof ApiCallError ? error.retryAfterMs : undefined,
-          },
-        );
+        try {
+          const response = await retryAsync(
+            async () => {
+              signal.throwIfAborted();
+              const details: { -readonly [K in keyof ApiCallReceipt]?: ApiCallReceipt[K] } = {
+                attempt: ++attempt,
+                circuitState,
+              };
+              return boundedCall(
+                { ...scope, signal, onReceipt: emitAttempt },
+                async (attemptSignal) => {
+                  let response: ApiFetchResponse;
+                  let body: string;
+                  try {
+                    response = await fetchImpl(url, { ...init, signal: attemptSignal });
+                    details.httpStatus = response.status;
+                    details.retryAfterMs = parseApiRetryAfter(response.headers?.get("retry-after"));
+                    details.rateLimited = response.status === 429;
+                    body = await response.text();
+                  } catch {
+                    attemptSignal.throwIfAborted();
+                    throw new ApiCallError("network_error");
+                  }
+                  if (!response.ok) {
+                    throw new ApiCallError("http_error", response.status, details.retryAfterMs);
+                  }
+                  return {
+                    ok: response.ok,
+                    status: response.status,
+                    headers: response.headers,
+                    text: async () => body,
+                  };
+                },
+                details,
+              );
+            },
+            {
+              attempts: 2,
+              minDelayMs: 300,
+              maxDelayMs: 30_000,
+              ...scope.retry,
+              jitter: 0,
+              shouldRetry: (error) =>
+                !signal.aborted &&
+                error instanceof ApiCallError &&
+                error.kind === "http_error" &&
+                [408, 429, 500, 502, 503, 504].includes(error.httpStatus ?? 0) &&
+                // Never shorten a server's Retry-After to the local backoff cap.
+                (error.retryAfterMs === undefined ||
+                  error.retryAfterMs <= (scope.retry?.maxDelayMs ?? 30_000)),
+              retryAfterMs: (error) =>
+                error instanceof ApiCallError ? error.retryAfterMs : undefined,
+            },
+          );
+          scope.circuitBreaker?.recordSuccess();
+          return response;
+        } catch (error) {
+          if (
+            error instanceof ApiCallError &&
+            (error.kind === "network_error" || error.kind === "http_error")
+          ) {
+            scope.circuitBreaker?.recordFailure();
+          }
+          throw error;
+        }
       },
+      { circuitState },
     );
+    return result;
   };
 }
