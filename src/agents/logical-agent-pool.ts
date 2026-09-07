@@ -1,5 +1,11 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { LCX_ONTOLOGY_AGENT_ROLES, type LcxOntologyAgentRole } from "../shared/lcx-ontology.js";
+import {
+  LogicalAgentModelRouter,
+  type LogicalAgentModelRouting,
+  type ModelCallReceipt,
+} from "./logical-agent-model-router.js";
+export type { LogicalAgentModelRouting, ModelCallReceipt } from "./logical-agent-model-router.js";
 import { stableStringify } from "./stable-stringify.js";
 
 export const LOGICAL_AGENT_IDS = [
@@ -279,6 +285,7 @@ export type LocalModelPoolOptions<
   TResult = unknown,
 > = Partial<LocalModelPoolConfig> & {
   modelInvoker?: LogicalAgentModelInvoker;
+  modelRouting?: LogicalAgentModelRouting;
   guardrails?: LogicalAgentGuardrails<TInput, TResult>;
 };
 
@@ -323,6 +330,7 @@ export type LogicalAgentTaskResult<TResult = unknown> = Readonly<{
   sideEffects: readonly LogicalAgentSideEffect[];
   error?: string;
   capabilityViolation?: string;
+  modelCalls?: readonly ModelCallReceipt[];
 }>;
 
 export type LogicalAgentExecutionContext<TInput, TResult> = {
@@ -348,7 +356,9 @@ export type LogicalAgentExecutor<TInput, TResult> = (
 
 export type LogicalAgentPoolStatus = {
   modelId: string;
-  sharedModel: true;
+  sharedModel: boolean;
+  modelRoutingMode?: "shared_invoker" | "role_policy";
+  configuredModelIds?: readonly string[];
   maxLoadedModels: 1;
   maxConcurrency: 1 | 2;
   memoryBudgetMb: number;
@@ -382,12 +392,15 @@ type QueueJob<TInput, TResult> = {
   sharedContext: LogicalAgentSharedContext;
   dependencyResults: Readonly<Record<string, LogicalAgentTaskResult<TResult>>>;
   executor: LogicalAgentExecutor<TInput, TResult>;
+  correlationId: string;
+  signal?: AbortSignal;
   resolve: (result: LogicalAgentTaskResult<TResult>) => void;
 };
 
 type ModelInvocationJob = {
-  request: unknown;
+  invoke: () => Promise<unknown>;
   signal: AbortSignal;
+  cleanup: () => void;
   resolve: (value: unknown) => void;
   reject: (error: unknown) => void;
 };
@@ -443,7 +456,7 @@ export class LogicalAgentPool<TInput, TResult> {
   #config: LocalModelPoolConfig;
   #modelInvoker: LogicalAgentModelInvoker;
   #guardrails: LogicalAgentGuardrails<TInput, TResult>;
-  #modelSlot: LogicalAgentModelSlot;
+  #modelRouter?: LogicalAgentModelRouter;
   #queue: Array<QueueJob<TInput, TResult>> = [];
   #modelInvocationQueue: ModelInvocationJob[] = [];
   #activeRuns = 0;
@@ -455,11 +468,16 @@ export class LogicalAgentPool<TInput, TResult> {
     this.#config = normalizePoolConfig(options);
     this.#modelInvoker = options?.modelInvoker ?? UNAVAILABLE_MODEL_INVOKER;
     this.#guardrails = options?.guardrails ?? {};
-    this.#modelSlot = Object.freeze({
-      modelId: this.#config.modelId,
-      maxLoadedModels: 1,
-      invoke: (request, signal) => this.#invokeModel(request, signal),
-    });
+    this.#modelRouter = options?.modelRouting
+      ? new LogicalAgentModelRouter(options.modelRouting)
+      : undefined;
+  }
+
+  /** Functions are deliberately excluded; adapter code changes require a new revision. */
+  get modelRoutingFingerprint(): string | undefined {
+    return this.#modelRouter
+      ? createHash("sha256").update(stableStringify(this.#modelRouter.routing)).digest("hex")
+      : undefined;
   }
 
   get config(): LocalModelPoolConfig {
@@ -469,7 +487,15 @@ export class LogicalAgentPool<TInput, TResult> {
   get status(): LogicalAgentPoolStatus {
     return {
       modelId: this.#config.modelId,
-      sharedModel: true,
+      sharedModel:
+        !this.#modelRouter ||
+        new Set(this.#modelRouter.routing.adapters.map((adapter) => adapter.modelId)).size === 1,
+      modelRoutingMode: this.#modelRouter ? "role_policy" : "shared_invoker",
+      configuredModelIds: Object.freeze(
+        this.#modelRouter
+          ? [...new Set(this.#modelRouter.routing.adapters.map((adapter) => adapter.modelId))]
+          : [this.#config.modelId],
+      ),
       maxLoadedModels: 1,
       maxConcurrency: this.#config.maxConcurrency,
       memoryBudgetMb: this.#config.memoryBudgetMb,
@@ -488,6 +514,8 @@ export class LogicalAgentPool<TInput, TResult> {
     executor: LogicalAgentExecutor<TInput, TResult>,
     dependencyResults: Readonly<Record<string, LogicalAgentTaskResult<TResult>>> = {},
     sharedContext: LogicalAgentSharedContext = {},
+    correlationId: string = randomUUID(),
+    signal?: AbortSignal,
   ): Promise<LogicalAgentTaskResult<TResult>> {
     getLogicalAgentDefinition(task.agentId);
     const taskSnapshot = snapshotTask(task);
@@ -498,6 +526,8 @@ export class LogicalAgentPool<TInput, TResult> {
         sharedContext: cloneAndFreeze(sharedContext),
         dependencyResults: dependencySnapshot,
         executor,
+        correlationId,
+        signal,
         resolve,
       });
       this.#pump();
@@ -524,42 +554,54 @@ export class LogicalAgentPool<TInput, TResult> {
         errors: [],
         closed: false,
       };
-      const modelSlot = this.#createTaskModelSlot(modelScope);
-      const attempt = executeWithTimeout(async (signal) => {
-        try {
-          await this.#guardrails.input?.({
-            task: job.task,
-            agent,
-            input: job.task.input,
-            capabilities,
-          });
-          const execution = await job.executor({
-            task: job.task,
-            agent,
-            input: job.task.input,
-            sharedContext: job.sharedContext,
-            dependencyResults: job.dependencyResults,
-            modelPool: this.#config,
-            modelSlot,
-            capabilities,
+      const modelCalls: ModelCallReceipt[] = [];
+      const selectedModelId = this.#modelRouter?.primaryModelId(agent.id) ?? this.#config.modelId;
+      const attempt = executeWithTimeout(
+        async (signal) => {
+          const modelSlot = this.#createTaskModelSlot(
+            modelScope,
+            job,
             signal,
-          });
-          await this.#guardrails.output?.({
-            task: job.task,
-            agent,
-            output: execution.output,
-            sideEffects: execution.sideEffects,
             capabilities,
-          });
-          modelScope.closed = true;
-          await this.#waitForTaskModelInvocations(modelScope);
-          return execution;
-        } catch (error: unknown) {
-          modelScope.closed = true;
-          await this.#waitForTaskModelInvocations(modelScope);
-          throw error;
-        }
-      }, this.#config.taskTimeoutMs);
+            modelCalls,
+          );
+          try {
+            await this.#guardrails.input?.({
+              task: job.task,
+              agent,
+              input: job.task.input,
+              capabilities,
+            });
+            const execution = await job.executor({
+              task: job.task,
+              agent,
+              input: job.task.input,
+              sharedContext: job.sharedContext,
+              dependencyResults: job.dependencyResults,
+              modelPool: this.#config,
+              modelSlot,
+              capabilities,
+              signal,
+            });
+            await this.#guardrails.output?.({
+              task: job.task,
+              agent,
+              output: execution.output,
+              sideEffects: execution.sideEffects,
+              capabilities,
+            });
+            modelScope.closed = true;
+            await this.#waitForTaskModelInvocations(modelScope);
+            return execution;
+          } catch (error: unknown) {
+            modelScope.closed = true;
+            await this.#waitForTaskModelInvocations(modelScope);
+            throw error;
+          }
+        },
+        this.#config.taskTimeoutMs,
+        job.signal,
+      );
       void attempt.outcome
         .then(
           (execution): LogicalAgentTaskResult<TResult> => {
@@ -583,7 +625,13 @@ export class LogicalAgentPool<TInput, TResult> {
             failedTaskResult<TResult>(job.task, this.#config.modelId, startedAt, error),
         )
         .then((result) => {
-          job.resolve(result);
+          job.resolve(
+            Object.freeze({
+              ...result,
+              modelId: modelCalls.at(-1)?.modelId ?? selectedModelId,
+              modelCalls: Object.freeze([...modelCalls]),
+            }),
+          );
         });
       void attempt.termination.then(() => {
         this.#activeRuns -= 1;
@@ -592,23 +640,71 @@ export class LogicalAgentPool<TInput, TResult> {
     }
   }
 
-  #invokeModel(request: unknown, signal: AbortSignal): Promise<unknown> {
+  #invokeModel(invoke: () => Promise<unknown>, signal: AbortSignal): Promise<unknown> {
     return new Promise((resolve, reject) => {
-      this.#modelInvocationQueue.push({ request, signal, resolve, reject });
+      const abort = () => {
+        const index = this.#modelInvocationQueue.indexOf(job);
+        if (index >= 0) {
+          this.#modelInvocationQueue.splice(index, 1);
+          job.cleanup();
+          reject(new Error("logical-agent model invocation aborted before start"));
+        }
+      };
+      const job: ModelInvocationJob = {
+        invoke,
+        signal,
+        resolve,
+        reject,
+        cleanup: () => signal.removeEventListener("abort", abort),
+      };
+      this.#modelInvocationQueue.push(job);
+      signal.addEventListener("abort", abort, { once: true });
       this.#pumpModelInvocations();
     });
   }
 
-  #createTaskModelSlot(scope: TaskModelInvocationScope): LogicalAgentModelSlot {
+  #createTaskModelSlot(
+    scope: TaskModelInvocationScope,
+    job: QueueJob<TInput, TResult>,
+    taskSignal: AbortSignal,
+    capabilities: LogicalAgentCapabilities,
+    receipts: ModelCallReceipt[],
+  ): LogicalAgentModelSlot {
     return Object.freeze({
-      ...this.#modelSlot,
+      modelId: this.#modelRouter?.primaryModelId(job.task.agentId) ?? this.#config.modelId,
+      maxLoadedModels: 1,
       invoke: (request: unknown, signal: AbortSignal) => {
         if (scope.closed) {
           return Promise.reject(
             new Error("logical-agent model invocation started after task exit"),
           );
         }
-        const invocation = this.#invokeModel(request, signal);
+        const controller = new AbortController();
+        const abort = () => controller.abort();
+        for (const source of [signal, taskSignal]) {
+          source.addEventListener("abort", abort, { once: true });
+          if (source.aborted) {
+            controller.abort();
+          }
+        }
+        const invocation = (
+          this.#modelRouter
+            ? this.#modelRouter.invoke({
+                role: job.task.agentId,
+                taskId: job.task.id,
+                correlationId: job.correlationId,
+                payload: request,
+                capabilities,
+                signal: controller.signal,
+                dispatch: (invoke, dispatchSignal) => this.#invokeModel(invoke, dispatchSignal),
+                record: (receipt) => receipts.push(receipt),
+              })
+            : this.#invokeLegacyModel(job, request, controller.signal, receipts)
+        ).finally(() => {
+          for (const source of [signal, taskSignal]) {
+            source.removeEventListener("abort", abort);
+          }
+        });
         const observed = invocation.then(
           () => undefined,
           (error: unknown) => {
@@ -620,6 +716,48 @@ export class LogicalAgentPool<TInput, TResult> {
         return invocation;
       },
     });
+  }
+
+  async #invokeLegacyModel(
+    job: QueueJob<TInput, TResult>,
+    request: unknown,
+    signal: AbortSignal,
+    receipts: ModelCallReceipt[],
+  ): Promise<unknown> {
+    const startedAtMs = Date.now();
+    let outcome: ModelCallReceipt["outcome"] = "failed";
+    let adapterInvoked = false;
+    try {
+      const value = await this.#invokeModel(() => {
+        adapterInvoked = true;
+        return this.#modelInvoker(request, signal);
+      }, signal);
+      outcome = "completed";
+      return value;
+    } finally {
+      receipts.push(
+        Object.freeze({
+          schemaVersion: "lcx_model_call_v1",
+          callId: randomUUID(),
+          correlationId: job.correlationId,
+          taskId: job.task.id,
+          role: job.task.agentId,
+          policyRevision: "legacy",
+          adapterId: "legacy-invoker",
+          provider: "unknown",
+          modelId: this.#config.modelId,
+          attempt: 1,
+          mode: "injected",
+          startedAtMs,
+          latencyMs: Math.max(0, Date.now() - startedAtMs),
+          outcome: signal.aborted ? "aborted" : outcome,
+          adapterInvoked,
+          realModelInferenceObserved: false,
+          providerCallObserved: false,
+          evidence: "not-observed",
+        }),
+      );
+    }
   }
 
   async #waitForTaskModelInvocations(scope: TaskModelInvocationScope): Promise<void> {
@@ -640,6 +778,7 @@ export class LogicalAgentPool<TInput, TResult> {
       if (!job) {
         return;
       }
+      job.cleanup();
       if (job.signal.aborted) {
         job.reject(new Error("logical-agent model invocation aborted before start"));
         continue;
@@ -665,7 +804,7 @@ export class LogicalAgentPool<TInput, TResult> {
     let invocationError: unknown;
     let succeeded = false;
     try {
-      result = await this.#modelInvoker(job.request, job.signal);
+      result = await job.invoke();
       succeeded = true;
     } catch (error: unknown) {
       invocationError = error;
@@ -711,6 +850,7 @@ function snapshotTaskResult<TResult>(
     ...result,
     ...(result.output === undefined ? {} : { output: cloneAndFreeze(result.output) }),
     sideEffects: Object.freeze([...result.sideEffects]),
+    ...(result.modelCalls ? { modelCalls: cloneAndFreeze(result.modelCalls) } : {}),
   });
 }
 
@@ -906,12 +1046,26 @@ function normalizeExecutionResult<TResult>(
 function executeWithTimeout<TResult>(
   executor: (signal: AbortSignal) => TResult | Promise<TResult>,
   timeoutMs: number,
+  parentSignal?: AbortSignal,
 ): { outcome: Promise<TResult>; termination: Promise<void> } {
   const controller = new AbortController();
   const cancellationErrors: unknown[] = [];
   const signal = createSafeAbortSignal(controller, cancellationErrors);
   let timedOut = false;
-  const execution = Promise.resolve().then(() => executor(signal));
+  let cancelled = parentSignal?.aborted === true;
+  const cancel = () => {
+    cancelled = true;
+    controller.abort();
+  };
+  parentSignal?.addEventListener("abort", cancel, { once: true });
+  const execution = Promise.resolve()
+    .then(() => {
+      if (cancelled) {
+        throw new Error("logical-agent task cancelled before start");
+      }
+      return executor(signal);
+    })
+    .finally(() => parentSignal?.removeEventListener("abort", cancel));
   const termination = execution.then(
     () => undefined,
     () => undefined,
@@ -936,7 +1090,9 @@ function executeWithTimeout<TResult>(
     execution.then(
       (value) => {
         clearTimeout(timer);
-        if (!timedOut) {
+        if (cancelled) {
+          reject(new Error("logical-agent task cancelled"));
+        } else if (!timedOut) {
           resolve(value);
         }
       },
@@ -1270,6 +1426,7 @@ export async function runLogicalAgentPlan<TInput, TResult>(params: {
   resume?: boolean;
   handoffs?: readonly LogicalAgentHandoff[];
   sharedContext?: LogicalAgentSharedContext;
+  signal?: AbortSignal;
 }): Promise<LogicalAgentPlanResult<TResult>> {
   const tasks = params.tasks.map(snapshotTask);
   validatePlan(tasks);
@@ -1277,7 +1434,12 @@ export async function runLogicalAgentPlan<TInput, TResult>(params: {
   const pool = params.pool ?? new LogicalAgentPool<TInput, TResult>();
   const handoffs = validateHandoffs(tasks, params.handoffs ?? []);
   const sharedContext = cloneAndFreeze(params.sharedContext ?? {});
-  const planFingerprint = fingerprintLogicalAgentPlan(tasks, handoffs, finalTaskId, sharedContext);
+  const baseFingerprint = fingerprintLogicalAgentPlan(tasks, handoffs, finalTaskId, sharedContext);
+  const planFingerprint = pool.modelRoutingFingerprint
+    ? createHash("sha256")
+        .update(`${baseFingerprint}:${pool.modelRoutingFingerprint}`)
+        .digest("hex")
+    : baseFingerprint;
   const runId = params.runId?.trim() || createLogicalAgentRunId();
   const events: LogicalAgentRunEvent[] = [];
   let eventSequence = 0;
@@ -1461,7 +1623,7 @@ export async function runLogicalAgentPlan<TInput, TResult>(params: {
           });
           changed = true;
           void pool
-            .submit(task, params.executor, dependencyResults, sharedContext)
+            .submit(task, params.executor, dependencyResults, sharedContext, runId, params.signal)
             .then((result) => {
               if (finished) {
                 return;

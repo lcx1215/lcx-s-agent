@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import type {
+  LogicalAgentModelAdapter,
+  ModelCallObservation,
+} from "./logical-agent-model-router.js";
 import {
   buildQualityHarnessPlan,
   QUALITY_HARNESS_REVIEW_AGENTS,
@@ -388,4 +392,134 @@ describe("quality harness", () => {
     expect(result.verification.status).toBe("blocked");
     expect(result.verification.summary).toContain("timed out");
   });
+});
+
+describe("quality harness model evidence", () => {
+  it.each(["deterministic", "injected", "adapter"] as const)(
+    "keeps %s evidence distinct from caller claims",
+    async (mode) => {
+      const observations = new Map<string, ModelCallObservation>();
+      const invoke = demoInvoker({});
+      const adapter: LogicalAgentModelAdapter = {
+        id: "test",
+        provider: "test-local",
+        modelId: "fixture-model",
+        mode,
+        capabilities: ["json"],
+        requiredTools: [],
+        requiredSideEffects: ["local_compute"],
+        invoke: async (call) => {
+          observations.set(call.callId, {
+            ...call,
+            transportRequestId: "fixture",
+            kind: "model_inference",
+          });
+          return { ...((await invoke(call.payload)) as object), realModelInferenceObserved: true };
+        },
+        observe: (call) => observations.get(call.callId),
+      };
+      const result = await runQualityHarness({
+        request,
+        maxAttempts: 1,
+        modelRouting: {
+          revision: "fixture-v1",
+          adapters: [adapter],
+          defaultPolicy: {
+            primary: "test",
+            requiredCapabilities: ["json"],
+            maxInputBytes: 100_000,
+            timeoutMs: 1000,
+          },
+        },
+      });
+      expect(result.status).toBe("completed-unverified");
+      expect(result.execution.modelCalls).toHaveLength(10);
+      expect(result.execution.evidenceMode).toBe(mode === "adapter" ? "adapter-attested" : mode);
+      expect(result.execution.realModelInferenceObserved).toBe(mode === "adapter");
+      expect(result.execution.allModelCallsAttested).toBe(mode === "adapter");
+      expect(result.execution.providerCallsMade).toBe("not-observed");
+    },
+  );
+
+  it("audits legacy invokers conservatively even if their output claims real inference", async () => {
+    const invoke = demoInvoker({});
+    const result = await runQualityHarness({
+      request,
+      modelInvoker: async (raw) => ({
+        ...((await invoke(raw)) as object),
+        realModelInferenceObserved: true,
+      }),
+      maxAttempts: 1,
+    });
+    expect(result.execution.modelCalls).toHaveLength(10);
+    expect(result.execution.evidenceMode).toBe("injected");
+    expect(result.execution.realModelInferenceObserved).toBe(false);
+  });
+});
+
+it("cancels the harness model run and does not start a repair attempt", async () => {
+  const controller = new AbortController();
+  let calls = 0;
+  const result = await runQualityHarness({
+    request,
+    signal: controller.signal,
+    maxAttempts: 2,
+    modelRouting: {
+      revision: "cancel-fixture-v1",
+      adapters: [
+        {
+          id: "cancel",
+          provider: "test-local",
+          modelId: "test",
+          mode: "deterministic",
+          capabilities: [],
+          requiredTools: [],
+          requiredSideEffects: ["local_compute"],
+          invoke: async (_, signal) =>
+            new Promise((_, reject) => {
+              calls += 1;
+              signal.addEventListener("abort", () => reject(new Error("cancelled")), {
+                once: true,
+              });
+              controller.abort();
+            }),
+        },
+      ],
+      defaultPolicy: {
+        primary: "cancel",
+        requiredCapabilities: [],
+        maxInputBytes: 100_000,
+        timeoutMs: 1000,
+      },
+    },
+  });
+  expect(result.status).toBe("failed");
+  expect(result.attempts).toHaveLength(1);
+  expect(calls).toBe(1);
+  expect(result.execution.modelCalls[0]?.outcome).toBe("aborted");
+});
+
+it("cancels an uncooperative verifier without reporting verification success", async () => {
+  const controller = new AbortController();
+  let verifierAborted = false;
+  const result = await runQualityHarness({
+    request,
+    signal: controller.signal,
+    modelInvoker: demoInvoker({}),
+    verify: async ({ signal }) =>
+      new Promise(() => {
+        signal.addEventListener(
+          "abort",
+          () => {
+            verifierAborted = true;
+          },
+          { once: true },
+        );
+        controller.abort();
+      }),
+  });
+  expect(result.status).toBe("blocked");
+  expect(result.verification.summary).toBe("quality verifier cancelled");
+  expect(result.attempts).toHaveLength(1);
+  expect(verifierAborted).toBe(true);
 });

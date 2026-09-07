@@ -47,8 +47,23 @@ function createQualityReceipt(params: {
   verification: QualityHarnessVerification;
   status: QualityHarnessReceipt["status"];
   maxAttempts: 1 | 2;
+  routed: boolean;
 }): QualityHarnessReceipt {
   const last = params.attempts.at(-1);
+  const modelCalls = params.attempts.flatMap((attempt) =>
+    attempt.stages.flatMap((stage) => stage.modelCalls ?? []),
+  );
+  const evidenceModes = new Set(
+    modelCalls.map((call) =>
+      call.evidence === "adapter-attested"
+        ? "adapter-attested"
+        : call.mode === "deterministic"
+          ? "deterministic"
+          : call.mode === "adapter"
+            ? "adapter-unattested"
+            : "injected",
+    ),
+  );
   return Object.freeze({
     schemaVersion: QUALITY_HARNESS_SCHEMA_VERSION,
     harness: "lcx-quality",
@@ -57,10 +72,16 @@ function createQualityReceipt(params: {
     task: summarizeTask(params.request.task),
     modelPool: params.pool,
     execution: Object.freeze({
-      backend: "injected_model_invoker",
+      backend: params.routed ? "role_model_router" : "injected_model_invoker",
+      evidenceMode: evidenceModes.size > 1 ? "mixed" : ([...evidenceModes][0] ?? "injected"),
+      modelCalls: Object.freeze(modelCalls),
       modelId: params.pool.modelId,
-      realModelInferenceObserved: false,
-      providerCallsMade: "not-observed",
+      realModelInferenceObserved: modelCalls.some((call) => call.realModelInferenceObserved),
+      allModelCallsAttested:
+        modelCalls.length > 0 && modelCalls.every((call) => call.evidence === "adapter-attested"),
+      providerCallsMade: modelCalls.some((call) => call.providerCallObserved)
+        ? "adapter-attested"
+        : "not-observed",
       externalSideEffects: "not-observed",
     }),
     plannedStages: QUALITY_HARNESS_STAGES,
@@ -101,6 +122,7 @@ export async function runQualityHarness(
     memoryBudgetMb: options.memoryBudgetMb,
     taskTimeoutMs: options.taskTimeoutMs,
     modelInvoker: options.modelInvoker,
+    modelRouting: options.modelRouting,
   });
   const attempts: QualityHarnessAttemptReceipt[] = [];
   let feedback: string[] = [];
@@ -114,6 +136,8 @@ export async function runQualityHarness(
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const plan = await runLogicalAgentPlan({
       pool,
+      runId: `${runId}:attempt:${attempt}`,
+      signal: options.signal,
       tasks: buildQualityHarnessPlan({ runId, attempt, request, repairFeedback: feedback }),
       finalTaskId: "final_precheck",
       executor: createQualityHarnessStageExecutor,
@@ -135,6 +159,7 @@ export async function runQualityHarness(
         quality.artifact,
         attempt,
         options.verifierTimeoutMs,
+        options.signal,
       );
     }
     const status = qualityAttemptStatus({
@@ -165,9 +190,13 @@ export async function runQualityHarness(
         verification,
         status: options.verify ? "verified" : "completed-unverified",
         maxAttempts,
+        routed: options.modelRouting !== undefined,
       });
     }
     feedback = attemptFeedback;
+    if (options.signal?.aborted) {
+      break;
+    }
   }
 
   const last = attempts.at(-1);
@@ -188,5 +217,6 @@ export async function runQualityHarness(
     verification: finalVerification,
     status,
     maxAttempts,
+    routed: options.modelRouting !== undefined,
   });
 }

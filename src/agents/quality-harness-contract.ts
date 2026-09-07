@@ -2,6 +2,8 @@ import {
   buildDefaultLogicalAgentPlan,
   type LogicalAgentExecutionContext,
   type LogicalAgentModelInvoker,
+  type LogicalAgentModelRouting,
+  type ModelCallReceipt,
   type LogicalAgentPlanResult,
   type LogicalAgentPoolStatus,
   type LogicalAgentSideEffect,
@@ -108,7 +110,9 @@ export type QualityHarnessVerifier = (params: {
 
 export type QualityHarnessOptions = Readonly<{
   request: QualityHarnessRequest;
-  modelInvoker: LogicalAgentModelInvoker;
+  modelInvoker?: LogicalAgentModelInvoker;
+  modelRouting?: LogicalAgentModelRouting;
+  signal?: AbortSignal;
   modelId?: string;
   maxConcurrency?: 1 | 2;
   memoryBudgetMb?: number;
@@ -148,6 +152,7 @@ export type QualityHarnessStageReceipt = Readonly<{
   agentId: string;
   status: string;
   modelId: string;
+  modelCalls?: readonly ModelCallReceipt[];
   outputKind?: QualityHarnessStageOutput["kind"];
   reviewVerdict?: QualityHarnessReview["verdict"];
   findingCount?: number;
@@ -184,11 +189,19 @@ export type QualityHarnessReceipt = Readonly<{
   task: Readonly<{ sha256: string; length: number }>;
   modelPool: LogicalAgentPoolStatus;
   execution: Readonly<{
-    backend: "injected_model_invoker";
+    backend: "injected_model_invoker" | "role_model_router";
+    evidenceMode:
+      | "deterministic"
+      | "injected"
+      | "adapter-unattested"
+      | "adapter-attested"
+      | "mixed";
+    modelCalls: readonly ModelCallReceipt[];
     modelId: string;
-    realModelInferenceObserved: false;
-    providerCallsMade: "not-observed" | "caller-attested";
-    externalSideEffects: "not-observed" | "caller-attested";
+    realModelInferenceObserved: boolean;
+    allModelCallsAttested: boolean;
+    providerCallsMade: "not-observed" | "caller-attested" | "adapter-attested";
+    externalSideEffects: "not-observed" | "caller-attested" | "adapter-attested";
   }>;
   plannedStages: readonly QualityHarnessStage[];
   attempts: readonly QualityHarnessAttemptReceipt[];

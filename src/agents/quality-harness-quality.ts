@@ -285,6 +285,7 @@ export function summarizeQualityStageResult(
         }
       : {}),
     sideEffects: Object.freeze([...result.sideEffects]),
+    modelCalls: result.modelCalls ?? [],
     ...(result.error ? { error: result.error.slice(0, 1_000) } : {}),
   });
 }
@@ -311,15 +312,34 @@ export async function runQualityVerifier(
   artifact: QualityHarnessArtifact,
   attempt: number,
   timeoutMs = 30_000,
+  parentSignal?: AbortSignal,
 ): Promise<QualityHarnessVerification> {
   const boundedTimeoutMs =
     Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.min(timeoutMs, 2_147_483_647) : 30_000;
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let cancel: (() => void) | undefined;
+  const cancellation = new Promise<{ kind: "cancelled" }>((resolve) => {
+    cancel = () => {
+      controller.abort();
+      resolve({ kind: "cancelled" });
+    };
+    if (parentSignal?.aborted) {
+      cancel();
+    } else {
+      parentSignal?.addEventListener("abort", cancel, { once: true });
+    }
+  });
   try {
     const result = await Promise.race([
+      cancellation,
       Promise.resolve()
-        .then(() => verifier({ request, artifact, attempt, signal: controller.signal }))
+        .then(() => {
+          if (controller.signal.aborted) {
+            throw new Error("quality verifier cancelled before start");
+          }
+          return verifier({ request, artifact, attempt, signal: controller.signal });
+        })
         .then((value) => ({ kind: "result" as const, value })),
       new Promise<{ kind: "timeout" }>((resolve) => {
         timer = setTimeout(() => {
@@ -328,6 +348,13 @@ export async function runQualityVerifier(
         }, boundedTimeoutMs);
       }),
     ]);
+    if (result.kind === "cancelled") {
+      return Object.freeze({
+        status: "blocked",
+        summary: "quality verifier cancelled",
+        details: [],
+      });
+    }
     if (result.kind === "timeout") {
       return Object.freeze({
         status: "blocked",
@@ -343,6 +370,9 @@ export async function runQualityVerifier(
       details: [],
     });
   } finally {
+    if (cancel) {
+      parentSignal?.removeEventListener("abort", cancel);
+    }
     if (timer !== undefined) {
       clearTimeout(timer);
     }
