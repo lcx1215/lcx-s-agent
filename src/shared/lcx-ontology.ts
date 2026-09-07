@@ -750,10 +750,14 @@ export type LcxOntologyFinanceDataProviderRole =
 
 export const LCX_ONTOLOGY_FINANCE_DATA_SOURCE_FAMILIES = [
   "market_data_api",
+  "crypto_market_data",
   "fundamentals_api",
   "official_filing",
   "official_macro_data",
   "etf_issuer",
+  "geospatial_reference",
+  "weather_environmental",
+  "seismic_event_feed",
   "manual_snapshot",
   "local_research_artifact",
 ] as const;

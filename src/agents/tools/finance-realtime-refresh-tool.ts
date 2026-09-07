@@ -55,6 +55,9 @@ async function writeReceipt(workspaceDir: string, instrument: string, payload: u
 export function createFinanceRealtimeRefreshTool(options?: {
   workspaceDir?: string;
   fetchImpl?: FetchImpl;
+  alphaVantageApiKey?: string;
+  coinGeckoApiKey?: string;
+  coinCapApiKey?: string;
 }): AnyAgentTool {
   const workspaceDir = resolveWorkspaceRoot(options?.workspaceDir);
   return {
@@ -88,7 +91,12 @@ export function createFinanceRealtimeRefreshTool(options?: {
           crossSourceSkewMaxMinutes: params.crossSourceSkewMaxMinutes,
           requireOfficialReference: params.requireOfficialReference,
         };
-        const registry = createFinanceRealtimeSourceRegistry({ fetchImpl: options?.fetchImpl });
+        const registry = createFinanceRealtimeSourceRegistry({
+          fetchImpl: options?.fetchImpl,
+          alphaVantageApiKey: options?.alphaVantageApiKey,
+          coinGeckoApiKey: options?.coinGeckoApiKey,
+          coinCapApiKey: options?.coinCapApiKey,
+        });
         const selectedSourceIds = params.sourceIds?.map((sourceId) => sourceId.trim());
         const adapters = selectedSourceIds
           ? registry.filter((adapter) => selectedSourceIds.includes(adapter.id))

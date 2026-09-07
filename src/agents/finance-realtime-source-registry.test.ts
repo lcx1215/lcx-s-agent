@@ -177,14 +177,38 @@ describe("finance realtime source registry", () => {
       }),
     });
 
-    expect(registry).toHaveLength(5);
+    expect(registry).toHaveLength(9);
     expect(registry.map((adapter) => adapter.id)).toEqual([
       "yahoo_public_chart",
+      "binance_public_crypto_ticker",
+      "kraken_public_crypto_ticker",
+      "coinbase_exchange_public_crypto_ticker",
+      "coincap_public_crypto_asset",
       "nasdaq_exchange_quote",
       "stooq_public_daily",
       "sec_edgar_official_reference",
       "invesco_qqq_issuer_reference",
     ]);
     expect(registry[0]?.providerRole).toBe("primary_market_data");
+  });
+
+  it("filters the registry to crypto sources without calling equity adapters", () => {
+    const registry = createFinanceRealtimeSourceRegistry();
+    const inspection = inspectFinanceRealtimeSourceRegistry(
+      {
+        instrument: "BTCUSDT",
+        assetClass: "crypto",
+        useCase: "crypto_registry_inspection",
+        asOf: "2026-09-07T10:45:00.000Z",
+        requireOfficialReference: false,
+      },
+      registry,
+    );
+    expect(inspection.candidateAdapters.map((adapter) => adapter.id)).toEqual([
+      "binance_public_crypto_ticker",
+      "kraken_public_crypto_ticker",
+      "coinbase_exchange_public_crypto_ticker",
+      "coincap_public_crypto_asset",
+    ]);
   });
 });

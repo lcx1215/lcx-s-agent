@@ -7,6 +7,13 @@ import {
   createStooqDelayedMarketAdapter,
 } from "./finance-additional-source-adapters.js";
 import {
+  createBinanceCryptoTickerAdapter,
+  createCoinbaseCryptoTickerAdapter,
+  createCoinCapCryptoAssetAdapter,
+  createCoinGeckoCryptoPriceAdapter,
+  createKrakenCryptoTickerAdapter,
+} from "./finance-crypto-source-adapters.js";
+import {
   buildFinanceDataGatewaySnapshot,
   type FinanceDataGatewayInput,
   type FinanceDataGatewayObservationInput,
@@ -82,6 +89,8 @@ export type FinanceRealtimeRegistryInspection = Readonly<{
 export type FinanceRealtimeSourceRegistryOptions = Readonly<{
   fetchImpl?: FetchImpl;
   alphaVantageApiKey?: string;
+  coinGeckoApiKey?: string;
+  coinCapApiKey?: string;
   additionalAdapters?: readonly FinanceRealtimeSourceAdapter[];
 }>;
 
@@ -333,7 +342,7 @@ export function createYahooDelayedMarketAdapter(
     providerName: "yahoo-public-chart",
     providerRole: "primary_market_data",
     priority: 10,
-    supports: (request) => request.assetClass.trim().length > 0,
+    supports: (request) => request.assetClass.trim().toLowerCase() !== "crypto",
     collect: async (request, signal) => {
       if (signal.aborted) {
         throw new Error("yahoo adapter cancelled before fetch");
@@ -356,6 +365,13 @@ export function createFinanceRealtimeSourceRegistry(
 ): readonly FinanceRealtimeSourceAdapter[] {
   const adapters: FinanceRealtimeSourceAdapter[] = [
     createYahooDelayedMarketAdapter(options),
+    createBinanceCryptoTickerAdapter({ fetchImpl: options.fetchImpl }),
+    createKrakenCryptoTickerAdapter({ fetchImpl: options.fetchImpl }),
+    createCoinbaseCryptoTickerAdapter({ fetchImpl: options.fetchImpl }),
+    createCoinCapCryptoAssetAdapter({
+      apiKey: options.coinCapApiKey,
+      fetchImpl: options.fetchImpl,
+    }),
     createNasdaqExchangeMarketAdapter({ fetchImpl: options.fetchImpl }),
     createStooqDelayedMarketAdapter({ fetchImpl: options.fetchImpl }),
     createSecOfficialReferenceAdapter({ fetchImpl: options.fetchImpl }),
@@ -365,6 +381,14 @@ export function createFinanceRealtimeSourceRegistry(
     adapters.push(
       createAlphaVantageMarketAdapter({
         apiKey: options.alphaVantageApiKey,
+        fetchImpl: options.fetchImpl,
+      }),
+    );
+  }
+  if (options.coinGeckoApiKey?.trim()) {
+    adapters.push(
+      createCoinGeckoCryptoPriceAdapter({
+        apiKey: options.coinGeckoApiKey,
         fetchImpl: options.fetchImpl,
       }),
     );

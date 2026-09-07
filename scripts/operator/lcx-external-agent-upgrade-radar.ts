@@ -877,14 +877,14 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     adoptionMode: "finance_agent_architecture_probe",
     existingOwner:
       "finance external source adapter, realtime source registry, and adapter contract tests",
-    ownerEntrypoint: "src/agents/tools/finance-external-source-adapter-tool.ts",
+    ownerEntrypoint: "src/agents/echoapi-cli-runner.ts",
     ownerUseTrigger:
-      "When a future task asks for EchoAPI, API collection import, response assertions, SSE/TCP testing, or environment switching, use it only to produce a reviewed request/response fixture for the existing source adapter owner.",
+      "When a future task supplies an EchoAPI CI case URL for a public read-only API, run one real case through the EchoAPI CLI runner and route the status/report receipt into the existing source owners; use the collection/export surface for reviewed adapter contracts.",
     autocueTerms: ["EchoAPI", "API collection import", "SSE API test", "response assertion"],
     distilledPattern:
-      "separate request authoring and response testing from the financial data authority; import only redacted fixtures with URL, timestamp, schema, and license evidence",
+      "separate real public-case execution and response testing from the financial data authority; retain URL host/path, status, timing/report hash, schema evidence, and explicit no-webhook/no-secret-env policy",
     firstLocalProbe:
-      "import one public market or SEC cURL request into a local fixture, run schema/provenance assertions, and prove cookies, environment secrets, and post-request scripts are excluded",
+      "run one public read-only EchoAPI CI case with one iteration, JSON/CLI report, no webhook, minimal environment, and then map its actual status into a reviewed local source receipt",
     requiredReceipts: [
       "finance-external-source-adapter",
       "finance-realtime-source-registry",
@@ -892,6 +892,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "response_schema_receipt",
     ],
     requiredFilters: [
+      "real_public_case_allowed",
       "fixture_first",
       "no_cookie_import",
       "no_environment_secret_import",
@@ -901,13 +902,14 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     riskBoundaries: [
       "api_client_not_finance_truth_source",
       "no_cookie_or_token_import",
+      "no_client_certificate_import",
       "no_unreviewed_script_execution",
       "no_provider_config_change",
       "no_external_channel_sender_change",
       "protected_memory_guard",
     ],
     liveBoundary:
-      "EchoAPI may help test a separately authorized adapter; its environments, cookies, scripts, and remote writes never become LCX runtime authority",
+      "EchoAPI may execute one explicitly supplied public case; its environments, cookies, scripts, webhooks, client certificates, and remote writes never become LCX runtime authority",
   },
   {
     id: "finnews_hunter_realtime_intelligence",

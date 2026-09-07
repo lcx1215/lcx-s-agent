@@ -12,6 +12,7 @@
 //   node --import tsx scripts/operator/finance-data-gateway-live-smoke.ts            # dry, prints guidance
 //   node --import tsx scripts/operator/finance-data-gateway-live-smoke.ts --live     # real fetch
 //   node --import tsx scripts/operator/finance-data-gateway-live-smoke.ts --live --symbol SPY --json
+//   node --import tsx scripts/operator/finance-data-gateway-live-smoke.ts --live --asset-class crypto --symbol BTCUSDT --json
 
 import {
   createFinanceRealtimeSourceRegistry,
@@ -20,12 +21,18 @@ import {
 
 function parseArgs(args: string[]) {
   const symbolFlagIndex = args.indexOf("--symbol");
+  const assetClassFlagIndex = args.indexOf("--asset-class");
   const symbol =
     symbolFlagIndex >= 0 && args[symbolFlagIndex + 1] ? args[symbolFlagIndex + 1] : "QQQ";
+  const assetClass =
+    assetClassFlagIndex >= 0 && args[assetClassFlagIndex + 1]
+      ? args[assetClassFlagIndex + 1].toLowerCase()
+      : "etf";
   return {
     json: args.includes("--json"),
     live: args.includes("--live"),
     symbol: symbol.toUpperCase(),
+    assetClass,
   };
 }
 
@@ -38,6 +45,7 @@ async function main() {
         "finance-data-gateway-live-smoke: dry mode (no network fetch).",
         "Pass --live to fetch the public primary, cross-check, official, and issuer sources.",
         "Example: node --import tsx scripts/operator/finance-data-gateway-live-smoke.ts --live --symbol QQQ --json",
+        "Crypto example: node --import tsx scripts/operator/finance-data-gateway-live-smoke.ts --live --asset-class crypto --symbol BTCUSDT --json",
         "Boundary: research-only; every source attempt and unavailable adapter is reported.",
       ].join("\n"),
     );
@@ -50,12 +58,12 @@ async function main() {
     receipt = await runFinanceRealtimeRefresh({
       request: {
         instrument: options.symbol,
-        assetClass: "etf",
+        assetClass: options.assetClass,
         useCase: "live_gateway_smoke_portfolio_macro_risk_research",
         asOf: new Date().toISOString(),
-        requireOfficialReference: true,
-        freshnessMaxMinutes: 60 * 24 * 5,
-        crossSourceSkewMaxMinutes: 60 * 24,
+        requireOfficialReference: options.assetClass !== "crypto",
+        freshnessMaxMinutes: options.assetClass === "crypto" ? 60 : 60 * 24 * 5,
+        crossSourceSkewMaxMinutes: options.assetClass === "crypto" ? 30 : 60 * 24,
       },
       adapters: createFinanceRealtimeSourceRegistry(),
     });

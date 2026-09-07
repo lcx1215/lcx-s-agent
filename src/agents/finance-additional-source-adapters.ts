@@ -128,7 +128,7 @@ export function createStooqDelayedMarketAdapter(
     providerName: "stooq-public-daily",
     providerRole: "cross_check_market_data",
     priority: 20,
-    supports: (request) => request.assetClass.trim().length > 0,
+    supports: (request) => request.assetClass.trim().toLowerCase() !== "crypto",
     collect: async (request) => {
       const symbol = request.instrument.includes(".")
         ? request.instrument.toLowerCase()
@@ -178,7 +178,7 @@ export function createNasdaqExchangeMarketAdapter(
     providerName: "nasdaq-exchange-public-quote",
     providerRole: "cross_check_market_data",
     priority: 12,
-    supports: (request) => request.assetClass.trim().length > 0,
+    supports: (request) => request.assetClass.trim().toLowerCase() !== "crypto",
     collect: async (request) => {
       const sourceUrlOrArtifact = `https://api.nasdaq.com/api/quote/${encodeURIComponent(request.instrument.toUpperCase())}/info?assetclass=${encodeURIComponent(request.assetClass.toLowerCase())}`;
       const payload = (await fetchJson(
@@ -272,7 +272,7 @@ export function createAlphaVantageMarketAdapter(options: {
     providerName: "alpha-vantage-global-quote",
     providerRole: "cross_check_market_data",
     priority: 15,
-    supports: (request) => request.assetClass.trim().length > 0,
+    supports: (request) => request.assetClass.trim().toLowerCase() !== "crypto",
     collect: async (request) => {
       const sourceUrlOrArtifact = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${encodeURIComponent(request.instrument)}`;
       const url = `${sourceUrlOrArtifact}&apikey=${encodeURIComponent(apiKey)}`;
@@ -303,7 +303,7 @@ export function createSecOfficialReferenceAdapter(
     providerName: "sec-edgar-official",
     providerRole: "official_or_issuer_reference",
     priority: 10,
-    supports: (request) => request.assetClass.trim().length > 0,
+    supports: (request) => request.assetClass.trim().toLowerCase() !== "crypto",
     collect: async (request) => {
       const fetchImpl = resolveFinanceFetch(options.fetchImpl);
       const cik = cikByInstrument[request.instrument.trim().toUpperCase()];
@@ -371,7 +371,9 @@ export function createInvescoIssuerReferenceAdapter(
     providerName: "invesco-issuer-reference",
     providerRole: "official_or_issuer_reference",
     priority: 20,
-    supports: (request) => request.instrument.trim().toUpperCase() === ticker,
+    supports: (request) =>
+      request.assetClass.trim().toLowerCase() !== "crypto" &&
+      request.instrument.trim().toUpperCase() === ticker,
     collect: async (request) => {
       const sourceUrlOrArtifact = `https://dng-api.invesco.com/cache/v1/accounts/en_US/shareclasses/${encodeURIComponent(ticker)}/performance/standard?idType=ticker&performanceSubType=cumulative&productType=ETF`;
       const payload = (await fetchJson(

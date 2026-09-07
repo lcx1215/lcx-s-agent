@@ -43,6 +43,7 @@ import { createFinancePromotionReviewTool } from "./tools/finance-promotion-revi
 import { createFinanceRealtimeRefreshTool } from "./tools/finance-realtime-refresh-tool.js";
 import { createFinanceResearchSourceWorkbenchTool } from "./tools/finance-research-source-workbench-tool.js";
 import { createGatewayTool } from "./tools/gateway-tool.js";
+import { createGeospatialSourceRefreshTool } from "./tools/geospatial-source-refresh-tool.js";
 import { createGitHubProjectCapabilityIntakeTool } from "./tools/github-project-capability-intake-tool.js";
 import { createImageTool } from "./tools/image-tool.js";
 import { createLobsterWorkfaceAppTool } from "./tools/lobster-workface-app-tool.js";
@@ -209,6 +210,9 @@ export function createOpenClawTools(options?: {
       workspaceDir,
     }),
     createFinanceRealtimeRefreshTool({
+      workspaceDir,
+    }),
+    createGeospatialSourceRefreshTool({
       workspaceDir,
     }),
     createFinanceArticleSourceRegistryRecordTool({

@@ -201,6 +201,15 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     includeInOpenClawGroup: true,
   },
   {
+    id: "geospatial_source_refresh",
+    label: "geospatial_source_refresh",
+    description:
+      "Inspect or explicitly fetch public geocoding, weather, and earthquake sources with cross-source review",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
     id: "finance_learning_pipeline_orchestrator",
     label: "finance_learning_pipeline_orchestrator",
     description:
