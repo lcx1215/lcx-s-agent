@@ -30,6 +30,8 @@ For a US common stock, use `assetClass=us_equity` (or `stock`, `equity`, or
 | SEC EDGAR submissions  | official/issuer reference | filing date/form for configured issuer/ETF mappings | none       |
 | Treasury Fiscal Data   | official/issuer reference | debt-to-penny and average Treasury interest rates   | none       |
 | GDELT DOC              | independent cross-check   | public article discovery and publication metadata   | none       |
+| Google News RSS        | independent cross-check   | public article metadata search                      | none       |
+| Yahoo Finance RSS      | independent cross-check   | public finance-news metadata                        | none       |
 
 The optional keyed path is enabled only when the corresponding process
 environment values are already present at runtime:
@@ -53,16 +55,16 @@ missing or partial credential is an unavailable adapter, not a fake success.
 Collection-shaped data does not fit a single `last_price` field, so it uses the
 same source/time/conflict discipline in a record-oriented receipt:
 
-| Collection        | Sources                                              | Coverage                                                                            |
-| ----------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `news`            | GDELT public; Massive/Finnhub cross-check when keyed | article id, title/body metadata, publisher, tickers, sentiment fields when supplied |
-| `options_chain`   | Massive when keyed                                   | contract details, quote/trade, greeks, IV, open interest, underlying snapshot       |
-| `dividends`       | Massive when keyed                                   | declaration, ex-dividend, record/pay dates, amount and frequency                    |
-| `splits`          | Massive when keyed                                   | execution date, ratio and adjustment metadata                                       |
-| `macro_series`    | BLS, Treasury debt/average rates, FRED when keyed    | official time-series records with observation dates                                 |
-| `sec_filings`     | SEC EDGAR submissions                                | public filing form, filing/report dates, and primary document metadata              |
-| `company_profile` | FMP Basic when keyed                                 | free-tier reference/profile fields; timestamp is explicitly unknown                 |
-| `eod_history`     | FMP Basic when keyed                                 | historical end-of-day records with date and OHLCV fields                            |
+| Collection        | Sources                                                               | Coverage                                                                                   |
+| ----------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `news`            | GDELT, Google News RSS, Yahoo Finance RSS; Massive/Finnhub when keyed | article id, title/description metadata, publisher, tickers, sentiment fields when supplied |
+| `options_chain`   | Massive when keyed                                                    | contract details, quote/trade, greeks, IV, open interest, underlying snapshot              |
+| `dividends`       | Massive when keyed                                                    | declaration, ex-dividend, record/pay dates, amount and frequency                           |
+| `splits`          | Massive when keyed                                                    | execution date, ratio and adjustment metadata                                              |
+| `macro_series`    | BLS, Treasury debt/average rates, FRED when keyed                     | official time-series records with observation dates                                        |
+| `sec_filings`     | SEC EDGAR submissions                                                 | public filing form, filing/report dates, and primary document metadata                     |
+| `company_profile` | FMP Basic when keyed                                                  | free-tier reference/profile fields; timestamp is explicitly unknown                        |
+| `eod_history`     | FMP Basic when keyed                                                  | historical end-of-day records with date and OHLCV fields                                   |
 
 The built-in tool is `finance_market_collection_refresh`. The CLI counterpart
 is:

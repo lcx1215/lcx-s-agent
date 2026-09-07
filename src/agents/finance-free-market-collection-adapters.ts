@@ -66,6 +66,19 @@ async function fetchJson(
   url: string,
   headers: Record<string, string> = {},
 ): Promise<unknown> {
+  const body = await fetchText(fetchImpl, url, headers);
+  try {
+    return JSON.parse(body) as unknown;
+  } catch {
+    throw new FreeMarketCollectionAdapterError("source returned invalid JSON");
+  }
+}
+
+async function fetchText(
+  fetchImpl: FetchImpl,
+  url: string,
+  headers: Record<string, string> = {},
+): Promise<string> {
   let response: { ok: boolean; status: number; text: () => Promise<string> };
   try {
     response = await fetchImpl(url, { headers });
@@ -81,11 +94,7 @@ async function fetchJson(
   if (!body) {
     throw new FreeMarketCollectionAdapterError("source returned an empty body");
   }
-  try {
-    return JSON.parse(body) as unknown;
-  } catch {
-    throw new FreeMarketCollectionAdapterError("source returned invalid JSON");
-  }
+  return body;
 }
 
 function buildItem(
@@ -117,6 +126,119 @@ function buildItem(
 
 function isUsEquity(assetClass: string): boolean {
   return ["common_stock", "equity", "stock", "us_equity"].includes(assetClass.trim().toLowerCase());
+}
+
+function decodeXmlText(value: string): string {
+  return value
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/gu, "$1")
+    .replace(/&amp;/gu, "&")
+    .replace(/&quot;/gu, '"')
+    .replace(/&#39;|&#x27;/giu, "'")
+    .replace(/&lt;/gu, "<")
+    .replace(/&gt;/gu, ">");
+}
+
+function rssTag(block: string, tag: string): string {
+  const match = block.match(new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}>`, "iu"));
+  return match ? decodeXmlText(match[1] ?? "").trim() : "";
+}
+
+function rssItems(body: string, providerName: string): Readonly<Record<string, string>>[] {
+  const items = [...body.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/giu)].map(
+    (match) => match[1] ?? "",
+  );
+  const records = items.map((item) => ({
+    title: rssTag(item, "title"),
+    link: rssTag(item, "link"),
+    description: rssTag(item, "description")
+      .replace(/<[^>]+>/gu, " ")
+      .trim()
+      .slice(0, 2_000),
+    pubDate: rssTag(item, "pubDate"),
+    source: rssTag(item, "source"),
+  }));
+  const usable = records.filter((record) => record.title || record.link);
+  if (usable.length === 0) {
+    throw new FreeMarketCollectionAdapterError(`${providerName} RSS returned no usable items`);
+  }
+  return usable;
+}
+
+function createPublicRssNewsCollectionAdapter(options: {
+  id: string;
+  providerName: string;
+  priority: number;
+  buildUrl: (symbol: string) => string;
+  fetchImpl?: FetchImpl;
+}): FinanceMarketCollectionAdapter {
+  return {
+    id: options.id,
+    providerName: options.providerName,
+    providerRole: "cross_check_market_data",
+    priority: options.priority,
+    supports: (request) => isUsEquity(request.assetClass) && request.collection === "news",
+    collect: async (request) => {
+      const symbol = request.instrument.toUpperCase();
+      const sourceUrlOrArtifact = options.buildUrl(symbol);
+      const body = await fetchText(resolveFinanceFetch(options.fetchImpl), sourceUrlOrArtifact, {
+        "User-Agent": "LCX Agent research-only",
+      });
+      const records = rssItems(body, options.providerName);
+      return records.slice(0, request.limit).map((record, index) =>
+        buildItem(request, {
+          itemId: record.link || `${symbol}-${options.id}-${index}`,
+          providerName: options.providerName,
+          providerRole: "cross_check_market_data",
+          sourceFamily: "market_data_api",
+          sourceTimestamp: sourceTimestamp(record.pubDate, request.asOf),
+          delayStatus: "delayed",
+          sourceUrlOrArtifact,
+          data: record,
+        }),
+      );
+    },
+  };
+}
+
+/** Public Google News RSS search; metadata-only and cross-check role. */
+export function createGoogleNewsRssCollectionAdapter(
+  options: {
+    fetchImpl?: FetchImpl;
+  } = {},
+): FinanceMarketCollectionAdapter {
+  return createPublicRssNewsCollectionAdapter({
+    id: "google_news_rss",
+    providerName: "google-news-rss",
+    priority: 35,
+    fetchImpl: options.fetchImpl,
+    buildUrl: (symbol) =>
+      apiUrl("https://news.google.com/rss/search", {
+        q: symbol,
+        hl: "en-US",
+        gl: "US",
+        ceid: "US:en",
+      }),
+  });
+}
+
+/** Public Yahoo Finance RSS search; metadata-only and cross-check role. */
+export function createYahooFinanceRssCollectionAdapter(
+  options: {
+    fetchImpl?: FetchImpl;
+  } = {},
+): FinanceMarketCollectionAdapter {
+  return createPublicRssNewsCollectionAdapter({
+    id: "yahoo_finance_rss",
+    providerName: "yahoo-finance-rss",
+    priority: 40,
+    fetchImpl: options.fetchImpl,
+    buildUrl: (symbol) =>
+      apiUrl("https://feeds.finance.yahoo.com/rss/2.0/headline", {
+        s: symbol,
+        region: "US",
+        lang: "en-US",
+      }),
+  });
 }
 
 /**

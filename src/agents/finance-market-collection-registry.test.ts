@@ -7,6 +7,7 @@ import {
   createFmpFreeBasicEodCollectionAdapter,
   createFmpFreeBasicProfileCollectionAdapter,
   createGdeltPublicNewsCollectionAdapter,
+  createGoogleNewsRssCollectionAdapter,
   createSecFilingsCollectionAdapter,
   createMassiveDividendsCollectionAdapter,
   createMassiveNewsCollectionAdapter,
@@ -14,6 +15,7 @@ import {
   createMassiveSplitsCollectionAdapter,
   createTreasuryDebtCollectionAdapter,
   createTreasuryAverageInterestRatesCollectionAdapter,
+  createYahooFinanceRssCollectionAdapter,
   createFinanceMarketCollectionRegistry,
   inspectFinanceMarketCollectionRegistry,
   resolveFinanceMarketCollectionRegistryOptionsFromEnv,
@@ -103,6 +105,22 @@ function fakeFetch(url: string): ReturnType<FetchImpl> {
       ok: true,
       status: 200,
       text: async () => JSON.stringify([{ id: 2, headline: "cross-check", datetime: 1788780000 }]),
+    });
+  }
+  if (url.includes("news.google.com/rss/search")) {
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      text: async () =>
+        `<?xml version="1.0"?><rss><channel><item><title>Google AAPL</title><link>https://example.test/google-aapl</link><description><![CDATA[Google description]]></description><pubDate>Mon, 07 Sep 2026 13:00:00 GMT</pubDate><source>Example Wire</source></item></channel></rss>`,
+    });
+  }
+  if (url.includes("feeds.finance.yahoo.com/rss/2.0/headline")) {
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      text: async () =>
+        `<?xml version="1.0"?><rss><channel><item><title>Yahoo AAPL</title><link>https://example.test/yahoo-aapl</link><description>Yahoo description</description><pubDate>Mon, 07 Sep 2026 12:00:00 GMT</pubDate><source>Yahoo Finance</source></item></channel></rss>`,
     });
   }
   if (url.includes("api.gdeltproject.org/api/v2/doc/doc")) {
@@ -296,6 +314,22 @@ describe("finance market collection registry", () => {
     expect(eod[0]?.sourceUrlOrArtifact).not.toContain("fmp-secret");
   });
 
+  it("collects public RSS news without retaining article bodies", async () => {
+    const google = await createGoogleNewsRssCollectionAdapter({ fetchImpl: fakeFetch }).collect(
+      EQUITY_REQUEST,
+      new AbortController().signal,
+    );
+    const yahoo = await createYahooFinanceRssCollectionAdapter({ fetchImpl: fakeFetch }).collect(
+      EQUITY_REQUEST,
+      new AbortController().signal,
+    );
+    expect(google[0]?.providerName).toBe("google-news-rss");
+    expect(google[0]?.sourceTimestamp).toBe("2026-09-07T13:00:00.000Z");
+    expect(google[0]?.data).toEqual(expect.objectContaining({ title: "Google AAPL" }));
+    expect(yahoo[0]?.providerName).toBe("yahoo-finance-rss");
+    expect(yahoo[0]?.sourceTimestamp).toBe("2026-09-07T12:00:00.000Z");
+  });
+
   it("keeps collection failures visible instead of declaring a partial run ready", async () => {
     const receipt = await runFinanceMarketCollectionRefresh({
       request: EQUITY_REQUEST,
@@ -336,6 +370,8 @@ describe("finance market collection registry", () => {
       "massive_us_equity_news",
       "finnhub_us_equity_news",
       "gdelt_public_news",
+      "google_news_rss",
+      "yahoo_finance_rss",
     ]);
     expect(JSON.stringify(inspection)).not.toContain("secret");
     const fmpInspection = inspectFinanceMarketCollectionRegistry(

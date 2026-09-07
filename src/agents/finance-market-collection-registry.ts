@@ -6,14 +6,18 @@ import type {
 import {
   createFmpFreeBasicEodCollectionAdapter,
   createFmpFreeBasicProfileCollectionAdapter,
+  createGoogleNewsRssCollectionAdapter,
   createGdeltPublicNewsCollectionAdapter,
+  createYahooFinanceRssCollectionAdapter,
 } from "./finance-free-market-collection-adapters.js";
 import { resolveFinanceFetch, type FetchImpl } from "./finance-live-market-source.js";
 
 export {
   createFmpFreeBasicEodCollectionAdapter,
   createFmpFreeBasicProfileCollectionAdapter,
+  createGoogleNewsRssCollectionAdapter,
   createGdeltPublicNewsCollectionAdapter,
+  createYahooFinanceRssCollectionAdapter,
 } from "./finance-free-market-collection-adapters.js";
 
 const SEC_USER_AGENT = "LCX Agent research-only contact=local";
@@ -1084,6 +1088,8 @@ export function createFinanceMarketCollectionRegistry(
     createTreasuryAverageInterestRatesCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createSecFilingsCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createGdeltPublicNewsCollectionAdapter({ fetchImpl: options.fetchImpl }),
+    createGoogleNewsRssCollectionAdapter({ fetchImpl: options.fetchImpl }),
+    createYahooFinanceRssCollectionAdapter({ fetchImpl: options.fetchImpl }),
   ];
   if (options.massiveApiKey?.trim()) {
     adapters.push(

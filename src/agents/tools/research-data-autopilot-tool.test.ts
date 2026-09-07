@@ -6,6 +6,22 @@ import type { FetchImpl } from "../finance-live-market-source.js";
 import { createResearchDataAutopilotTool } from "./research-data-autopilot-tool.js";
 
 const fakeFetch: FetchImpl = async (url) => {
+  if (url.includes("news.google.com/rss/search")) {
+    return {
+      ok: true,
+      status: 200,
+      text: async () =>
+        `<?xml version="1.0"?><rss><channel><item><title>Google AAPL</title><link>https://example.test/google-aapl</link><pubDate>Mon, 07 Sep 2026 13:00:00 GMT</pubDate></item></channel></rss>`,
+    };
+  }
+  if (url.includes("feeds.finance.yahoo.com/rss/2.0/headline")) {
+    return {
+      ok: true,
+      status: 200,
+      text: async () =>
+        `<?xml version="1.0"?><rss><channel><item><title>Yahoo AAPL</title><link>https://example.test/yahoo-aapl</link><pubDate>Mon, 07 Sep 2026 12:00:00 GMT</pubDate></item></channel></rss>`,
+    };
+  }
   if (url.includes("api.gdeltproject.org/api/v2/doc/doc")) {
     return {
       ok: true,
@@ -68,7 +84,7 @@ describe("research_data_autopilot tool", () => {
         autoSelectedSources: true,
         result: expect.objectContaining({
           status: "ready",
-          selectedSourceIds: ["gdelt_public_news"],
+          selectedSourceIds: ["gdelt_public_news", "google_news_rss", "yahoo_finance_rss"],
         }),
         receiptPath: expect.stringContaining("memory/research-data-autopilot/"),
       }),
