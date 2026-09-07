@@ -1,3 +1,4 @@
+import type { LogicalAgentModelRouting } from "../../src/agents/logical-agent-model-router.ts";
 import { createCanonicalStateRootLogicalAgentCheckpointStore } from "../../src/agents/logical-agent-pool-checkpoint-store.ts";
 import {
   buildDefaultLogicalAgentPlan,
@@ -117,6 +118,30 @@ function qualityDemoResponse(request: QualityHarnessModelRequest): QualityHarnes
   };
 }
 
+function qualityDemoRouting(): LogicalAgentModelRouting {
+  return {
+    revision: "operator-quality-demo-v1",
+    adapters: [
+      {
+        id: "deterministic-quality-demo",
+        provider: "local-deterministic-demo",
+        modelId: "deterministic-demo-model",
+        mode: "deterministic",
+        capabilities: ["quality_harness"],
+        requiredTools: [],
+        requiredSideEffects: ["local_compute"],
+        invoke: async ({ payload }) => qualityDemoResponse(payload as QualityHarnessModelRequest),
+      },
+    ],
+    defaultPolicy: {
+      primary: "deterministic-quality-demo",
+      requiredCapabilities: ["quality_harness"],
+      maxInputBytes: 256_000,
+      timeoutMs: 1_000,
+    },
+  };
+}
+
 export async function buildLogicalAgentPoolPayload(options: Options) {
   const pool = new LogicalAgentPool({ maxConcurrency: options.concurrency });
   const plan = buildDefaultLogicalAgentPlan({ ask: options.ask });
@@ -149,8 +174,7 @@ export async function buildLogicalAgentPoolPayload(options: Options) {
         modelId: "deterministic-demo-model",
         maxConcurrency: options.concurrency,
         maxAttempts: 1,
-        modelInvoker: (request) =>
-          Promise.resolve(qualityDemoResponse(request as QualityHarnessModelRequest)),
+        modelRouting: qualityDemoRouting(),
         verify: async () => ({
           status: "passed",
           summary: "deterministic local verifier passed",
@@ -198,7 +222,7 @@ async function main() {
   process.stdout.write(
     [
       `10 个逻辑 Agent / 1 个共享模型槽位 / 并发上限 ${options.concurrency}`,
-      `模式：${options.qualityDemo ? "质量闭环 demo（复用十角色 DAG，不调用模型）" : options.demo ? "本地确定性 demo（不调用模型）" : "只输出编排计划"}`,
+      `模式：${options.qualityDemo ? "质量闭环 demo（role router + 确定性 adapter，不调用真实模型）" : options.demo ? "本地确定性 demo（不调用真实模型）" : "只输出编排计划"}`,
       `checkpoint：${options.persistCheckpoint ? "已接入活动 state-root 文件持久化" : "未启用（使用 --persist-checkpoint）"}`,
       `下一步：注入真实本地 modelInvoker 后才会执行模型推理；receipt 仍需真实 verifier 才能标 verified。`,
     ].join("\n") + "\n",
