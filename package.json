@@ -170,6 +170,7 @@
     "lcx:rpc": "node scripts/run-node.mjs agent --mode rpc --json",
     "lcx:us-market:collection": "node --import tsx scripts/operator/us-market-collection-live-smoke.ts",
     "lcx:us-market:quote": "node --import tsx scripts/operator/finance-data-gateway-live-smoke.ts",
+    "lcx:vision:smoke": "node --import tsx scripts/operator/local-vision-vlm-live-smoke.ts",
     "lint": "oxlint --type-aware",
     "lint:agent:ingress-owner": "node scripts/check-ingress-agent-owner-context.mjs",
     "lint:all": "pnpm lint && pnpm lint:swift",

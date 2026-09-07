@@ -258,6 +258,19 @@ describe("image tool implicit imageModel config", () => {
     });
   });
 
+  it("selects the local MLX-VLM lane when explicitly enabled", async () => {
+    vi.stubEnv("LCX_LOCAL_VISION_ENABLED", "1");
+    await withTempAgentDir(async (agentDir) => {
+      const cfg: OpenClawConfig = {
+        agents: { defaults: { model: { primary: "openai/gpt-5.2" } } },
+      };
+      expect(resolveImageModelConfigForTool({ cfg, agentDir })).toEqual({
+        primary: "mlx-vlm/local",
+      });
+      expect(createImageTool({ config: cfg, agentDir })).not.toBeNull();
+    });
+  });
+
   it("pairs minimax primary with MiniMax-VL-01 (and fallbacks) when auth exists", async () => {
     await withTempAgentDir(async (agentDir) => {
       vi.stubEnv("MINIMAX_API_KEY", "minimax-test");
