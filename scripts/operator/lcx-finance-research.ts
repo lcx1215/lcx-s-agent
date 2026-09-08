@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import {
   buildFinanceCaseRun,
+  listFinanceCases,
   saveFinanceCaseRun,
   readFinanceCaseRun,
   compareFinanceCaseRuns,
@@ -27,12 +28,14 @@ type FinanceResearchCliResult =
   | Awaited<ReturnType<typeof readFinanceCaseRun>>
   | ReturnType<typeof compareFinanceCaseRuns>
   | Awaited<ReturnType<typeof appendFinanceOutcome>>
-  | Awaited<ReturnType<typeof readFinanceOutcomes>>;
+  | Awaited<ReturnType<typeof readFinanceOutcomes>>
+  | Awaited<ReturnType<typeof listFinanceCases>>;
 
 export async function runFinanceResearchCli(args: string[]): Promise<FinanceResearchCliResult> {
   const { values } = parseArgs({
     args,
     options: {
+      "list-cases": { type: "boolean", default: false },
       "packet-ref": { type: "string" },
       "outcome-file": { type: "string" },
       "list-outcomes": { type: "boolean", default: false },
@@ -51,6 +54,24 @@ export async function runFinanceResearchCli(args: string[]): Promise<FinanceRese
       "max-api-calls": { type: "string", default: "64" },
     },
   });
+  if (values["list-cases"]) {
+    if (
+      !values["case-dir"] ||
+      values.live ||
+      values.ask ||
+      values["read-run"] ||
+      values["compare-run"] ||
+      values["checkpoint-run"] ||
+      values["outcome-file"] ||
+      values["packet-ref"] ||
+      values["list-outcomes"]
+    ) {
+      throw new Error(
+        "--list-cases requires case-dir and cannot be combined with research or outcome operations",
+      );
+    }
+    return listFinanceCases(values["case-dir"]);
+  }
   if (values["outcome-file"] || values["list-outcomes"] || values["packet-ref"]) {
     if (
       !values["case-dir"] ||

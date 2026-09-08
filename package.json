@@ -154,6 +154,7 @@
     "lcx": "node scripts/run-node.mjs",
     "lcx:api:live-smoke": "node --import tsx scripts/operator/lcx-api-live-smoke.ts",
     "lcx:api:load-smoke": "node --import tsx scripts/operator/lcx-api-load-smoke.ts",
+    "lcx:caseflow:demo": "node --import tsx scripts/operator/lcx-caseflow-demo.ts",
     "lcx:cloud:preflight": "node --import tsx scripts/operator/lcx-cloud-preflight.ts",
     "lcx:commercial:acceptance": "node --import tsx scripts/operator/lcx-commercial-acceptance-harness.ts",
     "lcx:echoapi": "node --import tsx scripts/operator/echoapi-cli-live-smoke.ts",

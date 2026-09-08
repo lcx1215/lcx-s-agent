@@ -243,7 +243,37 @@ for the current research question.
 The lifecycle now has frozen cases/runs/packets, bounded recovery and appended
 outcome records. Automatic quarterly scheduling is still unbound, and numerical
 calibration requires predeclared targets/metrics rather than hindsight labels.
-Next perform one coherent v1 acceptance on the accumulated local candidate,
-including historical coverage and semantic-quality gaps, before remote review
-or live research promotion. Broker execution and external sending remain
+The integrated local candidate has now been exercised through the lifecycle command below. Historical coverage and semantic-quality gaps still block live research promotion. Broker execution and external sending remain
 outside Caseflow authority.
+
+## Integrated lifecycle entrypoints
+
+Discover saved cases without remembering content hashes:
+
+```sh
+pnpm lcx:finance:research --case-dir ./caseflow-data --list-cases
+```
+
+This inventory is derived from verified artifacts and includes case/revision,
+Run reference, observation date, packet state, claim count and follow-up dates.
+It does not introduce a second registry.
+
+Run the entire lifecycle with explicitly synthetic adapters:
+
+```sh
+pnpm lcx:caseflow:demo --output ./local-artifacts
+```
+
+Each invocation creates a new output subdirectory containing frozen runs,
+SQLite source/model checkpoints, the Outcome Ledger, `summary.json` and a
+readable `index.html`. It uses the real runner and persistence modules to
+execute, freeze, resume, compare and append an outcome. Assertions stop the
+command if resume dispatches new source/model work or changes frozen evidence.
+The synthetic model and observations are labelled throughout; this command
+never fetches live market data or performs real inference.
+
+The integrated run observed one synthetic source call and twenty injected
+model calls initially, then zero new calls on resume. Two runs were indexed,
+frozen evidence compared equal, and one quarterly review record was appended.
+96 focused tests plus runtime/operator type checks passed on the integrated
+candidate. Remote review, merge and actual market-quality proof remain separate.

@@ -264,3 +264,56 @@ export function compareFinanceCaseRuns(before: FinanceCaseRun, after: FinanceCas
     gaps: { before: before.packet.gaps, after: after.packet.gaps },
   };
 }
+
+/** Derived inventory only: content-addressed artifacts remain the source of truth. */
+export type FinanceCaseInventoryEntry = {
+  ref: string;
+  caseId: string;
+  question: string;
+  revision: string;
+  runId: string;
+  recordedAt: string;
+  asOf: string;
+  status: FinanceCaseRun["packet"]["status"];
+  adopted: boolean;
+  claimCount: number;
+  followups: FinanceCaseRun["packet"]["followups"];
+};
+export async function listFinanceCases(directory: string): Promise<FinanceCaseInventoryEntry[]> {
+  let filenames: string[];
+  try {
+    filenames = await fs.readdir(directory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+  const runs = await Promise.all(
+    filenames
+      .filter((name) => /^[a-f0-9]{64}\.json$/u.test(name))
+      .map(async (name) => {
+        const ref = name.slice(0, -5);
+        const run = await readFinanceCaseRun(directory, ref);
+        return {
+          ref,
+          caseId: run.case.id,
+          question: run.case.question,
+          revision: run.case.revision,
+          runId: run.run.id,
+          recordedAt: run.run.recordedAt,
+          asOf: run.case.asOf,
+          status: run.packet.status,
+          adopted: run.packet.adopted,
+          claimCount: run.packet.claims.length,
+          followups: run.packet.followups,
+        };
+      }),
+  );
+  return runs.toSorted(
+    (a, b) =>
+      a.caseId.localeCompare(b.caseId) ||
+      b.recordedAt.localeCompare(a.recordedAt) ||
+      a.ref.localeCompare(b.ref),
+  );
+}
