@@ -354,6 +354,28 @@ describe("finance research batch runner", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it("reserves a hard worst-case API budget before dispatching jobs", async () => {
+    const fetchImpl = vi.fn(fixtureFetch);
+    const packet = await runFinanceResearchBatch({
+      ...options(fetchImpl),
+      maxApiCalls: 3,
+      maxSourcesPerJob: 2,
+      retry: { attempts: 1 },
+    });
+
+    expect(packet.status).toBe("partial");
+    expect(packet.budget).toMatchObject({
+      maxApiCalls: 3,
+      reservedCallBudget: 3,
+      callCount: 3,
+      blockedJobs: 2,
+    });
+    expect(packet.jobs.slice(2).every((job) => job.error === "api_call_budget_exhausted")).toBe(
+      true,
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
   it("returns cancellation for every queued job with no dispatch when already aborted", async () => {
     const fetchImpl = vi.fn(fixtureFetch);
     const packet = await runFinanceResearchBatch({

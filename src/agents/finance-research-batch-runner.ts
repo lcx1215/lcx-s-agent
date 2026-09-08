@@ -60,6 +60,8 @@ export type FinanceResearchBatchOptions = Readonly<{
   correlationId?: string;
   signal?: AbortSignal;
   maxJobs?: number;
+  /** Hard upper bound on worst-case source attempts reserved before dispatch. */
+  maxApiCalls?: number;
   maxConcurrency?: number;
   maxSourcesPerJob?: number;
   sourceTimeoutMs?: number;
@@ -113,6 +115,8 @@ export type FinanceResearchBatchEvidencePacket = Readonly<{
   committeeEvidence: readonly FinanceCommitteeEvidence[];
   budget: Readonly<{
     maxJobs: number;
+    maxApiCalls: number;
+    reservedCallBudget: number;
     requestedJobs: number;
     completedJobs: number;
     failedJobs: number;
@@ -225,6 +229,7 @@ export async function runFinanceResearchBatch(
   const useCase = requiredText(options.useCase, "useCase");
   const correlationId = requiredText(options.correlationId ?? randomUUID(), "correlationId");
   const maxJobs = positive(options.maxJobs ?? 256, "maxJobs", true);
+  const maxApiCalls = positive(options.maxApiCalls ?? 10_000, "maxApiCalls", true);
   const maxConcurrency = positive(options.maxConcurrency ?? 4, "maxConcurrency", true);
   const maxSourcesPerJob = positive(options.maxSourcesPerJob ?? 3, "maxSourcesPerJob", true);
   const sourceTimeoutMs = positive(options.sourceTimeoutMs ?? 15_000, "sourceTimeoutMs");
@@ -322,6 +327,7 @@ export async function runFinanceResearchBatch(
   let next = 0;
   let active = 0;
   let peakConcurrency = 0;
+  let reservedCallBudget = 0;
   const abortStatus = () =>
     signal.reason instanceof ApiCallError && signal.reason.kind === "timeout"
       ? ("timed_out" as const)
@@ -343,6 +349,21 @@ export async function runFinanceResearchBatch(
         jobs[index] = { ...base, status: abortStatus(), missingEvidence: ["job_not_dispatched"] };
         continue;
       }
+      const supportedAdapterCount =
+        job.kind === "realtime"
+          ? realtimeAdapters.filter((adapter) => adapter.supports(job.request)).length
+          : collectionAdapters.filter((adapter) => adapter.supports(job.request)).length;
+      const worstCaseJobCalls = Math.min(maxSourcesPerJob, supportedAdapterCount) * retryAttempts;
+      if (reservedCallBudget + worstCaseJobCalls > maxApiCalls) {
+        jobs[index] = {
+          ...base,
+          status: "blocked",
+          missingEvidence: ["api_call_budget_exhausted"],
+          error: "api_call_budget_exhausted",
+        };
+        continue;
+      }
+      reservedCallBudget += worstCaseJobCalls;
       active++;
       peakConcurrency = Math.max(peakConcurrency, active);
       try {
@@ -407,6 +428,8 @@ export async function runFinanceResearchBatch(
   const httpCalls = apiCalls.filter((call) => call.operation === "http_get");
   const budget = {
     maxJobs,
+    maxApiCalls,
+    reservedCallBudget,
     requestedJobs,
     completedJobs: count("ready") + count("needs_review"),
     failedJobs: count("blocked") + count("failed"),
