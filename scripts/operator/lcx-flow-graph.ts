@@ -1660,7 +1660,12 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
     allowedPaths: [
       "scripts/operator/finance-data-gateway-live-smoke.ts",
       "scripts/operator/finance-data-gateway-smoke.ts",
+      "src/agents/finance-data-gateway.test.ts",
       "src/agents/finance-data-gateway.ts",
+      "src/agents/geospatial-source-registry.test.ts",
+      "src/agents/geospatial-source-registry.ts",
+      "src/agents/finance-realtime-source-registry.test.ts",
+      "src/agents/finance-realtime-source-registry.ts",
       "src/agents/openclaw-tools.finance-article-source-registry-registration.test.ts",
       "src/agents/openclaw-tools.finance-data-gateway-registration.test.ts",
       "src/agents/tools/finance-article-source-registry-inspect-tool.ts",
