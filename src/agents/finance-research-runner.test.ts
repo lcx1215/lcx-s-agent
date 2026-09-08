@@ -93,6 +93,26 @@ async function modelInvoker(request: unknown): Promise<unknown> {
     return {
       kind: "artifact",
       artifact: {
+        supportingAnalysis: {
+          causalHypotheses: ["liquidity", "earnings"].map((id) => ({
+            id,
+            cause: id,
+            effect: "repricing",
+            mechanism: "discount rate or cash flow",
+            evidenceIds: [evidenceId],
+            alternativeExplanations: ["risk premium change"],
+            disconfirmingTest: "compare control windows",
+            status: "hypothesis",
+          })),
+          scenarios: ["base", "up", "down"].map((id, index) => ({
+            id,
+            probability: [0.5, 0.3, 0.2][index],
+            condition: id,
+            expectedEffect: "conditional repricing",
+            invalidation: "policy surprise",
+            evidenceIds: [evidenceId],
+          })),
+        },
         answer:
           "Research-only quarterly outlook: the supplied evidence supports a bounded candidate view with explicit uncertainty and invalidation checks.",
         claims: [
@@ -137,7 +157,7 @@ describe("finance research runner", () => {
 
     expect(history.length).toBeGreaterThanOrEqual(3);
     expect(history.every((collection) => collection.fromDate === "2026-03-08")).toBe(true);
-    expect(history.every((collection) => collection.toDate === "2026-09-08")).toBe(true);
+    expect(history.every((collection) => collection.toDate === "2026-09-07")).toBe(true);
     expect(targets.some((target) => target.assetClass === "crypto")).toBe(true);
     expect(targets.some((target) => target.assetClass === "us_equity")).toBe(true);
   });
@@ -375,7 +395,7 @@ describe("finance research runner", () => {
               {
                 collection: "eod_history",
                 fromDate: "2026-03-08",
-                toDate: "2026-09-08",
+                toDate: "2026-09-07",
                 freshnessMaxMinutes: 300000,
               },
             ],
@@ -388,7 +408,7 @@ describe("finance research runner", () => {
       batchOptions: BATCH_OPTIONS,
     });
     expect(result.status).toBe("needs_review");
-    expect(result.missingEvidence).toContain("history:historical_window_coverage_unverified");
+    expect(result.missingEvidence).toContain("history:historical_window_coverage_incomplete");
     expect(result.quarterlyOutput.adopted).toBe(false);
   });
   it("resumes committee and quality stages without new model calls", async () => {

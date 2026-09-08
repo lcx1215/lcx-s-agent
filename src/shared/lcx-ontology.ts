@@ -50,6 +50,24 @@ export const LCX_ONTOLOGY_ENTITY_TYPES = [
 ] as const;
 export type LcxOntologyEntityType = (typeof LCX_ONTOLOGY_ENTITY_TYPES)[number];
 
+/** Caseflow artifacts reuse entity semantics; persistence and dispatch stay with their owners. */
+export const LCX_CASEFLOW_CONTRACT = {
+  schemaVersion: "lcx_caseflow_v1",
+  entities: {
+    research_case: "task",
+    research_run: "receipt",
+    decision_packet: "artifact",
+    outcome_ledger: "evidence",
+  },
+  owner: "src/agents/finance-caseflow.ts",
+  executionAuthority: "none",
+} as const satisfies {
+  schemaVersion: string;
+  entities: Record<string, LcxOntologyEntityType>;
+  owner: string;
+  executionAuthority: "none";
+};
+
 export const LCX_ONTOLOGY_RELATION_TYPES = [
   "asks_for",
   "targets",
@@ -888,6 +906,10 @@ export const LCX_ONTOLOGY_CHANNEL_MILESTONE_ALIASES: Readonly<
 } as const;
 
 export const LCX_ONTOLOGY_WORKFLOW_NODE_IDS = [
+  "research_case",
+  "research_run",
+  "decision_packet",
+  "outcome_ledger",
   "ingress_external_message",
   "intent_classifier",
   "local_brain_planner",
@@ -1141,6 +1163,7 @@ export const LCX_ONTOLOGY_WORKFLOW_FILTER_IDS = [
 export type LcxOntologyWorkflowFilterId = (typeof LCX_ONTOLOGY_WORKFLOW_FILTER_IDS)[number];
 
 export const LCX_ONTOLOGY_WORKFLOW_SCENARIO_IDS = [
+  "finance_caseflow_waterflow",
   "external_finance_research_waterflow",
   "directed_daily_research_brief_waterflow",
   "module_learning_internalization_waterflow",

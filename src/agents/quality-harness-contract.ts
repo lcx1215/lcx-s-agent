@@ -55,6 +55,7 @@ export type QualityHarnessClaim = Readonly<{
 }>;
 
 export type QualityHarnessArtifact = Readonly<{
+  supportingAnalysis?: Readonly<Record<string, unknown>>;
   answer: string;
   claims: readonly QualityHarnessClaim[];
 }>;
@@ -484,7 +485,16 @@ function parseArtifact(value: unknown): QualityHarnessArtifact {
       ...(uncertainty ? { uncertainty } : {}),
     });
   });
-  return Object.freeze({ answer, claims: Object.freeze(claims) });
+  if (artifact.supportingAnalysis !== undefined && !isQualityRecord(artifact.supportingAnalysis)) {
+    throw new Error("artifact.supportingAnalysis must be an object");
+  }
+  return Object.freeze({
+    answer,
+    claims: Object.freeze(claims),
+    ...(artifact.supportingAnalysis === undefined
+      ? {}
+      : { supportingAnalysis: artifact.supportingAnalysis }),
+  });
 }
 
 function parseReview(value: unknown): QualityHarnessReview {

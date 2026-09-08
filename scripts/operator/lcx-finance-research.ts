@@ -3,6 +3,10 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import {
+  bindFinanceCaseFollowups,
+  createFinanceNativeCronScheduler,
+} from "../../src/agents/finance-caseflow-followups.ts";
+import {
   buildFinanceCaseRun,
   listFinanceCases,
   saveFinanceCaseRun,
@@ -10,6 +14,7 @@ import {
   compareFinanceCaseRuns,
   caseflowFingerprint,
 } from "../../src/agents/finance-caseflow.ts";
+import { FinanceForecast } from "../../src/agents/finance-forecast-calibration.ts";
 import {
   appendFinanceOutcome,
   readFinanceOutcomes,
@@ -21,6 +26,7 @@ import {
   createLocalRoleShadowAdapter,
   resolveLocalTextModelRuntimeConfig,
 } from "../../src/agents/local-text-model-adapter.ts";
+import type { CronJob } from "../../src/cron/types.ts";
 
 /** Explicit operator entrypoint; planning never starts network or model work. */
 type FinanceResearchCliResult =
@@ -29,12 +35,18 @@ type FinanceResearchCliResult =
   | ReturnType<typeof compareFinanceCaseRuns>
   | Awaited<ReturnType<typeof appendFinanceOutcome>>
   | Awaited<ReturnType<typeof readFinanceOutcomes>>
-  | Awaited<ReturnType<typeof listFinanceCases>>;
+  | Awaited<ReturnType<typeof listFinanceCases>>
+  | Awaited<ReturnType<typeof bindFinanceCaseFollowups>>;
 
 export async function runFinanceResearchCli(args: string[]): Promise<FinanceResearchCliResult> {
   const { values } = parseArgs({
     args,
     options: {
+      "followup-agent": { type: "string" },
+      "gateway-cli": { type: "string" },
+      "register-followups": { type: "boolean", default: false },
+      "followup-status": { type: "boolean", default: false },
+      "forecast-file": { type: "string" },
       "list-cases": { type: "boolean", default: false },
       "packet-ref": { type: "string" },
       "outcome-file": { type: "string" },
@@ -54,6 +66,77 @@ export async function runFinanceResearchCli(args: string[]): Promise<FinanceRese
       "max-api-calls": { type: "string", default: "64" },
     },
   });
+  if (
+    (values["gateway-cli"] || values["followup-agent"]) &&
+    !values["register-followups"] &&
+    !values["followup-status"]
+  ) {
+    throw new Error("gateway-cli and followup-agent require a followup operation");
+  }
+  if (values["gateway-cli"] && !values["followup-agent"]) {
+    throw new Error("native scheduler requires an explicit --followup-agent owner");
+  }
+  if (values["register-followups"] || values["followup-status"]) {
+    if (
+      !values["case-dir"] ||
+      !values["packet-ref"] ||
+      values.live ||
+      values.ask ||
+      values["outcome-file"] ||
+      values["list-outcomes"] ||
+      values["list-cases"] ||
+      values["read-run"] ||
+      values["forecast-file"] ||
+      values["compare-run"] ||
+      (values["register-followups"] && values["followup-status"])
+    ) {
+      throw new Error(
+        "followup mode requires case-dir and packet-ref, without research or outcome operations",
+      );
+    }
+    const { callGateway } = await import("../../src/gateway/call.ts");
+    return bindFinanceCaseFollowups({
+      directory: values["case-dir"],
+      packetRef: values["packet-ref"],
+      register: values["register-followups"],
+      agentId: values["followup-agent"],
+      scheduler: values["gateway-cli"]
+        ? createFinanceNativeCronScheduler(
+            values["gateway-cli"],
+            `caseflow:${values["packet-ref"]}:`,
+          )
+        : {
+            list: async () => {
+              const jobs: CronJob[] = [];
+              let offset = 0;
+              for (;;) {
+                const page = await callGateway<{
+                  jobs: CronJob[];
+                  hasMore: boolean;
+                  nextOffset: number | null;
+                }>({
+                  method: "cron.list",
+                  params: {
+                    includeDisabled: true,
+                    query: `caseflow:${values["packet-ref"]}:`,
+                    offset,
+                    limit: 100,
+                  },
+                });
+                jobs.push(...page.jobs);
+                if (!page.hasMore) {
+                  return jobs;
+                }
+                if (page.nextOffset === null || page.nextOffset <= offset) {
+                  throw new Error("invalid scheduler pagination");
+                }
+                offset = page.nextOffset;
+              }
+            },
+            add: (job) => callGateway<CronJob>({ method: "cron.add", params: job }),
+          },
+    });
+  }
   if (values["list-cases"]) {
     if (
       !values["case-dir"] ||
@@ -130,6 +213,12 @@ export async function runFinanceResearchCli(args: string[]): Promise<FinanceRese
       "--ask and --as-of are required; use --live only for explicit collection and inference",
     );
   }
+  if (values["forecast-file"] && (!values["case-dir"] || !values["case-id"])) {
+    throw new Error("--forecast-file requires --case-dir and --case-id");
+  }
+  const forecasts = values["forecast-file"]
+    ? FinanceForecast.array().parse(JSON.parse(await fs.readFile(values["forecast-file"], "utf8")))
+    : undefined;
   const maxModelCalls = Number(values["max-model-calls"]);
   if (!Number.isSafeInteger(maxModelCalls) || maxModelCalls <= 0) {
     throw new Error("--max-model-calls must be a positive integer");
@@ -154,6 +243,13 @@ export async function runFinanceResearchCli(args: string[]): Promise<FinanceRese
           await Promise.all(
             [
               "../../src/agents/finance-caseflow.ts",
+              "../../src/agents/finance-forecast-calibration.ts",
+              "../../src/agents/finance-history-coverage.ts",
+              "../../src/agents/finance-research-assessment.ts",
+              "../../src/agents/api-call-contract.ts",
+              "../../src/agents/finance-free-market-collection-adapters.ts",
+              "../../src/agents/finance-market-collection-registry.ts",
+              "../../src/agents/quality-harness-contract.ts",
               "../../src/agents/finance-run-checkpoints.ts",
               "../../src/agents/finance-model-checkpoints.ts",
               "../../src/agents/finance-research-runner.ts",
@@ -180,6 +276,7 @@ export async function runFinanceResearchCli(args: string[]): Promise<FinanceRese
       receipt,
       execution,
       budget: { maxApiCalls },
+      forecasts,
     });
     const savedCaseRun = await saveFinanceCaseRun(values["case-dir"], run);
     return { ...receipt, savedCaseRun };

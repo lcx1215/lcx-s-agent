@@ -35,6 +35,14 @@ const HEAD_SURFACE_FILES = [
 ] as const;
 
 const TAIL_SURFACE_FILES = [
+  "src/agents/finance-caseflow.ts",
+  "src/agents/finance-outcome-ledger.ts",
+  "src/agents/finance-run-checkpoints.ts",
+  "src/agents/finance-model-checkpoints.ts",
+  "src/agents/finance-research-runner.ts",
+  "src/agents/finance-research-batch-runner.ts",
+  "scripts/operator/lcx-finance-research.ts",
+
   "scripts/operator/lcx-change-impact-plan.ts",
   "scripts/operator/local-brain-taxonomy.ts",
   "scripts/operator/local-brain-contracts.ts",
@@ -98,6 +106,11 @@ const MODULE_LEARNING_TARGET_EXEMPTIONS: Record<string, string> = {
 const MODULE_LEARNING_TARGETS_WITHOUT_TAXONOMY = new Set(LCX_ONTOLOGY_EXTERNAL_LEARNING_TARGET_IDS);
 
 const CRITICAL_MODULE_CONTRACTS: CriticalModuleContract[] = [
+  {
+    id: "finance_caseflow",
+    headTerms: ["research_case", "decision_packet", "outcome_ledger"],
+    tailTerms: ["buildFinanceCaseRun", "appendFinanceOutcome", "executionAuthority"],
+  },
   {
     id: "financial_modeling_valuation_qc",
     headTerms: ["financial_modeling_valuation_qc", "valuation/modeling QC"],

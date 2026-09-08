@@ -32,6 +32,10 @@ import {
   type FinanceRealtimeSourceRequest,
 } from "./finance-realtime-source-registry.js";
 import {
+  requiresFinanceResearchAssessment,
+  verifyFinanceResearchAssessment,
+} from "./finance-research-assessment.js";
+import {
   runFinanceResearchBatch,
   type FinanceResearchBatchCollection,
   type FinanceResearchBatchEvidencePacket,
@@ -223,8 +227,11 @@ function buildHistoryCollection(
     collection: "eod_history",
     ...(asOf === undefined
       ? {}
-      : { fromDate: subtractMonths(asOf, horizonMonths), toDate: dateOnly(asOf) }),
-    limit: Math.min(250, Math.max(40, horizonMonths * 23)),
+      : {
+          fromDate: subtractMonths(asOf, horizonMonths),
+          toDate: dateOnly(new Date(Date.parse(asOf) - 86_400_000).toISOString()),
+        }),
+    limit: Math.min(1000, Math.max(40, horizonMonths * 31)),
     freshnessMaxMinutes: horizonMonths * 31 * 24 * 60 + 24 * 60,
   };
 }
@@ -534,6 +541,16 @@ function qualityVerifier(decisionMode: FinanceDecisionMode): QualityHarnessVerif
         details: [`invalid_supported_claims=${invalidClaims.length}`],
       };
     }
+    if (requiresFinanceResearchAssessment(request.task)) {
+      const assessment = verifyFinanceResearchAssessment(artifact.supportingAnalysis, evidenceIds);
+      if (!assessment.passed) {
+        return {
+          status: "failed",
+          summary: assessment.reason,
+          details: ["causal attribution and scenarios require a structured, reviewable assessment"],
+        };
+      }
+    }
     const policy = evaluateFinanceDecisionPolicy({
       mode: decisionMode,
       ask: request.task,
@@ -548,7 +565,8 @@ function qualityVerifier(decisionMode: FinanceDecisionMode): QualityHarnessVerif
     }
     return {
       status: "passed",
-      summary: "finance candidate is grounded and remains within the selected decision boundary",
+      summary:
+        "finance references and decision boundary verified; semantic support requires independent review",
       details: [
         `evidence_count=${request.evidence.length}`,
         `claim_count=${artifact.claims.length}`,
@@ -845,6 +863,17 @@ export async function runFinanceResearchRun(
           sourceGatePassed: sourceGate(batch).passed,
           committeeGatePassed: committeeGateResult.passed,
           noExecutionAuthority: true,
+          ...(requiresFinanceResearchAssessment(ask)
+            ? {
+                supportingAnalysisContract: {
+                  causalHypotheses:
+                    "At least two objects: id,cause,effect,mechanism,evidenceIds,alternativeExplanations (nonempty array),disconfirmingTest,status= hypothesis. Do not present correlation as established causality.",
+                  scenarios:
+                    "At least three distinct objects: id,probability (0..1; sum=1),condition,expectedEffect,invalidation,evidenceIds. These are conditional hypotheses, not calibrated probabilities.",
+                  placement: "artifact.supportingAnalysis, retained by draft and format stages",
+                },
+              }
+            : {}),
         },
       };
       const executeQuality = () =>

@@ -1,3 +1,4 @@
+import { ApiCallError } from "./api-call-contract.js";
 import type {
   FinanceDataDelayStatus,
   FinanceDataProviderRole,
@@ -83,6 +84,9 @@ async function fetchText(
   try {
     response = await fetchImpl(url, { headers });
   } catch (error) {
+    if (error instanceof ApiCallError) {
+      throw error;
+    }
     throw new FreeMarketCollectionAdapterError(
       `source request failed: ${error instanceof Error ? error.message : String(error)}`,
     );
@@ -325,6 +329,12 @@ export function createYahooPublicEodHistoryCollectionAdapter(
           sourceUrlOrArtifact = candidateUrl;
           break;
         } catch (error) {
+          if (
+            error instanceof ApiCallError &&
+            ["forbidden", "budget_exhausted", "cancelled"].includes(error.kind)
+          ) {
+            throw error;
+          }
           lastError = error;
         }
       }
@@ -601,6 +611,84 @@ export function createFmpFreeBasicEodCollectionAdapter(options: {
           data: record,
         }),
       );
+    },
+  };
+}
+
+/** Public spot market history, never an account or execution endpoint. */
+export function createBinancePublicEodHistoryCollectionAdapter(
+  options: { fetchImpl?: FetchImpl } = {},
+): FinanceMarketCollectionAdapter {
+  return {
+    id: "binance_public_eod_history",
+    providerName: "binance-public-eod-history",
+    providerRole: "primary_market_data",
+    priority: 10,
+    supports: (request) =>
+      ["crypto", "cryptocurrency"].includes(request.assetClass.toLowerCase()) &&
+      request.collection === "eod_history",
+    collect: async (request) => {
+      const symbol = request.instrument.toUpperCase();
+      if (!/^[A-Z0-9]{5,24}$/u.test(symbol)) {
+        throw new FreeMarketCollectionAdapterError("invalid spot symbol");
+      }
+      const startTime = utcDayEpoch(request.fromDate ?? "", "fromDate");
+      const endTime = utcDayEpoch(request.toDate ?? "", "toDate") + 86_400_000 - 1;
+      if (endTime <= startTime || endTime >= Date.parse(request.asOf)) {
+        throw new FreeMarketCollectionAdapterError(
+          "history must contain completed days before asOf",
+        );
+      }
+      const url = apiUrl("https://data-api.binance.vision/api/v3/klines", {
+        symbol,
+        interval: "1d",
+        startTime,
+        endTime,
+        limit: Math.min(1000, request.limit ?? 1000),
+      });
+      const body: unknown = JSON.parse(
+        await fetchText(resolveFinanceFetch(options.fetchImpl), url),
+      );
+      if (!Array.isArray(body)) {
+        throw new FreeMarketCollectionAdapterError("invalid kline response");
+      }
+      return body.map((value: unknown) => {
+        if (!Array.isArray(value) || value.length < 7) {
+          throw new FreeMarketCollectionAdapterError("invalid kline row");
+        }
+        const [opened, open, high, low, close, volume, closed] = value.map(Number);
+        if (
+          ![opened, open, high, low, close, volume, closed].every(Number.isFinite) ||
+          opened < startTime ||
+          closed > endTime ||
+          opened % 86_400_000 !== 0 ||
+          closed !== opened + 86_400_000 - 1 ||
+          Math.min(open, high, low, close) <= 0 ||
+          low > Math.min(open, close) ||
+          high < Math.max(open, close) ||
+          volume < 0
+        ) {
+          throw new FreeMarketCollectionAdapterError("invalid completed OHLCV bar");
+        }
+        return buildItem(request, {
+          itemId: `${symbol}-${opened}`,
+          providerName: "binance-public-eod-history",
+          providerRole: "primary_market_data",
+          sourceFamily: "market_data_api",
+          sourceTimestamp: new Date(closed).toISOString(),
+          delayStatus: "delayed",
+          sourceUrlOrArtifact: url,
+          data: {
+            symbol,
+            date: new Date(opened).toISOString().slice(0, 10),
+            open,
+            high,
+            low,
+            close,
+            volume,
+          },
+        });
+      });
     },
   };
 }

@@ -4,6 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 import { requireNodeSqlite } from "../memory/sqlite.js";
 import { caseflowFingerprint, readFinanceCaseRun } from "./finance-caseflow.js";
+import { calibrateFinanceForecasts } from "./finance-forecast-calibration.js";
 
 const Text = z.string().trim().min(1);
 const Hash = z.string().regex(/^[a-f0-9]{64}$/u);
@@ -32,7 +33,7 @@ export const FinanceOutcomeInput = z
     checkpointMonths: z.union([z.literal(3), z.literal(6)]),
     observedAt: z.string().datetime(),
     evidence: z.array(Observation).min(1),
-    assessments: z.array(Assessment).min(1),
+    assessments: z.array(Assessment),
     supersedes: Hash.optional(),
     correctionReason: Text.optional(),
   })
@@ -51,6 +52,7 @@ const Entry = z
     status: z.literal("recorded_for_review"),
     executionAuthority: z.literal("none"),
     input: FinanceOutcomeInput,
+    calibration: z.array(z.record(z.string(), z.unknown())).optional(),
     originalClaims: z.array(z.object({ id: Text, text: Text })),
   })
   .strict();
@@ -86,7 +88,7 @@ function readRows(
   });
 }
 
-/** User-supplied observations remain review records, never automatic prediction scores. */
+/** Append observations and reproducible scores; provenance remains subject to review. */
 export async function appendFinanceOutcome(
   directory: string,
   packetRef: string,
@@ -184,6 +186,18 @@ export async function appendFinanceOutcome(
         executionAuthority: "none",
         input: data,
         originalClaims,
+        ...(packet.packet.forecasts
+          ? {
+              calibration: calibrateFinanceForecasts({
+                forecasts: packet.packet.forecasts,
+                checkpointMonths: data.checkpointMonths,
+                dueAt: followup.dueAt,
+                frozenAt: packet.run.recordedAt,
+                observedAt: data.observedAt,
+                evidence: data.evidence,
+              }),
+            }
+          : {}),
       });
       const ref = caseflowFingerprint(entry);
       db.prepare(

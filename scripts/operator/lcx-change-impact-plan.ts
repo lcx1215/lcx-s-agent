@@ -33,6 +33,34 @@ const execFileAsync = promisify(execFile);
 
 const PATH_RULES: PathRule[] = [
   {
+    id: "finance_caseflow",
+    lane: "finance_research_capability",
+    patterns: [
+      /^src\/agents\/finance-(?:caseflow(?:-followups)?|forecast-calibration|history-coverage|research-assessment|research-runner|research-batch-runner|run-checkpoints|model-checkpoints|outcome-ledger|free-market-collection-adapters|market-collection-registry|realtime-source-registry)\.ts$/u,
+      /^scripts\/operator\/lcx-(?:finance-research|caseflow-demo)\.ts$/u,
+    ],
+    requiredChecks: ["finance-caseflow-regression", "head-tail-consistency"],
+    commands: [
+      "pnpm vitest run src/agents/finance-caseflow.test.ts src/agents/finance-research-runner.test.ts src/agents/finance-research-batch-runner.test.ts src/agents/finance-outcome-ledger.test.ts src/agents/finance-caseflow-followups.test.ts src/agents/finance-history-coverage.test.ts src/agents/finance-forecast-calibration.test.ts src/agents/finance-research-assessment.test.ts",
+      "node --import tsx scripts/operator/lcx-head-tail-consistency.ts --json",
+    ],
+    headTailRequired: true,
+    risk: "elevated",
+    safetyNotes: [
+      "Research, source transport, scheduler binding and external execution remain separate authorities.",
+    ],
+  },
+  {
+    id: "api_transport_governance",
+    lane: "agent_workflow_memory",
+    patterns: [/^src\/agents\/api-call-contract\.ts$/u],
+    requiredChecks: ["api-transport-tests"],
+    commands: [
+      "pnpm vitest run src/agents/api-call-contract.test.ts src/agents/finance-research-batch-runner.test.ts",
+    ],
+    risk: "elevated",
+  },
+  {
     id: "physical_path_migration",
     lane: "repository_cleanup",
     patterns: [
@@ -393,7 +421,7 @@ const PATH_RULES: PathRule[] = [
     lane: "agent_workflow_memory",
     patterns: [
       /^src\/agents\/coding-harness\//u,
-      /^src\/agents\/quality-harness(?:-quality)?\.ts$/u,
+      /^src\/agents\/quality-harness(?:-quality|-contract)?\.ts$/u,
       /^src\/commands\/doctor-config-flow\.ts$/u,
       /^src\/config\/(?:identity-migration|paths)\.ts$/u,
       /^src\/infra\/pairing-files\.ts$/u,

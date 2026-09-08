@@ -2,6 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { LCX_CASEFLOW_CONTRACT } from "../shared/lcx-ontology.js";
+import { FinanceForecast, type FinanceForecastContract } from "./finance-forecast-calibration.js";
 import type { FinanceResearchRunReceipt } from "./finance-research-runner.js";
 
 const Hash = z.string().regex(/^[a-f0-9]{64}$/u);
@@ -21,7 +23,7 @@ const Claim = z.object({
   referenceStatus: z.enum(["linked", "needs_review"]),
 });
 const CaseRun = z.object({
-  schemaVersion: z.literal("lcx_caseflow_v1"),
+  schemaVersion: z.literal(LCX_CASEFLOW_CONTRACT.schemaVersion),
   case: z.object({
     id: CaseId,
     revision: Hash,
@@ -40,9 +42,11 @@ const CaseRun = z.object({
     snapshot: z.record(z.string(), z.unknown()),
   }),
   packet: z.object({
+    forecasts: z.array(FinanceForecast).optional(),
     status: z.enum(["planned", "candidate", "needs_review", "blocked"]),
     adopted: z.boolean(),
     analysis: z.string().optional(),
+    supportingAnalysis: z.record(z.string(), z.unknown()).optional(),
     claims: z.array(Claim),
     gaps: z.array(z.string()),
     executionAuthority: z.literal("none"),
@@ -101,6 +105,7 @@ export function buildFinanceCaseRun(params: {
   receipt: FinanceResearchRunReceipt;
   execution: Record<string, unknown>;
   budget: { maxApiCalls: number };
+  forecasts?: FinanceForecastContract[];
 }): FinanceCaseRun {
   const { receipt } = params;
   CaseId.parse(params.caseId);
@@ -112,7 +117,14 @@ export function buildFinanceCaseRun(params: {
     decisionMode: receipt.plan.decisionMode,
     targets: receipt.plan.targets,
     budget: params.budget,
+    ...(params.forecasts ? { forecasts: z.array(FinanceForecast).parse(params.forecasts) } : {}),
   });
+  if (
+    params.forecasts &&
+    new Set(params.forecasts.map((f) => f.id)).size !== params.forecasts.length
+  ) {
+    throw new Error("duplicate forecast id");
+  }
   const snapshot = jsonRecord(receipt);
   const execution = jsonRecord(params.execution);
   const evidence = (receipt.batch?.committeeEvidence ?? []).map((item) => ({ ...item }));
@@ -133,7 +145,7 @@ export function buildFinanceCaseRun(params: {
   }));
   const invalidReferences = claims.some((claim) => claim.referenceStatus === "needs_review");
   return CaseRun.parse({
-    schemaVersion: "lcx_caseflow_v1",
+    schemaVersion: LCX_CASEFLOW_CONTRACT.schemaVersion,
     case: {
       id: params.caseId,
       revision: caseflowFingerprint(definition),
@@ -152,6 +164,7 @@ export function buildFinanceCaseRun(params: {
       snapshot,
     },
     packet: {
+      ...(params.forecasts ? { forecasts: params.forecasts } : {}),
       status: invalidReferences ? "needs_review" : receipt.status,
       adopted:
         receipt.status === "candidate" &&
@@ -160,6 +173,7 @@ export function buildFinanceCaseRun(params: {
         receipt.quarterlyOutput.adopted &&
         !invalidReferences,
       analysis: receipt.quarterlyOutput.candidateAnalysis,
+      supportingAnalysis: receipt.quality?.finalArtifact?.supportingAnalysis,
       claims,
       gaps: [
         ...receipt.missingEvidence,
@@ -186,6 +200,13 @@ function verify(value: unknown): FinanceCaseRun {
     caseflowFingerprint(result.run.snapshot) !== result.run.snapshotFingerprint
   ) {
     throw new Error("caseflow fingerprint mismatch");
+  }
+  if (
+    result.packet.forecasts &&
+    caseflowFingerprint(result.packet.forecasts) !==
+      caseflowFingerprint(result.case.definition.forecasts)
+  ) {
+    throw new Error("forecast definition mismatch");
   }
   return result;
 }

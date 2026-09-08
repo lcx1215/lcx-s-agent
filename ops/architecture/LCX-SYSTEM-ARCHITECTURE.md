@@ -377,3 +377,18 @@ node --import tsx scripts/operator/lcx-change-impact-plan.ts --json
 
 These commands are local audits. They do not prove training absorption,
 promotion, external-channel binding, or `user-visible-observed`.
+
+## Research Caseflow closure
+
+The finance master lane maps the macro research question to `research_case` (task),
+`research_run` (receipt), `decision_packet` (artifact), and `outcome_ledger` (evidence).
+The canonical mapping is `LCX_CASEFLOW_CONTRACT` in `src/shared/lcx-ontology.ts`.
+`finance-caseflow.ts` owns immutable snapshots and `finance-outcome-ledger.ts` owns
+append-only review; `lcx-finance-research.ts` is their operator entrypoint.
+Source and model checkpoints preserve bounded dispatch and uncertain work across restarts.
+
+The mind model, head-tail audit and flow graph include this chain. Their passing
+checks prove structural coverage only. Historical completeness, independent
+semantic support, numeric calibration and live scheduler binding each require
+separate receipts. A saved quarterly date is not a scheduled job. No packet grants
+account access, orders, transfers or external sending authority.

@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { requireNodeSqlite } from "../memory/sqlite.js";
 import { buildFinanceCaseRun, saveFinanceCaseRun } from "./finance-caseflow.js";
 import { appendFinanceOutcome, readFinanceOutcomes } from "./finance-outcome-ledger.js";
@@ -9,6 +9,7 @@ import { runFinanceResearchRun } from "./finance-research-runner.js";
 
 const directories: string[] = [];
 afterEach(async () => {
+  vi.useRealTimers();
   await Promise.all(
     directories.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
   );
@@ -66,6 +67,59 @@ async function fixture() {
   return { directory, ref: saved.ref, input };
 }
 describe("finance outcome ledger", () => {
+  it("scores a predeclared forecast after its due date and retains the score on read", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2025-01-01T00:00:00Z"));
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "calibration-ledger-"));
+    directories.push(directory);
+    const receipt = await runFinanceResearchRun({
+      input: { ask: "Quarterly event", asOf: "2025-01-01T00:00:00Z" },
+    });
+    const run = buildFinanceCaseRun({
+      caseId: "calibration",
+      receipt,
+      execution: {},
+      budget: { maxApiCalls: 1 },
+      forecasts: [
+        {
+          id: "close-up",
+          field: "close",
+          unit: "USD",
+          source: "fixture",
+          checkpointMonths: 3,
+          threshold: 100,
+          probabilityAbove: 0.8,
+        },
+      ],
+    });
+    const saved = await saveFinanceCaseRun(directory, run);
+    vi.setSystemTime(new Date("2025-04-02T00:00:00Z"));
+    const input = {
+      recordId: "q1",
+      checkpointMonths: 3,
+      observedAt: "2025-04-02T00:00:00Z",
+      evidence: [
+        {
+          id: "e",
+          source: "fixture",
+          sourceTimestamp: "2025-04-01T00:00:00Z",
+          field: "close",
+          unit: "USD",
+          value: 110,
+        },
+      ],
+      assessments: [],
+    };
+    // Forecast-only cases do not invent a textual claim to attach a numerical outcome.
+    const entry = await appendFinanceOutcome(directory, saved.ref, input);
+    expect(entry.calibration?.[0]).toMatchObject({
+      status: "scored",
+      brierScore: expect.closeTo(0.04),
+    });
+    expect((await readFinanceOutcomes(directory, saved.ref))[0].calibration).toEqual(
+      entry.calibration,
+    );
+  });
   it("binds observations to original claims without changing the packet", async () => {
     const { directory, ref, input } = await fixture();
     const before = await fs.readFile(path.join(directory, `${ref}.json`), "utf8");

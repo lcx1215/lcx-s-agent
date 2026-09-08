@@ -80,6 +80,14 @@ const HEAD_SURFACES = [
 ] as const;
 
 const WORKFLOW_SURFACES = [
+  "src/agents/finance-caseflow.ts",
+  "src/agents/finance-outcome-ledger.ts",
+  "src/agents/finance-run-checkpoints.ts",
+  "src/agents/finance-model-checkpoints.ts",
+  "src/agents/finance-research-runner.ts",
+  "src/agents/finance-research-batch-runner.ts",
+  "scripts/operator/lcx-finance-research.ts",
+
   "src/shared/lcx-ontology.ts",
   "src/shared/global-evidence-projection.ts",
   "src/shared/global-evidence-projection-read.ts",
@@ -133,6 +141,8 @@ const WORKFLOW_SURFACES = [
 ] as const;
 
 const PROOF_SURFACES = [
+  "src/agents/finance-caseflow.test.ts",
+  "src/agents/finance-outcome-ledger.test.ts",
   ...WORKFLOW_SURFACES,
   "test/lcx-ontology.test.ts",
   "src/shared/global-evidence-projection.test.ts",
@@ -175,6 +185,7 @@ const PROOF_SURFACES = [
 ] as const;
 
 const BOUNDARY_SURFACES = [
+  "src/agents/finance-caseflow.ts",
   "AGENTS.md",
   "README.md",
   "ops/architecture/LCX-SYSTEM-ARCHITECTURE.md",
@@ -381,6 +392,18 @@ const MIND_MODEL_LANES: MindModelLane[] = [
     ],
     nextAction:
       "Run the commercial acceptance harness for product readiness; fix owner gates, not isolated symptoms.",
+  },
+  {
+    id: "finance_caseflow",
+    masterLane: "finance_research_capability",
+    objective:
+      "Trace research_case through research_run, decision_packet and outcome_ledger without granting execution authority.",
+    headTerms: ["research_case", "decision_packet", "outcome_ledger"],
+    workflowTerms: ["buildFinanceCaseRun", "appendFinanceOutcome", "openFinanceRunCheckpoints"],
+    proofTerms: ["finance-caseflow.test", "finance-outcome-ledger.test"],
+    boundaryTerms: ["executionAuthority", "not_independently_verified", "not_scheduled"],
+    nextAction:
+      "Verify source coverage, immutable forecast scoring and scheduler binding separately from structural coverage.",
   },
   {
     id: "finance_research_capability",

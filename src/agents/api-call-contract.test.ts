@@ -20,6 +20,22 @@ const response = (status = 200, retryAfter?: string) => ({
 afterEach(() => vi.useRealTimers());
 
 describe("API call governance", () => {
+  it("reserves before every HTTP dispatch including fallback calls", async () => {
+    const fetch = vi.fn<ApiFetch>(async () => response());
+    let remaining = 1;
+    const guarded = governApiFetch(fetch, {
+      beforeHttpDispatch: () => {
+        if (remaining-- <= 0) {
+          throw new ApiCallError("budget_exhausted");
+        }
+      },
+    });
+    await guarded("https://example.test/primary");
+    await expect(guarded("https://example.test/fallback")).rejects.toMatchObject({
+      kind: "budget_exhausted",
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
   it("records successful body completion and preserves old header-less fake fetch", async () => {
     const receipts: ApiCallReceipt[] = [];
     const fetch: ApiFetch = async () => ({ ok: true, status: 200, text: async () => "legacy" });

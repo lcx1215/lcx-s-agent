@@ -261,6 +261,7 @@ export async function runFinanceRealtimeRefresh(options: {
   correlationId?: string;
   retry?: ApiTransportOptions["retry"];
   sourceGovernance?: ApiSourceGovernanceRegistry;
+  beforeHttpDispatch?: ApiTransportOptions["beforeHttpDispatch"];
 }): Promise<FinanceRealtimeRefreshReceipt> {
   const request = normalizeRequest(options.request);
   validateAdapters(options.adapters);
@@ -291,6 +292,7 @@ export async function runFinanceRealtimeRefresh(options: {
           signal: options.signal,
           correlationId,
           retry: options.retry,
+          beforeHttpDispatch: options.beforeHttpDispatch,
           ...(() => {
             const governance = options.sourceGovernance?.forSource(adapter.id);
             return governance

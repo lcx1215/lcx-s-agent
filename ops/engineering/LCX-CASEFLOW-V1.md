@@ -216,8 +216,7 @@ Only three/six-month checkpoints present in the original packet are accepted.
 Observation dates must be between the case date and the present; source dates
 cannot exceed the observation date. Early records are labelled `interim`.
 Sources are retained as supplied, not fetched or certified by this interface;
-freshness and semantic support remain review responsibilities. The existing
-historical-data review gate is unchanged.
+freshness and semantic support remain review responsibilities. The historical-data gate separately checks completed date coverage against the supported calendar.
 
 `outcome-ledger.sqlite` uses transactional append, a per-packet hash chain and
 unique record IDs. Repeating identical input is idempotent. A changed payload
@@ -241,8 +240,8 @@ for the current research question.
 ## Next delivery boundary
 
 The lifecycle now has frozen cases/runs/packets, bounded recovery and appended
-outcome records. Automatic quarterly scheduling is still unbound, and numerical
-calibration requires predeclared targets/metrics rather than hindsight labels.
+outcome records. Quarterly scheduling uses the existing Gateway Cron service through explicit registration.
+Numeric calibration uses frozen event definitions; live binding and source provenance still require their own receipts.
 The integrated local candidate has now been exercised through the lifecycle command below. Historical coverage and semantic-quality gaps still block live research promotion. Broker execution and external sending remain
 outside Caseflow authority.
 
@@ -277,3 +276,67 @@ model calls initially, then zero new calls on resume. Two runs were indexed,
 frozen evidence compared equal, and one quarterly review record was appended.
 96 focused tests plus runtime/operator type checks passed on the integrated
 candidate. Remote review, merge and actual market-quality proof remain separate.
+
+## Architecture, historical coverage and research quality
+
+The canonical ontology maps Caseflow objects to existing task/receipt/artifact/evidence
+entities. Mind-model, head-tail, flow-graph and change-impact owners supervise the
+same lifecycle, including its source and model checkpoints. A new Caseflow entrypoint
+must register under the existing lifecycle cluster.
+
+Historical daily data must cover every completed date in the requested window for
+each provider independently. The calendar currently covers NYSE 2026–2028 and UTC
+daily crypto. Unknown equity years, missing/duplicate/invalid bars and unfinished
+current dates stay in review. Calendar coverage does not certify corporate-action
+adjustments or cross-provider price agreement. NYSE dates follow the
+[exchange calendar](https://www.nyse.com/trade/hours-calendars).
+The Binance adapter uses only the public spot daily-kline endpoint and validates
+complete OHLCV bars; it exposes no account or order operations.
+
+Attribution/election/scenario questions require structured `supportingAnalysis`:
+at least two causal hypotheses with mechanisms, alternative explanations and
+falsification tests; at least three conditional scenarios with evidence IDs and
+probabilities summing to one. These independently checked constraints improve
+reviewability. They do not establish causality or calibrate a model's probabilities.
+Source and model approval alone cannot satisfy a missing assessment.
+
+## Frozen forecasts and scoring
+
+Pass `--forecast-file forecasts.json` when creating a saved case. Each array entry
+contains `id`, `field`, `unit`, `source`, `checkpointMonths` (3 or 6), `threshold`
+and `probabilityAbove` (0–1). The event is strictly `observed value > threshold`.
+Forecasts participate in the case-definition hash. Changing them creates a revision.
+
+On outcome append, matching numeric observations produce a Brier score
+`(probabilityAbove - outcome)^2` and a 0.25 reference score for a constant 0.5
+forecast. This is one-event scoring, not evidence of model-wide calibration.
+The forecast must have been frozen before the checkpoint. Exactly one observation
+must match the frozen source, field, unit and checkpoint timestamp; otherwise it
+remains unscored. Its provenance remains `supplied_observation_not_independently_verified`.
+Forecast-only outcomes may use an empty assessments array. Corrections remain appended.
+
+## Quarterly scheduler binding
+
+```sh
+pnpm lcx:finance:research --case-dir ./caseflow-data --packet-ref RUN_REF --register-followups
+pnpm lcx:finance:research --case-dir ./caseflow-data --packet-ref RUN_REF --followup-status
+```
+
+Registration creates two isolated one-shot jobs through the configured Gateway,
+with external delivery disabled. SQLite reserves each registration before dispatch;
+concurrent calls cannot create the same binding twice. Unknown dispatch or removed
+bindings require reconciliation, not blind recreation. Gateway read-back determines
+current binding status; the original packet keeps its immutable `not_scheduled` dates.
+A scheduler receipt is not proof that a future review ran or that observations were
+correct. A Gateway protocol/authentication failure blocks binding and must be fixed
+in the runtime owner before retries.
+
+For a deployed Gateway using a newer wire protocol, pass `--gateway-cli` with the
+absolute JavaScript entrypoint of that runtime's installed CLI and `--followup-agent`
+with the explicitly selected existing agent ID. This explicitly
+uses the deployed client's `cron add/list/get` commands and declaration identity;
+it does not relax protocol negotiation or change authentication. The adapter reads
+back only matching Caseflow jobs. Follow-ups record the source entrypoint and its
+working directory, so preserve that checkout until the jobs are migrated.
+Evidence-only follow-ups of blocked cases may have no claim assessments; they must
+still append at least one timestamped observation and cannot invent original claims.

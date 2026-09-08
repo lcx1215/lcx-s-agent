@@ -212,6 +212,15 @@ type GovernanceInventoryArea = {
  */
 const GOVERNANCE_COMPONENT_RULES: GovernanceComponentRule[] = [
   {
+    id: "deployment_configuration_surface",
+    patterns: [/^deploy\//u],
+    category: "deployment_configuration",
+    routeOwner: "scripts/operator/lcx-cloud-preflight.ts",
+    proofSurface: "cloud preflight and deployment manifest review",
+    boundary: "deployment files do not prove an active runtime or authorize service restarts",
+    disposition: "governed_source",
+  },
+  {
     id: "repository_test_surface",
     patterns: [/(^|\/)[^/]+\.(?:test|spec)\.[^/]+$/u],
     category: "test",

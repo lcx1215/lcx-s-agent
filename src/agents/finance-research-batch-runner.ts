@@ -8,6 +8,7 @@ import {
   type ApiTransportOptions,
 } from "./api-call-contract.js";
 import type { FinanceCommitteeEvidence } from "./finance-agent-committee.js";
+import { assessFinanceHistoryCoverage } from "./finance-history-coverage.js";
 import {
   createFinanceMarketCollectionRegistry,
   inspectFinanceMarketCollectionRegistry,
@@ -98,6 +99,7 @@ export type FinanceResearchBatchJob = PlannedJob &
     status: "ready" | "needs_review" | "blocked" | "failed" | "cancelled" | "timed_out";
     queueWaitMs: number;
     receipt?: SourceReceipt;
+    historyCoverage?: ReturnType<typeof assessFinanceHistoryCoverage>;
     apiCalls: readonly ApiCallReceipt[];
     freshnessWarnings: readonly string[];
     /** Collection conflicts only compare duplicate identities within one source. */
@@ -425,6 +427,7 @@ export async function runFinanceResearchBatch(
       active++;
       peakConcurrency = Math.max(peakConcurrency, active);
       try {
+        let httpDispatched = 0;
         const transport = {
           maxSources: maxSourcesPerJob,
           timeoutMs: sourceTimeoutMs,
@@ -432,6 +435,12 @@ export async function runFinanceResearchBatch(
           correlationId: job.correlationId,
           retry: { ...options.retry, attempts: retryAttempts },
           sourceGovernance: governance,
+          beforeHttpDispatch: () => {
+            if (httpDispatched >= worstCaseJobCalls) {
+              throw new ApiCallError("budget_exhausted");
+            }
+            httpDispatched++;
+          },
         };
         const receipt =
           job.kind === "realtime"
@@ -447,12 +456,14 @@ export async function runFinanceResearchBatch(
               });
         const apiCalls = receipt.sourceAttempts.flatMap((attempt) => attempt.apiCalls ?? []);
         const assessment = assessReceipt(receipt, job);
-        // Row freshness does not establish completeness of a requested historical window.
-        // Keep this fail-closed until collection adapters expose a coverage contract.
-        const coverageGaps =
+        const historyCoverage =
           job.kind === "collection" && job.request.collection === "eod_history"
-            ? ["historical_window_coverage_unverified"]
-            : [];
+            ? assessFinanceHistoryCoverage(
+                job.request,
+                (receipt as FinanceMarketCollectionReceipt).records,
+              )
+            : undefined;
+        const coverageGaps = historyCoverage?.gaps ?? [];
         const requiresReview =
           coverageGaps.length > 0 ||
           assessment.freshnessWarnings.length > 0 ||
@@ -463,6 +474,7 @@ export async function runFinanceResearchBatch(
           receipt,
           apiCalls,
           ...assessment,
+          ...(historyCoverage ? { historyCoverage } : {}),
           status: signal.aborted
             ? abortStatus()
             : receipt.status === "ready" && requiresReview
@@ -574,6 +586,7 @@ export async function runFinanceResearchBatch(
         freshnessWarnings: job.freshnessWarnings,
         conflicts: job.conflicts,
         conflictAssessment: job.conflictAssessment,
+        historyCoverage: job.historyCoverage,
         missingEvidence: job.missingEvidence,
         error: job.error,
         sourceAttempts: job.receipt?.sourceAttempts,

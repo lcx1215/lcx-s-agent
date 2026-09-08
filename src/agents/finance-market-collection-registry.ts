@@ -12,6 +12,7 @@ import type {
   FinanceDataSourceFamily,
 } from "./finance-data-gateway.js";
 import {
+  createBinancePublicEodHistoryCollectionAdapter,
   createFmpFreeBasicEodCollectionAdapter,
   createFmpFreeBasicProfileCollectionAdapter,
   createGoogleNewsRssCollectionAdapter,
@@ -22,6 +23,7 @@ import {
 import { resolveFinanceFetch, type FetchImpl } from "./finance-live-market-source.js";
 
 export {
+  createBinancePublicEodHistoryCollectionAdapter,
   createFmpFreeBasicEodCollectionAdapter,
   createFmpFreeBasicProfileCollectionAdapter,
   createGoogleNewsRssCollectionAdapter,
@@ -994,6 +996,7 @@ export async function runFinanceMarketCollectionRefresh(options: {
   correlationId?: string;
   retry?: ApiTransportOptions["retry"];
   sourceGovernance?: ApiSourceGovernanceRegistry;
+  beforeHttpDispatch?: ApiTransportOptions["beforeHttpDispatch"];
 }): Promise<FinanceMarketCollectionReceipt> {
   const request = normalizeRequest(options.request);
   validateAdapters(options.adapters);
@@ -1026,6 +1029,7 @@ export async function runFinanceMarketCollectionRefresh(options: {
           signal: options.signal,
           correlationId,
           retry: options.retry,
+          beforeHttpDispatch: options.beforeHttpDispatch,
           ...(() => {
             const governance = options.sourceGovernance?.forSource(adapter.id);
             return governance
@@ -1116,6 +1120,7 @@ export function createFinanceMarketCollectionRegistry(
   options: FinanceMarketCollectionRegistryOptions = {},
 ): readonly FinanceMarketCollectionAdapter[] {
   const adapters: FinanceMarketCollectionAdapter[] = [
+    createBinancePublicEodHistoryCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createBlsMacroSeriesCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createTreasuryDebtCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createTreasuryAverageInterestRatesCollectionAdapter({ fetchImpl: options.fetchImpl }),

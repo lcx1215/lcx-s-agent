@@ -26,7 +26,8 @@ export type ApiCallReceipt = Readonly<{
     | "timeout"
     | "cancelled"
     | "circuit_open"
-    | "source_error";
+    | "source_error"
+    | "budget_exhausted";
   timeoutMs: number;
   circuitState: ApiCircuitState;
   retryAfterMs?: number;
@@ -48,6 +49,8 @@ export type ApiTransportOptions = {
   circuitBreaker?: ApiCircuitBreaker;
   rateLimiter?: ApiRateLimiter;
   onReceipt?: (receipt: ApiCallReceipt) => void;
+  /** Synchronous reservation immediately before each actual HTTP attempt. */
+  beforeHttpDispatch?: () => void;
 };
 
 export type ApiCircuitBreaker = Readonly<{
@@ -496,6 +499,8 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
                     if (permit !== undefined) {
                       details.throttleWaitMs = permit.waitMs;
                     }
+                    attemptSignal.throwIfAborted();
+                    scope.beforeHttpDispatch?.();
                     response = await fetchImpl(url, { ...init, signal: attemptSignal });
                     details.httpStatus = response.status;
                     details.retryAfterMs = parseApiRetryAfter(response.headers?.get("retry-after"));
