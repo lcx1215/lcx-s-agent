@@ -101,7 +101,7 @@ describe("runCodexCodingHarness", () => {
     expect(result.trajectory.projection.historyObserved).toBe(true);
     expect(calls.map((call) => call.method)).toEqual(["agent.wait", "chat.history"]);
     expect(spawnAcp).toHaveBeenCalledWith(
-      expect.objectContaining({ cwd: "/tmp/codex-harness-fixture", sandbox: "inherit" }),
+      expect.objectContaining({ cwd: "/tmp/codex-harness-fixture", sandbox: "require" }),
       expect.anything(),
     );
   });
@@ -290,6 +290,19 @@ describe("runCodexCodingHarness", () => {
     expect(result.workspaceScope).toBe("host-unconfined");
     expect(result.error).toMatch(/confined (?:executor )?workspace proof/i);
     expect(result.cleanup).toBe("confirmed");
+  });
+
+  it("redacts quoted JSON credentials from coding receipts", () => {
+    const redacted = __testing.redactText(
+      '{"token":"ghp_test-secret","apiKey":"sk-test-secret"} Authorization: Bearer bearer-secret',
+    );
+
+    expect(redacted).toContain('"token=[redacted]');
+    expect(redacted).toContain('"apiKey=[redacted]');
+    expect(redacted).toContain("Authorization: [redacted]");
+    expect(redacted).not.toContain("ghp_test-secret");
+    expect(redacted).not.toContain("sk-test-secret");
+    expect(redacted).not.toContain("bearer-secret");
   });
 
   it("returns an identity-change receipt before attributing committed paths", async () => {

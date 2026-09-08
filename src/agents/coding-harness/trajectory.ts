@@ -85,6 +85,10 @@ function redactString(value: string): string {
     );
 }
 
+export function sanitizeCodingHarnessText(value: string): string {
+  return redactString(value);
+}
+
 function sanitizeValue(value: unknown, key?: string): unknown {
   if (key && SENSITIVE_KEY.test(key)) {
     return REDACTED;
