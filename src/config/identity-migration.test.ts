@@ -60,6 +60,9 @@ describe("LCX identity migration writer contract", () => {
             readPath: path.join(root, ".openclaw", `${writer}.state`),
             writePath: path.join(root, ".lcx", `${writer}.state`),
           });
+          if (writer === "config") {
+            await writeRaw(pathContract.readPath, "legacy-source\n");
+          }
           await writeRaw(pathContract.writePath, raw);
           return {
             pathContract,
@@ -165,7 +168,7 @@ describe("LCX identity migration writer contract", () => {
     });
   });
 
-  it("refuses a caller-supplied canonical-only receipt set without migration proof", async () => {
+  it("refuses canonical targets when the compatibility source is missing", async () => {
     await withTempRoot(async (root) => {
       const plan = migrationPlan(root);
       const raw = "canonical-only\n";
@@ -174,7 +177,7 @@ describe("LCX identity migration writer contract", () => {
           const pathContract = createLcxIdentityWriterPathContract({
             writer,
             migrationPlan: plan,
-            readPath: path.join(root, ".lcx", `${writer}.state`),
+            readPath: path.join(root, ".openclaw", `${writer}.state`),
             writePath: path.join(root, ".lcx", `${writer}.state`),
           });
           await writeRaw(pathContract.writePath, raw);
@@ -230,6 +233,9 @@ describe("LCX identity migration writer contract", () => {
       ];
       const receipts = await Promise.all(
         contracts.map(async (pathContract) => {
+          if (pathContract.writer === "config") {
+            await writeRaw(pathContract.readPath, "legacy-source\n");
+          }
           await writeRaw(pathContract.writePath, raw);
           return {
             pathContract,

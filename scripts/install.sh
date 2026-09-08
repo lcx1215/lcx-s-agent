@@ -1632,7 +1632,7 @@ remove_known_lcx_git_wrapper() {
         return 0
     fi
     if [[ -f "$wrapper" ]] && grep -Fq "# LCX Agent git wrapper" "$wrapper" \
-        && grep -Eq '^exec node ".*/dist/entry\\.js"' "$wrapper"; then
+        && grep -Eq '^exec node ".*/dist/entry\.js"' "$wrapper"; then
         rm -f "$wrapper"
         ui_success "Removed the LCX Agent git wrapper (switching to npm)"
         return 0

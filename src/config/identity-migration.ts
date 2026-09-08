@@ -503,13 +503,22 @@ export async function writeLcxIdentityMigrationCompletionMarker(params: {
       "LCX_IDENTITY_COMPLETION_TARGETS_INCOMPLETE",
     );
   }
-  const hasMigrationPath = [...receiptsByTarget.values()].some(
-    (receipt) =>
-      path.resolve(receipt.pathContract.readPath) !== path.resolve(receipt.pathContract.writePath),
-  );
-  if (!hasMigrationPath) {
+  const hasMigrationEvidence = [...receiptsByTarget.values()].some((receipt) => {
+    const readPath = path.resolve(receipt.pathContract.readPath);
+    const writePath = path.resolve(receipt.pathContract.writePath);
+    if (readPath === writePath) {
+      return false;
+    }
+    if (fs.existsSync(readPath)) {
+      return true;
+    }
+    // A path-move receipt proves that the compatibility object existed even
+    // though the successful rename intentionally removed the old path.
+    return "kind" in receipt.previous && receipt.previous.exists;
+  });
+  if (!hasMigrationEvidence) {
     throw new LcxIdentityWriterContractError(
-      "Identity migration completion requires at least one receipt that proves a compatibility-to-canonical path transition",
+      "Identity migration completion requires an observable compatibility source or durable path-move receipt",
       "LCX_IDENTITY_COMPLETION_MIGRATION_UNPROVEN",
     );
   }
