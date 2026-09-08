@@ -165,6 +165,47 @@ describe("LCX identity migration writer contract", () => {
     });
   });
 
+  it("refuses a caller-supplied canonical-only receipt set without migration proof", async () => {
+    await withTempRoot(async (root) => {
+      const plan = migrationPlan(root);
+      const raw = "canonical-only\n";
+      const receipts = await Promise.all(
+        LCX_IDENTITY_WRITER_NAMES.map(async (writer) => {
+          const pathContract = createLcxIdentityWriterPathContract({
+            writer,
+            migrationPlan: plan,
+            readPath: path.join(root, ".lcx", `${writer}.state`),
+            writePath: path.join(root, ".lcx", `${writer}.state`),
+          });
+          await writeRaw(pathContract.writePath, raw);
+          return {
+            pathContract,
+            previous: { exists: false, hash: null, bytes: null },
+            next: {
+              hash: crypto.createHash("sha256").update(raw).digest("hex"),
+              bytes: Buffer.byteLength(raw, "utf8"),
+            },
+            rollback: {
+              path: pathContract.rollbackPath,
+              strategy: "remove-written-target" as const,
+            },
+            audit: { status: "written" as const },
+          };
+        }),
+      );
+
+      await expect(
+        writeLcxIdentityMigrationCompletionMarker({
+          migrationPlan: plan,
+          requiredTargets: receipts.map(({ pathContract }) =>
+            createLcxIdentityMigrationTarget(pathContract),
+          ),
+          writerReceipts: receipts,
+        }),
+      ).rejects.toMatchObject({ code: "LCX_IDENTITY_COMPLETION_MIGRATION_UNPROVEN" });
+    });
+  });
+
   it("tracks distinct targets even when adapters share a writer family", async () => {
     await withTempRoot(async (root) => {
       const plan = migrationPlan(root);

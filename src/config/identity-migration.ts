@@ -503,6 +503,16 @@ export async function writeLcxIdentityMigrationCompletionMarker(params: {
       "LCX_IDENTITY_COMPLETION_TARGETS_INCOMPLETE",
     );
   }
+  const hasMigrationPath = [...receiptsByTarget.values()].some(
+    (receipt) =>
+      path.resolve(receipt.pathContract.readPath) !== path.resolve(receipt.pathContract.writePath),
+  );
+  if (!hasMigrationPath) {
+    throw new LcxIdentityWriterContractError(
+      "Identity migration completion requires at least one receipt that proves a compatibility-to-canonical path transition",
+      "LCX_IDENTITY_COMPLETION_MIGRATION_UNPROVEN",
+    );
+  }
   const marker = Object.freeze({
     schemaVersion: 1 as const,
     canonicalStateDir: path.resolve(migrationPlan.canonicalStateDir),
