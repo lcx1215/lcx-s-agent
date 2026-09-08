@@ -119,16 +119,55 @@ reuse, cancellation continuation, budget exhaustion across reopen and changed
 input rejection. Runtime and operator-inclusive type checks pass. These are
 local synthetic-source tests, not a fresh market or model-quality evaluation.
 
+## Model-stage checkpoints and inference budget
+
+The existing `--checkpoint-run` live interface now enables both source and
+model checkpoints. `--max-model-calls 48` sets an independent persistent model
+invocation limit (48 by default). This is a call-count limit, not a token,
+monetary or lifetime wall-clock budget. Every routed adapter attempt and legacy
+invoker dispatch reserves one call before invoking the implementation. Failed,
+timed-out and interrupted calls retain their reservation; already-aborted
+requests are not dispatched or charged.
+
+Committee and quality are two stage checkpoints around the existing owners.
+A completed stage reuses its full original receipt, including unsuccessful
+quality outcomes, model-call timestamps and attestation records. No model
+invocation occurs for that stage on resume. `modelCheckpoint` reports
+`newModelCalls`, `reservedModelCalls`, `reusedStages` and
+`attestationScope: original_execution_receipts`. A cached attestation is not
+new inference or a new quality assessment.
+
+Cached committee results retain their exact original evidence context,
+including the coverage summary. New invocation transport accounting remains in
+the batch budget metadata. Source results, question/date/mode, caller code/config
+identity, routing policy and model budget must match. A changed input requires
+a new checkpoint key; it cannot silently reuse previous model conclusions.
+The model ledger is separately namespaced in the same SQLite database.
+
+An unfinished stage is `needs_review` with `model_stage_outcome_unknown` and is
+not restarted automatically. This includes uncertainty after a crash or failed
+stage-result publication. Stage granularity is intentional: individual roles
+inside an interrupted committee or quality stage are not resumed. Existing
+in-memory DAG behavior remains owned by the pool; there is no replacement DAG.
+
+69 focused tests pass across model storage, end-to-end runner restoration,
+source checkpoints, Caseflow, model routing, quality and operator suites.
+End-to-end tests verify no new model calls after restart, exact original evidence
+and quality receipts, budget exhaustion remaining blocked, and unchanged raw
+source evidence. Additional tests cover charged failures, cancelled dispatch,
+unknown stage outcomes and changed evidence. Runtime and operator-inclusive
+type checks, lint, formatting and diff checks pass.
+
 ## Remaining contract
 
-Committee and quality-model nodes are not checkpointed: they execute again on
-a live invocation. There is no persistent model-call budget or full-DAG Resume
-claim. Each returned invocation may still produce a distinct frozen CaseRun.
-Frozen-result reading remains distinct from model replay.
+The implemented recovery boundary is source nodes plus whole model stages.
+It is not arbitrary per-role full-DAG Resume or model replay. A changed code
+fingerprint (including upgrading to this implementation) requires a new key;
+prior source-only checkpoint keys are preserved rather than migrated silently.
+Each returned invocation may still produce a distinct frozen CaseRun.
 
-Next extend checkpoints to model stages with an explicit inference budget and
-failure/attestation contract. Then add historical coverage contracts and an
-append-only Outcome Ledger tied to the original packet. Three/six-month dates
-remain `not_scheduled`. Preserve the v0 historical coverage review gate until
-coverage has evidence. Broker execution and external sending remain outside
-Caseflow authority.
+Next add the append-only Outcome Ledger tied to the original packet: observed
+results, deviations, invalidation conditions and three/six-month evaluation
+records. Dates remain `not_scheduled` until a separately authorized scheduler
+is bound. Historical coverage and semantic quality still need independent
+proof. Broker execution and external sending remain outside Caseflow authority.

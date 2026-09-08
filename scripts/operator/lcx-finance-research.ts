@@ -38,6 +38,7 @@ export async function runFinanceResearchCli(args: string[]): Promise<FinanceRese
       model: { type: "string" },
       adapter: { type: "string" },
       python: { type: "string" },
+      "max-model-calls": { type: "string", default: "48" },
       "max-api-calls": { type: "string", default: "64" },
     },
   });
@@ -73,6 +74,10 @@ export async function runFinanceResearchCli(args: string[]): Promise<FinanceRese
       "--ask and --as-of are required; use --live only for explicit collection and inference",
     );
   }
+  const maxModelCalls = Number(values["max-model-calls"]);
+  if (!Number.isSafeInteger(maxModelCalls) || maxModelCalls <= 0) {
+    throw new Error("--max-model-calls must be a positive integer");
+  }
   const maxApiCalls = Number(values["max-api-calls"]);
   if (!Number.isSafeInteger(maxApiCalls) || maxApiCalls <= 0) {
     throw new Error("--max-api-calls must be a positive integer");
@@ -87,12 +92,14 @@ export async function runFinanceResearchCli(args: string[]): Promise<FinanceRese
     runtime: {} as Record<string, unknown>,
     live: values.live,
     maxApiCalls,
+    maxModelCalls,
     codeFiles: values["case-dir"]
       ? Object.fromEntries(
           await Promise.all(
             [
               "../../src/agents/finance-caseflow.ts",
               "../../src/agents/finance-run-checkpoints.ts",
+              "../../src/agents/finance-model-checkpoints.ts",
               "../../src/agents/finance-research-runner.ts",
               "../../src/agents/finance-research-batch-runner.ts",
               "../../src/agents/local-text-model-adapter.ts",
@@ -138,6 +145,16 @@ export async function runFinanceResearchCli(args: string[]): Promise<FinanceRese
     await runFinanceResearchRun({
       input,
       liveFetch: true,
+      ...(values["checkpoint-run"]
+        ? {
+            modelCheckpoint: {
+              path: path.join(values["case-dir"]!, "source-checkpoints.sqlite"),
+              runId: `${values["case-id"]}:${values["checkpoint-run"]}`,
+              executionFingerprint: caseflowFingerprint(execution),
+              maxModelCalls,
+            },
+          }
+        : {}),
       batchOptions: {
         maxApiCalls,
         retry: { attempts: 1 },

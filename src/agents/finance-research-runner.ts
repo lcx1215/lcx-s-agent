@@ -20,6 +20,12 @@ import {
   type FinanceMarketCollectionRequest,
 } from "./finance-market-collection-registry.js";
 import {
+  openFinanceModelCheckpoints,
+  financeModelRoutingIdentity,
+  FinanceModelStageUncertainError,
+  type FinanceModelCheckpointOptions,
+} from "./finance-model-checkpoints.js";
+import {
   createFinanceRealtimeSourceRegistry,
   inspectFinanceRealtimeSourceRegistry,
   type FinanceRealtimeSourceAdapter,
@@ -59,6 +65,7 @@ export type FinanceResearchRunInput = Readonly<{
 
 export type FinanceResearchRunOptions = Readonly<{
   input: FinanceResearchRunInput;
+  modelCheckpoint?: FinanceModelCheckpointOptions;
   liveFetch?: boolean;
   qualityEnabled?: boolean;
   modelId?: string;
@@ -141,6 +148,7 @@ export type FinanceResearchRunReceipt = Readonly<{
     model: FinanceResearchModelExecution;
   }>;
   quality?: QualityHarnessReceipt;
+  modelCheckpoint?: ReturnType<ReturnType<typeof openFinanceModelCheckpoints>["summary"]>;
   quarterlyOutput: FinanceQuarterlyOutput;
   gates: readonly FinanceResearchGate[];
   missingEvidence: readonly string[];
@@ -662,6 +670,12 @@ function qualityGate(quality: QualityHarnessReceipt | undefined): FinanceResearc
 export async function runFinanceResearchRun(
   options: FinanceResearchRunOptions,
 ): Promise<FinanceResearchRunReceipt> {
+  if (options.modelCheckpoint) {
+    positiveInteger(options.modelCheckpoint.maxModelCalls, "maxModelCalls");
+    requiredText(options.modelCheckpoint.path, "model checkpoint path");
+    requiredText(options.modelCheckpoint.runId, "model checkpoint runId");
+    requiredText(options.modelCheckpoint.executionFingerprint, "model checkpoint fingerprint");
+  }
   const ask = requiredText(options.input.ask, "ask");
   const asOf = assertIsoTimestamp(options.input.asOf, "asOf");
   const horizonMonths = normalizeHorizon(options.input.horizonMonths);
@@ -709,8 +723,11 @@ export async function runFinanceResearchRun(
     });
   }
 
-  const batch = await runFinanceResearchBatch({
+  let batch = await runFinanceResearchBatch({
     ...options.batchOptions,
+    ...(options.modelCheckpoint
+      ? { correlationId: `finance-research:${shortHash(options.modelCheckpoint.runId)}` }
+      : {}),
     targets,
     asOf,
     useCase: "finance_research_run",
@@ -720,7 +737,7 @@ export async function runFinanceResearchRun(
     realtimeAdapters,
     collectionAdapters,
   });
-  const evidence = batch.committeeEvidence;
+  let evidence = batch.committeeEvidence;
   const baseMissing = missingEvidence(batch);
   const hasModel = options.modelRouting !== undefined || options.modelInvoker !== undefined;
   if (!hasModel) {
@@ -753,105 +770,189 @@ export async function runFinanceResearchRun(
     });
   }
 
-  const committeeInput: FinanceCommitteeInput = {
-    ask,
-    asOf,
-    decisionMode,
-    evidence,
-    userConstraints: {
-      horizonMonths,
-      sourceStatus: batch.status,
-      researchOnly: true,
-    },
-  };
-  // Validate before starting the DAG so malformed evidence cannot become a partial model run.
-  buildFinanceCommitteeContext(committeeInput);
-  const committee = await runFinanceCommittee<Record<string, unknown>>({
-    input: committeeInput,
-    executor: createFinanceCommitteeExecutor(),
-    ...(options.modelRouting === undefined ? {} : { modelRouting: options.modelRouting }),
-    ...(options.modelInvoker === undefined ? {} : { modelInvoker: options.modelInvoker }),
-    runId: `finance-research:${shortHash({ ask, asOf, horizonMonths })}:${randomUUID().slice(0, 8)}`,
-  });
-  const modelId = options.modelRouting?.adapters[0]?.modelId ?? options.modelId ?? DEFAULT_MODEL_ID;
-  const model = buildModelExecution(committee, modelId);
-  const committeeGateResult = committeeGate(committee);
-
-  const qualityRequested = options.qualityEnabled !== false;
-  let quality: QualityHarnessReceipt | undefined;
-  if (
-    qualityRequested &&
-    (options.qualityModelRouting !== undefined || options.qualityModelInvoker !== undefined)
-  ) {
-    const qualityRequest = {
-      task: `${ask}\nProduce a research-only ${horizonMonths}-month outlook with explicit quarter checkpoints, supporting evidence IDs, counter-thesis, and invalidation conditions. Do not provide execution instructions.`,
-      evidence: qualityEvidence(batch),
-      sharedContext: {
+  const modelCheckpoint = options.modelCheckpoint
+    ? openFinanceModelCheckpoints(options.modelCheckpoint, {
+        ask,
         asOf,
         horizonMonths,
         decisionMode,
+        jobs: batch.jobs,
+        modelId: options.modelId ?? DEFAULT_MODEL_ID,
+        routing: [options.modelRouting, options.qualityModelRouting].map(
+          financeModelRoutingIdentity,
+        ),
+        qualityEnabled: options.qualityEnabled ?? true,
+        committeeConfigured: hasModel,
+        qualityConfigured:
+          options.qualityModelRouting !== undefined || options.qualityModelInvoker !== undefined,
+      })
+    : undefined;
+  try {
+    const committeeInput: FinanceCommitteeInput = {
+      ask,
+      asOf,
+      decisionMode,
+      evidence,
+      userConstraints: {
+        horizonMonths,
         sourceStatus: batch.status,
-        sourceGatePassed: sourceGate(batch).passed,
-        committeeGatePassed: committeeGateResult.passed,
-        noExecutionAuthority: true,
+        researchOnly: true,
       },
     };
-    quality = await runQualityHarness({
-      request: qualityRequest,
-      modelId,
-      ...(options.qualityModelRouting === undefined
-        ? {}
-        : { modelRouting: options.qualityModelRouting }),
-      ...(options.qualityModelInvoker === undefined
-        ? {}
-        : { modelInvoker: options.qualityModelInvoker }),
-      maxConcurrency: 1,
-      memoryBudgetMb: 3_072,
-      taskTimeoutMs: 180_000,
-      verifierTimeoutMs: 10_000,
-      maxAttempts: 2,
-      verify: qualityVerifier(decisionMode),
+    // Validate before starting the DAG so malformed evidence cannot become a partial model run.
+    buildFinanceCommitteeContext(committeeInput);
+    const executeCommittee = () =>
+      runFinanceCommittee<Record<string, unknown>>({
+        input: committeeInput,
+        executor: createFinanceCommitteeExecutor(),
+        ...(options.modelRouting === undefined
+          ? {}
+          : {
+              modelRouting: modelCheckpoint?.routing(options.modelRouting) ?? options.modelRouting,
+            }),
+        ...(options.modelInvoker === undefined
+          ? {}
+          : {
+              modelInvoker: modelCheckpoint?.invoker(options.modelInvoker) ?? options.modelInvoker,
+            }),
+        runId: `finance-research:${shortHash({ ask, asOf, horizonMonths })}:${randomUUID().slice(0, 8)}`,
+      });
+    const committee = modelCheckpoint
+      ? await modelCheckpoint.stage("committee", executeCommittee)
+      : await executeCommittee();
+    // Keep cached model conclusions bound to their original evidence context.
+    evidence = committee.context.evidence;
+    batch = { ...batch, committeeEvidence: evidence };
+    const modelId =
+      options.modelRouting?.adapters[0]?.modelId ?? options.modelId ?? DEFAULT_MODEL_ID;
+    const model = buildModelExecution(committee, modelId);
+    const committeeGateResult = committeeGate(committee);
+
+    const qualityRequested = options.qualityEnabled !== false;
+    let quality: QualityHarnessReceipt | undefined;
+    if (
+      qualityRequested &&
+      (options.qualityModelRouting !== undefined || options.qualityModelInvoker !== undefined)
+    ) {
+      const qualityRequest = {
+        task: `${ask}\nProduce a research-only ${horizonMonths}-month outlook with explicit quarter checkpoints, supporting evidence IDs, counter-thesis, and invalidation conditions. Do not provide execution instructions.`,
+        evidence: qualityEvidence(batch),
+        sharedContext: {
+          asOf,
+          horizonMonths,
+          decisionMode,
+          sourceStatus: batch.status,
+          sourceGatePassed: sourceGate(batch).passed,
+          committeeGatePassed: committeeGateResult.passed,
+          noExecutionAuthority: true,
+        },
+      };
+      const executeQuality = () =>
+        runQualityHarness({
+          request: qualityRequest,
+          modelId,
+          ...(options.qualityModelRouting === undefined
+            ? {}
+            : {
+                modelRouting:
+                  modelCheckpoint?.routing(options.qualityModelRouting) ??
+                  options.qualityModelRouting,
+              }),
+          ...(options.qualityModelInvoker === undefined
+            ? {}
+            : {
+                modelInvoker:
+                  modelCheckpoint?.invoker(options.qualityModelInvoker) ??
+                  options.qualityModelInvoker,
+              }),
+          maxConcurrency: 1,
+          memoryBudgetMb: 3_072,
+          taskTimeoutMs: 180_000,
+          verifierTimeoutMs: 10_000,
+          maxAttempts: 2,
+          verify: qualityVerifier(decisionMode),
+        });
+      quality = modelCheckpoint
+        ? await modelCheckpoint.stage("quality", executeQuality)
+        : await executeQuality();
+    }
+    const source = sourceGate(batch);
+    const qualityGateResult = qualityGate(quality);
+    const allGatesPassed = source.passed && committeeGateResult.passed && qualityGateResult.passed;
+    const quarterlyOutput = buildQuarterlyOutput({
+      horizonMonths,
+      plan,
+      evidenceIds: evidence.map((item) => item.id),
+      quality,
+      committee: model,
+      adopted: allGatesPassed,
+      missingEvidence: baseMissing,
     });
+    const gates: FinanceResearchGate[] = [
+      source,
+      committeeGateResult,
+      qualityGateResult,
+      {
+        id: "quarterly_output" as const,
+        passed: allGatesPassed,
+        reason: allGatesPassed
+          ? "quarterly candidate passed source, committee, and quality gates"
+          : "quarterly output remains a non-adopted candidate because an upstream gate failed",
+      },
+    ];
+    return Object.freeze({
+      schemaVersion: FINANCE_RESEARCH_RUN_SCHEMA_VERSION,
+      boundary: "finance_research_run_research_only",
+      status: allGatesPassed
+        ? "candidate"
+        : batch.status === "blocked"
+          ? "blocked"
+          : "needs_review",
+      answerDecision: allGatesPassed ? "candidate_for_review" : "return_failed_reason",
+      plan,
+      batch,
+      committee: {
+        coverage: committee.coverage,
+        model,
+      },
+      ...(quality === undefined ? {} : { quality }),
+      ...(modelCheckpoint ? { modelCheckpoint: modelCheckpoint.summary() } : {}),
+      quarterlyOutput,
+      gates: Object.freeze(gates),
+      missingEvidence: Object.freeze(baseMissing),
+      notTouched: NOT_TOUCHED,
+    });
+  } catch (error) {
+    if (!(error instanceof FinanceModelStageUncertainError)) {
+      throw error;
+    }
+    return {
+      schemaVersion: FINANCE_RESEARCH_RUN_SCHEMA_VERSION,
+      boundary: "finance_research_run_research_only",
+      status: "needs_review",
+      answerDecision: "return_failed_reason",
+      plan,
+      batch,
+      modelCheckpoint: modelCheckpoint?.summary(),
+      quarterlyOutput: buildQuarterlyOutput({
+        horizonMonths,
+        plan,
+        evidenceIds: evidence.map((item) => item.id),
+        adopted: false,
+        missingEvidence: [error.message],
+      }),
+      gates: [
+        sourceGate(batch),
+        ...(["committee", "quality", "quarterly_output"] as const).map((id) => ({
+          id,
+          passed: false,
+          reason: error.message,
+        })),
+      ],
+      missingEvidence: [...baseMissing, error.message],
+      notTouched: NOT_TOUCHED,
+    };
+  } finally {
+    modelCheckpoint?.close();
   }
-  const source = sourceGate(batch);
-  const qualityGateResult = qualityGate(quality);
-  const allGatesPassed = source.passed && committeeGateResult.passed && qualityGateResult.passed;
-  const quarterlyOutput = buildQuarterlyOutput({
-    horizonMonths,
-    plan,
-    evidenceIds: evidence.map((item) => item.id),
-    quality,
-    committee: model,
-    adopted: allGatesPassed,
-    missingEvidence: baseMissing,
-  });
-  const gates: FinanceResearchGate[] = [
-    source,
-    committeeGateResult,
-    qualityGateResult,
-    {
-      id: "quarterly_output" as const,
-      passed: allGatesPassed,
-      reason: allGatesPassed
-        ? "quarterly candidate passed source, committee, and quality gates"
-        : "quarterly output remains a non-adopted candidate because an upstream gate failed",
-    },
-  ];
-  return Object.freeze({
-    schemaVersion: FINANCE_RESEARCH_RUN_SCHEMA_VERSION,
-    boundary: "finance_research_run_research_only",
-    status: allGatesPassed ? "candidate" : batch.status === "blocked" ? "blocked" : "needs_review",
-    answerDecision: allGatesPassed ? "candidate_for_review" : "return_failed_reason",
-    plan,
-    batch,
-    committee: {
-      coverage: committee.coverage,
-      model,
-    },
-    ...(quality === undefined ? {} : { quality }),
-    quarterlyOutput,
-    gates: Object.freeze(gates),
-    missingEvidence: Object.freeze(baseMissing),
-    notTouched: NOT_TOUCHED,
-  });
 }

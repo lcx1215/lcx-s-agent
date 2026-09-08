@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { FinanceDataGatewayObservationInput } from "./finance-data-gateway.js";
 import { resolveFinanceFetch } from "./finance-live-market-source.js";
@@ -387,5 +390,107 @@ describe("finance research runner", () => {
     expect(result.status).toBe("needs_review");
     expect(result.missingEvidence).toContain("history:historical_window_coverage_unverified");
     expect(result.quarterlyOutput.adopted).toBe(false);
+  });
+  it("resumes committee and quality stages without new model calls", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-model-resume-"));
+    try {
+      const checkpoint = {
+        path: path.join(directory, "checkpoints.sqlite"),
+        runId: "fixture-case",
+        executionFingerprint: "fixture-v1",
+      };
+      let calls = 0;
+      const countedModel: typeof modelInvoker = async (request) => {
+        calls++;
+        return modelInvoker(request);
+      };
+      const options = {
+        input: {
+          ask: "Review market evidence",
+          asOf: AS_OF,
+          targets: [
+            {
+              id: "spy",
+              instrument: "SPY",
+              assetClass: "us_equity",
+              realtime: { requireOfficialReference: false },
+            },
+          ],
+        },
+        liveFetch: true,
+        modelInvoker: countedModel,
+        qualityModelInvoker: countedModel,
+        batchOptions: { ...BATCH_OPTIONS, checkpoint },
+        modelCheckpoint: { ...checkpoint, maxModelCalls: 32 },
+      };
+      const first = await runFinanceResearchRun(options);
+      const firstCalls = calls;
+      expect(first.status).toBe("candidate");
+      expect(firstCalls).toBeGreaterThan(10);
+      const resumed = await runFinanceResearchRun(options);
+      expect(calls).toBe(firstCalls);
+      expect(resumed.status).toBe("candidate");
+      expect(resumed.committee).toEqual(first.committee);
+      expect(resumed.batch?.committeeEvidence).toEqual(first.batch?.committeeEvidence);
+      expect(resumed.quality).toEqual(first.quality);
+      expect(resumed.modelCheckpoint).toMatchObject({
+        newModelCalls: 0,
+        reservedModelCalls: firstCalls,
+        reusedStages: ["committee", "quality"],
+      });
+      const ids = new Set(resumed.batch?.committeeEvidence.map((item) => item.id));
+      expect(
+        resumed.quarterlyOutput.candidateClaims?.every((claim) =>
+          claim.evidenceIds.every((id) => ids.has(id)),
+        ),
+      ).toBe(true);
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps exhausted inference budgets and failed quality gates across resume", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-model-budget-"));
+    try {
+      const checkpoint = {
+        path: path.join(directory, "checkpoints.sqlite"),
+        runId: "budget-case",
+        executionFingerprint: "fixture-v1",
+      };
+      let calls = 0;
+      const countedModel: typeof modelInvoker = async (request) => {
+        calls++;
+        return modelInvoker(request);
+      };
+      const options = {
+        input: {
+          ask: "Review market evidence",
+          asOf: AS_OF,
+          targets: [
+            {
+              id: "spy",
+              instrument: "SPY",
+              assetClass: "us_equity",
+              realtime: { requireOfficialReference: false },
+            },
+          ],
+        },
+        liveFetch: true,
+        modelInvoker: countedModel,
+        qualityModelInvoker: countedModel,
+        batchOptions: { ...BATCH_OPTIONS, checkpoint },
+        modelCheckpoint: { ...checkpoint, maxModelCalls: 1 },
+      };
+      const first = await runFinanceResearchRun(options);
+      expect(calls).toBe(1);
+      expect(first.quarterlyOutput.adopted).toBe(false);
+      expect(first.batch?.status).toBe("completed");
+      const resumed = await runFinanceResearchRun(options);
+      expect(calls).toBe(1);
+      expect(resumed.quarterlyOutput.adopted).toBe(false);
+      expect(resumed.modelCheckpoint?.reservedModelCalls).toBe(1);
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
   });
 });

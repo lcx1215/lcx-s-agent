@@ -73,4 +73,9 @@ describe("finance research operator", () => {
       "requires live case research",
     );
   });
+  it("rejects an invalid inference budget before execution", async () => {
+    await expect(runFinanceResearchCli([...input, "--max-model-calls", "0"])).rejects.toThrow(
+      "positive integer",
+    );
+  });
 });
