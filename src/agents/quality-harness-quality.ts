@@ -60,18 +60,20 @@ const CURRENT_DATA_PATTERN =
   /当前|最新|今天|今日|现在|截至|实时|股价|价格|市值|收益率|行情|current|latest|today|now|as of|price|market cap|yield/iu;
 const DIRECT_TRADE_ACTION_PATTERN =
   /(?:^|[.!?\n:]\s*)(?:buy|sell|add|reduce|go long|go short)\b[^.!?\n]{0,120}(?:[.!?\n]|$)|\b(?:you\s+should|i\s+(?:recommend|would)|recommend(?:ed)?|consider|please)\b[^.!?\n]{0,60}\b(?:buy|sell|add|reduce|go long|go short)\b|(?:建议|应该|推荐|考虑|立即|现在)[^\n。！？]{0,30}(?:买入|卖出|加仓|减仓|做多|做空|增持|减持)|(?:买入|卖出|加仓|减仓|做多|做空|增持|减持)[^\n。！？]{0,12}(?:股票|仓位|标的|[A-Z]{1,6}\b)/imu;
+const POSITION_SIZING_PATTERN =
+  /\b(?:allocate|assign|invest|put|commit|reserve)\s+(?:up\s+to\s+)?[+-]?\d[\d,]*(?:\.\d+)?\s*%[^.!?\n]{0,80}\b(?:portfolio|position|capital|assets?)\b|\b(?:allocate|assign|invest|put|commit|reserve)\s+(?:up\s+to\s+)?[+-]?\d[\d,]*(?:\.\d+)?\s*%[^.!?\n]{0,40}\b(?:in|into|to)\b|(?:配置|分配|投入|拿出|占用)[^\n。！？]{0,20}[+-]?\d[\d,]*(?:\.\d+)?\s*%|[+-]?\d[\d,]*(?:\.\d+)?\s*%[^\n。！？]{0,20}(?:仓位|组合|资金|资产)/imu;
 
 function extractDataNumbers(text: string): string[] {
   return (
     text.match(
-      /(?:[$€£¥]\s*)?\d[\d,]*(?:\.\d+)?(?:\s*%|\s*(?:USD|EUR|GBP|CNY|JPY|美元|欧元|英镑|人民币|日元|元))?/giu,
+      /(?:[$€£¥]\s*)?[+-]?\d[\d,]*(?:\.\d+)?(?:\s*%|\s*(?:USD|EUR|GBP|CNY|JPY|美元|欧元|英镑|人民币|日元|元))?/giu,
     ) ?? []
   ).map((value) => value.replace(/\s+/g, ""));
 }
 
 function normalizedNumber(value: string): string {
   const compact = value.replace(/\s+/g, "").replace(/,/g, "").toLowerCase();
-  const number = compact.match(/\d+(?:\.\d+)?/)?.[0] ?? compact;
+  const number = compact.match(/-?\d+(?:\.\d+)?/)?.[0] ?? compact;
   const unit = compact.includes("%")
     ? "percent"
     : /(?:\$|usd|美元)/u.test(compact)
@@ -108,13 +110,16 @@ function validateFinanceAnswerSafety(
   if (DIRECT_TRADE_ACTION_PATTERN.test(artifact.answer)) {
     problems.push("final finance answer contains a direct trade action or recommendation");
   }
+  if (POSITION_SIZING_PATTERN.test(artifact.answer)) {
+    problems.push("final finance answer contains an explicit portfolio position-sizing directive");
+  }
 
   if (CURRENT_DATA_PATTERN.test(request.task) || CURRENT_DATA_PATTERN.test(artifact.answer)) {
     const answerNumbers = extractDataNumbers(artifact.answer);
     if (answerNumbers.length > 0) {
       const evidenceById = new Map(request.evidence.map((entry) => [entry.id, entry]));
-      const citedEvidence = artifact.claims
-        .filter((claim) => claim.status === "supported")
+      const supportedClaims = artifact.claims.filter((claim) => claim.status === "supported");
+      const citedEvidence = supportedClaims
         .flatMap((claim) => claim.evidenceIds)
         .map((id) => evidenceById.get(id))
         .filter((entry): entry is QualityHarnessEvidence => entry !== undefined);
@@ -130,6 +135,24 @@ function validateFinanceAnswerSafety(
       if (unsupportedNumbers.length > 0) {
         problems.push(
           `final finance answer contains current-data numbers without matching cited evidence with the same unit and timestamp: ${unsupportedNumbers.join(", ")}`,
+        );
+      }
+      const unclaimedNumbers = answerNumbers.filter((number) => {
+        const normalized = normalizedNumber(number);
+        return !supportedClaims.some(
+          (claim) =>
+            extractDataNumbers(claim.text).some(
+              (value) => normalizedNumber(value) === normalized,
+            ) &&
+            claim.evidenceIds.some((id) => {
+              const entry = evidenceById.get(id);
+              return entry !== undefined && hasEvidenceSourceAndTimestamp(entry);
+            }),
+        );
+      });
+      if (unclaimedNumbers.length > 0) {
+        problems.push(
+          `final finance answer contains current-data numbers not asserted by a supported claim with timestamped evidence: ${unclaimedNumbers.join(", ")}`,
         );
       }
     }

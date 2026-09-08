@@ -231,6 +231,79 @@ describe("quality harness", () => {
     ).toMatchObject({ passed: false });
   });
 
+  it("rejects explicit portfolio position-sizing directives", async () => {
+    const result = await runQualityHarness({
+      request: financeRequest,
+      maxAttempts: 1,
+      modelInvoker: demoInvoker({ answer: "Allocate 25% of your portfolio to Microsoft." }),
+      verify: async () => ({ status: "passed", summary: "should not run", details: [] }),
+    });
+
+    expect(result.status).toBe("quality-failed");
+    expect(
+      result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
+    ).toMatchObject({ passed: false });
+  });
+
+  it("does not allow an unrelated grounded claim to certify a final current number", async () => {
+    const result = await runQualityHarness({
+      request: financeRequest,
+      maxAttempts: 1,
+      modelInvoker: async (raw) => {
+        const current = raw as QualityHarnessModelRequest;
+        if (current.stage === "intake") {
+          return { kind: "plan", requirements: ["回答问题"], missingEvidence: [] };
+        }
+        if (current.stage === "draft" || current.stage === "format") {
+          return {
+            kind: "artifact",
+            artifact: {
+              answer: "NVDA 当前价格为 480 美元。",
+              claims: [
+                {
+                  id: "unrelated",
+                  text: "市场材料记录了一个项目状态。",
+                  status: "supported",
+                  evidenceIds: ["market"],
+                },
+              ],
+            },
+          };
+        }
+        return passReview();
+      },
+      verify: async () => ({ status: "passed", summary: "should not run", details: [] }),
+    });
+
+    expect(result.status).toBe("quality-failed");
+    expect(
+      result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
+    ).toMatchObject({ passed: false });
+  });
+
+  it("preserves negative signs when matching current finance evidence", async () => {
+    const result = await runQualityHarness({
+      request: {
+        ...financeRequest,
+        evidence: [
+          {
+            id: "market",
+            text: "截至 2026-09-06，公开行情材料记录 NVDA 的收益率为 -10%。",
+            source: "market-feed-test",
+          },
+        ],
+      },
+      maxAttempts: 1,
+      modelInvoker: demoInvoker({ answer: "NVDA 当前收益率为 10%。" }),
+      verify: async () => ({ status: "passed", summary: "should not run", details: [] }),
+    });
+
+    expect(result.status).toBe("quality-failed");
+    expect(
+      result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
+    ).toMatchObject({ passed: false });
+  });
+
   it("does not equate a percentage with a currency amount", async () => {
     const result = await runQualityHarness({
       request: {
