@@ -387,7 +387,7 @@ export function buildAllRegisteredFinanceResearchTargets(
               : undefined;
     const symbol =
       macroSeries ??
-      (adapter.id === "binance_public_eod_history"
+      (adapter.id === "binance_public_eod_history" || adapter.id === "coingecko_daily_history"
         ? "BTCUSDT"
         : adapter.id === "fred_public_index_history"
           ? "SP500"
@@ -404,7 +404,15 @@ export function buildAllRegisteredFinanceResearchTargets(
             freshnessMaxMinutes: 7 * 24 * 60,
           },
           ...(
-            ["sec_filings", "company_profile", "options_chain", "dividends", "splits"] as const
+            [
+              "sec_filings",
+              "company_profile",
+              "financial_statements",
+              "earnings",
+              "options_chain",
+              "dividends",
+              "splits",
+            ] as const
           ).map((collection) => ({ collection, limit: 20, freshnessMaxMinutes: 366 * 24 * 60 })),
         ];
     const collection = candidates.find((candidate) =>

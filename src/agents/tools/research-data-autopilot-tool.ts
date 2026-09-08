@@ -38,6 +38,8 @@ export const RESEARCH_DATA_AUTOPILOT_INTENTS = [
   "sec_filings",
   "company_profile",
   "eod_history",
+  "financial_statements",
+  "earnings",
   "geocode",
   "weather",
   "earthquake",

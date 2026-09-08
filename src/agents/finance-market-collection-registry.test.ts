@@ -434,6 +434,8 @@ describe("finance market collection registry", () => {
     );
     expect(fmpInspection.candidateAdapters.map((adapter) => adapter.id)).toEqual([
       "fmp_free_basic_company_profile",
+      "finnhub_metric",
+      "finnhub_profile2",
     ]);
   });
 

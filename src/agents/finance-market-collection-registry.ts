@@ -34,6 +34,8 @@ export {
   createYahooFinanceRssCollectionAdapter,
 } from "./finance-free-market-collection-adapters.js";
 
+import { createRegisteredCapabilityAdapters } from "./finance-registered-capability-adapters.js";
+
 const SEC_USER_AGENT = "LCX Agent research-only contact=local";
 
 export const FINANCE_MARKET_COLLECTION_SCHEMA_VERSION = "lcx_finance_market_collection_v1" as const;
@@ -47,6 +49,8 @@ export const FINANCE_MARKET_COLLECTION_KINDS = [
   "sec_filings",
   "company_profile",
   "eod_history",
+  "financial_statements",
+  "earnings",
 ] as const;
 export type FinanceMarketCollectionKind = (typeof FINANCE_MARKET_COLLECTION_KINDS)[number];
 
@@ -132,6 +136,8 @@ export type FinanceMarketCollectionRegistryOptions = Readonly<{
   finnhubApiKey?: string;
   fredApiKey?: string;
   fmpApiKey?: string;
+  alphaVantageApiKey?: string;
+  coinGeckoApiKey?: string;
   /** Yahoo public endpoints are opt-in because automated traffic may be rejected. */
   includeYahooPublicSources?: boolean;
   additionalAdapters?: readonly FinanceMarketCollectionAdapter[];
@@ -1110,6 +1116,8 @@ export function resolveFinanceMarketCollectionRegistryOptionsFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): FinanceMarketCollectionRegistryOptions {
   return {
+    alphaVantageApiKey: env.ALPHA_VANTAGE_API_KEY?.trim() || undefined,
+    coinGeckoApiKey: env.COINGECKO_API_KEY?.trim() || undefined,
     massiveApiKey: env.MASSIVE_API_KEY?.trim() || undefined,
     finnhubApiKey: env.FINNHUB_API_KEY?.trim() || undefined,
     fredApiKey: env.FRED_API_KEY?.trim() || undefined,
@@ -1122,6 +1130,7 @@ export function createFinanceMarketCollectionRegistry(
   options: FinanceMarketCollectionRegistryOptions = {},
 ): readonly FinanceMarketCollectionAdapter[] {
   const adapters: FinanceMarketCollectionAdapter[] = [
+    ...createRegisteredCapabilityAdapters(options),
     createBinancePublicEodHistoryCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createFredPublicIndexHistoryCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createBlsMacroSeriesCollectionAdapter({ fetchImpl: options.fetchImpl }),
