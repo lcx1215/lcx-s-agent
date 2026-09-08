@@ -17,6 +17,7 @@ import {
   runFinanceRealtimeRefresh,
   type FinanceRealtimeSourceRequest,
 } from "../finance-realtime-source-registry.js";
+import { inspectFinanceSourceHealth } from "../finance-source-health.js";
 import {
   createGeospatialSourceRegistry,
   inspectGeospatialSourceRegistry,
@@ -28,6 +29,7 @@ import type { AnyAgentTool } from "./common.js";
 import { jsonResult, ToolInputError } from "./common.js";
 
 export const RESEARCH_DATA_AUTOPILOT_INTENTS = [
+  "source_health",
   "quote",
   "crypto_quote",
   ...FINANCE_MARKET_COLLECTION_KINDS,
@@ -116,7 +118,7 @@ export function createResearchDataAutopilotTool(options?: {
     label: "Research Data Autopilot",
     name: "research_data_autopilot",
     description:
-      "Autonomously route a read-only research request across all canonical finance, crypto, public macro, SEC, news, geospatial, weather, and seismic adapters. The agent does not choose provider URLs: registries select every supporting source, retain failures, cross-check results, and never touch trading, broker, wallet, or order authority.",
+      "Use source_health to inspect configured routes and recent call evidence without network access. Autonomously route a read-only research request across all canonical finance, crypto, public macro, SEC, news, geospatial, weather, and seismic adapters. The agent does not choose provider URLs: registries select every supporting source, retain failures, cross-check results, and never touch trading, broker, wallet, or order authority.",
     parameters: ResearchDataAutopilotSchema,
     execute: async (_toolCallId, args) => {
       const params = args as {
@@ -137,10 +139,12 @@ export function createResearchDataAutopilotTool(options?: {
         const intent = params.intent;
         const target = requiredText(params.target, "target");
         const asOf = params.asOf ?? new Date().toISOString();
-        const liveFetch = params.liveFetch ?? true;
+        const liveFetch = intent === "source_health" ? false : (params.liveFetch ?? true);
         let payload: unknown;
 
-        if (isGeospatialIntent(intent)) {
+        if (intent === "source_health") {
+          payload = await inspectFinanceSourceHealth({ workspaceDir, asOf });
+        } else if (isGeospatialIntent(intent)) {
           const request = {
             kind: intent,
             query: target,
@@ -223,9 +227,10 @@ export function createResearchDataAutopilotTool(options?: {
             "wallet_or_order_authority",
           ],
         };
-        const receiptPath = params.writeReceipt
-          ? await writeAutopilotReceipt(workspaceDir, intent, target, result)
-          : undefined;
+        const receiptPath =
+          (params.writeReceipt ?? (liveFetch && !isGeospatialIntent(intent)))
+            ? await writeAutopilotReceipt(workspaceDir, intent, target, result)
+            : undefined;
         return jsonResult({ ...result, receiptPath });
       } catch (error) {
         if (error instanceof ToolInputError) {

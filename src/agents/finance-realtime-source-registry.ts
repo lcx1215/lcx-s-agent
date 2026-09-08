@@ -13,6 +13,7 @@ import {
   createSecOfficialReferenceAdapter,
   createStooqDelayedMarketAdapter,
 } from "./finance-additional-source-adapters.js";
+import { resolveFinanceCredentialEnv } from "./finance-credential-env.js";
 import {
   createBitstampCryptoTickerAdapter,
   createBybitCryptoTickerAdapter,
@@ -126,6 +127,9 @@ export type FinanceRealtimeSourceRegistryOptions = Readonly<{
 export function resolveFinanceRealtimeSourceRegistryOptionsFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): FinanceRealtimeSourceRegistryOptions {
+  if (env === process.env) {
+    env = resolveFinanceCredentialEnv(env);
+  }
   return {
     alphaVantageApiKey: env.ALPHA_VANTAGE_API_KEY?.trim() || undefined,
     coinGeckoApiKey: env.COINGECKO_API_KEY?.trim() || undefined,

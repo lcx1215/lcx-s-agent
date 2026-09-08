@@ -1,9 +1,13 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { FetchImpl } from "../finance-live-market-source.js";
 import { createResearchDataAutopilotTool } from "./research-data-autopilot-tool.js";
+
+beforeEach(() => {
+  vi.stubEnv("OPENCLAW_STATE_DIR", "/tmp/lcx-autopilot-no-live-credentials");
+});
 
 const fakeFetch: FetchImpl = async (url) => {
   if (url.includes("news.google.com/rss/search")) {

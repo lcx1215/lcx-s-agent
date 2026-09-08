@@ -6,6 +6,7 @@ import {
   type ApiCallReceipt,
   type ApiTransportOptions,
 } from "./api-call-contract.js";
+import { resolveFinanceCredentialEnv } from "./finance-credential-env.js";
 import type {
   FinanceDataDelayStatus,
   FinanceDataProviderRole,
@@ -1143,6 +1144,9 @@ export async function runFinanceMarketCollectionRefresh(options: {
 export function resolveFinanceMarketCollectionRegistryOptionsFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): FinanceMarketCollectionRegistryOptions {
+  if (env === process.env) {
+    env = resolveFinanceCredentialEnv(env);
+  }
   return {
     alphaVantageApiKey: env.ALPHA_VANTAGE_API_KEY?.trim() || undefined,
     coinGeckoApiKey: env.COINGECKO_API_KEY?.trim() || undefined,

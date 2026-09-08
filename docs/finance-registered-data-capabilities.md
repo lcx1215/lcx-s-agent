@@ -117,3 +117,25 @@ Official contracts: [FMP](https://site.financialmodelingprep.com/developer/docs)
 [Alpaca](https://docs.alpaca.markets/us/reference/stockbars),
 [CoinGecko](https://docs.coingecko.com/reference/endpoint-overview),
 [FRED](https://fred.stlouisfed.org/docs/api/fred/series_observations.html).
+
+## Runtime credentials and source health
+
+The finance option resolvers read the existing state directory's
+`finance-caseflow/credentials.env` on each default Agent call. Only the finance
+credential allowlist is read; process environment values take precedence, and
+an explicitly empty variable disables the saved key. The loader does not change
+global process environment, model/provider settings, or write credentials.
+
+Call `research_data_autopilot` with `intent: "source_health", target: "all"`
+for provider and route counts plus configuration and recent call evidence.
+A successful call expires from the recent-success category after 24 hours.
+This is a liveness observation window, not a market-data freshness threshold.
+Packet quality and timestamps remain separate; a callable source can return
+stale data. Missing credentials, disabled routes, unverified routes and recent
+failures remain visible. Offline replays do not establish live source health.
+
+Live finance calls through the Agent tool save a receipt by default; callers may
+explicitly set `writeReceipt: false`. The health view reads operator and current
+workspace receipts. It does not claim continuous uptime, probe unused endpoints,
+install a schedule, or bypass account entitlements. A running service still needs
+to load the updated code before these changes affect that process.
