@@ -24,17 +24,19 @@ async function main() {
         "echoapi-cli-live-smoke: dry mode (no EchoAPI case executed).",
         "Run pnpm lcx:echoapi:ensure to install or reuse the exact CLI in the active LCX state root.",
         "Pass --live --ci-url <EchoAPI CI case URL> to execute one real case iteration.",
+        "Pass --live --builtin-public-case to test a real public market snapshot without a CI URL.",
         "The runner sends no webhook, does not inherit secret environment variables, and does not grant finance or trading authority.",
       ].join("\n"),
     );
     process.stdout.write("\n");
     return 0;
   }
-  if (!ciUrl) {
-    throw new Error("--ci-url is required with --live");
+  if (!ciUrl && !args.includes("--builtin-public-case")) {
+    throw new Error("--ci-url or --builtin-public-case is required with --live");
   }
   const receipt = await runEchoApiCliCase({
     ciUrl,
+    builtinPublicCase: args.includes("--builtin-public-case"),
     executable: readFlag(args, "--executable"),
     outputDir: readFlag(args, "--output-dir"),
     timeoutMs: Number(readFlag(args, "--timeout-ms") ?? 15_000),

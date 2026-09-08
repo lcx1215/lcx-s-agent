@@ -1,9 +1,11 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import path from "node:path";
 import { promisify } from "node:util";
 import { resolveStateDir } from "../config/paths.js";
+import { resolveFinanceFetch } from "./finance-live-market-source.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -13,7 +15,8 @@ export const ECHOAPI_CLI_TARBALL_INTEGRITY =
   "sha512-QvZN4pXUs+2jCJviHgsl3qM37D3yKy+X3aG6gEV+hqvbI+EDGlT0/4o7VqQY8Y7Khncsqn13lCiMro/QccEsEg==" as const;
 
 export type EchoApiCliRunOptions = Readonly<{
-  ciUrl: string;
+  ciUrl?: string;
+  builtinPublicCase?: boolean;
   executable?: string;
   timeoutMs?: number;
   outputDir?: string;
@@ -31,6 +34,13 @@ export type EchoApiCliRunReceipt = Readonly<{
   exitCode: number;
   passed: boolean;
   reportPath?: string;
+  reportVerified: boolean;
+  source?: Readonly<{
+    url: string;
+    fetchedAt: string;
+    bodySha256: string;
+    boundary: "real_public_data_local_snapshot";
+  }>;
   stdoutSha256: string;
   stderr: string;
   policy: readonly string[];
@@ -71,7 +81,7 @@ export function buildEchoApiCliArgs(
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     throw new Error("timeoutMs must be a positive number");
   }
-  const reportMode = options.retainReport === false ? "cli" : "json";
+  const reportMode = "json";
   return [
     "run",
     ciUrl,
@@ -83,6 +93,8 @@ export function buildEchoApiCliArgs(
     String(Math.round(timeoutMs)),
     "--timeout-script",
     "1000",
+    "--insecure",
+    "0",
     "--out-dir",
     options.outputDir,
     "--out-file",
@@ -223,7 +235,45 @@ async function resolveExecutable(requested?: string): Promise<{
 export async function runEchoApiCliCase(
   options: EchoApiCliRunOptions,
 ): Promise<EchoApiCliRunReceipt> {
-  const url = validateEchoApiCiUrl(options.ciUrl, options);
+  if (Boolean(options.ciUrl) === Boolean(options.builtinPublicCase)) {
+    throw new Error("Specify exactly one ciUrl or builtinPublicCase");
+  }
+  if (options.builtinPublicCase) {
+    return runBuiltinPublicCase(options);
+  }
+  const url = validateEchoApiCiUrl(options.ciUrl ?? "", options);
+  return executeEchoApiCase(options, url.href, { hostname: url.hostname, pathname: url.pathname });
+}
+
+export function verifyEchoApiReport(report: unknown): boolean {
+  if (!report || typeof report !== "object") {
+    return false;
+  }
+  const value = report as {
+    action?: unknown;
+    data?: {
+      http?: { total?: number; success?: number; error?: number };
+      assert?: { total?: number; success?: number; error?: number };
+    };
+  };
+  return (
+    value.action === "complete" &&
+    [value.data?.http, value.data?.assert].every(
+      (counts) =>
+        counts != null &&
+        Number.isInteger(counts.total) &&
+        (counts.total ?? 0) > 0 &&
+        counts.success === counts.total &&
+        counts.error === 0,
+    )
+  );
+}
+
+async function executeEchoApiCase(
+  options: EchoApiCliRunOptions,
+  caseInput: string,
+  target: EchoApiCliRunReceipt["target"],
+): Promise<EchoApiCliRunReceipt> {
   const outputDir = requiredText(
     options.outputDir ?? path.join(resolveStateDir(), "reports", "echoapi"),
     "outputDir",
@@ -233,9 +283,10 @@ export async function runEchoApiCliCase(
     ? await resolveExecutable(options.executable)
     : await resolveExecutable();
   const executable = resolved.executable;
-  const args = buildEchoApiCliArgs(options.ciUrl, {
+  const runDir = await mkdtemp(path.join(outputDir, "run-"));
+  const args = buildEchoApiCliArgs(caseInput, {
     timeoutMs: options.timeoutMs,
-    outputDir,
+    outputDir: runDir,
     retainReport: options.retainReport,
   });
   let exitCode = 0;
@@ -256,16 +307,27 @@ export async function runEchoApiCliCase(
     stdout = failure.stdout ?? "";
     stderr = failure.stderr || failure.message || "EchoAPI CLI failed";
   }
+  const reportPath = path.join(runDir, "lcx-echoapi.json");
+  let reportVerified = false;
+  try {
+    reportVerified = verifyEchoApiReport(JSON.parse(await readFile(reportPath, "utf8")));
+  } catch {
+    /* Missing or malformed reports fail closed. */
+  }
+  if (options.retainReport === false) {
+    await rm(runDir, { recursive: true, force: true });
+  }
   return {
     schemaVersion: "lcx_echoapi_cli_run_v2",
     boundary: "echoapi_public_case_runner_research_only",
-    target: { hostname: url.hostname, pathname: url.pathname },
+    target,
     executable,
     cliVersion: resolved.version,
     cliSource: resolved.source,
     exitCode,
-    passed: exitCode === 0,
-    reportPath: options.retainReport === false ? undefined : `${outputDir}/lcx-echoapi.json`,
+    passed: exitCode === 0 && reportVerified,
+    reportVerified,
+    reportPath: options.retainReport === false ? undefined : reportPath,
     stdoutSha256: createHash("sha256").update(stdout, "utf8").digest("hex"),
     stderr: stderr.trim().slice(0, 2_000),
     policy: [
@@ -277,4 +339,118 @@ export async function runEchoApiCliCase(
       "research_only_no_trade_or_wallet_authority",
     ],
   };
+}
+
+/** Exercise the real CLI against a bounded snapshot fetched through LCX's public-data transport. */
+async function runBuiltinPublicCase(options: EchoApiCliRunOptions): Promise<EchoApiCliRunReceipt> {
+  const sourceUrl = "https://data-api.binance.vision/api/v3/ticker/price?symbol=BTCUSDT";
+  const response = await resolveFinanceFetch(undefined, {
+    timeoutMs: options.timeoutMs ?? 15_000,
+    retry: { attempts: 1 },
+  })(sourceUrl);
+  if (!response.ok) {
+    throw new Error(`Public case source HTTP ${response.status}`);
+  }
+  const body = await response.text();
+  if (Buffer.byteLength(body) > 16_384) {
+    throw new Error("Public case source exceeded size limit");
+  }
+  const price = JSON.parse(body) as { symbol?: unknown; price?: unknown };
+  if (
+    price.symbol !== "BTCUSDT" ||
+    typeof price.price !== "string" ||
+    !Number.isFinite(Number(price.price)) ||
+    Number(price.price) <= 0
+  ) {
+    throw new Error("Invalid public price snapshot");
+  }
+  const source = {
+    url: sourceUrl,
+    fetchedAt: new Date().toISOString(),
+    bodySha256: createHash("sha256").update(body).digest("hex"),
+    boundary: "real_public_data_local_snapshot" as const,
+  };
+  let hits = 0;
+  const server = createServer((request, result) => {
+    if (request.method !== "GET" || request.url !== "/market") {
+      result.writeHead(404).end();
+      return;
+    }
+    hits++;
+    result.setHeader("Content-Type", "application/json");
+    result.end(body);
+  });
+  const outputDir = options.outputDir ?? path.join(resolveStateDir(), "reports", "echoapi");
+  await mkdir(outputDir, { recursive: true });
+  const caseDir = await mkdtemp(path.join(outputDir, "public-case-"));
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Local snapshot server failed");
+    }
+    const casePath = path.join(caseDir, "case.json");
+    await writeFile(
+      casePath,
+      JSON.stringify({
+        test_events: [
+          {
+            event_id: "public-price",
+            type: "api",
+            enabled: 1,
+            data: {
+              target_id: "public-price",
+              apiData: {
+                target_id: "public-price",
+                name: "LCX real public price snapshot",
+                method: "GET",
+                url: `http://127.0.0.1:${address.port}/market`,
+                request: {
+                  header: { parameter: [] },
+                  query: { parameter: [] },
+                  body: { mode: "none" },
+                  post_tasks: [
+                    {
+                      type: "assert",
+                      enabled: 1,
+                      name: "HTTP 200",
+                      data: {
+                        type: "responseCode",
+                        expression: { compareType: "eq", compareValue: "200" },
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        ],
+        option: {
+          scene: "auto_test",
+          name: "LCX public finance snapshot",
+          iterationCount: 1,
+          collection: [],
+          env: { environment: {} },
+          globals: {},
+          cookies: { switch: -1, data: [] },
+          system_configs: {},
+          enable_sandbox: 1,
+        },
+      }),
+    );
+    const receipt = await executeEchoApiCase(options, casePath, {
+      hostname: "127.0.0.1",
+      pathname: "/market",
+    });
+    return { ...receipt, passed: receipt.passed && hits > 0, source };
+  } finally {
+    server.closeAllConnections();
+    if (server.listening) {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+    await rm(caseDir, { recursive: true, force: true });
+  }
 }
