@@ -217,13 +217,28 @@ export async function writeDeviceIdentityForIdentityMigration(
   options?: { expectedReadPath?: string; expectedWritePath?: string },
 ): Promise<LcxIdentityWriteReceipt> {
   let derivedId: string | null = null;
+  let publicKeyDer: Buffer;
+  let privateDerivedPublicKeyDer: Buffer;
   try {
+    const publicKey = crypto.createPublicKey(identity.publicKeyPem);
+    const privateKey = crypto.createPrivateKey(identity.privateKeyPem);
+    const privateDerivedPublicKey = crypto.createPublicKey(privateKey);
+    publicKeyDer = publicKey.export({ type: "spki", format: "der" }) as Buffer;
+    privateDerivedPublicKeyDer = privateDerivedPublicKey.export({
+      type: "spki",
+      format: "der",
+    }) as Buffer;
     derivedId = fingerprintPublicKey(identity.publicKeyPem);
-    crypto.createPrivateKey(identity.privateKeyPem);
   } catch {
     throw new LcxIdentityWriterContractError(
       "Device identity keys are invalid",
       "LCX_IDENTITY_DEVICE_KEYS_INVALID",
+    );
+  }
+  if (!publicKeyDer.equals(privateDerivedPublicKeyDer)) {
+    throw new LcxIdentityWriterContractError(
+      "Device identity public and private keys do not form the same keypair",
+      "LCX_IDENTITY_DEVICE_KEYPAIR_MISMATCH",
     );
   }
   if (!derivedId) {
