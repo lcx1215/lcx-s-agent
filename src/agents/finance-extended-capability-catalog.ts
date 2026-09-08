@@ -506,6 +506,40 @@ export function extendedFinanceCapabilities(options: Options): Capability[] {
   }
   if (options.alpacaApiSecretKey) {
     result.push({
+      id: "alpaca_indicative_options_chain",
+      provider: "Alpaca",
+      key: options.alpacaApiKeyId,
+      auth: "APCA-API-KEY-ID",
+      extraHeaders: { "APCA-API-SECRET-KEY": options.alpacaApiSecretKey },
+      collection: "options_chain",
+      delayStatus: "delayed",
+      accepts: equity,
+      documentation: "https://docs.alpaca.markets/us/reference/optionchain",
+      sample: { instrument: "AAPL", assetClass: "us_equity", collection: "options_chain" },
+      url: (r) =>
+        endpoint(
+          `https://data.alpaca.markets/v1beta1/options/snapshots/${encodeURIComponent(r.instrument)}`,
+          { feed: "indicative", limit: String(Math.min(r.limit ?? 20, 100)) },
+        ),
+      parse: (body) =>
+        Object.entries(obj(body.snapshots)).map(([symbol, snapshot]) => {
+          const data = obj(snapshot);
+          return {
+            time: iso(obj(data.latestTrade).t),
+            data: {
+              ...data,
+              symbol,
+              feed: "indicative",
+              tradesDelayed: true,
+              quotesModified: true,
+              executionGrade: false,
+              continuationRequired: Boolean(body.next_page_token),
+              sourceTimeMeaning: "latest_trade_time_quote_time_retained_separately",
+            },
+          };
+        }),
+    });
+    result.push({
       id: "alpaca_daily_history",
       provider: "Alpaca",
       key: options.alpacaApiKeyId,

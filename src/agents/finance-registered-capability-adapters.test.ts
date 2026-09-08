@@ -281,3 +281,55 @@ it("preserves full raw responses independently of normalized limits and redacts 
   expect(receipt.records[0].data.rawArtifact).toBe("artifact.json");
   expect(JSON.stringify(receipt)).not.toContain("fixture-secret");
 });
+
+it("makes indicative options usable while preserving delayed, modified and incomplete-feed limits", async () => {
+  let actualUrl = "";
+  const adapters = createRegisteredCapabilityAdapters({
+    alpacaApiKeyId: "private-id",
+    alpacaApiSecretKey: "private-secret",
+    fetchImpl: async (url) => {
+      actualUrl = String(url);
+      return {
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({
+            next_page_token: "more",
+            snapshots: {
+              AAPL260918C00300000: {
+                latestTrade: { p: 10, t: "2026-09-07T15:30:00Z" },
+                latestQuote: { ap: 11, bp: 9, t: "2026-09-07T15:45:00Z" },
+              },
+              MISSING: { latestQuote: { ap: 10 } },
+            },
+          }),
+      };
+    },
+  });
+  const receipt = await runFinanceMarketCollectionRefresh({
+    request: {
+      instrument: "AAPL",
+      assetClass: "us_equity",
+      collection: "options_chain",
+      asOf: "2026-09-08T00:00:00Z",
+      limit: 5,
+    },
+    adapters,
+  });
+  expect(new URL(actualUrl).hostname).toBe("data.alpaca.markets");
+  expect(new URL(actualUrl).searchParams.get("feed")).toBe("indicative");
+  expect(receipt.records).toHaveLength(1);
+  expect(receipt.records[0]).toMatchObject({
+    delayStatus: "delayed",
+    sourceFamily: "market_data_api",
+    sourceTimestamp: "2026-09-07T15:30:00.000Z",
+    data: {
+      symbol: "AAPL260918C00300000",
+      quotesModified: true,
+      tradesDelayed: true,
+      executionGrade: false,
+      continuationRequired: true,
+    },
+  });
+  expect(JSON.stringify(receipt)).not.toContain("private-");
+});

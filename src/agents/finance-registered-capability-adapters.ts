@@ -31,6 +31,7 @@ export type Capability = {
   auth: string;
   extraHeaders?: Record<string, string>;
   snapshot?: boolean;
+  delayStatus?: "delayed" | "end_of_day";
   sample?: FinanceMarketCollectionAdapter["sampleRequest"];
   accepts?: (request: FinanceMarketCollectionRequest) => boolean;
   documentation?: string;
@@ -298,10 +299,13 @@ export function createRegisteredCapabilityAdapters(
           collection: r.collection,
           providerName: c.provider,
           providerRole: "cross_check_market_data",
-          sourceFamily: c.collection === "eod_history" ? "market_data_api" : "fundamentals_api",
+          sourceFamily:
+            c.collection === "eod_history" || c.collection === "options_chain"
+              ? "market_data_api"
+              : "fundamentals_api",
           sourceTimestamp: row.time ?? r.asOf,
           observedAt: r.asOf,
-          delayStatus: "manual_or_unknown",
+          delayStatus: c.delayStatus ?? "manual_or_unknown",
           sourceUrlOrArtifact,
           data: {
             ...row.data,
