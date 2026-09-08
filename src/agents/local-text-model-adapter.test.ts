@@ -160,6 +160,29 @@ describe("local text model adapter contract", () => {
     expect(prompt).toContain("Do not invent current data");
   });
 
+  it("bounds large finance evidence and dependency expansion before local inference", () => {
+    const prompt = buildLocalRoleShadowPrompt({
+      schemaVersion: "lcx_local_role_shadow_v1",
+      runId: "run-1",
+      taskId: "risk_check",
+      role: "risk_check",
+      purpose: "review evidence risk",
+      ask: "review the supplied evidence",
+      evidence: Array.from({ length: 24 }, (_, index) => `evidence-${index}:${"x".repeat(4_000)}`),
+      dependencyOutputs: Object.fromEntries(
+        Array.from({ length: 18 }, (_, index) => [
+          `task-${index}`,
+          { output: "y".repeat(4_000), status: "completed" },
+        ]),
+      ),
+    });
+    expect(prompt.length).toBeLessThan(20_000);
+    expect(prompt).toContain("evidence-0:");
+    expect(prompt).not.toContain("evidence-23:");
+    expect(prompt).toContain("task-0");
+    expect(prompt).not.toContain("task-17");
+  });
+
   it("keeps model downloads offline unless explicitly allowed", () => {
     expect(resolveLocalTextModelRuntimeConfig({ adapterPath: "/tmp/adapter" }).allowNetwork).toBe(
       false,

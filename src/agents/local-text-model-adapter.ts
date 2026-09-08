@@ -344,6 +344,12 @@ export function buildQualityHarnessModelPrompt(request: QualityHarnessModelReque
 }
 
 export function buildLocalRoleShadowPrompt(request: LocalRoleShadowRequest): string {
+  const evidence = request.evidence.slice(0, 12).map((item) => clipPromptText(item, 900));
+  const dependencyOutputs = Object.fromEntries(
+    Object.entries(request.dependencyOutputs)
+      .slice(0, 6)
+      .map(([taskId, output]) => [taskId, compactPromptValue(output)]),
+  );
   return [
     "You are the LCX Agent local auxiliary thought-flow model.",
     "Produce a compact planning packet for the assigned role; do not answer the user directly.",
@@ -354,8 +360,8 @@ export function buildLocalRoleShadowPrompt(request: LocalRoleShadowRequest): str
     `role=${request.role}`,
     `purpose=${request.purpose}`,
     `task=${request.ask}`,
-    `evidence=${JSON.stringify(request.evidence)}`,
-    `dependency_outputs=${JSON.stringify(request.dependencyOutputs)}`,
+    `evidence=${JSON.stringify(evidence)}`,
+    `dependency_outputs=${JSON.stringify(dependencyOutputs)}`,
   ].join("\n");
 }
 

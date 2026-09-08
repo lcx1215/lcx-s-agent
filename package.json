@@ -176,6 +176,7 @@
     "lcx:projection-reader-audit": "node --import tsx scripts/operator/lcx-projection-reader-audit.ts --json",
     "lcx:research:chart": "node --import tsx scripts/operator/finance-chart-analysis-live-smoke.ts",
     "lcx:research:data": "node --import tsx scripts/operator/research-data-autopilot-live-smoke.ts",
+    "lcx:research:run": "node --import tsx scripts/operator/lcx-finance-research-run.ts",
     "lcx:research:web": "node --import tsx scripts/operator/research-web-autopilot-live-smoke.ts",
     "lcx:rpc": "node scripts/run-node.mjs agent --mode rpc --json",
     "lcx:us-market:collection": "node --import tsx scripts/operator/us-market-collection-live-smoke.ts",
