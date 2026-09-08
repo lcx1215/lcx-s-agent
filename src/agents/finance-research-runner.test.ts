@@ -1,0 +1,254 @@
+import { describe, expect, it } from "vitest";
+import type { FinanceDataGatewayObservationInput } from "./finance-data-gateway.js";
+import type {
+  FinanceMarketCollectionAdapter,
+  FinanceMarketCollectionItem,
+} from "./finance-market-collection-registry.js";
+import type { FinanceRealtimeSourceAdapter } from "./finance-realtime-source-registry.js";
+import {
+  buildDefaultFinanceResearchTargets,
+  runFinanceResearchRun,
+} from "./finance-research-runner.js";
+
+const AS_OF = "2026-09-08T12:00:00.000Z";
+
+function realtimeObservation(
+  providerName: string,
+  providerRole: FinanceDataGatewayObservationInput["providerRole"],
+): FinanceDataGatewayObservationInput {
+  return {
+    providerName,
+    providerRole,
+    sourceFamily: "market_data_api",
+    observedAt: AS_OF,
+    timezone: "UTC",
+    delayStatus: "realtime",
+    fields: [
+      {
+        name: "last_price",
+        value: 100,
+        currency: "USD",
+        adjusted: false,
+        fieldDefinition: "synthetic current price",
+        sourceTimestamp: AS_OF,
+        sourceUrlOrArtifact: `fixture://${providerName}/price`,
+      },
+    ],
+  };
+}
+
+function realtimeAdapter(
+  id: string,
+  providerRole: FinanceRealtimeSourceAdapter["providerRole"],
+): FinanceRealtimeSourceAdapter {
+  return {
+    id,
+    providerName: id,
+    providerRole,
+    priority: 1,
+    supports: () => true,
+    collect: async () => realtimeObservation(id, providerRole),
+  };
+}
+
+function collectionAdapter(): FinanceMarketCollectionAdapter {
+  return {
+    id: "fixture_collection",
+    providerName: "fixture-collection",
+    providerRole: "primary_market_data",
+    priority: 1,
+    supports: () => true,
+    collect: async (request) => {
+      const item: FinanceMarketCollectionItem = {
+        itemId: `${request.instrument}-${request.collection}-1`,
+        collection: request.collection,
+        providerName: "fixture-collection",
+        providerRole: "primary_market_data",
+        sourceFamily: "market_data_api",
+        sourceTimestamp: AS_OF,
+        observedAt: AS_OF,
+        delayStatus: "realtime",
+        sourceUrlOrArtifact: "fixture://collection",
+        data: { close: 100, title: "bounded fixture evidence" },
+      };
+      return [item];
+    },
+  };
+}
+
+async function modelInvoker(request: unknown): Promise<unknown> {
+  const payload = request as {
+    stage?: string;
+    evidence?: readonly { id: string }[];
+  };
+  if (payload.stage === "intake") {
+    return { kind: "plan", requirements: ["timestamped evidence"], missingEvidence: [] };
+  }
+  if (payload.stage === "draft" || payload.stage === "format") {
+    const evidenceId = payload.evidence?.[0]?.id ?? "finance-batch-summary";
+    return {
+      kind: "artifact",
+      artifact: {
+        answer:
+          "Research-only quarterly outlook: the supplied evidence supports a bounded candidate view with explicit uncertainty and invalidation checks.",
+        claims: [
+          {
+            id: "claim-1",
+            text: "The current evidence packet is usable only within its timestamps and source coverage.",
+            status: "supported",
+            evidenceIds: [evidenceId],
+          },
+        ],
+      },
+    };
+  }
+  return {
+    kind: "review",
+    review: { verdict: "pass", criticalFindings: [], evidenceGaps: [], notes: [] },
+  };
+}
+
+const BATCH_OPTIONS = {
+  realtimeAdapters: [
+    realtimeAdapter("fixture_primary", "primary_market_data"),
+    realtimeAdapter("fixture_cross_check", "cross_check_market_data"),
+  ],
+  collectionAdapters: [collectionAdapter()],
+  maxSourcesPerJob: 2,
+  maxConcurrency: 2,
+  sourceTimeoutMs: 1_000,
+  totalTimeoutMs: 10_000,
+} as const;
+
+describe("finance research runner", () => {
+  it("builds an explicit six-month target window and preserves research boundaries", () => {
+    const targets = buildDefaultFinanceResearchTargets(
+      "分析未来半年美股和加密货币市场情绪，并考虑美国中期选举。",
+      6,
+      AS_OF,
+    );
+    const history = targets
+      .flatMap((target) => target.collections ?? [])
+      .filter((collection) => collection.collection === "eod_history");
+
+    expect(history.length).toBeGreaterThanOrEqual(3);
+    expect(history.every((collection) => collection.fromDate === "2026-03-08")).toBe(true);
+    expect(history.every((collection) => collection.toDate === "2026-09-08")).toBe(true);
+    expect(targets.some((target) => target.assetClass === "crypto")).toBe(true);
+    expect(targets.some((target) => target.assetClass === "us_equity")).toBe(true);
+  });
+
+  it("runs a dry plan without invoking a source or model", async () => {
+    const result = await runFinanceResearchRun({
+      input: {
+        ask: "分析未来半年美股和比特币的市场情绪。",
+        asOf: AS_OF,
+        horizonMonths: 6,
+        targets: [
+          {
+            id: "dry-target",
+            instrument: "BTCUSDT",
+            assetClass: "crypto",
+            realtime: { requireOfficialReference: false },
+          },
+        ],
+      },
+      liveFetch: false,
+      batchOptions: BATCH_OPTIONS,
+    });
+
+    expect(result.status).toBe("planned");
+    expect(result.plan.expectedJobCount).toBe(1);
+    expect(result.plan.sourceInspections[0]?.candidateAdapterIds).toEqual([
+      "fixture_primary",
+      "fixture_cross_check",
+    ]);
+    expect(result.notTouched).toContain("trading_execution");
+  });
+
+  it("connects batch evidence to the committee, quality harness, and quarterly checkpoints", async () => {
+    const result = await runFinanceResearchRun({
+      input: {
+        ask: "分析未来半年美股和比特币的市场情绪，并考虑美国中期选举。",
+        asOf: AS_OF,
+        horizonMonths: 6,
+        targets: [
+          {
+            id: "btc-fixture",
+            instrument: "BTCUSDT",
+            assetClass: "crypto",
+            realtime: { requireOfficialReference: false },
+            collections: [{ collection: "news", limit: 1, freshnessMaxMinutes: 60 }],
+          },
+        ],
+      },
+      liveFetch: true,
+      qualityEnabled: true,
+      modelInvoker,
+      qualityModelInvoker: modelInvoker,
+      modelId: "fixture-model",
+      batchOptions: BATCH_OPTIONS,
+    });
+
+    expect(result.status).toBe("candidate");
+    expect(result.answerDecision).toBe("candidate_for_review");
+    expect(result.batch?.status).toBe("completed");
+    expect(result.committee?.coverage.equivalenceStatus).toBe("committee_candidate");
+    expect(result.committee?.model.modelCallCount).toBe(10);
+    expect(result.quality?.status).toBe("verified");
+    expect(result.quality?.quality.passed).toBe(true);
+    expect(result.quarterlyOutput.checkpoints).toHaveLength(2);
+    expect(result.quarterlyOutput.adopted).toBe(true);
+    expect(result.notTouched).toEqual(
+      expect.arrayContaining(["provider_config", "external_channel_sender", "trading_execution"]),
+    );
+  });
+
+  it("keeps a stale collection out of adopted output even when the model DAG completes", async () => {
+    const staleCollection: FinanceMarketCollectionAdapter = {
+      ...collectionAdapter(),
+      collect: async (request) => [
+        {
+          itemId: "stale-item",
+          collection: request.collection,
+          providerName: "fixture-collection",
+          providerRole: "primary_market_data",
+          sourceFamily: "market_data_api",
+          sourceTimestamp: "2026-09-01T00:00:00.000Z",
+          observedAt: AS_OF,
+          delayStatus: "delayed",
+          sourceUrlOrArtifact: "fixture://stale",
+          data: { close: 100 },
+        },
+      ],
+    };
+    const result = await runFinanceResearchRun({
+      input: {
+        ask: "分析未来半年美股市场情绪。",
+        asOf: AS_OF,
+        targets: [
+          {
+            id: "stale-target",
+            instrument: "SPY",
+            assetClass: "us_equity",
+            realtime: { requireOfficialReference: false },
+            collections: [{ collection: "news", limit: 1, freshnessMaxMinutes: 60 }],
+          },
+        ],
+      },
+      liveFetch: true,
+      modelInvoker,
+      qualityModelInvoker: modelInvoker,
+      batchOptions: { ...BATCH_OPTIONS, collectionAdapters: [staleCollection] },
+    });
+
+    expect(result.status).toBe("needs_review");
+    expect(result.gates.find((gate) => gate.id === "source")?.passed).toBe(false);
+    expect(result.quarterlyOutput.adopted).toBe(false);
+    expect(
+      result.missingEvidence.some((item) =>
+        item.includes("stale_or_invalid_collection_provenance"),
+      ),
+    ).toBe(true);
+  });
+});
