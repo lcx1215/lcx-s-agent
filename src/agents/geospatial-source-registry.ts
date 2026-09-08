@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   apiSourceErrorText,
   runApiSourceCall,
+  type ApiSourceGovernanceRegistry,
   type ApiCallReceipt,
   type ApiTransportOptions,
 } from "./api-call-contract.js";
@@ -84,6 +85,8 @@ export type GeospatialRefreshReceipt = Readonly<{
     }>[];
   }>[];
   freshnessWarnings: readonly string[];
+  /** Stale observations retained for audit but excluded from the selected evidence when a fresh field exists. */
+  staleSourceWarnings: readonly string[];
   missingEvidence: readonly string[];
   requiredNextSteps: readonly string[];
   notTouched: readonly string[];
@@ -110,6 +113,19 @@ function assertIsoTimestamp(value: string, label: string): string {
     throw new GeospatialSourceError(`${label} must be an ISO timestamp`);
   }
   return normalized;
+}
+
+function parseUtcTimestamp(value: unknown, label: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new GeospatialSourceError(`${label} must be an ISO timestamp`);
+  }
+  const normalized = value.trim();
+  // Open-Meteo returns a wall-clock value when timezone=UTC without a suffix.
+  // Treating it as the host's Asia/Shanghai local time shifts freshness by 8h.
+  const withUtcSuffix = /(?:[zZ]|[+-]\d{2}:?\d{2})$/u.test(normalized)
+    ? normalized
+    : `${normalized}Z`;
+  return assertIsoTimestamp(new Date(withUtcSuffix).toISOString(), label);
 }
 
 function parseFiniteNumber(value: unknown, label: string): number {
@@ -382,10 +398,11 @@ export function createOpenMeteoWeatherAdapter(
     supports: (request) => request.kind === "weather",
     collect: async (request) => {
       const { latitude, longitude } = parseCoordinates(request.query);
-      const sourceUrlOrArtifact = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,relative_humidity_2m,pressure_msl,wind_speed_10m&timezone=UTC`;
+      const sourceUrlOrArtifact = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,relative_humidity_2m,pressure_msl,wind_speed_10m&forecast_days=1&past_days=0&timezone=UTC`;
       const payload = (await fetchJson(
         resolveFinanceFetch(options.fetchImpl),
         sourceUrlOrArtifact,
+        { Accept: "application/json", "Cache-Control": "no-cache" },
       )) as {
         current?: {
           time?: string;
@@ -399,10 +416,7 @@ export function createOpenMeteoWeatherAdapter(
       if (!current?.time) {
         throw new GeospatialSourceError("Open-Meteo returned no current weather block");
       }
-      const sourceTimestamp = assertIsoTimestamp(
-        new Date(current.time).toISOString(),
-        "Open-Meteo current time",
-      );
+      const sourceTimestamp = parseUtcTimestamp(current.time, "Open-Meteo current time");
       const fields: GeospatialSourceField[] = [];
       for (const [name, value, unit, definition] of [
         ["temperature_2m", current.temperature_2m, "°C", "Open-Meteo current 2m temperature"],
@@ -601,6 +615,7 @@ export async function runGeospatialRefresh(options: {
   retry?: ApiTransportOptions["retry"];
   authScopeLabel?: ApiTransportOptions["authScopeLabel"];
   idempotencyKey?: string;
+  sourceGovernance?: ApiSourceGovernanceRegistry;
 }): Promise<GeospatialRefreshReceipt> {
   const request = normalizeRequest(options.request);
   const timeoutMs = options.timeoutMs ?? 15_000;
@@ -628,6 +643,15 @@ export async function runGeospatialRefresh(options: {
           signal: options.signal,
           correlationId,
           retry: options.retry,
+          ...(() => {
+            const governance = options.sourceGovernance?.forSource(adapter.id);
+            return governance
+              ? {
+                  rateLimiter: governance.rateLimiter,
+                  circuitBreaker: governance.circuitBreaker,
+                }
+              : {};
+          })(),
           authScopeLabel: options.authScopeLabel ?? "public",
           idempotencyKey: options.idempotencyKey ?? `${correlationId}:${adapter.id}`,
           onReceipt: (receipt) => apiCalls.push(receipt),
@@ -657,12 +681,27 @@ export async function runGeospatialRefresh(options: {
   const fieldNames = unique(
     observations.flatMap((observation) => observation.fields.map((field) => field.name)),
   ).toSorted();
-  const normalizedFields = fieldNames.flatMap((fieldName) => {
-    const candidatesForField = observations.flatMap((observation) =>
+  const asOfMs = Date.parse(request.asOf);
+  const freshnessMaxMinutes = request.freshnessMaxMinutes ?? 60 * 24;
+  const fieldAgeMinutes = (sourceTimestamp: string) =>
+    Math.max(0, (asOfMs - Date.parse(sourceTimestamp)) / 60_000);
+  const isFresh = (sourceTimestamp: string) =>
+    fieldAgeMinutes(sourceTimestamp) <= freshnessMaxMinutes;
+  const fieldCandidates = (fieldName: string) =>
+    observations.flatMap((observation) =>
       observation.fields
         .filter((field) => field.name === fieldName)
         .map((field) => ({ field, observation })),
     );
+  const selectedCandidates = (fieldName: string) => {
+    const candidatesForField = fieldCandidates(fieldName);
+    const freshCandidates = candidatesForField.filter(({ field }) =>
+      isFresh(field.sourceTimestamp),
+    );
+    return freshCandidates.length > 0 ? freshCandidates : candidatesForField;
+  };
+  const normalizedFields = fieldNames.flatMap((fieldName) => {
+    const candidatesForField = selectedCandidates(fieldName);
     const selectedField =
       candidatesForField.find(
         ({ observation }) => observation.providerRole === "primary_reference",
@@ -670,11 +709,7 @@ export async function runGeospatialRefresh(options: {
     return selectedField ? [selectedField.field] : [];
   });
   const conflicts = fieldNames.flatMap((fieldName) => {
-    const candidatesForField = observations.flatMap((observation) =>
-      observation.fields
-        .filter((field) => field.name === fieldName)
-        .map((field) => ({ field, observation })),
-    );
+    const candidatesForField = selectedCandidates(fieldName);
     const identities = unique(candidatesForField.map(({ field }) => JSON.stringify(field.value)));
     if (identities.length <= 1) {
       return [];
@@ -690,16 +725,22 @@ export async function runGeospatialRefresh(options: {
       },
     ];
   });
-  const asOfMs = Date.parse(request.asOf);
-  const freshnessMaxMinutes = request.freshnessMaxMinutes ?? 60 * 24;
-  const freshnessWarnings = observations.flatMap((observation) =>
+  const staleSourceWarnings = observations.flatMap((observation) =>
     observation.fields.flatMap((field) => {
-      const ageMinutes = Math.max(0, (asOfMs - Date.parse(field.sourceTimestamp)) / 60_000);
+      const ageMinutes = fieldAgeMinutes(field.sourceTimestamp);
       return ageMinutes > freshnessMaxMinutes
         ? [`${field.name} from ${observation.providerName} is ${Math.round(ageMinutes)}m old`]
         : [];
     }),
   );
+  const freshnessWarnings = normalizedFields.flatMap((field) => {
+    const ageMinutes = fieldAgeMinutes(field.sourceTimestamp);
+    return ageMinutes > freshnessMaxMinutes
+      ? [
+          `${field.name} from ${observations.find((observation) => observation.fields.includes(field))?.providerName ?? "selected-source"} is ${Math.round(ageMinutes)}m old`,
+        ]
+      : [];
+  });
   const missingEvidence = observations.length === 0 ? ["successful_geospatial_observation"] : [];
   const requiredNextSteps: string[] = [];
   if (missingEvidence.length > 0) {
@@ -727,6 +768,7 @@ export async function runGeospatialRefresh(options: {
     normalizedFields,
     conflicts,
     freshnessWarnings,
+    staleSourceWarnings,
     missingEvidence,
     requiredNextSteps: unique(requiredNextSteps),
     notTouched: [

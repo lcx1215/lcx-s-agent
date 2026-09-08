@@ -178,9 +178,8 @@ describe("finance realtime source registry", () => {
       }),
     });
 
-    expect(registry).toHaveLength(13);
+    expect(registry).toHaveLength(12);
     expect(registry.map((adapter) => adapter.id)).toEqual([
-      "yahoo_public_chart",
       "binance_public_crypto_ticker",
       "kraken_public_crypto_ticker",
       "coinbase_exchange_public_crypto_ticker",
@@ -195,6 +194,9 @@ describe("finance realtime source registry", () => {
       "invesco_qqq_issuer_reference",
     ]);
     expect(registry[0]?.providerRole).toBe("primary_market_data");
+    expect(createFinanceRealtimeSourceRegistry({ includeYahooPublicSource: true })[0]?.id).toBe(
+      "yahoo_public_chart",
+    );
   });
 
   it("filters the registry to crypto sources without calling equity adapters", () => {
@@ -238,6 +240,7 @@ describe("finance realtime source registry", () => {
       alpacaFeed: undefined,
       finnhubApiKey: "finnhub-secret",
       twelveDataApiKey: "twelve-secret",
+      includeYahooPublicSource: false,
     });
   });
 });
@@ -247,6 +250,7 @@ describe("realtime API transport governance", () => {
     let httpSignal: AbortSignal | undefined;
     let calls = 0;
     const adapters = createFinanceRealtimeSourceRegistry({
+      includeYahooPublicSource: true,
       fetchImpl: async (_url, init) => {
         calls += 1;
         httpSignal = init?.signal;

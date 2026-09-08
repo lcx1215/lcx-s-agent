@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FetchImpl } from "./finance-live-market-source.js";
+import { createNwsCurrentWeatherAdapter } from "./geospatial-official-source-adapters.js";
 import {
   createGeospatialSourceRegistry,
   createNominatimGeocodingAdapter,
@@ -113,6 +114,71 @@ describe("geospatial source registry", () => {
     const adapter = createNominatimGeocodingAdapter({ minIntervalMs: 0 });
     expect(adapter.providerRole).toBe("cross_check_reference");
     expect(adapter.sourceFamily).toBe("geospatial_reference");
+  });
+
+  it("selects fresh official fields when a preferred feed is stale", async () => {
+    const fetchImpl: FetchImpl = async (url) => ({
+      ok: true,
+      status: 200,
+      text: async () => {
+        if (url.includes("open-meteo.com")) {
+          return JSON.stringify({
+            current: {
+              time: "2026-09-07T10:00",
+              temperature_2m: 18,
+              relative_humidity_2m: 50,
+              pressure_msl: 1000,
+              wind_speed_10m: 4,
+            },
+          });
+        }
+        if (url.includes("/points/")) {
+          return JSON.stringify({
+            properties: { observationStations: "https://api.weather.gov/stations" },
+          });
+        }
+        if (url.endsWith("/stations")) {
+          return JSON.stringify({ features: [{ properties: { stationIdentifier: "KTEST" } }] });
+        }
+        return JSON.stringify({
+          properties: {
+            timestamp: "2026-09-07T11:59:00Z",
+            temperature: { value: 20 },
+            relativeHumidity: { value: 60 },
+            barometricPressure: { value: 101500 },
+            windSpeed: { value: 10 },
+            textDescription: "Clear",
+          },
+        });
+      },
+    });
+    const receipt = await runGeospatialRefresh({
+      request: {
+        kind: "weather",
+        query: "40.7128,-74.0060",
+        asOf: "2026-09-07T12:00:00.000Z",
+        freshnessMaxMinutes: 60,
+      },
+      adapters: [
+        createOpenMeteoWeatherAdapter({ fetchImpl }),
+        createNwsCurrentWeatherAdapter({ fetchImpl }),
+      ],
+      maxSources: 2,
+      retry: { attempts: 1 },
+    });
+
+    expect(receipt.status).toBe("ready");
+    expect(receipt.freshnessWarnings).toEqual([]);
+    expect(receipt.staleSourceWarnings).toEqual(
+      expect.arrayContaining(["temperature_2m from open-meteo-weather is 120m old"]),
+    );
+    expect(receipt.normalizedFields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "temperature_2m", value: 20 }),
+        expect.objectContaining({ name: "pressure_msl", value: 1015 }),
+      ]),
+    );
+    expect(receipt.conflicts).toEqual([]);
   });
 });
 

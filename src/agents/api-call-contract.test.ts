@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApiCallError,
   createApiCircuitBreaker,
+  createApiRateLimiter,
   governApiFetch,
   parseApiRetryAfter,
   runApiSourceCall,
@@ -116,6 +117,68 @@ describe("API call governance", () => {
     await expect(governApiFetch(fetch)("https://example.test")).rejects.toMatchObject({
       httpStatus: status,
     });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("classifies forbidden sources without retrying or pretending they are rate limits", async () => {
+    const receipts: ApiCallReceipt[] = [];
+    const fetch = vi.fn<ApiFetch>().mockResolvedValue(response(403));
+    await expect(
+      governApiFetch(fetch, { onReceipt: (receipt) => receipts.push(receipt) })(
+        "https://example.test",
+      ),
+    ).rejects.toMatchObject({ kind: "forbidden", httpStatus: 403 });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(receipts[0]).toMatchObject({
+      status: "failed",
+      httpStatus: 403,
+      transportError: "forbidden",
+      rateLimited: false,
+    });
+  });
+
+  it("paces repeated calls through a reusable source limiter", async () => {
+    vi.useFakeTimers();
+    const receipts: ApiCallReceipt[] = [];
+    const limiter = createApiRateLimiter({ minIntervalMs: 100, maxConcurrent: 1 });
+    const fetch = vi.fn<ApiFetch>().mockResolvedValue(response());
+    const governed = governApiFetch(fetch, {
+      rateLimiter: limiter,
+      onReceipt: (receipt) => receipts.push(receipt),
+    });
+    await governed("https://example.test");
+    const second = governed("https://example.test");
+    await vi.advanceTimersByTimeAsync(99);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await second;
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(receipts[1]).toEqual(expect.objectContaining({ throttleWaitMs: 100 }));
+  });
+
+  it("preserves rate_limited when a source limiter queue is full", async () => {
+    const limiter = createApiRateLimiter({
+      minIntervalMs: 0,
+      maxConcurrent: 1,
+      maxQueue: 1,
+    });
+    const heldPermit = await limiter.acquire();
+    const receipts: ApiCallReceipt[] = [];
+    const fetch = vi.fn<ApiFetch>().mockResolvedValue(response());
+    const governed = governApiFetch(fetch, {
+      rateLimiter: limiter,
+      onReceipt: (receipt) => receipts.push(receipt),
+    });
+    const queued = governed("https://example.test");
+    const rejected = governed("https://example.test");
+    await expect(rejected).rejects.toMatchObject({ kind: "rate_limited" });
+    expect(receipts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ transportError: "rate_limited", status: "failed" }),
+      ]),
+    );
+    heldPermit.release();
+    await queued;
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 

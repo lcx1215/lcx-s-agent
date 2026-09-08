@@ -21,6 +21,8 @@ export type ApiCallReceipt = Readonly<{
   transportError?:
     | "network_error"
     | "http_error"
+    | "forbidden"
+    | "rate_limited"
     | "timeout"
     | "cancelled"
     | "circuit_open"
@@ -29,6 +31,7 @@ export type ApiCallReceipt = Readonly<{
   circuitState: ApiCircuitState;
   retryAfterMs?: number;
   rateLimited?: boolean;
+  throttleWaitMs?: number;
   authScopeLabel: ApiAuthScopeLabel;
   quota?: { remaining?: number; limit?: number };
   cost?: { amount: number; currency: string };
@@ -43,6 +46,7 @@ export type ApiTransportOptions = {
   authScopeLabel?: ApiAuthScopeLabel;
   idempotencyKey?: string;
   circuitBreaker?: ApiCircuitBreaker;
+  rateLimiter?: ApiRateLimiter;
   onReceipt?: (receipt: ApiCallReceipt) => void;
 };
 
@@ -128,6 +132,174 @@ export class ApiCallError extends Error {
     super(httpStatus === undefined ? `API ${kind}` : `API http status ${httpStatus}`);
     this.name = "ApiCallError";
   }
+}
+
+export type ApiRateLimiterPermit = Readonly<{
+  waitMs: number;
+  release: () => void;
+}>;
+
+export type ApiRateLimiter = Readonly<{
+  acquire: (signal?: AbortSignal) => Promise<ApiRateLimiterPermit>;
+}>;
+
+/**
+ * Bounded per-source scheduler. It intentionally slows callers down instead
+ * of retrying a provider that is already protecting its public endpoint.
+ */
+export function createApiRateLimiter(
+  options: {
+    minIntervalMs?: number;
+    maxConcurrent?: number;
+    maxQueue?: number;
+  } = {},
+): ApiRateLimiter {
+  const minIntervalMs = options.minIntervalMs ?? 250;
+  const maxConcurrent = options.maxConcurrent ?? 1;
+  const maxQueue = options.maxQueue ?? 64;
+  if (!Number.isFinite(minIntervalMs) || minIntervalMs < 0) {
+    throw new Error("minIntervalMs must be a non-negative number");
+  }
+  if (!Number.isSafeInteger(maxConcurrent) || maxConcurrent <= 0) {
+    throw new Error("maxConcurrent must be a positive integer");
+  }
+  if (!Number.isSafeInteger(maxQueue) || maxQueue <= 0) {
+    throw new Error("maxQueue must be a positive integer");
+  }
+
+  type Waiter = {
+    enqueuedAt: number;
+    signal?: AbortSignal;
+    resolve: (permit: ApiRateLimiterPermit) => void;
+    reject: (error: ApiCallError) => void;
+    onAbort?: () => void;
+  };
+  const queue: Waiter[] = [];
+  let active = 0;
+  let nextStartAt = 0;
+  let drainTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const schedule = () => {
+    if (drainTimer !== undefined || queue.length === 0 || active >= maxConcurrent) {
+      return;
+    }
+    const waitMs = Math.max(0, nextStartAt - Date.now());
+    if (waitMs > 0) {
+      drainTimer = setTimeout(() => {
+        drainTimer = undefined;
+        drain();
+      }, waitMs);
+      drainTimer.unref?.();
+      return;
+    }
+    drain();
+  };
+
+  const drain = () => {
+    if (queue.length === 0 || active >= maxConcurrent) {
+      return;
+    }
+    const now = Date.now();
+    if (nextStartAt > now) {
+      schedule();
+      return;
+    }
+    const waiter = queue.shift();
+    if (!waiter) {
+      return;
+    }
+    if (waiter.signal?.aborted) {
+      waiter.reject(new ApiCallError("cancelled"));
+      drain();
+      return;
+    }
+    waiter.signal?.removeEventListener("abort", waiter.onAbort!);
+    active += 1;
+    nextStartAt = Date.now() + minIntervalMs;
+    let released = false;
+    waiter.resolve({
+      waitMs: Math.max(0, Date.now() - waiter.enqueuedAt),
+      release: () => {
+        if (released) {
+          return;
+        }
+        released = true;
+        active = Math.max(0, active - 1);
+        schedule();
+      },
+    });
+    schedule();
+  };
+
+  return Object.freeze({
+    acquire: (signal?: AbortSignal) => {
+      if (signal?.aborted) {
+        return Promise.reject(new ApiCallError("cancelled"));
+      }
+      if (queue.length >= maxQueue) {
+        return Promise.reject(new ApiCallError("rate_limited"));
+      }
+      return new Promise<ApiRateLimiterPermit>((resolve, reject) => {
+        const waiter: Waiter = {
+          enqueuedAt: Date.now(),
+          signal,
+          resolve,
+          reject,
+        };
+        waiter.onAbort = () => {
+          const index = queue.indexOf(waiter);
+          if (index >= 0) {
+            queue.splice(index, 1);
+            reject(new ApiCallError("cancelled"));
+            schedule();
+          }
+        };
+        signal?.addEventListener("abort", waiter.onAbort, { once: true });
+        queue.push(waiter);
+        schedule();
+      });
+    },
+  });
+}
+
+export type ApiSourceGovernance = Readonly<{
+  rateLimiter: ApiRateLimiter;
+  circuitBreaker: ApiCircuitBreaker;
+}>;
+
+export type ApiSourceGovernanceRegistry = Readonly<{
+  forSource: (sourceKey: string) => ApiSourceGovernance;
+}>;
+
+/** Reusable source-scoped state for repeated, bounded live refreshes. */
+export function createApiSourceGovernanceRegistry(
+  options: {
+    minIntervalMs?: number;
+    maxConcurrent?: number;
+    maxQueue?: number;
+    failureThreshold?: number;
+    resetAfterMs?: number;
+  } = {},
+): ApiSourceGovernanceRegistry {
+  const states = new Map<string, ApiSourceGovernance>();
+  return Object.freeze({
+    forSource: (sourceKey: string) => {
+      const key = sourceKey.trim();
+      if (!key) {
+        throw new Error("sourceKey required");
+      }
+      const existing = states.get(key);
+      if (existing) {
+        return existing;
+      }
+      const state = Object.freeze({
+        rateLimiter: createApiRateLimiter(options),
+        circuitBreaker: createApiCircuitBreaker(options),
+      });
+      states.set(key, state);
+      return state;
+    },
+  });
 }
 
 export function apiSourceErrorText(error: unknown): string {
@@ -318,18 +490,32 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
                 async (attemptSignal) => {
                   let response: ApiFetchResponse;
                   let body: string;
+                  let permit: ApiRateLimiterPermit | undefined;
                   try {
+                    permit = await scope.rateLimiter?.acquire(attemptSignal);
+                    if (permit !== undefined) {
+                      details.throttleWaitMs = permit.waitMs;
+                    }
                     response = await fetchImpl(url, { ...init, signal: attemptSignal });
                     details.httpStatus = response.status;
                     details.retryAfterMs = parseApiRetryAfter(response.headers?.get("retry-after"));
                     details.rateLimited = response.status === 429;
                     body = await response.text();
-                  } catch {
+                  } catch (error) {
                     attemptSignal.throwIfAborted();
+                    if (error instanceof ApiCallError) {
+                      throw error;
+                    }
                     throw new ApiCallError("network_error");
+                  } finally {
+                    permit?.release();
                   }
                   if (!response.ok) {
-                    throw new ApiCallError("http_error", response.status, details.retryAfterMs);
+                    throw new ApiCallError(
+                      response.status === 403 ? "forbidden" : "http_error",
+                      response.status,
+                      details.retryAfterMs,
+                    );
                   }
                   return {
                     ok: response.ok,
@@ -364,7 +550,9 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
         } catch (error) {
           if (
             error instanceof ApiCallError &&
-            (error.kind === "network_error" || error.kind === "http_error")
+            (error.kind === "network_error" ||
+              error.kind === "http_error" ||
+              error.kind === "forbidden")
           ) {
             scope.circuitBreaker?.recordFailure();
           }

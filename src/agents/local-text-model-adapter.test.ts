@@ -20,6 +20,17 @@ describe("local text model adapter contract", () => {
     );
   });
 
+  it("recovers a declared quality envelope when only its tail is malformed", () => {
+    expect(
+      parseLocalModelJson(
+        '{"kind":"review","review":{"verdict":"pass","criticalFindings":[],"evidenceGaps":[],"notes":[]},"tail"',
+      ),
+    ).toEqual({
+      kind: "review",
+      review: { verdict: "pass", criticalFindings: [], evidenceGaps: [], notes: [] },
+    });
+  });
+
   it("builds a bounded prompt without exposing execution receipts", () => {
     const prompt = buildQualityHarnessModelPrompt({
       schemaVersion: 1,
@@ -37,6 +48,37 @@ describe("local text model adapter contract", () => {
     expect(prompt).toContain("stage=intake");
     expect(prompt).toContain("evidence=");
     expect(prompt).not.toContain("lcx_model_call_v1");
+  });
+
+  it("bounds dependency expansion and repeats the exact output contract", () => {
+    const prompt = buildQualityHarnessModelPrompt({
+      schemaVersion: 1,
+      runId: "run-1",
+      attempt: 2,
+      stage: "evidence",
+      agentId: "evidence_integrity",
+      task: "review the supplied evidence",
+      evidence: [{ id: "e1", text: "known fact" }],
+      sharedContext: { researchOnly: true },
+      dependencyOutputs: {
+        data_cleaning: {
+          status: "completed",
+          output: {
+            kind: "review",
+            review: {
+              verdict: "pass",
+              criticalFindings: Array.from({ length: 100 }, () => "repeated finding"),
+            },
+          },
+        },
+      },
+      repairFeedback: Array.from({ length: 100 }, () => "repeated feedback"),
+      instructions: "return a review",
+    });
+    expect(prompt.length).toBeLessThan(8_000);
+    expect(prompt).toContain(
+      'Return only one JSON object. Exact schema: {"kind":"review","review":{"verdict":"pass","criticalFindings":[],"evidenceGaps":[],"notes":[]}}',
+    );
   });
 
   it("requires an explicit adapter path", () => {

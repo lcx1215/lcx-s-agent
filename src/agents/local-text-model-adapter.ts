@@ -85,6 +85,7 @@ function terminateChild(child: ChildProcess): void {
 
 export function parseLocalModelJson(raw: string): Record<string, unknown> {
   const trimmed = raw.trim();
+  const candidates: Record<string, unknown>[] = [];
   for (let searchFrom = 0; searchFrom < trimmed.length; searchFrom += 1) {
     const start = trimmed.indexOf("{", searchFrom);
     if (start < 0) {
@@ -118,7 +119,7 @@ export function parseLocalModelJson(raw: string): Record<string, unknown> {
           try {
             const parsed = JSON.parse(trimmed.slice(start, index + 1)) as unknown;
             if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-              return parsed as Record<string, unknown>;
+              candidates.push(parsed as Record<string, unknown>);
             }
           } catch {
             // Keep searching; model runtimes may emit a short prefix before JSON.
@@ -128,31 +129,160 @@ export function parseLocalModelJson(raw: string): Record<string, unknown> {
       }
     }
   }
+  const withKind = candidates.find((candidate) => typeof candidate.kind === "string");
+  if (withKind) {
+    return withKind;
+  }
+  const declaredKind = trimmed.match(/"kind"\s*:\s*"(plan|review|artifact)"/u)?.[1];
+  if (declaredKind === "plan") {
+    const plan = candidates.find(
+      (candidate) => "requirements" in candidate && "missingEvidence" in candidate,
+    );
+    if (plan) {
+      return {
+        kind: "plan",
+        requirements: plan.requirements,
+        missingEvidence: plan.missingEvidence,
+      };
+    }
+  }
+  if (declaredKind === "review") {
+    const review = candidates.find(
+      (candidate) =>
+        "verdict" in candidate && "criticalFindings" in candidate && "evidenceGaps" in candidate,
+    );
+    if (review) {
+      return { kind: "review", review };
+    }
+  }
+  if (declaredKind === "artifact") {
+    const artifact = candidates.find((candidate) => "answer" in candidate && "claims" in candidate);
+    if (artifact) {
+      return { kind: "artifact", artifact };
+    }
+  }
+  if (candidates[0]) {
+    return candidates[0];
+  }
   throw new Error("local text model output did not contain a JSON object");
 }
 
+function clipPromptText(value: string, maxLength: number): string {
+  const normalized = value.trim();
+  return normalized.length <= maxLength ? normalized : `${normalized.slice(0, maxLength)}…`;
+}
+
+function compactPromptValue(value: unknown, depth = 0): unknown {
+  if (depth >= 4) {
+    return typeof value === "string" ? clipPromptText(value, 240) : "[bounded]";
+  }
+  if (typeof value === "string") {
+    return clipPromptText(value, 1_200);
+  }
+  if (value === null || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.slice(0, 8).map((entry) => compactPromptValue(entry, depth + 1));
+  }
+  if (typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .slice(0, 16)
+        .map(([key, entry]) => [key, compactPromptValue(entry, depth + 1)]),
+    );
+  }
+  return typeof value === "bigint"
+    ? value.toString()
+    : typeof value === "symbol"
+      ? (value.description ?? "symbol")
+      : "[unsupported]";
+}
+
+function compactQualityEvidence(request: QualityHarnessModelRequest) {
+  return request.evidence.slice(0, 8).map((entry) => ({
+    id: entry.id,
+    text: clipPromptText(entry.text, 500),
+    ...(entry.source === undefined ? {} : { source: clipPromptText(entry.source, 300) }),
+  }));
+}
+
+function compactQualityDependencies(request: QualityHarnessModelRequest) {
+  return Object.fromEntries(
+    Object.entries(request.dependencyOutputs)
+      .slice(0, 10)
+      .map(([taskId, output]) => [taskId, compactPromptValue(output)]),
+  );
+}
+
+function formatPromptSectionValue(value: unknown, depth = 0): string {
+  const compact = compactPromptValue(value, depth);
+  if (compact === null || typeof compact === "number" || typeof compact === "boolean") {
+    return String(compact);
+  }
+  if (typeof compact === "string") {
+    return compact;
+  }
+  if (Array.isArray(compact)) {
+    return compact.map((entry) => formatPromptSectionValue(entry, depth + 1)).join("; ");
+  }
+  if (compact === undefined || compact === null || typeof compact !== "object") {
+    return typeof compact === "bigint"
+      ? compact.toString()
+      : typeof compact === "symbol"
+        ? (compact.description ?? "symbol")
+        : "[unsupported]";
+  }
+  return Object.entries(compact)
+    .map(([key, entry]) => `${key}=${formatPromptSectionValue(entry, depth + 1)}`)
+    .join("; ");
+}
+
+function qualityStageContract(stage: QualityHarnessModelRequest["stage"]): string {
+  if (stage === "intake") {
+    return '{"kind":"plan","requirements":[],"missingEvidence":[]}';
+  }
+  if (stage === "draft" || stage === "format") {
+    return '{"kind":"artifact","artifact":{"answer":"bounded answer","claims":[{"id":"claim-1","text":"supported claim","status":"supported","evidenceIds":["evidence-id"]}]}}';
+  }
+  return '{"kind":"review","review":{"verdict":"pass","criticalFindings":[],"evidenceGaps":[],"notes":[]}}';
+}
+
 export function buildQualityHarnessModelPrompt(request: QualityHarnessModelRequest): string {
-  const contractExample =
-    request.stage === "intake"
-      ? '{"kind":"plan","requirements":[],"missingEvidence":[]}'
-      : request.stage === "draft" || request.stage === "format"
-        ? '{"kind":"artifact","artifact":{"answer":"bounded answer","claims":[{"id":"claim-1","text":"supported claim","status":"supported","evidenceIds":["operator-input"]}]}}'
-        : '{"kind":"review","review":{"verdict":"pass","criticalFindings":[],"evidenceGaps":[],"notes":[]}}';
-  return [
-    "You are a bounded LCX local model adapter.",
-    "Return exactly one valid JSON object and no markdown, commentary, or think trace.",
-    "Follow the requested stage contract exactly. Do not invent facts or current data.",
-    `stage=${request.stage}`,
-    `agent_id=${request.agentId}`,
-    `task=${request.task}`,
-    `instructions=${request.instructions}`,
-    `exact_shape_example=${contractExample}`,
-    "Use the exact top-level kind and nested field names from the example; empty arrays are valid.",
-    `evidence=${JSON.stringify(request.evidence)}`,
-    `shared_context=${JSON.stringify(request.sharedContext)}`,
-    `dependency_outputs=${JSON.stringify(request.dependencyOutputs)}`,
-    `repair_feedback=${JSON.stringify(request.repairFeedback)}`,
-  ].join("\n");
+  const contractExample = qualityStageContract(request.stage);
+  const evidence = compactQualityEvidence(request);
+  const dependencyOutputs = compactQualityDependencies(request);
+  const repairFeedback = request.repairFeedback
+    .slice(0, 8)
+    .map((item) => clipPromptText(item, 300));
+  const evidenceSection = clipPromptText(
+    evidence
+      .map((entry) => `[${entry.id}] ${entry.text}${entry.source ? ` (${entry.source})` : ""}`)
+      .join(" | "),
+    1_800,
+  );
+  const needsDependencies = [
+    "risk",
+    "exposure",
+    "draft",
+    "adversarial",
+    "format",
+    "precheck",
+  ].includes(request.stage);
+  const sections = [
+    "LCX quality stage. Use the supplied evidence only.",
+    `stage=${request.stage}; agent=${request.agentId}`,
+    `task=${clipPromptText(request.task, 1_200)}`,
+    `evidence=${evidenceSection}`,
+    ...(needsDependencies
+      ? [`previous=${clipPromptText(formatPromptSectionValue(dependencyOutputs), 600) || "none"}`]
+      : []),
+    ...(repairFeedback.length > 0
+      ? [`repair=${clipPromptText(formatPromptSectionValue(repairFeedback), 600)}`]
+      : []),
+    `Return only one JSON object. Exact schema: ${contractExample}`,
+  ];
+  return sections.join("\n");
 }
 
 export function buildLocalRoleShadowPrompt(request: LocalRoleShadowRequest): string {

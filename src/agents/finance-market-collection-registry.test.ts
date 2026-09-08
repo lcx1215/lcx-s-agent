@@ -413,6 +413,17 @@ describe("finance market collection registry", () => {
       "finnhub_us_equity_news",
       "gdelt_public_news",
       "google_news_rss",
+    ]);
+    expect(
+      inspectFinanceMarketCollectionRegistry(
+        EQUITY_REQUEST,
+        createFinanceMarketCollectionRegistry({ ...options, includeYahooPublicSources: true }),
+      ).candidateAdapters.map((adapter) => adapter.id),
+    ).toEqual([
+      "massive_us_equity_news",
+      "finnhub_us_equity_news",
+      "gdelt_public_news",
+      "google_news_rss",
       "yahoo_finance_rss",
     ]);
     expect(JSON.stringify(inspection)).not.toContain("secret");

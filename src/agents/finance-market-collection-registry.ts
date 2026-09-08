@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   apiSourceErrorText,
   runApiSourceCall,
+  type ApiSourceGovernanceRegistry,
   type ApiCallReceipt,
   type ApiTransportOptions,
 } from "./api-call-contract.js";
@@ -127,6 +128,8 @@ export type FinanceMarketCollectionRegistryOptions = Readonly<{
   finnhubApiKey?: string;
   fredApiKey?: string;
   fmpApiKey?: string;
+  /** Yahoo public endpoints are opt-in because automated traffic may be rejected. */
+  includeYahooPublicSources?: boolean;
   additionalAdapters?: readonly FinanceMarketCollectionAdapter[];
 }>;
 
@@ -990,6 +993,7 @@ export async function runFinanceMarketCollectionRefresh(options: {
   signal?: AbortSignal;
   correlationId?: string;
   retry?: ApiTransportOptions["retry"];
+  sourceGovernance?: ApiSourceGovernanceRegistry;
 }): Promise<FinanceMarketCollectionReceipt> {
   const request = normalizeRequest(options.request);
   validateAdapters(options.adapters);
@@ -1022,6 +1026,15 @@ export async function runFinanceMarketCollectionRefresh(options: {
           signal: options.signal,
           correlationId,
           retry: options.retry,
+          ...(() => {
+            const governance = options.sourceGovernance?.forSource(adapter.id);
+            return governance
+              ? {
+                  rateLimiter: governance.rateLimiter,
+                  circuitBreaker: governance.circuitBreaker,
+                }
+              : {};
+          })(),
           onReceipt: (receipt) => apiCalls.push(receipt),
         },
         () => {
@@ -1095,6 +1108,7 @@ export function resolveFinanceMarketCollectionRegistryOptionsFromEnv(
     finnhubApiKey: env.FINNHUB_API_KEY?.trim() || undefined,
     fredApiKey: env.FRED_API_KEY?.trim() || undefined,
     fmpApiKey: env.FMP_API_KEY?.trim() || undefined,
+    includeYahooPublicSources: env.LCX_ENABLE_YAHOO_PUBLIC_SOURCES === "1",
   };
 }
 
@@ -1106,11 +1120,15 @@ export function createFinanceMarketCollectionRegistry(
     createTreasuryDebtCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createTreasuryAverageInterestRatesCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createSecFilingsCollectionAdapter({ fetchImpl: options.fetchImpl }),
-    createYahooPublicEodHistoryCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createGdeltPublicNewsCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createGoogleNewsRssCollectionAdapter({ fetchImpl: options.fetchImpl }),
-    createYahooFinanceRssCollectionAdapter({ fetchImpl: options.fetchImpl }),
   ];
+  if (options.includeYahooPublicSources) {
+    adapters.push(
+      createYahooPublicEodHistoryCollectionAdapter({ fetchImpl: options.fetchImpl }),
+      createYahooFinanceRssCollectionAdapter({ fetchImpl: options.fetchImpl }),
+    );
+  }
   if (options.massiveApiKey?.trim()) {
     adapters.push(
       createMassiveNewsCollectionAdapter({

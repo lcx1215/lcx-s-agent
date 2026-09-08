@@ -122,6 +122,9 @@ function summarizeGeospatial(receipt: GeospatialRefreshReceipt) {
       sourceTimestamps: receipt.normalizedFields.map((field) => field.sourceTimestamp),
       valueObserved: receipt.normalizedFields.length > 0,
     },
+    freshnessGatePassed: receipt.freshnessWarnings.length === 0,
+    provenanceConflictGatePassed: receipt.conflicts.length === 0,
+    readyGatePassed: receipt.status === "ready",
     sourceAttempts: receipt.sourceAttempts.map((attempt) => ({
       adapterId: attempt.adapterId,
       providerName: attempt.providerName,
@@ -130,7 +133,10 @@ function summarizeGeospatial(receipt: GeospatialRefreshReceipt) {
       apiCalls: (attempt.apiCalls ?? []).map(compactReceipt),
     })),
     receipts: apiCalls.map(compactReceipt),
+    conflicts: receipt.conflicts,
     missingEvidence: receipt.missingEvidence,
+    freshnessWarnings: receipt.freshnessWarnings,
+    staleSourceWarnings: receipt.staleSourceWarnings,
   };
 }
 
@@ -167,12 +173,14 @@ async function main(): Promise<number> {
         freshnessMaxMinutes: 60,
       },
       adapters: createGeospatialSourceRegistry(),
-      maxSources: 1,
+      // Keep one global source plus one official cross-check so a cached or
+      // lagging public feed cannot become the sole freshness authority.
+      maxSources: 2,
       timeoutMs: options.timeoutMs,
       correlationId,
       retry: { attempts: 1 },
       authScopeLabel: "public",
-      idempotencyKey: `${correlationId}:open_meteo_current_weather`,
+      idempotencyKey: `${correlationId}:weather_refresh`,
     });
     result = summarizeGeospatial(refresh);
   }

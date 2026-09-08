@@ -84,6 +84,7 @@ export class LiveMarketFetchError extends Error {
     readonly reason:
       | "network_error"
       | "http_error"
+      | "forbidden"
       | "empty_body"
       | "unparseable"
       | "no_value"
@@ -167,7 +168,11 @@ export async function fetchYahooQuote(
           throw error;
         }
         if (error.kind === "http_error" && error.httpStatus === 403) {
-          lastError = new LiveMarketFetchError(error.message, "http_error");
+          lastError = new LiveMarketFetchError(error.message, "forbidden");
+          continue;
+        }
+        if (error.kind === "forbidden") {
+          lastError = new LiveMarketFetchError(error.message, "forbidden");
           continue;
         }
         if (error.kind === "http_error") {
@@ -183,7 +188,7 @@ export async function fetchYahooQuote(
     if (!response.ok) {
       lastError = new LiveMarketFetchError(
         `yahoo http status ${response.status} on ${host}`,
-        "http_error",
+        response.status === 403 ? "forbidden" : "http_error",
       );
       continue;
     }

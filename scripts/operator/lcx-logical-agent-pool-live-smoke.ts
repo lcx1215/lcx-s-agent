@@ -12,6 +12,7 @@ import {
 } from "../../src/agents/geospatial-source-registry.ts";
 import {
   createLocalRoleShadowAdapter,
+  createLocalQualityHarnessAdapter,
   resolveLocalTextModelRuntimeConfig,
   type LocalRoleShadowRequest,
   type LocalTextModelRuntimeConfig,
@@ -29,6 +30,10 @@ import {
   type LogicalAgentRequest,
   type ModelCallReceipt,
 } from "../../src/agents/logical-agent-pool.ts";
+import {
+  runQualityHarness,
+  type QualityHarnessVerifier,
+} from "../../src/agents/quality-harness.ts";
 import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
 
 const execFileAsync = promisify(execFile);
@@ -44,6 +49,7 @@ type Options = {
   timeoutMs: number;
   allowNetwork: boolean;
   withGeospatial: boolean;
+  withQuality: boolean;
   geospatialQuery: string;
   skipFull: boolean;
   json: boolean;
@@ -73,6 +79,7 @@ function parseArgs(args: readonly string[]): Options {
     timeoutMs: 120_000,
     allowNetwork: false,
     withGeospatial: false,
+    withQuality: false,
     geospatialQuery: "40.7128,-74.0060",
     skipFull: false,
     json: false,
@@ -101,6 +108,8 @@ function parseArgs(args: readonly string[]): Options {
       options.allowNetwork = true;
     } else if (arg === "--with-geospatial") {
       options.withGeospatial = true;
+    } else if (arg === "--with-quality") {
+      options.withQuality = true;
     } else if (arg === "--geospatial-query") {
       options.geospatialQuery = readValue(args, index, arg);
       index += 1;
@@ -110,7 +119,7 @@ function parseArgs(args: readonly string[]): Options {
       options.json = true;
     } else if (arg === "--help" || arg === "-h") {
       throw new Error(
-        "Usage: node --import tsx scripts/operator/lcx-logical-agent-pool-live-smoke.ts [--json] [--skip-full] [--with-geospatial] [--geospatial-query LAT,LON] [--allow-model-network] [--ask TEXT] [--adapter DIR] [--model MODEL] [--python PATH] [--max-tokens N] [--timeout-ms N]",
+        "Usage: node --import tsx scripts/operator/lcx-logical-agent-pool-live-smoke.ts [--json] [--skip-full] [--with-geospatial] [--with-quality] [--geospatial-query LAT,LON] [--allow-model-network] [--ask TEXT] [--adapter DIR] [--model MODEL] [--python PATH] [--max-tokens N] [--timeout-ms N]",
       );
     } else {
       throw new Error(`unknown argument: ${arg}`);
@@ -164,6 +173,77 @@ function buildRouting(
   };
 }
 
+function buildQualityRouting(
+  adapter: ReturnType<typeof createLocalQualityHarnessAdapter>,
+  runtime: LocalTextModelRuntimeConfig,
+): LogicalAgentModelRouting {
+  return {
+    revision: `live-local-qwen-quality-v1-${createHash("sha256")
+      .update(runtime.adapterPath)
+      .digest("hex")
+      .slice(0, 12)}`,
+    adapters: [adapter],
+    defaultPolicy: {
+      primary: adapter.id,
+      requiredCapabilities: ["quality_harness"],
+      maxInputBytes: 256_000,
+      timeoutMs: runtime.timeoutMs,
+    },
+  };
+}
+
+const verifyQualityArtifact: QualityHarnessVerifier = ({ request, artifact }) => {
+  const evidenceIds = new Set(request.evidence.map((entry) => entry.id));
+  const invalidClaims = artifact.claims.filter(
+    (claim) =>
+      claim.status === "supported" &&
+      (claim.evidenceIds.length === 0 || claim.evidenceIds.some((id) => !evidenceIds.has(id))),
+  );
+  if (invalidClaims.length > 0) {
+    return {
+      status: "failed",
+      summary: "supported claims must cite supplied evidence ids",
+      details: [`invalid_supported_claims=${invalidClaims.length}`],
+    };
+  }
+  return {
+    status: "passed",
+    summary: "artifact claims are bounded to the supplied evidence contract",
+    details: [`evidence_count=${request.evidence.length}`, `claim_count=${artifact.claims.length}`],
+  };
+};
+
+async function runQualityShadow(
+  runtime: LocalTextModelRuntimeConfig,
+  request: ShadowInput,
+): Promise<Awaited<ReturnType<typeof runQualityHarness>>> {
+  const adapter = createLocalQualityHarnessAdapter(runtime);
+  const routing = buildQualityRouting(adapter, runtime);
+  return runQualityHarness({
+    request: {
+      task: request.ask,
+      evidence: request.evidence.map((text, index) => ({
+        id: `live-evidence-${index + 1}`,
+        text,
+        source: "live-local-api-shadow",
+      })),
+      sharedContext: {
+        researchOnly: true,
+        externalSideEffectsAllowed: false,
+        sourceTimestampsRequired: true,
+      },
+    },
+    modelId: runtime.modelId,
+    modelRouting: routing,
+    maxConcurrency: 1,
+    memoryBudgetMb: 3072,
+    taskTimeoutMs: Math.max(runtime.timeoutMs + 30_000, 180_000),
+    verifierTimeoutMs: 10_000,
+    maxAttempts: 2,
+    verify: verifyQualityArtifact,
+  });
+}
+
 type ShadowInput = Readonly<{
   ask: string;
   evidence: readonly string[];
@@ -211,6 +291,12 @@ function summarizeGeospatialEvidence(receipt: GeospatialRefreshReceipt) {
         `field=${field.name};value=${String(field.value)};source_timestamp=${field.sourceTimestamp};definition=${field.fieldDefinition}`,
     ),
     ...receipt.freshnessWarnings.map((warning) => `freshness_warning=${warning}`),
+    ...receipt.conflicts.map(
+      (conflict) =>
+        `provenance_conflict=${conflict.fieldName};values=${conflict.providerValues
+          .map((entry) => `${entry.providerName}:${String(entry.value)}@${entry.sourceTimestamp}`)
+          .join("|")}`,
+    ),
     ...receipt.missingEvidence.map((missing) => `missing_evidence=${missing}`),
   ];
   return {
@@ -219,6 +305,11 @@ function summarizeGeospatialEvidence(receipt: GeospatialRefreshReceipt) {
     fieldNames: receipt.normalizedFields.map((field) => field.name),
     sourceTimestamps: receipt.normalizedFields.map((field) => field.sourceTimestamp),
     freshnessWarnings: receipt.freshnessWarnings,
+    staleSourceWarnings: receipt.staleSourceWarnings,
+    conflicts: receipt.conflicts,
+    freshnessGatePassed: receipt.freshnessWarnings.length === 0,
+    provenanceConflictGatePassed: receipt.conflicts.length === 0,
+    readyGatePassed: receipt.status === "ready",
     receipts: apiCalls.map(compactApiCall),
     evidence,
   };
@@ -234,12 +325,14 @@ async function runGeospatialShadow(query: string, timeoutMs: number) {
       freshnessMaxMinutes: 60,
     },
     adapters: createGeospatialSourceRegistry(),
-    maxSources: 1,
+    // Use the public aggregate plus the official cross-check; the registry
+    // chooses the freshest field and retains stale-source evidence separately.
+    maxSources: 2,
     timeoutMs,
     correlationId,
     retry: { attempts: 1 },
     authScopeLabel: "public",
-    idempotencyKey: `${correlationId}:open_meteo_current_weather`,
+    idempotencyKey: `${correlationId}:weather_refresh`,
   });
   return {
     correlationId,
@@ -405,6 +498,7 @@ async function main(): Promise<number> {
   if (options.withGeospatial && !apiShadow?.transportSucceeded) {
     throw new Error("geospatial transport did not produce a successful API receipt");
   }
+  const quality = options.withQuality ? await runQualityShadow(runtime, request) : undefined;
   const single = await runSingleRole(routing, request);
   const singleCalls = single.calls.map(compactCall);
   const singlePassed =
@@ -455,9 +549,14 @@ async function main(): Promise<number> {
       ? {
           ...apiShadow,
           evidenceInjectedIntoRoles: true,
-          freshnessGatePassed: apiShadow?.status === "ready",
+          freshnessGatePassed: apiShadow?.freshnessGatePassed ?? false,
+          provenanceConflictGatePassed: apiShadow?.provenanceConflictGatePassed ?? false,
+          readyGatePassed: apiShadow?.readyGatePassed ?? false,
         }
       : { skipped: true, reason: "--with-geospatial not supplied" },
+    quality: options.withQuality
+      ? quality
+      : { skipped: true, reason: "--with-quality not supplied" },
     claims: {
       singleRoleRealModelInferenceObserved: single.calls.some(
         (call) => call.realModelInferenceObserved,
@@ -469,7 +568,12 @@ async function main(): Promise<number> {
       fullShadowCompletedTenRoles: !options.skipFull && fullPassed,
       fullShadowQualityGates: "not_run_in_raw_role_shadow",
       apiTransportSucceeded: apiShadow?.transportSucceeded ?? false,
-      apiFreshnessGatePassed: apiShadow?.status === "ready",
+      apiFreshnessGatePassed: apiShadow?.freshnessGatePassed ?? false,
+      apiProvenanceConflictGatePassed: apiShadow?.provenanceConflictGatePassed ?? false,
+      apiReadyGatePassed: apiShadow?.readyGatePassed ?? false,
+      qualityGatePassed: quality?.status === "verified" && quality.quality.passed,
+      qualityRealModelInferenceObserved: quality?.execution.realModelInferenceObserved ?? false,
+      qualityModelCallsAttested: quality?.execution.allModelCallsAttested ?? false,
       providerConfigTouched: false,
       externalSideEffects: false,
       protectedMemoryTouched: false,
@@ -489,7 +593,16 @@ async function main(): Promise<number> {
       ].join("\n") + "\n",
     );
   }
-  return singlePassed && fullPassed && (!options.withGeospatial || apiShadow?.status === "ready")
+  const qualityPassed =
+    !options.withQuality ||
+    (quality?.status === "verified" &&
+      quality.quality.passed &&
+      quality.execution.realModelInferenceObserved &&
+      quality.execution.allModelCallsAttested);
+  return singlePassed &&
+    fullPassed &&
+    qualityPassed &&
+    (!options.withGeospatial || apiShadow?.status === "ready")
     ? 0
     : 2;
 }

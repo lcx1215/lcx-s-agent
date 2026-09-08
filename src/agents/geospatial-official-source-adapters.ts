@@ -52,6 +52,24 @@ function parseTimestamp(value: unknown, fallback: string, label: string): string
   throw new OfficialGeospatialSourceError(`${label} must be a valid timestamp`);
 }
 
+function normalizeWindSpeed(
+  value: unknown,
+  unitCode: unknown,
+): Readonly<{ value: number; unit: string }> {
+  const parsed = parseFiniteNumber(value, "NWS wind speed");
+  if (unitCode === "wmoUnit:m_s-1") {
+    return { value: parsed * 3.6, unit: "km/h" };
+  }
+  if (unitCode === undefined || unitCode === "wmoUnit:km_h-1") {
+    return { value: parsed, unit: "km/h" };
+  }
+  throw new OfficialGeospatialSourceError(
+    `NWS wind speed unit is unsupported: ${
+      typeof unitCode === "string" ? unitCode : JSON.stringify(unitCode)
+    }`,
+  );
+}
+
 async function fetchJson(fetchImpl: FetchImpl, url: string): Promise<unknown> {
   let response: { ok: boolean; status: number; text: () => Promise<string> };
   try {
@@ -135,7 +153,7 @@ export function createNwsCurrentWeatherAdapter(
           temperature?: { value?: unknown };
           relativeHumidity?: { value?: unknown };
           barometricPressure?: { value?: unknown };
-          windSpeed?: { value?: unknown };
+          windSpeed?: { value?: unknown; unitCode?: unknown };
           textDescription?: unknown;
         };
       };
@@ -192,14 +210,18 @@ export function createNwsCurrentWeatherAdapter(
         );
       }
       if (properties.windSpeed?.value !== null && properties.windSpeed?.value !== undefined) {
+        const windSpeed = normalizeWindSpeed(
+          properties.windSpeed.value,
+          properties.windSpeed.unitCode,
+        );
         fields.push(
           field(
             "wind_speed_10m",
-            parseFiniteNumber(properties.windSpeed.value, "NWS wind speed"),
-            "km/h",
+            windSpeed.value,
+            windSpeed.unit,
             sourceTimestamp,
             observationsUrl,
-            "NWS official station wind speed; station height varies by location",
+            "NWS official station wind speed normalized to km/h; station height varies by location",
           ),
         );
       }

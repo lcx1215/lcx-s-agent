@@ -41,4 +41,35 @@ describe("official geospatial source adapters", () => {
       ]),
     );
   });
+
+  it("converts NWS wind speeds reported in metres per second", async () => {
+    const adapter = createNwsCurrentWeatherAdapter({
+      fetchImpl: async (url) => ({
+        ok: true,
+        status: 200,
+        text: async () =>
+          url.includes("/points/")
+            ? JSON.stringify({
+                properties: { observationStations: "https://api.weather.gov/stations" },
+              })
+            : url.endsWith("/stations")
+              ? JSON.stringify({ features: [{ properties: { stationIdentifier: "KTEST" } }] })
+              : JSON.stringify({
+                  properties: {
+                    timestamp: "2026-09-07T11:59:00Z",
+                    windSpeed: { value: 5, unitCode: "wmoUnit:m_s-1" },
+                  },
+                }),
+      }),
+    });
+    const observation = await adapter.collect(
+      { kind: "weather", query: "38.8977,-77.0365", asOf: "2026-09-07T12:00:00.000Z" },
+      new AbortController().signal,
+    );
+    expect(observation.fields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "wind_speed_10m", value: 18, unit: "km/h" }),
+      ]),
+    );
+  });
 });

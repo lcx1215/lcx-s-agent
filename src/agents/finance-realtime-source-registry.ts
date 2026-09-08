@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   apiSourceErrorText,
   runApiSourceCall,
+  type ApiSourceGovernanceRegistry,
   type ApiCallReceipt,
   type ApiTransportOptions,
 } from "./api-call-contract.js";
@@ -117,6 +118,8 @@ export type FinanceRealtimeSourceRegistryOptions = Readonly<{
   alpacaFeed?: string;
   finnhubApiKey?: string;
   twelveDataApiKey?: string;
+  /** Yahoo's public chart endpoint is opt-in because it can reject automated traffic. */
+  includeYahooPublicSource?: boolean;
   additionalAdapters?: readonly FinanceRealtimeSourceAdapter[];
 }>;
 
@@ -133,6 +136,7 @@ export function resolveFinanceRealtimeSourceRegistryOptionsFromEnv(
     alpacaFeed: env.ALPACA_DATA_FEED?.trim() || undefined,
     finnhubApiKey: env.FINNHUB_API_KEY?.trim() || undefined,
     twelveDataApiKey: env.TWELVE_DATA_API_KEY?.trim() || undefined,
+    includeYahooPublicSource: env.LCX_ENABLE_YAHOO_PUBLIC_SOURCE === "1",
   };
 }
 
@@ -256,6 +260,7 @@ export async function runFinanceRealtimeRefresh(options: {
   signal?: AbortSignal;
   correlationId?: string;
   retry?: ApiTransportOptions["retry"];
+  sourceGovernance?: ApiSourceGovernanceRegistry;
 }): Promise<FinanceRealtimeRefreshReceipt> {
   const request = normalizeRequest(options.request);
   validateAdapters(options.adapters);
@@ -286,6 +291,15 @@ export async function runFinanceRealtimeRefresh(options: {
           signal: options.signal,
           correlationId,
           retry: options.retry,
+          ...(() => {
+            const governance = options.sourceGovernance?.forSource(adapter.id);
+            return governance
+              ? {
+                  rateLimiter: governance.rateLimiter,
+                  circuitBreaker: governance.circuitBreaker,
+                }
+              : {};
+          })(),
           onReceipt: (receipt) => apiCalls.push(receipt),
         },
         () => {
@@ -422,7 +436,6 @@ export function createFinanceRealtimeSourceRegistry(
   options: FinanceRealtimeSourceRegistryOptions = {},
 ): readonly FinanceRealtimeSourceAdapter[] {
   const adapters: FinanceRealtimeSourceAdapter[] = [
-    createYahooDelayedMarketAdapter(options),
     createBinanceCryptoTickerAdapter({ fetchImpl: options.fetchImpl }),
     createKrakenCryptoTickerAdapter({ fetchImpl: options.fetchImpl }),
     createCoinbaseCryptoTickerAdapter({ fetchImpl: options.fetchImpl }),
@@ -439,6 +452,9 @@ export function createFinanceRealtimeSourceRegistry(
     createSecCompanyFactsAdapter({ fetchImpl: options.fetchImpl }),
     createInvescoIssuerReferenceAdapter({ fetchImpl: options.fetchImpl }),
   ];
+  if (options.includeYahooPublicSource) {
+    adapters.unshift(createYahooDelayedMarketAdapter(options));
+  }
   if (options.alphaVantageApiKey?.trim()) {
     adapters.push(
       createAlphaVantageMarketAdapter({
