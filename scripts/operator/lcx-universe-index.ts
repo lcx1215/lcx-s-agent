@@ -435,6 +435,16 @@ const GOVERNANCE_COMPONENT_RULES: GovernanceComponentRule[] = [
     disposition: "governed_source",
   },
   {
+    id: "deployment_configuration_surface",
+    patterns: [/^deploy\//u],
+    category: "deployment_configuration",
+    routeOwner: "scripts/operator/lcx-change-impact-plan.ts",
+    proofSurface: "deployment-specific check plus lcx-change-impact-plan",
+    boundary:
+      "deployment configuration is governed source, not proof of a deployed runtime or external delivery",
+    disposition: "governed_source",
+  },
+  {
     id: "auxiliary_project_surface",
     patterns: [/^(?:Swabble|packages)\//u],
     category: "auxiliary_project",
