@@ -249,6 +249,8 @@ describe("quality harness", () => {
     for (const answer of [
       "Make MSFT 25% of your portfolio.",
       "Keep 25% of the portfolio in cash.",
+      "Limit MSFT to 25% of your portfolio.",
+      "Cap the position at 5%.",
     ]) {
       const result = await runQualityHarness({
         request: {
@@ -265,6 +267,48 @@ describe("quality harness", () => {
         result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
       ).toMatchObject({ passed: false });
     }
+  });
+
+  it("does not reject a factual company allocation as a user directive", async () => {
+    const result = await runQualityHarness({
+      request: {
+        task: "请总结该公司的投资计划。",
+        evidence: [
+          {
+            id: "company-plan",
+            text: "公司计划将 25% 的资本投入研发。",
+            source: "company-report-test",
+          },
+        ],
+      },
+      maxAttempts: 1,
+      modelInvoker: async (raw) => {
+        const current = raw as QualityHarnessModelRequest;
+        if (current.stage === "intake") {
+          return { kind: "plan", requirements: ["总结投资计划"], missingEvidence: [] };
+        }
+        if (current.stage === "draft" || current.stage === "format") {
+          return {
+            kind: "artifact",
+            artifact: {
+              answer: "The company plans to allocate 25% of its capital to R&D.",
+              claims: [
+                {
+                  id: "company-plan",
+                  text: "The company plans to allocate 25% of its capital to R&D.",
+                  status: "supported",
+                  evidenceIds: ["company-plan"],
+                },
+              ],
+            },
+          };
+        }
+        return passReview();
+      },
+      verify: async () => ({ status: "passed", summary: "factual report", details: [] }),
+    });
+
+    expect(result.status).toBe("verified");
   });
 
   it("does not allow an unrelated grounded claim to certify a final current number", async () => {
@@ -410,6 +454,43 @@ describe("quality harness", () => {
         return passReview();
       },
       verify: async () => ({ status: "passed", summary: "date formats match", details: [] }),
+    });
+
+    expect(result.status).toBe("verified");
+  });
+
+  it("does not require a displayed timestamp to be repeated in claim text", async () => {
+    const result = await runQualityHarness({
+      request: financeRequest,
+      maxAttempts: 1,
+      modelInvoker: async (raw) => {
+        const current = raw as QualityHarnessModelRequest;
+        if (current.stage === "intake") {
+          return { kind: "plan", requirements: ["回答问题"], missingEvidence: [] };
+        }
+        if (current.stage === "draft" || current.stage === "format") {
+          return {
+            kind: "artifact",
+            artifact: {
+              answer: "As of September 6, 2026, NVDA was $480.",
+              claims: [
+                {
+                  id: "claim-1",
+                  text: "NVDA was $480.",
+                  status: "supported",
+                  evidenceIds: ["market"],
+                },
+              ],
+            },
+          };
+        }
+        return passReview();
+      },
+      verify: async () => ({
+        status: "passed",
+        summary: "timestamp metadata is separately grounded",
+        details: [],
+      }),
     });
 
     expect(result.status).toBe("verified");

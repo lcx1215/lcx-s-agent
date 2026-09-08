@@ -61,12 +61,26 @@ const CURRENT_DATA_PATTERN =
 const DIRECT_TRADE_ACTION_PATTERN =
   /(?:^|[.!?\n:]\s*)(?:buy|sell|add|reduce|go long|go short)\b[^.!?\n]{0,120}(?:[.!?\n]|$)|\b(?:you\s+should|i\s+(?:recommend|would)|recommend(?:ed)?|consider|please)\b[^.!?\n]{0,60}\b(?:buy|sell|add|reduce|go long|go short)\b|(?:建议|应该|推荐|考虑|立即|现在)[^\n。！？]{0,30}(?:买入|卖出|加仓|减仓|做多|做空|增持|减持)|(?:买入|卖出|加仓|减仓|做多|做空|增持|减持)[^\n。！？]{0,12}(?:股票|仓位|标的|[A-Z]{1,6}\b)/imu;
 const POSITION_SIZING_PATTERN =
-  /\b(?:allocate|assign|invest|put|commit|reserve|make|keep|hold|maintain|target|set|size|weight)\b[^.!?\n]{0,100}[+-]?\d[\d,]*(?:\.\d+)?\s*%[^.!?\n]{0,100}\b(?:portfolio|position|capital|assets?|cash)\b|\b(?:allocate|assign|invest|put|commit|reserve|make|keep|hold|maintain|target|set|size|weight)\b[^.!?\n]{0,100}[+-]?\d[\d,]*(?:\.\d+)?\s*%\s*(?:of|in|into|to)\b|(?:配置|分配|投入|拿出|占用)[^\n。！？]{0,20}[+-]?\d[\d,]*(?:\.\d+)?\s*%|[+-]?\d[\d,]*(?:\.\d+)?\s*%[^\n。！？]{0,20}(?:仓位|组合|资金|资产)/imu;
+  /(?:^|[.!?\n:]\s*)(?:please\s+|you\s+(?:should|can)\s+|i\s+(?:recommend|would)\s+|consider\s+)?(?:allocate|assign|invest|put|commit|reserve|make|keep|hold|maintain|target|set|size|weight|limit|cap)\b[^.!?\n]{0,120}[+-]?\d[\d,]*(?:\.\d+)?\s*%[^.!?\n]{0,120}\b(?:your\s+)?(?:portfolio|position|capital|assets?|cash)\b|(?:^|[.!?\n:]\s*)(?:please\s+|you\s+(?:should|can)\s+|i\s+(?:recommend|would)\s+|consider\s+)?(?:allocate|assign|invest|put|commit|reserve|make|keep|hold|maintain|target|set|size|weight|limit|cap)\b[^.!?\n]{0,120}\b(?:your\s+)?(?:portfolio|position|capital|assets?|cash)\b[^.!?\n]{0,120}[+-]?\d[\d,]*(?:\.\d+)?\s*%|(?:^|[。！？\n：:]\s*)(?:请|建议|应该|推荐|考虑|把|将)?(?:配置|分配|投入|拿出|占用|限制|控制|设定|维持)[^\n。！？]{0,30}[+-]?\d[\d,]*(?:\.\d+)?\s*%[^\n。！？]{0,30}(?:仓位|组合|资金|资产|现金)|(?:^|[。！？\n：:]\s*)(?:请|建议|应该|推荐|考虑|把|将)?(?:配置|分配|投入|拿出|占用|限制|控制|设定|维持)[^\n。！？]{0,30}(?:仓位|组合|资金|资产|现金)[^\n。！？]{0,30}[+-]?\d[\d,]*(?:\.\d+)?\s*%/imu;
 const DATA_NUMBER_PATTERN =
   /(?<!\d)(?:[+-]?(?:[$€£¥]\s*)?|[$€£¥]\s*[+-]?)\d[\d,]*(?:\.\d+)?(?:\s*%|\s*(?:USD|EUR|GBP|CNY|JPY|美元|欧元|英镑|人民币|日元|元))?/giu;
+const DISPLAY_TIMESTAMP_PATTERN =
+  /\b20\d{2}[-/]\d{1,2}(?:[-/]\d{1,2})?(?:[T ]\d{1,2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2})?)?\b|\b\d{4}年\d{1,2}月\d{1,2}日\b|\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s+20\d{2})?\b|\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+20\d{2}\b/giu;
 
 function extractDataNumbers(text: string): string[] {
-  return (text.match(DATA_NUMBER_PATTERN) ?? []).map((value) => value.replace(/\s+/g, ""));
+  const timestampRanges = [...text.matchAll(DISPLAY_TIMESTAMP_PATTERN)].map((match) => {
+    const start = match.index ?? 0;
+    return [start, start + match[0].length] as const;
+  });
+  return [...text.matchAll(DATA_NUMBER_PATTERN)]
+    .filter((match) => {
+      const start = match.index ?? 0;
+      const end = start + match[0].length;
+      return !timestampRanges.some(
+        ([rangeStart, rangeEnd]) => start < rangeEnd && end > rangeStart,
+      );
+    })
+    .map((match) => match[0].replace(/\s+/g, ""));
 }
 
 function normalizedNumber(value: string): string {

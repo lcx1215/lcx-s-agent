@@ -36,6 +36,7 @@ import {
 import { applyConfigEnvVars } from "./env-vars.js";
 import {
   createLcxIdentityWriterPathContract,
+  type LcxIdentityMigrationSourceReceipt,
   type LcxIdentityWriterPathContract,
 } from "./identity-migration.js";
 import {
@@ -94,6 +95,7 @@ export type ConfigIoPathContract = LcxIdentityWriterPathContract & Readonly<{ wr
 
 export type ConfigWriteReceipt = Readonly<{
   pathContract: ConfigIoPathContract;
+  source: LcxIdentityMigrationSourceReceipt | null;
   previous: Readonly<{
     exists: boolean;
     hash: string | null;
@@ -1310,6 +1312,19 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
     options: ConfigWriteOptions = {},
   ): Promise<ConfigWriteReceipt> {
     const writeContract = assertWriteContract(options);
+    const sourceRaw =
+      writeContract.readPath === writeContract.writePath
+        ? null
+        : await readOptionalRaw(writeContract.readPath);
+    const source: LcxIdentityMigrationSourceReceipt | null =
+      sourceRaw === null && writeContract.readPath === writeContract.writePath
+        ? null
+        : Object.freeze({
+            path: writeContract.readPath,
+            exists: sourceRaw !== null,
+            hash: sourceRaw === null ? null : hashConfigRaw(sourceRaw),
+            bytes: sourceRaw === null ? null : Buffer.byteLength(sourceRaw, "utf-8"),
+          });
     const previousWriteRaw = await readOptionalRaw(writePath);
     const previousWriteExists = previousWriteRaw !== null;
     const previousWriteHash = previousWriteRaw === null ? null : hashConfigRaw(previousWriteRaw);
@@ -1502,6 +1517,7 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
     };
     const receipt: ConfigWriteReceipt = Object.freeze({
       pathContract: writeContract,
+      source,
       previous: Object.freeze({
         exists: previousWriteExists,
         hash: previousWriteHash,
