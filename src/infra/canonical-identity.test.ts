@@ -62,6 +62,10 @@ describe("canonical LCX identity", () => {
     expect(installer).toContain("npm view lcx-agent dist-tags.beta");
     expect(installer).toContain("https://github.com/lcx1215/lcx-s-agent.git");
     expect(installer).toContain('cat > "$HOME/.local/bin/lcx"');
+    expect(installer).toContain("# LCX Agent git wrapper");
+    expect(installer).toContain("remove_known_lcx_git_wrapper");
+    expect(installer).toContain('while [[ -e "$backup" || -L "$backup" ]]');
+    expect(installer).toContain('mv "$wrapper" "$backup"');
     expect(installer).toContain('"$npm_root/lcx-agent/lcx.mjs"');
     expect(installer).toContain('exec "$HOME/.local/bin/lcx"');
     expect(installer).toContain(

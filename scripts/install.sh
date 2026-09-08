@@ -1626,6 +1626,32 @@ ensure_openclaw_bin_link() {
     return 0
 }
 
+remove_known_lcx_git_wrapper() {
+    local wrapper="$HOME/.local/bin/lcx"
+    if [[ ! -e "$wrapper" && ! -L "$wrapper" ]]; then
+        return 0
+    fi
+    if [[ -f "$wrapper" ]] && grep -Fq "# LCX Agent git wrapper" "$wrapper" \
+        && grep -Eq '^exec node ".*/dist/entry\\.js"' "$wrapper"; then
+        rm -f "$wrapper"
+        ui_success "Removed the LCX Agent git wrapper (switching to npm)"
+        return 0
+    fi
+    local backup_base="${wrapper}.bak-$(date +%Y%m%d-%H%M%S)"
+    local backup="$backup_base"
+    local suffix=0
+    while [[ -e "$backup" || -L "$backup" ]]; do
+        suffix=$((suffix + 1))
+        backup="${backup_base}-${suffix}"
+    done
+    if mv "$wrapper" "$backup"; then
+        ui_warn "Preserved an unrelated executable at ${wrapper} as ${backup}"
+        return 0
+    fi
+    ui_error "Could not preserve the existing executable at ${wrapper}; leaving it untouched"
+    return 1
+}
+
 # Check for existing OpenClaw installation
 check_existing_openclaw() {
     if [[ -n "$(type -P lcx 2>/dev/null || true)" || -n "$(type -P openclaw 2>/dev/null || true)" ]]; then
@@ -1957,6 +1983,7 @@ install_openclaw_from_git() {
 
     cat > "$HOME/.local/bin/lcx" <<EOF
 #!/usr/bin/env bash
+# LCX Agent git wrapper
 set -euo pipefail
 exec node "${repo_dir}/dist/entry.js" "\$@"
 EOF
@@ -2296,11 +2323,7 @@ main() {
         install_openclaw_from_git "$repo_dir"
     else
         # Clean up git wrappers if switching to npm.
-        if [[ -x "$HOME/.local/bin/lcx" ]]; then
-            ui_info "Removing git wrapper (switching to npm)"
-            rm -f "$HOME/.local/bin/lcx"
-            ui_success "git wrapper removed"
-        fi
+        remove_known_lcx_git_wrapper || exit 1
         if [[ -x "$HOME/.local/bin/openclaw" ]]; then
             rm -f "$HOME/.local/bin/openclaw"
         fi
