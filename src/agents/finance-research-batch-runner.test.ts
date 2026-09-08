@@ -494,3 +494,68 @@ describe("finance research batch runner", () => {
     expect(packet.jobs[0].receipt?.selectedSourceIds).toEqual([adapters[0].id]);
   });
 });
+
+it("dispatches only the requested source and reserves its multi-endpoint cost", async () => {
+  const calls: string[] = [];
+  const fetchImpl: FetchImpl = async (url) => {
+    calls.push(String(url));
+    return response([news()]);
+  };
+  const chosen = collection(fetchImpl);
+  const other = { ...chosen, id: "not-selected", collect: vi.fn(chosen.collect) };
+  const receipt = await runFinanceResearchBatch({
+    asOf: AS_OF,
+    useCase: "source-coverage",
+    maxApiCalls: 2,
+    maxHttpCallsPerSource: 2,
+    targets: [
+      {
+        id: "source-news",
+        instrument: "AAPL",
+        assetClass: "us_equity",
+        realtime: false,
+        sourceAdapterIds: [chosen.id],
+        collections: [{ collection: "news", freshnessMaxMinutes: 60 }],
+      },
+    ],
+    collectionAdapters: [
+      {
+        ...chosen,
+        collect: async (request, signal) => {
+          await resolveFinanceFetch(fetchImpl)("https://example.test/lookup", { signal });
+          return chosen.collect(request, signal);
+        },
+      },
+      other,
+    ],
+  });
+  expect(receipt.budget.callCount).toBe(2);
+  expect(receipt.budget.reservedCallBudget).toBe(2);
+  expect(other.collect).not.toHaveBeenCalled();
+  expect(receipt.jobs[0].status).toBe("ready");
+  expect(calls).toHaveLength(2);
+});
+
+it("keeps single-source observations available for review without promoting their quality", async () => {
+  const adapters = realtime(fixtureFetch);
+  const result = await runFinanceResearchBatch({
+    asOf: AS_OF,
+    useCase: "all-source-review",
+    includeReviewEvidence: true,
+    targets: [
+      {
+        id: "isolated-primary",
+        sourceAdapterIds: [adapters[0].id],
+        instrument: "AAPL",
+        assetClass: "us_equity",
+      },
+    ],
+    realtimeAdapters: adapters,
+  });
+  const evidence = JSON.parse(result.committeeEvidence[1].text);
+  expect(evidence.usableAsCurrentEvidence).toBe(false);
+  expect(evidence.data).toBeUndefined();
+  expect(evidence.reviewData.snapshot.normalizedFields.length).toBeGreaterThan(0);
+  expect(evidence.reviewBoundary).toContain("not_verified_current_evidence");
+  expect(result.jobs[0].status).toBe("blocked");
+});

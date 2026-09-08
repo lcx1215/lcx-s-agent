@@ -13,6 +13,7 @@ import type {
 } from "./finance-data-gateway.js";
 import {
   createBinancePublicEodHistoryCollectionAdapter,
+  createFredPublicIndexHistoryCollectionAdapter,
   createFmpFreeBasicEodCollectionAdapter,
   createFmpFreeBasicProfileCollectionAdapter,
   createGoogleNewsRssCollectionAdapter,
@@ -24,6 +25,7 @@ import { resolveFinanceFetch, type FetchImpl } from "./finance-live-market-sourc
 
 export {
   createBinancePublicEodHistoryCollectionAdapter,
+  createFredPublicIndexHistoryCollectionAdapter,
   createFmpFreeBasicEodCollectionAdapter,
   createFmpFreeBasicProfileCollectionAdapter,
   createGoogleNewsRssCollectionAdapter,
@@ -1121,6 +1123,7 @@ export function createFinanceMarketCollectionRegistry(
 ): readonly FinanceMarketCollectionAdapter[] {
   const adapters: FinanceMarketCollectionAdapter[] = [
     createBinancePublicEodHistoryCollectionAdapter({ fetchImpl: options.fetchImpl }),
+    createFredPublicIndexHistoryCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createBlsMacroSeriesCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createTreasuryDebtCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createTreasuryAverageInterestRatesCollectionAdapter({ fetchImpl: options.fetchImpl }),

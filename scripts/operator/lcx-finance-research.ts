@@ -42,6 +42,8 @@ export async function runFinanceResearchCli(args: string[]): Promise<FinanceRese
   const { values } = parseArgs({
     args,
     options: {
+      "all-sources": { type: "boolean", default: false },
+      "sources-only": { type: "boolean", default: false },
       "followup-agent": { type: "string" },
       "gateway-cli": { type: "string" },
       "register-followups": { type: "boolean", default: false },
@@ -66,6 +68,20 @@ export async function runFinanceResearchCli(args: string[]): Promise<FinanceRese
       "max-api-calls": { type: "string", default: "64" },
     },
   });
+  if (
+    (values["all-sources"] || values["sources-only"]) &&
+    (values["read-run"] ||
+      values["list-cases"] ||
+      values["list-outcomes"] ||
+      values["outcome-file"] ||
+      values["followup-status"] ||
+      values["register-followups"])
+  ) {
+    throw new Error("source selection flags require research mode");
+  }
+  if (values["sources-only"] && (!values.live || values.model || values.adapter || values.python)) {
+    throw new Error("--sources-only requires --live without model overrides");
+  }
   if (
     (values["gateway-cli"] || values["followup-agent"]) &&
     !values["register-followups"] &&
@@ -227,7 +243,11 @@ export async function runFinanceResearchCli(args: string[]): Promise<FinanceRese
   if (!Number.isSafeInteger(maxApiCalls) || maxApiCalls <= 0) {
     throw new Error("--max-api-calls must be a positive integer");
   }
-  if (values.live && (!values.model?.trim() || !values.adapter?.trim())) {
+  if (
+    values.live &&
+    !values["sources-only"] &&
+    (!values.model?.trim() || !values.adapter?.trim())
+  ) {
     throw new Error("--live requires an explicit --model and --adapter before any collection");
   }
   const execution = {
@@ -236,6 +256,8 @@ export async function runFinanceResearchCli(args: string[]): Promise<FinanceRese
     modelArtifactFingerprint: "not_captured",
     runtime: {} as Record<string, unknown>,
     live: values.live,
+    sourcesOnly: values["sources-only"],
+    sourcePolicy: values["all-sources"] ? "all_registered" : "prioritized",
     maxApiCalls,
     maxModelCalls,
     codeFiles: values["case-dir"]
@@ -281,9 +303,36 @@ export async function runFinanceResearchCli(args: string[]): Promise<FinanceRese
     const savedCaseRun = await saveFinanceCaseRun(values["case-dir"], run);
     return { ...receipt, savedCaseRun };
   };
-  const input = { ask: values.ask, asOf: values["as-of"] };
+  const input = {
+    ask: values.ask,
+    asOf: values["as-of"],
+    sourcePolicy: values["all-sources"] ? ("all_registered" as const) : ("prioritized" as const),
+  };
   if (!values.live) {
     return finish(await runFinanceResearchRun({ input }));
+  }
+  if (values["sources-only"]) {
+    return finish(
+      await runFinanceResearchRun({
+        input,
+        liveFetch: true,
+        batchOptions: {
+          maxApiCalls,
+          retry: { attempts: 1 },
+          sourceTimeoutMs: 15000,
+          totalTimeoutMs: 120000,
+          ...(values["checkpoint-run"]
+            ? {
+                checkpoint: {
+                  path: path.join(values["case-dir"]!, "source-checkpoints.sqlite"),
+                  runId: `${values["case-id"]}:${values["checkpoint-run"]}`,
+                  executionFingerprint: caseflowFingerprint(execution),
+                },
+              }
+            : {}),
+        },
+      }),
+    );
   }
   const runtime = resolveLocalTextModelRuntimeConfig({
     modelId: values.model,

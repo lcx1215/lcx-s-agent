@@ -4,6 +4,7 @@ import {
   createBlsMacroSeriesCollectionAdapter,
   createFinnhubNewsCollectionAdapter,
   createFredMacroSeriesCollectionAdapter,
+  createFredPublicIndexHistoryCollectionAdapter,
   createFmpFreeBasicEodCollectionAdapter,
   createFmpFreeBasicProfileCollectionAdapter,
   createGdeltPublicNewsCollectionAdapter,
@@ -526,5 +527,54 @@ describe("market collection API transport governance", () => {
     });
     expect(JSON.stringify(receipt)).not.toContain("fake-private-key");
     expect(receipt.sourceAttempts[0].error).toBe("source_error");
+  });
+});
+
+describe("public FRED index history", () => {
+  const request = {
+    ...EQUITY_REQUEST,
+    instrument: "SP500",
+    collection: "eod_history" as const,
+    fromDate: "2026-09-03",
+    toDate: "2026-09-04",
+    asOf: "2026-09-05T00:00:00Z",
+  };
+  it("keeps index units explicit and does not silently substitute an ETF", async () => {
+    const adapter = createFredPublicIndexHistoryCollectionAdapter({
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        text: async () => "observation_date,SP500\n2026-09-03,6500\n2026-09-04,.\n",
+      }),
+    });
+    expect(adapter.supports(request)).toBe(true);
+    expect(adapter.supports({ ...request, instrument: "SPY" })).toBe(false);
+    const rows = await adapter.collect(request, new AbortController().signal);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].data).toMatchObject({
+      close: 6500,
+      unit: "index_points",
+      instrumentType: "index",
+    });
+  });
+  it("rejects invalid schemas, values, range leaks, and unfinished dates", async () => {
+    for (const body of [
+      "Date,Close\n2026-09-03,6500",
+      "observation_date,SP500\n2026-09-03,NaN",
+      "observation_date,SP500\n2026-09-02,6500",
+    ]) {
+      const adapter = createFredPublicIndexHistoryCollectionAdapter({
+        fetchImpl: async () => ({
+          ok: true,
+          status: 200,
+          text: async () => body,
+        }),
+      });
+      await expect(adapter.collect(request, new AbortController().signal)).rejects.toThrow();
+    }
+    const adapter = createFredPublicIndexHistoryCollectionAdapter();
+    await expect(
+      adapter.collect({ ...request, asOf: "2026-09-04T12:00:00Z" }, new AbortController().signal),
+    ).rejects.toThrow("completed days");
   });
 });

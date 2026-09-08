@@ -15,6 +15,7 @@ import {
 } from "./finance-decision-policy.js";
 import {
   createFinanceMarketCollectionRegistry,
+  resolveFinanceMarketCollectionRegistryOptionsFromEnv,
   inspectFinanceMarketCollectionRegistry,
   type FinanceMarketCollectionAdapter,
   type FinanceMarketCollectionRequest,
@@ -27,6 +28,7 @@ import {
 } from "./finance-model-checkpoints.js";
 import {
   createFinanceRealtimeSourceRegistry,
+  resolveFinanceRealtimeSourceRegistryOptionsFromEnv,
   inspectFinanceRealtimeSourceRegistry,
   type FinanceRealtimeSourceAdapter,
   type FinanceRealtimeSourceRequest,
@@ -65,6 +67,7 @@ export type FinanceResearchRunInput = Readonly<{
   horizonMonths?: number;
   decisionMode?: FinanceDecisionMode;
   targets?: readonly FinanceResearchBatchTarget[];
+  sourcePolicy?: "prioritized" | "all_registered";
 }>;
 
 export type FinanceResearchRunOptions = Readonly<{
@@ -96,6 +99,11 @@ export type FinanceResearchPlan = Readonly<{
   orchestration: FinanceBrainOrchestrationPlan;
   targets: readonly FinanceResearchBatchTarget[];
   expectedJobCount: number;
+  sourceInventory?: {
+    registeredAdapterIds: readonly string[];
+    unplannedAdapterIds: readonly string[];
+    unavailableProviders: readonly { provider: string; requiredEnvironment: readonly string[] }[];
+  };
   sourceInspections: readonly FinanceResearchSourceInspection[];
   boundaries: readonly string[];
 }>;
@@ -325,6 +333,140 @@ export function buildDefaultFinanceResearchTargets(
   return Object.freeze(targets);
 }
 
+/** All-source mode assigns each adapter its own evidence job; priority cannot starve a source. */
+export function buildAllRegisteredFinanceResearchTargets(
+  asOf: string,
+  horizonMonths: number,
+  realtimeAdapters: readonly FinanceRealtimeSourceAdapter[],
+  collectionAdapters: readonly FinanceMarketCollectionAdapter[],
+): readonly FinanceResearchBatchTarget[] {
+  const history = buildHistoryCollection(horizonMonths, asOf);
+  const result: FinanceResearchBatchTarget[] = [];
+  for (const adapter of realtimeAdapters) {
+    const symbol =
+      adapter.id.startsWith("invesco_") || adapter.id === "sec_edgar_official_reference"
+        ? "QQQ"
+        : adapter.supports({
+              instrument: "BTCUSDT",
+              assetClass: "crypto",
+              asOf,
+              useCase: "finance_research_run",
+              freshnessMaxMinutes: 30,
+              crossSourceSkewMaxMinutes: 5,
+            })
+          ? "BTCUSDT"
+          : "AAPL";
+    const request = {
+      instrument: symbol,
+      assetClass: symbol === "BTCUSDT" ? "crypto" : "us_equity",
+      asOf,
+      useCase: "finance_research_run",
+      freshnessMaxMinutes: 24 * 60,
+      crossSourceSkewMaxMinutes: 60,
+    };
+    if (adapter.supports(request)) {
+      result.push({
+        id: `source-${adapter.id}`,
+        sourceAdapterIds: [adapter.id],
+        instrument: request.instrument,
+        assetClass: request.assetClass,
+        realtime: { freshnessMaxMinutes: 24 * 60, requireOfficialReference: false },
+      });
+    }
+  }
+  for (const adapter of collectionAdapters) {
+    const macroSeries =
+      adapter.id === "fred_macro_series"
+        ? "FEDFUNDS"
+        : adapter.id === "bls_public_macro_series"
+          ? "CUUR0000SA0"
+          : adapter.id === "treasury_fiscal_debt_to_penny"
+            ? "debt_to_penny"
+            : adapter.id === "treasury_fiscal_average_interest_rates"
+              ? "avg_interest_rates"
+              : undefined;
+    const symbol =
+      macroSeries ??
+      (adapter.id === "binance_public_eod_history"
+        ? "BTCUSDT"
+        : adapter.id === "fred_public_index_history"
+          ? "SP500"
+          : "AAPL");
+    const assetClass = macroSeries ? "macro_series" : symbol === "BTCUSDT" ? "crypto" : "us_equity";
+    const candidates: FinanceResearchBatchCollection[] = macroSeries
+      ? [buildMacroCollection(macroSeries)]
+      : [
+          history,
+          {
+            ...buildNewsCollection(),
+            fromDate: dateOnly(new Date(Date.parse(asOf) - 7 * 86_400_000).toISOString()),
+            toDate: dateOnly(asOf),
+            freshnessMaxMinutes: 7 * 24 * 60,
+          },
+          ...(
+            ["sec_filings", "company_profile", "options_chain", "dividends", "splits"] as const
+          ).map((collection) => ({ collection, limit: 20, freshnessMaxMinutes: 366 * 24 * 60 })),
+        ];
+    const collection = candidates.find((candidate) =>
+      adapter.supports({ ...candidate, instrument: symbol, assetClass, asOf }),
+    );
+    if (collection) {
+      result.push({
+        id: `source-${adapter.id}`,
+        sourceAdapterIds: [adapter.id],
+        instrument: symbol,
+        assetClass,
+        realtime: false,
+        collections: [collection],
+      });
+    }
+  }
+  return result;
+}
+
+const OPTIONAL_SOURCE_PROVIDERS = [
+  {
+    provider: "Alpha Vantage",
+    adapter: "alpha_vantage_global_quote",
+    requiredEnvironment: ["ALPHA_VANTAGE_API_KEY"],
+  },
+  {
+    provider: "CoinGecko",
+    adapter: "coingecko_public_crypto_price",
+    requiredEnvironment: ["COINGECKO_API_KEY"],
+  },
+  {
+    provider: "Massive",
+    adapter: "massive_us_equity_snapshot",
+    requiredEnvironment: ["MASSIVE_API_KEY"],
+  },
+  {
+    provider: "Alpaca",
+    adapter: "alpaca_us_equity_latest_quote",
+    requiredEnvironment: ["ALPACA_API_KEY_ID", "ALPACA_API_SECRET_KEY"],
+  },
+  {
+    provider: "Finnhub",
+    adapter: "finnhub_us_equity_quote",
+    requiredEnvironment: ["FINNHUB_API_KEY"],
+  },
+  {
+    provider: "Twelve Data",
+    adapter: "twelve_data_us_equity_quote",
+    requiredEnvironment: ["TWELVE_DATA_API_KEY"],
+  },
+  {
+    provider: "FRED macro API",
+    adapter: "fred_macro_series",
+    requiredEnvironment: ["FRED_API_KEY"],
+  },
+  {
+    provider: "FMP",
+    adapter: "fmp_free_basic_company_profile",
+    requiredEnvironment: ["FMP_API_KEY"],
+  },
+] as const;
+
 function sourceInspections(
   targets: readonly FinanceResearchBatchTarget[],
   asOf: string,
@@ -348,7 +490,12 @@ function sourceInspections(
         crossSourceSkewMaxMinutes: policy.crossSourceSkewMaxMinutes ?? 5,
         requireOfficialReference: policy.requireOfficialReference,
       };
-      const inspection = inspectFinanceRealtimeSourceRegistry(request, realtimeAdapters);
+      const inspection = inspectFinanceRealtimeSourceRegistry(
+        request,
+        realtimeAdapters.filter(
+          (adapter) => !target.sourceAdapterIds || target.sourceAdapterIds.includes(adapter.id),
+        ),
+      );
       inspections.push({
         targetId: target.id,
         kind: "realtime",
@@ -363,7 +510,12 @@ function sourceInspections(
         ...common,
         collection: collection.collection,
       } as FinanceMarketCollectionRequest;
-      const inspection = inspectFinanceMarketCollectionRegistry(request, collectionAdapters);
+      const inspection = inspectFinanceMarketCollectionRegistry(
+        request,
+        collectionAdapters.filter(
+          (adapter) => !target.sourceAdapterIds || target.sourceAdapterIds.includes(adapter.id),
+        ),
+      );
       inspections.push({
         targetId: target.id,
         kind: "collection",
@@ -395,6 +547,17 @@ function buildPlan(
       count + (target.realtime === false ? 0 : 1) + (target.collections?.length ?? 0),
     0,
   );
+  const inspections = sourceInspections(
+    targets,
+    asOf,
+    "finance_research_run",
+    realtimeAdapters,
+    collectionAdapters,
+  );
+  const registeredAdapterIds = [...realtimeAdapters, ...collectionAdapters].map(
+    (adapter) => adapter.id,
+  );
+  const plannedIds = new Set(inspections.flatMap((inspection) => inspection.candidateAdapterIds));
   return Object.freeze({
     ask,
     asOf,
@@ -403,13 +566,18 @@ function buildPlan(
     orchestration,
     targets: Object.freeze([...targets]),
     expectedJobCount,
-    sourceInspections: sourceInspections(
-      targets,
-      asOf,
-      "finance_research_run",
-      realtimeAdapters,
-      collectionAdapters,
-    ),
+    sourceInspections: inspections,
+    ...(input.sourcePolicy === "all_registered"
+      ? {
+          sourceInventory: {
+            registeredAdapterIds,
+            unplannedAdapterIds: registeredAdapterIds.filter((id) => !plannedIds.has(id)),
+            unavailableProviders: OPTIONAL_SOURCE_PROVIDERS.filter(
+              (provider) => !registeredAdapterIds.includes(provider.adapter),
+            ).map(({ provider, requiredEnvironment }) => ({ provider, requiredEnvironment })),
+          },
+        }
+      : {}),
     boundaries: Object.freeze([
       "research_only",
       "no_execution_authority",
@@ -632,14 +800,23 @@ function buildQuarterlyOutput(params: {
   });
 }
 
-function sourceGate(batch: FinanceResearchBatchEvidencePacket): FinanceResearchGate {
-  const passed = batch.status === "completed" && batch.jobs.every((job) => job.status === "ready");
+function sourceGate(
+  batch: FinanceResearchBatchEvidencePacket,
+  plan: FinanceResearchPlan,
+): FinanceResearchGate {
+  const inventory = plan.sourceInventory;
+  const coverageMissing =
+    (inventory?.unplannedAdapterIds.length ?? 0) + (inventory?.unavailableProviders.length ?? 0);
+  const passed =
+    batch.status === "completed" &&
+    batch.jobs.every((job) => job.status === "ready") &&
+    coverageMissing === 0;
   return {
     id: "source",
     passed,
     reason: passed
       ? "all bounded source jobs are ready"
-      : `source evidence is ${batch.status}; ready=${batch.budget.readyJobs}/${batch.budget.requestedJobs}; review=${batch.budget.reviewJobs}; blocked=${batch.budget.blockedJobs}`,
+      : `source evidence is ${batch.status}; ready=${batch.budget.readyJobs}/${batch.budget.requestedJobs}; review=${batch.budget.reviewJobs}; blocked=${batch.budget.blockedJobs}; unregistered_or_unplanned=${coverageMissing}`,
   };
 }
 
@@ -698,14 +875,34 @@ export async function runFinanceResearchRun(
   const asOf = assertIsoTimestamp(options.input.asOf, "asOf");
   const horizonMonths = normalizeHorizon(options.input.horizonMonths);
   const decisionMode = options.input.decisionMode ?? "research_only";
-  const targets =
-    options.input.targets ?? buildDefaultFinanceResearchTargets(ask, horizonMonths, asOf);
   const realtimeAdapters =
     options.batchOptions?.realtimeAdapters ??
-    createFinanceRealtimeSourceRegistry(options.batchOptions?.realtimeRegistryOptions);
+    createFinanceRealtimeSourceRegistry({
+      ...resolveFinanceRealtimeSourceRegistryOptionsFromEnv(),
+      ...(options.input.sourcePolicy === "all_registered"
+        ? { includeYahooPublicSource: true }
+        : {}),
+      ...options.batchOptions?.realtimeRegistryOptions,
+    });
   const collectionAdapters =
     options.batchOptions?.collectionAdapters ??
-    createFinanceMarketCollectionRegistry(options.batchOptions?.collectionRegistryOptions);
+    createFinanceMarketCollectionRegistry({
+      ...resolveFinanceMarketCollectionRegistryOptionsFromEnv(),
+      ...(options.input.sourcePolicy === "all_registered"
+        ? { includeYahooPublicSources: true }
+        : {}),
+      ...options.batchOptions?.collectionRegistryOptions,
+    });
+  const targets =
+    options.input.targets ??
+    (options.input.sourcePolicy === "all_registered"
+      ? buildAllRegisteredFinanceResearchTargets(
+          asOf,
+          horizonMonths,
+          realtimeAdapters,
+          collectionAdapters,
+        )
+      : buildDefaultFinanceResearchTargets(ask, horizonMonths, asOf));
   const plan = buildPlan(
     { ...options.input, ask, asOf, decisionMode },
     targets,
@@ -742,6 +939,9 @@ export async function runFinanceResearchRun(
   }
 
   let batch = await runFinanceResearchBatch({
+    ...(options.input.sourcePolicy === "all_registered"
+      ? { maxSourcesPerJob: 1, maxHttpCallsPerSource: 3, includeReviewEvidence: true }
+      : {}),
     ...options.batchOptions,
     ...(options.modelCheckpoint
       ? { correlationId: `finance-research:${shortHash(options.modelCheckpoint.runId)}` }
@@ -756,10 +956,16 @@ export async function runFinanceResearchRun(
     collectionAdapters,
   });
   let evidence = batch.committeeEvidence;
-  const baseMissing = missingEvidence(batch);
+  const baseMissing = [
+    ...missingEvidence(batch),
+    ...(plan.sourceInventory?.unplannedAdapterIds.map((id) => `source_not_planned:${id}`) ?? []),
+    ...(plan.sourceInventory?.unavailableProviders.map(
+      (item) => `source_not_registered:${item.provider}`,
+    ) ?? []),
+  ];
   const hasModel = options.modelRouting !== undefined || options.modelInvoker !== undefined;
   if (!hasModel) {
-    const source = sourceGate(batch);
+    const source = sourceGate(batch, plan);
     const quality = qualityGate(undefined);
     const quarterlyOutput = buildQuarterlyOutput({
       horizonMonths,
@@ -860,7 +1066,7 @@ export async function runFinanceResearchRun(
           horizonMonths,
           decisionMode,
           sourceStatus: batch.status,
-          sourceGatePassed: sourceGate(batch).passed,
+          sourceGatePassed: sourceGate(batch, plan).passed,
           committeeGatePassed: committeeGateResult.passed,
           noExecutionAuthority: true,
           ...(requiresFinanceResearchAssessment(ask)
@@ -905,7 +1111,7 @@ export async function runFinanceResearchRun(
         ? await modelCheckpoint.stage("quality", executeQuality)
         : await executeQuality();
     }
-    const source = sourceGate(batch);
+    const source = sourceGate(batch, plan);
     const qualityGateResult = qualityGate(quality);
     const allGatesPassed = source.passed && committeeGateResult.passed && qualityGateResult.passed;
     const quarterlyOutput = buildQuarterlyOutput({
@@ -971,7 +1177,7 @@ export async function runFinanceResearchRun(
         missingEvidence: [error.message],
       }),
       gates: [
-        sourceGate(batch),
+        sourceGate(batch, plan),
         ...(["committee", "quality", "quarterly_output"] as const).map((id) => ({
           id,
           passed: false,

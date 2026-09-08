@@ -692,3 +692,85 @@ export function createBinancePublicEodHistoryCollectionAdapter(
     },
   };
 }
+
+/** Explicit index series only: never substitute an index level for an ETF price. */
+export function createFredPublicIndexHistoryCollectionAdapter(
+  options: { fetchImpl?: FetchImpl } = {},
+): FinanceMarketCollectionAdapter {
+  const supported = new Set(["SP500", "NASDAQ100"]);
+  return {
+    id: "fred_public_index_history",
+    providerName: "fred-public-index-history",
+    providerRole: "primary_market_data",
+    priority: 10,
+    supports: (request) =>
+      isUsEquity(request.assetClass) &&
+      request.collection === "eod_history" &&
+      supported.has(request.instrument.toUpperCase()),
+    collect: async (request) => {
+      const symbol = request.instrument.toUpperCase();
+      if (!supported.has(symbol)) {
+        throw new FreeMarketCollectionAdapterError("unsupported index series");
+      }
+      const from = utcDayEpoch(request.fromDate ?? "", "fromDate");
+      const to = utcDayEpoch(request.toDate ?? "", "toDate");
+      if (from > to || to + 86_400_000 > Date.parse(request.asOf)) {
+        throw new FreeMarketCollectionAdapterError(
+          "index history requires completed days before asOf",
+        );
+      }
+      // FRED observations use '.' for a missing value; coverage checks retain that gap.
+      const url = apiUrl("https://fred.stlouisfed.org/graph/fredgraph.csv", {
+        id: symbol,
+        cosd: request.fromDate ?? "",
+        coed: request.toDate ?? "",
+      });
+      const lines = (await fetchText(resolveFinanceFetch(options.fetchImpl), url)).split(/\r?\n/u);
+      if (lines.shift() !== `observation_date,${symbol}`) {
+        throw new FreeMarketCollectionAdapterError("unexpected index CSV schema");
+      }
+      const rows: FinanceMarketCollectionItem[] = [];
+      for (const line of lines) {
+        if (!line) {
+          continue;
+        }
+        const columns = line.split(",");
+        if (columns.length !== 2) {
+          throw new FreeMarketCollectionAdapterError("invalid index CSV row");
+        }
+        const [date, raw] = columns;
+        const epoch = utcDayEpoch(date, "observation_date");
+        if (epoch < from || epoch > to) {
+          throw new FreeMarketCollectionAdapterError("index observation outside requested window");
+        }
+        if (raw === "." || raw === "") {
+          continue;
+        }
+        const close = Number(raw);
+        if (!Number.isFinite(close) || close <= 0) {
+          throw new FreeMarketCollectionAdapterError("invalid index level");
+        }
+        rows.push(
+          buildItem(request, {
+            itemId: `${symbol}-${date}`,
+            providerName: "fred-public-index-history",
+            providerRole: "primary_market_data",
+            sourceFamily: "market_data_api",
+            sourceTimestamp: new Date(epoch + 86_400_000 - 1).toISOString(),
+            delayStatus: "delayed",
+            sourceUrlOrArtifact: url,
+            data: {
+              symbol,
+              date,
+              close,
+              unit: "index_points",
+              instrumentType: "index",
+              timestampBasis: "observation_date_end_utc_not_publication_time",
+            },
+          }),
+        );
+      }
+      return rows.slice(-(request.limit ?? 1000));
+    },
+  };
+}

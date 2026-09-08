@@ -3,6 +3,7 @@ import {
   createAlphaVantageMarketAdapter,
   createInvescoIssuerReferenceAdapter,
   createNasdaqExchangeMarketAdapter,
+  parseNasdaqTradeTimestamp,
   createSecOfficialReferenceAdapter,
   createStooqDelayedMarketAdapter,
   parseAlphaVantageGlobalQuote,
@@ -142,4 +143,11 @@ describe("additional finance source adapters", () => {
     expect(adapter.id).toBe("stooq_public_daily");
     expect(adapter.providerName).not.toBe("yahoo-public-chart");
   });
+});
+
+it("parses observed Nasdaq ET intraday timestamps with summer and winter offsets", () => {
+  expect(parseNasdaqTradeTimestamp("Sep 8, 2026 7:48 AM ET")).toBe("2026-09-08T11:48:00.000Z");
+  expect(parseNasdaqTradeTimestamp("Jan 8, 2026 4:00 PM ET")).toBe("2026-01-08T21:00:00.000Z");
+  expect(() => parseNasdaqTradeTimestamp("Nov 1, 2026 1:30 AM ET")).toThrow("ambiguous");
+  expect(() => parseNasdaqTradeTimestamp("Mar 8, 2026 2:30 AM ET")).toThrow("invalid");
 });

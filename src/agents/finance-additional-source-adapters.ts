@@ -47,6 +47,84 @@ function dayStartIso(value: unknown, label: string): string {
   ).toISOString();
 }
 
+/** Nasdaq labels intraday timestamps ET; resolve the date's actual US Eastern offset. */
+export function parseNasdaqTradeTimestamp(value: string): string {
+  const match = value.match(
+    /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{1,2}), (\d{4}) (\d{1,2}):(\d{2})(?::(\d{2}))? (AM|PM) ET$/u,
+  );
+  if (!match) {
+    if (
+      /^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/u.test(value) &&
+      Number.isFinite(Date.parse(value))
+    ) {
+      return new Date(value).toISOString();
+    }
+    if (
+      /^\d{4}-\d{2}-\d{2}$/u.test(value) ||
+      /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2}, \d{4}$/u.test(value)
+    ) {
+      return dayStartIso(value, "Nasdaq trade date");
+    }
+    throw new AdditionalSourceAdapterError("unsupported Nasdaq timestamp format");
+  }
+  const month = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ].indexOf(match[1]);
+  const hour12 = Number(match[4]);
+  if (hour12 < 1 || hour12 > 12 || Number(match[5]) > 59 || Number(match[6] ?? 0) > 59) {
+    throw new AdditionalSourceAdapterError("invalid Nasdaq timestamp");
+  }
+  const expected = {
+    year: Number(match[3]),
+    month: month + 1,
+    day: Number(match[2]),
+    hour: (hour12 % 12) + (match[7] === "PM" ? 12 : 0),
+    minute: Number(match[5]),
+    second: Number(match[6] ?? 0),
+  };
+  const wall = Date.UTC(
+    expected.year,
+    month,
+    expected.day,
+    expected.hour,
+    expected.minute,
+    expected.second,
+  );
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "numeric",
+    second: "numeric",
+    hourCycle: "h23",
+  });
+  const matches = [4, 5]
+    .map((offset) => wall + offset * 3_600_000)
+    .filter((epoch) => {
+      const parts = Object.fromEntries(
+        formatter.formatToParts(epoch).map((part) => [part.type, Number(part.value)]),
+      );
+      return Object.entries(expected).every(([key, number]) => parts[key] === number);
+    });
+  if (matches.length !== 1) {
+    throw new AdditionalSourceAdapterError("ambiguous or invalid Nasdaq Eastern timestamp");
+  }
+  return new Date(matches[0]).toISOString();
+}
+
 async function fetchJson(
   fetchImpl: FetchImpl,
   url: string,
@@ -203,7 +281,7 @@ export function createNasdaqExchangeMarketAdapter(
       if (!primary?.lastSalePrice || !primary.lastTradeTimestamp) {
         throw new AdditionalSourceAdapterError("Nasdaq response has no usable primary quote");
       }
-      const sourceTimestamp = dayStartIso(primary.lastTradeTimestamp, "Nasdaq trade date");
+      const sourceTimestamp = parseNasdaqTradeTimestamp(primary.lastTradeTimestamp);
       return {
         providerName: "nasdaq-exchange-public-quote",
         providerRole: "cross_check_market_data",

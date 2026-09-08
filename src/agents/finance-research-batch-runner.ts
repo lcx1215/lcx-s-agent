@@ -44,6 +44,8 @@ export type FinanceResearchBatchCollection = Omit<
 
 export type FinanceResearchBatchTarget = Readonly<{
   id: string;
+  /** Explicit source selection; omitted preserves normal registry routing. */
+  sourceAdapterIds?: readonly string[];
   instrument: string;
   assetClass: string;
   /** Defaults to a realtime refresh; false permits collection-only targets. */
@@ -70,6 +72,10 @@ export type FinanceResearchBatchOptions = Readonly<{
   maxApiCalls?: number;
   maxConcurrency?: number;
   maxSourcesPerJob?: number;
+  /** Per-adapter endpoint allowance, reserved before dispatch (e.g. SEC lookup + facts). */
+  maxHttpCallsPerSource?: number;
+  /** Expose returned but unapproved data to reviewers, never as current verified evidence. */
+  includeReviewEvidence?: boolean;
   sourceTimeoutMs?: number;
   totalTimeoutMs?: number;
   retry?: ApiTransportOptions["retry"];
@@ -82,6 +88,7 @@ export type FinanceResearchBatchOptions = Readonly<{
 
 type PlannedJob = Readonly<{
   targetId: string;
+  sourceAdapterIds?: readonly string[];
   jobId: string;
   /** Stable request identity for receipts, not a cache or an exactly-once guarantee. */
   idempotencyKey: string;
@@ -245,6 +252,11 @@ export async function runFinanceResearchBatch(
   const maxApiCalls = positive(options.maxApiCalls ?? 10_000, "maxApiCalls", true);
   const maxConcurrency = positive(options.maxConcurrency ?? 4, "maxConcurrency", true);
   const maxSourcesPerJob = positive(options.maxSourcesPerJob ?? 3, "maxSourcesPerJob", true);
+  const maxHttpCallsPerSource = positive(
+    options.maxHttpCallsPerSource ?? 1,
+    "maxHttpCallsPerSource",
+    true,
+  );
   const sourceTimeoutMs = positive(options.sourceTimeoutMs ?? 15_000, "sourceTimeoutMs");
   const totalTimeoutMs = positive(options.totalTimeoutMs ?? 120_000, "totalTimeoutMs");
   const retryAttempts = positive(options.retry?.attempts ?? 1, "retry.attempts", true);
@@ -313,13 +325,27 @@ export async function runFinanceResearchBatch(
       });
     }
     for (const entry of requests) {
-      const idempotencyKey = identity({ targetId, ...entry, maxSourcesPerJob });
+      const sourceAdapterIds = target.sourceAdapterIds;
+      if (
+        sourceAdapterIds &&
+        (!sourceAdapterIds.length || sourceAdapterIds.some((id) => !id.trim()))
+      ) {
+        throw new Error("sourceAdapterIds must contain nonempty source IDs");
+      }
+      const idempotencyKey = identity({
+        targetId,
+        ...entry,
+        maxSourcesPerJob,
+        ...(sourceAdapterIds ? { sourceAdapterIds } : {}),
+        ...(maxHttpCallsPerSource !== 1 ? { maxHttpCallsPerSource } : {}),
+      });
       if (planned.some((job) => job.idempotencyKey === idempotencyKey)) {
         throw new Error(`duplicate job for target: ${targetId}`);
       }
       const jobId = `finance-batch:${idempotencyKey}`;
       planned.push({
         ...entry,
+        ...(sourceAdapterIds ? { sourceAdapterIds } : {}),
         targetId,
         jobId,
         idempotencyKey,
@@ -387,11 +413,18 @@ export async function runFinanceResearchBatch(
         jobs[index] = { ...base, status: abortStatus(), missingEvidence: ["job_not_dispatched"] };
         continue;
       }
+      const selectedRealtimeAdapters = realtimeAdapters.filter(
+        (adapter) => !job.sourceAdapterIds || job.sourceAdapterIds.includes(adapter.id),
+      );
+      const selectedCollectionAdapters = collectionAdapters.filter(
+        (adapter) => !job.sourceAdapterIds || job.sourceAdapterIds.includes(adapter.id),
+      );
       const supportedAdapterCount =
         job.kind === "realtime"
-          ? realtimeAdapters.filter((adapter) => adapter.supports(job.request)).length
-          : collectionAdapters.filter((adapter) => adapter.supports(job.request)).length;
-      const worstCaseJobCalls = Math.min(maxSourcesPerJob, supportedAdapterCount) * retryAttempts;
+          ? selectedRealtimeAdapters.filter((adapter) => adapter.supports(job.request)).length
+          : selectedCollectionAdapters.filter((adapter) => adapter.supports(job.request)).length;
+      const worstCaseJobCalls =
+        Math.min(maxSourcesPerJob, supportedAdapterCount) * retryAttempts * maxHttpCallsPerSource;
       const reservation = checkpoint?.reserve(job.jobId, worstCaseJobCalls);
       if (reservation?.status === "completed") {
         const restored = reservation.result as FinanceResearchBatchJob;
@@ -447,12 +480,12 @@ export async function runFinanceResearchBatch(
             ? await runFinanceRealtimeRefresh({
                 ...transport,
                 request: job.request,
-                adapters: realtimeAdapters,
+                adapters: selectedRealtimeAdapters,
               })
             : await runFinanceMarketCollectionRefresh({
                 ...transport,
                 request: job.request,
-                adapters: collectionAdapters,
+                adapters: selectedCollectionAdapters,
               });
         const apiCalls = receipt.sourceAttempts.flatMap((attempt) => attempt.apiCalls ?? []);
         const assessment = assessReceipt(receipt, job);
@@ -591,8 +624,16 @@ export async function runFinanceResearchBatch(
         error: job.error,
         sourceAttempts: job.receipt?.sourceAttempts,
         requiredNextSteps: job.receipt?.requiredNextSteps,
-        // Raw withheld evidence remains in jobs[].receipt for the quality reviewer.
         data: job.status === "ready" ? job.receipt : undefined,
+        ...(options.includeReviewEvidence &&
+        job.status !== "ready" &&
+        job.receipt?.sourceAttempts.some((attempt) => attempt.status === "succeeded")
+          ? {
+              reviewData: job.receipt,
+              reviewBoundary:
+                "unapproved_source_data_for_review_only_not_verified_current_evidence",
+            }
+          : {}),
       }),
     })),
   ];

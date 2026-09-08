@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { FinanceDataGatewayObservationInput } from "./finance-data-gateway.js";
 import { resolveFinanceFetch } from "./finance-live-market-source.js";
 import type {
@@ -513,4 +513,40 @@ describe("finance research runner", () => {
       await fs.rm(directory, { recursive: true, force: true });
     }
   });
+});
+
+it("plans every registered source independently and loads configured source credentials without exposing them", async () => {
+  for (const key of [
+    "ALPHA_VANTAGE_API_KEY",
+    "COINGECKO_API_KEY",
+    "MASSIVE_API_KEY",
+    "ALPACA_API_KEY_ID",
+    "ALPACA_API_SECRET_KEY",
+    "FINNHUB_API_KEY",
+    "TWELVE_DATA_API_KEY",
+    "FRED_API_KEY",
+    "FMP_API_KEY",
+  ]) {
+    vi.stubEnv(key, "fixture-private-key-not-a-live-key");
+  }
+  try {
+    const receipt = await runFinanceResearchRun({
+      input: { ask: "all financial sources", asOf: AS_OF, sourcePolicy: "all_registered" },
+    });
+    const inventory = receipt.plan.sourceInventory!;
+    expect(inventory.registeredAdapterIds).toContain("alpha_vantage_global_quote");
+    expect(inventory.unplannedAdapterIds).toEqual([]);
+    expect(inventory.unavailableProviders).toEqual([]);
+    expect(receipt.plan.expectedJobCount).toBe(inventory.registeredAdapterIds.length);
+    expect(
+      receipt.plan.sourceInspections.every((job) => job.candidateAdapterIds.length === 1),
+    ).toBe(true);
+    expect(
+      new Set(receipt.plan.sourceInspections.flatMap((job) => job.candidateAdapterIds)).size,
+    ).toBe(inventory.registeredAdapterIds.length);
+    expect(JSON.stringify(receipt)).not.toContain("fixture-private-key");
+    expect(receipt.batch).toBeUndefined();
+  } finally {
+    vi.unstubAllEnvs();
+  }
 });

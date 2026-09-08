@@ -340,3 +340,30 @@ back only matching Caseflow jobs. Follow-ups record the source entrypoint and it
 working directory, so preserve that checkout until the jobs are migrated.
 Evidence-only follow-ups of blocked cases may have no claim assessments; they must
 still append at least one timestamped observation and cannot invent original claims.
+
+## All-source research coverage
+
+The existing research operator accepts `--all-sources`. It loads the existing
+market-source environment configuration and plans one job per registered adapter,
+with an explicit source selector. Source priority cannot silently omit later
+adapters. The plan lists adapters that have no supported request and providers
+that still require credentials/configuration. Secret values never enter that list.
+
+Use `--all-sources --live --sources-only --max-api-calls 128` to collect evidence
+without selecting or running a model, together with the usual `--ask`, `--as-of`,
+`--case-id` and `--case-dir`. Model-enabled research continues to require explicit
+model/adapter selection. `--checkpoint-run` retains each source job's result;
+a changed request/configuration must use a new run identity.
+
+All-source jobs reserve up to three HTTP calls per adapter for multi-endpoint
+sources such as SEC ticker lookup plus filings/facts. Total API budget, retries,
+concurrency and deadlines still apply. Successful but unapproved observations are
+available as `reviewData` with their original gaps; they never become verified
+current evidence merely because a request returned data. Missing registrations,
+source failures, freshness and cross-check requirements still block adoption.
+
+FRED public history is restricted to the explicitly named `SP500` and
+`NASDAQ100` index series. Values are index points, not ETF prices. Missing CSV
+observations remain coverage gaps; date timestamps describe observation dates,
+not verified publication times. References: [S&P 500](https://fred.stlouisfed.org/series/SP500)
+and [NASDAQ 100](https://fred.stlouisfed.org/series/NASDAQ100).

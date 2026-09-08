@@ -145,3 +145,14 @@ describe("finance research operator", () => {
     }
   });
 });
+
+it("exposes complete source planning and prevents collection flags on read operations", async () => {
+  const result = await runFinanceResearchCli([...input, "--all-sources"]);
+  expect("plan" in result && result.plan.sourceInventory?.unplannedAdapterIds).toEqual([]);
+  await expect(runFinanceResearchCli([...input, "--sources-only"])).rejects.toThrow(
+    "requires --live",
+  );
+  await expect(runFinanceResearchCli(["--list-cases", "--all-sources"])).rejects.toThrow(
+    "research mode",
+  );
+});
