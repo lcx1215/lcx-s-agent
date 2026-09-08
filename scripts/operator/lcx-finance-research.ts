@@ -9,6 +9,10 @@ import {
   compareFinanceCaseRuns,
   caseflowFingerprint,
 } from "../../src/agents/finance-caseflow.ts";
+import {
+  appendFinanceOutcome,
+  readFinanceOutcomes,
+} from "../../src/agents/finance-outcome-ledger.ts";
 import type { FinanceResearchRunReceipt } from "../../src/agents/finance-research-runner.ts";
 import { runFinanceResearchRun } from "../../src/agents/finance-research-runner.ts";
 import {
@@ -21,12 +25,17 @@ import {
 type FinanceResearchCliResult =
   | (FinanceResearchRunReceipt & { savedCaseRun?: Awaited<ReturnType<typeof saveFinanceCaseRun>> })
   | Awaited<ReturnType<typeof readFinanceCaseRun>>
-  | ReturnType<typeof compareFinanceCaseRuns>;
+  | ReturnType<typeof compareFinanceCaseRuns>
+  | Awaited<ReturnType<typeof appendFinanceOutcome>>
+  | Awaited<ReturnType<typeof readFinanceOutcomes>>;
 
 export async function runFinanceResearchCli(args: string[]): Promise<FinanceResearchCliResult> {
   const { values } = parseArgs({
     args,
     options: {
+      "packet-ref": { type: "string" },
+      "outcome-file": { type: "string" },
+      "list-outcomes": { type: "boolean", default: false },
       "checkpoint-run": { type: "string" },
       "case-dir": { type: "string" },
       "case-id": { type: "string" },
@@ -42,6 +51,32 @@ export async function runFinanceResearchCli(args: string[]): Promise<FinanceRese
       "max-api-calls": { type: "string", default: "64" },
     },
   });
+  if (values["outcome-file"] || values["list-outcomes"] || values["packet-ref"]) {
+    if (
+      !values["case-dir"] ||
+      !values["packet-ref"] ||
+      Boolean(values["outcome-file"]) === Boolean(values["list-outcomes"]) ||
+      values.live ||
+      values.ask ||
+      values["as-of"] ||
+      values["case-id"] ||
+      values["checkpoint-run"] ||
+      values["read-run"] ||
+      values["compare-run"]
+    ) {
+      throw new Error(
+        "outcome mode requires case-dir, packet-ref and either outcome-file or list-outcomes; research cannot run simultaneously",
+      );
+    }
+    if (values["outcome-file"]) {
+      if ((await fs.stat(values["outcome-file"])).size > 1_048_576) {
+        throw new Error("outcome input exceeds 1 MiB");
+      }
+      const input: unknown = JSON.parse(await fs.readFile(values["outcome-file"], "utf8"));
+      return appendFinanceOutcome(values["case-dir"], values["packet-ref"], input);
+    }
+    return readFinanceOutcomes(values["case-dir"], values["packet-ref"]);
+  }
   if (
     values["checkpoint-run"] &&
     (!values.live || !values["case-id"] || !values["case-dir"] || values["read-run"])

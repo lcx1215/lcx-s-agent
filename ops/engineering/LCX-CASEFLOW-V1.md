@@ -166,8 +166,84 @@ fingerprint (including upgrading to this implementation) requires a new key;
 prior source-only checkpoint keys are preserved rather than migrated silently.
 Each returned invocation may still produce a distinct frozen CaseRun.
 
-Next add the append-only Outcome Ledger tied to the original packet: observed
-results, deviations, invalidation conditions and three/six-month evaluation
-records. Dates remain `not_scheduled` until a separately authorized scheduler
-is bound. Historical coverage and semantic quality still need independent
-proof. Broker execution and external sending remain outside Caseflow authority.
+## Outcome Ledger
+
+The original frozen packet reference owns every outcome record. The ledger
+stores original claim text, timestamped/field-level observations, an explicit
+finding (`supported`, `contradicted`, `inconclusive`), deviation notes and
+invalidation conditions. Findings remain caller assessments with status
+`recorded_for_review`; they are not machine-verified prediction scores.
+A packet with no claims cannot acquire invented claims through this interface.
+
+```sh
+pnpm lcx:finance:research --case-dir ./caseflow-data --packet-ref RUN_REF \
+  --outcome-file ./observation.json
+
+pnpm lcx:finance:research --case-dir ./caseflow-data --packet-ref RUN_REF \
+  --list-outcomes
+```
+
+Example input structure (use actual claim IDs, evidence and observed dates):
+
+```json
+{
+  "recordId": "quarter-1-review",
+  "checkpointMonths": 3,
+  "observedAt": "2025-04-01T00:00:00Z",
+  "evidence": [
+    {
+      "id": "closing-price",
+      "source": "artifact://audited-observation",
+      "sourceTimestamp": "2025-03-31T00:00:00Z",
+      "field": "close",
+      "value": 120,
+      "unit": "USD"
+    }
+  ],
+  "assessments": [
+    {
+      "claimId": "original-claim-id",
+      "finding": "inconclusive",
+      "evidenceIds": ["closing-price"],
+      "deviation": "The original claim did not declare a numerical target.",
+      "invalidationConditions": ["The original causal premise no longer holds."]
+    }
+  ]
+}
+```
+
+Only three/six-month checkpoints present in the original packet are accepted.
+Observation dates must be between the case date and the present; source dates
+cannot exceed the observation date. Early records are labelled `interim`.
+Sources are retained as supplied, not fetched or certified by this interface;
+freshness and semantic support remain review responsibilities. The existing
+historical-data review gate is unchanged.
+
+`outcome-ledger.sqlite` uses transactional append, a per-packet hash chain and
+unique record IDs. Repeating identical input is idempotent. A changed payload
+with the same record ID is rejected. Corrections use a new `recordId`, the prior
+record's hash in `supersedes`, and a `correctionReason`; they must reference an
+unsuperseded entry in the same packet/checkpoint. Reads retain all history.
+SQL triggers reject UPDATE/DELETE through the ordinary database interface.
+Hashes detect changed content relative to retained references; they are not
+signatures and do not defend against an administrator replacing the entire
+ledger or removing its tail without an external anchor. The original packet
+file is never modified.
+
+30 focused tests pass across ledger, Caseflow, runner and operator. Coverage
+includes record/read, unchanged original packet, duplicate submissions,
+correction history, unknown references, future dates, interim classification,
+append-only triggers, tamper detection and operator-mode separation. Runtime
+and operator-inclusive type checks, lint, formatting and diff checks pass.
+The fixtures are synthetic historical cases, not fabricated future outcomes
+for the current research question.
+
+## Next delivery boundary
+
+The lifecycle now has frozen cases/runs/packets, bounded recovery and appended
+outcome records. Automatic quarterly scheduling is still unbound, and numerical
+calibration requires predeclared targets/metrics rather than hindsight labels.
+Next perform one coherent v1 acceptance on the accumulated local candidate,
+including historical coverage and semantic-quality gaps, before remote review
+or live research promotion. Broker execution and external sending remain
+outside Caseflow authority.
