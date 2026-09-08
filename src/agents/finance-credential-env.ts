@@ -16,6 +16,8 @@ export const FINANCE_CREDENTIAL_KEYS = [
   "FRED_API_KEY",
   "FMP_API_KEY",
   "LCX_FINANCE_HTTP_PROXY",
+  "LCX_ENABLE_YAHOO_PUBLIC_SOURCE",
+  "LCX_ENABLE_YAHOO_PUBLIC_SOURCES",
 ] as const;
 
 /** Read the existing dedicated finance store without changing global process state. */

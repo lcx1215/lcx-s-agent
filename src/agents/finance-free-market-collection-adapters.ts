@@ -356,10 +356,14 @@ export function createYahooPublicEodHistoryCollectionAdapter(
           const low = optionalFiniteNumber(quote.low?.[index]);
           const close = optionalFiniteNumber(quote.close?.[index]);
           if (
+            date >= new Date(request.asOf).toISOString().slice(0, 10) ||
             open === undefined ||
             high === undefined ||
             low === undefined ||
-            close === undefined
+            close === undefined ||
+            Math.min(open, high, low, close) <= 0 ||
+            low > Math.min(open, close) ||
+            high < Math.max(open, close)
           ) {
             return null;
           }

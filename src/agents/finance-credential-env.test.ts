@@ -62,3 +62,27 @@ it("distinguishes successful calls, expired evidence, missing configuration and 
     "verification_expired",
   );
 });
+
+it("includes receipts written by the direct collection tool", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "finance-direct-health-"));
+  const receiptDir = path.join(dir, "memory", "finance-data-gateway", "collections");
+  await fs.mkdir(receiptDir, { recursive: true });
+  await fs.writeFile(
+    path.join(receiptDir, "live.json"),
+    JSON.stringify({
+      schemaVersion: "lcx_finance_market_collection_v1",
+      adaptersCalled: true,
+      request: { asOf: "2026-09-08T10:00:00Z" },
+      status: "ready",
+      sourceAttempts: [{ adapterId: "binance_public_crypto_ticker", status: "succeeded" }],
+    }),
+  );
+  const health = await inspectFinanceSourceHealth({
+    workspaceDir: dir,
+    env: { OPENCLAW_STATE_DIR: dir },
+    asOf: "2026-09-08T12:00:00Z",
+  });
+  expect(health.routes.find((r) => r.id === "binance_public_crypto_ticker")?.callState).toBe(
+    "recent_success",
+  );
+});

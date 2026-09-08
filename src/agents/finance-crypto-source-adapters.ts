@@ -327,11 +327,16 @@ export function parseCoinCapCryptoAsset(
   observedAt: string,
 ): FinanceDataGatewayObservationInput {
   const body = payload as {
+    timestamp?: unknown;
     data?: { priceUsd?: unknown; timestamp?: unknown; volumeUsd24Hr?: unknown };
   };
   const crypto = normalizeCryptoInstrument(instrument);
   const price = parseFiniteNumber(body.data?.priceUsd, "CoinCap price");
-  const sourceTimestamp = parseTimestamp(body.data?.timestamp, observedAt, "CoinCap timestamp");
+  const sourceTimestamp = parseTimestamp(
+    body.timestamp ?? body.data?.timestamp,
+    observedAt,
+    "CoinCap timestamp",
+  );
   const fields: FinanceDataGatewayObservationInput["fields"] = [
     {
       name: "last_price",
@@ -374,10 +379,9 @@ export function createCoinCapCryptoAssetAdapter(
     supports: (request) => request.assetClass.trim().toLowerCase() === "crypto",
     collect: async (request) => {
       const crypto = cryptoRequest(request);
-      const sourceUrlOrArtifact = `https://api.coincap.io/v2/assets/${encodeURIComponent(crypto.coinCap)}`;
-      const headers: Record<string, string> = options.apiKey
-        ? { Authorization: `Bearer ${options.apiKey}` }
-        : {};
+      const apiKey = requiredText(options.apiKey ?? "", "CoinCap API key");
+      const sourceUrlOrArtifact = `https://rest.coincap.io/v3/assets/${encodeURIComponent(crypto.coinCap)}`;
+      const headers: Record<string, string> = { Authorization: `Bearer ${apiKey}` };
       const payload = await fetchJson(
         resolveFinanceFetch(options.fetchImpl),
         sourceUrlOrArtifact,

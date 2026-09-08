@@ -84,10 +84,10 @@ describe("finance crypto source adapters", () => {
       REQUEST,
       new AbortController().signal,
     );
-    const coincap = await createCoinCapCryptoAssetAdapter({ fetchImpl }).collect(
-      REQUEST,
-      new AbortController().signal,
-    );
+    const coincap = await createCoinCapCryptoAssetAdapter({
+      fetchImpl,
+      apiKey: "fixture-key",
+    }).collect(REQUEST, new AbortController().signal);
     expect(binance.providerName).toBe("binance-public-spot");
     expect(coinbase.providerName).toBe("coinbase-exchange-public");
     expect(coincap.providerName).toBe("coincap-public-assets");
@@ -103,4 +103,25 @@ describe("finance crypto source adapters", () => {
       ),
     ).toThrow("Kraken returned an error");
   });
+});
+
+it("uses CoinCap v3 auth and its top-level source timestamp", async () => {
+  const adapter = createCoinCapCryptoAssetAdapter({
+    apiKey: "fixture-key",
+    fetchImpl: async (url, init) => {
+      expect(url).toBe("https://rest.coincap.io/v3/assets/bitcoin");
+      expect(init?.headers).toEqual({ Authorization: "Bearer fixture-key" });
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ timestamp: 1788777744000, data: { priceUsd: "100" } }),
+      };
+    },
+  });
+  const observation = await adapter.collect(REQUEST, new AbortController().signal);
+  expect(observation.fields[0].sourceTimestamp).toBe(new Date(1788777744000).toISOString());
+  expect(JSON.stringify(observation)).not.toContain("fixture-key");
+  await expect(
+    createCoinCapCryptoAssetAdapter().collect(REQUEST, new AbortController().signal),
+  ).rejects.toThrow("CoinCap API key required");
 });

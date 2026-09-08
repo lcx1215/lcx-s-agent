@@ -448,10 +448,14 @@ export function createFinanceRealtimeSourceRegistry(
     createBybitCryptoTickerAdapter({ fetchImpl: options.fetchImpl }),
     createOkxCryptoTickerAdapter({ fetchImpl: options.fetchImpl }),
     createBitstampCryptoTickerAdapter({ fetchImpl: options.fetchImpl }),
-    createCoinCapCryptoAssetAdapter({
-      apiKey: options.coinCapApiKey,
-      fetchImpl: options.fetchImpl,
-    }),
+    ...(options.coinCapApiKey?.trim()
+      ? [
+          createCoinCapCryptoAssetAdapter({
+            apiKey: options.coinCapApiKey,
+            fetchImpl: options.fetchImpl,
+          }),
+        ]
+      : []),
     createNasdaqExchangeMarketAdapter({ fetchImpl: options.fetchImpl }),
     createStooqDelayedMarketAdapter({ fetchImpl: options.fetchImpl }),
     createSecOfficialReferenceAdapter({ fetchImpl: options.fetchImpl }),

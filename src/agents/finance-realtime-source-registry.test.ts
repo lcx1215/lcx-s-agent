@@ -178,7 +178,7 @@ describe("finance realtime source registry", () => {
       }),
     });
 
-    expect(registry).toHaveLength(12);
+    expect(registry).toHaveLength(11);
     expect(registry.map((adapter) => adapter.id)).toEqual([
       "binance_public_crypto_ticker",
       "kraken_public_crypto_ticker",
@@ -186,7 +186,6 @@ describe("finance realtime source registry", () => {
       "bybit_public_crypto_ticker",
       "okx_public_crypto_ticker",
       "bitstamp_public_crypto_ticker",
-      "coincap_public_crypto_asset",
       "nasdaq_exchange_quote",
       "stooq_public_daily",
       "sec_edgar_official_reference",
@@ -218,7 +217,6 @@ describe("finance realtime source registry", () => {
       "bybit_public_crypto_ticker",
       "okx_public_crypto_ticker",
       "bitstamp_public_crypto_ticker",
-      "coincap_public_crypto_asset",
     ]);
   });
 
@@ -297,4 +295,15 @@ describe("realtime API transport governance", () => {
     expect(receipt.sourceAttempts[0].apiCalls?.[0].status).toBe("cancelled");
     expect(JSON.stringify(receipt)).not.toContain("secret-reason");
   });
+});
+
+it("only enables CoinCap when a key is configured", () => {
+  expect(
+    createFinanceRealtimeSourceRegistry().some((a) => a.id === "coincap_public_crypto_asset"),
+  ).toBe(false);
+  expect(
+    createFinanceRealtimeSourceRegistry({ coinCapApiKey: "fixture-key" }).some(
+      (a) => a.id === "coincap_public_crypto_asset",
+    ),
+  ).toBe(true);
 });

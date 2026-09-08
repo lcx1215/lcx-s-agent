@@ -54,6 +54,8 @@ export async function inspectFinanceSourceHealth(options: {
   const roots = [
     path.join(resolveStateDir(env), "finance-caseflow", "receipts"),
     path.join(options.workspaceDir, "memory", "research-data-autopilot"),
+    path.join(options.workspaceDir, "memory", "finance-data-gateway", "collections"),
+    path.join(options.workspaceDir, "memory", "finance-data-gateway", "realtime"),
   ];
   async function scan(dir: string, depth: number) {
     let entries;
