@@ -535,15 +535,21 @@ it("plans every registered source independently and loads configured source cred
     });
     const inventory = receipt.plan.sourceInventory!;
     expect(inventory.registeredAdapterIds).toContain("alpha_vantage_global_quote");
-    expect(inventory.unplannedAdapterIds).toEqual([]);
+    expect(inventory.unplannedAdapterIds).toEqual([
+      "fmp_eod_bulk",
+      "fmp_earning_call_transcript",
+      "fmp_institutional_ownership_symbol_positions_summary",
+    ]);
     expect(inventory.unavailableProviders).toEqual([]);
-    expect(receipt.plan.expectedJobCount).toBe(inventory.registeredAdapterIds.length);
+    expect(receipt.plan.expectedJobCount).toBe(
+      inventory.registeredAdapterIds.length - inventory.unplannedAdapterIds.length,
+    );
     expect(
       receipt.plan.sourceInspections.every((job) => job.candidateAdapterIds.length === 1),
     ).toBe(true);
     expect(
       new Set(receipt.plan.sourceInspections.flatMap((job) => job.candidateAdapterIds)).size,
-    ).toBe(inventory.registeredAdapterIds.length);
+    ).toBe(inventory.registeredAdapterIds.length - inventory.unplannedAdapterIds.length);
     expect(JSON.stringify(receipt)).not.toContain("fixture-private-key");
     expect(receipt.batch).toBeUndefined();
   } finally {

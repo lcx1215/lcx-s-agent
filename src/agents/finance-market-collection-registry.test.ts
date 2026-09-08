@@ -169,18 +169,18 @@ function fakeFetch(url: string): ReturnType<FetchImpl> {
         }),
     });
   }
-  if (url.includes("financialmodelingprep.com/api/v3/profile/AAPL")) {
+  if (url.includes("financialmodelingprep.com/stable/profile?symbol=AAPL")) {
     return Promise.resolve({
       ok: true,
       status: 200,
       text: async () => JSON.stringify([{ symbol: "AAPL", companyName: "Apple Inc." }]),
     });
   }
-  if (url.includes("financialmodelingprep.com/api/v3/historical-price-full/AAPL")) {
+  if (url.includes("financialmodelingprep.com/stable/historical-price-eod/full?symbol=AAPL")) {
     return Promise.resolve({
       ok: true,
       status: 200,
-      text: async () => JSON.stringify({ historical: [{ date: "2026-09-04", close: 250 }] }),
+      text: async () => JSON.stringify([{ date: "2026-09-04", close: 250 }]),
     });
   }
   if (url.includes("api.bls.gov")) {
@@ -414,6 +414,8 @@ describe("finance market collection registry", () => {
       "finnhub_us_equity_news",
       "gdelt_public_news",
       "google_news_rss",
+      "fmp_news_press_releases",
+      "fmp_news_stock",
     ]);
     expect(
       inspectFinanceMarketCollectionRegistry(
@@ -426,6 +428,8 @@ describe("finance market collection registry", () => {
       "gdelt_public_news",
       "google_news_rss",
       "yahoo_finance_rss",
+      "fmp_news_press_releases",
+      "fmp_news_stock",
     ]);
     expect(JSON.stringify(inspection)).not.toContain("secret");
     const fmpInspection = inspectFinanceMarketCollectionRegistry(

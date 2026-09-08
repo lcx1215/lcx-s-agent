@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { FetchImpl } from "../finance-live-market-source.js";
 import { createResearchDataAutopilotTool } from "./research-data-autopilot-tool.js";
 
@@ -92,4 +92,28 @@ describe("research_data_autopilot tool", () => {
     const receiptPath = (result.details as { receiptPath: string }).receiptPath;
     await expect(fs.stat(path.join(workspaceDir, receiptPath))).resolves.toBeDefined();
   });
+});
+
+it("makes extended financial datasets available through the agent-facing router", async () => {
+  vi.stubEnv("FMP_API_KEY", "fixture-key");
+  try {
+    const tool = createResearchDataAutopilotTool({ workspaceDir: "/tmp/lcx-autopilot" });
+    const result = await tool.execute("holdings-inspect", {
+      intent: "etf_holdings",
+      target: "SPY",
+      liveFetch: false,
+    });
+    expect(result.details).toEqual(
+      expect.objectContaining({
+        result: expect.objectContaining({
+          noNetworkCalled: true,
+          candidateAdapters: expect.arrayContaining([
+            expect.objectContaining({ id: "fmp_etf_holdings" }),
+          ]),
+        }),
+      }),
+    );
+  } finally {
+    vi.unstubAllEnvs();
+  }
 });

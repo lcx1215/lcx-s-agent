@@ -375,6 +375,25 @@ export function buildAllRegisteredFinanceResearchTargets(
     }
   }
   for (const adapter of collectionAdapters) {
+    if (adapter.sampleRequest) {
+      const sample = adapter.sampleRequest;
+      result.push({
+        id: `source-${adapter.id}`,
+        sourceAdapterIds: [adapter.id],
+        instrument: sample.instrument,
+        assetClass: sample.assetClass,
+        realtime: false,
+        collections: [
+          {
+            collection: sample.collection,
+            seriesId: sample.seriesId,
+            limit: 100,
+            freshnessMaxMinutes: 366 * 24 * 60,
+          },
+        ],
+      });
+      continue;
+    }
     const macroSeries =
       adapter.id === "fred_macro_series"
         ? "FEDFUNDS"

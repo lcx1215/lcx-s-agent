@@ -507,9 +507,7 @@ function fmpUrlWithoutKey(baseUrl: string, params: Record<string, string | numbe
 }
 
 /**
- * FMP's free Basic tier is intentionally limited here to profile/reference
- * data. Paid news, fundamentals, calendars, insider, and intraday endpoints
- * are not silently treated as free capabilities.
+ * Compatibility ID retained; current stable endpoint entitlement is account-dependent.
  */
 export function createFmpFreeBasicProfileCollectionAdapter(options: {
   apiKey: string;
@@ -524,15 +522,12 @@ export function createFmpFreeBasicProfileCollectionAdapter(options: {
     supports: (request) =>
       isUsEquity(request.assetClass) && request.collection === "company_profile",
     collect: async (request) => {
-      const baseUrl = "https://financialmodelingprep.com/api/v3/profile";
+      const baseUrl = "https://financialmodelingprep.com/stable/profile";
       const params = { symbol: request.instrument.toUpperCase() };
-      const sourceUrlOrArtifact = fmpUrlWithoutKey(
-        `${baseUrl}/${encodeURIComponent(params.symbol)}`,
-        {},
-      );
+      const sourceUrlOrArtifact = fmpUrlWithoutKey(baseUrl, params);
       const payload = await fetchJson(
         resolveFinanceFetch(options.fetchImpl),
-        apiUrl(`${baseUrl}/${encodeURIComponent(params.symbol)}`, { apikey: apiKey }),
+        apiUrl(baseUrl, { ...params, apikey: apiKey }),
       );
       if (!Array.isArray(payload)) {
         throw new FreeMarketCollectionAdapterError("FMP profile response has no array");
@@ -562,7 +557,7 @@ export function createFmpFreeBasicProfileCollectionAdapter(options: {
   };
 }
 
-/** FMP free Basic historical EOD only; no realtime or paid research routes. */
+/** Compatibility ID retained for stable EOD; no entitlement assumption. */
 export function createFmpFreeBasicEodCollectionAdapter(options: {
   apiKey: string;
   fetchImpl?: FetchImpl;
@@ -576,8 +571,8 @@ export function createFmpFreeBasicEodCollectionAdapter(options: {
     supports: (request) => isUsEquity(request.assetClass) && request.collection === "eod_history",
     collect: async (request) => {
       const symbol = request.instrument.toUpperCase();
-      const baseUrl = `https://financialmodelingprep.com/api/v3/historical-price-full/${encodeURIComponent(symbol)}`;
-      const params: Record<string, string | number> = { limit: request.limit ?? 20 };
+      const baseUrl = "https://financialmodelingprep.com/stable/historical-price-eod/full";
+      const params: Record<string, string | number> = { symbol };
       if (request.fromDate) {
         params.from = request.fromDate;
       }
@@ -585,14 +580,14 @@ export function createFmpFreeBasicEodCollectionAdapter(options: {
         params.to = request.toDate;
       }
       const sourceUrlOrArtifact = fmpUrlWithoutKey(baseUrl, params);
-      const payload = (await fetchJson(
+      const payload = await fetchJson(
         resolveFinanceFetch(options.fetchImpl),
         apiUrl(baseUrl, { ...params, apikey: apiKey }),
-      )) as { historical?: unknown };
-      if (!Array.isArray(payload.historical)) {
-        throw new FreeMarketCollectionAdapterError("FMP EOD response has no historical array");
+      );
+      if (!Array.isArray(payload)) {
+        throw new FreeMarketCollectionAdapterError("FMP EOD response has no stable array");
       }
-      const records = payload.historical.filter(
+      const records = payload.filter(
         (record): record is Readonly<Record<string, unknown>> =>
           typeof record === "object" && record !== null && !Array.isArray(record),
       );

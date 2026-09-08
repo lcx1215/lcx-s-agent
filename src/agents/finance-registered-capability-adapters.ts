@@ -1,4 +1,5 @@
 import { ApiCallError } from "./api-call-contract.js";
+import { extendedFinanceCapabilities } from "./finance-extended-capability-catalog.js";
 import { resolveFinanceFetch } from "./finance-live-market-source.js";
 import type {
   FinanceMarketCollectionAdapter,
@@ -20,7 +21,7 @@ function timestamp(value: unknown): string | undefined {
   const ms = typeof value === "number" ? value : Date.parse(value);
   return Number.isFinite(ms) ? new Date(ms).toISOString() : undefined;
 }
-type Capability = {
+export type Capability = {
   id: string;
   provider: string;
   key: string | undefined;
@@ -28,6 +29,12 @@ type Capability = {
   crypto?: boolean;
   url: (request: FinanceMarketCollectionRequest) => URL;
   auth: string;
+  extraHeaders?: Record<string, string>;
+  snapshot?: boolean;
+  sample?: FinanceMarketCollectionAdapter["sampleRequest"];
+  accepts?: (request: FinanceMarketCollectionRequest) => boolean;
+  documentation?: string;
+  decode?: (text: string) => unknown;
   parse: (body: Row, raw: unknown) => { data: Row; time?: string }[];
 };
 const url = (base: string, params: Record<string, string> = {}) => {
@@ -176,6 +183,7 @@ export function createRegisteredCapabilityAdapters(
         ];
       }),
   });
+  capabilities.push(...extendedFinanceCapabilities(options));
   return capabilities
     .filter((c) => c.key?.trim())
     .map((c) => ({
@@ -183,19 +191,23 @@ export function createRegisteredCapabilityAdapters(
       providerName: c.provider,
       providerRole: "cross_check_market_data",
       priority: 65,
+      sampleRequest: c.sample,
       supports: (r) =>
         r.collection === c.collection &&
-        (c.crypto
-          ? r.assetClass === "crypto"
-          : ["us_equity", "stock", "equity", "common_stock"].includes(r.assetClass)),
+        (c.accepts
+          ? c.accepts(r)
+          : c.crypto
+            ? r.assetClass === "crypto"
+            : ["us_equity", "stock", "equity", "common_stock"].includes(r.assetClass)),
       collect: async (r, signal) => {
         const endpoint = c.url(r);
         const sourceUrlOrArtifact = endpoint.toString();
-        const headers: Record<string, string> = {};
+        const headers: Record<string, string> = { ...c.extraHeaders };
         if (c.auth === "apikey") {
           endpoint.searchParams.set(c.auth, c.key!.trim());
         } else {
-          headers[c.auth] = c.auth === "Authorization" ? `Bearer ${c.key!.trim()}` : c.key!.trim();
+          headers[c.auth === "apikey-header" ? "apikey" : c.auth] =
+            c.auth === "Authorization" ? `Bearer ${c.key!.trim()}` : c.key!.trim();
         }
         let response;
         try {
@@ -207,6 +219,23 @@ export function createRegisteredCapabilityAdapters(
             throw error;
           }
           throw new ApiCallError("network_error");
+        }
+        const responseText = await response.text();
+        let rawArtifact: string | undefined;
+        let safeBody = responseText;
+        for (const secret of [c.key, ...Object.values(c.extraHeaders ?? {})]) {
+          if (secret) {
+            safeBody = safeBody.replaceAll(secret, "[REDACTED]");
+          }
+        }
+        if (options.captureRawResponse) {
+          rawArtifact = await options.captureRawResponse({
+            adapterId: c.id,
+            sourceUrlOrArtifact,
+            observedAt: r.asOf,
+            httpStatus: response.status,
+            body: safeBody,
+          });
         }
         if (!response.ok) {
           throw new ApiCallError(
@@ -220,7 +249,7 @@ export function createRegisteredCapabilityAdapters(
         }
         let raw: unknown;
         try {
-          raw = JSON.parse(await response.text()) as unknown;
+          raw = c.decode ? c.decode(safeBody) : (JSON.parse(safeBody) as unknown);
         } catch {
           throw new Error(`${c.id}: invalid JSON`);
         }
@@ -230,7 +259,8 @@ export function createRegisteredCapabilityAdapters(
           body.Information ||
           body["Error Message"] ||
           body.error ||
-          body.status === "ERROR"
+          body.status === "ERROR" ||
+          body.status === "error"
         ) {
           throw new Error(`${c.id}: provider rejected request (quota, entitlement or parameters)`);
         }
@@ -238,7 +268,7 @@ export function createRegisteredCapabilityAdapters(
           .parse(body, raw)
           .filter((row) => {
             if (!row.time) {
-              return c.collection === "company_profile";
+              return c.snapshot || c.collection === "company_profile";
             }
             if (c.collection === "eod_history") {
               const price = row.data.close ?? row.data.price;
@@ -275,6 +305,9 @@ export function createRegisteredCapabilityAdapters(
           sourceUrlOrArtifact,
           data: {
             ...row.data,
+            capabilityId: c.id,
+            ...(rawArtifact ? { rawArtifact } : {}),
+            coverage: "bounded_response_not_full_provider_database",
             sourceTimestampMeaning: row.time
               ? "observation_or_fiscal_period_not_publication"
               : "retrieved_snapshot_provider_timestamp_unavailable",

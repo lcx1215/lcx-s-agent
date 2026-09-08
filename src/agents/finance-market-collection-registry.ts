@@ -51,6 +51,15 @@ export const FINANCE_MARKET_COLLECTION_KINDS = [
   "eod_history",
   "financial_statements",
   "earnings",
+  "analyst_estimates",
+  "ownership",
+  "etf_holdings",
+  "market_reference",
+  "valuation",
+  "technical_indicators",
+  "event_calendar",
+  "transcripts",
+  "bulk_dataset",
 ] as const;
 export type FinanceMarketCollectionKind = (typeof FINANCE_MARKET_COLLECTION_KINDS)[number];
 
@@ -83,6 +92,11 @@ export type FinanceMarketCollectionAdapter = Readonly<{
   providerName: string;
   providerRole: FinanceDataProviderRole;
   priority: number;
+  /** Representative discovery request; does not override a user request. */
+  sampleRequest?: Pick<
+    FinanceMarketCollectionRequest,
+    "instrument" | "assetClass" | "collection" | "seriesId"
+  >;
   supports: (request: FinanceMarketCollectionRequest) => boolean;
   collect: (
     request: FinanceMarketCollectionRequest,
@@ -132,12 +146,26 @@ export type FinanceMarketCollectionRegistryInspection = Readonly<{
 
 export type FinanceMarketCollectionRegistryOptions = Readonly<{
   fetchImpl?: FetchImpl;
+  /** Optional evidence sink; receives credential-redacted provider bodies. */
+  captureRawResponse?: (
+    response: Readonly<{
+      adapterId: string;
+      sourceUrlOrArtifact: string;
+      observedAt: string;
+      httpStatus: number;
+      body: string;
+    }>,
+  ) => Promise<string>;
   massiveApiKey?: string;
   finnhubApiKey?: string;
   fredApiKey?: string;
   fmpApiKey?: string;
   alphaVantageApiKey?: string;
   coinGeckoApiKey?: string;
+  twelveDataApiKey?: string;
+  alpacaApiKeyId?: string;
+  alpacaApiSecretKey?: string;
+  alpacaDataFeed?: string;
   /** Yahoo public endpoints are opt-in because automated traffic may be rejected. */
   includeYahooPublicSources?: boolean;
   additionalAdapters?: readonly FinanceMarketCollectionAdapter[];
@@ -1122,6 +1150,10 @@ export function resolveFinanceMarketCollectionRegistryOptionsFromEnv(
     finnhubApiKey: env.FINNHUB_API_KEY?.trim() || undefined,
     fredApiKey: env.FRED_API_KEY?.trim() || undefined,
     fmpApiKey: env.FMP_API_KEY?.trim() || undefined,
+    twelveDataApiKey: env.TWELVE_DATA_API_KEY?.trim() || undefined,
+    alpacaApiKeyId: env.ALPACA_API_KEY_ID?.trim() || undefined,
+    alpacaApiSecretKey: env.ALPACA_API_SECRET_KEY?.trim() || undefined,
+    alpacaDataFeed: env.ALPACA_DATA_FEED?.trim() || "iex",
     includeYahooPublicSources: env.LCX_ENABLE_YAHOO_PUBLIC_SOURCES === "1",
   };
 }
