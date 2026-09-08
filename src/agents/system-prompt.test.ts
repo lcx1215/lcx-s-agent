@@ -216,7 +216,7 @@ describe("buildAgentSystemPrompt", () => {
   it("adds math and study memory recall guidance when memory tools are available", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",
-      toolNames: ["memory_search", "memory_get", "local_memory_record", "external_live_probe"],
+      toolNames: ["memory_search", "memory_get", "local_memory_record"],
     });
 
     expect(prompt).toContain("## Memory Recall");
@@ -281,16 +281,7 @@ describe("buildAgentSystemPrompt", () => {
       "After current-research-line, MEMORY.md, the latest carryover cue, and correction notes, prefer at most two active local durable memory cards whose subject or 'Use This Card When' section matches the current ask",
     );
     expect(prompt).toContain(
-      "When diagnosing operator-phrasing drift, routing mistakes, or repeated repair issues, inspect memory/external-work-receipts/repair-queue.md and index.md first, then only the specific recent receipt files you need before replaying whole chats.",
-    );
-    expect(prompt).toContain(
-      "When validating a external message live repair or checking whether the active chat path still drifts, prefer external_live_probe over manual send/read loops.",
-    );
-    expect(prompt).toContain(
-      "External is the API namespace and External is the visible app surface for the same integration.",
-    );
-    expect(prompt).toContain(
-      "refreshes memory/external-live-probes/index.md instead of forcing chat replay from memory.",
+      "When diagnosing operator-phrasing drift, routing mistakes, or repeated repair issues, inspect the relevant external-channel repair receipt before replaying whole chats.",
     );
     expect(prompt).toContain(
       "Do not use local_memory_record to overwrite memory/current-research-line.md, memory/unified-risk-view.md, or MEMORY.md.",
@@ -646,17 +637,6 @@ describe("buildAgentSystemPrompt", () => {
     );
   });
 
-  it("describes the bounded External live probe tool when available", () => {
-    const prompt = buildAgentSystemPrompt({
-      workspaceDir: "/tmp/openclaw",
-      toolNames: ["external_live_probe"],
-    });
-
-    expect(prompt).toContain(
-      "- external_live_probe: Send a bounded external message live acceptance probe, wait, read recent chat messages back, evaluate simple checks, and leave a receipt under memory/external-live-probes",
-    );
-  });
-
   it("adds modern agentic work-pattern guidance", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",
@@ -718,7 +698,7 @@ describe("buildAgentSystemPrompt", () => {
       "Default user experience: one main control room, multi-role internal orchestration, simple summary first, specialist detail only on demand.",
     );
     expect(prompt).toContain(
-      "Treat natural-language asks like 继续做智能体, 继续提升智能体, 修 External 对话理解, 让它会分类干活, or keep improving the agent as one semantic family: agent/control-room capability improvement.",
+      "Treat natural-language asks like 继续做智能体, 继续提升智能体, 修外部通道对话理解, 让它会分类干活, or keep improving the agent as one semantic family: agent/control-room capability improvement.",
     );
     expect(prompt).toContain(
       "For that family, classify the requested capability first, pick the highest-leverage bounded repair, implement it when code changes are allowed, verify it, and state the next macro step.",

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { planFinanceBrainOrchestration } from "./finance-brain-orchestration.js";
 import {
   createCanonicalStateRootLogicalAgentCheckpointStore,
   resolveLogicalAgentCheckpointPath,
@@ -23,6 +24,88 @@ describe("logical agent pool", () => {
     const plan = buildDefaultLogicalAgentPlan({ ask: "共享事实包指纹测试" });
     expect(fingerprintLogicalAgentPlan(plan, [], "final_precheck", { snapshotId: "a" })).not.toBe(
       fingerprintLogicalAgentPlan(plan, [], "final_precheck", { snapshotId: "b" }),
+    );
+  });
+
+  it("passes an intent-family route through explicit context and records transferred ownership", async () => {
+    const ask = "学k线图分析技术";
+    const route = planFinanceBrainOrchestration({ text: ask });
+    const observed: {
+      sharedContext?: Readonly<Record<string, unknown>>;
+      dependencyResults?: Readonly<Record<string, unknown>>;
+    } = {};
+
+    const result = await runLogicalAgentPlan({
+      tasks: [
+        {
+          id: "intent_route",
+          agentId: "data_cleaning",
+          input: { ask },
+        },
+        {
+          id: "technical_specialist",
+          agentId: "research_draft",
+          input: { ask },
+          dependsOn: ["intent_route"],
+        },
+      ],
+      handoffs: [
+        {
+          fromTaskId: "intent_route",
+          toTaskId: "technical_specialist",
+          contextScope: "dependency_results",
+          ownership: "transferred",
+          reason: "the selected route owns the next specialist decision",
+        },
+      ],
+      sharedContext: {
+        intentFamily: "finance_research",
+        route: {
+          primaryModules: route.primaryModules,
+          supportingModules: route.supportingModules,
+          requiredTools: route.requiredTools,
+          boundaries: route.boundaries,
+        },
+      },
+      executor: ({ task, sharedContext, dependencyResults }) => {
+        if (task.id === "technical_specialist") {
+          observed.sharedContext = sharedContext;
+          observed.dependencyResults = dependencyResults;
+        }
+        return { output: task.id, sideEffects: [] };
+      },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(observed.sharedContext).toMatchObject({
+      intentFamily: "finance_research",
+      route: {
+        primaryModules: expect.arrayContaining(["technical_timing", "causal_map"]),
+        supportingModules: ["finance_learning_memory"],
+      },
+    });
+    expect(observed.dependencyResults).toEqual(
+      expect.objectContaining({ intent_route: expect.objectContaining({ status: "completed" }) }),
+    );
+    expect(result.handoffs).toEqual([
+      expect.objectContaining({
+        fromTaskId: "intent_route",
+        toTaskId: "technical_specialist",
+        contextScope: "dependency_results",
+        ownership: "transferred",
+      }),
+    ]);
+    expect(result.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "handoff",
+          taskId: "technical_specialist",
+          payload: expect.objectContaining({
+            fromTaskId: "intent_route",
+            ownership: "transferred",
+          }),
+        }),
+      ]),
     );
   });
 
