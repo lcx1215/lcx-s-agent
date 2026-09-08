@@ -62,8 +62,8 @@ export const FINANCE_BRAIN_MODULES = [
     role: "Connect liquidity, hedging breakdown, forced deleveraging, and risk appetite across equities, rates, FX, commodities, and crypto without treating one market as a standalone signal.",
     requiredTools: ["finance_framework_core_inspect", "finance_learning_capability_apply"],
     triggerPatterns: [
-      /\b(?:cross[- ]asset|risk appetite|liquidity transmission|spillover|correlation regime|global liquidity|equity[- ]bond correlation|simultaneous selloff|forced deleveraging)\b/u,
-      /跨资产|风险偏好|流动性传导|外溢|相关性 regime|全球流动性|股债同跌|股债相关性|相关性失效|被迫去杠杆/u,
+      /\b(?:cross[- ]asset|risk appetite|market sentiment|investor sentiment|liquidity transmission|spillover|correlation regime|global liquidity|equity[- ]bond correlation|simultaneous selloff|forced deleveraging)\b/u,
+      /跨资产|风险偏好|市场情绪|投资者情绪|流动性传导|外溢|相关性 regime|全球流动性|股债同跌|股债相关性|相关性失效|被迫去杠杆/u,
     ],
   },
   {
@@ -84,8 +84,8 @@ export const FINANCE_BRAIN_MODULES = [
     role: "Read index concentration, AI/mega-cap crowding, breadth, constituents, weights, and major-index regime context.",
     requiredTools: ["finance_framework_core_inspect", "finance_learning_capability_apply"],
     triggerPatterns: [
-      /\b(?:index concentration|ai concentration|mag7|mega[- ]cap|breadth|nasdaq|s&p|spx|global index|constituents?|weights?)\b/u,
-      /股市|股票市场|权益市场|大盘|全球指数|指数集中度|AI集中度|权重|成分股|市场宽度|纳指|标普|巨头|宽度|MSCI/u,
+      /\b(?:index concentration|ai concentration|mag7|mega[- ]cap|breadth|nasdaq|s&p|spx|u\.?s\.? (?:equities|stocks)|global index|constituents?|weights?)\b/u,
+      /股市|股票市场|权益市场|美股|大盘|全球指数|指数集中度|AI集中度|权重|成分股|市场宽度|纳指|标普|巨头|宽度|MSCI/u,
     ],
   },
   {
@@ -93,7 +93,7 @@ export const FINANCE_BRAIN_MODULES = [
     role: "Separate US equity market structure, sector leadership, breadth, positioning, and risk appetite from single-company fundamentals.",
     requiredTools: ["finance_framework_core_inspect", "finance_learning_capability_apply"],
     triggerPatterns: [
-      /\b(?:us equities|us stocks|nasdaq|s&p|spx|qqq|spy|iwm|sector leadership|market breadth)\b/u,
+      /\b(?:u\.?s\.? (?:equities|stocks)|nasdaq|s&p|spx|qqq|spy|iwm|sector leadership|market breadth)\b/u,
       /美股|纳斯达克|标普|罗素|行业领导|市场宽度|高 beta 科技/u,
     ],
   },
@@ -207,8 +207,8 @@ export const FINANCE_BRAIN_MODULES = [
     role: "Handle catalysts, earnings windows, policy events, geopolitical shocks, and event follow-up timing.",
     requiredTools: ["finance_framework_core_inspect", "finance_framework_event_driven_producer"],
     triggerPatterns: [
-      /\b(?:event|catalyst|earnings|guidance|budget revision|policy|meeting|geopolitical|headline|shock)\b/u,
-      /事件|催化|财报日|指引|预算|预算变化|政策|会议|地缘|突发/u,
+      /\b(?:event|catalyst|earnings|guidance|budget revision|policy|meeting|geopolitical|headline|shock|elections?|midterms?)\b/u,
+      /事件|催化|财报日|指引|预算|预算变化|政策|会议|地缘|突发|选举/u,
     ],
   },
   {
