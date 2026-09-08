@@ -6,6 +6,8 @@ import type { FetchImpl } from "../finance-live-market-source.js";
 import { createResearchDataAutopilotTool } from "./research-data-autopilot-tool.js";
 
 beforeEach(() => {
+  vi.stubEnv("LCX_ENABLE_YAHOO_PUBLIC_SOURCE", "1");
+  vi.stubEnv("LCX_ENABLE_YAHOO_PUBLIC_SOURCES", "1");
   vi.stubEnv("OPENCLAW_STATE_DIR", "/tmp/lcx-autopilot-no-live-credentials");
 });
 

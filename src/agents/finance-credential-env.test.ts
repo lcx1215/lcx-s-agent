@@ -10,11 +10,12 @@ it("loads only finance credentials, respects explicit overrides, and never mutat
   await fs.mkdir(path.join(dir, "finance-caseflow"));
   await fs.writeFile(
     path.join(dir, "finance-caseflow", "credentials.env"),
-    "FMP_API_KEY=stored\nFINNHUB_API_KEY=stored-finn\nOPENAI_API_KEY=unrelated\n",
+    "FMP_API_KEY=stored\nFINNHUB_API_KEY=stored-finn\nOPENAI_API_KEY=unrelated\nLCX_FINANCE_HTTP_PROXY=http://localhost:8080\n",
     { mode: 0o600 },
   );
   const env = { OPENCLAW_STATE_DIR: dir, FINNHUB_API_KEY: "", FRED_API_KEY: "explicit" };
   const result = resolveFinanceCredentialEnv(env);
+  expect(result.LCX_FINANCE_HTTP_PROXY).toBe("http://localhost:8080");
   expect(result.FMP_API_KEY).toBe("stored");
   expect(result.FINNHUB_API_KEY).toBe("");
   expect(result.FRED_API_KEY).toBe("explicit");

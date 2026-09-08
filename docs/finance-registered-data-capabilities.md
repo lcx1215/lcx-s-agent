@@ -5,7 +5,7 @@ The canonical collection registry exposes these datasets to
 planner. The executable extended catalog is
 `src/agents/finance-extended-capability-catalog.ts`; existing adapters remain in
 `finance-registered-capability-adapters.ts` and the free collection registry.
-Credentials are read from the process environment. Restarting a task does not
+Credentials are read from the process environment or the shared finance credential store. Restarting a task does not
 require recreating adapters or memorizing URLs.
 
 | Provider       | Available collection routes                                                                                                                                                                                                                                                                                                                                                  | Credential variables                                                |
@@ -139,3 +139,21 @@ explicitly set `writeReceipt: false`. The health view reads operator and current
 workspace receipts. It does not claim continuous uptime, probe unused endpoints,
 install a schedule, or bypass account entitlements. A running service still needs
 to load the updated code before these changes affect that process.
+
+## Shared callers and network transport
+
+LCX agents, including a Qwen-backed agent with these tools enabled, use
+`finance_market_collection_refresh` or `research_data_autopilot`. A model name
+alone does not grant tool execution. Codex or another local CLI caller can use:
+
+```sh
+node --import tsx scripts/operator/lcx-finance-capability-collect.ts --live --adapters coingecko_global --output /absolute/private/receipt-directory
+```
+
+Both routes use the same registry, credential store, and governed HTTP transport.
+For environments where shell proxy variables are unavailable, the finance store
+also accepts `LCX_FINANCE_HTTP_PROXY`. It applies only to finance HTTP requests;
+ordinary proxy environment settings remain the fallback. Store credentials and
+any authenticated proxy URL privately, never in repository files or prompts.
+Existing processes must load the new source to use this behavior. Receipts prove
+calls and data acquisition; they do not prove that a particular model invoked a tool.

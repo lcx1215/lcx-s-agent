@@ -15,6 +15,7 @@ export const FINANCE_CREDENTIAL_KEYS = [
   "TWELVE_DATA_API_KEY",
   "FRED_API_KEY",
   "FMP_API_KEY",
+  "LCX_FINANCE_HTTP_PROXY",
 ] as const;
 
 /** Read the existing dedicated finance store without changing global process state. */

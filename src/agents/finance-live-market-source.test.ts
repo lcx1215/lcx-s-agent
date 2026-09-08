@@ -1,5 +1,6 @@
-import { fetch as undiciFetch } from "undici";
+import { EnvHttpProxyAgent, Response, fetch as undiciFetch } from "undici";
 import { describe, expect, it, vi } from "vitest";
+import { resolveFinanceCredentialEnv } from "./finance-credential-env.js";
 import { buildFinanceDataGatewaySnapshot } from "./finance-data-gateway.js";
 import {
   collectLiveFinanceGatewayInput,
@@ -176,10 +177,29 @@ describe("collectLiveFinanceGatewayInput", () => {
 
 vi.mock("undici", async (importOriginal) => {
   const actual = await importOriginal<typeof import("undici")>();
-  return { ...actual, fetch: vi.fn() };
+  return {
+    ...actual,
+    fetch: vi.fn(),
+    EnvHttpProxyAgent: vi.fn(function (options) {
+      return new actual.EnvHttpProxyAgent(options);
+    }),
+  };
 });
 
+vi.mock("./finance-credential-env.js", () => ({ resolveFinanceCredentialEnv: vi.fn(() => ({})) }));
+
 describe("default proxy-aware transport", () => {
+  it("uses the saved finance proxy without requiring shell proxy variables", async () => {
+    vi.mocked(resolveFinanceCredentialEnv).mockReturnValueOnce({
+      LCX_FINANCE_HTTP_PROXY: "http://proxy.test:8080",
+    });
+    vi.mocked(undiciFetch).mockResolvedValueOnce(new Response("{}"));
+    await resolveFinanceFetch()("https://example.test");
+    expect(EnvHttpProxyAgent).toHaveBeenLastCalledWith({
+      httpProxy: "http://proxy.test:8080",
+      httpsProxy: "http://proxy.test:8080",
+    });
+  });
   it("passes the deadline signal to undici without making a network call", async () => {
     vi.mocked(undiciFetch).mockImplementationOnce(async () => new Promise(() => {}));
     await expect(

@@ -20,6 +20,7 @@ import {
   type ApiFetch,
   type ApiTransportOptions,
 } from "./api-call-contract.js";
+import { resolveFinanceCredentialEnv } from "./finance-credential-env.js";
 import type {
   FinanceDataGatewayInput,
   FinanceDataGatewayObservationInput,
@@ -52,10 +53,19 @@ const YAHOO_CHART_HOSTS = ["query2", "query1"] as const;
 const YAHOO_HEADERS = { "User-Agent": "Mozilla/5.0 (LCX Agent research-only market snapshot)" };
 
 let defaultFinanceProxyAgent: EnvHttpProxyAgent | undefined;
+let defaultFinanceProxyUrl: string | undefined;
 
 function defaultFinanceFetch(): FetchImpl {
   return async (url, init) => {
-    defaultFinanceProxyAgent ??= new EnvHttpProxyAgent();
+    const proxy = resolveFinanceCredentialEnv().LCX_FINANCE_HTTP_PROXY?.trim() || undefined;
+    if (!defaultFinanceProxyAgent || proxy !== defaultFinanceProxyUrl) {
+      const previous = defaultFinanceProxyAgent;
+      defaultFinanceProxyAgent = new EnvHttpProxyAgent(
+        proxy ? { httpProxy: proxy, httpsProxy: proxy } : undefined,
+      );
+      defaultFinanceProxyUrl = proxy;
+      void previous?.close().catch(() => undefined);
+    }
     const response = await undiciFetch(url, {
       dispatcher: defaultFinanceProxyAgent,
       headers: init?.headers,
