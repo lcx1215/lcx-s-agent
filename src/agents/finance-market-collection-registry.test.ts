@@ -578,3 +578,25 @@ describe("public FRED index history", () => {
     ).rejects.toThrow("completed days");
   });
 });
+
+it("uses the FRED v1 api_key parameter and excludes it from provenance", async () => {
+  let requested: URL | undefined;
+  const adapter = createFredMacroSeriesCollectionAdapter({
+    apiKey: "fixture-fred-key",
+    fetchImpl: async (url) => {
+      requested = new URL(String(url));
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ observations: [{ date: "2026-08-01", value: "3.5" }] }),
+      };
+    },
+  });
+  const records = await adapter.collect(
+    { ...MACRO_REQUEST, instrument: "FEDFUNDS", seriesId: "FEDFUNDS" },
+    new AbortController().signal,
+  );
+  expect(requested?.searchParams.get("api_key")).toBe("fixture-fred-key");
+  expect(requested?.searchParams.has("apiKey")).toBe(false);
+  expect(records[0].sourceUrlOrArtifact).not.toContain("fixture-fred-key");
+});

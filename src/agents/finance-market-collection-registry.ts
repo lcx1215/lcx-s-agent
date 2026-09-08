@@ -886,7 +886,7 @@ export function createFredMacroSeriesCollectionAdapter(options: {
       const sourceUrlOrArtifact = safeMassiveUrl(baseUrl, params);
       const payload = (await fetchJson(
         resolveFinanceFetch(options.fetchImpl),
-        massiveUrlWithKey(baseUrl, params, apiKey),
+        apiUrl(baseUrl, { ...params, api_key: apiKey }),
       )) as {
         observations?: Array<Record<string, unknown>>;
         error_code?: string;
