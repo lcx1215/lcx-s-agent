@@ -45,6 +45,7 @@ const FinanceChartAnalysisSchema = Type.Object({
   liveFetch: Type.Optional(Type.Boolean()),
   timeoutMs: Type.Optional(Type.Number()),
   maxSources: Type.Optional(Type.Number()),
+  sourceIds: Type.Optional(Type.Array(Type.String())),
   image: Type.Optional(
     Type.String({ description: "Optional chart image path, URL, or data URL for visual review." }),
   ),
@@ -241,6 +242,7 @@ export function createFinanceChartAnalysisTool(options?: {
         liveFetch?: boolean;
         timeoutMs?: number;
         maxSources?: number;
+        sourceIds?: string[];
         image?: string;
         includeImage?: boolean;
         includeBars?: boolean;
@@ -272,14 +274,21 @@ export function createFinanceChartAnalysisTool(options?: {
             ...resolveFinanceMarketCollectionRegistryOptionsFromEnv(),
             fetchImpl: options?.fetchImpl,
           });
+          const selected = params.sourceIds?.map((id) => id.trim());
+          if (selected?.some((id) => !registry.some((adapter) => adapter.id === id))) {
+            throw new ToolInputError("unknown finance chart source adapter");
+          }
+          const adapters = selected
+            ? registry.filter((adapter) => selected.includes(adapter.id))
+            : registry;
           if (params.liveFetch === false) {
-            const inspection = inspectFinanceMarketCollectionRegistry(request, registry);
+            const inspection = inspectFinanceMarketCollectionRegistry(request, adapters);
             sourceReceipt = inspection as unknown as Record<string, unknown>;
             collectionStatus = "inspection";
           } else {
             const receipt = await runFinanceMarketCollectionRefresh({
               request,
-              adapters: registry,
+              adapters,
               maxSources: params.maxSources,
               timeoutMs: params.timeoutMs,
             });

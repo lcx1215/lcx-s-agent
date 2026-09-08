@@ -157,6 +157,7 @@
     "lcx:caseflow:demo": "node --import tsx scripts/operator/lcx-caseflow-demo.ts",
     "lcx:cloud:preflight": "node --import tsx scripts/operator/lcx-cloud-preflight.ts",
     "lcx:commercial:acceptance": "node --import tsx scripts/operator/lcx-commercial-acceptance-harness.ts",
+    "lcx:data": "node --import tsx scripts/operator/lcx-research-data-tool.ts",
     "lcx:echoapi": "node --import tsx scripts/operator/echoapi-cli-live-smoke.ts",
     "lcx:echoapi:ensure": "node --import tsx scripts/operator/echoapi-cli-live-smoke.ts --ensure",
     "lcx:external-channel": "node --import tsx scripts/operator/lcx-external-channel-binding.ts --apply --json",

@@ -157,3 +157,40 @@ ordinary proxy environment settings remain the fallback. Store credentials and
 any authenticated proxy URL privately, never in repository files or prompts.
 Existing processes must load the new source to use this behavior. Receipts prove
 calls and data acquisition; they do not prove that a particular model invoked a tool.
+
+### Provider-neutral JSON tool host
+
+`pnpm lcx:data --list` exports the existing research, collection, realtime and
+chart tool schemas. Send one JSON object on stdin with `tool` and `arguments` to
+execute it; use `--workspace <directory>` for receipt storage. For example:
+
+```json
+{
+  "tool": "finance_market_collection_refresh",
+  "arguments": {
+    "instrument": "AAPL",
+    "assetClass": "us_equity",
+    "collection": "company_profile",
+    "sourceIds": ["fmp_free_basic_company_profile"],
+    "liveFetch": true,
+    "writeReceipt": true
+  }
+}
+```
+
+Local and hosted model integrations can import `createResearchDataToolHost`,
+provide these schemas to their model, and execute validated model tool requests
+on the host. Credentials remain on that host. Returned text/image content can be
+passed back through the caller's own model API. The entry does not deploy a cloud
+service or choose a model. `--vision` returns image content for a vision-capable
+caller; configured vision execution is injectable through `visionTool`.
+
+Chart requests accept `sourceIds` to retain numeric-source provenance while using
+an image for a separate visual review. Yahoo historical bars exclude the current
+UTC date conservatively, future dates and invalid OHLC. Its three public routes
+remain opt-in through the shared finance store or process environment flags.
+
+CoinCap uses the [official v3 contract](https://rest.coincap.io/api-docs.json),
+Bearer authentication and the response's top-level timestamp. A missing
+`COINCAP_API_KEY` leaves this route declared but unconfigured, rather than
+repeatedly attempting the obsolete unauthenticated v2 endpoint.

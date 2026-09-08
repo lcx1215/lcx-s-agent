@@ -1,10 +1,17 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FetchImpl } from "../finance-live-market-source.js";
 import type { AnyAgentTool } from "./common.js";
 import { createFinanceChartAnalysisTool } from "./finance-chart-analysis-tool.js";
+
+beforeEach(() => {
+  vi.stubEnv("LCX_ENABLE_YAHOO_PUBLIC_SOURCES", "1");
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 const ONE_PIXEL_PNG_B64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
@@ -176,4 +183,23 @@ describe("finance_chart_analysis tool", () => {
       }),
     );
   });
+});
+
+it("rejects an unknown source before fetching a chart", async () => {
+  let called = false;
+  const tool = createFinanceChartAnalysisTool({
+    workspaceDir: "/tmp/chart-source-selection",
+    fetchImpl: async () => {
+      called = true;
+      throw new Error("unexpected fetch");
+    },
+  });
+  await expect(
+    tool.execute("unknown-source", {
+      instrument: "AAPL",
+      sourceIds: ["not-a-registered-source"],
+      liveFetch: true,
+    }),
+  ).rejects.toThrow("unknown finance chart source adapter");
+  expect(called).toBe(false);
 });
