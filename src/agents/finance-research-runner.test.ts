@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FinanceDataGatewayObservationInput } from "./finance-data-gateway.js";
+import { resolveFinanceFetch } from "./finance-live-market-source.js";
 import type {
   FinanceMarketCollectionAdapter,
   FinanceMarketCollectionItem,
@@ -250,5 +251,141 @@ describe("finance research runner", () => {
         item.includes("stale_or_invalid_collection_provenance"),
       ),
     ).toBe(true);
+  });
+  it.each(["committee", "quality"])(
+    "isolates %s model failure from collected evidence",
+    async (stage) => {
+      const failingModel = async () => {
+        throw new Error("fixture model failure");
+      };
+      const result = await runFinanceResearchRun({
+        input: {
+          ask: "Review market evidence",
+          asOf: AS_OF,
+          targets: [
+            {
+              id: "model-failure",
+              instrument: "SPY",
+              assetClass: "us_equity",
+              realtime: { requireOfficialReference: false },
+            },
+          ],
+        },
+        liveFetch: true,
+        modelInvoker: stage === "committee" ? failingModel : modelInvoker,
+        qualityModelInvoker: stage === "quality" ? failingModel : modelInvoker,
+        batchOptions: BATCH_OPTIONS,
+      });
+      expect(result.batch?.status).toBe("completed");
+      expect(result.batch?.committeeEvidence.length).toBeGreaterThan(0);
+      expect(JSON.stringify(result.batch)).not.toContain("fixture model failure");
+      expect(result.gates.find((gate) => gate.id === stage)?.passed).toBe(false);
+      expect(result.quarterlyOutput.adopted).toBe(false);
+      expect(result.answerDecision).toBe("return_failed_reason");
+    },
+  );
+
+  it("retains a 403 source failure even with successful model execution", async () => {
+    const denied: FinanceMarketCollectionAdapter = {
+      ...collectionAdapter(),
+      collect: async () => {
+        await resolveFinanceFetch(async () => ({
+          ok: false,
+          status: 403,
+          text: async () => "Forbidden",
+        }))("https://example.test/denied");
+        return [];
+      },
+    };
+    const result = await runFinanceResearchRun({
+      input: {
+        ask: "Review market evidence",
+        asOf: AS_OF,
+        targets: [
+          {
+            id: "denied",
+            instrument: "SPY",
+            assetClass: "us_equity",
+            realtime: { requireOfficialReference: false },
+            collections: [{ collection: "news", freshnessMaxMinutes: 60 }],
+          },
+        ],
+      },
+      liveFetch: true,
+      modelInvoker,
+      qualityModelInvoker: modelInvoker,
+      batchOptions: { ...BATCH_OPTIONS, collectionAdapters: [denied] },
+    });
+    expect(JSON.stringify(result.batch)).toContain("403");
+    expect(result.status).toBe("needs_review");
+    expect(result.quarterlyOutput.adopted).toBe(false);
+  });
+
+  it("does not accept an unknown evidence citation", async () => {
+    const result = await runFinanceResearchRun({
+      input: {
+        ask: "Review market evidence",
+        asOf: AS_OF,
+        targets: [
+          {
+            id: "citation",
+            instrument: "SPY",
+            assetClass: "us_equity",
+            realtime: { requireOfficialReference: false },
+          },
+        ],
+      },
+      liveFetch: true,
+      modelInvoker,
+      qualityModelInvoker: async () => ({
+        kind: "artifact",
+        artifact: {
+          answer: "Research candidate",
+          claims: [
+            {
+              id: "invented",
+              text: "unsupported",
+              status: "supported",
+              evidenceIds: ["nonexistent-source"],
+            },
+          ],
+        },
+      }),
+      batchOptions: BATCH_OPTIONS,
+    });
+    expect(result.gates.find((gate) => gate.id === "quality")?.passed).toBe(false);
+    expect(result.quarterlyOutput.adopted).toBe(false);
+  });
+
+  it("keeps fresh but unverified historical coverage in review", async () => {
+    const result = await runFinanceResearchRun({
+      input: {
+        ask: "Review six months of history",
+        asOf: AS_OF,
+        targets: [
+          {
+            id: "history",
+            instrument: "SPY",
+            assetClass: "us_equity",
+            realtime: false,
+            collections: [
+              {
+                collection: "eod_history",
+                fromDate: "2026-03-08",
+                toDate: "2026-09-08",
+                freshnessMaxMinutes: 300000,
+              },
+            ],
+          },
+        ],
+      },
+      liveFetch: true,
+      modelInvoker,
+      qualityModelInvoker: modelInvoker,
+      batchOptions: BATCH_OPTIONS,
+    });
+    expect(result.status).toBe("needs_review");
+    expect(result.missingEvidence).toContain("history:historical_window_coverage_unverified");
+    expect(result.quarterlyOutput.adopted).toBe(false);
   });
 });

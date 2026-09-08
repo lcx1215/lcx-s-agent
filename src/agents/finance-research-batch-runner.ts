@@ -389,7 +389,14 @@ export async function runFinanceResearchBatch(
               });
         const apiCalls = receipt.sourceAttempts.flatMap((attempt) => attempt.apiCalls ?? []);
         const assessment = assessReceipt(receipt, job);
+        // Row freshness does not establish completeness of a requested historical window.
+        // Keep this fail-closed until collection adapters expose a coverage contract.
+        const coverageGaps =
+          job.kind === "collection" && job.request.collection === "eod_history"
+            ? ["historical_window_coverage_unverified"]
+            : [];
         const requiresReview =
+          coverageGaps.length > 0 ||
           assessment.freshnessWarnings.length > 0 ||
           assessment.conflicts.length > 0 ||
           receipt.sourceAttempts.some((attempt) => attempt.status === "failed");
@@ -403,7 +410,7 @@ export async function runFinanceResearchBatch(
             : receipt.status === "ready" && requiresReview
               ? "needs_review"
               : receipt.status,
-          missingEvidence: receipt.missingEvidence,
+          missingEvidence: [...receipt.missingEvidence, ...coverageGaps],
         };
       } catch (error) {
         jobs[index] = {
