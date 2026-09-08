@@ -26,6 +26,10 @@ import {
   type FinanceRealtimeSourceRegistryOptions,
   type FinanceRealtimeSourceRequest,
 } from "./finance-realtime-source-registry.js";
+import {
+  openFinanceRunCheckpoints,
+  type FinanceCheckpointOptions,
+} from "./finance-run-checkpoints.js";
 
 export const FINANCE_RESEARCH_BATCH_SCHEMA_VERSION = "lcx_finance_research_batch_v1" as const;
 
@@ -55,6 +59,7 @@ export type FinanceResearchBatchTarget = Readonly<{
 
 export type FinanceResearchBatchOptions = Readonly<{
   targets: readonly FinanceResearchBatchTarget[];
+  checkpoint?: FinanceCheckpointOptions;
   asOf: string;
   useCase: string;
   correlationId?: string;
@@ -113,6 +118,12 @@ export type FinanceResearchBatchEvidencePacket = Readonly<{
   jobs: readonly FinanceResearchBatchJob[];
   /** Includes a coverage summary and every job's status; only ready jobs carry data. */
   committeeEvidence: readonly FinanceCommitteeEvidence[];
+  checkpoint?: Readonly<{
+    runId: string;
+    scope: "source_nodes_only";
+    reusedJobIds: readonly string[];
+    uncertainJobIds: readonly string[];
+  }>;
   budget: Readonly<{
     maxJobs: number;
     maxApiCalls: number;
@@ -315,6 +326,29 @@ export async function runFinanceResearchBatch(
     }
   }
 
+  const checkpoint = options.checkpoint
+    ? openFinanceRunCheckpoints(
+        options.checkpoint,
+        identity({
+          schema: "finance_checkpoint_v1",
+          execution: options.checkpoint.executionFingerprint,
+          planned: planned.map(({ correlationId: _correlationId, ...job }) => job),
+          maxApiCalls,
+          maxConcurrency,
+          totalTimeoutMs,
+          maxJobs,
+          maxSourcesPerJob,
+          retry: options.retry ?? { attempts: 1 },
+          sourceTimeoutMs,
+          adapters: [...realtimeAdapters, ...collectionAdapters].map((adapter) => ({
+            id: adapter.id,
+            provider: adapter.providerName,
+            priority: adapter.priority,
+          })),
+        }),
+        maxApiCalls,
+      )
+    : undefined;
   const governance =
     options.sourceGovernance ?? createApiSourceGovernanceRegistry(DEFAULT_SOURCE_GOVERNANCE);
   const controller = new AbortController();
@@ -324,10 +358,12 @@ export async function runFinanceResearchBatch(
   const timer = setTimeout(() => controller.abort(new ApiCallError("timeout")), totalTimeoutMs);
   const startedAt = Date.now();
   const jobs: FinanceResearchBatchJob[] = [];
+  const reusedJobIds: string[] = [];
+  const uncertainJobIds: string[] = [];
   let next = 0;
   let active = 0;
   let peakConcurrency = 0;
-  let reservedCallBudget = 0;
+  let reservedCallBudget = checkpoint?.reserved() ?? 0;
   const abortStatus = () =>
     signal.reason instanceof ApiCallError && signal.reason.kind === "timeout"
       ? ("timed_out" as const)
@@ -354,7 +390,29 @@ export async function runFinanceResearchBatch(
           ? realtimeAdapters.filter((adapter) => adapter.supports(job.request)).length
           : collectionAdapters.filter((adapter) => adapter.supports(job.request)).length;
       const worstCaseJobCalls = Math.min(maxSourcesPerJob, supportedAdapterCount) * retryAttempts;
-      if (reservedCallBudget + worstCaseJobCalls > maxApiCalls) {
+      const reservation = checkpoint?.reserve(job.jobId, worstCaseJobCalls);
+      if (reservation?.status === "completed") {
+        const restored = reservation.result as FinanceResearchBatchJob;
+        if (restored?.jobId !== job.jobId || restored.idempotencyKey !== job.idempotencyKey) {
+          throw new Error("checkpoint job identity mismatch");
+        }
+        reusedJobIds.push(job.jobId);
+        jobs[index] = restored;
+        continue;
+      }
+      if (reservation?.status === "uncertain") {
+        uncertainJobIds.push(job.jobId);
+        jobs[index] = {
+          ...base,
+          status: "needs_review",
+          missingEvidence: ["checkpoint_dispatch_outcome_unknown"],
+        };
+        continue;
+      }
+      if (
+        reservation?.status === "budget_exhausted" ||
+        (!checkpoint && reservedCallBudget + worstCaseJobCalls > maxApiCalls)
+      ) {
         jobs[index] = {
           ...base,
           status: "blocked",
@@ -363,7 +421,7 @@ export async function runFinanceResearchBatch(
         };
         continue;
       }
-      reservedCallBudget += worstCaseJobCalls;
+      reservedCallBudget = checkpoint?.reserved() ?? reservedCallBudget + worstCaseJobCalls;
       active++;
       peakConcurrency = Math.max(peakConcurrency, active);
       try {
@@ -422,12 +480,30 @@ export async function runFinanceResearchBatch(
       } finally {
         active--;
       }
+      if (reservation?.status === "reserved") {
+        checkpoint!.complete(job.jobId, reservation.token, jobs[index]);
+      }
     }
   };
   try {
-    await Promise.all(Array.from({ length: Math.min(maxConcurrency, planned.length) }, worker));
+    const outcomes = await Promise.allSettled(
+      Array.from({ length: Math.min(maxConcurrency, planned.length) }, async () => {
+        try {
+          await worker();
+        } catch (error) {
+          controller.abort(error);
+          throw error;
+        }
+      }),
+    );
+    const failure = outcomes.find((outcome) => outcome.status === "rejected");
+    if (failure?.status === "rejected") {
+      throw failure.reason;
+    }
+    reservedCallBudget = checkpoint?.reserved() ?? reservedCallBudget;
   } finally {
     clearTimeout(timer);
+    checkpoint?.close();
   }
   const count = (status: FinanceResearchBatchJob["status"]) =>
     jobs.filter((job) => job.status === status).length;
@@ -517,6 +593,16 @@ export async function runFinanceResearchBatch(
     status,
     jobs,
     committeeEvidence,
+    ...(options.checkpoint
+      ? {
+          checkpoint: {
+            runId: options.checkpoint.runId,
+            scope: "source_nodes_only" as const,
+            reusedJobIds,
+            uncertainJobIds,
+          },
+        }
+      : {}),
     budget,
     notTouched: NOT_TOUCHED,
   };

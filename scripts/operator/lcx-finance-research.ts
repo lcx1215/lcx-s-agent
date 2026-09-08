@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import {
@@ -26,6 +27,7 @@ export async function runFinanceResearchCli(args: string[]): Promise<FinanceRese
   const { values } = parseArgs({
     args,
     options: {
+      "checkpoint-run": { type: "string" },
       "case-dir": { type: "string" },
       "case-id": { type: "string" },
       "read-run": { type: "string" },
@@ -39,6 +41,12 @@ export async function runFinanceResearchCli(args: string[]): Promise<FinanceRese
       "max-api-calls": { type: "string", default: "64" },
     },
   });
+  if (
+    values["checkpoint-run"] &&
+    (!values.live || !values["case-id"] || !values["case-dir"] || values["read-run"])
+  ) {
+    throw new Error("--checkpoint-run requires live case research and cannot read a frozen run");
+  }
   if (values["read-run"]) {
     if (!values["case-dir"] || values.live || values.ask || values["case-id"]) {
       throw new Error("--read-run requires --case-dir and cannot execute research");
@@ -84,6 +92,7 @@ export async function runFinanceResearchCli(args: string[]): Promise<FinanceRese
           await Promise.all(
             [
               "../../src/agents/finance-caseflow.ts",
+              "../../src/agents/finance-run-checkpoints.ts",
               "../../src/agents/finance-research-runner.ts",
               "../../src/agents/finance-research-batch-runner.ts",
               "../../src/agents/local-text-model-adapter.ts",
@@ -129,7 +138,19 @@ export async function runFinanceResearchCli(args: string[]): Promise<FinanceRese
     await runFinanceResearchRun({
       input,
       liveFetch: true,
-      batchOptions: { maxApiCalls, retry: { attempts: 1 } },
+      batchOptions: {
+        maxApiCalls,
+        retry: { attempts: 1 },
+        ...(values["checkpoint-run"]
+          ? {
+              checkpoint: {
+                path: path.join(values["case-dir"]!, "source-checkpoints.sqlite"),
+                runId: `${values["case-id"]}:${values["checkpoint-run"]}`,
+                executionFingerprint: caseflowFingerprint(execution),
+              },
+            }
+          : {}),
+      },
       modelRouting: {
         revision: "finance-waterflow-v0-role",
         adapters: [role],

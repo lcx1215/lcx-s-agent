@@ -68,4 +68,9 @@ describe("finance research operator", () => {
       await fs.rm(directory, { recursive: true, force: true });
     }
   });
+  it("rejects checkpoint mutation in planning mode", async () => {
+    await expect(runFinanceResearchCli([...input, "--checkpoint-run", "resume-1"])).rejects.toThrow(
+      "requires live case research",
+    );
+  });
 });

@@ -66,16 +66,69 @@ observation dates September 8 and September 9. Reading and comparing those
 artifacts identified a definition change, distinct Run IDs, no evidence change,
 and `planned` status for both. This is persistence proof, not market analysis.
 
-## Next contract
+## Source-node checkpoints and budget continuation
 
-This slice saves completed runner receipts, including blocked/review receipts.
-It does not checkpoint an in-flight or crashed run, resume nodes, restore spent
-budget, rerun a model against frozen inputs, schedule follow-ups or record
-actual outcomes. Frozen-result reading must not be described as model replay.
+Add `--checkpoint-run RUN_KEY` to an explicit live case command. The operator
+uses `source-checkpoints.sqlite` under `--case-dir`, namespaced by Case ID and
+RUN_KEY. Omit the flag to keep the existing non-persistent collection behavior.
+Planning and frozen-read modes reject checkpoint mutation.
 
-Next add persistent run/node checkpoints and budget reservations to the existing
-runner, with restart and duplicate-dispatch tests. Then add explicit historical
-coverage contracts and an append-only Outcome Ledger tied to the original
-packet. Preserve the v0 `historical_window_coverage_unverified` review gate until
+```sh
+pnpm lcx:finance:research --case-dir ./caseflow-data --case-id crypto-us-sentiment \
+  --checkpoint-run observation-1 --ask 'Review six months of sentiment' \
+  --as-of 2026-09-08T00:00:00Z --live --model MODEL_ID --adapter ADAPTER_PATH
+```
+
+Repeat the same command to continue source collection. A new observation date,
+plan, budget, source selection, retry policy or caller execution fingerprint
+requires a new RUN_KEY; a mismatch fails before dispatch. Library callers must
+change `executionFingerprint` when changing custom adapter code/configuration.
+The operator supplies its recorded code/config fingerprint; its scope remains
+the explicitly listed files, not the entire dependency or credential closure.
+
+SQLite commits the worst-case source-attempt reservation before dispatch.
+Reservations and result publication are atomic across processes, and reopening
+the run retains charged budget. Completed results, including failed/cancelled
+ones, are reused. Undispatched nodes can run with the remaining budget. There
+is no automatic refund or retry of a completed failed node.
+
+A reserved node without a durable result may have sent a request before a crash,
+or may still belong to a live process. It becomes `needs_review` with
+`checkpoint_dispatch_outcome_unknown`, retains its reservation, and is never
+automatically sent again in that checkpoint run. This prevents duplicate source
+dispatch; it does not promise recovery of an externally executed result. A new
+RUN_KEY is an intentional new collection and gets a separate budget.
+
+Receipts expose `checkpoint.scope = source_nodes_only`, `reusedJobIds` and
+`uncertainJobIds`. Preserved node receipts retain their original correlation
+IDs. Aggregate call counts describe the included known receipts, including
+reused ones; they are not counts of new calls during the resume invocation.
+Worst-case reservations can exceed observed calls and are never reconstructed
+from successful calls alone. Total invocation timeout restarts on resume; it
+is not a persisted lifetime deadline. Rate-limit/circuit state is not restored.
+
+Checkpoint storage failures stop further worker dispatch and drain in-flight
+workers before closing the database. A result-write failure leaves the prior
+reservation intact, so restart cannot silently repeat that node. The current
+store has no automatic uncertain-node reset or destructive cleanup command.
+
+69 focused tests pass across storage, batch/resume, runner, Caseflow, API
+contract and operator suites. Evidence includes abrupt child-process exit,
+two-process reservation contention, result persistence failure, completed-node
+reuse, cancellation continuation, budget exhaustion across reopen and changed
+input rejection. Runtime and operator-inclusive type checks pass. These are
+local synthetic-source tests, not a fresh market or model-quality evaluation.
+
+## Remaining contract
+
+Committee and quality-model nodes are not checkpointed: they execute again on
+a live invocation. There is no persistent model-call budget or full-DAG Resume
+claim. Each returned invocation may still produce a distinct frozen CaseRun.
+Frozen-result reading remains distinct from model replay.
+
+Next extend checkpoints to model stages with an explicit inference budget and
+failure/attestation contract. Then add historical coverage contracts and an
+append-only Outcome Ledger tied to the original packet. Three/six-month dates
+remain `not_scheduled`. Preserve the v0 historical coverage review gate until
 coverage has evidence. Broker execution and external sending remain outside
 Caseflow authority.
