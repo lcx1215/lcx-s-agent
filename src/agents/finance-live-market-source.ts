@@ -1,3 +1,4 @@
+import { gunzipSync } from "node:zlib";
 // Track A: turn the finance data gateway from fixture-only into one that can
 // ingest a REAL, authorized public market data source.
 //
@@ -12,7 +13,6 @@
 // answer can never present these as realtime execution-grade numbers. The
 // fetch implementation is injectable so the mapping logic is testable offline
 // and so the live path can fail closed when the network or data is unavailable.
-
 import { EnvHttpProxyAgent, fetch as undiciFetch } from "undici";
 import {
   ApiCallError,
@@ -55,14 +55,18 @@ const YAHOO_HEADERS = { "User-Agent": "Mozilla/5.0 (LCX Agent research-only mark
 let defaultFinanceProxyAgent: EnvHttpProxyAgent | undefined;
 let defaultFinanceProxyUrl: string | undefined;
 
-function defaultFinanceFetch(): FetchImpl {
+function defaultFinanceFetch(gzipText = false): FetchImpl {
   return async (url, init) => {
     const proxy = resolveFinanceCredentialEnv().LCX_FINANCE_HTTP_PROXY?.trim() || undefined;
     if (!defaultFinanceProxyAgent || proxy !== defaultFinanceProxyUrl) {
       const previous = defaultFinanceProxyAgent;
-      defaultFinanceProxyAgent = new EnvHttpProxyAgent(
-        proxy ? { httpProxy: proxy, httpsProxy: proxy } : undefined,
-      );
+      // The governed AbortSignal owns the total request budget. Undici's 10s
+      // connection default otherwise truncates callers that explicitly allow longer.
+      defaultFinanceProxyAgent = new EnvHttpProxyAgent({
+        ...(proxy ? { httpProxy: proxy, httpsProxy: proxy } : {}),
+        connectTimeout: 30_000,
+        requestTls: { timeout: 30_000 },
+      });
       defaultFinanceProxyUrl = proxy;
       void previous?.close().catch(() => undefined);
     }
@@ -75,7 +79,34 @@ function defaultFinanceFetch(): FetchImpl {
       ok: response.ok,
       status: response.status,
       headers: response.headers,
-      text: () => response.text(),
+      text: async () => {
+        if (!gzipText || !response.ok) {
+          return response.text();
+        }
+        const reader = response.body?.getReader();
+        if (!reader) {
+          throw new Error("Missing compressed public data body");
+        }
+        const chunks: Uint8Array[] = [];
+        let size = 0;
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) {
+              break;
+            }
+            size += value.byteLength;
+            if (size > 4 * 1024 * 1024) {
+              throw new Error("Compressed public data exceeds size limit");
+            }
+            chunks.push(value);
+          }
+        } finally {
+          await reader.cancel();
+        }
+        const body = Buffer.concat(chunks);
+        return gunzipSync(body, { maxOutputLength: 16 * 1024 * 1024 }).toString("utf8");
+      },
     };
   };
 }
@@ -86,6 +117,11 @@ export function resolveFinanceFetch(
   options: ApiTransportOptions = {},
 ): FetchImpl {
   return governApiFetch(fetchImpl ?? defaultFinanceFetch(), options);
+}
+
+/** Injected fetches supply decoded text; native downloads remain bounded and proxy-aware. */
+export function resolveFinanceGzipTextFetch(fetchImpl?: FetchImpl): FetchImpl {
+  return governApiFetch(fetchImpl ?? defaultFinanceFetch(true));
 }
 
 export class LiveMarketFetchError extends Error {

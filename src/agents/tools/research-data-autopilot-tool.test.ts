@@ -44,6 +44,19 @@ const fakeFetch: FetchImpl = async (url) => {
         }),
     };
   }
+  if (url.includes(".toc.json.gz")) {
+    return {
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          ID: 1,
+          title: "AAPL public title",
+          url: "https://example.test/title",
+          date: "2026-09-07T13:00:00Z",
+        }),
+    };
+  }
   return {
     ok: true,
     status: 200,
@@ -90,7 +103,12 @@ describe("research_data_autopilot tool", () => {
         autoSelectedSources: true,
         result: expect.objectContaining({
           status: "ready",
-          selectedSourceIds: ["gdelt_public_news", "google_news_rss", "yahoo_finance_rss"],
+          selectedSourceIds: [
+            "gdelt_public_news",
+            "gdelt_public_news_titles",
+            "google_news_rss",
+            "yahoo_finance_rss",
+          ],
         }),
         receiptPath: expect.stringContaining("memory/research-data-autopilot/"),
       }),

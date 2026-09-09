@@ -18,7 +18,12 @@ const FinanceMarketCollectionRefreshSchema = Type.Object({
   instrument: Type.String(),
   assetClass: Type.String(),
   collection: Type.Union(FINANCE_MARKET_COLLECTION_KINDS.map((kind) => Type.Literal(kind))),
-  seriesId: Type.Optional(Type.String()),
+  seriesId: Type.Optional(
+    Type.String({
+      description:
+        "Macro series identifier; for news title sampling, an optional literal company or topic keyword such as Apple.",
+    }),
+  ),
   fromDate: Type.Optional(Type.String()),
   toDate: Type.Optional(Type.String()),
   asOf: Type.Optional(Type.String()),

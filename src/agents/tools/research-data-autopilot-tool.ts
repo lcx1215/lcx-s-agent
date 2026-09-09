@@ -43,7 +43,12 @@ const ResearchDataAutopilotSchema = Type.Object({
   intent: Type.Union(RESEARCH_DATA_AUTOPILOT_INTENTS.map((intent) => Type.Literal(intent))),
   target: Type.String(),
   assetClass: Type.Optional(Type.String()),
-  seriesId: Type.Optional(Type.String()),
+  seriesId: Type.Optional(
+    Type.String({
+      description:
+        "Macro series identifier; for news title sampling, an optional literal company or topic keyword such as Apple.",
+    }),
+  ),
   fromDate: Type.Optional(Type.String()),
   toDate: Type.Optional(Type.String()),
   limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 250 })),

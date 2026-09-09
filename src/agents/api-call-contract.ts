@@ -5,6 +5,38 @@ import { retryAsync, type RetryConfig } from "../infra/retry.js";
 /** Labels only: never include credentials, URLs, headers, bodies or raw errors. */
 export type ApiAuthScopeLabel = "public" | "configured_read_only" | "unspecified";
 export type ApiCircuitState = "closed" | "open" | "half_open";
+const SAFE_NETWORK_CODES = [
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_BODY_TIMEOUT",
+  "UND_ERR_SOCKET",
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ETIMEDOUT",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "CERT_HAS_EXPIRED",
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "ERR_TLS_CERT_ALTNAME_INVALID",
+] as const;
+type ApiNetworkCode = (typeof SAFE_NETWORK_CODES)[number];
+
+function safeNetworkCode(error: unknown): ApiNetworkCode | undefined {
+  let current = error;
+  for (let depth = 0; depth < 4 && current && typeof current === "object"; depth++) {
+    const value = current as { code?: unknown; cause?: unknown };
+    if (
+      typeof value.code === "string" &&
+      (SAFE_NETWORK_CODES as readonly string[]).includes(value.code)
+    ) {
+      return value.code as ApiNetworkCode;
+    }
+    current = value.cause;
+  }
+  return undefined;
+}
+
 export type ApiCallReceipt = Readonly<{
   schemaVersion: "lcx_api_call_v1";
   callId: string;
@@ -18,6 +50,7 @@ export type ApiCallReceipt = Readonly<{
   attempt: number;
   status: "succeeded" | "failed" | "timed_out" | "cancelled";
   httpStatus?: number;
+  networkCode?: ApiNetworkCode;
   transportError?:
     | "network_error"
     | "http_error"
@@ -131,6 +164,7 @@ export class ApiCallError extends Error {
     readonly kind: NonNullable<ApiCallReceipt["transportError"]>,
     readonly httpStatus?: number,
     readonly retryAfterMs?: number,
+    readonly networkCode?: ApiNetworkCode,
   ) {
     super(httpStatus === undefined ? `API ${kind}` : `API http status ${httpStatus}`);
     this.name = "ApiCallError";
@@ -372,6 +406,9 @@ async function boundedCall<T>(
               ? "failed"
               : "succeeded",
       ...(kind ? { transportError: kind } : {}),
+      ...(error instanceof ApiCallError && error.networkCode
+        ? { networkCode: error.networkCode }
+        : {}),
     };
     try {
       options.onReceipt?.(receipt);
@@ -443,6 +480,7 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
       source: "public-source",
       ...inherited,
       ...options,
+      retry: options.retry ? { ...inherited?.retry, ...options.retry } : inherited?.retry,
       correlationId: options.correlationId ?? inherited?.correlationId ?? randomUUID(),
       operation: "http_get",
       signal: signals.length ? AbortSignal.any(signals) : undefined,
@@ -511,7 +549,12 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
                     if (error instanceof ApiCallError) {
                       throw error;
                     }
-                    throw new ApiCallError("network_error");
+                    throw new ApiCallError(
+                      "network_error",
+                      undefined,
+                      undefined,
+                      safeNetworkCode(error),
+                    );
                   } finally {
                     permit?.release();
                   }
@@ -541,8 +584,12 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
               shouldRetry: (error) =>
                 !signal.aborted &&
                 error instanceof ApiCallError &&
-                error.kind === "http_error" &&
-                [408, 429, 500, 502, 503, 504].includes(error.httpStatus ?? 0) &&
+                ((error.kind === "http_error" &&
+                  [408, 429, 500, 502, 503, 504].includes(error.httpStatus ?? 0)) ||
+                  (error.kind === "network_error" &&
+                    ["ECONNRESET", "UND_ERR_SOCKET", "EAI_AGAIN"].includes(
+                      error.networkCode ?? "",
+                    ))) &&
                 // Never shorten a server's Retry-After to the local backoff cap.
                 (error.retryAfterMs === undefined ||
                   error.retryAfterMs <= (scope.retry?.maxDelayMs ?? 30_000)),

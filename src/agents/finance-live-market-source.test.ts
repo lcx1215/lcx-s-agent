@@ -1,3 +1,4 @@
+import { gzipSync } from "node:zlib";
 import { EnvHttpProxyAgent, Response, fetch as undiciFetch } from "undici";
 import { describe, expect, it, vi } from "vitest";
 import { resolveFinanceCredentialEnv } from "./finance-credential-env.js";
@@ -5,6 +6,7 @@ import { buildFinanceDataGatewaySnapshot } from "./finance-data-gateway.js";
 import {
   collectLiveFinanceGatewayInput,
   resolveFinanceFetch,
+  resolveFinanceGzipTextFetch,
   fetchYahooQuote,
   LiveMarketFetchError,
   parseYahooChart,
@@ -198,6 +200,8 @@ describe("default proxy-aware transport", () => {
     expect(EnvHttpProxyAgent).toHaveBeenLastCalledWith({
       httpProxy: "http://proxy.test:8080",
       httpsProxy: "http://proxy.test:8080",
+      connectTimeout: 30_000,
+      requestTls: { timeout: 30_000 },
     });
   });
   it("passes the deadline signal to undici without making a network call", async () => {
@@ -209,4 +213,21 @@ describe("default proxy-aware transport", () => {
     expect(init?.signal?.aborted).toBe(true);
     expect(init?.dispatcher).toBeDefined();
   });
+});
+
+it("decodes public gzip text under the governed deadline", async () => {
+  vi.mocked(undiciFetch).mockResolvedValueOnce(
+    new Response(new Uint8Array(gzipSync("public news metadata"))),
+  );
+  const response = await resolveFinanceGzipTextFetch()("https://example.test/data.json.gz");
+  expect(await response.text()).toBe("public news metadata");
+});
+
+it("rejects a compressed response that expands past the output budget", async () => {
+  vi.mocked(undiciFetch).mockResolvedValueOnce(
+    new Response(new Uint8Array(gzipSync(Buffer.alloc(17 * 1024 * 1024, 65)))),
+  );
+  await expect(
+    resolveFinanceGzipTextFetch()("https://example.test/data.json.gz"),
+  ).rejects.toMatchObject({ kind: "network_error" });
 });

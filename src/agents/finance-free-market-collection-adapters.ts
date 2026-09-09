@@ -1,3 +1,4 @@
+import { createApiRateLimiter } from "./api-call-contract.js";
 import { ApiCallError } from "./api-call-contract.js";
 import type {
   FinanceDataDelayStatus,
@@ -450,6 +451,9 @@ export function createYahooFinanceRssCollectionAdapter(
  * cross-check, not a quote or issuer authority. GDELT may rate-limit high
  * traffic, so a failed attempt stays visible in the collection receipt.
  */
+// GDELT's public service asks clients to send at most one request per five seconds.
+const gdeltPublicRateLimiter = createApiRateLimiter({ minIntervalMs: 5_000, maxConcurrent: 1 });
+
 export function createGdeltPublicNewsCollectionAdapter(
   options: {
     fetchImpl?: FetchImpl;
@@ -473,7 +477,10 @@ export function createGdeltPublicNewsCollectionAdapter(
       };
       const sourceUrlOrArtifact = apiUrl(baseUrl, params);
       const payload = (await fetchJson(
-        resolveFinanceFetch(options.fetchImpl),
+        resolveFinanceFetch(options.fetchImpl, {
+          rateLimiter: gdeltPublicRateLimiter,
+          retry: { minDelayMs: 5_000 },
+        }),
         sourceUrlOrArtifact,
         { "User-Agent": "LCX Agent research-only" },
       )) as { articles?: unknown };

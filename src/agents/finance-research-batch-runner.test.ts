@@ -475,8 +475,8 @@ describe("finance research batch runner", () => {
         ],
       }),
     );
-    const adapters = createFinanceMarketCollectionRegistry({ fetchImpl }).filter((adapter) =>
-      adapter.id.includes("gdelt"),
+    const adapters = createFinanceMarketCollectionRegistry({ fetchImpl }).filter(
+      (adapter) => adapter.id === "gdelt_public_news",
     );
     expect(adapters).toHaveLength(1);
     const base = options();

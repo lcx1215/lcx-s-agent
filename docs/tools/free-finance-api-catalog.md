@@ -129,6 +129,30 @@ pnpm lcx:research:chart --live --symbol AAPL --limit 250 --json
   named source, timestamp, and provenance receipt; EchoAPI itself is never
   treated as a provider.
 
+## GDELT service degradation
+
+`gdelt_public_news` retains DOC API failures and paces requests at least five
+seconds apart. The public service can still return HTTP 429. Transport receipts
+retain allowlisted network codes without logging URLs, headers, or raw errors;
+transient GET resets may retry once within the total call budget. Certificate
+and authorization failures do not retry.
+
+`gdelt_public_news_titles` uses GDELT's official downloadable TOC files as a
+separate, keyless source. It searches titles in two sampled minutes from a
+recent 15-minute processing window, at least five minutes behind `asOf`.
+For a company name, set `seriesId` to a literal keyword such as `Apple` while
+keeping `instrument` as `AAPL`. This is a bounded title sample, not fulltext
+search or complete news coverage. Every result retains the sampled file URLs,
+content hashes, monitoring timestamps, and missing-file coverage. An empty
+sample does not establish that no news exists. Direct batch callers reserve
+two HTTP calls per source; the all-source runner already reserves three.
+
+Gzip downloads use the existing proxy-aware, deadline-governed transport with
+4 MiB compressed and 16 MiB decoded limits. No browser challenge, login, paid
+permission, or rate-limit bypass is used. GDELT explicitly recommends its
+[downloadable ngrams and TOC data](https://blog.gdeltproject.org/using-the-new-web-ngrams-dataset-to-find-relevant-coverage/)
+while its search infrastructure is being migrated.
+
 ## Open-source agent patterns audited
 
 OpenBB, TradingAgents, FinRobot, and the smaller AI Hedge Fund projects were

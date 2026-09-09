@@ -350,3 +350,79 @@ describe("API call governance", () => {
     );
   });
 });
+
+describe("safe network diagnosis", () => {
+  it.each(["UND_ERR_CONNECT_TIMEOUT", "ECONNRESET", "CERT_HAS_EXPIRED"])(
+    "keeps %s without leaking transport messages",
+    async (code) => {
+      const receipts: ApiCallReceipt[] = [];
+      const fetch = vi.fn<ApiFetch>().mockRejectedValue(
+        new Error("secret transport URL", {
+          cause: Object.assign(new Error("secret host"), { code }),
+        }),
+      );
+      await expect(
+        governApiFetch(fetch, { retry: { attempts: 1 }, onReceipt: (r) => receipts.push(r) })(
+          "https://example.test",
+        ),
+      ).rejects.toMatchObject({ kind: "network_error", networkCode: code });
+      expect(receipts[0].networkCode).toBe(code);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(receipts)).not.toContain("secret");
+    },
+  );
+  it("drops arbitrary error-code strings", async () => {
+    const receipts: ApiCallReceipt[] = [];
+    const fetch: ApiFetch = async () => {
+      throw { code: "secret-api-key" };
+    };
+    await expect(
+      governApiFetch(fetch, { retry: { attempts: 1 }, onReceipt: (r) => receipts.push(r) })(
+        "https://example.test",
+      ),
+    ).rejects.toMatchObject({ kind: "network_error" });
+    expect(receipts[0].networkCode).toBeUndefined();
+    expect(JSON.stringify(receipts)).not.toContain("secret");
+  });
+});
+
+it("retries a transient GET reset once within the same budget and records both attempts", async () => {
+  const receipts: ApiCallReceipt[] = [];
+  const dispatch = vi.fn();
+  const fetch = vi
+    .fn<ApiFetch>()
+    .mockRejectedValueOnce(Object.assign(new Error("private"), { code: "ECONNRESET" }))
+    .mockResolvedValueOnce(response());
+  await governApiFetch(fetch, {
+    retry: { minDelayMs: 1 },
+    beforeHttpDispatch: dispatch,
+    onReceipt: (r) => receipts.push(r),
+  })("https://example.test");
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(dispatch).toHaveBeenCalledTimes(2);
+  expect(receipts).toEqual([
+    expect.objectContaining({ status: "failed", networkCode: "ECONNRESET", attempt: 1 }),
+    expect.objectContaining({ status: "succeeded", attempt: 2 }),
+  ]);
+});
+
+it("does not retry certificate failures", async () => {
+  const fetch = vi
+    .fn<ApiFetch>()
+    .mockRejectedValue(Object.assign(new Error("private"), { code: "CERT_HAS_EXPIRED" }));
+  await expect(governApiFetch(fetch)("https://example.test")).rejects.toMatchObject({
+    networkCode: "CERT_HAS_EXPIRED",
+  });
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+it("preserves the caller's one-attempt limit when a source sets its own retry delay", async () => {
+  const fetch = vi.fn<ApiFetch>().mockResolvedValue(response(429));
+  await expect(
+    runApiSourceCall(
+      { provider: "public", source: "public", operation: "collect", retry: { attempts: 1 } },
+      async () => governApiFetch(fetch, { retry: { minDelayMs: 5000 } })("https://example.test"),
+    ),
+  ).rejects.toMatchObject({ httpStatus: 429 });
+  expect(fetch).toHaveBeenCalledTimes(1);
+});

@@ -22,6 +22,7 @@ import {
   createYahooPublicEodHistoryCollectionAdapter,
   createYahooFinanceRssCollectionAdapter,
 } from "./finance-free-market-collection-adapters.js";
+import { createGdeltNewsTitlesAdapter } from "./finance-gdelt-news-titles.js";
 import { resolveFinanceFetch, type FetchImpl } from "./finance-live-market-source.js";
 
 export {
@@ -1174,6 +1175,7 @@ export function createFinanceMarketCollectionRegistry(
     createTreasuryAverageInterestRatesCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createSecFilingsCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createGdeltPublicNewsCollectionAdapter({ fetchImpl: options.fetchImpl }),
+    createGdeltNewsTitlesAdapter({ fetchImpl: options.fetchImpl }),
     createGoogleNewsRssCollectionAdapter({ fetchImpl: options.fetchImpl }),
   ];
   if (options.includeYahooPublicSources) {
