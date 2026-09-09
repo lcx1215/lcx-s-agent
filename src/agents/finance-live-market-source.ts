@@ -25,6 +25,7 @@ import type {
   FinanceDataGatewayInput,
   FinanceDataGatewayObservationInput,
 } from "./finance-data-gateway.js";
+import { financeResponseCache } from "./finance-response-cache.js";
 import { governFinanceQuota } from "./finance-source-quota.js";
 
 export type LiveMarketQuote = {
@@ -117,12 +118,18 @@ export function resolveFinanceFetch(
   fetchImpl?: FetchImpl,
   options: ApiTransportOptions = {},
 ): FetchImpl {
-  return governApiFetch(fetchImpl ?? governFinanceQuota(createFinanceNativeFetch()), options);
+  return governApiFetch(
+    fetchImpl ?? financeResponseCache.wrap(governFinanceQuota(createFinanceNativeFetch())),
+    options,
+  );
 }
 
 /** Injected fetches supply decoded text; native downloads remain bounded and proxy-aware. */
 export function resolveFinanceGzipTextFetch(fetchImpl?: FetchImpl): FetchImpl {
-  return governApiFetch(fetchImpl ?? governFinanceQuota(createFinanceNativeFetch(true)));
+  return governApiFetch(
+    fetchImpl ??
+      financeResponseCache.wrap(governFinanceQuota(createFinanceNativeFetch(true)), "gzip"),
+  );
 }
 
 export class LiveMarketFetchError extends Error {

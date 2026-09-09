@@ -68,10 +68,11 @@ export type FinanceResearchBatchOptions = Readonly<{
   correlationId?: string;
   signal?: AbortSignal;
   maxJobs?: number;
-  /** Hard upper bound on worst-case source attempts reserved before dispatch. */
+  /** Hard HTTP dispatch cap; checkpointed runs additionally reserve crash-safe worst cases. */
   maxApiCalls?: number;
   maxConcurrency?: number;
   maxSourcesPerJob?: number;
+  maxSourceConcurrency?: number;
   /** Per-adapter endpoint allowance, reserved before dispatch (e.g. SEC lookup + facts). */
   maxHttpCallsPerSource?: number;
   /** Expose returned but unapproved data to reviewers, never as current verified evidence. */
@@ -148,10 +149,15 @@ export type FinanceResearchBatchEvidencePacket = Readonly<{
     maxConcurrency: number;
     peakConcurrency: number;
     maxSourcesPerJob: number;
+    maxSourceConcurrency: number;
     sourceTimeoutMs: number;
     totalTimeoutMs: number;
     retryAttempts: number;
     callCount: number;
+    httpDispatchCount: number;
+    cacheHitCount: number;
+    rejectedDispatchCount: number;
+    budgetAccounting: "actual_dispatch" | "durable_worst_case_reservation";
     callCountBasis: "http_get_receipts_including_rejected_dispatch";
     receiptCount: number;
     queuePolicy: "bounded_fifo_reject_oversize_before_dispatch";
@@ -257,6 +263,14 @@ export async function runFinanceResearchBatch(
     "maxHttpCallsPerSource",
     true,
   );
+  const maxSourceConcurrency = positive(
+    options.maxSourceConcurrency ?? 4,
+    "maxSourceConcurrency",
+    true,
+  );
+  if (maxSourceConcurrency > 8) {
+    throw new Error("maxSourceConcurrency must not exceed 8");
+  }
   const sourceTimeoutMs = positive(options.sourceTimeoutMs ?? 15_000, "sourceTimeoutMs");
   const totalTimeoutMs = positive(options.totalTimeoutMs ?? 120_000, "totalTimeoutMs");
   const retryAttempts = positive(options.retry?.attempts ?? 1, "retry.attempts", true);
@@ -366,6 +380,7 @@ export async function runFinanceResearchBatch(
           totalTimeoutMs,
           maxJobs,
           maxSourcesPerJob,
+          maxSourceConcurrency,
           retry: options.retry ?? { attempts: 1 },
           sourceTimeoutMs,
           adapters: [...realtimeAdapters, ...collectionAdapters].map((adapter) => ({
@@ -444,10 +459,7 @@ export async function runFinanceResearchBatch(
         };
         continue;
       }
-      if (
-        reservation?.status === "budget_exhausted" ||
-        (!checkpoint && reservedCallBudget + worstCaseJobCalls > maxApiCalls)
-      ) {
+      if (reservation?.status === "budget_exhausted") {
         jobs[index] = {
           ...base,
           status: "blocked",
@@ -456,23 +468,31 @@ export async function runFinanceResearchBatch(
         };
         continue;
       }
-      reservedCallBudget = checkpoint?.reserved() ?? reservedCallBudget + worstCaseJobCalls;
+      reservedCallBudget = checkpoint?.reserved() ?? reservedCallBudget;
       active++;
       peakConcurrency = Math.max(peakConcurrency, active);
       try {
         let httpDispatched = 0;
         const transport = {
           maxSources: maxSourcesPerJob,
+          maxSourceConcurrency,
           timeoutMs: sourceTimeoutMs,
+          cacheMaxAgeMs: job.freshnessMaxMinutes * 60_000,
           signal,
           correlationId: job.correlationId,
           retry: { ...options.retry, attempts: retryAttempts },
           sourceGovernance: governance,
           beforeHttpDispatch: () => {
-            if (httpDispatched >= worstCaseJobCalls) {
+            if (
+              httpDispatched >= worstCaseJobCalls ||
+              (!checkpoint && reservedCallBudget >= maxApiCalls)
+            ) {
               throw new ApiCallError("budget_exhausted");
             }
             httpDispatched++;
+            if (!checkpoint) {
+              reservedCallBudget++;
+            }
           },
         };
         const receipt =
@@ -569,10 +589,19 @@ export async function runFinanceResearchBatch(
     maxConcurrency,
     peakConcurrency,
     maxSourcesPerJob,
+    maxSourceConcurrency,
     sourceTimeoutMs,
     totalTimeoutMs,
     retryAttempts,
     callCount: httpCalls.length,
+    httpDispatchCount: httpCalls.filter((call) => call.dispatchedAt !== undefined).length,
+    cacheHitCount: httpCalls.filter((call) => call.dataAccess?.kind === "cache").length,
+    rejectedDispatchCount: httpCalls.filter(
+      (call) => !call.dispatchedAt && call.dataAccess?.kind !== "cache",
+    ).length,
+    budgetAccounting: checkpoint
+      ? ("durable_worst_case_reservation" as const)
+      : ("actual_dispatch" as const),
     callCountBasis: "http_get_receipts_including_rejected_dispatch" as const,
     receiptCount: apiCalls.length,
     queuePolicy: "bounded_fifo_reject_oversize_before_dispatch" as const,

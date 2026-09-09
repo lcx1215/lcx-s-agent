@@ -13,6 +13,7 @@ import {
   createSecOfficialReferenceAdapter,
   createStooqDelayedMarketAdapter,
 } from "./finance-additional-source-adapters.js";
+import { financeReuseTimestamp } from "./finance-cache-provenance.js";
 import { resolveFinanceCredentialEnv } from "./finance-credential-env.js";
 import {
   createBitstampCryptoTickerAdapter,
@@ -37,6 +38,7 @@ import {
   quoteToObservation,
   type FetchImpl,
 } from "./finance-live-market-source.js";
+import { mapFinanceSourceLanes } from "./finance-source-scheduler.js";
 import {
   createAlpacaUsEquityQuoteAdapter,
   createFinnhubUsEquityQuoteAdapter,
@@ -266,6 +268,8 @@ export async function runFinanceRealtimeRefresh(options: {
   retry?: ApiTransportOptions["retry"];
   sourceGovernance?: ApiSourceGovernanceRegistry;
   beforeHttpDispatch?: ApiTransportOptions["beforeHttpDispatch"];
+  cacheMaxAgeMs?: number;
+  maxSourceConcurrency?: number;
 }): Promise<FinanceRealtimeRefreshReceipt> {
   const request = normalizeRequest(options.request);
   validateAdapters(options.adapters);
@@ -284,56 +288,84 @@ export async function runFinanceRealtimeRefresh(options: {
 
   let adaptersCalled = false;
   const correlationId = options.correlationId ?? randomUUID();
-  for (const adapter of selected) {
-    const apiCalls: ApiCallReceipt[] = [];
-    const startedAt = Date.now();
-    try {
-      const observation = await collectWithTimeout(
-        adapter,
-        request,
-        {
-          timeoutMs,
-          signal: options.signal,
-          correlationId,
-          retry: options.retry,
-          beforeHttpDispatch: options.beforeHttpDispatch,
-          ...(() => {
-            const governance = options.sourceGovernance?.forSource(adapter.id);
-            return governance
-              ? {
-                  rateLimiter: governance.rateLimiter,
-                  circuitBreaker: governance.circuitBreaker,
-                }
-              : {};
-          })(),
-          onReceipt: (receipt) => apiCalls.push(receipt),
-        },
-        () => {
-          adaptersCalled = true;
-        },
-      );
-      observations.push(observation);
-      sourceAttempts.push({
-        adapterId: adapter.id,
-        providerName: adapter.providerName,
-        providerRole: adapter.providerRole,
-        priority: adapter.priority,
-        status: "succeeded",
-        latencyMs: Math.max(0, Date.now() - startedAt),
-        apiCalls: [...apiCalls],
-      });
-    } catch (error) {
-      sourceAttempts.push({
-        adapterId: adapter.id,
-        providerName: adapter.providerName,
-        providerRole: adapter.providerRole,
-        priority: adapter.priority,
-        status: "failed",
-        latencyMs: Math.max(0, Date.now() - startedAt),
-        apiCalls: [...apiCalls],
-        error: errorText(error),
-      });
-    }
+  const results = await mapFinanceSourceLanes(
+    selected,
+    async (adapter) => {
+      const sourceAttempts: FinanceRealtimeSourceAttempt[] = [];
+      const observations: FinanceDataGatewayObservationInput[] = [];
+      const apiCalls: ApiCallReceipt[] = [];
+      const startedAt = Date.now();
+      try {
+        const observation = await collectWithTimeout(
+          adapter,
+          request,
+          {
+            timeoutMs,
+            cacheMaxAgeMs: Math.min(
+              options.cacheMaxAgeMs ?? Infinity,
+              (request.freshnessMaxMinutes ?? 15) * 60_000,
+            ),
+            signal: options.signal,
+            correlationId,
+            retry: options.retry,
+            beforeHttpDispatch: options.beforeHttpDispatch,
+            ...(() => {
+              const governance = options.sourceGovernance?.forSource(adapter.id);
+              return governance
+                ? {
+                    rateLimiter: governance.rateLimiter,
+                    circuitBreaker: governance.circuitBreaker,
+                  }
+                : {};
+            })(),
+            onReceipt: (receipt) => apiCalls.push(receipt),
+          },
+          () => {
+            adaptersCalled = true;
+          },
+        );
+        const reusedAt = financeReuseTimestamp(apiCalls, request.asOf);
+        observations.push(
+          reusedAt
+            ? {
+                ...observation,
+                observedAt: reusedAt,
+                fields: observation.fields.map((field) => ({
+                  ...field,
+                  sourceTimestamp:
+                    field.sourceTimestamp === request.asOf ? reusedAt : field.sourceTimestamp,
+                })),
+              }
+            : observation,
+        );
+        sourceAttempts.push({
+          adapterId: adapter.id,
+          providerName: adapter.providerName,
+          providerRole: adapter.providerRole,
+          priority: adapter.priority,
+          status: "succeeded",
+          latencyMs: Math.max(0, Date.now() - startedAt),
+          apiCalls: [...apiCalls],
+        });
+      } catch (error) {
+        sourceAttempts.push({
+          adapterId: adapter.id,
+          providerName: adapter.providerName,
+          providerRole: adapter.providerRole,
+          priority: adapter.priority,
+          status: "failed",
+          latencyMs: Math.max(0, Date.now() - startedAt),
+          apiCalls: [...apiCalls],
+          error: errorText(error),
+        });
+      }
+      return { sourceAttempts, observations };
+    },
+    options.maxSourceConcurrency,
+  );
+  for (const result of results) {
+    sourceAttempts.push(...result.sourceAttempts);
+    observations.push(...result.observations);
   }
 
   const baseReceipt = {

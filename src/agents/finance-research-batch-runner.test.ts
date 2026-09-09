@@ -354,7 +354,7 @@ describe("finance research batch runner", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it("reserves a hard worst-case API budget before dispatching jobs", async () => {
+  it("caps actual HTTP dispatches under concurrent jobs and reports local rejections separately", async () => {
     const fetchImpl = vi.fn(fixtureFetch);
     const packet = await runFinanceResearchBatch({
       ...options(fetchImpl),
@@ -367,12 +367,19 @@ describe("finance research batch runner", () => {
     expect(packet.budget).toMatchObject({
       maxApiCalls: 3,
       reservedCallBudget: 3,
-      callCount: 3,
+      httpDispatchCount: 3,
+      rejectedDispatchCount: 3,
+      budgetAccounting: "actual_dispatch",
+      callCount: 6,
       blockedJobs: 2,
     });
-    expect(packet.jobs.slice(2).every((job) => job.error === "api_call_budget_exhausted")).toBe(
-      true,
-    );
+    expect(
+      packet.jobs
+        .flatMap((job) => job.apiCalls)
+        .filter(
+          (call) => call.operation === "http_get" && call.transportError === "budget_exhausted",
+        ),
+    ).toHaveLength(3);
     expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
 
@@ -421,8 +428,8 @@ describe("finance research batch runner", () => {
       const packet = await pending;
       expect(packet.status).toBe(kind === "cancel" ? "cancelled" : "timed_out");
       expect(packet.budget.cancelledJobs + packet.budget.timedOutJobs).toBe(4);
-      expect(fetchImpl).toHaveBeenCalledTimes(1);
-      expect(aborted).toBe(1);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+      expect(aborted).toBe(2);
       expect(
         packet.jobs[0].apiCalls.some(
           (call) => call.status === (kind === "cancel" ? "cancelled" : "timed_out"),

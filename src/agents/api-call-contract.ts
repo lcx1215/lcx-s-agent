@@ -48,6 +48,8 @@ export type ApiCallReceipt = Readonly<{
   finishedAt: string;
   /** Set only after all quota/queue waits and caller budget approval, immediately before dispatch. */
   dispatchedAt?: string;
+  /** Reuse is a data read, never a new HTTP dispatch or fresh source verification. */
+  dataAccess?: { kind: "network" | "cache"; fetchedAt: string; ageMs: number };
   latencyMs: number;
   attempt: number;
   status: "succeeded" | "failed" | "timed_out" | "cancelled";
@@ -78,6 +80,8 @@ export type ApiCallReceipt = Readonly<{
 
 export type ApiTransportOptions = {
   signal?: AbortSignal;
+  /** Upper bound for finance response reuse; zero forces an independent network read. */
+  cacheMaxAgeMs?: number;
   timeoutMs?: number;
   correlationId?: string;
   retry?: RetryConfig;
@@ -148,19 +152,27 @@ export function createApiCircuitBreaker(
 export type ApiFetchResponse = {
   ok: boolean;
   status: number;
+  dataAccess?: ApiCallReceipt["dataAccess"];
   headers?: { get(name: string): string | null };
   text: () => Promise<string>;
 };
 export type ApiFetch = ((
   url: string,
-  init?: { headers?: Record<string, string>; signal?: AbortSignal },
+  init?: { headers?: Record<string, string>; signal?: AbortSignal; cacheMaxAgeMs?: number },
 ) => Promise<ApiFetchResponse>) & {
+  /** Read-only cache presence check; no reservations or network side effects. */
+  hasCachedResponse?: (
+    url: string,
+    init?: { headers?: Record<string, string>; cacheMaxAgeMs?: number },
+  ) => boolean;
+  /** A prepared cache read must not reserve caller HTTP budget. */
+  skipsHttpDispatch?: boolean;
   /** Releases a prepared local reservation when dispatch is rejected or cancelled. */
   cancelPreparation?: () => Promise<void>;
   /** Optional scheduling phase; it must not send HTTP. */
   prepare?: (
     url: string,
-    init?: { headers?: Record<string, string>; signal?: AbortSignal },
+    init?: { headers?: Record<string, string>; signal?: AbortSignal; cacheMaxAgeMs?: number },
   ) => Promise<ApiFetch>;
 };
 
@@ -498,15 +510,20 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
       operation: "http_get",
       signal: signals.length ? AbortSignal.any(signals) : undefined,
     };
-    const circuitState = scope.circuitBreaker?.beforeRequest() ?? "closed";
-    if (circuitState === "open") {
-      return boundedCall(
-        { ...scope, operation: "http_get", onReceipt: scope.onReceipt },
-        async () => {
-          throw new ApiCallError("circuit_open");
-        },
-        { circuitState },
-      );
+    let circuitState: ApiCircuitState = "closed";
+    let circuitChecked = false;
+    if (!fetchImpl.hasCachedResponse?.(url, { ...init, cacheMaxAgeMs: scope.cacheMaxAgeMs })) {
+      circuitState = scope.circuitBreaker?.beforeRequest() ?? "closed";
+      circuitChecked = true;
+      if (circuitState === "open") {
+        return boundedCall(
+          scope,
+          async () => {
+            throw new ApiCallError("circuit_open");
+          },
+          { circuitState },
+        );
+      }
     }
     let lastAttemptStatus: ApiCallReceipt["status"] | undefined;
     const emitAttempt = (receipt: ApiCallReceipt) => {
@@ -547,11 +564,13 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
                   let permit: ApiRateLimiterPermit | undefined;
                   try {
                     permit = await scope.rateLimiter?.acquire(attemptSignal);
-                    if (permit !== undefined) {
-                      details.throttleWaitMs = permit.waitMs;
-                    }
+                    details.throttleWaitMs = permit?.waitMs ?? 0;
                     attemptSignal.throwIfAborted();
-                    const dispatchInit = { ...init, signal: attemptSignal };
+                    const dispatchInit = {
+                      ...init,
+                      signal: attemptSignal,
+                      cacheMaxAgeMs: scope.cacheMaxAgeMs,
+                    };
                     const preparationStarted = Date.now();
                     const dispatch = fetchImpl.prepare
                       ? await fetchImpl.prepare(url, dispatchInit)
@@ -562,13 +581,27 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
                     }
                     try {
                       attemptSignal.throwIfAborted();
-                      scope.beforeHttpDispatch?.();
+                      if (!dispatch.skipsHttpDispatch) {
+                        if (!circuitChecked) {
+                          circuitState = scope.circuitBreaker?.beforeRequest() ?? "closed";
+                          circuitChecked = true;
+                        }
+                        details.circuitState = circuitState;
+                        if (circuitState === "open") {
+                          throw new ApiCallError("circuit_open");
+                        }
+                        attemptSignal.throwIfAborted();
+                        scope.beforeHttpDispatch?.();
+                      }
                     } catch (error) {
                       await dispatch.cancelPreparation?.();
                       throw error;
                     }
-                    details.dispatchedAt = new Date().toISOString();
+                    if (!dispatch.skipsHttpDispatch) {
+                      details.dispatchedAt = new Date().toISOString();
+                    }
                     response = await dispatch(url, dispatchInit);
+                    details.dataAccess = response.dataAccess;
                     details.httpStatus = response.status;
                     details.retryAfterMs = parseApiRetryAfter(response.headers?.get("retry-after"));
                     details.rateLimited = response.status === 429;
@@ -627,6 +660,7 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
                     ok: response.ok,
                     status: response.status,
                     headers: response.headers,
+                    dataAccess: response.dataAccess,
                     text: async () => body,
                   };
                 },
@@ -655,7 +689,9 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
                 error instanceof ApiCallError ? error.retryAfterMs : undefined,
             },
           );
-          scope.circuitBreaker?.recordSuccess();
+          if (response.dataAccess?.kind !== "cache") {
+            scope.circuitBreaker?.recordSuccess();
+          }
           return response;
         } catch (error) {
           if (

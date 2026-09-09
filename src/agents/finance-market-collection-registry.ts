@@ -6,6 +6,7 @@ import {
   type ApiCallReceipt,
   type ApiTransportOptions,
 } from "./api-call-contract.js";
+import { financeReuseTimestamp } from "./finance-cache-provenance.js";
 import { resolveFinanceCredentialEnv } from "./finance-credential-env.js";
 import type {
   FinanceDataDelayStatus,
@@ -24,6 +25,7 @@ import {
 } from "./finance-free-market-collection-adapters.js";
 import { createGdeltNewsTitlesAdapter } from "./finance-gdelt-news-titles.js";
 import { resolveFinanceFetch, type FetchImpl } from "./finance-live-market-source.js";
+import { mapFinanceSourceLanes } from "./finance-source-scheduler.js";
 
 export {
   createBinancePublicEodHistoryCollectionAdapter,
@@ -1035,6 +1037,8 @@ export async function runFinanceMarketCollectionRefresh(options: {
   retry?: ApiTransportOptions["retry"];
   sourceGovernance?: ApiSourceGovernanceRegistry;
   beforeHttpDispatch?: ApiTransportOptions["beforeHttpDispatch"];
+  cacheMaxAgeMs?: number;
+  maxSourceConcurrency?: number;
 }): Promise<FinanceMarketCollectionReceipt> {
   const request = normalizeRequest(options.request);
   validateAdapters(options.adapters);
@@ -1055,58 +1059,82 @@ export async function runFinanceMarketCollectionRefresh(options: {
   const records: FinanceMarketCollectionItem[] = [];
   let adaptersCalled = false;
   const correlationId = options.correlationId ?? randomUUID();
-  for (const adapter of selected) {
-    const apiCalls: ApiCallReceipt[] = [];
-    const startedAt = Date.now();
-    try {
-      const collected = await collectWithTimeout(
-        adapter,
-        request,
-        {
-          timeoutMs,
-          signal: options.signal,
-          correlationId,
-          retry: options.retry,
-          beforeHttpDispatch: options.beforeHttpDispatch,
-          ...(() => {
-            const governance = options.sourceGovernance?.forSource(adapter.id);
-            return governance
+  const results = await mapFinanceSourceLanes(
+    selected,
+    async (adapter) => {
+      const sourceAttempts: FinanceMarketCollectionAttempt[] = [];
+      const records: FinanceMarketCollectionItem[] = [];
+      const apiCalls: ApiCallReceipt[] = [];
+      const startedAt = Date.now();
+      try {
+        const collected = await collectWithTimeout(
+          adapter,
+          request,
+          {
+            timeoutMs,
+            cacheMaxAgeMs: options.cacheMaxAgeMs,
+            signal: options.signal,
+            correlationId,
+            retry: options.retry,
+            beforeHttpDispatch: options.beforeHttpDispatch,
+            ...(() => {
+              const governance = options.sourceGovernance?.forSource(adapter.id);
+              return governance
+                ? {
+                    rateLimiter: governance.rateLimiter,
+                    circuitBreaker: governance.circuitBreaker,
+                  }
+                : {};
+            })(),
+            onReceipt: (receipt) => apiCalls.push(receipt),
+          },
+          () => {
+            adaptersCalled = true;
+          },
+        );
+        const reusedAt = financeReuseTimestamp(apiCalls, request.asOf);
+        records.push(
+          ...collected.map((item) =>
+            reusedAt
               ? {
-                  rateLimiter: governance.rateLimiter,
-                  circuitBreaker: governance.circuitBreaker,
+                  ...item,
+                  observedAt: reusedAt,
+                  sourceTimestamp:
+                    item.sourceTimestamp === request.asOf ? reusedAt : item.sourceTimestamp,
                 }
-              : {};
-          })(),
-          onReceipt: (receipt) => apiCalls.push(receipt),
-        },
-        () => {
-          adaptersCalled = true;
-        },
-      );
-      records.push(...collected);
-      sourceAttempts.push({
-        adapterId: adapter.id,
-        providerName: adapter.providerName,
-        providerRole: adapter.providerRole,
-        priority: adapter.priority,
-        status: "succeeded",
-        recordCount: collected.length,
-        latencyMs: Math.max(0, Date.now() - startedAt),
-        apiCalls: [...apiCalls],
-      });
-    } catch (error) {
-      sourceAttempts.push({
-        adapterId: adapter.id,
-        providerName: adapter.providerName,
-        providerRole: adapter.providerRole,
-        priority: adapter.priority,
-        status: "failed",
-        recordCount: 0,
-        latencyMs: Math.max(0, Date.now() - startedAt),
-        apiCalls: [...apiCalls],
-        error: errorText(error),
-      });
-    }
+              : item,
+          ),
+        );
+        sourceAttempts.push({
+          adapterId: adapter.id,
+          providerName: adapter.providerName,
+          providerRole: adapter.providerRole,
+          priority: adapter.priority,
+          status: "succeeded",
+          recordCount: collected.length,
+          latencyMs: Math.max(0, Date.now() - startedAt),
+          apiCalls: [...apiCalls],
+        });
+      } catch (error) {
+        sourceAttempts.push({
+          adapterId: adapter.id,
+          providerName: adapter.providerName,
+          providerRole: adapter.providerRole,
+          priority: adapter.priority,
+          status: "failed",
+          recordCount: 0,
+          latencyMs: Math.max(0, Date.now() - startedAt),
+          apiCalls: [...apiCalls],
+          error: errorText(error),
+        });
+      }
+      return { sourceAttempts, records };
+    },
+    options.maxSourceConcurrency,
+  );
+  for (const result of results) {
+    sourceAttempts.push(...result.sourceAttempts);
+    records.push(...result.records);
   }
   const failedAttempts = sourceAttempts.filter((attempt) => attempt.status === "failed");
   const baseReceipt = {
