@@ -70,4 +70,46 @@ describe("finance source health evidence envelopes", () => {
       expect(health.routes.find((r) => r.id === id)?.callState).toBe("unverified");
     }
   });
+  it("ignores future evidence instead of hiding the latest valid failure", async () => {
+    const health = await setup({
+      future: receipt("gdelt_public_news", "2026-09-10T03:00:00Z"),
+      failure: {
+        ...receipt("gdelt_public_news"),
+        status: "blocked",
+        sourceAttempts: [{ adapterId: "gdelt_public_news", status: "failed" }],
+      },
+    });
+    expect(health.routes.find((r) => r.id === "gdelt_public_news")?.callState).toBe(
+      "recent_failure",
+    );
+  });
+  it.each([true, false])(
+    "keeps same-time failures visible regardless of file order (%s)",
+    async (failureFirst) => {
+      const success = receipt("gdelt_public_news");
+      const failure = {
+        ...success,
+        status: "blocked",
+        sourceAttempts: [{ adapterId: "gdelt_public_news", status: "failed" }],
+      };
+      const health = await setup({
+        a: failureFirst ? failure : success,
+        z: failureFirst ? success : failure,
+      });
+      expect(health.routes.find((r) => r.id === "gdelt_public_news")?.callState).toBe(
+        "recent_failure",
+      );
+    },
+  );
+  it("skips malformed attempts without losing valid sibling failures", async () => {
+    const health = await setup({
+      mixed: {
+        ...receipt("gdelt_public_news"),
+        sourceAttempts: [null, { adapterId: "gdelt_public_news", status: "failed" }],
+      },
+    });
+    expect(health.routes.find((r) => r.id === "gdelt_public_news")?.callState).toBe(
+      "recent_failure",
+    );
+  });
 });

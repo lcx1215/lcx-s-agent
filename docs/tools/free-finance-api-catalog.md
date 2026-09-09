@@ -16,9 +16,11 @@ and target; the registry chooses all supporting providers automatically.
 independently of the shell's working directory. `--workspace <directory>`
 remains an explicit override. Source health recognizes raw collection receipts,
 autopilot envelopes, and saved tool-result envelopes; dry-run and evaluation
-artifacts never count as live source evidence.
+artifacts never count as live source evidence. Future-dated observations are
+excluded; conflicting attempts at the same timestamp retain failure until a
+newer successful observation exists. This is recent call evidence, not uptime.
 
-## Wired now
+## Registered adapters (availability requires live evidence)
 
 | Source                     | Access path                                      | Current LCX use                                                                         | Boundary                                                                       |
 | -------------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
@@ -32,23 +34,24 @@ artifacts never count as live source evidence.
 | Nasdaq public quote        | public endpoint                                  | exchange/session cross-check                                                            | endpoint and access policy can change                                          |
 | Stooq                      | public CSV endpoint                              | end-of-day cross-check                                                                  | may challenge automated traffic; failure is recorded, never hidden             |
 | Invesco issuer reference   | public issuer endpoint                           | QQQ issuer/performance reference                                                        | issuer-specific, not a general market feed                                     |
-| Bybit, CoinCap, CoinGecko  | public crypto endpoints; CoinGecko may use a key | crypto spot cross-checks                                                                | crypto-only; rate limits and plan entitlements are source evidence             |
+| Bybit, CoinGecko           | public crypto endpoints; CoinGecko may use a key | crypto spot cross-checks                                                                | crypto-only; rate limits and plan entitlements are source evidence             |
 | NOAA/NWS, Open-Meteo, USGS | public geospatial/weather/seismic endpoints      | geocode, weather, earthquake context                                                    | contextual sources; not financial authority                                    |
 
-## Free registration, wired after the key is supplied
+## Credential-gated adapters (plan entitlements vary)
 
 Set keys in the process environment or the local service manager. Never put a
 key in a tool argument, source URL, receipt, commit, or documentation example.
 
-| Environment variable                          | Provider                | Enabled surface                           | Free-tier truth                                                                                                                          |
-| --------------------------------------------- | ----------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `FRED_API_KEY`                                | FRED                    | official macro collection                 | registered key is required for JSON API access                                                                                           |
-| `FMP_API_KEY`                                 | Financial Modeling Prep | `company_profile`, `eod_history` only     | Basic free scope is limited; this adapter does not claim FMP news, calendars, insider, fundamentals, intraday, crypto, or forex are free |
-| `MASSIVE_API_KEY`                             | Massive                 | quote/collection adapters already present | free Basic/reference/EOD coverage must be distinguished from paid snapshots, realtime, financials, and other entitlements                |
-| `FINNHUB_API_KEY`                             | Finnhub                 | quote and news cross-checks               | endpoint-level plan and entitlement must be proven by the receipt                                                                        |
-| `TWELVE_DATA_API_KEY`                         | Twelve Data             | quote cross-check                         | free plan is rate-limited and intended for personal/internal use; no redistribution assumption                                           |
-| `ALPHA_VANTAGE_API_KEY`                       | Alpha Vantage           | end-of-day/global-quote cross-check       | free key is strongly rate-limited; free access is not realtime execution data                                                            |
-| `ALPACA_API_KEY_ID` + `ALPACA_API_SECRET_KEY` | Alpaca market data      | latest quote adapter only                 | data-feed entitlement is separate from account/broker authority; LCX does not call trading endpoints                                     |
+| Environment variable                          | Provider                | Enabled surface                                   | Free-tier truth                                                                                                                          |
+| --------------------------------------------- | ----------------------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `COINCAP_API_KEY`                             | CoinCap                 | crypto asset lookup                               | the LCX adapter requires a key; registration alone does not prove usable access                                                          |
+| `FRED_API_KEY`                                | FRED                    | official macro collection                         | registered key is required for JSON API access                                                                                           |
+| `FMP_API_KEY`                                 | Financial Modeling Prep | profile, history and registered capability routes | Basic free scope is limited; this adapter does not claim FMP news, calendars, insider, fundamentals, intraday, crypto, or forex are free |
+| `MASSIVE_API_KEY`                             | Massive                 | quote/collection adapters already present         | free Basic/reference/EOD coverage must be distinguished from paid snapshots, realtime, financials, and other entitlements                |
+| `FINNHUB_API_KEY`                             | Finnhub                 | quote and news cross-checks                       | endpoint-level plan and entitlement must be proven by the receipt                                                                        |
+| `TWELVE_DATA_API_KEY`                         | Twelve Data             | quote cross-check                                 | free plan is rate-limited and intended for personal/internal use; no redistribution assumption                                           |
+| `ALPHA_VANTAGE_API_KEY`                       | Alpha Vantage           | end-of-day/global-quote cross-check               | free key is strongly rate-limited; free access is not realtime execution data                                                            |
+| `ALPACA_API_KEY_ID` + `ALPACA_API_SECRET_KEY` | Alpaca market data      | quotes, history and indicative options snapshots  | data-feed entitlement is separate from account/broker authority; LCX does not call trading endpoints                                     |
 
 After a key is registered, verify the selected adapter without exposing it:
 

@@ -60,6 +60,11 @@ export async function inspectFinanceSourceHealth(options: {
   env?: NodeJS.ProcessEnv;
   asOf?: string;
 }) {
+  const asOf = options.asOf ?? new Date().toISOString();
+  const inspectionTime = Date.parse(asOf);
+  if (!Number.isFinite(inspectionTime)) {
+    throw new Error("source health asOf must be an ISO timestamp");
+  }
   const env = resolveFinanceCredentialEnv(options.env ?? process.env);
   const allEnv = { ...env };
   for (const key of FINANCE_CREDENTIAL_KEYS) {
@@ -114,25 +119,31 @@ export async function inspectFinanceSourceHealth(options: {
         }
         const asOf = receipt.request?.asOf;
         if (
-          !["lcx_finance_market_collection_v1", "lcx_finance_realtime_refresh_v1"].includes(
-            String(receipt.schemaVersion),
-          ) ||
           receipt.adaptersCalled !== true ||
           !Array.isArray(receipt.sourceAttempts) ||
           typeof receipt.status !== "string" ||
           typeof asOf !== "string" ||
-          !Number.isFinite(Date.parse(asOf))
+          !Number.isFinite(Date.parse(asOf)) ||
+          Date.parse(asOf) > inspectionTime
         ) {
           continue;
         }
         for (const attempt of receipt.sourceAttempts) {
           if (
+            !attempt ||
+            typeof attempt !== "object" ||
             typeof attempt.adapterId !== "string" ||
             !["succeeded", "failed"].includes(attempt.status)
           ) {
             continue;
           }
-          if (Date.parse(latest.get(attempt.adapterId)?.asOf ?? "") >= Date.parse(asOf)) {
+          const previous = latest.get(attempt.adapterId);
+          const previousTime = Date.parse(previous?.asOf ?? "");
+          // Equal timestamps cannot establish recovery; retain the failure conservatively.
+          if (
+            previousTime > Date.parse(asOf) ||
+            (previousTime === Date.parse(asOf) && previous?.status === "failed")
+          ) {
             continue;
           }
           latest.set(attempt.adapterId, {
@@ -150,13 +161,9 @@ export async function inspectFinanceSourceHealth(options: {
   for (const root of roots) {
     await scan(root, 1);
   }
-  const asOf = options.asOf ?? new Date().toISOString();
-  if (!Number.isFinite(Date.parse(asOf))) {
-    throw new Error("source health asOf must be an ISO timestamp");
-  }
   const routes = declared.map((adapter) => {
     const observation = latest.get(adapter.id);
-    const ageMs = observation ? Date.parse(asOf) - Date.parse(observation.asOf) : Infinity;
+    const ageMs = observation ? inspectionTime - Date.parse(observation.asOf) : Infinity;
     return {
       id: adapter.id,
       provider: financeProviderId(adapter.id),
@@ -165,7 +172,7 @@ export async function inspectFinanceSourceHealth(options: {
         ? "not_configured_or_disabled"
         : !observation
           ? "unverified"
-          : ageMs < 0 || ageMs > 24 * 3600000
+          : ageMs > 24 * 3600000
             ? "verification_expired"
             : observation.status === "succeeded"
               ? "recent_success"
