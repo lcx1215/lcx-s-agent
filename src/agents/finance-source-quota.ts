@@ -442,20 +442,65 @@ export function createFinanceQuotaGuard(
             const used = state.events
               .filter((event) => event.at >= cutoff)
               .reduce((sum, event) => sum + event.weight, 0);
+            let nextAvailableAt = time;
+            if (used >= window.limit) {
+              let remaining = used;
+              for (const event of state.events
+                .filter((event) => event.at >= cutoff)
+                .toSorted((a, b) => a.at - b.at)) {
+                remaining -= event.weight;
+                nextAvailableAt =
+                  window.alignment === "utc_day" ? cutoff + day : event.at + window.durationMs + 1;
+                if (remaining < window.limit) {
+                  break;
+                }
+              }
+            }
             return {
               ...window,
+              nextAvailableAt: new Date(nextAvailableAt).toISOString(),
               locallyCountedUsage: used,
               localRemaining: Math.max(0, window.limit - used),
             };
           });
+          const availableTokens = policy.tokenBucket
+            ? Math.min(
+                policy.tokenBucket.capacity,
+                (state.tokens ?? policy.tokenBucket.capacity) +
+                  (Math.max(0, time - (state.tokenUpdatedAt ?? time)) *
+                    policy.tokenBucket.refillPerSecond) /
+                    1_000,
+              )
+            : undefined;
+          const nextAllowed = Math.max(
+            time,
+            state.blockedUntil,
+            state.nextStartAt,
+            ...windows.map((window) => Date.parse(window.nextAvailableAt)),
+            state.serverBudget && state.serverBudget.remaining < 1
+              ? state.serverBudget.resetAt
+              : time,
+            policy.tokenBucket && availableTokens !== undefined && availableTokens < 1
+              ? time +
+                  Math.ceil(((1 - availableTokens) * 1_000) / policy.tokenBucket.refillPerSecond)
+              : time,
+          );
           return {
             ...base,
+            availableTokens,
+            nextAllowedAt: new Date(nextAllowed).toISOString(),
+            nextAllowedBasis: "one_credit_local_estimate_recheck_at_dispatch" as const,
             state:
               state.blockedUntil > time
                 ? "cooldown"
-                : windows.some((window) => window.localRemaining === 0)
+                : windows.some((window) => window.localRemaining === 0) ||
+                    (state.serverBudget &&
+                      state.serverBudget.resetAt > time &&
+                      state.serverBudget.remaining < 1)
                   ? "quota_exhausted"
-                  : "within_local_budget",
+                  : nextAllowed > time
+                    ? "waiting"
+                    : "within_local_budget",
             blockedUntil:
               state.blockedUntil > time ? new Date(state.blockedUntil).toISOString() : undefined,
             serverBudget:

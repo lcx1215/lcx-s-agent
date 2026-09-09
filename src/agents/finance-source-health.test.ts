@@ -113,3 +113,76 @@ describe("finance source health evidence envelopes", () => {
     );
   });
 });
+
+it("does not turn cache reads or locally rejected dispatch into recovered provider health", async () => {
+  const health = await setup({
+    old: {
+      ...receipt("gdelt_public_news", "2026-09-09T02:00:00Z"),
+      sourceAttempts: [{ adapterId: "gdelt_public_news", status: "failed" }],
+    },
+    cached: {
+      ...receipt("gdelt_public_news"),
+      sourceAttempts: [
+        {
+          adapterId: "gdelt_public_news",
+          status: "succeeded",
+          apiCalls: [
+            {
+              operation: "http_get",
+              status: "succeeded",
+              dataAccess: { kind: "cache", fetchedAt: "2026-09-09T02:00:00Z" },
+            },
+          ],
+        },
+      ],
+    },
+  });
+  expect(health.routes.find((route) => route.id === "gdelt_public_news")?.callState).toBe(
+    "recent_failure",
+  );
+  expect(health.responseReuse.scope).toBe("process_local");
+});
+
+it("projects DOC, title-file and public FRED quotas onto their own routes", async () => {
+  const health = await setup({});
+  expect(
+    health.routes
+      .find((route) => route.id === "gdelt_public_news")
+      ?.quotaGroups.map((quota) => quota.id),
+  ).toEqual(["gdelt_doc"]);
+  expect(
+    health.routes
+      .find((route) => route.id === "gdelt_public_news_titles")
+      ?.quotaGroups.map((quota) => quota.id),
+  ).toEqual(["gdelt_titles"]);
+  expect(
+    health.routes
+      .find((route) => route.id === "fred_public_index_history")
+      ?.quotaGroups.map((quota) => quota.id),
+  ).toEqual(["fred_public"]);
+});
+
+it("reads source attempts in canonical batch/run envelopes without promoting replay-only reads", async () => {
+  const health = await setup({
+    run: {
+      schemaVersion: "lcx_finance_research_run_v1",
+      batch: {
+        schemaVersion: "lcx_finance_research_batch_v1",
+        jobs: [{ receipt: receipt("gdelt_public_news") }],
+      },
+    },
+    dry: {
+      networkCalled: false,
+      result: {
+        schemaVersion: "lcx_finance_research_batch_v1",
+        jobs: [{ receipt: receipt("google_news_rss") }],
+      },
+    },
+  });
+  expect(health.routes.find((route) => route.id === "gdelt_public_news")?.callState).toBe(
+    "recent_success",
+  );
+  expect(health.routes.find((route) => route.id === "google_news_rss")?.callState).toBe(
+    "unverified",
+  );
+});

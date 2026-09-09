@@ -123,7 +123,7 @@ export function createResearchDataAutopilotTool(options?: {
     label: "Research Data Autopilot",
     name: "research_data_autopilot",
     description:
-      "Use source_health to inspect configured routes, recent call evidence, shared provider quotas, cooldowns and unknown ceilings without network access. Autonomously route a read-only research request across all canonical finance, crypto, public macro, SEC, news, geospatial, weather, and seismic adapters. The agent does not choose provider URLs: registries select every supporting source, retain failures, cross-check results, and never touch trading, broker, wallet, or order authority.",
+      "Use source_health to inspect configured routes, recent call evidence, shared provider quotas, next eligible times, cooldowns, process-local response reuse and unknown ceilings without network access. Cached reads are not new source-health verification. Autonomously route a read-only research request across all canonical finance, crypto, public macro, SEC, news, geospatial, weather, and seismic adapters. The agent does not choose provider URLs: registries select every supporting source, retain failures, cross-check results, and never touch trading, broker, wallet, or order authority.",
     parameters: ResearchDataAutopilotSchema,
     execute: async (_toolCallId, args) => {
       const params = args as {

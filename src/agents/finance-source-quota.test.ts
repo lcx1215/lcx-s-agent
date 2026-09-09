@@ -339,3 +339,16 @@ describe("shared finance provider quotas", () => {
     expect(classifyFinanceQuotaBody("not JSON")).toBeUndefined();
   });
 });
+
+it("reports the same local eligibility time that a rolling daily window enforces", async () => {
+  const time = Date.parse("2026-09-09T00:00:00Z");
+  const fixture = await setup({ windows: [{ limit: 1, durationMs: day }] }, time);
+  await fixture.guard().wrap(async () => response())("https://example.test/quote");
+  const [quota] = await fixture.guard().inspect();
+  expect(quota).toMatchObject({
+    state: "quota_exhausted",
+    nextAllowedAt: new Date(time + day + 1).toISOString(),
+  });
+  fixture.advance(day + 1);
+  expect((await fixture.guard().inspect())[0].state).toBe("within_local_budget");
+});

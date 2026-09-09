@@ -10,20 +10,11 @@ import {
   createFinanceRealtimeSourceRegistry,
   resolveFinanceRealtimeSourceRegistryOptionsFromEnv,
 } from "./finance-realtime-source-registry.js";
+import { financeResponseCache } from "./finance-response-cache.js";
 import { createFinanceQuotaGuard } from "./finance-source-quota.js";
+import { financeProviderId, financeQuotaGroupId } from "./finance-source-scheduler.js";
 
-export function financeProviderId(id: string): string {
-  if (id.startsWith("alpha_vantage_")) {
-    return "alpha_vantage";
-  }
-  if (id.startsWith("twelve_data_")) {
-    return "twelve_data";
-  }
-  if (id.startsWith("google_news_")) {
-    return "google_news";
-  }
-  return id.split("_")[0];
-}
+export { financeProviderId } from "./finance-source-scheduler.js";
 type Observation = { asOf: string; status: string; packetStatus: string; receiptPath: string };
 
 type HealthReceipt = {
@@ -34,25 +25,34 @@ type HealthReceipt = {
   status?: unknown;
 };
 
-/** Accept the existing raw, autopilot, and tool-result envelopes, never evaluation artifacts. */
-function unwrapHealthReceipt(value: unknown): HealthReceipt | undefined {
-  for (let depth = 0; depth < 4; depth++) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-      return undefined;
-    }
-    const envelope = value as Record<string, unknown>;
-    if (envelope.networkCalled === false || envelope.evaluationMode) {
-      return undefined;
-    }
-    if (
-      envelope.schemaVersion === "lcx_finance_market_collection_v1" ||
-      envelope.schemaVersion === "lcx_finance_realtime_refresh_v1"
-    ) {
-      return envelope as HealthReceipt;
-    }
-    value = envelope.details ?? envelope.result;
+/** Follow only canonical receipt envelopes, never arbitrary nested JSON or evaluation artifacts. */
+function unwrapHealthReceipts(value: unknown, depth = 0): HealthReceipt[] {
+  if (depth > 7 || !value || typeof value !== "object" || Array.isArray(value)) {
+    return [];
   }
-  return undefined;
+  const envelope = value as Record<string, unknown>;
+  if (envelope.networkCalled === false || envelope.evaluationMode) {
+    return [];
+  }
+  if (
+    envelope.schemaVersion === "lcx_finance_market_collection_v1" ||
+    envelope.schemaVersion === "lcx_finance_realtime_refresh_v1"
+  ) {
+    return [envelope as HealthReceipt];
+  }
+  if (envelope.schemaVersion === "lcx_finance_research_run_v1") {
+    return unwrapHealthReceipts(envelope.batch, depth + 1);
+  }
+  if (envelope.schemaVersion === "lcx_finance_research_batch_v1" && Array.isArray(envelope.jobs)) {
+    return envelope.jobs
+      .slice(0, 256)
+      .flatMap((job: unknown) =>
+        job && typeof job === "object" && "receipt" in job
+          ? unwrapHealthReceipts(job.receipt, depth + 1)
+          : [],
+      );
+  }
+  return unwrapHealthReceipts(envelope.details ?? envelope.result, depth + 1);
 }
 
 /** Presence and last observed calls are separate; no network probes or uptime promises. */
@@ -114,45 +114,56 @@ export async function inspectFinanceSourceHealth(options: {
       }
       try {
         const parsed = JSON.parse(await fs.readFile(file, "utf8"));
-        const receipt = unwrapHealthReceipt(parsed);
-        if (!receipt) {
-          continue;
-        }
-        const asOf = receipt.request?.asOf;
-        if (
-          receipt.adaptersCalled !== true ||
-          !Array.isArray(receipt.sourceAttempts) ||
-          typeof receipt.status !== "string" ||
-          typeof asOf !== "string" ||
-          !Number.isFinite(Date.parse(asOf)) ||
-          Date.parse(asOf) > inspectionTime
-        ) {
-          continue;
-        }
-        for (const attempt of receipt.sourceAttempts) {
+        for (const receipt of unwrapHealthReceipts(parsed)) {
+          const asOf = receipt.request?.asOf;
           if (
-            !attempt ||
-            typeof attempt !== "object" ||
-            typeof attempt.adapterId !== "string" ||
-            !["succeeded", "failed"].includes(attempt.status)
+            receipt.adaptersCalled !== true ||
+            !Array.isArray(receipt.sourceAttempts) ||
+            typeof receipt.status !== "string" ||
+            typeof asOf !== "string" ||
+            !Number.isFinite(Date.parse(asOf)) ||
+            Date.parse(asOf) > inspectionTime
           ) {
             continue;
           }
-          const previous = latest.get(attempt.adapterId);
-          const previousTime = Date.parse(previous?.asOf ?? "");
-          // Equal timestamps cannot establish recovery; retain the failure conservatively.
-          if (
-            previousTime > Date.parse(asOf) ||
-            (previousTime === Date.parse(asOf) && previous?.status === "failed")
-          ) {
-            continue;
+          for (const attempt of receipt.sourceAttempts) {
+            if (
+              !attempt ||
+              typeof attempt !== "object" ||
+              typeof attempt.adapterId !== "string" ||
+              !["succeeded", "failed"].includes(attempt.status)
+            ) {
+              continue;
+            }
+            if (
+              Array.isArray(attempt.apiCalls) &&
+              !attempt.apiCalls.some(
+                (call: unknown) =>
+                  call &&
+                  typeof call === "object" &&
+                  "dispatchedAt" in call &&
+                  typeof call.dispatchedAt === "string" &&
+                  Number.isFinite(Date.parse(call.dispatchedAt)),
+              )
+            ) {
+              continue;
+            }
+            const previous = latest.get(attempt.adapterId);
+            const previousTime = Date.parse(previous?.asOf ?? "");
+            // Equal timestamps cannot establish recovery; retain the failure conservatively.
+            if (
+              previousTime > Date.parse(asOf) ||
+              (previousTime === Date.parse(asOf) && previous?.status === "failed")
+            ) {
+              continue;
+            }
+            latest.set(attempt.adapterId, {
+              asOf,
+              status: attempt.status,
+              packetStatus: receipt.status,
+              receiptPath: file,
+            });
           }
-          latest.set(attempt.adapterId, {
-            asOf,
-            status: attempt.status,
-            packetStatus: receipt.status,
-            receiptPath: file,
-          });
         }
       } catch {
         /* A partial or unrelated artifact is not source-health evidence. */
@@ -162,6 +173,10 @@ export async function inspectFinanceSourceHealth(options: {
   for (const root of roots) {
     await scan(root, 1);
   }
+  const quotas = await createFinanceQuotaGuard({
+    stateDir: resolveStateDir(env),
+    now: () => inspectionTime,
+  }).inspect();
   const routes = declared.map((adapter) => {
     const observation = latest.get(adapter.id);
     const ageMs = observation ? inspectionTime - Date.parse(observation.asOf) : Infinity;
@@ -169,6 +184,13 @@ export async function inspectFinanceSourceHealth(options: {
       id: adapter.id,
       provider: financeProviderId(adapter.id),
       configured: configured.has(adapter.id),
+      quotaGroups: quotas
+        .filter((quota) => quota.id === financeQuotaGroupId(adapter.id))
+        .map((quota) => ({
+          id: quota.id,
+          state: quota.state,
+          nextAllowedAt: "nextAllowedAt" in quota ? quota.nextAllowedAt : undefined,
+        })),
       callState: !configured.has(adapter.id)
         ? "not_configured_or_disabled"
         : !observation
@@ -184,10 +206,8 @@ export async function inspectFinanceSourceHealth(options: {
   return {
     asOf,
     noNetworkCalled: true,
-    quotas: await createFinanceQuotaGuard({
-      stateDir: resolveStateDir(env),
-      now: () => inspectionTime,
-    }).inspect(),
+    quotas,
+    responseReuse: financeResponseCache.inspect(),
     boundary: "inventory_and_recent_call_evidence_not_continuous_uptime",
     providerCount: new Set(routes.map((r) => r.provider)).size,
     routeCount: routes.length,

@@ -80,3 +80,63 @@ Only the native default finance fetch is governed automatically; injected test
 transports and the explicitly authorized raw measurement operator are separate.
 Long-lived processes must load the new code through the normal deployment
 procedure; a local CLI proof alone does not prove their reload or deployment.
+
+## Calling pipeline and reuse
+
+All default finance adapters, including gzip feeds, use this path:
+
+```text
+research / refresh / batch
+  -> bounded provider lanes (same provider serial, independent providers parallel)
+  -> bounded response reuse / duplicate wait
+  -> shared provider quota reservation
+  -> caller HTTP budget approval
+  -> native HTTP / retry receipt
+  -> source parsing and provenance / freshness gates
+```
+
+Each refresh permits four independent provider lanes by default, configurable
+from one to eight with `maxSourceConcurrency`. Source results retain selection
+order. A failed source remains in the receipt; parallelism does not replace it
+with another provider or increase its quota. Batch job concurrency and source
+lane concurrency are separate bounds.
+
+The default response cache is shared inside one process and retains at most
+256 entries / 16 MiB. It does not persist provider bodies to disk. Its identity
+includes the full request and credentials in a hash, with separate namespaces
+for normal and gzip decoding. It joins concurrent identical reads, respects
+caller cancellation, and releases waiting readers when the owner fails.
+Different processes share the durable quota ledger, but not response bodies.
+
+Reuse defaults to five seconds for market responses, one minute for news and
+recognized history/macro routes, and fifteen minutes for recognized reference
+metadata routes. These are local reuse policies, not guarantees that source
+data is current. A caller can tighten the window with `cacheMaxAgeMs`; zero
+forces a network read. Known error envelopes, malformed JSON, HTML access
+pages, and responses forbidding caching are not retained. Expired entries are
+never returned as a fallback after a failed refresh. Gateway and collection
+freshness checks still apply to the provider timestamps. Reuse preserves the
+original fetch time and does not advance observation timestamps or fallback
+source timestamps to the new request time.
+
+HTTP receipts distinguish `dataAccess.kind: network` from `cache`. Cache reads
+have their own call/correlation IDs and original `fetchedAt`, but no
+`dispatchedAt`, no quota reservation, and no caller HTTP charge. Cached reads
+do not close an open network circuit. Source health ignores cached/local-only
+attempts when determining recovery and exposes process-local reuse counters
+separately. Each quota group exposes `nextAllowedAt`, an estimate for one credit;
+weighted endpoint eligibility must still be checked at dispatch.
+
+Normal batches enforce `maxApiCalls` synchronously at actual HTTP dispatch.
+Unused retry allowances and cached reads therefore leave budget for later
+work. A small budget can yield partial source coverage; it does not promise a
+complete multi-source answer. Checkpointed batches keep durable worst-case
+reservations because a crashed process may have dispatched a request before
+saving its result. Their receipt states `durable_worst_case_reservation` rather
+than claiming actual-only accounting.
+
+Batch `httpDispatchCount`, `cacheHitCount`, and `rejectedDispatchCount` distinguish
+these outcomes. The legacy `callCount` continues to count HTTP-operation
+receipts, including cache reads and locally rejected attempts; do not use it as
+provider consumption. Quotas are ceilings, not traffic targets: there is no
+background prefetch, automatic saturation, or trading execution.

@@ -148,7 +148,23 @@ describe("finance research operator", () => {
 
 it("exposes complete source planning and prevents collection flags on read operations", async () => {
   const result = await runFinanceResearchCli([...input, "--all-sources"]);
-  expect("plan" in result && result.plan.sourceInventory?.unplannedAdapterIds).toEqual([]);
+  if (!("plan" in result) || !result.plan.sourceInventory) {
+    throw new Error("expected all-source inventory");
+  }
+  const inventory = result.plan.sourceInventory;
+  // These routes require an explicit date/quarter; discovery must not invent one.
+  const requiresPeriod = inventory.registeredAdapterIds.filter((id) =>
+    [
+      "fmp_eod_bulk",
+      "fmp_earning_call_transcript",
+      "fmp_institutional_ownership_symbol_positions_summary",
+    ].includes(id),
+  );
+  expect(inventory.unplannedAdapterIds).toEqual(requiresPeriod);
+  expect(result.plan.expectedJobCount).toBe(
+    inventory.registeredAdapterIds.length - requiresPeriod.length,
+  );
+  expect(result.batch).toBeUndefined();
   await expect(runFinanceResearchCli([...input, "--sources-only"])).rejects.toThrow(
     "requires --live",
   );
