@@ -20,6 +20,68 @@ const response = (status = 200, retryAfter?: string) => ({
 afterEach(() => vi.useRealTimers());
 
 describe("API call governance", () => {
+  it("does not claim HTTP dispatch or spend the caller budget when quota preparation rejects", async () => {
+    const receipts: ApiCallReceipt[] = [];
+    const fetch = Object.assign(
+      vi.fn<ApiFetch>(async () => response()),
+      {
+        prepare: async () => {
+          throw new ApiCallError("budget_exhausted");
+        },
+      },
+    );
+    const beforeHttpDispatch = vi.fn();
+    await expect(
+      governApiFetch(fetch, { beforeHttpDispatch, onReceipt: (receipt) => receipts.push(receipt) })(
+        "https://example.test",
+      ),
+    ).rejects.toMatchObject({ kind: "budget_exhausted" });
+    expect(beforeHttpDispatch).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(receipts[0].dispatchedAt).toBeUndefined();
+  });
+  it("records dispatch only after scheduling and caller budget checks", async () => {
+    let prepared = false;
+    const receipts: ApiCallReceipt[] = [];
+    const dispatch: ApiFetch = async () => response();
+    const fetch = Object.assign(dispatch, {
+      prepare: async () => {
+        prepared = true;
+        return dispatch;
+      },
+    });
+    await governApiFetch(fetch, {
+      beforeHttpDispatch: () => expect(prepared).toBe(true),
+      onReceipt: (receipt) => receipts.push(receipt),
+    })("https://example.test");
+    expect(Number.isFinite(Date.parse(receipts[0].dispatchedAt ?? ""))).toBe(true);
+  });
+  it("retains numeric quota headers on rejected requests without leaking arbitrary headers", async () => {
+    const receipts: ApiCallReceipt[] = [];
+    const fetch: ApiFetch = async () => ({
+      ...response(429),
+      headers: new Headers({
+        "X-RateLimit-Limit": "8",
+        "X-RateLimit-Remaining": "0",
+        "X-RateLimit-Reset": "1788926000",
+        "api-credits-left": "secret-token",
+        Authorization: "private-key",
+        "X-Unrelated": "42",
+      }),
+    });
+    await expect(
+      governApiFetch(fetch, { retry: { attempts: 1 }, onReceipt: (r) => receipts.push(r) })(
+        "https://example.test",
+      ),
+    ).rejects.toMatchObject({ httpStatus: 429 });
+    expect(receipts[0].rateLimitHeaders).toEqual({
+      "x-ratelimit-limit": 8,
+      "x-ratelimit-remaining": 0,
+      "x-ratelimit-reset": 1788926000,
+    });
+    expect(JSON.stringify(receipts)).not.toMatch(/private-key|secret-token|x-unrelated/u);
+  });
+
   it("reserves before every HTTP dispatch including fallback calls", async () => {
     const fetch = vi.fn<ApiFetch>(async () => response());
     let remaining = 1;

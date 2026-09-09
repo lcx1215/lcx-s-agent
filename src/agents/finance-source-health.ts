@@ -10,6 +10,7 @@ import {
   createFinanceRealtimeSourceRegistry,
   resolveFinanceRealtimeSourceRegistryOptionsFromEnv,
 } from "./finance-realtime-source-registry.js";
+import { createFinanceQuotaGuard } from "./finance-source-quota.js";
 
 export function financeProviderId(id: string): string {
   if (id.startsWith("alpha_vantage_")) {
@@ -183,6 +184,10 @@ export async function inspectFinanceSourceHealth(options: {
   return {
     asOf,
     noNetworkCalled: true,
+    quotas: await createFinanceQuotaGuard({
+      stateDir: resolveStateDir(env),
+      now: () => inspectionTime,
+    }).inspect(),
     boundary: "inventory_and_recent_call_evidence_not_continuous_uptime",
     providerCount: new Set(routes.map((r) => r.provider)).size,
     routeCount: routes.length,

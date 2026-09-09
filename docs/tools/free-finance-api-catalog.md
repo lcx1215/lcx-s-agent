@@ -20,6 +20,10 @@ artifacts never count as live source evidence. Future-dated observations are
 excluded; conflicting attempts at the same timestamp retain failure until a
 newer successful observation exists. This is recent call evidence, not uptime.
 
+Shared call ceilings, exhausted budgets and measurement boundaries are documented
+in [Finance source quotas](finance-source-quota-limits.md). Inspect the `quotas`
+section of `source_health` before treating a recent success as currently callable.
+
 ## Registered adapters (availability requires live evidence)
 
 | Source                     | Access path                                      | Current LCX use                                                                         | Boundary                                                                       |

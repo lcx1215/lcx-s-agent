@@ -46,6 +46,8 @@ export type ApiCallReceipt = Readonly<{
   operation: string;
   startedAt: string;
   finishedAt: string;
+  /** Set only after all quota/queue waits and caller budget approval, immediately before dispatch. */
+  dispatchedAt?: string;
   latencyMs: number;
   attempt: number;
   status: "succeeded" | "failed" | "timed_out" | "cancelled";
@@ -68,6 +70,8 @@ export type ApiCallReceipt = Readonly<{
   throttleWaitMs?: number;
   authScopeLabel: ApiAuthScopeLabel;
   quota?: { remaining?: number; limit?: number };
+  /** Numeric allowlist only; units and windows remain provider-specific. */
+  rateLimitHeaders?: Readonly<Record<string, number>>;
   cost?: { amount: number; currency: string };
   idempotencyKey?: string;
 }>;
@@ -147,10 +151,18 @@ export type ApiFetchResponse = {
   headers?: { get(name: string): string | null };
   text: () => Promise<string>;
 };
-export type ApiFetch = (
+export type ApiFetch = ((
   url: string,
   init?: { headers?: Record<string, string>; signal?: AbortSignal },
-) => Promise<ApiFetchResponse>;
+) => Promise<ApiFetchResponse>) & {
+  /** Releases a prepared local reservation when dispatch is rejected or cancelled. */
+  cancelPreparation?: () => Promise<void>;
+  /** Optional scheduling phase; it must not send HTTP. */
+  prepare?: (
+    url: string,
+    init?: { headers?: Record<string, string>; signal?: AbortSignal },
+  ) => Promise<ApiFetch>;
+};
 
 type CallContext = ApiTransportOptions & {
   provider: string;
@@ -406,6 +418,7 @@ async function boundedCall<T>(
               ? "failed"
               : "succeeded",
       ...(kind ? { transportError: kind } : {}),
+      ...(kind === "rate_limited" ? { rateLimited: true } : {}),
       ...(error instanceof ApiCallError && error.networkCode
         ? { networkCode: error.networkCode }
         : {}),
@@ -538,11 +551,56 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
                       details.throttleWaitMs = permit.waitMs;
                     }
                     attemptSignal.throwIfAborted();
-                    scope.beforeHttpDispatch?.();
-                    response = await fetchImpl(url, { ...init, signal: attemptSignal });
+                    const dispatchInit = { ...init, signal: attemptSignal };
+                    const preparationStarted = Date.now();
+                    const dispatch = fetchImpl.prepare
+                      ? await fetchImpl.prepare(url, dispatchInit)
+                      : fetchImpl;
+                    if (fetchImpl.prepare) {
+                      details.throttleWaitMs =
+                        (details.throttleWaitMs ?? 0) + Date.now() - preparationStarted;
+                    }
+                    try {
+                      attemptSignal.throwIfAborted();
+                      scope.beforeHttpDispatch?.();
+                    } catch (error) {
+                      await dispatch.cancelPreparation?.();
+                      throw error;
+                    }
+                    details.dispatchedAt = new Date().toISOString();
+                    response = await dispatch(url, dispatchInit);
                     details.httpStatus = response.status;
                     details.retryAfterMs = parseApiRetryAfter(response.headers?.get("retry-after"));
                     details.rateLimited = response.status === 429;
+                    const rateLimitHeaders: Record<string, number> = {};
+                    for (const name of [
+                      "x-ratelimit-limit",
+                      "x-ratelimit-remaining",
+                      "x-ratelimit-reset",
+                      "ratelimit-limit",
+                      "ratelimit-remaining",
+                      "ratelimit-reset",
+                      "api-credits-used",
+                      "api-credits-left",
+                      "x-bapi-limit",
+                      "x-bapi-limit-status",
+                      "x-bapi-limit-reset-timestamp",
+                      "x-mbx-used-weight",
+                      "x-mbx-used-weight-1m",
+                    ]) {
+                      const value = response.headers?.get(name);
+                      if (
+                        value?.trim() &&
+                        /^\d+(?:\.\d+)?$/u.test(value.trim()) &&
+                        Number.isFinite(Number(value))
+                      ) {
+                        rateLimitHeaders[name] = Number(value);
+                      }
+                    }
+                    if (Object.keys(rateLimitHeaders).length) {
+                      details.rateLimitHeaders = rateLimitHeaders;
+                    }
+
                     body = await response.text();
                   } catch (error) {
                     attemptSignal.throwIfAborted();

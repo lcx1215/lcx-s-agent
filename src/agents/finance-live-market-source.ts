@@ -25,6 +25,7 @@ import type {
   FinanceDataGatewayInput,
   FinanceDataGatewayObservationInput,
 } from "./finance-data-gateway.js";
+import { governFinanceQuota } from "./finance-source-quota.js";
 
 export type LiveMarketQuote = {
   /** Uppercase instrument symbol as understood by the caller, e.g. "QQQ". */
@@ -55,7 +56,7 @@ const YAHOO_HEADERS = { "User-Agent": "Mozilla/5.0 (LCX Agent research-only mark
 let defaultFinanceProxyAgent: EnvHttpProxyAgent | undefined;
 let defaultFinanceProxyUrl: string | undefined;
 
-function defaultFinanceFetch(gzipText = false): FetchImpl {
+export function createFinanceNativeFetch(gzipText = false): FetchImpl {
   return async (url, init) => {
     const proxy = resolveFinanceCredentialEnv().LCX_FINANCE_HTTP_PROXY?.trim() || undefined;
     if (!defaultFinanceProxyAgent || proxy !== defaultFinanceProxyUrl) {
@@ -116,12 +117,12 @@ export function resolveFinanceFetch(
   fetchImpl?: FetchImpl,
   options: ApiTransportOptions = {},
 ): FetchImpl {
-  return governApiFetch(fetchImpl ?? defaultFinanceFetch(), options);
+  return governApiFetch(fetchImpl ?? governFinanceQuota(createFinanceNativeFetch()), options);
 }
 
 /** Injected fetches supply decoded text; native downloads remain bounded and proxy-aware. */
 export function resolveFinanceGzipTextFetch(fetchImpl?: FetchImpl): FetchImpl {
-  return governApiFetch(fetchImpl ?? defaultFinanceFetch(true));
+  return governApiFetch(fetchImpl ?? governFinanceQuota(createFinanceNativeFetch(true)));
 }
 
 export class LiveMarketFetchError extends Error {
