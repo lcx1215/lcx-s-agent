@@ -1,6 +1,8 @@
 #!/usr/bin/env node
+import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../../src/agents/agent-scope.js";
 import { createResearchDataToolHost } from "../../src/agents/research-data-tool-host.js";
 import { resolveWorkspaceRoot } from "../../src/agents/workspace-dir.js";
+import { loadConfig } from "../../src/config/config.js";
 
 async function main() {
   const args = process.argv.slice(2);
@@ -11,9 +13,13 @@ async function main() {
   ) {
     throw new Error("--workspace requires a directory");
   }
-  const workspaceDir = resolveWorkspaceRoot(
-    workspaceIndex < 0 ? undefined : args[workspaceIndex + 1],
-  );
+  const workspaceDir =
+    workspaceIndex >= 0
+      ? resolveWorkspaceRoot(args[workspaceIndex + 1])
+      : (() => {
+          const config = loadConfig();
+          return resolveAgentWorkspaceDir(config, resolveDefaultAgentId(config));
+        })();
   const host = createResearchDataToolHost({
     workspaceDir,
     modelHasVision: args.includes("--vision"),

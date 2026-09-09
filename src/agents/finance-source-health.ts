@@ -25,6 +25,35 @@ export function financeProviderId(id: string): string {
 }
 type Observation = { asOf: string; status: string; packetStatus: string; receiptPath: string };
 
+type HealthReceipt = {
+  schemaVersion?: unknown;
+  adaptersCalled?: unknown;
+  request?: { asOf?: unknown };
+  sourceAttempts?: unknown;
+  status?: unknown;
+};
+
+/** Accept the existing raw, autopilot, and tool-result envelopes, never evaluation artifacts. */
+function unwrapHealthReceipt(value: unknown): HealthReceipt | undefined {
+  for (let depth = 0; depth < 4; depth++) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return undefined;
+    }
+    const envelope = value as Record<string, unknown>;
+    if (envelope.networkCalled === false || envelope.evaluationMode) {
+      return undefined;
+    }
+    if (
+      envelope.schemaVersion === "lcx_finance_market_collection_v1" ||
+      envelope.schemaVersion === "lcx_finance_realtime_refresh_v1"
+    ) {
+      return envelope as HealthReceipt;
+    }
+    value = envelope.details ?? envelope.result;
+  }
+  return undefined;
+}
+
 /** Presence and last observed calls are separate; no network probes or uptime promises. */
 export async function inspectFinanceSourceHealth(options: {
   workspaceDir: string;
@@ -79,17 +108,18 @@ export async function inspectFinanceSourceHealth(options: {
       }
       try {
         const parsed = JSON.parse(await fs.readFile(file, "utf8"));
-        if (parsed.networkCalled === false || parsed.evaluationMode) {
+        const receipt = unwrapHealthReceipt(parsed);
+        if (!receipt) {
           continue;
         }
-        const receipt = parsed.result?.sourceAttempts ? parsed.result : parsed;
         const asOf = receipt.request?.asOf;
         if (
           !["lcx_finance_market_collection_v1", "lcx_finance_realtime_refresh_v1"].includes(
-            receipt.schemaVersion,
+            String(receipt.schemaVersion),
           ) ||
           receipt.adaptersCalled !== true ||
           !Array.isArray(receipt.sourceAttempts) ||
+          typeof receipt.status !== "string" ||
           typeof asOf !== "string" ||
           !Number.isFinite(Date.parse(asOf))
         ) {

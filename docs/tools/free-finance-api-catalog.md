@@ -12,6 +12,12 @@ entry point across the finance realtime, finance collection, crypto, macro,
 SEC, geospatial, weather, and seismic registries. The agent supplies an intent
 and target; the registry chooses all supporting providers automatically.
 
+`pnpm lcx:data` uses the configured default agent workspace for receipts,
+independently of the shell's working directory. `--workspace <directory>`
+remains an explicit override. Source health recognizes raw collection receipts,
+autopilot envelopes, and saved tool-result envelopes; dry-run and evaluation
+artifacts never count as live source evidence.
+
 ## Wired now
 
 | Source                     | Access path                                      | Current LCX use                                                                         | Boundary                                                                       |
