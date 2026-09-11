@@ -3,10 +3,51 @@ import {
   buildLocalRoleShadowPrompt,
   buildQualityHarnessModelPrompt,
   parseLocalModelJson,
+  parseLocalBaseModelJson,
   resolveLocalTextModelRuntimeConfig,
 } from "./local-text-model-adapter.js";
 
 describe("local text model adapter contract", () => {
+  it("keeps nested draft claims and more than eight evidence IDs visible to reviewers", () => {
+    const ids = Array.from({ length: 21 }, (_, n) => `e-${n}`);
+    const prompt = buildQualityHarnessModelPrompt({
+      schemaVersion: 1,
+      runId: "review",
+      attempt: 1,
+      stage: "adversarial",
+      agentId: "adversarial_challenge",
+      task: "check the draft",
+      evidence: ids.map((id) => ({ id, text: "fact" })),
+      sharedContext: {},
+      repairFeedback: [],
+      instructions: "review",
+      dependencyOutputs: {
+        research_draft: {
+          status: "completed",
+          output: {
+            kind: "artifact",
+            artifact: {
+              answer: "observed values",
+              claims: [
+                { id: "c1", text: "all instruments", status: "supported", evidenceIds: ids },
+              ],
+            },
+          },
+        },
+      },
+    });
+    const previous = prompt.split("previous=")[1]?.split("\n")[0];
+    expect(previous).toContain('"evidenceIds":' + JSON.stringify(ids));
+    expect(previous).not.toContain("[bounded]");
+  });
+  it("only unwraps complete JSON fences for base specialists", () => {
+    expect(parseLocalBaseModelJson('```json\n{"label":"finance"}\n```')).toEqual({
+      label: "finance",
+    });
+    expect(() => parseLocalBaseModelJson('{"facts":[{"quote":"text"}],"tail"')).toThrow();
+    expect(() => parseLocalBaseModelJson('commentary {"label":"finance"}')).toThrow();
+  });
+
   it("parses JSON after bounded runtime chatter", () => {
     expect(parseLocalModelJson('loading\n{"kind":"plan","requirements":[]}')).toEqual({
       kind: "plan",
@@ -75,10 +116,26 @@ describe("local text model adapter contract", () => {
       repairFeedback: Array.from({ length: 100 }, () => "repeated feedback"),
       instructions: "return a review",
     });
-    expect(prompt.length).toBeLessThan(8_000);
-    expect(prompt).toContain(
-      'Return only one JSON object. Exact schema: {"kind":"review","review":{"verdict":"pass","criticalFindings":[],"evidenceGaps":[],"notes":[]}}',
-    );
+    expect(prompt.length).toBeLessThan(20_000);
+    expect(prompt).toContain('verdict:"pass"|"revise"|"reject"');
+    expect(prompt).toContain("instructions=return a review");
+    expect(prompt).toContain("context=");
+    expect(prompt).toContain("previous=");
+  });
+
+  it("supports explicitly selected base weights without loading an incompatible LoRA", () => {
+    expect(
+      resolveLocalTextModelRuntimeConfig({
+        adapterPath: "",
+        baseModel: true,
+        modelId: "/local/new-model",
+      }),
+    ).toMatchObject({
+      baseModel: true,
+      adapterPath: "",
+      modelId: "/local/new-model",
+      allowNetwork: false,
+    });
   });
 
   it("requires an explicit adapter path", () => {
@@ -112,4 +169,27 @@ describe("local text model adapter contract", () => {
         .allowNetwork,
     ).toBe(true);
   });
+});
+
+it("does not silently drop later evidence, stage instructions or analysis requirements", () => {
+  const prompt = buildQualityHarnessModelPrompt({
+    schemaVersion: 1,
+    runId: "coverage",
+    attempt: 1,
+    stage: "draft",
+    agentId: "research_draft",
+    task: "Compare returns",
+    evidence: Array.from({ length: 20 }, (_, i) => ({
+      id: `e${i}`,
+      text: `asset-${i} return 5% ` + "fact ".repeat(400),
+    })),
+    sharedContext: { supportingAnalysisContract: { scenarios: "three conditional scenarios" } },
+    dependencyOutputs: {},
+    repairFeedback: [],
+    instructions: "Compare equivalent periods and preserve uncertainty.",
+  });
+  expect(prompt).toContain("[e19] asset-19");
+  expect(prompt).toContain("Compare equivalent periods");
+  expect(prompt).toContain("three conditional scenarios");
+  expect(prompt).not.toContain('"answer":"bounded answer"');
 });

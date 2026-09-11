@@ -58,6 +58,13 @@ describe("LCX run receipt", () => {
           externalSender: "not_touched_by_projection",
           training: "not_touched_by_projection",
         }),
+        ontologyEdges: expect.arrayContaining([
+          {
+            relation: "produces",
+            subject: { type: "module", id: "governance" },
+            object: { type: "receipt", id: receipt.runId },
+          },
+        ]),
       }),
     );
   });
@@ -112,5 +119,26 @@ describe("LCX run receipt", () => {
         nextAction: "continue",
       }),
     ).toThrow("checkedAt must match snapshot.observedAt");
+  });
+
+  it("rejects an invalid semantic edge before emitting the receipt", () => {
+    expect(() =>
+      buildLcxRunReceipt({
+        runId: "run",
+        owner: "owner",
+        phase: "observe",
+        status: "passed",
+        checkedAt: "2026-09-07T07:00:00.000Z",
+        boundary: boundaryFromFlags({ scope: "local_only" }),
+        ontologyEdges: [
+          {
+            relation: "requires",
+            subject: { type: "workflow", id: "workflow-1" },
+            object: { type: "actor", id: "actor-1" },
+          },
+        ],
+        nextAction: "continue",
+      }),
+    ).toThrow("violates relation contract");
   });
 });

@@ -64,13 +64,13 @@ type ReceiptReadResult =
 
 function normalizeDateKey(value?: string): string {
   const normalized = value?.trim();
-  if (normalized && /^\d{4}-\d{2}-\d{2}$/u.test(normalized)) {
+  if (normalized && (normalized === "all" || /^\d{4}-\d{2}-\d{2}$/u.test(normalized))) {
     return normalized;
   }
   if (normalized) {
-    throw new ToolInputError("dateKey must be YYYY-MM-DD");
+    throw new ToolInputError("dateKey must be YYYY-MM-DD or all");
   }
-  return new Date().toISOString().slice(0, 10);
+  return "all";
 }
 
 function normalizeRelativePath(value: string): string {
@@ -284,29 +284,41 @@ async function readReceiptFile(receiptPath: string): Promise<ReceiptReadResult> 
   }
 }
 
+export async function listModuleLearningReceiptPaths(
+  workspaceDir: string,
+  dateKey: string,
+): Promise<string[]> {
+  const root = path.join(workspaceDir, MODULE_LEARNING_PIPELINE_PLAN_RECEIPT_DIR);
+  try {
+    const directories =
+      dateKey === "all"
+        ? (await fs.readdir(root, { withFileTypes: true }))
+            .filter((entry) => entry.isDirectory() && /^\d{4}-\d{2}-\d{2}$/u.test(entry.name))
+            .map((entry) => entry.name)
+        : [dateKey];
+    const files = await Promise.all(
+      directories.map(async (directory) => {
+        const entries = await fs.readdir(path.join(root, directory), { withFileTypes: true });
+        return entries
+          .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+          .map((entry) => path.join(root, directory, entry.name));
+      }),
+    );
+    return files.flat().toSorted();
+  } catch {
+    return [];
+  }
+}
+
 async function readDailyReceipts(params: {
   workspaceDir: string;
   dateKey: string;
   targetModule?: string;
   maxFiles?: number;
 }): Promise<ReceiptReadResult[]> {
-  const receiptDir = path.join(
-    params.workspaceDir,
-    MODULE_LEARNING_PIPELINE_PLAN_RECEIPT_DIR,
-    params.dateKey,
-  );
-  let entries: string[];
-  try {
-    entries = await fs.readdir(receiptDir);
-  } catch {
-    return [];
-  }
   const limit = params.maxFiles && params.maxFiles > 0 ? Math.floor(params.maxFiles) : undefined;
-  const jsonFiles = entries
-    .filter((entry) => entry.endsWith(".json"))
-    .toSorted()
-    .slice(0, limit)
-    .map((entry) => path.join(receiptDir, entry));
+  const allFiles = await listModuleLearningReceiptPaths(params.workspaceDir, params.dateKey);
+  const jsonFiles = (params.dateKey === "all" ? allFiles.toReversed() : allFiles).slice(0, limit);
   const results = await Promise.all(jsonFiles.map((receiptPath) => readReceiptFile(receiptPath)));
   if (!params.targetModule) {
     return results;

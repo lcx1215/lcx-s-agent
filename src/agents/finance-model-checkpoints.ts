@@ -27,11 +27,17 @@ export function financeModelRoutingIdentity(routing: LogicalAgentModelRouting | 
           capabilities: adapter.capabilities,
           requiredTools: adapter.requiredTools,
           requiredSideEffects: adapter.requiredSideEffects,
+          roleScope: adapter.roleScope,
+          maxInputBytes: adapter.maxInputBytes,
+          qualificationId: adapter.qualificationId,
         }
       : { missingAdapter: id };
   };
   const policyIdentity = (policy: LogicalAgentModelRouting["defaultPolicy"]) => ({
     ...policy,
+    outputContract: policy.outputContract
+      ? { revision: policy.outputContract.revision }
+      : undefined,
     primary: adapterIdentity(policy.primary),
     fallback: (policy.fallback ?? []).map(adapterIdentity),
   });

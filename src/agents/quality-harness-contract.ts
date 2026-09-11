@@ -10,6 +10,14 @@ import {
   type LogicalAgentTask,
   type LogicalAgentTaskResult,
 } from "./logical-agent-pool.js";
+import {
+  collectQualityFindings,
+  qualityFindingPacket,
+  RECONCILABLE_REVIEW_ROLES,
+  type QualityFindingClosure,
+  type QualityFindingPacket,
+  type QualityFindingReceipt,
+} from "./quality-harness-findings.js";
 
 export const QUALITY_HARNESS_SCHEMA_VERSION = 1 as const;
 
@@ -65,6 +73,7 @@ export type QualityHarnessReview = Readonly<{
   criticalFindings: readonly string[];
   evidenceGaps: readonly string[];
   notes: readonly string[];
+  findingClosure?: QualityFindingClosure;
 }>;
 
 export type QualityHarnessStageOutput =
@@ -94,6 +103,7 @@ export type QualityHarnessModelRequest = Readonly<{
   dependencyOutputs: Readonly<Record<string, unknown>>;
   repairFeedback: readonly string[];
   instructions: string;
+  findingPacket?: QualityFindingPacket;
 }>;
 
 export type QualityHarnessVerification = Readonly<{
@@ -110,6 +120,7 @@ export type QualityHarnessVerifier = (params: {
 }) => QualityHarnessVerification | Promise<QualityHarnessVerification>;
 
 export type QualityHarnessOptions = Readonly<{
+  allowProviderCalls?: boolean;
   request: QualityHarnessRequest;
   modelInvoker?: LogicalAgentModelInvoker;
   modelRouting?: LogicalAgentModelRouting;
@@ -172,6 +183,7 @@ export type QualityHarnessAttemptReceipt = Readonly<{
   planStatus: LogicalAgentPlanResult<QualityHarnessStageOutput>["status"];
   stages: readonly QualityHarnessStageReceipt[];
   gates: readonly QualityHarnessGate[];
+  findings?: readonly QualityFindingReceipt[];
   feedback: readonly string[];
   verification: QualityHarnessVerification;
 }>;
@@ -198,6 +210,12 @@ export type QualityHarnessReceipt = Readonly<{
       | "adapter-attested"
       | "mixed";
     modelCalls: readonly ModelCallReceipt[];
+    modelDiversity?: Readonly<{
+      draftModel: string | null;
+      reviewModels: readonly string[];
+      hasDistinctReviewModel: boolean;
+      allPostDraftReviewsSeparated?: boolean;
+    }>;
     modelId: string;
     realModelInferenceObserved: boolean;
     allModelCallsAttested: boolean;
@@ -232,7 +250,7 @@ export const QUALITY_HARNESS_STAGES: readonly QualityHarnessStage[] = [
   "format",
   "precheck",
 ];
-const STAGE_BY_AGENT_ID: Readonly<Record<string, QualityHarnessStage>> = Object.freeze({
+export const STAGE_BY_AGENT_ID: Readonly<Record<string, QualityHarnessStage>> = Object.freeze({
   data_cleaning: "intake",
   financial_extraction: "extraction",
   news_classification: "classification",
@@ -361,12 +379,19 @@ export function buildQualityHarnessPlan(params: {
       id: task.id,
       agentId: task.agentId,
       input: input(stage),
-      ...(task.dependsOn ? { dependsOn: task.dependsOn } : {}),
+      ...(task.dependsOn
+        ? {
+            dependsOn:
+              task.id === "final_precheck"
+                ? [...new Set([...task.dependsOn, ...RECONCILABLE_REVIEW_ROLES, "research_draft"])]
+                : task.dependsOn,
+          }
+        : {}),
     };
   });
 }
 
-function stageInstructions(stage: QualityHarnessStage): string {
+export function stageInstructions(stage: QualityHarnessStage): string {
   switch (stage) {
     case "intake":
       return "Return JSON {kind:'plan',requirements:string[],missingEvidence:string[]}; normalize the task and do not invent facts.";
@@ -400,6 +425,9 @@ function compactOutput(output: QualityHarnessStageOutput): unknown {
     artifact: {
       answer: output.artifact.answer.slice(0, 6_000),
       claims: output.artifact.claims.slice(0, 50),
+      ...(output.artifact.supportingAnalysis === undefined
+        ? {}
+        : { supportingAnalysis: output.artifact.supportingAnalysis }),
     },
   };
 }
@@ -412,11 +440,32 @@ function buildModelRequest(
     dependencyOutputs[taskId] = {
       agentId: result.agentId,
       status: result.status,
-      output: result.output === undefined ? undefined : compactOutput(result.output),
+      output:
+        result.output === undefined
+          ? undefined
+          : context.input.stage === "precheck" && taskId === "formatting"
+            ? result.output
+            : compactOutput(result.output),
       error: result.error,
     };
   }
+  const format = context.dependencyResults.formatting?.output;
+  const findingPacket =
+    context.input.stage === "precheck" && format?.kind === "artifact"
+      ? qualityFindingPacket(
+          format.artifact,
+          context.input.request.evidence,
+          collectQualityFindings(
+            Object.values(context.dependencyResults).flatMap((result) =>
+              result.status === "completed" && result.output?.kind === "review"
+                ? [{ role: result.agentId, review: result.output.review }]
+                : [],
+            ),
+          ),
+        )
+      : undefined;
   return Object.freeze({
+    ...(findingPacket ? { findingPacket } : {}),
     schemaVersion: QUALITY_HARNESS_SCHEMA_VERSION,
     runId: context.input.runId,
     attempt: context.input.attempt,
@@ -446,6 +495,11 @@ function parseArtifact(value: unknown): QualityHarnessArtifact {
   }
   const artifact = record.artifact;
   const answer = requiredQualityText(artifact.answer, "artifact.answer");
+  if (
+    /^(bounded answer|cross.asset analysis|supported claim|answer|analysis)[.!。]?$/iu.test(answer)
+  ) {
+    throw new Error("artifact.answer contains a schema placeholder, not analysis");
+  }
   if (!Array.isArray(artifact.claims) || artifact.claims.length === 0) {
     throw new Error("artifact.claims must contain at least one claim");
   }
@@ -497,6 +551,52 @@ function parseArtifact(value: unknown): QualityHarnessArtifact {
   });
 }
 
+function parseFindingClosure(value: unknown): QualityFindingClosure {
+  if (!isQualityRecord(value) || !Array.isArray(value.resolutions)) {
+    throw new Error("review.findingClosure must contain resolutions");
+  }
+  const hash = (value: unknown) => {
+    const text = requiredQualityText(value, "finding closure hash", 64);
+    if (!/^[a-f0-9]{64}$/u.test(text)) {
+      throw new Error("invalid finding closure hash");
+    }
+    return text;
+  };
+  if (value.resolutions.length > 100) {
+    throw new Error("too many finding resolutions");
+  }
+  return Object.freeze({
+    artifactSha256: hash(value.artifactSha256),
+    evidenceSha256: hash(value.evidenceSha256),
+    resolutions: Object.freeze(
+      value.resolutions.map((entry) => {
+        if (!isQualityRecord(entry) || !["resolved", "unresolved"].includes(String(entry.status))) {
+          throw new Error("invalid finding resolution");
+        }
+        return Object.freeze({
+          findingId: hash(entry.findingId),
+          status: entry.status as "resolved" | "unresolved",
+          evidenceIds: Object.freeze(
+            qualityStringArray(entry.evidenceIds, "resolution.evidenceIds"),
+          ),
+          artifactQuote:
+            typeof entry.artifactQuote === "string" ? entry.artifactQuote.slice(0, 4000) : "",
+          ...(entry.artifactClaimId === undefined
+            ? {}
+            : {
+                artifactClaimId: requiredQualityText(
+                  entry.artifactClaimId,
+                  "resolution.artifactClaimId",
+                  200,
+                ),
+              }),
+          rationale: requiredQualityText(entry.rationale, "resolution.rationale", 2000),
+        });
+      }),
+    ),
+  });
+}
+
 function parseReview(value: unknown): QualityHarnessReview {
   const record = parseModelJson(value);
   if (record.kind !== "review" || !isQualityRecord(record.review)) {
@@ -509,6 +609,9 @@ function parseReview(value: unknown): QualityHarnessReview {
   }
   return Object.freeze({
     verdict,
+    ...(review.findingClosure === undefined
+      ? {}
+      : { findingClosure: parseFindingClosure(review.findingClosure) }),
     criticalFindings: Object.freeze(
       qualityStringArray(review.criticalFindings, "review.criticalFindings"),
     ),
@@ -517,7 +620,10 @@ function parseReview(value: unknown): QualityHarnessReview {
   });
 }
 
-function parseStageOutput(stage: QualityHarnessStage, value: unknown): QualityHarnessStageOutput {
+export function parseStageOutput(
+  stage: QualityHarnessStage,
+  value: unknown,
+): QualityHarnessStageOutput {
   if (stage === "intake") {
     const record = parseModelJson(value);
     if (record.kind !== "plan") {

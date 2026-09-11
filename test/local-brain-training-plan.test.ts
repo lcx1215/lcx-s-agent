@@ -8,6 +8,7 @@ import {
   buildLocalBrainTrainingPlan,
   buildQwenBaseModelMigrationPlan,
   inspectMiniMaxTeacherRuntimeConfig,
+  nativeContractRepairCases,
 } from "../scripts/operator/local-brain-training-plan.js";
 
 async function writeJsonl(prefix: string, lines: unknown[]): Promise<string> {
@@ -28,6 +29,33 @@ async function writeJson(
 }
 
 describe("local-brain-training-plan", () => {
+  it("routes a covered fresh strict failure to repair, preserving stale and unrelated evals", () => {
+    const receipt = {
+      generatedAt: "2026-09-11T04:00:00Z",
+      resolved: { adapterPath: "/tmp/candidate" },
+      summary: { passed: 1, total: 1, modelContractFailureCaseIds: ["case-a"] },
+      caseReceipts: [{ id: "case-a", modelContractReady: false }],
+    };
+    const input = {
+      receipt,
+      adapterPath: "/tmp/candidate",
+      candidateAt: "2026-09-10T04:00:00Z",
+      caseIds: ["case-a"],
+    };
+    expect(nativeContractRepairCases(input)).toEqual(["case-a"]);
+    expect(nativeContractRepairCases({ ...input, adapterPath: "/tmp/new-candidate" })).toEqual([]);
+    expect(nativeContractRepairCases({ ...input, candidateAt: "2026-09-12T04:00:00Z" })).toEqual(
+      [],
+    );
+    expect(nativeContractRepairCases({ ...input, caseIds: ["case-a", "unseen"] })).toEqual([]);
+    expect(
+      nativeContractRepairCases({
+        ...input,
+        receipt: { ...receipt, summary: { modelContractFailureCaseIds: [] } },
+      }),
+    ).toEqual([]);
+  });
+
   it("does not re-enable MiniMax training after its runtime references are removed", () => {
     expect(
       inspectMiniMaxTeacherRuntimeConfig({
@@ -1681,6 +1709,21 @@ describe("local-brain-training-plan", () => {
     const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-training-plan-workspace-"));
     const guardLogPath = await writeJsonl("lcx-training-plan-guard-", [
       { at: "2026-05-09T10:00:00.000Z", event: "guard_start" },
+      {
+        at: "2026-05-09T10:01:00.000Z",
+        event: "step_ok",
+        name: "stable_hardened_eval",
+        result: {
+          adapterPath: "/tmp/adapter-r2",
+          summary: {
+            passed: 72,
+            total: 72,
+            failedCaseIds: [],
+            parseErrorCaseIds: [],
+            promotionReady: true,
+          },
+        },
+      },
     ]);
     const quotaLogPath = await writeJsonl("lcx-training-plan-quota-", []);
     await writeJson(workspaceDir, "memory/finance-learning-retrieval-receipts/2026-05-12/r.json", {
@@ -1739,6 +1782,7 @@ describe("local-brain-training-plan", () => {
       );
       expect(plan.evolutionAccelerationQueue).toMatchObject({
         readyNowCount: 1,
+        idleOnlyCount: 2,
         fastestSafeNextAction: "bridge_module_learning_receipts_now",
         steps: expect.arrayContaining([
           expect.objectContaining({
@@ -1750,6 +1794,17 @@ describe("local-brain-training-plan", () => {
           }),
         ]),
       });
+      expect(plan.evolutionAccelerationQueue.steps).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "route_external_transport_to_selected_clean_answer_path",
+            status: "ready_when_idle",
+          }),
+        ]),
+      );
+      expect(plan.evolutionAccelerationQueue.activeNonIdleProgress.nextIdleAction).toBe(
+        plan.evolutionAccelerationQueue.fastestSafeNextAction,
+      );
     } finally {
       await fs.rm(worktree, { recursive: true, force: true });
       await fs.rm(workspaceDir, { recursive: true, force: true });

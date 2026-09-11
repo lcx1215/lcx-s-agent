@@ -11,6 +11,7 @@ import type {
   FinanceMarketCollectionItem,
   FinanceMarketCollectionRequest,
 } from "./finance-market-collection-registry.js";
+import { financeNewsQuery } from "./finance-news-entity.js";
 
 class FreeMarketCollectionAdapterError extends Error {
   constructor(message: string) {
@@ -206,6 +207,7 @@ function createPublicRssNewsCollectionAdapter(options: {
 }
 
 type YahooChartHistoryResult = {
+  meta?: { instrumentType?: unknown; currency?: unknown };
   timestamp?: unknown;
   indicators?: {
     quote?: Array<{
@@ -379,6 +381,10 @@ export function createYahooPublicEodHistoryCollectionAdapter(
               high,
               low,
               close,
+              ...(typeof result.meta?.instrumentType === "string"
+                ? { instrumentType: result.meta.instrumentType.toLowerCase() }
+                : {}),
+              ...(typeof result.meta?.currency === "string" ? { unit: result.meta.currency } : {}),
               ...(volume === undefined ? {} : { volume }),
             },
           };
@@ -418,7 +424,7 @@ export function createGoogleNewsRssCollectionAdapter(
     fetchImpl: options.fetchImpl,
     buildUrl: (symbol) =>
       apiUrl("https://news.google.com/rss/search", {
-        q: symbol,
+        q: financeNewsQuery(symbol),
         hl: "en-US",
         gl: "US",
         ceid: "US:en",
@@ -468,7 +474,7 @@ export function createGdeltPublicNewsCollectionAdapter(
     collect: async (request) => {
       const baseUrl = "https://api.gdeltproject.org/api/v2/doc/doc";
       const params = {
-        query: request.instrument.toUpperCase(),
+        query: financeNewsQuery(request.instrument),
         mode: "artlist",
         maxrecords: request.limit ?? 20,
         sort: "datedesc",

@@ -134,6 +134,7 @@ function fakeFetch(url: string): ReturnType<FetchImpl> {
           chart: {
             result: [
               {
+                meta: { instrumentType: "EQUITY", currency: "USD" },
                 timestamp: [1788523200, 1788609600, 1788696000],
                 indicators: {
                   quote: [
@@ -368,7 +369,14 @@ describe("finance market collection registry", () => {
     expect(bars[0]?.providerName).toBe("yahoo-public-eod-history");
     expect(bars[0]?.delayStatus).toBe("end_of_day");
     expect(bars[0]?.data).toEqual(
-      expect.objectContaining({ symbol: "AAPL", open: 245, close: 249, volume: 1000 }),
+      expect.objectContaining({
+        symbol: "AAPL",
+        open: 245,
+        close: 249,
+        volume: 1000,
+        instrumentType: "equity",
+        unit: "USD",
+      }),
     );
     expect(bars[0]?.sourceUrlOrArtifact).toContain("period1=");
   });

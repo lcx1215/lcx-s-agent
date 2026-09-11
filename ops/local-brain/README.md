@@ -104,6 +104,29 @@ node --import tsx scripts/operator/lcx-module-learning-absorption-gate.ts --json
 node --import tsx scripts/operator/lcx-system-memory-sedimentation-gate.ts --json
 ```
 
+When recovery fails, inspect the structured index receipt even if its process
+exits nonzero: missing owner paths are actionable findings, not a failed scan.
+Register new source paths with their existing change-impact lane; retained
+benchmark JSON belongs to the inventory-only evidence surface. Expand untracked
+files individually so a directory entry cannot hide an unowned file.
+
+For a stale operator snapshot, inspect the installed operator loop before use.
+Where its observation guards are available, refresh with cleanup and training
+restart disabled, then run the recovery exam again:
+
+```bash
+LCX_LOCAL_OPERATOR_OBSERVE_ONLY=true \
+LCX_LOCAL_OPERATOR_SKIP_CLEANUP=true \
+LCX_LOCAL_OPERATOR_SKIP_TRAINING_RESTART=true \
+  zsh "$HOME/.openclaw/bin/lcx-local-operator-loop.sh"
+node --import tsx scripts/operator/lcx-context-recovery-exam.ts --json
+```
+
+The loop checks the previous snapshot before writing its new digest. Its embedded
+recovery result can therefore remain stale for that refresh; the subsequent exam
+is the current recovery proof. Skipped operator checks are not overall system
+health. This one-time refresh does not install or modify a recurring schedule.
+
 This is a read-only `local_mind_model_only` architecture audit. It checks whether
 each main lane still has workflow closure across four surfaces: macro rule,
 workflow entrypoint, proof/eval surface, and boundary flag. It covers context

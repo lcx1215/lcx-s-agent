@@ -1,8 +1,10 @@
 import crypto from "node:crypto";
-import type {
-  LcxOntologyBoundaryStatus,
-  LcxOntologyEvidenceKind,
-  LcxOntologyEvidenceStatus,
+import {
+  assertValidLcxOntologyEdges,
+  type LcxOntologyEdge,
+  type LcxOntologyBoundaryStatus,
+  type LcxOntologyEvidenceKind,
+  type LcxOntologyEvidenceStatus,
 } from "./lcx-ontology.js";
 
 /**
@@ -12,7 +14,7 @@ import type {
  * Existing owners may keep their legacy top-level fields. The receipt is the
  * stable cross-owner join surface for automation, handoffs, and human views.
  */
-export const LCX_RUN_RECEIPT_CONTRACT_VERSION = "lcx_run_receipt_v2" as const;
+export const LCX_RUN_RECEIPT_CONTRACT_VERSION = "lcx_run_receipt_v3" as const;
 
 export const LCX_RUN_PHASES = ["observe", "repair", "verify", "handoff"] as const;
 export type LcxRunPhase = (typeof LCX_RUN_PHASES)[number];
@@ -61,15 +63,17 @@ export type LcxRunReceipt = {
   snapshot: LcxRunSnapshot;
   boundary: LcxRunBoundary;
   evidence: LcxRunEvidence[];
+  ontologyEdges: LcxOntologyEdge[];
   nextAction: string;
 };
 
 export type BuildLcxRunReceiptParams = Omit<
   LcxRunReceipt,
-  "contractVersion" | "evidence" | "snapshot"
+  "contractVersion" | "evidence" | "snapshot" | "ontologyEdges"
 > & {
   snapshot?: LcxRunSnapshot;
   evidence?: readonly LcxRunEvidence[];
+  ontologyEdges?: readonly LcxOntologyEdge[];
 };
 
 function nonEmpty(value: string, field: string): string {
@@ -179,17 +183,29 @@ export function buildLcxRunReceipt(params: BuildLcxRunReceiptParams): LcxRunRece
   if (new Set(evidence.map((item) => item.id)).size !== evidence.length) {
     throw new Error("run receipt evidence ids must be unique");
   }
+  const runId = nonEmpty(params.runId, "runId");
+  const owner = nonEmpty(params.owner, "owner");
+  const ontologyEdges = [
+    {
+      relation: "produces" as const,
+      subject: { type: "module" as const, id: owner },
+      object: { type: "receipt" as const, id: runId },
+    },
+    ...(params.ontologyEdges ?? []),
+  ];
+  assertValidLcxOntologyEdges(ontologyEdges, "run receipt ontology edges");
   return {
     contractVersion: LCX_RUN_RECEIPT_CONTRACT_VERSION,
-    runId: nonEmpty(params.runId, "runId"),
+    runId,
     ...(params.parentRunId?.trim() ? { parentRunId: params.parentRunId.trim() } : {}),
-    owner: nonEmpty(params.owner, "owner"),
+    owner,
     phase: params.phase,
     status: params.status,
     checkedAt: params.checkedAt.trim(),
     snapshot,
     boundary: normalizeBoundary(params.boundary),
     evidence,
+    ontologyEdges: [...ontologyEdges],
     nextAction: nonEmpty(params.nextAction, "nextAction"),
   };
 }

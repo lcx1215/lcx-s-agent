@@ -429,6 +429,18 @@ async function boundedCall<T>(
             : failed
               ? "failed"
               : "succeeded",
+      ...(error instanceof ApiCallError &&
+      Number.isInteger(error.httpStatus) &&
+      error.httpStatus! >= 100 &&
+      error.httpStatus! <= 599
+        ? { httpStatus: error.httpStatus }
+        : {}),
+      ...(error instanceof ApiCallError &&
+      error.retryAfterMs !== undefined &&
+      Number.isFinite(error.retryAfterMs) &&
+      error.retryAfterMs >= 0
+        ? { retryAfterMs: error.retryAfterMs }
+        : {}),
       ...(kind ? { transportError: kind } : {}),
       ...(kind === "rate_limited" ? { rateLimited: true } : {}),
       ...(error instanceof ApiCallError && error.networkCode

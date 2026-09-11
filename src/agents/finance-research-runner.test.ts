@@ -128,7 +128,12 @@ async function modelInvoker(request: unknown): Promise<unknown> {
   }
   return {
     kind: "review",
-    review: { verdict: "pass", criticalFindings: [], evidenceGaps: [], notes: [] },
+    review: {
+      verdict: "pass",
+      criticalFindings: [],
+      evidenceGaps: [],
+      notes: ["Checked supplied timestamps and coverage; no additional fact was inferred."],
+    },
   };
 }
 
@@ -226,6 +231,102 @@ describe("finance research runner", () => {
     expect(result.notTouched).toEqual(
       expect.arrayContaining(["provider_config", "external_channel_sender", "trading_execution"]),
     );
+  });
+
+  it.each([
+    { ask: "分析未来半年美股趋势和共同暴露。", modules: ["M01", "M02", "M12"], trend: true },
+    { ask: "核对 SPY 收盘价和来源时间。", modules: ["M01"], trend: false },
+  ])("passes a consistent scoped method kit for $ask", async ({ ask, modules, trend }) => {
+    const requests: unknown[] = [];
+    const capture = async (request: unknown) => {
+      requests.push(request);
+      return modelInvoker(request);
+    };
+    const result = await runFinanceResearchRun({
+      input: {
+        ask,
+        asOf: AS_OF,
+        horizonMonths: 6,
+        targets: [
+          {
+            id: "method-kit-fixture",
+            instrument: "SPY",
+            assetClass: "us_equity",
+            realtime: { requireOfficialReference: false },
+          },
+        ],
+      },
+      liveFetch: true,
+      modelInvoker: capture,
+      qualityModelInvoker: capture,
+      batchOptions: BATCH_OPTIONS,
+    });
+
+    expect(result.status).toBe("candidate");
+    const committeeRequest = requests.find(
+      (request): request is { instructions?: string } =>
+        typeof request === "object" && request !== null && "instructions" in request,
+    );
+    expect(committeeRequest?.instructions?.includes("200-session moving average")).toBe(trend);
+    expect(committeeRequest?.instructions).toContain("M11 波动率相对价值");
+    expect(committeeRequest?.instructions).toContain("D28 融资拥挤与流动性压力");
+    const qualityRequest = requests.find(
+      (request): request is { task?: string; sharedContext?: Record<string, unknown> } =>
+        typeof request === "object" &&
+        request !== null &&
+        "sharedContext" in request &&
+        typeof (request as { sharedContext?: Record<string, unknown> }).sharedContext
+          ?.strategyMethodKit === "object",
+    );
+    expect(qualityRequest?.sharedContext?.strategyMethodKit).toMatchObject({
+      selectedModules: modules,
+    });
+    expect(qualityRequest?.task).toContain(ask);
+    expect(qualityRequest?.task).not.toContain("quarter checkpoints");
+    if (!trend) {
+      expect(JSON.stringify(qualityRequest?.sharedContext?.strategyMethodKit)).not.toContain(
+        "200-session",
+      );
+    }
+  });
+
+  it("does not spend model calls when all source evidence is unavailable", async () => {
+    const invoke = vi.fn(modelInvoker);
+    const result = await runFinanceResearchRun({
+      input: {
+        ask: "分析 SPY",
+        asOf: AS_OF,
+        targets: [
+          {
+            id: "empty",
+            instrument: "SPY",
+            assetClass: "us_equity",
+            realtime: false,
+            collections: [{ collection: "news", freshnessMaxMinutes: 60 }],
+          },
+        ],
+      },
+      liveFetch: true,
+      modelInvoker: invoke,
+      qualityModelInvoker: invoke,
+      batchOptions: {
+        ...BATCH_OPTIONS,
+        collectionAdapters: [
+          {
+            ...collectionAdapter(),
+            collect: async () => {
+              throw new Error("fixture unavailable");
+            },
+          },
+        ],
+      },
+    });
+    expect(invoke).not.toHaveBeenCalled();
+    expect(result.committee).toBeUndefined();
+    expect(result.quality).toBeUndefined();
+    expect(result.missingEvidence).toContain("source_evidence_unavailable");
+    expect(result.sourceRecovery?.entries[0].action).toBe("review_evidence");
+    expect(result.quarterlyOutput.adopted).toBe(false);
   });
 
   it("keeps a stale collection out of adopted output even when the model DAG completes", async () => {

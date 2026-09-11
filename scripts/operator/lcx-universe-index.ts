@@ -248,6 +248,15 @@ const GOVERNANCE_COMPONENT_RULES: GovernanceComponentRule[] = [
     disposition: "governed_source",
   },
   {
+    id: "finance_benchmark_receipts",
+    patterns: [/^\.artifacts\/finance-strategy\/[^/]+\.json$/u],
+    category: "historical_or_evaluation_artifact",
+    routeOwner: "scripts/operator/finance-strategy-method-benchmark.ts",
+    proofSurface: "finance strategy benchmark mathematical checks and source receipts",
+    boundary: "research receipts are inventory only; existence does not prove alpha or execution",
+    disposition: "inventory_only",
+  },
+  {
     id: "temporary_artifact_surface",
     patterns: [/^\.tmp\//u],
     category: "temporary_artifact",
@@ -711,7 +720,12 @@ async function main() {
   const [trackedInventory, rgFilesRaw, gitStatusInventory] = await Promise.all([
     execLinesWithStatus("git", ["ls-files"]),
     execLines("rg", ["--files", "--hidden", "-g", "!.git", "-g", "!node_modules"]),
-    execLinesWithStatus("git", ["status", "--short", "--branch"], repoRoot, false),
+    execLinesWithStatus(
+      "git",
+      ["status", "--short", "--branch", "--untracked-files=all"],
+      repoRoot,
+      false,
+    ),
   ]);
   const trackedFiles = trackedInventory.lines;
   const rgFiles = rgFilesRaw.length > 0 ? rgFilesRaw : trackedFiles;

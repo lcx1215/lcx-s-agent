@@ -9,6 +9,64 @@ import { runFinanceResearchCli } from "./lcx-finance-research.ts";
 const input = ["--ask", "过去六个月加密货币和美股市场情绪", "--as-of", "2026-09-08T00:00:00Z"];
 
 describe("finance research operator", () => {
+  it("rejects reasoning overrides outside an explicit workflow", async () => {
+    await expect(
+      runFinanceResearchCli([...input, "--workflow-reasoning", "bounded_workflow"]),
+    ).rejects.toThrow("requires --workflow-models");
+    await expect(
+      runFinanceResearchCli([...input, "--workflow-models", "--workflow-reasoning", "invalid"]),
+    ).rejects.toThrow("provider_default or bounded_workflow");
+  });
+
+  it("rejects ambiguous configured-model authority before collection", async () => {
+    for (const override of [["--model", "fixture"], ["--sources-only"]]) {
+      await expect(
+        runFinanceResearchCli([...input, "--workflow-models", ...override]),
+      ).rejects.toThrow("cannot combine local overrides or sources-only");
+      await expect(
+        runFinanceResearchCli([...input, "--configured-model", ...override]),
+      ).rejects.toThrow("cannot combine local overrides or sources-only");
+    }
+  });
+  it("plans source recovery without model or network work", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-recovery-cli-"));
+    try {
+      const file = path.join(directory, "original.json");
+      await fs.writeFile(
+        file,
+        JSON.stringify({
+          schemaVersion: "lcx_finance_research_batch_v1",
+          boundary: "finance_research_batch_research_only",
+          correlationId: "fixture",
+          asOf: "2026-09-08T00:00:00Z",
+          jobs: [],
+        }),
+      );
+      const result = await runFinanceResearchCli([
+        "--recover-from",
+        file,
+        "--as-of",
+        "2026-09-08T00:01:00Z",
+      ]);
+      expect(result).toMatchObject({
+        status: "planned",
+        adopted: false,
+        originalEvidenceRewritten: false,
+      });
+      expect("batch" in result).toBe(false);
+      await expect(
+        runFinanceResearchCli([
+          "--recover-from",
+          file,
+          "--as-of",
+          "2026-09-08T00:01:00Z",
+          "--configured-model",
+        ]),
+      ).rejects.toThrow("cannot combine");
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
   it("returns a fixed-date plan without model or source execution", async () => {
     const receipt = await runFinanceResearchCli(input);
     if (!("plan" in receipt)) {
@@ -78,6 +136,11 @@ describe("finance research operator", () => {
   it("rejects an invalid inference budget before execution", async () => {
     await expect(runFinanceResearchCli([...input, "--max-model-calls", "0"])).rejects.toThrow(
       "positive integer",
+    );
+  });
+  it("rejects an unbounded model output limit before execution", async () => {
+    await expect(runFinanceResearchCli([...input, "--max-model-tokens", "16385"])).rejects.toThrow(
+      "integer from 1 to 16384",
     );
   });
   it("records and lists an outcome without invoking research", async () => {

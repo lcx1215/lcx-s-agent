@@ -399,8 +399,18 @@ const MIND_MODEL_LANES: MindModelLane[] = [
     objective:
       "Trace research_case through research_run, decision_packet and outcome_ledger without granting execution authority.",
     headTerms: ["research_case", "decision_packet", "outcome_ledger"],
-    workflowTerms: ["buildFinanceCaseRun", "appendFinanceOutcome", "openFinanceRunCheckpoints"],
-    proofTerms: ["finance-caseflow.test", "finance-outcome-ledger.test"],
+    workflowTerms: [
+      "buildFinanceCaseRun",
+      "appendFinanceOutcome",
+      "openFinanceRunCheckpoints",
+      "createFinanceModelWorkflow",
+      "validateFinanceWorkflowOutput",
+    ],
+    proofTerms: [
+      "finance-caseflow.test",
+      "finance-outcome-ledger.test",
+      "finance-model-workflow.test",
+    ],
     boundaryTerms: ["executionAuthority", "not_independently_verified", "not_scheduled"],
     nextAction:
       "Verify source coverage, immutable forecast scoring and scheduler binding separately from structural coverage.",

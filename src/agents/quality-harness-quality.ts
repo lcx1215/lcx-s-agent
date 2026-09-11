@@ -15,12 +15,17 @@ import {
   type QualityHarnessVerification,
   type QualityHarnessVerifier,
 } from "./quality-harness-contract.js";
+import {
+  reconcileQualityFindings,
+  type QualityFindingReceipt,
+} from "./quality-harness-findings.js";
 
 export type QualityEvaluation = Readonly<{
   passed: boolean;
   artifact?: QualityHarnessArtifact;
   gates: readonly QualityHarnessGate[];
   feedback: readonly string[];
+  findings: readonly QualityFindingReceipt[];
 }>;
 
 function normalizeFeedback(feedback: readonly string[]): string[] {
@@ -176,16 +181,27 @@ export function evaluateQuality(
     findQualityStageResult(result, "evidence_integrity"),
     "evidence",
   );
+  const findings = reconcileQualityFindings(result.tasks, artifact, request.evidence);
+  const reconciledReview = (role: string, stage: QualityHarnessStage) => {
+    const original = reviewPassed(findQualityStageResult(result, role), stage);
+    const roleFindings = findings.filter((finding) => finding.role === role);
+    return !original.passed &&
+      roleFindings.length > 0 &&
+      roleFindings.every((finding) => finding.status === "resolved")
+      ? {
+          passed: true,
+          reason: `${stage} findings independently resolved against final artifact`,
+          feedback: [],
+        }
+      : original;
+  };
   const supportingReviews = [
-    reviewPassed(findQualityStageResult(result, "financial_extraction"), "extraction"),
-    reviewPassed(findQualityStageResult(result, "news_classification"), "classification"),
-    reviewPassed(findQualityStageResult(result, "risk_check"), "risk"),
-    reviewPassed(findQualityStageResult(result, "portfolio_exposure"), "exposure"),
+    reconciledReview("financial_extraction", "extraction"),
+    reconciledReview("news_classification", "classification"),
+    reconciledReview("risk_check", "risk"),
+    reconciledReview("portfolio_exposure", "exposure"),
   ];
-  const adversarialReview = reviewPassed(
-    findQualityStageResult(result, "adversarial_challenge"),
-    "adversarial",
-  );
+  const adversarialReview = reconciledReview("adversarial_challenge", "adversarial");
   const precheck = reviewPassed(findQualityStageResult(result, "final_precheck"), "precheck");
   const allStagesCompleted = result.status === "completed" && result.tasks.length === 10;
   const sideEffects = result.tasks.flatMap((entry) => entry.sideEffects);
@@ -216,7 +232,7 @@ export function evaluateQuality(
       id: "supporting_role_reviews",
       passed: supportingReviews.every((review) => review.passed),
       reason: supportingReviews.every((review) => review.passed)
-        ? "extraction, classification, risk, and exposure roles passed"
+        ? "supporting reviews passed or their findings were independently closed against the final artifact"
         : supportingReviews
             .filter((review) => !review.passed)
             .map((review) => review.reason)
@@ -253,6 +269,12 @@ export function evaluateQuality(
   const feedback = normalizeFeedback([
     ...groundingProblems,
     ...financeSafetyProblems,
+    ...findings
+      .filter((finding) => finding.status === "unresolved")
+      .map(
+        (finding) =>
+          `${finding.role} finding ${finding.id}: ${finding.closureFailure ?? "final artifact missing"}`,
+      ),
     ...supportingReviews.flatMap((review) => review.feedback),
     ...evidenceReview.feedback,
     ...adversarialReview.feedback,
@@ -264,6 +286,7 @@ export function evaluateQuality(
     ...(artifact ? { artifact } : {}),
     gates: Object.freeze(gates),
     feedback: Object.freeze(feedback),
+    findings: Object.freeze(findings),
   });
 }
 

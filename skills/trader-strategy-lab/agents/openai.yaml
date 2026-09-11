@@ -1,0 +1,3 @@
+interface:
+  display_name: "三地交易策略研究"
+  short_description: "从公开交易方法提炼可检验策略，附来源、触发条件、失效情景与个人实施边界"

@@ -56,7 +56,12 @@ export async function runCaseflowDemo(output: string) {
     }
     return {
       kind: "review",
-      review: { verdict: "pass", criticalFindings: [], evidenceGaps: [], notes: [] },
+      review: {
+        verdict: "pass",
+        criticalFindings: [],
+        evidenceGaps: [],
+        notes: ["Synthetic fixture checked the supplied evidence packet and found no gaps."],
+      },
     };
   };
   const options = {

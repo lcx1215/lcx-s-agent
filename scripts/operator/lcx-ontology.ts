@@ -125,6 +125,46 @@ const INTEGRATION_SURFACES = [
   {
     path: "src/shared/global-evidence-projection.ts",
     terms: ["LCX_ONTOLOGY_SURFACE_IDS", "LCX_ONTOLOGY_CAPABILITY_ROLES", "isLcxOntologyValue"],
+    importsFrom: [
+      {
+        source: "./lcx-ontology.js",
+        names: ["LCX_ONTOLOGY_SURFACE_IDS", "LCX_ONTOLOGY_CAPABILITY_ROLES", "isLcxOntologyValue"],
+      },
+    ],
+    calls: ["isLcxOntologyValue"],
+  },
+  {
+    path: "src/agents/finance-caseflow.ts",
+    terms: ["ontologyEdges", "assertValidLcxOntologyEdges", "buildFinanceCaseOntologyEdges"],
+    importsFrom: [
+      {
+        source: "../shared/lcx-ontology.js",
+        names: ["LCX_CASEFLOW_CONTRACT", "assertValidLcxOntologyEdges", "LcxOntologyEdge"],
+      },
+    ],
+    calls: ["assertValidLcxOntologyEdges"],
+  },
+  {
+    path: "src/shared/lcx-run-receipt.ts",
+    terms: ["ontologyEdges", "assertValidLcxOntologyEdges"],
+    importsFrom: [
+      {
+        source: "./lcx-ontology.js",
+        names: ["assertValidLcxOntologyEdges", "LcxOntologyEdge"],
+      },
+    ],
+    calls: ["assertValidLcxOntologyEdges"],
+  },
+  {
+    path: "scripts/operator/lcx-ontology.ts",
+    terms: ["validateLcxOntologyRegistry"],
+    importsFrom: [
+      {
+        source: "../../src/shared/lcx-ontology.js",
+        names: ["validateLcxOntologyRegistry", "canonicalizeLcxOntologyValue"],
+      },
+    ],
+    calls: ["validateLcxOntologyRegistry"],
   },
   {
     path: "scripts/operator/lcx-mind-model.ts",
@@ -153,7 +193,17 @@ const INTEGRATION_SURFACES = [
       "missingEvidenceIsUnknown",
       "providerConfigTouched",
       "protectedMemoryTouched",
+      "getLcxOntologyOrchestrationContract",
+      "validateLcxOntologyOrchestrationContract",
+      "requiredProofKinds",
     ],
+    importsFrom: [
+      {
+        source: "../../src/shared/lcx-ontology.ts",
+        names: ["getLcxOntologyOrchestrationContract", "validateLcxOntologyOrchestrationContract"],
+      },
+    ],
+    calls: ["getLcxOntologyOrchestrationContract", "validateLcxOntologyOrchestrationContract"],
   },
   {
     path: "ops/external-learning/2026-09-01-multi-agent-pattern-intake.md",
@@ -206,6 +256,9 @@ type IntegrationResult = {
   path: string;
   ok: boolean;
   missingTerms: string[];
+  missingImports: string[];
+  missingCalls: string[];
+  semanticChecked: boolean;
 };
 
 type TaskFamilySourceResult = {
@@ -220,6 +273,16 @@ type TaskFamilySourceResult = {
 
 function unique(values: readonly string[]): string[] {
   return [...new Set(values)];
+}
+
+function extractStaticImports(source: string): Array<{ clause: string; source: string }> {
+  return [...source.matchAll(/(?:^|\n)\s*import\s+([\s\S]*?)\s+from\s+["']([^"']+)["'];?/gu)].map(
+    (match) => ({ clause: match[1], source: match[2] }),
+  );
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 function extractTaskFamilies(sourcePath: string, source: string): string[] {
@@ -246,9 +309,40 @@ async function inspectIntegrationSurface(
   try {
     const source = await fs.readFile(filePath, "utf8");
     const missingTerms = surface.terms.filter((term) => !source.includes(term));
-    return { path: surface.path, ok: missingTerms.length === 0, missingTerms };
+    const imports = extractStaticImports(source);
+    const missingImports = (surface.importsFrom ?? []).flatMap((requirement) => {
+      const matchingImports = imports.filter((entry) => entry.source === requirement.source);
+      return requirement.names
+        .filter(
+          (name) =>
+            !matchingImports.some((entry) =>
+              new RegExp(`\\b${escapeRegExp(name)}\\b`, "u").test(entry.clause),
+            ),
+        )
+        .map((name) => `${requirement.source}:${name}`);
+    });
+    const missingCalls = (surface.calls ?? [])
+      .filter((name) => !new RegExp(`\\b${escapeRegExp(name)}\\s*\\(`, "u").test(source))
+      .map((name) => `${name}()`);
+    return {
+      path: surface.path,
+      ok: missingTerms.length === 0 && missingImports.length === 0 && missingCalls.length === 0,
+      missingTerms,
+      missingImports,
+      missingCalls,
+      semanticChecked: (surface.importsFrom?.length ?? 0) > 0 || (surface.calls?.length ?? 0) > 0,
+    };
   } catch {
-    return { path: surface.path, ok: false, missingTerms: [...surface.terms] };
+    return {
+      path: surface.path,
+      ok: false,
+      missingTerms: [...surface.terms],
+      missingImports: (surface.importsFrom ?? []).flatMap((requirement) =>
+        requirement.names.map((name) => `${requirement.source}:${name}`),
+      ),
+      missingCalls: (surface.calls ?? []).map((name) => `${name}()`),
+      semanticChecked: (surface.importsFrom?.length ?? 0) > 0 || (surface.calls?.length ?? 0) > 0,
+    };
   }
 }
 
@@ -306,8 +400,15 @@ async function buildOntologyAudit() {
       ? []
       : [
           integration.path +
-            (integration.missingTerms.length > 0
-              ? ": missing " + integration.missingTerms.join(", ")
+            (integration.missingTerms.length > 0 ||
+            integration.missingImports.length > 0 ||
+            integration.missingCalls.length > 0
+              ? ": missing " +
+                [
+                  ...integration.missingTerms,
+                  ...integration.missingImports,
+                  ...integration.missingCalls,
+                ].join(", ")
               : ": unreadable"),
         ],
   );
@@ -338,6 +439,10 @@ async function buildOntologyAudit() {
     relationContracts: {
       count: LCX_ONTOLOGY_REGISTRY.relationContracts.length,
       relations: LCX_ONTOLOGY_REGISTRY.relationContracts.map((contract) => contract.relation),
+    },
+    orchestrationContracts: {
+      count: LCX_ONTOLOGY_REGISTRY.orchestrationContracts.length,
+      patterns: LCX_ONTOLOGY_REGISTRY.orchestrationContracts.map((contract) => contract.pattern),
     },
     vocabularyCounts,
     identifierClasses: {

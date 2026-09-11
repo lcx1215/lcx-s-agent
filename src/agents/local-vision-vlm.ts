@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { buildLocalMlxCommand } from "./local-model-slot.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -250,8 +251,6 @@ export async function runLocalVisionVlm(params: {
     }
 
     const args = [
-      "-m",
-      "mlx_vlm",
       "generate",
       "--model",
       model,
@@ -269,7 +268,7 @@ export async function runLocalVisionVlm(params: {
     ];
     let stdout = "";
     try {
-      const result = await execFileAsync(pythonPath, args, {
+      const result = await execFileAsync(pythonPath, buildLocalMlxCommand("mlx_vlm", args), {
         cwd: tempDir,
         env: { ...process.env, PYTHONUNBUFFERED: "1" },
         timeout: timeoutMs,

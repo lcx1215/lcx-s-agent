@@ -1,0 +1,320 @@
+import type { FinanceCommitteeEvidence } from "./finance-agent-committee.js";
+import type { FinanceMarketCollectionItem } from "./finance-market-collection-registry.js";
+import type {
+  FinanceResearchBatchEvidencePacket,
+  FinanceResearchBatchJob,
+} from "./finance-research-batch-runner.js";
+import type { QualityHarnessArtifact } from "./quality-harness-contract.js";
+
+/** Exact instrument labels only; this checks citation coverage, not semantic truth. */
+export function findUncitedFinanceInstruments(
+  evidence: readonly { id: string }[],
+  claims: QualityHarnessArtifact["claims"],
+): readonly string[] {
+  const instruments = evidence
+    .filter((entry) => entry.id.startsWith("finance-model:"))
+    .map((entry) => ({
+      id: entry.id,
+      instrument: decodeURIComponent(entry.id.slice("finance-model:".length)),
+    }));
+  const missing: string[] = [];
+  for (const claim of claims) {
+    if (claim.status !== "supported") {
+      continue;
+    }
+    for (const entry of instruments) {
+      const escaped = entry.instrument.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+      if (
+        new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "iu").test(claim.text) &&
+        !claim.evidenceIds.includes(entry.id)
+      ) {
+        missing.push(`${claim.id}:${entry.id}`);
+      }
+    }
+  }
+  return missing;
+}
+
+function number(value: unknown): number | undefined {
+  if (typeof value === "string" && /^[+-]?\d+(\.\d+)?$/u.test(value.trim())) {
+    value = Number(value);
+  }
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+  return value;
+}
+const rounded = (value: number) => Math.round(value * 1_000) / 1_000;
+
+export function rankFinanceWindowDrawdowns(
+  entries: readonly {
+    instrument: string;
+    from: string;
+    to: string;
+    maxDrawdownPct: number;
+  }[],
+) {
+  const groups = new Map<string, (typeof entries)[number][]>();
+  for (const entry of entries) {
+    const key = `${entry.from}..${entry.to}`;
+    groups.set(key, [...(groups.get(key) ?? []), entry]);
+  }
+  return [...groups].map(([window, values]) => ({
+    window,
+    ranked: values.toSorted((a, b) => a.maxDrawdownPct - b.maxDrawdownPct),
+  }));
+}
+
+/** Descriptive arithmetic over one provider and one price definition, never a forecast. */
+export function summarizeFinancePriceHistory(
+  rows: readonly FinanceMarketCollectionItem[],
+  asOf: string,
+) {
+  const series = new Map<string, Map<string, number>>();
+  let invalid = 0;
+  let duplicates = 0;
+  let conflicts = 0;
+  for (const row of rows) {
+    const close = number(row.data.close ?? row.data.c ?? row.data.price);
+    const date =
+      typeof row.data.date === "string" ? row.data.date : row.sourceTimestamp.slice(0, 10);
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/u.test(date) ||
+      !Number.isFinite(Date.parse(date)) ||
+      new Date(date).toISOString().slice(0, 10) !== date ||
+      date >= asOf.slice(0, 10) ||
+      !Number.isFinite(Date.parse(row.sourceTimestamp)) ||
+      Date.parse(row.sourceTimestamp) > Date.parse(asOf) ||
+      close === undefined ||
+      close <= 0
+    ) {
+      invalid += 1;
+      continue;
+    }
+    // Feed and adjustment basis are part of identity; do not stitch different definitions.
+    const key = JSON.stringify([
+      row.providerName,
+      row.data.feed ?? "unspecified",
+      row.data.adjusted ?? "unspecified",
+      row.data.instrumentType ?? "unspecified",
+      row.data.unit ?? "unspecified",
+    ]);
+    const values = series.get(key) ?? new Map<string, number>();
+    if (values.has(date)) {
+      duplicates += 1;
+      if (values.get(date) !== close) {
+        conflicts += 1;
+      }
+    } else {
+      values.set(date, close);
+    }
+    series.set(key, values);
+  }
+  const summaries = [...series].map(([identity, values]) => {
+    const ordered = [...values].toSorted(([a], [b]) => a.localeCompare(b));
+    const prices = ordered.map(([, close]) => close);
+    const last = prices.at(-1)!;
+    let peak = prices[0];
+    let drawdown = 0;
+    for (const price of prices) {
+      peak = Math.max(peak, price);
+      drawdown = Math.min(drawdown, price / peak - 1);
+    }
+    const returns = Object.fromEntries(
+      [1, 5, 21, 63, 126].map((period) => [
+        period,
+        prices.length > period
+          ? rounded((last / prices[prices.length - 1 - period] - 1) * 100)
+          : null,
+      ]),
+    );
+    const observationWindows = Object.fromEntries(
+      [1, 5, 21, 63, 126].map((period) => [
+        period,
+        prices.length > period
+          ? { from: ordered[prices.length - 1 - period][0], to: ordered.at(-1)![0] }
+          : null,
+      ]),
+    );
+    return {
+      identity: JSON.parse(identity) as string[],
+      observations: prices.length,
+      from: ordered[0][0],
+      to: ordered.at(-1)![0],
+      first: prices[0],
+      last,
+      priceReturnPct: rounded((last / prices[0] - 1) * 100),
+      returnsByObservationPct: returns,
+      observationWindows,
+      maxDrawdownPct: rounded(drawdown * 100),
+      currentDrawdownPct: rounded((last / peak - 1) * 100),
+    };
+  });
+  return {
+    invalid,
+    duplicates,
+    conflicts,
+    summaries,
+    usable: conflicts === 0 && summaries.length > 0,
+    basis:
+      "price_change_not_dividend_reinvested_total_return; periods_are_observations; gaps_and_source_status_remain_separate",
+  };
+}
+
+/** Build model-sized facts before prompt clipping, retaining the raw job IDs for audit. */
+export function buildFinanceResearchModelEvidence(
+  batch: FinanceResearchBatchEvidencePacket,
+  options: { includeReviewEvidence?: boolean } = {},
+): readonly FinanceCommitteeEvidence[] {
+  const groups = new Map<string, FinanceResearchBatchJob[]>();
+  const readyDrawdowns: Parameters<typeof rankFinanceWindowDrawdowns>[0][number][] = [];
+  for (const job of batch.jobs) {
+    const group = groups.get(job.request.instrument) ?? [];
+    group.push(job);
+    groups.set(job.request.instrument, group);
+  }
+  const result: FinanceCommitteeEvidence[] = [
+    {
+      id: `finance-model-coverage:${batch.correlationId}`,
+      source: "finance-research-batch-runner",
+      timestamp: batch.asOf,
+      text: `Research only. Frozen asOf=${batch.asOf}. ${batch.jobs.length} jobs, ${batch.status}. Status counts: ${JSON.stringify(
+        batch.jobs.reduce<Record<string, number>>((counts, job) => {
+          counts[job.status] = (counts[job.status] ?? 0) + 1;
+          return counts;
+        }, {}),
+      )}. Facts below are deterministic summaries of frozen receipts, not model conclusions. Needs_review values cannot be promoted to verified current evidence. Original receipts remain available by job ID.`,
+    },
+  ];
+  for (const [instrument, jobs] of groups) {
+    const facts: string[] = [];
+    const priceCandidates: {
+      job: FinanceResearchBatchJob;
+      summary: ReturnType<typeof summarizeFinancePriceHistory>["summaries"][number];
+    }[] = [];
+    for (const job of jobs) {
+      if (
+        job.status !== "ready" &&
+        !(options.includeReviewEvidence && job.status === "needs_review")
+      ) {
+        continue;
+      }
+      if (!job.receipt) {
+        continue;
+      }
+      const prefix = `${job.jobId} (${job.status})`;
+      if ("records" in job.receipt) {
+        const records = job.receipt.records;
+        const collection = "collection" in job.request ? job.request.collection : undefined;
+        if (collection === "eod_history") {
+          const history = summarizeFinancePriceHistory(records, batch.asOf);
+          if (!history.usable) {
+            facts.push(
+              `${prefix}: historical values excluded; conflicting dates=${history.conflicts}, invalid=${history.invalid}.`,
+            );
+            continue;
+          }
+          for (const summary of history.summaries) {
+            priceCandidates.push({ job, summary });
+          }
+        } else if (collection === "macro_series") {
+          const valid = records
+            .filter(
+              (r) =>
+                number(r.data.value) !== undefined &&
+                Date.parse(r.sourceTimestamp) <= Date.parse(batch.asOf),
+            )
+            .toSorted((a, b) => a.sourceTimestamp.localeCompare(b.sourceTimestamp));
+          const last = valid.at(-1),
+            previous = valid.at(-2);
+          if (last) {
+            facts.push(
+              `${prefix}: ${typeof last.data.seriesId === "string" ? last.data.seriesId : instrument}, latest value=${String(number(last.data.value) ?? "unknown")}, observation period=${last.sourceTimestamp}; previous=${String(number(previous?.data.value) ?? "unknown")} (${previous?.sourceTimestamp ?? "unknown"}). Observation period is not publication time; units and revisions need source review.`,
+            );
+          }
+        } else if (collection === "news") {
+          const eligible = records.filter((r) => {
+            const match = r.data.entityMatch;
+            return (
+              Date.parse(r.sourceTimestamp) <= Date.parse(batch.asOf) &&
+              typeof match === "object" &&
+              match !== null &&
+              "status" in match &&
+              match.status === "matched"
+            );
+          });
+          facts.push(
+            `${prefix}: ${records.length} news rows, ${eligible.length} entity-matched headlines. Headline-only, not full-text verification or sentiment. ${eligible
+              .slice(0, 2)
+              .map(
+                (r) =>
+                  `${typeof r.data.title === "string" ? r.data.title : typeof r.data.headline === "string" ? r.data.headline : "unknown"} (${r.sourceTimestamp})`,
+              )
+              .join("; ")}`,
+          );
+        }
+      } else {
+        const fields = job.receipt.snapshot?.normalizedFields ?? [];
+        if (fields.length) {
+          facts.push(
+            `${prefix}: quote fields ${JSON.stringify(fields.slice(0, 3).map((f) => ({ name: f.name, value: f.value, sourceTimestamp: f.sourceTimestamp })))}`,
+          );
+        }
+      }
+    }
+    // One entire source series per instrument. Tie-breaks prefer consolidated daily closes over IEX.
+    const preference = ["yahoo", "massive", "twelve", "binance", "fred", "alpaca"];
+    const rank = (provider: string) => {
+      const index = preference.findIndex((name) => provider.includes(name));
+      return index < 0 ? 99 : index;
+    };
+    priceCandidates.sort(
+      (a, b) =>
+        b.summary.to.localeCompare(a.summary.to) ||
+        b.summary.observations - a.summary.observations ||
+        rank(a.summary.identity[0]) - rank(b.summary.identity[0]),
+    );
+    const candidate = priceCandidates[0];
+    if (candidate) {
+      const h = candidate.summary;
+      if (candidate.job.status === "ready") {
+        readyDrawdowns.push({
+          instrument,
+          from: h.from,
+          to: h.to,
+          maxDrawdownPct: h.maxDrawdownPct,
+        });
+      }
+      const window21 = h.observationWindows[21];
+      const window63 = h.observationWindows[63];
+      facts.unshift(
+        `Price (${candidate.job.status}); assetClass=${candidate.job.request.assetClass}, kind=${h.identity[3]}, unit=${h.identity[4]}; ${h.observations} closes ${h.from}..${h.to}, window=${h.priceReturnPct}%, maxDD_entire_window=${h.maxDrawdownPct}%; last21=${h.returnsByObservationPct[21] ?? "unknown"}% (${window21 ? `${window21.from}..${window21.to}` : "insufficient history"}); last63=${h.returnsByObservationPct[63] ?? "unknown"}% (${window63 ? `${window63.from}..${window63.to}` : "insufficient history"}). Price change, not total return; lookbacks are return intervals, not calendar days. Source=${h.identity[0]}; feed=${h.identity[1]}; adjusted=${h.identity[2]}; Coverage=${candidate.job.historyCoverage?.status ?? "unverified"}; ${priceCandidates.length} series available, not stitched. Receipt=${candidate.job.jobId}.`,
+      );
+    }
+    if (facts.length) {
+      result.push({
+        id: `finance-model:${encodeURIComponent(instrument)}`,
+        source: "finance-research-batch-runner",
+        timestamp: batch.asOf,
+        text: `${instrument}\n${facts.join("\n")}`,
+      });
+    }
+  }
+  const ranking = rankFinanceWindowDrawdowns(readyDrawdowns)
+    .filter((group) => group.ranked.length > 1)
+    .map(
+      (group) =>
+        `Worst drawdown magnitudes, same window ${group.window}: ${group.ranked
+          .slice(0, 5)
+          .map((entry) => `${entry.instrument} ${entry.maxDrawdownPct}%`)
+          .join(", ")}.`,
+    )
+    .join(" ");
+  if (ranking) {
+    result[0] = {
+      ...result[0],
+      text: result[0].text.replace(". Facts below", `. ${ranking} Facts below`),
+    };
+  }
+  return result;
+}

@@ -1052,7 +1052,19 @@ async function universeIndexCheck(): Promise<RecoveryCheck> {
       process.execPath,
       ["--import", "tsx", "scripts/operator/lcx-universe-index.ts", "--json", "--no-write"],
       { cwd: repoRoot, env: process.env, maxBuffer: 64 * 1024 * 1024 },
-    );
+    ).catch((error: unknown) => {
+      // A nonzero inventory gate can still carry the actionable structured receipt.
+      if (
+        error &&
+        typeof error === "object" &&
+        "stdout" in error &&
+        typeof error.stdout === "string" &&
+        error.stdout.trim()
+      ) {
+        return { stdout: error.stdout };
+      }
+      throw error;
+    });
     const payload = JSON.parse(stdout) as Record<string, unknown>;
     const summary = payload.summary as Record<string, unknown> | undefined;
     const ownerCoverage = payload.ownerCoverage as Record<string, unknown> | undefined;
@@ -1069,7 +1081,8 @@ async function universeIndexCheck(): Promise<RecoveryCheck> {
         workspaceArtifactFiles: summary?.workspaceArtifactFiles,
         liveSidecarFiles: summary?.liveSidecarFiles,
         unmatchedChangedFiles: summary?.unmatchedChangedFiles,
-        governanceOwnerCount: ownerCoverage?.governanceOwnerCount,
+        changeImpact: ownerCoverage?.changeImpact,
+        nextSafeCommands: payload.nextSafeCommands,
       },
     };
   } catch (error) {

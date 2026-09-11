@@ -12,6 +12,58 @@ async function makeGuardLog(lines: unknown[]): Promise<string> {
 }
 
 describe("minimax brain failure curriculum", () => {
+  it("feeds native contract failures from a newer receipt into repair even when assisted cases pass", async () => {
+    const logPath = await makeGuardLog([]);
+    const receiptPath = path.join(path.dirname(logPath), "eval.json");
+    await fs.writeFile(
+      receiptPath,
+      JSON.stringify({
+        boundary: "local_brain_eval_receipt_only",
+        generatedAt: "2026-09-11T01:00:00.000Z",
+        resolved: { adapterPath: "/tmp/adapter-current" },
+        summary: {
+          passed: 2,
+          total: 2,
+          passRate: 1,
+          failedCaseIds: [],
+          parseRecoveredCaseIds: [],
+          modelContractFailureCaseIds: [
+            "broad_finance_module_taxonomy_coverage",
+            "adjacent_credit_case",
+          ],
+        },
+      }),
+    );
+    try {
+      const prompts = await buildFailureCurriculumPrompts({
+        guardLogPath: logPath,
+        evalReceiptPath: receiptPath,
+        maxPrompts: 8,
+      });
+      expect(prompts).toHaveLength(2);
+      expect(
+        prompts.every((entry) => entry.sourceSummary.includes("Native model contract failed")),
+      ).toBe(true);
+      expect(prompts.some((entry) => entry.id.includes("adjacent_credit_case"))).toBe(true);
+      await fs.writeFile(
+        receiptPath,
+        JSON.stringify({
+          boundary: "unrelated_receipt",
+          summary: { modelContractFailureCaseIds: ["fake"] },
+        }),
+      );
+      expect(
+        await buildFailureCurriculumPrompts({
+          guardLogPath: logPath,
+          evalReceiptPath: receiptPath,
+          maxPrompts: 8,
+        }),
+      ).toEqual([]);
+    } finally {
+      await fs.rm(path.dirname(logPath), { recursive: true, force: true });
+    }
+  });
+
   it("turns latest eval failures into targeted MiniMax teacher prompts", async () => {
     const logPath = await makeGuardLog([
       {

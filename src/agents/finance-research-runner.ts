@@ -4,6 +4,7 @@ import {
   buildFinanceCommitteeContext,
   runFinanceCommittee,
   type FinanceCommitteeInput,
+  type FinanceCommitteeSharedContext,
 } from "./finance-agent-committee.js";
 import {
   planFinanceBrainOrchestration,
@@ -45,6 +46,13 @@ import {
   type FinanceResearchBatchTarget,
 } from "./finance-research-batch-runner.js";
 import {
+  buildFinanceResearchModelEvidence,
+  findUncitedFinanceInstruments,
+} from "./finance-research-evidence.js";
+import { buildFinanceSourceRecoveryPlan } from "./finance-source-recovery.js";
+import { buildFinanceStrategyMethodKit } from "./finance-strategy-method-kit.js";
+import { modelRoutingTaskTimeoutMs } from "./logical-agent-model-router.js";
+import {
   type LogicalAgentExecutionContext,
   type LogicalAgentModelInvoker,
   type LogicalAgentModelRouting,
@@ -52,6 +60,12 @@ import {
   type LogicalAgentTaskResult,
   type LogicalAgentExecutor,
 } from "./logical-agent-pool.js";
+import {
+  parseStageOutput,
+  stageInstructions,
+  STAGE_BY_AGENT_ID,
+  type QualityHarnessModelRequest,
+} from "./quality-harness-contract.js";
 import {
   runQualityHarness,
   type QualityHarnessArtifact,
@@ -71,6 +85,8 @@ export type FinanceResearchRunInput = Readonly<{
 }>;
 
 export type FinanceResearchRunOptions = Readonly<{
+  signal?: AbortSignal;
+  allowProviderCalls?: boolean;
   input: FinanceResearchRunInput;
   modelCheckpoint?: FinanceModelCheckpointOptions;
   liveFetch?: boolean;
@@ -160,6 +176,7 @@ export type FinanceResearchRunReceipt = Readonly<{
     model: FinanceResearchModelExecution;
   }>;
   quality?: QualityHarnessReceipt;
+  sourceRecovery?: ReturnType<typeof buildFinanceSourceRecoveryPlan>;
   modelCheckpoint?: ReturnType<ReturnType<typeof openFinanceModelCheckpoints>["summary"]>;
   quarterlyOutput: FinanceQuarterlyOutput;
   gates: readonly FinanceResearchGate[];
@@ -633,21 +650,50 @@ export function createFinanceCommitteeExecutor(): LogicalAgentExecutor<
   return async (
     context: LogicalAgentExecutionContext<LogicalAgentRequest, Record<string, unknown>>,
   ) => {
-    const payload = {
-      schemaVersion: "lcx_local_role_shadow_v1" as const,
-      runId: context.sharedContext.runId ?? context.task.id,
-      taskId: context.task.id,
-      role: context.agent.id,
-      purpose: context.agent.purpose,
-      ask: context.input.ask,
-      evidence: context.input.evidence ?? [],
-      dependencyOutputs: dependencyOutputs(context.dependencyResults),
-    };
-    const output = await context.modelSlot.invoke(payload, context.signal);
-    if (typeof output !== "object" || output === null || Array.isArray(output)) {
-      throw new Error("finance committee model returned a non-object role result");
+    const shared = context.sharedContext as FinanceCommitteeSharedContext;
+    const stage = STAGE_BY_AGENT_ID[context.agent.id];
+    if (!stage) {
+      throw new Error("finance committee role has no research stage contract");
     }
-    return { output: output as Record<string, unknown>, sideEffects: [] };
+    const suppliedKit = shared.userConstraints.strategyMethodKit;
+    const methodPrompt =
+      suppliedKit &&
+      typeof suppliedKit === "object" &&
+      "prompt" in suppliedKit &&
+      typeof suppliedKit.prompt === "string"
+        ? suppliedKit.prompt
+        : buildFinanceStrategyMethodKit(shared.ask).prompt;
+    const payload: QualityHarnessModelRequest = {
+      schemaVersion: 1,
+      runId:
+        typeof context.sharedContext.runId === "string"
+          ? context.sharedContext.runId
+          : context.task.id,
+      attempt: 1,
+      stage,
+      agentId: context.agent.id,
+      task: context.input.ask,
+      evidence: shared.evidence,
+      sharedContext: {
+        asOf: shared.asOf,
+        decisionMode: shared.decisionMode,
+        userConstraints: shared.userConstraints,
+      },
+      dependencyOutputs: dependencyOutputs(context.dependencyResults),
+      repairFeedback: [],
+      instructions: `${stageInstructions(stage)} Apply this role only to the user's actual task. Do not demand company statements, news tables or other deliverables absent from that task.\n\n${methodPrompt}`,
+    };
+    const output = parseStageOutput(stage, await context.modelSlot.invoke(payload, context.signal));
+    if (
+      output.kind === "review" &&
+      output.review.notes.length +
+        output.review.criticalFindings.length +
+        output.review.evidenceGaps.length ===
+        0
+    ) {
+      throw new Error("finance committee review contains no findings or checks");
+    }
+    return { output: { ...output }, sideEffects: [] };
   };
 }
 
@@ -734,6 +780,14 @@ function qualityVerifier(decisionMode: FinanceDecisionMode): QualityHarnessVerif
         status: "failed",
         summary: "supported claims must cite supplied evidence ids",
         details: [`invalid_supported_claims=${invalidClaims.length}`],
+      };
+    }
+    const uncited = findUncitedFinanceInstruments(request.evidence, artifact.claims);
+    if (uncited.length > 0) {
+      return {
+        status: "failed",
+        summary: "supported instrument claims must cite their own supplied evidence",
+        details: uncited,
       };
     }
     if (requiresFinanceResearchAssessment(request.task)) {
@@ -892,6 +946,7 @@ function qualityGate(quality: QualityHarnessReceipt | undefined): FinanceResearc
 export async function runFinanceResearchRun(
   options: FinanceResearchRunOptions,
 ): Promise<FinanceResearchRunReceipt> {
+  options.signal?.throwIfAborted();
   if (options.modelCheckpoint) {
     positiveInteger(options.modelCheckpoint.maxModelCalls, "maxModelCalls");
     requiredText(options.modelCheckpoint.path, "model checkpoint path");
@@ -970,6 +1025,13 @@ export async function runFinanceResearchRun(
       ? { maxSourcesPerJob: 1, maxHttpCallsPerSource: 3, includeReviewEvidence: true }
       : {}),
     ...options.batchOptions,
+    ...(options.signal
+      ? {
+          signal: options.batchOptions?.signal
+            ? AbortSignal.any([options.signal, options.batchOptions.signal])
+            : options.signal,
+        }
+      : {}),
     ...(options.modelCheckpoint
       ? { correlationId: `finance-research:${shortHash(options.modelCheckpoint.runId)}` }
       : {}),
@@ -982,7 +1044,12 @@ export async function runFinanceResearchRun(
     realtimeAdapters,
     collectionAdapters,
   });
-  let evidence = batch.committeeEvidence;
+  let evidence = buildFinanceResearchModelEvidence(batch, {
+    includeReviewEvidence:
+      options.input.sourcePolicy === "all_registered" ||
+      options.batchOptions?.includeReviewEvidence,
+  });
+  batch = { ...batch, committeeEvidence: evidence };
   const baseMissing = [
     ...missingEvidence(batch),
     ...(plan.sourceInventory?.unplannedAdapterIds.map((id) => `source_not_planned:${id}`) ?? []),
@@ -990,8 +1057,11 @@ export async function runFinanceResearchRun(
       (item) => `source_not_registered:${item.provider}`,
     ) ?? []),
   ];
+  const sourceRecovery = buildFinanceSourceRecoveryPlan(batch, asOf);
+  const hasModelEvidence = evidence.some((item) => item.id.startsWith("finance-model:"));
   const hasModel = options.modelRouting !== undefined || options.modelInvoker !== undefined;
-  if (!hasModel) {
+  if (!hasModel || !hasModelEvidence) {
+    const modelBlockReason = !hasModel ? "model_not_configured" : "source_evidence_unavailable";
     const source = sourceGate(batch, plan);
     const quality = qualityGate(undefined);
     const quarterlyOutput = buildQuarterlyOutput({
@@ -999,28 +1069,30 @@ export async function runFinanceResearchRun(
       plan,
       evidenceIds: evidence.map((item) => item.id),
       adopted: false,
-      missingEvidence: [...baseMissing, "model_not_configured"],
+      missingEvidence: [...baseMissing, modelBlockReason],
     });
     const blockedGates: FinanceResearchGate[] = [
       source,
-      { id: "committee", passed: false, reason: "model routing or invoker not configured" },
+      { id: "committee", passed: false, reason: modelBlockReason },
       quality,
       { id: "quarterly_output", passed: false, reason: "upstream model gate failed" },
     ];
     return Object.freeze({
       schemaVersion: FINANCE_RESEARCH_RUN_SCHEMA_VERSION,
       boundary: "finance_research_run_research_only",
-      status: "blocked",
+      status: hasModel && batch.status !== "blocked" ? "needs_review" : "blocked",
       answerDecision: "return_failed_reason",
       plan,
       batch,
+      sourceRecovery,
       quarterlyOutput,
       gates: Object.freeze(blockedGates),
-      missingEvidence: Object.freeze([...baseMissing, "model_not_configured"]),
+      missingEvidence: Object.freeze([...baseMissing, modelBlockReason]),
       notTouched: NOT_TOUCHED,
     });
   }
 
+  const strategyMethodKit = buildFinanceStrategyMethodKit(ask);
   const modelCheckpoint = options.modelCheckpoint
     ? openFinanceModelCheckpoints(options.modelCheckpoint, {
         ask,
@@ -1032,13 +1104,16 @@ export async function runFinanceResearchRun(
         routing: [options.modelRouting, options.qualityModelRouting].map(
           financeModelRoutingIdentity,
         ),
+        strategyMethodKit,
         qualityEnabled: options.qualityEnabled ?? true,
+        allowProviderCalls: options.allowProviderCalls === true,
         committeeConfigured: hasModel,
         qualityConfigured:
           options.qualityModelRouting !== undefined || options.qualityModelInvoker !== undefined,
       })
     : undefined;
   try {
+    options.signal?.throwIfAborted();
     const committeeInput: FinanceCommitteeInput = {
       ask,
       asOf,
@@ -1048,12 +1123,15 @@ export async function runFinanceResearchRun(
         horizonMonths,
         sourceStatus: batch.status,
         researchOnly: true,
+        strategyMethodKit,
       },
     };
     // Validate before starting the DAG so malformed evidence cannot become a partial model run.
     buildFinanceCommitteeContext(committeeInput);
     const executeCommittee = () =>
       runFinanceCommittee<Record<string, unknown>>({
+        signal: options.signal,
+        allowProviderCalls: options.allowProviderCalls,
         input: committeeInput,
         executor: createFinanceCommitteeExecutor(),
         ...(options.modelRouting === undefined
@@ -1086,7 +1164,7 @@ export async function runFinanceResearchRun(
       (options.qualityModelRouting !== undefined || options.qualityModelInvoker !== undefined)
     ) {
       const qualityRequest = {
-        task: `${ask}\nProduce a research-only ${horizonMonths}-month outlook with explicit quarter checkpoints, supporting evidence IDs, counter-thesis, and invalidation conditions. Do not provide execution instructions.`,
+        task: `${ask}\nApply only the supplied method kit checks relevant to this task. Preserve the requested horizon and deliverable; do not add a forecast or backtest to a factual request. Cite supporting evidence IDs, distinguish inference, and state missing evidence. Keep research-only and do not provide execution instructions.`,
         evidence: qualityEvidence(batch),
         sharedContext: {
           asOf,
@@ -1096,6 +1174,7 @@ export async function runFinanceResearchRun(
           sourceGatePassed: sourceGate(batch, plan).passed,
           committeeGatePassed: committeeGateResult.passed,
           noExecutionAuthority: true,
+          strategyMethodKit,
           ...(requiresFinanceResearchAssessment(ask)
             ? {
                 supportingAnalysisContract: {
@@ -1111,6 +1190,8 @@ export async function runFinanceResearchRun(
       };
       const executeQuality = () =>
         runQualityHarness({
+          signal: options.signal,
+          allowProviderCalls: options.allowProviderCalls,
           request: qualityRequest,
           modelId,
           ...(options.qualityModelRouting === undefined
@@ -1129,7 +1210,9 @@ export async function runFinanceResearchRun(
               }),
           maxConcurrency: 1,
           memoryBudgetMb: 3_072,
-          taskTimeoutMs: 180_000,
+          taskTimeoutMs: options.qualityModelRouting
+            ? modelRoutingTaskTimeoutMs(options.qualityModelRouting)
+            : 180_000,
           verifierTimeoutMs: 10_000,
           maxAttempts: 2,
           verify: qualityVerifier(decisionMode),
@@ -1173,6 +1256,7 @@ export async function runFinanceResearchRun(
       answerDecision: allGatesPassed ? "candidate_for_review" : "return_failed_reason",
       plan,
       batch,
+      sourceRecovery,
       committee: {
         coverage: committee.coverage,
         model,
@@ -1195,6 +1279,7 @@ export async function runFinanceResearchRun(
       answerDecision: "return_failed_reason",
       plan,
       batch,
+      sourceRecovery,
       modelCheckpoint: modelCheckpoint?.summary(),
       quarterlyOutput: buildQuarterlyOutput({
         horizonMonths,

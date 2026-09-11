@@ -407,7 +407,7 @@ describe("lcx-module-learning-absorption-gate", () => {
     );
   });
 
-  it("can write evidence and superseding eval-absorbed plan receipts when the gate is clean", async () => {
+  it("does not manufacture per-source absorption or adjacent-task proof from a clean global eval", async () => {
     workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-absorption-gate-"));
     const evalSummaryPath = await seedJson(workspaceDir, "eval-summary.json", cleanEvalSummary());
     await seedJson(
@@ -479,20 +479,15 @@ describe("lcx-module-learning-absorption-gate", () => {
     );
     expect(writeResult.status).toBe(0);
     const writeParsed = JSON.parse(writeResult.stdout) as Record<string, unknown>;
-    expect(writeParsed).toEqual(
-      expect.objectContaining({
-        absorptionReady: true,
-        gateDecision: "ready_for_eval_absorbed_review",
-        preWriteGateDecision: "hold_at_application_ready",
-        postWriteReviewRefreshed: true,
-      }),
-    );
-    expect(writeParsed.writtenAbsorptionReceipts).toEqual([
-      expect.objectContaining({
-        targetModule: "options_volatility",
-        status: "eval_absorbed",
-      }),
-    ]);
+    expect(writeParsed).toMatchObject({
+      absorptionReady: false,
+      writeAvailable: false,
+      gateDecision: "hold_at_application_ready",
+      postWriteReviewRefreshed: false,
+      writtenAbsorptionReceipts: [],
+      writeSkippedReason:
+        "absorption_requires_executed_per_receipt_training_and_adjacent_task_evidence",
+    });
 
     const reviewResult = runReviewCli(
       ["--date", "2026-05-14", "--no-write", "--json"],
@@ -504,9 +499,9 @@ describe("lcx-module-learning-absorption-gate", () => {
       expect.objectContaining({
         counts: expect.objectContaining({
           receiptFiles: 1,
-          rawReceiptFiles: 2,
-          evalAbsorbed: 1,
-          weakModuleLearning: 0,
+          rawReceiptFiles: 1,
+          evalAbsorbed: 0,
+          weakModuleLearning: 1,
         }),
       }),
     );

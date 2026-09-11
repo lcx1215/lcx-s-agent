@@ -2,12 +2,17 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { LCX_CASEFLOW_CONTRACT } from "../shared/lcx-ontology.js";
+import {
+  assertValidLcxOntologyEdges,
+  LCX_CASEFLOW_CONTRACT,
+  type LcxOntologyEdge,
+} from "../shared/lcx-ontology.js";
 import { FinanceForecast, type FinanceForecastContract } from "./finance-forecast-calibration.js";
 import type { FinanceResearchRunReceipt } from "./finance-research-runner.js";
 
 const Hash = z.string().regex(/^[a-f0-9]{64}$/u);
 const CaseId = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/u);
+const LEGACY_CASEFLOW_SCHEMA_VERSION = "lcx_caseflow_v1" as const;
 const Evidence = z.object({
   id: z.string(),
   source: z.string(),
@@ -22,8 +27,16 @@ const Claim = z.object({
   sourceStatus: z.string(),
   referenceStatus: z.enum(["linked", "needs_review"]),
 });
+const OntologyEdges = z.unknown().transform((value) => {
+  assertValidLcxOntologyEdges(value, "caseflow ontology edges");
+  return [...value];
+});
 const CaseRun = z.object({
-  schemaVersion: z.literal(LCX_CASEFLOW_CONTRACT.schemaVersion),
+  schemaVersion: z.union([
+    z.literal(LCX_CASEFLOW_CONTRACT.schemaVersion),
+    z.literal(LEGACY_CASEFLOW_SCHEMA_VERSION),
+  ]),
+  ontologyEdges: OntologyEdges.optional(),
   case: z.object({
     id: CaseId,
     revision: Hash,
@@ -60,7 +73,11 @@ const CaseRun = z.object({
     ),
   }),
 });
-export type FinanceCaseRun = z.infer<typeof CaseRun>;
+type ParsedFinanceCaseRun = z.infer<typeof CaseRun>;
+export type FinanceCaseRun = Omit<ParsedFinanceCaseRun, "schemaVersion" | "ontologyEdges"> & {
+  schemaVersion: typeof LCX_CASEFLOW_CONTRACT.schemaVersion;
+  ontologyEdges: LcxOntologyEdge[];
+};
 
 function canonical(value: unknown): string {
   if (Array.isArray(value)) {
@@ -86,6 +103,107 @@ export function caseflowFingerprint(value: unknown): string {
 function jsonRecord(value: unknown): Record<string, unknown> {
   return z.record(z.string(), z.unknown()).parse(JSON.parse(JSON.stringify(value)));
 }
+
+function legacyTargetsFromDefinition(
+  definition: Record<string, unknown>,
+): readonly { id: string }[] {
+  if (!Array.isArray(definition.targets)) {
+    return [];
+  }
+  return definition.targets.flatMap((target) => {
+    if (
+      target !== null &&
+      typeof target === "object" &&
+      !Array.isArray(target) &&
+      typeof (target as Record<string, unknown>).id === "string"
+    ) {
+      return [{ id: (target as Record<string, string>).id }];
+    }
+    return [];
+  });
+}
+
+function buildFinanceCaseOntologyEdges(params: {
+  caseId: string;
+  runId: string;
+  targets: readonly { id: string }[];
+  evidence: readonly { id: string }[];
+  claims: readonly { id: string; evidenceIds: readonly string[] }[];
+}): LcxOntologyEdge[] {
+  const taskId = `research_case:${params.caseId}`;
+  const intentId = `intent:${params.caseId}`;
+  const receiptId = `research_run:${params.runId}`;
+  const artifactId = `decision_packet:${params.runId}`;
+  const edges: LcxOntologyEdge[] = [];
+  const seen = new Set<string>();
+  const add = (edge: LcxOntologyEdge) => {
+    const key = JSON.stringify(edge);
+    if (!seen.has(key)) {
+      seen.add(key);
+      edges.push(edge);
+    }
+  };
+
+  add({
+    relation: "asks_for",
+    subject: { type: "intent", id: intentId },
+    object: { type: "task", id: taskId },
+  });
+  for (const target of params.targets) {
+    add({
+      relation: "targets",
+      subject: { type: "task", id: taskId },
+      object: { type: "domain_entity", id: `target:${target.id}` },
+    });
+  }
+  add({
+    relation: "produces",
+    subject: { type: "task", id: taskId },
+    object: { type: "receipt", id: receiptId },
+  });
+  add({
+    relation: "produces",
+    subject: { type: "task", id: taskId },
+    object: { type: "artifact", id: artifactId },
+  });
+  add({
+    relation: "owned_by",
+    subject: { type: "artifact", id: artifactId },
+    object: { type: "module", id: "src/agents/finance-caseflow.ts" },
+  });
+  add({
+    relation: "validated_by",
+    subject: { type: "artifact", id: artifactId },
+    object: { type: "receipt", id: receiptId },
+  });
+  for (const item of params.evidence) {
+    const evidenceId = `evidence:${item.id}`;
+    add({
+      relation: "requires",
+      subject: { type: "task", id: taskId },
+      object: { type: "evidence", id: evidenceId },
+    });
+    add({
+      relation: "derived_from",
+      subject: { type: "artifact", id: artifactId },
+      object: { type: "evidence", id: evidenceId },
+    });
+  }
+  const evidenceIds = new Set(params.evidence.map((item) => item.id));
+  for (const claim of params.claims) {
+    for (const evidenceId of claim.evidenceIds) {
+      if (evidenceIds.has(evidenceId)) {
+        add({
+          relation: "supports",
+          subject: { type: "evidence", id: `evidence:${evidenceId}` },
+          object: { type: "claim", id: `claim:${claim.id}` },
+        });
+      }
+    }
+  }
+  return edges;
+}
+
 function followupDate(asOf: string, months: number): string {
   const date = new Date(asOf);
   if (!Number.isFinite(date.getTime())) {
@@ -144,8 +262,17 @@ export function buildFinanceCaseRun(params: {
         : ("needs_review" as const),
   }));
   const invalidReferences = claims.some((claim) => claim.referenceStatus === "needs_review");
-  return CaseRun.parse({
+  const runId = randomUUID();
+  const ontologyEdges = buildFinanceCaseOntologyEdges({
+    caseId: params.caseId,
+    runId,
+    targets: receipt.plan.targets,
+    evidence,
+    claims,
+  });
+  return verify({
     schemaVersion: LCX_CASEFLOW_CONTRACT.schemaVersion,
+    ontologyEdges,
     case: {
       id: params.caseId,
       revision: caseflowFingerprint(definition),
@@ -154,7 +281,7 @@ export function buildFinanceCaseRun(params: {
       definition,
     },
     run: {
-      id: randomUUID(),
+      id: runId,
       recordedAt: new Date().toISOString(),
       execution,
       executionFingerprint: caseflowFingerprint(execution),
@@ -192,7 +319,26 @@ export function buildFinanceCaseRun(params: {
 }
 
 function verify(value: unknown): FinanceCaseRun {
-  const result = CaseRun.parse(value);
+  const parsed = CaseRun.parse(value);
+  if (
+    parsed.schemaVersion === LCX_CASEFLOW_CONTRACT.schemaVersion &&
+    parsed.ontologyEdges === undefined
+  ) {
+    throw new Error("caseflow v2 artifact is missing ontology edges");
+  }
+  const result = {
+    ...parsed,
+    schemaVersion: LCX_CASEFLOW_CONTRACT.schemaVersion,
+    ontologyEdges:
+      parsed.ontologyEdges ??
+      buildFinanceCaseOntologyEdges({
+        caseId: parsed.case.id,
+        runId: parsed.run.id,
+        targets: legacyTargetsFromDefinition(parsed.case.definition),
+        evidence: parsed.run.evidence,
+        claims: parsed.packet.claims,
+      }),
+  } satisfies FinanceCaseRun;
   if (
     caseflowFingerprint(result.case.definition) !== result.case.revision ||
     caseflowFingerprint(result.run.execution) !== result.run.executionFingerprint ||
@@ -201,6 +347,7 @@ function verify(value: unknown): FinanceCaseRun {
   ) {
     throw new Error("caseflow fingerprint mismatch");
   }
+  assertValidLcxOntologyEdges(result.ontologyEdges, "caseflow ontology edges");
   if (
     result.packet.forecasts &&
     caseflowFingerprint(result.packet.forecasts) !==

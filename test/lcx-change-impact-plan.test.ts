@@ -45,6 +45,65 @@ async function runPlan(changedFile: string) {
 }
 
 describe("lcx-change-impact-plan", () => {
+  it("keeps unknown artifact paths blocked", async () => {
+    const result = await runPlan(".artifacts/unowned/report.json");
+    expect(result.ok).toBe(false);
+    expect(result.strayGate.unmatchedChangedFiles).toContain(".artifacts/unowned/report.json");
+  });
+  it("routes finance methods and retained receipts to explicit owners", async () => {
+    const files = [
+      "src/agents/finance-strategy-method-kit.ts",
+      "src/agents/finance-strategy-method-catalog.ts",
+      "src/agents/quality-harness-findings.ts",
+      "scripts/operator/finance-strategy-all-methods.ts",
+      "docs/experiments/research/finance-strategy-all-methods-2026-09-10.md",
+      "docs/experiments/research/finance-strategy-stress-matrix-2026-09-10.md",
+      "src/agents/finance-source-recovery.ts",
+      "src/agents/finance-model-workflow.ts",
+      "src/agents/finance-model-specialist.ts",
+      "docs/experiments/research/finance-model-workflow.md",
+      "src/agents/configured-finance-model-adapter.ts",
+      "src/agents/finance-news-entity.ts",
+      "src/agents/finance-research-evidence.ts",
+      "src/agents/finance-agent-committee.ts",
+      "src/agents/local-text-model-adapter.ts",
+      "src/agents/logical-agent-model-router.ts",
+      "scripts/operator/finance-strategy-method-benchmark.ts",
+      ".artifacts/finance-strategy/benchmark-20260910.json",
+    ];
+    const result = await runPlanArgs(files.flatMap((file) => ["--changed", file]));
+    expect(result.ok).toBe(true);
+    expect(result.unmatchedFiles).toEqual([]);
+    expect(result.impacts.map((impact) => impact.id)).toEqual(
+      expect.arrayContaining([
+        "finance_caseflow",
+        "logical_agent_pool",
+        "finance_benchmark_receipts",
+      ]),
+    );
+  });
+  it("routes operator tests through their actual configuration instead of silently excluding them", async () => {
+    const result = await runPlanArgs([
+      "--files",
+      "scripts/operator/lcx-finance-research.test.ts",
+      "src/agents/quality-harness-findings.test.ts",
+    ]);
+    expect(result.recommendedFastCommands).toContain(
+      "pnpm vitest run --config vitest.scripts-operator.config.ts scripts/operator/lcx-finance-research.test.ts",
+    );
+    expect(result.recommendedFastCommands).toContain(
+      "pnpm vitest run src/agents/quality-harness-findings.test.ts",
+    );
+    expect(result.recommendedFastCommands).not.toContain(
+      "pnpm vitest run scripts/operator/lcx-finance-research.test.ts src/agents/quality-harness-findings.test.ts",
+    );
+  });
+  it("keeps retained benchmark evidence on an existing mathematical test owner", async () => {
+    const result = await runPlan(".artifacts/finance-strategy/all-methods-20260910.json");
+    expect(result.recommendedFastCommands).toContain(
+      "pnpm vitest run src/agents/finance-strategy-method-benchmark.test.ts",
+    );
+  });
   it("does not recommend heavy local-brain eval tests as fast commands while training may be active", async () => {
     const payload = await runPlan("scripts/operator/lcx-context-recovery-exam.ts");
 

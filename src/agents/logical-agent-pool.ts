@@ -284,6 +284,8 @@ export type LocalModelPoolOptions<
   TInput = unknown,
   TResult = unknown,
 > = Partial<LocalModelPoolConfig> & {
+  /** Caller-authorized model inference only; never grants messages, trading or memory writes. */
+  allowProviderCalls?: boolean;
   modelInvoker?: LogicalAgentModelInvoker;
   modelRouting?: LogicalAgentModelRouting;
   guardrails?: LogicalAgentGuardrails<TInput, TResult>;
@@ -453,6 +455,7 @@ function normalizePoolConfig(config?: Partial<LocalModelPoolConfig>): LocalModel
 }
 
 export class LogicalAgentPool<TInput, TResult> {
+  #allowProviderCalls: boolean;
   #config: LocalModelPoolConfig;
   #modelInvoker: LogicalAgentModelInvoker;
   #guardrails: LogicalAgentGuardrails<TInput, TResult>;
@@ -465,6 +468,7 @@ export class LogicalAgentPool<TInput, TResult> {
   #maxObservedModelConcurrency = 0;
 
   constructor(options?: LocalModelPoolOptions<TInput, TResult>) {
+    this.#allowProviderCalls = options?.allowProviderCalls === true;
     this.#config = normalizePoolConfig(options);
     this.#modelInvoker = options?.modelInvoker ?? UNAVAILABLE_MODEL_INVOKER;
     this.#guardrails = options?.guardrails ?? {};
@@ -476,7 +480,14 @@ export class LogicalAgentPool<TInput, TResult> {
   /** Functions are deliberately excluded; adapter code changes require a new revision. */
   get modelRoutingFingerprint(): string | undefined {
     return this.#modelRouter
-      ? createHash("sha256").update(stableStringify(this.#modelRouter.routing)).digest("hex")
+      ? createHash("sha256")
+          .update(
+            stableStringify({
+              routing: this.#modelRouter.routing,
+              allowProviderCalls: this.#allowProviderCalls,
+            }),
+          )
+          .digest("hex")
       : undefined;
   }
 
@@ -544,7 +555,20 @@ export class LogicalAgentPool<TInput, TResult> {
       this.#maxObservedConcurrency = Math.max(this.#maxObservedConcurrency, this.#activeRuns);
       const startedAt = Date.now();
       const registeredAgent = getLogicalAgentDefinition(job.task.agentId);
-      const capabilities = freezeLogicalAgentCapabilities(registeredAgent.capabilities);
+      const capabilities = freezeLogicalAgentCapabilities(
+        this.#allowProviderCalls
+          ? {
+              ...registeredAgent.capabilities,
+              allowedSideEffects: [
+                ...registeredAgent.capabilities.allowedSideEffects,
+                "provider_call",
+              ],
+              forbiddenSideEffects: registeredAgent.capabilities.forbiddenSideEffects.filter(
+                (effect) => effect !== "provider_call",
+              ),
+            }
+          : registeredAgent.capabilities,
+      );
       const agent = freezeLogicalAgentDefinition({
         ...registeredAgent,
         capabilities,

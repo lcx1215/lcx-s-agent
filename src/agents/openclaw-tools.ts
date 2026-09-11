@@ -44,6 +44,7 @@ import { createFinancePromotionProposalDraftTool } from "./tools/finance-promoti
 import { createFinancePromotionProposalStatusTool } from "./tools/finance-promotion-proposal-status-tool.js";
 import { createFinancePromotionReviewTool } from "./tools/finance-promotion-review-tool.js";
 import { createFinanceRealtimeRefreshTool } from "./tools/finance-realtime-refresh-tool.js";
+import { createFinanceResearchRunTool } from "./tools/finance-research-run-tool.js";
 import { createFinanceResearchSourceWorkbenchTool } from "./tools/finance-research-source-workbench-tool.js";
 import { createGatewayTool } from "./tools/gateway-tool.js";
 import { createGeospatialSourceRefreshTool } from "./tools/geospatial-source-refresh-tool.js";
@@ -51,6 +52,7 @@ import { createGitHubProjectCapabilityIntakeTool } from "./tools/github-project-
 import { createImageTool } from "./tools/image-tool.js";
 import { createLobsterWorkfaceAppTool } from "./tools/lobster-workface-app-tool.js";
 import { createLocalMemoryRecordTool } from "./tools/local-memory-record-tool.js";
+import { createLocalSpecialistTool } from "./tools/local-specialist-tool.js";
 import { createMcpContextTool } from "./tools/mcp-context-tool.js";
 import { createMessageTool } from "./tools/message-tool.js";
 import { createModuleLearningPipelinePlanTool } from "./tools/module-learning-pipeline-plan-tool.js";
@@ -221,6 +223,8 @@ export function createOpenClawTools(options?: {
       ...resolveFinanceRealtimeSourceRegistryOptionsFromEnv(),
     }),
     createFinanceMarketCollectionRefreshTool({ workspaceDir }),
+    createFinanceResearchRunTool({ workspaceDir, config: options?.config }),
+    createLocalSpecialistTool({ workspaceDir }),
     createResearchDataAutopilotTool({ workspaceDir }),
     createFinanceChartAnalysisTool({
       workspaceDir,

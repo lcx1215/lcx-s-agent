@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { createConfiguredFinanceModelAdapter } from "../../src/agents/configured-finance-model-adapter.ts";
 import {
   bindFinanceCaseFollowups,
   createFinanceNativeCronScheduler,
@@ -16,20 +17,28 @@ import {
 } from "../../src/agents/finance-caseflow.ts";
 import { FinanceForecast } from "../../src/agents/finance-forecast-calibration.ts";
 import {
+  createFinanceModelWorkflow,
+  inspectFinanceModelWorkflow,
+  type FinanceWorkflowReasoningPolicy,
+} from "../../src/agents/finance-model-workflow.ts";
+import {
   appendFinanceOutcome,
   readFinanceOutcomes,
 } from "../../src/agents/finance-outcome-ledger.ts";
 import type { FinanceResearchRunReceipt } from "../../src/agents/finance-research-runner.ts";
 import { runFinanceResearchRun } from "../../src/agents/finance-research-runner.ts";
+import { runFinanceSourceRecovery } from "../../src/agents/finance-source-recovery.ts";
 import {
   createLocalQualityHarnessAdapter,
-  createLocalRoleShadowAdapter,
   resolveLocalTextModelRuntimeConfig,
 } from "../../src/agents/local-text-model-adapter.ts";
+import { loadConfig } from "../../src/config/config.ts";
+import type { OpenClawConfig } from "../../src/config/config.ts";
 import type { CronJob } from "../../src/cron/types.ts";
 
 /** Explicit operator entrypoint; planning never starts network or model work. */
 type FinanceResearchCliResult =
+  | Awaited<ReturnType<typeof runFinanceSourceRecovery>>
   | (FinanceResearchRunReceipt & { savedCaseRun?: Awaited<ReturnType<typeof saveFinanceCaseRun>> })
   | Awaited<ReturnType<typeof readFinanceCaseRun>>
   | ReturnType<typeof compareFinanceCaseRuns>
@@ -38,12 +47,22 @@ type FinanceResearchCliResult =
   | Awaited<ReturnType<typeof listFinanceCases>>
   | Awaited<ReturnType<typeof bindFinanceCaseFollowups>>;
 
-export async function runFinanceResearchCli(args: string[]): Promise<FinanceResearchCliResult> {
+export async function runFinanceResearchCli(
+  args: string[],
+  context?: { signal?: AbortSignal; config?: OpenClawConfig },
+): Promise<FinanceResearchCliResult> {
+  context?.signal?.throwIfAborted();
   const { values } = parseArgs({
     args,
     options: {
+      "recovery-source": { type: "string", multiple: true },
+      "recover-from": { type: "string" },
+      "max-recovery-jobs": { type: "string", default: "8" },
       "all-sources": { type: "boolean", default: false },
       "sources-only": { type: "boolean", default: false },
+      "workflow-models": { type: "boolean", default: false },
+      "workflow-reasoning": { type: "string" },
+      "configured-model": { type: "boolean", default: false },
       "followup-agent": { type: "string" },
       "gateway-cli": { type: "string" },
       "register-followups": { type: "boolean", default: false },
@@ -65,9 +84,71 @@ export async function runFinanceResearchCli(args: string[]): Promise<FinanceRese
       adapter: { type: "string" },
       python: { type: "string" },
       "max-model-calls": { type: "string", default: "48" },
+      "max-model-tokens": { type: "string" },
       "max-api-calls": { type: "string", default: "64" },
     },
   });
+  if (
+    values["workflow-reasoning"] &&
+    (!values["workflow-models"] ||
+      !["provider_default", "bounded_workflow"].includes(values["workflow-reasoning"]))
+  ) {
+    throw new Error(
+      "--workflow-reasoning requires --workflow-models and provider_default or bounded_workflow",
+    );
+  }
+  const workflowReasoning = values["workflow-reasoning"] as
+    | FinanceWorkflowReasoningPolicy
+    | undefined;
+  if (values["recover-from"]) {
+    const allowed = new Set([
+      "recover-from",
+      "recovery-source",
+      "max-recovery-jobs",
+      "as-of",
+      "live",
+      "max-api-calls",
+    ]);
+    for (const argument of args) {
+      if (argument.startsWith("--") && !allowed.has(argument.slice(2).split("=")[0])) {
+        throw new Error(
+          "source recovery cannot combine research, model, case or followup operations",
+        );
+      }
+    }
+    if (!values["as-of"]) {
+      throw new Error("source recovery requires --as-of");
+    }
+    const maxApiCalls = Number(values["max-api-calls"]);
+    if (!Number.isSafeInteger(maxApiCalls) || maxApiCalls < 1) {
+      throw new Error("--max-api-calls must be a positive integer");
+    }
+    return runFinanceSourceRecovery(JSON.parse(await fs.readFile(values["recover-from"], "utf8")), {
+      asOf: values["as-of"],
+      live: values.live,
+      maxJobs: Number(values["max-recovery-jobs"]),
+      sourceAdapterIds: values["recovery-source"],
+      batchOptions: {
+        maxApiCalls,
+        maxSourcesPerJob: 1,
+        maxHttpCallsPerSource: 3,
+        retry: { attempts: 1 },
+        sourceTimeoutMs: 15_000,
+        totalTimeoutMs: 120_000,
+      },
+    });
+  }
+  if (values["recovery-source"] || args.some((arg) => arg.startsWith("--max-recovery-jobs"))) {
+    throw new Error("recovery selectors require --recover-from");
+  }
+  if (
+    (values["configured-model"] || values["workflow-models"]) &&
+    (values.model || values.adapter || values.python || values["sources-only"])
+  ) {
+    throw new Error(
+      "--configured-model uses the existing primary model and cannot combine local overrides or sources-only",
+    );
+  }
   if (
     (values["all-sources"] || values["sources-only"]) &&
     (values["read-run"] ||
@@ -239,6 +320,14 @@ export async function runFinanceResearchCli(args: string[]): Promise<FinanceRese
   if (!Number.isSafeInteger(maxModelCalls) || maxModelCalls <= 0) {
     throw new Error("--max-model-calls must be a positive integer");
   }
+  const maxModelTokens =
+    values["max-model-tokens"] === undefined ? undefined : Number(values["max-model-tokens"]);
+  if (
+    maxModelTokens !== undefined &&
+    (!Number.isSafeInteger(maxModelTokens) || maxModelTokens < 1 || maxModelTokens > 16_384)
+  ) {
+    throw new Error("--max-model-tokens must be an integer from 1 to 16384");
+  }
   const maxApiCalls = Number(values["max-api-calls"]);
   if (!Number.isSafeInteger(maxApiCalls) || maxApiCalls <= 0) {
     throw new Error("--max-api-calls must be a positive integer");
@@ -246,6 +335,7 @@ export async function runFinanceResearchCli(args: string[]): Promise<FinanceRese
   if (
     values.live &&
     !values["sources-only"] &&
+    !(values["configured-model"] || values["workflow-models"]) &&
     (!values.model?.trim() || !values.adapter?.trim())
   ) {
     throw new Error("--live requires an explicit --model and --adapter before any collection");
@@ -277,8 +367,13 @@ export async function runFinanceResearchCli(args: string[]): Promise<FinanceRese
               "../../src/agents/finance-research-runner.ts",
               "../../src/agents/finance-research-batch-runner.ts",
               "../../src/agents/local-text-model-adapter.ts",
+              "../../src/agents/configured-finance-model-adapter.ts",
+              "../../src/agents/finance-research-evidence.ts",
+              "../../src/agents/finance-news-entity.ts",
               "../../src/agents/logical-agent-model-router.ts",
               "../../src/agents/logical-agent-pool.ts",
+              "../../src/agents/finance-model-workflow.ts",
+              "../../src/agents/configured-finance-model-adapter.ts",
               "../../src/agents/quality-harness.ts",
               "./lcx-finance-research.ts",
             ].map(async (file) => [
@@ -291,7 +386,10 @@ export async function runFinanceResearchCli(args: string[]): Promise<FinanceRese
   };
   const finish = async (receipt: FinanceResearchRunReceipt) => {
     if (!values["case-dir"] || !values["case-id"]) {
-      return receipt;
+      return {
+        ...receipt,
+        ...(execution.runtime.workflow ? { modelWorkflow: execution.runtime.workflow } : {}),
+      };
     }
     const run = buildFinanceCaseRun({
       caseId: values["case-id"],
@@ -308,12 +406,20 @@ export async function runFinanceResearchCli(args: string[]): Promise<FinanceRese
     asOf: values["as-of"],
     sourcePolicy: values["all-sources"] ? ("all_registered" as const) : ("prioritized" as const),
   };
+  if (values["workflow-models"]) {
+    execution.runtime = {
+      workflow: inspectFinanceModelWorkflow(context?.config ?? loadConfig(), {
+        reasoningPolicy: workflowReasoning,
+      }),
+    };
+  }
   if (!values.live) {
-    return finish(await runFinanceResearchRun({ input }));
+    return finish(await runFinanceResearchRun({ input, signal: context?.signal }));
   }
   if (values["sources-only"]) {
     return finish(
       await runFinanceResearchRun({
+        signal: context?.signal,
         input,
         liveFetch: true,
         batchOptions: {
@@ -334,19 +440,48 @@ export async function runFinanceResearchCli(args: string[]): Promise<FinanceRese
       }),
     );
   }
-  const runtime = resolveLocalTextModelRuntimeConfig({
-    modelId: values.model,
-    adapterPath: values.adapter!,
-    pythonPath: values.python,
-    allowNetwork: false,
-  });
+  const workflow = values["workflow-models"]
+    ? createFinanceModelWorkflow(context?.config ?? loadConfig(), {
+        reasoningPolicy: workflowReasoning,
+        maxCalls: maxModelCalls,
+        maxTokens: maxModelTokens,
+      })
+    : undefined;
+  const runtime =
+    values["configured-model"] || workflow
+      ? { timeoutMs: 120_000, maxTokens: maxModelTokens ?? 8_192 }
+      : resolveLocalTextModelRuntimeConfig({
+          modelId: values.model,
+          adapterPath: values.adapter!,
+          pythonPath: values.python,
+          allowNetwork: false,
+          maxTokens: maxModelTokens,
+        });
   execution.runtime = { ...runtime };
-  const role = createLocalRoleShadowAdapter(runtime);
-  const quality = createLocalQualityHarnessAdapter(runtime);
+  const role =
+    workflow?.routing.adapters[1] ??
+    ("adapterPath" in runtime
+      ? createLocalQualityHarnessAdapter(runtime)
+      : createConfiguredFinanceModelAdapter(context?.config ?? loadConfig(), {
+          maxCalls: maxModelCalls,
+          timeoutMs: runtime.timeoutMs,
+          maxTokens: runtime.maxTokens,
+        }));
+  const quality = role;
+  execution.model = role.modelId;
+  execution.runtime = { ...execution.runtime, provider: role.provider };
+  if (values["configured-model"] || workflow) {
+    execution.adapterReference = workflow ? "configured-workflow" : "configured-primary";
+    if (workflow) {
+      execution.runtime.workflow = workflow.manifest;
+    }
+  }
   return finish(
     await runFinanceResearchRun({
+      signal: context?.signal,
       input,
       liveFetch: true,
+      allowProviderCalls: values["configured-model"] || values["workflow-models"],
       ...(values["checkpoint-run"]
         ? {
             modelCheckpoint: {
@@ -370,18 +505,18 @@ export async function runFinanceResearchCli(args: string[]): Promise<FinanceRese
             }
           : {}),
       },
-      modelRouting: {
-        revision: "finance-waterflow-v0-role",
+      modelRouting: workflow?.routing ?? {
+        revision: "finance-waterflow-v1-research-role",
         adapters: [role],
         defaultPolicy: {
           primary: role.id,
-          requiredCapabilities: ["logical_agent_role_shadow"],
+          requiredCapabilities: ["quality_harness"],
           maxInputBytes: 256_000,
           timeoutMs: runtime.timeoutMs,
         },
       },
-      qualityModelRouting: {
-        revision: "finance-waterflow-v0-quality",
+      qualityModelRouting: workflow?.routing ?? {
+        revision: "finance-waterflow-v1-quality",
         adapters: [quality],
         defaultPolicy: {
           primary: quality.id,

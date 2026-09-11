@@ -101,6 +101,7 @@ type ExternalChannelBindingSummary = {
 type CliOptions = {
   json: boolean;
   apply: boolean;
+  compatibilityOnly: boolean;
   snapshotPath: string;
   sidecarRoot: string;
 };
@@ -108,7 +109,7 @@ type CliOptions = {
 function usage(): never {
   throw new Error(
     [
-      "Usage: node --import tsx scripts/operator/lcx-external-channel-binding.ts [--json] [--apply]",
+      "Usage: node --import tsx scripts/operator/lcx-external-channel-binding.ts [--json] [--apply | --compatibility-only]",
       "",
       "External-channel operator for making the External transport route to the selected clean LCX answer path.",
       "The historical live script name is legacy compatibility; External is the owner-agent communication medium, not a brain.",
@@ -122,6 +123,7 @@ export function parseExternalChannelBindingArgs(args: string[]): CliOptions {
   const options: CliOptions = {
     json: false,
     apply: false,
+    compatibilityOnly: false,
     snapshotPath: DEFAULT_SNAPSHOT_PATH,
     sidecarRoot: DEFAULT_SIDECAR_ROOT,
   };
@@ -129,6 +131,8 @@ export function parseExternalChannelBindingArgs(args: string[]): CliOptions {
     const arg = args[index];
     if (arg === "--json") {
       options.json = true;
+    } else if (arg === "--compatibility-only") {
+      options.compatibilityOnly = true;
     } else if (arg === "--apply") {
       options.apply = true;
     } else if (arg === "--snapshot-path") {
@@ -150,6 +154,15 @@ export function parseExternalChannelBindingArgs(args: string[]): CliOptions {
     } else {
       usage();
     }
+  }
+  if (options.compatibilityOnly && !args.includes("--snapshot-path")) {
+    options.snapshotPath = path.join(
+      path.dirname(DEFAULT_SNAPSHOT_PATH),
+      "lcx-external-channel-compatibility-latest.json",
+    );
+  }
+  if (options.compatibilityOnly && options.apply) {
+    throw new Error("--compatibility-only cannot apply or restart a channel runtime");
   }
   return options;
 }
@@ -574,6 +587,46 @@ async function readUserVisibleObserved(): Promise<boolean> {
 
 export async function runExternalChannelBinding(options: CliOptions): Promise<JsonRecord> {
   const startedAt = new Date().toISOString();
+  if (options.compatibilityOnly) {
+    const { createFinanceResearchRunTool } =
+      await import("../../src/agents/tools/finance-research-run-tool.js");
+    const tool = createFinanceResearchRunTool();
+    const payload = {
+      ok: true,
+      boundary: "local_external_channel_compatibility_only",
+      generatedAt: startedAt,
+      decision: {
+        status: "compatibility_ready_runtime_not_bound",
+        action: "implement_platform_adapter_using_existing_channel_plugin_and_agent_tool_contracts",
+      },
+      compatibility: {
+        channelContract: "src/channels/plugins/types.plugin.ts#ChannelPlugin",
+        inboundOwner: "src/auto-reply/dispatch.ts#dispatchInboundMessage",
+        researchTool: tool.name,
+        researchOwner: "src/agents/finance-research-runner.ts#runFinanceResearchRun",
+        outboundContract: "src/channels/plugins/types.adapters.ts#ChannelOutboundAdapter",
+        modelSelection: "configured_finance_workflow",
+        localAdapterPromotionRequired: false,
+        platformRequirements: [
+          "account_and_sender_authorization",
+          "message_and_thread_identity",
+          "cancellation",
+          "outbound_delivery_receipt",
+        ],
+        localProofCommand:
+          "pnpm exec vitest run src/agents/tools/finance-research-run-tool.test.ts src/agents/openclaw-tools.finance-external-source-adapter-registration.test.ts",
+      },
+      externalChannelApplied: false,
+      userVisibleObserved: false,
+      modelWeightAbsorbed: false,
+      liveTouched: false,
+      providerConfigTouched: false,
+      protectedMemoryTouched: false,
+    };
+    await fs.mkdir(path.dirname(options.snapshotPath), { recursive: true });
+    await fs.writeFile(options.snapshotPath, `${JSON.stringify(payload, null, 2)}\n`);
+    return payload;
+  }
   const trainingPlan = await readTrainingPlan();
   const userVisibleObserved = await readUserVisibleObserved();
   let decision = buildExternalChannelBindingDecision({

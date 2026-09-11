@@ -1,7 +1,44 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildExternalChannelBindingDecision } from "../scripts/operator/lcx-external-channel-binding.js";
+import {
+  buildExternalChannelBindingDecision,
+  parseExternalChannelBindingArgs,
+  runExternalChannelBinding,
+} from "../scripts/operator/lcx-external-channel-binding.js";
 
 describe("lcx-external-channel-binding", () => {
+  it("keeps platform compatibility separate from runtime activation and model promotion", async () => {
+    expect(() => parseExternalChannelBindingArgs(["--compatibility-only", "--apply"])).toThrow(
+      "cannot apply",
+    );
+    expect(parseExternalChannelBindingArgs(["--compatibility-only"]).snapshotPath).toContain(
+      "compatibility-latest",
+    );
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-channel-compat-"));
+    try {
+      const result = await runExternalChannelBinding(
+        parseExternalChannelBindingArgs([
+          "--compatibility-only",
+          "--snapshot-path",
+          path.join(root, "receipt.json"),
+        ]),
+      );
+      expect(result).toMatchObject({
+        boundary: "local_external_channel_compatibility_only",
+        externalChannelApplied: false,
+        userVisibleObserved: false,
+        compatibility: {
+          researchTool: "finance_research_run",
+          localAdapterPromotionRequired: false,
+        },
+      });
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   const readyTrainingPlan = {
     boundary: "local_brain_training_plan_only",
     activeProcesses: [],

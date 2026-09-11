@@ -36,8 +36,12 @@ const PATH_RULES: PathRule[] = [
     id: "finance_caseflow",
     lane: "finance_research_capability",
     patterns: [
-      /^src\/agents\/finance-(?:caseflow(?:-followups)?|forecast-calibration|history-coverage|research-assessment|research-runner|research-batch-runner|run-checkpoints|model-checkpoints|outcome-ledger|free-market-collection-adapters|market-collection-registry|realtime-source-registry)\.ts$/u,
+      /^src\/agents\/finance-(?:caseflow(?:-followups)?|forecast-calibration|history-coverage|research-assessment|source-recovery|model-workflow|model-specialist|agent-committee|news-entity|research-evidence|strategy-method-kit|strategy-method-catalog|research-runner|research-batch-runner|run-checkpoints|model-checkpoints|outcome-ledger|free-market-collection-adapters|market-collection-registry|realtime-source-registry)\.ts$/u,
       /^scripts\/operator\/lcx-(?:finance-research|caseflow-demo)\.ts$/u,
+      /^src\/agents\/configured-finance-model-adapter\.ts$/u,
+      /^docs\/experiments\/research\/finance-model-workflow\.md$/u,
+      /^scripts\/operator\/finance-strategy-(?:method-benchmark|all-methods)\.ts$/u,
+      /^docs\/experiments\/research\/finance-strategy-(?:method-benchmark|all-methods|stress-matrix)-[\d-]+\.md$/u,
     ],
     requiredChecks: ["finance-caseflow-regression", "head-tail-consistency"],
     commands: [
@@ -49,6 +53,20 @@ const PATH_RULES: PathRule[] = [
     safetyNotes: [
       "Research, source transport, scheduler binding and external execution remain separate authorities.",
     ],
+  },
+  {
+    id: "finance_benchmark_receipts",
+    lane: "finance_research_capability",
+    patterns: [/^\.artifacts\/finance-strategy\/[^/]+\.json$/u],
+    requiredChecks: ["finance-benchmark-math", "git-diff-check"],
+    commands: [
+      "pnpm vitest run src/agents/finance-strategy-method-benchmark.test.ts",
+      "git diff --check",
+    ],
+    safetyNotes: [
+      "Benchmark receipts are retained research evidence, not source, model learning, or execution authority. Inventory all contained files separately; do not publish generated receipts by default.",
+    ],
+    risk: "normal",
   },
   {
     id: "api_transport_governance",
@@ -105,6 +123,7 @@ const PATH_RULES: PathRule[] = [
       /^CONTRIBUTING\.md$/u,
       /^MEMORY\.md$/u,
       /^\.gitignore$/u,
+      /^\.oxfmtrc\.jsonc$/u,
       /^README\.md$/u,
       /^ops\/(?:architecture|engineering)\//u,
       /^ops\/local-brain\/README\.md$/u,
@@ -208,6 +227,7 @@ const PATH_RULES: PathRule[] = [
     lane: "agent_workflow_memory",
     patterns: [
       /^src\/agents\/logical-agent-pool\.ts$/u,
+      /^src\/agents\/(?:logical-agent-model-router|local-text-model-adapter)\.ts$/u,
       /^src\/agents\/logical-agent-pool\.test\.ts$/u,
       /^scripts\/operator\/lcx-logical-agent-pool\.ts$/u,
       /^ops\/local-brain\/logical-agent-pool\.md$/u,
@@ -421,7 +441,7 @@ const PATH_RULES: PathRule[] = [
     lane: "agent_workflow_memory",
     patterns: [
       /^src\/agents\/coding-harness\//u,
-      /^src\/agents\/quality-harness(?:-quality|-contract)?\.ts$/u,
+      /^src\/agents\/quality-harness(?:-quality|-contract|-findings)?\.ts$/u,
       /^src\/commands\/doctor-config-flow\.ts$/u,
       /^src\/config\/(?:identity-migration|paths)\.ts$/u,
       /^src\/infra\/pairing-files\.ts$/u,
@@ -521,7 +541,7 @@ async function gitChangedFiles(): Promise<string[]> {
 
   const [diff, status] = await Promise.all([
     execFileAsync("git", ["diff", "--name-only", "HEAD"], { cwd: repoRoot }),
-    execFileAsync("git", ["status", "--short"], { cwd: repoRoot }),
+    execFileAsync("git", ["status", "--short", "--untracked-files=all"], { cwd: repoRoot }),
   ]);
   const changed = new Set(
     diff.stdout
@@ -552,7 +572,18 @@ function impactFor(files: readonly string[]): Impact[] {
     }
     const commands = [...rule.commands];
     if (rule.id === "test_file_changed") {
-      commands.push(`pnpm vitest run ${matchedFiles.join(" ")}`);
+      const operatorTests = matchedFiles.filter((file) => file.startsWith("scripts/operator/"));
+      const ordinaryTests = matchedFiles.filter((file) => !file.startsWith("scripts/operator/"));
+      const quote = (file: string) =>
+        /^[a-zA-Z0-9_./-]+$/u.test(file) ? file : "'" + file.replaceAll("'", "'\"'\"'") + "'";
+      if (ordinaryTests.length) {
+        commands.push(`pnpm vitest run ${ordinaryTests.map(quote).join(" ")}`);
+      }
+      if (operatorTests.length) {
+        commands.push(
+          `pnpm vitest run --config vitest.scripts-operator.config.ts ${operatorTests.map(quote).join(" ")}`,
+        );
+      }
     }
     return {
       id: rule.id,

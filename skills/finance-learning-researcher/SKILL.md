@@ -15,10 +15,18 @@ execution.
    data before collecting evidence.
 2. Use the finance data gateway and source registry; timestamp current values
    and retain source/coverage limits.
-3. Produce thesis, counter-thesis, catalyst, invalidation, portfolio impact,
+3. The full strategy package is the sibling [trader-strategy-lab](../trader-strategy-lab/SKILL.md):
+   its 12 methods, 28 directions, practitioner/source ledger, decision packet,
+   and evaluation gates are available from this entry too. The local runtime
+   injects the same full catalog and only selects task-relevant methods for the
+   visible answer.
+4. Apply the [runtime method kit](references/trader-strategy-method-kit.md):
+   freeze a simple baseline and costs, use lagged signals, check at least three
+   periods, and inspect shared exposure before calling a result useful.
+5. Produce thesis, counter-thesis, catalyst, invalidation, portfolio impact,
    and the next safe check. Route learning receipts through the module-learning
    absorption owner.
-4. Keep a research-only answer: no buy/sell, sizing, options-bet, wallet, or
+6. Keep a research-only answer: no buy/sell, sizing, options-bet, wallet, or
    order-routing instruction.
 
 ## Boundaries

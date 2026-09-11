@@ -7,6 +7,22 @@ import type {
 
 export type ModelExecutionMode = "deterministic" | "injected" | "adapter";
 export type ModelCallOutcome = "completed" | "failed" | "rejected" | "timed_out" | "aborted";
+export class ModelAdapterError extends Error {
+  constructor(
+    readonly code:
+      | "output_invalid"
+      | "output_truncated"
+      | "process_error"
+      | "output_limit"
+      | "runtime_timeout"
+      | "provider_auth"
+      | "provider_rate_limit"
+      | "call_budget_exhausted",
+  ) {
+    super(`model adapter ${code}`);
+    this.name = "ModelAdapterError";
+  }
+}
 export type ModelCallRequest = Readonly<{
   callId: string;
   correlationId: string;
@@ -25,6 +41,9 @@ export type ModelCallObservation = Readonly<{
   modelId: string;
   transportRequestId: string;
   kind: "model_inference" | "provider_call";
+  outputNormalization?: "terminal_delimiters" | "json_extraction";
+  credentialSource?: "configuration" | "environment" | "auth_profile";
+  reasoningEffort?: "low" | "high" | "max";
 }>;
 
 export type LogicalAgentModelAdapter = Readonly<{
@@ -35,6 +54,10 @@ export type LogicalAgentModelAdapter = Readonly<{
   capabilities: readonly string[];
   requiredTools: readonly string[];
   requiredSideEffects: readonly LogicalAgentSideEffect[];
+  /** Explicitly bounded specialists cannot become general fallbacks. */
+  roleScope?: readonly LogicalAgentId[];
+  maxInputBytes?: number;
+  qualificationId?: string;
   invoke: (request: ModelCallRequest, signal: AbortSignal) => Promise<unknown>;
   /** Trusted integration boundary: check an independent transport record for this call.
    * A test stub here proves contract handling only, not actual inference.
@@ -49,6 +72,16 @@ export type LogicalAgentRoleModelPolicy = Readonly<{
   requiredCapabilities: readonly string[];
   maxInputBytes: number;
   timeoutMs: number;
+  workload?: string;
+  /** Require observed prior-role execution and exclude every model it used successfully. */
+  excludeModelsUsedBy?: readonly LogicalAgentId[];
+  /** Keep all artifact edits with the one proven author, preserving another reviewer. */
+  sameModelAsRole?: LogicalAgentId;
+  outputContract?: Readonly<{
+    /** Included in checkpoint identity; change when validation semantics change. */
+    revision: string;
+    validate: (output: unknown, input: unknown) => boolean;
+  }>;
 }>;
 
 export type LogicalAgentModelRouting = Readonly<{
@@ -79,11 +112,25 @@ export type ModelCallReceipt = Readonly<{
   providerCallObserved: boolean;
   evidence: "not-observed" | "adapter-attested";
   observationIdSha256?: string;
+  outputNormalization?: "terminal_delimiters" | "json_extraction";
+  credentialSource?: "configuration" | "environment" | "auth_profile";
+  reasoningEffort?: "low" | "high" | "max";
+  workload?: string;
+  outputContractRevision?: string;
+  qualificationId?: string;
   /** Fixed codes only: never persist prompts, outputs, exception text or credentials. */
   reason?:
     | "input_constraint"
     | "capability_constraint"
+    | "role_scope_constraint"
+    | "model_separation_constraint"
+    | "model_separation_unproven"
+    | "model_affinity_constraint"
+    | "model_affinity_unproven"
+    | "adapter_input_constraint"
+    | "output_contract"
     | "adapter_error"
+    | ModelAdapterError["code"]
     | "cancelled"
     | "deadline";
 }>;
@@ -93,6 +140,7 @@ type Dispatch = (invoke: () => Promise<unknown>, signal: AbortSignal) => Promise
 export class LogicalAgentModelRouter {
   readonly routing: LogicalAgentModelRouting;
   #adapters = new Map<string, LogicalAgentModelAdapter>();
+  #completedModels = new Map<string, Map<LogicalAgentId, Set<string>>>();
 
   constructor(routing: LogicalAgentModelRouting) {
     if (!routing.revision.trim()) {
@@ -107,6 +155,12 @@ export class LogicalAgentModelRouter {
       ) {
         throw new Error("model routing requires unique adapters with provider/model identity");
       }
+      if (
+        adapter.maxInputBytes !== undefined &&
+        (!Number.isSafeInteger(adapter.maxInputBytes) || adapter.maxInputBytes < 1)
+      ) {
+        throw new Error("specialist input bytes must be bounded");
+      }
       this.#adapters.set(
         adapter.id,
         Object.freeze({
@@ -114,6 +168,7 @@ export class LogicalAgentModelRouter {
           capabilities: Object.freeze([...adapter.capabilities]),
           requiredTools: Object.freeze([...adapter.requiredTools]),
           requiredSideEffects: Object.freeze([...adapter.requiredSideEffects]),
+          ...(adapter.roleScope ? { roleScope: Object.freeze([...adapter.roleScope]) } : {}),
         }),
       );
     }
@@ -129,6 +184,13 @@ export class LogicalAgentModelRouter {
       }
       const targets = [policy.primary, ...(policy.fallback ?? [])];
       if (
+        policy.outputContract &&
+        (!policy.outputContract.revision.trim() ||
+          typeof policy.outputContract.validate !== "function")
+      ) {
+        throw new Error("model output contract requires a revision and validator");
+      }
+      if (
         new Set(targets).size !== targets.length ||
         targets.some((id) => !this.#adapters.has(id))
       ) {
@@ -138,6 +200,12 @@ export class LogicalAgentModelRouter {
         ...policy,
         fallback: Object.freeze([...(policy.fallback ?? [])]),
         requiredCapabilities: Object.freeze([...policy.requiredCapabilities]),
+        ...(policy.excludeModelsUsedBy
+          ? { excludeModelsUsedBy: Object.freeze([...policy.excludeModelsUsedBy]) }
+          : {}),
+        ...(policy.outputContract
+          ? { outputContract: Object.freeze({ ...policy.outputContract }) }
+          : {}),
       });
     };
     this.routing = Object.freeze({
@@ -221,6 +289,37 @@ export class LogicalAgentModelRouter {
           reason = "capability_constraint";
           throw new Error("model capability constraint rejected");
         }
+        const prior = this.#completedModels.get(params.correlationId);
+        const affinity = policy.sameModelAsRole ? prior?.get(policy.sameModelAsRole) : undefined;
+        if (policy.sameModelAsRole && affinity?.size !== 1) {
+          outcome = "rejected";
+          reason = "model_affinity_unproven";
+          throw new Error("artifact author identity is unavailable or ambiguous");
+        }
+        if (affinity && !affinity.has(`${adapter.provider}/${adapter.modelId}`)) {
+          outcome = "rejected";
+          reason = "model_affinity_constraint";
+          throw new Error("artifact rewrite must preserve its actual author model");
+        }
+        if (policy.excludeModelsUsedBy?.some((role) => !prior?.get(role)?.size)) {
+          outcome = "rejected";
+          reason = "model_separation_unproven";
+          throw new Error("prior model identity unavailable for independent review");
+        }
+        if (
+          policy.excludeModelsUsedBy?.some((role) =>
+            prior?.get(role)?.has(`${adapter.provider}/${adapter.modelId}`),
+          )
+        ) {
+          outcome = "rejected";
+          reason = "model_separation_constraint";
+          throw new Error("review model must differ from artifact authors");
+        }
+        if (adapter.roleScope && !adapter.roleScope.includes(params.role)) {
+          outcome = "rejected";
+          reason = "role_scope_constraint";
+          throw new Error("model specialist role scope rejected");
+        }
         let payload: unknown;
         try {
           if (
@@ -234,6 +333,14 @@ export class LogicalAgentModelRouter {
           outcome = "rejected";
           reason = "input_constraint";
           throw new Error("model input constraint rejected");
+        }
+        if (
+          adapter.maxInputBytes !== undefined &&
+          Buffer.byteLength(serialized, "utf8") > adapter.maxInputBytes
+        ) {
+          outcome = "rejected";
+          reason = "adapter_input_constraint";
+          throw new Error("model specialist input scope rejected");
         }
         const cancelled = new Promise<never>((_, reject) => {
           controller.signal.addEventListener(
@@ -257,18 +364,39 @@ export class LogicalAgentModelRouter {
           }, controller.signal),
           cancelled,
         ]);
+        if (policy.outputContract) {
+          let accepted = false;
+          try {
+            accepted = policy.outputContract.validate(result, payload);
+          } catch {
+            // Validator exceptions are contract failures, never model success.
+          }
+          if (!accepted) {
+            reason = "output_contract";
+            throw new Error("model output contract rejected");
+          }
+        }
         outcome = "completed";
+        const completed =
+          this.#completedModels.get(params.correlationId) ?? new Map<LogicalAgentId, Set<string>>();
+        const models = completed.get(params.role) ?? new Set<string>();
+        models.add(`${adapter.provider}/${adapter.modelId}`);
+        completed.set(params.role, models);
+        this.#completedModels.set(params.correlationId, completed);
         return result;
-      } catch {
-        reason ??= "adapter_error";
+      } catch (error) {
+        reason ??= error instanceof ModelAdapterError ? error.code : "adapter_error";
         // Cancellation never launches a fallback; failed/rejected/timed-out targets may do so.
         if (
           outcome === "aborted" ||
           params.signal.aborted ||
           index === targets.length - 1 ||
-          reason === "input_constraint"
+          reason === "input_constraint" ||
+          reason === "call_budget_exhausted" ||
+          reason === "model_separation_unproven" ||
+          reason === "model_affinity_unproven"
         ) {
-          throw new Error(`model routing ${outcome}: ${reason}`);
+          throw new Error(`model routing ${outcome}: ${reason}`, { cause: error });
         }
       } finally {
         if (timer !== undefined) {
@@ -302,6 +430,11 @@ export class LogicalAgentModelRouter {
             policyRevision: this.routing.revision,
             adapterId: adapter.id,
             mode: adapter.mode,
+            ...(policy.workload ? { workload: policy.workload } : {}),
+            ...(policy.outputContract
+              ? { outputContractRevision: policy.outputContract.revision }
+              : {}),
+            ...(adapter.qualificationId ? { qualificationId: adapter.qualificationId } : {}),
             startedAtMs,
             latencyMs: Math.max(0, Date.now() - startedAtMs),
             outcome,
@@ -309,6 +442,15 @@ export class LogicalAgentModelRouter {
             realModelInferenceObserved: observation !== undefined,
             providerCallObserved: observation?.kind === "provider_call",
             evidence: observation ? "adapter-attested" : "not-observed",
+            ...(observation?.reasoningEffort
+              ? { reasoningEffort: observation.reasoningEffort }
+              : {}),
+            ...(observation?.credentialSource
+              ? { credentialSource: observation.credentialSource }
+              : {}),
+            ...(observation?.outputNormalization
+              ? { outputNormalization: observation.outputNormalization }
+              : {}),
             ...(observation
               ? {
                   observationIdSha256: createHash("sha256")
@@ -323,4 +465,16 @@ export class LogicalAgentModelRouter {
     }
     throw new Error("model routing exhausted");
   }
+}
+
+/** Allow every bounded fallback plus scheduler overhead without truncating the role contract. */
+export function modelRoutingTaskTimeoutMs(routing: LogicalAgentModelRouting): number {
+  return Math.min(
+    2_147_483_647,
+    Math.max(
+      ...[routing.defaultPolicy, ...Object.values(routing.roles ?? {})].map(
+        (policy) => policy.timeoutMs * (1 + (policy.fallback?.length ?? 0)) + 1_000,
+      ),
+    ),
+  );
 }

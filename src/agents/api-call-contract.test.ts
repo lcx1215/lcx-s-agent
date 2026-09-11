@@ -26,7 +26,7 @@ describe("API call governance", () => {
       vi.fn<ApiFetch>(async () => response()),
       {
         prepare: async () => {
-          throw new ApiCallError("budget_exhausted");
+          throw new ApiCallError("budget_exhausted", undefined, 120_000);
         },
       },
     );
@@ -39,6 +39,7 @@ describe("API call governance", () => {
     expect(beforeHttpDispatch).not.toHaveBeenCalled();
     expect(fetch).not.toHaveBeenCalled();
     expect(receipts[0].dispatchedAt).toBeUndefined();
+    expect(receipts[0].retryAfterMs).toBe(120_000);
   });
   it("records dispatch only after scheduling and caller budget checks", async () => {
     let prepared = false;

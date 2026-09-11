@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildFinanceCommitteeContext, runFinanceCommittee } from "./finance-agent-committee.js";
 import type { LogicalAgentModelAdapter } from "./logical-agent-model-router.js";
 import { LogicalAgentPool } from "./logical-agent-pool.js";
@@ -19,6 +19,66 @@ const input = {
 };
 
 describe("finance agent committee", () => {
+  it("does not dispatch research roles after the caller cancels", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("caller cancelled"));
+    const executor = vi.fn(async () => ({ output: {}, sideEffects: [] }));
+    const result = await runFinanceCommittee({ input, signal: controller.signal, executor });
+    expect(executor).not.toHaveBeenCalled();
+    expect(result.execution.status).not.toBe("completed");
+  });
+
+  it.each([false, true])(
+    "allows long model calls and a bounded fallback chain (fallback=%s)",
+    async (useFallback) => {
+      vi.useFakeTimers();
+      try {
+        const adapter: LogicalAgentModelAdapter = {
+          id: "slow-fixture",
+          provider: "local-fixture",
+          modelId: "fixture",
+          mode: "deterministic",
+          capabilities: ["json"],
+          requiredTools: [],
+          requiredSideEffects: ["local_compute"],
+          invoke: async () =>
+            new Promise((resolve) => setTimeout(() => resolve({ ok: true }), 31_000)),
+        };
+        const pending = runFinanceCommittee({
+          input,
+          modelRouting: {
+            revision: "slow-fixture",
+            adapters: [
+              adapter,
+              {
+                ...adapter,
+                id: "slow-primary",
+                invoke: async () =>
+                  new Promise((_resolve, reject) =>
+                    setTimeout(() => reject(new Error("recoverable")), 50_000),
+                  ),
+              },
+            ],
+            defaultPolicy: {
+              primary: useFallback ? "slow-primary" : adapter.id,
+              fallback: useFallback ? [adapter.id] : [],
+              requiredCapabilities: ["json"],
+              maxInputBytes: 64_000,
+              timeoutMs: 60_000,
+            },
+          },
+          executor: async ({ modelSlot, signal }) => ({
+            output: await modelSlot.invoke({}, signal),
+            sideEffects: [],
+          }),
+        });
+        await vi.runAllTimersAsync();
+        expect((await pending).execution.status).toBe("completed");
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
   it("builds one immutable fact packet shared by every role", () => {
     const context = buildFinanceCommitteeContext(input);
     expect(context.schemaVersion).toBe("lcx_finance_committee_context_v1");

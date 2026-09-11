@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   buildFinanceCaseRun,
+  caseflowFingerprint,
   saveFinanceCaseRun,
   readFinanceCaseRun,
   compareFinanceCaseRuns,
@@ -45,6 +46,49 @@ describe("finance caseflow persistence", () => {
       "2027-02-28T12:00:00.000Z",
     ]);
     expect(run.packet.followups.every((item) => item.status === "not_scheduled")).toBe(true);
+  });
+  it("persists and validates ontology edges at the caseflow artifact boundary", async () => {
+    const run = await fixture();
+    expect(run.ontologyEdges).toEqual(
+      expect.arrayContaining([
+        {
+          relation: "asks_for",
+          subject: { type: "intent", id: "intent:market-sentiment" },
+          object: { type: "task", id: "research_case:market-sentiment" },
+        },
+        expect.objectContaining({
+          relation: "produces",
+          subject: { type: "task", id: "research_case:market-sentiment" },
+          object: expect.objectContaining({ type: "artifact" }),
+        }),
+      ]),
+    );
+    const dir = await directory();
+    const saved = await saveFinanceCaseRun(dir, run);
+    expect((await readFinanceCaseRun(dir, saved.ref)).ontologyEdges).toEqual(run.ontologyEdges);
+
+    const { ontologyEdges: _legacyEdges, ...legacyBody } = run;
+    const legacyRun = { ...legacyBody, schemaVersion: "lcx_caseflow_v1" as const };
+    const legacyRef = caseflowFingerprint(legacyRun);
+    await fs.writeFile(path.join(dir, `${legacyRef}.json`), JSON.stringify(legacyRun), "utf8");
+    const migrated = await readFinanceCaseRun(dir, legacyRef);
+    expect(migrated.schemaVersion).toBe("lcx_caseflow_v2");
+    expect(migrated.ontologyEdges.length).toBeGreaterThan(0);
+
+    const invalidRun = {
+      ...run,
+      ontologyEdges: [
+        ...run.ontologyEdges,
+        {
+          relation: "requires" as const,
+          subject: { type: "workflow" as const, id: "workflow-1" },
+          object: { type: "actor" as const, id: "actor-1" },
+        },
+      ],
+    };
+    const invalidRef = caseflowFingerprint(invalidRun);
+    await fs.writeFile(path.join(dir, `${invalidRef}.json`), JSON.stringify(invalidRun), "utf8");
+    await expect(readFinanceCaseRun(dir, invalidRef)).rejects.toThrow("violates relation contract");
   });
   it("supports concurrent idempotent publication without partial artifacts", async () => {
     const run = await fixture();

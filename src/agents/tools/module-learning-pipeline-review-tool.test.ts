@@ -27,6 +27,30 @@ describe("module learning pipeline review tool", () => {
     }
   });
 
+  it("keeps previous batches in the default review while allowing an explicit date", async () => {
+    workspaceDir = await makeTempWorkspace("openclaw-learning-history-");
+    for (const [date, targetModule] of [
+      ["2020-01-01", "portfolio_risk_gates"],
+      ["2020-01-02", "technical_timing"],
+    ]) {
+      await seedJson(
+        workspaceDir,
+        `memory/module-learning-pipeline-plan-receipts/${date}/pending.json`,
+        {
+          boundary: "local_module_learning_pipeline_plan",
+          targetModule,
+          sourceUrlOrPath: `source-${targetModule}`,
+          status: "application_ready",
+        },
+      );
+    }
+    const tool = createModuleLearningPipelineReviewTool({ workspaceDir });
+    const all = await tool.execute("backlog", { writeReview: false });
+    expect(all.details).toMatchObject({ dateKey: "all", counts: { receiptFiles: 2 } });
+    const daily = await tool.execute("daily", { dateKey: "2020-01-02", writeReview: false });
+    expect(daily.details).toMatchObject({ dateKey: "2020-01-02", counts: { receiptFiles: 1 } });
+  });
+
   it("writes a daily review and flags incomplete module-learning receipts", async () => {
     workspaceDir = await makeTempWorkspace("openclaw-module-learning-review-");
     await seedJson(

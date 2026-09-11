@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  LogicalAgentModelRouter,
   type LogicalAgentModelAdapter,
   type LogicalAgentModelRouting,
   type LogicalAgentRoleModelPolicy,
@@ -335,4 +336,144 @@ it("does not dispatch an adapter when cancellation lands between queue admission
   expect(result.status).toBe("failed");
   expect(invoke).not.toHaveBeenCalled();
   expect(result.modelCalls?.[0]).toMatchObject({ outcome: "aborted", adapterInvoked: false });
+});
+
+it("requires explicit opt-in for configured provider inference and retains all other boundaries", async () => {
+  const invoke = vi.fn(async ({ payload }) => payload);
+  const remote = adapter("small", { requiredSideEffects: ["provider_call"], invoke });
+  for (const allowed of [false, true]) {
+    const pool = new LogicalAgentPool<string, unknown>({
+      allowProviderCalls: allowed,
+      modelRouting: routing({ adapters: [remote] }),
+    });
+    const result = await runLogicalAgentPlan({ pool, tasks: [task], executor: execute });
+    expect(result.tasks[0]?.status).toBe(allowed ? "completed" : "failed");
+  }
+  expect(invoke).toHaveBeenCalledTimes(1);
+  const pool = new LogicalAgentPool<string, unknown>({
+    allowProviderCalls: true,
+    modelRouting: routing({
+      adapters: [adapter("small", { requiredSideEffects: ["external_message"] })],
+    }),
+  });
+  const result = await runLogicalAgentPlan({ pool, tasks: [task], executor: execute });
+  expect(result.tasks[0]?.modelCalls?.[0]?.reason).toBe("capability_constraint");
+});
+
+describe("actual artifact author exclusion", () => {
+  it("skips the successful draft model after fallback, and isolates correlation scopes", async () => {
+    const router = new LogicalAgentModelRouter(
+      routing({
+        adapters: [
+          adapter("small", {
+            invoke: async ({ role }) => {
+              if (role === "research_draft") {
+                throw new Error("primary failed");
+              }
+              return { reviewed: true };
+            },
+          }),
+          adapter("reviewer"),
+        ],
+        defaultPolicy: { ...policy, fallback: ["reviewer"] },
+        roles: {
+          adversarial_challenge: {
+            ...policy,
+            primary: "reviewer",
+            fallback: ["small"],
+            excludeModelsUsedBy: ["research_draft"],
+          },
+        },
+      }),
+    );
+    const receipts: { role: string; adapterId: string; reason?: string }[] = [];
+    const invoke = (
+      role: "research_draft" | "adversarial_challenge",
+      correlationId = "isolated-run",
+    ) =>
+      router.invoke({
+        role,
+        taskId: role,
+        correlationId,
+        payload: {},
+        capabilities: {
+          allowedTools: [],
+          allowedSideEffects: ["local_compute"],
+          forbiddenSideEffects: [],
+        },
+        signal: new AbortController().signal,
+        dispatch: async (fn) => fn(),
+        record: (receipt) => {
+          receipts.push(receipt);
+        },
+      });
+    await invoke("research_draft");
+    await invoke("adversarial_challenge");
+    expect(receipts.map((r) => [r.adapterId, r.reason])).toEqual([
+      ["small", "adapter_error"],
+      ["reviewer", undefined],
+      ["reviewer", "model_separation_constraint"],
+      ["small", undefined],
+    ]);
+    await expect(invoke("adversarial_challenge", "unproven-run")).rejects.toThrow(
+      "model_separation_unproven",
+    );
+  });
+});
+
+it("preserves one artifact author so a reviewer remains available after provider failure", async () => {
+  const router = new LogicalAgentModelRouter(
+    routing({
+      adapters: [
+        adapter("small"),
+        adapter("reviewer"),
+        adapter("unavailable", {
+          invoke: async () => {
+            throw new Error("provider unavailable");
+          },
+        }),
+      ],
+      roles: {
+        research_draft: { ...policy, primary: "reviewer" },
+        formatting: { ...policy, fallback: ["reviewer"], sameModelAsRole: "research_draft" },
+        final_precheck: {
+          ...policy,
+          primary: "unavailable",
+          fallback: ["reviewer", "small"],
+          excludeModelsUsedBy: ["research_draft", "formatting"],
+        },
+      },
+    }),
+  );
+  const receipts: { adapterId: string; reason?: string }[] = [];
+  const invoke = (role: "research_draft" | "formatting" | "final_precheck") =>
+    router.invoke({
+      role,
+      taskId: role,
+      correlationId: "single-author",
+      payload: {},
+      capabilities: {
+        allowedTools: [],
+        allowedSideEffects: ["local_compute"],
+        forbiddenSideEffects: [],
+      },
+      signal: new AbortController().signal,
+      dispatch: async (fn) => fn(),
+      record: (r) => {
+        receipts.push(r);
+      },
+    });
+  await expect(invoke("formatting")).rejects.toThrow("model_affinity_unproven");
+  await invoke("research_draft");
+  await invoke("formatting");
+  await invoke("final_precheck");
+  expect(receipts.map((r) => [r.adapterId, r.reason])).toEqual([
+    ["small", "model_affinity_unproven"],
+    ["reviewer", undefined],
+    ["small", "model_affinity_constraint"],
+    ["reviewer", undefined],
+    ["unavailable", "adapter_error"],
+    ["reviewer", "model_separation_constraint"],
+    ["small", undefined],
+  ]);
 });

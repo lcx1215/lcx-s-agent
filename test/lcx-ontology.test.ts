@@ -58,6 +58,8 @@ import {
   LCX_ONTOLOGY_MIGRATION_MANIFEST_SCHEMA_VERSION,
   LCX_ONTOLOGY_NON_CANONICAL_TASK_FAMILY_CLASSES,
   LCX_ONTOLOGY_NON_CANONICAL_TASK_FAMILY_IDS,
+  LCX_ONTOLOGY_ORCHESTRATION_CONTRACTS,
+  LCX_ONTOLOGY_REQUIRED_ORCHESTRATION_PROOF_KINDS,
   LCX_ONTOLOGY_RELATION_CONTRACTS,
   LCX_ONTOLOGY_REGISTRY,
   LCX_ONTOLOGY_REGISTRY_POLICY,
@@ -69,9 +71,11 @@ import {
   LCX_ONTOLOGY_WEAK_EVIDENCE_POLICIES,
   canonicalizeLcxOntologyValue,
   getLcxOntologyEvolutionRule,
+  getLcxOntologyOrchestrationContract,
   getLcxOntologyRelationContract,
   isLcxOntologyRelationAllowed,
   validateLcxOntologyMigrationManifest,
+  validateLcxOntologyOrchestrationContract,
   validateLcxOntologyRegistry,
 } from "../src/shared/lcx-ontology.js";
 
@@ -92,6 +96,10 @@ describe("LCX ontology registry", () => {
       15,
     );
     expect(LCX_ONTOLOGY_REGISTRY.relationContracts).toEqual(LCX_ONTOLOGY_RELATION_CONTRACTS);
+    expect(LCX_ONTOLOGY_REGISTRY.orchestrationContracts).toEqual(
+      LCX_ONTOLOGY_ORCHESTRATION_CONTRACTS,
+    );
+    expect(LCX_ONTOLOGY_ORCHESTRATION_CONTRACTS).toHaveLength(3);
     expect(LCX_ONTOLOGY_REGISTRY_POLICY).toMatchObject({
       canonicalSource: "src/shared/lcx-ontology.ts",
       auditEntrypoint: "scripts/operator/lcx-ontology.ts",
@@ -247,6 +255,33 @@ describe("LCX ontology registry", () => {
     expect(isLcxOntologyRelationAllowed("delivered_via", "summary", "adapter")).toBe(true);
   });
 
+  it("binds orchestration patterns to delegation, ownership, scope, and proof", () => {
+    for (const contract of LCX_ONTOLOGY_ORCHESTRATION_CONTRACTS) {
+      expect(validateLcxOntologyOrchestrationContract(contract)).toEqual([]);
+      expect(contract.requiredProofKinds).toEqual(LCX_ONTOLOGY_REQUIRED_ORCHESTRATION_PROOF_KINDS);
+    }
+    expect(getLcxOntologyOrchestrationContract("handoff")).toMatchObject({
+      delegationMode: "handoff",
+      finalOwner: "specialist_final_owner",
+      contextScope: "inherited",
+      workspaceScope: "disjoint_write_set",
+    });
+
+    const invalid = LCX_ONTOLOGY_ORCHESTRATION_CONTRACTS[0];
+    expect(
+      validateLcxOntologyOrchestrationContract({
+        ...invalid,
+        delegationMode: "handoff",
+        requiredProofKinds: ["trace"],
+      }),
+    ).toEqual(
+      expect.arrayContaining([
+        "orchestration pattern manager must use delegation mode manager_as_tool",
+        "orchestration contract is missing required proof kind: tool_attribution",
+      ]),
+    );
+  });
+
   it("keeps legacy labels as aliases without changing canonical delivery states", () => {
     expect(canonicalizeLcxOntologyValue("module", "artifact-memory-recall")).toBe(
       "finance_learning_memory",
@@ -290,6 +325,10 @@ describe("LCX ontology registry", () => {
       }),
     );
     expect(audit.relationContracts.count).toBe(15);
+    expect(audit.orchestrationContracts).toEqual({
+      count: 3,
+      patterns: ["manager", "handoff", "parallel_worker"],
+    });
     expect(audit.taskFamilySources.flatMap((source) => source.nonCanonicalTaskFamilies)).toEqual(
       expect.arrayContaining(["unknown", "partial_json_object"]),
     );
@@ -305,5 +344,18 @@ describe("LCX ontology registry", () => {
         },
       ]),
     );
+    const semanticSurfaces = audit.integrationSurfaces.filter((surface) => surface.semanticChecked);
+    expect(semanticSurfaces.map((surface) => surface.path)).toEqual(
+      expect.arrayContaining([
+        "src/agents/finance-caseflow.ts",
+        "src/shared/lcx-run-receipt.ts",
+        "src/shared/global-evidence-projection.ts",
+        "scripts/operator/lcx-ontology.ts",
+      ]),
+    );
+    expect(semanticSurfaces.every((surface) => surface.ok)).toBe(true);
+    expect(
+      semanticSurfaces.flatMap((surface) => [...surface.missingImports, ...surface.missingCalls]),
+    ).toEqual([]);
   });
 });

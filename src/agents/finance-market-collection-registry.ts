@@ -25,6 +25,7 @@ import {
 } from "./finance-free-market-collection-adapters.js";
 import { createGdeltNewsTitlesAdapter } from "./finance-gdelt-news-titles.js";
 import { resolveFinanceFetch, type FetchImpl } from "./finance-live-market-source.js";
+import { assessFinanceNewsEntity } from "./finance-news-entity.js";
 import { mapFinanceSourceLanes } from "./finance-source-scheduler.js";
 
 export {
@@ -1094,16 +1095,26 @@ export async function runFinanceMarketCollectionRefresh(options: {
         );
         const reusedAt = financeReuseTimestamp(apiCalls, request.asOf);
         records.push(
-          ...collected.map((item) =>
-            reusedAt
+          ...collected.map((rawItem) => {
+            const item =
+              rawItem.collection === "news"
+                ? {
+                    ...rawItem,
+                    data: {
+                      ...rawItem.data,
+                      entityMatch: assessFinanceNewsEntity(request.instrument, rawItem.data),
+                    },
+                  }
+                : rawItem;
+            return reusedAt
               ? {
                   ...item,
                   observedAt: reusedAt,
                   sourceTimestamp:
                     item.sourceTimestamp === request.asOf ? reusedAt : item.sourceTimestamp,
                 }
-              : item,
-          ),
+              : item;
+          }),
         );
         sourceAttempts.push({
           adapterId: adapter.id,

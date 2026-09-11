@@ -1,4 +1,5 @@
 import type { FinanceDecisionMode } from "./finance-decision-policy.js";
+import { modelRoutingTaskTimeoutMs } from "./logical-agent-model-router.js";
 import {
   buildDefaultLogicalAgentPlan,
   LogicalAgentPool,
@@ -158,6 +159,8 @@ export function evaluateFinanceCommitteeCoverage<TResult>(
 }
 
 export async function runFinanceCommittee<TResult>(params: {
+  allowProviderCalls?: boolean;
+  signal?: AbortSignal;
   input: FinanceCommitteeInput;
   executor: LogicalAgentExecutor<LogicalAgentRequest, TResult>;
   pool?: LogicalAgentPool<LogicalAgentRequest, TResult>;
@@ -185,10 +188,16 @@ export async function runFinanceCommittee<TResult>(params: {
   const pool =
     params.pool ??
     new LogicalAgentPool<LogicalAgentRequest, TResult>({
+      modelId: params.modelRouting?.adapters[0]?.modelId,
+      taskTimeoutMs: params.modelRouting
+        ? modelRoutingTaskTimeoutMs(params.modelRouting)
+        : undefined,
+      allowProviderCalls: params.allowProviderCalls,
       ...(params.modelRouting === undefined ? {} : { modelRouting: params.modelRouting }),
       ...(params.modelInvoker === undefined ? {} : { modelInvoker: params.modelInvoker }),
     });
   const execution = await runLogicalAgentPlan({
+    signal: params.signal,
     tasks: buildDefaultLogicalAgentPlan(request),
     executor: params.executor,
     pool,

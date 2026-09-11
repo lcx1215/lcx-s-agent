@@ -146,6 +146,11 @@ describe("quality harness", () => {
       "formatting",
       "risk_check",
       "evidence_integrity",
+      "financial_extraction",
+      "news_classification",
+      "portfolio_exposure",
+      "adversarial_challenge",
+      "research_draft",
     ]);
   });
 

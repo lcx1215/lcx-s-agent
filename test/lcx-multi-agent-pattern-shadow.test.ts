@@ -5,6 +5,7 @@ import {
   DEFAULT_REPLAY_EXPERIMENT_ID,
   EXECUTOR_SCHEMA_VERSION,
   METRICS_SCHEMA_VERSION,
+  PROOF_COVERAGE_SCHEMA_VERSION,
   RECEIPT_SCHEMA_VERSION,
   REPLAY_FIXTURES,
   SHADOW_EXECUTION_PHASES,
@@ -22,6 +23,8 @@ import {
   normalizeExecutorResponse,
   normalizeShadowModeInput,
   scoreShadowAnswer,
+  validateShadowLatestReceipt,
+  validateShadowProofCoverage,
   type ShadowExecutorRequest,
 } from "../scripts/operator/lcx-multi-agent-pattern-shadow.js";
 import { buildFixtureResponse } from "./fixtures/lcx-multi-agent-pattern-shadow-executor.ts";
@@ -45,6 +48,51 @@ describe("LCX multi-agent pattern shadow", () => {
 
     const stale = classifyShadowLatestReceipt(receipt, "2026-09-10T00:00:00.000Z");
     expect(stale.status).toBe("stale");
+  });
+
+  it("blocks a latest projection when its runs, proof coverage, phase, or summary drift", () => {
+    const source = buildReplayExperiment({ experimentId: "shadow-latest-integrity" });
+
+    expect(validateShadowLatestReceipt(source)).toEqual([]);
+
+    const missingRuns = { ...source, runs: [] };
+    expect(classifyShadowLatestReceipt(missingRuns, "2026-09-02T00:00:00.000Z")).toMatchObject({
+      status: "blocked",
+      reason: expect.stringContaining("runs must be a non-empty array"),
+    });
+
+    const missingCoverage = {
+      ...source,
+      runs: source.runs.map((run) => ({ ...run, proofCoverage: undefined })),
+    };
+    expect(classifyShadowLatestReceipt(missingCoverage, "2026-09-02T00:00:00.000Z")).toMatchObject({
+      status: "blocked",
+      reason: expect.stringContaining("proof coverage must be an object"),
+    });
+
+    const phaseDrift = { ...source, executionPhase: "isolated_executor" as const };
+    expect(classifyShadowLatestReceipt(phaseDrift, "2026-09-02T00:00:00.000Z")).toMatchObject({
+      status: "blocked",
+      reason: expect.stringContaining("executionPhase disagrees with mode"),
+    });
+
+    const summaryDrift = {
+      ...source,
+      summary: { ...source.summary, normalPasses: source.summary.normalRuns + 1 },
+    };
+    expect(classifyShadowLatestReceipt(summaryDrift, "2026-09-02T00:00:00.000Z")).toMatchObject({
+      status: "blocked",
+      reason: expect.stringContaining("normalPasses exceeds normalRuns"),
+    });
+
+    const projectionDrift = {
+      ...source,
+      summary: { ...source.summary, normalPasses: 0, normalPassRate: 0 },
+    };
+    expect(classifyShadowLatestReceipt(projectionDrift, "2026-09-02T00:00:00.000Z")).toMatchObject({
+      status: "blocked",
+      reason: expect.stringContaining("summary normalPasses disagrees with runs"),
+    });
   });
 
   it("keeps the protocol versioned, forward-compatible, and evidence-bounded", () => {
@@ -191,6 +239,37 @@ describe("LCX multi-agent pattern shadow", () => {
       handoff: { normalRuns: 1, normalPasses: 1, medianCriticalPathLatencyMs: 40 },
       parallel_worker: { normalRuns: 1, normalPasses: 1, medianCriticalPathLatencyMs: 28 },
     });
+    const normalRuns = first.runs.filter((run) => run.fixture === "normal_quality");
+    expect(
+      normalRuns.every((run) => run.proofCoverage?.schemaVersion === PROOF_COVERAGE_SCHEMA_VERSION),
+    ).toBe(true);
+    expect(normalRuns.every((run) => run.proofCoverage?.complete === true)).toBe(true);
+    expect(normalRuns.every((run) => run.proofCoverage?.missing.length === 0)).toBe(true);
+    expect(normalRuns.every((run) => run.proofCoverage?.unknown.length === 0)).toBe(true);
+    expect(
+      normalRuns.every(
+        (run) => run.proofCoverage?.present.length === run.proofCoverage?.required.length,
+      ),
+    ).toBe(true);
+    expect(
+      normalRuns.every((run) =>
+        run.proofCoverage?.entries.every((entry) => entry.evidence.length > 0),
+      ),
+    ).toBe(true);
+    const normalCoverage = normalRuns[0]?.proofCoverage;
+    const normalTopology = normalRuns[0]?.topology;
+    expect(validateShadowProofCoverage(normalCoverage, normalTopology)).toEqual([]);
+    expect(
+      validateShadowProofCoverage(
+        { ...normalCoverage, complete: true, missing: ["replay"] },
+        normalTopology,
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        "proof coverage status partitions overlap",
+        "proof coverage complete disagrees with missing or unknown",
+      ]),
+    );
     expect(new Set(first.runs.map((run) => run.deliveryKey)).size).toBe(first.runs.length);
   });
 
@@ -220,6 +299,11 @@ describe("LCX multi-agent pattern shadow", () => {
     expect(isolated.runs.every((run) => run.status === "blocked")).toBe(true);
     expect(isolated.runs.every((run) => run.metrics.childCallCount === 0)).toBe(true);
     expect(isolated.runs.every((run) => run.permissionAudit.evidence === "unverified")).toBe(true);
+    expect(isolated.runs.every((run) => run.proofCoverage?.complete === false)).toBe(true);
+    expect(isolated.runs.every((run) => (run.proofCoverage?.unknown.length ?? 0) > 0)).toBe(true);
+    expect(isolated.summary.trialDecision).toBe("downrank");
+    expect(isolated.summary.trialDecisionReason).toContain("proof coverage");
+    expect(isolated.summary.trialDecisionReason).toContain("replay");
     expect(isolated.executionPhase).toBe("isolated_executor");
     expect(isolated.runs.every((run) => run.executionPhase === "isolated_executor")).toBe(true);
     expect(buildLiveExperiment).toBe(buildIsolatedExecutorExperiment);
@@ -231,6 +315,13 @@ describe("LCX multi-agent pattern shadow", () => {
       finalOwner: "root_final_owner",
       expectedChildCalls: 3,
       expectedMaxConcurrency: 1,
+      requiredProofKinds: expect.arrayContaining([
+        "trace",
+        "tool_attribution",
+        "permission_audit",
+        "evaluator_result",
+        "replay",
+      ]),
     });
     expect(getShadowTopology("handoff")).toMatchObject({
       delegationMode: "handoff",

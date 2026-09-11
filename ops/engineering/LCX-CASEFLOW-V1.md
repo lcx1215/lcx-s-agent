@@ -351,8 +351,27 @@ that still require credentials/configuration. Secret values never enter that lis
 
 Use `--all-sources --live --sources-only --max-api-calls 128` to collect evidence
 without selecting or running a model, together with the usual `--ask`, `--as-of`,
-`--case-id` and `--case-dir`. Model-enabled research continues to require explicit
-model/adapter selection. `--checkpoint-run` retains each source job's result;
+`--case-id` and `--case-dir`. Model-enabled research requires explicit local
+model/adapter selection or `--configured-model` to use the already configured
+primary model. The latter requires an existing compatible model definition and
+credential; it does not create or modify provider configuration. It grants model
+inference only and is bounded by `--max-model-calls`, not trading or messaging
+authority. The two model selections cannot be combined.
+`--max-model-tokens` bounds each response (1–16384); for reasoning models this
+may include internal reasoning tokens. A token-limited response is recorded as
+`output_truncated`, never accepted as a completed analysis.
+For a normally ended response, the adapter may normalize only mismatched terminal
+JSON delimiters after a complete string. It never fills missing content, and the
+model-call receipt records `outputNormalization=terminal_delimiters`. Stage schema
+and research quality checks still apply to the result.
+
+Historical prices are summarized before model prompting, preserving source/feed
+identity, dates, price-return basis and receipt references. News entity labels are
+heuristic relevance checks, not verification of article claims or sentiment.
+Raw receipts and source-review failures remain available. A completed model
+transport does not establish a valid research artifact or a passed quality gate.
+
+`--checkpoint-run` retains each source job's result;
 a changed request/configuration must use a new run identity.
 
 All-source jobs reserve up to three HTTP calls per adapter for multi-endpoint
@@ -367,3 +386,36 @@ FRED public history is restricted to the explicitly named `SP500` and
 observations remain coverage gaps; date timestamps describe observation dates,
 not verified publication times. References: [S&P 500](https://fred.stlouisfed.org/series/SP500)
 and [NASDAQ 100](https://fred.stlouisfed.org/series/NASDAQ100).
+
+## Bounded source recovery
+
+`lcx-finance-research --recover-from` classifies a saved batch before dispatch.
+The default is a plan; `--live` executes only selected retryable jobs under a
+new explicit API budget. It never rewrites the original receipt or adopts the
+result as a complete research conclusion.
+
+```bash
+node --import tsx scripts/operator/lcx-finance-research.ts \
+  --recover-from saved-research.json --as-of 2026-09-10T12:00:00Z \
+  --max-recovery-jobs 4 --max-api-calls 8
+# Add --live to execute, or --recovery-source ADAPTER_ID to narrow the source.
+```
+
+Ready jobs are preserved. HTTP access failures require access resolution;
+conflicts, stale evidence, missing cross-checks and unknown failures require
+review. Unknown checkpoint dispatches require reconciliation. Retry-After from
+both HTTP and local quota errors is retained, and jobs before that deadline
+are deferred without dispatch. A retry is still subject to the existing quota
+and credential checks; it does not grant additional provider entitlement.
+
+Feed the latest recovery receipt into the next recovery invocation. Its
+`recoveryState` retains successful, waiting, excluded and deferred jobs, so a
+small job limit does not discard the rest of the work. Selecting one adapter
+cannot clear an unselected adapter's failures. This state is scheduling metadata,
+not a substitute for original source data: actual attempts remain in `batch`,
+and `latestAttemptJobId` links scheduling entries to those receipts. The parent
+fingerprint covers normalized scheduling inputs, not the original file bytes.
+
+The research runner skips committee and quality calls when its evidence builder
+has produced no instrument facts. It returns source recovery actions with the
+failed reason instead of running the model on a coverage summary alone.
