@@ -155,6 +155,36 @@ describe("finance realtime source registry", () => {
     expect(receipt.requiredNextSteps).toContain("run_data_provenance_quality_review");
   });
 
+  it("keeps a cross-check slot when primary sources exceed the source limit", async () => {
+    const receipt = await runFinanceRealtimeRefresh({
+      request: { ...request, requireOfficialReference: false },
+      maxSources: 2,
+      adapters: [
+        adapter({
+          id: "primary-1",
+          providerRole: "primary_market_data",
+          priority: 1,
+          result: observation("primary-1", "primary_market_data"),
+        }),
+        adapter({
+          id: "primary-2",
+          providerRole: "primary_market_data",
+          priority: 2,
+          result: observation("primary-2", "primary_market_data"),
+        }),
+        adapter({
+          id: "cross-check",
+          providerRole: "cross_check_market_data",
+          priority: 1,
+          result: observation("cross-check", "cross_check_market_data"),
+        }),
+      ],
+    });
+
+    expect(receipt.selectedSourceIds).toEqual(["primary-1", "cross-check"]);
+    expect(receipt.snapshot?.missingEvidence).not.toContain("cross_check_market_data_provider");
+  });
+
   it("reserves a bounded source slot for required official evidence", async () => {
     const receipt = await runFinanceRealtimeRefresh({
       request,

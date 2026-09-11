@@ -128,6 +128,7 @@ export type FinanceResearchBatchEvidencePacket = Readonly<{
   decisionMode: "research_only";
   correlationId: string;
   asOf: string;
+  asOfMode?: FinanceAsOfMode;
   useCase: string;
   status: "completed" | "partial" | "blocked" | "cancelled" | "timed_out";
   jobs: readonly FinanceResearchBatchJob[];
@@ -685,6 +686,7 @@ export async function runFinanceResearchBatch(
     decisionMode: "research_only",
     correlationId,
     asOf,
+    ...(options.asOfMode === undefined ? {} : { asOfMode: options.asOfMode }),
     useCase,
     status,
     jobs,

@@ -201,6 +201,21 @@ function selectAdapters(
   requireOfficialReference: boolean | undefined,
 ): FinanceRealtimeSourceAdapter[] {
   const selected = candidates.slice(0, maxSources);
+  const crossCheck = candidates.find(
+    (adapter) => adapter.providerRole === "cross_check_market_data",
+  );
+  if (
+    crossCheck &&
+    maxSources > 1 &&
+    !selected.some((adapter) => adapter.providerRole === "cross_check_market_data")
+  ) {
+    const replaceIndex = selected.findLastIndex(
+      (adapter) => adapter.providerRole === "primary_market_data",
+    );
+    if (replaceIndex >= 0) {
+      selected[replaceIndex] = crossCheck;
+    }
+  }
   if (
     !requireOfficialReference ||
     selected.some((adapter) => adapter.providerRole === "official_or_issuer_reference")
@@ -213,7 +228,18 @@ function selectAdapters(
   if (!official) {
     return selected;
   }
-  return [...selected.slice(0, Math.max(0, maxSources - 1)), official];
+  const hasCrossCheck = selected.some(
+    (adapter) => adapter.providerRole === "cross_check_market_data",
+  );
+  const replaceIndex = selected.findLastIndex((adapter) =>
+    hasCrossCheck && maxSources >= 3
+      ? adapter.providerRole === "primary_market_data"
+      : adapter.providerRole !== "official_or_issuer_reference",
+  );
+  if (replaceIndex >= 0) {
+    selected[replaceIndex] = official;
+  }
+  return selected;
 }
 
 function errorText(error: unknown): string {

@@ -251,6 +251,52 @@ describe("finance research runner", () => {
     );
   });
 
+  it("retains bounded post-cutoff collection evidence in live-now mode", async () => {
+    const postCutoff = "2026-09-08T12:01:00.000Z";
+    const liveCollection: FinanceMarketCollectionAdapter = {
+      ...collectionAdapter(),
+      collect: async (request) => [
+        {
+          itemId: "live-news",
+          collection: request.collection,
+          providerName: "fixture-collection",
+          providerRole: "primary_market_data",
+          sourceFamily: "market_data_api",
+          sourceTimestamp: postCutoff,
+          observedAt: postCutoff,
+          delayStatus: "realtime",
+          sourceUrlOrArtifact: "fixture://live-news",
+          data: { title: "SPY stock market report", tickers: ["SPY"] },
+        },
+      ],
+    };
+    const result = await runFinanceResearchRun({
+      input: {
+        ask: "核对 SPY 新闻",
+        asOf: AS_OF,
+        asOfMode: "live_now",
+        targets: [
+          {
+            id: "live-news",
+            instrument: "SPY",
+            assetClass: "us_equity",
+            realtime: false,
+            collections: [{ collection: "news", freshnessMaxMinutes: 60 }],
+          },
+        ],
+      },
+      liveFetch: true,
+      modelInvoker,
+      qualityModelInvoker: modelInvoker,
+      batchOptions: { ...BATCH_OPTIONS, collectionAdapters: [liveCollection] },
+    });
+
+    expect(result.batch?.asOfMode).toBe("live_now");
+    expect(
+      result.batch?.committeeEvidence.find((item) => item.id === "finance-model:SPY")?.text,
+    ).toContain(postCutoff);
+  });
+
   it.each([
     { ask: "分析未来半年美股趋势和共同暴露。", modules: ["M01", "M02", "M12"], trend: true },
     { ask: "核对 SPY 收盘价和来源时间。", modules: ["M01"], trend: false },

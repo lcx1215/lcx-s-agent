@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import {
   assertIsoTimestamp,
+  assertResearchAsk,
   buildFinanceResearchCommitteeRouting,
   buildFinanceResearchRegistryOptions,
   preflightFinanceResearchReceiptDestination,
@@ -108,6 +109,9 @@ describe("lcx-finance-research-run", () => {
   });
 
   it("rejects oversized plan and live model bounds before execution", async () => {
+    expect(() => assertResearchAsk("x".repeat(32_769))).toThrow(
+      "--ask must be <= 32768 UTF-8 bytes",
+    );
     await expect(runResearch(["--horizon-months", "121"])).rejects.toThrow(
       "--horizon-months must be a positive integer <= 120",
     );
@@ -143,11 +147,24 @@ describe("lcx-finance-research-run", () => {
       ).rejects.toThrow();
       await expect(
         preflightLocalModelPythonRuntime(path.join(workspaceDir, "missing-python")),
-      ).rejects.toThrow("local model Python runtime is not executable");
-      await expect(preflightLocalModelPythonRuntime(process.execPath)).resolves.toBeUndefined();
+      ).rejects.toThrow("local model Python runtime cannot import mlx_lm");
+      await expect(preflightLocalModelPythonRuntime(process.execPath)).rejects.toThrow(
+        "local model Python runtime cannot import mlx_lm",
+      );
     } finally {
       await fs.rm(workspaceDir, { recursive: true, force: true });
     }
+  });
+
+  it("prints help successfully", async () => {
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      ["--import", "tsx", "scripts/operator/lcx-finance-research-run.ts", "--help"],
+      { cwd: repoRoot, env: process.env, maxBuffer: 256 * 1024 },
+    );
+    expect(stdout).toContain(
+      "Usage: node --import tsx scripts/operator/lcx-finance-research-run.ts",
+    );
   });
 
   it("routes committee payloads through the quality-stage adapter contract", () => {

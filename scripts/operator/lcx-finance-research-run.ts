@@ -34,6 +34,7 @@ const DEFAULT_ASK =
   "分析过去六个月加密货币和美股的市场情绪、最近美股上涨的驱动，以及美国中期选举后可能发生什么。";
 const DEFAULT_MODEL_ID = "Qwen/Qwen3-0.6B";
 const MAX_HORIZON_MONTHS = 120;
+const MAX_RESEARCH_ASK_BYTES = 32_768;
 const MAX_MODEL_TOKENS = 16_384;
 const MAX_MODEL_TIMEOUT_MS = 2_147_483_647;
 
@@ -61,38 +62,43 @@ type Options = {
   json: boolean;
 };
 
-function usage(): never {
-  throw new Error(
-    [
-      "Usage: node --import tsx scripts/operator/lcx-finance-research-run.ts [options]",
-      "",
-      "Runs the bounded finance research waterflow: source batch -> committee -> quality -> quarterly output.",
-      "Dry plan is the default and never fetches sources or resolves a model adapter.",
-      "",
-      "Options:",
-      "  --ask TEXT                         natural-language research question",
-      "  --as-of ISO                        observation cutoff (default: now)",
-      `  --horizon-months N                 horizon for the research plan (default: 6, max: ${MAX_HORIZON_MONTHS})`,
-      "  --decision-mode MODE               research_only|strategy_candidate|conditional_trade_candidate",
-      "  --live                              fetch bounded public/provider sources and run the model DAG",
-      "  --skip-quality                     do not run the quality harness (live only)",
-      "  --adapter DIR                      explicit local adapter directory",
-      "  --model MODEL                      local model id (default: Qwen/Qwen3-0.6B)",
-      "  --python PATH                      local model Python runtime",
-      `  --max-tokens N                     bounded local model output tokens (max: ${MAX_MODEL_TOKENS})`,
-      `  --timeout-ms N                     bounded local model timeout (max: ${MAX_MODEL_TIMEOUT_MS})`,
-      "  --allow-model-network              allow the local model runtime to use network",
-      "  --max-api-calls N                  hard source-attempt budget (default: 48, max: 10000)",
-      "  --max-concurrency N                batch concurrency (default: 3)",
-      "  --max-sources-per-job N            source adapters per job (default: 2)",
-      `  --source-timeout-ms N              per-source timeout (default: 30000, max: ${MAX_MODEL_TIMEOUT_MS})`,
-      `  --total-timeout-ms N               whole batch timeout (default: 180000, max: ${MAX_MODEL_TIMEOUT_MS})`,
-      "  --retry-attempts N                 attempts per adapter (default: 1)",
-      "  --include-yahoo-public-sources     explicitly opt in to Yahoo public adapters",
-      "  --write                            write the full receipt to workspace state",
-      "  --json                             emit a bounded JSON summary",
-    ].join("\n"),
-  );
+class HelpRequestedError extends Error {
+  constructor() {
+    super("help requested");
+    this.name = "HelpRequestedError";
+  }
+}
+
+function usage(): string {
+  return [
+    "Usage: node --import tsx scripts/operator/lcx-finance-research-run.ts [options]",
+    "",
+    "Runs the bounded finance research waterflow: source batch -> committee -> quality -> quarterly output.",
+    "Dry plan is the default and never fetches sources or resolves a model adapter.",
+    "",
+    "Options:",
+    `  --ask TEXT                         natural-language research question (max ${MAX_RESEARCH_ASK_BYTES} UTF-8 bytes)`,
+    "  --as-of ISO                        observation cutoff (default: now)",
+    `  --horizon-months N                 horizon for the research plan (default: 6, max: ${MAX_HORIZON_MONTHS})`,
+    "  --decision-mode MODE               research_only|strategy_candidate|conditional_trade_candidate",
+    "  --live                              fetch bounded public/provider sources and run the model DAG",
+    "  --skip-quality                     do not run the quality harness (live only)",
+    "  --adapter DIR                      explicit local adapter directory",
+    "  --model MODEL                      local model id (default: Qwen/Qwen3-0.6B)",
+    "  --python PATH                      local model Python runtime",
+    `  --max-tokens N                     bounded local model output tokens (max: ${MAX_MODEL_TOKENS})`,
+    `  --timeout-ms N                     bounded local model timeout (max: ${MAX_MODEL_TIMEOUT_MS})`,
+    "  --allow-model-network              allow the local model runtime to use network",
+    "  --max-api-calls N                  hard source-attempt budget (default: 48, max: 10000)",
+    "  --max-concurrency N                batch concurrency (default: 3)",
+    "  --max-sources-per-job N            source adapters per job (default: 2)",
+    `  --source-timeout-ms N              per-source timeout (default: 30000, max: ${MAX_MODEL_TIMEOUT_MS})`,
+    `  --total-timeout-ms N               whole batch timeout (default: 180000, max: ${MAX_MODEL_TIMEOUT_MS})`,
+    "  --retry-attempts N                 attempts per adapter (default: 1)",
+    "  --include-yahoo-public-sources     explicitly opt in to Yahoo public adapters",
+    "  --write                            write the full receipt to workspace state",
+    "  --json                             emit a bounded JSON summary",
+  ].join("\n");
 }
 
 function readValue(args: readonly string[], index: number, flag: string): string {
@@ -213,12 +219,23 @@ function parseArgs(args: readonly string[]): Options {
     } else if (arg === "--json") {
       options.json = true;
     } else if (arg === "--help" || arg === "-h") {
-      usage();
+      throw new HelpRequestedError();
     } else {
       throw new Error(`unknown argument: ${arg}`);
     }
   }
   return options;
+}
+
+export function assertResearchAsk(value: string): string {
+  const normalized = value.trim();
+  if (!normalized) {
+    throw new Error("--ask is required");
+  }
+  if (Buffer.byteLength(normalized, "utf8") > MAX_RESEARCH_ASK_BYTES) {
+    throw new Error(`--ask must be <= ${MAX_RESEARCH_ASK_BYTES} UTF-8 bytes`);
+  }
+  return normalized;
 }
 
 const ISO_TIMESTAMP_PATTERN =
@@ -491,12 +508,12 @@ export async function preflightLocalModelPythonRuntime(pythonPath: string): Prom
     throw new Error("local model Python runtime is required");
   }
   try {
-    await execFileAsync(normalized, ["--version"], {
+    await execFileAsync(normalized, ["-c", "import mlx.core, mlx_lm"], {
       maxBuffer: 64 * 1024,
       timeout: 10_000,
     });
   } catch {
-    throw new Error(`local model Python runtime is not executable: ${normalized}`);
+    throw new Error(`local model Python runtime cannot import mlx_lm: ${normalized}`);
   }
 }
 
@@ -536,6 +553,7 @@ export function buildFinanceResearchRegistryOptions(
 async function run(
   options: Options,
 ): Promise<{ receipt: FinanceResearchRunReceipt; written?: unknown }> {
+  const ask = assertResearchAsk(options.ask);
   const asOf = assertIsoTimestamp(options.asOf ?? new Date().toISOString());
   const asOfMode = options.live && options.asOf === undefined ? ("live_now" as const) : undefined;
   if (options.live && !options.write) {
@@ -545,7 +563,7 @@ async function run(
     await preflightFinanceResearchReceiptDestination(asOf);
   }
   const input: FinanceResearchRunInput = {
-    ask: options.ask,
+    ask,
     asOf,
     horizonMonths: options.horizonMonths,
     decisionMode: options.decisionMode,
@@ -634,9 +652,14 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     process.exitCode = await main();
   } catch (error) {
-    process.stderr.write(
-      `lcx finance research run failed: ${error instanceof Error ? error.message : String(error)}\n`,
-    );
-    process.exitCode = 2;
+    if (error instanceof HelpRequestedError) {
+      process.stdout.write(`${usage()}\n`);
+      process.exitCode = 0;
+    } else {
+      process.stderr.write(
+        `lcx finance research run failed: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
+      process.exitCode = 2;
+    }
   }
 }
