@@ -1,4 +1,6 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -62,6 +64,10 @@ describe("canonical LCX identity", () => {
     expect(installer).toContain("npm view lcx-agent dist-tags.beta");
     expect(installer).toContain("https://github.com/lcx1215/lcx-s-agent.git");
     expect(installer).toContain('cat > "$HOME/.local/bin/lcx"');
+    expect(installer).toContain("# LCX Agent git wrapper");
+    expect(installer).toContain("remove_known_lcx_git_wrapper");
+    expect(installer).toContain('while [[ -e "$backup" || -L "$backup" ]]');
+    expect(installer).toContain('mv "$wrapper" "$backup"');
     expect(installer).toContain('"$npm_root/lcx-agent/lcx.mjs"');
     expect(installer).toContain('exec "$HOME/.local/bin/lcx"');
     expect(installer).toContain(
@@ -71,5 +77,35 @@ describe("canonical LCX identity", () => {
       'compatibility_workspace="${HOME}/${legacy_state_dir}/workspace${workspace_suffix}"',
     );
     expect(installer).toContain('if [[ -f "${compatibility_workspace}/BOOTSTRAP.md" ]]');
+  });
+
+  it("removes the generated git wrapper without renaming it as unrelated", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-installer-"));
+    const wrapper = path.join(root, ".local", "bin", "lcx");
+    try {
+      await fs.mkdir(path.dirname(wrapper), { recursive: true });
+      await fs.writeFile(
+        wrapper,
+        '#!/usr/bin/env bash\n# LCX Agent git wrapper\nset -euo pipefail\nexec node "/repo/dist/entry.js" "$@"\n',
+        { mode: 0o700 },
+      );
+      execFileSync(
+        "bash",
+        [
+          "-c",
+          'set -euo pipefail; export OPENCLAW_INSTALL_SH_NO_RUN=1; source "$1"; remove_known_lcx_git_wrapper',
+          "installer-test",
+          path.join(process.cwd(), "scripts/install.sh"),
+        ],
+        { env: { ...process.env, HOME: root }, stdio: "ignore" },
+      );
+      await expect(fs.access(wrapper)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
   });
 });

@@ -104,6 +104,26 @@ describe("device identity migration writer", () => {
     ).rejects.toMatchObject({ code: "LCX_IDENTITY_READ_PATH_MISMATCH" });
   });
 
+  it("rejects a valid but mismatched public/private keypair before writing", async () => {
+    const root = await createRoot();
+    const first = loadOrCreateDeviceIdentity(path.join(root, "first", "identity", "device.json"));
+    const second = loadOrCreateDeviceIdentity(path.join(root, "second", "identity", "device.json"));
+    const migration = createLcxIdentityDeviceMigration({
+      migrationPlan: migrationPlan(root),
+    });
+
+    await expect(
+      writeDeviceIdentityForIdentityMigration(migration, {
+        ...first,
+        deviceId: second.deviceId,
+        publicKeyPem: second.publicKeyPem,
+      }),
+    ).rejects.toMatchObject({ code: "LCX_IDENTITY_DEVICE_KEYPAIR_MISMATCH" });
+    await expect(readFile(migration.writeIdentityPath, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it("rejects config-only authority because device state needs a state root", async () => {
     const root = await createRoot();
 

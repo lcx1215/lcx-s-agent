@@ -38,6 +38,15 @@ async function writeRaw(filePath: string, raw: string): Promise<void> {
   await fs.writeFile(filePath, raw, "utf8");
 }
 
+function sourceReceipt(pathContract: { readPath: string }, raw: string | null) {
+  return {
+    path: pathContract.readPath,
+    exists: raw !== null,
+    hash: raw === null ? null : crypto.createHash("sha256").update(raw).digest("hex"),
+    bytes: raw === null ? null : Buffer.byteLength(raw, "utf8"),
+  };
+}
+
 function migrationPlan(root: string) {
   return resolveLcxIdentityMigrationPlan({
     env: {} as NodeJS.ProcessEnv,
@@ -60,9 +69,13 @@ describe("LCX identity migration writer contract", () => {
             readPath: path.join(root, ".openclaw", `${writer}.state`),
             writePath: path.join(root, ".lcx", `${writer}.state`),
           });
+          if (writer === "config") {
+            await writeRaw(pathContract.readPath, "legacy-source\n");
+          }
           await writeRaw(pathContract.writePath, raw);
           return {
             pathContract,
+            source: sourceReceipt(pathContract, writer === "config" ? "legacy-source\n" : null),
             previous: { exists: false, hash: null, bytes: null },
             next: { hash: nextHash, bytes: Buffer.byteLength(raw, "utf8") },
             rollback: {
@@ -119,6 +132,7 @@ describe("LCX identity migration writer contract", () => {
           const hash = crypto.createHash("sha256").update(raw).digest("hex");
           receipts.push({
             pathContract,
+            source: sourceReceipt(pathContract, null),
             previous: { exists: false, hash: null, bytes: null },
             next: { hash, bytes: Buffer.byteLength(raw, "utf8") },
             rollback: {
@@ -165,6 +179,102 @@ describe("LCX identity migration writer contract", () => {
     });
   });
 
+  it("refuses canonical targets when the compatibility source is missing", async () => {
+    await withTempRoot(async (root) => {
+      const plan = migrationPlan(root);
+      const raw = "canonical-only\n";
+      const receipts = await Promise.all(
+        LCX_IDENTITY_WRITER_NAMES.map(async (writer) => {
+          const pathContract = createLcxIdentityWriterPathContract({
+            writer,
+            migrationPlan: plan,
+            readPath: path.join(root, ".openclaw", `${writer}.state`),
+            writePath: path.join(root, ".lcx", `${writer}.state`),
+          });
+          await writeRaw(pathContract.writePath, raw);
+          return {
+            pathContract,
+            source: sourceReceipt(pathContract, null),
+            previous: { exists: false, hash: null, bytes: null },
+            next: {
+              hash: crypto.createHash("sha256").update(raw).digest("hex"),
+              bytes: Buffer.byteLength(raw, "utf8"),
+            },
+            rollback: {
+              path: pathContract.rollbackPath,
+              strategy: "remove-written-target" as const,
+            },
+            audit: { status: "written" as const },
+          };
+        }),
+      );
+
+      await expect(
+        writeLcxIdentityMigrationCompletionMarker({
+          migrationPlan: plan,
+          requiredTargets: receipts.map(({ pathContract }) =>
+            createLcxIdentityMigrationTarget(pathContract),
+          ),
+          writerReceipts: receipts,
+        }),
+      ).rejects.toMatchObject({ code: "LCX_IDENTITY_COMPLETION_MIGRATION_UNPROVEN" });
+    });
+  });
+
+  it("rejects a receipt whose declared compatibility source is unrelated to the live source", async () => {
+    await withTempRoot(async (root) => {
+      const plan = migrationPlan(root);
+      const raw = "canonical-only\n";
+      const receipts = await Promise.all(
+        LCX_IDENTITY_WRITER_NAMES.map(async (writer) => {
+          const pathContract = createLcxIdentityWriterPathContract({
+            writer,
+            migrationPlan: plan,
+            readPath: path.join(root, ".openclaw", `${writer}.state`),
+            writePath: path.join(root, ".lcx", `${writer}.state`),
+          });
+          await writeRaw(pathContract.writePath, raw);
+          const source =
+            writer === "config"
+              ? {
+                  path: pathContract.readPath,
+                  exists: true,
+                  hash: crypto.createHash("sha256").update(raw).digest("hex"),
+                  bytes: Buffer.byteLength(raw, "utf8"),
+                }
+              : sourceReceipt(pathContract, null);
+          if (writer === "config") {
+            await writeRaw(pathContract.readPath, "unrelated-legacy-state\n");
+          }
+          return {
+            pathContract,
+            source,
+            previous: { exists: false, hash: null, bytes: null },
+            next: {
+              hash: crypto.createHash("sha256").update(raw).digest("hex"),
+              bytes: Buffer.byteLength(raw, "utf8"),
+            },
+            rollback: {
+              path: pathContract.rollbackPath,
+              strategy: "remove-written-target" as const,
+            },
+            audit: { status: "written" as const },
+          };
+        }),
+      );
+
+      await expect(
+        writeLcxIdentityMigrationCompletionMarker({
+          migrationPlan: plan,
+          requiredTargets: receipts.map(({ pathContract }) =>
+            createLcxIdentityMigrationTarget(pathContract),
+          ),
+          writerReceipts: receipts,
+        }),
+      ).rejects.toMatchObject({ code: "LCX_IDENTITY_COMPLETION_SOURCE_STALE" });
+    });
+  });
+
   it("tracks distinct targets even when adapters share a writer family", async () => {
     await withTempRoot(async (root) => {
       const plan = migrationPlan(root);
@@ -189,9 +299,16 @@ describe("LCX identity migration writer contract", () => {
       ];
       const receipts = await Promise.all(
         contracts.map(async (pathContract) => {
+          if (pathContract.writer === "config") {
+            await writeRaw(pathContract.readPath, "legacy-source\n");
+          }
           await writeRaw(pathContract.writePath, raw);
           return {
             pathContract,
+            source: sourceReceipt(
+              pathContract,
+              pathContract.writer === "config" ? "legacy-source\n" : null,
+            ),
             previous: { exists: false, hash: null, bytes: null },
             next: {
               hash: crypto.createHash("sha256").update(raw).digest("hex"),

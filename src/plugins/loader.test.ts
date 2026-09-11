@@ -215,11 +215,15 @@ function createPluginSdkAliasFixture() {
   const root = makeTempDir();
   const srcFile = path.join(root, "src", "plugin-sdk", "index.ts");
   const distFile = path.join(root, "dist", "plugin-sdk", "index.js");
+  const srcQueueFile = path.join(root, "src", "plugin-sdk", "keyed-async-queue.ts");
+  const distQueueFile = path.join(root, "dist", "plugin-sdk", "keyed-async-queue.js");
   fs.mkdirSync(path.dirname(srcFile), { recursive: true });
   fs.mkdirSync(path.dirname(distFile), { recursive: true });
   fs.writeFileSync(srcFile, "export {};\n", "utf-8");
   fs.writeFileSync(distFile, "export {};\n", "utf-8");
-  return { root, srcFile, distFile };
+  fs.writeFileSync(srcQueueFile, "export {};\n", "utf-8");
+  fs.writeFileSync(distQueueFile, "export {};\n", "utf-8");
+  return { root, srcFile, distFile, srcQueueFile, distQueueFile };
 }
 
 afterEach(() => {
@@ -1017,7 +1021,7 @@ describe("loadOpenClawPlugins", () => {
   });
 
   it("prefers src plugin-sdk alias when loader runs from src in non-production", () => {
-    const { root, srcFile } = createPluginSdkAliasFixture();
+    const { root, srcFile, srcQueueFile } = createPluginSdkAliasFixture();
 
     const resolved = withEnv({ NODE_ENV: undefined }, () =>
       __testing.resolvePluginSdkAliasFile({
@@ -1027,5 +1031,12 @@ describe("loadOpenClawPlugins", () => {
       }),
     );
     expect(resolved).toBe(srcFile);
+    expect(
+      __testing.resolvePluginSdkAliasFile({
+        srcFile: "keyed-async-queue.ts",
+        distFile: "keyed-async-queue.js",
+        modulePath: path.join(root, "src", "plugins", "loader.ts"),
+      }),
+    ).toBe(srcQueueFile);
   });
 });

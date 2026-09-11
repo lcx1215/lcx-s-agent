@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import nodeFs from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -119,6 +120,14 @@ describe("LCX identity migration config I/O", () => {
         context.writeOptions,
       );
 
+      expect(receipt.source).toMatchObject({
+        path: legacyPath,
+        exists: true,
+        bytes: Buffer.byteLength(legacyRaw, "utf8"),
+      });
+      expect(receipt.source?.hash).toBe(
+        crypto.createHash("sha256").update(legacyRaw).digest("hex"),
+      );
       expect(receipt.previous.exists).toBe(false);
       expect(receipt.rollback.strategy).toBe("remove-written-target");
       expect(await fs.readFile(legacyPath, "utf8")).toBe(legacyRaw);
