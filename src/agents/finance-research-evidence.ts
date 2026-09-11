@@ -213,12 +213,18 @@ export function buildFinanceResearchModelEvidence(
       id: `finance-model-coverage:${batch.correlationId}`,
       source: "finance-research-batch-runner",
       timestamp: batch.asOf,
-      text: `Research only. Frozen asOf=${batch.asOf}. ${batch.jobs.length} jobs, ${batch.status}. Status counts: ${JSON.stringify(
+      text: `Research only. ${
+        batch.asOfMode === "live_now"
+          ? `Live-now collection-time evidence anchored at asOf=${batch.asOf}; source timestamps may be later than asOf only within the bounded live-now skew.`
+          : `Frozen asOf=${batch.asOf}.`
+      } ${batch.jobs.length} jobs, ${batch.status}. Status counts: ${JSON.stringify(
         batch.jobs.reduce<Record<string, number>>((counts, job) => {
           counts[job.status] = (counts[job.status] ?? 0) + 1;
           return counts;
         }, {}),
-      )}. Facts below are deterministic summaries of frozen receipts, not model conclusions. Needs_review values cannot be promoted to verified current evidence. Original receipts remain available by job ID.`,
+      )}. Facts below are deterministic summaries of ${
+        batch.asOfMode === "live_now" ? "collection-time receipts" : "frozen receipts"
+      }, not model conclusions. Needs_review values cannot be promoted to verified current evidence. Original receipts remain available by job ID.`,
     },
   ];
   for (const [instrument, jobs] of groups) {
@@ -237,7 +243,9 @@ export function buildFinanceResearchModelEvidence(
       if (!job.receipt) {
         continue;
       }
-      const prefix = `${job.jobId} (${job.status})`;
+      const prefix = `${job.jobId} (${job.status}; ${
+        batch.asOfMode === "live_now" ? "collection-time evidence" : "frozen-asOf evidence"
+      })`;
       if ("records" in job.receipt) {
         const records = job.receipt.records;
         const collection = "collection" in job.request ? job.request.collection : undefined;

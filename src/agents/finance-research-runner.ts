@@ -744,6 +744,7 @@ export function createFinanceCommitteeExecutor(): LogicalAgentExecutor<
       evidence: shared.evidence,
       sharedContext: {
         asOf: shared.asOf,
+        ...(shared.asOfMode === undefined ? {} : { asOfMode: shared.asOfMode }),
         decisionMode: shared.decisionMode,
         userConstraints: shared.userConstraints,
       },
@@ -1191,6 +1192,7 @@ export async function runFinanceResearchRun(
     const committeeInput: FinanceCommitteeInput = {
       ask,
       asOf,
+      ...(options.input.asOfMode === undefined ? {} : { asOfMode: options.input.asOfMode }),
       decisionMode,
       evidence,
       userConstraints: {
@@ -1242,6 +1244,7 @@ export async function runFinanceResearchRun(
         evidence: qualityEvidence(batch),
         sharedContext: {
           asOf,
+          ...(options.input.asOfMode === undefined ? {} : { asOfMode: options.input.asOfMode }),
           horizonMonths,
           decisionMode,
           sourceStatus: batch.status,

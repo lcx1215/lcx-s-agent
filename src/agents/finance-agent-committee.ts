@@ -1,3 +1,4 @@
+import type { FinanceAsOfMode } from "./finance-data-gateway.js";
 import type { FinanceDecisionMode } from "./finance-decision-policy.js";
 import { modelRoutingTaskTimeoutMs } from "./logical-agent-model-router.js";
 import {
@@ -24,6 +25,7 @@ export type FinanceCommitteeEvidence = Readonly<{
 export type FinanceCommitteeInput = Readonly<{
   ask: string;
   asOf: string;
+  asOfMode?: FinanceAsOfMode;
   decisionMode?: FinanceDecisionMode;
   evidence: readonly FinanceCommitteeEvidence[];
   userConstraints?: Readonly<Record<string, unknown>>;
@@ -34,6 +36,7 @@ export type FinanceCommitteeSharedContext = LogicalAgentSharedContext &
     schemaVersion: typeof FINANCE_COMMITTEE_CONTEXT_SCHEMA;
     ask: string;
     asOf: string;
+    asOfMode?: FinanceAsOfMode;
     decisionMode: FinanceDecisionMode;
     evidence: readonly FinanceCommitteeEvidence[];
     userConstraints: Readonly<Record<string, unknown>>;
@@ -111,6 +114,7 @@ export function buildFinanceCommitteeContext(
     schemaVersion: FINANCE_COMMITTEE_CONTEXT_SCHEMA,
     ask,
     asOf,
+    ...(input.asOfMode === undefined ? {} : { asOfMode: input.asOfMode }),
     decisionMode: input.decisionMode ?? "research_only",
     evidence: Object.freeze(evidence),
     userConstraints: cloneRecord(input.userConstraints ?? {}),

@@ -271,6 +271,7 @@ describe("finance research runner", () => {
 
   it("retains bounded post-cutoff collection evidence in live-now mode", async () => {
     const postCutoff = "2026-09-08T12:01:00.000Z";
+    const requests: unknown[] = [];
     const liveCollection: FinanceMarketCollectionAdapter = {
       ...collectionAdapter(),
       collect: async (request) => [
@@ -304,15 +305,34 @@ describe("finance research runner", () => {
         ],
       },
       liveFetch: true,
-      modelInvoker,
-      qualityModelInvoker: modelInvoker,
+      modelInvoker: async (request) => {
+        requests.push(request);
+        return modelInvoker(request);
+      },
+      qualityModelInvoker: async (request) => {
+        requests.push(request);
+        return modelInvoker(request);
+      },
       batchOptions: { ...BATCH_OPTIONS, collectionAdapters: [liveCollection] },
     });
 
     expect(result.batch?.asOfMode).toBe("live_now");
+    expect(result.batch?.committeeEvidence[0]?.text).toContain("collection-time evidence");
     expect(
       result.batch?.committeeEvidence.find((item) => item.id === "finance-model:SPY")?.text,
     ).toContain(postCutoff);
+    expect(
+      requests.filter(
+        (request): request is { sharedContext?: { asOfMode?: string } } =>
+          typeof request === "object" && request !== null && "sharedContext" in request,
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sharedContext: expect.objectContaining({ asOfMode: "live_now" }),
+        }),
+      ]),
+    );
   });
 
   it.each([
