@@ -44,6 +44,18 @@ function number(value: unknown): number | undefined {
   }
   return value;
 }
+
+function macroValue(
+  data: Readonly<Record<string, unknown>>,
+): { field: string; value: number } | undefined {
+  for (const field of ["value", "tot_pub_debt_out_amt", "avg_interest_rate_amt"]) {
+    const value = number(data[field]);
+    if (value !== undefined) {
+      return { field, value };
+    }
+  }
+  return undefined;
+}
 const rounded = (value: number) => Math.round(value * 1_000) / 1_000;
 
 export function rankFinanceWindowDrawdowns(
@@ -221,15 +233,17 @@ export function buildFinanceResearchModelEvidence(
           const valid = records
             .filter(
               (r) =>
-                number(r.data.value) !== undefined &&
+                macroValue(r.data) !== undefined &&
                 Date.parse(r.sourceTimestamp) <= Date.parse(batch.asOf),
             )
             .toSorted((a, b) => a.sourceTimestamp.localeCompare(b.sourceTimestamp));
           const last = valid.at(-1),
             previous = valid.at(-2);
           if (last) {
+            const latest = macroValue(last.data);
+            const prior = previous ? macroValue(previous.data) : undefined;
             facts.push(
-              `${prefix}: ${typeof last.data.seriesId === "string" ? last.data.seriesId : instrument}, latest value=${String(number(last.data.value) ?? "unknown")}, observation period=${last.sourceTimestamp}; previous=${String(number(previous?.data.value) ?? "unknown")} (${previous?.sourceTimestamp ?? "unknown"}). Observation period is not publication time; units and revisions need source review.`,
+              `${prefix}: ${typeof last.data.seriesId === "string" ? last.data.seriesId : instrument}, latest ${latest?.field ?? "value"}=${String(latest?.value ?? "unknown")}, observation period=${last.sourceTimestamp}; previous=${String(prior?.value ?? "unknown")} (${previous?.sourceTimestamp ?? "unknown"}). Observation period is not publication time; units and revisions need source review.`,
             );
           }
         } else if (collection === "news") {

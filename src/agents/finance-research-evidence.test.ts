@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { FinanceMarketCollectionItem } from "./finance-market-collection-registry.js";
+import type { FinanceResearchBatchEvidencePacket } from "./finance-research-batch-runner.js";
 import {
+  buildFinanceResearchModelEvidence,
   summarizeFinancePriceHistory,
   findUncitedFinanceInstruments,
   rankFinanceWindowDrawdowns,
@@ -99,5 +101,50 @@ describe("finance price arithmetic before model prompting", () => {
     );
     expect(result.invalid).toBe(3);
     expect(result.summaries[0]?.observations).toBe(1);
+  });
+
+  it("keeps Treasury provider-specific numeric fields in model evidence", () => {
+    const packet = {
+      schemaVersion: "lcx_finance_research_batch_v1",
+      boundary: "finance_research_batch_research_only",
+      decisionMode: "research_only",
+      correlationId: "treasury-evidence",
+      asOf: "2026-09-10T00:00:00Z",
+      useCase: "test",
+      status: "completed",
+      committeeEvidence: [],
+      budget: {},
+      jobs: [
+        {
+          request: {
+            instrument: "debt_to_penny",
+            assetClass: "macro_series",
+            collection: "macro_series",
+            asOf: "2026-09-10T00:00:00Z",
+          },
+          status: "ready",
+          receipt: {
+            records: [
+              {
+                itemId: "debt-1",
+                collection: "macro_series",
+                providerName: "treasury-fiscal-debt-to-penny",
+                providerRole: "official_or_issuer_reference",
+                sourceFamily: "official_macro_data",
+                sourceTimestamp: "2026-09-04T00:00:00Z",
+                observedAt: "2026-09-04T00:00:00Z",
+                delayStatus: "official_lagged",
+                sourceUrlOrArtifact: "https://fiscaldata.treasury.gov",
+                data: { record_date: "2026-09-04", tot_pub_debt_out_amt: "100" },
+              },
+            ],
+          },
+        },
+      ],
+    } as unknown as FinanceResearchBatchEvidencePacket;
+
+    expect(buildFinanceResearchModelEvidence(packet).at(-1)?.text).toContain(
+      "latest tot_pub_debt_out_amt=100",
+    );
   });
 });

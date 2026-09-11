@@ -77,9 +77,13 @@ describe("finance_chart_analysis tool", () => {
     const details = result.details as {
       status: string;
       analysis: { features: { sma20?: number } };
+      sourceReceipt: { missingEvidence?: readonly string[] };
       receiptPath: string;
     };
-    expect(details.status).toBe("ready");
+    expect(details.status).toBe("needs_review");
+    expect(details.sourceReceipt).toEqual(
+      expect.objectContaining({ missingEvidence: ["supplied_bars_provenance"] }),
+    );
     expect(details.analysis.features.sma20).toBeCloseTo(110.5, 6);
     await expect(fs.stat(path.join(workspaceDir, details.receiptPath))).resolves.toBeDefined();
   });

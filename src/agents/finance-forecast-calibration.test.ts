@@ -81,4 +81,17 @@ describe("forecast calibration", () => {
       })[0],
     ).toMatchObject({ status: "scored", evidenceId: "e" });
   });
+
+  it("does not score an observation that arrives outside the checkpoint window", () => {
+    expect(
+      calibrateFinanceForecasts({
+        ...input,
+        observedAt: "2026-12-02T00:00:00Z",
+        evidence: [{ ...input.evidence[0], sourceTimestamp: "2026-12-01T00:00:00Z" }],
+      })[0],
+    ).toMatchObject({
+      status: "unscored",
+      reason: "unique_observation_on_or_immediately_after_checkpoint_required",
+    });
+  });
 });

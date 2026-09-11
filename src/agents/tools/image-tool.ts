@@ -223,6 +223,7 @@ async function runImagePrompt(params: {
   modelOverride?: string;
   prompt: string;
   images: Array<{ base64: string; mimeType: string }>;
+  signal?: AbortSignal;
 }): Promise<{
   text: string;
   provider: string;
@@ -244,6 +245,7 @@ async function runImagePrompt(params: {
           images: params.images,
           prompt: params.prompt,
           modelId,
+          signal: params.signal,
         });
         return {
           text: localResult.text,
@@ -352,7 +354,7 @@ export function createImageTool(options?: {
       maxBytesMb: Type.Optional(Type.Number()),
       maxImages: Type.Optional(Type.Number()),
     }),
-    execute: async (_toolCallId, args) => {
+    execute: async (_toolCallId, args, signal) => {
       const record = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
 
       // MARK: - Normalize image + images input and dedupe while preserving order
@@ -522,6 +524,7 @@ export function createImageTool(options?: {
         modelOverride,
         prompt: promptRaw,
         images: loadedImages.map((img) => ({ base64: img.base64, mimeType: img.mimeType })),
+        signal,
       });
 
       const imageDetails =

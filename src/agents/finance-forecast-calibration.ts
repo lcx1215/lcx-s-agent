@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+const MAX_CHECKPOINT_OBSERVATION_LAG_MS = 7 * 24 * 60 * 60 * 1_000;
+
 /** Freeze the event definition before its observation window begins. */
 export const FinanceForecast = z
   .object({
@@ -25,12 +27,14 @@ function checkpointObservation(
     dueDate.getUTCMonth(),
     dueDate.getUTCDate(),
   );
+  const checkpointEnd = checkpointStart + MAX_CHECKPOINT_OBSERVATION_LAG_MS;
   const candidates = rows
     .map((row) => ({ row, timestamp: Date.parse(row.sourceTimestamp) }))
     .filter(
       (entry) =>
         Number.isFinite(entry.timestamp) &&
         entry.timestamp >= checkpointStart &&
+        entry.timestamp <= checkpointEnd &&
         entry.timestamp <= observedAt,
     )
     .toSorted((a, b) => a.timestamp - b.timestamp);

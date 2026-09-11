@@ -76,6 +76,29 @@ describe("finance strategy method benchmark math", () => {
     const evaluated = __test.evaluateSeries("SPY", rowsBySymbol, dates, 20, 1, 0.0015, "buy_hold");
     expect(evaluated.metric.turnover).toBe(2);
   });
+
+  it("aggregates buy-and-hold wealth instead of averaging daily returns", () => {
+    const dates = ["2026-01-01", "2026-01-02", "2026-01-03"];
+    const rowsBySymbol = {
+      A: dates.map((date, index) => ({
+        date,
+        close: [100, 110, 110][index],
+        sourceTimestamp: `${date}T13:30:00.000Z`,
+      })),
+      B: dates.map((date, index) => ({
+        date,
+        close: [100, 100, 200][index],
+        sourceTimestamp: `${date}T13:30:00.000Z`,
+      })),
+    };
+    const series = Object.keys(rowsBySymbol).map((symbol) =>
+      __test.evaluateSeries(symbol, rowsBySymbol, dates, 20, 1, 0, "buy_hold"),
+    );
+
+    const portfolio = __test.aggregateSeries(series, "buy_hold");
+    expect(portfolio.metric.totalReturn).toBeCloseTo(0.55, 8);
+    expect(portfolio.dailyReturns[1]).toBeCloseTo(0.47619047619, 8);
+  });
 });
 
 describe("strategy receipt evidence boundaries", () => {

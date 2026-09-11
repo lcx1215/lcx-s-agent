@@ -157,6 +157,20 @@ function collectionSourceSummary(receipt: {
   };
 }
 
+function hasSuppliedBarProvenance(records: readonly FinanceChartRecord[]): boolean {
+  return (
+    records.length > 0 &&
+    records.every((record) => {
+      const provider = record.providerName;
+      const source = record.sourceUrlOrArtifact;
+      return (
+        (typeof provider === "string" && provider.trim().length > 0) ||
+        (typeof source === "string" && source.trim().length > 0)
+      );
+    })
+  );
+}
+
 function toolContentText(result: unknown): string {
   if (!result || typeof result !== "object" || Array.isArray(result)) {
     return "";
@@ -317,6 +331,20 @@ export function createFinanceChartAnalysisTool(options?: {
           };
         }
 
+        if (params.bars && !hasSuppliedBarProvenance(sourceRecords)) {
+          sourceReceipt = {
+            ...sourceReceipt,
+            missingEvidence: [
+              ...((sourceReceipt.missingEvidence as string[] | undefined) ?? []),
+              "supplied_bars_provenance",
+            ],
+            requiredNextSteps: [
+              ...((sourceReceipt.requiredNextSteps as string[] | undefined) ?? []),
+              "attach_provider_or_source_url_to_supplied_bars",
+            ],
+          };
+        }
+
         const normalization = normalizeFinanceChartBars(sourceRecords);
         const analysis =
           normalization.bars.length >= 2
@@ -404,7 +432,9 @@ export function createFinanceChartAnalysisTool(options?: {
           : null;
 
         const status = analysis
-          ? collectionStatus === "needs_review" || normalization.droppedCount > 0
+          ? collectionStatus === "needs_review" ||
+            normalization.droppedCount > 0 ||
+            (collectionStatus === "provided_input" && !hasSuppliedBarProvenance(sourceRecords))
             ? "needs_review"
             : "ready"
           : imagePayload

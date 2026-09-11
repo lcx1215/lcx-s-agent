@@ -89,6 +89,8 @@ export async function bindFinanceCaseFollowups(params: {
       desired.payload.kind === "agentTurn" &&
       job.payload.message === desired.payload.message &&
       job.sessionTarget === "isolated" &&
+      job.wakeMode === desired.wakeMode &&
+      job.deleteAfterRun === desired.deleteAfterRun &&
       job.agentId === params.agentId &&
       job.delivery?.mode === "none";
     bindings.push({

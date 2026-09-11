@@ -265,6 +265,20 @@ describe("quality harness", () => {
     ).toMatchObject({ passed: false });
   });
 
+  it("rejects portfolio sizing language in research-only mode", async () => {
+    const result = await runQualityHarness({
+      request: financeRequest,
+      maxAttempts: 1,
+      modelInvoker: demoInvoker({ answer: "Allocate 50% of your portfolio to NVDA." }),
+      verify: async () => ({ status: "passed", summary: "should not run", details: [] }),
+    });
+
+    expect(result.status).toBe("quality-failed");
+    expect(
+      result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
+    ).toMatchObject({ passed: false });
+  });
+
   it("allows a conditional candidate while still rejecting execution claims", async () => {
     const candidate = await runQualityHarness({
       request: {

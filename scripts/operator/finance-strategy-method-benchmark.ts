@@ -228,10 +228,30 @@ function evaluateSeries(
   return { dailyReturns, positions, metric: summarize(dailyReturns, positions) };
 }
 
-function aggregateSeries(series: readonly EvaluatedSeries[]): EvaluatedSeries {
-  const dailyReturns = Array.from({ length: series[0]?.dailyReturns.length ?? 0 }, (_, index) =>
-    mean(series.map((item) => item.dailyReturns[index] ?? 0)),
-  );
+function aggregateSeries(
+  series: readonly EvaluatedSeries[],
+  method: MethodName = "trend_breadth_gate",
+): EvaluatedSeries {
+  const dailyReturns =
+    method === "buy_hold"
+      ? (() => {
+          const wealth = series.map(() => 1);
+          let previousPortfolioWealth = 1;
+          const returns: number[] = [];
+          for (let index = 0; index < (series[0]?.dailyReturns.length ?? 0); index += 1) {
+            for (const [seriesIndex, item] of series.entries()) {
+              wealth[seriesIndex] =
+                (wealth[seriesIndex] ?? 1) * (1 + (item.dailyReturns[index] ?? 0));
+            }
+            const portfolioWealth = mean(wealth);
+            returns.push(portfolioWealth / previousPortfolioWealth - 1);
+            previousPortfolioWealth = portfolioWealth;
+          }
+          return returns;
+        })()
+      : Array.from({ length: series[0]?.dailyReturns.length ?? 0 }, (_, index) =>
+          mean(series.map((item) => item.dailyReturns[index] ?? 0)),
+        );
   const positions = Array.from({ length: series[0]?.positions.length ?? 0 }, (_, index) =>
     mean(series.map((item) => item.positions[index] ?? 0)),
   );
@@ -319,6 +339,7 @@ function evaluateStressMatrix(
               method as MethodName,
             ),
           ),
+          method as MethodName,
         ),
       ]),
     ) as Record<MethodName, EvaluatedSeries>;
@@ -462,7 +483,7 @@ export async function runBenchmark(args: readonly string[] = process.argv.slice(
     ]),
   ) as Record<MethodName, Record<string, EvaluatedSeries>>;
   const portfolio = Object.fromEntries(
-    methods.map((method) => [method, aggregateSeries(Object.values(evaluated[method]))]),
+    methods.map((method) => [method, aggregateSeries(Object.values(evaluated[method]), method)]),
   ) as Record<MethodName, EvaluatedSeries>;
   const comparisons = Object.fromEntries(
     options.symbols.map((symbol) => {
@@ -552,4 +573,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     });
 }
 
-export const __test = { evaluateSeries, summarize, periodMetrics, parseOptions, medianValue };
+export const __test = {
+  aggregateSeries,
+  evaluateSeries,
+  summarize,
+  periodMetrics,
+  parseOptions,
+  medianValue,
+};
