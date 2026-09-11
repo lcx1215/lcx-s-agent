@@ -4,7 +4,10 @@ import path from "node:path";
 import { Type } from "@sinclair/typebox";
 import { loadConfig } from "../../config/config.js";
 import type { OpenClawConfig } from "../../config/config.js";
-import { createFinanceModelWorkflow } from "../finance-model-workflow.js";
+import {
+  createFinanceModelWorkflow,
+  type FinanceWorkflowSlotModels,
+} from "../finance-model-workflow.js";
 import { runFinanceResearchRun } from "../finance-research-runner.js";
 import { resolveWorkspaceRoot } from "../workspace-dir.js";
 import { jsonResult, readStringParam, ToolInputError, type AnyAgentTool } from "./common.js";
@@ -36,6 +39,7 @@ function boundedInteger(
 export function createFinanceResearchRunTool(options?: {
   workspaceDir?: string;
   config?: OpenClawConfig;
+  slotModels?: FinanceWorkflowSlotModels;
   executeResearch?: typeof runFinanceResearchRun;
 }): AnyAgentTool {
   const workspace = resolveWorkspaceRoot(options?.workspaceDir);
@@ -79,6 +83,7 @@ export function createFinanceResearchRunTool(options?: {
         const workflow =
           params.live === true
             ? createFinanceModelWorkflow(options?.config ?? loadConfig(), {
+                slotModels: options?.slotModels,
                 maxCalls: maxModelCalls,
                 maxTokens: 8_192,
               })

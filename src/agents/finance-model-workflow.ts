@@ -16,6 +16,12 @@ import {
 import type { LogicalAgentId } from "./logical-agent-pool.js";
 import { parseStageOutput, type QualityHarnessModelRequest } from "./quality-harness-contract.js";
 
+export type FinanceWorkflowSlotModels = Readonly<{
+  fast: string;
+  reasoning: string;
+  review: string;
+}>;
+
 export type FinanceWorkflowReasoningPolicy = "provider_default" | "bounded_workflow";
 
 function financeRoleExecutionContract(
@@ -41,18 +47,29 @@ function financeRoleExecutionContract(
 /** Configuration order supplies candidates, not a claim of measured model quality. */
 export function inspectFinanceModelWorkflow(
   cfg: OpenClawConfig,
-  options: { reasoningPolicy?: FinanceWorkflowReasoningPolicy; timeoutMs?: number } = {},
+  options: {
+    reasoningPolicy?: FinanceWorkflowReasoningPolicy;
+    timeoutMs?: number;
+    slotModels?: FinanceWorkflowSlotModels;
+  } = {},
 ) {
   const selection = cfg.agents?.defaults?.model;
-  const primary = typeof selection === "string" ? selection : selection?.primary;
+  const primary =
+    options.slotModels?.fast ?? (typeof selection === "string" ? selection : selection?.primary);
   if (!primary) {
     throw new Error("finance workflow requires a configured primary model");
   }
   const models = [
-    ...new Set([primary, ...(typeof selection === "object" ? (selection.fallbacks ?? []) : [])]),
+    ...new Set(
+      options.slotModels
+        ? Object.values(options.slotModels)
+        : [primary, ...(typeof selection === "object" ? (selection.fallbacks ?? []) : [])],
+    ),
   ];
-  const reasoning = models.find((model) => model !== primary) ?? primary;
+  const reasoning =
+    options.slotModels?.reasoning ?? models.find((model) => model !== primary) ?? primary;
   const review =
+    options.slotModels?.review ??
     models.find((model) => model.split("/")[0] !== reasoning.split("/")[0]) ??
     models.find((model) => model !== reasoning) ??
     reasoning;
@@ -139,6 +156,7 @@ export function createFinanceModelWorkflow(
     maxTokens?: number;
     timeoutMs?: number;
     reasoningPolicy?: FinanceWorkflowReasoningPolicy;
+    slotModels?: FinanceWorkflowSlotModels;
     adapterFactory?: typeof createConfiguredFinanceModelAdapter;
   } = {},
 ) {

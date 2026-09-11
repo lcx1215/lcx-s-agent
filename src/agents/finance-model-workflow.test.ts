@@ -32,6 +32,15 @@ const review = {
   },
 };
 describe("ontology backed finance workflow", () => {
+  it("honors persistent slots without turning unrelated fallbacks into authors", () => {
+    const manifest = inspectFinanceModelWorkflow(cfg, {
+      slotModels: { fast: "a/fast", reasoning: "a/fast", review: "b/review" },
+    });
+    expect(manifest.models).toEqual(["a/fast", "b/review"]);
+    expect(manifest.slots).toMatchObject({ reasoning: "a/fast", review: "b/review" });
+    expect(manifest.distinctDraftAndReviewModels).toBe(true);
+  });
+
   it("deduplicates configured candidates and separates draft from review without inferring quality", () => {
     const manifest = inspectFinanceModelWorkflow(cfg);
     expect(manifest.models).toHaveLength(3);

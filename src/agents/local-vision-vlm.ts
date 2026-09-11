@@ -238,7 +238,9 @@ export async function runLocalVisionVlm(params: {
   pythonPath?: string;
   timeoutMs?: number;
   maxTokens?: number;
+  signal?: AbortSignal;
 }): Promise<{ text: string; model: string; pythonPath: string }> {
+  params.signal?.throwIfAborted();
   rejectCloudLocalVisionRuntime();
   if (params.images.length === 0) {
     throw new Error("local vision requires at least one image");
@@ -288,6 +290,7 @@ export async function runLocalVisionVlm(params: {
         cwd: tempDir,
         env: { ...process.env, PYTHONUNBUFFERED: "1" },
         timeout: timeoutMs,
+        signal: params.signal,
         maxBuffer: 2 * 1024 * 1024,
       });
       stdout = result.stdout;
