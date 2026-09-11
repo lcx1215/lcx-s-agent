@@ -141,6 +141,12 @@ function options(fetchImpl: FetchImpl = fixtureFetch): FinanceResearchBatchOptio
 afterEach(() => vi.useRealTimers());
 
 describe("finance research batch runner", () => {
+  it("propagates the live-now mode to every source request", async () => {
+    const packet = await runFinanceResearchBatch({ ...options(), asOfMode: "live_now" });
+
+    expect(packet.jobs.every((job) => job.request.asOfMode === "live_now")).toBe(true);
+  });
+
   it("fans out mixed targets and preserves per-job provenance in committee-compatible evidence", async () => {
     const fetchImpl = vi.fn(fixtureFetch);
     const packet = await runFinanceResearchBatch(options(fetchImpl));

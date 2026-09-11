@@ -481,6 +481,7 @@ async function run(
   options: Options,
 ): Promise<{ receipt: FinanceResearchRunReceipt; written?: unknown }> {
   const asOf = assertIsoTimestamp(options.asOf ?? new Date().toISOString());
+  const asOfMode = options.live && options.asOf === undefined ? ("live_now" as const) : undefined;
   if (options.live && !options.write) {
     throw new Error("--write is required with --live to persist the full research receipt");
   }
@@ -489,6 +490,7 @@ async function run(
     asOf,
     horizonMonths: options.horizonMonths,
     decisionMode: options.decisionMode,
+    ...(asOfMode === undefined ? {} : { asOfMode }),
   };
   const { realtimeRegistryOptions, collectionRegistryOptions } =
     buildFinanceResearchRegistryOptions(options.includeYahooPublicSources);

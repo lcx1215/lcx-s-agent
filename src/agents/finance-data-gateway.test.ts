@@ -99,4 +99,29 @@ describe("finance data gateway cross-source audit", () => {
       true,
     );
   });
+
+  it("allows collection-time fields for an explicit live-now run", () => {
+    const snapshot = buildFinanceDataGatewaySnapshot({
+      instrument: "QQQ",
+      assetClass: "etf",
+      useCase: "live_now_cutoff_test",
+      asOf: "2026-09-07T10:15:00.000Z",
+      asOfMode: "live_now",
+      freshnessMaxMinutes: 60 * 24 * 5,
+      requireOfficialReference: false,
+      observations: [
+        observation("live-yahoo", "primary_market_data", "2026-09-08T20:00:00.000Z", 800),
+        observation("live-nasdaq", "cross_check_market_data", "2026-09-08T20:30:00.000Z", 800),
+      ],
+    });
+
+    expect(snapshot.qualityStatus).toBe("ready");
+    expect(snapshot.missingEvidence).not.toContain("post_cutoff_observations");
+    expect(snapshot.freshnessWarnings).not.toContain(
+      "last_price from live-yahoo is newer than requested asOf 2026-09-07T10:15:00.000Z",
+    );
+    expect(snapshot.normalizedFields.some((field) => field.sourceTimestamp > snapshot.asOf)).toBe(
+      true,
+    );
+  });
 });

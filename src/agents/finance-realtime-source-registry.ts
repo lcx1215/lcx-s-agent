@@ -29,6 +29,7 @@ import {
 } from "./finance-crypto-source-adapters.js";
 import {
   buildFinanceDataGatewaySnapshot,
+  type FinanceAsOfMode,
   type FinanceDataGatewayInput,
   type FinanceDataGatewayObservationInput,
   type FinanceDataGatewaySnapshot,
@@ -54,6 +55,7 @@ export type FinanceRealtimeSourceRequest = Readonly<{
   assetClass: string;
   useCase: string;
   asOf: string;
+  asOfMode?: FinanceAsOfMode;
   freshnessMaxMinutes?: number;
   crossSourceSkewMaxMinutes?: number;
   requireOfficialReference?: boolean;
@@ -168,6 +170,7 @@ function normalizeRequest(request: FinanceRealtimeSourceRequest): FinanceRealtim
     assetClass: requiredText(request.assetClass, "assetClass"),
     useCase: requiredText(request.useCase, "useCase"),
     asOf: assertIsoTimestamp(request.asOf, "asOf"),
+    ...(request.asOfMode === undefined ? {} : { asOfMode: request.asOfMode }),
     freshnessMaxMinutes: request.freshnessMaxMinutes,
     crossSourceSkewMaxMinutes: request.crossSourceSkewMaxMinutes,
     requireOfficialReference: request.requireOfficialReference,

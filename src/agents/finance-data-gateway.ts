@@ -19,6 +19,7 @@ export type FinanceDataProviderRole = LcxOntologyFinanceDataProviderRole;
 export type FinanceDataSourceFamily = LcxOntologyFinanceDataSourceFamily;
 export type FinanceDataDelayStatus = LcxOntologyFinanceDataDelayStatus;
 export type FinanceDataQualityStatus = LcxOntologyFinanceDataQualityStatus;
+export type FinanceAsOfMode = "historical" | "live_now";
 
 export type FinanceDataGatewayFieldInput = {
   name: string;
@@ -46,6 +47,8 @@ export type FinanceDataGatewayInput = {
   assetClass: string;
   useCase: string;
   asOf: string;
+  /** Historical cutoffs reject source timestamps after asOf; live-now runs permit collection-time evidence. */
+  asOfMode?: FinanceAsOfMode;
   freshnessMaxMinutes?: number;
   crossSourceSkewMaxMinutes?: number;
   requireOfficialReference?: boolean;
@@ -236,6 +239,7 @@ export function buildFinanceDataGatewaySnapshot(
   const freshnessWarnings: string[] = [];
   const futureSourceWarnings: string[] = [];
   const asOfMs = Date.parse(asOf);
+  const historicalCutoff = input.asOfMode !== "live_now";
   const freshnessMaxMinutes = input.freshnessMaxMinutes ?? 60 * 24;
   const crossSourceSkewMaxMinutes = input.crossSourceSkewMaxMinutes ?? 60 * 24;
   if (!Number.isFinite(crossSourceSkewMaxMinutes) || crossSourceSkewMaxMinutes < 0) {
@@ -264,7 +268,7 @@ export function buildFinanceDataGatewaySnapshot(
         `observations[${observationIndex}].fields[${fieldIndex}].sourceUrlOrArtifact`,
       );
       const sourceTimestampMs = Date.parse(sourceTimestamp);
-      if (sourceTimestampMs > asOfMs) {
+      if (historicalCutoff && sourceTimestampMs > asOfMs) {
         const warning = `${field.name.trim()} from ${observation.providerName.trim()} is newer than requested asOf ${asOf}`;
         futureSourceWarnings.push(warning);
         freshnessWarnings.push(warning);
@@ -280,7 +284,9 @@ export function buildFinanceDataGatewaySnapshot(
 
   const eligibleObservations = input.observations.map((observation) => ({
     ...observation,
-    fields: observation.fields.filter((field) => Date.parse(field.sourceTimestamp) <= asOfMs),
+    fields: historicalCutoff
+      ? observation.fields.filter((field) => Date.parse(field.sourceTimestamp) <= asOfMs)
+      : observation.fields,
   }));
 
   const providerRolesPresent = unique(

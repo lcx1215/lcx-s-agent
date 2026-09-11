@@ -10,6 +10,7 @@ import { financeReuseTimestamp } from "./finance-cache-provenance.js";
 import { resolveFinanceCredentialEnv } from "./finance-credential-env.js";
 import type {
   FinanceDataDelayStatus,
+  FinanceAsOfMode,
   FinanceDataProviderRole,
   FinanceDataSourceFamily,
 } from "./finance-data-gateway.js";
@@ -73,6 +74,7 @@ export type FinanceMarketCollectionRequest = Readonly<{
   assetClass: string;
   collection: FinanceMarketCollectionKind;
   asOf: string;
+  asOfMode?: FinanceAsOfMode;
   seriesId?: string;
   fromDate?: string;
   toDate?: string;
@@ -226,6 +228,7 @@ function normalizeRequest(request: FinanceMarketCollectionRequest): FinanceMarke
     assetClass: requiredText(request.assetClass, "assetClass"),
     collection: request.collection,
     asOf: assertIsoTimestamp(request.asOf, "asOf"),
+    ...(request.asOfMode === undefined ? {} : { asOfMode: request.asOfMode }),
     seriesId: request.seriesId?.trim() || undefined,
     fromDate: assertIsoDate(request.fromDate, "fromDate"),
     toDate: assertIsoDate(request.toDate, "toDate"),
