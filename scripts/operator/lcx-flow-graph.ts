@@ -1493,6 +1493,7 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "scripts/operator/lcx-caseflow-demo.ts",
       "scripts/operator/lcx-finance-research.test.ts",
       "scripts/operator/lcx-finance-research.ts",
+      "scripts/operator/lcx-finance-research-run.ts",
       "src/agents/finance-caseflow-followups.test.ts",
       "src/agents/finance-caseflow-followups.ts",
       "src/agents/finance-caseflow.test.ts",
@@ -1513,6 +1514,7 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "src/agents/finance-research-runner.ts",
       "src/agents/finance-run-checkpoints.test.ts",
       "src/agents/finance-run-checkpoints.ts",
+      "test/lcx-finance-research-run.test.ts",
     ],
   },
   {
@@ -1659,6 +1661,8 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "src/agents/finance-brain-orchestration.ts",
       "src/agents/finance-research-runner.test.ts",
       "src/agents/finance-research-runner.ts",
+      "src/agents/tools/finance-research-run-tool.test.ts",
+      "src/agents/tools/finance-research-run-tool.ts",
       "test/lcx-directed-daily-research-brief.test.ts",
       "test/lcx-finance-research-run.test.ts",
     ],
@@ -1763,13 +1767,8 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "scripts/operator/finance-data-gateway-smoke.ts",
       "scripts/operator/lcx-api-load-smoke.ts",
       "src/agents/finance-data-gateway.ts",
-      "src/agents/finance-data-gateway.test.ts",
-      "src/agents/finance-realtime-source-registry.test.ts",
-      "src/agents/finance-realtime-source-registry.ts",
       "src/agents/finance-research-batch-runner.test.ts",
       "src/agents/finance-research-batch-runner.ts",
-      "src/agents/geospatial-source-registry.test.ts",
-      "src/agents/geospatial-source-registry.ts",
       "src/agents/openclaw-tools.finance-article-source-registry-registration.test.ts",
       "src/agents/openclaw-tools.finance-data-gateway-registration.test.ts",
       "src/agents/tools/finance-article-source-registry-inspect-tool.ts",
@@ -1835,6 +1834,42 @@ const SHARED_ENTRYPOINT_OWNERS: SharedEntrypointOwner[] = [
     familyIds: ["architecture_supervision_entrypoints", "universe_inventory_entrypoints"],
     reason:
       "the universe-index test is the shared proof for architecture wiring and inventory ownership.",
+  },
+  {
+    path: "src/agents/finance-research-batch-runner.test.ts",
+    familyIds: ["finance_caseflow_entrypoints", "finance_data_quality_entrypoints"],
+    reason:
+      "the batch-runner test covers both finance lifecycle orchestration and the data-quality batch boundary.",
+  },
+  {
+    path: "src/agents/finance-research-batch-runner.ts",
+    familyIds: ["finance_caseflow_entrypoints", "finance_data_quality_entrypoints"],
+    reason:
+      "the batch runner is shared by the finance lifecycle owner and the data-quality batch boundary.",
+  },
+  {
+    path: "src/agents/finance-research-runner.test.ts",
+    familyIds: ["finance_caseflow_entrypoints", "focused_daily_research_product_entrypoints"],
+    reason:
+      "the research-runner test covers both caseflow lifecycle orchestration and focused daily research.",
+  },
+  {
+    path: "src/agents/finance-research-runner.ts",
+    familyIds: ["finance_caseflow_entrypoints", "focused_daily_research_product_entrypoints"],
+    reason:
+      "the research runner is shared by the caseflow lifecycle owner and focused daily research product.",
+  },
+  {
+    path: "scripts/operator/lcx-finance-research-run.ts",
+    familyIds: ["finance_caseflow_entrypoints", "focused_daily_research_product_entrypoints"],
+    reason:
+      "the finance research operator is the shared execution surface for the caseflow lifecycle and focused daily research product.",
+  },
+  {
+    path: "test/lcx-finance-research-run.test.ts",
+    familyIds: ["finance_caseflow_entrypoints", "focused_daily_research_product_entrypoints"],
+    reason:
+      "the finance research operator test proves both caseflow wiring and focused daily research product registration.",
   },
 ];
 
