@@ -454,6 +454,28 @@ describe("finance market collection registry", () => {
     expect(records[0]?.itemId).toBe("https://example.test/aapl-window");
   });
 
+  it("uses an explicit topic for GDELT news searches", async () => {
+    let requestedUrl = "";
+    const adapter = createGdeltPublicNewsCollectionAdapter({
+      fetchImpl: async (url) => {
+        requestedUrl = url;
+        return {
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify({
+              articles: [{ url: "https://example.test/topic", seendate: "20260907T130000Z" }],
+            }),
+        };
+      },
+    });
+    await adapter.collect(
+      { ...EQUITY_REQUEST, instrument: "SPY", seriesId: "global markets sentiment" },
+      new AbortController().signal,
+    );
+    expect(new URL(requestedUrl).searchParams.get("query")).toBe("global markets sentiment");
+  });
+
   it("collects public Yahoo EOD bars and drops incomplete rows", async () => {
     const bars = await createYahooPublicEodHistoryCollectionAdapter({
       fetchImpl: fakeFetch,

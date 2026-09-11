@@ -168,7 +168,7 @@ export function createResearchDataAutopilotTool(options?: {
             : inspectGeospatialSourceRegistry(request, geospatialRegistry);
         } else if (intent === "quote" || intent === "crypto_quote") {
           const assetClass =
-            params.assetClass ?? (intent === "crypto_quote" ? "crypto" : "us_equity");
+            params.assetClass?.trim() ?? (intent === "crypto_quote" ? "crypto" : "us_equity");
           const request: FinanceRealtimeSourceRequest = {
             instrument: target,
             assetClass,

@@ -540,10 +540,10 @@ export async function runBenchmark(args: readonly string[] = process.argv.slice(
       source: "yahoo_public_eod_history",
       sourceRole: "primary_market_data",
       asOf: options.asOf,
-      fromDate: dates[0],
-      toDate: dates.at(-1),
+      fromDate: evaluationDates[0],
+      toDate: evaluationDates.at(-1),
       symbols: options.symbols,
-      alignedObservations: dates.length,
+      alignedObservations: evaluationDates.length,
       sourceReceipts: collected.map(({ receipts, rows }, index) => ({
         symbol: options.symbols[index],
         status: receipts.every((receipt) => receipt.status === "ready") ? "ready" : "needs_review",
