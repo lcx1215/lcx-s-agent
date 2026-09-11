@@ -124,4 +124,29 @@ describe("finance data gateway cross-source audit", () => {
       true,
     );
   });
+
+  it("blocks implausibly future timestamps in live-now mode", () => {
+    const asOf = new Date().toISOString();
+    const future = new Date(Date.parse(asOf) + 10 * 60_000).toISOString();
+    const snapshot = buildFinanceDataGatewaySnapshot({
+      instrument: "QQQ",
+      assetClass: "etf",
+      useCase: "live_now_future_skew_test",
+      asOf,
+      asOfMode: "live_now",
+      requireOfficialReference: false,
+      observations: [
+        observation("future-yahoo", "primary_market_data", future, 800),
+        observation("future-nasdaq", "cross_check_market_data", future, 800),
+      ],
+    });
+
+    expect(snapshot.qualityStatus).toBe("blocked");
+    expect(snapshot.missingEvidence).toContain("implausible_future_observations");
+    expect(snapshot.requiredNextSteps).toContain("review_implausible_future_observations");
+    expect(snapshot.freshnessWarnings).toContain(
+      "last_price from future-yahoo exceeds the live-now future skew limit",
+    );
+    expect(snapshot.normalizedFields).toHaveLength(0);
+  });
 });

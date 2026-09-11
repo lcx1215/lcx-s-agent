@@ -8,6 +8,8 @@ import {
   assertIsoTimestamp,
   buildFinanceResearchCommitteeRouting,
   buildFinanceResearchRegistryOptions,
+  preflightFinanceResearchReceiptDestination,
+  preflightLocalModelPythonRuntime,
 } from "../scripts/operator/lcx-finance-research-run.ts";
 
 const execFileAsync = promisify(execFile);
@@ -124,6 +126,28 @@ describe("lcx-finance-research-run", () => {
     await expect(runResearch(["--live"])).rejects.toThrow(
       "--write is required with --live to persist the full research receipt",
     );
+  });
+
+  it("preflights live receipt destinations and the local Python runtime", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-finance-research-"));
+    const blockedRoot = path.join(workspaceDir, "blocked-root");
+    try {
+      await preflightFinanceResearchReceiptDestination("2026-09-08T12:00:00.000Z", workspaceDir);
+      await expect(
+        fs.stat(path.join(workspaceDir, "memory", "finance-research-runs", "2026-09-08")),
+      ).resolves.toBeDefined();
+
+      await fs.writeFile(blockedRoot, "not a directory");
+      await expect(
+        preflightFinanceResearchReceiptDestination("2026-09-08T12:00:00.000Z", blockedRoot),
+      ).rejects.toThrow();
+      await expect(
+        preflightLocalModelPythonRuntime(path.join(workspaceDir, "missing-python")),
+      ).rejects.toThrow("local model Python runtime is not executable");
+      await expect(preflightLocalModelPythonRuntime(process.execPath)).resolves.toBeUndefined();
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
   });
 
   it("routes committee payloads through the quality-stage adapter contract", () => {

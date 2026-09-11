@@ -21,6 +21,8 @@ export type FinanceDataDelayStatus = LcxOntologyFinanceDataDelayStatus;
 export type FinanceDataQualityStatus = LcxOntologyFinanceDataQualityStatus;
 export type FinanceAsOfMode = "historical" | "live_now";
 
+const MAX_LIVE_NOW_FUTURE_SKEW_MINUTES = 5;
+
 export type FinanceDataGatewayFieldInput = {
   name: string;
   value: string | number;
@@ -240,6 +242,9 @@ export function buildFinanceDataGatewaySnapshot(
   const futureSourceWarnings: string[] = [];
   const asOfMs = Date.parse(asOf);
   const historicalCutoff = input.asOfMode !== "live_now";
+  const futureTimestampLimitMs = historicalCutoff
+    ? asOfMs
+    : Date.now() + MAX_LIVE_NOW_FUTURE_SKEW_MINUTES * 60_000;
   const freshnessMaxMinutes = input.freshnessMaxMinutes ?? 60 * 24;
   const crossSourceSkewMaxMinutes = input.crossSourceSkewMaxMinutes ?? 60 * 24;
   if (!Number.isFinite(crossSourceSkewMaxMinutes) || crossSourceSkewMaxMinutes < 0) {
@@ -248,7 +253,18 @@ export function buildFinanceDataGatewaySnapshot(
 
   for (const [observationIndex, observation] of input.observations.entries()) {
     trimRequired(observation.providerName, `observations[${observationIndex}].providerName`);
-    assertIsoDate(observation.observedAt, `observations[${observationIndex}].observedAt`);
+    const observedAt = assertIsoDate(
+      observation.observedAt,
+      `observations[${observationIndex}].observedAt`,
+    );
+    const observedAtMs = Date.parse(observedAt);
+    if (observedAtMs > futureTimestampLimitMs) {
+      const warning = historicalCutoff
+        ? `${observation.providerName.trim()} observation is newer than requested asOf ${asOf}`
+        : `${observation.providerName.trim()} observation exceeds the live-now future skew limit`;
+      futureSourceWarnings.push(warning);
+      freshnessWarnings.push(warning);
+    }
     trimRequired(observation.timezone, `observations[${observationIndex}].timezone`);
     if (observation.fields.length === 0) {
       missingEvidence.push(`observations[${observationIndex}].fields`);
@@ -268,8 +284,10 @@ export function buildFinanceDataGatewaySnapshot(
         `observations[${observationIndex}].fields[${fieldIndex}].sourceUrlOrArtifact`,
       );
       const sourceTimestampMs = Date.parse(sourceTimestamp);
-      if (historicalCutoff && sourceTimestampMs > asOfMs) {
-        const warning = `${field.name.trim()} from ${observation.providerName.trim()} is newer than requested asOf ${asOf}`;
+      if (sourceTimestampMs > futureTimestampLimitMs) {
+        const warning = historicalCutoff
+          ? `${field.name.trim()} from ${observation.providerName.trim()} is newer than requested asOf ${asOf}`
+          : `${field.name.trim()} from ${observation.providerName.trim()} exceeds the live-now future skew limit`;
         futureSourceWarnings.push(warning);
         freshnessWarnings.push(warning);
       }
@@ -284,9 +302,9 @@ export function buildFinanceDataGatewaySnapshot(
 
   const eligibleObservations = input.observations.map((observation) => ({
     ...observation,
-    fields: historicalCutoff
-      ? observation.fields.filter((field) => Date.parse(field.sourceTimestamp) <= asOfMs)
-      : observation.fields,
+    fields: observation.fields.filter(
+      (field) => Date.parse(field.sourceTimestamp) <= futureTimestampLimitMs,
+    ),
   }));
 
   const providerRolesPresent = unique(
@@ -312,7 +330,9 @@ export function buildFinanceDataGatewaySnapshot(
   freshnessWarnings.push(...crossSourceTimestampWarnings);
 
   if (futureSourceWarnings.length > 0) {
-    missingEvidence.push("post_cutoff_observations");
+    missingEvidence.push(
+      historicalCutoff ? "post_cutoff_observations" : "implausible_future_observations",
+    );
   }
 
   if (!providerRolesPresent.includes("primary_market_data")) {
@@ -339,7 +359,11 @@ export function buildFinanceDataGatewaySnapshot(
     requiredNextSteps.push("refresh_or_label_stale_fields");
   }
   if (futureSourceWarnings.length > 0) {
-    requiredNextSteps.push("review_future_dated_observations");
+    requiredNextSteps.push(
+      historicalCutoff
+        ? "review_future_dated_observations"
+        : "review_implausible_future_observations",
+    );
   }
 
   const qualityStatus: FinanceDataQualityStatus =

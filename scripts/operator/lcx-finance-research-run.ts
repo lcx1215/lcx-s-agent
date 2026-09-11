@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -444,6 +444,62 @@ async function writePrivateReceipt(filePath: string, serialized: string): Promis
   await fs.chmod(filePath, 0o600);
 }
 
+async function probePrivateReceiptPath(filePath: string): Promise<void> {
+  const handle = await fs.open(filePath, "wx", 0o600);
+  try {
+    await handle.writeFile("");
+  } finally {
+    await handle.close();
+  }
+  await fs.chmod(filePath, 0o600);
+}
+
+export async function preflightFinanceResearchReceiptDestination(
+  asOf: string,
+  root = WORKSPACE_DIR(),
+): Promise<void> {
+  const normalizedAsOf = assertIsoTimestamp(asOf);
+  const stateDir = path.join(root, "state");
+  const runDir = path.join(root, "memory", "finance-research-runs", normalizedAsOf.slice(0, 10));
+  const latestPath = path.join(stateDir, "lcx-finance-research-run-latest.json");
+  await fs.mkdir(runDir, { recursive: true });
+  await fs.mkdir(stateDir, { recursive: true });
+  try {
+    const handle = await fs.open(latestPath, "r+");
+    await handle.close();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
+  const probes = [
+    path.join(runDir, `.lcx-finance-research-${randomUUID()}.tmp`),
+    path.join(stateDir, `.lcx-finance-research-${randomUUID()}.tmp`),
+  ];
+  try {
+    for (const probe of probes) {
+      await probePrivateReceiptPath(probe);
+    }
+  } finally {
+    await Promise.all(probes.map((probe) => fs.rm(probe, { force: true })));
+  }
+}
+
+export async function preflightLocalModelPythonRuntime(pythonPath: string): Promise<void> {
+  const normalized = pythonPath.trim();
+  if (!normalized) {
+    throw new Error("local model Python runtime is required");
+  }
+  try {
+    await execFileAsync(normalized, ["--version"], {
+      maxBuffer: 64 * 1024,
+      timeout: 10_000,
+    });
+  } catch {
+    throw new Error(`local model Python runtime is not executable: ${normalized}`);
+  }
+}
+
 async function writeReceipt(receipt: FinanceResearchRunReceipt, asOf: string) {
   const root = WORKSPACE_DIR();
   const stateDir = path.join(root, "state");
@@ -484,6 +540,9 @@ async function run(
   const asOfMode = options.live && options.asOf === undefined ? ("live_now" as const) : undefined;
   if (options.live && !options.write) {
     throw new Error("--write is required with --live to persist the full research receipt");
+  }
+  if (options.live) {
+    await preflightFinanceResearchReceiptDestination(asOf);
   }
   const input: FinanceResearchRunInput = {
     ask: options.ask,
@@ -526,6 +585,7 @@ async function run(
     timeoutMs: options.timeoutMs,
     allowNetwork: options.allowModelNetwork,
   });
+  await preflightLocalModelPythonRuntime(runtime.pythonPath);
   const governance = createApiSourceGovernanceRegistry({
     minIntervalMs: 250,
     maxConcurrent: 1,
