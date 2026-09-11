@@ -2,6 +2,6 @@ import {
   hasConfiguredSecretInput,
   normalizeResolvedSecretInputString,
   normalizeSecretInputString,
-} from "openclaw/plugin-sdk";
+} from "lcx-agent/plugin-sdk";
 
 export { hasConfiguredSecretInput, normalizeResolvedSecretInputString, normalizeSecretInputString };

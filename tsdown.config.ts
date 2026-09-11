@@ -4,7 +4,7 @@ const env = {
   NODE_ENV: "production",
 };
 
-export default defineConfig([
+const configs = [
   {
     entry: "src/index.ts",
     env,
@@ -119,6 +119,13 @@ export default defineConfig([
     platform: "node",
   },
   {
+    entry: "src/plugin-sdk/keyed-async-queue.ts",
+    outDir: "dist/plugin-sdk",
+    env,
+    fixedExtension: false,
+    platform: "node",
+  },
+  {
     entry: "src/extensionAPI.ts",
     env,
     fixedExtension: false,
@@ -130,5 +137,27 @@ export default defineConfig([
     fixedExtension: false,
     platform: "node",
   },
-]);
+];
+
+const requestedConfigIndex = process.env.LCX_TSDOWN_CONFIG_INDEX;
+const selectedConfigs =
+  requestedConfigIndex === undefined
+    ? configs
+    : (() => {
+        const index = Number.parseInt(requestedConfigIndex, 10);
+        if (!Number.isInteger(index) || index < 0 || index >= configs.length) {
+          throw new Error(`Invalid LCX_TSDOWN_CONFIG_INDEX: ${requestedConfigIndex}`);
+        }
+        return [configs[index]];
+      })();
+
+export default defineConfig(
+  selectedConfigs.map((config) => ({
+    ...config,
+    clean:
+      requestedConfigIndex === undefined
+        ? config.clean
+        : Number.parseInt(requestedConfigIndex, 10) === 0,
+  })),
+);
 // Bundles CLI, runtime, plugin SDK, and bundled hook entrypoints.

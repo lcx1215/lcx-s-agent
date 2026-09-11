@@ -1,5 +1,5 @@
-import type { ChannelPlugin, OpenClawPluginApi } from "openclaw/plugin-sdk/core";
-import { emptyPluginConfigSchema } from "openclaw/plugin-sdk/core";
+import type { ChannelPlugin, OpenClawPluginApi } from "lcx-agent/plugin-sdk/core";
+import { emptyPluginConfigSchema } from "lcx-agent/plugin-sdk/core";
 import { telegramPlugin } from "./src/channel.js";
 import { setTelegramRuntime } from "./src/runtime.js";
 

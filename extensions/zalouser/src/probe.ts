@@ -1,4 +1,4 @@
-import type { BaseProbeResult } from "openclaw/plugin-sdk";
+import type { BaseProbeResult } from "lcx-agent/plugin-sdk";
 import type { ZcaUserInfo } from "./types.js";
 import { getZaloUserInfo } from "./zalo-js.js";
 

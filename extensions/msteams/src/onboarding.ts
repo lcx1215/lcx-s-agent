@@ -5,14 +5,14 @@ import type {
   DmPolicy,
   WizardPrompter,
   MSTeamsTeamConfig,
-} from "openclaw/plugin-sdk";
+} from "lcx-agent/plugin-sdk";
 import {
   addWildcardAllowFrom,
   DEFAULT_ACCOUNT_ID,
   formatDocsLink,
   mergeAllowFromEntries,
   promptChannelAccessConfig,
-} from "openclaw/plugin-sdk";
+} from "lcx-agent/plugin-sdk";
 import {
   parseMSTeamsTeamEntry,
   resolveMSTeamsChannelAllowlist,

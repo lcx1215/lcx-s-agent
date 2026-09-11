@@ -1,9 +1,9 @@
-import * as discordSdk from "openclaw/plugin-sdk/discord";
-import * as imessageSdk from "openclaw/plugin-sdk/imessage";
-import * as lineSdk from "openclaw/plugin-sdk/line";
-import * as signalSdk from "openclaw/plugin-sdk/signal";
-import * as slackSdk from "openclaw/plugin-sdk/slack";
-import * as whatsappSdk from "openclaw/plugin-sdk/whatsapp";
+import * as discordSdk from "lcx-agent/plugin-sdk/discord";
+import * as imessageSdk from "lcx-agent/plugin-sdk/imessage";
+import * as lineSdk from "lcx-agent/plugin-sdk/line";
+import * as signalSdk from "lcx-agent/plugin-sdk/signal";
+import * as slackSdk from "lcx-agent/plugin-sdk/slack";
+import * as whatsappSdk from "lcx-agent/plugin-sdk/whatsapp";
 import { describe, expect, it } from "vitest";
 
 describe("plugin-sdk subpath exports", () => {

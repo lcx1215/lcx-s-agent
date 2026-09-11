@@ -1,4 +1,16 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import {
+  createLcxIdentityWriterPathContract,
+  readLcxIdentityWriterRaw,
+  rollbackLcxIdentityWriter,
+  writeLcxIdentityWriterRawWithReceipt,
+  LcxIdentityWriterContractError,
+  type LcxIdentityWriteReceipt,
+  type LcxIdentityWriterPathContract,
+  type LcxIdentityMigrationPlan,
+} from "lcx-agent/plugin-sdk";
 import { resolveMSTeamsStorePath } from "./storage.js";
 import { readJsonFile, withFileLock, writeJsonFile } from "./store-fs.js";
 
@@ -38,7 +50,7 @@ export type MSTeamsPollCard = {
   fallbackText: string;
 };
 
-type PollStoreData = {
+export type MSTeamsPollStoreData = {
   version: 1;
   polls: Record<string, MSTeamsPoll>;
 };
@@ -270,15 +282,15 @@ export function createMSTeamsPollStoreFs(params?: MSTeamsPollStoreFsOptions): MS
     stateDir: params?.stateDir,
     storePath: params?.storePath,
   });
-  const empty: PollStoreData = { version: 1, polls: {} };
+  const empty: MSTeamsPollStoreData = { version: 1, polls: {} };
 
-  const readStore = async (): Promise<PollStoreData> => {
-    const { value } = await readJsonFile<PollStoreData>(filePath, empty);
+  const readStore = async (): Promise<MSTeamsPollStoreData> => {
+    const { value } = await readJsonFile<MSTeamsPollStoreData>(filePath, empty);
     const pruned = pruneToLimit(pruneExpired(value.polls ?? {}));
     return { version: 1, polls: pruned };
   };
 
-  const writeStore = async (data: PollStoreData) => {
+  const writeStore = async (data: MSTeamsPollStoreData) => {
     await writeJsonFile(filePath, data);
   };
 
@@ -312,4 +324,121 @@ export function createMSTeamsPollStoreFs(params?: MSTeamsPollStoreFsOptions): MS
     });
 
   return { createPoll, getPoll, recordVote };
+}
+
+export type LcxIdentityMSTeamsPollMigration = Readonly<{
+  pathContract: LcxIdentityWriterPathContract & Readonly<{ writer: "channel-local" }>;
+  readStorePath: string;
+  writeStorePath: string;
+}>;
+
+function resolveMSTeamsPollReadRoot(
+  migrationPlan: LcxIdentityMigrationPlan,
+  existsSync: (candidate: string) => boolean,
+): string {
+  const writePath = path.join(migrationPlan.writeStateDir, STORE_FILENAME);
+  if (existsSync(writePath)) {
+    return migrationPlan.writeStateDir;
+  }
+  const legacyRoots = migrationPlan.readStateDirs.filter((root) => {
+    if (path.resolve(root) === path.resolve(migrationPlan.writeStateDir)) {
+      return false;
+    }
+    return existsSync(path.join(root, STORE_FILENAME));
+  });
+  if (legacyRoots.length > 1) {
+    throw new LcxIdentityWriterContractError(
+      `MSTeams poll state exists in multiple legacy roots: ${legacyRoots.join(", ")}`,
+      "LCX_IDENTITY_SPLIT_STATE",
+    );
+  }
+  return legacyRoots[0] ?? migrationPlan.readStateDir;
+}
+
+function resolveCurrentMSTeamsPollMigration(
+  migration: LcxIdentityMSTeamsPollMigration,
+): LcxIdentityWriterPathContract & Readonly<{ writer: "channel-local" }> {
+  const plan = migration.pathContract.migrationPlan;
+  if (!plan) {
+    return migration.pathContract;
+  }
+  const readRoot = resolveMSTeamsPollReadRoot(plan, fs.existsSync);
+  return createLcxIdentityWriterPathContract({
+    writer: "channel-local",
+    migrationPlan: plan,
+    readPath: path.join(readRoot, STORE_FILENAME),
+    writePath: migration.writeStorePath,
+    backupPath: migration.pathContract.backupPath,
+    auditPath: migration.pathContract.auditPath,
+  });
+}
+
+export function createLcxIdentityMSTeamsPollMigration(params: {
+  migrationPlan: LcxIdentityMigrationPlan;
+  existsSync?: (candidate: string) => boolean;
+}): LcxIdentityMSTeamsPollMigration {
+  if (params.migrationPlan.mode === "explicit-config-override") {
+    throw new Error("MSTeams poll migration requires a state-root authority");
+  }
+  const readRoot = resolveMSTeamsPollReadRoot(
+    params.migrationPlan,
+    params.existsSync ?? fs.existsSync,
+  );
+  const writeStorePath = path.join(params.migrationPlan.writeStateDir, STORE_FILENAME);
+  const pathContract = createLcxIdentityWriterPathContract({
+    writer: "channel-local",
+    migrationPlan: params.migrationPlan,
+    readPath: path.join(readRoot, STORE_FILENAME),
+    writePath: writeStorePath,
+  });
+  return Object.freeze({
+    pathContract,
+    readStorePath: pathContract.readPath,
+    writeStorePath,
+  });
+}
+
+function parseMSTeamsPollStore(raw: string | null): MSTeamsPollStoreData {
+  if (raw !== null) {
+    try {
+      const parsed = JSON.parse(raw) as Partial<MSTeamsPollStoreData>;
+      if (
+        parsed.version === 1 &&
+        parsed.polls &&
+        typeof parsed.polls === "object" &&
+        !Array.isArray(parsed.polls)
+      ) {
+        return { version: 1, polls: parsed.polls as MSTeamsPollStoreData["polls"] };
+      }
+    } catch {
+      // Treat malformed legacy state as empty, matching the runtime reader.
+    }
+  }
+  return { version: 1, polls: {} };
+}
+
+export async function readMSTeamsPollStoreForIdentityMigration(
+  migration: LcxIdentityMSTeamsPollMigration,
+): Promise<MSTeamsPollStoreData> {
+  return parseMSTeamsPollStore(
+    await readLcxIdentityWriterRaw(resolveCurrentMSTeamsPollMigration(migration)),
+  );
+}
+
+export async function writeMSTeamsPollStoreForIdentityMigration(
+  migration: LcxIdentityMSTeamsPollMigration,
+  store: MSTeamsPollStoreData,
+  options?: { expectedReadPath?: string; expectedWritePath?: string },
+): Promise<LcxIdentityWriteReceipt> {
+  return await writeLcxIdentityWriterRawWithReceipt(
+    resolveCurrentMSTeamsPollMigration(migration),
+    `${JSON.stringify({ version: 1, polls: store.polls }, null, 2)}\n`,
+    options,
+  );
+}
+
+export async function rollbackMSTeamsPollIdentityMigration(
+  receipt: LcxIdentityWriteReceipt,
+): Promise<void> {
+  await rollbackLcxIdentityWriter(receipt);
 }

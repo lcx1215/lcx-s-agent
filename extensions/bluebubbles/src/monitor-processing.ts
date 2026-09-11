@@ -1,4 +1,4 @@
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "lcx-agent/plugin-sdk";
 import {
   DM_GROUP_ACCESS_REASON,
   createScopedPairingAccess,
@@ -14,7 +14,7 @@ import {
   resolveControlCommandGate,
   stripMarkdown,
   type HistoryEntry,
-} from "openclaw/plugin-sdk";
+} from "lcx-agent/plugin-sdk";
 import { downloadBlueBubblesAttachment } from "./attachments.js";
 import { markBlueBubblesChatRead, sendBlueBubblesTyping } from "./chat.js";
 import { fetchBlueBubblesHistory } from "./history.js";

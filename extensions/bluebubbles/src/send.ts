@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
-import { stripMarkdown } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "lcx-agent/plugin-sdk";
+import { stripMarkdown } from "lcx-agent/plugin-sdk";
 import { resolveBlueBubblesAccount } from "./accounts.js";
 import {
   getCachedBlueBubblesPrivateApiStatus,

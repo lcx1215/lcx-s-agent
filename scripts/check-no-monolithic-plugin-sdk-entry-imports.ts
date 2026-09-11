@@ -33,12 +33,12 @@ function main() {
   }
 
   if (offenders.length > 0) {
-    console.error("Bundled plugin entrypoints must not import monolithic openclaw/plugin-sdk.");
+    console.error("Bundled plugin entrypoints must not import monolithic lcx-agent/plugin-sdk.");
     for (const file of offenders.toSorted()) {
       const relative = path.relative(process.cwd(), file) || file;
       console.error(`- ${relative}`);
     }
-    console.error("Use openclaw/plugin-sdk/<channel> for channel plugins or /core for others.");
+    console.error("Use lcx-agent/plugin-sdk/<channel> for channel plugins or /core for others.");
     process.exit(1);
   }
 

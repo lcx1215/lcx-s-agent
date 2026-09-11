@@ -4,7 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import JSON5 from "json5";
 import { createModuleLearningPipelineReviewTool } from "../../src/agents/tools/module-learning-pipeline-review-tool.ts";
+import { resolveLcxIdentityMigrationPlan } from "../../src/config/paths.ts";
 import { buildLearningSedimentationBridge } from "./lcx-learning-sedimentation-bridge.ts";
 import {
   DEFAULT_GUARD_LOG_PATH,
@@ -308,6 +310,15 @@ type QuotaStatusSnapshot = {
   finalConcurrency?: number;
 };
 
+export type MiniMaxTeacherRuntimeSnapshot = {
+  boundary: "local_minimax_teacher_runtime_status_only";
+  enabled: boolean;
+  configPath: string;
+  configuredRefs: string[];
+  usableAuthorityRefs: string[];
+  reason: string;
+};
+
 export type ActiveTrainingProcess = {
   pid?: number;
   ppid?: number;
@@ -380,6 +391,255 @@ type TrainingDecision = {
   codexRepairEligible: boolean;
   nextCommand?: string;
 };
+
+function isRecord(value: unknown): value is JsonRecord {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Inspect only the runtime configuration surface. Historical source code,
+ * receipts, and adapters are intentionally outside this enablement decision.
+ */
+export function inspectMiniMaxTeacherRuntimeConfig(
+  config: unknown,
+  options?: { authProfileStore?: unknown },
+): Omit<MiniMaxTeacherRuntimeSnapshot, "configPath"> {
+  const configuredRefs: string[] = [];
+  const usableAuthorityRefs: string[] = [];
+  const add = (pathParts: string[]) => configuredRefs.push(pathParts.join("."));
+  const addUsable = (pathParts: string[]) => usableAuthorityRefs.push(pathParts.join("."));
+  const root = isRecord(config) ? config : {};
+
+  const isUsableSecretString = (value: string): boolean => {
+    const trimmed = value.trim();
+    if (!trimmed || /^(?:undefined|null|example|changeme|replace[-_ ]?me)$/i.test(trimmed)) {
+      return false;
+    }
+    const envRef = /^\$\{([A-Z][A-Z0-9_]*)\}$/.exec(trimmed);
+    return envRef ? Boolean(process.env[envRef[1]]?.trim()) : true;
+  };
+  const hasUsableCredential = (value: unknown): boolean => {
+    if (typeof value === "string") {
+      return isUsableSecretString(value);
+    }
+    if (Array.isArray(value)) {
+      return value.some((entry) => hasUsableCredential(entry));
+    }
+    if (!isRecord(value)) {
+      return false;
+    }
+    if (value.source === "env" && typeof value.id === "string") {
+      return Boolean(process.env[value.id.trim()]?.trim());
+    }
+    return Object.entries(value).some(([key, entry]) =>
+      /api[-_]?key|token|secret|password|credential|authorization|auth|key/i.test(key)
+        ? hasUsableCredential(entry)
+        : false,
+    );
+  };
+  const hasUsableMiniMaxStoredCredential = (value: unknown): boolean => {
+    if (!isRecord(value) || typeof value.type !== "string") {
+      return false;
+    }
+    if (value.type === "oauth") {
+      return hasUsableCredential(value.access) || hasUsableCredential(value.refresh);
+    }
+    if (value.type === "token") {
+      return hasUsableCredential(value.token);
+    }
+    if (value.type === "api_key") {
+      return hasUsableCredential(value.key) || hasUsableCredential(value.keyRef);
+    }
+    return false;
+  };
+  const authProfileStore = isRecord(options?.authProfileStore) ? options.authProfileStore : {};
+  const storedProfiles = isRecord(authProfileStore.profiles) ? authProfileStore.profiles : {};
+  const hasUsablePortalProfile = Object.values(storedProfiles).some(
+    (profile) =>
+      isRecord(profile) &&
+      typeof profile.provider === "string" &&
+      /minimax-portal/i.test(profile.provider) &&
+      hasUsableMiniMaxStoredCredential(profile),
+  );
+  const models = isRecord(root.models) ? root.models : {};
+  const providers = isRecord(models.providers) ? models.providers : {};
+  for (const [providerId, providerConfig] of Object.entries(providers)) {
+    if (
+      /minimax/i.test(providerId) &&
+      isRecord(providerConfig) &&
+      providerConfig.enabled !== false
+    ) {
+      const providerPath = ["models", "providers", providerId];
+      const hasProviderShape = [
+        "baseUrl",
+        "apiKey",
+        "auth",
+        "api",
+        "headers",
+        "authHeader",
+        "models",
+      ].some((key) => Object.prototype.hasOwnProperty.call(providerConfig, key));
+      if (hasProviderShape) {
+        add(providerPath);
+      }
+      const hasUsableProviderCredential = ["apiKey", "headers"].some((key) => {
+        if (key === "apiKey" && providerConfig.apiKey === "minimax-oauth") {
+          return false;
+        }
+        return hasUsableCredential(providerConfig[key]);
+      });
+      if (
+        hasUsableProviderCredential ||
+        (/minimax-portal/i.test(providerId) && hasUsablePortalProfile)
+      ) {
+        addUsable(providerPath);
+      }
+    }
+  }
+
+  const collectModelRefs = (value: unknown, pathParts: string[]): void => {
+    if (typeof value === "string" && /minimax/i.test(value)) {
+      add(pathParts);
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((entry, index) => collectModelRefs(entry, [...pathParts, String(index)]));
+      return;
+    }
+    if (isRecord(value)) {
+      for (const [key, entry] of Object.entries(value)) {
+        if (key === "primary" || key === "fallbacks" || key === "model") {
+          collectModelRefs(entry, [...pathParts, key]);
+        }
+      }
+    }
+  };
+  const agents = isRecord(root.agents) ? root.agents : {};
+  if (isRecord(agents.defaults)) {
+    collectModelRefs(agents.defaults.model, ["agents", "defaults", "model"]);
+    if (isRecord(agents.defaults.subagents)) {
+      collectModelRefs(agents.defaults.subagents.model, [
+        "agents",
+        "defaults",
+        "subagents",
+        "model",
+      ]);
+    }
+  }
+  if (Array.isArray(agents.list)) {
+    agents.list.forEach((agent, index) => {
+      if (!isRecord(agent)) {
+        return;
+      }
+      collectModelRefs(agent.model, ["agents", "list", String(index), "model"]);
+      if (isRecord(agent.subagents)) {
+        collectModelRefs(agent.subagents.model, [
+          "agents",
+          "list",
+          String(index),
+          "subagents",
+          "model",
+        ]);
+      }
+    });
+  }
+
+  const auth = isRecord(root.auth) ? root.auth : {};
+  const profiles = isRecord(auth.profiles) ? auth.profiles : {};
+  for (const [profileId, profile] of Object.entries(profiles)) {
+    if (
+      isRecord(profile) &&
+      typeof profile.provider === "string" &&
+      /minimax/i.test(profile.provider)
+    ) {
+      const profilePath = ["auth", "profiles", profileId];
+      add(profilePath);
+      if (hasUsableCredential(profile)) {
+        addUsable(profilePath);
+      }
+    }
+  }
+
+  const plugins = isRecord(root.plugins) ? root.plugins : {};
+  const pluginEntries = isRecord(plugins.entries) ? plugins.entries : {};
+  for (const [pluginId, entry] of Object.entries(pluginEntries)) {
+    if (/minimax/i.test(pluginId) && isRecord(entry) && entry.enabled !== false) {
+      add(["plugins", "entries", pluginId]);
+    }
+  }
+
+  const env = isRecord(root.env) ? root.env : {};
+  const envVars = isRecord(env.vars) ? env.vars : {};
+  for (const [key, value] of Object.entries(envVars)) {
+    if (/minimax/i.test(key) && typeof value === "string" && value.trim()) {
+      const envPath = ["env", "vars", key];
+      add(envPath);
+      if (/(?:api[-_]?key|token|secret|password|auth)/i.test(key) && hasUsableCredential(value)) {
+        addUsable(envPath);
+      }
+    }
+  }
+  const uniqueRefs = [...new Set(configuredRefs)];
+  const uniqueUsableAuthorityRefs = [...new Set(usableAuthorityRefs)];
+  return {
+    boundary: "local_minimax_teacher_runtime_status_only",
+    enabled: uniqueUsableAuthorityRefs.length > 0,
+    configuredRefs: uniqueRefs,
+    usableAuthorityRefs: uniqueUsableAuthorityRefs,
+    reason:
+      uniqueUsableAuthorityRefs.length > 0
+        ? "MiniMax runtime references have usable provider or auth authority."
+        : uniqueRefs.length > 0
+          ? "MiniMax runtime references exist, but no usable provider credential or auth authority is configured."
+          : "MiniMax provider, auth, agent, plugin, and model references are absent from runtime configuration.",
+  };
+}
+
+async function readMiniMaxTeacherRuntimeSnapshot(): Promise<MiniMaxTeacherRuntimeSnapshot> {
+  const migrationPlan = resolveLcxIdentityMigrationPlan();
+  const configPath = migrationPlan.readConfigPath;
+  const raw = await fs.readFile(configPath, "utf8").catch(() => undefined);
+  if (raw === undefined) {
+    return {
+      boundary: "local_minimax_teacher_runtime_status_only",
+      enabled: false,
+      configPath,
+      configuredRefs: [],
+      usableAuthorityRefs: [],
+      reason: "Runtime configuration is unavailable; MiniMax auto-start is disabled fail-closed.",
+    };
+  }
+  try {
+    const configuredAgentDir =
+      process.env.OPENCLAW_AGENT_DIR?.trim() || process.env.PI_CODING_AGENT_DIR?.trim();
+    const agentDir =
+      configuredAgentDir || path.join(migrationPlan.readStateDir, "agents", "main", "agent");
+    const authProfileRaw = await fs
+      .readFile(path.join(agentDir, "auth-profiles.json"), "utf8")
+      .catch(() => undefined);
+    let authProfileStore: unknown;
+    if (authProfileRaw !== undefined) {
+      try {
+        authProfileStore = JSON5.parse(authProfileRaw);
+      } catch {
+        authProfileStore = undefined;
+      }
+    }
+    return {
+      ...inspectMiniMaxTeacherRuntimeConfig(JSON5.parse(raw), { authProfileStore }),
+      configPath,
+    };
+  } catch {
+    return {
+      boundary: "local_minimax_teacher_runtime_status_only",
+      enabled: false,
+      configPath,
+      configuredRefs: [],
+      usableAuthorityRefs: [],
+      reason: "Runtime configuration is invalid; MiniMax auto-start is disabled fail-closed.",
+    };
+  }
+}
 
 type EvolutionAccelerationStep = {
   id: string;
@@ -454,6 +714,18 @@ const normalizeWorkspaceDir = (value?: string): string => {
   const trimmed = typeof value === "string" ? value.trim() : "";
   return trimmed.length > 0 ? path.resolve(trimmed) : DEFAULT_WORKSPACE_DIR;
 };
+async function readRegisteredEvalCaseIds(worktree: string): Promise<ReadonlySet<string>> {
+  const sourcePath = path.join(worktree, "scripts", "operator", "local-brain-distill-eval.ts");
+  const source = await fs.readFile(sourcePath, "utf8").catch(() => "");
+  const start = source.indexOf("const EVAL_CASES: EvalCase[] = [");
+  const end = source.indexOf("const EVAL_CASE_BY_ID", start);
+  if (start < 0 || end <= start) {
+    return new Set();
+  }
+  return new Set(
+    [...source.slice(start, end).matchAll(/^\s+id: "([^"]+)"/gmu)].map((match) => match[1]),
+  );
+}
 const buildRepairLockCommand = (worktree: string): string =>
   `node --import tsx scripts/operator/lcx-automation-repair-lock.ts --mode acquire --lane local-brain-training-plan --worktree ${quoteShellArg(worktree)} --json`;
 const buildMediumTrainingCommand = (logPath: string): string =>
@@ -811,6 +1083,7 @@ function qwenCapabilityConsolidationSnapshot(params: {
   events: JsonRecord[];
   latestPassingEval?: EvalSnapshot;
   latestCandidateEval?: EvalSnapshot;
+  registeredEvalCaseIds: ReadonlySet<string>;
 }): QwenCapabilityConsolidationSnapshot {
   const latestVerdictByAdapter = new Map(
     latestAdapterVerdictSnapshots(params.events)
@@ -864,7 +1137,12 @@ function qwenCapabilityConsolidationSnapshot(params: {
       ]),
     );
   }
-  const targetedEvalFirstCaseIds = latestBlockedHarvestCaseIds.slice(0, 8);
+  // Candidate logs can outlive the current eval registry. Keep their harvest
+  // history visible, but never emit an invocation that the eval runner will
+  // reject before starting; this is especially important after case renames.
+  const targetedEvalFirstCaseIds = latestBlockedHarvestCaseIds
+    .filter((caseId) => params.registeredEvalCaseIds.has(caseId))
+    .slice(0, 8);
   const targetedEvalReceiptPath = path.join(
     DEFAULT_WORKSPACE_DIR,
     "state",
@@ -1883,6 +2161,7 @@ function buildDecisions(params: {
   stableEvalTimeoutCountAfterLatestStart?: number;
   latestTeacher?: TeacherSnapshot;
   latestQuotaStatus?: QuotaStatusSnapshot;
+  miniMaxTeacherRuntime: MiniMaxTeacherRuntimeSnapshot;
   qwenBaseModelMigration?: QwenBaseModelMigrationSnapshot;
   activeGuardAdapterTruth?: ActiveGuardAdapterTruthSnapshot;
   liveExternalBrainBinding?: LegacyLiveExternalBrainBindingSnapshot;
@@ -1896,17 +2175,28 @@ function buildDecisions(params: {
   const decisions: TrainingDecision[] = [];
   const active = params.activeProcesses.length > 0;
   const activeGuardEvolutionCooldown = activeGuardEvolutionCooldownSnapshot(params.activeProcesses);
-  decisions.push({
-    id: active ? "training_already_active" : "training_not_active",
-    lane: "training",
-    severity: "info",
-    action: active ? "do_not_start_overlapping_guard" : "start_medium_training_guard",
-    reason: active
-      ? "A local-brain guard or child process is already active."
-      : "No active local-brain training process was detected.",
-    codexRepairEligible: false,
-    nextCommand: active ? undefined : buildMediumTrainingCommand(params.guardLogPath),
-  });
+  if (!params.miniMaxTeacherRuntime.enabled) {
+    decisions.push({
+      id: "training_provider_disabled",
+      lane: "training",
+      severity: "info",
+      action: "do_not_start_disabled_minimax_training",
+      reason: params.miniMaxTeacherRuntime.reason,
+      codexRepairEligible: false,
+    });
+  } else {
+    decisions.push({
+      id: active ? "training_already_active" : "training_not_active",
+      lane: "training",
+      severity: "info",
+      action: active ? "do_not_start_overlapping_guard" : "start_medium_training_guard",
+      reason: active
+        ? "A local-brain guard or child process is already active."
+        : "No active local-brain training process was detected.",
+      codexRepairEligible: false,
+      nextCommand: active ? undefined : buildMediumTrainingCommand(params.guardLogPath),
+    });
+  }
 
   if (params.overlappingHeavyEval) {
     decisions.push({
@@ -2146,7 +2436,16 @@ function buildDecisions(params: {
     });
   }
 
-  if (params.latestTeacher && params.latestTeacher.failures > 0) {
+  const latestTeacherHasQuotaFailure = Boolean(
+    params.latestTeacher?.failureErrors.some((error) =>
+      /429|rate_limit_error|Token Plan usage limit reached/iu.test(error),
+    ),
+  );
+  if (
+    params.latestTeacher &&
+    params.latestTeacher.failures > 0 &&
+    (params.miniMaxTeacherRuntime.enabled || !latestTeacherHasQuotaFailure)
+  ) {
     decisions.push({
       id: "teacher_sample_quality_failure",
       lane: "teacher_quality",
@@ -2594,6 +2893,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
   const quotaLogPath = options.quotaLogPath ?? (await latestQuotaLogPath());
   const quotaEvents = await readJsonl(quotaLogPath);
   const worktree = normalizeWorktree(options.worktree);
+  const registeredEvalCaseIds = await readRegisteredEvalCaseIds(worktree);
   const workspaceDir = normalizeWorkspaceDir(options.workspaceDir);
   const activeProcesses = await activeTrainingProcesses(options.processCheck);
   const latestGuardEvent = latestEvent(guardEvents, () => true);
@@ -2643,6 +2943,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     events: guardEvents,
     latestPassingEval,
     latestCandidateEval,
+    registeredEvalCaseIds,
   });
   const latestPromotion = latestEvent(
     guardEvents,
@@ -2684,6 +2985,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
   });
   const latestTeacher = latestTeacherSnapshot(quotaEvents);
   const latestQuotaStatus = latestQuotaStatusSnapshot(quotaEvents);
+  const miniMaxTeacherRuntime = await readMiniMaxTeacherRuntimeSnapshot();
   const latestGuardStartAt = eventTime(latestGuardStart);
   const stableEvalTimeoutCountAfterLatestStart = countEvalTimeoutsAfter(
     guardEvents,
@@ -2706,6 +3008,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     stableEvalTimeoutCountAfterLatestStart,
     latestTeacher,
     latestQuotaStatus,
+    miniMaxTeacherRuntime,
     qwenBaseModelMigration,
     activeGuardAdapterTruth,
     externalChannelBinding,
@@ -2777,6 +3080,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     selectedCleanEval: qwenCapabilityConsolidation.selectedCleanEval,
     latestTeacher,
     latestQuotaStatus,
+    miniMaxTeacherRuntime,
     qwenBaseModelMigration,
     moduleLearningReview,
     learningSedimentationBridge,

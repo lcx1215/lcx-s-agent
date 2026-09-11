@@ -1,4 +1,4 @@
-import { loadOutboundMediaFromUrl } from "openclaw/plugin-sdk";
+import { loadOutboundMediaFromUrl } from "lcx-agent/plugin-sdk";
 import { getMattermostRuntime } from "../runtime.js";
 import { resolveMattermostAccount } from "./accounts.js";
 import {

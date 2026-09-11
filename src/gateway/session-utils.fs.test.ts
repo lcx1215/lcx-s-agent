@@ -660,8 +660,22 @@ describe("resolveSessionTranscriptCandidates", () => {
     const candidates = resolveSessionTranscriptCandidates("sess-1", undefined);
     const fallback = candidates[candidates.length - 1];
     expect(fallback).toBe(
-      path.join(path.resolve("/srv/openclaw-home"), ".openclaw", "sessions", "sess-1.jsonl"),
+      path.join(path.resolve("/srv/openclaw-home"), ".lcx", "sessions", "sess-1.jsonl"),
     );
+  });
+
+  test("keeps an existing compatibility state root in the fallback", async () => {
+    const home = await fs.promises.mkdtemp(path.join(os.tmpdir(), "lcx-session-home-"));
+    try {
+      await fs.promises.mkdir(path.join(home, ".openclaw"), { recursive: true });
+      vi.stubEnv("OPENCLAW_HOME", home);
+      const candidates = resolveSessionTranscriptCandidates("sess-legacy", undefined);
+      expect(candidates[candidates.length - 1]).toBe(
+        path.join(home, ".openclaw", "sessions", "sess-legacy.jsonl"),
+      );
+    } finally {
+      await fs.promises.rm(home, { recursive: true, force: true });
+    }
   });
 });
 

@@ -2,6 +2,11 @@
 
 Use this when the chat context is gone and you need to quickly resume LCX local-brain work.
 
+For the system-level map and plane ownership, start with
+[`ops/architecture/LCX-SYSTEM-ARCHITECTURE.md`](../architecture/LCX-SYSTEM-ARCHITECTURE.md).
+This runbook is the local-brain implementation lane beneath that map; it is
+not the system's top-level architecture or readiness authority.
+
 This runbook is local only. It does not prove `user-visible-observed`, does
 not touch the external sender compatibility path, does not edit provider config,
 and does not write protected memory.
@@ -176,6 +181,13 @@ sidecar files, stale snapshots, large runtime artifacts, and
 `garbageCandidates`. It is `local_universe_index_only`: inventory and cleanup
 candidates only, no delete/migration/live authority, and always
 `liveTouched=false`, `providerConfigTouched=false`, `protectedMemoryTouched=false`.
+Its `lcx_component_governance_v1` coverage contract also classifies every
+repository-tracked-and-visible path with an inventory owner, route owner,
+category, proof surface, boundary, and disposition. `review_required` or unknown components
+make coverage incomplete; `inventory_only` artifacts remain visible and
+counted but cannot become source or runtime authority. Every route owner is
+also checked as an existing canonical owner surface. Workspace state/log/
+memory/tmp/live-sidecar files remain inventory areas under the same owner.
 Route candidates back to the matching owner before repair or cleanup.
 The Problem Cluster Radar is the current-issue aggregator for that governance
 stack:
@@ -719,6 +731,10 @@ find /Users/liuchengxu/.codex/skills -maxdepth 2 -name SKILL.md | sort
 Prefer extending existing source registry, capability-card, retrieval/apply,
 eval, skill-harvester, receipt, and runbook paths. If a new path is still
 needed, leave the decision in the artifact or summary as:
+
+```text
+decision vocabulary: Reuse, merge, or extend
+```
 
 ```text
 prior_art_checked=<files_or_receipts>

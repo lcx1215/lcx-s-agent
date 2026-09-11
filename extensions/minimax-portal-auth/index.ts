@@ -3,7 +3,7 @@ import {
   type OpenClawPluginApi,
   type ProviderAuthContext,
   type ProviderAuthResult,
-} from "openclaw/plugin-sdk/core";
+} from "lcx-agent/plugin-sdk/core";
 import {
   resolveMinimaxDefaultTextModelId,
   resolveMinimaxTextModelCatalog,

@@ -2,7 +2,7 @@ import {
   applyWindowsSpawnProgramPolicy,
   materializeWindowsSpawnProgram,
   resolveWindowsSpawnProgramCandidate,
-} from "openclaw/plugin-sdk";
+} from "lcx-agent/plugin-sdk";
 
 type SpawnTarget = {
   command: string;

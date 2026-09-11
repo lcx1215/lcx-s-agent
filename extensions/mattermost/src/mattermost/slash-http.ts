@@ -6,14 +6,14 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { OpenClawConfig, ReplyPayload, RuntimeEnv } from "openclaw/plugin-sdk";
+import type { OpenClawConfig, ReplyPayload, RuntimeEnv } from "lcx-agent/plugin-sdk";
 import {
   createReplyPrefixOptions,
   createTypingCallbacks,
   isDangerousNameMatchingEnabled,
   logTypingFailure,
   resolveControlCommandGate,
-} from "openclaw/plugin-sdk";
+} from "lcx-agent/plugin-sdk";
 import type { ResolvedMattermostAccount } from "../mattermost/accounts.js";
 import { getMattermostRuntime } from "../runtime.js";
 import {

@@ -1,1 +1,1 @@
-export { promptAccountId } from "openclaw/plugin-sdk";
+export { promptAccountId } from "lcx-agent/plugin-sdk";

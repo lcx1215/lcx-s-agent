@@ -27,4 +27,26 @@ describe("external replay guard", () => {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
   });
+
+  it("uses the active LCX migration state root when no state dir is supplied", async () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "lcx-external-replay-active-"));
+    const previousStateDir = process.env.OPENCLAW_STATE_DIR;
+    process.env.OPENCLAW_STATE_DIR = stateDir;
+    try {
+      const guard = createExternalReplayGuard();
+      await expect(
+        guard.shouldProcessMessage({ accountId: "primary", messageId: "active-root-message" }),
+      ).resolves.toBe(true);
+      expect(fs.existsSync(path.join(stateDir, "external", "replay-dedupe", "primary.json"))).toBe(
+        true,
+      );
+    } finally {
+      if (previousStateDir === undefined) {
+        delete process.env.OPENCLAW_STATE_DIR;
+      } else {
+        process.env.OPENCLAW_STATE_DIR = previousStateDir;
+      }
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
 });

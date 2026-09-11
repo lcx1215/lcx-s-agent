@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { fetchWithSsrFGuard } from "openclaw/plugin-sdk";
+import { fetchWithSsrFGuard } from "lcx-agent/plugin-sdk";
 import type { ResolvedGoogleChatAccount } from "./accounts.js";
 import { getGoogleChatAccessToken } from "./auth.js";
 import type { GoogleChatReaction } from "./types.js";

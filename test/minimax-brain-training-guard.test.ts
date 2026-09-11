@@ -233,6 +233,8 @@ describe("minimax brain training guard adapter resolution", () => {
     expect(source).toContain("allowFailure: true");
     expect(source).toContain("HARDENED_EVAL_STEP_TIMEOUT_MS");
     expect(source).toContain("HARDENED_EVAL_IDLE_TIMEOUT_MS");
+    expect(source).toContain('"--blind"');
+    expect(source).toContain('"--no-response-prefill"');
   });
 
   it("bounds hardened eval child steps so a stuck candidate cannot stall training", async () => {

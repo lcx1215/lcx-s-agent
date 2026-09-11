@@ -141,6 +141,16 @@ export function buildOwnerControlMap(input: OwnerControlInput) {
     boolValue(summary.activeTrainingOrEval) === true;
   const dirtyFiles = numberValue(universeIndex.dirtyFiles) ?? 0;
   const unmatchedChangedFiles = numberValue(universeIndex.unmatchedChangedFiles) ?? 0;
+  const governanceStatus =
+    typeof universeIndex.governanceStatus === "string" ? universeIndex.governanceStatus : undefined;
+  const governanceScope =
+    typeof universeIndex.governanceScope === "string" ? universeIndex.governanceScope : undefined;
+  const governanceTotalComponents = numberValue(universeIndex.governanceTotalComponents);
+  const governanceReviewRequiredComponents =
+    numberValue(universeIndex.governanceReviewRequiredComponents) ?? 0;
+  const governanceCoverageRate = numberValue(universeIndex.governanceCoverageRate);
+  const governanceUnknownComponents = stringArray(universeIndex.governanceUnknownComponents);
+  const governanceMissingRouteOwners = stringArray(universeIndex.governanceMissingRouteOwners);
   const acceptedSkillOptPackets = numberValue(monotonicDataLedger.acceptedSkillOptPackets) ?? 0;
   const moduleLearningEvalAbsorbed =
     numberValue(monotonicDataLedger.moduleLearningEvalAbsorbed) ?? 0;
@@ -193,6 +203,30 @@ export function buildOwnerControlMap(input: OwnerControlInput) {
     stopWhen: "发现无关改动混在一起、文件归属说不清、或准备改外部通道发送/供应商/受保护记忆。",
     ownerAuthorization: "普通归类不需要；删除、回滚、提交、推送需要你明确说。",
   });
+
+  addIf(
+    items,
+    governanceStatus !== "complete" ||
+      governanceReviewRequiredComponents > 0 ||
+      governanceUnknownComponents.length > 0 ||
+      governanceMissingRouteOwners.length > 0,
+    {
+      id: "total_component_governance",
+      title: "全量部件治理覆盖",
+      status: "blocked_now",
+      ownerCanSee: true,
+      ownerCanDirectNow: false,
+      codexCanActWhenSafe: true,
+      supervisor: "Universe Index 负责盘点和归属；Codex 负责补规则；老板看是否还有无主部件。",
+      evidenceNow:
+        "tracked-and-visible 组件总数、review-required、unknown、route owner 缺失和覆盖率。",
+      reason: `当前全量治理状态是 ${governanceStatus ?? "missing"}，共 ${governanceTotalComponents ?? "unknown"} 个组件；review-required=${governanceReviewRequiredComponents}，unknown=${governanceUnknownComponents.length}，route owner 缺失=${governanceMissingRouteOwners.length}，scope=${governanceScope ?? "missing"}，coverageRate=${governanceCoverageRate ?? "unknown"}。`,
+      nextControl: "先补齐 Universe Index 的显式规则和真实 route owner，再允许继续扩展系统。",
+      proceedWhen: "治理状态 complete、review-required=0、unknown=0、route owner 缺失=0。",
+      stopWhen: "发现新文件没有类别、证明面、边界或真实 owner，或有人想用短标签冒充 route owner。",
+      ownerAuthorization: "补治理规则不需要；删除、迁移或改变组件 authority 需要你明确授权。",
+    },
+  );
 
   addIf(
     items,

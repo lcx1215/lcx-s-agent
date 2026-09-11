@@ -74,9 +74,11 @@ const PATH_RULES: PathRule[] = [
     lane: "global_doctrine_and_runbook",
     patterns: [
       /^AGENTS\.md$/u,
+      /^CONTRIBUTING\.md$/u,
       /^MEMORY\.md$/u,
       /^\.gitignore$/u,
       /^README\.md$/u,
+      /^ops\/(?:architecture|engineering)\//u,
       /^ops\/local-brain\/README\.md$/u,
       /^ops\/codex_handoff\.md$/u,
       /^ops\/automation\/repair-lock-protocol\.md$/u,
@@ -384,6 +386,25 @@ const PATH_RULES: PathRule[] = [
     patterns: [/^ops\/codex-remote-devbox-and-browser-runbook\.md$/u],
     requiredChecks: ["doctrine-consistency"],
     commands: ["node --import tsx scripts/operator/lcx-doctrine-consistency.ts --json"],
+  },
+  {
+    id: "identity_harness_contracts",
+    lane: "agent_workflow_memory",
+    patterns: [
+      /^src\/agents\/coding-harness\//u,
+      /^src\/agents\/quality-harness(?:-quality)?\.ts$/u,
+      /^src\/commands\/doctor-config-flow\.ts$/u,
+      /^src\/config\/(?:identity-migration|paths)\.ts$/u,
+      /^src\/infra\/pairing-files\.ts$/u,
+    ],
+    requiredChecks: ["identity-harness-contract-tests", "git-diff-check"],
+    commands: [
+      "pnpm vitest run src/agents/quality-harness.test.ts src/agents/coding-harness/codex-acp.test.ts src/config/identity-migration.test.ts src/config/paths.test.ts src/infra/pairing-files.identity-migration.test.ts",
+      "git diff --check",
+    ],
+    safetyNotes: [
+      "Identity and harness changes must preserve canonical-state activation, workspace attribution, finance safety, and rollback visibility; no provider, training, or external-channel authority is granted by these checks.",
+    ],
   },
   {
     id: "live_or_provider_boundary",

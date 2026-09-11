@@ -37,6 +37,7 @@ async function runUniverseIndex(args: string[] = ["--json", "--no-write"]) {
     summary: {
       trackedFiles: number;
       visibleFiles: number;
+      trackedAndVisibleFiles: number;
       dirtyFiles: number;
       workspaceArtifactFiles: number;
       liveSidecarFiles: number;
@@ -45,12 +46,49 @@ async function runUniverseIndex(args: string[] = ["--json", "--no-write"]) {
     repo: {
       trackedFileCount: number;
       visibleFileCount: number;
+      trackedAndVisibleFileCount: number;
       dirtyFileCount: number;
       topLevelCounts: Record<string, number>;
       changedFiles: string[];
     };
     ownerCoverage: {
       changeImpact: { ok: boolean; unmatchedFiles: string[]; affectedLanes: string[] };
+      governanceCoverage: {
+        status: string;
+        scope: string;
+        summary: {
+          totalComponents: number;
+          governedComponents: number;
+          inventoryOnlyComponents: number;
+          reviewRequiredComponents: number;
+          coverageRate: number;
+          inventoryAreaCount: number;
+          inventoryAreaComponentCount: number;
+        };
+        routeOwnerValidation: {
+          checked: string[];
+          missing: string[];
+        };
+        unknownComponents: string[];
+        components: Array<{
+          path: string;
+          inventoryOwner: string;
+          routeOwner: string | null;
+          proofSurface: string;
+          boundary: string;
+          disposition: string;
+        }>;
+        inventoryAreas: Array<{
+          id: string;
+          path: string;
+          componentCount: number;
+          inventoryOwner: string;
+          routeOwner: string;
+          proofSurface: string;
+          boundary: string;
+          disposition: string;
+        }>;
+      };
       governanceOwners: string[];
       governanceOwnerCount: number;
     };
@@ -94,11 +132,15 @@ describe("LCX universe index", () => {
         protectedMemoryTouched: false,
       }),
     );
-    expect(payload.ok).toBe(payload.summary.unmatchedChangedFiles === 0);
+    expect(payload.ok).toBe(
+      payload.summary.unmatchedChangedFiles === 0 &&
+        payload.ownerCoverage.governanceCoverage.status === "complete",
+    );
     expect(payload.summary.trackedFiles).toBeGreaterThan(100);
     expect(payload.summary.visibleFiles).toBeGreaterThan(100);
     expect(payload.repo.trackedFileCount).toBe(payload.summary.trackedFiles);
     expect(payload.repo.visibleFileCount).toBe(payload.summary.visibleFiles);
+    expect(payload.repo.trackedAndVisibleFileCount).toBe(payload.summary.trackedAndVisibleFiles);
     expect(payload.repo.topLevelCounts).toEqual(
       expect.objectContaining({
         scripts: expect.any(Number),
@@ -107,6 +149,49 @@ describe("LCX universe index", () => {
     );
     expect(payload.ownerCoverage.changeImpact.ok).toBe(
       payload.ownerCoverage.changeImpact.unmatchedFiles.length === 0,
+    );
+    expect(payload.ownerCoverage.governanceCoverage.status).toBe("complete");
+    expect(payload.ownerCoverage.governanceCoverage.scope).toBe("repo_tracked_and_visible_files");
+    expect(payload.ownerCoverage.governanceCoverage.summary.totalComponents).toBe(
+      payload.summary.trackedAndVisibleFiles,
+    );
+    expect(payload.ownerCoverage.governanceCoverage.summary.reviewRequiredComponents).toBe(0);
+    expect(payload.ownerCoverage.governanceCoverage.summary.coverageRate).toBe(1);
+    expect(payload.ownerCoverage.governanceCoverage.routeOwnerValidation.missing).toEqual([]);
+    expect(
+      payload.ownerCoverage.governanceCoverage.routeOwnerValidation.checked.length,
+    ).toBeGreaterThan(0);
+    expect(payload.ownerCoverage.governanceCoverage.summary.inventoryAreaCount).toBe(5);
+    expect(payload.ownerCoverage.governanceCoverage.summary.inventoryAreaComponentCount).toBe(
+      payload.summary.workspaceArtifactFiles + payload.summary.liveSidecarFiles,
+    );
+    expect(payload.ownerCoverage.governanceCoverage.unknownComponents).toEqual([]);
+    expect(payload.ownerCoverage.governanceCoverage.components).toHaveLength(
+      payload.summary.trackedAndVisibleFiles,
+    );
+    expect(payload.ownerCoverage.governanceCoverage.components).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          inventoryOwner: "lcx-universe-index",
+          routeOwner: expect.any(String),
+          proofSurface: expect.any(String),
+          boundary: expect.any(String),
+        }),
+      ]),
+    );
+    expect(payload.ownerCoverage.governanceCoverage.inventoryAreas).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "workspace_state",
+          inventoryOwner: "lcx-universe-index",
+          disposition: "inventory_only",
+        }),
+        expect.objectContaining({
+          id: "live_sidecar",
+          routeOwner: "scripts/operator/lcx-external-channel-status.ts",
+          disposition: "inventory_only",
+        }),
+      ]),
     );
     expect(Array.isArray(payload.ownerCoverage.changeImpact.unmatchedFiles)).toBe(true);
     expect(Array.isArray(payload.ownerCoverage.changeImpact.affectedLanes)).toBe(true);

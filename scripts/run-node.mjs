@@ -189,13 +189,13 @@ const logRunner = (message, deps) => {
   if (deps.env.OPENCLAW_RUNNER_LOG === "0") {
     return;
   }
-  deps.stderr.write(`[openclaw] ${message}\n`);
+  deps.stderr.write(`[lcx] ${message}\n`);
 };
 
 const shouldProtectJsonStdout = (args) => args.includes("--json");
 
 const runOpenClaw = async (deps) => {
-  const nodeProcess = deps.spawn(deps.execPath, ["openclaw.mjs", ...deps.args], {
+  const nodeProcess = deps.spawn(deps.execPath, ["lcx.mjs", ...deps.args], {
     cwd: deps.cwd,
     env: deps.env,
     stdio: "inherit",

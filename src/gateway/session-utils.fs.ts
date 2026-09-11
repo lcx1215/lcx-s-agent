@@ -2,6 +2,18 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  createLcxIdentityWriterPathContract,
+  readLcxIdentityWriterRaw,
+  removeLcxIdentityWriterWithReceipt,
+  rollbackLcxIdentityRemoval,
+  rollbackLcxIdentityWriter,
+  writeLcxIdentityWriterRawWithReceipt,
+  LcxIdentityWriterContractError,
+  type LcxIdentityRemovalReceipt,
+  type LcxIdentityWriteReceipt,
+} from "../config/identity-migration.js";
+import { resolveStateDir } from "../config/paths.js";
+import {
   formatSessionArchiveTimestamp,
   parseSessionArchiveTimestamp,
   type SessionArchiveReason,
@@ -9,6 +21,11 @@ import {
   resolveSessionTranscriptPath,
   resolveSessionTranscriptPathInDir,
 } from "../config/sessions.js";
+import {
+  resolveCurrentSessionIdentityPathContract,
+  resolveIdentityMigrationTranscriptPath,
+  type LcxIdentitySessionMigration,
+} from "../config/sessions/identity-migration.js";
 import { resolveRequiredHomeDir } from "../infra/home-dir.js";
 import { jsonUtf8Bytes } from "../infra/json-utf8-bytes.js";
 import { hasInterSessionUserProvenance } from "../sessions/input-provenance.js";
@@ -157,13 +174,49 @@ export function resolveSessionTranscriptCandidates(
   }
 
   const home = resolveRequiredHomeDir(process.env, os.homedir);
-  const legacyDir = path.join(home, ".openclaw", "sessions");
-  pushCandidate(() => resolveSessionTranscriptPathInDir(sessionId, legacyDir));
+  const activeSessionsDir = path.join(
+    resolveStateDir(process.env, () => home),
+    "sessions",
+  );
+  pushCandidate(() => resolveSessionTranscriptPathInDir(sessionId, activeSessionsDir));
 
   return Array.from(new Set(candidates));
 }
 
 export type ArchiveFileReason = SessionArchiveReason;
+
+export type LcxIdentitySessionArchiveReceipt = Readonly<{
+  canonicalTranscriptPath: string;
+  archiveWrite: LcxIdentityWriteReceipt;
+  sourceRemoval: LcxIdentityRemovalReceipt;
+}>;
+
+export type LcxIdentitySessionArchiveCleanupReceipt = Readonly<{
+  removed: readonly LcxIdentityRemovalReceipt[];
+  rollbackAvailable: boolean;
+}>;
+
+async function identityFileExists(filePath: string): Promise<boolean> {
+  return await fs.promises
+    .stat(filePath)
+    .then((stat) => stat.isFile())
+    .catch(() => false);
+}
+
+function createSessionArchiveContract(params: {
+  migration: LcxIdentitySessionMigration;
+  writer: "sessions" | "backups";
+  filePath: string;
+}) {
+  const current = resolveCurrentSessionIdentityPathContract(params.migration);
+  return createLcxIdentityWriterPathContract({
+    writer: params.writer,
+    migrationPlan: current.migrationPlan,
+    readPath: params.filePath,
+    writePath: params.filePath,
+    auditPath: current.auditPath,
+  });
+}
 
 function canonicalizePathForComparison(filePath: string): string {
   const resolved = path.resolve(filePath);
@@ -179,6 +232,102 @@ export function archiveFileOnDisk(filePath: string, reason: ArchiveFileReason): 
   const archived = `${filePath}.${reason}.${ts}`;
   fs.renameSync(filePath, archived);
   return archived;
+}
+
+export async function archiveSessionTranscriptForIdentityMigration(params: {
+  migration: LcxIdentitySessionMigration;
+  sessionId: string;
+  reason: ArchiveFileReason;
+  topicId?: string | number;
+  nowMs?: number;
+}): Promise<LcxIdentitySessionArchiveReceipt | null> {
+  const canonicalTranscriptPath = resolveIdentityMigrationTranscriptPath(
+    params.migration,
+    params.sessionId,
+    params.topicId,
+  );
+  const legacyTranscriptPath = resolveSessionTranscriptPathInDir(
+    params.sessionId,
+    params.migration.readSessionsDir,
+    params.topicId,
+  );
+  const candidates = Array.from(new Set([canonicalTranscriptPath, legacyTranscriptPath]));
+  const existingPaths = (
+    await Promise.all(
+      candidates.map(async (candidate) =>
+        (await identityFileExists(candidate)) ? candidate : null,
+      ),
+    )
+  ).filter((candidate): candidate is string => candidate !== null);
+  if (existingPaths.length > 1) {
+    throw new LcxIdentityWriterContractError(
+      `session transcript migration found split state: ${existingPaths.join(" and ")}`,
+      "LCX_IDENTITY_SPLIT_STATE",
+    );
+  }
+  const sourcePath = existingPaths[0];
+  if (!sourcePath) {
+    return null;
+  }
+
+  const raw = await readLcxIdentityWriterRaw(
+    createSessionArchiveContract({
+      migration: params.migration,
+      writer: "sessions",
+      filePath: sourcePath,
+    }),
+  );
+  if (raw === null) {
+    return null;
+  }
+
+  const archivePath = `${canonicalTranscriptPath}.${params.reason}.${formatSessionArchiveTimestamp(
+    params.nowMs,
+  )}`;
+  const archiveWrite = await writeLcxIdentityWriterRawWithReceipt(
+    createSessionArchiveContract({
+      migration: params.migration,
+      writer: "backups",
+      filePath: archivePath,
+    }),
+    raw,
+  );
+  let sourceRemoval: LcxIdentityRemovalReceipt | undefined;
+  try {
+    sourceRemoval = await removeLcxIdentityWriterWithReceipt(
+      createSessionArchiveContract({
+        migration: params.migration,
+        writer: "sessions",
+        filePath: sourcePath,
+      }),
+    );
+  } catch (error) {
+    await rollbackLcxIdentityWriter(archiveWrite);
+    throw error;
+  }
+
+  return Object.freeze({
+    canonicalTranscriptPath,
+    archiveWrite,
+    sourceRemoval,
+  });
+}
+
+export async function rollbackSessionTranscriptIdentityArchive(
+  receipt: LcxIdentitySessionArchiveReceipt,
+): Promise<void> {
+  const sourcePath = receipt.sourceRemoval.pathContract.writePath;
+  if (
+    sourcePath !== receipt.canonicalTranscriptPath &&
+    (await identityFileExists(receipt.canonicalTranscriptPath))
+  ) {
+    throw new LcxIdentityWriterContractError(
+      `session transcript archive rollback would recreate split state at ${receipt.canonicalTranscriptPath}`,
+      "LCX_IDENTITY_SPLIT_STATE",
+    );
+  }
+  await rollbackLcxIdentityRemoval(receipt.sourceRemoval);
+  await rollbackLcxIdentityWriter(receipt.archiveWrite);
 }
 
 /**
@@ -264,6 +413,88 @@ export async function cleanupArchivedSessionTranscripts(opts: {
   }
 
   return { removed, scanned };
+}
+
+export async function cleanupArchivedSessionTranscriptsForIdentityMigration(params: {
+  migration: LcxIdentitySessionMigration;
+  olderThanMs: number;
+  reason?: ArchiveFileReason;
+  nowMs?: number;
+}): Promise<{
+  result: { removed: number; scanned: number };
+  receipt: LcxIdentitySessionArchiveCleanupReceipt;
+}> {
+  if (!Number.isFinite(params.olderThanMs) || params.olderThanMs < 0) {
+    return {
+      result: { removed: 0, scanned: 0 },
+      receipt: { removed: [], rollbackAvailable: false },
+    };
+  }
+  const now = params.nowMs ?? Date.now();
+  const reason = params.reason ?? "deleted";
+  const directories = Array.from(
+    new Set(
+      [params.migration.readSessionsDir, params.migration.writeSessionsDir].map((dir) =>
+        path.resolve(dir),
+      ),
+    ),
+  );
+  const removed: LcxIdentityRemovalReceipt[] = [];
+  let scanned = 0;
+  try {
+    for (const dir of directories) {
+      const entries = await fs.promises.readdir(dir).catch(() => []);
+      for (const entry of entries) {
+        const timestamp = parseSessionArchiveTimestamp(entry, reason);
+        if (timestamp == null) {
+          continue;
+        }
+        scanned += 1;
+        if (now - timestamp <= params.olderThanMs) {
+          continue;
+        }
+        const fullPath = path.join(dir, entry);
+        if (!(await identityFileExists(fullPath))) {
+          continue;
+        }
+        removed.push(
+          await removeLcxIdentityWriterWithReceipt(
+            createSessionArchiveContract({
+              migration: params.migration,
+              writer: "backups",
+              filePath: fullPath,
+            }),
+          ),
+        );
+      }
+    }
+  } catch (error) {
+    for (const receipt of removed.toReversed()) {
+      await rollbackLcxIdentityRemoval(receipt);
+    }
+    throw error;
+  }
+  for (const receipt of removed) {
+    await fs.promises.unlink(receipt.rollback.path).catch(() => undefined);
+  }
+  return {
+    result: { removed: removed.length, scanned },
+    receipt: Object.freeze({ removed: Object.freeze(removed), rollbackAvailable: false }),
+  };
+}
+
+export async function rollbackSessionArchiveCleanupIdentityMigration(
+  receipt: LcxIdentitySessionArchiveCleanupReceipt,
+): Promise<void> {
+  if (!receipt.rollbackAvailable) {
+    throw new LcxIdentityWriterContractError(
+      "session archive cleanup rollback window has been closed after committed cleanup",
+      "LCX_IDENTITY_CLEANUP_ROLLBACK_CLOSED",
+    );
+  }
+  for (const removed of receipt.removed.toReversed()) {
+    await rollbackLcxIdentityRemoval(removed);
+  }
 }
 
 export function capArrayByJsonBytes<T>(

@@ -5,8 +5,8 @@
  * resolves agent routes, and handles replies.
  */
 
-import type { ReplyPayload, OpenClawConfig } from "openclaw/plugin-sdk";
-import { createReplyPrefixOptions } from "openclaw/plugin-sdk";
+import type { ReplyPayload, OpenClawConfig } from "lcx-agent/plugin-sdk";
+import { createReplyPrefixOptions } from "lcx-agent/plugin-sdk";
 import { checkTwitchAccessControl } from "./access-control.js";
 import { getOrCreateClientManager } from "./client-manager-registry.js";
 import { getTwitchRuntime } from "./runtime.js";

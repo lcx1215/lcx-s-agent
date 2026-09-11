@@ -714,7 +714,11 @@ describe("handleSystemRunInvoke mac app exec host routing", () => {
       command: ["env", "-S", 'sh -c "echo pwned"'],
     });
     expect(runCommand).not.toHaveBeenCalled();
-    expectInvokeErrorMessage(sendInvokeResult, { message: "allowlist miss" });
+    expectInvokeErrorMessage(sendInvokeResult, {
+      message:
+        process.platform === "win32" ? "SYSTEM_RUN_DENIED: approval required" : "allowlist miss",
+      exact: process.platform === "win32",
+    });
   });
 
   it("denies semicolon-chained shell payloads in allowlist mode without explicit approval", async () => {

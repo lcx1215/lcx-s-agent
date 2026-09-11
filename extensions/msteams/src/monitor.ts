@@ -7,7 +7,7 @@ import {
   summarizeMapping,
   type OpenClawConfig,
   type RuntimeEnv,
-} from "openclaw/plugin-sdk";
+} from "lcx-agent/plugin-sdk";
 import { createMSTeamsConversationStoreFs } from "./conversation-store-fs.js";
 import type { MSTeamsConversationStore } from "./conversation-store.js";
 import { formatUnknownError } from "./errors.js";

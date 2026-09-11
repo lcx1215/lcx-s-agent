@@ -16,9 +16,12 @@ function envWith(overrides: Record<string, string | undefined>): NodeJS.ProcessE
   return { ...overrides };
 }
 
-function loadConfigForHome(home: string) {
+function loadConfigForHome(home: string, configPath?: string) {
   return createConfigIO({
-    env: envWith({ OPENCLAW_HOME: home }),
+    env: envWith({
+      OPENCLAW_HOME: home,
+      ...(configPath ? { OPENCLAW_CONFIG_PATH: configPath } : {}),
+    }),
     homedir: () => home,
   }).loadConfig();
 }
@@ -53,8 +56,8 @@ describe("Nix integration (U3, U5, U9)", () => {
   });
 
   describe("U5: CONFIG_PATH and STATE_DIR env var overrides", () => {
-    it("STATE_DIR defaults to ~/.openclaw when env not set", () => {
-      expect(resolveStateDir(envWith({ OPENCLAW_STATE_DIR: undefined }))).toMatch(/\.openclaw$/);
+    it("STATE_DIR defaults to ~/.lcx when env not set", () => {
+      expect(resolveStateDir(envWith({ OPENCLAW_STATE_DIR: undefined }))).toMatch(/\.lcx$/);
     });
 
     it("STATE_DIR respects OPENCLAW_STATE_DIR override", () => {
@@ -67,10 +70,10 @@ describe("Nix integration (U3, U5, U9)", () => {
       const customHome = path.join(path.sep, "custom", "home");
       expect(
         resolveStateDir(envWith({ OPENCLAW_HOME: customHome, OPENCLAW_STATE_DIR: undefined })),
-      ).toBe(path.join(path.resolve(customHome), ".openclaw"));
+      ).toBe(path.join(path.resolve(customHome), ".lcx"));
     });
 
-    it("CONFIG_PATH defaults to OPENCLAW_HOME/.openclaw/openclaw.json", () => {
+    it("CONFIG_PATH defaults to OPENCLAW_HOME/.lcx/lcx.json", () => {
       const customHome = path.join(path.sep, "custom", "home");
       expect(
         resolveConfigPathCandidate(
@@ -80,15 +83,15 @@ describe("Nix integration (U3, U5, U9)", () => {
             OPENCLAW_STATE_DIR: undefined,
           }),
         ),
-      ).toBe(path.join(path.resolve(customHome), ".openclaw", "openclaw.json"));
+      ).toBe(path.join(path.resolve(customHome), ".lcx", "lcx.json"));
     });
 
-    it("CONFIG_PATH defaults to ~/.openclaw/openclaw.json when env not set", () => {
+    it("CONFIG_PATH defaults to ~/.lcx/lcx.json when env not set", () => {
       expect(
         resolveConfigPathCandidate(
           envWith({ OPENCLAW_CONFIG_PATH: undefined, OPENCLAW_STATE_DIR: undefined }),
         ),
-      ).toMatch(/\.openclaw[\\/]openclaw\.json$/);
+      ).toMatch(/\.lcx[\\/]lcx\.json$/);
     });
 
     it("CONFIG_PATH respects OPENCLAW_CONFIG_PATH override", () => {
@@ -120,7 +123,7 @@ describe("Nix integration (U3, U5, U9)", () => {
   describe("U5b: tilde expansion for config paths", () => {
     it("expands ~ in common path-ish config fields", async () => {
       await withTempHome(async (home) => {
-        const configDir = path.join(home, ".openclaw");
+        const configDir = path.join(home, ".lcx");
         await fs.mkdir(configDir, { recursive: true });
         const pluginDir = path.join(home, "plugins", "demo-plugin");
         await fs.mkdir(pluginDir, { recursive: true });
@@ -142,7 +145,7 @@ describe("Nix integration (U3, U5, U9)", () => {
           "utf-8",
         );
         await fs.writeFile(
-          path.join(configDir, "openclaw.json"),
+          path.join(configDir, "lcx.json"),
           JSON.stringify(
             {
               plugins: {
@@ -177,7 +180,7 @@ describe("Nix integration (U3, U5, U9)", () => {
           "utf-8",
         );
 
-        const cfg = loadConfigForHome(home);
+        const cfg = loadConfigForHome(home, path.join(configDir, "lcx.json"));
 
         expect(cfg.plugins?.load?.paths?.[0]).toBe(path.join(home, "plugins", "demo-plugin"));
         expect(cfg.agents?.defaults?.workspace).toBe(path.join(home, "ws-default"));

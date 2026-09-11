@@ -30,6 +30,14 @@ describe("LCX owner brief", () => {
             trainSliceWritten: 2928,
             acceptedSkillOptPackets: 3,
           },
+          universeIndex: {
+            governanceStatus: "complete",
+            governanceTotalComponents: 8080,
+            governanceGovernedComponents: 7966,
+            governanceInventoryOnlyComponents: 114,
+            governanceReviewRequiredComponents: 0,
+            governanceCoverageRate: 1,
+          },
         },
         liveTouched: false,
         providerConfigTouched: false,
@@ -74,6 +82,8 @@ describe("LCX owner brief", () => {
     expect(brief.markdown).toContain("管控图");
     expect(brief.markdown).toContain("/tmp/state/lcx-owner-control-map-latest.md");
     expect(brief.markdown).toContain("已经有 3 条小规则候选");
+    expect(brief.markdown).toContain("全量部件治理：complete");
+    expect(brief.markdown).toContain("共 8080 个");
     expect(brief.markdown).toContain("候选模型还有 2 个格式不干净的案例");
     expect(brief.markdown).toContain("商品级验收还没过");
     expect(brief.markdown).not.toContain("structuralOwnerFailures");

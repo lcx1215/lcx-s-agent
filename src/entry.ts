@@ -4,6 +4,7 @@ import { enableCompileCache } from "node:module";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { isRootHelpInvocation, isRootVersionInvocation } from "./cli/argv.js";
+import { resolveCliName } from "./cli/cli-name.js";
 import { applyCliProfileEnv, parseCliProfileArgs } from "./cli/profile.js";
 import { shouldSkipRespawnForArgv } from "./cli/respawn-policy.js";
 import { normalizeWindowsArgv } from "./cli/windows-argv.js";
@@ -13,6 +14,8 @@ import { installProcessWarningFilter } from "./infra/warning-filter.js";
 import { attachChildProcessBridge } from "./process/child-process-bridge.js";
 
 const ENTRY_WRAPPER_PAIRS = [
+  { wrapperBasename: "lcx.mjs", entryBasename: "entry.js" },
+  { wrapperBasename: "lcx.js", entryBasename: "entry.js" },
   { wrapperBasename: "openclaw.mjs", entryBasename: "entry.js" },
   { wrapperBasename: "openclaw.js", entryBasename: "entry.js" },
 ] as const;
@@ -40,7 +43,8 @@ if (
 ) {
   // Imported as a dependency — skip all entry-point side effects.
 } else {
-  process.title = "openclaw";
+  const cliName = resolveCliName();
+  process.title = cliName;
   installProcessWarningFilter();
   normalizeEnv();
   if (!isTruthyEnvValue(process.env.NODE_DISABLE_COMPILE_CACHE)) {
@@ -113,7 +117,7 @@ if (
 
     child.once("error", (error) => {
       console.error(
-        "[openclaw] Failed to respawn CLI:",
+        `[${cliName}] Failed to respawn CLI:`,
         error instanceof Error ? (error.stack ?? error.message) : error,
       );
       process.exit(1);
@@ -133,7 +137,7 @@ if (
       })
       .catch((error) => {
         console.error(
-          "[openclaw] Failed to resolve version:",
+          `[${cliName}] Failed to resolve version:`,
           error instanceof Error ? (error.stack ?? error.message) : error,
         );
         process.exitCode = 1;
@@ -151,7 +155,7 @@ if (
       })
       .catch((error) => {
         console.error(
-          "[openclaw] Failed to display help:",
+          `[${cliName}] Failed to display help:`,
           error instanceof Error ? (error.stack ?? error.message) : error,
         );
         process.exitCode = 1;
@@ -165,7 +169,7 @@ if (
     const parsed = parseCliProfileArgs(process.argv);
     if (!parsed.ok) {
       // Keep it simple; Commander will handle rich help/errors after we strip flags.
-      console.error(`[openclaw] ${parsed.error}`);
+      console.error(`[${cliName}] ${parsed.error}`);
       process.exit(2);
     }
 
@@ -180,7 +184,7 @@ if (
         .then(({ runCli }) => runCli(process.argv))
         .catch((error) => {
           console.error(
-            "[openclaw] Failed to start CLI:",
+            `[${cliName}] Failed to start CLI:`,
             error instanceof Error ? (error.stack ?? error.message) : error,
           );
           process.exitCode = 1;

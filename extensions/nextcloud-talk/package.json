@@ -4,6 +4,7 @@
   "description": "OpenClaw Nextcloud Talk channel plugin",
   "type": "module",
   "dependencies": {
+    "lcx-agent": "workspace:*",
     "zod": "^4.3.6"
   },
   "openclaw": {

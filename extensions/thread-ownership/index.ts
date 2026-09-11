@@ -1,4 +1,4 @@
-import type { OpenClawConfig, OpenClawPluginApi } from "openclaw/plugin-sdk/core";
+import type { OpenClawConfig, OpenClawPluginApi } from "lcx-agent/plugin-sdk/core";
 
 type ThreadOwnershipConfig = {
   forwarderUrl?: string;

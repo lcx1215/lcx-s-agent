@@ -4,7 +4,22 @@ import { parseByteSize } from "../../cli/parse-bytes.js";
 import { parseDurationMs } from "../../cli/parse-duration.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { loadConfig } from "../config.js";
+import {
+  createLcxIdentityWriterPathContract,
+  readLcxIdentityWriterRaw,
+  removeLcxIdentityWriterWithReceipt,
+  rollbackLcxIdentityRemoval,
+  rollbackLcxIdentityWriter,
+  writeLcxIdentityWriterRawWithReceipt,
+  LcxIdentityWriterContractError,
+  type LcxIdentityRemovalReceipt,
+  type LcxIdentityWriteReceipt,
+} from "../identity-migration.js";
 import type { SessionMaintenanceConfig, SessionMaintenanceMode } from "../types.base.js";
+import {
+  resolveCurrentSessionIdentityPathContract,
+  type LcxIdentitySessionMigration,
+} from "./identity-migration.js";
 import type { SessionEntry } from "./types.js";
 
 const log = createSubsystemLogger("sessions/store");
@@ -34,6 +49,45 @@ export type ResolvedSessionMaintenanceConfig = {
   maxDiskBytes: number | null;
   highWaterBytes: number | null;
 };
+
+export type LcxIdentitySessionRotationReceipt = Readonly<{
+  canonicalStorePath: string;
+  sourceRemoval: LcxIdentityRemovalReceipt;
+  archiveWrite: LcxIdentityWriteReceipt;
+  cleanedBackups: readonly LcxIdentityRemovalReceipt[];
+}>;
+
+function createMaintenanceFileContract(params: {
+  migration: LcxIdentitySessionMigration;
+  writer: "sessions" | "backups";
+  filePath: string;
+}) {
+  const current = resolveCurrentSessionIdentityPathContract(params.migration);
+  return createLcxIdentityWriterPathContract({
+    writer: params.writer,
+    migrationPlan: current.migrationPlan,
+    readPath: params.filePath,
+    writePath: params.filePath,
+    auditPath: current.auditPath,
+  });
+}
+
+async function identityFileExists(filePath: string): Promise<boolean> {
+  return await fs.promises
+    .stat(filePath)
+    .then((stat) => stat.isFile())
+    .catch(() => false);
+}
+
+async function rollbackSessionRotationParts(
+  receipt: LcxIdentitySessionRotationReceipt,
+): Promise<void> {
+  for (const removed of [...receipt.cleanedBackups].toReversed()) {
+    await rollbackLcxIdentityRemoval(removed);
+  }
+  await rollbackLcxIdentityRemoval(receipt.sourceRemoval);
+  await rollbackLcxIdentityWriter(receipt.archiveWrite);
+}
 
 function resolvePruneAfterMs(maintenance?: SessionMaintenanceConfig): number {
   const raw = maintenance?.pruneAfter ?? maintenance?.pruneDays;
@@ -324,4 +378,143 @@ export async function rotateSessionFile(
   }
 
   return true;
+}
+
+/**
+ * Rotate the active session store through the LCX identity contract.
+ *
+ * The current file is archived under the canonical sessions directory, then
+ * removed through a receipt-backed sessions writer. This keeps legacy
+ * read-old/canonical-write-new migration from leaving a second active store.
+ */
+export async function rotateSessionFileForIdentityMigration(params: {
+  migration: LcxIdentitySessionMigration;
+  overrideBytes?: number;
+  nowMs?: number;
+}): Promise<LcxIdentitySessionRotationReceipt | null> {
+  const current = resolveCurrentSessionIdentityPathContract(params.migration);
+  const canonicalStorePath = current.writePath;
+  const readCandidates = current.migrationPlan
+    ? current.migrationPlan.readStateDirs.map((stateDir) =>
+        path.resolve(stateDir, params.migration.relativePath),
+      )
+    : [current.readPath];
+  const existingReadPaths = (
+    await Promise.all(
+      readCandidates.map(async (candidate) =>
+        (await identityFileExists(candidate)) ? candidate : null,
+      ),
+    )
+  ).filter((candidate): candidate is string => candidate !== null);
+  if (existingReadPaths.length > 1) {
+    throw new LcxIdentityWriterContractError(
+      `sessions migration found split store state: ${existingReadPaths.join(" and ")}`,
+      "LCX_IDENTITY_SPLIT_STATE",
+    );
+  }
+  const sourcePath = existingReadPaths[0] ?? current.readPath;
+  const sourceStat = await fs.promises.stat(sourcePath).catch(() => null);
+  if (!sourceStat?.isFile()) {
+    return null;
+  }
+
+  const maxBytes = params.overrideBytes ?? resolveMaintenanceConfig().rotateBytes;
+  if (sourceStat.size <= maxBytes) {
+    return null;
+  }
+  if (sourcePath !== canonicalStorePath && (await identityFileExists(canonicalStorePath))) {
+    throw new LcxIdentityWriterContractError(
+      `sessions migration found split store state: ${sourcePath} and ${canonicalStorePath}`,
+      "LCX_IDENTITY_SPLIT_STATE",
+    );
+  }
+
+  const raw = await readLcxIdentityWriterRaw(
+    createMaintenanceFileContract({
+      migration: params.migration,
+      writer: "sessions",
+      filePath: sourcePath,
+    }),
+  );
+  if (raw === null) {
+    return null;
+  }
+
+  const archiveBase = path.basename(canonicalStorePath);
+  const archivePath = path.join(
+    path.dirname(canonicalStorePath),
+    `${archiveBase}.bak.${params.nowMs ?? Date.now()}`,
+  );
+  const archiveWrite = await writeLcxIdentityWriterRawWithReceipt(
+    createMaintenanceFileContract({
+      migration: params.migration,
+      writer: "backups",
+      filePath: archivePath,
+    }),
+    raw,
+  );
+
+  let sourceRemoval: LcxIdentityRemovalReceipt | undefined;
+  const cleanedBackups: LcxIdentityRemovalReceipt[] = [];
+  try {
+    sourceRemoval = await removeLcxIdentityWriterWithReceipt(
+      createMaintenanceFileContract({
+        migration: params.migration,
+        writer: "sessions",
+        filePath: sourcePath,
+      }),
+    );
+
+    const backupNames = (await fs.promises.readdir(path.dirname(canonicalStorePath)))
+      .filter((fileName) => fileName.startsWith(`${archiveBase}.bak.`))
+      .toSorted()
+      .toReversed();
+    for (const oldBackup of backupNames.slice(3)) {
+      const oldBackupPath = path.join(path.dirname(canonicalStorePath), oldBackup);
+      if (!(await identityFileExists(oldBackupPath))) {
+        continue;
+      }
+      cleanedBackups.push(
+        await removeLcxIdentityWriterWithReceipt(
+          createMaintenanceFileContract({
+            migration: params.migration,
+            writer: "backups",
+            filePath: oldBackupPath,
+          }),
+        ),
+      );
+    }
+  } catch (error) {
+    if (sourceRemoval) {
+      await rollbackLcxIdentityRemoval(sourceRemoval);
+    }
+    for (const removed of cleanedBackups.toReversed()) {
+      await rollbackLcxIdentityRemoval(removed);
+    }
+    await rollbackLcxIdentityWriter(archiveWrite);
+    throw error;
+  }
+
+  return Object.freeze({
+    canonicalStorePath,
+    sourceRemoval,
+    archiveWrite,
+    cleanedBackups: Object.freeze(cleanedBackups),
+  });
+}
+
+export async function rollbackSessionFileIdentityRotation(
+  receipt: LcxIdentitySessionRotationReceipt,
+): Promise<void> {
+  const sourcePath = receipt.sourceRemoval.pathContract.writePath;
+  if (
+    sourcePath !== receipt.canonicalStorePath &&
+    (await identityFileExists(receipt.canonicalStorePath))
+  ) {
+    throw new LcxIdentityWriterContractError(
+      `sessions rotation rollback would recreate split state at ${receipt.canonicalStorePath}`,
+      "LCX_IDENTITY_SPLIT_STATE",
+    );
+  }
+  await rollbackSessionRotationParts(receipt);
 }

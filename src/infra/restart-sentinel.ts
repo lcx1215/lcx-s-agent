@@ -1,7 +1,20 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { formatCliCommand } from "../cli/command-format.js";
+import {
+  createLcxIdentityWriterPathContract,
+  readLcxIdentityWriterRaw,
+  removeLcxIdentityWriterWithReceipt,
+  resolveLcxIdentityStateWriterPathContract,
+  rollbackLcxIdentityRemoval,
+  rollbackLcxIdentityWriter,
+  writeLcxIdentityWriterRawWithReceipt,
+  type LcxIdentityRemovalReceipt,
+  type LcxIdentityWriteReceipt,
+  type LcxIdentityWriterPathContract,
+} from "../config/identity-migration.js";
 import { resolveStateDir } from "../config/paths.js";
+import type { LcxIdentityMigrationPlan } from "../config/paths.js";
 
 export type RestartSentinelLog = {
   stdoutTail?: string | null;
@@ -52,6 +65,15 @@ export type RestartSentinel = {
 
 const SENTINEL_FILENAME = "restart-sentinel.json";
 
+function parseRestartSentinel(raw: string): RestartSentinel | null {
+  try {
+    const parsed = JSON.parse(raw) as RestartSentinel | undefined;
+    return parsed?.version === 1 && parsed.payload ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 export function formatDoctorNonInteractiveHint(
   env: Record<string, string | undefined> = process.env as Record<string, string | undefined>,
 ): string {
@@ -73,20 +95,127 @@ export async function writeRestartSentinel(
   return filePath;
 }
 
+export type LcxIdentityRestartSentinelMigration = Readonly<{
+  pathContract: LcxIdentityWriterPathContract & Readonly<{ writer: "restart-sentinel" }>;
+  readSentinelPath: string;
+  writeSentinelPath: string;
+}>;
+
+export type LcxIdentityRestartSentinelSnapshot = Readonly<{
+  path: string;
+  exists: boolean;
+  raw: string | null;
+  sentinel: RestartSentinel | null;
+}>;
+
+export function createLcxIdentityRestartSentinelMigration(params: {
+  migrationPlan: LcxIdentityMigrationPlan;
+  existsSync?: (candidate: string) => boolean;
+}): LcxIdentityRestartSentinelMigration {
+  if (params.migrationPlan.mode === "explicit-config-override") {
+    throw new Error("Restart sentinel migration requires a state-root authority");
+  }
+  const pathContract = resolveLcxIdentityStateWriterPathContract({
+    writer: "restart-sentinel",
+    migrationPlan: params.migrationPlan,
+    relativePath: SENTINEL_FILENAME,
+    existsSync: params.existsSync,
+  });
+  return Object.freeze({
+    pathContract,
+    readSentinelPath: pathContract.readPath,
+    writeSentinelPath: pathContract.writePath,
+  });
+}
+
+function resolveCurrentRestartSentinelPathContract(
+  migration: LcxIdentityRestartSentinelMigration,
+): LcxIdentityWriterPathContract & Readonly<{ writer: "restart-sentinel" }> {
+  const plan = migration.pathContract.migrationPlan;
+  if (!plan) {
+    return migration.pathContract;
+  }
+  return resolveLcxIdentityStateWriterPathContract({
+    writer: "restart-sentinel",
+    migrationPlan: plan,
+    relativePath: SENTINEL_FILENAME,
+    backupPath: migration.pathContract.backupPath,
+    auditPath: migration.pathContract.auditPath,
+  });
+}
+
+export async function readRestartSentinelForIdentityMigration(
+  migration: LcxIdentityRestartSentinelMigration,
+): Promise<LcxIdentityRestartSentinelSnapshot> {
+  const pathContract = resolveCurrentRestartSentinelPathContract(migration);
+  const raw = await readLcxIdentityWriterRaw(pathContract);
+  return {
+    path: pathContract.readPath,
+    exists: raw !== null,
+    raw,
+    sentinel: raw === null ? null : parseRestartSentinel(raw),
+  };
+}
+
+export async function writeRestartSentinelForIdentityMigration(
+  migration: LcxIdentityRestartSentinelMigration,
+  payload: RestartSentinelPayload,
+  options?: { expectedReadPath?: string; expectedWritePath?: string },
+): Promise<LcxIdentityWriteReceipt> {
+  const pathContract = resolveCurrentRestartSentinelPathContract(migration);
+  const data: RestartSentinel = { version: 1, payload };
+  return await writeLcxIdentityWriterRawWithReceipt(
+    pathContract,
+    `${JSON.stringify(data, null, 2)}\n`,
+    options,
+  );
+}
+
+export async function consumeRestartSentinelForIdentityMigration(
+  migration: LcxIdentityRestartSentinelMigration,
+): Promise<{ sentinel: RestartSentinel; receipt: LcxIdentityRemovalReceipt } | null> {
+  const snapshot = await readRestartSentinelForIdentityMigration(migration);
+  if (!snapshot.sentinel) {
+    return null;
+  }
+  const pathContract = resolveCurrentRestartSentinelPathContract(migration);
+  const removalContract =
+    pathContract.readPath === pathContract.writePath
+      ? pathContract
+      : createLcxIdentityWriterPathContract({
+          writer: "restart-sentinel",
+          migrationPlan: pathContract.migrationPlan,
+          readPath: pathContract.readPath,
+          writePath: pathContract.readPath,
+          auditPath: pathContract.auditPath,
+        });
+  const receipt = await removeLcxIdentityWriterWithReceipt(removalContract, {
+    expectedReadPath: removalContract.readPath,
+    expectedWritePath: removalContract.writePath,
+  });
+  return { sentinel: snapshot.sentinel, receipt };
+}
+
+export async function rollbackRestartSentinelIdentityMigration(
+  receipt: LcxIdentityWriteReceipt,
+): Promise<void> {
+  await rollbackLcxIdentityWriter(receipt);
+}
+
+export async function rollbackConsumedRestartSentinelMigration(
+  receipt: LcxIdentityRemovalReceipt,
+): Promise<void> {
+  await rollbackLcxIdentityRemoval(receipt);
+}
+
 export async function readRestartSentinel(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<RestartSentinel | null> {
   const filePath = resolveRestartSentinelPath(env);
   try {
     const raw = await fs.readFile(filePath, "utf-8");
-    let parsed: RestartSentinel | undefined;
-    try {
-      parsed = JSON.parse(raw) as RestartSentinel | undefined;
-    } catch {
-      await fs.unlink(filePath).catch(() => {});
-      return null;
-    }
-    if (!parsed || parsed.version !== 1 || !parsed.payload) {
+    const parsed = parseRestartSentinel(raw);
+    if (!parsed) {
       await fs.unlink(filePath).catch(() => {});
       return null;
     }

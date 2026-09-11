@@ -53,7 +53,7 @@ const requiredSubpathEntries = [
   "account-id",
 ];
 
-// Critical functions that channel extension plugins import from openclaw/plugin-sdk.
+// Critical functions that channel extension plugins import from lcx-agent/plugin-sdk.
 // If any of these are missing, plugins will fail at runtime with:
 //   TypeError: (0 , _pluginSdk.<name>) is not a function
 const requiredExports = [

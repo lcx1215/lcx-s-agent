@@ -2,10 +2,20 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { formatCliCommand } from "../cli/command-format.js";
+import {
+  createLcxIdentityWriterPathContract,
+  moveLcxIdentityPathWithReceipt,
+  readLcxIdentityWriterRaw,
+  rollbackLcxIdentityPathMove,
+  LcxIdentityWriterContractError,
+  type LcxIdentityPathMoveReceipt,
+  type LcxIdentityWriterPathContract,
+} from "../config/identity-migration.js";
 import { resolveOAuthDir } from "../config/paths.js";
+import type { LcxIdentityMigrationPlan } from "../config/paths.js";
 import { info, success } from "../globals.js";
 import { getChildLogger } from "../logging.js";
-import { DEFAULT_ACCOUNT_ID } from "../routing/session-key.js";
+import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "../routing/session-key.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
 import type { WebChannel } from "../utils.js";
 import { jidToE164, resolveUserPath } from "../utils.js";
@@ -15,6 +25,126 @@ export function resolveDefaultWebAuthDir(): string {
 }
 
 export const WA_WEB_AUTH_DIR = resolveDefaultWebAuthDir();
+
+const WEB_AUTH_RELATIVE_PATH = path.join("credentials", "whatsapp");
+
+export type LcxIdentityWebAuthMigration = Readonly<{
+  accountId: string;
+  pathContract: LcxIdentityWriterPathContract & Readonly<{ writer: "credentials" }>;
+  readAuthDir: string;
+  writeAuthDir: string;
+}>;
+
+function resolveWebAuthAccountRelativePath(accountId: string): string {
+  return path.join(WEB_AUTH_RELATIVE_PATH, normalizeAccountId(accountId));
+}
+
+function resolveWebAuthMigrationReadRoot(
+  migrationPlan: LcxIdentityMigrationPlan,
+  accountId: string,
+  existsSync: (candidate: string) => boolean,
+): string {
+  const relativePath = resolveWebAuthAccountRelativePath(accountId);
+  const writeAuthDir = path.join(migrationPlan.writeStateDir, relativePath);
+  if (existsSync(path.join(writeAuthDir, "creds.json"))) {
+    return migrationPlan.writeStateDir;
+  }
+  const legacyRoots = migrationPlan.readStateDirs.filter((root) => {
+    if (path.resolve(root) === path.resolve(migrationPlan.writeStateDir)) {
+      return false;
+    }
+    return existsSync(path.join(root, relativePath, "creds.json"));
+  });
+  if (legacyRoots.length > 1) {
+    throw new LcxIdentityWriterContractError(
+      `WhatsApp Web auth state exists in multiple legacy roots: ${legacyRoots.join(", ")}`,
+      "LCX_IDENTITY_SPLIT_STATE",
+    );
+  }
+  return legacyRoots[0] ?? migrationPlan.readStateDir;
+}
+
+export function createLcxIdentityWebAuthMigration(params: {
+  migrationPlan: LcxIdentityMigrationPlan;
+  accountId?: string | null;
+  existsSync?: (candidate: string) => boolean;
+}): LcxIdentityWebAuthMigration {
+  if (params.migrationPlan.mode === "explicit-config-override") {
+    throw new Error("WhatsApp Web auth migration requires a state-root authority");
+  }
+  const accountId = normalizeAccountId(params.accountId ?? DEFAULT_ACCOUNT_ID);
+  const relativePath = resolveWebAuthAccountRelativePath(accountId);
+  const readRoot = resolveWebAuthMigrationReadRoot(
+    params.migrationPlan,
+    accountId,
+    params.existsSync ?? fsSync.existsSync,
+  );
+  const writeAuthDir = path.join(params.migrationPlan.writeStateDir, relativePath);
+  const pathContract = createLcxIdentityWriterPathContract({
+    writer: "credentials",
+    migrationPlan: params.migrationPlan,
+    readPath: path.join(readRoot, relativePath),
+    writePath: writeAuthDir,
+  });
+  return Object.freeze({
+    accountId,
+    pathContract,
+    readAuthDir: pathContract.readPath,
+    writeAuthDir,
+  });
+}
+
+export async function readWebAuthForIdentityMigration(
+  migration: LcxIdentityWebAuthMigration,
+): Promise<{ exists: boolean; authDir: string; files: string[] }> {
+  const pathContract = migration.pathContract.migrationPlan
+    ? createLcxIdentityWriterPathContract({
+        writer: "credentials",
+        migrationPlan: migration.pathContract.migrationPlan,
+        readPath: migration.readAuthDir,
+        writePath: migration.writeAuthDir,
+        backupPath: migration.pathContract.backupPath,
+        auditPath: migration.pathContract.auditPath,
+      })
+    : migration.pathContract;
+  const raw = await readLcxIdentityWriterRaw(
+    createLcxIdentityWriterPathContract({
+      writer: "credentials",
+      migrationPlan: pathContract.migrationPlan,
+      readPath: path.join(pathContract.readPath, "creds.json"),
+      writePath: path.join(pathContract.writePath, "creds.json"),
+      auditPath: pathContract.auditPath,
+    }),
+  );
+  if (raw === null) {
+    return { exists: false, authDir: pathContract.readPath, files: [] };
+  }
+  const files = await fs.readdir(pathContract.readPath).catch(() => ["creds.json"]);
+  return { exists: true, authDir: pathContract.readPath, files: files.toSorted() };
+}
+
+export async function migrateWebAuthForIdentityMigration(
+  migration: LcxIdentityWebAuthMigration,
+): Promise<{
+  status: "missing" | "already-canonical" | "migrated";
+  receipt?: LcxIdentityPathMoveReceipt;
+}> {
+  const state = await readWebAuthForIdentityMigration(migration);
+  if (!state.exists) {
+    return { status: "missing" };
+  }
+  if (path.resolve(migration.readAuthDir) === path.resolve(migration.writeAuthDir)) {
+    return { status: "already-canonical" };
+  }
+  const receipt = await moveLcxIdentityPathWithReceipt(migration.pathContract);
+  return { status: "migrated", receipt };
+}
+
+export async function rollbackWebAuthIdentityMigration(
+  receipt: LcxIdentityPathMoveReceipt,
+): Promise<void> {
+  await rollbackLcxIdentityPathMove(receipt);
+}
 
 export function resolveWebCredsPath(authDir: string): string {
   return path.join(authDir, "creds.json");

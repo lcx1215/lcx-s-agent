@@ -9,7 +9,7 @@ import {
   type ChannelAccountSnapshot,
   type ChannelPlugin,
   type OpenClawConfig,
-} from "openclaw/plugin-sdk";
+} from "lcx-agent/plugin-sdk";
 import {
   listExternalAccountIds,
   resolveDefaultExternalAccountId,

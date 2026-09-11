@@ -9,7 +9,15 @@ import {
 } from "../agents/model-catalog.js";
 import { resolveDefaultModelForAgent } from "../agents/model-selection.js";
 import type { OpenClawConfig } from "../config/config.js";
-import { STATE_DIR } from "../config/paths.js";
+import {
+  readLcxIdentityWriterRaw,
+  resolveLcxIdentityStateWriterPathContract,
+  rollbackLcxIdentityWriter,
+  writeLcxIdentityWriterRawWithReceipt,
+  type LcxIdentityWriteReceipt,
+  type LcxIdentityWriterPathContract,
+} from "../config/identity-migration.js";
+import { STATE_DIR, type LcxIdentityMigrationPlan } from "../config/paths.js";
 import { logVerbose } from "../globals.js";
 import { loadJsonFile, saveJsonFile } from "../infra/json-file.js";
 import { resolveAutoImageModel } from "../media-understanding/runner.js";
@@ -27,17 +35,17 @@ export interface CachedSticker {
   receivedFrom?: string;
 }
 
-interface StickerCache {
+export interface TelegramStickerCache {
   version: number;
   stickers: Record<string, CachedSticker>;
 }
 
-function loadCache(): StickerCache {
+function loadCache(): TelegramStickerCache {
   const data = loadJsonFile(CACHE_FILE);
   if (!data || typeof data !== "object") {
     return { version: CACHE_VERSION, stickers: {} };
   }
-  const cache = data as StickerCache;
+  const cache = data as TelegramStickerCache;
   if (cache.version !== CACHE_VERSION) {
     // Future: handle migration if needed
     return { version: CACHE_VERSION, stickers: {} };
@@ -45,8 +53,113 @@ function loadCache(): StickerCache {
   return cache;
 }
 
-function saveCache(cache: StickerCache): void {
+function saveCache(cache: TelegramStickerCache): void {
   saveJsonFile(CACHE_FILE, cache);
+}
+
+export type LcxIdentityTelegramStickerCacheMigration = Readonly<{
+  pathContract: LcxIdentityWriterPathContract & Readonly<{ writer: "telegram-sticker-cache" }>;
+  relativePath: string;
+  readCachePath: string;
+  writeCachePath: string;
+}>;
+
+export function createLcxIdentityTelegramStickerCacheMigration(params: {
+  migrationPlan: LcxIdentityMigrationPlan;
+  existsSync?: (candidate: string) => boolean;
+}): LcxIdentityTelegramStickerCacheMigration {
+  if (params.migrationPlan.mode === "explicit-config-override") {
+    throw new Error("Telegram sticker cache migration requires a state-root authority");
+  }
+  const relativePath = path.join("telegram", "sticker-cache.json");
+  const pathContract = resolveLcxIdentityStateWriterPathContract({
+    writer: "telegram-sticker-cache",
+    migrationPlan: params.migrationPlan,
+    relativePath,
+    existsSync: params.existsSync,
+  });
+  return Object.freeze({
+    pathContract,
+    relativePath,
+    readCachePath: pathContract.readPath,
+    writeCachePath: pathContract.writePath,
+  });
+}
+
+function resolveCurrentTelegramStickerCachePathContract(
+  migration: LcxIdentityTelegramStickerCacheMigration,
+): LcxIdentityWriterPathContract & Readonly<{ writer: "telegram-sticker-cache" }> {
+  const plan = migration.pathContract.migrationPlan;
+  if (!plan) {
+    return migration.pathContract;
+  }
+  return resolveLcxIdentityStateWriterPathContract({
+    writer: "telegram-sticker-cache",
+    migrationPlan: plan,
+    relativePath: migration.relativePath,
+    backupPath: migration.pathContract.backupPath,
+    auditPath: migration.pathContract.auditPath,
+  });
+}
+
+function parseStickerCache(raw: string): TelegramStickerCache | null {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    const cache = parsed as Partial<TelegramStickerCache>;
+    if (
+      cache.version !== CACHE_VERSION ||
+      !cache.stickers ||
+      typeof cache.stickers !== "object" ||
+      Array.isArray(cache.stickers)
+    ) {
+      return null;
+    }
+    return cache as TelegramStickerCache;
+  } catch {
+    return null;
+  }
+}
+
+export async function readTelegramStickerCacheForIdentityMigration(
+  migration: LcxIdentityTelegramStickerCacheMigration,
+): Promise<TelegramStickerCache | null> {
+  const raw = await readLcxIdentityWriterRaw(
+    resolveCurrentTelegramStickerCachePathContract(migration),
+  );
+  return raw === null ? null : parseStickerCache(raw);
+}
+
+export async function writeTelegramStickerCacheForIdentityMigration(
+  migration: LcxIdentityTelegramStickerCacheMigration,
+  cache: TelegramStickerCache,
+  options?: { expectedReadPath?: string; expectedWritePath?: string },
+): Promise<LcxIdentityWriteReceipt> {
+  return await writeLcxIdentityWriterRawWithReceipt(
+    resolveCurrentTelegramStickerCachePathContract(migration),
+    `${JSON.stringify(cache, null, 2)}\n`,
+    options,
+  );
+}
+
+export async function cacheStickerForIdentityMigration(params: {
+  migration: LcxIdentityTelegramStickerCacheMigration;
+  sticker: CachedSticker;
+}): Promise<LcxIdentityWriteReceipt> {
+  const cache = (await readTelegramStickerCacheForIdentityMigration(params.migration)) ?? {
+    version: CACHE_VERSION,
+    stickers: {},
+  };
+  cache.stickers[params.sticker.fileUniqueId] = params.sticker;
+  return await writeTelegramStickerCacheForIdentityMigration(params.migration, cache);
+}
+
+export async function rollbackTelegramStickerCacheIdentityMigration(
+  receipt: LcxIdentityWriteReceipt,
+): Promise<void> {
+  await rollbackLcxIdentityWriter(receipt);
 }
 
 /**

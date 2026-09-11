@@ -108,21 +108,21 @@ Notes:
 
 ## Plugin SDK import paths
 
-Use SDK subpaths instead of the monolithic `openclaw/plugin-sdk` import when
+Use SDK subpaths instead of the monolithic `lcx-agent/plugin-sdk` import when
 authoring plugins:
 
-- `openclaw/plugin-sdk/core` for generic plugin APIs, provider auth types, and shared helpers.
-- `openclaw/plugin-sdk/telegram` for Telegram channel plugins.
-- `openclaw/plugin-sdk/discord` for Discord channel plugins.
-- `openclaw/plugin-sdk/slack` for Slack channel plugins.
-- `openclaw/plugin-sdk/signal` for Signal channel plugins.
-- `openclaw/plugin-sdk/imessage` for iMessage channel plugins.
-- `openclaw/plugin-sdk/whatsapp` for WhatsApp channel plugins.
-- `openclaw/plugin-sdk/line` for LINE channel plugins.
+- `lcx-agent/plugin-sdk/core` for generic plugin APIs, provider auth types, and shared helpers.
+- `lcx-agent/plugin-sdk/telegram` for Telegram channel plugins.
+- `lcx-agent/plugin-sdk/discord` for Discord channel plugins.
+- `lcx-agent/plugin-sdk/slack` for Slack channel plugins.
+- `lcx-agent/plugin-sdk/signal` for Signal channel plugins.
+- `lcx-agent/plugin-sdk/imessage` for iMessage channel plugins.
+- `lcx-agent/plugin-sdk/whatsapp` for WhatsApp channel plugins.
+- `lcx-agent/plugin-sdk/line` for LINE channel plugins.
 
 Compatibility note:
 
-- `openclaw/plugin-sdk` remains supported for existing external plugins.
+- `lcx-agent/plugin-sdk` remains supported for existing external plugins.
 - New and migrated bundled plugins should use channel subpaths (or `core`) to
   keep startup imports scoped.
 

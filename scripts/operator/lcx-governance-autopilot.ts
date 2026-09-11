@@ -387,6 +387,9 @@ function compactOwner(id: OwnerId, payload: Record<string, unknown> | undefined)
     const repo = recordValue(payload.repo);
     const ownerCoverage = recordValue(payload.ownerCoverage);
     const garbageCandidates = recordValue(payload.garbageCandidates);
+    const governanceCoverage = recordValue(ownerCoverage?.governanceCoverage);
+    const governanceSummary = recordValue(governanceCoverage?.summary);
+    const routeOwnerValidation = recordValue(governanceCoverage?.routeOwnerValidation);
     return {
       summary: payload.summary,
       latestStatePath: payload.latestStatePath,
@@ -400,6 +403,17 @@ function compactOwner(id: OwnerId, payload: Record<string, unknown> | undefined)
       staleRuntimeCandidates: summary?.staleRuntimeCandidates,
       largeRuntimeCandidates: summary?.largeRuntimeCandidates,
       staleSnapshots: summary?.staleSnapshots,
+      governanceScope: governanceCoverage?.scope,
+      governanceStatus: governanceCoverage?.status,
+      governanceTotalComponents: governanceSummary?.totalComponents,
+      governanceGovernedComponents: governanceSummary?.governedComponents,
+      governanceInventoryOnlyComponents: governanceSummary?.inventoryOnlyComponents,
+      governanceReviewRequiredComponents: governanceSummary?.reviewRequiredComponents,
+      governanceCoverageRate: governanceSummary?.coverageRate,
+      governanceUnknownComponents: governanceCoverage?.unknownComponents,
+      governanceMissingRouteOwners: routeOwnerValidation?.missing,
+      governanceInventoryAreaCount: governanceSummary?.inventoryAreaCount,
+      governanceInventoryAreaComponentCount: governanceSummary?.inventoryAreaComponentCount,
       repoBranch: repo?.branch,
       changedFiles: repo?.changedFiles,
       untrackedRepoFiles: garbageCandidates?.untrackedRepoFiles,
@@ -1079,6 +1093,17 @@ function buildContextRecoveryHandoff({
     `- unmatchedChangedFiles: ${inlineValue(universeIndexCompact?.unmatchedChangedFiles)}`,
     `- staleRuntimeCandidates: ${inlineValue(universeIndexCompact?.staleRuntimeCandidates)}`,
     `- staleSnapshots: ${inlineValue(universeIndexCompact?.staleSnapshots)}`,
+    `- governanceScope: ${inlineValue(universeIndexCompact?.governanceScope)}`,
+    `- governanceStatus: ${inlineValue(universeIndexCompact?.governanceStatus)}`,
+    `- governanceTotalComponents: ${inlineValue(universeIndexCompact?.governanceTotalComponents)}`,
+    `- governanceGovernedComponents: ${inlineValue(universeIndexCompact?.governanceGovernedComponents)}`,
+    `- governanceInventoryOnlyComponents: ${inlineValue(universeIndexCompact?.governanceInventoryOnlyComponents)}`,
+    `- governanceReviewRequiredComponents: ${inlineValue(universeIndexCompact?.governanceReviewRequiredComponents)}`,
+    `- governanceCoverageRate: ${inlineValue(universeIndexCompact?.governanceCoverageRate)}`,
+    `- governanceUnknownComponents: ${inlineValue(universeIndexCompact?.governanceUnknownComponents)}`,
+    `- governanceMissingRouteOwners: ${inlineValue(universeIndexCompact?.governanceMissingRouteOwners)}`,
+    `- governanceInventoryAreaCount: ${inlineValue(universeIndexCompact?.governanceInventoryAreaCount)}`,
+    `- governanceInventoryAreaComponentCount: ${inlineValue(universeIndexCompact?.governanceInventoryAreaComponentCount)}`,
     "- boundary: local_universe_index_only; inventory and cleanup candidates only, no delete/migration/live authority",
     "",
     "## Active PIDs",
@@ -1291,10 +1316,13 @@ const requiredParseFailures = owners.filter(
 );
 const activeTrainingOrEval = trainingActive(byOwner.trainingPlan, byOwner.externalChannelBinding);
 const structuralOwnerFailures = owners.filter((owner) => owner.parsed && owner.ok === false);
+const universeIndexGovernanceIncomplete =
+  byOwner.universeIndex?.compact.governanceStatus !== "complete";
 const releaseBlocked =
   byOwner.commercialAcceptance?.compact.readyForCommercialRelease === false ||
   stringArray(byOwner.problemRadar?.compact.actionableClusters).length > 0 ||
-  stringArray(byOwner.problemRadar?.compact.blockedClusters).length > 0;
+  stringArray(byOwner.problemRadar?.compact.blockedClusters).length > 0 ||
+  universeIndexGovernanceIncomplete;
 const governanceCheckedAt = new Date().toISOString();
 const globalEvidenceProjectionReader = readGlobalEvidenceProjectionForAdapter(
   byOwner.mindModel?.projection,
@@ -1399,6 +1427,25 @@ const receipt = {
     universeIndexDirtyFiles: byOwner.universeIndex?.compact.dirtyFiles,
     universeIndexUnmatchedChangedFiles: byOwner.universeIndex?.compact.unmatchedChangedFiles,
     universeIndexStaleRuntimeCandidates: byOwner.universeIndex?.compact.staleRuntimeCandidates,
+    universeIndexGovernanceScope: byOwner.universeIndex?.compact.governanceScope,
+    universeIndexGovernanceStatus: byOwner.universeIndex?.compact.governanceStatus,
+    universeIndexGovernanceTotalComponents:
+      byOwner.universeIndex?.compact.governanceTotalComponents,
+    universeIndexGovernanceGovernedComponents:
+      byOwner.universeIndex?.compact.governanceGovernedComponents,
+    universeIndexGovernanceInventoryOnlyComponents:
+      byOwner.universeIndex?.compact.governanceInventoryOnlyComponents,
+    universeIndexGovernanceReviewRequiredComponents:
+      byOwner.universeIndex?.compact.governanceReviewRequiredComponents,
+    universeIndexGovernanceCoverageRate: byOwner.universeIndex?.compact.governanceCoverageRate,
+    universeIndexGovernanceUnknownComponents:
+      byOwner.universeIndex?.compact.governanceUnknownComponents,
+    universeIndexGovernanceMissingRouteOwners:
+      byOwner.universeIndex?.compact.governanceMissingRouteOwners,
+    universeIndexGovernanceInventoryAreaCount:
+      byOwner.universeIndex?.compact.governanceInventoryAreaCount,
+    universeIndexGovernanceInventoryAreaComponentCount:
+      byOwner.universeIndex?.compact.governanceInventoryAreaComponentCount,
     externalUpgradeBlacktechMechanismCount:
       byOwner.externalAgentUpgrade?.compact.blacktechMechanismCount,
     externalUpgradeRuntimeAuthorityGrantedCount:
@@ -1548,6 +1595,20 @@ const digestMaterial = {
   universeIndexUnmatchedChangedFiles: universeIndexCompact?.unmatchedChangedFiles,
   universeIndexStaleRuntimeCandidates: universeIndexCompact?.staleRuntimeCandidates,
   universeIndexStaleSnapshots: universeIndexCompact?.staleSnapshots,
+  universeIndexGovernanceScope: universeIndexCompact?.governanceScope,
+  universeIndexGovernanceStatus: universeIndexCompact?.governanceStatus,
+  universeIndexGovernanceTotalComponents: universeIndexCompact?.governanceTotalComponents,
+  universeIndexGovernanceGovernedComponents: universeIndexCompact?.governanceGovernedComponents,
+  universeIndexGovernanceInventoryOnlyComponents:
+    universeIndexCompact?.governanceInventoryOnlyComponents,
+  universeIndexGovernanceReviewRequiredComponents:
+    universeIndexCompact?.governanceReviewRequiredComponents,
+  universeIndexGovernanceCoverageRate: universeIndexCompact?.governanceCoverageRate,
+  universeIndexGovernanceUnknownComponents: universeIndexCompact?.governanceUnknownComponents,
+  universeIndexGovernanceMissingRouteOwners: universeIndexCompact?.governanceMissingRouteOwners,
+  universeIndexGovernanceInventoryAreaCount: universeIndexCompact?.governanceInventoryAreaCount,
+  universeIndexGovernanceInventoryAreaComponentCount:
+    universeIndexCompact?.governanceInventoryAreaComponentCount,
   externalUpgradeBlacktechMechanismCount: externalAgentUpgradeCompact?.blacktechMechanismCount,
   externalUpgradeBlacktechReadyLocalOnlyCount:
     externalAgentUpgradeCompact?.blacktechReadyLocalOnlyCount,

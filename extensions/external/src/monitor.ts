@@ -14,7 +14,7 @@ import {
   type ChannelGatewayContext,
   type ChannelLogSink,
   type OpenClawConfig,
-} from "openclaw/plugin-sdk";
+} from "lcx-agent/plugin-sdk";
 import { normalizeExternalInboundMessage } from "./protocol.js";
 import { createExternalReplayGuard, type ExternalReplayGuard } from "./replay-guard.js";
 import { isExternalInboundMessageAllowed, isExternalWebhookAuthorized } from "./security.js";

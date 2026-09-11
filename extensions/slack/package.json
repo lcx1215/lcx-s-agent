@@ -4,6 +4,9 @@
   "private": true,
   "description": "OpenClaw Slack channel plugin",
   "type": "module",
+  "dependencies": {
+    "lcx-agent": "workspace:*"
+  },
   "openclaw": {
     "extensions": [
       "./index.ts"

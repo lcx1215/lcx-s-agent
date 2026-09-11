@@ -6,6 +6,7 @@
   "dependencies": {
     "@sinclair/typebox": "0.34.48",
     "commander": "^14.0.3",
+    "lcx-agent": "workspace:*",
     "ws": "^8.19.0",
     "zod": "^4.3.6"
   },

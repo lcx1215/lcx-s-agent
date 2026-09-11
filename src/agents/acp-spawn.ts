@@ -63,6 +63,7 @@ export type SpawnAcpResult = {
   childSessionKey?: string;
   runId?: string;
   mode?: SpawnAcpMode;
+  workspaceScope?: "confined" | "host-unconfined";
   note?: string;
   error?: string;
 };
@@ -450,6 +451,9 @@ export async function spawnAcpDirect(
     childSessionKey: sessionKey,
     runId: childRunId,
     mode: spawnMode,
+    // ACP sessions execute on the host; the coding harness must not certify
+    // their edits as workspace-confined without a stronger executor proof.
+    workspaceScope: "host-unconfined",
     note: spawnMode === "session" ? ACP_SPAWN_SESSION_ACCEPTED_NOTE : ACP_SPAWN_ACCEPTED_NOTE,
   };
 }

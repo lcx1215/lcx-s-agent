@@ -12,7 +12,7 @@ import {
   type ChannelOnboardingDmPolicy,
   type OpenClawConfig,
   type WizardPrompter,
-} from "openclaw/plugin-sdk";
+} from "lcx-agent/plugin-sdk";
 import {
   listNextcloudTalkAccountIds,
   resolveDefaultNextcloudTalkAccountId,

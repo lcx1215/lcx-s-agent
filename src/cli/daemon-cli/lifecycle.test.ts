@@ -128,7 +128,7 @@ describe("runDaemonRestart health checks", () => {
 
     await expect(runDaemonRestart({ json: true })).rejects.toMatchObject({
       message: "Gateway restart timed out after 180s waiting for health checks.",
-      hints: ["openclaw gateway status --deep", "openclaw doctor"],
+      hints: ["lcx gateway status --deep", "lcx doctor"],
     });
     expect(terminateStaleGatewayPids).not.toHaveBeenCalled();
     expect(renderRestartDiagnostics).toHaveBeenCalledTimes(1);
@@ -148,7 +148,7 @@ describe("runDaemonRestart health checks", () => {
     try {
       await expect(runDaemonRestart({ json: true })).rejects.toMatchObject({
         message: "Gateway restart timed out after 240s waiting for health checks.",
-        hints: ["openclaw gateway status --deep", "openclaw doctor"],
+        hints: ["lcx gateway status --deep", "lcx doctor"],
       });
       expect(waitForGatewayHealthyRestart).toHaveBeenCalledWith(
         expect.objectContaining({ attempts: 480, delayMs: 500 }),

@@ -1,4 +1,4 @@
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "lcx-agent/plugin-sdk";
 
 export type TlonResolvedAccount = {
   accountId: string;

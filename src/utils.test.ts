@@ -138,13 +138,25 @@ describe("jidToE164", () => {
 });
 
 describe("resolveConfigDir", () => {
-  it("prefers ~/.openclaw when legacy dir is missing", async () => {
+  it("uses the canonical ~/.lcx state dir when no override is set", async () => {
     const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "openclaw-config-dir-"));
     try {
-      const newDir = path.join(root, ".openclaw");
+      const newDir = path.join(root, ".lcx");
       await fs.promises.mkdir(newDir, { recursive: true });
       const resolved = resolveConfigDir({} as NodeJS.ProcessEnv, () => root);
       expect(resolved).toBe(newDir);
+    } finally {
+      await fs.promises.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the active compatibility state dir for config-owned files", async () => {
+    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "openclaw-config-dir-"));
+    try {
+      const compatibilityDir = path.join(root, ".openclaw");
+      await fs.promises.mkdir(compatibilityDir, { recursive: true });
+      await fs.promises.writeFile(path.join(compatibilityDir, "openclaw.json"), "{}", "utf8");
+      expect(resolveConfigDir({} as NodeJS.ProcessEnv, () => root)).toBe(compatibilityDir);
     } finally {
       await fs.promises.rm(root, { recursive: true, force: true });
     }

@@ -29,6 +29,7 @@ const repoRoot = path.resolve(SCRIPT_DIR, "..", "..");
 const HEAD_SURFACE_FILES = [
   "AGENTS.md",
   "README.md",
+  "ops/architecture/LCX-SYSTEM-ARCHITECTURE.md",
   "ops/local-brain/README.md",
   "src/agents/system-prompt.ts",
 ] as const;

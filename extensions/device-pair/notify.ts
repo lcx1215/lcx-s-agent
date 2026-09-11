@@ -1,7 +1,16 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
-import { listDevicePairing } from "openclaw/plugin-sdk/core";
+import type { OpenClawPluginApi } from "lcx-agent/plugin-sdk/core";
+import { listDevicePairing } from "lcx-agent/plugin-sdk/core";
+import {
+  readLcxIdentityWriterRaw,
+  resolveLcxIdentityStateWriterPathContract,
+  rollbackLcxIdentityWriter,
+  writeLcxIdentityWriterRawWithReceipt,
+  type LcxIdentityWriteReceipt,
+  type LcxIdentityWriterPathContract,
+} from "../../src/config/identity-migration.js";
+import type { LcxIdentityMigrationPlan } from "../../src/config/paths.js";
 
 const NOTIFY_STATE_FILE = "device-pair-notify.json";
 const NOTIFY_POLL_INTERVAL_MS = 10_000;
@@ -15,10 +24,16 @@ type NotifySubscription = {
   addedAtMs: number;
 };
 
-type NotifyStateFile = {
+export type NotifyStateFile = {
   subscribers: NotifySubscription[];
   notifiedRequestIds: Record<string, number>;
 };
+
+export type LcxIdentityDevicePairNotifyMigration = Readonly<{
+  pathContract: LcxIdentityWriterPathContract & Readonly<{ writer: "device-pair-notify" }>;
+  readStatePath: string;
+  writeStatePath: string;
+}>;
 
 export type PendingPairingRequest = {
   requestId: string;
@@ -51,6 +66,42 @@ export function formatPendingRequests(pending: PendingPairingRequest[]): string 
 
 function resolveNotifyStatePath(stateDir: string): string {
   return path.join(stateDir, NOTIFY_STATE_FILE);
+}
+
+export function createLcxIdentityDevicePairNotifyMigration(params: {
+  migrationPlan: LcxIdentityMigrationPlan;
+  existsSync?: (candidate: string) => boolean;
+}): LcxIdentityDevicePairNotifyMigration {
+  if (params.migrationPlan.mode === "explicit-config-override") {
+    throw new Error("Device pair notify migration requires a state-root authority");
+  }
+  const pathContract = resolveLcxIdentityStateWriterPathContract({
+    writer: "device-pair-notify",
+    migrationPlan: params.migrationPlan,
+    relativePath: NOTIFY_STATE_FILE,
+    existsSync: params.existsSync,
+  });
+  return Object.freeze({
+    pathContract,
+    readStatePath: pathContract.readPath,
+    writeStatePath: pathContract.writePath,
+  });
+}
+
+function resolveCurrentDevicePairNotifyPathContract(
+  migration: LcxIdentityDevicePairNotifyMigration,
+): LcxIdentityWriterPathContract & Readonly<{ writer: "device-pair-notify" }> {
+  const plan = migration.pathContract.migrationPlan;
+  if (!plan) {
+    return migration.pathContract;
+  }
+  return resolveLcxIdentityStateWriterPathContract({
+    writer: "device-pair-notify",
+    migrationPlan: plan,
+    relativePath: NOTIFY_STATE_FILE,
+    backupPath: migration.pathContract.backupPath,
+    auditPath: migration.pathContract.auditPath,
+  });
 }
 
 function normalizeNotifyState(raw: unknown): NotifyStateFile {
@@ -105,6 +156,38 @@ function normalizeNotifyState(raw: unknown): NotifyStateFile {
   }
 
   return { subscribers, notifiedRequestIds };
+}
+
+export async function readDevicePairNotifyStateForIdentityMigration(
+  migration: LcxIdentityDevicePairNotifyMigration,
+): Promise<NotifyStateFile> {
+  const raw = await readLcxIdentityWriterRaw(resolveCurrentDevicePairNotifyPathContract(migration));
+  if (raw === null) {
+    return { subscribers: [], notifiedRequestIds: {} };
+  }
+  try {
+    return normalizeNotifyState(JSON.parse(raw));
+  } catch {
+    return { subscribers: [], notifiedRequestIds: {} };
+  }
+}
+
+export async function writeDevicePairNotifyStateForIdentityMigration(
+  migration: LcxIdentityDevicePairNotifyMigration,
+  state: NotifyStateFile,
+  options?: { expectedReadPath?: string; expectedWritePath?: string },
+): Promise<LcxIdentityWriteReceipt> {
+  return await writeLcxIdentityWriterRawWithReceipt(
+    resolveCurrentDevicePairNotifyPathContract(migration),
+    `${JSON.stringify(normalizeNotifyState(state), null, 2)}\n`,
+    options,
+  );
+}
+
+export async function rollbackDevicePairNotifyIdentityMigration(
+  receipt: LcxIdentityWriteReceipt,
+): Promise<void> {
+  await rollbackLcxIdentityWriter(receipt);
 }
 
 async function readNotifyState(filePath: string): Promise<NotifyStateFile> {

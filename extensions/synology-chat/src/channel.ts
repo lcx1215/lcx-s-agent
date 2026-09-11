@@ -9,7 +9,7 @@ import {
   setAccountEnabledInConfigSection,
   registerPluginHttpRoute,
   buildChannelConfigSchema,
-} from "openclaw/plugin-sdk";
+} from "lcx-agent/plugin-sdk";
 import { z } from "zod";
 import { listAccountIds, resolveAccount } from "./accounts.js";
 import { sendMessage, sendFileUrl } from "./client.js";

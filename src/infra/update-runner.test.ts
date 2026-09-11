@@ -538,7 +538,7 @@ describe("runGatewayUpdate", () => {
 
     expect(result.status).toBe("error");
     expect(result.reason).toBe("doctor-entry-missing");
-    expect(result.steps.at(-1)?.name).toBe("openclaw doctor entry");
+    expect(result.steps.at(-1)?.name).toBe("lcx doctor entry");
   });
 
   it("repairs UI assets when doctor run removes control-ui files", async () => {

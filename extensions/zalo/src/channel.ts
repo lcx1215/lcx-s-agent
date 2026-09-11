@@ -3,7 +3,7 @@ import type {
   ChannelDock,
   ChannelPlugin,
   OpenClawConfig,
-} from "openclaw/plugin-sdk";
+} from "lcx-agent/plugin-sdk";
 import {
   applyAccountNameToChannelSection,
   buildChannelConfigSchema,
@@ -20,7 +20,7 @@ import {
   resolveOpenProviderRuntimeGroupPolicy,
   resolveChannelAccountConfigBasePath,
   setAccountEnabledInConfigSection,
-} from "openclaw/plugin-sdk";
+} from "lcx-agent/plugin-sdk";
 import {
   listZaloAccountIds,
   resolveDefaultZaloAccountId,

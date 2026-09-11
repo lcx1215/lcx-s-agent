@@ -164,19 +164,72 @@ describe("resolve exec approvals defaults", () => {
   it("expands home-prefixed default file and socket paths", () => {
     const dir = makeTempDir();
     const prevOpenClawHome = process.env.OPENCLAW_HOME;
+    const prevOpenClawStateDir = process.env.OPENCLAW_STATE_DIR;
+    const prevClawdbotStateDir = process.env.CLAWDBOT_STATE_DIR;
     try {
       process.env.OPENCLAW_HOME = dir;
+      delete process.env.OPENCLAW_STATE_DIR;
+      delete process.env.CLAWDBOT_STATE_DIR;
       expect(path.normalize(resolveExecApprovalsPath())).toBe(
-        path.normalize(path.join(dir, ".openclaw", "exec-approvals.json")),
+        path.normalize(path.join(dir, ".lcx", "exec-approvals.json")),
       );
       expect(path.normalize(resolveExecApprovalsSocketPath())).toBe(
-        path.normalize(path.join(dir, ".openclaw", "exec-approvals.sock")),
+        path.normalize(path.join(dir, ".lcx", "exec-approvals.sock")),
       );
     } finally {
       if (prevOpenClawHome === undefined) {
         delete process.env.OPENCLAW_HOME;
       } else {
         process.env.OPENCLAW_HOME = prevOpenClawHome;
+      }
+      if (prevOpenClawStateDir === undefined) {
+        delete process.env.OPENCLAW_STATE_DIR;
+      } else {
+        process.env.OPENCLAW_STATE_DIR = prevOpenClawStateDir;
+      }
+      if (prevClawdbotStateDir === undefined) {
+        delete process.env.CLAWDBOT_STATE_DIR;
+      } else {
+        process.env.CLAWDBOT_STATE_DIR = prevClawdbotStateDir;
+      }
+    }
+  });
+
+  it("uses the active compatibility state root for approval files", () => {
+    const dir = makeTempDir();
+    const compatibilityDir = path.join(dir, ".openclaw");
+    fs.mkdirSync(compatibilityDir, { recursive: true });
+    fs.writeFileSync(path.join(compatibilityDir, "openclaw.json"), "{}\n", "utf8");
+    const previous = {
+      home: process.env.OPENCLAW_HOME,
+      state: process.env.OPENCLAW_STATE_DIR,
+      legacyState: process.env.CLAWDBOT_STATE_DIR,
+    };
+    try {
+      process.env.OPENCLAW_HOME = dir;
+      delete process.env.OPENCLAW_STATE_DIR;
+      delete process.env.CLAWDBOT_STATE_DIR;
+      expect(path.normalize(resolveExecApprovalsPath())).toBe(
+        path.normalize(path.join(compatibilityDir, "exec-approvals.json")),
+      );
+      expect(path.normalize(resolveExecApprovalsSocketPath())).toBe(
+        path.normalize(path.join(compatibilityDir, "exec-approvals.sock")),
+      );
+    } finally {
+      if (previous.home === undefined) {
+        delete process.env.OPENCLAW_HOME;
+      } else {
+        process.env.OPENCLAW_HOME = previous.home;
+      }
+      if (previous.state === undefined) {
+        delete process.env.OPENCLAW_STATE_DIR;
+      } else {
+        process.env.OPENCLAW_STATE_DIR = previous.state;
+      }
+      if (previous.legacyState === undefined) {
+        delete process.env.CLAWDBOT_STATE_DIR;
+      } else {
+        process.env.CLAWDBOT_STATE_DIR = previous.legacyState;
       }
     }
   });

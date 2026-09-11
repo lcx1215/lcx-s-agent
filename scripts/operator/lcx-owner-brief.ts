@@ -115,6 +115,7 @@ function lineList(lines: string[]): string {
 export function buildOwnerBrief(input: OwnerBriefInput) {
   const summary = recordValue(input.governance.summary) ?? {};
   const owners = recordValue(input.governance.owners) ?? {};
+  const universeIndex = recordValue(owners.universeIndex) ?? {};
   const trainingPlan = recordValue(owners.trainingPlan) ?? {};
   const latestCandidateEval = recordValue(trainingPlan.latestCandidateEval) ?? {};
   const monotonicDataLedger = recordValue(owners.monotonicDataLedger) ?? {};
@@ -132,6 +133,16 @@ export function buildOwnerBrief(input: OwnerBriefInput) {
     stringArray(latestCandidateEval.parseRecoveredCaseIds).length +
     stringArray(latestCandidateEval.parseErrorCaseIds).length;
   const failedCaseCount = stringArray(latestCandidateEval.failedCaseIds).length;
+  const governanceTotalComponents = numberValue(universeIndex.governanceTotalComponents);
+  const governanceGovernedComponents = numberValue(universeIndex.governanceGovernedComponents);
+  const governanceInventoryOnlyComponents = numberValue(
+    universeIndex.governanceInventoryOnlyComponents,
+  );
+  const governanceReviewRequiredComponents = numberValue(
+    universeIndex.governanceReviewRequiredComponents,
+  );
+  const governanceCoverageRate = numberValue(universeIndex.governanceCoverageRate);
+  const governanceStatus = textValue(universeIndex.governanceStatus);
   const acceptedSkillOptPackets = numberValue(monotonicDataLedger.acceptedSkillOptPackets);
   const datasetExamples = numberValue(monotonicDataLedger.datasetExamples);
   const trainSliceWritten = numberValue(monotonicDataLedger.trainSliceWritten);
@@ -150,6 +161,9 @@ export function buildOwnerBrief(input: OwnerBriefInput) {
     selectedCleanAdapter ? `当前干净模型还是 ${selectedCleanAdapter}。` : undefined,
     parseIssueCount > 0 ? `候选模型还有 ${parseIssueCount} 个格式不干净的案例。` : undefined,
     failedCaseCount > 0 ? `候选模型还有 ${failedCaseCount} 个明确失败案例。` : undefined,
+    governanceTotalComponents !== undefined
+      ? `全量部件治理：${governanceStatus ?? "状态未知"}，${governanceGovernedComponents ?? 0} 个源组件、${governanceInventoryOnlyComponents ?? 0} 个库存组件，共 ${governanceTotalComponents} 个；review-required=${governanceReviewRequiredComponents ?? "未知"}，覆盖率=${governanceCoverageRate ?? "未知"}。`
+      : undefined,
   ].filter((line): line is string => typeof line === "string");
   const machineLines = [
     `后台守护：${numberValue(processCounts.guard) ?? 0}`,

@@ -25,6 +25,7 @@ When the operator says “release”, immediately do this preflight (no extra qu
 - [ ] Run `pnpm plugins:sync` to align extension package versions + changelogs.
 - [ ] Update CLI/version strings in [`src/version.ts`](https://github.com/openclaw/openclaw/blob/main/src/version.ts) and the Baileys user agent in [`src/web/session.ts`](https://github.com/openclaw/openclaw/blob/main/src/web/session.ts).
 - [ ] Confirm package metadata (name, description, repository, keywords, license) and `bin` map points to [`openclaw.mjs`](https://github.com/openclaw/openclaw/blob/main/openclaw.mjs) for `openclaw`.
+- [ ] Publish the workspace compatibility package `packages/openclaw` alongside the canonical `lcx-agent` package so existing `openclaw` plugin peers and `openclaw/plugin-sdk/*` imports remain installable.
 - [ ] If dependencies changed, run `pnpm install` so `pnpm-lock.yaml` is current.
 
 2. **Build & artifacts**
@@ -69,6 +70,7 @@ When the operator says “release”, immediately do this preflight (no extra qu
 - [ ] Confirm git status is clean; commit and push as needed.
 - [ ] `npm login` (verify 2FA) if needed.
 - [ ] `npm publish --access public` (use `--tag beta` for pre-releases).
+- [ ] From `packages/openclaw`, publish the matching `openclaw` compatibility package after `lcx-agent` is available at the same version.
 - [ ] Verify the registry: `npm view openclaw version`, `npm view openclaw dist-tags`, and `npx -y openclaw@X.Y.Z --version` (or `--help`).
 
 ### Troubleshooting (notes from 2.0.0-beta2 release)

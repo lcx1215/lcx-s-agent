@@ -7,7 +7,7 @@ import {
   readWebhookBodyOrReject,
   resolveWebhookTargetWithAuthOrRejectSync,
   resolveWebhookTargets,
-} from "openclaw/plugin-sdk";
+} from "lcx-agent/plugin-sdk";
 import { createBlueBubblesDebounceRegistry } from "./monitor-debounce.js";
 import { normalizeWebhookMessage, normalizeWebhookReaction } from "./monitor-normalize.js";
 import { logVerbose, processMessage, processReaction } from "./monitor-processing.js";

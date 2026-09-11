@@ -259,6 +259,8 @@ describe("LCX mind model god-view architecture check", () => {
     expect(runbook).toContain("LCX Agent Mind Model");
     expect(runbook).toContain("Canonical Ontology");
     expect(runbook).toContain("LCX Agent Flow Graph");
+    expect(runbook).toContain("lcx_component_governance_v1");
+    expect(runbook).toContain("review_required");
     expect(runbook).toContain("World-class agent architecture");
     expect(runbook).toContain("single factual owner");
     expect(runbook).toContain("workflow closure");

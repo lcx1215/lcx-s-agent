@@ -4,7 +4,6 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
-  VERSION,
   readVersionFromBuildInfoForModuleUrl,
   readVersionFromPackageJsonForModuleUrl,
   resolveBinaryVersion,
@@ -153,14 +152,14 @@ describe("version resolution", () => {
     expect(resolveUsableRuntimeVersion(" 2026.3.2 ")).toBe("2026.3.2");
   });
 
-  it("prefers runtime VERSION over service/package markers and ignores blank env values", () => {
+  it("uses service/package markers when runtime VERSION is the unusable fallback", () => {
     expect(
       resolveRuntimeServiceVersion({
         OPENCLAW_VERSION: "   ",
         OPENCLAW_SERVICE_VERSION: "  2.0.0  ",
         npm_package_version: "1.0.0",
       }),
-    ).toBe(VERSION);
+    ).toBe("2.0.0");
 
     expect(
       resolveRuntimeServiceVersion({
@@ -168,7 +167,7 @@ describe("version resolution", () => {
         OPENCLAW_SERVICE_VERSION: "\t",
         npm_package_version: " 1.0.0-package ",
       }),
-    ).toBe(VERSION);
+    ).toBe("1.0.0-package");
 
     expect(
       resolveRuntimeServiceVersion(
@@ -179,6 +178,6 @@ describe("version resolution", () => {
         },
         "fallback",
       ),
-    ).toBe(VERSION);
+    ).toBe("fallback");
   });
 });

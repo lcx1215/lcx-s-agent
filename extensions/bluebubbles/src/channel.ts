@@ -1,4 +1,4 @@
-import type { ChannelAccountSnapshot, ChannelPlugin, OpenClawConfig } from "openclaw/plugin-sdk";
+import type { ChannelAccountSnapshot, ChannelPlugin, OpenClawConfig } from "lcx-agent/plugin-sdk";
 import {
   applyAccountNameToChannelSection,
   buildChannelConfigSchema,
@@ -13,7 +13,7 @@ import {
   resolveBlueBubblesGroupRequireMention,
   resolveBlueBubblesGroupToolPolicy,
   setAccountEnabledInConfigSection,
-} from "openclaw/plugin-sdk";
+} from "lcx-agent/plugin-sdk";
 import {
   listBlueBubblesAccountIds,
   type ResolvedBlueBubblesAccount,

@@ -4,7 +4,7 @@ import path from "node:path";
 import { resolveDefaultAgentId } from "../agents/agent-scope.js";
 import { formatCliCommand } from "../cli/command-format.js";
 import type { OpenClawConfig } from "../config/config.js";
-import { resolveOAuthDir, resolveStateDir } from "../config/paths.js";
+import { resolveNewStateDir, resolveOAuthDir, resolveStateDir } from "../config/paths.js";
 import {
   formatSessionArchiveTimestamp,
   isPrimarySessionTranscriptFileName,
@@ -477,7 +477,7 @@ export async function noteStateIntegrity(
   const env = process.env;
   const homedir = () => resolveRequiredHomeDir(env, os.homedir);
   const stateDir = resolveStateDir(env, homedir);
-  const defaultStateDir = path.join(homedir(), ".openclaw");
+  const defaultStateDir = resolveNewStateDir(() => resolveRequiredHomeDir(env, homedir));
   const oauthDir = resolveOAuthDir(env, stateDir);
   const agentId = resolveDefaultAgentId(cfg);
   const sessionsDir = resolveSessionTranscriptsDirForAgent(agentId, env, homedir);
@@ -498,8 +498,8 @@ export async function noteStateIntegrity(
       [
         `- State directory is under macOS cloud-synced storage (${displayStateDir}; ${cloudSyncedStateDir.storage}).`,
         "- This can cause slow I/O and sync/lock races for sessions and credentials.",
-        "- Prefer a local non-synced state dir (for example: ~/.openclaw).",
-        `  Set locally: OPENCLAW_STATE_DIR=~/.openclaw ${formatCliCommand("openclaw doctor")}`,
+        "- Prefer a local non-synced state dir (for example: ~/.lcx).",
+        `  Set locally: OPENCLAW_STATE_DIR=~/.lcx ${formatCliCommand("lcx doctor")}`,
       ].join("\n"),
     );
   }

@@ -3,7 +3,7 @@ import {
   emptyPluginConfigSchema,
   type OpenClawPluginApi,
   type ProviderAuthContext,
-} from "openclaw/plugin-sdk/core";
+} from "lcx-agent/plugin-sdk/core";
 import { loginGeminiCliOAuth } from "./oauth.js";
 
 const PROVIDER_ID = "google-gemini-cli";

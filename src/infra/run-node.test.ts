@@ -62,7 +62,7 @@ describe("run-node script", () => {
         expect(exitCode).toBe(0);
         await expect(fs.readFile(argsPath, "utf-8")).resolves.toContain("exec tsdown --no-clean");
         await expect(fs.readFile(indexPath, "utf-8")).resolves.toContain("sentinel");
-        expect(nodeCalls).toEqual([[process.execPath, "openclaw.mjs", "--version"]]);
+        expect(nodeCalls).toEqual([[process.execPath, "lcx.mjs", "--version"]]);
       });
     },
   );
@@ -193,9 +193,7 @@ describe("run-node script", () => {
         });
 
         expect(exitCode).toBe(0);
-        expect(spawned).toEqual([
-          [process.execPath, "openclaw.mjs", "channels", "status", "--probe"],
-        ]);
+        expect(spawned).toEqual([[process.execPath, "lcx.mjs", "channels", "status", "--probe"]]);
         expect(gitCalls).toEqual([["rev-parse", "--show-toplevel"]]);
       });
     },

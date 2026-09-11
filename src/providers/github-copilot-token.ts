@@ -1,5 +1,19 @@
+import fs from "node:fs";
 import path from "node:path";
-import { resolveStateDir } from "../config/paths.js";
+import {
+  createLcxIdentityWriterPathContract,
+  readLcxIdentityWriterRaw,
+  removeLcxIdentityWriterWithReceipt,
+  resolveLcxIdentityStateWriterPathContract,
+  rollbackLcxIdentityRemoval,
+  rollbackLcxIdentityWriter,
+  writeLcxIdentityWriterRawWithReceipt,
+  LcxIdentityWriterContractError,
+  type LcxIdentityRemovalReceipt,
+  type LcxIdentityWriteReceipt,
+  type LcxIdentityWriterPathContract,
+} from "../config/identity-migration.js";
+import { resolveStateDir, type LcxIdentityMigrationPlan } from "../config/paths.js";
 import { loadJsonFile, saveJsonFile } from "../infra/json-file.js";
 
 const COPILOT_TOKEN_URL = "https://api.github.com/copilot_internal/v2/token";
@@ -11,6 +25,128 @@ export type CachedCopilotToken = {
   /** milliseconds since epoch */
   updatedAt: number;
 };
+
+const COPILOT_TOKEN_RELATIVE_PATH = path.join("credentials", "github-copilot.token.json");
+
+export type LcxIdentityCopilotTokenMigration = Readonly<{
+  pathContract: LcxIdentityWriterPathContract & Readonly<{ writer: "credentials" }>;
+}>;
+
+export type LcxIdentityCopilotTokenWriteReceipt = Readonly<{
+  write: LcxIdentityWriteReceipt;
+  removedLegacy?: LcxIdentityRemovalReceipt;
+}>;
+
+export function createLcxIdentityCopilotTokenMigration(params: {
+  migrationPlan: LcxIdentityMigrationPlan;
+  existsSync?: (candidate: string) => boolean;
+}): LcxIdentityCopilotTokenMigration {
+  if (params.migrationPlan.mode === "explicit-config-override") {
+    throw new Error("Copilot token migration requires a state-root authority");
+  }
+  const pathContract = resolveLcxIdentityStateWriterPathContract({
+    writer: "credentials",
+    migrationPlan: params.migrationPlan,
+    relativePath: COPILOT_TOKEN_RELATIVE_PATH,
+    existsSync: params.existsSync,
+  });
+  return Object.freeze({ pathContract });
+}
+
+function resolveCurrentCopilotTokenPathContract(
+  migration: LcxIdentityCopilotTokenMigration,
+): LcxIdentityWriterPathContract & Readonly<{ writer: "credentials" }> {
+  const plan = migration.pathContract.migrationPlan;
+  if (!plan) {
+    return migration.pathContract;
+  }
+  const existsSync = fs.existsSync;
+  const existingPaths = plan.readStateDirs
+    .map((stateDir) => path.resolve(stateDir, COPILOT_TOKEN_RELATIVE_PATH))
+    .filter((candidate) => existsSync(candidate));
+  if (existingPaths.length > 1) {
+    throw new LcxIdentityWriterContractError(
+      `Copilot token migration found split credential state: ${existingPaths.join(" and ")}`,
+      "LCX_IDENTITY_SPLIT_STATE",
+    );
+  }
+  return resolveLcxIdentityStateWriterPathContract({
+    writer: "credentials",
+    migrationPlan: plan,
+    relativePath: COPILOT_TOKEN_RELATIVE_PATH,
+    auditPath: migration.pathContract.auditPath,
+  });
+}
+
+function parseCachedCopilotToken(value: unknown): CachedCopilotToken | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const parsed = value as Partial<CachedCopilotToken>;
+  if (typeof parsed.token !== "string" || typeof parsed.expiresAt !== "number") {
+    return null;
+  }
+  return {
+    token: parsed.token,
+    expiresAt: parsed.expiresAt,
+    updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : 0,
+  };
+}
+
+export async function readCopilotTokenForIdentityMigration(
+  migration: LcxIdentityCopilotTokenMigration,
+): Promise<CachedCopilotToken | null> {
+  const raw = await readLcxIdentityWriterRaw(resolveCurrentCopilotTokenPathContract(migration));
+  if (raw === null) {
+    return null;
+  }
+  try {
+    return parseCachedCopilotToken(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+export async function writeCopilotTokenForIdentityMigration(
+  migration: LcxIdentityCopilotTokenMigration,
+  token: CachedCopilotToken,
+): Promise<LcxIdentityCopilotTokenWriteReceipt> {
+  const contract = resolveCurrentCopilotTokenPathContract(migration);
+  const write = await writeLcxIdentityWriterRawWithReceipt(
+    contract,
+    `${JSON.stringify(token, null, 2)}\n`,
+  );
+  if (contract.readPath === contract.writePath) {
+    return Object.freeze({ write });
+  }
+  let removedLegacy: LcxIdentityRemovalReceipt | undefined;
+  try {
+    if (fs.existsSync(contract.readPath)) {
+      removedLegacy = await removeLcxIdentityWriterWithReceipt(
+        createLcxIdentityWriterPathContract({
+          writer: "credentials",
+          migrationPlan: contract.migrationPlan,
+          readPath: contract.readPath,
+          writePath: contract.readPath,
+          auditPath: contract.auditPath,
+        }),
+      );
+    }
+  } catch (error) {
+    await rollbackLcxIdentityWriter(write);
+    throw error;
+  }
+  return Object.freeze({ write, removedLegacy });
+}
+
+export async function rollbackCopilotTokenIdentityMigration(
+  receipt: LcxIdentityCopilotTokenWriteReceipt,
+): Promise<void> {
+  if (receipt.removedLegacy) {
+    await rollbackLcxIdentityRemoval(receipt.removedLegacy);
+  }
+  await rollbackLcxIdentityWriter(receipt.write);
+}
 
 function resolveCopilotTokenCachePath(env: NodeJS.ProcessEnv = process.env) {
   return path.join(resolveStateDir(env), "credentials", "github-copilot.token.json");
@@ -85,6 +221,7 @@ export async function resolveCopilotApiToken(params: {
   cachePath?: string;
   loadJsonFileImpl?: (path: string) => unknown;
   saveJsonFileImpl?: (path: string, value: CachedCopilotToken) => void;
+  identityMigration?: LcxIdentityCopilotTokenMigration;
 }): Promise<{
   token: string;
   expiresAt: number;
@@ -92,10 +229,15 @@ export async function resolveCopilotApiToken(params: {
   baseUrl: string;
 }> {
   const env = params.env ?? process.env;
-  const cachePath = params.cachePath?.trim() || resolveCopilotTokenCachePath(env);
+  const cachePath =
+    params.cachePath?.trim() ||
+    params.identityMigration?.pathContract.writePath ||
+    resolveCopilotTokenCachePath(env);
   const loadJsonFileFn = params.loadJsonFileImpl ?? loadJsonFile;
   const saveJsonFileFn = params.saveJsonFileImpl ?? saveJsonFile;
-  const cached = loadJsonFileFn(cachePath) as CachedCopilotToken | undefined;
+  const cached = params.identityMigration
+    ? await readCopilotTokenForIdentityMigration(params.identityMigration)
+    : parseCachedCopilotToken(loadJsonFileFn(cachePath));
   if (cached && typeof cached.token === "string" && typeof cached.expiresAt === "number") {
     if (isTokenUsable(cached)) {
       return {
@@ -126,7 +268,11 @@ export async function resolveCopilotApiToken(params: {
     expiresAt: json.expiresAt,
     updatedAt: Date.now(),
   };
-  saveJsonFileFn(cachePath, payload);
+  if (params.identityMigration) {
+    await writeCopilotTokenForIdentityMigration(params.identityMigration, payload);
+  } else {
+    saveJsonFileFn(cachePath, payload);
+  }
 
   return {
     token: payload.token,

@@ -1,12 +1,12 @@
 import os from "node:os";
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
+import type { OpenClawPluginApi } from "lcx-agent/plugin-sdk/core";
 import {
   approveDevicePairing,
   listDevicePairing,
   resolveGatewayBindUrl,
   runPluginCommandWithTimeout,
   resolveTailnetHostWithRunner,
-} from "openclaw/plugin-sdk/core";
+} from "lcx-agent/plugin-sdk/core";
 import qrcode from "qrcode-terminal";
 import {
   armPairNotifyOnce,

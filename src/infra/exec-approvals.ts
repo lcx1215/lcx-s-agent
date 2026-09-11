@@ -1,6 +1,16 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import {
+  readLcxIdentityWriterRaw,
+  resolveLcxIdentityStateWriterPathContract,
+  rollbackLcxIdentityWriter,
+  writeLcxIdentityWriterRawWithReceipt,
+  type LcxIdentityWriteReceipt,
+  type LcxIdentityWriterPathContract,
+} from "../config/identity-migration.js";
+import { resolveStateDir } from "../config/paths.js";
+import type { LcxIdentityMigrationPlan } from "../config/paths.js";
 import { DEFAULT_AGENT_ID } from "../routing/session-key.js";
 import { expandHomePrefix } from "./home-dir.js";
 import { requestJsonlSocket } from "./jsonl-socket.js";
@@ -117,8 +127,9 @@ const DEFAULT_SECURITY: ExecSecurity = "deny";
 const DEFAULT_ASK: ExecAsk = "on-miss";
 const DEFAULT_ASK_FALLBACK: ExecSecurity = "deny";
 const DEFAULT_AUTO_ALLOW_SKILLS = false;
-const DEFAULT_SOCKET = "~/.openclaw/exec-approvals.sock";
-const DEFAULT_FILE = "~/.openclaw/exec-approvals.json";
+const DEFAULT_SOCKET_FILENAME = "exec-approvals.sock";
+const DEFAULT_FILE_FILENAME = "exec-approvals.json";
+const EXEC_APPROVALS_RELATIVE_PATH = DEFAULT_FILE_FILENAME;
 
 function hashExecApprovalsRaw(raw: string | null): string {
   return crypto
@@ -128,11 +139,11 @@ function hashExecApprovalsRaw(raw: string | null): string {
 }
 
 export function resolveExecApprovalsPath(): string {
-  return expandHomePrefix(DEFAULT_FILE);
+  return path.join(resolveStateDir(), DEFAULT_FILE_FILENAME);
 }
 
 export function resolveExecApprovalsSocketPath(): string {
-  return expandHomePrefix(DEFAULT_SOCKET);
+  return path.join(resolveStateDir(), DEFAULT_SOCKET_FILENAME);
 }
 
 function normalizeAllowlistPattern(value: string | undefined): string | null {
@@ -337,6 +348,121 @@ export function saveExecApprovals(file: ExecApprovalsFile) {
   } catch {
     // best-effort on platforms without chmod
   }
+}
+
+export type LcxIdentityExecApprovalsMigration = Readonly<{
+  pathContract: LcxIdentityWriterPathContract & Readonly<{ writer: "exec-approvals" }>;
+  readApprovalsPath: string;
+  writeApprovalsPath: string;
+  writeSocketPath: string;
+}>;
+
+export function createLcxIdentityExecApprovalsMigration(params: {
+  migrationPlan: LcxIdentityMigrationPlan;
+  existsSync?: (candidate: string) => boolean;
+}): LcxIdentityExecApprovalsMigration {
+  if (params.migrationPlan.mode === "explicit-config-override") {
+    throw new Error("Exec approvals migration requires a state-root authority");
+  }
+  const pathContract = resolveLcxIdentityStateWriterPathContract({
+    writer: "exec-approvals",
+    migrationPlan: params.migrationPlan,
+    relativePath: EXEC_APPROVALS_RELATIVE_PATH,
+    existsSync: params.existsSync,
+  });
+  return Object.freeze({
+    pathContract,
+    readApprovalsPath: pathContract.readPath,
+    writeApprovalsPath: pathContract.writePath,
+    // The socket is a runtime endpoint, not a migration file. This path is
+    // only the canonical default stored inside the JSON state.
+    writeSocketPath: path.join(params.migrationPlan.writeStateDir, DEFAULT_SOCKET_FILENAME),
+  });
+}
+
+function resolveCurrentExecApprovalsPathContract(
+  migration: LcxIdentityExecApprovalsMigration,
+): LcxIdentityWriterPathContract & Readonly<{ writer: "exec-approvals" }> {
+  const plan = migration.pathContract.migrationPlan;
+  if (!plan) {
+    return migration.pathContract;
+  }
+  return resolveLcxIdentityStateWriterPathContract({
+    writer: "exec-approvals",
+    migrationPlan: plan,
+    relativePath: EXEC_APPROVALS_RELATIVE_PATH,
+    backupPath: migration.pathContract.backupPath,
+    auditPath: migration.pathContract.auditPath,
+  });
+}
+
+export async function readExecApprovalsSnapshotForIdentityMigration(
+  migration: LcxIdentityExecApprovalsMigration,
+): Promise<ExecApprovalsSnapshot> {
+  const pathContract = resolveCurrentExecApprovalsPathContract(migration);
+  const raw = await readLcxIdentityWriterRaw(pathContract);
+  let parsed: ExecApprovalsFile | null = null;
+  if (raw !== null) {
+    try {
+      parsed = JSON.parse(raw) as ExecApprovalsFile;
+    } catch {
+      parsed = null;
+    }
+  }
+  const file =
+    parsed?.version === 1
+      ? normalizeExecApprovals(parsed)
+      : normalizeExecApprovals({ version: 1, agents: {} });
+  return {
+    path: pathContract.readPath,
+    exists: raw !== null,
+    raw,
+    file,
+    hash: hashExecApprovalsRaw(raw),
+  };
+}
+
+export async function loadExecApprovalsForIdentityMigration(
+  migration: LcxIdentityExecApprovalsMigration,
+): Promise<ExecApprovalsFile> {
+  return (await readExecApprovalsSnapshotForIdentityMigration(migration)).file;
+}
+
+export async function writeExecApprovalsForIdentityMigration(
+  migration: LcxIdentityExecApprovalsMigration,
+  file: ExecApprovalsFile,
+  options?: { expectedReadPath?: string; expectedWritePath?: string },
+): Promise<LcxIdentityWriteReceipt> {
+  const pathContract = resolveCurrentExecApprovalsPathContract(migration);
+  return await writeLcxIdentityWriterRawWithReceipt(
+    pathContract,
+    `${JSON.stringify(file, null, 2)}\n`,
+    options,
+  );
+}
+
+export async function ensureExecApprovalsForIdentityMigration(
+  migration: LcxIdentityExecApprovalsMigration,
+): Promise<{ file: ExecApprovalsFile; receipt: LcxIdentityWriteReceipt }> {
+  const loaded = await loadExecApprovalsForIdentityMigration(migration);
+  const next = normalizeExecApprovals(loaded);
+  const socketPath = next.socket?.path?.trim();
+  const token = next.socket?.token?.trim();
+  const updated: ExecApprovalsFile = {
+    ...next,
+    socket: {
+      path: socketPath && socketPath.length > 0 ? socketPath : migration.writeSocketPath,
+      token: token && token.length > 0 ? token : generateToken(),
+    },
+  };
+  const receipt = await writeExecApprovalsForIdentityMigration(migration, updated);
+  return { file: updated, receipt };
+}
+
+export async function rollbackExecApprovalsIdentityMigration(
+  receipt: LcxIdentityWriteReceipt,
+): Promise<void> {
+  await rollbackLcxIdentityWriter(receipt);
 }
 
 export function ensureExecApprovals(): ExecApprovalsFile {

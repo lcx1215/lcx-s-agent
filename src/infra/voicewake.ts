@@ -1,4 +1,13 @@
 import path from "node:path";
+import {
+  readLcxIdentityWriterRaw,
+  resolveLcxIdentityStateWriterPathContract,
+  rollbackLcxIdentityWriter,
+  writeLcxIdentityWriterRawWithReceipt,
+  type LcxIdentityWriteReceipt,
+  type LcxIdentityWriterPathContract,
+} from "../config/identity-migration.js";
+import type { LcxIdentityMigrationPlan } from "../config/paths.js";
 import { resolveStateDir } from "../config/paths.js";
 import { createAsyncLock, readJsonFile, writeJsonAtomic } from "./json-files.js";
 
@@ -22,6 +31,92 @@ function sanitizeTriggers(triggers: string[] | undefined | null): string[] {
 }
 
 const withLock = createAsyncLock();
+
+const VOICE_WAKE_RELATIVE_PATH = path.join("settings", "voicewake.json");
+
+export type LcxIdentityVoiceWakeMigration = Readonly<{
+  pathContract: LcxIdentityWriterPathContract & Readonly<{ writer: "voicewake" }>;
+  readStatePath: string;
+  writeStatePath: string;
+}>;
+
+export function createLcxIdentityVoiceWakeMigration(params: {
+  migrationPlan: LcxIdentityMigrationPlan;
+  existsSync?: (candidate: string) => boolean;
+}): LcxIdentityVoiceWakeMigration {
+  if (params.migrationPlan.mode === "explicit-config-override") {
+    throw new Error("Voice wake migration requires a state-root authority");
+  }
+  const pathContract = resolveLcxIdentityStateWriterPathContract({
+    writer: "voicewake",
+    migrationPlan: params.migrationPlan,
+    relativePath: VOICE_WAKE_RELATIVE_PATH,
+    existsSync: params.existsSync,
+  });
+  return Object.freeze({
+    pathContract,
+    readStatePath: pathContract.readPath,
+    writeStatePath: pathContract.writePath,
+  });
+}
+
+function resolveCurrentVoiceWakePathContract(
+  migration: LcxIdentityVoiceWakeMigration,
+): LcxIdentityWriterPathContract & Readonly<{ writer: "voicewake" }> {
+  const plan = migration.pathContract.migrationPlan;
+  if (!plan) {
+    return migration.pathContract;
+  }
+  return resolveLcxIdentityStateWriterPathContract({
+    writer: "voicewake",
+    migrationPlan: plan,
+    relativePath: VOICE_WAKE_RELATIVE_PATH,
+    backupPath: migration.pathContract.backupPath,
+    auditPath: migration.pathContract.auditPath,
+  });
+}
+
+export async function readVoiceWakeConfigForIdentityMigration(
+  migration: LcxIdentityVoiceWakeMigration,
+): Promise<VoiceWakeConfig> {
+  const raw = await readLcxIdentityWriterRaw(resolveCurrentVoiceWakePathContract(migration));
+  if (raw === null) {
+    return { triggers: defaultVoiceWakeTriggers(), updatedAtMs: 0 };
+  }
+  try {
+    const parsed = JSON.parse(raw) as VoiceWakeConfig;
+    return {
+      triggers: sanitizeTriggers(parsed.triggers),
+      updatedAtMs:
+        typeof parsed.updatedAtMs === "number" && parsed.updatedAtMs > 0 ? parsed.updatedAtMs : 0,
+    };
+  } catch {
+    return { triggers: defaultVoiceWakeTriggers(), updatedAtMs: 0 };
+  }
+}
+
+export async function writeVoiceWakeConfigForIdentityMigration(
+  migration: LcxIdentityVoiceWakeMigration,
+  config: VoiceWakeConfig,
+  options?: { expectedReadPath?: string; expectedWritePath?: string },
+): Promise<LcxIdentityWriteReceipt> {
+  const normalized: VoiceWakeConfig = {
+    triggers: sanitizeTriggers(config.triggers),
+    updatedAtMs:
+      typeof config.updatedAtMs === "number" && config.updatedAtMs > 0 ? config.updatedAtMs : 0,
+  };
+  return await writeLcxIdentityWriterRawWithReceipt(
+    resolveCurrentVoiceWakePathContract(migration),
+    `${JSON.stringify(normalized, null, 2)}\n`,
+    options,
+  );
+}
+
+export async function rollbackVoiceWakeIdentityMigration(
+  receipt: LcxIdentityWriteReceipt,
+): Promise<void> {
+  await rollbackLcxIdentityWriter(receipt);
+}
 
 export function defaultVoiceWakeTriggers() {
   return [...DEFAULT_TRIGGERS];

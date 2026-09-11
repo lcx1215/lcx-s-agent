@@ -27,7 +27,7 @@ import {
   type ChannelMessageActionAdapter,
   type ChannelPlugin,
   type ResolvedSignalAccount,
-} from "openclaw/plugin-sdk/signal";
+} from "lcx-agent/plugin-sdk/signal";
 import { getSignalRuntime } from "./runtime.js";
 
 const signalMessageActions: ChannelMessageActionAdapter = {

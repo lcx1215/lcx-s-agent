@@ -4,6 +4,10 @@ import path from "node:path";
 import JSON5 from "json5";
 import { expandHomePrefix } from "../infra/home-dir.js";
 import { CONFIG_DIR } from "../utils.js";
+import {
+  writeCronStoreForIdentityMigration,
+  type LcxIdentityCronStoreMigration,
+} from "./identity-migration.js";
 import type { CronStoreFile } from "./types.js";
 
 export const DEFAULT_CRON_DIR = path.join(CONFIG_DIR, "cron");
@@ -52,9 +56,21 @@ export async function loadCronStore(storePath: string): Promise<CronStoreFile> {
   }
 }
 
-export async function saveCronStore(storePath: string, store: CronStoreFile) {
-  await fs.promises.mkdir(path.dirname(storePath), { recursive: true });
+export async function saveCronStore(
+  storePath: string,
+  store: CronStoreFile,
+  opts?: { identityMigration?: LcxIdentityCronStoreMigration },
+) {
   const json = JSON.stringify(store, null, 2);
+  if (opts?.identityMigration) {
+    await writeCronStoreForIdentityMigration(opts.identityMigration, store, {
+      expectedReadPath: storePath,
+      expectedWritePath: opts.identityMigration.writeStorePath,
+    });
+    serializedStoreCache.set(opts.identityMigration.writeStorePath, `${json}\n`);
+    return;
+  }
+  await fs.promises.mkdir(path.dirname(storePath), { recursive: true });
   const cached = serializedStoreCache.get(storePath);
   if (cached === json) {
     return;
@@ -111,3 +127,17 @@ async function renameWithRetry(src: string, dest: string): Promise<void> {
     }
   }
 }
+
+export {
+  appendCronRunLogForIdentityMigration,
+  createLcxIdentityCronRunLogMigration,
+  createLcxIdentityCronStoreMigration,
+  readCronStoreForIdentityMigration,
+  rollbackCronRunLogIdentityMigration,
+  rollbackCronStoreIdentityMigration,
+  writeCronStoreForIdentityMigration,
+} from "./identity-migration.js";
+export type {
+  LcxIdentityCronRunLogMigration,
+  LcxIdentityCronStoreMigration,
+} from "./identity-migration.js";

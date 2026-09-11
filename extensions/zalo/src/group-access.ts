@@ -1,9 +1,9 @@
-import type { GroupPolicy, SenderGroupAccessDecision } from "openclaw/plugin-sdk";
+import type { GroupPolicy, SenderGroupAccessDecision } from "lcx-agent/plugin-sdk";
 import {
   evaluateSenderGroupAccess,
   isNormalizedSenderAllowed,
   resolveOpenProviderRuntimeGroupPolicy,
-} from "openclaw/plugin-sdk";
+} from "lcx-agent/plugin-sdk";
 
 const ZALO_ALLOW_FROM_PREFIX_RE = /^(zalo|zl):/i;
 

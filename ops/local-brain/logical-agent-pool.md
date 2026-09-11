@@ -39,3 +39,15 @@ node --import tsx scripts/operator/lcx-logical-agent-pool.ts --demo --json
 The demo only proves role wiring, dependency ordering, and resource limits. It
 does not prove model quality, training absorption, promotion, external-channel
 binding, or user-visible delivery.
+
+For the same ten-role DAG with structured artifact grounding, evidence review,
+adversarial review, final precheck, bounded repair, and a deterministic local
+verifier, run:
+
+```bash
+node --import tsx scripts/operator/lcx-logical-agent-pool.ts --quality-demo --json
+```
+
+The quality contract and real `modelInvoker` seam are documented in
+`docs/concepts/quality-harness.md`. The deterministic demo remains a wiring
+check; it is not Qwen inference or proof of learned capability.

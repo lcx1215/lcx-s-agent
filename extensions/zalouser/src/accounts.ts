@@ -1,9 +1,9 @@
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "lcx-agent/plugin-sdk";
 import {
   DEFAULT_ACCOUNT_ID,
   normalizeAccountId,
   normalizeOptionalAccountId,
-} from "openclaw/plugin-sdk/account-id";
+} from "lcx-agent/plugin-sdk/account-id";
 import type { ResolvedZalouserAccount, ZalouserAccountConfig, ZalouserConfig } from "./types.js";
 import { checkZaloAuthenticated, getZaloUserInfo } from "./zalo-js.js";
 

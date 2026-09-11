@@ -1,4 +1,4 @@
-import type { BaseProbeResult } from "openclaw/plugin-sdk";
+import type { BaseProbeResult } from "lcx-agent/plugin-sdk";
 import { normalizeSecretInputString } from "./secret-input.js";
 import { buildBlueBubblesApiUrl, blueBubblesFetchWithTimeout } from "./types.js";
 

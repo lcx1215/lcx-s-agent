@@ -1,4 +1,4 @@
-import type { PluginRuntime } from "openclaw/plugin-sdk/discord";
+import type { PluginRuntime } from "lcx-agent/plugin-sdk/discord";
 
 let runtime: PluginRuntime | null = null;
 

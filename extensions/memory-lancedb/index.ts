@@ -9,8 +9,8 @@
 import { randomUUID } from "node:crypto";
 import type * as LanceDB from "@lancedb/lancedb";
 import { Type } from "@sinclair/typebox";
+import type { OpenClawPluginApi } from "lcx-agent/plugin-sdk/core";
 import OpenAI from "openai";
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import {
   DEFAULT_CAPTURE_MAX_CHARS,
   MEMORY_CATEGORIES,

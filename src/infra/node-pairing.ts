@@ -3,9 +3,12 @@ import {
   createAsyncLock,
   pruneExpiredPending,
   readJsonFile,
+  readPairingStateForIdentityMigration,
   resolvePairingPaths,
   upsertPendingPairingRequest,
   writeJsonAtomic,
+  writePairingStateForIdentityMigration,
+  type LcxIdentityPairingMigration,
 } from "./pairing-files.js";
 import { rejectPendingPairingRequest } from "./pairing-pending.js";
 import { generatePairingToken, verifyPairingToken } from "./pairing-token.js";
@@ -59,11 +62,31 @@ type NodePairingStateFile = {
   pairedByNodeId: Record<string, NodePairingPairedNode>;
 };
 
+type NodePairingBaseDir = string | (LcxIdentityPairingMigration & { kind: "node" });
+
 const PENDING_TTL_MS = 5 * 60 * 1000;
 
 const withLock = createAsyncLock();
 
-async function loadState(baseDir?: string): Promise<NodePairingStateFile> {
+function isIdentityPairingMigration(
+  baseDir: NodePairingBaseDir | undefined,
+): baseDir is LcxIdentityPairingMigration & { kind: "node" } {
+  return typeof baseDir === "object" && baseDir !== null && baseDir.kind === "node";
+}
+
+async function loadState(baseDir?: NodePairingBaseDir): Promise<NodePairingStateFile> {
+  if (isIdentityPairingMigration(baseDir)) {
+    const persisted = await readPairingStateForIdentityMigration<
+      NodePairingPendingRequest,
+      NodePairingPairedNode
+    >(baseDir);
+    const state: NodePairingStateFile = {
+      pendingById: persisted.pending,
+      pairedByNodeId: persisted.paired,
+    };
+    pruneExpiredPending(state.pendingById, Date.now(), PENDING_TTL_MS);
+    return state;
+  }
   const { pendingPath, pairedPath } = resolvePairingPaths(baseDir, "nodes");
   const [pending, paired] = await Promise.all([
     readJsonFile<Record<string, NodePairingPendingRequest>>(pendingPath),
@@ -77,7 +100,14 @@ async function loadState(baseDir?: string): Promise<NodePairingStateFile> {
   return state;
 }
 
-async function persistState(state: NodePairingStateFile, baseDir?: string) {
+async function persistState(state: NodePairingStateFile, baseDir?: NodePairingBaseDir) {
+  if (isIdentityPairingMigration(baseDir)) {
+    await writePairingStateForIdentityMigration({
+      migration: baseDir,
+      state: { pending: state.pendingById, paired: state.pairedByNodeId },
+    });
+    return;
+  }
   const { pendingPath, pairedPath } = resolvePairingPaths(baseDir, "nodes");
   await Promise.all([
     writeJsonAtomic(pendingPath, state.pendingById),
@@ -93,7 +123,7 @@ function newToken() {
   return generatePairingToken();
 }
 
-export async function listNodePairing(baseDir?: string): Promise<NodePairingList> {
+export async function listNodePairing(baseDir?: NodePairingBaseDir): Promise<NodePairingList> {
   const state = await loadState(baseDir);
   const pending = Object.values(state.pendingById).toSorted((a, b) => b.ts - a.ts);
   const paired = Object.values(state.pairedByNodeId).toSorted(
@@ -104,7 +134,7 @@ export async function listNodePairing(baseDir?: string): Promise<NodePairingList
 
 export async function getPairedNode(
   nodeId: string,
-  baseDir?: string,
+  baseDir?: NodePairingBaseDir,
 ): Promise<NodePairingPairedNode | null> {
   const state = await loadState(baseDir);
   return state.pairedByNodeId[normalizeNodeId(nodeId)] ?? null;
@@ -112,7 +142,7 @@ export async function getPairedNode(
 
 export async function requestNodePairing(
   req: Omit<NodePairingPendingRequest, "requestId" | "ts" | "isRepair">,
-  baseDir?: string,
+  baseDir?: NodePairingBaseDir,
 ): Promise<{
   status: "pending";
   request: NodePairingPendingRequest;
@@ -154,7 +184,7 @@ export async function requestNodePairing(
 
 export async function approveNodePairing(
   requestId: string,
-  baseDir?: string,
+  baseDir?: NodePairingBaseDir,
 ): Promise<{ requestId: string; node: NodePairingPairedNode } | null> {
   return await withLock(async () => {
     const state = await loadState(baseDir);
@@ -192,7 +222,7 @@ export async function approveNodePairing(
 
 export async function rejectNodePairing(
   requestId: string,
-  baseDir?: string,
+  baseDir?: NodePairingBaseDir,
 ): Promise<{ requestId: string; nodeId: string } | null> {
   return await withLock(async () => {
     return await rejectPendingPairingRequest<
@@ -212,7 +242,7 @@ export async function rejectNodePairing(
 export async function verifyNodeToken(
   nodeId: string,
   token: string,
-  baseDir?: string,
+  baseDir?: NodePairingBaseDir,
 ): Promise<{ ok: boolean; node?: NodePairingPairedNode }> {
   const state = await loadState(baseDir);
   const normalized = normalizeNodeId(nodeId);
@@ -226,7 +256,7 @@ export async function verifyNodeToken(
 export async function updatePairedNodeMetadata(
   nodeId: string,
   patch: Partial<Omit<NodePairingPairedNode, "nodeId" | "token" | "createdAtMs" | "approvedAtMs">>,
-  baseDir?: string,
+  baseDir?: NodePairingBaseDir,
 ) {
   await withLock(async () => {
     const state = await loadState(baseDir);
@@ -261,7 +291,7 @@ export async function updatePairedNodeMetadata(
 export async function renamePairedNode(
   nodeId: string,
   displayName: string,
-  baseDir?: string,
+  baseDir?: NodePairingBaseDir,
 ): Promise<NodePairingPairedNode | null> {
   return await withLock(async () => {
     const state = await loadState(baseDir);
