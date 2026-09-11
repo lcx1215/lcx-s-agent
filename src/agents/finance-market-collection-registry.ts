@@ -8,11 +8,12 @@ import {
 } from "./api-call-contract.js";
 import { financeReuseTimestamp } from "./finance-cache-provenance.js";
 import { resolveFinanceCredentialEnv } from "./finance-credential-env.js";
-import type {
-  FinanceDataDelayStatus,
-  FinanceAsOfMode,
-  FinanceDataProviderRole,
-  FinanceDataSourceFamily,
+import {
+  FINANCE_LIVE_NOW_MAX_FUTURE_SKEW_MINUTES,
+  type FinanceAsOfMode,
+  type FinanceDataDelayStatus,
+  type FinanceDataProviderRole,
+  type FinanceDataSourceFamily,
 } from "./finance-data-gateway.js";
 import {
   createBinancePublicEodHistoryCollectionAdapter,
@@ -245,12 +246,16 @@ function collectionRecordInRequestWindow(
   const observedAt =
     typeof record.observedAt === "string" ? Date.parse(record.observedAt) : Number.NaN;
   const asOf = Date.parse(request.asOf);
+  const futureTimestampLimit =
+    request.asOfMode === "live_now"
+      ? Date.now() + FINANCE_LIVE_NOW_MAX_FUTURE_SKEW_MINUTES * 60_000
+      : asOf;
   if (
     !Number.isFinite(sourceTimestamp) ||
     !Number.isFinite(observedAt) ||
     !Number.isFinite(asOf) ||
-    sourceTimestamp > asOf ||
-    observedAt > asOf
+    sourceTimestamp > futureTimestampLimit ||
+    observedAt > futureTimestampLimit
   ) {
     return false;
   }

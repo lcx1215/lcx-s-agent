@@ -554,6 +554,44 @@ describe("finance market collection registry", () => {
     expect(receipt.requiredNextSteps).toContain("inspect_out_of_window_collection_records");
   });
 
+  it("allows bounded post-cutoff records in live-now mode", async () => {
+    const receipt = await runFinanceMarketCollectionRefresh({
+      request: {
+        ...EQUITY_REQUEST,
+        asOf: "2026-09-08T12:00:00.000Z",
+        asOfMode: "live_now",
+        fromDate: undefined,
+        toDate: undefined,
+      },
+      adapters: [
+        {
+          id: "live-now",
+          providerName: "live-now",
+          providerRole: "primary_market_data",
+          priority: 1,
+          supports: () => true,
+          collect: async () => [
+            {
+              itemId: "live-news",
+              collection: "news",
+              providerName: "live-now",
+              providerRole: "primary_market_data",
+              sourceFamily: "market_data_api",
+              sourceTimestamp: "2026-09-08T12:01:00.000Z",
+              observedAt: "2026-09-08T12:01:00.000Z",
+              delayStatus: "realtime",
+              sourceUrlOrArtifact: "fixture://live-now",
+              data: { title: "post-cutoff evidence" },
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(receipt.status).toBe("ready");
+    expect(receipt.missingEvidence).toEqual([]);
+  });
+
   it("reports environment-backed providers without exposing credential values", () => {
     const options = resolveFinanceMarketCollectionRegistryOptionsFromEnv({
       MASSIVE_API_KEY: "massive-secret",
