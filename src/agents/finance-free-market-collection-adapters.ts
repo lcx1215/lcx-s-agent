@@ -493,7 +493,7 @@ export function createGdeltPublicNewsCollectionAdapter(
         throw new FreeMarketCollectionAdapterError("fromDate must be before toDate");
       }
       const params: Record<string, string | number> = {
-        query: financeNewsQuery(request.instrument),
+        query: request.seriesId?.trim() || financeNewsQuery(request.instrument),
         mode: "artlist",
         maxrecords: request.limit ?? 20,
         sort: "datedesc",

@@ -167,11 +167,14 @@ export function createResearchDataAutopilotTool(options?: {
               })
             : inspectGeospatialSourceRegistry(request, geospatialRegistry);
         } else if (intent === "quote" || intent === "crypto_quote") {
+          const assetClass =
+            params.assetClass ?? (intent === "crypto_quote" ? "crypto" : "us_equity");
           const request: FinanceRealtimeSourceRequest = {
             instrument: target,
-            assetClass: params.assetClass ?? (intent === "crypto_quote" ? "crypto" : "us_equity"),
+            assetClass,
             useCase: "research_data_autopilot",
             asOf,
+            requireOfficialReference: assetClass.toLowerCase() !== "crypto",
           };
           const envOptions = resolveFinanceRealtimeSourceRegistryOptionsFromEnv();
           const registry = createFinanceRealtimeSourceRegistry({

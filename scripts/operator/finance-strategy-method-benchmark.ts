@@ -228,6 +228,16 @@ function evaluateSeries(
   return { dailyReturns, positions, metric: summarize(dailyReturns, positions) };
 }
 
+function sliceEvaluationSeries(
+  series: EvaluatedSeries,
+  evaluationStartIndex: number,
+): EvaluatedSeries {
+  const start = Math.max(0, evaluationStartIndex);
+  const dailyReturns = series.dailyReturns.slice(start);
+  const positions = series.positions.slice(start);
+  return { dailyReturns, positions, metric: summarize(dailyReturns, positions) };
+}
+
 function aggregateSeries(
   series: readonly EvaluatedSeries[],
   method: MethodName = "trend_breadth_gate",
@@ -315,6 +325,7 @@ function medianValue(values: readonly number[]): number {
 function evaluateStressMatrix(
   rowsBySymbol: Readonly<Record<string, readonly PriceRow[]>>,
   dates: readonly string[],
+  evaluationStartIndex = 0,
 ): Readonly<{
   variants: readonly StressVariantResult[];
   summary: Readonly<{
@@ -337,14 +348,17 @@ function evaluateStressMatrix(
         method,
         aggregateSeries(
           Object.keys(rowsBySymbol).map((symbol) =>
-            evaluateSeries(
-              symbol,
-              rowsBySymbol,
-              dates,
-              variant.lookback,
-              variant.breadth,
-              costRate,
-              method as MethodName,
+            sliceEvaluationSeries(
+              evaluateSeries(
+                symbol,
+                rowsBySymbol,
+                dates,
+                variant.lookback,
+                variant.breadth,
+                costRate,
+                method as MethodName,
+              ),
+              evaluationStartIndex,
             ),
           ),
           method as MethodName,
@@ -392,7 +406,11 @@ async function collectSymbol(symbol: string, options: ReturnType<typeof parseOpt
   // 300-calendar-day equity chunk is below that cap even after exchange
   // holidays are accounted for, and each response is checked for truncation.
   const chunkCalendarDays = 300;
+  const requiredLookback = options.stress
+    ? Math.max(options.lookback, ...STRESS_LOOKBACKS)
+    : options.lookback;
   const start = parseDate(options.fromDate, "--from-date");
+  start.setUTCDate(start.getUTCDate() - requiredLookback * 2);
   let end = parseDate(options.toDate, "--to-date");
   const receipts = [];
   const records: FinanceMarketCollectionItem[] = [];
@@ -431,9 +449,6 @@ async function collectSymbol(symbol: string, options: ReturnType<typeof parseOpt
     end = new Date(chunkStart.getTime() - 86_400_000);
   }
   const rows = rowsFromItems(records);
-  const requiredLookback = options.stress
-    ? Math.max(options.lookback, ...STRESS_LOOKBACKS)
-    : options.lookback;
   if (
     receipts.some((receipt) => receipt.status !== "ready") ||
     rows.length < requiredLookback + 20
@@ -469,6 +484,11 @@ export async function runBenchmark(args: readonly string[] = process.argv.slice(
       .map((date) => byDate.get(date))
       .filter((row): row is PriceRow => row !== undefined);
   }
+  const evaluationStartIndex = dates.findIndex((date) => date >= options.fromDate);
+  if (evaluationStartIndex < 0) {
+    throw new Error(`aligned observations do not cover --from-date ${options.fromDate}`);
+  }
+  const evaluationDates = dates.slice(evaluationStartIndex);
   const costRate = options.costBps / 10_000;
   const methods = Object.freeze(["buy_hold", "trend_breadth_gate"] as const);
   const evaluated = Object.fromEntries(
@@ -477,14 +497,17 @@ export async function runBenchmark(args: readonly string[] = process.argv.slice(
       Object.fromEntries(
         options.symbols.map((symbol) => [
           symbol,
-          evaluateSeries(
-            symbol,
-            rowsBySymbol,
-            dates,
-            options.lookback,
-            options.breadth,
-            costRate,
-            method,
+          sliceEvaluationSeries(
+            evaluateSeries(
+              symbol,
+              rowsBySymbol,
+              dates,
+              options.lookback,
+              options.breadth,
+              costRate,
+              method,
+            ),
+            evaluationStartIndex,
           ),
         ]),
       ),
@@ -548,11 +571,16 @@ export async function runBenchmark(args: readonly string[] = process.argv.slice(
     portfolio: Object.fromEntries(
       methods.map((method) => [
         method,
-        { metric: portfolio[method].metric, periods: periodMetrics(portfolio[method], dates) },
+        {
+          metric: portfolio[method].metric,
+          periods: periodMetrics(portfolio[method], evaluationDates),
+        },
       ]),
     ),
     comparisons,
-    ...(options.stress ? { stressMatrix: evaluateStressMatrix(rowsBySymbol, dates) } : {}),
+    ...(options.stress
+      ? { stressMatrix: evaluateStressMatrix(rowsBySymbol, dates, evaluationStartIndex) }
+      : {}),
     checks: {
       realSourceReceipts: true,
       allSourcesReady: true,

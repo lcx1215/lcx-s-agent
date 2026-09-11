@@ -136,6 +136,7 @@ function latestFact(
   payload: SecFactsPayload,
   tags: readonly string[],
   preferredUnits: readonly string[],
+  asOf?: string,
 ): { tag: string; unit: string; fact: SecFactUnit } | undefined {
   const candidates = tags.flatMap((tag) => {
     const tagged = Object.entries(payload.facts ?? {}).flatMap(([namespace, facts]) => {
@@ -149,7 +150,14 @@ function latestFact(
     });
     return tagged;
   });
-  const sorted = candidates.toSorted((left, right) => {
+  const cutoffMs = asOf ? Date.parse(asOf) : Number.NaN;
+  const eligible = Number.isFinite(cutoffMs)
+    ? candidates.filter((candidate) => {
+        const timestamp = Date.parse(textValue(candidate.fact.filed || candidate.fact.end));
+        return Number.isFinite(timestamp) && timestamp <= cutoffMs;
+      })
+    : candidates;
+  const sorted = eligible.toSorted((left, right) => {
     const unitRank = (unit: string) => {
       const index = preferredUnits.indexOf(unit);
       return index < 0 ? preferredUnits.length : index;
@@ -325,7 +333,7 @@ export function createSecCompanyFactsAdapter(
         },
       ] as const;
       const fields = factSpecs.flatMap((spec) => {
-        const selected = latestFact(payload, spec.tags, spec.units);
+        const selected = latestFact(payload, spec.tags, spec.units, request.asOf);
         const normalized =
           selected && factField(selected, spec.name, entityName, sourceUrlOrArtifact);
         return normalized ? [normalized] : [];

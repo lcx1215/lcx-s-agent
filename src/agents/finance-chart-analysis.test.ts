@@ -32,8 +32,9 @@ describe("finance chart analysis", () => {
       { ...bars(1)[0], providerName: "provider-a" },
       { ...bars(1)[0], close: 99, providerName: "provider-b" },
     ]);
-    expect(normalized.bars).toHaveLength(0);
-    expect(normalized.droppedCount).toBe(2);
+    expect(normalized.bars).toHaveLength(1);
+    expect(normalized.bars[0]?.close).toBe(100);
+    expect(normalized.droppedCount).toBe(1);
   });
 
   it("rejects conflicting same-date bars instead of depending on input order", () => {
