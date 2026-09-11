@@ -65,6 +65,8 @@ const CURRENT_DATA_PATTERN =
   /当前|最新|今天|今日|现在|截至|实时|股价|价格|市值|收益率|行情|current|latest|today|now|as of|price|market cap|yield/iu;
 const DIRECT_TRADE_ACTION_PATTERN =
   /(?:^|[.!?\n:]\s*)(?:buy|sell|add|reduce|go long|go short)\b[^.!?\n]{0,120}(?:[.!?\n]|$)|\b(?:you\s+should|i\s+(?:recommend|would)|recommend(?:ed)?|consider|please)\b[^.!?\n]{0,60}\b(?:buy|sell|add|reduce|go long|go short)\b|(?:建议|应该|推荐|考虑|立即|现在)[^\n。！？]{0,30}(?:买入|卖出|加仓|减仓|做多|做空|增持|减持)|(?:买入|卖出|加仓|减仓|做多|做空|增持|减持)[^\n。！？]{0,12}(?:股票|仓位|标的|[A-Z]{1,6}\b)/imu;
+const EXECUTION_CLAIM_PATTERN =
+  /已下单|下单成功|已经买入|已经卖出|已开仓|已平仓|交易已完成|转账成功|order filled|order placed|position opened|position closed|funds transferred/iu;
 
 function extractDataNumbers(text: string): string[] {
   return (
@@ -110,8 +112,13 @@ function validateFinanceAnswerSafety(
     return [];
   }
   const problems: string[] = [];
-  if (DIRECT_TRADE_ACTION_PATTERN.test(artifact.answer)) {
+  const allowsConditionalCandidate =
+    request.sharedContext?.decisionMode === "conditional_trade_candidate";
+  if (!allowsConditionalCandidate && DIRECT_TRADE_ACTION_PATTERN.test(artifact.answer)) {
     problems.push("final finance answer contains a direct trade action or recommendation");
+  }
+  if (EXECUTION_CLAIM_PATTERN.test(artifact.answer)) {
+    problems.push("final finance answer contains an execution claim");
   }
 
   if (CURRENT_DATA_PATTERN.test(request.task) || CURRENT_DATA_PATTERN.test(artifact.answer)) {

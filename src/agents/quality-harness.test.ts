@@ -265,6 +265,42 @@ describe("quality harness", () => {
     ).toMatchObject({ passed: false });
   });
 
+  it("allows a conditional candidate while still rejecting execution claims", async () => {
+    const candidate = await runQualityHarness({
+      request: {
+        ...financeRequest,
+        sharedContext: { decisionMode: "conditional_trade_candidate" },
+      },
+      maxAttempts: 1,
+      modelInvoker: demoInvoker({
+        answer: "Conditional trade candidate: Buy NVDA if the trigger holds; review only.",
+      }),
+      verify: async () => ({ status: "passed", summary: "candidate contract passed", details: [] }),
+    });
+
+    expect(candidate.status).toBe("verified");
+    expect(
+      candidate.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
+    ).toMatchObject({ passed: true });
+
+    const executionClaim = await runQualityHarness({
+      request: {
+        ...financeRequest,
+        sharedContext: { decisionMode: "conditional_trade_candidate" },
+      },
+      maxAttempts: 1,
+      modelInvoker: demoInvoker({
+        answer: "Conditional trade candidate: Buy NVDA if the trigger holds; order filled.",
+      }),
+      verify: async () => ({ status: "passed", summary: "should not run", details: [] }),
+    });
+
+    expect(executionClaim.status).toBe("quality-failed");
+    expect(
+      executionClaim.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
+    ).toMatchObject({ passed: false });
+  });
+
   it("does not equate a percentage with a currency amount", async () => {
     const result = await runQualityHarness({
       request: {

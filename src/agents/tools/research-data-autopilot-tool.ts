@@ -125,7 +125,7 @@ export function createResearchDataAutopilotTool(options?: {
     description:
       "Use source_health to inspect configured routes, recent call evidence, shared provider quotas, next eligible times, cooldowns, process-local response reuse and unknown ceilings without network access. Cached reads are not new source-health verification. Autonomously route a read-only research request across all canonical finance, crypto, public macro, SEC, news, geospatial, weather, and seismic adapters. The agent does not choose provider URLs: registries select every supporting source, retain failures, cross-check results, and never touch trading, broker, wallet, or order authority.",
     parameters: ResearchDataAutopilotSchema,
-    execute: async (_toolCallId, args) => {
+    execute: async (_toolCallId, args, signal) => {
       const params = args as {
         intent: ResearchDataAutopilotIntent;
         target: string;
@@ -163,6 +163,7 @@ export function createResearchDataAutopilotTool(options?: {
                 adapters: registry,
                 maxSources: params.maxSources,
                 timeoutMs: params.timeoutMs,
+                signal,
               })
             : inspectGeospatialSourceRegistry(request, registry);
         } else if (intent === "quote" || intent === "crypto_quote") {
@@ -183,6 +184,7 @@ export function createResearchDataAutopilotTool(options?: {
                 adapters: registry,
                 maxSources: params.maxSources,
                 timeoutMs: params.timeoutMs,
+                signal,
               })
             : inspectFinanceRealtimeSourceRegistry(request, registry);
         } else {
@@ -212,6 +214,7 @@ export function createResearchDataAutopilotTool(options?: {
                 adapters: registry,
                 maxSources: params.maxSources,
                 timeoutMs: params.timeoutMs,
+                signal,
               })
             : inspectFinanceMarketCollectionRegistry(request, registry);
         }

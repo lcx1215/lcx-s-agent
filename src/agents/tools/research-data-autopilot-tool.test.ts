@@ -141,3 +141,30 @@ it("makes extended financial datasets available through the agent-facing router"
     vi.unstubAllEnvs();
   }
 });
+
+it("propagates caller cancellation to the live geospatial registry", async () => {
+  const controller = new AbortController();
+  let httpSignal: AbortSignal | undefined;
+  const fetchImpl: FetchImpl = async (_url, init) => {
+    httpSignal = init?.signal;
+    controller.abort("private-reason");
+    return new Promise(() => {});
+  };
+  const tool = createResearchDataAutopilotTool({
+    workspaceDir: "/tmp/lcx-autopilot-cancel",
+    fetchImpl,
+  });
+
+  const result = await tool.execute(
+    "cancel-live",
+    { intent: "weather", target: "31,121", liveFetch: true },
+    controller.signal,
+  );
+
+  expect(httpSignal?.aborted).toBe(true);
+  expect(result.details).toEqual(
+    expect.objectContaining({
+      result: expect.objectContaining({ status: "blocked" }),
+    }),
+  );
+});

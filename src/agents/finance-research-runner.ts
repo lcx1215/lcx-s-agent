@@ -228,7 +228,13 @@ function dateOnly(value: string): string {
 
 function subtractMonths(value: string, months: number): string {
   const date = new Date(value);
+  const originalDay = date.getUTCDate();
+  date.setUTCDate(1);
   date.setUTCMonth(date.getUTCMonth() - months);
+  const lastDayOfTargetMonth = new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0),
+  ).getUTCDate();
+  date.setUTCDate(Math.min(originalDay, lastDayOfTargetMonth));
   return date.toISOString().slice(0, 10);
 }
 
@@ -256,7 +262,9 @@ function buildHistoryCollection(
           fromDate: subtractMonths(asOf, horizonMonths),
           toDate: dateOnly(new Date(Date.parse(asOf) - 86_400_000).toISOString()),
         }),
-    limit: Math.min(1000, Math.max(40, horizonMonths * 31)),
+    // Keep each request within the market registry's hard maximum; longer horizons
+    // are represented by the date window and may be reported as incomplete coverage.
+    limit: Math.min(250, Math.max(40, horizonMonths * 31)),
     freshnessMaxMinutes: horizonMonths * 31 * 24 * 60 + 24 * 60,
   };
 }

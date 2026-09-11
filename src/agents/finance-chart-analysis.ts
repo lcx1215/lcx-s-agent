@@ -94,7 +94,9 @@ function normalizeRecord(record: FinanceChartRecord): FinanceChartBar | undefine
     high <= 0 ||
     low <= 0 ||
     close <= 0 ||
-    high < low
+    high < low ||
+    high < Math.max(open, close) ||
+    low > Math.min(open, close)
   ) {
     return undefined;
   }

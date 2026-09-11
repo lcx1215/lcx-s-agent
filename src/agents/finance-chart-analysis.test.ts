@@ -37,6 +37,16 @@ describe("finance chart analysis", () => {
     expect(normalized.droppedCount).toBe(1);
   });
 
+  it("drops OHLC rows whose open or close falls outside the high-low range", () => {
+    const normalized = normalizeFinanceChartBars([
+      { date: "2026-01-01", open: 10, high: 9, low: 1, close: 8 },
+      { date: "2026-01-02", open: 2, high: 5, low: 3, close: 4 },
+    ]);
+
+    expect(normalized.bars).toEqual([]);
+    expect(normalized.droppedCount).toBe(2);
+  });
+
   it("produces deterministic trend, drawdown, and moving-average features", () => {
     const normalized = normalizeFinanceChartBars(bars(25));
     const analysis = analyzeFinanceChartBars("AAPL", normalized.bars);

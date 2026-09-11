@@ -50,8 +50,8 @@ canonical state-root checkpoint store.
 ## State-root boundary observed during this run
 
 `resolveStateDir()` currently resolves to the existing compatibility root
-`/Users/liuchengxu/.openclaw` on this machine, while the target LCX root is
-`/Users/liuchengxu/.lcx`. The identity migration completion marker is not yet
+`$LCX_STATE_DIR` on the validation host, while the target LCX root is
+`$LCX_CANONICAL_STATE_DIR`. The identity migration completion marker is not yet
 active. The checkpoint adapter intentionally follows `resolveStateDir()` so it
 does not create a split-brain writer; when the existing migration owner proves
 the canonical switch, the same adapter follows it automatically.

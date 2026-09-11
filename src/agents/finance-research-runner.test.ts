@@ -167,6 +167,21 @@ describe("finance research runner", () => {
     expect(targets.some((target) => target.assetClass === "us_equity")).toBe(true);
   });
 
+  it("clamps month-end history windows and the registry collection limit", () => {
+    const targets = buildDefaultFinanceResearchTargets(
+      "分析美股历史",
+      12,
+      "2026-03-31T12:00:00.000Z",
+    );
+    const history = targets
+      .flatMap((target) => target.collections ?? [])
+      .filter((collection) => collection.collection === "eod_history");
+
+    expect(history.length).toBeGreaterThan(0);
+    expect(history.every((collection) => collection.fromDate === "2025-03-31")).toBe(true);
+    expect(history.every((collection) => collection.limit === 250)).toBe(true);
+  });
+
   it("runs a dry plan without invoking a source or model", async () => {
     const result = await runFinanceResearchRun({
       input: {

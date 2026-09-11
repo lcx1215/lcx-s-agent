@@ -684,8 +684,9 @@ export async function runGeospatialRefresh(options: {
   const asOfMs = Date.parse(request.asOf);
   const freshnessMaxMinutes = request.freshnessMaxMinutes ?? 60 * 24;
   const fieldAgeMinutes = (sourceTimestamp: string) =>
-    Math.max(0, (asOfMs - Date.parse(sourceTimestamp)) / 60_000);
+    (asOfMs - Date.parse(sourceTimestamp)) / 60_000;
   const isFresh = (sourceTimestamp: string) =>
+    fieldAgeMinutes(sourceTimestamp) >= 0 &&
     fieldAgeMinutes(sourceTimestamp) <= freshnessMaxMinutes;
   const fieldCandidates = (fieldName: string) =>
     observations.flatMap((observation) =>
@@ -694,7 +695,10 @@ export async function runGeospatialRefresh(options: {
         .map((field) => ({ field, observation })),
     );
   const selectedCandidates = (fieldName: string) => {
-    const candidatesForField = fieldCandidates(fieldName);
+    // A historical asOf must never be satisfied by a value observed in the future.
+    const candidatesForField = fieldCandidates(fieldName).filter(
+      ({ field }) => Date.parse(field.sourceTimestamp) <= asOfMs,
+    );
     const freshCandidates = candidatesForField.filter(({ field }) =>
       isFresh(field.sourceTimestamp),
     );
@@ -733,14 +737,26 @@ export async function runGeospatialRefresh(options: {
         : [];
     }),
   );
-  const freshnessWarnings = normalizedFields.flatMap((field) => {
-    const ageMinutes = fieldAgeMinutes(field.sourceTimestamp);
-    return ageMinutes > freshnessMaxMinutes
-      ? [
-          `${field.name} from ${observations.find((observation) => observation.fields.includes(field))?.providerName ?? "selected-source"} is ${Math.round(ageMinutes)}m old`,
-        ]
-      : [];
-  });
+  const futureSourceWarnings = observations.flatMap((observation) =>
+    observation.fields.flatMap((field) =>
+      Date.parse(field.sourceTimestamp) > asOfMs
+        ? [
+            `${field.name} from ${observation.providerName} is newer than requested asOf ${request.asOf}`,
+          ]
+        : [],
+    ),
+  );
+  const freshnessWarnings = [
+    ...futureSourceWarnings,
+    ...normalizedFields.flatMap((field) => {
+      const ageMinutes = fieldAgeMinutes(field.sourceTimestamp);
+      return ageMinutes > freshnessMaxMinutes
+        ? [
+            `${field.name} from ${observations.find((observation) => observation.fields.includes(field))?.providerName ?? "selected-source"} is ${Math.round(ageMinutes)}m old`,
+          ]
+        : [];
+    }),
+  ];
   const missingEvidence = observations.length === 0 ? ["successful_geospatial_observation"] : [];
   const requiredNextSteps: string[] = [];
   if (missingEvidence.length > 0) {
@@ -751,6 +767,9 @@ export async function runGeospatialRefresh(options: {
   }
   if (freshnessWarnings.length > 0) {
     requiredNextSteps.push("refresh_or_label_stale_fields");
+  }
+  if (futureSourceWarnings.length > 0) {
+    requiredNextSteps.push("review_future_dated_observations");
   }
   return {
     schemaVersion: "lcx_geospatial_refresh_v1",

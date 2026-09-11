@@ -180,6 +180,34 @@ describe("geospatial source registry", () => {
     );
     expect(receipt.conflicts).toEqual([]);
   });
+
+  it("excludes future-dated fields from a historical asOf and raises a warning", async () => {
+    const fetchImpl: FetchImpl = async () => ({
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          current: { time: "2026-09-07T13:00", temperature_2m: 18 },
+        }),
+    });
+    const receipt = await runGeospatialRefresh({
+      request: {
+        kind: "weather",
+        query: "31,121",
+        asOf: "2026-09-07T12:00:00.000Z",
+        freshnessMaxMinutes: 60,
+      },
+      adapters: [createOpenMeteoWeatherAdapter({ fetchImpl })],
+      retry: { attempts: 1 },
+    });
+
+    expect(receipt.status).toBe("needs_review");
+    expect(receipt.normalizedFields).toEqual([]);
+    expect(receipt.freshnessWarnings).toContain(
+      "temperature_2m from open-meteo-weather is newer than requested asOf 2026-09-07T12:00:00.000Z",
+    );
+    expect(receipt.requiredNextSteps).toContain("review_future_dated_observations");
+  });
 });
 
 describe("geospatial API transport governance", () => {
