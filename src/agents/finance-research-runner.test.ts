@@ -150,6 +150,24 @@ const BATCH_OPTIONS = {
 } as const;
 
 describe("finance research runner", () => {
+  it("targets the caller-supplied equity ticker instead of the broad canary universe", () => {
+    const targets = buildDefaultFinanceResearchTargets("Analyze AAPL stock", 6, AS_OF);
+    expect(
+      targets
+        .filter((target) => target.id.startsWith("us-equity-"))
+        .map((target) => target.instrument),
+    ).toEqual(["AAPL"]);
+  });
+
+  it("maps common company names to bounded equity tickers", () => {
+    const targets = buildDefaultFinanceResearchTargets("分析 Nvidia 股票", 6, AS_OF);
+    expect(
+      targets
+        .filter((target) => target.id.startsWith("us-equity-"))
+        .map((target) => target.instrument),
+    ).toEqual(["NVDA"]);
+  });
+
   it("builds an explicit six-month target window and preserves research boundaries", () => {
     const targets = buildDefaultFinanceResearchTargets(
       "分析未来半年美股和加密货币市场情绪，并考虑美国中期选举。",
