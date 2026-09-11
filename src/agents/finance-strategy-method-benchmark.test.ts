@@ -81,6 +81,23 @@ describe("strategy receipt evidence boundaries", () => {
       expect(() => allMethods.parseOutputPath(args)).toThrow("Usage:");
     }
   });
+
+  it("accepts explicit input and research roots for packaged receipt generation", () => {
+    expect(
+      allMethods.parseCliOptions([
+        "--input-root",
+        "./generated-inputs",
+        "--research-root",
+        "./research-bundle",
+      ]),
+    ).toEqual(
+      expect.objectContaining({
+        inputRoot: expect.stringContaining("generated-inputs"),
+        researchRoot: expect.stringContaining("research-bundle"),
+      }),
+    );
+  });
+
   it("keeps empty, failed and malformed source groups unready", () => {
     expect(allMethods.sourceGroupReady({})).toBe(false);
     expect(allMethods.sourceGroupReady({ feed: null })).toBe(false);
