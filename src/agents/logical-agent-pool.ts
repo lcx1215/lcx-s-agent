@@ -1080,9 +1080,29 @@ function executeWithTimeout<TResult>(
   const signal = createSafeAbortSignal(controller, cancellationErrors);
   let timedOut = false;
   let cancelled = parentSignal?.aborted === true;
+  let outcomeSettled = false;
+  let rejectOutcome: ((reason?: unknown) => void) | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const rejectIfPending = (reason: unknown) => {
+    if (outcomeSettled) {
+      return;
+    }
+    outcomeSettled = true;
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+    rejectOutcome?.(reason);
+  };
   const cancel = () => {
     cancelled = true;
-    controller.abort();
+    try {
+      controller.abort();
+    } catch (error: unknown) {
+      cancellationErrors.push(error);
+    }
+    if (!timedOut) {
+      rejectIfPending(new Error("logical-agent task cancelled"));
+    }
   };
   parentSignal?.addEventListener("abort", cancel, { once: true });
   const execution = Promise.resolve()
@@ -1098,7 +1118,8 @@ function executeWithTimeout<TResult>(
     () => undefined,
   );
   const outcome = new Promise<TResult>((resolve, reject) => {
-    const timer = setTimeout(() => {
+    rejectOutcome = reject;
+    timer = setTimeout(() => {
       timedOut = true;
       try {
         controller.abort();
@@ -1112,20 +1133,28 @@ function executeWithTimeout<TResult>(
       const timeoutError = new Error(
         `logical-agent task timed out after ${timeoutMs}ms${cancellationDetail}`,
       );
-      void termination.then(() => reject(timeoutError));
+      void termination.then(() => rejectIfPending(timeoutError));
     }, timeoutMs);
     execution.then(
       (value) => {
-        clearTimeout(timer);
+        if (outcomeSettled) {
+          return;
+        }
         if (cancelled) {
-          reject(new Error("logical-agent task cancelled"));
+          rejectIfPending(new Error("logical-agent task cancelled"));
         } else if (!timedOut) {
+          outcomeSettled = true;
+          clearTimeout(timer);
           resolve(value);
         }
       },
       (error: unknown) => {
-        clearTimeout(timer);
+        if (outcomeSettled) {
+          return;
+        }
         if (!timedOut) {
+          outcomeSettled = true;
+          clearTimeout(timer);
           reject(error);
         }
       },
@@ -1500,19 +1529,20 @@ export async function runLogicalAgentPlan<TInput, TResult>(params: {
     throw new Error("logical-agent resume requires an explicit runId");
   }
 
+  const restoredCheckpoint = params.resume ? params.checkpointStore?.load(runId) : undefined;
+  if (params.resume && !restoredCheckpoint) {
+    throw new Error(`logical-agent checkpoint not found for runId: ${runId}`);
+  }
   const restoredResults = params.resume
     ? restoreCheckpoint({
-        checkpoint:
-          params.checkpointStore?.load(runId) ??
-          (() => {
-            throw new Error(`logical-agent checkpoint not found for runId: ${runId}`);
-          })(),
+        checkpoint: restoredCheckpoint!,
         runId,
         planFingerprint,
         tasks,
       })
     : new Map<string, LogicalAgentTaskResult<TResult>>();
   if (params.resume) {
+    eventSequence = restoredCheckpoint?.lastEventSequence ?? 0;
     emit("run_resumed", undefined, {
       completedTaskCount: restoredResults.size,
       planFingerprint,
@@ -1555,7 +1585,8 @@ export async function runLogicalAgentPlan<TInput, TResult>(params: {
         planFingerprint,
         tasks,
         results,
-        lastEventSequence: eventSequence,
+        // Reserve the sequence used by checkpoint_saved before persisting.
+        lastEventSequence: eventSequence + 1,
       });
       params.checkpointStore.save(checkpoint);
       emit("checkpoint_saved", undefined, {

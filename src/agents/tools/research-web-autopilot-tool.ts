@@ -395,15 +395,16 @@ export function createResearchWebAutopilotTool(options?: {
               });
               return undefined;
             }
+            const finalUrl = httpUrl(details.finalUrl) ?? candidate.url;
             return {
               url: candidate.url,
-              finalUrl: httpUrl(details.finalUrl) ?? candidate.url,
+              finalUrl,
               title: textValue(details.title) || candidate.title,
               contentType: textValue(details.contentType),
               extractor: textValue(details.extractor),
               text: text.slice(0, maxChars),
               fetchedAt: textValue(details.fetchedAt) || observedAt,
-              isLikelyPrimary: candidate.isLikelyPrimary,
+              isLikelyPrimary: likelyPrimaryReference(finalUrl),
             };
           } catch (error) {
             failures.push({ stage: "fetch", url: candidate.url, error: errorText(error) });

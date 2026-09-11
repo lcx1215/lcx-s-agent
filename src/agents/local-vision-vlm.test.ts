@@ -67,5 +67,8 @@ describe("local vision VLM runtime", () => {
     ).toBe(
       "The chart shows a thermostat. The system is used to adjust room temperature and the data is presented graphically.",
     );
+    expect(
+      collapseRepeatedVisionText("The current return is 10%. The current return is 20%."),
+    ).toBe("The current return is 10%. The current return is 20%.");
   });
 });

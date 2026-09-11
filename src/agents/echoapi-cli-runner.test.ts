@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildEchoApiCliArgs,
+  redactEchoApiText,
   validateEchoApiCiUrl,
   verifyEchoApiReport,
   runEchoApiCliCase,
@@ -51,6 +52,17 @@ describe("EchoAPI CLI runner boundary", () => {
     ]);
     expect(args).not.toContain("--web-hook");
     expect(args.join(" ")).not.toContain("$");
+  });
+
+  it("redacts CI query credentials from retained CLI diagnostics", () => {
+    const sensitiveUrl =
+      "https://open.echoapi.com/open/ci/automated_testing?ci_id=public&token=secret";
+    const redacted = redactEchoApiText(
+      `request failed ${sensitiveUrl}; token=secret; authorization: Bearer secret`,
+      sensitiveUrl,
+    );
+    expect(redacted).not.toContain("secret");
+    expect(redacted).toContain("[REDACTED_QUERY]");
   });
 });
 

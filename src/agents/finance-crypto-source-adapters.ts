@@ -185,12 +185,8 @@ export function createBinanceCryptoTickerAdapter(
       const crypto = cryptoRequest(request);
       const sourceUrlOrArtifact = `https://data-api.binance.vision/api/v3/ticker/price?symbol=${encodeURIComponent(crypto.binance)}`;
       const payload = await fetchJson(resolveFinanceFetch(options.fetchImpl), sourceUrlOrArtifact);
-      return parseBinanceCryptoTicker(
-        payload,
-        request.instrument,
-        sourceUrlOrArtifact,
-        request.asOf,
-      );
+      const observedAt = new Date().toISOString();
+      return parseBinanceCryptoTicker(payload, request.instrument, sourceUrlOrArtifact, observedAt);
     },
   };
 }
@@ -242,12 +238,8 @@ export function createKrakenCryptoTickerAdapter(
       const crypto = cryptoRequest(request);
       const sourceUrlOrArtifact = `https://api.kraken.com/0/public/Ticker?pair=${encodeURIComponent(crypto.kraken)}`;
       const payload = await fetchJson(resolveFinanceFetch(options.fetchImpl), sourceUrlOrArtifact);
-      return parseKrakenCryptoTicker(
-        payload,
-        request.instrument,
-        sourceUrlOrArtifact,
-        request.asOf,
-      );
+      const observedAt = new Date().toISOString();
+      return parseKrakenCryptoTicker(payload, request.instrument, sourceUrlOrArtifact, observedAt);
     },
   };
 }
@@ -310,11 +302,12 @@ export function createCoinbaseCryptoTickerAdapter(
         "User-Agent": "LCX Agent research-only crypto snapshot",
         "Cache-Control": "no-cache",
       });
+      const observedAt = new Date().toISOString();
       return parseCoinbaseCryptoTicker(
         payload,
         request.instrument,
         sourceUrlOrArtifact,
-        request.asOf,
+        observedAt,
       );
     },
   };
@@ -387,12 +380,8 @@ export function createCoinCapCryptoAssetAdapter(
         sourceUrlOrArtifact,
         headers,
       );
-      return parseCoinCapCryptoAsset(
-        payload,
-        request.instrument,
-        sourceUrlOrArtifact,
-        request.asOf,
-      );
+      const observedAt = new Date().toISOString();
+      return parseCoinCapCryptoAsset(payload, request.instrument, sourceUrlOrArtifact, observedAt);
     },
   };
 }
@@ -449,11 +438,12 @@ export function createCoinGeckoCryptoPriceAdapter(options: {
       const payload = await fetchJson(resolveFinanceFetch(options.fetchImpl), url, {
         Accept: "application/json",
       });
+      const observedAt = new Date().toISOString();
       return parseCoinGeckoCryptoPrice(
         payload,
         request.instrument,
         sourceUrlOrArtifact,
-        request.asOf,
+        observedAt,
       );
     },
   };

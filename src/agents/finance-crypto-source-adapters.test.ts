@@ -89,6 +89,8 @@ describe("finance crypto source adapters", () => {
       apiKey: "fixture-key",
     }).collect(REQUEST, new AbortController().signal);
     expect(binance.providerName).toBe("binance-public-spot");
+    expect(binance.observedAt).not.toBe(REQUEST.asOf);
+    expect(Number.isFinite(Date.parse(binance.observedAt))).toBe(true);
     expect(coinbase.providerName).toBe("coinbase-exchange-public");
     expect(coincap.providerName).toBe("coincap-public-assets");
   });

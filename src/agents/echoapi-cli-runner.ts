@@ -136,14 +136,56 @@ async function readInstalledVersion(runtimeRoot: string): Promise<string | undef
 async function bootstrapActiveStateEchoApiCli(): Promise<{ executable: string; version: string }> {
   const runtimeRoot = echoApiRuntimeRoot();
   const executable = echoApiExecutablePath(runtimeRoot);
-  const installedVersion = await readInstalledVersion(runtimeRoot);
-  if (installedVersion === ECHOAPI_CLI_VERSION) {
-    return { executable, version: installedVersion };
-  }
-
   await mkdir(runtimeRoot, { recursive: true });
   const npmExecutable = process.platform === "win32" ? "npm.cmd" : "npm";
+  const downloadDir = await mkdtemp(path.join(runtimeRoot, ".download-"));
   try {
+    const packageSpec = `${ECHOAPI_CLI_PACKAGE}@${ECHOAPI_CLI_VERSION}`;
+    const packResult = await execFileAsync(
+      npmExecutable,
+      [
+        "pack",
+        packageSpec,
+        "--json",
+        "--pack-destination",
+        downloadDir,
+        "--registry",
+        "https://registry.npmjs.org/",
+      ],
+      {
+        encoding: "utf8",
+        cwd: runtimeRoot,
+        env: safeEnvironment(),
+        maxBuffer: 8 * 1024 * 1024,
+        timeout: 120_000,
+      },
+    );
+    const packMetadata = JSON.parse(packResult.stdout) as Array<{
+      filename?: unknown;
+      integrity?: unknown;
+    }>;
+    const packed = packMetadata[0];
+    if (!packed || typeof packed.filename !== "string" || typeof packed.integrity !== "string") {
+      throw new Error("npm pack returned incomplete artifact metadata");
+    }
+    if (packed.integrity !== ECHOAPI_CLI_TARBALL_INTEGRITY) {
+      throw new Error(
+        `EchoAPI CLI tarball integrity changed: expected ${ECHOAPI_CLI_TARBALL_INTEGRITY}, received ${packed.integrity}`,
+      );
+    }
+    const filename = path.basename(packed.filename);
+    if (filename !== packed.filename) {
+      throw new Error("npm pack returned an unsafe artifact filename");
+    }
+    const tarballPath = path.join(downloadDir, filename);
+    const tarballIntegrity = `sha512-${createHash("sha512")
+      .update(await readFile(tarballPath))
+      .digest("base64")}`;
+    if (tarballIntegrity !== ECHOAPI_CLI_TARBALL_INTEGRITY) {
+      throw new Error(
+        `EchoAPI CLI downloaded artifact failed integrity verification: expected ${ECHOAPI_CLI_TARBALL_INTEGRITY}, received ${tarballIntegrity}`,
+      );
+    }
     await execFileAsync(
       npmExecutable,
       [
@@ -155,7 +197,7 @@ async function bootstrapActiveStateEchoApiCli(): Promise<{ executable: string; v
         "--ignore-scripts",
         "--registry",
         "https://registry.npmjs.org/",
-        `${ECHOAPI_CLI_PACKAGE}@${ECHOAPI_CLI_VERSION}`,
+        tarballPath,
       ],
       {
         encoding: "utf8",
@@ -171,6 +213,8 @@ async function bootstrapActiveStateEchoApiCli(): Promise<{ executable: string; v
       `failed to install ${ECHOAPI_CLI_PACKAGE}@${ECHOAPI_CLI_VERSION} into the active LCX state root: ${(failure.stderr || failure.message || "npm install failed").trim().slice(0, 2_000)}`,
       { cause: error },
     );
+  } finally {
+    await rm(downloadDir, { recursive: true, force: true });
   }
 
   const finalVersion = await readInstalledVersion(runtimeRoot);
@@ -269,6 +313,33 @@ export function verifyEchoApiReport(report: unknown): boolean {
   );
 }
 
+export function redactEchoApiText(value: string, sensitiveUrl?: string): string {
+  let redacted = value;
+  if (sensitiveUrl) {
+    try {
+      const parsed = new URL(sensitiveUrl);
+      const safeUrl = `${parsed.origin}${parsed.pathname}?[REDACTED_QUERY]`;
+      redacted = redacted.split(parsed.href).join(safeUrl);
+    } catch {
+      // Generic URL redaction below still protects malformed input.
+    }
+  }
+  return redacted
+    .replace(/https?:\/\/[^\s"'<>?]+(?:\?[^\s"'<>]*)?/giu, (url) => {
+      try {
+        const parsed = new URL(url);
+        return `${parsed.origin}${parsed.pathname}${parsed.search ? "?[REDACTED_QUERY]" : ""}`;
+      } catch {
+        return url;
+      }
+    })
+    .replace(/(authorization\s*[:=]\s*(?:bearer\s+)?|bearer\s+)[^\s,;]+/giu, "$1[REDACTED]")
+    .replace(
+      /(["']?(?:token|api[_-]?key|secret|password)["']?\s*[:=]\s*["']?)[^"',\s}]+/giu,
+      "$1[REDACTED]",
+    );
+}
+
 async function executeEchoApiCase(
   options: EchoApiCliRunOptions,
   caseInput: string,
@@ -329,7 +400,7 @@ async function executeEchoApiCase(
     reportVerified,
     reportPath: options.retainReport === false ? undefined : reportPath,
     stdoutSha256: createHash("sha256").update(stdout, "utf8").digest("hex"),
-    stderr: stderr.trim().slice(0, 2_000),
+    stderr: redactEchoApiText(stderr, caseInput).trim().slice(0, 2_000),
     policy: [
       "one_iteration_only",
       "no_webhook_argument_sent",

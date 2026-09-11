@@ -404,6 +404,39 @@ describe("logical agent pool", () => {
     expect(pool.status.activeRuns).toBe(0);
   });
 
+  it("returns promptly when the parent cancels an executor that ignores AbortSignal", async () => {
+    const pool = new LogicalAgentPool({ taskTimeoutMs: 1_000 });
+    const parent = new AbortController();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const run = runLogicalAgentPlan({
+      pool,
+      signal: parent.signal,
+      tasks: [{ id: "parent-cancel", agentId: "data_cleaning", input: { ask: "x" } }],
+      executor: async () => {
+        await blocked;
+        return { output: "late", sideEffects: [] };
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    let guardTimer: ReturnType<typeof setTimeout> | undefined;
+    const guard = new Promise<never>((_, reject) => {
+      guardTimer = setTimeout(() => reject(new Error("parent cancellation did not return")), 100);
+    });
+    parent.abort();
+    const result = await Promise.race([run, guard]);
+    if (guardTimer !== undefined) {
+      clearTimeout(guardTimer);
+    }
+    expect(result.status).toBe("failed");
+    expect(result.tasks[0]?.error).toContain("cancelled");
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(pool.status.activeRuns).toBe(0);
+  });
+
   it("waits for executor termination before resolving a timed-out task", async () => {
     let terminated = false;
     const pool = new LogicalAgentPool({ taskTimeoutMs: 5 });
@@ -732,6 +765,10 @@ describe("logical agent pool", () => {
       schemaVersion: LOGICAL_AGENT_CHECKPOINT_SCHEMA_VERSION,
       completedTaskIds: ["root"],
     });
+    const firstCheckpoint = store.load("recoverable-run");
+    expect(firstCheckpoint?.lastEventSequence).toBe(
+      first.events.find((event) => event.kind === "checkpoint_saved")?.sequence,
+    );
 
     const resumed = await runLogicalAgentPlan({
       runId: "recoverable-run",
@@ -754,6 +791,7 @@ describe("logical agent pool", () => {
     expect(resumed.status).toBe("completed");
     expect(resumed.resumed).toBe(true);
     expect(resumed.events[0]?.kind).toBe("run_resumed");
+    expect(resumed.events[0]?.sequence).toBe((firstCheckpoint?.lastEventSequence ?? 0) + 1);
     expect(rootRuns).toBe(1);
     expect(specialistRuns).toBe(2);
     expect(events).toContain("run_completed");

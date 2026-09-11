@@ -1512,14 +1512,20 @@ const requiredParseFailures = owners.filter(
   (owner) => OWNER_COMMANDS.find((command) => command.id === owner.id)?.required && !owner.parsed,
 );
 const activeTrainingOrEval = trainingActive(byOwner.trainingPlan, byOwner.externalChannelBinding);
-const structuralOwnerFailures = owners.filter((owner) => owner.runReceipt.status === "failed");
+const structuralOwnerFailures = owners.filter(
+  (owner) => owner.runReceipt.status === "failed" || owner.runReceipt.status === "blocked",
+);
+const structuralOwnerExecutionFailures = owners.some(
+  (owner) => owner.runReceipt.status === "failed",
+);
 const universeIndexGovernanceIncomplete =
   byOwner.universeIndex?.compact.governanceStatus !== "complete";
 const releaseBlocked =
   byOwner.commercialAcceptance?.compact.readyForCommercialRelease === false ||
   stringArray(byOwner.problemRadar?.compact.actionableClusters).length > 0 ||
   stringArray(byOwner.problemRadar?.compact.blockedClusters).length > 0 ||
-  universeIndexGovernanceIncomplete;
+  universeIndexGovernanceIncomplete ||
+  structuralOwnerFailures.length > 0;
 const governanceCheckedAt = governanceSnapshot.observedAt;
 const globalEvidenceProjectionReader = readGlobalEvidenceProjectionForAdapter(
   byOwner.mindModel?.projection,
@@ -1528,7 +1534,7 @@ const globalEvidenceProjectionReader = readGlobalEvidenceProjectionForAdapter(
 );
 const globalEvidenceProjection: GlobalEvidenceProjectionRead = globalEvidenceProjectionReader.read;
 const governanceRunStatus =
-  requiredParseFailures.length > 0
+  requiredParseFailures.length > 0 || structuralOwnerExecutionFailures
     ? ("failed" as const)
     : releaseBlocked
       ? ("blocked" as const)

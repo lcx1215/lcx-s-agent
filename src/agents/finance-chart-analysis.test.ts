@@ -27,6 +27,16 @@ describe("finance chart analysis", () => {
     expect(normalized.droppedCount).toBe(1);
   });
 
+  it("does not silently stitch overlapping providers into one chart", () => {
+    const normalized = normalizeFinanceChartBars([
+      { ...bars(1)[0], providerName: "provider-a" },
+      { ...bars(1)[0], close: 999, providerName: "provider-b" },
+    ]);
+    expect(normalized.bars).toHaveLength(1);
+    expect(normalized.bars[0]?.close).toBe(100);
+    expect(normalized.droppedCount).toBe(1);
+  });
+
   it("produces deterministic trend, drawdown, and moving-average features", () => {
     const normalized = normalizeFinanceChartBars(bars(25));
     const analysis = analyzeFinanceChartBars("AAPL", normalized.bars);

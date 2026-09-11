@@ -125,38 +125,61 @@ export function createFinanceNativeCronScheduler(
     );
     return JSON.parse(stdout);
   };
-  const Job = z.object({
-    id: z.string(),
-    agentId: z.string().optional(),
-    name: z.string(),
-    enabled: z.boolean(),
-    createdAtMs: z.number(),
-    updatedAtMs: z.number(),
-    schedule: z.object({ kind: z.literal("at"), at: z.string() }),
-    sessionTarget: z.literal("isolated"),
-    wakeMode: z.enum(["now", "next-heartbeat"]),
-    payload: z.object({ kind: z.literal("agentTurn"), message: z.string() }),
-    delivery: z.object({ mode: z.literal("none") }),
-    state: z.object({
-      nextRunAtMs: z.number().optional(),
-      lastRunStatus: z.enum(["ok", "error", "skipped"]).optional(),
-    }),
-  });
-  const get = async (id: string): Promise<CronJob> => Job.parse(await run(["get", id]));
+  const Job = z
+    .object({
+      id: z.string(),
+      agentId: z.string().optional(),
+      name: z.string(),
+      enabled: z.boolean(),
+      createdAtMs: z.number(),
+      updatedAtMs: z.number(),
+      schedule: z.union([
+        z.object({ kind: z.literal("at"), at: z.string() }),
+        z.object({
+          kind: z.literal("every"),
+          everyMs: z.number(),
+          anchorMs: z.number().optional(),
+        }),
+        z.object({
+          kind: z.literal("cron"),
+          expr: z.string(),
+          tz: z.string().optional(),
+          staggerMs: z.number().optional(),
+        }),
+      ]),
+      sessionTarget: z.enum(["main", "isolated"]),
+      wakeMode: z.enum(["now", "next-heartbeat"]),
+      payload: z.union([
+        z.object({ kind: z.literal("systemEvent"), text: z.string() }),
+        z.object({ kind: z.literal("agentTurn"), message: z.string() }).passthrough(),
+      ]),
+      delivery: z
+        .object({ mode: z.enum(["none", "announce", "webhook"]) })
+        .passthrough()
+        .optional(),
+      state: z
+        .object({
+          nextRunAtMs: z.number().optional(),
+          lastRunStatus: z.enum(["ok", "error", "skipped"]).optional(),
+        })
+        .passthrough(),
+    })
+    .passthrough();
+  const parseJobs = async () => {
+    const page = z
+      .object({
+        jobs: z.array(Job),
+        hasMore: z.boolean().optional(),
+      })
+      .parse(await run(["list", "--all"]));
+    if (page.hasMore) {
+      throw new Error("native CLI returned a partial scheduler inventory");
+    }
+    return page.jobs as unknown as CronJob[];
+  };
   return {
     list: async () => {
-      const page = z
-        .object({
-          jobs: z.array(z.object({ id: z.string(), name: z.string() })),
-          hasMore: z.boolean().optional(),
-        })
-        .parse(await run(["list", "--all"]));
-      if (page.hasMore) {
-        throw new Error("native CLI returned a partial scheduler inventory");
-      }
-      return Promise.all(
-        page.jobs.filter((job) => job.name.startsWith(namePrefix)).map((job) => get(job.id)),
-      );
+      return (await parseJobs()).filter((job) => job.name.startsWith(namePrefix));
     },
     add: async (job) => {
       if (
@@ -174,8 +197,6 @@ export function createFinanceNativeCronScheduler(
             "--name",
             job.name,
             ...(job.agentId ? ["--agent", job.agentId] : []),
-            "--declaration-key",
-            job.name,
             "--at",
             job.schedule.at,
             "--session",
@@ -186,7 +207,12 @@ export function createFinanceNativeCronScheduler(
             "--keep-after-run",
           ]),
         );
-      return get("job" in result ? result.job.id : result.id);
+      const addedId = "job" in result ? result.job.id : result.id;
+      const addedJob = (await parseJobs()).find((candidate) => candidate.id === addedId);
+      if (!addedJob) {
+        throw new Error(`native CLI did not return the added scheduler job: ${addedId}`);
+      }
+      return addedJob;
     },
   };
 }

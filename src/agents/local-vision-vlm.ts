@@ -143,10 +143,19 @@ function describeProcessError(error: unknown, stderr?: string): Error {
 function repetitionKey(segment: string): string {
   return segment
     .replace(/^\s*[-*]?\s*\d+[.)]?\s*/u, "")
-    .replace(/\d+(?:\.\d+)?/gu, "#")
     .replace(/\s+/gu, " ")
     .trim()
     .toLowerCase();
+}
+
+function observationSignature(segment: string): string {
+  const numericTokens =
+    segment.match(/(?:[$€£¥]\s*)?[-+]?\d[\d,]*(?:\.\d+)?\s*(?:%|[a-z]{1,8})?/giu) ?? [];
+  const entityTokens = segment.match(/\b[A-Z][A-Z0-9._-]{1,}\b/gu) ?? [];
+  return [...numericTokens, ...entityTokens]
+    .map((value) => value.replace(/\s+/gu, "").toLowerCase())
+    .toSorted()
+    .join("|");
 }
 
 const REPETITION_STOP_WORDS = new Set([
@@ -197,19 +206,26 @@ export function collapseRepeatedVisionText(text: string): string {
     .filter(Boolean);
   const kept: string[] = [];
   const keptSemanticTokens: Set<string>[] = [];
+  const keptObservationSignatures: string[] = [];
   let previousKey = "";
   for (const segment of segments) {
     const key = repetitionKey(segment);
     const tokens = semanticTokens(segment);
+    const signature = observationSignature(segment);
     if (
       (key && key === previousKey) ||
       (tokens.size >= 8 &&
-        keptSemanticTokens.some((previous) => tokenSimilarity(tokens, previous) >= 0.72))
+        keptSemanticTokens.some(
+          (previous, index) =>
+            keptObservationSignatures[index] === signature &&
+            tokenSimilarity(tokens, previous) >= 0.72,
+        ))
     ) {
       continue;
     }
     kept.push(segment);
     keptSemanticTokens.push(tokens);
+    keptObservationSignatures.push(signature);
     previousKey = key;
   }
   return kept.join(" ").trim();

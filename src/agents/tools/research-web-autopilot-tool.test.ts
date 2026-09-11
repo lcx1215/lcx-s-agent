@@ -124,6 +124,35 @@ describe("research_web_autopilot tool", () => {
     expect(searchExecute).not.toHaveBeenCalled();
   });
 
+  it("downgrades primary evidence after a cross-origin redirect", async () => {
+    const tool = createResearchWebAutopilotTool({
+      searchTool: stubTool("web_search", async () =>
+        jsonResult({
+          provider: "test-search",
+          results: [{ url: "https://www.sec.gov/Archives/edgar/data/example", title: "filing" }],
+        }),
+      ),
+      fetchTool: stubTool("web_fetch", async () =>
+        jsonResult({
+          status: 200,
+          finalUrl: "https://example.test/redirected",
+          text: "redirected evidence",
+        }),
+      ),
+    });
+    const result = await tool.execute("web-redirect", {
+      query: "filing",
+      openTop: 1,
+      requirePrimary: true,
+    });
+    expect(result.details).toEqual(
+      expect.objectContaining({
+        status: "needs_review",
+        openedDocuments: [expect.objectContaining({ isLikelyPrimary: false })],
+      }),
+    );
+  });
+
   it("uses the guarded public search fallback when the configured provider has no key", async () => {
     const fetchedUrls: string[] = [];
     const fetchTool = stubTool("web_fetch", async (_callId, args) => {

@@ -202,11 +202,15 @@ function evaluateSeries(
   const dailyReturns: number[] = [];
   const positions: number[] = [0];
   for (let index = 1; index < closes.length; index += 1) {
-    const decisionIndex = index - 1;
+    // A signal formed at close t is first tradable on the following session;
+    // with close-only data, apply it to the next complete close-to-close bar.
+    const signalIndex = index - 2;
     const trend =
-      decisionIndex + 1 >= lookback &&
-      closes[decisionIndex] > mean(closes.slice(decisionIndex - lookback + 1, decisionIndex + 1));
-    const position = method === "buy_hold" ? 1 : trend && breadth[decisionIndex] ? 1 : 0;
+      signalIndex >= 0 &&
+      signalIndex + 1 >= lookback &&
+      closes[signalIndex] > mean(closes.slice(signalIndex - lookback + 1, signalIndex + 1));
+    const position =
+      method === "buy_hold" ? 1 : signalIndex >= 0 && trend && breadth[signalIndex] ? 1 : 0;
     const previousPosition = positions[index - 1] ?? 0;
     const grossReturn = closes[index] / closes[index - 1] - 1;
     const transactionCost = Math.abs(position - previousPosition) * costRate;
@@ -339,16 +343,19 @@ function evaluateStressMatrix(
 }
 
 async function collectSymbol(symbol: string, options: ReturnType<typeof parseOptions>) {
-  // The canonical collection contract caps one request at 250 rows. Fetch
-  // three overlapping calendar chunks so a three-year daily sample is real,
-  // complete, and still auditable through individual source receipts.
+  // The canonical collection contract caps one request at 250 rows. A
+  // 300-calendar-day equity chunk is below that cap even after exchange
+  // holidays are accounted for, and each response is checked for truncation.
+  const chunkCalendarDays = 300;
   const start = parseDate(options.fromDate, "--from-date");
   let end = parseDate(options.toDate, "--to-date");
   const receipts = [];
   const records: FinanceMarketCollectionItem[] = [];
   const seenDates = new Set<string>();
   while (end >= start) {
-    const chunkStart = new Date(Math.max(start.getTime(), end.getTime() - 370 * 86_400_000));
+    const chunkStart = new Date(
+      Math.max(start.getTime(), end.getTime() - chunkCalendarDays * 86_400_000),
+    );
     const receipt = await runFinanceMarketCollectionRefresh({
       request: {
         instrument: symbol,
@@ -363,6 +370,11 @@ async function collectSymbol(symbol: string, options: ReturnType<typeof parseOpt
       maxSources: 1,
       timeoutMs: 30_000,
     });
+    if (receipt.records.length >= 250) {
+      throw new Error(
+        `${symbol} source chunk reached the provider row cap; refusing incomplete historical coverage`,
+      );
+    }
     receipts.push(receipt);
     for (const record of receipt.records) {
       const date = typeof record.data.date === "string" ? record.data.date : record.itemId;

@@ -30,8 +30,8 @@ describe("finance strategy method benchmark math", () => {
       0.0015,
       "trend_breadth_gate",
     );
-    expect(evaluated.positions.slice(0, 20).every((position) => position === 0)).toBe(true);
-    expect(evaluated.positions[20]).toBe(1);
+    expect(evaluated.positions.slice(0, 21).every((position) => position === 0)).toBe(true);
+    expect(evaluated.positions[21]).toBe(1);
     expect(evaluated.metric.observations).toBe(23);
   });
 

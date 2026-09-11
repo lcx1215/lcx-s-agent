@@ -259,7 +259,7 @@ export async function runFinanceResearchBatch(
   const maxConcurrency = positive(options.maxConcurrency ?? 4, "maxConcurrency", true);
   const maxSourcesPerJob = positive(options.maxSourcesPerJob ?? 3, "maxSourcesPerJob", true);
   const maxHttpCallsPerSource = positive(
-    options.maxHttpCallsPerSource ?? 1,
+    options.maxHttpCallsPerSource ?? 2,
     "maxHttpCallsPerSource",
     true,
   );

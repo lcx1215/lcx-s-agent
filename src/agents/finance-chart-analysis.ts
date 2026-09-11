@@ -110,14 +110,35 @@ function normalizeRecord(record: FinanceChartRecord): FinanceChartBar | undefine
   };
 }
 
+function sourceKey(record: FinanceChartRecord): string {
+  const providerName = record.providerName;
+  if (typeof providerName === "string" && providerName.trim()) {
+    return `provider:${providerName.trim().toLowerCase()}`;
+  }
+  const sourceUrlOrArtifact = record.sourceUrlOrArtifact;
+  if (typeof sourceUrlOrArtifact === "string" && sourceUrlOrArtifact.trim()) {
+    return `source:${sourceUrlOrArtifact.trim()}`;
+  }
+  return "unattributed";
+}
+
 export function normalizeFinanceChartBars(
   records: readonly FinanceChartRecord[],
 ): FinanceChartBarNormalization {
   const byDate = new Map<string, FinanceChartBar>();
   let droppedCount = 0;
+  let selectedSourceKey: string | undefined;
   for (const record of records) {
     const normalized = normalizeRecord(record);
     if (!normalized) {
+      droppedCount += 1;
+      continue;
+    }
+    const currentSourceKey = sourceKey(record);
+    if (selectedSourceKey === undefined) {
+      selectedSourceKey = currentSourceKey;
+    } else if (currentSourceKey !== selectedSourceKey) {
+      // Do not silently stitch overlapping bars from different providers.
       droppedCount += 1;
       continue;
     }
