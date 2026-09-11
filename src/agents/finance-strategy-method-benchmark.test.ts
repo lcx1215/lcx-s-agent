@@ -76,6 +76,53 @@ describe("finance strategy method benchmark math", () => {
     const evaluated = __test.evaluateSeries("SPY", rowsBySymbol, dates, 20, 1, 0.0015, "buy_hold");
     expect(evaluated.metric.turnover).toBe(2);
   });
+
+  it("aggregates buy-and-hold wealth instead of averaging daily returns", () => {
+    const dates = ["2026-01-01", "2026-01-02", "2026-01-03"];
+    const rowsBySymbol = {
+      A: dates.map((date, index) => ({
+        date,
+        close: [100, 110, 110][index],
+        sourceTimestamp: `${date}T13:30:00.000Z`,
+      })),
+      B: dates.map((date, index) => ({
+        date,
+        close: [100, 100, 200][index],
+        sourceTimestamp: `${date}T13:30:00.000Z`,
+      })),
+    };
+    const series = Object.keys(rowsBySymbol).map((symbol) =>
+      __test.evaluateSeries(symbol, rowsBySymbol, dates, 20, 1, 0, "buy_hold"),
+    );
+
+    const portfolio = __test.aggregateSeries(series, "buy_hold");
+    expect(portfolio.metric.totalReturn).toBeCloseTo(0.55, 8);
+    expect(portfolio.dailyReturns[1]).toBeCloseTo(0.47619047619, 8);
+  });
+
+  it("aggregates turnover from individual position paths", () => {
+    const series = [
+      { dailyReturns: [0, 0], positions: [0, 1, 0] },
+      { dailyReturns: [0, 0], positions: [0, 0, 1] },
+    ].map((item) => ({ ...item, metric: __test.summarize(item.dailyReturns, item.positions) }));
+    const portfolio = __test.aggregateSeries(series);
+    expect(portfolio.metric.turnover).toBe(2);
+    expect(portfolio.positions).toEqual([0, 0.5, 0.5]);
+  });
+
+  it("starts each period at its displayed date boundary", () => {
+    const dates = Array.from({ length: 9 }, (_, index) => `2026-01-${index + 1}`);
+    const series = {
+      dailyReturns: Array(8).fill(0),
+      positions: Array(9).fill(0),
+    };
+    const periods = __test.periodMetrics(
+      { ...series, metric: __test.summarize(series.dailyReturns, series.positions) },
+      dates,
+    );
+    expect(periods[1]?.metric.observations).toBe(2);
+    expect(periods[2]?.metric.observations).toBe(2);
+  });
 });
 
 describe("strategy receipt evidence boundaries", () => {
@@ -111,8 +158,40 @@ describe("strategy receipt evidence boundaries", () => {
       false,
     );
     expect(
-      allMethods.sourceGroupReady({ a: { http_status: 200 }, b: { http_status: "200" } }),
+      allMethods.sourceGroupReady({
+        a: {
+          http_status: 200,
+          status: "success",
+          finished_at: "2026-09-10T12:00:00Z",
+          request: { instrument: "AAPL" },
+        },
+        b: {
+          http_status: "200",
+          evidence_status: "ready",
+          observed_at: "2026-09-10T12:00:00Z",
+          request: { instrument: "AAPL" },
+        },
+      }),
     ).toBe(true);
+    expect(
+      allMethods.sourceGroupReady({
+        feed: {
+          http_status: 200,
+          finished_at: "2026-09-10T12:00:00Z",
+          request: { instrument: "AAPL" },
+          error: "provider payload error",
+        },
+      }),
+    ).toBe(false);
+    expect(
+      allMethods.sourceGroupReady({
+        AAPL: {
+          http_status: 200,
+          finished_at: "2026-09-10T12:00:00Z",
+          request: { instrument: "QQQ" },
+        },
+      }),
+    ).toBe(false);
   });
   it("does not stringify invalid source metadata into credible receipt labels", () => {
     for (const value of [{ gate_status: "ready" }, null, undefined, 200, " "]) {

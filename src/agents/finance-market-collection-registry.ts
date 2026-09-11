@@ -236,6 +236,31 @@ function normalizeRequest(request: FinanceMarketCollectionRequest): FinanceMarke
   };
 }
 
+function collectionRecordInRequestWindow(
+  record: FinanceMarketCollectionItem,
+  request: FinanceMarketCollectionRequest,
+): boolean {
+  const sourceTimestamp =
+    typeof record.sourceTimestamp === "string" ? Date.parse(record.sourceTimestamp) : Number.NaN;
+  const observedAt =
+    typeof record.observedAt === "string" ? Date.parse(record.observedAt) : Number.NaN;
+  const asOf = Date.parse(request.asOf);
+  if (
+    !Number.isFinite(sourceTimestamp) ||
+    !Number.isFinite(observedAt) ||
+    !Number.isFinite(asOf) ||
+    sourceTimestamp > asOf ||
+    observedAt > asOf
+  ) {
+    return false;
+  }
+  const date = new Date(sourceTimestamp).toISOString().slice(0, 10);
+  return (
+    (request.fromDate === undefined || date >= request.fromDate) &&
+    (request.toDate === undefined || date <= request.toDate)
+  );
+}
+
 function errorText(error: unknown): string {
   return apiSourceErrorText(error);
 }
@@ -1156,6 +1181,9 @@ export async function runFinanceMarketCollectionRefresh(options: {
     records.push(...result.records);
   }
   const failedAttempts = sourceAttempts.filter((attempt) => attempt.status === "failed");
+  const invalidRecordCount = records.filter(
+    (record) => !collectionRecordInRequestWindow(record, request),
+  ).length;
   const baseReceipt = {
     schemaVersion: FINANCE_MARKET_COLLECTION_SCHEMA_VERSION,
     refreshId: `${request.collection}:${request.instrument}:${request.asOf}`,
@@ -1181,11 +1209,17 @@ export async function runFinanceMarketCollectionRefresh(options: {
       requiredNextSteps: ["inspect_source_attempt_failures", "retry_with_healthy_adapter"],
     };
   }
+  const invalidEvidence =
+    invalidRecordCount > 0 ? ["timestamped_records_within_requested_window"] : [];
+  const failedEvidence = failedAttempts.length > 0 ? ["successful_finance_market_collection"] : [];
   return {
     ...baseReceipt,
-    status: failedAttempts.length > 0 ? "needs_review" : "ready",
-    missingEvidence: [],
-    requiredNextSteps: failedAttempts.length > 0 ? ["inspect_source_attempt_failures"] : [],
+    status: failedAttempts.length > 0 || invalidRecordCount > 0 ? "needs_review" : "ready",
+    missingEvidence: [...failedEvidence, ...invalidEvidence],
+    requiredNextSteps: [
+      ...(failedAttempts.length > 0 ? ["inspect_source_attempt_failures"] : []),
+      ...(invalidRecordCount > 0 ? ["inspect_out_of_window_collection_records"] : []),
+    ],
   };
 }
 

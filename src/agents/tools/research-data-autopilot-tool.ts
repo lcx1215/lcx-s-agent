@@ -119,6 +119,7 @@ export function createResearchDataAutopilotTool(options?: {
   fetchImpl?: FetchImpl;
 }): AnyAgentTool {
   const workspaceDir = resolveWorkspaceRoot(options?.workspaceDir);
+  const geospatialRegistry = createGeospatialSourceRegistry({ fetchImpl: options?.fetchImpl });
   return {
     label: "Research Data Autopilot",
     name: "research_data_autopilot",
@@ -156,22 +157,24 @@ export function createResearchDataAutopilotTool(options?: {
             asOf,
             freshnessMaxMinutes: undefined,
           } as const;
-          const registry = createGeospatialSourceRegistry({ fetchImpl: options?.fetchImpl });
           payload = liveFetch
             ? await runGeospatialRefresh({
                 request,
-                adapters: registry,
+                adapters: geospatialRegistry,
                 maxSources: params.maxSources,
                 timeoutMs: params.timeoutMs,
                 signal,
               })
-            : inspectGeospatialSourceRegistry(request, registry);
+            : inspectGeospatialSourceRegistry(request, geospatialRegistry);
         } else if (intent === "quote" || intent === "crypto_quote") {
+          const assetClass =
+            params.assetClass?.trim() ?? (intent === "crypto_quote" ? "crypto" : "us_equity");
           const request: FinanceRealtimeSourceRequest = {
             instrument: target,
-            assetClass: params.assetClass ?? (intent === "crypto_quote" ? "crypto" : "us_equity"),
+            assetClass,
             useCase: "research_data_autopilot",
             asOf,
+            requireOfficialReference: assetClass.toLowerCase() !== "crypto",
           };
           const envOptions = resolveFinanceRealtimeSourceRegistryOptionsFromEnv();
           const registry = createFinanceRealtimeSourceRegistry({
@@ -218,6 +221,8 @@ export function createResearchDataAutopilotTool(options?: {
               })
             : inspectFinanceMarketCollectionRegistry(request, registry);
         }
+
+        signal?.throwIfAborted();
 
         const result = {
           schemaVersion: AUTOPILOT_SCHEMA_VERSION,

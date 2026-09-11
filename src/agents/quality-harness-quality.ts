@@ -65,12 +65,20 @@ const CURRENT_DATA_PATTERN =
   /当前|最新|今天|今日|现在|截至|实时|股价|价格|市值|收益率|行情|current|latest|today|now|as of|price|market cap|yield/iu;
 const DIRECT_TRADE_ACTION_PATTERN =
   /(?:^|[.!?\n:]\s*)(?:buy|sell|add|reduce|go long|go short)\b[^.!?\n]{0,120}(?:[.!?\n]|$)|\b(?:you\s+should|i\s+(?:recommend|would)|recommend(?:ed)?|consider|please)\b[^.!?\n]{0,60}\b(?:buy|sell|add|reduce|go long|go short)\b|(?:建议|应该|推荐|考虑|立即|现在)[^\n。！？]{0,30}(?:买入|卖出|加仓|减仓|做多|做空|增持|减持)|(?:买入|卖出|加仓|减仓|做多|做空|增持|减持)[^\n。！？]{0,12}(?:股票|仓位|标的|[A-Z]{1,6}\b)/imu;
+const POSITION_SIZING_PATTERN =
+  /(?:\b(?:allocate|allocation|position\s*(?:size|sizing)|portfolio\s*(?:weight|allocation)|invest)\b[^.!?\n]{0,100}\b\d+(?:\.\d+)?\s*%|\b\d+(?:\.\d+)?\s*%[^.!?\n]{0,100}\b(?:portfolio|position|allocate|allocation)\b|(?:配置|仓位|投入|分配)[^。！？\n]{0,80}\d+(?:\.\d+)?\s*%)/imu;
 const EXECUTION_CLAIM_PATTERN =
   /已下单|下单成功|已经买入|已经卖出|已开仓|已平仓|交易已完成|转账成功|order filled|order placed|position opened|position closed|funds transferred/iu;
 
 function extractDataNumbers(text: string): string[] {
+  const withoutDateLiterals = text
+    .replace(
+      /\b20\d{2}[-/]\d{1,2}[-/]\d{1,2}(?:[T ][0-9]{1,2}:[0-9]{2}(?::[0-9]{2}(?:\.[0-9]+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?\b/giu,
+      " ",
+    )
+    .replace(/\b20\d{2}年\d{1,2}月\d{1,2}日?/gu, " ");
   return (
-    text.match(
+    withoutDateLiterals.match(
       /(?<!\d)[+-]?\s*(?:[$€£¥]\s*)?\d[\d,]*(?:\.\d+)?(?:\s*%|\s*(?:USD|EUR|GBP|CNY|JPY|美元|欧元|英镑|人民币|日元|元))?/giu,
     ) ?? []
   ).map((value) => value.replace(/\s+/g, ""));
@@ -87,23 +95,46 @@ function normalizedNumber(value: string): string {
         ? "eur"
         : /(?:£|gbp|英镑)/u.test(compact)
           ? "gbp"
-          : /(?:¥|cny|人民币|元)/u.test(compact)
-            ? "cny"
-            : /(?:jpy|日元)/u.test(compact)
-              ? "jpy"
+          : /(?:jpy|日元)/u.test(compact)
+            ? "jpy"
+            : /(?:¥|cny|人民币|元)/u.test(compact)
+              ? "cny"
               : "unitless";
   return `${number}|${unit}`;
 }
 
-function claimMatchesEvidenceEntity(claimText: string, evidenceText: string): boolean {
-  const claimEntities = claimText.match(/\b[A-Z][A-Z0-9.-]{1,9}\b/gu) ?? [];
-  if (claimEntities.length === 0) {
-    return true;
+const FINANCE_ENTITY_ALIASES: readonly Readonly<{ alias: RegExp; canonical: string }>[] = [
+  { alias: /AAPL|Apple|苹果(?:公司)?/giu, canonical: "AAPL" },
+  { alias: /MSFT|Microsoft|微软(?:公司)?/giu, canonical: "MSFT" },
+  { alias: /NVDA|NVIDIA|英伟达(?:公司)?/giu, canonical: "NVDA" },
+  { alias: /TSLA|Tesla|特斯拉(?:公司)?/giu, canonical: "TSLA" },
+  { alias: /AMZN|Amazon|亚马逊(?:公司)?/giu, canonical: "AMZN" },
+  { alias: /GOOGL|Google|Alphabet|谷歌(?:公司)?/giu, canonical: "GOOGL" },
+  { alias: /META|Meta|Facebook|脸书(?:公司)?/giu, canonical: "META" },
+  { alias: /QQQ|Invesco\s+QQQ/giu, canonical: "QQQ" },
+  { alias: /SPY|SPDR\s+S&P\s+500/giu, canonical: "SPY" },
+];
+
+const NON_ENTITY_TOKENS = new Set(["USD", "EUR", "GBP", "CNY", "JPY", "ETF", "API", "URL"]);
+
+function financeEntities(text: string): Set<string> {
+  let normalized = text;
+  for (const { alias, canonical } of FINANCE_ENTITY_ALIASES) {
+    normalized = normalized.replace(alias, ` ${canonical} `);
   }
-  const evidenceEntities = new Set(
-    (evidenceText.match(/\b[A-Z][A-Z0-9.-]{1,9}\b/gu) ?? []).map((value) => value.toUpperCase()),
+  return new Set(
+    (normalized.match(/\b[A-Z][A-Z0-9.-]{1,9}\b/gu) ?? []).filter(
+      (entity) => !NON_ENTITY_TOKENS.has(entity),
+    ),
   );
-  return claimEntities.some((entity) => evidenceEntities.has(entity.toUpperCase()));
+}
+
+function claimMatchesEvidenceEntity(claimText: string, evidenceText: string): boolean {
+  const claimEntities = financeEntities(claimText);
+  const evidenceEntities = financeEntities(evidenceText);
+  return (
+    claimEntities.size > 0 && [...claimEntities].some((entity) => evidenceEntities.has(entity))
+  );
 }
 
 function hasEvidenceSourceAndTimestamp(evidence: QualityHarnessEvidence): boolean {
@@ -125,7 +156,11 @@ function validateFinanceAnswerSafety(
   const problems: string[] = [];
   const allowsConditionalCandidate =
     request.sharedContext?.decisionMode === "conditional_trade_candidate";
-  if (!allowsConditionalCandidate && DIRECT_TRADE_ACTION_PATTERN.test(artifact.answer)) {
+  if (
+    !allowsConditionalCandidate &&
+    (DIRECT_TRADE_ACTION_PATTERN.test(artifact.answer) ||
+      POSITION_SIZING_PATTERN.test(artifact.answer))
+  ) {
     problems.push("final finance answer contains a direct trade action or recommendation");
   }
   if (EXECUTION_CLAIM_PATTERN.test(artifact.answer)) {

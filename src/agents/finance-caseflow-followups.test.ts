@@ -40,6 +40,12 @@ it("binds two jobs, reads state, preserves completed jobs and prevents duplicate
     expect(jobs).toHaveLength(2);
     expect(bound.bindings.every((b) => b.status === "scheduled")).toBe(true);
     expect(jobs.every((j) => j.delivery?.mode === "none")).toBe(true);
+    jobs[0].wakeMode = "next-heartbeat";
+    expect((await bindFinanceCaseFollowups(params)).bindings[0].status).toBe("binding_drift");
+    jobs[0].wakeMode = "now";
+    jobs[0].deleteAfterRun = true;
+    expect((await bindFinanceCaseFollowups(params)).bindings[0].status).toBe("binding_drift");
+    jobs[0].deleteAfterRun = false;
     jobs[0].enabled = false;
     expect((await bindFinanceCaseFollowups(params)).bindings[0].status).toBe(
       "disabled_or_finished",

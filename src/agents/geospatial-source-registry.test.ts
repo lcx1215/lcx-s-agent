@@ -46,10 +46,66 @@ describe("geospatial source registry", () => {
     });
     expect(receipt.status).toBe("needs_review");
     expect(receipt.sourceAttempts).toHaveLength(2);
-    expect(receipt.conflicts.map((conflict) => conflict.fieldName)).toEqual([
-      "latitude",
-      "longitude",
-    ]);
+    expect(receipt.conflicts).toEqual([]);
+    expect(receipt.freshnessWarnings.length).toBeGreaterThan(0);
+    expect(receipt.observations.every((observation) => observation.observedAt !== AS_OF)).toBe(
+      true,
+    );
+    expect(receipt.normalizedFields.every((field) => field.sourceTimestamp !== AS_OF)).toBe(true);
+  });
+
+  it("downgrades a partial refresh when one selected source fails", async () => {
+    const successful = {
+      id: "successful-geospatial-source",
+      providerName: "successful-geospatial-source",
+      providerRole: "primary_reference" as const,
+      sourceFamily: "weather_environmental" as const,
+      priority: 1,
+      supports: () => true,
+      collect: async () => ({
+        providerName: "successful-geospatial-source",
+        providerRole: "primary_reference" as const,
+        sourceFamily: "weather_environmental" as const,
+        observedAt: AS_OF,
+        timezone: "UTC",
+        fields: [
+          {
+            name: "temperature_2m",
+            value: 20,
+            sourceTimestamp: AS_OF,
+            fieldDefinition: "fixture temperature",
+            sourceUrlOrArtifact: "https://example.test/weather",
+          },
+        ],
+      }),
+    };
+    const failing = {
+      id: "failing-geospatial-source",
+      providerName: "failing-geospatial-source",
+      providerRole: "cross_check_reference" as const,
+      sourceFamily: "weather_environmental" as const,
+      priority: 2,
+      supports: () => true,
+      collect: async () => {
+        throw new Error("fixture source failure");
+      },
+    };
+
+    const receipt = await runGeospatialRefresh({
+      request: { kind: "weather", query: "31,121", asOf: AS_OF },
+      adapters: [successful, failing],
+      maxSources: 2,
+      retry: { attempts: 1 },
+    });
+
+    expect(receipt.status).toBe("needs_review");
+    expect(receipt.observations).toHaveLength(1);
+    expect(receipt.sourceAttempts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ adapterId: "failing-geospatial-source", status: "failed" }),
+      ]),
+    );
+    expect(receipt.requiredNextSteps).toContain("retry_failed_adapter");
   });
 
   it("normalizes weather current fields and respects coordinate bounds", async () => {
@@ -207,6 +263,59 @@ describe("geospatial source registry", () => {
       "temperature_2m from open-meteo-weather is newer than requested asOf 2026-09-07T12:00:00.000Z",
     );
     expect(receipt.requiredNextSteps).toContain("review_future_dated_observations");
+  });
+
+  it("downgrades partial source failures even when another source succeeds", async () => {
+    const successfulAdapter = {
+      id: "successful-reference",
+      providerName: "successful-reference",
+      providerRole: "primary_reference" as const,
+      sourceFamily: "weather_environmental" as const,
+      priority: 1,
+      supports: () => true,
+      collect: async () => ({
+        providerName: "successful-reference",
+        providerRole: "primary_reference" as const,
+        sourceFamily: "weather_environmental" as const,
+        observedAt: AS_OF,
+        timezone: "UTC",
+        fields: [
+          {
+            name: "temperature_2m",
+            value: 20,
+            sourceTimestamp: AS_OF,
+            fieldDefinition: "test temperature",
+            sourceUrlOrArtifact: "https://example.test/weather",
+          },
+        ],
+      }),
+    };
+    const failingAdapter = {
+      id: "failed-reference",
+      providerName: "failed-reference",
+      providerRole: "cross_check_reference" as const,
+      sourceFamily: "weather_environmental" as const,
+      priority: 2,
+      supports: () => true,
+      collect: async () => {
+        throw new Error("provider unavailable");
+      },
+    };
+
+    const receipt = await runGeospatialRefresh({
+      request: { kind: "weather", query: "31,121", asOf: AS_OF },
+      adapters: [successfulAdapter, failingAdapter],
+      maxSources: 2,
+      retry: { attempts: 1 },
+    });
+
+    expect(receipt.status).toBe("needs_review");
+    expect(receipt.sourceAttempts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ adapterId: "failed-reference", status: "failed" }),
+      ]),
+    );
+    expect(receipt.requiredNextSteps).toContain("inspect_source_attempt_failures");
   });
 });
 

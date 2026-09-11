@@ -405,6 +405,77 @@ describe("finance market collection registry", () => {
     expect(yahoo[0]?.sourceTimestamp).toBe("2026-09-07T12:00:00.000Z");
   });
 
+  it("drops RSS items without valid provider timestamps", async () => {
+    const adapter = createGoogleNewsRssCollectionAdapter({
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        text: async () =>
+          `<?xml version="1.0"?><rss><channel><item><title>Untimestamped AAPL</title><link>https://example.test/missing</link></item><item><title>Timestamped AAPL</title><link>https://example.test/valid</link><pubDate>Mon, 07 Sep 2026 13:00:00 GMT</pubDate></item></channel></rss>`,
+      }),
+    });
+
+    const records = await adapter.collect(EQUITY_REQUEST, new AbortController().signal);
+
+    expect(records).toHaveLength(1);
+    expect(records[0]?.itemId).toBe("https://example.test/valid");
+  });
+
+  it("encodes an explicit GDELT news window", async () => {
+    let requestedUrl = "";
+    const adapter = createGdeltPublicNewsCollectionAdapter({
+      fetchImpl: async (url) => {
+        requestedUrl = url;
+        return {
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify({
+              articles: [
+                { url: "https://example.test/aapl-window", seendate: "20260907T130000Z" },
+                { url: "https://example.test/aapl-future", seendate: "20260908T130000Z" },
+                { url: "https://example.test/aapl-undated" },
+              ],
+            }),
+        };
+      },
+    });
+
+    const records = await adapter.collect(
+      { ...EQUITY_REQUEST, fromDate: "2026-09-01", toDate: "2026-09-07" },
+      new AbortController().signal,
+    );
+
+    const url = new URL(requestedUrl);
+    expect(url.searchParams.get("startdatetime")).toBe("20260901000000");
+    expect(url.searchParams.get("enddatetime")).toBe("20260907235959");
+    expect(url.searchParams.get("timespan")).toBeNull();
+    expect(records).toHaveLength(1);
+    expect(records[0]?.itemId).toBe("https://example.test/aapl-window");
+  });
+
+  it("uses an explicit topic for GDELT news searches", async () => {
+    let requestedUrl = "";
+    const adapter = createGdeltPublicNewsCollectionAdapter({
+      fetchImpl: async (url) => {
+        requestedUrl = url;
+        return {
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify({
+              articles: [{ url: "https://example.test/topic", seendate: "20260907T130000Z" }],
+            }),
+        };
+      },
+    });
+    await adapter.collect(
+      { ...EQUITY_REQUEST, instrument: "SPY", seriesId: "global markets sentiment" },
+      new AbortController().signal,
+    );
+    expect(new URL(requestedUrl).searchParams.get("query")).toBe("global markets sentiment");
+  });
+
   it("collects public Yahoo EOD bars and drops incomplete rows", async () => {
     const bars = await createYahooPublicEodHistoryCollectionAdapter({
       fetchImpl: fakeFetch,
@@ -448,6 +519,39 @@ describe("finance market collection registry", () => {
       expect.arrayContaining([expect.objectContaining({ status: "failed", error: "429" })]),
     );
     expect(receipt.notTouched).toContain("trading_execution");
+  });
+
+  it("does not mark records outside the requested historical window ready", async () => {
+    const receipt = await runFinanceMarketCollectionRefresh({
+      request: EQUITY_REQUEST,
+      adapters: [
+        {
+          id: "out-of-window",
+          providerName: "out-of-window",
+          providerRole: "primary_market_data",
+          priority: 1,
+          supports: () => true,
+          collect: async () => [
+            {
+              itemId: "future-news",
+              collection: "news",
+              providerName: "out-of-window",
+              providerRole: "primary_market_data",
+              sourceFamily: "market_data_api",
+              sourceTimestamp: "2026-09-08T13:00:00.000Z",
+              observedAt: "2026-09-08T13:00:00.000Z",
+              delayStatus: "realtime",
+              sourceUrlOrArtifact: "fixture://out-of-window",
+              data: { title: "future evidence" },
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(receipt.status).toBe("needs_review");
+    expect(receipt.missingEvidence).toContain("timestamped_records_within_requested_window");
+    expect(receipt.requiredNextSteps).toContain("inspect_out_of_window_collection_records");
   });
 
   it("reports environment-backed providers without exposing credential values", () => {

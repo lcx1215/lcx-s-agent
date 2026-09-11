@@ -238,7 +238,7 @@ export function createOpenMeteoGeocodingAdapter(
       if (!result?.name || result.latitude === undefined || result.longitude === undefined) {
         throw new GeospatialSourceError("Open-Meteo returned no geocoding result");
       }
-      const sourceTimestamp = request.asOf;
+      const sourceTimestamp = new Date().toISOString();
       const fields: GeospatialSourceField[] = [
         {
           name: "latitude",
@@ -298,7 +298,7 @@ export function createOpenMeteoGeocodingAdapter(
       return geocodeObservation({
         providerName: "open-meteo-geocoding",
         providerRole: "primary_reference",
-        observedAt: request.asOf,
+        observedAt: sourceTimestamp,
         sourceUrlOrArtifact,
         fields,
       });
@@ -340,7 +340,7 @@ export function createNominatimGeocodingAdapter(
       if (!result?.lat || !result.lon || !result.display_name) {
         throw new GeospatialSourceError("Nominatim returned no geocoding result");
       }
-      const sourceTimestamp = request.asOf;
+      const sourceTimestamp = new Date().toISOString();
       const fields: GeospatialSourceField[] = [
         {
           name: "latitude",
@@ -378,7 +378,7 @@ export function createNominatimGeocodingAdapter(
       return geocodeObservation({
         providerName: "nominatim-openstreetmap",
         providerRole: "cross_check_reference",
-        observedAt: request.asOf,
+        observedAt: sourceTimestamp,
         sourceUrlOrArtifact,
         fields,
       });
@@ -758,9 +758,13 @@ export async function runGeospatialRefresh(options: {
     }),
   ];
   const missingEvidence = observations.length === 0 ? ["successful_geospatial_observation"] : [];
+  const failedSources = sourceAttempts.some((attempt) => attempt.status === "failed");
   const requiredNextSteps: string[] = [];
   if (missingEvidence.length > 0) {
     requiredNextSteps.push("inspect_source_attempt_failures", "retry_with_healthy_adapter");
+  }
+  if (failedSources && missingEvidence.length === 0) {
+    requiredNextSteps.push("inspect_source_attempt_failures", "retry_failed_adapter");
   }
   if (conflicts.length > 0) {
     requiredNextSteps.push("run_geospatial_provenance_review");
@@ -778,7 +782,7 @@ export async function runGeospatialRefresh(options: {
     status:
       missingEvidence.length > 0
         ? "blocked"
-        : conflicts.length > 0 || freshnessWarnings.length > 0
+        : failedSources || conflicts.length > 0 || freshnessWarnings.length > 0
           ? "needs_review"
           : "ready",
     sourceAttempts,

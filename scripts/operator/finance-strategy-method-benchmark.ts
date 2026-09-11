@@ -228,14 +228,52 @@ function evaluateSeries(
   return { dailyReturns, positions, metric: summarize(dailyReturns, positions) };
 }
 
-function aggregateSeries(series: readonly EvaluatedSeries[]): EvaluatedSeries {
-  const dailyReturns = Array.from({ length: series[0]?.dailyReturns.length ?? 0 }, (_, index) =>
-    mean(series.map((item) => item.dailyReturns[index] ?? 0)),
-  );
+function sliceEvaluationSeries(
+  series: EvaluatedSeries,
+  evaluationStartIndex: number,
+): EvaluatedSeries {
+  const start = Math.max(0, evaluationStartIndex);
+  const dailyReturns = series.dailyReturns.slice(start);
+  const positions = series.positions.slice(start);
+  return { dailyReturns, positions, metric: summarize(dailyReturns, positions) };
+}
+
+function aggregateSeries(
+  series: readonly EvaluatedSeries[],
+  method: MethodName = "trend_breadth_gate",
+): EvaluatedSeries {
+  const dailyReturns =
+    method === "buy_hold"
+      ? (() => {
+          const wealth = series.map(() => 1);
+          let previousPortfolioWealth = 1;
+          const returns: number[] = [];
+          for (let index = 0; index < (series[0]?.dailyReturns.length ?? 0); index += 1) {
+            for (const [seriesIndex, item] of series.entries()) {
+              wealth[seriesIndex] =
+                (wealth[seriesIndex] ?? 1) * (1 + (item.dailyReturns[index] ?? 0));
+            }
+            const portfolioWealth = mean(wealth);
+            returns.push(portfolioWealth / previousPortfolioWealth - 1);
+            previousPortfolioWealth = portfolioWealth;
+          }
+          return returns;
+        })()
+      : Array.from({ length: series[0]?.dailyReturns.length ?? 0 }, (_, index) =>
+          mean(series.map((item) => item.dailyReturns[index] ?? 0)),
+        );
   const positions = Array.from({ length: series[0]?.positions.length ?? 0 }, (_, index) =>
     mean(series.map((item) => item.positions[index] ?? 0)),
   );
-  return { dailyReturns, positions, metric: summarize(dailyReturns, positions) };
+  const metric = summarize(dailyReturns, positions);
+  return {
+    dailyReturns,
+    positions,
+    metric: {
+      ...metric,
+      turnover: series.length === 0 ? 0 : mean(series.map((item) => item.metric.turnover)),
+    },
+  };
 }
 
 function periodMetrics(
@@ -248,7 +286,7 @@ function periodMetrics(
     [dates[Math.floor((2 * dates.length) / 3)], dates.at(-1)],
   ] as const;
   return periods.map(([start, end], periodIndex) => {
-    const from = periodIndex === 0 ? 0 : Math.floor((periodIndex * dates.length) / 3) - 1;
+    const from = Math.floor((periodIndex * dates.length) / 3);
     const to =
       periodIndex === 2
         ? series.dailyReturns.length
@@ -287,6 +325,7 @@ function medianValue(values: readonly number[]): number {
 function evaluateStressMatrix(
   rowsBySymbol: Readonly<Record<string, readonly PriceRow[]>>,
   dates: readonly string[],
+  evaluationStartIndex = 0,
 ): Readonly<{
   variants: readonly StressVariantResult[];
   summary: Readonly<{
@@ -309,16 +348,20 @@ function evaluateStressMatrix(
         method,
         aggregateSeries(
           Object.keys(rowsBySymbol).map((symbol) =>
-            evaluateSeries(
-              symbol,
-              rowsBySymbol,
-              dates,
-              variant.lookback,
-              variant.breadth,
-              costRate,
-              method as MethodName,
+            sliceEvaluationSeries(
+              evaluateSeries(
+                symbol,
+                rowsBySymbol,
+                dates,
+                variant.lookback,
+                variant.breadth,
+                costRate,
+                method as MethodName,
+              ),
+              evaluationStartIndex,
             ),
           ),
+          method as MethodName,
         ),
       ]),
     ) as Record<MethodName, EvaluatedSeries>;
@@ -363,7 +406,11 @@ async function collectSymbol(symbol: string, options: ReturnType<typeof parseOpt
   // 300-calendar-day equity chunk is below that cap even after exchange
   // holidays are accounted for, and each response is checked for truncation.
   const chunkCalendarDays = 300;
+  const requiredLookback = options.stress
+    ? Math.max(options.lookback, ...STRESS_LOOKBACKS)
+    : options.lookback;
   const start = parseDate(options.fromDate, "--from-date");
+  start.setUTCDate(start.getUTCDate() - requiredLookback * 2);
   let end = parseDate(options.toDate, "--to-date");
   const receipts = [];
   const records: FinanceMarketCollectionItem[] = [];
@@ -402,9 +449,6 @@ async function collectSymbol(symbol: string, options: ReturnType<typeof parseOpt
     end = new Date(chunkStart.getTime() - 86_400_000);
   }
   const rows = rowsFromItems(records);
-  const requiredLookback = options.stress
-    ? Math.max(options.lookback, ...STRESS_LOOKBACKS)
-    : options.lookback;
   if (
     receipts.some((receipt) => receipt.status !== "ready") ||
     rows.length < requiredLookback + 20
@@ -440,6 +484,11 @@ export async function runBenchmark(args: readonly string[] = process.argv.slice(
       .map((date) => byDate.get(date))
       .filter((row): row is PriceRow => row !== undefined);
   }
+  const evaluationStartIndex = dates.findIndex((date) => date >= options.fromDate);
+  if (evaluationStartIndex < 0) {
+    throw new Error(`aligned observations do not cover --from-date ${options.fromDate}`);
+  }
+  const evaluationDates = dates.slice(evaluationStartIndex);
   const costRate = options.costBps / 10_000;
   const methods = Object.freeze(["buy_hold", "trend_breadth_gate"] as const);
   const evaluated = Object.fromEntries(
@@ -448,21 +497,24 @@ export async function runBenchmark(args: readonly string[] = process.argv.slice(
       Object.fromEntries(
         options.symbols.map((symbol) => [
           symbol,
-          evaluateSeries(
-            symbol,
-            rowsBySymbol,
-            dates,
-            options.lookback,
-            options.breadth,
-            costRate,
-            method,
+          sliceEvaluationSeries(
+            evaluateSeries(
+              symbol,
+              rowsBySymbol,
+              dates,
+              options.lookback,
+              options.breadth,
+              costRate,
+              method,
+            ),
+            evaluationStartIndex,
           ),
         ]),
       ),
     ]),
   ) as Record<MethodName, Record<string, EvaluatedSeries>>;
   const portfolio = Object.fromEntries(
-    methods.map((method) => [method, aggregateSeries(Object.values(evaluated[method]))]),
+    methods.map((method) => [method, aggregateSeries(Object.values(evaluated[method]), method)]),
   ) as Record<MethodName, EvaluatedSeries>;
   const comparisons = Object.fromEntries(
     options.symbols.map((symbol) => {
@@ -488,10 +540,10 @@ export async function runBenchmark(args: readonly string[] = process.argv.slice(
       source: "yahoo_public_eod_history",
       sourceRole: "primary_market_data",
       asOf: options.asOf,
-      fromDate: dates[0],
-      toDate: dates.at(-1),
+      fromDate: evaluationDates[0],
+      toDate: evaluationDates.at(-1),
       symbols: options.symbols,
-      alignedObservations: dates.length,
+      alignedObservations: evaluationDates.length,
       sourceReceipts: collected.map(({ receipts, rows }, index) => ({
         symbol: options.symbols[index],
         status: receipts.every((receipt) => receipt.status === "ready") ? "ready" : "needs_review",
@@ -519,11 +571,16 @@ export async function runBenchmark(args: readonly string[] = process.argv.slice(
     portfolio: Object.fromEntries(
       methods.map((method) => [
         method,
-        { metric: portfolio[method].metric, periods: periodMetrics(portfolio[method], dates) },
+        {
+          metric: portfolio[method].metric,
+          periods: periodMetrics(portfolio[method], evaluationDates),
+        },
       ]),
     ),
     comparisons,
-    ...(options.stress ? { stressMatrix: evaluateStressMatrix(rowsBySymbol, dates) } : {}),
+    ...(options.stress
+      ? { stressMatrix: evaluateStressMatrix(rowsBySymbol, dates, evaluationStartIndex) }
+      : {}),
     checks: {
       realSourceReceipts: true,
       allSourcesReady: true,
@@ -552,4 +609,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     });
 }
 
-export const __test = { evaluateSeries, summarize, periodMetrics, parseOptions, medianValue };
+export const __test = {
+  aggregateSeries,
+  evaluateSeries,
+  summarize,
+  periodMetrics,
+  parseOptions,
+  medianValue,
+};

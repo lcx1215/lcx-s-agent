@@ -137,6 +137,14 @@ export function normalizeFinanceChartBars(
       droppedCount += 1;
       continue;
     }
+    const currentSourceKey = sourceKey(record);
+    if (selectedSourceKey === undefined) {
+      selectedSourceKey = currentSourceKey;
+    } else if (currentSourceKey !== selectedSourceKey) {
+      // Do not silently stitch overlapping bars from different providers.
+      droppedCount += 1;
+      continue;
+    }
     if (conflictingDates.has(normalized.date)) {
       droppedCount += 1;
       continue;
@@ -156,14 +164,6 @@ export function normalizeFinanceChartBars(
       byDate.delete(normalized.date);
       conflictingDates.add(normalized.date);
       droppedCount += 2;
-      continue;
-    }
-    const currentSourceKey = sourceKey(record);
-    if (selectedSourceKey === undefined) {
-      selectedSourceKey = currentSourceKey;
-    } else if (currentSourceKey !== selectedSourceKey) {
-      // Do not silently stitch overlapping bars from different providers.
-      droppedCount += 1;
       continue;
     }
     byDate.set(normalized.date, normalized);

@@ -88,6 +88,27 @@ describe("research_data_autopilot tool", () => {
     );
   });
 
+  it("does not require an unavailable official issuer source for crypto quotes", async () => {
+    const tool = createResearchDataAutopilotTool({ workspaceDir: "/tmp/lcx-autopilot" });
+    const result = await tool.execute("crypto-inspect", {
+      intent: "quote",
+      target: "BTC-USD",
+      assetClass: " crypto ",
+      liveFetch: false,
+    });
+
+    expect(result.details).toEqual(
+      expect.objectContaining({
+        result: expect.objectContaining({
+          request: expect.objectContaining({
+            assetClass: "crypto",
+            requireOfficialReference: false,
+          }),
+        }),
+      }),
+    );
+  });
+
   it("autonomously routes public news through the registry and returns its receipt", async () => {
     const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-autopilot-tool-"));
     const tool = createResearchDataAutopilotTool({ workspaceDir, fetchImpl: fakeFetch });
@@ -155,16 +176,13 @@ it("propagates caller cancellation to the live geospatial registry", async () =>
     fetchImpl,
   });
 
-  const result = await tool.execute(
-    "cancel-live",
-    { intent: "weather", target: "31,121", liveFetch: true },
-    controller.signal,
-  );
+  await expect(
+    tool.execute(
+      "cancel-live",
+      { intent: "weather", target: "31,121", liveFetch: true },
+      controller.signal,
+    ),
+  ).rejects.toThrow();
 
   expect(httpSignal?.aborted).toBe(true);
-  expect(result.details).toEqual(
-    expect.objectContaining({
-      result: expect.objectContaining({ status: "blocked" }),
-    }),
-  );
 });

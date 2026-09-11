@@ -521,6 +521,16 @@ export class LogicalAgentPool<TInput, TResult> {
     };
   }
 
+  restoreCompletedModelCalls(
+    correlationId: string,
+    results: readonly LogicalAgentTaskResult<TResult>[],
+  ): void {
+    this.#modelRouter?.restoreCompletedModelCalls(
+      correlationId,
+      results.flatMap((result) => result.modelCalls ?? []),
+    );
+  }
+
   submit(
     task: LogicalAgentTask<TInput>,
     executor: LogicalAgentExecutor<TInput, TResult>,
@@ -1585,6 +1595,7 @@ export async function runLogicalAgentPlan<TInput, TResult>(params: {
       })
     : new Map<string, LogicalAgentTaskResult<TResult>>();
   if (params.resume) {
+    pool.restoreCompletedModelCalls(runId, [...restoredResults.values()]);
     eventSequence = restoredCheckpoint?.lastEventSequence ?? 0;
     emit("run_resumed", undefined, {
       completedTaskCount: restoredResults.size,

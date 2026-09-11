@@ -7,6 +7,7 @@ import {
 import {
   evaluateFinanceDecisionPolicy,
   FINANCE_DECISION_MODES,
+  type FinanceDecisionCandidateContext,
   type FinanceDecisionMode,
 } from "../../src/agents/finance-decision-policy.js";
 import {
@@ -1170,7 +1171,10 @@ function auditCandidate(params: {
 export function buildPipelineResult(
   ask: string,
   candidateAnswer: string,
-  options: { financeDecisionMode?: FinanceDecisionMode } = {},
+  options: {
+    financeDecisionMode?: FinanceDecisionMode;
+    candidateContext?: FinanceDecisionCandidateContext;
+  } = {},
 ) {
   const financeDecisionMode = options.financeDecisionMode ?? "research_only";
   const productGovernor = buildProductGovernor();
@@ -1199,6 +1203,7 @@ export function buildPipelineResult(
     mode: financeDecisionMode,
     ask,
     answer: candidateAnswer,
+    candidateContext: options.candidateContext,
   });
   const checks = auditCandidate({
     ask,

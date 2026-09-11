@@ -98,8 +98,8 @@ if (!args.includes("--live")) {
     let stopReason = "bounded_sample_not_an_upper_limit";
     const startedAt = new Date().toISOString();
     async function probe(index: number) {
-      if (index) {
-        await delay(intervalMs);
+      if (index > 0 && intervalMs > 0) {
+        await delay(index * intervalMs);
       }
       let bodyRateLimited = false;
       const native = createFinanceNativeFetch(adapterId === "gdelt_public_news_titles");

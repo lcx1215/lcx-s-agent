@@ -13,7 +13,16 @@ describe("finance decision mode integration", () => {
     const result = buildPipelineResult(
       "NVDA 现在适合买吗？",
       "候选买入 NVDA：只有在财报指引未破坏 thesis 且估值回到风险预算内时才触发，依据是截至 2026-09-07 的财报和报价数据来源。持有周期 1-3 个月；主要风险是估值压缩和回撤，失效条件是指引下修。仅供审阅，执行前需要人工确认，不自动下单。",
-      { financeDecisionMode: "conditional_trade_candidate" },
+      {
+        financeDecisionMode: "conditional_trade_candidate",
+        candidateContext: {
+          evidence: [{ id: "market-20260907", text: "截至 2026-09-07 的财报和报价数据。" }],
+          claims: [{ status: "supported", evidenceIds: ["market-20260907"] }],
+          supportingAnalysis: {
+            scenarios: [{ invalidation: "财报指引下修", evidenceIds: ["market-20260907"] }],
+          },
+        },
+      },
     );
 
     expect(result.terminalDecision).toBe("adopt_visible_answer");

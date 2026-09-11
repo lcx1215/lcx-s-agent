@@ -121,6 +121,40 @@ describe("US equity finance source adapters", () => {
     expect(urls.some((url) => url.includes("twelve-secret"))).toBe(true);
   });
 
+  it("selects the latest SEC fact at or before a historical cutoff", async () => {
+    const fetchImpl: FetchImpl = async (url) => ({
+      ok: true,
+      status: 200,
+      text: async () =>
+        url.includes("company_tickers")
+          ? JSON.stringify({ 0: { cik_str: 320193, ticker: "AAPL", title: "Apple Inc." } })
+          : JSON.stringify({
+              entityName: "Apple Inc.",
+              facts: {
+                "us-gaap": {
+                  Assets: {
+                    units: {
+                      USD: [
+                        { val: 2_000, filed: "2026-08-01", end: "2026-06-30" },
+                        { val: 1_500, filed: "2026-05-01", end: "2026-03-31" },
+                      ],
+                    },
+                  },
+                },
+              },
+            }),
+    });
+    const observation = await createSecCompanyFactsAdapter({ fetchImpl }).collect(
+      { ...REQUEST, asOf: "2026-06-01T00:00:00.000Z" },
+      new AbortController().signal,
+    );
+    expect(observation.fields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "fundamental_assets", value: 1_500 }),
+      ]),
+    );
+  });
+
   it("only supports US equity asset classes", () => {
     const adapter = createMassiveUsEquitySnapshotAdapter({ apiKey: "test-key" });
     expect(adapter.supports(REQUEST)).toBe(true);

@@ -320,6 +320,57 @@ describe("role model execution receipts", () => {
       }),
     ).rejects.toThrow("fingerprint mismatch");
   });
+
+  it("restores model affinity from completed checkpoint receipts", async () => {
+    const store = createInMemoryLogicalAgentCheckpointStore<unknown>();
+    const routed = routing({
+      roles: {
+        research_draft: { ...policy, primary: "small" },
+        formatting: { ...policy, primary: "small", sameModelAsRole: "research_draft" },
+      },
+    });
+    const tasks = [
+      { id: "draft", agentId: "research_draft" as const, input: "draft" },
+      {
+        id: "format",
+        agentId: "formatting" as const,
+        input: "format",
+        dependsOn: ["draft"],
+      },
+    ];
+    let formattingAttempts = 0;
+    const executor = async ({
+      task,
+      modelSlot,
+      input,
+      signal,
+    }: LogicalAgentExecutionContext<string, unknown>) => {
+      if (task.agentId === "formatting" && formattingAttempts++ === 0) {
+        throw new Error("stop after durable prefix");
+      }
+      return { output: await modelSlot.invoke(input, signal), sideEffects: [] as const };
+    };
+
+    const first = await runLogicalAgentPlan({
+      runId: "restore-route",
+      tasks,
+      executor,
+      checkpointStore: store,
+      pool: new LogicalAgentPool<string, unknown>({ modelRouting: routed }),
+    });
+    expect(first.status).toBe("failed");
+
+    const resumed = await runLogicalAgentPlan({
+      runId: "restore-route",
+      resume: true,
+      tasks,
+      executor,
+      checkpointStore: store,
+      pool: new LogicalAgentPool<string, unknown>({ modelRouting: routed }),
+    });
+    expect(resumed.status).toBe("completed");
+    expect(resumed.tasks[1]?.modelId).toBe("model-small");
+  });
 });
 
 it("does not dispatch an adapter when cancellation lands between queue admission and invocation", async () => {

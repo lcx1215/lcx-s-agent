@@ -99,4 +99,31 @@ describe("finance_realtime_source_refresh tool", () => {
       await fs.rm(workspaceDir, { recursive: true, force: true });
     }
   });
+
+  it("uses unique receipt paths for concurrent same-millisecond refreshes", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "finance-realtime-concurrent-"));
+    try {
+      const tool = createFinanceRealtimeRefreshTool({ workspaceDir, fetchImpl: fakeFetch });
+      const args = {
+        instrument: "QQQ",
+        assetClass: "etf",
+        useCase: "tool_live_research",
+        asOf: "2026-07-01T20:05:00.000Z",
+        requireOfficialReference: false,
+        liveFetch: true,
+        writeReceipt: true,
+      };
+      const [first, second] = await Promise.all([
+        tool.execute("same-ms-1", args),
+        tool.execute("same-ms-2", args),
+      ]);
+      const firstPath = (first.details as { receiptPath: string }).receiptPath;
+      const secondPath = (second.details as { receiptPath: string }).receiptPath;
+      expect(firstPath).not.toBe(secondPath);
+      await expect(fs.stat(path.join(workspaceDir, firstPath))).resolves.toBeDefined();
+      await expect(fs.stat(path.join(workspaceDir, secondPath))).resolves.toBeDefined();
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
 });

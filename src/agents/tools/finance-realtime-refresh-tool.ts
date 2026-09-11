@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
@@ -38,13 +39,18 @@ function safeReceiptStem(value: string): string {
   );
 }
 
-async function writeReceipt(workspaceDir: string, instrument: string, payload: unknown) {
+async function writeReceipt(
+  workspaceDir: string,
+  instrument: string,
+  receiptId: string,
+  payload: unknown,
+) {
   const now = new Date().toISOString();
   const relPath = path.join(
     "memory",
     "finance-data-gateway",
     "realtime",
-    `${now.slice(0, 10)}-${safeReceiptStem(instrument)}-${now.replace(/[:.]/gu, "-")}.json`,
+    `${now.slice(0, 10)}-${safeReceiptStem(instrument)}-${safeReceiptStem(receiptId)}-${randomUUID()}.json`,
   );
   const absolutePath = path.join(workspaceDir, relPath);
   await fs.mkdir(path.dirname(absolutePath), { recursive: true });
@@ -72,7 +78,7 @@ export function createFinanceRealtimeRefreshTool(options?: {
     description:
       "Inspect or explicitly fetch an authorized public finance source through the preferred/fallback registry, then pass the result into the canonical finance data gateway. Live fetching is opt-in, delayed data is labeled, and missing cross-check evidence remains blocked.",
     parameters: FinanceRealtimeRefreshSchema,
-    execute: async (_toolCallId, args, callerSignal) => {
+    execute: async (toolCallId, args, callerSignal) => {
       const params = args as {
         instrument: string;
         assetClass: string;
@@ -142,7 +148,12 @@ export function createFinanceRealtimeRefreshTool(options?: {
         });
         callerSignal?.throwIfAborted();
         const receiptPath = params.writeReceipt
-          ? await writeReceipt(workspaceDir, request.instrument, receipt)
+          ? await writeReceipt(
+              workspaceDir,
+              request.instrument,
+              `${String(toolCallId)}-${receipt.refreshId}`,
+              receipt,
+            )
           : undefined;
         return jsonResult({
           ...receipt,

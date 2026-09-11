@@ -227,6 +227,38 @@ export class LogicalAgentModelRouter {
     return this.#adapters.get(this.#policy(role).primary)!.modelId;
   }
 
+  restoreCompletedModelCalls(correlationId: string, receipts: readonly ModelCallReceipt[]): void {
+    if (!correlationId.trim()) {
+      throw new Error("model routing restore requires a correlation ID");
+    }
+    const completed = new Map<LogicalAgentId, Set<string>>();
+    for (const receipt of receipts) {
+      if (receipt.correlationId !== correlationId) {
+        throw new Error("model routing checkpoint receipt correlation mismatch");
+      }
+      if (receipt.outcome !== "completed") {
+        continue;
+      }
+      const adapter = this.#adapters.get(receipt.adapterId);
+      if (
+        !adapter ||
+        receipt.schemaVersion !== "lcx_model_call_v1" ||
+        receipt.policyRevision !== this.routing.revision ||
+        receipt.provider !== adapter.provider ||
+        receipt.modelId !== adapter.modelId ||
+        !receipt.adapterInvoked
+      ) {
+        throw new Error("logical-agent checkpoint contains an invalid completed model receipt");
+      }
+      const models = completed.get(receipt.role) ?? new Set<string>();
+      models.add(`${receipt.provider}/${receipt.modelId}`);
+      completed.set(receipt.role, models);
+    }
+    if (completed.size > 0) {
+      this.#completedModels.set(correlationId, completed);
+    }
+  }
+
   #policy(role: LogicalAgentId): LogicalAgentRoleModelPolicy {
     return this.routing.roles?.[role] ?? this.routing.defaultPolicy;
   }

@@ -265,6 +265,20 @@ describe("quality harness", () => {
     ).toMatchObject({ passed: false });
   });
 
+  it("rejects portfolio sizing language in research-only mode", async () => {
+    const result = await runQualityHarness({
+      request: financeRequest,
+      maxAttempts: 1,
+      modelInvoker: demoInvoker({ answer: "Allocate 50% of your portfolio to NVDA." }),
+      verify: async () => ({ status: "passed", summary: "should not run", details: [] }),
+    });
+
+    expect(result.status).toBe("quality-failed");
+    expect(
+      result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
+    ).toMatchObject({ passed: false });
+  });
+
   it("allows a conditional candidate while still rejecting execution claims", async () => {
     const candidate = await runQualityHarness({
       request: {
@@ -506,6 +520,93 @@ describe("quality harness", () => {
     expect(
       result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
     ).toMatchObject({ passed: false });
+  });
+
+  it("does not let unrelated evidence satisfy a Chinese company claim", async () => {
+    const result = await runQualityHarness({
+      request: {
+        ...financeRequest,
+        evidence: [
+          {
+            id: "msft",
+            text: "截至 2026-09-06，微软的价格为 200 美元。",
+            source: "market-feed-test",
+          },
+        ],
+      },
+      maxAttempts: 1,
+      modelInvoker: async (raw) => {
+        const current = raw as QualityHarnessModelRequest;
+        if (current.stage === "intake") {
+          return { kind: "plan", requirements: ["回答问题"], missingEvidence: [] };
+        }
+        if (current.stage === "draft" || current.stage === "format") {
+          return {
+            kind: "artifact",
+            artifact: {
+              answer: "苹果当前价格为 200 美元。",
+              claims: [
+                {
+                  id: "claim-1",
+                  text: "苹果当前价格为 200 美元。",
+                  status: "supported",
+                  evidenceIds: ["msft"],
+                },
+              ],
+            },
+          };
+        }
+        return passReview();
+      },
+      verify: async () => ({ status: "passed", summary: "should not run", details: [] }),
+    });
+
+    expect(result.status).toBe("quality-failed");
+    expect(
+      result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
+    ).toMatchObject({ passed: false });
+  });
+
+  it("does not treat a required current-data date as a financial number", async () => {
+    const result = await runQualityHarness({
+      request: {
+        ...financeRequest,
+        evidence: [
+          {
+            id: "aapl",
+            text: "截至 2026-09-06，AAPL 的价格为 $100。",
+            source: "market-feed-test",
+          },
+        ],
+      },
+      maxAttempts: 1,
+      modelInvoker: async (raw) => {
+        const current = raw as QualityHarnessModelRequest;
+        if (current.stage === "intake") {
+          return { kind: "plan", requirements: ["回答问题"], missingEvidence: [] };
+        }
+        if (current.stage === "draft" || current.stage === "format") {
+          return {
+            kind: "artifact",
+            artifact: {
+              answer: "截至 2026-09-06，AAPL 当前价格为 $100。",
+              claims: [
+                {
+                  id: "claim-1",
+                  text: "截至 2026-09-06，AAPL 当前价格为 $100。",
+                  status: "supported",
+                  evidenceIds: ["aapl"],
+                },
+              ],
+            },
+          };
+        }
+        return passReview();
+      },
+      verify: async () => ({ status: "passed", summary: "should not run", details: [] }),
+    });
+
+    expect(result.status).toBe("verified");
   });
 
   it("aborts a verifier that exceeds its independent timeout", async () => {
