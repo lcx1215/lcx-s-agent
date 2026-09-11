@@ -99,6 +99,30 @@ describe("finance strategy method benchmark math", () => {
     expect(portfolio.metric.totalReturn).toBeCloseTo(0.55, 8);
     expect(portfolio.dailyReturns[1]).toBeCloseTo(0.47619047619, 8);
   });
+
+  it("aggregates turnover from individual position paths", () => {
+    const series = [
+      { dailyReturns: [0, 0], positions: [0, 1, 0] },
+      { dailyReturns: [0, 0], positions: [0, 0, 1] },
+    ].map((item) => ({ ...item, metric: __test.summarize(item.dailyReturns, item.positions) }));
+    const portfolio = __test.aggregateSeries(series);
+    expect(portfolio.metric.turnover).toBe(2);
+    expect(portfolio.positions).toEqual([0, 0.5, 0.5]);
+  });
+
+  it("starts each period at its displayed date boundary", () => {
+    const dates = Array.from({ length: 9 }, (_, index) => `2026-01-${index + 1}`);
+    const series = {
+      dailyReturns: Array(8).fill(0),
+      positions: Array(9).fill(0),
+    };
+    const periods = __test.periodMetrics(
+      { ...series, metric: __test.summarize(series.dailyReturns, series.positions) },
+      dates,
+    );
+    expect(periods[1]?.metric.observations).toBe(2);
+    expect(periods[2]?.metric.observations).toBe(2);
+  });
 });
 
 describe("strategy receipt evidence boundaries", () => {

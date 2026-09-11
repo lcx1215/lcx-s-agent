@@ -38,6 +38,37 @@ function pathWithin(root: string, target: string): boolean {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
+async function canonicalPath(value: string): Promise<string | undefined> {
+  const suffix: string[] = [];
+  let candidate = path.resolve(value);
+  while (true) {
+    try {
+      const resolved = await fs.realpath(candidate);
+      return path.join(resolved, ...suffix.toReversed());
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      const parent = path.dirname(candidate);
+      if ((code !== "ENOENT" && code !== "ENOTDIR") || parent === candidate) {
+        return undefined;
+      }
+      suffix.unshift(path.basename(candidate));
+      candidate = parent;
+    }
+  }
+}
+
+async function pathWithinCanonical(root: string, target: string): Promise<boolean> {
+  const [canonicalRoot, canonicalTarget] = await Promise.all([
+    canonicalPath(root),
+    canonicalPath(target),
+  ]);
+  return (
+    canonicalRoot !== undefined &&
+    canonicalTarget !== undefined &&
+    pathWithin(canonicalRoot, canonicalTarget)
+  );
+}
+
 async function writableDirectory(value: string): Promise<boolean> {
   try {
     const stat = await fs.stat(value);
@@ -149,7 +180,7 @@ export async function buildCloudPreflight(env: NodeJS.ProcessEnv = process.env) 
       status: "fail",
       detail: "OPENCLAW_CONFIG_PATH must be an absolute path in the cloud runtime.",
     });
-  } else if (stateDir && !pathWithin(stateDir, configPath)) {
+  } else if (stateDir && !(await pathWithinCanonical(stateDir, configPath))) {
     checks.push({
       id: "config_path",
       status: "fail",
@@ -170,11 +201,17 @@ export async function buildCloudPreflight(env: NodeJS.ProcessEnv = process.env) 
   const configDir = absolutePath(env.OPENCLAW_CONFIG_DIR);
   const workspaceDir = absolutePath(env.OPENCLAW_WORKSPACE_DIR);
   const workspaceIsNestedInConfig =
-    configDir !== undefined && workspaceDir !== undefined && pathWithin(configDir, workspaceDir);
+    configDir !== undefined &&
+    workspaceDir !== undefined &&
+    (await pathWithinCanonical(configDir, workspaceDir));
   const configDirOutsideState =
-    stateDir !== undefined && configDir !== undefined && !pathWithin(stateDir, configDir);
+    stateDir !== undefined &&
+    configDir !== undefined &&
+    !(await pathWithinCanonical(stateDir, configDir));
   const workspaceDirOutsideState =
-    stateDir !== undefined && workspaceDir !== undefined && !pathWithin(stateDir, workspaceDir);
+    stateDir !== undefined &&
+    workspaceDir !== undefined &&
+    !(await pathWithinCanonical(stateDir, workspaceDir));
   if (configDirOutsideState || workspaceDirOutsideState) {
     checks.push({
       id: "compose_mounts",

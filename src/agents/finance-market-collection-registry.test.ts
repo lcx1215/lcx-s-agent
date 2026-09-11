@@ -499,6 +499,39 @@ describe("finance market collection registry", () => {
     expect(receipt.notTouched).toContain("trading_execution");
   });
 
+  it("does not mark records outside the requested historical window ready", async () => {
+    const receipt = await runFinanceMarketCollectionRefresh({
+      request: EQUITY_REQUEST,
+      adapters: [
+        {
+          id: "out-of-window",
+          providerName: "out-of-window",
+          providerRole: "primary_market_data",
+          priority: 1,
+          supports: () => true,
+          collect: async () => [
+            {
+              itemId: "future-news",
+              collection: "news",
+              providerName: "out-of-window",
+              providerRole: "primary_market_data",
+              sourceFamily: "market_data_api",
+              sourceTimestamp: "2026-09-08T13:00:00.000Z",
+              observedAt: "2026-09-08T13:00:00.000Z",
+              delayStatus: "realtime",
+              sourceUrlOrArtifact: "fixture://out-of-window",
+              data: { title: "future evidence" },
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(receipt.status).toBe("needs_review");
+    expect(receipt.missingEvidence).toContain("timestamped_records_within_requested_window");
+    expect(receipt.requiredNextSteps).toContain("inspect_out_of_window_collection_records");
+  });
+
   it("reports environment-backed providers without exposing credential values", () => {
     const options = resolveFinanceMarketCollectionRegistryOptionsFromEnv({
       MASSIVE_API_KEY: "massive-secret",

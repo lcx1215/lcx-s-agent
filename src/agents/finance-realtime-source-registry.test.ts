@@ -155,6 +155,34 @@ describe("finance realtime source registry", () => {
     expect(receipt.requiredNextSteps).toContain("run_data_provenance_quality_review");
   });
 
+  it("blocks an observation whose source timestamp is newer than the historical cutoff", async () => {
+    const receipt = await runFinanceRealtimeRefresh({
+      request,
+      adapters: [
+        adapter({
+          id: "future-primary",
+          providerRole: "primary_market_data",
+          priority: 1,
+          result: {
+            ...observation("future-primary", "primary_market_data"),
+            fields: [
+              {
+                ...observation("future-primary", "primary_market_data").fields[0],
+                sourceTimestamp: "2026-07-02T00:00:00.000Z",
+              },
+            ],
+          },
+        }),
+      ],
+    });
+
+    expect(receipt.status).toBe("blocked");
+    expect(receipt.snapshot).toBeUndefined();
+    expect(receipt.sourceAttempts[0]).toEqual(
+      expect.objectContaining({ status: "failed", error: "source_error" }),
+    );
+  });
+
   it("reserves a bounded source slot for required official evidence", async () => {
     const receipt = await runFinanceRealtimeRefresh({
       request,

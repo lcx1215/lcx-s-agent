@@ -255,7 +255,15 @@ function aggregateSeries(
   const positions = Array.from({ length: series[0]?.positions.length ?? 0 }, (_, index) =>
     mean(series.map((item) => item.positions[index] ?? 0)),
   );
-  return { dailyReturns, positions, metric: summarize(dailyReturns, positions) };
+  const metric = summarize(dailyReturns, positions);
+  return {
+    dailyReturns,
+    positions,
+    metric: {
+      ...metric,
+      turnover: series.length === 0 ? 0 : mean(series.map((item) => item.metric.turnover)),
+    },
+  };
 }
 
 function periodMetrics(
@@ -268,7 +276,7 @@ function periodMetrics(
     [dates[Math.floor((2 * dates.length) / 3)], dates.at(-1)],
   ] as const;
   return periods.map(([start, end], periodIndex) => {
-    const from = periodIndex === 0 ? 0 : Math.floor((periodIndex * dates.length) / 3) - 1;
+    const from = Math.floor((periodIndex * dates.length) / 3);
     const to =
       periodIndex === 2
         ? series.dailyReturns.length

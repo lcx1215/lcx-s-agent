@@ -104,4 +104,29 @@ describe("LCX cloud preflight", () => {
       );
     });
   });
+
+  it("blocks an in-root symlink that resolves outside the canonical state root", async () => {
+    await withCloudState(async (stateDir) => {
+      const externalDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-cloud-preflight-outside-"));
+      try {
+        const externalConfig = path.join(externalDir, "openclaw.json");
+        const linkedConfig = path.join(stateDir, "linked-openclaw.json");
+        await fs.writeFile(externalConfig, "{}\n", "utf8");
+        await fs.symlink(externalConfig, linkedConfig);
+        const result = await buildCloudPreflight({
+          LCX_CLOUD_RUNTIME: "1",
+          OPENCLAW_STATE_DIR: stateDir,
+          OPENCLAW_CONFIG_PATH: linkedConfig,
+          OPENCLAW_GATEWAY_TOKEN: "test-gateway-token",
+          LCX_LOCAL_VISION_ENABLED: "0",
+        });
+        expect(result.status).toBe("blocked");
+        expect(result.checks).toEqual(
+          expect.arrayContaining([expect.objectContaining({ id: "config_path", status: "fail" })]),
+        );
+      } finally {
+        await fs.rm(externalDir, { recursive: true, force: true });
+      }
+    });
+  });
 });

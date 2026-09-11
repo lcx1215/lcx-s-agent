@@ -12,6 +12,15 @@ export const FINANCE_DECISION_MODES = [
 
 export type FinanceDecisionMode = (typeof FINANCE_DECISION_MODES)[number];
 
+export type FinanceDecisionCandidateContext = Readonly<{
+  evidence: readonly Readonly<{ id: string; text: string }>[];
+  claims: readonly Readonly<{
+    status: "supported" | "uncertain";
+    evidenceIds: readonly string[];
+  }>[];
+  supportingAnalysis?: Readonly<Record<string, unknown>>;
+}>;
+
 export type FinanceDecisionPolicyResult = Readonly<{
   mode: FinanceDecisionMode;
   allowed: boolean;
@@ -39,7 +48,59 @@ const HORIZON_PATTERN =
 const REVIEW_BOUNDARY_PATTERN =
   /仅候选|候选意见|需要确认|人工确认|不自动下单|不执行|执行前确认|仅供审阅|no automatic execution|human confirmation|review only|not execution/iu;
 const EXECUTION_CLAIM_PATTERN =
-  /已下单|下单成功|已经买入|已经卖出|已开仓|已平仓|交易已完成|转账成功|order filled|order placed|position opened|position closed|funds transferred/iu;
+  /已下单|下单成功|已经买入|已经卖出|已开仓|已平仓|交易已完成|转账成功|order filled|order placed|position opened|position closed|funds transferred|(?:\b(?:your|the|an?)\s+)?[A-Z][A-Z0-9.-]{1,9}\s+order\b.{0,24}\b(?:executed|filled|placed|completed)\b|\b(?:i|we)\s+(?:bought|sold|purchased|opened|closed|exited)\b/iu;
+
+function hasCitedSupportingEvidence(context: FinanceDecisionCandidateContext): boolean {
+  const evidenceIds = new Set(
+    context.evidence
+      .filter((evidence) => evidence.id.trim().length > 0 && evidence.text.trim().length > 0)
+      .map((evidence) => evidence.id),
+  );
+  return context.claims.some(
+    (claim) =>
+      claim.status === "supported" &&
+      claim.evidenceIds.length > 0 &&
+      claim.evidenceIds.every(
+        (evidenceId) => evidenceId.trim().length > 0 && evidenceIds.has(evidenceId),
+      ),
+  );
+}
+
+function hasStructuredRiskAndInvalidation(
+  context: FinanceDecisionCandidateContext | undefined,
+): boolean {
+  if (
+    !context ||
+    !context.supportingAnalysis ||
+    !Array.isArray(context.supportingAnalysis.scenarios)
+  ) {
+    return false;
+  }
+  const evidenceIds = new Set(
+    context.evidence
+      .filter((evidence) => evidence.id.trim().length > 0 && evidence.text.trim().length > 0)
+      .map((evidence) => evidence.id),
+  );
+  return context.supportingAnalysis.scenarios.some((scenario) => {
+    if (!scenario || typeof scenario !== "object" || Array.isArray(scenario)) {
+      return false;
+    }
+    const value = scenario as { evidenceIds?: unknown; invalidation?: unknown };
+    const invalidation = typeof value.invalidation === "string" ? value.invalidation.trim() : "";
+    return (
+      Array.isArray(value.evidenceIds) &&
+      value.evidenceIds.length > 0 &&
+      value.evidenceIds.every(
+        (evidenceId) => typeof evidenceId === "string" && evidenceIds.has(evidenceId),
+      ) &&
+      invalidation.length > 0 &&
+      !/^(?:evidence|risk|source|data)\s+(?:missing|unknown|unavailable|not available)$/iu.test(
+        invalidation,
+      ) &&
+      !/^(?:证据缺失|风险未知|来源缺失|数据缺失|待核验|未知)$/u.test(invalidation)
+    );
+  });
+}
 
 function unique(values: readonly string[]): string[] {
   return [...new Set(values)];
@@ -53,6 +114,7 @@ export function evaluateFinanceDecisionPolicy(params: {
   mode?: FinanceDecisionMode;
   ask: string;
   answer: string;
+  candidateContext?: FinanceDecisionCandidateContext;
 }): FinanceDecisionPolicyResult {
   const mode = params.mode ?? "research_only";
   const ask = params.ask.trim();
@@ -104,6 +166,15 @@ export function evaluateFinanceDecisionPolicy(params: {
   }
   if (mode === "conditional_trade_candidate" && !hasAction && asksForAction) {
     failedReasons.push("conditional_trade_candidate_missing_action_candidate");
+  }
+  if (
+    params.candidateContext === undefined ||
+    !hasCitedSupportingEvidence(params.candidateContext)
+  ) {
+    requiredEvidence.push("cited_supporting_evidence");
+  }
+  if (!hasStructuredRiskAndInvalidation(params.candidateContext)) {
+    requiredEvidence.push("structured_risk_and_invalidation");
   }
   if (requiredEvidence.length > 0) {
     failedReasons.push("finance_candidate_contract_incomplete");

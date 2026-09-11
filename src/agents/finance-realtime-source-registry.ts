@@ -224,6 +224,22 @@ function refreshId(request: FinanceRealtimeSourceRequest, adapterIds: readonly s
     .slice(0, 24);
 }
 
+function validateObservationTimestamps(
+  observation: FinanceDataGatewayObservationInput,
+  asOf: string,
+): FinanceDataGatewayObservationInput {
+  const cutoff = Date.parse(asOf);
+  const fields = observation.fields.filter((field) => {
+    const sourceTimestamp =
+      typeof field.sourceTimestamp === "string" ? Date.parse(field.sourceTimestamp) : Number.NaN;
+    return Number.isFinite(sourceTimestamp) && sourceTimestamp <= cutoff;
+  });
+  if (fields.length === 0) {
+    throw new Error("finance source returned no timestamped field at or before requested asOf");
+  }
+  return fields.length === observation.fields.length ? observation : { ...observation, fields };
+}
+
 function validateAdapters(adapters: readonly FinanceRealtimeSourceAdapter[]): void {
   const ids = new Set<string>();
   for (const [index, adapter] of adapters.entries()) {
@@ -346,18 +362,19 @@ export async function runFinanceRealtimeRefresh(options: {
           },
         );
         const reusedAt = financeReuseTimestamp(apiCalls, request.asOf);
+        const timestampedObservation = validateObservationTimestamps(observation, request.asOf);
         observations.push(
           reusedAt
             ? {
-                ...observation,
+                ...timestampedObservation,
                 observedAt: reusedAt,
-                fields: observation.fields.map((field) => ({
+                fields: timestampedObservation.fields.map((field) => ({
                   ...field,
                   sourceTimestamp:
                     field.sourceTimestamp === request.asOf ? reusedAt : field.sourceTimestamp,
                 })),
               }
-            : observation,
+            : timestampedObservation,
         );
         sourceAttempts.push({
           adapterId: adapter.id,

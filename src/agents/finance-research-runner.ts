@@ -814,6 +814,11 @@ function qualityVerifier(decisionMode: FinanceDecisionMode): QualityHarnessVerif
       mode: decisionMode,
       ask: request.task,
       answer: artifact.answer,
+      candidateContext: {
+        evidence: request.evidence,
+        claims: artifact.claims,
+        supportingAnalysis: artifact.supportingAnalysis,
+      },
     });
     if (!policy.allowed) {
       return {
