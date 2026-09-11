@@ -104,8 +104,16 @@ export type LcxIdentityAuditResult = Readonly<{
   error?: string;
 }>;
 
+export type LcxIdentityMigrationSourceReceipt = Readonly<{
+  path: string;
+  exists: boolean;
+  hash: string | null;
+  bytes: number | null;
+}>;
+
 export type LcxIdentityWriteReceipt = Readonly<{
   pathContract: LcxIdentityWriterPathContract;
+  source: LcxIdentityMigrationSourceReceipt | null;
   previous: Readonly<{
     exists: boolean;
     hash: string | null;
@@ -158,6 +166,7 @@ export type LcxIdentityPathMoveReceipt = Readonly<{
 // migration primitive and do not fabricate a next-content hash.
 export type LcxIdentityConfigWriteReceipt = Readonly<{
   pathContract: LcxIdentityWriterPathContract;
+  source: LcxIdentityMigrationSourceReceipt | null;
   previous: LcxIdentityWriteReceipt["previous"];
   next: LcxIdentityWriteReceipt["next"];
   rollback: LcxIdentityWriteReceipt["rollback"];
@@ -503,6 +512,25 @@ export async function writeLcxIdentityMigrationCompletionMarker(params: {
       "LCX_IDENTITY_COMPLETION_TARGETS_INCOMPLETE",
     );
   }
+  const hasMigrationEvidence = [...receiptsByTarget.values()].some((receipt) => {
+    if (isRawMigrationReceipt(receipt)) {
+      return (
+        receipt.pathContract.readPath !== receipt.pathContract.writePath &&
+        receipt.source?.exists === true
+      );
+    }
+    // A path-move receipt proves that the compatibility object existed even
+    // though the successful rename intentionally removed the old path. The
+    // durable receipt verifier below also binds its inode/content to the
+    // canonical destination.
+    return "kind" in receipt.previous && receipt.previous.exists;
+  });
+  if (!hasMigrationEvidence) {
+    throw new LcxIdentityWriterContractError(
+      "Identity migration completion requires an observable compatibility source or durable path-move receipt",
+      "LCX_IDENTITY_COMPLETION_MIGRATION_UNPROVEN",
+    );
+  }
   const marker = Object.freeze({
     schemaVersion: 1 as const,
     canonicalStateDir: path.resolve(migrationPlan.canonicalStateDir),
@@ -523,6 +551,48 @@ function isRawMigrationReceipt(
   return "next" in receipt;
 }
 
+async function assertMigrationSourceReceipt(
+  receipt: LcxIdentityWriteReceipt | LcxIdentityConfigWriteReceipt,
+): Promise<void> {
+  const { pathContract, source } = receipt;
+  if (path.resolve(pathContract.readPath) === path.resolve(pathContract.writePath)) {
+    return;
+  }
+  if (
+    !source ||
+    path.resolve(source.path) !== path.resolve(pathContract.readPath) ||
+    (source.exists &&
+      (!/^[a-f0-9]{64}$/i.test(source.hash ?? "") ||
+        !Number.isInteger(source.bytes) ||
+        (source.bytes ?? -1) < 0)) ||
+    (!source.exists && (source.hash !== null || source.bytes !== null))
+  ) {
+    throw new LcxIdentityWriterContractError(
+      "Identity migration receipt is missing a valid compatibility source provenance for " +
+        pathContract.writer,
+      "LCX_IDENTITY_COMPLETION_SOURCE_MALFORMED",
+    );
+  }
+  const sourceRaw = await readOptionalRaw(source.path);
+  if ((sourceRaw !== null) !== source.exists) {
+    throw new LcxIdentityWriterContractError(
+      "Identity migration receipt compatibility source existence changed for " +
+        pathContract.writer,
+      "LCX_IDENTITY_COMPLETION_SOURCE_STALE",
+    );
+  }
+  if (
+    sourceRaw !== null &&
+    (hashRaw(sourceRaw) !== source.hash || Buffer.byteLength(sourceRaw, "utf8") !== source.bytes)
+  ) {
+    throw new LcxIdentityWriterContractError(
+      "Identity migration receipt compatibility source no longer matches for " +
+        pathContract.writer,
+      "LCX_IDENTITY_COMPLETION_SOURCE_STALE",
+    );
+  }
+}
+
 async function assertDurableMigrationReceipt(
   receipt: LcxIdentityMigrationWriterReceipt,
 ): Promise<void> {
@@ -533,6 +603,7 @@ async function assertDurableMigrationReceipt(
     );
   }
   if (isRawMigrationReceipt(receipt)) {
+    await assertMigrationSourceReceipt(receipt);
     if (
       !/^[a-f0-9]{64}$/i.test(receipt.next.hash) ||
       !Number.isInteger(receipt.next.bytes) ||
@@ -625,6 +696,17 @@ export async function writeLcxIdentityWriterRawWithReceipt(
   },
 ): Promise<LcxIdentityWriteReceipt> {
   assertLcxIdentityWriterPathContract(contract, options);
+  const sourceRaw =
+    contract.readPath === contract.writePath ? null : await readOptionalRaw(contract.readPath);
+  const source =
+    sourceRaw === null && contract.readPath === contract.writePath
+      ? null
+      : Object.freeze({
+          path: contract.readPath,
+          exists: sourceRaw !== null,
+          hash: sourceRaw === null ? null : hashRaw(sourceRaw),
+          bytes: sourceRaw === null ? null : Buffer.byteLength(sourceRaw, "utf8"),
+        });
   const previousRaw = await readOptionalRaw(contract.writePath);
   const previousExists = previousRaw !== null;
   const previousHash = previousExists ? hashRaw(previousRaw) : null;
@@ -639,6 +721,7 @@ export async function writeLcxIdentityWriterRawWithReceipt(
 
   const receipt = Object.freeze({
     pathContract: contract,
+    source,
     previous: Object.freeze({
       exists: previousExists,
       hash: previousHash,

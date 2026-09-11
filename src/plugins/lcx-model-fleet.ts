@@ -103,9 +103,15 @@ export default {
       reviewRequired: true,
       modelWeightAbsorbed: false,
     });
-    api.registerTool(createLocalSpecialistTool({ workspaceDir }));
-    api.registerTool(
-      createFinanceResearchRunTool({ workspaceDir, config: api.config, slotModels }),
+    api.registerTool((context) =>
+      createLocalSpecialistTool({ workspaceDir: context.workspaceDir ?? workspaceDir }),
+    );
+    api.registerTool((context) =>
+      createFinanceResearchRunTool({
+        workspaceDir: context.workspaceDir ?? workspaceDir,
+        config: context.config ?? api.config,
+        slotModels,
+      }),
     );
     api.registerTool({
       name: "lcx_model_roster",

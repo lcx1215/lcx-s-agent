@@ -7,6 +7,7 @@ import { spawnAcpDirect, type SpawnAcpContext, type SpawnAcpResult } from "../ac
 import { extractAssistantText, stripToolMessages } from "../tools/sessions-helpers.js";
 import {
   AppendOnlyCodingTrajectory,
+  sanitizeCodingHarnessText,
   summarizeTrajectoryText,
   type CodingHarnessTrajectoryProjection,
 } from "./trajectory.js";
@@ -109,11 +110,7 @@ type CodingHarnessDeps = {
 };
 
 function redactText(value: string): string {
-  return value
-    .replace(/(authorization\s*[:=]\s*)([^\s,;]+)/gi, "$1[redacted]")
-    .replace(/(bearer\s+)[^\s]+/gi, "$1[redacted]")
-    .replace(/(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]")
-    .slice(0, MAX_OUTPUT_CHARS);
+  return sanitizeCodingHarnessText(value).slice(0, MAX_OUTPUT_CHARS);
 }
 
 function normalizeOutput(value: unknown): string {
@@ -522,10 +519,11 @@ export async function runCodexCodingHarness(
         cwd,
         mode: "run",
         thread: false,
-        // ACP sessions run on the host and do not support sandbox="require".
-        // The clean named-worktree preflight and postflight attribution remain
-        // the harness boundary; use the supported inherited ACP mode here.
-        sandbox: "inherit",
+        // The coding harness requires a confined executor proof before any
+        // ACP session is created. The current direct ACP adapter rejects
+        // sandbox="require" before creating a session because it runs on the
+        // host; a future confined adapter may accept it and return "confined".
+        sandbox: "require",
       },
       input.context ?? {},
     );
@@ -965,6 +963,7 @@ export async function runCodexCodingHarness(
 
 export const __testing = {
   parseGitStatusPaths,
+  redactText,
   resolveChangedPathsSince,
   runSafeVerification,
 };

@@ -124,8 +124,16 @@ const resolvePluginSdkLineAlias = (): string | null => {
   return resolvePluginSdkAliasFile({ srcFile: "line.ts", distFile: "line.js" });
 };
 
+const resolvePluginSdkKeyedAsyncQueueAlias = (): string | null => {
+  return resolvePluginSdkAliasFile({
+    srcFile: "keyed-async-queue.ts",
+    distFile: "keyed-async-queue.js",
+  });
+};
+
 export const __testing = {
   resolvePluginSdkAliasFile,
+  resolvePluginSdkKeyedAsyncQueueAlias,
 };
 
 function buildCacheKey(params: {
@@ -508,6 +516,7 @@ export function loadOpenClawPlugins(options: PluginLoadOptions = {}): PluginRegi
     const pluginSdkIMessageAlias = resolvePluginSdkIMessageAlias();
     const pluginSdkWhatsAppAlias = resolvePluginSdkWhatsAppAlias();
     const pluginSdkLineAlias = resolvePluginSdkLineAlias();
+    const pluginSdkKeyedAsyncQueueAlias = resolvePluginSdkKeyedAsyncQueueAlias();
     const addPluginSdkAliases = (suffix: string, target: string | null) =>
       target
         ? {
@@ -526,6 +535,7 @@ export function loadOpenClawPlugins(options: PluginLoadOptions = {}): PluginRegi
       ...addPluginSdkAliases("/whatsapp", pluginSdkWhatsAppAlias),
       ...addPluginSdkAliases("/line", pluginSdkLineAlias),
       ...addPluginSdkAliases("/account-id", pluginSdkAccountIdAlias),
+      ...addPluginSdkAliases("/keyed-async-queue", pluginSdkKeyedAsyncQueueAlias),
     };
     jitiLoader = createJiti(import.meta.url, {
       interopDefault: true,
