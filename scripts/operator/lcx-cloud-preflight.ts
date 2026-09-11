@@ -153,7 +153,25 @@ export async function buildCloudPreflight(env: NodeJS.ProcessEnv = process.env) 
 
   const configDir = absolutePath(env.OPENCLAW_CONFIG_DIR);
   const workspaceDir = absolutePath(env.OPENCLAW_WORKSPACE_DIR);
-  if (configDir && workspaceDir && path.resolve(configDir) !== path.resolve(workspaceDir)) {
+  const workspaceIsNestedInConfig =
+    configDir !== undefined && workspaceDir !== undefined && pathWithin(configDir, workspaceDir);
+  const configDirOutsideState =
+    stateDir !== undefined && configDir !== undefined && !pathWithin(stateDir, configDir);
+  const workspaceDirOutsideState =
+    stateDir !== undefined && workspaceDir !== undefined && !pathWithin(stateDir, workspaceDir);
+  if (configDirOutsideState || workspaceDirOutsideState) {
+    checks.push({
+      id: "compose_mounts",
+      status: "fail",
+      detail:
+        "OPENCLAW_CONFIG_DIR and OPENCLAW_WORKSPACE_DIR must remain inside OPENCLAW_STATE_DIR; an external mount would create split-brain state.",
+    });
+  } else if (
+    configDir &&
+    workspaceDir &&
+    path.resolve(configDir) !== path.resolve(workspaceDir) &&
+    !workspaceIsNestedInConfig
+  ) {
     checks.push({
       id: "compose_mounts",
       status: "warn",
@@ -164,7 +182,9 @@ export async function buildCloudPreflight(env: NodeJS.ProcessEnv = process.env) 
     checks.push({
       id: "compose_mounts",
       status: "pass",
-      detail: "No split config/workspace mount was detected in the runtime environment.",
+      detail: workspaceIsNestedInConfig
+        ? "Workspace mount is nested under the canonical config root."
+        : "No split config/workspace mount was detected in the runtime environment.",
     });
   }
 

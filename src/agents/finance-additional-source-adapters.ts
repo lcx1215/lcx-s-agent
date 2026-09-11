@@ -37,13 +37,38 @@ function dayStartIso(value: unknown, label: string): string {
         : (() => {
             throw new AdditionalSourceAdapterError(`${label} must be a date string`);
           })();
-  const timestamp = Date.parse(day);
+  const dateOnly =
+    /^\d{4}-\d{2}-\d{2}$/u.test(day) ||
+    /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2}, \d{4}$/u.test(day);
+  const calendarMatch = day.match(
+    /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{1,2}), (\d{4})$/u,
+  );
+  const timestamp = calendarMatch
+    ? Date.UTC(
+        Number(calendarMatch[3]),
+        [
+          "Jan",
+          "Feb",
+          "Mar",
+          "Apr",
+          "May",
+          "Jun",
+          "Jul",
+          "Aug",
+          "Sep",
+          "Oct",
+          "Nov",
+          "Dec",
+        ].indexOf(calendarMatch[1]),
+        Number(calendarMatch[2]),
+      )
+    : Date.parse(dateOnly ? `${day}T00:00:00Z` : day);
   if (!Number.isFinite(timestamp)) {
     throw new AdditionalSourceAdapterError(`${label} must be an ISO date`);
   }
   const parsedDate = new Date(timestamp);
   return new Date(
-    Date.UTC(parsedDate.getFullYear(), parsedDate.getMonth(), parsedDate.getDate()),
+    Date.UTC(parsedDate.getUTCFullYear(), parsedDate.getUTCMonth(), parsedDate.getUTCDate()),
   ).toISOString();
 }
 

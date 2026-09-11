@@ -15,7 +15,13 @@ import { createFinanceQuotaGuard } from "./finance-source-quota.js";
 import { financeProviderId, financeQuotaGroupId } from "./finance-source-scheduler.js";
 
 export { financeProviderId } from "./finance-source-scheduler.js";
-type Observation = { asOf: string; status: string; packetStatus: string; receiptPath: string };
+type Observation = {
+  asOf: string;
+  dispatchedAt: string;
+  status: string;
+  packetStatus: string;
+  receiptPath: string;
+};
 
 type HealthReceipt = {
   schemaVersion?: unknown;
@@ -24,6 +30,30 @@ type HealthReceipt = {
   sourceAttempts?: unknown;
   status?: unknown;
 };
+
+function latestDispatchTime(attempt: unknown): number | undefined {
+  if (
+    !attempt ||
+    typeof attempt !== "object" ||
+    !("apiCalls" in attempt) ||
+    !Array.isArray((attempt as { apiCalls?: unknown }).apiCalls)
+  ) {
+    return undefined;
+  }
+  const dispatchTimes = (attempt as { apiCalls: unknown[] }).apiCalls.flatMap((call: unknown) => {
+    if (
+      !call ||
+      typeof call !== "object" ||
+      !("dispatchedAt" in call) ||
+      typeof call.dispatchedAt !== "string"
+    ) {
+      return [];
+    }
+    const timestamp = Date.parse(call.dispatchedAt);
+    return Number.isFinite(timestamp) ? [timestamp] : [];
+  });
+  return dispatchTimes.length > 0 ? Math.max(...dispatchTimes) : undefined;
+}
 
 /** Follow only canonical receipt envelopes, never arbitrary nested JSON or evaluation artifacts. */
 function unwrapHealthReceipts(value: unknown, depth = 0): HealthReceipt[] {
@@ -135,30 +165,22 @@ export async function inspectFinanceSourceHealth(options: {
             ) {
               continue;
             }
-            if (
-              Array.isArray(attempt.apiCalls) &&
-              !attempt.apiCalls.some(
-                (call: unknown) =>
-                  call &&
-                  typeof call === "object" &&
-                  "dispatchedAt" in call &&
-                  typeof call.dispatchedAt === "string" &&
-                  Number.isFinite(Date.parse(call.dispatchedAt)),
-              )
-            ) {
+            const dispatchedAtMs = latestDispatchTime(attempt);
+            if (dispatchedAtMs === undefined || dispatchedAtMs > inspectionTime) {
               continue;
             }
             const previous = latest.get(attempt.adapterId);
-            const previousTime = Date.parse(previous?.asOf ?? "");
+            const previousTime = Date.parse(previous?.dispatchedAt ?? "");
             // Equal timestamps cannot establish recovery; retain the failure conservatively.
             if (
-              previousTime > Date.parse(asOf) ||
-              (previousTime === Date.parse(asOf) && previous?.status === "failed")
+              previousTime > dispatchedAtMs ||
+              (previousTime === dispatchedAtMs && previous?.status === "failed")
             ) {
               continue;
             }
             latest.set(attempt.adapterId, {
               asOf,
+              dispatchedAt: new Date(dispatchedAtMs).toISOString(),
               status: attempt.status,
               packetStatus: receipt.status,
               receiptPath: file,
@@ -179,7 +201,7 @@ export async function inspectFinanceSourceHealth(options: {
   }).inspect();
   const routes = declared.map((adapter) => {
     const observation = latest.get(adapter.id);
-    const ageMs = observation ? inspectionTime - Date.parse(observation.asOf) : Infinity;
+    const ageMs = observation ? inspectionTime - Date.parse(observation.dispatchedAt) : Infinity;
     return {
       id: adapter.id,
       provider: financeProviderId(adapter.id),

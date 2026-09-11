@@ -33,6 +33,42 @@ describe("LCX cloud preflight", () => {
     });
   });
 
+  it("accepts the documented nested workspace mount under the config root", async () => {
+    await withCloudState(async (stateDir, configPath) => {
+      const result = await buildCloudPreflight({
+        LCX_CLOUD_RUNTIME: "1",
+        OPENCLAW_STATE_DIR: stateDir,
+        OPENCLAW_CONFIG_PATH: configPath,
+        OPENCLAW_CONFIG_DIR: stateDir,
+        OPENCLAW_WORKSPACE_DIR: path.join(stateDir, "workspace"),
+        OPENCLAW_GATEWAY_TOKEN: "test-gateway-token",
+        LCX_LOCAL_VISION_ENABLED: "0",
+      });
+      expect(result.status).toBe("ready");
+      expect(result.checks).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: "compose_mounts", status: "pass" })]),
+      );
+    });
+  });
+
+  it("blocks a workspace mount outside the canonical state root", async () => {
+    await withCloudState(async (stateDir, configPath) => {
+      const result = await buildCloudPreflight({
+        LCX_CLOUD_RUNTIME: "1",
+        OPENCLAW_STATE_DIR: stateDir,
+        OPENCLAW_CONFIG_PATH: configPath,
+        OPENCLAW_CONFIG_DIR: stateDir,
+        OPENCLAW_WORKSPACE_DIR: path.join(stateDir, "..", "workspace"),
+        OPENCLAW_GATEWAY_TOKEN: "test-gateway-token",
+        LCX_LOCAL_VISION_ENABLED: "0",
+      });
+      expect(result.status).toBe("blocked");
+      expect(result.checks).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: "compose_mounts", status: "fail" })]),
+      );
+    });
+  });
+
   it("blocks a split config root and placeholder gateway secret", async () => {
     await withCloudState(async (stateDir) => {
       const result = await buildCloudPreflight({

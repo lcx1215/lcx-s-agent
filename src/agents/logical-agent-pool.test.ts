@@ -493,6 +493,46 @@ describe("logical agent pool", () => {
     expect(pool.status.activeRuns).toBe(0);
   });
 
+  it("cancels a queued task before it starts", async () => {
+    const pool = new LogicalAgentPool({ maxConcurrency: 1, taskTimeoutMs: 1_000 });
+    let releaseFirst!: () => void;
+    const firstFinished = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const first = pool.submit(
+      { id: "queue-first", agentId: "data_cleaning", input: { ask: "first" } },
+      async () => {
+        await firstFinished;
+        return { output: "first", sideEffects: [] };
+      },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const controller = new AbortController();
+    let secondStarted = false;
+    const second = pool.submit(
+      { id: "queue-second", agentId: "news_classification", input: { ask: "second" } },
+      async () => {
+        secondStarted = true;
+        return { output: "second", sideEffects: [] };
+      },
+      {},
+      {},
+      "queue-second-correlation",
+      controller.signal,
+    );
+    controller.abort();
+
+    const secondResult = await second;
+    expect(secondResult.status).toBe("failed");
+    expect(secondResult.error).toContain("cancelled before start");
+    expect(secondStarted).toBe(false);
+    expect(pool.status.queuedRuns).toBe(0);
+
+    releaseFirst();
+    expect((await first).status).toBe("completed");
+    expect(pool.status.activeRuns).toBe(0);
+  });
+
   it("contains exceptions raised by abort listeners", async () => {
     const pool = new LogicalAgentPool({ taskTimeoutMs: 5 });
     const result = await runLogicalAgentPlan({

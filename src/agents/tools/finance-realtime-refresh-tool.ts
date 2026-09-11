@@ -72,7 +72,7 @@ export function createFinanceRealtimeRefreshTool(options?: {
     description:
       "Inspect or explicitly fetch an authorized public finance source through the preferred/fallback registry, then pass the result into the canonical finance data gateway. Live fetching is opt-in, delayed data is labeled, and missing cross-check evidence remains blocked.",
     parameters: FinanceRealtimeRefreshSchema,
-    execute: async (_toolCallId, args) => {
+    execute: async (_toolCallId, args, callerSignal) => {
       const params = args as {
         instrument: string;
         assetClass: string;
@@ -138,7 +138,9 @@ export function createFinanceRealtimeRefreshTool(options?: {
           adapters,
           maxSources: params.maxSources,
           timeoutMs: params.timeoutMs,
+          signal: callerSignal,
         });
+        callerSignal?.throwIfAborted();
         const receiptPath = params.writeReceipt
           ? await writeReceipt(workspaceDir, request.instrument, receipt)
           : undefined;

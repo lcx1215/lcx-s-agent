@@ -13,7 +13,7 @@ const receipt = (adapterId: string, asOf = "2026-09-09T03:00:00Z") => ({
   adaptersCalled: true,
   request: { asOf },
   status: "ready",
-  sourceAttempts: [{ adapterId, status: "succeeded" }],
+  sourceAttempts: [{ adapterId, status: "succeeded", apiCalls: [{ dispatchedAt: asOf }] }],
 });
 async function setup(files: Record<string, unknown>) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "source-health-"));
@@ -54,7 +54,13 @@ describe("finance source health evidence envelopes", () => {
         details: {
           ...receipt("gdelt_public_news_titles", "2026-09-09T03:30:00Z"),
           status: "blocked",
-          sourceAttempts: [{ adapterId: "gdelt_public_news_titles", status: "failed" }],
+          sourceAttempts: [
+            {
+              adapterId: "gdelt_public_news_titles",
+              status: "failed",
+              apiCalls: [{ dispatchedAt: "2026-09-09T03:30:00Z" }],
+            },
+          ],
         },
       },
       dry: { networkCalled: false, details: receipt("google_news_rss") },
@@ -76,7 +82,13 @@ describe("finance source health evidence envelopes", () => {
       failure: {
         ...receipt("gdelt_public_news"),
         status: "blocked",
-        sourceAttempts: [{ adapterId: "gdelt_public_news", status: "failed" }],
+        sourceAttempts: [
+          {
+            adapterId: "gdelt_public_news",
+            status: "failed",
+            apiCalls: [{ dispatchedAt: "2026-09-09T03:00:00Z" }],
+          },
+        ],
       },
     });
     expect(health.routes.find((r) => r.id === "gdelt_public_news")?.callState).toBe(
@@ -90,7 +102,13 @@ describe("finance source health evidence envelopes", () => {
       const failure = {
         ...success,
         status: "blocked",
-        sourceAttempts: [{ adapterId: "gdelt_public_news", status: "failed" }],
+        sourceAttempts: [
+          {
+            adapterId: "gdelt_public_news",
+            status: "failed",
+            apiCalls: [{ dispatchedAt: "2026-09-09T03:00:00Z" }],
+          },
+        ],
       };
       const health = await setup({
         a: failureFirst ? failure : success,
@@ -105,7 +123,14 @@ describe("finance source health evidence envelopes", () => {
     const health = await setup({
       mixed: {
         ...receipt("gdelt_public_news"),
-        sourceAttempts: [null, { adapterId: "gdelt_public_news", status: "failed" }],
+        sourceAttempts: [
+          null,
+          {
+            adapterId: "gdelt_public_news",
+            status: "failed",
+            apiCalls: [{ dispatchedAt: "2026-09-09T03:00:00Z" }],
+          },
+        ],
       },
     });
     expect(health.routes.find((r) => r.id === "gdelt_public_news")?.callState).toBe(
@@ -118,7 +143,13 @@ it("does not turn cache reads or locally rejected dispatch into recovered provid
   const health = await setup({
     old: {
       ...receipt("gdelt_public_news", "2026-09-09T02:00:00Z"),
-      sourceAttempts: [{ adapterId: "gdelt_public_news", status: "failed" }],
+      sourceAttempts: [
+        {
+          adapterId: "gdelt_public_news",
+          status: "failed",
+          apiCalls: [{ dispatchedAt: "2026-09-09T02:00:00Z" }],
+        },
+      ],
     },
     cached: {
       ...receipt("gdelt_public_news"),
@@ -141,6 +172,34 @@ it("does not turn cache reads or locally rejected dispatch into recovered provid
     "recent_failure",
   );
   expect(health.responseReuse.scope).toBe("process_local");
+});
+
+it("uses verified dispatch time for freshness and rejects success without dispatch proof", async () => {
+  const health = await setup({
+    recent: {
+      ...receipt("gdelt_public_news", "2026-01-01T00:00:00Z"),
+      sourceAttempts: [
+        {
+          adapterId: "gdelt_public_news",
+          status: "succeeded",
+          apiCalls: [{ dispatchedAt: "2026-09-09T03:30:00Z" }],
+        },
+      ],
+    },
+    noProof: {
+      ...receipt("google_news_rss", "2026-09-09T03:00:00Z"),
+      sourceAttempts: [{ adapterId: "google_news_rss", status: "succeeded" }],
+    },
+  });
+  expect(health.routes.find((route) => route.id === "gdelt_public_news")?.callState).toBe(
+    "recent_success",
+  );
+  expect(health.routes.find((route) => route.id === "google_news_rss")?.callState).toBe(
+    "unverified",
+  );
+  expect(health.routes.find((route) => route.id === "gdelt_public_news")?.lastObservation).toEqual(
+    expect.objectContaining({ dispatchedAt: "2026-09-09T03:30:00.000Z" }),
+  );
 });
 
 it("projects DOC, title-file and public FRED quotas onto their own routes", async () => {

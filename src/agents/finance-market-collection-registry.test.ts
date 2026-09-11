@@ -308,6 +308,50 @@ describe("finance market collection registry", () => {
     expect(fred[0]?.sourceUrlOrArtifact).not.toContain("fred-secret");
   });
 
+  it("maps the BLS annual-average period to the end of its observation year", async () => {
+    const adapter = createBlsMacroSeriesCollectionAdapter({
+      fetchImpl: async () =>
+        ({
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify({
+              status: "REQUEST_SUCCEEDED",
+              Results: {
+                series: [
+                  {
+                    seriesID: "CUSR0000SA0",
+                    data: [{ year: "2026", period: "M13", value: "321.5" }],
+                  },
+                ],
+              },
+            }),
+        }) as Awaited<ReturnType<FetchImpl>>,
+    });
+    const records = await adapter.collect(MACRO_REQUEST, new AbortController().signal);
+    expect(records[0]?.sourceTimestamp).toBe("2026-12-31T00:00:00.000Z");
+  });
+
+  it("rejects unsupported BLS observation periods instead of inventing a January date", async () => {
+    const adapter = createBlsMacroSeriesCollectionAdapter({
+      fetchImpl: async () =>
+        ({
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify({
+              status: "REQUEST_SUCCEEDED",
+              Results: {
+                series: [{ seriesID: "CUSR0000SA0", data: [{ year: "2026", period: "A01" }] }],
+              },
+            }),
+        }) as Awaited<ReturnType<FetchImpl>>,
+    });
+    await expect(adapter.collect(MACRO_REQUEST, new AbortController().signal)).rejects.toThrow(
+      "unsupported BLS observation period",
+    );
+  });
+
   it("collects official Treasury average rates and SEC filing metadata", async () => {
     const rates = await createTreasuryAverageInterestRatesCollectionAdapter({
       fetchImpl: fakeFetch,

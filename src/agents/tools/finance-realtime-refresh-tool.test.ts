@@ -61,11 +61,42 @@ describe("finance_realtime_source_refresh tool", () => {
       expect.objectContaining({
         status: "blocked",
         receiptPath: expect.stringContaining("memory/finance-data-gateway/realtime/"),
-        missingEvidence: expect.arrayContaining(["cross_check_market_data_provider"]),
+        missingEvidence: expect.arrayContaining(["successful_finance_source_observation"]),
         notTouched: expect.arrayContaining(["trading_execution"]),
       }),
     );
     const receiptPath = (result.details as { receiptPath: string }).receiptPath;
     await expect(fs.stat(path.join(workspaceDir, receiptPath))).resolves.toBeDefined();
+  });
+
+  it("forwards a pre-aborted caller signal without dispatching a source request", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "finance-realtime-cancelled-"));
+    let fetchCalls = 0;
+    const fetchImpl: FetchImpl = async () => {
+      fetchCalls += 1;
+      return { ok: true, status: 200, text: async () => quoteBody };
+    };
+    const controller = new AbortController();
+    controller.abort(new Error("platform cancelled"));
+    try {
+      const tool = createFinanceRealtimeRefreshTool({ workspaceDir, fetchImpl });
+      await expect(
+        tool.execute(
+          "cancelled",
+          {
+            instrument: "QQQ",
+            assetClass: "etf",
+            useCase: "tool_live_research",
+            liveFetch: true,
+            writeReceipt: true,
+          },
+          controller.signal,
+        ),
+      ).rejects.toThrow("platform cancelled");
+      expect(fetchCalls).toBe(0);
+      await expect(fs.stat(path.join(workspaceDir, "memory"))).rejects.toThrow();
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
   });
 });

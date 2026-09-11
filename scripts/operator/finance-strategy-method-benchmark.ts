@@ -82,10 +82,14 @@ function parseOptions(args: readonly string[]) {
   if (!fromDateValue) {
     fromDate.setUTCFullYear(fromDate.getUTCFullYear() - 3);
   }
-  const symbols = (valueAfter(args, "--symbols") ?? DEFAULT_SYMBOLS.join(","))
-    .split(",")
-    .map((value) => value.trim().toUpperCase())
-    .filter(Boolean);
+  const symbols = [
+    ...new Set(
+      (valueAfter(args, "--symbols") ?? DEFAULT_SYMBOLS.join(","))
+        .split(",")
+        .map((value) => value.trim().toUpperCase())
+        .filter(Boolean),
+    ),
+  ];
   const lookback = Number(valueAfter(args, "--lookback") ?? DEFAULT_LOOKBACK);
   const costBps = Number(valueAfter(args, "--cost-bps") ?? DEFAULT_COST_BPS);
   const breadth = Number(valueAfter(args, "--breadth") ?? DEFAULT_BREADTH);
@@ -108,7 +112,7 @@ function parseOptions(args: readonly string[]) {
     asOf: asOf.toISOString(),
     fromDate: isoDate(fromDate),
     toDate,
-    symbols: Object.freeze([...new Set(symbols)]),
+    symbols: Object.freeze(symbols),
     lookback,
     costBps,
     breadth,
@@ -157,7 +161,8 @@ function summarize(dailyReturns: readonly number[], positions: readonly number[]
     maxDrawdown = Math.min(maxDrawdown, equity / peak - 1);
   }
   const years = dailyReturns.length / 252;
-  const turnover = positions
+  const turnoverPositions = positions.at(-1) === 1 ? [...positions, 0] : positions;
+  const turnover = turnoverPositions
     .slice(1)
     .reduce((sum, position, index) => sum + Math.abs(position - positions[index]), 0);
   return {
@@ -529,4 +534,4 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     });
 }
 
-export const __test = { evaluateSeries, summarize, periodMetrics };
+export const __test = { evaluateSeries, summarize, periodMetrics, parseOptions };

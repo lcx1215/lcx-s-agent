@@ -602,7 +602,10 @@ function macroItem(
 function blsObservationDate(year: unknown, period: unknown): string {
   const yearText = textValue(year);
   const periodText = textValue(period);
-  if (/^M\d{2}$/u.test(periodText)) {
+  if (periodText === "M13") {
+    return isoDate(`${yearText}-12-31`, "BLS annual-average observation date");
+  }
+  if (/^M(?:0[1-9]|1[0-2])$/u.test(periodText)) {
     return isoDate(`${yearText}-${periodText.slice(1)}-01`, "BLS observation date");
   }
   if (
@@ -614,7 +617,9 @@ function blsObservationDate(year: unknown, period: unknown): string {
     const month = (Number(periodText.slice(2)) - 1) * 3 + 1;
     return isoDate(`${yearText}-${String(month).padStart(2, "0")}-01`, "BLS observation date");
   }
-  return isoDate(`${yearText}-01-01`, "BLS observation date");
+  throw new FinanceMarketCollectionAdapterError(
+    `unsupported BLS observation period: ${periodText}`,
+  );
 }
 
 export function createBlsMacroSeriesCollectionAdapter(

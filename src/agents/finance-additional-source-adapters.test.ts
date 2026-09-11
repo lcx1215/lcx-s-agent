@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createAlphaVantageMarketAdapter,
   createInvescoIssuerReferenceAdapter,
@@ -10,6 +10,8 @@ import {
   parseStooqDailyCsv,
 } from "./finance-additional-source-adapters.js";
 import type { FetchImpl } from "./finance-live-market-source.js";
+
+vi.stubEnv("LCX_ENABLE_YAHOO_PUBLIC_SOURCE", "1");
 
 const REQUEST = {
   instrument: "QQQ",
@@ -150,4 +152,8 @@ it("parses observed Nasdaq ET intraday timestamps with summer and winter offsets
   expect(parseNasdaqTradeTimestamp("Jan 8, 2026 4:00 PM ET")).toBe("2026-01-08T21:00:00.000Z");
   expect(() => parseNasdaqTradeTimestamp("Nov 1, 2026 1:30 AM ET")).toThrow("ambiguous");
   expect(() => parseNasdaqTradeTimestamp("Mar 8, 2026 2:30 AM ET")).toThrow("invalid");
+});
+
+it("anchors date-only Nasdaq timestamps to the UTC calendar date", () => {
+  expect(parseNasdaqTradeTimestamp("2026-01-02")).toBe("2026-01-02T00:00:00.000Z");
 });

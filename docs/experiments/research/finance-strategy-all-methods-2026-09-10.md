@@ -22,8 +22,11 @@ title: "Finance Strategy All Methods 2026-09-10"
 # 在 trader-strategies-20260909 研究包根目录执行
 python experiments/run_strategy_tests.py --refresh
 python experiments/run_real_market_tests.py --no-refresh
-# 回到 lcx-s-agent 仓库根目录后执行
-pnpm lcx:finance:strategy-all-methods -- --out .artifacts/finance-strategy/all-methods-20260910.json
+# 回到 lcx-s-agent 仓库根目录后执行；两个输入根都要显式指定
+pnpm lcx:finance:strategy-all-methods -- \
+  --input-root .artifacts/finance-strategy \
+  --research-root /path/to/trader-strategies-20260909 \
+  --out .artifacts/finance-strategy/all-methods-20260910.json
 ```
 
 ## 覆盖和结果

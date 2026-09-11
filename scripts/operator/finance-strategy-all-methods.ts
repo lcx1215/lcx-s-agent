@@ -57,11 +57,22 @@ type AllMethodsReceipt = Readonly<{
   }>;
 }>;
 
+type AllMethodsReceiptOptions = Readonly<{
+  inputRoot?: string;
+  researchRoot?: string;
+}>;
+
+type CliOptions = Readonly<
+  AllMethodsReceiptOptions & {
+    out?: string;
+  }
+>;
+
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "../..");
-const EXTERNAL_ROOT =
-  process.env.LCX_TRADER_STRATEGY_RESEARCH_ROOT ??
-  path.resolve(REPO_ROOT, "../../.codex/research/trader-strategies-20260909");
+const CONFIGURED_RESEARCH_ROOT = process.env.LCX_TRADER_STRATEGY_RESEARCH_ROOT?.trim()
+  ? path.resolve(process.env.LCX_TRADER_STRATEGY_RESEARCH_ROOT)
+  : undefined;
 
 function asObject(value: unknown, label: string): JsonObject {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -71,7 +82,17 @@ function asObject(value: unknown, label: string): JsonObject {
 }
 
 async function readJson(filePath: string): Promise<JsonObject> {
-  return asObject(JSON.parse(await fs.readFile(filePath, "utf8")), filePath);
+  try {
+    return asObject(JSON.parse(await fs.readFile(filePath, "utf8")), filePath);
+  } catch (error: unknown) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      throw new Error(
+        `required strategy input is missing: ${filePath}; provide a generated receipt`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
 }
 
 function requiredObject(value: unknown, label: string): JsonObject {
@@ -98,9 +119,15 @@ function sourceGroupReady(receipts: JsonObject): boolean {
   );
 }
 
-function artifactLabel(filePath: string): string {
-  if (path.resolve(filePath).startsWith(`${EXTERNAL_ROOT}${path.sep}`)) {
-    return `external-research/${path.relative(EXTERNAL_ROOT, filePath)}`;
+function artifactLabel(filePath: string, researchRoot?: string): string {
+  if (researchRoot) {
+    const relativeToResearch = path.relative(path.resolve(researchRoot), path.resolve(filePath));
+    if (
+      relativeToResearch === "" ||
+      (!relativeToResearch.startsWith("..") && !path.isAbsolute(relativeToResearch))
+    ) {
+      return `external-research/${relativeToResearch}`;
+    }
   }
   return path.relative(REPO_ROOT, filePath) || filePath;
 }
@@ -193,6 +220,8 @@ function buildMethods(
   m07: JsonObject,
   realSummary: JsonObject,
   realResults: Readonly<Record<string, JsonObject>>,
+  researchRoot: string = CONFIGURED_RESEARCH_ROOT ?? REPO_ROOT,
+  inputRoot: string = REPO_ROOT,
 ): readonly MethodReceipt[] {
   const benchmarkChecks = requiredObject(benchmark.checks, "benchmark.checks");
   const benchmarkPortfolio = requiredObject(benchmark.portfolio, "benchmark.portfolio");
@@ -234,13 +263,10 @@ function buildMethods(
     throw new Error("real_market_summary.tests must be an array");
   }
 
-  const localBenchmark = artifactLabel(
-    path.join(REPO_ROOT, ".artifacts/finance-strategy/benchmark-20260910.json"),
-  );
-  const localStress = artifactLabel(
-    path.join(REPO_ROOT, ".artifacts/finance-strategy/stress-matrix-12us-20260910.json"),
-  );
-  const external = (name: string) => path.join(EXTERNAL_ROOT, name);
+  const artifact = (filePath: string) => artifactLabel(filePath, researchRoot);
+  const localBenchmark = artifact(path.join(inputRoot, "benchmark-20260910.json"));
+  const localStress = artifact(path.join(inputRoot, "stress-matrix-12us-20260910.json"));
+  const external = (name: string) => path.join(researchRoot, name);
 
   const m02Portfolio = requiredObject(
     benchmarkPortfolio.trend_breadth_gate,
@@ -296,7 +322,7 @@ function buildMethods(
       "M02",
       "real_market_backtest",
       `${requiredText(benchmarkData.fromDate, "benchmarkData.fromDate")}..${requiredText(benchmarkData.toDate, "benchmarkData.toDate")}`,
-      [localBenchmark, localStress, artifactLabel(external("experiments/m02_results.json"))],
+      [localBenchmark, localStress, artifact(external("experiments/m02_results.json"))],
       [requiredText(benchmarkData.source, "benchmarkData.source"), "Yahoo Finance chart API"],
       "research_candidate",
       localSourcesReady && strategySourcesReady,
@@ -315,8 +341,8 @@ function buildMethods(
       "real_market_diagnostic",
       sourceWindow(real("M03"), "2018-01-03..2026-09-08"),
       [
-        artifactLabel(external("experiments/real_market/m03_real_market.json")),
-        artifactLabel(external("experiments/real_market/real_market_summary.json")),
+        artifact(external("experiments/real_market/m03_real_market.json")),
+        artifact(external("experiments/real_market/real_market_summary.json")),
       ],
       ["Yahoo Finance chart API"],
       requiredText(real("M03").stage, "M03.stage"),
@@ -333,8 +359,8 @@ function buildMethods(
       "real_market_diagnostic",
       sourceWindow(real("M04"), "2018-02-28..2026-09-09"),
       [
-        artifactLabel(external("experiments/real_market/m04_real_market.json")),
-        artifactLabel(external("experiments/real_market/real_market_summary.json")),
+        artifact(external("experiments/real_market/m04_real_market.json")),
+        artifact(external("experiments/real_market/real_market_summary.json")),
       ],
       ["Yahoo Finance chart API"],
       requiredText(real("M04").stage, "M04.stage"),
@@ -351,8 +377,8 @@ function buildMethods(
       "real_market_backtest",
       sourceWindow(m05, "2005-01-01..2026-09-09"),
       [
-        artifactLabel(external("experiments/m05_results.json")),
-        artifactLabel(external("experiments/manifest.json")),
+        artifact(external("experiments/m05_results.json")),
+        artifact(external("experiments/manifest.json")),
       ],
       ["Yahoo Finance chart API"],
       requiredText(m05.stage, "m05.stage"),
@@ -375,8 +401,8 @@ function buildMethods(
       "real_market_backtest",
       sourceWindow(m06, "2005-01-01..2026-09-09"),
       [
-        artifactLabel(external("experiments/m06_results.json")),
-        artifactLabel(external("experiments/manifest.json")),
+        artifact(external("experiments/m06_results.json")),
+        artifact(external("experiments/manifest.json")),
       ],
       ["Yahoo Finance chart API"],
       requiredText(m06.stage, "m06.stage"),
@@ -396,8 +422,8 @@ function buildMethods(
       "real_market_diagnostic",
       sourceWindow(m07, "2005-01-01..2026-09-09"),
       [
-        artifactLabel(external("experiments/m07_diagnostic.json")),
-        artifactLabel(external("experiments/manifest.json")),
+        artifact(external("experiments/m07_diagnostic.json")),
+        artifact(external("experiments/manifest.json")),
       ],
       ["Yahoo Finance chart API"],
       requiredText(m07.stage, "m07.stage"),
@@ -416,8 +442,8 @@ function buildMethods(
       "real_market_diagnostic",
       sourceWindow(real("M08"), "2018-01-03..2026-09-09"),
       [
-        artifactLabel(external("experiments/real_market/m08_real_market.json")),
-        artifactLabel(external("experiments/real_market/real_market_summary.json")),
+        artifact(external("experiments/real_market/m08_real_market.json")),
+        artifact(external("experiments/real_market/real_market_summary.json")),
       ],
       ["Yahoo Finance chart API"],
       requiredText(real("M08").stage, "M08.stage"),
@@ -431,8 +457,8 @@ function buildMethods(
       "real_market_diagnostic",
       "2025-03-07..2026-06-22 announced events",
       [
-        artifactLabel(external("experiments/real_market/m09_real_market.json")),
-        artifactLabel(external("experiments/real_market/real_market_summary.json")),
+        artifact(external("experiments/real_market/m09_real_market.json")),
+        artifact(external("experiments/real_market/real_market_summary.json")),
       ],
       ["S&P Global official announcements", "Yahoo Finance chart API"],
       requiredText(real("M09").stage, "M09.stage"),
@@ -446,8 +472,8 @@ function buildMethods(
       "real_market_diagnostic",
       requiredText(real("M10").quote_timestamp ?? "2026-09-10 snapshot", "M10.quote_timestamp"),
       [
-        artifactLabel(external("experiments/real_market/m10_real_market.json")),
-        artifactLabel(external("experiments/real_market/real_market_summary.json")),
+        artifact(external("experiments/real_market/m10_real_market.json")),
+        artifact(external("experiments/real_market/real_market_summary.json")),
       ],
       ["Cboe delayed options quote API"],
       requiredText(real("M10").stage, "M10.stage"),
@@ -461,8 +487,8 @@ function buildMethods(
       "real_market_diagnostic",
       requiredText(real("M11").quote_timestamp ?? "2026-09-10 snapshot", "M11.quote_timestamp"),
       [
-        artifactLabel(external("experiments/real_market/m11_real_market.json")),
-        artifactLabel(external("experiments/real_market/real_market_summary.json")),
+        artifact(external("experiments/real_market/m11_real_market.json")),
+        artifact(external("experiments/real_market/real_market_summary.json")),
       ],
       ["Cboe delayed options quote API"],
       requiredText(real("M11").stage, "M11.stage"),
@@ -500,28 +526,45 @@ function buildMethods(
   return Object.freeze(receipts);
 }
 
-export async function buildAllMethodsReceipt(): Promise<AllMethodsReceipt> {
-  const benchmarkPath = path.join(REPO_ROOT, ".artifacts/finance-strategy/benchmark-20260910.json");
-  const stressPath = path.join(
-    REPO_ROOT,
-    ".artifacts/finance-strategy/stress-matrix-12us-20260910.json",
+function configuredRoot(value: string | undefined, environment: string, label: string): string {
+  const raw = value?.trim() || process.env[environment]?.trim();
+  if (!raw) {
+    throw new Error(`${label} is required; pass it explicitly or set ${environment}`);
+  }
+  return path.resolve(raw);
+}
+
+export async function buildAllMethodsReceipt(
+  options: AllMethodsReceiptOptions = {},
+): Promise<AllMethodsReceipt> {
+  const inputRoot = configuredRoot(
+    options.inputRoot,
+    "LCX_FINANCE_STRATEGY_INPUT_ROOT",
+    "finance strategy input root",
   );
-  const strategyManifestPath = path.join(EXTERNAL_ROOT, "experiments/manifest.json");
+  const researchRoot = configuredRoot(
+    options.researchRoot,
+    "LCX_TRADER_STRATEGY_RESEARCH_ROOT",
+    "trader strategy research root",
+  );
+  const benchmarkPath = path.join(inputRoot, "benchmark-20260910.json");
+  const stressPath = path.join(inputRoot, "stress-matrix-12us-20260910.json");
+  const strategyManifestPath = path.join(researchRoot, "experiments/manifest.json");
   const [benchmark, stress, strategyManifest, m02, m05, m06, m07, realSummary, ...realResults] =
     await Promise.all([
       readJson(benchmarkPath),
       readJson(stressPath),
       readJson(strategyManifestPath),
-      readJson(path.join(EXTERNAL_ROOT, "experiments/m02_results.json")),
-      readJson(path.join(EXTERNAL_ROOT, "experiments/m05_results.json")),
-      readJson(path.join(EXTERNAL_ROOT, "experiments/m06_results.json")),
-      readJson(path.join(EXTERNAL_ROOT, "experiments/m07_diagnostic.json")),
-      readJson(path.join(EXTERNAL_ROOT, "experiments/real_market/real_market_summary.json")),
+      readJson(path.join(researchRoot, "experiments/m02_results.json")),
+      readJson(path.join(researchRoot, "experiments/m05_results.json")),
+      readJson(path.join(researchRoot, "experiments/m06_results.json")),
+      readJson(path.join(researchRoot, "experiments/m07_diagnostic.json")),
+      readJson(path.join(researchRoot, "experiments/real_market/real_market_summary.json")),
       ...STRATEGY_METHOD_IDS.filter((id) =>
         ["M03", "M04", "M08", "M09", "M10", "M11"].includes(id),
       ).map((id) =>
         readJson(
-          path.join(EXTERNAL_ROOT, `experiments/real_market/${id.toLowerCase()}_real_market.json`),
+          path.join(researchRoot, `experiments/real_market/${id.toLowerCase()}_real_market.json`),
         ),
       ),
     ]);
@@ -538,6 +581,8 @@ export async function buildAllMethodsReceipt(): Promise<AllMethodsReceipt> {
     m07,
     realSummary,
     realById,
+    researchRoot,
+    inputRoot,
   );
   const checks = Object.freeze({
     completeCatalog:
@@ -571,30 +616,47 @@ export async function buildAllMethodsReceipt(): Promise<AllMethodsReceipt> {
   });
 }
 
+function parseCliOptions(args: readonly string[]): CliOptions {
+  const options: { inputRoot?: string; researchRoot?: string; out?: string } = {};
+  for (let index = 0; index < args.length; index += 2) {
+    const flag = args[index];
+    const value = args[index + 1];
+    if (
+      (flag !== "--input-root" && flag !== "--research-root" && flag !== "--out") ||
+      !value?.trim() ||
+      value.startsWith("--")
+    ) {
+      throw new Error(
+        "Usage: finance-strategy-all-methods --input-root PATH --research-root PATH [--out PATH]",
+      );
+    }
+    if (flag === "--input-root") {
+      options.inputRoot = path.resolve(value);
+    } else if (flag === "--research-root") {
+      options.researchRoot = path.resolve(value);
+    } else {
+      options.out = path.resolve(value);
+    }
+  }
+  return options;
+}
+
 function parseOutputPath(args: readonly string[]): string | undefined {
-  if (args.length === 0) {
-    return undefined;
-  }
-  if (args.length !== 2 || args[0] !== "--out" || !args[1]?.trim() || args[1].startsWith("--")) {
-    throw new Error(
-      "Usage: finance-strategy-all-methods [--out PATH]; default writes JSON to stdout only",
-    );
-  }
-  return path.resolve(args[1]);
+  return parseCliOptions(args).out;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   Promise.resolve()
     .then(async () => {
-      const outputPath = parseOutputPath(process.argv.slice(2));
-      const receipt = await buildAllMethodsReceipt();
+      const options = parseCliOptions(process.argv.slice(2));
+      const receipt = await buildAllMethodsReceipt(options);
       const json = `${JSON.stringify(receipt, null, 2)}\n`;
-      if (outputPath) {
-        await fs.writeFile(outputPath, json, "utf8");
+      if (options.out) {
+        await fs.writeFile(options.out, json, "utf8");
       }
       process.stdout.write(
-        outputPath
-          ? `all_method_receipt_ok methods=${receipt.methodCount} output=${outputPath}\n`
+        options.out
+          ? `all_method_receipt_ok methods=${receipt.methodCount} output=${options.out}\n`
           : json,
       );
     })
@@ -606,4 +668,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     });
 }
 
-export const __test = { buildMethods, requiredText, sourceGroupReady, parseOutputPath };
+export const __test = {
+  buildMethods,
+  requiredText,
+  sourceGroupReady,
+  parseOutputPath,
+  parseCliOptions,
+};

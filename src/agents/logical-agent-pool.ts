@@ -397,6 +397,7 @@ type QueueJob<TInput, TResult> = {
   correlationId: string;
   signal?: AbortSignal;
   resolve: (result: LogicalAgentTaskResult<TResult>) => void;
+  onStart?: () => void;
 };
 
 type ModelInvocationJob = {
@@ -532,7 +533,9 @@ export class LogicalAgentPool<TInput, TResult> {
     const taskSnapshot = snapshotTask(task);
     const dependencySnapshot = snapshotDependencyResults(dependencyResults);
     return new Promise((resolve) => {
-      this.#queue.push({
+      let queued = true;
+      let cancelQueued: () => void = () => {};
+      const job: QueueJob<TInput, TResult> = {
         task: taskSnapshot,
         sharedContext: cloneAndFreeze(sharedContext),
         dependencyResults: dependencySnapshot,
@@ -540,7 +543,46 @@ export class LogicalAgentPool<TInput, TResult> {
         correlationId,
         signal,
         resolve,
-      });
+        onStart: () => {
+          queued = false;
+          signal?.removeEventListener("abort", cancelQueued);
+        },
+      };
+      cancelQueued = () => {
+        if (!queued) {
+          return;
+        }
+        const index = this.#queue.indexOf(job);
+        if (index < 0) {
+          return;
+        }
+        this.#queue.splice(index, 1);
+        queued = false;
+        signal?.removeEventListener("abort", cancelQueued);
+        resolve(
+          failedTaskResult<TResult>(
+            taskSnapshot,
+            this.#config.modelId,
+            Date.now(),
+            new Error("logical-agent task cancelled before start"),
+          ),
+        );
+        this.#pump();
+      };
+      if (signal?.aborted) {
+        queued = false;
+        resolve(
+          failedTaskResult<TResult>(
+            taskSnapshot,
+            this.#config.modelId,
+            Date.now(),
+            new Error("logical-agent task cancelled before start"),
+          ),
+        );
+        return;
+      }
+      signal?.addEventListener("abort", cancelQueued, { once: true });
+      this.#queue.push(job);
       this.#pump();
     });
   }
@@ -551,6 +593,7 @@ export class LogicalAgentPool<TInput, TResult> {
       if (!job) {
         return;
       }
+      job.onStart?.();
       this.#activeRuns += 1;
       this.#maxObservedConcurrency = Math.max(this.#maxObservedConcurrency, this.#activeRuns);
       const startedAt = Date.now();

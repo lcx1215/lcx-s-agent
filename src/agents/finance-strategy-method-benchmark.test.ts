@@ -44,6 +44,33 @@ describe("finance strategy method benchmark math", () => {
     expect(Object.isFrozen(variants)).toBe(true);
     expect(Object.isFrozen(variants[0])).toBe(true);
   });
+
+  it("requires three distinct instruments after symbol deduplication", () => {
+    expect(() => __test.parseOptions(["--symbols", "AAPL,AAPL,MSFT"])).toThrow(
+      "at least three instruments",
+    );
+    expect(__test.parseOptions(["--symbols", "AAPL,AAPL,MSFT,QQQ"]).symbols).toEqual([
+      "AAPL",
+      "MSFT",
+      "QQQ",
+    ]);
+  });
+
+  it("includes forced liquidation in turnover", () => {
+    const dates = ["2026-01-01", "2026-01-02", "2026-01-03"];
+    const rowsBySymbol = Object.fromEntries(
+      ["SPY", "QQQ", "IWM"].map((symbol) => [
+        symbol,
+        dates.map((date, index) => ({
+          date,
+          close: 100 + index,
+          sourceTimestamp: `${date}T13:30:00.000Z`,
+        })),
+      ]),
+    );
+    const evaluated = __test.evaluateSeries("SPY", rowsBySymbol, dates, 20, 1, 0.0015, "buy_hold");
+    expect(evaluated.metric.turnover).toBe(2);
+  });
 });
 
 describe("strategy receipt evidence boundaries", () => {
