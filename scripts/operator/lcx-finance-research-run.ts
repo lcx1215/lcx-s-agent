@@ -18,7 +18,6 @@ import {
 } from "../../src/agents/finance-research-runner.ts";
 import {
   createLocalQualityHarnessAdapter,
-  createLocalRoleShadowAdapter,
   resolveLocalTextModelRuntimeConfig,
   type LocalTextModelRuntimeConfig,
 } from "../../src/agents/local-text-model-adapter.ts";
@@ -211,11 +210,14 @@ function parseArgs(args: readonly string[]): Options {
   return options;
 }
 
-function assertIsoTimestamp(value: string): string {
-  if (!Number.isFinite(Date.parse(value))) {
+const ISO_TIMESTAMP_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:?\d{2})$/u;
+
+export function assertIsoTimestamp(value: string): string {
+  if (!ISO_TIMESTAMP_PATTERN.test(value) || !Number.isFinite(Date.parse(value))) {
     throw new Error("--as-of must be an ISO timestamp");
   }
-  return value;
+  return new Date(value).toISOString();
 }
 
 async function resolveAdapterPath(options: Options): Promise<string> {
@@ -251,14 +253,16 @@ function routingRevision(prefix: string, runtime: LocalTextModelRuntimeConfig): 
     .slice(0, 12)}`;
 }
 
-function buildRoleRouting(runtime: LocalTextModelRuntimeConfig): LogicalAgentModelRouting {
-  const adapter = createLocalRoleShadowAdapter(runtime);
+export function buildFinanceResearchCommitteeRouting(
+  runtime: LocalTextModelRuntimeConfig,
+): LogicalAgentModelRouting {
+  const adapter = createLocalQualityHarnessAdapter(runtime);
   return {
-    revision: routingRevision("finance-local-role-v1", runtime),
+    revision: routingRevision("finance-local-committee-v1", runtime),
     adapters: [adapter],
     defaultPolicy: {
       primary: adapter.id,
-      requiredCapabilities: ["logical_agent_role_shadow"],
+      requiredCapabilities: ["quality_harness"],
       maxInputBytes: 256_000,
       timeoutMs: runtime.timeoutMs,
     },
@@ -407,6 +411,11 @@ function summarizeReceipt(receipt: FinanceResearchRunReceipt, options: Options) 
   };
 }
 
+async function writePrivateReceipt(filePath: string, serialized: string): Promise<void> {
+  await fs.writeFile(filePath, serialized, { encoding: "utf8", mode: 0o600 });
+  await fs.chmod(filePath, 0o600);
+}
+
 async function writeReceipt(receipt: FinanceResearchRunReceipt, asOf: string) {
   const root = WORKSPACE_DIR();
   const stateDir = path.join(root, "state");
@@ -417,9 +426,27 @@ async function writeReceipt(receipt: FinanceResearchRunReceipt, asOf: string) {
   await fs.mkdir(runDir, { recursive: true });
   await fs.mkdir(stateDir, { recursive: true });
   const serialized = `${JSON.stringify(receipt, null, 2)}\n`;
-  await fs.writeFile(datedPath, serialized, "utf8");
-  await fs.writeFile(latestPath, serialized, "utf8");
+  await writePrivateReceipt(datedPath, serialized);
+  await writePrivateReceipt(latestPath, serialized);
   return { datedPath, latestPath };
+}
+
+export function buildFinanceResearchRegistryOptions(
+  includeYahooPublicSources: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  const realtimeRegistryOptions = resolveFinanceRealtimeSourceRegistryOptionsFromEnv(env);
+  const collectionRegistryOptions = resolveFinanceMarketCollectionRegistryOptionsFromEnv(env);
+  return {
+    realtimeRegistryOptions: {
+      ...realtimeRegistryOptions,
+      ...(includeYahooPublicSources ? { includeYahooPublicSource: true } : {}),
+    },
+    collectionRegistryOptions: {
+      ...collectionRegistryOptions,
+      ...(includeYahooPublicSources ? { includeYahooPublicSources: true } : {}),
+    },
+  } as const;
 }
 
 async function run(
@@ -432,8 +459,8 @@ async function run(
     horizonMonths: options.horizonMonths,
     decisionMode: options.decisionMode,
   };
-  const realtimeRegistryOptions = resolveFinanceRealtimeSourceRegistryOptionsFromEnv();
-  const collectionRegistryOptions = resolveFinanceMarketCollectionRegistryOptionsFromEnv();
+  const { realtimeRegistryOptions, collectionRegistryOptions } =
+    buildFinanceResearchRegistryOptions(options.includeYahooPublicSources);
   const batchOptions = {
     maxApiCalls: options.maxApiCalls,
     maxConcurrency: options.maxConcurrency,
@@ -442,10 +469,7 @@ async function run(
     totalTimeoutMs: options.totalTimeoutMs,
     retry: { attempts: options.retryAttempts },
     realtimeRegistryOptions,
-    collectionRegistryOptions: {
-      ...collectionRegistryOptions,
-      ...(options.includeYahooPublicSources ? { includeYahooPublicSources: true } : {}),
-    },
+    collectionRegistryOptions,
   } as const;
   if (!options.live) {
     const receipt = await runFinanceResearchRun({
@@ -478,7 +502,7 @@ async function run(
     liveFetch: true,
     qualityEnabled: options.quality,
     modelId: runtime.modelId,
-    modelRouting: buildRoleRouting(runtime),
+    modelRouting: buildFinanceResearchCommitteeRouting(runtime),
     ...(options.quality ? { qualityModelRouting: buildQualityRouting(runtime) } : {}),
     sourceGovernance: governance,
     batchOptions,

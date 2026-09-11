@@ -4,6 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import {
+  buildFinanceResearchCommitteeRouting,
+  buildFinanceResearchRegistryOptions,
+} from "../scripts/operator/lcx-finance-research-run.ts";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
@@ -60,15 +64,54 @@ describe("lcx-finance-research-run", () => {
 
   it("writes an explicit dry receipt only when requested", async () => {
     const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-finance-research-"));
-    const payload = await runResearch(["--write", "--as-of", "2026-09-08T12:00:00.000Z"], {
-      OPENCLAW_WORKSPACE_DIR: workspaceDir,
+    try {
+      const payload = await runResearch(["--write", "--as-of", "2026-09-08T12:00:00.000Z"], {
+        OPENCLAW_WORKSPACE_DIR: workspaceDir,
+      });
+      const written = payload.written as Record<string, string>;
+      expect(written.latestPath).toBe(
+        path.join(workspaceDir, "state", "lcx-finance-research-run-latest.json"),
+      );
+      await expect(fs.readFile(written.latestPath, "utf8")).resolves.toContain(
+        "lcx_finance_research_run_v1",
+      );
+      if (process.platform !== "win32") {
+        expect((await fs.stat(written.latestPath)).mode & 0o777).toBe(0o600);
+        expect((await fs.stat(written.datedPath)).mode & 0o777).toBe(0o600);
+      }
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
+  it("normalizes ISO cutoffs, rejects path-like cutoffs, and forwards Yahoo opt-in", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-finance-research-"));
+    try {
+      await expect(
+        runResearch(["--write", "--as-of", "../../2026-09-08T12:00:00.000Z"], {
+          OPENCLAW_WORKSPACE_DIR: workspaceDir,
+        }),
+      ).rejects.toThrow("--as-of must be an ISO timestamp");
+      const options = buildFinanceResearchRegistryOptions(true, {});
+      expect(options.realtimeRegistryOptions.includeYahooPublicSource).toBe(true);
+      expect(options.collectionRegistryOptions.includeYahooPublicSources).toBe(true);
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
+  it("routes committee payloads through the quality-stage adapter contract", () => {
+    const routing = buildFinanceResearchCommitteeRouting({
+      adapterPath: "/tmp/adapter",
+      modelId: "fixture-model",
+      pythonPath: "/tmp/python",
+      maxTokens: 384,
+      timeoutMs: 10_000,
+      allowNetwork: false,
     });
-    const written = payload.written as Record<string, string>;
-    expect(written.latestPath).toBe(
-      path.join(workspaceDir, "state", "lcx-finance-research-run-latest.json"),
-    );
-    await expect(fs.readFile(written.latestPath, "utf8")).resolves.toContain(
-      "lcx_finance_research_run_v1",
+    expect(routing.defaultPolicy.requiredCapabilities).toEqual(["quality_harness"]);
+    expect(routing.adapters[0]?.capabilities).toEqual(
+      expect.arrayContaining(["quality_harness", "local_model_inference"]),
     );
   });
 });
