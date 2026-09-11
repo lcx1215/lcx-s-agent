@@ -98,9 +98,7 @@ async function run(variant: Variant) {
                 findingId: finding.id,
                 status: variant === "unresolved" ? "unresolved" : "resolved",
                 evidenceIds: [variant === "unknown-evidence" ? "invented" : "window"],
-                ...(variant === "anchor" || variant === "unknown-anchor"
-                  ? { artifactClaimId: variant === "anchor" ? "c1" : "invented" }
-                  : {}),
+                artifactClaimId: variant === "unknown-anchor" ? "invented" : "c1",
                 artifactQuote:
                   variant === "anchor" || variant === "unknown-anchor"
                     ? ""
@@ -252,7 +250,7 @@ describe("version-bound finding closure", () => {
     if (variant === "bad-quote") {
       expect(
         result.attempts[0].findings?.some(
-          (finding) => finding.closureFailure === "artifact_quote_not_found",
+          (finding) => finding.closureFailure === "artifact_claim_anchor_invalid",
         ),
       ).toBe(true);
     }

@@ -98,9 +98,22 @@ export async function inspectFinanceSourceHealth(options: {
   }
   const env = resolveFinanceCredentialEnv(options.env ?? process.env);
   const allEnv = { ...env };
-  for (const key of FINANCE_CREDENTIAL_KEYS) {
-    if (key.endsWith("KEY") || key.endsWith("KEY_ID")) {
-      allEnv[key] ||= "catalog-only";
+  const catalogOnlyCredentials: Partial<Record<(typeof FINANCE_CREDENTIAL_KEYS)[number], string>> =
+    {
+      ALPHA_VANTAGE_API_KEY: "catalog-only",
+      COINGECKO_API_KEY: "catalog-only",
+      COINCAP_API_KEY: "catalog-only",
+      MASSIVE_API_KEY: "catalog-only",
+      ALPACA_API_KEY_ID: "catalog-only-id",
+      ALPACA_API_SECRET_KEY: "catalog-only-secret",
+      FINNHUB_API_KEY: "catalog-only",
+      TWELVE_DATA_API_KEY: "catalog-only",
+      FRED_API_KEY: "catalog-only",
+      FMP_API_KEY: "catalog-only",
+    };
+  for (const [key, value] of Object.entries(catalogOnlyCredentials)) {
+    if (value !== undefined) {
+      allEnv[key as keyof NodeJS.ProcessEnv] ||= value;
     }
   }
   allEnv.LCX_ENABLE_YAHOO_PUBLIC_SOURCE = "1";

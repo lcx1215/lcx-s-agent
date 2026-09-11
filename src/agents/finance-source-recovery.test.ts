@@ -204,6 +204,31 @@ describe("finance source recovery", () => {
       result.recoveryState.jobs.find((entry) => entry.jobId === "two")?.sourceAdapterIds,
     ).toEqual(["primary"]);
   });
+
+  it("applies an explicit source selection to an originally unpinned job", async () => {
+    const source = batch([{ ...job("unpin"), sourceAdapterIds: undefined }]);
+    const calls: string[] = [];
+    const adapter: FinanceMarketCollectionAdapter = {
+      id: "selected",
+      providerName: "selected",
+      providerRole: "primary_market_data",
+      priority: 0,
+      supports: () => true,
+      collect: async () => {
+        calls.push("selected");
+        return [];
+      },
+    };
+    const result = await runFinanceSourceRecovery(source, {
+      asOf: AS_OF,
+      live: true,
+      maxJobs: 1,
+      sourceAdapterIds: ["selected"],
+      batchOptions: { realtimeAdapters: [], collectionAdapters: [adapter] },
+    });
+    expect(result.selectedParentJobIds).toEqual(["unpin"]);
+    expect(calls).toEqual(["selected"]);
+  });
   it("rejects malformed, duplicate and backwards-time inputs before execution", () => {
     expect(() => buildFinanceSourceRecoveryPlan({}, AS_OF)).toThrow();
     expect(() =>

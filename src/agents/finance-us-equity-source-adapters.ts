@@ -25,9 +25,20 @@ function textValue(value: unknown): string {
     : "";
 }
 
+function finiteNumber(value: unknown): number | undefined {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : undefined;
+  }
+  if (typeof value !== "string" || !value.trim()) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 function parseFiniteNumber(value: unknown, label: string): number {
-  const parsed = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(parsed)) {
+  const parsed = finiteNumber(value);
+  if (parsed === undefined) {
     throw new UsEquitySourceAdapterError(`${label} must be a finite number`);
   }
   return parsed;
@@ -338,8 +349,7 @@ export function createSecCompanyFactsAdapter(
 }
 
 function optionalNumber(value: unknown): number | undefined {
-  const parsed = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
+  return finiteNumber(value);
 }
 
 type MassiveSnapshot = {

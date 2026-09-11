@@ -195,4 +195,49 @@ describe("research_web_autopilot tool", () => {
     );
     expect(fetchedUrls[0]).toContain("html.duckduckgo.com/html");
   });
+
+  it("does not treat an unrelated investor host as the requested issuer", async () => {
+    const tool = createResearchWebAutopilotTool({
+      searchTool: stubTool("web_search", async () =>
+        jsonResult({
+          results: [{ url: "https://investor.attacker.example/filing", title: "unrelated" }],
+        }),
+      ),
+      fetchTool: stubTool("web_fetch", async () =>
+        jsonResult({ status: 200, text: "unrelated evidence" }),
+      ),
+    });
+    const result = await tool.execute("web-primary-binding", {
+      query: "AAPL latest filing",
+      openTop: 1,
+      requirePrimary: true,
+    });
+    expect(result.details).toEqual(
+      expect.objectContaining({
+        status: "needs_review",
+        crossCheck: expect.objectContaining({ hasPrimary: false }),
+        missingEvidence: ["primary_or_official_reference"],
+      }),
+    );
+  });
+
+  it("passes the caller cancellation signal through search and fetch", async () => {
+    const controller = new AbortController();
+    let seenSignal: AbortSignal | undefined;
+    const tool = createResearchWebAutopilotTool({
+      searchTool: stubTool("web_search", async () =>
+        jsonResult({ results: [{ url: "https://example.test/source", title: "source" }] }),
+      ),
+      fetchTool: stubTool("web_fetch", async (_callId, _args, signal) => {
+        seenSignal = signal;
+        controller.abort(new Error("cancelled"));
+        signal?.throwIfAborted();
+        return jsonResult({ status: 200, text: "unreachable" });
+      }),
+    });
+    await expect(
+      tool.execute("web-cancel", { query: "cancel", openTop: 1 }, controller.signal),
+    ).rejects.toThrow();
+    expect(seenSignal).toBe(controller.signal);
+  });
 });

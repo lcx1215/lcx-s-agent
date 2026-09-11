@@ -272,6 +272,7 @@ export function createFinanceChartAnalysisTool(options?: {
           };
           const registry = createFinanceMarketCollectionRegistry({
             ...resolveFinanceMarketCollectionRegistryOptionsFromEnv(),
+            includeYahooPublicSources: true,
             fetchImpl: options?.fetchImpl,
           });
           const selected = params.sourceIds?.map((id) => id.trim());
@@ -393,7 +394,7 @@ export function createFinanceChartAnalysisTool(options?: {
           : null;
 
         const status = analysis
-          ? collectionStatus === "needs_review"
+          ? collectionStatus === "needs_review" || normalization.droppedCount > 0
             ? "needs_review"
             : "ready"
           : imagePayload

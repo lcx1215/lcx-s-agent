@@ -127,4 +127,35 @@ describe("US equity finance source adapters", () => {
     expect(adapter.supports({ ...REQUEST, assetClass: "etf" })).toBe(false);
     expect(adapter.supports({ ...REQUEST, assetClass: "crypto" })).toBe(false);
   });
+
+  it("does not coerce null or blank quote fields into zero", async () => {
+    const fetchImpl: FetchImpl = async (url) => ({
+      ok: true,
+      status: 200,
+      text: async () =>
+        url.includes("massive.com")
+          ? JSON.stringify({ ticker: { day: { c: null, v: "" } } })
+          : url.includes("finnhub.io")
+            ? JSON.stringify({ c: null, t: 1788780000 })
+            : JSON.stringify({ close: "", timestamp: "1788780000" }),
+    });
+    await expect(
+      createMassiveUsEquitySnapshotAdapter({ apiKey: "key", fetchImpl }).collect(
+        REQUEST,
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("no supported fields");
+    await expect(
+      createFinnhubUsEquityQuoteAdapter({ apiKey: "key", fetchImpl }).collect(
+        REQUEST,
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("no supported fields");
+    await expect(
+      createTwelveDataUsEquityQuoteAdapter({ apiKey: "key", fetchImpl }).collect(
+        REQUEST,
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("no supported fields");
+  });
 });

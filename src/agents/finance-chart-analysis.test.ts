@@ -30,11 +30,19 @@ describe("finance chart analysis", () => {
   it("does not silently stitch overlapping providers into one chart", () => {
     const normalized = normalizeFinanceChartBars([
       { ...bars(1)[0], providerName: "provider-a" },
-      { ...bars(1)[0], close: 999, providerName: "provider-b" },
+      { ...bars(1)[0], close: 99, providerName: "provider-b" },
     ]);
-    expect(normalized.bars).toHaveLength(1);
-    expect(normalized.bars[0]?.close).toBe(100);
-    expect(normalized.droppedCount).toBe(1);
+    expect(normalized.bars).toHaveLength(0);
+    expect(normalized.droppedCount).toBe(2);
+  });
+
+  it("rejects conflicting same-date bars instead of depending on input order", () => {
+    const normalized = normalizeFinanceChartBars([
+      { ...bars(1)[0], providerName: "provider-a" },
+      { ...bars(1)[0], open: 101, high: 102, close: 101, providerName: "provider-a" },
+    ]);
+    expect(normalized.bars).toEqual([]);
+    expect(normalized.droppedCount).toBe(2);
   });
 
   it("drops OHLC rows whose open or close falls outside the high-low range", () => {

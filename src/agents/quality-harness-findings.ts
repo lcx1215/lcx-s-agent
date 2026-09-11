@@ -31,7 +31,7 @@ export type QualityFindingResolution = Readonly<{
   status: "resolved" | "unresolved";
   evidenceIds: readonly string[];
   artifactQuote: string;
-  artifactClaimId?: string;
+  artifactClaimId: string;
   rationale: string;
 }>;
 export type QualityFindingClosure = Readonly<{
@@ -145,12 +145,13 @@ export function reconcileQualityFindings(
   const text = [artifact.answer, ...artifact.claims.map((claim) => claim.text)].join("\n");
   return findings.map((finding) => {
     const supplied = resolutions.find((entry) => entry.findingId === finding.id);
-    const claim = supplied?.artifactClaimId
+    const claim = supplied
       ? artifact.claims.find((entry) => entry.id === supplied.artifactClaimId)
       : undefined;
     const anchorValid =
-      !supplied?.artifactClaimId ||
-      (!!claim && (!supplied.artifactQuote || claim.text.includes(supplied.artifactQuote)));
+      !!supplied?.artifactClaimId &&
+      !!claim &&
+      (!supplied.artifactQuote || claim.text.includes(supplied.artifactQuote));
     const resolution =
       supplied && claim && !supplied.artifactQuote
         ? { ...supplied, artifactQuote: claim.text }

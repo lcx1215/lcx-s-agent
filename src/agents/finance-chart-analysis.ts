@@ -128,12 +128,34 @@ export function normalizeFinanceChartBars(
   records: readonly FinanceChartRecord[],
 ): FinanceChartBarNormalization {
   const byDate = new Map<string, FinanceChartBar>();
+  const conflictingDates = new Set<string>();
   let droppedCount = 0;
   let selectedSourceKey: string | undefined;
   for (const record of records) {
     const normalized = normalizeRecord(record);
     if (!normalized) {
       droppedCount += 1;
+      continue;
+    }
+    if (conflictingDates.has(normalized.date)) {
+      droppedCount += 1;
+      continue;
+    }
+    const existing = byDate.get(normalized.date);
+    if (existing) {
+      const identical =
+        existing.timestamp === normalized.timestamp &&
+        existing.open === normalized.open &&
+        existing.high === normalized.high &&
+        existing.low === normalized.low &&
+        existing.close === normalized.close &&
+        existing.volume === normalized.volume;
+      if (identical) {
+        continue;
+      }
+      byDate.delete(normalized.date);
+      conflictingDates.add(normalized.date);
+      droppedCount += 2;
       continue;
     }
     const currentSourceKey = sourceKey(record);

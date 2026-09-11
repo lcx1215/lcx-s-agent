@@ -97,20 +97,56 @@ function siteName(url: string): string | undefined {
   }
 }
 
-function likelyPrimaryReference(url: string): boolean {
+const PRIMARY_QUERY_STOP_WORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "at",
+  "company",
+  "filing",
+  "latest",
+  "news",
+  "price",
+  "quote",
+  "report",
+  "the",
+  "today",
+  "what",
+]);
+
+function queryEntityTokens(query: string): readonly string[] {
+  return [
+    ...new Set(
+      (query.toLowerCase().match(/[a-z0-9]+/gu) ?? []).filter(
+        (token) => token.length >= 2 && !PRIMARY_QUERY_STOP_WORDS.has(token),
+      ),
+    ),
+  ];
+}
+
+function hostnameMatchesQuery(hostname: string, query: string): boolean {
+  const hostTokens = new Set(hostname.split(/[.-]/u).filter(Boolean));
+  return queryEntityTokens(query).some((token) => hostTokens.has(token));
+}
+
+function likelyPrimaryReference(url: string, query = ""): boolean {
   const hostname = siteName(url)?.toLowerCase() ?? "";
+  if (hostname === "sec.gov" || hostname.endsWith(".sec.gov")) {
+    return true;
+  }
+  const issuerHostMatches = hostnameMatchesQuery(hostname, query);
   return (
-    hostname === "sec.gov" ||
-    hostname.endsWith(".gov") ||
-    hostname.endsWith(".mil") ||
-    hostname.startsWith("investor.") ||
-    hostname.startsWith("ir.") ||
-    hostname.includes("investors.") ||
-    hostname.includes("www.annualreports.")
+    issuerHostMatches &&
+    (hostname.endsWith(".gov") ||
+      hostname.endsWith(".mil") ||
+      hostname.startsWith("investor.") ||
+      hostname.startsWith("ir.") ||
+      hostname.includes(".investors.") ||
+      hostname.includes("annualreports."))
   );
 }
 
-function normalizeCandidate(value: unknown): WebSearchCandidate | undefined {
+function normalizeCandidate(value: unknown, query = ""): WebSearchCandidate | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
   }
@@ -127,15 +163,19 @@ function normalizeCandidate(value: unknown): WebSearchCandidate | undefined {
       ? { published: textValue(record.published ?? record.age) }
       : {}),
     ...(siteName(url) ? { siteName: siteName(url) } : {}),
-    isLikelyPrimary: likelyPrimaryReference(url),
+    isLikelyPrimary: likelyPrimaryReference(url, query),
   };
 }
 
-function extractCandidates(details: SearchDetails, limit: number): WebSearchCandidate[] {
+function extractCandidates(
+  details: SearchDetails,
+  limit: number,
+  query: string,
+): WebSearchCandidate[] {
   const candidates: WebSearchCandidate[] = [];
   if (Array.isArray(details.results)) {
     for (const value of details.results) {
-      const candidate = normalizeCandidate(value);
+      const candidate = normalizeCandidate(value, query);
       if (candidate) {
         candidates.push(candidate);
       }
@@ -143,7 +183,7 @@ function extractCandidates(details: SearchDetails, limit: number): WebSearchCand
   }
   if (Array.isArray(details.citations)) {
     for (const value of details.citations) {
-      const candidate = normalizeCandidate({ url: value });
+      const candidate = normalizeCandidate({ url: value }, query);
       if (candidate) {
         candidates.push(candidate);
       }
@@ -158,7 +198,11 @@ function extractCandidates(details: SearchDetails, limit: number): WebSearchCand
   return [...unique.values()].slice(0, limit);
 }
 
-function extractPublicSearchPageCandidates(text: string, limit: number): WebSearchCandidate[] {
+function extractPublicSearchPageCandidates(
+  text: string,
+  limit: number,
+  query: string,
+): WebSearchCandidate[] {
   const candidates: WebSearchCandidate[] = [];
   const markdownLinks = [...text.matchAll(/\[([^\]]{2,240})\]\((https?:\/\/[^)\s]+)\)/gu)];
   for (const match of markdownLinks) {
@@ -171,7 +215,7 @@ function extractPublicSearchPageCandidates(text: string, limit: number): WebSear
       url,
       snippet: "public search fallback result",
       ...(siteName(url) ? { siteName: siteName(url) } : {}),
-      isLikelyPrimary: likelyPrimaryReference(url),
+      isLikelyPrimary: likelyPrimaryReference(url, query),
     });
   }
   const genericUrls = [...text.matchAll(/https?:\/\/[^\s)\]">]+/gu)];
@@ -185,7 +229,7 @@ function extractPublicSearchPageCandidates(text: string, limit: number): WebSear
       url,
       snippet: "public search fallback result",
       ...(siteName(url) ? { siteName: siteName(url) } : {}),
-      isLikelyPrimary: likelyPrimaryReference(url),
+      isLikelyPrimary: likelyPrimaryReference(url, query),
     });
   }
   const unique = new Map<string, WebSearchCandidate>();
@@ -266,7 +310,7 @@ export function createResearchWebAutopilotTool(options?: {
     description:
       "Run a read-only web evidence loop: search for leads, open the top original URLs through the canonical web fetch guard, retain timestamps and failures, and mark likely official references without treating snippets or page text as trusted instructions.",
     parameters: ResearchWebAutopilotSchema,
-    execute: async (_toolCallId, args) => {
+    execute: async (_toolCallId, args, callerSignal) => {
       const params = args as {
         query: string;
         maxResults?: number;
@@ -284,6 +328,7 @@ export function createResearchWebAutopilotTool(options?: {
       if (!query) {
         throw new ToolInputError("query required");
       }
+      callerSignal?.throwIfAborted();
       const maxResults = Math.min(10, Math.max(1, Math.trunc(params.maxResults ?? 5)));
       const openTop = Math.min(5, Math.max(0, Math.trunc(params.openTop ?? 3)));
       const maxChars = Math.min(20_000, Math.max(500, Math.trunc(params.maxChars ?? 8_000)));
@@ -318,14 +363,19 @@ export function createResearchWebAutopilotTool(options?: {
       let searchDetails: SearchDetails = {};
       if (searchTool) {
         try {
-          const result = await searchTool.execute("research-web-search", {
-            query,
-            count: maxResults,
-            ...(params.country ? { country: params.country } : {}),
-            ...(params.searchLang ? { search_lang: params.searchLang } : {}),
-            ...(params.uiLang ? { ui_lang: params.uiLang } : {}),
-            ...(params.freshness ? { freshness: params.freshness } : {}),
-          });
+          callerSignal?.throwIfAborted();
+          const result = await searchTool.execute(
+            "research-web-search",
+            {
+              query,
+              count: maxResults,
+              ...(params.country ? { country: params.country } : {}),
+              ...(params.searchLang ? { search_lang: params.searchLang } : {}),
+              ...(params.uiLang ? { ui_lang: params.uiLang } : {}),
+              ...(params.freshness ? { freshness: params.freshness } : {}),
+            },
+            callerSignal,
+          );
           searchDetails = detailsOf(result) as SearchDetails;
           const searchError = textValue(searchDetails.error) || textValue(searchDetails.message);
           if (
@@ -336,24 +386,37 @@ export function createResearchWebAutopilotTool(options?: {
             failures.push({ stage: "search", error: searchError });
           }
         } catch (error) {
+          if (callerSignal?.aborted) {
+            throw error;
+          }
           failures.push({ stage: "search", error: errorText(error) });
         }
       }
-      let candidates = extractCandidates(searchDetails, maxResults);
+      callerSignal?.throwIfAborted();
+      let candidates = extractCandidates(searchDetails, maxResults, query);
       let publicFallback:
         | { used: boolean; url?: string; fetchedAt?: string; candidateCount?: number }
         | undefined;
       if (candidates.length === 0 && fetchTool) {
         const fallbackUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}&kl=us-en`;
         try {
-          const result = await fetchTool.execute("research-web-public-search-fallback", {
-            url: fallbackUrl,
-            extractMode: "markdown",
-            maxChars: Math.min(maxChars, 12_000),
-          });
+          callerSignal?.throwIfAborted();
+          const result = await fetchTool.execute(
+            "research-web-public-search-fallback",
+            {
+              url: fallbackUrl,
+              extractMode: "markdown",
+              maxChars: Math.min(maxChars, 12_000),
+            },
+            callerSignal,
+          );
           const details = detailsOf(result) as FetchDetails;
           const fallbackText = textValue(details.text);
-          const fallbackCandidates = extractPublicSearchPageCandidates(fallbackText, maxResults);
+          const fallbackCandidates = extractPublicSearchPageCandidates(
+            fallbackText,
+            maxResults,
+            query,
+          );
           if (fallbackCandidates.length > 0) {
             candidates = fallbackCandidates;
             publicFallback = {
@@ -370,20 +433,29 @@ export function createResearchWebAutopilotTool(options?: {
             });
           }
         } catch (error) {
+          if (callerSignal?.aborted) {
+            throw error;
+          }
           failures.push({ stage: "search", url: fallbackUrl, error: errorText(error) });
         }
       }
+      callerSignal?.throwIfAborted();
       const opened = await Promise.all(
         candidates.slice(0, openTop).map(async (candidate) => {
           if (!fetchTool) {
             return undefined;
           }
           try {
-            const result = await fetchTool.execute("research-web-fetch", {
-              url: candidate.url,
-              extractMode: "markdown",
-              maxChars,
-            });
+            callerSignal?.throwIfAborted();
+            const result = await fetchTool.execute(
+              "research-web-fetch",
+              {
+                url: candidate.url,
+                extractMode: "markdown",
+                maxChars,
+              },
+              callerSignal,
+            );
             const details = detailsOf(result) as FetchDetails;
             const status = typeof details.status === "number" ? details.status : 200;
             const text = textValue(details.text);
@@ -404,14 +476,18 @@ export function createResearchWebAutopilotTool(options?: {
               extractor: textValue(details.extractor),
               text: text.slice(0, maxChars),
               fetchedAt: textValue(details.fetchedAt) || observedAt,
-              isLikelyPrimary: likelyPrimaryReference(finalUrl),
+              isLikelyPrimary: likelyPrimaryReference(finalUrl, query),
             };
           } catch (error) {
+            if (callerSignal?.aborted) {
+              throw error;
+            }
             failures.push({ stage: "fetch", url: candidate.url, error: errorText(error) });
             return undefined;
           }
         }),
       );
+      callerSignal?.throwIfAborted();
       const openedDocuments = opened.filter(
         (document): document is NonNullable<typeof document> => document !== undefined,
       );
@@ -461,6 +537,7 @@ export function createResearchWebAutopilotTool(options?: {
           "broker_or_wallet_authority",
         ],
       };
+      callerSignal?.throwIfAborted();
       const receiptPath = params.writeReceipt
         ? await writeWebReceipt(workspaceDir, query, payload)
         : undefined;

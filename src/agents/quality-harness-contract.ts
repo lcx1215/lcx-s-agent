@@ -581,15 +581,11 @@ function parseFindingClosure(value: unknown): QualityFindingClosure {
           ),
           artifactQuote:
             typeof entry.artifactQuote === "string" ? entry.artifactQuote.slice(0, 4000) : "",
-          ...(entry.artifactClaimId === undefined
-            ? {}
-            : {
-                artifactClaimId: requiredQualityText(
-                  entry.artifactClaimId,
-                  "resolution.artifactClaimId",
-                  200,
-                ),
-              }),
+          artifactClaimId: requiredQualityText(
+            entry.artifactClaimId,
+            "resolution.artifactClaimId",
+            200,
+          ),
           rationale: requiredQualityText(entry.rationale, "resolution.rationale", 2000),
         });
       }),

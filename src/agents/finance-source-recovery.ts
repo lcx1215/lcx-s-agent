@@ -268,8 +268,9 @@ export async function runFinanceSourceRecovery(
     if (!selectedSources) {
       return [target];
     }
-    const sourceAdapterIds =
-      target.sourceAdapterIds?.filter((id) => selectedSources.includes(id)) ?? [];
+    const sourceAdapterIds = target.sourceAdapterIds
+      ? target.sourceAdapterIds.filter((id) => selectedSources.includes(id))
+      : [...selectedSources];
     return sourceAdapterIds.length ? [{ ...target, sourceAdapterIds }] : [];
   });
   const eligibleIds = new Set(eligible.map((target) => target.id));

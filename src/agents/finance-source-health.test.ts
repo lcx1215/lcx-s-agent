@@ -47,6 +47,12 @@ describe("finance source health evidence envelopes", () => {
       expect(health.routes.find((route) => route.id === id)?.callState).toBe("recent_success");
     }
   });
+  it("declares Alpaca even when its secret component is absent", async () => {
+    const health = await setup({});
+    expect(health.routes.find((route) => route.id === "alpaca_us_equity_latest_quote")).toEqual(
+      expect.objectContaining({ callState: "not_configured_or_disabled" }),
+    );
+  });
   it("keeps newer failures visible and rejects dry or evaluation wrappers at every level", async () => {
     const health = await setup({
       old: receipt("gdelt_public_news_titles"),

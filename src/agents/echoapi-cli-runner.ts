@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, constants, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -133,9 +133,28 @@ async function readInstalledVersion(runtimeRoot: string): Promise<string | undef
   }
 }
 
+async function installedExecutableIsUsable(executable: string): Promise<boolean> {
+  try {
+    const info = await stat(executable);
+    if (!info.isFile()) {
+      return false;
+    }
+    await access(executable, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function bootstrapActiveStateEchoApiCli(): Promise<{ executable: string; version: string }> {
   const runtimeRoot = echoApiRuntimeRoot();
   const executable = echoApiExecutablePath(runtimeRoot);
+  if (
+    (await readInstalledVersion(runtimeRoot)) === ECHOAPI_CLI_VERSION &&
+    (await installedExecutableIsUsable(executable))
+  ) {
+    return { executable, version: ECHOAPI_CLI_VERSION };
+  }
   await mkdir(runtimeRoot, { recursive: true });
   const npmExecutable = process.platform === "win32" ? "npm.cmd" : "npm";
   const downloadDir = await mkdtemp(path.join(runtimeRoot, ".download-"));

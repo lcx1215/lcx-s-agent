@@ -402,9 +402,12 @@ async function collectSymbol(symbol: string, options: ReturnType<typeof parseOpt
     end = new Date(chunkStart.getTime() - 86_400_000);
   }
   const rows = rowsFromItems(records);
+  const requiredLookback = options.stress
+    ? Math.max(options.lookback, ...STRESS_LOOKBACKS)
+    : options.lookback;
   if (
     receipts.some((receipt) => receipt.status !== "ready") ||
-    rows.length < options.lookback + 20
+    rows.length < requiredLookback + 20
   ) {
     const statuses = receipts
       .map((receipt) => `${receipt.status}:${receipt.records.length}`)
@@ -424,7 +427,10 @@ export async function runBenchmark(args: readonly string[] = process.argv.slice(
     collected[0]?.rows
       .map((row) => row.date)
       .filter((date) => dateSets.every((set) => set.has(date))) ?? [];
-  if (dates.length < options.lookback + 30) {
+  const requiredLookback = options.stress
+    ? Math.max(options.lookback, ...STRESS_LOOKBACKS)
+    : options.lookback;
+  if (dates.length < requiredLookback + 30) {
     throw new Error(`aligned observations=${dates.length} is below the minimum`);
   }
   const rowsBySymbol: Record<string, readonly PriceRow[]> = {};
@@ -504,6 +510,7 @@ export async function runBenchmark(args: readonly string[] = process.argv.slice(
     },
     frozenRule: {
       lookbackSessions: options.lookback,
+      minimumHistorySessions: requiredLookback,
       breadthThreshold: options.breadth,
       transactionCostBpsPerTurn: options.costBps,
       signalTiming: "decision from prior completed close, return starts next session",

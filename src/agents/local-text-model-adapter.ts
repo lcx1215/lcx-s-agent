@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
+import { buildLocalModelProcessEnv } from "./local-model-process-env.js";
 import { buildLocalMlxCommand } from "./local-model-slot.js";
 import type {
   LogicalAgentModelAdapter,
@@ -321,7 +322,7 @@ export function buildQualityHarnessModelPrompt(request: QualityHarnessModelReque
           `finding_packet=${JSON.stringify(request.findingPacket)}`,
           `closure_artifact=${JSON.stringify((request.dependencyOutputs.formatting as { output?: unknown } | undefined)?.output)}`,
           `closure_evidence=${JSON.stringify(request.evidence)}`,
-          'For every finding in finding_packet, independently check whether the FINAL artifact fixes it using the supplied evidence. Add review.findingClosure={artifactSha256,evidenceSha256,resolutions:[{findingId,status:"resolved"|"unresolved",evidenceIds:string[],artifactQuote?:string,artifactClaimId?:string,rationale:string}]}. Copy both packet hashes and every findingId exactly. Include exactly one resolution per finding, cite supporting evidence IDs and preferably artifactClaimId naming the exact current final claim (omit artifactQuote and the system will extract that claim verbatim), or supply an exact final-answer/claim quote. Explain why that current claim fixes the issue. Never quote a prior draft. A prior revise is not proof the final answer is still wrong. Never close a still-present error or missing evidence by assertion. Mark unresolved when unsure. Retain the normal review fields; use pass only if the final artifact passes.',
+          'For every finding in finding_packet, independently check whether the FINAL artifact fixes it using the supplied evidence. Add review.findingClosure={artifactSha256,evidenceSha256,resolutions:[{findingId,status:"resolved"|"unresolved",evidenceIds:string[],artifactClaimId:string,artifactQuote?:string,rationale:string}]}. Copy both packet hashes and every findingId exactly. Include exactly one resolution per finding, cite supporting evidence IDs and artifactClaimId naming the exact current final claim; omit artifactQuote only when the claim text itself should be used. Explain why that current claim fixes the issue. Never quote a prior draft. A prior revise is not proof the final answer is still wrong. Never close a still-present error or missing evidence by assertion. Mark unresolved when unsure. Retain the normal review fields; use pass only if the final artifact passes.',
         ]
       : []),
     `previous=${clipPromptText(JSON.stringify(dependencyOutputs), 16_000) || "none"}`,
@@ -383,11 +384,10 @@ async function runMlxGenerate(
     ];
     const child = spawn(runtime.pythonPath, buildLocalMlxCommand("mlx_lm", args), {
       stdio: ["ignore", "pipe", "pipe"],
-      env: {
-        ...process.env,
+      env: buildLocalModelProcessEnv(process.env, {
         PYTHONUNBUFFERED: "1",
         HF_HUB_OFFLINE: runtime.allowNetwork ? (process.env.HF_HUB_OFFLINE ?? "0") : "1",
-      },
+      }),
     });
     const transportRequestId = `mlx_lm:${child.pid ?? "unknown"}:${randomUUID()}`;
     let stdout = "";

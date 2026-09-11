@@ -192,6 +192,27 @@ function orderedAdapters(
     );
 }
 
+function selectAdapters(
+  candidates: readonly FinanceRealtimeSourceAdapter[],
+  maxSources: number,
+  requireOfficialReference: boolean | undefined,
+): FinanceRealtimeSourceAdapter[] {
+  const selected = candidates.slice(0, maxSources);
+  if (
+    !requireOfficialReference ||
+    selected.some((adapter) => adapter.providerRole === "official_or_issuer_reference")
+  ) {
+    return selected;
+  }
+  const official = candidates.find(
+    (adapter) => adapter.providerRole === "official_or_issuer_reference",
+  );
+  if (!official) {
+    return selected;
+  }
+  return [...selected.slice(0, Math.max(0, maxSources - 1)), official];
+}
+
 function errorText(error: unknown): string {
   return apiSourceErrorText(error);
 }
@@ -282,7 +303,7 @@ export async function runFinanceRealtimeRefresh(options: {
   if (!Number.isInteger(maxSources) || maxSources <= 0) {
     throw new Error("maxSources must be a positive integer");
   }
-  const selected = candidates.slice(0, maxSources);
+  const selected = selectAdapters(candidates, maxSources, request.requireOfficialReference);
   const sourceAttempts: FinanceRealtimeSourceAttempt[] = [];
   const observations: FinanceDataGatewayObservationInput[] = [];
 

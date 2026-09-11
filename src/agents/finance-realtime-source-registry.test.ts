@@ -155,6 +155,41 @@ describe("finance realtime source registry", () => {
     expect(receipt.requiredNextSteps).toContain("run_data_provenance_quality_review");
   });
 
+  it("reserves a bounded source slot for required official evidence", async () => {
+    const receipt = await runFinanceRealtimeRefresh({
+      request,
+      maxSources: 3,
+      adapters: [
+        adapter({
+          id: "primary-1",
+          providerRole: "primary_market_data",
+          priority: 1,
+          result: observation("primary-1", "primary_market_data"),
+        }),
+        adapter({
+          id: "primary-2",
+          providerRole: "primary_market_data",
+          priority: 2,
+          result: observation("primary-2", "primary_market_data"),
+        }),
+        adapter({
+          id: "primary-3",
+          providerRole: "primary_market_data",
+          priority: 3,
+          result: observation("primary-3", "primary_market_data"),
+        }),
+        adapter({
+          id: "official",
+          providerRole: "official_or_issuer_reference",
+          priority: 1,
+          result: observation("official", "official_or_issuer_reference"),
+        }),
+      ],
+    });
+    expect(receipt.selectedSourceIds).toEqual(["primary-1", "primary-2", "official"]);
+    expect(receipt.selectedSourceIds).toContain("official");
+  });
+
   it("keeps the default public source explicitly injectable and delayed", () => {
     const registry = createFinanceRealtimeSourceRegistry({
       fetchImpl: async () => ({
