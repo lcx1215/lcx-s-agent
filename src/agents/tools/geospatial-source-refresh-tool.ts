@@ -60,7 +60,8 @@ export function createGeospatialSourceRefreshTool(options?: {
     description:
       "Inspect or explicitly fetch public geocoding, weather, and earthquake sources. Live requests are opt-in; source disagreement and stale fields remain visible for review.",
     parameters: GeospatialSourceRefreshSchema,
-    execute: async (_toolCallId, args) => {
+    execute: async (_toolCallId, args, callerSignal) => {
+      callerSignal?.throwIfAborted();
       const params = args as {
         kind: GeospatialSourceKind;
         query: string;
@@ -93,7 +94,9 @@ export function createGeospatialSourceRefreshTool(options?: {
           adapters: registry,
           maxSources: params.maxSources,
           timeoutMs: params.timeoutMs,
+          signal: callerSignal,
         });
+        callerSignal?.throwIfAborted();
         const receiptPath = params.writeReceipt
           ? await writeReceipt(workspaceDir, params.kind, params.query, receipt)
           : undefined;

@@ -273,6 +273,17 @@ export function buildStressVariants(): readonly StressVariant[] {
   );
 }
 
+function medianValue(values: readonly number[]): number {
+  const sorted = values.toSorted((a, b) => a - b);
+  if (sorted.length === 0) {
+    return 0;
+  }
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1
+    ? (sorted[middle] ?? 0)
+    : ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2;
+}
+
 function evaluateStressMatrix(
   rowsBySymbol: Readonly<Record<string, readonly PriceRow[]>>,
   dates: readonly string[],
@@ -328,7 +339,7 @@ function evaluateStressMatrix(
   const drawdownDeltas = results
     .map((result) => result.maxDrawdownDeltaPp)
     .toSorted((a, b) => a - b);
-  const median = cagrDeltas[Math.floor(cagrDeltas.length / 2)] ?? 0;
+  const median = medianValue(cagrDeltas);
   return Object.freeze({
     variants: Object.freeze(results),
     summary: Object.freeze({
@@ -534,4 +545,4 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     });
 }
 
-export const __test = { evaluateSeries, summarize, periodMetrics, parseOptions };
+export const __test = { evaluateSeries, summarize, periodMetrics, parseOptions, medianValue };

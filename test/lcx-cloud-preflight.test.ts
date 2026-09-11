@@ -87,4 +87,21 @@ describe("LCX cloud preflight", () => {
       );
     });
   });
+
+  it("blocks an in-root config path that does not resolve to a readable file", async () => {
+    await withCloudState(async (stateDir, configPath) => {
+      await fs.rm(configPath);
+      const result = await buildCloudPreflight({
+        LCX_CLOUD_RUNTIME: "1",
+        OPENCLAW_STATE_DIR: stateDir,
+        OPENCLAW_CONFIG_PATH: configPath,
+        OPENCLAW_GATEWAY_TOKEN: "test-gateway-token",
+        LCX_LOCAL_VISION_ENABLED: "0",
+      });
+      expect(result.status).toBe("blocked");
+      expect(result.checks).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: "config_path", status: "fail" })]),
+      );
+    });
+  });
 });

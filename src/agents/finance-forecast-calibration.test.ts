@@ -48,7 +48,7 @@ describe("forecast calibration", () => {
     for (const change of [
       { source: "other" },
       { unit: "EUR" },
-      { sourceTimestamp: "2026-06-04T00:00:00Z" },
+      { sourceTimestamp: "2026-05-30T00:00:00Z" },
     ]) {
       expect(
         calibrateFinanceForecasts({ ...input, evidence: [{ ...input.evidence[0], ...change }] })[0]
@@ -67,6 +67,17 @@ describe("forecast calibration", () => {
         ...input,
         dueAt: "2026-06-01T12:00:00Z",
         evidence: [{ ...input.evidence[0], sourceTimestamp: "2026-06-01T00:00:00Z" }],
+      })[0],
+    ).toMatchObject({ status: "scored", evidenceId: "e" });
+  });
+
+  it("selects the first available source session after a weekend checkpoint", () => {
+    expect(
+      calibrateFinanceForecasts({
+        ...input,
+        dueAt: "2026-06-05T12:00:00Z",
+        observedAt: "2026-06-09T00:00:00Z",
+        evidence: [{ ...input.evidence[0], sourceTimestamp: "2026-06-08T20:00:00Z" }],
       })[0],
     ).toMatchObject({ status: "scored", evidenceId: "e" });
   });

@@ -51,6 +51,19 @@ async function writableDirectory(value: string): Promise<boolean> {
   }
 }
 
+async function readableRegularFile(value: string): Promise<boolean> {
+  try {
+    const stat = await fs.stat(value);
+    if (!stat.isFile()) {
+      return false;
+    }
+    await fs.access(value, fsConstants.R_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function configMentionsLocalVision(configPath: string | undefined): Promise<boolean> {
   if (!configPath) {
     return false;
@@ -144,10 +157,13 @@ export async function buildCloudPreflight(env: NodeJS.ProcessEnv = process.env) 
         "OPENCLAW_CONFIG_PATH is outside OPENCLAW_STATE_DIR; this would create split-brain state.",
     });
   } else {
+    const readable = await readableRegularFile(configPath);
     checks.push({
       id: "config_path",
-      status: "pass",
-      detail: `Config path is inside the canonical state root: ${configPath}`,
+      status: readable ? "pass" : "fail",
+      detail: readable
+        ? `Config path is inside the canonical state root: ${configPath}`
+        : "OPENCLAW_CONFIG_PATH is missing, not a regular file, or not readable.",
     });
   }
 

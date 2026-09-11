@@ -136,6 +136,15 @@ export function resolveImageModelConfigForTool(params: {
   }
 
   if (preferred?.trim()) {
+    if (preferred === LOCAL_VISION_MODEL_REF && providerOk) {
+      if (providerVisionFromConfig) {
+        addFallback(providerVisionFromConfig);
+      } else if (primary.provider === "minimax") {
+        addFallback("minimax/MiniMax-VL-01");
+      } else if (primary.provider === "zai") {
+        addFallback("zai/glm-4.6v");
+      }
+    }
     if (openaiOk) {
       addFallback("openai/gpt-5-mini");
     }

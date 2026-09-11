@@ -45,6 +45,11 @@ describe("finance strategy method benchmark math", () => {
     expect(Object.isFrozen(variants[0])).toBe(true);
   });
 
+  it("uses the mean of both middle values for an even-sized median", () => {
+    expect(__test.medianValue([4, 1, 10, 7])).toBe(5.5);
+    expect(__test.medianValue([4, 1, 10])).toBe(4);
+  });
+
   it("requires three distinct instruments after symbol deduplication", () => {
     expect(() => __test.parseOptions(["--symbols", "AAPL,AAPL,MSFT"])).toThrow(
       "at least three instruments",

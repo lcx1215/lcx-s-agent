@@ -271,6 +271,20 @@ describe("image tool implicit imageModel config", () => {
     });
   });
 
+  it("keeps the authenticated primary provider as a fallback behind local vision", async () => {
+    vi.stubEnv("LCX_LOCAL_VISION_ENABLED", "1");
+    vi.stubEnv("MINIMAX_API_KEY", "minimax-test");
+    await withTempAgentDir(async (agentDir) => {
+      const cfg: OpenClawConfig = {
+        agents: { defaults: { model: { primary: "minimax/MiniMax-M2.5" } } },
+      };
+      expect(resolveImageModelConfigForTool({ cfg, agentDir })).toEqual({
+        primary: "mlx-vlm/local",
+        fallbacks: ["minimax/MiniMax-VL-01"],
+      });
+    });
+  });
+
   it("pairs minimax primary with MiniMax-VL-01 (and fallbacks) when auth exists", async () => {
     await withTempAgentDir(async (agentDir) => {
       vi.stubEnv("MINIMAX_API_KEY", "minimax-test");

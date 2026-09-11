@@ -14,11 +14,10 @@ export const FinanceForecast = z
   .strict();
 export type FinanceForecastContract = z.infer<typeof FinanceForecast>;
 
-const DAY_MS = 86_400_000;
-
 function checkpointObservation(
   rows: Array<{ id: string; sourceTimestamp: string; value: string | number }>,
   due: number,
+  observedAt: number,
 ) {
   const dueDate = new Date(due);
   const checkpointStart = Date.UTC(
@@ -32,7 +31,7 @@ function checkpointObservation(
       (entry) =>
         Number.isFinite(entry.timestamp) &&
         entry.timestamp >= checkpointStart &&
-        entry.timestamp < checkpointStart + 2 * DAY_MS,
+        entry.timestamp <= observedAt,
     )
     .toSorted((a, b) => a.timestamp - b.timestamp);
   const first = candidates[0];
@@ -66,7 +65,11 @@ export function calibrateFinanceForecasts(params: {
         (e) =>
           e.field === forecast.field && e.unit === forecast.unit && e.source === forecast.source,
       );
-      const checkpointRow = Number.isFinite(due) ? checkpointObservation(rows, due) : undefined;
+      const observedAt = Date.parse(params.observedAt);
+      const checkpointRow =
+        Number.isFinite(due) && Number.isFinite(observedAt)
+          ? checkpointObservation(rows, due, observedAt)
+          : undefined;
       const reason =
         !Number.isFinite(due) ||
         !Number.isFinite(Date.parse(params.frozenAt)) ||
