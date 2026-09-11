@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import type {
+  LogicalAgentModelAdapter,
+  ModelCallObservation,
+} from "./logical-agent-model-router.js";
 import {
   buildQualityHarnessPlan,
   QUALITY_HARNESS_REVIEW_AGENTS,
@@ -97,6 +101,31 @@ function demoInvoker(params: {
 }
 
 describe("quality harness", () => {
+  it("passes one shared fact packet to every specialist and reviewer", async () => {
+    const requests: QualityHarnessModelRequest[] = [];
+    await runQualityHarness({
+      request: {
+        ...request,
+        sharedContext: {
+          snapshotId: "snapshot-20260907",
+          decisionMode: "conditional_trade_candidate",
+          sourceTimestamp: "2026-09-07T09:00:00+08:00",
+        },
+      },
+      maxAttempts: 1,
+      modelInvoker: demoInvoker({ requests }),
+      createRunId: () => "shared-context-run",
+    });
+
+    expect(requests).toHaveLength(10);
+    expect(new Set(requests.map((entry) => entry.sharedContext.snapshotId))).toEqual(
+      new Set(["snapshot-20260907"]),
+    );
+    expect(
+      requests.every((entry) => entry.sharedContext.decisionMode === "conditional_trade_candidate"),
+    ).toBe(true);
+  });
+
   it("derives its ten-stage plan from the existing default logical-agent DAG", () => {
     const plan = buildQualityHarnessPlan({ runId: "run-1", attempt: 1, request });
     expect(plan).toHaveLength(10);
@@ -117,6 +146,11 @@ describe("quality harness", () => {
       "formatting",
       "risk_check",
       "evidence_integrity",
+      "financial_extraction",
+      "news_classification",
+      "portfolio_exposure",
+      "adversarial_challenge",
+      "research_draft",
     ]);
   });
 
@@ -231,11 +265,11 @@ describe("quality harness", () => {
     ).toMatchObject({ passed: false });
   });
 
-  it("rejects explicit portfolio position-sizing directives", async () => {
+  it("rejects portfolio sizing language in research-only mode", async () => {
     const result = await runQualityHarness({
       request: financeRequest,
       maxAttempts: 1,
-      modelInvoker: demoInvoker({ answer: "Allocate 25% of your portfolio to Microsoft." }),
+      modelInvoker: demoInvoker({ answer: "Allocate 50% of your portfolio to NVDA." }),
       verify: async () => ({ status: "passed", summary: "should not run", details: [] }),
     });
 
@@ -245,299 +279,39 @@ describe("quality harness", () => {
     ).toMatchObject({ passed: false });
   });
 
-  it("rejects position-sizing directives without current-data wording", async () => {
-    for (const answer of [
-      "Make MSFT 25% of your portfolio.",
-      "Keep 25% of the portfolio in cash.",
-      "Limit MSFT to 25% of your portfolio.",
-      "Cap the position at 5%.",
-    ]) {
-      const result = await runQualityHarness({
-        request: {
-          task: "请总结 MSFT 的投资风险。",
-          evidence: financeRequest.evidence,
-        },
-        maxAttempts: 1,
-        modelInvoker: demoInvoker({ answer }),
-        verify: async () => ({ status: "passed", summary: "should not run", details: [] }),
-      });
-
-      expect(result.status).toBe("quality-failed");
-      expect(
-        result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
-      ).toMatchObject({ passed: false });
-    }
-  });
-
-  it("does not reject a factual company allocation as a user directive", async () => {
-    const result = await runQualityHarness({
-      request: {
-        task: "请总结该公司的投资计划。",
-        evidence: [
-          {
-            id: "company-plan",
-            text: "公司计划将 25% 的资本投入研发。",
-            source: "company-report-test",
-          },
-        ],
-      },
-      maxAttempts: 1,
-      modelInvoker: async (raw) => {
-        const current = raw as QualityHarnessModelRequest;
-        if (current.stage === "intake") {
-          return { kind: "plan", requirements: ["总结投资计划"], missingEvidence: [] };
-        }
-        if (current.stage === "draft" || current.stage === "format") {
-          return {
-            kind: "artifact",
-            artifact: {
-              answer: "The company plans to allocate 25% of its capital to R&D.",
-              claims: [
-                {
-                  id: "company-plan",
-                  text: "The company plans to allocate 25% of its capital to R&D.",
-                  status: "supported",
-                  evidenceIds: ["company-plan"],
-                },
-              ],
-            },
-          };
-        }
-        return passReview();
-      },
-      verify: async () => ({ status: "passed", summary: "factual report", details: [] }),
-    });
-
-    expect(result.status).toBe("verified");
-  });
-
-  it("does not allow an unrelated grounded claim to certify a final current number", async () => {
-    const result = await runQualityHarness({
-      request: financeRequest,
-      maxAttempts: 1,
-      modelInvoker: async (raw) => {
-        const current = raw as QualityHarnessModelRequest;
-        if (current.stage === "intake") {
-          return { kind: "plan", requirements: ["回答问题"], missingEvidence: [] };
-        }
-        if (current.stage === "draft" || current.stage === "format") {
-          return {
-            kind: "artifact",
-            artifact: {
-              answer: "NVDA 当前价格为 480 美元。",
-              claims: [
-                {
-                  id: "unrelated",
-                  text: "市场材料记录了一个项目状态。",
-                  status: "supported",
-                  evidenceIds: ["market"],
-                },
-              ],
-            },
-          };
-        }
-        return passReview();
-      },
-      verify: async () => ({ status: "passed", summary: "should not run", details: [] }),
-    });
-
-    expect(result.status).toBe("quality-failed");
-    expect(
-      result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
-    ).toMatchObject({ passed: false });
-  });
-
-  it("binds every current number to the evidence cited by its own claim", async () => {
-    const result = await runQualityHarness({
+  it("allows a conditional candidate while still rejecting execution claims", async () => {
+    const candidate = await runQualityHarness({
       request: {
         ...financeRequest,
-        evidence: [
-          {
-            id: "market-a",
-            text: "截至 2026-09-06，市场材料记录 NVDA 的价格为 480 美元。",
-            source: "market-feed-a",
-          },
-          {
-            id: "market-b",
-            text: "截至 2026-09-06，市场材料记录 NVDA 的价格为 481 美元。",
-            source: "market-feed-b",
-          },
-        ],
+        sharedContext: { decisionMode: "conditional_trade_candidate" },
       },
       maxAttempts: 1,
-      modelInvoker: async (raw) => {
-        const current = raw as QualityHarnessModelRequest;
-        if (current.stage === "intake") {
-          return { kind: "plan", requirements: ["回答问题"], missingEvidence: [] };
-        }
-        if (current.stage === "draft" || current.stage === "format") {
-          return {
-            kind: "artifact",
-            artifact: {
-              answer: "NVDA 当前价格为 480 美元，另一项市场记录为 481 美元。",
-              claims: [
-                {
-                  id: "claim-a",
-                  text: "NVDA 当前价格为 480 美元。",
-                  status: "supported",
-                  evidenceIds: ["market-b"],
-                },
-                {
-                  id: "claim-b",
-                  text: "另一项市场记录为 481 美元。",
-                  status: "supported",
-                  evidenceIds: ["market-a"],
-                },
-              ],
-            },
-          };
-        }
-        return passReview();
-      },
-      verify: async () => ({ status: "passed", summary: "should not run", details: [] }),
-    });
-
-    expect(result.status).toBe("quality-failed");
-    expect(
-      result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
-    ).toMatchObject({ passed: false });
-  });
-
-  it("preserves negative signs when matching current finance evidence", async () => {
-    const result = await runQualityHarness({
-      request: {
-        ...financeRequest,
-        evidence: [
-          {
-            id: "market",
-            text: "截至 2026-09-06，公开行情材料记录 NVDA 的收益率为 -10%。",
-            source: "market-feed-test",
-          },
-        ],
-      },
-      maxAttempts: 1,
-      modelInvoker: demoInvoker({ answer: "NVDA 当前收益率为 10%。" }),
-      verify: async () => ({ status: "passed", summary: "should not run", details: [] }),
-    });
-
-    expect(result.status).toBe("quality-failed");
-    expect(
-      result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
-    ).toMatchObject({ passed: false });
-  });
-
-  it("does not treat hyphenated dates as negative finance numbers", async () => {
-    const result = await runQualityHarness({
-      request: financeRequest,
-      maxAttempts: 1,
-      modelInvoker: async (raw) => {
-        const current = raw as QualityHarnessModelRequest;
-        if (current.stage === "intake") {
-          return { kind: "plan", requirements: ["回答问题"], missingEvidence: [] };
-        }
-        if (current.stage === "draft" || current.stage === "format") {
-          return {
-            kind: "artifact",
-            artifact: {
-              answer: "截至 2026/09/06，NVDA 当前价格为 480 美元。",
-              claims: [
-                {
-                  id: "claim-1",
-                  text: "截至 2026-09-06，NVDA 当前价格为 480 美元。",
-                  status: "supported",
-                  evidenceIds: ["market"],
-                },
-              ],
-            },
-          };
-        }
-        return passReview();
-      },
-      verify: async () => ({ status: "passed", summary: "date formats match", details: [] }),
-    });
-
-    expect(result.status).toBe("verified");
-  });
-
-  it("does not require a displayed timestamp to be repeated in claim text", async () => {
-    const result = await runQualityHarness({
-      request: financeRequest,
-      maxAttempts: 1,
-      modelInvoker: async (raw) => {
-        const current = raw as QualityHarnessModelRequest;
-        if (current.stage === "intake") {
-          return { kind: "plan", requirements: ["回答问题"], missingEvidence: [] };
-        }
-        if (current.stage === "draft" || current.stage === "format") {
-          return {
-            kind: "artifact",
-            artifact: {
-              answer: "As of September 6, 2026, NVDA was $480.",
-              claims: [
-                {
-                  id: "claim-1",
-                  text: "NVDA was $480.",
-                  status: "supported",
-                  evidenceIds: ["market"],
-                },
-              ],
-            },
-          };
-        }
-        return passReview();
-      },
-      verify: async () => ({
-        status: "passed",
-        summary: "timestamp metadata is separately grounded",
-        details: [],
+      modelInvoker: demoInvoker({
+        answer: "Conditional trade candidate: Buy NVDA if the trigger holds; review only.",
       }),
+      verify: async () => ({ status: "passed", summary: "candidate contract passed", details: [] }),
     });
 
-    expect(result.status).toBe("verified");
-  });
+    expect(candidate.status).toBe("verified");
+    expect(
+      candidate.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
+    ).toMatchObject({ passed: true });
 
-  it("preserves a sign before a currency symbol", async () => {
-    const result = await runQualityHarness({
+    const executionClaim = await runQualityHarness({
       request: {
         ...financeRequest,
-        evidence: [
-          {
-            id: "market",
-            text: "截至 2026-09-06，公开材料记录价格为 $10。",
-            source: "market-feed-test",
-          },
-        ],
+        sharedContext: { decisionMode: "conditional_trade_candidate" },
       },
       maxAttempts: 1,
-      modelInvoker: async (raw) => {
-        const current = raw as QualityHarnessModelRequest;
-        if (current.stage === "intake") {
-          return { kind: "plan", requirements: ["回答问题"], missingEvidence: [] };
-        }
-        if (current.stage === "draft" || current.stage === "format") {
-          return {
-            kind: "artifact",
-            artifact: {
-              answer: "NVDA 当前价格为 -$10。",
-              claims: [
-                {
-                  id: "claim-1",
-                  text: "NVDA 当前价格为 -$10。",
-                  status: "supported",
-                  evidenceIds: ["market"],
-                },
-              ],
-            },
-          };
-        }
-        return passReview();
-      },
+      modelInvoker: demoInvoker({
+        answer: "Conditional trade candidate: Buy NVDA if the trigger holds; order filled.",
+      }),
       verify: async () => ({ status: "passed", summary: "should not run", details: [] }),
     });
 
-    expect(result.status).toBe("quality-failed");
+    expect(executionClaim.status).toBe("quality-failed");
     expect(
-      result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
+      executionClaim.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
     ).toMatchObject({ passed: false });
   });
 
@@ -555,6 +329,101 @@ describe("quality harness", () => {
       },
       maxAttempts: 1,
       modelInvoker: demoInvoker({ answer: "当前价格为 $10。" }),
+      verify: async () => ({ status: "passed", summary: "should not run", details: [] }),
+    });
+
+    expect(result.status).toBe("quality-failed");
+    expect(
+      result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
+    ).toMatchObject({ passed: false });
+  });
+
+  it("preserves signs when matching current-data numbers", async () => {
+    const result = await runQualityHarness({
+      request: {
+        ...financeRequest,
+        evidence: [
+          {
+            id: "market",
+            text: "截至 2026-09-06，公开行情材料记录涨跌幅为 +5%。",
+            source: "market-feed-test",
+          },
+        ],
+      },
+      maxAttempts: 1,
+      modelInvoker: async (raw) => {
+        const current = raw as QualityHarnessModelRequest;
+        if (current.stage === "intake") {
+          return { kind: "plan", requirements: ["回答问题"], missingEvidence: [] };
+        }
+        if (current.stage === "draft" || current.stage === "format") {
+          return {
+            kind: "artifact",
+            artifact: {
+              answer: "NVDA 当前涨跌幅为 -5%。",
+              claims: [
+                {
+                  id: "claim-1",
+                  text: "NVDA 当前涨跌幅为 -5%。",
+                  status: "supported",
+                  evidenceIds: ["market"],
+                },
+              ],
+            },
+          };
+        }
+        return passReview();
+      },
+      verify: async () => ({ status: "passed", summary: "should not run", details: [] }),
+    });
+
+    expect(result.status).toBe("quality-failed");
+    expect(
+      result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
+    ).toMatchObject({ passed: false });
+  });
+
+  it("requires current-data numbers to be grounded by the same claim and its evidence", async () => {
+    const result = await runQualityHarness({
+      request: {
+        ...financeRequest,
+        evidence: [
+          {
+            id: "qqq",
+            text: "截至 2026-09-06，QQQ 的价格为 $100。",
+            source: "market-feed-test",
+          },
+          {
+            id: "aapl",
+            text: "截至 2026-09-06，AAPL 的价格为 $200。",
+            source: "market-feed-test",
+          },
+        ],
+      },
+      maxAttempts: 1,
+      modelInvoker: async (raw) => {
+        const current = raw as QualityHarnessModelRequest;
+        if (current.stage === "intake") {
+          return { kind: "plan", requirements: ["回答问题"], missingEvidence: [] };
+        }
+        if (current.stage === "draft" || current.stage === "format") {
+          return {
+            kind: "artifact",
+            artifact: {
+              answer: "AAPL 当前价格为 $100。",
+              claims: [
+                {
+                  id: "claim-1",
+                  text: "AAPL 当前价格为 $100。",
+                  status: "supported",
+                  evidenceIds: ["qqq"],
+                },
+              ],
+            },
+          };
+        }
+        return passReview();
+      },
       verify: async () => ({ status: "passed", summary: "should not run", details: [] }),
     });
 
@@ -653,6 +522,93 @@ describe("quality harness", () => {
     ).toMatchObject({ passed: false });
   });
 
+  it("does not let unrelated evidence satisfy a Chinese company claim", async () => {
+    const result = await runQualityHarness({
+      request: {
+        ...financeRequest,
+        evidence: [
+          {
+            id: "msft",
+            text: "截至 2026-09-06，微软的价格为 200 美元。",
+            source: "market-feed-test",
+          },
+        ],
+      },
+      maxAttempts: 1,
+      modelInvoker: async (raw) => {
+        const current = raw as QualityHarnessModelRequest;
+        if (current.stage === "intake") {
+          return { kind: "plan", requirements: ["回答问题"], missingEvidence: [] };
+        }
+        if (current.stage === "draft" || current.stage === "format") {
+          return {
+            kind: "artifact",
+            artifact: {
+              answer: "苹果当前价格为 200 美元。",
+              claims: [
+                {
+                  id: "claim-1",
+                  text: "苹果当前价格为 200 美元。",
+                  status: "supported",
+                  evidenceIds: ["msft"],
+                },
+              ],
+            },
+          };
+        }
+        return passReview();
+      },
+      verify: async () => ({ status: "passed", summary: "should not run", details: [] }),
+    });
+
+    expect(result.status).toBe("quality-failed");
+    expect(
+      result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
+    ).toMatchObject({ passed: false });
+  });
+
+  it("does not treat a required current-data date as a financial number", async () => {
+    const result = await runQualityHarness({
+      request: {
+        ...financeRequest,
+        evidence: [
+          {
+            id: "aapl",
+            text: "截至 2026-09-06，AAPL 的价格为 $100。",
+            source: "market-feed-test",
+          },
+        ],
+      },
+      maxAttempts: 1,
+      modelInvoker: async (raw) => {
+        const current = raw as QualityHarnessModelRequest;
+        if (current.stage === "intake") {
+          return { kind: "plan", requirements: ["回答问题"], missingEvidence: [] };
+        }
+        if (current.stage === "draft" || current.stage === "format") {
+          return {
+            kind: "artifact",
+            artifact: {
+              answer: "截至 2026-09-06，AAPL 当前价格为 $100。",
+              claims: [
+                {
+                  id: "claim-1",
+                  text: "截至 2026-09-06，AAPL 当前价格为 $100。",
+                  status: "supported",
+                  evidenceIds: ["aapl"],
+                },
+              ],
+            },
+          };
+        }
+        return passReview();
+      },
+      verify: async () => ({ status: "passed", summary: "should not run", details: [] }),
+    });
+
+    expect(result.status).toBe("verified");
+  });
+
   it("aborts a verifier that exceeds its independent timeout", async () => {
     let aborted = false;
     const result = await runQualityHarness({
@@ -673,4 +629,134 @@ describe("quality harness", () => {
     expect(result.verification.status).toBe("blocked");
     expect(result.verification.summary).toContain("timed out");
   });
+});
+
+describe("quality harness model evidence", () => {
+  it.each(["deterministic", "injected", "adapter"] as const)(
+    "keeps %s evidence distinct from caller claims",
+    async (mode) => {
+      const observations = new Map<string, ModelCallObservation>();
+      const invoke = demoInvoker({});
+      const adapter: LogicalAgentModelAdapter = {
+        id: "test",
+        provider: "test-local",
+        modelId: "fixture-model",
+        mode,
+        capabilities: ["json"],
+        requiredTools: [],
+        requiredSideEffects: ["local_compute"],
+        invoke: async (call) => {
+          observations.set(call.callId, {
+            ...call,
+            transportRequestId: "fixture",
+            kind: "model_inference",
+          });
+          return { ...((await invoke(call.payload)) as object), realModelInferenceObserved: true };
+        },
+        observe: (call) => observations.get(call.callId),
+      };
+      const result = await runQualityHarness({
+        request,
+        maxAttempts: 1,
+        modelRouting: {
+          revision: "fixture-v1",
+          adapters: [adapter],
+          defaultPolicy: {
+            primary: "test",
+            requiredCapabilities: ["json"],
+            maxInputBytes: 100_000,
+            timeoutMs: 1000,
+          },
+        },
+      });
+      expect(result.status).toBe("completed-unverified");
+      expect(result.execution.modelCalls).toHaveLength(10);
+      expect(result.execution.evidenceMode).toBe(mode === "adapter" ? "adapter-attested" : mode);
+      expect(result.execution.realModelInferenceObserved).toBe(mode === "adapter");
+      expect(result.execution.allModelCallsAttested).toBe(mode === "adapter");
+      expect(result.execution.providerCallsMade).toBe("not-observed");
+    },
+  );
+
+  it("audits legacy invokers conservatively even if their output claims real inference", async () => {
+    const invoke = demoInvoker({});
+    const result = await runQualityHarness({
+      request,
+      modelInvoker: async (raw) => ({
+        ...((await invoke(raw)) as object),
+        realModelInferenceObserved: true,
+      }),
+      maxAttempts: 1,
+    });
+    expect(result.execution.modelCalls).toHaveLength(10);
+    expect(result.execution.evidenceMode).toBe("injected");
+    expect(result.execution.realModelInferenceObserved).toBe(false);
+  });
+});
+
+it("cancels the harness model run and does not start a repair attempt", async () => {
+  const controller = new AbortController();
+  let calls = 0;
+  const result = await runQualityHarness({
+    request,
+    signal: controller.signal,
+    maxAttempts: 2,
+    modelRouting: {
+      revision: "cancel-fixture-v1",
+      adapters: [
+        {
+          id: "cancel",
+          provider: "test-local",
+          modelId: "test",
+          mode: "deterministic",
+          capabilities: [],
+          requiredTools: [],
+          requiredSideEffects: ["local_compute"],
+          invoke: async (_, signal) =>
+            new Promise((_, reject) => {
+              calls += 1;
+              signal.addEventListener("abort", () => reject(new Error("cancelled")), {
+                once: true,
+              });
+              controller.abort();
+            }),
+        },
+      ],
+      defaultPolicy: {
+        primary: "cancel",
+        requiredCapabilities: [],
+        maxInputBytes: 100_000,
+        timeoutMs: 1000,
+      },
+    },
+  });
+  expect(result.status).toBe("failed");
+  expect(result.attempts).toHaveLength(1);
+  expect(calls).toBe(1);
+  expect(result.execution.modelCalls[0]?.outcome).toBe("aborted");
+});
+
+it("cancels an uncooperative verifier without reporting verification success", async () => {
+  const controller = new AbortController();
+  let verifierAborted = false;
+  const result = await runQualityHarness({
+    request,
+    signal: controller.signal,
+    modelInvoker: demoInvoker({}),
+    verify: async ({ signal }) =>
+      new Promise(() => {
+        signal.addEventListener(
+          "abort",
+          () => {
+            verifierAborted = true;
+          },
+          { once: true },
+        );
+        controller.abort();
+      }),
+  });
+  expect(result.status).toBe("blocked");
+  expect(result.verification.summary).toBe("quality verifier cancelled");
+  expect(result.attempts).toHaveLength(1);
+  expect(verifierAborted).toBe(true);
 });

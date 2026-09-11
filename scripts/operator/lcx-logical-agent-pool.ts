@@ -1,3 +1,5 @@
+import type { LogicalAgentModelRouting } from "../../src/agents/logical-agent-model-router.ts";
+import { createCanonicalStateRootLogicalAgentCheckpointStore } from "../../src/agents/logical-agent-pool-checkpoint-store.ts";
 import {
   buildDefaultLogicalAgentPlan,
   LOGICAL_AGENT_DEFINITIONS,
@@ -16,6 +18,9 @@ type Options = {
   demo: boolean;
   qualityDemo: boolean;
   json: boolean;
+  persistCheckpoint: boolean;
+  resume: boolean;
+  runId?: string;
 };
 
 function parsePositiveConcurrency(value: string): 1 | 2 {
@@ -33,6 +38,8 @@ function parseArgs(args: readonly string[]): Options {
     demo: false,
     qualityDemo: false,
     json: false,
+    persistCheckpoint: false,
+    resume: false,
   };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -56,13 +63,31 @@ function parseArgs(args: readonly string[]): Options {
       options.qualityDemo = true;
     } else if (arg === "--json") {
       options.json = true;
+    } else if (arg === "--persist-checkpoint") {
+      options.persistCheckpoint = true;
+    } else if (arg === "--resume") {
+      options.resume = true;
+      options.persistCheckpoint = true;
+    } else if (arg === "--run-id") {
+      const value = args[index + 1];
+      if (!value?.trim()) {
+        throw new Error("--run-id requires a non-empty value");
+      }
+      options.runId = value;
+      index += 1;
     } else if (arg === "--help" || arg === "-h") {
       throw new Error(
-        "Usage: node --import tsx scripts/operator/lcx-logical-agent-pool.ts [--json] [--demo] [--quality-demo] [--concurrency 1|2] [--ask TEXT]",
+        "Usage: node --import tsx scripts/operator/lcx-logical-agent-pool.ts [--json] [--demo] [--quality-demo] [--persist-checkpoint] [--resume --run-id ID] [--concurrency 1|2] [--ask TEXT]",
       );
     } else {
       throw new Error(`unknown argument: ${arg}`);
     }
+  }
+  if (options.resume && !options.demo) {
+    throw new Error("--resume requires --demo so the persisted plan can be replayed safely");
+  }
+  if (options.resume && !options.runId) {
+    throw new Error("--resume requires --run-id");
   }
   return options;
 }
@@ -93,13 +118,43 @@ function qualityDemoResponse(request: QualityHarnessModelRequest): QualityHarnes
   };
 }
 
+function qualityDemoRouting(): LogicalAgentModelRouting {
+  return {
+    revision: "operator-quality-demo-v1",
+    adapters: [
+      {
+        id: "deterministic-quality-demo",
+        provider: "local-deterministic-demo",
+        modelId: "deterministic-demo-model",
+        mode: "deterministic",
+        capabilities: ["quality_harness"],
+        requiredTools: [],
+        requiredSideEffects: ["local_compute"],
+        invoke: async ({ payload }) => qualityDemoResponse(payload as QualityHarnessModelRequest),
+      },
+    ],
+    defaultPolicy: {
+      primary: "deterministic-quality-demo",
+      requiredCapabilities: ["quality_harness"],
+      maxInputBytes: 256_000,
+      timeoutMs: 1_000,
+    },
+  };
+}
+
 export async function buildLogicalAgentPoolPayload(options: Options) {
   const pool = new LogicalAgentPool({ maxConcurrency: options.concurrency });
   const plan = buildDefaultLogicalAgentPlan({ ask: options.ask });
+  const checkpointStore = options.persistCheckpoint
+    ? createCanonicalStateRootLogicalAgentCheckpointStore<unknown>()
+    : undefined;
   const execution = options.demo
     ? await runLogicalAgentPlan({
         pool,
         tasks: plan,
+        ...(checkpointStore === undefined ? {} : { checkpointStore }),
+        ...(options.runId === undefined ? {} : { runId: options.runId }),
+        ...(options.resume ? { resume: true } : {}),
         executor: ({ task, dependencyResults }) => ({
           output: {
             taskId: task.id,
@@ -119,8 +174,7 @@ export async function buildLogicalAgentPoolPayload(options: Options) {
         modelId: "deterministic-demo-model",
         maxConcurrency: options.concurrency,
         maxAttempts: 1,
-        modelInvoker: (request) =>
-          Promise.resolve(qualityDemoResponse(request as QualityHarnessModelRequest)),
+        modelRouting: qualityDemoRouting(),
         verify: async () => ({
           status: "passed",
           summary: "deterministic local verifier passed",
@@ -148,6 +202,9 @@ export async function buildLogicalAgentPoolPayload(options: Options) {
       maxConcurrency: 2,
       realModelInference: false,
       qualityHarness: options.qualityDemo,
+      checkpointPersistence: options.persistCheckpoint
+        ? "active_state_root_file"
+        : "injected_store_only",
     },
     liveTouched: false,
     providerConfigTouched: false,
@@ -165,7 +222,8 @@ async function main() {
   process.stdout.write(
     [
       `10 个逻辑 Agent / 1 个共享模型槽位 / 并发上限 ${options.concurrency}`,
-      `模式：${options.qualityDemo ? "质量闭环 demo（复用十角色 DAG，不调用模型）" : options.demo ? "本地确定性 demo（不调用模型）" : "只输出编排计划"}`,
+      `模式：${options.qualityDemo ? "质量闭环 demo（role router + 确定性 adapter，不调用真实模型）" : options.demo ? "本地确定性 demo（不调用真实模型）" : "只输出编排计划"}`,
+      `checkpoint：${options.persistCheckpoint ? "已接入活动 state-root 文件持久化" : "未启用（使用 --persist-checkpoint）"}`,
       `下一步：注入真实本地 modelInvoker 后才会执行模型推理；receipt 仍需真实 verifier 才能标 verified。`,
     ].join("\n") + "\n",
   );

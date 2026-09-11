@@ -1,7 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { gzipSync } from "node:zlib";
+import { EnvHttpProxyAgent, Response, fetch as undiciFetch } from "undici";
+import { describe, expect, it, vi } from "vitest";
+import { resolveFinanceCredentialEnv } from "./finance-credential-env.js";
 import { buildFinanceDataGatewaySnapshot } from "./finance-data-gateway.js";
 import {
   collectLiveFinanceGatewayInput,
+  resolveFinanceFetch,
+  resolveFinanceGzipTextFetch,
   fetchYahooQuote,
   LiveMarketFetchError,
   parseYahooChart,
@@ -33,6 +38,18 @@ function fakeFetch(body: string, init?: { ok?: boolean; status?: number }): Fetc
     status: init?.status ?? 200,
     text: async () => body,
   });
+}
+
+function sequenceFetch(responses: Array<{ ok: boolean; status: number; body: string }>): FetchImpl {
+  let index = 0;
+  return async () => {
+    const response = responses[Math.min(index++, responses.length - 1)];
+    return {
+      ok: response.ok,
+      status: response.status,
+      text: async () => response.body,
+    };
+  };
 }
 
 describe("parseYahooChart", () => {
@@ -89,6 +106,17 @@ describe("fetchYahooQuote", () => {
     await expect(fetchYahooQuote("QQQ", { fetchImpl: throwingFetch })).rejects.toMatchObject({
       reason: "network_error",
     });
+  });
+
+  it("falls back from a blocked Yahoo host to the healthy public chart host", async () => {
+    const quote = await fetchYahooQuote("QQQ", {
+      fetchImpl: sequenceFetch([
+        { ok: false, status: 403, body: "" },
+        { ok: true, status: 200, body: SAMPLE_JSON },
+      ]),
+    });
+    expect(quote.price).toBe(725.17);
+    expect(quote.sourceUrlOrArtifact).toContain("query1.finance.yahoo.com");
   });
 });
 
@@ -147,4 +175,59 @@ describe("collectLiveFinanceGatewayInput", () => {
       }),
     ).rejects.toBeInstanceOf(LiveMarketFetchError);
   });
+});
+
+vi.mock("undici", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("undici")>();
+  return {
+    ...actual,
+    fetch: vi.fn(),
+    EnvHttpProxyAgent: vi.fn(function (options) {
+      return new actual.EnvHttpProxyAgent(options);
+    }),
+  };
+});
+
+vi.mock("./finance-credential-env.js", () => ({ resolveFinanceCredentialEnv: vi.fn(() => ({})) }));
+
+describe("default proxy-aware transport", () => {
+  it("uses the saved finance proxy without requiring shell proxy variables", async () => {
+    vi.mocked(resolveFinanceCredentialEnv).mockReturnValueOnce({
+      LCX_FINANCE_HTTP_PROXY: "http://proxy.test:8080",
+    });
+    vi.mocked(undiciFetch).mockResolvedValueOnce(new Response("{}"));
+    await resolveFinanceFetch()("https://example.test");
+    expect(EnvHttpProxyAgent).toHaveBeenLastCalledWith({
+      httpProxy: "http://proxy.test:8080",
+      httpsProxy: "http://proxy.test:8080",
+      connectTimeout: 30_000,
+      requestTls: { timeout: 30_000 },
+    });
+  });
+  it("passes the deadline signal to undici without making a network call", async () => {
+    vi.mocked(undiciFetch).mockImplementationOnce(async () => new Promise(() => {}));
+    await expect(
+      resolveFinanceFetch(undefined, { timeoutMs: 10 })("https://example.test"),
+    ).rejects.toMatchObject({ kind: "timeout" });
+    const init = vi.mocked(undiciFetch).mock.calls.at(-1)?.[1];
+    expect(init?.signal?.aborted).toBe(true);
+    expect(init?.dispatcher).toBeDefined();
+  });
+});
+
+it("decodes public gzip text under the governed deadline", async () => {
+  vi.mocked(undiciFetch).mockResolvedValueOnce(
+    new Response(new Uint8Array(gzipSync("public news metadata"))),
+  );
+  const response = await resolveFinanceGzipTextFetch()("https://example.test/data.json.gz");
+  expect(await response.text()).toBe("public news metadata");
+});
+
+it("rejects a compressed response that expands past the output budget", async () => {
+  vi.mocked(undiciFetch).mockResolvedValueOnce(
+    new Response(new Uint8Array(gzipSync(Buffer.alloc(17 * 1024 * 1024, 65)))),
+  );
+  await expect(
+    resolveFinanceGzipTextFetch()("https://example.test/data.json.gz"),
+  ).rejects.toMatchObject({ kind: "network_error" });
 });

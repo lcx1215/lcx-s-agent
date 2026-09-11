@@ -1,3 +1,4 @@
+import { gunzipSync } from "node:zlib";
 // Track A: turn the finance data gateway from fixture-only into one that can
 // ingest a REAL, authorized public market data source.
 //
@@ -12,11 +13,20 @@
 // answer can never present these as realtime execution-grade numbers. The
 // fetch implementation is injectable so the mapping logic is testable offline
 // and so the live path can fail closed when the network or data is unavailable.
-
+import { EnvHttpProxyAgent, fetch as undiciFetch } from "undici";
+import {
+  ApiCallError,
+  governApiFetch,
+  type ApiFetch,
+  type ApiTransportOptions,
+} from "./api-call-contract.js";
+import { resolveFinanceCredentialEnv } from "./finance-credential-env.js";
 import type {
   FinanceDataGatewayInput,
   FinanceDataGatewayObservationInput,
 } from "./finance-data-gateway.js";
+import { financeResponseCache } from "./finance-response-cache.js";
+import { governFinanceQuota } from "./finance-source-quota.js";
 
 export type LiveMarketQuote = {
   /** Uppercase instrument symbol as understood by the caller, e.g. "QQQ". */
@@ -32,18 +42,95 @@ export type LiveMarketQuote = {
   sourceUrlOrArtifact: string;
 };
 
-export type FetchImpl = (
-  url: string,
-  init?: { headers?: Record<string, string> },
-) => Promise<{ ok: boolean; status: number; text: () => Promise<string> }>;
+export type FetchImpl = ApiFetch;
 
-const YAHOO_CHART_URL = (symbol: string): string =>
-  `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
+const YAHOO_CHART_URL = (symbol: string, host = "query2"): string =>
+  `https://${host}.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
     symbol.toUpperCase(),
   )}?interval=1d&range=1d`;
 
+const YAHOO_CHART_HOSTS = ["query2", "query1"] as const;
+
 // Yahoo returns 429/403 without a browser-like UA; keep it explicit and honest.
 const YAHOO_HEADERS = { "User-Agent": "Mozilla/5.0 (LCX Agent research-only market snapshot)" };
+
+let defaultFinanceProxyAgent: EnvHttpProxyAgent | undefined;
+let defaultFinanceProxyUrl: string | undefined;
+
+export function createFinanceNativeFetch(gzipText = false): FetchImpl {
+  return async (url, init) => {
+    const proxy = resolveFinanceCredentialEnv().LCX_FINANCE_HTTP_PROXY?.trim() || undefined;
+    if (!defaultFinanceProxyAgent || proxy !== defaultFinanceProxyUrl) {
+      const previous = defaultFinanceProxyAgent;
+      // The governed AbortSignal owns the total request budget. Undici's 10s
+      // connection default otherwise truncates callers that explicitly allow longer.
+      defaultFinanceProxyAgent = new EnvHttpProxyAgent({
+        ...(proxy ? { httpProxy: proxy, httpsProxy: proxy } : {}),
+        connectTimeout: 30_000,
+        requestTls: { timeout: 30_000 },
+      });
+      defaultFinanceProxyUrl = proxy;
+      void previous?.close().catch(() => undefined);
+    }
+    const response = await undiciFetch(url, {
+      dispatcher: defaultFinanceProxyAgent,
+      headers: init?.headers,
+      signal: init?.signal,
+    });
+    return {
+      ok: response.ok,
+      status: response.status,
+      headers: response.headers,
+      text: async () => {
+        if (!gzipText || !response.ok) {
+          return response.text();
+        }
+        const reader = response.body?.getReader();
+        if (!reader) {
+          throw new Error("Missing compressed public data body");
+        }
+        const chunks: Uint8Array[] = [];
+        let size = 0;
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) {
+              break;
+            }
+            size += value.byteLength;
+            if (size > 4 * 1024 * 1024) {
+              throw new Error("Compressed public data exceeds size limit");
+            }
+            chunks.push(value);
+          }
+        } finally {
+          await reader.cancel();
+        }
+        const body = Buffer.concat(chunks);
+        return gunzipSync(body, { maxOutputLength: 16 * 1024 * 1024 }).toString("utf8");
+      },
+    };
+  };
+}
+
+/** Resolve the repository's proxy-aware public HTTP path for source adapters. */
+export function resolveFinanceFetch(
+  fetchImpl?: FetchImpl,
+  options: ApiTransportOptions = {},
+): FetchImpl {
+  return governApiFetch(
+    fetchImpl ?? financeResponseCache.wrap(governFinanceQuota(createFinanceNativeFetch())),
+    options,
+  );
+}
+
+/** Injected fetches supply decoded text; native downloads remain bounded and proxy-aware. */
+export function resolveFinanceGzipTextFetch(fetchImpl?: FetchImpl): FetchImpl {
+  return governApiFetch(
+    fetchImpl ??
+      financeResponseCache.wrap(governFinanceQuota(createFinanceNativeFetch(true)), "gzip"),
+  );
+}
 
 export class LiveMarketFetchError extends Error {
   constructor(
@@ -51,6 +138,7 @@ export class LiveMarketFetchError extends Error {
     readonly reason:
       | "network_error"
       | "http_error"
+      | "forbidden"
       | "empty_body"
       | "unparseable"
       | "no_value"
@@ -64,7 +152,11 @@ export class LiveMarketFetchError extends Error {
 // Yahoo chart JSON shape (trimmed):
 // { chart: { result: [ { meta: { currency, symbol, regularMarketPrice,
 //   regularMarketTime, exchangeTimezoneName } } ], error: null } }
-export function parseYahooChart(body: string, requestedSymbol: string): LiveMarketQuote {
+export function parseYahooChart(
+  body: string,
+  requestedSymbol: string,
+  sourceUrlOrArtifact = YAHOO_CHART_URL(requestedSymbol),
+): LiveMarketQuote {
   const text = body.trim();
   if (!text) {
     throw new LiveMarketFetchError("yahoo returned an empty body", "empty_body");
@@ -109,33 +201,62 @@ export function parseYahooChart(body: string, requestedSymbol: string): LiveMark
     currency,
     // The public chart endpoint is delayed, not realtime execution-grade.
     delayStatus: "delayed",
-    sourceUrlOrArtifact: YAHOO_CHART_URL(requestedSymbol),
+    sourceUrlOrArtifact,
   };
 }
 
 export async function fetchYahooQuote(
   symbol: string,
-  options: { fetchImpl?: FetchImpl } = {},
+  options: ApiTransportOptions & { fetchImpl?: FetchImpl } = {},
 ): Promise<LiveMarketQuote> {
-  const fetchImpl = options.fetchImpl ?? (globalThis.fetch as FetchImpl | undefined);
-  if (!fetchImpl) {
-    throw new LiveMarketFetchError("no fetch implementation available", "network_error");
+  const fetchImpl = resolveFinanceFetch(options.fetchImpl, options);
+  let lastError: LiveMarketFetchError | undefined;
+  for (const host of YAHOO_CHART_HOSTS) {
+    const url = YAHOO_CHART_URL(symbol, host);
+    let response: { ok: boolean; status: number; text: () => Promise<string> };
+    try {
+      response = await fetchImpl(url, { headers: YAHOO_HEADERS });
+    } catch (error) {
+      if (error instanceof ApiCallError) {
+        if (error.kind === "timeout" || error.kind === "cancelled") {
+          throw error;
+        }
+        if (error.kind === "http_error" && error.httpStatus === 403) {
+          lastError = new LiveMarketFetchError(error.message, "forbidden");
+          continue;
+        }
+        if (error.kind === "forbidden") {
+          lastError = new LiveMarketFetchError(error.message, "forbidden");
+          continue;
+        }
+        if (error.kind === "http_error") {
+          throw new LiveMarketFetchError(error.message, "http_error");
+        }
+      }
+      lastError = new LiveMarketFetchError(
+        `yahoo request failed on ${host}: ${(error as Error).message}`,
+        "network_error",
+      );
+      continue;
+    }
+    if (!response.ok) {
+      lastError = new LiveMarketFetchError(
+        `yahoo http status ${response.status} on ${host}`,
+        response.status === 403 ? "forbidden" : "http_error",
+      );
+      continue;
+    }
+    try {
+      const body = await response.text();
+      return parseYahooChart(body, symbol, url);
+    } catch (error) {
+      if (!(error instanceof LiveMarketFetchError)) {
+        throw error;
+      }
+      lastError = error;
+    }
   }
-  const url = YAHOO_CHART_URL(symbol);
-  let response: { ok: boolean; status: number; text: () => Promise<string> };
-  try {
-    response = await fetchImpl(url, { headers: YAHOO_HEADERS });
-  } catch (error) {
-    throw new LiveMarketFetchError(
-      `yahoo request failed: ${(error as Error).message}`,
-      "network_error",
-    );
-  }
-  if (!response.ok) {
-    throw new LiveMarketFetchError(`yahoo http status ${response.status}`, "http_error");
-  }
-  const body = await response.text();
-  return parseYahooChart(body, symbol);
+  throw lastError ?? new LiveMarketFetchError("yahoo request failed", "network_error");
 }
 
 // Map a fetched quote into the gateway's observation contract, preserving full

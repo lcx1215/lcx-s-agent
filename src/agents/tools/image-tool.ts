@@ -3,6 +3,12 @@ import { Type } from "@sinclair/typebox";
 import type { OpenClawConfig } from "../../config/config.js";
 import { resolveUserPath } from "../../utils.js";
 import { loadWebMedia } from "../../web/media.js";
+import {
+  isLocalVisionModelRef,
+  LOCAL_VISION_MODEL_REF,
+  runLocalVisionVlm,
+  resolveLocalVisionRuntimeConfig,
+} from "../local-vision-vlm.js";
 import { minimaxUnderstandImage } from "../minimax-vlm.js";
 import {
   coerceImageAssistantText,
@@ -109,20 +115,36 @@ export function resolveImageModelConfigForTool(params: {
 
   let preferred: string | null = null;
 
+  // Local MLX-VLM is opt-in so a machine without the model/runtime keeps the
+  // existing provider routing. When enabled, it is the first image lane and
+  // configured remote providers remain explicit fallbacks.
+  if (resolveLocalVisionRuntimeConfig().enabled) {
+    preferred = LOCAL_VISION_MODEL_REF;
+  }
+
   // MiniMax users: always try the canonical vision model first when auth exists.
-  if (primary.provider === "minimax" && providerOk) {
+  if (!preferred && primary.provider === "minimax" && providerOk) {
     preferred = "minimax/MiniMax-VL-01";
-  } else if (providerOk && providerVisionFromConfig) {
+  } else if (!preferred && providerOk && providerVisionFromConfig) {
     preferred = providerVisionFromConfig;
-  } else if (primary.provider === "zai" && providerOk) {
+  } else if (!preferred && primary.provider === "zai" && providerOk) {
     preferred = "zai/glm-4.6v";
-  } else if (primary.provider === "openai" && openaiOk) {
+  } else if (!preferred && primary.provider === "openai" && openaiOk) {
     preferred = "openai/gpt-5-mini";
-  } else if (primary.provider === "anthropic" && anthropicOk) {
+  } else if (!preferred && primary.provider === "anthropic" && anthropicOk) {
     preferred = ANTHROPIC_IMAGE_PRIMARY;
   }
 
   if (preferred?.trim()) {
+    if (preferred === LOCAL_VISION_MODEL_REF && providerOk) {
+      if (providerVisionFromConfig) {
+        addFallback(providerVisionFromConfig);
+      } else if (primary.provider === "minimax") {
+        addFallback("minimax/MiniMax-VL-01");
+      } else if (primary.provider === "zai") {
+        addFallback("zai/glm-4.6v");
+      }
+    }
     if (openaiOk) {
       addFallback("openai/gpt-5-mini");
     }
@@ -201,6 +223,7 @@ async function runImagePrompt(params: {
   modelOverride?: string;
   prompt: string;
   images: Array<{ base64: string; mimeType: string }>;
+  signal?: AbortSignal;
 }): Promise<{
   text: string;
   provider: string;
@@ -217,6 +240,19 @@ async function runImagePrompt(params: {
     cfg: effectiveCfg,
     modelOverride: params.modelOverride,
     run: async (provider, modelId) => {
+      if (isLocalVisionModelRef(`${provider}/${modelId}`)) {
+        const localResult = await runLocalVisionVlm({
+          images: params.images,
+          prompt: params.prompt,
+          modelId,
+          signal: params.signal,
+        });
+        return {
+          text: localResult.text,
+          provider: "mlx-vlm",
+          model: localResult.model,
+        };
+      }
       const model = resolveModelFromRegistry({ modelRegistry, provider, modelId });
       if (!model.input?.includes("image")) {
         throw new Error(`Model does not support images: ${provider}/${modelId}`);
@@ -318,7 +354,7 @@ export function createImageTool(options?: {
       maxBytesMb: Type.Optional(Type.Number()),
       maxImages: Type.Optional(Type.Number()),
     }),
-    execute: async (_toolCallId, args) => {
+    execute: async (_toolCallId, args, signal) => {
       const record = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
 
       // MARK: - Normalize image + images input and dedupe while preserving order
@@ -488,6 +524,7 @@ export function createImageTool(options?: {
         modelOverride,
         prompt: promptRaw,
         images: loadedImages.map((img) => ({ base64: img.base64, mimeType: img.mimeType })),
+        signal,
       });
 
       const imageDetails =

@@ -47,6 +47,7 @@ export type FinanceDataGatewayInput = {
   useCase: string;
   asOf: string;
   freshnessMaxMinutes?: number;
+  crossSourceSkewMaxMinutes?: number;
   requireOfficialReference?: boolean;
   observations: FinanceDataGatewayObservationInput[];
 };
@@ -195,6 +196,31 @@ function buildConflicts(
   });
 }
 
+function buildCrossSourceTimestampWarnings(
+  fieldNames: readonly string[],
+  observations: readonly FinanceDataGatewayObservationInput[],
+  maxSkewMinutes: number,
+): string[] {
+  return fieldNames.flatMap((fieldName) => {
+    const timestamps = observations.flatMap((observation) =>
+      observation.fields
+        .filter((field) => field.name.trim() === fieldName)
+        .map((field) => Date.parse(field.sourceTimestamp)),
+    );
+    const validTimestamps = timestamps.filter((timestamp) => Number.isFinite(timestamp));
+    if (validTimestamps.length < 2) {
+      return [];
+    }
+    const skewMinutes = (Math.max(...validTimestamps) - Math.min(...validTimestamps)) / 60_000;
+    if (skewMinutes <= maxSkewMinutes) {
+      return [];
+    }
+    return [
+      `${fieldName} source timestamps differ by ${Math.round(skewMinutes)}m across providers`,
+    ];
+  });
+}
+
 export function buildFinanceDataGatewaySnapshot(
   input: FinanceDataGatewayInput,
 ): FinanceDataGatewaySnapshot {
@@ -210,6 +236,10 @@ export function buildFinanceDataGatewaySnapshot(
   const freshnessWarnings: string[] = [];
   const asOfMs = Date.parse(asOf);
   const freshnessMaxMinutes = input.freshnessMaxMinutes ?? 60 * 24;
+  const crossSourceSkewMaxMinutes = input.crossSourceSkewMaxMinutes ?? 60 * 24;
+  if (!Number.isFinite(crossSourceSkewMaxMinutes) || crossSourceSkewMaxMinutes < 0) {
+    throw new Error("crossSourceSkewMaxMinutes must be a non-negative number");
+  }
 
   for (const [observationIndex, observation] of input.observations.entries()) {
     trimRequired(observation.providerName, `observations[${observationIndex}].providerName`);
@@ -256,6 +286,12 @@ export function buildFinanceDataGatewaySnapshot(
     .map((fieldName) => selectPrimaryField(fieldName, input.observations))
     .filter((field): field is FinanceDataGatewayNormalizedField => Boolean(field));
   const conflicts = buildConflicts(fieldNames, input.observations);
+  const crossSourceTimestampWarnings = buildCrossSourceTimestampWarnings(
+    fieldNames,
+    input.observations,
+    crossSourceSkewMaxMinutes,
+  );
+  freshnessWarnings.push(...crossSourceTimestampWarnings);
 
   if (!providerRolesPresent.includes("primary_market_data")) {
     missingEvidence.push("primary_market_data_provider");

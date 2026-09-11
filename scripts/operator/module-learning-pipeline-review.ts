@@ -16,7 +16,7 @@ function usage(): never {
     [
       "Usage: node --import tsx scripts/operator/module-learning-pipeline-review.ts [--date YYYY-MM-DD] [--target-module NAME] [--max-files N] [--workspace DIR] [--no-write] [--json]",
       "",
-      "Default reads/writes under ~/.openclaw/workspace/memory/module-learning-pipeline-*.",
+      "Default reviews all dated batches; --date selects a single batch.",
       "Use --no-write for a dry run. This is local review only and does not touch live/provider/protected-memory state.",
     ].join("\n"),
   );
@@ -70,7 +70,11 @@ function parseArgs(args: string[]): CliOptions {
       usage();
     }
   }
-  if (options.dateKey && !/^\d{4}-\d{2}-\d{2}$/u.test(options.dateKey)) {
+  if (
+    options.dateKey &&
+    options.dateKey !== "all" &&
+    !/^\d{4}-\d{2}-\d{2}$/u.test(options.dateKey)
+  ) {
     usage();
   }
   return options;

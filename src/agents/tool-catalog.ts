@@ -114,6 +114,15 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     includeInOpenClawGroup: true,
   },
   {
+    id: "research_web_autopilot",
+    label: "research_web_autopilot",
+    description:
+      "Search, open original web documents, cross-check likely primary references, and retain timestamped failures in a read-only evidence receipt",
+    sectionId: "web",
+    profiles: [],
+    includeInOpenClawGroup: true,
+  },
+  {
     id: "memory_search",
     label: "memory_search",
     description: "Broad memory recall",
@@ -187,6 +196,69 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     label: "finance_external_source_adapter",
     description:
       "Normalize safe external finance source tool outputs, feed exports, and public references into local research artifacts without fetching remote content",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    id: "finance_realtime_source_refresh",
+    label: "finance_realtime_source_refresh",
+    description:
+      "Inspect or explicitly fetch an authorized public finance source through the preferred/fallback registry and pass it into the canonical finance data gateway",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    id: "finance_market_collection_refresh",
+    label: "finance_market_collection_refresh",
+    description:
+      "Inspect or explicitly fetch public US-market news, options, corporate actions, official macro, SEC filings, company profiles, and free-tier EOD collections with provenance receipts",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    id: "finance_research_run",
+    label: "finance_research_run",
+    description:
+      "Plan or explicitly execute the canonical finance research workflow with bounded sources, independent review, and finding closure",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    id: "local_specialist",
+    label: "local_specialist",
+    description:
+      "Run bounded offline classification, fact extraction, or summarization on supplied text",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    id: "research_data_autopilot",
+    label: "research_data_autopilot",
+    description:
+      "Autonomously route read-only research requests across all canonical finance, crypto, macro, SEC, news, geospatial, weather, and seismic adapters with automatic source selection and provenance",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    id: "finance_chart_analysis",
+    label: "finance_chart_analysis",
+    description:
+      "Analyze canonical OHLCV history deterministically and optionally attach a chart image for vision review without trade or order authority",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    id: "geospatial_source_refresh",
+    label: "geospatial_source_refresh",
+    description:
+      "Inspect or explicitly fetch public geocoding, weather, and earthquake sources with cross-source review",
     sectionId: "memory",
     profiles: ["coding"],
     includeInOpenClawGroup: true,

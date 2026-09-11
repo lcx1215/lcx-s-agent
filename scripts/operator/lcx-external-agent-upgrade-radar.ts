@@ -17,6 +17,18 @@ type CandidateId =
   | "computer_use_cli_bridge"
   | "github_cli_agentic_workflow_control"
   | "multi_agent_framework_orchestration_guardrails"
+  | "individual_ai_hedge_fund"
+  | "trading_agents_finance_multi_agent"
+  | "finrobot_financial_research"
+  | "openbb_finance_data_platform"
+  | "agent_reach_source_adapter"
+  | "echoapi_api_test_harness"
+  | "finnews_hunter_realtime_intelligence"
+  | "openfr_finance_research"
+  | "amplio_crash_resume_harness"
+  | "cameron_personal_finance_approval"
+  | "cents_thesis_research"
+  | "openalice_full_lifecycle_trading"
   | "prediction_market_research_intake"
   | "prediction_market_strategy_audit";
 
@@ -32,6 +44,7 @@ type AdoptionMode =
   | "computer_use_cli_probe"
   | "github_cli_agentic_workflow_probe"
   | "multi_agent_orchestration_probe"
+  | "finance_agent_architecture_probe"
   | "prediction_market_research_probe"
   | "strategy_audit_probe";
 
@@ -83,7 +96,8 @@ type BlacktechMechanismId =
   | "local_first_memory_provenance"
   | "agent_trace_observability"
   | "secure_tool_skill_permission_layer"
-  | "github_cli_agentic_control_plane";
+  | "github_cli_agentic_control_plane"
+  | "finance_research_truth_and_guardrails";
 
 type BlacktechMechanism = {
   id: BlacktechMechanismId;
@@ -559,12 +573,13 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
   },
   {
     id: "multi_agent_framework_orchestration_guardrails",
-    label: "LangGraph / OpenAI Agents / CrewAI / Microsoft Agent Framework",
+    label: "LangGraph / OpenAI Agents / CrewAI / Microsoft Agent Framework / OpenHands",
     sourceUrls: [
       "https://docs.langchain.com/oss/python/langchain/multi-agent",
       "https://openai.github.io/openai-agents-python/handoffs/",
       "https://docs.crewai.com/introduction",
       "https://learn.microsoft.com/agent-framework/overview/agent-framework-overview",
+      "https://github.com/OpenHands/OpenHands",
     ],
     sourceKind: "docs_product_and_paper",
     claimedCapability:
@@ -579,6 +594,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "OpenAI Agents handoffs",
       "CrewAI",
       "Microsoft Agent Framework",
+      "OpenHands",
       "multi-agent",
       "supervisor routing",
     ],
@@ -608,6 +624,550 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     ],
     liveBoundary:
       "external channel can benefit from clearer role routing only after local owner checks and migration; this radar grants no external-channel agent framework authority",
+  },
+  {
+    id: "individual_ai_hedge_fund",
+    label: "virattt/ai-hedge-fund",
+    sourceUrls: [
+      "https://github.com/virattt/ai-hedge-fund",
+      "https://github.com/virattt/ai-hedge-fund/blob/main/VISION.md",
+    ],
+    sourceKind: "github",
+    claimedCapability:
+      "individual-developer AI hedge-fund product with pluggable analyst alpha models, mandate files, backtesting, persistent fund cycles, and explicit paper/educational boundaries",
+    adoptionMode: "finance_agent_architecture_probe",
+    existingOwner:
+      "finance answer pipeline, deterministic data gateway, and local-model evaluation",
+    ownerEntrypoint: "scripts/operator/lcx-commercial-answer-pipeline.ts",
+    ownerUseTrigger:
+      "When a future task asks for ai-hedge-fund, alpha models, fund mandates, analyst teams, backtesting, or persistent hedge-fund cycles, route the pattern through the finance pipeline and local eval owners before changing any trading authority.",
+    autocueTerms: [
+      "ai-hedge-fund",
+      "alpha model",
+      "fund mandate",
+      "hedge-fund team",
+      "finance backtest",
+    ],
+    distilledPattern:
+      "separate fund mandate, pluggable research/alpha models, deterministic market-data client, backtest cycle, paper record, and any later execution boundary",
+    firstLocalProbe:
+      "build one research-only mandate fixture that runs the finance data gateway, records a no-lookahead backtest receipt, and ends at review without producing an order",
+    requiredReceipts: [
+      "finance-data-gateway",
+      "source_registry",
+      "local-brain-distill-eval",
+      "backtest_receipt",
+      "review_panel",
+    ],
+    requiredFilters: [
+      "research_only_boundary",
+      "no_lookahead",
+      "deterministic_data_owner",
+      "no_trade_advice",
+      "separate_model_quality_from_pnl",
+    ],
+    riskBoundaries: [
+      "no_broker_or_order_execution",
+      "no_trade_advice",
+      "research_only",
+      "no_provider_config_change",
+      "no_external_channel_sender_change",
+      "protected_memory_guard",
+    ],
+    liveBoundary:
+      "only research artifacts and backtest receipts may enter the local review path; no broker, wallet, order, or live fund authority is granted",
+  },
+  {
+    id: "trading_agents_finance_multi_agent",
+    label: "TauricResearch/TradingAgents",
+    sourceUrls: [
+      "https://github.com/TauricResearch/TradingAgents",
+      "https://arxiv.org/abs/2412.20138",
+    ],
+    sourceKind: "paper_and_github",
+    claimedCapability:
+      "high-adoption financial multi-agent research system with fundamental, technical, sentiment, bull/bear research, trader, risk, portfolio-manager, checkpoint-resume, and decision-log patterns",
+    adoptionMode: "finance_agent_architecture_probe",
+    existingOwner: "LogicalAgentPool, finance data gateway, and research-only answer pipeline",
+    ownerEntrypoint: "src/agents/logical-agent-pool.ts",
+    ownerUseTrigger:
+      "When a future task asks for TradingAgents, bull/bear debate, trader/risk/portfolio-manager roles, or finance multi-agent graphs, map the role contract into LogicalAgentPool and finance evidence gates without importing broker execution.",
+    autocueTerms: [
+      "TradingAgents",
+      "bull bear debate",
+      "financial multi-agent",
+      "portfolio manager agent",
+      "trading decision log",
+    ],
+    distilledPattern:
+      "compose specialist financial analysis, explicit bullish/bearish challenge, risk review, portfolio synthesis, and durable decision evidence while keeping numbers and execution outside the LLM",
+    firstLocalProbe:
+      "run a local finance DAG with financial extraction, evidence integrity, adversarial challenge, risk check, and final precheck against a fixture with missing data and no order output",
+    requiredReceipts: [
+      "logical-agent-pool",
+      "logical-agent-checkpoint",
+      "finance-data-gateway",
+      "review_panel",
+      "control_room_summary",
+    ],
+    requiredFilters: [
+      "single_shared_local_model",
+      "checkpoint_resume_required",
+      "source_timestamp_required",
+      "adversarial_review_required",
+      "no_trade_advice",
+    ],
+    riskBoundaries: [
+      "no_broker_or_order_execution",
+      "no_wallet_connection",
+      "no_trade_advice",
+      "no_provider_config_change",
+      "no_external_channel_sender_change",
+      "protected_memory_guard",
+    ],
+    liveBoundary:
+      "the finance roles may produce bounded research and risk artifacts only; portfolio-manager language never becomes a live order or position authority",
+  },
+  {
+    id: "finrobot_financial_research",
+    label: "AI4Finance/FinRobot",
+    sourceUrls: [
+      "https://github.com/AI4Finance-Foundation/FinRobot",
+      "https://arxiv.org/abs/2405.14767",
+    ],
+    sourceKind: "paper_and_github",
+    claimedCapability:
+      "financial research product with role-based pipeline and debate agents, deterministic valuation operators, provider failover, numeric provenance, and traceable multi-chapter reports",
+    adoptionMode: "finance_agent_architecture_probe",
+    existingOwner: "finance data gateway, quantitative validation, and report/review pipeline",
+    ownerEntrypoint: "src/agents/finance-data-gateway.ts",
+    ownerUseTrigger:
+      "When a future task asks for FinRobot, DCF/DDM/LBO/comps, deterministic valuation, provider failover, or investment-committee reports, route computation to finance owners and keep the local model as narration/review support only.",
+    autocueTerms: ["FinRobot", "DCF", "DDM", "LBO", "comps valuation", "numeric provenance"],
+    distilledPattern:
+      "strictly separate code-calculated financial numbers from LLM reasoning and report prose, with provider provenance, failover, debate, and a traceable artifact",
+    firstLocalProbe:
+      "replay one deterministic valuation fixture through finance data normalization, calculation, provenance, bull/bear review, and report completeness checks without current-data invention",
+    requiredReceipts: [
+      "finance-data-gateway",
+      "data_provenance_quality",
+      "quant_math",
+      "review_panel",
+      "research_artifact_qc",
+    ],
+    requiredFilters: [
+      "numbers_code_calculated",
+      "field_definition_required",
+      "provider_conflict_preserved",
+      "report_provenance_required",
+      "no_trade_advice",
+    ],
+    riskBoundaries: [
+      "no_llm_generated_financial_numbers",
+      "no_broker_or_order_execution",
+      "no_trade_advice",
+      "no_provider_config_change",
+      "no_external_channel_sender_change",
+      "protected_memory_guard",
+    ],
+    liveBoundary:
+      "only source-bound calculations and reviewed research reports may proceed; no robo-advisor or live-trading authority is imported",
+  },
+  {
+    id: "openbb_finance_data_platform",
+    label: "OpenBB finance data and AI-agent platform",
+    sourceUrls: [
+      "https://github.com/OpenBB-finance/OpenBB",
+      "https://github.com/OpenBB-finance/openbb-ai",
+      "https://github.com/OpenBB-finance/agents-for-openbb",
+    ],
+    sourceKind: "github",
+    claimedCapability:
+      "high-adoption financial data platform exposing normalized vendor integrations to quants, analysts, APIs, MCP servers, and AI-agent surfaces",
+    adoptionMode: "finance_agent_architecture_probe",
+    existingOwner: "finance data gateway, source registry, and adapter health/doctor contracts",
+    ownerEntrypoint: "src/agents/finance-data-gateway.ts",
+    ownerUseTrigger:
+      "When a future task asks for OpenBB, finance provider adapters, analyst widgets, MCP finance data, or vendor normalization, route through the finance data gateway and source registry rather than adding a parallel data truth layer.",
+    autocueTerms: [
+      "OpenBB",
+      "OpenBB AI",
+      "finance data platform",
+      "vendor adapter",
+      "financial MCP",
+    ],
+    distilledPattern:
+      "connect financial data sources once, normalize field definitions and timestamps, expose the same evidence to research and agents, and report adapter health/fallback explicitly",
+    firstLocalProbe:
+      "add one read-only finance adapter fixture with preferred/fallback source metadata, field-definition validation, timestamp receipt, and a doctor result",
+    requiredReceipts: [
+      "finance-data-gateway",
+      "source_registry",
+      "data_provenance_quality",
+      "adapter_health_receipt",
+    ],
+    requiredFilters: [
+      "single_finance_truth_gateway",
+      "field_definition_required",
+      "source_timestamp_required",
+      "provider_conflict_preserved",
+      "credential_scope_required",
+    ],
+    riskBoundaries: [
+      "agpl_code_not_copied",
+      "no_unreviewed_provider_install",
+      "no_credential_write",
+      "no_broker_or_order_execution",
+      "no_provider_config_change",
+      "no_external_channel_sender_change",
+      "protected_memory_guard",
+    ],
+    liveBoundary:
+      "provider adapters remain read-only research inputs until separately audited, authenticated, and bound; this candidate cannot create a second finance truth source",
+  },
+  {
+    id: "agent_reach_source_adapter",
+    label: "Panniantong/Agent-Reach",
+    sourceUrls: ["https://github.com/Panniantong/Agent-Reach"],
+    sourceKind: "github",
+    claimedCapability:
+      "individual-built capability layer with preferred and fallback backends, a doctor command, and explicit cookie/credential boundaries",
+    adoptionMode: "finance_agent_architecture_probe",
+    existingOwner: "finance realtime source registry and source health receipts",
+    ownerEntrypoint: "src/agents/finance-realtime-source-registry.ts",
+    ownerUseTrigger:
+      "When a future task asks for Agent-Reach, preferred/fallback web capabilities, source doctor, or backend health, route it through the finance realtime source registry and skill-harvester before adding any connector or credential path.",
+    autocueTerms: ["Agent-Reach", "preferred fallback adapter", "source doctor", "backend health"],
+    distilledPattern:
+      "represent a capability as an ordered adapter set with observable health, fallback reasons, and a separate credential boundary",
+    firstLocalProbe:
+      "run the local finance source registry with a failing preferred fixture and a succeeding fallback fixture, then preserve both attempts in one gateway receipt",
+    requiredReceipts: [
+      "finance-realtime-source-registry",
+      "finance-data-gateway",
+      "adapter_health_receipt",
+    ],
+    requiredFilters: [
+      "no_cookie_import",
+      "no_credential_write",
+      "preferred_fallback_order_explicit",
+      "single_finance_truth_gateway",
+    ],
+    riskBoundaries: [
+      "no_unreviewed_installer",
+      "no_cookie_or_token_import",
+      "no_provider_config_change",
+      "no_external_channel_sender_change",
+      "protected_memory_guard",
+    ],
+    liveBoundary:
+      "the adapter contract may run an explicitly authorized public source; it cannot import cookies, credentials, external senders, or a second source of truth",
+  },
+  {
+    id: "echoapi_api_test_harness",
+    label: "EchoAPI API request/response harness",
+    sourceUrls: [
+      "https://www.echoapi.com/wiki/docs/start",
+      "https://www.echoapi.com/wiki/docs/http_debug/script",
+      "https://github.com/EchoAPI-Team/echoapi-for-vscode-support/blob/main/LICENSE",
+    ],
+    sourceKind: "docs_product_and_paper",
+    claimedCapability:
+      "API client and test surface for HTTP, SSE, and TCP requests with environments, scripts, cookies, and response assertions",
+    adoptionMode: "finance_agent_architecture_probe",
+    existingOwner:
+      "finance external source adapter, realtime source registry, and adapter contract tests",
+    ownerEntrypoint: "src/agents/echoapi-cli-runner.ts",
+    ownerUseTrigger:
+      "When a task supplies an EchoAPI CI case URL for a public read-only API, ensure the exact CLI is present under the canonical state-root runtime, run one real case through the LCX CLI runner, and route the status/report receipt into the existing source owners; use the collection/export surface for reviewed adapter contracts.",
+    autocueTerms: ["EchoAPI", "API collection import", "SSE API test", "response assertion"],
+    distilledPattern:
+      "separate real public-case execution and response testing from the financial data authority; retain URL host/path, status, timing/report hash, schema evidence, and explicit no-webhook/no-secret-env policy",
+    firstLocalProbe:
+      "ensure echoapi-cli@3.0.0 in the canonical state root, run one public read-only case with one iteration, JSON/CLI report, no webhook, minimal environment, and then map its actual status into a reviewed local source receipt",
+    requiredReceipts: [
+      "finance-external-source-adapter",
+      "finance-realtime-source-registry",
+      "source_license_scope_receipt",
+      "response_schema_receipt",
+    ],
+    requiredFilters: [
+      "real_public_case_allowed",
+      "fixture_first",
+      "no_cookie_import",
+      "no_environment_secret_import",
+      "no_post_request_external_write",
+      "single_finance_truth_gateway",
+    ],
+    riskBoundaries: [
+      "api_client_not_finance_truth_source",
+      "no_cookie_or_token_import",
+      "no_client_certificate_import",
+      "no_unreviewed_script_execution",
+      "no_provider_config_change",
+      "no_external_channel_sender_change",
+      "protected_memory_guard",
+    ],
+    liveBoundary:
+      "EchoAPI may execute one explicitly supplied public case; its environments, cookies, scripts, webhooks, client certificates, and remote writes never become LCX runtime authority",
+  },
+  {
+    id: "finnews_hunter_realtime_intelligence",
+    label: "DemonDamon/FinnewsHunter",
+    sourceUrls: ["https://github.com/DemonDamon/FinnewsHunter"],
+    sourceKind: "github",
+    claimedCapability:
+      "personal multi-agent financial intelligence project combining news collection, sentiment fusion, factor mining, market data, and a realtime search surface",
+    adoptionMode: "finance_agent_architecture_probe",
+    existingOwner:
+      "finance article source registry, realtime source registry, and news-classification logical worker",
+    ownerEntrypoint: "src/agents/finance-realtime-source-registry.ts",
+    ownerUseTrigger:
+      "When a future task asks for FinnewsHunter, realtime finance news, sentiment fusion, or alpha-factor mining, ingest only timestamped source packets and classification fixtures through existing finance owners; never import its collection or execution surface directly.",
+    autocueTerms: [
+      "FinnewsHunter",
+      "realtime finance news",
+      "sentiment fusion",
+      "financial news agent",
+    ],
+    distilledPattern:
+      "collect source packets before analysis, keep publication and retrieval timestamps, deduplicate event evidence, and route sentiment through adversarial review",
+    firstLocalProbe:
+      "replay a local news packet fixture with duplicate headlines, conflicting timestamps, and missing issuer confirmation through the article registry and review panel",
+    requiredReceipts: [
+      "finance-article-source-registry",
+      "finance-realtime-source-registry",
+      "data_provenance_quality",
+      "review_panel",
+    ],
+    requiredFilters: [
+      "source_timestamp_required",
+      "duplicate_event_review_required",
+      "sentiment_is_not_forecast",
+      "no_trade_advice",
+    ],
+    riskBoundaries: [
+      "source_code_license_receipt_required",
+      "no_unreviewed_scraper_install",
+      "no_broker_or_order_execution",
+      "no_provider_config_change",
+      "no_external_channel_sender_change",
+    ],
+    liveBoundary:
+      "news collection may feed research-only evidence after source and license review; sentiment, factor names, and realtime labels never become trading authority",
+  },
+  {
+    id: "openfr_finance_research",
+    label: "oujingzhou/openfr",
+    sourceUrls: ["https://github.com/oujingzhou/openfr"],
+    sourceKind: "github",
+    claimedCapability:
+      "lightweight financial research agent using market-data adapters, multi-model analysis, caching, retry/fallback, and market-hours awareness",
+    adoptionMode: "finance_agent_architecture_probe",
+    existingOwner:
+      "finance realtime source registry, finance data gateway, and logical-agent research DAG",
+    ownerEntrypoint: "src/agents/finance-realtime-source-registry.ts",
+    ownerUseTrigger:
+      "When a future task asks for OpenFR, AKShare, quote caching, retry/fallback, or market-hours handling, map the pattern into the source registry and gateway; audit provider and dependency scope before any adapter is added.",
+    autocueTerms: ["OpenFR", "AKShare finance agent", "quote cache", "market-hours guard"],
+    distilledPattern:
+      "cache by source freshness, retry bounded failures, understand market-hours limitations, and keep provider fallback visible in the research receipt",
+    firstLocalProbe:
+      "add a deterministic adapter fixture with cache-age, retry, market-hours, and stale-data labels, then verify the canonical gateway never treats cache presence as freshness proof",
+    requiredReceipts: [
+      "finance-realtime-source-registry",
+      "finance-data-gateway",
+      "adapter_health_receipt",
+      "data_provenance_quality",
+    ],
+    requiredFilters: [
+      "cache_age_required",
+      "market_hours_boundary_required",
+      "retry_limit_required",
+      "provider_conflict_preserved",
+    ],
+    riskBoundaries: [
+      "dependency_license_review_required",
+      "no_unreviewed_provider_install",
+      "no_broker_or_order_execution",
+      "no_provider_config_change",
+      "no_external_channel_sender_change",
+    ],
+    liveBoundary:
+      "cache and retry patterns are local adapter behavior only; no AKShare, broker, wallet, or live trade surface is imported by the radar",
+  },
+  {
+    id: "amplio_crash_resume_harness",
+    label: "google-deepmind/amplio",
+    sourceUrls: ["https://github.com/google-deepmind/amplio"],
+    sourceKind: "github",
+    claimedCapability:
+      "lightweight agent harness emphasizing crash-resume, agent/user/environment coordination, and run-start source snapshots",
+    adoptionMode: "multi_agent_orchestration_probe",
+    existingOwner: "LogicalAgentPool, canonical state-root checkpoint store, and context recovery",
+    ownerEntrypoint: "src/agents/logical-agent-pool-checkpoint-store.ts",
+    ownerUseTrigger:
+      "When a future task asks for Amplio, crash-resume, run-start source snapshots, or environment coordination, compare the pattern with the canonical checkpoint store and context recovery before changing persistence.",
+    autocueTerms: [
+      "Amplio",
+      "crash resume",
+      "run-start snapshot",
+      "agent environment coordination",
+    ],
+    distilledPattern:
+      "capture the run's source snapshot and safe resume boundary once, then let all workers inherit the same evidence without creating another state root",
+    firstLocalProbe:
+      "restart one logical-agent run from the canonical state-root checkpoint and prove the resumed plan fingerprint and source boundary remain unchanged",
+    requiredReceipts: ["logical-agent-checkpoint", "context-recovery-exam", "plan_fingerprint"],
+    requiredFilters: [
+      "canonical_state_root_only",
+      "atomic_checkpoint_write",
+      "resume_plan_fingerprint_required",
+      "no_second_truth_store",
+    ],
+    riskBoundaries: [
+      "no_new_state_root",
+      "no_parallel_persistence_authority",
+      "no_provider_config_change",
+      "no_external_channel_sender_change",
+      "protected_memory_guard",
+    ],
+    liveBoundary:
+      "crash-resume patterns strengthen local orchestration only; they do not prove model learning, external binding, or user-visible completion",
+  },
+  {
+    id: "cameron_personal_finance_approval",
+    label: "agentailor/cameron",
+    sourceUrls: ["https://github.com/agentailor/cameron"],
+    sourceKind: "github",
+    claimedCapability:
+      "individual-built personal-finance agent with local data ownership, seed-data evaluation, capability learning, and an approval gate before every write",
+    adoptionMode: "finance_agent_architecture_probe",
+    existingOwner: "finance write boundary, protected-memory gate, and operator approval contracts",
+    ownerEntrypoint: "scripts/operator/lcx-commercial-answer-pipeline.ts",
+    ownerUseTrigger:
+      "When a future task asks for Cameron, personal-finance writes, capability approval, or local finance data ownership, map it to LCX approval and evidence gates before any connector or write path changes.",
+    autocueTerms: ["Cameron finance agent", "personal finance approval", "finance capability gate"],
+    distilledPattern:
+      "require explicit human approval for every financial capability and keep personal data on owner-controlled infrastructure while testing against seed data",
+    firstLocalProbe:
+      "replay a seed-only finance write proposal and prove the proposal is blocked until an explicit owner approval receipt exists",
+    requiredReceipts: [
+      "finance-data-gateway",
+      "human_signoff_checkpoint",
+      "protected_memory_guard",
+      "source_registry",
+    ],
+    requiredFilters: [
+      "seed_data_only_probe",
+      "explicit_approval_required",
+      "no_secret_in_artifact",
+      "no_trade_advice",
+    ],
+    riskBoundaries: [
+      "no_bank_connector_write",
+      "no_money_movement",
+      "no_protected_memory_write_without_approval",
+      "no_provider_config_change",
+      "no_external_channel_sender_change",
+    ],
+    liveBoundary:
+      "approval patterns may strengthen local finance write gates; no personal-bank connector or money-movement capability is enabled",
+  },
+  {
+    id: "cents_thesis_research",
+    label: "wolfbane/cents",
+    sourceUrls: ["https://github.com/wolfbane/cents"],
+    sourceKind: "github",
+    claimedCapability:
+      "individual research CLI for thesis-driven multi-agent evidence gathering across fundamentals, technicals, macro, sentiment, moat, and insider signals with a paper-only loop",
+    adoptionMode: "finance_agent_architecture_probe",
+    existingOwner: "finance research artifact, source registry, and acceptance harness",
+    ownerEntrypoint: "scripts/operator/lcx-commercial-acceptance-harness.ts",
+    ownerUseTrigger:
+      "When a future task asks for Cents, thesis tracking, conviction calibration, or paper-only investment research, route it through the acceptance harness and require source and calibration receipts.",
+    autocueTerms: [
+      "Cents investment research",
+      "thesis tracking",
+      "conviction calibration",
+      "paper-only finance",
+    ],
+    distilledPattern:
+      "turn a thesis into explicit premises, collect specialist evidence, track conviction changes, and evaluate forward outcomes without presenting model conviction as calibrated truth",
+    firstLocalProbe:
+      "run one thesis fixture through evidence collection, premise conflict, conviction-change receipt, and calibration-ready holdout without any trade action",
+    requiredReceipts: [
+      "source_registry",
+      "data_provenance_quality",
+      "review_panel",
+      "commercial_acceptance_harness",
+    ],
+    requiredFilters: [
+      "paper_only",
+      "premise_conflict_preserved",
+      "calibration_holdout_required",
+      "no_trade_advice",
+    ],
+    riskBoundaries: [
+      "no_broker_or_order_execution",
+      "no_position_sizing_authority",
+      "no_trade_advice",
+      "no_provider_config_change",
+      "no_external_channel_sender_change",
+      "protected_memory_guard",
+    ],
+    liveBoundary:
+      "thesis artifacts can enter local review only; conviction scores remain uncalibrated research signals and cannot become user-visible trade instructions",
+  },
+  {
+    id: "openalice_full_lifecycle_trading",
+    label: "TraderAlice/OpenAlice",
+    sourceUrls: ["https://github.com/TraderAlice/OpenAlice"],
+    sourceKind: "github",
+    claimedCapability:
+      "one-person cross-asset trading product spanning research, unified accounts, staged orders, guard pipelines, monitoring, and exit lifecycle",
+    adoptionMode: "finance_agent_architecture_probe",
+    existingOwner:
+      "finance research boundary, execution prohibition, and reversible artifact review",
+    ownerEntrypoint: "scripts/operator/lcx-commercial-answer-pipeline.ts",
+    ownerUseTrigger:
+      "When a future task asks for OpenAlice, trading-as-Git, unified trading accounts, staged orders, or full lifecycle trading, study the artifact and guard patterns only; route all LCX work through research-only finance owners.",
+    autocueTerms: [
+      "OpenAlice",
+      "trading-as-Git",
+      "unified trading account",
+      "staged order",
+      "full lifecycle trading",
+    ],
+    distilledPattern:
+      "make financial actions reviewable as versioned artifacts with account snapshots, pre-execution guard checks, and explicit human stop points",
+    firstLocalProbe:
+      "model a paper-only staged research artifact with immutable diff, risk guard results, account snapshot fixture, and a hard stop before any broker adapter",
+    requiredReceipts: [
+      "source_registry",
+      "review_panel",
+      "human_signoff_checkpoint",
+      "finance-data-gateway",
+      "control_room_summary",
+    ],
+    requiredFilters: [
+      "architecture_only_due_to_license",
+      "paper_only",
+      "human_stop_before_execution",
+      "reversible_artifact_required",
+      "no_trade_advice",
+    ],
+    riskBoundaries: [
+      "agpl_code_not_copied",
+      "no_broker_or_order_execution",
+      "no_wallet_connection",
+      "no_private_key_access",
+      "no_provider_config_change",
+      "no_external_channel_sender_change",
+      "protected_memory_guard",
+    ],
+    liveBoundary:
+      "OpenAlice is an architecture reference only; its AGPL and execution surface remain outside LCX, and LCX keeps the hard no-trading boundary",
   },
   {
     id: "prediction_market_research_intake",
@@ -1040,6 +1600,67 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
     liveBoundary:
       "GitHub CLI control-plane proof is local/operator-only; it cannot prove user-visible-observed or grant remote repository write authority by itself.",
   },
+  {
+    id: "finance_research_truth_and_guardrails",
+    priority: 8,
+    label: "Finance research truth and guardrails",
+    sourceCandidates: [
+      "individual_ai_hedge_fund",
+      "trading_agents_finance_multi_agent",
+      "finrobot_financial_research",
+      "openbb_finance_data_platform",
+      "agent_reach_source_adapter",
+      "finnews_hunter_realtime_intelligence",
+      "openfr_finance_research",
+      "cameron_personal_finance_approval",
+      "cents_thesis_research",
+      "openalice_full_lifecycle_trading",
+    ],
+    ownerEntrypoint: "src/agents/finance-data-gateway.ts",
+    automaticTrigger:
+      "When a finance-agent, alpha model, valuation, backtest, portfolio, thesis, broker, or personal-finance write pattern appears, autopilot routes it through the finance data gateway, LogicalAgentPool, and review gates before any answer or adapter change.",
+    ownerGate:
+      "numbers need deterministic computation and source/timestamp/field provenance; local-model narration needs raw contract evidence; execution, money movement, wallet, and direct trade authority remain forbidden",
+    autopilotSurface:
+      "finance data gateway, LogicalAgentPool checkpoint receipt, local-brain-distill-eval, commercial answer pipeline, and review panel",
+    doctrineTerms: [
+      "numbers are code-calculated",
+      "source timestamp and field definition",
+      "bull/bear and adversarial review",
+      "thesis and falsifier",
+      "checkpoint restart proof",
+      "research only",
+    ],
+    currentStatus: "partially_wired_local_only",
+    nextSafeLocalProbe:
+      "run one fixture-based finance DAG with deterministic numbers, source receipts, adversarial challenge, real local-model evidence, durable checkpoint restart, and a final no-trade precheck",
+    nextAutomationAction:
+      "autopilot should surface the finance fixture and exactly one idle-safe local-model/evidence step, while blocking providers, brokers, wallets, protected-memory writes, and external sends",
+    blockedUntilIdle:
+      "real local-model eval, adapter work, training, and any external binding must wait for the current local-brain guard/eval/MLX state to be idle",
+    requiredProofChain: [
+      "finance_source_registry_receipt",
+      "field_definition_and_timestamp_receipt",
+      "deterministic_finance_calculation_receipt",
+      "logical_agent_checkpoint_restart_receipt",
+      "real_local_model_execution_receipt",
+      "raw_contract_or_explicit_hardening_receipt",
+      "adversarial_review_receipt",
+      "no_trade_authority_receipt",
+    ],
+    forbiddenAuthorities: [
+      "llm_generated_financial_numbers",
+      "model_conviction_as_calibrated_forecast",
+      "broker_or_order_execution",
+      "wallet_or_private_key_access",
+      "money_movement",
+      "provider_config_change",
+      "protected_memory_write",
+      "external_channel_sender_change",
+    ],
+    liveBoundary:
+      "finance-agent patterns can improve local research and risk artifacts; they never by themselves create advice, execution, account, wallet, or user-visible authority",
+  },
 ];
 
 function missingFor(candidate: ExternalUpgradeCandidate): string[] {
@@ -1163,6 +1784,18 @@ function buildChecks(verdicts: readonly CandidateVerdict[]): RadarCheck[] {
     "computer_use_cli_bridge",
     "github_cli_agentic_workflow_control",
     "multi_agent_framework_orchestration_guardrails",
+    "individual_ai_hedge_fund",
+    "trading_agents_finance_multi_agent",
+    "finrobot_financial_research",
+    "openbb_finance_data_platform",
+    "agent_reach_source_adapter",
+    "echoapi_api_test_harness",
+    "finnews_hunter_realtime_intelligence",
+    "openfr_finance_research",
+    "amplio_crash_resume_harness",
+    "cameron_personal_finance_approval",
+    "cents_thesis_research",
+    "openalice_full_lifecycle_trading",
     "prediction_market_research_intake",
     "prediction_market_strategy_audit",
   ];
@@ -1283,6 +1916,7 @@ function buildBlacktechChecks(
     "agent_trace_observability",
     "secure_tool_skill_permission_layer",
     "github_cli_agentic_control_plane",
+    "finance_research_truth_and_guardrails",
   ];
   const missingExpected = expectedIds.filter((id) => !mechanismIds.has(id));
   const missingFields = mechanisms.flatMap((mechanism) =>

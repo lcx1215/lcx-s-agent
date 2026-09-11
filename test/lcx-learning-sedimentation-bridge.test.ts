@@ -152,6 +152,27 @@ describe("LCX learning sedimentation bridge", () => {
     );
   });
 
+  it("reuses a prior-day batch without duplicating learning work", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-learning-bridge-"));
+    try {
+      await seedBridgeEvidence(workspaceDir);
+      const written = await runBridge(workspaceDir, ["--write-plan-receipts"]);
+      const original = path.join(workspaceDir, written.candidates[0].receiptPath!);
+      const earlier = path.join(
+        workspaceDir,
+        "memory/module-learning-pipeline-plan-receipts/2020-01-01/old.json",
+      );
+      await fs.mkdir(path.dirname(earlier), { recursive: true });
+      await fs.rename(original, earlier);
+      const rerun = await runBridge(workspaceDir, ["--write-plan-receipts"]);
+      expect(rerun.missingPlanReceiptCount).toBe(0);
+      expect(rerun.candidates[0]?.receiptWritten).toBe(false);
+      expect(rerun.candidates[0]?.receiptPath).toContain("2020-01-01");
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
   it("reuses same-day plan receipts instead of asking operators to write duplicates", async () => {
     const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-learning-bridge-"));
     await seedBridgeEvidence(workspaceDir);

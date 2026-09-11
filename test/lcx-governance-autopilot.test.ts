@@ -359,9 +359,9 @@ describe("LCX governance autopilot", () => {
     expect(payload.summary.universeIndexGovernanceTotalComponents).toBe(
       payload.owners.universeIndex?.governanceTotalComponents,
     );
-    expect(payload.owners.externalAgentUpgrade?.blacktechMechanismCount).toBe(7);
+    expect(payload.owners.externalAgentUpgrade?.blacktechMechanismCount).toBe(8);
     expect(payload.owners.externalAgentUpgrade?.blacktechRuntimeAuthorityGrantedCount).toBe(0);
-    expect(payload.owners.externalAgentUpgrade?.blacktechAutopilotRoutedCount).toBe(7);
+    expect(payload.owners.externalAgentUpgrade?.blacktechAutopilotRoutedCount).toBe(8);
     expect(payload.owners.externalAgentUpgrade?.perfectIntegrationClaim).toBe(false);
     expect(payload.owners.skillOptLite?.nextIdleAction).toEqual(expect.any(String));
     expect(payload.owners.providerCouncilAcceleration?.status).toEqual(expect.any(String));
@@ -528,9 +528,9 @@ describe("LCX governance autopilot", () => {
     expect(digest.material?.providerCouncilAccelerationStatus).toBe(
       payload.owners.providerCouncilAcceleration?.status,
     );
-    expect(digest.material?.externalUpgradeBlacktechMechanismCount).toBe(7);
+    expect(digest.material?.externalUpgradeBlacktechMechanismCount).toBe(8);
     expect(digest.material?.externalUpgradeBlacktechRuntimeAuthorityGrantedCount).toBe(0);
-    expect(digest.material?.externalUpgradeBlacktechAutopilotRoutedCount).toBe(7);
+    expect(digest.material?.externalUpgradeBlacktechAutopilotRoutedCount).toBe(8);
     expect(digest.liveTouched).toBe(false);
     expect(digest.providerConfigTouched).toBe(false);
     expect(digest.protectedMemoryTouched).toBe(false);

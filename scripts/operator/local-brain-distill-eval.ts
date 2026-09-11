@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_WORKSPACE_DIR } from "./lcx-local-paths.js";
@@ -26,6 +26,8 @@ type CliOptions = {
   model: string;
   adapterPath?: string;
   receiptPath?: string;
+  checkpointPath?: string;
+  resume: boolean;
   pythonBin: string;
   json: boolean;
   noAdapter: boolean;
@@ -233,6 +235,7 @@ function usage(): never {
       "       combine --hardened --blind --no-response-prefill for the strict neutral promotion gate",
       "       add --case-file JSONL with --blind to score generated cases without putting labels in prompts",
       "       add --no-response-prefill to measure self-started JSON separately from structural prefill",
+      "       add --checkpoint PATH --resume to persist and continue completed eval shards",
       "",
       "Runs one local inference acceptance check for the auxiliary thought-flow adapter.",
       "Use --adapter latest-passing to resolve the current adapter through minimax-brain-training-guard; this may fall back to the best-evidence training seed and reports that status separately.",
@@ -241,6 +244,7 @@ function usage(): never {
       "The strict neutral promotion gate never applies hardening, retries, recovery, or case labels; it only changes the gate decision.",
       "Use --case-file only with --blind; rows must be generalization-harness JSONL and labels stay scorer-side.",
       "Use --receipt PATH to explicitly write a compact case-level receipt; it never proves promotion readiness.",
+      "Checkpoint resume is fail-closed when the model, adapter, case set, prompt mode, or contract flags change.",
     ].join("\n"),
   );
 }
@@ -269,6 +273,7 @@ function parseArgs(args: string[]): CliOptions {
     contractOnly: false,
     progress: false,
     summaryOnly: false,
+    resume: false,
     timeoutMs: 180_000,
     caseIds: [],
   };
@@ -283,6 +288,11 @@ function parseArgs(args: string[]): CliOptions {
     } else if (arg === "--receipt") {
       options.receiptPath = path.resolve(readValue(args, index));
       index += 1;
+    } else if (arg === "--checkpoint") {
+      options.checkpointPath = path.resolve(readValue(args, index));
+      index += 1;
+    } else if (arg === "--resume") {
+      options.resume = true;
     } else if (arg === "--case-file") {
       options.caseFile = path.resolve(readValue(args, index));
       index += 1;
@@ -341,6 +351,9 @@ function parseArgs(args: string[]): CliOptions {
     usage();
   }
   if (options.caseFile && options.caseIds.length > 0) {
+    usage();
+  }
+  if (options.resume && !options.receiptPath && !options.checkpointPath) {
     usage();
   }
   if (options.adapterPath && !isAdapterSelector(options.adapterPath)) {
@@ -5322,6 +5335,68 @@ function compactEvalReceiptCase(entry: EvalReceiptCaseInput) {
   };
 }
 
+type EvalRuntimeCaseResult = EvalReceiptCaseInput & {
+  rawOutput: string;
+  parsed: Record<string, unknown> | null;
+  diagnosticFallbackParsed?: Record<string, unknown> | null;
+};
+
+type EvalShardCheckpoint = {
+  schemaVersion: "lcx_eval_shard_checkpoint_v1";
+  state: "running" | "complete";
+  fingerprint: string;
+  requested: {
+    model: string;
+    adapterPath: string | null;
+    caseIds: string[];
+    caseFile: string | null;
+    caseFileSha256: string | null;
+    caseSource: "fixed_registry" | "generated_holdout_file";
+    hardened: boolean;
+    blind: boolean;
+    responsePrefill: boolean;
+    contractOnly: boolean;
+    promptMode: string;
+  };
+  evalCaseIds: string[];
+  completedCaseIds: string[];
+  nextCaseId: string | null;
+  updatedAt: string;
+  caseResults: Record<string, unknown>[];
+};
+
+function writeJsonAtomically(filePath: string, value: unknown): void {
+  mkdirSync(path.dirname(filePath), { recursive: true });
+  const tempPath = `${filePath}.${process.pid}.tmp`;
+  writeFileSync(tempPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  renameSync(tempPath, filePath);
+}
+
+function checkpointCaseResult(entry: EvalRuntimeCaseResult): Record<string, unknown> {
+  const { rawOutput: _rawOutput, ...durable } = entry;
+  return durable as Record<string, unknown>;
+}
+
+function restoreCheckpointCase(value: unknown): EvalRuntimeCaseResult {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("eval checkpoint contains an invalid case result");
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.id !== "string" ||
+    !record.acceptance ||
+    typeof record.acceptance !== "object" ||
+    Array.isArray(record.acceptance)
+  ) {
+    throw new Error("eval checkpoint case result is missing id or acceptance");
+  }
+  return {
+    ...record,
+    rawOutput: "",
+    parsed: (record.parsed as Record<string, unknown> | null | undefined) ?? null,
+  } as EvalRuntimeCaseResult;
+}
+
 const options = parseArgs(process.argv.slice(2));
 const adapterResolution = await resolveEvalAdapter(options);
 const resolvedOptions: CliOptions = {
@@ -5349,8 +5424,96 @@ if (unknownPrerequisiteCaseIds.length > 0) {
     `unknown prerequisite eval case id(s): ${[...new Set(unknownPrerequisiteCaseIds)].join(", ")}`,
   );
 }
-const caseResults = [];
+const checkpointPath =
+  options.checkpointPath ??
+  (options.receiptPath ? `${options.receiptPath}.checkpoint.json` : undefined);
+const shardFingerprint = hashText(
+  JSON.stringify({
+    model: options.model,
+    adapterPath: resolvedOptions.adapterPath ?? null,
+    requestedCaseIds,
+    evalCaseIds: evalCases.map((evalCase) => evalCase.id),
+    caseFile: options.caseFile ?? null,
+    caseFileSha256: generatedCaseFile?.fileSha256 ?? null,
+    hardened: options.hardened,
+    blind: options.blind,
+    responsePrefill: options.responsePrefill,
+    contractOnly: options.contractOnly,
+    promptMode: options.blind ? "neutral" : "assisted",
+  }),
+);
+let resumedFromCheckpoint = false;
+let completedCaseIds = new Set<string>();
+const caseResults: EvalRuntimeCaseResult[] = [];
+if (options.resume) {
+  if (!checkpointPath || !existsSync(checkpointPath)) {
+    throw new Error(`eval checkpoint not found: ${checkpointPath ?? "missing path"}`);
+  }
+  let checkpoint: EvalShardCheckpoint;
+  try {
+    checkpoint = JSON.parse(readFileSync(checkpointPath, "utf8")) as EvalShardCheckpoint;
+  } catch (error) {
+    throw new Error(`eval checkpoint could not be read: ${String(error)}`, { cause: error });
+  }
+  if (
+    checkpoint.schemaVersion !== "lcx_eval_shard_checkpoint_v1" ||
+    checkpoint.fingerprint !== shardFingerprint
+  ) {
+    throw new Error(
+      "eval checkpoint fingerprint mismatch; refuse to mix model, adapter, case set, prompt mode, or contract flags",
+    );
+  }
+  const expectedCaseIds = evalCases.map((evalCase) => evalCase.id);
+  if (JSON.stringify(checkpoint.evalCaseIds) !== JSON.stringify(expectedCaseIds)) {
+    throw new Error("eval checkpoint case order mismatch; refuse to resume a different shard");
+  }
+  for (const rawCaseResult of checkpoint.caseResults) {
+    const restored = restoreCheckpointCase(rawCaseResult);
+    caseResults.push(restored);
+    completedCaseIds.add(restored.id);
+  }
+  if (completedCaseIds.size !== checkpoint.completedCaseIds.length) {
+    throw new Error("eval checkpoint completed-case index is inconsistent");
+  }
+  resumedFromCheckpoint = true;
+}
+const writeShardCheckpoint = (state: "running" | "complete") => {
+  if (!checkpointPath) {
+    return;
+  }
+  const nextCaseId = evalCases.find((evalCase) => !completedCaseIds.has(evalCase.id))?.id ?? null;
+  const checkpoint: EvalShardCheckpoint = {
+    schemaVersion: "lcx_eval_shard_checkpoint_v1",
+    state,
+    fingerprint: shardFingerprint,
+    requested: {
+      model: options.model,
+      adapterPath: resolvedOptions.adapterPath ?? null,
+      caseIds: requestedCaseIds,
+      caseFile: options.caseFile ?? null,
+      caseFileSha256: generatedCaseFile?.fileSha256 ?? null,
+      caseSource: options.caseFile ? "generated_holdout_file" : "fixed_registry",
+      hardened: options.hardened,
+      blind: options.blind,
+      responsePrefill: options.responsePrefill,
+      contractOnly: options.contractOnly,
+      promptMode: options.blind ? "neutral" : "assisted",
+    },
+    evalCaseIds: evalCases.map((evalCase) => evalCase.id),
+    completedCaseIds: [...completedCaseIds],
+    nextCaseId,
+    updatedAt: new Date().toISOString(),
+    caseResults: caseResults.map(checkpointCaseResult),
+  };
+  writeJsonAtomically(checkpointPath, checkpoint);
+};
 for (const evalCase of evalCases) {
+  if (completedCaseIds.has(evalCase.id)) {
+    if (options.progress) {
+      process.stderr.write(`[local-brain-eval] resume-skip ${evalCase.id}\n`);
+    }
+    continue;
+  }
   if (options.progress) {
     process.stderr.write(`[local-brain-eval] start ${evalCase.id}\n`);
   }
@@ -5483,6 +5646,8 @@ for (const evalCase of evalCases) {
         ? { parseError: generateResult.parseError ?? parseRetryError }
         : {}),
     });
+    completedCaseIds.add(evalCase.id);
+    writeShardCheckpoint("running");
     if (options.progress) {
       process.stderr.write(
         `[local-brain-eval] done ${evalCase.id} ok=${caseResults.at(-1)?.acceptance.ok ? "true" : "false"}\n`,
@@ -5554,6 +5719,8 @@ for (const evalCase of evalCases) {
         parseRecovered: true,
         parseError,
       });
+      completedCaseIds.add(evalCase.id);
+      writeShardCheckpoint("running");
       if (options.progress) {
         process.stderr.write(
           `[local-brain-eval] done ${evalCase.id} ok=${caseResults.at(-1)?.acceptance.ok ? "true" : "false"} parseRecovered=true parseError=${formatProgressError(error)}\n`,
@@ -5592,6 +5759,8 @@ for (const evalCase of evalCases) {
       initialOutputSha256,
       parseError,
     });
+    completedCaseIds.add(evalCase.id);
+    writeShardCheckpoint("running");
     if (options.progress) {
       process.stderr.write(
         `[local-brain-eval] done ${evalCase.id} ok=${caseResults.at(-1)?.acceptance.ok ? "true" : "false"} parseError=${formatProgressError(error)}\n`,
@@ -5599,6 +5768,7 @@ for (const evalCase of evalCases) {
     }
   }
 }
+writeShardCheckpoint("complete");
 const passedCases = caseResults.filter((entry) => entry.acceptance.ok);
 const failedCases = caseResults.filter((entry) => !entry.acceptance.ok);
 const parseRecoveredCases = caseResults.filter(
@@ -5679,6 +5849,16 @@ const result = {
         ? "assisted_hardened_challenger"
         : "raw_contract",
   learningClaim: "not_proven_by_contract_eval",
+  shard: {
+    checkpointPath: checkpointPath ?? null,
+    resumedFromCheckpoint,
+    totalCases: evalCases.length,
+    completedCases: caseResults.length,
+    remainingCaseIds: evalCases
+      .map((evalCase) => evalCase.id)
+      .filter((caseId) => !completedCaseIds.has(caseId)),
+    recoveryContract: "case_set_and_runtime_fingerprint_required",
+  },
   hierarchy: {
     requestedCaseIds,
     autoIncludedPrerequisiteCaseIds,
@@ -5794,6 +5974,7 @@ if (options.receiptPath) {
       providerConfigTouched: false,
       protectedMemoryTouched: false,
     },
+    shard: result.shard,
   };
   mkdirSync(path.dirname(options.receiptPath), { recursive: true });
   writeFileSync(options.receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, "utf8");

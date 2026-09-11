@@ -3,6 +3,7 @@ import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
+import { hardenLocalBrainPlanForAsk } from "./local-brain-contracts.js";
 
 type CliOptions = {
   dataDir: string;
@@ -11,6 +12,7 @@ type CliOptions = {
   curatedRepeat: number;
   nonReviewRepeat: number;
   json: boolean;
+  repairContractTargets: boolean;
 };
 
 type JsonRecord = {
@@ -79,7 +81,7 @@ const SOURCE_KIND_TRUST_TIERS: Record<string, string> = {
 function usage(): never {
   throw new Error(
     [
-      "Usage: node --import tsx scripts/operator/local-brain-distill-train-slice.ts [--data DIR] [--out DIR] [--max-review-examples N] [--curated-repeat N] [--non-review-repeat N] [--json]",
+      "Usage: node --import tsx scripts/operator/local-brain-distill-train-slice.ts [--data DIR] [--out DIR] [--max-review-examples N] [--curated-repeat N] [--non-review-repeat N] [--repair-contract-targets] [--json]",
       "",
       "Builds a bounded, balanced MLX-LM training slice from the full local-brain dataset.",
     ].join("\n"),
@@ -110,6 +112,7 @@ function parseArgs(args: string[]): CliOptions {
     curatedRepeat: 6,
     nonReviewRepeat: 2,
     json: false,
+    repairContractTargets: false,
   };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -128,6 +131,8 @@ function parseArgs(args: string[]): CliOptions {
     } else if (arg === "--non-review-repeat") {
       options.nonReviewRepeat = readPositiveInteger(readValue(args, index));
       index += 1;
+    } else if (arg === "--repair-contract-targets") {
+      options.repairContractTargets = true;
     } else if (arg === "--json") {
       options.json = true;
     } else if (arg === "--help" || arg === "-h") {
@@ -135,6 +140,14 @@ function parseArgs(args: string[]): CliOptions {
     } else {
       usage();
     }
+  }
+  if (
+    options.repairContractTargets &&
+    (!args.includes("--out") ||
+      options.outDir === options.dataDir ||
+      options.outDir === DEFAULT_OUT_DIR)
+  ) {
+    throw new Error("Contract repair requires a separate output directory");
   }
   return options;
 }
@@ -425,6 +438,41 @@ function targetReviewIndexes(
   return selectedIndexes;
 }
 
+function repairTrainingTarget(record: JsonRecord): JsonRecord {
+  if (typeof record.prompt !== "string" || typeof record.completion !== "string") {
+    throw new Error("Contract repair requires a prompt and JSON completion");
+  }
+  const match = /(?:^|\n)user_or_task: ([\s\S]*?)(?:\nsource_summary:|$)/u.exec(record.prompt);
+  if (!match?.[1]?.trim()) {
+    throw new Error("Contract repair requires an explicit user_or_task boundary");
+  }
+  const parsed: unknown = JSON.parse(record.completion);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Contract repair requires a JSON object target");
+  }
+  const completion = JSON.stringify(
+    hardenLocalBrainPlanForAsk(parsed as Record<string, unknown>, {
+      ask: match[1].trim(),
+      sourceSummary: record.prompt
+        .split("\nsource_summary:")
+        .slice(1)
+        .join("\nsource_summary:")
+        .trim(),
+    }),
+  );
+  return {
+    ...record,
+    completion,
+    meta: {
+      ...record.meta,
+      contractTargetRepaired: completion !== record.completion,
+      originalCompletionSha256: createHash("sha256").update(record.completion).digest("hex"),
+      targetRepairOwner: "local-brain-contracts",
+      learningClaim: "training_target_only_not_absorption_proof",
+    },
+  };
+}
+
 function cloneForSlice(record: JsonRecord, repeat: number, lane: string): JsonRecord {
   const sourcePath =
     typeof record.meta?.sourcePath === "string" ? record.meta.sourcePath : "unknown-source";
@@ -483,7 +531,10 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
   }
 
   try {
-    for await (const record of readJsonl(trainPath)) {
+    for await (const sourceRecord of readJsonl(trainPath)) {
+      const record = options.repairContractTargets
+        ? repairTrainingTarget(sourceRecord)
+        : sourceRecord;
       const sourceKind = sourceKindOf(record);
       if (sourceKind === CURATED_SOURCE_KIND) {
         for (let repeat = 0; repeat < options.curatedRepeat; repeat += 1) {
@@ -533,6 +584,7 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
     sourceDataDir: options.dataDir,
     outDir: options.outDir,
     policy: {
+      repairContractTargets: options.repairContractTargets,
       selection: "curated_first_non_review_repeated_teacher_quality_family_dedup_sample",
       maxReviewExamples: options.maxReviewExamples,
       curatedRepeat: options.curatedRepeat,

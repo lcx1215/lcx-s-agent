@@ -492,6 +492,10 @@ export function createOpenClawCodingTools(options?: {
       replyToMode: options?.replyToMode,
       hasRepliedRef: options?.hasRepliedRef,
       modelHasVision: options?.modelHasVision,
+      nativeVisionModelRef:
+        options?.modelHasVision && options?.modelProvider && options?.modelId
+          ? `${options.modelProvider}/${options.modelId}`
+          : undefined,
       requireExplicitMessageTarget: options?.requireExplicitMessageTarget,
       disableMessageTool: options?.disableMessageTool,
       requesterAgentIdOverride: agentId,

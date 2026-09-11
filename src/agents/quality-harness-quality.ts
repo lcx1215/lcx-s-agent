@@ -15,12 +15,17 @@ import {
   type QualityHarnessVerification,
   type QualityHarnessVerifier,
 } from "./quality-harness-contract.js";
+import {
+  reconcileQualityFindings,
+  type QualityFindingReceipt,
+} from "./quality-harness-findings.js";
 
 export type QualityEvaluation = Readonly<{
   passed: boolean;
   artifact?: QualityHarnessArtifact;
   gates: readonly QualityHarnessGate[];
   feedback: readonly string[];
+  findings: readonly QualityFindingReceipt[];
 }>;
 
 function normalizeFeedback(feedback: readonly string[]): string[] {
@@ -61,37 +66,27 @@ const CURRENT_DATA_PATTERN =
 const DIRECT_TRADE_ACTION_PATTERN =
   /(?:^|[.!?\n:]\s*)(?:buy|sell|add|reduce|go long|go short)\b[^.!?\n]{0,120}(?:[.!?\n]|$)|\b(?:you\s+should|i\s+(?:recommend|would)|recommend(?:ed)?|consider|please)\b[^.!?\n]{0,60}\b(?:buy|sell|add|reduce|go long|go short)\b|(?:建议|应该|推荐|考虑|立即|现在)[^\n。！？]{0,30}(?:买入|卖出|加仓|减仓|做多|做空|增持|减持)|(?:买入|卖出|加仓|减仓|做多|做空|增持|减持)[^\n。！？]{0,12}(?:股票|仓位|标的|[A-Z]{1,6}\b)/imu;
 const POSITION_SIZING_PATTERN =
-  /(?:^|[.!?\n:]\s*)(?:please\s+|you\s+(?:should|can)\s+|i\s+(?:recommend|would)\s+|consider\s+)?(?:allocate|assign|invest|put|commit|reserve|make|keep|hold|maintain|target|set|size|weight|limit|cap)\b[^.!?\n]{0,120}[+-]?\d[\d,]*(?:\.\d+)?\s*%[^.!?\n]{0,120}\b(?:your\s+)?(?:portfolio|position|capital|assets?|cash)\b|(?:^|[.!?\n:]\s*)(?:please\s+|you\s+(?:should|can)\s+|i\s+(?:recommend|would)\s+|consider\s+)?(?:allocate|assign|invest|put|commit|reserve|make|keep|hold|maintain|target|set|size|weight|limit|cap)\b[^.!?\n]{0,120}\b(?:your\s+)?(?:portfolio|position|capital|assets?|cash)\b[^.!?\n]{0,120}[+-]?\d[\d,]*(?:\.\d+)?\s*%|(?:^|[。！？\n：:]\s*)(?:请|建议|应该|推荐|考虑|把|将)?(?:配置|分配|投入|拿出|占用|限制|控制|设定|维持)[^\n。！？]{0,30}[+-]?\d[\d,]*(?:\.\d+)?\s*%[^\n。！？]{0,30}(?:仓位|组合|资金|资产|现金)|(?:^|[。！？\n：:]\s*)(?:请|建议|应该|推荐|考虑|把|将)?(?:配置|分配|投入|拿出|占用|限制|控制|设定|维持)[^\n。！？]{0,30}(?:仓位|组合|资金|资产|现金)[^\n。！？]{0,30}[+-]?\d[\d,]*(?:\.\d+)?\s*%/imu;
-const DATA_NUMBER_PATTERN =
-  /(?<!\d)(?:[+-]?(?:[$€£¥]\s*)?|[$€£¥]\s*[+-]?)\d[\d,]*(?:\.\d+)?(?:\s*%|\s*(?:USD|EUR|GBP|CNY|JPY|美元|欧元|英镑|人民币|日元|元))?/giu;
-const DISPLAY_TIMESTAMP_PATTERN =
-  /\b20\d{2}[-/]\d{1,2}(?:[-/]\d{1,2})?(?:[T ]\d{1,2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2})?)?\b|\b\d{4}年\d{1,2}月\d{1,2}日\b|\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s+20\d{2})?\b|\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+20\d{2}\b/giu;
+  /(?:\b(?:allocate|allocation|position\s*(?:size|sizing)|portfolio\s*(?:weight|allocation)|invest)\b[^.!?\n]{0,100}\b\d+(?:\.\d+)?\s*%|\b\d+(?:\.\d+)?\s*%[^.!?\n]{0,100}\b(?:portfolio|position|allocate|allocation)\b|(?:配置|仓位|投入|分配)[^。！？\n]{0,80}\d+(?:\.\d+)?\s*%)/imu;
+const EXECUTION_CLAIM_PATTERN =
+  /已下单|下单成功|已经买入|已经卖出|已开仓|已平仓|交易已完成|转账成功|order filled|order placed|position opened|position closed|funds transferred/iu;
 
 function extractDataNumbers(text: string): string[] {
-  const timestampRanges = [...text.matchAll(DISPLAY_TIMESTAMP_PATTERN)].map((match) => {
-    const start = match.index ?? 0;
-    return [start, start + match[0].length] as const;
-  });
-  return [...text.matchAll(DATA_NUMBER_PATTERN)]
-    .filter((match) => {
-      const start = match.index ?? 0;
-      const end = start + match[0].length;
-      return !timestampRanges.some(
-        ([rangeStart, rangeEnd]) => start < rangeEnd && end > rangeStart,
-      );
-    })
-    .map((match) => match[0].replace(/\s+/g, ""));
+  const withoutDateLiterals = text
+    .replace(
+      /\b20\d{2}[-/]\d{1,2}[-/]\d{1,2}(?:[T ][0-9]{1,2}:[0-9]{2}(?::[0-9]{2}(?:\.[0-9]+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?\b/giu,
+      " ",
+    )
+    .replace(/\b20\d{2}年\d{1,2}月\d{1,2}日?/gu, " ");
+  return (
+    withoutDateLiterals.match(
+      /(?<!\d)[+-]?\s*(?:[$€£¥]\s*)?\d[\d,]*(?:\.\d+)?(?:\s*%|\s*(?:USD|EUR|GBP|CNY|JPY|美元|欧元|英镑|人民币|日元|元))?/giu,
+    ) ?? []
+  ).map((value) => value.replace(/\s+/g, ""));
 }
 
 function normalizedNumber(value: string): string {
   const compact = value.replace(/\s+/g, "").replace(/,/g, "").toLowerCase();
-  const numericMatch = compact.match(/([+-]?)(?:[$€£¥])?([+-]?)(\d+(?:\.\d+)?)/u);
-  const sign = numericMatch?.[1] === "-" || numericMatch?.[2] === "-" ? "-" : "";
-  const unsigned = numericMatch?.[3] ?? compact;
-  const [integer, fraction] = unsigned.split(".");
-  const normalizedInteger = integer.replace(/^0+(?=\d)/u, "");
-  const normalizedFraction = fraction?.replace(/0+$/u, "");
-  const number = `${sign}${normalizedInteger || "0"}${normalizedFraction ? `.${normalizedFraction}` : ""}`;
+  const number = compact.match(/[+-]?\d+(?:\.\d+)?/)?.[0] ?? compact;
   const unit = compact.includes("%")
     ? "percent"
     : /(?:\$|usd|美元)/u.test(compact)
@@ -100,12 +95,46 @@ function normalizedNumber(value: string): string {
         ? "eur"
         : /(?:£|gbp|英镑)/u.test(compact)
           ? "gbp"
-          : /(?:¥|cny|人民币|元)/u.test(compact)
-            ? "cny"
-            : /(?:jpy|日元)/u.test(compact)
-              ? "jpy"
+          : /(?:jpy|日元)/u.test(compact)
+            ? "jpy"
+            : /(?:¥|cny|人民币|元)/u.test(compact)
+              ? "cny"
               : "unitless";
   return `${number}|${unit}`;
+}
+
+const FINANCE_ENTITY_ALIASES: readonly Readonly<{ alias: RegExp; canonical: string }>[] = [
+  { alias: /AAPL|Apple|苹果(?:公司)?/giu, canonical: "AAPL" },
+  { alias: /MSFT|Microsoft|微软(?:公司)?/giu, canonical: "MSFT" },
+  { alias: /NVDA|NVIDIA|英伟达(?:公司)?/giu, canonical: "NVDA" },
+  { alias: /TSLA|Tesla|特斯拉(?:公司)?/giu, canonical: "TSLA" },
+  { alias: /AMZN|Amazon|亚马逊(?:公司)?/giu, canonical: "AMZN" },
+  { alias: /GOOGL|Google|Alphabet|谷歌(?:公司)?/giu, canonical: "GOOGL" },
+  { alias: /META|Meta|Facebook|脸书(?:公司)?/giu, canonical: "META" },
+  { alias: /QQQ|Invesco\s+QQQ/giu, canonical: "QQQ" },
+  { alias: /SPY|SPDR\s+S&P\s+500/giu, canonical: "SPY" },
+];
+
+const NON_ENTITY_TOKENS = new Set(["USD", "EUR", "GBP", "CNY", "JPY", "ETF", "API", "URL"]);
+
+function financeEntities(text: string): Set<string> {
+  let normalized = text;
+  for (const { alias, canonical } of FINANCE_ENTITY_ALIASES) {
+    normalized = normalized.replace(alias, ` ${canonical} `);
+  }
+  return new Set(
+    (normalized.match(/\b[A-Z][A-Z0-9.-]{1,9}\b/gu) ?? []).filter(
+      (entity) => !NON_ENTITY_TOKENS.has(entity),
+    ),
+  );
+}
+
+function claimMatchesEvidenceEntity(claimText: string, evidenceText: string): boolean {
+  const claimEntities = financeEntities(claimText);
+  const evidenceEntities = financeEntities(evidenceText);
+  return (
+    claimEntities.size > 0 && [...claimEntities].some((entity) => evidenceEntities.has(entity))
+  );
 }
 
 function hasEvidenceSourceAndTimestamp(evidence: QualityHarnessEvidence): boolean {
@@ -125,11 +154,17 @@ function validateFinanceAnswerSafety(
     return [];
   }
   const problems: string[] = [];
-  if (DIRECT_TRADE_ACTION_PATTERN.test(artifact.answer)) {
+  const allowsConditionalCandidate =
+    request.sharedContext?.decisionMode === "conditional_trade_candidate";
+  if (
+    !allowsConditionalCandidate &&
+    (DIRECT_TRADE_ACTION_PATTERN.test(artifact.answer) ||
+      POSITION_SIZING_PATTERN.test(artifact.answer))
+  ) {
     problems.push("final finance answer contains a direct trade action or recommendation");
   }
-  if (POSITION_SIZING_PATTERN.test(artifact.answer)) {
-    problems.push("final finance answer contains an explicit portfolio position-sizing directive");
+  if (EXECUTION_CLAIM_PATTERN.test(artifact.answer)) {
+    problems.push("final finance answer contains an execution claim");
   }
 
   if (CURRENT_DATA_PATTERN.test(request.task) || CURRENT_DATA_PATTERN.test(artifact.answer)) {
@@ -139,26 +174,29 @@ function validateFinanceAnswerSafety(
       const supportedClaims = artifact.claims.filter((claim) => claim.status === "supported");
       const unsupportedNumbers = answerNumbers.filter((number) => {
         const normalized = normalizedNumber(number);
-        return !supportedClaims.some(
-          (claim) =>
-            extractDataNumbers(claim.text).some(
-              (value) => normalizedNumber(value) === normalized,
-            ) &&
-            claim.evidenceIds.some((id) => {
-              const entry = evidenceById.get(id);
-              return (
-                entry !== undefined &&
-                hasEvidenceSourceAndTimestamp(entry) &&
+        return !supportedClaims.some((claim) => {
+          const claimCarriesNumber = extractDataNumbers(claim.text).some(
+            (value) => normalizedNumber(value) === normalized,
+          );
+          if (!claimCarriesNumber) {
+            return false;
+          }
+          return claim.evidenceIds
+            .map((id) => evidenceById.get(id))
+            .filter((entry): entry is QualityHarnessEvidence => entry !== undefined)
+            .some(
+              (entry) =>
                 extractDataNumbers(entry.text).some(
                   (value) => normalizedNumber(value) === normalized,
-                )
-              );
-            }),
-        );
+                ) &&
+                hasEvidenceSourceAndTimestamp(entry) &&
+                claimMatchesEvidenceEntity(claim.text, entry.text),
+            );
+        });
       });
       if (unsupportedNumbers.length > 0) {
         problems.push(
-          `final finance answer contains current-data numbers without matching claim-specific evidence with the same unit and timestamp: ${unsupportedNumbers.join(", ")}`,
+          `final finance answer contains current-data numbers without matching cited evidence with the same unit and timestamp: ${unsupportedNumbers.join(", ")}`,
         );
       }
     }
@@ -205,16 +243,27 @@ export function evaluateQuality(
     findQualityStageResult(result, "evidence_integrity"),
     "evidence",
   );
+  const findings = reconcileQualityFindings(result.tasks, artifact, request.evidence);
+  const reconciledReview = (role: string, stage: QualityHarnessStage) => {
+    const original = reviewPassed(findQualityStageResult(result, role), stage);
+    const roleFindings = findings.filter((finding) => finding.role === role);
+    return !original.passed &&
+      roleFindings.length > 0 &&
+      roleFindings.every((finding) => finding.status === "resolved")
+      ? {
+          passed: true,
+          reason: `${stage} findings independently resolved against final artifact`,
+          feedback: [],
+        }
+      : original;
+  };
   const supportingReviews = [
-    reviewPassed(findQualityStageResult(result, "financial_extraction"), "extraction"),
-    reviewPassed(findQualityStageResult(result, "news_classification"), "classification"),
-    reviewPassed(findQualityStageResult(result, "risk_check"), "risk"),
-    reviewPassed(findQualityStageResult(result, "portfolio_exposure"), "exposure"),
+    reconciledReview("financial_extraction", "extraction"),
+    reconciledReview("news_classification", "classification"),
+    reconciledReview("risk_check", "risk"),
+    reconciledReview("portfolio_exposure", "exposure"),
   ];
-  const adversarialReview = reviewPassed(
-    findQualityStageResult(result, "adversarial_challenge"),
-    "adversarial",
-  );
+  const adversarialReview = reconciledReview("adversarial_challenge", "adversarial");
   const precheck = reviewPassed(findQualityStageResult(result, "final_precheck"), "precheck");
   const allStagesCompleted = result.status === "completed" && result.tasks.length === 10;
   const sideEffects = result.tasks.flatMap((entry) => entry.sideEffects);
@@ -245,7 +294,7 @@ export function evaluateQuality(
       id: "supporting_role_reviews",
       passed: supportingReviews.every((review) => review.passed),
       reason: supportingReviews.every((review) => review.passed)
-        ? "extraction, classification, risk, and exposure roles passed"
+        ? "supporting reviews passed or their findings were independently closed against the final artifact"
         : supportingReviews
             .filter((review) => !review.passed)
             .map((review) => review.reason)
@@ -282,6 +331,12 @@ export function evaluateQuality(
   const feedback = normalizeFeedback([
     ...groundingProblems,
     ...financeSafetyProblems,
+    ...findings
+      .filter((finding) => finding.status === "unresolved")
+      .map(
+        (finding) =>
+          `${finding.role} finding ${finding.id}: ${finding.closureFailure ?? "final artifact missing"}`,
+      ),
     ...supportingReviews.flatMap((review) => review.feedback),
     ...evidenceReview.feedback,
     ...adversarialReview.feedback,
@@ -293,6 +348,7 @@ export function evaluateQuality(
     ...(artifact ? { artifact } : {}),
     gates: Object.freeze(gates),
     feedback: Object.freeze(feedback),
+    findings: Object.freeze(findings),
   });
 }
 
@@ -314,6 +370,7 @@ export function summarizeQualityStageResult(
         }
       : {}),
     sideEffects: Object.freeze([...result.sideEffects]),
+    modelCalls: result.modelCalls ?? [],
     ...(result.error ? { error: result.error.slice(0, 1_000) } : {}),
   });
 }
@@ -340,15 +397,34 @@ export async function runQualityVerifier(
   artifact: QualityHarnessArtifact,
   attempt: number,
   timeoutMs = 30_000,
+  parentSignal?: AbortSignal,
 ): Promise<QualityHarnessVerification> {
   const boundedTimeoutMs =
     Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.min(timeoutMs, 2_147_483_647) : 30_000;
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let cancel: (() => void) | undefined;
+  const cancellation = new Promise<{ kind: "cancelled" }>((resolve) => {
+    cancel = () => {
+      controller.abort();
+      resolve({ kind: "cancelled" });
+    };
+    if (parentSignal?.aborted) {
+      cancel();
+    } else {
+      parentSignal?.addEventListener("abort", cancel, { once: true });
+    }
+  });
   try {
     const result = await Promise.race([
+      cancellation,
       Promise.resolve()
-        .then(() => verifier({ request, artifact, attempt, signal: controller.signal }))
+        .then(() => {
+          if (controller.signal.aborted) {
+            throw new Error("quality verifier cancelled before start");
+          }
+          return verifier({ request, artifact, attempt, signal: controller.signal });
+        })
         .then((value) => ({ kind: "result" as const, value })),
       new Promise<{ kind: "timeout" }>((resolve) => {
         timer = setTimeout(() => {
@@ -357,6 +433,13 @@ export async function runQualityVerifier(
         }, boundedTimeoutMs);
       }),
     ]);
+    if (result.kind === "cancelled") {
+      return Object.freeze({
+        status: "blocked",
+        summary: "quality verifier cancelled",
+        details: [],
+      });
+    }
     if (result.kind === "timeout") {
       return Object.freeze({
         status: "blocked",
@@ -372,6 +455,9 @@ export async function runQualityVerifier(
       details: [],
     });
   } finally {
+    if (cancel) {
+      parentSignal?.removeEventListener("abort", cancel);
+    }
     if (timer !== undefined) {
       clearTimeout(timer);
     }

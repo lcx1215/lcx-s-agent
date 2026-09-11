@@ -8,6 +8,9 @@ import {
   LCX_ONTOLOGY_AGENT_ROLES,
   LCX_ONTOLOGY_COMMUNICATION_KINDS,
   LCX_ONTOLOGY_EXECUTION_STATES,
+  LCX_ONTOLOGY_ORCHESTRATION_PROOF_KINDS,
+  getLcxOntologyOrchestrationContract,
+  validateLcxOntologyOrchestrationContract,
 } from "../../src/shared/lcx-ontology.ts";
 import type {
   LcxOntologyAgentRole,
@@ -16,6 +19,7 @@ import type {
   LcxOntologyExecutionState,
   LcxOntologyInterruptionRecoveryState,
   LcxOntologyOrchestrationPattern,
+  LcxOntologyOrchestrationProofKind,
   LcxOntologyOwnershipMode,
   LcxOntologyWorkspaceScope,
 } from "../../src/shared/lcx-ontology.ts";
@@ -56,6 +60,7 @@ function isKnownValue<const T extends readonly string[]>(
 export const EXECUTOR_SCHEMA_VERSION = "lcx_multi_agent_shadow_executor_v1" as const;
 export const RECEIPT_SCHEMA_VERSION = "lcx_multi_agent_pattern_shadow_v1" as const;
 export const METRICS_SCHEMA_VERSION = "lcx_multi_agent_shadow_metrics_v1" as const;
+export const PROOF_COVERAGE_SCHEMA_VERSION = "lcx_multi_agent_shadow_proof_coverage_v1" as const;
 export const CASE_CONTRACT_VERSION = "single_stock_loss_recovery_risk_triage_v1" as const;
 export const INTAKE_ID = "multi_agent_pattern_intake_20260901" as const;
 export const DEFAULT_REPETITIONS = 5;
@@ -240,6 +245,7 @@ export type ShadowTopology = {
   delegationMode: LcxOntologyDelegationMode;
   finalOwner: LcxOntologyOwnershipMode;
   childRoles: LcxOntologyAgentRole[];
+  requiredProofKinds: LcxOntologyOrchestrationProofKind[];
   expectedChildCalls: number;
   expectedMaxConcurrency: number;
   contextScope: LcxOntologyContextScope;
@@ -310,6 +316,166 @@ export type ShadowRecovery = {
   reason?: string;
 };
 
+export type ShadowProofCoverageStatus = "present" | "missing" | "unknown";
+
+export type ShadowProofCoverageEntry = {
+  kind: LcxOntologyOrchestrationProofKind;
+  status: ShadowProofCoverageStatus;
+  evidence: string[];
+};
+
+/**
+ * Receipt-level proof coverage keeps the ontology declaration auditable at the
+ * run boundary: a required proof kind is not treated as present merely because
+ * the topology declared it.
+ */
+export type ShadowProofCoverage = {
+  schemaVersion: typeof PROOF_COVERAGE_SCHEMA_VERSION;
+  required: LcxOntologyOrchestrationProofKind[];
+  present: LcxOntologyOrchestrationProofKind[];
+  missing: LcxOntologyOrchestrationProofKind[];
+  unknown: LcxOntologyOrchestrationProofKind[];
+  entries: ShadowProofCoverageEntry[];
+  complete: boolean;
+};
+
+const SHADOW_PROOF_COVERAGE_STATUSES = ["present", "missing", "unknown"] as const;
+
+function sameStringMembers(left: readonly string[], right: readonly string[]): boolean {
+  return (
+    left.length === right.length &&
+    new Set(left).size === left.length &&
+    new Set(right).size === right.length &&
+    left.every((value) => right.includes(value))
+  );
+}
+
+/**
+ * Validate persisted or adapter-supplied coverage before a decision trusts it.
+ * The topology remains the source of truth for the required proof set; this
+ * validator only checks the receipt's projection and does not create a second
+ * proof registry.
+ */
+export function validateShadowProofCoverage(
+  value: unknown,
+  topology: Pick<ShadowTopology, "requiredProofKinds"> | undefined,
+): string[] {
+  const errors: string[] = [];
+  const record = asRecord(value);
+  if (!record) {
+    return ["proof coverage must be an object"];
+  }
+  if (record.schemaVersion !== PROOF_COVERAGE_SCHEMA_VERSION) {
+    errors.push("proof coverage schema version is incompatible");
+  }
+
+  const rawExpected = topology?.requiredProofKinds;
+  if (!Array.isArray(rawExpected)) {
+    errors.push("proof coverage topology is missing required proof kinds");
+  }
+  const expected = Array.isArray(rawExpected) ? [...rawExpected] : [];
+  if (expected.length === 0) {
+    errors.push("proof coverage topology must require at least one proof kind");
+  }
+  if (expected.some((kind) => !isKnownValue(LCX_ONTOLOGY_ORCHESTRATION_PROOF_KINDS, kind))) {
+    errors.push("proof coverage topology uses an unknown proof kind");
+  }
+  if (new Set(expected).size !== expected.length) {
+    errors.push("proof coverage topology contains duplicate proof kinds");
+  }
+  const readProofKindArray = (field: string): string[] | undefined => {
+    const raw = record[field];
+    if (
+      !Array.isArray(raw) ||
+      !raw.every((kind) => isKnownValue(LCX_ONTOLOGY_ORCHESTRATION_PROOF_KINDS, kind))
+    ) {
+      errors.push(`proof coverage ${field} must contain known proof kinds`);
+      return undefined;
+    }
+    const kinds = raw as string[];
+    if (new Set(kinds).size !== kinds.length) {
+      errors.push(`proof coverage ${field} contains duplicate proof kinds`);
+    }
+    return kinds;
+  };
+
+  const required = readProofKindArray("required");
+  if (required && !sameStringMembers(required, expected)) {
+    errors.push("proof coverage required kinds do not match the topology");
+  }
+  const present = readProofKindArray("present");
+  const missing = readProofKindArray("missing");
+  const unknown = readProofKindArray("unknown");
+  const partitions = [present, missing, unknown].filter(
+    (partition): partition is string[] => partition !== undefined,
+  );
+  if (partitions.length === 3) {
+    const partitioned = partitions.flat();
+    if (new Set(partitioned).size !== partitioned.length) {
+      errors.push("proof coverage status partitions overlap");
+    }
+    if (!sameStringMembers(partitioned, expected)) {
+      errors.push("proof coverage status partitions do not cover the topology");
+    }
+  }
+
+  const entries = record.entries;
+  const entryStatuses = new Map<string, ShadowProofCoverageStatus>();
+  if (!Array.isArray(entries)) {
+    errors.push("proof coverage entries must be an array");
+  } else {
+    for (const [index, rawEntry] of entries.entries()) {
+      const entry = asRecord(rawEntry);
+      const kind = entry?.kind;
+      const status = entry?.status;
+      const evidence = entry?.evidence;
+      if (!isKnownValue(LCX_ONTOLOGY_ORCHESTRATION_PROOF_KINDS, kind)) {
+        errors.push(`proof coverage entry ${index} has an unknown proof kind`);
+        continue;
+      }
+      if (!isKnownValue(SHADOW_PROOF_COVERAGE_STATUSES, status)) {
+        errors.push(`proof coverage entry ${index} has an invalid status`);
+        continue;
+      }
+      if (
+        !Array.isArray(evidence) ||
+        evidence.length === 0 ||
+        !evidence.every((item) => typeof item === "string" && item.length > 0)
+      ) {
+        errors.push(`proof coverage entry ${index} must include evidence`);
+      }
+      if (entryStatuses.has(kind)) {
+        errors.push(`proof coverage entries duplicate ${kind}`);
+      }
+      entryStatuses.set(kind, status);
+    }
+    if (!sameStringMembers([...entryStatuses.keys()], expected)) {
+      errors.push("proof coverage entries do not match the topology");
+    }
+  }
+
+  if (partitions.length === 3) {
+    const statusPartitions = new Map<ShadowProofCoverageStatus, readonly string[]>([
+      ["present", present ?? []],
+      ["missing", missing ?? []],
+      ["unknown", unknown ?? []],
+    ]);
+    for (const [kind, status] of entryStatuses) {
+      if (!statusPartitions.get(status)?.includes(kind)) {
+        errors.push(`proof coverage entry ${kind} disagrees with its status partition`);
+      }
+    }
+  }
+
+  const complete = record.complete;
+  if (typeof complete !== "boolean") {
+    errors.push("proof coverage complete must be boolean");
+  } else if (missing && unknown && complete !== (missing.length === 0 && unknown.length === 0)) {
+    errors.push("proof coverage complete disagrees with missing or unknown");
+  }
+  return errors;
+}
+
 export type ShadowRunReceipt = {
   receiptSchemaVersion: typeof RECEIPT_SCHEMA_VERSION;
   executorSchemaVersion: typeof EXECUTOR_SCHEMA_VERSION;
@@ -338,6 +504,8 @@ export type ShadowRunReceipt = {
   quality?: ShadowQuality;
   permissionAudit: ShadowPermissionAudit;
   recovery: ShadowRecovery;
+  /** Additive field; old receipts may omit it and remain readable. */
+  proofCoverage?: ShadowProofCoverage;
   metrics: ShadowMetrics;
   error?: { code: string; message: string };
   reused?: boolean;
@@ -461,6 +629,234 @@ function asLatestRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function latestSummaryIntegrityErrors(summary: Record<string, unknown> | undefined): string[] {
+  if (!summary) {
+    return ["summary is missing"];
+  }
+  const errors: string[] = [];
+  const countFields = [
+    "patternCount",
+    "normalRuns",
+    "normalPasses",
+    "blockedRuns",
+    "escapedPermissionViolations",
+    "externalSideEffects",
+  ];
+  for (const field of countFields) {
+    if (!isNonNegativeInteger(summary[field])) {
+      errors.push(`summary ${field} must be a non-negative integer`);
+    }
+  }
+  const normalRuns = isNonNegativeInteger(summary.normalRuns) ? summary.normalRuns : undefined;
+  const normalPasses = isNonNegativeInteger(summary.normalPasses)
+    ? summary.normalPasses
+    : undefined;
+  if (normalRuns !== undefined && normalPasses !== undefined && normalPasses > normalRuns) {
+    errors.push("summary normalPasses exceeds normalRuns");
+  }
+  const normalPassRate = summary.normalPassRate;
+  if (
+    normalPassRate !== null &&
+    (typeof normalPassRate !== "number" ||
+      !Number.isFinite(normalPassRate) ||
+      normalPassRate < 0 ||
+      normalPassRate > 1)
+  ) {
+    errors.push("summary normalPassRate must be null or a number between 0 and 1");
+  }
+  if (normalRuns !== undefined) {
+    if (normalRuns === 0 && normalPassRate !== null) {
+      errors.push("summary normalPassRate must be null when normalRuns is zero");
+    } else if (normalRuns > 0 && typeof normalPassRate !== "number") {
+      errors.push("summary normalPassRate must be numeric when normalRuns is non-zero");
+    } else if (
+      normalRuns > 0 &&
+      normalPasses !== undefined &&
+      typeof normalPassRate === "number" &&
+      Math.abs(normalPassRate - normalPasses / normalRuns) > 1e-9
+    ) {
+      errors.push("summary normalPassRate disagrees with normalRuns and normalPasses");
+    }
+  }
+  return errors;
+}
+
+function latestReceiptIntegrityErrors(
+  receipt: Record<string, unknown>,
+  summary: Record<string, unknown> | undefined,
+): string[] {
+  const errors: string[] = latestSummaryIntegrityErrors(summary).map(
+    (error) => `summary: ${error}`,
+  );
+  const projected = {
+    patterns: new Set<ShadowPattern>(),
+    normalRuns: 0,
+    normalPasses: 0,
+    blockedRuns: 0,
+    escapedPermissionViolations: 0,
+    externalSideEffects: 0,
+  };
+  let incompleteProof = false;
+  let hardBoundary = false;
+  for (const [field, expected] of [
+    ["executorSchemaVersion", EXECUTOR_SCHEMA_VERSION],
+    ["metricsSchemaVersion", METRICS_SCHEMA_VERSION],
+    ["intakeId", INTAKE_ID],
+  ] as const) {
+    if (receipt[field] !== expected) {
+      errors.push(`receipt ${field} is incompatible`);
+    }
+  }
+
+  const mode = receipt.mode;
+  const expectedPhase =
+    mode === "replay" || mode === "live" ? canonicalShadowExecutionPhase(mode) : undefined;
+  if (expectedPhase === undefined) {
+    errors.push("receipt mode is invalid");
+  } else if (receipt.executionPhase !== undefined && receipt.executionPhase !== expectedPhase) {
+    errors.push("receipt executionPhase disagrees with mode");
+  }
+
+  const runs = receipt.runs;
+  if (!Array.isArray(runs) || runs.length === 0) {
+    errors.push("receipt runs must be a non-empty array");
+  } else {
+    for (const [index, rawRun] of runs.entries()) {
+      const run = asLatestRecord(rawRun);
+      if (!run) {
+        errors.push(`run ${index} is not an object`);
+        continue;
+      }
+      if (run.receiptSchemaVersion !== RECEIPT_SCHEMA_VERSION) {
+        errors.push(`run ${index} receipt schema version is incompatible`);
+      }
+      if (run.executorSchemaVersion !== EXECUTOR_SCHEMA_VERSION) {
+        errors.push(`run ${index} executor schema version is incompatible`);
+      }
+      if (run.metricsSchemaVersion !== METRICS_SCHEMA_VERSION) {
+        errors.push(`run ${index} metrics schema version is incompatible`);
+      }
+      if (run.intakeId !== INTAKE_ID) {
+        errors.push(`run ${index} intake id is incompatible`);
+      }
+      if (run.mode !== mode) {
+        errors.push(`run ${index} mode disagrees with receipt`);
+      }
+      if (
+        expectedPhase !== undefined &&
+        run.executionPhase !== undefined &&
+        run.executionPhase !== expectedPhase
+      ) {
+        errors.push(`run ${index} executionPhase disagrees with receipt mode`);
+      }
+      if (run.boundary !== "local_multi_agent_pattern_shadow_only") {
+        errors.push(`run ${index} boundary is incompatible`);
+      }
+      const pattern = isKnownValue(SHADOW_PATTERNS, run.pattern) ? run.pattern : undefined;
+      if (pattern === undefined) {
+        errors.push(`run ${index} pattern is unknown`);
+      } else {
+        projected.patterns.add(pattern);
+      }
+      if (run.fixture !== undefined && !isKnownValue(REPLAY_FIXTURES, run.fixture)) {
+        errors.push(`run ${index} fixture is unknown`);
+      }
+      const isNormal = run.fixture === undefined || run.fixture === "normal_quality";
+      if (isNormal) {
+        projected.normalRuns += 1;
+        if (asLatestRecord(run.quality)?.pass === true) {
+          projected.normalPasses += 1;
+        }
+      }
+      if (run.status === "blocked") {
+        projected.blockedRuns += 1;
+      }
+      const metrics = asLatestRecord(run.metrics);
+      const escapedPermissionViolations = metrics?.escapedPermissionViolations;
+      const externalSideEffects = metrics?.externalSideEffects;
+      if (!isNonNegativeInteger(escapedPermissionViolations)) {
+        errors.push(`run ${index} metrics escapedPermissionViolations is invalid`);
+      } else {
+        projected.escapedPermissionViolations += escapedPermissionViolations;
+      }
+      if (!isNonNegativeInteger(externalSideEffects)) {
+        errors.push(`run ${index} metrics externalSideEffects is invalid`);
+      } else {
+        projected.externalSideEffects += externalSideEffects;
+      }
+      const qualityChecks = asLatestRecord(asLatestRecord(run.quality)?.checks);
+      const recovery = asLatestRecord(run.recovery);
+      if (
+        (isNormal &&
+          (escapedPermissionViolations > 0 ||
+            externalSideEffects > 0 ||
+            qualityChecks?.noDirectTradeAction === false)) ||
+        recovery?.passed === false ||
+        recovery?.state === "unrecoverable"
+      ) {
+        hardBoundary = true;
+      }
+      const topology = asLatestRecord(run.topology);
+      const requiredProofKinds = topology?.requiredProofKinds;
+      const coverageErrors = validateShadowProofCoverage(
+        run.proofCoverage,
+        Array.isArray(requiredProofKinds)
+          ? {
+              requiredProofKinds: requiredProofKinds as LcxOntologyOrchestrationProofKind[],
+            }
+          : undefined,
+      );
+      for (const error of coverageErrors) {
+        errors.push(`run ${index}: ${error}`);
+      }
+      if (coverageErrors.length > 0 || asLatestRecord(run.proofCoverage)?.complete !== true) {
+        incompleteProof = true;
+      }
+    }
+  }
+  if (summary) {
+    for (const [field, expected] of [
+      ["patternCount", projected.patterns.size],
+      ["normalRuns", projected.normalRuns],
+      ["normalPasses", projected.normalPasses],
+      ["blockedRuns", projected.blockedRuns],
+      ["escapedPermissionViolations", projected.escapedPermissionViolations],
+      ["externalSideEffects", projected.externalSideEffects],
+    ] as const) {
+      if (isNonNegativeInteger(summary[field]) && summary[field] !== expected) {
+        errors.push(`summary ${field} disagrees with runs`);
+      }
+    }
+    if (mode === "replay" && summary.trialDecision !== "unverified") {
+      errors.push("summary trialDecision disagrees with replay mode");
+    }
+    if (mode === "live") {
+      if (hardBoundary && summary.trialDecision !== "discard") {
+        errors.push("summary trialDecision misses a hard run boundary");
+      } else if (incompleteProof && summary.trialDecision === "pass") {
+        errors.push("summary trialDecision passes despite incomplete proof coverage");
+      }
+    }
+  }
+  return errors;
+}
+
+/**
+ * Validate the latest persisted projection before governance or a problem
+ * radar treats its freshness and decision fields as current evidence.
+ */
+export function validateShadowLatestReceipt(value: unknown): string[] {
+  const receipt = asLatestRecord(value);
+  if (!receipt) {
+    return ["latest shadow receipt must be an object"];
+  }
+  return latestReceiptIntegrityErrors(receipt, asLatestRecord(receipt.summary));
+}
+
 function latestSnapshotFromReceipt(
   value: unknown,
   checkedAt = new Date().toISOString(),
@@ -522,7 +918,22 @@ function latestSnapshotFromReceipt(
       reason: "latest shadow receipt is missing or incompatible",
     };
   }
+  const integrityErrors = validateShadowLatestReceipt(receipt);
+  if (integrityErrors.length > 0) {
+    return {
+      ...base,
+      status: "blocked",
+      reason: `latest shadow receipt integrity is unverified (${integrityErrors[0]})`,
+    };
+  }
   const nowMs = Date.parse(checkedAt);
+  if (Number.isNaN(nowMs)) {
+    return {
+      ...base,
+      status: "blocked",
+      reason: "latest shadow snapshot check time is invalid",
+    };
+  }
   if (completedAtMs > nowMs) {
     return {
       ...base,
@@ -885,39 +1296,24 @@ export function normalizeExecutorResponse(
 }
 
 function topologyFor(pattern: ShadowPattern): ShadowTopology {
-  if (pattern === "manager") {
-    return {
-      pattern,
-      delegationMode: "manager_as_tool",
-      finalOwner: "root_final_owner",
-      childRoles: ["risk_gate", "evaluator", "advisor"],
-      expectedChildCalls: 3,
-      expectedMaxConcurrency: 1,
-      contextScope: "inherited",
-      workspaceScope: "disjoint_write_set",
-    };
+  const contract = getLcxOntologyOrchestrationContract(pattern);
+  if (!contract) {
+    throw new Error(`missing ontology orchestration contract for ${pattern}`);
   }
-  if (pattern === "handoff") {
-    return {
-      pattern,
-      delegationMode: "handoff",
-      finalOwner: "specialist_final_owner",
-      childRoles: ["specialist"],
-      expectedChildCalls: 1,
-      expectedMaxConcurrency: 1,
-      contextScope: "inherited",
-      workspaceScope: "disjoint_write_set",
-    };
+  const contractErrors = validateLcxOntologyOrchestrationContract(contract);
+  if (contractErrors.length > 0) {
+    throw new Error(`invalid ontology orchestration contract: ${contractErrors.join("; ")}`);
   }
   return {
-    pattern,
-    delegationMode: "parallel_fanout",
-    finalOwner: "root_final_owner",
-    childRoles: ["risk_gate", "evaluator", "advisor"],
-    expectedChildCalls: 3,
-    expectedMaxConcurrency: 3,
-    contextScope: "inherited",
-    workspaceScope: "disjoint_write_set",
+    pattern: contract.pattern,
+    delegationMode: contract.delegationMode,
+    finalOwner: contract.finalOwner,
+    childRoles: [...contract.childRoles],
+    requiredProofKinds: [...contract.requiredProofKinds],
+    expectedChildCalls: pattern === "handoff" ? 1 : 3,
+    expectedMaxConcurrency: pattern === "parallel_worker" ? 3 : 1,
+    contextScope: contract.contextScope,
+    workspaceScope: contract.workspaceScope,
   };
 }
 
@@ -1720,6 +2116,132 @@ function metricsFor(params: {
   };
 }
 
+function proofCoverageFor(params: {
+  topology: ShadowTopology;
+  executionMode: ShadowMode;
+  response: ShadowExecutorResponse;
+  quality: ShadowQuality | undefined;
+  permission: ShadowPermissionAudit;
+  recovery: ShadowRecovery;
+}): ShadowProofCoverage {
+  const entryFor = (kind: LcxOntologyOrchestrationProofKind): ShadowProofCoverageEntry => {
+    switch (kind) {
+      case "trace":
+      case "event_stream": {
+        const capability = params.response.capabilities.eventReceipt;
+        if (capability === "unsupported") {
+          return { kind, status: "missing", evidence: [`eventReceipt=${capability}`] };
+        }
+        if (capability === "unknown" || params.response.events === undefined) {
+          return {
+            kind,
+            status: "unknown",
+            evidence: [
+              `eventReceipt=${capability}`,
+              `events=${params.response.events === undefined ? "absent" : "present"}`,
+            ],
+          };
+        }
+        return {
+          kind,
+          status: params.response.events.length > 0 ? "present" : "missing",
+          evidence: [`eventReceipt=${capability}`, `events=${params.response.events.length}`],
+        };
+      }
+      case "tool_attribution": {
+        const capability = params.response.capabilities.toolEventReceipt;
+        if (capability === "unsupported") {
+          return { kind, status: "missing", evidence: [`toolEventReceipt=${capability}`] };
+        }
+        if (capability === "unknown" || params.response.toolEvents === undefined) {
+          return {
+            kind,
+            status: "unknown",
+            evidence: [
+              `toolEventReceipt=${capability}`,
+              `toolEvents=${params.response.toolEvents === undefined ? "absent" : "present"}`,
+            ],
+          };
+        }
+        const unattributed = params.response.toolEvents.filter(
+          (event) => typeof event.taskId !== "string" || event.taskId.length === 0,
+        ).length;
+        return {
+          kind,
+          status: unattributed === 0 ? "present" : "missing",
+          evidence: [
+            `toolEventReceipt=${capability}`,
+            `toolEvents=${params.response.toolEvents.length}`,
+            `unattributed=${unattributed}`,
+          ],
+        };
+      }
+      case "permission_audit":
+        return {
+          kind,
+          status: params.permission.evidence === "verified" ? "present" : "unknown",
+          evidence: [
+            `permissionAudit=${params.permission.evidence}`,
+            `outcome=${params.permission.outcome}`,
+          ],
+        };
+      case "approval":
+        return {
+          kind,
+          status: "unknown",
+          evidence: ["approval evidence is conditional and not emitted by this shadow owner"],
+        };
+      case "replay":
+        if (params.executionMode === "replay") {
+          return { kind, status: "present", evidence: ["mode=replay"] };
+        }
+        if (params.recovery.state !== "not_injected") {
+          return {
+            kind,
+            status: "present",
+            evidence: [`mode=isolated_executor`, `recovery=${params.recovery.state}`],
+          };
+        }
+        return {
+          kind,
+          status: "missing",
+          evidence: ["mode=isolated_executor", "recovery=not_injected"],
+        };
+      case "evaluator_result":
+        return params.quality
+          ? {
+              kind,
+              status: "present",
+              evidence: [
+                "quality=evaluated",
+                `qualityPass=${String(params.quality.pass)}`,
+                `pipelineAccepted=${String(params.quality.pipelineAccepted)}`,
+              ],
+            }
+          : { kind, status: "missing", evidence: ["quality=absent"] };
+      case "usage": {
+        const basis = usageBasis(params.response.usage);
+        return basis === "missing"
+          ? { kind, status: "missing", evidence: ["usage=absent"] }
+          : { kind, status: "present", evidence: [`usage=${basis}`] };
+      }
+    }
+  };
+  const entries = params.topology.requiredProofKinds.map(entryFor);
+  const present = entries.filter((entry) => entry.status === "present").map((entry) => entry.kind);
+  const missing = entries.filter((entry) => entry.status === "missing").map((entry) => entry.kind);
+  const unknown = entries.filter((entry) => entry.status === "unknown").map((entry) => entry.kind);
+  return {
+    schemaVersion: PROOF_COVERAGE_SCHEMA_VERSION,
+    required: [...params.topology.requiredProofKinds],
+    present,
+    missing,
+    unknown,
+    entries,
+    complete: missing.length === 0 && unknown.length === 0,
+  };
+}
+
 function idempotencyKey(params: {
   experimentId: string;
   pattern: ShadowPattern;
@@ -1809,6 +2331,18 @@ function runReceiptFromResponse(params: {
     childCallCount: params.childCallCount,
   });
   const quality = scoreAnswer(answer);
+  const proofCoverage = proofCoverageFor({
+    topology,
+    executionMode: params.execution.mode,
+    response: params.response,
+    quality,
+    permission: metricsAndPermission.permission,
+    recovery,
+  });
+  const proofCoverageErrors = validateShadowProofCoverage(proofCoverage, topology);
+  if (proofCoverageErrors.length > 0) {
+    throw new Error(`invalid generated proof coverage: ${proofCoverageErrors.join("; ")}`);
+  }
   const eventIds = events?.map((event) => event.eventId) ?? [];
   const artifactHashes =
     events
@@ -1852,6 +2386,7 @@ function runReceiptFromResponse(params: {
     quality,
     permissionAudit: metricsAndPermission.permission,
     recovery,
+    proofCoverage,
     metrics: metricsAndPermission.metrics,
     error: params.error ?? params.response.error,
     reused: params.reused,
@@ -1987,6 +2522,24 @@ function decisionForSummary(params: {
       decision: "discard",
       reason:
         "external side effect, direct trade action, escaped permission, or unrecoverable interruption",
+    };
+  }
+  const incompleteProofKinds = new Set<string>();
+  const incompleteProofRuns = params.runs.filter((run) => {
+    const coverageErrors = validateShadowProofCoverage(run.proofCoverage, run.topology);
+    if (coverageErrors.length > 0) {
+      incompleteProofKinds.add("coverage_record");
+      return true;
+    }
+    for (const kind of [...run.proofCoverage.missing, ...run.proofCoverage.unknown]) {
+      incompleteProofKinds.add(kind);
+    }
+    return !run.proofCoverage.complete;
+  });
+  if (incompleteProofRuns.length > 0) {
+    return {
+      decision: "downrank",
+      reason: `required proof coverage incomplete or unknown (${[...incompleteProofKinds].join(", ")}); keep the topology in shadow`,
     };
   }
   const qualityAndEvidenceByPattern = params.patterns.map((pattern) => {
@@ -2628,6 +3181,29 @@ async function readExistingReceipts(): Promise<Map<string, ShadowRunReceipt>> {
   return result;
 }
 
+function canReuseReplayReceipt(
+  prior: ShadowRunReceipt | undefined,
+  expected: ShadowRunReceipt,
+): boolean {
+  return (
+    prior !== undefined &&
+    prior.receiptSchemaVersion === RECEIPT_SCHEMA_VERSION &&
+    prior.executorSchemaVersion === EXECUTOR_SCHEMA_VERSION &&
+    prior.metricsSchemaVersion === METRICS_SCHEMA_VERSION &&
+    prior.experimentId === expected.experimentId &&
+    prior.mode === "replay" &&
+    prior.executionPhase === "replay" &&
+    prior.pattern === expected.pattern &&
+    prior.repetition === expected.repetition &&
+    prior.fixture === expected.fixture &&
+    prior.caseId === expected.caseId &&
+    prior.idempotencyKey === expected.idempotencyKey &&
+    prior.deliveryKey === expected.deliveryKey &&
+    JSON.stringify(prior.topology) === JSON.stringify(expected.topology) &&
+    validateShadowProofCoverage(prior.proofCoverage, expected.topology).length === 0
+  );
+}
+
 async function atomicWrite(filePath: string, content: string): Promise<void> {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
@@ -3066,26 +3642,20 @@ async function main(): Promise<void> {
         const existing = await readExistingReceipts();
         const replayRuns = payload.runs.map((run) => {
           const prior = existing.get(run.idempotencyKey);
-          if (!prior) {
+          if (!canReuseReplayReceipt(prior, run)) {
             return run;
           }
           return {
             ...prior,
-            deliveryKey:
-              prior.deliveryKey ??
-              deliveryKey({
-                experimentId: prior.experimentId,
-                pattern: prior.pattern,
-                repetition: prior.repetition,
-                executorFingerprint: payload.executorFingerprint,
-              }),
             reused: true,
           };
         });
         const replayPayload = { ...payload, runs: replayRuns };
         await persistExperiment(
           replayPayload,
-          payload.runs.filter((run) => !existing.has(run.idempotencyKey)),
+          payload.runs.filter(
+            (run) => !canReuseReplayReceipt(existing.get(run.idempotencyKey), run),
+          ),
         );
         writeExperimentPayload(replayPayload, options.json);
       } finally {

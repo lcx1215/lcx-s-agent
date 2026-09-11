@@ -63,6 +63,19 @@ describe("planFinanceBrainOrchestration", () => {
     expect(plan.boundaries).toContain("research_only");
   });
 
+  it("makes the relaxed finance mode explicit without removing execution separation", () => {
+    const plan = planFinanceBrainOrchestration({
+      text: "给出一个带条件的 NVDA 买入候选",
+      decisionMode: "conditional_trade_candidate",
+      highStakesConclusion: true,
+    });
+
+    expect(plan.boundaries).toEqual(
+      expect.arrayContaining(["conditional_trade_candidate", "no_execution_authority"]),
+    );
+    expect(plan.boundaries).not.toContain("no_trade_advice");
+  });
+
   it("routes advanced chart-line learning into technical timing", () => {
     const plan = planFinanceBrainOrchestration({
       text: "学习高级图线分析技术",
@@ -105,6 +118,72 @@ describe("planFinanceBrainOrchestration", () => {
     );
     expect(plan.requiredTools).not.toContain("finance_framework_crypto_market_structure_producer");
     expect(plan.requiredTools).not.toContain("finance_framework_cross_asset_liquidity_producer");
+  });
+
+  it.each([
+    "分析未来半年美股和加密货币的市场情绪，考虑美国中期选举的影响。",
+    "展望未来六个月美股和比特币的风险偏好，以及美国中期选举和政策变化。",
+    "Assess market sentiment for US equities and crypto over the next six months, considering US midterm elections.",
+    "Assess risk appetite for U.S. stocks and Bitcoin over a six-month horizon, including US midterms.",
+  ])("routes sentiment and election outlooks through existing finance lanes: %s", (text) => {
+    const plan = planFinanceBrainOrchestration({ text });
+
+    expect(plan.primaryModules).toEqual(
+      expect.arrayContaining([
+        "global_index_regime",
+        "us_equity_market_structure",
+        "crypto_market_structure",
+        "cross_asset_liquidity",
+        "event_driven",
+        "causal_map",
+      ]),
+    );
+    expect(plan.supportingModules).toEqual(["finance_learning_memory"]);
+    expect(plan.requiredTools).toEqual(
+      expect.arrayContaining([
+        "finance_framework_event_driven_producer",
+        "finance_framework_causal_map_producer",
+        "finance_learning_capability_apply",
+        "finance_learning_retrieval_review",
+      ]),
+    );
+    expect(plan.boundaries).toEqual(
+      expect.arrayContaining(["research_only", "no_execution_authority", "evidence_required"]),
+    );
+  });
+
+  it.each([
+    "分析市场情绪。",
+    "分析投资者情绪。",
+    "Assess market sentiment.",
+    "Assess investor sentiment.",
+  ])("routes sentiment without requiring an explicit risk-appetite keyword: %s", (text) => {
+    const plan = planFinanceBrainOrchestration({ text });
+
+    expect(plan.primaryModules).toContain("cross_asset_liquidity");
+  });
+
+  it("does not treat an investment horizon alone as an event catalyst", () => {
+    const plan = planFinanceBrainOrchestration({
+      text: "展望未来半年美股和加密货币的风险偏好。",
+    });
+
+    expect(plan.primaryModules).toContain("cross_asset_liquidity");
+    expect(plan.primaryModules).not.toContain("event_driven");
+  });
+
+  it.each([
+    "帮我整理未来半年的学习计划和情绪日记。",
+    "解释美国中期选举的投票流程。",
+    "Explain voting procedures for US midterm elections over the next six months.",
+    "Summarize sentiment in customer feedback and plan our next six-month marketing campaign.",
+  ])("keeps non-finance horizons, sentiment, and elections unselected: %s", (text) => {
+    const plan = planFinanceBrainOrchestration({ text });
+
+    expect(plan.selectionTrace.financeTask).toBe(false);
+    expect(plan.primaryModules).toEqual([]);
+    expect(plan.supportingModules).toEqual([]);
+    expect(plan.requiredTools).toEqual(["review_tier"]);
   });
 
   it("connects Treasury supply and term premium to rates, credit, ETF, math, risk, and review", () => {
@@ -193,6 +272,20 @@ describe("planFinanceBrainOrchestration", () => {
         "causal_map",
       ]),
     );
+  });
+
+  it("keeps ordinary currency requests from fanning into two overlapping FX owners", () => {
+    const plan = planFinanceBrainOrchestration({
+      text: "美元流动性变化会怎样影响我的组合？",
+      hasHoldingsOrPortfolioContext: true,
+    });
+
+    expect(plan.primaryModules).toContain("fx_currency_liquidity");
+    expect(plan.primaryModules).not.toContain("fx_dollar");
+    expect(plan.selectionTrace.suppressedModules).toEqual([
+      expect.objectContaining({ id: "fx_dollar" }),
+    ]);
+    expect(plan.selectionTrace.dataGatewayReason).toBe("holdings_or_portfolio_context");
   });
 
   it("does not invent a heavy finance plan for non-finance text", () => {

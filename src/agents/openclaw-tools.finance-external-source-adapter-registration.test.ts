@@ -5,5 +5,7 @@ describe("createOpenClawTools finance external source adapter registration", () 
   it("includes the finance external source adapter tool", () => {
     const tools = createOpenClawTools({ workspaceDir: "/tmp/openclaw" });
     expect(tools.some((tool) => tool.name === "finance_external_source_adapter")).toBe(true);
+    expect(tools.some((tool) => tool.name === "finance_research_run")).toBe(true);
+    expect(tools.some((tool) => tool.name === "local_specialist")).toBe(true);
   });
 });

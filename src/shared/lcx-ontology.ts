@@ -50,6 +50,24 @@ export const LCX_ONTOLOGY_ENTITY_TYPES = [
 ] as const;
 export type LcxOntologyEntityType = (typeof LCX_ONTOLOGY_ENTITY_TYPES)[number];
 
+/** Caseflow artifacts reuse entity semantics; persistence and dispatch stay with their owners. */
+export const LCX_CASEFLOW_CONTRACT = {
+  schemaVersion: "lcx_caseflow_v2",
+  entities: {
+    research_case: "task",
+    research_run: "receipt",
+    decision_packet: "artifact",
+    outcome_ledger: "evidence",
+  },
+  owner: "src/agents/finance-caseflow.ts",
+  executionAuthority: "none",
+} as const satisfies {
+  schemaVersion: string;
+  entities: Record<string, LcxOntologyEntityType>;
+  owner: string;
+  executionAuthority: "none";
+};
+
 export const LCX_ONTOLOGY_RELATION_TYPES = [
   "asks_for",
   "targets",
@@ -74,6 +92,21 @@ export type LcxOntologyRelationContract = {
   subjectTypes: readonly LcxOntologyEntityType[];
   objectTypes: readonly LcxOntologyEntityType[];
 };
+
+/**
+ * A persisted semantic edge. Entity ids are owner-scoped identifiers; the
+ * relation contract is what gives the edge its cross-owner meaning.
+ */
+export type LcxOntologyEntityRef = Readonly<{
+  type: LcxOntologyEntityType;
+  id: string;
+}>;
+
+export type LcxOntologyEdge = Readonly<{
+  relation: LcxOntologyRelationType;
+  subject: LcxOntologyEntityRef;
+  object: LcxOntologyEntityRef;
+}>;
 
 /**
  * Relation types are not merely labels: these contracts constrain the kinds
@@ -328,6 +361,90 @@ export const LCX_ONTOLOGY_AGENT_ROLES = [
 ] as const;
 export type LcxOntologyAgentRole = (typeof LCX_ONTOLOGY_AGENT_ROLES)[number];
 
+/** Consumed by finance model routing. Slots describe responsibility, not parameter count. */
+export const LCX_FINANCE_MODEL_WORKFLOW_VERSION = "lcx_finance_model_workflow_v9" as const;
+export const LCX_FINANCE_WORKFLOW_ROLE_CONTRACTS = {
+  data_cleaning: {
+    stage: "intake",
+    slot: "deterministic",
+    ontologyRole: "worker",
+    output: "plan",
+    localSpecialistEligible: false,
+  },
+  financial_extraction: {
+    stage: "extraction",
+    slot: "fast",
+    ontologyRole: "specialist",
+    output: "review",
+    localSpecialistEligible: true,
+  },
+  news_classification: {
+    stage: "classification",
+    slot: "fast",
+    ontologyRole: "specialist",
+    output: "review",
+    localSpecialistEligible: true,
+  },
+  evidence_integrity: {
+    stage: "evidence",
+    slot: "review",
+    ontologyRole: "evaluator",
+    output: "review",
+    localSpecialistEligible: false,
+  },
+  risk_check: {
+    stage: "risk",
+    slot: "reasoning",
+    ontologyRole: "risk_gate",
+    output: "review",
+    localSpecialistEligible: false,
+  },
+  portfolio_exposure: {
+    stage: "exposure",
+    slot: "reasoning",
+    ontologyRole: "specialist",
+    output: "review",
+    localSpecialistEligible: false,
+  },
+  research_draft: {
+    stage: "draft",
+    slot: "reasoning",
+    ontologyRole: "advisor",
+    output: "artifact",
+    localSpecialistEligible: false,
+  },
+  adversarial_challenge: {
+    stage: "adversarial",
+    slot: "review",
+    ontologyRole: "evaluator",
+    output: "review",
+    localSpecialistEligible: false,
+  },
+  formatting: {
+    stage: "format",
+    slot: "fast",
+    ontologyRole: "worker",
+    output: "artifact",
+    localSpecialistEligible: false,
+  },
+  final_precheck: {
+    stage: "precheck",
+    slot: "review",
+    ontologyRole: "evaluator",
+    output: "review",
+    localSpecialistEligible: false,
+  },
+} as const satisfies Record<
+  string,
+  {
+    stage: string;
+    slot: "deterministic" | "fast" | "reasoning" | "review";
+    ontologyRole: LcxOntologyAgentRole;
+    output: "plan" | "review" | "artifact";
+    localSpecialistEligible: boolean;
+  }
+>;
+
 export const LCX_ONTOLOGY_DELEGATION_MODES = [
   "manager_as_tool",
   "handoff",
@@ -406,6 +523,66 @@ export const LCX_ONTOLOGY_INTERRUPTION_RECOVERY_STATES = [
 ] as const;
 export type LcxOntologyInterruptionRecoveryState =
   (typeof LCX_ONTOLOGY_INTERRUPTION_RECOVERY_STATES)[number];
+
+export type LcxOntologyOrchestrationContract = Readonly<{
+  pattern: LcxOntologyOrchestrationPattern;
+  delegationMode: LcxOntologyDelegationMode;
+  finalOwner: LcxOntologyOwnershipMode;
+  childRoles: readonly LcxOntologyAgentRole[];
+  contextScope: LcxOntologyContextScope;
+  workspaceScope: LcxOntologyWorkspaceScope;
+  requiredProofKinds: readonly LcxOntologyOrchestrationProofKind[];
+}>;
+
+/**
+ * A topology is only useful to LCX when it carries enough observable proof to
+ * explain who ran, what tools were used, which boundary was checked, whether
+ * the result was evaluated, and whether the path can be replayed. Approval is
+ * conditional on the action's side-effect policy, so it is not a universal
+ * proof requirement here.
+ */
+export const LCX_ONTOLOGY_REQUIRED_ORCHESTRATION_PROOF_KINDS = [
+  "trace",
+  "tool_attribution",
+  "permission_audit",
+  "evaluator_result",
+  "replay",
+] as const satisfies readonly LcxOntologyOrchestrationProofKind[];
+
+/**
+ * Canonical topology contracts for the orchestration patterns currently
+ * evaluated by LCX. Runtime owners should consume these contracts instead of
+ * rebuilding a second pattern-to-scope mapping.
+ */
+export const LCX_ONTOLOGY_ORCHESTRATION_CONTRACTS = [
+  {
+    pattern: "manager",
+    delegationMode: "manager_as_tool",
+    finalOwner: "root_final_owner",
+    childRoles: ["risk_gate", "evaluator", "advisor"],
+    contextScope: "inherited",
+    workspaceScope: "disjoint_write_set",
+    requiredProofKinds: LCX_ONTOLOGY_REQUIRED_ORCHESTRATION_PROOF_KINDS,
+  },
+  {
+    pattern: "handoff",
+    delegationMode: "handoff",
+    finalOwner: "specialist_final_owner",
+    childRoles: ["specialist"],
+    contextScope: "inherited",
+    workspaceScope: "disjoint_write_set",
+    requiredProofKinds: LCX_ONTOLOGY_REQUIRED_ORCHESTRATION_PROOF_KINDS,
+  },
+  {
+    pattern: "parallel_worker",
+    delegationMode: "parallel_fanout",
+    finalOwner: "root_final_owner",
+    childRoles: ["risk_gate", "evaluator", "advisor"],
+    contextScope: "inherited",
+    workspaceScope: "disjoint_write_set",
+    requiredProofKinds: LCX_ONTOLOGY_REQUIRED_ORCHESTRATION_PROOF_KINDS,
+  },
+] as const satisfies readonly LcxOntologyOrchestrationContract[];
 
 export const LCX_ONTOLOGY_FINANCE_LEARNING_CAPABILITY_TYPES = [
   "analysis_method",
@@ -750,10 +927,14 @@ export type LcxOntologyFinanceDataProviderRole =
 
 export const LCX_ONTOLOGY_FINANCE_DATA_SOURCE_FAMILIES = [
   "market_data_api",
+  "crypto_market_data",
   "fundamentals_api",
   "official_filing",
   "official_macro_data",
   "etf_issuer",
+  "geospatial_reference",
+  "weather_environmental",
+  "seismic_event_feed",
   "manual_snapshot",
   "local_research_artifact",
 ] as const;
@@ -884,6 +1065,10 @@ export const LCX_ONTOLOGY_CHANNEL_MILESTONE_ALIASES: Readonly<
 } as const;
 
 export const LCX_ONTOLOGY_WORKFLOW_NODE_IDS = [
+  "research_case",
+  "research_run",
+  "decision_packet",
+  "outcome_ledger",
   "ingress_external_message",
   "intent_classifier",
   "local_brain_planner",
@@ -1137,6 +1322,7 @@ export const LCX_ONTOLOGY_WORKFLOW_FILTER_IDS = [
 export type LcxOntologyWorkflowFilterId = (typeof LCX_ONTOLOGY_WORKFLOW_FILTER_IDS)[number];
 
 export const LCX_ONTOLOGY_WORKFLOW_SCENARIO_IDS = [
+  "finance_caseflow_waterflow",
   "external_finance_research_waterflow",
   "directed_daily_research_brief_waterflow",
   "module_learning_internalization_waterflow",
@@ -1514,6 +1700,7 @@ export const LCX_ONTOLOGY_EVOLUTION_CONTRACT = {
     "semantic_breaks_require_versioned_migration",
     "parallel_registries_are_forbidden",
     "non_canonical_runtime_outcomes_stay_outside_semantics",
+    "orchestration_patterns_require_owner_scope_and_proof",
   ],
 } as const;
 
@@ -1583,6 +1770,14 @@ export const LCX_ONTOLOGY_REGISTRY = {
   nonCanonicalTaskFamilyClasses: LCX_ONTOLOGY_NON_CANONICAL_TASK_FAMILY_CLASSES,
   policy: LCX_ONTOLOGY_REGISTRY_POLICY,
   stateChains: LCX_ONTOLOGY_STATE_CHAINS,
+  orchestrationContracts: LCX_ONTOLOGY_ORCHESTRATION_CONTRACTS,
+  financeModelWorkflow: {
+    version: LCX_FINANCE_MODEL_WORKFLOW_VERSION,
+    roles: LCX_FINANCE_WORKFLOW_ROLE_CONTRACTS,
+    owner: "src/agents/finance-model-workflow.ts",
+    proof: "src/agents/finance-model-workflow.test.ts",
+    executionAuthority: "none",
+  },
   aliases: {
     module: LCX_ONTOLOGY_MODULE_ALIASES,
     taskFamily: LCX_ONTOLOGY_TASK_FAMILY_ALIASES,
@@ -1623,6 +1818,200 @@ export function isLcxOntologyRelationAllowed(
     contract.subjectTypes.includes(subjectType) &&
     contract.objectTypes.includes(objectType)
   );
+}
+
+export function getLcxOntologyOrchestrationContract(
+  pattern: LcxOntologyOrchestrationPattern,
+): LcxOntologyOrchestrationContract | undefined {
+  return LCX_ONTOLOGY_ORCHESTRATION_CONTRACTS.find((contract) => contract.pattern === pattern);
+}
+
+function isKnownOrchestrationValue<const T extends readonly string[]>(
+  values: T,
+  value: unknown,
+): value is T[number] {
+  return typeof value === "string" && values.includes(value);
+}
+
+/**
+ * Validate the cross-owner contract carried by an orchestration topology.
+ * This is intentionally stricter than enum validation: a pattern must map to
+ * the matching delegation mode and final-owner policy, and cannot omit the
+ * proof surfaces needed for attribution and recovery review.
+ */
+export function validateLcxOntologyOrchestrationContract(value: unknown): string[] {
+  if (!isRecord(value)) {
+    return ["orchestration contract must be an object"];
+  }
+  const errors: string[] = [];
+  const pattern = value.pattern;
+  const delegationMode = value.delegationMode;
+  const finalOwner = value.finalOwner;
+  const childRoles = value.childRoles;
+  const contextScope = value.contextScope;
+  const workspaceScope = value.workspaceScope;
+  const requiredProofKinds = value.requiredProofKinds;
+  const patternValid = isKnownOrchestrationValue(LCX_ONTOLOGY_ORCHESTRATION_PATTERNS, pattern);
+  if (!patternValid) {
+    errors.push("orchestration contract uses an unknown pattern");
+  }
+  if (!isKnownOrchestrationValue(LCX_ONTOLOGY_DELEGATION_MODES, delegationMode)) {
+    errors.push("orchestration contract uses an unknown delegation mode");
+  }
+  if (!isKnownOrchestrationValue(LCX_ONTOLOGY_OWNERSHIP_MODES, finalOwner)) {
+    errors.push("orchestration contract uses an unknown final owner");
+  }
+  if (!isKnownOrchestrationValue(LCX_ONTOLOGY_CONTEXT_SCOPES, contextScope)) {
+    errors.push("orchestration contract uses an unknown context scope");
+  }
+  if (!isKnownOrchestrationValue(LCX_ONTOLOGY_WORKSPACE_SCOPES, workspaceScope)) {
+    errors.push("orchestration contract uses an unknown workspace scope");
+  }
+  if (!Array.isArray(childRoles) || childRoles.length === 0) {
+    errors.push("orchestration contract needs at least one child role");
+  } else {
+    for (const role of childRoles) {
+      if (!isKnownOrchestrationValue(LCX_ONTOLOGY_AGENT_ROLES, role)) {
+        errors.push("orchestration contract uses an unknown child role: " + String(role));
+      }
+    }
+    if (new Set(childRoles).size !== childRoles.length) {
+      errors.push("orchestration contract child roles must be unique");
+    }
+  }
+  if (!Array.isArray(requiredProofKinds) || requiredProofKinds.length === 0) {
+    errors.push("orchestration contract needs at least one required proof kind");
+  } else {
+    for (const proofKind of requiredProofKinds) {
+      if (!isKnownOrchestrationValue(LCX_ONTOLOGY_ORCHESTRATION_PROOF_KINDS, proofKind)) {
+        errors.push("orchestration contract uses an unknown proof kind: " + String(proofKind));
+      }
+    }
+    if (new Set(requiredProofKinds).size !== requiredProofKinds.length) {
+      errors.push("orchestration contract required proof kinds must be unique");
+    }
+    for (const proofKind of LCX_ONTOLOGY_REQUIRED_ORCHESTRATION_PROOF_KINDS) {
+      if (!requiredProofKinds.includes(proofKind)) {
+        errors.push("orchestration contract is missing required proof kind: " + proofKind);
+      }
+    }
+  }
+  if (patternValid) {
+    const expectedDelegationMode =
+      pattern === "manager"
+        ? "manager_as_tool"
+        : pattern === "handoff"
+          ? "handoff"
+          : "parallel_fanout";
+    if (delegationMode !== expectedDelegationMode) {
+      errors.push(
+        `orchestration pattern ${pattern} must use delegation mode ${expectedDelegationMode}`,
+      );
+    }
+    const expectedFinalOwner =
+      pattern === "handoff" ? "specialist_final_owner" : "root_final_owner";
+    if (finalOwner !== expectedFinalOwner) {
+      errors.push(`orchestration pattern ${pattern} must use final owner ${expectedFinalOwner}`);
+    }
+  }
+  return errors;
+}
+
+function isLcxOntologyEntityType(value: unknown): value is LcxOntologyEntityType {
+  return (
+    typeof value === "string" && LCX_ONTOLOGY_ENTITY_TYPES.includes(value as LcxOntologyEntityType)
+  );
+}
+
+function isLcxOntologyRelationType(value: unknown): value is LcxOntologyRelationType {
+  return (
+    typeof value === "string" &&
+    LCX_ONTOLOGY_RELATION_TYPES.includes(value as LcxOntologyRelationType)
+  );
+}
+
+/**
+ * Validate semantic edges at a persisted or cross-owner boundary. This is
+ * deliberately separate from registry validation: a valid vocabulary can
+ * still be used to construct an invalid relation instance.
+ */
+export function validateLcxOntologyEdges(edges: unknown): string[] {
+  if (!Array.isArray(edges)) {
+    return ["ontology edges must be an array"];
+  }
+  const errors: string[] = [];
+  const seen = new Set<string>();
+  for (const [index, rawEdge] of edges.entries()) {
+    if (!isRecord(rawEdge)) {
+      errors.push(`ontology edge ${index} must be an object`);
+      continue;
+    }
+    const relation = rawEdge.relation;
+    const subject = rawEdge.subject;
+    const object = rawEdge.object;
+    if (!isLcxOntologyRelationType(relation)) {
+      errors.push(`ontology edge ${index} uses an unknown relation: ${String(relation)}`);
+    }
+    if (!isRecord(subject)) {
+      errors.push(`ontology edge ${index} subject must be an object`);
+    }
+    if (!isRecord(object)) {
+      errors.push(`ontology edge ${index} object must be an object`);
+    }
+    if (!isRecord(subject) || !isRecord(object)) {
+      continue;
+    }
+    const subjectType = subject.type;
+    const objectType = object.type;
+    const subjectId = subject.id;
+    const objectId = object.id;
+    if (!isLcxOntologyEntityType(subjectType)) {
+      errors.push(`ontology edge ${index} uses an unknown subject type: ${String(subjectType)}`);
+    }
+    if (!isLcxOntologyEntityType(objectType)) {
+      errors.push(`ontology edge ${index} uses an unknown object type: ${String(objectType)}`);
+    }
+    if (typeof subjectId !== "string" || subjectId.trim().length === 0) {
+      errors.push(`ontology edge ${index} subject id must not be empty`);
+    }
+    if (typeof objectId !== "string" || objectId.trim().length === 0) {
+      errors.push(`ontology edge ${index} object id must not be empty`);
+    }
+    if (
+      isLcxOntologyRelationType(relation) &&
+      isLcxOntologyEntityType(subjectType) &&
+      isLcxOntologyEntityType(objectType) &&
+      !isLcxOntologyRelationAllowed(relation, subjectType, objectType)
+    ) {
+      errors.push(
+        `ontology edge ${index} violates relation contract: ${relation} ${subjectType}->${objectType}`,
+      );
+    }
+    if (
+      isLcxOntologyRelationType(relation) &&
+      isLcxOntologyEntityType(subjectType) &&
+      isLcxOntologyEntityType(objectType) &&
+      typeof subjectId === "string" &&
+      typeof objectId === "string"
+    ) {
+      const key = JSON.stringify([relation, subjectType, subjectId, objectType, objectId]);
+      if (seen.has(key)) {
+        errors.push(`ontology edge ${index} duplicates an earlier edge`);
+      }
+      seen.add(key);
+    }
+  }
+  return errors;
+}
+
+export function assertValidLcxOntologyEdges(
+  edges: unknown,
+  context = "ontology edges",
+): asserts edges is readonly LcxOntologyEdge[] {
+  const errors = validateLcxOntologyEdges(edges);
+  if (errors.length > 0) {
+    throw new Error(`${context}: ${errors.join("; ")}`);
+  }
 }
 
 export function isLcxOntologyNonCanonicalTaskFamily(value: string): boolean {
@@ -1975,6 +2364,26 @@ function validateRelationContracts(): string[] {
   return errors;
 }
 
+function validateOrchestrationContracts(): string[] {
+  const errors: string[] = [];
+  const seenPatterns = new Set<LcxOntologyOrchestrationPattern>();
+  for (const contract of LCX_ONTOLOGY_ORCHESTRATION_CONTRACTS) {
+    if (seenPatterns.has(contract.pattern)) {
+      errors.push("orchestration contract repeats pattern " + contract.pattern);
+    }
+    seenPatterns.add(contract.pattern);
+    for (const error of validateLcxOntologyOrchestrationContract(contract)) {
+      errors.push("orchestration contract " + contract.pattern + ": " + error);
+    }
+  }
+  for (const pattern of LCX_ONTOLOGY_ORCHESTRATION_PATTERNS) {
+    if (!seenPatterns.has(pattern)) {
+      errors.push("orchestration pattern has no contract: " + pattern);
+    }
+  }
+  return errors;
+}
+
 function validateStateChains(): string[] {
   const errors: string[] = [];
   const chainVocabularies = {
@@ -2040,6 +2449,7 @@ export function validateLcxOntologyRegistry(): string[] {
     ...validateVocabularyGroups(),
     ...validateEvolutionContract(),
     ...validateRelationContracts(),
+    ...validateOrchestrationContracts(),
     ...validateStateChains(),
     ...validateAliasKeys(),
   );

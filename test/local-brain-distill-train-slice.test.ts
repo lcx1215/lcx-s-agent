@@ -42,6 +42,56 @@ function line(sourceKind: string, sourcePath: string): string {
 }
 
 describe("local brain distill train slice", () => {
+  it("repairs only training targets and preserves held-out data and source provenance", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-contract-target-"));
+    const data = path.join(root, "data");
+    const out = path.join(root, "out");
+    await fs.mkdir(data);
+    const rows = [
+      "QQQ 与国债持仓的利率风险如何拆解？",
+      "企业债流动性下降，先核对哪些风险证据？",
+    ].map((ask, index) => ({
+      ...JSON.parse(line("curated_seed", `case-${index}`)),
+      prompt: `user_or_task: ${ask}\nsource_summary: research only`,
+    }));
+    const original = rows.map((row) => JSON.stringify(row)).join("\n") + "\n";
+    await fs.writeFile(path.join(data, "train.jsonl"), original);
+    await fs.writeFile(path.join(data, "valid.jsonl"), original);
+    await fs.writeFile(path.join(data, "test.jsonl"), original);
+    try {
+      await execFileAsync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          "scripts/operator/local-brain-distill-train-slice.ts",
+          "--data",
+          data,
+          "--out",
+          out,
+          "--repair-contract-targets",
+          "--curated-repeat",
+          "1",
+          "--json",
+        ],
+        { cwd: repoRoot },
+      );
+      const repaired = await parseJsonl(path.join(out, "train.jsonl"));
+      expect(repaired).toHaveLength(2);
+      expect(repaired.every((row) => row.completion !== rows[0].completion)).toBe(true);
+      expect(repaired[0].meta).toMatchObject({
+        targetRepairOwner: "local-brain-contracts",
+        originalCompletionSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      });
+      for (const split of ["valid", "test"]) {
+        expect(await fs.readFile(path.join(out, `${split}.jsonl`), "utf8")).toBe(original);
+      }
+      expect(await fs.readFile(path.join(data, "train.jsonl"), "utf8")).toBe(original);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps full artifacts external but balances the MLX train slice", async () => {
     const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-train-slice-"));
     const dataDir = path.join(fixtureRoot, "dataset");

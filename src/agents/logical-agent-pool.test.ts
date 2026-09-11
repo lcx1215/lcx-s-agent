@@ -1,7 +1,18 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { planFinanceBrainOrchestration } from "./finance-brain-orchestration.js";
+import {
+  createCanonicalStateRootLogicalAgentCheckpointStore,
+  resolveLogicalAgentCheckpointPath,
+} from "./logical-agent-pool-checkpoint-store.js";
 import {
   buildDefaultLogicalAgentPlan,
+  createInMemoryLogicalAgentCheckpointStore,
+  fingerprintLogicalAgentPlan,
   LOGICAL_AGENT_DEFINITIONS,
+  LOGICAL_AGENT_CHECKPOINT_SCHEMA_VERSION,
   type LogicalAgentExecutionResult,
   type LogicalAgentTask,
   LogicalAgentPool,
@@ -9,6 +20,95 @@ import {
 } from "./logical-agent-pool.js";
 
 describe("logical agent pool", () => {
+  it("changes the plan fingerprint when the shared fact packet changes", () => {
+    const plan = buildDefaultLogicalAgentPlan({ ask: "共享事实包指纹测试" });
+    expect(fingerprintLogicalAgentPlan(plan, [], "final_precheck", { snapshotId: "a" })).not.toBe(
+      fingerprintLogicalAgentPlan(plan, [], "final_precheck", { snapshotId: "b" }),
+    );
+  });
+
+  it("passes an intent-family route through explicit context and records transferred ownership", async () => {
+    const ask = "学k线图分析技术";
+    const route = planFinanceBrainOrchestration({ text: ask });
+    const observed: {
+      sharedContext?: Readonly<Record<string, unknown>>;
+      dependencyResults?: Readonly<Record<string, unknown>>;
+    } = {};
+
+    const result = await runLogicalAgentPlan({
+      tasks: [
+        {
+          id: "intent_route",
+          agentId: "data_cleaning",
+          input: { ask },
+        },
+        {
+          id: "technical_specialist",
+          agentId: "research_draft",
+          input: { ask },
+          dependsOn: ["intent_route"],
+        },
+      ],
+      handoffs: [
+        {
+          fromTaskId: "intent_route",
+          toTaskId: "technical_specialist",
+          contextScope: "dependency_results",
+          ownership: "transferred",
+          reason: "the selected route owns the next specialist decision",
+        },
+      ],
+      sharedContext: {
+        intentFamily: "finance_research",
+        route: {
+          primaryModules: route.primaryModules,
+          supportingModules: route.supportingModules,
+          requiredTools: route.requiredTools,
+          boundaries: route.boundaries,
+        },
+      },
+      executor: ({ task, sharedContext, dependencyResults }) => {
+        if (task.id === "technical_specialist") {
+          observed.sharedContext = sharedContext;
+          observed.dependencyResults = dependencyResults;
+        }
+        return { output: task.id, sideEffects: [] };
+      },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(observed.sharedContext).toMatchObject({
+      intentFamily: "finance_research",
+      route: {
+        primaryModules: expect.arrayContaining(["technical_timing", "causal_map"]),
+        supportingModules: ["finance_learning_memory"],
+      },
+    });
+    expect(observed.dependencyResults).toEqual(
+      expect.objectContaining({ intent_route: expect.objectContaining({ status: "completed" }) }),
+    );
+    expect(result.handoffs).toEqual([
+      expect.objectContaining({
+        fromTaskId: "intent_route",
+        toTaskId: "technical_specialist",
+        contextScope: "dependency_results",
+        ownership: "transferred",
+      }),
+    ]);
+    expect(result.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "handoff",
+          taskId: "technical_specialist",
+          payload: expect.objectContaining({
+            fromTaskId: "intent_route",
+            ownership: "transferred",
+          }),
+        }),
+      ]),
+    );
+  });
+
   it("defines ten logical roles while binding every role to one shared local model", () => {
     expect(LOGICAL_AGENT_DEFINITIONS).toHaveLength(10);
     expect(new Set(LOGICAL_AGENT_DEFINITIONS.map((agent) => agent.modelBinding))).toEqual(
@@ -304,6 +404,39 @@ describe("logical agent pool", () => {
     expect(pool.status.activeRuns).toBe(0);
   });
 
+  it("returns promptly when the parent cancels an executor that ignores AbortSignal", async () => {
+    const pool = new LogicalAgentPool({ taskTimeoutMs: 1_000 });
+    const parent = new AbortController();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const run = runLogicalAgentPlan({
+      pool,
+      signal: parent.signal,
+      tasks: [{ id: "parent-cancel", agentId: "data_cleaning", input: { ask: "x" } }],
+      executor: async () => {
+        await blocked;
+        return { output: "late", sideEffects: [] };
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    let guardTimer: ReturnType<typeof setTimeout> | undefined;
+    const guard = new Promise<never>((_, reject) => {
+      guardTimer = setTimeout(() => reject(new Error("parent cancellation did not return")), 100);
+    });
+    parent.abort();
+    const result = await Promise.race([run, guard]);
+    if (guardTimer !== undefined) {
+      clearTimeout(guardTimer);
+    }
+    expect(result.status).toBe("failed");
+    expect(result.tasks[0]?.error).toContain("cancelled");
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(pool.status.activeRuns).toBe(0);
+  });
+
   it("waits for executor termination before resolving a timed-out task", async () => {
     let terminated = false;
     const pool = new LogicalAgentPool({ taskTimeoutMs: 5 });
@@ -357,6 +490,46 @@ describe("logical agent pool", () => {
     expect((await first).status).toBe("failed");
     expect((await second).status).toBe("completed");
     expect(overlapped).toBe(false);
+    expect(pool.status.activeRuns).toBe(0);
+  });
+
+  it("cancels a queued task before it starts", async () => {
+    const pool = new LogicalAgentPool({ maxConcurrency: 1, taskTimeoutMs: 1_000 });
+    let releaseFirst!: () => void;
+    const firstFinished = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const first = pool.submit(
+      { id: "queue-first", agentId: "data_cleaning", input: { ask: "first" } },
+      async () => {
+        await firstFinished;
+        return { output: "first", sideEffects: [] };
+      },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const controller = new AbortController();
+    let secondStarted = false;
+    const second = pool.submit(
+      { id: "queue-second", agentId: "news_classification", input: { ask: "second" } },
+      async () => {
+        secondStarted = true;
+        return { output: "second", sideEffects: [] };
+      },
+      {},
+      {},
+      "queue-second-correlation",
+      controller.signal,
+    );
+    controller.abort();
+
+    const secondResult = await second;
+    expect(secondResult.status).toBe("failed");
+    expect(secondResult.error).toContain("cancelled before start");
+    expect(secondStarted).toBe(false);
+    expect(pool.status.queuedRuns).toBe(0);
+
+    releaseFirst();
+    expect((await first).status).toBe("completed");
     expect(pool.status.activeRuns).toBe(0);
   });
 
@@ -573,5 +746,210 @@ describe("logical agent pool", () => {
 
     expect(result.status).toBe("failed");
     expect(result.tasks[0]?.error).toContain("must declare sideEffects");
+  });
+
+  it("emits a trace, checkpoints completed work, and resumes only the unfinished suffix", async () => {
+    const store = createInMemoryLogicalAgentCheckpointStore<string>();
+    const events: string[] = [];
+    let rootRuns = 0;
+    let specialistRuns = 0;
+    const tasks: Array<LogicalAgentTask<{ ask: string }>> = [
+      { id: "root", agentId: "data_cleaning", input: { ask: "recover" } },
+      {
+        id: "specialist",
+        agentId: "risk_check",
+        input: { ask: "recover" },
+        dependsOn: ["root"],
+      },
+      {
+        id: "final",
+        agentId: "final_precheck",
+        input: { ask: "recover" },
+        dependsOn: ["specialist"],
+      },
+    ];
+    const executor = ({ task }: { task: LogicalAgentTask<{ ask: string }> }) => {
+      if (task.id === "root") {
+        rootRuns += 1;
+      }
+      if (task.id === "specialist") {
+        specialistRuns += 1;
+        if (specialistRuns === 1) {
+          throw new Error("transient specialist failure");
+        }
+      }
+      return { output: task.id, sideEffects: [] } as const;
+    };
+
+    const first = await runLogicalAgentPlan({
+      runId: "recoverable-run",
+      tasks,
+      executor,
+      checkpointStore: store,
+      eventSink: (event) => events.push(event.kind),
+      handoffs: [
+        {
+          fromTaskId: "root",
+          toTaskId: "specialist",
+          contextScope: "dependency_results",
+          ownership: "transferred",
+          reason: "risk specialist owns the next decision",
+        },
+      ],
+    });
+
+    expect(first.status).toBe("failed");
+    expect(first.events.map((event) => event.kind)).toContain("checkpoint_saved");
+    expect(first.events.map((event) => event.kind)).toContain("handoff");
+    expect(store.load("recoverable-run")).toMatchObject({
+      schemaVersion: LOGICAL_AGENT_CHECKPOINT_SCHEMA_VERSION,
+      completedTaskIds: ["root"],
+    });
+    const firstCheckpoint = store.load("recoverable-run");
+    expect(firstCheckpoint?.lastEventSequence).toBe(
+      first.events.find((event) => event.kind === "checkpoint_saved")?.sequence,
+    );
+
+    const resumed = await runLogicalAgentPlan({
+      runId: "recoverable-run",
+      resume: true,
+      tasks,
+      executor,
+      checkpointStore: store,
+      eventSink: (event) => events.push(event.kind),
+      handoffs: [
+        {
+          fromTaskId: "root",
+          toTaskId: "specialist",
+          contextScope: "dependency_results",
+          ownership: "transferred",
+          reason: "risk specialist owns the next decision",
+        },
+      ],
+    });
+
+    expect(resumed.status).toBe("completed");
+    expect(resumed.resumed).toBe(true);
+    expect(resumed.events[0]?.kind).toBe("run_resumed");
+    expect(resumed.events[0]?.sequence).toBe((firstCheckpoint?.lastEventSequence ?? 0) + 1);
+    expect(rootRuns).toBe(1);
+    expect(specialistRuns).toBe(2);
+    expect(events).toContain("run_completed");
+    await expect(
+      runLogicalAgentPlan({
+        runId: "recoverable-run",
+        resume: true,
+        tasks: tasks.map((task) => ({ ...task, input: { ask: "different-plan" } })),
+        executor,
+        checkpointStore: store,
+      }),
+    ).rejects.toThrow("fingerprint mismatch");
+  });
+
+  it("persists checkpoints below the active state root and resumes from a fresh store instance", async () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "lcx-logical-agent-state-"));
+    const firstStore = createCanonicalStateRootLogicalAgentCheckpointStore<string>({ stateDir });
+    const tasks: Array<LogicalAgentTask<{ ask: string }>> = [
+      { id: "root", agentId: "data_cleaning", input: { ask: "persist" } },
+      { id: "final", agentId: "final_precheck", input: { ask: "persist" }, dependsOn: ["root"] },
+    ];
+    let rootRuns = 0;
+    let finalRuns = 0;
+    const executor = ({ task }: { task: LogicalAgentTask<{ ask: string }> }) => {
+      if (task.id === "root") {
+        rootRuns += 1;
+      }
+      if (task.id === "final") {
+        finalRuns += 1;
+        if (finalRuns === 1) {
+          throw new Error("stop after durable prefix");
+        }
+      }
+      return { output: task.id, sideEffects: [] } as const;
+    };
+
+    const first = await runLogicalAgentPlan({
+      runId: "durable-restart-run",
+      tasks,
+      executor,
+      checkpointStore: firstStore,
+    });
+    expect(first.status).toBe("failed");
+
+    const checkpointPath = resolveLogicalAgentCheckpointPath("durable-restart-run", stateDir);
+    expect(fs.existsSync(checkpointPath)).toBe(true);
+    expect(path.dirname(checkpointPath)).toBe(
+      path.join(stateDir, "agents", "logical-agent-checkpoints"),
+    );
+    expect(() => fs.statSync(checkpointPath)).not.toThrow();
+
+    const restartedStore = createCanonicalStateRootLogicalAgentCheckpointStore<string>({
+      stateDir,
+    });
+    const resumed = await runLogicalAgentPlan({
+      runId: "durable-restart-run",
+      resume: true,
+      tasks,
+      executor,
+      checkpointStore: restartedStore,
+    });
+    expect(resumed.status).toBe("completed");
+    expect(resumed.resumed).toBe(true);
+    expect(rootRuns).toBe(1);
+    expect(finalRuns).toBe(2);
+  });
+
+  it("runs input and output guardrails inside the shared pool boundary", async () => {
+    const inputBlocked = await runLogicalAgentPlan({
+      pool: new LogicalAgentPool({
+        guardrails: {
+          input: ({ input }) => {
+            if (typeof input === "object" && input !== null && "ask" in input) {
+              throw new Error("input guardrail blocked unsafe request");
+            }
+          },
+        },
+      }),
+      tasks: [{ id: "input-blocked", agentId: "data_cleaning", input: { ask: "unsafe" } }],
+      executor: () => ({ output: "never", sideEffects: [] }),
+    });
+    expect(inputBlocked.status).toBe("failed");
+    expect(inputBlocked.tasks[0]?.error).toBe("input guardrail blocked unsafe request");
+
+    const outputBlocked = await runLogicalAgentPlan({
+      pool: new LogicalAgentPool({
+        guardrails: {
+          output: ({ output }) => {
+            if (output === "unsafe-output") {
+              throw new Error("output guardrail blocked unsafe result");
+            }
+          },
+        },
+      }),
+      tasks: [{ id: "output-blocked", agentId: "data_cleaning", input: { ask: "safe" } }],
+      executor: () => ({ output: "unsafe-output", sideEffects: [] }),
+    });
+    expect(outputBlocked.status).toBe("failed");
+    expect(outputBlocked.tasks[0]?.error).toBe("output guardrail blocked unsafe result");
+  });
+
+  it("rejects a handoff that is not backed by a dependency edge", async () => {
+    await expect(
+      runLogicalAgentPlan({
+        tasks: [
+          { id: "root", agentId: "data_cleaning", input: { ask: "x" } },
+          { id: "specialist", agentId: "risk_check", input: { ask: "x" } },
+        ],
+        executor: () => ({ output: "never", sideEffects: [] }),
+        handoffs: [
+          {
+            fromTaskId: "root",
+            toTaskId: "specialist",
+            contextScope: "dependency_results",
+            ownership: "transferred",
+          },
+        ],
+      }),
+    ).rejects.toThrow("must be a dependency");
   });
 });

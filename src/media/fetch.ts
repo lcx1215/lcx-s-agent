@@ -31,6 +31,7 @@ type FetchMediaOptions = {
   filePathHint?: string;
   maxBytes?: number;
   maxRedirects?: number;
+  signal?: AbortSignal;
   ssrfPolicy?: SsrFPolicy;
   lookupFn?: LookupFn;
 };
@@ -87,6 +88,7 @@ export async function fetchRemoteMedia(options: FetchMediaOptions): Promise<Fetc
     filePathHint,
     maxBytes,
     maxRedirects,
+    signal,
     ssrfPolicy,
     lookupFn,
   } = options;
@@ -99,7 +101,7 @@ export async function fetchRemoteMedia(options: FetchMediaOptions): Promise<Fetc
       withStrictGuardedFetchMode({
         url,
         fetchImpl,
-        init: requestInit,
+        init: signal ? { ...requestInit, signal } : requestInit,
         maxRedirects,
         policy: ssrfPolicy,
         lookupFn,

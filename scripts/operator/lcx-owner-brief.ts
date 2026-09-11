@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import type { LcxRunSnapshot } from "../../src/shared/lcx-run-receipt.ts";
 import {
   GOVERNANCE_AUTOPILOT_LATEST_PATH,
   LOCAL_FAILURE_TRACE_LATEST_PATH,
@@ -12,6 +13,7 @@ type JsonRecord = Record<string, unknown>;
 
 type OwnerBriefInput = {
   checkedAt: string;
+  snapshot?: LcxRunSnapshot;
   governance: JsonRecord;
   localFailureTrace: JsonRecord;
   paths: {
@@ -147,6 +149,7 @@ export function buildOwnerBrief(input: OwnerBriefInput) {
   const datasetExamples = numberValue(monotonicDataLedger.datasetExamples);
   const trainSliceWritten = numberValue(monotonicDataLedger.trainSliceWritten);
   const selectedCleanAdapter = shortPath(trainingPlan.selectedCleanAdapter);
+  const governanceRunId = textValue(recordValue(input.governance.runReceipt)?.runId) ?? "未关联";
   const headlineText = headline({ activeTrainingOrEval, result });
   const blockers = [
     firstFailedGateText(firstFailedGate),
@@ -182,6 +185,7 @@ export function buildOwnerBrief(input: OwnerBriefInput) {
     "# LCX 老板总览",
     "",
     `生成时间：${input.checkedAt}`,
+    `总控 runId：${governanceRunId}`,
     "",
     `一句话：${headlineText}`,
     "",
@@ -217,6 +221,8 @@ export function buildOwnerBrief(input: OwnerBriefInput) {
     kind: "lcx-owner-brief",
     boundary: "local_owner_brief_readable_summary_only",
     checkedAt: input.checkedAt,
+    ...(input.snapshot ? { snapshot: input.snapshot } : {}),
+    runReceipt: input.governance.runReceipt,
     title: "LCX 老板总览",
     headline: headlineText,
     firstFailedGate: firstFailedGate ?? "none",

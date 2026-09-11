@@ -5,6 +5,12 @@ import {
   type FinanceBrainOrchestrationPlan,
 } from "../../src/agents/finance-brain-orchestration.js";
 import {
+  evaluateFinanceDecisionPolicy,
+  FINANCE_DECISION_MODES,
+  type FinanceDecisionCandidateContext,
+  type FinanceDecisionMode,
+} from "../../src/agents/finance-decision-policy.js";
+import {
   applyVisibleAnswerAdoptionGate,
   findVisibleAnswerAdoptionGateFailures,
 } from "../../src/agents/visible-answer-adoption-gate.js";
@@ -14,6 +20,7 @@ import type { LcxOntologyAnswerPipelineFilterId } from "../../src/shared/lcx-ont
 type CliOptions = {
   ask?: string;
   candidateAnswer?: string;
+  financeDecisionMode?: FinanceDecisionMode;
   json: boolean;
 };
 
@@ -491,7 +498,7 @@ const MACRO_PRODUCT_CONTRACTS = [
   {
     id: "finance_data_and_trade_boundary",
     invariant:
-      "Finance answers must separate research from execution, use sourced/timestamped numbers, route conflicts to provenance review, and give useful risk triage without direct trade action.",
+      "Finance answers must separate research, strategy candidates, conditional trade candidates, and execution; use sourced/timestamped numbers and route conflicts to provenance review.",
     ownsFilters: [
       "single_stock_loss_reply_requires_concrete_risk_triage",
       "standalone_finance_ask_cannot_defer_to_stale_prior_answer",
@@ -501,7 +508,7 @@ const MACRO_PRODUCT_CONTRACTS = [
       "no_trade_advice",
     ],
     microRulePolicy:
-      "Ticker-specific cases such as NVDA are regression samples for the general finance research boundary.",
+      "research_only remains the compatibility default; strategy_candidate and conditional_trade_candidate require an explicit mode, a complete evidence/risk packet, and never grant execution authority.",
   },
   {
     id: "owner_status_and_async_receipts",
@@ -561,6 +568,7 @@ function usage(): never {
       "Usage: node --import tsx scripts/operator/lcx-commercial-answer-pipeline.ts [--ask TEXT --candidate-answer TEXT] [--json]",
       "",
       "Without --ask, runs the built-in commercial answer pipeline diagnostic scenarios.",
+      "Use --finance-mode conditional_trade_candidate to allow an evidence-bound buy/sell candidate; this never grants execution authority.",
       "This is local-only: it audits candidate answer adoption rules and never calls providers, external channel sender, or MLX.",
     ].join("\n"),
   );
@@ -583,6 +591,13 @@ function parseArgs(args: string[]): CliOptions {
       index += 1;
     } else if (arg === "--candidate-answer") {
       options.candidateAnswer = readValue(args, index);
+      index += 1;
+    } else if (arg === "--finance-mode") {
+      const value = readValue(args, index);
+      if (!(FINANCE_DECISION_MODES as readonly string[]).includes(value)) {
+        usage();
+      }
+      options.financeDecisionMode = value as FinanceDecisionMode;
       index += 1;
     } else if (arg === "--json") {
       options.json = true;
@@ -752,6 +767,7 @@ function auditCandidate(params: {
   ask: string;
   candidateAnswer: string;
   needs: PipelineNeed[];
+  financeDecisionMode?: FinanceDecisionMode;
 }): PipelineAuditCheck[] {
   const candidate = params.candidateAnswer.trim();
   const candidateLower = candidate.toLowerCase();
@@ -807,22 +823,26 @@ function auditCandidate(params: {
         /(?:可以|建议|应该|直接|先|用).{0,24}(?:期权.{0,10}杠杆|加杠杆|重仓|满仓|梭哈|押\s*[A-Za-z0-9\u4e00-\u9fff]+|赌|追|补仓)|(?:突破|上涨).{0,10}追|跌了.{0,10}(?:再)?补仓|再补仓/u,
       )
     : false;
+  const allowsConditionalTradeCandidate =
+    params.financeDecisionMode === "conditional_trade_candidate";
   const directTradeLanguage =
-    directActionTemplate ||
-    directChinesePositionInstruction ||
-    directHighRiskRecoveryInstruction ||
-    findVisibleAnswerAdoptionGateFailures({
-      userMessage: params.ask,
-      answerText: candidate,
-    }).length > 0 ||
-    (includesPattern(
-      candidateLower,
-      /\b(?:buy|sell|add|reduce|go long|go short)\b|(?:应该|建议|可以).{0,12}(买|卖|加仓|减仓|做多|做空)|仓位.{0,8}\d+%/u,
-    ) &&
-      !includesPattern(
+    !allowsConditionalTradeCandidate &&
+    (directActionTemplate ||
+      directChinesePositionInstruction ||
+      directHighRiskRecoveryInstruction ||
+      findVisibleAnswerAdoptionGateFailures({
+        userMessage: params.ask,
+        answerText: candidate,
+        financeDecisionMode: params.financeDecisionMode,
+      }).length > 0 ||
+      (includesPattern(
         candidateLower,
-        /不(?:能|应该|建议).{0,8}(买|卖|加仓|减仓)|不是.{0,8}交易建议|no trade advice/u,
-      ));
+        /\b(?:buy|sell|add|reduce|go long|go short)\b|(?:应该|建议|可以).{0,12}(买|卖|加仓|减仓|做多|做空)|仓位.{0,8}\d+%/u,
+      ) &&
+        !includesPattern(
+          candidateLower,
+          /不(?:能|应该|建议).{0,8}(买|卖|加仓|减仓)|不是.{0,8}交易建议|no trade advice/u,
+        )));
 
   const pickedModelWithoutEvidence =
     requiredNeedIds.has("model_disagreement_arbitration") &&
@@ -1148,7 +1168,15 @@ function auditCandidate(params: {
   return checks;
 }
 
-export function buildPipelineResult(ask: string, candidateAnswer: string) {
+export function buildPipelineResult(
+  ask: string,
+  candidateAnswer: string,
+  options: {
+    financeDecisionMode?: FinanceDecisionMode;
+    candidateContext?: FinanceDecisionCandidateContext;
+  } = {},
+) {
+  const financeDecisionMode = options.financeDecisionMode ?? "research_only";
   const productGovernor = buildProductGovernor();
   const orchestration = planFinanceBrainOrchestration({
     text: ask,
@@ -1156,6 +1184,7 @@ export function buildPipelineResult(ask: string, candidateAnswer: string) {
     highStakesConclusion:
       /买|卖|加仓|减仓|仓位|风险|当前|最新|今天|现在|buy|sell|risk|current|latest/iu.test(ask),
     writesDurableMemory: /学习|沉淀|memory|learn|study/iu.test(ask),
+    decisionMode: financeDecisionMode,
   });
   const needs = resolveNeeds(ask, orchestration);
   const stages = resolveRequiredStages(needs);
@@ -1170,15 +1199,28 @@ export function buildPipelineResult(ask: string, candidateAnswer: string) {
       },
     },
   });
-  const checks = auditCandidate({ ask, candidateAnswer, needs });
+  const financeDecision = evaluateFinanceDecisionPolicy({
+    mode: financeDecisionMode,
+    ask,
+    answer: candidateAnswer,
+    candidateContext: options.candidateContext,
+  });
+  const checks = auditCandidate({
+    ask,
+    candidateAnswer,
+    needs,
+    financeDecisionMode,
+  });
   const visibleGateDecision = applyVisibleAnswerAdoptionGate({
     userMessage: ask,
     answerText: candidateAnswer,
+    financeDecisionMode,
   });
   const failedReasons = checks
     .filter((check) => !check.ok && check.failedReason)
     .map((check) => check.failedReason!)
-    .concat(visibleGateDecision.failedReasons);
+    .concat(visibleGateDecision.failedReasons)
+    .concat(financeDecision.failedReasons);
   const uniqueFailedReasons = [...new Set(failedReasons)];
   const terminalDecision: TerminalDecision =
     uniqueFailedReasons.length === 0 ? "adopt_visible_answer" : "return_failed_reason";
@@ -1187,6 +1229,7 @@ export function buildPipelineResult(ask: string, candidateAnswer: string) {
     boundary: "local_commercial_answer_pipeline_only",
     ask,
     candidateAuthority: "model_candidate_not_final_authority",
+    financeDecision,
     qwenRole: answerAuditPolicy.qwenRole,
     qwenChallengeContract: {
       outputShape: "challenge_patch_only",
@@ -1273,7 +1316,9 @@ export function buildPipelineResult(ask: string, candidateAnswer: string) {
 export function runScenarioSuite() {
   const productGovernor = buildProductGovernor();
   const results = BUILT_IN_SCENARIOS.map((scenario) => {
-    const result = buildPipelineResult(scenario.ask, scenario.candidateAnswer);
+    const result = buildPipelineResult(scenario.ask, scenario.candidateAnswer, {
+      financeDecisionMode: "research_only",
+    });
     const expectedFailedReasons = scenario.expectedFailedReasons ?? [];
     const expectedFailedReasonsPresent = expectedFailedReasons.every((reason) =>
       result.failedReasons.includes(reason),
@@ -1314,7 +1359,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const options = parseArgs(process.argv.slice(2));
   const result =
     options.ask && options.candidateAnswer
-      ? buildPipelineResult(options.ask, options.candidateAnswer)
+      ? buildPipelineResult(options.ask, options.candidateAnswer, {
+          financeDecisionMode: options.financeDecisionMode,
+        })
       : runScenarioSuite();
 
   if (options.json) {

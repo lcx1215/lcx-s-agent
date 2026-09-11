@@ -673,6 +673,11 @@ async function buildBatchPrompts(
   const maxFailurePrompts = Math.min(Math.ceil(count / 2), 12);
   const failurePrompts = await buildFailureCurriculumPrompts({
     guardLogPath: options.guardLogPath,
+    evalReceiptPath: path.join(
+      options.workspaceDir,
+      "state",
+      "lcx-targeted-challenger-eval-receipt-latest.json",
+    ),
     maxPrompts: maxFailurePrompts,
     startIndex: start,
   });

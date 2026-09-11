@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { modelRoutingTaskTimeoutMs, type ModelCallReceipt } from "./logical-agent-model-router.js";
 import {
   LogicalAgentPool,
   runLogicalAgentPlan,
@@ -31,6 +32,38 @@ import {
 
 export * from "./quality-harness-contract.js";
 
+export function summarizeQualityModelDiversity(calls: readonly ModelCallReceipt[]) {
+  const completed = calls.filter(
+    (call) => call.outcome === "completed" && call.realModelInferenceObserved,
+  );
+  const identity = (call: ModelCallReceipt) => `${call.provider}/${call.modelId}`;
+  const draft = completed.filter((call) => call.role === "research_draft").at(-1);
+  const reviewModels = [
+    ...new Set(
+      QUALITY_HARNESS_REVIEW_AGENTS.flatMap((role) => {
+        const call = completed.filter((entry) => entry.role === role).at(-1);
+        return call ? [identity(call)] : [];
+      }),
+    ),
+  ];
+  return {
+    draftModel: draft ? identity(draft) : null,
+    reviewModels,
+    hasDistinctReviewModel: !!draft && reviewModels.some((model) => model !== identity(draft)),
+    allPostDraftReviewsSeparated:
+      !!draft &&
+      ["adversarial_challenge", "final_precheck"].every((role) => {
+        const review = completed.filter((call) => call.role === role).at(-1);
+        const formatter = completed.filter((call) => call.role === "formatting").at(-1);
+        return (
+          !!review &&
+          identity(review) !== identity(draft) &&
+          (role !== "final_precheck" || (!!formatter && identity(review) !== identity(formatter)))
+        );
+      }),
+  };
+}
+
 function summarizeTask(task: string): { sha256: string; length: number } {
   return {
     sha256: crypto.createHash("sha256").update(task, "utf8").digest("hex"),
@@ -47,8 +80,23 @@ function createQualityReceipt(params: {
   verification: QualityHarnessVerification;
   status: QualityHarnessReceipt["status"];
   maxAttempts: 1 | 2;
+  routed: boolean;
 }): QualityHarnessReceipt {
   const last = params.attempts.at(-1);
+  const modelCalls = params.attempts.flatMap((attempt) =>
+    attempt.stages.flatMap((stage) => stage.modelCalls ?? []),
+  );
+  const evidenceModes = new Set(
+    modelCalls.map((call) =>
+      call.evidence === "adapter-attested"
+        ? "adapter-attested"
+        : call.mode === "deterministic"
+          ? "deterministic"
+          : call.mode === "adapter"
+            ? "adapter-unattested"
+            : "injected",
+    ),
+  );
   return Object.freeze({
     schemaVersion: QUALITY_HARNESS_SCHEMA_VERSION,
     harness: "lcx-quality",
@@ -57,10 +105,19 @@ function createQualityReceipt(params: {
     task: summarizeTask(params.request.task),
     modelPool: params.pool,
     execution: Object.freeze({
-      backend: "injected_model_invoker",
+      backend: params.routed ? "role_model_router" : "injected_model_invoker",
+      evidenceMode: evidenceModes.size > 1 ? "mixed" : ([...evidenceModes][0] ?? "injected"),
+      modelCalls: Object.freeze(modelCalls),
+      modelDiversity: summarizeQualityModelDiversity(
+        last?.stages.flatMap((stage) => stage.modelCalls ?? []) ?? [],
+      ),
       modelId: params.pool.modelId,
-      realModelInferenceObserved: false,
-      providerCallsMade: "not-observed",
+      realModelInferenceObserved: modelCalls.some((call) => call.realModelInferenceObserved),
+      allModelCallsAttested:
+        modelCalls.length > 0 && modelCalls.every((call) => call.evidence === "adapter-attested"),
+      providerCallsMade: modelCalls.some((call) => call.providerCallObserved)
+        ? "adapter-attested"
+        : "not-observed",
       externalSideEffects: "not-observed",
     }),
     plannedStages: QUALITY_HARNESS_STAGES,
@@ -96,11 +153,15 @@ export async function runQualityHarness(
   }
   const runId = options.createRunId?.() ?? crypto.randomUUID();
   const pool = new LogicalAgentPool<QualityHarnessStageInput, QualityHarnessStageOutput>({
+    allowProviderCalls: options.allowProviderCalls,
     modelId: options.modelId,
     maxConcurrency: options.maxConcurrency,
     memoryBudgetMb: options.memoryBudgetMb,
-    taskTimeoutMs: options.taskTimeoutMs,
+    taskTimeoutMs:
+      options.taskTimeoutMs ??
+      (options.modelRouting ? modelRoutingTaskTimeoutMs(options.modelRouting) : undefined),
     modelInvoker: options.modelInvoker,
+    modelRouting: options.modelRouting,
   });
   const attempts: QualityHarnessAttemptReceipt[] = [];
   let feedback: string[] = [];
@@ -114,9 +175,12 @@ export async function runQualityHarness(
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const plan = await runLogicalAgentPlan({
       pool,
+      runId: `${runId}:attempt:${attempt}`,
+      signal: options.signal,
       tasks: buildQualityHarnessPlan({ runId, attempt, request, repairFeedback: feedback }),
       finalTaskId: "final_precheck",
       executor: createQualityHarnessStageExecutor,
+      sharedContext: request.sharedContext ?? {},
     });
     const quality = evaluateQuality(plan, request);
     finalArtifact = quality.artifact ?? finalArtifact;
@@ -134,6 +198,7 @@ export async function runQualityHarness(
         quality.artifact,
         attempt,
         options.verifierTimeoutMs,
+        options.signal,
       );
     }
     const status = qualityAttemptStatus({
@@ -149,6 +214,7 @@ export async function runQualityHarness(
         planStatus: plan.status,
         stages: Object.freeze(plan.tasks.map(summarizeQualityStageResult)),
         gates: quality.gates,
+        findings: quality.findings,
         feedback: Object.freeze(attemptFeedback),
         verification,
       }),
@@ -164,9 +230,13 @@ export async function runQualityHarness(
         verification,
         status: options.verify ? "verified" : "completed-unverified",
         maxAttempts,
+        routed: options.modelRouting !== undefined,
       });
     }
     feedback = attemptFeedback;
+    if (options.signal?.aborted) {
+      break;
+    }
   }
 
   const last = attempts.at(-1);
@@ -187,5 +257,6 @@ export async function runQualityHarness(
     verification: finalVerification,
     status,
     maxAttempts,
+    routed: options.modelRouting !== undefined,
   });
 }

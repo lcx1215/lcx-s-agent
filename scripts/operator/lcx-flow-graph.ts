@@ -87,6 +87,35 @@ const FAMILY_IDS: FlowFamilyId[] = [...LCX_ONTOLOGY_WORKFLOW_FAMILY_IDS];
 
 const FLOW_SCENARIOS: FlowScenario[] = [
   {
+    id: "finance_caseflow_waterflow",
+    family: "visible_external_finance_research",
+    objective:
+      "Preserve research identity, evidence, frozen decision packets and append-only outcome review.",
+    start: "research_case",
+    end: "outcome_ledger",
+    requiredNodes: [
+      "research_case",
+      "source_registry",
+      "research_run",
+      "review_panel",
+      "decision_packet",
+      "outcome_ledger",
+    ],
+    requiredFilters: [
+      "source_evidence_gate",
+      "no_wallet_or_order_execution",
+      "human_signoff_checkpoint",
+    ],
+    edges: [
+      ["research_case", "source_registry"],
+      ["source_registry", "research_run"],
+      ["research_run", "review_panel"],
+      ["review_panel", "decision_packet"],
+      ["decision_packet", "outcome_ledger"],
+    ],
+    receipts: ["src/agents/finance-caseflow.test.ts", "src/agents/finance-outcome-ledger.test.ts"],
+  },
+  {
     id: "external_finance_research_waterflow",
     family: "visible_external_finance_research",
     objective:
@@ -1208,6 +1237,19 @@ const ILLEGAL_EDGES: Array<[string, string, string]> = [
 
 const CONSOLIDATION_CLUSTERS: ConsolidationCluster[] = [
   {
+    id: "finance_research_lifecycle_cluster",
+    philosophy:
+      "Frozen research identity, bounded execution and outcome review form one finance lifecycle.",
+    ownerScenario: "finance_caseflow_waterflow",
+    ownerNode: "research_case",
+    sameClassTerms: ["research_case", "decision_packet", "outcome_ledger"],
+    mergeFilters: [
+      "source_evidence_gate",
+      "no_wallet_or_order_execution",
+      "human_signoff_checkpoint",
+    ],
+  },
+  {
     id: "architecture_supervision_cluster",
     philosophy:
       "god-view, head-tail, flow-graph, context recovery, and doctor are one supervision stack",
@@ -1429,6 +1471,49 @@ const CONSOLIDATION_CLUSTERS: ConsolidationCluster[] = [
 ];
 
 const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
+  {
+    id: "finance_caseflow_entrypoints",
+    ownerCluster: "finance_research_lifecycle_cluster",
+    ownerPath: "src/agents/finance-caseflow.ts",
+    watchedPathTerms: [
+      "finance-caseflow",
+      "finance-research-runner",
+      "finance-research-batch-runner",
+      "finance-outcome-ledger",
+      "finance-forecast-calibration",
+      "finance-history-coverage",
+      "finance-research-assessment",
+      "finance-model-checkpoints",
+      "finance-run-checkpoints",
+      "lcx-finance-research",
+      "lcx-caseflow-demo",
+    ],
+    allowedPaths: [
+      "scripts/operator/lcx-caseflow-demo.ts",
+      "scripts/operator/lcx-finance-research.test.ts",
+      "scripts/operator/lcx-finance-research.ts",
+      "src/agents/finance-caseflow-followups.test.ts",
+      "src/agents/finance-caseflow-followups.ts",
+      "src/agents/finance-caseflow.test.ts",
+      "src/agents/finance-caseflow.ts",
+      "src/agents/finance-forecast-calibration.test.ts",
+      "src/agents/finance-forecast-calibration.ts",
+      "src/agents/finance-history-coverage.test.ts",
+      "src/agents/finance-history-coverage.ts",
+      "src/agents/finance-model-checkpoints.test.ts",
+      "src/agents/finance-model-checkpoints.ts",
+      "src/agents/finance-outcome-ledger.test.ts",
+      "src/agents/finance-outcome-ledger.ts",
+      "src/agents/finance-research-assessment.test.ts",
+      "src/agents/finance-research-assessment.ts",
+      "src/agents/finance-research-batch-runner.test.ts",
+      "src/agents/finance-research-batch-runner.ts",
+      "src/agents/finance-research-runner.test.ts",
+      "src/agents/finance-research-runner.ts",
+      "src/agents/finance-run-checkpoints.test.ts",
+      "src/agents/finance-run-checkpoints.ts",
+    ],
+  },
   {
     id: "architecture_supervision_entrypoints",
     ownerCluster: "architecture_supervision_cluster",
@@ -1658,6 +1743,11 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "source-registry",
     ],
     allowedPaths: [
+      "src/agents/finance-data-gateway.test.ts",
+      "src/agents/finance-realtime-source-registry.test.ts",
+      "src/agents/finance-realtime-source-registry.ts",
+      "src/agents/geospatial-source-registry.test.ts",
+      "src/agents/geospatial-source-registry.ts",
       "scripts/operator/finance-data-gateway-live-smoke.ts",
       "scripts/operator/finance-data-gateway-smoke.ts",
       "src/agents/finance-data-gateway.ts",
@@ -1730,6 +1820,7 @@ const SHARED_ENTRYPOINT_OWNERS: SharedEntrypointOwner[] = [
 ];
 
 const FLOW_DIAGNOSTIC_OWNER_BY_SCENARIO_ID: Record<string, string> = {
+  finance_caseflow_waterflow: "scripts/operator/lcx-finance-research.ts",
   external_finance_research_waterflow: "scripts/operator/lcx-commercial-answer-pipeline.ts",
   directed_daily_research_brief_waterflow: "scripts/operator/lcx-directed-daily-research-brief.ts",
   module_learning_internalization_waterflow: "scripts/operator/module-learning-pipeline-review.ts",

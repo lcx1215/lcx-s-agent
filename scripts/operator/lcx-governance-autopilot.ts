@@ -8,6 +8,15 @@ import {
   type GlobalEvidenceProjectionRead,
 } from "../../src/shared/global-evidence-projection-read.ts";
 import {
+  boundaryFromFlags,
+  buildLcxRunReceipt,
+  createLcxRunId,
+  createLcxRunSnapshot,
+  type LcxRunPhase,
+  type LcxRunReceipt,
+  type LcxRunSnapshot,
+} from "../../src/shared/lcx-run-receipt.ts";
+import {
   buildLocalFailureTraceReceipt,
   summarizeTraceForHandoff,
   type LocalFailureTraceReceipt,
@@ -15,6 +24,7 @@ import {
 } from "./lcx-local-failure-trace.ts";
 import {
   CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
+  CONTROL_ROOM_LATEST_PATH,
   DEFAULT_WORKSPACE_DIR,
   EVOLUTION_PROMOTION_DIGEST_LATEST_PATH,
   GOVERNANCE_AUTOPILOT_LATEST_PATH,
@@ -26,6 +36,7 @@ import {
   OWNER_BRIEF_LATEST_MARKDOWN_PATH,
   OWNER_CONTROL_MAP_LATEST_JSON_PATH,
   OWNER_CONTROL_MAP_LATEST_MARKDOWN_PATH,
+  REAL_COST_LEDGER_LATEST_JSON_PATH,
   MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH,
   SELF_REPAIR_HANDS_JSONL_PATH,
   SELF_REPAIR_HANDS_LATEST_PATH,
@@ -81,6 +92,7 @@ type OwnerRun = {
   summary: unknown;
   compact: Record<string, unknown>;
   projection?: unknown;
+  runReceipt: LcxRunReceipt;
   error?: string;
 };
 
@@ -746,7 +758,46 @@ function compactOwner(id: OwnerId, payload: Record<string, unknown> | undefined)
   };
 }
 
-async function runOwner(command: OwnerCommand): Promise<OwnerRun> {
+function buildOwnerRunReceipt(params: {
+  command: OwnerCommand;
+  parsed: boolean;
+  exitCode: number;
+  ok?: boolean;
+  payload?: Record<string, unknown>;
+  parentRunId?: string;
+  snapshot: LcxRunSnapshot;
+  phase: LcxRunPhase;
+  error?: string;
+}): LcxRunReceipt {
+  const checkedAt = params.snapshot.observedAt;
+  return buildLcxRunReceipt({
+    runId: createLcxRunId({
+      checkedAt,
+      owner: params.command.id,
+      key: `${params.command.script}|${params.exitCode}|${params.error ?? ""}`,
+    }),
+    parentRunId: params.parentRunId,
+    owner: params.command.id,
+    phase: params.phase,
+    status: ownerRunStatus(params),
+    checkedAt,
+    snapshot: params.snapshot,
+    boundary: ownerBoundary(params.payload),
+    evidence: ownerEvidence({
+      id: params.command.id,
+      command: params.command.script,
+      parsed: params.parsed,
+      exitCode: params.exitCode,
+      ok: params.ok,
+    }),
+    nextAction: ownerNextAction(params.payload, params.command.id),
+  });
+}
+
+async function runOwner(
+  command: OwnerCommand,
+  params: { parentRunId?: string; phase?: LcxRunPhase; snapshot: LcxRunSnapshot },
+): Promise<OwnerRun> {
   const args = ["--import", "tsx", command.script, ...(command.args ?? [])];
   const renderedCommand = `node ${args.join(" ")}`;
   try {
@@ -756,16 +807,27 @@ async function runOwner(command: OwnerCommand): Promise<OwnerRun> {
       maxBuffer: EXEC_MAX_BUFFER,
     });
     const payload = JSON.parse(stdout) as Record<string, unknown>;
+    const ok = typeof payload.ok === "boolean" ? payload.ok : undefined;
     return {
       id: command.id,
       command: renderedCommand,
       exitCode: 0,
       parsed: true,
-      ok: typeof payload.ok === "boolean" ? payload.ok : undefined,
+      ok,
       boundary: typeof payload.boundary === "string" ? payload.boundary : undefined,
       summary: payload.summary,
       compact: compactOwner(command.id, payload),
       projection: payload.globalEvidenceProjection,
+      runReceipt: buildOwnerRunReceipt({
+        command,
+        parsed: true,
+        exitCode: 0,
+        ok,
+        payload,
+        parentRunId: params.parentRunId,
+        snapshot: params.snapshot,
+        phase: params.phase ?? "observe",
+      }),
     };
   } catch (error) {
     const details = error as {
@@ -776,54 +838,83 @@ async function runOwner(command: OwnerCommand): Promise<OwnerRun> {
     };
     try {
       const payload = JSON.parse(details.stdout ?? "") as Record<string, unknown>;
+      const ok = typeof payload.ok === "boolean" ? payload.ok : undefined;
       return {
         id: command.id,
         command: renderedCommand,
         exitCode: typeof details.code === "number" ? details.code : 1,
         parsed: true,
-        ok: typeof payload.ok === "boolean" ? payload.ok : undefined,
+        ok,
         boundary: typeof payload.boundary === "string" ? payload.boundary : undefined,
         summary: payload.summary,
         compact: compactOwner(command.id, payload),
         projection: payload.globalEvidenceProjection,
+        runReceipt: buildOwnerRunReceipt({
+          command,
+          parsed: true,
+          exitCode: typeof details.code === "number" ? details.code : 1,
+          ok,
+          payload,
+          parentRunId: params.parentRunId,
+          snapshot: params.snapshot,
+          phase: params.phase ?? "observe",
+          error: details.stderr?.trim() || details.message,
+        }),
         error: details.stderr?.trim() || details.message,
       };
     } catch {
+      const exitCode = typeof details.code === "number" ? details.code : 1;
       return {
         id: command.id,
         command: renderedCommand,
-        exitCode: typeof details.code === "number" ? details.code : 1,
+        exitCode,
         parsed: false,
         ok: false,
         boundary: undefined,
         summary: undefined,
         compact: {},
+        runReceipt: buildOwnerRunReceipt({
+          command,
+          parsed: false,
+          exitCode,
+          parentRunId: params.parentRunId,
+          snapshot: params.snapshot,
+          phase: params.phase ?? "observe",
+          error: [details.message, details.stderr].filter(Boolean).join("\n"),
+        }),
         error: [details.message, details.stderr].filter(Boolean).join("\n"),
       };
     }
   }
 }
 
-async function runSelfRepairAutoWrite(signal: SelfRepairAutoSignal): Promise<OwnerRun> {
-  return runOwner({
-    id: "selfRepairHands",
-    script: "scripts/operator/lcx-self-repair-hands.ts",
-    args: [
-      "--write",
-      "--json",
-      "--signal-key",
-      signal.signalKey,
-      "--issue",
-      signal.issue,
-      "--observed-failure",
-      signal.observedFailure,
-      "--replacement-rule",
-      signal.replacementRule,
-      "--domain",
-      signal.domain,
-    ],
-    required: true,
-  });
+async function runSelfRepairAutoWrite(
+  signal: SelfRepairAutoSignal,
+  parentRunId: string,
+  snapshot: LcxRunSnapshot,
+): Promise<OwnerRun> {
+  return runOwner(
+    {
+      id: "selfRepairHands",
+      script: "scripts/operator/lcx-self-repair-hands.ts",
+      args: [
+        "--write",
+        "--json",
+        "--signal-key",
+        signal.signalKey,
+        "--issue",
+        signal.issue,
+        "--observed-failure",
+        signal.observedFailure,
+        "--replacement-rule",
+        signal.replacementRule,
+        "--domain",
+        signal.domain,
+      ],
+      required: true,
+    },
+    { parentRunId, phase: "repair", snapshot },
+  );
 }
 
 function selfRepairLatestSignalKey(selfRepairCompact: Record<string, unknown> | undefined) {
@@ -896,6 +987,60 @@ function ownerMap(owners: readonly OwnerRun[]) {
   >;
 }
 
+function ownerRunStatus(params: { parsed: boolean; exitCode: number; ok?: boolean }) {
+  if (!params.parsed) {
+    return "failed" as const;
+  }
+  if (params.ok === false) {
+    return "blocked" as const;
+  }
+  return params.exitCode !== 0 ? ("failed" as const) : ("passed" as const);
+}
+
+function ownerNextAction(payload: Record<string, unknown> | undefined, id: string): string {
+  for (const key of ["nextAction", "nextSafeAction", "fastestSafeNextAction", "nextIdleAction"]) {
+    const value = payload?.[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return payload ? `review_${id}_owner_output` : `repair_${id}_owner_execution`;
+}
+
+function ownerBoundary(payload: Record<string, unknown> | undefined) {
+  return boundaryFromFlags({
+    scope: typeof payload?.boundary === "string" ? payload.boundary : "local_owner_only",
+    externalSenderTouched:
+      payload?.externalSenderTouched === true ||
+      payload?.externalChannelTouched === true ||
+      payload?.liveTouched === true,
+    trainingTouched: payload?.trainingTouched === true,
+    providerConfigTouched: payload?.providerConfigTouched === true,
+    protectedMemoryTouched: payload?.protectedMemoryTouched === true,
+  });
+}
+
+function ownerEvidence(params: {
+  id: string;
+  command: string;
+  parsed: boolean;
+  exitCode: number;
+  ok?: boolean;
+}) {
+  return [
+    {
+      id: `owner:${params.id}`,
+      kind: "proof" as const,
+      status: params.parsed ? ("present" as const) : ("missing" as const),
+      owner: "lcx-governance-autopilot",
+      locator: params.command,
+      detail: params.parsed
+        ? `exitCode=${params.exitCode}; ok=${String(params.ok ?? "unknown")}`
+        : "owner output was not parsed",
+    },
+  ];
+}
+
 function hasBoundaryTouch(owners: readonly OwnerRun[], key: string): boolean {
   return owners.some((owner) => {
     const compact = owner.compact;
@@ -926,6 +1071,38 @@ async function gitStatusShortBranch() {
     .trim()
     .split("\n")
     .filter((line) => line.length > 0);
+}
+
+async function gitSourceIdentity(): Promise<{ sourceCommit: string; sourceBranch: string }> {
+  try {
+    const [{ stdout: sourceCommit }, { stdout: sourceBranch }] = await Promise.all([
+      execFileAsync("git", ["rev-parse", "HEAD"], {
+        cwd: repoRoot,
+        maxBuffer: EXEC_MAX_BUFFER,
+      }),
+      execFileAsync("git", ["branch", "--show-current"], {
+        cwd: repoRoot,
+        maxBuffer: EXEC_MAX_BUFFER,
+      }),
+    ]);
+    return {
+      sourceCommit: sourceCommit.trim() || "unknown",
+      sourceBranch: sourceBranch.trim() || "detached",
+    };
+  } catch {
+    return { sourceCommit: "unknown", sourceBranch: "unknown" };
+  }
+}
+
+async function readJsonRecord(filePath: string): Promise<Record<string, unknown>> {
+  try {
+    const parsed: unknown = JSON.parse(await fs.readFile(filePath, "utf8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
 }
 
 async function activePidSummary(): Promise<ActivePidSummary> {
@@ -1296,7 +1473,23 @@ function buildContextRecoveryHandoff({
 }
 
 const options = parseArgs(process.argv.slice(2));
-let owners = await Promise.all(OWNER_COMMANDS.map((command) => runOwner(command)));
+const governanceStartedAt = new Date().toISOString();
+const sourceIdentity = await gitSourceIdentity();
+const governanceSnapshot = createLcxRunSnapshot({
+  observedAt: governanceStartedAt,
+  sourceCommit: sourceIdentity.sourceCommit,
+  sourceBranch: sourceIdentity.sourceBranch,
+  authorityOwner: "lcx-governance-autopilot",
+});
+const governanceRunId = createLcxRunId({
+  checkedAt: governanceStartedAt,
+  owner: "lcx-governance-autopilot",
+});
+let owners = await Promise.all(
+  OWNER_COMMANDS.map((command) =>
+    runOwner(command, { parentRunId: governanceRunId, snapshot: governanceSnapshot }),
+  ),
+);
 let byOwner = ownerMap(owners);
 const multiAgentPatternShadow = await readLatestShadowSnapshot();
 const selfRepairAutoSignal = buildSelfRepairAutoSignal(byOwner);
@@ -1305,7 +1498,11 @@ const selfRepairAutoWriteNeeded =
   selfRepairLatestSignalKey(byOwner.selfRepairHands?.compact) !== selfRepairAutoSignal.signalKey;
 let selfRepairAutoWriteRun: OwnerRun | undefined;
 if (selfRepairAutoWriteNeeded && selfRepairAutoSignal) {
-  selfRepairAutoWriteRun = await runSelfRepairAutoWrite(selfRepairAutoSignal);
+  selfRepairAutoWriteRun = await runSelfRepairAutoWrite(
+    selfRepairAutoSignal,
+    governanceRunId,
+    governanceSnapshot,
+  );
   owners = owners.map((owner) =>
     owner.id === "selfRepairHands" ? selfRepairAutoWriteRun! : owner,
   );
@@ -1315,26 +1512,71 @@ const requiredParseFailures = owners.filter(
   (owner) => OWNER_COMMANDS.find((command) => command.id === owner.id)?.required && !owner.parsed,
 );
 const activeTrainingOrEval = trainingActive(byOwner.trainingPlan, byOwner.externalChannelBinding);
-const structuralOwnerFailures = owners.filter((owner) => owner.parsed && owner.ok === false);
+const structuralOwnerFailures = owners.filter(
+  (owner) => owner.runReceipt.status === "failed" || owner.runReceipt.status === "blocked",
+);
+const structuralOwnerExecutionFailures = owners.some(
+  (owner) => owner.runReceipt.status === "failed",
+);
 const universeIndexGovernanceIncomplete =
   byOwner.universeIndex?.compact.governanceStatus !== "complete";
 const releaseBlocked =
   byOwner.commercialAcceptance?.compact.readyForCommercialRelease === false ||
   stringArray(byOwner.problemRadar?.compact.actionableClusters).length > 0 ||
   stringArray(byOwner.problemRadar?.compact.blockedClusters).length > 0 ||
-  universeIndexGovernanceIncomplete;
-const governanceCheckedAt = new Date().toISOString();
+  universeIndexGovernanceIncomplete ||
+  structuralOwnerFailures.length > 0;
+const governanceCheckedAt = governanceSnapshot.observedAt;
 const globalEvidenceProjectionReader = readGlobalEvidenceProjectionForAdapter(
   byOwner.mindModel?.projection,
   governanceCheckedAt,
   { adapterId: "governance-autopilot", sourceOwner: "mindModel" },
 );
 const globalEvidenceProjection: GlobalEvidenceProjectionRead = globalEvidenceProjectionReader.read;
+const governanceRunStatus =
+  requiredParseFailures.length > 0 || structuralOwnerExecutionFailures
+    ? ("failed" as const)
+    : releaseBlocked
+      ? ("blocked" as const)
+      : ("passed" as const);
+const governanceNextAction =
+  (activeTrainingOrEval
+    ? "wait_for_active_training_or_eval_before_mutating_work"
+    : stringArray(byOwner.problemRadar?.compact.nextActions)[0]) ??
+  stringArray(byOwner.trainingPlan?.compact.nextActions)[0] ??
+  "review_owner_evidence_and_select_one_safe_lane";
+const governanceRunReceipt = buildLcxRunReceipt({
+  runId: governanceRunId,
+  owner: "lcx-governance-autopilot",
+  phase: "observe",
+  status: governanceRunStatus,
+  checkedAt: governanceCheckedAt,
+  snapshot: governanceSnapshot,
+  boundary: boundaryFromFlags({
+    scope: "local_governance_autopilot_only",
+    externalSenderTouched: hasBoundaryTouch(owners, "liveTouched"),
+    trainingTouched: hasBoundaryTouch(owners, "trainingTouched"),
+    providerConfigTouched: hasBoundaryTouch(owners, "providerConfigTouched"),
+    protectedMemoryTouched: hasBoundaryTouch(owners, "protectedMemoryTouched"),
+  }),
+  evidence: owners.map((owner) => ({
+    id: `owner:${owner.id}`,
+    kind: "proof" as const,
+    status: owner.parsed ? "present" : "missing",
+    owner: "lcx-governance-autopilot",
+    locator: owner.command,
+    detail: `childRunId=${owner.runReceipt.runId}; status=${owner.runReceipt.status}`,
+  })),
+  nextAction: governanceNextAction,
+});
 
 const receipt = {
   ok: requiredParseFailures.length === 0,
   boundary: "local_governance_autopilot_only",
   checkedAt: governanceCheckedAt,
+  snapshot: governanceSnapshot,
+  runId: governanceRunId,
+  runReceipt: governanceRunReceipt,
   workspaceDir: DEFAULT_WORKSPACE_DIR,
   latestStatePath: GOVERNANCE_AUTOPILOT_LATEST_PATH,
   universeIndexLatestPath: UNIVERSE_INDEX_LATEST_PATH,
@@ -1350,6 +1592,7 @@ const receipt = {
   ownerBriefLatestMarkdownPath: OWNER_BRIEF_LATEST_MARKDOWN_PATH,
   ownerControlMapLatestJsonPath: OWNER_CONTROL_MAP_LATEST_JSON_PATH,
   ownerControlMapLatestMarkdownPath: OWNER_CONTROL_MAP_LATEST_MARKDOWN_PATH,
+  controlRoomLatestPath: CONTROL_ROOM_LATEST_PATH,
   handoffLatestPath: CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
   multiAgentPatternShadowLatestPath: MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH,
   multiAgentPatternShadow,
@@ -1368,6 +1611,7 @@ const receipt = {
     parsed: owner.parsed,
     ok: owner.ok,
     boundary: owner.boundary,
+    runReceipt: owner.runReceipt,
   })),
   triggerPolicy: {
     readOnly: false,
@@ -1665,6 +1909,7 @@ const evolutionPromotionDigest = {
 };
 const localFailureTrace = buildLocalFailureTraceReceipt({
   checkedAt: receipt.checkedAt,
+  snapshot: governanceSnapshot,
   workspaceDir: DEFAULT_WORKSPACE_DIR,
   repo: {
     cwd: repoRoot,
@@ -1693,6 +1938,7 @@ const localFailureTrace = buildLocalFailureTraceReceipt({
     OWNER_BRIEF_LATEST_MARKDOWN_PATH,
     OWNER_CONTROL_MAP_LATEST_JSON_PATH,
     OWNER_CONTROL_MAP_LATEST_MARKDOWN_PATH,
+    CONTROL_ROOM_LATEST_PATH,
   ],
   ownerCommands: receipt.ownerCommands,
   summary: receipt.summary,
@@ -1704,6 +1950,7 @@ const localFailureTrace = buildLocalFailureTraceReceipt({
 });
 const ownerControlMap = buildOwnerControlMap({
   checkedAt: receipt.checkedAt,
+  snapshot: governanceSnapshot,
   governance: receipt,
   localFailureTrace,
   paths: {
@@ -1721,6 +1968,7 @@ const ownerControlMap = buildOwnerControlMap({
 });
 const ownerBrief = buildOwnerBrief({
   checkedAt: receipt.checkedAt,
+  snapshot: governanceSnapshot,
   governance: receipt,
   localFailureTrace,
   paths: {
@@ -1737,6 +1985,53 @@ const ownerBrief = buildOwnerBrief({
     ],
   },
 });
+const realCostLedger = await readJsonRecord(REAL_COST_LEDGER_LATEST_JSON_PATH);
+const monotonicDataLedger = await readJsonRecord(MONOTONIC_DATA_LEDGER_LATEST_PATH);
+const controlRoom = {
+  schemaVersion: "lcx_control_room_v1",
+  kind: "lcx-control-room",
+  boundary: "local_control_room_projection_only",
+  generatedAt: governanceSnapshot.observedAt,
+  snapshot: governanceSnapshot,
+  sourceAuthority: {
+    owner: "lcx-governance-autopilot",
+    sourcePath: GOVERNANCE_AUTOPILOT_LATEST_PATH,
+    rule: "governance snapshot is the only current-cycle fact; all other surfaces are projections",
+  },
+  governance: receipt,
+  evolutionPromotionDigest,
+  localFailureTrace,
+  monotonicDataLedger,
+  ownerBrief,
+  ownerControlMap,
+  realCostLedger,
+  views: {
+    ownerBrief: {
+      role: "text_projection",
+      path: OWNER_BRIEF_LATEST_JSON_PATH,
+    },
+    ownerControlMap: {
+      role: "control_projection",
+      path: OWNER_CONTROL_MAP_LATEST_JSON_PATH,
+    },
+    webDashboard: {
+      role: "canonical_lcx_control_room_view",
+      endpoint: "/api/farm-snapshot",
+      source: CONTROL_ROOM_LATEST_PATH,
+    },
+  },
+  externalSchedulerBoundary: {
+    codexDesktopHourlyAutomation: "external_trigger_only",
+    greenFixMarkers: "not_lcx_agent_evidence",
+    schedulerSuccessDoesNotProve: [
+      "agent_receipt",
+      "dashboard_currentness",
+      "model_learning",
+      "commit_or_pull_request",
+      "user_visible_delivery",
+    ],
+  },
+};
 
 await fs.mkdir(path.dirname(GOVERNANCE_AUTOPILOT_LATEST_PATH), { recursive: true });
 await fs.writeFile(GOVERNANCE_AUTOPILOT_LATEST_PATH, `${JSON.stringify(receipt, null, 2)}\n`);
@@ -1745,6 +2040,9 @@ await fs.writeFile(
   EVOLUTION_PROMOTION_DIGEST_LATEST_PATH,
   `${JSON.stringify(evolutionPromotionDigest, null, 2)}\n`,
 );
+const controlRoomTempPath = `${CONTROL_ROOM_LATEST_PATH}.${process.pid}.tmp`;
+await fs.writeFile(controlRoomTempPath, `${JSON.stringify(controlRoom, null, 2)}\n`);
+await fs.rename(controlRoomTempPath, CONTROL_ROOM_LATEST_PATH);
 await fs.mkdir(path.dirname(CONTEXT_RECOVERY_HANDOFF_LATEST_PATH), { recursive: true });
 await fs.writeFile(
   CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,

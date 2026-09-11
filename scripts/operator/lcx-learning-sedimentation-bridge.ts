@@ -246,11 +246,8 @@ function planReceiptKey(params: {
 
 async function buildExistingPlanReceiptIndex(params: {
   workspaceDir: string;
-  dateKey: string;
 }): Promise<Map<string, ExistingPlanReceipt>> {
-  const receiptFiles = await listJsonFiles(
-    path.join(params.workspaceDir, PLAN_RECEIPT_DIR, params.dateKey),
-  );
+  const receiptFiles = await listJsonFiles(path.join(params.workspaceDir, PLAN_RECEIPT_DIR));
   const index = new Map<string, ExistingPlanReceipt>();
   for (const file of receiptFiles) {
     const receipt = await readJsonObject<Record<string, unknown>>(file.path);
@@ -308,11 +305,10 @@ export async function buildLearningSedimentationBridge(
   options: LearningSedimentationBridgeOptions,
 ) {
   const memoryDir = path.join(options.workspaceDir, "memory");
-  const dateKey = new Date().toISOString().slice(0, 10);
   const [applyFiles, retrievalIndex, existingPlanReceipts] = await Promise.all([
     listJsonFiles(path.join(memoryDir, "finance-learning-apply-usage-receipts")),
     buildRetrievalIndex(options.workspaceDir),
-    buildExistingPlanReceiptIndex({ workspaceDir: options.workspaceDir, dateKey }),
+    buildExistingPlanReceiptIndex({ workspaceDir: options.workspaceDir }),
   ]);
   const planTool = createModuleLearningPipelinePlanTool({ workspaceDir: options.workspaceDir });
   const rawCandidates: Array<{

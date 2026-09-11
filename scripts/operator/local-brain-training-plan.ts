@@ -120,6 +120,7 @@ type QwenCapabilityConsolidationSnapshot = {
     targetedEvalFirstCaseIds: string[];
     targetedEvalCommand?: string;
     targetedEvalReceiptPath: string;
+    nativeRepairCaseIds: string[];
     fullEvalGate: "run_full_hardened_eval_only_after_targeted_cases_are_clean";
     notPromotionProof: true;
     requiredNextStep: string;
@@ -1079,11 +1080,46 @@ function compactEvalSnapshot(
   };
 }
 
+/** A completed strict failure routes back to repair, never to an identical eval loop. */
+export function nativeContractRepairCases(params: {
+  receipt?: JsonRecord;
+  adapterPath?: string;
+  candidateAt?: string;
+  caseIds: string[];
+}): string[] {
+  const receipt = params.receipt;
+  if (!receipt || !params.adapterPath || !params.candidateAt || params.caseIds.length === 0) {
+    return [];
+  }
+  const resolved = receipt.resolved as JsonRecord | undefined;
+  const summary = receipt.summary as JsonRecord | undefined;
+  const at = typeof receipt.generatedAt === "string" ? Date.parse(receipt.generatedAt) : NaN;
+  const candidateAt = Date.parse(params.candidateAt);
+  if (
+    resolved?.adapterPath !== params.adapterPath ||
+    !Number.isFinite(at) ||
+    !Number.isFinite(candidateAt) ||
+    at < candidateAt
+  ) {
+    return [];
+  }
+  const rows = Array.isArray(receipt.caseReceipts) ? (receipt.caseReceipts as JsonRecord[]) : [];
+  const covered = new Set(rows.map((row) => row.id));
+  if (!params.caseIds.every((id) => covered.has(id))) {
+    return [];
+  }
+  return Array.isArray(summary?.modelContractFailureCaseIds)
+    ? summary.modelContractFailureCaseIds.filter((id): id is string => typeof id === "string")
+    : [];
+}
+
 function qwenCapabilityConsolidationSnapshot(params: {
   events: JsonRecord[];
   latestPassingEval?: EvalSnapshot;
   latestCandidateEval?: EvalSnapshot;
   registeredEvalCaseIds: ReadonlySet<string>;
+  targetedEvalReceiptPath: string;
+  targetedEvalReceipt?: JsonRecord;
 }): QwenCapabilityConsolidationSnapshot {
   const latestVerdictByAdapter = new Map(
     latestAdapterVerdictSnapshots(params.events)
@@ -1143,13 +1179,17 @@ function qwenCapabilityConsolidationSnapshot(params: {
   const targetedEvalFirstCaseIds = latestBlockedHarvestCaseIds
     .filter((caseId) => params.registeredEvalCaseIds.has(caseId))
     .slice(0, 8);
-  const targetedEvalReceiptPath = path.join(
-    DEFAULT_WORKSPACE_DIR,
-    "state",
-    "lcx-targeted-challenger-eval-receipt-latest.json",
-  );
+  const targetedEvalReceiptPath = params.targetedEvalReceiptPath;
+  const nativeRepairCaseIds = nativeContractRepairCases({
+    receipt: params.targetedEvalReceipt,
+    adapterPath: latestBlockedCandidate?.adapterPath,
+    candidateAt: latestBlockedCandidate?.at,
+    caseIds: targetedEvalFirstCaseIds,
+  });
   const targetedEvalCommand =
-    latestBlockedCandidate?.adapterPath && targetedEvalFirstCaseIds.length > 0
+    latestBlockedCandidate?.adapterPath &&
+    targetedEvalFirstCaseIds.length > 0 &&
+    nativeRepairCaseIds.length === 0
       ? [
           "node --import tsx scripts/operator/local-brain-distill-eval.ts",
           `--adapter '${latestBlockedCandidate.adapterPath}'`,
@@ -1258,12 +1298,15 @@ function qwenCapabilityConsolidationSnapshot(params: {
       targetedEvalFirstCaseIds,
       targetedEvalCommand,
       targetedEvalReceiptPath,
+      nativeRepairCaseIds,
       fullEvalGate: "run_full_hardened_eval_only_after_targeted_cases_are_clean",
       notPromotionProof: true,
       requiredNextStep:
-        latestBlockedHarvestCaseIds.length > 0 || blockedCapabilityFamilies.length > 0
-          ? "feed_harvested_cases_to_failure_focus_teacher_then_run_targeted_eval_before_full_eval"
-          : "wait_for_named_failed_or_parse_recovered_cases_before_harvest",
+        nativeRepairCaseIds.length > 0
+          ? "repair_native_contract_before_repeating_same_adapter_eval"
+          : latestBlockedHarvestCaseIds.length > 0 || blockedCapabilityFamilies.length > 0
+            ? "feed_harvested_cases_to_failure_focus_teacher_then_run_targeted_eval_before_full_eval"
+            : "wait_for_named_failed_or_parse_recovered_cases_before_harvest",
     },
     requiredAction,
     notes: [
@@ -2583,6 +2626,21 @@ function buildEvolutionAccelerationQueue(params: {
     params.qwenCapabilityConsolidation.capabilityHarvest.targetedEvalCommand;
   const targetedEvalCaseIds =
     params.qwenCapabilityConsolidation.capabilityHarvest.targetedEvalFirstCaseIds;
+  const nativeRepairCaseIds =
+    params.qwenCapabilityConsolidation.capabilityHarvest.nativeRepairCaseIds;
+  if (nativeRepairCaseIds.length > 0) {
+    steps.push({
+      id: "repair_native_contract_before_repeat_eval",
+      lane: "training",
+      priority: 10,
+      status: "blocked_by_missing_proof",
+      executionClass: "idle_only_training_data",
+      reason: `A newer eval of this adapter still fails native contracts: ${nativeRepairCaseIds.join(",")}. Build and validate a changed candidate before repeating evaluation.`,
+      guardCondition:
+        "changed training data or adapter and no active training/eval before execution",
+      notTouched: commonNotTouched,
+    });
+  }
   if (targetedEvalCommand && targetedEvalCaseIds.length > 0) {
     steps.push({
       id: "targeted_challenger_eval_first",
@@ -2683,7 +2741,7 @@ function buildEvolutionAccelerationQueue(params: {
       guardCondition:
         "add per-receipt eval/training evidence, fresh adjacent application task, and keep/downrank/discard decision",
       command:
-        "node --import tsx scripts/operator/module-learning-pipeline-review.ts --json && node --import tsx scripts/operator/lcx-module-learning-absorption-gate.ts --json",
+        "node --import tsx scripts/operator/module-learning-pipeline-review.ts --json --no-write && node --import tsx scripts/operator/lcx-module-learning-absorption-gate.ts --json",
       blockedByDecisionIds: decisionIds.has("module_learning_incomplete_evidence")
         ? ["module_learning_incomplete_evidence"]
         : [],
@@ -2755,11 +2813,17 @@ function buildEvolutionAccelerationQueue(params: {
   const blockedCount = sortedSteps.filter((step) =>
     ["blocked_by_active_training", "blocked_by_missing_proof"].includes(step.status),
   ).length;
-  const fastestSafeNextAction = activeHeavyWork
-    ? (sortedSteps.find((step) => step.status === "ready_now")?.id ??
-      "wait_for_current_training_eval_then_run_idle_queue")
-    : (sortedSteps.find((step) => step.status === "ready_now" || step.status === "ready_when_idle")
-        ?.id ?? "continue_observability_no_acceleration_step");
+  const readyNowStep = sortedSteps.find((step) => step.status === "ready_now");
+  const nextIdleStep = sortedSteps.find((step) =>
+    activeHeavyWork
+      ? ["ready_when_idle", "blocked_by_active_training"].includes(step.status)
+      : step.status === "ready_when_idle",
+  );
+  const fastestSafeNextAction =
+    readyNowStep?.id ??
+    (activeHeavyWork
+      ? "wait_for_current_training_eval_then_run_idle_queue"
+      : (nextIdleStep?.id ?? "continue_observability_no_acceleration_step"));
   const activeEvalProcesses = params.activeProcesses.filter(
     (process) => process.role === "local_brain_eval",
   );
@@ -2774,10 +2838,6 @@ function buildEvolutionAccelerationQueue(params: {
   const latestBlocked = params.qwenCapabilityConsolidation.adapterLadder.latestBlockedChallenger;
   const latestBlockedEval = latestBlocked?.eval;
   const latestBlockedCaseIds = params.qwenCapabilityConsolidation.capabilityHarvest.harvestCaseIds;
-  const readyNowStep = sortedSteps.find((step) => step.status === "ready_now");
-  const nextIdleStep = sortedSteps.find((step) =>
-    ["ready_when_idle", "blocked_by_active_training"].includes(step.status),
-  );
   const activeNonIdleProgress: ActiveNonIdleProgressSnapshot = {
     boundary: "local_active_non_idle_progress_only",
     isEmptyWait: false,
@@ -2944,6 +3004,14 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     latestPassingEval,
     latestCandidateEval,
     registeredEvalCaseIds,
+    targetedEvalReceiptPath: path.join(
+      workspaceDir,
+      "state",
+      "lcx-targeted-challenger-eval-receipt-latest.json",
+    ),
+    targetedEvalReceipt: await readJsonRecord(
+      path.join(workspaceDir, "state", "lcx-targeted-challenger-eval-receipt-latest.json"),
+    ),
   });
   const latestPromotion = latestEvent(
     guardEvents,

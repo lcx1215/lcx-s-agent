@@ -1,0 +1,34 @@
+{
+  "id": "lcx-model-fleet",
+  "name": "LCX Model Fleet",
+  "description": "Persistent model duties on the existing gateway",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["slotModels"],
+    "properties": {
+      "slotModels": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["fast", "reasoning", "review"],
+        "properties": {
+          "fast": {
+            "type": "string"
+          },
+          "reasoning": {
+            "type": "string"
+          },
+          "review": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": ["local_specialist", "finance_research_run", "lcx_model_roster", "local_vision"]
+  }
+}

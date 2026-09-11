@@ -1,3 +1,5 @@
+import type { FinanceDecisionMode } from "./finance-decision-policy.js";
+
 export type VisibleAnswerAdoptionGateDecision = {
   status: "adopted" | "replaced";
   text: string;
@@ -327,8 +329,11 @@ function extractsSemiconductorOptionsRiskList(answerText: string): boolean {
 export function findVisibleAnswerAdoptionGateFailures(params: {
   userMessage: string;
   answerText: string;
+  financeDecisionMode?: FinanceDecisionMode;
 }): string[] {
   const failures: string[] = [];
+  const allowsConditionalTradeCandidate =
+    params.financeDecisionMode === "conditional_trade_candidate";
   const explicitVisibleContract = looksLikeExplicitVisibleContractAsk(params.userMessage);
   const protocolTruthSurfaceReply = looksLikeProtocolTruthSurfaceReply(
     params.userMessage,
@@ -486,17 +491,19 @@ export function findVisibleAnswerAdoptionGateFailures(params: {
     failures.push("unasked_ticker_context_bleed_in_position_reply");
   }
 
-  if (ACTION_STANCE_HEADING_PATTERN.test(params.answerText)) {
-    failures.push("action_stance_heading_in_position_risk_reply");
-  }
-  if (ENGLISH_POSITION_ACTION_PATTERN.test(params.answerText)) {
-    failures.push("english_direct_position_action_language");
-  }
-  if (CHINESE_POSITION_ACTION_PATTERN.test(params.answerText)) {
-    failures.push("chinese_direct_position_action_language");
-  }
-  if (CHINESE_ACTION_FRAMEWORK_PATTERN.test(params.answerText)) {
-    failures.push("chinese_action_framework_language");
+  if (!allowsConditionalTradeCandidate) {
+    if (ACTION_STANCE_HEADING_PATTERN.test(params.answerText)) {
+      failures.push("action_stance_heading_in_position_risk_reply");
+    }
+    if (ENGLISH_POSITION_ACTION_PATTERN.test(params.answerText)) {
+      failures.push("english_direct_position_action_language");
+    }
+    if (CHINESE_POSITION_ACTION_PATTERN.test(params.answerText)) {
+      failures.push("chinese_direct_position_action_language");
+    }
+    if (CHINESE_ACTION_FRAMEWORK_PATTERN.test(params.answerText)) {
+      failures.push("chinese_action_framework_language");
+    }
   }
   return [...new Set(failures)];
 }
@@ -844,11 +851,13 @@ function renderPositionRiskRescueReply(userMessage: string): string {
 export function applyVisibleAnswerAdoptionGate(params: {
   userMessage: string;
   answerText: string;
+  financeDecisionMode?: FinanceDecisionMode;
 }): VisibleAnswerAdoptionGateDecision {
   const text = stripVisibleInternalTail(params.answerText);
   const failedReasons = findVisibleAnswerAdoptionGateFailures({
     userMessage: params.userMessage,
     answerText: text,
+    financeDecisionMode: params.financeDecisionMode,
   });
   if (failedReasons.length === 0) {
     return { status: "adopted", text, failedReasons };

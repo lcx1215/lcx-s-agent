@@ -1,4 +1,5 @@
 import type { LcxOntologyModuleId } from "../shared/lcx-ontology.js";
+import type { FinanceDecisionMode } from "./finance-decision-policy.js";
 
 export type FinanceBrainModuleId = LcxOntologyModuleId;
 
@@ -15,11 +16,19 @@ export type FinanceBrainOrchestrationInput = {
   hasLocalMathInputs?: boolean;
   highStakesConclusion?: boolean;
   writesDurableMemory?: boolean;
+  decisionMode?: FinanceDecisionMode;
 };
 
 export type FinanceBrainOrchestrationPlan = {
   primaryModules: FinanceBrainModuleId[];
   supportingModules: FinanceBrainModuleId[];
+  selectionTrace: {
+    financeTask: boolean;
+    rawMatchedModules: FinanceBrainModuleId[];
+    suppressedModules: Array<{ id: FinanceBrainModuleId; reason: string }>;
+    focus: "none" | "focused" | "broad";
+    dataGatewayReason: string;
+  };
   requiredTools: string[];
   reviewTools: string[];
   handoffOrder: string[];
@@ -53,8 +62,8 @@ export const FINANCE_BRAIN_MODULES = [
     role: "Connect liquidity, hedging breakdown, forced deleveraging, and risk appetite across equities, rates, FX, commodities, and crypto without treating one market as a standalone signal.",
     requiredTools: ["finance_framework_core_inspect", "finance_learning_capability_apply"],
     triggerPatterns: [
-      /\b(?:cross[- ]asset|risk appetite|liquidity transmission|spillover|correlation regime|global liquidity|equity[- ]bond correlation|simultaneous selloff|forced deleveraging)\b/u,
-      /跨资产|风险偏好|流动性传导|外溢|相关性 regime|全球流动性|股债同跌|股债相关性|相关性失效|被迫去杠杆/u,
+      /\b(?:cross[- ]asset|risk appetite|market sentiment|investor sentiment|liquidity transmission|spillover|correlation regime|global liquidity|equity[- ]bond correlation|simultaneous selloff|forced deleveraging)\b/u,
+      /跨资产|风险偏好|市场情绪|投资者情绪|流动性传导|外溢|相关性 regime|全球流动性|股债同跌|股债相关性|相关性失效|被迫去杠杆/u,
     ],
   },
   {
@@ -75,8 +84,8 @@ export const FINANCE_BRAIN_MODULES = [
     role: "Read index concentration, AI/mega-cap crowding, breadth, constituents, weights, and major-index regime context.",
     requiredTools: ["finance_framework_core_inspect", "finance_learning_capability_apply"],
     triggerPatterns: [
-      /\b(?:index concentration|ai concentration|mag7|mega[- ]cap|breadth|nasdaq|s&p|spx|global index|constituents?|weights?)\b/u,
-      /股市|股票市场|权益市场|大盘|全球指数|指数集中度|AI集中度|权重|成分股|市场宽度|纳指|标普|巨头|宽度|MSCI/u,
+      /\b(?:index concentration|ai concentration|mag7|mega[- ]cap|breadth|nasdaq|s&p|spx|u\.?s\.? (?:equities|stocks)|global index|constituents?|weights?)\b/u,
+      /股市|股票市场|权益市场|美股|大盘|全球指数|指数集中度|AI集中度|权重|成分股|市场宽度|纳指|标普|巨头|宽度|MSCI/u,
     ],
   },
   {
@@ -84,7 +93,7 @@ export const FINANCE_BRAIN_MODULES = [
     role: "Separate US equity market structure, sector leadership, breadth, positioning, and risk appetite from single-company fundamentals.",
     requiredTools: ["finance_framework_core_inspect", "finance_learning_capability_apply"],
     triggerPatterns: [
-      /\b(?:us equities|us stocks|nasdaq|s&p|spx|qqq|spy|iwm|sector leadership|market breadth)\b/u,
+      /\b(?:u\.?s\.? (?:equities|stocks)|nasdaq|s&p|spx|qqq|spy|iwm|sector leadership|market breadth)\b/u,
       /美股|纳斯达克|标普|罗素|行业领导|市场宽度|高 beta 科技/u,
     ],
   },
@@ -198,8 +207,8 @@ export const FINANCE_BRAIN_MODULES = [
     role: "Handle catalysts, earnings windows, policy events, geopolitical shocks, and event follow-up timing.",
     requiredTools: ["finance_framework_core_inspect", "finance_framework_event_driven_producer"],
     triggerPatterns: [
-      /\b(?:event|catalyst|earnings|guidance|budget revision|policy|meeting|geopolitical|headline|shock)\b/u,
-      /事件|催化|财报日|指引|预算|预算变化|政策|会议|地缘|突发/u,
+      /\b(?:event|catalyst|earnings|guidance|budget revision|policy|meeting|geopolitical|headline|shock|elections?|midterms?)\b/u,
+      /事件|催化|财报日|指引|预算|预算变化|政策|会议|地缘|突发|选举/u,
     ],
   },
   {
@@ -246,6 +255,36 @@ function needsFinanceDataGateway(text: string): boolean {
   );
 }
 
+function arbitrateFinanceModules(text: string, rawMatched: FinanceBrainModuleId[]) {
+  const suppressedModules: Array<{ id: FinanceBrainModuleId; reason: string }> = [];
+  const broadTaxonomyRequest = rawMatched.length >= 15;
+  const selected = [...rawMatched];
+  // fx_currency_liquidity owns the common cross-market currency lane. Keep
+  // the legacy fx_dollar module only for an explicitly broad taxonomy request;
+  // otherwise one user phrase must not route the same evidence to two owners.
+  if (
+    !broadTaxonomyRequest &&
+    selected.includes("fx_currency_liquidity") &&
+    selected.includes("fx_dollar")
+  ) {
+    const index = selected.indexOf("fx_dollar");
+    selected.splice(index, 1);
+    suppressedModules.push({
+      id: "fx_dollar",
+      reason: "covered_by_fx_currency_liquidity_for_non_broad_request",
+    });
+  }
+  return {
+    selected,
+    suppressedModules,
+    focus: broadTaxonomyRequest
+      ? ("broad" as const)
+      : selected.length > 0
+        ? ("focused" as const)
+        : ("none" as const),
+  };
+}
+
 export function planFinanceBrainOrchestration(
   input: FinanceBrainOrchestrationInput,
 ): FinanceBrainOrchestrationPlan {
@@ -259,7 +298,10 @@ export function planFinanceBrainOrchestration(
       (id) =>
         !["event_driven", "causal_map", "technical_timing", "finance_learning_memory"].includes(id),
     );
-  const matched = financeTask ? rawMatched : [];
+  const arbitration = financeTask
+    ? arbitrateFinanceModules(text, rawMatched)
+    : { selected: [], suppressedModules: [], focus: "none" as const };
+  const matched = financeTask ? arbitration.selected : [];
   const seeded = financeTask ? unique<FinanceBrainModuleId>([...matched, "causal_map"]) : matched;
 
   if (input.hasHoldingsOrPortfolioContext && !seeded.includes("portfolio_risk_gates")) {
@@ -289,6 +331,15 @@ export function planFinanceBrainOrchestration(
       input.highStakesConclusion === true)
       ? ["finance_data_gateway_snapshot"]
       : [];
+  const dataGatewayReason = !financeTask
+    ? "not_a_finance_task"
+    : dataGatewayTools.length > 0
+      ? input.hasHoldingsOrPortfolioContext === true
+        ? "holdings_or_portfolio_context"
+        : input.highStakesConclusion === true
+          ? "high_stakes_conclusion"
+          : "fresh_or_vendor_number_signal"
+      : "no_fresh_number_or_portfolio_signal";
   const requiredTools = unique([...moduleTools, ...dataGatewayTools, "review_tier"]);
   const needsPanel =
     input.highStakesConclusion ||
@@ -296,10 +347,26 @@ export function planFinanceBrainOrchestration(
     primaryModules.includes("portfolio_risk_gates") ||
     primaryModules.includes("quant_math");
   const reviewTools = needsPanel ? ["review_tier", "review_panel"] : ["review_tier"];
+  const decisionMode = input.decisionMode ?? "research_only";
+  const boundaries = [
+    decisionMode,
+    "no_execution_authority",
+    "evidence_required",
+    "no_model_math_guessing",
+    "risk_gate_before_action_language",
+    ...(decisionMode === "research_only" ? ["no_trade_advice"] : []),
+  ];
 
   return {
     primaryModules,
     supportingModules,
+    selectionTrace: {
+      financeTask,
+      rawMatchedModules: rawMatched,
+      suppressedModules: arbitration.suppressedModules,
+      focus: arbitration.focus,
+      dataGatewayReason,
+    },
     requiredTools: unique([...requiredTools, ...reviewTools]),
     reviewTools,
     handoffOrder: [
@@ -314,12 +381,6 @@ export function planFinanceBrainOrchestration(
       "review_tier_or_panel",
       "control_room_summary",
     ],
-    boundaries: [
-      "research_only",
-      "no_execution_authority",
-      "evidence_required",
-      "no_model_math_guessing",
-      "risk_gate_before_action_language",
-    ],
+    boundaries,
   };
 }

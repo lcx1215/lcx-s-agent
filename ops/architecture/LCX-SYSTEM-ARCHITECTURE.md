@@ -24,14 +24,14 @@ writer, or delivery authority.
 
 ## The six architectural planes
 
-| Plane                   | Responsibility                                                                                  | Canonical owner or surface                                                                                                                                                                       | Must not become                                                                                       |
-| ----------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
-| Semantics               | Entity, relation, module, workflow, evidence, learning, delivery, and boundary vocabulary       | `src/shared/lcx-ontology.ts`; audit `scripts/operator/lcx-ontology.ts`                                                                                                                           | A second registry or ad-hoc cross-layer vocabulary                                                    |
-| Control                 | Intent classification, routing, orchestration, safety gates, recovery, and visible-flow control | TypeScript under `src/agents/`, `src/auto-reply/`, and the named operator entrypoints                                                                                                            | A model-specific workflow or a Python workflow authority                                              |
-| Waterflow               | Start/end nodes, required modules, filters, receipts, and bounded feedback edges                | `scripts/operator/lcx-flow-graph.ts`                                                                                                                                                             | A loose list of features or an unguarded feedback loop                                                |
-| Capability              | Finance research, data gateway, modules, source registry, tools, and reviewable domain work     | Existing capability owners under `src/agents/` and their operator/test surfaces                                                                                                                  | A direct trading executor, unsourced current-data answer, or unreviewed claim                         |
-| Evidence and governance | Projection, receipts, audits, recovery, impact planning, and problem routing                    | `scripts/operator/lcx-mind-model.ts`, `lcx-head-tail-consistency.ts`, `lcx-problem-cluster-radar.ts`, `lcx-context-recovery-exam.ts`, `lcx-universe-index.ts`, and `lcx-governance-autopilot.ts` | A second truth owner, a completion slogan, or a promotion shortcut                                    |
-| Delivery                | Connect a proven answer path to an external communication adapter and collect visible proof     | `scripts/operator/lcx-external-channel-binding.ts`, `lcx-external-channel-status.ts`, and adapter code                                                                                           | A second brain, provider authority, or `user-visible-observed` without real inbound/outbound evidence |
+| Plane                   | Responsibility                                                                                  | Canonical owner or surface                                                                                                                                                                                                        | Must not become                                                                                       |
+| ----------------------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Semantics               | Entity, relation, module, workflow, evidence, learning, delivery, and boundary vocabulary       | `src/shared/lcx-ontology.ts`; audit `scripts/operator/lcx-ontology.ts`                                                                                                                                                            | A second registry or ad-hoc cross-layer vocabulary                                                    |
+| Control                 | Intent classification, routing, orchestration, safety gates, recovery, and visible-flow control | TypeScript under `src/agents/`, `src/auto-reply/`, and the named operator entrypoints                                                                                                                                             | A model-specific workflow or a Python workflow authority                                              |
+| Waterflow               | Start/end nodes, required modules, filters, receipts, and bounded feedback edges                | `scripts/operator/lcx-flow-graph.ts`                                                                                                                                                                                              | A loose list of features or an unguarded feedback loop                                                |
+| Capability              | Finance research, data gateway, modules, source registry, tools, and reviewable domain work     | Existing capability owners under `src/agents/` and their operator/test surfaces                                                                                                                                                   | A direct trading executor, unsourced current-data answer, or unreviewed claim                         |
+| Evidence and governance | Projection, receipts, audits, recovery, impact planning, and problem routing                    | `src/shared/lcx-run-receipt.ts`; `scripts/operator/lcx-mind-model.ts`, `lcx-head-tail-consistency.ts`, `lcx-problem-cluster-radar.ts`, `lcx-context-recovery-exam.ts`, `lcx-universe-index.ts`, and `lcx-governance-autopilot.ts` | A second truth owner, a completion slogan, or a promotion shortcut                                    |
+| Delivery                | Connect a proven answer path to an external communication adapter and collect visible proof     | `scripts/operator/lcx-external-channel-binding.ts`, `lcx-external-channel-status.ts`, and adapter code                                                                                                                            | A second brain, provider authority, or `user-visible-observed` without real inbound/outbound evidence |
 
 The six planes are architectural responsibilities, not maturity levels. “High,
 middle, and low” quality or model labels belong inside a capability or an
@@ -53,7 +53,7 @@ different views of the same system, not competing top-level systems:
 | **Learning sedimentation / internalization**        | `scripts/operator/module-learning-pipeline-plan.ts`, `module-learning-pipeline-review.ts`, and the `lcx-learning-sedimentation-*` owners                                                  | Did a source become an applied and reviewed capability, rather than merely a stored artifact?                | A bounded learning loop around capabilities; it does not redefine runtime truth.                |
 | **Continuity, inventory, and governance autopilot** | `lcx-context-recovery-exam.ts`, `lcx-universe-index.ts`, `lcx-problem-cluster-radar.ts`, and `lcx-governance-autopilot.ts`                                                                | Can a new window recover current state, route a problem to its owner, and refresh one compact evidence view? | Operational supervision and recovery; inventory and radar are not deletion or repair authority. |
 | **Core / host / delivery boundary**                 | Current LCX control and answer path plus `lcx-external-channel-binding.ts` and `lcx-external-channel-status.ts`                                                                           | Which part is product/control authority, which part is an execution host, and which part is transport?       | Boundary and delivery plane; a host or channel is never a second LCX brain.                     |
-| **Optional model and logical-agent implementation** | Qwen/MiniMax/adapters and the bounded logical-agent pool                                                                                                                                  | Can an implementation candidate execute, be evaluated, and possibly be promoted?                             | A subordinate implementation loop; it cannot redefine semantics, governance, or delivery proof. |
+| **Optional model and logical-agent implementation** | Qwen/MiniMax/adapters and `src/agents/logical-agent-pool.ts`                                                                                                                              | Can an implementation candidate execute, be evaluated, and possibly be promoted?                             | A subordinate implementation loop; it cannot redefine semantics, governance, or delivery proof. |
 
 ### Macro--micro unified capability rule
 
@@ -175,6 +175,29 @@ skip workflow filters, claim learning from stored text, bind a delivery adapter,
 or modify provider/protected-memory authority by naming a model or passing one
 local check.
 
+### Native multi-agent execution contract
+
+The logical-agent pool absorbs generic multi-agent mechanics behind the same
+TypeScript control owner. Its event stream is a receipt surface, not a second
+runtime; its checkpoint store is injected by the canonical state owner, not
+created as a hidden state root. A plan fingerprint binds resume to the same
+task ids, agent ids, inputs, and dependency graph. Handoffs transfer declared
+dependency context and ownership metadata only; they do not transfer provider,
+external-channel, protected-memory, training, or trading authority.
+
+```text
+task DAG
+  -> bounded shared-model pool
+  -> input/output/capability guardrails
+  -> task events and completed-prefix checkpoint
+  -> fingerprint-checked resume or terminal receipt
+```
+
+This is a native LCX protocol slice inspired by reviewed open-source patterns.
+LCX does not vendor LangGraph, OpenHands, AutoGen, Microsoft Agent Framework,
+or OpenAI Agents as another orchestration runtime. AutoGen is specifically not
+the adoption base while its official project is in maintenance mode.
+
 ### Learning and memory loop
 
 ```text
@@ -257,6 +280,28 @@ must have all four surfaces:
 4. **Boundary flag** — an explicit statement of what the lane cannot prove or
    mutate.
 
+### Shared execution receipt
+
+Owner-specific receipts remain authoritative for their domain, but every
+governance child run can expose the same join envelope from
+`src/shared/lcx-run-receipt.ts`:
+
+```text
+root run
+  -> parentRunId
+  -> child runId + owner + phase + status
+  -> boundary { externalSender, training, providerConfig, protectedMemory }
+  -> evidence[] + nextAction
+```
+
+The envelope is a correlation and handoff contract, not a new workflow owner.
+`passed` means the owner execution produced a valid result; `blocked` means the
+owner ran and reported a domain gate; `failed` means the owner could not
+produce a parseable result. A blocked commercial/readiness gate therefore does
+not masquerade as an infrastructure execution failure. Challenger evals,
+training receipts, promotion, external binding, and user-visible observation
+remain separate proof gates.
+
 The relevant proof is the owner command, not this map. Use the smallest route
 that answers the question:
 
@@ -270,6 +315,37 @@ full inventory          -> lcx-universe-index
 visible delivery        -> lcx-external-channel-binding/status
 training or promotion   -> local-brain-training-plan and its owners
 ```
+
+### One current-cycle fact and one LCX control room
+
+Every governance cycle creates one `LcxRunSnapshot` with one `observedAt`, one
+source commit, one source branch, and one authority owner. The root receipt,
+all child receipts, the failure trace, the evolution digest, and the control
+room must carry that same snapshot. Older source logs remain evidence with
+their own age; they cannot silently become the current-cycle timestamp.
+
+The durable current-cycle data surface is:
+
+```text
+lcx-governance-autopilot
+  -> lcx-control-room-latest.json
+      -> canonical browser control-room view
+      -> owner brief projection
+      -> owner control-map projection
+      -> evolution / failure / cost projections
+```
+
+`lcx-control-room-latest.json` is the only LCX Agent dashboard data source.
+The standalone JSON and Markdown files remain compatibility exports and human
+readouts, not competing facts or dashboard versions. The generic macOS host
+surface and Codex Desktop UI are outside this authority. In particular, the
+Codex hourly scheduler is an external trigger only: its green or `fix` marker
+does not prove an LCX receipt, current dashboard state, commit, CI, model
+learning, or user-visible delivery.
+
+The control-room snapshot is written atomically. A missing or invalid snapshot
+is a stale/unknown control-room state, not permission to fall back to a mixed
+set of independently timestamped files.
 
 ## Current convergence order
 
@@ -301,3 +377,18 @@ node --import tsx scripts/operator/lcx-change-impact-plan.ts --json
 
 These commands are local audits. They do not prove training absorption,
 promotion, external-channel binding, or `user-visible-observed`.
+
+## Research Caseflow closure
+
+The finance master lane maps the macro research question to `research_case` (task),
+`research_run` (receipt), `decision_packet` (artifact), and `outcome_ledger` (evidence).
+The canonical mapping is `LCX_CASEFLOW_CONTRACT` in `src/shared/lcx-ontology.ts`.
+`finance-caseflow.ts` owns immutable snapshots and `finance-outcome-ledger.ts` owns
+append-only review; `lcx-finance-research.ts` is their operator entrypoint.
+Source and model checkpoints preserve bounded dispatch and uncertain work across restarts.
+
+The mind model, head-tail audit and flow graph include this chain. Their passing
+checks prove structural coverage only. Historical completeness, independent
+semantic support, numeric calibration and live scheduler binding each require
+separate receipts. A saved quarterly date is not a scheduled job. No packet grants
+account access, orders, transfers or external sending authority.

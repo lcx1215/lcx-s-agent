@@ -1,8 +1,6 @@
-import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { createModuleLearningPipelinePlanTool } from "../../src/agents/tools/module-learning-pipeline-plan-tool.ts";
-import { createModuleLearningPipelineReviewTool } from "../../src/agents/tools/module-learning-pipeline-review-tool.ts";
+import { listModuleLearningReceiptPaths } from "../../src/agents/tools/module-learning-pipeline-review-tool.ts";
 import { DEFAULT_GUARD_LOG_PATH, DEFAULT_WORKSPACE_DIR } from "./lcx-local-paths.ts";
 
 type CliOptions = {
@@ -42,8 +40,6 @@ type EvalTimeoutSnapshot = {
 };
 
 const REVIEW_DIR = path.join("memory", "module-learning-pipeline-reviews");
-const PLAN_RECEIPT_DIR = path.join("memory", "module-learning-pipeline-plan-receipts");
-const ABSORPTION_EVIDENCE_DIR = path.join("memory", "module-learning-absorption-evidence");
 const EVAL_EVENT_NAMES = new Set([
   "stable_hardened_eval",
   "training_seed_hardened_eval",
@@ -69,7 +65,7 @@ function usage(): never {
       "Usage: node --import tsx scripts/operator/lcx-module-learning-absorption-gate.ts [--workspace DIR] [--date YYYY-MM-DD] [--guard-log PATH] [--eval-summary PATH] [--json]",
       "",
       "Reads module-learning review receipts and hardened eval evidence, then decides whether module-learning may be called eval_absorbed.",
-      "Default is read-only. --write-absorbed-plan-receipts writes local evidence and superseding eval_absorbed plan receipts only when hardened eval is clean.",
+      "Audits all dated batches by default. The legacy write flag cannot synthesize training or adjacent-task evidence.",
     ].join("\n"),
   );
 }
@@ -120,14 +116,18 @@ function parseArgs(args: string[]): CliOptions {
       usage();
     }
   }
-  if (options.dateKey && !/^\d{4}-\d{2}-\d{2}$/u.test(options.dateKey)) {
+  if (
+    options.dateKey &&
+    options.dateKey !== "all" &&
+    !/^\d{4}-\d{2}-\d{2}$/u.test(options.dateKey)
+  ) {
     usage();
   }
   return options;
 }
 
 function normalizeDateKey(value?: string): string {
-  return value ?? new Date().toISOString().slice(0, 10);
+  return value ?? "all";
 }
 
 function recordValue(value: unknown): JsonRecord | undefined {
@@ -148,10 +148,6 @@ function numberValue(value: unknown): number {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function boolValue(value: unknown): boolean {
-  return value === true;
 }
 
 function isTerminalNonAbsorbedDecision(row: JsonRecord): boolean {
@@ -293,61 +289,7 @@ async function countPlanReceiptFiles(params: {
   workspaceDir: string;
   dateKey: string;
 }): Promise<number> {
-  const receiptDir = path.join(params.workspaceDir, PLAN_RECEIPT_DIR, params.dateKey);
-  try {
-    const entries = await fs.readdir(receiptDir, { withFileTypes: true });
-    return entries.filter((entry) => entry.isFile() && entry.name.endsWith(".json")).length;
-  } catch {
-    return 0;
-  }
-}
-
-function adjacentTaskForModule(targetModule: string): string {
-  const tasks: Record<string, string> = {
-    portfolio_risk_gates:
-      "Apply this portfolio risk lesson to a fresh QQQ/TLT/NVDA-style risk question and refuse sizing without weights, limits, and return-series evidence.",
-    event_driven:
-      "Apply this event-driven lesson to a fresh earnings, policy, or ETF catalyst triage and separate catalyst evidence from trade advice.",
-    technical_timing:
-      "Apply this timing lesson to a fresh ETF or large-cap timing question and keep technicals as timing context, not standalone alpha.",
-    options_volatility:
-      "Apply this options-volatility lesson to a fresh event gap-risk question and return research-only IV/skew/liquidity framing, not a contract recommendation.",
-    factor_research:
-      "Apply this factor lesson to a fresh ETF or index research task and require formula, lag, costs, and sample-out evidence before reuse.",
-    macro_rates_inflation:
-      "Apply this macro lesson to a fresh rates/liquidity portfolio question and separate timestamped data gaps from reusable regime logic.",
-    global_index_regime:
-      "Apply this index-regime lesson to a fresh index concentration or breadth question and name missing methodology or constituent evidence.",
-  };
-  return (
-    tasks[targetModule] ??
-    `Apply this ${targetModule} lesson to a fresh adjacent research-only task with source, risk boundary, and review evidence.`
-  );
-}
-
-function evidenceReceiptPath(params: {
-  dateKey: string;
-  targetModule: string;
-  receiptPath: string;
-}): string {
-  const hash = createHash("sha256")
-    .update(`${params.dateKey}\n${params.targetModule}\n${params.receiptPath}`)
-    .digest("hex")
-    .slice(0, 12);
-  return path
-    .join(ABSORPTION_EVIDENCE_DIR, params.dateKey, `${params.targetModule}__${hash}.json`)
-    .split(path.sep)
-    .join("/");
-}
-
-async function writeJson(params: {
-  workspaceDir: string;
-  relativePath: string;
-  payload: Record<string, unknown>;
-}): Promise<void> {
-  const absolutePath = path.join(params.workspaceDir, params.relativePath);
-  await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-  await fs.writeFile(absolutePath, `${JSON.stringify(params.payload, null, 2)}\n`, "utf8");
+  return (await listModuleLearningReceiptPaths(params.workspaceDir, params.dateKey)).length;
 }
 
 function missingRowEvidence(row: JsonRecord): string[] {
@@ -528,126 +470,12 @@ function buildGate(params: {
     blockers: [...new Set(blockers)],
     nextActions: [...new Set(nextActions)],
     notPromoted: true,
-    writeAvailable:
-      !params.review ||
-      !globalEvalClean ||
-      evalTimeoutNewerThanEval ||
-      boundaryViolations > 0 ||
-      rows.length === 0 ||
-      claimableRows.length === 0 ||
-      missingEvidenceByReceipt.length === 0
-        ? false
-        : missingEvidenceByReceipt.every((entry) =>
-            entry.missingEvidence.every((field) => REQUIRED_EVIDENCE_FIELDS.has(field)),
-          ),
+    // Auditing a global eval must never invent per-source training or transfer evidence.
+    writeAvailable: false,
     liveTouched: false,
     providerConfigTouched: false,
     protectedMemoryTouched: false,
     languageCorpusTouched: false,
-  };
-}
-
-async function writeAbsorbedPlanReceipts(params: {
-  workspaceDir: string;
-  dateKey: string;
-  review: JsonRecord | undefined;
-  gate: ReturnType<typeof buildGate>;
-  latestEval: EvalSnapshot;
-  absorptionDecision: "keep" | "downrank" | "discard";
-}) {
-  const rows = Array.isArray(params.review?.rows)
-    ? params.review.rows.filter((entry): entry is JsonRecord => Boolean(recordValue(entry)))
-    : [];
-  const eligibleRows = rows.filter(
-    (row) =>
-      row.status === "application_ready" &&
-      !boolValue(row.boundaryViolation) &&
-      !boolValue(row.superseded),
-  );
-  const planTool = createModuleLearningPipelinePlanTool({ workspaceDir: params.workspaceDir });
-  const written = [];
-  for (const [index, row] of eligibleRows.entries()) {
-    const targetModule = stringValue(row.targetModule) ?? "unknown";
-    const receiptPath = stringValue(row.receiptPath) ?? "unknown";
-    const evidencePath = evidenceReceiptPath({
-      dateKey: params.dateKey,
-      targetModule,
-      receiptPath,
-    });
-    const freshAdjacentApplicationTask =
-      stringValue(row.freshAdjacentApplicationTask) ?? adjacentTaskForModule(targetModule);
-    await writeJson({
-      workspaceDir: params.workspaceDir,
-      relativePath: evidencePath,
-      payload: {
-        ok: true,
-        boundary: "local_module_learning_absorption_evidence",
-        dateKey: params.dateKey,
-        targetModule,
-        sourceReceiptPath: receiptPath,
-        evalEvidenceSource: params.gate.evalEvidenceSource,
-        latestEval: params.gate.latestEval,
-        requiredCaseIds: params.gate.requiredCaseIds,
-        freshAdjacentApplicationTask,
-        keepDownrankDiscardDecision: params.absorptionDecision,
-        claimBoundary:
-          "This proves core eval absorption evidence for module-learning review; it does not prove user-visible-observed or protected-memory update.",
-        liveTouched: false,
-        providerConfigTouched: false,
-        protectedMemoryTouched: false,
-        languageCorpusTouched: false,
-      },
-    });
-    const planResult = await planTool.execute(`module-learning-absorption-${index}`, {
-      targetModule,
-      receiptDateKey: params.dateKey,
-      sourceUrlOrPath: stringValue(row.sourceUrlOrPath),
-      learningIntent: stringValue(row.learningIntent),
-      actualReadingScope: stringValue(row.actualReadingScope),
-      applicationValidationTask:
-        stringValue(row.freshAdjacentApplicationTask) ??
-        stringValue(row.applicationValidationTask) ??
-        freshAdjacentApplicationTask,
-      existingArtifactPaths: [
-        stringValue(row.sourceUrlOrPath),
-        stringValue(row.retrievalReceiptPath),
-        stringValue(row.applicationValidationReceiptPath),
-        evidencePath,
-      ].filter((entry): entry is string => Boolean(entry)),
-      sourceRegistryRecordPath: stringValue(row.sourceRegistryRecordPath),
-      retrievalReceiptPath: stringValue(row.retrievalReceiptPath),
-      applicationValidationReceiptPath: stringValue(row.applicationValidationReceiptPath),
-      trainingOrEvalAbsorptionEvidencePath: evidencePath,
-      freshAdjacentApplicationTask,
-      keepDownrankDiscardDecision: params.absorptionDecision,
-      supersedesReceiptPath: receiptPath,
-      writeReceipt: true,
-    });
-    const details = planResult.details as Record<string, unknown>;
-    written.push({
-      targetModule,
-      supersedesReceiptPath: receiptPath,
-      absorptionEvidencePath: evidencePath,
-      newReceiptPath: details.receiptPath,
-      status: details.status,
-    });
-  }
-  return written;
-}
-
-async function refreshReviewAfterWrite(params: {
-  workspaceDir: string;
-  dateKey: string;
-}): Promise<{ review: JsonRecord; reviewPath: string }> {
-  const reviewTool = createModuleLearningPipelineReviewTool({ workspaceDir: params.workspaceDir });
-  const reviewResult = await reviewTool.execute("module-learning-absorption-gate-refresh", {
-    dateKey: params.dateKey,
-    writeReview: true,
-  });
-  const review = reviewResult.details as JsonRecord;
-  return {
-    review,
-    reviewPath: stringValue(review.reviewPath) ?? path.join(REVIEW_DIR, `${params.dateKey}.json`),
   };
 }
 
@@ -700,55 +528,16 @@ const result = buildGate({
   latestEvalTimeout,
   evalEvidenceSource,
 });
-const writtenAbsorptionReceipts =
-  options.writeAbsorbedPlanReceipts && latestEval && result.writeAvailable
-    ? await writeAbsorbedPlanReceipts({
-        workspaceDir: options.workspaceDir,
-        dateKey,
-        review,
-        gate: result,
-        latestEval,
-        absorptionDecision: options.absorptionDecision,
-      })
-    : [];
-const refreshedReview =
-  writtenAbsorptionReceipts.length > 0
-    ? await refreshReviewAfterWrite({
-        workspaceDir: options.workspaceDir,
-        dateKey,
-      })
-    : undefined;
-const refreshedPlanReceiptFiles = refreshedReview
-  ? await countPlanReceiptFiles({
-      workspaceDir: options.workspaceDir,
-      dateKey,
-    })
-  : planReceiptFiles;
-const refreshedGate =
-  refreshedReview && latestEval
-    ? buildGate({
-        dateKey,
-        review: refreshedReview.review,
-        reviewPath: refreshedReview.reviewPath,
-        planReceiptFiles: refreshedPlanReceiptFiles,
-        latestEval,
-        latestEvalTimeout,
-        evalEvidenceSource,
-      })
-    : undefined;
 const finalResult = {
-  ...(refreshedGate ?? result),
-  preWriteGateDecision: writtenAbsorptionReceipts.length > 0 ? result.gateDecision : null,
-  postWriteReviewRefreshed: Boolean(refreshedGate),
+  ...result,
+  preWriteGateDecision: null,
+  postWriteReviewRefreshed: false,
   writeRequested: options.writeAbsorbedPlanReceipts,
   absorptionDecision: options.absorptionDecision,
-  writtenAbsorptionReceipts,
-  writeSkippedReason:
-    options.writeAbsorbedPlanReceipts && writtenAbsorptionReceipts.length === 0
-      ? result.writeAvailable
-        ? "no_eligible_application_ready_rows"
-        : "gate_not_write_available"
-      : null,
+  writtenAbsorptionReceipts: [],
+  writeSkippedReason: options.writeAbsorbedPlanReceipts
+    ? "absorption_requires_executed_per_receipt_training_and_adjacent_task_evidence"
+    : null,
 };
 
 if (options.json) {

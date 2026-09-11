@@ -2,8 +2,8 @@
 // Live counterpart to finance-data-gateway-smoke.ts.
 //
 // The fixture smoke proves the gateway's validation logic offline. This live
-// smoke proves the NEW path: fetch a real quote from an authorized public
-// source (Stooq, delayed/EOD) and feed it into the same pure gateway.
+// smoke proves the multi-source path: fetch public market data plus official
+// references and feed every observation into the same canonical gateway.
 //
 // It is fail-closed and opt-in: the real network fetch only runs with --live.
 // Without --live it prints how to enable it and exits 0 (no silent fake data).
@@ -12,18 +12,28 @@
 //   node --import tsx scripts/operator/finance-data-gateway-live-smoke.ts            # dry, prints guidance
 //   node --import tsx scripts/operator/finance-data-gateway-live-smoke.ts --live     # real fetch
 //   node --import tsx scripts/operator/finance-data-gateway-live-smoke.ts --live --symbol SPY --json
+//   node --import tsx scripts/operator/finance-data-gateway-live-smoke.ts --live --asset-class crypto --symbol BTCUSDT --json
 
-import { buildFinanceDataGatewaySnapshot } from "../../src/agents/finance-data-gateway.ts";
-import { collectLiveFinanceGatewayInput } from "../../src/agents/finance-live-market-source.ts";
+import {
+  createFinanceRealtimeSourceRegistry,
+  resolveFinanceRealtimeSourceRegistryOptionsFromEnv,
+  runFinanceRealtimeRefresh,
+} from "../../src/agents/finance-realtime-source-registry.ts";
 
 function parseArgs(args: string[]) {
   const symbolFlagIndex = args.indexOf("--symbol");
+  const assetClassFlagIndex = args.indexOf("--asset-class");
   const symbol =
     symbolFlagIndex >= 0 && args[symbolFlagIndex + 1] ? args[symbolFlagIndex + 1] : "QQQ";
+  const assetClass =
+    assetClassFlagIndex >= 0 && args[assetClassFlagIndex + 1]
+      ? args[assetClassFlagIndex + 1].toLowerCase()
+      : "etf";
   return {
     json: args.includes("--json"),
     live: args.includes("--live"),
     symbol: symbol.toUpperCase(),
+    assetClass,
   };
 }
 
@@ -34,24 +44,31 @@ async function main() {
     process.stdout.write(
       [
         "finance-data-gateway-live-smoke: dry mode (no network fetch).",
-        "Pass --live to fetch a real delayed/EOD quote from the public source.",
+        "Pass --live to fetch the public primary, cross-check, official, and issuer sources.",
         "Example: node --import tsx scripts/operator/finance-data-gateway-live-smoke.ts --live --symbol QQQ --json",
-        "Boundary: research-only, delayed data, single primary source -> gateway will report blocked",
-        "until a real cross-check + official/issuer provider are added.",
+        "Crypto example: node --import tsx scripts/operator/finance-data-gateway-live-smoke.ts --live --asset-class crypto --symbol BTCUSDT --json",
+        "Boundary: research-only; every source attempt and unavailable adapter is reported.",
       ].join("\n"),
     );
     process.stdout.write("\n");
     return 0;
   }
 
-  let input;
+  let receipt;
   try {
-    input = await collectLiveFinanceGatewayInput({
-      instrument: options.symbol,
-      assetClass: "etf",
-      useCase: "live_gateway_smoke_portfolio_macro_risk_research",
-      requireOfficialReference: false,
-      freshnessMaxMinutes: 60 * 24 * 5,
+    receipt = await runFinanceRealtimeRefresh({
+      request: {
+        instrument: options.symbol,
+        assetClass: options.assetClass,
+        useCase: "live_gateway_smoke_portfolio_macro_risk_research",
+        asOf: new Date().toISOString(),
+        requireOfficialReference: options.assetClass !== "crypto",
+        freshnessMaxMinutes: options.assetClass === "crypto" ? 60 : 60 * 24 * 5,
+        crossSourceSkewMaxMinutes: options.assetClass === "crypto" ? 30 : 60 * 24,
+      },
+      adapters: createFinanceRealtimeSourceRegistry(
+        resolveFinanceRealtimeSourceRegistryOptionsFromEnv(),
+      ),
     });
   } catch (error) {
     // Fail closed: a live source that is unavailable must not produce a fake or
@@ -64,27 +81,29 @@ async function main() {
     return 2;
   }
 
-  const snapshot = buildFinanceDataGatewaySnapshot(input);
-
   if (options.json) {
-    process.stdout.write(`${JSON.stringify(snapshot, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`);
   } else {
-    const priceField = snapshot.normalizedFields.find((field) => field.name === "last_price");
+    const priceField = receipt.snapshot?.normalizedFields.find(
+      (field) => field.name === "last_price",
+    );
     process.stdout.write(
       [
-        `instrument=${snapshot.instrument}`,
-        `live=true source=yahoo`,
-        `ok=${snapshot.ok}`,
-        `qualityStatus=${snapshot.qualityStatus}`,
+        `instrument=${receipt.request.instrument}`,
+        "live=true source_registry=multi",
+        `status=${receipt.status}`,
         `last_price=${priceField?.value ?? "none"}`,
         `sourceTimestamp=${priceField?.sourceTimestamp ?? "none"}`,
-        `providerRoles=${snapshot.providerRolesPresent.join(",")}`,
-        `missingEvidence=${snapshot.missingEvidence.join(",") || "none"}`,
+        `sourceAttempts=${receipt.sourceAttempts.map((attempt) => `${attempt.adapterId}:${attempt.status}`).join(",") || "none"}`,
+        `missingEvidence=${receipt.missingEvidence.join(",") || "none"}`,
       ].join("\n"),
     );
     process.stdout.write("\n");
   }
-  return 0;
+  return receipt.status === "blocked" &&
+    receipt.sourceAttempts.every((attempt) => attempt.status !== "succeeded")
+    ? 2
+    : 0;
 }
 
 main()

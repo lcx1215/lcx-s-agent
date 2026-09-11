@@ -112,18 +112,18 @@ describe("lcx-external-agent-upgrade-radar", () => {
     expect(payload.summary).toEqual(
       expect.objectContaining({
         failed: 0,
-        registeredCandidateCount: 13,
-        architectureIntegratedCount: 13,
-        sourceRegistrationOnlyCount: 13,
+        registeredCandidateCount: 25,
+        architectureIntegratedCount: 25,
+        sourceRegistrationOnlyCount: 25,
         sourceReceiptVerifiedCount: 0,
-        sourceReceiptMissingCount: 52,
+        sourceReceiptMissingCount: 100,
         sourceVerificationClaim: false,
         runtimeAuthorityGrantedCount: 0,
-        blacktechMechanismCount: 7,
+        blacktechMechanismCount: 8,
         blacktechReadyLocalOnlyCount: 2,
-        blacktechPartialLocalOnlyCount: 5,
+        blacktechPartialLocalOnlyCount: 6,
         blacktechRuntimeAuthorityGrantedCount: 0,
-        blacktechAutopilotRoutedCount: 7,
+        blacktechAutopilotRoutedCount: 8,
         perfectIntegrationClaim: false,
       }),
     );
@@ -154,6 +154,18 @@ describe("lcx-external-agent-upgrade-radar", () => {
       "computer_use_cli_bridge",
       "github_cli_agentic_workflow_control",
       "multi_agent_framework_orchestration_guardrails",
+      "individual_ai_hedge_fund",
+      "trading_agents_finance_multi_agent",
+      "finrobot_financial_research",
+      "openbb_finance_data_platform",
+      "agent_reach_source_adapter",
+      "echoapi_api_test_harness",
+      "finnews_hunter_realtime_intelligence",
+      "openfr_finance_research",
+      "amplio_crash_resume_harness",
+      "cameron_personal_finance_approval",
+      "cents_thesis_research",
+      "openalice_full_lifecycle_trading",
       "prediction_market_research_intake",
       "prediction_market_strategy_audit",
     ]);
@@ -200,8 +212,36 @@ describe("lcx-external-agent-upgrade-radar", () => {
           ownerEntrypoint: skillEntrypoint("cli-anything-harvester"),
         }),
         expect.objectContaining({
-          label: "LangGraph / OpenAI Agents / CrewAI / Microsoft Agent Framework",
+          label: "LangGraph / OpenAI Agents / CrewAI / Microsoft Agent Framework / OpenHands",
           ownerEntrypoint: "scripts/operator/lcx-flow-graph.ts",
+        }),
+        expect.objectContaining({
+          label: "virattt/ai-hedge-fund",
+          ownerEntrypoint: "scripts/operator/lcx-commercial-answer-pipeline.ts",
+        }),
+        expect.objectContaining({
+          label: "TauricResearch/TradingAgents",
+          ownerEntrypoint: "src/agents/logical-agent-pool.ts",
+        }),
+        expect.objectContaining({
+          label: "AI4Finance/FinRobot",
+          ownerEntrypoint: "src/agents/finance-data-gateway.ts",
+        }),
+        expect.objectContaining({
+          label: "OpenBB finance data and AI-agent platform",
+          ownerEntrypoint: "src/agents/finance-data-gateway.ts",
+        }),
+        expect.objectContaining({
+          label: "agentailor/cameron",
+          ownerEntrypoint: "scripts/operator/lcx-commercial-answer-pipeline.ts",
+        }),
+        expect.objectContaining({
+          label: "wolfbane/cents",
+          ownerEntrypoint: "scripts/operator/lcx-commercial-acceptance-harness.ts",
+        }),
+        expect.objectContaining({
+          label: "TraderAlice/OpenAlice",
+          ownerEntrypoint: "scripts/operator/lcx-commercial-answer-pipeline.ts",
         }),
         expect.objectContaining({
           label: "Polymarket research intake tools",
@@ -245,7 +285,7 @@ describe("lcx-external-agent-upgrade-radar", () => {
     }
   });
 
-  it("registers the seven prioritized blacktech mechanisms without live or model-weight authority", async () => {
+  it("registers the eight prioritized blacktech mechanisms without live or model-weight authority", async () => {
     const payload = await runRadar();
 
     expect(payload.blacktechMechanisms.map((mechanism) => mechanism.id)).toEqual([
@@ -256,9 +296,10 @@ describe("lcx-external-agent-upgrade-radar", () => {
       "agent_trace_observability",
       "secure_tool_skill_permission_layer",
       "github_cli_agentic_control_plane",
+      "finance_research_truth_and_guardrails",
     ]);
     expect(payload.nextBlacktechProbes.map((probe) => probe.priority)).toEqual([
-      1, 2, 3, 4, 5, 6, 7,
+      1, 2, 3, 4, 5, 6, 7, 8,
     ]);
     expect(payload.blacktechMechanisms).toEqual(
       expect.arrayContaining([
@@ -282,6 +323,17 @@ describe("lcx-external-agent-upgrade-radar", () => {
           automaticTrigger: expect.stringContaining("commercial acceptance"),
           autopilotSurface: expect.stringContaining("commercialAcceptance"),
           requiredProofChain: expect.arrayContaining(["side_effect_audit"]),
+        }),
+        expect.objectContaining({
+          id: "finance_research_truth_and_guardrails",
+          ownerEntrypoint: "src/agents/finance-data-gateway.ts",
+          automaticTrigger: expect.stringContaining("finance-agent"),
+          ownerGate: expect.stringContaining("deterministic computation"),
+          nextSafeLocalProbe: expect.stringContaining("checkpoint restart"),
+          requiredProofChain: expect.arrayContaining([
+            "real_local_model_execution_receipt",
+            "no_trade_authority_receipt",
+          ]),
         }),
         expect.objectContaining({
           id: "unified_trajectory_schema",

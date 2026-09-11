@@ -19,6 +19,7 @@ type FailureEvalSnapshot = {
   at: string;
   adapterPath: string;
   failedCaseIds: string[];
+  modelContractFailureCaseIds: string[];
   parseRecoveredCaseIds: string[];
   passed: number;
   total: number;
@@ -27,6 +28,7 @@ type FailureEvalSnapshot = {
 
 export type FailureCurriculumOptions = {
   guardLogPath?: string;
+  evalReceiptPath?: string;
   maxPrompts: number;
   startIndex?: number;
 };
@@ -318,13 +320,22 @@ function evalSnapshotFromPayload(
   const failedCaseIds = (summary as { failedCaseIds?: unknown }).failedCaseIds;
   const parseRecoveredCaseIds = (summary as { parseRecoveredCaseIds?: unknown })
     .parseRecoveredCaseIds;
+  const modelContractFailureCaseIds = (summary as { modelContractFailureCaseIds?: unknown })
+    .modelContractFailureCaseIds;
+  const filteredModelContractFailureCaseIds = Array.isArray(modelContractFailureCaseIds)
+    ? modelContractFailureCaseIds.filter((entry): entry is string => typeof entry === "string")
+    : [];
   const filteredFailedCaseIds = Array.isArray(failedCaseIds)
     ? failedCaseIds.filter((entry): entry is string => typeof entry === "string")
     : [];
   const filteredParseRecoveredCaseIds = Array.isArray(parseRecoveredCaseIds)
     ? parseRecoveredCaseIds.filter((entry): entry is string => typeof entry === "string")
     : [];
-  if (filteredFailedCaseIds.length === 0 && filteredParseRecoveredCaseIds.length === 0) {
+  if (
+    filteredFailedCaseIds.length === 0 &&
+    filteredParseRecoveredCaseIds.length === 0 &&
+    filteredModelContractFailureCaseIds.length === 0
+  ) {
     return undefined;
   }
   const passed = (summary as { passed?: unknown }).passed;
@@ -334,6 +345,7 @@ function evalSnapshotFromPayload(
     at: typeof payload.at === "string" ? payload.at : "",
     adapterPath,
     failedCaseIds: filteredFailedCaseIds,
+    modelContractFailureCaseIds: filteredModelContractFailureCaseIds,
     parseRecoveredCaseIds: filteredParseRecoveredCaseIds,
     passed: typeof passed === "number" ? passed : 0,
     total: typeof total === "number" ? total : 0,
@@ -356,6 +368,36 @@ async function latestFailureSnapshot(logPath: string): Promise<FailureEvalSnapsh
     .map(evalSnapshotFromPayload)
     .filter((entry): entry is FailureEvalSnapshot => Boolean(entry));
   return snapshots.toSorted((left, right) => right.at.localeCompare(left.at))[0];
+}
+
+async function receiptFailureSnapshot(
+  receiptPath: string,
+): Promise<FailureEvalSnapshot | undefined> {
+  try {
+    const receipt = JSON.parse(await fs.readFile(receiptPath, "utf8")) as {
+      boundary?: unknown;
+      generatedAt?: unknown;
+      requested?: { contractOnly?: unknown };
+      resolved?: { adapterPath?: unknown };
+      summary?: unknown;
+    };
+    if (
+      receipt.boundary !== "local_brain_eval_receipt_only" ||
+      typeof receipt.generatedAt !== "string" ||
+      !Number.isFinite(Date.parse(receipt.generatedAt)) ||
+      receipt.requested?.contractOnly === true
+    ) {
+      return undefined;
+    }
+    return evalSnapshotFromPayload({
+      event: "step_non_passing",
+      name: "candidate_hardened_eval",
+      at: receipt.generatedAt,
+      result: { adapterPath: receipt.resolved?.adapterPath, summary: receipt.summary },
+    });
+  } catch {
+    return undefined;
+  }
 }
 
 function fallbackRecipe(caseId: string, priority: number): FailureCaseRecipe {
@@ -391,13 +433,24 @@ export async function buildFailureCurriculumPrompts(
   if (options.maxPrompts <= 0) {
     return [];
   }
-  const snapshot = await latestFailureSnapshot(options.guardLogPath ?? DEFAULT_GUARD_LOG);
+  const logSnapshot = await latestFailureSnapshot(options.guardLogPath ?? DEFAULT_GUARD_LOG);
+  const receiptSnapshot = options.evalReceiptPath
+    ? await receiptFailureSnapshot(options.evalReceiptPath)
+    : undefined;
+  const snapshot =
+    receiptSnapshot && (!logSnapshot || receiptSnapshot.at > logSnapshot.at)
+      ? receiptSnapshot
+      : logSnapshot;
   if (!snapshot) {
     return [];
   }
   const recipeByCaseId = new Map(FAILURE_CASE_RECIPES.map((recipe) => [recipe.caseId, recipe]));
   const focusCaseIds = Array.from(
-    new Set([...snapshot.failedCaseIds, ...snapshot.parseRecoveredCaseIds]),
+    new Set([
+      ...snapshot.modelContractFailureCaseIds,
+      ...snapshot.failedCaseIds,
+      ...snapshot.parseRecoveredCaseIds,
+    ]),
   );
   const recipes = focusCaseIds
     .map((caseId, index) => recipeForCaseId(caseId, recipeByCaseId, 10 - index))
@@ -412,6 +465,9 @@ export async function buildFailureCurriculumPrompts(
     sourceSummary: [
       recipe.sourceSummary,
       `Latest failed eval adapter ${path.basename(snapshot.adapterPath)} passed ${snapshot.passed}/${snapshot.total} (${snapshot.passRate}).`,
+      snapshot.modelContractFailureCaseIds.includes(recipe.caseId)
+        ? "Native model contract failed despite assisted acceptance. Generate a compact JSON training target with canonical module ids and all required evidence gaps; do not depend on normalization or runtime hardening. Use an adjacent task, not a copied eval answer."
+        : undefined,
       snapshot.parseRecoveredCaseIds.includes(recipe.caseId)
         ? "This case passed acceptance only through parseRecovered; compact valid JSON is required before promotion."
         : undefined,

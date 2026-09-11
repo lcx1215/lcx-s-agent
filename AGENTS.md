@@ -22,9 +22,12 @@ Skill. Do not turn this file into a transcript or a second registry.
   runtime identifier is compatibility-only and is not a product or repository
   authority.
 - The repository is https://github.com/lcx1215/lcx-s-agent. Upstream OpenClaw remains the runtime lineage; it is not a second LCX source or release authority.
-- Finance behavior is research-only: no direct buy/sell/add/reduce commands,
-  position sizing instructions, or invented current numbers. Current data needs
-  a source and timestamp; missing evidence must be stated plainly.
+- Finance behavior is source-gated and mode-aware: `research_only` remains the
+  compatibility default, while explicit `strategy_candidate` and
+  `conditional_trade_candidate` modes may produce reviewable strategy or
+  conditional buy/sell candidates. No mode grants broker/exchange execution,
+  funds transfer, or wallet authority; current data still needs a source and
+  timestamp, and missing evidence must be stated plainly.
 - A local test, receipt, replay, or stored text does not prove model learning,
   promotion, external-channel binding, deployment, or user-visible success.
 - Provider configuration, authentication, training, protected memory, and

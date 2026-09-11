@@ -212,6 +212,15 @@ type GovernanceInventoryArea = {
  */
 const GOVERNANCE_COMPONENT_RULES: GovernanceComponentRule[] = [
   {
+    id: "deployment_configuration_surface",
+    patterns: [/^deploy\//u],
+    category: "deployment_configuration",
+    routeOwner: "scripts/operator/lcx-cloud-preflight.ts",
+    proofSurface: "cloud preflight and deployment manifest review",
+    boundary: "deployment files do not prove an active runtime or authorize service restarts",
+    disposition: "governed_source",
+  },
+  {
     id: "repository_test_surface",
     patterns: [/(^|\/)[^/]+\.(?:test|spec)\.[^/]+$/u],
     category: "test",
@@ -237,6 +246,15 @@ const GOVERNANCE_COMPONENT_RULES: GovernanceComponentRule[] = [
     proofSurface: "targeted auxiliary check plus lcx-change-impact-plan",
     boundary: "Codex auxiliary files do not become LCX runtime, provider, or delivery authority",
     disposition: "governed_source",
+  },
+  {
+    id: "finance_benchmark_receipts",
+    patterns: [/^\.artifacts\/finance-strategy\/[^/]+\.json$/u],
+    category: "historical_or_evaluation_artifact",
+    routeOwner: "scripts/operator/finance-strategy-method-benchmark.ts",
+    proofSurface: "finance strategy benchmark mathematical checks and source receipts",
+    boundary: "research receipts are inventory only; existence does not prove alpha or execution",
+    disposition: "inventory_only",
   },
   {
     id: "temporary_artifact_surface",
@@ -702,7 +720,12 @@ async function main() {
   const [trackedInventory, rgFilesRaw, gitStatusInventory] = await Promise.all([
     execLinesWithStatus("git", ["ls-files"]),
     execLines("rg", ["--files", "--hidden", "-g", "!.git", "-g", "!node_modules"]),
-    execLinesWithStatus("git", ["status", "--short", "--branch"], repoRoot, false),
+    execLinesWithStatus(
+      "git",
+      ["status", "--short", "--branch", "--untracked-files=all"],
+      repoRoot,
+      false,
+    ),
   ]);
   const trackedFiles = trackedInventory.lines;
   const rgFiles = rgFilesRaw.length > 0 ? rgFilesRaw : trackedFiles;

@@ -2,6 +2,8 @@ import type { OpenClawConfig } from "../config/config.js";
 import { resolvePluginTools } from "../plugins/tools.js";
 import type { GatewayMessageChannel } from "../utils/message-channel.js";
 import { resolveSessionAgentId } from "./agent-scope.js";
+import type { FinanceWorkflowSlotModels } from "./finance-model-workflow.js";
+import { resolveFinanceRealtimeSourceRegistryOptionsFromEnv } from "./finance-realtime-source-registry.js";
 import type { SandboxFsBridge } from "./sandbox/fs-bridge.js";
 import type { ToolFsPolicy } from "./tool-fs-policy.js";
 import { createAgentsListTool } from "./tools/agents-list-tool.js";
@@ -15,6 +17,7 @@ import { createFinanceArticleExtractCapabilityInputTool } from "./tools/finance-
 import { createFinanceArticleSourceCollectionPreflightTool } from "./tools/finance-article-source-collection-preflight-tool.js";
 import { createFinanceArticleSourceRegistryInspectTool } from "./tools/finance-article-source-registry-inspect-tool.js";
 import { createFinanceArticleSourceRegistryRecordTool } from "./tools/finance-article-source-registry-record-tool.js";
+import { createFinanceChartAnalysisTool } from "./tools/finance-chart-analysis-tool.js";
 import { createFinanceDataGatewaySnapshotTool } from "./tools/finance-data-gateway-tool.js";
 import { createFinanceDoctrineTeacherFeedbackCandidateInputReconciliationStatusTool } from "./tools/finance-doctrine-teacher-feedback-candidate-input-reconciliation-status-tool.js";
 import { createFinanceDoctrineTeacherFeedbackCandidateInputReconciliationTool } from "./tools/finance-doctrine-teacher-feedback-candidate-input-reconciliation-tool.js";
@@ -33,6 +36,7 @@ import { createFinanceLearningCapabilityAttachTool } from "./tools/finance-learn
 import { createFinanceLearningCapabilityInspectTool } from "./tools/finance-learning-capability-inspect-tool.js";
 import { createFinanceLearningPipelineOrchestratorTool } from "./tools/finance-learning-pipeline-orchestrator-tool.js";
 import { createFinanceLearningRetrievalReviewTool } from "./tools/finance-learning-retrieval-review-tool.js";
+import { createFinanceMarketCollectionRefreshTool } from "./tools/finance-market-collection-refresh-tool.js";
 import { createFinancePromotionBulkReviewTool } from "./tools/finance-promotion-bulk-review-tool.js";
 import { createFinancePromotionCandidatesTool } from "./tools/finance-promotion-candidates-tool.js";
 import { createFinancePromotionDecisionTool } from "./tools/finance-promotion-decision-tool.js";
@@ -40,12 +44,16 @@ import { createFinancePromotionDoctrineEditHandoffTool } from "./tools/finance-p
 import { createFinancePromotionProposalDraftTool } from "./tools/finance-promotion-proposal-draft-tool.js";
 import { createFinancePromotionProposalStatusTool } from "./tools/finance-promotion-proposal-status-tool.js";
 import { createFinancePromotionReviewTool } from "./tools/finance-promotion-review-tool.js";
+import { createFinanceRealtimeRefreshTool } from "./tools/finance-realtime-refresh-tool.js";
+import { createFinanceResearchRunTool } from "./tools/finance-research-run-tool.js";
 import { createFinanceResearchSourceWorkbenchTool } from "./tools/finance-research-source-workbench-tool.js";
 import { createGatewayTool } from "./tools/gateway-tool.js";
+import { createGeospatialSourceRefreshTool } from "./tools/geospatial-source-refresh-tool.js";
 import { createGitHubProjectCapabilityIntakeTool } from "./tools/github-project-capability-intake-tool.js";
 import { createImageTool } from "./tools/image-tool.js";
 import { createLobsterWorkfaceAppTool } from "./tools/lobster-workface-app-tool.js";
 import { createLocalMemoryRecordTool } from "./tools/local-memory-record-tool.js";
+import { createLocalSpecialistTool } from "./tools/local-specialist-tool.js";
 import { createMcpContextTool } from "./tools/mcp-context-tool.js";
 import { createMessageTool } from "./tools/message-tool.js";
 import { createModuleLearningPipelinePlanTool } from "./tools/module-learning-pipeline-plan-tool.js";
@@ -53,6 +61,8 @@ import { createModuleLearningPipelineReviewTool } from "./tools/module-learning-
 import { createNodesTool } from "./tools/nodes-tool.js";
 import { createPdfTool } from "./tools/pdf-tool.js";
 import { createQuantMathTool } from "./tools/quant-math-tool.js";
+import { createResearchDataAutopilotTool } from "./tools/research-data-autopilot-tool.js";
+import { createResearchWebAutopilotTool } from "./tools/research-web-autopilot-tool.js";
 import { createReviewPanelTool } from "./tools/review-panel-tool.js";
 import { createReviewTierTool } from "./tools/review-tier-tool.js";
 import { createSessionStatusTool } from "./tools/session-status-tool.js";
@@ -64,6 +74,28 @@ import { createSubagentsTool } from "./tools/subagents-tool.js";
 import { createTtsTool } from "./tools/tts-tool.js";
 import { createWebFetchTool, createWebSearchTool } from "./tools/web-tools.js";
 import { resolveWorkspaceRoot } from "./workspace-dir.js";
+
+function resolveModelFleetSlotModels(
+  config?: OpenClawConfig,
+): FinanceWorkflowSlotModels | undefined {
+  const raw = config?.plugins?.entries?.["lcx-model-fleet"]?.config?.slotModels;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return undefined;
+  }
+  const slots = raw as Record<string, unknown>;
+  if (
+    typeof slots.fast !== "string" ||
+    typeof slots.reasoning !== "string" ||
+    typeof slots.review !== "string"
+  ) {
+    return undefined;
+  }
+  return {
+    fast: slots.fast,
+    reasoning: slots.reasoning,
+    review: slots.review,
+  };
+}
 
 export function createOpenClawTools(options?: {
   sandboxBrowserBridgeUrl?: string;
@@ -101,6 +133,8 @@ export function createOpenClawTools(options?: {
   hasRepliedRef?: { value: boolean };
   /** If true, the model has native vision capability */
   modelHasVision?: boolean;
+  /** Effective model reference for native vision provenance receipts. */
+  nativeVisionModelRef?: string;
   /** Explicit agent ID override for cron/hook sessions. */
   requesterAgentIdOverride?: string;
   /** Require explicit message targets (no implicit last-route sends). */
@@ -205,6 +239,32 @@ export function createOpenClawTools(options?: {
       workspaceDir,
     }),
     createFinanceDataGatewaySnapshotTool({
+      workspaceDir,
+    }),
+    createFinanceRealtimeRefreshTool({
+      workspaceDir,
+      ...resolveFinanceRealtimeSourceRegistryOptionsFromEnv(),
+    }),
+    createFinanceMarketCollectionRefreshTool({ workspaceDir }),
+    createFinanceResearchRunTool({
+      workspaceDir,
+      config: options?.config,
+      slotModels: resolveModelFleetSlotModels(options?.config),
+    }),
+    createLocalSpecialistTool({ workspaceDir }),
+    createResearchDataAutopilotTool({ workspaceDir }),
+    createFinanceChartAnalysisTool({
+      workspaceDir,
+      modelHasVision: options?.modelHasVision,
+      nativeVisionModelRef: options?.nativeVisionModelRef,
+      visionTool: imageTool,
+    }),
+    createResearchWebAutopilotTool({
+      workspaceDir,
+      config: options?.config,
+      sandboxed: options?.sandboxed,
+    }),
+    createGeospatialSourceRefreshTool({
       workspaceDir,
     }),
     createFinanceArticleSourceRegistryRecordTool({
