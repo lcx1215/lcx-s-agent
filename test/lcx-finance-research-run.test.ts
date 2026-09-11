@@ -5,6 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import {
+  assertIsoTimestamp,
   buildFinanceResearchCommitteeRouting,
   buildFinanceResearchRegistryOptions,
 } from "../scripts/operator/lcx-finance-research-run.ts";
@@ -92,12 +93,28 @@ describe("lcx-finance-research-run", () => {
           OPENCLAW_WORKSPACE_DIR: workspaceDir,
         }),
       ).rejects.toThrow("--as-of must be an ISO timestamp");
+      expect(assertIsoTimestamp("2026-09-08T12:00:00.000Z")).toBe("2026-09-08T12:00:00.000Z");
+      expect(() => assertIsoTimestamp("2026-02-31T12:00:00.000Z")).toThrow(
+        "--as-of must be an ISO timestamp",
+      );
       const options = buildFinanceResearchRegistryOptions(true, {});
       expect(options.realtimeRegistryOptions.includeYahooPublicSource).toBe(true);
       expect(options.collectionRegistryOptions.includeYahooPublicSources).toBe(true);
     } finally {
       await fs.rm(workspaceDir, { recursive: true, force: true });
     }
+  });
+
+  it("rejects oversized plan and live model bounds before execution", async () => {
+    await expect(runResearch(["--horizon-months", "121"])).rejects.toThrow(
+      "--horizon-months must be a positive integer <= 120",
+    );
+    await expect(runResearch(["--max-tokens", "16385"])).rejects.toThrow(
+      "--max-tokens must be a positive integer <= 16384",
+    );
+    await expect(runResearch(["--live", "--timeout-ms", "2147483648"])).rejects.toThrow(
+      "--timeout-ms must be a positive integer <= 2147483647",
+    );
   });
 
   it("routes committee payloads through the quality-stage adapter contract", () => {

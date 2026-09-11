@@ -289,6 +289,10 @@ export function buildQualityHarnessModelPrompt(request: QualityHarnessModelReque
       : "");
   const evidence = compactQualityEvidence(request);
   const dependencyOutputs = compactQualityDependencies(request);
+  const dependencyEntries = Object.entries(request.dependencyOutputs);
+  const dependencyValuesMayBeClipped =
+    dependencyEntries.length !== Object.keys(dependencyOutputs).length ||
+    JSON.stringify(dependencyOutputs) !== JSON.stringify(request.dependencyOutputs);
   const repairFeedback = request.repairFeedback
     .slice(0, 8)
     .map((item) => clipPromptText(item, 300));
@@ -317,6 +321,7 @@ export function buildQualityHarnessModelPrompt(request: QualityHarnessModelReque
         ]
       : []),
     `evidence_coverage=provided:${request.evidence.length}; included:${evidence.length}; text_may_be_clipped:${evidenceSection.endsWith("…") || evidence.some((entry, index) => entry.text !== request.evidence[index]?.text)}. Never claim to have reviewed omitted evidence.`,
+    `dependency_coverage=provided:${dependencyEntries.length}; included:${Object.keys(dependencyOutputs).length}; values_may_be_clipped:${dependencyValuesMayBeClipped}. Never claim to have reviewed omitted or bounded dependency output.`,
     ...(request.findingPacket?.findings.length
       ? [
           `finding_packet=${JSON.stringify(request.findingPacket)}`,
@@ -345,11 +350,16 @@ export function buildQualityHarnessModelPrompt(request: QualityHarnessModelReque
 
 export function buildLocalRoleShadowPrompt(request: LocalRoleShadowRequest): string {
   const evidence = request.evidence.slice(0, 12).map((item) => clipPromptText(item, 900));
+  const evidenceTextMayBeClipped =
+    evidence.length !== request.evidence.length ||
+    evidence.some((item, index) => item !== request.evidence[index]);
+  const dependencyEntries = Object.entries(request.dependencyOutputs);
   const dependencyOutputs = Object.fromEntries(
-    Object.entries(request.dependencyOutputs)
-      .slice(0, 6)
-      .map(([taskId, output]) => [taskId, compactPromptValue(output)]),
+    dependencyEntries.slice(0, 6).map(([taskId, output]) => [taskId, compactPromptValue(output)]),
   );
+  const dependencyValuesMayBeClipped =
+    dependencyEntries.length !== Object.keys(dependencyOutputs).length ||
+    JSON.stringify(dependencyOutputs) !== JSON.stringify(request.dependencyOutputs);
   return [
     "You are the LCX Agent local auxiliary thought-flow model.",
     "Produce a compact planning packet for the assigned role; do not answer the user directly.",
@@ -361,7 +371,9 @@ export function buildLocalRoleShadowPrompt(request: LocalRoleShadowRequest): str
     `purpose=${request.purpose}`,
     `task=${request.ask}`,
     `evidence=${JSON.stringify(evidence)}`,
+    `evidence_coverage=provided:${request.evidence.length}; included:${evidence.length}; text_may_be_clipped:${evidenceTextMayBeClipped}. Never claim to have reviewed omitted evidence.`,
     `dependency_outputs=${JSON.stringify(dependencyOutputs)}`,
+    `dependency_coverage=provided:${dependencyEntries.length}; included:${Object.keys(dependencyOutputs).length}; values_may_be_clipped:${dependencyValuesMayBeClipped}. Never claim to have reviewed omitted or bounded dependency output.`,
   ].join("\n");
 }
 

@@ -33,6 +33,9 @@ const WORKSPACE_DIR = () => process.env.OPENCLAW_WORKSPACE_DIR?.trim() || DEFAUL
 const DEFAULT_ASK =
   "分析过去六个月加密货币和美股的市场情绪、最近美股上涨的驱动，以及美国中期选举后可能发生什么。";
 const DEFAULT_MODEL_ID = "Qwen/Qwen3-0.6B";
+const MAX_HORIZON_MONTHS = 120;
+const MAX_MODEL_TOKENS = 16_384;
+const MAX_MODEL_TIMEOUT_MS = 2_147_483_647;
 
 type Options = {
   ask: string;
@@ -69,15 +72,15 @@ function usage(): never {
       "Options:",
       "  --ask TEXT                         natural-language research question",
       "  --as-of ISO                        observation cutoff (default: now)",
-      "  --horizon-months N                 horizon for the research plan (default: 6)",
+      `  --horizon-months N                 horizon for the research plan (default: 6, max: ${MAX_HORIZON_MONTHS})`,
       "  --decision-mode MODE               research_only|strategy_candidate|conditional_trade_candidate",
       "  --live                              fetch bounded public/provider sources and run the model DAG",
       "  --skip-quality                     do not run the quality harness (live only)",
       "  --adapter DIR                      explicit local adapter directory",
       "  --model MODEL                      local model id (default: Qwen/Qwen3-0.6B)",
       "  --python PATH                      local model Python runtime",
-      "  --max-tokens N                     bounded local model output tokens",
-      "  --timeout-ms N                     bounded local model timeout",
+      `  --max-tokens N                     bounded local model output tokens (max: ${MAX_MODEL_TOKENS})`,
+      `  --timeout-ms N                     bounded local model timeout (max: ${MAX_MODEL_TIMEOUT_MS})`,
       "  --allow-model-network              allow the local model runtime to use network",
       "  --max-api-calls N                  hard source-attempt budget (default: 48, max: 10000)",
       "  --max-concurrency N                batch concurrency (default: 3)",
@@ -151,7 +154,7 @@ function parseArgs(args: readonly string[]): Options {
       options.asOf = readValue(args, index, arg);
       index += 1;
     } else if (arg === "--horizon-months") {
-      options.horizonMonths = positiveInteger(readValue(args, index, arg), arg);
+      options.horizonMonths = positiveInteger(readValue(args, index, arg), arg, MAX_HORIZON_MONTHS);
       index += 1;
     } else if (arg === "--decision-mode") {
       options.decisionMode = decisionMode(readValue(args, index, arg));
@@ -170,10 +173,10 @@ function parseArgs(args: readonly string[]): Options {
       options.pythonPath = readValue(args, index, arg);
       index += 1;
     } else if (arg === "--max-tokens") {
-      options.maxTokens = positiveInteger(readValue(args, index, arg), arg);
+      options.maxTokens = positiveInteger(readValue(args, index, arg), arg, MAX_MODEL_TOKENS);
       index += 1;
     } else if (arg === "--timeout-ms") {
-      options.timeoutMs = positiveInteger(readValue(args, index, arg), arg);
+      options.timeoutMs = positiveInteger(readValue(args, index, arg), arg, MAX_MODEL_TIMEOUT_MS);
       index += 1;
     } else if (arg === "--allow-model-network") {
       options.allowModelNetwork = true;
@@ -211,10 +214,27 @@ function parseArgs(args: readonly string[]): Options {
 }
 
 const ISO_TIMESTAMP_PATTERN =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:?\d{2})$/u;
+  /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:?\d{2})$/u;
 
 export function assertIsoTimestamp(value: string): string {
-  if (!ISO_TIMESTAMP_PATTERN.test(value) || !Number.isFinite(Date.parse(value))) {
+  const match = ISO_TIMESTAMP_PATTERN.exec(value);
+  const year = match ? Number(match[1]) : Number.NaN;
+  const month = match ? Number(match[2]) : Number.NaN;
+  const day = match ? Number(match[3]) : Number.NaN;
+  const daysInMonth =
+    month === 2
+      ? 28 + Number(year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0))
+      : [4, 6, 9, 11].includes(month)
+        ? 30
+        : 31;
+  if (
+    !match ||
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > daysInMonth ||
+    !Number.isFinite(Date.parse(value))
+  ) {
     throw new Error("--as-of must be an ISO timestamp");
   }
   return new Date(value).toISOString();
@@ -235,7 +255,7 @@ async function resolveAdapterPath(options: Options): Promise<string> {
       "--model",
       options.modelId,
       "--current-adapter",
-      "latest",
+      "latest-passing",
     ],
     { cwd: REPO_ROOT, maxBuffer: 2 * 1024 * 1024, timeout: 30_000 },
   );

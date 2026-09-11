@@ -181,6 +181,12 @@ describe("local text model adapter contract", () => {
     expect(prompt).not.toContain("evidence-23:");
     expect(prompt).toContain("task-0");
     expect(prompt).not.toContain("task-17");
+    expect(prompt).toContain(
+      "evidence_coverage=provided:24; included:12; text_may_be_clipped:true",
+    );
+    expect(prompt).toContain(
+      "dependency_coverage=provided:18; included:6; values_may_be_clipped:true",
+    );
   });
 
   it("keeps model downloads offline unless explicitly allowed", () => {
@@ -214,5 +220,6 @@ it("does not silently drop later evidence, stage instructions or analysis requir
   expect(prompt).toContain("[e19] asset-19");
   expect(prompt).toContain("Compare equivalent periods");
   expect(prompt).toContain("three conditional scenarios");
+  expect(prompt).toContain("evidence_coverage=provided:20; included:20; text_may_be_clipped:true");
   expect(prompt).not.toContain('"answer":"bounded answer"');
 });
