@@ -68,6 +68,11 @@ describe("tool-policy", () => {
     expect(group).toContain("subagents");
     expect(group).toContain("session_status");
     expect(group).toContain("tts");
+    expect(group).toContain("finance_research_run");
+    expect(group).toContain("local_specialist");
+    expect(resolveToolProfilePolicy("coding")?.allow).toEqual(
+      expect.arrayContaining(["finance_research_run", "local_specialist"]),
+    );
   });
 
   it("normalizes tool names and aliases", () => {

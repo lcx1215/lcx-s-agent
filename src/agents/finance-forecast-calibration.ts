@@ -14,6 +14,35 @@ export const FinanceForecast = z
   .strict();
 export type FinanceForecastContract = z.infer<typeof FinanceForecast>;
 
+const DAY_MS = 86_400_000;
+
+function checkpointObservation(
+  rows: Array<{ id: string; sourceTimestamp: string; value: string | number }>,
+  due: number,
+) {
+  const dueDate = new Date(due);
+  const checkpointStart = Date.UTC(
+    dueDate.getUTCFullYear(),
+    dueDate.getUTCMonth(),
+    dueDate.getUTCDate(),
+  );
+  const candidates = rows
+    .map((row) => ({ row, timestamp: Date.parse(row.sourceTimestamp) }))
+    .filter(
+      (entry) =>
+        Number.isFinite(entry.timestamp) &&
+        entry.timestamp >= checkpointStart &&
+        entry.timestamp < checkpointStart + 2 * DAY_MS,
+    )
+    .toSorted((a, b) => a.timestamp - b.timestamp);
+  const first = candidates[0];
+  if (!first) {
+    return undefined;
+  }
+  const sameTimestamp = candidates.filter((entry) => entry.timestamp === first.timestamp);
+  return sameTimestamp.length === 1 ? first.row : undefined;
+}
+
 export function calibrateFinanceForecasts(params: {
   forecasts: FinanceForecastContract[];
   checkpointMonths: number;
@@ -37,6 +66,7 @@ export function calibrateFinanceForecasts(params: {
         (e) =>
           e.field === forecast.field && e.unit === forecast.unit && e.source === forecast.source,
       );
+      const checkpointRow = Number.isFinite(due) ? checkpointObservation(rows, due) : undefined;
       const reason =
         !Number.isFinite(due) ||
         !Number.isFinite(Date.parse(params.frozenAt)) ||
@@ -45,21 +75,19 @@ export function calibrateFinanceForecasts(params: {
           ? "forecast_not_frozen_before_due"
           : Date.parse(params.observedAt) < due
             ? "checkpoint_not_due"
-            : rows.length !== 1
-              ? "unique_matching_observation_required"
-              : typeof rows[0].value !== "number" || !Number.isFinite(rows[0].value)
+            : checkpointRow === undefined
+              ? "unique_observation_on_or_immediately_after_checkpoint_required"
+              : typeof checkpointRow.value !== "number" || !Number.isFinite(checkpointRow.value)
                 ? "numeric_observation_required"
-                : Date.parse(rows[0].sourceTimestamp) !== due
-                  ? "exact_checkpoint_timestamp_required"
-                  : null;
+                : null;
       if (reason) {
         return { forecastId: forecast.id, status: "unscored" as const, reason };
       }
-      const outcome = Number((rows[0].value as number) > forecast.threshold);
+      const outcome = Number((checkpointRow!.value as number) > forecast.threshold);
       return {
         forecastId: forecast.id,
         status: "scored" as const,
-        evidenceId: rows[0].id,
+        evidenceId: checkpointRow!.id,
         outcome,
         brierScore: (forecast.probabilityAbove - outcome) ** 2,
         baselineBrierScore: 0.25,

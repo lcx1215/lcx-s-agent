@@ -94,6 +94,8 @@ describe("registered provider capabilities", () => {
       adapters: adapters.filter((a) => a.id === "finnhub_profile2"),
     });
     expect(result.records[0].delayStatus).toBe("manual_or_unknown");
+    expect(result.records[0].sourceTimestamp).not.toBe(asOf);
+    expect(result.records[0].observedAt).toBe(result.records[0].sourceTimestamp);
     expect(result.records[0].data.sourceTimestampMeaning).toContain("timestamp_unavailable");
   });
   it("drops invalid and unfinished daily bars while retaining usable history", async () => {
@@ -195,7 +197,8 @@ describe("extended capability contracts", () => {
     });
     expect(estimates.records[0].data.valueNature).toContain("forecast");
     expect(estimates.records[0].data.targetPeriod).toBe("2027-12-31");
-    expect(Date.parse(estimates.records[0].sourceTimestamp)).toBe(Date.parse(asOf));
+    expect(estimates.records[0].sourceTimestamp).not.toBe(asOf);
+    expect(estimates.records[0].observedAt).toBe(estimates.records[0].sourceTimestamp);
     const statements = await runFinanceMarketCollectionRefresh({
       request,
       adapters: adapters.filter((a) => a.id === "fmp_income_statement_annual"),

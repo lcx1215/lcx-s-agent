@@ -324,6 +324,101 @@ describe("quality harness", () => {
     ).toMatchObject({ passed: false });
   });
 
+  it("preserves signs when matching current-data numbers", async () => {
+    const result = await runQualityHarness({
+      request: {
+        ...financeRequest,
+        evidence: [
+          {
+            id: "market",
+            text: "截至 2026-09-06，公开行情材料记录涨跌幅为 +5%。",
+            source: "market-feed-test",
+          },
+        ],
+      },
+      maxAttempts: 1,
+      modelInvoker: async (raw) => {
+        const current = raw as QualityHarnessModelRequest;
+        if (current.stage === "intake") {
+          return { kind: "plan", requirements: ["回答问题"], missingEvidence: [] };
+        }
+        if (current.stage === "draft" || current.stage === "format") {
+          return {
+            kind: "artifact",
+            artifact: {
+              answer: "NVDA 当前涨跌幅为 -5%。",
+              claims: [
+                {
+                  id: "claim-1",
+                  text: "NVDA 当前涨跌幅为 -5%。",
+                  status: "supported",
+                  evidenceIds: ["market"],
+                },
+              ],
+            },
+          };
+        }
+        return passReview();
+      },
+      verify: async () => ({ status: "passed", summary: "should not run", details: [] }),
+    });
+
+    expect(result.status).toBe("quality-failed");
+    expect(
+      result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
+    ).toMatchObject({ passed: false });
+  });
+
+  it("requires current-data numbers to be grounded by the same claim and its evidence", async () => {
+    const result = await runQualityHarness({
+      request: {
+        ...financeRequest,
+        evidence: [
+          {
+            id: "qqq",
+            text: "截至 2026-09-06，QQQ 的价格为 $100。",
+            source: "market-feed-test",
+          },
+          {
+            id: "aapl",
+            text: "截至 2026-09-06，AAPL 的价格为 $200。",
+            source: "market-feed-test",
+          },
+        ],
+      },
+      maxAttempts: 1,
+      modelInvoker: async (raw) => {
+        const current = raw as QualityHarnessModelRequest;
+        if (current.stage === "intake") {
+          return { kind: "plan", requirements: ["回答问题"], missingEvidence: [] };
+        }
+        if (current.stage === "draft" || current.stage === "format") {
+          return {
+            kind: "artifact",
+            artifact: {
+              answer: "AAPL 当前价格为 $100。",
+              claims: [
+                {
+                  id: "claim-1",
+                  text: "AAPL 当前价格为 $100。",
+                  status: "supported",
+                  evidenceIds: ["qqq"],
+                },
+              ],
+            },
+          };
+        }
+        return passReview();
+      },
+      verify: async () => ({ status: "passed", summary: "should not run", details: [] }),
+    });
+
+    expect(result.status).toBe("quality-failed");
+    expect(
+      result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
+    ).toMatchObject({ passed: false });
+  });
+
   it("requires the evidence carrying each current number to have its own timestamp", async () => {
     const result = await runQualityHarness({
       request: {

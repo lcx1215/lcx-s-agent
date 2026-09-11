@@ -48,7 +48,7 @@ describe("forecast calibration", () => {
     for (const change of [
       { source: "other" },
       { unit: "EUR" },
-      { sourceTimestamp: input.observedAt },
+      { sourceTimestamp: "2026-06-04T00:00:00Z" },
     ]) {
       expect(
         calibrateFinanceForecasts({ ...input, evidence: [{ ...input.evidence[0], ...change }] })[0]
@@ -59,5 +59,15 @@ describe("forecast calibration", () => {
       calibrateFinanceForecasts({ ...input, evidence: [...input.evidence, ...input.evidence] })[0]
         .status,
     ).toBe("unscored");
+  });
+
+  it("selects one observation on the due date when the due time is intraday", () => {
+    expect(
+      calibrateFinanceForecasts({
+        ...input,
+        dueAt: "2026-06-01T12:00:00Z",
+        evidence: [{ ...input.evidence[0], sourceTimestamp: "2026-06-01T00:00:00Z" }],
+      })[0],
+    ).toMatchObject({ status: "scored", evidenceId: "e" });
   });
 });

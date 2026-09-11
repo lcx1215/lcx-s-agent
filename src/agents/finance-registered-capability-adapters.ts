@@ -222,6 +222,7 @@ export function createRegisteredCapabilityAdapters(
           throw new ApiCallError("network_error");
         }
         const responseText = await response.text();
+        const observedAt = new Date().toISOString();
         let rawArtifact: string | undefined;
         let safeBody = responseText;
         for (const secret of [c.key, ...Object.values(c.extraHeaders ?? {})]) {
@@ -233,7 +234,7 @@ export function createRegisteredCapabilityAdapters(
           rawArtifact = await options.captureRawResponse({
             adapterId: c.id,
             sourceUrlOrArtifact,
-            observedAt: r.asOf,
+            observedAt,
             httpStatus: response.status,
             body: safeBody,
           });
@@ -303,8 +304,8 @@ export function createRegisteredCapabilityAdapters(
             c.collection === "eod_history" || c.collection === "options_chain"
               ? "market_data_api"
               : "fundamentals_api",
-          sourceTimestamp: row.time ?? r.asOf,
-          observedAt: r.asOf,
+          sourceTimestamp: row.time ?? observedAt,
+          observedAt,
           delayStatus: c.delayStatus ?? "manual_or_unknown",
           sourceUrlOrArtifact,
           data: {

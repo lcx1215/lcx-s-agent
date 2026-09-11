@@ -165,6 +165,9 @@ describe("finance research runner", () => {
     expect(history.every((collection) => collection.toDate === "2026-09-07")).toBe(true);
     expect(targets.some((target) => target.assetClass === "crypto")).toBe(true);
     expect(targets.some((target) => target.assetClass === "us_equity")).toBe(true);
+    const sentiment = targets.find((target) => target.id === "cross-asset-sentiment-news");
+    expect(sentiment?.instrument).toBe("SPY");
+    expect(sentiment?.collections?.[0]?.seriesId).toBe("market sentiment");
   });
 
   it("clamps month-end history windows and the registry collection limit", () => {

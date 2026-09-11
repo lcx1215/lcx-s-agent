@@ -327,10 +327,12 @@ export function buildDefaultFinanceResearchTargets(
   }
   targets.push({
     id: "cross-asset-sentiment-news",
-    instrument: "US equities crypto market sentiment risk appetite US midterm elections",
+    // Ticker-oriented providers need a bounded instrument, while GDELT uses
+    // the explicit topic query instead of treating prose as a symbol.
+    instrument: "SPY",
     assetClass: "us_equity",
     realtime: false,
-    collections: [buildNewsCollection()],
+    collections: [{ ...buildNewsCollection(), seriesId: "market sentiment" }],
   });
   targets.push(
     {

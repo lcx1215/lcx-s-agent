@@ -71,14 +71,14 @@ const EXECUTION_CLAIM_PATTERN =
 function extractDataNumbers(text: string): string[] {
   return (
     text.match(
-      /(?:[$€£¥]\s*)?\d[\d,]*(?:\.\d+)?(?:\s*%|\s*(?:USD|EUR|GBP|CNY|JPY|美元|欧元|英镑|人民币|日元|元))?/giu,
+      /(?<!\d)[+-]?\s*(?:[$€£¥]\s*)?\d[\d,]*(?:\.\d+)?(?:\s*%|\s*(?:USD|EUR|GBP|CNY|JPY|美元|欧元|英镑|人民币|日元|元))?/giu,
     ) ?? []
   ).map((value) => value.replace(/\s+/g, ""));
 }
 
 function normalizedNumber(value: string): string {
   const compact = value.replace(/\s+/g, "").replace(/,/g, "").toLowerCase();
-  const number = compact.match(/\d+(?:\.\d+)?/)?.[0] ?? compact;
+  const number = compact.match(/[+-]?\d+(?:\.\d+)?/)?.[0] ?? compact;
   const unit = compact.includes("%")
     ? "percent"
     : /(?:\$|usd|美元)/u.test(compact)
@@ -93,6 +93,17 @@ function normalizedNumber(value: string): string {
               ? "jpy"
               : "unitless";
   return `${number}|${unit}`;
+}
+
+function claimMatchesEvidenceEntity(claimText: string, evidenceText: string): boolean {
+  const claimEntities = claimText.match(/\b[A-Z][A-Z0-9.-]{1,9}\b/gu) ?? [];
+  if (claimEntities.length === 0) {
+    return true;
+  }
+  const evidenceEntities = new Set(
+    (evidenceText.match(/\b[A-Z][A-Z0-9.-]{1,9}\b/gu) ?? []).map((value) => value.toUpperCase()),
+  );
+  return claimEntities.some((entity) => evidenceEntities.has(entity.toUpperCase()));
 }
 
 function hasEvidenceSourceAndTimestamp(evidence: QualityHarnessEvidence): boolean {
@@ -125,19 +136,28 @@ function validateFinanceAnswerSafety(
     const answerNumbers = extractDataNumbers(artifact.answer);
     if (answerNumbers.length > 0) {
       const evidenceById = new Map(request.evidence.map((entry) => [entry.id, entry]));
-      const citedEvidence = artifact.claims
-        .filter((claim) => claim.status === "supported")
-        .flatMap((claim) => claim.evidenceIds)
-        .map((id) => evidenceById.get(id))
-        .filter((entry): entry is QualityHarnessEvidence => entry !== undefined);
+      const supportedClaims = artifact.claims.filter((claim) => claim.status === "supported");
       const unsupportedNumbers = answerNumbers.filter((number) => {
         const normalized = normalizedNumber(number);
-        return !citedEvidence.some(
-          (entry) =>
-            extractDataNumbers(entry.text).some(
-              (value) => normalizedNumber(value) === normalized,
-            ) && hasEvidenceSourceAndTimestamp(entry),
-        );
+        return !supportedClaims.some((claim) => {
+          const claimCarriesNumber = extractDataNumbers(claim.text).some(
+            (value) => normalizedNumber(value) === normalized,
+          );
+          if (!claimCarriesNumber) {
+            return false;
+          }
+          return claim.evidenceIds
+            .map((id) => evidenceById.get(id))
+            .filter((entry): entry is QualityHarnessEvidence => entry !== undefined)
+            .some(
+              (entry) =>
+                extractDataNumbers(entry.text).some(
+                  (value) => normalizedNumber(value) === normalized,
+                ) &&
+                hasEvidenceSourceAndTimestamp(entry) &&
+                claimMatchesEvidenceEntity(claim.text, entry.text),
+            );
+        });
       });
       if (unsupportedNumbers.length > 0) {
         problems.push(

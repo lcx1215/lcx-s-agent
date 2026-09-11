@@ -80,7 +80,8 @@ export function createFinanceMarketCollectionRefreshTool(options?: {
     description:
       "Inspect or explicitly fetch structured US-market collections such as public news, options chains, dividends, splits, official macro series, SEC filings, company profiles, and free-tier EOD history. Results retain source, timestamp, delay, raw record fields, and failed attempts; this tool has no trading or order authority.",
     parameters: FinanceMarketCollectionRefreshSchema,
-    execute: async (_toolCallId, args) => {
+    execute: async (_toolCallId, args, callerSignal) => {
+      callerSignal?.throwIfAborted();
       const params = args as {
         instrument: string;
         assetClass: string;
@@ -143,7 +144,9 @@ export function createFinanceMarketCollectionRefreshTool(options?: {
           adapters,
           maxSources: params.maxSources,
           timeoutMs: params.timeoutMs,
+          signal: callerSignal,
         });
+        callerSignal?.throwIfAborted();
         const receiptPath = params.writeReceipt
           ? await writeReceipt(workspaceDir, request.instrument, request.collection, receipt)
           : undefined;

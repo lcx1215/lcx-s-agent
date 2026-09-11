@@ -56,4 +56,16 @@ describe("finance decision policy", () => {
       ]),
     );
   });
+
+  it("matches English action keywords regardless of capitalization", () => {
+    const result = evaluateFinanceDecisionPolicy({
+      mode: "conditional_trade_candidate",
+      ask: "BUY AAPL?",
+      answer:
+        "Strategy candidate: Buy AAPL if the earnings trigger holds; source and timestamped evidence are required. Risk is drawdown, with a one-month horizon. Review only, no automatic execution, and human confirmation is required.",
+    });
+
+    expect(result.allowed).toBe(true);
+    expect(result.requiredEvidence).toEqual([]);
+  });
 });

@@ -219,6 +219,24 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     includeInOpenClawGroup: true,
   },
   {
+    id: "finance_research_run",
+    label: "finance_research_run",
+    description:
+      "Plan or explicitly execute the canonical finance research workflow with bounded sources, independent review, and finding closure",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    id: "local_specialist",
+    label: "local_specialist",
+    description:
+      "Run bounded offline classification, fact extraction, or summarization on supplied text",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
     id: "research_data_autopilot",
     label: "research_data_autopilot",
     description:

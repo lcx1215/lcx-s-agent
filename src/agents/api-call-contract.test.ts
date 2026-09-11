@@ -412,6 +412,25 @@ describe("API call governance", () => {
       ]),
     );
   });
+
+  it("does not open a source circuit for permanent client HTTP errors", async () => {
+    const breaker = createApiCircuitBreaker({ failureThreshold: 1, resetAfterMs: 60_000 });
+    const fetch = vi
+      .fn<ApiFetch>()
+      .mockResolvedValueOnce(response(404))
+      .mockResolvedValue(response());
+    const governed = governApiFetch(fetch, {
+      circuitBreaker: breaker,
+      retry: { attempts: 1 },
+    });
+
+    await expect(governed("https://example.test/missing")).rejects.toMatchObject({
+      kind: "http_error",
+      httpStatus: 404,
+    });
+    await expect(governed("https://example.test/valid")).resolves.toMatchObject({ status: 200 });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("safe network diagnosis", () => {

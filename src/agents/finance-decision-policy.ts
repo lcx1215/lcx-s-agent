@@ -22,11 +22,11 @@ export type FinanceDecisionPolicyResult = Readonly<{
 }>;
 
 const CANDIDATE_ACTION_PATTERN =
-  /\b(?:buy|sell|hold|wait|add|reduce|long|short|entry|exit)\b|买|卖|买入|卖出|持有|等待|加仓|减仓|做多|做空|入场|出场/u;
+  /\b(?:buy|sell|hold|wait|add|reduce|long|short|entry|exit)\b|买|卖|买入|卖出|持有|等待|加仓|减仓|做多|做空|入场|出场/iu;
 const ASSET_ACTION_PATTERN =
-  /\b(?:buy|sell|add|reduce|long|short)\s+[A-Z][A-Z0-9.-]{1,9}\b|(?:买入|卖出|买|卖|加仓|减仓|做多|做空).{0,12}(?:[A-Z]{2,6}|[\u3400-\u9fff]{1,8})/u;
+  /\b(?:buy|sell|add|reduce|long|short)\s+[A-Z][A-Z0-9.-]{1,9}\b|(?:买入|卖出|买|卖|加仓|减仓|做多|做空).{0,12}(?:[A-Z]{2,6}|[\u3400-\u9fff]{1,8})/iu;
 const DIRECT_ACTION_PATTERN =
-  /\b(?:should|recommend|buy|sell|add|reduce|go long|go short|hold|wait)\b.{0,24}\b(?:buy|sell|add|reduce|hold|wait|position|shares?)\b|(?:应该|建议|可以|不要|别|先别|不建议).{0,18}(?:买|卖|买入|卖出|加仓|减仓|补仓|摊低|割肉|持有|等待|做多|做空)/u;
+  /\b(?:should|recommend|buy|sell|add|reduce|go long|go short|hold|wait)\b.{0,24}\b(?:buy|sell|add|reduce|hold|wait|position|shares?)\b|(?:应该|建议|可以|不要|别|先别|不建议).{0,18}(?:买|卖|买入|卖出|加仓|减仓|补仓|摊低|割肉|持有|等待|做多|做空)/iu;
 const STRATEGY_PATTERN = /策略|方案|候选|配置|组合|strategy|thesis|allocation|candidate|scenario/iu;
 const CONDITION_PATTERN =
   /如果|当|只有|触发|条件|在.+情况下|若|unless|if|when|trigger|condition|scenario/iu;

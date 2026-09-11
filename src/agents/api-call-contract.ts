@@ -709,8 +709,8 @@ export function governApiFetch(fetchImpl: ApiFetch, options: ApiTransportOptions
           if (
             error instanceof ApiCallError &&
             (error.kind === "network_error" ||
-              error.kind === "http_error" ||
-              error.kind === "forbidden")
+              (error.kind === "http_error" &&
+                [408, 429, 500, 502, 503, 504].includes(error.httpStatus ?? 0)))
           ) {
             scope.circuitBreaker?.recordFailure();
           }
