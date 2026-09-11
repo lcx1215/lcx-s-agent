@@ -8,7 +8,10 @@ import {
   type ApiTransportOptions,
 } from "./api-call-contract.js";
 import type { FinanceCommitteeEvidence } from "./finance-agent-committee.js";
-import type { FinanceAsOfMode } from "./finance-data-gateway.js";
+import {
+  FINANCE_LIVE_NOW_MAX_FUTURE_SKEW_MINUTES,
+  type FinanceAsOfMode,
+} from "./finance-data-gateway.js";
 import { assessFinanceHistoryCoverage } from "./finance-history-coverage.js";
 import {
   createFinanceMarketCollectionRegistry,
@@ -219,16 +222,22 @@ function assessReceipt(receipt: SourceReceipt, job: PlannedJob) {
   const freshnessWarnings: string[] = [];
   const conflicts: string[] = [];
   const seen = new Map<string, string>();
+  const historicalCutoff = job.request.asOfMode !== "live_now";
+  const futureTimestampLimitMs = historicalCutoff
+    ? Date.parse(job.request.asOf)
+    : Date.now() + FINANCE_LIVE_NOW_MAX_FUTURE_SKEW_MINUTES * 60_000;
   for (const record of (receipt as FinanceMarketCollectionReceipt).records) {
     const key = JSON.stringify([record.providerName, record.collection, record.itemId]);
-    const age = (Date.parse(job.request.asOf) - Date.parse(record.sourceTimestamp)) / 60_000;
-    const historicalCutoff = job.request.asOfMode !== "live_now";
+    const sourceTimestampMs = Date.parse(record.sourceTimestamp);
+    const observedAtMs = Date.parse(record.observedAt);
+    const age = (Date.parse(job.request.asOf) - sourceTimestampMs) / 60_000;
     if (
       !Number.isFinite(age) ||
-      (historicalCutoff && age < 0) ||
+      !Number.isFinite(sourceTimestampMs) ||
+      !Number.isFinite(observedAtMs) ||
+      sourceTimestampMs > futureTimestampLimitMs ||
+      observedAtMs > futureTimestampLimitMs ||
       age > job.freshnessMaxMinutes ||
-      !Number.isFinite(Date.parse(record.observedAt)) ||
-      (historicalCutoff && Date.parse(record.observedAt) > Date.parse(job.request.asOf)) ||
       record.delayStatus === "manual_or_unknown" ||
       !record.sourceUrlOrArtifact?.trim()
     ) {

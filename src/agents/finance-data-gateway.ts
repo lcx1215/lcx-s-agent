@@ -21,7 +21,7 @@ export type FinanceDataDelayStatus = LcxOntologyFinanceDataDelayStatus;
 export type FinanceDataQualityStatus = LcxOntologyFinanceDataQualityStatus;
 export type FinanceAsOfMode = "historical" | "live_now";
 
-const MAX_LIVE_NOW_FUTURE_SKEW_MINUTES = 5;
+export const FINANCE_LIVE_NOW_MAX_FUTURE_SKEW_MINUTES = 5;
 
 export type FinanceDataGatewayFieldInput = {
   name: string;
@@ -244,7 +244,7 @@ export function buildFinanceDataGatewaySnapshot(
   const historicalCutoff = input.asOfMode !== "live_now";
   const futureTimestampLimitMs = historicalCutoff
     ? asOfMs
-    : Date.now() + MAX_LIVE_NOW_FUTURE_SKEW_MINUTES * 60_000;
+    : Date.now() + FINANCE_LIVE_NOW_MAX_FUTURE_SKEW_MINUTES * 60_000;
   const freshnessMaxMinutes = input.freshnessMaxMinutes ?? 60 * 24;
   const crossSourceSkewMaxMinutes = input.crossSourceSkewMaxMinutes ?? 60 * 24;
   if (!Number.isFinite(crossSourceSkewMaxMinutes) || crossSourceSkewMaxMinutes < 0) {

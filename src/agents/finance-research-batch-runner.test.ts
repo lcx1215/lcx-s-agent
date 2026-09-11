@@ -300,6 +300,25 @@ describe("finance research batch runner", () => {
     expect(JSON.parse(packet.committeeEvidence[1].text).data).toBeUndefined();
   });
 
+  it("withholds implausibly future collection records from live-now evidence", async () => {
+    const future = new Date(Date.now() + 10 * 60_000).toISOString();
+    const base = options(async () =>
+      response([news({ sourceTimestamp: future, observedAt: future })]),
+    );
+    const packet = await runFinanceResearchBatch({
+      ...base,
+      asOfMode: "live_now",
+      targets: [{ ...base.targets[0], realtime: false }],
+    });
+
+    expect(packet.jobs[0]?.receipt?.status).toBe("ready");
+    expect(packet.jobs[0]?.status).toBe("needs_review");
+    expect(packet.jobs[0]?.freshnessWarnings).toContain(
+      'stale_or_invalid_collection_provenance:["news","news","article"]',
+    );
+    expect(JSON.parse(packet.committeeEvidence[0].text).data).toBeUndefined();
+  });
+
   it("preserves partial-source failure even when the realtime gateway itself is ready", async () => {
     const base = options();
     const extra: FinanceRealtimeSourceAdapter = {
