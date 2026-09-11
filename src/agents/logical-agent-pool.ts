@@ -1340,7 +1340,7 @@ function validateHandoffs<TInput>(
 }
 
 function createLogicalAgentRunId(): string {
-  return `logical-agent-run-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return `logical-agent-run-${Date.now()}-${randomUUID().slice(0, 8)}`;
 }
 
 function checkpointForResults<TInput, TResult>(params: {
