@@ -12,9 +12,41 @@ import { runFinanceResearchRun } from "../finance-research-runner.js";
 import { resolveWorkspaceRoot } from "../workspace-dir.js";
 import { jsonResult, readStringParam, ToolInputError, type AnyAgentTool } from "./common.js";
 
+const targetCollectionSchema = Type.Object({
+  collection: Type.String({ minLength: 1, maxLength: 64 }),
+  seriesId: Type.Optional(Type.String({ maxLength: 256 })),
+  fromDate: Type.Optional(Type.String({ maxLength: 32 })),
+  toDate: Type.Optional(Type.String({ maxLength: 32 })),
+  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 250 })),
+  freshnessMaxMinutes: Type.Number({ minimum: 1, maximum: 60 * 24 * 366 }),
+});
+
+const targetSchema = Type.Object({
+  id: Type.String({ minLength: 1, maxLength: 128 }),
+  sourceAdapterIds: Type.Optional(
+    Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { maxItems: 32 }),
+  ),
+  instrument: Type.String({ minLength: 1, maxLength: 64 }),
+  assetClass: Type.String({ minLength: 1, maxLength: 64 }),
+  realtime: Type.Optional(
+    Type.Union([
+      Type.Literal(false),
+      Type.Partial(
+        Type.Object({
+          freshnessMaxMinutes: Type.Number({ minimum: 1, maximum: 60 * 24 * 366 }),
+          crossSourceSkewMaxMinutes: Type.Number({ minimum: 0, maximum: 60 * 24 * 366 }),
+          requireOfficialReference: Type.Boolean(),
+        }),
+      ),
+    ]),
+  ),
+  collections: Type.Optional(Type.Array(targetCollectionSchema, { maxItems: 16 })),
+});
+
 const schema = Type.Object({
   ask: Type.String({ minLength: 1, maxLength: 12_000 }),
   asOf: Type.String({ description: "Explicit ISO timestamp for the research evidence window" }),
+  targets: Type.Optional(Type.Array(targetSchema, { maxItems: 64 })),
   live: Type.Optional(Type.Boolean({ default: false })),
   maxModelCalls: Type.Optional(Type.Integer({ minimum: 1, maximum: 48, default: 24 })),
   maxApiCalls: Type.Optional(Type.Integer({ minimum: 1, maximum: 64, default: 32 })),
@@ -63,6 +95,9 @@ export function createFinanceResearchRunTool(options?: {
       const maxModelCalls = boundedInteger(params, "maxModelCalls", 24, 48);
       const maxApiCalls = boundedInteger(params, "maxApiCalls", 32, 64);
       const timeoutMs = boundedInteger(params, "timeoutMs", 600_000, 1_200_000, 1_000);
+      const targets = params.targets as Parameters<
+        typeof runFinanceResearchRun
+      >[0]["input"]["targets"];
       const controller = new AbortController();
       const timer = setTimeout(
         () => controller.abort(new Error("finance workflow deadline exceeded")),
@@ -89,7 +124,7 @@ export function createFinanceResearchRunTool(options?: {
               })
             : undefined;
         const receipt = await executeResearch({
-          input: { ask, asOf },
+          input: { ask, asOf, ...(targets ? { targets } : {}) },
           signal,
           liveFetch: params.live === true,
           allowProviderCalls: params.live === true,

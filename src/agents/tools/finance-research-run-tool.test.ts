@@ -82,6 +82,27 @@ describe("platform-independent finance workflow tool", () => {
     expect(request.modelRouting).toBe(request.qualityModelRouting);
   });
 
+  it("accepts validated explicit targets for caller-specific instruments", async () => {
+    const executeResearch = vi.fn<typeof runFinanceResearchRun>(async () =>
+      runFinanceResearchRun({ input }),
+    );
+    const tool = createFinanceResearchRunTool({
+      workspaceDir: await workspace(),
+      executeResearch,
+    });
+    const targets = [
+      {
+        id: "us-equity-aapl",
+        instrument: "AAPL",
+        assetClass: "us_equity",
+        realtime: { requireOfficialReference: false },
+        collections: [{ collection: "eod_history", freshnessMaxMinutes: 60 * 24 }],
+      },
+    ] as const;
+    await tool.execute("explicit-target", { ...input, targets });
+    expect(executeResearch.mock.calls[0]?.[0].input.targets).toEqual(targets);
+  });
+
   it("stops before execution when the platform cancels and rejects invalid budgets", async () => {
     const executeResearch = vi.fn<typeof runFinanceResearchRun>(async () =>
       runFinanceResearchRun({ input }),

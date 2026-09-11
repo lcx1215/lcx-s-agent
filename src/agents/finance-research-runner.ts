@@ -250,6 +250,56 @@ function isUsEquityAsk(text: string): boolean {
   return /美股|股票|指数|SPY|QQQ|US equities|US stocks|equity|stock/iu.test(text);
 }
 
+const FINANCE_EQUITY_ALIASES = Object.freeze({
+  apple: "AAPL",
+  amazon: "AMZN",
+  alphabet: "GOOGL",
+  google: "GOOGL",
+  meta: "META",
+  microsoft: "MSFT",
+  nvidia: "NVDA",
+  tesla: "TSLA",
+} as const);
+
+const NON_EQUITY_SYMBOL_TOKENS = new Set([
+  "AI",
+  "API",
+  "BLS",
+  "CPI",
+  "DAG",
+  "EOD",
+  "ETF",
+  "GDP",
+  "HTTP",
+  "HTTPS",
+  "JSON",
+  "ML",
+  "SEC",
+  "US",
+  "USA",
+  "USD",
+  "UTC",
+]);
+
+/** Extract only bounded, caller-supplied equity symbols; prose falls back to the broad canary universe. */
+function requestedEquitySymbols(text: string): readonly string[] {
+  const symbols = new Set<string>();
+  for (const match of text.matchAll(
+    /(?:^|[^A-Za-z0-9])\$?([A-Z]{1,5}(?:\.[A-Z])?)(?![A-Za-z0-9])/g,
+  )) {
+    const symbol = match[1];
+    if (symbol && !NON_EQUITY_SYMBOL_TOKENS.has(symbol)) {
+      symbols.add(symbol);
+    }
+  }
+  for (const [alias, symbol] of Object.entries(FINANCE_EQUITY_ALIASES)) {
+    if (new RegExp(`\\b${alias}\\b`, "iu").test(text)) {
+      symbols.add(symbol);
+    }
+  }
+  return Object.freeze([...symbols]);
+}
+
 function buildHistoryCollection(
   horizonMonths: number,
   asOf?: string,
@@ -311,7 +361,8 @@ export function buildDefaultFinanceResearchTargets(
     });
   }
   if (equity || (!crypto && !equity)) {
-    for (const symbol of ["SPY", "QQQ"] as const) {
+    const symbols = requestedEquitySymbols(normalizedAsk);
+    for (const symbol of symbols.length > 0 ? symbols : ["SPY", "QQQ"]) {
       targets.push({
         id: `us-equity-${symbol.toLowerCase()}`,
         instrument: symbol,
