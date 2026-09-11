@@ -29,6 +29,7 @@ import {
 } from "./finance-crypto-source-adapters.js";
 import {
   buildFinanceDataGatewaySnapshot,
+  FINANCE_LIVE_NOW_MAX_FUTURE_SKEW_MINUTES,
   type FinanceAsOfMode,
   type FinanceDataGatewayInput,
   type FinanceDataGatewayObservationInput,
@@ -256,12 +257,17 @@ function refreshId(request: FinanceRealtimeSourceRequest, adapterIds: readonly s
 function validateObservationTimestamps(
   observation: FinanceDataGatewayObservationInput,
   asOf: string,
+  asOfMode: FinanceAsOfMode | undefined,
 ): FinanceDataGatewayObservationInput {
   const cutoff = Date.parse(asOf);
+  const futureTimestampLimit =
+    asOfMode === "live_now"
+      ? Date.now() + FINANCE_LIVE_NOW_MAX_FUTURE_SKEW_MINUTES * 60_000
+      : cutoff;
   const fields = observation.fields.filter((field) => {
     const sourceTimestamp =
       typeof field.sourceTimestamp === "string" ? Date.parse(field.sourceTimestamp) : Number.NaN;
-    return Number.isFinite(sourceTimestamp) && sourceTimestamp <= cutoff;
+    return Number.isFinite(sourceTimestamp) && sourceTimestamp <= futureTimestampLimit;
   });
   if (fields.length === 0) {
     throw new Error("finance source returned no timestamped field at or before requested asOf");
@@ -391,7 +397,11 @@ export async function runFinanceRealtimeRefresh(options: {
           },
         );
         const reusedAt = financeReuseTimestamp(apiCalls, request.asOf);
-        const timestampedObservation = validateObservationTimestamps(observation, request.asOf);
+        const timestampedObservation = validateObservationTimestamps(
+          observation,
+          request.asOf,
+          request.asOfMode,
+        );
         observations.push(
           reusedAt
             ? {

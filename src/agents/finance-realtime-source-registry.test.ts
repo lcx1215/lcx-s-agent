@@ -213,6 +213,40 @@ describe("finance realtime source registry", () => {
     );
   });
 
+  it("accepts collection-time observations within the bounded live-now skew", async () => {
+    const liveTimestamp = new Date(Date.now() + 60_000).toISOString();
+    const receipt = await runFinanceRealtimeRefresh({
+      request: {
+        ...request,
+        asOf: "2020-01-01T00:00:00.000Z",
+        asOfMode: "live_now",
+        requireOfficialReference: false,
+      },
+      adapters: (["primary_market_data", "cross_check_market_data"] as const).map(
+        (providerRole, index) =>
+          adapter({
+            id: `live-${index === 0 ? "primary" : "cross-check"}`,
+            providerRole,
+            priority: index + 1,
+            result: {
+              ...observation(`live-${index === 0 ? "primary" : "cross-check"}`, providerRole),
+              observedAt: liveTimestamp,
+              fields: [
+                {
+                  ...observation(`live-${index === 0 ? "primary" : "cross-check"}`, providerRole)
+                    .fields[0],
+                  sourceTimestamp: liveTimestamp,
+                },
+              ],
+            },
+          }),
+      ),
+    });
+
+    expect(receipt.status).toBe("ready");
+    expect(receipt.snapshot?.qualityStatus).toBe("ready");
+  });
+
   it("reserves a bounded source slot for required official evidence", async () => {
     const receipt = await runFinanceRealtimeRefresh({
       request,

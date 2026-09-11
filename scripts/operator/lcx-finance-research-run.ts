@@ -37,6 +37,9 @@ const MAX_HORIZON_MONTHS = 120;
 const MAX_RESEARCH_ASK_BYTES = 32_768;
 const MAX_MODEL_TOKENS = 16_384;
 const MAX_MODEL_TIMEOUT_MS = 2_147_483_647;
+// The local adapter compacts evidence and dependency output before prompting; allow the
+// router to receive the contract's bounded 48-item quality packet before that compaction.
+export const QUALITY_ROUTER_MAX_INPUT_BYTES = 1_000_000;
 
 type Options = {
   ask: string;
@@ -308,7 +311,7 @@ export function buildFinanceResearchCommitteeRouting(
     defaultPolicy: {
       primary: adapter.id,
       requiredCapabilities: ["quality_harness"],
-      maxInputBytes: 256_000,
+      maxInputBytes: QUALITY_ROUTER_MAX_INPUT_BYTES,
       timeoutMs: runtime.timeoutMs,
     },
   };
@@ -322,7 +325,7 @@ function buildQualityRouting(runtime: LocalTextModelRuntimeConfig): LogicalAgent
     defaultPolicy: {
       primary: adapter.id,
       requiredCapabilities: ["quality_harness"],
-      maxInputBytes: 256_000,
+      maxInputBytes: QUALITY_ROUTER_MAX_INPUT_BYTES,
       timeoutMs: runtime.timeoutMs,
     },
   };
