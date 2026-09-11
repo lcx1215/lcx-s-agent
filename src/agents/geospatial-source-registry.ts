@@ -758,9 +758,13 @@ export async function runGeospatialRefresh(options: {
     }),
   ];
   const missingEvidence = observations.length === 0 ? ["successful_geospatial_observation"] : [];
+  const failedSources = sourceAttempts.some((attempt) => attempt.status === "failed");
   const requiredNextSteps: string[] = [];
   if (missingEvidence.length > 0) {
     requiredNextSteps.push("inspect_source_attempt_failures", "retry_with_healthy_adapter");
+  }
+  if (failedSources && missingEvidence.length === 0) {
+    requiredNextSteps.push("inspect_source_attempt_failures", "retry_failed_adapter");
   }
   if (conflicts.length > 0) {
     requiredNextSteps.push("run_geospatial_provenance_review");
@@ -778,7 +782,7 @@ export async function runGeospatialRefresh(options: {
     status:
       missingEvidence.length > 0
         ? "blocked"
-        : conflicts.length > 0 || freshnessWarnings.length > 0
+        : failedSources || conflicts.length > 0 || freshnessWarnings.length > 0
           ? "needs_review"
           : "ready",
     sourceAttempts,

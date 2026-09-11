@@ -250,7 +250,6 @@ export function createApiRateLimiter(
         drainTimer = undefined;
         drain();
       }, waitMs);
-      drainTimer.unref?.();
       return;
     }
     drain();

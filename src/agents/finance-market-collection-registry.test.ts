@@ -405,6 +405,55 @@ describe("finance market collection registry", () => {
     expect(yahoo[0]?.sourceTimestamp).toBe("2026-09-07T12:00:00.000Z");
   });
 
+  it("drops RSS items without valid provider timestamps", async () => {
+    const adapter = createGoogleNewsRssCollectionAdapter({
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        text: async () =>
+          `<?xml version="1.0"?><rss><channel><item><title>Untimestamped AAPL</title><link>https://example.test/missing</link></item><item><title>Timestamped AAPL</title><link>https://example.test/valid</link><pubDate>Mon, 07 Sep 2026 13:00:00 GMT</pubDate></item></channel></rss>`,
+      }),
+    });
+
+    const records = await adapter.collect(EQUITY_REQUEST, new AbortController().signal);
+
+    expect(records).toHaveLength(1);
+    expect(records[0]?.itemId).toBe("https://example.test/valid");
+  });
+
+  it("encodes an explicit GDELT news window", async () => {
+    let requestedUrl = "";
+    const adapter = createGdeltPublicNewsCollectionAdapter({
+      fetchImpl: async (url) => {
+        requestedUrl = url;
+        return {
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify({
+              articles: [
+                { url: "https://example.test/aapl-window", seendate: "20260907T130000Z" },
+                { url: "https://example.test/aapl-future", seendate: "20260908T130000Z" },
+                { url: "https://example.test/aapl-undated" },
+              ],
+            }),
+        };
+      },
+    });
+
+    const records = await adapter.collect(
+      { ...EQUITY_REQUEST, fromDate: "2026-09-01", toDate: "2026-09-07" },
+      new AbortController().signal,
+    );
+
+    const url = new URL(requestedUrl);
+    expect(url.searchParams.get("startdatetime")).toBe("20260901000000");
+    expect(url.searchParams.get("enddatetime")).toBe("20260907235959");
+    expect(url.searchParams.get("timespan")).toBeNull();
+    expect(records).toHaveLength(1);
+    expect(records[0]?.itemId).toBe("https://example.test/aapl-window");
+  });
+
   it("collects public Yahoo EOD bars and drops incomplete rows", async () => {
     const bars = await createYahooPublicEodHistoryCollectionAdapter({
       fetchImpl: fakeFetch,

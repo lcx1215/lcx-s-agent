@@ -2,11 +2,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
-import type { FinanceWorkflowSlotModels } from "../agents/finance-model-workflow.js";
 import { runLocalVisionVlm, LOW_MEMORY_LOCAL_VISION_MODEL } from "../agents/local-vision-vlm.js";
 import { jsonResult, readStringParam, ToolInputError } from "../agents/tools/common.js";
-import { createFinanceResearchRunTool } from "../agents/tools/finance-research-run-tool.js";
-import { createLocalSpecialistTool } from "../agents/tools/local-specialist-tool.js";
 import type { OpenClawPluginApi } from "./types.js";
 
 export const LOCAL_MODEL_DUTIES = [
@@ -48,7 +45,7 @@ export const LOCAL_MODEL_DUTIES = [
   },
 ] as const;
 
-function readSlots(config: Record<string, unknown> | undefined): FinanceWorkflowSlotModels {
+function readSlots(config: Record<string, unknown> | undefined) {
   const value = config?.slotModels;
   if (!value || typeof value !== "object") {
     throw new Error("lcx-model-fleet requires explicit slotModels");
@@ -103,16 +100,9 @@ export default {
       reviewRequired: true,
       modelWeightAbsorbed: false,
     });
-    api.registerTool((context) =>
-      createLocalSpecialistTool({ workspaceDir: context.workspaceDir ?? workspaceDir }),
-    );
-    api.registerTool((context) =>
-      createFinanceResearchRunTool({
-        workspaceDir: context.workspaceDir ?? workspaceDir,
-        config: context.config ?? api.config,
-        slotModels,
-      }),
-    );
+    // The core tool registry owns the shared research and local-specialist
+    // names. It receives these slot models from the host config, so the
+    // plugin must not register shadow copies that the resolver will discard.
     api.registerTool({
       name: "lcx_model_roster",
       label: "Model Duties",

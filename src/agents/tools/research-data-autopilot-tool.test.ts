@@ -155,16 +155,13 @@ it("propagates caller cancellation to the live geospatial registry", async () =>
     fetchImpl,
   });
 
-  const result = await tool.execute(
-    "cancel-live",
-    { intent: "weather", target: "31,121", liveFetch: true },
-    controller.signal,
-  );
+  await expect(
+    tool.execute(
+      "cancel-live",
+      { intent: "weather", target: "31,121", liveFetch: true },
+      controller.signal,
+    ),
+  ).rejects.toThrow();
 
   expect(httpSignal?.aborted).toBe(true);
-  expect(result.details).toEqual(
-    expect.objectContaining({
-      result: expect.objectContaining({ status: "blocked" }),
-    }),
-  );
 });

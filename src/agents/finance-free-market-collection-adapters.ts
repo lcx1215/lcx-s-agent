@@ -34,17 +34,17 @@ function textValue(value: unknown): string {
     : "";
 }
 
-function sourceTimestamp(value: unknown, fallback: string): string {
+function sourceTimestamp(value: unknown): string | undefined {
   const raw = textValue(value).trim();
   if (!raw) {
-    return fallback;
+    return undefined;
   }
   const gdeltCompact = raw.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/u);
   const normalized = gdeltCompact
     ? `${gdeltCompact[1]}-${gdeltCompact[2]}-${gdeltCompact[3]}T${gdeltCompact[4]}:${gdeltCompact[5]}:${gdeltCompact[6]}Z`
     : raw;
   const parsed = Date.parse(normalized);
-  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : fallback;
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : undefined;
 }
 
 function isoDate(value: unknown, label: string): string {
@@ -190,18 +190,30 @@ function createPublicRssNewsCollectionAdapter(options: {
         "User-Agent": "LCX Agent research-only",
       });
       const records = rssItems(body, options.providerName);
-      return records.slice(0, request.limit).map((record, index) =>
-        buildItem(request, {
-          itemId: record.link || `${symbol}-${options.id}-${index}`,
-          providerName: options.providerName,
-          providerRole: "cross_check_market_data",
-          sourceFamily: "market_data_api",
-          sourceTimestamp: sourceTimestamp(record.pubDate, request.asOf),
-          delayStatus: "delayed",
-          sourceUrlOrArtifact,
-          data: record,
-        }),
-      );
+      const items = records.flatMap((record, index) => {
+        const timestamp = sourceTimestamp(record.pubDate);
+        if (!timestamp) {
+          return [];
+        }
+        return [
+          buildItem(request, {
+            itemId: record.link || `${symbol}-${options.id}-${index}`,
+            providerName: options.providerName,
+            providerRole: "cross_check_market_data",
+            sourceFamily: "market_data_api",
+            sourceTimestamp: timestamp,
+            delayStatus: "delayed",
+            sourceUrlOrArtifact,
+            data: record,
+          }),
+        ];
+      });
+      if (items.length === 0) {
+        throw new FreeMarketCollectionAdapterError(
+          `${options.providerName} RSS returned no timestamped items`,
+        );
+      }
+      return items.slice(0, request.limit);
     },
   };
 }
@@ -237,7 +249,7 @@ function yahooSourceTimestamp(value: unknown, fallback: string): string {
       return timestamp.toISOString();
     }
   }
-  return sourceTimestamp(value, fallback);
+  return sourceTimestamp(value) ?? fallback;
 }
 
 function utcDayEpoch(value: string, label: string): number {
@@ -473,14 +485,30 @@ export function createGdeltPublicNewsCollectionAdapter(
     supports: (request) => isUsEquity(request.assetClass) && request.collection === "news",
     collect: async (request) => {
       const baseUrl = "https://api.gdeltproject.org/api/v2/doc/doc";
-      const params = {
+      const fromMs = request.fromDate ? utcDayEpoch(request.fromDate, "fromDate") : undefined;
+      const toMs = request.toDate
+        ? utcDayEpoch(request.toDate, "toDate") + 24 * 60 * 60 * 1_000
+        : undefined;
+      if (fromMs !== undefined && toMs !== undefined && fromMs >= toMs) {
+        throw new FreeMarketCollectionAdapterError("fromDate must be before toDate");
+      }
+      const params: Record<string, string | number> = {
         query: financeNewsQuery(request.instrument),
         mode: "artlist",
         maxrecords: request.limit ?? 20,
         sort: "datedesc",
         format: "json",
-        timespan: "1d",
       };
+      if (request.fromDate || request.toDate) {
+        if (request.fromDate) {
+          params.startdatetime = `${request.fromDate.replaceAll("-", "")}000000`;
+        }
+        if (request.toDate) {
+          params.enddatetime = `${request.toDate.replaceAll("-", "")}235959`;
+        }
+      } else {
+        params.timespan = "1d";
+      }
       const sourceUrlOrArtifact = apiUrl(baseUrl, params);
       const payload = (await fetchJson(
         resolveFinanceFetch(options.fetchImpl, {
@@ -502,14 +530,33 @@ export function createGdeltPublicNewsCollectionAdapter(
           `GDELT returned no articles for ${request.instrument.toUpperCase()}`,
         );
       }
-      return articles.slice(0, request.limit).map((article, index) => {
+      const datedArticles = articles.flatMap((article) => {
+        const timestamp = sourceTimestamp(article.seendate);
+        if (!timestamp) {
+          return [];
+        }
+        const timestampMs = Date.parse(timestamp);
+        if (
+          (fromMs !== undefined && timestampMs < fromMs) ||
+          (toMs !== undefined && timestampMs >= toMs)
+        ) {
+          return [];
+        }
+        return [{ article, timestamp }];
+      });
+      if (datedArticles.length === 0) {
+        throw new FreeMarketCollectionAdapterError(
+          `GDELT returned no timestamped articles in the requested window for ${request.instrument.toUpperCase()}`,
+        );
+      }
+      return datedArticles.slice(0, request.limit).map(({ article, timestamp }, index) => {
         const url = textValue(article.url);
         return buildItem(request, {
           itemId: url || `${request.instrument.toUpperCase()}-gdelt-news-${index}`,
           providerName: "gdelt-public-news",
           providerRole: "cross_check_market_data",
           sourceFamily: "market_data_api",
-          sourceTimestamp: sourceTimestamp(article.seendate, request.asOf),
+          sourceTimestamp: timestamp,
           delayStatus: "delayed",
           sourceUrlOrArtifact,
           data: article,

@@ -219,6 +219,8 @@ export function createResearchDataAutopilotTool(options?: {
             : inspectFinanceMarketCollectionRegistry(request, registry);
         }
 
+        signal?.throwIfAborted();
+
         const result = {
           schemaVersion: AUTOPILOT_SCHEMA_VERSION,
           boundary: "research_data_autopilot_read_only" as const,
