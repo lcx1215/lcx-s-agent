@@ -115,6 +115,15 @@ describe("lcx-finance-research-run", () => {
     await expect(runResearch(["--live", "--timeout-ms", "2147483648"])).rejects.toThrow(
       "--timeout-ms must be a positive integer <= 2147483647",
     );
+    await expect(runResearch(["--source-timeout-ms", "2147483648"])).rejects.toThrow(
+      "--source-timeout-ms must be a positive integer <= 2147483647",
+    );
+    await expect(runResearch(["--total-timeout-ms", "2147483648"])).rejects.toThrow(
+      "--total-timeout-ms must be a positive integer <= 2147483647",
+    );
+    await expect(runResearch(["--live"])).rejects.toThrow(
+      "--write is required with --live to persist the full research receipt",
+    );
   });
 
   it("routes committee payloads through the quality-stage adapter contract", () => {

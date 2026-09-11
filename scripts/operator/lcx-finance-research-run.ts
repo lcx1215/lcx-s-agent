@@ -85,8 +85,8 @@ function usage(): never {
       "  --max-api-calls N                  hard source-attempt budget (default: 48, max: 10000)",
       "  --max-concurrency N                batch concurrency (default: 3)",
       "  --max-sources-per-job N            source adapters per job (default: 2)",
-      "  --source-timeout-ms N              per-source timeout (default: 30000)",
-      "  --total-timeout-ms N               whole batch timeout (default: 180000)",
+      `  --source-timeout-ms N              per-source timeout (default: 30000, max: ${MAX_MODEL_TIMEOUT_MS})`,
+      `  --total-timeout-ms N               whole batch timeout (default: 180000, max: ${MAX_MODEL_TIMEOUT_MS})`,
       "  --retry-attempts N                 attempts per adapter (default: 1)",
       "  --include-yahoo-public-sources     explicitly opt in to Yahoo public adapters",
       "  --write                            write the full receipt to workspace state",
@@ -190,10 +190,18 @@ function parseArgs(args: readonly string[]): Options {
       options.maxSourcesPerJob = positiveInteger(readValue(args, index, arg), arg);
       index += 1;
     } else if (arg === "--source-timeout-ms") {
-      options.sourceTimeoutMs = positiveInteger(readValue(args, index, arg), arg);
+      options.sourceTimeoutMs = positiveInteger(
+        readValue(args, index, arg),
+        arg,
+        MAX_MODEL_TIMEOUT_MS,
+      );
       index += 1;
     } else if (arg === "--total-timeout-ms") {
-      options.totalTimeoutMs = positiveInteger(readValue(args, index, arg), arg);
+      options.totalTimeoutMs = positiveInteger(
+        readValue(args, index, arg),
+        arg,
+        MAX_MODEL_TIMEOUT_MS,
+      );
       index += 1;
     } else if (arg === "--retry-attempts") {
       options.retryAttempts = positiveInteger(readValue(args, index, arg), arg, 3);
@@ -473,6 +481,9 @@ async function run(
   options: Options,
 ): Promise<{ receipt: FinanceResearchRunReceipt; written?: unknown }> {
   const asOf = assertIsoTimestamp(options.asOf ?? new Date().toISOString());
+  if (options.live && !options.write) {
+    throw new Error("--write is required with --live to persist the full research receipt");
+  }
   const input: FinanceResearchRunInput = {
     ask: options.ask,
     asOf,
@@ -501,7 +512,10 @@ async function run(
     return { receipt, ...(written === undefined ? {} : { written }) };
   }
   const adapterPath = await resolveAdapterPath(options);
-  await fs.access(path.join(adapterPath, "adapter_config.json"));
+  await Promise.all([
+    fs.access(path.join(adapterPath, "adapter_config.json")),
+    fs.access(path.join(adapterPath, "adapters.safetensors")),
+  ]);
   const runtime = resolveLocalTextModelRuntimeConfig({
     adapterPath,
     modelId: options.modelId,

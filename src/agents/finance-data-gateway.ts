@@ -234,6 +234,7 @@ export function buildFinanceDataGatewaySnapshot(
 
   const missingEvidence: string[] = [];
   const freshnessWarnings: string[] = [];
+  const futureSourceWarnings: string[] = [];
   const asOfMs = Date.parse(asOf);
   const freshnessMaxMinutes = input.freshnessMaxMinutes ?? 60 * 24;
   const crossSourceSkewMaxMinutes = input.crossSourceSkewMaxMinutes ?? 60 * 24;
@@ -262,7 +263,13 @@ export function buildFinanceDataGatewaySnapshot(
         field.sourceUrlOrArtifact,
         `observations[${observationIndex}].fields[${fieldIndex}].sourceUrlOrArtifact`,
       );
-      const ageMinutes = Math.max(0, (asOfMs - Date.parse(sourceTimestamp)) / 60_000);
+      const sourceTimestampMs = Date.parse(sourceTimestamp);
+      if (sourceTimestampMs > asOfMs) {
+        const warning = `${field.name.trim()} from ${observation.providerName.trim()} is newer than requested asOf ${asOf}`;
+        futureSourceWarnings.push(warning);
+        freshnessWarnings.push(warning);
+      }
+      const ageMinutes = (asOfMs - sourceTimestampMs) / 60_000;
       if (ageMinutes > freshnessMaxMinutes) {
         freshnessWarnings.push(
           `${field.name.trim()} from ${observation.providerName.trim()} is ${Math.round(ageMinutes)}m old`,
@@ -271,6 +278,11 @@ export function buildFinanceDataGatewaySnapshot(
     }
   }
 
+  const eligibleObservations = input.observations.map((observation) => ({
+    ...observation,
+    fields: observation.fields.filter((field) => Date.parse(field.sourceTimestamp) <= asOfMs),
+  }));
+
   const providerRolesPresent = unique(
     input.observations.map((observation) => observation.providerRole),
   );
@@ -278,20 +290,24 @@ export function buildFinanceDataGatewaySnapshot(
     input.observations.map((observation) => observation.sourceFamily),
   );
   const fieldNames = unique(
-    input.observations.flatMap((observation) =>
+    eligibleObservations.flatMap((observation) =>
       observation.fields.map((field) => field.name.trim()).filter(Boolean),
     ),
   ).toSorted();
   const normalizedFields = fieldNames
-    .map((fieldName) => selectPrimaryField(fieldName, input.observations))
+    .map((fieldName) => selectPrimaryField(fieldName, eligibleObservations))
     .filter((field): field is FinanceDataGatewayNormalizedField => Boolean(field));
-  const conflicts = buildConflicts(fieldNames, input.observations);
+  const conflicts = buildConflicts(fieldNames, eligibleObservations);
   const crossSourceTimestampWarnings = buildCrossSourceTimestampWarnings(
     fieldNames,
-    input.observations,
+    eligibleObservations,
     crossSourceSkewMaxMinutes,
   );
   freshnessWarnings.push(...crossSourceTimestampWarnings);
+
+  if (futureSourceWarnings.length > 0) {
+    missingEvidence.push("post_cutoff_observations");
+  }
 
   if (!providerRolesPresent.includes("primary_market_data")) {
     missingEvidence.push("primary_market_data_provider");
@@ -315,6 +331,9 @@ export function buildFinanceDataGatewaySnapshot(
   }
   if (freshnessWarnings.length > 0) {
     requiredNextSteps.push("refresh_or_label_stale_fields");
+  }
+  if (futureSourceWarnings.length > 0) {
+    requiredNextSteps.push("review_future_dated_observations");
   }
 
   const qualityStatus: FinanceDataQualityStatus =
