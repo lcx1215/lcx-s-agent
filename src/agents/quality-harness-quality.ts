@@ -69,8 +69,14 @@ const EXECUTION_CLAIM_PATTERN =
   /已下单|下单成功|已经买入|已经卖出|已开仓|已平仓|交易已完成|转账成功|order filled|order placed|position opened|position closed|funds transferred/iu;
 
 function extractDataNumbers(text: string): string[] {
+  const withoutDateLiterals = text
+    .replace(
+      /\b20\d{2}[-/]\d{1,2}[-/]\d{1,2}(?:[T ][0-9]{1,2}:[0-9]{2}(?::[0-9]{2}(?:\.[0-9]+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?\b/giu,
+      " ",
+    )
+    .replace(/\b20\d{2}年\d{1,2}月\d{1,2}日?/gu, " ");
   return (
-    text.match(
+    withoutDateLiterals.match(
       /(?<!\d)[+-]?\s*(?:[$€£¥]\s*)?\d[\d,]*(?:\.\d+)?(?:\s*%|\s*(?:USD|EUR|GBP|CNY|JPY|美元|欧元|英镑|人民币|日元|元))?/giu,
     ) ?? []
   ).map((value) => value.replace(/\s+/g, ""));
@@ -87,23 +93,46 @@ function normalizedNumber(value: string): string {
         ? "eur"
         : /(?:£|gbp|英镑)/u.test(compact)
           ? "gbp"
-          : /(?:¥|cny|人民币|元)/u.test(compact)
-            ? "cny"
-            : /(?:jpy|日元)/u.test(compact)
-              ? "jpy"
+          : /(?:jpy|日元)/u.test(compact)
+            ? "jpy"
+            : /(?:¥|cny|人民币|元)/u.test(compact)
+              ? "cny"
               : "unitless";
   return `${number}|${unit}`;
 }
 
-function claimMatchesEvidenceEntity(claimText: string, evidenceText: string): boolean {
-  const claimEntities = claimText.match(/\b[A-Z][A-Z0-9.-]{1,9}\b/gu) ?? [];
-  if (claimEntities.length === 0) {
-    return true;
+const FINANCE_ENTITY_ALIASES: readonly Readonly<{ alias: RegExp; canonical: string }>[] = [
+  { alias: /AAPL|Apple|苹果(?:公司)?/giu, canonical: "AAPL" },
+  { alias: /MSFT|Microsoft|微软(?:公司)?/giu, canonical: "MSFT" },
+  { alias: /NVDA|NVIDIA|英伟达(?:公司)?/giu, canonical: "NVDA" },
+  { alias: /TSLA|Tesla|特斯拉(?:公司)?/giu, canonical: "TSLA" },
+  { alias: /AMZN|Amazon|亚马逊(?:公司)?/giu, canonical: "AMZN" },
+  { alias: /GOOGL|Google|Alphabet|谷歌(?:公司)?/giu, canonical: "GOOGL" },
+  { alias: /META|Meta|Facebook|脸书(?:公司)?/giu, canonical: "META" },
+  { alias: /QQQ|Invesco\s+QQQ/giu, canonical: "QQQ" },
+  { alias: /SPY|SPDR\s+S&P\s+500/giu, canonical: "SPY" },
+];
+
+const NON_ENTITY_TOKENS = new Set(["USD", "EUR", "GBP", "CNY", "JPY", "ETF", "API", "URL"]);
+
+function financeEntities(text: string): Set<string> {
+  let normalized = text;
+  for (const { alias, canonical } of FINANCE_ENTITY_ALIASES) {
+    normalized = normalized.replace(alias, ` ${canonical} `);
   }
-  const evidenceEntities = new Set(
-    (evidenceText.match(/\b[A-Z][A-Z0-9.-]{1,9}\b/gu) ?? []).map((value) => value.toUpperCase()),
+  return new Set(
+    (normalized.match(/\b[A-Z][A-Z0-9.-]{1,9}\b/gu) ?? []).filter(
+      (entity) => !NON_ENTITY_TOKENS.has(entity),
+    ),
   );
-  return claimEntities.some((entity) => evidenceEntities.has(entity.toUpperCase()));
+}
+
+function claimMatchesEvidenceEntity(claimText: string, evidenceText: string): boolean {
+  const claimEntities = financeEntities(claimText);
+  const evidenceEntities = financeEntities(evidenceText);
+  return (
+    claimEntities.size > 0 && [...claimEntities].some((entity) => evidenceEntities.has(entity))
+  );
 }
 
 function hasEvidenceSourceAndTimestamp(evidence: QualityHarnessEvidence): boolean {

@@ -142,9 +142,11 @@ describe("finance_chart_analysis tool", () => {
 
   it("uses the configured image tool when the primary model has no vision", async () => {
     let visionCalls = 0;
+    let visionImage: unknown;
     const visionTool = {
-      execute: async () => {
+      execute: async (_toolCallId: unknown, args: unknown) => {
         visionCalls += 1;
+        visionImage = (args as { image?: unknown }).image;
         return {
           content: [{ type: "text", text: "visible chart context" }],
           details: { model: "test-vlm" },
@@ -162,6 +164,7 @@ describe("finance_chart_analysis tool", () => {
       image: `data:image/png;base64,${ONE_PIXEL_PNG_B64}`,
     });
     expect(visionCalls).toBe(1);
+    expect(visionImage).toBe(`data:image/png;base64,${ONE_PIXEL_PNG_B64}`);
     expect(result.details).toEqual(
       expect.objectContaining({
         visual: expect.objectContaining({

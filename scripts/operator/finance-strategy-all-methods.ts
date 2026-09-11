@@ -107,15 +107,131 @@ function requiredText(value: unknown, label: string): string {
 }
 
 function sourceGroupReady(receipts: JsonObject): boolean {
-  const rows = Object.values(receipts);
-  return (
-    rows.length > 0 &&
-    rows.every(
-      (receipt) =>
-        typeof receipt === "object" &&
-        receipt !== null &&
-        Number((receipt as JsonObject).http_status) === 200,
+  const rows = Object.entries(receipts);
+  return rows.length > 0 && rows.every(([key, receipt]) => sourceReceiptReady(key, receipt));
+}
+
+const SOURCE_RECEIPT_TIMESTAMP_KEYS = [
+  "finished_at",
+  "finishedAt",
+  "observed_at",
+  "observedAt",
+  "source_timestamp",
+  "sourceTimestamp",
+  "retrieved_at",
+  "retrievedAt",
+  "quote_timestamp",
+  "updated_at",
+  "updatedAt",
+  "timestamp",
+] as const;
+
+const SOURCE_RECEIPT_REQUEST_KEYS = [
+  "instrument",
+  "symbol",
+  "ticker",
+  "series_id",
+  "seriesId",
+  "query",
+  "window",
+  "from",
+  "to",
+  "start",
+  "end",
+] as const;
+
+const SOURCE_RECEIPT_STATUS_KEYS = [
+  "status",
+  "evidence_status",
+  "body_status",
+  "provider_status",
+  "data_status",
+] as const;
+
+const SOURCE_RECEIPT_ERROR_KEYS = [
+  "error",
+  "error_code",
+  "error_message",
+  "provider_error",
+  "body_error",
+  "transport_error",
+] as const;
+
+function nonEmptyReceiptText(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function nestedReceiptObject(receipt: JsonObject): JsonObject | undefined {
+  for (const key of ["request", "request_context", "requestContext", "params"] as const) {
+    const value = receipt[key];
+    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+      return value as JsonObject;
+    }
+  }
+  return undefined;
+}
+
+function receiptRequestValues(receipt: JsonObject): string[] {
+  const request = nestedReceiptObject(receipt);
+  return [...SOURCE_RECEIPT_REQUEST_KEYS]
+    .flatMap((key) => [receipt[key], request?.[key]])
+    .map((value) =>
+      typeof value === "number" && Number.isFinite(value)
+        ? String(value)
+        : nonEmptyReceiptText(value),
     )
+    .filter((value): value is string => value !== undefined);
+}
+
+function sourceReceiptReady(key: string, value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const receipt = value as JsonObject;
+  const httpStatus = receipt.http_status ?? receipt.httpStatus;
+  if (String(httpStatus).trim() !== "200") {
+    return false;
+  }
+  const timestamp = SOURCE_RECEIPT_TIMESTAMP_KEYS.map((timestampKey) => receipt[timestampKey]).find(
+    (candidate) => nonEmptyReceiptText(candidate) !== undefined,
+  );
+  if (typeof timestamp !== "string" || !Number.isFinite(Date.parse(timestamp))) {
+    return false;
+  }
+  for (const statusKey of SOURCE_RECEIPT_STATUS_KEYS) {
+    const statusValue = receipt[statusKey];
+    if (statusValue === undefined || statusValue === null || statusValue === "") {
+      continue;
+    }
+    const status = nonEmptyReceiptText(statusValue);
+    if (
+      !status ||
+      !["ok", "ready", "success", "succeeded", "completed", "200"].includes(status.toLowerCase())
+    ) {
+      return false;
+    }
+  }
+  if (
+    SOURCE_RECEIPT_ERROR_KEYS.some((errorKey) => {
+      const error = receipt[errorKey];
+      return (
+        error !== undefined &&
+        error !== null &&
+        error !== false &&
+        (typeof error !== "string" || error.trim().length > 0)
+      );
+    })
+  ) {
+    return false;
+  }
+  const requestValues = receiptRequestValues(receipt);
+  if (requestValues.length === 0) {
+    return false;
+  }
+  const expectedInstrument = /^[A-Z][A-Z0-9.-]{1,9}$/u.test(key) ? key.toUpperCase() : undefined;
+  return (
+    expectedInstrument === undefined ||
+    requestValues.some((item) => item.toUpperCase() === expectedInstrument)
   );
 }
 
@@ -150,13 +266,11 @@ function sourceWindow(value: unknown, fallback: string): string {
 
 function checkBooleans(value: unknown, label: string): boolean {
   const checks = requiredObject(value, label);
-  const values = Object.entries(checks)
-    .filter(([, item]) => typeof item === "boolean")
-    .map(([, item]) => item);
-  if (values.length === 0) {
-    throw new Error(`${label} must contain boolean checks`);
+  const entries = Object.entries(checks);
+  if (entries.length === 0 || entries.some(([, item]) => typeof item !== "boolean")) {
+    throw new Error(`${label} must contain only boolean checks`);
   }
-  return values.every(Boolean);
+  return entries.every(([, item]) => item === true);
 }
 
 function methodReceipt(
@@ -252,7 +366,7 @@ function buildMethods(
   );
   const realYahooReady = sourceGroupReady(realYahooSources);
   const cboeSource = requiredObject(realSources.cboe, "real_market_summary.sources.cboe");
-  const cboeReady = Number(cboeSource.http_status) === 200;
+  const cboeReady = sourceReceiptReady("cboe", cboeSource);
   const eventSources = requiredObject(
     realSources.event_sources,
     "real_market_summary.sources.event_sources",
@@ -296,7 +410,7 @@ function buildMethods(
   };
   const realGate = (method: string) =>
     requiredText(
-      realTest(method)?.gate_status ?? real(method).gate_status ?? "unknown",
+      realTest(method)?.gate_status ?? real(method).gate_status,
       `${method}.gate_status`,
     );
   const m09Events = real("M09").events;

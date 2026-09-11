@@ -238,7 +238,7 @@ export function createOpenMeteoGeocodingAdapter(
       if (!result?.name || result.latitude === undefined || result.longitude === undefined) {
         throw new GeospatialSourceError("Open-Meteo returned no geocoding result");
       }
-      const sourceTimestamp = request.asOf;
+      const sourceTimestamp = new Date().toISOString();
       const fields: GeospatialSourceField[] = [
         {
           name: "latitude",
@@ -298,7 +298,7 @@ export function createOpenMeteoGeocodingAdapter(
       return geocodeObservation({
         providerName: "open-meteo-geocoding",
         providerRole: "primary_reference",
-        observedAt: request.asOf,
+        observedAt: sourceTimestamp,
         sourceUrlOrArtifact,
         fields,
       });
@@ -340,7 +340,7 @@ export function createNominatimGeocodingAdapter(
       if (!result?.lat || !result.lon || !result.display_name) {
         throw new GeospatialSourceError("Nominatim returned no geocoding result");
       }
-      const sourceTimestamp = request.asOf;
+      const sourceTimestamp = new Date().toISOString();
       const fields: GeospatialSourceField[] = [
         {
           name: "latitude",
@@ -378,7 +378,7 @@ export function createNominatimGeocodingAdapter(
       return geocodeObservation({
         providerName: "nominatim-openstreetmap",
         providerRole: "cross_check_reference",
-        observedAt: request.asOf,
+        observedAt: sourceTimestamp,
         sourceUrlOrArtifact,
         fields,
       });

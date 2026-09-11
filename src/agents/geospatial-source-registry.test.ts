@@ -46,10 +46,12 @@ describe("geospatial source registry", () => {
     });
     expect(receipt.status).toBe("needs_review");
     expect(receipt.sourceAttempts).toHaveLength(2);
-    expect(receipt.conflicts.map((conflict) => conflict.fieldName)).toEqual([
-      "latitude",
-      "longitude",
-    ]);
+    expect(receipt.conflicts).toEqual([]);
+    expect(receipt.freshnessWarnings.length).toBeGreaterThan(0);
+    expect(receipt.observations.every((observation) => observation.observedAt !== AS_OF)).toBe(
+      true,
+    );
+    expect(receipt.normalizedFields.every((field) => field.sourceTimestamp !== AS_OF)).toBe(true);
   });
 
   it("normalizes weather current fields and respects coordinate bounds", async () => {

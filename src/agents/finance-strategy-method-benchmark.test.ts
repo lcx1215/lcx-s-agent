@@ -111,8 +111,40 @@ describe("strategy receipt evidence boundaries", () => {
       false,
     );
     expect(
-      allMethods.sourceGroupReady({ a: { http_status: 200 }, b: { http_status: "200" } }),
+      allMethods.sourceGroupReady({
+        a: {
+          http_status: 200,
+          status: "success",
+          finished_at: "2026-09-10T12:00:00Z",
+          request: { instrument: "AAPL" },
+        },
+        b: {
+          http_status: "200",
+          evidence_status: "ready",
+          observed_at: "2026-09-10T12:00:00Z",
+          request: { instrument: "AAPL" },
+        },
+      }),
     ).toBe(true);
+    expect(
+      allMethods.sourceGroupReady({
+        feed: {
+          http_status: 200,
+          finished_at: "2026-09-10T12:00:00Z",
+          request: { instrument: "AAPL" },
+          error: "provider payload error",
+        },
+      }),
+    ).toBe(false);
+    expect(
+      allMethods.sourceGroupReady({
+        AAPL: {
+          http_status: 200,
+          finished_at: "2026-09-10T12:00:00Z",
+          request: { instrument: "QQQ" },
+        },
+      }),
+    ).toBe(false);
   });
   it("does not stringify invalid source metadata into credible receipt labels", () => {
     for (const value of [{ gate_status: "ready" }, null, undefined, 200, " "]) {

@@ -182,7 +182,9 @@ function toolContentText(result: unknown): string {
 async function loadChartImage(
   imageInput: string,
   workspaceDir: string,
+  signal?: AbortSignal,
 ): Promise<{ data: string; mimeType: string; resolvedImage: string; byteLength: number }> {
+  signal?.throwIfAborted();
   const resolvedImage = imageInput.replace(/^@/u, "").trim();
   if (!resolvedImage) {
     throw new Error("image must not be empty");
@@ -199,7 +201,9 @@ async function loadChartImage(
   const media = await loadWebMedia(resolvedImage, {
     maxBytes: 10 * 1024 * 1024,
     localRoots: resolveMediaToolLocalRoots(workspaceDir),
+    signal,
   });
+  signal?.throwIfAborted();
   if (media.kind !== "image") {
     throw new Error(`chart image is not an image: ${media.kind}`);
   }
@@ -230,7 +234,7 @@ export function createFinanceChartAnalysisTool(options?: {
     description:
       "Analyze a stock or other market chart through two explicit lanes: fetch and calculate deterministic OHLCV features from canonical history, and optionally attach a chart image for native vision review. This is research-only and never issues trades, orders, sizing, or wallet actions.",
     parameters: FinanceChartAnalysisSchema,
-    execute: async (_toolCallId, args) => {
+    execute: async (_toolCallId, args, signal) => {
       const params = args as {
         instrument?: string;
         assetClass?: string;
@@ -292,6 +296,7 @@ export function createFinanceChartAnalysisTool(options?: {
               adapters,
               maxSources: params.maxSources,
               timeoutMs: params.timeoutMs,
+              signal,
             });
             sourceRecords = receipt.records as unknown as FinanceChartRecord[];
             collectionStatus = receipt.status;
@@ -331,18 +336,23 @@ export function createFinanceChartAnalysisTool(options?: {
         let visualLatencyMs: number | undefined;
         if (imageInput && includeImage) {
           try {
-            imagePayload = await loadChartImage(imageInput, workspaceDir);
+            imagePayload = await loadChartImage(imageInput, workspaceDir, signal);
           } catch (error) {
             imageError = error instanceof Error ? error.message : String(error);
           }
         }
         if (imagePayload && !options?.modelHasVision && options?.visionTool) {
+          signal?.throwIfAborted();
           const visualStartedAt = Date.now();
           try {
-            const visionResult = await options.visionTool.execute("finance-chart-vision", {
-              image: imageInput,
-              prompt: FINANCE_CHART_VISUAL_PROMPT,
-            });
+            const visionResult = await options.visionTool.execute(
+              "finance-chart-vision",
+              {
+                image: `data:${imagePayload.mimeType};base64,${imagePayload.data}`,
+                prompt: FINANCE_CHART_VISUAL_PROMPT,
+              },
+              signal,
+            );
             visionAnalysis = {
               status: "completed",
               text: toolContentText(visionResult) || "vision tool returned no textual analysis",
@@ -440,6 +450,7 @@ export function createFinanceChartAnalysisTool(options?: {
           ],
         };
         const receiptPayload = { ...payload, bars: normalization.bars };
+        signal?.throwIfAborted();
         const receiptPath = params.writeReceipt
           ? await writeChartReceipt(workspaceDir, instrument ?? "provided_bars", receiptPayload)
           : undefined;
