@@ -528,33 +528,6 @@ describe("lcx-change-impact-plan", () => {
     );
   });
 
-  it("routes macOS owner control-room files as local UI, not live proof", async () => {
-    const payload = await runPlanArgs([
-      "--files",
-      "apps/macos/Sources/OpenClaw/LCXAgentControlRoom.swift",
-      "apps/macos/Sources/OpenClaw/LCXAgentControlRoomView.swift",
-      "apps/macos/Tests/OpenClawIPCTests/LCXAgentControlRoomTests.swift",
-    ]);
-
-    expect(payload.ok).toBe(true);
-    expect(payload.unmatchedFiles).toEqual([]);
-    expect(payload.affectedLanes).toEqual(["local_automation"]);
-    expect(payload.impacts).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "macos_owner_control_room",
-          lane: "local_automation",
-          requiredChecks: ["macos-control-room-build-or-test"],
-          safetyNotes: expect.arrayContaining([
-            expect.stringContaining(
-              "do not treat them as external-channel or legacy live External proof",
-            ),
-          ]),
-        }),
-      ]),
-    );
-  });
-
   it("routes local ignore hygiene through the runbook lane", async () => {
     const payload = await runPlan(".gitignore");
 

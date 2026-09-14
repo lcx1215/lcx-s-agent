@@ -413,23 +413,6 @@ const PATH_RULES: PathRule[] = [
     ],
   },
   {
-    id: "macos_owner_control_room",
-    lane: "local_automation",
-    patterns: [
-      /^apps\/macos\/Sources\/OpenClaw\/DebugActions\.swift$/u,
-      /^apps\/macos\/Sources\/OpenClaw\/LCXAgentControlRoom\.swift$/u,
-      /^apps\/macos\/Sources\/OpenClaw\/LCXAgentControlRoomView\.swift$/u,
-      /^apps\/macos\/Sources\/OpenClaw\/MenuContentView\.swift$/u,
-      /^apps\/macos\/Tests\/OpenClawIPCTests\/LCXAgentControlRoomTests\.swift$/u,
-    ],
-    requiredChecks: ["macos-control-room-build-or-test"],
-    commands: ["xcodebuild -list"],
-    safetyNotes: [
-      "macOS control-room files are local UI only; do not treat them as external-channel or legacy live External proof.",
-    ],
-    risk: "elevated",
-  },
-  {
     id: "operator_runbook_docs",
     lane: "global_doctrine_and_runbook",
     patterns: [/^ops\/codex-remote-devbox-and-browser-runbook\.md$/u],

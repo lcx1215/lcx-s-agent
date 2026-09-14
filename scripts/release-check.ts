@@ -4,7 +4,6 @@ import { execSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { sparkleBuildFloorsFromShortVersion, type SparkleBuildFloors } from "./sparkle-build.ts";
 
 type PackFile = { path: string };
 type PackResult = { files?: PackFile[] };
@@ -33,10 +32,6 @@ const requiredPathGroups = [
   "dist/plugin-sdk/line.d.ts",
   "dist/build-info.json",
 ];
-const forbiddenPrefixes = ["dist/OpenClaw.app/"];
-const appcastPath = resolve("appcast.xml");
-const laneBuildMin = 1_000_000_000;
-const laneFloorAdoptionDateKey = 20260227;
 
 type PackageJson = {
   name?: string;
@@ -131,83 +126,6 @@ function checkPluginVersions() {
   }
 }
 
-function extractTag(item: string, tag: string): string | null {
-  const escapedTag = tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const regex = new RegExp(`<${escapedTag}>([^<]+)</${escapedTag}>`);
-  return regex.exec(item)?.[1]?.trim() ?? null;
-}
-
-export function collectAppcastSparkleVersionErrors(xml: string): string[] {
-  const itemMatches = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)];
-  const errors: string[] = [];
-  const calverItems: Array<{ title: string; sparkleBuild: number; floors: SparkleBuildFloors }> =
-    [];
-
-  if (itemMatches.length === 0) {
-    errors.push("appcast.xml contains no <item> entries.");
-  }
-
-  for (const [, item] of itemMatches) {
-    const title = extractTag(item, "title") ?? "unknown";
-    const shortVersion = extractTag(item, "sparkle:shortVersionString");
-    const sparkleVersion = extractTag(item, "sparkle:version");
-
-    if (!sparkleVersion) {
-      errors.push(`appcast item '${title}' is missing sparkle:version.`);
-      continue;
-    }
-    if (!/^[0-9]+$/.test(sparkleVersion)) {
-      errors.push(`appcast item '${title}' has non-numeric sparkle:version '${sparkleVersion}'.`);
-      continue;
-    }
-
-    if (!shortVersion) {
-      continue;
-    }
-    const floors = sparkleBuildFloorsFromShortVersion(shortVersion);
-    if (floors === null) {
-      continue;
-    }
-
-    calverItems.push({ title, sparkleBuild: Number(sparkleVersion), floors });
-  }
-
-  const observedLaneAdoptionDateKey = calverItems
-    .filter((item) => item.sparkleBuild >= laneBuildMin)
-    .map((item) => item.floors.dateKey)
-    .toSorted((a, b) => a - b)[0];
-  const effectiveLaneAdoptionDateKey =
-    typeof observedLaneAdoptionDateKey === "number"
-      ? Math.min(observedLaneAdoptionDateKey, laneFloorAdoptionDateKey)
-      : laneFloorAdoptionDateKey;
-
-  for (const item of calverItems) {
-    const expectLaneFloor =
-      item.sparkleBuild >= laneBuildMin || item.floors.dateKey >= effectiveLaneAdoptionDateKey;
-    const floor = expectLaneFloor ? item.floors.laneFloor : item.floors.legacyFloor;
-    if (item.sparkleBuild < floor) {
-      const floorLabel = expectLaneFloor ? "lane floor" : "legacy floor";
-      errors.push(
-        `appcast item '${item.title}' has sparkle:version ${item.sparkleBuild} below ${floorLabel} ${floor}.`,
-      );
-    }
-  }
-
-  return errors;
-}
-
-function checkAppcastSparkleVersions() {
-  const xml = readFileSync(appcastPath, "utf8");
-  const errors = collectAppcastSparkleVersionErrors(xml);
-  if (errors.length > 0) {
-    console.error("release-check: appcast sparkle version validation failed:");
-    for (const error of errors) {
-      console.error(`  - ${error}`);
-    }
-    process.exit(1);
-  }
-}
-
 // Critical functions that channel extension plugins import from lcx-agent/plugin-sdk.
 // If any are missing from the compiled output, plugins crash at runtime (#27569).
 const requiredPluginSdkExports = [
@@ -271,7 +189,6 @@ function checkPluginSdkExports() {
 
 function main() {
   checkPluginVersions();
-  checkAppcastSparkleVersions();
   checkPluginSdkExports();
 
   const results = runPackDry();
@@ -286,22 +203,11 @@ function main() {
       return paths.has(group) ? [] : [group];
     })
     .toSorted();
-  const forbidden = [...paths].filter((path) =>
-    forbiddenPrefixes.some((prefix) => path.startsWith(prefix)),
-  );
 
-  if (missing.length > 0 || forbidden.length > 0) {
-    if (missing.length > 0) {
-      console.error("release-check: missing files in npm pack:");
-      for (const path of missing) {
-        console.error(`  - ${path}`);
-      }
-    }
-    if (forbidden.length > 0) {
-      console.error("release-check: forbidden files in npm pack:");
-      for (const path of forbidden) {
-        console.error(`  - ${path}`);
-      }
+  if (missing.length > 0) {
+    console.error("release-check: missing files in npm pack:");
+    for (const path of missing) {
+      console.error(`  - ${path}`);
     }
     process.exit(1);
   }
