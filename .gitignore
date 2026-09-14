@@ -112,6 +112,9 @@ Swabble/build/
 dist/protocol.schema.json
 .ant-colony/
 
+# Local runtime state written by operator scripts and runners (branches/_system)
+branches/_system/
+
 # Generated extension declaration output
 ops/external-channel-artifacts/promotions/
 
