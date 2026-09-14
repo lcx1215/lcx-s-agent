@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, type ExecFileOptions } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -737,6 +737,21 @@ const extractAdapterFromCommand = (command: string): string | undefined => {
 };
 
 const execFileAsync = promisify(execFile);
+
+// `promisify(execFile)` throws synchronously when spawn itself is denied (EPERM/EACCES),
+// before any promise exists, so a chained `.catch()` never runs. Probe commands such as
+// ps/du/sysctl are best-effort, so wrap them and degrade to "tool unavailable".
+async function execFileSafely(
+  command: string,
+  args: readonly string[],
+  options: ExecFileOptions = {},
+): Promise<{ stdout: string; stderr: string } | undefined> {
+  try {
+    return await execFileAsync(command, args, options);
+  } catch {
+    return undefined;
+  }
+}
 const DEFAULT_EXTERNAL_CHANNEL_BINDING_SNAPSHOT_PATH = path.join(
   DEFAULT_WORKSPACE_DIR,
   "state",
@@ -1966,9 +1981,9 @@ async function activeTrainingProcesses(enabled: boolean): Promise<ActiveTraining
   if (!enabled) {
     return [];
   }
-  const result = await execFileAsync("ps", ["-ax", "-o", "pid=,ppid=,etime=,command="], {
+  const result = (await execFileSafely("ps", ["-ax", "-o", "pid=,ppid=,etime=,command="], {
     maxBuffer: 1024 * 1024,
-  }).catch(() => ({ stdout: "" }));
+  })) ?? { stdout: "" };
   return result.stdout.split(/\r?\n/u).flatMap((line) => {
     const match = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/u.exec(line);
     if (!match) {
@@ -2062,14 +2077,14 @@ async function directorySizeBytes(dirPath: string): Promise<number | undefined> 
   if (!stats?.isDirectory()) {
     return undefined;
   }
-  const result = await execFileAsync("du", ["-sk", dirPath]).catch(() => undefined);
+  const result = await execFileSafely("du", ["-sk", dirPath]);
   const rawSize = result?.stdout.trim().split(/\s+/u)[0];
   const sizeKb = rawSize ? Number(rawSize) : NaN;
   return Number.isFinite(sizeKb) ? sizeKb * 1024 : undefined;
 }
 
 async function machineMemoryBytes(): Promise<number | undefined> {
-  const result = await execFileAsync("sysctl", ["-n", "hw.memsize"]).catch(() => undefined);
+  const result = await execFileSafely("sysctl", ["-n", "hw.memsize"]);
   const parsed = result ? Number(result.stdout.trim()) : NaN;
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
