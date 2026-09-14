@@ -97,6 +97,7 @@ package-lock.json
 .agents/
 .agents
 .agent/
+.workbuddy-ai/
 skills-lock.json
 
 # Local iOS signing overrides
@@ -110,6 +111,9 @@ Swabble/build/
 # Generated protocol schema (produced via pnpm protocol:gen)
 dist/protocol.schema.json
 .ant-colony/
+
+# Local runtime state written by operator scripts and runners (branches/_system)
+branches/_system/
 
 # Generated extension declaration output
 ops/external-channel-artifacts/promotions/

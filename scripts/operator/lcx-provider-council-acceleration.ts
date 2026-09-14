@@ -3,7 +3,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { runExternalLearningCouncil } from "../../src/agents/provider-learning-council.js";
+import {
+  runExternalLearningCouncil,
+  resolveLearningCouncilDisabledRoles,
+} from "../../src/agents/provider-learning-council.js";
 import { loadConfig } from "../../src/config/config.js";
 import { DEFAULT_WORKSPACE_DIR, GOVERNANCE_AUTOPILOT_LATEST_PATH } from "./lcx-local-paths.ts";
 
@@ -336,6 +339,7 @@ async function dailyUseCoverage(
   workspaceDir: string,
   nowMs = Date.now(),
   windowHours = 24,
+  requiredRoles: readonly string[] = REQUIRED_ROLES,
 ): Promise<DailyUseCoverage> {
   const files = await listRecentCouncilFiles(workspaceDir);
   const windowMs = windowHours * 60 * 60 * 1_000;
@@ -353,7 +357,7 @@ async function dailyUseCoverage(
     }
     const roles = summarizeRoles(payload);
     const successfulRoles = new Set(roles.filter((role) => role.success).map((role) => role.role));
-    if (REQUIRED_ROLES.every((role) => successfulRoles.has(role))) {
+    if (requiredRoles.every((role) => successfulRoles.has(role))) {
       if (
         !latestCompleteCouncilAt ||
         Date.parse(generatedAt ?? "") > Date.parse(latestCompleteCouncilAt)
@@ -389,7 +393,7 @@ async function dailyUseCoverage(
   const successfulRolesInWindow = roleRows
     .filter((role) => role.success > 0)
     .map((role) => role.role);
-  const missingSuccessfulRoles = REQUIRED_ROLES.filter(
+  const missingSuccessfulRoles = requiredRoles.filter(
     (role) => !successfulRolesInWindow.includes(role),
   );
   const nextDueAt = latestCompleteCouncilAt
@@ -410,6 +414,7 @@ async function dailyUseCoverage(
 function councilFreshAndComplete(
   council: LatestCouncil | undefined,
   maxFreshMinutes: number,
+  requiredRoles: readonly string[],
 ): boolean {
   if (!council || council.status === "degraded") {
     return false;
@@ -417,7 +422,7 @@ function councilFreshAndComplete(
   if (council.ageMinutes === undefined || council.ageMinutes > maxFreshMinutes) {
     return false;
   }
-  return REQUIRED_ROLES.every((role) => council.successfulRoles.includes(role));
+  return requiredRoles.every((role) => council.successfulRoles.includes(role));
 }
 
 function extractTrainingTruth(snapshot: Record<string, unknown> | undefined) {
@@ -456,6 +461,7 @@ function buildFocusPrompt(params: {
   options: CliOptions;
   trainingTruth: ReturnType<typeof extractTrainingTruth>;
   latestCouncil: LatestCouncil | undefined;
+  minimaxDisabled: boolean;
 }) {
   const blockedCaseIds = [
     ...params.trainingTruth.failedCaseIds,
@@ -466,7 +472,7 @@ function buildFocusPrompt(params: {
     params.options.focus ??
     [
       "LCX Agent provider-council acceleration review.",
-      "目标：多花 Kimi/DeepSeek/MiniMax token 来加速本体进化，但只能产出可验证的 SOP 小改动、eval case、teacher curriculum 和 rejected edit buffer。",
+      "目标：多花 Kimi/DeepSeek token 来加速本体进化，但只能产出可验证的 SOP 小改动、eval case、teacher curriculum 和 rejected edit buffer。",
       "重点失败族：single_stock_curve_technical_timing_preflight、external knowledge/module absorption、finance data provenance、review panel、direct buy/sell refusal。",
       "不要给交易建议，不要改 provider config，不要碰 external channel sender，不要碰 protected memory。",
     ].join(" ");
@@ -484,10 +490,14 @@ function buildFocusPrompt(params: {
     `- blocked_clusters: ${params.trainingTruth.blockedClusters.join(", ") || "none"}`,
     `- latest_council: ${params.latestCouncil?.path ?? "none"}`,
     "",
-    "三模型分工：",
+    params.minimaxDisabled ? "两模型分工：" : "三模型分工：",
     "- Kimi：把失败样本压缩成一个可执行 SOP 小改动和验证集题目。",
     "- DeepSeek：挑 source_registry、data_provenance_quality、eval_absorbed、direct_buy_sell_answer、technical_timing_as_standalone_alpha 的漏洞。",
-    "- MiniMax：做反例和风险审查，防止为了烧 token 制造垃圾产物。",
+    ...(params.minimaxDisabled
+      ? [
+          "- 注意：MiniMax provider 已从运行时配置停用，本 council 只有两个角色；不要等待或假设有 MiniMax 反例审查。",
+        ]
+      : ["- MiniMax：做反例和风险审查，防止为了烧 token 制造垃圾产物。"]),
     "",
     "输出要求：",
     "- 只给可落地的 3-6 个改进项。",
@@ -496,11 +506,17 @@ function buildFocusPrompt(params: {
   ].join("\n");
 }
 
-async function runCouncil(prompt: string, options: CliOptions): Promise<string> {
+async function runCouncil(
+  prompt: string,
+  options: CliOptions,
+  minimaxDisabled: boolean,
+): Promise<string> {
   process.env.OPENCLAW_LEARNING_COUNCIL_KIMI_MODEL = "moonshot/kimi-k2.6";
   process.env.OPENCLAW_LEARNING_COUNCIL_DEEPSEEK_MODEL =
     "custom-api-deepseek-com/deepseek-v4-flash";
-  process.env.OPENCLAW_LEARNING_COUNCIL_MINIMAX_MODEL = "minimax-portal/MiniMax-M2.7";
+  if (!minimaxDisabled) {
+    process.env.OPENCLAW_LEARNING_COUNCIL_MINIMAX_MODEL = "minimax-portal/MiniMax-M2.7";
+  }
   const messageId = `provider-council-acceleration-${new Date()
     .toISOString()
     .replaceAll(":", "-")}`;
@@ -514,14 +530,18 @@ async function runCouncil(prompt: string, options: CliOptions): Promise<string> 
   });
 }
 
-function runCouncilWithTimeout(prompt: string, options: CliOptions): Promise<string> {
+function runCouncilWithTimeout(
+  prompt: string,
+  options: CliOptions,
+  minimaxDisabled: boolean,
+): Promise<string> {
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       reject(new Error(`provider council timeout after ${options.timeoutMs}ms`));
     }, options.timeoutMs);
   });
-  return Promise.race([runCouncil(prompt, options), timeout]).finally(() => {
+  return Promise.race([runCouncil(prompt, options, minimaxDisabled), timeout]).finally(() => {
     if (timer) {
       clearTimeout(timer);
     }
@@ -548,6 +568,9 @@ function renderText(details: Record<string, unknown>) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  const disabledRoles = resolveLearningCouncilDisabledRoles(loadConfig());
+  const minimaxDisabled = disabledRoles.includes("minimax");
+  const requiredRoles = REQUIRED_ROLES.filter((role) => !disabledRoles.includes(role));
   const [gitLines, activePids, snapshot, council, dailyUse] = await Promise.all([
     gitStatusLines(),
     activePidSummary(options),
@@ -557,15 +580,24 @@ async function main() {
         : path.join(options.workspaceDir, "state", "lcx-governance-autopilot-latest.json"),
     ),
     latestCouncil(options.workspaceDir),
-    dailyUseCoverage(options.workspaceDir),
+    dailyUseCoverage(options.workspaceDir, Date.now(), 24, requiredRoles),
   ]);
   const trainingTruth = extractTrainingTruth(snapshot);
   const gitClean = gitLines.length <= 1;
   const activeCounts = activePidCounts(activePids);
   const activeEvalOrMlx =
     !activePids.available || activePids.eval.length > 0 || activePids.mlx.length > 0;
-  const freshCompleteCouncil = councilFreshAndComplete(council, options.maxFreshMinutes);
-  const prompt = buildFocusPrompt({ options, trainingTruth, latestCouncil: council });
+  const freshCompleteCouncil = councilFreshAndComplete(
+    council,
+    options.maxFreshMinutes,
+    requiredRoles,
+  );
+  const prompt = buildFocusPrompt({
+    options,
+    trainingTruth,
+    latestCouncil: council,
+    minimaxDisabled,
+  });
   const hardBlocks = [
     ...(activeEvalOrMlx ? ["active_eval_or_mlx"] : []),
     ...(!gitClean ? ["dirty_git_worktree"] : []),
@@ -582,7 +614,7 @@ async function main() {
 
   if (options.write && canRunProviderCouncilNow) {
     try {
-      const result = await runCouncilWithTimeout(prompt, options);
+      const result = await runCouncilWithTimeout(prompt, options, minimaxDisabled);
       providerResultSnippet = result.slice(0, 2_000);
       action = "provider_council_run_completed";
       status = "provider_council_acceleration_receipt_written";
@@ -617,6 +649,8 @@ async function main() {
     activeEvalOrMlx,
     latestCouncil: council,
     freshCompleteCouncil,
+    disabledRoles,
+    requiredRoles,
     dailyUse,
     hardBlocks,
     canRunProviderCouncilNow,

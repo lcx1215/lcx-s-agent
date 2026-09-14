@@ -29,6 +29,8 @@ import {
 } from "./finance-crypto-source-adapters.js";
 import {
   buildFinanceDataGatewaySnapshot,
+  FINANCE_LIVE_NOW_MAX_FUTURE_SKEW_MINUTES,
+  type FinanceAsOfMode,
   type FinanceDataGatewayInput,
   type FinanceDataGatewayObservationInput,
   type FinanceDataGatewaySnapshot,
@@ -54,6 +56,7 @@ export type FinanceRealtimeSourceRequest = Readonly<{
   assetClass: string;
   useCase: string;
   asOf: string;
+  asOfMode?: FinanceAsOfMode;
   freshnessMaxMinutes?: number;
   crossSourceSkewMaxMinutes?: number;
   requireOfficialReference?: boolean;
@@ -168,6 +171,7 @@ function normalizeRequest(request: FinanceRealtimeSourceRequest): FinanceRealtim
     assetClass: requiredText(request.assetClass, "assetClass"),
     useCase: requiredText(request.useCase, "useCase"),
     asOf: assertIsoTimestamp(request.asOf, "asOf"),
+    ...(request.asOfMode === undefined ? {} : { asOfMode: request.asOfMode }),
     freshnessMaxMinutes: request.freshnessMaxMinutes,
     crossSourceSkewMaxMinutes: request.crossSourceSkewMaxMinutes,
     requireOfficialReference: request.requireOfficialReference,
@@ -198,6 +202,21 @@ function selectAdapters(
   requireOfficialReference: boolean | undefined,
 ): FinanceRealtimeSourceAdapter[] {
   const selected = candidates.slice(0, maxSources);
+  const crossCheck = candidates.find(
+    (adapter) => adapter.providerRole === "cross_check_market_data",
+  );
+  if (
+    crossCheck &&
+    maxSources > 1 &&
+    !selected.some((adapter) => adapter.providerRole === "cross_check_market_data")
+  ) {
+    const replaceIndex = selected.findLastIndex(
+      (adapter) => adapter.providerRole === "primary_market_data",
+    );
+    if (replaceIndex >= 0) {
+      selected[replaceIndex] = crossCheck;
+    }
+  }
   if (
     !requireOfficialReference ||
     selected.some((adapter) => adapter.providerRole === "official_or_issuer_reference")
@@ -210,7 +229,18 @@ function selectAdapters(
   if (!official) {
     return selected;
   }
-  return [...selected.slice(0, Math.max(0, maxSources - 1)), official];
+  const hasCrossCheck = selected.some(
+    (adapter) => adapter.providerRole === "cross_check_market_data",
+  );
+  const replaceIndex = selected.findLastIndex((adapter) =>
+    hasCrossCheck && maxSources >= 3
+      ? adapter.providerRole === "primary_market_data"
+      : adapter.providerRole !== "official_or_issuer_reference",
+  );
+  if (replaceIndex >= 0) {
+    selected[replaceIndex] = official;
+  }
+  return selected;
 }
 
 function errorText(error: unknown): string {
@@ -227,12 +257,17 @@ function refreshId(request: FinanceRealtimeSourceRequest, adapterIds: readonly s
 function validateObservationTimestamps(
   observation: FinanceDataGatewayObservationInput,
   asOf: string,
+  asOfMode: FinanceAsOfMode | undefined,
 ): FinanceDataGatewayObservationInput {
   const cutoff = Date.parse(asOf);
+  const futureTimestampLimit =
+    asOfMode === "live_now"
+      ? Date.now() + FINANCE_LIVE_NOW_MAX_FUTURE_SKEW_MINUTES * 60_000
+      : cutoff;
   const fields = observation.fields.filter((field) => {
     const sourceTimestamp =
       typeof field.sourceTimestamp === "string" ? Date.parse(field.sourceTimestamp) : Number.NaN;
-    return Number.isFinite(sourceTimestamp) && sourceTimestamp <= cutoff;
+    return Number.isFinite(sourceTimestamp) && sourceTimestamp <= futureTimestampLimit;
   });
   if (fields.length === 0) {
     throw new Error("finance source returned no timestamped field at or before requested asOf");
@@ -362,7 +397,11 @@ export async function runFinanceRealtimeRefresh(options: {
           },
         );
         const reusedAt = financeReuseTimestamp(apiCalls, request.asOf);
-        const timestampedObservation = validateObservationTimestamps(observation, request.asOf);
+        const timestampedObservation = validateObservationTimestamps(
+          observation,
+          request.asOf,
+          request.asOfMode,
+        );
         observations.push(
           reusedAt
             ? {

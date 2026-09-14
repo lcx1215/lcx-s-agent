@@ -141,6 +141,12 @@ function options(fetchImpl: FetchImpl = fixtureFetch): FinanceResearchBatchOptio
 afterEach(() => vi.useRealTimers());
 
 describe("finance research batch runner", () => {
+  it("propagates the live-now mode to every source request", async () => {
+    const packet = await runFinanceResearchBatch({ ...options(), asOfMode: "live_now" });
+
+    expect(packet.jobs.every((job) => job.request.asOfMode === "live_now")).toBe(true);
+  });
+
   it("fans out mixed targets and preserves per-job provenance in committee-compatible evidence", async () => {
     const fetchImpl = vi.fn(fixtureFetch);
     const packet = await runFinanceResearchBatch(options(fetchImpl));
@@ -292,6 +298,25 @@ describe("finance research batch runner", () => {
     expect(packet.jobs[0].status).toBe("needs_review");
     expect(packet.jobs[0].receipt?.status).toBe("ready");
     expect(JSON.parse(packet.committeeEvidence[1].text).data).toBeUndefined();
+  });
+
+  it("withholds implausibly future collection records from live-now evidence", async () => {
+    const future = new Date(Date.now() + 10 * 60_000).toISOString();
+    const base = options(async () =>
+      response([news({ sourceTimestamp: future, observedAt: future })]),
+    );
+    const packet = await runFinanceResearchBatch({
+      ...base,
+      asOfMode: "live_now",
+      targets: [{ ...base.targets[0], realtime: false }],
+    });
+
+    expect(packet.jobs[0]?.receipt?.status).toBe("ready");
+    expect(packet.jobs[0]?.status).toBe("needs_review");
+    expect(packet.jobs[0]?.freshnessWarnings).toContain(
+      'stale_or_invalid_collection_provenance:["news","news","article"]',
+    );
+    expect(JSON.parse(packet.committeeEvidence[0].text).data).toBeUndefined();
   });
 
   it("preserves partial-source failure even when the realtime gateway itself is ready", async () => {

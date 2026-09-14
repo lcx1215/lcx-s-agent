@@ -102,6 +102,17 @@ describe("finance price arithmetic before model prompting", () => {
     expect(result.invalid).toBe(3);
     expect(result.summaries[0]?.observations).toBe(1);
   });
+  it("allows post-cutoff records only when live-now evidence is bounded", () => {
+    const postCutoff = row("2026-09-08", 100);
+    const historical = summarizeFinancePriceHistory([postCutoff], "2026-09-08T12:00:00Z");
+    const liveNow = summarizeFinancePriceHistory([postCutoff], "2026-09-08T12:00:00Z", {
+      asOfMode: "live_now",
+      futureTimestampLimitMs: Date.parse("2026-09-08T20:05:00Z"),
+    });
+
+    expect(historical.summaries).toHaveLength(0);
+    expect(liveNow.summaries).toHaveLength(1);
+  });
 
   it("keeps Treasury provider-specific numeric fields in model evidence", () => {
     const packet = {

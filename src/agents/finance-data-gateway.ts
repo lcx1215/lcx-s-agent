@@ -19,6 +19,9 @@ export type FinanceDataProviderRole = LcxOntologyFinanceDataProviderRole;
 export type FinanceDataSourceFamily = LcxOntologyFinanceDataSourceFamily;
 export type FinanceDataDelayStatus = LcxOntologyFinanceDataDelayStatus;
 export type FinanceDataQualityStatus = LcxOntologyFinanceDataQualityStatus;
+export type FinanceAsOfMode = "historical" | "live_now";
+
+export const FINANCE_LIVE_NOW_MAX_FUTURE_SKEW_MINUTES = 5;
 
 export type FinanceDataGatewayFieldInput = {
   name: string;
@@ -46,6 +49,8 @@ export type FinanceDataGatewayInput = {
   assetClass: string;
   useCase: string;
   asOf: string;
+  /** Historical cutoffs reject source timestamps after asOf; live-now runs permit collection-time evidence. */
+  asOfMode?: FinanceAsOfMode;
   freshnessMaxMinutes?: number;
   crossSourceSkewMaxMinutes?: number;
   requireOfficialReference?: boolean;
@@ -234,7 +239,12 @@ export function buildFinanceDataGatewaySnapshot(
 
   const missingEvidence: string[] = [];
   const freshnessWarnings: string[] = [];
+  const futureSourceWarnings: string[] = [];
   const asOfMs = Date.parse(asOf);
+  const historicalCutoff = input.asOfMode !== "live_now";
+  const futureTimestampLimitMs = historicalCutoff
+    ? asOfMs
+    : Date.now() + FINANCE_LIVE_NOW_MAX_FUTURE_SKEW_MINUTES * 60_000;
   const freshnessMaxMinutes = input.freshnessMaxMinutes ?? 60 * 24;
   const crossSourceSkewMaxMinutes = input.crossSourceSkewMaxMinutes ?? 60 * 24;
   if (!Number.isFinite(crossSourceSkewMaxMinutes) || crossSourceSkewMaxMinutes < 0) {
@@ -243,7 +253,18 @@ export function buildFinanceDataGatewaySnapshot(
 
   for (const [observationIndex, observation] of input.observations.entries()) {
     trimRequired(observation.providerName, `observations[${observationIndex}].providerName`);
-    assertIsoDate(observation.observedAt, `observations[${observationIndex}].observedAt`);
+    const observedAt = assertIsoDate(
+      observation.observedAt,
+      `observations[${observationIndex}].observedAt`,
+    );
+    const observedAtMs = Date.parse(observedAt);
+    if (observedAtMs > futureTimestampLimitMs) {
+      const warning = historicalCutoff
+        ? `${observation.providerName.trim()} observation is newer than requested asOf ${asOf}`
+        : `${observation.providerName.trim()} observation exceeds the live-now future skew limit`;
+      futureSourceWarnings.push(warning);
+      freshnessWarnings.push(warning);
+    }
     trimRequired(observation.timezone, `observations[${observationIndex}].timezone`);
     if (observation.fields.length === 0) {
       missingEvidence.push(`observations[${observationIndex}].fields`);
@@ -262,7 +283,15 @@ export function buildFinanceDataGatewaySnapshot(
         field.sourceUrlOrArtifact,
         `observations[${observationIndex}].fields[${fieldIndex}].sourceUrlOrArtifact`,
       );
-      const ageMinutes = Math.max(0, (asOfMs - Date.parse(sourceTimestamp)) / 60_000);
+      const sourceTimestampMs = Date.parse(sourceTimestamp);
+      if (sourceTimestampMs > futureTimestampLimitMs) {
+        const warning = historicalCutoff
+          ? `${field.name.trim()} from ${observation.providerName.trim()} is newer than requested asOf ${asOf}`
+          : `${field.name.trim()} from ${observation.providerName.trim()} exceeds the live-now future skew limit`;
+        futureSourceWarnings.push(warning);
+        freshnessWarnings.push(warning);
+      }
+      const ageMinutes = (asOfMs - sourceTimestampMs) / 60_000;
       if (ageMinutes > freshnessMaxMinutes) {
         freshnessWarnings.push(
           `${field.name.trim()} from ${observation.providerName.trim()} is ${Math.round(ageMinutes)}m old`,
@@ -271,6 +300,13 @@ export function buildFinanceDataGatewaySnapshot(
     }
   }
 
+  const eligibleObservations = input.observations.map((observation) => ({
+    ...observation,
+    fields: observation.fields.filter(
+      (field) => Date.parse(field.sourceTimestamp) <= futureTimestampLimitMs,
+    ),
+  }));
+
   const providerRolesPresent = unique(
     input.observations.map((observation) => observation.providerRole),
   );
@@ -278,20 +314,26 @@ export function buildFinanceDataGatewaySnapshot(
     input.observations.map((observation) => observation.sourceFamily),
   );
   const fieldNames = unique(
-    input.observations.flatMap((observation) =>
+    eligibleObservations.flatMap((observation) =>
       observation.fields.map((field) => field.name.trim()).filter(Boolean),
     ),
   ).toSorted();
   const normalizedFields = fieldNames
-    .map((fieldName) => selectPrimaryField(fieldName, input.observations))
+    .map((fieldName) => selectPrimaryField(fieldName, eligibleObservations))
     .filter((field): field is FinanceDataGatewayNormalizedField => Boolean(field));
-  const conflicts = buildConflicts(fieldNames, input.observations);
+  const conflicts = buildConflicts(fieldNames, eligibleObservations);
   const crossSourceTimestampWarnings = buildCrossSourceTimestampWarnings(
     fieldNames,
-    input.observations,
+    eligibleObservations,
     crossSourceSkewMaxMinutes,
   );
   freshnessWarnings.push(...crossSourceTimestampWarnings);
+
+  if (futureSourceWarnings.length > 0) {
+    missingEvidence.push(
+      historicalCutoff ? "post_cutoff_observations" : "implausible_future_observations",
+    );
+  }
 
   if (!providerRolesPresent.includes("primary_market_data")) {
     missingEvidence.push("primary_market_data_provider");
@@ -315,6 +357,13 @@ export function buildFinanceDataGatewaySnapshot(
   }
   if (freshnessWarnings.length > 0) {
     requiredNextSteps.push("refresh_or_label_stale_fields");
+  }
+  if (futureSourceWarnings.length > 0) {
+    requiredNextSteps.push(
+      historicalCutoff
+        ? "review_future_dated_observations"
+        : "review_implausible_future_observations",
+    );
   }
 
   const qualityStatus: FinanceDataQualityStatus =

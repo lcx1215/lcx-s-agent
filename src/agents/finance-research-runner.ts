@@ -10,6 +10,7 @@ import {
   planFinanceBrainOrchestration,
   type FinanceBrainOrchestrationPlan,
 } from "./finance-brain-orchestration.js";
+import type { FinanceAsOfMode } from "./finance-data-gateway.js";
 import {
   evaluateFinanceDecisionPolicy,
   type FinanceDecisionMode,
@@ -78,6 +79,7 @@ export const FINANCE_RESEARCH_RUN_SCHEMA_VERSION = "lcx_finance_research_run_v1"
 export type FinanceResearchRunInput = Readonly<{
   ask: string;
   asOf: string;
+  asOfMode?: FinanceAsOfMode;
   horizonMonths?: number;
   decisionMode?: FinanceDecisionMode;
   targets?: readonly FinanceResearchBatchTarget[];
@@ -110,6 +112,7 @@ export type FinanceResearchSourceInspection = Readonly<{
 export type FinanceResearchPlan = Readonly<{
   ask: string;
   asOf: string;
+  asOfMode?: FinanceAsOfMode;
   horizonMonths: number;
   decisionMode: FinanceDecisionMode;
   orchestration: FinanceBrainOrchestrationPlan;
@@ -575,6 +578,7 @@ const OPTIONAL_SOURCE_PROVIDERS = [
 function sourceInspections(
   targets: readonly FinanceResearchBatchTarget[],
   asOf: string,
+  asOfMode: FinanceAsOfMode | undefined,
   useCase: string,
   realtimeAdapters: readonly FinanceRealtimeSourceAdapter[],
   collectionAdapters: readonly FinanceMarketCollectionAdapter[],
@@ -585,6 +589,7 @@ function sourceInspections(
       instrument: requiredText(target.instrument, "instrument"),
       assetClass: requiredText(target.assetClass, "assetClass"),
       asOf,
+      ...(asOfMode === undefined ? {} : { asOfMode }),
     };
     if (target.realtime !== false) {
       const policy = target.realtime ?? {};
@@ -655,6 +660,7 @@ function buildPlan(
   const inspections = sourceInspections(
     targets,
     asOf,
+    input.asOfMode,
     "finance_research_run",
     realtimeAdapters,
     collectionAdapters,
@@ -666,6 +672,7 @@ function buildPlan(
   return Object.freeze({
     ask,
     asOf,
+    ...(input.asOfMode === undefined ? {} : { asOfMode: input.asOfMode }),
     horizonMonths,
     decisionMode,
     orchestration,
@@ -737,6 +744,7 @@ export function createFinanceCommitteeExecutor(): LogicalAgentExecutor<
       evidence: shared.evidence,
       sharedContext: {
         asOf: shared.asOf,
+        ...(shared.asOfMode === undefined ? {} : { asOfMode: shared.asOfMode }),
         decisionMode: shared.decisionMode,
         userConstraints: shared.userConstraints,
       },
@@ -1104,6 +1112,7 @@ export async function runFinanceResearchRun(
     targets,
     asOf,
     useCase: "finance_research_run",
+    ...(options.input.asOfMode === undefined ? {} : { asOfMode: options.input.asOfMode }),
     ...(options.sourceGovernance === undefined
       ? {}
       : { sourceGovernance: options.sourceGovernance }),
@@ -1183,6 +1192,7 @@ export async function runFinanceResearchRun(
     const committeeInput: FinanceCommitteeInput = {
       ask,
       asOf,
+      ...(options.input.asOfMode === undefined ? {} : { asOfMode: options.input.asOfMode }),
       decisionMode,
       evidence,
       userConstraints: {
@@ -1234,6 +1244,7 @@ export async function runFinanceResearchRun(
         evidence: qualityEvidence(batch),
         sharedContext: {
           asOf,
+          ...(options.input.asOfMode === undefined ? {} : { asOfMode: options.input.asOfMode }),
           horizonMonths,
           decisionMode,
           sourceStatus: batch.status,

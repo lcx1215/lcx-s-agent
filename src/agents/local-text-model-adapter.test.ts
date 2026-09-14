@@ -160,6 +160,35 @@ describe("local text model adapter contract", () => {
     expect(prompt).toContain("Do not invent current data");
   });
 
+  it("bounds large finance evidence and dependency expansion before local inference", () => {
+    const prompt = buildLocalRoleShadowPrompt({
+      schemaVersion: "lcx_local_role_shadow_v1",
+      runId: "run-1",
+      taskId: "risk_check",
+      role: "risk_check",
+      purpose: "review evidence risk",
+      ask: "review the supplied evidence",
+      evidence: Array.from({ length: 24 }, (_, index) => `evidence-${index}:${"x".repeat(4_000)}`),
+      dependencyOutputs: Object.fromEntries(
+        Array.from({ length: 18 }, (_, index) => [
+          `task-${index}`,
+          { output: "y".repeat(4_000), status: "completed" },
+        ]),
+      ),
+    });
+    expect(prompt.length).toBeLessThan(20_000);
+    expect(prompt).toContain("evidence-0:");
+    expect(prompt).not.toContain("evidence-23:");
+    expect(prompt).toContain("task-0");
+    expect(prompt).not.toContain("task-17");
+    expect(prompt).toContain(
+      "evidence_coverage=provided:24; included:12; text_may_be_clipped:true",
+    );
+    expect(prompt).toContain(
+      "dependency_coverage=provided:18; included:6; values_may_be_clipped:true",
+    );
+  });
+
   it("keeps model downloads offline unless explicitly allowed", () => {
     expect(resolveLocalTextModelRuntimeConfig({ adapterPath: "/tmp/adapter" }).allowNetwork).toBe(
       false,
@@ -191,5 +220,31 @@ it("does not silently drop later evidence, stage instructions or analysis requir
   expect(prompt).toContain("[e19] asset-19");
   expect(prompt).toContain("Compare equivalent periods");
   expect(prompt).toContain("three conditional scenarios");
+  expect(prompt).toContain("evidence_coverage=provided:20; included:20; text_may_be_clipped:true");
   expect(prompt).not.toContain('"answer":"bounded answer"');
+});
+
+it("aligns allowed evidence IDs with entries that fit the final prompt section", () => {
+  const prompt = buildQualityHarnessModelPrompt({
+    schemaVersion: 1,
+    runId: "section-limit",
+    attempt: 1,
+    stage: "draft",
+    agentId: "research_draft",
+    task: "Compare supplied observations",
+    evidence: Array.from({ length: 48 }, (_, index) => ({
+      id: `source-${index}`,
+      text: `fact-${index} ` + "value ".repeat(100),
+      source: `source-${index} ` + "x".repeat(600),
+    })),
+    sharedContext: {},
+    dependencyOutputs: {},
+    repairFeedback: [],
+    instructions: "Compare only included observations.",
+  });
+
+  expect(prompt).toContain("evidence_coverage=provided:48; included:");
+  expect(prompt).toContain("text_may_be_clipped:true");
+  expect(prompt).not.toContain("[source-47]");
+  expect(prompt).not.toContain('"source-47"');
 });
