@@ -79,8 +79,18 @@ async function cleanupLegacyLaunchdService(params: {
   plistPath: string;
 }): Promise<string | null> {
   const domain = typeof process.getuid === "function" ? `gui/${process.getuid()}` : "gui/501";
-  await execFileAsync("launchctl", ["bootout", domain, params.plistPath]).catch(() => undefined);
-  await execFileAsync("launchctl", ["unload", params.plistPath]).catch(() => undefined);
+  // launchctl spawn can be denied outright (EPERM/EACCES), which throws synchronously and
+  // bypasses a chained .catch(); best-effort unload must not abort the doctor command.
+  try {
+    await execFileAsync("launchctl", ["bootout", domain, params.plistPath]);
+  } catch {
+    // ignore
+  }
+  try {
+    await execFileAsync("launchctl", ["unload", params.plistPath]);
+  } catch {
+    // ignore
+  }
 
   const trashDir = path.join(os.homedir(), ".Trash");
   try {
