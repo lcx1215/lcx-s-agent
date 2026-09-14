@@ -47,6 +47,7 @@ type LearningCouncilArtifact = {
   status: "full" | "full_with_mutable_fact_warnings" | "degraded";
   mutableFactWarnings: string[];
   roles: LearningCouncilRoleRun[];
+  skippedRoles?: Array<{ role: LearningCouncilRole; reason: string }>;
   rescues?: LearningCouncilRescueRun[];
   runPacket: LearningCouncilRunPacket;
   finalReply: string;
@@ -154,6 +155,22 @@ function findAllowedLearningCouncilModel(
     return undefined;
   }
   return candidates.find((candidate) => Object.hasOwn(allowedModels, candidate));
+}
+
+export function resolveLearningCouncilDisabledRoles(cfg: OpenClawConfig): LearningCouncilRole[] {
+  // A council role whose provider family is absent from the runtime config is
+  // retired, not failed: skip it instead of burning a gateway call and forcing
+  // the artifact into degraded status. An explicit env override still wins.
+  if (
+    process.env.OPENCLAW_LEARNING_COUNCIL_MINIMAX_MODEL?.trim() ||
+    findAllowedLearningCouncilModel(cfg, [
+      `minimax-portal/${resolveMinimaxDefaultTextModelId()}`,
+      `minimax/${resolveMinimaxDefaultTextModelId()}`,
+    ]) !== undefined
+  ) {
+    return [];
+  }
+  return ["minimax"];
 }
 
 function resolveLearningCouncilModel(role: LearningCouncilRole, cfg: OpenClawConfig): string {
@@ -1015,7 +1032,7 @@ function buildMiniMaxSystemPrompt(params: {
 
 function resolveDistilledOperatingPack(params: {
   kimi: LearningCouncilRoleRun;
-  minimax: LearningCouncilRoleRun;
+  minimax?: LearningCouncilRoleRun;
   deepseek: LearningCouncilRoleRun;
   rescues: LearningCouncilRescueRun[];
   durableLearningDiscipline: boolean;
@@ -1036,7 +1053,7 @@ function resolveDistilledOperatingPack(params: {
   const rescueFor = (role: LearningCouncilRole) =>
     params.rescues.find((rescue) => rescue.targetRole === role && rescue.success)?.text ?? "";
   const kimiSource = params.kimi.success ? params.kimi.text : rescueFor("kimi");
-  const minimaxSource = params.minimax.success ? params.minimax.text : rescueFor("minimax");
+  const minimaxSource = params.minimax?.success ? params.minimax.text : rescueFor("minimax");
   const deepseekSource = params.deepseek.success ? params.deepseek.text : rescueFor("deepseek");
 
   const keepers = dedupeBullets(
@@ -1648,13 +1665,14 @@ function mergeMiniMaxRuns(
 
 function renderConsensus(params: {
   kimi: LearningCouncilRoleRun;
-  minimax: LearningCouncilRoleRun;
+  minimax?: LearningCouncilRoleRun;
   deepseek: LearningCouncilRoleRun;
   rescues: LearningCouncilRescueRun[];
   mutableFactWarnings: string[];
   sourceCoverageWarnings: string[];
+  skippedRoles?: Array<{ role: LearningCouncilRole; reason: string }>;
 }): string {
-  const minimaxConsensusSource = params.minimax.success
+  const minimaxConsensusSource = params.minimax?.success
     ? params.minimax.text
     : (params.rescues.find((rescue) => rescue.targetRole === "minimax" && rescue.success)?.text ??
       "");
@@ -1662,7 +1680,7 @@ function renderConsensus(params: {
   const disagreements = extractBullets(minimaxConsensusSource, "Challenges", 4);
   const evidenceGaps = extractBullets(minimaxConsensusSource, "Evidence gaps", 4);
   const roleFailures = [params.kimi, params.minimax, params.deepseek]
-    .filter((result) => !result.success)
+    .filter((result): result is LearningCouncilRoleRun => result !== undefined && !result.success)
     .map((result) => `${result.role}=${result.error ?? "failed"}`);
   const rescueCoverage = params.rescues
     .filter((rescue) => rescue.success)
@@ -1694,6 +1712,7 @@ function renderConsensus(params: {
   }
   if (
     roleFailures.length > 0 ||
+    (params.skippedRoles?.length ?? 0) > 0 ||
     params.mutableFactWarnings.length > 0 ||
     params.sourceCoverageWarnings.length > 0
   ) {
@@ -1701,6 +1720,9 @@ function renderConsensus(params: {
     lines.push("### Reliability note");
     if (roleFailures.length > 0) {
       lines.push(`- partial council only: ${roleFailures.join("; ")}`);
+    }
+    for (const skipped of params.skippedRoles ?? []) {
+      lines.push(`- ${skipped.role} role skipped: ${skipped.reason}`);
     }
     if (rescueCoverage.length > 0) {
       lines.push(`- fallback rescue coverage: ${rescueCoverage.join("; ")}`);
@@ -1900,40 +1922,21 @@ export async function runExternalLearningCouncil(params: {
     }),
   ]);
 
-  const minimaxPrimary = await runLearningCouncilRole({
-    cfg: runtimeConfig,
-    role: "minimax",
-    userMessage: params.userMessage,
-    routeAgentId: params.routeAgentId,
-    baseSessionKey,
-    timeoutSeconds: 360,
-    thinking: "high",
-    extraSystemPrompt: [
-      learningAnchorContext.prompt,
-      buildMiniMaxSystemPrompt({
-        userMessage: params.userMessage,
-        kimiText: kimi.text || kimi.error || "kimi run unavailable",
-        kimiModel: kimi.model,
-        deepseekText: deepseek.text || deepseek.error || "deepseek run unavailable",
-        deepseekModel: deepseek.model,
-        minimaxHeavy: directives.minimaxHeavy,
-        bilingualComprehension: directives.bilingualComprehension,
-        internalizationFocus: directives.internalizationFocus,
-        antiShallowSummary: directives.antiShallowSummary,
-        durableLearningDiscipline: directives.durableLearningDiscipline,
-        broadKnowledgeDistillation: directives.broadKnowledgeDistillation,
-      }),
-    ]
-      .filter(Boolean)
-      .join("\n\n"),
-  });
-  const minimaxExtra = directives.minimaxHeavy
-    ? await runLearningCouncilRole({
+  const disabledRoles = resolveLearningCouncilDisabledRoles(runtimeConfig);
+  const minimaxDisabled = disabledRoles.includes("minimax");
+  const skippedRoles = disabledRoles.map((role) => ({
+    role,
+    reason: "provider family absent from runtime config (role retired, not failed)",
+  }));
+
+  const minimaxPrimary = minimaxDisabled
+    ? undefined
+    : await runLearningCouncilRole({
         cfg: runtimeConfig,
         role: "minimax",
         userMessage: params.userMessage,
         routeAgentId: params.routeAgentId,
-        baseSessionKey: `${baseSessionKey}:redteam`,
+        baseSessionKey,
         timeoutSeconds: 360,
         thinking: "high",
         extraSystemPrompt: [
@@ -1944,9 +1947,7 @@ export async function runExternalLearningCouncil(params: {
             kimiModel: kimi.model,
             deepseekText: deepseek.text || deepseek.error || "deepseek run unavailable",
             deepseekModel: deepseek.model,
-            minimaxHeavy: true,
-            priorAuditText:
-              minimaxPrimary.text || minimaxPrimary.error || "prior minimax audit unavailable",
+            minimaxHeavy: directives.minimaxHeavy,
             bilingualComprehension: directives.bilingualComprehension,
             internalizationFocus: directives.internalizationFocus,
             antiShallowSummary: directives.antiShallowSummary,
@@ -1956,9 +1957,40 @@ export async function runExternalLearningCouncil(params: {
         ]
           .filter(Boolean)
           .join("\n\n"),
-      })
-    : undefined;
-  const minimax = mergeMiniMaxRuns(minimaxPrimary, minimaxExtra);
+      });
+  const minimaxExtra =
+    !minimaxDisabled && directives.minimaxHeavy
+      ? await runLearningCouncilRole({
+          cfg: runtimeConfig,
+          role: "minimax",
+          userMessage: params.userMessage,
+          routeAgentId: params.routeAgentId,
+          baseSessionKey: `${baseSessionKey}:redteam`,
+          timeoutSeconds: 360,
+          thinking: "high",
+          extraSystemPrompt: [
+            learningAnchorContext.prompt,
+            buildMiniMaxSystemPrompt({
+              userMessage: params.userMessage,
+              kimiText: kimi.text || kimi.error || "kimi run unavailable",
+              kimiModel: kimi.model,
+              deepseekText: deepseek.text || deepseek.error || "deepseek run unavailable",
+              deepseekModel: deepseek.model,
+              minimaxHeavy: true,
+              priorAuditText:
+                minimaxPrimary.text || minimaxPrimary.error || "prior minimax audit unavailable",
+              bilingualComprehension: directives.bilingualComprehension,
+              internalizationFocus: directives.internalizationFocus,
+              antiShallowSummary: directives.antiShallowSummary,
+              durableLearningDiscipline: directives.durableLearningDiscipline,
+              broadKnowledgeDistillation: directives.broadKnowledgeDistillation,
+            }),
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
+        })
+      : undefined;
+  const minimax = minimaxPrimary ? mergeMiniMaxRuns(minimaxPrimary, minimaxExtra) : undefined;
   const rescues: LearningCouncilRescueRun[] = [];
 
   const rescueTargets: Array<{
@@ -1967,22 +1999,30 @@ export async function runExternalLearningCouncil(params: {
   }> = [
     {
       failed: "kimi",
-      helper: deepseek.success ? "deepseek" : minimax.success ? "minimax" : undefined,
+      helper: deepseek.success ? "deepseek" : minimax?.success ? "minimax" : undefined,
     },
     {
       failed: "deepseek",
-      helper: kimi.success ? "kimi" : minimax.success ? "minimax" : undefined,
+      helper: kimi.success ? "kimi" : minimax?.success ? "minimax" : undefined,
     },
-    {
-      failed: "minimax",
-      helper: deepseek.success ? "deepseek" : kimi.success ? "kimi" : undefined,
-    },
+    ...(minimaxDisabled
+      ? []
+      : [
+          {
+            failed: "minimax" as const,
+            helper: deepseek.success
+              ? ("deepseek" as const)
+              : kimi.success
+                ? ("kimi" as const)
+                : undefined,
+          },
+        ]),
   ];
 
   for (const target of rescueTargets) {
     const failedRole =
       target.failed === "kimi" ? kimi : target.failed === "deepseek" ? deepseek : minimax;
-    if (failedRole.success || !target.helper) {
+    if (!failedRole || failedRole.success || !target.helper) {
       continue;
     }
     rescues.push(
@@ -1994,17 +2034,20 @@ export async function runExternalLearningCouncil(params: {
         routeAgentId: params.routeAgentId,
         baseSessionKey,
         kimiText: kimi.text || kimi.error || "unavailable",
-        minimaxText: minimax.text || minimax.error || "unavailable",
+        minimaxText: minimax?.text || minimax?.error || "skipped: provider disabled",
         deepseekText: deepseek.text || deepseek.error || "unavailable",
       }),
     );
   }
 
-  const failures = [kimi, minimax, deepseek].filter((result) => !result.success);
-  const mutableFactWarnings = [kimi, minimax, deepseek]
+  const attemptedRoles = [kimi, minimax, deepseek].filter(
+    (result): result is LearningCouncilRoleRun => result !== undefined,
+  );
+  const failures = attemptedRoles.filter((result) => !result.success);
+  const mutableFactWarnings = attemptedRoles
     .filter((result) => result.success)
     .flatMap((result) => detectMutableFactWarnings({ role: result.role, text: result.text }));
-  const sourceCoverageWarnings = [kimi, minimax, deepseek].flatMap((result) =>
+  const sourceCoverageWarnings = attemptedRoles.flatMap((result) =>
     detectSourceCoverageWeakness({
       role: result.role,
       text: result.text,
@@ -2089,19 +2132,25 @@ export async function runExternalLearningCouncil(params: {
     })}`,
   });
 
+  const roleScopeLabel =
+    attemptedRoles.length >= 3
+      ? "three-model"
+      : `${attemptedRoles.map((role) => role.role).join("+")} (skipped: ${
+          skippedRoles.map((entry) => entry.role).join(",") || "none"
+        })`;
   const finalReply = [
     `Learning council run: ${
       status === "degraded"
         ? "partial / degraded execution"
         : status === "full_with_mutable_fact_warnings"
-          ? "full three-model execution completed with low-fidelity fact warnings"
-          : "full three-model execution completed"
+          ? `full ${roleScopeLabel} execution completed with low-fidelity fact warnings`
+          : `full ${roleScopeLabel} execution completed`
     }.`,
     "",
     renderLearningCouncilReadableLead({
       userMessage: params.userMessage,
       status,
-      roles: [kimi, minimax, deepseek],
+      roles: attemptedRoles,
       rescues,
       mutableFactWarnings,
       sourceCoverageWarnings,
@@ -2109,10 +2158,15 @@ export async function runExternalLearningCouncil(params: {
     "",
     renderRoleSection(kimi),
     "",
-    renderRoleSection(
-      minimax,
-      rescues.find((rescue) => rescue.targetRole === "minimax"),
-    ),
+    ...(minimax
+      ? [
+          "",
+          renderRoleSection(
+            minimax,
+            rescues.find((rescue) => rescue.targetRole === "minimax"),
+          ),
+        ]
+      : []),
     "",
     renderRoleSection(
       deepseek,
@@ -2126,6 +2180,7 @@ export async function runExternalLearningCouncil(params: {
       rescues,
       mutableFactWarnings,
       sourceCoverageWarnings,
+      skippedRoles,
     }),
     ...(directives.durableLearningDiscipline
       ? ["", renderDistilledOperatingPack(distilledOperatingPack)]
@@ -2146,7 +2201,8 @@ export async function runExternalLearningCouncil(params: {
     userMessage: params.userMessage,
     status,
     mutableFactWarnings,
-    roles: [kimi, minimax, deepseek],
+    roles: attemptedRoles,
+    ...(skippedRoles.length > 0 ? { skippedRoles } : {}),
     rescues,
     runPacket,
     finalReply,
