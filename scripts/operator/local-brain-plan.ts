@@ -165,6 +165,7 @@ function runGenerate(options: CliOptions): Promise<string> {
       {
         stdio: ["ignore", "pipe", "pipe"],
         shell: process.platform === "win32" && /\.(?:cmd|bat)$/iu.test(options.pythonBin),
+        env: { ...process.env, HF_HUB_OFFLINE: process.env.HF_HUB_OFFLINE ?? "1" },
       },
     );
     let stdout = "";

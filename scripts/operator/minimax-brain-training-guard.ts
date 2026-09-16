@@ -3,6 +3,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveOpenClawAgentDir } from "../../src/agents/agent-paths.js";
+import { resolveApiKeyForProvider } from "../../src/agents/model-auth.js";
+import { resolveLearningCouncilDisabledRoles } from "../../src/agents/provider-learning-council.js";
+import { loadConfig } from "../../src/config/config.js";
 import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
 
 type CliOptions = {
@@ -381,7 +385,9 @@ function runCommand(
     let idleTimer: NodeJS.Timeout | undefined;
     const child = spawn(command, args, {
       cwd: WORKTREE_CWD,
-      env: process.env,
+      // Local-brain python children always use the cached model/adapter; avoid
+      // HF hub reachability hangs that blow eval/training step budgets.
+      env: { ...process.env, HF_HUB_OFFLINE: process.env.HF_HUB_OFFLINE ?? "1" },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -520,7 +526,9 @@ function runQuietCommand(command: string, args: string[]): Promise<CommandResult
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: WORKTREE_CWD,
-      env: process.env,
+      // Local-brain python children always use the cached model/adapter; avoid
+      // HF hub reachability hangs that blow eval/training step budgets.
+      env: { ...process.env, HF_HUB_OFFLINE: process.env.HF_HUB_OFFLINE ?? "1" },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -1541,6 +1549,47 @@ async function skipForHighLoad(params: {
   return true;
 }
 
+async function isMinimaxTeacherCredentialAvailable(): Promise<boolean> {
+  const cfg = loadConfig();
+  // Mirror the provider-council retirement rule: a MiniMax model that is absent
+  // from the runtime allowed-models list (or explicitly disabled by env) retires
+  // the teacher step even if a residual credential still resolves.
+  if (resolveLearningCouncilDisabledRoles(cfg).includes("minimax")) {
+    return false;
+  }
+  const agentDir = resolveOpenClawAgentDir();
+  for (const provider of ["minimax", "minimax-portal"] as const) {
+    const resolved = await resolveApiKeyForProvider({
+      provider,
+      cfg,
+      agentDir,
+    }).catch(() => ({ apiKey: undefined as string | undefined }));
+    if (resolved.apiKey) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function runTeacherStepOrRetire(
+  options: CliOptions,
+  round: number,
+  teacherRetired: boolean,
+): Promise<void> {
+  if (teacherRetired) {
+    await appendLog(options.logPath, {
+      event: "step_skipped",
+      round,
+      name: "minimax_teacher_batch",
+      reason: "minimax_disabled_teacher_retired",
+      liveTouched: false,
+      providerConfigTouched: false,
+    });
+    return;
+  }
+  await runTeacherStep(options, round);
+}
+
 async function runTeacherStep(options: CliOptions, round: number): Promise<unknown> {
   if (options.teacherProfile === "minimax-plus-brain") {
     return runJsonStep(options, round, "minimax_plus_brain_saturator", "node", [
@@ -1982,11 +2031,15 @@ let trainingResumeAdapter =
     ? currentAdapter
     : trainingResumeSeed?.adapterPath;
 let teacherSidecar: TeacherSidecar | undefined;
+// MiniMax is disabled as an active provider; retire the teacher step instead of
+// failing the guard run before eval/training evidence can be refreshed.
+const minimaxTeacherRetired = !options.mock && !(await isMinimaxTeacherCredentialAvailable());
 
 await appendLog(options.logPath, {
   event: "guard_start",
   mode: "minimax_teacher_additive_only",
   teacherProfile: options.teacherProfile,
+  teacherRetired: minimaxTeacherRetired,
   originalPipelineReplaced: false,
   liveTouched: false,
   providerConfigTouched: false,
@@ -2062,7 +2115,7 @@ if (localTrainingPaused) {
 }
 
 try {
-  teacherSidecar = await startTeacherSidecar(options);
+  teacherSidecar = minimaxTeacherRetired ? undefined : await startTeacherSidecar(options);
   while (Date.now() < deadline) {
     round += 1;
     if (
@@ -2109,10 +2162,10 @@ try {
           providerConfigTouched: false,
         });
         teacherSidecar = undefined;
-        await runTeacherStep(options, round);
+        await runTeacherStepOrRetire(options, round, minimaxTeacherRetired);
       }
     } else {
-      await runTeacherStep(options, round);
+      await runTeacherStepOrRetire(options, round, minimaxTeacherRetired);
     }
     await runJsonStep(options, round, "dataset", "node", [
       "--import",
