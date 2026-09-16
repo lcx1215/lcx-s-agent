@@ -955,6 +955,7 @@ async function runIntegrityChecks(round: number, force: boolean): Promise<void> 
       "--import",
       "tsx",
       "scripts/operator/local-brain-distill-dataset.ts",
+      "--include-blind",
       "--workspace",
       options.workspaceDir,
       "--out",

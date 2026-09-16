@@ -2171,6 +2171,7 @@ try {
       "--import",
       "tsx",
       "scripts/operator/local-brain-distill-dataset.ts",
+      "--include-blind",
       "--json",
     ]);
     await runJsonStep(options, round, "smoke", "node", [
