@@ -66,6 +66,7 @@ export async function runCentralHarnessCycle(
     modelId: string;
     outcome: "completed" | "failed" | "blocked" | "skipped";
     reason?: string;
+    note?: string;
   } = {
     provider: "",
     modelId: "",
@@ -79,6 +80,7 @@ export async function runCentralHarnessCycle(
       provider: proposal.provider,
       modelId: proposal.modelId,
       outcome: "completed",
+      ...(proposal.plan.note ? { note: proposal.plan.note } : {}),
     };
     for (const action of proposal.plan.actions) {
       if (actionsApproved + actionsBlockedByGate >= maxSteps) {
@@ -164,4 +166,38 @@ export async function runCentralHarnessCycle(
     await options.settle(receipt);
   }
   return receipt;
+}
+
+/**
+ * Codex-harness context-compaction + retained-reasoning pattern, applied to the
+ * central harness. Instead of feeding the brain the whole raw thread, fold a
+ * bounded tail of done cycles into compact backlog entries (who ran, who got
+ * gated, and the brain's own one-line note from the prior turn). This keeps
+ * the probe small and lets the next decision inherit prior reasoning.
+ */
+export type CompactBacklogEntry = Readonly<{
+  atMs: number;
+  brainOutcome: "completed" | "failed" | "blocked" | "skipped";
+  note?: string;
+  approved: readonly string[];
+  blocked: readonly string[];
+}>;
+
+export function compactReceipts(
+  receipts: readonly CentralRunReceipt[],
+  max: number,
+): readonly CompactBacklogEntry[] {
+  const bounded = Number.isSafeInteger(max) ? Math.max(1, Math.min(max, 200)) : 20;
+  const tail = receipts.slice(-bounded);
+  return tail.map((receipt) => ({
+    atMs: Date.parse(receipt.observedAt) || 0,
+    brainOutcome: receipt.brainCall.outcome,
+    ...(receipt.brainCall.note ? { note: receipt.brainCall.note } : {}),
+    approved: receipt.steps
+      .filter((step) => step.status === "approved" || step.status === "ran_ok")
+      .map((step) => step.ownerId),
+    blocked: receipt.steps
+      .filter((step) => step.status === "blocked_by_gate")
+      .map((step) => step.ownerId),
+  }));
 }

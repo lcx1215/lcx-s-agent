@@ -1,15 +1,25 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { runCentralHarnessCycle } from "../../src/agents/central-harness/harness-loop.js";
+import {
+  runCentralHarnessCycle,
+  compactReceipts,
+} from "../../src/agents/central-harness/harness-loop.js";
+import type { CompactBacklogEntry } from "../../src/agents/central-harness/harness-loop.js";
 import { createCentralBrain } from "../../src/agents/central-harness/model-brain.js";
 import type { CentralBrain } from "../../src/agents/central-harness/model-brain.js";
 import { createCentralToolRegistry } from "../../src/agents/central-harness/tool-registry.js";
-import type { CentralPerception } from "../../src/agents/central-harness/types.js";
+import type {
+  CentralPerception,
+  CentralRunReceipt,
+} from "../../src/agents/central-harness/types.js";
 import { loadConfig } from "../../src/config/io.js";
 
 const WORKSPACE = path.join(process.env.HOME ?? ".", ".openclaw", "workspace");
 const STATE_DIR = path.join(WORKSPACE, "state");
+const LOG_PATH = path.join(STATE_DIR, "lcx-central-agent-log-latest.jsonl");
+/** Resume window: how many prior cycles the brain is allowed to see (thread-store tail). */
+const RESUME_WINDOW = 40;
 
 const CLAIMED_BOUNDARIES = [
   "research_only",
@@ -66,7 +76,9 @@ function extractOwnerTotals(state: Record<string, unknown>): Record<string, unkn
   return {};
 }
 
-async function buildPerception(): Promise<CentralPerception> {
+async function buildPerception(
+  backlog: readonly CompactBacklogEntry[],
+): Promise<CentralPerception> {
   const controlRoom = await readLatest<Record<string, unknown>>("lcx-control-room-latest.json", {});
   const governance = await readLatest<Record<string, unknown>>(
     "lcx-governance-autopilot-latest.json",
@@ -78,15 +90,35 @@ async function buildPerception(): Promise<CentralPerception> {
     observedAt,
     ownerTotals,
     controlRoom,
-    backlog: [],
+    backlog,
     boundaries: CLAIMED_BOUNDARIES,
   };
 }
 
+/** Thread-store: read the persisted JSONL tail so a restart resumes prior decisions. */
+async function loadPersistedReceipts(): Promise<CentralRunReceipt[]> {
+  try {
+    const raw = await fs.readFile(LOG_PATH, "utf8");
+    const out: CentralRunReceipt[] = [];
+    for (const line of raw
+      .split("\n")
+      .filter((l) => l.trim().length > 0)
+      .slice(-RESUME_WINDOW)) {
+      try {
+        out.push(JSON.parse(line) as CentralRunReceipt);
+      } catch {
+        /* Skip malformed tail; keep going on the well-formed part. */
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 async function settle(receipt: unknown): Promise<void> {
-  const logPath = path.join(STATE_DIR, "lcx-central-agent-log-latest.jsonl");
-  await fs.mkdir(path.dirname(logPath), { recursive: true });
-  const handle = await fs.open(logPath, "a");
+  await fs.mkdir(path.dirname(LOG_PATH), { recursive: true });
+  const handle = await fs.open(LOG_PATH, "a");
   try {
     await handle.write(`${JSON.stringify(receipt)}\n`);
   } finally {
@@ -107,8 +139,11 @@ async function main(): Promise<void> {
 
   const deadline = Date.now() + durationMinutes * 60_000;
   let runs = 0;
+  // thread-store resume: recover prior cycles so the brain inherits context.
+  let history = await loadPersistedReceipts();
   while (Date.now() < deadline) {
-    const perception = await buildPerception();
+    // context compaction: only the compacted tail reaches the brain, never raw history.
+    const perception = await buildPerception(compactReceipts(history, 10));
     const receipt = await runCentralHarnessCycle({
       perception,
       brain,
@@ -116,6 +151,7 @@ async function main(): Promise<void> {
       runId: `central-${runs}-${Date.now()}`,
     });
     await settle(receipt);
+    history = history.concat(receipt).slice(-200);
     runs += 1;
     if (dryRun) {
       break;

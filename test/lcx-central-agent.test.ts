@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { runCentralHarnessCycle } from "../src/agents/central-harness/harness-loop.js";
+import {
+  runCentralHarnessCycle,
+  compactReceipts,
+} from "../src/agents/central-harness/harness-loop.js";
 import {
   createCentralBrain,
   validateCentralActionPlan,
@@ -136,5 +139,38 @@ describe("approveOwner deterministic gate", () => {
     for (const key of ["trade", "live", "senders", "execute", "protected"]) {
       expect(approveOwner("problemRadar", { [key]: true }).ok).toBe(false);
     }
+  });
+});
+
+describe("codex harness patterns: retained reasoning + context compaction", () => {
+  it("carries the brain's plan note forward into the receipt", async () => {
+    const receipt = await runCentralHarnessCycle({
+      perception: perception(),
+      brain: brainWithActions([{ ownerId: "mindModel", args: {}, reasoning: "x" }]),
+      registry,
+    });
+    expect(receipt.brainCall.note).toBe("test plan");
+  });
+
+  it("compacts a bounded tail and folds who ran vs who got gated", async () => {
+    const done = await runCentralHarnessCycle({
+      perception: perception(),
+      brain: brainWithActions([
+        { ownerId: "mindModel", args: {}, reasoning: "run" },
+        { ownerId: "unknownOwner", args: {}, reasoning: "blocked" },
+      ]),
+      registry,
+      execute: async () => ({}),
+    });
+    const compacted = compactReceipts([done, done, done], 2);
+    expect(compacted).toHaveLength(2);
+    expect(compacted[0].approved).toEqual(["mindModel"]);
+    expect(compacted[0].blocked).toEqual(["unknownOwner"]);
+    expect(compacted[0].note).toBe("test plan");
+  });
+
+  it("keeps compaction bounded and accepts a degenerate empty thread", () => {
+    expect(compactReceipts([], 5)).toEqual([]);
+    expect(compactReceipts([], 0)).toEqual([]);
   });
 });

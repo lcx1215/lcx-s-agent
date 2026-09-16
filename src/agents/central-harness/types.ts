@@ -98,6 +98,8 @@ export type CentralRunReceipt = Readonly<{
     modelId: string;
     outcome: "completed" | "failed" | "blocked" | "skipped";
     reason?: string;
+    /** Brain's one-line plan note, retained across turns (codex retained-reasoning pattern). */
+    note?: string;
   }>;
   nextAction: string;
   liveTouched: false;
