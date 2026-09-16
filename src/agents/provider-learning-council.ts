@@ -1959,7 +1959,7 @@ export async function runExternalLearningCouncil(params: {
           .join("\n\n"),
       });
   const minimaxExtra =
-    !minimaxDisabled && directives.minimaxHeavy
+    !minimaxDisabled && directives.minimaxHeavy && minimaxPrimary
       ? await runLearningCouncilRole({
           cfg: runtimeConfig,
           role: "minimax",
