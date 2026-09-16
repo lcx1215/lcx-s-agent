@@ -223,6 +223,17 @@ const PATH_RULES: PathRule[] = [
     risk: "elevated",
   },
   {
+    id: "ide_scaffolding_plans",
+    lane: "global_doctrine_and_runbook",
+    patterns: [/^\.trae\//u],
+    requiredChecks: ["universe-index", "head-tail-consistency"],
+    commands: [
+      "node --import tsx scripts/operator/lcx-universe-index.ts --json --no-write",
+      "node --import tsx scripts/operator/lcx-head-tail-consistency.ts --json",
+    ],
+    headTailRequired: true,
+  },
+  {
     id: "logical_agent_pool",
     lane: "agent_workflow_memory",
     patterns: [
