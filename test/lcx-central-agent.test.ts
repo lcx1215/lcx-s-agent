@@ -7,10 +7,14 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   runCentralHarnessCycle,
+  boundPerception,
   compactReceipts,
   resumableReceipts,
+  CENTRAL_PERCEPTION_BUDGET_BYTES,
+  CENTRAL_PERCEPTION_KEY_BUDGET_BYTES,
 } from "../src/agents/central-harness/harness-loop.js";
 import {
+  buildCentralBrainPrompt,
   createCentralBrain,
   validateCentralActionPlan,
 } from "../src/agents/central-harness/model-brain.js";
@@ -514,6 +518,12 @@ function receipt(overrides: Partial<CentralRunReceipt> = {}): CentralRunReceipt 
     boundaries: ["research_only"],
     brainCall: { provider: "test", modelId: "test", outcome: "completed" },
     nextAction: "continue",
+    contextBudget: {
+      budgetBytes: CENTRAL_PERCEPTION_BUDGET_BYTES,
+      injectedBytes: 120,
+      overBudget: false,
+      droppedSections: [],
+    },
     liveTouched: false,
     providerConfigTouched: false,
     protectedMemoryTouched: false,
@@ -598,6 +608,116 @@ describe("one snapshot per cycle, and a pointer that never moves backwards", () 
   });
 });
 
+describe("injected context is bounded by bytes, not by entry count", () => {
+  /** A control-room snapshot the size of the live one: the bulky keys dominate. */
+  function bulkyControlRoom(): Record<string, unknown> {
+    return {
+      schemaVersion: "lcx_control_room_v1",
+      kind: "control_room",
+      governance: { raw: "g".repeat(185_000) },
+      localFailureTrace: { raw: "f".repeat(34_000) },
+      ownerControlMap: { raw: "m".repeat(24_000) },
+      ownerBrief: { raw: "b".repeat(9_800) },
+      views: { ok: 3 },
+    };
+  }
+
+  it("drops the oversized keys and names each one with the bytes it cost", () => {
+    const { perception: bounded, report } = boundPerception(
+      perception({ controlRoom: bulkyControlRoom() }),
+    );
+    expect(Buffer.byteLength(JSON.stringify(bounded.controlRoom))).toBeLessThanOrEqual(
+      CENTRAL_PERCEPTION_BUDGET_BYTES,
+    );
+    // Small keys survive, so the brain still sees that a control room exists.
+    expect(bounded.controlRoom.views).toEqual({ ok: 3 });
+    expect(bounded.controlRoom.schemaVersion).toBe("lcx_control_room_v1");
+    const [dropped] = report.droppedSections;
+    expect(dropped.section).toBe("controlRoom");
+    expect(dropped.droppedKeys.map((entry) => entry.key)).toEqual([
+      "governance",
+      "localFailureTrace",
+      "ownerControlMap",
+      "ownerBrief",
+    ]);
+    expect(dropped.droppedKeys[0].bytes).toBeGreaterThan(180_000);
+    expect(dropped.originalBytes).toBeGreaterThan(250_000);
+    expect(report.injectedBytes).toBeLessThanOrEqual(CENTRAL_PERCEPTION_BUDGET_BYTES);
+    expect(report.overBudget).toBe(false);
+  });
+
+  it("never truncates the state the decision needs to fit the budget", () => {
+    const ownerTotals = { problemRadar: { ok: true, status: "ran_ok" } };
+    const backlog = [
+      { atMs: 1, approved: ["mindModel"], blocked: [], notOk: [], nextAction: "continue" },
+    ];
+    const { perception: bounded } = boundPerception(
+      perception({ controlRoom: bulkyControlRoom(), ownerTotals, backlog }),
+    );
+    expect(bounded.ownerTotals).toEqual(ownerTotals);
+    expect(bounded.backlog).toEqual(backlog);
+    expect(bounded.boundaries).toEqual(perception().boundaries);
+    expect(bounded.observedAt).toBe(perception().observedAt);
+  });
+
+  it("bounds the prompt actually built for the model, not just a copy", () => {
+    const unbounded = buildCentralBrainPrompt(perception({ controlRoom: bulkyControlRoom() }));
+    const { perception: bounded } = boundPerception(
+      perception({ controlRoom: bulkyControlRoom() }),
+    );
+    const boundedPrompt = buildCentralBrainPrompt(bounded);
+    expect(Buffer.byteLength(unbounded)).toBeGreaterThan(250_000);
+    expect(Buffer.byteLength(boundedPrompt)).toBeLessThanOrEqual(
+      CENTRAL_PERCEPTION_BUDGET_BYTES + 1_500, // + the fixed instruction block
+    );
+    // The reduction has to be real, not a rounding artefact.
+    expect(Buffer.byteLength(boundedPrompt) * 50).toBeLessThan(Buffer.byteLength(unbounded));
+  });
+
+  it("hands the brain the bounded perception and records the report on the receipt", async () => {
+    let seenControlRoom: Readonly<Record<string, unknown>> = {};
+    const receiptFromCycle = await runCentralHarnessCycle({
+      perception: perception({ controlRoom: bulkyControlRoom() }),
+      brain: {
+        propose: async (given) => {
+          seenControlRoom = given.controlRoom;
+          return { kind: "blocked_no_provider", reason: "test" };
+        },
+      },
+      registry,
+    });
+    expect(seenControlRoom.governance).toBeUndefined();
+    expect(receiptFromCycle.contextBudget.injectedBytes).toBeLessThanOrEqual(
+      CENTRAL_PERCEPTION_BUDGET_BYTES,
+    );
+    expect(receiptFromCycle.contextBudget.droppedSections[0].droppedKeys[0].key).toBe("governance");
+  });
+
+  it("is idempotent, so re-bounding an already bounded perception changes nothing", () => {
+    const once = boundPerception(perception({ controlRoom: bulkyControlRoom() }));
+    const twice = boundPerception(once.perception);
+    expect(twice.perception).toEqual(once.perception);
+    expect(twice.report.droppedSections).toEqual([]);
+  });
+
+  it("reports overBudget honestly instead of cutting the decision state", () => {
+    const hugeBacklog = Array.from({ length: 4 }, () => ({ note: "n".repeat(4_000) }));
+    const { perception: bounded, report } = boundPerception(
+      perception({ backlog: hugeBacklog, controlRoom: bulkyControlRoom() }),
+      CENTRAL_PERCEPTION_KEY_BUDGET_BYTES,
+    );
+    expect(report.overBudget).toBe(true);
+    expect(bounded.backlog).toHaveLength(4);
+    expect(bounded.controlRoom).toEqual({});
+  });
+
+  it("keeps a degenerate empty control room free of a dropped-section report", () => {
+    const { report } = boundPerception(perception());
+    expect(report.droppedSections).toEqual([]);
+    expect(report.overBudget).toBe(false);
+  });
+});
+
 describe("central agent CLI persists evidence a reader can walk back to", () => {
   function runCli(userHome: string) {
     return spawnSync(
@@ -654,6 +774,50 @@ describe("central agent CLI persists evidence a reader can walk back to", () => 
       };
       expect(secondSummary.resumeDroppedNonDecisionCycles).toBe(1);
       expect(await fsp.readdir(runsDir)).toHaveLength(2);
+    } finally {
+      await fsp.rm(userHome, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it("keeps the summary and the per-cycle snapshot when the jsonl cannot be written", async () => {
+    // Fault injection, not a hypothetical: before the write was made fail-open, an
+    // unwritable jsonl path exited 1 with 0 bytes on stdout and destroyed the whole
+    // cycle's evidence. A completed cycle must not become unparseable because one
+    // copy of its record could not be persisted.
+    const userHome = await fsp.mkdtemp(path.join(os.tmpdir(), "lcx-central-home-"));
+    const stateDir = path.join(userHome, ".openclaw", "workspace", "state");
+    const runsDir = path.join(stateDir, "lcx-central-agent-runs");
+    const logPath = path.join(
+      userHome,
+      ".openclaw",
+      "workspace",
+      "logs",
+      "lcx-central-agent-log-latest.jsonl",
+    );
+    try {
+      await fsp.mkdir(logPath, { recursive: true }); // a directory: open(.., "a") is EISDIR
+      const result = runCli(userHome);
+      expect(result.status).toBe(0);
+      const summary = JSON.parse(result.stdout.trim()) as {
+        runs: number;
+        evidenceComplete: boolean;
+        evidenceWriteFailures: { target: string; reason: string }[];
+        latestRunPath: string | null;
+      };
+      expect(summary.runs).toBe(1);
+      expect(summary.evidenceComplete).toBe(false);
+      expect(summary.evidenceWriteFailures.map((failure) => failure.target)).toEqual(["jsonl"]);
+      expect(summary.evidenceWriteFailures[0].reason).toContain("EISDIR");
+      // The cycle's evidence survives through the copy that did land.
+      expect(summary.latestRunPath).not.toBeNull();
+      expect(await fsp.readdir(runsDir)).toHaveLength(1);
+      const latest = JSON.parse(
+        await fsp.readFile(path.join(stateDir, "lcx-central-agent-latest.json"), "utf8"),
+      ) as { evidenceComplete: boolean; contextBudget: { injectedBytes: number } | null };
+      expect(latest.evidenceComplete).toBe(false);
+      expect(latest.contextBudget?.injectedBytes).toBeLessThanOrEqual(
+        CENTRAL_PERCEPTION_BUDGET_BYTES,
+      );
     } finally {
       await fsp.rm(userHome, { recursive: true, force: true });
     }

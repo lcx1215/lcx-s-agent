@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { CentralBrain, CentralBrainOutcome } from "./model-brain.js";
 import type {
+  CentralContextBudgetReport,
   CentralPerception,
   CentralRunReceipt,
   CentralStep,
@@ -28,6 +29,8 @@ export type HarnessLoopOptions = Readonly<{
    */
   planOnly?: boolean;
   runId?: string;
+  /** Override the injected-context byte budget (tests / offline). */
+  contextBudgetBytes?: number;
   /** Deterministic execute override for tests / offline. */
   execute?: (
     ownerId: string,
@@ -81,12 +84,16 @@ export async function runCentralHarnessCycle(
     reason: "brain_disabled",
   };
 
+  // The byte budget is applied here, at the single point where perception reaches
+  // the brain, so no caller can hand the model an unbounded snapshot.
+  const bounded = boundPerception(options.perception, options.contextBudgetBytes);
+
   // A brain failure (provider unreachable, output-contract violation, abort) must
   // still settle a receipt. The scheduled harness has to report "the brain failed"
   // honestly rather than crashing and leaving its owner with no parseable output.
   let proposal: CentralBrainOutcome | undefined;
   try {
-    proposal = await options.brain.propose(options.perception, signal);
+    proposal = await options.brain.propose(bounded.perception, signal);
   } catch (error) {
     brainCall = {
       provider: "",
@@ -201,6 +208,7 @@ export async function runCentralHarnessCycle(
     boundaries: options.perception.boundaries,
     brainCall,
     nextAction,
+    contextBudget: bounded.report,
     liveTouched: false,
     providerConfigTouched: false,
     protectedMemoryTouched: false,
@@ -271,4 +279,111 @@ export function compactReceipts(
     notOk: receipt.steps.filter((step) => step.observedOk === false).map((step) => step.ownerId),
     nextAction: receipt.nextAction,
   }));
+}
+
+/**
+ * Total byte budget for the perception injected into the brain prompt, and the
+ * per-key cap that stops one oversized section from crowding out the small,
+ * decision-relevant ones.
+ *
+ * Codex bounds injected context in *bytes* (`additionalContextLimit`). Bounding
+ * only counts, which is what this harness did, is a different and weaker
+ * guarantee: `backlog.slice(0, 10)` says nothing about the bytes those ten entries
+ * carry. Measured on the live workspace, the control-room snapshot alone
+ * serialized to ~311 KB — 99.7% of a 319 KB prompt — for a decision that only
+ * needs the per-owner status lines already carried by `ownerTotals`.
+ */
+export const CENTRAL_PERCEPTION_BUDGET_BYTES = 12_000;
+export const CENTRAL_PERCEPTION_KEY_BUDGET_BYTES = 2_048;
+
+function jsonBytes(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value ?? null));
+}
+
+/**
+ * Keep the object keys that fit both the per-key cap and the section budget,
+ * preserving declaration order, and report what was left out. A key that does not
+ * fit is skipped rather than terminating the scan, so a later small key still
+ * gets in.
+ */
+function boundObjectSection(
+  source: Readonly<Record<string, unknown>>,
+  sectionBudgetBytes: number,
+): {
+  value: Record<string, unknown>;
+  dropped: readonly Readonly<{ key: string; bytes: number }>[];
+} {
+  const kept: Record<string, unknown> = {};
+  const dropped: { key: string; bytes: number }[] = [];
+  let keptBytes = 2; // "{}"
+  for (const [key, value] of Object.entries(source)) {
+    const bytes = jsonBytes(value);
+    const entryBytes = jsonBytes(key) + bytes + 2; // "key":value,
+    if (
+      bytes > CENTRAL_PERCEPTION_KEY_BUDGET_BYTES ||
+      keptBytes + entryBytes > sectionBudgetBytes
+    ) {
+      dropped.push({ key, bytes });
+      continue;
+    }
+    kept[key] = value;
+    keptBytes += entryBytes;
+  }
+  return { value: kept, dropped };
+}
+
+/**
+ * Bound the perception handed to the brain to a byte budget.
+ *
+ * The always-injected sections (owner status, backlog, boundaries) are counted
+ * first and never truncated mid-structure — a partially cut JSON fragment would
+ * be worse than useless to the model. The flexible section (the control-room
+ * snapshot) absorbs the whole reduction, and every key left out is named with its
+ * byte size so the omission is visible in the receipt. The full snapshot remains
+ * on disk: this bounds the injection, it does not delete evidence.
+ *
+ * Idempotent: bounding an already-bounded perception returns it unchanged.
+ */
+export function boundPerception(
+  perception: CentralPerception,
+  budgetBytes: number = CENTRAL_PERCEPTION_BUDGET_BYTES,
+): { perception: CentralPerception; report: CentralContextBudgetReport } {
+  const budget =
+    Number.isSafeInteger(budgetBytes) && budgetBytes > 0
+      ? budgetBytes
+      : CENTRAL_PERCEPTION_BUDGET_BYTES;
+  const controlRoom = perception.controlRoom ?? {};
+  const originalBytes = jsonBytes(controlRoom);
+  const fixedBytes = jsonBytes({
+    observedAt: perception.observedAt,
+    ownerTotals: perception.ownerTotals,
+    backlog: perception.backlog,
+    boundaries: perception.boundaries,
+  });
+  const { value, dropped } = boundObjectSection(controlRoom, Math.max(0, budget - fixedBytes));
+  const boundedPerception: CentralPerception = { ...perception, controlRoom: value };
+  const injectedBytes = jsonBytes(boundedPerception);
+  return {
+    perception: boundedPerception,
+    report: {
+      budgetBytes: budget,
+      injectedBytes,
+      // Honest rather than silently over: if the fixed sections alone blow the
+      // budget, say so instead of truncating the state the decision needs.
+      overBudget: injectedBytes > budget,
+      droppedSections:
+        dropped.length > 0
+          ? [
+              {
+                section: "controlRoom",
+                originalBytes,
+                keptBytes: jsonBytes(value),
+                droppedKeys: dropped.toSorted(
+                  (left, right) => right.bytes - left.bytes || left.key.localeCompare(right.key),
+                ),
+              },
+            ]
+          : [],
+    },
+  };
 }

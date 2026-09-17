@@ -2,9 +2,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
-  runCentralHarnessCycle,
+  boundPerception,
   compactReceipts,
   resumableReceipts,
+  runCentralHarnessCycle,
 } from "../../src/agents/central-harness/harness-loop.js";
 import type { CompactBacklogEntry } from "../../src/agents/central-harness/harness-loop.js";
 import { createCentralBrain } from "../../src/agents/central-harness/model-brain.js";
@@ -48,6 +49,9 @@ const CLAIMED_BOUNDARIES = [
 ];
 
 class ParseError extends Error {}
+
+/** An evidence write that failed. Named, never swallowed, never fatal. */
+type EvidenceWriteFailure = Readonly<{ target: string; reason: string }>;
 
 function parseArgs(args: string[]): Record<string, string | boolean> {
   const out: Record<string, string | boolean> = {
@@ -184,6 +188,10 @@ function failedCycleReceipt(
       reason: `cycle failed: ${String(error).slice(0, 300)}`,
     },
     nextAction: "halt_and_report",
+    // The cycle threw, so nothing reached the brain; this records the budget that
+    // was in force rather than claiming an injection happened. The receipt's own
+    // brainCall.outcome is what tells a reader no injection occurred.
+    contextBudget: boundPerception(perception).report,
     liveTouched: false,
     providerConfigTouched: false,
     protectedMemoryTouched: false,
@@ -199,6 +207,7 @@ async function writeLatest(
     planOnly: boolean;
     runSnapshotPath?: string;
     droppedNonDecisionCycles: number;
+    evidenceWriteFailures: readonly EvidenceWriteFailure[];
   },
 ): Promise<void> {
   // The pointer is resolved against what is already on disk, so a run that observed
@@ -226,6 +235,11 @@ async function writeLatest(
     supersededThisRun: pointer.superseded && receipt ? receipt.runId : null,
     /** Resume-window honesty: cycles dropped because they produced no decision. */
     resumeDroppedNonDecisionCycles: meta.droppedNonDecisionCycles,
+    /** Byte budget actually applied to the brain's perception this cycle. */
+    contextBudget: receipt?.contextBudget ?? null,
+    /** Evidence-write honesty: a completed cycle whose record could not be persisted. */
+    evidenceComplete: meta.evidenceWriteFailures.length === 0,
+    evidenceWriteFailures: meta.evidenceWriteFailures,
     liveTouched: false,
     providerConfigTouched: false,
     protectedMemoryTouched: false,
@@ -260,6 +274,18 @@ async function main(): Promise<void> {
   let lastReceipt: CentralRunReceipt | undefined;
   let lastRunSnapshotPath: string | undefined;
   let droppedNonDecisionCycles = 0;
+  /**
+   * Evidence writes are fail-open, the same way the codex harness treats its audit
+   * trail: an unwritable log must not turn a completed cycle into an unparseable
+   * failure. Verified by fault injection before this guard existed — with the jsonl
+   * path unwritable the process exited 1 with 0 bytes on stdout, so the owner saw
+   * `ran_failed` and the whole cycle's receipt was gone. Every failure is named in
+   * the summary instead, so the loss stays visible.
+   */
+  const evidenceWriteFailures: EvidenceWriteFailure[] = [];
+  const recordEvidenceFailure = (target: string, error: unknown): void => {
+    evidenceWriteFailures.push({ target, reason: String(error).slice(0, 300) });
+  };
   // thread-store resume: recover prior cycles so the brain inherits context.
   let history = await loadPersistedReceipts();
   while (Date.now() < deadline && runs < maxCycles) {
@@ -283,13 +309,18 @@ async function main(): Promise<void> {
       // perception or dispatch fails mid-cycle.
       receipt = failedCycleReceipt(perception, runs, error);
     }
-    await settle(receipt);
+    try {
+      await settle(receipt);
+    } catch (error) {
+      recordEvidenceFailure("jsonl", error);
+    }
     try {
       lastRunSnapshotPath = await writeRunSnapshot(RUNS_DIR, receipt);
-    } catch {
+    } catch (error) {
       // The per-cycle snapshot is an extra copy of a receipt that is already in the
       // jsonl. Losing it must not cost the invocation its summary, so this stays
       // best-effort and the pointer simply records no run path.
+      recordEvidenceFailure("run_snapshot", error);
       lastRunSnapshotPath = undefined;
     }
     lastReceipt = receipt;
@@ -303,12 +334,18 @@ async function main(): Promise<void> {
   }
   // Always publish the observable snapshot, even on a zero-cycle run, so readers
   // never see a stale or absent central-agent surface.
-  await writeLatest(lastReceipt, runs, {
-    dryRun,
-    planOnly,
-    ...(lastRunSnapshotPath !== undefined ? { runSnapshotPath: lastRunSnapshotPath } : {}),
-    droppedNonDecisionCycles,
-  });
+  try {
+    await writeLatest(lastReceipt, runs, {
+      dryRun,
+      planOnly,
+      ...(lastRunSnapshotPath !== undefined ? { runSnapshotPath: lastRunSnapshotPath } : {}),
+      droppedNonDecisionCycles,
+      evidenceWriteFailures,
+    });
+  } catch (error) {
+    // stdout is the last surface standing: the summary below still has to print.
+    recordEvidenceFailure("latest_pointer", error);
+  }
   const brainOutcome = lastReceipt?.brainCall.outcome ?? null;
   const summary = {
     ok: runs > 0,
@@ -351,6 +388,11 @@ async function main(): Promise<void> {
     runsDir: RUNS_DIR,
     /** Resume-window honesty: cycles dropped because they produced no decision. */
     resumeDroppedNonDecisionCycles: droppedNonDecisionCycles,
+    /** Byte budget applied to the brain's perception, with every dropped key named. */
+    contextBudget: lastReceipt?.contextBudget ?? null,
+    /** False when a cycle's evidence could not be persisted; the run still succeeded. */
+    evidenceComplete: evidenceWriteFailures.length === 0,
+    evidenceWriteFailures,
     liveTouched: false,
     providerConfigTouched: false,
     protectedMemoryTouched: false,

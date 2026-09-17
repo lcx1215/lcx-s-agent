@@ -86,6 +86,30 @@ export type CentralPerception = Readonly<{
   boundaries: readonly string[];
 }>;
 
+/** One perception section that had to be bounded before injection. */
+export type CentralContextDroppedSection = Readonly<{
+  section: string;
+  originalBytes: number;
+  keptBytes: number;
+  /** Keys left out of the injected context, with the bytes each one cost. */
+  droppedKeys: readonly Readonly<{ key: string; bytes: number }>[];
+}>;
+
+/**
+ * Byte budget applied to the perception handed to the brain. Counts are not a
+ * byte guarantee: bounding the backlog to 10 entries says nothing about how many
+ * bytes those entries carry. The budget, the injected size, and every dropped key
+ * are reported on the receipt so a bounded injection is visible evidence rather
+ * than a silent omission — the full snapshot stays on disk either way.
+ */
+export type CentralContextBudgetReport = Readonly<{
+  budgetBytes: number;
+  injectedBytes: number;
+  /** True when the always-injected sections alone already exceed the budget. */
+  overBudget: boolean;
+  droppedSections: readonly CentralContextDroppedSection[];
+}>;
+
 /** The bounded action batch the brain returns (validated by an output contract). */
 export type CentralActionPlan = Readonly<{
   actions: readonly CentralProposedAction[];
@@ -111,6 +135,12 @@ export type CentralRunReceipt = Readonly<{
     note?: string;
   }>;
   nextAction: string;
+  /**
+   * Byte budget actually applied to the brain's perception this cycle. Present so
+   * a reader can tell a bounded injection from an unbounded one without having to
+   * re-derive it, and so the dropped keys are named rather than silently missing.
+   */
+  contextBudget: CentralContextBudgetReport;
   liveTouched: false;
   providerConfigTouched: false;
   protectedMemoryTouched: false;
