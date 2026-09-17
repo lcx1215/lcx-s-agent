@@ -237,6 +237,14 @@ function loadSnapshot(): JsonObject {
       canBecomeTrainingMaterial: Boolean(localFailureTrace.canBecomeTrainingMaterial),
       nextSafeAction: stringAt(localFailureTrace, "nextSafeAction") ?? "review_first_failed_gate",
     },
+    // The autopilot publishes its receipt last and names every evidence write it
+    // could not persist. Without this the dashboard would show a partial
+    // governance cycle as a complete one. Tri-state: an absent flag reads as
+    // unknown (a writer that predates the field), never as a silent healthy.
+    governanceEvidence: {
+      complete: booleanAt(autopilot, "evidenceComplete") ?? null,
+      writeFailures: optionalArrayAt(autopilot, "evidenceWriteFailures") ?? null,
+    },
     evolution: {
       datasetExamples:
         numberAt(monotonicLedger, "summary", "datasetExamples") ??

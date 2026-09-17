@@ -62,4 +62,20 @@ describe("LCX farm web projection view", () => {
     // returns `{}` for absent, so `?? fallback` would never fire.
     expect(source).not.toContain('objectAt(centralAgentOwner, "contextBudget")');
   });
+
+  it("projects the autopilot's own evidence health, not only the central agent's", async () => {
+    const source = await fs.readFile(
+      path.join(repoRoot, "scripts/operator/lcx-farm-web-server.ts"),
+      "utf8",
+    );
+
+    // The autopilot receipt is reachable through the control room, but a curated
+    // projection only shows what it names explicitly. Without this block a
+    // partial governance cycle would look complete on the dashboard.
+    expect(source).toContain("governanceEvidence");
+    expect(source).toContain('booleanAt(autopilot, "evidenceComplete")');
+    expect(source).toContain('optionalArrayAt(autopilot, "evidenceWriteFailures")');
+    // Same tri-state rule as the central agent: never the collapsing reader.
+    expect(source).not.toContain('objectAt(autopilot, "evidenceComplete")');
+  });
 });
