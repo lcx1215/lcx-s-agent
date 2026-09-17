@@ -43,6 +43,15 @@ Skill. Do not turn this file into a transcript or a second registry.
   and visible-flow control. Python is an engine for training, MLX/model
   execution, numerical work, or isolated tools; it is not a new workflow
   authority.
+- The Central Agent Harness (`scripts/operator/lcx-central-agent.ts` plus
+  `src/agents/central-harness/`) is the decision layer over the governance
+  owners. It perceives the governance and control-room snapshots, the model
+  brain proposes an action, the TypeScript gate approves or blocks it, and
+  every cycle appends one receipt to `lcx-central-agent-log-latest.jsonl` and
+  refreshes `lcx-central-agent-latest.json`. It holds no execution authority:
+  a cycle may not touch live state, provider configuration, protected memory,
+  or an external channel, and an unavailable brain is reported as an
+  unavailable brain rather than as an inferred success.
 - Optional implementations, providers, models, tools, plugins, and channels
   are replaceable adapters. Do not hardcode one as the system's permanent
   brain or authority.

@@ -503,6 +503,40 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     ],
   },
   {
+    id: "central_agent_decision_waterflow",
+    family: "local_operator_to_single_digest",
+    objective:
+      "The whole-system decision must have one owner: the central agent perceives the governance and control-room snapshots, the model brain proposes, the TypeScript gate approves or blocks, and the cycle records one receipt and one latest snapshot.",
+    start: "governance_autopilot",
+    end: "central_agent_latest_receipt",
+    requiredNodes: [
+      "governance_autopilot",
+      "central_agent_perception",
+      "central_agent_brain_proposal",
+      "central_agent_gate",
+      "central_agent_latest_receipt",
+    ],
+    requiredFilters: [
+      "llm_proposes_ts_gate_approves",
+      "central_agent_plan_only_no_dispatch",
+      "central_agent_no_execution_authority",
+      "no_provider_config_change",
+      "protected_memory_guard",
+      "error_receipt_required",
+    ],
+    edges: [
+      ["governance_autopilot", "central_agent_perception"],
+      ["central_agent_perception", "central_agent_brain_proposal"],
+      ["central_agent_brain_proposal", "central_agent_gate"],
+      ["central_agent_gate", "central_agent_latest_receipt"],
+    ],
+    receipts: [
+      "lcx-central-agent-latest",
+      "lcx-central-agent-log-latest.jsonl",
+      "test/lcx-central-agent.test.ts",
+    ],
+  },
+  {
     id: "external_visible_language_waterflow",
     family: "visible_external_readability_and_language_boundary",
     objective:
@@ -1988,6 +2022,11 @@ const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
     "src/auto-reply/reply/skillopt-autocue.ts",
     "src/agents/finance-data-gateway.ts",
     "src/agents/tools/finance-data-gateway-tool.ts",
+    "scripts/operator/lcx-central-agent.ts",
+    "src/agents/central-harness/harness-loop.ts",
+    "src/agents/central-harness/tool-registry.ts",
+    "src/agents/central-harness/model-brain.ts",
+    "src/agents/central-harness/types.ts",
   ],
   proof: [
     "scripts/operator/lcx-flow-graph.ts",
@@ -2012,6 +2051,7 @@ const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
     "test/local-brain-contracts.test.ts",
     "test/lcx-external-channel-compat-status.test.ts",
     "test/lcx-external-channel-binding.test.ts",
+    "test/lcx-central-agent.test.ts",
   ],
   boundary: [
     "AGENTS.md",
@@ -2025,19 +2065,38 @@ const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
     "scripts/operator/local-brain-training-plan.ts",
     "src/agents/tools/module-learning-pipeline-review-tool.ts",
     "src/auto-reply/reply/skillopt-autocue.ts",
+    "scripts/operator/lcx-central-agent.ts",
+    "src/agents/central-harness/harness-loop.ts",
+    "src/agents/central-harness/tool-registry.ts",
+    "src/agents/central-harness/types.ts",
   ],
 };
 
 const SURFACE_TERMS: Record<SurfaceGroup, string[]> = {
   head: ["LCX Agent Flow Graph", "waterflow", "wrong-flow", "filter valve", "bounded feedback"],
-  workflow: ["FLOW_SCENARIOS", "requiredFilters", "feedbackEdges", "ILLEGAL_EDGES"],
-  proof: ["flow_graph_exam", "missingRequiredFilters", "test/lcx-flow-graph.test.ts"],
+  workflow: [
+    "FLOW_SCENARIOS",
+    "requiredFilters",
+    "feedbackEdges",
+    "ILLEGAL_EDGES",
+    "central_agent_decision_waterflow",
+    "gate_and_record_only",
+    "CENTRAL_FORBIDDEN_SIDE_EFFECTS",
+  ],
+  proof: [
+    "flow_graph_exam",
+    "missingRequiredFilters",
+    "test/lcx-flow-graph.test.ts",
+    "test/lcx-central-agent.test.ts",
+  ],
   boundary: [
     "local_flow_graph_only",
     "liveTouched",
     "providerConfigTouched",
     "protectedMemoryTouched",
     "same_philosophy_merge_required",
+    "local_central_agent_observe_only",
+    "llm_proposes_ts_gate_approves",
   ],
 };
 
