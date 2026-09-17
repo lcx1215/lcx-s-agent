@@ -4,6 +4,7 @@ import path from "node:path";
 import { Type } from "@sinclair/typebox";
 import { loadConfig } from "../../config/config.js";
 import type { OpenClawConfig } from "../../config/config.js";
+import { FINANCE_DECISION_MODES, type FinanceDecisionMode } from "../finance-decision-policy.js";
 import {
   createFinanceModelWorkflow,
   type FinanceWorkflowSlotModels,
@@ -47,6 +48,12 @@ const schema = Type.Object({
   ask: Type.String({ minLength: 1, maxLength: 12_000 }),
   asOf: Type.String({ description: "Explicit ISO timestamp for the research evidence window" }),
   targets: Type.Optional(Type.Array(targetSchema, { maxItems: 64 })),
+  /**
+   * Answer-authority mode. `research_only` stays the compatibility default; the
+   * candidate modes only widen what the frozen decision packet may contain and
+   * never grant broker, wallet, or execution authority.
+   */
+  decisionMode: Type.Optional(Type.Union(FINANCE_DECISION_MODES.map((mode) => Type.Literal(mode)))),
   live: Type.Optional(Type.Boolean({ default: false })),
   maxModelCalls: Type.Optional(Type.Integer({ minimum: 1, maximum: 48, default: 24 })),
   maxApiCalls: Type.Optional(Type.Integer({ minimum: 1, maximum: 64, default: 32 })),
@@ -79,7 +86,7 @@ export function createFinanceResearchRunTool(options?: {
     name: "finance_research_run",
     label: "Finance Research Workflow",
     description:
-      "Plan or explicitly execute the canonical finance research workflow with configured models, independent review and finding closure. Works through any channel's normal agent tool dispatch. Planning is the default; live=true permits bounded source/model calls. Returns a local receipt, never sends a platform message or claims model learning or external delivery.",
+      "Plan or explicitly execute the canonical finance research workflow with configured models, independent review and finding closure. Works through any channel's normal agent tool dispatch. Planning is the default; live=true permits bounded source/model calls. decisionMode selects the answer authority (research_only by default; the candidate modes may produce a reviewable strategy or conditional buy/sell candidate) and never grants broker, wallet, or execution authority. Returns a local receipt, never sends a platform message or claims model learning or external delivery.",
     parameters: schema,
     execute: async (toolCallId, args, callerSignal) => {
       callerSignal?.throwIfAborted();
@@ -92,6 +99,16 @@ export function createFinanceResearchRunTool(options?: {
       if (params.live !== undefined && typeof params.live !== "boolean") {
         throw new ToolInputError("live must be a boolean");
       }
+      const rawDecisionMode = params.decisionMode;
+      if (
+        rawDecisionMode !== undefined &&
+        !FINANCE_DECISION_MODES.includes(rawDecisionMode as FinanceDecisionMode)
+      ) {
+        throw new ToolInputError(
+          `decisionMode must be one of ${FINANCE_DECISION_MODES.join(", ")}`,
+        );
+      }
+      const decisionMode = rawDecisionMode as FinanceDecisionMode | undefined;
       const maxModelCalls = boundedInteger(params, "maxModelCalls", 24, 48);
       const maxApiCalls = boundedInteger(params, "maxApiCalls", 32, 64);
       const timeoutMs = boundedInteger(params, "timeoutMs", 600_000, 1_200_000, 1_000);
@@ -124,7 +141,12 @@ export function createFinanceResearchRunTool(options?: {
               })
             : undefined;
         const receipt = await executeResearch({
-          input: { ask, asOf, ...(targets ? { targets } : {}) },
+          input: {
+            ask,
+            asOf,
+            ...(targets ? { targets } : {}),
+            ...(decisionMode ? { decisionMode } : {}),
+          },
           signal,
           liveFetch: params.live === true,
           allowProviderCalls: params.live === true,

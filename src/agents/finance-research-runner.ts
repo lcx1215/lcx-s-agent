@@ -378,6 +378,27 @@ export function buildDefaultFinanceResearchTargets(
         collections: [history, buildNewsCollection()],
       });
     }
+    // The directed daily brief's index-options task declares implied volatility,
+    // term structure, and skew as required fresh inputs and invalidates its
+    // conclusion without them, but the prioritized default set collected no
+    // options data at all: `options_chain` was reachable only through
+    // all_registered. Reuse the already-registered collection instead of adding
+    // a provider, a registry entry, or a parallel source owner.
+    targets.push({
+      id: "us-index-options-chain",
+      instrument: "SPY",
+      assetClass: "us_equity",
+      realtime: false,
+      collections: [
+        {
+          collection: "options_chain",
+          limit: 20,
+          // Three days tolerates a weekend or holiday close without accepting a
+          // genuinely stale chain.
+          freshnessMaxMinutes: 3 * 24 * 60,
+        },
+      ],
+    });
   }
   targets.push({
     id: "cross-asset-sentiment-news",

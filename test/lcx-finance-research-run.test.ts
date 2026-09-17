@@ -54,9 +54,17 @@ describe("lcx-finance-research-run", () => {
     );
     expect(payload.batch).toBeUndefined();
     const plan = payload.plan as Record<string, unknown>;
-    expect(plan.expectedJobCount).toBe(12);
+    expect(plan.expectedJobCount).toBe(13);
     expect(plan.targetIds).toEqual(
-      expect.arrayContaining(["crypto-btc", "us-equity-spy", "us-equity-qqq"]),
+      expect.arrayContaining([
+        "crypto-btc",
+        "us-equity-spy",
+        "us-equity-qqq",
+        // The directed daily brief's index-options task requires implied
+        // volatility, term structure, and skew, so the prioritized default set
+        // must collect an options chain instead of leaving it to all_registered.
+        "us-index-options-chain",
+      ]),
     );
     expect((plan.orchestration as Record<string, unknown>).primaryModules).toEqual(
       expect.arrayContaining(["event_driven", "cross_asset_liquidity"]),

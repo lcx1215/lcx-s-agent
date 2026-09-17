@@ -103,6 +103,26 @@ describe("platform-independent finance workflow tool", () => {
     expect(executeResearch.mock.calls[0]?.[0].input.targets).toEqual(targets);
   });
 
+  it("forwards an explicit decision mode and rejects one outside the declared vocabulary", async () => {
+    const executeResearch = vi.fn<typeof runFinanceResearchRun>(async () =>
+      runFinanceResearchRun({ input }),
+    );
+    const tool = createFinanceResearchRunTool({
+      workspaceDir: await workspace(),
+      executeResearch,
+    });
+    await tool.execute("mode-candidate", { ...input, decisionMode: "strategy_candidate" });
+    expect(executeResearch.mock.calls[0]?.[0].input.decisionMode).toBe("strategy_candidate");
+    // Omitted stays omitted: the runner keeps `research_only` as its own default.
+    await tool.execute("mode-default", input);
+    expect(executeResearch.mock.calls[1]?.[0].input.decisionMode).toBeUndefined();
+    // The candidate modes widen the answer packet; none of them grants execution.
+    await expect(
+      tool.execute("mode-live", { ...input, decisionMode: "live_execution" }),
+    ).rejects.toThrow("decisionMode must be one of");
+    expect(executeResearch).toHaveBeenCalledTimes(2);
+  });
+
   it("stops before execution when the platform cancels and rejects invalid budgets", async () => {
     const executeResearch = vi.fn<typeof runFinanceResearchRun>(async () =>
       runFinanceResearchRun({ input }),
