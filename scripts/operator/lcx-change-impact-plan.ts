@@ -487,6 +487,23 @@ const PATH_RULES: PathRule[] = [
     ],
   },
   {
+    // Hand-run developer tools. Nothing schedules them and nothing imports them:
+    // a human runs them by hand, and the live ones additionally need a provider
+    // key or a paired device. They still need an owner lane, otherwise a change
+    // to one is reported as an unowned stray file.
+    id: "developer_manual_tools",
+    lane: "local_dev_tooling",
+    patterns: [
+      /^scripts\/(?:cron_usage_report|debug-claude-usage|firecrawl-compare|generate-secretref-credential-matrix|label-open-issues|readability-basic-compare|sync-moonshot-docs|test-shell-completion|zai-fallback-repro)\.ts$/u,
+      /^scripts\/operator\/(?:geospatial-source-live-smoke|ios-node-e2e|test-device-pair-telegram)\.ts$/u,
+    ],
+    requiredChecks: [],
+    commands: ["git diff --check"],
+    safetyNotes: [
+      "These are hand-run developer tools with no automated gate; some need a live provider key or a paired device. Changing one means running it by hand and stating what was observed. This lane grants no provider, credential, or external-channel authority.",
+    ],
+  },
+  {
     id: "test_file_changed",
     lane: "test_surface",
     patterns: [/(^|\/)[^/]+\.test\.ts$/u],
