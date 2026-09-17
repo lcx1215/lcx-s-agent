@@ -328,7 +328,29 @@ function compactCurrentTrainingVolatile(value: unknown) {
   };
 }
 
-function currentRuntimeSkillSnapshot() {
+/**
+ * Discriminated runtime-skill status. A single generic failure summary used to make
+ * three different situations identical: a required skill genuinely missing, a wrong
+ * autocue mapping, and "the snapshot could not be built at all". The third one is not
+ * a governance red light — it is an unobserved fact — so it is named separately and
+ * never reported as a list of skills that were "missing".
+ */
+type RuntimeSkillSnapshot = Readonly<{
+  ok: boolean;
+  status: "ok" | "missing_skills" | "autocue_mismatch" | "snapshot_build_failed";
+  skillCount: number;
+  missing: readonly string[];
+  wrongCues: readonly Readonly<{ body: string; expectedSkill: string; selectedSkill?: string }>[];
+  cueResults: readonly Readonly<{
+    body: string;
+    expectedSkill: string;
+    selectedSkill?: string;
+    ok: boolean;
+  }>[];
+  error?: string;
+}>;
+
+function currentRuntimeSkillSnapshot(): RuntimeSkillSnapshot {
   try {
     const snapshot = buildWorkspaceSkillSnapshot(repoRoot, {
       config: loadConfig(),
@@ -343,26 +365,59 @@ function currentRuntimeSkillSnapshot() {
         availableSkillNames,
       });
       return {
+        body: probe.body,
         expectedSkill: probe.expectedSkill,
         selectedSkill: cue?.skillName,
         ok: cue?.skillName === probe.expectedSkill,
       };
     });
+    const wrongCues = cueResults
+      .filter((entry) => !entry.ok)
+      .map(({ body, expectedSkill, selectedSkill }) => ({ body, expectedSkill, selectedSkill }));
     return {
-      ok: missing.length === 0 && cueResults.every((entry) => entry.ok),
+      ok: missing.length === 0 && wrongCues.length === 0,
+      status:
+        missing.length > 0 ? "missing_skills" : wrongCues.length > 0 ? "autocue_mismatch" : "ok",
       skillCount: availableSkillNames.length,
       missing,
+      wrongCues,
       cueResults,
     };
   } catch (error) {
+    // `missing` stays empty on purpose: the snapshot never loaded, so no skill was
+    // observed to be absent. Claiming the full required list here would fabricate an
+    // observation and make an environment failure look like a governance failure.
     return {
       ok: false,
+      status: "snapshot_build_failed",
       skillCount: 0,
-      missing: [...REQUIRED_RUNTIME_SKILLS],
+      missing: [],
+      wrongCues: [],
       cueResults: [],
       error: String(error),
     };
   }
+}
+
+/** Name the actual cause in the summary, because only the summary reaches the surface. */
+function runtimeSkillSummary(snapshot: RuntimeSkillSnapshot): string {
+  if (snapshot.status === "snapshot_build_failed") {
+    return `local runtime skill snapshot could not be built, so skill availability is unobserved (not a missing-skill finding): ${
+      snapshot.error ?? "unknown error"
+    }`;
+  }
+  if (snapshot.status === "missing_skills") {
+    return `local runtime skill snapshot is missing required LCX operator skills: ${snapshot.missing.join(", ")}`;
+  }
+  if (snapshot.status === "autocue_mismatch") {
+    return `LCX operator autocue mapping is wrong for: ${snapshot.wrongCues
+      .map(
+        (cue) =>
+          `${JSON.stringify(cue.body)} selected ${cue.selectedSkill ?? "nothing"} instead of ${cue.expectedSkill}`,
+      )
+      .join("; ")}`;
+  }
+  return "local runtime skill snapshot includes the core LCX operator skills and deterministic natural-language autocues";
 }
 
 function operatorTrainingVolatileMatches(
@@ -1298,8 +1353,7 @@ async function main() {
     {
       id: "runtime_lcx_operator_skills_available_and_autocued",
       ok: runtimeSkillSnapshot.ok,
-      summary:
-        "local runtime skill snapshot must include core LCX operator skills and deterministic natural-language autocues",
+      summary: runtimeSkillSummary(runtimeSkillSnapshot),
       evidence: runtimeSkillSnapshot,
     },
     {
