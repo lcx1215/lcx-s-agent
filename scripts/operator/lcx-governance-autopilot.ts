@@ -264,14 +264,17 @@ const OWNER_COMMANDS: OwnerCommand[] = [
   },
   {
     // The LLM decision layer, driven from the rule-driven loop instead of being
-    // an orphaned script nobody schedules. `--plan-only` bounds it to one gated
-    // decision per pass: it perceives, the brain proposes, the TS gate approves
-    // or blocks, and the receipt records the plan and its reasoning. It never
-    // re-spawns the owners this same pass already runs in parallel, and it never
-    // reaches provider config, external senders, protected memory, or trading.
+    // an orphaned script nobody schedules. It runs in full dispatch mode: it
+    // perceives, the brain proposes, the TS gate approves or blocks, and the
+    // approved read-only owners are actually spawned (bounded by maxSteps and
+    // one cycle per pass). The registry's declared arg vector is the whole CLI
+    // surface, so a proposal can choose WHICH owner runs but can never add an
+    // authority flag. It never reaches provider config, external senders,
+    // protected memory, or trading. `--plan-only` remains available for a
+    // deliberate one-decision-wide pass; it is no longer the scheduled default.
     id: "centralAgent",
     script: "scripts/operator/lcx-central-agent.ts",
-    args: ["--max-cycles", "1", "--plan-only", "--json"],
+    args: ["--max-cycles", "1", "--json"],
     required: true,
   },
 ];
@@ -781,6 +784,12 @@ function compactOwner(id: OwnerId, payload: Record<string, unknown> | undefined)
       actionsApproved: payload.actionsApproved,
       actionsBlockedByGate: payload.actionsBlockedByGate,
       approvedOwners: payload.approvedOwners,
+      // A red light the owner reported itself is not the same signal as "the
+      // harness could not run it"; both are projected so the control room and
+      // the next central cycle can tell them apart.
+      ownersReportingNotOk: payload.ownersReportingNotOk,
+      failedSteps: payload.failedSteps,
+      nextAction: payload.nextAction,
       // The owner's stdout carries the rationale directly; the on-disk snapshot
       // holds the full receipt, but the compact must only use the payload.
       brainNote: payload.brainNote,
@@ -1801,6 +1810,9 @@ const receipt = {
     centralAgentActionsApproved: byOwner.centralAgent?.compact.actionsApproved,
     centralAgentActionsBlockedByGate: byOwner.centralAgent?.compact.actionsBlockedByGate,
     centralAgentApprovedOwners: byOwner.centralAgent?.compact.approvedOwners,
+    centralAgentOwnersReportingNotOk: byOwner.centralAgent?.compact.ownersReportingNotOk,
+    centralAgentFailedSteps: byOwner.centralAgent?.compact.failedSteps,
+    centralAgentNextAction: byOwner.centralAgent?.compact.nextAction,
     centralAgentBrainNote: byOwner.centralAgent?.compact.brainNote,
   },
   owners: Object.fromEntries(owners.map((owner) => [owner.id, owner.compact])),
@@ -1951,6 +1963,9 @@ const digestMaterial = {
   centralAgentActionsApproved: centralAgentCompact?.actionsApproved,
   centralAgentActionsBlockedByGate: centralAgentCompact?.actionsBlockedByGate,
   centralAgentApprovedOwners: centralAgentCompact?.approvedOwners,
+  centralAgentOwnersReportingNotOk: centralAgentCompact?.ownersReportingNotOk,
+  centralAgentFailedSteps: centralAgentCompact?.failedSteps,
+  centralAgentNextAction: centralAgentCompact?.nextAction,
   centralAgentBrainNote: centralAgentCompact?.brainNote,
   liveTouched: receipt.liveTouched,
   providerConfigTouched: receipt.providerConfigTouched,

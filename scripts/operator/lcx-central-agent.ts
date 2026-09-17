@@ -286,6 +286,20 @@ async function main(): Promise<void> {
       lastReceipt?.steps
         .filter((step) => step.status === "approved" || step.status === "ran_ok")
         .map((step) => step.ownerId) ?? [],
+    /** Owners that ran and whose own receipt reported not-ok (a real red light). */
+    ownersReportingNotOk:
+      lastReceipt?.steps.filter((step) => step.observedOk === false).map((step) => step.ownerId) ??
+      [],
+    /** Owners the harness could not run at all, with the reason it recorded. */
+    failedSteps:
+      lastReceipt?.steps
+        .filter((step) => step.status === "ran_failed")
+        .map((step) => ({
+          ownerId: step.ownerId,
+          reason: step.failureReason ?? "no failure reason recorded",
+        })) ?? [],
+    /** TypeScript-computed next step; never model-authored. */
+    nextAction: lastReceipt?.nextAction ?? null,
     /** The brain's own one-line rationale, so readers see *why*, not just *what*. */
     brainNote: lastReceipt?.brainCall.note ?? null,
     liveTouched: false,

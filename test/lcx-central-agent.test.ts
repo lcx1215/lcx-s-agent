@@ -365,6 +365,74 @@ describe("central harness plan-only and failure settlement", () => {
   });
 });
 
+describe("an owner's own red light is not a dispatch failure", () => {
+  it("records ran_ok + observedOk false when the owner ran and reported not-ok", async () => {
+    const receipt = await runCentralHarnessCycle({
+      perception: perception(),
+      brain: brainWithActions([
+        { ownerId: "commercialAcceptance", args: {}, reasoning: "check acceptance" },
+      ]),
+      registry,
+      execute: async () => ({ output: '{"ok":false}', exitCode: 1, observedOk: false }),
+    });
+    const step = receipt.steps[0];
+    expect(step.status).toBe("ran_ok");
+    expect(step.observedOk).toBe(false);
+    expect(step.failureReason).toBeUndefined();
+    expect(receipt.nextAction).toBe("follow_up_on_owners_reporting_not_ok");
+  });
+
+  it("records ran_failed with a reason when the owner could not be run at all", async () => {
+    const receipt = await runCentralHarnessCycle({
+      perception: perception(),
+      brain: brainWithActions([{ ownerId: "mindModel", args: {}, reasoning: "supervise" }]),
+      registry,
+      execute: async () => {
+        throw new Error("owner mindModel produced no parseable receipt: boom");
+      },
+    });
+    const step = receipt.steps[0];
+    expect(step.status).toBe("ran_failed");
+    expect(step.observedOk).toBeUndefined();
+    expect(step.failureReason).toContain("no parseable receipt");
+  });
+
+  it("carries the owner verdict and the TS next action into the compact backlog", async () => {
+    const receipt = await runCentralHarnessCycle({
+      perception: perception(),
+      brain: brainWithActions([
+        { ownerId: "commercialAcceptance", args: {}, reasoning: "check acceptance" },
+      ]),
+      registry,
+      execute: async () => ({ observedOk: false }),
+    });
+    const [entry] = compactReceipts([receipt], 5);
+    expect(entry.approved).toEqual(["commercialAcceptance"]);
+    expect(entry.notOk).toEqual(["commercialAcceptance"]);
+    expect(entry.nextAction).toBe("follow_up_on_owners_reporting_not_ok");
+  });
+
+  it("marks the next action as halt_and_report when the brain call fails", async () => {
+    const receipt = await runCentralHarnessCycle({
+      perception: perception(),
+      brain: {
+        propose: async () => {
+          throw new Error("provider unreachable");
+        },
+      },
+      registry,
+    });
+    expect(receipt.nextAction).toBe("halt_and_report");
+  });
+
+  it("refuses a known owner whose script is absent from the checkout", () => {
+    expect(approveOwner("problemRadar", {})).toEqual({ ok: true });
+    const refused = approveOwner("problemRadar", {}, path.join(REPO_ROOT, ".tmp", "no-such-root"));
+    expect(refused.ok).toBe(false);
+    expect(refused.reason).toContain("owner script not present");
+  });
+});
+
 describe("central harness is wired into the governance loop, not orphaned", () => {
   const autopilotSource = fs.readFileSync(
     path.join(REPO_ROOT, "scripts/operator/lcx-governance-autopilot.ts"),
@@ -376,8 +444,18 @@ describe("central harness is wired into the governance loop, not orphaned", () =
     expect(autopilotSource).toContain("scripts/operator/lcx-central-agent.ts");
   });
 
-  it("runs it cycle-bounded and plan-only so the hourly pass stays one decision wide", () => {
-    expect(autopilotSource).toContain('"--max-cycles", "1", "--plan-only", "--json"');
+  it("runs it cycle-bounded in full dispatch mode so the scheduled pass really drives owners", () => {
+    expect(autopilotSource).toContain('args: ["--max-cycles", "1", "--json"]');
+    expect(autopilotSource).not.toContain('"--max-cycles", "1", "--plan-only", "--json"');
+  });
+
+  it("keeps plan-only available as an explicit opt-in instead of the scheduled default", () => {
+    const cliSource = fs.readFileSync(
+      path.join(REPO_ROOT, "scripts/operator/lcx-central-agent.ts"),
+      "utf8",
+    );
+    expect(cliSource).toContain('arg === "--plan-only"');
+    expect(cliSource).toContain('planOnly ? "gate_and_record_only" : "gate_record_and_dispatch"');
   });
 
   it("projects the decision layer into the governance summary", () => {

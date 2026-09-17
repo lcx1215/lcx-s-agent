@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -213,11 +214,16 @@ function escalationReason(args: Readonly<Record<string, unknown>>): string | und
   return undefined;
 }
 
-/** Deterministic gate. Rejects unknown owners, --write flags, and any arg key
- * that smells like an authority escalation, even if suggested by the LLM. */
+/** Deterministic gate. Rejects unknown owners, missing owner scripts, --write
+ * flags, and any arg key that smells like an authority escalation, even if
+ * suggested by the LLM.
+ *
+ * `rootDir` defaults to the resolved repo root; it is injectable only so the
+ * reachability branch can be exercised without mutating the checkout. */
 function approveOwner(
   ownerId: string,
   args: Readonly<Record<string, unknown>>,
+  rootDir: string = REPO_ROOT,
 ): {
   ok: boolean;
   reason?: string;
@@ -226,8 +232,30 @@ function approveOwner(
   if (!owner) {
     return { ok: false, reason: `unknown or write-authority owner: ${ownerId}` };
   }
+  // Verify reachability at gate time, not at dispatch time: a renamed or removed
+  // owner script must be reported as a refused proposal instead of surfacing
+  // later as an opaque `ran_failed`.
+  if (!existsSync(path.join(rootDir, owner.script))) {
+    return { ok: false, reason: `owner script not present in this checkout: ${owner.script}` };
+  }
   const escalation = escalationReason(args);
   return escalation ? { ok: false, reason: escalation } : { ok: true };
+}
+
+/** Parse the owner's stdout as a JSON object; undefined when it is not one. */
+function tryParseJsonObject(raw: string): Record<string, unknown> | undefined {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0 || (trimmed[0] !== "{" && trimmed[0] !== "[")) {
+    return undefined;
+  }
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function runOwner(
@@ -241,17 +269,47 @@ async function runOwner(
   // fail closed as `ran_failed` instead of doing anything useful.
   const cliArgs = [...owner.args];
   void args;
-  const { stdout } = await execFileAsync(
-    process.execPath,
-    ["--import", "tsx", owner.script, ...cliArgs],
-    {
-      cwd: REPO_ROOT,
-      env: process.env,
-      maxBuffer: EXEC_MAX_BUFFER,
-    },
-  );
-  signal.throwIfAborted();
-  return { output: stdout } as Readonly<Record<string, unknown>>;
+  try {
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      ["--import", "tsx", owner.script, ...cliArgs],
+      {
+        cwd: REPO_ROOT,
+        env: process.env,
+        maxBuffer: EXEC_MAX_BUFFER,
+      },
+    );
+    signal.throwIfAborted();
+    return { output: stdout, exitCode: 0, observedOk: true };
+  } catch (error) {
+    signal.throwIfAborted();
+    // A non-zero exit is NOT the same as "could not run". Several governance
+    // owners exit 1 exactly when they report a red light, and their stdout is
+    // still a complete receipt. Throwing here would discard the single most
+    // decision-relevant observation, so keep it and mark the owner's own verdict.
+    const failure = error as { stdout?: unknown; code?: unknown; message?: unknown };
+    const stdout = typeof failure.stdout === "string" ? failure.stdout : "";
+    const ownerReceipt = tryParseJsonObject(stdout);
+    if (ownerReceipt !== undefined) {
+      return {
+        output: stdout,
+        exitCode: typeof failure.code === "number" ? failure.code : 1,
+        // A non-zero exit with no `ok: true` in the receipt IS the owner's own
+        // not-ok verdict; anything else would be the harness second-guessing it.
+        observedOk: ownerReceipt.ok === true,
+      };
+    }
+    const stderr =
+      typeof (error as { stderr?: unknown }).stderr === "string"
+        ? (error as { stderr: string }).stderr
+        : "";
+    throw new Error(
+      `owner ${owner.id} produced no parseable receipt: ${
+        stderr.trim() || String(failure.message ?? error)
+      }`.slice(0, 400),
+      { cause: error },
+    );
+  }
 }
 
 /**

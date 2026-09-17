@@ -43,6 +43,15 @@ export type CentralStep = {
   status: "approved" | "blocked_by_gate" | "ran_ok" | "ran_failed" | "skipped";
   boundary?: readonly string[];
   gateReason?: string;
+  /**
+   * The owner's OWN verdict when it produced a parseable receipt. `ran_ok` means
+   * the harness got a receipt; `observedOk: false` means that receipt reported a
+   * red light. Kept separate so "we could not run it" never hides behind "it ran
+   * and reported not-ok", and vice versa.
+   */
+  observedOk?: boolean;
+  /** Why the harness could not run the owner at all (crash, unparseable output). */
+  failureReason?: string;
   startedAtMs?: number;
   finishedAtMs?: number;
 };

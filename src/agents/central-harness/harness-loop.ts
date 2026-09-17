@@ -155,18 +155,40 @@ export async function runCentralHarnessCycle(
     }
     const spec = observer.get(step.ownerId)!;
     try {
-      if (options.execute) {
-        // Test/offline override: deterministic execute given the full spec.
-        await options.execute(step.ownerId, spec, step.args, signal);
-      } else {
-        await spec.execute(step.args, signal);
+      const observation =
+        options.execute !== undefined
+          ? // Test/offline override: deterministic execute given the full spec.
+            await options.execute(step.ownerId, spec, step.args, signal)
+          : await spec.execute(step.args, signal);
+      // `ran_ok` means the harness obtained a receipt. The owner's own verdict
+      // rides alongside it, so "it ran and reported a red light" never reads as
+      // "it did not run" (and vice versa).
+      const observed = (observation as { observedOk?: unknown } | undefined)?.observedOk;
+      if (observed === true || observed === false) {
+        step.observedOk = observed;
       }
       step.status = "ran_ok";
-    } catch {
+    } catch (error) {
       step.status = "ran_failed";
+      step.failureReason = String(error).slice(0, 300);
     }
     step.finishedAtMs = Date.now();
   }
+
+  // The next action is computed here, by TypeScript, and never by the brain: it
+  // is a bounded enum the following cycle can trust, not self-authored guidance.
+  const nextAction =
+    brainCall.outcome === "completed"
+      ? actionsBlockedByGate > 0
+        ? "review_blocked_proposals"
+        : steps.some((step) => step.observedOk === false)
+          ? "follow_up_on_owners_reporting_not_ok"
+          : "continue"
+      : brainCall.outcome === "failed"
+        ? "halt_and_report"
+        : brainCall.outcome === "blocked"
+          ? "restore_brain_provider_then_retry"
+          : "continue";
 
   const receipt: CentralRunReceipt = {
     schemaVersion: "lcx_central_agent_v1",
@@ -178,7 +200,7 @@ export async function runCentralHarnessCycle(
     steps,
     boundaries: options.perception.boundaries,
     brainCall,
-    nextAction: "continue",
+    nextAction,
     liveTouched: false,
     providerConfigTouched: false,
     protectedMemoryTouched: false,
@@ -194,8 +216,13 @@ export async function runCentralHarnessCycle(
  * Codex-harness context-compaction + retained-reasoning pattern, applied to the
  * central harness. Instead of feeding the brain the whole raw thread, fold a
  * bounded tail of done cycles into compact backlog entries (who ran, who got
- * gated, and the brain's own one-line note from the prior turn). This keeps
- * the probe small and lets the next decision inherit prior reasoning.
+ * gated, which owners reported a red light, and the brain's own one-line note
+ * from the prior turn). This keeps the probe small and lets the next decision
+ * inherit prior reasoning.
+ *
+ * `nextAction` is carried through as well: it is the TypeScript-computed next
+ * step, so the following cycle sees the harness's own verdict instead of having
+ * to re-derive it, and the field cannot become model-authored guidance.
  */
 export type CompactBacklogEntry = Readonly<{
   atMs: number;
@@ -203,6 +230,9 @@ export type CompactBacklogEntry = Readonly<{
   note?: string;
   approved: readonly string[];
   blocked: readonly string[];
+  /** Owners that ran and whose own receipt reported not-ok. */
+  notOk: readonly string[];
+  nextAction: string;
 }>;
 
 export function compactReceipts(
@@ -221,5 +251,7 @@ export function compactReceipts(
     blocked: receipt.steps
       .filter((step) => step.status === "blocked_by_gate")
       .map((step) => step.ownerId),
+    notOk: receipt.steps.filter((step) => step.observedOk === false).map((step) => step.ownerId),
+    nextAction: receipt.nextAction,
   }));
 }
