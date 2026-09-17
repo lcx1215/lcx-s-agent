@@ -8,6 +8,10 @@ import {
   type ApiTransportOptions,
 } from "./api-call-contract.js";
 import type { FinanceCommitteeEvidence } from "./finance-agent-committee.js";
+import {
+  FINANCE_LIVE_NOW_MAX_FUTURE_SKEW_MINUTES,
+  type FinanceAsOfMode,
+} from "./finance-data-gateway.js";
 import { assessFinanceHistoryCoverage } from "./finance-history-coverage.js";
 import {
   createFinanceMarketCollectionRegistry,
@@ -64,6 +68,7 @@ export type FinanceResearchBatchOptions = Readonly<{
   targets: readonly FinanceResearchBatchTarget[];
   checkpoint?: FinanceCheckpointOptions;
   asOf: string;
+  asOfMode?: FinanceAsOfMode;
   useCase: string;
   correlationId?: string;
   signal?: AbortSignal;
@@ -123,6 +128,7 @@ export type FinanceResearchBatchEvidencePacket = Readonly<{
   decisionMode: "research_only";
   correlationId: string;
   asOf: string;
+  asOfMode?: FinanceAsOfMode;
   useCase: string;
   status: "completed" | "partial" | "blocked" | "cancelled" | "timed_out";
   jobs: readonly FinanceResearchBatchJob[];
@@ -217,15 +223,22 @@ function assessReceipt(receipt: SourceReceipt, job: PlannedJob) {
   const freshnessWarnings: string[] = [];
   const conflicts: string[] = [];
   const seen = new Map<string, string>();
+  const historicalCutoff = job.request.asOfMode !== "live_now";
+  const futureTimestampLimitMs = historicalCutoff
+    ? Date.parse(job.request.asOf)
+    : Date.now() + FINANCE_LIVE_NOW_MAX_FUTURE_SKEW_MINUTES * 60_000;
   for (const record of (receipt as FinanceMarketCollectionReceipt).records) {
     const key = JSON.stringify([record.providerName, record.collection, record.itemId]);
-    const age = (Date.parse(job.request.asOf) - Date.parse(record.sourceTimestamp)) / 60_000;
+    const sourceTimestampMs = Date.parse(record.sourceTimestamp);
+    const observedAtMs = Date.parse(record.observedAt);
+    const age = (Date.parse(job.request.asOf) - sourceTimestampMs) / 60_000;
     if (
       !Number.isFinite(age) ||
-      age < 0 ||
+      !Number.isFinite(sourceTimestampMs) ||
+      !Number.isFinite(observedAtMs) ||
+      sourceTimestampMs > futureTimestampLimitMs ||
+      observedAtMs > futureTimestampLimitMs ||
       age > job.freshnessMaxMinutes ||
-      !Number.isFinite(Date.parse(record.observedAt)) ||
-      Date.parse(record.observedAt) > Date.parse(job.request.asOf) ||
       record.delayStatus === "manual_or_unknown" ||
       !record.sourceUrlOrArtifact?.trim()
     ) {
@@ -302,6 +315,7 @@ export async function runFinanceResearchBatch(
       instrument: requiredText(target.instrument, "instrument"),
       assetClass: requiredText(target.assetClass, "assetClass"),
       asOf,
+      ...(options.asOfMode === undefined ? {} : { asOfMode: options.asOfMode }),
     };
     const requests: Array<
       Pick<PlannedJob, "kind" | "freshnessMaxMinutes"> & {
@@ -672,6 +686,7 @@ export async function runFinanceResearchBatch(
     decisionMode: "research_only",
     correlationId,
     asOf,
+    ...(options.asOfMode === undefined ? {} : { asOfMode: options.asOfMode }),
     useCase,
     status,
     jobs,

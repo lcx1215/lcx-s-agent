@@ -1959,6 +1959,9 @@ export async function runExternalLearningCouncil(params: {
           .join("\n\n"),
       });
   const minimaxExtra =
+    // `minimaxPrimary` is `undefined` exactly when minimax is disabled, so
+    // `!minimaxDisabled` is redundant here; kept explicit so the guard reads
+    // the same as the retirement check above instead of relying on that link.
     !minimaxDisabled && directives.minimaxHeavy && minimaxPrimary
       ? await runLearningCouncilRole({
           cfg: runtimeConfig,

@@ -19,7 +19,7 @@ repos:
         args: [--maxkb=500]
       - id: check-merge-conflict
       - id: detect-private-key
-        exclude: '(^|/)(\.secrets\.baseline$|\.detect-secrets\.cfg$|\.pre-commit-config\.yaml$|apps/ios/fastlane/Fastfile$|.*\.test\.ts$)'
+        exclude: '(^|/)(\.secrets\.baseline$|\.detect-secrets\.cfg$|\.pre-commit-config\.yaml$|.*\.test\.ts$)'
 
   # Secret detection (same as CI)
   - repo: https://github.com/Yelp/detect-secrets
@@ -119,20 +119,4 @@ repos:
         language: system
         pass_filenames: false
         types_or: [javascript, jsx, ts, tsx]
-
-      # swiftlint (same as CI)
-      - id: swiftlint
-        name: swiftlint
-        entry: swiftlint --config .swiftlint.yml
-        language: system
-        pass_filenames: false
-        types: [swift]
-
-      # swiftformat --lint (same as CI)
-      - id: swiftformat
-        name: swiftformat
-        entry: swiftformat --lint apps/macos/Sources --config .swiftformat
-        language: system
-        pass_filenames: false
-        types: [swift]
 # Defines local pre-commit checks before code enters the OpenClaw/Lobster tree.

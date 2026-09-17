@@ -658,6 +658,10 @@ describe.skipIf(process.platform === "win32")("local-brain-distill-eval", () => 
           encoding: "utf8",
           env: {
             ...process.env,
+            // Isolate the prompt cache under the temp home: ensurePromptCache only
+            // passes cache_prompt when it actually builds the cache, so a warm shared
+            // cache would silently skip the flag this test asserts on.
+            LCX_USER_HOME: tempDir,
             EVAL_FAKE_PYTHON_LOG: argLog,
           },
         },

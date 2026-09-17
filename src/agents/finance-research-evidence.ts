@@ -1,4 +1,8 @@
 import type { FinanceCommitteeEvidence } from "./finance-agent-committee.js";
+import {
+  FINANCE_LIVE_NOW_MAX_FUTURE_SKEW_MINUTES,
+  type FinanceAsOfMode,
+} from "./finance-data-gateway.js";
 import type { FinanceMarketCollectionItem } from "./finance-market-collection-registry.js";
 import type {
   FinanceResearchBatchEvidencePacket,
@@ -81,7 +85,17 @@ export function rankFinanceWindowDrawdowns(
 export function summarizeFinancePriceHistory(
   rows: readonly FinanceMarketCollectionItem[],
   asOf: string,
+  options: Readonly<{
+    asOfMode?: FinanceAsOfMode;
+    futureTimestampLimitMs?: number;
+  }> = {},
 ) {
+  const historicalCutoff = options.asOfMode !== "live_now";
+  const futureTimestampLimitMs =
+    options.futureTimestampLimitMs ??
+    (historicalCutoff
+      ? Date.parse(asOf)
+      : Date.now() + FINANCE_LIVE_NOW_MAX_FUTURE_SKEW_MINUTES * 60_000);
   const series = new Map<string, Map<string, number>>();
   let invalid = 0;
   let duplicates = 0;
@@ -90,13 +104,18 @@ export function summarizeFinancePriceHistory(
     const close = number(row.data.close ?? row.data.c ?? row.data.price);
     const date =
       typeof row.data.date === "string" ? row.data.date : row.sourceTimestamp.slice(0, 10);
+    const dateMs = Date.parse(`${date}T00:00:00.000Z`);
+    const dateAfterCutoff = historicalCutoff
+      ? date >= asOf.slice(0, 10)
+      : !Number.isFinite(dateMs) || dateMs > futureTimestampLimitMs;
+    const sourceTimestampMs = Date.parse(row.sourceTimestamp);
     if (
       !/^\d{4}-\d{2}-\d{2}$/u.test(date) ||
       !Number.isFinite(Date.parse(date)) ||
       new Date(date).toISOString().slice(0, 10) !== date ||
-      date >= asOf.slice(0, 10) ||
-      !Number.isFinite(Date.parse(row.sourceTimestamp)) ||
-      Date.parse(row.sourceTimestamp) > Date.parse(asOf) ||
+      dateAfterCutoff ||
+      !Number.isFinite(sourceTimestampMs) ||
+      sourceTimestampMs > futureTimestampLimitMs ||
       close === undefined ||
       close <= 0
     ) {
@@ -178,6 +197,10 @@ export function buildFinanceResearchModelEvidence(
   batch: FinanceResearchBatchEvidencePacket,
   options: { includeReviewEvidence?: boolean } = {},
 ): readonly FinanceCommitteeEvidence[] {
+  const futureTimestampLimitMs =
+    batch.asOfMode === "live_now"
+      ? Date.now() + FINANCE_LIVE_NOW_MAX_FUTURE_SKEW_MINUTES * 60_000
+      : Date.parse(batch.asOf);
   const groups = new Map<string, FinanceResearchBatchJob[]>();
   const readyDrawdowns: Parameters<typeof rankFinanceWindowDrawdowns>[0][number][] = [];
   for (const job of batch.jobs) {
@@ -190,12 +213,18 @@ export function buildFinanceResearchModelEvidence(
       id: `finance-model-coverage:${batch.correlationId}`,
       source: "finance-research-batch-runner",
       timestamp: batch.asOf,
-      text: `Research only. Frozen asOf=${batch.asOf}. ${batch.jobs.length} jobs, ${batch.status}. Status counts: ${JSON.stringify(
+      text: `Research only. ${
+        batch.asOfMode === "live_now"
+          ? `Live-now collection-time evidence anchored at asOf=${batch.asOf}; source timestamps may be later than asOf only within the bounded live-now skew.`
+          : `Frozen asOf=${batch.asOf}.`
+      } ${batch.jobs.length} jobs, ${batch.status}. Status counts: ${JSON.stringify(
         batch.jobs.reduce<Record<string, number>>((counts, job) => {
           counts[job.status] = (counts[job.status] ?? 0) + 1;
           return counts;
         }, {}),
-      )}. Facts below are deterministic summaries of frozen receipts, not model conclusions. Needs_review values cannot be promoted to verified current evidence. Original receipts remain available by job ID.`,
+      )}. Facts below are deterministic summaries of ${
+        batch.asOfMode === "live_now" ? "collection-time receipts" : "frozen receipts"
+      }, not model conclusions. Needs_review values cannot be promoted to verified current evidence. Original receipts remain available by job ID.`,
     },
   ];
   for (const [instrument, jobs] of groups) {
@@ -214,12 +243,17 @@ export function buildFinanceResearchModelEvidence(
       if (!job.receipt) {
         continue;
       }
-      const prefix = `${job.jobId} (${job.status})`;
+      const prefix = `${job.jobId} (${job.status}; ${
+        batch.asOfMode === "live_now" ? "collection-time evidence" : "frozen-asOf evidence"
+      })`;
       if ("records" in job.receipt) {
         const records = job.receipt.records;
         const collection = "collection" in job.request ? job.request.collection : undefined;
         if (collection === "eod_history") {
-          const history = summarizeFinancePriceHistory(records, batch.asOf);
+          const history = summarizeFinancePriceHistory(records, batch.asOf, {
+            asOfMode: batch.asOfMode,
+            futureTimestampLimitMs,
+          });
           if (!history.usable) {
             facts.push(
               `${prefix}: historical values excluded; conflicting dates=${history.conflicts}, invalid=${history.invalid}.`,
@@ -234,7 +268,7 @@ export function buildFinanceResearchModelEvidence(
             .filter(
               (r) =>
                 macroValue(r.data) !== undefined &&
-                Date.parse(r.sourceTimestamp) <= Date.parse(batch.asOf),
+                Date.parse(r.sourceTimestamp) <= futureTimestampLimitMs,
             )
             .toSorted((a, b) => a.sourceTimestamp.localeCompare(b.sourceTimestamp));
           const last = valid.at(-1),
@@ -250,7 +284,7 @@ export function buildFinanceResearchModelEvidence(
           const eligible = records.filter((r) => {
             const match = r.data.entityMatch;
             return (
-              Date.parse(r.sourceTimestamp) <= Date.parse(batch.asOf) &&
+              Date.parse(r.sourceTimestamp) <= futureTimestampLimitMs &&
               typeof match === "object" &&
               match !== null &&
               "status" in match &&

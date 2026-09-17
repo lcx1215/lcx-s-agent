@@ -75,4 +75,78 @@ describe("finance data gateway cross-source audit", () => {
 
     expect(snapshot.qualityStatus).toBe("ready");
   });
+
+  it("blocks and excludes post-cutoff fields from historical evidence", () => {
+    const snapshot = buildFinanceDataGatewaySnapshot({
+      instrument: "QQQ",
+      assetClass: "etf",
+      useCase: "historical_cutoff_test",
+      asOf: "2026-09-07T10:15:00.000Z",
+      requireOfficialReference: false,
+      observations: [
+        observation("future-yahoo", "primary_market_data", "2026-09-08T20:00:00.000Z", 800),
+        observation("historical-nasdaq", "cross_check_market_data", "2026-09-04T20:30:00.000Z"),
+      ],
+    });
+
+    expect(snapshot.qualityStatus).toBe("blocked");
+    expect(snapshot.missingEvidence).toContain("post_cutoff_observations");
+    expect(snapshot.requiredNextSteps).toContain("review_future_dated_observations");
+    expect(snapshot.freshnessWarnings).toContain(
+      "last_price from future-yahoo is newer than requested asOf 2026-09-07T10:15:00.000Z",
+    );
+    expect(snapshot.normalizedFields.every((field) => field.sourceTimestamp <= snapshot.asOf)).toBe(
+      true,
+    );
+  });
+
+  it("allows collection-time fields for an explicit live-now run", () => {
+    const snapshot = buildFinanceDataGatewaySnapshot({
+      instrument: "QQQ",
+      assetClass: "etf",
+      useCase: "live_now_cutoff_test",
+      asOf: "2026-09-07T10:15:00.000Z",
+      asOfMode: "live_now",
+      freshnessMaxMinutes: 60 * 24 * 5,
+      requireOfficialReference: false,
+      observations: [
+        observation("live-yahoo", "primary_market_data", "2026-09-08T20:00:00.000Z", 800),
+        observation("live-nasdaq", "cross_check_market_data", "2026-09-08T20:30:00.000Z", 800),
+      ],
+    });
+
+    expect(snapshot.qualityStatus).toBe("ready");
+    expect(snapshot.missingEvidence).not.toContain("post_cutoff_observations");
+    expect(snapshot.freshnessWarnings).not.toContain(
+      "last_price from live-yahoo is newer than requested asOf 2026-09-07T10:15:00.000Z",
+    );
+    expect(snapshot.normalizedFields.some((field) => field.sourceTimestamp > snapshot.asOf)).toBe(
+      true,
+    );
+  });
+
+  it("blocks implausibly future timestamps in live-now mode", () => {
+    const asOf = new Date().toISOString();
+    const future = new Date(Date.parse(asOf) + 10 * 60_000).toISOString();
+    const snapshot = buildFinanceDataGatewaySnapshot({
+      instrument: "QQQ",
+      assetClass: "etf",
+      useCase: "live_now_future_skew_test",
+      asOf,
+      asOfMode: "live_now",
+      requireOfficialReference: false,
+      observations: [
+        observation("future-yahoo", "primary_market_data", future, 800),
+        observation("future-nasdaq", "cross_check_market_data", future, 800),
+      ],
+    });
+
+    expect(snapshot.qualityStatus).toBe("blocked");
+    expect(snapshot.missingEvidence).toContain("implausible_future_observations");
+    expect(snapshot.requiredNextSteps).toContain("review_implausible_future_observations");
+    expect(snapshot.freshnessWarnings).toContain(
+      "last_price from future-yahoo exceeds the live-now future skew limit",
+    );
+    expect(snapshot.normalizedFields).toHaveLength(0);
+  });
 });
