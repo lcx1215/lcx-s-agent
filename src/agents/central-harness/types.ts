@@ -52,6 +52,22 @@ export type CentralStep = {
   observedOk?: boolean;
   /** Why the harness could not run the owner at all (crash, unparseable output). */
   failureReason?: string;
+  /**
+   * What the tool actually returned — the owner's parsed receipt when there was
+   * one — bounded, with everything that did not fit named in
+   * `outcomeDroppedKeys`.
+   *
+   * A Codex-style loop feeds the tool result back to the model so the next
+   * decision is made on evidence rather than on the fact that something ran.
+   * This harness used to read `observedOk` off the observation and discard the
+   * rest, so the brain could only learn *that* an owner ran, never *what it
+   * said* — the reason fields were recorded here and then dropped again by
+   * `compactReceipts` before the next cycle could see them. The digest is
+   * bounded the same way the injected perception is: what is left out is named,
+   * not silently missing, and the full receipt stays on disk either way.
+   */
+  outcome?: Readonly<Record<string, unknown>>;
+  outcomeDroppedKeys?: readonly string[];
   startedAtMs?: number;
   finishedAtMs?: number;
 };

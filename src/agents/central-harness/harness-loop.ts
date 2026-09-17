@@ -174,6 +174,33 @@ export async function runCentralHarnessCycle(
       if (observed === true || observed === false) {
         step.observedOk = observed;
       }
+      // Feed the tool result forward, bounded. Reading only `observedOk` and
+      // discarding the rest is what left the brain unable to see what an owner
+      // reported: the Codex loop's whole point is that the next decision is made
+      // on the previous tool's output, not on the fact that a tool ran.
+      //
+      // Digest the owner's *parsed receipt* rather than the harness envelope. The
+      // envelope's `output` key is the whole raw stdout, which any byte budget
+      // drops first — digesting it would carry `{exitCode, observedOk}` and
+      // nothing the owner actually said.
+      const digestSource = isPlainRecord(observation.receipt)
+        ? observation.receipt
+        : isPlainRecord(observation)
+          ? observation
+          : undefined;
+      if (digestSource !== undefined) {
+        const boundedOutcome = boundObjectSection(
+          digestSource,
+          CENTRAL_STEP_OUTCOME_BUDGET_BYTES,
+          // The digest is the whole budget for one step: no single key may take
+          // more of it than the digest itself.
+          CENTRAL_STEP_OUTCOME_BUDGET_BYTES,
+        );
+        step.outcome = boundedOutcome.value;
+        if (boundedOutcome.dropped.length > 0) {
+          step.outcomeDroppedKeys = boundedOutcome.dropped.map((entry) => entry.key);
+        }
+      }
       step.status = "ran_ok";
     } catch (error) {
       step.status = "ran_failed";
@@ -241,6 +268,30 @@ export type CompactBacklogEntry = Readonly<{
   /** Owners that ran and whose own receipt reported not-ok. */
   notOk: readonly string[];
   nextAction: string;
+  /**
+   * The *why* behind the ids above, for the steps that did not come back
+   * cleanly green.
+   *
+   * `approved`/`blocked`/`notOk` answer *who*. Without this the next decision can
+   * only guess *why* — the harness recorded `gateReason`, `failureReason` and the
+   * owner's own receipt on the step and then dropped all three here, so a cycle
+   * gated for a fixable reason looked identical to one gated on principle, and an
+   * owner that returned a red light arrived as a bare id. A real receipt shows
+   * the shape of the gap: `commercialAcceptance` ran and reported not-ok, and the
+   * next cycle saw only its name.
+   *
+   * The full tool digest rides on the newest entry only; older entries keep the
+   * reason. See `compactReceipts` for why.
+   */
+  outcomes: readonly Readonly<{
+    ownerId: string;
+    status: CentralStep["status"];
+    reason?: string;
+    outcome?: Readonly<Record<string, unknown>>;
+    outcomeDroppedKeys?: readonly string[];
+  }>[];
+  /** Steps that had a reason worth carrying but did not fit the cap. */
+  outcomesOmitted?: number;
 }>;
 
 /**
@@ -260,25 +311,70 @@ export function resumableReceipts(
   return receipts.filter((receipt) => receipt.brainCall.outcome === "completed");
 }
 
+/**
+ * Steps whose *why* the next decision actually needs: anything that did not come
+ * back cleanly green.
+ *
+ * `approved` and `notOk` already answer *who* for the clean ones, and the control
+ * room already carries a per-owner status line, so re-stating a green step as a
+ * digest would spend the shared byte budget on the cases that need no action.
+ * `ran_ok` with no verdict is included on purpose: an owner that answered
+ * something without saying whether it was ok is exactly where the next decision
+ * is blind, and its digest is the only thing that can tell it.
+ */
+function stepsNeedingReason(receipt: CentralRunReceipt): readonly CentralStep[] {
+  return receipt.steps.filter(
+    (step) =>
+      step.status === "blocked_by_gate" ||
+      step.status === "ran_failed" ||
+      (step.status === "ran_ok" && step.observedOk !== true),
+  );
+}
+
 export function compactReceipts(
   receipts: readonly CentralRunReceipt[],
   max: number,
 ): readonly CompactBacklogEntry[] {
   const bounded = Number.isSafeInteger(max) ? Math.max(1, Math.min(max, 200)) : 20;
   const tail = receipts.slice(-bounded);
-  return tail.map((receipt) => ({
-    atMs: Date.parse(receipt.observedAt) || 0,
-    brainOutcome: receipt.brainCall.outcome,
-    ...(receipt.brainCall.note ? { note: receipt.brainCall.note } : {}),
-    approved: receipt.steps
-      .filter((step) => step.status === "approved" || step.status === "ran_ok")
-      .map((step) => step.ownerId),
-    blocked: receipt.steps
-      .filter((step) => step.status === "blocked_by_gate")
-      .map((step) => step.ownerId),
-    notOk: receipt.steps.filter((step) => step.observedOk === false).map((step) => step.ownerId),
-    nextAction: receipt.nextAction,
-  }));
+  const newestIndex = tail.length - 1;
+  return tail.map((receipt, index) => {
+    // The digest rides on the newest entry only. A reason for an older cycle is
+    // either still failing — and so reappears here — or already handled, while
+    // the bytes it costs are shared with the control room. Older entries keep the
+    // reason and the ids, which is what compaction is for.
+    const carriesDigest = index === newestIndex;
+    const interesting = stepsNeedingReason(receipt);
+    const kept = interesting.slice(0, CENTRAL_BACKLOG_MAX_OUTCOMES);
+    return {
+      atMs: Date.parse(receipt.observedAt) || 0,
+      brainOutcome: receipt.brainCall.outcome,
+      ...(receipt.brainCall.note ? { note: receipt.brainCall.note } : {}),
+      approved: receipt.steps
+        .filter((step) => step.status === "approved" || step.status === "ran_ok")
+        .map((step) => step.ownerId),
+      blocked: receipt.steps
+        .filter((step) => step.status === "blocked_by_gate")
+        .map((step) => step.ownerId),
+      notOk: receipt.steps.filter((step) => step.observedOk === false).map((step) => step.ownerId),
+      nextAction: receipt.nextAction,
+      outcomes: kept.map((step) => {
+        const reason = step.gateReason ?? step.failureReason;
+        return {
+          ownerId: step.ownerId,
+          status: step.status,
+          ...(reason ? { reason: reason.slice(0, CENTRAL_STEP_REASON_CHARS) } : {}),
+          ...(carriesDigest && step.outcome ? { outcome: step.outcome } : {}),
+          ...(carriesDigest && step.outcomeDroppedKeys
+            ? { outcomeDroppedKeys: step.outcomeDroppedKeys }
+            : {}),
+        };
+      }),
+      ...(interesting.length > kept.length
+        ? { outcomesOmitted: interesting.length - kept.length }
+        : {}),
+    };
+  });
 }
 
 /**
@@ -295,9 +391,27 @@ export function compactReceipts(
  */
 export const CENTRAL_PERCEPTION_BUDGET_BYTES = 12_000;
 export const CENTRAL_PERCEPTION_KEY_BUDGET_BYTES = 2_048;
+/**
+ * Caps on the tool-result digest carried back to the next decision, and on how
+ * much of a step's reason survives compaction.
+ *
+ * These are ceilings, not typical sizes, and there are three of them because the
+ * backlog is an always-injected section: `boundPerception` counts it before the
+ * control room and never truncates it, so an unbounded enrichment would spend the
+ * shared budget on history and leave the control room with nothing. What is left
+ * out is named (`outcomeDroppedKeys`, `outcomesOmitted`) rather than silently
+ * missing, and the full receipt stays on disk either way.
+ */
+export const CENTRAL_STEP_OUTCOME_BUDGET_BYTES = 512;
+export const CENTRAL_BACKLOG_MAX_OUTCOMES = 6;
+export const CENTRAL_STEP_REASON_CHARS = 240;
 
 function jsonBytes(value: unknown): number {
   return Buffer.byteLength(JSON.stringify(value ?? null));
+}
+
+function isPlainRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**
@@ -309,6 +423,7 @@ function jsonBytes(value: unknown): number {
 function boundObjectSection(
   source: Readonly<Record<string, unknown>>,
   sectionBudgetBytes: number,
+  keyBudgetBytes: number = CENTRAL_PERCEPTION_KEY_BUDGET_BYTES,
 ): {
   value: Record<string, unknown>;
   dropped: readonly Readonly<{ key: string; bytes: number }>[];
@@ -319,10 +434,7 @@ function boundObjectSection(
   for (const [key, value] of Object.entries(source)) {
     const bytes = jsonBytes(value);
     const entryBytes = jsonBytes(key) + bytes + 2; // "key":value,
-    if (
-      bytes > CENTRAL_PERCEPTION_KEY_BUDGET_BYTES ||
-      keptBytes + entryBytes > sectionBudgetBytes
-    ) {
+    if (bytes > keyBudgetBytes || keptBytes + entryBytes > sectionBudgetBytes) {
       dropped.push({ key, bytes });
       continue;
     }

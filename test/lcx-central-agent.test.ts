@@ -10,8 +10,10 @@ import {
   boundPerception,
   compactReceipts,
   resumableReceipts,
+  CENTRAL_BACKLOG_MAX_OUTCOMES,
   CENTRAL_PERCEPTION_BUDGET_BYTES,
   CENTRAL_PERCEPTION_KEY_BUDGET_BYTES,
+  CENTRAL_STEP_OUTCOME_BUDGET_BYTES,
 } from "../src/agents/central-harness/harness-loop.js";
 import {
   buildCentralBrainPrompt,
@@ -23,6 +25,7 @@ import {
   createCentralToolRegistry,
   approveOwner,
   centralOwnerScriptPaths,
+  ownerObservedOk,
   CENTRAL_CAPABILITY_OWNER_IDS,
   CENTRAL_EXCLUDED_WRITE_OWNER_IDS,
   CENTRAL_GOVERNANCE_OWNER_IDS,
@@ -822,4 +825,123 @@ describe("central agent CLI persists evidence a reader can walk back to", () => 
       await fsp.rm(userHome, { recursive: true, force: true });
     }
   }, 120_000);
+});
+
+describe("the loop feeds the owner's own output back to the next decision", () => {
+  it("carries the owner's receipt into the backlog instead of only its name", async () => {
+    const cycle = await runCentralHarnessCycle({
+      perception: perception(),
+      brain: brainWithActions([
+        { ownerId: "commercialAcceptance", args: {}, reasoning: "check acceptance" },
+      ]),
+      registry,
+      execute: async () => ({
+        output: '{"ok":false,"summary":{"failed":2}}',
+        exitCode: 1,
+        observedOk: false,
+        receipt: { ok: false, summary: { failed: 2 } },
+      }),
+    });
+    const [entry] = compactReceipts([cycle], 5);
+    expect(entry.notOk).toEqual(["commercialAcceptance"]);
+    expect(entry.outcomes).toHaveLength(1);
+    expect(entry.outcomes[0].outcome).toEqual({ ok: false, summary: { failed: 2 } });
+    // The envelope's raw stdout is what a byte budget drops first, so digesting
+    // the envelope instead of the receipt would hand the brain nothing at all.
+    expect(entry.outcomes[0].outcome).not.toHaveProperty("output");
+  });
+
+  it("spends no digest on owners that came back cleanly green", async () => {
+    const cycle = await runCentralHarnessCycle({
+      perception: perception(),
+      brain: brainWithActions([{ ownerId: "problemRadar", args: {}, reasoning: "scan" }]),
+      registry,
+      execute: async () => ({
+        output: "{}",
+        exitCode: 0,
+        observedOk: true,
+        receipt: { ok: true },
+      }),
+    });
+    const [entry] = compactReceipts([cycle], 5);
+    expect(entry.approved).toEqual(["problemRadar"]);
+    expect(entry.outcomes).toEqual([]);
+  });
+
+  it("carries the gate's reason, not only the blocked id", async () => {
+    const cycle = await runCentralHarnessCycle({
+      perception: perception(),
+      brain: brainWithActions([{ ownerId: "unknownOwner", args: {}, reasoning: "x" }]),
+      registry,
+    });
+    const [entry] = compactReceipts([cycle], 5);
+    expect(entry.blocked).toEqual(["unknownOwner"]);
+    expect(entry.outcomes[0]).toMatchObject({
+      ownerId: "unknownOwner",
+      status: "blocked_by_gate",
+    });
+    expect(entry.outcomes[0].reason).toContain("unknown owner");
+  });
+
+  it("bounds the digest per step and names the keys it left out", async () => {
+    const cycle = await runCentralHarnessCycle({
+      perception: perception(),
+      brain: brainWithActions([{ ownerId: "mindModel", args: {}, reasoning: "supervise" }]),
+      registry,
+      execute: async () => ({
+        observedOk: false,
+        receipt: { ok: false, small: 1, huge: "x".repeat(4_000) },
+      }),
+    });
+    const step = cycle.steps[0];
+    expect(Buffer.byteLength(JSON.stringify(step.outcome))).toBeLessThanOrEqual(
+      CENTRAL_STEP_OUTCOME_BUDGET_BYTES,
+    );
+    expect(step.outcome).toEqual({ ok: false, small: 1 });
+    expect(step.outcomeDroppedKeys).toEqual(["huge"]);
+  });
+
+  it("keeps the digest on the newest cycle and the reason on older ones", async () => {
+    const run = (runId: string, detail: string) =>
+      runCentralHarnessCycle({
+        perception: perception(),
+        runId,
+        brain: brainWithActions([{ ownerId: "mindModel", args: {}, reasoning: "supervise" }]),
+        registry,
+        execute: async () => ({ observedOk: false, receipt: { ok: false, detail } }),
+      });
+    const older = await run("older", "first");
+    const newer = await run("newer", "second");
+    const entries = compactReceipts([older, newer], 5);
+    expect(entries[0].outcomes[0].status).toBe("ran_ok");
+    expect(entries[0].outcomes[0].outcome).toBeUndefined();
+    expect(entries[1].outcomes[0].outcome).toEqual({ ok: false, detail: "second" });
+  });
+
+  it("names how many reasons did not fit the per-entry cap", () => {
+    const steps = Array.from({ length: CENTRAL_BACKLOG_MAX_OUTCOMES + 2 }, (_, index) => ({
+      stepId: `s${index}`,
+      ownerId: `owner${index}`,
+      args: {},
+      status: "ran_failed" as const,
+      failureReason: `boom ${index}`,
+    }));
+    const [entry] = compactReceipts([receipt({ steps })], 5);
+    expect(entry.outcomes).toHaveLength(CENTRAL_BACKLOG_MAX_OUTCOMES);
+    expect(entry.outcomesOmitted).toBe(2);
+  });
+});
+
+describe("the owner's own verdict outranks the exit status", () => {
+  it("prefers a stated verdict over the exit status, in both directions", () => {
+    expect(ownerObservedOk({ ok: false }, true)).toBe(false);
+    expect(ownerObservedOk({ ok: true }, false)).toBe(true);
+  });
+
+  it("falls back to the exit status only when the receipt states no verdict", () => {
+    expect(ownerObservedOk({ summary: {} }, true)).toBe(true);
+    expect(ownerObservedOk({ summary: {} }, false)).toBe(false);
+    expect(ownerObservedOk(undefined, true)).toBe(true);
+    expect(ownerObservedOk(undefined, false)).toBe(false);
+  });
 });

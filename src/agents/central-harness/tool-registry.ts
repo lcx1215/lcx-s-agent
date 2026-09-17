@@ -258,6 +258,25 @@ function tryParseJsonObject(raw: string): Record<string, unknown> | undefined {
   }
 }
 
+/**
+ * The owner's own verdict, with the exit status as the fallback rather than the
+ * authority.
+ *
+ * A receipt that states `ok` is the owner speaking about itself, so it wins; the
+ * exit status only fills the silence. Reading the exit status first — which the
+ * success path used to do by returning a constant `true` — overrules the only
+ * witness the harness has: most registered owners never set an exit code, so for
+ * them a receipt reporting `ok: false` arrived as a green light. In the other
+ * direction a non-zero exit with no verdict in the receipt stays not-ok, because
+ * a crash must never be upgraded into a pass.
+ */
+export function ownerObservedOk(
+  receipt: Readonly<Record<string, unknown>> | undefined,
+  exitedCleanly: boolean,
+): boolean {
+  return typeof receipt?.ok === "boolean" ? receipt.ok : exitedCleanly;
+}
+
 async function runOwner(
   owner: OwnerCommand,
   args: Readonly<Record<string, unknown>>,
@@ -280,7 +299,17 @@ async function runOwner(
       },
     );
     signal.throwIfAborted();
-    return { output: stdout, exitCode: 0, observedOk: true };
+    const ownerReceipt = tryParseJsonObject(stdout);
+    return {
+      output: stdout,
+      exitCode: 0,
+      observedOk: ownerObservedOk(ownerReceipt, true),
+      // Carry the parsed receipt forward as well as the raw stdout. The loop can
+      // only feed the next decision what it kept, and a raw stdout string is the
+      // first thing any byte budget drops, so keeping only `output` means the
+      // brain never learns what the owner actually reported.
+      ...(ownerReceipt !== undefined ? { receipt: ownerReceipt } : {}),
+    };
   } catch (error) {
     signal.throwIfAborted();
     // A non-zero exit is NOT the same as "could not run". Several governance
@@ -294,9 +323,10 @@ async function runOwner(
       return {
         output: stdout,
         exitCode: typeof failure.code === "number" ? failure.code : 1,
-        // A non-zero exit with no `ok: true` in the receipt IS the owner's own
-        // not-ok verdict; anything else would be the harness second-guessing it.
-        observedOk: ownerReceipt.ok === true,
+        observedOk: ownerObservedOk(ownerReceipt, false),
+        // A red light is exactly the case where the reason matters most, so the
+        // receipt rides along here too instead of being reduced to a boolean.
+        receipt: ownerReceipt,
       };
     }
     const stderr =
