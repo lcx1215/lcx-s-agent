@@ -235,6 +235,23 @@ export type CompactBacklogEntry = Readonly<{
   nextAction: string;
 }>;
 
+/**
+ * Codex-harness terminal-card rule, applied to the central agent's resume window.
+ *
+ * A cycle whose brain call did not complete (`failed`, `blocked`) produced no
+ * decision and no owner verdict. Replaying it would let a transient provider
+ * outage read to the next cycle as ordinary precedent, and would inflate the
+ * backlog with entries that say nothing about what was decided. Only completed
+ * cycles are resumable. The dropped cycles stay on disk as evidence — they are
+ * simply not inherited as context, and the caller reports how many were dropped
+ * so the omission is visible rather than silent.
+ */
+export function resumableReceipts(
+  receipts: readonly CentralRunReceipt[],
+): readonly CentralRunReceipt[] {
+  return receipts.filter((receipt) => receipt.brainCall.outcome === "completed");
+}
+
 export function compactReceipts(
   receipts: readonly CentralRunReceipt[],
   max: number,

@@ -1,15 +1,20 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import fsp from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   runCentralHarnessCycle,
   compactReceipts,
+  resumableReceipts,
 } from "../src/agents/central-harness/harness-loop.js";
 import {
   createCentralBrain,
   validateCentralActionPlan,
 } from "../src/agents/central-harness/model-brain.js";
+import { resolveLatestPointer, runSnapshotPath } from "../src/agents/central-harness/run-store.js";
 import {
   createCentralToolRegistry,
   approveOwner,
@@ -18,7 +23,7 @@ import {
   CENTRAL_EXCLUDED_WRITE_OWNER_IDS,
   CENTRAL_GOVERNANCE_OWNER_IDS,
 } from "../src/agents/central-harness/tool-registry.js";
-import type { CentralPerception } from "../src/agents/central-harness/types.js";
+import type { CentralPerception, CentralRunReceipt } from "../src/agents/central-harness/types.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -495,4 +500,162 @@ describe("central harness is wired into the governance loop, not orphaned", () =
     // Guard the exact bug this replaced: reading a field the owner never emits.
     expect(autopilotSource).not.toContain("recordValue(payload.latestReceipt)");
   });
+});
+
+function receipt(overrides: Partial<CentralRunReceipt> = {}): CentralRunReceipt {
+  return {
+    schemaVersion: "lcx_central_agent_v1",
+    runId: "central-0-1",
+    observedAt: "2026-09-17T00:00:00.000Z",
+    actionsProposed: 0,
+    actionsApproved: 0,
+    actionsBlockedByGate: 0,
+    steps: [],
+    boundaries: ["research_only"],
+    brainCall: { provider: "test", modelId: "test", outcome: "completed" },
+    nextAction: "continue",
+    liveTouched: false,
+    providerConfigTouched: false,
+    protectedMemoryTouched: false,
+    ...overrides,
+  };
+}
+
+describe("terminal cycles are evidence, not resumable context", () => {
+  it("resumes only cycles whose brain call completed", () => {
+    const completed = receipt({ runId: "a" });
+    const failed = receipt({
+      runId: "b",
+      brainCall: { provider: "", modelId: "", outcome: "failed", reason: "provider unreachable" },
+      nextAction: "halt_and_report",
+    });
+    const blocked = receipt({
+      runId: "c",
+      brainCall: { provider: "", modelId: "", outcome: "blocked", reason: "no_provider" },
+      nextAction: "restore_brain_provider_then_retry",
+    });
+    const skipped = receipt({
+      runId: "d",
+      brainCall: { provider: "", modelId: "", outcome: "skipped", reason: "brain_disabled" },
+    });
+    expect(resumableReceipts([completed, failed, blocked, skipped]).map((r) => r.runId)).toEqual([
+      "a",
+    ]);
+  });
+
+  it("does not turn a failed cycle into a compacted backlog entry for the next turn", () => {
+    const failed = receipt({
+      runId: "b",
+      brainCall: { provider: "", modelId: "", outcome: "failed", reason: "provider unreachable" },
+      nextAction: "halt_and_report",
+    });
+    expect(compactReceipts(resumableReceipts([failed]), 10)).toEqual([]);
+    // The same cycle stays visible as evidence: dropping it from context is not deleting it.
+    expect(compactReceipts([failed], 10)[0].brainOutcome).toBe("failed");
+  });
+});
+
+describe("one snapshot per cycle, and a pointer that never moves backwards", () => {
+  it("keeps the pointer on the snapshot that observed last, not the one that finished last", () => {
+    const manual = receipt({ runId: "manual", observedAt: "2026-09-17T00:00:00.000Z" });
+    const hourly = receipt({ runId: "hourly", observedAt: "2026-09-17T01:00:00.000Z" });
+
+    const superseded = resolveLatestPointer(
+      { latestReceipt: hourly, latestRunPath: "/runs/hourly.json" },
+      manual,
+      "/runs/manual.json",
+    );
+    expect(superseded.superseded).toBe(true);
+    expect(superseded.heldReceipt?.runId).toBe("hourly");
+    expect(superseded.heldRunPath).toBe("/runs/hourly.json");
+    expect(superseded.heldRunId).toBe("hourly");
+
+    const taken = resolveLatestPointer(
+      { latestReceipt: manual, latestRunPath: "/runs/manual.json" },
+      hourly,
+      "/runs/hourly.json",
+    );
+    expect(taken.superseded).toBe(false);
+    expect(taken.heldReceipt?.runId).toBe("hourly");
+    expect(taken.heldRunPath).toBe("/runs/hourly.json");
+  });
+
+  it("refreshes the snapshot on a zero-cycle run without erasing the last real receipt", () => {
+    const pointer = resolveLatestPointer(
+      { latestReceipt: receipt({ runId: "keep" }), latestRunPath: "/runs/keep.json" },
+      undefined,
+      undefined,
+    );
+    expect(pointer.superseded).toBe(false);
+    expect(pointer.heldReceipt?.runId).toBe("keep");
+    expect(pointer.heldRunPath).toBe("/runs/keep.json");
+  });
+
+  it("names exactly one snapshot file per runId", () => {
+    expect(runSnapshotPath("/state/lcx-central-agent-runs", "central-0-1")).toBe(
+      "/state/lcx-central-agent-runs/central-0-1.json",
+    );
+  });
+});
+
+describe("central agent CLI persists evidence a reader can walk back to", () => {
+  function runCli(userHome: string) {
+    return spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        path.join(REPO_ROOT, "scripts/operator/lcx-central-agent.ts"),
+        "--dry-run",
+        "--max-cycles",
+        "1",
+        "--json",
+      ],
+      {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        env: { ...process.env, LCX_USER_HOME: userHome },
+        timeout: 60_000,
+        input: "",
+        shell: false,
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+  }
+
+  it("writes one immutable snapshot per cycle and points latest at it", async () => {
+    const userHome = await fsp.mkdtemp(path.join(os.tmpdir(), "lcx-central-home-"));
+    const stateDir = path.join(userHome, ".openclaw", "workspace", "state");
+    const runsDir = path.join(stateDir, "lcx-central-agent-runs");
+    try {
+      const first = runCli(userHome);
+      expect(first.status).toBe(0);
+      const firstSummary = JSON.parse(first.stdout.trim()) as {
+        runs: number;
+        latestRunPath: string | null;
+      };
+      expect(firstSummary.runs).toBe(1);
+      expect(await fsp.readdir(runsDir)).toHaveLength(1);
+
+      const latest = JSON.parse(
+        await fsp.readFile(path.join(stateDir, "lcx-central-agent-latest.json"), "utf8"),
+      ) as { runsDir: string; latestRunId: string | null; latestRunPath: string | null };
+      expect(latest.runsDir).toBe(runsDir);
+      expect(latest.latestRunPath).toBe(firstSummary.latestRunPath);
+      expect(path.basename(latest.latestRunPath ?? "")).toBe(latest.latestRunId + ".json");
+
+      // Second pass: the dry-run brain never completes, so the first cycle is now in
+      // the resume window but must not be inherited as context.
+      const second = runCli(userHome);
+      expect(second.status).toBe(0);
+      const secondSummary = JSON.parse(second.stdout.trim()) as {
+        resumeDroppedNonDecisionCycles: number;
+      };
+      expect(secondSummary.resumeDroppedNonDecisionCycles).toBe(1);
+      expect(await fsp.readdir(runsDir)).toHaveLength(2);
+    } finally {
+      await fsp.rm(userHome, { recursive: true, force: true });
+    }
+  }, 120_000);
 });

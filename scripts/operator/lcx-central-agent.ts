@@ -4,10 +4,16 @@ import { pathToFileURL } from "node:url";
 import {
   runCentralHarnessCycle,
   compactReceipts,
+  resumableReceipts,
 } from "../../src/agents/central-harness/harness-loop.js";
 import type { CompactBacklogEntry } from "../../src/agents/central-harness/harness-loop.js";
 import { createCentralBrain } from "../../src/agents/central-harness/model-brain.js";
 import type { CentralBrain } from "../../src/agents/central-harness/model-brain.js";
+import {
+  resolveLatestPointer,
+  writeJsonAtomic,
+  writeRunSnapshot,
+} from "../../src/agents/central-harness/run-store.js";
 import { createCentralToolRegistry } from "../../src/agents/central-harness/tool-registry.js";
 import {
   CENTRAL_CAPABILITY_OWNER_IDS,
@@ -19,13 +25,19 @@ import type {
   CentralRunReceipt,
 } from "../../src/agents/central-harness/types.js";
 import { loadConfig } from "../../src/config/io.js";
-import { CENTRAL_AGENT_LATEST_PATH, CENTRAL_AGENT_LOG_JSONL_PATH } from "./lcx-local-paths.ts";
+import {
+  CENTRAL_AGENT_LATEST_PATH,
+  CENTRAL_AGENT_LOG_JSONL_PATH,
+  CENTRAL_AGENT_RUNS_DIR,
+} from "./lcx-local-paths.ts";
 
 /** Canonical state/log paths live in lcx-local-paths so readers share one contract. */
 const STATE_DIR = path.dirname(CENTRAL_AGENT_LATEST_PATH);
 const LOG_PATH = CENTRAL_AGENT_LOG_JSONL_PATH;
 /** Observable latest snapshot: coverage + the newest receipt, for other readers. */
 const LATEST_PATH = CENTRAL_AGENT_LATEST_PATH;
+/** One immutable snapshot per cycle, so overlapping runs cannot erase each other. */
+const RUNS_DIR = CENTRAL_AGENT_RUNS_DIR;
 /** Resume window: how many prior cycles the brain is allowed to see (thread-store tail). */
 const RESUME_WINDOW = 40;
 
@@ -178,19 +190,24 @@ function failedCycleReceipt(
   };
 }
 
-async function writeJsonAtomic(filePath: string, payload: unknown): Promise<void> {
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  const tmp = `${filePath}.tmp-${process.pid}`;
-  await fs.writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
-  await fs.rename(tmp, filePath);
-}
-
 /** Latest observable snapshot: coverage plus the newest cycle receipt. */
 async function writeLatest(
   receipt: CentralRunReceipt | undefined,
   runs: number,
-  meta: { dryRun: boolean; planOnly: boolean },
+  meta: {
+    dryRun: boolean;
+    planOnly: boolean;
+    runSnapshotPath?: string;
+    droppedNonDecisionCycles: number;
+  },
 ): Promise<void> {
+  // The pointer is resolved against what is already on disk, so a run that observed
+  // earlier than the snapshot it finds does not move the pointer backwards.
+  const previous = await readLatest<{
+    latestReceipt?: unknown;
+    latestRunPath?: unknown;
+  }>(path.basename(LATEST_PATH), {});
+  const pointer = resolveLatestPointer(previous, receipt, meta.runSnapshotPath);
   await writeJsonAtomic(LATEST_PATH, {
     schemaVersion: "lcx_central_agent_latest_v1",
     boundary: "local_central_agent_observe_only",
@@ -200,7 +217,15 @@ async function writeLatest(
     planOnly: meta.planOnly,
     dispatchMode: meta.planOnly ? "gate_and_record_only" : "gate_record_and_dispatch",
     coverage: centralCoverage(),
-    latestReceipt: receipt ?? null,
+    latestReceipt: pointer.heldReceipt,
+    /** How to walk back from the pointer to any individual cycle's full receipt. */
+    latestRunId: pointer.heldRunId,
+    latestRunPath: pointer.heldRunPath,
+    runsDir: RUNS_DIR,
+    /** Set when a concurrent run that observed later already owns the pointer. */
+    supersededThisRun: pointer.superseded && receipt ? receipt.runId : null,
+    /** Resume-window honesty: cycles dropped because they produced no decision. */
+    resumeDroppedNonDecisionCycles: meta.droppedNonDecisionCycles,
     liveTouched: false,
     providerConfigTouched: false,
     protectedMemoryTouched: false,
@@ -233,11 +258,17 @@ async function main(): Promise<void> {
   const deadline = Date.now() + durationMinutes * 60_000;
   let runs = 0;
   let lastReceipt: CentralRunReceipt | undefined;
+  let lastRunSnapshotPath: string | undefined;
+  let droppedNonDecisionCycles = 0;
   // thread-store resume: recover prior cycles so the brain inherits context.
   let history = await loadPersistedReceipts();
   while (Date.now() < deadline && runs < maxCycles) {
     // context compaction: only the compacted tail reaches the brain, never raw history.
-    const perception = await buildPerception(compactReceipts(history, 10));
+    // Terminal cycles are dropped first: a cycle whose brain call did not complete
+    // carries no decision, so inheriting it would let an outage read as precedent.
+    const resumable = resumableReceipts(history);
+    droppedNonDecisionCycles = history.length - resumable.length;
+    const perception = await buildPerception(compactReceipts(resumable, 10));
     let receipt: CentralRunReceipt;
     try {
       receipt = await runCentralHarnessCycle({
@@ -253,6 +284,14 @@ async function main(): Promise<void> {
       receipt = failedCycleReceipt(perception, runs, error);
     }
     await settle(receipt);
+    try {
+      lastRunSnapshotPath = await writeRunSnapshot(RUNS_DIR, receipt);
+    } catch {
+      // The per-cycle snapshot is an extra copy of a receipt that is already in the
+      // jsonl. Losing it must not cost the invocation its summary, so this stays
+      // best-effort and the pointer simply records no run path.
+      lastRunSnapshotPath = undefined;
+    }
     lastReceipt = receipt;
     history = history.concat(receipt).slice(-200);
     runs += 1;
@@ -264,7 +303,12 @@ async function main(): Promise<void> {
   }
   // Always publish the observable snapshot, even on a zero-cycle run, so readers
   // never see a stale or absent central-agent surface.
-  await writeLatest(lastReceipt, runs, { dryRun, planOnly });
+  await writeLatest(lastReceipt, runs, {
+    dryRun,
+    planOnly,
+    ...(lastRunSnapshotPath !== undefined ? { runSnapshotPath: lastRunSnapshotPath } : {}),
+    droppedNonDecisionCycles,
+  });
   const brainOutcome = lastReceipt?.brainCall.outcome ?? null;
   const summary = {
     ok: runs > 0,
@@ -302,6 +346,11 @@ async function main(): Promise<void> {
     nextAction: lastReceipt?.nextAction ?? null,
     /** The brain's own one-line rationale, so readers see *why*, not just *what*. */
     brainNote: lastReceipt?.brainCall.note ?? null,
+    /** Where this invocation's own cycle receipt was written, for direct reading. */
+    latestRunPath: lastRunSnapshotPath ?? null,
+    runsDir: RUNS_DIR,
+    /** Resume-window honesty: cycles dropped because they produced no decision. */
+    resumeDroppedNonDecisionCycles: droppedNonDecisionCycles,
     liveTouched: false,
     providerConfigTouched: false,
     protectedMemoryTouched: false,
