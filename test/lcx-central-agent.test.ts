@@ -157,6 +157,28 @@ describe("central agent harness gate", () => {
     expect(receipt.actionsProposed).toBe(0);
   });
 
+  it("names the real adapter error instead of claiming configuration is absent", async () => {
+    // A config with no resolvable provider/model: the adapter throws, and that
+    // throw is the only evidence of why the cycle decided nothing.
+    const brain = createCentralBrain({
+      agents: { defaults: { model: "not-a-provider-ref" } },
+    } as never);
+    const receipt = await runCentralHarnessCycle({ perception: perception(), brain, registry });
+    expect(receipt.brainCall.outcome).toBe("blocked");
+    expect(receipt.brainCall.reason).toContain("no usable finance model");
+    expect(receipt.brainCall.reason).toContain("explicit provider/model");
+    // The unverified claim is reserved for the case that actually has no adapter.
+    expect(receipt.brainCall.reason).not.toContain("no configurable finance provider/model");
+  });
+
+  it("keeps the honest generic reason when the adapter is deliberately disabled", async () => {
+    const brain = createCentralBrain(null as never, { adapterDisabled: true });
+    const receipt = await runCentralHarnessCycle({ perception: perception(), brain, registry });
+    expect(receipt.brainCall.reason).toBe(
+      "no configurable finance provider/model available for brain inference",
+    );
+  });
+
   it("deterministic result when the brain proposes an empty plan", async () => {
     const receipt = await runCentralHarnessCycle({
       perception: perception(),

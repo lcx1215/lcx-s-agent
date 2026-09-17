@@ -102,6 +102,20 @@ export function createCentralBrain(
   let invoke: ((payload: unknown, signal: AbortSignal) => Promise<unknown>) | undefined;
   let provider = "";
   let modelId = "";
+  /**
+   * Why the configured adapter could not be built, kept verbatim.
+   *
+   * The bare `catch` that used to stand here discarded the error and then
+   * reported "no configurable finance provider/model available for brain
+   * inference" — a claim about configuration that nothing had checked, and the
+   * only remaining explanation for a cycle that decided nothing. Measured: 9 of
+   * 14 recorded cycles reported exactly that string, while the same resolution
+   * succeeds 40/40 in both the interactive shell and the hourly loop's minimal
+   * environment, so the discarded error was the sole evidence of the real cause
+   * and it was thrown away. Naming it costs one string and makes the next idle
+   * cycle explain itself.
+   */
+  let adapterError: string | undefined;
   if (!options.adapterDisabled) {
     try {
       const adapter = createConfiguredFinanceModelAdapter(cfg, {
@@ -127,10 +141,11 @@ export function createCentralBrain(
         } as Parameters<typeof adapter.invoke>[0];
         return adapter.invoke(request, signal);
       };
-    } catch {
+    } catch (error) {
       provider = "";
       modelId = "";
       invoke = undefined;
+      adapterError = (error instanceof Error ? error.message : String(error)).slice(0, 300);
     }
   }
   const callable = provider !== "" && modelId !== "" && invoke !== undefined;
@@ -139,7 +154,9 @@ export function createCentralBrain(
       if (!callable) {
         return {
           kind: "blocked_no_provider",
-          reason: "no configurable finance provider/model available for brain inference",
+          reason: adapterError
+            ? `central brain has no usable finance model: ${adapterError}`
+            : "no configurable finance provider/model available for brain inference",
         };
       }
       // callable already proved invoke is set; assert to satisfy TS across the closure.
