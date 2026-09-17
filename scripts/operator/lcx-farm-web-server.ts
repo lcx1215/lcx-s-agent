@@ -80,6 +80,41 @@ function stringArrayAt(root: JsonObject, ...keys: string[]): string[] {
     : [];
 }
 
+/**
+ * Tri-state readers. The `*At` helpers above collapse a missing value into a
+ * neutral default (`{}` / `[]` / `undefined`), which is right for display fields
+ * but wrong for a health flag: an absent `evidenceComplete` must read as unknown,
+ * never as a false alarm. These return `undefined` for absent and are the only
+ * ones safe to chain with `??`.
+ */
+function rawAt(root: JsonObject, ...keys: string[]): unknown {
+  let current: unknown = root;
+  for (const key of keys) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) {
+      return undefined;
+    }
+    current = (current as JsonObject)[key];
+  }
+  return current;
+}
+
+function booleanAt(root: JsonObject, ...keys: string[]): boolean | undefined {
+  const value = rawAt(root, ...keys);
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function optionalObjectAt(root: JsonObject, ...keys: string[]): JsonObject | undefined {
+  const value = rawAt(root, ...keys);
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as JsonObject)
+    : undefined;
+}
+
+function optionalArrayAt(root: JsonObject, ...keys: string[]): unknown[] | undefined {
+  const value = rawAt(root, ...keys);
+  return Array.isArray(value) ? value : undefined;
+}
+
 function numberMapAt(root: JsonObject, ...keys: string[]): Record<string, number> {
   const value = objectAt(root, ...keys);
   return Object.fromEntries(
@@ -271,6 +306,23 @@ function loadSnapshot(): JsonObject {
       approvedOwners: stringArrayAt(centralAgentOwner, "approvedOwners"),
       brainNote: stringAt(centralAgentOwner, "brainNote"),
       latestPath: stringAt(centralAgentOwner, "latestPath"),
+      // Byte budget actually applied to the brain's perception this cycle, with the
+      // keys it left out. The harness bounds the injection; without this the bound
+      // would be invisible on the surface a human reads.
+      contextBudget:
+        optionalObjectAt(centralAgentOwner, "contextBudget") ??
+        optionalObjectAt(summary, "centralAgentContextBudget") ??
+        null,
+      // False means a completed cycle's evidence could not be persisted. Tri-state:
+      // absent is "unknown", never a silent false.
+      evidenceComplete:
+        booleanAt(centralAgentOwner, "evidenceComplete") ??
+        booleanAt(summary, "centralAgentEvidenceComplete") ??
+        null,
+      evidenceWriteFailures:
+        optionalArrayAt(centralAgentOwner, "evidenceWriteFailures") ??
+        optionalArrayAt(summary, "centralAgentEvidenceWriteFailures") ??
+        [],
       role: "the LLM decision layer: it proposes, the TS gate approves or blocks, and the plan is recorded; it holds no provider, external-sender, protected-memory, or trading authority",
     },
     remoteDevboxStatus: sshConfigStatus(),

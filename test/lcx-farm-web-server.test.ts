@@ -39,4 +39,27 @@ describe("LCX farm web projection view", () => {
     // The dashboard stays read-only: the projection must not grant the agent authority.
     expect(source).not.toContain("providerConfigTouched: true");
   });
+
+  it("surfaces the context budget and evidence-write health, not only the plan", async () => {
+    const source = await fs.readFile(
+      path.join(repoRoot, "scripts/operator/lcx-farm-web-server.ts"),
+      "utf8",
+    );
+
+    // A bound the harness applied is only honest if a human can see it; the same
+    // goes for a cycle whose evidence could not be persisted.
+    expect(source).toContain("contextBudget");
+    expect(source).toContain("evidenceComplete");
+    expect(source).toContain("evidenceWriteFailures");
+    expect(source).toContain("centralAgentContextBudget");
+    expect(source).toContain("centralAgentEvidenceComplete");
+    expect(source).toContain("centralAgentEvidenceWriteFailures");
+    // Tri-state readers, so an absent flag reads as unknown instead of false.
+    expect(source).toContain("function booleanAt");
+    expect(source).toContain("function optionalObjectAt");
+    expect(source).toContain("function optionalArrayAt");
+    // The collapsing readers must not be used for a health flag: `objectAt`
+    // returns `{}` for absent, so `?? fallback` would never fire.
+    expect(source).not.toContain('objectAt(centralAgentOwner, "contextBudget")');
+  });
 });

@@ -793,6 +793,12 @@ function compactOwner(id: OwnerId, payload: Record<string, unknown> | undefined)
       // The owner's stdout carries the rationale directly; the on-disk snapshot
       // holds the full receipt, but the compact must only use the payload.
       brainNote: payload.brainNote,
+      // Context budget + evidence health: a bounded injection and a degraded
+      // evidence write are both facts a reader has to be able to see, so they are
+      // projected here rather than left inside the receipt on disk.
+      contextBudget: payload.contextBudget,
+      evidenceComplete: payload.evidenceComplete,
+      evidenceWriteFailures: payload.evidenceWriteFailures,
       latestPath: payload.latestPath,
       liveTouched: payload.liveTouched,
       providerConfigTouched: payload.providerConfigTouched,
@@ -1814,6 +1820,9 @@ const receipt = {
     centralAgentFailedSteps: byOwner.centralAgent?.compact.failedSteps,
     centralAgentNextAction: byOwner.centralAgent?.compact.nextAction,
     centralAgentBrainNote: byOwner.centralAgent?.compact.brainNote,
+    centralAgentContextBudget: byOwner.centralAgent?.compact.contextBudget,
+    centralAgentEvidenceComplete: byOwner.centralAgent?.compact.evidenceComplete,
+    centralAgentEvidenceWriteFailures: byOwner.centralAgent?.compact.evidenceWriteFailures,
   },
   owners: Object.fromEntries(owners.map((owner) => [owner.id, owner.compact])),
   notTouched: [
@@ -1967,6 +1976,9 @@ const digestMaterial = {
   centralAgentFailedSteps: centralAgentCompact?.failedSteps,
   centralAgentNextAction: centralAgentCompact?.nextAction,
   centralAgentBrainNote: centralAgentCompact?.brainNote,
+  centralAgentContextBudget: centralAgentCompact?.contextBudget,
+  centralAgentEvidenceComplete: centralAgentCompact?.evidenceComplete,
+  centralAgentEvidenceWriteFailures: centralAgentCompact?.evidenceWriteFailures,
   liveTouched: receipt.liveTouched,
   providerConfigTouched: receipt.providerConfigTouched,
   protectedMemoryTouched: receipt.protectedMemoryTouched,

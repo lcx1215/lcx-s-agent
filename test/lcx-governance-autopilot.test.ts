@@ -107,6 +107,14 @@ async function runAutopilot() {
       };
       selfRepairHandsLatestWrittenStatus?: string;
       selfRepairHandsLatestWrittenSignalKey?: string;
+      centralAgentContextBudget?: {
+        budgetBytes?: number;
+        injectedBytes?: number;
+        overBudget?: boolean;
+        droppedSections?: Array<{ section?: string; droppedKeys?: Array<{ key?: string }> }>;
+      };
+      centralAgentEvidenceComplete?: boolean;
+      centralAgentEvidenceWriteFailures?: unknown[];
     };
     owners: {
       mindModel?: { summary?: unknown };
@@ -377,6 +385,21 @@ describe("LCX governance autopilot", () => {
       payload.owners.externalChannelStatus?.statusModel,
     );
     expect(payload.owners.contextRecovery?.compressedContextRecovered).toEqual(expect.any(Boolean));
+    // The central agent's byte budget and evidence-write health have to survive the
+    // governance projection, otherwise a bounded injection and a lost receipt would
+    // only ever exist inside the owner's own stdout.
+    expect(payload.summary.centralAgentContextBudget).toEqual(
+      expect.objectContaining({
+        budgetBytes: expect.any(Number),
+        injectedBytes: expect.any(Number),
+        overBudget: expect.any(Boolean),
+      }),
+    );
+    expect(payload.summary.centralAgentContextBudget?.injectedBytes).toBeLessThanOrEqual(
+      payload.summary.centralAgentContextBudget?.budgetBytes ?? 0,
+    );
+    expect(payload.summary.centralAgentEvidenceComplete).toEqual(expect.any(Boolean));
+    expect(Array.isArray(payload.summary.centralAgentEvidenceWriteFailures)).toBe(true);
     expect(payload.latestStatePath).toBe(
       path.join(lcxWorkspace, "state", "lcx-governance-autopilot-latest.json"),
     );
