@@ -2073,7 +2073,14 @@ const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
 };
 
 const SURFACE_TERMS: Record<SurfaceGroup, string[]> = {
-  head: ["LCX Agent Flow Graph", "waterflow", "wrong-flow", "filter valve", "bounded feedback"],
+  head: [
+    "LCX Agent Flow Graph",
+    "waterflow",
+    "wrong-flow",
+    "filter valve",
+    "bounded feedback",
+    "Central Agent Harness",
+  ],
   workflow: [
     "FLOW_SCENARIOS",
     "requiredFilters",
