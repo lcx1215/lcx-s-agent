@@ -128,6 +128,7 @@ function loadSnapshot(): JsonObject {
   const summary = objectAt(autopilot, "summary");
   const owners = objectAt(autopilot, "owners");
   const providerCouncilOwner = objectAt(owners, "providerCouncilAcceleration");
+  const centralAgentOwner = objectAt(owners, "centralAgent");
   const material = objectAt(digest, "material");
   const candidate = objectAt(material, "latestCandidateEval");
   const activePidCounts = numberMapAt(material, "activePidCounts");
@@ -227,6 +228,51 @@ function loadSnapshot(): JsonObject {
       stringAt(material, "fastestSafeNextAction") ??
       stringAt(summary, "fastestSafeNextAction") ??
       "refresh_owner_state",
+    // Central agent harness: the LLM decision layer's gated plan for this cycle.
+    // Without this the agent's reasoning would live only in the control-room JSON
+    // and never reach the dashboard a human actually reads.
+    centralAgent: {
+      runs: numberAt(centralAgentOwner, "runs") ?? numberAt(summary, "centralAgentRuns") ?? 0,
+      dispatchMode:
+        stringAt(centralAgentOwner, "dispatchMode") ??
+        stringAt(summary, "centralAgentDispatchMode") ??
+        "unknown",
+      brainOutcome:
+        stringAt(centralAgentOwner, "brainOutcome") ??
+        stringAt(summary, "centralAgentBrainOutcome") ??
+        "unknown",
+      brainAvailable:
+        centralAgentOwner.brainAvailable === true || summary.centralAgentBrainAvailable === true,
+      registryTools:
+        numberAt(centralAgentOwner, "registryTools") ??
+        numberAt(summary, "centralAgentRegistryTools") ??
+        0,
+      governanceOwners:
+        numberAt(centralAgentOwner, "coverageGovernanceOwners") ??
+        numberAt(summary, "centralAgentGovernanceOwners") ??
+        0,
+      capabilities:
+        numberAt(centralAgentOwner, "coverageCapabilities") ??
+        numberAt(summary, "centralAgentCapabilities") ??
+        0,
+      excludedWriteOwners: stringArrayAt(centralAgentOwner, "coverageExcludedWriteOwners"),
+      actionsProposed:
+        numberAt(centralAgentOwner, "actionsProposed") ??
+        numberAt(summary, "centralAgentActionsProposed") ??
+        0,
+      actionsApproved:
+        numberAt(centralAgentOwner, "actionsApproved") ??
+        numberAt(summary, "centralAgentActionsApproved") ??
+        0,
+      actionsBlockedByGate:
+        numberAt(centralAgentOwner, "actionsBlockedByGate") ??
+        numberAt(summary, "centralAgentActionsBlockedByGate") ??
+        0,
+      approvedOwners: stringArrayAt(centralAgentOwner, "approvedOwners"),
+      brainNote: stringAt(centralAgentOwner, "brainNote"),
+      latestPath: stringAt(centralAgentOwner, "latestPath"),
+      role: "the LLM decision layer: it proposes, the TS gate approves or blocks, and the plan is recorded; it holds no provider, external-sender, protected-memory, or trading authority",
+    },
     remoteDevboxStatus: sshConfigStatus(),
     lockedComputerUseStatus: "manual_codex_settings_required",
     webFrontendRole:

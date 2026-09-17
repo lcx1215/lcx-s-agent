@@ -25,4 +25,18 @@ describe("LCX farm web projection view", () => {
     expect(source).not.toContain("stateRoot");
     expect(source).not.toContain("lcx-governance-autopilot-latest.json");
   });
+
+  it("projects the central agent decision layer so the agent is visible, not just stored", async () => {
+    const source = await fs.readFile(
+      path.join(repoRoot, "scripts/operator/lcx-farm-web-server.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain('const centralAgentOwner = objectAt(owners, "centralAgent")');
+    expect(source).toContain("brainOutcome");
+    expect(source).toContain("approvedOwners");
+    expect(source).toContain("registryTools");
+    // The dashboard stays read-only: the projection must not grant the agent authority.
+    expect(source).not.toContain("providerConfigTouched: true");
+  });
 });

@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   runCentralHarnessCycle,
@@ -10,8 +13,37 @@ import {
 import {
   createCentralToolRegistry,
   approveOwner,
+  centralOwnerScriptPaths,
+  CENTRAL_CAPABILITY_OWNER_IDS,
+  CENTRAL_EXCLUDED_WRITE_OWNER_IDS,
+  CENTRAL_GOVERNANCE_OWNER_IDS,
 } from "../src/agents/central-harness/tool-registry.js";
 import type { CentralPerception } from "../src/agents/central-harness/types.js";
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+/** The canonical read-only owner surface the harness must be able to drive.
+ * Kept here (not imported from the side-effectful autopilot module) so a silent
+ * regression in tool-registry coverage fails this test. */
+const EXPECTED_READ_ONLY_OWNER_IDS = [
+  "problemRadar",
+  "commercialAcceptance",
+  "changeImpact",
+  "projectionReaderAudit",
+  "universeIndex",
+  "externalAgentUpgrade",
+  "liveFadeoutAudit",
+  "externalChannelStatus",
+  "trainingPlan",
+  "skillOptLite",
+  "monotonicDataLedger",
+  "providerCouncilAcceleration",
+  "externalChannelBinding",
+  "mindModel",
+  "flowGraph",
+  "headTail",
+  "contextRecovery",
+] as const;
 
 function perception(overrides: Partial<CentralPerception> = {}): CentralPerception {
   return {
@@ -172,5 +204,217 @@ describe("codex harness patterns: retained reasoning + context compaction", () =
   it("keeps compaction bounded and accepts a degenerate empty thread", () => {
     expect(compactReceipts([], 5)).toEqual([]);
     expect(compactReceipts([], 0)).toEqual([]);
+  });
+});
+
+describe("central harness covers the whole system, not a slice of it", () => {
+  it("registers every canonical read-only governance owner", () => {
+    expect([...CENTRAL_GOVERNANCE_OWNER_IDS].toSorted()).toEqual(
+      [...EXPECTED_READ_ONLY_OWNER_IDS].toSorted(),
+    );
+  });
+
+  it("exposes the capability layer alongside the owners", () => {
+    for (const capabilityId of CENTRAL_CAPABILITY_OWNER_IDS) {
+      expect(registry.has(capabilityId)).toBe(true);
+    }
+    expect(CENTRAL_CAPABILITY_OWNER_IDS).toContain("finance_research_run");
+  });
+
+  it("keeps write-authority owners out, explicitly rather than by omission", () => {
+    expect(CENTRAL_EXCLUDED_WRITE_OWNER_IDS).toContain("selfRepairHands");
+    for (const excludedId of CENTRAL_EXCLUDED_WRITE_OWNER_IDS) {
+      expect(registry.has(excludedId)).toBe(false);
+      expect(approveOwner(excludedId, {}).ok).toBe(false);
+    }
+  });
+
+  it("never declares a governance owner whose script is missing on disk", () => {
+    const missing = centralOwnerScriptPaths().filter(
+      (relPath) => !fs.existsSync(path.join(REPO_ROOT, relPath)),
+    );
+    expect(missing).toEqual([]);
+  });
+
+  it("gates the capability layer off provider calls", async () => {
+    const spec = registry.get("finance_research_run")!;
+    expect(spec.approve({ live: true }).ok).toBe(false);
+    expect(spec.approve({ live: false }).ok).toBe(false);
+    expect(spec.approve({ provider: "moonshot" }).ok).toBe(false);
+    expect(spec.approve({ ask: "summarize", asOf: "2026-09-17T00:00:00.000Z" }).ok).toBe(true);
+
+    const receipt = await runCentralHarnessCycle({
+      perception: perception(),
+      brain: brainWithActions([
+        { ownerId: "finance_research_run", args: { live: true }, reasoning: "go live" },
+      ]),
+      registry,
+    });
+    expect(receipt.actionsApproved).toBe(0);
+    expect(receipt.actionsBlockedByGate).toBe(1);
+    expect(receipt.steps[0].gateReason).toContain("capability gate");
+  });
+
+  it("never appends an extra CLI flag to an owner command", () => {
+    const source = fs.readFileSync(
+      path.join(REPO_ROOT, "src/agents/central-harness/tool-registry.ts"),
+      "utf8",
+    );
+    expect(source).not.toContain("show-diagnostics");
+    expect(source).not.toContain("showDiagnostics");
+    expect(source).not.toContain("cliArgs.push");
+  });
+});
+
+describe("central harness escalation gate: forbidden side effects stay unreachable", () => {
+  // Phase D contract from the design plan: inject the escalation classes the brain
+  // must never reach and prove each one is refused with no side effect at all.
+  const escalations = [
+    { label: "provider change", ownerId: "mindModel", args: { providerConfig: "moonshot" } },
+    { label: "provider api key", ownerId: "mindModel", args: { apiKey: "sk-redacted" } },
+    { label: "provider bootstrap", ownerId: "mindModel", args: { bootstrapProvider: true } },
+    {
+      label: "external send",
+      ownerId: "externalChannelStatus",
+      args: { sendExternalMessage: true },
+    },
+    {
+      label: "external webhook",
+      ownerId: "externalChannelStatus",
+      args: { webhookUrl: "https://example.invalid/hook" },
+    },
+    { label: "trading action", ownerId: "problemRadar", args: { tradingAction: "buy" } },
+    { label: "order placement", ownerId: "problemRadar", args: { order: { symbol: "NVDA" } } },
+    { label: "protected memory write", ownerId: "mindModel", args: { protectedMemory: "x" } },
+    { label: "cli flag smuggling", ownerId: "universeIndex", args: { extra: "--write --live" } },
+  ] as const;
+
+  it("blocks every escalation class and records blocked_by_gate", async () => {
+    let dispatched = 0;
+    const receipt = await runCentralHarnessCycle({
+      perception: perception(),
+      brain: brainWithActions(
+        escalations.map((e) => ({ ownerId: e.ownerId, args: e.args, reasoning: e.label })),
+      ),
+      registry,
+      maxSteps: escalations.length,
+      execute: async () => {
+        dispatched += 1;
+        return {};
+      },
+    });
+    expect(receipt.actionsProposed).toBe(escalations.length);
+    expect(receipt.actionsApproved).toBe(0);
+    expect(receipt.actionsBlockedByGate).toBe(escalations.length);
+    expect(receipt.steps.every((s) => s.status === "blocked_by_gate")).toBe(true);
+    // The point of the gate: nothing dispatched, so no forbidden side effect happened.
+    expect(dispatched).toBe(0);
+    expect(receipt.liveTouched).toBe(false);
+    expect(receipt.providerConfigTouched).toBe(false);
+    expect(receipt.protectedMemoryTouched).toBe(false);
+  });
+
+  it("names the escalation in the gate reason instead of silently dropping it", () => {
+    expect(approveOwner("mindModel", { providerConfig: "x" }).reason).toContain(
+      "escalates authority",
+    );
+    expect(approveOwner("externalChannelStatus", { sendExternalMessage: true }).ok).toBe(false);
+    expect(approveOwner("problemRadar", { tradingAction: "buy" }).ok).toBe(false);
+    expect(approveOwner("problemRadar", { order: {} }).ok).toBe(false);
+  });
+
+  it("still approves the same owners with genuinely benign args", () => {
+    expect(approveOwner("mindModel", {}).ok).toBe(true);
+    expect(approveOwner("externalChannelStatus", {}).ok).toBe(true);
+    expect(approveOwner("problemRadar", { asOf: "2026-09-17T00:00:00.000Z" }).ok).toBe(true);
+  });
+});
+
+describe("central harness plan-only and failure settlement", () => {
+  it("records the approved plan without dispatching any owner", async () => {
+    let dispatched = 0;
+    const receipt = await runCentralHarnessCycle({
+      perception: perception(),
+      brain: brainWithActions([{ ownerId: "mindModel", args: {}, reasoning: "supervise" }]),
+      registry,
+      planOnly: true,
+      execute: async () => {
+        dispatched += 1;
+        return {};
+      },
+    });
+    expect(receipt.actionsApproved).toBe(1);
+    expect(dispatched).toBe(0);
+    expect(receipt.steps[0].status).toBe("approved");
+  });
+
+  it("settles an honest receipt when the brain call itself throws", async () => {
+    const receipt = await runCentralHarnessCycle({
+      perception: perception(),
+      brain: {
+        propose: async () => {
+          throw new Error("provider unreachable");
+        },
+      },
+      registry,
+    });
+    expect(receipt.brainCall.outcome).toBe("failed");
+    expect(receipt.brainCall.reason).toContain("provider unreachable");
+    expect(receipt.actionsProposed).toBe(0);
+    expect(receipt.steps).toHaveLength(0);
+  });
+});
+
+describe("central harness is wired into the governance loop, not orphaned", () => {
+  const autopilotSource = fs.readFileSync(
+    path.join(REPO_ROOT, "scripts/operator/lcx-governance-autopilot.ts"),
+    "utf8",
+  );
+
+  it("declares the central agent as a required governance owner", () => {
+    expect(autopilotSource).toContain('id: "centralAgent"');
+    expect(autopilotSource).toContain("scripts/operator/lcx-central-agent.ts");
+  });
+
+  it("runs it cycle-bounded and plan-only so the hourly pass stays one decision wide", () => {
+    expect(autopilotSource).toContain('"--max-cycles", "1", "--plan-only", "--json"');
+  });
+
+  it("projects the decision layer into the governance summary", () => {
+    for (const field of [
+      "centralAgentBrainOutcome",
+      "centralAgentActionsApproved",
+      "centralAgentApprovedOwners",
+      "centralAgentRegistryTools",
+    ]) {
+      expect(autopilotSource).toContain(field);
+    }
+  });
+
+  it("never re-enters the autopilot, so owner scheduling stays acyclic", () => {
+    const paths = centralOwnerScriptPaths();
+    expect(paths.some((relPath) => relPath.includes("lcx-governance-autopilot"))).toBe(false);
+  });
+
+  it("shares one canonical snapshot path between writer and readers", () => {
+    const centralCli = fs.readFileSync(
+      path.join(REPO_ROOT, "scripts/operator/lcx-central-agent.ts"),
+      "utf8",
+    );
+    expect(centralCli).toContain("CENTRAL_AGENT_LATEST_PATH");
+    expect(autopilotSource).toContain("CENTRAL_AGENT_LATEST_PATH");
+  });
+
+  it("carries the brain's rationale end to end so readers see why, not just what", () => {
+    const centralCli = fs.readFileSync(
+      path.join(REPO_ROOT, "scripts/operator/lcx-central-agent.ts"),
+      "utf8",
+    );
+    // The CLI must publish the note on stdout, because the autopilot's compact can
+    // only read the owner payload — not the on-disk snapshot.
+    expect(centralCli).toContain("brainNote: lastReceipt?.brainCall.note");
+    expect(autopilotSource).toContain("brainNote: payload.brainNote");
+    // Guard the exact bug this replaced: reading a field the owner never emits.
+    expect(autopilotSource).not.toContain("recordValue(payload.latestReceipt)");
   });
 });

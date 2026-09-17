@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { CentralBrain } from "./model-brain.js";
+import type { CentralBrain, CentralBrainOutcome } from "./model-brain.js";
 import type {
   CentralPerception,
   CentralRunReceipt,
@@ -20,6 +20,13 @@ export type HarnessLoopOptions = Readonly<{
   registry: ReadonlyMap<string, CentralToolSpec>;
   /** Max steps per cycle to stay bounded. */
   maxSteps?: number;
+  /**
+   * Stop after the gate: record the approved plan without dispatching it.
+   * The scheduled owner path uses this so the hourly governance pass pays for
+   * one brain decision instead of re-spawning every owner the autopilot already
+   * runs in parallel.
+   */
+  planOnly?: boolean;
   runId?: string;
   /** Deterministic execute override for tests / offline. */
   execute?: (
@@ -74,8 +81,21 @@ export async function runCentralHarnessCycle(
     reason: "brain_disabled",
   };
 
-  const proposal = await options.brain.propose(options.perception, signal);
-  if (proposal.kind === "proposed") {
+  // A brain failure (provider unreachable, output-contract violation, abort) must
+  // still settle a receipt. The scheduled harness has to report "the brain failed"
+  // honestly rather than crashing and leaving its owner with no parseable output.
+  let proposal: CentralBrainOutcome | undefined;
+  try {
+    proposal = await options.brain.propose(options.perception, signal);
+  } catch (error) {
+    brainCall = {
+      provider: "",
+      modelId: "",
+      outcome: "failed",
+      reason: `brain call failed: ${String(error).slice(0, 300)}`,
+    };
+  }
+  if (proposal?.kind === "proposed") {
     brainCall = {
       provider: proposal.provider,
       modelId: proposal.modelId,
@@ -117,7 +137,7 @@ export async function runCentralHarnessCycle(
       actionsApproved += 1;
       steps.push(makeStepStep(action.ownerId, action.args ?? {}));
     }
-  } else {
+  } else if (proposal !== undefined) {
     brainCall = {
       provider: "",
       modelId: "",
@@ -127,7 +147,9 @@ export async function runCentralHarnessCycle(
   }
 
   // Dispatch approved steps strictly sequentially (research-only owners, idempotent reads).
-  for (const step of steps) {
+  // `planOnly` intentionally stops before this: the decision is already recorded on
+  // the steps, and spawning the owners here would double-run the autopilot's own pass.
+  for (const step of options.planOnly ? [] : steps) {
     if (step.status !== "approved") {
       continue;
     }

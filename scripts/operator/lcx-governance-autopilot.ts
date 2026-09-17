@@ -23,6 +23,7 @@ import {
   writeLocalFailureTraceReceipt,
 } from "./lcx-local-failure-trace.ts";
 import {
+  CENTRAL_AGENT_LATEST_PATH,
   CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
   CONTROL_ROOM_LATEST_PATH,
   DEFAULT_WORKSPACE_DIR,
@@ -73,7 +74,8 @@ type OwnerId =
   | "mindModel"
   | "flowGraph"
   | "headTail"
-  | "contextRecovery";
+  | "contextRecovery"
+  | "centralAgent";
 
 type OwnerCommand = {
   id: OwnerId;
@@ -258,6 +260,18 @@ const OWNER_COMMANDS: OwnerCommand[] = [
     id: "contextRecovery",
     script: "scripts/operator/lcx-context-recovery-exam.ts",
     args: ["--json"],
+    required: true,
+  },
+  {
+    // The LLM decision layer, driven from the rule-driven loop instead of being
+    // an orphaned script nobody schedules. `--plan-only` bounds it to one gated
+    // decision per pass: it perceives, the brain proposes, the TS gate approves
+    // or blocks, and the receipt records the plan and its reasoning. It never
+    // re-spawns the owners this same pass already runs in parallel, and it never
+    // reaches provider config, external senders, protected memory, or trading.
+    id: "centralAgent",
+    script: "scripts/operator/lcx-central-agent.ts",
+    args: ["--max-cycles", "1", "--plan-only", "--json"],
     required: true,
   },
 ];
@@ -747,6 +761,33 @@ function compactOwner(id: OwnerId, payload: Record<string, unknown> | undefined)
       summary: payload.summary,
       moduleCounts: payload.moduleCounts,
       actionableFailures: payload.actionableFailures,
+    };
+  }
+
+  if (id === "centralAgent") {
+    const coverage = recordValue(payload.coverage);
+    return {
+      summary: payload.summary,
+      runs: payload.runs,
+      planOnly: payload.planOnly,
+      dispatchMode: payload.dispatchMode,
+      brainOutcome: payload.brainOutcome,
+      brainAvailable: payload.brainAvailable,
+      registryTools: payload.registryTools,
+      coverageGovernanceOwners: coverage?.governanceOwners,
+      coverageCapabilities: coverage?.capabilities,
+      coverageExcludedWriteOwners: coverage?.excludedWriteOwners,
+      actionsProposed: payload.actionsProposed,
+      actionsApproved: payload.actionsApproved,
+      actionsBlockedByGate: payload.actionsBlockedByGate,
+      approvedOwners: payload.approvedOwners,
+      // The owner's stdout carries the rationale directly; the on-disk snapshot
+      // holds the full receipt, but the compact must only use the payload.
+      brainNote: payload.brainNote,
+      latestPath: payload.latestPath,
+      liveTouched: payload.liveTouched,
+      providerConfigTouched: payload.providerConfigTouched,
+      protectedMemoryTouched: payload.protectedMemoryTouched,
     };
   }
 
@@ -1593,6 +1634,7 @@ const receipt = {
   ownerControlMapLatestJsonPath: OWNER_CONTROL_MAP_LATEST_JSON_PATH,
   ownerControlMapLatestMarkdownPath: OWNER_CONTROL_MAP_LATEST_MARKDOWN_PATH,
   controlRoomLatestPath: CONTROL_ROOM_LATEST_PATH,
+  centralAgentLatestPath: CENTRAL_AGENT_LATEST_PATH,
   handoffLatestPath: CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
   multiAgentPatternShadowLatestPath: MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH,
   multiAgentPatternShadow,
@@ -1632,6 +1674,8 @@ const receipt = {
       "owner_brief_latest_markdown",
       "owner_control_map_latest_json",
       "owner_control_map_latest_markdown",
+      "central_agent_latest_via_owner",
+      "central_agent_log_jsonl_via_owner",
     ],
     autoUpdateLatestState: true,
     activeTrainingOrEval,
@@ -1742,6 +1786,22 @@ const receipt = {
       ?.fastestSafeNextAction,
     activeNonIdleProgress: recordValue(byOwner.trainingPlan?.compact.evolutionAcceleration)
       ?.activeNonIdleProgress,
+    // Central agent harness: the LLM decision layer's own gated plan for this pass.
+    // Surfaced in the governance summary so the dashboard shows what the agent
+    // decided, which owners it selected, and whether its brain was reachable.
+    centralAgentRuns: byOwner.centralAgent?.compact.runs,
+    centralAgentDispatchMode: byOwner.centralAgent?.compact.dispatchMode,
+    centralAgentBrainOutcome: byOwner.centralAgent?.compact.brainOutcome,
+    centralAgentBrainAvailable: byOwner.centralAgent?.compact.brainAvailable,
+    centralAgentRegistryTools: byOwner.centralAgent?.compact.registryTools,
+    centralAgentGovernanceOwners: byOwner.centralAgent?.compact.coverageGovernanceOwners,
+    centralAgentCapabilities: byOwner.centralAgent?.compact.coverageCapabilities,
+    centralAgentExcludedWriteOwners: byOwner.centralAgent?.compact.coverageExcludedWriteOwners,
+    centralAgentActionsProposed: byOwner.centralAgent?.compact.actionsProposed,
+    centralAgentActionsApproved: byOwner.centralAgent?.compact.actionsApproved,
+    centralAgentActionsBlockedByGate: byOwner.centralAgent?.compact.actionsBlockedByGate,
+    centralAgentApprovedOwners: byOwner.centralAgent?.compact.approvedOwners,
+    centralAgentBrainNote: byOwner.centralAgent?.compact.brainNote,
   },
   owners: Object.fromEntries(owners.map((owner) => [owner.id, owner.compact])),
   notTouched: [
@@ -1775,6 +1835,7 @@ const mindModelCompact = recordValue(receipt.owners.mindModel);
 const flowGraphCompact = recordValue(receipt.owners.flowGraph);
 const headTailCompact = recordValue(receipt.owners.headTail);
 const contextRecoveryCompact = recordValue(receipt.owners.contextRecovery);
+const centralAgentCompact = recordValue(receipt.owners.centralAgent);
 const activeCounts = activePidCounts(activePids);
 const digestMaterial = {
   repoBranch: gitStatusLines[0] ?? "",
@@ -1877,6 +1938,20 @@ const digestMaterial = {
   flowGraphFailed: recordValue(flowGraphCompact?.summary)?.failed,
   headTailFailed: recordValue(headTailCompact?.summary)?.failed,
   contextRecoveryOk: contextRecoveryCompact?.compressedContextRecovered,
+  // Central agent harness: the LLM decision layer's own gated plan for this pass.
+  centralAgentRuns: centralAgentCompact?.runs,
+  centralAgentDispatchMode: centralAgentCompact?.dispatchMode,
+  centralAgentBrainOutcome: centralAgentCompact?.brainOutcome,
+  centralAgentBrainAvailable: centralAgentCompact?.brainAvailable,
+  centralAgentRegistryTools: centralAgentCompact?.registryTools,
+  centralAgentGovernanceOwners: centralAgentCompact?.coverageGovernanceOwners,
+  centralAgentCapabilities: centralAgentCompact?.coverageCapabilities,
+  centralAgentExcludedWriteOwners: centralAgentCompact?.coverageExcludedWriteOwners,
+  centralAgentActionsProposed: centralAgentCompact?.actionsProposed,
+  centralAgentActionsApproved: centralAgentCompact?.actionsApproved,
+  centralAgentActionsBlockedByGate: centralAgentCompact?.actionsBlockedByGate,
+  centralAgentApprovedOwners: centralAgentCompact?.approvedOwners,
+  centralAgentBrainNote: centralAgentCompact?.brainNote,
   liveTouched: receipt.liveTouched,
   providerConfigTouched: receipt.providerConfigTouched,
   protectedMemoryTouched: receipt.protectedMemoryTouched,
@@ -1925,6 +2000,7 @@ const localFailureTrace = buildLocalFailureTraceReceipt({
     MONOTONIC_DATA_LEDGER_JSONL_PATH,
     CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
     MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH,
+    CENTRAL_AGENT_LATEST_PATH,
   ],
   writtenArtifacts: [
     GOVERNANCE_AUTOPILOT_LATEST_PATH,

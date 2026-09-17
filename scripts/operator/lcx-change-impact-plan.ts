@@ -490,6 +490,20 @@ const PATH_RULES: PathRule[] = [
     risk: "elevated",
   },
   {
+    id: "central_agent_harness",
+    lane: "agent_workflow_memory",
+    patterns: [/^src\/agents\/central-harness\//u, /^scripts\/operator\/lcx-central-agent\.ts$/u],
+    requiredChecks: ["central-agent-harness-tests", "head-tail-consistency"],
+    commands: [
+      "pnpm vitest run test/lcx-central-agent.test.ts",
+      "node --import tsx scripts/operator/lcx-central-agent.ts --dry-run --duration-minutes 1 --json",
+      "node --import tsx scripts/operator/lcx-head-tail-consistency.ts --json",
+    ],
+    safetyNotes: [
+      "The central harness only proposes; deterministic TS gates approve. It never gains provider, external-sender, protected-memory, or trading authority, and its capability tools stay planning-only.",
+    ],
+  },
+  {
     id: "test_file_changed",
     lane: "test_surface",
     patterns: [/(^|\/)[^/]+\.test\.ts$/u],

@@ -9,15 +9,23 @@ import type { CompactBacklogEntry } from "../../src/agents/central-harness/harne
 import { createCentralBrain } from "../../src/agents/central-harness/model-brain.js";
 import type { CentralBrain } from "../../src/agents/central-harness/model-brain.js";
 import { createCentralToolRegistry } from "../../src/agents/central-harness/tool-registry.js";
+import {
+  CENTRAL_CAPABILITY_OWNER_IDS,
+  CENTRAL_EXCLUDED_WRITE_OWNER_IDS,
+  CENTRAL_GOVERNANCE_OWNER_IDS,
+} from "../../src/agents/central-harness/tool-registry.js";
 import type {
   CentralPerception,
   CentralRunReceipt,
 } from "../../src/agents/central-harness/types.js";
 import { loadConfig } from "../../src/config/io.js";
+import { CENTRAL_AGENT_LATEST_PATH, CENTRAL_AGENT_LOG_JSONL_PATH } from "./lcx-local-paths.ts";
 
-const WORKSPACE = path.join(process.env.HOME ?? ".", ".openclaw", "workspace");
-const STATE_DIR = path.join(WORKSPACE, "state");
-const LOG_PATH = path.join(STATE_DIR, "lcx-central-agent-log-latest.jsonl");
+/** Canonical state/log paths live in lcx-local-paths so readers share one contract. */
+const STATE_DIR = path.dirname(CENTRAL_AGENT_LATEST_PATH);
+const LOG_PATH = CENTRAL_AGENT_LOG_JSONL_PATH;
+/** Observable latest snapshot: coverage + the newest receipt, for other readers. */
+const LATEST_PATH = CENTRAL_AGENT_LATEST_PATH;
 /** Resume window: how many prior cycles the brain is allowed to see (thread-store tail). */
 const RESUME_WINDOW = 40;
 
@@ -30,19 +38,31 @@ const CLAIMED_BOUNDARIES = [
 class ParseError extends Error {}
 
 function parseArgs(args: string[]): Record<string, string | boolean> {
-  const out: Record<string, string | boolean> = { durationMinutes: 2, dryRun: false };
+  const out: Record<string, string | boolean> = {
+    durationMinutes: 2,
+    dryRun: false,
+    planOnly: false,
+    maxCycles: Number.POSITIVE_INFINITY,
+  };
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (arg === "--duration-minutes") {
       out.durationMinutes = Number(args[i + 1]);
       i += 1;
+    } else if (arg === "--max-cycles") {
+      out.maxCycles = Number(args[i + 1]);
+      i += 1;
     } else if (arg === "--dry-run") {
       out.dryRun = true;
+    } else if (arg === "--plan-only") {
+      // Gate and record the decision; never spawn the owners. Used by the
+      // hourly governance owner so the pass stays one brain call wide.
+      out.planOnly = true;
     } else if (arg === "--json") {
       out.json = true;
     } else if (arg === "--help" || arg === "-h") {
       throw new ParseError(
-        "Usage: node --import tsx scripts/operator/lcx-central-agent.ts [--duration-minutes N] [--dry-run] [--json]",
+        "Usage: node --import tsx scripts/operator/lcx-central-agent.ts [--duration-minutes N] [--max-cycles N] [--plan-only] [--dry-run] [--json]",
       );
     }
   }
@@ -116,6 +136,77 @@ async function loadPersistedReceipts(): Promise<CentralRunReceipt[]> {
   }
 }
 
+/** Declared reach: what the harness can actually drive, so "whole system" is checkable. */
+function centralCoverage() {
+  return {
+    governanceOwners: CENTRAL_GOVERNANCE_OWNER_IDS.length,
+    capabilities: CENTRAL_CAPABILITY_OWNER_IDS.length,
+    excludedWriteOwners: [...CENTRAL_EXCLUDED_WRITE_OWNER_IDS],
+    boundary: "read_only_owners_plus_planning_only_capabilities",
+  };
+}
+
+/**
+ * Honest fallback receipt for a cycle that threw before it could settle. The
+ * owner surface must stay parseable, so a failure is reported as a receipt
+ * rather than as a crashed process with no output.
+ */
+function failedCycleReceipt(
+  perception: CentralPerception,
+  index: number,
+  error: unknown,
+): CentralRunReceipt {
+  return {
+    schemaVersion: "lcx_central_agent_v1",
+    runId: `central-${index}-${Date.now()}-failed`,
+    observedAt: perception.observedAt,
+    actionsProposed: 0,
+    actionsApproved: 0,
+    actionsBlockedByGate: 0,
+    steps: [],
+    boundaries: perception.boundaries,
+    brainCall: {
+      provider: "",
+      modelId: "",
+      outcome: "failed",
+      reason: `cycle failed: ${String(error).slice(0, 300)}`,
+    },
+    nextAction: "halt_and_report",
+    liveTouched: false,
+    providerConfigTouched: false,
+    protectedMemoryTouched: false,
+  };
+}
+
+async function writeJsonAtomic(filePath: string, payload: unknown): Promise<void> {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  const tmp = `${filePath}.tmp-${process.pid}`;
+  await fs.writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
+  await fs.rename(tmp, filePath);
+}
+
+/** Latest observable snapshot: coverage plus the newest cycle receipt. */
+async function writeLatest(
+  receipt: CentralRunReceipt | undefined,
+  runs: number,
+  meta: { dryRun: boolean; planOnly: boolean },
+): Promise<void> {
+  await writeJsonAtomic(LATEST_PATH, {
+    schemaVersion: "lcx_central_agent_latest_v1",
+    boundary: "local_central_agent_observe_only",
+    updatedAt: new Date().toISOString(),
+    runs,
+    dryRun: meta.dryRun,
+    planOnly: meta.planOnly,
+    dispatchMode: meta.planOnly ? "gate_and_record_only" : "gate_record_and_dispatch",
+    coverage: centralCoverage(),
+    latestReceipt: receipt ?? null,
+    liveTouched: false,
+    providerConfigTouched: false,
+    protectedMemoryTouched: false,
+  });
+}
+
 async function settle(receipt: unknown): Promise<void> {
   await fs.mkdir(path.dirname(LOG_PATH), { recursive: true });
   const handle = await fs.open(LOG_PATH, "a");
@@ -130,6 +221,8 @@ async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
   const durationMinutes = Number(options.durationMinutes);
   const dryRun = options.dryRun === true;
+  const planOnly = options.planOnly === true;
+  const maxCycles = Number(options.maxCycles);
   const registry = createCentralToolRegistry();
   const brain: CentralBrain = dryRun
     ? {
@@ -139,39 +232,72 @@ async function main(): Promise<void> {
 
   const deadline = Date.now() + durationMinutes * 60_000;
   let runs = 0;
+  let lastReceipt: CentralRunReceipt | undefined;
   // thread-store resume: recover prior cycles so the brain inherits context.
   let history = await loadPersistedReceipts();
-  while (Date.now() < deadline) {
+  while (Date.now() < deadline && runs < maxCycles) {
     // context compaction: only the compacted tail reaches the brain, never raw history.
     const perception = await buildPerception(compactReceipts(history, 10));
-    const receipt = await runCentralHarnessCycle({
-      perception,
-      brain,
-      registry,
-      runId: `central-${runs}-${Date.now()}`,
-    });
+    let receipt: CentralRunReceipt;
+    try {
+      receipt = await runCentralHarnessCycle({
+        perception,
+        brain,
+        registry,
+        planOnly,
+        runId: `central-${runs}-${Date.now()}`,
+      });
+    } catch (error) {
+      // Never exit without a receipt: the owner surface stays parseable even when
+      // perception or dispatch fails mid-cycle.
+      receipt = failedCycleReceipt(perception, runs, error);
+    }
     await settle(receipt);
+    lastReceipt = receipt;
     history = history.concat(receipt).slice(-200);
     runs += 1;
-    if (dryRun) {
+    if (dryRun || runs >= maxCycles) {
       break;
     }
     // Bounded pacing: at least a short pause between cycles to stay idle-friendly.
     await new Promise((resolve) => setTimeout(resolve, 5000));
   }
+  // Always publish the observable snapshot, even on a zero-cycle run, so readers
+  // never see a stale or absent central-agent surface.
+  await writeLatest(lastReceipt, runs, { dryRun, planOnly });
+  const brainOutcome = lastReceipt?.brainCall.outcome ?? null;
+  const summary = {
+    ok: runs > 0,
+    boundary: "local_central_agent_observe_only",
+    runs,
+    dryRun,
+    planOnly,
+    dispatchMode: planOnly ? "gate_and_record_only" : "gate_record_and_dispatch",
+    maxCycles: Number.isFinite(maxCycles) ? maxCycles : null,
+    latestPath: LATEST_PATH,
+    registryTools: registry.size,
+    coverage: centralCoverage(),
+    brainOutcome,
+    brainAvailable: brainOutcome === "completed",
+    actionsProposed: lastReceipt?.actionsProposed ?? 0,
+    actionsApproved: lastReceipt?.actionsApproved ?? 0,
+    actionsBlockedByGate: lastReceipt?.actionsBlockedByGate ?? 0,
+    approvedOwners:
+      lastReceipt?.steps
+        .filter((step) => step.status === "approved" || step.status === "ran_ok")
+        .map((step) => step.ownerId) ?? [],
+    /** The brain's own one-line rationale, so readers see *why*, not just *what*. */
+    brainNote: lastReceipt?.brainCall.note ?? null,
+    liveTouched: false,
+    providerConfigTouched: false,
+    protectedMemoryTouched: false,
+  };
   if (options.json) {
-    const summary = {
-      ok: true,
-      boundary: "local_central_agent_observe_only",
-      runs,
-      dryRun,
-      liveTouched: false,
-      providerConfigTouched: false,
-      protectedMemoryTouched: false,
-    };
     process.stdout.write(`${JSON.stringify(summary)}\n`);
   } else {
-    process.stdout.write(`central agent ran ${runs} cycle(s) over ${durationMinutes} min(s)\n`);
+    process.stdout.write(
+      `central agent ran ${runs} cycle(s) over ${durationMinutes} min(s); brain=${brainOutcome}\n`,
+    );
   }
 }
 
