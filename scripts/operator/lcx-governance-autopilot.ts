@@ -1835,6 +1835,10 @@ const receipt = {
   liveTouched: hasBoundaryTouch(owners, "liveTouched"),
   providerConfigTouched: hasBoundaryTouch(owners, "providerConfigTouched"),
   protectedMemoryTouched: hasBoundaryTouch(owners, "protectedMemoryTouched"),
+  // Filled in after the evidence writes below; a partial cycle must be visible
+  // instead of looking like a complete one.
+  evidenceComplete: true,
+  evidenceWriteFailures: [] as { artifact: string; error: string }[],
 };
 
 const [gitStatusLines, activePids] = await Promise.all([
@@ -2136,39 +2140,72 @@ const controlRoom = {
   },
 };
 
-await fs.mkdir(path.dirname(GOVERNANCE_AUTOPILOT_LATEST_PATH), { recursive: true });
-await fs.writeFile(GOVERNANCE_AUTOPILOT_LATEST_PATH, `${JSON.stringify(receipt, null, 2)}\n`);
-await fs.mkdir(path.dirname(EVOLUTION_PROMOTION_DIGEST_LATEST_PATH), { recursive: true });
-await fs.writeFile(
-  EVOLUTION_PROMOTION_DIGEST_LATEST_PATH,
-  `${JSON.stringify(evolutionPromotionDigest, null, 2)}\n`,
-);
-const controlRoomTempPath = `${CONTROL_ROOM_LATEST_PATH}.${process.pid}.tmp`;
-await fs.writeFile(controlRoomTempPath, `${JSON.stringify(controlRoom, null, 2)}\n`);
-await fs.rename(controlRoomTempPath, CONTROL_ROOM_LATEST_PATH);
-await fs.mkdir(path.dirname(CONTEXT_RECOVERY_HANDOFF_LATEST_PATH), { recursive: true });
-await fs.writeFile(
-  CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
-  `${buildContextRecoveryHandoff({
-    receipt,
-    gitStatusLines,
-    activePids,
-    digestMaterial,
-    universeIndexCompact,
-    trainingCompact,
-    skillOptCompact,
-    monotonicDataLedgerCompact,
-    providerCouncilAccelerationCompact,
-    externalChannelBindingCompact,
-    externalAgentUpgradeCompact,
-    multiAgentPatternShadow,
-    projectionReaderAuditCompact,
-    localFailureTrace,
-  })}\n`,
-);
-await writeLocalFailureTraceReceipt(localFailureTrace);
-await writeOwnerControlMap(ownerControlMap);
-await writeOwnerBrief(ownerBrief);
+/**
+ * Evidence writes are fail-open, and the receipt is published last.
+ *
+ * A single unwritable derived artifact used to reject the module before the
+ * receipt reached stdout: the cycle looked like a crash, stdout was empty, and
+ * every later artifact (failure trace, owner control map, owner brief) was
+ * silently skipped while the receipt already on disk recorded nothing about the
+ * partial run. Each write now names its own failure and the run still publishes
+ * its receipt, so a partial cycle is visible instead of indistinguishable.
+ */
+async function writeEvidence(artifact: string, write: () => Promise<unknown>): Promise<void> {
+  try {
+    await write();
+  } catch (error) {
+    receipt.evidenceWriteFailures.push({ artifact, error: String(error) });
+  }
+}
+
+await writeEvidence("evolutionPromotionDigest", async () => {
+  await fs.mkdir(path.dirname(EVOLUTION_PROMOTION_DIGEST_LATEST_PATH), { recursive: true });
+  await fs.writeFile(
+    EVOLUTION_PROMOTION_DIGEST_LATEST_PATH,
+    `${JSON.stringify(evolutionPromotionDigest, null, 2)}\n`,
+  );
+});
+await writeEvidence("controlRoom", async () => {
+  const controlRoomTempPath = `${CONTROL_ROOM_LATEST_PATH}.${process.pid}.tmp`;
+  await fs.writeFile(controlRoomTempPath, `${JSON.stringify(controlRoom, null, 2)}\n`);
+  await fs.rename(controlRoomTempPath, CONTROL_ROOM_LATEST_PATH);
+});
+await writeEvidence("contextRecoveryHandoff", async () => {
+  await fs.mkdir(path.dirname(CONTEXT_RECOVERY_HANDOFF_LATEST_PATH), { recursive: true });
+  await fs.writeFile(
+    CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
+    `${buildContextRecoveryHandoff({
+      receipt,
+      gitStatusLines,
+      activePids,
+      digestMaterial,
+      universeIndexCompact,
+      trainingCompact,
+      skillOptCompact,
+      monotonicDataLedgerCompact,
+      providerCouncilAccelerationCompact,
+      externalChannelBindingCompact,
+      externalAgentUpgradeCompact,
+      multiAgentPatternShadow,
+      projectionReaderAuditCompact,
+      localFailureTrace,
+    })}\n`,
+  );
+});
+await writeEvidence("localFailureTrace", () => writeLocalFailureTraceReceipt(localFailureTrace));
+await writeEvidence("ownerControlMap", () => writeOwnerControlMap(ownerControlMap));
+await writeEvidence("ownerBrief", () => writeOwnerBrief(ownerBrief));
+
+receipt.evidenceComplete = receipt.evidenceWriteFailures.length === 0;
+await writeEvidence("governanceAutopilotLatest", async () => {
+  await fs.mkdir(path.dirname(GOVERNANCE_AUTOPILOT_LATEST_PATH), { recursive: true });
+  await fs.writeFile(GOVERNANCE_AUTOPILOT_LATEST_PATH, `${JSON.stringify(receipt, null, 2)}\n`);
+});
+
+// The receipt cannot report its own publication failure in the copy it failed to
+// write, so recompute for the published copy: the persisted file carries the
+// derived-artifact verdict, stdout carries the verdict over every write.
+receipt.evidenceComplete = receipt.evidenceWriteFailures.length === 0;
 
 if (options.json) {
   console.log(JSON.stringify(receipt, null, 2));
@@ -2179,6 +2216,13 @@ if (options.json) {
       `releaseBlocked=${receipt.summary.releaseBlocked}`,
       `activeTrainingOrEval=${receipt.summary.activeTrainingOrEval}`,
       `latestStatePath=${receipt.latestStatePath}`,
+      ...(receipt.evidenceComplete
+        ? []
+        : [
+            `evidenceWriteFailures=${receipt.evidenceWriteFailures
+              .map((failure) => failure.artifact)
+              .join(",")}`,
+          ]),
     ].join("\n"),
   );
 }
