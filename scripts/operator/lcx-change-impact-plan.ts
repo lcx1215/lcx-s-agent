@@ -504,6 +504,65 @@ const PATH_RULES: PathRule[] = [
     ],
   },
   {
+    // Root-level build and dependency configuration. Changing one changes how
+    // everything is compiled, typed, or installed, but no single downstream
+    // check covers it, so the lane records the change and requires a clean diff
+    // rather than pretending to verify it.
+    id: "build_tooling_and_manifests",
+    lane: "local_build_tooling",
+    patterns: [
+      /^vitest[.-][\w.-]*\.ts$/u,
+      /^tsdown\.config\.ts$/u,
+      /^tsconfig[\w.-]*\.json$/u,
+      /^zizmor\.yml$/u,
+      /^pnpm-(?:lock|workspace)\.yaml$/u,
+      /^pyproject\.toml$/u,
+    ],
+    requiredChecks: [],
+    commands: ["git diff --check"],
+    safetyNotes: [
+      "Build and dependency changes affect every package at once. Keep them minimal and reviewable; regenerating lockfiles, bumping versions, or changing published build output is a separate, explicitly authorized change.",
+    ],
+  },
+  {
+    // The deployment surface: container images, PaaS manifests, and the podman
+    // env file. Nothing here runs automatically, and building or shipping is a
+    // separate authority.
+    id: "deployment_surface",
+    lane: "local_deployment_boundary",
+    patterns: [
+      /^Dockerfile[\w.-]*$/u,
+      /^docker-compose\.yml$/u,
+      /^docker-setup\.sh$/u,
+      /^setup-podman\.sh$/u,
+      /^openclaw\.podman\.env$/u,
+      /^fly(?:\.\w+)?\.toml$/u,
+      /^render\.yaml$/u,
+    ],
+    requiredChecks: [],
+    commands: ["git diff --check"],
+    safetyNotes: [
+      "Deployment surface only. Building an image, publishing, deploying, or restarting a service is never triggered by this lane and needs explicit authorization plus a named target.",
+    ],
+  },
+  {
+    // Root entrypoints and project-level documents. Entrypoint edits can alter
+    // every CLI invocation, so state what was run by hand.
+    id: "root_project_surface",
+    lane: "local_project_surface",
+    patterns: [
+      /^(?:lcx|openclaw)\.mjs$/u,
+      /^(?:CHANGELOG|CLAUDE|SECURITY|VISION)\.md$/u,
+      /^docs\.acp\.md$/u,
+      /^LICENSE$/u,
+    ],
+    requiredChecks: [],
+    commands: ["git diff --check"],
+    safetyNotes: [
+      "Entrypoints and project-level documents. Entrypoint changes affect every CLI invocation and must be exercised by hand; license, security, and vision changes are governance-level and should be called out explicitly.",
+    ],
+  },
+  {
     id: "test_file_changed",
     lane: "test_surface",
     patterns: [/(^|\/)[^/]+\.test\.ts$/u],
