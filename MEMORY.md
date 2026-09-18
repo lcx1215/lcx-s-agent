@@ -121,7 +121,8 @@
 - The learning timebox is now a durable in-harness workflow surface (`learning_distill` capability: pending review notes → keep/replay/next-eval cards under `state/lcx-learning-workflow-latest.json`); it is no longer process-bound.
 - The fundamental hook family is richer than the current local research corpus.
 - Local core verification is stronger than external-channel proof. `core-verified` is not `user-visible-observed`.
-- External-channel binding stays deferred (`deferred_training_plan_not_ready`). Verified 2026-09-19 by replaying the hardened eval on the 2026-09-14 0/213 cases against the same adapter (`thought-flow-v1-qwen3-0.6b-minimax-guard-2026-05-26T22-37-02-759Z-r2`): they now pass 8/8 with 0 parse errors, so the 0/213 was a transient runtime failure, not model regression. The durable blocker is structural: `modelContractReady` is false for every case because the adapter's raw output lacks the contract fields (`supporting_modules`, `missing_data`, `rejected_context`, `next_step`) that the post-2026-05-26 eval adds via hardening, and promotion requires raw contract completeness (`modelContractFailureCaseIds.length === 0`). Unblocking therefore needs the adapter retrained to emit those fields raw, not an eval-side fix. Evidence: `state/lcx-local-brain-eval-verify-replay-latest.json`.
+- External-channel binding stays deferred (`deferred_training_plan_not_ready`). Verified 2026-09-19 by replaying the hardened eval on the 2026-09-14 0/213 cases against the same adapter (`thought-flow-v1-qwen3-0.6b-minimax-guard-2026-05-26T22-37-02-759Z-r2`): they now pass 8/8 with 0 parse errors, so the 0/213 was a transient runtime failure, not model regression. The durable blocker is structural: `modelContractReady` is false for every case because the adapter's raw output lacks the contract fields (`supporting_modules`, `missing_data`, `rejected_context`, `next_step`) that the post-2026-05-26 eval adds via hardening, and promotion requires raw contract completeness (`modelContractFailureCaseIds.length === 0`). Unblocking therefore needs the adapter retrained to emit those fields raw, not an eval-side fix.
+- Retrain attempt 1 (2026-09-19, `--iters 40 --lr 1e-5` from the 05-26 r2 seed → `thought-flow-v1-qwen3-0.6b-minimax-guard-2026-09-19T01-14-55-r1`) improved but did not unlock: hardened eval now 213/213 pass (raw contract pass 37/213), yet `modelContractReadyCaseIds` stays empty for all 213 because raw output still omits case-required module ids and uses non-canonical module variants (normalization+hardening must patch them). Promotion audit still reports `training_plan_eval_not_promotion_ready`. Retrain attempt 2 (2026-09-18T18-16-27, `--iters 120`, resuming from attempt-1 adapter) is the documented continuation. Evidence: `state/lcx-local-brain-eval-verify-2026-09-19T01-14-55.json`, `state/lcx-local-brain-eval-verify-replay-latest.json`.
 
 ## Cleanup Rule
 
@@ -136,3 +137,81 @@
 - Keep improving the internal body by reducing duplicate state and duplicate workflow narration before adding new layers.
 - Make the decision-convergence loop explicit in learning, memory, and answer-shaping so LCX Agent gets more precise after each correction instead of just sounding more elaborate.
 - Next durable gains should come from cleaner finance memory, cleaner finance artifacts, and later live proof, not from more abstract architecture.
+
+## Macro Inventory (2026-09-19)
+
+Snapshot of the `scripts/operator/` factory floor (99 scripts) and the runtime state
+faces (`~/.openclaw/workspace/state/`). Purpose: separate healthy, wired components
+from residue before any deletion. Deletion of any listed item still needs explicit
+authorization.
+
+### Healthy core (tests + governance-loop wiring)
+
+- Control/governance: `lcx-central-agent`, `lcx-governance-autopilot`, `lcx-owner-brief`,
+  `lcx-owner-control-map`, `lcx-monotonic-data-ledger`, `lcx-local-failure-trace`,
+  `lcx-context-recovery-exam`, `lcx-problem-cluster-radar`, `lcx-live-fadeout-audit`,
+  `lcx-universe-index`, `lcx-change-impact-plan`, `lcx-system-doctor`, `lcx-agent-exam`,
+  `lcx-local-paths` (shared path constants).
+- Semantic/evidence gates: `lcx-ontology`, `lcx-mind-model`, `lcx-flow-graph`,
+  `lcx-head-tail-consistency`, `lcx-commercial-answer-pipeline`,
+  `lcx-projection-reader-audit`.
+- Training/learning pipeline: `local-brain-{contracts,taxonomy,plan,distill-dataset,
+distill-train-slice,distill-eval,distill-smoke,generalization-generator,
+generalization-harness,open-eval,open-eval-provider,promotion-audit,training-plan}`,
+  `module-learning-pipeline-{plan,review}`, `minimax-brain-{teacher-batch,training-guard,
+failure-curriculum}`, `minimax-quota-brain-saturator`.
+- External channel: `lcx-external-channel-{binding,compat,status}`,
+  `external-channel-sidecar-runtime-{bundle,freshness}`.
+- Finance: `lcx-finance-{research,research-run,live-execution,position-ledger}`,
+  `lcx-directed-daily-research-brief`, `lcx-research-data-tool`,
+  `lcx-commercial-acceptance-harness`, `lcx-visible-answer-quality-fuzzer`,
+  `lcx-external-short-intent-fuzzer`, `lcx-external-agent-upgrade-radar`, `lcx-skillopt-lite`.
+- 31 package.json-wired smoke/live-smoke entries cover the live-probe surface.
+
+### Orphan script candidates (no package.json/test/docs/src wiring; only change-impact inventory)
+
+- `minimax-provider-quota-saturator.ts` — MiniMax VLM provider is retired; superseded by
+  `minimax-quota-brain-saturator`. Dead weight.
+- `geospatial-source-live-smoke.ts` — one-shot probe, no wiring.
+- `test-device-pair-telegram.ts` — one-shot device-pair probe, no wiring.
+
+### Docs-only, not wired (keep or wire, do not silently delete)
+
+- `finance-learning-{event-review,multi-candidate,pipeline}-smoke` (referenced by the
+  finance-learning runbook), `discord-acp-plain-language-smoke` (testing.md),
+  `lcx-finance-capability-collect` + `lcx-finance-source-limit-probe` (feed the
+  registered-data-capabilities / source-quota docs).
+
+### State-face residue (no consumers anywhere in src/scripts/test/docs; cleanup candidate)
+
+- kimi-k2.6 era (2026-05-22): `kimi-k2.6-{high-intensity-output,local-usage-policy,
+real-output-smoke-latest,real-output-smoke-strict}-latest.json`,
+  `deepseek-high-intensity-quality-smoke-latest.json`.
+- sidecar era (2026-05-23): `lcx-safe-sidecar-{workpack,extra-workpack}-latest.{json,md}`.
+- blind-eval series (2026-08-30): `lcx-blind-{six-case*-round*,six-case*-prefill-round*,
+short-lark-r2-prefill,generated-holdout*}-*.json` (12 files),
+  `lcx-parse-stability-six-case-receipt-latest.json`.
+- 2026-09 probes: `lcx-short-lark-blind-no-prefill-20260901.json`,
+  `lcx-blind-commodity-challenger-receipt-latest.json`,
+  `lcx-required-module-eval-receipt-latest.json`,
+  `lcx-contract-repair-{eval,training}-20260911-r1.json` (+ checkpoint),
+  `lcx-native-contract-repair-queue-latest.json`, `lcx-live-lark-brain-binding-latest.json`.
+- older misc: `lcx-evolution-next-idle-actions.json`, `lcx-evolution-promotion-manual-check-latest.json`,
+  `commercial-answer-real-provider-sample-latest.json`, `openclaw-beta-intake-2026-09-01.json`,
+  `codex-{current-runtime-audit,lcx-engine-consolidation,openclaw-latest-beta-cutover}-20260901.md`.
+
+### Healthy active state faces (verified consumers)
+
+`lcx-central-agent-latest`, `lcx-control-room-latest`, `lcx-governance-autopilot-latest`,
+`lcx-owner-brief-latest`, `lcx-owner-control-map-latest`, `lcx-monotonic-data-ledger-latest`,
+`lcx-local-failure-trace-latest`, `lcx-evolution-promotion-digest-latest`,
+`lcx-external-channel-binding-latest`, `lcx-universe-index-latest`, `lcx-local-operator-latest`,
+`lcx-learning-workflow-latest`, `lcx-self-repair-hands-latest`, `lcx-context-recovery-handoff-latest.md`,
+`model-fleet-runtime.json`, `local-specialist-runs/`.
+
+### Verified gate status (2026-09-19)
+
+- ontology: 59 vocabulary / 15 relation contracts / 3 orchestration patterns / 58 contract
+  task-families canonical, 0 errors; 24 integration surfaces ok.
+- flow-graph 9/9, mind-model 40/40 checks green; promotion audit: `promotionApplied=false`
+  (external channel stays `deferred_training_plan_not_ready`, see the retrain note above).
