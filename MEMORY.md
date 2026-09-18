@@ -121,6 +121,7 @@
 - The learning timebox is now a durable in-harness workflow surface (`learning_distill` capability: pending review notes → keep/replay/next-eval cards under `state/lcx-learning-workflow-latest.json`); it is no longer process-bound.
 - The fundamental hook family is richer than the current local research corpus.
 - Local core verification is stronger than external-channel proof. `core-verified` is not `user-visible-observed`.
+- External-channel binding stays deferred (`deferred_training_plan_not_ready`). Verified 2026-09-19 by replaying the hardened eval on the 2026-09-14 0/213 cases against the same adapter (`thought-flow-v1-qwen3-0.6b-minimax-guard-2026-05-26T22-37-02-759Z-r2`): they now pass 8/8 with 0 parse errors, so the 0/213 was a transient runtime failure, not model regression. The durable blocker is structural: `modelContractReady` is false for every case because the adapter's raw output lacks the contract fields (`supporting_modules`, `missing_data`, `rejected_context`, `next_step`) that the post-2026-05-26 eval adds via hardening, and promotion requires raw contract completeness (`modelContractFailureCaseIds.length === 0`). Unblocking therefore needs the adapter retrained to emit those fields raw, not an eval-side fix. Evidence: `state/lcx-local-brain-eval-verify-replay-latest.json`.
 
 ## Cleanup Rule
 
