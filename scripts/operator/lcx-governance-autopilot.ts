@@ -3,6 +3,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { readFinancePositionLedger } from "../../src/agents/finance-position-ledger.ts";
+import { resolveFinancePositionLedgerLocation } from "../../src/agents/finance-state-dir.ts";
 import {
   readGlobalEvidenceProjectionForAdapter,
   type GlobalEvidenceProjectionRead,
@@ -1161,6 +1163,84 @@ async function readJsonRecord(filePath: string): Promise<Record<string, unknown>
   }
 }
 
+/**
+ * Read-only fold of the real position book into the control room. Every failure
+ * is a named status — `absent` when the database is not there (an absent book
+ * must never read as an empty portfolio), `unavailable` when the read itself
+ * broke — and `paper`/`venue` open positions are reported apart so a simulated
+ * book can never be read as real.
+ */
+async function readPositionLedgerProjection(): Promise<Record<string, unknown>> {
+  const boundary = "finance_position_ledger_read_only";
+  const notTouched = [
+    "trading_execution",
+    "order_placement",
+    "provider_config",
+    "external_channel_sender",
+    "protected_memory",
+  ];
+  try {
+    const location = resolveFinancePositionLedgerLocation({});
+    const databasePresent = await fs
+      .access(location.database)
+      .then(() => true)
+      .catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") {
+          return false;
+        }
+        throw error;
+      });
+    if (!databasePresent) {
+      return {
+        schemaVersion: "lcx_finance_position_ledger_projection_v1",
+        boundary,
+        status: "absent",
+        reason: "finance_position_ledger_absent",
+        ledgerDirectory: location.directory,
+        resolvedFrom: location.source,
+        databasePath: location.database,
+        notTouched,
+      };
+    }
+    const { ledger, recordCount, receiptRecordCount, markRecordCount, headRef } =
+      await readFinancePositionLedger(location.directory);
+    const openPositions = ledger.positions.filter((position) => position.quantity !== 0);
+    return {
+      schemaVersion: "lcx_finance_position_ledger_projection_v1",
+      boundary,
+      status:
+        ledger.unrealizedPnl === null
+          ? openPositions.length === 0
+            ? "empty"
+            : "partial_no_mark"
+          : "ready",
+      ledgerDirectory: location.directory,
+      resolvedFrom: location.source,
+      recordCount,
+      receiptRecordCount,
+      markRecordCount,
+      headRef,
+      paperFillCount: ledger.paperFillCount,
+      venueFillCount: ledger.venueFillCount,
+      positionCount: ledger.positions.length,
+      openPositionCount: openPositions.length,
+      positions: openPositions,
+      realizedPnl: ledger.realizedPnl,
+      unrealizedPnl: ledger.unrealizedPnl,
+      instrumentsWithoutMark: ledger.instrumentsWithoutMark,
+      notTouched,
+    };
+  } catch (error) {
+    return {
+      schemaVersion: "lcx_finance_position_ledger_projection_v1",
+      boundary,
+      status: "unavailable",
+      reason: `finance_position_ledger_read_failed: ${String(error).slice(0, 300)}`,
+      notTouched,
+    };
+  }
+}
+
 async function activePidSummary(): Promise<ActivePidSummary> {
   let stdout = "";
   try {
@@ -2095,6 +2175,16 @@ const ownerBrief = buildOwnerBrief({
 });
 const realCostLedger = await readJsonRecord(REAL_COST_LEDGER_LATEST_JSON_PATH);
 const monotonicDataLedger = await readJsonRecord(MONOTONIC_DATA_LEDGER_LATEST_PATH);
+
+/**
+ * Durable per-asset state plane folded into the control room: the real book, so
+ * every reader (dashboard, central harness, review) sees what is held instead of
+ * only counts of what ran. Same naming discipline as the ledger read tool: an
+ * absent database is a named status, not an empty portfolio, and a missing mark
+ * yields `partial_no_mark` rather than a fabricated PnL.
+ */
+const positionLedger = await readPositionLedgerProjection();
+
 const controlRoom = {
   schemaVersion: "lcx_control_room_v1",
   kind: "lcx-control-room",
@@ -2110,6 +2200,7 @@ const controlRoom = {
   evolutionPromotionDigest,
   localFailureTrace,
   monotonicDataLedger,
+  positionLedger,
   ownerBrief,
   ownerControlMap,
   realCostLedger,
