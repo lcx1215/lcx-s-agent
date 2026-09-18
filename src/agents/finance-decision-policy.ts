@@ -2,15 +2,28 @@
  * Finance answer authority is intentionally separate from broker/execution
  * authority. A candidate may contain a conditional buy/sell view, but it must
  * carry the evidence and invalidation context needed to be reviewable.
+ *
+ * The `live_execution` mode is the single exception: it is the only mode that may
+ * leave `executionAuthority: "none"`, and only when the caller names the declared
+ * execution adapter it will use. This module still never places an order itself —
+ * it only reports the authority a caller has already been granted.
  */
 
 export const FINANCE_DECISION_MODES = [
   "research_only",
   "strategy_candidate",
   "conditional_trade_candidate",
+  "live_execution",
 ] as const;
 
 export type FinanceDecisionMode = (typeof FINANCE_DECISION_MODES)[number];
+
+/**
+ * Only `live_execution` can produce anything other than `"none"`, and even then it
+ * reports `"declared_execution_adapter_required"` so the caller must name the adapter
+ * that owns the order path. Research and candidate modes never gain execution authority.
+ */
+export type FinanceExecutionAuthority = "none" | "declared_execution_adapter_required";
 
 export type FinanceDecisionCandidateContext = Readonly<{
   evidence: readonly Readonly<{ id: string; text: string }>[];
@@ -25,7 +38,7 @@ export type FinanceDecisionPolicyResult = Readonly<{
   mode: FinanceDecisionMode;
   allowed: boolean;
   candidateLanguageAllowed: boolean;
-  executionAuthority: "none";
+  executionAuthority: FinanceExecutionAuthority;
   failedReasons: readonly string[];
   requiredEvidence: readonly string[];
 }>;
@@ -108,24 +121,46 @@ function unique(values: readonly string[]): string[] {
 
 /**
  * Validate visible finance language against an explicitly selected answer
- * mode. This function never grants an external side effect.
+ * mode. This function never grants an external side effect; for `live_execution`
+ * it only confirms that a declared execution adapter was named.
  */
 export function evaluateFinanceDecisionPolicy(params: {
   mode?: FinanceDecisionMode;
   ask: string;
   answer: string;
   candidateContext?: FinanceDecisionCandidateContext;
+  /** Declared adapter that owns the order path. Required by `live_execution`. */
+  executionAdapter?: string;
 }): FinanceDecisionPolicyResult {
   const mode = params.mode ?? "research_only";
   const ask = params.ask.trim();
   const answer = params.answer.trim();
+  const executionAdapter = params.executionAdapter?.trim() ?? "";
   const asksForAction = CANDIDATE_ACTION_PATTERN.test(ask);
   const hasAction = ASSET_ACTION_PATTERN.test(answer);
   const failedReasons: string[] = [];
   const requiredEvidence: string[] = [];
 
-  if (EXECUTION_CLAIM_PATTERN.test(answer)) {
+  if (EXECUTION_CLAIM_PATTERN.test(answer) && mode !== "live_execution") {
     failedReasons.push("finance_execution_claim_forbidden");
+  }
+
+  if (mode === "live_execution") {
+    // The only mode that may leave "none": an order path is authorised solely by naming
+    // the declared execution adapter, so the caller cannot silently become an executor.
+    if (executionAdapter.length === 0) {
+      failedReasons.push("live_execution_requires_declared_execution_adapter");
+      requiredEvidence.push("declared_execution_adapter");
+    }
+    return Object.freeze({
+      mode,
+      allowed: failedReasons.length === 0,
+      candidateLanguageAllowed: failedReasons.length === 0,
+      executionAuthority:
+        failedReasons.length === 0 ? "declared_execution_adapter_required" : "none",
+      failedReasons: Object.freeze(unique(failedReasons)),
+      requiredEvidence: Object.freeze(requiredEvidence),
+    });
   }
 
   if (mode === "research_only") {

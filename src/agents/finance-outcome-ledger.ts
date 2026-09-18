@@ -1,10 +1,12 @@
 import { chmodSync, mkdirSync } from "node:fs";
 import fs from "node:fs/promises";
-import path from "node:path";
 import { z } from "zod";
+import { applySqliteMigrations, type SqliteMigration } from "../memory/sqlite-migrations.js";
 import { requireNodeSqlite } from "../memory/sqlite.js";
+import { LCX_ONTOLOGY_FINANCE_EXECUTION_AUTHORITIES } from "../shared/lcx-ontology.js";
 import { caseflowFingerprint, readFinanceCaseRun } from "./finance-caseflow.js";
 import { calibrateFinanceForecasts } from "./finance-forecast-calibration.js";
+import { financeOutcomeLedgerPath } from "./finance-state-dir.js";
 
 const Text = z.string().trim().min(1);
 const Hash = z.string().regex(/^[a-f0-9]{64}$/u);
@@ -50,14 +52,35 @@ const Entry = z
     dueAt: z.string().datetime(),
     timing: z.enum(["interim", "due_or_later"]),
     status: z.literal("recorded_for_review"),
-    executionAuthority: z.literal("none"),
+    executionAuthority: z.enum([...LCX_ONTOLOGY_FINANCE_EXECUTION_AUTHORITIES]),
     input: FinanceOutcomeInput,
     calibration: z.array(z.record(z.string(), z.unknown())).optional(),
     originalClaims: z.array(z.object({ id: Text, text: Text })),
   })
   .strict();
 export type FinanceOutcomeEntry = z.infer<typeof Entry> & { ref: string };
-const databasePath = (directory: string) => path.join(directory, "outcome-ledger.sqlite");
+/**
+ * The ledger file is generation-suffixed (`outcome-ledger_1.sqlite`). `finance-state-dir.ts`
+ * owns that name so writers and readers cannot disagree about it.
+ */
+const databasePath = financeOutcomeLedgerPath;
+
+const OUTCOME_LEDGER_MIGRATION_LEDGER = "finance_outcome_migrations";
+const OUTCOME_LEDGER_MIGRATIONS: readonly SqliteMigration[] = [
+  {
+    version: 1,
+    description: "append-only outcome ledger",
+    sql: `
+      CREATE TABLE IF NOT EXISTS finance_outcomes (
+        packet_ref TEXT NOT NULL, record_id TEXT NOT NULL, sequence INTEGER NOT NULL,
+        ref TEXT NOT NULL UNIQUE, body TEXT NOT NULL,
+        PRIMARY KEY(packet_ref,record_id), UNIQUE(packet_ref,sequence)
+      );
+      CREATE TRIGGER IF NOT EXISTS finance_outcome_no_update BEFORE UPDATE ON finance_outcomes BEGIN SELECT RAISE(ABORT,'outcomes are append-only'); END;
+      CREATE TRIGGER IF NOT EXISTS finance_outcome_no_delete BEFORE DELETE ON finance_outcomes BEGIN SELECT RAISE(ABORT,'outcomes are append-only'); END;
+    `,
+  },
+];
 
 function readRows(
   db: InstanceType<ReturnType<typeof requireNodeSqlite>["DatabaseSync"]>,
@@ -140,14 +163,16 @@ export async function appendFinanceOutcome(
   const db = new DatabaseSync(databasePath(directory));
   try {
     chmodSync(databasePath(directory), 0o600);
-    db.exec(`PRAGMA busy_timeout=5000; PRAGMA synchronous=FULL;
-      CREATE TABLE IF NOT EXISTS finance_outcomes (
-        packet_ref TEXT NOT NULL, record_id TEXT NOT NULL, sequence INTEGER NOT NULL,
-        ref TEXT NOT NULL UNIQUE, body TEXT NOT NULL,
-        PRIMARY KEY(packet_ref,record_id), UNIQUE(packet_ref,sequence)
-      );
-      CREATE TRIGGER IF NOT EXISTS finance_outcome_no_update BEFORE UPDATE ON finance_outcomes BEGIN SELECT RAISE(ABORT,'outcomes are append-only'); END;
-      CREATE TRIGGER IF NOT EXISTS finance_outcome_no_delete BEFORE DELETE ON finance_outcomes BEGIN SELECT RAISE(ABORT,'outcomes are append-only'); END;`);
+    // auto_vacuum must be set before the first journal_mode=WAL write: switching to WAL
+    // initialises the database file and silently freezes auto_vacuum afterwards.
+    db.exec(
+      `PRAGMA busy_timeout=5000; PRAGMA auto_vacuum=INCREMENTAL; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;`,
+    );
+    applySqliteMigrations({
+      db,
+      ledgerTable: OUTCOME_LEDGER_MIGRATION_LEDGER,
+      migrations: OUTCOME_LEDGER_MIGRATIONS,
+    });
     db.exec("BEGIN IMMEDIATE");
     try {
       const entries = readRows(db, packetRef);

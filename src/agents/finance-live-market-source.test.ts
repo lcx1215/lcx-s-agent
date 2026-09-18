@@ -1,10 +1,11 @@
 import { gzipSync } from "node:zlib";
-import { EnvHttpProxyAgent, Response, fetch as undiciFetch } from "undici";
+import { Agent, EnvHttpProxyAgent, Response, fetch as undiciFetch } from "undici";
 import { describe, expect, it, vi } from "vitest";
 import { resolveFinanceCredentialEnv } from "./finance-credential-env.js";
 import { buildFinanceDataGatewaySnapshot } from "./finance-data-gateway.js";
 import {
   collectLiveFinanceGatewayInput,
+  decideFinanceProxy,
   resolveFinanceFetch,
   resolveFinanceGzipTextFetch,
   fetchYahooQuote,
@@ -185,6 +186,9 @@ vi.mock("undici", async (importOriginal) => {
     EnvHttpProxyAgent: vi.fn(function (options) {
       return new actual.EnvHttpProxyAgent(options);
     }),
+    Agent: vi.fn(function (options) {
+      return new actual.Agent(options);
+    }),
   };
 });
 
@@ -212,6 +216,46 @@ describe("default proxy-aware transport", () => {
     const init = vi.mocked(undiciFetch).mock.calls.at(-1)?.[1];
     expect(init?.signal?.aborted).toBe(true);
     expect(init?.dispatcher).toBeDefined();
+  });
+
+  it("builds a direct agent for an explicitly empty proxy, so ambient HTTP_PROXY is ignored", async () => {
+    // The defect this guards: `""` used to read as "nothing declared", so an EnvHttpProxyAgent was
+    // built with no httpProxy and silently fell back to the shell's HTTP_PROXY/HTTPS_PROXY. On a
+    // proxied or sandboxed host that made "go direct" impossible to express, and every source
+    // failed with no HTTP status — indistinguishable from a network outage.
+    vi.mocked(resolveFinanceCredentialEnv).mockReturnValueOnce({ LCX_FINANCE_HTTP_PROXY: "" });
+    vi.mocked(undiciFetch).mockResolvedValueOnce(new Response("{}"));
+
+    await resolveFinanceFetch()("https://example.test");
+
+    expect(Agent).toHaveBeenLastCalledWith({ connectTimeout: 30_000 });
+  });
+
+  it("still defers to the ambient proxy when no finance proxy is declared", async () => {
+    // The other half: an undeclared proxy must keep the old behaviour, because a machine that
+    // genuinely needs a proxy relies on EnvHttpProxyAgent reading it.
+    vi.mocked(resolveFinanceCredentialEnv).mockReturnValueOnce({});
+    vi.mocked(undiciFetch).mockResolvedValueOnce(new Response("{}"));
+
+    await resolveFinanceFetch()("https://example.test");
+
+    expect(EnvHttpProxyAgent).toHaveBeenLastCalledWith({
+      connectTimeout: 30_000,
+      requestTls: { timeout: 30_000 },
+    });
+  });
+});
+
+describe("decideFinanceProxy", () => {
+  it("keeps the three declared states apart", () => {
+    // Collapsing any two of these is the original bug.
+    expect(decideFinanceProxy(undefined)).toEqual({ kind: "ambient" });
+    expect(decideFinanceProxy("")).toEqual({ kind: "direct" });
+    expect(decideFinanceProxy("   ")).toEqual({ kind: "direct" });
+    expect(decideFinanceProxy("http://proxy.test:8080")).toEqual({
+      kind: "explicit",
+      proxy: "http://proxy.test:8080",
+    });
   });
 });
 

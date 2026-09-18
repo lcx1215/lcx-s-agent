@@ -228,6 +228,24 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     includeInOpenClawGroup: true,
   },
   {
+    id: "finance_position_ledger_read",
+    label: "finance_position_ledger_read",
+    description:
+      "Read the durable position book: open positions, average cost, realized and unrealized PnL, marks, and the equity curve derived from the same stream",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    id: "finance_outcome_ledger_read",
+    label: "finance_outcome_ledger_read",
+    description:
+      "Read the outcome ledger: which finance cases exist, whether any has had its original claims assessed, and how recorded observations scored against those claims",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
     id: "local_specialist",
     label: "local_specialist",
     description:

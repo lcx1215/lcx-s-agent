@@ -390,7 +390,10 @@ function summarizeReceipt(receipt: FinanceResearchRunReceipt, options: Options) 
               adapterId: attempt.adapterId,
               providerName: attempt.providerName,
               status: attempt.status,
-              recordCount: attempt.recordCount,
+              // Only the market-collection attempt carries a record count; a realtime refresh
+              // attempt has none. Reading it off that branch is `undefined` either way, and
+              // `JSON.stringify` drops undefined, so the emitted summary is unchanged.
+              recordCount: "recordCount" in attempt ? attempt.recordCount : undefined,
               latencyMs: attempt.latencyMs,
               error: attempt.error,
               apiCalls: attempt.apiCalls?.map(compactApiCall),

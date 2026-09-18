@@ -106,4 +106,40 @@ describe("finance decision policy", () => {
       expect.arrayContaining(["cited_supporting_evidence", "structured_risk_and_invalidation"]),
     );
   });
+
+  it("withholds execution authority in live mode until a declared adapter is named", () => {
+    const result = evaluateFinanceDecisionPolicy({
+      mode: "live_execution",
+      ask: "按策略直接下单 AAPL。",
+      answer: "Your AAPL order has been executed.",
+    });
+
+    expect(result.allowed).toBe(false);
+    expect(result.executionAuthority).toBe("none");
+    expect(result.failedReasons).toContain("live_execution_requires_declared_execution_adapter");
+    expect(result.requiredEvidence).toEqual(["declared_execution_adapter"]);
+  });
+
+  it("grants declared-adapter execution authority only in live mode", () => {
+    const live = evaluateFinanceDecisionPolicy({
+      mode: "live_execution",
+      ask: "按策略直接下单 AAPL。",
+      answer: "Your AAPL order has been executed.",
+      executionAdapter: "declared-broker-adapter",
+    });
+
+    expect(live.allowed).toBe(true);
+    expect(live.executionAuthority).toBe("declared_execution_adapter_required");
+
+    const candidate = evaluateFinanceDecisionPolicy({
+      mode: "conditional_trade_candidate",
+      ask: "AAPL 现在适合买吗？",
+      answer:
+        "候选买入 AAPL：如果触发条件成立则考虑，依据截至 2026-09-07 的数据，风险是回撤，持有期一个月，仅供审阅，不自动下单。",
+      candidateContext,
+      executionAdapter: "declared-broker-adapter",
+    });
+
+    expect(candidate.executionAuthority).toBe("none");
+  });
 });

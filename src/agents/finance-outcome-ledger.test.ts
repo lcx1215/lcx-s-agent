@@ -6,6 +6,7 @@ import { requireNodeSqlite } from "../memory/sqlite.js";
 import { buildFinanceCaseRun, saveFinanceCaseRun } from "./finance-caseflow.js";
 import { appendFinanceOutcome, readFinanceOutcomes } from "./finance-outcome-ledger.js";
 import { runFinanceResearchRun } from "./finance-research-runner.js";
+import { financeOutcomeLedgerPath } from "./finance-state-dir.js";
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -190,7 +191,7 @@ describe("finance outcome ledger", () => {
     });
     expect(record.timing).toBe("interim");
     const { DatabaseSync } = requireNodeSqlite();
-    const db = new DatabaseSync(path.join(directory, "outcome-ledger.sqlite"));
+    const db = new DatabaseSync(financeOutcomeLedgerPath(directory));
     try {
       expect(() => db.exec("DELETE FROM finance_outcomes")).toThrow("append-only");
       expect(() => db.exec("UPDATE finance_outcomes SET body='{}'")).toThrow("append-only");
@@ -202,7 +203,7 @@ describe("finance outcome ledger", () => {
     const { directory, ref, input } = await fixture();
     await appendFinanceOutcome(directory, ref, input);
     const { DatabaseSync } = requireNodeSqlite();
-    const db = new DatabaseSync(path.join(directory, "outcome-ledger.sqlite"));
+    const db = new DatabaseSync(financeOutcomeLedgerPath(directory));
     try {
       db.exec("DROP TRIGGER finance_outcome_no_update; UPDATE finance_outcomes SET body='{}'");
     } finally {

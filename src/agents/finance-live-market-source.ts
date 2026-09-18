@@ -13,7 +13,7 @@ import { gunzipSync } from "node:zlib";
 // answer can never present these as realtime execution-grade numbers. The
 // fetch implementation is injectable so the mapping logic is testable offline
 // and so the live path can fail closed when the network or data is unavailable.
-import { EnvHttpProxyAgent, fetch as undiciFetch } from "undici";
+import { Agent, EnvHttpProxyAgent, fetch as undiciFetch } from "undici";
 import {
   ApiCallError,
   governApiFetch,
@@ -54,22 +54,66 @@ const YAHOO_CHART_HOSTS = ["query2", "query1"] as const;
 // Yahoo returns 429/403 without a browser-like UA; keep it explicit and honest.
 const YAHOO_HEADERS = { "User-Agent": "Mozilla/5.0 (LCX Agent research-only market snapshot)" };
 
-let defaultFinanceProxyAgent: EnvHttpProxyAgent | undefined;
-let defaultFinanceProxyUrl: string | undefined;
+let defaultFinanceProxyAgent: Agent | EnvHttpProxyAgent | undefined;
+let defaultFinanceProxyKey: string | undefined;
+
+/** Which proxy the finance fetcher must use, decided from `LCX_FINANCE_HTTP_PROXY` alone. */
+export type FinanceProxyDecision =
+  | { kind: "ambient" }
+  | { kind: "direct" }
+  | { kind: "explicit"; proxy: string };
+
+/**
+ * Decide the finance transport proxy from the declared value.
+ *
+ * The three states must not collapse into two, and collapsing them is exactly the defect this
+ * function exists to prevent. An empty `LCX_FINANCE_HTTP_PROXY` used to be read as "no proxy
+ * declared", so `EnvHttpProxyAgent` was constructed with no `httpProxy` and then fell back to the
+ * ambient `HTTP_PROXY`/`HTTPS_PROXY`. On any host that exports those (a sandbox, a CI runner, a
+ * proxied laptop) there was then **no way to make finance collection go direct**: every request
+ * went to a proxy the operator never chose for finance, and the sources failed with no HTTP status
+ * at all — indistinguishable from a network outage.
+ *
+ *   undefined  -> `ambient`: nothing declared, so defer to HTTP_PROXY/HTTPS_PROXY. This is the
+ *                 correct default on a machine that genuinely needs a proxy.
+ *   ""         -> `direct`: the operator declared "no proxy". The ambient variables must be
+ *                 ignored, which means an agent that does not consult them at all.
+ *   "http://…" -> `explicit`: use exactly this proxy, and nothing else.
+ */
+export function decideFinanceProxy(declared: string | undefined): FinanceProxyDecision {
+  if (declared === undefined) {
+    return { kind: "ambient" };
+  }
+  const trimmed = declared.trim();
+  return trimmed.length === 0 ? { kind: "direct" } : { kind: "explicit", proxy: trimmed };
+}
 
 export function createFinanceNativeFetch(gzipText = false): FetchImpl {
   return async (url, init) => {
-    const proxy = resolveFinanceCredentialEnv().LCX_FINANCE_HTTP_PROXY?.trim() || undefined;
-    if (!defaultFinanceProxyAgent || proxy !== defaultFinanceProxyUrl) {
+    const decision = decideFinanceProxy(resolveFinanceCredentialEnv().LCX_FINANCE_HTTP_PROXY);
+    // `direct` and `ambient` must produce different cache keys: they build different agents, and
+    // reusing the ambient agent after a direct decision is the original bug in another costume.
+    const key =
+      decision.kind === "direct"
+        ? "\u0000direct"
+        : decision.kind === "ambient"
+          ? "\u0000ambient"
+          : decision.proxy;
+    if (!defaultFinanceProxyAgent || key !== defaultFinanceProxyKey) {
       const previous = defaultFinanceProxyAgent;
       // The governed AbortSignal owns the total request budget. Undici's 10s
       // connection default otherwise truncates callers that explicitly allow longer.
-      defaultFinanceProxyAgent = new EnvHttpProxyAgent({
-        ...(proxy ? { httpProxy: proxy, httpsProxy: proxy } : {}),
-        connectTimeout: 30_000,
-        requestTls: { timeout: 30_000 },
-      });
-      defaultFinanceProxyUrl = proxy;
+      defaultFinanceProxyAgent =
+        decision.kind === "direct"
+          ? new Agent({ connectTimeout: 30_000 })
+          : new EnvHttpProxyAgent({
+              ...(decision.kind === "explicit"
+                ? { httpProxy: decision.proxy, httpsProxy: decision.proxy }
+                : {}),
+              connectTimeout: 30_000,
+              requestTls: { timeout: 30_000 },
+            });
+      defaultFinanceProxyKey = key;
       void previous?.close().catch(() => undefined);
     }
     const response = await undiciFetch(url, {

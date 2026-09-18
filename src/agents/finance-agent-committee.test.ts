@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildFinanceCommitteeContext, runFinanceCommittee } from "./finance-agent-committee.js";
+import {
+  buildFinanceCommitteeContext,
+  evaluateFinanceCommitteeCoverage,
+  runFinanceCommittee,
+} from "./finance-agent-committee.js";
 import type { LogicalAgentModelAdapter } from "./logical-agent-model-router.js";
 import { LogicalAgentPool } from "./logical-agent-pool.js";
 
@@ -119,6 +123,37 @@ describe("finance agent committee", () => {
           "lcx_finance_committee_context_v1",
       ),
     ).toBe(true);
+  });
+
+  it("withholds the verdict for a missing required lane, but not for the advisory one", () => {
+    const planOf = (agentIds: readonly string[]) => ({
+      tasks: agentIds.map((agentId) => ({ agentId, status: "completed" })),
+    });
+
+    // Every required lane completed, the adversarial round skipped. The verdict still holds, and
+    // the skipped lane is still named — so the relaxation does not hide what was not done.
+    const advisorySkipped = evaluateFinanceCommitteeCoverage(
+      planOf([
+        "evidence_integrity",
+        "financial_extraction",
+        "portfolio_exposure",
+        "risk_check",
+        "research_draft",
+        "final_precheck",
+      ]) as never,
+    );
+    expect(advisorySkipped.equivalenceStatus).toBe("committee_candidate");
+    expect(advisorySkipped.missingLanes).toEqual(["adversarial_challenge"]);
+    expect(advisorySkipped.missingRequiredLanes).toEqual([]);
+
+    // A missing *required* lane still withholds it, so this is a narrowing of what is demanded
+    // rather than a blanket opening of the gate.
+    const requiredSkipped = evaluateFinanceCommitteeCoverage(
+      planOf(["evidence_integrity", "research_draft"]) as never,
+    );
+    expect(requiredSkipped.equivalenceStatus).toBe("not_ready");
+    expect(requiredSkipped.missingRequiredLanes).toContain("risk_check");
+    expect(requiredSkipped.missingLanes).toContain("adversarial_challenge");
   });
 
   it("routes the production committee owner through an injected role policy", async () => {

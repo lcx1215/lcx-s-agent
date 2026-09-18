@@ -5,6 +5,7 @@ import { z } from "zod";
 import {
   assertValidLcxOntologyEdges,
   LCX_CASEFLOW_CONTRACT,
+  LCX_ONTOLOGY_FINANCE_EXECUTION_AUTHORITIES,
   type LcxOntologyEdge,
 } from "../shared/lcx-ontology.js";
 import { FinanceForecast, type FinanceForecastContract } from "./finance-forecast-calibration.js";
@@ -62,7 +63,7 @@ const CaseRun = z.object({
     supportingAnalysis: z.record(z.string(), z.unknown()).optional(),
     claims: z.array(Claim),
     gaps: z.array(z.string()),
-    executionAuthority: z.literal("none"),
+    executionAuthority: z.enum([...LCX_ONTOLOGY_FINANCE_EXECUTION_AUTHORITIES]),
     semanticSupport: z.literal("not_independently_verified"),
     followups: z.array(
       z.object({
@@ -433,6 +434,25 @@ export function compareFinanceCaseRuns(before: FinanceCaseRun, after: FinanceCas
   };
 }
 
+/**
+ * The stable part of a gap: the failure family, with the per-symbol and per-source detail
+ * stripped.
+ *
+ * A blocked case can carry hundreds of gaps that are all one failure repeated per instrument
+ * (`BTCUSDT:stale_or_invalid_collection_provenance:[...]`). The count alone would say how many
+ * observations failed but not *which* failure it is, and "blocked by 426 gaps" is not actionable
+ * while "blocked by stale_or_invalid_collection_provenance" is.
+ *
+ * Both shapes the caseflow writes are `<subject>:<failure>[:<detail>]`, where the failure is the
+ * second segment: `<symbol>:<missing-evidence-kind>:[...]` for an uncollected observation and
+ * `<gate-id>:<reason>` for a failed gate. So the second segment is the family in both, and a gap
+ * with no separator is already its own family.
+ */
+export function caseflowGapKind(gap: string): string {
+  const parts = gap.split(":");
+  return parts.length >= 2 ? (parts[1] ?? gap) : gap;
+}
+
 /** Derived inventory only: content-addressed artifacts remain the source of truth. */
 export type FinanceCaseInventoryEntry = {
   ref: string;
@@ -445,6 +465,12 @@ export type FinanceCaseInventoryEntry = {
   status: FinanceCaseRun["packet"]["status"];
   adopted: boolean;
   claimCount: number;
+  /**
+   * Why the case is not further along, collapsed to one entry per failure family. Empty means the
+   * case recorded no gap, not that it is unblocked — read `status` for that.
+   */
+  gapKinds: readonly string[];
+  gapCount: number;
   followups: FinanceCaseRun["packet"]["followups"];
 };
 export async function listFinanceCases(directory: string): Promise<FinanceCaseInventoryEntry[]> {
@@ -474,6 +500,8 @@ export async function listFinanceCases(directory: string): Promise<FinanceCaseIn
           status: run.packet.status,
           adopted: run.packet.adopted,
           claimCount: run.packet.claims.length,
+          gapKinds: [...new Set(run.packet.gaps.map(caseflowGapKind))].toSorted(),
+          gapCount: run.packet.gaps.length,
           followups: run.packet.followups,
         };
       }),

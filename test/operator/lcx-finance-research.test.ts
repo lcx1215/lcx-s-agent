@@ -2,10 +2,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { QUALITY_ROUTER_MAX_INPUT_BYTES } from "../../scripts/operator/lcx-finance-research-run.ts";
+import { runFinanceResearchCli } from "../../scripts/operator/lcx-finance-research.ts";
 import { buildFinanceCaseRun, saveFinanceCaseRun } from "../../src/agents/finance-caseflow.ts";
 import { runFinanceResearchRun } from "../../src/agents/finance-research-runner.ts";
-import { QUALITY_ROUTER_MAX_INPUT_BYTES } from "./lcx-finance-research-run.ts";
-import { runFinanceResearchCli } from "./lcx-finance-research.ts";
 
 const input = ["--ask", "过去六个月加密货币和美股市场情绪", "--as-of", "2026-09-08T00:00:00Z"];
 

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   buildFinanceCaseRun,
   caseflowFingerprint,
+  caseflowGapKind,
   saveFinanceCaseRun,
   readFinanceCaseRun,
   compareFinanceCaseRuns,
@@ -158,5 +159,27 @@ describe("finance caseflow persistence", () => {
     expect(run.packet.claims[0].kind).toBe("inference_candidate");
     expect(run.run.evidence).toEqual([]);
     expect(run.packet.executionAuthority).toBe("none");
+  });
+});
+
+describe("caseflowGapKind", () => {
+  it("collapses the per-symbol detail out of a missing-evidence gap", () => {
+    // Real shape: hundreds of these differ only by instrument and timestamp. Reported raw they are
+    // 426 gaps; reported by family they are one failure.
+    expect(
+      caseflowGapKind(
+        'BTCUSDT:stale_or_invalid_collection_provenance:["binance-public-eod-history","eod_history","BTCUSDT-1772928000000"]',
+      ),
+    ).toBe("stale_or_invalid_collection_provenance");
+  });
+
+  it("keeps the reason of a failed gate, not the gate id", () => {
+    expect(caseflowGapKind("model_gate:upstream model gate failed")).toBe(
+      "upstream model gate failed",
+    );
+  });
+
+  it("treats a gap with no separator as its own family", () => {
+    expect(caseflowGapKind("api_call_budget_exhausted")).toBe("api_call_budget_exhausted");
   });
 });

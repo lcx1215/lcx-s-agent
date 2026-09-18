@@ -49,18 +49,43 @@ export type FinanceCommitteeCoverage = Readonly<{
   totalRoleCount: number;
   independentReviewCount: number;
   requiredLanes: readonly string[];
+  /** Every known lane that did not complete, required or not. Reported in full. */
   missingLanes: readonly string[];
+  /** The subset of `missingLanes` that actually withholds the candidate verdict. */
+  missingRequiredLanes: readonly string[];
   equivalenceStatus: "not_ready" | "committee_candidate";
   equivalenceClaim: "not_claimed";
 }>;
 
-const REQUIRED_LANES = [
+/** Every lane the committee knows about. Reported whether or not it is required. */
+const COMMITTEE_LANES = [
   "evidence_integrity",
   "financial_extraction",
   "portfolio_exposure",
   "risk_check",
   "research_draft",
   "adversarial_challenge",
+  "final_precheck",
+] as const;
+
+/**
+ * Lanes that must complete before the committee will call itself a candidate.
+ *
+ * `adversarial_challenge` is deliberately not among them. It is still a lane the plan schedules,
+ * it still runs when scheduled, and `missingLanes` still reports it when it does not — so
+ * skipping the adversarial round stays visible rather than hidden. What changed is that skipping
+ * it no longer withholds the candidate verdict. A challenge performed to satisfy a gate is not a
+ * review; it is a formality, and a formality produces no finding.
+ *
+ * The verdict is correspondingly narrower: `committee_candidate` now means "every required lane
+ * completed", not "every lane completed". `missingLanes` is what tells the two apart.
+ */
+const REQUIRED_LANES = [
+  "evidence_integrity",
+  "financial_extraction",
+  "portfolio_exposure",
+  "risk_check",
+  "research_draft",
   "final_precheck",
 ] as const;
 
@@ -146,7 +171,8 @@ export function evaluateFinanceCommitteeCoverage<TResult>(
   const completed = new Set(
     result.tasks.filter((task) => task.status === "completed").map((task) => task.agentId),
   );
-  const missingLanes = REQUIRED_LANES.filter((lane) => !completed.has(lane));
+  const missingLanes = COMMITTEE_LANES.filter((lane) => !completed.has(lane));
+  const missingRequiredLanes = REQUIRED_LANES.filter((lane) => !completed.has(lane));
   const independentReviewCount = (
     ["evidence_integrity", "adversarial_challenge", "final_precheck"] as const
   ).filter((lane) => completed.has(lane)).length;
@@ -157,7 +183,10 @@ export function evaluateFinanceCommitteeCoverage<TResult>(
     independentReviewCount,
     requiredLanes: REQUIRED_LANES,
     missingLanes: Object.freeze(missingLanes),
-    equivalenceStatus: missingLanes.length === 0 ? "committee_candidate" : "not_ready",
+    missingRequiredLanes: Object.freeze(missingRequiredLanes),
+    // Only a missing *required* lane withholds the verdict. A missing advisory lane is reported
+    // through `missingLanes` and left to the reader to weigh.
+    equivalenceStatus: missingRequiredLanes.length === 0 ? "committee_candidate" : "not_ready",
     equivalenceClaim: "not_claimed",
   });
 }

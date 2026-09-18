@@ -38,7 +38,12 @@ it("distinguishes successful calls, expired evidence, missing configuration and 
         adaptersCalled: true,
         request: { asOf },
         status: "needs_review",
-        sourceAttempts: [{ adapterId: id, status: "succeeded" }],
+        // A source attempt only counts as evidence once it carries the dispatch time it was
+        // actually made at; without one the health inspector cannot tell a fresh call from an
+        // unverified route, and reports `unverified` rather than inventing a success.
+        sourceAttempts: [
+          { adapterId: id, status: "succeeded", apiCalls: [{ dispatchedAt: asOf }] },
+        ],
       }),
     );
   }
@@ -74,7 +79,13 @@ it("includes receipts written by the direct collection tool", async () => {
       adaptersCalled: true,
       request: { asOf: "2026-09-08T10:00:00Z" },
       status: "ready",
-      sourceAttempts: [{ adapterId: "binance_public_crypto_ticker", status: "succeeded" }],
+      sourceAttempts: [
+        {
+          adapterId: "binance_public_crypto_ticker",
+          status: "succeeded",
+          apiCalls: [{ dispatchedAt: "2026-09-08T10:00:00Z" }],
+        },
+      ],
     }),
   );
   const health = await inspectFinanceSourceHealth({

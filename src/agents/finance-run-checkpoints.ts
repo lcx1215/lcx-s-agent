@@ -1,7 +1,27 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, chmodSync } from "node:fs";
 import path from "node:path";
+import { applySqliteMigrations, type SqliteMigration } from "../memory/sqlite-migrations.js";
 import { requireNodeSqlite } from "../memory/sqlite.js";
+
+const CHECKPOINT_MIGRATION_LEDGER = "finance_checkpoint_migrations";
+const CHECKPOINT_MIGRATIONS: readonly SqliteMigration[] = [
+  {
+    version: 1,
+    description: "run budget and node reservations",
+    sql: `
+      CREATE TABLE IF NOT EXISTS finance_checkpoint_runs (
+        run_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL,
+        max_calls INTEGER NOT NULL, reserved INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE IF NOT EXISTS finance_checkpoint_nodes (
+        run_id TEXT NOT NULL, job_id TEXT NOT NULL, token TEXT NOT NULL,
+        status TEXT NOT NULL, cost INTEGER NOT NULL, result TEXT, result_hash TEXT,
+        PRIMARY KEY(run_id, job_id)
+      );
+    `,
+  },
+];
 
 export type FinanceCheckpointOptions = Readonly<{
   path: string;
@@ -39,16 +59,16 @@ export function openFinanceRunCheckpoints(
   const db = new DatabaseSync(options.path);
   try {
     chmodSync(options.path, 0o600);
-    db.exec(`PRAGMA busy_timeout=5000; PRAGMA synchronous=FULL;
-      CREATE TABLE IF NOT EXISTS finance_checkpoint_runs (
-        run_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL,
-        max_calls INTEGER NOT NULL, reserved INTEGER NOT NULL DEFAULT 0
-      );
-      CREATE TABLE IF NOT EXISTS finance_checkpoint_nodes (
-        run_id TEXT NOT NULL, job_id TEXT NOT NULL, token TEXT NOT NULL,
-        status TEXT NOT NULL, cost INTEGER NOT NULL, result TEXT, result_hash TEXT,
-        PRIMARY KEY(run_id, job_id)
-      );`);
+    // auto_vacuum must be set before the first journal_mode=WAL write: switching to WAL
+    // initialises the database file and silently freezes auto_vacuum afterwards.
+    db.exec(
+      `PRAGMA busy_timeout=5000; PRAGMA auto_vacuum=INCREMENTAL; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;`,
+    );
+    applySqliteMigrations({
+      db,
+      ledgerTable: CHECKPOINT_MIGRATION_LEDGER,
+      migrations: CHECKPOINT_MIGRATIONS,
+    });
     db.prepare(
       "INSERT OR IGNORE INTO finance_checkpoint_runs(run_id, fingerprint, max_calls) VALUES (?, ?, ?)",
     ).run(options.runId, fingerprint, maxApiCalls);
