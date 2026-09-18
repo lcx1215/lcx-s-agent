@@ -131,18 +131,94 @@ async function buildPerception(
   return {
     observedAt,
     ownerTotals,
-    // The learning-workflow surface rides in the flexible control-room section so
-    // the existing byte budget bounds it like any other control-room key and names
-    // whatever does not fit. The projection is deliberately small (counts + last
-    // summary); the full surface stays on disk under the latest pointer.
+    // The learning-workflow and governance surfaces ride in the flexible
+    // control-room section so the existing byte budget bounds them like any other
+    // control-room key and names whatever does not fit. Both projections are
+    // deliberately small (counts + verdicts); the full surfaces stay on disk under
+    // the latest pointers.
     controlRoom: {
       ...controlRoom,
       ...(learningWorkflow && typeof learningWorkflow === "object"
         ? { learningWorkflow: projectLearningWorkflow(learningWorkflow) }
         : {}),
+      // Without the digest the hour's own governance verdict (cycle status, next
+      // action, release gate, structural owner failures) never reaches the brain:
+      // the raw `/governance` section of the control room is 190KB and always gets
+      // dropped by name. The digest is the same small-surface pattern as
+      // learningWorkflow, so the budget keeps it while naming the raw key.
+      ...(isPresentObject(governance)
+        ? { governanceDigest: projectGovernanceDigest(governance) }
+        : {}),
     },
     backlog,
     boundaries: CLAIMED_BOUNDARIES,
+  };
+}
+
+function isPresentObject(state: Readonly<Record<string, unknown>>): boolean {
+  return state !== null && typeof state === "object" && Object.keys(state).length > 0;
+}
+
+function boundedString(value: unknown, maxLength: number): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.slice(0, maxLength) : null;
+}
+
+/**
+ * The hour's governance verdict, bounded to a couple of hundred bytes so the
+ * brain can act on it without paying for the 190KB raw section. Every verdict
+ * here is a projection of the *stored* latest state; a missing surface reports
+ * itself by name instead of pretending the system passed.
+ */
+export function projectGovernanceDigest(
+  state: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> {
+  if (!isPresentObject(state)) {
+    return { status: "unavailable", reason: "governance_state_missing" };
+  }
+  const receipt =
+    state.runReceipt !== null && typeof state.runReceipt === "object"
+      ? (state.runReceipt as Record<string, unknown>)
+      : {};
+  const summary =
+    state.summary !== null && typeof state.summary === "object"
+      ? (state.summary as Record<string, unknown>)
+      : {};
+  const shadow =
+    state.multiAgentPatternShadow !== null && typeof state.multiAgentPatternShadow === "object"
+      ? (state.multiAgentPatternShadow as Record<string, unknown>)
+      : {};
+  const reader =
+    state.globalEvidenceProjectionReader !== null &&
+    typeof state.globalEvidenceProjectionReader === "object"
+      ? (state.globalEvidenceProjectionReader as Record<string, unknown>)
+      : {};
+  const listSlice = (value: unknown): string[] =>
+    Array.isArray(value)
+      ? value
+          .filter((entry): entry is string => typeof entry === "string")
+          .map((entry) => entry.slice(0, 80))
+          .slice(0, 6)
+      : [];
+  return {
+    status: "present",
+    ok: state.ok === true,
+    checkedAt: boundedString(state.checkedAt, 40),
+    cycleStatus: boundedString(receipt.status, 40),
+    nextAction: boundedString(receipt.nextAction, 180),
+    releaseBlocked: summary.releaseBlocked === true,
+    ownerFailures: listSlice(summary.structuralOwnerFailures),
+    failedGates: listSlice(summary.failedGates),
+    blockedGates: listSlice(summary.blockedGates),
+    shadow: {
+      experimentId: boundedString(shadow.experimentId, 60),
+      trialDecision: boundedString(shadow.trialDecision, 60),
+      completion: boundedString(shadow.completedAt, 40),
+    },
+    projectionReader: {
+      adapterId: boundedString(reader.adapterId, 60),
+      readStatus: boundedString(reader.readStatus, 40),
+      blocked: reader.blocked === true,
+    },
   };
 }
 

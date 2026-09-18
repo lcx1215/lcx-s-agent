@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { projectGovernanceDigest } from "../scripts/operator/lcx-central-agent.js";
 import {
   runCentralHarnessCycle,
   boundPerception,
@@ -635,8 +636,12 @@ describe("central harness is wired into the governance loop, not orphaned", () =
       "utf8",
     );
     expect(cliSource).toContain('arg === "--plan-only"');
-    expect(cliSource).toContain(
-      'planOnly ? "gate_record_owners_plus_dispatch_capabilities" : "gate_record_and_dispatch"',
+    // The dispatch ternary is formatted multi-line and reads `meta.planOnly` in
+    // the writeLatest path, so match on the formatted shape instead of a
+    // single-line substring; the contract is that plan-only maps to the
+    // capability-draining mode.
+    expect(cliSource).toMatch(
+      /\n\s*dispatchMode: meta\.planOnly\n\s*\? "gate_record_owners_plus_dispatch_capabilities"\n\s*: "gate_record_and_dispatch",/u,
     );
   });
 
@@ -995,6 +1000,77 @@ describe("central agent CLI persists evidence a reader can walk back to", () => 
       await fsp.rm(userHome, { recursive: true, force: true });
     }
   }, 120_000);
+});
+
+describe("governance digest folds the hour's verdict into the budgeted brain view", () => {
+  const governanceState = {
+    ok: false,
+    checkedAt: "2026-09-18T08:05:27.701Z",
+    runReceipt: {
+      status: "blocked",
+      nextAction:
+        "training_eval_runtime_cluster: Hold promotion and repair eval runtime before judging the candidate.",
+    },
+    summary: {
+      releaseBlocked: true,
+      structuralOwnerFailures: ["commercialAcceptance", "externalChannelStatus"],
+      failedGates: ["lcx-external-channel-status_owner_unavailable"],
+      blockedGates: ["external_channel_not_bound"],
+    },
+    multiAgentPatternShadow: {
+      experimentId: "multi-agent-pattern-shadow-replay",
+      trialDecision: "unverified",
+      completedAt: "2026-09-16T05:34:25.988Z",
+    },
+    globalEvidenceProjectionReader: {
+      adapterId: "governance-autopilot",
+      readStatus: "stale",
+      blocked: true,
+    },
+  };
+
+  it("projects the verdict the raw 190KB section would have drowned, under the key budget", () => {
+    const digest = projectGovernanceDigest(governanceState);
+    expect(digest.status).toBe("present");
+    expect(digest.cycleStatus).toBe("blocked");
+    expect(digest.nextAction).toContain("training_eval_runtime_cluster");
+    expect(digest.releaseBlocked).toBe(true);
+    expect(digest.ownerFailures).toEqual(["commercialAcceptance", "externalChannelStatus"]);
+    expect(digest.blockedGates).toEqual(["external_channel_not_bound"]);
+    expect(digest.shadow.trialDecision).toBe("unverified");
+    expect(digest.projectionReader).toEqual({
+      adapterId: "governance-autopilot",
+      readStatus: "stale",
+      blocked: true,
+    });
+    expect(Buffer.byteLength(JSON.stringify(digest))).toBeLessThan(
+      CENTRAL_PERCEPTION_KEY_BUDGET_BYTES,
+    );
+  });
+
+  it("names a missing governance surface instead of pretending the pass ran", () => {
+    expect(projectGovernanceDigest({})).toEqual({
+      status: "unavailable",
+      reason: "governance_state_missing",
+    });
+  });
+
+  it("survives the budget while the raw section is still named as dropped", () => {
+    const { perception: bounded, report } = boundPerception(
+      perception({
+        controlRoom: {
+          schemaVersion: "lcx_control_room_v1",
+          governance: { raw: "g".repeat(185_000) },
+          governanceDigest: projectGovernanceDigest(governanceState),
+        },
+      }),
+    );
+    const digest = bounded.controlRoom.governanceDigest as Readonly<Record<string, unknown>>;
+    expect(digest.status).toBe("present");
+    expect(bounded.controlRoom.governance).toBeUndefined();
+    const [dropped] = report.droppedSections;
+    expect(dropped.droppedKeys.map((entry) => entry.key)).toEqual(["governance"]);
+  });
 });
 
 describe("the loop feeds the owner's own output back to the next decision", () => {
