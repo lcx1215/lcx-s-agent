@@ -1,6 +1,6 @@
 ---
-read_when: Connecting the macOS app to a remote gateway over SSH
-summary: OpenClaw.app 连接远程 Gateway 网关的 SSH 隧道设置
+read_when: 通过 SSH 连接到远程 Gateway 网关
+summary: 通过 SSH 隧道连接到远程 Gateway 网关的设置
 title: 远程 Gateway 网关设置
 x-i18n:
   generated_at: "2026-02-03T07:48:37Z"
@@ -11,9 +11,9 @@ x-i18n:
   workflow: 15
 ---
 
-# 使用远程 Gateway 网关运行 OpenClaw.app
+# 使用远程 Gateway 网关运行
 
-OpenClaw.app 使用 SSH 隧道连接到远程 Gateway 网关。本指南向你展示如何设置。
+使用 SSH 隧道从任意客户端访问远程 Gateway 网关。本指南向你展示如何设置。
 
 ## 概述
 
@@ -21,7 +21,7 @@ OpenClaw.app 使用 SSH 隧道连接到远程 Gateway 网关。本指南向你�
 ┌─────────────────────────────────────────────────────────────┐
 │                        Client Machine                          │
 │                                                              │
-│  OpenClaw.app ──► ws://127.0.0.1:18789 (local port)           │
+│  客户端（浏览器/CLI）──► ws://127.0.0.1:18789 (local port)     │
 │                     │                                        │
 │                     ▼                                        │
 │  SSH Tunnel ────────────────────────────────────────────────│
@@ -73,14 +73,10 @@ launchctl setenv OPENCLAW_GATEWAY_TOKEN "<your-token>"
 ssh -N remote-gateway &
 ```
 
-### 步骤 5：重启 OpenClaw.app
+### 步骤 5：连接客户端
 
-```bash
-# Quit OpenClaw.app (⌘Q), then reopen:
-open /path/to/OpenClaw.app
-```
-
-应用现在将通过 SSH 隧道连接到远程 Gateway 网关。
+将你的客户端（浏览器 Control UI、WebChat 或 CLI）指向 `ws://127.0.0.1:18789`。
+它现在将通过 SSH 隧道访问远程 Gateway 网关。
 
 ---
 
@@ -161,4 +157,4 @@ launchctl bootout gui/$UID/bot.molt.ssh-tunnel
 | `KeepAlive`                          | 隧道崩溃时自动重启                    |
 | `RunAtLoad`                          | 代理加载时启动隧道                    |
 
-OpenClaw.app 连接到你的客户端机器上的 `ws://127.0.0.1:18789`。SSH 隧道将该连接转发到运行 Gateway 网关的远程机器的端口 18789。
+你的客户端连接到客户端机器上的 `ws://127.0.0.1:18789`。SSH 隧道将该连接转发到运行 Gateway 网关的远程机器的端口 18789。

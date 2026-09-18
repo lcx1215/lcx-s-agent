@@ -21,7 +21,7 @@ title: "Features"
     Images, audio, and documents in and out.
   </Card>
   <Card title="Apps and UI" icon="monitor">
-    Web Control UI and macOS companion app.
+    Web Control UI. There is no native companion app.
   </Card>
   <Card title="Mobile nodes" icon="smartphone">
     iOS and Android nodes with pairing, voice/chat, and rich device commands.
@@ -43,7 +43,7 @@ title: "Features"
 - Group chat support with mention based activation
 - Media support for images, audio, and documents
 - Optional voice note transcription hook
-- WebChat and macOS menu bar app
+- WebChat and the Control UI
 - iOS node with pairing, Canvas, camera, screen recording, location, and voice features
 - Android node with pairing, Connect tab, chat sessions, voice tab, Canvas/camera/screen, plus device, notifications, contacts/calendar, motion, photos, SMS, and app update commands
 

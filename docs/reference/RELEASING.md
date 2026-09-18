@@ -1,23 +1,23 @@
 ---
 title: "Release Checklist"
-summary: "Step-by-step release checklist for npm + macOS app"
+summary: "Step-by-step release checklist for the npm package"
 read_when:
   - Cutting a new npm release
-  - Cutting a new macOS app release
   - Verifying metadata before publishing
 ---
 
-# Release Checklist (npm + macOS)
+# Release Checklist (npm)
 
 Use `pnpm` (Node 22+) from the repo root. Keep the working tree clean before tagging/publishing.
+
+There is no native companion app, so the npm package is the only release artifact.
 
 ## Operator trigger
 
 When the operator says “release”, immediately do this preflight (no extra questions unless blocked):
 
-- Read this doc and `docs/platforms/mac/release.md`.
-- Load env from `~/.profile` and confirm `SPARKLE_PRIVATE_KEY_FILE` + App Store Connect vars are set (SPARKLE_PRIVATE_KEY_FILE should live in `~/.profile`).
-- Use Sparkle keys from `~/Library/CloudStorage/Dropbox/Backup/Sparkle` if needed.
+- Read this doc.
+- Load env from `~/.profile` and confirm npm credentials are available.
 
 1. **Version & metadata**
 
@@ -56,16 +56,7 @@ When the operator says “release”, immediately do this preflight (no extra qu
   - `pnpm test:install:e2e` (requires both keys; runs both providers)
 - [ ] (Optional) Spot-check the web gateway if your changes affect send/receive paths.
 
-5. **macOS app (Sparkle)**
-
-- [ ] Build + sign the macOS app, then zip it for distribution.
-- [ ] Generate the Sparkle appcast (HTML notes via [`scripts/make_appcast.sh`](https://github.com/openclaw/openclaw/blob/main/scripts/make_appcast.sh)) and update `appcast.xml`.
-- [ ] Keep the app zip (and optional dSYM zip) ready to attach to the GitHub release.
-- [ ] Follow [macOS release](/platforms/mac/release) for the exact commands and required env vars.
-  - `APP_BUILD` must be numeric + monotonic (no `-beta`) so Sparkle compares versions correctly.
-  - If notarizing, use the `openclaw-notary` keychain profile created from App Store Connect API env vars (see [macOS release](/platforms/mac/release)).
-
-6. **Publish (npm)**
+5. **Publish (npm)**
 
 - [ ] Confirm git status is clean; commit and push as needed.
 - [ ] `npm login` (verify 2FA) if needed.
@@ -75,7 +66,7 @@ When the operator says “release”, immediately do this preflight (no extra qu
 
 ### Troubleshooting (notes from 2.0.0-beta2 release)
 
-- **npm pack/publish hangs or produces huge tarball**: the macOS app bundle in `dist/OpenClaw.app` (and release zips) get swept into the package. Fix by whitelisting publish contents via `package.json` `files` (include dist subdirs, docs, skills; exclude app bundles). Confirm with `npm pack --dry-run` that `dist/OpenClaw.app` is not listed.
+- **npm pack/publish hangs or produces huge tarball**: unexpected build output gets swept into the package. Fix by whitelisting publish contents via `package.json` `files` (include dist subdirs, docs, skills). Confirm with `npm pack --dry-run` that only the intended paths are listed.
 - **npm auth web loop for dist-tags**: use legacy auth to get an OTP prompt:
   - `NPM_CONFIG_AUTH_TYPE=legacy npm dist-tag add openclaw@X.Y.Z latest`
 - **`npx` verification fails with `ECOMPROMISED: Lock compromised`**: retry with a fresh cache:
@@ -83,12 +74,11 @@ When the operator says “release”, immediately do this preflight (no extra qu
 - **Tag needs repointing after a late fix**: force-update and push the tag, then ensure the GitHub release assets still match:
   - `git tag -f vX.Y.Z && git push -f origin vX.Y.Z`
 
-7. **GitHub release + appcast**
+6. **GitHub release**
 
 - [ ] Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z` (or `git push --tags`).
 - [ ] Create/refresh the GitHub release for `vX.Y.Z` with **title `openclaw X.Y.Z`** (not just the tag); body should include the **full** changelog section for that version (Highlights + Changes + Fixes), inline (no bare links), and **must not repeat the title inside the body**.
-- [ ] Attach artifacts: `npm pack` tarball (optional), `OpenClaw-X.Y.Z.zip`, and `OpenClaw-X.Y.Z.dSYM.zip` (if generated).
-- [ ] Commit the updated `appcast.xml` and push it (Sparkle feeds from main).
+- [ ] Attach the `npm pack` tarball (optional).
 - [ ] From a clean temp directory (no `package.json`), run `npx -y openclaw@X.Y.Z send --help` to confirm install/CLI entrypoints work.
 - [ ] Announce/share release notes.
 

@@ -18,10 +18,10 @@ x-i18n:
 
 OpenClaw 有两个表面上看起来相似的不同问题：
 
-1. **操作员远程控制**：macOS 菜单栏应用控制运行在其他地方的 Gateway 网关。
-2. **节点配对**：iOS/Android（以及未来的节点）发现 Gateway 网关并安全配对。
+1. **操作员远程控制**：操作者客户端（Control UI、CLI）控制运行在其他地方的 Gateway 网关。
+2. **节点配对**：节点客户端（以及未来的节点）发现 Gateway 网关并安全配对。
 
-设计目标是将所有网络发现/广播保留在 **Node Gateway 网关**（`openclaw gateway`）中，并让客户端（mac 应用、iOS）作为消费者。
+设计目标是将所有网络发现/广播保留在 **Node Gateway 网关**（`openclaw gateway`）中，并让客户端（Control UI、CLI）作为消费者。
 
 ## 术语
 
@@ -119,5 +119,5 @@ Gateway 网关是节点/客户端准入的唯一权威来源。
 ## 各组件职责
 
 - **Gateway 网关**：广播发现信标，拥有配对决策权，并托管 WS 端点。
-- **macOS 应用**：帮助你选择 Gateway 网关，显示配对提示，仅将 SSH 作为回退方案。
+- **运维客户端**：帮助你选择 Gateway 网关，显示配对提示，仅将 SSH 作为回退方案。
 - **iOS/Android 节点**：将 Bonjour 浏览作为便利功能，连接到已配对的 Gateway 网关 WS。

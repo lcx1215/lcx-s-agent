@@ -64,12 +64,6 @@ pnpm remove -g openclaw
 bun remove -g openclaw
 ```
 
-6. If you installed the macOS app:
-
-```bash
-rm -rf /Applications/OpenClaw.app
-```
-
 Notes:
 
 - If you used profiles (`--profile` / `OPENCLAW_PROFILE`), repeat step 3 for each state dir (defaults are `~/.openclaw-<profile>`).

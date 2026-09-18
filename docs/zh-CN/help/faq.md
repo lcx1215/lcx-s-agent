@@ -706,7 +706,7 @@ Gemini CLI 使用**插件认证流程**，而不是 `openclaw.json` 中的 clien
 
 你只有在使用 **macOS 专用工具**时才需要 Mac。对于 iMessage，你可以将 Gateway 网关保持在 Linux 上，通过将 `channels.imessage.cliPath` 指向 SSH 包装器在任何 Mac 上运行 `imsg`。如果你需要其他 macOS 专用工具，在 Mac 上运行 Gateway 网关或配对一个 macOS 节点。
 
-文档：[iMessage](/channels/imessage)、[节点](/nodes)、[Mac 远程模式](/platforms/mac/remote)。
+文档：[iMessage](/channels/imessage)、[节点](/nodes)、Mac 远程模式。
 
 ### iMessage 支持需要 Mac mini 吗
 
@@ -718,7 +718,7 @@ Gemini CLI 使用**插件认证流程**，而不是 `openclaw.json` 中的 clien
 - 如果你想要最简单的单机设置，在 Mac 上运行所有组件。
 
 文档：[iMessage](/channels/imessage)、[BlueBubbles](/channels/bluebubbles)、
-[Mac 远程模式](/platforms/mac/remote)。
+Mac 远程模式。
 
 ### 如果我买了 Mac mini 运行 OpenClaw，能连接到我的 MacBook Pro 吗
 
@@ -727,7 +727,7 @@ Gemini CLI 使用**插件认证流程**，而不是 `openclaw.json` 中的 clien
 常见模式：
 
 - Gateway 网关在 Mac mini 上（常开）。
-- MacBook Pro 运行 macOS 应用或节点主机并配对到 Gateway 网关。
+- MacBook Pro 运行节点主机并配对到 Gateway 网关。
 - 使用 `openclaw nodes status` / `openclaw nodes list` 查看它。
 
 文档：[节点](/nodes)、[节点 CLI](/cli/nodes)。
@@ -1016,7 +1016,7 @@ pnpm add -g clawhub
 在 macOS 二进制文件所在的地方运行 Gateway 网关，然后从 Linux 通过[远程模式](#how-do-i-run-openclaw-in-remote-mode-client-connects-to-a-gateway-elsewhere)或 Tailscale 连接。Skills 正常加载，因为 Gateway 网关主机是 macOS。
 
 **方案 B - 使用 macOS 节点（无需 SSH）。**
-在 Linux 上运行 Gateway 网关，配对一个 macOS 节点（菜单栏应用），并在 Mac 上将**节点运行命令**设置为“始终询问”或“始终允许”。当所需二进制文件存在于节点上时，OpenClaw 可以将 macOS 专用 Skills 视为符合条件。智能体通过 `nodes` 工具运行这些 Skills。如果你选择“始终询问”，在提示中批准“始终允许”会将该命令添加到允许列表。
+在 Linux 上运行 Gateway 网关，配对一个 macOS 节点主机，并在 Mac 上将**节点运行命令**设置为“始终询问”或“始终允许”。当所需二进制文件存在于节点上时，OpenClaw 可以将 macOS 专用 Skills 视为符合条件。智能体通过 `nodes` 工具运行这些 Skills。如果你选择“始终询问”，在提示中批准“始终允许”会将该命令添加到允许列表。
 
 **方案 C - 通过 SSH 代理 macOS 二进制文件（高级）。**
 保持 Gateway 网关在 Linux 上，但使所需的 CLI 二进制文件解析为在 Mac 上运行的 SSH 包装器。然后覆盖 Skills 以允许 Linux 使其保持符合条件。
@@ -1369,7 +1369,7 @@ Telegram → Gateway 网关 → 智能体 → `node.*` → 节点 → Gateway �
 1. 在常开主机（VPS/家庭服务器）上运行 Gateway 网关。
 2. 将 Gateway 网关主机和你的电脑放在同一个 tailnet 上。
 3. 确保 Gateway 网关 WS 可达（tailnet 绑定或 SSH 隧道）。
-4. 在本地打开 macOS 应用并以**远程 over SSH** 模式连接（或直接 tailnet），使其可以注册为节点。
+4. 在本地运行节点主机并以**远程 over SSH** 模式连接（或直接 tailnet），使其可以注册为节点。
 5. 在 Gateway 网关上批准节点：
    ```bash
    openclaw nodes pending
@@ -1380,7 +1380,7 @@ Telegram → Gateway 网关 → 智能体 → `node.*` → 节点 → Gateway �
 
 安全提醒：配对 macOS 节点允许在该机器上执行 `system.run`。只配对你信任的设备，并查阅[安全](/gateway/security)。
 
-文档：[节点](/nodes)、[Gateway 网关协议](/gateway/protocol)、[macOS 远程模式](/platforms/mac/remote)、[安全](/gateway/security)。
+文档：[节点](/nodes)、[Gateway 网关协议](/gateway/protocol)、macOS 远程模式、[安全](/gateway/security)。
 
 ### Tailscale 已连接但收不到回复，怎么办
 
@@ -1445,7 +1445,7 @@ SSH 对临时 shell 访问很好，但节点对于持续的智能体工作流和
 
 ### 节点会运行 Gateway 网关服务吗
 
-不会。每台主机上应该只运行**一个 Gateway 网关**，除非你有意运行隔离的配置文件（参阅[多 Gateway 网关](/gateway/multiple-gateways)）。节点是连接到 Gateway 网关的外围设备（iOS/Android 节点，或 macOS 菜单栏应用的“节点模式”）。对于无头节点主机和 CLI 控制，参阅[节点主机 CLI](/cli/node)。
+不会。每台主机上应该只运行**一个 Gateway 网关**，除非你有意运行隔离的配置文件（参阅[多 Gateway 网关](/gateway/multiple-gateways)）。节点是连接到 Gateway 网关的外围设备（节点客户端，或 macOS 的“节点模式”）。对于无头节点主机和 CLI 控制，参阅[节点主机 CLI](/cli/node)。
 
 `gateway`、`discovery` 和 `canvasHost` 的更改需要完全重启。
 
@@ -1496,14 +1496,14 @@ Serve 暴露 **Gateway 网关控制 UI + WS**。节点通过同一个 Gateway �
 推荐设置：
 
 1. **确保 VPS + Mac 在同一个 tailnet 上**。
-2. **使用 macOS 应用的远程模式**（SSH 目标可以是 tailnet 主机名）。应用会隧道 Gateway 网关端口并作为节点连接。
+2. **以远程模式运行节点主机**（SSH 目标可以是 tailnet 主机名）。它会隧道 Gateway 网关端口并作为节点连接。
 3. **在 Gateway 网关上批准节点**：
    ```bash
    openclaw nodes pending
    openclaw nodes approve <requestId>
    ```
 
-文档：[Gateway 网关协议](/gateway/protocol)、[发现](/gateway/discovery)、[macOS 远程模式](/platforms/mac/remote)。
+文档：[Gateway 网关协议](/gateway/protocol)、[发现](/gateway/discovery)、macOS 远程模式。
 
 ## 环境变量和 .env 加载
 
@@ -2197,7 +2197,7 @@ OpenClaw 通过在启动时立即绑定 WebSocket 监听器来强制运行时锁
 注意：
 
 - `openclaw gateway` 仅在 `gateway.mode` 为 `local` 时启动（或你传递覆盖标志）。
-- macOS 应用监视配置文件，当这些值更改时实时切换模式。
+- Gateway 网关监视配置文件，当这些值更改时实时切换模式。
 
 ### 控制 UI 显示"unauthorized"或持续重连，怎么办
 

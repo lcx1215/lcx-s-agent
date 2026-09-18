@@ -1,8 +1,8 @@
 ---
-summary: "Windows (WSL2) support + companion app status"
+summary: "Windows (WSL2) support and Gateway install"
 read_when:
   - Installing OpenClaw on Windows
-  - Looking for Windows companion app status
+  - Deciding how to run the Gateway on Windows
 title: "Windows (WSL2)"
 ---
 
@@ -14,7 +14,8 @@ tooling far more compatible (Node/Bun/pnpm, Linux binaries, skills). Native
 Windows might be trickier. WSL2 gives you the full Linux experience — one command
 to install: `wsl --install`.
 
-Native Windows companion apps are planned.
+There is no native companion app on any platform. Reach the Gateway from a browser
+or an existing chat channel.
 
 ## Install (WSL2)
 
@@ -197,7 +198,8 @@ openclaw onboard
 
 Full guide: [Getting Started](/start/getting-started)
 
-## Windows companion app
+## Companion app status
 
-We do not have a Windows companion app yet. Contributions are welcome if you want
-contributions to make it happen.
+None. OpenClaw ships no native companion app on Windows, macOS, Linux, iOS, or
+Android; the Gateway is a headless TypeScript service you reach from a browser or
+an existing chat channel.

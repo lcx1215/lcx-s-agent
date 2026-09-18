@@ -138,33 +138,9 @@ x-i18n:
 ## 平台
 
 - [平台概览](/platforms)
-- [macOS](/platforms/macos)
-- [iOS](/platforms/ios)
-- [Android](/platforms/android)
 - [Windows (WSL2)](/platforms/windows)
 - [Linux](/platforms/linux)
 - [Web 界面](/web)
-
-## macOS 配套应用（高级）
-
-- [macOS 开发环境配置](/platforms/mac/dev-setup)
-- [macOS 菜单栏](/platforms/mac/menu-bar)
-- [macOS 语音唤醒](/platforms/mac/voicewake)
-- [macOS 语音悬浮窗](/platforms/mac/voice-overlay)
-- [macOS WebChat](/platforms/mac/webchat)
-- [macOS Canvas](/platforms/mac/canvas)
-- [macOS 子进程](/platforms/mac/child-process)
-- [macOS 健康检查](/platforms/mac/health)
-- [macOS 图标](/platforms/mac/icon)
-- [macOS 日志](/platforms/mac/logging)
-- [macOS 权限](/platforms/mac/permissions)
-- [macOS 远程](/platforms/mac/remote)
-- [macOS 签名](/platforms/mac/signing)
-- [macOS 发布](/platforms/mac/release)
-- [macOS Gateway 网关 (launchd)](/platforms/mac/bundled-gateway)
-- [macOS XPC](/platforms/mac/xpc)
-- [macOS Skills](/platforms/mac/skills)
-- [macOS Peekaboo](/platforms/mac/peekaboo)
 
 ## 工作区 + 模板
 
@@ -196,4 +172,3 @@ x-i18n:
 
 - [测试](/reference/test)
 - [发布检查清单](/reference/RELEASING)
-- [设备型号](/reference/device-models)

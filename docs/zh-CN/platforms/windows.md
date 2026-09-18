@@ -1,8 +1,8 @@
 ---
 read_when:
   - 在 Windows 上安装 OpenClaw
-  - 查找 Windows 配套应用状态
-summary: Windows（WSL2）支持 + 配套应用状态
+  - 决定如何在 Windows 上运行 Gateway 网关
+summary: Windows（WSL2）支持与 Gateway 网关安装
 title: Windows (WSL2)
 x-i18n:
   generated_at: "2026-02-03T07:53:19Z"
@@ -17,7 +17,7 @@ x-i18n:
 
 Windows 上的 OpenClaw 推荐**通过 WSL2**（推荐 Ubuntu）。CLI + Gateway 网关在 Linux 内运行，这保持了运行时的一致性并使工具兼容性大大提高（Node/Bun/pnpm、Linux 二进制文件、Skills）。原生 Windows 可能更棘手。WSL2 给你完整的 Linux 体验——一条命令安装：`wsl --install`。
 
-原生 Windows 配套应用已在计划中。
+任何平台上都没有原生配套应用。通过浏览器或已有的聊天渠道访问 Gateway 网关。
 
 ## 安装（WSL2）
 
@@ -151,6 +151,6 @@ openclaw onboard
 
 完整指南：[入门指南](/start/getting-started)
 
-## Windows 配套应用
+## 配套应用状态
 
-我们还没有 Windows 配套应用。如果你想让它实现，欢迎贡献。
+无。OpenClaw 在 Windows、macOS、Linux、iOS 和 Android 上均不提供原生配套应用；Gateway 网关是一个无头的 TypeScript 服务，你通过浏览器或已有的聊天渠道访问它。

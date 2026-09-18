@@ -584,7 +584,6 @@ Gmail Pub/Sub 钩子设置 + 运行器。参见 [/automation/gmail-pubsub](/auto
 
 - `/status`（可用时添加简短的提供商用量行）
 - `openclaw status --usage`（打印完整的提供商明细）
-- macOS 菜单栏（上下文下的用量部分）
 
 说明：
 

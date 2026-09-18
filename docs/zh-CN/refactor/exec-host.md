@@ -16,6 +16,11 @@ x-i18n:
 
 # Exec 主机重构计划
 
+> **状态：已被取代。** 本计划假设由一个原生配套应用托管本地 Unix socket 来处理审批。
+> 该应用已不存在，运行时中也没有 UDS IPC：节点主机自行执行 exec 审批
+> （`src/node-host/exec-policy.ts`）并写入 `~/.openclaw/exec-approvals.json`。
+> 保留作历史记录；当前行为见 [Exec 批准](/tools/exec-approvals)。
+
 ## 目标
 
 - 添加 `exec.host` + `exec.security` 以在**沙箱**、**Gateway 网关**和**节点**之间路由执行。

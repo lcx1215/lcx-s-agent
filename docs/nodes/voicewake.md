@@ -45,14 +45,14 @@ Notes:
 
 Who receives it:
 
-- All WebSocket clients (macOS app, WebChat, etc.)
-- All connected nodes (iOS/Android), and also on node connect as an initial “current state” push.
+- All WebSocket clients (WebChat, Control UI, etc.)
+- All connected nodes, and also on node connect as an initial “current state” push.
 
 ## Client behavior
 
-### macOS app
+### Web clients
 
-- Uses the global list to gate `VoiceWakeRuntime` triggers.
+- Use the global list to gate Voice Wake triggers.
 - Editing “Trigger words” in Voice Wake settings calls `voicewake.set` and then relies on the broadcast to keep other clients in sync.
 
 ### iOS node

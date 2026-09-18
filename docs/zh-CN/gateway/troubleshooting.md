@@ -618,22 +618,7 @@ curl -fsSL https://openclaw.ai/install.sh | bash
 
 参见 [工具](/tools) 和 [TypeBox 模式](/concepts/typebox)。
 
-## macOS 特定问题
-
-### 授予权限（语音/麦克风）时应用崩溃
-
-如果在你点击隐私提示的"允许"时应用消失或显示"Abort trap 6"：
-
-**修复 1：重置 TCC 缓存**
-
-```bash
-tccutil reset All bot.molt.mac.debug
-```
-
-**修复 2：强制使用新的 Bundle ID**
-如果重置不起作用，在 [`scripts/package-mac-app.sh`](https://github.com/openclaw/openclaw/blob/main/scripts/package-mac-app.sh) 中更改 `BUNDLE_ID`（例如，添加 `.test` 后缀）并重新构建。这会强制 macOS 将其视为新应用。
-
-### Gateway 网关卡在"Starting..."
+## Gateway 网关卡在"Starting..."
 
 应用连接到端口 `18789` 上的本地 Gateway 网关。如果一直卡住：
 

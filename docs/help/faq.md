@@ -803,7 +803,7 @@ buy one as an always-on host, but a small VPS, home server, or Raspberry Pi-clas
 
 You only need a Mac **for macOS-only tools**. For iMessage, use [BlueBubbles](/channels/bluebubbles) (recommended) - the BlueBubbles server runs on any Mac, and the Gateway can run on Linux or elsewhere. If you want other macOS-only tools, run the Gateway on a Mac or pair a macOS node.
 
-Docs: [BlueBubbles](/channels/bluebubbles), [Nodes](/nodes), [Mac remote mode](/platforms/mac/remote).
+Docs: [BlueBubbles](/channels/bluebubbles), [Nodes](/nodes), Mac remote mode.
 
 ### Do I need a Mac mini for iMessage support
 
@@ -816,7 +816,7 @@ Common setups:
 - Run everything on the Mac if you want the simplest single‑machine setup.
 
 Docs: [BlueBubbles](/channels/bluebubbles), [Nodes](/nodes),
-[Mac remote mode](/platforms/mac/remote).
+Mac remote mode.
 
 ### If I buy a Mac mini to run OpenClaw can I connect it to my MacBook Pro
 
@@ -827,7 +827,7 @@ capabilities like screen/camera/canvas and `system.run` on that device.
 Common pattern:
 
 - Gateway on the Mac mini (always-on).
-- MacBook Pro runs the macOS app or a node host and pairs to the Gateway.
+- MacBook Pro runs a node host and pairs to the Gateway.
 - Use `openclaw nodes status` / `openclaw nodes list` to see it.
 
 Docs: [Nodes](/nodes), [Nodes CLI](/cli/nodes).
@@ -1162,7 +1162,7 @@ You have three supported patterns:
 Run the Gateway where the macOS binaries exist, then connect from Linux in [remote mode](#how-do-i-run-openclaw-in-remote-mode-client-connects-to-a-gateway-elsewhere) or over Tailscale. The skills load normally because the Gateway host is macOS.
 
 **Option B - use a macOS node (no SSH).**
-Run the Gateway on Linux, pair a macOS node (menubar app), and set **Node Run Commands** to "Always Ask" or "Always Allow" on the Mac. OpenClaw can treat macOS-only skills as eligible when the required binaries exist on the node. The agent runs those skills via the `nodes` tool. If you choose "Always Ask", approving "Always Allow" in the prompt adds that command to the allowlist.
+Run the Gateway on Linux, pair a macOS node host, and set **Node Run Commands** to "Always Ask" or "Always Allow" on the Mac. OpenClaw can treat macOS-only skills as eligible when the required binaries exist on the node. The agent runs those skills via the `nodes` tool. If you choose "Always Ask", approving "Always Allow" in the prompt adds that command to the allowlist.
 
 **Option C - proxy macOS binaries over SSH (advanced).**
 Keep the Gateway on Linux, but make the required CLI binaries resolve to SSH wrappers that run on a Mac. Then override the skill to allow Linux so it stays eligible.
@@ -1580,7 +1580,7 @@ Typical setup:
 1. Run the Gateway on the always-on host (VPS/home server).
 2. Put the Gateway host + your computer on the same tailnet.
 3. Ensure the Gateway WS is reachable (tailnet bind or SSH tunnel).
-4. Open the macOS app locally and connect in **Remote over SSH** mode (or direct tailnet)
+4. Run a node host locally and connect it over SSH (or direct tailnet)
    so it can register as a node.
 5. Approve the node on the Gateway:
 
@@ -1594,7 +1594,7 @@ No separate TCP bridge is required; nodes connect over the Gateway WebSocket.
 Security reminder: pairing a macOS node allows `system.run` on that machine. Only
 pair devices you trust, and review [Security](/gateway/security).
 
-Docs: [Nodes](/nodes), [Gateway protocol](/gateway/protocol), [macOS remote mode](/platforms/mac/remote), [Security](/gateway/security).
+Docs: [Nodes](/nodes), [Gateway protocol](/gateway/protocol), macOS remote mode, [Security](/gateway/security).
 
 ### Tailscale is connected but I get no replies What now
 
@@ -1677,7 +1677,7 @@ Docs: [Nodes](/nodes), [Nodes CLI](/cli/nodes), [Multiple gateways](/gateway/mul
 ### Do nodes run a gateway service
 
 No. Only **one gateway** should run per host unless you intentionally run isolated profiles (see [Multiple gateways](/gateway/multiple-gateways)). Nodes are peripherals that connect
-to the gateway (iOS/Android nodes, or macOS "node mode" in the menubar app). For headless node
+to the gateway (node clients, or macOS "node mode"). For headless node
 hosts and CLI control, see [Node host CLI](/cli/node).
 
 A full restart is required for `gateway`, `discovery`, and `canvasHost` changes.
@@ -1750,8 +1750,8 @@ Serve exposes the **Gateway Control UI + WS**. Nodes connect over the same Gatew
 Recommended setup:
 
 1. **Make sure the VPS + Mac are on the same tailnet**.
-2. **Use the macOS app in Remote mode** (SSH target can be the tailnet hostname).
-   The app will tunnel the Gateway port and connect as a node.
+2. **Run a node host in remote mode** (SSH target can be the tailnet hostname).
+   It will tunnel the Gateway port and connect as a node.
 3. **Approve the node** on the gateway:
 
    ```bash
@@ -1759,7 +1759,7 @@ Recommended setup:
    openclaw devices approve <requestId>
    ```
 
-Docs: [Gateway protocol](/gateway/protocol), [Discovery](/gateway/discovery), [macOS remote mode](/platforms/mac/remote).
+Docs: [Gateway protocol](/gateway/protocol), [Discovery](/gateway/discovery), macOS remote mode.
 
 ## Env vars and .env loading
 
@@ -2495,7 +2495,7 @@ Set `gateway.mode: "remote"` and point to a remote WebSocket URL, optionally wit
 Notes:
 
 - `openclaw gateway` only starts when `gateway.mode` is `local` (or you pass the override flag).
-- The macOS app watches the config file and switches modes live when these values change.
+- The Gateway watches the config file and switches modes live when these values change.
 
 ### The Control UI says unauthorized or keeps reconnecting What now
 

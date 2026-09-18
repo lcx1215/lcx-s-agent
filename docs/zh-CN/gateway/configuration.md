@@ -2828,7 +2828,7 @@ OpenClaw 可以为 OpenClaw 启动一个**专用、隔离的** Chrome/Brave/Edge
 - 控制服务：仅 local loopback（端口从 `gateway.port` 派生，默认 `18791`）
 - CDP URL：`http://127.0.0.1:18792`（控制服务 + 1，旧版单配置文件）
 - 配置文件颜色：`#FF4500`（龙虾橙）
-- 注意：控制服务器由运行中的 Gateway 网关（OpenClaw.app 菜单栏或 `openclaw gateway`）启动。
+- 注意：控制服务器由运行中的 Gateway 网关（`openclaw gateway`）启动。
 - 自动检测顺序：如果为 Chromium 内核则使用默认浏览器；否则 Chrome → Brave → Edge → Chromium → Chrome Canary。
 
 ```json5
@@ -2855,7 +2855,7 @@ OpenClaw 可以为 OpenClaw 启动一个**专用、隔离的** Chrome/Brave/Edge
 
 ### `ui`（外观）
 
-原生应用用于 UI 外观的可选强调色（例如 Talk 模式气泡着色）。
+用于 UI 外观的可选强调色（例如 Talk 模式气泡着色）。
 
 如果未设置，客户端回退到柔和的浅蓝色。
 
@@ -2951,11 +2951,7 @@ OpenClaw 可以为 OpenClaw 启动一个**专用、隔离的** Chrome/Brave/Edge
 - `gateway.remote.token` 提供远程调用的 token（不需要认证时留空）。
 - `gateway.remote.password` 提供远程调用的密码（不需要认证时留空）。
 
-macOS 应用行为：
-
-- OpenClaw.app 监视 `~/.openclaw/openclaw.json`，当 `gateway.mode` 或 `gateway.remote.url` 变更时实时切换模式。
-- 如果 `gateway.mode` 未设置但 `gateway.remote.url` 已设置，macOS 应用将其视为远程模式。
-- 当你在 macOS 应用中更改连接模式时，它会将 `gateway.mode`（以及远程模式下的 `gateway.remote.url` + `gateway.remote.transport`）写回配置文件。
+Gateway 网关监视 `~/.openclaw/openclaw.json` 并自动应用更改 — 大多数设置无需手动重启。
 
 ```json5
 {
@@ -2970,7 +2966,7 @@ macOS 应用行为：
 }
 ```
 
-直连传输示例（macOS 应用）：
+直连传输示例：
 
 ```json5
 {

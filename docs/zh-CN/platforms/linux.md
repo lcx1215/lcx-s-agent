@@ -1,9 +1,9 @@
 ---
 read_when:
-  - 查找 Linux 配套应用状态时
+  - 在 Linux 上运行 Gateway 网关时
   - 规划平台覆盖或贡献时
-summary: Linux 支持 + 配套应用状态
-title: Linux 应用
+summary: Linux 支持与 Gateway 网关安装
+title: Linux
 x-i18n:
   generated_at: "2026-02-03T07:52:18Z"
   model: claude-opus-4-5
@@ -13,12 +13,12 @@ x-i18n:
   workflow: 15
 ---
 
-# Linux 应用
+# Linux
 
 Gateway 网关在 Linux 上完全支持。**Node 是推荐的运行时**。
 不推荐 Bun 用于 Gateway 网关（WhatsApp/Telegram 存在 bug）。
 
-原生 Linux 配套应用已在计划中。如果你想帮助构建，欢迎贡献。
+没有原生配套应用；你通过浏览器或已有的聊天渠道访问 Gateway 网关。
 
 ## 新手快速路径（VPS）
 

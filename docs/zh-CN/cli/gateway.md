@@ -123,9 +123,9 @@ openclaw gateway probe
 openclaw gateway probe --json
 ```
 
-#### 通过 SSH 远程（Mac 应用对等）
+#### 通过 SSH 远程
 
-macOS 应用的"通过 SSH 远程"模式使用本地端口转发，因此远程 Gateway 网关（可能仅绑定到 loopback）变得可以通过 `ws://127.0.0.1:<port>` 访问。
+使用本地端口转发，使远程 Gateway 网关（可能仅绑定到 loopback）变得可以通过 `ws://127.0.0.1:<port>` 访问。
 
 CLI 等效命令：
 

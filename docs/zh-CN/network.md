@@ -48,8 +48,6 @@ x-i18n:
 
 - [节点概述](/nodes)
 - [桥接协议（旧版节点）](/gateway/bridge-protocol)
-- [节点运维手册：iOS](/platforms/ios)
-- [节点运维手册：Android](/platforms/android)
 
 ## 安全
 

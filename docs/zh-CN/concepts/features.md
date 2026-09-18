@@ -28,7 +28,7 @@ x-i18n:
     支持图片、音频和文档的收发。
   </Card>
   <Card title="应用与界面" icon="monitor">
-    Web 控制界面和 macOS 配套应用。
+    Web 控制界面。没有原生配套应用。
   </Card>
   <Card title="移动节点" icon="smartphone">
     iOS 和 Android 节点，支持 Canvas。
@@ -50,7 +50,7 @@ x-i18n:
 - 群聊支持，通过提及激活
 - 图片、音频和文档的媒体支持
 - 可选的语音消息转录钩子
-- WebChat 和 macOS 菜单栏应用
+- WebChat 和控制 UI
 - iOS 节点，支持配对和 Canvas 界面
 - Android 节点，支持配对、Canvas、聊天和相机
 

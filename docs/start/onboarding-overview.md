@@ -15,7 +15,9 @@ and how you prefer to configure providers.
 ## Choose your onboarding path
 
 - **CLI wizard** for macOS, Linux, and Windows (via WSL2).
-- **macOS app** for a guided first run on Apple silicon or Intel Macs.
+
+There is no native companion app; the CLI wizard is the onboarding path on every
+platform.
 
 ## CLI onboarding wizard
 
@@ -31,11 +33,10 @@ channels, and skills. Docs:
 - [Onboarding Wizard (CLI)](/start/wizard)
 - [`openclaw onboard` command](/cli/onboard)
 
-## macOS app onboarding
+## First-run flow
 
-Use the OpenClaw app when you want a fully guided setup on macOS. Docs:
-
-- [Onboarding (macOS App)](/start/onboarding)
+See [Onboarding](/start/onboarding) for the day‑0 sequence: pick where the
+Gateway runs, connect auth, run the wizard, and let the agent bootstrap itself.
 
 ## Custom Provider
 

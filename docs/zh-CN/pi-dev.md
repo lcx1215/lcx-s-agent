@@ -22,19 +22,25 @@ x-i18n:
 
 ## 运行 Pi 测试
 
-使用专用脚本运行 Pi 集成测试集：
+直接使用 Vitest 运行 Pi 相关测试集：
 
 ```bash
-scripts/pi/run-tests.sh
+pnpm test -- \
+  "src/agents/pi-*.test.ts" \
+  "src/agents/pi-embedded-*.test.ts" \
+  "src/agents/pi-tools*.test.ts" \
+  "src/agents/pi-settings.test.ts" \
+  "src/agents/pi-tool-definition-adapter*.test.ts" \
+  "src/agents/pi-extensions/**/*.test.ts"
 ```
 
-要包含执行真实提供商行为的实时测试：
+要包含真实提供商演练：
 
 ```bash
-scripts/pi/run-tests.sh --live
+OPENCLAW_LIVE_TEST=1 pnpm test -- src/agents/pi-embedded-runner-extraparams.live.test.ts
 ```
 
-该脚本通过以下 glob 模式运行所有 Pi 相关的单元测试：
+这覆盖主要的 Pi 单元测试套件：
 
 - `src/agents/pi-*.test.ts`
 - `src/agents/pi-embedded-*.test.ts`

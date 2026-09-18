@@ -103,7 +103,7 @@ For a high-level overview, see [Onboarding Wizard](/start/wizard).
     - Installs optional dependencies (some use Homebrew on macOS).
   </Step>
   <Step title="Finish">
-    - Summary + next steps, including iOS/Android/macOS apps for extra features.
+    - Summary + next steps.
   </Step>
 </Steps>
 
@@ -223,7 +223,7 @@ openclaw agents add work \
 ## Gateway wizard RPC
 
 The Gateway exposes the wizard flow over RPC (`wizard.start`, `wizard.next`, `wizard.cancel`, `wizard.status`).
-Clients (macOS app, Control UI) can render steps without re‑implementing onboarding logic.
+Clients (for example the Control UI) can render steps without re‑implementing onboarding logic.
 
 ## Signal setup (signal-cli)
 
@@ -268,7 +268,7 @@ will prompt to install it (npm or a local path) before it can be configured.
 ## Related docs
 
 - Wizard overview: [Onboarding Wizard](/start/wizard)
-- macOS app onboarding: [Onboarding](/start/onboarding)
+- First-run flow: [Onboarding](/start/onboarding)
 - Config reference: [Gateway configuration](/gateway/configuration)
 - Providers: [WhatsApp](/channels/whatsapp), [Telegram](/channels/telegram), [Discord](/channels/discord), [Google Chat](/channels/googlechat), [Signal](/channels/signal), [BlueBubbles](/channels/bluebubbles) (iMessage), [iMessage](/channels/imessage) (legacy)
 - Skills: [Skills](/tools/skills), [Skills config](/tools/skills-config)

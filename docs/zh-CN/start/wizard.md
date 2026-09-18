@@ -148,7 +148,7 @@ openclaw agents add <name>
    - 安装可选依赖项（某些在 macOS 上使用 Homebrew）。
 
 9. **完成**
-   - 总结 + 后续步骤，包括用于额外功能的 iOS/Android/macOS 应用。
+   - 总结 + 后续步骤。
 
 - 如果未检测到 GUI，向导会打印控制界面的 SSH 端口转发说明，而不是打开浏览器。
 - 如果控制界面资源缺失，向导会尝试构建它们；回退方案是 `pnpm ui:build`（自动安装 UI 依赖）。
@@ -284,7 +284,7 @@ openclaw agents add work \
 ## Gateway 网关向导 RPC
 
 Gateway 网关通过 RPC 暴露向导流程（`wizard.start`、`wizard.next`、`wizard.cancel`、`wizard.status`）。
-客户端（macOS 应用、控制界面）可以渲染步骤而无需重新实现新手引导逻辑。
+客户端（例如控制界面）可以渲染步骤而无需重新实现新手引导逻辑。
 
 ## Signal 设置（signal-cli）
 
@@ -325,7 +325,7 @@ WhatsApp 凭证存储在 `~/.openclaw/credentials/whatsapp/<accountId>/` 下。
 
 ## 相关文档
 
-- macOS 应用新手引导：[新手引导](/start/onboarding)
+- 首次运行流程：[新手引导](/start/onboarding)
 - 配置参考：[Gateway 网关配置](/gateway/configuration)
 - 提供商：[WhatsApp](/channels/whatsapp)、[Telegram](/channels/telegram)、[Discord](/channels/discord)、[Google Chat](/channels/googlechat)、[Signal](/channels/signal)、[iMessage](/channels/imessage)
 - Skills：[Skills](/tools/skills)、[Skills 配置](/tools/skills-config)

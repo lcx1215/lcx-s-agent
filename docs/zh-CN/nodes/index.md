@@ -20,7 +20,7 @@ x-i18n:
 
 旧版传输：[Bridge 协议](/gateway/bridge-protocol)（TCP JSONL；当前节点已弃用/移除）。
 
-macOS 也可以在**节点模式**下运行：菜单栏应用连接到 Gateway 网关的 WS 服务器，并将其本地 canvas/camera 命令作为节点暴露（因此 `openclaw nodes …` 可以针对这台 Mac 工作）。
+macOS 也可以在**节点模式**下运行：节点主机连接到 Gateway 网关的 WS 服务器，并将本地 canvas/camera 命令作为节点暴露（因此 `openclaw nodes …` 可以针对这台 Mac 工作）。
 
 注意事项：
 
@@ -282,13 +282,12 @@ openclaw nodes notify --node <idOrNameOrIp> --title "Ping" --body "Gateway ready
 注意事项：
 
 - `system.run` 在负载中返回 stdout/stderr/退出码。
-- `system.notify` 遵守 macOS 应用上的通知权限状态。
+- `system.notify` 遵守节点主机上的通知权限状态。
 - `system.run` 支持 `--cwd`、`--env KEY=VAL`、`--command-timeout` 和 `--needs-screen-recording`。
 - `system.notify` 支持 `--priority <passive|active|timeSensitive>` 和 `--delivery <system|overlay|auto>`。
 - macOS 节点会丢弃 `PATH` 覆盖；无头节点主机仅在 `PATH` 前置到节点主机 PATH 时才接受它。
-- 在 macOS 节点模式下，`system.run` 受 macOS 应用中的 exec 批准限制（设置 → Exec 批准）。
-  Ask/allowlist/full 的行为与无头节点主机相同；被拒绝的提示返回 `SYSTEM_RUN_DENIED`。
-- 在无头节点主机上，`system.run` 受 exec 批准限制（`~/.openclaw/exec-approvals.json`）。
+- `system.run` 受 exec 批准限制（`~/.openclaw/exec-approvals.json`）。
+  Ask/allowlist/full 的行为在所有主机上相同；被拒绝的提示返回 `SYSTEM_RUN_DENIED`。
 
 ## Exec 节点绑定
 
@@ -337,12 +336,10 @@ openclaw node run --host <gateway-host> --port 18789
 - 节点主机将其节点 id、令牌、显示名称和 Gateway 网关连接信息存储在 `~/.openclaw/node.json` 中。
 - Exec 批准通过 `~/.openclaw/exec-approvals.json` 在本地执行
   （参见 [Exec 批准](/tools/exec-approvals)）。
-- 在 macOS 上，当配套应用 exec 主机可达时，无头节点主机优先使用它，
-  如果应用不可用则回退到本地执行。设置 `OPENCLAW_NODE_EXEC_HOST=app` 要求
-  使用应用，或设置 `OPENCLAW_NODE_EXEC_FALLBACK=0` 禁用回退。
+- 无头节点主机在本地执行 `system.run`。
 - 当 Gateway 网关 WS 使用 TLS 时，添加 `--tls` / `--tls-fingerprint`。
 
 ## Mac 节点模式
 
-- macOS 菜单栏应用作为节点连接到 Gateway 网关 WS 服务器（因此 `openclaw nodes …` 可以针对这台 Mac 工作）。
+- 节点主机作为节点连接到 Gateway 网关 WS 服务器（因此 `openclaw nodes …` 可以针对这台 Mac 工作）。
 - 在远程模式下，应用为 Gateway 网关端口打开 SSH 隧道并连接到 `localhost`。

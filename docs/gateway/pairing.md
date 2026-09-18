@@ -10,7 +10,7 @@ title: "Gateway-Owned Pairing"
 # Gateway-owned pairing (Option B)
 
 In Gateway-owned pairing, the **Gateway** is the source of truth for which nodes
-are allowed to join. UIs (macOS app, future clients) are just frontends that
+are allowed to join. UIs (Control UI, CLI, future clients) are just frontends that
 approve or reject pending requests.
 
 **Important:** WS nodes use **device pairing** (role `node`) during `connect`.
@@ -69,12 +69,12 @@ Notes:
   `node.pair.request`.
 - Requests may include `silent: true` as a hint for auto-approval flows.
 
-## Auto-approval (macOS app)
+## Auto-approval
 
-The macOS app can optionally attempt a **silent approval** when:
+A client can optionally attempt a **silent approval** when:
 
 - the request is marked `silent`, and
-- the app can verify an SSH connection to the gateway host using the same user.
+- the client can verify an SSH connection to the gateway host using the same user.
 
 If silent approval fails, it falls back to the normal “Approve/Reject” prompt.
 

@@ -66,7 +66,7 @@ openclaw nodes run --agent main --node <id|name|ip> --raw "git status"
 - 读取 `tools.exec.*`（以及 `agents.list[].tools.exec.*` 覆盖）。
 - 在调用 `system.run` 前使用 exec 审批（`exec.approval.request`）。
 - 当设置了 `tools.exec.node` 时可省略 `--node`。
-- 需要支持 `system.run` 的节点（macOS 配套应用或无头节点主机）。
+- 需要支持 `system.run` 的节点（无头节点主机）。
 
 标志：
 

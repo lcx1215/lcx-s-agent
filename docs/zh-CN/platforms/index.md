@@ -2,7 +2,7 @@
 read_when:
   - 查找操作系统支持或安装路径时
   - 决定在哪里运行 Gateway 网关时
-summary: 平台支持概述（Gateway 网关 + 配套应用）
+summary: 平台支持概述（Gateway 网关主机）
 title: 平台
 x-i18n:
   generated_at: "2026-02-03T07:52:07Z"
@@ -18,15 +18,11 @@ x-i18n:
 OpenClaw 核心使用 TypeScript 编写。**Node 是推荐的运行时**。
 不推荐 Bun 用于 Gateway 网关（WhatsApp/Telegram 存在 bug）。
 
-配套应用适用于 macOS（菜单栏应用）和移动节点（iOS/Android）。Windows 和
-Linux 配套应用已在计划中，但 Gateway 网关目前已完全支持。
-Windows 原生配套应用也在计划中；推荐通过 WSL2 使用 Gateway 网关。
+Gateway 网关是一个 TypeScript 服务，可在任何支持 Node 的主机上运行。没有原生配套应用；
+你可以通过浏览器或已有的聊天渠道访问它。Windows 通过 WSL2 支持。
 
 ## 选择你的操作系统
 
-- macOS：[macOS](/platforms/macos)
-- iOS：[iOS](/platforms/ios)
-- Android：[Android](/platforms/android)
 - Windows：[Windows](/platforms/windows)
 - Linux：[Linux](/platforms/linux)
 

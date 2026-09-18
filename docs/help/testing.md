@@ -42,7 +42,7 @@ Think of the suites as “increasing realism” (and increasing flakiness/cost):
 ### Unit / integration (default)
 
 - Command: `pnpm test`
-- Config: `scripts/test-parallel.mjs` (runs `vitest.unit.config.ts`, `vitest.extensions.config.ts`, `vitest.gateway.config.ts`)
+- Config: `scripts/tests/test-parallel.mjs` (runs `vitest.unit.config.ts`, `vitest.extensions.config.ts`, `vitest.gateway.config.ts`)
 - Files: `src/**/*.test.ts`, `extensions/**/*.test.ts`
 - Scope:
   - Pure unit tests
@@ -110,13 +110,12 @@ Use this decision table:
   - Preconditioned/manual setup (the suite does not install/run/pair the app).
   - Command-by-command gateway `node.invoke` validation for the selected Android node.
 - Required pre-setup:
-  - Android app already connected + paired to the gateway.
-  - App kept in foreground.
+  - Android node already connected + paired to the gateway.
+  - Node client kept in foreground.
   - Permissions/capture consent granted for capabilities you expect to pass.
 - Optional target overrides:
   - `OPENCLAW_ANDROID_NODE_ID` or `OPENCLAW_ANDROID_NODE_NAME`.
   - `OPENCLAW_ANDROID_GATEWAY_URL` / `OPENCLAW_ANDROID_GATEWAY_TOKEN` / `OPENCLAW_ANDROID_GATEWAY_PASSWORD`.
-- Full Android setup details: [Android App](/platforms/android)
 
 ## Live: model smoke (profile keys)
 
@@ -347,8 +346,8 @@ If you want to rely on env keys (e.g. exported in your `~/.profile`), run local 
 
 These run `pnpm test:live` inside the repo Docker image, mounting your local config dir and workspace (and sourcing `~/.profile` if mounted):
 
-- Direct models: `pnpm test:docker:live-models` (script: `scripts/test-live-models-docker.sh`)
-- Gateway + dev agent: `pnpm test:docker:live-gateway` (script: `scripts/test-live-gateway-models-docker.sh`)
+- Direct models: `pnpm test:docker:live-models` (script: `scripts/tests/test-live-models-docker.sh`)
+- Gateway + dev agent: `pnpm test:docker:live-gateway` (script: `scripts/tests/test-live-gateway-models-docker.sh`)
 - Onboarding wizard (TTY, full scaffolding): `pnpm test:docker:onboard` (script: `scripts/e2e/onboard-docker.sh`)
 - Gateway networking (two containers, WS auth + health): `pnpm test:docker:gateway-network` (script: `scripts/e2e/gateway-network-docker.sh`)
 - Plugins (custom extension load + registry smoke): `pnpm test:docker:plugins` (script: `scripts/e2e/plugins-docker.sh`)

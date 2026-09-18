@@ -320,8 +320,8 @@ OPENCLAW_LIVE_CLI_BACKEND=1 \
 
 这些在仓库 Docker 镜像内运行 `pnpm test:live`，挂载你的本地配置目录和工作区（如果挂载了 `~/.profile` 则会加载它）：
 
-- 直接模型：`pnpm test:docker:live-models`（脚本：`scripts/test-live-models-docker.sh`）
-- Gateway 网关 + 开发智能体：`pnpm test:docker:live-gateway`（脚本：`scripts/test-live-gateway-models-docker.sh`）
+- 直接模型：`pnpm test:docker:live-models`（脚本：`scripts/tests/test-live-models-docker.sh`）
+- Gateway 网关 + 开发智能体：`pnpm test:docker:live-gateway`（脚本：`scripts/tests/test-live-gateway-models-docker.sh`）
 - 新手引导向导（TTY，完整脚手架）：`pnpm test:docker:onboard`（脚本：`scripts/e2e/onboard-docker.sh`）
 - Gateway 网关网络（两个容器，WS 认证 + 健康检查）：`pnpm test:docker:gateway-network`（脚本：`scripts/e2e/gateway-network-docker.sh`）
 - 插件（自定义扩展加载 + 注册表冒烟测试）：`pnpm test:docker:plugins`（脚本：`scripts/e2e/plugins-docker.sh`）

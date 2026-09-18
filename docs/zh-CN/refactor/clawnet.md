@@ -31,7 +31,7 @@ x-i18n:
 
 ## 目标（来自讨论）
 
-- 所有客户端使用一个协议（mac 应用、CLI、iOS、Android、无头节点）。
+- 所有客户端使用一个协议（CLI、Web UI、无头节点）。
 - 每个网络参与者都经过认证 + 配对。
 - 角色清晰：节点 vs 操作者。
 - 中央审批路由到用户所在位置。
@@ -76,15 +76,14 @@ x-i18n:
 ## 当前的控制平面客户端
 
 - CLI → 通过 `callGateway`（`src/gateway/call.ts`）连接 Gateway 网关 WS。
-- macOS 应用 UI → Gateway 网关 WS（`GatewayConnection`）。
+- Web UI 客户端 → Gateway 网关 WS（`GatewayConnection`）。
 - Web 控制 UI → Gateway 网关 WS。
 - ACP → Gateway 网关 WS。
 - 浏览器控制使用自己的 HTTP 控制服务器。
 
 ## 当前的节点
 
-- macOS 应用在节点模式下连接到 Gateway 网关 bridge（`MacNodeBridgeSession`）。
-- iOS/Android 应用连接到 Gateway 网关 bridge。
+- 节点客户端连接到 Gateway 网关 bridge。
 - 配对 + 每节点令牌存储在 Gateway 网关上。
 
 ## 当前审批流程（exec）
@@ -92,7 +91,7 @@ x-i18n:
 - 智能体通过 Gateway 网关使用 `system.run`。
 - Gateway 网关通过 bridge 调用节点。
 - 节点运行时决定审批。
-- UI 提示由 mac 应用显示（当节点 == mac 应用时）。
+- UI 提示由操作者客户端显示。
 - 节点向 Gateway 网关返回 `invoke-res`。
 - 多跳，UI 绑定到节点主机。
 
@@ -100,7 +99,7 @@ x-i18n:
 
 - 来自 WS 客户端的 Gateway 网关在线状态条目。
 - 来自 bridge 的节点在线状态条目。
-- mac 应用可能为同一台机器显示两个条目（UI + 节点）。
+- 客户端可能为同一台机器显示两个条目（UI + 节点）。
 - 节点身份存储在配对存储中；UI 身份是分开的。
 
 ---
@@ -224,7 +223,7 @@ x-i18n:
 
 ## 当前
 
-审批发生在节点主机上（mac 应用节点运行时）。提示出现在节点运行的地方。
+审批发生在节点主机上。提示出现在节点运行的地方。
 
 ## 提议
 
@@ -262,10 +261,10 @@ x-i18n:
 - 可选的 **operator.read** 用于状态和聊天视图。
 - 可选的 **operator.write/admin** 仅在明确启用时。
 
-## macOS 应用
+## 桌面节点
 
-- 默认是 Operator 角色（控制 UI）。
-- 启用"Mac 节点"时是 Node 角色（system.run、屏幕、相机）。
+- 默认是 Operator 角色（Control UI）。
+- 启用节点模式时是 Node 角色（system.run、屏幕、相机）。
 - 两个连接使用相同的 deviceId → 合并的 UI 条目。
 
 ## CLI
@@ -326,7 +325,7 @@ x-i18n:
 ## 阶段 3：中央审批
 
 - 在 WS 中添加审批请求 + 解决事件。
-- 更新 mac 应用 UI 以提示 + 响应。
+- 更新操作者客户端 UI 以提示 + 响应。
 - 节点运行时停止提示 UI。
 
 ## 阶段 4：TLS 统一
@@ -336,7 +335,7 @@ x-i18n:
 
 ## 阶段 5：弃用 bridge
 
-- 将 iOS/Android/mac 节点迁移到 WS。
+- 将节点迁移到 WS。
 - 保持 bridge 作为后备；稳定后移除。
 
 ## 阶段 6：设备绑定认证

@@ -16,7 +16,7 @@ x-i18n:
 
 # Gateway 网关协议（WebSocket）
 
-Gateway 网关 WS 协议是 OpenClaw 的**单一控制平面 + 节点传输**。所有客户端（CLI、Web UI、macOS 应用、iOS/Android 节点、无头节点）都通过 WebSocket 连接，并在握手时声明其**角色** + **作用域**。
+Gateway 网关 WS 协议是 OpenClaw 的**单一控制平面 + 节点传输**。所有客户端（CLI、Web UI、节点客户端、无头节点）都通过 WebSocket 连接，并在握手时声明其**角色** + **作用域**。
 
 ## 传输
 
@@ -183,9 +183,8 @@ Gateway 网关将这些视为**声明**并强制执行服务器端允许列表�
 
 - `PROTOCOL_VERSION` 在 `src/gateway/protocol/schema.ts` 中。
 - 客户端发送 `minProtocol` + `maxProtocol`；服务器拒绝不匹配的。
-- 模式 + 模型从 TypeBox 定义生成：
+- 模式从 TypeBox 定义生成：
   - `pnpm protocol:gen`
-  - `pnpm protocol:gen:swift`
   - `pnpm protocol:check`
 
 ## 认证

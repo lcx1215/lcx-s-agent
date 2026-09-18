@@ -2349,7 +2349,7 @@ See [Plugins](/tools/plugin).
 }
 ```
 
-- `seamColor`: accent color for native app UI chrome (Talk Mode bubble tint, etc.).
+- `seamColor`: accent color for UI chrome (Talk Mode bubble tint, etc.).
 - `assistant`: Control UI identity override. Falls back to active agent identity.
 
 ---

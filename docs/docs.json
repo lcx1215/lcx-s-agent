@@ -220,10 +220,6 @@
       "destination": "/concepts/agent-workspace"
     },
     {
-      "source": "/android",
-      "destination": "/platforms/android"
-    },
-    {
       "source": "/architecture",
       "destination": "/concepts/architecture"
     },
@@ -316,10 +312,6 @@
       "destination": "/web/dashboard"
     },
     {
-      "source": "/device-models",
-      "destination": "/reference/device-models"
-    },
-    {
       "source": "/discord",
       "destination": "/channels/discord"
     },
@@ -404,10 +396,6 @@
       "destination": "/channels/imessage"
     },
     {
-      "source": "/ios",
-      "destination": "/platforms/ios"
-    },
-    {
       "source": "/linux",
       "destination": "/platforms/linux"
     },
@@ -422,86 +410,6 @@
     {
       "source": "/lore",
       "destination": "/start/lore"
-    },
-    {
-      "source": "/mac/bun",
-      "destination": "/platforms/mac/bundled-gateway"
-    },
-    {
-      "source": "/platforms/mac/bun",
-      "destination": "/platforms/mac/bundled-gateway"
-    },
-    {
-      "source": "/mac/canvas",
-      "destination": "/platforms/mac/canvas"
-    },
-    {
-      "source": "/mac/child-process",
-      "destination": "/platforms/mac/child-process"
-    },
-    {
-      "source": "/mac/dev-setup",
-      "destination": "/platforms/mac/dev-setup"
-    },
-    {
-      "source": "/mac/health",
-      "destination": "/platforms/mac/health"
-    },
-    {
-      "source": "/mac/icon",
-      "destination": "/platforms/mac/icon"
-    },
-    {
-      "source": "/mac/logging",
-      "destination": "/platforms/mac/logging"
-    },
-    {
-      "source": "/mac/menu-bar",
-      "destination": "/platforms/mac/menu-bar"
-    },
-    {
-      "source": "/mac/peekaboo",
-      "destination": "/platforms/mac/peekaboo"
-    },
-    {
-      "source": "/mac/permissions",
-      "destination": "/platforms/mac/permissions"
-    },
-    {
-      "source": "/mac/release",
-      "destination": "/platforms/mac/release"
-    },
-    {
-      "source": "/mac/remote",
-      "destination": "/platforms/mac/remote"
-    },
-    {
-      "source": "/mac/signing",
-      "destination": "/platforms/mac/signing"
-    },
-    {
-      "source": "/mac/skills",
-      "destination": "/platforms/mac/skills"
-    },
-    {
-      "source": "/mac/voice-overlay",
-      "destination": "/platforms/mac/voice-overlay"
-    },
-    {
-      "source": "/mac/voicewake",
-      "destination": "/platforms/mac/voicewake"
-    },
-    {
-      "source": "/mac/webchat",
-      "destination": "/platforms/mac/webchat"
-    },
-    {
-      "source": "/mac/xpc",
-      "destination": "/platforms/mac/xpc"
-    },
-    {
-      "source": "/macos",
-      "destination": "/platforms/macos"
     },
     {
       "source": "/model-failover",
@@ -1139,37 +1047,11 @@
                 "group": "Platforms overview",
                 "pages": [
                   "platforms/index",
-                  "platforms/macos",
                   "platforms/linux",
                   "platforms/windows",
-                  "platforms/android",
-                  "platforms/ios",
                   "platforms/digitalocean",
                   "platforms/oracle",
                   "platforms/raspberry-pi"
-                ]
-              },
-              {
-                "group": "macOS companion app",
-                "pages": [
-                  "platforms/mac/dev-setup",
-                  "platforms/mac/menu-bar",
-                  "platforms/mac/voicewake",
-                  "platforms/mac/voice-overlay",
-                  "platforms/mac/webchat",
-                  "platforms/mac/canvas",
-                  "platforms/mac/child-process",
-                  "platforms/mac/health",
-                  "platforms/mac/icon",
-                  "platforms/mac/logging",
-                  "platforms/mac/permissions",
-                  "platforms/mac/remote",
-                  "platforms/mac/signing",
-                  "platforms/mac/release",
-                  "platforms/mac/bundled-gateway",
-                  "platforms/mac/xpc",
-                  "platforms/mac/skills",
-                  "platforms/mac/peekaboo"
                 ]
               }
             ]
@@ -1294,6 +1176,7 @@
                   "cli/sandbox",
                   "cli/secrets",
                   "cli/security",
+                  "cli/serve",
                   "cli/sessions",
                   "cli/setup",
                   "cli/skills",
@@ -1308,7 +1191,7 @@
               },
               {
                 "group": "RPC and API",
-                "pages": ["reference/rpc", "reference/device-models"]
+                "pages": ["reference/rpc"]
               },
               {
                 "group": "Templates",
@@ -1599,7 +1482,6 @@
                   "zh-CN/tools/apply-patch",
                   "zh-CN/brave-search",
                   "zh-CN/perplexity",
-                  "zh-CN/tools/diffs",
                   "zh-CN/tools/elevated",
                   "zh-CN/tools/exec",
                   "zh-CN/tools/exec-approvals",
@@ -1727,37 +1609,11 @@
                 "group": "平台概览",
                 "pages": [
                   "zh-CN/platforms/index",
-                  "zh-CN/platforms/macos",
                   "zh-CN/platforms/linux",
                   "zh-CN/platforms/windows",
-                  "zh-CN/platforms/android",
-                  "zh-CN/platforms/ios",
                   "zh-CN/platforms/digitalocean",
                   "zh-CN/platforms/oracle",
                   "zh-CN/platforms/raspberry-pi"
-                ]
-              },
-              {
-                "group": "macOS 配套应用",
-                "pages": [
-                  "zh-CN/platforms/mac/dev-setup",
-                  "zh-CN/platforms/mac/menu-bar",
-                  "zh-CN/platforms/mac/voicewake",
-                  "zh-CN/platforms/mac/voice-overlay",
-                  "zh-CN/platforms/mac/webchat",
-                  "zh-CN/platforms/mac/canvas",
-                  "zh-CN/platforms/mac/child-process",
-                  "zh-CN/platforms/mac/health",
-                  "zh-CN/platforms/mac/icon",
-                  "zh-CN/platforms/mac/logging",
-                  "zh-CN/platforms/mac/permissions",
-                  "zh-CN/platforms/mac/remote",
-                  "zh-CN/platforms/mac/signing",
-                  "zh-CN/platforms/mac/release",
-                  "zh-CN/platforms/mac/bundled-gateway",
-                  "zh-CN/platforms/mac/xpc",
-                  "zh-CN/platforms/mac/skills",
-                  "zh-CN/platforms/mac/peekaboo"
                 ]
               }
             ]
@@ -1895,7 +1751,7 @@
               },
               {
                 "group": "RPC 与 API",
-                "pages": ["zh-CN/reference/rpc", "zh-CN/reference/device-models"]
+                "pages": ["zh-CN/reference/rpc"]
               },
               {
                 "group": "模板",

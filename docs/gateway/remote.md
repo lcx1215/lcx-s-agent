@@ -9,8 +9,8 @@ title: "Remote Access"
 
 This repo supports “remote over SSH” by keeping a single Gateway (the master) running on a dedicated host (desktop/server) and connecting clients to it.
 
-- For **operators (you / the macOS app)**: SSH tunneling is the universal fallback.
-- For **nodes (iOS/Android and future devices)**: connect to the Gateway **WebSocket** (LAN/tailnet or SSH tunnel as needed).
+- For **operators (you)**: SSH tunneling is the universal fallback.
+- For **nodes**: connect to the Gateway **WebSocket** (LAN/tailnet or SSH tunnel as needed).
 
 ## The core idea
 
@@ -36,10 +36,11 @@ This is ideal when your laptop sleeps often but you want the agent always-on.
 
 The laptop does **not** run the agent. It connects remotely:
 
-- Use the macOS app’s **Remote over SSH** mode (Settings → General → “OpenClaw runs”).
-- The app opens and manages the tunnel, so WebChat + health checks “just work.”
+- Forward `18789` over SSH, then point your client at `ws://127.0.0.1:18789`.
+- There is no native companion app; the browser Control UI, WebChat, and CLI all
+  work over the tunnel.
 
-Runbook: [macOS remote access](/platforms/mac/remote).
+Runbook: [Remote Gateway Setup](/gateway/remote-gateway-readme).
 
 ### 3) Laptop runs the Gateway, remote access from other machines
 
@@ -64,7 +65,7 @@ Flow example (Telegram → node):
 Notes:
 
 - **Nodes do not run the gateway service.** Only one gateway should run per host unless you intentionally run isolated profiles (see [Multiple gateways](/gateway/multiple-gateways)).
-- macOS app “node mode” is just a node client over the Gateway WebSocket.
+- A node in “node mode” is just a node client over the Gateway WebSocket.
 
 ## SSH tunnel (CLI + tools)
 
@@ -117,16 +118,12 @@ Gateway call/probe credential resolution now follows one shared contract:
 
 ## Chat UI over SSH
 
-WebChat no longer uses a separate HTTP port. The SwiftUI chat UI connects directly to the Gateway WebSocket.
+WebChat does not use a separate HTTP port. The chat UI connects directly to the Gateway WebSocket.
 
 - Forward `18789` over SSH (see above), then connect clients to `ws://127.0.0.1:18789`.
-- On macOS, prefer the app’s “Remote over SSH” mode, which manages the tunnel automatically.
+- The same tunnel works for remote status checks, WebChat, and Voice Wake forwarding.
 
-## macOS app “Remote over SSH”
-
-The macOS menu bar app can drive the same setup end-to-end (remote status checks, WebChat, and Voice Wake forwarding).
-
-Runbook: [macOS remote access](/platforms/mac/remote).
+Runbook: [Remote Gateway Setup](/gateway/remote-gateway-readme).
 
 ## Security rules (remote/VPN)
 

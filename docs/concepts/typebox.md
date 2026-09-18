@@ -11,8 +11,8 @@ Last updated: 2026-01-10
 
 TypeBox is a TypeScript-first schema library. We use it to define the **Gateway
 WebSocket protocol** (handshake, request/response, server events). Those schemas
-drive **runtime validation**, **JSON Schema export**, and **Swift codegen** for
-the macOS app. One source of truth; everything else is generated.
+drive **runtime validation** and **JSON Schema export**. One source of truth;
+everything else is generated.
 
 If you want the higher-level protocol context, start with
 [Gateway architecture](/concepts/architecture).
@@ -60,16 +60,13 @@ Authoritative list lives in `src/gateway/server.ts` (`METHODS`, `EVENTS`).
 - Server handshake + method dispatch: `src/gateway/server.ts`
 - Node client: `src/gateway/client.ts`
 - Generated JSON Schema: `dist/protocol.schema.json`
-- Generated Swift models: `apps/macos/Sources/OpenClawProtocol/GatewayModels.swift`
 
 ## Current pipeline
 
 - `pnpm protocol:gen`
   - writes JSON Schema (draft‑07) to `dist/protocol.schema.json`
-- `pnpm protocol:gen:swift`
-  - generates Swift gateway models
 - `pnpm protocol:check`
-  - runs both generators and verifies the output is committed
+  - runs the generator and verifies the output is committed
 
 ## How the schemas are used at runtime
 
@@ -93,11 +90,11 @@ Connect (first message):
     "minProtocol": 2,
     "maxProtocol": 2,
     "client": {
-      "id": "openclaw-macos",
-      "displayName": "macos",
+      "id": "webchat-ui",
+      "displayName": "WebChat",
       "version": "1.0.0",
-      "platform": "macos 15.1",
-      "mode": "ui",
+      "platform": "browser",
+      "mode": "webchat",
       "instanceId": "A1B2"
     }
   }
@@ -251,21 +248,23 @@ pnpm protocol:check
 
 Add a server test in `src/gateway/server.*.test.ts` and note the method in docs.
 
-## Swift codegen behavior
+## JSON Schema export
 
-The Swift generator emits:
+`scripts/protocol-gen.ts` walks `ProtocolSchemas` and emits a single draft-07
+document:
 
-- `GatewayFrame` enum with `req`, `res`, `event`, and `unknown` cases
-- Strongly typed payload structs/enums
-- `ErrorCode` values and `GATEWAY_PROTOCOL_VERSION`
+- one `definitions` entry per named schema
+- a root `oneOf` over `RequestFrame`, `ResponseFrame`, and `EventFrame`
+- a `discriminator` on the `type` property
 
-Unknown frame types are preserved as raw payloads for forward compatibility.
+Because there is no native companion app, this file is the contract for
+non-TypeScript clients: generate your own types from it rather than expecting a
+maintained language binding in this repo.
 
 ## Versioning + compatibility
 
 - `PROTOCOL_VERSION` lives in `src/gateway/protocol/schema.ts`.
 - Clients send `minProtocol` + `maxProtocol`; the server rejects mismatches.
-- The Swift models keep unknown frame types to avoid breaking older clients.
 
 ## Schema patterns and conventions
 
@@ -279,8 +278,8 @@ Unknown frame types are preserved as raw payloads for forward compatibility.
 
 ## Live schema JSON
 
-Generated JSON Schema is in the repo at `dist/protocol.schema.json`. The
-published raw file is typically available at:
+`pnpm protocol:gen` writes the JSON Schema to `dist/protocol.schema.json`
+(generated output, gitignored). Upstream publishes the raw file at:
 
 - [https://raw.githubusercontent.com/openclaw/openclaw/main/dist/protocol.schema.json](https://raw.githubusercontent.com/openclaw/openclaw/main/dist/protocol.schema.json)
 
@@ -288,4 +287,4 @@ published raw file is typically available at:
 
 1. Update the TypeBox schemas.
 2. Run `pnpm protocol:check`.
-3. Commit the regenerated schema + Swift models.
+3. Commit the regenerated schema.

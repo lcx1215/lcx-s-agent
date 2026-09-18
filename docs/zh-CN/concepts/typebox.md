@@ -16,7 +16,7 @@ x-i18n:
 
 最后更新：2026-01-10
 
-TypeBox 是一个 TypeScript 优先的模式库。我们用它来定义 **Gateway 网关 WebSocket 协议**（握手、请求/响应、服务器事件）。这些模式驱动**运行时验证**、**JSON Schema 导出**和 macOS 应用的 **Swift 代码生成**。一个事实来源；其他一切都是生成的。
+TypeBox 是一个 TypeScript 优先的模式库。我们用它来定义 **Gateway 网关 WebSocket 协议**（握手、请求/响应、服务器事件）。这些模式驱动**运行时验证**和 **JSON Schema 导出**。一个事实来源；其他一切都是生成的。
 
 如果你想了解更高层次的协议上下文，请从 [Gateway 网关架构](/concepts/architecture)开始。
 
@@ -61,16 +61,13 @@ Client                    Gateway
 - 服务器握手 + 方法分发：`src/gateway/server.ts`
 - 节点客户端：`src/gateway/client.ts`
 - 生成的 JSON Schema：`dist/protocol.schema.json`
-- 生成的 Swift 模型：`apps/macos/Sources/OpenClawProtocol/GatewayModels.swift`
 
 ## 当前流程
 
 - `pnpm protocol:gen`
   - 将 JSON Schema（draft‑07）写入 `dist/protocol.schema.json`
-- `pnpm protocol:gen:swift`
-  - 生成 Swift Gateway 网关模型
 - `pnpm protocol:check`
-  - 运行两个生成器并验证输出已提交
+  - 运行生成器并验证输出已提交
 
 ## 模式在运行时的使用方式
 
@@ -91,11 +88,11 @@ Connect（第一条消息）：
     "minProtocol": 2,
     "maxProtocol": 2,
     "client": {
-      "id": "openclaw-macos",
-      "displayName": "macos",
+      "id": "webchat-ui",
+      "displayName": "WebChat",
       "version": "1.0.0",
-      "platform": "macos 15.1",
-      "mode": "ui",
+      "platform": "browser",
+      "mode": "webchat",
       "instanceId": "A1B2"
     }
   }
@@ -248,21 +245,20 @@ pnpm protocol:check
 
 在 `src/gateway/server.*.test.ts` 中添加服务器测试，并在文档中记录该方法。
 
-## Swift 代码生成行为
+## JSON Schema 导出
 
-Swift 生成器输出：
+`scripts/protocol-gen.ts` 遍历 `ProtocolSchemas`，输出单个 draft‑07 文档：
 
-- 带有 `req`、`res`、`event` 和 `unknown` 情况的 `GatewayFrame` 枚举
-- 强类型的 payload 结构体/枚举
-- `ErrorCode` 值和 `GATEWAY_PROTOCOL_VERSION`
+- 每个具名模式对应一个 `definitions` 条目
+- 根节点的 `oneOf` 覆盖 `RequestFrame`、`ResponseFrame`、`EventFrame`
+- `type` 属性上的 `discriminator`
 
-未知的帧类型保留为原始 payload 以实现向前兼容。
+由于没有原生配套应用，这个文件就是非 TypeScript 客户端的契约：请基于它自行生成类型，而不要期待本仓库维护某种语言的绑定。
 
 ## 版本控制 + 兼容性
 
 - `PROTOCOL_VERSION` 在 `src/gateway/protocol/schema.ts` 中。
 - 客户端发送 `minProtocol` + `maxProtocol`；服务器拒绝不匹配的。
-- Swift 模型保留未知帧类型以避免破坏旧客户端。
 
 ## 模式模式和约定
 
@@ -273,7 +269,7 @@ Swift 生成器输出：
 
 ## 实时 schema JSON
 
-生成的 JSON Schema 在仓库的 `dist/protocol.schema.json` 中。发布的原始文件通常可在以下位置获取：
+`pnpm protocol:gen` 将 JSON Schema 写入 `dist/protocol.schema.json`（生成产物，已被 git 忽略）。上游发布的原始文件通常可在以下位置获取：
 
 - https://raw.githubusercontent.com/openclaw/openclaw/main/dist/protocol.schema.json
 
@@ -281,4 +277,4 @@ Swift 生成器输出：
 
 1. 更新 TypeBox 模式。
 2. 运行 `pnpm protocol:check`。
-3. 提交重新生成的 schema + Swift 模型。
+3. 提交重新生成的 schema。

@@ -1,18 +1,17 @@
 ---
-summary: "Camera capture (iOS/Android nodes + macOS app) for agent use: photos (jpg) and short video clips (mp4)"
+summary: "Camera capture on paired nodes for agent use: photos (jpg) and short video clips (mp4)"
 read_when:
-  - Adding or modifying camera capture on iOS/Android nodes or macOS
+  - Adding or modifying camera capture on paired nodes
   - Extending agent-accessible MEDIA temp-file workflows
 title: "Camera Capture"
 ---
 
 # Camera capture (agent)
 
-OpenClaw supports **camera capture** for agent workflows:
+OpenClaw supports **camera capture** for agent workflows on a paired node that
+advertises the camera commands:
 
-- **iOS node** (paired via Gateway): capture a **photo** (`jpg`) or **short video clip** (`mp4`, with optional audio) via `node.invoke`.
-- **Android node** (paired via Gateway): capture a **photo** (`jpg`) or **short video clip** (`mp4`, with optional audio) via `node.invoke`.
-- **macOS app** (node via Gateway): capture a **photo** (`jpg`) or **short video clip** (`mp4`, with optional audio) via `node.invoke`.
+- capture a **photo** (`jpg`) or **short video clip** (`mp4`, with optional audio) via `node.invoke`.
 
 All camera access is gated behind **user-controlled settings**.
 
@@ -110,19 +109,17 @@ Like `canvas.*`, the Android node only allows `camera.*` commands in the **foreg
 
 Photos are recompressed to keep the base64 payload under 5 MB.
 
-## macOS app
+## Node settings
 
 ### User setting (default off)
 
-The macOS companion app exposes a checkbox:
-
-- **Settings → General → Allow Camera** (`openclaw.cameraEnabled`)
+- **Allow Camera** (`openclaw.cameraEnabled`)
   - Default: **off**
   - When off: camera requests return “Camera disabled by user”.
 
 ### CLI helper (node invoke)
 
-Use the main `openclaw` CLI to invoke camera commands on the macOS node.
+Use the main `openclaw` CLI to invoke camera commands on the node.
 
 Examples:
 
@@ -149,9 +146,9 @@ Notes:
 - Camera and microphone access trigger the usual OS permission prompts (and require usage strings in Info.plist).
 - Video clips are capped (currently `<= 60s`) to avoid oversized node payloads (base64 overhead + message limits).
 
-## macOS screen video (OS-level)
+## Screen video
 
-For _screen_ video (not camera), use the macOS companion:
+For _screen_ video (not camera), record from the node:
 
 ```bash
 openclaw nodes screen record --node <id> --duration 10s --fps 15   # prints MEDIA:<path>

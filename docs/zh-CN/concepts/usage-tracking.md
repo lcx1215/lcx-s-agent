@@ -27,7 +27,6 @@ x-i18n:
 - 聊天中的 `/usage cost`：从 OpenClaw 会话日志汇总的本地费用摘要。
 - CLI：`openclaw status --usage` 打印完整的按提供商分类的详细信息。
 - CLI：`openclaw channels list` 在提供商配置旁打印相同的使用量快照（使用 `--no-usage` 跳过）。
-- macOS 菜单栏：上下文菜单下的"使用量"部分（仅在可用时显示）。
 
 ## 提供商及凭据
 

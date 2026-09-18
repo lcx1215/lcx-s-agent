@@ -47,7 +47,7 @@ pnpm gateway:watch
 - 输出日志到 stdout；使用 launchd/systemd 保持运行并轮转日志。
 - 故障排除时传递 `--verbose` 以将调试日志（握手、请求/响应、事件）从日志文件镜像到 stdio。
 - `--force` 使用 `lsof` 查找所选端口上的监听器，发送 SIGTERM，记录它终止了什么，然后启动 Gateway 网关（如果缺少 `lsof` 则快速失败）。
-- 如果你在 supervisor（launchd/systemd/mac 应用子进程模式）下运行，stop/restart 通常发送 **SIGTERM**；旧版本可能将其显示为 `pnpm` `ELIFECYCLE` 退出码 **143**（SIGTERM），这是正常关闭，不是崩溃。
+- 如果你在 supervisor（launchd/systemd）下运行，stop/restart 通常发送 **SIGTERM**；旧版本可能将其显示为 `pnpm` `ELIFECYCLE` 退出码 **143**（SIGTERM），这是正常关闭，不是崩溃。
 - **SIGUSR1** 在授权时触发进程内重启（Gateway 网关工具/配置应用/更新，或启用 `commands.restart` 以进行手动重启）。
 - 默认需要 Gateway 网关认证：设置 `gateway.auth.token`（或 `OPENCLAW_GATEWAY_TOKEN`）或 `gateway.auth.password`。客户端必须发送 `connect.params.auth.token/password`，除非使用 Tailscale Serve 身份。
 - 向导现在默认生成令牌，即使在 loopback 上也是如此。
@@ -167,17 +167,16 @@ OPENCLAW_CONFIG_PATH=~/.openclaw/b.json OPENCLAW_STATE_DIR=~/.openclaw-b opencla
 
 ## WebChat 集成
 
-- WebChat 是原生 SwiftUI UI，直接与 Gateway 网关 WebSocket 通信以获取历史记录、发送、中止和事件。
+- WebChat 直接与 Gateway 网关 WebSocket 通信以获取历史记录、发送、中止和事件。
 - 远程使用通过相同的 SSH/Tailscale 隧道；如果配置了 Gateway 网关令牌，客户端在 `connect` 期间包含它。
-- macOS 应用通过单个 WS 连接（共享连接）；它从初始快照填充 presence 并监听 `presence` 事件以更新 UI。
+- 客户端通过单个 WS 连接（共享连接）；它从初始快照填充 presence 并监听 `presence` 事件以更新 UI。
 
 ## 类型和验证
 
 - 服务器使用 AJV 根据从协议定义发出的 JSON Schema 验证每个入站帧。
-- 客户端（TS/Swift）消费生成的类型（TS 直接使用；Swift 通过仓库的生成器）。
-- 协议定义是真实来源；使用以下命令重新生成 schema/模型：
+- 客户端（TypeScript）消费生成的类型。
+- 协议定义是真实来源；使用以下命令重新生成 schema：
   - `pnpm protocol:gen`
-  - `pnpm protocol:gen:swift`
 
 ## 连接快照
 
@@ -241,15 +240,6 @@ openclaw logs --follow
   我们仍然建议大多数设置**每台机器一个 Gateway 网关**；使用隔离的配置文件/端口进行冗余或救援机器人。参见[多个 Gateway 网关](/gateway/multiple-gateways)。
   - 清理：`openclaw gateway uninstall`（当前服务）和 `openclaw doctor`（旧版迁移）。
 - `gateway install` 在已安装时是无操作的；使用 `openclaw gateway install --force` 重新安装（配置文件/env/路径更改）。
-
-捆绑的 mac 应用：
-
-- OpenClaw.app 可以捆绑基于 Node 的 Gateway 网关中继并安装标记为
-  `bot.molt.gateway`（或 `bot.molt.<profile>`；旧版 `com.openclaw.*` 标签仍能干净卸载）的按用户 LaunchAgent。
-- 要干净地停止它，使用 `openclaw gateway stop`（或 `launchctl bootout gui/$UID/bot.molt.gateway`）。
-- 要重启，使用 `openclaw gateway restart`（或 `launchctl kickstart -k gui/$UID/bot.molt.gateway`）。
-  - `launchctl` 仅在 LaunchAgent 已安装时有效；否则先使用 `openclaw gateway install`。
-  - 运行命名配置文件时，将标签替换为 `bot.molt.<profile>`。
 
 ## 监管（systemd 用户单元）
 

@@ -41,6 +41,7 @@ This page describes the current CLI behavior. If commands change, update this do
 - [`approvals`](/cli/approvals)
 - [`sandbox`](/cli/sandbox)
 - [`tui`](/cli/tui)
+- [`serve`](/cli/serve)
 - [`browser`](/cli/browser)
 - [`cron`](/cli/cron)
 - [`dns`](/cli/dns)
@@ -665,7 +666,6 @@ Surfaces:
 
 - `/status` (adds a short provider usage line when available)
 - `openclaw status --usage` (prints full provider breakdown)
-- macOS menu bar (Usage section under Context)
 
 Notes:
 

@@ -3,7 +3,7 @@ summary: "Integrated browser control service + action commands"
 read_when:
   - Adding agent-controlled browser automation
   - Debugging why openclaw is interfering with your own Chrome
-  - Implementing browser settings + lifecycle in the macOS app
+  - Implementing browser settings + lifecycle in the Control UI
 title: "Browser (OpenClaw-managed)"
 ---
 

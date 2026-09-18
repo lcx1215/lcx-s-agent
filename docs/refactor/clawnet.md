@@ -24,7 +24,7 @@ Single, rigorous document for:
 
 ## Goals (from discussion)
 
-- One protocol for all clients (mac app, CLI, iOS, Android, headless node).
+- One protocol for all clients (CLI, web UI, headless node).
 - Every network participant authenticated + paired.
 - Role clarity: nodes vs operators.
 - Central approvals routed to where the user is.
@@ -69,15 +69,14 @@ Single, rigorous document for:
 ## Control plane clients today
 
 - CLI → Gateway WS via `callGateway` (`src/gateway/call.ts`).
-- macOS app UI → Gateway WS (`GatewayConnection`).
+- Web UI clients → Gateway WS (`GatewayConnection`).
 - Web Control UI → Gateway WS.
 - ACP → Gateway WS.
 - Browser control uses its own HTTP control server.
 
 ## Nodes today
 
-- macOS app in node mode connects to Gateway bridge (`MacNodeBridgeSession`).
-- iOS/Android apps connect to Gateway bridge.
+- Node clients connect to the Gateway bridge.
 - Pairing + per‑node token stored on gateway.
 
 ## Current approval flow (exec)
@@ -85,7 +84,7 @@ Single, rigorous document for:
 - Agent uses `system.run` via Gateway.
 - Gateway invokes node over bridge.
 - Node runtime decides approval.
-- UI prompt shown by mac app (when node == mac app).
+- UI prompt shown by the operator client.
 - Node returns `invoke-res` to Gateway.
 - Multi‑hop, UI tied to node host.
 
@@ -93,7 +92,7 @@ Single, rigorous document for:
 
 - Gateway presence entries from WS clients.
 - Node presence entries from bridge.
-- mac app can show two entries for same machine (UI + node).
+- A client can show two entries for the same machine (UI + node).
 - Node identity stored in pairing store; UI identity separate.
 
 ---
@@ -217,7 +216,7 @@ Use current TLS runtime + fingerprint pinning:
 
 ## Current
 
-Approval happens on node host (mac app node runtime). Prompt appears where node runs.
+Approval happens on the node host. Prompt appears where the node runs.
 
 ## Proposed
 
@@ -255,10 +254,10 @@ Approval is **gateway‑hosted**, UI delivered to operator clients.
 - Optional **operator.read** for status and chat view.
 - Optional **operator.write/admin** only when explicitly enabled.
 
-## macOS app
+## Desktop node
 
-- Operator role by default (control UI).
-- Node role when “Mac node” enabled (system.run, screen, camera).
+- Operator role by default (Control UI).
+- Node role when node mode is enabled (system.run, screen, camera).
 - Same deviceId for both connections → merged UI entry.
 
 ## CLI
@@ -319,7 +318,7 @@ Same `deviceId` across roles → single “Instance” row:
 ## Phase 3: Central approvals
 
 - Add approval request + resolve events in WS.
-- Update mac app UI to prompt + respond.
+- Update the operator client UI to prompt + respond.
 - Node runtime stops prompting UI.
 
 ## Phase 4: TLS unification

@@ -318,7 +318,7 @@ curl "https://api.telegram.org/bot<bot_token>/getUpdates"
     When the `device-pair` plugin is installed:
 
     1. `/pair` generates setup code
-    2. paste code in iOS app
+    2. paste code in the OpenClaw client
     3. `/pair approve` approves latest pending request
 
     More details: [Pairing](/channels/pairing#pair-via-telegram-recommended-for-ios).

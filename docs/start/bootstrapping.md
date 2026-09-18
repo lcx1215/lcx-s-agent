@@ -26,7 +26,7 @@ On the first agent run, OpenClaw bootstraps the workspace (default
 
 ## Where it runs
 
-Bootstrapping always runs on the **gateway host**. If the macOS app connects to
+Bootstrapping always runs on the **gateway host**. If a client connects to
 a remote Gateway, the workspace and bootstrapping files live on that remote
 machine.
 
@@ -37,5 +37,5 @@ host (for example, `user@gateway-host:~/.openclaw/workspace`).
 
 ## Related docs
 
-- macOS app onboarding: [Onboarding](/start/onboarding)
+- First-run flow: [Onboarding](/start/onboarding)
 - Workspace layout: [Agent workspace](/concepts/agent-workspace)

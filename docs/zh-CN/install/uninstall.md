@@ -71,12 +71,6 @@ pnpm remove -g openclaw
 bun remove -g openclaw
 ```
 
-6. 如果你安装了 macOS 应用：
-
-```bash
-rm -rf /Applications/OpenClaw.app
-```
-
 注意事项：
 
 - 如果你使用了配置文件（`--profile` / `OPENCLAW_PROFILE`），对每个状态目录重复步骤 3（默认为 `~/.openclaw-<profile>`）。

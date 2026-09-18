@@ -14,7 +14,7 @@ x-i18n:
 
 # WebChat（Gateway 网关 WebSocket UI）
 
-状态：macOS/iOS SwiftUI 聊天 UI 直接与 Gateway 网关 WebSocket 通信。
+状态：WebChat UI 直接与 Gateway 网关 WebSocket 通信。
 
 ## 它是什么
 
@@ -25,7 +25,7 @@ x-i18n:
 ## 快速开始
 
 1. 启动 Gateway 网关。
-2. 打开 WebChat UI（macOS/iOS 应用）或控制 UI 聊天标签页。
+2. 在浏览器中打开 WebChat UI 或控制 UI 聊天标签页。
 3. 确保已配置 Gateway 网关认证（默认需要，即使在 loopback 上）。
 
 ## 工作原理（行为）

@@ -12,10 +12,9 @@ title: "Presence"
 OpenClaw “presence” is a lightweight, best‑effort view of:
 
 - the **Gateway** itself, and
-- **clients connected to the Gateway** (mac app, WebChat, CLI, etc.)
+- **clients connected to the Gateway** (WebChat, Control UI, CLI, etc.)
 
-Presence is used primarily to render the macOS app’s **Instances** tab and to
-provide quick operator visibility.
+Presence provides quick operator visibility into what is currently connected.
 
 ## Presence fields (what shows up)
 
@@ -52,8 +51,8 @@ Instances list, `client.mode === "cli"` is **not** turned into a presence entry.
 
 ### 3) `system-event` beacons
 
-Clients can send richer periodic beacons via the `system-event` method. The mac
-app uses this to report host name, IP, and `lastInputSeconds`.
+Clients can send richer periodic beacons via the `system-event` method. Clients
+use this to report host name, IP, and `lastInputSeconds`.
 
 ### 4) Node connects (role: node)
 
@@ -88,9 +87,9 @@ IP, loopback remote addresses are ignored.
 
 ## Consumers
 
-### macOS Instances tab
+### Rendering presence
 
-The macOS app renders the output of `system-presence` and applies a small status
+Clients render the output of `system-presence` and apply a small status
 indicator (Active/Idle/Stale) based on the age of the last update.
 
 ## Debugging tips

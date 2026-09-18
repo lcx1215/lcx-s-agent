@@ -769,7 +769,7 @@ Auth modes:
 Rotation checklist (token/password):
 
 1. Generate/set a new secret (`gateway.auth.token` or `OPENCLAW_GATEWAY_PASSWORD`).
-2. Restart the Gateway (or restart the macOS app if it supervises the Gateway).
+2. Restart the Gateway (`openclaw gateway restart`, or restart the service).
 3. Update any remote clients (`gateway.remote.token` / `.password` on machines that call into the Gateway).
 4. Verify you can no longer connect with the old credentials.
 
@@ -1132,7 +1132,7 @@ If your AI does something bad:
 
 ### Contain
 
-1. **Stop it:** stop the macOS app (if it supervises the Gateway) or terminate your `openclaw gateway` process.
+1. **Stop it:** stop the Gateway service (`openclaw gateway stop`) or terminate your `openclaw gateway` process.
 2. **Close exposure:** set `gateway.bind: "loopback"` (or disable Tailscale Funnel/Serve) until you understand what happened.
 3. **Freeze access:** switch risky DMs/groups to `dmPolicy: "disabled"` / require mentions, and remove `"*"` allow-all entries if you had them.
 

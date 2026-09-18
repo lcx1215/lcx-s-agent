@@ -411,7 +411,7 @@ openclaw hooks list
 # Enable it
 openclaw hooks enable my-hook
 
-# Restart your gateway process (menu bar app restart on macOS, or restart your dev process)
+# Restart your gateway process (openclaw gateway restart)
 
 # Trigger the event
 # Send /new via your messaging channel

@@ -52,13 +52,10 @@ x-i18n:
 - [媒体图片](/nodes/images)
 - [媒体音频](/nodes/audio)
 
-## 配套应用
+## 平台
 
-- [macOS 应用](/platforms/macos)
-- [iOS 应用](/platforms/ios)
-- [Android 应用](/platforms/android)
 - [Windows (WSL2)](/platforms/windows)
-- [Linux 应用](/platforms/linux)
+- [Linux](/platforms/linux)
 
 ## 运维与安全
 

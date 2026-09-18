@@ -9,6 +9,12 @@ title: "Exec Host Refactor"
 
 # Exec host refactor plan
 
+> **Status: superseded.** This plan assumed a native companion app hosting a local
+> Unix socket for approvals. That app no longer exists and there is no UDS IPC in
+> the runtime: the node host enforces exec approvals itself
+> (`src/node-host/exec-policy.ts`) and writes `~/.openclaw/exec-approvals.json`.
+> Kept for history; see [Exec approvals](/tools/exec-approvals) for current behavior.
+
 ## Goals
 
 - Add `exec.host` + `exec.security` to route execution across **sandbox**, **gateway**, and **node**.

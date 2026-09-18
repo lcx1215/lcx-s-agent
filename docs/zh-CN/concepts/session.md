@@ -26,7 +26,7 @@ OpenClaw 将**每个智能体的一个直接聊天会话**视为主会话。直�
 
 ## Gateway 网关是唯一数据源
 
-所有会话状态都**由 Gateway 网关拥有**（"主" OpenClaw）。UI 客户端（macOS 应用、WebChat 等）必须向 Gateway 网关查询会话列表和令牌计数，而不是读取本地文件。
+所有会话状态都**由 Gateway 网关拥有**（"主" OpenClaw）。UI 客户端（WebChat、Control UI、TUI 等）必须向 Gateway 网关查询会话列表和令牌计数，而不是读取本地文件。
 
 - 在**远程模式**下，你关心的会话存储位于远程 Gateway 网关主机上，而不是你的 Mac 上。
 - UI 中显示的令牌计数来自 Gateway 网关的存储字段（`inputTokens`、`outputTokens`、`totalTokens`、`contextTokens`）。客户端不会解析 JSONL 对话记录来"修正"总数。

@@ -58,8 +58,6 @@ flowchart LR
   B --> C["Piエージェント"]
   B --> D["CLI"]
   B --> E["Web Control UI"]
-  B --> F["macOSアプリ"]
-  B --> G["iOSおよびAndroidノード"]
 ```
 
 Gatewayは、セッション、ルーティング、チャネル接続の信頼できる唯一の情報源です。

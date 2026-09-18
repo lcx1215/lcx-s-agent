@@ -2,7 +2,7 @@
 read_when:
   - 在 iOS 节点或 macOS 上添加或修改相机捕获
   - 扩展智能体可访问的 MEDIA 临时文件工作流
-summary: 用于智能体的相机捕获（iOS 节点 + macOS 应用）：照片（jpg）和短视频片段（mp4）
+summary: 配对节点上的相机捕获（供智能体使用）：照片（jpg）和短视频片段（mp4）
 title: 相机捕获
 x-i18n:
   generated_at: "2026-02-03T07:50:55Z"
@@ -15,11 +15,9 @@ x-i18n:
 
 # 相机捕获（智能体）
 
-OpenClaw 支持用于智能体工作流的**相机捕获**：
+OpenClaw 支持在声明了相机命令的**配对节点**上用于智能体工作流的**相机捕获**：
 
-- **iOS 节点**（通过 Gateway 网关配对）：通过 `node.invoke` 捕获**照片**（`jpg`）或**短视频片段**（`mp4`，可选音频）。
-- **Android 节点**（通过 Gateway 网关配对）：通过 `node.invoke` 捕获**照片**（`jpg`）或**短视频片段**（`mp4`，可选音频）。
-- **macOS 应用**（通过 Gateway 网关的节点）：通过 `node.invoke` 捕获**照片**（`jpg`）或**短视频片段**（`mp4`，可选音频）。
+- 通过 `node.invoke` 捕获**照片**（`jpg`）或**短视频片段**（`mp4`，可选音频）。
 
 所有相机访问都受**用户控制的设置**限制。
 
@@ -110,13 +108,11 @@ openclaw nodes camera clip --node <id> --no-audio
 
 照片会重新压缩以保持 base64 载荷小于 5 MB。
 
-## macOS 应用
+## 节点设置
 
 ### 用户设置（默认关闭）
 
-macOS 配套应用暴露一个复选框：
-
-- **设置 → 通用 → 允许相机**（`openclaw.cameraEnabled`）
+- **允许相机**（`openclaw.cameraEnabled`）
   - 默认：**关闭**
   - 关闭时：相机请求返回"用户已禁用相机"。
 
@@ -149,9 +145,9 @@ openclaw nodes camera clip --node <id> --no-audio
 - 相机和麦克风访问会触发通常的操作系统权限提示（并需要 Info.plist 中的使用说明字符串）。
 - 视频片段有上限（当前 `<= 60s`）以避免过大的节点载荷（base64 开销 + 消息限制）。
 
-## macOS 屏幕视频（操作系统级别）
+## 屏幕视频
 
-对于*屏幕*视频（非相机），使用 macOS 配套应用：
+对于*屏幕*视频（非相机），从节点录制：
 
 ```bash
 openclaw nodes screen record --node <id> --duration 10s --fps 15   # prints MEDIA:<path>

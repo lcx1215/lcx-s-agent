@@ -1,9 +1,8 @@
 ---
 read_when:
   - 发布新的 npm 版本
-  - 发布新的 macOS 应用版本
   - 发布前验证元数据
-summary: npm + macOS 应用的逐步发布清单
+summary: npm 包的逐步发布清单
 x-i18n:
   generated_at: "2026-02-03T10:09:28Z"
   model: claude-opus-4-5
@@ -13,17 +12,18 @@ x-i18n:
   workflow: 15
 ---
 
-# 发布清单（npm + macOS）
+# 发布清单（npm）
 
 从仓库根目录使用 `pnpm`（Node 22+）。在打标签/发布前保持工作树干净。
+
+没有原生配套应用，因此 npm 包是唯一的发布产物。
 
 ## 操作员触发
 
 当操作员说"release"时，立即执行此预检（除非遇到阻碍否则不要额外提问）：
 
-- 阅读本文档和 `docs/platforms/mac/release.md`。
-- 从 `~/.profile` 加载环境变量并确认 `SPARKLE_PRIVATE_KEY_FILE` + App Store Connect 变量已设置（SPARKLE_PRIVATE_KEY_FILE 应位于 `~/.profile` 中）。
-- 如需要，使用 `~/Library/CloudStorage/Dropbox/Backup/Sparkle` 中的 Sparkle 密钥。
+- 阅读本文档。
+- 从 `~/.profile` 加载环境变量并确认 npm 凭据可用。
 
 1. **版本和元数据**
 
@@ -61,16 +61,7 @@ x-i18n:
   - `pnpm test:install:e2e`（需要两个密钥；运行两个提供商）
 - [ ]（可选）如果你的更改影响发送/接收路径，抽查 Web Gateway 网关。
 
-5. **macOS 应用（Sparkle）**
-
-- [ ] 构建并签名 macOS 应用，然后压缩以供分发。
-- [ ] 生成 Sparkle appcast（通过 [`scripts/make_appcast.sh`](https://github.com/openclaw/openclaw/blob/main/scripts/make_appcast.sh) 生成 HTML 注释）并更新 `appcast.xml`。
-- [ ] 保留应用 zip（和可选的 dSYM zip）以便附加到 GitHub 发布。
-- [ ] 按照 [macOS 发布](/platforms/mac/release) 获取确切命令和所需环境变量。
-  - `APP_BUILD` 必须是数字且单调递增（不带 `-beta`），以便 Sparkle 正确比较版本。
-  - 如果进行公证，使用从 App Store Connect API 环境变量创建的 `openclaw-notary` 钥匙串配置文件（参见 [macOS 发布](/platforms/mac/release)）。
-
-6. **发布（npm）**
+5. **发布（npm）**
 
 - [ ] 确认 git 状态干净；根据需要提交并推送。
 - [ ] 如需要，`npm login`（验证 2FA）。
@@ -79,7 +70,7 @@ x-i18n:
 
 ### 故障排除（来自 2.0.0-beta2 发布的笔记）
 
-- **npm pack/publish 挂起或产生巨大 tarball**：`dist/OpenClaw.app` 中的 macOS 应用包（和发布 zip）被扫入包中。通过 `package.json` 的 `files` 白名单发布内容来修复（包含 dist 子目录、docs、skills；排除应用包）。用 `npm pack --dry-run` 确认 `dist/OpenClaw.app` 未列出。
+- **npm pack/publish 挂起或产生巨大 tarball**：意外的构建输出被扫入包中。通过 `package.json` 的 `files` 白名单发布内容来修复（包含 dist 子目录、docs、skills）。用 `npm pack --dry-run` 确认只列出了预期路径。
 - **npm auth dist-tags 的 Web 循环**：使用旧版认证以获取 OTP 提示：
   - `NPM_CONFIG_AUTH_TYPE=legacy npm dist-tag add openclaw@X.Y.Z latest`
 - **`npx` 验证失败并显示 `ECOMPROMISED: Lock compromised`**：使用新缓存重试：
@@ -87,12 +78,11 @@ x-i18n:
 - **延迟修复后需要重新指向标签**：强制更新并推送标签，然后确保 GitHub 发布资产仍然匹配：
   - `git tag -f vX.Y.Z && git push -f origin vX.Y.Z`
 
-7. **GitHub 发布 + appcast**
+6. **GitHub 发布**
 
 - [ ] 打标签并推送：`git tag vX.Y.Z && git push origin vX.Y.Z`（或 `git push --tags`）。
 - [ ] 为 `vX.Y.Z` 创建/刷新 GitHub 发布，**标题为 `openclaw X.Y.Z`**（不仅仅是标签）；正文应包含该版本的**完整**变更日志部分（亮点 + 更改 + 修复），内联显示（无裸链接），且**不得在正文中重复标题**。
-- [ ] 附加产物：`npm pack` tarball（可选）、`OpenClaw-X.Y.Z.zip` 和 `OpenClaw-X.Y.Z.dSYM.zip`（如果生成）。
-- [ ] 提交更新后的 `appcast.xml` 并推送（Sparkle 从 main 获取源）。
+- [ ] 附加 `npm pack` tarball（可选）。
 - [ ] 从干净的临时目录（无 `package.json`），运行 `npx -y openclaw@X.Y.Z send --help` 确认安装/CLI 入口点正常工作。
 - [ ] 宣布/分享发布说明。
 

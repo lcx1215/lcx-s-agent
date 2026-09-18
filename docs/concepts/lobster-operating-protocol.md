@@ -71,7 +71,6 @@ The LCX Agent layer is already active in the bundled hooks and workface tooling:
 - `src/hooks/bundled/operating-loop/handler.ts`
 - `src/hooks/bundled/learning-review-bootstrap/handler.ts`
 - `src/agents/tools/lobster-workface-app-tool.ts`
-- `apps/macos/Sources/OpenClaw/LobsterWorkfacePanel.swift`
 
 This layer contributes the real LCX Agent advantages:
 
@@ -115,7 +114,6 @@ agent behavior and later control-room answers.
 The user-facing workface is real, not theoretical:
 
 - `src/agents/tools/lobster-workface-app-tool.ts`
-- `apps/macos/Sources/OpenClaw/LobsterWorkfacePanel.swift`
 
 The workface layer follows a hardening rule:
 

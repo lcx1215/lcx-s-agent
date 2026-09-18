@@ -1,8 +1,8 @@
 ---
 read_when:
-  - 设计 macOS 新手引导助手
+  - 运行首次运行新手引导流程
   - 实现认证或身份设置
-summary: OpenClaw 的首次运行新手引导流程（macOS 应用）
+summary: OpenClaw 的首次运行新手引导流程
 title: 新手引导
 x-i18n:
   generated_at: "2026-02-03T07:54:07Z"
@@ -13,32 +13,40 @@ x-i18n:
   workflow: 15
 ---
 
-# 新手引导（macOS 应用）
+# 新手引导
 
 本文档描述**当前**的首次运行新手引导流程。目标是流畅的"第 0 天"体验：选择 Gateway 网关运行位置、连接认证、运行向导，然后让智能体自行引导。
 
-## 页面顺序（当前）
+没有原生配套应用；新手引导通过 CLI 和新手引导聊天会话运行。
 
-1. 欢迎 + 安全提示
-2. **Gateway 网关选择**（本地 / 远程 / 稍后配置）
-3. **认证（Anthropic OAuth）** — 仅限本地
-4. **设置向导**（Gateway 网关驱动）
-5. **权限**（TCC 提示）
-6. **CLI**（可选）
-7. **新手引导聊天**（专用会话）
-8. 就绪
+## 1) 启动向导
 
-## 1) 欢迎 + 安全提示
+```bash
+openclaw onboard --install-daemon
+```
 
-阅读显示的安全提示并相应决定。
+其他入口：
 
-## 2) 本地 vs 远程
+```bash
+openclaw gateway install   # 直接安装 Gateway 网关服务
+openclaw configure         # 交互式：选择 "Gateway service"
+openclaw doctor            # 修复或迁移已有服务
+```
+
+## 2) 安全信任模型
+
+- 默认情况下，OpenClaw 是个人智能体：一个受信任的操作员边界。
+- 共享/多用户设置需要锁定（拆分信任边界，保持工具访问最小化，并遵循[安全](/gateway/security)）。
+- 本地新手引导现在将新配置默认为 `tools.profile: "messaging"`，因此广泛的运行时/文件系统工具需要显式启用。
+- 如果启用了 hooks/webhooks 或其他不受信任的内容源，请使用强大的现代模型层级并保持严格的工具策略/沙箱。
+
+## 3) 本地 vs 远程
 
 **Gateway 网关**在哪里运行？
 
-- **本地（此 Mac）：** 新手引导可以在本地运行 OAuth 流程并写入凭证。
-- **远程（通过 SSH/Tailnet）：** 新手引导**不会**在本地运行 OAuth；凭证必须存在于 Gateway 网关主机上。
-- **稍后配置：** 跳过设置并保持应用未配置状态。
+- **本机（仅本地）：** 新手引导可以在本地配置认证并写入凭证。
+- **远程（通过 SSH/Tailnet）：** 新手引导**不会**配置本地认证；凭证必须存在于 Gateway 网关主机上。
+- **稍后配置：** 跳过设置并保持 Gateway 网关未配置状态。
 
 Gateway 网关认证提示：
 
@@ -46,37 +54,15 @@ Gateway 网关认证提示：
 - 如果你禁用认证，任何本地进程都可以连接；仅在完全受信任的机器上使用。
 - 对于多机器访问或非 loopback 绑定，使用**令牌**。
 
-## 3) 仅限本地的认证（Anthropic OAuth）
+## 4) 认证
 
-macOS 应用支持 Anthropic OAuth（Claude Pro/Max）。流程：
+- Anthropic OAuth（Claude Pro/Max）在浏览器中进行（PKCE），凭证写入 `~/.openclaw/credentials/oauth.json`。
+- 其他提供商（OpenAI、自定义 API）通过环境变量或配置文件配置。
 
-- 打开浏览器进行 OAuth（PKCE）
-- 要求用户粘贴 `code#state` 值
-- 将凭证写入 `~/.openclaw/credentials/oauth.json`
+## 5) 新手引导聊天（专用会话）
 
-其他提供商（OpenAI、自定义 API）目前通过环境变量或配置文件配置。
-
-## 4) 设置向导（Gateway 网关驱动）
-
-应用可以运行与 CLI 相同的设置向导。这使新手引导与 Gateway 网关端行为保持同步，避免在 SwiftUI 中重复逻辑。
-
-## 5) 权限
-
-新手引导请求以下所需的 TCC 权限：
-
-- 通知
-- 辅助功能
-- 屏幕录制
-- 麦克风 / 语音识别
-- 自动化（AppleScript）
-
-## 6) CLI（可选）
-
-应用可以通过 npm/pnpm 安装全局 `openclaw` CLI，以便终端工作流和 launchd 任务开箱即用。
-
-## 7) 新手引导聊天（专用会话）
-
-设置完成后，应用会打开一个专用的新手引导聊天会话，让智能体可以自我介绍并指导后续步骤。这使首次运行指导与你的正常对话分开。
+设置完成后，智能体会打开一个专用的新手引导聊天会话，以便自我介绍并指导后续步骤。这使首次运行指导与你的正常对话分开。
+参阅[引导](/start/bootstrapping)了解首次智能体运行在 Gateway 网关主机上发生的事情。
 
 ## 智能体引导仪式
 

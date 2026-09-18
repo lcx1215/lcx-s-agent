@@ -96,7 +96,7 @@ git commit -m "Add Clawd workspace"
 ## OpenClaw 的功能
 
 - 运行 WhatsApp Gateway 网关 + Pi 编程智能体，使助手可以读写聊天、获取上下文，并通过主机 Mac 运行 Skills。
-- macOS 应用管理权限（屏幕录制、通知、麦克风）并通过其内置二进制文件暴露 `openclaw` CLI。
+- `openclaw` CLI 是管理入口；没有原生配套应用。
 - 私聊默认折叠到智能体的 `main` 会话；群组保持隔离为 `agent:<agentId>:<channel>:group:<id>`（房间/频道：`agent:<agentId>:<channel>:channel:<id>`）；心跳保持后台任务存活。
 
 ## 核心 Skills（在设置 → Skills 中启用）
@@ -122,7 +122,7 @@ git commit -m "Add Clawd workspace"
 
 ## 使用说明
 
-- 脚本编写优先使用 `openclaw` CLI；mac 应用处理权限。
+- 脚本编写和管理优先使用 `openclaw` CLI。
 - 从 Skills 标签页运行安装；如果二进制文件已存在，它会隐藏按钮。
 - 保持心跳启用，以便助手可以安排提醒、监控收件箱和触发摄像头捕获。
 - Canvas UI 以全屏运行并带有原生叠加层。避免在左上/右上/底部边缘放置关键控件；在布局中添加显式边距，不要依赖安全区域内边距。

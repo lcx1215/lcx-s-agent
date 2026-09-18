@@ -74,7 +74,7 @@ access, bind explicitly and keep auth enabled.
 For tailnet‑only setups:
 
 - Set `gateway.bind: "tailnet"` in `~/.openclaw/openclaw.json`.
-- Restart the Gateway (or restart the macOS menubar app).
+- Restart the Gateway (`openclaw gateway restart`).
 
 ## What advertises
 

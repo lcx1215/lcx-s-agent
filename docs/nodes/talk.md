@@ -69,17 +69,6 @@ Defaults:
 - `apiKey`: falls back to `ELEVENLABS_API_KEY` (or gateway shell profile if available)
 - `outputFormat`: defaults to `pcm_44100` on macOS/iOS and `pcm_24000` on Android (set `mp3_*` to force MP3 streaming)
 
-## macOS UI
-
-- Menu bar toggle: **Talk**
-- Config tab: **Talk Mode** group (voice id + interrupt toggle)
-- Overlay:
-  - **Listening**: cloud pulses with mic level
-  - **Thinking**: sinking animation
-  - **Speaking**: radiating rings
-  - Click cloud: stop speaking
-  - Click X: exit Talk mode
-
 ## Notes
 
 - Requires Speech + Microphone permissions.

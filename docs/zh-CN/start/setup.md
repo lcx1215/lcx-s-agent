@@ -20,8 +20,9 @@ x-i18n:
 ## 太长不看
 
 - **个性化设置存放在仓库之外：** `~/.openclaw/workspace`（工作区）+ `~/.openclaw/openclaw.json`（配置）。
-- **稳定工作流：** 安装 macOS 应用；让它运行内置的 Gateway 网关。
-- **前沿工作流：** 通过 `pnpm gateway:watch` 自己运行 Gateway 网关，然后让 macOS 应用以本地模式连接。
+- **稳定工作流：** 把 Gateway 网关安装为服务，然后通过浏览器或已有的聊天渠道访问它。
+- **前沿工作流：** 通过 `pnpm gateway:watch` 自己运行 Gateway 网关。
+- **没有原生配套应用：** Gateway 网关是一个 TypeScript 服务；你通过浏览器、聊天渠道或 CLI 与它交互。
 
 ## 先决条件（从源码）
 
@@ -50,22 +51,30 @@ openclaw setup
 
 如果你还没有全局安装，通过 `pnpm openclaw setup` 运行它。
 
-## 稳定工作流（macOS 应用优先）
+## 稳定工作流（Gateway 网关服务优先）
 
-1. 安装并启动 **OpenClaw.app**（菜单栏）。
-2. 完成新手引导/权限检查清单（TCC 提示）。
-3. 确保 Gateway 网关是**本地**并正在运行（应用管理它）。
-4. 链接表面（示例：WhatsApp）：
+1. 安装 Gateway 网关服务（以下方式均受支持）：
+
+```bash
+openclaw onboard --install-daemon   # 向导（推荐）
+openclaw gateway install            # 直接安装
+openclaw configure                  # 交互式：选择 "Gateway service"
+openclaw doctor                     # 修复或迁移已有服务
+```
+
+2. 链接表面（示例：WhatsApp）：
 
 ```bash
 openclaw channels login
 ```
 
-5. 完整性检查：
+3. 完整性检查：
 
 ```bash
 openclaw health
 ```
+
+然后通过浏览器或已有的聊天渠道访问 Gateway 网关。
 
 如果你的构建版本中没有新手引导：
 
@@ -73,15 +82,7 @@ openclaw health
 
 ## 前沿工作流（在终端中运行 Gateway 网关）
 
-目标：开发 TypeScript Gateway 网关，获得热重载，保持 macOS 应用 UI 连接。
-
-### 0)（可选）也从源码运行 macOS 应用
-
-如果你也想让 macOS 应用保持前沿：
-
-```bash
-./scripts/restart-mac.sh
-```
+目标：开发 TypeScript Gateway 网关，获得热重载。
 
 ### 1) 启动开发 Gateway 网关
 
@@ -92,17 +93,11 @@ pnpm gateway:watch
 
 `gateway:watch` 以监视模式运行 Gateway 网关，并在 TypeScript 更改时重新加载。
 
-### 2) 将 macOS 应用指向你正在运行的 Gateway 网关
+### 2) 将客户端指向你正在运行的 Gateway 网关
 
-在 **OpenClaw.app** 中：
-
-- 连接模式：**本地**
-  应用将连接到在配置端口上运行的 Gateway 网关。
+Gateway 网关 WebSocket 默认为 `ws://127.0.0.1:18789`。在浏览器中打开 Control UI 或 WebChat，或在该端口上连接任意客户端。
 
 ### 3) 验证
-
-- 应用内 Gateway 网关状态应显示 **"Using existing gateway …"**
-- 或通过 CLI：
 
 ```bash
 openclaw health
@@ -110,7 +105,7 @@ openclaw health
 
 ### 常见陷阱
 
-- **端口错误：** Gateway 网关 WS 默认为 `ws://127.0.0.1:18789`；保持应用 + CLI 在同一端口上。
+- **端口错误：** Gateway 网关 WS 默认为 `ws://127.0.0.1:18789`；保持客户端 + CLI 在同一端口上。
 - **状态存储位置：**
   - 凭证：`~/.openclaw/credentials/`
   - 会话：`~/.openclaw/agents/<agentId>/sessions/`
@@ -150,4 +145,3 @@ sudo loginctl enable-linger $USER
 - [Gateway 网关配置](/gateway/configuration)（配置模式 + 示例）
 - [Discord](/channels/discord) 和 [Telegram](/channels/telegram)（回复标签 + replyToMode 设置）
 - [OpenClaw 助手设置](/start/openclaw)
-- [macOS 应用](/platforms/macos)（Gateway 网关生命周期）

@@ -113,5 +113,5 @@ RPC API, and a full list of config fields the wizard writes, see the
 
 - CLI command reference: [`openclaw onboard`](/cli/onboard)
 - Onboarding overview: [Onboarding Overview](/start/onboarding-overview)
-- macOS app onboarding: [Onboarding](/start/onboarding)
+- First-run flow: [Onboarding](/start/onboarding)
 - Agent first-run ritual: [Agent Bootstrapping](/start/bootstrapping)

@@ -213,7 +213,7 @@ OpenClaw 为 browser、canvas、nodes 和 cron 暴露**一流的智能体工具*
 - 如果不允许 `process`，`exec` 会同步运行并忽略 `yieldMs`/`background`。
 - `elevated` 受 `tools.elevated` 加上任何 `agents.list[].tools.elevated` 覆盖的门控（两者都必须允许），是 `host=gateway` + `security=full` 的别名。
 - `elevated` 仅在智能体被沙箱隔离时改变行为（否则是空操作）。
-- `host=node` 可以针对 macOS 配套应用或无头节点主机（`openclaw node run`）。
+- `host=node` 针对无头节点主机（`openclaw node run`）。
 - Gateway 网关/节点审批和允许列表：[执行审批](/tools/exec-approvals)。
 
 ### `process`
@@ -335,7 +335,7 @@ OpenClaw 为 browser、canvas、nodes 和 cron 暴露**一流的智能体工具*
 
 注意：
 
-- 摄像头/屏幕命令需要节点应用在前台。
+- 摄像头/屏幕命令需要节点客户端在前台。
 - 图像返回图像块 + `MEDIA:<path>`。
 - 视频返回 `FILE:<path>`（mp4）。
 - 位置返回 JSON 负载（lat/lon/accuracy/timestamp）。

@@ -76,17 +76,6 @@ Talk 模式是一个连续的语音对话循环：
 - `apiKey`：回退到 `ELEVENLABS_API_KEY`（或 Gateway 网关 shell profile（如果可用））
 - `outputFormat`：macOS/iOS 上默认为 `pcm_44100`，Android 上默认为 `pcm_24000`（设置 `mp3_*` 以强制 MP3 流式传输）
 
-## macOS UI
-
-- 菜单栏切换：**Talk**
-- 配置标签页：**Talk Mode** 组（voice id + 中断开关）
-- 悬浮窗：
-  - **监听**：云朵随麦克风电平脉动
-  - **思考**：下沉动画
-  - **朗读**：辐射圆环
-  - 点击云朵：停止朗读
-  - 点击 X：退出 Talk 模式
-
 ## 注意事项
 
 - 需要语音 + 麦克风权限。

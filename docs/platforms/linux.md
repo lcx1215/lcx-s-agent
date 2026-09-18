@@ -1,17 +1,18 @@
 ---
-summary: "Linux support + companion app status"
+summary: "Linux support and Gateway install"
 read_when:
-  - Looking for Linux companion app status
+  - Running the Gateway on Linux
   - Planning platform coverage or contributions
-title: "Linux App"
+title: "Linux"
 ---
 
-# Linux App
+# Linux
 
 The Gateway is fully supported on Linux. **Node is the recommended runtime**.
 Bun is not recommended for the Gateway (WhatsApp/Telegram bugs).
 
-Native Linux companion apps are planned. Contributions are welcome if you want to help build one.
+There is no native companion app; you reach the Gateway from a browser or an
+existing chat channel.
 
 ## Beginner quick path (VPS)
 

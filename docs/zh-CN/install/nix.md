@@ -43,7 +43,7 @@ Reference the nix-openclaw README for module options.
 
 ## 你将获得
 
-- Gateway 网关 + macOS 应用 + 工具（whisper、spotify、cameras）— 全部固定版本
+- Gateway 网关 + 工具（whisper、spotify、cameras）— 全部固定版本
 - 重启后仍能运行的 Launchd 服务
 - 带有声明式配置的插件系统
 - 即时回滚：`home-manager switch --rollback`
@@ -61,12 +61,6 @@ OpenClaw 支持 **Nix 模式**，使配置确定性并禁用自动安装流程�
 OPENCLAW_NIX_MODE=1
 ```
 
-在 macOS 上，GUI 应用不会自动继承 shell 环境变量。你也可以通过 defaults 启用 Nix 模式：
-
-```bash
-defaults write bot.molt.mac openclaw.nixMode -bool true
-```
-
 ### 配置 + 状态路径
 
 OpenClaw 从 `OPENCLAW_CONFIG_PATH` 读取 JSON5 配置，并将可变数据存储在 `OPENCLAW_STATE_DIR` 中。
@@ -80,17 +74,7 @@ OpenClaw 从 `OPENCLAW_CONFIG_PATH` 读取 JSON5 配置，并将可变数据存�
 
 - 自动安装和自我修改流程被禁用
 - 缺失的依赖会显示 Nix 特定的修复消息
-- 存在时 UI 会显示只读 Nix 模式横幅
-
-## 打包注意事项（macOS）
-
-macOS 打包流程期望在以下位置有一个稳定的 Info.plist 模板：
-
-```
-apps/macos/Sources/OpenClaw/Resources/Info.plist
-```
-
-[`scripts/package-mac-app.sh`](https://github.com/openclaw/openclaw/blob/main/scripts/package-mac-app.sh) 将此模板复制到应用包中并修补动态字段（bundle ID、版本/构建号、Git SHA、Sparkle 密钥）。这使 plist 对于 SwiftPM 打包和 Nix 构建保持确定性（它们不依赖完整的 Xcode 工具链）。
+- 跳过 Gateway 更新检查（版本由 Nix 管理）
 
 ## 相关内容
 

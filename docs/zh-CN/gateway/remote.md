@@ -16,8 +16,8 @@ x-i18n:
 
 本仓库通过在专用主机（桌面/服务器）上运行单个 Gateway 网关（主节点）并让客户端连接到它来支持"SSH 远程"。
 
-- 对于**操作员（你/macOS 应用）**：SSH 隧道是通用的回退方案。
-- 对于**节点（iOS/Android 和未来的设备）**：连接到 Gateway **WebSocket**（LAN/tailnet 或根据需要通过 SSH 隧道）。
+- 对于**操作员（你）**：SSH 隧道是通用的回退方案。
+- 对于**节点**：连接到 Gateway **WebSocket**（LAN/tailnet 或根据需要通过 SSH 隧道）。
 
 ## 核心理念
 
@@ -43,10 +43,10 @@ x-i18n:
 
 笔记本电脑**不**运行智能体。它远程连接：
 
-- 使用 macOS 应用的 **Remote over SSH** 模式（设置 → 通用 → "OpenClaw runs"）。
-- 应用打开并管理隧道，因此 WebChat + 健康检查"直接工作"。
+- 通过 SSH 转发 `18789`，然后将客户端指向 `ws://127.0.0.1:18789`。
+- 没有原生配套应用；浏览器控制 UI、WebChat 和 CLI 都可以通过该隧道工作。
 
-操作手册：[macOS 远程访问](/platforms/mac/remote)。
+操作手册：macOS 远程访问。
 
 ### 3) 笔记本电脑运行 Gateway 网关，从其他机器远程访问
 
@@ -71,7 +71,7 @@ x-i18n:
 说明：
 
 - **节点不运行 Gateway 网关服务。** 除非你有意运行隔离的配置文件，否则每台主机只应运行一个 Gateway 网关（参见[多 Gateway 网关](/gateway/multiple-gateways)）。
-- macOS 应用的"节点模式"只是通过 Gateway WebSocket 的节点客户端。
+- 处于"节点模式"的节点只是通过 Gateway WebSocket 的节点客户端。
 
 ## SSH 隧道（CLI + 工具）
 
@@ -108,16 +108,12 @@ ssh -N -L 18789:127.0.0.1:18789 user@host
 
 ## 通过 SSH 的聊天 UI
 
-WebChat 不再使用单独的 HTTP 端口。SwiftUI 聊天 UI 直接连接到 Gateway WebSocket。
+WebChat 不使用单独的 HTTP 端口。聊天 UI 直接连接到 Gateway WebSocket。
 
 - 通过 SSH 转发 `18789`（见上文），然后让客户端连接到 `ws://127.0.0.1:18789`。
-- 在 macOS 上，优先使用应用的"Remote over SSH"模式，它会自动管理隧道。
+- 同一条隧道也可用于远程状态检查、WebChat 和语音唤醒转发。
 
-## macOS 应用"Remote over SSH"
-
-macOS 菜单栏应用可以端到端驱动相同的设置（远程状态检查、WebChat 和语音唤醒转发）。
-
-操作手册：[macOS 远程访问](/platforms/mac/remote)。
+操作手册：[远程 Gateway 网关设置](/gateway/remote-gateway-readme)。
 
 ## 安全规则（远程/VPN）
 
