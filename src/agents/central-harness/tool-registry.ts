@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { createFinancePositionLedgerReadTool } from "../tools/finance-position-ledger-read-tool.js";
 import { createFinanceResearchRunTool } from "../tools/finance-research-run-tool.js";
 import type { CentralToolSpec } from "./types.js";
 import { CENTRAL_FORBIDDEN_SIDE_EFFECTS } from "./types.js";
@@ -148,8 +149,17 @@ const READ_ONLY_OWNERS: readonly OwnerCommand[] = [
  */
 export const CENTRAL_EXCLUDED_WRITE_OWNER_IDS = ["selfRepairHands"] as const;
 
-/** Capability (non-governance) tools registered alongside the owners. */
-export const CENTRAL_CAPABILITY_OWNER_IDS = ["finance_research_run"] as const;
+/**
+ * Capability (non-governance) tools registered alongside the owners.
+ * `finance_position_ledger_read` is the read-only view of the real per-asset
+ * book: without it the brain could only see counts ("an owner ran") and never
+ * what is actually held, so every finance decision would be made off a stateless
+ * snapshot. `finance_research_run` is the planning-only research capability.
+ */
+export const CENTRAL_CAPABILITY_OWNER_IDS = [
+  "finance_position_ledger_read",
+  "finance_research_run",
+] as const;
 
 export const CENTRAL_GOVERNANCE_OWNER_IDS: readonly string[] = READ_ONLY_OWNERS.map(
   (owner) => owner.id,
@@ -347,9 +357,13 @@ async function runOwner(
  * the same gate discipline as owners. `finance_research_run` is planning-only
  * here — the gate refuses any `live` argument, because a live run would reach
  * `provider_call`, which CENTRAL_FORBIDDEN_SIDE_EFFECTS rules out for the brain.
+ * `finance_position_ledger_read` is the read-only per-asset book view: it opens
+ * the real local ledger and answers "what is held and what is it worth", and the
+ * gate refuses any arg that would turn the read into an append or an order.
  */
 function createCapabilityTools(): readonly CentralToolSpec[] {
   const financeResearch = createFinanceResearchRunTool();
+  const ledgerRead = createFinancePositionLedgerReadTool();
   return [
     {
       ownerId: "finance_research_run",
@@ -377,6 +391,25 @@ function createCapabilityTools(): readonly CentralToolSpec[] {
         return details !== null && typeof details === "object" && !Array.isArray(details)
           ? (details as Record<string, unknown>)
           : { financeResearchRun: true };
+      },
+    },
+    {
+      ownerId: "finance_position_ledger_read",
+      name: ledgerRead.name,
+      label: ledgerRead.label,
+      description: `${ledgerRead.description} Central-harness scope: read-only; the gate refuses any arg that smacks of an append, order, or write.`,
+      allowedSideEffects: ["local_read"],
+      boundary: ["research_only", "finance_position_ledger_read_only", "no_execution_authority"],
+      approve: (args) => {
+        const escalation = escalationReason(args);
+        return escalation ? { ok: false, reason: `capability gate: ${escalation}` } : { ok: true };
+      },
+      execute: async (args) => {
+        const result = await ledgerRead.execute(`central-capability-${randomUUID()}`, args);
+        const details = (result as { details?: unknown } | undefined)?.details;
+        return details !== null && typeof details === "object" && !Array.isArray(details)
+          ? (details as Record<string, unknown>)
+          : { financePositionLedgerRead: true };
       },
     },
   ];

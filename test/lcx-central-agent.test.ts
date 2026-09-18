@@ -253,6 +253,9 @@ describe("central harness covers the whole system, not a slice of it", () => {
       expect(registry.has(capabilityId)).toBe(true);
     }
     expect(CENTRAL_CAPABILITY_OWNER_IDS).toContain("finance_research_run");
+    // The whole-system claim includes the real book: the brain must be able to
+    // see what is held (per-asset state), not only counts of what ran.
+    expect(CENTRAL_CAPABILITY_OWNER_IDS).toContain("finance_position_ledger_read");
   });
 
   it("keeps write-authority owners out, explicitly rather than by omission", () => {
@@ -287,6 +290,41 @@ describe("central harness covers the whole system, not a slice of it", () => {
     expect(receipt.actionsApproved).toBe(0);
     expect(receipt.actionsBlockedByGate).toBe(1);
     expect(receipt.steps[0].gateReason).toContain("capability gate");
+  });
+
+  it("reads the real per-asset book through the ledger capability, gated as read-only", async () => {
+    const spec = registry.get("finance_position_ledger_read")!;
+    expect(spec.approve({ asOf: "2026-09-17T00:00:00.000Z" }).ok).toBe(true);
+    expect(spec.approve({ order: { symbol: "NVDA" } }).ok).toBe(false);
+    expect(spec.approve({ trade: true }).ok).toBe(false);
+    expect(spec.approve({ write: true }).ok).toBe(false);
+
+    // Dispatch against an absent ledger directory: the capability must run, hand
+    // back a receipt that names the absent book (not an empty portfolio), and the
+    // harness must record ran_ok — "it ran and reported" ≠ "it crashed".
+    const ledgerDir = path.join(os.tmpdir(), `lcx-central-test-ledger-${process.pid}`);
+    const receipt = await runCentralHarnessCycle({
+      perception: perception(),
+      brain: brainWithActions([
+        {
+          ownerId: "finance_position_ledger_read",
+          args: { directory: ledgerDir },
+          reasoning: "see what the book holds",
+        },
+      ]),
+      registry,
+    });
+    expect(receipt.actionsProposed).toBe(1);
+    expect(receipt.actionsBlockedByGate).toBe(0);
+    const step = receipt.steps[0];
+    expect(step.status).toBe("ran_ok");
+    // The tool's leading fields survive the digest; the tail (notTouched list,
+    // paths) may be budget-dropped by design — the gate above already proves the
+    // write surface is unreachable through this capability.
+    expect(step.outcome?.status).toBe("absent");
+    expect(step.outcome?.reason).toBe("finance_position_ledger_absent");
+    expect(receipt.liveTouched).toBe(false);
+    expect(receipt.providerConfigTouched).toBe(false);
   });
 
   it("never appends an extra CLI flag to an owner command", () => {
