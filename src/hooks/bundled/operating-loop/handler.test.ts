@@ -616,6 +616,98 @@ describe("operating-loop hook", () => {
     );
     expect(unifiedRiskView).toContain("ready_targets: 1");
     expect(unifiedRiskView).toContain("risk_audit_path: memory/2026-03-15-risk-audit-snapshot.md");
+    expect(unifiedRiskView).toContain(
+      "position_ledger_status: not_available (no control-room snapshot found)",
+    );
+    expect(unifiedRiskView).toContain("## Position Ledger");
+  });
+
+  it("weaves the real control-room position ledger into the unified risk view", async () => {
+    const workspaceDir = await createCaseWorkspace("position-ledger");
+    const memoryDir = path.join(workspaceDir, "memory");
+    const sessionsDir = path.join(workspaceDir, "sessions");
+    await fs.mkdir(memoryDir, { recursive: true });
+    await fs.mkdir(sessionsDir, { recursive: true });
+
+    const stateDir = path.join(workspaceDir, "state");
+    await fs.mkdir(stateDir, { recursive: true });
+    await fs.writeFile(
+      path.join(stateDir, "lcx-control-room-latest.json"),
+      `${JSON.stringify(
+        {
+          schemaVersion: "lcx_control_room_v1",
+          kind: "lcx-control-room",
+          generatedAt: "2026-09-18T07:49:57.577Z",
+          positionLedger: {
+            schemaVersion: "lcx_finance_position_ledger_projection_v1",
+            boundary: "finance_position_ledger_read_only",
+            status: "ready",
+            recordCount: 2,
+            receiptRecordCount: 1,
+            markRecordCount: 1,
+            openPositionCount: 1,
+            positions: [
+              {
+                instrument: "AAPL",
+                quantity: 10,
+                averageCost: 231.4,
+                realizedPnl: 0,
+                markPrice: 233.1,
+                markPriceAt: "2026-09-17T11:00:00Z",
+                unrealizedPnl: 17,
+              },
+            ],
+            realizedPnl: 0,
+            unrealizedPnl: 17,
+            notTouched: ["trading_execution", "order_placement", "provider_config"],
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf-8",
+    );
+
+    const sessionFile = await writeWorkspaceFile({
+      dir: sessionsDir,
+      name: "ledger-session.jsonl",
+      content: createSessionContent([
+        { role: "user", content: "Summarize today's operating loop before reset" },
+        { role: "assistant", content: "I will fold the control-room snapshot into the risk view." },
+      ]),
+    });
+
+    const event = createHookEvent("command", "reset", "agent:main:main", {
+      cfg: makeConfig(workspaceDir),
+      commandSource: "cli",
+      previousSessionEntry: {
+        sessionId: "ledger-session",
+        sessionFile,
+      },
+    });
+    event.timestamp = new Date("2026-03-15T12:00:00.000Z");
+
+    await handler(event);
+
+    const unifiedRiskView = await fs.readFile(
+      path.join(memoryDir, "unified-risk-view.md"),
+      "utf-8",
+    );
+    expect(unifiedRiskView).toContain("## Position Ledger");
+    expect(unifiedRiskView).toContain("- position_ledger_status: ready");
+    expect(unifiedRiskView).toContain("- open_position_count: 1");
+    expect(unifiedRiskView).toContain("- position_ledger_records: 2");
+    expect(unifiedRiskView).toContain("- realized_pnl: 0");
+    expect(unifiedRiskView).toContain("- unrealized_pnl: 17");
+    expect(unifiedRiskView).toContain(
+      "- position: AAPL qty=10 avg_cost=231.4 mark=233.1 unrealized_pnl=17",
+    );
+    expect(unifiedRiskView).toContain(
+      "read-only control-room projection without execution authority",
+    );
+    expect(unifiedRiskView).toContain(
+      "Asset-level approvals or vetoes are intentionally left empty",
+    );
   });
 
   it("derives risk artifacts from the current frontier session even before a research card exists", async () => {

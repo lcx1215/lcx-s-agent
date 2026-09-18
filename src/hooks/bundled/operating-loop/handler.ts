@@ -140,6 +140,34 @@ type StaleWriteAuditRecord = {
   incoming: ProtectedSummaryMetadata;
 };
 
+// Read-only projection of the finance position ledger as folded into the
+// control-room snapshot by lcx-governance-autopilot (schema
+// lcx_finance_position_ledger_projection_v1). Field names mirror that writer;
+// an absent database surfaces as status "absent", a missing mark as
+// "partial_no_mark" — never a fabricated portfolio.
+type PositionLedgerPosition = {
+  instrument: string;
+  quantity: number;
+  averageCost?: number | null;
+  markPrice?: number | null;
+  markPriceAt?: string | null;
+  realizedPnl?: number | null;
+  unrealizedPnl?: number | null;
+};
+
+type PositionLedgerSnapshot = {
+  status?: string;
+  recordCount?: number;
+  positionCount?: number;
+  openPositionCount?: number;
+  realizedPnl?: number | null;
+  unrealizedPnl?: number | null;
+  positions?: PositionLedgerPosition[];
+  notTouched?: string[];
+};
+
+const CONTROL_ROOM_LATEST_FILENAME = "lcx-control-room-latest.json";
+
 const PROTECTED_SUMMARY_FILES = new Set(["current-research-line.md", "unified-risk-view.md"]);
 const SUMMARY_METADATA_PREFIX = "<!-- operating-loop-write-guard: ";
 const SUMMARY_METADATA_SUFFIX = " -->";
@@ -1302,12 +1330,93 @@ function renderRiskAuditSnapshot(params: {
   ].join("\n");
 }
 
+// One canonical snapshot name shared with the control-room writer
+// (scripts/operator/lcx-local-paths.ts CONTROL_ROOM_LATEST_PATH), resolved
+// under the same workspace dir this hook already uses. Reading is fail-open:
+// an absent or malformed snapshot is reported by the renderer as
+// not_available, never as an empty portfolio.
+async function loadControlRoomPositionLedger(
+  workspaceDir: string,
+): Promise<PositionLedgerSnapshot | undefined> {
+  let raw: string;
+  try {
+    raw = await fs.readFile(
+      path.join(workspaceDir, "state", CONTROL_ROOM_LATEST_FILENAME),
+      "utf-8",
+    );
+  } catch {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed !== "object" || parsed === null) {
+      return undefined;
+    }
+    const ledger = (parsed as Record<string, unknown>).positionLedger;
+    if (typeof ledger !== "object" || ledger === null) {
+      return undefined;
+    }
+    return ledger as PositionLedgerSnapshot;
+  } catch {
+    return undefined;
+  }
+}
+
+function finiteNumberOr(value: number | null | undefined, fallback: string): string {
+  return value === null || value === undefined || !Number.isFinite(value)
+    ? fallback
+    : String(value);
+}
+
+function renderPositionLedgerSection(ledger: PositionLedgerSnapshot | undefined): string[] {
+  const notTouched =
+    Array.isArray(ledger?.notTouched) && (ledger?.notTouched?.length ?? 0) > 0
+      ? (ledger?.notTouched?.join(", ") ?? "")
+      : "trading execution, order placement, provider config, external senders, protected memory";
+  if (!ledger || typeof ledger.status !== "string") {
+    return [
+      "",
+      "## Position Ledger",
+      "- position_ledger_status: not_available (no control-room snapshot found)",
+      `- not_touched: ${notTouched}`,
+    ];
+  }
+  const lines = [
+    "",
+    "## Position Ledger",
+    `- position_ledger_status: ${ledger.status}`,
+    `- open_position_count: ${finiteNumberOr(ledger.openPositionCount ?? null, "not_available")}`,
+    `- position_ledger_records: ${finiteNumberOr(ledger.recordCount ?? null, "not_available")}`,
+    `- realized_pnl: ${finiteNumberOr(ledger.realizedPnl ?? null, "not_available")}`,
+    `- unrealized_pnl: ${finiteNumberOr(ledger.unrealizedPnl ?? null, "not_available")}`,
+    `- not_touched: ${notTouched}`,
+  ];
+  const positions = Array.isArray(ledger.positions) ? ledger.positions : [];
+  for (const position of positions) {
+    lines.push(
+      `- position: ${position.instrument} qty=${position.quantity} avg_cost=${finiteNumberOr(
+        position.averageCost ?? null,
+        "not_available",
+      )} mark=${finiteNumberOr(position.markPrice ?? null, "no_mark")} unrealized_pnl=${finiteNumberOr(
+        position.unrealizedPnl ?? null,
+        "not_available",
+      )}`,
+    );
+  }
+  if (ledger.status !== "ready" && positions.length === 0) {
+    lines.push("- note: ledger is present but carries no current open positions with marks.");
+  }
+  lines.push("- note: read-only control-room projection without execution authority.");
+  return lines;
+}
+
 function renderUnifiedRiskView(params: {
   dateStr: string;
   nowIso: string;
   frontierSnapshots: FrontierSnapshot[];
   fundamentalHandoffs: FundamentalRiskSnapshot[];
   latestLearningCarryover?: LatestLearningCarryover;
+  positionLedger?: PositionLedgerSnapshot;
 }) {
   const handoffSummary = summarizeFundamentalHandoffs(params.fundamentalHandoffs);
   return [
@@ -1356,6 +1465,7 @@ function renderUnifiedRiskView(params: {
             : []),
         ]
       : []),
+    ...renderPositionLedgerSection(params.positionLedger),
     "- Asset-level approvals or vetoes are intentionally left empty because this repo does not provide that runtime state yet.",
     "",
   ].join("\n");
@@ -1478,6 +1588,7 @@ function buildNotes(params: {
   weeklyFrontier: FrontierSnapshot[];
   latestLearningCarryover?: LatestLearningCarryover;
   priorCurrentResearchLineStatus?: "active" | "paused" | "superseded" | "ready_to_resume";
+  positionLedger?: PositionLedgerSnapshot;
 }): MemoryNote[] {
   return [
     {
@@ -1559,6 +1670,7 @@ function buildNotes(params: {
           params.dailyFrontier.length > 0 ? params.dailyFrontier : params.weeklyFrontier,
         fundamentalHandoffs: params.fundamentalHandoffs,
         latestLearningCarryover: params.latestLearningCarryover,
+        positionLedger: params.positionLedger,
       }),
     },
   ];
@@ -1605,12 +1717,14 @@ const saveOperatingLoopArtifacts: HookHandler = async (event) => {
           } satisfies LatestLearningCarryover;
         })()
       : undefined;
-    const [fundamentalHandoffs, reviewMemos, followUpTrackers, artifactErrors] = await Promise.all([
-      loadFundamentalRiskSnapshots(workspaceDir),
-      loadFundamentalReviewMemoSnapshots(workspaceDir),
-      loadFundamentalFollowUpTrackerSnapshots(workspaceDir),
-      loadFundamentalArtifactErrorSnapshots(workspaceDir),
-    ]);
+    const [fundamentalHandoffs, reviewMemos, followUpTrackers, artifactErrors, positionLedger] =
+      await Promise.all([
+        loadFundamentalRiskSnapshots(workspaceDir),
+        loadFundamentalReviewMemoSnapshots(workspaceDir),
+        loadFundamentalFollowUpTrackerSnapshots(workspaceDir),
+        loadFundamentalArtifactErrorSnapshots(workspaceDir),
+        loadControlRoomPositionLedger(workspaceDir),
+      ]);
     const commandSource = event.context?.commandSource;
     const source = typeof commandSource === "string" ? commandSource : "unknown";
 
@@ -1679,6 +1793,7 @@ const saveOperatingLoopArtifacts: HookHandler = async (event) => {
       weeklyFrontier,
       latestLearningCarryover,
       priorCurrentResearchLineStatus: priorCurrentResearchLine?.lineStatus,
+      positionLedger,
     });
     const sourceRunId = `${event.sessionKey}:${sessionId ?? "unknown"}:${event.action}:${producedAt}`;
     const protectedMetadata = buildProtectedSummaryMetadata({
