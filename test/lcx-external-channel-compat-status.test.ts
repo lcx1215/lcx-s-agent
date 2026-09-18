@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -173,7 +173,7 @@ function runApplyWithFakePnpm(params: {
   targetRoot: string;
   fakeBinDir: string;
   json?: boolean;
-}): ReturnType<typeof spawnSync> {
+}): SpawnSyncReturns<string> {
   return spawnSync(
     process.execPath,
     [
@@ -361,7 +361,16 @@ describe("lcx-promote-live status", () => {
     const state = JSON.parse(fs.readFileSync(statePath, "utf8")) as {
       fileActions: unknown[];
       commands: {
-        targetBuild: { stdout: string; stderr: string };
+        // Mirrors the full record the promotion script writes for a build command; only the
+        // stream fields are read back below.
+        targetBuild: {
+          command: string;
+          cwd: string;
+          status: string;
+          code: number;
+          stdout: string;
+          stderr: string;
+        };
       };
     };
     state.fileActions = Array.from({ length: 250 }, (_, index) => ({

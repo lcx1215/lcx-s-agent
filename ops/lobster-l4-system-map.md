@@ -6,7 +6,7 @@ make it obvious where new work belongs.
 
 ## 1. Product Shape
 
-Lobster is a low-frequency research operating system.
+Lobster is a research operating system with an explicit, authorized path to live execution.
 
 Mainline:
 
@@ -15,12 +15,18 @@ Mainline:
 - summary first
 - branch detail only when needed
 
-Not mainline:
+Not the default:
 
-- autonomous trading
+- autonomous trading without an explicitly selected mode
 - execution approval theater
-- HFT
+- unattended HFT
 - free-form memory sprawl
+
+Opt-in and explicitly authorized (`live_execution`):
+
+- real orders, but only through a declared execution adapter
+- only for the venue, instrument, size, and run the operator authorizes
+- always inside a stated risk budget, always leaving an execution receipt
 
 ## 2. Active Runtime Layers
 

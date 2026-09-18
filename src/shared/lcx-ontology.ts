@@ -50,6 +50,18 @@ export const LCX_ONTOLOGY_ENTITY_TYPES = [
 ] as const;
 export type LcxOntologyEntityType = (typeof LCX_ONTOLOGY_ENTITY_TYPES)[number];
 
+/**
+ * Execution authority vocabulary. Only a live-execution run may leave `"none"`, and it does
+ * so as `"declared_execution_adapter_required"` so the order path always stays named. The
+ * ontology owns the vocabulary; the adapter, credentials, and funding stay separate authorities.
+ */
+export const LCX_ONTOLOGY_FINANCE_EXECUTION_AUTHORITIES = [
+  "none",
+  "declared_execution_adapter_required",
+] as const;
+export type LcxOntologyFinanceExecutionAuthority =
+  (typeof LCX_ONTOLOGY_FINANCE_EXECUTION_AUTHORITIES)[number];
+
 /** Caseflow artifacts reuse entity semantics; persistence and dispatch stay with their owners. */
 export const LCX_CASEFLOW_CONTRACT = {
   schemaVersion: "lcx_caseflow_v2",
@@ -60,12 +72,12 @@ export const LCX_CASEFLOW_CONTRACT = {
     outcome_ledger: "evidence",
   },
   owner: "src/agents/finance-caseflow.ts",
-  executionAuthority: "none",
+  executionAuthority: LCX_ONTOLOGY_FINANCE_EXECUTION_AUTHORITIES,
 } as const satisfies {
   schemaVersion: string;
   entities: Record<string, LcxOntologyEntityType>;
   owner: string;
-  executionAuthority: "none";
+  executionAuthority: readonly LcxOntologyFinanceExecutionAuthority[];
 };
 
 export const LCX_ONTOLOGY_RELATION_TYPES = [
@@ -1191,6 +1203,13 @@ export const LCX_ONTOLOGY_WORKFLOW_NODE_IDS = [
   "commercial_acceptance_harness",
   "schedule_gate",
   "repair_lock",
+  "execution_intent",
+  "explicit_run_authorization",
+  "declared_execution_adapter",
+  "order_placement",
+  "execution_receipt",
+  "position_ledger",
+  "equity_curve_projection",
 ] as const;
 export type LcxOntologyWorkflowNodeId = (typeof LCX_ONTOLOGY_WORKFLOW_NODE_IDS)[number];
 
@@ -1318,6 +1337,13 @@ export const LCX_ONTOLOGY_WORKFLOW_FILTER_IDS = [
   "logical_agent_config_immutable_required",
   "logical_agent_terminal_sink_required",
   "no_logical_agent_external_side_effects",
+  "explicit_run_authorization_required",
+  "declared_execution_adapter_required",
+  "risk_budget_required",
+  "execution_receipt_required",
+  "append_only_ledger_required",
+  "mark_required_for_unrealized_pnl",
+  "declared_period_required_for_annualised_metric",
 ] as const;
 export type LcxOntologyWorkflowFilterId = (typeof LCX_ONTOLOGY_WORKFLOW_FILTER_IDS)[number];
 
@@ -1345,6 +1371,7 @@ export const LCX_ONTOLOGY_WORKFLOW_SCENARIO_IDS = [
   "multi_agent_pattern_shadow_evaluation_waterflow",
   "logical_agent_pool_waterflow",
   "prediction_market_research_only_waterflow",
+  "finance_live_execution_waterflow",
   "automation_repair_lock_waterflow",
 ] as const;
 export type LcxOntologyWorkflowScenarioId = (typeof LCX_ONTOLOGY_WORKFLOW_SCENARIO_IDS)[number];
@@ -1372,6 +1399,7 @@ export const LCX_ONTOLOGY_WORKFLOW_FAMILY_IDS = [
   "multi_agent_pattern_shadow_evaluation",
   "logical_agent_pool",
   "prediction_market_research_and_strategy_audit",
+  "authorized_live_execution_and_risk_budget",
   "codex_auto_repair_and_schedule_guard",
 ] as const;
 export type LcxOntologyWorkflowFamilyId = (typeof LCX_ONTOLOGY_WORKFLOW_FAMILY_IDS)[number];
@@ -1776,7 +1804,7 @@ export const LCX_ONTOLOGY_REGISTRY = {
     roles: LCX_FINANCE_WORKFLOW_ROLE_CONTRACTS,
     owner: "src/agents/finance-model-workflow.ts",
     proof: "src/agents/finance-model-workflow.test.ts",
-    executionAuthority: "none",
+    executionAuthority: LCX_ONTOLOGY_FINANCE_EXECUTION_AUTHORITIES,
   },
   aliases: {
     module: LCX_ONTOLOGY_MODULE_ALIASES,

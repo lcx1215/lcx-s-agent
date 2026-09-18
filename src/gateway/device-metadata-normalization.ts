@@ -15,8 +15,8 @@ export function normalizeDeviceMetadataForAuth(value?: string | null): string {
   if (!trimmed) {
     return "";
   }
-  // Keep cross-runtime normalization deterministic (TS/Swift/Kotlin) by only
-  // lowercasing ASCII metadata fields used in auth payloads.
+  // Keep cross-runtime normalization deterministic by only lowercasing ASCII
+  // metadata fields used in auth payloads.
   return toLowerAscii(trimmed);
 }
 

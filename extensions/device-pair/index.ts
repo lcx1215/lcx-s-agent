@@ -301,7 +301,7 @@ function formatSetupReply(payload: SetupPayload, authLabel: string): string {
   return [
     "Pairing setup code generated.",
     "",
-    "1) Open the iOS app → Settings → Gateway",
+    "1) Open the device client → Settings → Gateway",
     "2) Paste the setup code below and tap Connect",
     "3) Back here, run /pair approve",
     "",
@@ -317,7 +317,7 @@ function formatSetupInstructions(): string {
   return [
     "Pairing setup code generated.",
     "",
-    "1) Open the iOS app → Settings → Gateway",
+    "1) Open the device client → Settings → Gateway",
     "2) Paste the setup code from my next message and tap Connect",
     "3) Back here, run /pair approve",
   ].join("\n");
@@ -436,9 +436,7 @@ export default function register(api: OpenClawPluginApi) {
             if (send) {
               await send(
                 target,
-                ["Scan this QR code with the OpenClaw iOS app:", "", "```", qrAscii, "```"].join(
-                  "\n",
-                ),
+                ["Scan this QR code with the device client:", "", "```", qrAscii, "```"].join("\n"),
                 {
                   ...(ctx.messageThreadId != null ? { messageThreadId: ctx.messageThreadId } : {}),
                   ...(ctx.accountId ? { accountId: ctx.accountId } : {}),
@@ -490,7 +488,7 @@ export default function register(api: OpenClawPluginApi) {
         // WebUI + CLI/TUI: ASCII QR
         return {
           text: [
-            "Scan this QR code with the OpenClaw iOS app:",
+            "Scan this QR code with the device client:",
             "",
             "```",
             qrAscii,

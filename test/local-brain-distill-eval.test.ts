@@ -216,6 +216,7 @@ describe.skipIf(process.platform === "win32")("local-brain-distill-eval", () => 
         requestedCaseIds: string[];
         autoIncludedPrerequisiteCaseIds: string[];
       };
+      cases: Array<{ id: string; parsed: { missing_data: string[] } }>;
     };
     expect(payload.ok).toBe(true);
     expect(payload.summary.promotionReady).toBe(true);

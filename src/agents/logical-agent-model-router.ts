@@ -5,6 +5,14 @@ import type {
   LogicalAgentSideEffect,
 } from "./logical-agent-pool.js";
 
+/**
+ * Explicit "any tool" grant token. A capability set that lists it is unrestricted on the
+ * tool axis, so registering a new tool does not require enumerating it in every caller.
+ * It is declared here, next to the gate that reads it, so the pool -> router import edge
+ * stays one-way. A narrower set that omits it still gates exactly as before.
+ */
+export const LOGICAL_AGENT_ANY_TOOL = "*" as const;
+
 export type ModelExecutionMode = "deterministic" | "injected" | "adapter";
 export type ModelCallOutcome = "completed" | "failed" | "rejected" | "timed_out" | "aborted";
 export class ModelAdapterError extends Error {
@@ -308,9 +316,12 @@ export class LogicalAgentModelRouter {
           reason = "cancelled";
           throw new Error("model call cancelled");
         }
+        const anyTool = params.capabilities.allowedTools.includes(LOGICAL_AGENT_ANY_TOOL);
         const allowed =
           policy.requiredCapabilities.every((cap) => adapter.capabilities.includes(cap)) &&
-          adapter.requiredTools.every((tool) => params.capabilities.allowedTools.includes(tool)) &&
+          adapter.requiredTools.every(
+            (tool) => anyTool || params.capabilities.allowedTools.includes(tool),
+          ) &&
           adapter.requiredSideEffects.every(
             (effect) =>
               params.capabilities.allowedSideEffects.includes(effect) &&

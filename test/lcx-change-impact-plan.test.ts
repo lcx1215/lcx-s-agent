@@ -82,20 +82,17 @@ describe("lcx-change-impact-plan", () => {
       ]),
     );
   });
-  it("routes operator tests through their actual configuration instead of silently excluding them", async () => {
+  it("routes every test file through the single main vitest configuration", async () => {
     const result = await runPlanArgs([
       "--files",
-      "scripts/operator/lcx-finance-research.test.ts",
+      "test/operator/lcx-finance-research.test.ts",
       "src/agents/quality-harness-findings.test.ts",
     ]);
     expect(result.recommendedFastCommands).toContain(
-      "pnpm vitest run --config vitest.scripts-operator.config.ts scripts/operator/lcx-finance-research.test.ts",
-    );
-    expect(result.recommendedFastCommands).toContain(
-      "pnpm vitest run src/agents/quality-harness-findings.test.ts",
+      "pnpm vitest run src/agents/quality-harness-findings.test.ts test/operator/lcx-finance-research.test.ts",
     );
     expect(result.recommendedFastCommands).not.toContain(
-      "pnpm vitest run scripts/operator/lcx-finance-research.test.ts src/agents/quality-harness-findings.test.ts",
+      "pnpm vitest run --config vitest.scripts-operator.config.ts test/operator/lcx-finance-research.test.ts",
     );
   });
   it("keeps retained benchmark evidence on an existing mathematical test owner", async () => {

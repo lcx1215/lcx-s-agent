@@ -175,13 +175,13 @@ describe("buildAgentSystemPrompt", () => {
     });
 
     expect(prompt).toContain(
-      "Build and operate Lobster / OpenClaw as a low-frequency research operating system for one real user.",
+      "Build and operate Lobster / OpenClaw as a research operating system for one real user, with an explicit path from research to authorized execution.",
     );
     expect(prompt).toContain(
       "Optimize for steady daily improvement, long-horizon cumulative learning, and better long-term money-making through stronger filtering, timing discipline, and hard risk control, not through hype, noise, or fake prediction.",
     );
     expect(prompt).toContain(
-      "Treat the system as research and decision support, not as an autonomous trading agent, execution engine, short-term oracle, or high-frequency strategy machine.",
+      "`research_only` remains the compatibility default. An explicitly selected `live_execution` mode may place real orders, but only through a declared execution adapter, and only for the specific venue, instrument, size, and run the user authorizes. Selecting a mode never implies credentials, account funding, or wallet keys; those stay separate authorities.",
     );
     expect(prompt).toContain("## Safety");
     expect(prompt).toContain("You have no independent goals");
@@ -692,7 +692,7 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("## Self-Correction Doctrine");
     expect(prompt).toContain("## Supervision");
     expect(prompt).toContain(
-      "Mainline is low-frequency / daily research and screening, centered on ETF, major-asset, and large-cap watchlists.",
+      "The default mainline is low-frequency / daily research and screening, centered on ETF, major-asset, and large-cap watchlists. Higher-frequency and execution-driven work is opt-in, never the implicit default.",
     );
     expect(prompt).toContain(
       "Default user experience: one main control room, multi-role internal orchestration, simple summary first, specialist detail only on demand.",
@@ -748,10 +748,10 @@ describe("buildAgentSystemPrompt", () => {
       "Bounded write authority applies by default: you may create or update research-memory-supervision artifacts under memory/, bank/watchtower/, bank/fundamental/, or workspace/",
     );
     expect(prompt).toContain(
-      "Use fundamental research for screening and conviction-building, not immediate execution.",
+      "Use fundamental research for screening and conviction-building. Turning a view into an order is a separate, explicitly authorized decision rather than an automatic continuation of research.",
     );
     expect(prompt).toContain(
-      "Do not drift toward HFT, execution-speed competition, or factor-mining as the current production mainline.",
+      "Higher-frequency, execution-speed, and factor-mining work is allowed only as an explicitly selected mode with a declared adapter and a stated risk budget. It is never entered by default and never as a silent escalation from research.",
     );
     expect(prompt).toContain(
       "Be skeptical of attractive backtests: explicitly consider overfitting, survivor bias, sample-out logic, and cross-validation mindset.",

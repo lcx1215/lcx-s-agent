@@ -20,6 +20,7 @@ from lobster_paths import STATE_DIR, save_state_json
 
 ENV_FILE = ROOT / ".env.lobster"
 SCHEDULER_HEARTBEAT_PATH = STATE_DIR / "scheduler_heartbeat.json"
+ANALYSIS_COMMAND_ENV = "OPENCLAW_SCHEDULER_ANALYSIS_COMMAND"
 
 
 def utc_now_iso() -> str:
@@ -90,6 +91,21 @@ def run_orchestrator(args: list[str]) -> int:
     return int(result.returncode)
 
 
+def run_orchestrator_captured(args: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run the orchestrator without letting its stdout reach this process's stdout.
+
+    The analysis lane writes its own receipt; this runner's stdout stays reserved
+    for the governance cycle's JSON so existing consumers keep parsing one object.
+    """
+    return subprocess.run(
+        ["python3", str(ROOT / "lobster_orchestrator.py"), *args],
+        cwd=str(ROOT),
+        env=os.environ.copy(),
+        text=True,
+        capture_output=True,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Clean-root daily OpenClaw learning scheduler runner")
     parser.add_argument("--dry-run", action="store_true", help="Run scheduler smoke without live side effects")
@@ -97,6 +113,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--write-receipt",
         action="store_true",
         help="Write scheduler heartbeat/smoke receipts under branches/_system",
+    )
+    parser.add_argument(
+        "--skip-analysis",
+        action="store_true",
+        help="Run only the governance cycle, not the paper-loop analysis lane",
     )
     return parser
 
@@ -111,6 +132,19 @@ def main(argv: list[str] | None = None) -> int:
         if args.write_receipt:
             command.append("--write-receipt")
         exit_code = run_orchestrator(command)
+        if not args.skip_analysis and os.environ.get(ANALYSIS_COMMAND_ENV):
+            # Opt-in on purpose: the analysis lane reads market data over the
+            # network and takes about a minute. Running it by default would make
+            # every governance cycle depend on the network, so the operator
+            # points OPENCLAW_SCHEDULER_ANALYSIS_COMMAND at it to enable it.
+            # Its output is captured so this runner keeps its stdout contract,
+            # and its exit code does not decide the governance cycle's.
+            analysis_args = ["analysis", "--dry-run"] if args.dry_run else ["analysis"]
+            if args.write_receipt:
+                analysis_args.append("--write-receipt")
+            analysis = run_orchestrator_captured(analysis_args)
+            if analysis.returncode not in (0, 2):
+                sys.stderr.write(analysis.stderr or analysis.stdout or "")
     except Exception:
         if args.write_receipt:
             heartbeat_finished(1, started, "failed")

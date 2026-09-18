@@ -28,6 +28,29 @@ async function writeJson(
   await fs.writeFile(targetPath, `${JSON.stringify(payload, null, 2)}\n`);
 }
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+/**
+ * `buildLocalBrainTrainingPlan` returns an open JSON record, so nested plan sections are
+ * `unknown` to the type checker even though the CLI always emits them. This walks a nested
+ * path and degrades to an empty record, without asserting a shape the CLI does not declare.
+ */
+function planSection(plan: Record<string, unknown>, ...keys: string[]): Record<string, unknown> {
+  let current: unknown = plan;
+  for (const key of keys) {
+    const record = asRecord(current);
+    if (!record) {
+      return {};
+    }
+    current = record[key];
+  }
+  return asRecord(current) ?? {};
+}
+
 describe("local-brain-training-plan", () => {
   it("routes a covered fresh strict failure to repair, preserving stale and unrelated evals", () => {
     const receipt = {
@@ -587,7 +610,7 @@ describe("local-brain-training-plan", () => {
         promotionReady: true,
       }),
     });
-    expect(plan.qwenCapabilityConsolidation.adapterLadder).toMatchObject({
+    expect(planSection(plan, "qwenCapabilityConsolidation").adapterLadder).toMatchObject({
       champion: {
         adapterPath: "/tmp/adapter-r2",
         runtimeEligible: true,
@@ -597,7 +620,7 @@ describe("local-brain-training-plan", () => {
         runtimeEligible: false,
       },
     });
-    expect(plan.qwenCapabilityConsolidation.capabilityHarvest).toMatchObject({
+    expect(planSection(plan, "qwenCapabilityConsolidation").capabilityHarvest).toMatchObject({
       boundary: "local_blocked_challenger_harvest_only",
       harvestMode: "failed_or_parse_recovered_cases_to_teacher_curriculum",
       sourceBlockedAdapter: "/tmp/adapter-r8",
@@ -705,28 +728,30 @@ describe("local-brain-training-plan", () => {
       name: "stable_hardened_eval",
       timeoutReason: "idle_timeout",
     });
-    expect(plan.qwenCapabilityConsolidation.capabilityHarvest).toMatchObject({
+    expect(planSection(plan, "qwenCapabilityConsolidation").capabilityHarvest).toMatchObject({
       sourceBlockedAdapter: "/tmp/adapter-r8",
       targetedEvalFirstCaseIds: [
         "index_concentration_mag7_portfolio_risk",
         "private_credit_nonbank_leverage_stress_waterflow",
       ],
     });
-    expect(plan.qwenCapabilityConsolidation.capabilityHarvest.targetedEvalCommand).toContain(
+    expect(
+      planSection(plan, "qwenCapabilityConsolidation", "capabilityHarvest").targetedEvalCommand,
+    ).toContain(
       "--case-id index_concentration_mag7_portfolio_risk,private_credit_nonbank_leverage_stress_waterflow",
     );
-    expect(plan.qwenCapabilityConsolidation.capabilityHarvest.targetedEvalCommand).not.toContain(
-      "short_lark_commodity_scope_01",
-    );
-    expect(plan.qwenCapabilityConsolidation.capabilityHarvest.targetedEvalCommand).toContain(
-      "--adapter '/tmp/adapter-r8'",
-    );
-    expect(plan.qwenCapabilityConsolidation.capabilityHarvest.targetedEvalCommand).toContain(
-      "--receipt",
-    );
-    expect(plan.qwenCapabilityConsolidation.capabilityHarvest.targetedEvalCommand).not.toContain(
-      "stable_hardened_eval_idle_timeout",
-    );
+    expect(
+      planSection(plan, "qwenCapabilityConsolidation", "capabilityHarvest").targetedEvalCommand,
+    ).not.toContain("short_lark_commodity_scope_01");
+    expect(
+      planSection(plan, "qwenCapabilityConsolidation", "capabilityHarvest").targetedEvalCommand,
+    ).toContain("--adapter '/tmp/adapter-r8'");
+    expect(
+      planSection(plan, "qwenCapabilityConsolidation", "capabilityHarvest").targetedEvalCommand,
+    ).toContain("--receipt");
+    expect(
+      planSection(plan, "qwenCapabilityConsolidation", "capabilityHarvest").targetedEvalCommand,
+    ).not.toContain("stable_hardened_eval_idle_timeout");
   });
 
   it("surfaces MiniMax quota completion as normal idle instead of provider failure", async () => {
@@ -1084,17 +1109,17 @@ describe("local-brain-training-plan", () => {
       providerConfigTouched: false,
       protectedMemoryTouched: false,
     });
-    expect(plan.externalChannelBinding.missingProof).toEqual(
+    expect(planSection(plan, "externalChannelBinding").missingProof).toEqual(
       expect.arrayContaining([
         "external_channel_source_drift_zero_after_selected_adapter",
         "fresh_real_external_inbound_and_outbound_user_visible_observed",
       ]),
     );
-    expect(plan.externalChannelBinding.legacyLiveCompatibility).toMatchObject({
+    expect(planSection(plan, "externalChannelBinding").legacyLiveCompatibility).toMatchObject({
       liveExternalBrainBinding: "legacy_compatibility_field",
       legacyStatus: "ready_for_live_runtime_binding",
     });
-    expect(plan.liveExternalBrainBinding).toMatchObject({
+    expect(planSection(plan, "liveExternalBrainBinding")).toMatchObject({
       boundary: "local_live_external_brain_binding_plan_only",
       conceptStatus: "legacy_live_terms_external_channel_owner_current",
       externalChannel: {
@@ -1114,13 +1139,13 @@ describe("local-brain-training-plan", () => {
       providerConfigTouched: false,
       protectedMemoryTouched: false,
     });
-    expect(plan.liveExternalBrainBinding.missingProof).toEqual(
+    expect(planSection(plan, "liveExternalBrainBinding").missingProof).toEqual(
       expect.arrayContaining([
         "live_sidecar_source_drift_zero_after_selected_adapter",
         "fresh_real_external_inbound_and_outbound_seen",
       ]),
     );
-    expect(plan.liveExternalBrainBinding.externalChannelMissingProof).toEqual(
+    expect(planSection(plan, "liveExternalBrainBinding").externalChannelMissingProof).toEqual(
       expect.arrayContaining([
         "external_channel_source_drift_zero_after_selected_adapter",
         "fresh_real_external_inbound_and_outbound_user_visible_observed",
@@ -1135,7 +1160,7 @@ describe("local-brain-training-plan", () => {
         }),
       ]),
     );
-    expect(plan.evolutionAccelerationQueue.steps).toEqual(
+    expect(planSection(plan, "evolutionAccelerationQueue").steps).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           id: "route_external_transport_to_selected_clean_answer_path",
@@ -1214,7 +1239,9 @@ describe("local-brain-training-plan", () => {
       adapterPath: "/tmp/older-still-clean-r1",
       promotionReady: true,
     });
-    expect(plan.qwenCapabilityConsolidation.selectedCleanAdapter).toBe("/tmp/older-still-clean-r1");
+    expect(planSection(plan, "qwenCapabilityConsolidation").selectedCleanAdapter).toBe(
+      "/tmp/older-still-clean-r1",
+    );
   });
 
   it("marks a promoted adapter as invalidated when its latest verdict fails", async () => {
@@ -1317,8 +1344,12 @@ describe("local-brain-training-plan", () => {
         }),
       ]),
     );
-    expect(plan.qwenCapabilityConsolidation.adapterLadder.latestCleanChallenger).toBeUndefined();
-    expect(plan.qwenCapabilityConsolidation.adapterLadder.latestBlockedChallenger).toMatchObject({
+    expect(
+      planSection(plan, "qwenCapabilityConsolidation", "adapterLadder").latestCleanChallenger,
+    ).toBeUndefined();
+    expect(
+      planSection(plan, "qwenCapabilityConsolidation", "adapterLadder").latestBlockedChallenger,
+    ).toMatchObject({
       adapterPath: "/tmp/promoted-later-failed-r2",
       runtimeEligible: false,
     });
@@ -1794,7 +1825,7 @@ describe("local-brain-training-plan", () => {
           }),
         ]),
       });
-      expect(plan.evolutionAccelerationQueue.steps).toEqual(
+      expect(planSection(plan, "evolutionAccelerationQueue").steps).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             id: "route_external_transport_to_selected_clean_answer_path",
@@ -1802,8 +1833,9 @@ describe("local-brain-training-plan", () => {
           }),
         ]),
       );
-      expect(plan.evolutionAccelerationQueue.activeNonIdleProgress.nextIdleAction).toBe(
-        plan.evolutionAccelerationQueue.fastestSafeNextAction,
+      const queue = planSection(plan, "evolutionAccelerationQueue");
+      expect(planSection(queue, "activeNonIdleProgress").nextIdleAction).toBe(
+        queue.fastestSafeNextAction,
       );
     } finally {
       await fs.rm(worktree, { recursive: true, force: true });

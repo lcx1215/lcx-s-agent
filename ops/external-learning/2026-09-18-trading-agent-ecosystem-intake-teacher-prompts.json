@@ -1,0 +1,22 @@
+[
+  {
+    "id": "trading_agent_ecosystem_contract_absorption",
+    "userMessage": "我把整个开源交易/量化 agent 生态扫了一遍（公开 GitHub API，100+ 仓库，按 star 排序）。请训练本地大脑学习怎么「吸收契约而不是吸收运行时」：只吸收执行契约、角色分工、证据与接地门禁、checkpoint/resume、guard pipeline 这些可迁移的契约；明确不要移植整个框架、不要新增第二个状态根、不要引入 broker/下单/外发通道、不要因为 star 高就假设质量高或能盈利。对每个外部模式，先在本仓找到已有 owner 并给出证据，再说要不要移植；找不到 owner 的才登记为缺口。",
+    "sourceSummary": "trading-agent ecosystem survey requiring contract-level absorption, existing-owner mapping before any port decision, no framework vendoring, no second state root, no execution or external-sender authority, and star-count-is-not-quality discipline."
+  },
+  {
+    "id": "behaviour_profile_from_own_fills",
+    "userMessage": "外部有个做法：解析你自己的券商流水，做出行为画像（持仓天数、胜率、盈亏比、回撤，以及处置效应、过度交易、追涨、锚定这些行为偏差），再把你实际走过的路径和一条影子回测路径对比，最后给报告。请训练本地大脑做这件事时守住边界：这是「复盘自己的记录」，不是交易建议；只能用已落盘的成交与 mark 流作为输入，缺数据就明说缺什么，不许编数字，不许输出下单/加仓/减仓指令；行为标签必须能被观测到的记录支持，不能从收益结果反推心理动机。",
+    "sourceSummary": "behaviour-profile distillation from the owner's own fills requiring own-record-only input, missing-data honesty, no invented numbers, no order instructions, and behaviour labels that are observable rather than inferred from outcomes."
+  },
+  {
+    "id": "durable_thesis_lifecycle_entity",
+    "userMessage": "本仓已经有 thesis 词汇、thesis_catalyst_lifecycle 模块、失效证据族和再校验要求，但没有一个「有 id、有证据链接、有状态迁移（成立/被推翻/已兑现）」的持久化论点对象。请训练本地大脑理解这两者的区别：有词汇和有消费者不等于有一等对象。要做持久化论点对象，必须走和持仓账本一样的路子——加本体节点与过滤器、写迁移账本、幂等、冲突报错不覆盖；并且必须能回答「这条论点是被哪条证据推翻的」。",
+    "sourceSummary": "durable thesis entity distillation distinguishing declared vocabulary and consumers from a persisted first-class object, requiring ontology nodes and filters, a migration ledger, idempotency, no silent overwrite, and per-thesis invalidation evidence."
+  },
+  {
+    "id": "agent_native_platform_registration_boundary",
+    "userMessage": "有个 agent-native 交易平台明确支持 OpenClaw 客户端：一个 agent 读它的 SKILL.md 就能注册，平台提供实验/挑战/排行榜和实时 mark-to-market 打分。请训练本地大脑判断这类「集成机会」：注册本身是外发通道写入，并且平台支持跟单/信号发布，这超出 research-only 与 no-execution-authority 边界。默认不注册；如果要评估，只能做只读观察并单独开权限决策，不能因为「别人都在用」就默认加入，也不能把「注册成功」说成「有交易能力」。",
+    "sourceSummary": "agent-native platform integration boundary requiring recognition that registration is an external-channel write and copy-trading is execution authority, default refusal, read-only observation only, separate owner authorisation, and no conflation of registration with trading capability."
+  }
+]

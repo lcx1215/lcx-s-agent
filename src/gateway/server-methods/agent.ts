@@ -690,8 +690,7 @@ export const agentHandlers: GatewayRequestHandlers = {
           ok: true,
           payload,
         });
-        // Send a second res frame (same id) so TS clients with expectFinal can wait.
-        // Swift clients will typically treat the first res as the result and ignore this.
+        // Send a second res frame (same id) so clients with expectFinal can wait.
         respond(true, payload, undefined, { runId });
       })
       .catch((err) => {

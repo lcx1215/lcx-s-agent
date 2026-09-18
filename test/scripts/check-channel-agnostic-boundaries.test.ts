@@ -4,7 +4,7 @@ import {
   findAcpUserFacingChannelNameViolations,
   findChannelCoreReverseDependencyViolations,
   findSystemMarkLiteralViolations,
-} from "../../scripts/check-channel-agnostic-boundaries.mjs";
+} from "../../scripts/checks/check-channel-agnostic-boundaries.mjs";
 
 describe("check-channel-agnostic-boundaries", () => {
   it("flags direct channel module imports", () => {

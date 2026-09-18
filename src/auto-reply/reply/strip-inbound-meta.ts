@@ -1,6 +1,6 @@
 /**
  * Strips OpenClaw-injected inbound metadata blocks from a user-role message
- * text before it is displayed in any UI surface (TUI, webchat, macOS app).
+ * text before it is displayed in any UI surface (TUI, WebChat, Control UI).
  *
  * Background: `buildInboundUserContextPrefix` in `inbound-meta.ts` prepends
  * structured metadata blocks (Conversation info, Sender info, reply context,

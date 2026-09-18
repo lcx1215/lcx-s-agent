@@ -2,6 +2,8 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { resolveDefaultAgentId, resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
 import { resolveMinimaxDefaultTextModelId } from "../agents/minimax-model-catalog.js";
+import { createDefaultDeps } from "../cli/deps.js";
+import { agentCommand } from "../commands/agent.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { randomIdempotencyKey, callGateway } from "../gateway/call.js";
 import {
@@ -23,6 +25,7 @@ import type {
 } from "../hooks/bundled/lobster-brain-registry.js";
 import { writeFileWithinRoot } from "../infra/fs-safe.js";
 import { recordOperationalAnomaly } from "../infra/operational-anomalies.js";
+import { defaultRuntime } from "../runtime.js";
 import { summarizeLearningCouncilVisibleTopic } from "./learning-visible-topic.js";
 
 type LearningCouncilRole = "kimi" | "minimax" | "deepseek";
@@ -1333,6 +1336,82 @@ function buildLearningCouncilAdoptionLedgerArtifact(params: {
   };
 }
 
+/**
+ * Transport used for one learning-council role turn.
+ *
+ * `in-process` runs the agent loop inside this process, so the council does not
+ * depend on a running Gateway daemon, its device-pairing state, or its auth
+ * surface. `gateway` keeps the legacy WebSocket path for deployments that
+ * intentionally front the council with a daemon.
+ */
+export type LearningCouncilTransport = "in-process" | "gateway";
+
+export function resolveLearningCouncilTransport(
+  env: NodeJS.ProcessEnv = process.env,
+): LearningCouncilTransport {
+  const raw = env.LCX_LEARNING_COUNCIL_TRANSPORT?.trim().toLowerCase();
+  if (!raw || raw === "in-process" || raw === "inprocess" || raw === "local") {
+    return "in-process";
+  }
+  if (raw === "gateway" || raw === "daemon" || raw === "ws") {
+    return "gateway";
+  }
+  throw new Error(
+    `LCX_LEARNING_COUNCIL_TRANSPORT must be "in-process" or "gateway", received: ${raw}`,
+  );
+}
+
+type InProcessAgentResult = { payloads?: Array<{ text?: string }> };
+
+function readPayloadTexts(result: unknown): string[] {
+  const payloads = (result as InProcessAgentResult | undefined)?.payloads;
+  if (!Array.isArray(payloads)) {
+    return [];
+  }
+  return payloads
+    .map((payload) => payload?.text)
+    .filter((text): text is string => typeof text === "string" && text.trim().length > 0);
+}
+
+/**
+ * Run one role turn through the local agent loop.
+ *
+ * The Gateway `agent` handler wraps the very same `agentCommandFromIngress`
+ * result in `{ status, summary, result }` and derives `senderIsOwner` from the
+ * `operator.admin` scope; the council client only holds `operator.write`, so
+ * `senderIsOwner` is false here as well.
+ */
+async function runLearningCouncilRoleInProcess(params: {
+  agentId: string;
+  sessionKey: string;
+  message: string;
+  model: string;
+  thinking: "off" | "medium" | "high";
+  timeoutSeconds: number;
+  extraSystemPrompt: string;
+}): Promise<GatewayAgentResponse> {
+  const result = await agentCommand(
+    {
+      message: params.message,
+      agentId: params.agentId,
+      sessionKey: params.sessionKey,
+      model: params.model,
+      thinking: params.thinking,
+      timeout: String(params.timeoutSeconds),
+      lane: "learning-council",
+      extraSystemPrompt: params.extraSystemPrompt,
+      senderIsOwner: false,
+    },
+    defaultRuntime,
+    createDefaultDeps(),
+  );
+  return {
+    status: "ok",
+    summary: "completed",
+    result: { payloads: readPayloadTexts(result).map((text) => ({ text })) },
+  };
+}
+
 async function runLearningCouncilRole(params: {
   cfg: OpenClawConfig;
   role: LearningCouncilRole;
@@ -1342,29 +1421,44 @@ async function runLearningCouncilRole(params: {
   timeoutSeconds: number;
   thinking: "off" | "medium" | "high";
   extraSystemPrompt: string;
+  /** Overrides the env-resolved transport; used by tests and explicit callers. */
+  transport?: LearningCouncilTransport;
 }): Promise<LearningCouncilRoleRun> {
   const model = resolveLearningCouncilModel(params.role, params.cfg);
   const capability = LEARNING_COUNCIL_CAPABILITIES[params.role];
   const providerFamily = resolveLearningCouncilProviderFamily(model);
   const heading = LEARNING_COUNCIL_HEADINGS[params.role];
+  const transport = params.transport ?? resolveLearningCouncilTransport();
+  const sessionKey = `${params.baseSessionKey}:${params.role}`;
   try {
-    const response = await callGateway<GatewayAgentResponse>({
-      method: "agent",
-      params: {
-        message: params.userMessage,
-        agentId: params.routeAgentId,
-        sessionKey: `${params.baseSessionKey}:${params.role}`,
-        model,
-        thinking: params.thinking,
-        timeout: params.timeoutSeconds,
-        lane: "learning-council",
-        extraSystemPrompt: params.extraSystemPrompt,
-        idempotencyKey: randomIdempotencyKey(),
-        label: `Learning Council: ${params.role}`,
-      },
-      expectFinal: true,
-      timeoutMs: (params.timeoutSeconds + 45) * 1000,
-    });
+    const response =
+      transport === "gateway"
+        ? await callGateway<GatewayAgentResponse>({
+            method: "agent",
+            params: {
+              message: params.userMessage,
+              agentId: params.routeAgentId,
+              sessionKey,
+              model,
+              thinking: params.thinking,
+              timeout: params.timeoutSeconds,
+              lane: "learning-council",
+              extraSystemPrompt: params.extraSystemPrompt,
+              idempotencyKey: randomIdempotencyKey(),
+              label: `Learning Council: ${params.role}`,
+            },
+            expectFinal: true,
+            timeoutMs: (params.timeoutSeconds + 45) * 1000,
+          })
+        : await runLearningCouncilRoleInProcess({
+            agentId: params.routeAgentId,
+            sessionKey,
+            message: params.userMessage,
+            model,
+            thinking: params.thinking,
+            timeoutSeconds: params.timeoutSeconds,
+            extraSystemPrompt: params.extraSystemPrompt,
+          });
     const text = pickGatewayText(response);
     if (!text) {
       return {
@@ -2233,3 +2327,8 @@ export async function runExternalLearningCouncil(params: {
 
   return finalReply;
 }
+
+export const __testing = {
+  runLearningCouncilRoleInProcess,
+  readPayloadTexts,
+};

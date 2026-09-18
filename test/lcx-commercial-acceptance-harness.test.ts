@@ -2,7 +2,10 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-import { buildCommercialAcceptanceHarness } from "../scripts/operator/lcx-commercial-acceptance-harness.js";
+import {
+  buildCommercialAcceptanceHarness,
+  type HarnessInputs,
+} from "../scripts/operator/lcx-commercial-acceptance-harness.js";
 import { parseJsonObjectFromOutput } from "../scripts/operator/smoke-json-output.js";
 
 const execFileAsync = promisify(execFile);
@@ -18,7 +21,9 @@ function owner(ownerName: string, payload: Record<string, unknown>) {
   };
 }
 
-function baseInputs() {
+// Typed with the harness's own input contract so fixture owners can legitimately omit `payload`
+// (an unavailable probe) without the inferred `owner(...)` shape demanding it.
+function baseInputs(): HarnessInputs {
   return {
     commercialAnswerPipeline: owner("lcx-commercial-answer-pipeline", {
       ok: true,

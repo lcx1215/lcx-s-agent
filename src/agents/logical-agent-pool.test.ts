@@ -12,6 +12,8 @@ import {
   createInMemoryLogicalAgentCheckpointStore,
   fingerprintLogicalAgentPlan,
   LOGICAL_AGENT_DEFINITIONS,
+  LOGICAL_AGENT_LOCAL_CAPABILITIES,
+  LOGICAL_AGENT_SIDE_EFFECTS,
   LOGICAL_AGENT_CHECKPOINT_SCHEMA_VERSION,
   type LogicalAgentExecutionResult,
   type LogicalAgentTask,
@@ -114,14 +116,19 @@ describe("logical agent pool", () => {
     expect(new Set(LOGICAL_AGENT_DEFINITIONS.map((agent) => agent.modelBinding))).toEqual(
       new Set(["shared_local_model"]),
     );
+    // The default grant is open: every side effect is allowed and nothing is forbidden.
+    // Narrowing is opt-in per caller, so this asserts the default rather than a policy.
     expect(
       LOGICAL_AGENT_DEFINITIONS.every(
         (agent) =>
-          agent.capabilities.allowedSideEffects.length === 3 &&
-          agent.capabilities.forbiddenSideEffects.includes("provider_call") &&
-          agent.capabilities.forbiddenSideEffects.includes("external_message"),
+          agent.capabilities.allowedSideEffects.length === LOGICAL_AGENT_SIDE_EFFECTS.length &&
+          agent.capabilities.forbiddenSideEffects.length === 0,
       ),
     ).toBe(true);
+    expect(LOGICAL_AGENT_LOCAL_CAPABILITIES.allowedSideEffects).toEqual(
+      expect.arrayContaining([...LOGICAL_AGENT_SIDE_EFFECTS]),
+    );
+    expect(LOGICAL_AGENT_LOCAL_CAPABILITIES.forbiddenSideEffects).toEqual([]);
   });
 
   it("runs the default DAG through one model slot in dependency order", async () => {
@@ -584,8 +591,36 @@ describe("logical agent pool", () => {
     );
   });
 
-  it("rejects undeclared side effects at the capability boundary", async () => {
+  it("admits every declared side effect under the open default grant", async () => {
     const result = await runLogicalAgentPlan({
+      tasks: [{ id: "unrestricted", agentId: "risk_check", input: { ask: "x" } }],
+      executor: () =>
+        ({
+          output: "ok",
+          sideEffects: ["trading_action", "external_message", "provider_call"],
+        }) as unknown as LogicalAgentExecutionResult<string>,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.tasks[0]?.capabilityViolation).toBeUndefined();
+    expect(result.tasks[0]?.sideEffects).toEqual([
+      "trading_action",
+      "external_message",
+      "provider_call",
+    ]);
+  });
+
+  it("rejects undeclared side effects at the capability boundary", async () => {
+    // The default grant is open, so the boundary is only observable on a narrowed pool.
+    const pool = new LogicalAgentPool<{ ask: string }, string>({
+      capabilities: {
+        allowedTools: [],
+        allowedSideEffects: ["local_output"],
+        forbiddenSideEffects: [],
+      },
+    });
+    const result = await runLogicalAgentPlan({
+      pool,
       tasks: [{ id: "unsafe", agentId: "risk_check", input: { ask: "x" } }],
       executor: () =>
         ({
@@ -600,7 +635,15 @@ describe("logical agent pool", () => {
   });
 
   it("validates side effects against an immutable capability snapshot", async () => {
+    const pool = new LogicalAgentPool<{ ask: string }, string>({
+      capabilities: {
+        allowedTools: [],
+        allowedSideEffects: ["local_output"],
+        forbiddenSideEffects: [],
+      },
+    });
     const result = await runLogicalAgentPlan({
+      pool,
       tasks: [{ id: "mutated-capabilities", agentId: "risk_check", input: { ask: "x" } }],
       executor: ({ agent }) => {
         try {

@@ -36,6 +36,7 @@ function runInventory() {
       reason: string;
       ownerUnlock: string;
     }>;
+    nextSafeLocalProbe: string;
     remoteGitHubTouched: boolean;
     liveTouched: boolean;
     providerConfigTouched: boolean;

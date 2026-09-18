@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { LCX_ONTOLOGY_AGENT_ROLES, type LcxOntologyAgentRole } from "../shared/lcx-ontology.js";
 import {
+  LOGICAL_AGENT_ANY_TOOL,
   LogicalAgentModelRouter,
   type LogicalAgentModelRouting,
   type ModelCallReceipt,
@@ -137,15 +138,23 @@ export type LogicalAgentGuardrails<TInput, TResult> = Readonly<{
   output?: (context: LogicalAgentOutputGuardrailContext<TInput, TResult>) => void | Promise<void>;
 }>;
 
+/**
+ * Default capability grant for the logical-agent pool.
+ *
+ * It is deliberately unrestricted: every declared side effect and every tool is allowed,
+ * so no local capability is withheld by default. Narrowing is opt-in -- a caller that
+ * needs a smaller surface passes its own `LogicalAgentCapabilities`, and
+ * `normalizeExecutionResult` still enforces exactly the set it was handed.
+ *
+ * An open default grants no side effect by itself. A side effect only happens when a
+ * caller both declares it and supplies an executor that performs it; the pool merely
+ * stops refusing the declaration up front. `provider_call` stays additionally gated per
+ * run by the pool's `allowProviderCalls` option, which is what actually admits it.
+ */
 export const LOGICAL_AGENT_LOCAL_CAPABILITIES: LogicalAgentCapabilities = Object.freeze({
-  allowedTools: Object.freeze(["local_model_inference"] as const),
-  allowedSideEffects: Object.freeze(["local_read", "local_compute", "local_output"] as const),
-  forbiddenSideEffects: Object.freeze([
-    "provider_call",
-    "external_message",
-    "protected_memory_write",
-    "trading_action",
-  ] as const),
+  allowedTools: Object.freeze([LOGICAL_AGENT_ANY_TOOL] as const),
+  allowedSideEffects: Object.freeze([...LOGICAL_AGENT_SIDE_EFFECTS]),
+  forbiddenSideEffects: Object.freeze([] as const),
 });
 
 export type LogicalAgentDefinition = Readonly<{
@@ -284,8 +293,16 @@ export type LocalModelPoolOptions<
   TInput = unknown,
   TResult = unknown,
 > = Partial<LocalModelPoolConfig> & {
-  /** Caller-authorized model inference only; never grants messages, trading or memory writes. */
+  /** Adds `provider_call` to this pool's grant; a widening that is meaningful only when a
+   * caller has already narrowed `capabilities`. */
   allowProviderCalls?: boolean;
+  /**
+   * Capability grant applied to every task in this pool. Defaults to the open
+   * `LOGICAL_AGENT_LOCAL_CAPABILITIES`. Pass a narrower set to keep a boundary
+   * enforceable: `normalizeExecutionResult` then rejects any declared side effect
+   * outside it, and the router rejects an adapter requiring a tool outside it.
+   */
+  capabilities?: LogicalAgentCapabilities;
   modelInvoker?: LogicalAgentModelInvoker;
   modelRouting?: LogicalAgentModelRouting;
   guardrails?: LogicalAgentGuardrails<TInput, TResult>;
@@ -457,6 +474,7 @@ function normalizePoolConfig(config?: Partial<LocalModelPoolConfig>): LocalModel
 
 export class LogicalAgentPool<TInput, TResult> {
   #allowProviderCalls: boolean;
+  #capabilities?: LogicalAgentCapabilities;
   #config: LocalModelPoolConfig;
   #modelInvoker: LogicalAgentModelInvoker;
   #guardrails: LogicalAgentGuardrails<TInput, TResult>;
@@ -470,6 +488,9 @@ export class LogicalAgentPool<TInput, TResult> {
 
   constructor(options?: LocalModelPoolOptions<TInput, TResult>) {
     this.#allowProviderCalls = options?.allowProviderCalls === true;
+    this.#capabilities = options?.capabilities
+      ? freezeLogicalAgentCapabilities(options.capabilities)
+      : undefined;
     this.#config = normalizePoolConfig(options);
     this.#modelInvoker = options?.modelInvoker ?? UNAVAILABLE_MODEL_INVOKER;
     this.#guardrails = options?.guardrails ?? {};
@@ -486,6 +507,9 @@ export class LogicalAgentPool<TInput, TResult> {
             stableStringify({
               routing: this.#modelRouter.routing,
               allowProviderCalls: this.#allowProviderCalls,
+              // Included only when a caller narrowed the grant, so an un-narrowed pool keeps
+              // exactly its previous fingerprint.
+              ...(this.#capabilities ? { capabilities: this.#capabilities } : {}),
             }),
           )
           .digest("hex")
@@ -608,19 +632,17 @@ export class LogicalAgentPool<TInput, TResult> {
       this.#maxObservedConcurrency = Math.max(this.#maxObservedConcurrency, this.#activeRuns);
       const startedAt = Date.now();
       const registeredAgent = getLogicalAgentDefinition(job.task.agentId);
+      const granted = this.#capabilities ?? registeredAgent.capabilities;
       const capabilities = freezeLogicalAgentCapabilities(
         this.#allowProviderCalls
           ? {
-              ...registeredAgent.capabilities,
-              allowedSideEffects: [
-                ...registeredAgent.capabilities.allowedSideEffects,
-                "provider_call",
-              ],
-              forbiddenSideEffects: registeredAgent.capabilities.forbiddenSideEffects.filter(
+              ...granted,
+              allowedSideEffects: [...granted.allowedSideEffects, "provider_call"],
+              forbiddenSideEffects: granted.forbiddenSideEffects.filter(
                 (effect) => effect !== "provider_call",
               ),
             }
-          : registeredAgent.capabilities,
+          : granted,
       );
       const agent = freezeLogicalAgentDefinition({
         ...registeredAgent,

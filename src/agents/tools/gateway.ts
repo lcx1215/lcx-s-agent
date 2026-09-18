@@ -13,6 +13,43 @@ export type GatewayCallOptions = {
   timeoutMs?: number;
 };
 
+/**
+ * Process-local stand-in for a subset of Gateway RPC methods.
+ *
+ * Daemon-free entry points (e.g. `lcx serve`) run the agent loop in-process
+ * with no Gateway websocket to dial. Without a stand-in, any tool that talks to
+ * the Gateway over RPC fails outright. A provider declares exactly which method
+ * names it serves and how to serve them, so this module stays free of any
+ * knowledge about specific method families.
+ *
+ * The provider is never consulted when the caller passed an explicit
+ * `gatewayUrl`, because that is a deliberate "use that Gateway" instruction.
+ */
+export type LocalGatewayProvider = {
+  methods: ReadonlySet<string>;
+  call: <T = Record<string, unknown>>(
+    method: string,
+    opts: GatewayCallOptions,
+    params?: unknown,
+    extra?: { expectFinal?: boolean },
+  ) => Promise<T>;
+};
+
+let localGatewayProvider: LocalGatewayProvider | null = null;
+
+/** Installs a process-local provider. Returns a disposer restoring the previous one. */
+export function setLocalGatewayProvider(next: LocalGatewayProvider | null): () => void {
+  const previous = localGatewayProvider;
+  localGatewayProvider = next;
+  return () => {
+    localGatewayProvider = previous;
+  };
+}
+
+export function getLocalGatewayProvider(): LocalGatewayProvider | null {
+  return localGatewayProvider;
+}
+
 type GatewayOverrideTarget = "local" | "remote";
 
 export function readGatewayCallOptions(params: Record<string, unknown>): GatewayCallOptions {
@@ -143,6 +180,11 @@ export async function callGatewayTool<T = Record<string, unknown>>(
   params?: unknown,
   extra?: { expectFinal?: boolean },
 ) {
+  if (localGatewayProvider && !trimToUndefined(opts.gatewayUrl)) {
+    if (localGatewayProvider.methods.has(method)) {
+      return (await localGatewayProvider.call<T>(method, opts, params, extra)) as T;
+    }
+  }
   const gateway = resolveGatewayOptions(opts);
   const scopes = resolveLeastPrivilegeOperatorScopesForMethod(method);
   return await callGateway<T>({

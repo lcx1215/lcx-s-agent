@@ -418,9 +418,10 @@ describe("hardenLocalBrainPlanForAsk", () => {
       },
     );
 
-    expect(
-      plan.risk_boundaries.filter((entry) => entry === "no_high_leverage_crypto"),
-    ).toHaveLength(1);
+    // `hardenLocalBrainPlanForAsk` returns an open JSON record, so the checker sees
+    // `risk_boundaries` as `unknown` even though the planner always emits a string array.
+    const riskBoundaries = Array.isArray(plan.risk_boundaries) ? plan.risk_boundaries : [];
+    expect(riskBoundaries.filter((entry) => entry === "no_high_leverage_crypto")).toHaveLength(1);
     expect(plan.risk_boundaries).not.toContain("no_high_leverage_crypto_reference");
     expect(plan.risk_boundaries).not.toContain("no_crypto_leverage_trade_recommendation");
     expect(plan.risk_boundaries).not.toContain("no_leverage_on_crypto");

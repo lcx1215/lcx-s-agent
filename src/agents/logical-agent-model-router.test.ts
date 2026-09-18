@@ -43,6 +43,16 @@ function routing(extra: Partial<LogicalAgentModelRouting> = {}): LogicalAgentMod
     ...extra,
   };
 }
+/**
+ * The pool default is now an open grant, so a test that wants to observe the capability
+ * boundary has to narrow it explicitly. `local_compute` stays allowed so the eligible
+ * fallback adapter in these tests remains reachable.
+ */
+const NARROW_GRANT = {
+  allowedTools: [],
+  allowedSideEffects: ["local_compute"],
+  forbiddenSideEffects: [],
+} as const;
 const task = { id: "clean", agentId: "data_cleaning" as const, input: "evidence" };
 const execute = async ({
   modelSlot,
@@ -118,6 +128,7 @@ describe("role model execution receipts", () => {
         ...(constraint === "capability" ? { capabilities: [] } : {}),
       });
       const pool = new LogicalAgentPool<string, unknown>({
+        capabilities: NARROW_GRANT,
         modelRouting: routing({
           adapters: [blocked, adapter("reviewer")],
           defaultPolicy: { ...policy, fallback: ["reviewer"] },
@@ -389,11 +400,12 @@ it("does not dispatch an adapter when cancellation lands between queue admission
   expect(result.modelCalls?.[0]).toMatchObject({ outcome: "aborted", adapterInvoked: false });
 });
 
-it("requires explicit opt-in for configured provider inference and retains all other boundaries", async () => {
+it("keeps provider inference behind explicit opt-in on a narrowed grant and retains all other boundaries", async () => {
   const invoke = vi.fn(async ({ payload }) => payload);
   const remote = adapter("small", { requiredSideEffects: ["provider_call"], invoke });
   for (const allowed of [false, true]) {
     const pool = new LogicalAgentPool<string, unknown>({
+      capabilities: NARROW_GRANT,
       allowProviderCalls: allowed,
       modelRouting: routing({ adapters: [remote] }),
     });
@@ -402,6 +414,7 @@ it("requires explicit opt-in for configured provider inference and retains all o
   }
   expect(invoke).toHaveBeenCalledTimes(1);
   const pool = new LogicalAgentPool<string, unknown>({
+    capabilities: NARROW_GRANT,
     allowProviderCalls: true,
     modelRouting: routing({
       adapters: [adapter("small", { requiredSideEffects: ["external_message"] })],

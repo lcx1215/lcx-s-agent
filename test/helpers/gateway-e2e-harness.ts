@@ -1,10 +1,11 @@
-import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { type ChildProcessByStdio, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import type { Readable } from "node:stream";
 import { GatewayClient } from "../../src/gateway/client.js";
 import { connectGatewayClient } from "../../src/gateway/test-helpers.e2e.js";
 import { loadOrCreateDeviceIdentity } from "../../src/infra/device-identity.js";
@@ -25,6 +26,11 @@ export type ChatEventPayload = {
   message?: unknown;
 };
 
+// `spawn` with `stdio: ["ignore", "pipe", "pipe"]` yields a child whose stdin is
+// closed rather than a pipe, so the exact type is ChildProcessByStdio, not
+// GatewayChildProcess. Consumers only use exitCode/killed/kill/once.
+type GatewayChildProcess = ChildProcessByStdio<null, Readable, Readable>;
+
 export type GatewayInstance = {
   name: string;
   port: number;
@@ -33,7 +39,7 @@ export type GatewayInstance = {
   homeDir: string;
   stateDir: string;
   configPath: string;
-  child: ChildProcessWithoutNullStreams;
+  child: GatewayChildProcess;
   stdout: string[];
   stderr: string[];
 };
@@ -57,7 +63,7 @@ const getFreePort = async () => {
 };
 
 async function waitForPortOpen(
-  proc: ChildProcessWithoutNullStreams,
+  proc: GatewayChildProcess,
   chunksOut: string[],
   chunksErr: string[],
   port: number,
@@ -122,7 +128,7 @@ export async function spawnGatewayInstance(name: string): Promise<GatewayInstanc
 
   const stdout: string[] = [];
   const stderr: string[] = [];
-  let child: ChildProcessWithoutNullStreams | null = null;
+  let child: GatewayChildProcess | null = null;
 
   try {
     child = spawn(

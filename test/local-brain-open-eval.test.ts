@@ -50,10 +50,12 @@ describe("local-brain-open-eval", () => {
 
   it("passes source summary into the provider via env", async () => {
     const result = await runOpenEval();
+    // `plan` is nullable, and the filter already dropped every entry whose summary is not a
+    // string, so reading it optionally here yields exactly the same value.
     const byId = Object.fromEntries(
       result.cases
         .filter((entry) => typeof entry.plan?.source_summary_from_provider === "string")
-        .map((entry) => [entry.id, entry.plan.source_summary_from_provider]),
+        .map((entry) => [entry.id, entry.plan?.source_summary_from_provider]),
     ) as Record<string, string>;
 
     expect(byId["cross_market_us_a_index_crypto"]).toBe(

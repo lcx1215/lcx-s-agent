@@ -13,6 +13,8 @@ from scripts.lobster_paths import ROOT, load_state_json, save_state_json
 ENABLE_CYCLE_ENV = "OPENCLAW_SCHEDULER_ENABLE_CYCLE"
 CYCLE_COMMAND_ENV = "OPENCLAW_SCHEDULER_CYCLE_COMMAND"
 DEFAULT_CYCLE_COMMAND = "pnpm exec tsx scripts/operator/agent-system-loop-smoke.ts"
+ANALYSIS_COMMAND_ENV = "OPENCLAW_SCHEDULER_ANALYSIS_COMMAND"
+DEFAULT_ANALYSIS_COMMAND = "pnpm exec tsx scripts/operator/paper-loop-analysis-cycle.ts --quick"
 
 
 def utc_now_iso() -> str:
@@ -88,6 +90,50 @@ def run_cycle(args: argparse.Namespace) -> int:
     if args.write_receipt:
         save_state_json(
             "scheduler_cycle_report.json" if result["ok"] else "scheduler_cycle_failure.json",
+            payload,
+        )
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0 if result["ok"] else 3
+
+
+def run_analysis(args: argparse.Namespace) -> int:
+    """Run the trading-analysis lane.
+
+    This is deliberately a separate lane from `cycle`. The governance cycle is
+    contractually clean -- the host watchdog requires ``remoteFetchOccurred`` to
+    be false -- while the analysis must read public market data. Declaring the
+    fetch here keeps both lanes honest instead of making one of them lie.
+    """
+    payload = build_status_payload()
+    payload["requestedAction"] = "analysis"
+    payload["analysisMode"] = "dry_run" if args.dry_run else "live_guarded"
+    # The analysis lane reaches the network on purpose; say so plainly rather
+    # than inheriting the governance lane's no-remote-fetch claim.
+    payload["boundary"]["noRemoteFetch"] = False
+    payload["boundary"]["remoteMarketDataFetchOnly"] = True
+    if args.dry_run or not truthy(os.environ.get(ENABLE_CYCLE_ENV)):
+        payload["status"] = "analysis_blocked_fail_closed"
+        payload["reason"] = (
+            "analysis lane is disabled unless --dry-run is used for smoke or "
+            f"{ENABLE_CYCLE_ENV}=1 is explicitly set for an approved live migration"
+        )
+        if args.write_receipt:
+            save_state_json("scheduler_analysis_smoke.json", payload)
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0 if args.dry_run else 2
+
+    result = run_agent_system_loop(
+        os.environ.get(ANALYSIS_COMMAND_ENV, DEFAULT_ANALYSIS_COMMAND)
+    )
+    payload["status"] = "analysis_completed" if result["ok"] else "analysis_failed"
+    payload["analysisCommand"] = result["command"]
+    payload["analysisDurationMs"] = result["duration_ms"]
+    payload["analysisResult"] = result["summary"]
+    payload["boundary"]["analysisReceiptOnly"] = True
+    payload["boundary"]["liveExternalMessageSend"] = False
+    if args.write_receipt:
+        save_state_json(
+            "scheduler_analysis_report.json" if result["ok"] else "scheduler_analysis_failure.json",
             payload,
         )
     print(json.dumps(payload, ensure_ascii=False, indent=2))
@@ -179,6 +225,11 @@ def build_parser() -> argparse.ArgumentParser:
     cycle.add_argument("--dry-run", action="store_true")
     cycle.add_argument("--write-receipt", action="store_true")
     cycle.set_defaults(func=run_cycle)
+
+    analysis = subparsers.add_parser("analysis")
+    analysis.add_argument("--dry-run", action="store_true")
+    analysis.add_argument("--write-receipt", action="store_true")
+    analysis.set_defaults(func=run_analysis)
     return parser
 
 

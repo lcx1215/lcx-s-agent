@@ -50,7 +50,20 @@ async function readRuntimeSourceFiles(
       if (!absolutePath) {
         continue;
       }
-      const source = await fs.readFile(absolutePath, "utf8");
+      // The path list comes from `git ls-files`, which reads the index. A file
+      // deleted in the worktree but not yet staged is still listed, so a read
+      // would throw ENOENT and fail the whole guardrail run over a file that no
+      // longer exists. There is nothing to scan in that case; only a genuine
+      // read failure should surface.
+      let source: string;
+      try {
+        source = await fs.readFile(absolutePath, "utf8");
+      } catch (error) {
+        if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+          continue;
+        }
+        throw error;
+      }
       output[index] = {
         relativePath: path.relative(repoRoot, absolutePath),
         source,

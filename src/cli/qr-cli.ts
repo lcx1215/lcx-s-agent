@@ -131,7 +131,7 @@ function emitQrSecretResolveDiagnostics(diagnostics: string[], opts: QrCliOption
 export function registerQrCli(program: Command) {
   program
     .command("qr")
-    .description("Generate an iOS pairing QR code and setup code")
+    .description("Generate a pairing QR code and setup code")
     .addHelpText(
       "after",
       () => `\n${theme.muted("Docs:")} ${formatDocsLink("/cli/qr", "docs.openclaw.ai/cli/qr")}\n`,
@@ -275,7 +275,7 @@ export function registerQrCli(program: Command) {
 
         const lines: string[] = [
           theme.heading("Pairing QR"),
-          "Scan this with the OpenClaw iOS app (Onboarding -> Scan QR).",
+          "Scan this QR code with the device client to pair.",
           "",
         ];
 
