@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { discoverOpenClawPlugins } from "../src/plugins/discovery.js";
+import { discoverOpenClawPlugins } from "../../src/plugins/discovery.js";
 
 const ROOT_IMPORT_PATTERNS = [
   /\b(?:import|export)\b[\s\S]*?\bfrom\s+["']openclaw\/plugin-sdk["']/,

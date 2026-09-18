@@ -447,7 +447,9 @@ function hardenPlanForKnownContracts(
   options: CliOptions,
 ): Record<string, unknown> {
   const text = `${options.ask}\n${options.sourceSummary}`;
-  const basePlan = {
+  // Annotated because spreading a `Record<string, unknown>` drops its index signature,
+  // which would leave only the two explicitly-set keys visible below.
+  const basePlan: Record<string, unknown> = {
     ...plan,
     risk_boundaries: mergeUnique(planRiskBoundaryValue(plan.risk_boundaries), [
       "research_only",

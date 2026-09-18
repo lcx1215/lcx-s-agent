@@ -9,7 +9,7 @@ import {
   runAsScript,
   toLine,
   unwrapExpression,
-} from "./lib/ts-guard-utils.mjs";
+} from "../lib/ts-guard-utils.mjs";
 
 const repoRoot = resolveRepoRoot(import.meta.url);
 const uiSourceDir = path.join(repoRoot, "ui", "src", "ui");

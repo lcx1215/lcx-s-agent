@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 import ts from "typescript";
-import { runCallsiteGuard } from "./lib/callsite-guard.mjs";
-import { runAsScript, toLine, unwrapExpression } from "./lib/ts-guard-utils.mjs";
+import { runCallsiteGuard } from "../lib/callsite-guard.mjs";
+import { runAsScript, toLine, unwrapExpression } from "../lib/ts-guard-utils.mjs";
 
 const sourceRoots = [
   "src/channels",

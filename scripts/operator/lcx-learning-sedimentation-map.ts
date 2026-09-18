@@ -27,7 +27,9 @@ type SedimentationLane = {
   proves: string[];
   doesNotProve: string[];
   evidenceSurfaces: string[];
-  counts: Record<string, number | boolean>;
+  // `proofGapSummary` is a nested per-gap tally, so the value union has to admit a numeric
+  // record alongside the scalar counters and booleans the other surfaces contribute.
+  counts: Record<string, number | boolean | Record<string, number>>;
   nextGate: string;
 };
 

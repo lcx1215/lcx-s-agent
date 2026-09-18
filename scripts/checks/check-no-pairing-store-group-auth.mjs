@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 
 import ts from "typescript";
-import { createPairingGuardContext } from "./lib/pairing-guard-context.mjs";
+import { createPairingGuardContext } from "../lib/pairing-guard-context.mjs";
 import {
   collectFileViolations,
   getPropertyNameText,
   runAsScript,
   toLine,
-} from "./lib/ts-guard-utils.mjs";
+} from "../lib/ts-guard-utils.mjs";
 
 const { repoRoot, sourceRoots, resolveFromRepo } = createPairingGuardContext(import.meta.url);
 

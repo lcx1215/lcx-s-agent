@@ -123,7 +123,13 @@ function cleanModuleList(value: unknown): string[] {
 }
 
 function cleanMissingData(value: unknown): string[] {
-  const blocked = new Set([...MODULE_IDS, ...CONTRACT_FIELD_TOKENS, ...CONTRACT_BOUNDARY_TOKENS]);
+  // Typed as `Set<string>`: these sets are membership filters over normalized, free-form
+  // values, so the literal unions they are built from must not constrain `.has`.
+  const blocked = new Set<string>([
+    ...MODULE_IDS,
+    ...CONTRACT_FIELD_TOKENS,
+    ...CONTRACT_BOUNDARY_TOKENS,
+  ]);
   const normalized = arrayValue(value)
     .map(canonicalMissingData)
     .filter((entry) => !blocked.has(entry));
@@ -143,12 +149,12 @@ function cleanMissingData(value: unknown): string[] {
 }
 
 function cleanRequiredTools(value: unknown): string[] {
-  const blocked = new Set([...CONTRACT_FIELD_TOKENS, ...CONTRACT_BOUNDARY_TOKENS]);
+  const blocked = new Set<string>([...CONTRACT_FIELD_TOKENS, ...CONTRACT_BOUNDARY_TOKENS]);
   return normalizeLocalBrainModuleList(arrayValue(value).filter((entry) => !blocked.has(entry)));
 }
 
 function cleanRejectedContext(value: unknown): string[] {
-  const blocked = new Set(CONTRACT_FIELD_TOKENS);
+  const blocked = new Set<string>(CONTRACT_FIELD_TOKENS);
   return arrayValue(value).filter((entry) => !blocked.has(entry));
 }
 

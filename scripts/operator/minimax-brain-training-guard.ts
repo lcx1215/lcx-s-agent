@@ -572,8 +572,10 @@ async function activeGuardProcesses(): Promise<ActiveProcess[]> {
       return { pid: Number(match[1]), command: match[2] };
     })
     .filter(
+      // The map above yields either a parsed process or `undefined`; `Boolean(entry)` does not
+      // narrow that, so the check is spelled out. Same selection, since an object is always truthy.
       (entry): entry is ActiveProcess =>
-        Boolean(entry) &&
+        entry !== undefined &&
         entry.pid !== process.pid &&
         !entry.command.includes("--resolve-current-adapter"),
     );

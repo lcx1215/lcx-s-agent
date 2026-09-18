@@ -2,7 +2,7 @@
 import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
-import { forceFreePort, type PortProcess } from "../src/cli/ports.js";
+import { forceFreePort, type PortProcess } from "../../src/cli/ports.js";
 
 const DEFAULT_PORT = 18789;
 

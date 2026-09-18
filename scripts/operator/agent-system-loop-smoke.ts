@@ -21,6 +21,11 @@ type CommandResult = {
 };
 
 type CommandFailure = Error & {
+  /**
+   * Process exit code, set alongside `stdout`/`stderr` when a command fails. `null` when the
+   * child was terminated by a signal, which is what the `close` event reports.
+   */
+  code?: number | null;
   stdout?: string;
   stderr?: string;
 };

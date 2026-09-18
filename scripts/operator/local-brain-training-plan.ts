@@ -651,7 +651,11 @@ type EvolutionAccelerationStep = {
     | "ready_when_idle"
     | "blocked_by_active_training"
     | "blocked_by_missing_proof"
-    | "informational";
+    | "informational"
+    // Emitted by the external-transport routing step once the runtime probe has already observed
+    // user-visible proof, i.e. there is nothing left to do. Distinct from "informational", which
+    // marks a step that is intentionally passive.
+    | "complete";
   executionClass:
     | "read_only"
     | "workspace_receipt_write"
@@ -747,7 +751,14 @@ async function execFileSafely(
   options: ExecFileOptions = {},
 ): Promise<{ stdout: string; stderr: string } | undefined> {
   try {
-    return await execFileAsync(command, args, options);
+    const { stdout, stderr } = await execFileAsync(command, args, options);
+    // `execFile` decodes both streams as utf8 unless a caller passes `encoding: null`, which no
+    // caller here does. The promisified type is the broad `string | Buffer` overload, so the
+    // already-decoded string case is passed through unchanged and only a buffer is decoded.
+    return {
+      stdout: typeof stdout === "string" ? stdout : stdout.toString("utf8"),
+      stderr: typeof stderr === "string" ? stderr : stderr.toString("utf8"),
+    };
   } catch {
     return undefined;
   }

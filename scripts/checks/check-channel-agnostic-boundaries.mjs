@@ -9,7 +9,7 @@ import {
   resolveRepoRoot,
   runAsScript,
   toLine,
-} from "./lib/ts-guard-utils.mjs";
+} from "../lib/ts-guard-utils.mjs";
 
 const repoRoot = resolveRepoRoot(import.meta.url);
 

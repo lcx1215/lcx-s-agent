@@ -170,7 +170,7 @@ function readString(value: unknown): string | undefined {
 
 function readStringArray(value: unknown): string[] {
   return Array.isArray(value)
-    ? value.filter((entry): entry is string => typeof entry === "string" && entry.trim())
+    ? value.filter((entry): entry is string => typeof entry === "string" && Boolean(entry.trim()))
     : [];
 }
 

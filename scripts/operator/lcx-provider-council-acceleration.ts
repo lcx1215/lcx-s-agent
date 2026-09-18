@@ -16,6 +16,10 @@ const repoRoot = path.resolve(SCRIPT_DIR, "..", "..");
 const DEFAULT_FRESH_MINUTES = 120;
 const COUNCIL_DIR = ["bank", "knowledge", "learning-councils"];
 const REQUIRED_ROLES = ["kimi", "minimax", "deepseek"] as const;
+// Enumerating every process with its full command line can exceed the default 1 MiB exec
+// buffer. Same value as the identical `Get-CimInstance Win32_Process` probe in
+// `lcx-governance-autopilot.ts`, which this Windows branch was copied from.
+const EXEC_MAX_BUFFER = 48 * 1024 * 1024;
 
 type CliOptions = {
   json: boolean;

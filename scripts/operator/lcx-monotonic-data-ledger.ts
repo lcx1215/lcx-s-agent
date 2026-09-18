@@ -138,7 +138,9 @@ function countByStatus(items: unknown[], expected: string): number {
 }
 
 function sourceKindTotal(sourceKinds: JsonRecord | undefined): number {
-  return Object.values(sourceKinds ?? {}).reduce(
+  // `Object.values` on a `JsonRecord` yields `unknown[]`, which makes `reduce` bind its
+  // accumulator to `unknown`. The explicit type argument pins the sum to `number`.
+  return Object.values(sourceKinds ?? {}).reduce<number>(
     (sum, value) => sum + (numberValue(value) ?? 0),
     0,
   );

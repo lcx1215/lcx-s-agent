@@ -259,6 +259,15 @@ type PromotionReceiptOutputSummary = PromotionStateStatusSummary & {
   visibleProof?: LiveVisibleProof;
 };
 
+/**
+ * `buildReceipt` always materializes `visibleProof` — either from `readLiveVisibleProof`
+ * or the inline `not_checked` literal — so consumers that render it can rely on it
+ * instead of re-checking an optional field that is never actually absent.
+ */
+type PromotionReceiptWithVisibleProof = PromotionReceipt & {
+  visibleProof: LiveVisibleProof;
+};
+
 type PromotionLock =
   | {
       acquired: true;
@@ -852,7 +861,10 @@ function readLiveVisibleProof(params: {
     .split(/\r?\n/u)
     .filter(Boolean)
     .slice(-5000)
-    .flatMap((line) => {
+    // Annotated so the spread below keeps the parsed record's index signature;
+    // without it the element type collapses to `{ recordedAtMs: number }` and the
+    // `stage`/`deliveryStatus`/`textPreview` reads on `records` stop resolving.
+    .flatMap((line): Array<Record<string, unknown> & { recordedAtMs: number }> => {
       try {
         const parsed = JSON.parse(line) as Record<string, unknown>;
         const recordedAtMs =
@@ -929,7 +941,7 @@ function buildReceipt(params: {
   blockedReasons: string[];
   commands: PromotionReceipt["commands"];
   applyFailed: boolean;
-}): PromotionReceipt {
+}): PromotionReceiptWithVisibleProof {
   const changedFileCount = params.fileActions.filter(
     (action) => action.sourceSha256 !== null && action.sourceSha256 !== action.targetSha256Before,
   ).length;
@@ -1183,7 +1195,7 @@ function summarizePromotionStateForStatus(
 }
 
 function summarizePromotionReceiptForOutput(
-  receipt: PromotionReceipt,
+  receipt: PromotionReceiptWithVisibleProof,
 ): PromotionReceiptOutputSummary {
   const acceptancePhrase = normalizeExternalAcceptancePhrase(receipt.visibleProof.acceptancePhrase);
   return {

@@ -59,8 +59,10 @@ async function main(): Promise<number> {
     ],
     prompt,
     ...(modelId ? { modelId } : {}),
-    ...(Number.isInteger(maxTokens) && maxTokens > 0 ? { maxTokens } : {}),
-    ...(Number.isInteger(timeoutMs) && timeoutMs > 0 ? { timeoutMs } : {}),
+    // `Number.isInteger` does not narrow `number | undefined`, so the `?? 0` restates what is
+    // already known once the guard passes: these options are absent unless they are numbers.
+    ...(Number.isInteger(maxTokens) && (maxTokens ?? 0) > 0 ? { maxTokens } : {}),
+    ...(Number.isInteger(timeoutMs) && (timeoutMs ?? 0) > 0 ? { timeoutMs } : {}),
   });
   const runtime = resolveLocalVisionRuntimeConfig();
   const details = {

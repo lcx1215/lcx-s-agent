@@ -30,7 +30,7 @@ type AcceptanceGate = {
   nextAction: string;
 };
 
-type HarnessInputs = {
+export type HarnessInputs = {
   commercialAnswerPipeline?: OwnerSnapshot;
   shortIntentFuzzer?: OwnerSnapshot;
   visibleAnswerQualityFuzzer?: OwnerSnapshot;

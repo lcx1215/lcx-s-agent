@@ -6,9 +6,9 @@
  * without running a full update.
  *
  * Run from repo root:
- *   node --import tsx scripts/test-shell-completion.ts [options]
- *   npx tsx scripts/test-shell-completion.ts [options]
- *   bun scripts/test-shell-completion.ts [options]
+ *   node --import tsx scripts/tests/test-shell-completion.ts [options]
+ *   npx tsx scripts/tests/test-shell-completion.ts [options]
+ *   bun scripts/tests/test-shell-completion.ts [options]
  *
  * Options:
  *   --shell <shell>   Override shell detection (zsh, bash, fish, powershell)
@@ -17,22 +17,22 @@
  *   --help            Show this help message
  *
  * Examples:
- *   node --import tsx scripts/test-shell-completion.ts
- *   node --import tsx scripts/test-shell-completion.ts --check-only
- *   node --import tsx scripts/test-shell-completion.ts --shell bash
- *   node --import tsx scripts/test-shell-completion.ts --force
+ *   node --import tsx scripts/tests/test-shell-completion.ts
+ *   node --import tsx scripts/tests/test-shell-completion.ts --check-only
+ *   node --import tsx scripts/tests/test-shell-completion.ts --shell bash
+ *   node --import tsx scripts/tests/test-shell-completion.ts --force
  */
 
 import os from "node:os";
 import path from "node:path";
 import { confirm, isCancel } from "@clack/prompts";
-import { installCompletion } from "../src/cli/completion-cli.js";
+import { installCompletion } from "../../src/cli/completion-cli.js";
 import {
   checkShellCompletionStatus,
   ensureCompletionCacheExists,
-} from "../src/commands/doctor-completion.js";
-import { stylePromptMessage } from "../src/terminal/prompt-style.js";
-import { theme } from "../src/terminal/theme.js";
+} from "../../src/commands/doctor-completion.js";
+import { stylePromptMessage } from "../../src/terminal/prompt-style.js";
+import { theme } from "../../src/terminal/theme.js";
 
 const CLI_NAME = "openclaw";
 
@@ -70,9 +70,9 @@ This script simulates the shell completion checks that run during
 \`openclaw update\`, \`openclaw doctor\`, and \`openclaw onboard\`.
 
 ${theme.heading("Usage (run from repo root):")}
-  node --import tsx scripts/test-shell-completion.ts [options]
-  npx tsx scripts/test-shell-completion.ts [options]
-  bun scripts/test-shell-completion.ts [options]
+  node --import tsx scripts/tests/test-shell-completion.ts [options]
+  npx tsx scripts/tests/test-shell-completion.ts [options]
+  bun scripts/tests/test-shell-completion.ts [options]
 
 ${theme.heading("Options:")}
   --check-only      Only check status, don't prompt to install
@@ -85,9 +85,9 @@ ${theme.heading("Behavior:")}
   - If both profile and cache exist: nothing to do
 
 ${theme.heading("Examples:")}
-  node --import tsx scripts/test-shell-completion.ts
-  node --import tsx scripts/test-shell-completion.ts --check-only
-  node --import tsx scripts/test-shell-completion.ts --force
+  node --import tsx scripts/tests/test-shell-completion.ts
+  node --import tsx scripts/tests/test-shell-completion.ts --check-only
+  node --import tsx scripts/tests/test-shell-completion.ts --force
 `);
 }
 

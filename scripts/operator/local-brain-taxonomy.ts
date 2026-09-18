@@ -176,8 +176,13 @@ export function selectLocalBrainContractHints(text: string): readonly string[] {
       }
     }
   }
-  return [...selected]
-    .toSorted((a, b) => a - b)
-    .map((index) => LOCAL_BRAIN_CONTRACT_HINTS[index])
-    .filter((hint): hint is string => Boolean(hint));
+  return (
+    [...selected]
+      .toSorted((a, b) => a - b)
+      .map((index) => LOCAL_BRAIN_CONTRACT_HINTS[index])
+      // No `is string` predicate: indexing the `as const` tuple yields its literal union, which is
+      // narrower than `string`, so such a predicate is rejected. The filter is a no-op guard and
+      // the literal union is assignable to the declared `readonly string[]` return type.
+      .filter((hint) => Boolean(hint))
+  );
 }

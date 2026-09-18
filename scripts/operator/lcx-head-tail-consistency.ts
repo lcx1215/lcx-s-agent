@@ -103,7 +103,11 @@ const MODULE_LEARNING_TARGET_EXEMPTIONS: Record<string, string> = {
     "control_room_summary is the visible-output substrate checked through prompt/eval surfaces",
 } as const;
 
-const MODULE_LEARNING_TARGETS_WITHOUT_TAXONOMY = new Set(LCX_ONTOLOGY_EXTERNAL_LEARNING_TARGET_IDS);
+// Typed as `Set<string>` so `.has` accepts the wider module-target union probed below; the
+// two-element literal union it is built from would otherwise reject every other target.
+const MODULE_LEARNING_TARGETS_WITHOUT_TAXONOMY = new Set<string>(
+  LCX_ONTOLOGY_EXTERNAL_LEARNING_TARGET_IDS,
+);
 
 const CRITICAL_MODULE_CONTRACTS: CriticalModuleContract[] = [
   {

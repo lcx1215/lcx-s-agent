@@ -1707,7 +1707,8 @@ const receipt = {
     userVisibleObserved: byOwner.externalChannelStatus?.compact.userVisibleObserved,
     externalChannelBindingStatus:
       byOwner.externalChannelBinding?.compact.externalChannelStatus ??
-      byOwner.trainingPlan?.compact.externalChannelBinding?.status ??
+      // `compact` is an open record, so the nested binding is `unknown` until narrowed.
+      recordValue(byOwner.trainingPlan?.compact.externalChannelBinding)?.status ??
       byOwner.externalChannelBinding?.compact.status,
     skillOptLiteStatus: byOwner.skillOptLite?.compact.status,
     skillOptLiteNextIdleAction: byOwner.skillOptLite?.compact.nextIdleAction,

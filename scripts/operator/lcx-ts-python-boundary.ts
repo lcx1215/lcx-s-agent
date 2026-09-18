@@ -104,7 +104,7 @@ const PYTHON_POLICIES: Record<string, Omit<PythonFilePolicy, "path">> = {
     reason: "分支新旧判断是流程控制，不是训练/计算发动机，应该迁到 TS。",
     targetTsOwner: "scripts/operator/lcx-change-impact-plan.ts",
   },
-  "scripts/check-composite-action-input-interpolation.py": {
+  "scripts/checks/check-composite-action-input-interpolation.py": {
     role: "migrate_to_ts_control",
     plainRole: "迁走",
     reason: "CI 字符串检查是流程控制，不是训练/计算发动机，应该迁到 TS。",

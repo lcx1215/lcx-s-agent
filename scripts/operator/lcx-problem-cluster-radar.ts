@@ -881,7 +881,12 @@ function learningSedimentationCluster(inputs: RadarInputs): ProblemCluster | und
       },
     });
   }
-  const gaps = arrayValue(audit?.gaps).map(recordValue).filter(Boolean);
+  // `recordValue` yields `undefined` for non-objects, and `.filter(Boolean)` does not narrow
+  // that away, so the predicate spells the narrowing out. It selects exactly the same entries
+  // as `Boolean` would: `recordValue` never returns another falsy value.
+  const gaps = arrayValue(audit?.gaps)
+    .map(recordValue)
+    .filter((gap): gap is Record<string, unknown> => gap !== undefined);
   if (gaps.length > 0) {
     for (const gap of gaps) {
       const id = stringValue(gap.id) ?? "learning_sedimentation_gap";
@@ -1439,7 +1444,11 @@ async function collectOwnerSnapshots(): Promise<RadarInputs> {
       payload: payload as unknown as Record<string, unknown>,
     })),
   ]);
-  const repairVerification = await buildRepairVerification(trainingPlan.payload);
+  // The training-plan probe resolves to either a payload-bearing snapshot or an error snapshot.
+  // Reading `.payload` off the error branch is `undefined` at runtime; spelling the check out
+  // keeps that identical while making the union readable to the checker.
+  const trainingPlanPayload = "payload" in trainingPlan ? trainingPlan.payload : undefined;
+  const repairVerification = await buildRepairVerification(trainingPlanPayload);
   return {
     trainingPlan,
     moduleAbsorption,

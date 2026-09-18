@@ -30,7 +30,25 @@ const TASK_FAMILY_SOURCE_PATHS = [
   "scripts/operator/lcx-self-repair-hands.ts",
 ] as const;
 
-const INTEGRATION_SURFACES = [
+type IntegrationSurfaceImportRequirement = {
+  source: string;
+  names: readonly string[];
+};
+
+/**
+ * Shape of one entry in `INTEGRATION_SURFACES`. Spelled out explicitly instead of letting the
+ * literal infer it, so that `importsFrom` and `calls` are optional-but-legal properties of
+ * every entry. An inferred `as const` union would expose them only on the five entries that
+ * set them, forcing an `in` guard at each read site purely to satisfy the checker.
+ */
+type IntegrationSurface = {
+  path: string;
+  terms: readonly string[];
+  importsFrom?: readonly IntegrationSurfaceImportRequirement[];
+  calls?: readonly string[];
+};
+
+const INTEGRATION_SURFACES: readonly IntegrationSurface[] = [
   {
     path: "ops/local-brain/README.md",
     terms: [
@@ -250,7 +268,7 @@ const INTEGRATION_SURFACES = [
     path: "scripts/operator/minimax-brain-teacher-batch.ts",
     terms: ["canonicalizeLcxOntologyValue"],
   },
-] as const;
+];
 
 type IntegrationResult = {
   path: string;

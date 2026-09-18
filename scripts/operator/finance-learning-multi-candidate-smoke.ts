@@ -44,7 +44,7 @@ async function seedFixture(params: {
   workspaceDir: string;
   tool: ReturnType<typeof createFinanceLearningPipelineOrchestratorTool>;
   fixture: (typeof FIXTURES)[number];
-}) {
+}): Promise<Record<string, unknown>> {
   const localFilePath = `memory/demo/${params.fixture.fileName}`;
   const targetPath = path.join(params.workspaceDir, localFilePath);
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
@@ -60,8 +60,13 @@ async function seedFixture(params: {
       "ETF event triage with catalyst mapping, liquidity regime, and portfolio risk gates",
     maxRetrievedCapabilities: 6,
   });
-  assert(result.details.ok === true, `${params.fixture.fileName} should seed successfully`);
-  return result.details;
+  assert(detailsOf(result).ok === true, `${params.fixture.fileName} should seed successfully`);
+  return detailsOf(result);
+}
+
+function detailsOf(result: { details: unknown }): Record<string, unknown> {
+  // Tool results carry `details: unknown` by contract; narrow it the same way src/agents/tools does.
+  return result.details as Record<string, unknown>;
 }
 
 async function main() {
@@ -80,14 +85,15 @@ async function main() {
       "Use retained ETF event triage, liquidity regime, catalyst follow-up, and portfolio risk gates for a research-only ETF event review.",
     maxCandidates: 5,
   });
-  assert(applyResult.details.ok === true, "multi-candidate apply should succeed");
+  const applyDetails = detailsOf(applyResult);
+  const rawAppliedCapabilities = applyDetails.appliedCapabilities;
+  assert(applyDetails.ok === true, "multi-candidate apply should succeed");
   assert(
-    typeof applyResult.details.candidateCount === "number" &&
-      applyResult.details.candidateCount >= 3,
+    typeof applyDetails.candidateCount === "number" && applyDetails.candidateCount >= 3,
     "multi-candidate apply should retrieve at least three candidates",
   );
   assert(
-    applyResult.details.synthesisMode === "multi_capability_synthesis",
+    applyDetails.synthesisMode === "multi_capability_synthesis",
     "multi-candidate apply should synthesize multiple capabilities",
   );
 
@@ -98,23 +104,23 @@ async function main() {
         workspaceDir,
         seededCandidateRuns: seeded.length,
         retainedCandidateCounts: seeded.map((entry) => entry.retainedCandidateCount),
-        applicationMode: applyResult.details.applicationMode,
-        synthesisMode: applyResult.details.synthesisMode,
-        candidateCount: applyResult.details.candidateCount,
-        usageReceiptPath: applyResult.details.usageReceiptPath,
-        usageReviewPath: applyResult.details.usageReviewPath,
-        appliedCapabilityNames: Array.isArray(applyResult.details.appliedCapabilities)
-          ? applyResult.details.appliedCapabilities.map((entry) =>
+        applicationMode: applyDetails.applicationMode,
+        synthesisMode: applyDetails.synthesisMode,
+        candidateCount: applyDetails.candidateCount,
+        usageReceiptPath: applyDetails.usageReceiptPath,
+        usageReviewPath: applyDetails.usageReviewPath,
+        appliedCapabilityNames: Array.isArray(rawAppliedCapabilities)
+          ? rawAppliedCapabilities.map((entry: unknown) =>
               entry && typeof entry === "object" && "capabilityName" in entry
                 ? entry.capabilityName
                 : null,
             )
           : [],
         noActionBoundary:
-          applyResult.details.answerSkeleton &&
-          typeof applyResult.details.answerSkeleton === "object" &&
-          "noActionBoundary" in applyResult.details.answerSkeleton
-            ? applyResult.details.answerSkeleton.noActionBoundary
+          applyDetails.answerSkeleton &&
+          typeof applyDetails.answerSkeleton === "object" &&
+          "noActionBoundary" in applyDetails.answerSkeleton
+            ? applyDetails.answerSkeleton.noActionBoundary
             : null,
       },
       null,

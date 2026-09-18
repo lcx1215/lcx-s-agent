@@ -360,7 +360,7 @@ function readString(value: unknown): string | undefined {
 
 function readStringArray(value: unknown): string[] {
   return Array.isArray(value)
-    ? value.filter((entry): entry is string => typeof entry === "string" && entry.trim())
+    ? value.filter((entry): entry is string => typeof entry === "string" && Boolean(entry.trim()))
     : [];
 }
 
@@ -936,9 +936,13 @@ function exampleFromModuleLearningReview(
   sourcePath: string,
 ): DistillExample[] {
   const rows = Array.isArray(parsed.rows) ? parsed.rows : [];
-  return rows
+  const examples = rows
     .slice(0, 24)
-    .map((row, index) => {
+    // Annotating the callback return type widens the produced objects to `DistillExample`
+    // (notably `meta.sourceKind`, which the literal below would otherwise narrow to a single
+    // string literal). The type predicate in the filter cannot narrow back from that narrower
+    // inferred type, so the widening has to happen here.
+    .map((row, index): DistillExample | undefined => {
       if (!row || typeof row !== "object" || Array.isArray(row)) {
         return undefined;
       }
@@ -1019,8 +1023,10 @@ function exampleFromModuleLearningReview(
           generatedAt: readString(parsed.generatedAt),
         },
       };
-    })
-    .filter((entry): entry is DistillExample => Boolean(entry));
+    });
+  // `entry !== undefined` selects exactly what `Boolean` would: every element is an object or
+  // `undefined`, and objects are always truthy.
+  return examples.filter((entry): entry is DistillExample => entry !== undefined);
 }
 
 function exampleFromAcceptedBrainCandidate(

@@ -7,7 +7,7 @@ import {
   MOONSHOT_KIMI_K2_INPUT,
   MOONSHOT_KIMI_K2_MAX_TOKENS,
   MOONSHOT_KIMI_K2_MODELS,
-} from "../ui/src/ui/data/moonshot-kimi-k2";
+} from "../ui/src/ui/data/moonshot-kimi-k2.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..");

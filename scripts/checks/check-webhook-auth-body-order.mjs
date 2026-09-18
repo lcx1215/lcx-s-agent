@@ -2,8 +2,8 @@
 
 import path from "node:path";
 import ts from "typescript";
-import { runCallsiteGuard } from "./lib/callsite-guard.mjs";
-import { runAsScript, toLine, unwrapExpression } from "./lib/ts-guard-utils.mjs";
+import { runCallsiteGuard } from "../lib/callsite-guard.mjs";
+import { runAsScript, toLine, unwrapExpression } from "../lib/ts-guard-utils.mjs";
 
 const sourceRoots = ["extensions"];
 const enforcedFiles = new Set([

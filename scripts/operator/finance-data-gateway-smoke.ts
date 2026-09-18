@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import { buildFinanceDataGatewaySnapshot } from "../../src/agents/finance-data-gateway.ts";
 
-function parseArgs(args: string[]) {
+// The return type is spelled out because a mutable object-literal property widens to `string`
+// when inferred, which would hide the two cases the fixture builder actually accepts.
+function parseArgs(args: string[]): { json: boolean; caseName: "clean" | "conflict" } {
   return {
     json: args.includes("--json"),
     caseName: args.includes("--conflict") ? "conflict" : "clean",

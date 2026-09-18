@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import type { Dirent } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -415,6 +416,16 @@ const GOVERNANCE_COMPONENT_RULES: GovernanceComponentRule[] = [
     disposition: "governed_source",
   },
   {
+    id: "paper_loop_surface",
+    patterns: [/^paper-loop\//u],
+    category: "finance_analysis_engine",
+    routeOwner: "scripts/operator/paper-loop-analysis-cycle.ts",
+    proofSurface: "paper-loop tests plus the analysis-cycle lane envelope",
+    boundary:
+      "a measured paper analysis is market evidence, not a live order, a promotion, or provider authority",
+    disposition: "governed_source",
+  },
+  {
     id: "ops_surface",
     patterns: [/^ops\//u],
     category: "ops_governance_and_artifact",
@@ -557,6 +568,15 @@ function buildRepoGovernanceCoverage(
   };
 }
 
+/**
+ * `routeOwnerValidation` is attached by the caller after an async route-owner probe, so it is
+ * absent from the function's inferred return type. Widening the binding with this optional
+ * property keeps that later assignment type-safe without changing what the function returns.
+ */
+type RepoGovernanceCoverage = ReturnType<typeof buildRepoGovernanceCoverage> & {
+  routeOwnerValidation?: { checked: string[]; missing: string[] };
+};
+
 function buildGovernanceInventoryAreas(
   entries: readonly {
     id: string;
@@ -639,7 +659,10 @@ async function walkArtifacts(root: string, nowMs: number): Promise<ArtifactInven
   const skippedDirs: string[] = [];
   const files: ArtifactFile[] = [];
   async function walk(current: string) {
-    let entries: Awaited<ReturnType<typeof fs.readdir>>;
+    // `fs.readdir` is overloaded, so `ReturnType<typeof fs.readdir>` resolves to the
+    // buffer-encoding overload whose `Dirent<Buffer>` names are buffers. This call passes no
+    // encoding, so it really yields `Dirent<string>` and every `entry.name` below is a string.
+    let entries: Dirent[];
     try {
       entries = await fs.readdir(current, { withFileTypes: true });
     } catch {
@@ -816,7 +839,7 @@ async function main() {
     (item): item is string => typeof item === "string",
   );
   const unmatchedChangedFiles = arrayValue(changeImpact.unmatchedFiles);
-  const governanceCoverage = buildRepoGovernanceCoverage(
+  const governanceCoverage: RepoGovernanceCoverage = buildRepoGovernanceCoverage(
     repoComponentFiles,
     governanceInventoryAreas,
   );

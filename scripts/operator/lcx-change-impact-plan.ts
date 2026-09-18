@@ -55,6 +55,32 @@ const PATH_RULES: PathRule[] = [
     ],
   },
   {
+    id: "finance_live_execution_seam",
+    lane: "finance_research_capability",
+    patterns: [
+      /^src\/agents\/finance-execution-adapter\.ts$/u,
+      /^src\/agents\/finance-position-ledger\.ts$/u,
+      /^src\/agents\/finance-equity-curve\.ts$/u,
+      /^src\/agents\/finance-state-dir\.ts$/u,
+      /^scripts\/operator\/lcx-finance-live-execution\.ts$/u,
+      /^scripts\/operator\/lcx-finance-position-ledger\.ts$/u,
+    ],
+    requiredChecks: ["git-diff-check", "head-tail-consistency"],
+    commands: [
+      "pnpm vitest run src/agents/finance-execution-adapter.test.ts src/agents/finance-position-ledger.test.ts",
+      "git diff --check",
+      "node --import tsx scripts/operator/lcx-head-tail-consistency.ts --json",
+    ],
+    headTailRequired: true,
+    risk: "elevated",
+    safetyNotes: [
+      "Paper adapter only: this rule covers a declared execution seam and the durable ledger downstream of it, not a venue order path. Credentials, funding and account binding stay separate authorities and are never read, stored or moved here.",
+      "The ledger is append-only by construction (SQLite triggers reject UPDATE/DELETE). A record that conflicts with an existing one is refused, never overwritten, so a correction needs a new record rather than an edit.",
+      "The equity curve is a pure projection of that stream and computes no metrics. It samples at mark instants only, so any annualised figure requires the caller to declare a period; the ledger holds no daily prices and must not be annualised as if it did.",
+      "The instrument allowlist is open by default (`FINANCE_RISK_BUDGET_ANY_INSTRUMENT`). Narrowing is the caller's explicit act: an empty list still admits nothing, and the same check runs at both the budget and the adapter, so `--allow-instrument` continues to bite. Opening this default grants no new authority — the only shipped adapter is paper and no venue, credential or account path exists.",
+    ],
+  },
+  {
     id: "finance_benchmark_receipts",
     lane: "finance_research_capability",
     patterns: [/^\.artifacts\/finance-strategy\/[^/]+\.json$/u],
@@ -201,7 +227,10 @@ const PATH_RULES: PathRule[] = [
     id: "multi_agent_pattern_shadow",
     lane: "agent_workflow_memory",
     patterns: [
-      /^ops\/external-learning\/2026-09-01-multi-agent-pattern-intake\.md$/u,
+      // The whole intake directory, not one filename: every record here is the same
+      // genre (external pattern survey + its teacher-prompt pack). Pinning exact names
+      // left sibling intakes unowned, so a new one became a stray the moment it was written.
+      /^ops\/external-learning\/[^/]+\.(?:md|json)$/u,
       /^scripts\/operator\/lcx-multi-agent-pattern-shadow\.ts$/u,
       /^test\/fixtures\/lcx-multi-agent-pattern-shadow-executor\.ts$/u,
       /^test\/lcx-multi-agent-pattern-shadow\.test\.ts$/u,
@@ -218,6 +247,7 @@ const PATH_RULES: PathRule[] = [
     ],
     safetyNotes: [
       "Replay is the default verification path; isolated executor/live remains blocked without an explicit executor command and never grants provider, training, or external-channel authority.",
+      "Files under ops/external-learning/ are research evidence: an intake records what was read and which contract was accepted, and it grants no execution, external-sender, or second-state-root authority by itself.",
     ],
     headTailRequired: true,
     risk: "elevated",
@@ -323,6 +353,7 @@ const PATH_RULES: PathRule[] = [
     patterns: [
       /^src\/agents\/system-prompt\.ts$/u,
       /^src\/agents\/openclaw-tools\.ts$/u,
+      /^src\/agents\/tool-catalog\.ts$/u,
       /^src\/agents\/finance-brain-orchestration\.ts$/u,
       /^src\/agents\/finance-data-gateway\.ts$/u,
       /^src\/agents\/finance-answer-composer\.ts$/u,
@@ -462,6 +493,13 @@ const PATH_RULES: PathRule[] = [
     risk: "elevated",
   },
   {
+    id: "memory_index_store",
+    lane: "agent_workflow_memory",
+    patterns: [/^src\/memory\/memory-schema\.ts$/u, /^src\/memory\/sqlite-migrations\.ts$/u],
+    requiredChecks: ["run-changed-tests"],
+    commands: ["pnpm vitest run src/memory/sqlite-migrations.test.ts src/memory/index.test.ts"],
+  },
+  {
     id: "test_file_changed",
     lane: "test_surface",
     patterns: [/(^|\/)[^/]+\.test\.ts$/u],
@@ -555,17 +593,12 @@ function impactFor(files: readonly string[]): Impact[] {
     }
     const commands = [...rule.commands];
     if (rule.id === "test_file_changed") {
-      const operatorTests = matchedFiles.filter((file) => file.startsWith("scripts/operator/"));
-      const ordinaryTests = matchedFiles.filter((file) => !file.startsWith("scripts/operator/"));
+      // Every test file lives under a tree the main vitest include globs cover
+      // (src/**, extensions/**, test/**), so one plain command routes them all.
       const quote = (file: string) =>
         /^[a-zA-Z0-9_./-]+$/u.test(file) ? file : "'" + file.replaceAll("'", "'\"'\"'") + "'";
-      if (ordinaryTests.length) {
-        commands.push(`pnpm vitest run ${ordinaryTests.map(quote).join(" ")}`);
-      }
-      if (operatorTests.length) {
-        commands.push(
-          `pnpm vitest run --config vitest.scripts-operator.config.ts ${operatorTests.map(quote).join(" ")}`,
-        );
+      if (matchedFiles.length) {
+        commands.push(`pnpm vitest run ${matchedFiles.map(quote).join(" ")}`);
       }
     }
     return {

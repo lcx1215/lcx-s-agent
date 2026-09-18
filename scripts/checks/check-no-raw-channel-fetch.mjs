@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 import ts from "typescript";
-import { runCallsiteGuard } from "./lib/callsite-guard.mjs";
-import { runAsScript, toLine, unwrapExpression } from "./lib/ts-guard-utils.mjs";
+import { runCallsiteGuard } from "../lib/callsite-guard.mjs";
+import { runAsScript, toLine, unwrapExpression } from "../lib/ts-guard-utils.mjs";
 
 const sourceRoots = [
   "src/telegram",
@@ -37,17 +37,17 @@ const allowedRawFetchCallsites = new Set([
   "extensions/googlechat/src/auth.ts:82",
   "extensions/matrix/src/directory-live.ts:41",
   "extensions/matrix/src/matrix/client/config.ts:171",
-  "extensions/mattermost/src/mattermost/client.ts:211",
+  "extensions/mattermost/src/mattermost/client.ts:224",
   "extensions/mattermost/src/mattermost/monitor.ts:230",
   "extensions/mattermost/src/mattermost/probe.ts:27",
-  "extensions/minimax-portal-auth/oauth.ts:71",
-  "extensions/minimax-portal-auth/oauth.ts:112",
+  "extensions/minimax-portal-auth/oauth.ts:65",
+  "extensions/minimax-portal-auth/oauth.ts:106",
   "extensions/msteams/src/graph.ts:39",
   "extensions/nextcloud-talk/src/room-info.ts:92",
   "extensions/nextcloud-talk/src/send.ts:107",
   "extensions/nextcloud-talk/src/send.ts:198",
-  "extensions/qwen-portal-auth/oauth.ts:46",
-  "extensions/qwen-portal-auth/oauth.ts:80",
+  "extensions/qwen-portal-auth/oauth.ts:35",
+  "extensions/qwen-portal-auth/oauth.ts:69",
   "extensions/talk-voice/index.ts:27",
   "extensions/thread-ownership/index.ts:105",
   "extensions/voice-call/src/providers/plivo.ts:95",
@@ -55,7 +55,7 @@ const allowedRawFetchCallsites = new Set([
   "extensions/voice-call/src/providers/tts-openai.ts:111",
   "extensions/voice-call/src/providers/twilio/api.ts:23",
   "src/channels/telegram/api.ts:8",
-  "src/discord/send.outbound.ts:347",
+  "src/discord/send.outbound.ts:355",
   "src/discord/voice-message.ts:264",
   "src/discord/voice-message.ts:308",
   "src/slack/monitor/media.ts:64",

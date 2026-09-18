@@ -124,6 +124,16 @@ function stringArray(value: unknown): string[] {
     : [];
 }
 
+/**
+ * Display-only accessor for `renderText`. These fields are read straight off the audit record,
+ * so a placeholder is the right output when they are absent. `stringValue` deliberately keeps
+ * returning `undefined` instead of a placeholder, because its other callers need to tell
+ * "absent" apart from a real value.
+ */
+function displayValue(value: unknown, fallback: string): string {
+  return stringValue(value) ?? fallback;
+}
+
 async function resolveCurrentAdapter(params: {
   worktree: string;
   guardLogPath: string;
@@ -355,9 +365,9 @@ export function buildPromotionAudit(params: {
 function renderText(audit: JsonRecord): string {
   const latestEval = asRecord(audit.latestEval);
   const lines = [
-    `Local brain promotion audit | decision=${stringValue(audit.promotionDecision, "unknown")}`,
-    `latest_passing_adapter=${stringValue(audit.latestPassingAdapter, "none")}`,
-    `latest_eval=${stringValue(latestEval.name, "unknown")} ${numberValue(latestEval.passed) ?? 0}/${numberValue(latestEval.total) ?? 0} promotionReady=${latestEval.promotionReady === true}`,
+    `Local brain promotion audit | decision=${displayValue(audit.promotionDecision, "unknown")}`,
+    `latest_passing_adapter=${displayValue(audit.latestPassingAdapter, "none")}`,
+    `latest_eval=${displayValue(latestEval.name, "unknown")} ${numberValue(latestEval.passed) ?? 0}/${numberValue(latestEval.total) ?? 0} promotionReady=${latestEval.promotionReady === true}`,
     `resolver_matches_latest_eval=${audit.resolverMatchesLatestEval === true}`,
     `promotion_blocking_decisions=${stringArray(audit.promotionBlockingDecisionIds).join(",") || "none"}`,
     `active_training=${audit.activeTraining === true}`,

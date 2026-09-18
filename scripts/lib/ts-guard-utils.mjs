@@ -1,12 +1,41 @@
-import { promises as fs } from "node:fs";
+import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
 const baseTestSuffixes = [".test.ts", ".test-utils.ts", ".test-harness.ts", ".e2e-harness.ts"];
 
+/**
+ * The repository root, located by walking up from the calling script to the
+ * nearest directory that is both a package and a workspace root.
+ *
+ * This used to be a fixed `"..", ".."` from the script's own directory. That
+ * silently resolved one level *above* the repository whenever a guard was not
+ * exactly two levels deep, and because `collectTypeScriptFilesFromRoots` treats
+ * a missing root as an empty result, the guard then scanned zero files and
+ * exited 0. A check that never ran was reported as a pass, which is worse than
+ * no check at all. Resolving by marker makes the guard's own depth irrelevant
+ * and turns an unresolvable root into a loud failure.
+ */
 export function resolveRepoRoot(importMetaUrl) {
-  return path.resolve(path.dirname(fileURLToPath(importMetaUrl)), "..", "..");
+  const start = path.dirname(fileURLToPath(importMetaUrl));
+  let dir = start;
+  for (;;) {
+    if (
+      existsSync(path.join(dir, "package.json")) &&
+      existsSync(path.join(dir, "pnpm-workspace.yaml"))
+    ) {
+      return dir;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) {
+      throw new Error(
+        `resolveRepoRoot: no package + workspace root found above ${start}; ` +
+          "the guard cannot tell which tree to scan, and guessing would let it pass vacuously.",
+      );
+    }
+    dir = parent;
+  }
 }
 
 export function resolveSourceRoots(repoRoot, relativeRoots) {

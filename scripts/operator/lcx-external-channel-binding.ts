@@ -218,12 +218,23 @@ async function readJson(filePath: string): Promise<JsonRecord | undefined> {
   }
 }
 
+/**
+ * Element type of `activeProcesses` entries that survived `recordValue`. Spelled with
+ * required-but-nullable fields so the `filter` predicate below is assignable to the
+ * mapped element type; an optional-field spelling fails that assignability check.
+ */
+type ActiveProcessEntry = {
+  pid: number | undefined;
+  role: string | undefined;
+  elapsed: string | undefined;
+};
+
 function activeProcessSummary(trainingPlan: JsonRecord | undefined) {
   const activeProcesses = Array.isArray(trainingPlan?.activeProcesses)
     ? trainingPlan.activeProcesses
     : [];
   return activeProcesses
-    .map((entry) => {
+    .map((entry): ActiveProcessEntry | undefined => {
       const record = recordValue(entry);
       if (!record) {
         return undefined;
@@ -234,7 +245,7 @@ function activeProcessSummary(trainingPlan: JsonRecord | undefined) {
         elapsed: stringValue(record.elapsed),
       };
     })
-    .filter((entry): entry is { pid?: number; role?: string; elapsed?: string } => Boolean(entry));
+    .filter((entry): entry is ActiveProcessEntry => Boolean(entry));
 }
 
 function sidecarDriftIsZero(summary: string | undefined): boolean {

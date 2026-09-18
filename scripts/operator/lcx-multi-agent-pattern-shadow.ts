@@ -14,6 +14,7 @@ import {
 } from "../../src/shared/lcx-ontology.ts";
 import type {
   LcxOntologyAgentRole,
+  LcxOntologyCommunicationKind,
   LcxOntologyContextScope,
   LcxOntologyDelegationMode,
   LcxOntologyExecutionState,
@@ -185,7 +186,9 @@ export type ShadowEvent = {
   role: LcxOntologyAgentRole;
   state: LcxOntologyExecutionState;
   kind: "task_started" | "task_completed" | "checkpoint" | "final_output";
-  communicationKind: "parent_message" | "report" | "final_answer";
+  // Validated against the single ontology registry (all of LCX_ONTOLOGY_COMMUNICATION_KINDS),
+  // so the declared domain must match it rather than a hand-picked subset.
+  communicationKind: LcxOntologyCommunicationKind;
   atMs: number;
   durationMs?: number;
   dependsOnTaskIds?: string[];
@@ -633,6 +636,16 @@ function isNonNegativeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
+/**
+ * Mirrors the JS relational coercion (`value > 0`) for receipt metrics that arrive as
+ * `unknown`. `Number(value) > 0` is the same ToPrimitive/ToNumber sequence the `>` operator
+ * performs, so this keeps the comparison byte-for-byte equivalent while giving the type
+ * checker a boolean — no shape assertion on a value the validator has not confirmed.
+ */
+function isPositiveMetric(value: unknown): boolean {
+  return Number(value) > 0;
+}
+
 function latestSummaryIntegrityErrors(summary: Record<string, unknown> | undefined): string[] {
   if (!summary) {
     return ["summary is missing"];
@@ -792,8 +805,8 @@ function latestReceiptIntegrityErrors(
       const recovery = asLatestRecord(run.recovery);
       if (
         (isNormal &&
-          (escapedPermissionViolations > 0 ||
-            externalSideEffects > 0 ||
+          (isPositiveMetric(escapedPermissionViolations) ||
+            isPositiveMetric(externalSideEffects) ||
             qualityChecks?.noDirectTradeAction === false)) ||
         recovery?.passed === false ||
         recovery?.state === "unrecoverable"
@@ -1525,7 +1538,9 @@ function syntheticToolEvents(
   fixture?: ReplayFixtureId,
 ): ShadowToolEvent[] {
   const plans = taskPlansFor(params.pattern);
-  const normal = plans.map((task) => ({
+  // Explicit element type: the seeded literal narrows `status` to "completed", which would
+  // otherwise reject the fixture-specific "blocked"/"escaped" pushes below.
+  const normal: ShadowToolEvent[] = plans.map((task) => ({
     eventId: `${params.runId}:${task.taskIdSuffix}:tool:read_case`,
     taskId: `${params.runId}:${task.taskIdSuffix}`,
     toolName: "read_case",
@@ -2526,15 +2541,18 @@ function decisionForSummary(params: {
   }
   const incompleteProofKinds = new Set<string>();
   const incompleteProofRuns = params.runs.filter((run) => {
-    const coverageErrors = validateShadowProofCoverage(run.proofCoverage, run.topology);
-    if (coverageErrors.length > 0) {
+    const coverage = run.proofCoverage;
+    const coverageErrors = validateShadowProofCoverage(coverage, run.topology);
+    // `!coverage` is already implied by the coverage error above; naming it here lets the
+    // compiler narrow `coverage` for the reads below instead of re-checking it.
+    if (coverageErrors.length > 0 || !coverage) {
       incompleteProofKinds.add("coverage_record");
       return true;
     }
-    for (const kind of [...run.proofCoverage.missing, ...run.proofCoverage.unknown]) {
+    for (const kind of [...coverage.missing, ...coverage.unknown]) {
       incompleteProofKinds.add(kind);
     }
-    return !run.proofCoverage.complete;
+    return !coverage.complete;
   });
   if (incompleteProofRuns.length > 0) {
     return {
@@ -3184,7 +3202,7 @@ async function readExistingReceipts(): Promise<Map<string, ShadowRunReceipt>> {
 function canReuseReplayReceipt(
   prior: ShadowRunReceipt | undefined,
   expected: ShadowRunReceipt,
-): boolean {
+): prior is ShadowRunReceipt {
   return (
     prior !== undefined &&
     prior.receiptSchemaVersion === RECEIPT_SCHEMA_VERSION &&

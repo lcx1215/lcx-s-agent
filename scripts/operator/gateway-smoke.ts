@@ -13,8 +13,14 @@ if (!urlRaw || !token) {
   process.exit(1);
 }
 
+// The guard above narrows `urlRaw`/`token` to `string`, but that narrowing lives in module
+// scope and does not reach into `main()`. Rebinding the validated values carries their
+// non-optional types across without adding a runtime check.
+const gatewayUrl = urlRaw;
+const gatewayToken = token;
+
 async function main() {
-  const url = resolveGatewayUrl(urlRaw);
+  const url = resolveGatewayUrl(gatewayUrl);
   const { request, waitOpen, close } = createGatewayWsClient({
     url: url.toString(),
     onEvent: (evt) => {
@@ -44,7 +50,7 @@ async function main() {
     role: "operator",
     scopes: ["operator.read", "operator.write", "operator.admin"],
     caps: [],
-    auth: { token },
+    auth: { token: gatewayToken },
   });
 
   if (!connectRes.ok) {

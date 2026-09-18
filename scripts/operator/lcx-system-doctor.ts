@@ -23,6 +23,15 @@ type CheckResult = {
   error?: string;
 };
 
+/** Resolved value of `runQuietCommand`, which captures both streams and its own duration. */
+type CommandResult = {
+  command: string;
+  args: string[];
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+};
+
 const WORKSPACE_DIR = DEFAULT_WORKSPACE_DIR;
 const MINIMAX_GUARD_LOG = DEFAULT_GUARD_LOG_PATH;
 const LEARNING_COUNCIL_DIR = path.join(WORKSPACE_DIR, "bank", "knowledge", "learning-councils");
@@ -707,7 +716,9 @@ async function minimaxTrainingGuardStatusCheck(): Promise<CheckResult> {
       summary: {
         logPaths: {
           guard: MINIMAX_GUARD_LOG,
-          quota: quotaLogPath,
+          // The quota log path is discovered from the plan, which is exactly what failed here,
+          // so the degraded summary reports it as unknown rather than guessing a path.
+          quota: undefined,
         },
       },
       error: error instanceof Error ? error.message : String(error),

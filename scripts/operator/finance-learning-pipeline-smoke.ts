@@ -1,3 +1,4 @@
+import type { Dirent } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -76,6 +77,12 @@ function getNumber(value: unknown, label: string): number {
   return value;
 }
 
+function detailsOf(result: { details: unknown }): Record<string, unknown> {
+  // Tool results carry `details: unknown` by contract; this narrows it the same way
+  // src/agents/tools does, without asserting or changing runtime behavior.
+  return result.details as Record<string, unknown>;
+}
+
 function buildAgentVisibleLearningLine(retrieval: Record<string, unknown>): string {
   const status = getString(
     retrieval.learningInternalizationStatus,
@@ -151,7 +158,7 @@ async function readWorkspaceJson(
 
 async function countJsonFilesUnder(workspaceDir: string, relativePath: string): Promise<number> {
   const absolutePath = path.join(workspaceDir, relativePath);
-  let entries: Array<fs.Dirent>;
+  let entries: Dirent[];
   try {
     entries = await fs.readdir(absolutePath, { withFileTypes: true });
   } catch {
@@ -189,7 +196,7 @@ async function seedValidCapabilityFromLocalFile(params: {
     learningIntent: "ETF event triage workflow with public headlines and ETF regime risk",
     maxRetrievedCapabilities: 5,
   });
-  assert(result.details.ok === true, `${params.toolCallId} should seed a retained capability`);
+  assert(detailsOf(result).ok === true, `${params.toolCallId} should seed a retained capability`);
   return result;
 }
 
@@ -210,17 +217,17 @@ async function runCase(
         retrievalNotes: SAFE_RETRIEVAL_NOTES,
         allowedActionAuthority: "research_only",
       });
-      assert(result.details.ok === true, "manual-paste should complete the full pipeline");
+      assert(detailsOf(result).ok === true, "manual-paste should complete the full pipeline");
       assert(
-        result.details.inspectTool === "finance_learning_capability_inspect",
+        detailsOf(result).inspectTool === "finance_learning_capability_inspect",
         "manual-paste should return inspect target",
       );
       return {
         case: caseName,
         ok: true,
-        retainedCandidateCount: result.details.retainedCandidateCount,
-        normalizedArticleArtifactPaths: result.details.normalizedArticleArtifactPaths,
-        inspectTargets: result.details.inspectTargets,
+        retainedCandidateCount: detailsOf(result).retainedCandidateCount,
+        normalizedArticleArtifactPaths: detailsOf(result).normalizedArticleArtifactPaths,
+        inspectTargets: detailsOf(result).inspectTargets,
       };
     }
     case "local-file": {
@@ -236,14 +243,17 @@ async function runCase(
         title: "ETF event triage workflow",
         retrievalNotes: SAFE_RETRIEVAL_NOTES,
       });
-      assert(result.details.ok === true, "local-file should complete the full pipeline");
-      assert(result.details.noRemoteFetchOccurred === true, "local-file should not fetch remotely");
+      assert(detailsOf(result).ok === true, "local-file should complete the full pipeline");
+      assert(
+        detailsOf(result).noRemoteFetchOccurred === true,
+        "local-file should not fetch remotely",
+      );
       return {
         case: caseName,
         ok: true,
-        retainedCandidateCount: result.details.retainedCandidateCount,
-        normalizedArticleArtifactPaths: result.details.normalizedArticleArtifactPaths,
-        inspectTargets: result.details.inspectTargets,
+        retainedCandidateCount: detailsOf(result).retainedCandidateCount,
+        normalizedArticleArtifactPaths: detailsOf(result).normalizedArticleArtifactPaths,
+        inspectTargets: detailsOf(result).inspectTargets,
       };
     }
     case "external-market-capability-intake": {
@@ -291,20 +301,23 @@ async function runCase(
         keepDownrankDiscardDecision: "keep",
       });
       assert(
-        result.details.ok === true,
+        detailsOf(result).ok === true,
         "external-market-capability-intake should complete pipeline",
       );
-      const retrieval = getRecord(result.details.retrievalFirstLearning, "retrievalFirstLearning");
+      const retrieval = getRecord(
+        detailsOf(result).retrievalFirstLearning,
+        "retrievalFirstLearning",
+      );
       const applicationValidation = getRecord(
-        result.details.applicationValidation,
+        detailsOf(result).applicationValidation,
         "applicationValidation",
       );
       const sourceIntakeEvidenceChain = getRecord(
-        result.details.sourceIntakeEvidenceChain,
+        detailsOf(result).sourceIntakeEvidenceChain,
         "sourceIntakeEvidenceChain",
       );
       const moduleLearningPlanCandidate = getRecord(
-        result.details.moduleLearningPlanCandidate,
+        detailsOf(result).moduleLearningPlanCandidate,
         "moduleLearningPlanCandidate",
       );
       const retrievalReceiptPath = getString(
@@ -376,8 +389,8 @@ async function runCase(
         targetSurface: handoff.targetSurface,
         backendTool: handoff.backendToolContract.toolName,
         sourceRequirement: handoff.backendToolContract.sourceRequirement,
-        retainedCandidateCount: result.details.retainedCandidateCount,
-        normalizedArticleArtifactPaths: result.details.normalizedArticleArtifactPaths,
+        retainedCandidateCount: detailsOf(result).retainedCandidateCount,
+        normalizedArticleArtifactPaths: detailsOf(result).normalizedArticleArtifactPaths,
         learningInternalizationStatus: retrieval.learningInternalizationStatus,
         postAttachCandidateCount: retrieval.postAttachCandidateCount,
         applicationReadyCandidateCount: retrieval.applicationReadyCandidateCount,
@@ -478,13 +491,16 @@ async function runCase(
         applicationValidationQuery: utterance,
         maxAppliedCapabilities: 3,
       });
-      assert(result.details.ok === false, "extraction-gap source should fail closed");
-      assert(result.details.failedStep === "extract", "extraction-gap should stop at extraction");
+      assert(detailsOf(result).ok === false, "extraction-gap source should fail closed");
       assert(
-        result.details.reason === "finance_article_extraction_gap",
+        detailsOf(result).failedStep === "extract",
+        "extraction-gap should stop at extraction",
+      );
+      assert(
+        detailsOf(result).reason === "finance_article_extraction_gap",
         "extraction-gap should expose the extraction gap reason",
       );
-      const extractionGap = getRecord(result.details.extractionGap, "extractionGap");
+      const extractionGap = getRecord(detailsOf(result).extractionGap, "extractionGap");
       const missingFields = Array.isArray(extractionGap.missingFields)
         ? extractionGap.missingFields
         : [];
@@ -513,8 +529,8 @@ async function runCase(
         handoffSource: handoff.source,
         targetSurface: handoff.targetSurface,
         backendTool: handoff.backendToolContract.toolName,
-        failedStep: result.details.failedStep,
-        reason: result.details.reason,
+        failedStep: detailsOf(result).failedStep,
+        reason: detailsOf(result).reason,
         missingFields,
         retrievalReceiptCreated: retrievalReceiptCountAfter > retrievalReceiptCountBefore,
         usageReviewCreated: usageReviewCountAfter > usageReviewCountBefore,
@@ -534,19 +550,20 @@ async function runCase(
           "How should the retained ETF event triage workflow be used for research with public headlines, ETF issuer notes, and portfolio risk checks?",
         maxCandidates: 1,
       });
-      assert(applyResult.details.ok === true, "capability-apply should apply a retained card");
+      assert(detailsOf(applyResult).ok === true, "capability-apply should apply a retained card");
       assert(
-        applyResult.details.applicationStatus === "application_ready",
+        detailsOf(applyResult).applicationStatus === "application_ready",
         "capability-apply should expose application_ready status",
       );
       assert(
-        applyResult.details.failedReason === null,
+        detailsOf(applyResult).failedReason === null,
         "capability-apply success should expose null failedReason",
       );
-      const answerSkeleton = getRecord(applyResult.details.answerSkeleton, "answerSkeleton");
+      const answerSkeleton = getRecord(detailsOf(applyResult).answerSkeleton, "answerSkeleton");
       const answerScaffold = getRecord(answerSkeleton.answerScaffold, "answerScaffold");
-      const appliedCapabilities = Array.isArray(applyResult.details.appliedCapabilities)
-        ? applyResult.details.appliedCapabilities
+      const rawAppliedCapabilities = detailsOf(applyResult).appliedCapabilities;
+      const appliedCapabilities: unknown[] = Array.isArray(rawAppliedCapabilities)
+        ? rawAppliedCapabilities
         : [];
       assert(appliedCapabilities.length > 0, "capability-apply should return applied capability");
       assert(
@@ -575,8 +592,11 @@ async function runCase(
         ),
         "usable answer contract should force application_ready or failedReason into the reply",
       );
-      const usageReceiptPath = getString(applyResult.details.usageReceiptPath, "usageReceiptPath");
-      const usageReviewPath = getString(applyResult.details.usageReviewPath, "usageReviewPath");
+      const usageReceiptPath = getString(
+        detailsOf(applyResult).usageReceiptPath,
+        "usageReceiptPath",
+      );
+      const usageReviewPath = getString(detailsOf(applyResult).usageReviewPath, "usageReviewPath");
       await assertArtifactExists(workspaceDir, usageReceiptPath);
       const usageReview = await readWorkspaceJson(workspaceDir, usageReviewPath);
       assert(
@@ -586,21 +606,21 @@ async function runCase(
       return {
         case: caseName,
         ok: true,
-        seedRetainedCandidateCount: seedResult.details.retainedCandidateCount,
-        applicationStatus: applyResult.details.applicationStatus,
-        failedReason: applyResult.details.failedReason,
-        applicationMode: applyResult.details.applicationMode,
-        synthesisMode: applyResult.details.synthesisMode,
+        seedRetainedCandidateCount: detailsOf(seedResult).retainedCandidateCount,
+        applicationStatus: detailsOf(applyResult).applicationStatus,
+        failedReason: detailsOf(applyResult).failedReason,
+        applicationMode: detailsOf(applyResult).applicationMode,
+        synthesisMode: detailsOf(applyResult).synthesisMode,
         usageReceiptPath,
         usageReviewPath,
         usageReviewBoundary: usageReview.boundary,
-        candidateCount: applyResult.details.candidateCount,
+        candidateCount: detailsOf(applyResult).candidateCount,
         noActionBoundary: answerSkeleton.noActionBoundary,
         answerScaffoldStatus: answerScaffold.status,
         usableAnswerContractStatus: usableAnswerContract.status,
         appliedCapabilityNames: appliedCapabilities.map((entry) =>
           typeof entry === "object" && entry && "capabilityName" in entry
-            ? (entry.capabilityName as unknown)
+            ? entry.capabilityName
             : null,
         ),
       };
@@ -616,21 +636,24 @@ async function runCase(
         queryText: "open source github repository benchmark compliance dataset governance",
         maxCandidates: 3,
       });
-      assert(applyResult.details.ok === false, "unmatched apply should fail closed");
+      assert(detailsOf(applyResult).ok === false, "unmatched apply should fail closed");
       assert(
-        applyResult.details.reason === "no_retrievable_finance_capability",
+        detailsOf(applyResult).reason === "no_retrievable_finance_capability",
         "unmatched apply should not improvise a learned answer",
       );
       assert(
-        applyResult.details.applicationStatus === "not_application_ready",
+        detailsOf(applyResult).applicationStatus === "not_application_ready",
         "unmatched apply should expose not_application_ready status",
       );
       assert(
-        applyResult.details.failedReason === "no_retrievable_finance_capability",
+        detailsOf(applyResult).failedReason === "no_retrievable_finance_capability",
         "unmatched apply should expose concrete failedReason",
       );
-      const usageReceiptPath = getString(applyResult.details.usageReceiptPath, "usageReceiptPath");
-      const usageReviewPath = getString(applyResult.details.usageReviewPath, "usageReviewPath");
+      const usageReceiptPath = getString(
+        detailsOf(applyResult).usageReceiptPath,
+        "usageReceiptPath",
+      );
+      const usageReviewPath = getString(detailsOf(applyResult).usageReviewPath, "usageReviewPath");
       await assertArtifactExists(workspaceDir, usageReceiptPath);
       const usageReview = await readWorkspaceJson(workspaceDir, usageReviewPath);
       assert(
@@ -641,13 +664,13 @@ async function runCase(
         case: caseName,
         ok: false,
         expectedFailure: true,
-        applicationStatus: applyResult.details.applicationStatus,
-        failedReason: applyResult.details.failedReason,
-        reason: applyResult.details.reason,
+        applicationStatus: detailsOf(applyResult).applicationStatus,
+        failedReason: detailsOf(applyResult).failedReason,
+        reason: detailsOf(applyResult).reason,
         usageReceiptPath,
         usageReviewPath,
         usageReviewBoundary: usageReview.boundary,
-        action: applyResult.details.action,
+        action: detailsOf(applyResult).action,
       };
     }
     case "external-rss": {
@@ -668,17 +691,17 @@ async function runCase(
         complianceNotes: SAFE_COMPLIANCE_NOTES,
         isPubliclyAccessible: true,
       });
-      assert(result.details.ok === true, "external-rss should complete the full pipeline");
+      assert(detailsOf(result).ok === true, "external-rss should complete the full pipeline");
       assert(
-        result.details.inspectTool === "finance_learning_capability_inspect",
+        detailsOf(result).inspectTool === "finance_learning_capability_inspect",
         "external-rss should return inspect target",
       );
       return {
         case: caseName,
         ok: true,
-        retainedCandidateCount: result.details.retainedCandidateCount,
-        normalizedArticleArtifactPaths: result.details.normalizedArticleArtifactPaths,
-        inspectTargets: result.details.inspectTargets,
+        retainedCandidateCount: detailsOf(result).retainedCandidateCount,
+        normalizedArticleArtifactPaths: detailsOf(result).normalizedArticleArtifactPaths,
+        inspectTargets: detailsOf(result).inspectTargets,
       };
     }
     case "generic": {
@@ -694,12 +717,12 @@ async function runCase(
         title: "Generic market note",
         retrievalNotes: SAFE_RETRIEVAL_NOTES,
       });
-      assert(result.details.ok === false, "generic should fail closed");
+      assert(detailsOf(result).ok === false, "generic should fail closed");
       return {
         case: caseName,
         ok: false,
-        failedStep: result.details.failedStep,
-        reason: result.details.reason,
+        failedStep: detailsOf(result).failedStep,
+        reason: detailsOf(result).reason,
       };
     }
     case "blocked": {
@@ -707,13 +730,13 @@ async function runCase(
         "blocked-bypass-request.json",
       );
       const result = await tool.execute("smoke-blocked", blockedRequest);
-      assert(result.details.ok === false, "blocked should fail closed");
-      assert(result.details.failedStep === "intake", "blocked should fail before extraction");
+      assert(detailsOf(result).ok === false, "blocked should fail closed");
+      assert(detailsOf(result).failedStep === "intake", "blocked should fail before extraction");
       return {
         case: caseName,
         ok: false,
-        failedStep: result.details.failedStep,
-        reason: result.details.reason,
+        failedStep: detailsOf(result).failedStep,
+        reason: detailsOf(result).reason,
       };
     }
     case "metadata-reference": {
@@ -721,19 +744,22 @@ async function runCase(
         "metadata-only-web-reference.json",
       );
       const result = await tool.execute("smoke-metadata-reference", metadataRequest);
-      assert(result.details.ok === true, "metadata-reference should succeed as metadata only");
+      assert(detailsOf(result).ok === true, "metadata-reference should succeed as metadata only");
       assert(
-        result.details.extractionSkipped === true,
+        detailsOf(result).extractionSkipped === true,
         "metadata-reference should skip extraction",
       );
-      assert(result.details.noRemoteFetchOccurred === true, "metadata-reference should not fetch");
+      assert(
+        detailsOf(result).noRemoteFetchOccurred === true,
+        "metadata-reference should not fetch",
+      );
       return {
         case: caseName,
         ok: true,
-        extractionSkipped: result.details.extractionSkipped,
-        extractionSkippedReason: result.details.extractionSkippedReason,
-        normalizedReferenceArtifactPaths: result.details.normalizedReferenceArtifactPaths,
-        inspectTool: result.details.inspectTool,
+        extractionSkipped: detailsOf(result).extractionSkipped,
+        extractionSkippedReason: detailsOf(result).extractionSkippedReason,
+        normalizedReferenceArtifactPaths: detailsOf(result).normalizedReferenceArtifactPaths,
+        inspectTool: detailsOf(result).inspectTool,
       };
     }
   }

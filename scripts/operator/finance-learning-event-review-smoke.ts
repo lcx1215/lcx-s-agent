@@ -49,6 +49,12 @@ function assert(condition: unknown, message: string): asserts condition {
   }
 }
 
+function detailsOf(result: { details: unknown }): Record<string, unknown> {
+  // Pure type-level narrowing of the tool contract's `details: unknown`.
+  // Deliberately NOT asserting: keeps runtime behavior identical to direct property access.
+  return result.details as Record<string, unknown>;
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   assert(value && typeof value === "object" && !Array.isArray(value), "value should be object");
   return value as Record<string, unknown>;
@@ -81,7 +87,7 @@ async function seedCapabilities(params: {
         "ETF event triage with catalyst mapping, liquidity regime, and portfolio risk gates",
       maxRetrievedCapabilities: 6,
     });
-    assert(result.details.ok === true, `${fileName} should seed successfully`);
+    assert(detailsOf(result).ok === true, `${fileName} should seed successfully`);
     seeded.push(result.details);
   }
   return seeded;
@@ -163,9 +169,9 @@ async function main() {
     queryText: event.researchQuestion,
     maxCandidates: 5,
   });
-  assert(applyResult.details.ok === true, "event review apply should succeed");
+  assert(detailsOf(applyResult).ok === true, "event review apply should succeed");
   assert(
-    applyResult.details.synthesisMode === "multi_capability_synthesis",
+    detailsOf(applyResult).synthesisMode === "multi_capability_synthesis",
     "event review should synthesize multiple capabilities",
   );
   const eventReviewDraft = buildEventReviewDraft({
@@ -184,12 +190,12 @@ async function main() {
         ok: true,
         workspaceDir,
         seededCandidateRuns: seeded.length,
-        candidateCount: applyResult.details.candidateCount,
-        synthesisMode: applyResult.details.synthesisMode,
-        applicationMode: applyResult.details.applicationMode,
+        candidateCount: detailsOf(applyResult).candidateCount,
+        synthesisMode: detailsOf(applyResult).synthesisMode,
+        applicationMode: detailsOf(applyResult).applicationMode,
         eventReviewDraft,
-        usageReceiptPath: applyResult.details.usageReceiptPath,
-        usageReviewPath: applyResult.details.usageReviewPath,
+        usageReceiptPath: detailsOf(applyResult).usageReceiptPath,
+        usageReviewPath: detailsOf(applyResult).usageReviewPath,
       },
       null,
       2,

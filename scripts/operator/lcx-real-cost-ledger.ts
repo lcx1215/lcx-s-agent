@@ -228,7 +228,7 @@ export async function buildRealCostLedger(input: CostLedgerInput) {
     }
     const roles = arrayValue(artifact.roles)
       .map((role) => recordValue(role))
-      .filter(Boolean);
+      .filter((role): role is JsonRecord => role !== undefined);
     if (roles.length === 0) {
       continue;
     }

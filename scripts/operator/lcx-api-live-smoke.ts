@@ -140,11 +140,26 @@ function summarizeGeospatial(receipt: GeospatialRefreshReceipt) {
   };
 }
 
+/**
+ * Failure shape emitted when the Yahoo probe throws. `summarizeYahoo` only ever describes a
+ * success, so the failure branch is its own member of the `result` union instead of an
+ * assertion onto the success type.
+ */
+type YahooSmokeFailure = {
+  status: "failed";
+  data: { valueObserved: false };
+  receipts: ReturnType<typeof summarizeYahoo>["receipts"];
+  error: string;
+};
+
 async function main(): Promise<number> {
   const options = parseArgs(process.argv.slice(2));
   const correlationId = `lcx-api-live-smoke:${options.source}:${Date.now()}`;
   const receipts: ApiCallReceipt[] = [];
-  let result: ReturnType<typeof summarizeYahoo> | ReturnType<typeof summarizeGeospatial>;
+  let result:
+    | ReturnType<typeof summarizeYahoo>
+    | ReturnType<typeof summarizeGeospatial>
+    | YahooSmokeFailure;
   if (options.source === "yahoo") {
     try {
       const quote = await fetchYahooQuote(options.instrument, {
@@ -162,7 +177,7 @@ async function main(): Promise<number> {
         data: { valueObserved: false },
         receipts: receipts.map(compactReceipt),
         error: error instanceof Error ? error.name : "source_error",
-      } as ReturnType<typeof summarizeYahoo>;
+      };
     }
   } else {
     const refresh = await runGeospatialRefresh({

@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -162,7 +162,10 @@ const PARSE_STABILITY_COMPACT_EVAL_CASE_IDS = new Set([
 ]);
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const WORKTREE_CWD = path.resolve(SCRIPT_DIR, "..", "..");
-let activeGenerateChild: ChildProcessWithoutNullStreams | undefined;
+// The generate child is spawned with `stdio: ["ignore", "pipe", "pipe"]`, so its stdin is null
+// and `ChildProcessWithoutNullStreams` (all three piped) does not describe it. `ChildProcess`
+// is the base type that covers every stdio combination and is what this handle needs.
+let activeGenerateChild: ChildProcess | undefined;
 
 function isParseStabilityCompactEvalCase(evalCase: EvalCase): boolean {
   return (
@@ -3845,8 +3848,12 @@ function readGeneratedCaseFile(filePath: string): GeneratedCaseFileRead {
         `generated case ${id} has invalid minModuleMatches at ${filePath}:${index + 1}`,
       );
     }
+    // `Array.prototype.includes` on the literal-union taxonomy requires an argument of that same
+    // union, but these ids arrive as free-form strings precisely so unknown ones can be caught.
+    // A `Set<string>` keeps the membership test identical while accepting any string.
+    const knownModuleIds = new Set<string>(LOCAL_BRAIN_MODULE_TAXONOMY);
     const unknownModules = [...requiredModules, ...forbiddenModules].filter(
-      (moduleId) => !LOCAL_BRAIN_MODULE_TAXONOMY.includes(moduleId),
+      (moduleId) => !knownModuleIds.has(moduleId),
     );
     if (unknownModules.length > 0) {
       throw new Error(
@@ -4802,8 +4809,15 @@ async function runGenerateWithTimeoutRetry(
         initialOutputSha256: error.rawOutput.length > 0 ? hashText(error.rawOutput) : undefined,
       };
     } catch (retryError) {
+      // `useUnknownInCatchVariables` makes the catch parameter `unknown`. The retry path only
+      // ever rejects with an `Error`, and this keeps the original `name: message` rendering
+      // byte-for-byte for that case (and the original `undefined: undefined` otherwise).
+      const retryLabel =
+        retryError instanceof Error
+          ? `${retryError.name}: ${retryError.message}`
+          : "undefined: undefined";
       throw new LocalBrainGenerateError(
-        `${error.name}: ${error.message}; compact retry failed: ${retryError.name}: ${retryError.message}`,
+        `${error.name}: ${error.message}; compact retry failed: ${retryLabel}`,
         rawOutputFromError(retryError) || rawOutputFromError(error) || "",
         retryError instanceof LocalBrainGenerateError ? retryError.stderrOutput : "",
       );

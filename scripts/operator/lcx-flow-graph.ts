@@ -1161,6 +1161,43 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     ],
   },
   {
+    id: "finance_live_execution_waterflow",
+    family: "authorized_live_execution_and_risk_budget",
+    objective:
+      "An explicitly authorized live-execution run may place orders, but only through a declared execution adapter, inside a stated risk budget, and only when it leaves an execution receipt that lands in an append-only position ledger. Research and candidate waterflows never reach this path.",
+    start: "execution_intent",
+    end: "position_ledger",
+    requiredNodes: [
+      "execution_intent",
+      "explicit_run_authorization",
+      "declared_execution_adapter",
+      "order_placement",
+      "execution_receipt",
+      "position_ledger",
+    ],
+    requiredFilters: [
+      "explicit_run_authorization_required",
+      "declared_execution_adapter_required",
+      "risk_budget_required",
+      "execution_receipt_required",
+      "append_only_ledger_required",
+      "mark_required_for_unrealized_pnl",
+    ],
+    edges: [
+      ["execution_intent", "explicit_run_authorization"],
+      ["explicit_run_authorization", "declared_execution_adapter"],
+      ["declared_execution_adapter", "order_placement"],
+      ["order_placement", "execution_receipt"],
+      ["execution_receipt", "position_ledger"],
+    ],
+    receipts: [
+      "finance-decision-policy",
+      "finance-caseflow",
+      "finance-outcome-ledger",
+      "finance-position-ledger",
+    ],
+  },
+  {
     id: "automation_repair_lock_waterflow",
     family: "codex_auto_repair_and_schedule_guard",
     objective:
@@ -1491,9 +1528,9 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
     ],
     allowedPaths: [
       "scripts/operator/lcx-caseflow-demo.ts",
-      "scripts/operator/lcx-finance-research.test.ts",
       "scripts/operator/lcx-finance-research.ts",
       "scripts/operator/lcx-finance-research-run.ts",
+      "test/operator/lcx-finance-research.test.ts",
       "src/agents/finance-caseflow-followups.test.ts",
       "src/agents/finance-caseflow-followups.ts",
       "src/agents/finance-caseflow.test.ts",
@@ -1514,6 +1551,8 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "src/agents/finance-research-runner.ts",
       "src/agents/finance-run-checkpoints.test.ts",
       "src/agents/finance-run-checkpoints.ts",
+      "src/agents/tools/finance-outcome-ledger-read-tool.test.ts",
+      "src/agents/tools/finance-outcome-ledger-read-tool.ts",
       "test/lcx-finance-research-run.test.ts",
     ],
   },
@@ -1899,6 +1938,7 @@ const FLOW_DIAGNOSTIC_OWNER_BY_SCENARIO_ID: Record<string, string> = {
     "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
   logical_agent_pool_waterflow: "scripts/operator/lcx-logical-agent-pool.ts",
   prediction_market_research_only_waterflow: "scripts/operator/lcx-external-agent-upgrade-radar.ts",
+  finance_live_execution_waterflow: "scripts/operator/lcx-finance-live-execution.ts",
   automation_repair_lock_waterflow: "scripts/operator/lcx-automation-repair-lock.ts",
 };
 
@@ -1946,6 +1986,8 @@ const FLOW_DIAGNOSTIC_FAST_CHECK_BY_SCENARIO_ID: Record<string, string> = {
     "node --import tsx scripts/operator/lcx-logical-agent-pool.ts --demo --json",
   prediction_market_research_only_waterflow:
     "node --import tsx scripts/operator/lcx-external-agent-upgrade-radar.ts --json",
+  finance_live_execution_waterflow:
+    "node --import tsx scripts/operator/lcx-finance-live-execution.ts --json --instrument AAPL --quantity 1 --reference-price 100 --as-of 2026-09-18T00:00:00Z --run-authorization owner-diagnostic --allow-instrument AAPL",
   automation_repair_lock_waterflow:
     "node --import tsx scripts/operator/lcx-automation-repair-lock.ts --mode status --json",
 };
@@ -2310,7 +2352,9 @@ function buildFlowDiagnosticIndex(): FlowDiagnosticIndexEntry[] {
 }
 
 function consolidationClusterCheck(surfaceTexts: Record<SurfaceGroup, string>): FlowCheck {
-  const scenarioIds = new Set(FLOW_SCENARIOS.map((scenario) => scenario.id));
+  // `Set<string>` because `cluster.ownerScenario` is an unconstrained string from the cluster
+  // table; the literal union of scenario ids would reject it at the membership test below.
+  const scenarioIds = new Set<string>(FLOW_SCENARIOS.map((scenario) => scenario.id));
   const nodeIds = new Set(NODE_IDS);
   const filterIds = new Set(FILTER_IDS);
   const missing = CONSOLIDATION_CLUSTERS.flatMap((cluster) => {
