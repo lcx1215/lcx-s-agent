@@ -116,9 +116,9 @@
 
 ## What Is Still Not Finished
 
-- The current workspace still does not have `memory/unified-risk-view.md`.
-- There is still no durable per-asset or per-position state plane.
-- The learning timebox is still process-bound, not a global durable workflow engine.
+- The current workspace still does not have `memory/unified-risk-view.md` — the operating-loop hook (command new/reset) renders it with the real control-room ledger woven in, but no session event has fired it in the live workspace yet.
+- The per-asset book is a durable read-only plane now (`finance_position_ledger_read` capability + control-room projection with equity curve); the asset-level approval/veto runtime state is still deliberately empty.
+- The learning timebox is now a durable in-harness workflow surface (`learning_distill` capability: pending review notes → keep/replay/next-eval cards under `state/lcx-learning-workflow-latest.json`); it is no longer process-bound.
 - The fundamental hook family is richer than the current local research corpus.
 - Local core verification is stronger than external-channel proof. `core-verified` is not `user-visible-observed`.
 

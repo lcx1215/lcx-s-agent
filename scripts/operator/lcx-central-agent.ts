@@ -120,14 +120,62 @@ async function buildPerception(
     "lcx-governance-autopilot-latest.json",
     {},
   );
+  const learningWorkflow = await readLatest<Record<string, unknown>>(
+    "lcx-learning-workflow-latest.json",
+    {},
+  );
   const ownerTotals = extractOwnerTotals(governance);
   const observedAt = new Date().toISOString();
   return {
     observedAt,
     ownerTotals,
-    controlRoom,
+    // The learning-workflow surface rides in the flexible control-room section so
+    // the existing byte budget bounds it like any other control-room key and names
+    // whatever does not fit. The projection is deliberately small (counts + last
+    // summary); the full surface stays on disk under the latest pointer.
+    controlRoom: {
+      ...controlRoom,
+      ...(learningWorkflow && typeof learningWorkflow === "object"
+        ? { learningWorkflow: projectLearningWorkflow(learningWorkflow) }
+        : {}),
+    },
     backlog,
     boundaries: CLAIMED_BOUNDARIES,
+  };
+}
+
+/**
+ * The brain only needs to know whether the learning workflow has work and how
+ * much; the cards themselves stay on disk. When the surface is absent the
+ * projection says so by name instead of pretending the queue is empty.
+ */
+function projectLearningWorkflow(
+  state: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> {
+  if (state.schemaVersion !== "lcx_learning_workflow_v1") {
+    return { status: "unavailable", reason: "learning_workflow_unknown_schema" };
+  }
+  const summary =
+    state.summary !== null && typeof state.summary === "object"
+      ? (state.summary as Record<string, unknown>)
+      : {};
+  const processed = Array.isArray(state.processed)
+    ? {
+        count: state.processed.length,
+        // Processed entries are name-sorted, so the tail is the newest note.
+        latestName: String(state.processed[state.processed.length - 1]?.name ?? ""),
+      }
+    : { count: 0 };
+  return {
+    status: "present",
+    lastDistilledAt: state.lastDistilledAt ?? null,
+    scanned: state.scanned ?? null,
+    pending: state.pending ?? null,
+    // Bounded first five names so a long queue cannot spend the vote alone.
+    queue: Array.isArray(state.queue) ? state.queue.slice(0, 5) : [],
+    summary,
+    processed,
+    latestRunPath: typeof state.latestRunPath === "string" ? state.latestRunPath : null,
   };
 }
 

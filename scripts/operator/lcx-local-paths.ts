@@ -50,6 +50,20 @@ export const CENTRAL_AGENT_LOG_JSONL_PATH = path.join(
   DEFAULT_WORKSPACE_LOG_DIR,
   "lcx-central-agent-log-latest.jsonl",
 );
+// Learning-workflow surface written by the learning_distill capability. Declared
+// here (mirroring the capability's own defaults) so the writer and every reader —
+// the central-agent perception and the control-room projection — share one name.
+export const LEARNING_WORKFLOW_LATEST_PATH = path.join(
+  DEFAULT_WORKSPACE_DIR,
+  "state",
+  "lcx-learning-workflow-latest.json",
+);
+export const LEARNING_WORKFLOW_RUNS_DIR = path.join(
+  DEFAULT_WORKSPACE_DIR,
+  "state",
+  "learning-workflow",
+  "runs",
+);
 // One immutable snapshot per cycle. The single `latest` file is a pointer, so an
 // overlapping run (hourly owner plus a manual invocation) must not be able to
 // overwrite another run's evidence.

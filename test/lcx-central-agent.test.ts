@@ -256,6 +256,9 @@ describe("central harness covers the whole system, not a slice of it", () => {
     // The whole-system claim includes the real book: the brain must be able to
     // see what is held (per-asset state), not only counts of what ran.
     expect(CENTRAL_CAPABILITY_OWNER_IDS).toContain("finance_position_ledger_read");
+    // The whole-system claim also includes the learning loop: the brain must be
+    // able to fold pending review notes into durable cards, not only read them.
+    expect(CENTRAL_CAPABILITY_OWNER_IDS).toContain("learning_distill");
   });
 
   it("keeps write-authority owners out, explicitly rather than by omission", () => {
@@ -335,6 +338,60 @@ describe("central harness covers the whole system, not a slice of it", () => {
     expect(source).not.toContain("show-diagnostics");
     expect(source).not.toContain("showDiagnostics");
     expect(source).not.toContain("cliArgs.push");
+  });
+
+  it("distills pending learning notes through the learning capability, gated as local-only", async () => {
+    const spec = registry.get("learning_distill")!;
+    const memoryDir = path.join(os.tmpdir(), `lcx-central-test-learning-${process.pid}`);
+    const stateDir = path.join(os.tmpdir(), `lcx-central-test-learning-state-${process.pid}`);
+    await fsp.mkdir(memoryDir, { recursive: true });
+    await fsp.writeFile(
+      path.join(memoryDir, "2026-09-10-review-harness.md"),
+      [
+        "# Learning Review: 2026-09-10 12:00:00 UTC",
+        "",
+        "- **Session Key**: sk-harness",
+        "- **Session ID**: sid-harness",
+        "- **Topic**: coding-and-systems",
+        "",
+        "## Review Note",
+        "- mistake_pattern: a mistake",
+        "- core_principle: a principle",
+        "- micro_drill: a drill",
+        "",
+      ].join("\n"),
+    );
+
+    // The gate treats this as a local-only capability: a write-shaped arg is
+    // refused, a plain scan is accepted.
+    expect(spec.approve({ memoryDir, stateDir, windowDays: 366 }).ok).toBe(true);
+    expect(spec.approve({ write: true }).ok).toBe(false);
+    expect(spec.approve({ order: { symbol: "NVDA" } }).ok).toBe(false);
+
+    const receipt = await runCentralHarnessCycle({
+      perception: perception(),
+      brain: brainWithActions([
+        {
+          ownerId: "learning_distill",
+          args: { memoryDir, stateDir, windowDays: 366 },
+          reasoning: "fold pending learning notes into cards",
+        },
+      ]),
+      registry,
+    });
+    expect(receipt.actionsProposed).toBe(1);
+    expect(receipt.actionsBlockedByGate).toBe(0);
+    const step = receipt.steps[0];
+    expect(step.status).toBe("ran_ok");
+    // The full cards array and the summary tail are budget-dropped from the
+    // 512-byte step digest by design (named in outcomeDroppedKeys); the leading
+    // status + pending counts survive, and the card fields themselves are covered
+    // by the tool's own unit tests.
+    expect(step.outcome?.status).toBe("distilled");
+    expect(step.outcome?.pending).toBe(1);
+    expect(receipt.liveTouched).toBe(false);
+    expect(receipt.providerConfigTouched).toBe(false);
+    expect(receipt.protectedMemoryTouched).toBe(false);
   });
 });
 

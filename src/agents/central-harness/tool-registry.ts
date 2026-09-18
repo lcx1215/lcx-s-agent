@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { createFinancePositionLedgerReadTool } from "../tools/finance-position-ledger-read-tool.js";
 import { createFinanceResearchRunTool } from "../tools/finance-research-run-tool.js";
+import { createLearningDistillTool } from "../tools/learning-distill-tool.js";
 import type { CentralToolSpec } from "./types.js";
 import { CENTRAL_FORBIDDEN_SIDE_EFFECTS } from "./types.js";
 
@@ -155,10 +156,14 @@ export const CENTRAL_EXCLUDED_WRITE_OWNER_IDS = ["selfRepairHands"] as const;
  * book: without it the brain could only see counts ("an owner ran") and never
  * what is actually held, so every finance decision would be made off a stateless
  * snapshot. `finance_research_run` is the planning-only research capability.
+ * `learning_distill` is the deterministic learning-workflow capability: it folds
+ * pending learning-review notes into durable keep cards and writes only its own
+ * state surface, never the memory notes it reads.
  */
 export const CENTRAL_CAPABILITY_OWNER_IDS = [
   "finance_position_ledger_read",
   "finance_research_run",
+  "learning_distill",
 ] as const;
 
 export const CENTRAL_GOVERNANCE_OWNER_IDS: readonly string[] = READ_ONLY_OWNERS.map(
@@ -364,6 +369,7 @@ async function runOwner(
 function createCapabilityTools(): readonly CentralToolSpec[] {
   const financeResearch = createFinanceResearchRunTool();
   const ledgerRead = createFinancePositionLedgerReadTool();
+  const learningDistill = createLearningDistillTool();
   return [
     {
       ownerId: "finance_research_run",
@@ -410,6 +416,29 @@ function createCapabilityTools(): readonly CentralToolSpec[] {
         return details !== null && typeof details === "object" && !Array.isArray(details)
           ? (details as Record<string, unknown>)
           : { financePositionLedgerRead: true };
+      },
+    },
+    {
+      ownerId: "learning_distill",
+      name: learningDistill.name,
+      label: learningDistill.label,
+      description: `${learningDistill.description} Central-harness scope: local learning distillation only; the gate refuses any arg that would turn the read into a memory edit, provider call, or external send.`,
+      allowedSideEffects: ["local_read", "local_compute", "local_output"],
+      boundary: ["research_only", "local_learning_distill_only", "no_execution_authority"],
+      approve: (args) => {
+        const escalation = escalationReason(args);
+        return escalation ? { ok: false, reason: `capability gate: ${escalation}` } : { ok: true };
+      },
+      execute: async (args, signal) => {
+        const result = await learningDistill.execute(
+          `central-capability-${randomUUID()}`,
+          args,
+          signal,
+        );
+        const details = (result as { details?: unknown } | undefined)?.details;
+        return details !== null && typeof details === "object" && !Array.isArray(details)
+          ? (details as Record<string, unknown>)
+          : { learningDistill: true };
       },
     },
   ];
