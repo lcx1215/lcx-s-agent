@@ -23,7 +23,16 @@
       "lcx-agent/plugin-sdk/account-id": ["./src/plugin-sdk/account-id.ts"]
     }
   },
-  "include": ["src/**/*", "ui/**/*", "extensions/**/*"],
+  "include": [
+    "src/**/*",
+    "ui/**/*",
+    "extensions/**/*",
+    "paper-loop/**/*",
+    "test/**/*",
+    "scripts/**/*",
+    "*.ts",
+    "packages/**/*"
+  ],
   "exclude": ["node_modules", "dist"]
 }
 // TypeScript project config for the main OpenClaw runtime and CLI sources.

@@ -9,6 +9,38 @@
 - Hard risk gates are mandatory.
 - This is not an execution engine, not an HFT system, and not approval theater.
 
+## Runtime Entry Surface
+
+- Two entry surfaces exist and are equal. `gateway` is the long-lived daemon
+  (WebSocket control plane, channels, canvas host, node pairing). `serve` is the
+  daemon-free single-process HTTP entry (`POST /agent`, `GET /healthz`).
+- `serve` carries no channels, canvas, or node state, so it starts anywhere a
+  Node process or container runs.
+- Scheduling works in both. `serve` serves the `cron` tool in-process against the
+  same store file as the daemon (`CONFIG_DIR/cron/jobs.json`, relocatable via
+  `OPENCLAW_STATE_DIR`). Do not run both schedulers against one store at once.
+- Tools with no daemon-free equivalent (`sessions_list`, `nodes`, `canvas`,
+  `browser`) return a Gateway connection error to the model under `serve`. That
+  degrades the tool; it does not fail the run.
+- Observations are entry-specific. State which entry produced one before treating
+  it as general truth.
+- Self-running is two separate capabilities, both required before claiming the
+  agent runs itself: **self-start** (`serve --detach` for a terminal-free
+  process; `serve install` for a `RunAtLoad` + `KeepAlive` LaunchAgent) and
+  **self-scheduling** (in-process cron firing `isolated` `agentTurn` jobs).
+- Verified with real providers and no human in the loop: a self-scheduled job
+  fired repeatedly, each run calling a real model API, writing its artifact, and
+  rescheduling itself. The council path runs Kimi (`moonshot/kimi-k2.6`) and
+  DeepSeek in parallel; MiniMax is retired (absent from provider config) and is
+  skipped, not failed.
+- `launchctl bootstrap` can fail with `Input/output error` in a restricted tool
+  session even when `launchctl kickstart` on an existing service succeeds. That
+  is an environment boundary: the plist itself validates (`plutil -lint OK`) and
+  installs from a normal terminal.
+- The agent workspace defaults to `~/.openclaw/workspace`, and
+  `tools.fs.workspaceOnly` blocks reads/writes outside it. Point the workspace
+  at the repository when the agent is expected to work on repo files.
+
 ## Why This File Exists
 
 - This is the fastest repo-level index for the active LCX Agent brain.

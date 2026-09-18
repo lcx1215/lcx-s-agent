@@ -197,7 +197,7 @@ Security boundary notes:
 - Enforcement reference points:
   - temp root resolver: `src/infra/tmp-openclaw-dir.ts`
   - SDK temp helpers: `src/plugin-sdk/temp-path.ts`
-  - messaging/channel tmp guardrail: `scripts/check-no-random-messaging-tmp.mjs`
+  - messaging/channel tmp guardrail: `scripts/checks/check-no-random-messaging-tmp.mjs`
 
 ## Operational Guidance
 

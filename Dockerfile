@@ -100,7 +100,14 @@ RUN for dir in /app/extensions /app/.agent /app/.agents; do \
         find "$dir" -type f -exec chmod 644 {} +; \
       fi; \
     done
-RUN pnpm build
+# The full tsdown build compiles ~90 entries and needs far more heap than the
+# default (~2 GB on a small VM). Without this it aborts with
+# "FATAL ERROR: Reached heap limit - JavaScript heap out of memory" (exit 134).
+# The build host must have enough RAM to back this heap: an 8 GB host could not
+# finish even with a 6 GB heap, so 16 GB is recommended. Override with
+# --build-arg OPENCLAW_BUILD_MAX_OLD_SPACE=<mb>.
+ARG OPENCLAW_BUILD_MAX_OLD_SPACE=6144
+RUN NODE_OPTIONS=--max-old-space-size=${OPENCLAW_BUILD_MAX_OLD_SPACE} pnpm build
 # Force pnpm for UI build (Bun may fail on ARM/Synology architectures)
 ENV OPENCLAW_PREFER_PNPM=1
 RUN pnpm ui:build
@@ -117,18 +124,17 @@ ENV NODE_ENV=production
 # This reduces the attack surface by preventing container escape via root privileges
 USER node
 
-# Start gateway server with default config.
-# Binds to loopback (127.0.0.1) by default for security.
+# Start the daemon-free in-process HTTP agent service (no Gateway daemon).
+# It binds to loopback (127.0.0.1) on port 8788 by default for security.
 #
-# IMPORTANT: With Docker bridge networking (-p 18789:18789), loopback bind
-# makes the gateway unreachable from the host. Either:
+# IMPORTANT: With Docker bridge networking (-p 8788:8788), a loopback bind
+# makes the service unreachable from the host. Either:
 #   - Use --network host, OR
-#   - Override --bind to "lan" (0.0.0.0) and set auth credentials
+#   - Set LCX_SERVE_BIND=lan and LCX_SERVE_TOKEN=<value>; the service refuses
+#     to bind a non-loopback address without a token.
 #
-# Built-in probe endpoints for container health checks:
-#   - GET /healthz (liveness) and GET /readyz (readiness)
-#   - aliases: /health and /ready
-# For external access from host/ingress, override bind to "lan" and set auth.
+# For the legacy Gateway daemon instead, override the command:
+#   docker run <image> node openclaw.mjs gateway --allow-unconfigured
 HEALTHCHECK --interval=3m --timeout=10s --start-period=15s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:18789/healthz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
-CMD ["node", "openclaw.mjs", "gateway", "--allow-unconfigured"]
+  CMD node -e "fetch('http://127.0.0.1:8788/healthz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+CMD ["node", "openclaw.mjs", "serve"]

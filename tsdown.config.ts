@@ -1,10 +1,12 @@
-import { defineConfig } from "tsdown";
+import { defineConfig, type UserConfig } from "tsdown";
 
 const env = {
   NODE_ENV: "production",
 };
 
-const configs = [
+// Typed as tsdown's own config shape so `config.clean` below is a known (optional) option
+// rather than an excess property on an inferred literal type.
+const configs: UserConfig[] = [
   {
     entry: "src/index.ts",
     env,

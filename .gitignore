@@ -70,6 +70,9 @@ dist/protocol.schema.json
 # Local runtime state written by operator scripts and runners (branches/_system)
 branches/_system/
 
+# Scratch space created at runtime by operator scripts
+tmp/
+
 # Generated extension declaration output
 ops/external-channel-artifacts/promotions/
 

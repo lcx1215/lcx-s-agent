@@ -39,6 +39,15 @@ pnpm test -- <focused-pattern>
 
 Use the package scripts and lockfile as the source of truth. Do not run the
 full suite or live tests by habit when the changed surface does not require it.
+If `pnpm` is not on `PATH`, the same binaries run directly from
+`node_modules/.bin/`.
+
+Test files are partitioned across several configs, so a focused run must use the
+config that actually includes the target path. `vitest.unit.config.ts` excludes
+`src/gateway/**`, `src/agents/**`, `src/commands/**`, and the channel trees;
+`vitest.gateway.config.ts` covers `src/gateway/**`; the root `vitest.config.ts`
+covers everything. A mismatch reports "No test files found" instead of a
+failure, which is easy to misread as a passing run.
 
 ## Pull requests
 

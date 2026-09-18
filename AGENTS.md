@@ -25,14 +25,23 @@ Skill. Do not turn this file into a transcript or a second registry.
 - Finance behavior is source-gated and mode-aware: `research_only` remains the
   compatibility default, while explicit `strategy_candidate` and
   `conditional_trade_candidate` modes may produce reviewable strategy or
-  conditional buy/sell candidates. No mode grants broker/exchange execution,
-  funds transfer, or wallet authority; current data still needs a source and
-  timestamp, and missing evidence must be stated plainly.
+  conditional buy/sell candidates. An explicit `live_execution` mode may place
+  real orders, but only through a declared execution adapter, and only for the
+  specific venue, instrument, size, and run the user authorizes. Enabling a mode
+  never implies credentials, account funding, or wallet keys; those remain
+  separate authorities and are never read, stored, or moved as a side effect.
+  Current data still needs a source and timestamp, and missing evidence must be
+  stated plainly.
 - A local test, receipt, replay, or stored text does not prove model learning,
   promotion, external-channel binding, deployment, or user-visible success.
 - Provider configuration, authentication, training, protected memory, and
   external-channel sending are separate authorities. Do not modify them as a
   side effect of ordinary code or Git work.
+- Runtime entry surfaces are explicit and equal: `gateway` is the long-lived
+  daemon (WebSocket control plane, channels, canvas host, node pairing), and
+  `serve` is the daemon-free single-process HTTP entry. Neither is the system's
+  brain and neither requires the other. Capability coverage differs by entry, so
+  state which entry an observation came from before generalizing it.
 
 ## Architecture boundaries
 
@@ -49,6 +58,23 @@ Skill. Do not turn this file into a transcript or a second registry.
 - Multi-Agent workers must have a declared role, scope, result responsibility,
   timeout/cancellation behavior, and a durable receipt. A worktree is
   isolation, not a second repository or truth owner.
+- Making a Gateway-bound capability work without a daemon means installing a
+  process-local provider at the existing call seam and reusing the Gateway's own
+  handlers and semantics. Do not fork behavior, and do not build a parallel
+  implementation that can drift. Keep the seam free of knowledge about specific
+  method families.
+- A daemon-free capability that cannot be assembled must degrade, not abort: a
+  missing optional capability is a stated limitation, never a reason to fail
+  startup or an otherwise valid run.
+- A resident entry point must be able to start and keep itself alive. A service
+  that only runs while a human holds a terminal open is not a deployment: pair
+  it with a detached-process mode and, where the platform allows it, a
+  login-scoped supervisor. Self-scheduling (cron) is a separate concern from
+  self-start, and both are needed before claiming the agent runs itself.
+- Process supervision and privilege are not the same capability. A tool session
+  that can signal an existing service may still be unable to register a new one;
+  report the exact failing operation and its platform error instead of
+  generalising "cannot install a service".
 
 ## Multi-window Git delivery
 
@@ -91,6 +117,16 @@ Reuse fresh evidence for the same commit SHA. Do not run the full repository
 suite, live probes, or repeated full logs when the changed surface does not
 require them. Parallelize independent read-only checks; serialize mutations.
 Stop after the requested end-state predicates are proven.
+
+Two evidence traps worth naming:
+
+- CLI `--help` output is not proof that a subcommand is wired. Subcommands
+  register lazily behind placeholder commands, so `<subcli> --help` stays
+  minimal for every subcommand. Verify by executing the subcommand and observing
+  its runtime effect.
+- A file's path, `package.json` `main`/`bin`, or an entry filename does not
+  establish what an entry point is. Confirm from source (program construction
+  plus argument parsing) and then from execution.
 
 ## Implementation and repository basics
 

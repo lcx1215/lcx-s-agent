@@ -1,5 +1,50 @@
 services:
+  # Daemon-free default. A single in-process HTTP agent service: POST /agent
+  # runs the agent loop directly, GET /healthz is the probe. It carries no
+  # WebSocket control plane, channel adapters, canvas host, or node/pairing
+  # state, so it starts anywhere a container runs.
+  lcx-agent-serve:
+    image: ${OPENCLAW_IMAGE:-openclaw:local}
+    environment:
+      HOME: /home/node
+      TERM: xterm-256color
+      OPENCLAW_STATE_DIR: ${OPENCLAW_CONTAINER_STATE_DIR:-/home/node/.openclaw}
+      OPENCLAW_CONFIG_PATH: ${OPENCLAW_CONTAINER_CONFIG_PATH:-/home/node/.openclaw/openclaw.json}
+      LCX_CLOUD_RUNTIME: ${LCX_CLOUD_RUNTIME:-0}
+      LCX_LOCAL_VISION_ENABLED: ${LCX_LOCAL_VISION_ENABLED:-0}
+      # A non-loopback bind requires a token; `serve` fails closed without one.
+      LCX_SERVE_BIND: lan
+      LCX_SERVE_PORT: "8788"
+      LCX_SERVE_TOKEN: ${LCX_SERVE_TOKEN:-}
+      CLAUDE_AI_SESSION_KEY: ${CLAUDE_AI_SESSION_KEY:-}
+      CLAUDE_WEB_SESSION_KEY: ${CLAUDE_WEB_SESSION_KEY:-}
+      CLAUDE_WEB_COOKIE: ${CLAUDE_WEB_COOKIE:-}
+    volumes:
+      - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
+      - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
+    ports:
+      - "${LCX_SERVE_PORT:-8788}:8788"
+    init: true
+    restart: unless-stopped
+    command:
+      ["node", "dist/index.js", "serve", "--bind", "lan", "--port", "8788"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8788/healthz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Legacy daemon shape. Keep it only when you need channel adapters, the
+  # canvas host, or node pairing; enable with `--profile gateway`.
   openclaw-gateway:
+    profiles: ["gateway"]
     image: ${OPENCLAW_IMAGE:-openclaw:local}
     environment:
       HOME: /home/node
@@ -56,6 +101,7 @@ services:
       start_period: 20s
 
   openclaw-cli:
+    profiles: ["gateway"]
     image: ${OPENCLAW_IMAGE:-openclaw:local}
     network_mode: "service:openclaw-gateway"
     cap_drop:

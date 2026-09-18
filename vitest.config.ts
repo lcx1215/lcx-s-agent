@@ -89,9 +89,10 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       reporter: ["text", "lcov"],
-      // Keep coverage stable without an ever-growing exclude list:
-      // only count files actually exercised by the test suite.
-      all: false,
+      // Keep coverage stable without an ever-growing exclude list: only files
+      // actually exercised by the test suite are counted. That is Vitest 4's
+      // default; the `all` option that used to express it was removed in v4,
+      // so setting it again would only be a type error.
       thresholds: {
         lines: 70,
         functions: 70,
@@ -119,7 +120,6 @@ export default defineConfig({
         "src/commands/**",
         "src/daemon/**",
         "src/hooks/**",
-        "src/macos/**",
 
         // Large integration surfaces; validated via e2e/manual/contract tests.
         "src/acp/**",
@@ -152,7 +152,6 @@ export default defineConfig({
 
         // Gateway server integration surfaces are intentionally validated via manual/e2e runs.
         "src/gateway/control-ui.ts",
-        "src/gateway/server-bridge.ts",
         "src/gateway/server-channels.ts",
         "src/gateway/server-methods/config.ts",
         "src/gateway/server-methods/send.ts",
@@ -163,7 +162,6 @@ export default defineConfig({
 
         // Process bridges are hard to unit-test in isolation.
         "src/gateway/call.ts",
-        "src/process/tau-rpc.ts",
         "src/process/exec.ts",
         // Interactive UIs/flows are intentionally validated via manual/e2e runs.
         "src/tui/**",
@@ -175,11 +173,8 @@ export default defineConfig({
         "src/slack/**",
         "src/browser/**",
         "src/channels/web/**",
-        "src/telegram/index.ts",
         "src/telegram/proxy.ts",
-        "src/telegram/webhook-set.ts",
         "src/telegram/**",
-        "src/webchat/**",
         "src/gateway/server.ts",
         "src/gateway/client.ts",
         "src/gateway/protocol/**",
