@@ -72,7 +72,9 @@ function parseArgs(args: string[]): Record<string, string | boolean> {
       out.dryRun = true;
     } else if (arg === "--plan-only") {
       // Gate and record the decision; never spawn the owners. Used by the
-      // hourly governance owner so the pass stays one brain call wide.
+      // Hourly governance owner so the pass stays one brain call wide; owners are
+      // recorded-and-not-run (the autopilot runs them in parallel), while
+      // capability steps still dispatch because nothing else covers them.
       out.planOnly = true;
     } else if (arg === "--json") {
       out.json = true;
@@ -210,6 +212,19 @@ function centralCoverage() {
   };
 }
 
+/** Capabilities this invocation actually dispatched (ran and returned a receipt). */
+function dispatchedCapabilities(
+  receipt: CentralRunReceipt | undefined,
+  capabilityIds: ReadonlySet<string>,
+): string[] {
+  if (!receipt) {
+    return [];
+  }
+  return receipt.steps
+    .filter((step) => step.status === "ran_ok" && capabilityIds.has(step.ownerId))
+    .map((step) => step.ownerId);
+}
+
 /**
  * Honest fallback receipt for a cycle that threw before it could settle. The
  * owner surface must stay parseable, so a failure is reported as a receipt
@@ -256,6 +271,7 @@ async function writeLatest(
     runSnapshotPath?: string;
     droppedNonDecisionCycles: number;
     evidenceWriteFailures: readonly EvidenceWriteFailure[];
+    capabilityDrain: readonly string[];
   },
 ): Promise<void> {
   // The pointer is resolved against what is already on disk, so a run that observed
@@ -272,7 +288,11 @@ async function writeLatest(
     runs,
     dryRun: meta.dryRun,
     planOnly: meta.planOnly,
-    dispatchMode: meta.planOnly ? "gate_and_record_only" : "gate_record_and_dispatch",
+    dispatchMode: meta.planOnly
+      ? "gate_record_owners_plus_dispatch_capabilities"
+      : "gate_record_and_dispatch",
+    /** Capabilities that actually ran this invocation (nothing else covers them). */
+    capabilityDrain: meta.capabilityDrain,
     coverage: centralCoverage(),
     latestReceipt: pointer.heldReceipt,
     /** How to walk back from the pointer to any individual cycle's full receipt. */
@@ -350,6 +370,11 @@ async function main(): Promise<void> {
         brain,
         registry,
         planOnly,
+        // In the hourly (plan-only) pass the autopilot already runs the owners in
+        // parallel, so only capability steps dispatch: they have no autopilot
+        // equivalent and would otherwise never drain (learning workflow, ledger
+        // reads, research plans).
+        capabilityOwnerIds: new Set(CENTRAL_CAPABILITY_OWNER_IDS),
         runId: `central-${runs}-${Date.now()}`,
       });
     } catch (error) {
@@ -389,6 +414,7 @@ async function main(): Promise<void> {
       ...(lastRunSnapshotPath !== undefined ? { runSnapshotPath: lastRunSnapshotPath } : {}),
       droppedNonDecisionCycles,
       evidenceWriteFailures,
+      capabilityDrain: dispatchedCapabilities(lastReceipt, new Set(CENTRAL_CAPABILITY_OWNER_IDS)),
     });
   } catch (error) {
     // stdout is the last surface standing: the summary below still has to print.
@@ -401,7 +427,11 @@ async function main(): Promise<void> {
     runs,
     dryRun,
     planOnly,
-    dispatchMode: planOnly ? "gate_and_record_only" : "gate_record_and_dispatch",
+    dispatchMode: planOnly
+      ? "gate_record_owners_plus_dispatch_capabilities"
+      : "gate_record_and_dispatch",
+    /** Capabilities that actually ran this invocation (nothing else covers them). */
+    capabilityDrain: dispatchedCapabilities(lastReceipt, new Set(CENTRAL_CAPABILITY_OWNER_IDS)),
     maxCycles: Number.isFinite(maxCycles) ? maxCycles : null,
     latestPath: LATEST_PATH,
     registryTools: registry.size,

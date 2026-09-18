@@ -393,6 +393,57 @@ describe("central harness covers the whole system, not a slice of it", () => {
     expect(receipt.providerConfigTouched).toBe(false);
     expect(receipt.protectedMemoryTouched).toBe(false);
   });
+
+  it("dispatches capability steps in plan-only mode but records owners without running them", async () => {
+    const memoryDir = path.join(os.tmpdir(), `lcx-central-test-planonly-${process.pid}`);
+    const stateDir = path.join(os.tmpdir(), `lcx-central-test-planonly-state-${process.pid}`);
+    await fsp.mkdir(memoryDir, { recursive: true });
+    await fsp.writeFile(
+      path.join(memoryDir, "2026-09-10-review-planonly.md"),
+      [
+        "# Learning Review: 2026-09-10 12:00:00 UTC",
+        "",
+        "- **Session Key**: sk-hourly",
+        "- **Session ID**: sid-hourly",
+        "- **Topic**: coding-and-systems",
+        "",
+        "## Review Note",
+        "- mistake_pattern: a mistake",
+        "- core_principle: a principle",
+        "- micro_drill: a drill",
+        "",
+      ].join("\n"),
+    );
+
+    const receipt = await runCentralHarnessCycle({
+      perception: perception(),
+      brain: brainWithActions([
+        { ownerId: "contextRecovery", args: {}, reasoning: "scheduled governance owner" },
+        {
+          ownerId: "learning_distill",
+          args: { memoryDir, stateDir, windowDays: 366 },
+          reasoning: "drain the learning workflow in the hourly pass",
+        },
+      ]),
+      registry,
+      planOnly: true,
+      capabilityOwnerIds: new Set(CENTRAL_CAPABILITY_OWNER_IDS),
+    });
+    expect(receipt.actionsProposed).toBe(2);
+    expect(receipt.actionsBlockedByGate).toBe(0);
+
+    // The governance owner is recorded but NOT dispatched: the autopilot runs it
+    // in parallel, so spawning it here would double-run the pass.
+    const ownerStep = receipt.steps.find((step) => step.ownerId === "contextRecovery");
+    expect(ownerStep?.status).toBe("approved");
+
+    // The capability has no autopilot equivalent, so the plan-only pass really
+    // dispatches it — otherwise its surface would never drain.
+    const capabilityStep = receipt.steps.find((step) => step.ownerId === "learning_distill");
+    expect(capabilityStep?.status).toBe("ran_ok");
+    expect(capabilityStep?.outcome?.status).toBe("distilled");
+    expect(capabilityStep?.outcome?.pending).toBe(1);
+  });
 });
 
 describe("central harness escalation gate: forbidden side effects stay unreachable", () => {
@@ -584,7 +635,9 @@ describe("central harness is wired into the governance loop, not orphaned", () =
       "utf8",
     );
     expect(cliSource).toContain('arg === "--plan-only"');
-    expect(cliSource).toContain('planOnly ? "gate_and_record_only" : "gate_record_and_dispatch"');
+    expect(cliSource).toContain(
+      'planOnly ? "gate_record_owners_plus_dispatch_capabilities" : "gate_record_and_dispatch"',
+    );
   });
 
   it("projects the decision layer into the governance summary", () => {

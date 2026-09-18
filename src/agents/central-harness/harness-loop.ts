@@ -22,12 +22,21 @@ export type HarnessLoopOptions = Readonly<{
   /** Max steps per cycle to stay bounded. */
   maxSteps?: number;
   /**
-   * Stop after the gate: record the approved plan without dispatching it.
-   * The scheduled owner path uses this so the hourly governance pass pays for
-   * one brain decision instead of re-spawning every owner the autopilot already
-   * runs in parallel.
+   * Stop after the gate for non-capability owners: record the approved plan
+   * without dispatching it. The scheduled owner path uses this so the hourly
+   * governance pass pays for one brain decision instead of re-spawning every
+   * owner the autopilot already runs in parallel. Capability steps are still
+   * dispatched in plan-only mode — see `capabilityOwnerIds`.
    */
   planOnly?: boolean;
+  /**
+   * Owners that are capabilities (not governance owners). In plan-only mode the
+   * autopilot already covers the governance owners, so only these steps run —
+   * a capability has no autopilot equivalent, and leaving it unrun would starve
+   * the surface it maintains (e.g. the learning workflow). The gate still
+   * approves each step; this changes dispatch, never authority.
+   */
+  capabilityOwnerIds?: ReadonlySet<string>;
   runId?: string;
   /** Override the injected-context byte budget (tests / offline). */
   contextBudgetBytes?: number;
@@ -154,10 +163,15 @@ export async function runCentralHarnessCycle(
   }
 
   // Dispatch approved steps strictly sequentially (research-only owners, idempotent reads).
-  // `planOnly` intentionally stops before this: the decision is already recorded on
-  // the steps, and spawning the owners here would double-run the autopilot's own pass.
-  for (const step of options.planOnly ? [] : steps) {
+  // `planOnly` stops owner steps before dispatch: the decision is already recorded
+  // on the steps, and spawning the owners here would double-run the autopilot's own
+  // pass. Capability steps are NOT stopped: no autopilot covers them, and a plan
+  // that never drains its capability surface would starve the learning workflow.
+  for (const step of steps) {
     if (step.status !== "approved") {
+      continue;
+    }
+    if (options.planOnly === true && !(options.capabilityOwnerIds?.has(step.ownerId) ?? false)) {
       continue;
     }
     const spec = observer.get(step.ownerId)!;
