@@ -146,6 +146,15 @@ const entries: SubCliEntry[] = [
     },
   },
   {
+    name: "serve",
+    description: "Run a minimal in-process HTTP agent service (no Gateway daemon)",
+    hasSubcommands: true,
+    register: async (program) => {
+      const mod = await import("../serve-cli.js");
+      mod.registerServeCli(program);
+    },
+  },
+  {
     name: "cron",
     description: "Manage cron jobs via the Gateway scheduler",
     hasSubcommands: true,
@@ -192,7 +201,7 @@ const entries: SubCliEntry[] = [
   },
   {
     name: "qr",
-    description: "Generate iOS pairing QR/setup code",
+    description: "Generate a pairing QR code and setup code",
     hasSubcommands: false,
     register: async (program) => {
       const mod = await import("../qr-cli.js");
