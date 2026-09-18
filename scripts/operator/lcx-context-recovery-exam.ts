@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -6,6 +7,7 @@ import { promisify } from "node:util";
 import { buildWorkspaceSkillSnapshot } from "../../src/agents/skills.ts";
 import { resolveSkillAutoCue } from "../../src/auto-reply/reply/skill-autocue.ts";
 import { loadConfig } from "../../src/config/config.ts";
+import { CONFIG_DIR } from "../../src/utils.ts";
 import {
   LOCAL_OPERATOR_LATEST_PATH,
   SELF_REPAIR_HANDS_JSONL_PATH,
@@ -328,41 +330,249 @@ function compactCurrentTrainingVolatile(value: unknown) {
   };
 }
 
-function currentRuntimeSkillSnapshot() {
+/**
+ * Discriminated runtime-skill status. A single generic failure summary used to make
+ * three different situations identical: a required skill genuinely missing, a wrong
+ * autocue mapping, and "the snapshot could not be built at all". The third one is not
+ * a governance red light — it is an unobserved fact — so it is named separately and
+ * never reported as a list of skills that were "missing".
+ *
+ * The snapshot is a capped, name-deduplicated merge of several roots, and the root that
+ * serves the machine-local skills is resolved from CONFIG_DIR, which itself follows the
+ * identity/state-dir migration. So "a required skill is absent from the snapshot" has
+ * three different causes that used to share one wording: the skill is not installed, the
+ * skill is installed but a root moved, or the skill is installed but discovery dropped it.
+ * The verdict therefore carries its own provenance — where each required skill came from,
+ * what each root contributed, and whether the missing ones are actually on disk. Without
+ * that, the same check can flip red and green minutes apart with nothing to tell the two
+ * apart, and the honest reading of a red light becomes impossible.
+ */
+type RequiredSkillPresence = Readonly<{
+  name: string;
+  /** Present in the merged snapshot (i.e. the agent could actually load it). */
+  inSnapshot: boolean;
+  /** Where the snapshot got it from; only known when it is present. */
+  source?: string;
+  baseDir?: string;
+  /** On disk under <repoRoot>/skills — a repository-owned contract. */
+  onDiskInRepo: boolean;
+  /** On disk under CONFIG_DIR/skills — a machine-provided capability. */
+  onDiskInManagedRoot: boolean;
+}>;
+
+type RuntimeSkillRootSummary = Readonly<{
+  source: string;
+  count: number;
+}>;
+
+type RuntimeSkillManagedRoot = Readonly<{
+  /** CONFIG_DIR/skills — the only root that serves the machine-local required skills. */
+  dir: string;
+  exists: boolean;
+  /** Immediate subdirectories that contain a SKILL.md. */
+  skillDirCount: number;
+  /** How many skills this root actually contributed to the snapshot. */
+  resolvedCount: number;
+}>;
+
+type RuntimeSkillSnapshot = Readonly<{
+  ok: boolean;
+  status: "ok" | "missing_skills" | "autocue_mismatch" | "snapshot_build_failed";
+  skillCount: number;
+  missing: readonly string[];
+  /** Installed in the repo skills dir, yet absent from the snapshot. */
+  missingRepoOwned: readonly string[];
+  /** Installed under the machine-local root, yet absent from the snapshot. */
+  missingMachineLocal: readonly string[];
+  /** Not found on disk in any root this check inspects. */
+  missingNotLocated: readonly string[];
+  requiredProvenance: readonly RequiredSkillPresence[];
+  roots: readonly RuntimeSkillRootSummary[];
+  managedRoot: RuntimeSkillManagedRoot;
+  snapshotAt: string;
+  wrongCues: readonly Readonly<{ body: string; expectedSkill: string; selectedSkill?: string }>[];
+  cueResults: readonly Readonly<{
+    body: string;
+    expectedSkill: string;
+    selectedSkill?: string;
+    ok: boolean;
+  }>[];
+  error?: string;
+}>;
+
+function skillInstalledIn(root: string, name: string): boolean {
+  try {
+    return fsSync.existsSync(path.join(root, "skills", name, "SKILL.md"));
+  } catch {
+    return false;
+  }
+}
+
+/** Read the machine-local root even when the snapshot never loaded. */
+function readManagedSkillRoot(): RuntimeSkillManagedRoot {
+  const dir = path.join(CONFIG_DIR, "skills");
+  try {
+    // Count by SKILL.md presence rather than by `Dirent.isDirectory()`: the entries here
+    // are commonly symlinks, and a type filter would report an installed root as empty.
+    const skillDirCount = fsSync
+      .readdirSync(dir)
+      .filter((name) => fsSync.existsSync(path.join(dir, name, "SKILL.md"))).length;
+    return { dir, exists: true, skillDirCount, resolvedCount: 0 };
+  } catch {
+    return { dir, exists: false, skillDirCount: 0, resolvedCount: 0 };
+  }
+}
+
+function currentRuntimeSkillSnapshot(): RuntimeSkillSnapshot {
+  const snapshotAt = new Date().toISOString();
+  const managedRootBase = readManagedSkillRoot();
   try {
     const snapshot = buildWorkspaceSkillSnapshot(repoRoot, {
       config: loadConfig(),
     });
     const availableSkillNames = snapshot.skills.map((entry) => entry.name);
-    const missing = REQUIRED_RUNTIME_SKILLS.filter(
-      (skillName) => !availableSkillNames.includes(skillName),
-    );
+    // `resolvedSkills` keeps the provenance that the merged `skills` list drops.
+    const resolved = (snapshot.resolvedSkills ?? []) as unknown as readonly {
+      name?: string;
+      source?: string;
+      baseDir?: string;
+    }[];
+    const provenanceByName = new Map<string, { source?: string; baseDir?: string }>();
+    const sourceCounts = new Map<string, number>();
+    for (const entry of resolved) {
+      if (typeof entry.name === "string") {
+        provenanceByName.set(entry.name, { source: entry.source, baseDir: entry.baseDir });
+      }
+      const key = entry.source ?? "(unknown)";
+      sourceCounts.set(key, (sourceCounts.get(key) ?? 0) + 1);
+    }
+    const roots = [...sourceCounts.entries()]
+      .map(([source, count]) => ({ source, count }))
+      .toSorted((a, b) => a.source.localeCompare(b.source));
+
+    const requiredProvenance: RequiredSkillPresence[] = REQUIRED_RUNTIME_SKILLS.map((name) => {
+      const hit = provenanceByName.get(name);
+      return {
+        name,
+        inSnapshot: availableSkillNames.includes(name),
+        source: hit?.source,
+        baseDir: hit?.baseDir,
+        onDiskInRepo: skillInstalledIn(repoRoot, name),
+        onDiskInManagedRoot: skillInstalledIn(CONFIG_DIR, name),
+      };
+    });
+    const missing = requiredProvenance.filter((entry) => !entry.inSnapshot).map((e) => e.name);
+    // Separate "the agent cannot load it" from "the file is not there". A root that moved,
+    // or a discovery cap, produces the first without the second, and only the second is an
+    // installation gap. Collapsing them is what made an earlier red light unactionable.
+    const missingRepoOwned = requiredProvenance
+      .filter((entry) => !entry.inSnapshot && entry.onDiskInRepo)
+      .map((entry) => entry.name);
+    const missingMachineLocal = requiredProvenance
+      .filter((entry) => !entry.inSnapshot && !entry.onDiskInRepo && entry.onDiskInManagedRoot)
+      .map((entry) => entry.name);
+    const missingNotLocated = requiredProvenance
+      .filter((entry) => !entry.inSnapshot && !entry.onDiskInRepo && !entry.onDiskInManagedRoot)
+      .map((entry) => entry.name);
+
     const cueResults = REQUIRED_AUTOCUE_PROBES.map((probe) => {
       const cue = resolveSkillAutoCue({
         body: probe.body,
         availableSkillNames,
       });
       return {
+        body: probe.body,
         expectedSkill: probe.expectedSkill,
         selectedSkill: cue?.skillName,
         ok: cue?.skillName === probe.expectedSkill,
       };
     });
+    const wrongCues = cueResults
+      .filter((entry) => !entry.ok)
+      .map(({ body, expectedSkill, selectedSkill }) => ({ body, expectedSkill, selectedSkill }));
     return {
-      ok: missing.length === 0 && cueResults.every((entry) => entry.ok),
+      ok: missing.length === 0 && wrongCues.length === 0,
+      status:
+        missing.length > 0 ? "missing_skills" : wrongCues.length > 0 ? "autocue_mismatch" : "ok",
       skillCount: availableSkillNames.length,
       missing,
+      missingRepoOwned,
+      missingMachineLocal,
+      missingNotLocated,
+      requiredProvenance,
+      roots,
+      managedRoot: {
+        ...managedRootBase,
+        resolvedCount: sourceCounts.get("openclaw-managed") ?? 0,
+      },
+      snapshotAt,
+      wrongCues,
       cueResults,
     };
   } catch (error) {
+    // `missing` stays empty on purpose: the snapshot never loaded, so no skill was
+    // observed to be absent. Claiming the full required list here would fabricate an
+    // observation and make an environment failure look like a governance failure.
+    // The managed root is still read, because "the snapshot failed to build" and "the
+    // machine-local skills are not installed" are different facts.
     return {
       ok: false,
+      status: "snapshot_build_failed",
       skillCount: 0,
-      missing: [...REQUIRED_RUNTIME_SKILLS],
+      missing: [],
+      missingRepoOwned: [],
+      missingMachineLocal: [],
+      missingNotLocated: [],
+      requiredProvenance: [],
+      roots: [],
+      managedRoot: managedRootBase,
+      snapshotAt,
+      wrongCues: [],
       cueResults: [],
       error: String(error),
     };
   }
+}
+
+/** Name the actual cause in the summary, because only the summary reaches the surface. */
+function runtimeSkillSummary(snapshot: RuntimeSkillSnapshot): string {
+  if (snapshot.status === "snapshot_build_failed") {
+    return `local runtime skill snapshot could not be built, so skill availability is unobserved (not a missing-skill finding): ${
+      snapshot.error ?? "unknown error"
+    }`;
+  }
+  if (snapshot.status === "missing_skills") {
+    const clauses: string[] = [];
+    if (snapshot.missingMachineLocal.length > 0) {
+      clauses.push(
+        `installed under ${snapshot.managedRoot.dir} but not merged into the snapshot, which is a discovery or root-resolution gap rather than a missing installation: ${snapshot.missingMachineLocal.join(", ")}`,
+      );
+    }
+    if (snapshot.missingRepoOwned.length > 0) {
+      clauses.push(
+        `installed under the repository skills dir but not merged into the snapshot: ${snapshot.missingRepoOwned.join(", ")}`,
+      );
+    }
+    if (snapshot.missingNotLocated.length > 0) {
+      clauses.push(
+        `not found on disk in the roots this check inspects: ${snapshot.missingNotLocated.join(", ")}`,
+      );
+    }
+    const managedRoot = `managedRoot=${snapshot.managedRoot.dir} exists=${snapshot.managedRoot.exists} skillDirs=${snapshot.managedRoot.skillDirCount} merged=${snapshot.managedRoot.resolvedCount}`;
+    const roots = snapshot.roots.map((root) => `${root.source}=${root.count}`).join(" ");
+    return `local runtime skill snapshot is missing required LCX operator skills — ${clauses.join(
+      "; ",
+    )} [${managedRoot}; roots: ${roots || "none"}; snapshotAt=${snapshot.snapshotAt}]`;
+  }
+  if (snapshot.status === "autocue_mismatch") {
+    return `LCX operator autocue mapping is wrong for: ${snapshot.wrongCues
+      .map(
+        (cue) =>
+          `${JSON.stringify(cue.body)} selected ${cue.selectedSkill ?? "nothing"} instead of ${cue.expectedSkill}`,
+      )
+      .join("; ")}`;
+  }
+  return "local runtime skill snapshot includes the core LCX operator skills and deterministic natural-language autocues";
 }
 
 function operatorTrainingVolatileMatches(
@@ -1298,8 +1508,7 @@ async function main() {
     {
       id: "runtime_lcx_operator_skills_available_and_autocued",
       ok: runtimeSkillSnapshot.ok,
-      summary:
-        "local runtime skill snapshot must include core LCX operator skills and deterministic natural-language autocues",
+      summary: runtimeSkillSummary(runtimeSkillSnapshot),
       evidence: runtimeSkillSnapshot,
     },
     {

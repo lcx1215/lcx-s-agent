@@ -223,10 +223,22 @@ observe current state
   -> refresh the recovery/evidence surface
 ```
 
+The Central Agent Harness sits on top of that loop as its decision layer. Each
+cycle perceives the governance and control-room snapshots, asks the model brain
+for a proposed action, and lets the TypeScript gate approve or block it; the
+approved read-only owners are then dispatched, and the cycle records one receipt
+and refreshes `lcx-central-agent-latest.json`. The scheduled pass runs in
+`gate_record_and_dispatch` mode, bounded to one cycle and a small step budget.
+`gate_and_record_only` remains available as an explicit opt-in for a pass that
+should decide without dispatching. A proposal can choose which owner runs but
+can never add an authority flag, and the harness never holds live,
+provider-config, protected-memory, or external-send authority.
+
 The universe index inventories and assigns component coverage; the problem
 radar groups; the mind model checks architecture closure; the flow graph checks
-waterflow; the change-impact plan assigns a master lane. None of these is
-deletion, training, promotion, or external-delivery authority.
+waterflow; the change-impact plan assigns a master lane; the central agent
+decides and records. None of these is deletion, training, promotion, or
+external-delivery authority.
 
 ### Total component governance contract
 

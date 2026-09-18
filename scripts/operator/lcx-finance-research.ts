@@ -15,6 +15,10 @@ import {
   compareFinanceCaseRuns,
   caseflowFingerprint,
 } from "../../src/agents/finance-caseflow.ts";
+import {
+  FINANCE_DECISION_MODES,
+  type FinanceDecisionMode,
+} from "../../src/agents/finance-decision-policy.ts";
 import { FinanceForecast } from "../../src/agents/finance-forecast-calibration.ts";
 import {
   createFinanceModelWorkflow,
@@ -79,6 +83,12 @@ export async function runFinanceResearchCli(
       "compare-run": { type: "string" },
       ask: { type: "string" },
       "as-of": { type: "string" },
+      /**
+       * Answer-authority mode for the frozen decision packet. `research_only`
+       * stays the default; the candidate modes widen the packet's content and
+       * never grant broker, wallet, or execution authority.
+       */
+      "decision-mode": { type: "string" },
       live: { type: "boolean", default: false },
       model: { type: "string" },
       adapter: { type: "string" },
@@ -401,10 +411,18 @@ export async function runFinanceResearchCli(
     const savedCaseRun = await saveFinanceCaseRun(values["case-dir"], run);
     return { ...receipt, savedCaseRun };
   };
+  const rawDecisionMode = values["decision-mode"];
+  if (
+    rawDecisionMode !== undefined &&
+    !FINANCE_DECISION_MODES.includes(rawDecisionMode as FinanceDecisionMode)
+  ) {
+    throw new Error(`--decision-mode must be one of ${FINANCE_DECISION_MODES.join(", ")}`);
+  }
   const input = {
     ask: values.ask,
     asOf: values["as-of"],
     sourcePolicy: values["all-sources"] ? ("all_registered" as const) : ("prioritized" as const),
+    ...(rawDecisionMode ? { decisionMode: rawDecisionMode as FinanceDecisionMode } : {}),
   };
   if (values["workflow-models"]) {
     execution.runtime = {

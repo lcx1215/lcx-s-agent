@@ -464,6 +464,16 @@ const GOVERNANCE_COMPONENT_RULES: GovernanceComponentRule[] = [
     disposition: "governed_source",
   },
   {
+    id: "ide_scaffolding_surface",
+    patterns: [/^\.trae\//u],
+    category: "documentation_and_instruction",
+    routeOwner: "scripts/operator/lcx-doctrine-consistency.ts",
+    proofSurface: "markdown/doc consistency via lcx-doctrine-consistency",
+    boundary:
+      "IDE scaffolding and draft plans are not runtime, provider, training, or delivery authority by presence alone",
+    disposition: "governed_source",
+  },
+  {
     id: "historical_evidence_surface",
     patterns: [/^(?:audit|changelog|evals|patches)\//u],
     category: "historical_or_evaluation_artifact",

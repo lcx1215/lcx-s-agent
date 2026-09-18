@@ -283,22 +283,31 @@ describe("finance research batch runner", () => {
     },
   );
 
+  // The receipt's own status separates "the fetch worked" from "the fetch returned
+  // usable evidence". A record whose timestamp is unparseable, or which lies after
+  // the requested `asOf`, is out of the requested window, so the collection receipt
+  // reports `needs_review` rather than `ready`. A record that is merely stale or
+  // low-quality is still in-window: the receipt stays `ready`, and it is the job
+  // status plus the committee evidence that refuse to promote it.
   it.each([
-    [news({ sourceTimestamp: OLD })],
-    [news({ sourceTimestamp: "invalid" })],
-    [news({ sourceTimestamp: "2026-09-09T12:00:00Z" })],
-    [news({ delayStatus: "manual_or_unknown" })],
-    [news(), news({ data: { title: "Contradictory revision" } })],
-  ])("does not promote invalid, stale, or contradictory collection records", async (...records) => {
-    const base = options(async () => response(records));
-    const packet = await runFinanceResearchBatch({
-      ...base,
-      targets: [{ ...base.targets[0], realtime: false }],
-    });
-    expect(packet.jobs[0].status).toBe("needs_review");
-    expect(packet.jobs[0].receipt?.status).toBe("ready");
-    expect(JSON.parse(packet.committeeEvidence[1].text).data).toBeUndefined();
-  });
+    [[news({ sourceTimestamp: OLD })], "ready"],
+    [[news({ sourceTimestamp: "invalid" })], "needs_review"],
+    [[news({ sourceTimestamp: "2026-09-09T12:00:00Z" })], "needs_review"],
+    [[news({ delayStatus: "manual_or_unknown" })], "ready"],
+    [[news(), news({ data: { title: "Contradictory revision" } })], "ready"],
+  ] as const)(
+    "does not promote invalid, stale, or contradictory collection records",
+    async (records, receiptStatus) => {
+      const base = options(async () => response(records));
+      const packet = await runFinanceResearchBatch({
+        ...base,
+        targets: [{ ...base.targets[0], realtime: false }],
+      });
+      expect(packet.jobs[0].status).toBe("needs_review");
+      expect(packet.jobs[0].receipt?.status).toBe(receiptStatus);
+      expect(JSON.parse(packet.committeeEvidence[1].text).data).toBeUndefined();
+    },
+  );
 
   it("withholds implausibly future collection records from live-now evidence", async () => {
     const future = new Date(Date.now() + 10 * 60_000).toISOString();
@@ -311,7 +320,13 @@ describe("finance research batch runner", () => {
       targets: [{ ...base.targets[0], realtime: false }],
     });
 
-    expect(packet.jobs[0]?.receipt?.status).toBe("ready");
+    // A timestamp beyond the live-now future skew is out of the requested window,
+    // so the collection receipt itself reports `needs_review`; the raw records are
+    // still retained for review, and the committee evidence stays unpromoted.
+    expect(packet.jobs[0]?.receipt?.status).toBe("needs_review");
+    expect(packet.jobs[0]?.receipt?.missingEvidence).toContain(
+      "timestamped_records_within_requested_window",
+    );
     expect(packet.jobs[0]?.status).toBe("needs_review");
     expect(packet.jobs[0]?.freshnessWarnings).toContain(
       'stale_or_invalid_collection_provenance:["news","news","article"]',

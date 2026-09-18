@@ -4582,7 +4582,12 @@ function promptCacheFileFor(
 
 function runChildCapture(command: string, args: string[], timeoutMs: number): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+    // The model and adapter are always local/cached; HF hub reachability checks
+    // hang for minutes when the network is restricted and blow the eval budget.
+    const child = spawn(command, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, HF_HUB_OFFLINE: process.env.HF_HUB_OFFLINE ?? "1" },
+    });
     let stdout = "";
     let stderr = "";
     let settled = false;
@@ -4711,7 +4716,10 @@ async function runGenerate(
     if (options.adapterPath) {
       args.splice(5, 0, "--adapter-path", options.adapterPath);
     }
-    const child = spawn(options.pythonBin, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(options.pythonBin, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, HF_HUB_OFFLINE: process.env.HF_HUB_OFFLINE ?? "1" },
+    });
     activeGenerateChild = child;
     let stdout = "";
     let stderr = "";

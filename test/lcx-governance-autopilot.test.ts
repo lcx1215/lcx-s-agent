@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
@@ -107,6 +108,14 @@ async function runAutopilot() {
       };
       selfRepairHandsLatestWrittenStatus?: string;
       selfRepairHandsLatestWrittenSignalKey?: string;
+      centralAgentContextBudget?: {
+        budgetBytes?: number;
+        injectedBytes?: number;
+        overBudget?: boolean;
+        droppedSections?: Array<{ section?: string; droppedKeys?: Array<{ key?: string }> }>;
+      };
+      centralAgentEvidenceComplete?: boolean;
+      centralAgentEvidenceWriteFailures?: unknown[];
     };
     owners: {
       mindModel?: { summary?: unknown };
@@ -377,6 +386,21 @@ describe("LCX governance autopilot", () => {
       payload.owners.externalChannelStatus?.statusModel,
     );
     expect(payload.owners.contextRecovery?.compressedContextRecovered).toEqual(expect.any(Boolean));
+    // The central agent's byte budget and evidence-write health have to survive the
+    // governance projection, otherwise a bounded injection and a lost receipt would
+    // only ever exist inside the owner's own stdout.
+    expect(payload.summary.centralAgentContextBudget).toEqual(
+      expect.objectContaining({
+        budgetBytes: expect.any(Number),
+        injectedBytes: expect.any(Number),
+        overBudget: expect.any(Boolean),
+      }),
+    );
+    expect(payload.summary.centralAgentContextBudget?.injectedBytes).toBeLessThanOrEqual(
+      payload.summary.centralAgentContextBudget?.budgetBytes ?? 0,
+    );
+    expect(payload.summary.centralAgentEvidenceComplete).toEqual(expect.any(Boolean));
+    expect(Array.isArray(payload.summary.centralAgentEvidenceWriteFailures)).toBe(true);
     expect(payload.latestStatePath).toBe(
       path.join(lcxWorkspace, "state", "lcx-governance-autopilot-latest.json"),
     );
@@ -633,4 +657,44 @@ describe("LCX governance autopilot", () => {
     expect(source).toContain("Get-CimInstance Win32_Process");
     expect(source).toContain('execFileAsync("ps", ["-axo", "pid,etime,command"]');
   });
+
+  it("still publishes its receipt when a derived evidence write fails", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-autopilot-evidence-"));
+    try {
+      const stateDir = path.join(home, ".openclaw", "workspace", "state");
+      await fs.mkdir(stateDir, { recursive: true });
+      // A directory cannot be opened for writing, so this forces exactly one
+      // derived artifact write to fail without touching the real workspace.
+      await fs.mkdir(path.join(stateDir, "lcx-context-recovery-handoff-latest.md"));
+
+      const { stdout } = await execFileAsync(
+        process.execPath,
+        ["--import", "tsx", "scripts/operator/lcx-governance-autopilot.ts", "--json"],
+        { cwd: repoRoot, env: { ...process.env, LCX_USER_HOME: home }, maxBuffer: EXEC_MAX_BUFFER },
+      );
+      const receipt = JSON.parse(stdout) as {
+        evidenceComplete: boolean;
+        evidenceWriteFailures: Array<{ artifact: string; error: string }>;
+      };
+
+      expect(receipt.evidenceComplete).toBe(false);
+      const handoffFailure = receipt.evidenceWriteFailures.find(
+        (failure) => failure.artifact === "contextRecoveryHandoff",
+      );
+      expect(handoffFailure?.error).toContain("EISDIR");
+
+      // Every artifact written after the failing one must still be produced, and
+      // the receipt must still reach the caller instead of exiting on the throw.
+      for (const artifact of [
+        "lcx-local-failure-trace-latest.json",
+        "lcx-owner-control-map-latest.json",
+        "lcx-owner-brief-latest.json",
+        "lcx-governance-autopilot-latest.json",
+      ]) {
+        await expect(fs.stat(path.join(stateDir, artifact))).resolves.toBeTruthy();
+      }
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  }, 120_000);
 });

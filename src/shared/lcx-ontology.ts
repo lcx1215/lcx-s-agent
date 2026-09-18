@@ -1210,6 +1210,10 @@ export const LCX_ONTOLOGY_WORKFLOW_NODE_IDS = [
   "execution_receipt",
   "position_ledger",
   "equity_curve_projection",
+  "central_agent_perception",
+  "central_agent_brain_proposal",
+  "central_agent_gate",
+  "central_agent_latest_receipt",
 ] as const;
 export type LcxOntologyWorkflowNodeId = (typeof LCX_ONTOLOGY_WORKFLOW_NODE_IDS)[number];
 
@@ -1344,6 +1348,9 @@ export const LCX_ONTOLOGY_WORKFLOW_FILTER_IDS = [
   "append_only_ledger_required",
   "mark_required_for_unrealized_pnl",
   "declared_period_required_for_annualised_metric",
+  "llm_proposes_ts_gate_approves",
+  "central_agent_plan_only_no_dispatch",
+  "central_agent_no_execution_authority",
 ] as const;
 export type LcxOntologyWorkflowFilterId = (typeof LCX_ONTOLOGY_WORKFLOW_FILTER_IDS)[number];
 
@@ -1373,6 +1380,7 @@ export const LCX_ONTOLOGY_WORKFLOW_SCENARIO_IDS = [
   "prediction_market_research_only_waterflow",
   "finance_live_execution_waterflow",
   "automation_repair_lock_waterflow",
+  "central_agent_decision_waterflow",
 ] as const;
 export type LcxOntologyWorkflowScenarioId = (typeof LCX_ONTOLOGY_WORKFLOW_SCENARIO_IDS)[number];
 

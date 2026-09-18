@@ -155,6 +155,29 @@ export function buildOwnerBrief(input: OwnerBriefInput) {
     firstFailedGateText(firstFailedGate),
     ...stringArray(summary.actionableClusters).map((cluster) => `还有待处理问题：${cluster}。`),
   ].slice(0, 4);
+  // "卡在哪里" names the cluster but not the cause, and a cluster name alone is not
+  // actionable. Quote each failing owner's first reason verbatim — paraphrasing a receipt
+  // is how a brief stops being a report and starts being an opinion. Owners the autopilot
+  // already calls structurally failed come first, because those are the named blockers.
+  const ownersWithReasons: { id: string; reasons: string[] }[] = Object.entries(owners)
+    .map(([id, value]) => ({ id, reasons: stringArray(recordValue(value)?.actionableFailures) }))
+    .filter((entry) => entry.reasons.length > 0);
+  const structuralFailureIds = stringArray(summary.structuralOwnerFailures);
+  const orderedReasonOwners = [
+    ...structuralFailureIds.flatMap((id) => ownersWithReasons.filter((entry) => entry.id === id)),
+    ...ownersWithReasons
+      .filter((entry) => !structuralFailureIds.includes(entry.id))
+      .toSorted((a, b) => a.id.localeCompare(b.id)),
+  ];
+  const MAX_REASON_LINES = 4;
+  const MAX_REASON_CHARS = 320;
+  const reasonLines = orderedReasonOwners.slice(0, MAX_REASON_LINES).map((entry) => {
+    const reason = entry.reasons[0] ?? "";
+    const clipped =
+      reason.length > MAX_REASON_CHARS ? `${reason.slice(0, MAX_REASON_CHARS)}…` : reason;
+    return `${entry.id}：${clipped}`;
+  });
+  const hiddenReasonCount = Math.max(0, orderedReasonOwners.length - MAX_REASON_LINES);
   const progressLines = [
     datasetExamples !== undefined ? `训练材料账本现在看到 ${datasetExamples} 条样本。` : undefined,
     trainSliceWritten !== undefined ? `当前训练切片是 ${trainSliceWritten} 条。` : undefined,
@@ -195,6 +218,18 @@ export function buildOwnerBrief(input: OwnerBriefInput) {
     "## 卡在哪里",
     lineList(blockers),
     "",
+    ...(reasonLines.length > 0
+      ? [
+          "## 具体原因（回执原文，未改写）",
+          lineList([
+            ...reasonLines,
+            ...(hiddenReasonCount > 0
+              ? [`还有 ${hiddenReasonCount} 个 owner 有待处理问题，见管控图。`]
+              : []),
+          ]),
+          "",
+        ]
+      : []),
     "## 机器在干嘛",
     lineList(machineLines),
     "",

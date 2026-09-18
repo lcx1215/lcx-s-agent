@@ -80,6 +80,41 @@ function stringArrayAt(root: JsonObject, ...keys: string[]): string[] {
     : [];
 }
 
+/**
+ * Tri-state readers. The `*At` helpers above collapse a missing value into a
+ * neutral default (`{}` / `[]` / `undefined`), which is right for display fields
+ * but wrong for a health flag: an absent `evidenceComplete` must read as unknown,
+ * never as a false alarm. These return `undefined` for absent and are the only
+ * ones safe to chain with `??`.
+ */
+function rawAt(root: JsonObject, ...keys: string[]): unknown {
+  let current: unknown = root;
+  for (const key of keys) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) {
+      return undefined;
+    }
+    current = (current as JsonObject)[key];
+  }
+  return current;
+}
+
+function booleanAt(root: JsonObject, ...keys: string[]): boolean | undefined {
+  const value = rawAt(root, ...keys);
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function optionalObjectAt(root: JsonObject, ...keys: string[]): JsonObject | undefined {
+  const value = rawAt(root, ...keys);
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as JsonObject)
+    : undefined;
+}
+
+function optionalArrayAt(root: JsonObject, ...keys: string[]): unknown[] | undefined {
+  const value = rawAt(root, ...keys);
+  return Array.isArray(value) ? value : undefined;
+}
+
 function numberMapAt(root: JsonObject, ...keys: string[]): Record<string, number> {
   const value = objectAt(root, ...keys);
   return Object.fromEntries(
@@ -128,6 +163,7 @@ function loadSnapshot(): JsonObject {
   const summary = objectAt(autopilot, "summary");
   const owners = objectAt(autopilot, "owners");
   const providerCouncilOwner = objectAt(owners, "providerCouncilAcceleration");
+  const centralAgentOwner = objectAt(owners, "centralAgent");
   const material = objectAt(digest, "material");
   const candidate = objectAt(material, "latestCandidateEval");
   const activePidCounts = numberMapAt(material, "activePidCounts");
@@ -201,6 +237,14 @@ function loadSnapshot(): JsonObject {
       canBecomeTrainingMaterial: Boolean(localFailureTrace.canBecomeTrainingMaterial),
       nextSafeAction: stringAt(localFailureTrace, "nextSafeAction") ?? "review_first_failed_gate",
     },
+    // The autopilot publishes its receipt last and names every evidence write it
+    // could not persist. Without this the dashboard would show a partial
+    // governance cycle as a complete one. Tri-state: an absent flag reads as
+    // unknown (a writer that predates the field), never as a silent healthy.
+    governanceEvidence: {
+      complete: booleanAt(autopilot, "evidenceComplete") ?? null,
+      writeFailures: optionalArrayAt(autopilot, "evidenceWriteFailures") ?? null,
+    },
     evolution: {
       datasetExamples:
         numberAt(monotonicLedger, "summary", "datasetExamples") ??
@@ -227,6 +271,68 @@ function loadSnapshot(): JsonObject {
       stringAt(material, "fastestSafeNextAction") ??
       stringAt(summary, "fastestSafeNextAction") ??
       "refresh_owner_state",
+    // Central agent harness: the LLM decision layer's gated plan for this cycle.
+    // Without this the agent's reasoning would live only in the control-room JSON
+    // and never reach the dashboard a human actually reads.
+    centralAgent: {
+      runs: numberAt(centralAgentOwner, "runs") ?? numberAt(summary, "centralAgentRuns") ?? 0,
+      dispatchMode:
+        stringAt(centralAgentOwner, "dispatchMode") ??
+        stringAt(summary, "centralAgentDispatchMode") ??
+        "unknown",
+      brainOutcome:
+        stringAt(centralAgentOwner, "brainOutcome") ??
+        stringAt(summary, "centralAgentBrainOutcome") ??
+        "unknown",
+      brainAvailable:
+        centralAgentOwner.brainAvailable === true || summary.centralAgentBrainAvailable === true,
+      registryTools:
+        numberAt(centralAgentOwner, "registryTools") ??
+        numberAt(summary, "centralAgentRegistryTools") ??
+        0,
+      governanceOwners:
+        numberAt(centralAgentOwner, "coverageGovernanceOwners") ??
+        numberAt(summary, "centralAgentGovernanceOwners") ??
+        0,
+      capabilities:
+        numberAt(centralAgentOwner, "coverageCapabilities") ??
+        numberAt(summary, "centralAgentCapabilities") ??
+        0,
+      excludedWriteOwners: stringArrayAt(centralAgentOwner, "coverageExcludedWriteOwners"),
+      actionsProposed:
+        numberAt(centralAgentOwner, "actionsProposed") ??
+        numberAt(summary, "centralAgentActionsProposed") ??
+        0,
+      actionsApproved:
+        numberAt(centralAgentOwner, "actionsApproved") ??
+        numberAt(summary, "centralAgentActionsApproved") ??
+        0,
+      actionsBlockedByGate:
+        numberAt(centralAgentOwner, "actionsBlockedByGate") ??
+        numberAt(summary, "centralAgentActionsBlockedByGate") ??
+        0,
+      approvedOwners: stringArrayAt(centralAgentOwner, "approvedOwners"),
+      brainNote: stringAt(centralAgentOwner, "brainNote"),
+      latestPath: stringAt(centralAgentOwner, "latestPath"),
+      // Byte budget actually applied to the brain's perception this cycle, with the
+      // keys it left out. The harness bounds the injection; without this the bound
+      // would be invisible on the surface a human reads.
+      contextBudget:
+        optionalObjectAt(centralAgentOwner, "contextBudget") ??
+        optionalObjectAt(summary, "centralAgentContextBudget") ??
+        null,
+      // False means a completed cycle's evidence could not be persisted. Tri-state:
+      // absent is "unknown", never a silent false.
+      evidenceComplete:
+        booleanAt(centralAgentOwner, "evidenceComplete") ??
+        booleanAt(summary, "centralAgentEvidenceComplete") ??
+        null,
+      evidenceWriteFailures:
+        optionalArrayAt(centralAgentOwner, "evidenceWriteFailures") ??
+        optionalArrayAt(summary, "centralAgentEvidenceWriteFailures") ??
+        [],
+      role: "the LLM decision layer: it proposes, the TS gate approves or blocks, and the plan is recorded; it holds no provider, external-sender, protected-memory, or trading authority",
+    },
     remoteDevboxStatus: sshConfigStatus(),
     lockedComputerUseStatus: "manual_codex_settings_required",
     webFrontendRole:

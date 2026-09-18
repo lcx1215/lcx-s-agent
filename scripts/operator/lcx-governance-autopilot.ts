@@ -23,6 +23,7 @@ import {
   writeLocalFailureTraceReceipt,
 } from "./lcx-local-failure-trace.ts";
 import {
+  CENTRAL_AGENT_LATEST_PATH,
   CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
   CONTROL_ROOM_LATEST_PATH,
   DEFAULT_WORKSPACE_DIR,
@@ -73,7 +74,8 @@ type OwnerId =
   | "mindModel"
   | "flowGraph"
   | "headTail"
-  | "contextRecovery";
+  | "contextRecovery"
+  | "centralAgent";
 
 type OwnerCommand = {
   id: OwnerId;
@@ -258,6 +260,21 @@ const OWNER_COMMANDS: OwnerCommand[] = [
     id: "contextRecovery",
     script: "scripts/operator/lcx-context-recovery-exam.ts",
     args: ["--json"],
+    required: true,
+  },
+  {
+    // The LLM decision layer, driven from the rule-driven loop instead of being
+    // an orphaned script nobody schedules. It runs in full dispatch mode: it
+    // perceives, the brain proposes, the TS gate approves or blocks, and the
+    // approved read-only owners are actually spawned (bounded by maxSteps and
+    // one cycle per pass). The registry's declared arg vector is the whole CLI
+    // surface, so a proposal can choose WHICH owner runs but can never add an
+    // authority flag. It never reaches provider config, external senders,
+    // protected memory, or trading. `--plan-only` remains available for a
+    // deliberate one-decision-wide pass; it is no longer the scheduled default.
+    id: "centralAgent",
+    script: "scripts/operator/lcx-central-agent.ts",
+    args: ["--max-cycles", "1", "--json"],
     required: true,
   },
 ];
@@ -747,6 +764,45 @@ function compactOwner(id: OwnerId, payload: Record<string, unknown> | undefined)
       summary: payload.summary,
       moduleCounts: payload.moduleCounts,
       actionableFailures: payload.actionableFailures,
+    };
+  }
+
+  if (id === "centralAgent") {
+    const coverage = recordValue(payload.coverage);
+    return {
+      summary: payload.summary,
+      runs: payload.runs,
+      planOnly: payload.planOnly,
+      dispatchMode: payload.dispatchMode,
+      brainOutcome: payload.brainOutcome,
+      brainAvailable: payload.brainAvailable,
+      registryTools: payload.registryTools,
+      coverageGovernanceOwners: coverage?.governanceOwners,
+      coverageCapabilities: coverage?.capabilities,
+      coverageExcludedWriteOwners: coverage?.excludedWriteOwners,
+      actionsProposed: payload.actionsProposed,
+      actionsApproved: payload.actionsApproved,
+      actionsBlockedByGate: payload.actionsBlockedByGate,
+      approvedOwners: payload.approvedOwners,
+      // A red light the owner reported itself is not the same signal as "the
+      // harness could not run it"; both are projected so the control room and
+      // the next central cycle can tell them apart.
+      ownersReportingNotOk: payload.ownersReportingNotOk,
+      failedSteps: payload.failedSteps,
+      nextAction: payload.nextAction,
+      // The owner's stdout carries the rationale directly; the on-disk snapshot
+      // holds the full receipt, but the compact must only use the payload.
+      brainNote: payload.brainNote,
+      // Context budget + evidence health: a bounded injection and a degraded
+      // evidence write are both facts a reader has to be able to see, so they are
+      // projected here rather than left inside the receipt on disk.
+      contextBudget: payload.contextBudget,
+      evidenceComplete: payload.evidenceComplete,
+      evidenceWriteFailures: payload.evidenceWriteFailures,
+      latestPath: payload.latestPath,
+      liveTouched: payload.liveTouched,
+      providerConfigTouched: payload.providerConfigTouched,
+      protectedMemoryTouched: payload.protectedMemoryTouched,
     };
   }
 
@@ -1593,6 +1649,7 @@ const receipt = {
   ownerControlMapLatestJsonPath: OWNER_CONTROL_MAP_LATEST_JSON_PATH,
   ownerControlMapLatestMarkdownPath: OWNER_CONTROL_MAP_LATEST_MARKDOWN_PATH,
   controlRoomLatestPath: CONTROL_ROOM_LATEST_PATH,
+  centralAgentLatestPath: CENTRAL_AGENT_LATEST_PATH,
   handoffLatestPath: CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
   multiAgentPatternShadowLatestPath: MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH,
   multiAgentPatternShadow,
@@ -1632,6 +1689,8 @@ const receipt = {
       "owner_brief_latest_markdown",
       "owner_control_map_latest_json",
       "owner_control_map_latest_markdown",
+      "central_agent_latest_via_owner",
+      "central_agent_log_jsonl_via_owner",
     ],
     autoUpdateLatestState: true,
     activeTrainingOrEval,
@@ -1743,6 +1802,28 @@ const receipt = {
       ?.fastestSafeNextAction,
     activeNonIdleProgress: recordValue(byOwner.trainingPlan?.compact.evolutionAcceleration)
       ?.activeNonIdleProgress,
+    // Central agent harness: the LLM decision layer's own gated plan for this pass.
+    // Surfaced in the governance summary so the dashboard shows what the agent
+    // decided, which owners it selected, and whether its brain was reachable.
+    centralAgentRuns: byOwner.centralAgent?.compact.runs,
+    centralAgentDispatchMode: byOwner.centralAgent?.compact.dispatchMode,
+    centralAgentBrainOutcome: byOwner.centralAgent?.compact.brainOutcome,
+    centralAgentBrainAvailable: byOwner.centralAgent?.compact.brainAvailable,
+    centralAgentRegistryTools: byOwner.centralAgent?.compact.registryTools,
+    centralAgentGovernanceOwners: byOwner.centralAgent?.compact.coverageGovernanceOwners,
+    centralAgentCapabilities: byOwner.centralAgent?.compact.coverageCapabilities,
+    centralAgentExcludedWriteOwners: byOwner.centralAgent?.compact.coverageExcludedWriteOwners,
+    centralAgentActionsProposed: byOwner.centralAgent?.compact.actionsProposed,
+    centralAgentActionsApproved: byOwner.centralAgent?.compact.actionsApproved,
+    centralAgentActionsBlockedByGate: byOwner.centralAgent?.compact.actionsBlockedByGate,
+    centralAgentApprovedOwners: byOwner.centralAgent?.compact.approvedOwners,
+    centralAgentOwnersReportingNotOk: byOwner.centralAgent?.compact.ownersReportingNotOk,
+    centralAgentFailedSteps: byOwner.centralAgent?.compact.failedSteps,
+    centralAgentNextAction: byOwner.centralAgent?.compact.nextAction,
+    centralAgentBrainNote: byOwner.centralAgent?.compact.brainNote,
+    centralAgentContextBudget: byOwner.centralAgent?.compact.contextBudget,
+    centralAgentEvidenceComplete: byOwner.centralAgent?.compact.evidenceComplete,
+    centralAgentEvidenceWriteFailures: byOwner.centralAgent?.compact.evidenceWriteFailures,
   },
   owners: Object.fromEntries(owners.map((owner) => [owner.id, owner.compact])),
   notTouched: [
@@ -1755,6 +1836,10 @@ const receipt = {
   liveTouched: hasBoundaryTouch(owners, "liveTouched"),
   providerConfigTouched: hasBoundaryTouch(owners, "providerConfigTouched"),
   protectedMemoryTouched: hasBoundaryTouch(owners, "protectedMemoryTouched"),
+  // Filled in after the evidence writes below; a partial cycle must be visible
+  // instead of looking like a complete one.
+  evidenceComplete: true,
+  evidenceWriteFailures: [] as { artifact: string; error: string }[],
 };
 
 const [gitStatusLines, activePids] = await Promise.all([
@@ -1776,6 +1861,7 @@ const mindModelCompact = recordValue(receipt.owners.mindModel);
 const flowGraphCompact = recordValue(receipt.owners.flowGraph);
 const headTailCompact = recordValue(receipt.owners.headTail);
 const contextRecoveryCompact = recordValue(receipt.owners.contextRecovery);
+const centralAgentCompact = recordValue(receipt.owners.centralAgent);
 const activeCounts = activePidCounts(activePids);
 const digestMaterial = {
   repoBranch: gitStatusLines[0] ?? "",
@@ -1878,6 +1964,26 @@ const digestMaterial = {
   flowGraphFailed: recordValue(flowGraphCompact?.summary)?.failed,
   headTailFailed: recordValue(headTailCompact?.summary)?.failed,
   contextRecoveryOk: contextRecoveryCompact?.compressedContextRecovered,
+  // Central agent harness: the LLM decision layer's own gated plan for this pass.
+  centralAgentRuns: centralAgentCompact?.runs,
+  centralAgentDispatchMode: centralAgentCompact?.dispatchMode,
+  centralAgentBrainOutcome: centralAgentCompact?.brainOutcome,
+  centralAgentBrainAvailable: centralAgentCompact?.brainAvailable,
+  centralAgentRegistryTools: centralAgentCompact?.registryTools,
+  centralAgentGovernanceOwners: centralAgentCompact?.coverageGovernanceOwners,
+  centralAgentCapabilities: centralAgentCompact?.coverageCapabilities,
+  centralAgentExcludedWriteOwners: centralAgentCompact?.coverageExcludedWriteOwners,
+  centralAgentActionsProposed: centralAgentCompact?.actionsProposed,
+  centralAgentActionsApproved: centralAgentCompact?.actionsApproved,
+  centralAgentActionsBlockedByGate: centralAgentCompact?.actionsBlockedByGate,
+  centralAgentApprovedOwners: centralAgentCompact?.approvedOwners,
+  centralAgentOwnersReportingNotOk: centralAgentCompact?.ownersReportingNotOk,
+  centralAgentFailedSteps: centralAgentCompact?.failedSteps,
+  centralAgentNextAction: centralAgentCompact?.nextAction,
+  centralAgentBrainNote: centralAgentCompact?.brainNote,
+  centralAgentContextBudget: centralAgentCompact?.contextBudget,
+  centralAgentEvidenceComplete: centralAgentCompact?.evidenceComplete,
+  centralAgentEvidenceWriteFailures: centralAgentCompact?.evidenceWriteFailures,
   liveTouched: receipt.liveTouched,
   providerConfigTouched: receipt.providerConfigTouched,
   protectedMemoryTouched: receipt.protectedMemoryTouched,
@@ -1926,6 +2032,7 @@ const localFailureTrace = buildLocalFailureTraceReceipt({
     MONOTONIC_DATA_LEDGER_JSONL_PATH,
     CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
     MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH,
+    CENTRAL_AGENT_LATEST_PATH,
   ],
   writtenArtifacts: [
     GOVERNANCE_AUTOPILOT_LATEST_PATH,
@@ -2034,39 +2141,72 @@ const controlRoom = {
   },
 };
 
-await fs.mkdir(path.dirname(GOVERNANCE_AUTOPILOT_LATEST_PATH), { recursive: true });
-await fs.writeFile(GOVERNANCE_AUTOPILOT_LATEST_PATH, `${JSON.stringify(receipt, null, 2)}\n`);
-await fs.mkdir(path.dirname(EVOLUTION_PROMOTION_DIGEST_LATEST_PATH), { recursive: true });
-await fs.writeFile(
-  EVOLUTION_PROMOTION_DIGEST_LATEST_PATH,
-  `${JSON.stringify(evolutionPromotionDigest, null, 2)}\n`,
-);
-const controlRoomTempPath = `${CONTROL_ROOM_LATEST_PATH}.${process.pid}.tmp`;
-await fs.writeFile(controlRoomTempPath, `${JSON.stringify(controlRoom, null, 2)}\n`);
-await fs.rename(controlRoomTempPath, CONTROL_ROOM_LATEST_PATH);
-await fs.mkdir(path.dirname(CONTEXT_RECOVERY_HANDOFF_LATEST_PATH), { recursive: true });
-await fs.writeFile(
-  CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
-  `${buildContextRecoveryHandoff({
-    receipt,
-    gitStatusLines,
-    activePids,
-    digestMaterial,
-    universeIndexCompact,
-    trainingCompact,
-    skillOptCompact,
-    monotonicDataLedgerCompact,
-    providerCouncilAccelerationCompact,
-    externalChannelBindingCompact,
-    externalAgentUpgradeCompact,
-    multiAgentPatternShadow,
-    projectionReaderAuditCompact,
-    localFailureTrace,
-  })}\n`,
-);
-await writeLocalFailureTraceReceipt(localFailureTrace);
-await writeOwnerControlMap(ownerControlMap);
-await writeOwnerBrief(ownerBrief);
+/**
+ * Evidence writes are fail-open, and the receipt is published last.
+ *
+ * A single unwritable derived artifact used to reject the module before the
+ * receipt reached stdout: the cycle looked like a crash, stdout was empty, and
+ * every later artifact (failure trace, owner control map, owner brief) was
+ * silently skipped while the receipt already on disk recorded nothing about the
+ * partial run. Each write now names its own failure and the run still publishes
+ * its receipt, so a partial cycle is visible instead of indistinguishable.
+ */
+async function writeEvidence(artifact: string, write: () => Promise<unknown>): Promise<void> {
+  try {
+    await write();
+  } catch (error) {
+    receipt.evidenceWriteFailures.push({ artifact, error: String(error) });
+  }
+}
+
+await writeEvidence("evolutionPromotionDigest", async () => {
+  await fs.mkdir(path.dirname(EVOLUTION_PROMOTION_DIGEST_LATEST_PATH), { recursive: true });
+  await fs.writeFile(
+    EVOLUTION_PROMOTION_DIGEST_LATEST_PATH,
+    `${JSON.stringify(evolutionPromotionDigest, null, 2)}\n`,
+  );
+});
+await writeEvidence("controlRoom", async () => {
+  const controlRoomTempPath = `${CONTROL_ROOM_LATEST_PATH}.${process.pid}.tmp`;
+  await fs.writeFile(controlRoomTempPath, `${JSON.stringify(controlRoom, null, 2)}\n`);
+  await fs.rename(controlRoomTempPath, CONTROL_ROOM_LATEST_PATH);
+});
+await writeEvidence("contextRecoveryHandoff", async () => {
+  await fs.mkdir(path.dirname(CONTEXT_RECOVERY_HANDOFF_LATEST_PATH), { recursive: true });
+  await fs.writeFile(
+    CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
+    `${buildContextRecoveryHandoff({
+      receipt,
+      gitStatusLines,
+      activePids,
+      digestMaterial,
+      universeIndexCompact,
+      trainingCompact,
+      skillOptCompact,
+      monotonicDataLedgerCompact,
+      providerCouncilAccelerationCompact,
+      externalChannelBindingCompact,
+      externalAgentUpgradeCompact,
+      multiAgentPatternShadow,
+      projectionReaderAuditCompact,
+      localFailureTrace,
+    })}\n`,
+  );
+});
+await writeEvidence("localFailureTrace", () => writeLocalFailureTraceReceipt(localFailureTrace));
+await writeEvidence("ownerControlMap", () => writeOwnerControlMap(ownerControlMap));
+await writeEvidence("ownerBrief", () => writeOwnerBrief(ownerBrief));
+
+receipt.evidenceComplete = receipt.evidenceWriteFailures.length === 0;
+await writeEvidence("governanceAutopilotLatest", async () => {
+  await fs.mkdir(path.dirname(GOVERNANCE_AUTOPILOT_LATEST_PATH), { recursive: true });
+  await fs.writeFile(GOVERNANCE_AUTOPILOT_LATEST_PATH, `${JSON.stringify(receipt, null, 2)}\n`);
+});
+
+// The receipt cannot report its own publication failure in the copy it failed to
+// write, so recompute for the published copy: the persisted file carries the
+// derived-artifact verdict, stdout carries the verdict over every write.
+receipt.evidenceComplete = receipt.evidenceWriteFailures.length === 0;
 
 if (options.json) {
   console.log(JSON.stringify(receipt, null, 2));
@@ -2077,6 +2217,13 @@ if (options.json) {
       `releaseBlocked=${receipt.summary.releaseBlocked}`,
       `activeTrainingOrEval=${receipt.summary.activeTrainingOrEval}`,
       `latestStatePath=${receipt.latestStatePath}`,
+      ...(receipt.evidenceComplete
+        ? []
+        : [
+            `evidenceWriteFailures=${receipt.evidenceWriteFailures
+              .map((failure) => failure.artifact)
+              .join(",")}`,
+          ]),
     ].join("\n"),
   );
 }

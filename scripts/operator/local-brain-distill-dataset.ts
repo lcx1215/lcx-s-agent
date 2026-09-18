@@ -34,6 +34,11 @@ type CliOptions = {
   // Held-out fraction the generator reserves; mixed train rows are drawn from
   // the "train" split so they never overlap the harness generalization holdout.
   generatedHoldoutFraction: number;
+  // When true, every assisted sample also emits a blind-format twin whose prompt
+  // carries only `user_or_task` (no case hints), mirroring the guard's strict
+  // `--hardened --blind` eval prompt. This teaches the model to emit the full
+  // output contract from a bare task, which the promotion gate requires.
+  includeBlind: boolean;
 };
 
 const DEFAULT_OUT_DIR = path.join(
@@ -76,9 +81,11 @@ const SOURCE_KIND_TRUST_TIERS: Record<string, string> = {
 function usage(): never {
   throw new Error(
     [
-      "Usage: node --import tsx scripts/operator/local-brain-distill-dataset.ts [--workspace DIR] [--out DIR] [--max-files N] [--mix-generated N] [--generated-seed N] [--generated-holdout-fraction F] [--json]",
+      "Usage: node --import tsx scripts/operator/local-brain-distill-dataset.ts [--workspace DIR] [--out DIR] [--max-files N] [--mix-generated N] [--generated-seed N] [--generated-holdout-fraction F] [--include-blind] [--json]",
       "",
       "Builds MLX-LM prompt/completion JSONL for a local auxiliary thought-flow model.",
+      "",
+      "--include-blind mirrors each assisted sample with a blind-format twin (bare user/task, no case hints) so a retrained adapter can pass the guard's strict --hardened --blind promotion gate.",
     ].join("\n"),
   );
 }
@@ -108,6 +115,7 @@ function parseArgs(args: string[]): CliOptions {
     mixGenerated: 0,
     generatedSeed: 1,
     generatedHoldoutFraction: 0.2,
+    includeBlind: false,
   };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -135,6 +143,8 @@ function parseArgs(args: string[]): CliOptions {
       index += 1;
     } else if (arg === "--json") {
       options.json = true;
+    } else if (arg === "--include-blind") {
+      options.includeBlind = true;
     } else if (arg === "--help" || arg === "-h") {
       usage();
     } else {
@@ -672,6 +682,80 @@ function buildPrompt(params: {
     `user_or_task: ${params.userAsk}`,
     `source_summary: ${params.sourceSummary}`,
   ].join("\n");
+}
+
+/**
+ * Blind-format prompt: mirrors the guard's strict `--hardened --blind` eval
+ * prefix and carries ONLY `user_or_task` (no source summary, no case-specific
+ * recommended modules / required missing_data / risk boundary hints). The model
+ * must infer the full output contract from the bare task alone, which is what
+ * the promotion gate scores.
+ */
+function buildBlindPrompt(userAsk: string): string {
+  return [
+    "You are the LCX Agent local auxiliary thought-flow model.",
+    "Blind neutral raw-contract eval: infer the contract from only the user/task.",
+    "/no_think",
+    "No prose, no markdown, no  thinking, no explanations, no nested objects.",
+    '{"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_external_conversation_history"]}',
+    "Return one single-line JSON object only; close the final brace and do not echo an answer template.",
+    `Allowed module ids (choose only those justified by the task): ${LOCAL_BRAIN_MODULE_TAXONOMY.join(", ")}.`,
+    `Allowed risk_boundary ids (choose only those justified by the task): ${LOCAL_BRAIN_RISK_BOUNDARIES.join(", ")}.`,
+    "Infer missing_data ids yourself from the task; no case-specific checklist or expected id is provided.",
+    "Do not invent current or timestamped market data, execution approval, probabilities, or durable memory writes.",
+    "",
+    "source_kind: blind_train",
+    `user_or_task: ${userAsk}`,
+  ].join("\n");
+}
+
+const USER_OR_TASK_PREFIX = "user_or_task: ";
+
+/** Extracts the user/task line every buildPrompt emits, so a blind twin can
+ * reuse the exact same completion while stripping all case hints. */
+function extractUserAskFromPrompt(prompt: string): string | undefined {
+  const line = prompt
+    .split("\n")
+    .find(
+      (line) => line.startsWith(USER_OR_TASK_PREFIX) && line.length > USER_OR_TASK_PREFIX.length,
+    );
+  if (!line) {
+    return undefined;
+  }
+  return line.slice(USER_OR_TASK_PREFIX.length);
+}
+
+/**
+ * Emits a blind-format twin for each assisted sample, reusing the target
+ * completion but replacing the prompt with a hint-free bare task prompt. The
+ * original assisted sample is kept; blind samples are what close the gap the
+ * strict promotion gate measures. Samples whose prompt cannot be decomposed are
+ * skipped rather than guessed.
+ */
+function withBlindVariants(examples: DistillExample[]): DistillExample[] {
+  const blind: DistillExample[] = [];
+  for (const example of examples) {
+    const userAsk = extractUserAskFromPrompt(example.prompt);
+    if (userAsk === undefined || userAsk.trim().length === 0) {
+      continue;
+    }
+    blind.push({
+      prompt: buildBlindPrompt(userAsk),
+      completion: example.completion,
+      meta: {
+        ...example.meta,
+        sourcePath: example.meta.sourcePath
+          ? `${example.meta.sourcePath}#blind`
+          : "blind-converted",
+        // Inherit the source's sourceKind so trust-tier accounting stays true:
+        // a blind twin reuses the exact source completion. Traceability of
+        // whether a row is blind vs assisted lives in the `#blind` path suffix
+        // and the manifest's counts.blind / blindMix.blindCount.
+        sourceKind: example.meta.sourceKind,
+      },
+    });
+  }
+  return blind;
 }
 
 function buildCompletion(params: {
@@ -2591,12 +2675,22 @@ async function main(): Promise<void> {
   }
 
   const splits = splitExamples(examples);
+  // Blind twins must be created ONLY from rows that landed in the train slice,
+  // then confined there: a blind twin reuses the exact completion of its
+  // assisted source, so if a twin existed for any valid/test row, that eval row's
+  // completion would also appear in train (memorization leakage). Creating twins
+  // from the train rows keeps valid/test completions disjoint from every train
+  // completion. This matches the same train-only convention as generated rows.
+  const blindExamples =
+    options.includeBlind && splits.train.length > 0 ? withBlindVariants(splits.train) : [];
+  splits.train = splits.train.concat(blindExamples);
+  const combined = examples.concat(blindExamples);
   await fs.mkdir(options.outDir, { recursive: true });
   await writeJsonl(path.join(options.outDir, "train.jsonl"), splits.train);
   await writeJsonl(path.join(options.outDir, "valid.jsonl"), splits.valid);
   await writeJsonl(path.join(options.outDir, "test.jsonl"), splits.test);
 
-  const allSourceKinds = sourceKindCounts(examples);
+  const allSourceKinds = sourceKindCounts(combined);
   const manifest = {
     ok: true,
     boundary: "local_auxiliary_thought_flow_only",
@@ -2604,13 +2698,22 @@ async function main(): Promise<void> {
     outDir: options.outDir,
     counts: {
       sourceFiles: files.length,
-      examples: examples.length,
+      examples: combined.length,
+      assisted: examples.length,
+      blind: blindExamples.length,
       train: splits.train.length,
       valid: splits.valid.length,
       test: splits.test.length,
     },
     sourceKinds: allSourceKinds,
     trainSourceKinds: sourceKindCounts(splits.train),
+    blindMix: {
+      boundary: "assisted_to_blind_twin_only",
+      enabled: options.includeBlind,
+      blindCount: blindExamples.length,
+      assistedCount: examples.length,
+      note: "Blind samples reuse the same target completion but strip all case hints from the prompt so the model learns to emit the full output contract from a bare user/task, which the strict --hardened --blind promotion gate scores.",
+    },
     generatedMix: {
       boundary: "synthetic_rule_generated_train_only",
       requested: options.mixGenerated,
@@ -2621,11 +2724,11 @@ async function main(): Promise<void> {
       inTestOrValid: false,
       note: "Infinite-stream rows are self-scored before admission and mixed into the train pool only; test/valid stay on the real receipt distribution and the generalization holdout stays the sole rule-vs-memorization probe.",
     },
-    teacherReviewQuality: teacherReviewQualitySummary(examples),
+    teacherReviewQuality: teacherReviewQualitySummary(combined),
     sampleTrust: {
       boundary: "local_brain_sample_trust_summary_only",
       sourceTrustTiers: SOURCE_KIND_TRUST_TIERS,
-      sourceTrustTierCounts: trustTierCounts(examples),
+      sourceTrustTierCounts: trustTierCounts(combined),
       trainTrustTierCounts: trustTierCounts(splits.train),
       highestTrustSourceKind: "curated_seed",
       largestTeacherSourceKind: "brain_distillation_review",
@@ -2656,7 +2759,8 @@ async function main(): Promise<void> {
       [
         "local brain distillation dataset built",
         `out_dir=${options.outDir}`,
-        `examples=${examples.length}`,
+        `examples=${combined.length}`,
+        `blind=${blindExamples.length}`,
         `train=${splits.train.length}`,
         `valid=${splits.valid.length}`,
         `test=${splits.test.length}`,

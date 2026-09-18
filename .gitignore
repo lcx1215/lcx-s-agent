@@ -63,6 +63,13 @@ skills-lock.json
 # Xcode build directories (xcodebuild output)
 Swabble/build/
 
+# Local build caches left behind after the macOS/Android app surfaces were
+# dropped. Their tracked trees are gone from the index, but the caches stay
+# on disk, so without these rules the change-impact governance scan sees them
+# as unowned changed files and fails the owner.
+apps/macos/.build/
+apps/shared/
+
 # Generated protocol schema (produced via pnpm protocol:gen)
 dist/protocol.schema.json
 .ant-colony/

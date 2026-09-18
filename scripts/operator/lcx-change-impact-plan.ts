@@ -253,6 +253,17 @@ const PATH_RULES: PathRule[] = [
     risk: "elevated",
   },
   {
+    id: "ide_scaffolding_plans",
+    lane: "global_doctrine_and_runbook",
+    patterns: [/^\.trae\//u],
+    requiredChecks: ["universe-index", "head-tail-consistency"],
+    commands: [
+      "node --import tsx scripts/operator/lcx-universe-index.ts --json --no-write",
+      "node --import tsx scripts/operator/lcx-head-tail-consistency.ts --json",
+    ],
+    headTailRequired: true,
+  },
+  {
     id: "logical_agent_pool",
     lane: "agent_workflow_memory",
     patterns: [
@@ -498,6 +509,96 @@ const PATH_RULES: PathRule[] = [
     patterns: [/^src\/memory\/memory-schema\.ts$/u, /^src\/memory\/sqlite-migrations\.ts$/u],
     requiredChecks: ["run-changed-tests"],
     commands: ["pnpm vitest run src/memory/sqlite-migrations.test.ts src/memory/index.test.ts"],
+  },
+  {
+    id: "central_agent_harness",
+    lane: "agent_workflow_memory",
+    patterns: [/^src\/agents\/central-harness\//u, /^scripts\/operator\/lcx-central-agent\.ts$/u],
+    requiredChecks: ["central-agent-harness-tests", "head-tail-consistency"],
+    commands: [
+      "pnpm vitest run test/lcx-central-agent.test.ts",
+      "node --import tsx scripts/operator/lcx-central-agent.ts --dry-run --duration-minutes 1 --json",
+      "node --import tsx scripts/operator/lcx-head-tail-consistency.ts --json",
+    ],
+    safetyNotes: [
+      "The central harness only proposes; deterministic TS gates approve. It never gains provider, external-sender, protected-memory, or trading authority, and its capability tools stay planning-only.",
+    ],
+  },
+  {
+    // Hand-run developer tools. Nothing schedules them and nothing imports them:
+    // a human runs them by hand, and the live ones additionally need a provider
+    // key or a paired device. They still need an owner lane, otherwise a change
+    // to one is reported as an unowned stray file.
+    id: "developer_manual_tools",
+    lane: "local_dev_tooling",
+    patterns: [
+      /^scripts\/(?:cron_usage_report|debug-claude-usage|firecrawl-compare|generate-secretref-credential-matrix|label-open-issues|readability-basic-compare|sync-moonshot-docs|test-shell-completion|zai-fallback-repro)\.ts$/u,
+      /^scripts\/operator\/(?:geospatial-source-live-smoke|ios-node-e2e|test-device-pair-telegram)\.ts$/u,
+    ],
+    requiredChecks: [],
+    commands: ["git diff --check"],
+    safetyNotes: [
+      "These are hand-run developer tools with no automated gate; some need a live provider key or a paired device. Changing one means running it by hand and stating what was observed. This lane grants no provider, credential, or external-channel authority.",
+    ],
+  },
+  {
+    // Root-level build and dependency configuration. Changing one changes how
+    // everything is compiled, typed, or installed, but no single downstream
+    // check covers it, so the lane records the change and requires a clean diff
+    // rather than pretending to verify it.
+    id: "build_tooling_and_manifests",
+    lane: "local_build_tooling",
+    patterns: [
+      /^vitest[.-][\w.-]*\.ts$/u,
+      /^tsdown\.config\.ts$/u,
+      /^tsconfig[\w.-]*\.json$/u,
+      /^zizmor\.yml$/u,
+      /^pnpm-(?:lock|workspace)\.yaml$/u,
+      /^pyproject\.toml$/u,
+    ],
+    requiredChecks: [],
+    commands: ["git diff --check"],
+    safetyNotes: [
+      "Build and dependency changes affect every package at once. Keep them minimal and reviewable; regenerating lockfiles, bumping versions, or changing published build output is a separate, explicitly authorized change.",
+    ],
+  },
+  {
+    // The deployment surface: container images, PaaS manifests, and the podman
+    // env file. Nothing here runs automatically, and building or shipping is a
+    // separate authority.
+    id: "deployment_surface",
+    lane: "local_deployment_boundary",
+    patterns: [
+      /^Dockerfile[\w.-]*$/u,
+      /^docker-compose\.yml$/u,
+      /^docker-setup\.sh$/u,
+      /^setup-podman\.sh$/u,
+      /^openclaw\.podman\.env$/u,
+      /^fly(?:\.\w+)?\.toml$/u,
+      /^render\.yaml$/u,
+    ],
+    requiredChecks: [],
+    commands: ["git diff --check"],
+    safetyNotes: [
+      "Deployment surface only. Building an image, publishing, deploying, or restarting a service is never triggered by this lane and needs explicit authorization plus a named target.",
+    ],
+  },
+  {
+    // Root entrypoints and project-level documents. Entrypoint edits can alter
+    // every CLI invocation, so state what was run by hand.
+    id: "root_project_surface",
+    lane: "local_project_surface",
+    patterns: [
+      /^(?:lcx|openclaw)\.mjs$/u,
+      /^(?:CHANGELOG|CLAUDE|SECURITY|VISION)\.md$/u,
+      /^docs\.acp\.md$/u,
+      /^LICENSE$/u,
+    ],
+    requiredChecks: [],
+    commands: ["git diff --check"],
+    safetyNotes: [
+      "Entrypoints and project-level documents. Entrypoint changes affect every CLI invocation and must be exercised by hand; license, security, and vision changes are governance-level and should be called out explicitly.",
+    ],
   },
   {
     id: "test_file_changed",
