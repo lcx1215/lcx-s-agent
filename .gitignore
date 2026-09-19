@@ -93,3 +93,12 @@ ops/external-channel-artifacts/promotions/
 **/.stfolder/
 # Keeps generated output, local credentials, caches, and runtime state out of git.
 tmp-lcx-owner-dashboard*.png
+
+# Runtime state and test scratch left at the repository root. The default finance
+# state directory and the local-brain eval verification output are written here by
+# operator runs, and the path-alias suites create their sandbox directories here.
+# They are untracked by design, but without these rules the change-impact
+# governance scan reads them as unowned changed files and fails the owner.
+/state/
+/openclaw-path-alias-*/
+src/canvas-host/a2ui/test-link-*.txt
