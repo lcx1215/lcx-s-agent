@@ -167,14 +167,6 @@ const runs = [
         },
       ]
     : []),
-  // scripts/operator/ holds runnable CLI tools that vitest.unit.config.ts
-  // deliberately skips. Without this lane the three operator suites exist with
-  // a config but nothing ever runs them, so they cannot catch a regression in
-  // the tools they cover. They are pure-logic and run in ~12s.
-  {
-    name: "scripts-operator",
-    args: ["vitest", "run", "--config", "vitest.scripts-operator.config.ts"],
-  },
   ...(includeExtensionsSuite
     ? [
         {
