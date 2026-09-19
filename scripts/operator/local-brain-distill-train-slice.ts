@@ -3,7 +3,14 @@ import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
+import { fileURLToPath } from "node:url";
+import {
+  createContractVocabAligner,
+  type ContractVocabAligner,
+} from "./local-brain-contract-vocab-align.js";
 import { hardenLocalBrainPlanForAsk } from "./local-brain-contracts.js";
+
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 type CliOptions = {
   dataDir: string;
@@ -13,6 +20,8 @@ type CliOptions = {
   nonReviewRepeat: number;
   json: boolean;
   repairContractTargets: boolean;
+  contractVocabAlign: boolean;
+  evalSource: string;
 };
 
 type JsonRecord = {
@@ -81,7 +90,7 @@ const SOURCE_KIND_TRUST_TIERS: Record<string, string> = {
 function usage(): never {
   throw new Error(
     [
-      "Usage: node --import tsx scripts/operator/local-brain-distill-train-slice.ts [--data DIR] [--out DIR] [--max-review-examples N] [--curated-repeat N] [--non-review-repeat N] [--repair-contract-targets] [--json]",
+      "Usage: node --import tsx scripts/operator/local-brain-distill-train-slice.ts [--data DIR] [--out DIR] [--max-review-examples N] [--curated-repeat N] [--non-review-repeat N] [--repair-contract-targets] [--contract-vocab-align] [--eval-source PATH] [--json]",
       "",
       "Builds a bounded, balanced MLX-LM training slice from the full local-brain dataset.",
     ].join("\n"),
@@ -113,6 +122,8 @@ function parseArgs(args: string[]): CliOptions {
     nonReviewRepeat: 2,
     json: false,
     repairContractTargets: false,
+    contractVocabAlign: false,
+    evalSource: path.join(SCRIPT_DIR, "local-brain-distill-eval.ts"),
   };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -133,6 +144,11 @@ function parseArgs(args: string[]): CliOptions {
       index += 1;
     } else if (arg === "--repair-contract-targets") {
       options.repairContractTargets = true;
+    } else if (arg === "--contract-vocab-align") {
+      options.contractVocabAlign = true;
+    } else if (arg === "--eval-source") {
+      options.evalSource = path.resolve(readValue(args, index));
+      index += 1;
     } else if (arg === "--json") {
       options.json = true;
     } else if (arg === "--help" || arg === "-h") {
@@ -505,6 +521,54 @@ async function copyFileAtomic(sourcePath: string, outPath: string): Promise<numb
     .filter((line) => line.trim()).length;
 }
 
+async function copyAlignedFile(
+  sourcePath: string,
+  outPath: string,
+  aligner: ContractVocabAligner | undefined,
+): Promise<number> {
+  if (!aligner) {
+    return copyFileAtomic(sourcePath, outPath);
+  }
+  const content = await fs.readFile(sourcePath, "utf8");
+  const lines: string[] = [];
+  for (const line of content.split(/\r?\n/u)) {
+    if (!line.trim()) {
+      continue;
+    }
+    const record = JSON.parse(line) as JsonRecord;
+    if (typeof record.prompt !== "string" || typeof record.completion !== "string") {
+      lines.push(line);
+      continue;
+    }
+    const aligned = aligner.alignRecord({
+      prompt: record.prompt,
+      completion: record.completion,
+      meta: record.meta,
+    });
+    if (!aligned.aligned || aligned.completion === record.completion) {
+      lines.push(line);
+      continue;
+    }
+    lines.push(
+      JSON.stringify({
+        ...record,
+        prompt: aligned.prompt,
+        completion: aligned.completion,
+        meta: {
+          ...record.meta,
+          contractVocabAligned: true,
+          directiveMissingData: aligned.directiveMissingData,
+          directiveRiskBoundaries: aligned.directiveRiskBoundaries,
+          contractVocabularySource: "local-brain-distill-eval-fixed-registry",
+          learningClaim: "training_target_only_not_absorption_proof",
+        },
+      }),
+    );
+  }
+  await writeFileAtomic(outPath, `${lines.join("\n")}\n`);
+  return lines.length;
+}
+
 async function buildTrainSlice(options: CliOptions): Promise<Record<string, unknown>> {
   const trainPath = path.join(options.dataDir, "train.jsonl");
   const counts = await countSourceKinds(trainPath);
@@ -512,6 +576,9 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
     counts.reviewCandidates,
     options.maxReviewExamples,
   );
+  const aligner = options.contractVocabAlign
+    ? await createContractVocabAligner(options.evalSource)
+    : undefined;
   const trainOut = path.join(options.outDir, "train.jsonl");
   await fs.mkdir(options.outDir, { recursive: true });
   const tempTrainOut = path.join(options.outDir, `.train.jsonl.${process.pid}.${Date.now()}.tmp`);
@@ -521,6 +588,9 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
   let reviewSelected = 0;
   let curatedWritten = 0;
   let nonReviewWritten = 0;
+  let alignedWritten = 0;
+  let directiveMissingDataCovered = 0;
+  let directiveRiskBoundariesCovered = 0;
   const writtenSourceKinds: Record<string, number> = {};
   const writtenTrustTiers: Record<string, number> = {};
   const writtenTeacherQuality = createTeacherQualityAccumulator();
@@ -530,11 +600,46 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
     incrementCount(writtenTrustTiers, trustTierForSourceKind(sourceKind));
   }
 
+  function alignRecord(record: JsonRecord): JsonRecord {
+    if (!aligner || typeof record.prompt !== "string" || typeof record.completion !== "string") {
+      return record;
+    }
+    const aligned = aligner.alignRecord({
+      prompt: record.prompt,
+      completion: record.completion,
+      meta: record.meta,
+    });
+    if (!aligned.aligned || aligned.completion === record.completion) {
+      return record;
+    }
+    alignedWritten += 1;
+    if (aligned.directiveMissingData.length > 0) {
+      directiveMissingDataCovered += 1;
+    }
+    if (aligned.directiveRiskBoundaries.length > 0) {
+      directiveRiskBoundariesCovered += 1;
+    }
+    return {
+      ...record,
+      prompt: aligned.prompt,
+      completion: aligned.completion,
+      meta: {
+        ...record.meta,
+        contractVocabAligned: true,
+        directiveMissingData: aligned.directiveMissingData,
+        directiveRiskBoundaries: aligned.directiveRiskBoundaries,
+        contractVocabularySource: "local-brain-distill-eval-fixed-registry",
+        learningClaim: "training_target_only_not_absorption_proof",
+      },
+    };
+  }
+
   try {
     for await (const sourceRecord of readJsonl(trainPath)) {
-      const record = options.repairContractTargets
+      const repaired = options.repairContractTargets
         ? repairTrainingTarget(sourceRecord)
         : sourceRecord;
+      const record = alignRecord(repaired);
       const sourceKind = sourceKindOf(record);
       if (sourceKind === CURATED_SOURCE_KIND) {
         for (let repeat = 0; repeat < options.curatedRepeat; repeat += 1) {
@@ -569,13 +674,15 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
   }
   await fs.rename(tempTrainOut, trainOut);
 
-  const validCopied = await copyFileAtomic(
+  const validCopied = await copyAlignedFile(
     path.join(options.dataDir, "valid.jsonl"),
     path.join(options.outDir, "valid.jsonl"),
+    aligner,
   );
-  const testCopied = await copyFileAtomic(
+  const testCopied = await copyAlignedFile(
     path.join(options.dataDir, "test.jsonl"),
     path.join(options.outDir, "test.jsonl"),
+    aligner,
   );
 
   const manifest = {
@@ -585,11 +692,26 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
     outDir: options.outDir,
     policy: {
       repairContractTargets: options.repairContractTargets,
+      contractVocabAlign: options.contractVocabAlign,
+      evalVocabularySource: options.contractVocabAlign ? options.evalSource : undefined,
       selection: "curated_first_non_review_repeated_teacher_quality_family_dedup_sample",
       maxReviewExamples: options.maxReviewExamples,
       curatedRepeat: options.curatedRepeat,
       nonReviewRepeat: options.nonReviewRepeat,
     },
+    contractVocabAlignment: aligner
+      ? {
+          boundary: "training_pair_matches_eval_contract_directive_format",
+          method: "keyword_rules_over_sample_text_no_llm",
+          alignedSourceRecords: alignedWritten,
+          trainDirectiveMissingDataCoverage: directiveMissingDataCovered,
+          trainDirectiveRiskBoundariesCoverage: directiveRiskBoundariesCovered,
+          vocabSizes: {
+            missingDataIds: aligner.missingDataIds.length,
+            riskBoundaryIds: aligner.riskBoundaryIds.length,
+          },
+        }
+      : undefined,
     counts: {
       sourceTrain: counts.sourceTrain,
       curatedSeen: counts.curatedSeen,
