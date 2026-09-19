@@ -1037,7 +1037,8 @@ describe("governance digest folds the hour's verdict into the budgeted brain vie
     expect(digest.releaseBlocked).toBe(true);
     expect(digest.ownerFailures).toEqual(["commercialAcceptance", "externalChannelStatus"]);
     expect(digest.blockedGates).toEqual(["external_channel_not_bound"]);
-    expect(digest.shadow.trialDecision).toBe("unverified");
+    const shadow = digest.shadow as Readonly<Record<string, unknown>>;
+    expect(shadow.trialDecision).toBe("unverified");
     expect(digest.projectionReader).toEqual({
       adapterId: "governance-autopilot",
       readStatus: "stale",

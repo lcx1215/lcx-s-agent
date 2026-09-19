@@ -53,8 +53,8 @@ class ParseError extends Error {}
 /** An evidence write that failed. Named, never swallowed, never fatal. */
 type EvidenceWriteFailure = Readonly<{ target: string; reason: string }>;
 
-function parseArgs(args: string[]): Record<string, string | boolean> {
-  const out: Record<string, string | boolean> = {
+function parseArgs(args: string[]): Record<string, string | boolean | number> {
+  const out: Record<string, string | boolean | number> = {
     durationMinutes: 2,
     dryRun: false,
     planOnly: false,
