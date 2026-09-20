@@ -43,11 +43,31 @@ const PATH_RULES: PathRule[] = [
     commands: ["pnpm vitest run src/cli/serve-detach.test.ts src/cli/serve-cli.test.ts"],
   },
   {
+    // Durable recall: per-session digests written at the end of every run, plus
+    // read-only recall over the archived transcript store. Both are what let a
+    // later session see earlier work without anyone asking for it.
+    id: "session_recall",
+    lane: "session_recall",
+    patterns: [
+      /^src\/agents\/rollout-summary\.ts$/u,
+      /^src\/agents\/rollout-distill\.ts$/u,
+      /^src\/plugins\/runtime\/runtime-tools\.ts$/u,
+      /^src\/plugins\/runtime\/types-core\.ts$/u,
+      /^extensions\/memory-core\/index\.ts$/u,
+    ],
+    requiredChecks: [],
+    commands: [
+      "pnpm vitest run src/agents/rollout-summary.test.ts src/agents/tools/session-history-tool.test.ts",
+    ],
+  },
+  {
     id: "finance_caseflow",
     lane: "finance_research_capability",
     patterns: [
       /^src\/agents\/finance-(?:caseflow(?:-followups)?|forecast-calibration|history-coverage|research-assessment|source-recovery|model-workflow|model-specialist|agent-committee|news-entity|research-evidence|strategy-method-kit|strategy-method-catalog|research-runner|research-batch-runner|run-checkpoints|model-checkpoints|outcome-ledger|free-market-collection-adapters|registered-capability-adapters|market-collection-registry|realtime-source-registry|source-health|data-connectors|connector-evidence|mcp-client|rest-client|answer-grounding-gate)\.ts$/u,
       /^src\/agents\/tools\/finance-data-connector-inspect-tool\.ts$/u,
+      /^src\/agents\/tools\/quant-lab-tool\.ts$/u,
+      /^src\/agents\/(?:quant-math-advanced|quant-math-inference|quant-math-foundations|finance-calculation-ledger)\.ts$/u,
       /^scripts\/operator\/lcx-(?:finance-research|caseflow-demo|finance-connector-probe)\.ts$/u,
       /^src\/agents\/configured-finance-model-adapter\.ts$/u,
       /^docs\/experiments\/research\/finance-model-workflow\.md$/u,
@@ -56,7 +76,7 @@ const PATH_RULES: PathRule[] = [
     ],
     requiredChecks: ["finance-caseflow-regression", "head-tail-consistency"],
     commands: [
-      "pnpm vitest run src/agents/finance-data-connectors.test.ts src/agents/finance-mcp-client.test.ts src/agents/finance-rest-client.test.ts src/agents/finance-connector-evidence.test.ts src/agents/tools/finance-data-connector-inspect-tool.test.ts src/agents/finance-answer-grounding-gate.test.ts src/agents/finance-answer-composer.test.ts test/operator/lcx-finance-connector-probe.test.ts",
+      "pnpm vitest run src/agents/finance-data-connectors.test.ts src/agents/finance-mcp-client.test.ts src/agents/finance-rest-client.test.ts src/agents/finance-connector-evidence.test.ts src/agents/tools/finance-data-connector-inspect-tool.test.ts src/agents/finance-answer-grounding-gate.test.ts src/agents/finance-answer-composer.test.ts src/agents/quant-math-advanced.test.ts src/agents/quant-math-inference.test.ts src/agents/quant-math-foundations.test.ts src/agents/openclaw-tools.quant-lab-registration.test.ts test/finance-decision-pipeline.test.ts test/operator/lcx-finance-connector-probe.test.ts test/lcx-commercial-answer-pipeline-grounding.test.ts test/lcx-quant-lab-scenarios.test.ts test/lcx-quant-lab-paper-portfolios.test.ts",
       "pnpm vitest run src/agents/finance-caseflow.test.ts src/agents/finance-research-runner.test.ts src/agents/finance-research-batch-runner.test.ts src/agents/finance-outcome-ledger.test.ts src/agents/finance-caseflow-followups.test.ts src/agents/finance-history-coverage.test.ts src/agents/finance-forecast-calibration.test.ts src/agents/finance-research-assessment.test.ts",
       "node --import tsx scripts/operator/lcx-head-tail-consistency.ts --json",
     ],
@@ -77,6 +97,7 @@ const PATH_RULES: PathRule[] = [
       /^src\/agents\/finance-thesis-ledger\.ts$/u,
       /^src\/agents\/finance-strategy-rule-ledger\.ts$/u,
       /^src\/agents\/finance-rule-readiness\.ts$/u,
+      /^src\/agents\/finance-bar-ledger\.ts$/u,
       /^src\/agents\/finance-state-dir\.ts$/u,
       // The agent-side read surface belongs to this seam as well as to the tool-registration
       // rule: it is where the model sees this book. Without it here, a change to the read
@@ -87,10 +108,11 @@ const PATH_RULES: PathRule[] = [
       /^scripts\/operator\/lcx-finance-position-ledger\.ts$/u,
       /^scripts\/operator\/lcx-finance-thesis-ledger\.ts$/u,
       /^scripts\/operator\/lcx-finance-strategy-rule-ledger\.ts$/u,
+      /^scripts\/operator\/lcx-finance-bar-ledger\.ts$/u,
     ],
     requiredChecks: ["git-diff-check", "head-tail-consistency"],
     commands: [
-      "pnpm vitest run src/agents/finance-execution-adapter.test.ts src/agents/finance-position-ledger.test.ts src/agents/finance-behaviour-profile.test.ts src/agents/finance-thesis-ledger.test.ts src/agents/finance-strategy-rule-ledger.test.ts src/agents/finance-strategy-rule-ledger-read-tool.test.ts src/agents/finance-rule-readiness.test.ts src/agents/tools/finance-position-ledger-read-tool.test.ts",
+      "pnpm vitest run src/agents/finance-execution-adapter.test.ts src/agents/finance-position-ledger.test.ts src/agents/finance-behaviour-profile.test.ts src/agents/finance-thesis-ledger.test.ts src/agents/finance-strategy-rule-ledger.test.ts src/agents/finance-strategy-rule-ledger-read-tool.test.ts src/agents/finance-rule-readiness.test.ts src/agents/finance-bar-ledger.test.ts src/agents/tools/finance-position-ledger-read-tool.test.ts",
       "git diff --check",
       "node --import tsx scripts/operator/lcx-head-tail-consistency.ts --json",
     ],
@@ -100,7 +122,8 @@ const PATH_RULES: PathRule[] = [
       "Paper adapter only: this rule covers a declared execution seam and the durable ledger downstream of it, not a venue order path. Credentials, funding and account binding stay separate authorities and are never read, stored or moved here.",
       "The ledger is append-only by construction (SQLite triggers reject UPDATE/DELETE). A record that conflicts with an existing one is refused, never overwritten, so a correction needs a new record rather than an edit.",
       "The equity curve is a pure projection of that stream and computes no metrics. It samples at mark instants only, so any annualised figure requires the caller to declare a period; the ledger holds no daily prices and must not be annualised as if it did.",
-      "The instrument allowlist is open by default (`FINANCE_RISK_BUDGET_ANY_INSTRUMENT`). Narrowing is the caller's explicit act: an empty list still admits nothing, and the same check runs at both the budget and the adapter, so `--allow-instrument` continues to bite. Opening this default grants no new authority — the only shipped adapter is paper and no venue, credential or account path exists.",
+      "The instrument allowlist is open by default (`FINANCE_RISK_BUDGET_ANY_INSTRUMENT`). Narrowing is the caller's explicit act: an empty list still admits nothing, and the same check runs at both the budget and the adapter, so `--allow-instrument` continues to bite. Opening this default grants no new authority. A venue adapter (`finance-alpaca-execution-adapter.ts`) reads `ALPACA_API_KEY_ID`/`ALPACA_API_SECRET` and refuses a paper/live key mismatch, so a venue credential path does exist; it is reachable only when a caller names that adapter, and no adapter is wired into any entrypoint by default.",
+      "The bar ledger records OHLCV batches and never derives a range it did not observe: `ohlcv` bars carry exchange-aggregated extremes, and a batch compiled from point observations is labelled `point_derived` with its `sampleCount`, so range-based measures (ATR, true drawdown, support/resistance) can decline it instead of returning confident numbers from numbers nobody observed.",
       "The behaviour profile is a pure projection over the same post-`asOf` receipt/mark stream the ledger read reports, so it holds no state and can never disagree with the positions beside it. Its labels are descriptive observations over recorded fills, never advice (`advice` is pinned `false`), and a dimension whose threshold the caller did not declare reports numbers with no label rather than a default.",
       "Rule readiness measures exposure to adverse markets from the **owner-declared** `observedAt` on each lifecycle event, never from the wall-clock write time: a window built on write times is not replayable and silently yields zero observations at a past `asOf`, which reads as 'nothing adverse happened' instead of 'unjudgeable'. Every threshold is opt-in, an undeclared one makes its condition unjudgeable rather than passing, and `ready: null` must never be treated as `false`.",
       'The thesis ledger stores events (`opened`, `transition`) and derives state by replay, so it has no state column to drift: an `asOf` view is a shorter prefix of the same stream. Closing is terminal — there is no re-open path, because `the thesis changed` and `the owner changed their mind` are different claims and only the owner can tell them apart. A thesis confers no execution authority; every record carries `executionAuthority: "none"`.',
@@ -392,6 +415,10 @@ const PATH_RULES: PathRule[] = [
       /^src\/agents\/subagent-announce\.ts$/u,
       /^src\/agents\/openclaw-tools\.ts$/u,
       /^src\/agents\/tool-catalog\.ts$/u,
+      // Decides which tools an LLM may actually call (profiles + the sub-agent deny
+      // list + spawn depth). Widening it is a capability change, not a copy edit.
+      /^src\/agents\/pi-tools\.policy\.ts$/u,
+      /^src\/config\/agent-limits\.ts$/u,
       /^src\/agents\/finance-brain-orchestration\.ts$/u,
       /^src\/agents\/finance-data-gateway\.ts$/u,
       /^src\/agents\/finance-answer-composer\.ts$/u,
@@ -611,21 +638,70 @@ const PATH_RULES: PathRule[] = [
       // Extension manifests declare where a channel plugin is installed from. `defaultChoice: "npm"`
       // plus an upstream `npmSpec` fetches upstream code even though the extension ships in-repo.
       /^extensions\/[^/]+\/package\.json$/u,
+      // Skills output used to end with a `npx clawhub` tip, and the system prompt used to advertise
+      // the upstream skill registry and community server. All three fetch upstream code or send
+      // someone upstream, so they belong to the same lane as the outbound headers.
+      /^src\/cli\/skills-cli\.format\.ts$/u,
+      /^src\/agents\/system-prompt\.ts$/u,
+      // Service identity truth: the daemon exposes the product name through the systemd unit name,
+      // the `Description=` line users see in `systemctl status`, and the TLS certificate subject.
+      // The launchd label, Windows task name and service marker stay as-is on purpose - they are
+      // how already-installed instances are recognized, so renaming them strands those installs.
+      /^src\/daemon\/constants\.ts$/u,
+      /^src\/infra\/tls\/gateway\.ts$/u,
+      // The install entrypoint is where a new user is told to fetch code from. If it
+      // names the upstream domain, that user installs the upstream product no matter
+      // what the rest of the tree claims.
+      /^scripts\/install\.sh$/u,
+      /^scripts\/install\.ps1$/u,
+      /^scripts\/protocol-gen\.ts$/u,
     ],
     requiredChecks: ["run-changed-tests"],
     commands: [
-      "pnpm vitest run test/lcx-outbound-identity.test.ts src/agents/pi-embedded-runner-extraparams.test.ts src/agents/tools/web-search.test.ts src/infra/canonical-identity.test.ts",
+      "pnpm vitest run test/lcx-outbound-identity.test.ts src/agents/pi-embedded-runner-extraparams.test.ts src/agents/tools/web-search.test.ts src/infra/canonical-identity.test.ts src/daemon/constants.test.ts src/agents/pi-tools.policy.test.ts src/channels/registry.helpers.test.ts",
     ],
     safetyNotes: [
       "Outbound identity headers come from the canonical constants, never from a literal naming the upstream project.",
+      // The guardrail in `commands` also scans the whole tree for a bare `LCX Agent` token in
+      // user-visible copy. Two files are deliberately exempt and must stay that way: registered
+      // Windows scheduled-task names, and one regex that keeps accepting legacy input. Renaming
+      // either is a behaviour change, not a rename.
+      "User-visible copy must not call itself by the upstream product name; type identifiers, the ~/.openclaw path and the docs.openclaw.ai links are out of scope on purpose.",
     ],
   },
   {
     id: "memory_index_store",
     lane: "agent_workflow_memory",
-    patterns: [/^src\/memory\/memory-schema\.ts$/u, /^src\/memory\/sqlite-migrations\.ts$/u],
+    patterns: [
+      /^src\/memory\/memory-schema\.ts$/u,
+      /^src\/memory\/sqlite-migrations\.ts$/u,
+      // The listing that decides which files enter the index, and the sqlite handle that holds
+      // it. Both were unowned, so a change to either fell through `strayGate` as unmatched and
+      // no lane named what had to hold.
+      /^src\/memory\/internal\.ts$/u,
+      /^src\/memory\/manager-sync-ops\.ts$/u,
+      // The command surface that reports memory health; it is where an unreadable source has to
+      // become visible to the operator.
+      /^src\/cli\/memory-cli\.ts$/u,
+    ],
     requiredChecks: ["run-changed-tests"],
-    commands: ["pnpm vitest run src/memory/sqlite-migrations.test.ts src/memory/index.test.ts"],
+    commands: [
+      "pnpm vitest run src/memory/sqlite-migrations.test.ts src/memory/index.test.ts src/memory/internal.test.ts src/memory/memory-index-pragmas.test.ts",
+    ],
+    safetyNotes: [
+      "An unreadable memory source is reported, never dropped: `listMemoryFilesWithDiagnostics` returns the inaccessible ones, the CLI names each with its errno and sets `dirReadable` to null, and sync logs a warning. A genuinely absent path stays silent because it was never a source.",
+      "The memory index opens with `busy_timeout`, WAL and `synchronous=FULL`, the same pragmas the finance books use: without them a concurrent writer fails immediately with 'database is locked'.",
+    ],
+  },
+  {
+    id: "install_package_rollback",
+    lane: "local_build_tooling",
+    patterns: [/^src\/infra\/install-package-dir\.ts$/u],
+    requiredChecks: ["run-changed-tests"],
+    commands: ["pnpm vitest run src/infra/install-package-dir.test.ts"],
+    safetyNotes: [
+      "A failed install must say whether the previous install was put back: `rollback()` returns what it could not restore and the returned error carries it, so a half-copied target with a stranded backup is never reported as a clean failure.",
+    ],
   },
   {
     id: "central_agent_harness",
