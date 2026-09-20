@@ -24,6 +24,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { breakEvenFloor, type FloorSample } from "../../src/agents/finance-calibrated-floor.js";
 import { compileExecutionIntent } from "../../src/agents/finance-intent-compiler.js";
 import {
   classifyFinanceStrategy,
@@ -56,6 +57,52 @@ async function main(): Promise<void> {
   const equity = Number(readArg(args, "--equity") ?? 100_000);
   const authorization = readArg(args, "--run-authorization") ?? "";
   const place = args.includes("--place");
+
+  // The floor is either derived from what the system has actually achieved, or
+  // explicitly declared as an exploration value. It is never a silent default.
+  const mode = readArg(args, "--mode") ?? "calibrated";
+  const scoredPath = readArg(args, "--scored") ?? "state/finance/research-scored.jsonl";
+  const exploreFloor = Number(readArg(args, "--explore-floor") ?? 0.1);
+
+  let effectiveFloor: number | null = floor;
+  let floorBasis = "ranking floor supplied on the command line";
+  if (mode === "calibrated") {
+    const scored: FloorSample[] = existsSync(scoredPath)
+      ? readFileSync(scoredPath, "utf8")
+          .split("\n")
+          .filter((line) => line.trim().length > 0)
+          .flatMap((line) => {
+            try {
+              const row = JSON.parse(line) as { conviction?: unknown; outcome?: unknown };
+              const conviction = Number(row.conviction);
+              if (!Number.isFinite(conviction)) {
+                return [];
+              }
+              return [{ conviction, outcome: row.outcome === 1 ? 1 : 0 }];
+            } catch {
+              return [];
+            }
+          })
+      : [];
+    const derived = breakEvenFloor(scored);
+    effectiveFloor = derived.floor;
+    floorBasis = derived.basis;
+    if (derived.floor === null) {
+      process.stdout.write(
+        "calibrated mode: no data-derived floor - " +
+          derived.basis +
+          "\nrefusing to trade; use --mode explore to generate the missing evidence\n",
+      );
+      return;
+    }
+    process.stdout.write(
+      "calibrated floor=" + derived.floor.toFixed(3) + " (" + derived.basis + ")\n",
+    );
+  } else {
+    effectiveFloor = exploreFloor;
+    floorBasis = "explore mode: declared for evidence generation, not profit";
+    process.stdout.write("explore floor=" + exploreFloor.toFixed(3) + " (" + floorBasis + ")\n");
+  }
 
   if (!existsSync(recordPath)) {
     process.stdout.write("no sample file at " + recordPath + "\n");
@@ -129,11 +176,11 @@ async function main(): Promise<void> {
           s.conviction,
         assetClass: "us_equity",
         invalidationPrice,
-        evidence: s.sources.map((sourceId) => ({ sourceId })),
       },
       market: { referencePrice: s.lastPrice, referencePriceAt: asOf },
       equity,
       runAuthorizationId: authorization,
+      ...(effectiveFloor !== null ? { minConviction: effectiveFloor } : {}),
       ...(strategyClass !== "unknown" ? { strategyClass } : {}),
     });
 
