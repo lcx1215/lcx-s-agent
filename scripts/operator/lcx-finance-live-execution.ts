@@ -31,6 +31,7 @@
  * `LCX_FINANCE_STATE_DIR`, else the workspace default), and the payload always reports which.
  */
 
+import { createAlpacaExecutionAdapter } from "../../src/agents/finance-alpaca-execution-adapter.js";
 import {
   createPaperExecutionAdapter,
   DEFAULT_FINANCE_RISK_BUDGET,
@@ -39,6 +40,7 @@ import {
   type FinanceOrderSide,
   type FinanceOrderType,
   type FinanceRiskBudget,
+  missingUnattendedCaps,
   placeFinanceOrder,
 } from "../../src/agents/finance-execution-adapter.ts";
 import {
@@ -49,6 +51,7 @@ import {
   type FinancePositionMark,
 } from "../../src/agents/finance-position-ledger.ts";
 import { resolveFinancePositionLedgerLocation } from "../../src/agents/finance-state-dir.ts";
+import { createFinanceWriteTransport } from "../../src/agents/finance-write-transport.js";
 
 export type Options = {
   instrument: string;
@@ -65,6 +68,10 @@ export type Options = {
   budget: FinanceRiskBudget;
   /** Append this run's receipt and marks to the durable book instead of only projecting in memory. */
   writeLedger: boolean;
+  /** Which declared execution adapter to place through. `paper` stays the default. */
+  adapter?: "paper" | "alpaca";
+  /** Alpaca only: `paper` (default) or `live`. Live needs a funded AK-prefixed key. */
+  alpacaMode?: "paper" | "live";
   /** Explicit ledger directory. When omitted, the shared resolver decides. */
   ledgerDirectory?: string;
   json: boolean;
@@ -111,6 +118,8 @@ export function parseArgs(args: readonly string[]): Options {
     marks: [],
     budget: DEFAULT_FINANCE_RISK_BUDGET,
     writeLedger: false,
+    adapter: "paper",
+    alpacaMode: "paper",
     json: false,
   };
   for (let index = 0; index < args.length; index += 1) {
@@ -160,6 +169,18 @@ export function parseArgs(args: readonly string[]): Options {
       index += 1;
     } else if (arg === "--write-ledger") {
       options.writeLedger = true;
+    } else if (arg === "--adapter") {
+      if (next !== "paper" && next !== "alpaca") {
+        throw new Error("--adapter expects paper or alpaca");
+      }
+      options.adapter = next;
+      index += 1;
+    } else if (arg === "--alpaca-mode") {
+      if (next !== "paper" && next !== "live") {
+        throw new Error("--alpaca-mode expects paper or live");
+      }
+      options.alpacaMode = next;
+      index += 1;
     } else if (arg === "--ledger-dir") {
       options.ledgerDirectory = next?.trim() ?? "";
       index += 1;
@@ -172,6 +193,12 @@ export function parseArgs(args: readonly string[]): Options {
     } else if (arg === "--max-orders-per-run") {
       options.budget = { ...options.budget, maxOrdersPerRun: parsePositiveNumber(arg, next) };
       index += 1;
+    } else if (arg === "--automation") {
+      if (next !== "attended" && next !== "unattended") {
+        throw new Error("--automation must be attended or unattended");
+      }
+      options.budget = { ...options.budget, automation: next };
+      index += 1;
     } else if (arg === "--json") {
       options.json = true;
     } else if (arg === "--help" || arg === "-h") {
@@ -181,10 +208,13 @@ export function parseArgs(args: readonly string[]): Options {
           "[--allow-instrument SYM] [--side buy|sell] [--quantity N] [--order-type market|limit] " +
           "[--limit-price N] [--mark SYM=PRICE@ISO] [--max-order-notional N] " +
           "[--max-instrument-notional N] [--max-orders-per-run N] " +
+          "[--automation attended|unattended] " +
           "[--write-ledger] [--ledger-dir PATH]\n" +
           "Omitting --allow-instrument leaves the run open by instrument; repeating it narrows " +
           "the run to the named instruments. Each --max-* cap is optional and enforced only when " +
-          "declared. Without --write-ledger nothing is persisted.",
+          "declared, EXCEPT under --automation unattended, where all three are required: a run " +
+          "with nobody watching that declines to name a ceiling has none. Without --write-ledger " +
+          "nothing is persisted.",
       );
     } else {
       throw new Error(`unknown argument: ${arg}`);
@@ -207,8 +237,29 @@ export async function buildFinanceLiveExecutionPayload(options: Options) {
     allowedInstruments,
   });
   const adapters = Object.freeze([
-    createPaperExecutionAdapter({ instruments: allowedInstruments }),
+    options.adapter === "alpaca"
+      ? createAlpacaExecutionAdapter({
+          instruments: allowedInstruments,
+          mode: options.alpacaMode,
+          postJson: async (url, init) => {
+            const transport = createFinanceWriteTransport();
+            const response = await transport({
+              url,
+              headers: init.headers,
+              body: init.body,
+              signal: init.signal,
+            });
+            return { status: response.status, body: response.body };
+          },
+          fillPoll: { timeoutMs: 15_000, intervalMs: 500 },
+        })
+      : createPaperExecutionAdapter({ instruments: allowedInstruments }),
   ]);
+
+  // Which ceilings an unattended run still owes, spelled out as cap names rather than refusal
+  // codes. The adapter refuses either way; this is so the operator reads "you owe
+  // maxOrdersPerRun" instead of reverse-engineering it from a snake_case code.
+  const unattendedMissingCaps = missingUnattendedCaps(budget);
 
   const placement = await placeFinanceOrder({
     mode: "live_execution",
@@ -300,6 +351,9 @@ export async function buildFinanceLiveExecutionPayload(options: Options) {
         declaredInstruments: allowedInstruments,
       },
       order_placement: { status: placement.status, refusalReasons: placement.refusalReasons },
+      ...(unattendedMissingCaps.length === 0
+        ? {}
+        : { unattended_requires_caps: unattendedMissingCaps }),
       execution_receipt: placement.receipt ?? null,
       // Present only when this run actually persisted something. A run that did not write must
       // not claim a ledger node, or the waterflow would look complete on a run that left no trace.
