@@ -65,11 +65,16 @@ export function analystTargetSignal(
     " window=" +
     summary.window;
 
+  // A target is a claim by someone. With no known claimant there is nothing to
+  // weigh, and coverage of zero would otherwise still return a floor of half
+  // confidence - a number that sounds modest but was derived from nobody.
+  const knownClaimants = Number.isFinite(summary.analystCount) && summary.analystCount >= 1;
   const valid =
     Number.isFinite(summary.currentPrice) &&
     summary.currentPrice > 0 &&
     Number.isFinite(summary.avgTarget) &&
-    summary.avgTarget > 0;
+    summary.avgTarget > 0 &&
+    knownClaimants;
 
   const upside = valid ? (summary.avgTarget - summary.currentPrice) / summary.currentPrice : 0;
   const direction: FinanceSignal["direction"] =

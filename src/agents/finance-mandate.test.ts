@@ -110,4 +110,24 @@ describe("evaluateFinanceMandate", () => {
     });
     expect(decision.reasons.length).toBeGreaterThanOrEqual(3);
   });
+
+  it("refuses a risk that is not a finite number instead of passing it", () => {
+    // Every comparison against NaN is false, so a NaN risk would clear the cap
+    // and be reported as safe. Unknown risk is not low risk.
+    const decision = evaluateFinanceMandate({
+      ...base,
+      riskFractionOfEquity: Number.NaN,
+    });
+    expect(decision.verdict).toBe("refuse");
+    expect(decision.reasons.join()).toMatch(/not a finite number/);
+  });
+
+  it("refuses an unknown drawdown rather than treating it as none", () => {
+    const decision = evaluateFinanceMandate({
+      ...base,
+      drawdownFraction: Number.NaN,
+    });
+    expect(decision.verdict).toBe("refuse");
+    expect(decision.reasons.join()).toMatch(/drawdown is not a finite/);
+  });
 });

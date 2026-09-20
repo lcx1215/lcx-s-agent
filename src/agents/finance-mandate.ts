@@ -225,6 +225,16 @@ export function evaluateFinanceMandate(
   // The tightened cap is visible through the returned `rules`; it must not be
   // pushed into `reasons`, because a non-empty `reasons` means refuse.
 
+  // A NaN is not a small number, it is an unknown one. Every comparison below
+  // is false against NaN, so a NaN risk or drawdown would sail past every cap
+  // and be reported as safe. Unknown risk is not low risk.
+  if (!Number.isFinite(context.riskFractionOfEquity)) {
+    reasons.push("refuse: risk is not a finite number; unknown risk is not low risk");
+  }
+  if (!Number.isFinite(context.drawdownFraction)) {
+    reasons.push("refuse: drawdown is not a finite number; unknown drawdown is not a safe one");
+  }
+
   // Class-independent: these come from the owner's own words.
   if (context.averagingDown === true) {
     reasons.push("refuse: adding to a losing position");

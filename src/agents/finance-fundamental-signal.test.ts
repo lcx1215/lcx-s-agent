@@ -63,4 +63,19 @@ describe("analystTargetSignal", () => {
     );
     expect(a.sourceId).toBe(b.sourceId);
   });
+
+  it("stays silent when no analyst is known to stand behind the target", () => {
+    // Coverage of zero used to floor at half confidence: a modest-sounding
+    // number derived from nobody.
+    for (const count of [0, Number.NaN]) {
+      const signal = analystTargetSignal(summary(120, count), { observedAt: at });
+      expect(signal.direction).toBe("hold");
+      expect(signal.confidence).toBe(0);
+    }
+  });
+
+  it("does not emit a NaN confidence that would poison downstream conviction", () => {
+    const signal = analystTargetSignal(summary(120, Number.NaN), { observedAt: at });
+    expect(Number.isFinite(signal.confidence)).toBe(true);
+  });
 });
