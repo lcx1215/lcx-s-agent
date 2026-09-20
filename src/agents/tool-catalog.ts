@@ -102,7 +102,7 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     label: "web_search",
     description: "Search the web",
     sectionId: "web",
-    profiles: [],
+    profiles: ["minimal", "coding", "messaging"],
     includeInOpenClawGroup: true,
   },
   {
@@ -110,7 +110,7 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     label: "web_fetch",
     description: "Fetch web content",
     sectionId: "web",
-    profiles: [],
+    profiles: ["minimal", "coding", "messaging"],
     includeInOpenClawGroup: true,
   },
   {
@@ -119,7 +119,7 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     description:
       "Search, open original web documents, cross-check likely primary references, and retain timestamped failures in a read-only evidence receipt",
     sectionId: "web",
-    profiles: [],
+    profiles: ["coding"],
     includeInOpenClawGroup: true,
   },
   {
@@ -134,6 +134,14 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     id: "memory_get",
     label: "memory_get",
     description: "Read memory files",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    id: "session_history",
+    label: "session_history",
+    description: "Read-only recall over archived session transcripts",
     sectionId: "memory",
     profiles: ["coding"],
     includeInOpenClawGroup: true,
@@ -160,6 +168,91 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     label: "finance_framework_core_inspect",
     description:
       "Inspect the durable finance framework core contract across domains or for one specific domain",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    id: "finance_data_connector",
+    label: "finance_data_connector",
+    description:
+      "Inspect the declared finance data connector surface by business domain, list the MCP tools a connector exposes, or call one MCP tool",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    id: "quant_lab",
+    label: "quant_lab",
+    description:
+      "Deterministic quant toolkit: portfolio construction, risk decomposition, attribution, and association testing with significance",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    id: "quant_math",
+    label: "quant_math",
+    description:
+      "Compute bounded quantitative metrics such as returns, covariance/correlation matrices, regression alpha/beta, Sharpe, Sortino, max drawdown, portfolio risk contribution, Black-Scholes option pricing and bond duration from explicit inputs",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    // The registered tool is `finance_data_gateway_snapshot`; `finance_data_gateway` is the
+    // ontology concept it maps to (`lcx-ontology.ts`). The catalog must carry the tool id — an
+    // entry under the concept name never matches, so the tool was absent from every profile
+    // allowlist and silently dropped on every profile but `full`.
+    id: "finance_data_gateway_snapshot",
+    label: "finance_data_gateway_snapshot",
+    description:
+      "Collect and normalise finance market data into a gateway snapshot carrying source, timestamp and quality status",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    id: "codex_coding_harness",
+    label: "codex_coding_harness",
+    description:
+      "Run a bounded Codex coding task through the existing ACP runtime. Requires a clean non-main worktree; pass verify as an argv array to earn a verified result.",
+    sectionId: "agents",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    id: "review_tier",
+    label: "review_tier",
+    description:
+      "Choose the lowest sufficient review tier before sending or preserving an agent output: local_only, single_model_review, or three_model_review. Use this to avoid unnecessary token burn while escalating high-risk finance, portfolio-risk, doctrine, durable-memory, or strict-review work.",
+    sectionId: "agents",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    id: "review_panel",
+    label: "review_panel",
+    description:
+      "Prepare a bounded review-panel work order from a candidate output. It uses review_tier policy, creates three reviewer tasks only for high-risk three_model_review cases, and can write a receipt without calling providers or changing memory doctrine.",
+    sectionId: "agents",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    id: "module_learning_pipeline_plan",
+    label: "module_learning_pipeline_plan",
+    description:
+      "Plan one evidence-gated module learning run using the shared source, capability, retrieval, application, eval, and keep/downrank/discard chain. This is read-only and does not fetch remote content or mutate live/provider/protected-memory state.",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    id: "module_learning_pipeline_review",
+    label: "module_learning_pipeline_review",
+    description:
+      "Review module_learning_pipeline_plan receipts for one day, flag incomplete module-learning claims, and optionally write a local review without touching live/provider/protected-memory state.",
     sectionId: "memory",
     profiles: ["coding"],
     includeInOpenClawGroup: true,
@@ -231,7 +324,7 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     id: "finance_position_ledger_read",
     label: "finance_position_ledger_read",
     description:
-      "Read the durable position book: open positions, average cost, realized and unrealized PnL, marks, and the equity curve derived from the same stream",
+      "Read the durable position book: open positions, average cost, realized and unrealized PnL, marks, the equity curve derived from the same stream, and — on request — a behaviour profile of the recorded fills (disposition effect, turnover, momentum chasing, anchoring)",
     sectionId: "memory",
     profiles: ["coding"],
     includeInOpenClawGroup: true,
@@ -241,6 +334,33 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     label: "finance_outcome_ledger_read",
     description:
       "Read the outcome ledger: which finance cases exist, whether any has had its original claims assessed, and how recorded observations scored against those claims",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    id: "finance_strategy_rule_ledger_read",
+    label: "finance_strategy_rule_ledger_read",
+    description:
+      "Read the declared strategy rules: each rule's form, instruments, emitted shape, schedule, and whether the owner has activated it (a draft rule is not authorised to run)",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    id: "finance_thesis_ledger_read",
+    label: "finance_thesis_ledger_read",
+    description:
+      "Read the durable thesis book: every claim the owner recorded about an instrument, the conditions that would invalidate it, and whether it is still active, invalidated or realised",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    id: "finance_source_health_read",
+    label: "finance_source_health_read",
+    description:
+      "Read which finance data sources are declared, which actually have credentials, and what the most recent stored call to each did: recent success, recent failure, expired verification, never called, or not configured",
     sectionId: "memory",
     profiles: ["coding"],
     includeInOpenClawGroup: true,
@@ -627,7 +747,7 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     label: "browser",
     description: "Control web browser",
     sectionId: "ui",
-    profiles: [],
+    profiles: ["coding"],
     includeInOpenClawGroup: true,
   },
   {
@@ -635,7 +755,7 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     label: "canvas",
     description: "Control canvases",
     sectionId: "ui",
-    profiles: [],
+    profiles: ["coding"],
     includeInOpenClawGroup: true,
   },
   {
@@ -675,7 +795,7 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     label: "nodes",
     description: "Nodes + devices",
     sectionId: "nodes",
-    profiles: [],
+    profiles: ["coding", "messaging"],
     includeInOpenClawGroup: true,
   },
   {
@@ -699,7 +819,7 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     label: "tts",
     description: "Text-to-speech conversion",
     sectionId: "media",
-    profiles: [],
+    profiles: ["coding", "messaging"],
     includeInOpenClawGroup: true,
   },
 ];
