@@ -78,7 +78,10 @@ async function main(): Promise<void> {
     twelveDataApiKey: key("TWELVE_DATA_API_KEY"),
     fredApiKey: key("FRED_API_KEY"),
   });
-  const adapters = registry.adapters ?? registry;
+  // The registry IS the adapter list. A `.adapters ?? registry` fallback here would be two
+  // shapes for one value: `registry.adapters` never exists, so the fallback silently hid a
+  // type error instead of answering which shape this actually is.
+  const adapters = registry;
 
   const asOf = new Date().toISOString();
   const rows: Row[] = [];
@@ -86,8 +89,6 @@ async function main(): Promise<void> {
   // slow and rude to the free tiers.
   const MAX_ATTEMPTS = Number(process.env.LCX_SWEEP_MAX ?? 60);
   let attempts = 0;
-  // Cap the fan-out: a full sweep is hundreds of provider calls, which is both
-  // slow and rude to the free tiers.
 
   process.stderr.write("sweeping " + adapters.length + " adapters...\n");
 
@@ -113,18 +114,31 @@ async function main(): Promise<void> {
         break;
       }
       try {
-        const result = await runFinanceMarketCollectionRefresh({
-          request: {
-            collection,
-            instrument,
-            assetClass: "us_equity",
-            asOf,
-            limit: 5,
-            fromDate: new Date(Date.now() - 400 * 86_400_000).toISOString().slice(0, 10),
-            toDate: asOf.slice(0, 10),
-          } as never,
+        // Some adapters reject or over-filter when a date window is supplied
+        // (SEC filings returned nothing with one, and works without). So try
+        // bare first and only add the window if that came up empty - otherwise
+        // this tool reports false negatives and quietly disqualifies sources
+        // that are working.
+        const fromDate = new Date(Date.now() - 400 * 86_400_000).toISOString().slice(0, 10);
+        const toDate = asOf.slice(0, 10);
+        let result = await runFinanceMarketCollectionRefresh({
+          request: { collection, instrument, assetClass: "us_equity", asOf, limit: 5 } as never,
           adapters: [adapter],
         });
+        if ((result.records ?? []).length === 0) {
+          result = await runFinanceMarketCollectionRefresh({
+            request: {
+              collection,
+              instrument,
+              assetClass: "us_equity",
+              asOf,
+              limit: 5,
+              fromDate,
+              toDate,
+            } as never,
+            adapters: [adapter],
+          });
+        }
         const records = result.records ?? [];
         const first = records[0] as { data?: Record<string, unknown> } | undefined;
         rows.push({
