@@ -21,6 +21,10 @@
  *   node --import tsx scripts/operator/lcx-finance-scheduler.ts --loop       # stay resident
  *   node --import tsx scripts/operator/lcx-finance-scheduler.ts --detach     # spawn detached
  *   node --import tsx scripts/operator/lcx-finance-scheduler.ts --status
+ *
+ * `--place`, `--venue paper|alpaca`, `--equity-from-venue` and the three `--max-*` caps are
+ * forwarded to the cycle. Without `--place` nothing is sent to the venue; without
+ * `--venue alpaca` the run stays on the local simulator.
  */
 
 import { spawn } from "node:child_process";
@@ -215,9 +219,43 @@ function status(): void {
   );
 }
 
+/**
+ * Everything after the scheduler's own switches is forwarded to the cycle verbatim.
+ *
+ * `--venue` matters more than it looks: the cycle defaults to the local simulator, so a
+ * detached loop that is not told `alpaca` will happily run unattended against a book no venue
+ * has ever seen. The venue is a decision, and a resident process must inherit it explicitly.
+ */
+function forwardedArgs(argv: readonly string[]): string[] {
+  const forwarded: string[] = [];
+  if (argv.includes("--place")) {
+    forwarded.push("--place");
+  }
+  if (argv.includes("--equity-from-venue")) {
+    forwarded.push("--equity-from-venue");
+  }
+  const venueIndex = argv.indexOf("--venue");
+  if (venueIndex >= 0) {
+    const venue = argv[venueIndex + 1];
+    if (venue !== "paper" && venue !== "alpaca") {
+      throw new Error("--venue must be paper or alpaca");
+    }
+    forwarded.push("--venue", venue);
+  }
+  // The caps are part of the authorisation, not tuning knobs: an unattended run has to name
+  // every ceiling, so they are forwarded rather than left to the cycle's defaults.
+  for (const flag of ["--max-order-notional", "--max-instrument-notional", "--max-orders"]) {
+    const index = argv.indexOf(flag);
+    if (index >= 0) {
+      forwarded.push(flag, String(argv[index + 1]));
+    }
+  }
+  return forwarded;
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
-  const extraArgs = argv.includes("--place") ? ["--place"] : [];
+  const extraArgs = forwardedArgs(argv);
 
   if (argv.includes("--status")) {
     status();

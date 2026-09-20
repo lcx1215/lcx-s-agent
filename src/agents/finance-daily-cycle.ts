@@ -31,6 +31,7 @@ import type { FinancePosition } from "./finance-position-ledger.js";
 import {
   appendFinanceExecutionReceipt,
   appendFinancePositionMark,
+  projectFinancePositions,
   readFinancePositionLedger,
 } from "./finance-position-ledger.js";
 import { resolveFinanceStateDir } from "./finance-state-dir.js";
@@ -245,6 +246,27 @@ export function venueReconciliationIssue(params: {
     );
   }
   return null;
+}
+
+/**
+ * The receipts that belong to the book this run is actually trading.
+ *
+ * The ledger keeps simulated and venue fills in one append-only stream, and it counts them
+ * apart precisely so a simulated book is never read as a real one. Reading the whole stream
+ * here undoes that: a `--venue paper` fill will never appear at the venue, so carrying it into
+ * an alpaca run makes `venueReconciliationIssue` disagree on every instrument, forever, with
+ * no way to recover — one rehearsal would permanently brick the live path.
+ */
+export function receiptsForVenue(
+  receipts: readonly FinanceExecutionReceipt[],
+  venue: "paper" | "alpaca",
+): readonly FinanceExecutionReceipt[] {
+  if (venue === "paper") {
+    return receipts.filter((receipt) => receipt.adapterKind === "paper");
+  }
+  return receipts.filter(
+    (receipt) => receipt.adapterKind === "venue" && receipt.venue.startsWith("alpaca"),
+  );
 }
 
 export type FinanceCycleFillRecord = Readonly<{
@@ -483,12 +505,18 @@ export async function runFinanceDailyCycle(
   const ledgerQuantity = new Map<string, number>();
   try {
     const ledger = await readFinancePositionLedger(directory, { asOf });
-    const derived = currentWeightsFromPositions(ledger.ledger.positions, params.equity);
+    // Sizing and reconciliation both have to see the book this run trades, not every fill the
+    // ledger has ever seen. See `receiptsForVenue`.
+    const book = projectFinancePositions({
+      receipts: receiptsForVenue(ledger.receipts, params.venue ?? "paper"),
+      marks: ledger.marks,
+    });
+    const derived = currentWeightsFromPositions(book.positions, params.equity);
     currentWeight = derived.weights;
     for (const symbol of derived.unpriced) {
       unpricedPositions.add(symbol);
     }
-    for (const position of ledger.ledger.positions) {
+    for (const position of book.positions) {
       ledgerQuantity.set(position.instrument.toUpperCase(), position.quantity);
     }
   } catch {

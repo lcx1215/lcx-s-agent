@@ -185,13 +185,18 @@ describe("createAlpacaExecutionAdapter", () => {
     );
   });
 
-  it("attaches the stop as a bracket on a buy, where a stop protects the entry", async () => {
+  it("protects a buy with the stop as an oto, not a bracket", async () => {
+    // Measured against the venue, not assumed: sending `order_class: "bracket"` with only a
+    // `stop_loss` comes back `http 422: bracket orders require take_profit.limit_price`. A
+    // take-profit is a price target the rule never declares, so the entry is sent as `oto` —
+    // fill it, then place the stop — and nothing is invented to satisfy the venue.
     stubCredentials(PAPER);
     const t = capturingTransport("ord-12");
     const adapter = createAlpacaExecutionAdapter({ instruments: ["AAPL"], postJson: t.fn });
     await adapter.execute({ ...baseIntent, stopPrice: 90 }, new AbortController().signal);
-    expect(t.bodies[0]?.order_class).toBe("bracket");
+    expect(t.bodies[0]?.order_class).toBe("oto");
     expect(t.bodies[0]?.stop_loss).toEqual({ stop_price: "90" });
+    expect(t.bodies[0]?.take_profit).toBeUndefined();
   });
 
   it("sends a sell as a plain order, because a stop below the market would be rejected", async () => {

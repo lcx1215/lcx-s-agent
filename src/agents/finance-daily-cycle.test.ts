@@ -7,6 +7,7 @@ import {
   attemptCycleOrder,
   currentWeightsFromPositions,
   lastCompletedMonthEnd,
+  receiptsForVenue,
   recordCycleFill,
   solveInvalidationPrice,
   venueReconciliationIssue,
@@ -199,6 +200,33 @@ describe("venueReconciliationIssue", () => {
     expect(
       venueReconciliationIssue({ instrument: "SPY", openOrders: 0, ledgerQuantity: 10 }),
     ).toBeNull();
+  });
+});
+
+describe("receiptsForVenue", () => {
+  // Measured, not assumed: a `--venue paper --place` rehearsal writes fills the venue will
+  // never hold, and reading them into an alpaca run made every instrument fail reconciliation
+  // with "out of sync" — permanently, because nothing in the system can remove them.
+  const simulated = cycleReceipt({ adapterKind: "paper", venue: "paper" });
+  const atVenue = cycleReceipt({ adapterKind: "venue", venue: "alpaca:paper" });
+
+  it("reads only simulated fills for a paper run", () => {
+    const picked = receiptsForVenue([simulated, atVenue], "paper");
+    expect(picked.map((item) => item.venue)).toEqual(["paper"]);
+  });
+
+  it("reads only venue fills for an alpaca run, so a rehearsal cannot brick it", () => {
+    const picked = receiptsForVenue([simulated, atVenue], "alpaca");
+    expect(picked.map((item) => item.venue)).toEqual(["alpaca:paper"]);
+  });
+
+  it("excludes a fill from a different venue even when it is a real one", () => {
+    // Another broker's fill is not this account's book. Both are `adapterKind: "venue"`, so
+    // the venue name is what separates them.
+    const elsewhere = cycleReceipt({ adapterKind: "venue", venue: "ibkr:live" });
+    expect(receiptsForVenue([elsewhere, atVenue], "alpaca").map((item) => item.venue)).toEqual([
+      "alpaca:paper",
+    ]);
   });
 });
 

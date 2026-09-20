@@ -166,7 +166,15 @@ export function createAlpacaExecutionAdapter(
       // This system declares no short selling, so "sell" means "reduce". If shorting is ever
       // admitted, that needs its own flag on the intent, not a bracket inferred from a side.
       if (intent.stopPrice !== undefined && intent.side === "buy") {
-        body.order_class = "bracket";
+        // Alpaca's `bracket` requires BOTH exit legs, and it rejects one with only a stop:
+        // "bracket orders require take_profit.limit_price". A take-profit is a price target,
+        // and this system has no business inventing one — the rule declares an invalidation
+        // level and no upside target, and a threshold the caller did not state is exactly what
+        // "the model must not carry its own thresholds" forbids.
+        //
+        // `oto` is the construct that matches what was actually declared: fill the entry, then
+        // place the stop. Nothing is guessed, and the entry still carries its protection.
+        body.order_class = "oto";
         body.stop_loss = { stop_price: String(intent.stopPrice) };
       }
 
