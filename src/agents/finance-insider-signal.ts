@@ -124,3 +124,126 @@ export function insiderSentimentSignal(
     ref: ref + " ageDays=" + ageDays.toFixed(0),
   };
 }
+
+/**
+ * Open-market transaction codes. Awards, gifts and exercises are excluded: an
+ * executive receiving a grant did not choose to buy, and counting it as insider
+ * demand would read compensation as conviction.
+ */
+const OPEN_MARKET_CODES = new Set(["P", "S"]);
+
+export type InsiderTransaction = Readonly<{
+  /** ISO date of the transaction. */
+  transactionDate: string;
+  /** Signed share change: negative for sales, positive for purchases. */
+  change: number;
+  /** Filing code when the provider supplies one. */
+  transactionCode?: string;
+}>;
+
+export type InsiderFlowOptions = Readonly<{
+  observedAt: string;
+  window: EvidenceWindowPolicy;
+  /** |net ratio| below this is noise. Default 0.1. */
+  deadbandRatio?: number;
+  /** Confidence ceiling. Default 0.45. */
+  baseConfidence?: number;
+  /** Transaction count treated as fully credible. Default 5. */
+  fullCredibilityCount?: number;
+  sourceId?: string;
+}>;
+
+/**
+ * Insider flow from individual open-market transactions.
+ *
+ * Preferred over the monthly ratio because the monthly series lagged by around
+ * eleven months in practice, which is far too slow for a thirty-day view. These
+ * filings were current to within weeks.
+ *
+ * The measure is scale-free on purpose: (buys - sells) / (buys + sells) needs no
+ * share count and no price, so it cannot be distorted by a company's size or by
+ * a period with unusually large individual trades.
+ */
+export function insiderFlowSignal(
+  transactions: readonly InsiderTransaction[],
+  options: InsiderFlowOptions,
+): FinanceSignal {
+  const deadband = options.deadbandRatio ?? 0.1;
+  const baseConfidence = options.baseConfidence ?? 0.45;
+  const fullCredibilityCount = options.fullCredibilityCount ?? 5;
+  const sourceId = options.sourceId ?? FINNHUB_INSIDER_SOURCE_ID;
+  const asOfMs = Date.parse(options.observedAt);
+
+  const silent = (reason: string): FinanceSignal => ({
+    sourceId,
+    kind: "fundamental",
+    direction: "hold",
+    strength: 0,
+    confidence: 0,
+    observedAt: options.observedAt,
+    ref: reason,
+  });
+
+  if (!Number.isFinite(asOfMs)) {
+    return silent("no observation time");
+  }
+
+  let buys = 0;
+  let sells = 0;
+  let count = 0;
+  for (const tx of transactions) {
+    const when = Date.parse(tx.transactionDate);
+    const ageDays = Number.isFinite(when) ? (asOfMs - when) / 86_400_000 : Number.NaN;
+    // Undated or outside the window is dropped, never assumed current.
+    if (!Number.isFinite(ageDays) || ageDays < 0 || ageDays > options.window.lookbackDays) {
+      continue;
+    }
+    // Only open-market activity. A grant is not a purchase.
+    if (tx.transactionCode !== undefined && !OPEN_MARKET_CODES.has(tx.transactionCode)) {
+      continue;
+    }
+    if (!Number.isFinite(tx.change) || tx.change === 0) {
+      continue;
+    }
+    count += 1;
+    if (tx.change > 0) {
+      buys += tx.change;
+    } else {
+      sells += -tx.change;
+    }
+  }
+
+  const total = buys + sells;
+  if (count === 0 || total <= 0) {
+    return silent("no open-market insider activity inside the window");
+  }
+
+  const ratio = (buys - sells) / total;
+  const direction: FinanceSignal["direction"] =
+    ratio > deadband ? "buy" : ratio < -deadband ? "sell" : "hold";
+  if (direction === "hold") {
+    return silent("insider flow inside the deadband");
+  }
+
+  const coverage = Math.min(1, count / fullCredibilityCount);
+  return {
+    sourceId,
+    kind: "fundamental",
+    direction,
+    strength: Math.min(1, Math.abs(ratio)),
+    confidence: baseConfidence * (0.5 + 0.5 * coverage),
+    observedAt: options.observedAt,
+    ref:
+      "buys=" +
+      buys +
+      " sells=" +
+      sells +
+      " ratio=" +
+      ratio.toFixed(3) +
+      " n=" +
+      count +
+      " window=" +
+      options.window.lookbackDays +
+      "d",
+  };
+}
