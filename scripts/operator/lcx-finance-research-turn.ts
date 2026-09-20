@@ -30,12 +30,17 @@ import {
   type NewsItem,
 } from "../../src/agents/finance-evidence-window.js";
 import { createFmpFreeBasicEodCollectionAdapter } from "../../src/agents/finance-free-market-collection-adapters.js";
+import {
+  insiderSentimentSignal,
+  insiderPeriodAgeDays,
+} from "../../src/agents/finance-insider-signal.js";
 import { compileExecutionIntent } from "../../src/agents/finance-intent-compiler.js";
 import {
   classifyFinanceStrategy,
   evaluateFinanceMandate,
 } from "../../src/agents/finance-mandate.js";
 import {
+  createFinanceMarketCollectionRegistry,
   createSecFilingsCollectionAdapter,
   runFinanceMarketCollectionRefresh,
 } from "../../src/agents/finance-market-collection-registry.js";
@@ -256,6 +261,68 @@ async function main(): Promise<void> {
     }
   } catch (error) {
     process.stderr.write("gather filings failed: " + String(error).slice(0, 100) + "\n");
+  }
+
+  // Gather 5: real insider sentiment, replacing any inference from form codes.
+  try {
+    const registry = createFinanceMarketCollectionRegistry({
+      fmpApiKey: fmpKey,
+      finnhubApiKey:
+        avKey === ""
+          ? ""
+          : typeof (env as { FINNHUB_API_KEY?: unknown }).FINNHUB_API_KEY === "string"
+            ? String((env as { FINNHUB_API_KEY?: unknown }).FINNHUB_API_KEY)
+            : "",
+    });
+    const picks = (registry as unknown as ReadonlyArray<{ id: string }>).filter(
+      (a) => a.id === "finnhub_stock_insider_sentiment",
+    );
+    const result = await runFinanceMarketCollectionRefresh({
+      request: {
+        collection: "ownership",
+        instrument,
+        assetClass: "us_equity",
+        asOf: now,
+        limit: 6,
+      } as never,
+      adapters: picks as never,
+    });
+    const rows = (result.records ?? [])
+      .map(
+        (r) =>
+          ((r as { data?: Record<string, unknown> }).data ?? {}) as Record<string, number | string>,
+      )
+      .filter((row) => Number.isFinite(Number(row.mspr)) && Number.isFinite(Number(row.year)))
+      // newest period last
+      .toSorted(
+        (a, b) => Number(a.year) * 12 + Number(a.month) - (Number(b.year) * 12 + Number(b.month)),
+      );
+    const newest = rows[rows.length - 1];
+    if (newest) {
+      const period = {
+        year: Number(newest.year),
+        month: Number(newest.month),
+        mspr: Number(newest.mspr),
+        change: Number(newest.change ?? 0),
+      };
+      const signal = insiderSentimentSignal(period, { observedAt: now, window });
+      const age = insiderPeriodAgeDays(period, Date.parse(now));
+      evidence.push({
+        sourceId: signal.sourceId,
+        description: "insider monthly share purchase ratio",
+        detail:
+          (signal.ref ?? "") +
+          (age === null ? "" : " ageDays=" + age.toFixed(0)) +
+          " window=" +
+          window.lookbackDays +
+          "d" +
+          (signal.direction === "hold"
+            ? " -> silent (" + (signal.ref ?? "").split("(").pop()
+            : " -> " + signal.direction),
+      });
+    }
+  } catch (error) {
+    process.stderr.write("gather insider failed: " + String(error).slice(0, 100) + "\n");
   }
 
   process.stdout.write("=== evidence gathered ===\n");
