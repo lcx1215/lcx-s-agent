@@ -151,6 +151,41 @@ const PATH_RULES: PathRule[] = [
     ],
   },
   {
+    // The unattended cycle: plan, schedule, and the venue order path it can reach.
+    //
+    // Separate from `finance_live_execution_seam` because that rule is explicitly the declared
+    // seam and its ledgers — paper by construction. Everything here can, when a caller asks
+    // for it (`--place --venue alpaca`), reach a real venue with a real credential, so the
+    // checks have to name the order path rather than assume a simulator behind it.
+    id: "finance_unattended_cycle",
+    lane: "finance_research_capability",
+    patterns: [
+      /^src\/agents\/finance-daily-cycle\.ts$/u,
+      /^src\/agents\/finance-cycle-schedule\.ts$/u,
+      /^src\/agents\/finance-paper-run\.ts$/u,
+      /^src\/agents\/finance-alpaca-run\.ts$/u,
+      /^src\/agents\/finance-alpaca-execution-adapter\.ts$/u,
+      /^src\/agents\/finance-universe-selection\.ts$/u,
+      /^scripts\/operator\/lcx-finance-daily-cycle\.ts$/u,
+      /^scripts\/operator\/lcx-finance-scheduler\.ts$/u,
+      /^scripts\/operator\/lcx-finance-universe-select\.ts$/u,
+    ],
+    requiredChecks: ["git-diff-check", "head-tail-consistency"],
+    commands: [
+      "pnpm vitest run src/agents/finance-daily-cycle.test.ts src/agents/finance-cycle-schedule.test.ts src/agents/finance-alpaca-run.test.ts src/agents/finance-alpaca-execution-adapter.test.ts src/agents/finance-universe-selection.test.ts",
+      "git diff --check",
+      "node --import tsx scripts/operator/lcx-head-tail-consistency.ts --json",
+    ],
+    headTailRequired: true,
+    risk: "elevated",
+    safetyNotes: [
+      "Placing is opt-in: the cycle plans by default and only sends orders when a caller passes `--place`. A plan is not an order.",
+      "Venue credentials are matched to their host locally — a `PK…` key against the live host and an `AK…` key against the paper host are both refused before any request leaves the process.",
+      "The venue is the authoritative book: before placing, the cycle reads the venue's open orders and positions and refuses an instrument that already has a working order or whose venue quantity disagrees with the local ledger. A fill the ledger missed is caught here, not remembered here.",
+      "A fill is only recorded when the venue reports one (`filledQuantity > 0`); an accepted-but-unfilled order is reported as such and never written as a position.",
+    ],
+  },
+  {
     // The finance plane's non-ledger members: quota bookkeeping, the finance credential
     // store and the probe script that feeds the quota probes. They live beside the ledgers
     // under one resolved root, so a change here can silently move where the whole plane is
