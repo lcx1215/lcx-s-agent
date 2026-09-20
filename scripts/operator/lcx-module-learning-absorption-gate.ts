@@ -288,8 +288,17 @@ async function readReview(params: { workspaceDir: string; dateKey: string }) {
 async function countPlanReceiptFiles(params: {
   workspaceDir: string;
   dateKey: string;
-}): Promise<number> {
-  return (await listModuleLearningReceiptPaths(params.workspaceDir, params.dateKey)).length;
+}): Promise<{ count: number; unreadable: string[] }> {
+  const { files, issues } = await listModuleLearningReceiptPaths(
+    params.workspaceDir,
+    params.dateKey,
+  );
+  // A receipt directory that could not be read yields the same count as a day with no receipts.
+  // Carry the failures alongside the count so the gate never mistakes one for the other.
+  return {
+    count: files.length,
+    unreadable: issues.map((issue) => `${issue.status}/${issue.code}`),
+  };
 }
 
 function missingRowEvidence(row: JsonRecord): string[] {
@@ -506,7 +515,7 @@ const { review, reviewRelativePath } = await readReview({
   workspaceDir: options.workspaceDir,
   dateKey,
 });
-const planReceiptFiles = await countPlanReceiptFiles({
+const planReceipts = await countPlanReceiptFiles({
   workspaceDir: options.workspaceDir,
   dateKey,
 });
@@ -523,7 +532,7 @@ const result = buildGate({
   dateKey,
   review,
   reviewPath: reviewRelativePath,
-  planReceiptFiles,
+  planReceiptFiles: planReceipts.count,
   latestEval,
   latestEvalTimeout,
   evalEvidenceSource,
@@ -532,6 +541,7 @@ const finalResult = {
   ...result,
   preWriteGateDecision: null,
   postWriteReviewRefreshed: false,
+  planReceiptSourceUnreadable: planReceipts.unreadable,
   writeRequested: options.writeAbsorbedPlanReceipts,
   absorptionDecision: options.absorptionDecision,
   writtenAbsorptionReceipts: [],

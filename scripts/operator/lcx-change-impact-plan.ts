@@ -61,14 +61,35 @@ const PATH_RULES: PathRule[] = [
     ],
   },
   {
+    // Memory index: FTS keyword recall is a standalone SQLite capability and
+    // must stay usable without an embedding provider, so the config resolution
+    // and the index manager own their own lane.
+    id: "memory_index_recall",
+    lane: "memory_index_recall",
+    patterns: [
+      /^src\/agents\/memory-search\.ts$/u,
+      /^src\/memory\/manager\.ts$/u,
+      // The index write path. Keyword recall is a standalone SQLite capability, so indexing
+      // must still happen without an embedding provider; these files decide whether it does.
+      /^src\/memory\/manager-embedding-ops\.ts$/u,
+      /^src\/memory\/manager-sync-ops\.ts$/u,
+      /^src\/memory\/internal\.ts$/u,
+    ],
+    requiredChecks: [],
+    commands: ["pnpm vitest run src/memory src/agents/tools/memory-tool.test.ts"],
+  },
+  {
     id: "finance_caseflow",
     lane: "finance_research_capability",
     patterns: [
       /^src\/agents\/finance-(?:caseflow(?:-followups)?|forecast-calibration|history-coverage|research-assessment|source-recovery|model-workflow|model-specialist|agent-committee|news-entity|research-evidence|strategy-method-kit|strategy-method-catalog|research-runner|research-batch-runner|run-checkpoints|model-checkpoints|outcome-ledger|free-market-collection-adapters|registered-capability-adapters|market-collection-registry|realtime-source-registry|source-health|data-connectors|connector-evidence|mcp-client|rest-client|answer-grounding-gate)\.ts$/u,
       /^src\/agents\/tools\/finance-data-connector-inspect-tool\.ts$/u,
+      // The read side of the stored research runs. Without it here, the only lane that would
+      // claim it is the generic tool-registration rule, which never runs its behaviour test.
+      /^src\/agents\/tools\/finance-research-runs-read-tool\.ts$/u,
       /^src\/agents\/tools\/quant-lab-tool\.ts$/u,
       /^src\/agents\/(?:quant-math-advanced|quant-math-inference|quant-math-foundations|finance-calculation-ledger)\.ts$/u,
-      /^scripts\/operator\/lcx-(?:finance-research|caseflow-demo|finance-connector-probe)\.ts$/u,
+      /^scripts\/operator\/lcx-(?:finance-research(?:-run)?|caseflow-demo|finance-connector-probe)\.ts$/u,
       /^src\/agents\/configured-finance-model-adapter\.ts$/u,
       /^docs\/experiments\/research\/finance-model-workflow\.md$/u,
       /^scripts\/operator\/finance-strategy-(?:method-benchmark|all-methods)\.ts$/u,
@@ -76,7 +97,7 @@ const PATH_RULES: PathRule[] = [
     ],
     requiredChecks: ["finance-caseflow-regression", "head-tail-consistency"],
     commands: [
-      "pnpm vitest run src/agents/finance-data-connectors.test.ts src/agents/finance-mcp-client.test.ts src/agents/finance-rest-client.test.ts src/agents/finance-connector-evidence.test.ts src/agents/tools/finance-data-connector-inspect-tool.test.ts src/agents/finance-answer-grounding-gate.test.ts src/agents/finance-answer-composer.test.ts src/agents/quant-math-advanced.test.ts src/agents/quant-math-inference.test.ts src/agents/quant-math-foundations.test.ts src/agents/openclaw-tools.quant-lab-registration.test.ts test/finance-decision-pipeline.test.ts test/operator/lcx-finance-connector-probe.test.ts test/lcx-commercial-answer-pipeline-grounding.test.ts test/lcx-quant-lab-scenarios.test.ts test/lcx-quant-lab-paper-portfolios.test.ts",
+      "pnpm vitest run src/agents/finance-data-connectors.test.ts src/agents/finance-mcp-client.test.ts src/agents/finance-rest-client.test.ts src/agents/finance-connector-evidence.test.ts src/agents/tools/finance-data-connector-inspect-tool.test.ts src/agents/tools/finance-research-runs-read-tool.test.ts src/agents/finance-answer-grounding-gate.test.ts src/agents/finance-answer-composer.test.ts src/agents/quant-math-advanced.test.ts src/agents/quant-math-inference.test.ts src/agents/quant-math-foundations.test.ts src/agents/openclaw-tools.quant-lab-registration.test.ts test/finance-decision-pipeline.test.ts test/operator/lcx-finance-connector-probe.test.ts test/lcx-commercial-answer-pipeline-grounding.test.ts test/lcx-quant-lab-scenarios.test.ts test/lcx-quant-lab-paper-portfolios.test.ts",
       "pnpm vitest run src/agents/finance-caseflow.test.ts src/agents/finance-research-runner.test.ts src/agents/finance-research-batch-runner.test.ts src/agents/finance-outcome-ledger.test.ts src/agents/finance-caseflow-followups.test.ts src/agents/finance-history-coverage.test.ts src/agents/finance-forecast-calibration.test.ts src/agents/finance-research-assessment.test.ts",
       "node --import tsx scripts/operator/lcx-head-tail-consistency.ts --json",
     ],
@@ -127,6 +148,27 @@ const PATH_RULES: PathRule[] = [
       "The behaviour profile is a pure projection over the same post-`asOf` receipt/mark stream the ledger read reports, so it holds no state and can never disagree with the positions beside it. Its labels are descriptive observations over recorded fills, never advice (`advice` is pinned `false`), and a dimension whose threshold the caller did not declare reports numbers with no label rather than a default.",
       "Rule readiness measures exposure to adverse markets from the **owner-declared** `observedAt` on each lifecycle event, never from the wall-clock write time: a window built on write times is not replayable and silently yields zero observations at a past `asOf`, which reads as 'nothing adverse happened' instead of 'unjudgeable'. Every threshold is opt-in, an undeclared one makes its condition unjudgeable rather than passing, and `ready: null` must never be treated as `false`.",
       'The thesis ledger stores events (`opened`, `transition`) and derives state by replay, so it has no state column to drift: an `asOf` view is a shorter prefix of the same stream. Closing is terminal — there is no re-open path, because `the thesis changed` and `the owner changed their mind` are different claims and only the owner can tell them apart. A thesis confers no execution authority; every record carries `executionAuthority: "none"`.',
+    ],
+  },
+  {
+    // The finance plane's non-ledger members: quota bookkeeping, the finance credential
+    // store and the probe script that feeds the quota probes. They live beside the ledgers
+    // under one resolved root, so a change here can silently move where the whole plane is
+    // read from — a missing quota file and a missing receipt both read as "nothing yet".
+    id: "finance_state_plane",
+    lane: "finance_research_capability",
+    patterns: [
+      /^src\/agents\/finance-source-quota\.ts$/u,
+      /^src\/agents\/finance-credential-env\.ts$/u,
+      /^scripts\/operator\/lcx-finance-source-limit-probe\.ts$/u,
+    ],
+    requiredChecks: [],
+    commands: [
+      "pnpm vitest run src/agents/finance-state-dir.test.ts src/agents/finance-source-quota.test.ts src/agents/finance-credential-env.test.ts src/agents/finance-source-health.test.ts src/agents/tools/finance-source-health-read-tool.test.ts",
+    ],
+    risk: "normal",
+    safetyNotes: [
+      "The credential store is read-only here: this lane never writes, moves or echoes a credential, and a credential is never a substitute for an execution authority.",
     ],
   },
   {
@@ -701,6 +743,20 @@ const PATH_RULES: PathRule[] = [
     commands: ["pnpm vitest run src/infra/install-package-dir.test.ts"],
     safetyNotes: [
       "A failed install must say whether the previous install was put back: `rollback()` returns what it could not restore and the returned error carries it, so a half-copied target with a stranded backup is never reported as a clean failure.",
+    ],
+  },
+  {
+    // The run log is the only receipt an unattended cron job leaves behind, and
+    // `unreadable-source` is the one judgement about a failed read that the cron reader and the
+    // learning review tools now share. Changing either changes what "nothing happened" means.
+    id: "cron_run_log_receipts",
+    lane: "local_automation",
+    patterns: [/^src\/cron\/run-log\.ts$/u, /^src\/infra\/unreadable-source\.ts$/u],
+    requiredChecks: ["run-changed-tests"],
+    commands: ["pnpm vitest run src/cron/run-log.test.ts src/cron/run-log.unreadable.test.ts"],
+    safetyNotes: [
+      "A run log that could not be read is reported as `unreadable` with its errno, never as an empty page: for an unattended job, 'nothing ran' and 'cannot tell' have opposite consequences.",
+      "Pruning rewrites the file from whatever it read, so a failed prune read skips the prune and warns — treating it as empty would erase every recorded run.",
     ],
   },
   {

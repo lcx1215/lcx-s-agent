@@ -1,23 +1,19 @@
 import type { Dirent } from "node:fs";
 import fs from "node:fs/promises";
+import { describeReadFailure, type SourceReadFailure } from "../../infra/unreadable-source.js";
 
 export type ReceiptDirectoryStatus = "read" | "absent" | "unreadable";
 
-export type ReceiptDirectoryIssue = Readonly<{
-  status: "absent" | "unreadable";
-  code: string;
-}>;
+/**
+ * Re-exported rather than redefined: "absent" versus "unreadable" is one judgement about a failed
+ * read, and two copies of it drift apart the moment somebody fixes one of them.
+ */
+export type ReceiptDirectoryIssue = SourceReadFailure;
 
 export type ReceiptDirectoryListing = Readonly<{
   entries: readonly Dirent[];
   issue: ReceiptDirectoryIssue | null;
 }>;
-
-function errnoCode(err: unknown): string {
-  return err && typeof err === "object" && "code" in err
-    ? String((err as NodeJS.ErrnoException).code)
-    : "error";
-}
 
 /**
  * Read a receipt directory, separating "there is nothing in there" from "I cannot see in there".
@@ -33,14 +29,7 @@ export async function readReceiptDirectory(directory: string): Promise<ReceiptDi
   try {
     entries = await fs.readdir(directory, { withFileTypes: true });
   } catch (err) {
-    const code = errnoCode(err);
-    return {
-      entries: [],
-      issue: {
-        status: code === "ENOENT" || code === "ENOTDIR" ? "absent" : "unreadable",
-        code,
-      },
-    };
+    return { entries: [], issue: describeReadFailure(err) };
   }
   return { entries, issue: null };
 }

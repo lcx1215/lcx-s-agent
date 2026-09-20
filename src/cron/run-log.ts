@@ -1,7 +1,15 @@
+import type { Dirent } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { parseByteSize } from "../cli/parse-bytes.js";
 import type { CronConfig } from "../config/types.cron.js";
+import {
+  describeReadFailure,
+  describeUnreadableSource,
+  isAbsentFailure,
+  type UnreadableSource,
+} from "../infra/unreadable-source.js";
+import { logWarn } from "../logger.js";
 import type { CronDeliveryStatus, CronRunStatus, CronRunTelemetry } from "./types.js";
 
 export type CronRunLogEntry = {
@@ -43,6 +51,13 @@ export type CronRunLogPageResult = {
   limit: number;
   hasMore: boolean;
   nextOffset: number | null;
+  /**
+   * Files that are there but could not be read. A run log nobody can read is not a job that
+   * never ran, and reporting "no runs" for it would describe the reader, not the job.
+   */
+  unreadable?: readonly UnreadableSource[];
+  /** Lines dropped because they were not valid JSON — see `unreadable` for the same reason. */
+  skippedLines?: number;
 };
 
 type ReadCronRunLogAllPageOptions = Omit<ReadCronRunLogPageOptions, "jobId"> & {
@@ -117,7 +132,19 @@ async function pruneIfNeeded(filePath: string, opts: { maxBytes: number; keepLin
     return;
   }
 
-  const raw = await fs.readFile(filePath, "utf-8").catch(() => "");
+  // Pruning rewrites the file from whatever was read. Treating a failed read as "empty" does not
+  // leave the log alone — it replaces every recorded run with an empty file. Skip the prune and
+  // say so; an oversized log is recoverable, an erased one is not.
+  const raw = await fs.readFile(filePath, "utf-8").catch((err) => {
+    const failure = describeReadFailure(err);
+    logWarn(
+      `[cron-run-log] skipped pruning ${filePath}: read failed (${failure.status}/${failure.code})`,
+    );
+    return null;
+  });
+  if (raw === null) {
+    return;
+  }
   const lines = raw
     .split("\n")
     .map((l) => l.trim())
@@ -226,12 +253,20 @@ function normalizeDeliveryStatuses(opts?: {
   return null;
 }
 
-function parseAllRunLogEntries(raw: string, opts?: { jobId?: string }): CronRunLogEntry[] {
+/**
+ * Returns the entries plus how many lines had to be dropped. A log with unreadable lines is not
+ * a log with nothing in it — the count is what lets the caller say which one it is holding.
+ */
+function parseAllRunLogEntries(
+  raw: string,
+  opts?: { jobId?: string },
+): { entries: CronRunLogEntry[]; skippedLines: number } {
   const jobId = opts?.jobId?.trim() || undefined;
   if (!raw.trim()) {
-    return [];
+    return { entries: [], skippedLines: 0 };
   }
   const parsed: CronRunLogEntry[] = [];
+  let skippedLines = 0;
   const lines = raw.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]?.trim();
@@ -307,10 +342,10 @@ function parseAllRunLogEntries(raw: string, opts?: { jobId?: string }): CronRunL
       }
       parsed.push(entry);
     } catch {
-      // ignore invalid lines
+      skippedLines += 1;
     }
   }
-  return parsed;
+  return { entries: parsed, skippedLines };
 }
 
 function filterRunLogEntries(
@@ -345,12 +380,20 @@ export async function readCronRunLogEntriesPage(
 ): Promise<CronRunLogPageResult> {
   await drainPendingWrite(filePath);
   const limit = Math.max(1, Math.min(200, Math.floor(opts?.limit ?? 50)));
-  const raw = await fs.readFile(path.resolve(filePath), "utf-8").catch(() => "");
+  const unreadable: UnreadableSource[] = [];
+  const resolvedPath = path.resolve(filePath);
+  const raw = await fs.readFile(resolvedPath, "utf-8").catch((err) => {
+    const failure = describeReadFailure(err);
+    if (!isAbsentFailure(failure)) {
+      unreadable.push(describeUnreadableSource(resolvedPath, err));
+    }
+    return "";
+  });
   const statuses = normalizeRunStatuses(opts);
   const deliveryStatuses = normalizeDeliveryStatuses(opts);
   const query = opts?.query?.trim().toLowerCase() ?? "";
   const sortDir: CronRunLogSortDir = opts?.sortDir === "asc" ? "asc" : "desc";
-  const all = parseAllRunLogEntries(raw, { jobId: opts?.jobId });
+  const { entries: all, skippedLines } = parseAllRunLogEntries(raw, { jobId: opts?.jobId });
   const filtered = filterRunLogEntries(all, {
     statuses,
     deliveryStatuses,
@@ -372,6 +415,8 @@ export async function readCronRunLogEntriesPage(
     limit,
     hasMore: nextOffset < total,
     nextOffset: nextOffset < total ? nextOffset : null,
+    ...(unreadable.length > 0 ? { unreadable } : {}),
+    ...(skippedLines > 0 ? { skippedLines } : {}),
   };
 }
 
@@ -384,7 +429,14 @@ export async function readCronRunLogEntriesPageAll(
   const query = opts.query?.trim().toLowerCase() ?? "";
   const sortDir: CronRunLogSortDir = opts.sortDir === "asc" ? "asc" : "desc";
   const runsDir = path.resolve(path.dirname(path.resolve(opts.storePath)), "runs");
-  const files = await fs.readdir(runsDir, { withFileTypes: true }).catch(() => []);
+  const unreadable: UnreadableSource[] = [];
+  const files = await fs.readdir(runsDir, { withFileTypes: true }).catch((err) => {
+    const failure = describeReadFailure(err);
+    if (!isAbsentFailure(failure)) {
+      unreadable.push(describeUnreadableSource(runsDir, err));
+    }
+    return [] as Dirent[];
+  });
   const jsonlFiles = files
     .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
     .map((entry) => path.join(runsDir, entry.name));
@@ -396,13 +448,23 @@ export async function readCronRunLogEntriesPageAll(
       limit,
       hasMore: false,
       nextOffset: null,
+      ...(unreadable.length > 0 ? { unreadable } : {}),
     };
   }
   await Promise.all(jsonlFiles.map((f) => drainPendingWrite(f)));
+  let skippedLines = 0;
   const chunks = await Promise.all(
     jsonlFiles.map(async (filePath) => {
-      const raw = await fs.readFile(filePath, "utf-8").catch(() => "");
-      return parseAllRunLogEntries(raw);
+      const raw = await fs.readFile(filePath, "utf-8").catch((err) => {
+        const failure = describeReadFailure(err);
+        if (!isAbsentFailure(failure)) {
+          unreadable.push(describeUnreadableSource(filePath, err));
+        }
+        return "";
+      });
+      const parsed = parseAllRunLogEntries(raw);
+      skippedLines += parsed.skippedLines;
+      return parsed.entries;
     }),
   );
   const all = chunks.flat();
@@ -438,5 +500,7 @@ export async function readCronRunLogEntriesPageAll(
     limit,
     hasMore: nextOffset < total,
     nextOffset: nextOffset < total ? nextOffset : null,
+    ...(unreadable.length > 0 ? { unreadable } : {}),
+    ...(skippedLines > 0 ? { skippedLines } : {}),
   };
 }
