@@ -51,6 +51,58 @@ type Recorded = {
   refusals?: string[];
 };
 
+/**
+ * Default pool: large, liquid US names.
+ *
+ * Breadth is the point. A low-frequency strategy on one symbol needs years to
+ * produce a usable sample; the same judgement across forty symbols produces a
+ * comparable number of observations in weeks. These are chosen for liquidity and
+ * coverage by the free providers, not because they are expected to be good
+ * trades - the pool should be boring, or its composition becomes a hidden bet.
+ */
+const DEFAULT_POOL = [
+  "AAPL",
+  "MSFT",
+  "NVDA",
+  "AMZN",
+  "GOOGL",
+  "META",
+  "TSLA",
+  "AVGO",
+  "JPM",
+  "V",
+  "MA",
+  "UNH",
+  "XOM",
+  "JNJ",
+  "PG",
+  "HD",
+  "MRK",
+  "ABBV",
+  "CVX",
+  "LLY",
+  "PEP",
+  "KO",
+  "BAC",
+  "PFE",
+  "TMO",
+  "COST",
+  "WMT",
+  "DIS",
+  "CSCO",
+  "MCD",
+  "ABT",
+  "DHR",
+  "VZ",
+  "ADBE",
+  "NFLX",
+  "CRM",
+  "AMD",
+  "INTC",
+  "QCOM",
+  "TXN",
+];
+
 function readArg(args: readonly string[], name: string): string | undefined {
   const index = args.indexOf(name);
   return index === -1 ? undefined : args[index + 1];
@@ -170,10 +222,11 @@ async function collectOne(params: {
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const raw = readArg(args, "--instruments") ?? "";
-  const instruments = raw
+  const explicit = raw
     .split(",")
     .map((value) => value.trim().toUpperCase())
     .filter((value) => value.length > 0);
+  const instruments = explicit.length > 0 ? explicit : DEFAULT_POOL;
   if (instruments.length === 0) {
     process.stdout.write("Usage: --instruments AAPL,MSFT --record PATH\n");
     return;
