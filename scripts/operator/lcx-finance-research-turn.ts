@@ -23,6 +23,12 @@ import { existsSync, readFileSync } from "node:fs";
 import { computeChartStructure } from "../../src/agents/finance-chart-structure.js";
 import { parseResearchConclusion } from "../../src/agents/finance-conclusion-intake.js";
 import { resolveFinanceCredentialEnv } from "../../src/agents/finance-credential-env.js";
+import {
+  defaultEvidenceWindow,
+  parseAvPublishedAgeDays,
+  summarizeNewsCohort,
+  type NewsItem,
+} from "../../src/agents/finance-evidence-window.js";
 import { createFmpFreeBasicEodCollectionAdapter } from "../../src/agents/finance-free-market-collection-adapters.js";
 import { compileExecutionIntent } from "../../src/agents/finance-intent-compiler.js";
 import {
@@ -78,6 +84,7 @@ async function main(): Promise<void> {
   const fmpKey = typeof env.FMP_API_KEY === "string" ? env.FMP_API_KEY : "";
   const avKey = typeof env.ALPHA_VANTAGE_API_KEY === "string" ? env.ALPHA_VANTAGE_API_KEY : "";
   const now = new Date().toISOString();
+  const window = defaultEvidenceWindow({ horizonDays: 30 });
   const evidence: Evidence[] = [];
   let lastPrice = 0;
 
@@ -145,23 +152,41 @@ async function main(): Promise<void> {
       feed?: Array<{
         overall_sentiment_score?: number;
         ticker_sentiment?: Array<{ ticker?: string; ticker_sentiment_score?: string }>;
+        time_published?: unknown;
       }>;
     };
-    const scores: number[] = [];
+    const asOfMs = Date.parse(now);
+    const cohortItems: NewsItem[] = [];
     for (const item of Array.isArray(payload.feed) ? payload.feed : []) {
       const match = (item.ticker_sentiment ?? []).find((e) => e.ticker === instrument);
       const raw = Number(match?.ticker_sentiment_score ?? item.overall_sentiment_score);
-      if (Number.isFinite(raw)) {
-        scores.push(raw);
+      // Articles with no usable timestamp are dropped, not treated as fresh.
+      const ageDays = parseAvPublishedAgeDays(item.time_published, asOfMs);
+      if (Number.isFinite(raw) && ageDays !== null) {
+        cohortItems.push({ ageDays, score: raw });
       }
     }
-    if (scores.length > 0) {
-      const average = scores.reduce((a, b) => a + b, 0) / scores.length;
+    const cohort = summarizeNewsCohort(cohortItems, window);
+    if (cohort.usable && cohort.weightedMean !== null) {
       evidence.push({
         sourceId: "alpha-vantage-news-sentiment",
-        description: "aggregated news sentiment",
-        detail: "meanScore=" + average.toFixed(4) + " articles=" + scores.length,
+        description: "news sentiment, recency weighted",
+        detail:
+          "weightedMean=" +
+          cohort.weightedMean.toFixed(4) +
+          " used=" +
+          cohort.used +
+          " spanDays=" +
+          cohort.spanDays.toFixed(1) +
+          " window=" +
+          window.lookbackDays +
+          "d" +
+          " halfLife=" +
+          window.newsHalfLifeDays +
+          "d",
       });
+    } else {
+      process.stderr.write("sentiment unusable: " + cohort.refusals.join("; ") + "\n");
     }
   } catch (error) {
     process.stderr.write("gather sentiment failed: " + String(error).slice(0, 100) + "\n");
