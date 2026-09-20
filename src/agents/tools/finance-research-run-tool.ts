@@ -4,7 +4,12 @@ import path from "node:path";
 import { Type } from "@sinclair/typebox";
 import { loadConfig } from "../../config/config.js";
 import type { OpenClawConfig } from "../../config/config.js";
-import { FINANCE_DECISION_MODES, type FinanceDecisionMode } from "../finance-decision-policy.js";
+import {
+  FINANCE_DECISION_MODES,
+  FINANCE_STRATEGY_STAGES,
+  type FinanceDecisionMode,
+  type FinanceStrategyStage,
+} from "../finance-decision-policy.js";
 import {
   createFinanceModelWorkflow,
   type FinanceWorkflowSlotModels,
@@ -54,6 +59,13 @@ const schema = Type.Object({
    * never grant broker, wallet, or execution authority.
    */
   decisionMode: Type.Optional(Type.Union(FINANCE_DECISION_MODES.map((mode) => Type.Literal(mode)))),
+  /**
+   * Declared research maturity stage. When present it binds the mode: a method that has only
+   * reached `paper_candidate` may not be written up as `conditional_trade_candidate`.
+   */
+  strategyStage: Type.Optional(
+    Type.Union(FINANCE_STRATEGY_STAGES.map((stage) => Type.Literal(stage))),
+  ),
   live: Type.Optional(Type.Boolean({ default: false })),
   maxModelCalls: Type.Optional(Type.Integer({ minimum: 1, maximum: 48, default: 24 })),
   maxApiCalls: Type.Optional(Type.Integer({ minimum: 1, maximum: 64, default: 32 })),
@@ -86,7 +98,7 @@ export function createFinanceResearchRunTool(options?: {
     name: "finance_research_run",
     label: "Finance Research Workflow",
     description:
-      "Plan or explicitly execute the canonical finance research workflow with configured models, independent review and finding closure. Works through any channel's normal agent tool dispatch. Planning is the default; live=true permits bounded source/model calls. decisionMode selects the answer authority (research_only by default; the candidate modes may produce a reviewable strategy or conditional buy/sell candidate) and never grants broker, wallet, or execution authority. Returns a local receipt, never sends a platform message or claims model learning or external delivery.",
+      "Plan or explicitly execute the canonical finance research workflow with configured models, independent review and finding closure. Works through any channel's normal agent tool dispatch. Planning is the default; live=true permits bounded source/model calls. decisionMode selects the answer authority (research_only by default; the candidate modes may produce a reviewable strategy or conditional buy/sell candidate) and never grants broker, wallet, or execution authority. strategyStage declares how far a method has been verified (method_only / research_candidate / paper_candidate / conditional_trade_candidate) and binds which decisionMode it may be written up in. Returns a local receipt, never sends a platform message or claims model learning or external delivery.",
     parameters: schema,
     execute: async (toolCallId, args, callerSignal) => {
       callerSignal?.throwIfAborted();
@@ -109,6 +121,16 @@ export function createFinanceResearchRunTool(options?: {
         );
       }
       const decisionMode = rawDecisionMode as FinanceDecisionMode | undefined;
+      const rawStrategyStage = params.strategyStage;
+      if (
+        rawStrategyStage !== undefined &&
+        !FINANCE_STRATEGY_STAGES.includes(rawStrategyStage as FinanceStrategyStage)
+      ) {
+        throw new ToolInputError(
+          `strategyStage must be one of ${FINANCE_STRATEGY_STAGES.join(", ")}`,
+        );
+      }
+      const strategyStage = rawStrategyStage as FinanceStrategyStage | undefined;
       const maxModelCalls = boundedInteger(params, "maxModelCalls", 24, 48);
       const maxApiCalls = boundedInteger(params, "maxApiCalls", 32, 64);
       const timeoutMs = boundedInteger(params, "timeoutMs", 600_000, 1_200_000, 1_000);
@@ -146,6 +168,7 @@ export function createFinanceResearchRunTool(options?: {
             asOf,
             ...(targets ? { targets } : {}),
             ...(decisionMode ? { decisionMode } : {}),
+            ...(strategyStage ? { strategyStage } : {}),
           },
           signal,
           liveFetch: params.live === true,

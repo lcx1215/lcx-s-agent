@@ -6,7 +6,7 @@ metadata: { "openclaw": { "emoji": "🧰" } }
 
 # Skill Harvester
 
-Use this when a user proposes a new Skill, GitHub/ClawHub workflow, external
+Use this when a user proposes a new Skill, GitHub/third-party-registry workflow, external
 agent project, or a reusable pattern from outside the repo.
 
 ## Workflow

@@ -16,7 +16,7 @@ x-i18n:
 
 # Gateway 网关协议（WebSocket）
 
-Gateway 网关 WS 协议是 OpenClaw 的**单一控制平面 + 节点传输**。所有客户端（CLI、Web UI、节点客户端、无头节点）都通过 WebSocket 连接，并在握手时声明其**角色** + **作用域**。
+Gateway 网关 WS 协议是 LCX Agent 的**单一控制平面 + 节点传输**。所有客户端（CLI、Web UI、节点客户端、无头节点）都通过 WebSocket 连接，并在握手时声明其**角色** + **作用域**。
 
 ## 传输
 
@@ -58,7 +58,7 @@ Gateway 网关 → 客户端（连接前质询）：
     "permissions": {},
     "auth": { "token": "…" },
     "locale": "en-US",
-    "userAgent": "openclaw-cli/1.2.3",
+    "userAgent": "lcx-cli/1.2.3",
     "device": {
       "id": "device_fingerprint",
       "publicKey": "…",

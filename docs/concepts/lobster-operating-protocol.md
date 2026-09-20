@@ -4,14 +4,14 @@ summary: "What is actually the default working mode in the LCX Agent fork, and w
 read_when:
   - You want to understand the real default workflow of this repo
   - You want to know which LCX Agent advantages are already active
-  - You want to distinguish the OpenClaw execution core from the optional Lobster runtime plugin
+  - You want to distinguish the LCX Agent execution core from the optional Lobster runtime plugin
 ---
 
 # LCX Agent Operating Protocol
 
-This repo is not just "OpenClaw plus some ideas." It currently operates as:
+This repo is not just "LCX Agent plus some ideas." It currently operates as:
 
-- an **OpenClaw / Hermes-style execution substrate**
+- an **LCX Agent / Hermes-style execution substrate**
 - with an **LCX Agent operating layer** for research discipline, learning carryover, protected summaries, and daily workface outputs
 
 That distinction matters. The execution substrate and the operating layer are
@@ -22,7 +22,7 @@ not the same thing.
 The default path is:
 
 1. The user speaks natural language in **one main control room**
-2. The main OpenClaw agent handles the request through the normal agent runtime
+2. The main LCX Agent agent handles the request through the normal agent runtime
 3. Only explicit lifecycle commands such as `/new` and `/reset` switch reset lanes
 4. Bundled LCX Agent hooks update protected summaries, learning carryover, and workface artifacts
 5. The user-facing workface panel reflects the current bounded research state
@@ -30,9 +30,9 @@ The default path is:
 This means the repo is optimized for one stable control room with internal
 orchestration, not for many separate surfaces that the user has to remember.
 
-## Execution Substrate: OpenClaw / Hermes-Style Agent
+## Execution Substrate: LCX Agent / Hermes-Style Agent
 
-The active execution core is still the embedded OpenClaw agent runtime:
+The active execution core is still the embedded LCX Agent agent runtime:
 
 - `src/agents/pi-embedded-runner/run/attempt.ts`
 - `src/agents/system-prompt.ts`
@@ -147,7 +147,7 @@ So the correct distinction is:
 
 Some limits remain important:
 
-- The main execution substrate is still OpenClaw, not the optional Lobster plugin runtime.
+- The main execution substrate is still LCX Agent, not the optional Lobster plugin runtime.
 - Direct-message session isolation is not fully per-conversation by default; `src/routing/session-key.ts` defaults DM scope to `main` unless configured otherwise.
 - The repo contains many local scripts and experiments, but the default working mode should be inferred from the bundled hooks, protected summaries, agent runtime, and workface surfaces first.
 
@@ -155,7 +155,7 @@ Some limits remain important:
 
 The most accurate summary is:
 
-- **OpenClaw / Hermes-style agent** provides the execution substrate
+- **LCX Agent / Hermes-style agent** provides the execution substrate
 - **LCX Agent** provides the operating protocol, learning spine, and workface discipline
 
 That is the current default working mode of this fork.

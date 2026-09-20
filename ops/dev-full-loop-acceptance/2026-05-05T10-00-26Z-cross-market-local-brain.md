@@ -75,7 +75,7 @@ Boundaries:
 
 ## Plain-Language Surface Check
 
-`pnpm openclaw capabilities language-brain-loop-smoke --json` passed and reported:
+`pnpm lcx capabilities language-brain-loop-smoke --json` passed and reported:
 
 - `visibleReply.startsWithPlainSummary: true`
 - `visibleReply.hidesInternalLabels: true`
@@ -102,7 +102,7 @@ node --import tsx scripts/dev/local-brain-open-eval-provider.ts "$PROMPT" | jq '
 Result: cross-market planning contract passed with the modules and missing inputs listed above.
 
 ```bash
-pnpm openclaw capabilities language-brain-loop-smoke --json
+pnpm lcx capabilities language-brain-loop-smoke --json
 ```
 
 Result: passed; final visible surface starts with plain Chinese summary and hides internal JSON labels.

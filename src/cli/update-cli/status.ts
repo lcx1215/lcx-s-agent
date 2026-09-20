@@ -4,6 +4,7 @@ import {
   resolveUpdateAvailability,
 } from "../../commands/status.update.js";
 import { readConfigFileSnapshot } from "../../config/config.js";
+import { CANONICAL_PRODUCT_NAME } from "../../infra/canonical-identity.js";
 import {
   normalizeUpdateChannel,
   resolveUpdateChannelDisplay,
@@ -107,7 +108,7 @@ export async function updateStatusCommand(opts: UpdateStatusOptions): Promise<vo
     },
   ];
 
-  defaultRuntime.log(theme.heading("OpenClaw update status"));
+  defaultRuntime.log(theme.heading(`${CANONICAL_PRODUCT_NAME} update status`));
   defaultRuntime.log("");
   defaultRuntime.log(
     renderTable({

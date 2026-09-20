@@ -1,14 +1,14 @@
-<!-- Owns ACP-related notes and integration context for OpenClaw agents. -->
+<!-- Owns ACP-related notes and integration context for LCX Agent agents. -->
 
-# OpenClaw ACP Bridge
+# LCX Agent ACP Bridge
 
-This document describes how the OpenClaw ACP (Agent Client Protocol) bridge works,
+This document describes how the LCX Agent ACP (Agent Client Protocol) bridge works,
 how it maps ACP sessions to Gateway sessions, and how IDEs should invoke it.
 
 ## Overview
 
-`openclaw acp` exposes an ACP agent over stdio and forwards prompts to a running
-OpenClaw Gateway over WebSocket. It keeps ACP session ids mapped to Gateway
+`lcx acp` exposes an ACP agent over stdio and forwards prompts to a running
+LCX Agent Gateway over WebSocket. It keeps ACP session ids mapped to Gateway
 session keys so IDEs can reconnect to the same agent transcript or reset it on
 request.
 
@@ -22,25 +22,25 @@ Key goals:
 ## How can I use this
 
 Use ACP when an IDE or tooling speaks Agent Client Protocol and you want it to
-drive a OpenClaw Gateway session.
+drive a LCX Agent Gateway session.
 
 Quick steps:
 
 1. Run a Gateway (local or remote).
 2. Configure the Gateway target (`gateway.remote.url` + auth) or pass flags.
-3. Point the IDE to run `openclaw acp` over stdio.
+3. Point the IDE to run `lcx acp` over stdio.
 
 Example config:
 
 ```bash
-openclaw config set gateway.remote.url wss://gateway-host:18789
-openclaw config set gateway.remote.token <token>
+lcx config set gateway.remote.url wss://gateway-host:18789
+lcx config set gateway.remote.token <token>
 ```
 
 Example run:
 
 ```bash
-openclaw acp --url wss://gateway-host:18789 --token <token>
+lcx acp --url wss://gateway-host:18789 --token <token>
 ```
 
 ## Selecting agents
@@ -50,9 +50,9 @@ ACP does not pick agents directly. It routes by the Gateway session key.
 Use agent-scoped session keys to target a specific agent:
 
 ```bash
-openclaw acp --session agent:main:main
-openclaw acp --session agent:design:main
-openclaw acp --session agent:qa:bug-123
+lcx acp --session agent:main:main
+lcx acp --session agent:design:main
+lcx acp --session agent:qa:bug-123
 ```
 
 Each ACP session maps to a single Gateway session key. One agent can have many
@@ -66,7 +66,7 @@ Add a custom ACP agent in `~/.config/zed/settings.json`:
 ```json
 {
   "agent_servers": {
-    "OpenClaw ACP": {
+    "LCX Agent ACP": {
       "type": "custom",
       "command": "openclaw",
       "args": ["acp"],
@@ -81,7 +81,7 @@ To target a specific Gateway or agent:
 ```json
 {
   "agent_servers": {
-    "OpenClaw ACP": {
+    "LCX Agent ACP": {
       "type": "custom",
       "command": "openclaw",
       "args": [
@@ -99,11 +99,11 @@ To target a specific Gateway or agent:
 }
 ```
 
-In Zed, open the Agent panel and select “OpenClaw ACP” to start a thread.
+In Zed, open the Agent panel and select “LCX Agent ACP” to start a thread.
 
 ## Execution Model
 
-- ACP client spawns `openclaw acp` and speaks ACP messages over stdio.
+- ACP client spawns `lcx acp` and speaks ACP messages over stdio.
 - The bridge connects to the Gateway using existing auth config (or CLI flags).
 - ACP `prompt` translates to Gateway `chat.send`.
 - Gateway streaming events are translated back into ACP streaming events.
@@ -120,9 +120,9 @@ You can override or reuse sessions in two ways:
 1. CLI defaults
 
 ```bash
-openclaw acp --session agent:main:main
-openclaw acp --session-label "support inbox"
-openclaw acp --reset-session
+lcx acp --session agent:main:main
+lcx acp --session-label "support inbox"
+lcx acp --reset-session
 ```
 
 2. ACP metadata per session
@@ -169,7 +169,7 @@ updates. Terminal Gateway states map to ACP `done` with stop reasons:
 
 ## Auth + Gateway Discovery
 
-`openclaw acp` resolves the Gateway URL and auth from CLI flags or config:
+`lcx acp` resolves the Gateway URL and auth from CLI flags or config:
 
 - `--url` / `--token` / `--password` take precedence.
 - Otherwise use configured `gateway.remote.*` settings.

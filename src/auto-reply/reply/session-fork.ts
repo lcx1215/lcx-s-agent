@@ -55,7 +55,11 @@ export function forkSessionFromParent(params: {
       cwd: manager.getCwd(),
       parentSession: parentSessionFile,
     };
-    fs.writeFileSync(sessionFile, `${JSON.stringify(header)}\n`, "utf-8");
+    // Same reason as the gateway transcript header: this is a new file, but a partial one still
+    // looks like a session file to every later reader.
+    const tmpPath = `${sessionFile}.${process.pid}.tmp`;
+    fs.writeFileSync(tmpPath, `${JSON.stringify(header)}\n`, "utf-8");
+    fs.renameSync(tmpPath, sessionFile);
     return { sessionId, sessionFile };
   } catch {
     return null;

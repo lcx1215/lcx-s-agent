@@ -8,7 +8,7 @@ title: "Camera Capture"
 
 # Camera capture (agent)
 
-OpenClaw supports **camera capture** for agent workflows on a paired node that
+LCX Agent supports **camera capture** for agent workflows on a paired node that
 advertises the camera commands:
 
 - capture a **photo** (`jpg`) or **short video clip** (`mp4`, with optional audio) via `node.invoke`.
@@ -67,10 +67,10 @@ The easiest way to get attachments is via the CLI helper, which writes decoded m
 Examples:
 
 ```bash
-openclaw nodes camera snap --node <id>               # default: both front + back (2 MEDIA lines)
-openclaw nodes camera snap --node <id> --facing front
-openclaw nodes camera clip --node <id> --duration 3000
-openclaw nodes camera clip --node <id> --no-audio
+lcx nodes camera snap --node <id>               # default: both front + back (2 MEDIA lines)
+lcx nodes camera snap --node <id> --facing front
+lcx nodes camera clip --node <id> --duration 3000
+lcx nodes camera clip --node <id> --no-audio
 ```
 
 Notes:
@@ -124,20 +124,20 @@ Use the main `openclaw` CLI to invoke camera commands on the node.
 Examples:
 
 ```bash
-openclaw nodes camera list --node <id>            # list camera ids
-openclaw nodes camera snap --node <id>            # prints MEDIA:<path>
-openclaw nodes camera snap --node <id> --max-width 1280
-openclaw nodes camera snap --node <id> --delay-ms 2000
-openclaw nodes camera snap --node <id> --device-id <id>
-openclaw nodes camera clip --node <id> --duration 10s          # prints MEDIA:<path>
-openclaw nodes camera clip --node <id> --duration-ms 3000      # prints MEDIA:<path> (legacy flag)
-openclaw nodes camera clip --node <id> --device-id <id>
-openclaw nodes camera clip --node <id> --no-audio
+lcx nodes camera list --node <id>            # list camera ids
+lcx nodes camera snap --node <id>            # prints MEDIA:<path>
+lcx nodes camera snap --node <id> --max-width 1280
+lcx nodes camera snap --node <id> --delay-ms 2000
+lcx nodes camera snap --node <id> --device-id <id>
+lcx nodes camera clip --node <id> --duration 10s          # prints MEDIA:<path>
+lcx nodes camera clip --node <id> --duration-ms 3000      # prints MEDIA:<path> (legacy flag)
+lcx nodes camera clip --node <id> --device-id <id>
+lcx nodes camera clip --node <id> --no-audio
 ```
 
 Notes:
 
-- `openclaw nodes camera snap` defaults to `maxWidth=1600` unless overridden.
+- `lcx nodes camera snap` defaults to `maxWidth=1600` unless overridden.
 - On macOS, `camera.snap` waits `delayMs` (default 2000ms) after warm-up/exposure settle before capturing.
 - Photo payloads are recompressed to keep base64 under 5 MB.
 
@@ -151,7 +151,7 @@ Notes:
 For _screen_ video (not camera), record from the node:
 
 ```bash
-openclaw nodes screen record --node <id> --duration 10s --fps 15   # prints MEDIA:<path>
+lcx nodes screen record --node <id> --duration 10s --fps 15   # prints MEDIA:<path>
 ```
 
 Notes:

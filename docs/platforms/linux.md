@@ -18,7 +18,7 @@ existing chat channel.
 
 1. Install Node 22+
 2. `npm i -g openclaw@latest`
-3. `openclaw onboard --install-daemon`
+3. `lcx onboard --install-daemon`
 4. From your laptop: `ssh -N -L 18789:127.0.0.1:18789 <user>@<host>`
 5. Open `http://127.0.0.1:18789/` and paste your token
 
@@ -40,19 +40,19 @@ Step-by-step VPS guide: [exe.dev](/install/exe-dev)
 Use one of these:
 
 ```
-openclaw onboard --install-daemon
+lcx onboard --install-daemon
 ```
 
 Or:
 
 ```
-openclaw gateway install
+lcx gateway install
 ```
 
 Or:
 
 ```
-openclaw configure
+lcx configure
 ```
 
 Select **Gateway service** when prompted.
@@ -60,22 +60,22 @@ Select **Gateway service** when prompted.
 Repair/migrate:
 
 ```
-openclaw doctor
+lcx doctor
 ```
 
 ## System control (systemd user unit)
 
-OpenClaw installs a systemd **user** service by default. Use a **system**
+LCX Agent installs a systemd **user** service by default. Use a **system**
 service for shared or always-on servers. The full unit example and guidance
 live in the [Gateway runbook](/gateway).
 
 Minimal setup:
 
-Create `~/.config/systemd/user/openclaw-gateway[-<profile>].service`:
+Create `~/.config/systemd/user/lcx-gateway[-<profile>].service`:
 
 ```
 [Unit]
-Description=OpenClaw Gateway (profile: <profile>, v<version>)
+Description=LCX Agent Gateway (profile: <profile>, v<version>)
 After=network-online.target
 Wants=network-online.target
 
@@ -91,5 +91,5 @@ WantedBy=default.target
 Enable it:
 
 ```
-systemctl --user enable --now openclaw-gateway[-<profile>].service
+systemctl --user enable --now lcx-gateway[-<profile>].service
 ```

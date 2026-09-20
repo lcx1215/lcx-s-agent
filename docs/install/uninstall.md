@@ -1,7 +1,7 @@
 ---
-summary: "Uninstall OpenClaw completely (CLI, service, state, workspace)"
+summary: "Uninstall LCX Agent completely (CLI, service, state, workspace)"
 read_when:
-  - You want to remove OpenClaw from a machine
+  - You want to remove LCX Agent from a machine
   - The gateway service is still running after uninstall
 title: "Uninstall"
 ---
@@ -18,14 +18,14 @@ Two paths:
 Recommended: use the built-in uninstaller:
 
 ```bash
-openclaw uninstall
+lcx uninstall
 ```
 
 Non-interactive (automation / npx):
 
 ```bash
-openclaw uninstall --all --yes --non-interactive
-npx -y openclaw uninstall --all --yes --non-interactive
+lcx uninstall --all --yes --non-interactive
+npx -y lcx uninstall --all --yes --non-interactive
 ```
 
 Manual steps (same result):
@@ -33,13 +33,13 @@ Manual steps (same result):
 1. Stop the gateway service:
 
 ```bash
-openclaw gateway stop
+lcx gateway stop
 ```
 
 2. Uninstall the gateway service (launchd/systemd/schtasks):
 
 ```bash
-openclaw gateway uninstall
+lcx gateway uninstall
 ```
 
 3. Delete state + config:
@@ -86,21 +86,21 @@ If you used a profile, replace the label and plist name with `ai.openclaw.<profi
 
 ### Linux (systemd user unit)
 
-Default unit name is `openclaw-gateway.service` (or `openclaw-gateway-<profile>.service`):
+Default unit name is `lcx-gateway.service` (or `lcx-gateway-<profile>.service`):
 
 ```bash
-systemctl --user disable --now openclaw-gateway.service
-rm -f ~/.config/systemd/user/openclaw-gateway.service
+systemctl --user disable --now lcx-gateway.service
+rm -f ~/.config/systemd/user/lcx-gateway.service
 systemctl --user daemon-reload
 ```
 
 ### Windows (Scheduled Task)
 
-Default task name is `OpenClaw Gateway` (or `OpenClaw Gateway (<profile>)`).
+Default task name is `LCX Agent Gateway` (or `LCX Agent Gateway (<profile>)`).
 The task script lives under your state dir.
 
 ```powershell
-schtasks /Delete /F /TN "OpenClaw Gateway"
+schtasks /Delete /F /TN "LCX Agent Gateway"
 Remove-Item -Force "$env:USERPROFILE\.openclaw\gateway.cmd"
 ```
 
@@ -110,7 +110,7 @@ If you used a profile, delete the matching task name and `~\.openclaw-<profile>\
 
 ### Normal install (install.sh / npm / pnpm / bun)
 
-If you used `https://openclaw.ai/install.sh` or `install.ps1`, the CLI was installed with `npm install -g openclaw@latest`.
+If you used `https://raw.githubusercontent.com/lcx1215/lcx-s-agent/main/scripts/install.sh` or `install.ps1`, the CLI was installed with `npm install -g openclaw@latest`.
 Remove it with `npm rm -g openclaw` (or `pnpm remove -g` / `bun remove -g` if you installed that way).
 
 ### Source checkout (git clone)

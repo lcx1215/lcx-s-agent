@@ -3,7 +3,7 @@ read_when:
   - 你想要可复现、可回滚的安装
   - 你已经在使用 Nix/NixOS/Home Manager
   - 你想要所有内容都固定并以声明式管理
-summary: 使用 Nix 声明式安装 OpenClaw
+summary: 使用 Nix 声明式安装 LCX Agent
 title: Nix
 x-i18n:
   generated_at: "2026-02-03T07:49:51Z"
@@ -16,7 +16,7 @@ x-i18n:
 
 # Nix 安装
 
-使用 Nix 运行 OpenClaw 的推荐方式是通过 **[nix-openclaw](https://github.com/openclaw/nix-openclaw)** — 一个开箱即用的 Home Manager 模块。
+使用 Nix 运行 LCX Agent 的推荐方式是通过 **[nix-openclaw](https://github.com/openclaw/nix-openclaw)** — 一个开箱即用的 Home Manager 模块。
 
 ## 快速开始
 
@@ -54,7 +54,7 @@ Reference the nix-openclaw README for module options.
 
 当设置 `OPENCLAW_NIX_MODE=1` 时（nix-openclaw 会自动设置）：
 
-OpenClaw 支持 **Nix 模式**，使配置确定性并禁用自动安装流程。
+LCX Agent 支持 **Nix 模式**，使配置确定性并禁用自动安装流程。
 通过导出以下环境变量启用：
 
 ```bash
@@ -63,7 +63,7 @@ OPENCLAW_NIX_MODE=1
 
 ### 配置 + 状态路径
 
-OpenClaw 从 `OPENCLAW_CONFIG_PATH` 读取 JSON5 配置，并将可变数据存储在 `OPENCLAW_STATE_DIR` 中。
+LCX Agent 从 `OPENCLAW_CONFIG_PATH` 读取 JSON5 配置，并将可变数据存储在 `OPENCLAW_STATE_DIR` 中。
 
 - `OPENCLAW_STATE_DIR`（默认：`~/.openclaw`）
 - `OPENCLAW_CONFIG_PATH`（默认：`$OPENCLAW_STATE_DIR/openclaw.json`）

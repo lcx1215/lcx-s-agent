@@ -61,7 +61,7 @@ deterministic demo 不会被包装成真实推理证据。
   只能证明这次编排和闸门结果，不能证明 Qwen 权重学习、`eval_absorbed`、晋升
   或长期能力。
 - `codex_coding_harness` 仍是实际 coding executor，ACP、sandbox、审批和
-  coding trajectory 仍由它及 OpenClaw 现有边界负责。质量 harness 可以在
+  coding trajectory 仍由它及 LCX Agent 现有边界负责。质量 harness 可以在
   coding 任务前后提供计划/审查/验证，但不复制 ACP app-server。
 
 ## 失败语义

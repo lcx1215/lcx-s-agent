@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { enableCompileCache } from "node:module";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { ensureStartupEgressDispatcher } from "./agents/model-egress.js";
 import { isRootHelpInvocation, isRootVersionInvocation } from "./cli/argv.js";
 import { resolveCliName } from "./cli/cli-name.js";
 import { applyCliProfileEnv, parseCliProfileArgs } from "./cli/profile.js";
@@ -47,6 +48,10 @@ if (
   process.title = cliName;
   installProcessWarningFilter();
   normalizeEnv();
+  // Before anything in the CLI can reach the network: a plain `fetch` issued before the first
+  // model turn (onboarding, `doctor`, provider discovery) would otherwise follow the host's proxy.
+  // Child processes still inherit the host's proxy variables — see `ensureStartupEgressDispatcher`.
+  ensureStartupEgressDispatcher();
   if (!isTruthyEnvValue(process.env.NODE_DISABLE_COMPILE_CACHE)) {
     try {
       enableCompileCache();

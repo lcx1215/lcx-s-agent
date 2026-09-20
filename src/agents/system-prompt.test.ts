@@ -175,7 +175,7 @@ describe("buildAgentSystemPrompt", () => {
     });
 
     expect(prompt).toContain(
-      "Build and operate Lobster / OpenClaw as a research operating system for one real user, with an explicit path from research to authorized execution.",
+      "Build and operate Lobster / LCX Agent as a research operating system for one real user, with an explicit path from research to authorized execution.",
     );
     expect(prompt).toContain(
       "Optimize for steady daily improvement, long-horizon cumulative learning, and better long-term money-making through stronger filtering, timing discipline, and hard risk control, not through hype, noise, or fake prediction.",
@@ -860,7 +860,7 @@ describe("buildAgentSystemPrompt", () => {
       workspaceDir: "/tmp/openclaw",
     });
 
-    expect(prompt).toContain("## OpenClaw CLI Quick Reference");
+    expect(prompt).toContain("## LCX Agent CLI Quick Reference");
     expect(prompt).toContain("openclaw gateway restart");
     expect(prompt).toContain("Do not invent commands");
   });
@@ -951,7 +951,7 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).not.toContain('runtime="acp" requires `agentId`');
     expect(prompt).not.toContain("not ACP harness ids");
     expect(prompt).toContain("- sessions_spawn: Spawn an isolated sub-agent session");
-    expect(prompt).toContain("- agents_list: List OpenClaw agent ids allowed for sessions_spawn");
+    expect(prompt).toContain("- agents_list: List LCX Agent agent ids allowed for sessions_spawn");
   });
 
   it("omits ACP harness spawn guidance for sandboxed sessions and shows ACP block note", () => {
@@ -990,9 +990,9 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain(
       "- If exactly one skill clearly applies: select it, read its SKILL.md at <location> with `Read`, then follow it.",
     );
-    expect(prompt).toContain("OpenClaw docs: /tmp/openclaw/docs");
+    expect(prompt).toContain("LCX Agent docs: /tmp/openclaw/docs");
     expect(prompt).toContain(
-      "For OpenClaw behavior, commands, config, or architecture: consult local docs first.",
+      "For LCX Agent behavior, commands, config, or architecture: consult local docs first.",
     );
   });
 
@@ -1003,9 +1003,9 @@ describe("buildAgentSystemPrompt", () => {
     });
 
     expect(prompt).toContain("## Documentation");
-    expect(prompt).toContain("OpenClaw docs: /tmp/openclaw/docs");
+    expect(prompt).toContain("LCX Agent docs: /tmp/openclaw/docs");
     expect(prompt).toContain(
-      "For OpenClaw behavior, commands, config, or architecture: consult local docs first.",
+      "For LCX Agent behavior, commands, config, or architecture: consult local docs first.",
     );
   });
 
@@ -1110,7 +1110,7 @@ describe("buildAgentSystemPrompt", () => {
       toolNames: ["gateway", "exec"],
     });
 
-    expect(prompt).toContain("## OpenClaw Self-Update");
+    expect(prompt).toContain("## LCX Agent Self-Update");
     expect(prompt).toContain("config.schema");
     expect(prompt).toContain("update.check");
     expect(prompt).toContain("config.apply");
@@ -1366,7 +1366,7 @@ describe("buildSubagentSystemPrompt", () => {
     expect(prompt).toContain("set `agentId` unless `acp.defaultAgent` is configured");
     expect(prompt).toContain("Do not ask users to run slash commands or CLI");
     expect(prompt).toContain("Do not use `exec` (`openclaw ...`, `acpx ...`)");
-    expect(prompt).toContain("Use `subagents` only for OpenClaw subagents");
+    expect(prompt).toContain("Use `subagents` only for LCX Agent subagents");
     expect(prompt).toContain("Subagent results auto-announce back to you");
     expect(prompt).toContain("Auto-announce is push-based");
     expect(prompt).toContain("Wait for completion events to arrive as user messages.");
@@ -1427,14 +1427,9 @@ describe("buildSubagentSystemPrompt", () => {
         },
         expectMainAgentLabel: false,
       },
-      {
-        name: "implicit default depth/maxSpawnDepth",
-        input: {
-          childSessionKey: "agent:main:subagent:abc",
-          task: "basic task",
-        },
-        expectMainAgentLabel: true,
-      },
+      // Note: the "implicit default" case this used to have is gone on purpose.
+      // With maxSpawnDepth defaulting to 2, a depth-1 sub-agent is an orchestrator
+      // and DOES get spawning guidance - that is asserted by the case below.
     ] as const;
 
     for (const testCase of leafCases) {
@@ -1445,5 +1440,16 @@ describe("buildSubagentSystemPrompt", () => {
         expect(prompt, testCase.name).toContain("spawned by the main agent");
       }
     }
+  });
+
+  it("gives depth-1 agents spawning guidance under the default depth", () => {
+    // Default maxSpawnDepth is 2, so a depth-1 sub-agent is an orchestrator and
+    // must be told it can spawn - otherwise nesting is configured but never used.
+    const prompt = buildSubagentSystemPrompt({
+      childSessionKey: "agent:main:subagent:abc",
+      task: "research task",
+      childDepth: 1,
+    });
+    expect(prompt).toContain("## Sub-Agent Spawning");
   });
 });

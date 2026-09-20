@@ -10,7 +10,7 @@ sidebarTitle: "Wizard Reference"
 
 # Onboarding Wizard Reference
 
-This is the full reference for the `openclaw onboard` CLI wizard.
+This is the full reference for the `lcx onboard` CLI wizard.
 For a high-level overview, see [Onboarding Wizard](/start/wizard).
 
 ## Flow details (local mode)
@@ -23,7 +23,7 @@ For a high-level overview, see [Onboarding Wizard](/start/wizard).
     - CLI `--reset` defaults to `config+creds+sessions`; use `--reset-scope full`
       to also remove workspace.
     - If the config is invalid or contains legacy keys, the wizard stops and asks
-      you to run `openclaw doctor` before continuing.
+      you to run `lcx doctor` before continuing.
     - Reset uses `trash` (never `rm`) and offers scopes:
       - Config only
       - Config + credentials + sessions
@@ -83,7 +83,7 @@ For a high-level overview, see [Onboarding Wizard](/start/wizard).
     - [Signal](/channels/signal): optional `signal-cli` install + account config.
     - [BlueBubbles](/channels/bluebubbles): **recommended for iMessage**; server URL + password + webhook.
     - [iMessage](/channels/imessage): legacy `imsg` CLI path + DB access.
-    - DM security: default is pairing. First DM sends a code; approve via `openclaw pairing approve <channel> <code>` or use allowlists.
+    - DM security: default is pairing. First DM sends a code; approve via `lcx pairing approve <channel> <code>` or use allowlists.
   </Step>
   <Step title="Daemon install">
     - macOS: LaunchAgent
@@ -94,8 +94,8 @@ For a high-level overview, see [Onboarding Wizard](/start/wizard).
     - **Runtime selection:** Node (recommended; required for WhatsApp/Telegram). Bun is **not recommended**.
   </Step>
   <Step title="Health check">
-    - Starts the Gateway (if needed) and runs `openclaw health`.
-    - Tip: `openclaw status --deep` adds gateway health probes to status output (requires a reachable gateway).
+    - Starts the Gateway (if needed) and runs `lcx health`.
+    - Tip: `lcx status --deep` adds gateway health probes to status output (requires a reachable gateway).
   </Step>
   <Step title="Skills (recommended)">
     - Reads the available skills and checks requirements.
@@ -117,7 +117,7 @@ If the Control UI assets are missing, the wizard attempts to build them; fallbac
 Use `--non-interactive` to automate or script onboarding:
 
 ```bash
-openclaw onboard --non-interactive \
+lcx onboard --non-interactive \
   --mode local \
   --auth-choice apiKey \
   --anthropic-api-key "$ANTHROPIC_API_KEY" \
@@ -137,7 +137,7 @@ Add `--json` for a machine‑readable summary.
 <AccordionGroup>
   <Accordion title="Gemini example">
     ```bash
-    openclaw onboard --non-interactive \
+    lcx onboard --non-interactive \
       --mode local \
       --auth-choice gemini-api-key \
       --gemini-api-key "$GEMINI_API_KEY" \
@@ -147,7 +147,7 @@ Add `--json` for a machine‑readable summary.
   </Accordion>
   <Accordion title="Z.AI example">
     ```bash
-    openclaw onboard --non-interactive \
+    lcx onboard --non-interactive \
       --mode local \
       --auth-choice zai-api-key \
       --zai-api-key "$ZAI_API_KEY" \
@@ -157,7 +157,7 @@ Add `--json` for a machine‑readable summary.
   </Accordion>
   <Accordion title="Vercel AI Gateway example">
     ```bash
-    openclaw onboard --non-interactive \
+    lcx onboard --non-interactive \
       --mode local \
       --auth-choice ai-gateway-api-key \
       --ai-gateway-api-key "$AI_GATEWAY_API_KEY" \
@@ -167,7 +167,7 @@ Add `--json` for a machine‑readable summary.
   </Accordion>
   <Accordion title="Cloudflare AI Gateway example">
     ```bash
-    openclaw onboard --non-interactive \
+    lcx onboard --non-interactive \
       --mode local \
       --auth-choice cloudflare-ai-gateway-api-key \
       --cloudflare-ai-gateway-account-id "your-account-id" \
@@ -179,7 +179,7 @@ Add `--json` for a machine‑readable summary.
   </Accordion>
   <Accordion title="Moonshot example">
     ```bash
-    openclaw onboard --non-interactive \
+    lcx onboard --non-interactive \
       --mode local \
       --auth-choice moonshot-api-key \
       --moonshot-api-key "$MOONSHOT_API_KEY" \
@@ -189,7 +189,7 @@ Add `--json` for a machine‑readable summary.
   </Accordion>
   <Accordion title="Synthetic example">
     ```bash
-    openclaw onboard --non-interactive \
+    lcx onboard --non-interactive \
       --mode local \
       --auth-choice synthetic-api-key \
       --synthetic-api-key "$SYNTHETIC_API_KEY" \
@@ -199,7 +199,7 @@ Add `--json` for a machine‑readable summary.
   </Accordion>
   <Accordion title="OpenCode Zen example">
     ```bash
-    openclaw onboard --non-interactive \
+    lcx onboard --non-interactive \
       --mode local \
       --auth-choice opencode-zen \
       --opencode-zen-api-key "$OPENCODE_API_KEY" \
@@ -212,7 +212,7 @@ Add `--json` for a machine‑readable summary.
 ### Add agent (non-interactive)
 
 ```bash
-openclaw agents add work \
+lcx agents add work \
   --workspace ~/.openclaw/workspace-work \
   --model openai/gpt-5.2 \
   --bind whatsapp:biz \
@@ -257,7 +257,7 @@ Typical fields in `~/.openclaw/openclaw.json`:
 - `wizard.lastRunCommand`
 - `wizard.lastRunMode`
 
-`openclaw agents add` writes `agents.list[]` and optional `bindings`.
+`lcx agents add` writes `agents.list[]` and optional `bindings`.
 
 WhatsApp credentials go under `~/.openclaw/credentials/whatsapp/<accountId>/`.
 Sessions are stored under `~/.openclaw/agents/<agentId>/sessions/`.

@@ -1,20 +1,20 @@
 ---
-summary: "Gmail Pub/Sub push wired into OpenClaw webhooks via gogcli"
+summary: "Gmail Pub/Sub push wired into LCX Agent webhooks via gogcli"
 read_when:
-  - Wiring Gmail inbox triggers to OpenClaw
+  - Wiring Gmail inbox triggers to LCX Agent
   - Setting up Pub/Sub push for agent wake
 title: "Gmail PubSub"
 ---
 
-# Gmail Pub/Sub -> OpenClaw
+# Gmail Pub/Sub -> LCX Agent
 
-Goal: Gmail watch -> Pub/Sub push -> `gog gmail watch serve` -> OpenClaw webhook.
+Goal: Gmail watch -> Pub/Sub push -> `gog gmail watch serve` -> LCX Agent webhook.
 
 ## Prereqs
 
 - `gcloud` installed and logged in ([install guide](https://docs.cloud.google.com/sdk/docs/install-sdk)).
 - `gog` (gogcli) installed and authorized for the Gmail account ([gogcli.sh](https://gogcli.sh/)).
-- OpenClaw hooks enabled (see [Webhooks](/automation/webhook)).
+- LCX Agent hooks enabled (see [Webhooks](/automation/webhook)).
 - `tailscale` logged in ([tailscale.com](https://tailscale.com/)). Supported setup uses Tailscale Funnel for the public HTTPS endpoint.
   Other tunnel services can work, but are DIY/unsupported and require manual wiring.
   Right now, Tailscale is what we support.
@@ -92,20 +92,20 @@ under `~/.openclaw/hooks/transforms` (see [Webhooks](/automation/webhook)).
 
 ## Wizard (recommended)
 
-Use the OpenClaw helper to wire everything together (installs deps on macOS via brew):
+Use the LCX Agent helper to wire everything together (installs deps on macOS via brew):
 
 ```bash
-openclaw webhooks gmail setup \
+lcx webhooks gmail setup \
   --account openclaw@gmail.com
 ```
 
 Defaults:
 
 - Uses Tailscale Funnel for the public push endpoint.
-- Writes `hooks.gmail` config for `openclaw webhooks gmail run`.
+- Writes `hooks.gmail` config for `lcx webhooks gmail run`.
 - Enables the Gmail hook preset (`hooks.presets: ["gmail"]`).
 
-Path note: when `tailscale.mode` is enabled, OpenClaw automatically sets
+Path note: when `tailscale.mode` is enabled, LCX Agent automatically sets
 `hooks.gmail.serve.path` to `/` and keeps the public path at
 `hooks.gmail.tailscale.path` (default `/gmail-pubsub`) because Tailscale
 strips the set-path prefix before proxying.
@@ -129,7 +129,7 @@ Gateway auto-start (recommended):
 Manual daemon (starts `gog gmail watch serve` + auto-renew):
 
 ```bash
-openclaw webhooks gmail run
+lcx webhooks gmail run
 ```
 
 ## One-time setup
@@ -194,10 +194,10 @@ gog gmail watch serve \
 Notes:
 
 - `--token` protects the push endpoint (`x-gog-token` or `?token=`).
-- `--hook-url` points to OpenClaw `/hooks/gmail` (mapped; isolated run + summary to main).
-- `--include-body` and `--max-bytes` control the body snippet sent to OpenClaw.
+- `--hook-url` points to LCX Agent `/hooks/gmail` (mapped; isolated run + summary to main).
+- `--include-body` and `--max-bytes` control the body snippet sent to LCX Agent.
 
-Recommended: `openclaw webhooks gmail run` wraps the same flow and auto-renews the watch.
+Recommended: `lcx webhooks gmail run` wraps the same flow and auto-renews the watch.
 
 ## Expose the handler (advanced, unsupported)
 

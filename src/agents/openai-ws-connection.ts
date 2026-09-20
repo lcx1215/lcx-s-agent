@@ -14,7 +14,10 @@
  */
 
 import { EventEmitter } from "node:events";
+import { HttpsProxyAgent } from "https-proxy-agent";
 import WebSocket from "ws";
+import type { OpenClawConfig } from "../config/config.js";
+import { resolveModelsProxyUrl } from "./model-egress.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WebSocket Event Types (Server → Client)
@@ -255,6 +258,15 @@ export interface OpenAIWebSocketManagerOptions {
   maxRetries?: number;
   /** Custom backoff delays in ms (default: [1000, 2000, 4000, 8000, 16000]) */
   backoffDelaysMs?: readonly number[];
+  /**
+   * Config used to resolve the declared model egress proxy.
+   *
+   * `ws` ignores ambient proxy variables entirely, which is what the laptop-vs-AWS/Cloudflare
+   * requirement wants — but it also ignored `models.proxy`, so the same field behaved differently
+   * on the HTTP path and this one. Resolved per connection attempt so a reconnect picks up the
+   * current declaration instead of a snapshot from construction time.
+   */
+  config?: OpenClawConfig;
 }
 
 type InternalEvents = {
@@ -294,12 +306,14 @@ export class OpenAIWebSocketManager extends EventEmitter<InternalEvents> {
   private readonly wsUrl: string;
   private readonly maxRetries: number;
   private readonly backoffDelaysMs: readonly number[];
+  private readonly config: OpenClawConfig | undefined;
 
   constructor(options: OpenAIWebSocketManagerOptions = {}) {
     super();
     this.wsUrl = options.url ?? OPENAI_WS_URL;
     this.maxRetries = options.maxRetries ?? MAX_RETRIES;
     this.backoffDelaysMs = options.backoffDelaysMs ?? BACKOFF_DELAYS_MS;
+    this.config = options.config;
   }
 
   // ─── Public API ────────────────────────────────────────────────────────────
@@ -379,11 +393,16 @@ export class OpenAIWebSocketManager extends EventEmitter<InternalEvents> {
         return;
       }
 
+      // `ws` never reads ambient proxy variables, which is exactly what the egress requirement
+      // wants. It also means a declared proxy has to be handed over explicitly — otherwise
+      // `models.proxy` would be honoured on the HTTP stream path and silently ignored here.
+      const proxyUrl = resolveModelsProxyUrl(this.config);
       const socket = new WebSocket(this.wsUrl, {
         headers: {
           Authorization: `Bearer ${this.apiKey}`,
           "OpenAI-Beta": "responses-websocket=v1",
         },
+        ...(proxyUrl ? { agent: new HttpsProxyAgent<string>(proxyUrl) } : {}),
       });
 
       this.ws = socket;

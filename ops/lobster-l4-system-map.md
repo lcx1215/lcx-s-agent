@@ -124,7 +124,7 @@ The adapter supports:
 - direct, group, and channel conversations
 - JSON webhook inbound messages with token or network-boundary authentication
 - JSON HTTP outbound replies with idempotency, reply, thread, and media fields
-- normal OpenClaw routing and reply dispatch through the shared agent runtime
+- normal LCX Agent routing and reply dispatch through the shared agent runtime
 
 Rule:
 

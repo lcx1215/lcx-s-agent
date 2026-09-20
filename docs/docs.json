@@ -1,6 +1,6 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "name": "OpenClaw",
+  "name": "LCX Agent",
   "description": "Self-hosted gateway that connects WhatsApp, Telegram, Discord, iMessage, and more to AI coding agents. Run a single Gateway process on your own machine and message your AI assistant from anywhere.",
   "theme": "mint",
   "icons": {
@@ -36,12 +36,12 @@
     "links": [
       {
         "label": "GitHub",
-        "href": "https://github.com/openclaw/openclaw",
+        "href": "https://github.com/lcx1215/lcx-s-agent",
         "icon": "github"
       },
       {
         "label": "Releases",
-        "href": "https://github.com/openclaw/openclaw/releases",
+        "href": "https://github.com/lcx1215/lcx-s-agent/releases",
         "icon": "package"
       }
     ]
@@ -265,15 +265,15 @@
     },
     {
       "source": "/clawd",
-      "destination": "/start/openclaw"
+      "destination": "/start/personal-assistant"
     },
     {
       "source": "/start/clawd",
-      "destination": "/start/openclaw"
+      "destination": "/start/personal-assistant"
     },
     {
       "source": "/start/clawd/",
-      "destination": "/start/openclaw"
+      "destination": "/start/personal-assistant"
     },
     {
       "source": "/start/pairing",
@@ -281,15 +281,23 @@
     },
     {
       "source": "/clawhub",
-      "destination": "/tools/clawhub"
+      "destination": "/tools/skills-directory"
+    },
+    {
+      "source": "/start/openclaw",
+      "destination": "/start/personal-assistant"
+    },
+    {
+      "source": "/tools/clawhub",
+      "destination": "/tools/skills-directory"
     },
     {
       "source": "/clawdhub",
-      "destination": "/tools/clawhub"
+      "destination": "/tools/skills-directory"
     },
     {
       "source": "/tools/clawdhub",
-      "destination": "/tools/clawhub"
+      "destination": "/tools/skills-directory"
     },
     {
       "source": "/configuration",
@@ -752,7 +760,7 @@
               {
                 "group": "Guides",
                 "pages": [
-                  "start/openclaw",
+                  "start/personal-assistant",
                   "start/wizard-cli-reference",
                   "start/wizard-cli-automation"
                 ]
@@ -946,7 +954,7 @@
                   "tools/slash-commands",
                   "tools/skills",
                   "tools/skills-config",
-                  "tools/clawhub",
+                  "tools/skills-directory",
                   "tools/plugin"
                 ]
               },
@@ -1330,7 +1338,7 @@
               },
               {
                 "group": "指南",
-                "pages": ["zh-CN/start/openclaw"]
+                "pages": ["zh-CN/start/personal-assistant"]
               }
             ]
           },
@@ -1517,7 +1525,7 @@
                   "zh-CN/tools/slash-commands",
                   "zh-CN/tools/skills",
                   "zh-CN/tools/skills-config",
-                  "zh-CN/tools/clawhub",
+                  "zh-CN/tools/skills-directory",
                   "zh-CN/tools/plugin"
                 ]
               },

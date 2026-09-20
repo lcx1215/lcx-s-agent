@@ -20,7 +20,7 @@ x-i18n:
 
 旧版传输：[Bridge 协议](/gateway/bridge-protocol)（TCP JSONL；当前节点已弃用/移除）。
 
-macOS 也可以在**节点模式**下运行：节点主机连接到 Gateway 网关的 WS 服务器，并将本地 canvas/camera 命令作为节点暴露（因此 `openclaw nodes …` 可以针对这台 Mac 工作）。
+macOS 也可以在**节点模式**下运行：节点主机连接到 Gateway 网关的 WS 服务器，并将本地 canvas/camera 命令作为节点暴露（因此 `lcx nodes …` 可以针对这台 Mac 工作）。
 
 注意事项：
 
@@ -35,17 +35,17 @@ macOS 也可以在**节点模式**下运行：节点主机连接到 Gateway 网�
 快速 CLI：
 
 ```bash
-openclaw devices list
-openclaw devices approve <requestId>
-openclaw devices reject <requestId>
-openclaw nodes status
-openclaw nodes describe --node <idOrNameOrIp>
+lcx devices list
+lcx devices approve <requestId>
+lcx devices reject <requestId>
+lcx nodes status
+lcx nodes describe --node <idOrNameOrIp>
 ```
 
 注意事项：
 
 - 当节点的设备配对角色包含 `node` 时，`nodes status` 将节点标记为**已配对**。
-- `node.pair.*`（CLI：`openclaw nodes pending/approve/reject`）是一个单独的 Gateway 网关拥有的
+- `node.pair.*`（CLI：`lcx nodes pending/approve/reject`）是一个单独的 Gateway 网关拥有的
   节点配对存储；它**不会**限制 WS `connect` 握手。
 
 ## 远程节点主机（system.run）
@@ -65,7 +65,7 @@ openclaw nodes describe --node <idOrNameOrIp>
 在节点机器上：
 
 ```bash
-openclaw node run --host <gateway-host> --port 18789 --display-name "Build Node"
+lcx node run --host <gateway-host> --port 18789 --display-name "Build Node"
 ```
 
 ### 通过 SSH 隧道访问远程 Gateway 网关（loopback 绑定）
@@ -82,19 +82,19 @@ ssh -N -L 18790:127.0.0.1:18789 user@gateway-host
 
 # 终端 B：导出 Gateway 网关令牌并通过隧道连接
 export OPENCLAW_GATEWAY_TOKEN="<gateway-token>"
-openclaw node run --host 127.0.0.1 --port 18790 --display-name "Build Node"
+lcx node run --host 127.0.0.1 --port 18790 --display-name "Build Node"
 ```
 
 注意事项：
 
 - 令牌是 Gateway 网关配置中的 `gateway.auth.token`（Gateway 网关主机上的 `~/.openclaw/openclaw.json`）。
-- `openclaw node run` 读取 `OPENCLAW_GATEWAY_TOKEN` 进行认证。
+- `lcx node run` 读取 `OPENCLAW_GATEWAY_TOKEN` 进行认证。
 
 ### 启动节点主机（服务）
 
 ```bash
-openclaw node install --host <gateway-host> --port 18789 --display-name "Build Node"
-openclaw node restart
+lcx node install --host <gateway-host> --port 18789 --display-name "Build Node"
+lcx node restart
 ```
 
 ### 配对 + 命名
@@ -102,23 +102,23 @@ openclaw node restart
 在 Gateway 网关主机上：
 
 ```bash
-openclaw nodes pending
-openclaw nodes approve <requestId>
-openclaw nodes list
+lcx nodes pending
+lcx nodes approve <requestId>
+lcx nodes list
 ```
 
 命名选项：
 
 - 在 `openclaw node run` / `openclaw node install` 上使用 `--display-name`（持久化在节点上的 `~/.openclaw/node.json` 中）。
-- `openclaw nodes rename --node <id|name|ip> --name "Build Node"`（Gateway 网关覆盖）。
+- `lcx nodes rename --node <id|name|ip> --name "Build Node"`（Gateway 网关覆盖）。
 
 ### 将命令加入允许列表
 
 Exec 批准是**每个节点主机**的。从 Gateway 网关添加允许列表条目：
 
 ```bash
-openclaw approvals allowlist add --node <id|name|ip> "/usr/bin/uname"
-openclaw approvals allowlist add --node <id|name|ip> "/usr/bin/sw_vers"
+lcx approvals allowlist add --node <id|name|ip> "/usr/bin/uname"
+lcx approvals allowlist add --node <id|name|ip> "/usr/bin/sw_vers"
 ```
 
 批准存储在节点主机的 `~/.openclaw/exec-approvals.json` 中。
@@ -128,9 +128,9 @@ openclaw approvals allowlist add --node <id|name|ip> "/usr/bin/sw_vers"
 配置默认值（Gateway 网关配置）：
 
 ```bash
-openclaw config set tools.exec.host node
-openclaw config set tools.exec.security allowlist
-openclaw config set tools.exec.node "<id-or-name>"
+lcx config set tools.exec.host node
+lcx config set tools.exec.security allowlist
+lcx config set tools.exec.node "<id-or-name>"
 ```
 
 或按会话：
@@ -153,7 +153,7 @@ openclaw config set tools.exec.node "<id-or-name>"
 低级（原始 RPC）：
 
 ```bash
-openclaw nodes invoke --node <idOrNameOrIp> --command canvas.eval --params '{"javaScript":"location.href"}'
+lcx nodes invoke --node <idOrNameOrIp> --command canvas.eval --params '{"javaScript":"location.href"}'
 ```
 
 对于常见的"给智能体一个 MEDIA 附件"工作流，存在更高级的辅助工具。
@@ -165,17 +165,17 @@ openclaw nodes invoke --node <idOrNameOrIp> --command canvas.eval --params '{"ja
 CLI 辅助工具（写入临时文件并打印 `MEDIA:<path>`）：
 
 ```bash
-openclaw nodes canvas snapshot --node <idOrNameOrIp> --format png
-openclaw nodes canvas snapshot --node <idOrNameOrIp> --format jpg --max-width 1200 --quality 0.9
+lcx nodes canvas snapshot --node <idOrNameOrIp> --format png
+lcx nodes canvas snapshot --node <idOrNameOrIp> --format jpg --max-width 1200 --quality 0.9
 ```
 
 ### Canvas 控制
 
 ```bash
-openclaw nodes canvas present --node <idOrNameOrIp> --target https://example.com
-openclaw nodes canvas hide --node <idOrNameOrIp>
-openclaw nodes canvas navigate https://example.com --node <idOrNameOrIp>
-openclaw nodes canvas eval --node <idOrNameOrIp> --js "document.title"
+lcx nodes canvas present --node <idOrNameOrIp> --target https://example.com
+lcx nodes canvas hide --node <idOrNameOrIp>
+lcx nodes canvas navigate https://example.com --node <idOrNameOrIp>
+lcx nodes canvas eval --node <idOrNameOrIp> --js "document.title"
 ```
 
 注意事项：
@@ -186,9 +186,9 @@ openclaw nodes canvas eval --node <idOrNameOrIp> --js "document.title"
 ### A2UI（Canvas）
 
 ```bash
-openclaw nodes canvas a2ui push --node <idOrNameOrIp> --text "Hello"
-openclaw nodes canvas a2ui push --node <idOrNameOrIp> --jsonl ./payload.jsonl
-openclaw nodes canvas a2ui reset --node <idOrNameOrIp>
+lcx nodes canvas a2ui push --node <idOrNameOrIp> --text "Hello"
+lcx nodes canvas a2ui push --node <idOrNameOrIp> --jsonl ./payload.jsonl
+lcx nodes canvas a2ui reset --node <idOrNameOrIp>
 ```
 
 注意事项：
@@ -200,16 +200,16 @@ openclaw nodes canvas a2ui reset --node <idOrNameOrIp>
 照片（`jpg`）：
 
 ```bash
-openclaw nodes camera list --node <idOrNameOrIp>
-openclaw nodes camera snap --node <idOrNameOrIp>            # 默认：两个朝向（2 个 MEDIA 行）
-openclaw nodes camera snap --node <idOrNameOrIp> --facing front
+lcx nodes camera list --node <idOrNameOrIp>
+lcx nodes camera snap --node <idOrNameOrIp>            # 默认：两个朝向（2 个 MEDIA 行）
+lcx nodes camera snap --node <idOrNameOrIp> --facing front
 ```
 
 视频片段（`mp4`）：
 
 ```bash
-openclaw nodes camera clip --node <idOrNameOrIp> --duration 10s
-openclaw nodes camera clip --node <idOrNameOrIp> --duration 3000 --no-audio
+lcx nodes camera clip --node <idOrNameOrIp> --duration 10s
+lcx nodes camera clip --node <idOrNameOrIp> --duration 3000 --no-audio
 ```
 
 注意事项：
@@ -223,8 +223,8 @@ openclaw nodes camera clip --node <idOrNameOrIp> --duration 3000 --no-audio
 节点暴露 `screen.record`（mp4）。示例：
 
 ```bash
-openclaw nodes screen record --node <idOrNameOrIp> --duration 10s --fps 10
-openclaw nodes screen record --node <idOrNameOrIp> --duration 10s --fps 10 --no-audio
+lcx nodes screen record --node <idOrNameOrIp> --duration 10s --fps 10
+lcx nodes screen record --node <idOrNameOrIp> --duration 10s --fps 10 --no-audio
 ```
 
 注意事项：
@@ -242,8 +242,8 @@ openclaw nodes screen record --node <idOrNameOrIp> --duration 10s --fps 10 --no-
 CLI 辅助工具：
 
 ```bash
-openclaw nodes location get --node <idOrNameOrIp>
-openclaw nodes location get --node <idOrNameOrIp> --accuracy precise --max-age 15000 --location-timeout 10000
+lcx nodes location get --node <idOrNameOrIp>
+lcx nodes location get --node <idOrNameOrIp> --accuracy precise --max-age 15000 --location-timeout 10000
 ```
 
 注意事项：
@@ -259,7 +259,7 @@ openclaw nodes location get --node <idOrNameOrIp> --accuracy precise --max-age 1
 低级调用：
 
 ```bash
-openclaw nodes invoke --node <idOrNameOrIp> --command sms.send --params '{"to":"+15555550123","message":"Hello from OpenClaw"}'
+lcx nodes invoke --node <idOrNameOrIp> --command sms.send --params '{"to":"+15555550123","message":"Hello from LCX Agent"}'
 ```
 
 注意事项：
@@ -275,8 +275,8 @@ macOS 节点暴露 `system.run`、`system.notify` 和 `system.execApprovals.get/
 示例：
 
 ```bash
-openclaw nodes run --node <idOrNameOrIp> -- echo "Hello from mac node"
-openclaw nodes notify --node <idOrNameOrIp> --title "Ping" --body "Gateway ready"
+lcx nodes run --node <idOrNameOrIp> -- echo "Hello from mac node"
+lcx nodes notify --node <idOrNameOrIp> --title "Ping" --body "Gateway ready"
 ```
 
 注意事项：
@@ -297,21 +297,21 @@ openclaw nodes notify --node <idOrNameOrIp> --title "Ping" --body "Gateway ready
 全局默认：
 
 ```bash
-openclaw config set tools.exec.node "node-id-or-name"
+lcx config set tools.exec.node "node-id-or-name"
 ```
 
 按智能体覆盖：
 
 ```bash
-openclaw config get agents.list
-openclaw config set agents.list[0].tools.exec.node "node-id-or-name"
+lcx config get agents.list
+lcx config set agents.list[0].tools.exec.node "node-id-or-name"
 ```
 
 取消设置以允许任何节点：
 
 ```bash
-openclaw config unset tools.exec.node
-openclaw config unset agents.list[0].tools.exec.node
+lcx config unset tools.exec.node
+lcx config unset agents.list[0].tools.exec.node
 ```
 
 ## 权限映射
@@ -320,14 +320,14 @@ openclaw config unset agents.list[0].tools.exec.node
 
 ## 无头节点主机（跨平台）
 
-OpenClaw 可以运行**无头节点主机**（无 UI），它连接到 Gateway 网关
+LCX Agent 可以运行**无头节点主机**（无 UI），它连接到 Gateway 网关
 WebSocket 并暴露 `system.run` / `system.which`。这在 Linux/Windows
 上或在服务器旁运行最小节点时很有用。
 
 启动它：
 
 ```bash
-openclaw node run --host <gateway-host> --port 18789
+lcx node run --host <gateway-host> --port 18789
 ```
 
 注意事项：
@@ -341,5 +341,5 @@ openclaw node run --host <gateway-host> --port 18789
 
 ## Mac 节点模式
 
-- 节点主机作为节点连接到 Gateway 网关 WS 服务器（因此 `openclaw nodes …` 可以针对这台 Mac 工作）。
+- 节点主机作为节点连接到 Gateway 网关 WS 服务器（因此 `lcx nodes …` 可以针对这台 Mac 工作）。
 - 在远程模式下，应用为 Gateway 网关端口打开 SSH 隧道并连接到 `localhost`。

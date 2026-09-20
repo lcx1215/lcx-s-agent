@@ -2,7 +2,7 @@
 summary: Node + tsx "__name is not a function" crash notes and workarounds
 read_when:
   - Debugging Node-only dev scripts or watch mode failures
-  - Investigating tsx/esbuild loader crashes in OpenClaw
+  - Investigating tsx/esbuild loader crashes in LCX Agent
 title: "Node + tsx Crash"
 ---
 
@@ -10,7 +10,7 @@ title: "Node + tsx Crash"
 
 ## Summary
 
-Running OpenClaw via Node with `tsx` fails at startup with:
+Running LCX Agent via Node with `tsx` fails at startup with:
 
 ```
 [openclaw] Failed to start CLI: TypeError: __name is not a function
@@ -56,7 +56,7 @@ node --import tsx scripts/repro/tsx-name-repro.ts
 ## Regression history
 
 - `2871657e` (2026-01-06): scripts changed from Bun to tsx to make Bun optional.
-- Before that (Bun path), `openclaw status` and `gateway:watch` worked.
+- Before that (Bun path), `lcx status` and `gateway:watch` worked.
 
 ## Workarounds
 

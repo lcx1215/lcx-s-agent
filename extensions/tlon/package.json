@@ -1,7 +1,7 @@
 {
   "name": "@openclaw/tlon",
   "version": "2026.3.2",
-  "description": "OpenClaw Tlon/Urbit channel plugin",
+  "description": "LCX Agent Tlon/Urbit channel plugin",
   "type": "module",
   "dependencies": {
     "@tloncorp/api": "https://codeload.github.com/tloncorp/api-beta/tar.gz/7eede1c1a756977b09f96aa14a92e2b06318ae87",
@@ -28,7 +28,7 @@
     "install": {
       "npmSpec": "@openclaw/tlon",
       "localPath": "extensions/tlon",
-      "defaultChoice": "npm"
+      "defaultChoice": "local"
     }
   }
 }

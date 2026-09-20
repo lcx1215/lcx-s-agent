@@ -1,5 +1,5 @@
 ---
-summary: "Fix Chrome/Brave/Edge/Chromium CDP startup issues for OpenClaw browser control on Linux"
+summary: "Fix Chrome/Brave/Edge/Chromium CDP startup issues for LCX Agent browser control on Linux"
 read_when: "Browser control fails on Linux, especially with snap Chromium"
 title: "Browser Troubleshooting"
 ---
@@ -8,7 +8,7 @@ title: "Browser Troubleshooting"
 
 ## Problem: "Failed to start Chrome CDP on port 18800"
 
-OpenClaw's browser control server fails to launch Chrome/Brave/Edge/Chromium with the error:
+LCX Agent's browser control server fails to launch Chrome/Brave/Edge/Chromium with the error:
 
 ```
 {"error":"Error: Failed to start Chrome CDP on port 18800 for profile \"openclaw\"."}
@@ -16,7 +16,7 @@ OpenClaw's browser control server fails to launch Chrome/Brave/Edge/Chromium wit
 
 ### Root Cause
 
-On Ubuntu (and many Linux distros), the default Chromium installation is a **snap package**. Snap's AppArmor confinement interferes with how OpenClaw spawns and monitors the browser process.
+On Ubuntu (and many Linux distros), the default Chromium installation is a **snap package**. Snap's AppArmor confinement interferes with how LCX Agent spawns and monitors the browser process.
 
 The `apt install chromium` command installs a stub package that redirects to snap:
 
@@ -37,7 +37,7 @@ sudo dpkg -i google-chrome-stable_current_amd64.deb
 sudo apt --fix-broken install -y  # if there are dependency errors
 ```
 
-Then update your OpenClaw config (`~/.openclaw/openclaw.json`):
+Then update your LCX Agent config (`~/.openclaw/openclaw.json`):
 
 ```json
 {
@@ -52,7 +52,7 @@ Then update your OpenClaw config (`~/.openclaw/openclaw.json`):
 
 ### Solution 2: Use Snap Chromium with Attach-Only Mode
 
-If you must use snap Chromium, configure OpenClaw to attach to a manually-started browser:
+If you must use snap Chromium, configure LCX Agent to attach to a manually-started browser:
 
 1. Update config:
 
@@ -81,7 +81,7 @@ chromium-browser --headless --no-sandbox --disable-gpu \
 ```ini
 # ~/.config/systemd/user/openclaw-browser.service
 [Unit]
-Description=OpenClaw Browser (Chrome CDP)
+Description=LCX Agent Browser (Chrome CDP)
 After=network.target
 
 [Service]
@@ -123,15 +123,15 @@ curl -s http://127.0.0.1:18791/tabs
 
 ### Problem: "Chrome extension relay is running, but no tab is connected"
 
-You’re using the `chrome` profile (extension relay). It expects the OpenClaw
+You’re using the `chrome` profile (extension relay). It expects the LCX Agent
 browser extension to be attached to a live tab.
 
 Fix options:
 
-1. **Use the managed browser:** `openclaw browser start --browser-profile openclaw`
+1. **Use the managed browser:** `lcx browser start --browser-profile openclaw`
    (or set `browser.defaultProfile: "openclaw"`).
 2. **Use the extension relay:** install the extension, open a tab, and click the
-   OpenClaw extension icon to attach it.
+   LCX Agent extension icon to attach it.
 
 Notes:
 

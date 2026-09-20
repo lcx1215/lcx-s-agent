@@ -241,7 +241,7 @@ describe("commands-protocol-info", () => {
       expect(searchHealthReply?.text).toContain("🔎 Search and provider health");
       expect(searchHealthReply?.text).toContain("Active model: moonshot/kimi-k2.6");
       expect(searchHealthReply?.text).toContain("Provider-native search: not connected");
-      expect(searchHealthReply?.text).toContain("OpenClaw web_search: connected");
+      expect(searchHealthReply?.text).toContain("LCX Agent web_search: connected");
       expect(searchHealthReply?.text).toContain("Recent degradation record: none found");
       expect(searchHealthReply?.text).toContain(
         "Current truth here is runtime/config surface only, not a fresh live probe.",
@@ -264,7 +264,7 @@ describe("commands-protocol-info", () => {
       expect(capabilitiesReply?.text).toContain("Active model: minimax-portal/MiniMax-M2.7");
       expect(capabilitiesReply?.text).toContain("Provider-native tools: none connected");
       expect(capabilitiesReply?.text).toContain(
-        "OpenClaw tools: web_search, web_fetch, memory_search",
+        "LCX Agent tools: web_search, web_fetch, memory_search",
       );
 
       const specificCapabilityReply = buildProtocolInfoReply({
@@ -286,7 +286,7 @@ describe("commands-protocol-info", () => {
       });
       expect(specificCapabilityReply?.text).toContain("🔎 Capability check: web-search");
       expect(specificCapabilityReply?.text).toContain("Provider-native web-search: not connected");
-      expect(specificCapabilityReply?.text).toContain("OpenClaw web_search: connected");
+      expect(specificCapabilityReply?.text).toContain("LCX Agent web_search: connected");
       expect(specificCapabilityReply?.text).toContain("runtime truth, not provider marketing");
 
       const providerOnlyCapabilityReply = buildProtocolInfoReply({
@@ -308,7 +308,7 @@ describe("commands-protocol-info", () => {
       });
       expect(providerOnlyCapabilityReply?.text).toContain("🔎 Capability check: quickjs");
       expect(providerOnlyCapabilityReply?.text).toContain("Provider-native quickjs: not connected");
-      expect(providerOnlyCapabilityReply?.text).toContain("OpenClaw generic tool: none");
+      expect(providerOnlyCapabilityReply?.text).toContain("LCX Agent generic tool: none");
 
       const agentArchitectureReply = buildProtocolInfoReply({
         text: "我们现在这个智能体是不是多个agent，还是纯靠api回答",
@@ -990,7 +990,7 @@ describe("commands-protocol-info", () => {
       });
       expect(reply?.text).toContain("🔎 Search and provider health");
       expect(reply?.text).toContain("Provider-native search: not connected");
-      expect(reply?.text).toContain("OpenClaw web_search: connected");
+      expect(reply?.text).toContain("LCX Agent web_search: connected");
       expect(reply?.text).toContain(
         "Recent degradation record: external.monitor.transport @ 2026-04-23T12:20:00.000Z",
       );

@@ -22,7 +22,7 @@ Treat the repository as three classes of paths:
 
 Examples:
 
-- general OpenClaw runtime and CLI surfaces
+- general LCX Agent runtime and CLI surfaces
 - most channel/setup/plugin infrastructure
 - build and packaging surfaces
 

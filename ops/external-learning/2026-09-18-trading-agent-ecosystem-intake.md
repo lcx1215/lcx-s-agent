@@ -62,7 +62,7 @@ substitutes:
 | [virattt/ai-hedge-fund](https://github.com/virattt/ai-hedge-fund)                   | **63,436**  | educational POC; states it does not trade |
 | [HKUDS/Vibe-Trading](https://github.com/HKUDS/Vibe-Trading)                         | **33,608**  | MIT; pushed 2026-09-17; "Shadow Account"  |
 | TradingAgents-CN                                                                    | 31,848      | Chinese-localised fork                    |
-| [HKUDS/AI-Trader](https://github.com/HKUDS/AI-Trader)                               | **22,369**  | agent-native platform; OpenClaw client    |
+| [HKUDS/AI-Trader](https://github.com/HKUDS/AI-Trader)                               | **22,369**  | agent-native platform; LCX Agent client   |
 | NoFxAiOS/nofx                                                                       | 12,922      |                                           |
 | QuantDinger                                                                         | 11,704      |                                           |
 | ValueCell                                                                           | 11,007      |                                           |
@@ -159,7 +159,7 @@ no factor evolution. **Highest cost of the three**, and it depends on an interfa
 `finance-strategy-method-catalog.ts` that has **not** been checked.
 
 ④ **Not integrated with any agent-native platform.** `HKUDS/AI-Trader` explicitly lists
-**OpenClaw** among supported agents and registers an agent by having it read
+**LCX Agent** among supported agents and registers an agent by having it read
 `https://ai4trade.ai/SKILL.md`. This is an _integration_ opportunity, not a mechanism to
 port — and it is **not** authorised here, because registration publishes signals and
 supports copy trading, i.e. external-channel writes and trade mirroring.

@@ -8,14 +8,14 @@ title: "Hooks"
 
 # Hooks
 
-Hooks provide an extensible event-driven system for automating actions in response to agent commands and events. Hooks are automatically discovered from directories and can be managed via CLI commands, similar to how skills work in OpenClaw.
+Hooks provide an extensible event-driven system for automating actions in response to agent commands and events. Hooks are automatically discovered from directories and can be managed via CLI commands, similar to how skills work in LCX Agent.
 
 ## Getting Oriented
 
 Hooks are small scripts that run when something happens. There are two kinds:
 
 - **Hooks** (this page): run inside the Gateway when agent events fire, like `/new`, `/reset`, `/stop`, or lifecycle events.
-- **Webhooks**: external HTTP webhooks that let other systems trigger work in OpenClaw. See [Webhook Hooks](/automation/webhook) or use `openclaw webhooks` for Gmail helper commands.
+- **Webhooks**: external HTTP webhooks that let other systems trigger work in LCX Agent. See [Webhook Hooks](/automation/webhook) or use `lcx webhooks` for Gmail helper commands.
 
 Hooks can also be bundled inside plugins; see [Plugins](/tools/plugin#plugin-hooks).
 
@@ -35,13 +35,13 @@ The hooks system allows you to:
 - Save session context to memory when `/new` is issued
 - Log all commands for auditing
 - Trigger custom automations on agent lifecycle events
-- Extend OpenClaw's behavior without modifying core code
+- Extend LCX Agent's behavior without modifying core code
 
 ## Getting Started
 
 ### Bundled Hooks
 
-OpenClaw ships with four bundled hooks that are automatically discovered:
+LCX Agent ships with four bundled hooks that are automatically discovered:
 
 - **💾 session-memory**: Saves session context to your agent workspace (default `~/.openclaw/workspace/memory/`) when you issue `/new`
 - **📎 bootstrap-extra-files**: Injects additional workspace bootstrap files from configured glob/path patterns during `agent:bootstrap`
@@ -51,30 +51,30 @@ OpenClaw ships with four bundled hooks that are automatically discovered:
 List available hooks:
 
 ```bash
-openclaw hooks list
+lcx hooks list
 ```
 
 Enable a hook:
 
 ```bash
-openclaw hooks enable session-memory
+lcx hooks enable session-memory
 ```
 
 Check hook status:
 
 ```bash
-openclaw hooks check
+lcx hooks check
 ```
 
 Get detailed information:
 
 ```bash
-openclaw hooks info session-memory
+lcx hooks info session-memory
 ```
 
 ### Onboarding
 
-During onboarding (`openclaw onboard`), you'll be prompted to enable recommended hooks. The wizard automatically discovers eligible hooks and presents them for selection.
+During onboarding (`lcx onboard`), you'll be prompted to enable recommended hooks. The wizard automatically discovers eligible hooks and presents them for selection.
 
 ## Hook Discovery
 
@@ -82,7 +82,7 @@ Hooks are automatically discovered from three directories (in order of precedenc
 
 1. **Workspace hooks**: `<workspace>/hooks/` (per-agent, highest precedence)
 2. **Managed hooks**: `~/.openclaw/hooks/` (user-installed, shared across workspaces)
-3. **Bundled hooks**: `<openclaw>/dist/hooks/bundled/` (shipped with OpenClaw)
+3. **Bundled hooks**: `<openclaw>/dist/hooks/bundled/` (shipped with LCX Agent)
 
 Managed hook directories can be either a **single hook** or a **hook pack** (package directory).
 
@@ -100,7 +100,7 @@ Hook packs are standard npm packages that export one or more hooks via `openclaw
 `package.json`. Install them with:
 
 ```bash
-openclaw hooks install <path-or-spec>
+lcx hooks install <path-or-spec>
 ```
 
 Npm specs are registry-only (package name + optional version/tag). Git/URL/file specs are rejected.
@@ -122,7 +122,7 @@ Hook packs can ship dependencies; they will be installed under `~/.openclaw/hook
 Each `openclaw.hooks` entry must stay inside the package directory after symlink
 resolution; entries that escape are rejected.
 
-Security note: `openclaw hooks install` installs dependencies with `npm install --ignore-scripts`
+Security note: `lcx hooks install` installs dependencies with `npm install --ignore-scripts`
 (no lifecycle scripts). Keep hook pack dependency trees "pure JS/TS" and avoid packages that rely
 on `postinstall` builds.
 
@@ -347,7 +347,7 @@ export default handler;
 
 ### Tool Result Hooks (Plugin API)
 
-These hooks are not event-stream listeners; they let plugins synchronously adjust tool results before OpenClaw persists them.
+These hooks are not event-stream listeners; they let plugins synchronously adjust tool results before LCX Agent persists them.
 
 - **`tool_result_persist`**: transform tool results before they are written to the session transcript. Must be synchronous; return the updated tool result payload or `undefined` to keep it as-is. See [Agent Loop](/concepts/agent-loop).
 
@@ -406,12 +406,12 @@ export default handler;
 
 ```bash
 # Verify hook is discovered
-openclaw hooks list
+lcx hooks list
 
 # Enable it
-openclaw hooks enable my-hook
+lcx hooks enable my-hook
 
-# Restart your gateway process (openclaw gateway restart)
+# Restart your gateway process (lcx gateway restart)
 
 # Trigger the event
 # Send /new via your messaging channel
@@ -505,46 +505,46 @@ Note: `module` must be a workspace-relative path. Absolute paths and traversal o
 
 ```bash
 # List all hooks
-openclaw hooks list
+lcx hooks list
 
 # Show only eligible hooks
-openclaw hooks list --eligible
+lcx hooks list --eligible
 
 # Verbose output (show missing requirements)
-openclaw hooks list --verbose
+lcx hooks list --verbose
 
 # JSON output
-openclaw hooks list --json
+lcx hooks list --json
 ```
 
 ### Hook Information
 
 ```bash
 # Show detailed info about a hook
-openclaw hooks info session-memory
+lcx hooks info session-memory
 
 # JSON output
-openclaw hooks info session-memory --json
+lcx hooks info session-memory --json
 ```
 
 ### Check Eligibility
 
 ```bash
 # Show eligibility summary
-openclaw hooks check
+lcx hooks check
 
 # JSON output
-openclaw hooks check --json
+lcx hooks check --json
 ```
 
 ### Enable/Disable
 
 ```bash
 # Enable a hook
-openclaw hooks enable session-memory
+lcx hooks enable session-memory
 
 # Disable a hook
-openclaw hooks disable command-logger
+lcx hooks disable command-logger
 ```
 
 ## Bundled hook reference
@@ -585,7 +585,7 @@ Saves session context to memory when you issue `/new`.
 **Enable**:
 
 ```bash
-openclaw hooks enable session-memory
+lcx hooks enable session-memory
 ```
 
 ### bootstrap-extra-files
@@ -626,7 +626,7 @@ Injects additional bootstrap files (for example monorepo-local `AGENTS.md` / `TO
 **Enable**:
 
 ```bash
-openclaw hooks enable bootstrap-extra-files
+lcx hooks enable bootstrap-extra-files
 ```
 
 ### command-logger
@@ -668,7 +668,7 @@ grep '"action":"new"' ~/.openclaw/logs/commands.log | jq .
 **Enable**:
 
 ```bash
-openclaw hooks enable command-logger
+lcx hooks enable command-logger
 ```
 
 ### boot-md
@@ -689,7 +689,7 @@ Internal hooks must be enabled for this to run.
 **Enable**:
 
 ```bash
-openclaw hooks enable boot-md
+lcx hooks enable boot-md
 ```
 
 ## Best Practices
@@ -773,7 +773,7 @@ Registered hook: boot-md -> gateway:startup
 List all discovered hooks:
 
 ```bash
-openclaw hooks list --verbose
+lcx hooks list --verbose
 ```
 
 ### Check Registration
@@ -792,7 +792,7 @@ const handler: HookHandler = async (event) => {
 Check why a hook isn't eligible:
 
 ```bash
-openclaw hooks info my-hook
+lcx hooks info my-hook
 ```
 
 Look for missing requirements in the output.
@@ -902,7 +902,7 @@ Session reset
 3. List all discovered hooks:
 
    ```bash
-   openclaw hooks list
+   lcx hooks list
    ```
 
 ### Hook Not Eligible
@@ -910,7 +910,7 @@ Session reset
 Check requirements:
 
 ```bash
-openclaw hooks info my-hook
+lcx hooks info my-hook
 ```
 
 Look for missing:
@@ -925,7 +925,7 @@ Look for missing:
 1. Verify hook is enabled:
 
    ```bash
-   openclaw hooks list
+   lcx hooks list
    # Should show ✓ next to enabled hooks
    ```
 
@@ -1009,7 +1009,7 @@ node -e "import('./path/to/handler.ts').then(console.log)"
 4. Verify and restart your gateway process:
 
    ```bash
-   openclaw hooks list
+   lcx hooks list
    # Should show: 🎯 my-hook ✓
    ```
 
@@ -1024,6 +1024,6 @@ node -e "import('./path/to/handler.ts').then(console.log)"
 ## See Also
 
 - [CLI Reference: hooks](/cli/hooks)
-- [Bundled Hooks README](https://github.com/openclaw/openclaw/tree/main/src/hooks/bundled)
+- [Bundled Hooks README](https://github.com/lcx1215/lcx-s-agent/tree/main/src/hooks/bundled)
 - [Webhook Hooks](/automation/webhook)
 - [Configuration](/gateway/configuration#hooks)

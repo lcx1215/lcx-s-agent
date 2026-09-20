@@ -8,10 +8,7 @@ import { isSilentReplyText } from "../auto-reply/tokens.js";
 import { loadConfig } from "../config/config.js";
 import { resolveMarkdownTableMode } from "../config/markdown-tables.js";
 import { logVerbose } from "../globals.js";
-import {
-  fetchWithSsrFGuard,
-  withTrustedEnvProxyGuardedFetchMode,
-} from "../infra/net/fetch-guard.js";
+import { fetchWithSsrFGuard, withStrictGuardedFetchMode } from "../infra/net/fetch-guard.js";
 import { loadWebMedia } from "../web/media.js";
 import type { SlackTokenSource } from "./accounts.js";
 import { resolveSlackAccount } from "./accounts.js";
@@ -215,7 +212,7 @@ async function uploadSlackFile(params: {
   // Upload the file content to the presigned URL
   const uploadBody = new Uint8Array(buffer) as BodyInit;
   const { response: uploadResp, release } = await fetchWithSsrFGuard(
-    withTrustedEnvProxyGuardedFetchMode({
+    withStrictGuardedFetchMode({
       url: uploadUrlResp.upload_url,
       init: {
         method: "POST",

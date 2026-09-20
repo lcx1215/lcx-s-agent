@@ -10,9 +10,45 @@ import {
 } from "../config/identity-migration.js";
 import { resolveStateDir } from "../config/paths.js";
 import type { LcxIdentityMigrationPlan } from "../config/paths.js";
-import { loadJsonFile, saveJsonFile } from "../infra/json-file.js";
+import { loadJsonFileDetailed, saveJsonFile } from "../infra/json-file.js";
+import { logWarn } from "../logger.js";
 import { normalizeDeliveryContext } from "../utils/delivery-context.js";
 import type { SubagentRunRecord } from "./subagent-registry.types.js";
+
+/**
+ * How the registry file looked the last time it was read. "absent" is a normal
+ * first run; "unreadable"/"corrupt" mean there *is* a file and it could not be
+ * turned into state — in which case the in-memory map is empty but the file on
+ * disk is still the only copy of the truth, so writes are blocked.
+ */
+export type SubagentRegistryLoadStatus =
+  | { state: "ok" }
+  | { state: "absent" }
+  | { state: "unreadable"; code: string }
+  | { state: "corrupt"; code: string };
+
+let registryLoadStatus: SubagentRegistryLoadStatus = { state: "absent" };
+let warnedWriteBlocked = false;
+
+export function getSubagentRegistryLoadStatus(): SubagentRegistryLoadStatus {
+  return registryLoadStatus;
+}
+
+export function resetSubagentRegistryStoreForTests() {
+  registryLoadStatus = { state: "absent" };
+  warnedWriteBlocked = false;
+}
+
+function isRegistryWriteBlocked(): boolean {
+  return registryLoadStatus.state === "unreadable" || registryLoadStatus.state === "corrupt";
+}
+
+export function describeSubagentRegistryLoadStatus(): string {
+  if (registryLoadStatus.state === "ok" || registryLoadStatus.state === "absent") {
+    return registryLoadStatus.state;
+  }
+  return `${registryLoadStatus.state}/${registryLoadStatus.code}`;
+}
 
 export type PersistedSubagentRegistryVersion = 1 | 2;
 
@@ -65,17 +101,18 @@ function resolveCurrentSubagentRegistryPathContract(
 function parseSubagentRegistry(raw: unknown): {
   runs: Map<string, SubagentRunRecord>;
   migrated: boolean;
+  invalid: boolean;
 } {
   if (!raw || typeof raw !== "object") {
-    return { runs: new Map(), migrated: false };
+    return { runs: new Map(), migrated: false, invalid: true };
   }
   const record = raw as Partial<PersistedSubagentRegistry>;
   if (record.version !== 1 && record.version !== 2) {
-    return { runs: new Map(), migrated: false };
+    return { runs: new Map(), migrated: false, invalid: true };
   }
   const runsRaw = record.runs;
   if (!runsRaw || typeof runsRaw !== "object") {
-    return { runs: new Map(), migrated: false };
+    return { runs: new Map(), migrated: false, invalid: true };
   }
   const out = new Map<string, SubagentRunRecord>();
   const isLegacy = record.version === 1;
@@ -125,7 +162,7 @@ function parseSubagentRegistry(raw: unknown): {
       migrated = true;
     }
   }
-  return { runs: out, migrated };
+  return { runs: out, migrated, invalid: false };
 }
 
 function serializeSubagentRegistry(
@@ -178,8 +215,27 @@ export function resolveSubagentRegistryPath(): string {
 
 export function loadSubagentRegistryFromDisk(): Map<string, SubagentRunRecord> {
   const pathname = resolveSubagentRegistryPath();
-  const raw = loadJsonFile(pathname);
-  const parsed = parseSubagentRegistry(raw);
+  const loaded = loadJsonFileDetailed(pathname);
+  warnedWriteBlocked = false;
+  if (loaded.status !== "ok") {
+    registryLoadStatus =
+      loaded.status === "corrupt"
+        ? { state: "corrupt", code: loaded.code }
+        : { state: loaded.status, code: loaded.code };
+    logWarn(
+      `[subagent-registry] cannot read ${pathname} (${describeSubagentRegistryLoadStatus()}): the registry is treated as empty and writes are blocked`,
+    );
+    return new Map();
+  }
+  const parsed = parseSubagentRegistry(loaded.value);
+  if (parsed.invalid) {
+    registryLoadStatus = { state: "corrupt", code: "UNRECOGNISED_REGISTRY_SHAPE" };
+    logWarn(
+      `[subagent-registry] unrecognised registry at ${pathname}: the registry is treated as empty and writes are blocked`,
+    );
+    return new Map();
+  }
+  registryLoadStatus = { state: "ok" };
   if (parsed.migrated) {
     try {
       saveSubagentRegistryToDisk(parsed.runs);
@@ -190,9 +246,22 @@ export function loadSubagentRegistryFromDisk(): Map<string, SubagentRunRecord> {
   return parsed.runs;
 }
 
-export function saveSubagentRegistryToDisk(runs: Map<string, SubagentRunRecord>) {
+export function saveSubagentRegistryToDisk(runs: Map<string, SubagentRunRecord>): boolean {
+  // The in-memory map is empty when the file on disk could not be read. Writing
+  // that emptiness back would replace the only remaining copy of these runs
+  // with `{}`, so hold writes until a load actually succeeds.
+  if (isRegistryWriteBlocked()) {
+    if (!warnedWriteBlocked) {
+      warnedWriteBlocked = true;
+      logWarn(
+        `[subagent-registry] refusing to overwrite ${resolveSubagentRegistryPath()}: last load was ${describeSubagentRegistryLoadStatus()}`,
+      );
+    }
+    return false;
+  }
   const pathname = resolveSubagentRegistryPath();
   saveJsonFile(pathname, serializeSubagentRegistry(runs));
+  return true;
 }
 
 export async function readSubagentRegistryForIdentityMigration(

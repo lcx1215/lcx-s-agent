@@ -1,7 +1,7 @@
 {
   "name": "@openclaw/discord",
   "version": "2026.3.2",
-  "description": "OpenClaw Discord channel plugin",
+  "description": "LCX Agent Discord channel plugin",
   "type": "module",
   "dependencies": {
     "lcx-agent": "workspace:*"

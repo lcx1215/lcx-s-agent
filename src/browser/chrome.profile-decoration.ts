@@ -1,5 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
+import { saveJsonFile } from "../infra/json-file.js";
+import { describeReadFailure } from "../infra/unreadable-source.js";
+import { logWarn } from "../logger.js";
 import {
   DEFAULT_OPENCLAW_BROWSER_COLOR,
   DEFAULT_OPENCLAW_BROWSER_PROFILE_NAME,
@@ -9,25 +12,57 @@ function decoratedMarkerPath(userDataDir: string) {
   return path.join(userDataDir, ".openclaw-profile-decorated");
 }
 
-function safeReadJson(filePath: string): Record<string, unknown> | null {
+type JsonRecordRead =
+  | { status: "ok"; value: Record<string, unknown> }
+  | { status: "absent" }
+  | { status: "unreadable"; detail: string };
+
+/**
+ * "No file" (a fresh profile) and "a file that could not be read or parsed" are different
+ * answers. Collapsing them made `?? {}` overwrite Chrome's `Preferences` — the only copy of the
+ * profile's settings — with a two-key object, which is how a browser profile gets wiped.
+ *
+ * Callers must skip the write when this reports `unreadable`.
+ */
+function readJsonRecord(filePath: string): JsonRecordRead {
+  let raw: string;
   try {
+    raw = fs.readFileSync(filePath, "utf-8");
+  } catch (err) {
     if (!fs.existsSync(filePath)) {
-      return null;
+      return { status: "absent" };
     }
-    const raw = fs.readFileSync(filePath, "utf-8");
+    const failure = describeReadFailure(err);
+    logWarn(
+      `[browser] cannot read ${filePath} (${failure.status}/${failure.code}); leaving it untouched`,
+    );
+    return { status: "unreadable", detail: `${failure.status}/${failure.code}` };
+  }
+  try {
     const parsed = JSON.parse(raw) as unknown;
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-      return null;
+      logWarn(`[browser] ${filePath} is not a JSON object; leaving it untouched`);
+      return { status: "unreadable", detail: "not-an-object" };
     }
-    return parsed as Record<string, unknown>;
+    return { status: "ok", value: parsed as Record<string, unknown> };
   } catch {
-    return null;
+    logWarn(`[browser] cannot parse ${filePath}; leaving it untouched`);
+    return { status: "unreadable", detail: "parse-failed" };
   }
 }
 
+/** Read-only variant: "cannot see it" is answered as "not there yet", which is the safe
+ * direction for the decoration checks — the caller then tries to decorate and bails out there. */
+function safeReadJson(filePath: string): Record<string, unknown> | null {
+  const result = readJsonRecord(filePath);
+  return result.status === "ok" ? result.value : null;
+}
+
 function safeWriteJson(filePath: string, data: Record<string, unknown>) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+  // This writes Chrome's own `Preferences` file, which is a few hundred KB and the only copy of
+  // the profile's settings. writeFileSync truncates first, so a crash mid-write left Chrome with
+  // an unparseable profile — "safe" in name only. Replace it atomically instead.
+  saveJsonFile(filePath, data);
 }
 
 function setDeep(obj: Record<string, unknown>, keys: string[], value: unknown) {
@@ -137,7 +172,15 @@ export function decorateOpenClawProfile(
   const localStatePath = path.join(userDataDir, "Local State");
   const preferencesPath = path.join(userDataDir, "Default", "Preferences");
 
-  const localState = safeReadJson(localStatePath) ?? {};
+  // If either file is there but unreadable, decorate nothing: writing a near-empty document over
+  // half of a profile we cannot see is worse than a skipped round, and leaving the marker off
+  // means the next run retries.
+  const localStateRead = readJsonRecord(localStatePath);
+  const preferencesRead = readJsonRecord(preferencesPath);
+  if (localStateRead.status === "unreadable" || preferencesRead.status === "unreadable") {
+    return;
+  }
+  const localState = localStateRead.status === "ok" ? localStateRead.value : {};
   // Common-ish shape: profile.info_cache.Default
   setDeep(localState, ["profile", "info_cache", "Default", "name"], desiredName);
   setDeep(localState, ["profile", "info_cache", "Default", "shortcut_name"], desiredName);
@@ -170,7 +213,7 @@ export function decorateOpenClawProfile(
   }
   safeWriteJson(localStatePath, localState);
 
-  const prefs = safeReadJson(preferencesPath) ?? {};
+  const prefs = preferencesRead.status === "ok" ? preferencesRead.value : {};
   setDeep(prefs, ["profile", "name"], desiredName);
   setDeep(prefs, ["profile", "profile_color"], desiredColor);
   setDeep(prefs, ["profile", "user_color"], desiredColor);
@@ -191,7 +234,13 @@ export function decorateOpenClawProfile(
 
 export function ensureProfileCleanExit(userDataDir: string) {
   const preferencesPath = path.join(userDataDir, "Default", "Preferences");
-  const prefs = safeReadJson(preferencesPath) ?? {};
+  const existing = readJsonRecord(preferencesPath);
+  // Unreadable ≠ empty. Writing `{exit_type, exited_cleanly}` over a Preferences file we could
+  // not look inside would drop every other setting in the profile.
+  if (existing.status === "unreadable") {
+    return;
+  }
+  const prefs = existing.status === "ok" ? existing.value : {};
   setDeep(prefs, ["exit_type"], "Normal");
   setDeep(prefs, ["exited_cleanly"], true);
   safeWriteJson(preferencesPath, prefs);

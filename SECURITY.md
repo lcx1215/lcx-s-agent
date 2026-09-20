@@ -2,19 +2,19 @@
 
 # Security Policy
 
-If you believe you've found a security issue in OpenClaw, please report it privately.
+If you believe you've found a security issue in LCX Agent, please report it privately.
 
 ## Reporting
 
-Report vulnerabilities directly to the repository where the issue lives:
+Report vulnerabilities privately in this repository:
 
-- **Core CLI and gateway** — [openclaw/openclaw](https://github.com/openclaw/openclaw)
-- **ClawHub** — [openclaw/clawhub](https://github.com/openclaw/clawhub)
-- **Trust and threat model** — [openclaw/trust](https://github.com/openclaw/trust)
+- **Private report (preferred)** — [Report a vulnerability](https://github.com/lcx1215/lcx-s-agent/security/advisories/new)
+- **Public discussion** — [GitHub discussions](https://github.com/lcx1215/lcx-s-agent/discussions), only after a fix is released or the issue is already public
 
-For issues that don't fit a specific repo, or if you're unsure, email **[security@openclaw.ai](mailto:security@openclaw.ai)** and we'll route it.
+This project is independently maintained. It is not affiliated with, and does not forward reports
+to, any third-party project — please do not send reports about it anywhere else.
 
-For full reporting instructions see our [Trust page](https://trust.openclaw.ai).
+For general security guidance see [Gateway security](https://docs.openclaw.ai/gateway/security).
 
 ### Required in Reports
 
@@ -34,10 +34,10 @@ Reports without reproduction steps, demonstrated impact, and remediation advice 
 For fastest triage, include all of the following:
 
 - Exact vulnerable path (`file`, function, and line range) on a current revision.
-- Tested version details (OpenClaw version and/or commit SHA).
+- Tested version details (LCX Agent version and/or commit SHA).
 - Reproducible PoC against latest `main` or latest released version.
-- Demonstrated impact tied to OpenClaw's documented trust boundaries.
-- For exposed-secret reports: proof the credential is OpenClaw-owned (or grants access to OpenClaw-operated infrastructure/services).
+- Demonstrated impact tied to LCX Agent's documented trust boundaries.
+- For exposed-secret reports: proof the credential is LCX Agent-owned (or grants access to LCX Agent-operated infrastructure/services).
 - Explicit statement that the report does not rely on adversarial operators sharing one gateway host/config.
 - Scope check explaining why the report is **not** covered by the Out of Scope section below.
 - For command-risk/parity reports (for example obfuscation detection differences), a concrete boundary-bypass path is required (auth/approval/allowlist/sandbox). Parity-only findings are treated as hardening, not vulnerabilities.
@@ -72,11 +72,11 @@ These are frequently reported but are typically closed with no code change:
 
 ## Security & Trust
 
-**Jamieson O'Reilly** ([@theonejvo](https://twitter.com/theonejvo)) is Security & Trust at OpenClaw. Jamieson is the founder of [Dvuln](https://dvuln.com) and brings extensive experience in offensive security, penetration testing, and security program development.
+**Jamieson O'Reilly** ([@theonejvo](https://twitter.com/theonejvo)) is Security & Trust at LCX Agent. Jamieson is the founder of [Dvuln](https://dvuln.com) and brings extensive experience in offensive security, penetration testing, and security program development.
 
 ## Bug Bounties
 
-OpenClaw is a labor of love. There is no bug bounty program and no budget for paid reports. Please still disclose responsibly so we can fix issues quickly.
+LCX Agent is a labor of love. There is no bug bounty program and no budget for paid reports. Please still disclose responsibly so we can fix issues quickly.
 The best way to help the project right now is by sending PRs.
 
 ## Maintainers: GHSA Updates via CLI
@@ -85,23 +85,23 @@ When patching a GHSA via `gh api`, include `X-GitHub-Api-Version: 2022-11-28` (o
 
 ## Operator Trust Model (Important)
 
-OpenClaw does **not** model one gateway as a multi-tenant, adversarial user boundary.
+LCX Agent does **not** model one gateway as a multi-tenant, adversarial user boundary.
 
 - Authenticated Gateway callers are treated as trusted operators for that gateway instance.
 - Session identifiers (`sessionKey`, session IDs, labels) are routing controls, not per-user authorization boundaries.
 - If one operator can view data from another operator on the same gateway, that is expected in this trust model.
-- OpenClaw can technically run multiple gateway instances on one machine, but recommended operations are clean separation by trust boundary.
+- LCX Agent can technically run multiple gateway instances on one machine, but recommended operations are clean separation by trust boundary.
 - Recommended mode: one user per machine/host (or VPS), one gateway for that user, and one or more agents inside that gateway.
-- If multiple users need OpenClaw, use one VPS (or host/OS user boundary) per user.
+- If multiple users need LCX Agent, use one VPS (or host/OS user boundary) per user.
 - For advanced setups, multiple gateways on one machine are possible, but only with strict isolation and are not the recommended default.
 - Exec behavior is host-first by default: `agents.defaults.sandbox.mode` defaults to `off`.
 - `tools.exec.host` defaults to `sandbox` as a routing preference, but if sandbox runtime is not active for the session, exec runs on the gateway host.
 - Implicit exec calls (no explicit host in the tool call) follow the same behavior.
-- This is expected in OpenClaw's one-user trusted-operator model. If you need isolation, enable sandbox mode (`non-main`/`all`) and keep strict tool policy.
+- This is expected in LCX Agent's one-user trusted-operator model. If you need isolation, enable sandbox mode (`non-main`/`all`) and keep strict tool policy.
 
 ## Trusted Plugin Concept (Core)
 
-Plugins/extensions are part of OpenClaw's trusted computing base for a gateway.
+Plugins/extensions are part of LCX Agent's trusted computing base for a gateway.
 
 - Installing or enabling a plugin grants it the same trust level as local code running on that gateway host.
 - Plugin behavior such as reading env/files or running host commands is expected inside this trust boundary.
@@ -110,7 +110,7 @@ Plugins/extensions are part of OpenClaw's trusted computing base for a gateway.
 ## Out of Scope
 
 - Public Internet Exposure
-- Using OpenClaw in ways that the docs recommend not to
+- Using LCX Agent in ways that the docs recommend not to
 - Deployments where mutually untrusted/adversarial operators share one gateway host and config (for example, reports expecting per-operator isolation for `sessions.list`, `sessions.preview`, `chat.history`, or similar control-plane reads)
 - Prompt-injection-only attacks (without a policy/auth/sandbox boundary bypass)
 - Reports that require write access to trusted local state (`~/.openclaw`, workspace files like `MEMORY.md` / `memory/*.md`)
@@ -122,15 +122,15 @@ Plugins/extensions are part of OpenClaw's trusted computing base for a gateway.
 - Any report whose only claim is that an operator-enabled `dangerous*`/`dangerously*` config option weakens defaults (these are explicit break-glass tradeoffs by design)
 - Reports that depend on trusted operator-supplied configuration values to trigger availability impact (for example custom regex patterns). These may still be fixed as defense-in-depth hardening, but are not security-boundary bypasses.
 - Reports whose only claim is heuristic/parity drift in command-risk detection (for example obfuscation-pattern checks) across exec surfaces, without a demonstrated trust-boundary bypass. These are hardening-only findings and are not vulnerabilities; triage may close them as `invalid`/`no-action` or track them separately as low/informational hardening.
-- Exposed secrets that are third-party/user-controlled credentials (not OpenClaw-owned and not granting access to OpenClaw-operated infrastructure/services) without demonstrated OpenClaw impact
+- Exposed secrets that are third-party/user-controlled credentials (not LCX Agent-owned and not granting access to LCX Agent-operated infrastructure/services) without demonstrated LCX Agent impact
 - Reports whose only claim is host-side exec when sandbox runtime is disabled/unavailable (documented default behavior in the trusted-operator model), without a boundary bypass.
 - Reports whose only claim is that a platform-provided upload destination URL is untrusted (for example Microsoft Teams `fileConsent/invoke` `uploadInfo.uploadUrl`) without proving attacker control in an authenticated production flow.
 
 ## Deployment Assumptions
 
-OpenClaw security guidance assumes:
+LCX Agent security guidance assumes:
 
-- The host where OpenClaw runs is within a trusted OS/admin boundary.
+- The host where LCX Agent runs is within a trusted OS/admin boundary.
 - Anyone who can modify `~/.openclaw` state/config (including `openclaw.json`) is effectively a trusted operator.
 - A single Gateway shared by mutually untrusted people is **not a recommended setup**. Use separate gateways (or at minimum separate OS users/hosts) per trust boundary.
 - Authenticated Gateway callers are treated as trusted operators. Session identifiers (for example `sessionKey`) are routing controls, not per-user authorization boundaries.
@@ -138,7 +138,7 @@ OpenClaw security guidance assumes:
 
 ## One-User Trust Model (Personal Assistant)
 
-OpenClaw's security model is "personal assistant" (one trusted operator, potentially many agents), not "shared multi-tenant bus."
+LCX Agent's security model is "personal assistant" (one trusted operator, potentially many agents), not "shared multi-tenant bus."
 
 - If multiple people can message the same tool-enabled agent (for example a shared Slack workspace), they can all steer that agent within its granted permissions.
 - Session or memory scoping reduces context bleed, but does **not** create per-user host authorization boundaries.
@@ -157,7 +157,7 @@ OpenClaw's security model is "personal assistant" (one trusted operator, potenti
 
 ## Gateway and Node trust concept
 
-OpenClaw separates routing from execution, but both remain inside the same operator trust boundary:
+LCX Agent separates routing from execution, but both remain inside the same operator trust boundary:
 
 - **Gateway** is the control plane. If a caller passes Gateway auth, they are treated as a trusted operator for that Gateway.
 - **Node** is an execution extension of the Gateway. Pairing a node grants operator-level remote capability on that node.
@@ -178,22 +178,22 @@ OpenClaw separates routing from execution, but both remain inside the same opera
 
 Plugins/extensions are loaded **in-process** with the Gateway and are treated as trusted code.
 
-- Plugins can execute with the same OS privileges as the OpenClaw process.
+- Plugins can execute with the same OS privileges as the LCX Agent process.
 - Runtime helpers (for example `runtime.system.runCommandWithTimeout`) are convenience APIs, not a sandbox boundary.
 - Only install plugins you trust, and prefer `plugins.allow` to pin explicit trusted plugin ids.
 
 ## Temp Folder Boundary (Media/Sandbox)
 
-OpenClaw uses a dedicated temp root for local media handoff and sandbox-adjacent temp artifacts:
+LCX Agent uses a dedicated temp root for local media handoff and sandbox-adjacent temp artifacts:
 
 - Preferred temp root: `/tmp/openclaw` (when available and safe on the host).
 - Fallback temp root: `os.tmpdir()/openclaw` (or `openclaw-<uid>` on multi-user hosts).
 
 Security boundary notes:
 
-- Sandbox media validation allows absolute temp paths only under the OpenClaw-managed temp root.
+- Sandbox media validation allows absolute temp paths only under the LCX Agent-managed temp root.
 - Arbitrary host tmp paths are not treated as trusted media roots.
-- Plugin/extension code should use OpenClaw temp helpers (`resolvePreferredOpenClawTmpDir`, `buildRandomTempFilePath`, `withTempDownloadPath`) rather than raw `os.tmpdir()` defaults when handling media files.
+- Plugin/extension code should use LCX Agent temp helpers (`resolvePreferredOpenClawTmpDir`, `buildRandomTempFilePath`, `withTempDownloadPath`) rather than raw `os.tmpdir()` defaults when handling media files.
 - Enforcement reference points:
   - temp root resolver: `src/infra/tmp-openclaw-dir.ts`
   - SDK temp helpers: `src/plugin-sdk/temp-path.ts`
@@ -201,7 +201,7 @@ Security boundary notes:
 
 ## Operational Guidance
 
-For threat model + hardening guidance (including `openclaw security audit --deep` and `--fix`), see:
+For threat model + hardening guidance (including `lcx security audit --deep` and `--fix`), see:
 
 - `https://docs.openclaw.ai/gateway/security`
 
@@ -221,14 +221,14 @@ For threat model + hardening guidance (including `openclaw security audit --deep
 
 ### Web Interface Safety
 
-OpenClaw's web interface (Gateway Control UI + HTTP endpoints) is intended for **local use only**.
+LCX Agent's web interface (Gateway Control UI + HTTP endpoints) is intended for **local use only**.
 
 - Recommended: keep the Gateway **loopback-only** (`127.0.0.1` / `::1`).
   - Config: `gateway.bind="loopback"` (default).
-  - CLI: `openclaw gateway run --bind loopback`.
+  - CLI: `lcx gateway run --bind loopback`.
 - `gateway.controlUi.dangerouslyDisableDeviceAuth` is intended for localhost-only break-glass use.
-  - OpenClaw keeps deployment flexibility by design and does not hard-forbid non-local setups.
-  - Non-local and other risky configurations are surfaced by `openclaw security audit` as dangerous findings.
+  - LCX Agent keeps deployment flexibility by design and does not hard-forbid non-local setups.
+  - Non-local and other risky configurations are surfaced by `lcx security audit` as dangerous findings.
   - This operator-selected tradeoff is by design and not, by itself, a security vulnerability.
 - Canvas host note: network-visible canvas is **intentional** for trusted node scenarios (LAN/tailnet).
   - Expected setup: non-loopback bind + Gateway auth (token/password/trusted-proxy) + firewall/tailnet controls.
@@ -242,7 +242,7 @@ OpenClaw's web interface (Gateway Control UI + HTTP endpoints) is intended for *
 
 ### Node.js Version
 
-OpenClaw requires **Node.js 22.12.0 or later** (LTS). This version includes important security patches:
+LCX Agent requires **Node.js 22.12.0 or later** (LTS). This version includes important security patches:
 
 - CVE-2025-59466: async_hooks DoS vulnerability
 - CVE-2026-21636: Permission model bypass vulnerability
@@ -255,7 +255,7 @@ node --version  # Should be v22.12.0 or later
 
 ### Docker Security
 
-When running OpenClaw in Docker:
+When running LCX Agent in Docker:
 
 1. The official image runs as a non-root user (`node`) for reduced attack surface
 2. Use `--read-only` flag when possible for additional filesystem protection
@@ -264,9 +264,10 @@ When running OpenClaw in Docker:
 Example secure Docker run:
 
 ```bash
+docker build -t lcx-agent:local .
 docker run --read-only --cap-drop=ALL \
-  -v openclaw-data:/app/data \
-  openclaw/openclaw:latest
+  -v lcx-agent-data:/app/data \
+  lcx-agent:local
 ```
 
 ## Security Scanning

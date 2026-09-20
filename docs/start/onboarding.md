@@ -1,5 +1,5 @@
 ---
-summary: "First-run onboarding flow for OpenClaw"
+summary: "First-run onboarding flow for LCX Agent"
 read_when:
   - Running the first-run onboarding flow
   - Implementing auth or identity setup
@@ -20,20 +20,20 @@ onboarding chat session.
 ## 1) Start the wizard
 
 ```bash
-openclaw onboard --install-daemon
+lcx onboard --install-daemon
 ```
 
 Other entry points:
 
 ```bash
-openclaw gateway install   # install the Gateway service directly
-openclaw configure         # interactive: select "Gateway service"
-openclaw doctor            # repair or migrate an existing service
+lcx gateway install   # install the Gateway service directly
+lcx configure         # interactive: select "Gateway service"
+lcx doctor            # repair or migrate an existing service
 ```
 
 ## 2) Security trust model
 
-- By default, OpenClaw is a personal agent: one trusted operator boundary.
+- By default, LCX Agent is a personal agent: one trusted operator boundary.
 - Shared/multi-user setups require lock-down (split trust boundaries, keep tool access minimal, and follow [Security](/gateway/security)).
 - Local onboarding now defaults new configs to `tools.profile: "messaging"` so broad runtime/filesystem tools are opt-in.
 - If hooks/webhooks or other untrusted content feeds are enabled, use a strong modern model tier and keep strict tool policy/sandboxing.

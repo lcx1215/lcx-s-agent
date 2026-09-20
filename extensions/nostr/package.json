@@ -1,7 +1,7 @@
 {
   "name": "@openclaw/nostr",
   "version": "2026.3.2",
-  "description": "OpenClaw Nostr channel plugin for NIP-04 encrypted DMs",
+  "description": "LCX Agent Nostr channel plugin for NIP-04 encrypted DMs",
   "type": "module",
   "dependencies": {
     "lcx-agent": "workspace:*",
@@ -25,7 +25,7 @@
     "install": {
       "npmSpec": "@openclaw/nostr",
       "localPath": "extensions/nostr",
-      "defaultChoice": "npm"
+      "defaultChoice": "local"
     }
   }
 }

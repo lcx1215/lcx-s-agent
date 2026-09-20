@@ -14,6 +14,7 @@ import type { FinanceAsOfMode } from "./finance-data-gateway.js";
 import {
   evaluateFinanceDecisionPolicy,
   type FinanceDecisionMode,
+  type FinanceStrategyStage,
 } from "./finance-decision-policy.js";
 import {
   createFinanceMarketCollectionRegistry,
@@ -82,6 +83,8 @@ export type FinanceResearchRunInput = Readonly<{
   asOfMode?: FinanceAsOfMode;
   horizonMonths?: number;
   decisionMode?: FinanceDecisionMode;
+  /** Declared research maturity stage; binds which `decisionMode` the run may use. */
+  strategyStage?: FinanceStrategyStage;
   targets?: readonly FinanceResearchBatchTarget[];
   sourcePolicy?: "prioritized" | "all_registered";
 }>;
@@ -857,7 +860,10 @@ function buildModelExecution(
   });
 }
 
-function qualityVerifier(decisionMode: FinanceDecisionMode): QualityHarnessVerifier {
+function qualityVerifier(
+  decisionMode: FinanceDecisionMode,
+  strategyStage?: FinanceStrategyStage,
+): QualityHarnessVerifier {
   return ({ request, artifact }) => {
     const evidenceIds = new Set(request.evidence.map((entry) => entry.id));
     const invalidClaims = artifact.claims.filter(
@@ -899,6 +905,7 @@ function qualityVerifier(decisionMode: FinanceDecisionMode): QualityHarnessVerif
         claims: artifact.claims,
         supportingAnalysis: artifact.supportingAnalysis,
       },
+      ...(strategyStage === undefined ? {} : { stage: strategyStage }),
     });
     if (!policy.allowed) {
       return {
@@ -1052,6 +1059,7 @@ export async function runFinanceResearchRun(
   const asOf = assertIsoTimestamp(options.input.asOf, "asOf");
   const horizonMonths = normalizeHorizon(options.input.horizonMonths);
   const decisionMode = options.input.decisionMode ?? "research_only";
+  const strategyStage = options.input.strategyStage;
   const realtimeAdapters =
     options.batchOptions?.realtimeAdapters ??
     createFinanceRealtimeSourceRegistry({
@@ -1313,7 +1321,7 @@ export async function runFinanceResearchRun(
             : 180_000,
           verifierTimeoutMs: 10_000,
           maxAttempts: 2,
-          verify: qualityVerifier(decisionMode),
+          verify: qualityVerifier(decisionMode, strategyStage),
         });
       quality = modelCheckpoint
         ? await modelCheckpoint.stage("quality", executeQuality)

@@ -11,7 +11,11 @@ import {
   appendFinancePositionMark,
   readFinancePositionLedger,
 } from "../finance-position-ledger.js";
-import { FINANCE_STATE_DIR_ENV, financePositionLedgerPath } from "../finance-state-dir.js";
+import {
+  FINANCE_STATE_DIR_ENV,
+  financeBehaviourThresholdsPath,
+  financePositionLedgerPath,
+} from "../finance-state-dir.js";
 import type { AnyAgentTool } from "./common.js";
 import { createFinancePositionLedgerReadTool } from "./finance-position-ledger-read-tool.js";
 
@@ -100,7 +104,46 @@ type ReadPayload = {
     levels?: readonly number[];
     levelTimestamps?: readonly string[];
   };
+  behaviour?: {
+    status: string;
+    thresholdsFile?: string;
+    thresholdsDeclared?: boolean;
+    thresholdsError?: string | null;
+    profile?: {
+      receiptCount: number;
+      paperFillCount: number;
+      venueFillCount: number;
+      advice: boolean;
+      dimensions: readonly {
+        dimension: string;
+        label: { id: string; statement: string } | null;
+        unavailableReason: string | null;
+      }[];
+      declaredThresholds: Record<string, number | null>;
+    };
+  };
 };
+
+/**
+ * Three paper buys at round prices. Round levels are the cheapest stream that reaches a label:
+ * `anchoring` needs three measurable fills and no marks at all.
+ */
+async function appendRoundLevelFills(directory: string, prices: readonly number[]): Promise<void> {
+  for (const price of prices) {
+    await appendFinanceExecutionReceipt(
+      directory,
+      fill({
+        fill: { filledQuantity: 10, fillPrice: price, filledAt: PAST, venueRef: "paper" },
+      }),
+    );
+  }
+}
+
+async function declareThresholds(directory: string, value: unknown): Promise<string> {
+  const file = financeBehaviourThresholdsPath(directory);
+  await fs.writeFile(file, JSON.stringify(value), "utf8");
+  return file;
+}
 
 async function read(tool: AnyAgentTool, args: Record<string, unknown> = {}): Promise<ReadPayload> {
   const result = await tool.execute("read-ledger", args);
@@ -275,11 +318,126 @@ describe("finance_position_ledger_read", () => {
     const tool = createFinancePositionLedgerReadTool({});
     await read(tool, { directory, initialCapital: 1000, includeCurveLevels: true });
     await read(tool, { directory, asOf: MARK_LATER });
+    await read(tool, { directory, includeBehaviour: true });
 
     const after = await fs.stat(database);
     const afterLedger = await readFinancePositionLedger(directory);
     expect(after.size).toBe(before.size);
     expect(afterLedger.recordCount).toBe(beforeLedger.recordCount);
     expect(afterLedger.headRef).toBe(beforeLedger.headRef);
+  });
+
+  describe("behaviour", () => {
+    it("does not build a behaviour profile unless it is asked for", async () => {
+      const directory = await storeDirectory();
+      await appendRoundLevelFills(directory, [100, 200, 300]);
+
+      const payload = await read(createFinancePositionLedgerReadTool({}), { directory });
+
+      expect(payload.behaviour?.status).toBe("not_requested");
+      expect(payload.behaviour?.profile).toBeUndefined();
+    });
+
+    it("reports measured numbers with no labels when the owner has declared no thresholds", async () => {
+      const directory = await storeDirectory();
+      await appendRoundLevelFills(directory, [100, 200, 300]);
+
+      const payload = await read(createFinancePositionLedgerReadTool({}), {
+        directory,
+        includeBehaviour: true,
+      });
+      const behaviour = payload.behaviour;
+
+      expect(behaviour?.status).toBe("computed");
+      expect(behaviour?.thresholdsDeclared).toBe(false);
+      expect(behaviour?.thresholdsError).toBeNull();
+      expect(behaviour?.thresholdsFile).toBe(financeBehaviourThresholdsPath(directory));
+      // The measurement happened either way; only the reading waits for a declared boundary.
+      expect(behaviour?.profile?.receiptCount).toBe(3);
+      expect(behaviour?.profile?.dimensions).toHaveLength(4);
+      expect(behaviour?.profile?.dimensions.every((item) => item.label === null)).toBe(true);
+      expect(behaviour?.profile?.advice).toBe(false);
+      const anchoring = behaviour?.profile?.dimensions.find(
+        (item) => item.dimension === "anchoring",
+      );
+      expect(anchoring?.unavailableReason).toContain("thresholds.roundLevelTolerancePercent");
+    });
+
+    it("labels a dimension against the owner's declaration, not the caller's", async () => {
+      const directory = await storeDirectory();
+      await appendRoundLevelFills(directory, [100, 200, 300]);
+      await declareThresholds(directory, {
+        roundLevelTolerancePercent: 0.5,
+        anchorShareThreshold: 0.6,
+      });
+
+      const payload = await read(createFinancePositionLedgerReadTool({}), {
+        directory,
+        includeBehaviour: true,
+      });
+      const behaviour = payload.behaviour;
+
+      expect(behaviour?.thresholdsDeclared).toBe(true);
+      expect(behaviour?.thresholdsError).toBeNull();
+      const anchoring = behaviour?.profile?.dimensions.find(
+        (item) => item.dimension === "anchoring",
+      );
+      expect(anchoring?.label?.id).toBe("fills_cluster_on_round_levels");
+      // The boundary the caller is held to is the one written in the file.
+      expect(behaviour?.profile?.declaredThresholds.roundLevelTolerancePercent).toBe(0.5);
+      expect(behaviour?.profile?.declaredThresholds.maxFillsPerDay).toBeNull();
+    });
+
+    it("still returns the book when the declaration exists but does not parse", async () => {
+      const directory = await storeDirectory();
+      await appendRoundLevelFills(directory, [100, 200, 300]);
+      // `dispositionGap` is not a threshold this module knows. Ignoring it would silently hold
+      // the reader to a boundary nobody declared, so it is reported instead.
+      await declareThresholds(directory, { dispositionGap: 0.1 });
+
+      const payload = await read(createFinancePositionLedgerReadTool({}), {
+        directory,
+        includeBehaviour: true,
+      });
+
+      // The positions are still the answer to the question that was asked.
+      expect(payload.ok).toBe(true);
+      expect(payload.status).not.toBe("absent");
+      expect(payload.positionCount).toBe(1);
+      expect(payload.behaviour?.thresholdsError).toContain("unknown behaviour threshold key");
+      expect(payload.behaviour?.thresholdsDeclared).toBe(false);
+      // Nothing was silently labelled against the unusable declaration.
+      expect(payload.behaviour?.profile?.dimensions.every((item) => item.label === null)).toBe(
+        true,
+      );
+    });
+
+    it("reports a declaration file that is not JSON at all", async () => {
+      const directory = await storeDirectory();
+      await appendRoundLevelFills(directory, [100, 200, 300]);
+      await fs.writeFile(financeBehaviourThresholdsPath(directory), "{ not json", "utf8");
+
+      const payload = await read(createFinancePositionLedgerReadTool({}), {
+        directory,
+        includeBehaviour: true,
+      });
+
+      expect(payload.ok).toBe(true);
+      expect(payload.behaviour?.thresholdsError).toContain("is not valid JSON");
+    });
+
+    it("builds the profile over the same stream the positions came from", async () => {
+      const directory = await storeDirectory();
+      await appendRoundLevelFills(directory, [100, 200, 300]);
+
+      const payload = await read(createFinancePositionLedgerReadTool({}), {
+        directory,
+        includeBehaviour: true,
+      });
+
+      expect(payload.behaviour?.profile?.receiptCount).toBe(payload.recordCount);
+      expect(payload.behaviour?.profile?.paperFillCount).toBe(payload.paperFillCount);
+      expect(payload.behaviour?.profile?.venueFillCount).toBe(payload.venueFillCount);
+    });
   });
 });

@@ -3,6 +3,8 @@ import path from "node:path";
 import {
   GATEWAY_SERVICE_KIND,
   GATEWAY_SERVICE_MARKER,
+  GATEWAY_SYSTEMD_SERVICE_NAME,
+  LEGACY_GATEWAY_SYSTEMD_SERVICE_NAMES,
   resolveGatewayLaunchAgentLabel,
   resolveGatewaySystemdServiceName,
   resolveGatewayWindowsTaskName,
@@ -107,7 +109,13 @@ function isOpenClawGatewaySystemdService(name: string, contents: string): boolea
   if (hasGatewayServiceMarker(contents)) {
     return true;
   }
-  if (!name.startsWith("openclaw-gateway")) {
+  // Prefer the marker; fall back to name prefixes so pre-rebrand units
+  // (installed before the service was renamed) are still recognized.
+  const matchesCurrentName = name.startsWith(GATEWAY_SYSTEMD_SERVICE_NAME);
+  const matchesLegacyName = LEGACY_GATEWAY_SYSTEMD_SERVICE_NAMES.some((legacy) =>
+    name.startsWith(legacy),
+  );
+  if (!matchesCurrentName && !matchesLegacyName) {
     return false;
   }
   return contents.toLowerCase().includes("gateway");

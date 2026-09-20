@@ -2,7 +2,7 @@
 read_when:
   - 你想了解记忆文件布局和工作流程
   - 你想调整自动压缩前的记忆刷新
-summary: OpenClaw 记忆的工作原理（工作空间文件 + 自动记忆刷新）
+summary: LCX Agent 记忆的工作原理（工作空间文件 + 自动记忆刷新）
 title: 记忆
 x-i18n:
   generated_at: "2026-02-03T07:47:38Z"
@@ -15,7 +15,7 @@ x-i18n:
 
 # 记忆
 
-OpenClaw 记忆是**智能体工作空间中的纯 Markdown 文件**。这些文件是唯一的事实来源；模型只"记住"写入磁盘的内容。
+LCX Agent 记忆是**智能体工作空间中的纯 Markdown 文件**。这些文件是唯一的事实来源；模型只"记住"写入磁盘的内容。
 
 记忆搜索工具由活动的记忆插件提供（默认：`memory-core`）。使用 `plugins.slots.memory = "none"` 禁用记忆插件。
 
@@ -42,7 +42,7 @@ OpenClaw 记忆是**智能体工作空间中的纯 Markdown 文件**。这些文
 
 ## 自动记忆刷新（压缩前触发）
 
-当会话**接近自动压缩**时，OpenClaw 会触发一个**静默的智能体回合**，提醒模型在上下文被压缩**之前**写入持久记忆。默认提示明确说明模型*可以回复*，但通常 `NO_REPLY` 是正确的响应，因此用户永远不会看到这个回合。
+当会话**接近自动压缩**时，LCX Agent 会触发一个**静默的智能体回合**，提醒模型在上下文被压缩**之前**写入持久记忆。默认提示明确说明模型*可以回复*，但通常 `NO_REPLY` 是正确的响应，因此用户永远不会看到这个回合。
 
 这由 `agents.defaults.compaction.memoryFlush` 控制：
 
@@ -76,13 +76,13 @@ OpenClaw 记忆是**智能体工作空间中的纯 Markdown 文件**。这些文
 
 ## 向量记忆搜索
 
-OpenClaw 可以在 `MEMORY.md` 和 `memory/*.md`（以及你选择加入的任何额外目录或文件）上构建小型向量索引，以便语义查询可以找到相关笔记，即使措辞不同。
+LCX Agent 可以在 `MEMORY.md` 和 `memory/*.md`（以及你选择加入的任何额外目录或文件）上构建小型向量索引，以便语义查询可以找到相关笔记，即使措辞不同。
 
 默认值：
 
 - 默认启用。
 - 监视记忆文件的更改（去抖动）。
-- 默认使用远程嵌入。如果未设置 `memorySearch.provider`，OpenClaw 自动选择：
+- 默认使用远程嵌入。如果未设置 `memorySearch.provider`，LCX Agent 自动选择：
   1. 如果配置了 `memorySearch.local.modelPath` 且文件存在，则使用 `local`。
   2. 如果可以解析 OpenAI 密钥，则使用 `openai`。
   3. 如果可以解析 Gemini 密钥，则使用 `gemini`。
@@ -90,7 +90,7 @@ OpenClaw 可以在 `MEMORY.md` 和 `memory/*.md`（以及你选择加入的任�
 - 本地模式使用 node-llama-cpp，可能需要运行 `pnpm approve-builds`。
 - 使用 sqlite-vec（如果可用）在 SQLite 中加速向量搜索。
 
-远程嵌入**需要**嵌入提供商的 API 密钥。OpenClaw 从身份验证配置文件、`models.providers.*.apiKey` 或环境变量解析密钥。Codex OAuth 仅涵盖聊天/补全，**不**满足记忆搜索的嵌入需求。对于 Gemini，使用 `GEMINI_API_KEY` 或 `models.providers.google.apiKey`。使用自定义 OpenAI 兼容端点时，设置 `memorySearch.remote.apiKey`（以及可选的 `memorySearch.remote.headers`）。
+远程嵌入**需要**嵌入提供商的 API 密钥。LCX Agent 从身份验证配置文件、`models.providers.*.apiKey` 或环境变量解析密钥。Codex OAuth 仅涵盖聊天/补全，**不**满足记忆搜索的嵌入需求。对于 Gemini，使用 `GEMINI_API_KEY` 或 `models.providers.google.apiKey`。使用自定义 OpenAI 兼容端点时，设置 `memorySearch.remote.apiKey`（以及可选的 `memorySearch.remote.headers`）。
 
 ### 额外记忆路径
 
@@ -218,16 +218,16 @@ agents: {
 - 文件类型：仅 Markdown（`MEMORY.md`、`memory/**/*.md`，以及 `memorySearch.extraPaths` 下的任何 `.md` 文件）。
 - 索引存储：每个智能体的 SQLite 位于 `~/.openclaw/memory/<agentId>.sqlite`（可通过 `agents.defaults.memorySearch.store.path` 配置，支持 `{agentId}` 令牌）。
 - 新鲜度：监视器监视 `MEMORY.md`、`memory/` 和 `memorySearch.extraPaths`，标记索引为脏（去抖动 1.5 秒）。同步在会话开始时、搜索时或按间隔安排，并异步运行。会话记录使用增量阈值触发后台同步。
-- 重新索引触发器：索引存储嵌入的**提供商/模型 + 端点指纹 + 分块参数**。如果其中任何一个发生变化，OpenClaw 会自动重置并重新索引整个存储。
+- 重新索引触发器：索引存储嵌入的**提供商/模型 + 端点指纹 + 分块参数**。如果其中任何一个发生变化，LCX Agent 会自动重置并重新索引整个存储。
 
 ### 混合搜索（BM25 + 向量）
 
-启用时，OpenClaw 结合：
+启用时，LCX Agent 结合：
 
 - **向量相似度**（语义匹配，措辞可以不同）
 - **BM25 关键词相关性**（精确令牌如 ID、环境变量、代码符号）
 
-如果你的平台上全文搜索不可用，OpenClaw 会回退到纯向量搜索。
+如果你的平台上全文搜索不可用，LCX Agent 会回退到纯向量搜索。
 
 #### 为什么使用混合搜索？
 
@@ -292,7 +292,7 @@ agents: {
 
 ### 嵌入缓存
 
-OpenClaw 可以在 SQLite 中缓存**块嵌入**，这样重新索引和频繁更新（特别是会话记录）不会重新嵌入未更改的文本。
+LCX Agent 可以在 SQLite 中缓存**块嵌入**，这样重新索引和频繁更新（特别是会话记录）不会重新嵌入未更改的文本。
 
 配置：
 
@@ -353,7 +353,7 @@ agents: {
 
 ### SQLite 向量加速（sqlite-vec）
 
-当 sqlite-vec 扩展可用时，OpenClaw 将嵌入存储在 SQLite 虚拟表（`vec0`）中，并在数据库中执行向量距离查询。这使搜索保持快速，无需将每个嵌入加载到 JS 中。
+当 sqlite-vec 扩展可用时，LCX Agent 将嵌入存储在 SQLite 虚拟表（`vec0`）中，并在数据库中执行向量距离查询。这使搜索保持快速，无需将每个嵌入加载到 JS 中。
 
 配置（可选）：
 
@@ -375,7 +375,7 @@ agents: {
 说明：
 
 - `enabled` 默认为 true；禁用时，搜索回退到对存储嵌入的进程内余弦相似度计算。
-- 如果 sqlite-vec 扩展缺失或加载失败，OpenClaw 会记录错误并继续使用 JS 回退（无向量表）。
+- 如果 sqlite-vec 扩展缺失或加载失败，LCX Agent 会记录错误并继续使用 JS 回退（无向量表）。
 - `extensionPath` 覆盖捆绑的 sqlite-vec 路径（对于自定义构建或非标准安装位置很有用）。
 
 ### 本地嵌入自动下载

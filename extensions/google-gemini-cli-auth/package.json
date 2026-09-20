@@ -2,7 +2,7 @@
   "name": "@openclaw/google-gemini-cli-auth",
   "version": "2026.3.2",
   "private": true,
-  "description": "OpenClaw Gemini CLI OAuth provider plugin",
+  "description": "LCX Agent Gemini CLI OAuth provider plugin",
   "type": "module",
   "dependencies": {
     "lcx-agent": "workspace:*"

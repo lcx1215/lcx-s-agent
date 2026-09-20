@@ -688,7 +688,7 @@ describe("lcx-agent-exam", () => {
     );
   });
 
-  it("runs module-learning review against the local OpenClaw workspace", async () => {
+  it("runs module-learning review against the local LCX Agent workspace", async () => {
     const source = await fs.readFile(
       path.join(repoRoot, "scripts/operator/lcx-agent-exam.ts"),
       "utf8",

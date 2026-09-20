@@ -1,7 +1,7 @@
 {
   "name": "@openclaw/external",
   "version": "2026.3.3",
-  "description": "Vendor-neutral HTTP JSON channel plugin for OpenClaw",
+  "description": "Vendor-neutral HTTP JSON channel plugin for LCX Agent",
   "type": "module",
   "dependencies": {
     "lcx-agent": "workspace:*",
@@ -24,7 +24,7 @@
     "install": {
       "npmSpec": "@openclaw/external",
       "localPath": "extensions/external",
-      "defaultChoice": "npm"
+      "defaultChoice": "local"
     }
   }
 }

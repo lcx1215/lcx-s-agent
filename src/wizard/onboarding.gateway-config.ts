@@ -181,7 +181,7 @@ export async function configureGatewayForOnboarding(
         copy: {
           modeMessage: "How do you want to provide the gateway password?",
           plaintextLabel: "Enter password now",
-          plaintextHint: "Stores the password directly in OpenClaw config",
+          plaintextHint: "Stores the password directly in LCX Agent config",
         },
       });
       if (selectedMode === "ref") {

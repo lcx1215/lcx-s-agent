@@ -17,7 +17,7 @@
 - migrated to `Projects/openclaw`: yes
 - live build passed: n/a
 - gateway restarted: no
-- `openclaw channels status --probe` passed: n/a
+- `lcx channels status --probe` passed: n/a
 - real Feishu verified: no
 - Feishu acceptance phrases used:
 - Feishu acceptance result:

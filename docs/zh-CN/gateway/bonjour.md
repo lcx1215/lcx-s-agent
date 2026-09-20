@@ -15,7 +15,7 @@ x-i18n:
 
 # Bonjour / mDNS 设备发现
 
-OpenClaw 使用 Bonjour（mDNS / DNS‑SD）作为**仅限局域网的便捷方式**来发现
+LCX Agent 使用 Bonjour（mDNS / DNS‑SD）作为**仅限局域网的便捷方式**来发现
 活跃的 Gateway 网关（WebSocket 端点）。这是尽力而为的，**不能**替代 SSH 或
 基于 Tailnet 的连接。
 
@@ -33,7 +33,7 @@ OpenClaw 使用 Bonjour（mDNS / DNS‑SD）作为**仅限局域网的便捷方�
 3. 配置 Tailscale **分割 DNS**，使你选择的域名通过该
    DNS 服务器为客户端（包括 iOS）解析。
 
-OpenClaw 支持任何发现域名；`openclaw.internal.` 只是一个示例。
+LCX Agent 支持任何发现域名；`openclaw.internal.` 只是一个示例。
 iOS/Android 节点同时浏览 `local.` 和你配置的广域域名。
 
 ### Gateway 网关配置（推荐）
@@ -48,7 +48,7 @@ iOS/Android 节点同时浏览 `local.` 和你配置的广域域名。
 ### 一次性 DNS 服务器设置（Gateway 网关主机）
 
 ```bash
-openclaw dns setup --apply
+lcx dns setup --apply
 ```
 
 这会安装 CoreDNS 并配置它：
@@ -81,7 +81,7 @@ Gateway 网关 WS 端口（默认 `18789`）默认绑定到 loopback。对于局
 对于仅 Tailnet 的设置：
 
 - 在 `~/.openclaw/openclaw.json` 中设置 `gateway.bind: "tailnet"`。
-- 重启 Gateway 网关（`openclaw gateway restart`）。
+- 重启 Gateway 网关（`lcx gateway restart`）。
 
 ## 什么在广播
 

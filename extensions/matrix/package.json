@@ -1,7 +1,7 @@
 {
   "name": "@openclaw/matrix",
   "version": "2026.3.2",
-  "description": "OpenClaw Matrix channel plugin",
+  "description": "LCX Agent Matrix channel plugin",
   "type": "module",
   "dependencies": {
     "@mariozechner/pi-agent-core": "0.55.3",
@@ -29,7 +29,7 @@
     "install": {
       "npmSpec": "@openclaw/matrix",
       "localPath": "extensions/matrix",
-      "defaultChoice": "npm"
+      "defaultChoice": "local"
     }
   }
 }

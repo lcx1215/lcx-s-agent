@@ -1,6 +1,6 @@
 // Default service labels (canonical + legacy compatibility)
 export const GATEWAY_LAUNCH_AGENT_LABEL = "ai.openclaw.gateway";
-export const GATEWAY_SYSTEMD_SERVICE_NAME = "openclaw-gateway";
+export const GATEWAY_SYSTEMD_SERVICE_NAME = "lcx-gateway";
 export const GATEWAY_WINDOWS_TASK_NAME = "OpenClaw Gateway";
 export const GATEWAY_SERVICE_MARKER = "openclaw";
 export const GATEWAY_SERVICE_KIND = "gateway";
@@ -14,6 +14,7 @@ export const LEGACY_GATEWAY_LAUNCH_AGENT_LABELS: string[] = [];
 export const LEGACY_GATEWAY_SYSTEMD_SERVICE_NAMES: string[] = [
   "clawdbot-gateway",
   "moltbot-gateway",
+  "openclaw-gateway",
 ];
 export const LEGACY_GATEWAY_WINDOWS_TASK_NAMES: string[] = [];
 
@@ -48,7 +49,7 @@ export function resolveGatewaySystemdServiceName(profile?: string): string {
   if (!suffix) {
     return GATEWAY_SYSTEMD_SERVICE_NAME;
   }
-  return `openclaw-gateway${suffix}`;
+  return `${GATEWAY_SYSTEMD_SERVICE_NAME}${suffix}`;
 }
 
 export function resolveGatewayWindowsTaskName(profile?: string): string {
@@ -73,9 +74,9 @@ export function formatGatewayServiceDescription(params?: {
     parts.push(`v${version}`);
   }
   if (parts.length === 0) {
-    return "OpenClaw Gateway";
+    return "LCX Agent Gateway";
   }
-  return `OpenClaw Gateway (${parts.join(", ")})`;
+  return `LCX Agent Gateway (${parts.join(", ")})`;
 }
 
 export function resolveGatewayServiceDescription(params: {
@@ -107,7 +108,7 @@ export function resolveNodeWindowsTaskName(): string {
 export function formatNodeServiceDescription(params?: { version?: string }): string {
   const version = params?.version?.trim();
   if (!version) {
-    return "OpenClaw Node Host";
+    return "LCX Agent Node Host";
   }
-  return `OpenClaw Node Host (v${version})`;
+  return `LCX Agent Node Host (v${version})`;
 }

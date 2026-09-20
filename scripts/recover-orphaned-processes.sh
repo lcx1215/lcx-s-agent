@@ -144,9 +144,10 @@ if (candidatePids.length > 0) {
 const includePattern = /codex|claude/i;
 
 const excludePatterns = [
-  /openclaw-gateway/i,
+  // Both names: the service was renamed, so either may still be running.
+  /openclaw-gateway|lcx-gateway/i,
   /signal-cli/i,
-  /node_modules\/\.bin\/openclaw/i,
+  /node_modules\/\.bin\/(openclaw|lcx)/i,
   /recover-orphaned-processes\.sh/i,
 ];
 

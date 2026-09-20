@@ -1,9 +1,9 @@
 import * as dns from "node:dns";
 import * as net from "node:net";
-import { EnvHttpProxyAgent, getGlobalDispatcher, setGlobalDispatcher } from "undici";
+import { Agent, getGlobalDispatcher, setGlobalDispatcher } from "undici";
 import type { TelegramNetworkConfig } from "../config/types.telegram.js";
 import { resolveFetch } from "../infra/fetch.js";
-import { hasProxyEnvConfigured } from "../infra/net/proxy-env.js";
+import { isDeclaredProxyDispatcher } from "../infra/net/egress-dispatcher.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import {
   resolveTelegramAutoSelectFamilyDecision,
@@ -14,10 +14,6 @@ let appliedAutoSelectFamily: boolean | null = null;
 let appliedDnsResultOrder: string | null = null;
 let appliedGlobalDispatcherAutoSelectFamily: boolean | null = null;
 const log = createSubsystemLogger("telegram/network");
-function isProxyLikeDispatcher(dispatcher: unknown): boolean {
-  const ctorName = (dispatcher as { constructor?: { name?: string } })?.constructor?.name;
-  return typeof ctorName === "string" && ctorName.includes("ProxyAgent");
-}
 
 const FALLBACK_RETRY_ERROR_CODES = [
   "ETIMEDOUT",
@@ -79,12 +75,15 @@ function applyTelegramNetworkWorkarounds(network?: TelegramNetworkConfig): void 
     autoSelectDecision.value !== appliedGlobalDispatcherAutoSelectFamily
   ) {
     const existingGlobalDispatcher = getGlobalDispatcher();
-    const shouldPreserveExistingProxy =
-      isProxyLikeDispatcher(existingGlobalDispatcher) && !hasProxyEnvConfigured();
-    if (!shouldPreserveExistingProxy) {
+    // Keep a dispatcher that was explicitly configured elsewhere (proxy or otherwise).
+    // We must NOT choose a dispatcher from ambient HTTP_PROXY/HTTPS_PROXY: the egress
+    // path has to be identical on a laptop behind a VPN and on AWS/Cloudflare, and an
+    // ambient proxy that dies with the shell would silently break every later request.
+    const shouldPreserveExistingDispatcher = isDeclaredProxyDispatcher(existingGlobalDispatcher);
+    if (!shouldPreserveExistingDispatcher) {
       try {
         setGlobalDispatcher(
-          new EnvHttpProxyAgent({
+          new Agent({
             connect: {
               autoSelectFamily: autoSelectDecision.value,
               autoSelectFamilyAttemptTimeout: 300,

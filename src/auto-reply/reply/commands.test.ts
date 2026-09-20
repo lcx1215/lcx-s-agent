@@ -1160,7 +1160,7 @@ describe("handleCommands context", () => {
       expect(result.shouldContinue).toBe(false);
       expect(result.reply?.text).toContain("🔎 Search and provider health");
       expect(result.reply?.text).toContain("Provider-native search: not connected");
-      expect(result.reply?.text).toContain("OpenClaw web_search: connected");
+      expect(result.reply?.text).toContain("LCX Agent web_search: connected");
       expect(result.reply?.text).toContain("Recent degradation record: none found");
       expect(result.reply?.text).toContain(
         "Current truth here is runtime/config surface only, not a fresh live probe.",
@@ -1297,7 +1297,7 @@ describe("handleCommands context", () => {
       expect(result.reply?.text).toContain("🧰 Connected capabilities");
       expect(result.reply?.text).toContain("Active model: minimax-portal/MiniMax-M2.7");
       expect(result.reply?.text).toContain("Provider-native tools: none connected");
-      expect(result.reply?.text).toContain("OpenClaw tools: web_search, web_fetch, memory_search");
+      expect(result.reply?.text).toContain("LCX Agent tools: web_search, web_fetch, memory_search");
       expect(result.reply?.text).not.toContain("ℹ️ Help");
     },
   );
@@ -1333,7 +1333,7 @@ describe("handleCommands context", () => {
       expect(result.shouldContinue).toBe(false);
       expect(result.reply?.text).toContain("🔎 Capability check: web-search");
       expect(result.reply?.text).toContain("Provider-native web-search: not connected");
-      expect(result.reply?.text).toContain("OpenClaw web_search: connected");
+      expect(result.reply?.text).toContain("LCX Agent web_search: connected");
       expect(result.reply?.text).toContain("runtime truth, not provider marketing");
       expect(result.reply?.text).not.toContain("ℹ️ Help");
     },
@@ -1375,7 +1375,7 @@ describe("handleCommands context", () => {
           ? "Provider-native file_search: unknown"
           : "Provider-native quickjs: not connected",
       );
-      expect(result.reply?.text).toContain("OpenClaw generic tool: none");
+      expect(result.reply?.text).toContain("LCX Agent generic tool: none");
       expect(result.reply?.text).toContain("runtime truth, not provider marketing");
       expect(result.reply?.text).not.toContain("ℹ️ Help");
     },

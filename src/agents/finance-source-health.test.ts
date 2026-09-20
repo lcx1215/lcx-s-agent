@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { inspectFinanceSourceHealth } from "./finance-source-health.js";
+import { financeReceiptsDir } from "./finance-state-dir.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -18,14 +19,14 @@ const receipt = (adapterId: string, asOf = "2026-09-09T03:00:00Z") => ({
 async function setup(files: Record<string, unknown>) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "source-health-"));
   roots.push(root);
-  const dir = path.join(root, "finance-caseflow", "receipts");
+  const dir = financeReceiptsDir(root);
   await fs.mkdir(dir, { recursive: true });
   for (const [name, data] of Object.entries(files)) {
     await fs.writeFile(path.join(dir, name + ".json"), JSON.stringify(data));
   }
   return inspectFinanceSourceHealth({
     workspaceDir: path.join(root, "workspace"),
-    env: { OPENCLAW_STATE_DIR: root },
+    env: { LCX_FINANCE_STATE_DIR: root },
     asOf: "2026-09-09T04:00:00Z",
   });
 }
@@ -46,6 +47,42 @@ describe("finance source health evidence envelopes", () => {
     ]) {
       expect(health.routes.find((route) => route.id === id)?.callState).toBe("recent_success");
     }
+  });
+  it("reads completion time on receipts written before dispatchedAt existed", async () => {
+    // Receipts predating `dispatchedAt` still carry `finishedAt`. Discarding them made hundreds of
+    // real source calls report as `unverified`, which an operator reads as "this was never called"
+    // when the truth is "it was called and the evidence is old". The two demand different actions,
+    // and the fallback must not invent freshness: an old receipt still ages past the cutoff.
+    const stale = "2026-09-01T03:00:00Z";
+    const health = await setup({
+      legacy: {
+        ...receipt("gdelt_public_news"),
+        sourceAttempts: [
+          {
+            adapterId: "gdelt_public_news",
+            status: "succeeded",
+            apiCalls: [{ finishedAt: stale }],
+          },
+        ],
+      },
+    });
+    const route = health.routes.find((entry) => entry.id === "gdelt_public_news");
+    expect(route?.callState).toBe("verification_expired");
+    // The stored instant is the completion time, ISO-normalized.
+    expect(Date.parse(route?.lastObservation?.dispatchedAt ?? "")).toBe(Date.parse(stale));
+  });
+  it("keeps a call with no usable timestamp unverified rather than guessing a time", async () => {
+    const health = await setup({
+      undated: {
+        ...receipt("gdelt_public_news"),
+        sourceAttempts: [
+          { adapterId: "gdelt_public_news", status: "succeeded", apiCalls: [{ httpStatus: 200 }] },
+        ],
+      },
+    });
+    expect(health.routes.find((entry) => entry.id === "gdelt_public_news")?.callState).toBe(
+      "unverified",
+    );
   });
   it("declares Alpaca even when its secret component is absent", async () => {
     const health = await setup({});

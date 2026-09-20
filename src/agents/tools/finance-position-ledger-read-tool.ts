@@ -1,11 +1,21 @@
 import fs from "node:fs/promises";
 import { Type } from "@sinclair/typebox";
+import {
+  buildFinanceBehaviourProfile,
+  parseFinanceBehaviourThresholds,
+  type FinanceBehaviourThresholds,
+} from "../finance-behaviour-profile.js";
 import { buildFinanceEquityCurve } from "../finance-equity-curve.js";
+import type { FinanceExecutionReceipt } from "../finance-execution-adapter.js";
 import {
   readFinancePositionLedger,
   readFinancePositionRecords,
+  type FinancePositionMark,
 } from "../finance-position-ledger.js";
-import { resolveFinancePositionLedgerLocation } from "../finance-state-dir.js";
+import {
+  financeBehaviourThresholdsPath,
+  resolveFinancePositionLedgerLocation,
+} from "../finance-state-dir.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult, readNumberParam, readStringParam } from "./common.js";
 
@@ -36,7 +46,72 @@ const FinancePositionLedgerReadSchema = Type.Object({
       description: "Include the full equity level series instead of only its summary.",
     }),
   ),
+  includeBehaviour: Type.Optional(
+    Type.Boolean({
+      description:
+        "Include the behaviour profile of the recorded fills (disposition effect, turnover, momentum chasing, anchoring). Measured numbers are always reported; a dimension carries a label only when the owner has declared that dimension's threshold in the ledger's behaviour-thresholds.json. Descriptive observations, never advice.",
+    }),
+  ),
 });
+
+/**
+ * Build the behaviour section of a ledger read.
+ *
+ * A declaration that exists but does not parse is **reported, not thrown**. The positions are
+ * still the answer to the question that was asked, and a broken declaration is not a reason to
+ * make the book unreadable. The validation rules come from `parseFinanceBehaviourThresholds`, so
+ * this tool and the operator entry cannot come to disagree about what a valid declaration is —
+ * only their failure behaviour differs.
+ *
+ * The profile is built over the stream the ledger projection actually consumed, so a label can
+ * never describe different fills than the positions printed beside it.
+ */
+async function readBehaviourSection(params: {
+  directory: string;
+  receipts: readonly FinanceExecutionReceipt[];
+  marks: readonly FinancePositionMark[];
+}) {
+  const thresholdsFile = financeBehaviourThresholdsPath(params.directory);
+  let raw: string | null = null;
+  try {
+    raw = await fs.readFile(thresholdsFile, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  let declared: FinanceBehaviourThresholds | null = null;
+  let thresholdsError: string | null = null;
+  if (raw !== null) {
+    let value: unknown;
+    try {
+      value = JSON.parse(raw) as unknown;
+    } catch {
+      thresholdsError = `${thresholdsFile} is not valid JSON`;
+    }
+    if (thresholdsError === null) {
+      const parsed = parseFinanceBehaviourThresholds(value, thresholdsFile);
+      if (parsed.ok) {
+        declared = parsed.thresholds;
+      } else {
+        thresholdsError = parsed.error;
+      }
+    }
+  }
+
+  return {
+    status: "computed" as const,
+    thresholdsFile,
+    thresholdsDeclared: declared !== null,
+    thresholdsError,
+    profile: buildFinanceBehaviourProfile({
+      receipts: params.receipts,
+      marks: params.marks,
+      ...(declared === null ? {} : { thresholds: declared }),
+    }),
+  };
+}
 
 /**
  * Read-only view of the agent's own book.
@@ -49,6 +124,12 @@ const FinancePositionLedgerReadSchema = Type.Object({
  * It reports where it read from. Reading the wrong directory is silent — an absent book and
  * a flat account look identical — so `ledgerDirectory`, `resolvedFrom` and `status` are part
  * of the result, and an absent database is a named failure rather than an empty portfolio.
+ *
+ * `includeBehaviour` adds the behaviour profile over the same stream. The boundary it reports
+ * against is the owner's, not the caller's: the thresholds come from the declaration file in the
+ * ledger directory, which the operator entry resolves to the same path, and the caller cannot
+ * substitute its own. That is deliberate — a model choosing the thresholds would be making the
+ * judgement and then reading its own measurement as evidence for it.
  */
 export function createFinancePositionLedgerReadTool(options?: {
   workspaceDir?: string;
@@ -57,7 +138,7 @@ export function createFinancePositionLedgerReadTool(options?: {
     label: "Finance Position Ledger Read",
     name: "finance_position_ledger_read",
     description:
-      "Read the durable position book: open positions, average cost, realized and unrealized PnL, marks, and (when initial capital is supplied) the equity curve derived from the same stream. Use this before answering anything that depends on what is currently held or on how a prior position is doing. Read-only: it never appends a fill, places an order, or touches a venue.",
+      "Read the durable position book: open positions, average cost, realized and unrealized PnL, marks, and (when initial capital is supplied) the equity curve derived from the same stream. Use this before answering anything that depends on what is currently held or on how a prior position is doing. With includeBehaviour it also describes how the owner has actually traded — disposition effect, turnover, momentum chasing, anchoring — as measurements over the recorded fills. Read-only: it never appends a fill, places an order, or touches a venue.",
     parameters: FinancePositionLedgerReadSchema,
     execute: async (_toolCallId, args) => {
       const params = args as Record<string, unknown>;
@@ -65,6 +146,7 @@ export function createFinancePositionLedgerReadTool(options?: {
       const asOf = readStringParam(params, "asOf");
       const initialCapital = readNumberParam(params, "initialCapital");
       const includeCurveLevels = params.includeCurveLevels === true;
+      const includeBehaviour = params.includeBehaviour === true;
 
       const location = resolveFinancePositionLedgerLocation({
         workspaceDir: options?.workspaceDir,
@@ -163,6 +245,14 @@ export function createFinancePositionLedgerReadTool(options?: {
               };
             })();
 
+      const behaviour = includeBehaviour
+        ? await readBehaviourSection({
+            directory: location.directory,
+            receipts: ledgerRead.receipts,
+            marks: ledgerRead.marks,
+          })
+        : ({ status: "not_requested" as const } as const);
+
       return jsonResult({
         ok: true,
         schemaVersion: FINANCE_POSITION_LEDGER_READ_SCHEMA_VERSION,
@@ -197,6 +287,7 @@ export function createFinancePositionLedgerReadTool(options?: {
         instrumentsWithoutMark: ledger.instrumentsWithoutMark,
         rejectedMarks: ledger.rejectedMarks,
         equityCurve,
+        behaviour,
         notTouched: [
           "trading_execution",
           "order_placement",

@@ -14,6 +14,10 @@ import {
   parseArgs,
 } from "../../scripts/operator/lcx-finance-position-ledger.ts";
 import {
+  FINANCE_EXECUTION_RECEIPT_SCHEMA,
+  type FinanceExecutionReceipt,
+} from "../../src/agents/finance-execution-adapter.ts";
+import {
   FINANCE_STATE_DIR_ENV,
   financePositionLedgerPath,
 } from "../../src/agents/finance-state-dir.ts";
@@ -29,6 +33,53 @@ async function storeDirectory(): Promise<string> {
   return directory;
 }
 
+/**
+ * A minimal paper receipt at a chosen fill price. Three of these at round prices are enough to
+ * give the anchoring dimension something to measure, which is the cheapest stream that reaches
+ * a label.
+ */
+function receiptFixture(id: string, instrument: string, price: number): FinanceExecutionReceipt {
+  return {
+    schemaVersion: FINANCE_EXECUTION_RECEIPT_SCHEMA,
+    receiptId: id,
+    intentId: `i-${id}`,
+    runAuthorizationId: "run-1",
+    adapterId: "paper",
+    adapterKind: "paper",
+    venue: "paper",
+    instrument,
+    side: "buy",
+    orderType: "market",
+    quantity: 10,
+    referencePrice: price,
+    referencePriceAt: PAST,
+    notional: price * 10,
+    fill: { filledQuantity: 10, fillPrice: price, filledAt: PAST, venueRef: "paper" },
+    executionAuthority: "declared_execution_adapter_required",
+    recordedAt: PAST,
+  };
+}
+
+async function writeJson(directory: string, name: string, value: unknown): Promise<string> {
+  const file = path.join(directory, name);
+  await fs.writeFile(file, JSON.stringify(value), "utf8");
+  return file;
+}
+
+async function appendReceipt(
+  directory: string,
+  id: string,
+  instrument: string,
+  price: number,
+): Promise<void> {
+  const receiptPath = await writeJson(
+    directory,
+    `${id}.json`,
+    receiptFixture(id, instrument, price),
+  );
+  await buildFinancePositionLedgerPayload({ directory, receiptPath, marks: [], json: true });
+}
+
 afterEach(async () => {
   await Promise.all(
     directories.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
@@ -42,6 +93,11 @@ describe("finance position ledger operator entry", () => {
     // agent's read tool then had to be told separately.
     expect(parseArgs([])).toEqual({ marks: [], json: false });
     expect(parseArgs(["--dir", "/book"])).toMatchObject({ directory: "/book" });
+    // Declaring behaviour thresholds is what turns measured numbers into labels, so the flag has
+    // to reach the payload builder rather than being dropped as an unknown argument.
+    expect(parseArgs(["--behaviour-thresholds", "/t.json"])).toMatchObject({
+      behaviourThresholdsPath: "/t.json",
+    });
   });
 
   it("treats a blank --dir as absent rather than as a path", () => {
@@ -131,5 +187,85 @@ describe("finance position ledger operator entry", () => {
     expect(reopened.ledger.realizedPnl).toBe(0);
     expect(reopened.claims.databaseWritten).toBe(false);
     expect(reopened.headRef).not.toBeNull();
+  });
+
+  it("reports a behaviour profile over the stored stream, without labels until thresholds exist", async () => {
+    const directory = await storeDirectory();
+    await appendReceipt(directory, "r1", "AAPL", 100);
+
+    const payload = await buildFinancePositionLedgerPayload({ directory, marks: [], json: true });
+
+    expect(payload.behaviour.receiptCount).toBe(1);
+    expect(payload.behaviour.paperFillCount).toBe(1);
+    expect(payload.behaviour.venueFillCount).toBe(0);
+    expect(payload.behaviour.advice).toBe(false);
+    expect(payload.behaviour.dimensions).toHaveLength(4);
+    // The numbers are reported either way; only the labels wait for a declared threshold.
+    expect(payload.behaviour.dimensions.every((item) => item.label === null)).toBe(true);
+    expect(payload.behaviourThresholdsSource).toBeNull();
+  });
+
+  it("labels the behaviour once the thresholds are declared", async () => {
+    const directory = await storeDirectory();
+    await appendReceipt(directory, "r1", "AAA", 100);
+    await appendReceipt(directory, "r2", "BBB", 200);
+    await appendReceipt(directory, "r3", "CCC", 300);
+
+    const undeclared = await buildFinancePositionLedgerPayload({
+      directory,
+      marks: [],
+      json: true,
+    });
+    const anchoringOf = (payload: typeof undeclared) =>
+      payload.behaviour.dimensions.find((item) => item.dimension === "anchoring");
+
+    // Same stream, same measured numbers — the label is the only thing the file changes.
+    expect(anchoringOf(undeclared)?.label).toBeNull();
+    expect(anchoringOf(undeclared)?.observations.measurableFills).toBe(3);
+
+    const thresholdsPath = await writeJson(directory, "thresholds.json", {
+      roundLevelTolerancePercent: 0.5,
+      anchorShareThreshold: 0.6,
+    });
+    const declared = await buildFinancePositionLedgerPayload({
+      directory,
+      marks: [],
+      behaviourThresholdsPath: thresholdsPath,
+      json: true,
+    });
+
+    expect(anchoringOf(declared)?.label?.id).toBe("fills_cluster_on_round_levels");
+    expect(declared.behaviourThresholdsSource).toBe(thresholdsPath);
+  });
+
+  it("refuses a thresholds file whose key is misspelled instead of reading it as undeclared", async () => {
+    const directory = await storeDirectory();
+    // `dispositionGap` is not a threshold this module knows. Ignoring it would report
+    // "dispositionGapThreshold was not declared", which an operator who supplied a number
+    // would read as "my threshold was not met" — the exact misreading this refusal prevents.
+    const thresholdsPath = await writeJson(directory, "thresholds.json", { dispositionGap: 0.1 });
+
+    await expect(
+      buildFinancePositionLedgerPayload({
+        directory,
+        marks: [],
+        behaviourThresholdsPath: thresholdsPath,
+        json: true,
+      }),
+    ).rejects.toThrow("unknown behaviour threshold key");
+  });
+
+  it("refuses a thresholds file whose value is not a usable number", async () => {
+    const directory = await storeDirectory();
+    const thresholdsPath = await writeJson(directory, "thresholds.json", { maxFillsPerDay: 0 });
+
+    await expect(
+      buildFinancePositionLedgerPayload({
+        directory,
+        marks: [],
+        behaviourThresholdsPath: thresholdsPath,
+        json: true,
+      }),
+    ).rejects.toThrow("maxFillsPerDay must be a positive finite number");
   });
 });

@@ -121,6 +121,24 @@ describe("registered provider capabilities", () => {
     expect(receipt.records).toHaveLength(1);
     expect(receipt.records[0].data.close).toBe(99);
   });
+  it("declares end-of-day provenance for daily bars instead of the unusable default", async () => {
+    // `manual_or_unknown` is refused as evidence downstream, so a collection the adapter itself
+    // restricts to days strictly before `asOf` must not fall back to it: those bars are completed
+    // end-of-day bars by construction, and saying so is a fact rather than an assumption.
+    const adapters = createRegisteredCapabilityAdapters({
+      massiveApiKey: "test",
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ results: [{ t: Date.parse("2026-09-04"), c: 99 }] }),
+      }),
+    });
+    const receipt = await runFinanceMarketCollectionRefresh({
+      request: { ...request, collection: "eod_history" },
+      adapters,
+    });
+    expect(receipt.records[0].delayStatus).toBe("end_of_day");
+  });
 });
 
 describe("extended capability contracts", () => {

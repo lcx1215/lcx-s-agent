@@ -216,6 +216,10 @@ export async function runFinanceDailyCycleOperator(
         dataIssues: report.dataIssues,
         placed: report.placed,
         refusals: report.refusals,
+        // Surfaced, not just performed: `appended: false` means the history was already in the
+        // book, which is the normal steady state. Without this line an operator cannot tell
+        // "nothing was filed" from "the run never tried".
+        barsFiled: report.barsFiled,
       };
       if (!options.json) {
         process.stdout.write(`${renderDay(payload)}\n`);

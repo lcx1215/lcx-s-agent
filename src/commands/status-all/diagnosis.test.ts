@@ -143,7 +143,7 @@ describe("inspectMacBuildToolchain", () => {
 
     const output = lines.join("\n");
     expect(output).toContain("OK:Port 18789");
-    expect(output).toContain("owned by the reachable local OpenClaw gateway");
+    expect(output).toContain("owned by the reachable local LCX Agent gateway");
     expect(output).not.toContain("WARN:Port 18789");
     expect(output).not.toContain("Stop it (openclaw gateway stop)");
   });

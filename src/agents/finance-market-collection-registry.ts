@@ -24,6 +24,7 @@ import {
   createGdeltPublicNewsCollectionAdapter,
   createYahooPublicEodHistoryCollectionAdapter,
   createYahooFinanceRssCollectionAdapter,
+  createChinaReachableUsEodHistoryCollectionAdapter,
 } from "./finance-free-market-collection-adapters.js";
 import { createGdeltNewsTitlesAdapter } from "./finance-gdelt-news-titles.js";
 import { resolveFinanceFetch, type FetchImpl } from "./finance-live-market-source.js";
@@ -39,6 +40,7 @@ export {
   createGdeltPublicNewsCollectionAdapter,
   createYahooPublicEodHistoryCollectionAdapter,
   createYahooFinanceRssCollectionAdapter,
+  createChinaReachableUsEodHistoryCollectionAdapter,
 } from "./finance-free-market-collection-adapters.js";
 
 import { createRegisteredCapabilityAdapters } from "./finance-registered-capability-adapters.js";
@@ -1308,6 +1310,10 @@ export function createFinanceMarketCollectionRegistry(
     createGdeltPublicNewsCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createGdeltNewsTitlesAdapter({ fetchImpl: options.fetchImpl }),
     createGoogleNewsRssCollectionAdapter({ fetchImpl: options.fetchImpl }),
+    // Unconditional, unlike the Yahoo sources: Yahoo answers 403 to every
+    // mainland-China source IP, so on such a host this is the only adapter that
+    // can return US equity end-of-day bars at all.
+    createChinaReachableUsEodHistoryCollectionAdapter({ fetchImpl: options.fetchImpl }),
   ];
   if (options.includeYahooPublicSources) {
     adapters.push(

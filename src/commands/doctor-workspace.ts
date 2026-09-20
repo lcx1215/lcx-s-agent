@@ -1,15 +1,18 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DEFAULT_AGENTS_FILENAME } from "../agents/workspace.js";
+import { CANONICAL_PROJECT_URL } from "../infra/canonical-identity.js";
 import { shortenHomePath } from "../utils.js";
 
+// Both commits live in this repository's own history; only the host changed, so the instructions
+// point at this project instead of sending someone to the upstream repository to fetch code.
 export const MEMORY_SYSTEM_PROMPT = [
   "Memory system not found in workspace.",
   "Paste this into your agent:",
   "",
   "Install the memory system by applying:",
-  "https://github.com/openclaw/openclaw/commit/9ffea23f31ca1df5183b25668f8f814bee0fb34e",
-  "https://github.com/openclaw/openclaw/commit/7d1fee70e76f2f634f1b41fca927ee663914183a",
+  `${CANONICAL_PROJECT_URL}/commit/9ffea23f31ca1df5183b25668f8f814bee0fb34e`,
+  `${CANONICAL_PROJECT_URL}/commit/7d1fee70e76f2f634f1b41fca927ee663914183a`,
 ].join("\n");
 
 export async function shouldSuggestMemorySystem(workspaceDir: string): Promise<boolean> {

@@ -102,3 +102,11 @@ tmp-lcx-owner-dashboard*.png
 /state/
 /openclaw-path-alias-*/
 src/canvas-host/a2ui/test-link-*.txt
+
+# Read-only probe scripts. They must live inside the repository (running them from
+# /tmp fails with ERR_PACKAGE_PATH_NOT_EXPORTED, because tsx cannot resolve the
+# exports of @mariozechner/* from outside the tree) and they are deleted once the
+# question they answer is answered. That in-tree placement is driven by module
+# resolution, not by governance, so a probe that is still in use would otherwise
+# fail the change-impact scan for a reason that has nothing to do with ownership.
+/.lcx-probe/

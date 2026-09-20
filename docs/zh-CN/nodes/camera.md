@@ -15,7 +15,7 @@ x-i18n:
 
 # 相机捕获（智能体）
 
-OpenClaw 支持在声明了相机命令的**配对节点**上用于智能体工作流的**相机捕获**：
+LCX Agent 支持在声明了相机命令的**配对节点**上用于智能体工作流的**相机捕获**：
 
 - 通过 `node.invoke` 捕获**照片**（`jpg`）或**短视频片段**（`mp4`，可选音频）。
 
@@ -73,10 +73,10 @@ OpenClaw 支持在声明了相机命令的**配对节点**上用于智能体工�
 示例：
 
 ```bash
-openclaw nodes camera snap --node <id>               # default: both front + back (2 MEDIA lines)
-openclaw nodes camera snap --node <id> --facing front
-openclaw nodes camera clip --node <id> --duration 3000
-openclaw nodes camera clip --node <id> --no-audio
+lcx nodes camera snap --node <id>               # default: both front + back (2 MEDIA lines)
+lcx nodes camera snap --node <id> --facing front
+lcx nodes camera clip --node <id> --duration 3000
+lcx nodes camera clip --node <id> --no-audio
 ```
 
 注意事项：
@@ -123,20 +123,20 @@ openclaw nodes camera clip --node <id> --no-audio
 示例：
 
 ```bash
-openclaw nodes camera list --node <id>            # list camera ids
-openclaw nodes camera snap --node <id>            # prints MEDIA:<path>
-openclaw nodes camera snap --node <id> --max-width 1280
-openclaw nodes camera snap --node <id> --delay-ms 2000
-openclaw nodes camera snap --node <id> --device-id <id>
-openclaw nodes camera clip --node <id> --duration 10s          # prints MEDIA:<path>
-openclaw nodes camera clip --node <id> --duration-ms 3000      # prints MEDIA:<path> (legacy flag)
-openclaw nodes camera clip --node <id> --device-id <id>
-openclaw nodes camera clip --node <id> --no-audio
+lcx nodes camera list --node <id>            # list camera ids
+lcx nodes camera snap --node <id>            # prints MEDIA:<path>
+lcx nodes camera snap --node <id> --max-width 1280
+lcx nodes camera snap --node <id> --delay-ms 2000
+lcx nodes camera snap --node <id> --device-id <id>
+lcx nodes camera clip --node <id> --duration 10s          # prints MEDIA:<path>
+lcx nodes camera clip --node <id> --duration-ms 3000      # prints MEDIA:<path> (legacy flag)
+lcx nodes camera clip --node <id> --device-id <id>
+lcx nodes camera clip --node <id> --no-audio
 ```
 
 注意事项：
 
-- `openclaw nodes camera snap` 默认 `maxWidth=1600`，除非被覆盖。
+- `lcx nodes camera snap` 默认 `maxWidth=1600`，除非被覆盖。
 - 在 macOS 上，`camera.snap` 在预热/曝光稳定后等待 `delayMs`（默认 2000ms）再捕获。
 - 照片载荷会重新压缩以保持 base64 小于 5 MB。
 
@@ -150,7 +150,7 @@ openclaw nodes camera clip --node <id> --no-audio
 对于*屏幕*视频（非相机），从节点录制：
 
 ```bash
-openclaw nodes screen record --node <id> --duration 10s --fps 15   # prints MEDIA:<path>
+lcx nodes screen record --node <id> --duration 10s --fps 15   # prints MEDIA:<path>
 ```
 
 注意事项：

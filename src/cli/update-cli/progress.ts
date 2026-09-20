@@ -1,4 +1,5 @@
 import { spinner } from "@clack/prompts";
+import { CANONICAL_PACKAGE_NAME } from "../../infra/canonical-identity.js";
 import { formatDurationPrecise } from "../../infra/format-time/format-duration.ts";
 import type {
   UpdateRunResult,
@@ -52,7 +53,9 @@ export function inferUpdateFailureHints(result: UpdateRunResult): string[] {
     hints.push(
       "Detected permission failure (EACCES). Re-run with a writable global prefix or sudo (for system-managed Node installs).",
     );
-    hints.push("Example: npm config set prefix ~/.local && npm i -g openclaw@latest");
+    hints.push(
+      `Example: npm config set prefix ~/.local && npm i -g ${CANONICAL_PACKAGE_NAME}@latest`,
+    );
   }
 
   if (
@@ -62,7 +65,7 @@ export function inferUpdateFailureHints(result: UpdateRunResult): string[] {
     hints.push(
       "Detected native optional dependency build failure. The updater retries with --omit=optional automatically.",
     );
-    hints.push("If it still fails: npm i -g openclaw@latest --omit=optional");
+    hints.push(`If it still fails: npm i -g ${CANONICAL_PACKAGE_NAME}@latest --omit=optional`);
   }
 
   return hints;

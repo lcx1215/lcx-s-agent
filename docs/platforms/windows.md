@@ -1,14 +1,14 @@
 ---
 summary: "Windows (WSL2) support and Gateway install"
 read_when:
-  - Installing OpenClaw on Windows
+  - Installing LCX Agent on Windows
   - Deciding how to run the Gateway on Windows
 title: "Windows (WSL2)"
 ---
 
 # Windows (WSL2)
 
-OpenClaw on Windows is recommended **via WSL2** (Ubuntu recommended). The
+LCX Agent on Windows is recommended **via WSL2** (Ubuntu recommended). The
 CLI + Gateway run inside Linux, which keeps the runtime consistent and makes
 tooling far more compatible (Node/Bun/pnpm, Linux binaries, skills). Native
 Windows might be trickier. WSL2 gives you the full Linux experience — one command
@@ -33,19 +33,19 @@ or an existing chat channel.
 Inside WSL2:
 
 ```
-openclaw onboard --install-daemon
+lcx onboard --install-daemon
 ```
 
 Or:
 
 ```
-openclaw gateway install
+lcx gateway install
 ```
 
 Or:
 
 ```
-openclaw configure
+lcx configure
 ```
 
 Select **Gateway service** when prompted.
@@ -53,7 +53,7 @@ Select **Gateway service** when prompted.
 Repair/migrate:
 
 ```
-openclaw doctor
+lcx doctor
 ```
 
 ## Gateway auto-start before Windows login
@@ -69,12 +69,12 @@ Inside WSL:
 sudo loginctl enable-linger "$(whoami)"
 ```
 
-### 2) Install the OpenClaw gateway user service
+### 2) Install the LCX Agent gateway user service
 
 Inside WSL:
 
 ```bash
-openclaw gateway install
+lcx gateway install
 ```
 
 ### 3) Start WSL automatically at Windows boot
@@ -96,8 +96,8 @@ wsl --list --verbose
 After a reboot (before Windows sign-in), check from WSL:
 
 ```bash
-systemctl --user is-enabled openclaw-gateway
-systemctl --user status openclaw-gateway --no-pager
+systemctl --user is-enabled lcx-gateway
+systemctl --user status lcx-gateway --no-pager
 ```
 
 ## Advanced: expose WSL services over LAN (portproxy)
@@ -140,7 +140,7 @@ Notes:
 
 - SSH from another machine targets the **Windows host IP** (example: `ssh user@windows-host -p 2222`).
 - Remote nodes must point at a **reachable** Gateway URL (not `127.0.0.1`); use
-  `openclaw status --all` to confirm.
+  `lcx status --all` to confirm.
 - Use `listenaddress=0.0.0.0` for LAN access; `127.0.0.1` keeps it local only.
 - If you want this automatic, register a Scheduled Task to run the refresh
   step at login.
@@ -183,23 +183,23 @@ Re-open Ubuntu, then verify:
 systemctl --user status
 ```
 
-### 3) Install OpenClaw (inside WSL)
+### 3) Install LCX Agent (inside WSL)
 
 Follow the Linux Getting Started flow inside WSL:
 
 ```bash
-git clone https://github.com/openclaw/openclaw.git
+git clone https://github.com/lcx1215/lcx-s-agent.git
 cd openclaw
 pnpm install
 pnpm ui:build # auto-installs UI deps on first run
 pnpm build
-openclaw onboard
+lcx onboard
 ```
 
 Full guide: [Getting Started](/start/getting-started)
 
 ## Companion app status
 
-None. OpenClaw ships no native companion app on Windows, macOS, Linux, iOS, or
+None. LCX Agent ships no native companion app on Windows, macOS, Linux, iOS, or
 Android; the Gateway is a headless TypeScript service you reach from a browser or
 an existing chat channel.

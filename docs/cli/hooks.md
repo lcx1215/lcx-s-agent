@@ -1,12 +1,12 @@
 ---
-summary: "CLI reference for `openclaw hooks` (agent hooks)"
+summary: "CLI reference for `lcx hooks` (agent hooks)"
 read_when:
   - You want to manage agent hooks
   - You want to install or update hooks
 title: "hooks"
 ---
 
-# `openclaw hooks`
+# `lcx hooks`
 
 Manage agent hooks (event-driven automations for commands like `/new`, `/reset`, and gateway startup).
 
@@ -18,7 +18,7 @@ Related:
 ## List All Hooks
 
 ```bash
-openclaw hooks list
+lcx hooks list
 ```
 
 List all discovered hooks from workspace, managed, and bundled directories.
@@ -44,7 +44,7 @@ Ready:
 **Example (verbose):**
 
 ```bash
-openclaw hooks list --verbose
+lcx hooks list --verbose
 ```
 
 Shows missing requirements for ineligible hooks.
@@ -52,7 +52,7 @@ Shows missing requirements for ineligible hooks.
 **Example (JSON):**
 
 ```bash
-openclaw hooks list --json
+lcx hooks list --json
 ```
 
 Returns structured JSON for programmatic use.
@@ -60,7 +60,7 @@ Returns structured JSON for programmatic use.
 ## Get Hook Information
 
 ```bash
-openclaw hooks info <name>
+lcx hooks info <name>
 ```
 
 Show detailed information about a specific hook.
@@ -76,7 +76,7 @@ Show detailed information about a specific hook.
 **Example:**
 
 ```bash
-openclaw hooks info session-memory
+lcx hooks info session-memory
 ```
 
 **Output:**
@@ -100,7 +100,7 @@ Requirements:
 ## Check Hooks Eligibility
 
 ```bash
-openclaw hooks check
+lcx hooks check
 ```
 
 Show summary of hook eligibility status (how many are ready vs. not ready).
@@ -122,12 +122,12 @@ Not ready: 0
 ## Enable a Hook
 
 ```bash
-openclaw hooks enable <name>
+lcx hooks enable <name>
 ```
 
 Enable a specific hook by adding it to your config (`~/.openclaw/config.json`).
 
-**Note:** Hooks managed by plugins show `plugin:<id>` in `openclaw hooks list` and
+**Note:** Hooks managed by plugins show `plugin:<id>` in `lcx hooks list` and
 can’t be enabled/disabled here. Enable/disable the plugin instead.
 
 **Arguments:**
@@ -137,7 +137,7 @@ can’t be enabled/disabled here. Enable/disable the plugin instead.
 **Example:**
 
 ```bash
-openclaw hooks enable session-memory
+lcx hooks enable session-memory
 ```
 
 **Output:**
@@ -154,12 +154,12 @@ openclaw hooks enable session-memory
 
 **After enabling:**
 
-- Restart the gateway so hooks reload (`openclaw gateway restart`).
+- Restart the gateway so hooks reload (`lcx gateway restart`).
 
 ## Disable a Hook
 
 ```bash
-openclaw hooks disable <name>
+lcx hooks disable <name>
 ```
 
 Disable a specific hook by updating your config.
@@ -171,7 +171,7 @@ Disable a specific hook by updating your config.
 **Example:**
 
 ```bash
-openclaw hooks disable command-logger
+lcx hooks disable command-logger
 ```
 
 **Output:**
@@ -187,8 +187,8 @@ openclaw hooks disable command-logger
 ## Install Hooks
 
 ```bash
-openclaw hooks install <path-or-spec>
-openclaw hooks install <npm-spec> --pin
+lcx hooks install <path-or-spec>
+lcx hooks install <npm-spec> --pin
 ```
 
 Install a hook pack from a local folder/archive or npm.
@@ -213,23 +213,23 @@ specs are rejected. Dependency installs run with `--ignore-scripts` for safety.
 
 ```bash
 # Local directory
-openclaw hooks install ./my-hook-pack
+lcx hooks install ./my-hook-pack
 
 # Local archive
-openclaw hooks install ./my-hook-pack.zip
+lcx hooks install ./my-hook-pack.zip
 
 # NPM package
 openclaw hooks install @openclaw/my-hook-pack
 
 # Link a local directory without copying
-openclaw hooks install -l ./my-hook-pack
+lcx hooks install -l ./my-hook-pack
 ```
 
 ## Update Hooks
 
 ```bash
-openclaw hooks update <id>
-openclaw hooks update --all
+lcx hooks update <id>
+lcx hooks update --all
 ```
 
 Update installed hook packs (npm installs only).
@@ -240,7 +240,7 @@ Update installed hook packs (npm installs only).
 - `--dry-run`: Show what would change without writing
 
 When a stored integrity hash exists and the fetched artifact hash changes,
-OpenClaw prints a warning and asks for confirmation before proceeding. Use
+LCX Agent prints a warning and asks for confirmation before proceeding. Use
 global `--yes` to bypass prompts in CI/non-interactive runs.
 
 ## Bundled Hooks
@@ -252,7 +252,7 @@ Saves session context to memory when you issue `/new`.
 **Enable:**
 
 ```bash
-openclaw hooks enable session-memory
+lcx hooks enable session-memory
 ```
 
 **Output:** `~/.openclaw/workspace/memory/YYYY-MM-DD-slug.md`
@@ -266,7 +266,7 @@ Injects additional bootstrap files (for example monorepo-local `AGENTS.md` / `TO
 **Enable:**
 
 ```bash
-openclaw hooks enable bootstrap-extra-files
+lcx hooks enable bootstrap-extra-files
 ```
 
 **See:** [bootstrap-extra-files documentation](/automation/hooks#bootstrap-extra-files)
@@ -278,7 +278,7 @@ Logs all command events to a centralized audit file.
 **Enable:**
 
 ```bash
-openclaw hooks enable command-logger
+lcx hooks enable command-logger
 ```
 
 **Output:** `~/.openclaw/logs/commands.log`
@@ -307,7 +307,7 @@ Runs `BOOT.md` when the gateway starts (after channels start).
 **Enable**:
 
 ```bash
-openclaw hooks enable boot-md
+lcx hooks enable boot-md
 ```
 
 **See:** [boot-md documentation](/automation/hooks#boot-md)

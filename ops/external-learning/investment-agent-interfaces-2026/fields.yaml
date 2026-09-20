@@ -1,0 +1,91 @@
+topic: 大厂与大模型厂商投研 Agent 的接口栈（数据接口 / Agent 协议接口 / 模型调用接口）
+version: 1
+time_range: 2025-09 至 2026-09（优先 2026 年内的最新事实）
+language: 中文
+
+field_groups:
+  - group: 基础信息
+    fields:
+      - name: company
+        desc: 厂商/机构名称
+        detail_level: 极简
+      - name: product
+        desc: 投研 Agent 产品/平台名称（含版本，如 Agentar 金融版、Claude for Financial Services）
+        detail_level: 简要
+      - name: release_time
+        desc: 发布或最近一次重大更新的时间（YYYY-MM）
+        detail_level: 极简
+      - name: positioning
+        desc: 定位与形态：是终端内嵌助手、Agent 开发平台、开源模板仓库，还是面向 C 端的投研助手
+        detail_level: 简要
+      - name: openness
+        desc: 对外开放程度：公开 API / 生态合作开放 / 仅签约客户 / 仅机构内部使用
+        detail_level: 简要
+
+  - group: 一、数据接口层（投研数据怎么进来）
+    fields:
+      - name: data_sources
+        desc: 接入的数据源清单与类型：行情、财务/财报、公告、新闻、研报、宏观、基金、另类数据（卫星/舆情/产业链）等
+        detail_level: 详细
+      - name: data_interface_type
+        desc: 接口形式：REST API / WebSocket 推送 / FIX / Python SDK / MCP Tools / SQL 直连 / 文件下载 / Excel 插件
+        detail_level: 详细
+      - name: data_api_examples
+        desc: 具体接口或端点示例（写出真实路径/工具名/SDK 方法名，附官方 URL）
+        detail_level: 详细
+      - name: market_coverage
+        desc: 覆盖市场与资产类别：A股/港股/美股/基金/债券/期货/外汇/加密/一级市场等
+        detail_level: 简要
+      - name: update_frequency
+        desc: 数据更新频率与延迟（实时/分钟/日频/季频，是否有 Level2 或 tick 级）
+        detail_level: 简要
+      - name: auth_and_billing
+        desc: 认证方式与计费：API Key / OAuth / 终端账号绑定 / 按调用次数 / 按席位 / 免费额度
+        detail_level: 简要
+
+  - group: 二、Agent 协议接口层（工具怎么暴露给模型）
+    fields:
+      - name: agent_protocol
+        desc: 使用的协议与调用范式：MCP / A2A / AG-UI / OpenAI function calling / OpenAPI / 私有插件协议
+        detail_level: 详细
+      - name: mcp_endpoint
+        desc: MCP 服务暴露方式：官方远程 MCP URL、本地 stdio server、注册市场、GitHub 开源仓库地址
+        detail_level: 详细
+      - name: tool_inventory
+        desc: 工具清单与粒度（列出代表性 tool 名称，说明是粗粒度"查财报"还是细粒度"资产负债表科目查询"）
+        detail_level: 详细
+      - name: skill_mechanism
+        desc: 是否使用 Skills / 插件 / 子 Agent 形态，如何分发（开源仓库、平台市场、内嵌）
+        detail_level: 简要
+      - name: interop
+        desc: 互操作能力：能否被第三方 Agent 调用、能否调用外部 MCP 服务、是否支持多 Agent 编排
+        detail_level: 简要
+
+  - group: 三、模型调用接口层（模型怎么调）
+    fields:
+      - name: base_model
+        desc: 底层模型（自研金融大模型 / 通用模型 + 金融微调 / 多模型路由）
+        detail_level: 简要
+      - name: model_api
+        desc: 模型调用接口形式：OpenAI 兼容接口 / 原生 SDK / 平台编排 API / 私有化部署接口
+        detail_level: 详细
+      - name: deployment
+        desc: 部署形态：公有云 API / VPC 私有化 / 本地一体机 / 浏览器插件
+        detail_level: 简要
+      - name: orchestration
+        desc: 编排与上下文机制：ReAct/Plan-Execute、工具编排框架、长上下文与记忆、回执与可审计性设计
+        detail_level: 简要
+
+  - group: 四、合规与边界
+    fields:
+      - name: compliance
+        desc: 牌照、数据授权、合规约束（是否禁止投资建议、是否需持牌、数据二次分发限制）
+        detail_level: 简要
+      - name: limitations
+        desc: 已知限制与坑：延迟、覆盖缺口、费用门槛、调用配额、合规免责声明
+        detail_level: 简要
+      - name: evidence
+        desc: 关键证据链接（官方文档、GitHub、发布公告、行业报告），至少 3 条
+        detail_level: 详细
+
+uncertain: []

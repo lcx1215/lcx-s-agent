@@ -393,6 +393,13 @@ export type MemorySearchConfig = {
   query?: {
     maxResults?: number;
     minScore?: number;
+    fts?: {
+      /**
+       * Enable standalone FTS5 keyword recall (default: true). Independent of
+       * `hybrid`, so keyword search still works without an embedding provider.
+       */
+      enabled?: boolean;
+    };
     hybrid?: {
       /** Enable hybrid BM25 + vector search (default: true). */
       enabled?: boolean;
@@ -427,6 +434,59 @@ export type MemorySearchConfig = {
   };
 };
 
+/** Transports an MCP server can be reached over. */
+export type McpTransportId = "stdio" | "http";
+
+/**
+ * A locally spawned MCP server speaking newline-delimited JSON-RPC over stdin/stdout.
+ *
+ * Spawning a process is privileged, so the command is only ever read from operator config — the
+ * model can name a declared server, never declare one.
+ */
+export type McpStdioServerConfig = {
+  transport: "stdio";
+  /** Executable to spawn. Resolved by the OS; use an absolute path when it matters. */
+  command: string;
+  args?: string[];
+  /** Extra environment for the child. Merged over a scrubbed parent environment. */
+  env?: Record<string, string>;
+  /** Working directory for the child. */
+  cwd?: string;
+  /** Per-request timeout in milliseconds (default: 30000). */
+  timeoutMs?: number;
+  /** Set false to keep the declaration but refuse every call (default: true). */
+  enabled?: boolean;
+};
+
+/**
+ * A remote MCP server over Streamable HTTP.
+ *
+ * Egress follows the same rule as `tools.web.proxy`: the route is whatever `proxyUrl` says and
+ * ambient proxy variables are never consulted, so the same config behaves identically on a laptop
+ * behind a VPN and on a cloud host.
+ */
+export type McpHttpServerConfig = {
+  transport: "http";
+  url: string;
+  headers?: Record<string, string>;
+  /**
+   * Explicit egress proxy URL. Omitted means "connect directly"; ambient HTTP_PROXY/HTTPS_PROXY/
+   * ALL_PROXY variables are ignored either way.
+   */
+  proxyUrl?: string;
+  /** Per-request timeout in milliseconds (default: 30000). */
+  timeoutMs?: number;
+  /** Set false to keep the declaration but refuse every call (default: true). */
+  enabled?: boolean;
+};
+
+export type McpServerConfig = McpStdioServerConfig | McpHttpServerConfig;
+
+export type McpToolsConfig = {
+  /** Declared MCP servers, keyed by name. The name is the only handle the model gets. */
+  servers?: Record<string, McpServerConfig>;
+};
+
 export type ToolsConfig = {
   /** Base tool profile applied before allow/deny lists. */
   profile?: ToolProfileId;
@@ -437,6 +497,16 @@ export type ToolsConfig = {
   /** Optional tool policy overrides keyed by provider id or "provider/model". */
   byProvider?: Record<string, ToolPolicyConfig>;
   web?: {
+    /**
+     * Explicit egress proxy URL shared by web_search and web_fetch, e.g.
+     * "http://proxy.corp.example:3128".
+     *
+     * Declared, never inherited: when set, web tool requests go through this proxy and ambient
+     * HTTP_PROXY/HTTPS_PROXY/ALL_PROXY variables (either case) are ignored. When omitted, requests
+     * go direct and ambient proxy variables are still ignored, so the same config behaves
+     * identically on a laptop behind a VPN and on AWS/Cloudflare.
+     */
+    proxy?: string;
     search?: {
       /** Enable web search tool (default: true when API key is present). */
       enabled?: boolean;
@@ -518,6 +588,12 @@ export type ToolsConfig = {
       };
     };
   };
+  /**
+   * Declared MCP servers. `mcp_context` inspects whatever MCP config files happen to exist;
+   * this block is what actually authorizes a connection and exposes it as `mcp_list_tools` /
+   * `mcp_call_tool`.
+   */
+  mcp?: McpToolsConfig;
   media?: MediaToolsConfig;
   links?: LinkToolsConfig;
   /** Message tool configuration. */

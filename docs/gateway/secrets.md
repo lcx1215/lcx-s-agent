@@ -9,7 +9,7 @@ title: "Secrets Management"
 
 # Secrets management
 
-OpenClaw supports additive SecretRefs so supported credentials do not need to be stored as plaintext in configuration.
+LCX Agent supports additive SecretRefs so supported credentials do not need to be stored as plaintext in configuration.
 
 Plaintext still works. SecretRefs are opt-in per credential.
 
@@ -61,7 +61,7 @@ active-surface policy, so you can see why a credential was treated as active or 
 
 ## Onboarding reference preflight
 
-When onboarding runs in interactive mode and you choose SecretRef storage, OpenClaw runs preflight validation before saving:
+When onboarding runs in interactive mode and you choose SecretRef storage, LCX Agent runs preflight validation before saving:
 
 - Env refs: validates env var name and confirms a non-empty value is visible during onboarding.
 - Provider refs (`file` or `exec`): validates provider selection, resolves `id`, and checks resolved value type.
@@ -163,7 +163,7 @@ Define providers under `secrets.providers`:
 
 - Runs configured absolute binary path, no shell.
 - By default, `command` must point to a regular file (not a symlink).
-- Set `allowSymlinkCommand: true` to allow symlink command paths (for example Homebrew shims). OpenClaw validates the resolved target path.
+- Set `allowSymlinkCommand: true` to allow symlink command paths (for example Homebrew shims). LCX Agent validates the resolved target path.
 - Pair `allowSymlinkCommand` with `trustedDirs` for package-manager paths (for example `["/opt/homebrew"]`).
 - Supports timeout, no-output timeout, output byte limits, env allowlist, and trusted dirs.
 - Windows fail-closed note: if ACL verification is unavailable for the command path, resolution fails. For trusted paths only, set `allowInsecurePath: true` on that provider to bypass path security checks.
@@ -203,7 +203,7 @@ Optional per-id errors:
         command: "/opt/homebrew/bin/op",
         allowSymlinkCommand: true, // required for Homebrew symlinked binaries
         trustedDirs: ["/opt/homebrew"],
-        args: ["read", "op://Personal/OpenClaw QA API Key/password"],
+        args: ["read", "op://Personal/LCX Agent QA API Key/password"],
         passEnv: ["HOME"],
         jsonOnly: false,
       },
@@ -320,7 +320,7 @@ Activation contract:
 
 ## Degraded and recovered signals
 
-When reload-time activation fails after a healthy state, OpenClaw enters degraded secrets state.
+When reload-time activation fails after a healthy state, LCX Agent enters degraded secrets state.
 
 One-shot system event and log codes:
 
@@ -336,11 +336,11 @@ Behavior:
 
 ## Command-path resolution
 
-Credential-sensitive command paths that opt in (for example `openclaw memory` remote-memory paths and `openclaw qr --remote`) can resolve supported SecretRefs via gateway snapshot RPC.
+Credential-sensitive command paths that opt in (for example `lcx memory` remote-memory paths and `lcx qr --remote`) can resolve supported SecretRefs via gateway snapshot RPC.
 
 - When gateway is running, those command paths read from the active snapshot.
 - If a configured SecretRef is required and gateway is unavailable, command resolution fails fast with actionable diagnostics.
-- Snapshot refresh after backend secret rotation is handled by `openclaw secrets reload`.
+- Snapshot refresh after backend secret rotation is handled by `lcx secrets reload`.
 - Gateway RPC method used by these command paths: `secrets.resolve`.
 
 ## Audit and configure workflow
@@ -348,9 +348,9 @@ Credential-sensitive command paths that opt in (for example `openclaw memory` re
 Default operator flow:
 
 ```bash
-openclaw secrets audit --check
-openclaw secrets configure
-openclaw secrets audit --check
+lcx secrets audit --check
+lcx secrets configure
+lcx secrets audit --check
 ```
 
 ### `secrets audit`
@@ -375,9 +375,9 @@ Interactive helper that:
 
 Helpful modes:
 
-- `openclaw secrets configure --providers-only`
-- `openclaw secrets configure --skip-provider-setup`
-- `openclaw secrets configure --agent <id>`
+- `lcx secrets configure --providers-only`
+- `lcx secrets configure --skip-provider-setup`
+- `lcx secrets configure --agent <id>`
 
 `configure` apply defaults:
 
@@ -390,8 +390,8 @@ Helpful modes:
 Apply a saved plan:
 
 ```bash
-openclaw secrets apply --from /tmp/openclaw-secrets-plan.json
-openclaw secrets apply --from /tmp/openclaw-secrets-plan.json --dry-run
+lcx secrets apply --from /tmp/openclaw-secrets-plan.json
+lcx secrets apply --from /tmp/openclaw-secrets-plan.json --dry-run
 ```
 
 For strict target/path contract details and exact rejection rules, see:
@@ -400,7 +400,7 @@ For strict target/path contract details and exact rejection rules, see:
 
 ## One-way safety policy
 
-OpenClaw intentionally does not write rollback backups containing historical plaintext secret values.
+LCX Agent intentionally does not write rollback backups containing historical plaintext secret values.
 
 Safety model:
 

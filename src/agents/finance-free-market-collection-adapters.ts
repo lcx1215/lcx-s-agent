@@ -423,6 +423,335 @@ export function createYahooPublicEodHistoryCollectionAdapter(
   };
 }
 
+// ---------------------------------------------------------------------------
+// China-reachable US equity EOD history
+// ---------------------------------------------------------------------------
+//
+// Yahoo Finance has refused mainland-China source IPs since 2021-11-01: every
+// chart and quote request answers 403 with a Chinese region-notice HTML page.
+// That is a source-side geographic block, not a credential, crumb, header or
+// network defect, so no amount of client-side tuning makes Yahoo usable from a
+// mainland host. These adapters reach the same asset class through public,
+// key-less endpoints that do answer mainland IPs. They stay research-only:
+// values are end-of-day and are never execution-grade.
+//
+// Two providers with deliberately different failure modes:
+//   eastmoney - fastest (~150ms) and richest (turnover, amplitude, listed
+//               adjustment flag), but the US market code is not derivable from
+//               the ticker: 105 Nasdaq / 106 NYSE / 107 NYSE American. It is
+//               probed once per symbol and then cached.
+//   sina      - ~2s, but needs no market code at all and returns the whole
+//               listed history, so it is the fallback that cannot fail on a
+//               market-code guess.
+const EASTMONEY_US_MARKET_CODES = ["105", "106", "107"] as const;
+
+const EASTMONEY_REFERER = "https://quote.eastmoney.com/";
+
+const eastmoneyMarketBySymbol = new Map<string, string>();
+
+type OhlcvRow = Readonly<{
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume?: number;
+}>;
+
+/** Eastmoney asks for YYYYMMDD; fall back to a 365-day window ending at `asOf`. */
+function eastmoneyCompactDay(value: string | undefined, fallback: Date): string {
+  const trimmed = value?.trim() ?? "";
+  const base = /^\d{4}-\d{2}-\d{2}$/u.test(trimmed)
+    ? new Date(`${trimmed}T00:00:00.000Z`)
+    : fallback;
+  if (!Number.isFinite(base.getTime())) {
+    return fallback.toISOString().slice(0, 10).replace(/-/gu, "");
+  }
+  return base.toISOString().slice(0, 10).replace(/-/gu, "");
+}
+
+function eastmoneyWindow(request: FinanceMarketCollectionRequest): {
+  beg: string;
+  end: string;
+} {
+  const asOfDay = new Date(`${new Date(request.asOf).toISOString().slice(0, 10)}T00:00:00.000Z`);
+  const end = eastmoneyCompactDay(request.toDate, asOfDay);
+  const fallbackStart = new Date(
+    Date.parse(`${end.slice(0, 4)}-${end.slice(4, 6)}-${end.slice(6, 8)}T00:00:00.000Z`) -
+      365 * 24 * 60 * 60 * 1_000,
+  );
+  return { beg: eastmoneyCompactDay(request.fromDate, fallbackStart), end };
+}
+
+/**
+ * Reject a bar that cannot be true regardless of provider.
+ *
+ * Both Chinese providers emit `open,close,high,low` (NOT the more familiar
+ * `open,high,low,close`), so a mis-ordered parse shows up here as a high below
+ * the open/close range rather than as a crash. Guarding on the OHLC invariant is
+ * what makes the field order a checked fact instead of an assumption.
+ */
+function sanitizeBar(row: OhlcvRow, asOfDay: string): OhlcvRow | null {
+  const { date, open, high, low, close } = row;
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(date) || date >= asOfDay) {
+    return null;
+  }
+  if (
+    [open, high, low, close].some((value) => !Number.isFinite(value)) ||
+    Math.min(open, high, low, close) <= 0
+  ) {
+    return null;
+  }
+  if (high < Math.max(open, close) || low > Math.min(open, close)) {
+    return null;
+  }
+  return row;
+}
+
+function parseEastmoneyKlines(body: string): OhlcvRow[] {
+  const payload = JSON.parse(body) as {
+    data?: { klines?: string[]; dktotal?: number };
+  };
+  const rows = payload.data?.klines;
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+  return rows.flatMap((line) => {
+    const parts = String(line).split(",");
+    if (parts.length < 6) {
+      return [];
+    }
+    // f51 date, f52 open, f53 close, f54 high, f55 low, f56 volume.
+    const [date, open, close, high, low, volume] = parts;
+    const row = {
+      date: date ?? "",
+      open: Number(open),
+      high: Number(high),
+      low: Number(low),
+      close: Number(close),
+      ...(Number.isFinite(Number(volume)) ? { volume: Number(volume) } : {}),
+    };
+    return [row];
+  });
+}
+
+function parseSinaKlines(body: string): OhlcvRow[] {
+  // The endpoint answers JSONP: a script-guard comment, then `var _AAPL([...])`.
+  const start = body.indexOf("[");
+  const end = body.lastIndexOf("]");
+  if (start < 0 || end <= start) {
+    return [];
+  }
+  const parsed = JSON.parse(body.slice(start, end + 1)) as unknown;
+  if (!Array.isArray(parsed)) {
+    return [];
+  }
+  return parsed.flatMap((entry) => {
+    const record = entry as Record<string, unknown>;
+    const date = typeof record.d === "string" ? record.d : "";
+    const open = Number(record.o);
+    const high = Number(record.h);
+    const low = Number(record.l);
+    const close = Number(record.c);
+    const volume = Number(record.v);
+    return [
+      {
+        date,
+        open,
+        high,
+        low,
+        close,
+        ...(Number.isFinite(volume) ? { volume } : {}),
+      },
+    ];
+  });
+}
+
+/** Resolve the Eastmoney US market code once per symbol, then reuse it. */
+async function resolveEastmoneyMarket(
+  fetchImpl: FetchImpl,
+  symbol: string,
+  probeUrl: (market: string) => string,
+): Promise<string | undefined> {
+  const cached = eastmoneyMarketBySymbol.get(symbol);
+  if (cached) {
+    return cached;
+  }
+  for (const market of EASTMONEY_US_MARKET_CODES) {
+    try {
+      const body = await fetchText(fetchImpl, probeUrl(market), {
+        "User-Agent": "Mozilla/5.0 (LCX Agent research-only market history)",
+        Referer: EASTMONEY_REFERER,
+      });
+      if (parseEastmoneyKlines(body).length > 0) {
+        eastmoneyMarketBySymbol.set(symbol, market);
+        return market;
+      }
+    } catch {
+      // A missing market code is a normal miss, not a failure: try the next one.
+    }
+  }
+  return undefined;
+}
+
+/**
+ * US equity end-of-day history from mainland-reachable public endpoints.
+ *
+ * Drop-in replacement for `yahoo_public_eod_history` where Yahoo is
+ * geo-blocked. Eastmoney is tried first and Sina second; both are adjusted
+ * (Eastmoney `fqt=1`, Sina's own adjusted series) so splits and dividends do
+ * not masquerade as trend signals.
+ */
+export function createChinaReachableUsEodHistoryCollectionAdapter(
+  options: {
+    fetchImpl?: FetchImpl;
+  } = {},
+): FinanceMarketCollectionAdapter {
+  const id = "china_reachable_us_eod_history";
+  const supports = (request: FinanceMarketCollectionRequest): boolean =>
+    isUsEquity(request.assetClass) && request.collection === "eod_history";
+
+  const toItems = (
+    request: FinanceMarketCollectionRequest,
+    rows: readonly OhlcvRow[],
+    providerName: string,
+    sourceUrlOrArtifact: string,
+    instrumentType?: string,
+  ): FinanceMarketCollectionItem[] =>
+    rows.map((row) =>
+      buildItem(request, {
+        itemId: `${request.instrument.toUpperCase()}-${providerName}-eod-${row.date}`,
+        providerName,
+        providerRole: "primary_market_data",
+        sourceFamily: "market_data_api",
+        sourceTimestamp: `${row.date}T00:00:00.000Z`,
+        delayStatus: "end_of_day",
+        sourceUrlOrArtifact,
+        data: {
+          symbol: request.instrument.toUpperCase(),
+          date: row.date,
+          open: row.open,
+          high: row.high,
+          low: row.low,
+          close: row.close,
+          ...(row.volume === undefined ? {} : { volume: row.volume }),
+          unit: "USD",
+          ...(instrumentType ? { instrumentType } : {}),
+        },
+      }),
+    );
+
+  const finish = (
+    request: FinanceMarketCollectionRequest,
+    rawRows: readonly OhlcvRow[],
+    providerName: string,
+    sourceUrlOrArtifact: string,
+    limit: number,
+    instrumentType?: string,
+  ): FinanceMarketCollectionItem[] => {
+    const asOfDay = new Date(request.asOf).toISOString().slice(0, 10);
+    const rows = rawRows
+      .map((row) => sanitizeBar(row, asOfDay))
+      .filter((row): row is OhlcvRow => row !== null);
+    if (rows.length === 0) {
+      throw new FreeMarketCollectionAdapterError(
+        `${providerName} has no usable OHLCV rows for ${request.instrument.toUpperCase()}`,
+      );
+    }
+    return toItems(request, rows.slice(-limit), providerName, sourceUrlOrArtifact, instrumentType);
+  };
+
+  return {
+    id,
+    providerName: "china-reachable-us-eod-history",
+    providerRole: "primary_market_data",
+    // Outranks `yahoo_public_eod_history` (20): on a mainland host Yahoo answers
+    // 403 for every symbol, so trying it first only burns the request budget.
+    priority: 10,
+    supports,
+    collect: async (request) => {
+      const symbol = request.instrument.toUpperCase();
+      const limit = request.limit ?? 20;
+      const fetchImpl = resolveFinanceFetch(options.fetchImpl);
+      const headers = {
+        "User-Agent": "Mozilla/5.0 (LCX Agent research-only market history)",
+        Referer: EASTMONEY_REFERER,
+      };
+
+      const { beg, end } = eastmoneyWindow(request);
+      const eastmoneyUrl = (market: string): string =>
+        apiUrl("https://push2his.eastmoney.com/api/qt/stock/kline/get", {
+          secid: `${market}.${symbol}`,
+          klt: 101,
+          fqt: 1,
+          beg,
+          end,
+          fields1: "f1,f2,f3,f4,f5,f6",
+          fields2: "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+        });
+      // Probe with a one-day window: resolution only needs a non-empty body.
+      const probeUrl = (market: string): string =>
+        apiUrl("https://push2his.eastmoney.com/api/qt/stock/kline/get", {
+          secid: `${market}.${symbol}`,
+          klt: 101,
+          fqt: 1,
+          beg: end,
+          end,
+          fields1: "f1,f2,f3",
+          fields2: "f51,f52,f53,f54,f55,f56",
+        });
+
+      let eastmoneyError: unknown;
+      const market = await resolveEastmoneyMarket(fetchImpl, symbol, probeUrl);
+      if (market) {
+        const url = eastmoneyUrl(market);
+        try {
+          const body = await fetchText(fetchImpl, url, headers);
+          return finish(
+            request,
+            parseEastmoneyKlines(body),
+            "eastmoney-us-eod-history",
+            url,
+            limit,
+          );
+        } catch (error) {
+          eastmoneyError = error;
+        }
+      }
+
+      const sinaUrl = apiUrl(
+        "https://stock.finance.sina.com.cn/usstock/api/jsonp_v2.php/var%20_lcx/US_MinKService.getDailyK",
+        { symbol, ___qn: 3 },
+      );
+      try {
+        const body = await fetchText(fetchImpl, sinaUrl, {
+          "User-Agent": "Mozilla/5.0 (LCX Agent research-only market history)",
+          Referer: "https://finance.sina.com.cn",
+        });
+        const all = parseSinaKlines(body);
+        const windowed =
+          request.fromDate || request.toDate
+            ? all.filter((row) => {
+                const from = request.fromDate?.trim();
+                const to = request.toDate?.trim();
+                if (from && row.date < from) {
+                  return false;
+                }
+                return !(to && row.date > to);
+              })
+            : all;
+        return finish(request, windowed, "sina-us-eod-history", sinaUrl, limit);
+      } catch (error) {
+        if (eastmoneyError) {
+          // Report the primary failure; the fallback only adds a second attempt.
+          throw eastmoneyError;
+        }
+        throw error;
+      }
+    },
+  };
+}
+
 /** Public Google News RSS search; metadata-only and cross-check role. */
 export function createGoogleNewsRssCollectionAdapter(
   options: {

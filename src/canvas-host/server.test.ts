@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
+import vm from "node:vm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { rawDataToString } from "../infra/ws.js";
@@ -21,6 +22,13 @@ const chokidarMockState = vi.hoisted(() => ({
 const CANVAS_WS_OPEN_TIMEOUT_MS = 2_000;
 const CANVAS_RELOAD_TIMEOUT_MS = 4_000;
 const CANVAS_RELOAD_TEST_TIMEOUT_MS = 12_000;
+
+// The A2UI bundle is a gitignored build artifact. This stub is what an older run
+// (or an interrupted one) leaves behind, and it contains "openclawA2UI", so it
+// satisfies the scaffold assertions while the renderer is actually empty.
+const A2UI_BUNDLE_STUB = "window.openclawA2UI = {};";
+// A real bundle is hundreds of KB; anything this small is a stub, not a build.
+const A2UI_REAL_BUNDLE_MIN_BYTES = 1024;
 
 // Tests: avoid chokidar polling/fsevents; trigger "all" events manually.
 vi.mock("chokidar", () => {
@@ -98,6 +106,16 @@ describe("canvas host", () => {
     expect(out).toContain("location.reload");
     expect(out).toContain("openclawCanvasA2UIAction");
     expect(out).toContain("openclawSendUserAction");
+  });
+
+  it("injects a live reload script that parses as JavaScript", () => {
+    // Regression guard: a brand-wide rename once replaced `globalThis.OpenClaw` with
+    // `globalThis.LCX Agent`, which is not a valid identifier and broke the whole
+    // injected script (silently — HTML still served, bridge never installed).
+    const out = injectCanvasLiveReload("<html><body>Hello</body></html>");
+    const script = out.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+    expect(script).toBeTruthy();
+    expect(() => new vm.Script(script ?? "")).not.toThrow();
   });
 
   it("creates a default index.html when missing", async () => {
@@ -268,10 +286,12 @@ describe("canvas host", () => {
     let createdBundle = false;
     let createdLink = false;
 
-    try {
-      await fs.stat(bundlePath);
-    } catch {
-      await fs.writeFile(bundlePath, "window.openclawA2UI = {};", "utf8");
+    // Treat a leftover stub as absent. Otherwise `stat` succeeds, nothing is
+    // cleaned up afterwards, and the stub stands in for the real bundle forever.
+    const existingBundle = await fs.readFile(bundlePath, "utf8").catch(() => null);
+    const haveRealBundle = existingBundle !== null && existingBundle.trim() !== A2UI_BUNDLE_STUB;
+    if (!haveRealBundle) {
+      await fs.writeFile(bundlePath, `${A2UI_BUNDLE_STUB}\n`, "utf8");
       createdBundle = true;
     }
 
@@ -293,6 +313,11 @@ describe("canvas host", () => {
       const js = await bundleRes.text();
       expect(bundleRes.status).toBe(200);
       expect(js).toContain("openclawA2UI");
+      if (haveRealBundle) {
+        // Guards the failure this test used to hide: a stub that contains the
+        // marker but ships no renderer.
+        expect(js.length).toBeGreaterThan(A2UI_REAL_BUNDLE_MIN_BYTES);
+      }
       const traversalRes = await fetch(
         `http://127.0.0.1:${server.port}${A2UI_PATH}/%2e%2e%2fpackage.json`,
       );

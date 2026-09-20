@@ -128,7 +128,7 @@ function resolveBotDisplayName(params: {
   if (agent?.name?.trim()) {
     return agent.name.trim();
   }
-  return "OpenClaw";
+  return "LCX Agent";
 }
 
 async function processMessageWithPipeline(params: {

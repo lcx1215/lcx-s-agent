@@ -17,6 +17,11 @@
  *
  * There is no model call anywhere in this file. That is deliberate: the answer to
  * "will an LLM-driven day be expensive?" is that the daytime does not need one.
+ *
+ * One side effect is not about trading: every run files the OHLC bars it already fetched into the
+ * bar book. The cycle needs closes to trade; range measures (readiness, true drawdown, ATR) need
+ * the high/low of the same bars and have no other supply, so discarding them after one use makes
+ * those measures permanently unavailable for rules nobody backfilled by hand.
  */
 
 import {
@@ -24,8 +29,10 @@ import {
   runFinanceAlpacaOrder,
   type AlpacaVenueState,
 } from "./finance-alpaca-run.js";
+import { appendFinanceBars } from "./finance-bar-ledger.js";
 import type { FinanceExecutionReceipt } from "./finance-execution-adapter.js";
 import { createChinaReachableUsEodHistoryCollectionAdapter } from "./finance-free-market-collection-adapters.js";
+import type { FinanceMarketCollectionItem } from "./finance-market-collection-registry.js";
 import { runFinancePaperOrder } from "./finance-paper-run.js";
 import type { FinancePosition } from "./finance-position-ledger.js";
 import {
@@ -103,6 +110,14 @@ export type FinanceDailyCycleReport = Readonly<{
   dataIssues: readonly string[];
   placed: readonly { instrument: string; quantity: number; notional: number }[];
   refusals: readonly string[];
+  /**
+   * What this run filed into the bar book.
+   *
+   * `appended: false` is the normal steady state, not a failure: an unchanged day re-appends an
+   * identical batch and the book deduplicates it by content. So "nothing was filed today" and
+   * "the history is already there" are different things, and the count says which.
+   */
+  barsFiled: readonly { instrument: string; barCount: number; appended: boolean }[];
 }>;
 
 type Bar = Readonly<{ date: string; close: number }>;
@@ -389,6 +404,80 @@ export async function attemptCycleOrder(
   }
 }
 
+/**
+ * Turn collected items into the bar book's `ohlcv` batch shape.
+ *
+ * Only rows that state all four prices are filed. A row missing `high`/`low` is not "a bar whose
+ * range is unknown" — it is a quote — and filing it under `ohlcv` would hand range measures
+ * numbers nobody observed, which is precisely what the `point_derived` shape exists to prevent.
+ * Rows whose four prices contradict each other (`low` above the open/close, `high` below it) are
+ * dropped for the same reason.
+ */
+function toOhlcvBatch(rows: readonly FinanceMarketCollectionItem[]): {
+  bars: {
+    date: string;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume?: number;
+  }[];
+  observedAt: string;
+  providerName: string;
+  sourceUrlOrArtifact: string;
+} | null {
+  const bars: {
+    date: string;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume?: number;
+  }[] = [];
+  for (const row of rows) {
+    const date = typeof row.data.date === "string" ? row.data.date.slice(0, 10) : "";
+    const open = Number(row.data.open);
+    const high = Number(row.data.high);
+    const low = Number(row.data.low);
+    const close = Number(row.data.close);
+    const volume = Number(row.data.volume);
+    if (!/^\d{4}-\d{2}-\d{2}$/u.test(date)) {
+      continue;
+    }
+    if (![open, high, low, close].every((value) => Number.isFinite(value) && value > 0)) {
+      continue;
+    }
+    if (low > Math.min(open, close) || high < Math.max(open, close)) {
+      continue;
+    }
+    bars.push({
+      date,
+      open,
+      high,
+      low,
+      close,
+      ...(Number.isFinite(volume) && volume >= 0 ? { volume } : {}),
+    });
+  }
+  if (bars.length === 0) {
+    return null;
+  }
+  bars.sort((left, right) => left.date.localeCompare(right.date));
+  // The batch's clock is the newest observation it carries, not the moment this run happened:
+  // a replay to an earlier `asOf` must still see the history, or "no bars in the window" gets
+  // read as "no history existed".
+  const observedAt = rows.reduce(
+    (latest, row) => (row.sourceTimestamp > latest ? row.sourceTimestamp : latest),
+    rows[0]?.sourceTimestamp ?? "",
+  );
+  return {
+    bars,
+    observedAt,
+    providerName: rows[0]?.providerName ?? "unknown",
+    sourceUrlOrArtifact: rows[0]?.sourceUrlOrArtifact ?? "",
+  };
+}
+
 export async function runFinanceDailyCycle(
   params: FinanceDailyCycleParams,
 ): Promise<FinanceDailyCycleReport> {
@@ -403,6 +492,10 @@ export async function runFinanceDailyCycle(
   const monthSeries = new Map<string, Bar[]>();
   const closes = new Map<string, number[]>();
   const lastBar = new Map<string, Bar>();
+  // Resolved once, so the bars this run reads are filed into the same book the run then trades
+  // against — a supply written to a second directory is invisible to every read that matters.
+  const directory = params.directory ?? resolveFinanceStateDir().directory;
+  const barsFiled: { instrument: string; barCount: number; appended: boolean }[] = [];
 
   for (const instrument of instruments) {
     try {
@@ -428,6 +521,44 @@ export async function runFinanceDailyCycle(
             /^\d{4}-\d{2}-\d{2}$/u.test(row.date) && Number.isFinite(row.close) && row.close > 0,
         )
         .toSorted((a, b) => a.date.localeCompare(b.date));
+
+      // Supply: this run already paid for these bars, so file them where every later read looks.
+      // Range measures have no other source of history, and a book that is only ever filled by
+      // hand is a book that goes stale without saying so. Filed before the 400-bar signal
+      // threshold on purpose: the threshold is about the signal, not about what is worth keeping.
+      try {
+        const batch = toOhlcvBatch(rows);
+        if (batch === null) {
+          dataIssues.push(`${instrument}: no complete OHLC row to file in the bar book`);
+        } else {
+          const result = await appendFinanceBars(directory, {
+            instrument,
+            derivation: "ohlcv",
+            provenance: {
+              origin: batch.providerName,
+              sourceUrlOrArtifact: batch.sourceUrlOrArtifact,
+              note:
+                `${String(batch.bars.length)} daily bars collected by the unattended daytime ` +
+                "cycle; end-of-day, research-only, not execution-grade",
+            },
+            observedAt: batch.observedAt,
+            bars: batch.bars,
+          });
+          barsFiled.push({
+            instrument,
+            barCount: batch.bars.length,
+            appended: result.appended,
+          });
+        }
+      } catch (error) {
+        // A bar book that cannot be written must not abort the run it was a side effect of:
+        // the cycle's job is the book it trades, and a missing measurement supply is a reported
+        // degradation, not a reason to stop trading.
+        dataIssues.push(
+          `${instrument}: bar book write failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+
       if (series.length < 400) {
         dataIssues.push(`${instrument}: only ${series.length} bars, need >= 400`);
         continue;
@@ -499,7 +630,6 @@ export async function runFinanceDailyCycle(
   }));
 
   // Current weights from the actual ledger, not from an assumed book.
-  const directory = params.directory ?? resolveFinanceStateDir().directory;
   let currentWeight: ReadonlyMap<string, number> = new Map();
   const unpricedPositions = new Set<string>();
   const ledgerQuantity = new Map<string, number>();
@@ -683,5 +813,6 @@ export async function runFinanceDailyCycle(
     dataIssues,
     placed,
     refusals,
+    barsFiled,
   });
 }

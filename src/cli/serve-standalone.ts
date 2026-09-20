@@ -15,6 +15,7 @@
  */
 import { Command } from "commander";
 import { registerServeCli } from "./serve-cli.js";
+import { routeStandaloneServeArgs } from "./serve-detach.js";
 
 const program = new Command();
 program
@@ -25,5 +26,8 @@ program
 registerServeCli(program);
 
 // `registerServeCli` declares `serve` as a subcommand, so the argv must route
-// through it for its options (`--bind`, `--port`, ...) to be recognized.
-await program.parseAsync(["node", "lcx-serve", "serve", ...process.argv.slice(2)]);
+// through it for its options (`--bind`, `--port`, ...) to be recognized. The
+// routing is shared with the detach contract so a `serve --detach` child is not
+// handed a duplicated subcommand.
+const routedArgs = routeStandaloneServeArgs(process.argv.slice(2));
+await program.parseAsync(["node", "lcx-serve", ...routedArgs]);

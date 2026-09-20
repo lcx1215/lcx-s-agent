@@ -306,7 +306,13 @@ export function createRegisteredCapabilityAdapters(
               : "fundamentals_api",
           sourceTimestamp: row.time ?? observedAt,
           observedAt,
-          delayStatus: c.delayStatus ?? "manual_or_unknown",
+          // `manual_or_unknown` is rejected as unusable provenance, so it must not be the
+          // default for a collection whose delay the adapter itself enforces: `eod_history`
+          // rows are filtered to days strictly before `asOf`, which makes them completed
+          // end-of-day bars by construction. Everything else keeps the conservative default
+          // and stays excluded until someone declares what it is.
+          delayStatus:
+            c.delayStatus ?? (c.collection === "eod_history" ? "end_of_day" : "manual_or_unknown"),
           sourceUrlOrArtifact,
           data: {
             ...row.data,

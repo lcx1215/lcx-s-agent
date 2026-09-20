@@ -26,6 +26,18 @@ const memoryCorePlugin = {
       { names: ["memory_search", "memory_get"] },
     );
 
+    // Read-only recall over the archived session transcript store. Registered
+    // independently of memory search: the archive is a separate store, so it
+    // stays available even when the memory index is disabled.
+    api.registerTool(
+      (ctx) => [
+        api.runtime.tools.createSessionHistoryTool({
+          agentId: ctx.agentId,
+        }),
+      ],
+      { names: ["session_history"] },
+    );
+
     api.registerCli(
       ({ program }) => {
         api.runtime.tools.registerMemoryCli(program);

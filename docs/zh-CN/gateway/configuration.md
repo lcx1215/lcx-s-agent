@@ -14,9 +14,9 @@ x-i18n:
 
 # 配置 🔧
 
-OpenClaw 从 `~/.openclaw/openclaw.json` 读取可选的 **JSON5** 配置（支持注释和尾逗号）。
+LCX Agent 从 `~/.openclaw/openclaw.json` 读取可选的 **JSON5** 配置（支持注释和尾逗号）。
 
-如果文件不存在，OpenClaw 使用安全的默认值（内置 Pi 智能体 + 按发送者分会话 + 工作区 `~/.openclaw/workspace`）。通常只在以下情况需要配置：
+如果文件不存在，LCX Agent 使用安全的默认值（内置 Pi 智能体 + 按发送者分会话 + 工作区 `~/.openclaw/workspace`）。通常只在以下情况需要配置：
 
 - 限制谁可以触发机器人（`channels.whatsapp.allowFrom`、`channels.telegram.allowFrom` 等）
 - 控制群组白名单 + 提及行为（`channels.whatsapp.groups`、`channels.telegram.groups`、`channels.discord.guilds`、`agents.list[].groupChat`）
@@ -29,15 +29,15 @@ OpenClaw 从 `~/.openclaw/openclaw.json` 读取可选的 **JSON5** 配置（支�
 
 ## 严格配置验证
 
-OpenClaw 只接受完全匹配 schema 的配置。
+LCX Agent 只接受完全匹配 schema 的配置。
 未知键、类型错误或无效值会导致 Gateway 网关 **拒绝启动**以确保安全。
 
 验证失败时：
 
 - Gateway 网关不会启动。
-- 只允许诊断命令（例如：`openclaw doctor`、`openclaw logs`、`openclaw health`、`openclaw status`、`openclaw service`、`openclaw help`）。
-- 运行 `openclaw doctor` 查看具体问题。
-- 运行 `openclaw doctor --fix`（或 `--yes`）应用迁移/修复。
+- 只允许诊断命令（例如：`lcx doctor`、`lcx logs`、`lcx health`、`lcx status`、`lcx service`、`lcx help`）。
+- 运行 `lcx doctor` 查看具体问题。
+- 运行 `lcx doctor --fix`（或 `--yes`）应用迁移/修复。
 
 Doctor 不会写入任何更改，除非你明确选择了 `--fix`/`--yes`。
 
@@ -70,8 +70,8 @@ Gateway 网关通过 `config.schema` 暴露配置的 JSON Schema 表示，供 UI
 示例（通过 `gateway call`）：
 
 ```bash
-openclaw gateway call config.get --params '{}' # capture payload.hash
-openclaw gateway call config.apply --params '{
+lcx gateway call config.get --params '{}' # capture payload.hash
+lcx gateway call config.apply --params '{
   "raw": "{\\n  agents: { defaults: { workspace: \\"~/.openclaw/workspace\\" } }\\n}\\n",
   "baseHash": "<hash-from-config.get>",
   "sessionKey": "agent:main:whatsapp:dm:+15555550123",
@@ -101,8 +101,8 @@ openclaw gateway call config.apply --params '{
 示例：
 
 ```bash
-openclaw gateway call config.get --params '{}' # capture payload.hash
-openclaw gateway call config.patch --params '{
+lcx gateway call config.get --params '{}' # capture payload.hash
+lcx gateway call config.patch --params '{
   "raw": "{\\n  channels: { telegram: { groups: { \\"*\\": { requireMention: false } } } }\\n}\\n",
   "baseHash": "<hash-from-config.get>",
   "sessionKey": "agent:main:whatsapp:dm:+15555550123",
@@ -272,7 +272,7 @@ scripts/sandbox-setup.sh
 
 ### 环境变量 + `.env`
 
-OpenClaw 从父进程（shell、launchd/systemd、CI 等）读取环境变量。
+LCX Agent 从父进程（shell、launchd/systemd、CI 等）读取环境变量。
 
 此外，它还会加载：
 
@@ -298,7 +298,7 @@ OpenClaw 从父进程（shell、launchd/systemd、CI 等）读取环境变量。
 
 ### `env.shellEnv`（可选）
 
-可选便利功能：如果启用且预期键均未设置，OpenClaw 会运行你的登录 shell 并仅导入缺失的预期键（不会覆盖）。
+可选便利功能：如果启用且预期键均未设置，LCX Agent 会运行你的登录 shell 并仅导入缺失的预期键（不会覆盖）。
 这实际上会 source 你的 shell 配置文件。
 
 ```json5
@@ -361,7 +361,7 @@ OpenClaw 从父进程（shell、launchd/systemd、CI 等）读取环境变量。
 
 ### 认证存储（OAuth + API 密钥）
 
-OpenClaw 在以下位置存储**每个智能体的**认证配置文件（OAuth + API 密钥）：
+LCX Agent 在以下位置存储**每个智能体的**认证配置文件（OAuth + API 密钥）：
 
 - `<agentDir>/auth-profiles.json`（默认：`~/.openclaw/agents/<agentId>/agent/auth-profiles.json`）
 
@@ -384,7 +384,7 @@ OpenClaw 在以下位置存储**每个智能体的**认证配置文件（OAuth +
 - OAuth 目录（仅旧版导入）：`OPENCLAW_OAUTH_DIR`
 - 智能体目录（默认智能体根目录覆盖）：`OPENCLAW_AGENT_DIR`（推荐）、`PI_CODING_AGENT_DIR`（旧版）
 
-首次使用时，OpenClaw 会将 `oauth.json` 条目导入到 `auth-profiles.json` 中。
+首次使用时，LCX Agent 会将 `oauth.json` 条目导入到 `auth-profiles.json` 中。
 
 ### `auth`
 
@@ -408,7 +408,7 @@ OpenClaw 在以下位置存储**每个智能体的**认证配置文件（OAuth +
 
 用于默认值和用户体验的可选每智能体身份标识。由 macOS 新手引导助手写入。
 
-如果设置了，OpenClaw 会推导默认值（仅在你未明确设置时）：
+如果设置了，LCX Agent 会推导默认值（仅在你未明确设置时）：
 
 - `messages.ackReaction` 来自**活跃智能体**的 `identity.emoji`（回退到 👀）
 - `agents.list[].groupChat.mentionPatterns` 来自智能体的 `identity.name`/`identity.emoji`（因此 "@Samantha" 在 Telegram/Slack/Discord/Google Chat/iMessage/WhatsApp 的群组中均可使用）
@@ -495,8 +495,8 @@ OpenClaw 在以下位置存储**每个智能体的**认证配置文件（OAuth +
 
 配对批准：
 
-- `openclaw pairing list whatsapp`
-- `openclaw pairing approve whatsapp <code>`
+- `lcx pairing list whatsapp`
+- `lcx pairing approve whatsapp <code>`
 
 ### `channels.whatsapp.allowFrom`
 
@@ -558,7 +558,7 @@ OpenClaw 在以下位置存储**每个智能体的**认证配置文件（OAuth +
 说明：
 
 - 出站命令默认使用 `default` 账号（如果存在）；否则使用第一个配置的账号 id（排序后）。
-- 旧版单账号 Baileys 认证目录由 `openclaw doctor` 迁移到 `whatsapp/default`。
+- 旧版单账号 Baileys 认证目录由 `lcx doctor` 迁移到 `whatsapp/default`。
 
 ### `channels.telegram.accounts` / `channels.discord.accounts` / `channels.googlechat.accounts` / `channels.slack.accounts` / `channels.mattermost.accounts` / `channels.signal.accounts` / `channels.imessage.accounts`
 
@@ -1032,7 +1032,7 @@ WhatsApp 通过 Gateway 网关的 Web 渠道（Baileys Web）运行。当存在�
 
 ### `channels.telegram`（机器人传输）
 
-OpenClaw 仅在存在 `channels.telegram` 配置段时启动 Telegram。机器人 token 从 `channels.telegram.botToken`（或 `channels.telegram.tokenFile`）解析，`TELEGRAM_BOT_TOKEN` 作为默认账号的回退。
+LCX Agent 仅在存在 `channels.telegram` 配置段时启动 Telegram。机器人 token 从 `channels.telegram.botToken`（或 `channels.telegram.tokenFile`）解析，`TELEGRAM_BOT_TOKEN` 作为默认账号的回退。
 设置 `channels.telegram.enabled: false` 禁用自动启动。
 多账号支持在 `channels.telegram.accounts` 下（参见上方多账号部分）。环境变量 token 仅适用于默认账号。
 设置 `channels.telegram.configWrites: false` 阻止 Telegram 发起的配置写入（包括超级群组 ID 迁移和 `/config set|unset`）。
@@ -1177,7 +1177,7 @@ OpenClaw 仅在存在 `channels.telegram` 配置段时启动 Telegram。机器�
 }
 ```
 
-OpenClaw 仅在存在 `channels.discord` 配置段时启动 Discord。token 从 `channels.discord.token` 解析，`DISCORD_BOT_TOKEN` 作为默认账号的回退（除非 `channels.discord.enabled` 为 `false`）。在为 cron/CLI 命令指定投递目标时，使用 `user:<id>`（私聊）或 `channel:<id>`（服务器频道）；裸数字 ID 有歧义会被拒绝。
+LCX Agent 仅在存在 `channels.discord` 配置段时启动 Discord。token 从 `channels.discord.token` 解析，`DISCORD_BOT_TOKEN` 作为默认账号的回退（除非 `channels.discord.enabled` 为 `false`）。在为 cron/CLI 命令指定投递目标时，使用 `user:<id>`（私聊）或 `channel:<id>`（服务器频道）；裸数字 ID 有歧义会被拒绝。
 服务器 slug 为小写，空格替换为 `-`；频道键使用 slug 化的频道名称（无前导 `#`）。建议使用服务器 id 作为键以避免重命名歧义。
 机器人发送的消息默认被忽略。通过 `channels.discord.allowBots` 启用（自身消息仍会被过滤以防止自回复循环）。
 反应通知模式：
@@ -1289,7 +1289,7 @@ Slack 以 Socket Mode 运行，需要机器人 token 和应用 token：
 
 多账号支持在 `channels.slack.accounts` 下（参见上方多账号部分）。环境变量 token 仅适用于默认账号。
 
-OpenClaw 在提供商启用且两个 token 都已设置时启动 Slack（通过配置或 `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN`）。在为 cron/CLI 命令指定投递目标时使用 `user:<id>`（私聊）或 `channel:<id>`。
+LCX Agent 在提供商启用且两个 token 都已设置时启动 Slack（通过配置或 `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN`）。在为 cron/CLI 命令指定投递目标时使用 `user:<id>`（私聊）或 `channel:<id>`。
 设置 `channels.slack.configWrites: false` 阻止 Slack 发起的配置写入（包括频道 ID 迁移和 `/config set|unset`）。
 
 机器人发送的消息默认被忽略。通过 `channels.slack.allowBots` 或 `channels.slack.channels.<id>.allowBots` 启用。
@@ -1339,7 +1339,7 @@ Mattermost 需要机器人 token 加上服务器的基础 URL：
 }
 ```
 
-OpenClaw 在账号已配置（机器人 token + 基础 URL）且已启用时启动 Mattermost。token + 基础 URL 从 `channels.mattermost.botToken` + `channels.mattermost.baseUrl` 或默认账号的 `MATTERMOST_BOT_TOKEN` + `MATTERMOST_URL` 解析（除非 `channels.mattermost.enabled` 为 `false`）。
+LCX Agent 在账号已配置（机器人 token + 基础 URL）且已启用时启动 Mattermost。token + 基础 URL 从 `channels.mattermost.botToken` + `channels.mattermost.baseUrl` 或默认账号的 `MATTERMOST_BOT_TOKEN` + `MATTERMOST_URL` 解析（除非 `channels.mattermost.enabled` 为 `false`）。
 
 聊天模式：
 
@@ -1381,7 +1381,7 @@ Signal 反应可以发出系统事件（共享反应工具）：
 
 ### `channels.imessage`（imsg CLI）
 
-OpenClaw 会生成 `imsg rpc`（通过 stdio 的 JSON-RPC）。无需守护进程或端口。
+LCX Agent 会生成 `imsg rpc`（通过 stdio 的 JSON-RPC）。无需守护进程或端口。
 
 ```json5
 {
@@ -1436,7 +1436,7 @@ exec ssh -T gateway-host imsg "$@"
 
 ### `agents.defaults.repoRoot`
 
-在系统提示的 Runtime 行中显示的可选仓库根目录。如果未设置，OpenClaw 会从工作区（和当前工作目录）向上查找 `.git` 目录进行检测。路径必须存在才能使用。
+在系统提示的 Runtime 行中显示的可选仓库根目录。如果未设置，LCX Agent 会从工作区（和当前工作目录）向上查找 `.git` 目录进行检测。路径必须存在才能使用。
 
 ```json5
 {
@@ -1460,7 +1460,7 @@ exec ssh -T gateway-host imsg "$@"
 
 注入系统提示前每个工作区引导文件截断前的最大字符数。默认：`20000`。
 
-当文件超过此限制时，OpenClaw 会记录警告并注入带标记的头尾截断内容。
+当文件超过此限制时，LCX Agent 会记录警告并注入带标记的头尾截断内容。
 
 ```json5
 {
@@ -1470,7 +1470,7 @@ exec ssh -T gateway-host imsg "$@"
 
 ### `agents.defaults.userTimezone`
 
-设置用户时区用于**系统提示上下文**（不用于消息信封中的时间戳）。如果未设置，OpenClaw 在运行时使用主机时区。
+设置用户时区用于**系统提示上下文**（不用于消息信封中的时间戳）。如果未设置，LCX Agent 在运行时使用主机时区。
 
 ```json5
 {
@@ -1535,7 +1535,7 @@ exec ssh -T gateway-host imsg "$@"
 
 输出示例：`[claude-opus-4-5 | think:high] Here's my response...`
 
-WhatsApp 入站前缀通过 `channels.whatsapp.messagePrefix` 配置（已弃用：`messages.messagePrefix`）。默认保持**不变**：当 `channels.whatsapp.allowFrom` 为空时为 `"[openclaw]"`，否则为 `""`（无前缀）。使用 `"[openclaw]"` 时，如果路由的智能体设置了 `identity.name`，OpenClaw 会改用 `[{identity.name}]`。
+WhatsApp 入站前缀通过 `channels.whatsapp.messagePrefix` 配置（已弃用：`messages.messagePrefix`）。默认保持**不变**：当 `channels.whatsapp.allowFrom` 为空时为 `"[openclaw]"`，否则为 `""`（无前缀）。使用 `"[openclaw]"` 时，如果路由的智能体设置了 `identity.name`，LCX Agent 会改用 `[{identity.name}]`。
 
 `ackReaction` 在支持反应的渠道（Slack/Discord/Telegram/Google Chat）上发送尽力而为的表情反应来确认入站消息。设置时默认为活跃智能体的 `identity.emoji`，否则为 `"👀"`。设为 `""` 禁用。
 
@@ -1550,7 +1550,7 @@ WhatsApp 入站前缀通过 `channels.whatsapp.messagePrefix` 配置（已弃用
 
 #### `messages.tts`
 
-为出站回复启用文字转语音。开启后，OpenClaw 使用 ElevenLabs 或 OpenAI 生成音频并附加到回复中。Telegram 使用 Opus 语音消息；其他渠道发送 MP3 音频。
+为出站回复启用文字转语音。开启后，LCX Agent 使用 ElevenLabs 或 OpenAI 生成音频并附加到回复中。Telegram 使用 Opus 语音消息；其他渠道发送 MP3 音频。
 
 ```json5
 {
@@ -1667,7 +1667,7 @@ Z.AI GLM-4.x 模型会自动启用思考模式，除非你：
 - 设置 `--thinking off`，或
 - 自行定义 `agents.defaults.models["zai/<model>"].params.thinking`。
 
-OpenClaw 还内置了一些别名快捷方式。默认值仅在模型已存在于 `agents.defaults.models` 中时才应用：
+LCX Agent 还内置了一些别名快捷方式。默认值仅在模型已存在于 `agents.defaults.models` 中时才应用：
 
 - `opus` -> `anthropic/claude-opus-4-5`
 - `sonnet` -> `anthropic/claude-sonnet-4-5`
@@ -1962,7 +1962,7 @@ MiniMax 认证：设置 `MINIMAX_API_KEY`（环境变量）或配置 `models.pro
 
 `agents.defaults.model.primary` 应设为 `provider/model`（例如 `anthropic/claude-opus-4-5`）。
 别名来自 `agents.defaults.models.*.alias`（例如 `Opus`）。
-如果省略提供商，OpenClaw 目前假定 `anthropic` 作为临时弃用回退。
+如果省略提供商，LCX Agent 目前假定 `anthropic` 作为临时弃用回退。
 Z.AI 模型可通过 `zai/<model>` 使用（例如 `zai/glm-4.7`），需要环境中设置
 `ZAI_API_KEY`（或旧版 `Z_AI_API_KEY`）。
 
@@ -2000,7 +2000,7 @@ Z.AI 模型可通过 `zai/<model>` 使用（例如 `zai/glm-4.7`），需要环�
 `tools.web` 配置 Web 搜索 + 获取工具：
 
 - `tools.web.search.enabled`（默认：有密钥时为 true）
-- `tools.web.search.apiKey`（推荐：通过 `openclaw configure --section web` 设置，或使用 `BRAVE_API_KEY` 环境变量）
+- `tools.web.search.apiKey`（推荐：通过 `lcx configure --section web` 设置，或使用 `BRAVE_API_KEY` 环境变量）
 - `tools.web.search.maxResults`（1–10，默认 5）
 - `tools.web.search.timeoutSeconds`（默认 30）
 - `tools.web.search.cacheTtlMinutes`（默认 15）
@@ -2168,7 +2168,7 @@ Z.AI 模型可通过 `zai/<model>` 使用（例如 `zai/glm-4.7`），需要环�
 - `group:automation`：`cron`、`gateway`
 - `group:messaging`：`message`
 - `group:nodes`：`nodes`
-- `group:openclaw`：所有内置 OpenClaw 工具（不包含提供商插件）
+- `group:openclaw`：所有内置 LCX Agent 工具（不包含提供商插件）
 
 `tools.elevated` 控制提升（主机）执行访问：
 
@@ -2261,8 +2261,8 @@ Z.AI 模型可通过 `zai/<model>` 使用（例如 `zai/glm-4.7`），需要环�
         workspaceAccess: "none", // none | ro | rw
         workspaceRoot: "~/.openclaw/sandboxes",
         docker: {
-          image: "openclaw-sandbox:bookworm-slim",
-          containerPrefix: "openclaw-sbx-",
+          image: "lcx-sandbox:bookworm-slim",
+          containerPrefix: "lcx-sbx-",
           workdir: "/workspace",
           readOnlyRoot: true,
           tmpfs: ["/tmp", "/var/tmp", "/run"],
@@ -2281,15 +2281,15 @@ Z.AI 模型可通过 `zai/<model>` 使用（例如 `zai/glm-4.7`），需要环�
             nproc: 256,
           },
           seccompProfile: "/path/to/seccomp.json",
-          apparmorProfile: "openclaw-sandbox",
+          apparmorProfile: "lcx-sandbox",
           dns: ["1.1.1.1", "8.8.8.8"],
           extraHosts: ["internal.service:10.0.0.5"],
           binds: ["/var/run/docker.sock:/var/run/docker.sock", "/home/user/source:/source:rw"],
         },
         browser: {
           enabled: false,
-          image: "openclaw-sandbox-browser:bookworm-slim",
-          containerPrefix: "openclaw-sbx-browser-",
+          image: "lcx-sandbox-browser:bookworm-slim",
+          containerPrefix: "lcx-sbx-browser-",
           cdpPort: 9222,
           vncPort: 5900,
           noVncPort: 6080,
@@ -2368,11 +2368,11 @@ noVNC URL 会注入系统提示中，以便智能体可以引用它。
 
 ### `models`（自定义提供商 + 基础 URL）
 
-OpenClaw 使用 **pi-coding-agent** 模型目录。你可以通过编写
-`~/.openclaw/agents/<agentId>/agent/models.json` 或在 OpenClaw 配置中的 `models.providers` 下定义相同的 schema 来添加自定义提供商（LiteLLM、本地 OpenAI 兼容服务器、Anthropic 代理等）。
+LCX Agent 使用 **pi-coding-agent** 模型目录。你可以通过编写
+`~/.openclaw/agents/<agentId>/agent/models.json` 或在 LCX Agent 配置中的 `models.providers` 下定义相同的 schema 来添加自定义提供商（LiteLLM、本地 OpenAI 兼容服务器、Anthropic 代理等）。
 按提供商的概述 + 示例：[/concepts/model-providers](/concepts/model-providers)。
 
-当存在 `models.providers` 时，OpenClaw 在启动时将 `models.json` 写入/合并到
+当存在 `models.providers` 时，LCX Agent 在启动时将 `models.json` 写入/合并到
 `~/.openclaw/agents/<agentId>/agent/`：
 
 - 默认行为：**合并**（保留现有提供商，按名称覆盖）
@@ -2416,7 +2416,7 @@ OpenClaw 使用 **pi-coding-agent** 模型目录。你可以通过编写
 
 ### OpenCode Zen（多模型代理）
 
-OpenCode Zen 是一个具有每模型端点的多模型网关。OpenClaw 使用
+OpenCode Zen 是一个具有每模型端点的多模型网关。LCX Agent 使用
 pi-ai 内置的 `opencode` 提供商；从 https://opencode.ai/auth 设置 `OPENCODE_API_KEY`（或
 `OPENCODE_ZEN_API_KEY`）。
 
@@ -2424,7 +2424,7 @@ pi-ai 内置的 `opencode` 提供商；从 https://opencode.ai/auth 设置 `OPEN
 
 - 模型引用使用 `opencode/<modelId>`（示例：`opencode/claude-opus-4-5`）。
 - 如果你通过 `agents.defaults.models` 启用白名单，请添加你计划使用的每个模型。
-- 快捷方式：`openclaw onboard --auth-choice opencode-zen`。
+- 快捷方式：`lcx onboard --auth-choice opencode-zen`。
 
 ```json5
 {
@@ -2442,7 +2442,7 @@ pi-ai 内置的 `opencode` 提供商；从 https://opencode.ai/auth 设置 `OPEN
 Z.AI 模型通过内置的 `zai` 提供商提供。在环境中设置 `ZAI_API_KEY`
 并通过 provider/model 引用模型。
 
-快捷方式：`openclaw onboard --auth-choice zai-api-key`。
+快捷方式：`lcx onboard --auth-choice zai-api-key`。
 
 ```json5
 {
@@ -2506,7 +2506,7 @@ Z.AI 模型通过内置的 `zai` 提供商提供。在环境中设置 `ZAI_API_K
 
 说明：
 
-- 在环境中设置 `MOONSHOT_API_KEY` 或使用 `openclaw onboard --auth-choice moonshot-api-key`。
+- 在环境中设置 `MOONSHOT_API_KEY` 或使用 `lcx onboard --auth-choice moonshot-api-key`。
 - 模型引用：`moonshot/kimi-k2.5`。
 - 如需中国端点，使用 `https://api.moonshot.cn/v1`。
 
@@ -2528,7 +2528,7 @@ Z.AI 模型通过内置的 `zai` 提供商提供。在环境中设置 `ZAI_API_K
 
 说明：
 
-- 在环境中设置 `KIMI_API_KEY` 或使用 `openclaw onboard --auth-choice kimi-code-api-key`。
+- 在环境中设置 `KIMI_API_KEY` 或使用 `lcx onboard --auth-choice kimi-code-api-key`。
 - 模型引用：`kimi-coding/k2p5`。
 
 ### Synthetic（Anthropic 兼容）
@@ -2570,7 +2570,7 @@ Z.AI 模型通过内置的 `zai` 提供商提供。在环境中设置 `ZAI_API_K
 
 说明：
 
-- 设置 `SYNTHETIC_API_KEY` 或使用 `openclaw onboard --auth-choice synthetic-api-key`。
+- 设置 `SYNTHETIC_API_KEY` 或使用 `lcx onboard --auth-choice synthetic-api-key`。
 - 模型引用：`synthetic/hf:MiniMaxAI/MiniMax-M2.1`。
 - 基础 URL 应省略 `/v1`，因为 Anthropic 客户端会自动附加。
 
@@ -2618,7 +2618,7 @@ Z.AI 模型通过内置的 `zai` 提供商提供。在环境中设置 `ZAI_API_K
 
 说明：
 
-- 设置 `MINIMAX_API_KEY` 环境变量或使用 `openclaw onboard --auth-choice minimax-api`。
+- 设置 `MINIMAX_API_KEY` 环境变量或使用 `lcx onboard --auth-choice minimax-api`。
 - 可用模型：`MiniMax-M2.1`（默认）。
 - 如需精确费用跟踪，请在 `models.json` 中更新定价。
 
@@ -2726,7 +2726,7 @@ Z.AI 模型通过内置的 `zai` 提供商提供。在环境中设置 `ZAI_API_K
   - `atHour`：本地小时（0-23）作为每日重置边界。
   - `idleMinutes`：滑动空闲窗口（分钟）。当 daily + idle 都配置时，先到期的获胜。
 - `resetByType`：`dm`、`group` 和 `thread` 的每会话覆盖。
-  - 如果你只设置了旧版 `session.idleMinutes` 而没有任何 `reset`/`resetByType`，OpenClaw 保持仅空闲模式以向后兼容。
+  - 如果你只设置了旧版 `session.idleMinutes` 而没有任何 `reset`/`resetByType`，LCX Agent 保持仅空闲模式以向后兼容。
 - `heartbeatIdleMinutes`：可选的心跳检查空闲覆盖（启用时每日重置仍然适用）。
 - `agentToAgent.maxPingPongTurns`：请求者/目标之间的最大回复轮次（0–5，默认 5）。
 - `sendPolicy.default`：无规则匹配时的 `allow` 或 `deny` 回退。
@@ -2814,9 +2814,9 @@ Z.AI 模型通过内置的 `zai` 提供商提供。在环境中设置 `ZAI_API_K
 }
 ```
 
-### `browser`（OpenClaw 管理的浏览器）
+### `browser`（LCX Agent 管理的浏览器）
 
-OpenClaw 可以为 OpenClaw 启动一个**专用、隔离的** Chrome/Brave/Edge/Chromium 实例并暴露一个小型 local loopback 控制服务。
+LCX Agent 可以为 LCX Agent 启动一个**专用、隔离的** Chrome/Brave/Edge/Chromium 实例并暴露一个小型 local loopback 控制服务。
 配置文件可以通过 `profiles.<name>.cdpUrl` 指向**远程** Chromium 浏览器。远程配置文件为仅附加模式（start/stop/reset 被禁用）。
 
 `browser.cdpUrl` 保留用于旧版单配置文件配置，以及作为仅设置 `cdpPort` 的配置文件的基础 scheme/host。
@@ -2828,7 +2828,7 @@ OpenClaw 可以为 OpenClaw 启动一个**专用、隔离的** Chrome/Brave/Edge
 - 控制服务：仅 local loopback（端口从 `gateway.port` 派生，默认 `18791`）
 - CDP URL：`http://127.0.0.1:18792`（控制服务 + 1，旧版单配置文件）
 - 配置文件颜色：`#FF4500`（龙虾橙）
-- 注意：控制服务器由运行中的 Gateway 网关（`openclaw gateway`）启动。
+- 注意：控制服务器由运行中的 Gateway 网关（`lcx gateway`）启动。
 - 自动检测顺序：如果为 Chromium 内核则使用默认浏览器；否则 Chrome → Brave → Edge → Chromium → Chrome Canary。
 
 ```json5
@@ -2866,7 +2866,7 @@ OpenClaw 可以为 OpenClaw 启动一个**专用、隔离的** Chrome/Brave/Edge
     // 可选：控制台 UI 助手身份覆盖。
     // 如果未设置，控制台 UI 使用活跃智能体的身份（配置或 IDENTITY.md）。
     assistant: {
-      name: "OpenClaw",
+      name: "LCX Agent",
       avatar: "CB", // 表情、短文本，或图片 URL/data URI
     },
   },
@@ -2915,12 +2915,12 @@ OpenClaw 可以为 OpenClaw 启动一个**专用、隔离的** Chrome/Brave/Edge
 信任的代理：
 
 - `gateway.trustedProxies`：在 Gateway 网关前面终止 TLS 的反向代理 IP 列表。
-- 当连接来自这些 IP 之一时，OpenClaw 使用 `x-forwarded-for`（或 `x-real-ip`）来确定客户端 IP，用于本地配对检查和 HTTP 认证/本地检查。
+- 当连接来自这些 IP 之一时，LCX Agent 使用 `x-forwarded-for`（或 `x-real-ip`）来确定客户端 IP，用于本地配对检查和 HTTP 认证/本地检查。
 - 仅列出你完全控制的代理，并确保它们**覆盖**传入的 `x-forwarded-for`。
 
 说明：
 
-- `openclaw gateway` 拒绝启动，除非 `gateway.mode` 设为 `local`（或你传递了覆盖标志）。
+- `lcx gateway` 拒绝启动，除非 `gateway.mode` 设为 `local`（或你传递了覆盖标志）。
 - `gateway.port` 控制用于 WebSocket + HTTP（控制台 UI、hooks、A2UI）的单一多路复用端口。
 - OpenAI Chat Completions 端点：**默认禁用**；通过 `gateway.http.endpoints.chatCompletions.enabled: true` 启用。
 - 优先级：`--port` > `OPENCLAW_GATEWAY_PORT` > `gateway.port` > 默认 `18789`。
@@ -2936,7 +2936,7 @@ OpenClaw 可以为 OpenClaw 启动一个**专用、隔离的** Chrome/Brave/Edge
 - `gateway.auth.password` 可在此设置，或通过 `OPENCLAW_GATEWAY_PASSWORD`（推荐）。
 - `gateway.auth.allowTailscale` 允许 Tailscale Serve 身份头部
   （`tailscale-user-login`）在请求通过 local loopback 到达且带有 `x-forwarded-for`、
-  `x-forwarded-proto` 和 `x-forwarded-host` 时满足认证。OpenClaw 在接受之前
+  `x-forwarded-proto` 和 `x-forwarded-host` 时满足认证。LCX Agent 在接受之前
   通过 `tailscale whois` 解析 `x-forwarded-for` 地址来验证身份。为 `true` 时，
   Serve 请求不需要 token/密码；设为 `false` 要求显式凭据。当
   `tailscale.mode = "serve"` 且认证模式不是 `password` 时默认为 `true`。
@@ -3050,7 +3050,7 @@ Gateway 网关监视 `~/.openclaw/openclaw.json`（或 `OPENCLAW_CONFIG_PATH`）
 ```bash
 OPENCLAW_CONFIG_PATH=~/.openclaw/a.json \
 OPENCLAW_STATE_DIR=~/.openclaw-a \
-openclaw gateway --port 19001
+lcx gateway --port 19001
 ```
 
 ### `hooks`（Gateway 网关 webhook）
@@ -3112,7 +3112,7 @@ openclaw gateway --port 19001
 - 如果没有先前的投递路由，请显式设置 `channel` + `to`（Telegram/Discord/Google Chat/Slack/Signal/iMessage/MS Teams 必需）。
 - `model` 覆盖此 hook 运行的 LLM（`provider/model` 或别名；如果设置了 `agents.defaults.models` 则必须被允许）。
 
-Gmail 辅助配置（由 `openclaw webhooks gmail setup` / `run` 使用）：
+Gmail 辅助配置（由 `lcx webhooks gmail setup` / `run` 使用）：
 
 ```json5
 {
@@ -3156,7 +3156,7 @@ Gateway 网关自动启动：
 - 避免在 Gateway 网关旁边单独运行 `gog gmail watch serve`；它会
   因 `listen tcp 127.0.0.1:8788: bind: address already in use` 而失败。
 
-注意：当 `tailscale.mode` 开启时，OpenClaw 将 `serve.path` 默认为 `/`，以便
+注意：当 `tailscale.mode` 开启时，LCX Agent 将 `serve.path` 默认为 `/`，以便
 Tailscale 可以正确代理 `/gmail-pubsub`（它会去除设置的路径前缀）。
 如果你需要后端接收带前缀的路径，请将
 `hooks.gmail.tailscale.target` 设为完整 URL（并对齐 `serve.path`）。
@@ -3166,7 +3166,7 @@ Tailscale 可以正确代理 `/gmail-pubsub`（它会去除设置的路径前缀
 Gateway 网关通过 HTTP 提供 HTML/CSS/JS 目录服务，以便 iOS/Android 节点可以简单地 `canvas.navigate` 到它。
 
 默认根目录：`~/.openclaw/workspace/canvas`
-默认端口：`18793`（选择此端口以避免 OpenClaw 浏览器 CDP 端口 `18792`）
+默认端口：`18793`（选择此端口以避免 LCX Agent 浏览器 CDP 端口 `18792`）
 服务器监听 **Gateway 网关绑定主机**（LAN 或 Tailnet），以便节点可以访问。
 
 服务器：
@@ -3274,7 +3274,7 @@ TLS：
 一次性设置助手（Gateway 网关主机）：
 
 ```bash
-openclaw dns setup --apply
+lcx dns setup --apply
 ```
 
 ```json5

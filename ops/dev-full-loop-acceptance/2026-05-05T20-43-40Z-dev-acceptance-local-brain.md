@@ -59,7 +59,7 @@ Realistic analyst prompts covered:
 node --import tsx scripts/dev/lcx-system-doctor.ts --json
 node --import tsx scripts/dev/minimax-brain-training-guard.ts --resolve-current-adapter --model Qwen/Qwen3-0.6B --log /Users/liuchengxu/.openclaw/workspace/logs/minimax-brain-training-guard-medium.jsonl
 node --import tsx scripts/dev/local-brain-distill-eval.ts --model Qwen/Qwen3-0.6B --adapter /Users/liuchengxu/.openclaw/local-brain-trainer/adapters/thought-flow-v1-qwen3-0.6b-minimax-guard-2026-05-05T16-27-05-938Z-r6 --hardened --summary-only --json --timeout-ms 240000 --case-id cross_market_us_a_index_crypto_analysis --progress
-pnpm openclaw capabilities language-brain-loop-smoke --json
+pnpm lcx capabilities language-brain-loop-smoke --json
 node --import tsx scripts/dev/local-brain-open-eval-provider.ts "$PROMPT"
 pnpm exec vitest run test/local-brain-contracts.test.ts
 node --import tsx scripts/dev/local-brain-distill-eval.ts --model Qwen/Qwen3-0.6B --adapter /Users/liuchengxu/.openclaw/local-brain-trainer/adapters/thought-flow-v1-qwen3-0.6b-minimax-guard-2026-05-05T16-27-05-938Z-r6 --hardened --summary-only --json --timeout-ms 1

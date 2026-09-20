@@ -1,7 +1,7 @@
 ---
 read_when:
   - 调试仅限 Node 的开发脚本或 watch 模式失败
-  - 排查 OpenClaw 中 tsx/esbuild 加载器崩溃问题
+  - 排查 LCX Agent 中 tsx/esbuild 加载器崩溃问题
 summary: Node + tsx "__name is not a function" 崩溃说明及解决方法
 title: Node + tsx 崩溃
 x-i18n:
@@ -17,7 +17,7 @@ x-i18n:
 
 ## 概述
 
-通过 Node 使用 `tsx` 运行 OpenClaw 时，启动阶段报错：
+通过 Node 使用 `tsx` 运行 LCX Agent 时，启动阶段报错：
 
 ```
 [openclaw] Failed to start CLI: TypeError: __name is not a function
@@ -63,7 +63,7 @@ node --import tsx scripts/repro/tsx-name-repro.ts
 ## 回归历史
 
 - `2871657e`（2026-01-06）：脚本从 Bun 改为 tsx，使 Bun 成为可选项。
-- 在此之前（Bun 路径），`openclaw status` 和 `gateway:watch` 均正常工作。
+- 在此之前（Bun 路径），`lcx status` 和 `gateway:watch` 均正常工作。
 
 ## 解决方法
 

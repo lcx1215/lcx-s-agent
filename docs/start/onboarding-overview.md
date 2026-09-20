@@ -1,5 +1,5 @@
 ---
-summary: "Overview of OpenClaw onboarding options and flows"
+summary: "Overview of LCX Agent onboarding options and flows"
 read_when:
   - Choosing an onboarding path
   - Setting up a new environment
@@ -9,7 +9,7 @@ sidebarTitle: "Onboarding Overview"
 
 # Onboarding Overview
 
-OpenClaw supports multiple onboarding paths depending on where the Gateway runs
+LCX Agent supports multiple onboarding paths depending on where the Gateway runs
 and how you prefer to configure providers.
 
 ## Choose your onboarding path
@@ -24,14 +24,14 @@ platform.
 Run the wizard in a terminal:
 
 ```bash
-openclaw onboard
+lcx onboard
 ```
 
 Use the CLI wizard when you want full control of the Gateway, workspace,
 channels, and skills. Docs:
 
 - [Onboarding Wizard (CLI)](/start/wizard)
-- [`openclaw onboard` command](/cli/onboard)
+- [`lcx onboard` command](/cli/onboard)
 
 ## First-run flow
 

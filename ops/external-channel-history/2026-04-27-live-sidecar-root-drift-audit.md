@@ -4,7 +4,7 @@ Date: 2026-04-27
 
 ## Failure Mode
 
-The main OpenClaw gateway is now running from the clean `lcx-s-openclaw`
+The main LCX Agent gateway is now running from the clean `lcx-s-openclaw`
 checkout, but several macOS LaunchAgent sidecars still run from the older
 `Desktop/openclaw` checkout.
 

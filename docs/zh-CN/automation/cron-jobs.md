@@ -36,7 +36,7 @@ x-i18n:
 创建一个一次性提醒，验证其存在，然后立即运行：
 
 ```bash
-openclaw cron add \
+lcx cron add \
   --name "Reminder" \
   --at "2026-02-01T16:00:00Z" \
   --session main \
@@ -44,15 +44,15 @@ openclaw cron add \
   --wake now \
   --delete-after-run
 
-openclaw cron list
-openclaw cron run <job-id> --force
-openclaw cron runs --id <job-id>
+lcx cron list
+lcx cron run <job-id> --force
+lcx cron runs --id <job-id>
 ```
 
 调度一个带投递功能的周期性隔离任务：
 
 ```bash
-openclaw cron add \
+lcx cron add \
   --name "Morning brief" \
   --cron "0 7 * * *" \
   --tz "America/Los_Angeles" \
@@ -302,7 +302,7 @@ Telegram 通过 `message_thread_id` 支持论坛主题。对于定时任务投�
 一次性提醒（UTC ISO，成功后自动删除）：
 
 ```bash
-openclaw cron add \
+lcx cron add \
   --name "Send reminder" \
   --at "2026-01-12T18:00:00Z" \
   --session main \
@@ -314,7 +314,7 @@ openclaw cron add \
 一次性提醒（主会话，立即唤醒）：
 
 ```bash
-openclaw cron add \
+lcx cron add \
   --name "Calendar check" \
   --at "20m" \
   --session main \
@@ -325,7 +325,7 @@ openclaw cron add \
 周期性隔离任务（投递到 WhatsApp）：
 
 ```bash
-openclaw cron add \
+lcx cron add \
   --name "Morning status" \
   --cron "0 7 * * *" \
   --tz "America/Los_Angeles" \
@@ -339,7 +339,7 @@ openclaw cron add \
 周期性隔离任务（投递到 Telegram 主题）：
 
 ```bash
-openclaw cron add \
+lcx cron add \
   --name "Nightly summary (topic)" \
   --cron "0 22 * * *" \
   --tz "America/Los_Angeles" \
@@ -353,7 +353,7 @@ openclaw cron add \
 带模型和思维覆盖的隔离任务：
 
 ```bash
-openclaw cron add \
+lcx cron add \
   --name "Deep analysis" \
   --cron "0 6 * * 1" \
   --tz "America/Los_Angeles" \
@@ -370,23 +370,23 @@ openclaw cron add \
 
 ```bash
 # 将任务绑定到智能体 "ops"（如果该智能体不存在则回退到默认智能体）
-openclaw cron add --name "Ops sweep" --cron "0 6 * * *" --session isolated --message "Check ops queue" --agent ops
+lcx cron add --name "Ops sweep" --cron "0 6 * * *" --session isolated --message "Check ops queue" --agent ops
 
 # 切换或清除现有任务的智能体
-openclaw cron edit <jobId> --agent ops
-openclaw cron edit <jobId> --clear-agent
+lcx cron edit <jobId> --agent ops
+lcx cron edit <jobId> --clear-agent
 ```
 
 手动运行（调试）：
 
 ```bash
-openclaw cron run <jobId> --force
+lcx cron run <jobId> --force
 ```
 
 编辑现有任务（补丁字段）：
 
 ```bash
-openclaw cron edit <jobId> \
+lcx cron edit <jobId> \
   --message "Updated prompt" \
   --model "opus" \
   --thinking low
@@ -395,20 +395,20 @@ openclaw cron edit <jobId> \
 运行历史：
 
 ```bash
-openclaw cron runs --id <jobId> --limit 50
+lcx cron runs --id <jobId> --limit 50
 ```
 
 不创建任务直接发送系统事件：
 
 ```bash
-openclaw system event --mode now --text "Next heartbeat: check battery."
+lcx system event --mode now --text "Next heartbeat: check battery."
 ```
 
 ## Gateway网关 API 接口
 
 - `cron.list`、`cron.status`、`cron.add`、`cron.update`、`cron.remove`
 - `cron.run`（强制或到期）、`cron.runs`
-  如需不创建任务直接发送系统事件，请使用 [`openclaw system event`](/cli/system)。
+  如需不创建任务直接发送系统事件，请使用 [`lcx system event`](/cli/system)。
 
 ## 故障排除
 

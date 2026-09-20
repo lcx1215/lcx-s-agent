@@ -7,7 +7,7 @@ read_when:
 title: "serve"
 ---
 
-# `openclaw serve`
+# `lcx serve`
 
 Run a minimal in-process HTTP agent service. It exposes the same embedded agent
 loop as `agent --local`, but as a long-lived HTTP endpoint instead of a

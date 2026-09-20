@@ -4,7 +4,7 @@ read_when:
   - 调试 openclaw 干扰你自己 Chrome 的问题
   - 在 Control UI 中实现浏览器设置和生命周期管理
 summary: 集成浏览器控制服务 + 操作命令
-title: 浏览器（OpenClaw 托管）
+title: 浏览器（LCX Agent 托管）
 x-i18n:
   generated_at: "2026-02-03T09:26:06Z"
   model: claude-opus-4-5
@@ -16,7 +16,7 @@ x-i18n:
 
 # 浏览器（openclaw 托管）
 
-OpenClaw 可以运行一个由智能体控制的**专用 Chrome/Brave/Edge/Chromium 配置文件**。
+LCX Agent 可以运行一个由智能体控制的**专用 Chrome/Brave/Edge/Chromium 配置文件**。
 它与你的个人浏览器隔离，通过 Gateway 网关内部的小型本地控制服务进行管理（仅限 loopback）。
 
 新手视角：
@@ -38,10 +38,10 @@ OpenClaw 可以运行一个由智能体控制的**专用 Chrome/Brave/Edge/Chrom
 ## 快速开始
 
 ```bash
-openclaw browser --browser-profile openclaw status
-openclaw browser --browser-profile openclaw start
-openclaw browser --browser-profile openclaw open https://example.com
-openclaw browser --browser-profile openclaw snapshot
+lcx browser --browser-profile lcx status
+lcx browser --browser-profile lcx start
+lcx browser --browser-profile lcx open https://example.com
+lcx browser --browser-profile lcx snapshot
 ```
 
 如果出现"Browser disabled"，请在配置中启用它（见下文）并重启 Gateway 网关。
@@ -49,7 +49,7 @@ openclaw browser --browser-profile openclaw snapshot
 ## 配置文件：`openclaw` 与 `chrome`
 
 - `openclaw`：托管的隔离浏览器（无需扩展）。
-- `chrome`：到你**系统浏览器**的扩展中继（需要将 OpenClaw 扩展附加到标签页）。
+- `chrome`：到你**系统浏览器**的扩展中继（需要将 LCX Agent 扩展附加到标签页）。
 
 如果你希望默认使用托管模式，请设置 `browser.defaultProfile: "openclaw"`。
 
@@ -94,12 +94,12 @@ openclaw browser --browser-profile openclaw snapshot
 
 ## 使用 Brave（或其他基于 Chromium 的浏览器）
 
-如果你的**系统默认**浏览器是基于 Chromium 的（Chrome/Brave/Edge 等），OpenClaw 会自动使用它。设置 `browser.executablePath` 可覆盖自动检测：
+如果你的**系统默认**浏览器是基于 Chromium 的（Chrome/Brave/Edge 等），LCX Agent 会自动使用它。设置 `browser.executablePath` 可覆盖自动检测：
 
 CLI 示例：
 
 ```bash
-openclaw config set browser.executablePath "/usr/bin/google-chrome"
+lcx config set browser.executablePath "/usr/bin/google-chrome"
 ```
 
 ```json5
@@ -129,18 +129,18 @@ openclaw config set browser.executablePath "/usr/bin/google-chrome"
 
 - **本地控制（默认）：** Gateway 网关启动 loopback 控制服务，可以启动本地浏览器。
 - **远程控制（节点主机）：** 在有浏览器的机器上运行节点主机；Gateway 网关将浏览器操作代理到该节点。
-- **远程 CDP：** 设置 `browser.profiles.<name>.cdpUrl`（或 `browser.cdpUrl`）以附加到远程的基于 Chromium 的浏览器。在这种情况下，OpenClaw 不会启动本地浏览器。
+- **远程 CDP：** 设置 `browser.profiles.<name>.cdpUrl`（或 `browser.cdpUrl`）以附加到远程的基于 Chromium 的浏览器。在这种情况下，LCX Agent 不会启动本地浏览器。
 
 远程 CDP URL 可以包含认证信息：
 
 - 查询令牌（例如 `https://provider.example?token=<token>`）
 - HTTP Basic 认证（例如 `https://user:pass@provider.example`）
 
-OpenClaw 在调用 `/json/*` 端点和连接 CDP WebSocket 时会保留认证信息。建议使用环境变量或密钥管理器存储令牌，而不是将其提交到配置文件中。
+LCX Agent 在调用 `/json/*` 端点和连接 CDP WebSocket 时会保留认证信息。建议使用环境变量或密钥管理器存储令牌，而不是将其提交到配置文件中。
 
 ## 节点浏览器代理（零配置默认）
 
-如果你在有浏览器的机器上运行**节点主机**，OpenClaw 可以自动将浏览器工具调用路由到该节点，无需任何额外的浏览器配置。这是远程 Gateway 网关的默认路径。
+如果你在有浏览器的机器上运行**节点主机**，LCX Agent 可以自动将浏览器工具调用路由到该节点，无需任何额外的浏览器配置。这是远程 Gateway 网关的默认路径。
 
 注意事项：
 
@@ -152,7 +152,7 @@ OpenClaw 在调用 `/json/*` 端点和连接 CDP WebSocket 时会保留认证信
 
 ## Browserless（托管远程 CDP）
 
-[Browserless](https://browserless.io) 是一个托管的 Chromium 服务，通过 HTTPS 暴露 CDP 端点。你可以将 OpenClaw 浏览器配置文件指向 Browserless 区域端点，并使用你的 API 密钥进行认证。
+[Browserless](https://browserless.io) 是一个托管的 Chromium 服务，通过 HTTPS 暴露 CDP 端点。你可以将 LCX Agent 浏览器配置文件指向 Browserless 区域端点，并使用你的 API 密钥进行认证。
 
 示例：
 
@@ -193,7 +193,7 @@ OpenClaw 在调用 `/json/*` 端点和连接 CDP WebSocket 时会保留认证信
 
 ## 配置文件（多浏览器）
 
-OpenClaw 支持多个命名配置文件（路由配置）。配置文件可以是：
+LCX Agent 支持多个命名配置文件（路由配置）。配置文件可以是：
 
 - **openclaw 托管**：具有独立用户数据目录和 CDP 端口的专用基于 Chromium 的浏览器实例
 - **远程**：显式 CDP URL（在其他地方运行的基于 Chromium 的浏览器）
@@ -210,7 +210,7 @@ OpenClaw 支持多个命名配置文件（路由配置）。配置文件可以�
 
 ## Chrome 扩展中继（使用你现有的 Chrome）
 
-OpenClaw 还可以通过本地 CDP 中继 + Chrome 扩展驱动**你现有的 Chrome 标签页**（无需单独的"openclaw"Chrome 实例）。
+LCX Agent 还可以通过本地 CDP 中继 + Chrome 扩展驱动**你现有的 Chrome 标签页**（无需单独的"openclaw"Chrome 实例）。
 
 完整指南：[Chrome 扩展](/tools/chrome-extension)
 
@@ -218,7 +218,7 @@ OpenClaw 还可以通过本地 CDP 中继 + Chrome 扩展驱动**你现有的 Ch
 
 - Gateway 网关在本地运行（同一台机器）或节点主机在浏览器所在机器上运行。
 - 本地**中继服务器**在 loopback 的 `cdpUrl` 上监听（默认：`http://127.0.0.1:18792`）。
-- 你点击标签页上的 **OpenClaw Browser Relay** 扩展图标来附加（它不会自动附加）。
+- 你点击标签页上的 **LCX Agent Browser Relay** 扩展图标来附加（它不会自动附加）。
 - 智能体通过选择正确的配置文件，使用普通的 `browser` 工具控制该标签页。
 
 如果 Gateway 网关在其他地方运行，请在浏览器所在机器上运行节点主机，以便 Gateway 网关可以代理浏览器操作。
@@ -236,22 +236,22 @@ Chrome 扩展中继接管需要主机浏览器控制，因此要么：
 1. 加载扩展（开发/未打包）：
 
 ```bash
-openclaw browser extension install
+lcx browser extension install
 ```
 
 - Chrome → `chrome://extensions` → 启用"开发者模式"
-- "加载已解压的扩展程序" → 选择 `openclaw browser extension path` 打印的目录
+- "加载已解压的扩展程序" → 选择 `lcx browser extension path` 打印的目录
 - 固定扩展，然后在你想要控制的标签页上点击它（徽章显示 `ON`）。
 
 2. 使用它：
 
-- CLI：`openclaw browser --browser-profile chrome tabs`
+- CLI：`lcx browser --browser-profile chrome tabs`
 - 智能体工具：`browser` 配合 `profile="chrome"`
 
 可选：如果你想要不同的名称或中继端口，创建你自己的配置文件：
 
 ```bash
-openclaw browser create-profile \
+lcx browser create-profile \
   --name my-chrome \
   --driver extension \
   --cdp-url http://127.0.0.1:18792 \
@@ -271,7 +271,7 @@ openclaw browser create-profile \
 
 ## 浏览器选择
 
-本地启动时，OpenClaw 选择第一个可用的：
+本地启动时，LCX Agent 选择第一个可用的：
 
 1. Chrome
 2. Brave
@@ -310,14 +310,14 @@ openclaw browser create-profile \
 
 某些功能（navigate/act/AI 快照/角色快照、元素截图、PDF）需要 Playwright。如果未安装 Playwright，这些端点会返回明确的 501 错误。ARIA 快照和基本截图对于 openclaw 托管的 Chrome 仍然有效。对于 Chrome 扩展中继驱动程序，ARIA 快照和截图需要 Playwright。
 
-如果你看到 `Playwright is not available in this gateway build`，请安装完整的 Playwright 包（不是 `playwright-core`）并重启 Gateway 网关，或者重新安装带浏览器支持的 OpenClaw。
+如果你看到 `Playwright is not available in this gateway build`，请安装完整的 Playwright 包（不是 `playwright-core`）并重启 Gateway 网关，或者重新安装带浏览器支持的 LCX Agent。
 
 #### Docker Playwright 安装
 
 如果你的 Gateway 网关在 Docker 中运行，避免使用 `npx playwright`（npm 覆盖冲突）。改用捆绑的 CLI：
 
 ```bash
-docker compose run --rm openclaw-cli \
+docker compose run --rm lcx-cli \
   node /app/node_modules/playwright-core/cli.js install chromium
 ```
 
@@ -341,79 +341,79 @@ docker compose run --rm openclaw-cli \
 
 基础操作：
 
-- `openclaw browser status`
-- `openclaw browser start`
-- `openclaw browser stop`
-- `openclaw browser tabs`
-- `openclaw browser tab`
-- `openclaw browser tab new`
-- `openclaw browser tab select 2`
-- `openclaw browser tab close 2`
-- `openclaw browser open https://example.com`
-- `openclaw browser focus abcd1234`
-- `openclaw browser close abcd1234`
+- `lcx browser status`
+- `lcx browser start`
+- `lcx browser stop`
+- `lcx browser tabs`
+- `lcx browser tab`
+- `lcx browser tab new`
+- `lcx browser tab select 2`
+- `lcx browser tab close 2`
+- `lcx browser open https://example.com`
+- `lcx browser focus abcd1234`
+- `lcx browser close abcd1234`
 
 检查：
 
-- `openclaw browser screenshot`
-- `openclaw browser screenshot --full-page`
-- `openclaw browser screenshot --ref 12`
-- `openclaw browser screenshot --ref e12`
-- `openclaw browser snapshot`
-- `openclaw browser snapshot --format aria --limit 200`
-- `openclaw browser snapshot --interactive --compact --depth 6`
-- `openclaw browser snapshot --efficient`
-- `openclaw browser snapshot --labels`
-- `openclaw browser snapshot --selector "#main" --interactive`
-- `openclaw browser snapshot --frame "iframe#main" --interactive`
-- `openclaw browser console --level error`
-- `openclaw browser errors --clear`
-- `openclaw browser requests --filter api --clear`
-- `openclaw browser pdf`
-- `openclaw browser responsebody "**/api" --max-chars 5000`
+- `lcx browser screenshot`
+- `lcx browser screenshot --full-page`
+- `lcx browser screenshot --ref 12`
+- `lcx browser screenshot --ref e12`
+- `lcx browser snapshot`
+- `lcx browser snapshot --format aria --limit 200`
+- `lcx browser snapshot --interactive --compact --depth 6`
+- `lcx browser snapshot --efficient`
+- `lcx browser snapshot --labels`
+- `lcx browser snapshot --selector "#main" --interactive`
+- `lcx browser snapshot --frame "iframe#main" --interactive`
+- `lcx browser console --level error`
+- `lcx browser errors --clear`
+- `lcx browser requests --filter api --clear`
+- `lcx browser pdf`
+- `lcx browser responsebody "**/api" --max-chars 5000`
 
 操作：
 
-- `openclaw browser navigate https://example.com`
-- `openclaw browser resize 1280 720`
-- `openclaw browser click 12 --double`
-- `openclaw browser click e12 --double`
-- `openclaw browser type 23 "hello" --submit`
-- `openclaw browser press Enter`
-- `openclaw browser hover 44`
-- `openclaw browser scrollintoview e12`
-- `openclaw browser drag 10 11`
-- `openclaw browser select 9 OptionA OptionB`
-- `openclaw browser download e12 /tmp/report.pdf`
-- `openclaw browser waitfordownload /tmp/report.pdf`
-- `openclaw browser upload /tmp/file.pdf`
-- `openclaw browser fill --fields '[{"ref":"1","type":"text","value":"Ada"}]'`
-- `openclaw browser dialog --accept`
-- `openclaw browser wait --text "Done"`
-- `openclaw browser wait "#main" --url "**/dash" --load networkidle --fn "window.ready===true"`
-- `openclaw browser evaluate --fn '(el) => el.textContent' --ref 7`
-- `openclaw browser highlight e12`
-- `openclaw browser trace start`
-- `openclaw browser trace stop`
+- `lcx browser navigate https://example.com`
+- `lcx browser resize 1280 720`
+- `lcx browser click 12 --double`
+- `lcx browser click e12 --double`
+- `lcx browser type 23 "hello" --submit`
+- `lcx browser press Enter`
+- `lcx browser hover 44`
+- `lcx browser scrollintoview e12`
+- `lcx browser drag 10 11`
+- `lcx browser select 9 OptionA OptionB`
+- `lcx browser download e12 /tmp/report.pdf`
+- `lcx browser waitfordownload /tmp/report.pdf`
+- `lcx browser upload /tmp/file.pdf`
+- `lcx browser fill --fields '[{"ref":"1","type":"text","value":"Ada"}]'`
+- `lcx browser dialog --accept`
+- `lcx browser wait --text "Done"`
+- `lcx browser wait "#main" --url "**/dash" --load networkidle --fn "window.ready===true"`
+- `lcx browser evaluate --fn '(el) => el.textContent' --ref 7`
+- `lcx browser highlight e12`
+- `lcx browser trace start`
+- `lcx browser trace stop`
 
 状态：
 
-- `openclaw browser cookies`
-- `openclaw browser cookies set session abc123 --url "https://example.com"`
-- `openclaw browser cookies clear`
-- `openclaw browser storage local get`
-- `openclaw browser storage local set theme dark`
-- `openclaw browser storage session clear`
-- `openclaw browser set offline on`
-- `openclaw browser set headers --json '{"X-Debug":"1"}'`
-- `openclaw browser set credentials user pass`
-- `openclaw browser set credentials --clear`
-- `openclaw browser set geo 37.7749 -122.4194 --origin "https://example.com"`
-- `openclaw browser set geo --clear`
-- `openclaw browser set media dark`
-- `openclaw browser set timezone America/New_York`
-- `openclaw browser set locale en-US`
-- `openclaw browser set device "iPhone 14"`
+- `lcx browser cookies`
+- `lcx browser cookies set session abc123 --url "https://example.com"`
+- `lcx browser cookies clear`
+- `lcx browser storage local get`
+- `lcx browser storage local set theme dark`
+- `lcx browser storage session clear`
+- `lcx browser set offline on`
+- `lcx browser set headers --json '{"X-Debug":"1"}'`
+- `lcx browser set credentials user pass`
+- `lcx browser set credentials --clear`
+- `lcx browser set geo 37.7749 -122.4194 --origin "https://example.com"`
+- `lcx browser set geo --clear`
+- `lcx browser set media dark`
+- `lcx browser set timezone America/New_York`
+- `lcx browser set locale en-US`
+- `lcx browser set device "iPhone 14"`
 
 注意事项：
 
@@ -433,16 +433,16 @@ docker compose run --rm openclaw-cli \
 
 ## 快照和 ref
 
-OpenClaw 支持两种"快照"风格：
+LCX Agent 支持两种"快照"风格：
 
-- **AI 快照（数字 ref）**：`openclaw browser snapshot`（默认；`--format ai`）
+- **AI 快照（数字 ref）**：`lcx browser snapshot`（默认；`--format ai`）
   - 输出：包含数字 ref 的文本快照。
-  - 操作：`openclaw browser click 12`、`openclaw browser type 23 "hello"`。
+  - 操作：`lcx browser click 12`、`lcx browser type 23 "hello"`。
   - 内部通过 Playwright 的 `aria-ref` 解析 ref。
 
-- **角色快照（角色 ref 如 `e12`）**：`openclaw browser snapshot --interactive`（或 `--compact`、`--depth`、`--selector`、`--frame`）
+- **角色快照（角色 ref 如 `e12`）**：`lcx browser snapshot --interactive`（或 `--compact`、`--depth`、`--selector`、`--frame`）
   - 输出：带有 `[ref=e12]`（和可选的 `[nth=1]`）的基于角色的列表/树。
-  - 操作：`openclaw browser click e12`、`openclaw browser highlight e12`。
+  - 操作：`lcx browser click e12`、`lcx browser highlight e12`。
   - 内部通过 `getByRole(...)`（加上重复项的 `nth()`）解析 ref。
   - 添加 `--labels` 可包含带有叠加 `e12` 标签的视口截图。
 
@@ -456,18 +456,18 @@ ref 行为：
 你可以等待的不仅仅是时间/文本：
 
 - 等待 URL（Playwright 支持通配符）：
-  - `openclaw browser wait --url "**/dash"`
+  - `lcx browser wait --url "**/dash"`
 - 等待加载状态：
-  - `openclaw browser wait --load networkidle`
+  - `lcx browser wait --load networkidle`
 - 等待 JS 断言：
-  - `openclaw browser wait --fn "window.ready===true"`
+  - `lcx browser wait --fn "window.ready===true"`
 - 等待选择器变得可见：
-  - `openclaw browser wait "#main"`
+  - `lcx browser wait "#main"`
 
 这些可以组合使用：
 
 ```bash
-openclaw browser wait "#main" \
+lcx browser wait "#main" \
   --url "**/dash" \
   --load networkidle \
   --fn "window.ready===true" \
@@ -478,16 +478,16 @@ openclaw browser wait "#main" \
 
 当操作失败时（例如"not visible"、"strict mode violation"、"covered"）：
 
-1. `openclaw browser snapshot --interactive`
+1. `lcx browser snapshot --interactive`
 2. 使用 `click <ref>` / `type <ref>`（在交互模式下优先使用角色 ref）
-3. 如果仍然失败：`openclaw browser highlight <ref>` 查看 Playwright 定位的目标
+3. 如果仍然失败：`lcx browser highlight <ref>` 查看 Playwright 定位的目标
 4. 如果页面行为异常：
-   - `openclaw browser errors --clear`
-   - `openclaw browser requests --filter api --clear`
+   - `lcx browser errors --clear`
+   - `lcx browser requests --filter api --clear`
 5. 深度调试：录制 trace：
-   - `openclaw browser trace start`
+   - `lcx browser trace start`
    - 重现问题
-   - `openclaw browser trace stop`（打印 `TRACE:<path>`）
+   - `lcx browser trace stop`（打印 `TRACE:<path>`）
 
 ## JSON 输出
 
@@ -496,10 +496,10 @@ openclaw browser wait "#main" \
 示例：
 
 ```bash
-openclaw browser status --json
-openclaw browser snapshot --interactive --json
-openclaw browser requests --filter api --json
-openclaw browser cookies --json
+lcx browser status --json
+lcx browser snapshot --interactive --json
+lcx browser requests --filter api --json
+lcx browser cookies --json
 ```
 
 JSON 格式的角色快照包含 `refs` 加上一个小的 `stats` 块（lines/chars/refs/interactive），以便工具可以推断负载大小和密度。
@@ -523,7 +523,7 @@ JSON 格式的角色快照包含 `refs` 加上一个小的 `stats` 块（lines/c
 ## 安全与隐私
 
 - openclaw 浏览器配置文件可能包含已登录的会话；请将其视为敏感信息。
-- `browser act kind=evaluate` / `openclaw browser evaluate` 和 `wait --fn` 在页面上下文中执行任意 JavaScript。提示注入可能会操纵它。如果不需要，请使用 `browser.evaluateEnabled=false` 禁用它。
+- `browser act kind=evaluate` / `lcx browser evaluate` 和 `wait --fn` 在页面上下文中执行任意 JavaScript。提示注入可能会操纵它。如果不需要，请使用 `browser.evaluateEnabled=false` 禁用它。
 - 有关登录和反机器人注意事项（X/Twitter 等），请参阅 [浏览器登录 + X/Twitter 发帖](/tools/browser-login)。
 - 保持 Gateway 网关/节点主机私有（仅限 loopback 或 tailnet）。
 - 远程 CDP 端点功能强大；请通过隧道保护它们。

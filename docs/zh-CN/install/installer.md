@@ -1,9 +1,9 @@
 ---
 read_when:
-  - 你想了解 `openclaw.ai/install.sh` 的工作机制
+  - 你想了解 `install.sh` 安装器的工作机制
   - 你想自动化安装（CI / 无头环境）
   - 你想从 GitHub 检出安装
-summary: 安装器脚本的工作原理（install.sh + install-cli.sh）、参数和自动化
+summary: 安装器脚本的工作原理（install.sh + install.ps1）、参数和自动化
 title: 安装器内部机制
 x-i18n:
   generated_at: "2026-02-01T21:07:55Z"
@@ -16,22 +16,21 @@ x-i18n:
 
 # 安装器内部机制
 
-OpenClaw 提供两个安装器脚本（托管在 `openclaw.ai`）：
+LCX Agent 提供两个安装器脚本（托管在本仓库）：
 
-- `https://openclaw.ai/install.sh` — "推荐"安装器（默认全局 npm 安装；也可从 GitHub 检出安装）
-- `https://openclaw.ai/install-cli.sh` — 无需 root 权限的 CLI 安装器（安装到带有独立 Node 的前缀目录）
-- `https://openclaw.ai/install.ps1` — Windows PowerShell 安装器（默认 npm；可选 git 安装）
+- `https://raw.githubusercontent.com/lcx1215/lcx-s-agent/main/scripts/install.sh` — "推荐"安装器（默认全局 npm 安装；也可从 GitHub 检出安装）
+- `https://raw.githubusercontent.com/lcx1215/lcx-s-agent/main/scripts/install.ps1` — Windows PowerShell 安装器（默认 npm；可选 git 安装）
 
 查看当前参数/行为，运行：
 
 ```bash
-curl -fsSL https://openclaw.ai/install.sh | bash -s -- --help
+curl -fsSL https://raw.githubusercontent.com/lcx1215/lcx-s-agent/main/scripts/install.sh | bash -s -- --help
 ```
 
 Windows (PowerShell) 帮助：
 
 ```powershell
-& ([scriptblock]::Create((iwr -useb https://openclaw.ai/install.ps1))) -?
+& ([scriptblock]::Create((iwr -useb https://raw.githubusercontent.com/lcx1215/lcx-s-agent/main/scripts/install.ps1))) -?
 ```
 
 如果安装器完成但在新终端中找不到 `openclaw`，通常是 Node/npm PATH 问题。参见：[安装](/install#nodejs--npm-path-sanity)。
@@ -46,19 +45,19 @@ Windows (PowerShell) 帮助：
   - `npm`（默认）：`npm install -g openclaw@latest`
   - `git`：克隆/构建源码检出并安装包装脚本
 - 在 Linux 上：必要时将 npm 前缀切换到 `~/.npm-global`，以避免全局 npm 权限错误。
-- 如果是升级现有安装：运行 `openclaw doctor --non-interactive`（尽力执行）。
-- 对于 git 安装：安装/更新后运行 `openclaw doctor --non-interactive`（尽力执行）。
+- 如果是升级现有安装：运行 `lcx doctor --non-interactive`（尽力执行）。
+- 对于 git 安装：安装/更新后运行 `lcx doctor --non-interactive`（尽力执行）。
 - 通过默认设置 `SHARP_IGNORE_GLOBAL_LIBVIPS=1` 来缓解 `sharp` 原生安装问题（避免使用系统 libvips 编译）。
 
 如果你*希望* `sharp` 链接到全局安装的 libvips（或你正在调试），请设置：
 
 ```bash
-SHARP_IGNORE_GLOBAL_LIBVIPS=0 curl -fsSL https://openclaw.ai/install.sh | bash
+SHARP_IGNORE_GLOBAL_LIBVIPS=0 curl -fsSL https://raw.githubusercontent.com/lcx1215/lcx-s-agent/main/scripts/install.sh | bash
 ```
 
 ### 可发现性 / "git 安装"提示
 
-如果你在**已有的 OpenClaw 源码检出目录中**运行安装器（通过 `package.json` + `pnpm-workspace.yaml` 检测），它会提示：
+如果你在**已有的 LCX Agent 源码检出目录中**运行安装器（通过 `package.json` + `pnpm-workspace.yaml` 检测），它会提示：
 
 - 更新并使用此检出（`git`）
 - 或迁移到全局 npm 安装（`npm`）
@@ -79,15 +78,9 @@ SHARP_IGNORE_GLOBAL_LIBVIPS=0 curl -fsSL https://openclaw.ai/install.sh | bash
 
 - `~/.npm-global`（并在存在时将其添加到 `~/.bashrc` / `~/.zshrc` 的 `PATH` 中）
 
-## install-cli.sh（无需 root 权限的 CLI 安装器）
-
-此脚本将 `openclaw` 安装到前缀目录（默认：`~/.openclaw`），同时在该前缀下安装专用的 Node 运行时，因此可以在不想改动系统 Node/npm 的机器上使用。
-
-帮助：
-
-```bash
-curl -fsSL https://openclaw.ai/install-cli.sh | bash -s -- --help
-```
+<Note>
+本仓库不提供单独的 CLI-only 安装器。请使用 [`install.sh`](#installsh)，它会在需要时安装 Node 22，且无需 root 权限。
+</Note>
 
 ## install.ps1（Windows PowerShell）
 
@@ -97,20 +90,20 @@ curl -fsSL https://openclaw.ai/install-cli.sh | bash -s -- --help
 - 选择安装方式：
   - `npm`（默认）：`npm install -g openclaw@latest`
   - `git`：克隆/构建源码检出并安装包装脚本
-- 在升级和 git 安装时运行 `openclaw doctor --non-interactive`（尽力执行）。
+- 在升级和 git 安装时运行 `lcx doctor --non-interactive`（尽力执行）。
 
 示例：
 
 ```powershell
-iwr -useb https://openclaw.ai/install.ps1 | iex
+iwr -useb https://raw.githubusercontent.com/lcx1215/lcx-s-agent/main/scripts/install.ps1 | iex
 ```
 
 ```powershell
-iwr -useb https://openclaw.ai/install.ps1 | iex -InstallMethod git
+iwr -useb https://raw.githubusercontent.com/lcx1215/lcx-s-agent/main/scripts/install.ps1 | iex -InstallMethod git
 ```
 
 ```powershell
-iwr -useb https://openclaw.ai/install.ps1 | iex -InstallMethod git -GitDir "C:\\openclaw"
+iwr -useb https://raw.githubusercontent.com/lcx1215/lcx-s-agent/main/scripts/install.ps1 | iex -InstallMethod git -GitDir "C:\\openclaw"
 ```
 
 环境变量：

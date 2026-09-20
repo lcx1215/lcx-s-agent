@@ -2,7 +2,7 @@
 title: Deploy on Render
 ---
 
-Deploy OpenClaw on Render using Infrastructure as Code. The included `render.yaml` Blueprint defines your entire stack declaratively, service, disk, environment variables, so you can deploy with a single click and version your infrastructure alongside your code.
+Deploy LCX Agent on Render using Infrastructure as Code. The included `render.yaml` Blueprint defines your entire stack declaratively, service, disk, environment variables, so you can deploy with a single click and version your infrastructure alongside your code.
 
 ## Prerequisites
 
@@ -11,7 +11,7 @@ Deploy OpenClaw on Render using Infrastructure as Code. The included `render.yam
 
 ## Deploy with a Render Blueprint
 
-[Deploy to Render](https://render.com/deploy?repo=https://github.com/openclaw/openclaw)
+[Deploy to Render](https://render.com/deploy?repo=https://github.com/lcx1215/lcx-s-agent)
 
 Clicking this link will:
 
@@ -24,7 +24,7 @@ Once deployed, your service URL follows the pattern `https://<service-name>.onre
 ## Understanding the Blueprint
 
 Render Blueprints are YAML files that define your infrastructure. The `render.yaml` in this
-repository configures everything needed to run OpenClaw:
+repository configures everything needed to run LCX Agent:
 
 ```yaml
 services:
@@ -105,7 +105,7 @@ Modify variables in **Dashboard → your service → Environment**. Changes trig
 
 ### Auto-deploy
 
-If you use the original OpenClaw repository, Render will not auto-deploy your OpenClaw. To update it, run a manual Blueprint sync from the dashboard.
+If you use the original LCX Agent repository, Render will not auto-deploy your LCX Agent. To update it, run a manual Blueprint sync from the dashboard.
 
 ## Custom domain
 
@@ -121,7 +121,7 @@ Render supports horizontal and vertical scaling:
 - **Vertical**: Change the plan to get more CPU/RAM
 - **Horizontal**: Increase instance count (Standard plan and above)
 
-For OpenClaw, vertical scaling is usually sufficient. Horizontal scaling requires sticky sessions or external state management.
+For LCX Agent, vertical scaling is usually sufficient. Horizontal scaling requires sticky sessions or external state management.
 
 ## Backups and migration
 
@@ -131,7 +131,7 @@ Export your configuration and workspace at any time:
 https://<your-service>.onrender.com/setup/export
 ```
 
-This downloads a portable backup you can restore on any OpenClaw host.
+This downloads a portable backup you can restore on any LCX Agent host.
 
 ## Troubleshooting
 

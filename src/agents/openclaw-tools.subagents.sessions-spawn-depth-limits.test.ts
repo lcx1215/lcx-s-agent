@@ -85,6 +85,9 @@ describe("sessions_spawn depth + child limits", () => {
   });
 
   it("rejects spawning when caller depth reaches maxSpawnDepth", async () => {
+    // Pin maxSpawnDepth to 1 (leaf-only) so this proves the ceiling is still
+    // enforced; the shipped default is 2, which allows one nested level.
+    setSubagentLimits({ maxSpawnDepth: 1 });
     const tool = createSessionsSpawnTool({ agentSessionKey: "agent:main:subagent:parent" });
     const result = await tool.execute("call-depth-reject", { task: "hello" });
 

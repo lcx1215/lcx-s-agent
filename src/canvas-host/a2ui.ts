@@ -113,9 +113,11 @@ export function injectCanvasLiveReload(html: string): string {
     const action = { ...userAction, id };
     return postToNode({ userAction: action });
   }
-  globalThis.OpenClaw = globalThis.OpenClaw ?? {};
-  globalThis.OpenClaw.postMessage = postToNode;
-  globalThis.OpenClaw.sendUserAction = sendUserAction;
+  globalThis.LCXAgent = globalThis.LCXAgent ?? {};
+  globalThis.LCXAgent.postMessage = postToNode;
+  globalThis.LCXAgent.sendUserAction = sendUserAction;
+  // Native WebView bridge names below are a live contract with the iOS/Android
+  // node apps and the A2UI bundle — do not rename without a dual-name fallback.
   globalThis.openclawPostMessage = postToNode;
   globalThis.openclawSendUserAction = sendUserAction;
 

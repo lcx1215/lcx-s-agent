@@ -148,7 +148,10 @@ describe("collectLiveFinanceGatewayInput", () => {
       assetClass: "etf",
       useCase: "live_gateway_portfolio_macro_risk_research",
       requireOfficialReference: false,
-      now: () => new Date("2026-06-01T20:05:00.000Z"),
+      // The sample is dated 2026-07-01, so `now` has to sit just after it: the gateway withholds
+      // observations dated after the requested `asOf` (fail-closed historical runs), and an
+      // asOf a month earlier than the sample would make this "live-shaped" input look future.
+      now: () => new Date("2026-07-01T20:05:00.000Z"),
       fetchImpl: fakeFetch(SAMPLE_JSON),
     });
     expect(input.instrument).toBe("QQQ");

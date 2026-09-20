@@ -1,6 +1,6 @@
 # @openclaw/diffs
 
-Read-only diff viewer plugin for **OpenClaw** agents.
+Read-only diff viewer plugin for **LCX Agent** agents.
 
 It gives agents one tool, `diffs`, that can:
 
@@ -135,10 +135,10 @@ Use the `diffs` tool in `file` mode for this before and after input. After it re
 Path: README.md
 
 Before:
-OpenClaw supports plugins.
+LCX Agent supports plugins.
 
 After:
-OpenClaw supports plugins and hosted diff views.
+LCX Agent supports plugins and hosted diff views.
 ```
 
 Do both:

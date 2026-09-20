@@ -1,0 +1,81 @@
+topic: 大厂与大模型厂商投研 Agent 的接口栈调研
+topic_slug: investment-agent-interfaces-2026
+created: 2026-09-20
+time_range: 2025-09 至 2026-09
+focus: 三层接口（数据接口 / Agent 协议接口 / 模型调用接口）
+
+items:
+  # A 组：国际模型大厂
+  - name: Anthropic-Claude-Financial-Services
+    category: 国际模型大厂
+    description: 2026-05 纽约发布的 Claude for Financial Services，含 10 个金融 Agent 模板、多个连接器与 MCP 支持
+  - name: OpenAI-Investment-Research-Agent
+    category: 国际模型大厂
+    description: OpenAI 在投研/金融方向的 Agent 能力、Agents SDK、function calling 与金融数据合作方
+  - name: Google-Gemini-Finance-Agent
+    category: 国际模型大厂
+    description: Google DeepMind / Gemini 面向金融与投研的 Agent、Google Finance 相关能力与接口
+
+  # B 组：国际其他模型厂商与机构内部
+  - name: Meta-xAI-Finance-Models
+    category: 国际模型大厂
+    description: Meta Muse Spark（Finance Agent 榜）、xAI Grok 在金融投研场景的接口与数据源
+  - name: Institutional-Internal-Agents
+    category: 国际金融机构
+    description: JPMorgan、BlackRock Aladdin、Bridgewater、Morgan Stanley 等机构内部投研 Agent 的接口与数据接入方式
+
+  # C 组：国际金融数据与终端大厂
+  - name: Bloomberg-Agent-Interfaces
+    category: 国际数据大厂
+    description: Bloomberg 终端 API、BQuant、BloombergGPT 及面向 Agent 的接口（是否提供 MCP）
+  - name: FactSet-SP-Morningstar-LSEG
+    category: 国际数据大厂
+    description: FactSet、S&P Global、Morningstar、LSEG 面向大模型/Agent 的接口（MCP、Mercury、OpenAPI）
+
+  # D 组：国内大模型厂商
+  - name: Ant-Agentar-Financial
+    category: 国内大模型厂商
+    description: 蚂蚁数科 Agentar 金融版（2026-09 外滩大会）的平台接口、数据源与 Agent 编排
+  - name: Alibaba-Tongyi-Finance
+    category: 国内大模型厂商
+    description: 阿里通义/阿里云百炼金融大模型与投研 Agent 的接口开放形态
+  - name: ByteDance-Doubao-Finance
+    category: 国内大模型厂商
+    description: 字节火山引擎/豆包在金融投研 Agent 的落地与接口（含 MCP、插件）
+  - name: Tencent-Hunyuan-Finance
+    category: 国内大模型厂商
+    description: 腾讯混元/腾讯云在金融投研 Agent 的产品与接口（含腾讯自选股、腾讯云金融大模型）
+  - name: Moonshot-Kimi-Research
+    category: 国内大模型厂商
+    description: 月之暗面 Kimi K3/研究员模式在金融投研的接口与数据接入（含 DeepSeek 在金融场景的接口应用）
+
+  # E 组：国内金融数据与 IT 厂商
+  - name: Hithink-Financial-API
+    category: 国内数据厂商
+    description: 同花顺官方 Financial-API：REST + MCP + CLI + Python SDK + Agent Skill 五合一形态
+  - name: Eastmoney-Miaoxiang-Skills
+    category: 国内数据厂商
+    description: 东方财富妙想金融大模型与妙想 Skills（宣称原生集成机构级 MCP 金融数据库）
+  - name: Hundsun-Broker-Research-Agents
+    category: 国内数据厂商
+    description: 恒生电子与券商系投研 Agent（智能投研技术联盟）的接口与数据接入方式
+  - name: Wind-and-OpenData-Interfaces
+    category: 国内数据厂商
+    description: Wind 万得 Client API、聚源/通联等商用库，与 Tushare/AkShare 等开源数据接口在 Agent 中的用法
+
+  # F 组：新兴 MCP 网关与横向协议
+  - name: Emerging-Finance-MCP-Gateways
+    category: 新兴网关
+    description: 进门投研 MCP 等新兴金融数据 MCP 网关，如何被多家 Agent 应用接入
+  - name: Protocol-Layer-Landscape
+    category: 横向协议
+    description: MCP / A2A / AG-UI / function calling 在投研场景的落地形态与分工，工具粒度与互操作现状
+  - name: Data-Interface-Form-Comparison
+    category: 横向协议
+    description: REST/WebSocket/FIX/SDK/SQL 各类投研数据接口形式的对比：延迟、覆盖、认证、计费、合规约束
+
+execution:
+  batch_size: 8
+  items_per_agent: 2-3
+  output_dir: results
+  output_format: json（一个 agent 产出一个 JSON 数组，含其负责的每个 item 一个对象）

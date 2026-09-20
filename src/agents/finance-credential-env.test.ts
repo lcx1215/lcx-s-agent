@@ -7,13 +7,12 @@ import { inspectFinanceSourceHealth } from "./finance-source-health.js";
 
 it("loads only finance credentials, respects explicit overrides, and never mutates process env", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "finance-env-"));
-  await fs.mkdir(path.join(dir, "finance-caseflow"));
   await fs.writeFile(
-    path.join(dir, "finance-caseflow", "credentials.env"),
+    path.join(dir, "credentials.env"),
     "FMP_API_KEY=stored\nFINNHUB_API_KEY=stored-finn\nOPENAI_API_KEY=unrelated\nLCX_FINANCE_HTTP_PROXY=http://localhost:8080\n",
     { mode: 0o600 },
   );
-  const env = { OPENCLAW_STATE_DIR: dir, FINNHUB_API_KEY: "", FRED_API_KEY: "explicit" };
+  const env = { LCX_FINANCE_STATE_DIR: dir, FINNHUB_API_KEY: "", FRED_API_KEY: "explicit" };
   const result = resolveFinanceCredentialEnv(env);
   expect(result.LCX_FINANCE_HTTP_PROXY).toBe("http://localhost:8080");
   expect(result.FMP_API_KEY).toBe("stored");
@@ -25,7 +24,7 @@ it("loads only finance credentials, respects explicit overrides, and never mutat
 
 it("distinguishes successful calls, expired evidence, missing configuration and replay", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "finance-health-"));
-  const receipts = path.join(dir, "finance-caseflow", "receipts", "run");
+  const receipts = path.join(dir, "receipts", "run");
   await fs.mkdir(receipts, { recursive: true });
   for (const [id, asOf] of [
     ["binance_public_crypto_ticker", "2026-09-08T10:00:00Z"],
@@ -49,7 +48,7 @@ it("distinguishes successful calls, expired evidence, missing configuration and 
   }
   const health = await inspectFinanceSourceHealth({
     workspaceDir: dir,
-    env: { OPENCLAW_STATE_DIR: dir },
+    env: { LCX_FINANCE_STATE_DIR: dir },
     asOf: "2026-09-08T12:00:00Z",
   });
   expect(
@@ -90,7 +89,7 @@ it("includes receipts written by the direct collection tool", async () => {
   );
   const health = await inspectFinanceSourceHealth({
     workspaceDir: dir,
-    env: { OPENCLAW_STATE_DIR: dir },
+    env: { LCX_FINANCE_STATE_DIR: dir },
     asOf: "2026-09-08T12:00:00Z",
   });
   expect(health.routes.find((r) => r.id === "binance_public_crypto_ticker")?.callState).toBe(

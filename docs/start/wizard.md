@@ -9,25 +9,25 @@ sidebarTitle: "Onboarding: CLI"
 
 # Onboarding Wizard (CLI)
 
-The onboarding wizard is the **recommended** way to set up OpenClaw on macOS,
+The onboarding wizard is the **recommended** way to set up LCX Agent on macOS,
 Linux, or Windows (via WSL2; strongly recommended).
 It configures a local Gateway or a remote Gateway connection, plus channels, skills,
 and workspace defaults in one guided flow.
 
 ```bash
-openclaw onboard
+lcx onboard
 ```
 
 <Info>
 Fastest first chat: open the Control UI (no channel setup needed). Run
-`openclaw dashboard` and chat in the browser. Docs: [Dashboard](/web/dashboard).
+`lcx dashboard` and chat in the browser. Docs: [Dashboard](/web/dashboard).
 </Info>
 
 To reconfigure later:
 
 ```bash
-openclaw configure
-openclaw agents add <name>
+lcx configure
+lcx agents add <name>
 ```
 
 <Note>
@@ -36,7 +36,7 @@ openclaw agents add <name>
 
 <Tip>
 Recommended: set up a Brave Search API key so the agent can use `web_search`
-(`web_fetch` works without a key). Easiest path: `openclaw configure --section web`
+(`web_fetch` works without a key). Easiest path: `lcx configure --section web`
 which stores `tools.web.search.apiKey`. Docs: [Web tools](/tools/web).
 </Tip>
 
@@ -80,7 +80,7 @@ The wizard starts with **QuickStart** (defaults) vs **Advanced** (full control).
 <Note>
 Re-running the wizard does **not** wipe anything unless you explicitly choose **Reset** (or pass `--reset`).
 CLI `--reset` defaults to config, credentials, and sessions; use `--reset-scope full` to include workspace.
-If the config is invalid or contains legacy keys, the wizard asks you to run `openclaw doctor` first.
+If the config is invalid or contains legacy keys, the wizard asks you to run `lcx doctor` first.
 </Note>
 
 **Remote mode** only configures the local client to connect to a Gateway elsewhere.
@@ -88,7 +88,7 @@ It does **not** install or change anything on the remote host.
 
 ## Add another agent
 
-Use `openclaw agents add <name>` to create a separate agent with its own workspace,
+Use `lcx agents add <name>` to create a separate agent with its own workspace,
 sessions, and auth profiles. Running without `--workspace` launches the wizard.
 
 What it sets:
@@ -111,7 +111,7 @@ RPC API, and a full list of config fields the wizard writes, see the
 
 ## Related docs
 
-- CLI command reference: [`openclaw onboard`](/cli/onboard)
+- CLI command reference: [`lcx onboard`](/cli/onboard)
 - Onboarding overview: [Onboarding Overview](/start/onboarding-overview)
 - First-run flow: [Onboarding](/start/onboarding)
 - Agent first-run ritual: [Agent Bootstrapping](/start/bootstrapping)

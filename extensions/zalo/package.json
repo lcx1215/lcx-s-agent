@@ -1,7 +1,7 @@
 {
   "name": "@openclaw/zalo",
   "version": "2026.3.2",
-  "description": "OpenClaw Zalo channel plugin",
+  "description": "LCX Agent Zalo channel plugin",
   "type": "module",
   "dependencies": {
     "lcx-agent": "workspace:*",
@@ -28,7 +28,7 @@
     "install": {
       "npmSpec": "@openclaw/zalo",
       "localPath": "extensions/zalo",
-      "defaultChoice": "npm"
+      "defaultChoice": "local"
     }
   }
 }

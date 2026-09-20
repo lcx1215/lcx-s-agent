@@ -15,14 +15,14 @@ x-i18n:
 
 # OpenResponses API（HTTP）
 
-OpenClaw 的 Gateway 网关可以提供兼容 OpenResponses 的 `POST /v1/responses` 端点。
+LCX Agent 的 Gateway 网关可以提供兼容 OpenResponses 的 `POST /v1/responses` 端点。
 
 此端点**默认禁用**。请先在配置中启用。
 
 - `POST /v1/responses`
 - 与 Gateway 网关相同的端口（WS + HTTP 多路复用）：`http://<gateway-host>:<port>/v1/responses`
 
-底层实现中，请求作为正常的 Gateway 网关智能体运行执行（与 `openclaw agent` 相同的代码路径），因此路由/权限/配置与你的 Gateway 网关一致。
+底层实现中，请求作为正常的 Gateway 网关智能体运行执行（与 `lcx agent` 相同的代码路径），因此路由/权限/配置与你的 Gateway 网关一致。
 
 ## 认证
 
@@ -42,7 +42,7 @@ OpenClaw 的 Gateway 网关可以提供兼容 OpenResponses 的 `POST /v1/respon
 - `model: "openclaw:<agentId>"`（示例：`"openclaw:main"`、`"openclaw:beta"`）
 - `model: "agent:<agentId>"`（别名）
 
-或通过头指定特定的 OpenClaw 智能体：
+或通过头指定特定的 LCX Agent 智能体：
 
 - `x-openclaw-agent-id: <agentId>`（默认：`main`）
 

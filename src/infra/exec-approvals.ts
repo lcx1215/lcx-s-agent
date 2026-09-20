@@ -13,6 +13,7 @@ import { resolveStateDir } from "../config/paths.js";
 import type { LcxIdentityMigrationPlan } from "../config/paths.js";
 import { DEFAULT_AGENT_ID } from "../routing/session-key.js";
 import { expandHomePrefix } from "./home-dir.js";
+import { saveJsonFile } from "./json-file.js";
 import { requestJsonlSocket } from "./jsonl-socket.js";
 export * from "./exec-approvals-analysis.js";
 export * from "./exec-approvals-allowlist.js";
@@ -342,12 +343,10 @@ export function loadExecApprovals(): ExecApprovalsFile {
 export function saveExecApprovals(file: ExecApprovalsFile) {
   const filePath = resolveExecApprovalsPath();
   ensureDir(filePath);
-  fs.writeFileSync(filePath, `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 });
-  try {
-    fs.chmodSync(filePath, 0o600);
-  } catch {
-    // best-effort on platforms without chmod
-  }
+  // Atomic write: exec approvals are the only record of what a human already approved. A
+  // half-written file would silently revoke every allowlist entry (and, worse, look like a
+  // legitimately empty allowlist) instead of failing loudly.
+  saveJsonFile(filePath, file);
 }
 
 export type LcxIdentityExecApprovalsMigration = Readonly<{

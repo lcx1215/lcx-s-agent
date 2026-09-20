@@ -20,6 +20,17 @@ export type MemoryChunk = {
   hash: string;
 };
 
+/**
+ * Model key used for chunks and FTS rows written when no embedding provider is configured.
+ *
+ * Chunk identity and FTS rows are keyed by embedding model so a vector index and a keyword
+ * index can coexist over the same files. With no provider there is no model to key on, but
+ * keyword recall is a standalone SQLite capability and must still be built — otherwise
+ * `FTS: ready` describes an index that has no files in it. The query side already treats an
+ * absent provider model as "match any model", so rows under this key are always searchable.
+ */
+export const FTS_ONLY_MODEL_KEY = "fts-only" as const;
+
 export function ensureDir(dir: string): string {
   try {
     fsSync.mkdirSync(dir, { recursive: true });

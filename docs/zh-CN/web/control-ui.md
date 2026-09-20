@@ -28,7 +28,7 @@ x-i18n:
 
 - http://127.0.0.1:18789/（或 http://localhost:18789/）
 
-如果页面加载失败，请先启动 Gateway 网关：`openclaw gateway`。
+如果页面加载失败，请先启动 Gateway 网关：`lcx gateway`。
 
 认证在 WebSocket 握手期间通过以下方式提供：
 
@@ -47,13 +47,13 @@ x-i18n:
 
 ```bash
 # 列出待处理的请求
-openclaw devices list
+lcx devices list
 
 # 按请求 ID 批准
-openclaw devices approve <requestId>
+lcx devices approve <requestId>
 ```
 
-一旦批准，设备会被记住，除非你使用 `openclaw devices revoke --device <id> --role <role>` 撤销它，否则不需要重新批准。参见 [Devices CLI](/cli/devices) 了解 token 轮换和撤销。
+一旦批准，设备会被记住，除非你使用 `lcx devices revoke --device <id> --role <role>` 撤销它，否则不需要重新批准。参见 [Devices CLI](/cli/devices) 了解 token 轮换和撤销。
 
 **注意：**
 
@@ -97,19 +97,19 @@ openclaw devices approve <requestId>
 保持 Gateway 网关在 loopback 上，让 Tailscale Serve 用 HTTPS 代理它：
 
 ```bash
-openclaw gateway --tailscale serve
+lcx gateway --tailscale serve
 ```
 
 打开：
 
 - `https://<magicdns>/`（或你配置的 `gateway.controlUi.basePath`）
 
-默认情况下，当 `gateway.auth.allowTailscale` 为 `true` 时，Serve 请求可以通过 Tailscale 身份头（`tailscale-user-login`）进行认证。OpenClaw 通过使用 `tailscale whois` 解析 `x-forwarded-for` 地址并与头匹配来验证身份，并且只在请求通过 Tailscale 的 `x-forwarded-*` 头到达 loopback 时接受这些。如果你想即使对于 Serve 流量也要求 token/密码，请设置 `gateway.auth.allowTailscale: false`（或强制 `gateway.auth.mode: "password"`）。
+默认情况下，当 `gateway.auth.allowTailscale` 为 `true` 时，Serve 请求可以通过 Tailscale 身份头（`tailscale-user-login`）进行认证。LCX Agent 通过使用 `tailscale whois` 解析 `x-forwarded-for` 地址并与头匹配来验证身份，并且只在请求通过 Tailscale 的 `x-forwarded-*` 头到达 loopback 时接受这些。如果你想即使对于 Serve 流量也要求 token/密码，请设置 `gateway.auth.allowTailscale: false`（或强制 `gateway.auth.mode: "password"`）。
 
 ### 绑定到 tailnet + token
 
 ```bash
-openclaw gateway --bind tailnet --token "$(openssl rand -hex 32)"
+lcx gateway --bind tailnet --token "$(openssl rand -hex 32)"
 ```
 
 然后打开：
@@ -120,7 +120,7 @@ openclaw gateway --bind tailnet --token "$(openssl rand -hex 32)"
 
 ## 不安全的 HTTP
 
-如果你通过普通 HTTP 打开仪表板（`http://<lan-ip>` 或 `http://<tailscale-ip>`），浏览器在**非安全上下文**中运行并阻止 WebCrypto。默认情况下，OpenClaw **阻止**没有设备身份的控制 UI 连接。
+如果你通过普通 HTTP 打开仪表板（`http://<lan-ip>` 或 `http://<tailscale-ip>`），浏览器在**非安全上下文**中运行并阻止 WebCrypto。默认情况下，LCX Agent **阻止**没有设备身份的控制 UI 连接。
 
 **推荐修复：** 使用 HTTPS（Tailscale Serve）或在本地打开 UI：
 

@@ -1,7 +1,7 @@
 {
   "name": "@openclaw/bluebubbles",
   "version": "2026.3.2",
-  "description": "OpenClaw BlueBubbles channel plugin",
+  "description": "LCX Agent BlueBubbles channel plugin",
   "type": "module",
   "dependencies": {
     "lcx-agent": "workspace:*",
@@ -31,7 +31,7 @@
     "install": {
       "npmSpec": "@openclaw/bluebubbles",
       "localPath": "extensions/bluebubbles",
-      "defaultChoice": "npm"
+      "defaultChoice": "local"
     }
   }
 }

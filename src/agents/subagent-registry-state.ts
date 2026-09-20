@@ -1,15 +1,52 @@
 import {
+  describeSubagentRegistryLoadStatus,
   loadSubagentRegistryFromDisk,
   saveSubagentRegistryToDisk,
 } from "./subagent-registry.store.js";
 import type { SubagentRunRecord } from "./subagent-registry.types.js";
 
-export function persistSubagentRunsToDisk(runs: Map<string, SubagentRunRecord>) {
+/**
+ * Why the last write did not happen. "blocked" means the registry on disk could not be read, so
+ * writes are held back on purpose; "write-error" means we tried and the write itself failed.
+ * Either way the runs only exist in memory, which is exactly what the caller must not assume away.
+ */
+export type SubagentRegistryPersistFailure = Readonly<{
+  at: number;
+  kind: "blocked" | "write-error";
+  detail: string;
+}>;
+
+let lastPersistFailure: SubagentRegistryPersistFailure | null = null;
+
+export function getSubagentRegistryPersistFailure(): SubagentRegistryPersistFailure | null {
+  return lastPersistFailure;
+}
+
+export function resetSubagentRegistryStateForTests(): void {
+  lastPersistFailure = null;
+}
+
+export function persistSubagentRunsToDisk(runs: Map<string, SubagentRunRecord>): boolean {
   try {
-    saveSubagentRegistryToDisk(runs);
-  } catch {
-    // ignore persistence failures
+    const written = saveSubagentRegistryToDisk(runs);
+    if (!written) {
+      lastPersistFailure = {
+        at: Date.now(),
+        kind: "blocked",
+        detail: describeSubagentRegistryLoadStatus(),
+      };
+      return false;
+    }
+  } catch (err) {
+    lastPersistFailure = {
+      at: Date.now(),
+      kind: "write-error",
+      detail: err instanceof Error ? err.message : "unknown",
+    };
+    return false;
   }
+  lastPersistFailure = null;
+  return true;
 }
 
 export function restoreSubagentRunsFromDisk(params: {

@@ -129,7 +129,7 @@ const QUALITY_FAMILIES: QualityFamily[] = [
       {
         id: "generic_intro",
         answer:
-          "我是 LCX Agent / OpenClaw 的 External 控制室入口。当前可用能力：可以把自然语言请求分到 control_room。",
+          "我是 LCX Agent / LCX Agent 的 External 控制室入口。当前可用能力：可以把自然语言请求分到 control_room。",
         expectedAnyFailedReasons: [
           "short_external_canary_wrong_route_generic_intro",
           "system_status_answer_missing_owner_evidence",

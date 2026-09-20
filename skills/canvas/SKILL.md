@@ -1,6 +1,6 @@
 # Canvas Skill
 
-Display HTML content on connected OpenClaw nodes (Mac app, iOS, Android).
+Display HTML content on connected LCX Agent nodes (Mac app, iOS, Android).
 
 ## Overview
 
@@ -123,7 +123,7 @@ tailscale status --json | jq -r '.Self.DNSName' | sed 's/\.$//'
 ### 3. Find connected nodes
 
 ```bash
-openclaw nodes list
+lcx nodes list
 ```
 
 Look for Mac/iOS/Android nodes with canvas capability.
@@ -168,7 +168,7 @@ Always specify `node:<node-id>` parameter.
 
 ### "node not connected" error
 
-Node is offline. Use `openclaw nodes list` to find online nodes.
+Node is offline. Use `lcx nodes list` to find online nodes.
 
 ### Content not updating
 

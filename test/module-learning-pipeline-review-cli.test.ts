@@ -114,7 +114,7 @@ describe("module-learning-pipeline-review CLI", () => {
     ).rejects.toThrow();
   });
 
-  it("defaults to the local OpenClaw workspace instead of the repo worktree", async () => {
+  it("defaults to the local LCX Agent workspace instead of the repo worktree", async () => {
     workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-module-review-home-"));
     const defaultWorkspaceDir = path.join(workspaceDir, ".openclaw", "workspace");
     await seedJson(

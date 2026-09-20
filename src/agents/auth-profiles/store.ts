@@ -2,7 +2,7 @@ import fs from "node:fs";
 import type { OAuthCredentials } from "@mariozechner/pi-ai";
 import { resolveOAuthPath } from "../../config/paths.js";
 import { withFileLock } from "../../infra/file-lock.js";
-import { loadJsonFile, saveJsonFile } from "../../infra/json-file.js";
+import { loadJsonFile, loadJsonFileDetailed, saveJsonFile } from "../../infra/json-file.js";
 import { AUTH_STORE_LOCK_OPTIONS, AUTH_STORE_VERSION, log } from "./constants.js";
 import { syncExternalCliCredentials } from "./external-cli-sync.js";
 import {
@@ -342,14 +342,44 @@ function applyLegacyStore(store: AuthProfileStore, legacy: LegacyAuthStore): voi
   }
 }
 
-function loadCoercedStore(authPath: string): AuthProfileStore | null {
-  const raw = loadJsonFile(authPath);
-  return coerceAuthStore(raw);
+/**
+ * "absent" means nobody has configured this store yet. "unreadable"/"corrupt" mean there *is*
+ * a file and it could not be turned into a store — in that case the empty store we hand back is
+ * a guess, and the file on disk is still the only copy of whatever credentials it held.
+ */
+type AuthStoreLoadState = "ok" | "absent" | "unreadable" | "corrupt";
+
+function loadCoercedStore(authPath: string): {
+  store: AuthProfileStore | null;
+  state: AuthStoreLoadState;
+} {
+  const loaded = loadJsonFileDetailed(authPath);
+  if (loaded.status === "absent") {
+    return { store: null, state: "absent" };
+  }
+  if (loaded.status !== "ok") {
+    log.warn(
+      `auth profile store at ${authPath} could not be read (${loaded.status}/${loaded.code}); treating it as empty and leaving the file untouched`,
+    );
+    return { store: null, state: loaded.status === "corrupt" ? "corrupt" : "unreadable" };
+  }
+  const store = coerceAuthStore(loaded.value);
+  if (!store) {
+    log.warn(
+      `auth profile store at ${authPath} did not parse as an auth profile store; treating it as empty and leaving the file untouched`,
+    );
+    return { store: null, state: "corrupt" };
+  }
+  return { store, state: "ok" };
+}
+
+function isUnreadableStoreState(state: AuthStoreLoadState): boolean {
+  return state === "unreadable" || state === "corrupt";
 }
 
 export function loadAuthProfileStore(): AuthProfileStore {
   const authPath = resolveAuthStorePath();
-  const asStore = loadCoercedStore(authPath);
+  const asStore = loadCoercedStore(authPath).store;
   if (asStore) {
     // Sync from external CLI tools on every load.
     const synced = syncExternalCliCredentials(asStore);
@@ -381,7 +411,9 @@ function loadAuthProfileStoreForAgent(
 ): AuthProfileStore {
   const readOnly = options?.readOnly === true;
   const authPath = resolveAuthStorePath(agentDir);
-  const asStore = loadCoercedStore(authPath);
+  const { store: asStore, state } = loadCoercedStore(authPath);
+  // Overwriting a store we could not read would throw away credentials we never saw. Refuse.
+  const onDiskIsUnreadable = isUnreadableStoreState(state);
   if (asStore) {
     // Runtime secret activation must remain read-only:
     // sync external CLI credentials in-memory, but never persist while readOnly.
@@ -393,7 +425,7 @@ function loadAuthProfileStoreForAgent(
   }
 
   // Fallback: inherit auth-profiles from main agent if subagent has none
-  if (agentDir && !readOnly) {
+  if (agentDir && !readOnly && !onDiskIsUnreadable) {
     const mainAuthPath = resolveAuthStorePath(); // without agentDir = main
     const mainRaw = loadJsonFile(mainAuthPath);
     const mainStore = coerceAuthStore(mainRaw);
@@ -416,6 +448,12 @@ function loadAuthProfileStoreForAgent(
   }
 
   const mergedOAuth = mergeOAuthFileIntoStore(store);
+  // The file on disk could not be read, so it is still the only copy of whatever credentials it
+  // held. Hand back what we managed to recover from auth.json / OAuth / external CLIs, but do not
+  // write anything over a file we were never able to look inside.
+  if (onDiskIsUnreadable) {
+    return store;
+  }
   // Keep external CLI credentials visible in runtime even during read-only loads.
   const syncedCli = syncExternalCliCredentials(store);
   const forceReadOnly = process.env.OPENCLAW_AUTH_STORE_READONLY === "1";

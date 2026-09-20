@@ -16,12 +16,12 @@ x-i18n:
 
 # 设备发现 & 传输协议
 
-OpenClaw 有两个表面上看起来相似的不同问题：
+LCX Agent 有两个表面上看起来相似的不同问题：
 
 1. **操作员远程控制**：操作者客户端（Control UI、CLI）控制运行在其他地方的 Gateway 网关。
 2. **节点配对**：节点客户端（以及未来的节点）发现 Gateway 网关并安全配对。
 
-设计目标是将所有网络发现/广播保留在 **Node Gateway 网关**（`openclaw gateway`）中，并让客户端（Control UI、CLI）作为消费者。
+设计目标是将所有网络发现/广播保留在 **Node Gateway 网关**（`lcx gateway`）中，并让客户端（Control UI、CLI）作为消费者。
 
 ## 术语
 

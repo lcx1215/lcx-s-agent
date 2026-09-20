@@ -2,7 +2,7 @@
   "name": "@openclaw/whatsapp",
   "version": "2026.3.2",
   "private": true,
-  "description": "OpenClaw WhatsApp channel plugin",
+  "description": "LCX Agent WhatsApp channel plugin",
   "type": "module",
   "dependencies": {
     "lcx-agent": "workspace:*"

@@ -387,7 +387,7 @@ export const ircOnboardingAdapter: ChannelOnboardingAdapter = {
       const realname = String(
         await prompter.text({
           message: "IRC real name",
-          initialValue: resolved.config.realname || "OpenClaw",
+          initialValue: resolved.config.realname || "LCX Agent",
           validate: (value) => (String(value ?? "").trim() ? undefined : "Required"),
         }),
       ).trim();

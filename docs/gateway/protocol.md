@@ -10,7 +10,7 @@ title: "Gateway Protocol"
 # Gateway protocol (WebSocket)
 
 The Gateway WS protocol is the **single control plane + node transport** for
-OpenClaw. All clients (CLI, web UI, node clients, headless nodes) connect over
+LCX Agent. All clients (CLI, web UI, node clients, headless nodes) connect over
 WebSocket and declare their **role** + **scope** at handshake time.
 
 ## Transport
@@ -53,7 +53,7 @@ Client → Gateway:
     "permissions": {},
     "auth": { "token": "…" },
     "locale": "en-US",
-    "userAgent": "openclaw-cli/1.2.3",
+    "userAgent": "lcx-cli/1.2.3",
     "device": {
       "id": "device_fingerprint",
       "publicKey": "…",

@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { runCommandWithTimeout } from "../process/exec.js";
 import { fetchWithTimeout } from "../utils/fetch-timeout.js";
+import { CANONICAL_PACKAGE_NAME } from "./canonical-identity.js";
 import { detectPackageManager as detectPackageManagerImpl } from "./detect-package-manager.js";
 import { channelToNpmTag, type UpdateChannel } from "./update-channels.js";
 
@@ -301,7 +302,7 @@ export async function fetchNpmTagVersion(params: {
   const tag = params.tag;
   try {
     const res = await fetchWithTimeout(
-      `https://registry.npmjs.org/openclaw/${encodeURIComponent(tag)}`,
+      `https://registry.npmjs.org/${CANONICAL_PACKAGE_NAME}/${encodeURIComponent(tag)}`,
       {},
       Math.max(250, timeoutMs),
     );

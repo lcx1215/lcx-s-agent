@@ -10,7 +10,7 @@ metadata:
 
 You are an orchestrator. Follow these 6 phases exactly. Do not skip phases.
 
-IMPORTANT — No `gh` CLI dependency. This skill uses curl + the GitHub REST API exclusively. The GH_TOKEN env var is already injected by OpenClaw. Pass it as a Bearer token in all API calls:
+IMPORTANT — No `gh` CLI dependency. This skill uses curl + the GitHub REST API exclusively. The GH_TOKEN env var is already injected by LCX Agent. Pass it as a Bearer token in all API calls:
 
 ```
 curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" ...
@@ -114,7 +114,7 @@ If in watch mode: Also filter out any issue numbers already in the PROCESSED_ISS
 Error handling:
 
 - If curl returns an HTTP 401 or 403 → stop and tell the user:
-  > "GitHub authentication failed. Please check your apiKey in the OpenClaw dashboard or in ~/.openclaw/openclaw.json under skills.entries.gh-issues."
+  > "GitHub authentication failed. Please check your apiKey in the LCX Agent dashboard or in ~/.openclaw/openclaw.json under skills.entries.gh-issues."
 - If the response is an empty array (after filtering) → report "No issues found matching filters" and stop (or loop back if in watch mode).
 - If curl fails or returns any other error → report the error verbatim and stop.
 
@@ -212,7 +212,7 @@ Run these checks sequentially via exec:
 
    If HTTP status is not 200, stop with:
 
-   > "GitHub authentication failed. Please check your apiKey in the OpenClaw dashboard or in ~/.openclaw/openclaw.json under skills.entries.gh-issues."
+   > "GitHub authentication failed. Please check your apiKey in the LCX Agent dashboard or in ~/.openclaw/openclaw.json under skills.entries.gh-issues."
 
 5. **Check for existing PRs:**
    For each confirmed issue number N, run:

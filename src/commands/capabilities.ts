@@ -220,9 +220,9 @@ const DEEPSEEK_DECLARATIONS: ProviderCapabilityDeclaration[] = [
 ];
 
 const OPENCLAW_GENERIC_TOOLS: Array<{ tool: string; note: string }> = [
-  { tool: "web_search", note: "generic OpenClaw web tool; not provider-native" },
-  { tool: "web_fetch", note: "generic OpenClaw web fetch tool; not provider-native" },
-  { tool: "memory_search", note: "generic OpenClaw memory recall tool; not provider-native" },
+  { tool: "web_search", note: "generic LCX Agent web tool; not provider-native" },
+  { tool: "web_fetch", note: "generic LCX Agent web fetch tool; not provider-native" },
+  { tool: "memory_search", note: "generic LCX Agent memory recall tool; not provider-native" },
 ];
 
 const PROVIDER_CAPABILITY_TO_GENERIC_TOOL: Record<string, string> = {
@@ -508,9 +508,9 @@ export function buildCapabilitySurfaceReport(cfg: OpenClawConfig): CapabilitySur
     lobsterProtocol,
     notes: [
       "configured model does not imply provider-native tools are connected",
-      "provider-advertised capabilities remain adapter_missing until OpenClaw implements and wires them",
+      "provider-advertised capabilities remain adapter_missing until LCX Agent implements and wires them",
       "live_verified is never claimed here without explicit runtime evidence",
-      "generic OpenClaw tools are listed separately from provider-native capabilities",
+      "generic LCX Agent tools are listed separately from provider-native capabilities",
       "the Lobster operating layer is distinct from the optional lobster workflow plugin runtime",
     ],
   };
@@ -541,7 +541,7 @@ export function formatCapabilityRunFooter(params: CapabilityRunFooterParams): st
 
 function formatCapabilitySurfaceText(report: CapabilitySurfaceReport): string {
   const lines: string[] = [];
-  lines.push("OpenClaw live capability surface");
+  lines.push("LCX Agent live capability surface");
   lines.push("");
   lines.push("Models:");
   if (report.models.length === 0) {
@@ -571,7 +571,7 @@ function formatCapabilitySurfaceText(report: CapabilitySurfaceReport): string {
     );
   }
   lines.push("");
-  lines.push("OpenClaw generic tools:");
+  lines.push("LCX Agent generic tools:");
   if (report.openclawCapabilities.length === 0) {
     lines.push("- none");
   }

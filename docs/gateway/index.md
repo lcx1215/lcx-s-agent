@@ -30,11 +30,11 @@ Use this page for day-1 startup and day-2 operations of the Gateway service.
   <Step title="Start the Gateway">
 
 ```bash
-openclaw gateway --port 18789
+lcx gateway --port 18789
 # debug/trace mirrored to stdio
-openclaw gateway --port 18789 --verbose
+lcx gateway --port 18789 --verbose
 # force-kill listener on selected port, then start
-openclaw gateway --force
+lcx gateway --force
 ```
 
   </Step>
@@ -42,9 +42,9 @@ openclaw gateway --force
   <Step title="Verify service health">
 
 ```bash
-openclaw gateway status
-openclaw status
-openclaw logs --follow
+lcx gateway status
+lcx status
+lcx logs --follow
 ```
 
 Healthy baseline: `Runtime: running` and `RPC probe: ok`.
@@ -54,7 +54,7 @@ Healthy baseline: `Runtime: running` and `RPC probe: ok`.
   <Step title="Validate channel readiness">
 
 ```bash
-openclaw channels status --probe
+lcx channels status --probe
 ```
 
   </Step>
@@ -94,15 +94,15 @@ Default mode is `gateway.reload.mode="hybrid"`.
 ## Operator command set
 
 ```bash
-openclaw gateway status
-openclaw gateway status --deep
-openclaw gateway status --json
-openclaw gateway install
-openclaw gateway restart
-openclaw gateway stop
-openclaw secrets reload
-openclaw logs --follow
-openclaw doctor
+lcx gateway status
+lcx gateway status --deep
+lcx gateway status --json
+lcx gateway install
+lcx gateway restart
+lcx gateway stop
+lcx secrets reload
+lcx logs --follow
+lcx doctor
 ```
 
 ## Remote access
@@ -130,22 +130,22 @@ Use supervised runs for production-like reliability.
   <Tab title="macOS (launchd)">
 
 ```bash
-openclaw gateway install
-openclaw gateway status
-openclaw gateway restart
-openclaw gateway stop
+lcx gateway install
+lcx gateway status
+lcx gateway restart
+lcx gateway stop
 ```
 
-LaunchAgent labels are `ai.openclaw.gateway` (default) or `ai.openclaw.<profile>` (named profile). `openclaw doctor` audits and repairs service config drift.
+LaunchAgent labels are `ai.openclaw.gateway` (default) or `ai.openclaw.<profile>` (named profile). `lcx doctor` audits and repairs service config drift.
 
   </Tab>
 
   <Tab title="Linux (systemd user)">
 
 ```bash
-openclaw gateway install
-systemctl --user enable --now openclaw-gateway[-<profile>].service
-openclaw gateway status
+lcx gateway install
+systemctl --user enable --now lcx-gateway[-<profile>].service
+lcx gateway status
 ```
 
 For persistence after logout, enable lingering:
@@ -162,7 +162,7 @@ Use a system unit for multi-user/always-on hosts.
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now openclaw-gateway[-<profile>].service
+sudo systemctl enable --now lcx-gateway[-<profile>].service
 ```
 
   </Tab>
@@ -223,9 +223,9 @@ See full protocol docs: [Gateway Protocol](/gateway/protocol).
 ### Readiness
 
 ```bash
-openclaw gateway status
-openclaw channels status --probe
-openclaw health
+lcx gateway status
+lcx channels status --probe
+lcx health
 ```
 
 ### Gap recovery

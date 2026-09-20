@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { CANONICAL_PROJECT_URL } from "../infra/canonical-identity.js";
 import {
   formatChannelSelectionLine,
   listChatChannels,
@@ -37,6 +38,6 @@ describe("channel registry helpers", () => {
     );
     expect(line).not.toContain("Docs:");
     expect(line).toContain("/channels/telegram");
-    expect(line).toContain("https://openclaw.ai");
+    expect(line).toContain(CANONICAL_PROJECT_URL);
   });
 });

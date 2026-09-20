@@ -32,6 +32,7 @@ import type {
   ToolCall,
 } from "@mariozechner/pi-ai";
 import { createAssistantMessageEventStream, streamSimple } from "@mariozechner/pi-ai";
+import type { OpenClawConfig } from "../config/config.js";
 import {
   OpenAIWebSocketManager,
   type ContentPart,
@@ -342,6 +343,11 @@ export interface OpenAIWebSocketStreamOptions {
   managerOptions?: OpenAIWebSocketManagerOptions;
   /** Abort signal forwarded from the run. */
   signal?: AbortSignal;
+  /**
+   * Config used to resolve the declared model egress proxy for the WebSocket connection.
+   * Omitted means connect directly — ambient proxy variables are never consulted.
+   */
+  config?: OpenClawConfig;
 }
 
 type WsTransport = "sse" | "websocket" | "auto";
@@ -447,7 +453,10 @@ export function createOpenAIWebSocketStreamFn(
       let session = wsRegistry.get(sessionId);
 
       if (!session) {
-        const manager = new OpenAIWebSocketManager(opts.managerOptions);
+        const manager = new OpenAIWebSocketManager({
+          ...opts.managerOptions,
+          config: opts.config,
+        });
         session = {
           manager,
           lastContextLength: 0,

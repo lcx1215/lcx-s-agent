@@ -10,7 +10,7 @@ title: "Web Tools"
 
 # Web tools
 
-OpenClaw ships two lightweight web tools:
+LCX Agent ships two lightweight web tools:
 
 - `web_search` — Search the web via Brave Search API (default), Perplexity Sonar, Gemini with Google Search grounding, Grok, or Kimi.
 - `web_fetch` — HTTP fetch + readable extraction (HTML → markdown/text).
@@ -43,7 +43,7 @@ See [Brave Search setup](/brave-search) and [Perplexity Sonar](/perplexity) for 
 
 ### Auto-detection
 
-If no `provider` is explicitly set, OpenClaw auto-detects which provider to use based on available API keys, checking in this order:
+If no `provider` is explicitly set, LCX Agent auto-detects which provider to use based on available API keys, checking in this order:
 
 1. **Brave** — `BRAVE_API_KEY` env var or `tools.web.search.apiKey` config
 2. **Gemini** — `GEMINI_API_KEY` env var or `tools.web.search.gemini.apiKey` config
@@ -92,7 +92,7 @@ Example: switch to Perplexity Sonar (direct API):
 
 1. Create a Brave Search API account at [https://brave.com/search/api/](https://brave.com/search/api/)
 2. In the dashboard, choose the **Data for Search** plan (not “Data for AI”) and generate an API key.
-3. Run `openclaw configure --section web` to store the key in config (recommended), or set `BRAVE_API_KEY` in your environment.
+3. Run `lcx configure --section web` to store the key in config (recommended), or set `BRAVE_API_KEY` in your environment.
 
 Brave provides paid plans; check the Brave API portal for the
 current limits and pricing.
@@ -103,7 +103,7 @@ For legal questions, consult your counsel.
 
 ### Where to set the key (recommended)
 
-**Recommended:** run `openclaw configure --section web`. It stores the key in
+**Recommended:** run `lcx configure --section web`. It stores the key in
 `~/.openclaw/openclaw.json` under `tools.web.search.apiKey`.
 
 **Environment alternative:** set `BRAVE_API_KEY` in the Gateway process
@@ -148,7 +148,7 @@ crypto/prepaid).
 **Environment alternative:** set `OPENROUTER_API_KEY` or `PERPLEXITY_API_KEY` in the Gateway
 environment. For a gateway install, put it in `~/.openclaw/.env`.
 
-If no base URL is set, OpenClaw chooses a default based on the API key source:
+If no base URL is set, LCX Agent chooses a default based on the API key source:
 
 - `PERPLEXITY_API_KEY` or `pplx-...` → `https://api.perplexity.ai`
 - `OPENROUTER_API_KEY` or `sk-or-...` → `https://openrouter.ai/api/v1`
@@ -204,6 +204,29 @@ For a gateway install, put it in `~/.openclaw/.env`.
 - Redirect resolution uses strict SSRF defaults, so redirects to private/internal targets are blocked.
 - The default model (`gemini-2.5-flash`) is fast and cost-effective.
   Any Gemini model that supports grounding can be used.
+
+## Egress proxy
+
+Web tool traffic never follows ambient proxy environment variables. `web_search` and `web_fetch` share a single declaration, `tools.web.proxy`, so the same config behaves identically on a laptop behind a VPN and on AWS/Cloudflare.
+
+```json5
+{
+  tools: {
+    web: {
+      // Optional. Declared egress route shared by web_search and web_fetch.
+      proxy: "http://proxy.corp.example:3128",
+    },
+  },
+}
+```
+
+- **Omitted (default):** requests connect directly. `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and their lowercase forms are ignored.
+- **Set:** requests go through the declared proxy. Ambient variables are still ignored, so a proxy that dies with your shell cannot silently break every later request.
+- Blank or whitespace-only values are treated as omitted (direct egress).
+- Use an `http://` or `https://` URL. DNS pinning is skipped for proxied requests because the proxy resolves the target host itself.
+- The target hostname no longer has to resolve locally: the proxy resolves it, so `web_fetch` can reach internal-only hosts your resolver does not know. The SSRF preflight still runs every check that needs no DNS answer (hostname allowlist, literal host/IP policy), so `http://169.254.169.254/` stays blocked. What it cannot catch on this route is a public name that resolves to a private address — with a proxy declared, that decision belongs to the proxy.
+- Without a proxy declared, nothing changes: the preflight still resolves the host and rejects one it cannot resolve.
+- Both tools read the same field, so you cannot end up with `web_search` proxied and `web_fetch` direct (or the reverse) by accident.
 
 ## web_search
 

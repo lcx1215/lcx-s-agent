@@ -202,7 +202,11 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
       enabled: params.settings.cache.enabled,
       maxEntries: params.settings.cache.maxEntries,
     };
-    this.fts = { enabled: params.settings.query.hybrid.enabled, available: false };
+    // FTS is a standalone SQLite capability, not a hybrid-search feature. It was
+    // previously gated on `hybrid.enabled`, so turning hybrid off (required
+    // without a vector store) also disabled plain keyword recall and left the
+    // index unusable whenever no embedding provider was configured.
+    this.fts = { enabled: params.settings.query.fts.enabled, available: false };
     this.ensureSchema();
     this.vector = {
       enabled: params.settings.store.vector.enabled,

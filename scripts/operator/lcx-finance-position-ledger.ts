@@ -23,6 +23,13 @@
  *     library's defaults (252 for returns, 1 for levels) would silently treat one mark as one
  *     trading day or one year. A number nobody declared is worse than no number.
  *
+ * The same rule governs the behaviour section. It is always reported, because the measured
+ * numbers (PGR/PLR, fills per day, the share of buys into strength, round-level clustering)
+ * need no threshold; only the *labels* are withheld without one, and `declaredThresholds` echoes
+ * what was supplied. `--behaviour-thresholds FILE` supplies them as JSON, and an unknown key in
+ * that file is an error rather than a silently ignored one — see `readBehaviourThresholds`.
+ * The labels are descriptive observations over recorded fills, never advice.
+ *
  * The directory is resolved by the same `resolveFinancePositionLedgerLocation` the agent's read
  * tool uses, so the book this entry writes is the book the model reads. `--dir` still wins when
  * given; otherwise `LCX_FINANCE_STATE_DIR`, otherwise the workspace default. The payload always
@@ -32,10 +39,15 @@
  * Usage:
  *   node --import tsx scripts/operator/lcx-finance-position-ledger.ts --json [--dir PATH] \
  *     [--append-receipt FILE] [--mark SYM=PRICE@ISO]... [--as-of ISO] \
- *     [--initial-capital N] [--periods-per-year N]
+ *     [--initial-capital N] [--periods-per-year N] [--behaviour-thresholds FILE]
  */
 
 import fs from "node:fs/promises";
+import {
+  buildFinanceBehaviourProfile,
+  parseFinanceBehaviourThresholds,
+  type FinanceBehaviourThresholds,
+} from "../../src/agents/finance-behaviour-profile.ts";
 import {
   readFinanceEquityCurve,
   type FinanceEquityCurve,
@@ -50,7 +62,10 @@ import {
   readFinancePositionProjectionStatus,
   type FinancePositionMark,
 } from "../../src/agents/finance-position-ledger.ts";
-import { resolveFinancePositionLedgerLocation } from "../../src/agents/finance-state-dir.ts";
+import {
+  financeBehaviourThresholdsPath,
+  resolveFinancePositionLedgerLocation,
+} from "../../src/agents/finance-state-dir.ts";
 import {
   calculateCagr,
   calculateCalmarRatio,
@@ -70,6 +85,8 @@ export type Options = {
   asOf?: string;
   initialCapital?: number;
   periodsPerYear?: number;
+  /** JSON file of declared behaviour thresholds. Without it the profile reports numbers only. */
+  behaviourThresholdsPath?: string;
   /** Projection whose watermark is reported. Defaults to the ledger's own projection. */
   projection?: string;
   /** Projection whose watermark is advanced to the current head. Omit to leave it untouched. */
@@ -128,6 +145,9 @@ export function parseArgs(args: readonly string[]): Options {
     } else if (arg === "--periods-per-year") {
       options.periodsPerYear = parsePositiveNumber("--periods-per-year", next);
       index += 1;
+    } else if (arg === "--behaviour-thresholds") {
+      options.behaviourThresholdsPath = next?.trim() ?? "";
+      index += 1;
     } else if (arg === "--projection") {
       options.projection = next ?? "";
       index += 1;
@@ -140,7 +160,7 @@ export function parseArgs(args: readonly string[]): Options {
       throw new Error(
         "Usage: node --import tsx scripts/operator/lcx-finance-position-ledger.ts [--json] " +
           "[--dir PATH] [--append-receipt FILE] [--mark SYM=PRICE@ISO] [--as-of ISO] " +
-          "[--initial-capital N] [--periods-per-year N] " +
+          "[--initial-capital N] [--periods-per-year N] [--behaviour-thresholds FILE] " +
           "[--projection NAME] [--advance-projection NAME]",
       );
     } else {
@@ -176,6 +196,40 @@ async function readReceiptFile(file: string): Promise<FinanceExecutionReceipt> {
   const candidate =
     asRecord(asRecord(record.nodes)?.execution_receipt) ?? asRecord(record.receipt) ?? record;
   return candidate as unknown as FinanceExecutionReceipt;
+}
+
+/**
+ * Read the declared behaviour thresholds, or report that there is no declaration.
+ *
+ * `null` means "no declaration in force", which is an ordinary state: the profile then reports
+ * the measured numbers with no labels. A declaration that *exists* but does not parse is an
+ * error, because the operator asked for labels and the boundary they declared is unusable —
+ * silently reporting "no labels" is the misreading the shared parser exists to prevent.
+ *
+ * The rules live in `parseFinanceBehaviourThresholds`, so the agent read tool applies the same
+ * ones; only the failure behaviour differs between the two callers.
+ */
+async function readBehaviourThresholds(file: string): Promise<FinanceBehaviourThresholds | null> {
+  let raw: string;
+  try {
+    raw = await fs.readFile(file, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(raw) as unknown;
+  } catch {
+    throw new Error(`${file} is not valid JSON`);
+  }
+  const parsed = parseFinanceBehaviourThresholds(value, file);
+  if (!parsed.ok) {
+    throw new Error(parsed.error);
+  }
+  return parsed.thresholds;
 }
 
 /**
@@ -337,6 +391,14 @@ export async function buildFinancePositionLedgerPayload(options: Options) {
     options.asOf === undefined || options.asOf.length === 0 ? {} : { asOf: options.asOf },
   );
 
+  // One declaration, two readers. The agent read tool resolves the same path, so the model and
+  // the operator cannot be held to different boundaries. `--behaviour-thresholds` overrides it.
+  const behaviourThresholdsFile =
+    options.behaviourThresholdsPath === undefined || options.behaviourThresholdsPath.length === 0
+      ? financeBehaviourThresholdsPath(location.directory)
+      : options.behaviourThresholdsPath;
+  const behaviourThresholds = await readBehaviourThresholds(behaviourThresholdsFile);
+
   const curve =
     options.initialCapital === undefined
       ? null
@@ -380,6 +442,21 @@ export async function buildFinancePositionLedgerPayload(options: Options) {
     projectionAdvanced: advanced !== null,
     equityCurve: curve,
     metrics: curve === null ? null : buildMetricsSection(curve, options.periodsPerYear),
+    /**
+     * Behaviour labels over the same stream `ledger` was derived from. `read.receipts` and
+     * `read.marks` are the post-`asOf` inputs the projection actually consumed, so a label can
+     * never describe a different stream than the positions printed beside it.
+     *
+     * Always present. The measured numbers need no threshold; only the labels are withheld when
+     * one is undeclared, and `declaredThresholds` echoes which were supplied. These are
+     * descriptive observations, not advice — the module pins `advice: false`.
+     */
+    behaviour: buildFinanceBehaviourProfile({
+      receipts: read.receipts,
+      marks: read.marks,
+      ...(behaviourThresholds === null ? {} : { thresholds: behaviourThresholds }),
+    }),
+    behaviourThresholdsSource: behaviourThresholds === null ? null : behaviourThresholdsFile,
     claims: {
       credentialsRead: false,
       networkTouched: false,
@@ -467,7 +544,29 @@ async function main() {
     }
   }
 
+  const behaviour = payload.behaviour;
+  lines.push(
+    `行为画像（成交 ${behaviour.receiptCount} 笔：纸面 ${behaviour.paperFillCount}／真实 ${behaviour.venueFillCount}；` +
+      `mark ${behaviour.markCount} 个，其中 ${behaviour.rejectedMarkCount} 个因缺时间戳或价格非正被拒）：`,
+  );
+  for (const finding of behaviour.dimensions) {
+    lines.push(
+      finding.label === null
+        ? `  ${finding.dimension}：无标签（${finding.unavailableReason}）`
+        : `  ${finding.dimension}：${finding.label.statement}`,
+    );
+  }
+  const undeclared = Object.entries(behaviour.declaredThresholds)
+    .filter(([, value]) => value === null)
+    .map(([key]) => key);
+  if (undeclared.length > 0) {
+    lines.push(
+      `  未声明阈值：${undeclared.join("、")}（用 --behaviour-thresholds FILE 声明后才会产出对应标签）`,
+    );
+  }
+
   lines.push("边界：只读写本地 SQLite 账本；不读凭据、不联网、不下单。");
+  lines.push(`行为画像边界：${behaviour.interpretationBoundary}`);
   process.stdout.write(`${lines.join("\n")}\n`);
 }
 

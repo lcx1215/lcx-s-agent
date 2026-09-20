@@ -1,11 +1,11 @@
 # @openclaw/twitch
 
-Twitch channel plugin for OpenClaw.
+Twitch channel plugin for LCX Agent.
 
 ## Install (local checkout)
 
 ```bash
-openclaw plugins install ./extensions/twitch
+lcx plugins install ./extensions/twitch
 ```
 
 ## Install (npm)

@@ -69,6 +69,16 @@ export type BedrockDiscoveryConfig = {
 
 export type ModelsConfig = {
   mode?: "merge" | "replace";
+  /**
+   * Explicit egress proxy URL for model requests, e.g. "http://proxy.corp.example:3128".
+   *
+   * Declared, never inherited: when set, model requests go through this proxy and ambient
+   * HTTP_PROXY/HTTPS_PROXY/ALL_PROXY variables (either case) are ignored. When omitted, model
+   * requests connect directly — the host environment still does not get to pick the route, because
+   * a VPN client or shell profile must not change how the same build behaves on a laptop and on
+   * AWS/Cloudflare. Leave unset unless a proxy is genuinely required.
+   */
+  proxy?: string;
   providers?: Record<string, ModelProviderConfig>;
   bedrockDiscovery?: BedrockDiscoveryConfig;
 };

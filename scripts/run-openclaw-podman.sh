@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Rootless OpenClaw in Podman: run after one-time setup.
+# Rootless LCX Agent in Podman: run after one-time setup.
 #
 # One-time setup (from repo root): ./setup-podman.sh
 # Then:
 #   ./scripts/run-openclaw-podman.sh launch           # Start gateway
 #   ./scripts/run-openclaw-podman.sh launch setup      # Onboarding wizard
 #
-# As the openclaw user (no repo needed):
+# As the lcx user (no repo needed):
 #   sudo -u openclaw /home/openclaw/run-openclaw-podman.sh
 #   sudo -u openclaw /home/openclaw/run-openclaw-podman.sh setup
 #
@@ -47,18 +47,18 @@ if [[ "${1:-}" == "setup-host" ]]; then
   exit 1
 fi
 
-# --- Step 2: launch (from repo: re-exec as openclaw in safe cwd; from openclaw home: run container) ---
+# --- Step 2: launch (from repo: re-exec as lcx in safe cwd; from lcx home: run container) ---
 if [[ "${1:-}" == "launch" ]]; then
   shift
   if [[ -n "${OPENCLAW_UID:-}" && "$(id -u)" -ne "$OPENCLAW_UID" ]]; then
-    # Exec as openclaw with cwd=/tmp so a nologin user never inherits an invalid cwd.
+    # Exec as lcx with cwd=/tmp so a nologin user never inherits an invalid cwd.
     exec sudo -u "$OPENCLAW_USER" env HOME="$OPENCLAW_HOME" PATH="$PATH" TERM="${TERM:-}" \
       bash -c 'cd /tmp && exec '"$LAUNCH_SCRIPT"' "$@"' _ "$@"
   fi
   # Already openclaw; fall through to container run (with remaining args, e.g. "setup")
 fi
 
-# --- Container run (script in openclaw home, run as openclaw) ---
+# --- Container run (script in lcx home, run as openclaw) ---
 EFFECTIVE_HOME="${HOME:-}"
 if [[ -n "${OPENCLAW_UID:-}" && "$(id -u)" -eq "$OPENCLAW_UID" ]]; then
   EFFECTIVE_HOME="$OPENCLAW_HOME"
@@ -71,7 +71,7 @@ CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-$EFFECTIVE_HOME/.openclaw}"
 ENV_FILE="${OPENCLAW_PODMAN_ENV:-$CONFIG_DIR/.env}"
 WORKSPACE_DIR="${OPENCLAW_WORKSPACE_DIR:-$CONFIG_DIR/workspace}"
 CONTAINER_NAME="${OPENCLAW_PODMAN_CONTAINER:-openclaw}"
-OPENCLAW_IMAGE="${OPENCLAW_PODMAN_IMAGE:-openclaw:local}"
+OPENCLAW_IMAGE="${OPENCLAW_PODMAN_IMAGE:-lcx:local}"
 PODMAN_PULL="${OPENCLAW_PODMAN_PULL:-never}"
 HOST_GATEWAY_PORT="${OPENCLAW_PODMAN_GATEWAY_HOST_PORT:-${OPENCLAW_GATEWAY_PORT:-18789}}"
 HOST_BRIDGE_PORT="${OPENCLAW_PODMAN_BRIDGE_HOST_PORT:-${OPENCLAW_BRIDGE_PORT:-18790}}"
@@ -79,7 +79,7 @@ HOST_BRIDGE_PORT="${OPENCLAW_PODMAN_BRIDGE_HOST_PORT:-${OPENCLAW_BRIDGE_PORT:-18
 # Non-loopback binds require gateway.controlUi.allowedOrigins (security hardening).
 GATEWAY_BIND="${OPENCLAW_GATEWAY_BIND:-loopback}"
 
-# Safe cwd for podman (openclaw is nologin; avoid inherited cwd from sudo)
+# Safe cwd for podman (lcx is nologin; avoid inherited cwd from sudo)
 cd "$EFFECTIVE_HOME" 2>/dev/null || cd /tmp 2>/dev/null || true
 
 RUN_SETUP=false

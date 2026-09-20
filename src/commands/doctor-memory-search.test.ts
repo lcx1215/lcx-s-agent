@@ -215,7 +215,7 @@ describe("noteMemorySearchHealth", () => {
 
     const message = note.mock.calls[0]?.[0] as string;
     expect(message).toContain("Gateway memory probe for default agent is not ready");
-    expect(message).toContain("openclaw configure --section model");
+    expect(message).toContain("lcx configure --section model");
     expect(message).not.toContain("openclaw auth add --provider");
   });
 
@@ -233,7 +233,7 @@ describe("noteMemorySearchHealth", () => {
     // provider: "local". So with no local file and no API keys, warn.
     expect(note).toHaveBeenCalledTimes(1);
     const message = String(note.mock.calls[0]?.[0] ?? "");
-    expect(message).toContain("openclaw configure --section model");
+    expect(message).toContain("lcx configure --section model");
   });
 
   it("still warns in auto mode when only ollama credentials exist", async () => {

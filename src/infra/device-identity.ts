@@ -12,6 +12,8 @@ import {
 } from "../config/identity-migration.js";
 import { resolveStateDir } from "../config/paths.js";
 import type { LcxIdentityMigrationPlan } from "../config/paths.js";
+import { saveJsonFile } from "./json-file.js";
+import { describeReadFailure } from "./unreadable-source.js";
 
 export type DeviceIdentity = {
   deviceId: string;
@@ -91,12 +93,7 @@ export function loadOrCreateDeviceIdentity(
             ...parsed,
             deviceId: derivedId,
           };
-          fs.writeFileSync(filePath, `${JSON.stringify(updated, null, 2)}\n`, { mode: 0o600 });
-          try {
-            fs.chmodSync(filePath, 0o600);
-          } catch {
-            // best-effort
-          }
+          saveJsonFile(filePath, updated);
           return {
             deviceId: derivedId,
             publicKeyPem: parsed.publicKeyPem,
@@ -110,8 +107,19 @@ export function loadOrCreateDeviceIdentity(
         };
       }
     }
-  } catch {
-    // fall through to regenerate
+  } catch (err) {
+    // "There is a file and I could not look inside it" is not the same as "there is no file".
+    // Regenerating on an unreadable file wrote a brand-new key pair over the only copy of the old
+    // one, silently — the device just stops matching whatever it was paired with, and nothing says
+    // why. A file that is genuinely absent still regenerates; one we cannot see fails loudly.
+    // (This is also the tail of the old non-atomic write: a half-written device.json lands here.)
+    const failure = describeReadFailure(err);
+    if (failure.status !== "absent") {
+      throw new Error(
+        `cannot read device identity at ${filePath} (${failure.status}/${failure.code}); refusing to replace it`,
+        { cause: err },
+      );
+    }
   }
 
   const identity = generateIdentity();
@@ -123,12 +131,7 @@ export function loadOrCreateDeviceIdentity(
     privateKeyPem: identity.privateKeyPem,
     createdAtMs: Date.now(),
   };
-  fs.writeFileSync(filePath, `${JSON.stringify(stored, null, 2)}\n`, { mode: 0o600 });
-  try {
-    fs.chmodSync(filePath, 0o600);
-  } catch {
-    // best-effort
-  }
+  saveJsonFile(filePath, stored);
   return identity;
 }
 

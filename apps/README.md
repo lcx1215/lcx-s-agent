@@ -1,6 +1,6 @@
 # Apps
 
-Deployable app surfaces that sit alongside the OpenClaw runtime.
+Deployable app surfaces that sit alongside the LCX Agent runtime.
 
 ## web/lcx-agent-farm
 

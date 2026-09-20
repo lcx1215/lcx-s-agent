@@ -219,7 +219,7 @@ export async function appendStatusAllDiagnosis(params: {
     const portOk = params.portUsage.listeners.length === 0 || gatewayOwnedPort;
     emitCheck(`Port ${params.port}`, portOk ? "ok" : "warn");
     if (gatewayOwnedPort) {
-      lines.push(`  ${muted("owned by the reachable local OpenClaw gateway")}`);
+      lines.push(`  ${muted("owned by the reachable local LCX Agent gateway")}`);
     } else if (!portOk) {
       for (const line of formatPortDiagnostics(params.portUsage as never)) {
         lines.push(`  ${muted(line)}`);

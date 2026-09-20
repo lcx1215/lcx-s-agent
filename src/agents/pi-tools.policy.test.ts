@@ -121,62 +121,41 @@ describe("resolveSubagentToolPolicy depth awareness", () => {
     expect(isToolAllowedByPolicyName("sessions_history", policy)).toBe(true);
   });
 
-  it("depth-1 orchestrator still denies gateway, cron, memory", () => {
+  it("depth-1 orchestrator still denies tools that would damage the system", () => {
     const policy = resolveSubagentToolPolicy(baseCfg, 1);
     expect(isToolAllowedByPolicyName("gateway", policy)).toBe(false);
     expect(isToolAllowedByPolicyName("cron", policy)).toBe(false);
-    expect(isToolAllowedByPolicyName("memory_search", policy)).toBe(false);
-    expect(isToolAllowedByPolicyName("memory_get", policy)).toBe(false);
-    expect(isToolAllowedByPolicyName("local_memory_record", policy)).toBe(false);
-    expect(isToolAllowedByPolicyName("finance_framework_core_record", policy)).toBe(false);
-    expect(isToolAllowedByPolicyName("finance_article_source_registry_record", policy)).toBe(false);
-    expect(isToolAllowedByPolicyName("finance_external_source_adapter", policy)).toBe(false);
-    expect(isToolAllowedByPolicyName("finance_learning_pipeline_orchestrator", policy)).toBe(false);
-    expect(isToolAllowedByPolicyName("module_learning_pipeline_plan", policy)).toBe(false);
-    expect(isToolAllowedByPolicyName("module_learning_pipeline_review", policy)).toBe(false);
-    expect(isToolAllowedByPolicyName("finance_research_source_workbench", policy)).toBe(false);
-    expect(isToolAllowedByPolicyName("finance_learning_capability_attach", policy)).toBe(false);
-    expect(isToolAllowedByPolicyName("finance_learning_capability_apply", policy)).toBe(false);
-    for (const toolName of FINANCE_FRAMEWORK_DOMAIN_PRODUCER_TOOL_NAMES) {
-      expect(isToolAllowedByPolicyName(toolName, policy)).toBe(false);
+    expect(isToolAllowedByPolicyName("agents_list", policy)).toBe(false);
+    expect(isToolAllowedByPolicyName("whatsapp_login", policy)).toBe(false);
+    expect(isToolAllowedByPolicyName("sessions_send", policy)).toBe(false);
+  });
+
+  it("depth-1 orchestrator allows memory + finance tools by default", () => {
+    const policy = resolveSubagentToolPolicy(baseCfg, 1);
+    for (const toolName of [
+      "memory_search",
+      "memory_get",
+      "local_memory_record",
+      "session_status",
+      "finance_external_source_adapter",
+      "finance_research_source_workbench",
+      "finance_framework_core_record",
+      "finance_promotion_decision",
+      ...FINANCE_FRAMEWORK_DOMAIN_PRODUCER_TOOL_NAMES,
+    ]) {
+      expect(isToolAllowedByPolicyName(toolName, policy)).toBe(true);
     }
-    expect(
-      isToolAllowedByPolicyName("finance_doctrine_teacher_feedback_elevation_handoff", policy),
-    ).toBe(false);
-    expect(
-      isToolAllowedByPolicyName(
-        "finance_doctrine_teacher_feedback_elevation_handoff_status",
-        policy,
-      ),
-    ).toBe(false);
-    expect(
-      isToolAllowedByPolicyName("finance_doctrine_teacher_feedback_candidate_input", policy),
-    ).toBe(false);
-    expect(
-      isToolAllowedByPolicyName("finance_doctrine_teacher_feedback_candidate_input_review", policy),
-    ).toBe(false);
-    expect(
-      isToolAllowedByPolicyName(
-        "finance_doctrine_teacher_feedback_candidate_input_reconciliation",
-        policy,
-      ),
-    ).toBe(false);
-    expect(
-      isToolAllowedByPolicyName(
-        "finance_doctrine_teacher_feedback_candidate_input_reconciliation_status",
-        policy,
-      ),
-    ).toBe(false);
-    expect(isToolAllowedByPolicyName("finance_doctrine_teacher_feedback", policy)).toBe(false);
-    expect(isToolAllowedByPolicyName("finance_doctrine_teacher_feedback_review", policy)).toBe(
-      false,
-    );
+  });
+
+  it("still denies when the caller narrows with tools.subagents.tools.deny", () => {
+    const cfg = {
+      agents: { defaults: { subagents: { maxSpawnDepth: 2 } } },
+      tools: { subagents: { tools: { deny: ["finance_promotion_decision"] } } },
+    } as unknown as OpenClawConfig;
+    const policy = resolveSubagentToolPolicy(cfg, 1);
     expect(isToolAllowedByPolicyName("finance_promotion_decision", policy)).toBe(false);
-    expect(isToolAllowedByPolicyName("finance_promotion_doctrine_edit_handoff", policy)).toBe(
-      false,
-    );
-    expect(isToolAllowedByPolicyName("finance_promotion_proposal_draft", policy)).toBe(false);
-    expect(isToolAllowedByPolicyName("finance_promotion_proposal_status", policy)).toBe(false);
+    // Narrowing one tool does not close the rest - this is not a blanket deny.
+    expect(isToolAllowedByPolicyName("memory_search", policy)).toBe(true);
   });
 
   it("depth-2 leaf denies sessions_spawn", () => {

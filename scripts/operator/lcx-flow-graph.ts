@@ -1563,7 +1563,10 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
     allowedPaths: [
       "scripts/operator/lcx-caseflow-demo.ts",
       "scripts/operator/lcx-finance-research.ts",
+      "scripts/operator/lcx-finance-research-batch.ts",
       "scripts/operator/lcx-finance-research-run.ts",
+      "scripts/operator/lcx-finance-research-score.ts",
+      "scripts/operator/lcx-finance-research-turn.ts",
       "test/operator/lcx-finance-research.test.ts",
       "src/agents/finance-caseflow-followups.test.ts",
       "src/agents/finance-caseflow-followups.ts",
@@ -1703,6 +1706,7 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "scripts/operator/lcx-external-channel-status.ts",
       "test/lcx-external-channel-status.test.ts",
       "test/lcx-commercial-answer-pipeline.test.ts",
+      "test/lcx-commercial-answer-pipeline-grounding.test.ts",
     ],
   },
   {
@@ -1736,6 +1740,8 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "src/agents/finance-research-runner.ts",
       "src/agents/tools/finance-research-run-tool.test.ts",
       "src/agents/tools/finance-research-run-tool.ts",
+      "src/agents/tools/finance-research-runs-read-tool.test.ts",
+      "src/agents/tools/finance-research-runs-read-tool.ts",
       "test/lcx-directed-daily-research-brief.test.ts",
       "test/lcx-finance-research-run.test.ts",
     ],
@@ -1839,6 +1845,7 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "scripts/operator/finance-data-gateway-live-smoke.ts",
       "scripts/operator/finance-data-gateway-smoke.ts",
       "scripts/operator/lcx-api-load-smoke.ts",
+      "scripts/operator/lcx-finance-research-batch.ts",
       "src/agents/finance-data-gateway.ts",
       "src/agents/finance-research-batch-runner.test.ts",
       "src/agents/finance-research-batch-runner.ts",
@@ -1943,6 +1950,12 @@ const SHARED_ENTRYPOINT_OWNERS: SharedEntrypointOwner[] = [
     familyIds: ["finance_caseflow_entrypoints", "focused_daily_research_product_entrypoints"],
     reason:
       "the finance research operator test proves both caseflow wiring and focused daily research product registration.",
+  },
+  {
+    path: "scripts/operator/lcx-finance-research-batch.ts",
+    familyIds: ["finance_caseflow_entrypoints", "finance_data_quality_entrypoints"],
+    reason:
+      "the batch operator is shared by the finance lifecycle owner and the data-quality batch boundary.",
   },
 ];
 

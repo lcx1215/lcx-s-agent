@@ -1,5 +1,6 @@
 import { confirm, isCancel } from "@clack/prompts";
 import { readConfigFileSnapshot } from "../../config/config.js";
+import { CANONICAL_CLI_NAME } from "../../infra/canonical-identity.js";
 import {
   formatUpdateChannelLabel,
   normalizeUpdateChannel,
@@ -24,7 +25,7 @@ import { updateCommand } from "./update-command.js";
 export async function updateWizardCommand(opts: UpdateWizardOptions = {}): Promise<void> {
   if (!process.stdin.isTTY) {
     defaultRuntime.error(
-      "Update wizard requires a TTY. Use `openclaw update --channel <stable|beta|dev>` instead.",
+      `Update wizard requires a TTY. Use \`${CANONICAL_CLI_NAME} update --channel <stable|beta|dev>\` instead.`,
     );
     defaultRuntime.exit(1);
     return;

@@ -104,7 +104,7 @@ const FUZZ_FAMILIES: FuzzFamily[] = [
       "还有戏吗",
     ],
     candidateAnswer:
-      "我是 LCX Agent / OpenClaw 的 External 控制室入口。当前可用能力：可以把自然语言请求分到 control_room、learning_command、technical_daily 等工作面。",
+      "我是 LCX Agent / LCX Agent 的 External 控制室入口。当前可用能力：可以把自然语言请求分到 control_room、learning_command、technical_daily 等工作面。",
     expectedDecision: "return_failed_reason",
     expectedAnyFailedReasons: ["short_external_canary_wrong_route_generic_intro"],
     sedimentAs: "rejected_edit_buffer",

@@ -1,6 +1,5 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { resolveStateDir } from "../config/paths.js";
 import { FINANCE_CREDENTIAL_KEYS, resolveFinanceCredentialEnv } from "./finance-credential-env.js";
 import {
   createFinanceMarketCollectionRegistry,
@@ -13,6 +12,7 @@ import {
 import { financeResponseCache } from "./finance-response-cache.js";
 import { createFinanceQuotaGuard } from "./finance-source-quota.js";
 import { financeProviderId, financeQuotaGroupId } from "./finance-source-scheduler.js";
+import { financeReceiptsDir, resolveFinanceStateDir } from "./finance-state-dir.js";
 
 export { financeProviderId } from "./finance-source-scheduler.js";
 type Observation = {
@@ -41,16 +41,28 @@ function latestDispatchTime(attempt: unknown): number | undefined {
     return undefined;
   }
   const dispatchTimes = (attempt as { apiCalls: unknown[] }).apiCalls.flatMap((call: unknown) => {
-    if (
-      !call ||
-      typeof call !== "object" ||
-      !("dispatchedAt" in call) ||
-      typeof call.dispatchedAt !== "string"
-    ) {
+    if (!call || typeof call !== "object") {
       return [];
     }
-    const timestamp = Date.parse(call.dispatchedAt);
-    return Number.isFinite(timestamp) ? [timestamp] : [];
+    // `dispatchedAt` is the moment the request left, which is the most faithful "when we saw this".
+    // Receipts written before it was recorded still carry `finishedAt`, and discarding them made
+    // the entire stored corpus invisible: hundreds of real source calls reported as `unverified`,
+    // which reads as "this was never called" when the truth is "it was called and the evidence is
+    // old". Falling back to completion time does not weaken the freshness bound — an old receipt
+    // still lands past the 24h cutoff as `verification_expired` — it only stops the evidence from
+    // vanishing, and `unverified` keeps its meaning: called never, not called long ago.
+    const candidate = (call as Record<string, unknown>).dispatchedAt;
+    const fallback = (call as Record<string, unknown>).finishedAt;
+    for (const value of [candidate, fallback]) {
+      if (typeof value !== "string") {
+        continue;
+      }
+      const timestamp = Date.parse(value);
+      if (Number.isFinite(timestamp)) {
+        return [timestamp];
+      }
+    }
+    return [];
   });
   return dispatchTimes.length > 0 ? Math.max(...dispatchTimes) : undefined;
 }
@@ -129,8 +141,9 @@ export async function inspectFinanceSourceHealth(options: {
   const configured = new Set(registry(env).map((a) => a.id));
   const declared = registry(allEnv);
   const latest = new Map<string, Observation>();
+  const financeDir = resolveFinanceStateDir({ env, workspaceDir: options.workspaceDir }).directory;
   const roots = [
-    path.join(resolveStateDir(env), "finance-caseflow", "receipts"),
+    financeReceiptsDir(financeDir),
     path.join(options.workspaceDir, "memory", "research-data-autopilot"),
     path.join(options.workspaceDir, "memory", "finance-data-gateway", "collections"),
     path.join(options.workspaceDir, "memory", "finance-data-gateway", "realtime"),
@@ -209,7 +222,7 @@ export async function inspectFinanceSourceHealth(options: {
     await scan(root, 1);
   }
   const quotas = await createFinanceQuotaGuard({
-    stateDir: resolveStateDir(env),
+    stateDir: financeDir,
     now: () => inspectionTime,
   }).inspect();
   const routes = declared.map((adapter) => {

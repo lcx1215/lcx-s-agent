@@ -15,7 +15,7 @@
 - migrated to `~/.openclaw/live-sidecars/lcx-s-openclaw`: yes | no
 - live build passed: yes | no
 - gateway restarted: yes | no
-- `openclaw channels status --probe` passed: yes | no
+- `lcx channels status --probe` passed: yes | no
 - real Feishu verified: yes | no
 - Feishu acceptance phrases used:
 - Feishu acceptance result:

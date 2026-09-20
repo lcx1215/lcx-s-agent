@@ -8,7 +8,7 @@ title: "Platforms"
 
 # Platforms
 
-OpenClaw core is written in TypeScript. **Node is the recommended runtime**.
+LCX Agent core is written in TypeScript. **Node is the recommended runtime**.
 Bun is not recommended for the Gateway (WhatsApp/Telegram bugs).
 
 The Gateway is a TypeScript service and runs on any Node-capable host. There is no
@@ -33,18 +33,18 @@ Windows is supported via WSL2.
 - Install guide: [Getting Started](/start/getting-started)
 - Gateway runbook: [Gateway](/gateway)
 - Gateway configuration: [Configuration](/gateway/configuration)
-- Service status: `openclaw gateway status`
+- Service status: `lcx gateway status`
 
 ## Gateway service install (CLI)
 
 Use one of these (all supported):
 
-- Wizard (recommended): `openclaw onboard --install-daemon`
-- Direct: `openclaw gateway install`
-- Configure flow: `openclaw configure` → select **Gateway service**
-- Repair/migrate: `openclaw doctor` (offers to install or fix the service)
+- Wizard (recommended): `lcx onboard --install-daemon`
+- Direct: `lcx gateway install`
+- Configure flow: `lcx configure` → select **Gateway service**
+- Repair/migrate: `lcx doctor` (offers to install or fix the service)
 
 The service target depends on OS:
 
 - macOS: LaunchAgent (`ai.openclaw.gateway` or `ai.openclaw.<profile>`; legacy `com.openclaw.*`)
-- Linux/WSL2: systemd user service (`openclaw-gateway[-<profile>].service`)
+- Linux/WSL2: systemd user service (`lcx-gateway[-<profile>].service`)

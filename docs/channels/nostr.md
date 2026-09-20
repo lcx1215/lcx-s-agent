@@ -1,7 +1,7 @@
 ---
 summary: "Nostr DM channel via NIP-04 encrypted messages"
 read_when:
-  - You want OpenClaw to receive DMs via Nostr
+  - You want LCX Agent to receive DMs via Nostr
   - You're setting up decentralized messaging
 title: "Nostr"
 ---
@@ -10,13 +10,13 @@ title: "Nostr"
 
 **Status:** Optional plugin (disabled by default).
 
-Nostr is a decentralized protocol for social networking. This channel enables OpenClaw to receive and respond to encrypted direct messages (DMs) via NIP-04.
+Nostr is a decentralized protocol for social networking. This channel enables LCX Agent to receive and respond to encrypted direct messages (DMs) via NIP-04.
 
 ## Install (on demand)
 
 ### Onboarding (recommended)
 
-- The onboarding wizard (`openclaw onboard`) and `openclaw channels add` list optional channel plugins.
+- The onboarding wizard (`lcx onboard`) and `lcx channels add` list optional channel plugins.
 - Selecting Nostr prompts you to install the plugin on demand.
 
 Install defaults:
@@ -35,7 +35,7 @@ openclaw plugins install @openclaw/nostr
 Use a local checkout (dev workflows):
 
 ```bash
-openclaw plugins install --link <path-to-openclaw>/extensions/nostr
+lcx plugins install --link <path-to-openclaw>/extensions/nostr
 ```
 
 Restart the Gateway after installing or enabling plugins.
@@ -94,7 +94,7 @@ Example:
       "privateKey": "${NOSTR_PRIVATE_KEY}",
       "profile": {
         "name": "openclaw",
-        "displayName": "OpenClaw",
+        "displayName": "LCX Agent",
         "about": "Personal assistant DM bot",
         "picture": "https://example.com/avatar.png",
         "banner": "https://example.com/banner.png",

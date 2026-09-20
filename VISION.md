@@ -1,8 +1,8 @@
 <!-- Owns the long-term product direction inherited from OpenClaw and adapted by the Lobster fork. -->
 
-## OpenClaw Vision
+## LCX Agent Vision
 
-OpenClaw is the AI that actually does things.
+LCX Agent is the AI that actually does things.
 It runs on your devices, in your channels, with your rules.
 
 This document explains the current state and direction of the project.
@@ -10,9 +10,9 @@ We are still early, so iteration is fast.
 Project overview and developer docs: [`README.md`](README.md)
 Contribution guide: [`CONTRIBUTING.md`](CONTRIBUTING.md)
 
-OpenClaw started as a personal playground to learn AI and build something genuinely useful:
+LCX Agent started as a personal playground to learn AI and build something genuinely useful:
 an assistant that can run real tasks on a real computer.
-It evolved through several names and shells: Warelay -> Clawdbot -> Moltbot -> OpenClaw.
+It evolved through several names and shells: Warelay -> Clawdbot -> Moltbot -> LCX Agent.
 
 The goal: a personal assistant that is easy to use, supports a wide range of platforms, and respects privacy and security.
 
@@ -42,7 +42,7 @@ Contribution rules:
 
 ## Security
 
-Security in OpenClaw is a deliberate tradeoff: strong defaults without killing capability.
+Security in LCX Agent is a deliberate tradeoff: strong defaults without killing capability.
 The goal is to stay powerful for real work while making risky paths explicit and operator-controlled.
 
 Canonical security policy and reporting:
@@ -53,7 +53,7 @@ We prioritize secure defaults, but also expose clear knobs for trusted high-powe
 
 ## Plugins & Memory
 
-OpenClaw has an extensive plugin API.
+LCX Agent has an extensive plugin API.
 Core stays lean; optional capability should usually ship as plugins.
 
 Preferred plugin path is npm package distribution plus local extension loading for development.
@@ -68,12 +68,12 @@ Today we ship multiple memory options; over time we plan to converge on one reco
 ### Skills
 
 We still ship some bundled skills for baseline UX.
-New skills should be published to ClawHub first (`clawhub.ai`), not added to core by default.
+New skills should live in the [skills directory](https://github.com/lcx1215/lcx-s-agent/tree/main/skills) first, not added to core by default.
 Core skill additions should be rare and require a strong product or security reason.
 
 ### MCP Support
 
-OpenClaw supports MCP through `mcporter`: https://github.com/steipete/mcporter
+LCX Agent supports MCP through `mcporter`: https://github.com/steipete/mcporter
 
 This keeps MCP integration flexible and decoupled from core runtime:
 
@@ -86,7 +86,7 @@ If there is an MCP server or feature `mcporter` does not support yet, please ope
 
 ### Setup
 
-OpenClaw is currently terminal-first by design.
+LCX Agent is currently terminal-first by design.
 This keeps setup explicit: users see docs, auth, permissions, and security posture up front.
 
 Long term, we want easier onboarding flows as hardening matures.
@@ -94,13 +94,13 @@ We do not want convenience wrappers that hide critical security decisions from u
 
 ### Why TypeScript?
 
-OpenClaw is primarily an orchestration system: prompts, tools, protocols, and integrations.
-TypeScript was chosen to keep OpenClaw hackable by default.
+LCX Agent is primarily an orchestration system: prompts, tools, protocols, and integrations.
+TypeScript was chosen to keep LCX Agent hackable by default.
 It is widely known, fast to iterate in, and easy to read, modify, and extend.
 
 ## What We Will Not Merge (For Now)
 
-- New core skills when they can live on ClawHub
+- New core skills when they can live in the skills directory
 - Full-doc translation sets for all docs (deferred; we plan AI-generated translations later)
 - Commercial service integrations that do not clearly fit the model-provider category
 - Wrapper channels around already supported channels without a clear capability or security gap

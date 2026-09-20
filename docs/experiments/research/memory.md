@@ -2,7 +2,7 @@
 summary: "Research notes: offline memory system for Clawd workspaces (Markdown source-of-truth + derived index)"
 read_when:
   - Designing workspace memory (~/.openclaw/workspace) beyond daily Markdown logs
-  - Deciding: standalone CLI vs deep OpenClaw integration
+  - Deciding: standalone CLI vs deep LCX Agent integration
   - Adding offline recall + reflection (retain/recall/reflect)
 title: "Workspace Memory Research"
 ---
@@ -168,17 +168,17 @@ Opinion evolution (simple, explainable):
 
 ## CLI integration: standalone vs deep integration
 
-Recommendation: **deep integration in OpenClaw**, but keep a separable core library.
+Recommendation: **deep integration in LCX Agent**, but keep a separable core library.
 
-### Why integrate into OpenClaw?
+### Why integrate into LCX Agent?
 
-- OpenClaw already knows:
+- LCX Agent already knows:
   - the workspace path (`agents.defaults.workspace`)
   - the session model + heartbeats
   - logging + troubleshooting patterns
 - You want the agent itself to call the tools:
-  - `openclaw memory recall "…" --k 25 --since 30d`
-  - `openclaw memory reflect --since 7d`
+  - `lcx memory recall "…" --k 25 --since 30d`
+  - `lcx memory reflect --since 7d`
 
 ### Why still split a library?
 

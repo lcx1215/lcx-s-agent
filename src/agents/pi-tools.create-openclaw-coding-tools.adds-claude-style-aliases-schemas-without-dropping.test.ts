@@ -320,15 +320,19 @@ describe("createOpenClawCodingTools", () => {
     expect(names.has("telegram")).toBe(false);
     expect(names.has("whatsapp")).toBe(false);
   });
-  it("filters session tools for sub-agent sessions by default", () => {
+  it("keeps sessions_send denied for sub-agent sessions but allows orchestration", () => {
     const tools = createOpenClawCodingTools({
       sessionKey: "agent:main:subagent:test",
     });
     const names = new Set(tools.map((tool) => tool.name));
-    expect(names.has("sessions_list")).toBe(false);
-    expect(names.has("sessions_history")).toBe(false);
+    // A depth-1 sub-agent is an orchestrator by default (maxSpawnDepth=2), so it may
+    // list/inspect/spawn. Leaf behaviour is covered by the depth-2 case below.
+    expect(names.has("sessions_list")).toBe(true);
+    expect(names.has("sessions_history")).toBe(true);
+    expect(names.has("sessions_spawn")).toBe(true);
+    // Denied at every depth: results must come back through the announce chain,
+    // not a side channel the parent never sees.
     expect(names.has("sessions_send")).toBe(false);
-    expect(names.has("sessions_spawn")).toBe(false);
     // Explicit subagent orchestration tool remains available (list/steer/kill with safeguards).
     expect(names.has("subagents")).toBe(true);
 
@@ -455,7 +459,7 @@ describe("createOpenClawCodingTools", () => {
     }
   });
   it("applies sandbox path guards to file_path alias", async () => {
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-sbx-"));
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-sbx-"));
     const outsidePath = path.join(os.tmpdir(), "openclaw-outside.txt");
     await fs.writeFile(outsidePath, "outside", "utf8");
     try {

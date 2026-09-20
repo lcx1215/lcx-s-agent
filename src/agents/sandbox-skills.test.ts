@@ -8,7 +8,7 @@ import { resolveSandboxContext } from "./sandbox/context.js";
 import { writeSkill } from "./skills.e2e-test-helpers.js";
 
 vi.mock("./sandbox/docker.js", () => ({
-  ensureSandboxContainer: vi.fn(async () => "openclaw-sbx-test"),
+  ensureSandboxContainer: vi.fn(async () => "lcx-sbx-test"),
 }));
 
 vi.mock("./sandbox/browser.js", () => ({

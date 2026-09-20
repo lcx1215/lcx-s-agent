@@ -28,13 +28,13 @@ jobs:
                 label: "r: skill",
                 close: true,
                 message:
-                  "Thanks for the contribution! New skills should be published to [Clawhub](https://clawhub.ai) for everyone to use. We’re keeping the core lean on skills, so I’m closing this out.",
+                  "Thanks for the contribution! New skills should be published to our [community skills directory](https://github.com/lcx1215/lcx-s-agent/tree/main/skills) for everyone to use. We’re keeping the core lean on skills, so I’m closing this out.",
               },
               {
                 label: "r: support",
                 close: true,
                 message:
-                  "Please use [our support server](https://discord.gg/clawd) and ask in #help or #users-helping-users to resolve this, or follow the stuck FAQ at https://docs.openclaw.ai/help/faq#im-stuck-whats-the-fastest-way-to-get-unstuck.",
+                  "Please open a [GitHub discussion](https://github.com/lcx1215/lcx-s-agent/discussions) to resolve this, or follow the stuck FAQ at https://docs.openclaw.ai/help/faq#im-stuck-whats-the-fastest-way-to-get-unstuck.",
               },
               {
                 label: "r: testflight",
@@ -55,13 +55,13 @@ jobs:
                 lockReason: "off-topic",
                 commentTriggers: ["moltbook"],
                 message:
-                  "OpenClaw is not affiliated with Moltbook, and issues related to Moltbook should not be submitted here.",
+                  "LCX Agent is not affiliated with Moltbook, and issues related to Moltbook should not be submitted here.",
               },
             ];
 
             const maintainerTeam = "maintainer";
             const pingWarningMessage =
-              "Please don’t spam-ping multiple maintainers at once. Be patient, or join our community Discord for help: https://discord.gg/clawd";
+              "Please don’t spam-ping multiple maintainers at once. Be patient, or ask for help in our GitHub discussions: https://github.com/lcx1215/lcx-s-agent/discussions";
             const mentionRegex = /@([A-Za-z0-9-]+)/g;
             const maintainerCache = new Map();
             const normalizeLogin = (login) => login.toLowerCase();

@@ -146,7 +146,7 @@ describe("lcx-finance-research-run", () => {
     try {
       await preflightFinanceResearchReceiptDestination("2026-09-08T12:00:00.000Z", workspaceDir);
       await expect(
-        fs.stat(path.join(workspaceDir, "memory", "finance-research-runs", "2026-09-08")),
+        fs.stat(path.join(workspaceDir, "state", "finance-research-runs", "2026-09-08")),
       ).resolves.toBeDefined();
 
       await fs.writeFile(blockedRoot, "not a directory");

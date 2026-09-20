@@ -1,8 +1,8 @@
 ---
 read_when:
-  - 你正在将 OpenClaw 迁移到新的笔记本电脑/服务器
+  - 你正在将 LCX Agent 迁移到新的笔记本电脑/服务器
   - 你想保留会话、认证和渠道登录（WhatsApp 等）
-summary: 将 OpenClaw 安装从一台机器迁移到另一台
+summary: 将 LCX Agent 安装从一台机器迁移到另一台
 title: 迁移指南
 x-i18n:
   generated_at: "2026-02-03T07:49:55Z"
@@ -13,9 +13,9 @@ x-i18n:
   workflow: 15
 ---
 
-# 将 OpenClaw 迁移到新机器
+# 将 LCX Agent 迁移到新机器
 
-本指南将 OpenClaw Gateway 网关从一台机器迁移到另一台，**无需重新进行新手引导**。
+本指南将 LCX Agent Gateway 网关从一台机器迁移到另一台，**无需重新进行新手引导**。
 
 迁移在概念上很简单：
 
@@ -40,7 +40,7 @@ x-i18n:
 如果你不确定，在**旧**机器上运行：
 
 ```bash
-openclaw status
+lcx status
 ```
 
 在输出中查找 `OPENCLAW_STATE_DIR` / profile 的提及。如果你运行多个 Gateway 网关，对每个配置文件重复此操作。
@@ -79,7 +79,7 @@ openclaw status
 在**旧**机器上，首先停止 Gateway 网关，这样文件不会在复制过程中发生变化：
 
 ```bash
-openclaw gateway stop
+lcx gateway stop
 ```
 
 （可选但推荐）归档状态目录和工作区：
@@ -94,7 +94,7 @@ tar -czf openclaw-workspace.tgz .openclaw/workspace
 
 如果你有多个配置文件/状态目录（例如 `~/.openclaw-main`、`~/.openclaw-work`），分别归档每个。
 
-### 步骤 1 — 在新机器上安装 OpenClaw
+### 步骤 1 — 在新机器上安装 LCX Agent
 
 在**新**机器上，安装 CLI（如果需要还有 Node）：
 
@@ -125,7 +125,7 @@ tar -czf openclaw-workspace.tgz .openclaw/workspace
 在**新**机器上：
 
 ```bash
-openclaw doctor
+lcx doctor
 ```
 
 Doctor 是"安全可靠"的命令。它修复服务、应用配置迁移，并警告不匹配问题。
@@ -133,8 +133,8 @@ Doctor 是"安全可靠"的命令。它修复服务、应用配置迁移，并�
 然后：
 
 ```bash
-openclaw gateway restart
-openclaw status
+lcx gateway restart
+lcx status
 ```
 
 ## 常见陷阱（以及如何避免）
@@ -150,7 +150,7 @@ openclaw status
 修复：使用你迁移的**相同**配置文件/状态目录运行 Gateway 网关/服务，然后重新运行：
 
 ```bash
-openclaw doctor
+lcx doctor
 ```
 
 ### 陷阱：只复制 `openclaw.json`
@@ -187,7 +187,7 @@ openclaw doctor
 
 在新机器上，确认：
 
-- `openclaw status` 显示 Gateway 网关正在运行
+- `lcx status` 显示 Gateway 网关正在运行
 - 你的渠道仍然连接（例如 WhatsApp 不需要重新配对）
 - 仪表板打开并显示现有会话
 - 你的工作区文件（记忆、配置）存在
@@ -196,4 +196,4 @@ openclaw doctor
 
 - [Doctor](/gateway/doctor)
 - [Gateway 网关故障排除](/gateway/troubleshooting)
-- [OpenClaw 在哪里存储数据？](/help/faq#where-does-openclaw-store-its-data)
+- [LCX Agent 在哪里存储数据？](/help/faq#where-does-openclaw-store-its-data)

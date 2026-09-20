@@ -1,4 +1,6 @@
-const DEFAULT_TAGLINE = "All your chats, one OpenClaw.";
+import { CANONICAL_CLI_NAME, CANONICAL_PRODUCT_NAME } from "../infra/canonical-identity.js";
+
+const DEFAULT_TAGLINE = `All your chats, one ${CANONICAL_PRODUCT_NAME}.`;
 export type TaglineMode = "random" | "default" | "off";
 
 const HOLIDAY_TAGLINES = {
@@ -99,7 +101,7 @@ const TAGLINES: string[] = [
   "Alexa, but with taste.",
   "I'm not AI-powered, I'm AI-possessed. Big difference.",
   "Deployed locally, trusted globally, debugged eternally.",
-  "You had me at 'openclaw gateway start.'",
+  `You had me at '${CANONICAL_CLI_NAME} gateway start.'`,
   HOLIDAY_TAGLINES.newYear,
   HOLIDAY_TAGLINES.lunarNewYear,
   HOLIDAY_TAGLINES.christmas,

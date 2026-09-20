@@ -4,7 +4,7 @@ services:
   # WebSocket control plane, channel adapters, canvas host, or node/pairing
   # state, so it starts anywhere a container runs.
   lcx-agent-serve:
-    image: ${OPENCLAW_IMAGE:-openclaw:local}
+    image: ${OPENCLAW_IMAGE:-lcx:local}
     environment:
       HOME: /home/node
       TERM: xterm-256color
@@ -43,9 +43,9 @@ services:
 
   # Legacy daemon shape. Keep it only when you need channel adapters, the
   # canvas host, or node pairing; enable with `--profile gateway`.
-  openclaw-gateway:
+  lcx-gateway:
     profiles: ["gateway"]
-    image: ${OPENCLAW_IMAGE:-openclaw:local}
+    image: ${OPENCLAW_IMAGE:-lcx:local}
     environment:
       HOME: /home/node
       TERM: xterm-256color
@@ -100,10 +100,10 @@ services:
       retries: 5
       start_period: 20s
 
-  openclaw-cli:
+  lcx-cli:
     profiles: ["gateway"]
-    image: ${OPENCLAW_IMAGE:-openclaw:local}
-    network_mode: "service:openclaw-gateway"
+    image: ${OPENCLAW_IMAGE:-lcx:local}
+    network_mode: "service:lcx-gateway"
     cap_drop:
       - NET_RAW
       - NET_ADMIN
@@ -130,5 +130,5 @@ services:
     init: true
     entrypoint: ["node", "dist/index.js"]
     depends_on:
-      - openclaw-gateway
-# Runs local OpenClaw services for container-based development and smoke tests.
+      - lcx-gateway
+# Runs local LCX Agent services for container-based development and smoke tests.

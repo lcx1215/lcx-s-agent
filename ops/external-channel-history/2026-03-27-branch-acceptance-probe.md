@@ -17,7 +17,7 @@
 - live build passed: n/a
 - gateway restarted: no
 - proxy restarted: no
-- `openclaw channels status --probe` passed: n/a
+- `lcx channels status --probe` passed: n/a
 - real Feishu verified: no
 - Feishu acceptance phrases used:
   - `给我今天的 technical daily。`

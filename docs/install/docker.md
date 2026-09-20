@@ -1,5 +1,5 @@
 ---
-summary: "Optional Docker-based setup and onboarding for OpenClaw"
+summary: "Optional Docker-based setup and onboarding for LCX Agent"
 read_when:
   - You want a containerized gateway instead of local installs
   - You are validating the Docker flow
@@ -12,13 +12,13 @@ Docker is **optional**. Use it only if you want a containerized gateway or to va
 
 ## Is Docker right for me?
 
-- **Yes**: you want an isolated, throwaway gateway environment or to run OpenClaw on a host without local installs.
+- **Yes**: you want an isolated, throwaway gateway environment or to run LCX Agent on a host without local installs.
 - **No**: you’re running on your own machine and just want the fastest dev loop. Use the normal install flow instead.
 - **Sandboxing note**: agent sandboxing uses Docker too, but it does **not** require the full gateway to run in Docker. See [Sandboxing](/gateway/sandboxing).
 
 This guide covers:
 
-- Containerized Gateway (full OpenClaw in Docker)
+- Containerized Gateway (full LCX Agent in Docker)
 - Per-session Agent Sandbox (host gateway + Docker-isolated agent tools)
 
 Sandboxing details: [Sandboxing](/gateway/sandboxing)
@@ -58,7 +58,7 @@ This script:
 
 Optional env vars:
 
-- `OPENCLAW_IMAGE` — use a remote image instead of building locally (e.g. `ghcr.io/openclaw/openclaw:latest`)
+- `OPENCLAW_IMAGE` — use a pre-built image instead of building locally (e.g. `ghcr.io/<your-org>/<your-image>:<tag>`)
 - `OPENCLAW_DOCKER_APT_PACKAGES` — install extra apt packages during build
 - `OPENCLAW_EXTRA_MOUNTS` — add extra host bind mounts
 - `OPENCLAW_HOME_VOLUME` — persist `/home/node` in a named volume
@@ -79,7 +79,7 @@ After it finishes:
 
 - Open `http://127.0.0.1:18789/` in your browser.
 - Paste the token into the Control UI (Settings → token).
-- Need the URL again? Run `docker compose run --rm openclaw-cli dashboard --no-open`.
+- Need the URL again? Run `docker compose run --rm lcx-cli dashboard --no-open`.
 
 ### Enable agent sandbox for Docker gateway (opt-in)
 
@@ -108,7 +108,7 @@ Notes:
   `agents.defaults.sandbox.mode` to `off` to avoid stale/broken sandbox config
   on reruns.
 - If `Dockerfile.sandbox` is missing, the script prints a warning and continues;
-  build `openclaw-sandbox:bookworm-slim` with `scripts/sandbox-setup.sh` if
+  build `lcx-sandbox:bookworm-slim` with `scripts/sandbox-setup.sh` if
   needed.
 - For non-local `OPENCLAW_IMAGE` values, the image must already contain Docker
   CLI support for sandbox execution.
@@ -118,8 +118,8 @@ Notes:
 For scripts and CI, disable Compose pseudo-TTY allocation with `-T`:
 
 ```bash
-docker compose run -T --rm openclaw-cli gateway probe
-docker compose run -T --rm openclaw-cli devices list --json
+docker compose run -T --rm lcx-cli gateway probe
+docker compose run -T --rm lcx-cli devices list --json
 ```
 
 If your automation exports no Claude session vars, leaving them unset now resolves to
@@ -128,15 +128,15 @@ warnings.
 
 ### Shared-network security note (CLI + gateway)
 
-`openclaw-cli` uses `network_mode: "service:openclaw-gateway"` so CLI commands can
+`lcx-cli` uses `network_mode: "service:lcx-gateway"` so CLI commands can
 reliably reach the gateway over `127.0.0.1` in Docker.
 
 Treat this as a shared trust boundary: loopback binding is not isolation between these two
 containers. If you need stronger separation, run commands from a separate container/host
-network path instead of the bundled `openclaw-cli` service.
+network path instead of the bundled `lcx-cli` service.
 
 To reduce impact if the CLI process is compromised, the compose config drops
-`NET_RAW`/`NET_ADMIN` and enables `no-new-privileges` on `openclaw-cli`.
+`NET_RAW`/`NET_ADMIN` and enables `no-new-privileges` on `lcx-cli`.
 
 It writes config/workspace on the host:
 
@@ -145,20 +145,15 @@ It writes config/workspace on the host:
 
 Running on a VPS? See [Hetzner (Docker VPS)](/install/hetzner).
 
-### Use a remote image (skip local build)
+### Use a pre-built image (skip local build)
 
-Official pre-built images are published at:
+No container image is published for this repository, so the default path is a
+local build (see below). If you publish your own image — or mirror one in a
+private registry — point `OPENCLAW_IMAGE` at it and the script runs `docker pull`
+instead of `docker build`.
 
-- [GitHub Container Registry package](https://github.com/openclaw/openclaw/pkgs/container/openclaw)
-
-Use image name `ghcr.io/openclaw/openclaw` (not similarly named Docker Hub
-images).
-
-Common tags:
-
-- `main` — latest build from `main`
-- `<version>` — release tag builds (for example `2026.2.26`)
-- `latest` — latest stable release tag
+Do not use images from the former upstream project's registry: those tags are
+unmaintained and are not this project's builds.
 
 ### Base image metadata
 
@@ -170,12 +165,12 @@ The docker image now publishes OCI base-image annotations (sha256 is an example)
 
 - `org.opencontainers.image.base.name=docker.io/library/node:22-bookworm`
 - `org.opencontainers.image.base.digest=sha256:cd7bcd2e7a1e6f72052feb023c7f6b722205d3fcab7bbcbd2d1bfdab10b1e935`
-- `org.opencontainers.image.source=https://github.com/openclaw/openclaw`
-- `org.opencontainers.image.url=https://openclaw.ai`
+- `org.opencontainers.image.source=https://github.com/lcx1215/lcx-s-agent`
+- `org.opencontainers.image.url=https://github.com/lcx1215/lcx-s-agent`
 - `org.opencontainers.image.documentation=https://docs.openclaw.ai/install/docker`
 - `org.opencontainers.image.licenses=MIT`
-- `org.opencontainers.image.title=OpenClaw`
-- `org.opencontainers.image.description=OpenClaw gateway and CLI runtime container image`
+- `org.opencontainers.image.title=LCX Agent`
+- `org.opencontainers.image.description=LCX Agent gateway and CLI runtime container image`
 - `org.opencontainers.image.revision=<git-sha>`
 - `org.opencontainers.image.version=<tag-or-main>`
 - `org.opencontainers.image.created=<rfc3339 timestamp>`
@@ -189,11 +184,11 @@ By default the setup script builds the image from source. To pull a pre-built
 image instead, set `OPENCLAW_IMAGE` before running the script:
 
 ```bash
-export OPENCLAW_IMAGE="ghcr.io/openclaw/openclaw:latest"
+export OPENCLAW_IMAGE="ghcr.io/<your-org>/<your-image>:<tag>"
 ./docker-setup.sh
 ```
 
-The script detects that `OPENCLAW_IMAGE` is not the default `openclaw:local` and
+The script detects that `OPENCLAW_IMAGE` is not the default `lcx:local` and
 runs `docker pull` instead of `docker build`. Everything else (onboarding,
 gateway start, token generation) works the same way.
 
@@ -206,7 +201,7 @@ time; it does not replace the compose/setup workflow.
 For easier day-to-day Docker management, install `ClawDock`:
 
 ```bash
-mkdir -p ~/.clawdock && curl -sL https://raw.githubusercontent.com/openclaw/openclaw/main/scripts/shell-helpers/clawdock-helpers.sh -o ~/.clawdock/clawdock-helpers.sh
+mkdir -p ~/.clawdock && curl -sL https://raw.githubusercontent.com/lcx1215/lcx-s-agent/main/scripts/shell-helpers/clawdock-helpers.sh -o ~/.clawdock/clawdock-helpers.sh
 ```
 
 **Add to your shell config (zsh):**
@@ -217,14 +212,14 @@ echo 'source ~/.clawdock/clawdock-helpers.sh' >> ~/.zshrc && source ~/.zshrc
 
 Then use `clawdock-start`, `clawdock-stop`, `clawdock-dashboard`, etc. Run `clawdock-help` for all commands.
 
-See [`ClawDock` Helper README](https://github.com/openclaw/openclaw/blob/main/scripts/shell-helpers/README.md) for details.
+See [`ClawDock` Helper README](https://github.com/lcx1215/lcx-s-agent/blob/main/scripts/shell-helpers/README.md) for details.
 
 ### Manual flow (compose)
 
 ```bash
-docker build -t openclaw:local -f Dockerfile .
-docker compose run --rm openclaw-cli onboard
-docker compose up -d openclaw-gateway
+docker build -t lcx:local -f Dockerfile .
+docker compose run --rm lcx-cli onboard
+docker compose up -d lcx-gateway
 ```
 
 Note: run `docker compose ...` from the repo root. If you enabled
@@ -241,9 +236,9 @@ If you see “unauthorized” or “disconnected (1008): pairing required”, fe
 fresh dashboard link and approve the browser device:
 
 ```bash
-docker compose run --rm openclaw-cli dashboard --no-open
-docker compose run --rm openclaw-cli devices list
-docker compose run --rm openclaw-cli devices approve <requestId>
+docker compose run --rm lcx-cli dashboard --no-open
+docker compose run --rm lcx-cli devices list
+docker compose run --rm lcx-cli devices approve <requestId>
 ```
 
 More detail: [Dashboard](/web/dashboard), [Devices](/cli/devices).
@@ -253,7 +248,7 @@ More detail: [Dashboard](/web/dashboard), [Devices](/cli/devices).
 If you want to mount additional host directories into the containers, set
 `OPENCLAW_EXTRA_MOUNTS` before running `docker-setup.sh`. This accepts a
 comma-separated list of Docker bind mounts and applies them to both
-`openclaw-gateway` and `openclaw-cli` by generating `docker-compose.extra.yml`.
+`lcx-gateway` and `lcx-cli` by generating `docker-compose.extra.yml`.
 
 Example:
 
@@ -348,7 +343,7 @@ export OPENCLAW_DOCKER_APT_PACKAGES="git curl jq"
 3. **Install Playwright browsers without `npx`** (avoids npm override conflicts):
 
 ```bash
-docker compose run --rm openclaw-cli \
+docker compose run --rm lcx-cli \
   node /app/node_modules/playwright-core/cli.js install chromium
 ```
 
@@ -415,19 +410,19 @@ Use the CLI container to configure channels, then restart the gateway if needed.
 WhatsApp (QR):
 
 ```bash
-docker compose run --rm openclaw-cli channels login
+docker compose run --rm lcx-cli channels login
 ```
 
 Telegram (bot token):
 
 ```bash
-docker compose run --rm openclaw-cli channels add --channel telegram --token "<token>"
+docker compose run --rm lcx-cli channels add --channel telegram --token "<token>"
 ```
 
 Discord (bot token):
 
 ```bash
-docker compose run --rm openclaw-cli channels add --channel discord --token "<token>"
+docker compose run --rm lcx-cli channels add --channel discord --token "<token>"
 ```
 
 Docs: [WhatsApp](/channels/whatsapp), [Telegram](/channels/telegram), [Discord](/channels/discord)
@@ -451,7 +446,7 @@ curl -fsS http://127.0.0.1:18789/readyz
 Aliases: `/health` and `/ready`.
 
 The Docker image includes a built-in `HEALTHCHECK` that pings `/healthz` in the
-background. In plain terms: Docker keeps checking if OpenClaw is still
+background. In plain terms: Docker keeps checking if LCX Agent is still
 responsive. If checks keep failing, Docker marks the container as `unhealthy`,
 and orchestration systems (Docker Compose restart policy, Swarm, Kubernetes,
 etc.) can automatically restart or replace it.
@@ -459,7 +454,7 @@ etc.) can automatically restart or replace it.
 Authenticated deep health snapshot (gateway + channels):
 
 ```bash
-docker compose exec openclaw-gateway node dist/index.js health --token "$OPENCLAW_GATEWAY_TOKEN"
+docker compose exec lcx-gateway node dist/index.js health --token "$OPENCLAW_GATEWAY_TOKEN"
 ```
 
 ### E2E smoke test (Docker)
@@ -494,9 +489,9 @@ If you see `Gateway target: ws://172.x.x.x:18789` or repeated `pairing required`
 errors from Docker CLI commands, run:
 
 ```bash
-docker compose run --rm openclaw-cli config set gateway.mode local
-docker compose run --rm openclaw-cli config set gateway.bind lan
-docker compose run --rm openclaw-cli devices list --url ws://127.0.0.1:18789
+docker compose run --rm lcx-cli config set gateway.mode local
+docker compose run --rm lcx-cli config set gateway.bind lan
+docker compose run --rm lcx-cli devices list --url ws://127.0.0.1:18789
 ```
 
 ### Notes
@@ -539,7 +534,7 @@ precedence, and troubleshooting.
 
 ### Default behavior
 
-- Image: `openclaw-sandbox:bookworm-slim`
+- Image: `lcx-sandbox:bookworm-slim`
 - One container per agent
 - Agent workspace access: `workspaceAccess: "none"` (default) uses `~/.openclaw/sandboxes`
   - `"ro"` keeps the sandbox workspace at `/workspace` and mounts the agent workspace read-only at `/agent` (disables `write`/`edit`/`apply_patch`)
@@ -561,9 +556,9 @@ If you plan to install packages in `setupCommand`, note:
 - Break-glass override: `agents.defaults.sandbox.docker.dangerouslyAllowContainerNamespaceJoin: true`.
 - `readOnlyRoot: true` blocks package installs.
 - `user` must be root for `apt-get` (omit `user` or set `user: "0:0"`).
-  OpenClaw auto-recreates containers when `setupCommand` (or docker config) changes
+  LCX Agent auto-recreates containers when `setupCommand` (or docker config) changes
   unless the container was **recently used** (within ~5 minutes). Hot containers
-  log a warning with the exact `openclaw sandbox recreate ...` command.
+  log a warning with the exact `lcx sandbox recreate ...` command.
 
 ```json5
 {
@@ -575,7 +570,7 @@ If you plan to install packages in `setupCommand`, note:
         workspaceAccess: "none", // none | ro | rw
         workspaceRoot: "~/.openclaw/sandboxes",
         docker: {
-          image: "openclaw-sandbox:bookworm-slim",
+          image: "lcx-sandbox:bookworm-slim",
           workdir: "/workspace",
           readOnlyRoot: true,
           tmpfs: ["/tmp", "/var/tmp", "/run"],
@@ -593,7 +588,7 @@ If you plan to install packages in `setupCommand`, note:
             nproc: 256,
           },
           seccompProfile: "/path/to/seccomp.json",
-          apparmorProfile: "openclaw-sandbox",
+          apparmorProfile: "lcx-sandbox",
           dns: ["1.1.1.1", "8.8.8.8"],
           extraHosts: ["internal.service:10.0.0.5"],
         },
@@ -640,7 +635,7 @@ Multi-agent: override `agents.defaults.sandbox.{docker,browser,prune}.*` per age
 scripts/sandbox-setup.sh
 ```
 
-This builds `openclaw-sandbox:bookworm-slim` using `Dockerfile.sandbox`.
+This builds `lcx-sandbox:bookworm-slim` using `Dockerfile.sandbox`.
 
 ### Sandbox common image (optional)
 
@@ -650,13 +645,13 @@ If you want a sandbox image with common build tooling (Node, Go, Rust, etc.), bu
 scripts/sandbox-common-setup.sh
 ```
 
-This builds `openclaw-sandbox-common:bookworm-slim`. To use it:
+This builds `lcx-sandbox-common:bookworm-slim`. To use it:
 
 ```json5
 {
   agents: {
     defaults: {
-      sandbox: { docker: { image: "openclaw-sandbox-common:bookworm-slim" } },
+      sandbox: { docker: { image: "lcx-sandbox-common:bookworm-slim" } },
     },
   },
 }
@@ -670,7 +665,7 @@ To run the browser tool inside the sandbox, build the browser image:
 scripts/sandbox-browser-setup.sh
 ```
 
-This builds `openclaw-sandbox-browser:bookworm-slim` using
+This builds `lcx-sandbox-browser:bookworm-slim` using
 `Dockerfile.sandbox-browser`. The container runs Chromium with CDP enabled and
 an optional noVNC observer (headful via Xvfb).
 
@@ -679,9 +674,9 @@ Notes:
 - Headful (Xvfb) reduces bot blocking vs headless.
 - Headless can still be used by setting `agents.defaults.sandbox.browser.headless=true`.
 - No full desktop environment (GNOME) is needed; Xvfb provides the display.
-- Browser containers default to a dedicated Docker network (`openclaw-sandbox-browser`) instead of global `bridge`.
+- Browser containers default to a dedicated Docker network (`lcx-sandbox-browser`) instead of global `bridge`.
 - Optional `agents.defaults.sandbox.browser.cdpSourceRange` restricts container-edge CDP ingress by CIDR (for example `172.21.0.1/32`).
-- noVNC observer access is password-protected by default; OpenClaw provides a short-lived observer token URL that serves a local bootstrap page and keeps the password in URL fragment (instead of URL query).
+- noVNC observer access is password-protected by default; LCX Agent provides a short-lived observer token URL that serves a local bootstrap page and keeps the password in URL fragment (instead of URL query).
 - Browser container startup defaults are conservative for shared/container workloads, including:
   - `--remote-debugging-address=127.0.0.1`
   - `--remote-debugging-port=<derived from OPENCLAW_BROWSER_CDP_PORT>`
@@ -796,11 +791,11 @@ Example:
 
 ## Troubleshooting
 
-- Image missing: build with [`scripts/sandbox-setup.sh`](https://github.com/openclaw/openclaw/blob/main/scripts/sandbox-setup.sh) or set `agents.defaults.sandbox.docker.image`.
+- Image missing: build with [`scripts/sandbox-setup.sh`](https://github.com/lcx1215/lcx-s-agent/blob/main/scripts/sandbox-setup.sh) or set `agents.defaults.sandbox.docker.image`.
 - Container not running: it will auto-create per session on demand.
 - Permission errors in sandbox: set `docker.user` to a UID:GID that matches your
   mounted workspace ownership (or chown the workspace folder).
-- Custom tools not found: OpenClaw runs commands with `sh -lc` (login shell), which
+- Custom tools not found: LCX Agent runs commands with `sh -lc` (login shell), which
   sources `/etc/profile` and may reset PATH. Set `docker.env.PATH` to prepend your
   custom tool paths (e.g., `/custom/bin:/usr/local/share/npm-global/bin`), or add
   a script under `/etc/profile.d/` in your Dockerfile.

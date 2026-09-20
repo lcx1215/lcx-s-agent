@@ -309,6 +309,24 @@ describe("finance research batch runner", () => {
     },
   );
 
+  it("does not reject a record merely because we fetched it after a historical asOf", async () => {
+    // `observedAt` is when *we* fetched. For a historical `asOf` that is always later, so bounding
+    // it by `asOf` rejected every record from any adapter that stamps the real fetch time — a
+    // source that returned valid in-window data could not contribute evidence at all. The
+    // look-ahead guard belongs to `sourceTimestamp`, which this record satisfies.
+    const fetchedAfterAsOf = new Date(Date.parse(AS_OF) + 6 * 3_600_000).toISOString();
+    const base = options(async () =>
+      response([news({ sourceTimestamp: FRESH, observedAt: fetchedAfterAsOf })]),
+    );
+    const packet = await runFinanceResearchBatch({
+      ...base,
+      targets: [{ ...base.targets[0], realtime: false }],
+    });
+
+    expect(packet.jobs[0]?.receipt?.status).toBe("ready");
+    expect(packet.jobs[0]?.freshnessWarnings).toEqual([]);
+  });
+
   it("withholds implausibly future collection records from live-now evidence", async () => {
     const future = new Date(Date.now() + 10 * 60_000).toISOString();
     const base = options(async () =>

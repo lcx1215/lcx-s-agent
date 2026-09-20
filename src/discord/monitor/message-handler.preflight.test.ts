@@ -124,7 +124,7 @@ describe("preflightDiscordMessage", () => {
       author: {
         id: "relay-bot-1",
         bot: true,
-        username: "OpenClaw",
+        username: "LCX Agent",
       },
     } as unknown as import("@buape/carbon").Message;
 

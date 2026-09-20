@@ -531,7 +531,7 @@ export function buildProtocolInfoReply(params: {
         "🔎 Search and provider health",
         `Active model: ${modelRefs ? modelRefs.active.label : (protocol.executionSubstrate.defaultModel ?? "unknown")}`,
         `Provider-native search: ${providerSearchState}`,
-        `OpenClaw web_search: ${openclawWebSearch?.states.includes("connected") ? "connected" : "not connected"}`,
+        `LCX Agent web_search: ${openclawWebSearch?.states.includes("connected") ? "connected" : "not connected"}`,
         `Capability mode: ${activeCapabilityModel?.mode ?? "unknown"}`,
         searchHealth.source === "anomaly"
           ? `Recent degradation record: ${searchHealth.sourceSystem ?? "provider"}${searchHealth.lastSeenAt ? ` @ ${searchHealth.lastSeenAt}` : ""}`
@@ -1032,8 +1032,8 @@ export function buildProtocolInfoReply(params: {
             ? `Provider-native ${check?.label ?? "capability"}: not connected`
             : `Provider-native ${check?.label ?? "capability"}: unknown`,
         genericTool
-          ? `OpenClaw ${genericTool}: ${genericConnected ? "connected" : "not connected"}`
-          : "OpenClaw generic tool: none",
+          ? `LCX Agent ${genericTool}: ${genericConnected ? "connected" : "not connected"}`
+          : "LCX Agent generic tool: none",
         "This answer is runtime truth, not provider marketing.",
         lobsterLine,
       ]
@@ -1048,7 +1048,7 @@ export function buildProtocolInfoReply(params: {
         "Short answer: not pure API chat. This is a main control-room agent with routed working surfaces, learning-council lanes, tools, memory/artifact receipts, and optional subagent/session-spawn capability.",
         "Current structure: control_room routes ordinary external-channel language into specialist surfaces such as learning_command, technical_daily, fundamental_research, knowledge_maintenance, ops_audit, and watchtower.",
         "Learning path: learning_command can run a three-lane council with stable Kimi / MiniMax / DeepSeek role labels; those labels are structural receipts, not a claim that every reply always used three live providers.",
-        "Subagents: OpenClaw also exposes sessions_spawn / subagents capability for real spawned work, but ordinary answers do not automatically become a persistent multi-agent swarm.",
+        "Subagents: LCX Agent also exposes sessions_spawn / subagents capability for real spawned work, but ordinary answers do not automatically become a persistent multi-agent swarm.",
         "Boundary: this answer is runtime/protocol truth, not marketing. Live external-channel proof still requires build, restart, probe, and visible reply evidence.",
         lobsterLine,
       ]
@@ -1089,7 +1089,7 @@ export function buildProtocolInfoReply(params: {
         "🧰 Connected capabilities",
         `Active model: ${modelRefs ? modelRefs.active.label : (protocol.executionSubstrate.defaultModel ?? "unknown")}`,
         `Provider-native tools: ${activeProviderTools.length > 0 ? activeProviderTools.join(", ") : "none connected"}`,
-        `OpenClaw tools: ${genericTools.length > 0 ? genericTools.join(", ") : "none connected"}`,
+        `LCX Agent tools: ${genericTools.length > 0 ? genericTools.join(", ") : "none connected"}`,
         lobsterLine,
         "Use /context detail or openclaw capabilities for the full capability surface.",
       ]

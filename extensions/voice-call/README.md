@@ -1,6 +1,6 @@
 # @openclaw/voice-call
 
-Official Voice Call plugin for **OpenClaw**.
+Official Voice Call plugin for **LCX Agent**.
 
 Providers:
 
@@ -14,7 +14,7 @@ Plugin system: `https://docs.openclaw.ai/plugin`
 
 ## Install (local dev)
 
-### Option A: install via OpenClaw (recommended)
+### Option A: install via LCX Agent (recommended)
 
 ```bash
 openclaw plugins install @openclaw/voice-call
@@ -143,13 +143,13 @@ Notes:
 ## CLI
 
 ```bash
-openclaw voicecall call --to "+15555550123" --message "Hello from OpenClaw"
-openclaw voicecall continue --call-id <id> --message "Any questions?"
-openclaw voicecall speak --call-id <id> --message "One moment"
-openclaw voicecall end --call-id <id>
-openclaw voicecall status --call-id <id>
-openclaw voicecall tail
-openclaw voicecall expose --mode funnel
+lcx voicecall call --to "+15555550123" --message "Hello from LCX Agent"
+lcx voicecall continue --call-id <id> --message "Any questions?"
+lcx voicecall speak --call-id <id> --message "One moment"
+lcx voicecall end --call-id <id>
+lcx voicecall status --call-id <id>
+lcx voicecall tail
+lcx voicecall expose --mode funnel
 ```
 
 ## Tool

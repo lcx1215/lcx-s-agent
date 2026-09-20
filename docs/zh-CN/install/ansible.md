@@ -3,7 +3,7 @@ read_when:
   - 你想要带安全加固的自动化服务器部署
   - 你需要带 VPN 访问的防火墙隔离设置
   - 你正在部署到远程 Debian/Ubuntu 服务器
-summary: 使用 Ansible、Tailscale VPN 和防火墙隔离进行自动化、加固的 OpenClaw 安装
+summary: 使用 Ansible、Tailscale VPN 和防火墙隔离进行自动化、加固的 LCX Agent 安装
 title: Ansible
 x-i18n:
   generated_at: "2026-02-03T07:49:29Z"
@@ -16,7 +16,7 @@ x-i18n:
 
 # Ansible 安装
 
-将 OpenClaw 部署到生产服务器的推荐方式是通过 **[openclaw-ansible](https://github.com/openclaw/openclaw-ansible)** — 一个安全优先架构的自动化安装程序。
+将 LCX Agent 部署到生产服务器的推荐方式是通过 **[openclaw-ansible](https://github.com/lcx1215/lcx-s-agent-ansible)** — 一个安全优先架构的自动化安装程序。
 
 ## 快速开始
 
@@ -26,7 +26,7 @@ x-i18n:
 curl -fsSL https://raw.githubusercontent.com/openclaw/openclaw-ansible/main/install.sh | bash
 ```
 
-> **📦 完整指南：[github.com/openclaw/openclaw-ansible](https://github.com/openclaw/openclaw-ansible)**
+> **📦 完整指南：[github.com/openclaw/openclaw-ansible](https://github.com/lcx1215/lcx-s-agent-ansible)**
 >
 > openclaw-ansible 仓库是 Ansible 部署的权威来源。本页是快速概述。
 
@@ -54,7 +54,7 @@ Ansible playbook 安装并配置：
 2. **UFW 防火墙**（仅允许 SSH + Tailscale 端口）
 3. **Docker CE + Compose V2**（用于智能体沙箱）
 4. **Node.js 22.x + pnpm**（运行时依赖）
-5. **OpenClaw**（基于主机，非容器化）
+5. **LCX Agent**（基于主机，非容器化）
 6. **Systemd 服务**（带安全加固的自动启动）
 
 注意：Gateway 网关**直接在主机上运行**（不在 Docker 中），但智能体沙箱使用 Docker 进行隔离。详情参见[沙箱隔离](/gateway/sandboxing)。
@@ -69,7 +69,7 @@ sudo -i -u openclaw
 
 安装后脚本将引导你完成：
 
-1. **新手引导向导**：配置 OpenClaw 设置
+1. **新手引导向导**：配置 LCX Agent 设置
 2. **提供商登录**：连接 WhatsApp/Telegram/Discord/Signal
 3. **Gateway 网关测试**：验证安装
 4. **Tailscale 设置**：连接到你的 VPN mesh
@@ -88,7 +88,7 @@ sudo systemctl restart openclaw
 
 # 提供商登录（以 openclaw 用户运行）
 sudo -i -u openclaw
-openclaw channels login
+lcx channels login
 ```
 
 ## 安全架构
@@ -125,7 +125,7 @@ Docker 用于**智能体沙箱**（隔离的工具执行），而不是用于运
 sudo apt update && sudo apt install -y ansible git
 
 # 2. 克隆仓库
-git clone https://github.com/openclaw/openclaw-ansible.git
+git clone https://github.com/lcx1215/lcx-s-agent-ansible.git
 cd openclaw-ansible
 
 # 3. 安装 Ansible collections
@@ -138,9 +138,9 @@ ansible-galaxy collection install -r requirements.yml
 # ansible-playbook playbook.yml --ask-become-pass
 ```
 
-## 更新 OpenClaw
+## 更新 LCX Agent
 
-Ansible 安装程序设置 OpenClaw 为手动更新。标准更新流程参见[更新](/install/updating)。
+Ansible 安装程序设置 LCX Agent 为手动更新。标准更新流程参见[更新](/install/updating)。
 
 要重新运行 Ansible playbook（例如，用于配置更改）：
 
@@ -183,7 +183,7 @@ pnpm start
 sudo systemctl status docker
 
 # 检查沙箱镜像
-sudo docker images | grep openclaw-sandbox
+sudo docker images | grep lcx-sandbox
 
 # 如果缺失则构建沙箱镜像
 cd /opt/openclaw/openclaw
@@ -196,20 +196,20 @@ sudo -u openclaw ./scripts/sandbox-setup.sh
 
 ```bash
 sudo -i -u openclaw
-openclaw channels login
+lcx channels login
 ```
 
 ## 高级配置
 
 详细的安全架构和故障排除：
 
-- [安全架构](https://github.com/openclaw/openclaw-ansible/blob/main/docs/security.md)
-- [技术详情](https://github.com/openclaw/openclaw-ansible/blob/main/docs/architecture.md)
-- [故障排除指南](https://github.com/openclaw/openclaw-ansible/blob/main/docs/troubleshooting.md)
+- [安全架构](https://github.com/lcx1215/lcx-s-agent-ansible/blob/main/docs/security.md)
+- [技术详情](https://github.com/lcx1215/lcx-s-agent-ansible/blob/main/docs/architecture.md)
+- [故障排除指南](https://github.com/lcx1215/lcx-s-agent-ansible/blob/main/docs/troubleshooting.md)
 
 ## 相关内容
 
-- [openclaw-ansible](https://github.com/openclaw/openclaw-ansible) — 完整部署指南
+- [openclaw-ansible](https://github.com/lcx1215/lcx-s-agent-ansible) — 完整部署指南
 - [Docker](/install/docker) — 容器化 Gateway 网关设置
 - [沙箱隔离](/gateway/sandboxing) — 智能体沙箱配置
 - [多智能体沙箱与工具](/tools/multi-agent-sandbox-tools) — 每个智能体的隔离

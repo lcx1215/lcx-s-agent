@@ -14,6 +14,15 @@ import type { QualityHarnessModelRequest } from "./quality-harness-contract.js";
 
 export const LOCAL_TEXT_MODEL_PROVIDER = "mlx-local" as const;
 export const DEFAULT_LOCAL_TEXT_MODEL = "Qwen/Qwen3-0.6B" as const;
+/** Shared with `local-evaluate-adapter.ts` so both paths drift together. */
+export const DEFAULT_LOCAL_MODEL_PYTHON_PATH = path.join(
+  os.homedir(),
+  ".openclaw",
+  "local-brain-trainer",
+  ".venv",
+  "bin",
+  "python",
+);
 export const DEFAULT_LOCAL_TEXT_MODEL_MAX_TOKENS = 384;
 export const DEFAULT_LOCAL_TEXT_MODEL_TIMEOUT_MS = 120_000;
 
@@ -56,9 +65,7 @@ export function resolveLocalTextModelRuntimeConfig(options: {
     throw new Error("local text model adapter requires an explicit adapter path");
   }
   return Object.freeze({
-    pythonPath:
-      options.pythonPath?.trim() ||
-      path.join(os.homedir(), ".openclaw", "local-brain-trainer", ".venv", "bin", "python"),
+    pythonPath: options.pythonPath?.trim() || DEFAULT_LOCAL_MODEL_PYTHON_PATH,
     modelId: options.modelId?.trim() || DEFAULT_LOCAL_TEXT_MODEL,
     adapterPath,
     baseModel: options.baseModel ?? false,

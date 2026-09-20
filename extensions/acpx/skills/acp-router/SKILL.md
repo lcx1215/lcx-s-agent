@@ -1,6 +1,6 @@
 ---
 name: acp-router
-description: Route plain-language requests for Pi, Claude Code, Codex, OpenCode, Gemini CLI, or ACP harness work into either OpenClaw ACP runtime sessions or direct acpx-driven sessions ("telephone game" flow). For coding-agent thread requests, read this skill first, then use only `sessions_spawn` for thread creation.
+description: Route plain-language requests for Pi, Claude Code, Codex, OpenCode, Gemini CLI, or ACP harness work into either LCX Agent ACP runtime sessions or direct acpx-driven sessions ("telephone game" flow). For coding-agent thread requests, read this skill first, then use only `sessions_spawn` for thread creation.
 user-invocable: false
 ---
 
@@ -10,7 +10,7 @@ When user intent is "run this in Pi/Claude Code/Codex/OpenCode/Gemini/Kimi (ACP 
 
 ## Intent detection
 
-Trigger this skill when the user asks OpenClaw to:
+Trigger this skill when the user asks LCX Agent to:
 
 - run something in Pi / Claude Code / Codex / OpenCode / Gemini
 - continue existing harness work
@@ -20,20 +20,20 @@ Trigger this skill when the user asks OpenClaw to:
 Mandatory preflight for coding-agent thread requests:
 
 - Before creating any thread for Pi/Claude/Codex/OpenCode/Gemini work, read this skill first in the same turn.
-- After reading, follow `OpenClaw ACP runtime path` below; do not use `message(action="thread-create")` for ACP harness thread spawn.
+- After reading, follow `LCX Agent ACP runtime path` below; do not use `message(action="thread-create")` for ACP harness thread spawn.
 
 ## Mode selection
 
 Choose one of these paths:
 
-1. OpenClaw ACP runtime path (default): use `sessions_spawn` / ACP runtime tools.
+1. LCX Agent ACP runtime path (default): use `sessions_spawn` / ACP runtime tools.
 2. Direct `acpx` path (telephone game): use `acpx` CLI through `exec` to drive the harness session directly.
 
 Use direct `acpx` when one of these is true:
 
 - user explicitly asks for direct `acpx` driving
 - ACP runtime/plugin path is unavailable or unhealthy
-- the task is "just relay prompts to harness" and no OpenClaw ACP lifecycle features are needed
+- the task is "just relay prompts to harness" and no LCX Agent ACP lifecycle features are needed
 
 Do not use:
 
@@ -56,7 +56,7 @@ These defaults match current acpx built-in aliases.
 
 If policy rejects the chosen id, report the policy error clearly and ask for the allowed ACP agent id.
 
-## OpenClaw ACP runtime path
+## LCX Agent ACP runtime path
 
 Required behavior:
 

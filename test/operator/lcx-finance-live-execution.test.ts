@@ -279,3 +279,65 @@ describe("finance live execution entry allowlist translation", () => {
     );
   });
 });
+
+describe("finance live execution unattended ceiling gate", () => {
+  it("parses --automation and refuses any other value", () => {
+    expect(parseArgs(["--automation", "unattended"]).budget.automation).toBe("unattended");
+    expect(parseArgs(["--automation", "attended"]).budget.automation).toBe("attended");
+    expect(() => parseArgs(["--automation", "yolo"])).toThrow(/attended or unattended/);
+  });
+
+  it("refuses an unattended run and names the ceilings it still owes", async () => {
+    const directory = await storeDirectory();
+    const payload = await buildFinanceLiveExecutionPayload(
+      options({
+        ledgerDirectory: directory,
+        budget: { ...DEFAULT_FINANCE_RISK_BUDGET, automation: "unattended" },
+      }),
+    );
+
+    expect(payload.nodes.order_placement.status).toBe("refused");
+    expect(payload.nodes.order_placement.refusalReasons).toEqual([
+      "risk_budget_unattended_requires_max_order_notional",
+      "risk_budget_unattended_requires_max_instrument_notional",
+      "risk_budget_unattended_requires_max_orders_per_run",
+    ]);
+    // The cap names, not the refusal codes: the operator should be told which number to go get.
+    expect(payload.nodes.unattended_requires_caps).toEqual([
+      "maxOrderNotional",
+      "maxInstrumentNotional",
+      "maxOrdersPerRun",
+    ]);
+  });
+
+  it("places an unattended run once every ceiling is declared", async () => {
+    const directory = await storeDirectory();
+    const payload = await buildFinanceLiveExecutionPayload(
+      options({
+        ledgerDirectory: directory,
+        budget: {
+          ...DEFAULT_FINANCE_RISK_BUDGET,
+          automation: "unattended",
+          maxOrderNotional: 10_000,
+          maxInstrumentNotional: 25_000,
+          maxOrdersPerRun: 2,
+        },
+      }),
+    );
+
+    expect(payload.nodes.order_placement.status).toBe("placed");
+    expect(payload.nodes.unattended_requires_caps).toBeUndefined();
+  });
+
+  it("leaves an attended run's caps optional: the default stays attended", async () => {
+    const directory = await storeDirectory();
+    // Same absence of caps as the refused case above; the only difference is who is watching.
+    const payload = await buildFinanceLiveExecutionPayload(
+      options({ ledgerDirectory: directory, quantity: 1000 }),
+    );
+
+    expect(DEFAULT_FINANCE_RISK_BUDGET.automation).toBe("attended");
+    expect(payload.nodes.order_placement.status).toBe("placed");
+    expect(payload.nodes.unattended_requires_caps).toBeUndefined();
+  });
+});

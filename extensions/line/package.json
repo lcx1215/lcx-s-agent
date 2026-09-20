@@ -2,7 +2,7 @@
   "name": "@openclaw/line",
   "version": "2026.3.2",
   "private": true,
-  "description": "OpenClaw LINE channel plugin",
+  "description": "LCX Agent LINE channel plugin",
   "type": "module",
   "dependencies": {
     "lcx-agent": "workspace:*"
@@ -24,7 +24,7 @@
     "install": {
       "npmSpec": "@openclaw/line",
       "localPath": "extensions/line",
-      "defaultChoice": "npm"
+      "defaultChoice": "local"
     }
   }
 }

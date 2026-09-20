@@ -39,7 +39,7 @@ async function main() {
     maxProtocol: 3,
     client: {
       id: "openclaw-ios",
-      displayName: "openclaw gateway smoke test",
+      displayName: "lcx gateway smoke test",
       version: "dev",
       platform: "dev",
       mode: "ui",

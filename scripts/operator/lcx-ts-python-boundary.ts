@@ -110,6 +110,18 @@ const PYTHON_POLICIES: Record<string, Omit<PythonFilePolicy, "path">> = {
     reason: "CI 字符串检查是流程控制，不是训练/计算发动机，应该迁到 TS。",
     targetTsOwner: "scripts/operator/lcx-change-impact-plan.ts",
   },
+  "scripts/local-model/lcx_calibrate.py": {
+    role: "keep_python_engine",
+    plainRole: "保留",
+    reason: "本地模型标定属于训练/评估发动机层，TS 只负责调度和验收。",
+    targetTsOwner: "scripts/operator/local-brain-training-plan.ts",
+  },
+  "scripts/local-model/lcx_mlx_evaluate.py": {
+    role: "keep_python_engine",
+    plainRole: "保留",
+    reason: "MLX 评估属于训练/评估发动机层，TS 只负责调度和验收。",
+    targetTsOwner: "scripts/operator/local-brain-training-plan.ts",
+  },
 };
 
 function parseArgs(args: string[]) {

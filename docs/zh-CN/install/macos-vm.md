@@ -1,10 +1,10 @@
 ---
 read_when:
-  - 你想让 OpenClaw 与你的主 macOS 环境隔离
+  - 你想让 LCX Agent 与你的主 macOS 环境隔离
   - 你想在沙箱中集成 iMessage（BlueBubbles）
   - 你想要一个可重置、可克隆的 macOS 环境
   - 你想比较本地与托管 macOS VM 选项
-summary: 在沙箱隔离的 macOS VM（本地或托管）中运行 OpenClaw，当你需要隔离或 iMessage 时
+summary: 在沙箱隔离的 macOS VM（本地或托管）中运行 LCX Agent，当你需要隔离或 iMessage 时
 title: macOS 虚拟机
 x-i18n:
   generated_at: "2026-02-03T07:53:09Z"
@@ -15,7 +15,7 @@ x-i18n:
   workflow: 15
 ---
 
-# 在 macOS 虚拟机上运行 OpenClaw（沙箱隔离）
+# 在 macOS 虚拟机上运行 LCX Agent（沙箱隔离）
 
 ## 推荐默认方案（大多数用户）
 
@@ -29,7 +29,7 @@ x-i18n:
 
 ### 在你的 Apple Silicon Mac 上运行本地 VM（Lume）
 
-使用 [Lume](https://cua.ai/docs/lume) 在你现有的 Apple Silicon Mac 上的沙箱 macOS VM 中运行 OpenClaw。
+使用 [Lume](https://cua.ai/docs/lume) 在你现有的 Apple Silicon Mac 上的沙箱 macOS VM 中运行 LCX Agent。
 
 这为你提供：
 
@@ -55,7 +55,7 @@ x-i18n:
 2. `lume create openclaw --os macos --ipsw latest`
 3. 完成设置助手，启用远程登录（SSH）
 4. `lume run openclaw --no-display`
-5. SSH 进入，安装 OpenClaw，配置渠道
+5. SSH 进入，安装 LCX Agent，配置渠道
 6. 完成
 
 ---
@@ -139,13 +139,13 @@ ssh youruser@192.168.64.X
 
 ---
 
-## 6) 安装 OpenClaw
+## 6) 安装 LCX Agent
 
 在 VM 内：
 
 ```bash
 npm install -g openclaw@latest
-openclaw onboard --install-daemon
+lcx onboard --install-daemon
 ```
 
 按照新手引导提示设置你的模型提供商（Anthropic、OpenAI 等）。
@@ -179,7 +179,7 @@ nano ~/.openclaw/openclaw.json
 然后登录 WhatsApp（扫描二维码）：
 
 ```bash
-openclaw channels login
+lcx channels login
 ```
 
 ---
@@ -193,19 +193,19 @@ lume stop openclaw
 lume run openclaw --no-display
 ```
 
-VM 在后台运行。OpenClaw 的守护进程保持 Gateway 网关运行。
+VM 在后台运行。LCX Agent 的守护进程保持 Gateway 网关运行。
 
 检查状态：
 
 ```bash
-ssh youruser@192.168.64.X "openclaw status"
+ssh youruser@192.168.64.X "lcx status"
 ```
 
 ---
 
 ## 额外：iMessage 集成
 
-这是在 macOS 上运行的杀手级功能。使用 [BlueBubbles](https://bluebubbles.app) 将 iMessage 添加到 OpenClaw。
+这是在 macOS 上运行的杀手级功能。使用 [BlueBubbles](https://bluebubbles.app) 将 iMessage 添加到 LCX Agent。
 
 在 VM 内：
 
@@ -214,7 +214,7 @@ ssh youruser@192.168.64.X "openclaw status"
 3. 启用 Web API 并设置密码
 4. 将 BlueBubbles webhooks 指向你的 Gateway 网关（示例：`https://your-gateway-host:3000/bluebubbles-webhook?password=<password>`）
 
-添加到你的 OpenClaw 配置：
+添加到你的 LCX Agent 配置：
 
 ```json
 {
@@ -267,12 +267,12 @@ lume run openclaw --no-display
 
 ## 故障排除
 
-| 问题                    | 解决方案                                                         |
-| ----------------------- | ---------------------------------------------------------------- |
-| 无法 SSH 进入 VM        | 检查 VM 的系统设置中是否启用了"远程登录"                         |
-| VM IP 未显示            | 等待 VM 完全启动，再次运行 `lume get openclaw`                   |
-| 找不到 Lume 命令        | 将 `~/.local/bin` 添加到你的 PATH                                |
-| WhatsApp 二维码扫描失败 | 确保运行 `openclaw channels login` 时你是登录到 VM（而不是主机） |
+| 问题                    | 解决方案                                                    |
+| ----------------------- | ----------------------------------------------------------- |
+| 无法 SSH 进入 VM        | 检查 VM 的系统设置中是否启用了"远程登录"                    |
+| VM IP 未显示            | 等待 VM 完全启动，再次运行 `lume get openclaw`              |
+| 找不到 Lume 命令        | 将 `~/.local/bin` 添加到你的 PATH                           |
+| WhatsApp 二维码扫描失败 | 确保运行 `lcx channels login` 时你是登录到 VM（而不是主机） |
 
 ---
 

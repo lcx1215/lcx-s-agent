@@ -128,7 +128,7 @@ describe("module-learning-pipeline-plan CLI", () => {
     await expect(fs.stat(path.join(workspaceDir, receiptPath))).resolves.toBeTruthy();
   });
 
-  it("defaults writes to the local OpenClaw workspace instead of the repo worktree", async () => {
+  it("defaults writes to the local LCX Agent workspace instead of the repo worktree", async () => {
     workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-module-plan-home-"));
 
     const result = runCliWithDefaultWorkspace(

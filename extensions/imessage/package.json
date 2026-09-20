@@ -2,7 +2,7 @@
   "name": "@openclaw/imessage",
   "version": "2026.3.2",
   "private": true,
-  "description": "OpenClaw iMessage channel plugin",
+  "description": "LCX Agent iMessage channel plugin",
   "type": "module",
   "dependencies": {
     "lcx-agent": "workspace:*"

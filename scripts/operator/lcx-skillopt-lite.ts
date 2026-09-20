@@ -361,7 +361,7 @@ function usage(): never {
       "Usage: node --import tsx scripts/operator/lcx-skillopt-lite.ts [--skill ID|auto|all] [--phase bootstrap|candidate-edit] [--task TEXT] [--workspace DIR] [--max-train-cases N] [--no-write] [--json]",
       "",
       "Builds local SkillOpt-lite seeds and preflight packets from latest governance/eval truth.",
-      "It writes only under the OpenClaw workspace memory path and does not touch live/provider/protected-memory state.",
+      "It writes only under the LCX Agent workspace memory path and does not touch live/provider/protected-memory state.",
     ].join("\n"),
   );
 }

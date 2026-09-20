@@ -1,4 +1,4 @@
 # Docs
 
 Owns operator-facing concepts, runbooks, install guides, channel guides, and
-public explanations for OpenClaw and the Lobster fork.
+public explanations for LCX Agent and the Lobster fork.

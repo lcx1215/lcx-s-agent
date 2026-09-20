@@ -360,10 +360,15 @@ function ensureTranscriptFile(params: { transcriptPath: string; sessionId: strin
       timestamp: new Date().toISOString(),
       cwd: process.cwd(),
     };
-    fs.writeFileSync(params.transcriptPath, `${JSON.stringify(header)}\n`, {
+    // Write the header to a sibling temp file and rename it in. The caller treats "file exists"
+    // as "transcript already initialised", so a truncated file would silently become a transcript
+    // with no header — worse than one that was never created.
+    const tmpPath = `${params.transcriptPath}.${process.pid}.tmp`;
+    fs.writeFileSync(tmpPath, `${JSON.stringify(header)}\n`, {
       encoding: "utf-8",
       mode: 0o600,
     });
+    fs.renameSync(tmpPath, params.transcriptPath);
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };

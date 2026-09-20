@@ -1,4 +1,4 @@
-import { EnvHttpProxyAgent } from "undici";
+import { EnvHttpProxyAgent, ProxyAgent } from "undici";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { withFetchPreconnect } from "../../test-utils/fetch-mock.js";
 import { createWebFetchTool, createWebSearchTool } from "./web-tools.js";
@@ -46,7 +46,10 @@ function createKimiSearchTool(kimiConfig?: { apiKey?: string; baseUrl?: string; 
   });
 }
 
-function createProviderSearchTool(provider: "brave" | "perplexity" | "grok" | "gemini" | "kimi") {
+function createProviderSearchTool(
+  provider: "brave" | "perplexity" | "grok" | "gemini" | "kimi",
+  declaredProxyUrl?: string,
+) {
   const searchConfig =
     provider === "perplexity"
       ? { provider, perplexity: { apiKey: "pplx-config-test" } }
@@ -61,6 +64,7 @@ function createProviderSearchTool(provider: "brave" | "perplexity" | "grok" | "g
     config: {
       tools: {
         web: {
+          ...(declaredProxyUrl === undefined ? {} : { proxy: declaredProxyUrl }),
           search: searchConfig,
         },
       },
@@ -196,7 +200,7 @@ describe("web_search country and language parameters", () => {
     expect(result?.details).toMatchObject({ error: "invalid_freshness" });
   });
 
-  it("uses proxy-aware dispatcher when HTTP_PROXY is configured", async () => {
+  it("ignores ambient HTTP_PROXY and never installs a proxy-aware dispatcher", async () => {
     vi.stubEnv("HTTP_PROXY", "http://127.0.0.1:7890");
     const mockFetch = installMockFetch({ web: { results: [] } });
     const tool = createWebSearchTool({ config: undefined, sandboxed: true });
@@ -206,11 +210,11 @@ describe("web_search country and language parameters", () => {
     const requestInit = mockFetch.mock.calls[0]?.[1] as
       | (RequestInit & { dispatcher?: unknown })
       | undefined;
-    expect(requestInit?.dispatcher).toBeInstanceOf(EnvHttpProxyAgent);
+    expect(requestInit?.dispatcher).not.toBeInstanceOf(EnvHttpProxyAgent);
   });
 });
 
-describe("web_search provider proxy dispatch", () => {
+describe("web_search provider egress is independent of ambient proxy env", () => {
   const priorFetch = global.fetch;
 
   afterEach(() => {
@@ -219,7 +223,7 @@ describe("web_search provider proxy dispatch", () => {
   });
 
   it.each(["brave", "perplexity", "grok", "gemini", "kimi"] as const)(
-    "uses proxy-aware dispatcher for %s provider when HTTP_PROXY is configured",
+    "ignores HTTP_PROXY for the %s provider",
     async (provider) => {
       vi.stubEnv("HTTP_PROXY", "http://127.0.0.1:7890");
       const mockFetch = installMockFetch(createProviderSuccessPayload(provider));
@@ -231,9 +235,84 @@ describe("web_search provider proxy dispatch", () => {
       const requestInit = mockFetch.mock.calls[0]?.[1] as
         | (RequestInit & { dispatcher?: unknown })
         | undefined;
-      expect(requestInit?.dispatcher).toBeInstanceOf(EnvHttpProxyAgent);
+      expect(requestInit?.dispatcher).not.toBeInstanceOf(EnvHttpProxyAgent);
     },
   );
+});
+
+const DECLARED_PROXY_URL = "http://proxy.corp.example:3128";
+
+describe("web tools route through a declared egress proxy, never through ambient env", () => {
+  const priorFetch = global.fetch;
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    global.fetch = priorFetch;
+  });
+
+  it.each(["brave", "perplexity", "grok", "gemini", "kimi"] as const)(
+    "routes the %s provider through tools.web.proxy even when ambient proxy env is set",
+    async (provider) => {
+      vi.stubEnv("HTTP_PROXY", "http://127.0.0.1:7890");
+      vi.stubEnv("http_proxy", "http://127.0.0.1:7890");
+      const mockFetch = installMockFetch(createProviderSuccessPayload(provider));
+      const tool = createProviderSearchTool(provider, DECLARED_PROXY_URL);
+      expect(tool).not.toBeNull();
+
+      await tool?.execute?.("call-1", { query: `declared-proxy-${provider}-test` });
+
+      const requestInit = mockFetch.mock.calls[0]?.[1] as
+        | (RequestInit & { dispatcher?: unknown })
+        | undefined;
+      expect(requestInit?.dispatcher).toBeInstanceOf(ProxyAgent);
+      expect(requestInit?.dispatcher).not.toBeInstanceOf(EnvHttpProxyAgent);
+    },
+  );
+
+  it("routes web_fetch through tools.web.proxy even when ambient proxy env is set", async () => {
+    vi.stubEnv("HTTP_PROXY", "http://127.0.0.1:7890");
+    vi.stubEnv("http_proxy", "http://127.0.0.1:7890");
+    const mockFetch = vi.fn((_input?: unknown, _init?: unknown) =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        url: "https://example.com/",
+        headers: new Headers({ "content-type": "text/html; charset=utf-8" }),
+        text: () => Promise.resolve("<html><body><p>hello</p></body></html>"),
+      } as unknown as Response),
+    );
+    global.fetch = withFetchPreconnect(mockFetch);
+    const tool = createWebFetchTool({
+      config: { tools: { web: { proxy: DECLARED_PROXY_URL } } },
+      sandboxed: false,
+    });
+    expect(tool).not.toBeNull();
+
+    const pending = tool?.execute?.("call-1", { url: "https://example.com/" });
+    if (pending) {
+      await pending.catch(() => undefined);
+    }
+
+    const requestInit = mockFetch.mock.calls[0]?.[1] as
+      | (RequestInit & { dispatcher?: unknown })
+      | undefined;
+    expect(requestInit?.dispatcher).toBeInstanceOf(ProxyAgent);
+    expect(requestInit?.dispatcher).not.toBeInstanceOf(EnvHttpProxyAgent);
+  });
+
+  it("treats a blank tools.web.proxy as direct egress rather than an empty proxy", async () => {
+    const mockFetch = installMockFetch(createProviderSuccessPayload("brave"));
+    const tool = createProviderSearchTool("brave", "   ");
+    expect(tool).not.toBeNull();
+
+    await tool?.execute?.("call-1", { query: "blank-proxy-test" });
+
+    const requestInit = mockFetch.mock.calls[0]?.[1] as
+      | (RequestInit & { dispatcher?: unknown })
+      | undefined;
+    expect(requestInit?.dispatcher).not.toBeInstanceOf(ProxyAgent);
+    expect(requestInit?.dispatcher).not.toBeInstanceOf(EnvHttpProxyAgent);
+  });
 });
 
 describe("web_search perplexity baseUrl defaults", () => {
@@ -356,7 +435,7 @@ describe("web_search kimi provider", () => {
               },
             ],
             search_results: [
-              { title: "OpenClaw", url: "https://openclaw.ai/docs", content: "docs" },
+              { title: "LCX Agent", url: "https://example.com/docs", content: "docs" },
             ],
           }),
           { status: 200, headers: { "content-type": "application/json" } },
@@ -392,7 +471,7 @@ describe("web_search kimi provider", () => {
       | undefined;
     expect(toolMessage?.tool_call_id).toBe("call_1");
     expect(JSON.parse(toolMessage?.content ?? "{}")).toMatchObject({
-      search_results: [{ url: "https://openclaw.ai/docs" }],
+      search_results: [{ url: "https://example.com/docs" }],
     });
 
     const details = result?.details as {
@@ -401,7 +480,7 @@ describe("web_search kimi provider", () => {
       provider?: string;
     };
     expect(details.provider).toBe("kimi");
-    expect(details.citations).toEqual(["https://openclaw.ai/docs"]);
+    expect(details.citations).toEqual(["https://example.com/docs"]);
     expect(details.content).toContain("final answer");
   });
 });

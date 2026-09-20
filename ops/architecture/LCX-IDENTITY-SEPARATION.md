@@ -56,7 +56,7 @@ is no longer needed and that existing users or extensions have a migration path.
 - Current source and tests use `lcx-agent/plugin-sdk`; the plugin loader also
   aliases the old `openclaw/plugin-sdk` paths for existing plugin source.
 - Config and state names are active LCX defaults for new installs. An existing
-  OpenClaw-era root remains the single normal runtime root until an explicit
+  LCX Agent-era root remains the single normal runtime root until an explicit
   migration switches the complete writer set; legacy names remain compatibility
   inputs and overrides.
 - Writing the canonical config alone does not activate the canonical root. If a
@@ -71,7 +71,7 @@ is no longer needed and that existing users or extensions have a migration path.
 - `src/config/paths.ts` now exposes `resolveLcxIdentityMigrationPlan` as a
   pure, filesystem-read-only planning boundary.
 - With no explicit override, the plan reads the canonical candidates first,
-  falls back to existing OpenClaw-era state/config candidates, and selects
+  falls back to existing LCX Agent-era state/config candidates, and selects
   `~/.lcx/lcx.json` as the write target.
 - An explicit `OPENCLAW_*` or `CLAWDBOT_*` state/config override remains the
   operator's read/write authority for compatibility and rollback.
@@ -240,7 +240,7 @@ owners and are not evidence of external-channel binding or visible delivery.
 The following still require a dedicated migration before removal:
 
 - package name and CLI entry names;
-- runtime source filenames and internal `OpenClaw*` type names;
+- runtime source filenames and internal `LCX Agent*` type names;
 - legacy environment variables and configuration keys;
 - Docker/Podman image, command, and state-root names;
 - app/bundle identifiers and plugin SDK paths;
@@ -249,6 +249,44 @@ The following still require a dedicated migration before removal:
 These are implementation compatibility facts, not a reason to restore an
 upstream remote or copy upstream configuration. New LCX code must not add new
 legacy references unless it is inside a named compatibility adapter.
+
+### Local contract identifiers retained (verified 2026-09-21)
+
+The list above says "wire-level protocol names". These are the concrete ones
+that survive in current source. **None of them is an outbound identity** —
+nothing here leaves the machine or names this product to a third party. Each is
+a string matched literally by a counterpart we do not control (an already
+installed browser extension, an iOS/Android node app, an already advertising
+gateway). Renaming one is a hard cutover, not a rename: it silently un-pairs
+existing installations.
+
+| identifier                                                       | location                                                                                                                                            | counterpart                                                                 |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `/__openclaw__/a2ui`, `/__openclaw__/canvas`, `/__openclaw__/ws` | `src/canvas-host/a2ui.ts:8-12`                                                                                                                      | installed browser extension / sidecar                                       |
+| `/__openclaw__/cap` and the `oc_cap` query param                 | `src/gateway/canvas-capability.ts:3-4`, `src/gateway/server/http-auth.ts:17` (`isCanvasPath`), used at `src/gateway/server-http.ts:623`             | same; also the capability-token auth predicate                              |
+| `_openclaw-gw._tcp`                                              | `src/infra/bonjour-discovery.ts:32`                                                                                                                 | gateway broadcaster and discoverer share one string; consumed by `discover` |
+| `openclawCanvasA2UIAction`                                       | `src/canvas-host/a2ui.ts:89`, `src/canvas-host/server.ts:105-110`, `src/canvas-host/a2ui/app/bootstrap.js:479-484` (compiled into `a2ui.bundle.js`) | iOS `webkit.messageHandlers`, Android WebView object                        |
+| `openclawPostMessage`, `openclawSendUserAction`                  | `src/canvas-host/a2ui.ts:119-120`, `src/canvas-host/server.ts:112,131`                                                                              | canvas HTML already served to clients                                       |
+
+Removal path for every row: add the canonical name **in addition to** the legacy
+one (new name first, legacy as fallback), ship the counterpart, observe, then
+drop the legacy branch. A single-step switch is not acceptable for any row.
+
+### Rename safety: identifiers are not prose
+
+A brand-wide search-and-replace once turned `globalThis.OpenClaw` into
+`globalThis.LCX Agent`. It sits inside a template literal, so TypeScript never
+complained; the injected canvas script was a syntax error at runtime, the action
+bridge was never installed, and the page still served 200 — a silent failure.
+
+Rules:
+
+- Replace surface by surface, never by string across the tree.
+- After any brand rename, grep the product name in **identifier position**
+  (`(globalThis|window|self)\.NAME`, `.NAME.`, `NAME =`), not just as text.
+- `src/canvas-host/server.test.ts` — "injects a live reload script that parses
+  as JavaScript" compiles the injected script with `node:vm` and is the standing
+  guard for this class.
 
 ## Migration order
 

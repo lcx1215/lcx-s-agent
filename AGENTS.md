@@ -21,7 +21,7 @@ Skill. Do not turn this file into a transcript or a second registry.
 - LCX Agent is the standalone product and repository identity. Any historical
   runtime identifier is compatibility-only and is not a product or repository
   authority.
-- The repository is https://github.com/lcx1215/lcx-s-agent. Upstream OpenClaw remains the runtime lineage; it is not a second LCX source or release authority.
+- The repository is https://github.com/lcx1215/lcx-s-agent. Upstream LCX Agent remains the runtime lineage; it is not a second LCX source or release authority.
 - Finance behavior is source-gated and mode-aware: `research_only` remains the
   compatibility default, while explicit `strategy_candidate` and
   `conditional_trade_candidate` modes may produce reviewable strategy or

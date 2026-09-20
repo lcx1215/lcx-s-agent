@@ -46,6 +46,7 @@ import { resolveOpenClawDocsPath } from "../../docs-path.js";
 import { isTimeoutError } from "../../failover-error.js";
 import { resolveImageSanitizationLimits } from "../../image-sanitization.js";
 import { resolveModelAuthMode } from "../../model-auth.js";
+import { ensureModelEgressDispatcher } from "../../model-egress.js";
 import { normalizeProviderId, resolveDefaultModelForAgent } from "../../model-selection.js";
 import { createOllamaStreamFn, OLLAMA_NATIVE_BASE_URL } from "../../ollama-stream.js";
 import { createOpenAIWebSocketStreamFn, releaseWsSession } from "../../openai-ws-stream.js";
@@ -63,6 +64,8 @@ import { subscribeEmbeddedPiSession } from "../../pi-embedded-subscribe.js";
 import { createPreparedEmbeddedPiSettingsManager } from "../../pi-project-settings.js";
 import { toClientToolDefinitions } from "../../pi-tool-definition-adapter.js";
 import { createOpenClawCodingTools, resolveToolLoopDetectionConfig } from "../../pi-tools.js";
+import { maybeDistillRolloutSummaries } from "../../rollout-distill.js";
+import { scheduleRolloutSummary } from "../../rollout-summary.js";
 import { resolveSandboxContext } from "../../sandbox.js";
 import { resolveSandboxRuntimeStatus } from "../../sandbox/runtime-status.js";
 import { repairSessionFileIfNeeded } from "../../session-file-repair.js";
@@ -236,6 +239,30 @@ export function wrapOllamaCompatNumCtx(baseFn: StreamFn | undefined, numCtx: num
         options?.onPayload?.(payload);
       },
     });
+}
+
+/**
+ * Assert the declared egress route at the moment a request is issued, not when the run starts.
+ *
+ * pi-ai installs its ambient `EnvHttpProxyAgent` **more than once**: its `utils/http-proxy.js`
+ * module gets evaluated on more than one resolved URL under pnpm's symlinked `node_modules`, and
+ * every evaluation queues another `setGlobalDispatcher(new EnvHttpProxyAgent())`. Measured on Node
+ * 22, a second install lands one macrotask after the first. A provider module that is loaded lazily
+ * during the first model call can therefore land an ambient install *after* the run began — which
+ * would silently send the request through the host's proxy.
+ *
+ * Keeping this closest to the request makes the declared route the last word before traffic leaves,
+ * independent of how the host's module loader orders those side effects.
+ */
+export function wrapStreamFnEgressAssertion(
+  baseFn: StreamFn | undefined,
+  config: OpenClawConfig | undefined,
+): StreamFn {
+  const streamFn = baseFn ?? streamSimple;
+  return (model, context, options) => {
+    ensureModelEgressDispatcher(config);
+    return streamFn(model, context, options);
+  };
 }
 
 function normalizeToolCallNameForDispatch(rawName: string, allowedToolNames?: Set<string>): string {
@@ -563,6 +590,12 @@ export async function runEmbeddedAttempt(
   );
 
   await fs.mkdir(resolvedWorkspace, { recursive: true });
+
+  // Model requests inherit `globalThis.fetch` — pi-ai passes no `fetch` to its SDK clients — so the
+  // egress route is whatever dispatcher is installed process-wide. Assert the declared route here,
+  // after the first real I/O of the run: pi-ai installs an ambient `EnvHttpProxyAgent` one macrotask
+  // tick after it is imported, so a check made before this point could still be overwritten.
+  ensureModelEgressDispatcher(params.config);
 
   const sandboxSessionKey = params.sessionKey?.trim() || params.sessionId;
   const sandbox = await resolveSandboxContext({
@@ -1034,6 +1067,7 @@ export async function runEmbeddedAttempt(
         if (wsApiKey) {
           activeSession.agent.streamFn = createOpenAIWebSocketStreamFn(wsApiKey, params.sessionId, {
             signal: runAbortController.signal,
+            config: params.config,
           });
         } else {
           log.warn(`[ws-stream] no API key for provider=${params.provider}; using HTTP transport`);
@@ -1043,6 +1077,14 @@ export async function runEmbeddedAttempt(
         // Force a stable streamFn reference so vitest can reliably mock @mariozechner/pi-ai.
         activeSession.agent.streamFn = streamSimple;
       }
+
+      // Innermost layer on purpose: every wrapper below builds on `agent.streamFn`, so this runs
+      // immediately before the request leaves. See `wrapStreamFnEgressAssertion` for why the
+      // assertion cannot live at run start.
+      activeSession.agent.streamFn = wrapStreamFnEgressAssertion(
+        activeSession.agent.streamFn,
+        params.config,
+      );
 
       // Ollama with OpenAI-compatible API needs num_ctx in payload.options.
       // Otherwise Ollama defaults to a 4096 context window.
@@ -1636,6 +1678,24 @@ export async function runEmbeddedAttempt(
               : undefined,
         });
         anthropicPayloadLogger?.recordUsage(messagesSnapshot, promptError);
+
+        // Durable per-session digest. Fire-and-forget: a missing summary is a
+        // stated limitation, never a run failure. Probe sessions are excluded
+        // because they carry no user work.
+        if (!isProbeSession) {
+          scheduleRolloutSummary({
+            workspaceDir: params.workspaceDir,
+            sessionId: params.sessionId,
+            sessionKey: params.sessionKey,
+            agentId: hookAgentId,
+            runId: params.runId,
+            outcome: aborted ? "aborted" : promptError ? "error" : "success",
+            error: promptError ? describeUnknownError(promptError) : undefined,
+            durationMs: Date.now() - promptStartedAt,
+            messages: messagesSnapshot,
+          });
+          maybeDistillRolloutSummaries({ workspaceDir: params.workspaceDir });
+        }
 
         // Run agent_end hooks to allow plugins to analyze the conversation
         // This is fire-and-forget, so we don't await

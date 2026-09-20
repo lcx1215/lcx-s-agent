@@ -7,8 +7,8 @@ const setDefaultResultOrder = vi.hoisted(() => vi.fn());
 const setGlobalDispatcher = vi.hoisted(() => vi.fn());
 const getGlobalDispatcherState = vi.hoisted(() => ({ value: undefined as unknown }));
 const getGlobalDispatcher = vi.hoisted(() => vi.fn(() => getGlobalDispatcherState.value));
-const EnvHttpProxyAgentCtor = vi.hoisted(() =>
-  vi.fn(function MockEnvHttpProxyAgent(this: { options: unknown }, options: unknown) {
+const AgentCtor = vi.hoisted(() =>
+  vi.fn(function MockAgent(this: { options: unknown }, options: unknown) {
     this.options = options;
   }),
 );
@@ -30,15 +30,15 @@ vi.mock("node:dns", async () => {
 });
 
 vi.mock("undici", () => ({
-  EnvHttpProxyAgent: EnvHttpProxyAgentCtor,
+  Agent: AgentCtor,
   getGlobalDispatcher,
   setGlobalDispatcher,
 }));
 
 const originalFetch = globalThis.fetch;
 
-function expectEnvProxyAgentConstructorCall(params: { nth: number; autoSelectFamily: boolean }) {
-  expect(EnvHttpProxyAgentCtor).toHaveBeenNthCalledWith(params.nth, {
+function expectAgentConstructorCall(params: { nth: number; autoSelectFamily: boolean }) {
+  expect(AgentCtor).toHaveBeenNthCalledWith(params.nth, {
     connect: {
       autoSelectFamily: params.autoSelectFamily,
       autoSelectFamilyAttemptTimeout: 300,
@@ -61,7 +61,7 @@ afterEach(() => {
   setGlobalDispatcher.mockReset();
   getGlobalDispatcher.mockClear();
   getGlobalDispatcherState.value = undefined;
-  EnvHttpProxyAgentCtor.mockClear();
+  AgentCtor.mockClear();
   vi.unstubAllEnvs();
   vi.clearAllMocks();
   if (originalFetch) {
@@ -169,12 +169,12 @@ describe("resolveTelegramFetch", () => {
     expect(setDefaultResultOrder).toHaveBeenCalledTimes(2);
   });
 
-  it("replaces global undici dispatcher with proxy-aware EnvHttpProxyAgent", async () => {
+  it("replaces global undici dispatcher with an env-independent Agent", async () => {
     globalThis.fetch = vi.fn(async () => ({})) as unknown as typeof fetch;
     resolveTelegramFetch(undefined, { network: { autoSelectFamily: true } });
 
     expect(setGlobalDispatcher).toHaveBeenCalledTimes(1);
-    expectEnvProxyAgentConstructorCall({ nth: 1, autoSelectFamily: true });
+    expectAgentConstructorCall({ nth: 1, autoSelectFamily: true });
   });
 
   it("keeps an existing proxy-like global dispatcher", async () => {
@@ -186,11 +186,28 @@ describe("resolveTelegramFetch", () => {
     resolveTelegramFetch(undefined, { network: { autoSelectFamily: true } });
 
     expect(setGlobalDispatcher).not.toHaveBeenCalled();
-    expect(EnvHttpProxyAgentCtor).not.toHaveBeenCalled();
+    expect(AgentCtor).not.toHaveBeenCalled();
   });
 
-  it("updates proxy-like dispatcher when proxy env is configured", async () => {
+  it("replaces an ambient EnvHttpProxyAgent instead of preserving it", async () => {
+    // `@mariozechner/pi-ai` installs `new EnvHttpProxyAgent()` as the process-wide dispatcher just
+    // by being imported, which makes it look like an operator-configured proxy. It is not: its
+    // route comes from ambient HTTP_PROXY/HTTPS_PROXY, so preserving it would let the host
+    // environment choose the egress route.
+    getGlobalDispatcherState.value = {
+      constructor: { name: "EnvHttpProxyAgent" },
+    };
+    globalThis.fetch = vi.fn(async () => ({})) as unknown as typeof fetch;
+
+    resolveTelegramFetch(undefined, { network: { autoSelectFamily: true } });
+
+    expect(setGlobalDispatcher).toHaveBeenCalledTimes(1);
+    expectAgentConstructorCall({ nth: 1, autoSelectFamily: true });
+  });
+
+  it("ignores ambient proxy env and keeps the explicitly configured dispatcher", async () => {
     vi.stubEnv("HTTPS_PROXY", "http://127.0.0.1:7890");
+    vi.stubEnv("HTTP_PROXY", "http://127.0.0.1:7890");
     getGlobalDispatcherState.value = {
       constructor: { name: "ProxyAgent" },
     };
@@ -198,8 +215,21 @@ describe("resolveTelegramFetch", () => {
 
     resolveTelegramFetch(undefined, { network: { autoSelectFamily: true } });
 
+    expect(setGlobalDispatcher).not.toHaveBeenCalled();
+    expect(AgentCtor).not.toHaveBeenCalled();
+  });
+
+  it("does not adopt ambient proxy env when no dispatcher is configured", async () => {
+    vi.stubEnv("HTTPS_PROXY", "http://127.0.0.1:7890");
+    globalThis.fetch = vi.fn(async () => ({})) as unknown as typeof fetch;
+
+    resolveTelegramFetch(undefined, { network: { autoSelectFamily: true } });
+
     expect(setGlobalDispatcher).toHaveBeenCalledTimes(1);
-    expect(EnvHttpProxyAgentCtor).toHaveBeenCalledTimes(1);
+    expectAgentConstructorCall({ nth: 1, autoSelectFamily: true });
+    const agentOptions = AgentCtor.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(agentOptions).not.toHaveProperty("httpProxy");
+    expect(agentOptions).not.toHaveProperty("httpsProxy");
   });
 
   it("sets global dispatcher only once across repeated equal decisions", async () => {
@@ -216,8 +246,8 @@ describe("resolveTelegramFetch", () => {
     resolveTelegramFetch(undefined, { network: { autoSelectFamily: false } });
 
     expect(setGlobalDispatcher).toHaveBeenCalledTimes(2);
-    expectEnvProxyAgentConstructorCall({ nth: 1, autoSelectFamily: true });
-    expectEnvProxyAgentConstructorCall({ nth: 2, autoSelectFamily: false });
+    expectAgentConstructorCall({ nth: 1, autoSelectFamily: true });
+    expectAgentConstructorCall({ nth: 2, autoSelectFamily: false });
   });
 
   it("retries once with ipv4 fallback when fetch fails with network timeout/unreachable", async () => {
@@ -247,8 +277,8 @@ describe("resolveTelegramFetch", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(setGlobalDispatcher).toHaveBeenCalledTimes(2);
-    expectEnvProxyAgentConstructorCall({ nth: 1, autoSelectFamily: true });
-    expectEnvProxyAgentConstructorCall({ nth: 2, autoSelectFamily: false });
+    expectAgentConstructorCall({ nth: 1, autoSelectFamily: true });
+    expectAgentConstructorCall({ nth: 2, autoSelectFamily: false });
   });
 
   it("retries with ipv4 fallback once per request, not once per process", async () => {

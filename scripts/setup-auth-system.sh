@@ -1,5 +1,5 @@
 #!/bin/bash
-# Setup OpenClaw Auth Management System
+# Setup LCX Agent Auth Management System
 # Run this once to set up:
 # 1. Long-lived Claude Code token
 # 2. Auth monitoring with notifications
@@ -9,7 +9,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "=== OpenClaw Auth System Setup ==="
+echo "=== LCX Agent Auth System Setup ==="
 echo ""
 
 # Step 1: Check current auth status
@@ -56,7 +56,7 @@ read -r NTFY_TOPIC
 
 # Phone notification
 echo ""
-echo "  OpenClaw message: Send warning via OpenClaw itself"
+echo "  LCX Agent message: Send warning via LCX Agent itself"
 echo "Enter your phone number for alerts (or leave blank to skip):"
 read -r PHONE_NUMBER
 

@@ -10,6 +10,7 @@ import {
   LEARNING_RECALL_MEMORY_NOTES,
   OPERATING_REVIEW_MEMORY_NOTES,
 } from "../hooks/bundled/lobster-brain-registry.js";
+import { CANONICAL_CLI_NAME, CANONICAL_PRODUCT_NAME } from "../infra/canonical-identity.js";
 import { listDeliverableMessageChannels } from "../utils/message-channel.js";
 import type { ResolvedTimeFormat } from "./date-time.js";
 import type { EmbeddedContextFile } from "./pi-embedded-helpers.js";
@@ -334,7 +335,7 @@ function buildEvalDrivenLoopSection(params: { isMinimal: boolean; availableTools
 function buildStrategyDoctrineSection() {
   return [
     "## Strategy Doctrine",
-    "Build and operate Lobster / OpenClaw as a research operating system for one real user, with an explicit path from research to authorized execution.",
+    "Build and operate Lobster / LCX Agent as a research operating system for one real user, with an explicit path from research to authorized execution.",
     "The goal is not to look impressive. The goal is to become more useful, more reliable, more learnable, and more economically valuable over time.",
     "The default mainline is low-frequency / daily research and screening, centered on ETF, major-asset, and large-cap watchlists. Higher-frequency and execution-driven work is opt-in, never the implicit default.",
     "Optimize for steady daily improvement, long-horizon cumulative learning, and better long-term money-making through stronger filtering, timing discipline, and hard risk control, not through hype, noise, or fake prediction.",
@@ -556,7 +557,7 @@ function buildMessagingSection(params: {
     "- Cross-session messaging → use sessions_send(sessionKey, message)",
     "- Sub-agent orchestration → use subagents(action=list|steer|kill)",
     `- Runtime-generated completion events may ask for a user update. Rewrite those in your normal assistant voice and send the update (do not forward raw internal metadata or default to ${SILENT_REPLY_TOKEN}).`,
-    "- Never use exec/curl for provider messaging; OpenClaw handles all routing internally.",
+    "- Never use exec/curl for provider messaging; LCX Agent handles all routing internally.",
     params.availableTools.has("message")
       ? [
           "",
@@ -597,13 +598,10 @@ function buildDocsSection(params: { docsPath?: string; isMinimal: boolean; readT
   }
   return [
     "## Documentation",
-    `OpenClaw docs: ${docsPath}`,
-    "Mirror: https://docs.openclaw.ai",
-    "Source: https://github.com/openclaw/openclaw",
-    "Community: https://discord.com/invite/clawd",
-    "Find new skills: https://clawhub.com",
-    "For OpenClaw behavior, commands, config, or architecture: consult local docs first.",
-    "When diagnosing issues, run `openclaw status` yourself when possible; only ask the user if you lack access (e.g., sandboxed).",
+    `${CANONICAL_PRODUCT_NAME} docs: ${docsPath}`,
+    "Source: https://github.com/lcx1215/lcx-s-agent",
+    `For ${CANONICAL_PRODUCT_NAME} behavior, commands, config, or architecture: consult local docs first.`,
+    `When diagnosing issues, run \`${CANONICAL_CLI_NAME} status\` yourself when possible; only ask the user if you lack access (e.g., sandboxed).`,
     "",
   ];
 }
@@ -686,6 +684,8 @@ export function buildAgentSystemPrompt(params: {
       "Inspect the durable finance framework core contract across domains or for one exact domain; read-only",
     finance_data_gateway_snapshot:
       "Normalize one research-only finance data snapshot from primary, cross-check, and official/issuer evidence; requires timestamps, field definitions, units/currency, freshness, and conflict visibility before sourced numbers are used",
+    finance_data_connector:
+      "Inspect the declared finance data connector surface by business domain, list the MCP tools one connector exposes, or call one MCP tool; connectors with no published endpoint are reported as gaps, never invented",
     finance_article_source_registry_record:
       "Create or refresh one retained finance article source registry entry using only safe collection methods; mark interviews, blogs, podcasts, social sentiment, viral events, and market-attention stories as weak alternative evidence with reliability and follow-through gates; never fetches remote content automatically",
     finance_article_source_collection_preflight:
@@ -745,10 +745,10 @@ export function buildAgentSystemPrompt(params: {
     nodes: "List/describe/notify/camera/screen on paired nodes",
     cron: "Manage cron jobs and wake events (use for reminders; when scheduling a reminder, write the systemEvent text as something that will read like a reminder when it fires, and mention that it is a reminder depending on the time gap between setting and firing; include recent context in reminder text if appropriate)",
     message: "Send messages and channel actions",
-    gateway: "Restart, apply config, or run updates on the running OpenClaw process",
+    gateway: "Restart, apply config, or run updates on the running LCX Agent process",
     agents_list: acpSpawnRuntimeEnabled
-      ? 'List OpenClaw agent ids allowed for sessions_spawn when runtime="subagent" (not ACP harness ids)'
-      : "List OpenClaw agent ids allowed for sessions_spawn",
+      ? 'List LCX Agent agent ids allowed for sessions_spawn when runtime="subagent" (not ACP harness ids)'
+      : "List LCX Agent agent ids allowed for sessions_spawn",
     sessions_list: "List other sessions (incl. sub-agents) with filters/last",
     sessions_history: "Fetch history for another session/sub-agent",
     sessions_send: "Send a message to another session/sub-agent",
@@ -781,6 +781,7 @@ export function buildAgentSystemPrompt(params: {
     "finance_framework_core_inspect",
     "finance_framework_core_record",
     "finance_data_gateway_snapshot",
+    "finance_data_connector",
     "finance_article_source_registry_record",
     "finance_article_source_collection_preflight",
     "finance_article_source_registry_inspect",
@@ -959,11 +960,11 @@ export function buildAgentSystemPrompt(params: {
 
   // For "none" mode, return just the basic identity line
   if (promptMode === "none") {
-    return "You are a personal assistant running inside OpenClaw.";
+    return `You are a personal assistant running inside ${CANONICAL_PRODUCT_NAME}.`;
   }
 
   const lines = [
-    "You are a personal assistant running inside OpenClaw.",
+    `You are a personal assistant running inside ${CANONICAL_PRODUCT_NAME}.`,
     "",
     "## Tooling",
     "Tool availability (filtered by policy):",
@@ -978,7 +979,7 @@ export function buildAgentSystemPrompt(params: {
           "- apply_patch: apply multi-file patches",
           `- ${execToolName}: run shell commands (supports background via yieldMs/background)`,
           `- ${processToolName}: manage background exec sessions`,
-          "- browser: control OpenClaw's dedicated browser",
+          "- browser: control LCX Agent's dedicated browser",
           "- canvas: present/eval/snapshot the Canvas",
           "- nodes: list/describe/notify/camera/screen on paired nodes",
           "- cron: manage cron jobs and wake events (use for reminders; when scheduling a reminder, write the systemEvent text as something that will read like a reminder when it fires, and mention that it is a reminder depending on the time gap between setting and firing; include recent context in reminder text if appropriate)",
@@ -1012,8 +1013,8 @@ export function buildAgentSystemPrompt(params: {
     "When approvals are required, preserve and show the full command/script exactly as provided (including chained operators like &&, ||, |, ;, or multiline shells) so the user can approve what will actually run.",
     "",
     ...safetySection,
-    "## OpenClaw CLI Quick Reference",
-    "OpenClaw is controlled via subcommands. Do not invent commands.",
+    "## LCX Agent CLI Quick Reference",
+    "LCX Agent is controlled via subcommands. Do not invent commands.",
     "To manage the Gateway daemon service (start/stop/restart):",
     "- openclaw gateway status",
     "- openclaw gateway start",
@@ -1034,15 +1035,15 @@ export function buildAgentSystemPrompt(params: {
     ...supervisionSection,
     ...macroDeductionSection,
     // Skip self-update for subagent/none modes
-    hasGateway && !isMinimal ? "## OpenClaw Self-Update" : "",
+    hasGateway && !isMinimal ? "## LCX Agent Self-Update" : "",
     hasGateway && !isMinimal
       ? [
           "Get Updates (self-update) is ONLY allowed when the user explicitly asks for it.",
           "Do not run config.apply or update.run unless the user explicitly requests an update or config change; if it's not explicit, ask first.",
-          "When the user asks whether OpenClaw should update, self-update, or only update if worthwhile, run update.check first and reason from that read-only result before considering update.run.",
+          "When the user asks whether LCX Agent should update, self-update, or only update if worthwhile, run update.check first and reason from that read-only result before considering update.run.",
           "Use config.schema to fetch the current JSON Schema (includes plugins/channels) before making config changes or answering config-field questions; avoid guessing field names/types.",
           "Actions: config.get, config.schema, update.check (read-only update worthiness preflight), config.apply (validate + write full config, then restart), config.patch (partial update, merges with existing), update.run (update deps or git, then restart).",
-          "After restart, OpenClaw pings the last active session automatically.",
+          "After restart, LCX Agent pings the last active session automatically.",
         ].join("\n")
       : "",
     hasGateway && !isMinimal ? "" : "",
@@ -1120,7 +1121,7 @@ export function buildAgentSystemPrompt(params: {
       userTimezone,
     }),
     "## Workspace Files (injected)",
-    "These user-editable files are loaded by OpenClaw and included below in Project Context.",
+    "These user-editable files are loaded by LCX Agent and included below in Project Context.",
     "",
     ...buildReplyTagsSection(isMinimal),
     ...buildMessagingSection({
@@ -1227,7 +1228,7 @@ export function buildAgentSystemPrompt(params: {
       heartbeatPromptLine,
       "If you receive a heartbeat poll (a user message matching the heartbeat prompt above), and there is nothing that needs attention, reply exactly:",
       "HEARTBEAT_OK",
-      'OpenClaw treats a leading/trailing "HEARTBEAT_OK" as a heartbeat ack (and may discard it).',
+      'LCX Agent treats a leading/trailing "HEARTBEAT_OK" as a heartbeat ack (and may discard it).',
       'If something needs attention, do NOT include "HEARTBEAT_OK"; reply with the alert text instead.',
       "",
     );

@@ -2,7 +2,7 @@
 read_when:
   - 运行无头节点主机
   - 为 system.run 配对非 macOS 节点
-summary: "`openclaw node` 的 CLI 参考（无头节点主机）"
+summary: "`lcx node` 的 CLI 参考（无头节点主机）"
 title: node
 x-i18n:
   generated_at: "2026-02-03T07:45:07Z"
@@ -13,14 +13,14 @@ x-i18n:
   workflow: 15
 ---
 
-# `openclaw node`
+# `lcx node`
 
 运行一个**无头节点主机**，连接到 Gateway 网关 WebSocket 并在此机器上暴露
 `system.run` / `system.which`。
 
 ## 为什么使用节点主机？
 
-当你希望智能体**在网络中的其他机器上运行命令**，而无需在那里安装完整的 OpenClaw Gateway 网关时，请使用节点主机。
+当你希望智能体**在网络中的其他机器上运行命令**，而无需在那里安装完整的 LCX Agent Gateway 网关时，请使用节点主机。
 
 常见用例：
 
@@ -49,7 +49,7 @@ x-i18n:
 ## 运行（前台）
 
 ```bash
-openclaw node run --host <gateway-host> --port 18789
+lcx node run --host <gateway-host> --port 18789
 ```
 
 选项：
@@ -66,7 +66,7 @@ openclaw node run --host <gateway-host> --port 18789
 将无头节点主机安装为用户服务。
 
 ```bash
-openclaw node install --host <gateway-host> --port 18789
+lcx node install --host <gateway-host> --port 18789
 ```
 
 选项：
@@ -83,13 +83,13 @@ openclaw node install --host <gateway-host> --port 18789
 管理服务：
 
 ```bash
-openclaw node status
-openclaw node stop
-openclaw node restart
-openclaw node uninstall
+lcx node status
+lcx node stop
+lcx node restart
+lcx node uninstall
 ```
 
-使用 `openclaw node run` 运行前台节点主机（无服务）。
+使用 `lcx node run` 运行前台节点主机（无服务）。
 
 服务命令接受 `--json` 以获取机器可读输出。
 
@@ -99,8 +99,8 @@ openclaw node uninstall
 通过以下方式批准：
 
 ```bash
-openclaw nodes pending
-openclaw nodes approve <requestId>
+lcx nodes pending
+lcx nodes approve <requestId>
 ```
 
 节点主机将其节点 id、token、显示名称和 Gateway 网关连接信息存储在
@@ -112,4 +112,4 @@ openclaw nodes approve <requestId>
 
 - `~/.openclaw/exec-approvals.json`
 - [执行批准](/tools/exec-approvals)
-- `openclaw approvals --node <id|name|ip>`（从 Gateway 网关编辑）
+- `lcx approvals --node <id|name|ip>`（从 Gateway 网关编辑）

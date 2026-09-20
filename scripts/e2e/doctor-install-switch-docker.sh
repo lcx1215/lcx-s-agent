@@ -132,7 +132,7 @@ LOGINCTL
 
     eval "$install_cmd"
 
-    unit_path="$HOME/.config/systemd/user/openclaw-gateway.service"
+    unit_path="$HOME/.config/systemd/user/lcx-gateway.service"
     if [ ! -f "$unit_path" ]; then
       echo "Missing unit file: $unit_path"
       exit 1

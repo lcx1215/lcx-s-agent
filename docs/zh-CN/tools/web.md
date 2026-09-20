@@ -16,7 +16,7 @@ x-i18n:
 
 # Web 工具
 
-OpenClaw 提供两个轻量级 Web 工具：
+LCX Agent 提供两个轻量级 Web 工具：
 
 - `web_search` — 通过 Brave Search API（默认）或 Perplexity Sonar（直连或通过 OpenRouter）搜索网络。
 - `web_fetch` — HTTP 获取 + 可读性提取（HTML → markdown/文本）。
@@ -78,7 +78,7 @@ OpenClaw 提供两个轻量级 Web 工具：
 
 1. 在 https://brave.com/search/api/ 创建 Brave Search API 账户
 2. 在控制面板中，选择 **Data for Search** 计划（不是"Data for AI"）并生成 API 密钥。
-3. 运行 `openclaw configure --section web` 将密钥存储在配置中（推荐），或在环境中设置 `BRAVE_API_KEY`。
+3. 运行 `lcx configure --section web` 将密钥存储在配置中（推荐），或在环境中设置 `BRAVE_API_KEY`。
 
 Brave 提供免费层和付费计划；查看 Brave API 门户了解当前限制和定价。
 
@@ -123,7 +123,7 @@ Perplexity Sonar 模型具有内置的网络搜索功能，并返回带有引用
 
 **环境变量替代方案：** 在 Gateway 网关环境中设置 `OPENROUTER_API_KEY` 或 `PERPLEXITY_API_KEY`。对于 Gateway 网关安装，将其放在 `~/.openclaw/.env` 中。
 
-如果未设置基础 URL，OpenClaw 会根据 API 密钥来源选择默认值：
+如果未设置基础 URL，LCX Agent 会根据 API 密钥来源选择默认值：
 
 - `PERPLEXITY_API_KEY` 或 `pplx-...` → `https://api.perplexity.ai`
 - `OPENROUTER_API_KEY` 或 `sk-or-...` → `https://openrouter.ai/api/v1`
@@ -136,6 +136,29 @@ Perplexity Sonar 模型具有内置的网络搜索功能，并返回带有引用
 | `perplexity/sonar`               | 带网络搜索的快速问答 | 快速查询 |
 | `perplexity/sonar-pro`（默认）   | 带网络搜索的多步推理 | 复杂问题 |
 | `perplexity/sonar-reasoning-pro` | 思维链分析           | 深度研究 |
+
+## 出口代理
+
+Web 工具的流量**不会**跟随环境变量里的代理设置。`web_search` 与 `web_fetch` 共用同一个声明 `tools.web.proxy`，因此同一份配置在 VPN 后的笔记本上和 AWS/Cloudflare 上行为一致。
+
+```json5
+{
+  tools: {
+    web: {
+      // 可选。web_search 与 web_fetch 共用的出口代理。
+      proxy: "http://proxy.corp.example:3128",
+    },
+  },
+}
+```
+
+- **不设置（默认）**：直连。忽略 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 及其小写形式。
+- **设置后**：请求走声明的代理；环境变量依然被忽略，因此随 shell 一起消失的代理不会静默打断后续所有请求。
+- 空字符串或纯空白视为未设置（直连）。
+- 请使用 `http://` 或 `https://` 形式的 URL。走代理时跳过 DNS 固定（由代理自行解析目标主机）。
+- 目标主机名**不再需要本机可解析**：由代理自行解析，因此 `web_fetch` 可以访问只有代理认识的主机。SSRF 预检仍会执行所有不依赖 DNS 的检查（主机名白名单、字面 IP 策略），所以 `http://169.254.169.254/` 依然被拦截；此路径上无法拦截的是"公网域名解析到内网地址"——声明了代理时，这个判断交给代理。
+- 未声明代理时行为不变：预检仍会解析主机，解析不了照样拒绝。
+- 两个工具读同一个字段，不会出现 `web_search` 走了代理而 `web_fetch` 直连（或反之）的情况。
 
 ## web_search
 

@@ -30,7 +30,7 @@ pnpm dlx promptfoo@latest eval -c evals/local-brain/promptfoo.yaml
 
 If Promptfoo fails on `better-sqlite3` native bindings, fix the local Promptfoo
 install/cache outside the repo, then rerun the same command. Do not add
-Promptfoo or `better-sqlite3` to the OpenClaw runtime dependencies just to make
+Promptfoo or `better-sqlite3` to the LCX Agent runtime dependencies just to make
 this dev eval work.
 
 This eval calls:

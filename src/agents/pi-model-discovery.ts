@@ -5,6 +5,7 @@ import type {
   AuthStorage as PiAuthStorage,
   ModelRegistry as PiModelRegistry,
 } from "@mariozechner/pi-coding-agent";
+import { saveJsonFile } from "../infra/json-file.js";
 import { ensureAuthProfileStore } from "./auth-profiles.js";
 import { resolvePiCredentialMapFromStore, type PiCredentialMap } from "./pi-auth-credentials.js";
 
@@ -85,8 +86,9 @@ function scrubLegacyStaticAuthJsonEntries(pathname: string): void {
     return;
   }
 
-  fs.writeFileSync(pathname, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
-  fs.chmodSync(pathname, 0o600);
+  // This is the pi credential store: a truncated write would take every remaining provider
+  // credential with it, so replace it atomically.
+  saveJsonFile(pathname, parsed);
 }
 
 function createAuthStorage(AuthStorageLike: unknown, path: string, creds: PiCredentialMap) {

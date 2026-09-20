@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { evaluateFinanceDecisionPolicy } from "./finance-decision-policy.js";
+import {
+  FINANCE_STAGE_ALLOWED_MODES,
+  FINANCE_STAGE_MODE_REFUSAL,
+  evaluateFinanceDecisionPolicy,
+} from "./finance-decision-policy.js";
 
 const candidateContext = {
   evidence: [{ id: "market-20260907", text: "截至 2026-09-07 的财报和报价数据。" }],
@@ -141,5 +145,64 @@ describe("finance decision policy", () => {
     });
 
     expect(candidate.executionAuthority).toBe("none");
+  });
+});
+
+describe("finance strategy stage binding", () => {
+  const conditionalAnswer =
+    "候选买入 AAPL：如果触发条件成立则考虑，依据截至 2026-09-07 的数据，风险是回撤，持有期一个月，仅供审阅，不自动下单。";
+
+  it("refuses a conditional write-up for a method that only reached paper_candidate", () => {
+    const result = evaluateFinanceDecisionPolicy({
+      mode: "conditional_trade_candidate",
+      ask: "AAPL 现在适合买吗？",
+      answer: conditionalAnswer,
+      candidateContext,
+      stage: "paper_candidate",
+    });
+
+    expect(result.allowed).toBe(false);
+    expect(result.failedReasons).toContain(FINANCE_STAGE_MODE_REFUSAL);
+    expect(result.requiredEvidence.join(" ")).toContain("stage_paper_candidate_allows_modes");
+  });
+
+  it("refuses method_only written up as a strategy candidate", () => {
+    const result = evaluateFinanceDecisionPolicy({
+      mode: "strategy_candidate",
+      ask: "给我一个低频组合策略",
+      answer:
+        "策略候选：在利率上行场景下降低成长暴露。如果实际利率继续上行则触发防守条件；依据来源和截至时间戳需要逐项核验。风险是回撤和相关性失效，持有周期按季度复核。仅供审阅，不自动下单，执行前需要人工确认。",
+      candidateContext,
+      stage: "method_only",
+    });
+
+    expect(result.allowed).toBe(false);
+    expect(result.failedReasons).toContain(FINANCE_STAGE_MODE_REFUSAL);
+  });
+
+  it("keeps live_execution outside every research stage", () => {
+    for (const [stage, modes] of Object.entries(FINANCE_STAGE_ALLOWED_MODES)) {
+      expect(modes).not.toContain("live_execution");
+      const result = evaluateFinanceDecisionPolicy({
+        mode: "live_execution",
+        ask: "按策略直接下单 AAPL。",
+        answer: "Your AAPL order has been executed.",
+        executionAdapter: "declared-broker-adapter",
+        stage: stage as keyof typeof FINANCE_STAGE_ALLOWED_MODES,
+      });
+      expect(result.failedReasons).toContain(FINANCE_STAGE_MODE_REFUSAL);
+    }
+  });
+
+  it("asserts nothing when no stage is declared", () => {
+    const result = evaluateFinanceDecisionPolicy({
+      mode: "conditional_trade_candidate",
+      ask: "AAPL 现在适合买吗？",
+      answer: conditionalAnswer,
+      candidateContext,
+    });
+
+    expect(result.allowed).toBe(true);
+    expect(result.failedReasons).toEqual([]);
   });
 });

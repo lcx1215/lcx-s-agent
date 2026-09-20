@@ -43,9 +43,10 @@ export function ensureDirForFile(filePath: string): void {
 }
 
 export function writeJsonFileSecure(pathname: string, value: unknown): void {
-  ensureDirForFile(pathname);
-  fs.writeFileSync(pathname, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-  fs.chmodSync(pathname, 0o600);
+  // "Secure" has to mean more than the file mode: writeFileSync truncates before it writes, so a
+  // crash mid-write used to leave a half-written secrets file behind — with the mode fix applied
+  // to nothing. writeTextFileAtomic right below does the temp-file + rename dance, so use it.
+  writeTextFileAtomic(pathname, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 export function readTextFileIfExists(pathname: string): string | null {

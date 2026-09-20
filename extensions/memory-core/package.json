@@ -2,7 +2,7 @@
   "name": "@openclaw/memory-core",
   "version": "2026.3.2",
   "private": true,
-  "description": "OpenClaw core memory search plugin",
+  "description": "LCX Agent core memory search plugin",
   "type": "module",
   "dependencies": {
     "lcx-agent": "workspace:*"

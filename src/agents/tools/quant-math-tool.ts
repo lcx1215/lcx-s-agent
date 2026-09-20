@@ -156,7 +156,14 @@ function sampleVariance(values: number[]): number {
     throw new ToolInputError("at least 2 values required");
   }
   const avg = mean(values);
-  return values.reduce((sum, value) => sum + (value - avg) ** 2, 0) / (values.length - 1);
+  const variance = values.reduce((sum, value) => sum + (value - avg) ** 2, 0) / (values.length - 1);
+  // mean() is a rounded sum, so on a perfectly flat series the deviations are not zero: they are
+  // the leftovers of that rounding, of order (n * eps * |mean|). Left as it is, a constant series
+  // reports a volatility near 1e-18, and every "must be non-zero" check below waves it through —
+  // Sharpe comes out around 1e16 and the correlation between two flat series comes out as 1.
+  // Dispersion that sits at the rounding floor of the mean is no dispersion at all.
+  const roundingFloor = (values.length * Number.EPSILON * Math.abs(avg)) ** 2;
+  return variance <= roundingFloor ? 0 : variance;
 }
 
 function sampleStdDev(values: number[]): number {

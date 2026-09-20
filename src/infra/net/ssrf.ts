@@ -329,6 +329,40 @@ export async function resolvePinnedHostname(
   return await resolvePinnedHostnameWithPolicy(hostname, { lookupFn });
 }
 
+/**
+ * Preflight for a target that a *declared proxy* will resolve and connect to.
+ *
+ * Runs exactly the checks that do not need a DNS answer — the hostname allowlist and the
+ * literal host/IP policy — and deliberately skips resolution, because on this route the proxy,
+ * not this process, turns the name into an address. Requiring a local lookup here only rejected
+ * names the local resolver cannot answer (an internal-only host reached through a corporate
+ * proxy), while adding no protection: a literal IP is still caught below, and a name that
+ * resolves to a private address is one the proxy has to reach anyway.
+ *
+ * What is given up is the *rebind* check: a public name that resolves to a private address is no
+ * longer caught when a proxy is declared. That is accepted because the declared proxy is an
+ * explicit operator choice, and it — not the local resolver — decides what it will connect to.
+ */
+export function assertAllowedHostnameForProxyRoute(hostname: string, policy?: SsrFPolicy): void {
+  const normalized = normalizeHostname(hostname);
+  if (!normalized) {
+    throw new Error("Invalid hostname");
+  }
+
+  const allowPrivateNetwork = isPrivateNetworkAllowedByPolicy(policy);
+  const allowedHostnames = normalizeHostnameSet(policy?.allowedHostnames);
+  const hostnameAllowlist = normalizeHostnameAllowlist(policy?.hostnameAllowlist);
+  const skipPrivateNetworkChecks = allowPrivateNetwork || allowedHostnames.has(normalized);
+
+  if (!matchesHostnameAllowlist(normalized, hostnameAllowlist)) {
+    throw new SsrFBlockedError(`Blocked hostname (not in allowlist): ${hostname}`);
+  }
+
+  if (!skipPrivateNetworkChecks) {
+    assertAllowedHostOrIpOrThrow(normalized, policy);
+  }
+}
+
 export function createPinnedDispatcher(pinned: PinnedHostname): Dispatcher {
   return new Agent({
     connect: {

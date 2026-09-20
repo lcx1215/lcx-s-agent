@@ -333,6 +333,15 @@ export type FinancePositionRecordsRead = Readonly<{
 
 export type FinancePositionLedgerRead = Readonly<{
   ledger: FinancePositionLedger;
+  /**
+   * The exact stream `ledger` was derived from, after the `asOf` filter was applied.
+   *
+   * A downstream projection (a behaviour profile, a second metric) must describe the same
+   * stream the positions beside it came from. Re-deriving the filter at each call site would
+   * mean two copies of the `asOf` rule that can drift apart, so the read reports what it used.
+   */
+  receipts: readonly FinanceExecutionReceipt[];
+  marks: readonly FinancePositionMark[];
   recordCount: number;
   receiptRecordCount: number;
   markRecordCount: number;
@@ -582,6 +591,8 @@ export async function readFinancePositionLedger(
   const ordered = considered.toSorted((left, right) => left.at.localeCompare(right.at));
   return Object.freeze({
     ledger: projectFinancePositions({ receipts: read.receipts, marks: ordered }),
+    receipts: Object.freeze([...read.receipts]),
+    marks: Object.freeze([...ordered]),
     recordCount: read.records.length,
     receiptRecordCount: read.receipts.length,
     markRecordCount: read.marks.length,

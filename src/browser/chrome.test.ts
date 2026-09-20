@@ -163,7 +163,7 @@ describe("browser chrome profile decoration", () => {
     expect(def.profile_color_seed).toBeUndefined();
   });
 
-  it("recovers from missing/invalid preference files", async () => {
+  it("leaves preference files it cannot read alone instead of overwriting them", async () => {
     const userDataDir = await createUserDataDir();
     await fsp.mkdir(path.join(userDataDir, "Default"), { recursive: true });
     await fsp.writeFile(path.join(userDataDir, "Local State"), "{", "utf-8"); // invalid JSON
@@ -172,6 +172,20 @@ describe("browser chrome profile decoration", () => {
       "[]", // valid JSON but wrong shape
       "utf-8",
     );
+
+    decorateOpenClawProfile(userDataDir, { color: DEFAULT_OPENCLAW_BROWSER_COLOR });
+
+    // Neither file is ours to replace: we could not see inside either one, and a profile's
+    // preferences are the only copy of its settings.
+    expect(await fsp.readFile(path.join(userDataDir, "Local State"), "utf-8")).toBe("{");
+    expect(await fsp.readFile(path.join(userDataDir, "Default", "Preferences"), "utf-8")).toBe(
+      "[]",
+    );
+  });
+
+  it("decorates a profile whose preference files are missing", async () => {
+    const userDataDir = await createUserDataDir();
+    await fsp.mkdir(path.join(userDataDir, "Default"), { recursive: true });
 
     decorateOpenClawProfile(userDataDir, { color: DEFAULT_OPENCLAW_BROWSER_COLOR });
 

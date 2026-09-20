@@ -1,7 +1,7 @@
 # LCX Codex Coding Harness
 
 LCX now exposes `codex_coding_harness` as a guarded coding capability. It is a
-thin LCX control layer over the existing OpenClaw ACP runtime; it is not a
+thin LCX control layer over the existing LCX Agent ACP runtime; it is not a
 second agent runtime and does not replace the normal `sessions_spawn` path.
 
 ## What is actually absorbed
@@ -12,7 +12,7 @@ second agent runtime and does not replace the normal `sessions_spawn` path.
 - Codex's coding executor is reached through ACP. The LCX layer waits for the
   actual run, observes the child history, observes the worktree, and records a
   bounded receipt.
-- The existing OpenClaw ACP policy, sandbox boundary, session manager, and
+- The existing LCX Agent ACP policy, sandbox boundary, session manager, and
   plugin registry remain the authority for runtime execution.
 
 The full DeepSeek Cordis tree and the Codex Rust `app-server` are intentionally
@@ -61,7 +61,7 @@ The next candidates are worth evaluating, but are not copied in this slice:
 
 - Codex `app-server` approval and backpressure events: absorb only if the
   current ACP adapter cannot expose a concrete event required by a coding
-  gate. Existing OpenClaw already owns ACP queueing, cancellation, approval,
+  gate. Existing LCX Agent already owns ACP queueing, cancellation, approval,
   and sandbox policy.
 - DeepSeek projection seams and event-schema migrations: useful for a future
   cross-runtime trace registry, but the coding trajectory first needs repeated

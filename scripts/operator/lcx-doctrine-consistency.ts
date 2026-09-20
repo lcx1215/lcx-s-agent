@@ -308,7 +308,7 @@ async function main() {
       fileLabel: "AGENTS.md repository identity",
       required: [
         "https://github.com/lcx1215/lcx-s-agent",
-        "Upstream OpenClaw remains the runtime lineage",
+        "Upstream LCX Agent remains the runtime lineage",
       ],
       summary:
         "repo guidance should identify the LCX fork without erasing upstream runtime lineage",

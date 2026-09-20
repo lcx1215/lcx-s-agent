@@ -227,6 +227,15 @@ function assessReceipt(receipt: SourceReceipt, job: PlannedJob) {
   const futureTimestampLimitMs = historicalCutoff
     ? Date.parse(job.request.asOf)
     : Date.now() + FINANCE_LIVE_NOW_MAX_FUTURE_SKEW_MINUTES * 60_000;
+  /**
+   * `sourceTimestamp` is when the data is from, so a historical `asOf` legitimately bounds it.
+   * `observedAt` is when *we* fetched, which for a historical `asOf` is always later — comparing
+   * it to `asOf` rejected every record an adapter had stamped with the real fetch time, so a
+   * source that returned valid in-window data was structurally unable to contribute evidence.
+   * The look-ahead guard belongs to `sourceTimestamp`; `observedAt` is only bounded in live-now
+   * mode, where an implausible reading means clock skew worth refusing.
+   */
+  const observedAtLimitMs = historicalCutoff ? Number.POSITIVE_INFINITY : futureTimestampLimitMs;
   for (const record of (receipt as FinanceMarketCollectionReceipt).records) {
     const key = JSON.stringify([record.providerName, record.collection, record.itemId]);
     const sourceTimestampMs = Date.parse(record.sourceTimestamp);
@@ -237,7 +246,7 @@ function assessReceipt(receipt: SourceReceipt, job: PlannedJob) {
       !Number.isFinite(sourceTimestampMs) ||
       !Number.isFinite(observedAtMs) ||
       sourceTimestampMs > futureTimestampLimitMs ||
-      observedAtMs > futureTimestampLimitMs ||
+      observedAtMs > observedAtLimitMs ||
       age > job.freshnessMaxMinutes ||
       record.delayStatus === "manual_or_unknown" ||
       !record.sourceUrlOrArtifact?.trim()

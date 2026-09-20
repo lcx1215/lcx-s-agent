@@ -325,8 +325,48 @@ export const ToolsWebFetchSchema = z
 
 export const ToolsWebSchema = z
   .object({
+    proxy: z.string().optional(),
     search: ToolsWebSearchSchema,
     fetch: ToolsWebFetchSchema,
+  })
+  .strict()
+  .optional();
+
+/**
+ * MCP server declarations. Strict on purpose: a typo in `transport`, `command` or `url` is a
+ * config error the operator needs to see, not something to silently coerce into a no-op.
+ */
+export const McpStdioServerSchema = z
+  .object({
+    transport: z.literal("stdio"),
+    command: z.string().min(1),
+    args: z.array(z.string()).optional(),
+    env: z.record(z.string(), z.string()).optional(),
+    cwd: z.string().optional(),
+    timeoutMs: z.number().int().positive().optional(),
+    enabled: z.boolean().optional(),
+  })
+  .strict();
+
+export const McpHttpServerSchema = z
+  .object({
+    transport: z.literal("http"),
+    url: z.string().min(1),
+    headers: z.record(z.string(), z.string()).optional(),
+    proxyUrl: z.string().optional(),
+    timeoutMs: z.number().int().positive().optional(),
+    enabled: z.boolean().optional(),
+  })
+  .strict();
+
+export const McpServerSchema = z.discriminatedUnion("transport", [
+  McpStdioServerSchema,
+  McpHttpServerSchema,
+]);
+
+export const ToolsMcpSchema = z
+  .object({
+    servers: z.record(z.string(), McpServerSchema).optional(),
   })
   .strict()
   .optional();
@@ -640,6 +680,12 @@ export const MemorySearchSchema = z
       .object({
         maxResults: z.number().int().positive().optional(),
         minScore: z.number().min(0).max(1).optional(),
+        fts: z
+          .object({
+            enabled: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
         hybrid: z
           .object({
             enabled: z.boolean().optional(),
@@ -718,6 +764,7 @@ export const ToolsSchema = z
   .object({
     ...CommonToolPolicyFields,
     web: ToolsWebSchema,
+    mcp: ToolsMcpSchema,
     media: ToolsMediaSchema,
     links: ToolsLinksSchema,
     sessions: z

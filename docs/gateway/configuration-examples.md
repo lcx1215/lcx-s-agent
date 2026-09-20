@@ -1,9 +1,9 @@
 ---
-summary: "Schema-accurate configuration examples for common OpenClaw setups"
+summary: "Schema-accurate configuration examples for common LCX Agent setups"
 read_when:
-  - Learning how to configure OpenClaw
+  - Learning how to configure LCX Agent
   - Looking for configuration examples
-  - Setting up OpenClaw for the first time
+  - Setting up LCX Agent for the first time
 title: "Configuration Examples"
 ---
 
@@ -291,7 +291,7 @@ Save to `~/.openclaw/openclaw.json` and you can DM the bot from that number.
         perSession: true,
         workspaceRoot: "~/.openclaw/sandboxes",
         docker: {
-          image: "openclaw-sandbox:bookworm-slim",
+          image: "lcx-sandbox:bookworm-slim",
           workdir: "/workspace",
           readOnlyRoot: true,
           tmpfs: ["/tmp", "/var/tmp", "/run"],

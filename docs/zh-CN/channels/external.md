@@ -1,7 +1,7 @@
 ---
 summary: "通过 JSON Webhook 和 HTTP 端点连接任意外部软件"
 read_when:
-  - 你想把自定义应用、工作流或服务接入 OpenClaw
+  - 你想把自定义应用、工作流或服务接入 LCX Agent
   - 你需要与厂商无关的入站和出站消息契约
 title: 外部消息通道
 ---
@@ -9,7 +9,7 @@ title: 外部消息通道
 # 外部消息通道
 
 外部消息通道是一个与厂商无关的适配器，面向能够发送和接收 HTTP 请求的
-软件。它在入站 Webhook 接收 JSON 消息，经 OpenClaw 正常路由和回复管道处理，
+软件。它在入站 Webhook 接收 JSON 消息，经 LCX Agent 正常路由和回复管道处理，
 再把回复以 JSON `POST` 请求发送到配置的端点。
 
 它不要求特定聊天厂商、SDK、账号体系或网络拓扑。Webhook 的提供方和出站

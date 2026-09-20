@@ -65,7 +65,7 @@ Risk boundaries:
 
 ## Plain-Language Surface Check
 
-`pnpm openclaw capabilities language-brain-loop-smoke --json` passed:
+`pnpm lcx capabilities language-brain-loop-smoke --json` passed:
 
 - `visibleReply.startsWithPlainSummary: true`
 - `visibleReply.hidesInternalLabels: true`
@@ -98,7 +98,7 @@ pnpm exec vitest run test/local-brain-contracts.test.ts
 Result: 1 file passed, 2 tests passed.
 
 ```bash
-pnpm openclaw capabilities language-brain-loop-smoke --json
+pnpm lcx capabilities language-brain-loop-smoke --json
 ```
 
 Result: passed; final visible surface starts with a plain-language summary and hides internal JSON labels.

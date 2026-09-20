@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPOSE_FILE="$ROOT_DIR/docker-compose.yml"
 EXTRA_COMPOSE_FILE="$ROOT_DIR/docker-compose.extra.yml"
-IMAGE_NAME="${OPENCLAW_IMAGE:-openclaw:local}"
+IMAGE_NAME="${OPENCLAW_IMAGE:-lcx:local}"
 EXTRA_MOUNTS="${OPENCLAW_EXTRA_MOUNTS:-}"
 HOME_VOLUME_NAME="${OPENCLAW_HOME_VOLUME:-}"
 RAW_SANDBOX_SETTING="${OPENCLAW_SANDBOX:-}"
@@ -89,7 +89,7 @@ ensure_control_ui_allowed_origins() {
   local current_allowed_origins
   allowed_origin_json="$(printf '["http://127.0.0.1:%s"]' "$OPENCLAW_GATEWAY_PORT")"
   current_allowed_origins="$(
-    docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
+    docker compose "${COMPOSE_ARGS[@]}" run --rm lcx-cli \
       config get gateway.controlUi.allowedOrigins 2>/dev/null || true
   )"
   current_allowed_origins="${current_allowed_origins//$'\r'/}"
@@ -99,15 +99,15 @@ ensure_control_ui_allowed_origins() {
     return 0
   fi
 
-  docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
+  docker compose "${COMPOSE_ARGS[@]}" run --rm lcx-cli \
     config set gateway.controlUi.allowedOrigins "$allowed_origin_json" --strict-json >/dev/null
   echo "Set gateway.controlUi.allowedOrigins to $allowed_origin_json for non-loopback bind."
 }
 
 sync_gateway_mode_and_bind() {
-  docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
+  docker compose "${COMPOSE_ARGS[@]}" run --rm lcx-cli \
     config set gateway.mode local >/dev/null
-  docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
+  docker compose "${COMPOSE_ARGS[@]}" run --rm lcx-cli \
     config set gateway.bind "$OPENCLAW_GATEWAY_BIND" >/dev/null
   echo "Pinned gateway.mode=local and gateway.bind=$OPENCLAW_GATEWAY_BIND for Docker setup."
 }
@@ -243,7 +243,7 @@ write_extra_compose() {
 
   cat >"$EXTRA_COMPOSE_FILE" <<'YAML'
 services:
-  openclaw-gateway:
+  lcx-gateway:
     volumes:
 YAML
 
@@ -265,7 +265,7 @@ YAML
   done
 
   cat >>"$EXTRA_COMPOSE_FILE" <<'YAML'
-  openclaw-cli:
+  lcx-cli:
     volumes:
 YAML
 
@@ -384,7 +384,7 @@ upsert_env "$ENV_FILE" \
   OPENCLAW_INSTALL_DOCKER_CLI \
   OPENCLAW_ALLOW_INSECURE_PRIVATE_WS
 
-if [[ "$IMAGE_NAME" == "openclaw:local" ]]; then
+if [[ "$IMAGE_NAME" == "lcx:local" ]]; then
   echo "==> Building Docker image: $IMAGE_NAME"
   docker build \
     --build-arg "OPENCLAW_DOCKER_APT_PACKAGES=${OPENCLAW_DOCKER_APT_PACKAGES}" \
@@ -412,7 +412,7 @@ echo "==> Fixing data-directory permissions"
 # ownership of all user project files on Linux hosts.
 # After fixing the config dir, only the OpenClaw metadata subdirectory
 # (.openclaw/) inside the workspace gets chowned, not the user's project files.
-docker compose "${COMPOSE_ARGS[@]}" run --rm --user root --entrypoint sh openclaw-cli -c \
+docker compose "${COMPOSE_ARGS[@]}" run --rm --user root --entrypoint sh lcx-cli -c \
   'find /home/node/.openclaw -xdev -exec chown node:node {} +; \
    [ -d /home/node/.openclaw/workspace/.openclaw ] && chown -R node:node /home/node/.openclaw/workspace/.openclaw || true'
 
@@ -425,7 +425,7 @@ echo "Gateway token: configured (redacted; stored in $OPENCLAW_CONFIG_DIR/.env o
 echo "Tailscale exposure: Off (use host-level tailnet/Tailscale setup separately)."
 echo "Install Gateway daemon: No (managed by Docker Compose)"
 echo ""
-docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli onboard --mode local --no-install-daemon
+docker compose "${COMPOSE_ARGS[@]}" run --rm lcx-cli onboard --mode local --no-install-daemon
 
 echo ""
 echo "==> Docker gateway defaults"
@@ -438,16 +438,16 @@ ensure_control_ui_allowed_origins
 echo ""
 echo "==> Provider setup (optional)"
 echo "WhatsApp (QR):"
-echo "  ${COMPOSE_HINT} run --rm openclaw-cli channels login"
+echo "  ${COMPOSE_HINT} run --rm lcx-cli channels login"
 echo "Telegram (bot token):"
-echo "  ${COMPOSE_HINT} run --rm openclaw-cli channels add --channel telegram --token <token>"
+echo "  ${COMPOSE_HINT} run --rm lcx-cli channels add --channel telegram --token <token>"
 echo "Discord (bot token):"
-echo "  ${COMPOSE_HINT} run --rm openclaw-cli channels add --channel discord --token <token>"
+echo "  ${COMPOSE_HINT} run --rm lcx-cli channels add --channel discord --token <token>"
 echo "Docs: https://docs.openclaw.ai/channels"
 
 echo ""
 echo "==> Starting gateway"
-docker compose "${COMPOSE_ARGS[@]}" up -d openclaw-gateway
+docker compose "${COMPOSE_ARGS[@]}" up -d lcx-gateway
 
 # --- Sandbox setup (opt-in via OPENCLAW_SANDBOX=1) ---
 if [[ -n "$SANDBOX_ENABLED" ]]; then
@@ -456,9 +456,9 @@ if [[ -n "$SANDBOX_ENABLED" ]]; then
 
   # Build sandbox image if Dockerfile.sandbox exists.
   if [[ -f "$ROOT_DIR/Dockerfile.sandbox" ]]; then
-    echo "Building sandbox image: openclaw-sandbox:bookworm-slim"
+    echo "Building sandbox image: lcx-sandbox:bookworm-slim"
     docker build \
-      -t "openclaw-sandbox:bookworm-slim" \
+      -t "lcx-sandbox:bookworm-slim" \
       -f "$ROOT_DIR/Dockerfile.sandbox" \
       "$ROOT_DIR"
   else
@@ -470,10 +470,10 @@ if [[ -n "$SANDBOX_ENABLED" ]]; then
   # Defense-in-depth: verify Docker CLI in the running image before enabling
   # sandbox. This avoids claiming sandbox is enabled when the image cannot
   # launch sandbox containers.
-  if ! docker compose "${COMPOSE_ARGS[@]}" run --rm --entrypoint docker openclaw-gateway --version >/dev/null 2>&1; then
+  if ! docker compose "${COMPOSE_ARGS[@]}" run --rm --entrypoint docker lcx-gateway --version >/dev/null 2>&1; then
     echo "WARNING: Docker CLI not found inside the container image." >&2
     echo "  Sandbox requires Docker CLI. Rebuild with --build-arg OPENCLAW_INSTALL_DOCKER_CLI=1" >&2
-    echo "  or use a local build (OPENCLAW_IMAGE=openclaw:local). Skipping sandbox setup." >&2
+    echo "  or use a local build (OPENCLAW_IMAGE=lcx:local). Skipping sandbox setup." >&2
     SANDBOX_ENABLED=""
   fi
 fi
@@ -487,7 +487,7 @@ if [[ -n "$SANDBOX_ENABLED" ]]; then
     SANDBOX_COMPOSE_FILE="$ROOT_DIR/docker-compose.sandbox.yml"
     cat >"$SANDBOX_COMPOSE_FILE" <<YAML
 services:
-  openclaw-gateway:
+  lcx-gateway:
     volumes:
       - ${DOCKER_SOCKET_PATH}:/var/run/docker.sock
 YAML
@@ -509,17 +509,17 @@ fi
 if [[ -n "$SANDBOX_ENABLED" ]]; then
   # Enable sandbox in OpenClaw config.
   sandbox_config_ok=true
-  if ! docker compose "${COMPOSE_ARGS[@]}" run --rm --no-deps openclaw-cli \
+  if ! docker compose "${COMPOSE_ARGS[@]}" run --rm --no-deps lcx-cli \
     config set agents.defaults.sandbox.mode "non-main" >/dev/null; then
     echo "WARNING: Failed to set agents.defaults.sandbox.mode" >&2
     sandbox_config_ok=false
   fi
-  if ! docker compose "${COMPOSE_ARGS[@]}" run --rm --no-deps openclaw-cli \
+  if ! docker compose "${COMPOSE_ARGS[@]}" run --rm --no-deps lcx-cli \
     config set agents.defaults.sandbox.scope "agent" >/dev/null; then
     echo "WARNING: Failed to set agents.defaults.sandbox.scope" >&2
     sandbox_config_ok=false
   fi
-  if ! docker compose "${COMPOSE_ARGS[@]}" run --rm --no-deps openclaw-cli \
+  if ! docker compose "${COMPOSE_ARGS[@]}" run --rm --no-deps lcx-cli \
     config set agents.defaults.sandbox.workspaceAccess "none" >/dev/null; then
     echo "WARNING: Failed to set agents.defaults.sandbox.workspaceAccess" >&2
     sandbox_config_ok=false
@@ -529,11 +529,11 @@ if [[ -n "$SANDBOX_ENABLED" ]]; then
     echo "Sandbox enabled: mode=non-main, scope=agent, workspaceAccess=none"
     echo "Docs: https://docs.openclaw.ai/gateway/sandboxing"
     # Restart gateway with sandbox compose overlay to pick up socket mount + config.
-    docker compose "${COMPOSE_ARGS[@]}" up -d openclaw-gateway
+    docker compose "${COMPOSE_ARGS[@]}" up -d lcx-gateway
   else
     echo "WARNING: Sandbox config was partially applied. Check errors above." >&2
     echo "  Skipping gateway restart to avoid exposing Docker socket without a full sandbox policy." >&2
-    if ! docker compose "${BASE_COMPOSE_ARGS[@]}" run --rm --no-deps openclaw-cli \
+    if ! docker compose "${BASE_COMPOSE_ARGS[@]}" run --rm --no-deps lcx-cli \
       config set agents.defaults.sandbox.mode "off" >/dev/null; then
       echo "WARNING: Failed to roll back agents.defaults.sandbox.mode to off" >&2
     else
@@ -543,13 +543,13 @@ if [[ -n "$SANDBOX_ENABLED" ]]; then
       rm -f "$SANDBOX_COMPOSE_FILE"
     fi
     # Ensure gateway service definition is reset without sandbox overlay mount.
-    docker compose "${BASE_COMPOSE_ARGS[@]}" up -d --force-recreate openclaw-gateway
+    docker compose "${BASE_COMPOSE_ARGS[@]}" up -d --force-recreate lcx-gateway
   fi
 else
   # Keep reruns deterministic: if sandbox is not active for this run, reset
   # persisted sandbox mode so future execs do not require docker.sock by stale
   # config alone.
-  if ! docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
+  if ! docker compose "${COMPOSE_ARGS[@]}" run --rm lcx-cli \
     config set agents.defaults.sandbox.mode "off" >/dev/null; then
     echo "WARNING: Failed to reset agents.defaults.sandbox.mode to off" >&2
   fi
@@ -566,6 +566,6 @@ echo "Workspace: $OPENCLAW_WORKSPACE_DIR"
 echo "Token: configured (redacted)"
 echo ""
 echo "Commands:"
-echo "  ${COMPOSE_HINT} logs -f openclaw-gateway"
-echo "  ${COMPOSE_HINT} exec openclaw-gateway node dist/index.js health --token \"\$OPENCLAW_GATEWAY_TOKEN\""
+echo "  ${COMPOSE_HINT} logs -f lcx-gateway"
+echo "  ${COMPOSE_HINT} exec lcx-gateway node dist/index.js health --token \"\$OPENCLAW_GATEWAY_TOKEN\""
 # Bootstraps Docker-based OpenClaw setup for local or server installs.

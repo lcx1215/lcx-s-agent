@@ -11,29 +11,29 @@ Manage Docker-based sandbox containers for isolated agent execution.
 
 ## Overview
 
-OpenClaw can run agents in isolated Docker containers for security. The `sandbox` commands help you manage these containers, especially after updates or configuration changes.
+LCX Agent can run agents in isolated Docker containers for security. The `sandbox` commands help you manage these containers, especially after updates or configuration changes.
 
 ## Commands
 
-### `openclaw sandbox explain`
+### `lcx sandbox explain`
 
 Inspect the **effective** sandbox mode/scope/workspace access, sandbox tool policy, and elevated gates (with fix-it config key paths).
 
 ```bash
-openclaw sandbox explain
-openclaw sandbox explain --session agent:main:main
-openclaw sandbox explain --agent work
-openclaw sandbox explain --json
+lcx sandbox explain
+lcx sandbox explain --session agent:main:main
+lcx sandbox explain --agent work
+lcx sandbox explain --json
 ```
 
-### `openclaw sandbox list`
+### `lcx sandbox list`
 
 List all sandbox containers with their status and configuration.
 
 ```bash
-openclaw sandbox list
-openclaw sandbox list --browser  # List only browser containers
-openclaw sandbox list --json     # JSON output
+lcx sandbox list
+lcx sandbox list --browser  # List only browser containers
+lcx sandbox list --json     # JSON output
 ```
 
 **Output includes:**
@@ -44,16 +44,16 @@ openclaw sandbox list --json     # JSON output
 - Idle time (time since last use)
 - Associated session/agent
 
-### `openclaw sandbox recreate`
+### `lcx sandbox recreate`
 
 Remove sandbox containers to force recreation with updated images/config.
 
 ```bash
-openclaw sandbox recreate --all                # Recreate all containers
-openclaw sandbox recreate --session main       # Specific session
-openclaw sandbox recreate --agent mybot        # Specific agent
-openclaw sandbox recreate --browser            # Only browser containers
-openclaw sandbox recreate --all --force        # Skip confirmation
+lcx sandbox recreate --all                # Recreate all containers
+lcx sandbox recreate --session main       # Specific session
+lcx sandbox recreate --agent mybot        # Specific agent
+lcx sandbox recreate --browser            # Only browser containers
+lcx sandbox recreate --all --force        # Skip confirmation
 ```
 
 **Options:**
@@ -72,14 +72,14 @@ openclaw sandbox recreate --all --force        # Skip confirmation
 
 ```bash
 # Pull new image
-docker pull openclaw-sandbox:latest
-docker tag openclaw-sandbox:latest openclaw-sandbox:bookworm-slim
+docker pull lcx-sandbox:latest
+docker tag lcx-sandbox:latest lcx-sandbox:bookworm-slim
 
 # Update config to use new image
 # Edit config: agents.defaults.sandbox.docker.image (or agents.list[].sandbox.docker.image)
 
 # Recreate containers
-openclaw sandbox recreate --all
+lcx sandbox recreate --all
 ```
 
 ### After changing sandbox configuration
@@ -88,22 +88,22 @@ openclaw sandbox recreate --all
 # Edit config: agents.defaults.sandbox.* (or agents.list[].sandbox.*)
 
 # Recreate to apply new config
-openclaw sandbox recreate --all
+lcx sandbox recreate --all
 ```
 
 ### After changing setupCommand
 
 ```bash
-openclaw sandbox recreate --all
+lcx sandbox recreate --all
 # or just one agent:
-openclaw sandbox recreate --agent family
+lcx sandbox recreate --agent family
 ```
 
 ### For a specific agent only
 
 ```bash
 # Update only one agent's containers
-openclaw sandbox recreate --agent alfred
+lcx sandbox recreate --agent alfred
 ```
 
 ## Why is this needed?
@@ -114,9 +114,9 @@ openclaw sandbox recreate --agent alfred
 - Containers are only pruned after 24h of inactivity
 - Regularly-used agents keep old containers running indefinitely
 
-**Solution:** Use `openclaw sandbox recreate` to force removal of old containers. They'll be recreated automatically with current settings when next needed.
+**Solution:** Use `lcx sandbox recreate` to force removal of old containers. They'll be recreated automatically with current settings when next needed.
 
-Tip: prefer `openclaw sandbox recreate` over manual `docker rm`. It uses the
+Tip: prefer `lcx sandbox recreate` over manual `docker rm`. It uses the
 Gateway’s container naming and avoids mismatches when scope/session keys change.
 
 ## Configuration
@@ -131,8 +131,8 @@ Sandbox settings live in `~/.openclaw/openclaw.json` under `agents.defaults.sand
         "mode": "all", // off, non-main, all
         "scope": "agent", // session, agent, shared
         "docker": {
-          "image": "openclaw-sandbox:bookworm-slim",
-          "containerPrefix": "openclaw-sbx-",
+          "image": "lcx-sandbox:bookworm-slim",
+          "containerPrefix": "lcx-sbx-",
           // ... more Docker options
         },
         "prune": {

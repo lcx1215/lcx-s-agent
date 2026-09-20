@@ -53,6 +53,47 @@ async function buildBlockedSnapshot() {
   return buildFinanceDataGatewaySnapshot(input);
 }
 
+describe("composeFinanceAnswer grounding attachment", () => {
+  it("passes the gate when the answer declares the number the snapshot actually contained", async () => {
+    const snapshot = await buildBlockedSnapshot();
+    const reply =
+      "QQQ last price 725.17.\n\n```figures\n" +
+      JSON.stringify([{ kind: "observed", name: "last_price", value: 725.17 }]) +
+      "\n```";
+    const model = recordingModel(reply);
+    const result = await composeFinanceAnswer({
+      ask: "where is QQQ",
+      snapshot,
+      model: "moonshot/kimi-k2.5",
+      callModel: model.caller,
+    });
+    expect(result.grounding.verdict).toBe("verified");
+    expect(result.grounding.grounded).toHaveLength(1);
+  });
+
+  it("reports an answer with no declaration block as unverifiable rather than passing it", async () => {
+    const snapshot = await buildBlockedSnapshot();
+    const model = recordingModel("QQQ last price 725.17 with no declared figures.");
+    const result = await composeFinanceAnswer({
+      ask: "where is QQQ",
+      snapshot,
+      model: "moonshot/kimi-k2.5",
+      callModel: model.caller,
+    });
+    expect(result.grounding.verdict).toBe("not_verifiable");
+  });
+
+  it("tells the model to declare its figures", async () => {
+    const model = recordingModel("ok");
+    await composeFinanceAnswer({
+      ask: "x",
+      model: "moonshot/kimi-k2.5",
+      callModel: model.caller,
+    });
+    expect(model.seen[0].systemContext).toContain("`figures`");
+  });
+});
+
 describe("buildGroundingContext", () => {
   it("warns against inventing numbers when there is no snapshot", () => {
     const context = buildGroundingContext(undefined);

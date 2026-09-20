@@ -1,11 +1,11 @@
 # @openclaw/zalo
 
-Zalo channel plugin for OpenClaw (Bot API).
+Zalo channel plugin for LCX Agent (Bot API).
 
 ## Install (local checkout)
 
 ```bash
-openclaw plugins install ./extensions/zalo
+lcx plugins install ./extensions/zalo
 ```
 
 ## Install (npm)

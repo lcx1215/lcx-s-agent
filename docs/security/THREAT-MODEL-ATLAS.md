@@ -1,4 +1,4 @@
-# OpenClaw Threat Model v1.0
+# LCX Agent Threat Model v1.0
 
 ## MITRE ATLAS Framework
 
@@ -21,7 +21,7 @@ This threat model is built on [MITRE ATLAS](https://atlas.mitre.org/), the indus
 
 ### Contributing to This Threat Model
 
-This is a living document maintained by the OpenClaw community. See [CONTRIBUTING-THREAT-MODEL.md](/security/CONTRIBUTING-THREAT-MODEL) for guidelines on contributing:
+This is a living document maintained by the LCX Agent community. See [CONTRIBUTING-THREAT-MODEL.md](/security/CONTRIBUTING-THREAT-MODEL) for guidelines on contributing:
 
 - Reporting new threats
 - Updating existing threats
@@ -34,18 +34,18 @@ This is a living document maintained by the OpenClaw community. See [CONTRIBUTIN
 
 ### 1.1 Purpose
 
-This threat model documents adversarial threats to the OpenClaw AI agent platform and ClawHub skill marketplace, using the MITRE ATLAS framework designed specifically for AI/ML systems.
+This threat model documents adversarial threats to the LCX Agent AI agent platform and its skill marketplace, using the MITRE ATLAS framework designed specifically for AI/ML systems.
 
 ### 1.2 Scope
 
-| Component              | Included | Notes                                            |
-| ---------------------- | -------- | ------------------------------------------------ |
-| OpenClaw Agent Runtime | Yes      | Core agent execution, tool calls, sessions       |
-| Gateway                | Yes      | Authentication, routing, channel integration     |
-| Channel Integrations   | Yes      | WhatsApp, Telegram, Discord, Signal, Slack, etc. |
-| ClawHub Marketplace    | Yes      | Skill publishing, moderation, distribution       |
-| MCP Servers            | Yes      | External tool providers                          |
-| User Devices           | Partial  | Mobile apps, desktop clients                     |
+| Component               | Included | Notes                                            |
+| ----------------------- | -------- | ------------------------------------------------ |
+| LCX Agent Agent Runtime | Yes      | Core agent execution, tool calls, sessions       |
+| Gateway                 | Yes      | Authentication, routing, channel integration     |
+| Channel Integrations    | Yes      | WhatsApp, Telegram, Discord, Signal, Slack, etc. |
+| Skill marketplace       | Yes      | Skill publishing, moderation, distribution       |
+| MCP Servers             | Yes      | External tool providers                          |
+| User Devices            | Partial  | Mobile apps, desktop clients                     |
 
 ### 1.3 Out of Scope
 
@@ -113,7 +113,7 @@ Nothing is explicitly out of scope for this threat model.
 ┌─────────────────────────────────────────────────────────────────┐
 │                 TRUST BOUNDARY 5: Supply Chain                   │
 │  ┌──────────────────────────────────────────────────────────┐   │
-│  │                      CLAWHUB                              │   │
+│  │                     MARKETPLACE                           │   │
 │  │  • Skill publishing (semver, SKILL.md required)           │   │
 │  │  • Pattern-based moderation flags                         │   │
 │  │  • VirusTotal scanning (coming soon)                      │   │
@@ -124,14 +124,14 @@ Nothing is explicitly out of scope for this threat model.
 
 ### 2.2 Data Flows
 
-| Flow | Source  | Destination | Data               | Protection           |
-| ---- | ------- | ----------- | ------------------ | -------------------- |
-| F1   | Channel | Gateway     | User messages      | TLS, AllowFrom       |
-| F2   | Gateway | Agent       | Routed messages    | Session isolation    |
-| F3   | Agent   | Tools       | Tool invocations   | Policy enforcement   |
-| F4   | Agent   | External    | web_fetch requests | SSRF blocking        |
-| F5   | ClawHub | Agent       | Skill code         | Moderation, scanning |
-| F6   | Agent   | Channel     | Responses          | Output filtering     |
+| Flow | Source      | Destination | Data               | Protection           |
+| ---- | ----------- | ----------- | ------------------ | -------------------- |
+| F1   | Channel     | Gateway     | User messages      | TLS, AllowFrom       |
+| F2   | Gateway     | Agent       | Routed messages    | Session isolation    |
+| F3   | Agent       | Tools       | Tool invocations   | Policy enforcement   |
+| F4   | Agent       | External    | web_fetch requests | SSRF blocking        |
+| F5   | Marketplace | Agent       | Skill code         | Moderation, scanning |
+| F6   | Agent       | Channel     | Responses          | Output filtering     |
 
 ---
 
@@ -144,7 +144,7 @@ Nothing is explicitly out of scope for this threat model.
 | Attribute               | Value                                                                |
 | ----------------------- | -------------------------------------------------------------------- |
 | **ATLAS ID**            | AML.T0006 - Active Scanning                                          |
-| **Description**         | Attacker scans for exposed OpenClaw gateway endpoints                |
+| **Description**         | Attacker scans for exposed LCX Agent gateway endpoints               |
 | **Attack Vector**       | Network scanning, shodan queries, DNS enumeration                    |
 | **Affected Components** | Gateway, exposed API endpoints                                       |
 | **Current Mitigations** | Tailscale auth option, bind to loopback by default                   |
@@ -264,9 +264,9 @@ Nothing is explicitly out of scope for this threat model.
 | Attribute               | Value                                                                    |
 | ----------------------- | ------------------------------------------------------------------------ |
 | **ATLAS ID**            | AML.T0010.001 - Supply Chain Compromise: AI Software                     |
-| **Description**         | Attacker publishes malicious skill to ClawHub                            |
+| **Description**         | Attacker publishes malicious skill to the marketplace                    |
 | **Attack Vector**       | Create account, publish skill with hidden malicious code                 |
-| **Affected Components** | ClawHub, skill loading, agent execution                                  |
+| **Affected Components** | Marketplace, skill loading, agent execution                              |
 | **Current Mitigations** | GitHub account age verification, pattern-based moderation flags          |
 | **Residual Risk**       | Critical - No sandboxing, limited review                                 |
 | **Recommendations**     | VirusTotal integration (in progress), skill sandboxing, community review |
@@ -278,7 +278,7 @@ Nothing is explicitly out of scope for this threat model.
 | **ATLAS ID**            | AML.T0010.001 - Supply Chain Compromise: AI Software           |
 | **Description**         | Attacker compromises popular skill and pushes malicious update |
 | **Attack Vector**       | Account compromise, social engineering of skill owner          |
-| **Affected Components** | ClawHub versioning, auto-update flows                          |
+| **Affected Components** | Marketplace versioning, auto-update flows                      |
 | **Current Mitigations** | Version fingerprinting                                         |
 | **Residual Risk**       | High - Auto-updates may pull malicious versions                |
 | **Recommendations**     | Implement update signing, rollback capability, version pinning |
@@ -306,7 +306,7 @@ Nothing is explicitly out of scope for this threat model.
 | **ATLAS ID**            | AML.T0043 - Craft Adversarial Data                                     |
 | **Description**         | Attacker crafts skill content to evade moderation patterns             |
 | **Attack Vector**       | Unicode homoglyphs, encoding tricks, dynamic loading                   |
-| **Affected Components** | ClawHub moderation.ts                                                  |
+| **Affected Components** | Marketplace moderation.ts                                              |
 | **Current Mitigations** | Pattern-based FLAG_RULES                                               |
 | **Residual Risk**       | High - Simple regex easily bypassed                                    |
 | **Recommendations**     | Add behavioral analysis (VirusTotal Code Insight), AST-based detection |
@@ -433,7 +433,7 @@ Nothing is explicitly out of scope for this threat model.
 
 ---
 
-## 4. ClawHub Supply Chain Analysis
+## 4. Skill Supply Chain Analysis
 
 ### 4.1 Current Security Controls
 
@@ -560,7 +560,7 @@ T-EXEC-002 → T-EXFIL-001 → External exfiltration
 
 ### 7.1 ATLAS Technique Mapping
 
-| ATLAS ID      | Technique Name                 | OpenClaw Threats                                                 |
+| ATLAS ID      | Technique Name                 | LCX Agent Threats                                                |
 | ------------- | ------------------------------ | ---------------------------------------------------------------- |
 | AML.T0006     | Active Scanning                | T-RECON-001, T-RECON-002                                         |
 | AML.T0009     | Collection                     | T-EXFIL-001, T-EXFIL-002, T-EXFIL-003                            |
@@ -582,7 +582,7 @@ T-EXEC-002 → T-EXFIL-001 → External exfiltration
 | `src/infra/net/ssrf.ts`             | SSRF protection             | **Critical** |
 | `src/security/external-content.ts`  | Prompt injection mitigation | **Critical** |
 | `src/agents/sandbox/tool-policy.ts` | Tool policy enforcement     | **Critical** |
-| `convex/lib/moderation.ts`          | ClawHub moderation          | **High**     |
+| `convex/lib/moderation.ts`          | Marketplace moderation      | **High**     |
 | `convex/lib/skillPublish.ts`        | Skill publishing flow       | **High**     |
 | `src/routing/resolve-route.ts`      | Session isolation           | **Medium**   |
 
@@ -591,13 +591,14 @@ T-EXEC-002 → T-EXFIL-001 → External exfiltration
 | Term                 | Definition                                                |
 | -------------------- | --------------------------------------------------------- |
 | **ATLAS**            | MITRE's Adversarial Threat Landscape for AI Systems       |
-| **ClawHub**          | OpenClaw's skill marketplace                              |
-| **Gateway**          | OpenClaw's message routing and authentication layer       |
+| **Marketplace**      | LCX Agent's skill marketplace                             |
+| **Gateway**          | LCX Agent's message routing and authentication layer      |
 | **MCP**              | Model Context Protocol - tool provider interface          |
 | **Prompt Injection** | Attack where malicious instructions are embedded in input |
-| **Skill**            | Downloadable extension for OpenClaw agents                |
+| **Skill**            | Downloadable extension for LCX Agent agents               |
 | **SSRF**             | Server-Side Request Forgery                               |
 
 ---
 
-_This threat model is a living document. Report security issues to security@openclaw.ai_
+_This threat model is a living document. Report security issues privately via
+[GitHub security advisories](https://github.com/lcx1215/lcx-s-agent/security/advisories/new)._

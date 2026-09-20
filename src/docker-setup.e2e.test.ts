@@ -61,7 +61,7 @@ async function createDockerSetupSandbox(): Promise<DockerSetupSandbox> {
   await writeFile(dockerfilePath, "FROM scratch\n");
   await writeFile(
     composePath,
-    "services:\n  openclaw-gateway:\n    image: noop\n  openclaw-cli:\n    image: noop\n",
+    "services:\n  lcx-gateway:\n    image: noop\n  lcx-cli:\n    image: noop\n",
   );
   await writeDockerStub(binDir, logPath);
 
@@ -185,9 +185,9 @@ describe("docker-setup.sh", () => {
     expect(extraCompose).toContain("openclaw-home:");
     const log = await readFile(activeSandbox.logPath, "utf8");
     expect(log).toContain("--build-arg OPENCLAW_DOCKER_APT_PACKAGES=ffmpeg build-essential");
-    expect(log).toContain("run --rm openclaw-cli onboard --mode local --no-install-daemon");
-    expect(log).toContain("run --rm openclaw-cli config set gateway.mode local");
-    expect(log).toContain("run --rm openclaw-cli config set gateway.bind lan");
+    expect(log).toContain("run --rm lcx-cli onboard --mode local --no-install-daemon");
+    expect(log).toContain("run --rm lcx-cli config set gateway.mode local");
+    expect(log).toContain("run --rm lcx-cli config set gateway.bind lan");
   });
 
   it("precreates config identity dir for CLI device auth writes", async () => {
@@ -287,12 +287,12 @@ describe("docker-setup.sh", () => {
     await writeFile(activeSandbox.logPath, "");
     await writeFile(
       join(activeSandbox.rootDir, "docker-compose.sandbox.yml"),
-      "services:\n  openclaw-gateway:\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock\n",
+      "services:\n  lcx-gateway:\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock\n",
     );
 
     const result = runDockerSetup(activeSandbox, {
       OPENCLAW_SANDBOX: "1",
-      DOCKER_STUB_FAIL_MATCH: "--entrypoint docker openclaw-gateway --version",
+      DOCKER_STUB_FAIL_MATCH: "--entrypoint docker lcx-gateway --version",
     });
 
     expect(result.status).toBe(0);
@@ -323,18 +323,16 @@ describe("docker-setup.sh", () => {
         .split("\n")
         .filter(
           (line) =>
-            line.includes("compose") &&
-            line.includes(" up -d") &&
-            line.includes("openclaw-gateway"),
+            line.includes("compose") && line.includes(" up -d") && line.includes("lcx-gateway"),
         );
       expect(gatewayStarts).toHaveLength(2);
       expect(log).toContain(
-        "run --rm --no-deps openclaw-cli config set agents.defaults.sandbox.mode non-main",
+        "run --rm --no-deps lcx-cli config set agents.defaults.sandbox.mode non-main",
       );
       expect(log).toContain("config set agents.defaults.sandbox.mode off");
       const forceRecreateLine = log
         .split("\n")
-        .find((line) => line.includes("up -d --force-recreate openclaw-gateway"));
+        .find((line) => line.includes("up -d --force-recreate lcx-gateway"));
       expect(forceRecreateLine).toBeDefined();
       expect(forceRecreateLine).not.toContain("docker-compose.sandbox.yml");
       await expect(
@@ -410,7 +408,7 @@ describe("docker-setup.sh", () => {
 
   it("keeps docker-compose CLI network namespace settings in sync", async () => {
     const compose = await readFile(join(repoRoot, "docker-compose.yml"), "utf8");
-    expect(compose).toContain('network_mode: "service:openclaw-gateway"');
-    expect(compose).toContain("depends_on:\n      - openclaw-gateway");
+    expect(compose).toContain('network_mode: "service:lcx-gateway"');
+    expect(compose).toContain("depends_on:\n      - lcx-gateway");
   });
 });

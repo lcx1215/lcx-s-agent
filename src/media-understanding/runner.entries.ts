@@ -13,7 +13,6 @@ import type {
   MediaUnderstandingModelConfig,
 } from "../config/types.tools.js";
 import { logVerbose, shouldLogVerbose } from "../globals.js";
-import { resolveProxyFetchFromEnv } from "../infra/net/proxy-fetch.js";
 import { resolvePreferredOpenClawTmpDir } from "../infra/tmp-openclaw-dir.js";
 import { runExec } from "../process/exec.js";
 import { MediaAttachmentCache } from "./attachments.js";
@@ -460,10 +459,9 @@ export async function runProviderEntry(params: {
     throw new Error(`Media provider not available: ${providerId}`);
   }
 
-  // Resolve proxy-aware fetch from env vars (HTTPS_PROXY, HTTP_PROXY, etc.)
-  // so provider HTTP calls are routed through the proxy when configured.
-  const fetchFn = resolveProxyFetchFromEnv();
-
+  // Providers are called directly. Egress must not be decided by ambient
+  // HTTP_PROXY/HTTPS_PROXY: the same code has to behave identically on a laptop behind a
+  // VPN and on AWS/Cloudflare.
   if (capability === "audio") {
     if (!provider.transcribeAudio) {
       throw new Error(`Audio transcription provider "${providerId}" not available.`);
@@ -504,7 +502,6 @@ export async function runProviderEntry(params: {
           prompt,
           query: providerQuery,
           timeoutMs,
-          fetchFn,
         }),
     });
     return {
@@ -554,7 +551,6 @@ export async function runProviderEntry(params: {
         model: entry.model,
         prompt,
         timeoutMs,
-        fetchFn,
       }),
   });
   return {

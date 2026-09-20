@@ -346,6 +346,7 @@ const TARGET_KEYS = [
   "auth",
   "auth.cooldowns",
   "models",
+  "models.proxy",
   "models.providers",
   "models.providers.*.baseUrl",
   "models.providers.*.apiKey",

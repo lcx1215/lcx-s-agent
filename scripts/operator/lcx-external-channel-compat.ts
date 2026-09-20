@@ -1533,10 +1533,7 @@ function runPromotion(initialArgs: Args): number {
 
   if (blockedReasons.length === 0 && args.apply) {
     commands.gatewayInstall = args.skipGatewayInstall
-      ? skippedCommand(
-          "pnpm --silent openclaw gateway install --force --runtime node",
-          args.targetRoot,
-        )
+      ? skippedCommand("pnpm --silent lcx gateway install --force --runtime node", args.targetRoot)
       : runPackageManagerCommand(
           [
             "--silent",
@@ -1559,7 +1556,7 @@ function runPromotion(initialArgs: Args): number {
 
   if (blockedReasons.length === 0 && args.apply) {
     commands.restart = args.skipRestart
-      ? skippedCommand("pnpm --silent openclaw daemon restart", args.targetRoot)
+      ? skippedCommand("pnpm --silent lcx daemon restart", args.targetRoot)
       : runPackageManagerCommand(
           ["--silent", "openclaw", "daemon", "restart"],
           args.targetRoot,
@@ -1575,7 +1572,7 @@ function runPromotion(initialArgs: Args): number {
 
   if (blockedReasons.length === 0 && args.apply) {
     commands.probe = args.skipProbe
-      ? skippedCommand("pnpm --silent openclaw channels status --probe", args.targetRoot)
+      ? skippedCommand("pnpm --silent lcx channels status --probe", args.targetRoot)
       : normalizeChannelProbeResult(
           runPackageManagerCommand(
             ["--silent", "openclaw", "channels", "status", "--probe"],

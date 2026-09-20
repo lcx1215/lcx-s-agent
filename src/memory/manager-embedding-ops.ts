@@ -11,6 +11,7 @@ import { enforceEmbeddingMaxInputTokens } from "./embedding-chunk-limits.js";
 import { estimateUtf8Bytes } from "./embedding-input-limits.js";
 import {
   chunkMarkdown,
+  FTS_ONLY_MODEL_KEY,
   hashText,
   parseEmbedding,
   remapChunkLines,
@@ -98,7 +99,7 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
     }
 
     const out = new Map<string, number[]>();
-    const baseParams = [this.provider.id, this.provider.model, this.providerKey];
+    const baseParams = [this.provider.id, this.ftsModelKey, this.providerKey];
     const batchSize = 400;
     for (let start = 0; start < unique.length; start += batchSize) {
       const batch = unique.slice(start, start + batchSize);
@@ -136,7 +137,7 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
       const embedding = entry.embedding ?? [];
       stmt.run(
         this.provider.id,
-        this.provider.model,
+        this.ftsModelKey,
         this.providerKey,
         entry.hash,
         JSON.stringify(embedding),
@@ -240,7 +241,7 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
         }),
       );
     }
-    return hashText(JSON.stringify({ provider: this.provider.id, model: this.provider.model }));
+    return hashText(JSON.stringify({ provider: this.provider.id, model: this.ftsModelKey }));
   }
 
   private async embedChunksWithBatch(
@@ -690,33 +691,37 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
     return this.batch.enabled ? this.batch.concurrency : EMBEDDING_INDEX_CONCURRENCY;
   }
 
+  /**
+   * Key used for chunk identity and FTS rows. With no embedding provider there is no model to
+   * key on, so the FTS-only sentinel is used instead: keyword recall is a standalone SQLite
+   * capability and must still have rows to search.
+   */
+  protected get ftsModelKey(): string {
+    return this.provider?.model ?? FTS_ONLY_MODEL_KEY;
+  }
+
   protected async indexFile(
     entry: MemoryFileEntry | SessionFileEntry,
     options: { source: MemorySource; content?: string },
   ) {
-    // FTS-only mode: skip indexing if no provider
-    if (!this.provider) {
-      log.debug("Skipping embedding indexing in FTS-only mode", {
-        path: entry.path,
-        source: options.source,
-      });
-      return;
-    }
-
     const content = options.content ?? (await fs.readFile(entry.absPath, "utf-8"));
-    const chunks = enforceEmbeddingMaxInputTokens(
-      this.provider,
-      chunkMarkdown(content, this.settings.chunking).filter(
-        (chunk) => chunk.text.trim().length > 0,
-      ),
-      EMBEDDING_BATCH_MAX_TOKENS,
+    const split = chunkMarkdown(content, this.settings.chunking).filter(
+      (chunk) => chunk.text.trim().length > 0,
     );
+    // Chunk sizing is a provider limit, so it only applies when there is a provider. Without
+    // one the file is still chunked and indexed for keyword recall — skipping it here is what
+    // left `files: 0` behind a status line that claimed FTS was ready.
+    const chunks = this.provider
+      ? enforceEmbeddingMaxInputTokens(this.provider, split, EMBEDDING_BATCH_MAX_TOKENS)
+      : split;
     if (options.source === "sessions" && "lineMap" in entry) {
       remapChunkLines(chunks, entry.lineMap);
     }
-    const embeddings = this.batch.enabled
-      ? await this.embedChunksWithBatch(chunks, entry, options.source)
-      : await this.embedChunksInBatches(chunks);
+    const embeddings = this.provider
+      ? this.batch.enabled
+        ? await this.embedChunksWithBatch(chunks, entry, options.source)
+        : await this.embedChunksInBatches(chunks)
+      : chunks.map(() => [] as number[]);
     const sample = embeddings.find((embedding) => embedding.length > 0);
     const vectorReady = sample ? await this.ensureVectorReady(sample.length) : false;
     const now = Date.now();
@@ -733,7 +738,7 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
       try {
         this.db
           .prepare(`DELETE FROM ${FTS_TABLE} WHERE path = ? AND source = ? AND model = ?`)
-          .run(entry.path, options.source, this.provider.model);
+          .run(entry.path, options.source, this.ftsModelKey);
       } catch {}
     }
     this.db
@@ -743,7 +748,7 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
       const chunk = chunks[i];
       const embedding = embeddings[i] ?? [];
       const id = hashText(
-        `${options.source}:${entry.path}:${chunk.startLine}:${chunk.endLine}:${chunk.hash}:${this.provider.model}`,
+        `${options.source}:${entry.path}:${chunk.startLine}:${chunk.endLine}:${chunk.hash}:${this.ftsModelKey}`,
       );
       this.db
         .prepare(
@@ -763,7 +768,7 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
           chunk.startLine,
           chunk.endLine,
           chunk.hash,
-          this.provider.model,
+          this.ftsModelKey,
           chunk.text,
           JSON.stringify(embedding),
           now,
@@ -787,7 +792,7 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
             id,
             entry.path,
             options.source,
-            this.provider.model,
+            this.ftsModelKey,
             chunk.startLine,
             chunk.endLine,
           );

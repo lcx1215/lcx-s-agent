@@ -14,7 +14,7 @@ import {
   truncateText,
   type ExtractMode,
 } from "./web-fetch-utils.js";
-import { fetchWithWebToolsNetworkGuard } from "./web-guarded-fetch.js";
+import { fetchWithWebToolsNetworkGuard, resolveWebToolsProxyUrl } from "./web-guarded-fetch.js";
 import {
   CacheEntry,
   DEFAULT_CACHE_TTL_MINUTES,
@@ -446,6 +446,12 @@ type WebFetchRuntimeParams = FirecrawlRuntimeParams & {
   cacheTtlMs: number;
   userAgent: string;
   readabilityEnabled: boolean;
+  /**
+   * Operator-declared egress route (`tools.web.proxy`); `undefined` means connect directly.
+   * Required (but nullable) on purpose so a forgotten forward is a compile error rather than a
+   * silent direct connection.
+   */
+  proxyUrl: string | undefined;
 };
 
 function toFirecrawlContentParams(
@@ -527,6 +533,7 @@ async function runWebFetch(params: WebFetchRuntimeParams): Promise<Record<string
       url: params.url,
       maxRedirects: params.maxRedirects,
       timeoutSeconds: params.timeoutSeconds,
+      proxyUrl: params.proxyUrl,
       init: {
         headers: {
           Accept: "text/markdown, text/html;q=0.9, */*;q=0.1",
@@ -758,6 +765,7 @@ export function createWebFetchTool(options?: {
         cacheTtlMs: resolveCacheTtlMs(fetch?.cacheTtlMinutes, DEFAULT_CACHE_TTL_MINUTES),
         userAgent,
         readabilityEnabled,
+        proxyUrl: resolveWebToolsProxyUrl(options?.config),
         firecrawlEnabled,
         firecrawlApiKey,
         firecrawlBaseUrl,

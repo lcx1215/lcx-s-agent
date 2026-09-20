@@ -48,7 +48,7 @@ Gateway 网关可以托管**一个智能体**（默认）或**多个智能体**�
 
 ### 单智能体模式（默认）
 
-如果你什么都不做，OpenClaw 运行单个智能体：
+如果你什么都不做，LCX Agent 运行单个智能体：
 
 - `agentId` 默认为 **`main`**。
 - 会话键为 `agent:main:<mainKey>`。
@@ -60,7 +60,7 @@ Gateway 网关可以托管**一个智能体**（默认）或**多个智能体**�
 使用智能体向导添加新的隔离智能体：
 
 ```bash
-openclaw agents add work
+lcx agents add work
 ```
 
 然后添加 `bindings`（或让向导完成）来路由入站消息。
@@ -68,7 +68,7 @@ openclaw agents add work
 验证：
 
 ```bash
-openclaw agents list --bindings
+lcx agents list --bindings
 ```
 
 ## 多个智能体 = 多个人、多种人格

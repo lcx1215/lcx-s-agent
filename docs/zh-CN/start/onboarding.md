@@ -2,7 +2,7 @@
 read_when:
   - 运行首次运行新手引导流程
   - 实现认证或身份设置
-summary: OpenClaw 的首次运行新手引导流程
+summary: LCX Agent 的首次运行新手引导流程
 title: 新手引导
 x-i18n:
   generated_at: "2026-02-03T07:54:07Z"
@@ -22,20 +22,20 @@ x-i18n:
 ## 1) 启动向导
 
 ```bash
-openclaw onboard --install-daemon
+lcx onboard --install-daemon
 ```
 
 其他入口：
 
 ```bash
-openclaw gateway install   # 直接安装 Gateway 网关服务
-openclaw configure         # 交互式：选择 "Gateway service"
-openclaw doctor            # 修复或迁移已有服务
+lcx gateway install   # 直接安装 Gateway 网关服务
+lcx configure         # 交互式：选择 "Gateway service"
+lcx doctor            # 修复或迁移已有服务
 ```
 
 ## 2) 安全信任模型
 
-- 默认情况下，OpenClaw 是个人智能体：一个受信任的操作员边界。
+- 默认情况下，LCX Agent 是个人智能体：一个受信任的操作员边界。
 - 共享/多用户设置需要锁定（拆分信任边界，保持工具访问最小化，并遵循[安全](/gateway/security)）。
 - 本地新手引导现在将新配置默认为 `tools.profile: "messaging"`，因此广泛的运行时/文件系统工具需要显式启用。
 - 如果启用了 hooks/webhooks 或其他不受信任的内容源，请使用强大的现代模型层级并保持严格的工具策略/沙箱。
@@ -66,7 +66,7 @@ Gateway 网关认证提示：
 
 ## 智能体引导仪式
 
-在首次智能体运行时，OpenClaw 会引导一个工作区（默认 `~/.openclaw/workspace`）：
+在首次智能体运行时，LCX Agent 会引导一个工作区（默认 `~/.openclaw/workspace`）：
 
 - 初始化 `AGENTS.md`、`BOOTSTRAP.md`、`IDENTITY.md`、`USER.md`
 - 运行简短的问答仪式（一次一个问题）
@@ -78,7 +78,7 @@ Gateway 网关认证提示：
 Gmail Pub/Sub 设置目前是手动步骤。使用：
 
 ```bash
-openclaw webhooks gmail setup --account you@gmail.com
+lcx webhooks gmail setup --account you@gmail.com
 ```
 
 参阅 [/automation/gmail-pubsub](/automation/gmail-pubsub) 了解详情。

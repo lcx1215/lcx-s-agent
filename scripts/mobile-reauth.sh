@@ -69,10 +69,10 @@ if claude setup-token; then
     echo ""
     "$SCRIPT_DIR/claude-auth-status.sh" full
 
-    # Restart openclaw service if running
+    # Restart lcx service if running
     if systemctl --user is-active openclaw >/dev/null 2>&1; then
         echo ""
-        echo "Restarting openclaw service..."
+        echo "Restarting lcx service..."
         systemctl --user restart openclaw
         echo -e "${GREEN}Service restarted.${NC}"
     fi

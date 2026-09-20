@@ -30,6 +30,7 @@ import { abortEmbeddedPiRun } from "../pi-embedded.js";
 import { optionalStringEnum } from "../schema/typebox.js";
 import { getSubagentDepthFromSessionStore } from "../subagent-depth.js";
 import { describeAnnounceDelivery } from "../subagent-registry-cleanup.js";
+import { getSubagentRegistryPersistFailure } from "../subagent-registry-state.js";
 import {
   clearSubagentRunSteerRestart,
   countPendingDescendantRuns,
@@ -39,6 +40,10 @@ import {
   replaceSubagentRunAfterSteer,
   type SubagentRunRecord,
 } from "../subagent-registry.js";
+import {
+  describeSubagentRegistryLoadStatus,
+  getSubagentRegistryLoadStatus,
+} from "../subagent-registry.store.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult, readNumberParam, readStringParam } from "./common.js";
 import { resolveInternalSessionKey, resolveMainSessionAlias } from "./sessions-helpers.js";
@@ -430,6 +435,24 @@ export function createSubagentsTool(opts?: { agentSessionKey?: string }): AnyAge
             buildListEntry(entry, (entry.endedAt ?? now) - (entry.startedAt ?? entry.createdAt)),
           );
 
+        // An empty list caused by an unreadable registry is not the same as an
+        // empty list caused by having no subagents: say which one it is.
+        const loadStatus = getSubagentRegistryLoadStatus();
+        const registryUnreadable =
+          loadStatus.state === "unreadable" || loadStatus.state === "corrupt";
+        const persistFailure = getSubagentRegistryPersistFailure();
+        const registryNotes: string[] = [];
+        if (registryUnreadable) {
+          registryNotes.push(
+            `subagent registry could not be read (${describeSubagentRegistryLoadStatus()}); this list may be incomplete`,
+          );
+        }
+        if (persistFailure) {
+          registryNotes.push(
+            `subagent runs are not being persisted (${persistFailure.kind}: ${persistFailure.detail}) — they exist only in memory`,
+          );
+        }
+        const registryNote = registryNotes.length > 0 ? registryNotes.join("; ") : null;
         const text = buildListText({ active, recent, recentMinutes });
         return jsonResult({
           status: "ok",
@@ -440,7 +463,8 @@ export function createSubagentsTool(opts?: { agentSessionKey?: string }): AnyAge
           total: runs.length,
           active: active.map((entry) => entry.view),
           recent: recent.map((entry) => entry.view),
-          text,
+          ...(registryNote ? { registryNote } : {}),
+          text: registryNote ? `${registryNote}\n${text}` : text,
         });
       }
 

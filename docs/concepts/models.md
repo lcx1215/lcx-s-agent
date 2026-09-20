@@ -15,7 +15,7 @@ Quick provider overview + examples: [/concepts/model-providers](/concepts/model-
 
 ## How model selection works
 
-OpenClaw selects models in this order:
+LCX Agent selects models in this order:
 
 1. **Primary** model (`agents.defaults.model.primary` or `agents.defaults.model`).
 2. **Fallbacks** in `agents.defaults.model.fallbacks` (in order).
@@ -24,7 +24,7 @@ OpenClaw selects models in this order:
 
 Related:
 
-- `agents.defaults.models` is the allowlist/catalog of models OpenClaw can use (plus aliases).
+- `agents.defaults.models` is the allowlist/catalog of models LCX Agent can use (plus aliases).
 - `agents.defaults.imageModel` is used **only when** the primary model can’t accept images.
 - Per-agent defaults can override `agents.defaults.model` via `agents.list[].model` plus bindings (see [/concepts/multi-agent](/concepts/multi-agent)).
 
@@ -39,7 +39,7 @@ Related:
 If you don’t want to hand-edit config, run the onboarding wizard:
 
 ```bash
-openclaw onboard
+lcx onboard
 ```
 
 It can set up model + auth for common providers, including **OpenAI Code (Codex)
@@ -62,7 +62,7 @@ Provider configuration examples (including OpenCode Zen) live in
 
 If `agents.defaults.models` is set, it becomes the **allowlist** for `/model` and for
 session overrides. When a user selects a model that isn’t in that allowlist,
-OpenClaw returns:
+LCX Agent returns:
 
 ```
 Model "provider/model" is not allowed. Use /model to list available models.
@@ -109,34 +109,34 @@ Notes:
 - `/model status` is the detailed view (auth candidates and, when configured, provider endpoint `baseUrl` + `api` mode).
 - Model refs are parsed by splitting on the **first** `/`. Use `provider/model` when typing `/model <ref>`.
 - If the model ID itself contains `/` (OpenRouter-style), you must include the provider prefix (example: `/model openrouter/moonshotai/kimi-k2`).
-- If you omit the provider, OpenClaw treats the input as an alias or a model for the **default provider** (only works when there is no `/` in the model ID).
+- If you omit the provider, LCX Agent treats the input as an alias or a model for the **default provider** (only works when there is no `/` in the model ID).
 
 Full command behavior/config: [Slash commands](/tools/slash-commands).
 
 ## CLI commands
 
 ```bash
-openclaw models list
-openclaw models status
-openclaw models set <provider/model>
-openclaw models set-image <provider/model>
+lcx models list
+lcx models status
+lcx models set <provider/model>
+lcx models set-image <provider/model>
 
-openclaw models aliases list
-openclaw models aliases add <alias> <provider/model>
-openclaw models aliases remove <alias>
+lcx models aliases list
+lcx models aliases add <alias> <provider/model>
+lcx models aliases remove <alias>
 
-openclaw models fallbacks list
-openclaw models fallbacks add <provider/model>
-openclaw models fallbacks remove <provider/model>
-openclaw models fallbacks clear
+lcx models fallbacks list
+lcx models fallbacks add <provider/model>
+lcx models fallbacks remove <provider/model>
+lcx models fallbacks clear
 
-openclaw models image-fallbacks list
-openclaw models image-fallbacks add <provider/model>
-openclaw models image-fallbacks remove <provider/model>
-openclaw models image-fallbacks clear
+lcx models image-fallbacks list
+lcx models image-fallbacks add <provider/model>
+lcx models image-fallbacks remove <provider/model>
+lcx models image-fallbacks clear
 ```
 
-`openclaw models` (no subcommand) is a shortcut for `models status`.
+`lcx models` (no subcommand) is a shortcut for `models status`.
 
 ### `models list`
 
@@ -166,12 +166,12 @@ Example (Anthropic setup-token):
 
 ```bash
 claude setup-token
-openclaw models status
+lcx models status
 ```
 
 ## Scanning (OpenRouter free models)
 
-`openclaw models scan` inspects OpenRouter’s **free model catalog** and can
+`lcx models scan` inspects OpenRouter’s **free model catalog** and can
 optionally probe models for tool and image support.
 
 Key flags:

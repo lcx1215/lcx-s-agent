@@ -1,9 +1,15 @@
 import { pathToFileURL } from "node:url";
 import { buildAnswerAuditPolicy } from "../../src/agents/answer-audit-policy.js";
+import { checkAnswerGrounding } from "../../src/agents/finance-answer-grounding-gate.js";
 import {
   planFinanceBrainOrchestration,
   type FinanceBrainOrchestrationPlan,
 } from "../../src/agents/finance-brain-orchestration.js";
+import {
+  getSharedCalculationLedger,
+  type CalculationRecord,
+} from "../../src/agents/finance-calculation-ledger.js";
+import type { FinanceDataGatewaySnapshot } from "../../src/agents/finance-data-gateway.js";
 import {
   evaluateFinanceDecisionPolicy,
   FINANCE_DECISION_MODES,
@@ -232,7 +238,7 @@ const BUILT_IN_SCENARIOS: PipelineScenario[] = [
     id: "provider_disagreement_blocks_generic_control_room_intro",
     ask: "Kimi、MiniMax、DeepSeek 三个模型意见不一致时，你应该怎么裁决？只说证据排序、本地 gate 和不能直接采信谁。",
     candidateAnswer:
-      "我是 LCX Agent / OpenClaw 的 External 控制室入口。当前可用能力: 可以把自然语言请求分到 control_room、learning_command、technical_daily 等工作面。",
+      "我是 LCX Agent / LCX Agent 的 External 控制室入口。当前可用能力: 可以把自然语言请求分到 control_room、learning_command、technical_daily 等工作面。",
     expectedDecision: "return_failed_reason",
     expectedFailedReasons: ["provider_council_arbitration_answer_missing"],
   },
@@ -251,7 +257,7 @@ const BUILT_IN_SCENARIOS: PipelineScenario[] = [
     id: "explicit_visible_contract_blocks_generic_control_room_intro",
     ask: "我问一个简单问题：没有最新行情时怎么回答？只给可信度边界和数据清单，不要讲系统能力，不要暴露内部标签。",
     candidateAnswer:
-      "我是 LCX Agent / OpenClaw 的 External 控制室入口。当前可用能力: 可以把自然语言请求分到 control_room、learning_command、technical_daily 等工作面。",
+      "我是 LCX Agent / LCX Agent 的 External 控制室入口。当前可用能力: 可以把自然语言请求分到 control_room、learning_command、technical_daily 等工作面。",
     expectedDecision: "return_failed_reason",
     expectedFailedReasons: ["explicit_visible_contract_ignored_by_generic_intro"],
   },
@@ -328,7 +334,7 @@ const BUILT_IN_SCENARIOS: PipelineScenario[] = [
     id: "real_external_short_buy_canary_blocks_generic_intro",
     ask: "能买吗",
     candidateAnswer:
-      "我是 LCX Agent / OpenClaw 的 External 控制室入口。当前可用能力：可以把自然语言请求分到 control_room、learning_command、technical_daily 等工作面。",
+      "我是 LCX Agent / LCX Agent 的 External 控制室入口。当前可用能力：可以把自然语言请求分到 control_room、learning_command、technical_daily 等工作面。",
     expectedDecision: "return_failed_reason",
     expectedFailedReasons: ["short_external_canary_wrong_route_generic_intro"],
   },
@@ -621,7 +627,10 @@ function resolveNeeds(ask: string, orchestration: FinanceBrainOrchestrationPlan)
   const text = ask.toLowerCase();
   const freshOrCurrentData = includesPattern(
     text,
-    /\b(?:recent|latest|today|now|current|price|quote|market|holdings?|position|portfolio|earnings?|daily|delta|count|growth)\b|最近|最新|今天|现在|行情|价格|报价|持仓|仓位|组合|财报|一天|日增|净增|涨了|涨幅|多少|条/u,
+    // Phrase-level English patterns added because the bare word list missed the ordinary phrasings
+    // ("trading at", "how much is X worth", "account balance", "how many shares do I own") that the
+    // Chinese side already caught. See needsFinanceDataGateway for why these are phrases, not words.
+    /\b(?:recent|latest|today|now|current|price|quote|market|holdings?|position|portfolio|earnings?|daily|delta|count|growth)\b|\b(?:trades?|trading) at\b|\bhow much\b[^.?]*\bworth\b|\b(?:account|my) balance\b|\bshares?\b[^.?]*\bown\b|\b(?:share|stock|market) (?:price|value)\b|\bnet worth\b|最近|最新|今天|现在|行情|价格|报价|持仓|仓位|组合|财报|一天|日增|净增|涨了|涨幅|多少|条/u,
   );
   const webOrExternalLearning = includesPattern(
     text,
@@ -763,11 +772,38 @@ function candidateHasEvidenceGapLanguage(candidate: string): boolean {
   );
 }
 
+/**
+ * The same question as `candidateHasEvidenceGapLanguage`, answered strictly.
+ *
+ * The loose version matches bare nouns: 数据, 来源, 时间戳, as of, data, source. Those words have
+ * to appear in any answer that talks about evidence, so matching them proves nothing -- measured
+ * end to end, "现在是 212.44 元数据已核验，风险可控" was adopted with zero failed reasons, because
+ * the substring 数据 inside 元数据 satisfied the check, while "现在是 212.44。数据缺失，不能下结论" was
+ * not adopted at all. A fabricated number plus two filler words passed; the honest answer did not.
+ *
+ * This version requires a gap *construction* -- the noun plus what is wrong with it -- so the
+ * answer has to actually say the data is missing instead of merely using the word.
+ *
+ * It is opt-in for the same reason `requireGrounding` is: flipping every existing candidate from
+ * adopted to failed has to be a deliberate switch, not a side effect of tightening a predicate.
+ */
+function candidateMarksRealEvidenceGap(candidate: string): boolean {
+  return includesPattern(
+    candidate.toLowerCase(),
+    /\b(?:no|without|missing|absent|lacks?|lacking|unavailable)\b[^.?!]{0,16}\b(?:source|timestamp|data|evidence|quote|snapshot)\b|\b(?:data|source|timestamp|evidence|quote|snapshot)\b[^.?!]{0,16}\b(?:missing|absent|unavailable|not available|gap|unknown)\b|\b(?:cannot|can't|could not)\b[^.?!]{0,12}\b(?:conclude|confirm|verify)\b|\b(?:not verified|unverified|unconfirmed)\b|数据(?:缺失|不足|不够|没有|缺口|空白|未知)|缺(?:数据|来源|时间戳|证据|口径)|(?:没有|无|缺少|尚未|未)[^。！？]{0,6}(?:来源|时间戳|数据|证据|口径)|(?:无法|不能|不宜|暂不)[^。！？]{0,6}(?:判断|下结论|确认|核验|证实)|未核验|待核验|待补|尚缺|不能下结论|无法判断/u,
+  );
+}
+
 function auditCandidate(params: {
   ask: string;
   candidateAnswer: string;
   needs: PipelineNeed[];
   financeDecisionMode?: FinanceDecisionMode;
+  /**
+   * Require a real gap construction ("数据缺失") instead of a bare evidence noun ("数据").
+   * Off by default: see `candidateMarksRealEvidenceGap` for why the loose test passes vacuously.
+   */
+  requireRealEvidenceMarking?: boolean;
 }): PipelineAuditCheck[] {
   const candidate = params.candidateAnswer.trim();
   const candidateLower = candidate.toLowerCase();
@@ -1041,20 +1077,23 @@ function auditCandidate(params: {
   ];
 
   if (requiredNeedIds.has("fresh_or_current_data") || requiredNeedIds.has("finance_data_gateway")) {
+    const gapLanguage = params.requireRealEvidenceMarking
+      ? candidateMarksRealEvidenceGap(candidate)
+      : candidateHasEvidenceGapLanguage(candidate);
     const missingFinanceGatewayForNumber =
       requiredNeedIds.has("finance_data_gateway") &&
       financeNumberVisible &&
       !financeGatewayEvidenceVisible &&
-      !candidateHasEvidenceGapLanguage(candidate);
+      !gapLanguage;
     checks.push({
       id: "fresh_data_gap_or_timestamp_required",
-      ok: candidateHasEvidenceGapLanguage(candidate) && !missingFinanceGatewayForNumber,
+      ok: gapLanguage && !missingFinanceGatewayForNumber,
       failedReason: missingFinanceGatewayForNumber
         ? "finance_data_gateway_snapshot_missing_for_number"
-        : candidateHasEvidenceGapLanguage(candidate)
+        : gapLanguage
           ? undefined
           : "fresh_data_or_timestamp_gap_not_marked",
-      evidence: candidateHasEvidenceGapLanguage(candidate)
+      evidence: gapLanguage
         ? "candidate marks missing data/source/timestamp before conclusion"
         : "candidate answers time-sensitive finance ask without marking data/source/timestamp gap",
     });
@@ -1174,6 +1213,28 @@ export function buildPipelineResult(
   options: {
     financeDecisionMode?: FinanceDecisionMode;
     candidateContext?: FinanceDecisionCandidateContext;
+    /** Snapshot the candidate was grounded on, when one exists. Absent means nothing to check against. */
+    snapshot?: FinanceDataGatewaySnapshot;
+    /**
+     * Calculations that actually ran, used to check `derived` figures. Falls back to the process-wide
+     * ledger so a figure the model computed earlier in this process is checkable without wiring.
+     */
+    calculations?: ReadonlyArray<CalculationRecord>;
+    /**
+     * Promote figure grounding from a report into a blocking condition.
+     *
+     * Off by default on purpose: every existing candidate answer predates the declaration block, so
+     * turning this on flips the whole suite from adopted to failed in one step. That is a real
+     * finding, but it has to be a deliberate switch, not a side effect of adding the check.
+     */
+    requireGrounding?: boolean;
+    /**
+     * Require the candidate to mark a real evidence gap ("数据缺失") rather than merely use an
+     * evidence noun ("数据"). Off by default for the same reason as `requireGrounding`: tightening
+     * this flips candidates that were passing on the bare word, and that has to be a deliberate
+     * switch rather than a side effect.
+     */
+    requireRealEvidenceMarking?: boolean;
   } = {},
 ) {
   const financeDecisionMode = options.financeDecisionMode ?? "research_only";
@@ -1210,17 +1271,32 @@ export function buildPipelineResult(
     candidateAnswer,
     needs,
     financeDecisionMode,
+    ...(options.requireRealEvidenceMarking ? { requireRealEvidenceMarking: true } : {}),
   });
   const visibleGateDecision = applyVisibleAnswerAdoptionGate({
     userMessage: ask,
     answerText: candidateAnswer,
     financeDecisionMode,
   });
+  const answerGrounding = checkAnswerGrounding({
+    answerText: candidateAnswer,
+    ...(options.snapshot ? { snapshot: options.snapshot } : {}),
+    calculations: options.calculations ?? getSharedCalculationLedger().list(),
+  });
+  // Reported always, blocking only when the caller opted in. A candidate written before the
+  // declaration block existed is unverifiable, and saying so is not the same as refusing it.
+  const groundingFailures =
+    options.requireGrounding && answerGrounding.verdict !== "verified"
+      ? [
+          `answer figure grounding ${answerGrounding.verdict}: ${answerGrounding.reasons.join("; ")}`,
+        ]
+      : [];
   const failedReasons = checks
     .filter((check) => !check.ok && check.failedReason)
     .map((check) => check.failedReason!)
     .concat(visibleGateDecision.failedReasons)
-    .concat(financeDecision.failedReasons);
+    .concat(financeDecision.failedReasons)
+    .concat(groundingFailures);
   const uniqueFailedReasons = [...new Set(failedReasons)];
   const terminalDecision: TerminalDecision =
     uniqueFailedReasons.length === 0 ? "adopt_visible_answer" : "return_failed_reason";
@@ -1230,6 +1306,14 @@ export function buildPipelineResult(
     ask,
     candidateAuthority: "model_candidate_not_final_authority",
     financeDecision,
+    /** Figure-grounding verdict for this candidate. Reporting only unless `requireGrounding`. */
+    answerGrounding: {
+      verdict: answerGrounding.verdict,
+      declaredFigures: answerGrounding.declarations.length,
+      ungroundedFigures: answerGrounding.ungrounded.length,
+      reasons: answerGrounding.reasons,
+      blocking: groundingFailures.length > 0,
+    },
     qwenRole: answerAuditPolicy.qwenRole,
     qwenChallengeContract: {
       outputShape: "challenge_patch_only",

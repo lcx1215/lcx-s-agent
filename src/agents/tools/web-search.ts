@@ -3,11 +3,12 @@ import { formatCliCommand } from "../../cli/command-format.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { normalizeResolvedSecretInputString } from "../../config/types.secrets.js";
 import { logVerbose } from "../../globals.js";
+import { CANONICAL_PRODUCT_NAME, CANONICAL_PROJECT_URL } from "../../infra/canonical-identity.js";
 import { wrapWebContent } from "../../security/external-content.js";
 import { normalizeSecretInput } from "../../utils/normalize-secret-input.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult, readNumberParam, readStringParam } from "./common.js";
-import { withTrustedWebToolsEndpoint } from "./web-guarded-fetch.js";
+import { resolveWebToolsProxyUrl, withTrustedWebToolsEndpoint } from "./web-guarded-fetch.js";
 import { resolveCitationRedirectUrl } from "./web-search-citation-redirect.js";
 import {
   CacheEntry,
@@ -613,6 +614,9 @@ async function withTrustedWebSearchEndpoint<T>(
     url: string;
     timeoutSeconds: number;
     init: RequestInit;
+    // Required (but nullable) on purpose: every internal call site must state its egress route,
+    // so a forgotten forward is a compile error instead of a silent direct connection.
+    proxyUrl: string | undefined;
   },
   run: (response: Response) => Promise<T>,
 ): Promise<T> {
@@ -621,6 +625,7 @@ async function withTrustedWebSearchEndpoint<T>(
       url: params.url,
       init: params.init,
       timeoutSeconds: params.timeoutSeconds,
+      proxyUrl: params.proxyUrl,
     },
     async ({ response }) => run(response),
   );
@@ -631,6 +636,7 @@ async function runGeminiSearch(params: {
   apiKey: string;
   model: string;
   timeoutSeconds: number;
+  proxyUrl: string | undefined;
 }): Promise<{ content: string; citations: Array<{ url: string; title?: string }> }> {
   const endpoint = `${GEMINI_API_BASE}/models/${params.model}:generateContent`;
 
@@ -638,6 +644,7 @@ async function runGeminiSearch(params: {
     {
       url: endpoint,
       timeoutSeconds: params.timeoutSeconds,
+      proxyUrl: params.proxyUrl,
       init: {
         method: "POST",
         headers: {
@@ -702,7 +709,7 @@ async function runGeminiSearch(params: {
         const batch = rawCitations.slice(i, i + MAX_CONCURRENT_REDIRECTS);
         const resolved = await Promise.all(
           batch.map(async (citation) => {
-            const resolvedUrl = await resolveCitationRedirectUrl(citation.url);
+            const resolvedUrl = await resolveCitationRedirectUrl(citation.url, params.proxyUrl);
             return { ...citation, url: resolvedUrl };
           }),
         );
@@ -861,6 +868,7 @@ async function runPerplexitySearch(params: {
   baseUrl: string;
   model: string;
   timeoutSeconds: number;
+  proxyUrl: string | undefined;
   freshness?: string;
 }): Promise<{ content: string; citations: string[] }> {
   const baseUrl = params.baseUrl.trim().replace(/\/$/, "");
@@ -886,13 +894,14 @@ async function runPerplexitySearch(params: {
     {
       url: endpoint,
       timeoutSeconds: params.timeoutSeconds,
+      proxyUrl: params.proxyUrl,
       init: {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${params.apiKey}`,
-          "HTTP-Referer": "https://openclaw.ai",
-          "X-Title": "OpenClaw Web Search",
+          "HTTP-Referer": CANONICAL_PROJECT_URL,
+          "X-Title": `${CANONICAL_PRODUCT_NAME} Web Search`,
         },
         body: JSON.stringify(body),
       },
@@ -916,6 +925,7 @@ async function runGrokSearch(params: {
   apiKey: string;
   model: string;
   timeoutSeconds: number;
+  proxyUrl: string | undefined;
   inlineCitations: boolean;
 }): Promise<{
   content: string;
@@ -942,6 +952,7 @@ async function runGrokSearch(params: {
     {
       url: XAI_API_ENDPOINT,
       timeoutSeconds: params.timeoutSeconds,
+      proxyUrl: params.proxyUrl,
       init: {
         method: "POST",
         headers: {
@@ -1024,6 +1035,7 @@ async function runKimiSearch(params: {
   baseUrl: string;
   model: string;
   timeoutSeconds: number;
+  proxyUrl: string | undefined;
 }): Promise<{ content: string; citations: string[] }> {
   const baseUrl = params.baseUrl.trim().replace(/\/$/, "");
   const endpoint = `${baseUrl}/chat/completions`;
@@ -1041,6 +1053,7 @@ async function runKimiSearch(params: {
       {
         url: endpoint,
         timeoutSeconds: params.timeoutSeconds,
+        proxyUrl: params.proxyUrl,
         init: {
           method: "POST",
           headers: {
@@ -1124,6 +1137,7 @@ async function runWebSearch(params: {
   count: number;
   apiKey: string;
   timeoutSeconds: number;
+  proxyUrl: string | undefined;
   cacheTtlMs: number;
   provider: (typeof SEARCH_PROVIDERS)[number];
   country?: string;
@@ -1163,6 +1177,7 @@ async function runWebSearch(params: {
       baseUrl: params.perplexityBaseUrl ?? DEFAULT_PERPLEXITY_BASE_URL,
       model: params.perplexityModel ?? DEFAULT_PERPLEXITY_MODEL,
       timeoutSeconds: params.timeoutSeconds,
+      proxyUrl: params.proxyUrl,
       freshness: params.freshness,
     });
 
@@ -1190,6 +1205,7 @@ async function runWebSearch(params: {
       apiKey: params.apiKey,
       model: params.grokModel ?? DEFAULT_GROK_MODEL,
       timeoutSeconds: params.timeoutSeconds,
+      proxyUrl: params.proxyUrl,
       inlineCitations: params.grokInlineCitations ?? false,
     });
 
@@ -1219,6 +1235,7 @@ async function runWebSearch(params: {
       baseUrl: params.kimiBaseUrl ?? DEFAULT_KIMI_BASE_URL,
       model: params.kimiModel ?? DEFAULT_KIMI_MODEL,
       timeoutSeconds: params.timeoutSeconds,
+      proxyUrl: params.proxyUrl,
     });
 
     const payload = {
@@ -1245,6 +1262,7 @@ async function runWebSearch(params: {
       apiKey: params.apiKey,
       model: params.geminiModel ?? DEFAULT_GEMINI_MODEL,
       timeoutSeconds: params.timeoutSeconds,
+      proxyUrl: params.proxyUrl,
     });
 
     const payload = {
@@ -1289,6 +1307,7 @@ async function runWebSearch(params: {
     {
       url: url.toString(),
       timeoutSeconds: params.timeoutSeconds,
+      proxyUrl: params.proxyUrl,
       init: {
         method: "GET",
         headers: {
@@ -1437,6 +1456,7 @@ export function createWebSearchTool(options?: {
         count: resolveSearchCount(count, DEFAULT_SEARCH_COUNT),
         apiKey,
         timeoutSeconds: resolveTimeoutSeconds(search?.timeoutSeconds, DEFAULT_TIMEOUT_SECONDS),
+        proxyUrl: resolveWebToolsProxyUrl(options?.config),
         cacheTtlMs: resolveCacheTtlMs(search?.cacheTtlMinutes, DEFAULT_CACHE_TTL_MINUTES),
         provider,
         country,

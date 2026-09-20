@@ -2,7 +2,7 @@
 read_when:
   - 设置新机器
   - 你想要"最新最好的"而不破坏你的个人设置
-summary: 设置指南：在保持最新的同时保持你的 OpenClaw 设置个性化
+summary: 设置指南：在保持最新的同时保持你的 LCX Agent 设置个性化
 title: 设置
 x-i18n:
   generated_at: "2026-02-03T07:54:27Z"
@@ -40,45 +40,45 @@ x-i18n:
 引导一次：
 
 ```bash
-openclaw setup
+lcx setup
 ```
 
 在此仓库内部，使用本地 CLI 入口：
 
 ```bash
-openclaw setup
+lcx setup
 ```
 
-如果你还没有全局安装，通过 `pnpm openclaw setup` 运行它。
+如果你还没有全局安装，通过 `pnpm lcx setup` 运行它。
 
 ## 稳定工作流（Gateway 网关服务优先）
 
 1. 安装 Gateway 网关服务（以下方式均受支持）：
 
 ```bash
-openclaw onboard --install-daemon   # 向导（推荐）
-openclaw gateway install            # 直接安装
-openclaw configure                  # 交互式：选择 "Gateway service"
-openclaw doctor                     # 修复或迁移已有服务
+lcx onboard --install-daemon   # 向导（推荐）
+lcx gateway install            # 直接安装
+lcx configure                  # 交互式：选择 "Gateway service"
+lcx doctor                     # 修复或迁移已有服务
 ```
 
 2. 链接表面（示例：WhatsApp）：
 
 ```bash
-openclaw channels login
+lcx channels login
 ```
 
 3. 完整性检查：
 
 ```bash
-openclaw health
+lcx health
 ```
 
 然后通过浏览器或已有的聊天渠道访问 Gateway 网关。
 
 如果你的构建版本中没有新手引导：
 
-- 运行 `openclaw setup`，然后 `openclaw channels login`，然后手动启动 Gateway 网关（`openclaw gateway`）。
+- 运行 `lcx setup`，然后 `lcx channels login`，然后手动启动 Gateway 网关（`lcx gateway`）。
 
 ## 前沿工作流（在终端中运行 Gateway 网关）
 
@@ -100,7 +100,7 @@ Gateway 网关 WebSocket 默认为 `ws://127.0.0.1:18789`。在浏览器中打�
 ### 3) 验证
 
 ```bash
-openclaw health
+lcx health
 ```
 
 ### 常见陷阱
@@ -144,4 +144,4 @@ sudo loginctl enable-linger $USER
 - [Gateway 网关运行手册](/gateway)（标志、监督、端口）
 - [Gateway 网关配置](/gateway/configuration)（配置模式 + 示例）
 - [Discord](/channels/discord) 和 [Telegram](/channels/telegram)（回复标签 + replyToMode 设置）
-- [OpenClaw 助手设置](/start/openclaw)
+- [LCX Agent 助手设置](/start/personal-assistant)

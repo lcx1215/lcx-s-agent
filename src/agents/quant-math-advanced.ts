@@ -200,6 +200,7 @@ export function cholesky(matrix: Matrix): Matrix | null {
 /** Solve `A x = b` via Cholesky. Throws with a usable reason when `A` is not positive definite. */
 export function solveSpd(matrix: Matrix, b: number[]): number[] {
   const n = assertSquare(matrix);
+  assertFinite(b, "b");
   if (b.length !== n) {
     throw new Error("matrix and vector dimensions disagree");
   }
@@ -782,6 +783,12 @@ export function ewmaCovariance(params: { returnsMatrix: Matrix; lambda?: number 
   observations: number;
 } {
   const lambda = params.lambda ?? 0.94;
+  // lambda is the weight on the previous estimate, so 1 - lambda is the weight on the newest
+  // observation. Above 1 that weight goes negative and the bias correction (1 - lambda^n) changes
+  // sign: the recursion still returns a plausible matrix, built on weights that grow with age.
+  if (!(lambda > 0 && lambda <= 1)) {
+    throw new Error(`lambda must be in (0, 1], received ${lambda}`);
+  }
   const rows = params.returnsMatrix;
   if (rows.length === 0) {
     throw new Error("returnsMatrix required");
@@ -950,7 +957,14 @@ export function neweyWestMean(params: { values: number[]; lags?: number }): {
   if (n < 2) {
     throw new Error("at least 2 observations required");
   }
+  assertFinite(values, "values");
   const lags = params.lags ?? Math.floor(Math.pow(n, 1 / 3));
+  // Past n - 1 there are no autocovariances left to weight, so a larger bandwidth does not buy
+  // more correction: it reweights noise and, with the clamp below, can shrink the standard error
+  // towards zero, which inflates the t statistic. grangerCausality already refuses the same shape.
+  if (lags < 0 || lags >= n) {
+    throw new Error(`lags must be between 0 and ${n - 1} for ${n} observations`);
+  }
   const mean = values.reduce((sum, value) => sum + value, 0) / n;
   const deviations = values.map((value) => value - mean);
 
@@ -1100,6 +1114,7 @@ export function partialAutocorrelationFunction(params: { values: number[]; maxLa
 
 /** Durbin-Watson statistic; ~2 means no first-order autocorrelation. */
 export function durbinWatson(residuals: number[]): number {
+  assertFinite(residuals, "residuals");
   if (residuals.length < 2) {
     throw new Error("at least 2 residuals required");
   }

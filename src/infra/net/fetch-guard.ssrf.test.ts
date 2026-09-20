@@ -1,4 +1,4 @@
-import { EnvHttpProxyAgent } from "undici";
+import { EnvHttpProxyAgent, ProxyAgent } from "undici";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fetchWithSsrFGuard, GUARDED_FETCH_MODE } from "./fetch-guard.js";
 
@@ -203,5 +203,138 @@ describe("fetchWithSsrFGuard hardening", () => {
       mode: GUARDED_FETCH_MODE.TRUSTED_ENV_PROXY,
       expectEnvProxy: true,
     });
+  });
+
+  it("routes through a declared proxyUrl and ignores ambient proxy env", async () => {
+    // Both cases are stubbed on purpose: undici reads the lowercase name first, so a test that
+    // only stubs HTTP_PROXY can pass while the ambient route is still in effect.
+    vi.stubEnv("HTTP_PROXY", "http://127.0.0.1:7890");
+    vi.stubEnv("http_proxy", "http://127.0.0.1:7890");
+    const lookupFn = createPublicLookup();
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const requestInit = init as RequestInit & { dispatcher?: unknown };
+      expect(requestInit.dispatcher).toBeInstanceOf(ProxyAgent);
+      expect(requestInit.dispatcher).not.toBeInstanceOf(EnvHttpProxyAgent);
+      return okResponse();
+    });
+
+    const result = await fetchWithSsrFGuard({
+      url: "https://public.example/resource",
+      fetchImpl,
+      lookupFn,
+      proxyUrl: "http://proxy.corp.example:3128",
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    await result.release();
+  });
+
+  it("lets a declared proxyUrl win over the env-proxy mode", async () => {
+    vi.stubEnv("HTTP_PROXY", "http://127.0.0.1:7890");
+    const lookupFn = createPublicLookup();
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const requestInit = init as RequestInit & { dispatcher?: unknown };
+      expect(requestInit.dispatcher).toBeInstanceOf(ProxyAgent);
+      return okResponse();
+    });
+
+    const result = await fetchWithSsrFGuard({
+      url: "https://public.example/resource",
+      fetchImpl,
+      lookupFn,
+      mode: GUARDED_FETCH_MODE.TRUSTED_ENV_PROXY,
+      proxyUrl: "http://proxy.corp.example:3128",
+    });
+
+    await result.release();
+  });
+});
+
+describe("fetchWithSsrFGuard declared proxy route and local DNS", () => {
+  type LookupFn = NonNullable<Parameters<typeof fetchWithSsrFGuard>[0]["lookupFn"]>;
+
+  const DECLARED_PROXY = "http://proxy.corp.example:3128";
+
+  /** A resolver that cannot answer: the local network knows nothing about this host. */
+  const createRefusingLookup = (): LookupFn =>
+    vi.fn(async () => {
+      const err = new Error("getaddrinfo ENOTFOUND internal-only.example");
+      (err as NodeJS.ErrnoException).code = "ENOTFOUND";
+      throw err;
+    }) as unknown as LookupFn;
+
+  const createPublicLookup = (): LookupFn =>
+    vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]) as unknown as LookupFn;
+
+  const okFetch = () => vi.fn(async () => new Response("ok", { status: 200 }));
+
+  it("reaches a host the local resolver cannot answer when a proxy is declared", async () => {
+    // The whole point: the proxy resolves the name, so demanding a local answer only rejected
+    // internal-only hosts while adding no protection.
+    const lookupFn = createRefusingLookup();
+    const fetchImpl = okFetch();
+
+    const result = await fetchWithSsrFGuard({
+      url: "https://internal-only.example/resource",
+      fetchImpl,
+      lookupFn,
+      proxyUrl: DECLARED_PROXY,
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(
+      lookupFn,
+      "the proxy resolves the name — no local lookup should happen",
+    ).not.toHaveBeenCalled();
+    await result.release();
+  });
+
+  it("still blocks literal private IPs on the declared proxy route", async () => {
+    // Skipping DNS must not disarm the checks that need no DNS answer.
+    for (const url of [
+      "http://169.254.169.254/latest/meta-data/",
+      "http://127.0.0.1:8080/internal",
+      "http://10.0.0.5/internal",
+    ]) {
+      const fetchImpl = okFetch();
+      await expect(
+        fetchWithSsrFGuard({
+          url,
+          fetchImpl,
+          lookupFn: createPublicLookup(),
+          proxyUrl: DECLARED_PROXY,
+        }),
+        `${url} must stay blocked`,
+      ).rejects.toThrow();
+      expect(fetchImpl).not.toHaveBeenCalled();
+    }
+  });
+
+  it("still enforces the hostname allowlist on the declared proxy route", async () => {
+    const fetchImpl = okFetch();
+    await expect(
+      fetchWithSsrFGuard({
+        url: "https://not-allowed.example/resource",
+        fetchImpl,
+        lookupFn: createPublicLookup(),
+        proxyUrl: DECLARED_PROXY,
+        policy: { hostnameAllowlist: ["allowed.example"] },
+      }),
+    ).rejects.toThrow(/allowlist/u);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("keeps requiring a local answer when no proxy is declared", async () => {
+    // No regression on the default route: without a declared proxy, an unresolvable host is still
+    // an error rather than a silent pass.
+    const fetchImpl = okFetch();
+    await expect(
+      fetchWithSsrFGuard({
+        url: "https://internal-only.example/resource",
+        fetchImpl,
+        lookupFn: createRefusingLookup(),
+      }),
+    ).rejects.toThrow(/ENOTFOUND/u);
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

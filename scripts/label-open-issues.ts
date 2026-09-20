@@ -617,7 +617,7 @@ async function classifyItem(
         {
           role: "system",
           content:
-            "You classify GitHub issues and pull requests for OpenClaw. Respond with JSON only, no extra text.",
+            "You classify GitHub issues and pull requests for LCX Agent. Respond with JSON only, no extra text.",
         },
         {
           role: "user",
@@ -696,7 +696,7 @@ async function main() {
     throw new Error("OPENAI_API_KEY is required to classify issues and pull requests.");
   }
 
-  logHeader("OpenClaw Issue Label Audit");
+  logHeader("LCX Agent Issue Label Audit");
   logStep(`Mode: ${dryRun ? "dry-run" : "apply labels"}`);
   logStep(`Model: ${model}`);
   logStep(`Issue limit: ${Number.isFinite(limit) ? limit : "unlimited"}`);

@@ -723,19 +723,19 @@ description: test skill
     const execDockerRawFn = (async (args: string[]) => {
       if (args[0] === "ps") {
         return {
-          stdout: Buffer.from("openclaw-sbx-browser-old\nopenclaw-sbx-browser-missing-hash\n"),
+          stdout: Buffer.from("lcx-sbx-browser-old\nlcx-sbx-browser-missing-hash\n"),
           stderr: Buffer.alloc(0),
           code: 0,
         };
       }
-      if (args[0] === "inspect" && args.at(-1) === "openclaw-sbx-browser-old") {
+      if (args[0] === "inspect" && args.at(-1) === "lcx-sbx-browser-old") {
         return {
           stdout: Buffer.from("abc123\tepoch-v0\n"),
           stderr: Buffer.alloc(0),
           code: 0,
         };
       }
-      if (args[0] === "inspect" && args.at(-1) === "openclaw-sbx-browser-missing-hash") {
+      if (args[0] === "inspect" && args.at(-1) === "lcx-sbx-browser-missing-hash") {
         return {
           stdout: Buffer.from("<no value>\t<no value>\n"),
           stderr: Buffer.alloc(0),
@@ -763,7 +763,7 @@ description: test skill
     const staleEpoch = res.findings.find(
       (f) => f.checkId === "sandbox.browser_container.hash_epoch_stale",
     );
-    expect(staleEpoch?.detail).toContain("openclaw-sbx-browser-old");
+    expect(staleEpoch?.detail).toContain("lcx-sbx-browser-old");
   });
 
   it("skips sandbox browser hash label checks when docker inspect is unavailable", async () => {
@@ -794,19 +794,19 @@ description: test skill
     const execDockerRawFn = (async (args: string[]) => {
       if (args[0] === "ps") {
         return {
-          stdout: Buffer.from("openclaw-sbx-browser-exposed\n"),
+          stdout: Buffer.from("lcx-sbx-browser-exposed\n"),
           stderr: Buffer.alloc(0),
           code: 0,
         };
       }
-      if (args[0] === "inspect" && args.at(-1) === "openclaw-sbx-browser-exposed") {
+      if (args[0] === "inspect" && args.at(-1) === "lcx-sbx-browser-exposed") {
         return {
           stdout: Buffer.from("hash123\t2026-02-21-novnc-auth-default\n"),
           stderr: Buffer.alloc(0),
           code: 0,
         };
       }
-      if (args[0] === "port" && args.at(-1) === "openclaw-sbx-browser-exposed") {
+      if (args[0] === "port" && args.at(-1) === "lcx-sbx-browser-exposed") {
         return {
           stdout: Buffer.from("6080/tcp -> 0.0.0.0:49101\n9222/tcp -> 127.0.0.1:49100\n"),
           stderr: Buffer.alloc(0),

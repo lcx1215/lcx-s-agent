@@ -387,7 +387,7 @@ function usage(): never {
       "  --preview-prompts N  dry-run only: include the next N prompt ids/messages in JSON output",
       "  --write               actually call MiniMax and write review artifacts; default is dry-run",
       "  --mock                use mock teacher for smoke without provider quota",
-      "  --direct-api          call MiniMax directly with auth profile fallback instead of openclaw agent",
+      "  --direct-api          call MiniMax directly with auth profile fallback instead of lcx agent",
       "  --allow-partial-write write accepted teacher samples even when some calls fail",
       "  --openclaw-agent ID   default research-minimax",
       "  --concurrency N       parallel MiniMax teacher calls per batch, default 8",

@@ -26,7 +26,7 @@ describe("web-guarded-fetch", () => {
     vi.clearAllMocks();
   });
 
-  it("uses trusted SSRF policy for trusted web tools endpoints", async () => {
+  it("uses trusted SSRF policy but never an ambient-proxy mode for trusted endpoints", async () => {
     vi.mocked(fetchWithSsrFGuard).mockResolvedValue({
       response: new Response("ok", { status: 200 }),
       finalUrl: "https://example.com",
@@ -42,7 +42,7 @@ describe("web-guarded-fetch", () => {
           dangerouslyAllowPrivateNetwork: true,
           allowRfc2544BenchmarkRange: true,
         }),
-        mode: GUARDED_FETCH_MODE.TRUSTED_ENV_PROXY,
+        mode: GUARDED_FETCH_MODE.STRICT,
       }),
     );
   });

@@ -22,7 +22,7 @@
 - Live proof:
   - targeted live tests passed
   - `pnpm build` passed in `Projects/openclaw`
-  - `openclaw channels status --probe` returned `Gateway reachable` and `Feishu ... works`
+  - `lcx channels status --probe` returned `Gateway reachable` and `Feishu ... works`
 
 ## Not yet synced to live
 

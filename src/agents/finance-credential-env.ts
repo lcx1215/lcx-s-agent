@@ -1,7 +1,7 @@
 import fs from "node:fs";
-import path from "node:path";
 import dotenv from "dotenv";
-import { resolveStateDir } from "../config/paths.js";
+import { FINANCE_CONNECTOR_CREDENTIAL_KEYS } from "./finance-data-connectors.js";
+import { financeCredentialsPath, resolveFinanceStateDir } from "./finance-state-dir.js";
 
 export const FINANCE_CREDENTIAL_KEYS = [
   "ALPHA_VANTAGE_API_KEY",
@@ -18,13 +18,15 @@ export const FINANCE_CREDENTIAL_KEYS = [
   "LCX_FINANCE_HTTP_PROXY",
   "LCX_ENABLE_YAHOO_PUBLIC_SOURCE",
   "LCX_ENABLE_YAHOO_PUBLIC_SOURCES",
+  ...FINANCE_CONNECTOR_CREDENTIAL_KEYS,
 ] as const;
 
 /** Read the existing dedicated finance store without changing global process state. */
 export function resolveFinanceCredentialEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
-  const file = path.join(resolveStateDir(env), "finance-caseflow", "credentials.env");
+  // Same root as the finance ledgers: one plane, one directory.
+  const file = financeCredentialsPath(resolveFinanceStateDir({ env }).directory);
   let stored: Record<string, string>;
   try {
     stored = dotenv.parse(fs.readFileSync(file));

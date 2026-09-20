@@ -167,14 +167,14 @@ node --import tsx scripts/operator/minimax-brain-teacher-batch.ts --limit 12 --w
 Defaults:
 
 - model: `MiniMax-M2.7`
-- source: `openclaw agent --agent research-minimax`
+- source: `lcx agent --agent research-minimax`
 - model ref: `minimax-portal/MiniMax-M2.7`
 - direct API base URL, when `--direct-api` is used:
   `https://api.minimax.io/anthropic`
 - output: `memory/external-brain-distillation-reviews/`
 
 Use `--direct-api` only when a direct MiniMax API key is available. The default
-path uses the existing local OpenClaw MiniMax agent interface.
+path uses the existing local LCX Agent MiniMax agent interface.
 
 The resulting artifacts are still review artifacts with
 `noLanguageRoutingPromotion=true` and `noLiveSenderTouched=true`. They feed the

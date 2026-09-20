@@ -1,5 +1,5 @@
 ---
-summary: "CLI reference for `openclaw secrets` (reload, audit, configure, apply)"
+summary: "CLI reference for `lcx secrets` (reload, audit, configure, apply)"
 read_when:
   - Re-resolving secret refs at runtime
   - Auditing plaintext residues and unresolved refs
@@ -7,9 +7,9 @@ read_when:
 title: "secrets"
 ---
 
-# `openclaw secrets`
+# `lcx secrets`
 
-Use `openclaw secrets` to manage SecretRefs and keep the active runtime snapshot healthy.
+Use `lcx secrets` to manage SecretRefs and keep the active runtime snapshot healthy.
 
 Command roles:
 
@@ -21,12 +21,12 @@ Command roles:
 Recommended operator loop:
 
 ```bash
-openclaw secrets audit --check
-openclaw secrets configure
-openclaw secrets apply --from /tmp/openclaw-secrets-plan.json --dry-run
-openclaw secrets apply --from /tmp/openclaw-secrets-plan.json
-openclaw secrets audit --check
-openclaw secrets reload
+lcx secrets audit --check
+lcx secrets configure
+lcx secrets apply --from /tmp/openclaw-secrets-plan.json --dry-run
+lcx secrets apply --from /tmp/openclaw-secrets-plan.json
+lcx secrets audit --check
+lcx secrets reload
 ```
 
 Exit code note for CI/gates:
@@ -45,8 +45,8 @@ Related:
 Re-resolve secret refs and atomically swap runtime snapshot.
 
 ```bash
-openclaw secrets reload
-openclaw secrets reload --json
+lcx secrets reload
+lcx secrets reload --json
 ```
 
 Notes:
@@ -57,7 +57,7 @@ Notes:
 
 ## Audit
 
-Scan OpenClaw state for:
+Scan LCX Agent state for:
 
 - plaintext secret storage
 - unresolved refs
@@ -65,9 +65,9 @@ Scan OpenClaw state for:
 - legacy residues (legacy auth store entries, OAuth reminders)
 
 ```bash
-openclaw secrets audit
-openclaw secrets audit --check
-openclaw secrets audit --json
+lcx secrets audit
+lcx secrets audit --check
+lcx secrets audit --json
 ```
 
 Exit behavior:
@@ -90,13 +90,13 @@ Report shape highlights:
 Build provider and SecretRef changes interactively, run preflight, and optionally apply:
 
 ```bash
-openclaw secrets configure
-openclaw secrets configure --plan-out /tmp/openclaw-secrets-plan.json
-openclaw secrets configure --apply --yes
-openclaw secrets configure --providers-only
-openclaw secrets configure --skip-provider-setup
-openclaw secrets configure --agent ops
-openclaw secrets configure --json
+lcx secrets configure
+lcx secrets configure --plan-out /tmp/openclaw-secrets-plan.json
+lcx secrets configure --apply --yes
+lcx secrets configure --providers-only
+lcx secrets configure --skip-provider-setup
+lcx secrets configure --agent ops
+lcx secrets configure --json
 ```
 
 Flow:
@@ -128,16 +128,16 @@ Exec provider safety note:
 
 - Homebrew installs often expose symlinked binaries under `/opt/homebrew/bin/*`.
 - Set `allowSymlinkCommand: true` only when needed for trusted package-manager paths, and pair it with `trustedDirs` (for example `["/opt/homebrew"]`).
-- On Windows, if ACL verification is unavailable for a provider path, OpenClaw fails closed. For trusted paths only, set `allowInsecurePath: true` on that provider to bypass path security checks.
+- On Windows, if ACL verification is unavailable for a provider path, LCX Agent fails closed. For trusted paths only, set `allowInsecurePath: true` on that provider to bypass path security checks.
 
 ## Apply a saved plan
 
 Apply or preflight a plan generated previously:
 
 ```bash
-openclaw secrets apply --from /tmp/openclaw-secrets-plan.json
-openclaw secrets apply --from /tmp/openclaw-secrets-plan.json --dry-run
-openclaw secrets apply --from /tmp/openclaw-secrets-plan.json --json
+lcx secrets apply --from /tmp/openclaw-secrets-plan.json
+lcx secrets apply --from /tmp/openclaw-secrets-plan.json --dry-run
+lcx secrets apply --from /tmp/openclaw-secrets-plan.json --json
 ```
 
 Plan contract details (allowed target paths, validation rules, and failure semantics):
@@ -160,9 +160,9 @@ Safety comes from strict preflight + atomic-ish apply with best-effort in-memory
 ## Example
 
 ```bash
-openclaw secrets audit --check
-openclaw secrets configure
-openclaw secrets audit --check
+lcx secrets audit --check
+lcx secrets configure
+lcx secrets audit --check
 ```
 
 If `audit --check` still reports plaintext findings, update the remaining reported target paths and rerun audit.

@@ -19,7 +19,10 @@ import {
 } from "../../src/agents/finance-realtime-source-registry.js";
 import { financeProviderId } from "../../src/agents/finance-source-health.js";
 import { classifyFinanceQuotaBody } from "../../src/agents/finance-source-quota-policy.js";
-import { resolveStateDir } from "../../src/config/paths.js";
+import {
+  financeQuotaProbesDir,
+  resolveFinanceStateDir,
+} from "../../src/agents/finance-state-dir.ts";
 
 // Representative read-only routes; this does not assert independent quotas per route.
 const selected: Record<string, string> = {
@@ -86,7 +89,7 @@ if (!args.includes("--live")) {
     }),
   );
 } else {
-  const root = path.join(resolveStateDir(), "finance-caseflow", "quota-probes");
+  const root = financeQuotaProbesDir(resolveFinanceStateDir().directory);
   await fs.mkdir(root, { recursive: true, mode: 0o700 });
   const runId = new Date().toISOString().replace(/[:.]/gu, "-");
   for (const [providerId, defaultAdapterId] of Object.entries(selected)) {

@@ -1,6 +1,6 @@
-# OpenClaw Installer for Windows (PowerShell)
-# Usage: iwr -useb https://openclaw.ai/install.ps1 | iex
-# Or: & ([scriptblock]::Create((iwr -useb https://openclaw.ai/install.ps1))) -NoOnboard
+# LCX Agent Installer for Windows (PowerShell)
+# Usage: iwr -useb https://raw.githubusercontent.com/lcx1215/lcx-s-agent/main/scripts/install.ps1 | iex
+# Or: & ([scriptblock]::Create((iwr -useb https://raw.githubusercontent.com/lcx1215/lcx-s-agent/main/scripts/install.ps1))) -NoOnboard
 
 param(
     [string]$InstallMethod = "npm",
@@ -34,8 +34,8 @@ function Write-Host {
 
 function Write-Banner {
     Write-Host ""
-    Write-Host "${ACCENT}  🦞 OpenClaw Installer$NC" -Level info
-    Write-Host "${MUTED}  All your chats, one OpenClaw.$NC" -Level info
+    Write-Host "${ACCENT}  🦞 LCX Agent Installer$NC" -Level info
+    Write-Host "${MUTED}  All your chats, one LCX Agent.$NC" -Level info
     Write-Host ""
 }
 
@@ -202,12 +202,12 @@ function Ensure-Git {
 function Install-OpenClawNpm {
     param([string]$Version = "latest")
     
-    Write-Host "Installing OpenClaw (openclaw@$Version)..." -Level info
+    Write-Host "Installing LCX Agent (openclaw@$Version)..." -Level info
     
     try {
         # Use -ExecutionPolicy Bypass to handle restricted execution policy
         npm install -g openclaw@$Version --no-fund --no-audit 2>&1
-        Write-Host "OpenClaw installed" -Level success
+        Write-Host "LCX Agent installed" -Level success
         return $true
     } catch {
         Write-Host "npm install failed: $_" -Level error
@@ -218,11 +218,11 @@ function Install-OpenClawNpm {
 function Install-OpenClawGit {
     param([string]$RepoDir, [switch]$Update)
     
-    Write-Host "Installing OpenClaw from git..." -Level info
+    Write-Host "Installing LCX Agent from git..." -Level info
     
     if (!(Test-Path $RepoDir)) {
         Write-Host "  Cloning repository..." -Level info
-        git clone https://github.com/openclaw/openclaw.git $RepoDir 2>&1
+        git clone https://github.com/lcx1215/lcx-s-agent.git $RepoDir 2>&1
     } elseif ($Update) {
         Write-Host "  Updating repository..." -Level info
         git -C $RepoDir pull --rebase 2>&1
@@ -253,7 +253,7 @@ function Install-OpenClawGit {
 node "%~dp0..\openclaw\dist\entry.js" %*
 "@ | Out-File -FilePath "$wrapperDir\openclaw.cmd" -Encoding ASCII -Force
     
-    Write-Host "OpenClaw installed" -Level success
+    Write-Host "LCX Agent installed" -Level success
     return $true
 }
 
@@ -290,7 +290,7 @@ function Main {
         }
         
         if ($DryRun) {
-            Write-Host "[DRY RUN] Would install OpenClaw from git to $GitDir" -Level info
+            Write-Host "[DRY RUN] Would install LCX Agent from git to $GitDir" -Level info
         } else {
             Install-OpenClawGit -RepoDir $GitDir -Update:(-not $NoGitUpdate)
         }
@@ -301,7 +301,7 @@ function Main {
         }
         
         if ($DryRun) {
-            Write-Host "[DRY RUN] Would install OpenClaw via npm (tag: $Tag)" -Level info
+            Write-Host "[DRY RUN] Would install LCX Agent via npm (tag: $Tag)" -Level info
         } else {
             if (!(Install-OpenClawNpm -Version $Tag)) {
                 exit 1
@@ -319,11 +319,11 @@ function Main {
     
     if (!$NoOnboard -and !$DryRun) {
         Write-Host ""
-        Write-Host "Run 'openclaw onboard' to complete setup" -Level info
+        Write-Host "Run 'lcx onboard' to complete setup" -Level info
     }
     
     Write-Host ""
-    Write-Host "🦞 OpenClaw installed successfully!" -Level success
+    Write-Host "🦞 LCX Agent installed successfully!" -Level success
 }
 
 Main

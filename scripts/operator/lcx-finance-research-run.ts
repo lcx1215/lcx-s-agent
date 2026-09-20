@@ -483,7 +483,7 @@ export async function preflightFinanceResearchReceiptDestination(
 ): Promise<void> {
   const normalizedAsOf = assertIsoTimestamp(asOf);
   const stateDir = path.join(root, "state");
-  const runDir = path.join(root, "memory", "finance-research-runs", normalizedAsOf.slice(0, 10));
+  const runDir = path.join(root, "state", "finance-research-runs", normalizedAsOf.slice(0, 10));
   const latestPath = path.join(stateDir, "lcx-finance-research-run-latest.json");
   await fs.mkdir(runDir, { recursive: true });
   await fs.mkdir(stateDir, { recursive: true });
@@ -526,7 +526,9 @@ export async function preflightLocalModelPythonRuntime(pythonPath: string): Prom
 async function writeReceipt(receipt: FinanceResearchRunReceipt, asOf: string) {
   const root = WORKSPACE_DIR();
   const stateDir = path.join(root, "state");
-  const runDir = path.join(root, "memory", "finance-research-runs", asOf.slice(0, 10));
+  // `state/` is git-ignored and is where the agent-side research tool writes its own runs;
+  // `memory/` is tracked, so a run archive dropped there becomes repository content.
+  const runDir = path.join(root, "state", "finance-research-runs", asOf.slice(0, 10));
   const stamp = new Date().toISOString().replace(/[:.]/gu, "-");
   const datedPath = path.join(runDir, `${stamp}__finance-research-run.json`);
   const latestPath = path.join(stateDir, "lcx-finance-research-run-latest.json");

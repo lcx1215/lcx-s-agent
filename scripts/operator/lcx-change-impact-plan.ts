@@ -878,7 +878,7 @@ const PATH_RULES: PathRule[] = [
     ],
     requiredChecks: ["run-changed-tests"],
     commands: [
-      "pnpm vitest run src/agents/subagent-registry-store.corrupt-guard.test.ts",
+      "pnpm vitest run src/agents/subagent-registry-store.corrupt-guard.test.ts src/browser/chrome.profile-decoration.unreadable.test.ts src/infra/device-identity.unreadable-guard.test.ts",
       "pnpm tsx scripts/operator/lcx-persistence-safety-audit.ts --json",
     ],
     safetyNotes: [

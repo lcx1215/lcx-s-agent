@@ -17,7 +17,7 @@
 - live build passed: n/a
 - gateway restarted: no
 - proxy restarted: no
-- `openclaw channels status --probe` passed: n/a
+- `lcx channels status --probe` passed: n/a
 - real Feishu verified: synthetic inbound yes, human-typed no
 - Feishu acceptance phrases used:
   - `learn_topic market regime`

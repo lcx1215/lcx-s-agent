@@ -86,7 +86,7 @@ describe("extension-relay-auth", () => {
         const header = req.headers["x-openclaw-relay-token"];
         seenToken = Array.isArray(header) ? header[0] : header;
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ Browser: "OpenClaw/extension-relay" }));
+        res.end(JSON.stringify({ Browser: "LCX Agent/extension-relay" }));
       },
       async ({ port }) => {
         const token = resolveRelayAuthTokenForPort(port);

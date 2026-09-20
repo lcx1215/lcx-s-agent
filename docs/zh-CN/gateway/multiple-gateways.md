@@ -2,7 +2,7 @@
 read_when:
   - 在同一台机器上运行多个 Gateway 网关
   - 你需要每个 Gateway 网关有隔离的配置/状态/端口
-summary: 在同一主机上运行多个 OpenClaw Gateway 网关（隔离、端口和配置文件）
+summary: 在同一主机上运行多个 LCX Agent Gateway 网关（隔离、端口和配置文件）
 title: 多 Gateway 网关
 x-i18n:
   generated_at: "2026-02-03T07:48:13Z"
@@ -66,8 +66,8 @@ openclaw --profile rescue gateway install
 ```bash
 # 主机器人（现有或新建，不带 --profile 参数）
 # 运行在端口 18789 + Chrome CDC/Canvas/... 端口
-openclaw onboard
-openclaw gateway install
+lcx onboard
+lcx gateway install
 
 # 救援机器人（隔离的配置文件 + 端口）
 openclaw --profile rescue onboard
@@ -103,11 +103,11 @@ openclaw --profile rescue gateway install
 ```bash
 OPENCLAW_CONFIG_PATH=~/.openclaw/main.json \
 OPENCLAW_STATE_DIR=~/.openclaw-main \
-openclaw gateway --port 18789
+lcx gateway --port 18789
 
 OPENCLAW_CONFIG_PATH=~/.openclaw/rescue.json \
 OPENCLAW_STATE_DIR=~/.openclaw-rescue \
-openclaw gateway --port 19001
+lcx gateway --port 19001
 ```
 
 ## 快速检查

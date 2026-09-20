@@ -9,12 +9,12 @@ title: "Discovery and Transports"
 
 # Discovery & transports
 
-OpenClaw has two distinct problems that look similar on the surface:
+LCX Agent has two distinct problems that look similar on the surface:
 
 1. **Operator remote control**: an operator client (Control UI, CLI) controlling a gateway running elsewhere.
 2. **Node pairing**: node clients (and future nodes) finding a gateway and pairing securely.
 
-The design goal is to keep all network discovery/advertising in the **Node Gateway** (`openclaw gateway`) and keep clients (Control UI, CLI) as consumers.
+The design goal is to keep all network discovery/advertising in the **Node Gateway** (`lcx gateway`) and keep clients (Control UI, CLI) as consumers.
 
 ## Terms
 

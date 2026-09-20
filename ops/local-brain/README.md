@@ -946,7 +946,7 @@ When `writeReceipt=true`, the tool writes a local receipt under:
 
 Use `--workspace PATH` only for isolated tests or an explicit alternate local
 workspace. Do not write these receipts into repo `memory/`; the review,
-training-plan, doctor, and agent exam all read the local OpenClaw workspace.
+training-plan, doctor, and agent exam all read the local LCX Agent workspace.
 
 The receipt status is evidence-derived: `missing_evidence`, `stored_only`,
 `retrieval_ready`, `application_ready`, or `eval_absorbed`. Do not upgrade a
@@ -1124,7 +1124,7 @@ Use them like this:
 - `cli-anything-harvester`: evaluate CLI-Anything, CLI-Hub, GUI/local software CLI wrappers, and safe agent-native software-control plans before any wrapper is trusted.
 
 The skills are operator guidance, not durable market memory. Do not copy their text into protected repo memory.
-Runtime-visible LCX skills must also be present in the OpenClaw managed skill
+Runtime-visible LCX skills must also be present in the LCX Agent managed skill
 snapshot under `/Users/liuchengxu/.openclaw/skills/`. It is acceptable for that
 managed path to symlink back to the canonical Codex skill folder under
 `/Users/liuchengxu/.codex/skills/`, but `lcx-context-recovery-exam` must prove
@@ -1200,7 +1200,7 @@ Use these as support tools, not as LCX doctrine:
 - `cli-system-doctor`: CLI-first diagnosis across build, typecheck, lint, and smoke paths.
 - `cli-json-noise-doctor`: fix JSON commands polluted by logs or non-JSON output.
 - `live-sidecar-sync-doctor`: linked-worktree and external-sidecar drift checks with bounded sync planning.
-- `repo-migration-cleaner`: OpenClaw/lobster to LCX naming cleanup.
+- `repo-migration-cleaner`: LCX Agent/lobster to LCX naming cleanup.
 - `semantic-family-miner`: batch-mining historical semantics for regression only, not as the main natural-language brain.
 - `security-best-practices`, `security-threat-model`, and `security-ownership-map`: security review, trust-boundary checks, and security ownership topology when explicitly requested.
 - `playwright` and `playwright-interactive`: browser verification for UI or localhost work.

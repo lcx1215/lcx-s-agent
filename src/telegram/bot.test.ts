@@ -952,7 +952,7 @@ describe("createTelegramBot", () => {
         reply_to_message: {
           message_id: 42,
           text: "original reply",
-          from: { id: 999, first_name: "OpenClaw" },
+          from: { id: 999, first_name: "LCX Agent" },
         },
       },
       me: { id: 999, username: "openclaw_bot" },

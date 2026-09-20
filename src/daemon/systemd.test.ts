@@ -61,7 +61,7 @@ describe("isSystemdServiceEnabled", () => {
   it("calls systemctl is-enabled when systemctl is present", async () => {
     const { isSystemdServiceEnabled } = await import("./systemd.js");
     execFileMock.mockImplementationOnce((_cmd, args, _opts, cb) => {
-      expect(args).toEqual(["--user", "is-enabled", "openclaw-gateway.service"]);
+      expect(args).toEqual(["--user", "is-enabled", "lcx-gateway.service"]);
       cb(null, "enabled", "");
     });
     const result = await isSystemdServiceEnabled({ env: {} });
@@ -115,12 +115,12 @@ describe("resolveSystemdUserUnitPath", () => {
     {
       name: "uses default service name when OPENCLAW_PROFILE is unset",
       env: { HOME: "/home/test" },
-      expected: "/home/test/.config/systemd/user/openclaw-gateway.service",
+      expected: "/home/test/.config/systemd/user/lcx-gateway.service",
     },
     {
       name: "uses profile-specific service name when OPENCLAW_PROFILE is set to a custom value",
       env: { HOME: "/home/test", OPENCLAW_PROFILE: "jbphoenix" },
-      expected: "/home/test/.config/systemd/user/openclaw-gateway-jbphoenix.service",
+      expected: "/home/test/.config/systemd/user/lcx-gateway-jbphoenix.service",
     },
     {
       name: "prefers OPENCLAW_SYSTEMD_UNIT over OPENCLAW_PROFILE",
@@ -208,7 +208,7 @@ describe("systemd service control", () => {
     execFileMock
       .mockImplementationOnce((_cmd, _args, _opts, cb) => cb(null, "", ""))
       .mockImplementationOnce((_cmd, args, _opts, cb) => {
-        expect(args).toEqual(["--user", "stop", "openclaw-gateway.service"]);
+        expect(args).toEqual(["--user", "stop", "lcx-gateway.service"]);
         cb(null, "", "");
       });
     const write = vi.fn();
@@ -224,7 +224,7 @@ describe("systemd service control", () => {
     execFileMock
       .mockImplementationOnce((_cmd, _args, _opts, cb) => cb(null, "", ""))
       .mockImplementationOnce((_cmd, args, _opts, cb) => {
-        expect(args).toEqual(["--user", "restart", "openclaw-gateway-work.service"]);
+        expect(args).toEqual(["--user", "restart", "lcx-gateway-work.service"]);
         cb(null, "", "");
       });
     const write = vi.fn();

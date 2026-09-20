@@ -43,7 +43,7 @@ This patch contains the current Feishu workflow-hardening fixes:
 3. rebuild the live runtime from the live repo
 4. restart only the gateway
 5. verify:
-   - `openclaw channels status --probe`
+   - `lcx channels status --probe`
    - one control-room message
    - one `learning_command` message
    - one watchtower/workface publish path

@@ -333,7 +333,7 @@ describe("LCX commercial answer pipeline", () => {
       "--ask",
       "这个呢",
       "--candidate-answer",
-      "我是 LCX Agent / OpenClaw 的 External 控制室入口。当前可用能力：可以把自然语言请求分到 control_room、learning_command、technical_daily 等工作面。",
+      "我是 LCX Agent / LCX Agent 的 External 控制室入口。当前可用能力：可以把自然语言请求分到 control_room、learning_command、technical_daily 等工作面。",
     ]);
     expect(genericIntro.failedReasons).toEqual(
       expect.arrayContaining(["short_external_canary_wrong_route_generic_intro"]),

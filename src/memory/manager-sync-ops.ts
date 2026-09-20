@@ -29,6 +29,7 @@ import { isFileMissingError } from "./fs-utils.js";
 import {
   buildFileEntry,
   ensureDir,
+  FTS_ONLY_MODEL_KEY,
   listMemoryFilesWithDiagnostics,
   normalizeExtraMemoryPaths,
   runWithConcurrency,
@@ -122,6 +123,15 @@ export abstract class MemoryManagerSyncOps {
   };
   protected readonly sources: Set<MemorySource> = new Set();
   protected providerKey: string | null = null;
+
+  /**
+   * The model key recorded on FTS rows. Mirrors `MemoryManagerEmbeddingOps`: with no embedding
+   * provider there are no vectors, but the rows still need a stable key, otherwise "is this row
+   * stale" compares against `undefined` and every sync re-indexes from scratch.
+   */
+  protected get ftsModelKey(): string {
+    return this.provider?.model ?? FTS_ONLY_MODEL_KEY;
+  }
   protected abstract readonly vector: {
     enabled: boolean;
     available: boolean | null;
@@ -654,10 +664,10 @@ export abstract class MemoryManagerSyncOps {
     needsFullReindex: boolean;
     progress?: MemorySyncProgressState;
   }) {
-    // FTS-only mode: skip embedding sync (no provider)
     if (!this.provider) {
-      log.debug("Skipping memory file sync in FTS-only mode (no embedding provider)");
-      return;
+      // Keyword-only recall: no vectors are produced, but the files still have to reach the
+      // index, or every memory search returns nothing while status reports FTS as ready.
+      log.debug("Indexing memory files without embeddings (no embedding provider)");
     }
 
     const listing = await listMemoryFilesWithDiagnostics(
@@ -735,7 +745,7 @@ export abstract class MemoryManagerSyncOps {
         try {
           this.db
             .prepare(`DELETE FROM ${FTS_TABLE} WHERE path = ? AND source = ? AND model = ?`)
-            .run(stale.path, "memory", this.provider.model);
+            .run(stale.path, "memory", this.ftsModelKey);
         } catch {}
       }
     }
@@ -745,10 +755,8 @@ export abstract class MemoryManagerSyncOps {
     needsFullReindex: boolean;
     progress?: MemorySyncProgressState;
   }) {
-    // FTS-only mode: skip embedding sync (no provider)
     if (!this.provider) {
-      log.debug("Skipping session file sync in FTS-only mode (no embedding provider)");
-      return;
+      log.debug("Indexing session files without embeddings (no embedding provider)");
     }
 
     const files = await listSessionFilesForAgent(this.agentId);
@@ -842,7 +850,7 @@ export abstract class MemoryManagerSyncOps {
         try {
           this.db
             .prepare(`DELETE FROM ${FTS_TABLE} WHERE path = ? AND source = ? AND model = ?`)
-            .run(stale.path, "sessions", this.provider.model);
+            .run(stale.path, "sessions", this.ftsModelKey);
         } catch {}
       }
     }
@@ -892,7 +900,7 @@ export abstract class MemoryManagerSyncOps {
     const needsFullReindex =
       params?.force ||
       !meta ||
-      (this.provider && meta.model !== this.provider.model) ||
+      (this.provider && meta.model !== this.ftsModelKey) ||
       (this.provider && meta.provider !== this.provider.id) ||
       meta.providerKey !== this.providerKey ||
       this.metaSourcesDiffer(meta, configuredSources) ||

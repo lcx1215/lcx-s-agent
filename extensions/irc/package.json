@@ -1,7 +1,7 @@
 {
   "name": "@openclaw/irc",
   "version": "2026.3.2",
-  "description": "OpenClaw IRC channel plugin",
+  "description": "LCX Agent IRC channel plugin",
   "type": "module",
   "dependencies": {
     "lcx-agent": "workspace:*",

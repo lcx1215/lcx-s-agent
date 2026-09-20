@@ -3,6 +3,11 @@ export const CANONICAL_PACKAGE_NAME = "lcx-agent";
 export const CANONICAL_CLI_NAME = "lcx";
 export const CANONICAL_CONFIG_FILENAME = "lcx.json";
 export const CANONICAL_STATE_DIRNAME = ".lcx";
+/**
+ * Public project URL. Used as the outbound `HTTP-Referer` on provider APIs (OpenRouter, Perplexity)
+ * so requests identify this product instead of the upstream project it was forked from.
+ */
+export const CANONICAL_PROJECT_URL = "https://github.com/lcx1215/lcx-s-agent";
 
 export const LEGACY_PACKAGE_NAME = "openclaw";
 export const LEGACY_CLI_NAME = "openclaw";

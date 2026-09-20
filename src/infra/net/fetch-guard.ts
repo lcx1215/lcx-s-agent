@@ -1,8 +1,9 @@
-import { EnvHttpProxyAgent, type Dispatcher } from "undici";
+import { EnvHttpProxyAgent, ProxyAgent, type Dispatcher } from "undici";
 import { logWarn } from "../../logger.js";
 import { bindAbortRelay } from "../../utils/fetch-timeout.js";
 import { hasProxyEnvConfigured } from "./proxy-env.js";
 import {
+  assertAllowedHostnameForProxyRoute,
   closeDispatcher,
   createPinnedDispatcher,
   resolvePinnedHostnameWithPolicy,
@@ -31,11 +32,23 @@ export type GuardedFetchOptions = {
   lookupFn?: LookupFn;
   mode?: GuardedFetchMode;
   pinDns?: boolean;
-  /** @deprecated use `mode: "trusted_env_proxy"` for trusted/operator-controlled URLs. */
-  proxy?: "env";
   /**
-   * @deprecated use `mode: "trusted_env_proxy"` instead.
+   * Explicitly declared egress route. When set, requests go through this proxy and ambient
+   * `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY` (either case) are ignored, so the same code takes the
+   * same route on a laptop behind a VPN and on AWS/Cloudflare. Prefer this over any
+   * environment-derived mode: an ambient proxy that dies with the shell would otherwise
+   * silently break every later request.
+   *
+   * This route neither pins DNS nor resolves the target locally: the proxy turns the name into an
+   * address. The SSRF preflight still runs every check that needs no DNS answer — the hostname
+   * allowlist and the literal host/IP policy — so `http://169.254.169.254/` is still blocked.
+   * What it cannot do is catch a public name resolving to a private address; on a declared proxy
+   * that decision belongs to the proxy.
    */
+  proxyUrl?: string;
+  /** @deprecated declare `proxyUrl` instead — ambient env must not choose the egress route. */
+  proxy?: "env";
+  /** @deprecated declare `proxyUrl` instead. */
   dangerouslyAllowEnvProxyWithoutPinnedDns?: boolean;
   auditContext?: string;
 };
@@ -175,16 +188,25 @@ export async function fetchWithSsrFGuard(params: GuardedFetchOptions): Promise<G
 
     let dispatcher: Dispatcher | null = null;
     try {
-      const pinned = await resolvePinnedHostnameWithPolicy(parsedUrl.hostname, {
-        lookupFn: params.lookupFn,
-        policy: params.policy,
-      });
       const canUseTrustedEnvProxy =
         mode === GUARDED_FETCH_MODE.TRUSTED_ENV_PROXY && hasProxyEnvConfigured();
-      if (canUseTrustedEnvProxy) {
-        dispatcher = new EnvHttpProxyAgent();
-      } else if (params.pinDns !== false) {
-        dispatcher = createPinnedDispatcher(pinned);
+      if (params.proxyUrl) {
+        // A declared egress route always wins over ambient proxy variables. The proxy resolves the
+        // target itself, so the preflight here runs only the checks that need no DNS answer — the
+        // hostname allowlist and the literal host/IP policy — instead of resolving locally. No
+        // pinned dispatcher is installed either: the proxy, not this process, picks the address.
+        assertAllowedHostnameForProxyRoute(parsedUrl.hostname, params.policy);
+        dispatcher = new ProxyAgent(params.proxyUrl);
+      } else {
+        const pinned = await resolvePinnedHostnameWithPolicy(parsedUrl.hostname, {
+          lookupFn: params.lookupFn,
+          policy: params.policy,
+        });
+        if (canUseTrustedEnvProxy) {
+          dispatcher = new EnvHttpProxyAgent();
+        } else if (params.pinDns !== false) {
+          dispatcher = createPinnedDispatcher(pinned);
+        }
       }
 
       const init: RequestInit & { dispatcher?: Dispatcher } = {

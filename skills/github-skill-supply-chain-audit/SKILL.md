@@ -1,6 +1,6 @@
 ---
 name: github-skill-supply-chain-audit
-description: Audit a GitHub-hosted Agent Skill before installing it. Use when the user wants to add skills from GitHub, ClawHub, awesome-skill lists, or any repository containing SKILL.md files, especially to check provenance, prompt-injection risk, hidden scripts, dependency risk, and uninstallability.
+description: Audit a GitHub-hosted Agent Skill before installing it. Use when the user wants to add skills from GitHub, a third-party registry, awesome-skill lists, or any repository containing SKILL.md files, especially to check provenance, prompt-injection risk, hidden scripts, dependency risk, and uninstallability.
 metadata: { "openclaw": { "emoji": "🛡️" } }
 ---
 
@@ -17,7 +17,7 @@ Use when the user says:
 - "install this skill from GitHub"
 - "find some skills and add them"
 - "is this SKILL.md safe"
-- "audit this ClawHub / awesome skills candidate"
+- "audit this third-party registry / awesome skills candidate"
 
 Do not use for ordinary code review unless the object being reviewed is an Agent Skill.
 

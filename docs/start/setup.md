@@ -1,5 +1,5 @@
 ---
-summary: "Advanced setup and development workflows for OpenClaw"
+summary: "Advanced setup and development workflows for LCX Agent"
 read_when:
   - Setting up a new machine
   - You want “latest + greatest” without breaking your personal setup
@@ -38,16 +38,16 @@ If you want “100% tailored to me” _and_ easy updates, keep your customizatio
 Bootstrap once:
 
 ```bash
-openclaw setup
+lcx setup
 ```
 
 From inside this repo, use the local CLI entry:
 
 ```bash
-openclaw setup
+lcx setup
 ```
 
-If you don’t have a global install yet, run it via `pnpm openclaw setup`.
+If you don’t have a global install yet, run it via `pnpm lcx setup`.
 
 ## Run the Gateway from this repo
 
@@ -62,29 +62,29 @@ node openclaw.mjs gateway --port 18789 --verbose
 1. Install the Gateway service (all of these are supported):
 
 ```bash
-openclaw onboard --install-daemon   # wizard (recommended)
-openclaw gateway install            # direct
-openclaw configure                  # interactive: select "Gateway service"
-openclaw doctor                     # repair or migrate an existing service
+lcx onboard --install-daemon   # wizard (recommended)
+lcx gateway install            # direct
+lcx configure                  # interactive: select "Gateway service"
+lcx doctor                     # repair or migrate an existing service
 ```
 
 2. Link surfaces (example: WhatsApp):
 
 ```bash
-openclaw channels login
+lcx channels login
 ```
 
 3. Sanity check:
 
 ```bash
-openclaw health
+lcx health
 ```
 
 Then reach the Gateway from a browser or an existing chat channel.
 
 If onboarding is not available in your build:
 
-- Run `openclaw setup`, then `openclaw channels login`, then start the Gateway manually (`openclaw gateway`).
+- Run `lcx setup`, then `lcx channels login`, then start the Gateway manually (`lcx gateway`).
 
 ## Bleeding edge workflow (Gateway in a terminal)
 
@@ -107,7 +107,7 @@ WebChat in a browser, or connect any client on that port.
 ### 3) Verify
 
 ```bash
-openclaw health
+lcx health
 ```
 
 ### Common footguns
@@ -157,4 +157,4 @@ user service (no lingering needed). See [Gateway runbook](/gateway) for the syst
 - [Gateway runbook](/gateway) (flags, supervision, ports)
 - [Gateway configuration](/gateway/configuration) (config schema + examples)
 - [Discord](/channels/discord) and [Telegram](/channels/telegram) (reply tags + replyToMode settings)
-- [OpenClaw assistant setup](/start/openclaw)
+- [LCX Agent assistant setup](/start/personal-assistant)

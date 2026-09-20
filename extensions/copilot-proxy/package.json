@@ -2,7 +2,7 @@
   "name": "@openclaw/copilot-proxy",
   "version": "2026.3.2",
   "private": true,
-  "description": "OpenClaw Copilot Proxy provider plugin",
+  "description": "LCX Agent Copilot Proxy provider plugin",
   "type": "module",
   "dependencies": {
     "lcx-agent": "workspace:*"

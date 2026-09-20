@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# OpenClaw Auth Widget for Termux
+# LCX Agent Auth Widget for Termux
 # Place in ~/.shortcuts/ for Termux:Widget
 #
 # This widget checks auth status and helps with re-auth if needed.
@@ -9,7 +9,7 @@
 SERVER="${OPENCLAW_SERVER:-${CLAWDBOT_SERVER:-l36}}"
 
 # Check auth status
-termux-toast "Checking OpenClaw auth..."
+termux-toast "Checking LCX Agent auth..."
 
 STATUS=$(ssh "$SERVER" '$HOME/openclaw/scripts/claude-auth-status.sh simple' 2>&1)
 EXIT_CODE=$?
@@ -69,7 +69,7 @@ case "$STATUS" in
                 termux-toast "Run: ssh $SERVER '$HOME/openclaw/scripts/mobile-reauth.sh'"
                 ;;
             *)
-                termux-toast "Warning: OpenClaw won't work until re-auth"
+                termux-toast "Warning: LCX Agent won't work until re-auth"
                 ;;
         esac
         ;;

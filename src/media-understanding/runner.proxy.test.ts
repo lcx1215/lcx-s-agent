@@ -54,21 +54,20 @@ async function runAudioCapabilityWithFetchCapture(params: {
   return seenFetchFn;
 }
 
-describe("runCapability proxy fetch passthrough", () => {
+describe("runCapability egress is independent of ambient proxy env", () => {
   beforeEach(() => vi.clearAllMocks());
   afterEach(() => vi.unstubAllEnvs());
 
-  it("passes fetchFn to audio provider when HTTPS_PROXY is set", async () => {
+  it("does not pass fetchFn to audio provider even when HTTPS_PROXY is set", async () => {
     vi.stubEnv("HTTPS_PROXY", "http://proxy.test:8080");
     const seenFetchFn = await runAudioCapabilityWithFetchCapture({
       fixturePrefix: "openclaw-audio-proxy",
       outputText: "transcribed",
     });
-    expect(seenFetchFn).toBeDefined();
-    expect(seenFetchFn).not.toBe(globalThis.fetch);
+    expect(seenFetchFn).toBeUndefined();
   });
 
-  it("passes fetchFn to video provider when HTTPS_PROXY is set", async () => {
+  it("does not pass fetchFn to video provider even when HTTPS_PROXY is set", async () => {
     vi.stubEnv("HTTPS_PROXY", "http://proxy.test:8080");
 
     await withVideoFixture("openclaw-video-proxy", async ({ ctx, media, cache }) => {
@@ -113,8 +112,7 @@ describe("runCapability proxy fetch passthrough", () => {
       });
 
       expect(result.outputs[0]?.text).toBe("video ok");
-      expect(seenFetchFn).toBeDefined();
-      expect(seenFetchFn).not.toBe(globalThis.fetch);
+      expect(seenFetchFn).toBeUndefined();
     });
   });
 

@@ -1,9 +1,9 @@
 ---
 read_when:
-  - 学习如何配置 OpenClaw
+  - 学习如何配置 LCX Agent
   - 寻找配置示例
-  - 首次设置 OpenClaw
-summary: 符合模式的常见 OpenClaw 设置配置示例
+  - 首次设置 LCX Agent
+summary: 符合模式的常见 LCX Agent 设置配置示例
 title: 配置示例
 x-i18n:
   generated_at: "2026-02-03T07:48:39Z"
@@ -284,7 +284,7 @@ x-i18n:
         perSession: true,
         workspaceRoot: "~/.openclaw/sandboxes",
         docker: {
-          image: "openclaw-sandbox:bookworm-slim",
+          image: "lcx-sandbox:bookworm-slim",
           workdir: "/workspace",
           readOnlyRoot: true,
           tmpfs: ["/tmp", "/var/tmp", "/run"],

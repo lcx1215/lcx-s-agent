@@ -1,7 +1,7 @@
 ---
-summary: "Connect any software to OpenClaw through a JSON webhook and HTTP endpoint"
+summary: "Connect any software to LCX Agent through a JSON webhook and HTTP endpoint"
 read_when:
-  - You want to connect a custom app, workflow, or service to OpenClaw
+  - You want to connect a custom app, workflow, or service to LCX Agent
   - You need a vendor-neutral inbound and outbound message contract
 title: "External Message Channel"
 ---
@@ -10,7 +10,7 @@ title: "External Message Channel"
 
 The External Message Channel is a vendor-neutral adapter for software that can
 send and receive HTTP requests. It accepts JSON messages on an inbound webhook,
-runs them through the normal OpenClaw route and reply pipeline, and sends
+runs them through the normal LCX Agent route and reply pipeline, and sends
 replies as JSON `POST` requests to the configured endpoint.
 
 It does not require a specific chat vendor, SDK, account system, or network

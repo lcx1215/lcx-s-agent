@@ -1,12 +1,12 @@
 ---
-summary: "CLI reference for `openclaw node` (headless node host)"
+summary: "CLI reference for `lcx node` (headless node host)"
 read_when:
   - Running the headless node host
   - Pairing a non-macOS node for system.run
 title: "node"
 ---
 
-# `openclaw node`
+# `lcx node`
 
 Run a **headless node host** that connects to the Gateway WebSocket and exposes
 `system.run` / `system.which` on this machine.
@@ -14,7 +14,7 @@ Run a **headless node host** that connects to the Gateway WebSocket and exposes
 ## Why use a node host?
 
 Use a node host when you want agents to **run commands on other machines** in your
-network without installing a full OpenClaw Gateway there.
+network without installing a full LCX Agent Gateway there.
 
 Common use cases:
 
@@ -46,7 +46,7 @@ Disable it on the node if needed:
 ## Run (foreground)
 
 ```bash
-openclaw node run --host <gateway-host> --port 18789
+lcx node run --host <gateway-host> --port 18789
 ```
 
 Options:
@@ -63,7 +63,7 @@ Options:
 Install a headless node host as a user service.
 
 ```bash
-openclaw node install --host <gateway-host> --port 18789
+lcx node install --host <gateway-host> --port 18789
 ```
 
 Options:
@@ -80,13 +80,13 @@ Options:
 Manage the service:
 
 ```bash
-openclaw node status
-openclaw node stop
-openclaw node restart
-openclaw node uninstall
+lcx node status
+lcx node stop
+lcx node restart
+lcx node uninstall
 ```
 
-Use `openclaw node run` for a foreground node host (no service).
+Use `lcx node run` for a foreground node host (no service).
 
 Service commands accept `--json` for machine-readable output.
 
@@ -96,8 +96,8 @@ The first connection creates a pending device pairing request (`role: node`) on 
 Approve it via:
 
 ```bash
-openclaw devices list
-openclaw devices approve <requestId>
+lcx devices list
+lcx devices approve <requestId>
 ```
 
 The node host stores its node id, token, display name, and gateway connection info in
@@ -109,4 +109,4 @@ The node host stores its node id, token, display name, and gateway connection in
 
 - `~/.openclaw/exec-approvals.json`
 - [Exec approvals](/tools/exec-approvals)
-- `openclaw approvals --node <id|name|ip>` (edit from the Gateway)
+- `lcx approvals --node <id|name|ip>` (edit from the Gateway)

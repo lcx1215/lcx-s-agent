@@ -1,4 +1,4 @@
-# OpenClaw Codebase Patterns
+# LCX Agent Codebase Patterns
 
 **Always reuse existing code - no redundancy!**
 

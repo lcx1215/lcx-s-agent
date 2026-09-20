@@ -115,7 +115,8 @@ does not own model authority, runtime truth, or brain state.
 
 Forward status names are `core-ready`, `external-channel-bound`, and
 `user-visible-observed`. Legacy `live-*` fields may still appear during
-migration; treat them as `legacy-*` compatibility labels.
+migration; treat them as `legacy-*` compatibility labels such as
+`legacy-live-visible-fixed`.
 
 | State                    | Meaning                                                          |
 | ------------------------ | ---------------------------------------------------------------- |
@@ -162,13 +163,13 @@ local LCX core
   -> user-visible-observed
 ```
 
-`cloud-runtime-ready` means the cloud control machine has one canonical
-repository checkout, one canonical state root, synced operator skills, receipts,
-logs, selected-clean adapter proof, and governance owners. It does **not** mean
+`cloud-runtime-ready` means the cloud control machine has one canonical repository
+checkout, one canonical state root, synced operator skills, receipts, logs,
+selected-clean adapter proof, and governance owners. It does **not** mean
 external-channel delivery, `user-visible-observed`, or model-weight absorption.
 
-Local rule: one LCX system and one factory/runtime, backed by one canonical
-repository and state root. Local isolation and parallel work use linked Git
+Local system/factory rule: one LCX system and one factory/runtime, backed by
+one canonical repository and state root. Local isolation and parallel work use linked Git
 worktrees only; no second repository or deployment checkout is authoritative.
 Feature branches belong to GitHub/GitLab collaboration, review, and release — not
 to the local runtime model.

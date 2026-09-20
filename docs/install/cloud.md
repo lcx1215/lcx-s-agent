@@ -83,8 +83,8 @@ mkdir -p /var/lib/lcx/state
 chmod 700 /var/lib/lcx/state
 # Edit deploy/cloud/.env and keep it outside source control.
 docker compose --env-file deploy/cloud/.env up -d
-docker compose --env-file deploy/cloud/.env run --rm openclaw-cli doctor
-docker compose --env-file deploy/cloud/.env run --rm openclaw-cli gateway probe
+docker compose --env-file deploy/cloud/.env run --rm lcx-cli doctor
+docker compose --env-file deploy/cloud/.env run --rm lcx-cli gateway probe
 ```
 
 Run the read-only cloud gate inside the gateway/CLI container:

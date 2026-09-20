@@ -41,55 +41,30 @@ function makeToolPolicyMatcher(policy: SandboxToolPolicy) {
 
 /**
  * Tools always denied for sub-agents regardless of depth.
- * These are system-level or interactive tools that sub-agents should never use.
+ *
+ * This list is deliberately short. It holds only tools whose use from a sub-agent
+ * would damage the system rather than do work: starting a second gateway inside a
+ * running one, scheduling recurring work that outlives the run, or bypassing the
+ * announce chain that returns results to the parent.
+ *
+ * Everything else is allowed by default — memory lookups, finance research,
+ * framework producers, promotion tooling. To narrow one sub-agent, set
+ * `tools.subagents.tools.deny` for it; do not grow this list, because that would
+ * take the tool away from every sub-agent everywhere.
  */
 const SUBAGENT_TOOL_DENY_ALWAYS = [
-  // System admin - dangerous from subagent
+  // Would start a second gateway inside an already-running one: recursive, and
+  // it fights the parent for the same port.
   "gateway",
+  // System admin surface; sub-agents should not enumerate or reconfigure agents.
   "agents_list",
-  // Interactive setup - not a task
+  // Needs a human to scan a QR code - it cannot complete from a sub-agent run.
   "whatsapp_login",
-  // Status/scheduling - main agent coordinates
-  "session_status",
+  // Recurring scheduling belongs to the orchestrator. A sub-agent cron would
+  // outlive the run that created it and keep firing with no parent to report to.
   "cron",
-  // Memory - pass relevant info in spawn prompt instead
-  "memory_search",
-  "memory_get",
-  "local_memory_record",
-  "finance_framework_core_record",
-  "finance_article_source_registry_record",
-  "finance_external_source_adapter",
-  "finance_learning_pipeline_orchestrator",
-  "module_learning_pipeline_plan",
-  "module_learning_pipeline_review",
-  "finance_research_source_workbench",
-  "finance_learning_capability_attach",
-  "finance_learning_capability_apply",
-  "finance_framework_macro_rates_inflation_producer",
-  "finance_framework_etf_regime_producer",
-  "finance_framework_options_volatility_producer",
-  "finance_framework_company_fundamentals_value_producer",
-  "finance_framework_commodities_oil_gold_producer",
-  "finance_framework_fx_dollar_producer",
-  "finance_framework_credit_liquidity_producer",
-  "finance_framework_event_driven_producer",
-  "finance_framework_portfolio_risk_gates_producer",
-  "finance_framework_causal_map_producer",
-  "finance_doctrine_teacher_feedback_elevation_handoff",
-  "finance_doctrine_teacher_feedback_elevation_handoff_status",
-  "finance_doctrine_teacher_feedback_candidate_input",
-  "finance_doctrine_teacher_feedback_candidate_input_review",
-  "finance_doctrine_teacher_feedback_candidate_input_reconciliation",
-  "finance_doctrine_teacher_feedback_candidate_input_reconciliation_status",
-  "finance_doctrine_teacher_feedback",
-  "finance_doctrine_teacher_feedback_review",
-  "finance_promotion_bulk_review",
-  "finance_promotion_decision",
-  "finance_promotion_doctrine_edit_handoff",
-  "finance_promotion_proposal_draft",
-  "finance_promotion_proposal_status",
-  "finance_promotion_review",
-  // Direct session sends - subagents communicate through announce chain
+  // Results must come back through the announce chain, not a side channel the
+  // parent never sees.
   "sessions_send",
 ];
 

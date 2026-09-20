@@ -1,8 +1,8 @@
 ---
 read_when:
-  - 启动新的 OpenClaw 智能体会话
+  - 启动新的 LCX Agent 智能体会话
   - 启用或审计默认 Skills
-summary: 个人助手设置的默认 OpenClaw 智能体指令和 Skills 列表
+summary: 个人助手设置的默认 LCX Agent 智能体指令和 Skills 列表
 x-i18n:
   generated_at: "2026-02-03T10:09:19Z"
   model: claude-opus-4-5
@@ -12,11 +12,11 @@ x-i18n:
   workflow: 15
 ---
 
-# AGENTS.md — OpenClaw 个人助手（默认）
+# AGENTS.md — LCX Agent 个人助手（默认）
 
 ## 首次运行（推荐）
 
-OpenClaw 为智能体使用专用的工作区目录。默认：`~/.openclaw/workspace`（可通过 `agents.defaults.workspace` 配置）。
+LCX Agent 为智能体使用专用的工作区目录。默认：`~/.openclaw/workspace`（可通过 `agents.defaults.workspace` 配置）。
 
 1. 创建工作区（如果尚不存在）：
 
@@ -93,7 +93,7 @@ git commit -m "Add Clawd workspace"
 # 可选：添加私有远程仓库 + push
 ```
 
-## OpenClaw 的功能
+## LCX Agent 的功能
 
 - 运行 WhatsApp Gateway 网关 + Pi 编程智能体，使助手可以读写聊天、获取上下文，并通过主机 Mac 运行 Skills。
 - `openclaw` CLI 是管理入口；没有原生配套应用。
@@ -126,6 +126,6 @@ git commit -m "Add Clawd workspace"
 - 从 Skills 标签页运行安装；如果二进制文件已存在，它会隐藏按钮。
 - 保持心跳启用，以便助手可以安排提醒、监控收件箱和触发摄像头捕获。
 - Canvas UI 以全屏运行并带有原生叠加层。避免在左上/右上/底部边缘放置关键控件；在布局中添加显式边距，不要依赖安全区域内边距。
-- 对于浏览器驱动的验证，使用带有 OpenClaw 管理的 Chrome 配置文件的 `openclaw browser`（tabs/status/screenshot）。
-- 对于 DOM 检查，使用 `openclaw browser eval|query|dom|snapshot`（需要机器输出时使用 `--json`/`--out`）。
-- 对于交互，使用 `openclaw browser click|type|hover|drag|select|upload|press|wait|navigate|back|evaluate|run`（click/type 需要 snapshot 引用；CSS 选择器使用 `evaluate`）。
+- 对于浏览器驱动的验证，使用带有 LCX Agent 管理的 Chrome 配置文件的 `lcx browser`（tabs/status/screenshot）。
+- 对于 DOM 检查，使用 `lcx browser eval|query|dom|snapshot`（需要机器输出时使用 `--json`/`--out`）。
+- 对于交互，使用 `lcx browser click|type|hover|drag|select|upload|press|wait|navigate|back|evaluate|run`（click/type 需要 snapshot 引用；CSS 选择器使用 `evaluate`）。

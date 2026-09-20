@@ -110,7 +110,7 @@ describe("minimax brain teacher batch parsing", () => {
     ).toBe(true);
     expect(
       isProviderPayloadMissingFailure({
-        error: "Error: OpenClaw agent output missing payload text: {}",
+        error: "Error: LCX Agent agent output missing payload text: {}",
       }),
     ).toBe(true);
     expect(

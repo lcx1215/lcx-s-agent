@@ -22,7 +22,7 @@ case "$STATUS" in
         termux-toast "Auth expired - opening console..."
         termux-open-url "https://console.anthropic.com/settings/api-keys"
         sleep 2
-        termux-notification -t "OpenClaw Re-Auth" -c "After getting key, run: ssh $SERVER '~/openclaw/scripts/mobile-reauth.sh'" --id openclaw-auth
+        termux-notification -t "LCX Agent Re-Auth" -c "After getting key, run: ssh $SERVER '~/openclaw/scripts/mobile-reauth.sh'" --id openclaw-auth
         ;;
     *)
         termux-toast "Connection error"

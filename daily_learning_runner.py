@@ -107,7 +107,7 @@ def run_orchestrator_captured(args: list[str]) -> subprocess.CompletedProcess[st
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Clean-root daily OpenClaw learning scheduler runner")
+    parser = argparse.ArgumentParser(description="Clean-root daily LCX Agent learning scheduler runner")
     parser.add_argument("--dry-run", action="store_true", help="Run scheduler smoke without live side effects")
     parser.add_argument(
         "--write-receipt",

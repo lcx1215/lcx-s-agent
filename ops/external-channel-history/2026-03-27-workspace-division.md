@@ -28,7 +28,7 @@
   - the live repo contains the intended patch
   - `pnpm build` passed in the live repo
   - the gateway restarted from the live repo build
-  - `openclaw channels status --probe` passed
+  - `lcx channels status --probe` passed
 
 ## Live runtime fact
 
@@ -56,7 +56,7 @@
 5. build in `Projects/openclaw`
 6. restart gateway
 7. verify with:
-   - `openclaw channels status --probe`
+   - `lcx channels status --probe`
    - real Feishu behavior
 
 ## Shipping rules

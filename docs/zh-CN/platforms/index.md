@@ -15,7 +15,7 @@ x-i18n:
 
 # 平台
 
-OpenClaw 核心使用 TypeScript 编写。**Node 是推荐的运行时**。
+LCX Agent 核心使用 TypeScript 编写。**Node 是推荐的运行时**。
 不推荐 Bun 用于 Gateway 网关（WhatsApp/Telegram 存在 bug）。
 
 Gateway 网关是一个 TypeScript 服务，可在任何支持 Node 的主机上运行。没有原生配套应用；
@@ -39,18 +39,18 @@ Gateway 网关是一个 TypeScript 服务，可在任何支持 Node 的主机上
 - 安装指南：[入门指南](/start/getting-started)
 - Gateway 网关运行手册：[Gateway 网关](/gateway)
 - Gateway 网关配置：[配置](/gateway/configuration)
-- 服务状态：`openclaw gateway status`
+- 服务状态：`lcx gateway status`
 
 ## Gateway 网关服务安装（CLI）
 
 使用以下任一方式（均支持）：
 
-- 向导（推荐）：`openclaw onboard --install-daemon`
-- 直接安装：`openclaw gateway install`
-- 配置流程：`openclaw configure` → 选择 **Gateway service**
-- 修复/迁移：`openclaw doctor`（提供安装或修复服务）
+- 向导（推荐）：`lcx onboard --install-daemon`
+- 直接安装：`lcx gateway install`
+- 配置流程：`lcx configure` → 选择 **Gateway service**
+- 修复/迁移：`lcx doctor`（提供安装或修复服务）
 
 服务目标取决于操作系统：
 
 - macOS：LaunchAgent（`bot.molt.gateway` 或 `bot.molt.<profile>`；旧版 `com.openclaw.*`）
-- Linux/WSL2：systemd 用户服务（`openclaw-gateway[-<profile>].service`）
+- Linux/WSL2：systemd 用户服务（`lcx-gateway[-<profile>].service`）

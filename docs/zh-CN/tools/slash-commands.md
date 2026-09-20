@@ -110,9 +110,9 @@ x-i18n:
 
 - 命令接受命令和参数之间的可选 `:`（例如 `/think: high`、`/send: on`、`/help:`）。
 - `/new <model>` 接受模型别名、`provider/model` 或提供商名称（模糊匹配）；如果没有匹配，文本被视为消息正文。
-- 要获取完整的提供商使用量分解，使用 `openclaw status --usage`。
+- 要获取完整的提供商使用量分解，使用 `lcx status --usage`。
 - `/allowlist add|remove` 需要 `commands.config=true` 并遵循渠道 `configWrites`。
-- `/usage` 控制每响应使用量页脚；`/usage cost` 从 OpenClaw 会话日志打印本地成本摘要。
+- `/usage` 控制每响应使用量页脚；`/usage cost` 从 LCX Agent 会话日志打印本地成本摘要。
 - `/restart` 默认禁用；设置 `commands.restart: true` 启用它。
 - `/verbose` 用于调试和额外可见性；在正常使用中保持**关闭**。
 - `/reasoning`（和 `/verbose`）在群组设置中有风险：它们可能会暴露你不打算公开的内部推理或工具输出。最好保持关闭，尤其是在群聊中。

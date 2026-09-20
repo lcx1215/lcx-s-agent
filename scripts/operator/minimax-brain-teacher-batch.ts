@@ -604,7 +604,7 @@ function readOpenClawAgentPayload(raw: string): string {
   };
   const text = payload.result?.payloads?.find((entry) => entry.text)?.text;
   if (!text) {
-    throw new Error(`OpenClaw agent output missing payload text: ${raw.slice(0, 500)}`);
+    throw new Error(`LCX Agent agent output missing payload text: ${raw.slice(0, 500)}`);
   }
   return text;
 }
@@ -2810,7 +2810,7 @@ async function callTeacherWithFallback(
       options.source === "openclaw-agent" &&
       !options.mock &&
       Boolean(options.apiKey) &&
-      message.includes("OpenClaw agent output missing payload text");
+      message.includes("LCX Agent agent output missing payload text");
     if (!canFallback) {
       throw error;
     }
@@ -2823,7 +2823,7 @@ async function callTeacherWithFallback(
 
 export function isProviderPayloadMissingFailure(failure: { error: string }): boolean {
   return (
-    failure.error.includes("OpenClaw agent output missing payload text") ||
+    failure.error.includes("LCX Agent agent output missing payload text") ||
     failure.error.includes("MiniMax teacher response missing text content")
   );
 }

@@ -95,7 +95,7 @@ function createSandboxConfig(
     workspaceAccess,
     workspaceRoot: "~/.openclaw/sandboxes",
     docker: {
-      image: "openclaw-sandbox:test",
+      image: "lcx-sandbox:test",
       containerPrefix: "oc-test-",
       workdir: "/workspace",
       readOnlyRoot: true,
@@ -112,7 +112,7 @@ function createSandboxConfig(
       enabled: false,
       image: "openclaw-browser:test",
       containerPrefix: "oc-browser-",
-      network: "openclaw-sandbox-browser",
+      network: "lcx-sandbox-browser",
       cdpPort: 9222,
       vncPort: 5900,
       noVncPort: 6080,

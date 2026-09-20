@@ -39,7 +39,7 @@ x-i18n:
 如果你想共享凭证，请将 `auth-profiles.json` 复制到其他智能体的 `agentDir` 中。
 
 有关沙箱隔离在运行时的行为，请参见[沙箱隔离](/gateway/sandboxing)。
-有关调试"为什么这被阻止了？"，请参见[沙箱 vs 工具策略 vs 提权](/gateway/sandbox-vs-tool-policy-vs-elevated) 和 `openclaw sandbox explain`。
+有关调试"为什么这被阻止了？"，请参见[沙箱 vs 工具策略 vs 提权](/gateway/sandbox-vs-tool-policy-vs-elevated) 和 `lcx sandbox explain`。
 
 ---
 
@@ -240,7 +240,7 @@ agents.list[].sandbox.prune.* > agents.defaults.sandbox.prune.*
 - `group:automation`：`cron`、`gateway`
 - `group:messaging`：`message`
 - `group:nodes`：`nodes`
-- `group:openclaw`：所有内置 OpenClaw 工具（不包括提供商插件）
+- `group:openclaw`：所有内置 LCX Agent 工具（不包括提供商插件）
 
 ### 提权模式
 
@@ -297,7 +297,7 @@ agents.list[].sandbox.prune.* > agents.defaults.sandbox.prune.*
 }
 ```
 
-旧版 `agent.*` 配置由 `openclaw doctor` 迁移；今后请优先使用 `agents.defaults` + `agents.list`。
+旧版 `agent.*` 配置由 `lcx doctor` 迁移；今后请优先使用 `agents.defaults` + `agents.list`。
 
 ---
 
@@ -354,13 +354,13 @@ agents.list[].sandbox.prune.* > agents.defaults.sandbox.prune.*
 1. **检查智能体解析：**
 
    ```exec
-   openclaw agents list --bindings
+   lcx agents list --bindings
    ```
 
 2. **验证沙箱容器：**
 
    ```exec
-   docker ps --filter "name=openclaw-sbx-"
+   docker ps --filter "name=lcx-sbx-"
    ```
 
 3. **测试工具限制：**

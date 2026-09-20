@@ -10,6 +10,7 @@ import {
 } from "../config/identity-migration.js";
 import { resolveStateDir } from "../config/paths.js";
 import type { LcxIdentityMigrationPlan } from "../config/paths.js";
+import { logWarn } from "../logger.js";
 import {
   clearDeviceAuthTokenFromStore,
   type DeviceAuthEntry,
@@ -21,6 +22,8 @@ import {
   normalizeDeviceAuthScopes,
   type DeviceAuthStore,
 } from "../shared/device-auth.js";
+import { saveJsonFile } from "./json-file.js";
+import { describeReadFailure } from "./unreadable-source.js";
 
 const DEVICE_AUTH_FILE = "device-auth.json";
 const DEVICE_AUTH_RELATIVE_PATH = path.join("identity", DEVICE_AUTH_FILE);
@@ -29,33 +32,69 @@ function resolveDeviceAuthPath(env: NodeJS.ProcessEnv = process.env): string {
   return path.join(resolveStateDir(env), "identity", DEVICE_AUTH_FILE);
 }
 
-function readStore(filePath: string): DeviceAuthStore | null {
+type DeviceAuthStoreRead =
+  | { status: "ok"; store: DeviceAuthStore }
+  | { status: "absent" }
+  | { status: "unreadable"; detail: string };
+
+/**
+ * "No store yet" and "a store that could not be read or parsed" are different answers. They used
+ * to collapse into `null`, and every caller that then wrote a store built around the one token it
+ * was handed replaced the file — dropping the tokens for every other device and role in it.
+ */
+function readStoreDetailed(filePath: string): DeviceAuthStoreRead {
+  let raw: string;
   try {
     if (!fs.existsSync(filePath)) {
-      return null;
+      return { status: "absent" };
     }
-    const raw = fs.readFileSync(filePath, "utf8");
-    const parsed = JSON.parse(raw) as DeviceAuthStore;
-    if (parsed?.version !== 1 || typeof parsed.deviceId !== "string") {
-      return null;
-    }
-    if (!parsed.tokens || typeof parsed.tokens !== "object") {
-      return null;
-    }
-    return parsed;
+    raw = fs.readFileSync(filePath, "utf8");
+  } catch (err) {
+    const failure = describeReadFailure(err);
+    return { status: "unreadable", detail: `${failure.status}/${failure.code}` };
+  }
+  let parsed: DeviceAuthStore;
+  try {
+    parsed = JSON.parse(raw) as DeviceAuthStore;
   } catch {
+    return { status: "unreadable", detail: "parse-failed" };
+  }
+  if (parsed?.version !== 1) {
+    // A format we do not understand may still hold tokens we would be destroying.
+    return { status: "unreadable", detail: "unrecognised-version" };
+  }
+  if (typeof parsed.deviceId !== "string" || !parsed.tokens || typeof parsed.tokens !== "object") {
+    // Recognised format, and nothing in it we would lose — same as starting fresh.
+    return { status: "absent" };
+  }
+  return { status: "ok", store: parsed };
+}
+
+/** Read-only path: no write follows, so "cannot see it" may be answered as "no token". */
+function readStore(filePath: string): DeviceAuthStore | null {
+  const result = readStoreDetailed(filePath);
+  if (result.status === "unreadable") {
+    logWarn(
+      `[device-auth] cannot read ${filePath} (${result.detail}); answering as no stored token`,
+    );
     return null;
   }
+  return result.status === "ok" ? result.store : null;
+}
+
+/** Write path: refuse to replace a store we were never able to look inside. */
+function readStoreForWrite(filePath: string): DeviceAuthStore | null {
+  const result = readStoreDetailed(filePath);
+  if (result.status === "unreadable") {
+    throw new Error(
+      `cannot read device auth store at ${filePath} (${result.detail}); refusing to replace tokens that could not be read`,
+    );
+  }
+  return result.status === "ok" ? result.store : null;
 }
 
 function writeStore(filePath: string, store: DeviceAuthStore): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, `${JSON.stringify(store, null, 2)}\n`, { mode: 0o600 });
-  try {
-    fs.chmodSync(filePath, 0o600);
-  } catch {
-    // best-effort
-  }
+  saveJsonFile(filePath, store);
 }
 
 export type LcxIdentityDeviceAuthMigration = Readonly<{
@@ -238,7 +277,7 @@ export function storeDeviceAuthToken(params: {
   const filePath = resolveDeviceAuthPath(params.env);
   return storeDeviceAuthTokenInStore({
     adapter: {
-      readStore: () => readStore(filePath),
+      readStore: () => readStoreForWrite(filePath),
       writeStore: (store) => writeStore(filePath, store),
     },
     deviceId: params.deviceId,
@@ -256,7 +295,7 @@ export function clearDeviceAuthToken(params: {
   const filePath = resolveDeviceAuthPath(params.env);
   clearDeviceAuthTokenFromStore({
     adapter: {
-      readStore: () => readStore(filePath),
+      readStore: () => readStoreForWrite(filePath),
       writeStore: (store) => writeStore(filePath, store),
     },
     deviceId: params.deviceId,

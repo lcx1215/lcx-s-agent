@@ -458,7 +458,7 @@ export function createMcpContextTool(options?: {
           workspaceConfigs.length === 0 &&
           cliBackendConfigs.length === 0 &&
           mcporter?.enabled !== true
-            ? "No MCP context surfaced from this workspace or current OpenClaw config."
+            ? "No MCP context surfaced from this workspace or current LCX Agent config."
             : undefined,
       });
     },

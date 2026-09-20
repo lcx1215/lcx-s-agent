@@ -244,13 +244,27 @@ function moduleMatches(module: FinanceBrainModuleDefinition, text: string): bool
 }
 
 function hasFinanceTaskSignal(text: string): boolean {
-  return /\b(finance|market|stock|equity|etf|portfolio|macro|earnings|valuation|quant|trading|investing|investment|candlestick)\b|金融|市场|股市|股票|美股|A股|a股|指数|基金|组合|持仓|宏观|财报|估值|量化|投资|K线|k线|图线|蜡烛图/u.test(
+  // `shares?` and `holdings?` were missing, so "how many shares do I own" was not a finance task at
+  // all and therefore never reached the data-gateway condition below, which is gated on financeTask.
+  return /\b(finance|market|stock|shares?|holdings?|equity|etf|portfolio|macro|earnings|valuation|quant|trading|investing|investment|candlestick)\b|金融|市场|股市|股票|美股|A股|a股|指数|基金|组合|持仓|宏观|财报|估值|量化|投资|K线|k线|图线|蜡烛图/u.test(
     text,
   );
 }
 
+/**
+ * Whether a live gateway snapshot is required before any number may be shown.
+ *
+ * The English side used to be a bare word list (price|quote|now|...), which silently missed the
+ * ordinary ways an English ask requests a current number: "what is AAPL trading at", "how much is
+ * Bitcoin worth", "what is my account balance", "how many shares do I own". The Chinese side never
+ * missed those, so the same question was routed through the data gateway in Chinese and adopted
+ * with no data requirement at all in English. The added patterns are phrase-level rather than bare
+ * words on purpose: a bare `worth` also matches "is this worth it" and a bare `balance` also
+ * matches "balance the risks", and over-triggering would demand a snapshot for asks that have no
+ * number in them.
+ */
 function needsFinanceDataGateway(text: string): boolean {
-  return /\b(?:current|latest|today|now|price|quote|market data|fresh|timestamp|vendor|as of|holdings?|position|portfolio|earnings?|financials?|options?|iv|index weights?|constituents?)\b|当前|最新|今天|现在|价格|行情|报价|市场数据|实时|时间戳|供应商|截至|持仓|仓位|财报|财务数据|期权|隐含波动率|指数权重|成分股/u.test(
+  return /\b(?:current|latest|today|now|price|quote|market data|fresh|timestamp|vendor|as of|holdings?|position|portfolio|earnings?|financials?|options?|iv|index weights?|constituents?)\b|\b(?:trades?|trading) at\b|\bhow much\b[^.?]*\bworth\b|\b(?:account|my) balance\b|\bshares?\b[^.?]*\bown\b|\b(?:share|stock|market) (?:price|value)\b|\bnet worth\b|当前|最新|今天|现在|价格|行情|报价|市场数据|实时|时间戳|供应商|截至|持仓|仓位|财报|财务数据|期权|隐含波动率|指数权重|成分股/u.test(
     text,
   );
 }

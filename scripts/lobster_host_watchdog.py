@@ -460,7 +460,7 @@ def write_receipt(snapshot: dict[str, Any]) -> Path:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Clean-root OpenClaw host watchdog compatibility check")
+    parser = argparse.ArgumentParser(description="Clean-root LCX Agent host watchdog compatibility check")
     parser.add_argument("--json", action="store_true", help="Emit the full JSON snapshot")
     parser.add_argument("--dry-run", action="store_true", help="Force no-alert compatibility mode")
     parser.add_argument("--skip-launchd", action="store_true", help="Skip launchctl read during tests")

@@ -376,7 +376,7 @@ describe("discord tool result dispatch", () => {
             channelId: "c1",
             content: "bot reply",
             ...createDiscordMessageMeta(),
-            author: { id: "bot-id", bot: true, username: "OpenClaw" },
+            author: { id: "bot-id", bot: true, username: "LCX Agent" },
           },
         },
         eventPatch: {

@@ -1,7 +1,7 @@
 ---
-summary: "Use OpenAI via API keys or Codex subscription in OpenClaw"
+summary: "Use OpenAI via API keys or Codex subscription in LCX Agent"
 read_when:
-  - You want to use OpenAI models in OpenClaw
+  - You want to use OpenAI models in LCX Agent
   - You want Codex subscription auth instead of API keys
 title: "OpenAI"
 ---
@@ -10,7 +10,7 @@ title: "OpenAI"
 
 OpenAI provides developer APIs for GPT models. Codex supports **ChatGPT sign-in** for subscription
 access or **API key** sign-in for usage-based access. Codex cloud requires ChatGPT sign-in.
-OpenAI explicitly supports subscription OAuth usage in external tools/workflows like OpenClaw.
+OpenAI explicitly supports subscription OAuth usage in external tools/workflows like LCX Agent.
 
 ## Option A: OpenAI API key (OpenAI Platform)
 
@@ -20,9 +20,9 @@ Get your API key from the OpenAI dashboard.
 ### CLI setup
 
 ```bash
-openclaw onboard --auth-choice openai-api-key
+lcx onboard --auth-choice openai-api-key
 # or non-interactive
-openclaw onboard --openai-api-key "$OPENAI_API_KEY"
+lcx onboard --openai-api-key "$OPENAI_API_KEY"
 ```
 
 ### Config snippet
@@ -43,10 +43,10 @@ Codex cloud requires ChatGPT sign-in, while the Codex CLI supports ChatGPT or AP
 
 ```bash
 # Run Codex OAuth in the wizard
-openclaw onboard --auth-choice openai-codex
+lcx onboard --auth-choice openai-codex
 
 # Or run OAuth directly
-openclaw models auth login --provider openai-codex
+lcx models auth login --provider openai-codex
 ```
 
 ### Config snippet (Codex subscription)
@@ -59,7 +59,7 @@ openclaw models auth login --provider openai-codex
 
 ### Transport default
 
-OpenClaw uses `pi-ai` for model streaming. For both `openai/*` and
+LCX Agent uses `pi-ai` for model streaming. For both `openai/*` and
 `openai-codex/*`, default transport is `"auto"` (WebSocket-first, then SSE
 fallback).
 
@@ -69,7 +69,7 @@ You can set `agents.defaults.models.<provider/model>.params.transport`:
 - `"websocket"`: force WebSocket
 - `"auto"`: try WebSocket, then fall back to SSE
 
-For `openai/*` (Responses API), OpenClaw also enables WebSocket warm-up by
+For `openai/*` (Responses API), LCX Agent also enables WebSocket warm-up by
 default (`openaiWsWarmup: true`) when WebSocket transport is used.
 
 Related OpenAI docs:
@@ -96,7 +96,7 @@ Related OpenAI docs:
 
 ### OpenAI WebSocket warm-up
 
-OpenAI docs describe warm-up as optional. OpenClaw enables it by default for
+OpenAI docs describe warm-up as optional. LCX Agent enables it by default for
 `openai/*` to reduce first-turn latency when using WebSocket transport.
 
 ### Disable warm-up
@@ -138,7 +138,7 @@ OpenAI docs describe warm-up as optional. OpenClaw enables it by default for
 ### OpenAI Responses server-side compaction
 
 For direct OpenAI Responses models (`openai/*` using `api: "openai-responses"` with
-`baseUrl` on `api.openai.com`), OpenClaw now auto-enables OpenAI server-side
+`baseUrl` on `api.openai.com`), LCX Agent now auto-enables OpenAI server-side
 compaction payload hints:
 
 - Forces `store: true` (unless model compat sets `supportsStore: false`)

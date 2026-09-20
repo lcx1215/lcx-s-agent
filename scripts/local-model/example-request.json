@@ -1,0 +1,28 @@
+{
+  "state": {
+    "stage": "review",
+    "task": "评估某公司季度营收表现",
+    "evidence": ["证据 E1: 本季度营收同比增长 6%", "证据 E2: 毛利率环比持平"],
+    "claims": 4
+  },
+  "questions": {
+    "verdict": {
+      "type": "choice",
+      "instructions": "本次审查结论应判定为哪一项？证据充分且无事实错误选 pass；存在可修复的错误选 revise；存在严重错误或关键证据缺失选 reject",
+      "criteria": {
+        "pass": "证据充分、无事实错误",
+        "revise": "存在可修复的错误",
+        "reject": "严重错误或关键证据缺失"
+      }
+    },
+    "severity": {
+      "type": "score",
+      "instructions": "所发现问题的最严重程度是哪一档？",
+      "criteria": ["无问题", "轻微", "中等", "严重"]
+    },
+    "has_gap": {
+      "type": "noul",
+      "instructions": "是否存在支撑主张所必需、但当前缺失的关键证据？"
+    }
+  }
+}
