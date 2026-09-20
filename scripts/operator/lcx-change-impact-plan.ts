@@ -82,7 +82,7 @@ const PATH_RULES: PathRule[] = [
     id: "finance_caseflow",
     lane: "finance_research_capability",
     patterns: [
-      /^src\/agents\/finance-(?:caseflow(?:-followups)?|forecast-calibration|history-coverage|research-assessment|source-recovery|model-workflow|model-specialist|agent-committee|news-entity|research-evidence|strategy-method-kit|strategy-method-catalog|research-runner|research-batch-runner|run-checkpoints|model-checkpoints|outcome-ledger|free-market-collection-adapters|registered-capability-adapters|market-collection-registry|realtime-source-registry|source-health|data-connectors|connector-evidence|mcp-client|rest-client|answer-grounding-gate)\.ts$/u,
+      /^src\/agents\/finance-(?:caseflow(?:-followups)?|forecast-calibration|history-coverage|research-assessment|source-recovery|model-workflow|model-specialist|agent-committee|news-entity|research-evidence|strategy-method-kit|strategy-method-catalog|research-runner|research-batch-runner|run-checkpoints|model-checkpoints|outcome-ledger|free-market-collection-adapters|registered-capability-adapters|market-collection-registry|realtime-source-registry|source-health|data-connectors|connector-evidence|mcp-client|rest-client|answer-grounding-gate|decision-policy)\.ts$/u,
       /^src\/agents\/tools\/finance-data-connector-inspect-tool\.ts$/u,
       // The read side of the stored research runs. Without it here, the only lane that would
       // claim it is the generic tool-registration rule, which never runs its behaviour test.
@@ -125,6 +125,9 @@ const PATH_RULES: PathRule[] = [
       // tool is gated by head-tail consistency and the system-prompt tests but never by the
       // read tool's own behaviour test.
       /^src\/agents\/tools\/finance-position-ledger-read-tool\.ts$/u,
+      // The bar book's agent-facing side. Without it here this file is only claimed by the
+      // generic tool-registration rule, which never runs the bar ledger's own behaviour test.
+      /^src\/agents\/tools\/finance-bar-ledger-tool\.ts$/u,
       /^scripts\/operator\/lcx-finance-live-execution\.ts$/u,
       /^scripts\/operator\/lcx-finance-position-ledger\.ts$/u,
       /^scripts\/operator\/lcx-finance-thesis-ledger\.ts$/u,
@@ -133,7 +136,7 @@ const PATH_RULES: PathRule[] = [
     ],
     requiredChecks: ["git-diff-check", "head-tail-consistency"],
     commands: [
-      "pnpm vitest run src/agents/finance-execution-adapter.test.ts src/agents/finance-position-ledger.test.ts src/agents/finance-behaviour-profile.test.ts src/agents/finance-thesis-ledger.test.ts src/agents/finance-strategy-rule-ledger.test.ts src/agents/finance-strategy-rule-ledger-read-tool.test.ts src/agents/finance-rule-readiness.test.ts src/agents/finance-bar-ledger.test.ts src/agents/tools/finance-position-ledger-read-tool.test.ts",
+      "pnpm vitest run src/agents/finance-execution-adapter.test.ts src/agents/finance-position-ledger.test.ts src/agents/finance-behaviour-profile.test.ts src/agents/finance-thesis-ledger.test.ts src/agents/finance-strategy-rule-ledger.test.ts src/agents/finance-strategy-rule-ledger-read-tool.test.ts src/agents/finance-rule-readiness.test.ts src/agents/finance-bar-ledger.test.ts src/agents/tools/finance-position-ledger-read-tool.test.ts src/agents/tools/finance-bar-ledger-tool.test.ts",
       "git diff --check",
       "node --import tsx scripts/operator/lcx-head-tail-consistency.ts --json",
     ],
@@ -696,6 +699,28 @@ const PATH_RULES: PathRule[] = [
     ],
   },
   {
+    // Declared MCP servers. The config is the authorization boundary for spawning a local process
+    // or opening a remote connection, so a change here is a capability change, not plumbing:
+    // widening it hands the model a new way to run things.
+    id: "mcp_connector_surface",
+    lane: "local_live_boundary",
+    patterns: [
+      /^src\/agents\/mcp-(?:client|servers)\.ts$/u,
+      // Bar supply ships as a declared MCP server rather than as a one-off fetch script, so the
+      // server itself is part of this surface: it is the thing the config authorizes spawning.
+      /^scripts\/mcp\/[A-Za-z0-9._-]+\.mjs$/u,
+    ],
+    requiredChecks: ["explicit-live-boundary-review"],
+    commands: [
+      "pnpm vitest run src/agents/mcp-servers.test.ts src/agents/mcp-client.test.ts src/agents/tools/mcp-bridge-tools.test.ts",
+    ],
+    risk: "elevated",
+    safetyNotes: [
+      "A server is callable only when declared in tools.mcp.servers: the model supplies a name, never a command, a URL or an argv.",
+      "stdio children inherit no ambient proxy variables and no session-scoped variables; http egress is explicit-proxy only.",
+    ],
+  },
+  {
     // Attribution headers (OpenRouter/Perplexity style) are sent on every outbound request, so a
     // stale value there is live behaviour rather than dead text. This product is self-owned and
     // must not identify itself as the upstream project on the wire.
@@ -732,6 +757,25 @@ const PATH_RULES: PathRule[] = [
       /^scripts\/install\.sh$/u,
       /^scripts\/install\.ps1$/u,
       /^scripts\/protocol-gen\.ts$/u,
+      // The docs mirror the same three outward-facing surfaces, and a stale address there is
+      // read and copied by a user just as readily as one in code: where to install from, where
+      // to report a vulnerability, and where to ask for help.
+      /^docs\/install\/(?:installer|docker|updating)\.md$/u,
+      /^docs\/zh-CN\/install\/(?:installer|updating)\.md$/u,
+      /^docs\/security\/[^/]+\.md$/u,
+      /^docs\/gateway\/security\/index\.md$/u,
+      /^docs\/zh-CN\/gateway\/security\/index\.md$/u,
+      // Skills docs used to teach `npx clawhub`, which downloads and runs upstream code, and the
+      // CLI reference used to end the skills command with the same tip.
+      /^docs\/tools\/(?:clawhub|skills)\.md$/u,
+      /^docs\/zh-CN\/tools\/(?:clawhub|skills)\.md$/u,
+      /^docs\/cli\/index\.md$/u,
+      /^docs\/zh-CN\/cli\/index\.md$/u,
+      /^docs\/start\/openclaw\.md$/u,
+      /^docs\/zh-CN\/start\/openclaw\.md$/u,
+      // Issue/PR automation and the issue form reply to users with links. A stale one routes a
+      // real person upstream at the exact moment they are asking for help.
+      /^\.github\/(?:workflows|ISSUE_TEMPLATE)\/.+$/u,
     ],
     requiredChecks: ["run-changed-tests"],
     commands: [
@@ -803,16 +847,67 @@ const PATH_RULES: PathRule[] = [
       /^src\/agents\/subagent-registry\.ts$/u,
       /^src\/agents\/subagent-registry\.types\.ts$/u,
       /^src\/agents\/subagent-registry-cleanup\.ts$/u,
+      /^src\/agents\/subagent-registry-state\.ts$/u,
+      /^src\/agents\/subagent-registry\.store\.ts$/u,
       /^src\/agents\/subagent-announce\.ts$/u,
       /^src\/agents\/subagent-announce-queue\.ts$/u,
     ],
     requiredChecks: ["run-changed-tests"],
     commands: [
-      "pnpm vitest run src/agents/subagent-registry.announce-loop-guard.test.ts src/agents/subagent-registry-cleanup.test.ts src/agents/subagent-registry.steer-restart.test.ts src/agents/subagent-registry.persistence.test.ts src/agents/subagent-announce-queue.test.ts",
+      "pnpm vitest run src/agents/subagent-registry.announce-loop-guard.test.ts src/agents/subagent-registry-cleanup.test.ts src/agents/subagent-registry.steer-restart.test.ts src/agents/subagent-registry.persistence.test.ts src/agents/subagent-registry-store.corrupt-guard.test.ts src/agents/subagent-announce-queue.test.ts",
     ],
     safetyNotes: [
       "A subagent whose announce was abandoned must stay distinguishable from one that announced: the give-up is recorded on the run as `announceGiveUp`, because a log line nobody reads leaves the run looking delivered.",
       "Announce retries are bounded on purpose (retry budget plus expiry). Do not turn a terminal give-up into an infinite retry.",
+      "A registry file that cannot be read is not an empty registry: the load status must be reported and writes must be blocked, otherwise the next persist replaces the only copy of those runs with `{}`.",
+    ],
+  },
+  {
+    id: "persisted_state_read_contract",
+    lane: "agent_workflow_memory",
+    patterns: [
+      /^src\/infra\/json-file\.ts$/u,
+      /^src\/infra\/device-identity\.ts$/u,
+      /^src\/infra\/device-auth-store\.ts$/u,
+      /^src\/infra\/exec-approvals\.ts$/u,
+      /^src\/secrets\/shared\.ts$/u,
+      /^src\/agents\/pi-model-discovery\.ts$/u,
+      /^src\/browser\/chrome\.profile-decoration\.ts$/u,
+      /^src\/gateway\/server-methods\/chat\.ts$/u,
+      /^src\/auto-reply\/reply\/session-fork\.ts$/u,
+    ],
+    requiredChecks: ["run-changed-tests"],
+    commands: [
+      "pnpm vitest run src/agents/subagent-registry-store.corrupt-guard.test.ts",
+      "pnpm tsx scripts/operator/lcx-persistence-safety-audit.ts --json",
+    ],
+    safetyNotes: [
+      "Reading a JSON state file must keep 'no file' distinct from 'a file that could not be read or parsed'. Callers that write the file back must use `loadJsonFileDetailed`: treating an unreadable file as an empty document and persisting that emptiness destroys the original.",
+      "Writing one must go through `saveJsonFile` or another temp-file + rename. `writeFileSync` truncates before it writes, so an interrupted write leaves a truncated file behind — and for these files (device keys, exec approvals, secrets, the pi credential store, Chrome's Preferences) there is no second copy.",
+      "Two of these used to be named `safeWriteJson` / `writeJsonFileSecure` while doing the unsafe thing. A helper's name is not evidence; check the write itself.",
+    ],
+  },
+  {
+    id: "auth_profile_credential_store",
+    lane: "local_live_boundary",
+    patterns: [/^src\/agents\/auth-profiles\//u],
+    requiredChecks: ["run-changed-tests"],
+    commands: [
+      "pnpm vitest run src/agents/auth-profiles/unreadable-store.test.ts src/agents/auth-profiles/credential-state.test.ts src/agents/auth-profiles/oauth.test.ts src/agents/auth-profiles/identity-migration.test.ts",
+    ],
+    safetyNotes: [
+      "Credentials are not reproducible: a store that cannot be read must never be overwritten by one rebuilt from auth.json, OAuth or external CLI sync. Report that it could not be read instead of reporting an empty store.",
+    ],
+  },
+  {
+    id: "persistence_safety_audit",
+    lane: "agent_workflow_memory",
+    patterns: [/^scripts\/operator\/lcx-persistence-safety-audit\.ts$/u],
+    requiredChecks: ["run-changed-tests"],
+    commands: ["pnpm tsx scripts/operator/lcx-persistence-safety-audit.ts --json"],
+    safetyNotes: [
+      "This audit is the standing detector for two state-destroying shapes: reading a JSON state file with `loadJsonFile` and writing the resulting emptiness back over it, and writing a `.json` state file with `writeFileSync` (which truncates first).",
+      "It is a candidate list, not an oracle: a new finding means 'confirm this site', and an exemption must state *why* the site is safe. Do not add an exemption whose reason is only 'known'.",
     ],
   },
   {
