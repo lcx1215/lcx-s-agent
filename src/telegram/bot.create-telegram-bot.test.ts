@@ -1965,7 +1965,16 @@ describe("createTelegramBot", () => {
       });
 
       expect(replySpy).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(TELEGRAM_TEST_TIMINGS.textFragmentGapMs + 100);
+      // The debounce flush is asynchronous: firing the timer only starts it. Advancing
+      // once is not always enough for the reply to land, and the half-finished flush
+      // then leaks into the next test (which sees a reply it never sent). Drain until
+      // the reply arrives instead of advancing by a fixed amount.
+      for (let i = 0; i < 10; i++) {
+        await vi.advanceTimersByTimeAsync(TELEGRAM_TEST_TIMINGS.textFragmentGapMs + 100);
+        if (replySpy.mock.calls.length > 0) {
+          break;
+        }
+      }
 
       expect(replySpy).toHaveBeenCalledTimes(1);
       const payload = replySpy.mock.calls[0]?.[0] as { RawBody?: string };
