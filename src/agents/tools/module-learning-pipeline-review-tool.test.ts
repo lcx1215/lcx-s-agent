@@ -403,4 +403,65 @@ describe("module learning pipeline review tool", () => {
       }),
     );
   });
+
+  it("reports an unreadable receipt directory instead of reporting an empty pipeline", async () => {
+    workspaceDir = await makeTempWorkspace("openclaw-module-learning-review-");
+    const receiptDir = path.join(
+      workspaceDir,
+      "memory/module-learning-pipeline-plan-receipts/2026-05-12",
+    );
+    await fs.mkdir(receiptDir, { recursive: true });
+    await fs.writeFile(
+      path.join(receiptDir, "a.json"),
+      `${JSON.stringify({ boundary: "module_learning_pipeline_plan_receipt" }, null, 2)}\n`,
+      "utf8",
+    );
+    await fs.chmod(receiptDir, 0o000);
+    let denied = false;
+    try {
+      await fs.readdir(receiptDir);
+    } catch {
+      denied = true;
+    }
+    if (!denied) {
+      // Whether chmod denies access depends on the platform and on the user running the suite.
+      await fs.chmod(receiptDir, 0o755);
+      return;
+    }
+    try {
+      const tool = createModuleLearningPipelineReviewTool({ workspaceDir });
+      const result = await tool.execute("locked", {
+        dateKey: "2026-05-12",
+        writeReview: false,
+      });
+      expect(result.details).toEqual(
+        expect.objectContaining({
+          receiptSource: {
+            directory: "memory/module-learning-pipeline-plan-receipts/2026-05-12",
+            status: "unreadable",
+            code: expect.any(String),
+          },
+        }),
+      );
+    } finally {
+      await fs.chmod(receiptDir, 0o755);
+    }
+  });
+
+  it("marks an absent receipt directory as absent, not as a pipeline that ran empty", async () => {
+    workspaceDir = await makeTempWorkspace("openclaw-module-learning-review-");
+    const tool = createModuleLearningPipelineReviewTool({ workspaceDir });
+
+    const result = await tool.execute("absent", { dateKey: "2026-05-12", writeReview: false });
+
+    expect(result.details).toEqual(
+      expect.objectContaining({
+        receiptSource: {
+          directory: "memory/module-learning-pipeline-plan-receipts/2026-05-12",
+          status: "absent",
+          code: "ENOENT",
+        },
+      }),
+    );
+  });
 });

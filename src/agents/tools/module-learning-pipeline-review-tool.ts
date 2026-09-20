@@ -8,6 +8,7 @@ import {
   MODULE_LEARNING_EVIDENCE_STATUSES,
   MODULE_LEARNING_TARGETS,
 } from "./module-learning-pipeline-plan-tool.js";
+import { readReceiptDirectory, type ReceiptDirectoryIssue } from "./receipt-directory.js";
 
 export const MODULE_LEARNING_PIPELINE_PLAN_RECEIPT_DIR = path.join(
   "memory",
@@ -287,27 +288,36 @@ async function readReceiptFile(receiptPath: string): Promise<ReceiptReadResult> 
 export async function listModuleLearningReceiptPaths(
   workspaceDir: string,
   dateKey: string,
-): Promise<string[]> {
+): Promise<{ files: string[]; issues: ReceiptDirectoryIssue[] }> {
   const root = path.join(workspaceDir, MODULE_LEARNING_PIPELINE_PLAN_RECEIPT_DIR);
-  try {
-    const directories =
-      dateKey === "all"
-        ? (await fs.readdir(root, { withFileTypes: true }))
-            .filter((entry) => entry.isDirectory() && /^\d{4}-\d{2}-\d{2}$/u.test(entry.name))
-            .map((entry) => entry.name)
-        : [dateKey];
-    const files = await Promise.all(
-      directories.map(async (directory) => {
-        const entries = await fs.readdir(path.join(root, directory), { withFileTypes: true });
-        return entries
-          .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
-          .map((entry) => path.join(root, directory, entry.name));
-      }),
-    );
-    return files.flat().toSorted();
-  } catch {
-    return [];
+  // One unreadable directory must not silently shrink the whole review to "nothing happened":
+  // report which level could not be read instead of returning an empty list.
+  const issues: ReceiptDirectoryIssue[] = [];
+  let directories: string[];
+  if (dateKey === "all") {
+    const rootListing = await readReceiptDirectory(root);
+    if (rootListing.issue) {
+      return { files: [], issues: [rootListing.issue] };
+    }
+    directories = rootListing.entries
+      .filter((entry) => entry.isDirectory() && /^\d{4}-\d{2}-\d{2}$/u.test(entry.name))
+      .map((entry) => entry.name);
+  } else {
+    directories = [dateKey];
   }
+  const perDirectory = await Promise.all(
+    directories.map(async (directory) => {
+      const listing = await readReceiptDirectory(path.join(root, directory));
+      if (listing.issue) {
+        issues.push(listing.issue);
+        return [] as string[];
+      }
+      return listing.entries
+        .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+        .map((entry) => path.join(root, directory, entry.name));
+    }),
+  );
+  return { files: perDirectory.flat().toSorted(), issues };
 }
 
 async function readDailyReceipts(params: {
@@ -315,17 +325,23 @@ async function readDailyReceipts(params: {
   dateKey: string;
   targetModule?: string;
   maxFiles?: number;
-}): Promise<ReceiptReadResult[]> {
+}): Promise<{ results: ReceiptReadResult[]; issues: ReceiptDirectoryIssue[] }> {
   const limit = params.maxFiles && params.maxFiles > 0 ? Math.floor(params.maxFiles) : undefined;
-  const allFiles = await listModuleLearningReceiptPaths(params.workspaceDir, params.dateKey);
+  const { files: allFiles, issues } = await listModuleLearningReceiptPaths(
+    params.workspaceDir,
+    params.dateKey,
+  );
   const jsonFiles = (params.dateKey === "all" ? allFiles.toReversed() : allFiles).slice(0, limit);
   const results = await Promise.all(jsonFiles.map((receiptPath) => readReceiptFile(receiptPath)));
   if (!params.targetModule) {
-    return results;
+    return { results, issues };
   }
-  return results.filter(
-    (result) => !result.ok || result.receipt.targetModule === params.targetModule,
-  );
+  return {
+    results: results.filter(
+      (result) => !result.ok || result.receipt.targetModule === params.targetModule,
+    ),
+    issues,
+  };
 }
 
 function activeReceiptKey(receipt: ModuleLearningPlanReceipt): string {
@@ -344,6 +360,8 @@ export function buildModuleLearningPipelineReview(params: {
   dateKey: string;
   targetModule?: string;
   receiptResults: ReceiptReadResult[];
+  /** Required so a caller cannot silently drop it: `null` means every source read fine. */
+  receiptSource: ReceiptDirectoryIssue | null;
 }) {
   const validReceipts = params.receiptResults.filter(
     (result): result is Extract<ReceiptReadResult, { ok: true }> => result.ok,
@@ -553,6 +571,16 @@ export function buildModuleLearningPipelineReview(params: {
     countsByStatus,
     proofGapSummary,
     nextProofQueue,
+    receiptSource: {
+      directory: normalizeRelativePath(
+        path.join(
+          MODULE_LEARNING_PIPELINE_PLAN_RECEIPT_DIR,
+          params.dateKey === "all" ? "*" : params.dateKey,
+        ),
+      ),
+      status: params.receiptSource?.status ?? "read",
+      code: params.receiptSource?.code ?? null,
+    },
     rows,
     terminalNonAbsorbedRows: terminalNonAbsorbedRows.map((row) => ({
       receiptPath: row.receiptPath,
@@ -612,7 +640,7 @@ export function createModuleLearningPipelineReviewTool(options?: {
       );
       const maxFiles = readNumberParam(params, "maxFiles");
       const writeReviewFlag = params.writeReview !== false;
-      const receiptResults = await readDailyReceipts({
+      const { results: receiptResults, issues } = await readDailyReceipts({
         workspaceDir,
         dateKey,
         targetModule,
@@ -623,6 +651,7 @@ export function createModuleLearningPipelineReviewTool(options?: {
         dateKey,
         targetModule,
         receiptResults,
+        receiptSource: issues[0] ?? null,
       });
       const reviewPath = writeReviewFlag
         ? await writeReview({

@@ -217,6 +217,69 @@ describe("finance learning retrieval review tool", () => {
     );
   });
 
+  it("reports an unreadable receipt directory instead of reporting an empty day", async () => {
+    workspaceDir = await makeTempWorkspace("openclaw-finance-learning-review-");
+    const receiptDir = path.join(
+      workspaceDir,
+      "memory/finance-learning-retrieval-receipts/2026-04-27",
+    );
+    await fs.mkdir(receiptDir, { recursive: true });
+    await fs.writeFile(
+      path.join(receiptDir, "a.json"),
+      `${JSON.stringify({ boundary: "finance_learning_retrieval_receipt" }, null, 2)}\n`,
+      "utf8",
+    );
+    await fs.chmod(receiptDir, 0o000);
+    let denied = false;
+    try {
+      await fs.readdir(receiptDir);
+    } catch {
+      denied = true;
+    }
+    if (!denied) {
+      // Whether chmod denies access depends on the platform and on the user running the suite.
+      await fs.chmod(receiptDir, 0o755);
+      return;
+    }
+    try {
+      const tool = createFinanceLearningRetrievalReviewTool({ workspaceDir });
+      const result = await tool.execute("locked", {
+        dateKey: "2026-04-27",
+        writeReview: false,
+      });
+      // Two receipts are on disk and unreadable. "0 receipts" would describe what the scan could
+      // read, not what the day produced.
+      expect(result.details).toEqual(
+        expect.objectContaining({
+          receiptSource: {
+            directory: "memory/finance-learning-retrieval-receipts/2026-04-27",
+            status: "unreadable",
+            code: expect.any(String),
+          },
+        }),
+      );
+    } finally {
+      await fs.chmod(receiptDir, 0o755);
+    }
+  });
+
+  it("marks an absent receipt directory as absent, not as a day with no output", async () => {
+    workspaceDir = await makeTempWorkspace("openclaw-finance-learning-review-");
+    const tool = createFinanceLearningRetrievalReviewTool({ workspaceDir });
+
+    const result = await tool.execute("absent", { dateKey: "2026-04-27" });
+
+    expect(result.details).toEqual(
+      expect.objectContaining({
+        receiptSource: {
+          directory: "memory/finance-learning-retrieval-receipts/2026-04-27",
+          status: "absent",
+          code: "ENOENT",
+        },
+      }),
+    );
+  });
+
   it("supports dry-run review when no receipts exist", async () => {
     workspaceDir = await makeTempWorkspace("openclaw-finance-learning-review-");
     const tool = createFinanceLearningRetrievalReviewTool({ workspaceDir });

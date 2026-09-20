@@ -4,6 +4,7 @@ import { Type } from "@sinclair/typebox";
 import { resolveWorkspaceRoot } from "../workspace-dir.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult, readNumberParam, readStringParam, ToolInputError } from "./common.js";
+import { readReceiptDirectory, type ReceiptDirectoryIssue } from "./receipt-directory.js";
 
 export const FINANCE_LEARNING_RETRIEVAL_RECEIPT_DIR = path.join(
   "memory",
@@ -142,30 +143,33 @@ async function readDailyReceipts(params: {
   workspaceDir: string;
   dateKey: string;
   maxFiles?: number;
-}): Promise<ReceiptReadResult[]> {
+}): Promise<{ results: ReceiptReadResult[]; issue: ReceiptDirectoryIssue | null }> {
   const receiptDir = path.join(
     params.workspaceDir,
     FINANCE_LEARNING_RETRIEVAL_RECEIPT_DIR,
     params.dateKey,
   );
-  let entries: string[];
-  try {
-    entries = await fs.readdir(receiptDir);
-  } catch {
-    return [];
-  }
-  const jsonFiles = entries
-    .filter((entry) => entry.endsWith(".json"))
+  // A directory that cannot be read is not a day with no receipts. The caller carries `issue`
+  // through to the report so an unreadable source is never reported as an empty one.
+  const listing = await readReceiptDirectory(receiptDir);
+  const jsonFiles = listing.entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+    .map((entry) => entry.name)
     .toSorted()
     .slice(0, params.maxFiles && params.maxFiles > 0 ? params.maxFiles : undefined)
     .map((entry) => path.join(receiptDir, entry));
-  return Promise.all(jsonFiles.map((receiptPath) => readReceiptFile(receiptPath)));
+  return {
+    results: await Promise.all(jsonFiles.map((receiptPath) => readReceiptFile(receiptPath))),
+    issue: listing.issue,
+  };
 }
 
 export function buildFinanceLearningRetrievalReview(params: {
   workspaceDir: string;
   dateKey: string;
   receiptResults: ReceiptReadResult[];
+  /** Required so a caller cannot silently drop it: `null` means the directory read fine. */
+  receiptSource: ReceiptDirectoryIssue | null;
 }) {
   const validReceipts = params.receiptResults.filter(
     (result): result is Extract<ReceiptReadResult, { ok: true }> => result.ok,
@@ -279,6 +283,13 @@ export function buildFinanceLearningRetrievalReview(params: {
     },
     rows,
     weakLearningIntents,
+    receiptSource: {
+      directory: normalizeRelativePath(
+        path.join(FINANCE_LEARNING_RETRIEVAL_RECEIPT_DIR, params.dateKey),
+      ),
+      status: params.receiptSource?.status ?? "read",
+      code: params.receiptSource?.code ?? null,
+    },
     invalidReceipts: invalidReceipts.map((result) => ({
       path: normalizeRelativePath(path.relative(params.workspaceDir, result.path)),
       reason: result.reason,
@@ -299,11 +310,12 @@ export async function writeFinanceLearningRetrievalReview(params: {
   dateKey: string;
   maxFiles?: number;
 }) {
-  const receiptResults = await readDailyReceipts(params);
+  const { results: receiptResults, issue } = await readDailyReceipts(params);
   const review = buildFinanceLearningRetrievalReview({
     workspaceDir: params.workspaceDir,
     dateKey: params.dateKey,
     receiptResults,
+    receiptSource: issue,
   });
   const reviewRelPath = path.join(FINANCE_LEARNING_RETRIEVAL_REVIEW_DIR, `${params.dateKey}.json`);
   await fs.mkdir(path.join(params.workspaceDir, FINANCE_LEARNING_RETRIEVAL_REVIEW_DIR), {
@@ -342,16 +354,20 @@ export function createFinanceLearningRetrievalReviewTool(options?: {
             ...(maxFiles && maxFiles > 0 ? { maxFiles } : {}),
           })
         : undefined;
+      const inMemory = writeResult
+        ? undefined
+        : await readDailyReceipts({
+            workspaceDir,
+            dateKey,
+            ...(maxFiles && maxFiles > 0 ? { maxFiles } : {}),
+          });
       const review =
         writeResult?.review ??
         buildFinanceLearningRetrievalReview({
           workspaceDir,
           dateKey,
-          receiptResults: await readDailyReceipts({
-            workspaceDir,
-            dateKey,
-            ...(maxFiles && maxFiles > 0 ? { maxFiles } : {}),
-          }),
+          receiptResults: inMemory?.results ?? [],
+          receiptSource: inMemory?.issue ?? null,
         });
       return jsonResult({
         ok: true,
@@ -360,11 +376,14 @@ export function createFinanceLearningRetrievalReviewTool(options?: {
         reviewPath: writeResult?.reviewPath,
         counts: review.counts,
         weakLearningIntents: review.weakLearningIntents,
+        receiptSource: review.receiptSource,
         separationContract: review.separationContract,
         action:
-          review.counts.weakLearningReceipts > 0
-            ? "Review weak learning intents before assuming the learning brain internalized them."
-            : "Finance learning receipts for this date are retrievable or empty; no weak learning receipt was found.",
+          review.receiptSource.status !== "read"
+            ? `Finance learning receipts could not be read (${review.receiptSource.status}${review.receiptSource.code ? `, ${review.receiptSource.code}` : ""}); this review is blind, not evidence that the day produced nothing.`
+            : review.counts.weakLearningReceipts > 0
+              ? "Review weak learning intents before assuming the learning brain internalized them."
+              : "Finance learning receipts for this date are retrievable or empty; no weak learning receipt was found.",
       });
     },
   };
