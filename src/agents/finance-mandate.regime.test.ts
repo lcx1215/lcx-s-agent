@@ -62,6 +62,35 @@ describe("regime through evaluateFinanceMandate", () => {
     expect(decision.rules?.maxRiskPerTradeFraction).toBeCloseTo(0.005, 10);
   });
 
+  it("actually scales the cap when volatility exceeds the gate", () => {
+    // The gate was configured for a while and read by nothing, so the config
+    // claimed volatility was being scaled and no code did it.
+    const calm = evaluateFinanceMandate({
+      ...base,
+      riskFractionOfEquity: 0.008,
+      realizedVolatilityFraction: 0.15,
+    });
+    const wild = evaluateFinanceMandate({
+      ...base,
+      riskFractionOfEquity: 0.008,
+      realizedVolatilityFraction: 0.6,
+    });
+    // Gate is 0.20: at 0.60 volatility the cap shrinks to a third, so 0.8% no
+    // longer fits.
+    expect(calm.verdict).toBe("pass");
+    expect(wild.verdict).toBe("refuse");
+  });
+
+  it("applies the volatility gate on top of a regime, not instead of it", () => {
+    const both = evaluateFinanceMandate({
+      ...base,
+      riskFractionOfEquity: 0.004,
+      regime: "risk_off",
+      realizedVolatilityFraction: 0.6,
+    });
+    expect(both.verdict).toBe("refuse");
+  });
+
   it("does not treat a regime note as a refusal", () => {
     // Guards a real bug: the tightening note was once pushed into `reasons`,
     // and any non-empty `reasons` reads as refuse.

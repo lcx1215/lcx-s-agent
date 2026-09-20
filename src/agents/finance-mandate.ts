@@ -185,7 +185,39 @@ export type FinanceMandateContext = Readonly<{
    * Absent means "no regime reading", which leaves the caps as declared.
    */
   regime?: FinanceRegime;
+  /** Annualised realised volatility as a fraction. Drives the volatility gate. */
+  realizedVolatilityFraction?: number;
 }>;
+
+/**
+ * Scale the risk cap down when realised volatility exceeds the gate.
+ *
+ * This existed as a configured number for a while and was read nowhere, so the
+ * config claimed volatility was being scaled and nothing did it. A control that
+ * is declared but not enforced is worse than no control: it is believed.
+ *
+ * The scaling is proportional (gate / observed), which is volatility targeting:
+ * twice as volatile means half the position, so the money at risk stays put.
+ */
+export function applyVolatilityGateToClassRules(
+  rules: FinanceClassRules,
+  realizedVolatilityFraction: number | undefined,
+  gateFraction: number | null,
+): FinanceClassRules {
+  if (
+    gateFraction === null ||
+    realizedVolatilityFraction === undefined ||
+    !Number.isFinite(realizedVolatilityFraction) ||
+    realizedVolatilityFraction <= gateFraction
+  ) {
+    return rules;
+  }
+  return Object.freeze({
+    ...rules,
+    maxRiskPerTradeFraction:
+      rules.maxRiskPerTradeFraction * (gateFraction / realizedVolatilityFraction),
+  });
+}
 
 export type FinanceMandateDecision = Readonly<{
   strategyClass: FinanceStrategyClass | "unknown";
@@ -221,6 +253,14 @@ export function evaluateFinanceMandate(
     context.regime === undefined
       ? rules[strategyClass]
       : applyRegimeToClassRules(rules[strategyClass], context.regime);
+  // Volatility gate: the configured number now actually does something.
+  const gateFraction =
+    DEFAULT_REGIME_ADJUSTMENTS[context.regime ?? "normal"].volatilityGateFraction;
+  const gatedRules = applyVolatilityGateToClassRules(
+    classRules,
+    context.realizedVolatilityFraction,
+    gateFraction,
+  );
   const reasons: string[] = [];
   // The tightened cap is visible through the returned `rules`; it must not be
   // pushed into `reasons`, because a non-empty `reasons` means refuse.
@@ -243,20 +283,20 @@ export function evaluateFinanceMandate(
     reasons.push("refuse: increasing size to win back a loss");
   }
 
-  if (context.riskFractionOfEquity > classRules.maxRiskPerTradeFraction) {
+  if (context.riskFractionOfEquity > gatedRules.maxRiskPerTradeFraction) {
     reasons.push(
       `refuse: risk ${(context.riskFractionOfEquity * 100).toFixed(2)}% exceeds the ${(
-        classRules.maxRiskPerTradeFraction * 100
+        gatedRules.maxRiskPerTradeFraction * 100
       ).toFixed(2)}% cap for class ${strategyClass}`,
     );
   }
 
-  if (classRules.stopLossRequired && context.stopLossDefined !== true) {
+  if (gatedRules.stopLossRequired && context.stopLossDefined !== true) {
     reasons.push(`refuse: class ${strategyClass} requires a defined stop`);
   }
 
   if (
-    classRules.requireSignificantAutocorrelation &&
+    gatedRules.requireSignificantAutocorrelation &&
     context.hasSignificantAutocorrelation !== true
   ) {
     reasons.push(
@@ -265,19 +305,19 @@ export function evaluateFinanceMandate(
   }
 
   if (
-    classRules.maxDrawdownHaltFraction !== null &&
-    context.drawdownFraction >= classRules.maxDrawdownHaltFraction
+    gatedRules.maxDrawdownHaltFraction !== null &&
+    context.drawdownFraction >= gatedRules.maxDrawdownHaltFraction
   ) {
     return {
       strategyClass,
       verdict: "needs_human",
       reasons: [
         `drawdown ${(context.drawdownFraction * 100).toFixed(1)}% reached the ${(
-          classRules.maxDrawdownHaltFraction * 100
+          gatedRules.maxDrawdownHaltFraction * 100
         ).toFixed(0)}% halt for class ${strategyClass}; manual review required`,
         ...reasons,
       ],
-      rules: classRules,
+      rules: gatedRules,
     };
   }
 
@@ -285,6 +325,6 @@ export function evaluateFinanceMandate(
     strategyClass,
     verdict: reasons.length > 0 ? "refuse" : "pass",
     reasons,
-    rules: classRules,
+    rules: gatedRules,
   };
 }
