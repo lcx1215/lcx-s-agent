@@ -295,6 +295,25 @@ function collectRefusalReasons(request: FinanceOrderPlacementRequest): string[] 
     reasons.push("execution_intent_limit_price_forbidden_for_market_order");
   }
 
+  // `stopPrice` was the one number on the intent this boundary never looked at, even though the
+  // intent type documents why it matters: "Sizing from a stop and then placing an order with none is
+  // worse than not asking for one, because it looks controlled." Measured at a reference price of
+  // 100, a buy whose stop sat at 120, at 100, at 0 and at NaN all placed. `placeFinanceOrder` is
+  // exported and takes a plain object, so this is reachable without `compileExecutionIntent`, which
+  // is the only other place that knows what a stop is for.
+  if (intent.stopPrice !== undefined) {
+    if (!isPositiveFinite(intent.stopPrice)) {
+      reasons.push("execution_intent_stop_price_must_be_positive");
+    } else if (
+      isPositiveFinite(intent.referencePrice) &&
+      (intent.side === "buy"
+        ? intent.stopPrice >= intent.referencePrice
+        : intent.stopPrice <= intent.referencePrice)
+    ) {
+      reasons.push("execution_intent_stop_price_on_wrong_side");
+    }
+  }
+
   if (adapter !== undefined) {
     if (!adapter.orderTypes.includes(intent.orderType)) {
       reasons.push("declared_adapter_order_type_unsupported");
@@ -316,6 +335,23 @@ function collectRefusalReasons(request: FinanceOrderPlacementRequest): string[] 
   // as one code so a caller can fix all of them in one pass instead of playing whack-a-mole.
   for (const cap of missingUnattendedCaps(budget)) {
     reasons.push(UNATTENDED_CAP_REFUSAL_CODES[cap]);
+  }
+
+  // The caps are guarded by `isPositiveFinite`, so an absent one imposes nothing. The two counters
+  // that *feed* them were not guarded at all, and a negative counter widens the cap it is meant to
+  // consume. Measured with a 1000 cap and a 500 order: `committedInstrumentNotional: 900` was
+  // refused as `risk_budget_instrument_notional_exceeded` while `-1e9` placed, and
+  // `ordersPlacedThisRun: 1` was refused as `risk_budget_order_count_exceeded` while `-100` placed.
+  // A counter comes from the caller, so a buggy one (uninitialised, or derived by subtraction) is
+  // the realistic path, and "the narrowing path is never a widening" has to hold for it too.
+  if (
+    !Number.isFinite(request.committedInstrumentNotional) ||
+    request.committedInstrumentNotional < 0
+  ) {
+    reasons.push("committed_instrument_notional_must_be_non_negative");
+  }
+  if (!Number.isFinite(request.ordersPlacedThisRun) || request.ordersPlacedThisRun < 0) {
+    reasons.push("orders_placed_this_run_must_be_non_negative");
   }
 
   if (!admitsInstrument(budget.allowedInstruments, intent.instrument)) {

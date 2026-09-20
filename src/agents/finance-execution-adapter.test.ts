@@ -7,16 +7,24 @@ import {
   type FinanceExecutionAdapter,
   type FinanceExecutionIntent,
   type FinanceRiskBudget,
+  missingUnattendedCaps,
   placeFinanceOrder,
 } from "./finance-execution-adapter.js";
 
 type PlacementRequest = Parameters<typeof placeFinanceOrder>[0];
 
 const budget: FinanceRiskBudget = {
+  automation: "attended",
   maxOrderNotional: 10_000,
   maxInstrumentNotional: 25_000,
   maxOrdersPerRun: 5,
   allowedInstruments: ["AAPL"],
+};
+
+/** Same numbers, but nobody is watching: the caps stop being optional. */
+const unattendedBudget: FinanceRiskBudget = {
+  ...budget,
+  automation: "unattended",
 };
 
 const intent: FinanceExecutionIntent = {
@@ -196,6 +204,79 @@ describe("finance execution adapter seam", () => {
     ]);
   });
 
+  it("leaves an attended run's caps opt-in: a missing cap is not a boundary", async () => {
+    const bare = await placeFinanceOrder(
+      request({
+        budget: {
+          ...budget,
+          automation: "attended",
+          maxOrderNotional: undefined,
+          maxInstrumentNotional: undefined,
+          maxOrdersPerRun: undefined,
+        },
+      }),
+    );
+
+    expect(bare.status).toBe("placed");
+    expect(bare.refusalReasons).toEqual([]);
+    expect(missingUnattendedCaps({ ...budget, automation: "attended" })).toEqual([]);
+  });
+
+  it("refuses an unattended run that declines to name every ceiling", async () => {
+    const result = await placeFinanceOrder(
+      request({
+        budget: {
+          ...unattendedBudget,
+          maxOrderNotional: undefined,
+          maxInstrumentNotional: undefined,
+          maxOrdersPerRun: undefined,
+        },
+      }),
+    );
+
+    expect(result.status).toBe("refused");
+    expect(result.receipt).toBeUndefined();
+    expect(result.refusalReasons).toEqual([
+      "risk_budget_unattended_requires_max_order_notional",
+      "risk_budget_unattended_requires_max_instrument_notional",
+      "risk_budget_unattended_requires_max_orders_per_run",
+    ]);
+  });
+
+  it("names only the caps an unattended run still owes, so all can be fixed in one pass", async () => {
+    const partial = await placeFinanceOrder(
+      request({ budget: { ...unattendedBudget, maxOrdersPerRun: undefined } }),
+    );
+
+    expect(partial.refusalReasons).toEqual(["risk_budget_unattended_requires_max_orders_per_run"]);
+    expect(missingUnattendedCaps({ ...unattendedBudget, maxOrdersPerRun: undefined })).toEqual([
+      "maxOrdersPerRun",
+    ]);
+  });
+
+  it("places an unattended run once every ceiling is declared", async () => {
+    const result = await placeFinanceOrder(request({ budget: unattendedBudget }));
+
+    expect(result.status).toBe("placed");
+    expect(result.refusalReasons).toEqual([]);
+  });
+
+  it("still enforces a declared cap under unattended: refusing does not become declaring", async () => {
+    const result = await placeFinanceOrder(
+      request({
+        budget: { ...unattendedBudget, maxOrderNotional: 100 },
+        intent: { ...intent, quantity: 10, referencePrice: 231.4 },
+      }),
+    );
+
+    expect(result.refusalReasons).toContain("risk_budget_order_notional_exceeded");
+  });
+
+  it("keeps the default budget attended, so nobody inherits unattended by omission", () => {
+    expect(DEFAULT_FINANCE_RISK_BUDGET.automation).toBe("attended");
+    expect(missingUnattendedCaps(DEFAULT_FINANCE_RISK_BUDGET)).toEqual([]);
+  });
+
   it("refuses a market order that carries a limit price and a limit order without one", async () => {
     const marketWithLimit = await placeFinanceOrder(
       request({ intent: { ...intent, limitPrice: 200 } }),
@@ -247,5 +328,70 @@ describe("finance execution adapter seam", () => {
     const first = await placeFinanceOrder(request());
     const second = await placeFinanceOrder(request());
     expect(first.receipt?.receiptId).toBe(second.receipt?.receiptId);
+  });
+});
+
+/**
+ * The two things this boundary did not look at.
+ *
+ * `stopPrice` was never read here even though the intent type documents why it matters ("Sizing from
+ * a stop and then placing an order with none is worse than not asking for one, because it looks
+ * controlled"). And the two counters that feed the caps were unguarded, so a negative one widened
+ * the cap it is meant to consume. Both are reachable through the exported `placeFinanceOrder`, which
+ * takes a plain object, so neither depends on `compileExecutionIntent` having been used.
+ */
+describe("the stop price and the budget counters", () => {
+  const withStop = (stopPrice: number, side: FinanceExecutionIntent["side"] = "buy") =>
+    request({ intent: { ...intent, side, stopPrice } as FinanceExecutionIntent });
+
+  it("accepts a stop on the correct side of each direction", async () => {
+    const buy = await placeFinanceOrder(withStop(220));
+    expect(buy.status).toBe("placed");
+    const sell = await placeFinanceOrder(withStop(240, "sell"));
+    expect(sell.status).toBe("placed");
+  });
+
+  it("refuses a stop on the wrong side of the entry", async () => {
+    // referencePrice is 231.4, so 240 is above a long entry and 220 is below a short one.
+    const buy = await placeFinanceOrder(withStop(240));
+    expect(buy.refusalReasons).toContain("execution_intent_stop_price_on_wrong_side");
+    const sell = await placeFinanceOrder(withStop(220, "sell"));
+    expect(sell.refusalReasons).toContain("execution_intent_stop_price_on_wrong_side");
+  });
+
+  it("refuses a stop that sits exactly on the entry", async () => {
+    const result = await placeFinanceOrder(withStop(intent.referencePrice));
+    expect(result.refusalReasons).toContain("execution_intent_stop_price_on_wrong_side");
+  });
+
+  it("refuses a stop that is not a positive number", async () => {
+    for (const stopPrice of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const result = await placeFinanceOrder(withStop(stopPrice));
+      expect(result.refusalReasons).toContain("execution_intent_stop_price_must_be_positive");
+    }
+  });
+
+  it("still places an order that carries no stop at all", async () => {
+    // A stop is optional; refusing a bare order is a different control's job.
+    const result = await placeFinanceOrder(request());
+    expect(result.status).toBe("placed");
+  });
+
+  it("refuses a negative committed notional instead of widening the instrument cap", async () => {
+    const control = await placeFinanceOrder(request({ committedInstrumentNotional: 24_000 }));
+    expect(control.refusalReasons).toContain("risk_budget_instrument_notional_exceeded");
+
+    const widened = await placeFinanceOrder(request({ committedInstrumentNotional: -1_000_000 }));
+    expect(widened.status).toBe("refused");
+    expect(widened.refusalReasons).toContain("committed_instrument_notional_must_be_non_negative");
+  });
+
+  it("refuses a negative order count instead of widening the per-run cap", async () => {
+    const control = await placeFinanceOrder(request({ ordersPlacedThisRun: 5 }));
+    expect(control.refusalReasons).toContain("risk_budget_order_count_exceeded");
+
+    const widened = await placeFinanceOrder(request({ ordersPlacedThisRun: -100 }));
+    expect(widened.status).toBe("refused");
+    expect(widened.refusalReasons).toContain("orders_placed_this_run_must_be_non_negative");
   });
 });

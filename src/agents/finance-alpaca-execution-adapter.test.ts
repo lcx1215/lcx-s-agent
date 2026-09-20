@@ -27,6 +27,16 @@ function transport(body: unknown, status = 200) {
   return { fn, calls };
 }
 
+/** Captures what was actually sent, because the defect lives in the payload, not the URL. */
+function capturingTransport(orderId: string) {
+  const bodies: Record<string, unknown>[] = [];
+  const fn = async (_url: string, init?: { body: string }) => {
+    bodies.push(JSON.parse(init?.body ?? "{}") as Record<string, unknown>);
+    return { status: 200, body: JSON.stringify({ id: orderId, status: "new", filled_qty: "0" }) };
+  };
+  return { fn, bodies };
+}
+
 afterEach(() => {
   vi.unstubAllEnvs();
 });
@@ -175,6 +185,30 @@ describe("createAlpacaExecutionAdapter", () => {
     );
   });
 
+  it("attaches the stop as a bracket on a buy, where a stop protects the entry", async () => {
+    stubCredentials(PAPER);
+    const t = capturingTransport("ord-12");
+    const adapter = createAlpacaExecutionAdapter({ instruments: ["AAPL"], postJson: t.fn });
+    await adapter.execute({ ...baseIntent, stopPrice: 90 }, new AbortController().signal);
+    expect(t.bodies[0]?.order_class).toBe("bracket");
+    expect(t.bodies[0]?.stop_loss).toEqual({ stop_price: "90" });
+  });
+
+  it("sends a sell as a plain order, because a stop below the market would be rejected", async () => {
+    stubCredentials(PAPER);
+    const t = capturingTransport("ord-13");
+    const adapter = createAlpacaExecutionAdapter({ instruments: ["AAPL"], postJson: t.fn });
+    // Same stop, selling side: the venue requires a sell's stop_loss ABOVE the market, so a
+    // bracket here is a guaranteed 422 — and the exit path is the one that must never fail.
+    await adapter.execute(
+      { ...baseIntent, side: "sell", stopPrice: 90 },
+      new AbortController().signal,
+    );
+    expect(t.bodies[0]?.order_class).toBeUndefined();
+    expect(t.bodies[0]?.stop_loss).toBeUndefined();
+    expect(t.bodies[0]?.side).toBe("sell");
+  });
+
   it("reports zero for an order that reaches a terminal unfilled state", async () => {
     stubCredentials(PAPER);
     const t = transport({ id: "ord-11", status: "new", filled_qty: "0" });
@@ -191,5 +225,72 @@ describe("createAlpacaExecutionAdapter", () => {
     const fill = await adapter.execute(baseIntent, new AbortController().signal);
     expect(fill.filledQuantity).toBe(0);
     expect(fill.fillPrice).toBe(0);
+  });
+});
+
+/**
+ * The empty allowlist and a non-finite poll bound.
+ *
+ * The shared contract declares `instruments` as "Empty accepts nothing" and `admitsInstrument`
+ * implements that, but this adapter read an empty list as "any": measured, `instruments: []` placed
+ * an order for AAPL while `instruments: ["AAPL"]` refused MSFT. `placeFinanceOrder` masks it by
+ * refusing first, and both real callers pass a caller-supplied list straight through.
+ *
+ * `fillPoll.timeoutMs: NaN` removed the deadline rather than shortening it (`Date.now() >= NaN` is
+ * false forever), so the poll loop never reached its "unknown fill state" exit: with a status endpoint
+ * that never turns terminal, `timeoutMs: 1` threw the intended error while `NaN` polled past 40
+ * requests with no end.
+ */
+describe("an empty allowlist and a non-finite poll bound", () => {
+  it("refuses an empty instrument list rather than reading it as any", async () => {
+    stubCredentials(PAPER);
+    const t = transport({ id: "ord-20" });
+    const adapter = createAlpacaExecutionAdapter({ instruments: [], postJson: t.fn });
+    await expect(adapter.execute(baseIntent, new AbortController().signal)).rejects.toThrow(
+      /not declared for instrument AAPL/,
+    );
+    expect(t.calls).toHaveLength(0);
+  });
+
+  it("refuses a non-finite poll bound before polling the venue at all", async () => {
+    stubCredentials(PAPER);
+    const t = transport({ id: "ord-21", status: "new", filled_qty: "0" });
+    let polls = 0;
+    const statusFetch = async () => {
+      polls += 1;
+      return {
+        status: 200,
+        body: JSON.stringify({ id: "ord-21", status: "new", filled_qty: "0" }),
+      };
+    };
+    for (const timeoutMs of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      const adapter = createAlpacaExecutionAdapter({
+        instruments: ["AAPL"],
+        postJson: t.fn,
+        fillPoll: { timeoutMs, intervalMs: 1 },
+        statusFetch,
+      });
+      await expect(adapter.execute(baseIntent, new AbortController().signal)).rejects.toThrow(
+        /fillPoll requires a finite non-negative/,
+      );
+    }
+    expect(polls).toBe(0);
+  });
+
+  it("still polls, and still gives up, with a finite bound", async () => {
+    stubCredentials(PAPER);
+    const t = transport({ id: "ord-22", status: "new", filled_qty: "0" });
+    const adapter = createAlpacaExecutionAdapter({
+      instruments: ["AAPL"],
+      postJson: t.fn,
+      fillPoll: { timeoutMs: 20, intervalMs: 1 },
+      statusFetch: async () => ({
+        status: 200,
+        body: JSON.stringify({ id: "ord-22", status: "new", filled_qty: "0" }),
+      }),
+    });
+    await expect(adapter.execute(baseIntent, new AbortController().signal)).rejects.toThrow(
+      /fill state is unknown/,
+    );
   });
 });

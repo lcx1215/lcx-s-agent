@@ -106,7 +106,14 @@ export function createAlpacaExecutionAdapter(
       signal: AbortSignal,
     ): Promise<FinanceExecutionFill> => {
       const symbol = normalizeInstrument(intent.instrument);
-      if (instruments.length > 0 && !instruments.includes(symbol)) {
+      // The shared contract declares this field as "Instruments this adapter accepts. Empty accepts
+      // nothing", and `admitsInstrument` in `finance-execution-adapter.ts` implements exactly that.
+      // This check was written as `instruments.length > 0 && !instruments.includes(symbol)`, so an
+      // empty list accepted *every* symbol -- the opposite of the contract, and in the widening
+      // direction. `placeFinanceOrder` masks it because it refuses first, but `execute` belongs to the
+      // exported adapter object and both real callers pass a caller-supplied list straight through, so
+      // `instruments: []` reaching here meant "trade anything".
+      if (!instruments.includes(symbol)) {
         throw new Error(`Alpaca adapter is not declared for instrument ${symbol}`);
       }
       if (!orderTypes.includes(intent.orderType)) {
@@ -147,9 +154,18 @@ export function createAlpacaExecutionAdapter(
       if (intent.orderType === "limit") {
         body.limit_price = String(intent.limitPrice);
       }
-      if (intent.stopPrice !== undefined) {
-        // Sizing assumes a stop exists; the order has to carry it or the
-        // assumption is fiction.
+      // A bracket protects an ENTRY. Sizing already assumed a stop and used it, so the stop
+      // has done its real job before this line; whether the order carries one is a different
+      // question.
+      //
+      // For a sell it must not. Two independent reasons: Alpaca requires a sell's `stop_loss`
+      // to sit ABOVE the market (below is a 422), and a sell here is a reduction — the legs
+      // would be acting on a position the order just flattened. Sending it anyway would turn
+      // the exit path into a guaranteed rejection, i.e. a book that can enter and never leave.
+      //
+      // This system declares no short selling, so "sell" means "reduce". If shorting is ever
+      // admitted, that needs its own flag on the intent, not a bracket inferred from a side.
+      if (intent.stopPrice !== undefined && intent.side === "buy") {
         body.order_class = "bracket";
         body.stop_loss = { stop_price: String(intent.stopPrice) };
       }
@@ -199,6 +215,20 @@ export function createAlpacaExecutionAdapter(
       if (options.fillPoll) {
         const timeoutMs = options.fillPoll.timeoutMs ?? 10_000;
         const intervalMs = options.fillPoll.intervalMs ?? 200;
+        // A non-finite bound removes the deadline instead of shortening it: `Date.now() >= NaN` is
+        // false forever, so the poll loop below never reaches its "unknown fill state" exit and keeps
+        // calling the venue. Measured with a status endpoint that never reaches a terminal state:
+        // `timeoutMs: 1` threw the intended "fill state is unknown" error, while `NaN` and `Infinity`
+        // polled past 40 requests with no end. A hang against a live venue is worse than a wrong
+        // number, and the surrounding code already refuses rather than guess, so this refuses too.
+        if (
+          !Number.isFinite(timeoutMs) ||
+          timeoutMs < 0 ||
+          !Number.isFinite(intervalMs) ||
+          intervalMs < 0
+        ) {
+          throw new Error("fillPoll requires a finite non-negative timeoutMs and intervalMs");
+        }
         const statusFetch = options.statusFetch ?? createFinanceUncachedFetch();
         const authHeaders = { "APCA-API-KEY-ID": keyId, "APCA-API-SECRET-KEY": secret };
         const deadline = Date.now() + timeoutMs;
