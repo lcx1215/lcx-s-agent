@@ -29,6 +29,7 @@ import { AGENT_LANE_SUBAGENT } from "../lanes.js";
 import { abortEmbeddedPiRun } from "../pi-embedded.js";
 import { optionalStringEnum } from "../schema/typebox.js";
 import { getSubagentDepthFromSessionStore } from "../subagent-depth.js";
+import { describeAnnounceDelivery } from "../subagent-registry-cleanup.js";
 import {
   clearSubagentRunSteerRestart,
   countPendingDescendantRuns,
@@ -394,7 +395,10 @@ export function createSubagentsTool(opts?: { agentSessionKey?: string }): AnyAge
           const runtime = formatDurationCompact(runtimeMs);
           const label = truncateLine(resolveSubagentLabel(entry), 48);
           const task = truncateLine(entry.task.trim(), 72);
-          const line = `${index}. ${label} (${resolveModelDisplay(sessionEntry, entry.model)}, ${runtime}${usageText ? `, ${usageText}` : ""}) ${status}${task.toLowerCase() !== label.toLowerCase() ? ` - ${task}` : ""}`;
+          // A run that finished but never got its result delivered must not read like one that
+          // did: otherwise "done" is the last thing anyone hears about it.
+          const announceNote = describeAnnounceDelivery(entry);
+          const line = `${index}. ${label} (${resolveModelDisplay(sessionEntry, entry.model)}, ${runtime}${usageText ? `, ${usageText}` : ""}) ${status}${announceNote ? ` [${announceNote}]` : ""}${task.toLowerCase() !== label.toLowerCase() ? ` - ${task}` : ""}`;
           const baseView = {
             index,
             runId: entry.runId,
@@ -407,6 +411,7 @@ export function createSubagentsTool(opts?: { agentSessionKey?: string }): AnyAge
             model: resolveModelRef(sessionEntry) || entry.model,
             totalTokens,
             startedAt: entry.startedAt,
+            ...(announceNote ? { announceNote } : {}),
           };
           index += 1;
           return { line, view: entry.endedAt ? { ...baseView, endedAt: entry.endedAt } : baseView };

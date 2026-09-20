@@ -20,6 +20,24 @@ export type DeferredCleanupDecision =
       resumeDelayMs?: number;
     };
 
+/**
+ * How the announce for a finished run ended, in words a reader can act on. `null` means nothing
+ * went wrong that the reader needs to know about.
+ *
+ * The point is that "delivered" and "abandoned" must not render the same way: a run whose result
+ * was never delivered otherwise looks exactly like a run whose result arrived, and the requester
+ * keeps waiting for something that already stopped trying.
+ */
+export function describeAnnounceDelivery(entry: SubagentRunRecord): string | null {
+  const giveUp = entry.announceGiveUp;
+  if (!giveUp) {
+    return null;
+  }
+  return giveUp.reason === "retry-limit"
+    ? "result not delivered: announce gave up after repeated retries"
+    : "result not delivered: announce expired before delivery";
+}
+
 export function resolveCleanupCompletionReason(
   entry: SubagentRunRecord,
 ): SubagentLifecycleEndedReason {

@@ -760,6 +760,27 @@ const PATH_RULES: PathRule[] = [
     ],
   },
   {
+    // The subagent lifecycle registry: spawn, end, cleanup, and the announce that tells the
+    // requester a child finished. Every "the parent never heard back" failure lives here.
+    id: "subagent_lifecycle_registry",
+    lane: "agent_workflow_memory",
+    patterns: [
+      /^src\/agents\/subagent-registry\.ts$/u,
+      /^src\/agents\/subagent-registry\.types\.ts$/u,
+      /^src\/agents\/subagent-registry-cleanup\.ts$/u,
+      /^src\/agents\/subagent-announce\.ts$/u,
+      /^src\/agents\/subagent-announce-queue\.ts$/u,
+    ],
+    requiredChecks: ["run-changed-tests"],
+    commands: [
+      "pnpm vitest run src/agents/subagent-registry.announce-loop-guard.test.ts src/agents/subagent-registry-cleanup.test.ts src/agents/subagent-registry.steer-restart.test.ts src/agents/subagent-registry.persistence.test.ts src/agents/subagent-announce-queue.test.ts",
+    ],
+    safetyNotes: [
+      "A subagent whose announce was abandoned must stay distinguishable from one that announced: the give-up is recorded on the run as `announceGiveUp`, because a log line nobody reads leaves the run looking delivered.",
+      "Announce retries are bounded on purpose (retry budget plus expiry). Do not turn a terminal give-up into an infinite retry.",
+    ],
+  },
+  {
     id: "central_agent_harness",
     lane: "agent_workflow_memory",
     patterns: [/^src\/agents\/central-harness\//u, /^scripts\/operator\/lcx-central-agent\.ts$/u],

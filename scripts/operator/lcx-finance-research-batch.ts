@@ -26,7 +26,7 @@
  *     --instruments AAPL,MSFT,NVDA --record PATH
  */
 
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import {
   chartStructureSignal,
@@ -103,6 +103,47 @@ const DEFAULT_POOL = [
   "TXN",
 ];
 
+/**
+ * Keys already recorded, as instrument|day.
+ *
+ * Running twice on the same day used to append a second record for the same
+ * instrument, and scoring then counted that observation twice while reporting a
+ * larger sample than really exists. A retry, a cron overlap, or a manual re-run
+ * after a partial failure all produced duplicates.
+ */
+function recordedKeys(path: string): Set<string> {
+  if (!existsSync(path)) {
+    return new Set();
+  }
+  return new Set(
+    readFileSync(path, "utf8")
+      .split("\n")
+      .filter((line) => line.trim().length > 0)
+      .flatMap((line) => {
+        try {
+          const row = JSON.parse(line) as { instrument?: unknown; asOf?: unknown };
+          if (typeof row.instrument === "string" && typeof row.asOf === "string") {
+            return [row.instrument.toUpperCase() + "|" + row.asOf.slice(0, 10)];
+          }
+          return [];
+        } catch {
+          return [];
+        }
+      }),
+  );
+}
+
+/** Never let a provider key reach a log through an error message. */
+function scrub(text: string, secrets: readonly string[]): string {
+  let out = text.replace(/apikey=[^&\s"']+/giu, "apikey=***");
+  for (const secret of secrets) {
+    if (secret.length > 0) {
+      out = out.split(secret).join("***");
+    }
+  }
+  return out;
+}
+
 function readArg(args: readonly string[], name: string): string | undefined {
   const index = args.indexOf(name);
   return index === -1 ? undefined : args[index + 1];
@@ -156,8 +197,8 @@ async function collectOne(params: {
         }),
       );
     }
-  } catch {
-    // a missing leg simply leaves the pool short for this instrument
+  } catch (error) {
+    process.stderr.write("leg failed: " + scrub(String(error), []).slice(0, 100) + "\n");
   }
 
   try {
@@ -189,8 +230,8 @@ async function collectOne(params: {
         ),
       );
     }
-  } catch {
-    // same: a missing leg leaves the pool short
+  } catch (error) {
+    process.stderr.write("leg failed: " + scrub(String(error), []).slice(0, 100) + "\n");
   }
 
   const fused = fuseSignals(signals, { minSources: 2, minAgreement: 0.6 });
@@ -241,8 +282,18 @@ async function main(): Promise<void> {
     (a) => a.id === "fmp_price_target_summary",
   );
 
+  const day = asOf.slice(0, 10);
+  const seen = recordedKeys(recordPath);
+  const todo = instruments.filter((i) => !seen.has(i + "|" + day));
+  const skipped = instruments.length - todo.length;
+  if (skipped > 0) {
+    process.stdout.write(
+      "skipping " + skipped + " instrument(s) already recorded for " + day + "\n",
+    );
+  }
+
   const records: Recorded[] = [];
-  for (const instrument of instruments) {
+  for (const instrument of todo) {
     const record = await collectOne({ instrument, asOf, eodAdapter, targetAdapters });
     records.push(record);
     process.stdout.write(
@@ -259,7 +310,10 @@ async function main(): Promise<void> {
   }
 
   mkdirSync(dirname(recordPath), { recursive: true });
-  appendFileSync(recordPath, records.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  if (records.length > 0) {
+    mkdirSync(dirname(recordPath), { recursive: true });
+    appendFileSync(recordPath, records.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  }
   const acted = records.filter((r) => r.direction !== "none").length;
   process.stdout.write(
     "\nrecorded " +

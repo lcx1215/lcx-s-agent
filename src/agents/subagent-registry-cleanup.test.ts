@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { resolveDeferredCleanupDecision } from "./subagent-registry-cleanup.js";
+import {
+  describeAnnounceDelivery,
+  resolveDeferredCleanupDecision,
+} from "./subagent-registry-cleanup.js";
 import type { SubagentRunRecord } from "./subagent-registry.types.js";
 
 function makeEntry(overrides: Partial<SubagentRunRecord> = {}): SubagentRunRecord {
@@ -77,5 +80,20 @@ describe("resolveDeferredCleanupDecision", () => {
     });
 
     expect(decision).toEqual({ kind: "retry", retryCount: 2, resumeDelayMs: 2_000 });
+  });
+});
+
+describe("describeAnnounceDelivery", () => {
+  it("says nothing when the announce was not abandoned", () => {
+    expect(describeAnnounceDelivery(makeEntry())).toBeNull();
+  });
+
+  it("names the give-up reason so an undelivered result is not read as a delivered one", () => {
+    expect(
+      describeAnnounceDelivery(makeEntry({ announceGiveUp: { reason: "retry-limit", at: 5 } })),
+    ).toMatch(/not delivered.*retries/);
+    expect(
+      describeAnnounceDelivery(makeEntry({ announceGiveUp: { reason: "expiry", at: 5 } })),
+    ).toMatch(/not delivered.*expired/);
   });
 });

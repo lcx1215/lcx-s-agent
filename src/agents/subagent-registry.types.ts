@@ -28,6 +28,16 @@ export type SubagentRunRecord = {
   announceRetryCount?: number;
   /** Timestamp of the last announce retry attempt (for backoff). */
   lastAnnounceRetryAt?: number;
+  /**
+   * Set when the announce was abandoned for good: the run finished, but its result was never
+   * delivered to anyone. Without this, a run that gave up and a run that announced successfully
+   * are the same record — both just have `cleanupCompletedAt` — so "nobody was told" is
+   * indistinguishable from "everybody was told".
+   */
+  announceGiveUp?: {
+    reason: "retry-limit" | "expiry";
+    at: number;
+  };
   /** Terminal lifecycle reason recorded when the run finishes. */
   endedReason?: SubagentLifecycleEndedReason;
   /** Set after the subagent_ended hook has been emitted successfully once. */

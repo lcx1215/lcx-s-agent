@@ -90,7 +90,13 @@ function resolveAnnounceRetryDelayMs(retryCount: number) {
   return Math.min(baseDelay, MAX_ANNOUNCE_RETRY_DELAY_MS);
 }
 
-function logAnnounceGiveUp(entry: SubagentRunRecord, reason: "retry-limit" | "expiry") {
+/**
+ * Record the give-up on the run, not only in the log: a log line nobody reads leaves the run
+ * looking exactly like one that announced, and the requester then waits for a result that is
+ * never going to arrive.
+ */
+function markAnnounceGiveUp(entry: SubagentRunRecord, reason: "retry-limit" | "expiry") {
+  entry.announceGiveUp = { reason, at: Date.now() };
   const retryCount = entry.announceRetryCount ?? 0;
   const endedAgoMs =
     typeof entry.endedAt === "number" ? Math.max(0, Date.now() - entry.endedAt) : undefined;
@@ -447,7 +453,7 @@ function resumeSubagentRun(runId: string) {
   }
   // Skip entries that have exhausted their retry budget or expired (#18264).
   if ((entry.announceRetryCount ?? 0) >= MAX_ANNOUNCE_RETRY_COUNT) {
-    logAnnounceGiveUp(entry, "retry-limit");
+    markAnnounceGiveUp(entry, "retry-limit");
     entry.cleanupCompletedAt = Date.now();
     persistSubagentRuns();
     return;
@@ -457,7 +463,7 @@ function resumeSubagentRun(runId: string) {
     typeof entry.endedAt === "number" &&
     Date.now() - entry.endedAt > ANNOUNCE_EXPIRY_MS
   ) {
-    logAnnounceGiveUp(entry, "expiry");
+    markAnnounceGiveUp(entry, "expiry");
     entry.cleanupCompletedAt = Date.now();
     persistSubagentRuns();
     return;
@@ -753,7 +759,7 @@ async function finalizeSubagentCleanup(
     }
     const completionReason = resolveCleanupCompletionReason(entry);
     await emitCompletionEndedHookIfNeeded(entry, completionReason);
-    logAnnounceGiveUp(entry, deferredDecision.reason);
+    markAnnounceGiveUp(entry, deferredDecision.reason);
     completeCleanupBookkeeping({
       runId,
       entry,
@@ -834,7 +840,7 @@ function retryDeferredCompletedAnnounces(excludeRunId?: string) {
     // stay pending while descendants run for a long time.
     const endedAgo = now - (entry.endedAt ?? now);
     if (entry.expectsCompletionMessage !== true && endedAgo > ANNOUNCE_EXPIRY_MS) {
-      logAnnounceGiveUp(entry, "expiry");
+      markAnnounceGiveUp(entry, "expiry");
       entry.cleanupCompletedAt = now;
       persistSubagentRuns();
       continue;

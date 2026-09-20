@@ -109,6 +109,7 @@ describe("announce loop guard (#18264)", () => {
   test.each([
     {
       name: "expired entries with high retry count are skipped by resumeSubagentRun",
+      expectedReason: "retry-limit" as const,
       createEntry: (now: number) => ({
         // Ended 10 minutes ago (well past ANNOUNCE_EXPIRY_MS of 5 min).
         runId: "test-expired-loop",
@@ -126,6 +127,7 @@ describe("announce loop guard (#18264)", () => {
     },
     {
       name: "entries over retry budget are marked completed without announcing",
+      expectedReason: "retry-limit" as const,
       createEntry: (now: number) => ({
         runId: "test-retry-budget",
         childSessionKey: "agent:main:subagent:retry-budget",
@@ -140,7 +142,25 @@ describe("announce loop guard (#18264)", () => {
         lastAnnounceRetryAt: now - 30_000,
       }),
     },
-  ])("$name", ({ createEntry }) => {
+    {
+      name: "entries past the announce expiry are marked completed without announcing",
+      expectedReason: "expiry" as const,
+      createEntry: (now: number) => ({
+        // Ended 10 minutes ago (past ANNOUNCE_EXPIRY_MS of 5 min) with retries left to spend.
+        runId: "test-expired-only",
+        childSessionKey: "agent:main:subagent:child-1",
+        requesterSessionKey: "agent:main:main",
+        requesterDisplayKey: "agent:main:main",
+        task: "expired without exhausting retries",
+        cleanup: "keep" as const,
+        createdAt: now - 15 * 60_000,
+        startedAt: now - 14 * 60_000,
+        endedAt: now - 10 * 60_000,
+        announceRetryCount: 1,
+        lastAnnounceRetryAt: now - 9 * 60_000,
+      }),
+    },
+  ])("$name", ({ createEntry, expectedReason }) => {
     announceFn.mockClear();
     registry.resetSubagentRegistryForTests();
 
@@ -154,6 +174,10 @@ describe("announce loop guard (#18264)", () => {
     const runs = registry.listSubagentRunsForRequester("agent:main:main");
     const stored = runs.find((run) => run.runId === entry.runId);
     expect(stored?.cleanupCompletedAt).toBeDefined();
+    // The give-up must be on the record, not only in a log line: a finished run whose result
+    // was never delivered must not read like one that announced.
+    expect(stored?.announceGiveUp?.reason).toBe(expectedReason);
+    expect(stored?.announceGiveUp?.at).toBeTypeOf("number");
   });
 
   test("expired completion-message entries are still resumed for announce", async () => {
