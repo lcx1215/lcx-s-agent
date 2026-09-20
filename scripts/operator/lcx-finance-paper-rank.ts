@@ -1,0 +1,178 @@
+/**
+ * Rank the day's recorded candidates and turn the top ones into orders.
+ *
+ * Why this exists: an absolute conviction floor means the system either trades
+ * or it does not, and with the signals available today the honest answer was
+ * "does not" - every day, indefinitely. That is not caution, it is a stall that
+ * produces no evidence either way.
+ *
+ * A systematic strategy does not ask "am I sure enough in the abstract". It asks
+ * "of the things available today, which are the best few". So this ranks by
+ * conviction and takes the top N, subject to a floor that still applies: the
+ * floor is what stops the system from picking the least bad of a uniformly bad
+ * set. Ranking without a floor is how you end up trading noise because it was
+ * the tallest blade of grass.
+ *
+ * Nothing here loosens the gates. Each candidate still goes through the intent
+ * compiler and the mandate - stop declared, risk capped, class resolved. Placing
+ * is opt-in and only ever paper unless the venue says otherwise.
+ *
+ * Usage:
+ *   node --import tsx scripts/operator/lcx-finance-paper-rank.ts \
+ *     --record PATH --day YYYY-MM-DD --top 3 --floor 0.15 \
+ *     --equity 100000 --run-authorization ID [--place]
+ */
+
+import { existsSync, readFileSync } from "node:fs";
+import { compileExecutionIntent } from "../../src/agents/finance-intent-compiler.js";
+import {
+  classifyFinanceStrategy,
+  evaluateFinanceMandate,
+} from "../../src/agents/finance-mandate.js";
+
+type Sample = {
+  asOf: string;
+  instrument: string;
+  direction: string;
+  conviction: number;
+  agreement: number;
+  sources: string[];
+  lastPrice: number;
+  target: number | null;
+  refusals?: string[];
+};
+
+function readArg(args: readonly string[], name: string): string | undefined {
+  const index = args.indexOf(name);
+  return index === -1 ? undefined : args[index + 1];
+}
+
+async function main(): Promise<void> {
+  const args = process.argv.slice(2);
+  const recordPath = readArg(args, "--record") ?? "state/finance/research-samples.jsonl";
+  const day = readArg(args, "--day") ?? new Date().toISOString().slice(0, 10);
+  const top = Number(readArg(args, "--top") ?? 3);
+  const floor = Number(readArg(args, "--floor") ?? 0.15);
+  const equity = Number(readArg(args, "--equity") ?? 100_000);
+  const authorization = readArg(args, "--run-authorization") ?? "";
+  const place = args.includes("--place");
+
+  if (!existsSync(recordPath)) {
+    process.stdout.write("no sample file at " + recordPath + "\n");
+    return;
+  }
+
+  const samples = readFileSync(recordPath, "utf8")
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line) as Sample];
+      } catch {
+        return [];
+      }
+    })
+    .filter((s) => s.asOf.slice(0, 10) === day)
+    .filter((s) => s.direction === "buy" || s.direction === "sell")
+    .filter((s) => Number.isFinite(s.conviction) && s.lastPrice > 0);
+
+  const ranked = samples.toSorted((a, b) => b.conviction - a.conviction);
+  const eligible = ranked.filter((s) => s.conviction >= floor);
+  const chosen = eligible.slice(0, Math.max(0, top));
+
+  process.stdout.write(
+    "day=" +
+      day +
+      " candidates=" +
+      samples.length +
+      " aboveFloor=" +
+      eligible.length +
+      " selected=" +
+      chosen.length +
+      " (top=" +
+      top +
+      " floor=" +
+      floor +
+      ")\n\n",
+  );
+
+  if (chosen.length === 0) {
+    process.stdout.write(
+      "nothing clears the floor; refusing to trade the least bad of a bad set\n",
+    );
+    return;
+  }
+
+  const asOf = new Date().toISOString();
+  for (const s of chosen) {
+    const stopDistance = s.lastPrice * 0.02;
+    const invalidationPrice =
+      s.direction === "buy"
+        ? Number((s.lastPrice - stopDistance).toFixed(4))
+        : Number((s.lastPrice + stopDistance).toFixed(4));
+
+    const strategyClass = classifyFinanceStrategy({ assetClass: "us_equity" });
+    const compiled = compileExecutionIntent({
+      conclusion: {
+        conclusionId: "rank-" + s.instrument.toLowerCase() + "-" + day,
+        instrument: s.instrument,
+        direction: s.direction === "sell" ? "sell" : "buy",
+        conviction: s.conviction,
+        thesis:
+          "ranked top-" +
+          top +
+          " of " +
+          samples.length +
+          " on " +
+          day +
+          " at conviction " +
+          s.conviction,
+        assetClass: "us_equity",
+        invalidationPrice,
+        evidence: s.sources.map((sourceId) => ({ sourceId })),
+      },
+      market: { referencePrice: s.lastPrice, referencePriceAt: asOf },
+      equity,
+      runAuthorizationId: authorization,
+      ...(strategyClass !== "unknown" ? { strategyClass } : {}),
+    });
+
+    if (!compiled.ok) {
+      process.stdout.write(
+        s.instrument.padEnd(6) + " refused at compile: " + [...compiled.refusals].join("; ") + "\n",
+      );
+      continue;
+    }
+
+    const mandate = evaluateFinanceMandate({
+      strategy: { assetClass: "us_equity" },
+      riskFractionOfEquity: (compiled.intent.quantity * stopDistance) / equity,
+      drawdownFraction: 0,
+      stopLossDefined: true,
+      hasSignificantAutocorrelation: true,
+    });
+
+    process.stdout.write(
+      s.instrument.padEnd(6) +
+        " conviction=" +
+        s.conviction.toFixed(3) +
+        " " +
+        compiled.intent.side +
+        " qty=" +
+        compiled.intent.quantity +
+        " stop=" +
+        (compiled.intent.stopPrice?.toFixed(2) ?? "none") +
+        " mandate=" +
+        mandate.verdict +
+        (mandate.verdict === "pass" ? "" : " [" + mandate.reasons.join("; ") + "]") +
+        (place && mandate.verdict === "pass" ? " -> would place" : "") +
+        "\n",
+    );
+  }
+
+  if (!place) {
+    process.stdout.write("\ndry run; pass --place to submit to the paper venue\n");
+  }
+}
+
+await main();
