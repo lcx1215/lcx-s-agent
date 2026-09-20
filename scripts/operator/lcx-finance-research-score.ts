@@ -21,10 +21,12 @@
  *     [--record PATH] [--horizon-days 30]
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { resolveFinanceCredentialEnv } from "../../src/agents/finance-credential-env.js";
 import { createFmpFreeBasicEodCollectionAdapter } from "../../src/agents/finance-free-market-collection-adapters.js";
 import { runFinanceMarketCollectionRefresh } from "../../src/agents/finance-market-collection-registry.js";
+import type { ScoredSample } from "../../src/agents/finance-reflection.js";
 
 type Sample = {
   asOf: string;
@@ -81,6 +83,7 @@ async function main(): Promise<void> {
   let hits = 0;
   let claimedSum = 0;
   let brierSum = 0;
+  const scored: ScoredSample[] = [];
 
   for (const sample of samples) {
     if (sample.direction === "none") {
@@ -135,11 +138,27 @@ async function main(): Promise<void> {
 
     const movedUp = at.close > sample.lastPrice;
     const outcome = sample.direction === "buy" ? (movedUp ? 1 : 0) : movedUp ? 0 : 1;
+    const movePct = ((at.close - sample.lastPrice) / sample.lastPrice) * 100;
     mature += 1;
     hits += outcome;
     claimedSum += sample.conviction;
     brierSum += (sample.conviction - outcome) ** 2;
+    scored.push({
+      instrument: sample.instrument,
+      asOf: sample.asOf,
+      direction: sample.direction === "sell" ? "sell" : "buy",
+      conviction: sample.conviction,
+      outcome: outcome === 1 ? 1 : 0,
+      movePct: Number(movePct.toFixed(4)),
+    });
   }
+
+  const scoredPath = "state/finance/research-scored.jsonl";
+  mkdirSync(dirname(scoredPath), { recursive: true });
+  writeFileSync(
+    scoredPath,
+    scored.map((r) => JSON.stringify(r)).join("\n") + (scored.length > 0 ? "\n" : ""),
+  );
 
   const brier = mature > 0 ? brierSum / mature : null;
   const hitRate = mature > 0 ? hits / mature : null;
@@ -149,6 +168,7 @@ async function main(): Promise<void> {
     JSON.stringify(
       {
         recordPath,
+        scoredPath,
         horizonDays,
         total: samples.length,
         refused,

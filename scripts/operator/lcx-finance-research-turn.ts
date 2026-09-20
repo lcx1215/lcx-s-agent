@@ -19,6 +19,7 @@
  *     --instrument AAPL --equity 100000 --run-authorization ID [--json]
  */
 
+import { existsSync, readFileSync } from "node:fs";
 import { computeChartStructure } from "../../src/agents/finance-chart-structure.js";
 import { parseResearchConclusion } from "../../src/agents/finance-conclusion-intake.js";
 import { resolveFinanceCredentialEnv } from "../../src/agents/finance-credential-env.js";
@@ -32,6 +33,11 @@ import {
   createSecFilingsCollectionAdapter,
   runFinanceMarketCollectionRefresh,
 } from "../../src/agents/finance-market-collection-registry.js";
+import {
+  buildReflection,
+  renderReflection,
+  type ScoredSample,
+} from "../../src/agents/finance-reflection.js";
 import { createRegisteredCapabilityAdapters } from "../../src/agents/finance-registered-capability-adapters.js";
 import {
   buildFinanceConclusionPrompt,
@@ -44,6 +50,22 @@ type Evidence = { sourceId: string; description: string; detail: string };
 function readArg(args: readonly string[], name: string): string | undefined {
   const index = args.indexOf(name);
   return index === -1 ? undefined : args[index + 1];
+}
+
+function readScored(path: string): ScoredSample[] {
+  if (!existsSync(path)) {
+    return [];
+  }
+  return readFileSync(path, "utf8")
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line) as ScoredSample];
+      } catch {
+        return [];
+      }
+    });
 }
 
 async function main(): Promise<void> {
@@ -223,6 +245,15 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Show the model its own scored record before it judges again. Facts only -
+  // it is told what happened, never how much to move its number.
+  const scored = readScored("state/finance/research-scored.jsonl");
+  const reflection = [
+    renderReflection(buildReflection(scored, { instrument })),
+    "",
+    renderReflection(buildReflection(scored)),
+  ].join("\n");
+
   const prompt =
     buildFinanceConclusionPrompt({
       instrument,
@@ -230,7 +261,9 @@ async function main(): Promise<void> {
       availableSources: evidence.map((e) => ({ sourceId: e.sourceId, description: e.description })),
       question:
         "Given the evidence below, is there a directional view for the next 30 days?\n\n" +
-        evidence.map((e) => "- " + e.sourceId + ": " + e.detail).join("\n"),
+        evidence.map((e) => "- " + e.sourceId + ": " + e.detail).join("\n") +
+        "\n\n" +
+        reflection,
       horizonDays: 30,
     }) + "\n\nReply with the JSON object only.";
 
