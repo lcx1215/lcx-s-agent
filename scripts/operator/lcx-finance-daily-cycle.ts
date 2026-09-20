@@ -1,0 +1,339 @@
+/**
+ * Operator entry for the unattended finance day.
+ *
+ * Two modes, and the split is the point:
+ *   day   - data, signal, drift, rebalance. Zero model calls.
+ *   night - settle matured calls and build the reflection. Zero model calls.
+ *
+ * The one place a model is wanted is the self-calibration step, and that is deliberately NOT in
+ * this file. Keeping it out means the daily cost is zero no matter how often cron fires, and the
+ * expensive step stays a separate, separately-budgeted invocation.
+ *
+ * Instruments come from the ACTIVE rule in the strategy ledger, never from a hard-coded list, so
+ * the schedule follows the declared rule instead of drifting from it.
+ *
+ * Usage:
+ *   node --import tsx scripts/operator/lcx-finance-daily-cycle.ts [--json] \
+ *     [--mode day|night] [--dir PATH] [--as-of ISO] [--equity N] [--band N] [--place]
+ */
+
+import { fetchAlpacaAccountSnapshot } from "../../src/agents/finance-alpaca-run.js";
+import { runFinanceDailyCycle } from "../../src/agents/finance-daily-cycle.js";
+import { backfillOutcomes } from "../../src/agents/finance-outcome-backfill.js";
+import { buildReflection } from "../../src/agents/finance-reflection.js";
+import { resolveFinanceStateDir } from "../../src/agents/finance-state-dir.js";
+import { readFinanceStrategyRuleLedger } from "../../src/agents/finance-strategy-rule-ledger.js";
+
+const SAMPLES_FILE = "research-samples.jsonl";
+
+type Mode = "day" | "night";
+
+type Options = Readonly<{
+  json: boolean;
+  mode: Mode;
+  directory?: string;
+  asOf: string;
+  equity: number;
+  band: number;
+  place: boolean;
+  venue: "paper" | "alpaca";
+  equityFromVenue: boolean;
+  /**
+   * Declared risk caps. They are flags rather than constants because a boundary nobody chose
+   * is not a boundary: the unattended budget refuses an undeclared cap, and a cap the script
+   * author hard-coded is one the operator never agreed to.
+   */
+  maxOrderNotional: number;
+  maxInstrumentNotional: number;
+  maxOrdersPerRun: number;
+}>;
+
+const USAGE =
+  "Usage: node --import tsx scripts/operator/lcx-finance-daily-cycle.ts [--json] " +
+  "[--mode day|night] [--dir PATH] [--as-of ISO] [--equity N] [--band N] [--place] " +
+  "[--venue paper|alpaca] [--equity-from-venue] " +
+  "[--max-order-notional N] [--max-instrument-notional N] [--max-orders N]";
+
+function positiveNumber(raw: string | undefined, flag: string): number {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${flag} must be a positive number\n${USAGE}`);
+  }
+  return parsed;
+}
+
+function parseArgs(argv: readonly string[]): Options {
+  const options = {
+    json: false,
+    mode: "day" as Mode,
+    asOf: new Date().toISOString(),
+    equity: 100_000,
+    band: 0.05,
+    place: false,
+    venue: "paper" as "paper" | "alpaca",
+    equityFromVenue: false,
+    directory: undefined as string | undefined,
+    // Defaults, not constants: they reproduce the previous behaviour when nothing is passed.
+    maxOrderNotional: 10_000,
+    maxInstrumentNotional: 20_000,
+    maxOrdersPerRun: 8,
+  };
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    const next = argv[index + 1];
+    if (arg === "--json") {
+      options.json = true;
+    } else if (arg === "--mode") {
+      if (next !== "day" && next !== "night") {
+        throw new Error(`--mode must be day or night\n${USAGE}`);
+      }
+      options.mode = next;
+      index += 1;
+    } else if (arg === "--dir") {
+      options.directory = next;
+      index += 1;
+    } else if (arg === "--as-of") {
+      options.asOf = next ?? options.asOf;
+      index += 1;
+    } else if (arg === "--equity") {
+      const parsed = Number(next);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        throw new Error(`--equity must be a positive number\n${USAGE}`);
+      }
+      options.equity = parsed;
+      index += 1;
+    } else if (arg === "--band") {
+      const parsed = Number(next);
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        throw new Error(`--band must be a non-negative number\n${USAGE}`);
+      }
+      options.band = parsed;
+      index += 1;
+    } else if (arg === "--place") {
+      options.place = true;
+    } else if (arg === "--venue") {
+      if (next !== "paper" && next !== "alpaca") {
+        throw new Error(`--venue must be paper or alpaca\n${USAGE}`);
+      }
+      options.venue = next;
+      index += 1;
+    } else if (arg === "--equity-from-venue") {
+      options.equityFromVenue = true;
+    } else if (arg === "--max-order-notional") {
+      options.maxOrderNotional = positiveNumber(next, "--max-order-notional");
+      index += 1;
+    } else if (arg === "--max-instrument-notional") {
+      options.maxInstrumentNotional = positiveNumber(next, "--max-instrument-notional");
+      index += 1;
+    } else if (arg === "--max-orders") {
+      options.maxOrdersPerRun = Math.floor(positiveNumber(next, "--max-orders"));
+      index += 1;
+    } else if (arg === "--help" || arg === "-h") {
+      throw new Error(USAGE);
+    } else {
+      throw new Error(`unknown argument: ${arg ?? ""}\n${USAGE}`);
+    }
+  }
+  return options;
+}
+
+async function activeInstruments(directory: string): Promise<{
+  instruments: readonly string[];
+  ruleIds: readonly string[];
+}> {
+  const read = await readFinanceStrategyRuleLedger(directory, {});
+  const active = read.ledger.rules.filter((rule) => rule.state === "active");
+  const instruments = [...new Set(active.flatMap((rule) => [...rule.instruments]))];
+  return { instruments, ruleIds: active.map((rule) => rule.ruleId) };
+}
+
+export async function runFinanceDailyCycleOperator(
+  argv: readonly string[] = process.argv.slice(2),
+): Promise<Record<string, unknown>> {
+  const options = parseArgs(argv);
+  const directory = options.directory ?? resolveFinanceStateDir().directory;
+  let equity = options.equity;
+  let equitySource: "flag" | "default" | "venue" | "venue-failed" = argv.includes("--equity")
+    ? "flag"
+    : "default";
+  if (options.equityFromVenue) {
+    if (options.venue !== "alpaca") {
+      return {
+        directory,
+        mode: options.mode,
+        asOf: options.asOf,
+        ok: false,
+        error: "--equity-from-venue requires --venue alpaca",
+      };
+    }
+    const snapshot = await fetchAlpacaAccountSnapshot();
+    if (snapshot.ok) {
+      equity = snapshot.account.equity;
+      equitySource = "venue";
+    } else {
+      equitySource = "venue-failed";
+    }
+  }
+
+  const base = { directory, mode: options.mode, asOf: options.asOf, equity, equitySource };
+
+  try {
+    const { instruments, ruleIds } = await activeInstruments(directory);
+    if (instruments.length === 0) {
+      return { ...base, ok: false, error: "no active rule declares any instrument" };
+    }
+
+    if (options.mode === "day") {
+      const report = await runFinanceDailyCycle({
+        instruments,
+        equity,
+        asOf: options.asOf,
+        caps: {
+          maxOrderNotional: options.maxOrderNotional,
+          maxInstrumentNotional: options.maxInstrumentNotional,
+          maxOrdersPerRun: options.maxOrdersPerRun,
+        },
+        runAuthorizationId: `daily-cycle:${options.asOf.slice(0, 10)}`,
+        rebalanceBand: options.band,
+        place: options.place,
+        venue: options.venue,
+        directory,
+      });
+      const payload = {
+        ...base,
+        ok: report.ok,
+        ruleIds,
+        modelCalls: report.modelCalls,
+        signalAnchor: report.signalAnchor,
+        // Reported so a run can be read back against the boundary it actually used.
+        caps: {
+          maxOrderNotional: options.maxOrderNotional,
+          maxInstrumentNotional: options.maxInstrumentNotional,
+          maxOrdersPerRun: options.maxOrdersPerRun,
+        },
+        targets: report.targets,
+        drift: report.drift,
+        dataIssues: report.dataIssues,
+        placed: report.placed,
+        refusals: report.refusals,
+      };
+      if (!options.json) {
+        process.stdout.write(`${renderDay(payload)}\n`);
+      }
+      return payload;
+    }
+
+    const { readFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    let samples: unknown[] = [];
+    try {
+      samples = (await readFile(join(directory, SAMPLES_FILE), "utf8"))
+        .trim()
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line) as unknown);
+    } catch {
+      samples = [];
+    }
+    const settled = await backfillOutcomes({
+      samples: samples as Parameters<typeof backfillOutcomes>[0]["samples"],
+      asOf: options.asOf,
+    });
+    const reflection =
+      settled.scored.length > 0 ? buildReflection(settled.scored, { instanceLimit: 5 }) : null;
+    const payload = {
+      ...base,
+      ok: settled.issues.length === 0,
+      ruleIds,
+      modelCalls: 0,
+      sampleCount: samples.length,
+      scored: settled.scored,
+      pending: settled.pending,
+      declined: settled.declined,
+      reflection,
+      issues: settled.issues,
+    };
+    if (!options.json) {
+      process.stdout.write(`${renderNight(payload)}\n`);
+    }
+    return payload;
+  } catch (error) {
+    const payload = {
+      ...base,
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+    if (!options.json) {
+      process.stdout.write(`finance daily cycle: 错误: ${String(payload.error)}\n`);
+    }
+    return payload;
+  }
+}
+
+function renderDay(payload: Record<string, unknown>): string {
+  const lines: string[] = [];
+  lines.push("Finance daily cycle — day");
+  lines.push(`  目录: ${String(payload.directory)}`);
+  lines.push(`  规则: ${(payload.ruleIds as string[]).join(", ")}`);
+  lines.push(
+    `  信号锚点: ${String(payload.signalAnchor)}  模型调用: ${String(payload.modelCalls)}`,
+  );
+  const drift = payload.drift as { instrument: string; action: string; notional: number }[];
+  const acting = drift.filter((row) => row.action !== "none");
+  lines.push(`  需要动作: ${acting.length} / ${drift.length}`);
+  for (const row of acting) {
+    lines.push(`    - ${row.instrument} ${row.action} ${row.notional}`);
+  }
+  const placed = payload.placed as { instrument: string; quantity: number }[];
+  if (placed.length > 0) {
+    lines.push(`  已成交: ${placed.map((row) => `${row.instrument}x${row.quantity}`).join(", ")}`);
+  } else {
+    lines.push("  已成交: 无（未给 --place 或无需动作）");
+  }
+  const issues = payload.dataIssues as string[];
+  if (issues.length > 0) {
+    lines.push(`  数据问题: ${issues.join("; ")}`);
+  }
+  lines.push("边界：不下真实单；未给 --place 只输出计划。");
+  return lines.join("\n");
+}
+
+function renderNight(payload: Record<string, unknown>): string {
+  const lines: string[] = [];
+  lines.push("Finance daily cycle — night");
+  lines.push(`  目录: ${String(payload.directory)}`);
+  lines.push(
+    `  样本: ${String(payload.sampleCount)}  已结算: ${(payload.scored as unknown[]).length}  未到期: ${(payload.pending as unknown[]).length}  被拒(不计命中率): ${(payload.declined as unknown[]).length}`,
+  );
+  const reflection = payload.reflection as {
+    hitRate: number | null;
+    brier: number | null;
+    overconfidenceGap: number | null;
+    instances: readonly string[];
+  } | null;
+  if (reflection) {
+    lines.push(
+      `  命中率: ${reflection.hitRate?.toFixed(3) ?? "n/a"}  Brier: ${reflection.brier?.toFixed(4) ?? "n/a"}  过度自信差: ${reflection.overconfidenceGap?.toFixed(4) ?? "n/a"}`,
+    );
+    for (const line of reflection.instances) {
+      lines.push(`    - ${line}`);
+    }
+  } else {
+    lines.push("  反思: 无已结算样本（不足则不编造基线）");
+  }
+  lines.push("边界：只报事实，不下指令；自我校准是另一次独立、单独预算的调用。");
+  return lines.join("\n");
+}
+
+const isMain = process.argv[1] !== undefined && import.meta.url === `file://${process.argv[1]}`;
+if (isMain) {
+  const argv = process.argv.slice(2);
+  const wantsJson = argv.includes("--json");
+  const payload = await runFinanceDailyCycleOperator(argv);
+  if (wantsJson) {
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+  }
+  if (payload["ok"] === false) {
+    process.exitCode = 1;
+  }
+}
