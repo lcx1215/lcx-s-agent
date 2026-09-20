@@ -25,6 +25,12 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { breakEvenFloor, type FloorSample } from "../../src/agents/finance-calibrated-floor.js";
+import {
+  FINANCE_RISK_BUDGET_ANY_INSTRUMENT,
+  createPaperExecutionAdapter,
+  placeFinanceOrder,
+  type FinanceRiskAutomation,
+} from "../../src/agents/finance-execution-adapter.js";
 import { compileExecutionIntent } from "../../src/agents/finance-intent-compiler.js";
 import {
   classifyFinanceStrategy,
@@ -151,6 +157,22 @@ async function main(): Promise<void> {
   }
 
   const asOf = new Date().toISOString();
+  // Unattended requires every cap; attended leaves them opt-in. So a scheduled
+  // run has to name its boundaries, and cannot inherit someone else's.
+  const automation = (readArg(args, "--automation") ?? "attended") as FinanceRiskAutomation;
+  const budget = {
+    automation,
+    maxOrderNotional: Number(readArg(args, "--max-order-notional") ?? 5000),
+    maxInstrumentNotional: Number(readArg(args, "--max-instrument-notional") ?? 5000),
+    maxOrdersPerRun: Number(readArg(args, "--max-orders-per-run") ?? 3),
+    allowedInstruments: [FINANCE_RISK_BUDGET_ANY_INSTRUMENT],
+  };
+  const paperAdapter = createPaperExecutionAdapter({
+    instruments: samples.map((c) => c.instrument),
+    slippageBps: Number(readArg(args, "--slippage-bps") ?? 0),
+  });
+  let placedCount = 0;
+
   for (const s of chosen) {
     const stopDistance = s.lastPrice * 0.02;
     const invalidationPrice =
@@ -212,9 +234,26 @@ async function main(): Promise<void> {
         " mandate=" +
         mandate.verdict +
         (mandate.verdict === "pass" ? "" : " [" + mandate.reasons.join("; ") + "]") +
-        (place && mandate.verdict === "pass" ? " -> would place" : "") +
         "\n",
     );
+
+    if (place && mandate.verdict === "pass") {
+      const result = await placeFinanceOrder({
+        mode: "live_execution",
+        intent: compiled.intent,
+        budget,
+        adapters: [paperAdapter],
+        executionAdapterId: paperAdapter.id,
+        committedInstrumentNotional: 0,
+        ordersPlacedThisRun: placedCount,
+      });
+      if (result.status === "placed") {
+        placedCount += 1;
+        process.stdout.write("   placed " + (result.receipt?.receiptId ?? "?") + "\n");
+      } else {
+        process.stdout.write("   refused: " + [...result.refusalReasons].join("; ") + "\n");
+      }
+    }
   }
 
   if (!place) {
