@@ -22,7 +22,9 @@ async function emitCredsUpdateAndReadSaveCreds() {
 }
 
 function mockCredsJsonSpies(readContents: string) {
-  const credsSuffix = path.join(".openclaw", "credentials", "whatsapp", "default", "creds.json");
+  // Match the stable tail only: the state root is either .openclaw or .lcx
+  // depending on the active identity migration, and this test owns neither.
+  const credsSuffix = path.join("credentials", "whatsapp", "default", "creds.json");
   const copySpy = vi.spyOn(fsSync, "copyFileSync").mockImplementation(() => {});
   const existsSpy = vi.spyOn(fsSync, "existsSync").mockImplementation((p) => {
     if (typeof p !== "string") {
@@ -206,13 +208,7 @@ describe("web session", () => {
 
   it("rotates creds backup when creds.json is valid JSON", async () => {
     const creds = mockCredsJsonSpies("{}");
-    const backupSuffix = path.join(
-      ".openclaw",
-      "credentials",
-      "whatsapp",
-      "default",
-      "creds.json.bak",
-    );
+    const backupSuffix = path.join("credentials", "whatsapp", "default", "creds.json.bak");
 
     await createWaSocket(false, false);
     const saveCreds = await emitCredsUpdateAndReadSaveCreds();

@@ -212,7 +212,7 @@ describe("DiscordMessageListener", () => {
 
 describe("discord allowlist helpers", () => {
   it("normalizes slugs", () => {
-    expect(normalizeDiscordSlug("Friends of LCX Agent")).toBe("friends-of-openclaw");
+    expect(normalizeDiscordSlug("Friends of LCX Agent")).toBe("friends-of-lcx-agent");
     expect(normalizeDiscordSlug("#General")).toBe("general");
     expect(normalizeDiscordSlug("Dev__Chat")).toBe("dev-chat");
   });
@@ -228,10 +228,10 @@ describe("discord allowlist helpers", () => {
     }
     expect(allowListMatches(allow, { id: "123" })).toBe(true);
     expect(allowListMatches(allow, { name: "steipete" })).toBe(false);
-    expect(allowListMatches(allow, { name: "friends-of-openclaw" })).toBe(false);
+    expect(allowListMatches(allow, { name: "friends-of-lcx-agent" })).toBe(false);
     expect(allowListMatches(allow, { name: "steipete" }, { allowNameMatching: true })).toBe(true);
     expect(
-      allowListMatches(allow, { name: "friends-of-openclaw" }, { allowNameMatching: true }),
+      allowListMatches(allow, { name: "friends-of-lcx-agent" }, { allowNameMatching: true }),
     ).toBe(true);
     expect(allowListMatches(allow, { name: "other" })).toBe(false);
   });
@@ -250,26 +250,26 @@ describe("discord allowlist helpers", () => {
 describe("discord guild/channel resolution", () => {
   it("resolves guild entry by id", () => {
     const guildEntries = makeEntries({
-      "123": { slug: "friends-of-openclaw" },
+      "123": { slug: "friends-of-lcx-agent" },
     });
     const resolved = resolveDiscordGuildEntry({
       guild: fakeGuild("123", "Friends of LCX Agent"),
       guildEntries,
     });
     expect(resolved?.id).toBe("123");
-    expect(resolved?.slug).toBe("friends-of-openclaw");
+    expect(resolved?.slug).toBe("friends-of-lcx-agent");
   });
 
   it("resolves guild entry by slug key", () => {
     const guildEntries = makeEntries({
-      "friends-of-openclaw": { slug: "friends-of-openclaw" },
+      "friends-of-lcx-agent": { slug: "friends-of-lcx-agent" },
     });
     const resolved = resolveDiscordGuildEntry({
       guild: fakeGuild("123", "Friends of LCX Agent"),
       guildEntries,
     });
     expect(resolved?.id).toBe("123");
-    expect(resolved?.slug).toBe("friends-of-openclaw");
+    expect(resolved?.slug).toBe("friends-of-lcx-agent");
   });
 
   it("falls back to wildcard guild entry", () => {
