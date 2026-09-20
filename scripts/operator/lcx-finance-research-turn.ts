@@ -30,10 +30,7 @@ import {
   type NewsItem,
 } from "../../src/agents/finance-evidence-window.js";
 import { createFmpFreeBasicEodCollectionAdapter } from "../../src/agents/finance-free-market-collection-adapters.js";
-import {
-  insiderSentimentSignal,
-  insiderPeriodAgeDays,
-} from "../../src/agents/finance-insider-signal.js";
+import { insiderFlowSignal } from "../../src/agents/finance-insider-signal.js";
 import { compileExecutionIntent } from "../../src/agents/finance-intent-compiler.js";
 import {
   classifyFinanceStrategy,
@@ -275,7 +272,7 @@ async function main(): Promise<void> {
             : "",
     });
     const picks = (registry as unknown as ReadonlyArray<{ id: string }>).filter(
-      (a) => a.id === "finnhub_stock_insider_sentiment",
+      (a) => a.id === "finnhub_stock_insider_transactions",
     );
     const result = await runFinanceMarketCollectionRefresh({
       request: {
@@ -287,40 +284,29 @@ async function main(): Promise<void> {
       } as never,
       adapters: picks as never,
     });
-    const rows = (result.records ?? [])
-      .map(
-        (r) =>
-          ((r as { data?: Record<string, unknown> }).data ?? {}) as Record<string, number | string>,
-      )
-      .filter((row) => Number.isFinite(Number(row.mspr)) && Number.isFinite(Number(row.year)))
-      // newest period last
-      .toSorted(
-        (a, b) => Number(a.year) * 12 + Number(a.month) - (Number(b.year) * 12 + Number(b.month)),
-      );
-    const newest = rows[rows.length - 1];
-    if (newest) {
-      const period = {
-        year: Number(newest.year),
-        month: Number(newest.month),
-        mspr: Number(newest.mspr),
-        change: Number(newest.change ?? 0),
-      };
-      const signal = insiderSentimentSignal(period, { observedAt: now, window });
-      const age = insiderPeriodAgeDays(period, Date.parse(now));
-      evidence.push({
-        sourceId: signal.sourceId,
-        description: "insider monthly share purchase ratio",
-        detail:
-          (signal.ref ?? "") +
-          (age === null ? "" : " ageDays=" + age.toFixed(0)) +
-          " window=" +
-          window.lookbackDays +
-          "d" +
-          (signal.direction === "hold"
-            ? " -> silent (" + (signal.ref ?? "").split("(").pop()
-            : " -> " + signal.direction),
-      });
-    }
+    const txs = (result.records ?? []).flatMap((r) => {
+      const d = (r as { data?: Record<string, unknown> }).data ?? {};
+      const when = d.transactionDate;
+      const change = Number(d.change);
+      if (typeof when !== "string" || !Number.isFinite(change) || change === 0) {
+        return [];
+      }
+      return [
+        {
+          transactionDate: when,
+          change,
+          ...(typeof d.transactionCode === "string" ? { transactionCode: d.transactionCode } : {}),
+        },
+      ];
+    });
+    const signal = insiderFlowSignal(txs, { observedAt: now, window });
+    evidence.push({
+      sourceId: signal.sourceId,
+      description: "open-market insider flow",
+      detail:
+        (signal.ref ?? "") +
+        (signal.direction === "hold" ? " -> silent" : " -> " + signal.direction),
+    });
   } catch (error) {
     process.stderr.write("gather insider failed: " + String(error).slice(0, 100) + "\n");
   }
