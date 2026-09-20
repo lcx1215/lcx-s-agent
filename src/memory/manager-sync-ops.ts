@@ -29,7 +29,7 @@ import { isFileMissingError } from "./fs-utils.js";
 import {
   buildFileEntry,
   ensureDir,
-  listMemoryFiles,
+  listMemoryFilesWithDiagnostics,
   normalizeExtraMemoryPaths,
   runWithConcurrency,
 } from "./internal.js";
@@ -44,6 +44,20 @@ import {
 import { loadSqliteVecExtension } from "./sqlite-vec.js";
 import { requireNodeSqlite } from "./sqlite.js";
 import type { MemorySource, MemorySyncProgressUpdate } from "./types.js";
+
+/**
+ * Pragmas applied to every memory index database, the same set the finance books use.
+ *
+ * A second writer — a resident `serve` process indexing while a command indexes, or two agent
+ * turns at once — must wait for the write lock instead of failing the instant it is taken, and a
+ * reader must not be blocked by a writer. Without `busy_timeout` a concurrent writer fails
+ * immediately with "database is locked"; without WAL, readers and writers exclude each other.
+ *
+ * Order matters: `auto_vacuum` must precede `journal_mode`, because switching journal_mode
+ * initialises the database file and silently freezes auto_vacuum afterwards.
+ */
+export const MEMORY_INDEX_SQLITE_PRAGMAS =
+  "PRAGMA busy_timeout=5000; PRAGMA auto_vacuum=INCREMENTAL; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;";
 
 type MemoryIndexMeta = {
   model: string;
@@ -258,7 +272,9 @@ export abstract class MemoryManagerSyncOps {
     const dir = path.dirname(dbPath);
     ensureDir(dir);
     const { DatabaseSync } = requireNodeSqlite();
-    return new DatabaseSync(dbPath, { allowExtension: this.settings.store.vector.enabled });
+    const db = new DatabaseSync(dbPath, { allowExtension: this.settings.store.vector.enabled });
+    db.exec(MEMORY_INDEX_SQLITE_PRAGMAS);
+    return db;
   }
 
   private seedEmbeddingCache(sourceDb: DatabaseSync): void {
@@ -644,7 +660,17 @@ export abstract class MemoryManagerSyncOps {
       return;
     }
 
-    const files = await listMemoryFiles(this.workspaceDir, this.settings.extraPaths);
+    const listing = await listMemoryFilesWithDiagnostics(
+      this.workspaceDir,
+      this.settings.extraPaths,
+    );
+    const files = [...listing.files];
+    // An unreadable source is not an absent one: its files are missing from this index, and
+    // indexing the rest silently would leave the agent running on partial memory with nothing
+    // to indicate the loss.
+    for (const source of listing.inaccessible) {
+      log.warn(`memory source not readable (${source.code}): ${source.path}`);
+    }
     const fileEntries = (
       await Promise.all(files.map(async (file) => buildFileEntry(file, this.workspaceDir)))
     ).filter((entry): entry is MemoryFileEntry => entry !== null);

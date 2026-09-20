@@ -77,11 +77,49 @@ async function walkDir(dir: string, files: string[]) {
   }
 }
 
-export async function listMemoryFiles(
+export type MemorySourceIssue = Readonly<{
+  /** The configured path that could not be read. */
+  path: string;
+  /** Node's errno when the failure carried one, `error` otherwise. */
+  code: string;
+}>;
+
+export type MemoryFileListing = Readonly<{
+  files: readonly string[];
+  /**
+   * Sources that are configured and present but could not be read.
+   *
+   * These are deliberately *not* folded into `files`: a path that does not exist was never a
+   * source, while a path that exists and refuses to be read is a source whose contents are
+   * silently absent — and to every caller that reads the same as "this memory does not exist".
+   * An agent that runs on half its memory without any signal is the failure this reports.
+   */
+  inaccessible: readonly MemorySourceIssue[];
+}>;
+
+function memorySourceIssue(err: unknown, absPath: string): MemorySourceIssue {
+  const code =
+    err && typeof err === "object" && "code" in err
+      ? String((err as NodeJS.ErrnoException).code)
+      : "error";
+  return { path: absPath, code };
+}
+
+/**
+ * List the markdown memory files reachable from a workspace, and report the sources that were
+ * configured but unreadable.
+ *
+ * A missing path is skipped: it was never a source, and a configured-but-absent extra path is a
+ * normal state. Any *other* failure (permission denied, I/O error, a name that is too long) is
+ * reported rather than skipped, because skipping it would turn "I could not read your memory"
+ * into "you have no memory" without telling anyone.
+ */
+export async function listMemoryFilesWithDiagnostics(
   workspaceDir: string,
   extraPaths?: string[],
-): Promise<string[]> {
+): Promise<MemoryFileListing> {
   const result: string[] = [];
+  const inaccessible: MemorySourceIssue[] = [];
   const memoryFile = path.join(workspaceDir, "MEMORY.md");
   const altMemoryFile = path.join(workspaceDir, "memory.md");
   const memoryDir = path.join(workspaceDir, "memory");
@@ -96,7 +134,11 @@ export async function listMemoryFiles(
         return;
       }
       result.push(absPath);
-    } catch {}
+    } catch (err) {
+      if (!isFileMissingError(err)) {
+        inaccessible.push(memorySourceIssue(err, absPath));
+      }
+    }
   };
 
   await addMarkdownFile(memoryFile);
@@ -106,7 +148,11 @@ export async function listMemoryFiles(
     if (!dirStat.isSymbolicLink() && dirStat.isDirectory()) {
       await walkDir(memoryDir, result);
     }
-  } catch {}
+  } catch (err) {
+    if (!isFileMissingError(err)) {
+      inaccessible.push(memorySourceIssue(err, memoryDir));
+    }
+  }
 
   const normalizedExtraPaths = normalizeExtraMemoryPaths(workspaceDir, extraPaths);
   if (normalizedExtraPaths.length > 0) {
@@ -123,11 +169,15 @@ export async function listMemoryFiles(
         if (stat.isFile() && inputPath.endsWith(".md")) {
           result.push(inputPath);
         }
-      } catch {}
+      } catch (err) {
+        if (!isFileMissingError(err)) {
+          inaccessible.push(memorySourceIssue(err, inputPath));
+        }
+      }
     }
   }
   if (result.length <= 1) {
-    return result;
+    return { files: result, inaccessible };
   }
   const seen = new Set<string>();
   const deduped: string[] = [];
@@ -135,14 +185,31 @@ export async function listMemoryFiles(
     let key = entry;
     try {
       key = await fs.realpath(entry);
-    } catch {}
+    } catch (err) {
+      if (!isFileMissingError(err)) {
+        inaccessible.push(memorySourceIssue(err, entry));
+      }
+    }
     if (seen.has(key)) {
       continue;
     }
     seen.add(key);
     deduped.push(entry);
   }
-  return deduped;
+  return { files: deduped, inaccessible };
+}
+
+/**
+ * The file list only. Callers that can surface a problem should prefer
+ * `listMemoryFilesWithDiagnostics`: this form keeps the historic signature, and an unreadable
+ * source is still a source it had to leave out.
+ */
+export async function listMemoryFiles(
+  workspaceDir: string,
+  extraPaths?: string[],
+): Promise<string[]> {
+  const listing = await listMemoryFilesWithDiagnostics(workspaceDir, extraPaths);
+  return [...listing.files];
 }
 
 export function hashText(value: string): string {

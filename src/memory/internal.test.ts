@@ -6,6 +6,7 @@ import {
   buildFileEntry,
   chunkMarkdown,
   listMemoryFiles,
+  listMemoryFilesWithDiagnostics,
   normalizeExtraMemoryPaths,
   remapChunkLines,
 } from "./internal.js";
@@ -85,6 +86,42 @@ describe("listMemoryFiles", () => {
 
     const files = await listMemoryFiles(tmpDir, ["/does/not/exist"]);
     expect(files).toHaveLength(1);
+  });
+
+  it("reports a source that exists but cannot be read, instead of skipping it silently", async () => {
+    const tmpDir = getTmpDir();
+    await fs.writeFile(path.join(tmpDir, "MEMORY.md"), "# Default memory");
+    const lockedDir = path.join(tmpDir, "locked-notes");
+    await fs.mkdir(lockedDir, { recursive: true });
+    await fs.writeFile(path.join(lockedDir, "note.md"), "# Note");
+
+    await fs.chmod(lockedDir, 0o000);
+    try {
+      // Whether chmod actually denies access depends on the platform and on the user running the
+      // suite; skip rather than assert a guarantee the environment does not provide.
+      let denied = false;
+      try {
+        await fs.readdir(lockedDir);
+      } catch {
+        denied = true;
+      }
+      if (!denied) {
+        return;
+      }
+
+      const listing = await listMemoryFilesWithDiagnostics(tmpDir, [lockedDir]);
+      expect(listing.files.some((file) => file.includes("locked-notes"))).toBe(false);
+      expect(listing.inaccessible).toHaveLength(1);
+      expect(listing.inaccessible[0]?.path).toBe(lockedDir);
+      // Reported as a fault, not as an absence.
+      expect(listing.inaccessible[0]?.code).not.toBe("ENOENT");
+    } finally {
+      await fs.chmod(lockedDir, 0o755);
+    }
+
+    // An absent path stays silent: it was never a source, so there is nothing to report.
+    const missing = await listMemoryFilesWithDiagnostics(tmpDir, ["/does/not/exist"]);
+    expect(missing.inaccessible).toHaveLength(0);
   });
 
   it("ignores symlinked files and directories", async () => {

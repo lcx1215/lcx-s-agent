@@ -9,7 +9,7 @@ import { resolveStateDir } from "../config/paths.js";
 import { resolveSessionTranscriptsDirForAgent } from "../config/sessions/paths.js";
 import { setVerbose } from "../globals.js";
 import { getMemorySearchManager, type MemorySearchManagerResult } from "../memory/index.js";
-import { listMemoryFiles, normalizeExtraMemoryPaths } from "../memory/internal.js";
+import { listMemoryFilesWithDiagnostics, normalizeExtraMemoryPaths } from "../memory/internal.js";
 import { defaultRuntime } from "../runtime.js";
 import { formatDocsLink } from "../terminal/links.js";
 import { colorize, isRich, theme } from "../terminal/theme.js";
@@ -538,8 +538,16 @@ async function scanMemoryFiles(
   let listed: string[] = [];
   let listedOk = false;
   try {
-    listed = await listMemoryFiles(workspaceDir, resolvedExtraPaths);
+    const listing = await listMemoryFilesWithDiagnostics(workspaceDir, resolvedExtraPaths);
+    listed = [...listing.files];
     listedOk = true;
+    // A source that is present but unreadable is not the same as a source that is absent: the
+    // files are missing from the index, and without this line the report would say "no memory
+    // files found" — which describes the scan, not the loss.
+    for (const source of listing.inaccessible) {
+      issues.push(`memory source not readable (${shortenHomePath(source.path)}): ${source.code}`);
+      dirReadable = null;
+    }
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (dirReadable !== null) {

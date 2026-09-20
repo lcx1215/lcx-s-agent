@@ -62,6 +62,17 @@ async function assertInstallBoundaryPaths(params: {
   }
 }
 
+function errorCode(err: unknown): string {
+  return err && typeof err === "object" && "code" in err
+    ? String((err as NodeJS.ErrnoException).code)
+    : "error";
+}
+
+/** Keep the original failure first: the rollback problem is context, not the headline. */
+function withRollbackProblem(error: string, rollbackProblem: string | null): string {
+  return rollbackProblem === null ? error : `${error} (rollback incomplete: ${rollbackProblem})`;
+}
+
 export async function installPackageDir(params: {
   sourceDir: string;
   targetDir: string;
@@ -92,16 +103,35 @@ export async function installPackageDir(params: {
     await fs.rename(params.targetDir, backupDir);
   }
 
-  const rollback = async () => {
+  /**
+   * Put the previous install back, and return a description of what could not be put back — or
+   * `null` when the previous state is in place again.
+   *
+   * A rollback that fails is reported rather than swallowed. "the install failed" and "the install
+   * failed and your previous install is gone" are different outcomes, and returning only the first
+   * leaves a caller believing the package is intact while the target sits half-copied and the
+   * backup is stranded beside it.
+   */
+  const rollback = async (): Promise<string | null> => {
     if (!backupDir) {
-      return;
+      return null;
     }
     await assertInstallBoundaryPaths({
       installBaseDir,
       candidatePaths: [params.targetDir, backupDir],
     });
-    await fs.rm(params.targetDir, { recursive: true, force: true }).catch(() => undefined);
-    await fs.rename(backupDir, params.targetDir).catch(() => undefined);
+    const problems: string[] = [];
+    try {
+      await fs.rm(params.targetDir, { recursive: true, force: true });
+    } catch (err) {
+      problems.push(`could not clear ${params.targetDir}: ${errorCode(err)}`);
+    }
+    try {
+      await fs.rename(backupDir, params.targetDir);
+    } catch (err) {
+      problems.push(`could not restore ${backupDir}: ${errorCode(err)}`);
+    }
+    return problems.length > 0 ? problems.join("; ") : null;
   };
 
   try {
@@ -111,15 +141,21 @@ export async function installPackageDir(params: {
     });
     await fs.cp(params.sourceDir, params.targetDir, { recursive: true });
   } catch (err) {
-    await rollback();
-    return { ok: false, error: `${params.copyErrorPrefix}: ${String(err)}` };
+    const rollbackProblem = await rollback();
+    return {
+      ok: false,
+      error: withRollbackProblem(`${params.copyErrorPrefix}: ${String(err)}`, rollbackProblem),
+    };
   }
 
   try {
     await params.afterCopy?.();
   } catch (err) {
-    await rollback();
-    return { ok: false, error: `post-copy validation failed: ${String(err)}` };
+    const rollbackProblem = await rollback();
+    return {
+      ok: false,
+      error: withRollbackProblem(`post-copy validation failed: ${String(err)}`, rollbackProblem),
+    };
   }
 
   if (params.hasDeps) {
@@ -133,10 +169,13 @@ export async function installPackageDir(params: {
       },
     );
     if (npmRes.code !== 0) {
-      await rollback();
+      const rollbackProblem = await rollback();
       return {
         ok: false,
-        error: `npm install failed: ${npmRes.stderr.trim() || npmRes.stdout.trim()}`,
+        error: withRollbackProblem(
+          `npm install failed: ${npmRes.stderr.trim() || npmRes.stdout.trim()}`,
+          rollbackProblem,
+        ),
       };
     }
   }
