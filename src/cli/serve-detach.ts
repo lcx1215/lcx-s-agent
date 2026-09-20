@@ -21,6 +21,17 @@ import { resolveStateDir } from "../config/paths.js";
 
 export const SERVE_PID_FILENAME = "serve.pid";
 
+/**
+ * `serve-standalone.ts` has to force the `serve` subcommand because that entry
+ * wires the command directly instead of going through the built CLI. `--detach`
+ * re-executes that same entry with an explicit `serve` argument, so the wrapper
+ * must route through the subcommand only once: prepending unconditionally hands
+ * the child `serve serve`, which commander rejects before it can listen.
+ */
+export function routeStandaloneServeArgs(rawArgs: readonly string[]): string[] {
+  return rawArgs[0] === "serve" ? [...rawArgs] : ["serve", ...rawArgs];
+}
+
 export type ServeDetachPaths = {
   stateDir: string;
   pidPath: string;
@@ -117,6 +128,92 @@ export type SpawnDetachedServeResult = {
   pidPath: string;
 };
 
+/**
+ * Environment for a detached child, with session-scoped entries removed.
+ *
+ * A detached `serve` outlives the shell that launched it, so it must not inherit
+ * anything that only exists for the lifetime of that session. Three families
+ * have been observed to wedge a resident agent *hours after a clean start*:
+ *
+ * - `NODE_OPTIONS` may carry a `--require` shim whose broker proxies network
+ *   through a per-session socket. Once that session ends, every outbound
+ *   request from the resident process hangs until it times out — which looks
+ *   like "all providers are down" even though a freshly spawned process reaches
+ *   the same endpoints in well under a second.
+ * - Loopback `HTTP(S)_PROXY` / `ALL_PROXY` values are usually a per-session
+ *   local helper with the same failure mode. A non-loopback proxy is a real
+ *   egress route, so it is deliberately preserved.
+ * - `CODEBUDDY_*` carries the sandbox bulk-delete guard's counter, keyed by an
+ *   id that never changes for a long-lived process. The counter only grows, and
+ *   once it reaches the threshold the guard rejects every further delete, so
+ *   each agent turn fails in under a second — permanently, because the
+ *   rejection path does not persist the increment and therefore never resets.
+ *
+ * The shared symptom is what makes this hard to diagnose: **the service works
+ * when it is started, breaks later, and works again immediately after a
+ * restart.** Callers can still re-add anything they need through `overrides`.
+ */
+const SHIM_REQUIRE_MARKER = "node-language-shim.cjs";
+
+const SESSION_SCOPED_PROXY_KEYS = new Set([
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "ALL_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "all_proxy",
+]);
+
+function isLoopbackProxy(value: string): boolean {
+  return /(^|\/\/)(127\.0\.0\.1|localhost|\[?::1\]?)(:|\/|$)/iu.test(value.trim());
+}
+
+/**
+ * Drop only the shim `--require` from `NODE_OPTIONS`; keep unrelated flags.
+ *
+ * The operand is matched as a quoted string first because the shim path
+ * legitimately contains spaces (`…/WorkBuddy AI.app/…`), so splitting on
+ * whitespace would leave half of a quoted path behind.
+ */
+const NODE_OPTIONS_REQUIRE = /(?:--require|-r)(?:=|\s+)(?:"[^"]*"|'[^']*'|\S*)/gu;
+
+function stripSessionShimFromNodeOptions(value: string): string {
+  if (!value.includes(SHIM_REQUIRE_MARKER)) {
+    return value;
+  }
+  return value
+    .replace(NODE_OPTIONS_REQUIRE, (match) => (match.includes(SHIM_REQUIRE_MARKER) ? "" : match))
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+export function buildDetachedServeEnv(
+  overrides: NodeJS.ProcessEnv = {},
+  env: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const result: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) {
+      continue;
+    }
+    if (key.startsWith("CODEBUDDY_")) {
+      continue;
+    }
+    if (SESSION_SCOPED_PROXY_KEYS.has(key) && isLoopbackProxy(value)) {
+      continue;
+    }
+    if (key === "NODE_OPTIONS") {
+      const stripped = stripSessionShimFromNodeOptions(value);
+      if (stripped) {
+        result[key] = stripped;
+      }
+      continue;
+    }
+    result[key] = value;
+  }
+  return { ...result, ...overrides };
+}
+
 export async function spawnDetachedServe(
   params: SpawnDetachedServeParams,
 ): Promise<SpawnDetachedServeResult> {
@@ -135,7 +232,7 @@ export async function spawnDetachedServe(
       cwd: params.cwd,
       detached: true,
       stdio: ["ignore", stdoutHandle.fd, stderrHandle.fd],
-      env: { ...process.env, ...params.env },
+      env: buildDetachedServeEnv(params.env),
     });
   } finally {
     // The child holds its own duplicated descriptors; the parent must not keep

@@ -496,7 +496,11 @@ describe("finance market collection registry", () => {
     expect(bars[0]?.sourceUrlOrArtifact).toContain("period1=");
   });
 
-  it("keeps collection failures visible instead of declaring a partial run ready", async () => {
+  it("keeps collection failures visible while still allowing a partial run to be ready", async () => {
+    // Owner decision 2026-09-19: a failed *secondary* provider is environmental
+    // noise and no longer blocks, because some providers are permanently
+    // unreachable on real machines and a zero-failure gate starves research.
+    // The failure must still be visible — that is what this test guards.
     const receipt = await runFinanceMarketCollectionRefresh({
       request: EQUITY_REQUEST,
       adapters: [
@@ -513,11 +517,12 @@ describe("finance market collection registry", () => {
         },
       ],
     });
-    expect(receipt.status).toBe("needs_review");
+    expect(receipt.status).toBe("ready");
     expect(receipt.records).toHaveLength(1);
     expect(receipt.sourceAttempts).toEqual(
       expect.arrayContaining([expect.objectContaining({ status: "failed", error: "429" })]),
     );
+    expect(receipt.requiredNextSteps).toContain("inspect_source_attempt_failures");
     expect(receipt.notTouched).toContain("trading_execution");
   });
 

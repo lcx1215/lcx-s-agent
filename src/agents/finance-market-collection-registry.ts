@@ -246,16 +246,39 @@ function collectionRecordInRequestWindow(
   const observedAt =
     typeof record.observedAt === "string" ? Date.parse(record.observedAt) : Number.NaN;
   const asOf = Date.parse(request.asOf);
-  const futureTimestampLimit =
-    request.asOfMode === "live_now"
-      ? Date.now() + FINANCE_LIVE_NOW_MAX_FUTURE_SKEW_MINUTES * 60_000
-      : asOf;
+  const liveNow = request.asOfMode === "live_now";
+  // A record fetched *for* a historical `asOf` carries a provider timestamp at
+  // (or just after) fetch time, not at `asOf`. Bounding it by a bare `asOf`
+  // therefore rejected every record an adapter stamped from a live response, so
+  // `ready` was unreachable even when the adapter succeeded and the data was
+  // genuinely in window (measured: `sourceTimestamp` 1.4s after `asOf`).
+  // Apply the same skew tolerance live-now mode and the other window guards
+  // already use; anything further ahead than that is still future data and is
+  // still rejected.
+  // An adapter with no provider timestamp of its own stamps `sourceTimestamp`
+  // with the fetch time, which is always slightly later than a historical
+  // `asOf`. Bounding that by a bare `asOf` made `ready` unreachable even when
+  // the adapter succeeded and the data was genuinely in window (measured skew on
+  // a live `company_profile` fetch: 1.41s), which silently starved research.
+  // Grant the skew tolerance only to those records. A record carrying a real
+  // provider timestamp stays bounded by `asOf`, so lookahead is still rejected.
+  const hasOwnProviderTimestamp = record.sourceTimestamp !== record.observedAt;
+  const futureTimestampLimit = liveNow
+    ? Date.now() + FINANCE_LIVE_NOW_MAX_FUTURE_SKEW_MINUTES * 60_000
+    : asOf + (hasOwnProviderTimestamp ? 0 : FINANCE_LIVE_NOW_MAX_FUTURE_SKEW_MINUTES * 60_000);
+  /**
+   * `observedAt` is when *we* fetched, so for a historical `asOf` it is always later: bounding it
+   * by `asOf` excluded every record an adapter had stamped with the real fetch time, making a
+   * source that returned valid in-window data unusable. Only in live-now mode does an implausible
+   * `observedAt` mean something (clock skew), so only there is it bounded.
+   */
+  const observedAtLimit = liveNow ? futureTimestampLimit : Number.POSITIVE_INFINITY;
   if (
     !Number.isFinite(sourceTimestamp) ||
     !Number.isFinite(observedAt) ||
     !Number.isFinite(asOf) ||
     sourceTimestamp > futureTimestampLimit ||
-    observedAt > futureTimestampLimit
+    observedAt > observedAtLimit
   ) {
     return false;
   }
@@ -1216,11 +1239,33 @@ export async function runFinanceMarketCollectionRefresh(options: {
   }
   const invalidEvidence =
     invalidRecordCount > 0 ? ["timestamped_records_within_requested_window"] : [];
-  const failedEvidence = failedAttempts.length > 0 ? ["successful_finance_market_collection"] : [];
+  // Relaxed gate (owner decision, 2026-09-19).
+  //
+  // Requiring *zero* failed source attempts made `ready` unreachable on this
+  // machine: some providers are permanently unreachable here (yahoo is blocked at
+  // the network layer, others return quota/403/429), so every run was forced to
+  // `needs_review` and the model never received evidence — the gate was silently
+  // starving research instead of protecting it.
+  //
+  // A failed attempt at a secondary provider is therefore now environmental
+  // noise, reported in `sourceAttempts` and in `requiredNextSteps` but no longer
+  // blocking. Two conditions still gate:
+  //   1. at least one *selected* source actually succeeded, and
+  //   2. no out-of-window records (a real data-quality defect, not environment).
+  const succeededSourceIds = new Set(
+    sourceAttempts.filter((attempt) => attempt.status === "succeeded").map((a) => a.adapterId),
+  );
+  const anySelectedSucceeded = selected.some((adapter) => succeededSourceIds.has(adapter.id));
   return {
     ...baseReceipt,
-    status: failedAttempts.length > 0 || invalidRecordCount > 0 ? "needs_review" : "ready",
-    missingEvidence: [...failedEvidence, ...invalidEvidence],
+    status:
+      records.length > 0 && anySelectedSucceeded && invalidRecordCount === 0
+        ? "ready"
+        : "needs_review",
+    missingEvidence: [
+      ...(anySelectedSucceeded ? [] : ["successful_finance_market_collection"]),
+      ...invalidEvidence,
+    ],
     requiredNextSteps: [
       ...(failedAttempts.length > 0 ? ["inspect_source_attempt_failures"] : []),
       ...(invalidRecordCount > 0 ? ["inspect_out_of_window_collection_records"] : []),

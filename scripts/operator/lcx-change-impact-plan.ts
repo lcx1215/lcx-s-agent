@@ -33,11 +33,22 @@ const execFileAsync = promisify(execFile);
 
 const PATH_RULES: PathRule[] = [
   {
+    // `serve` is a first-class entry surface (see AGENTS.md): it is the
+    // daemon-free resident agent, so its lifecycle files own a lane of their
+    // own instead of falling through `strayGate` as unmatched changes.
+    id: "daemon_free_agent_entry",
+    lane: "daemon_free_agent_entry",
+    patterns: [/^src\/cli\/serve-detach\.ts$/u, /^src\/cli\/serve-standalone\.ts$/u],
+    requiredChecks: [],
+    commands: ["pnpm vitest run src/cli/serve-detach.test.ts src/cli/serve-cli.test.ts"],
+  },
+  {
     id: "finance_caseflow",
     lane: "finance_research_capability",
     patterns: [
-      /^src\/agents\/finance-(?:caseflow(?:-followups)?|forecast-calibration|history-coverage|research-assessment|source-recovery|model-workflow|model-specialist|agent-committee|news-entity|research-evidence|strategy-method-kit|strategy-method-catalog|research-runner|research-batch-runner|run-checkpoints|model-checkpoints|outcome-ledger|free-market-collection-adapters|market-collection-registry|realtime-source-registry)\.ts$/u,
-      /^scripts\/operator\/lcx-(?:finance-research|caseflow-demo)\.ts$/u,
+      /^src\/agents\/finance-(?:caseflow(?:-followups)?|forecast-calibration|history-coverage|research-assessment|source-recovery|model-workflow|model-specialist|agent-committee|news-entity|research-evidence|strategy-method-kit|strategy-method-catalog|research-runner|research-batch-runner|run-checkpoints|model-checkpoints|outcome-ledger|free-market-collection-adapters|registered-capability-adapters|market-collection-registry|realtime-source-registry|source-health|data-connectors|connector-evidence|mcp-client|rest-client|answer-grounding-gate)\.ts$/u,
+      /^src\/agents\/tools\/finance-data-connector-inspect-tool\.ts$/u,
+      /^scripts\/operator\/lcx-(?:finance-research|caseflow-demo|finance-connector-probe)\.ts$/u,
       /^src\/agents\/configured-finance-model-adapter\.ts$/u,
       /^docs\/experiments\/research\/finance-model-workflow\.md$/u,
       /^scripts\/operator\/finance-strategy-(?:method-benchmark|all-methods)\.ts$/u,
@@ -45,6 +56,7 @@ const PATH_RULES: PathRule[] = [
     ],
     requiredChecks: ["finance-caseflow-regression", "head-tail-consistency"],
     commands: [
+      "pnpm vitest run src/agents/finance-data-connectors.test.ts src/agents/finance-mcp-client.test.ts src/agents/finance-rest-client.test.ts src/agents/finance-connector-evidence.test.ts src/agents/tools/finance-data-connector-inspect-tool.test.ts src/agents/finance-answer-grounding-gate.test.ts src/agents/finance-answer-composer.test.ts test/operator/lcx-finance-connector-probe.test.ts",
       "pnpm vitest run src/agents/finance-caseflow.test.ts src/agents/finance-research-runner.test.ts src/agents/finance-research-batch-runner.test.ts src/agents/finance-outcome-ledger.test.ts src/agents/finance-caseflow-followups.test.ts src/agents/finance-history-coverage.test.ts src/agents/finance-forecast-calibration.test.ts src/agents/finance-research-assessment.test.ts",
       "node --import tsx scripts/operator/lcx-head-tail-consistency.ts --json",
     ],
@@ -60,14 +72,25 @@ const PATH_RULES: PathRule[] = [
     patterns: [
       /^src\/agents\/finance-execution-adapter\.ts$/u,
       /^src\/agents\/finance-position-ledger\.ts$/u,
+      /^src\/agents\/finance-behaviour-profile\.ts$/u,
       /^src\/agents\/finance-equity-curve\.ts$/u,
+      /^src\/agents\/finance-thesis-ledger\.ts$/u,
+      /^src\/agents\/finance-strategy-rule-ledger\.ts$/u,
+      /^src\/agents\/finance-rule-readiness\.ts$/u,
       /^src\/agents\/finance-state-dir\.ts$/u,
+      // The agent-side read surface belongs to this seam as well as to the tool-registration
+      // rule: it is where the model sees this book. Without it here, a change to the read
+      // tool is gated by head-tail consistency and the system-prompt tests but never by the
+      // read tool's own behaviour test.
+      /^src\/agents\/tools\/finance-position-ledger-read-tool\.ts$/u,
       /^scripts\/operator\/lcx-finance-live-execution\.ts$/u,
       /^scripts\/operator\/lcx-finance-position-ledger\.ts$/u,
+      /^scripts\/operator\/lcx-finance-thesis-ledger\.ts$/u,
+      /^scripts\/operator\/lcx-finance-strategy-rule-ledger\.ts$/u,
     ],
     requiredChecks: ["git-diff-check", "head-tail-consistency"],
     commands: [
-      "pnpm vitest run src/agents/finance-execution-adapter.test.ts src/agents/finance-position-ledger.test.ts",
+      "pnpm vitest run src/agents/finance-execution-adapter.test.ts src/agents/finance-position-ledger.test.ts src/agents/finance-behaviour-profile.test.ts src/agents/finance-thesis-ledger.test.ts src/agents/finance-strategy-rule-ledger.test.ts src/agents/finance-strategy-rule-ledger-read-tool.test.ts src/agents/finance-rule-readiness.test.ts src/agents/tools/finance-position-ledger-read-tool.test.ts",
       "git diff --check",
       "node --import tsx scripts/operator/lcx-head-tail-consistency.ts --json",
     ],
@@ -78,6 +101,9 @@ const PATH_RULES: PathRule[] = [
       "The ledger is append-only by construction (SQLite triggers reject UPDATE/DELETE). A record that conflicts with an existing one is refused, never overwritten, so a correction needs a new record rather than an edit.",
       "The equity curve is a pure projection of that stream and computes no metrics. It samples at mark instants only, so any annualised figure requires the caller to declare a period; the ledger holds no daily prices and must not be annualised as if it did.",
       "The instrument allowlist is open by default (`FINANCE_RISK_BUDGET_ANY_INSTRUMENT`). Narrowing is the caller's explicit act: an empty list still admits nothing, and the same check runs at both the budget and the adapter, so `--allow-instrument` continues to bite. Opening this default grants no new authority — the only shipped adapter is paper and no venue, credential or account path exists.",
+      "The behaviour profile is a pure projection over the same post-`asOf` receipt/mark stream the ledger read reports, so it holds no state and can never disagree with the positions beside it. Its labels are descriptive observations over recorded fills, never advice (`advice` is pinned `false`), and a dimension whose threshold the caller did not declare reports numbers with no label rather than a default.",
+      "Rule readiness measures exposure to adverse markets from the **owner-declared** `observedAt` on each lifecycle event, never from the wall-clock write time: a window built on write times is not replayable and silently yields zero observations at a past `asOf`, which reads as 'nothing adverse happened' instead of 'unjudgeable'. Every threshold is opt-in, an undeclared one makes its condition unjudgeable rather than passing, and `ready: null` must never be treated as `false`.",
+      'The thesis ledger stores events (`opened`, `transition`) and derives state by replay, so it has no state column to drift: an `asOf` view is a shorter prefix of the same stream. Closing is terminal — there is no re-open path, because `the thesis changed` and `the owner changed their mind` are different claims and only the owner can tell them apart. A thesis confers no execution authority; every record carries `executionAuthority: "none"`.',
     ],
   },
   {
@@ -363,6 +389,7 @@ const PATH_RULES: PathRule[] = [
     lane: "agent_workflow_memory",
     patterns: [
       /^src\/agents\/system-prompt\.ts$/u,
+      /^src\/agents\/subagent-announce\.ts$/u,
       /^src\/agents\/openclaw-tools\.ts$/u,
       /^src\/agents\/tool-catalog\.ts$/u,
       /^src\/agents\/finance-brain-orchestration\.ts$/u,
@@ -470,14 +497,40 @@ const PATH_RULES: PathRule[] = [
       /^src\/commands\/doctor-config-flow\.ts$/u,
       /^src\/config\/(?:identity-migration|paths)\.ts$/u,
       /^src\/infra\/pairing-files\.ts$/u,
+      /^src\/infra\/update-check\.ts$/u,
+      /^src\/cli\/update-cli\/progress\.ts$/u,
+      /^src\/cli\/update-cli\/(?:status|update-command|wizard)\.ts$/u,
+      /^src\/cli\/(?:banner|tagline)\.ts$/u,
     ],
     requiredChecks: ["identity-harness-contract-tests", "git-diff-check"],
     commands: [
-      "pnpm vitest run src/agents/quality-harness.test.ts src/agents/coding-harness/codex-acp.test.ts src/config/identity-migration.test.ts src/config/paths.test.ts src/infra/pairing-files.identity-migration.test.ts",
+      "pnpm vitest run src/agents/quality-harness.test.ts src/agents/coding-harness/codex-acp.test.ts src/config/identity-migration.test.ts src/config/paths.test.ts src/infra/pairing-files.identity-migration.test.ts src/infra/update-check.test.ts src/cli/update-cli/progress.test.ts src/cli/update-cli.test.ts src/cli/banner.test.ts src/cli/tagline.test.ts",
       "git diff --check",
     ],
     safetyNotes: [
       "Identity and harness changes must preserve canonical-state activation, workspace attribution, finance safety, and rollback visibility; no provider, training, or external-channel authority is granted by these checks.",
+    ],
+  },
+  {
+    id: "cli_display_surface",
+    lane: "agent_workflow_memory",
+    patterns: [
+      /^src\/cli\/(?:docs-cli|update-cli|plugins-cli|browser-cli|webhooks-cli|security-cli)\.ts$/u,
+      /^src\/cli\/program\/(?:register\.subclis|command-registry)\.ts$/u,
+      /^src\/commands\/(?:status\.command|doctor|doctor-update|doctor-gateway-services|dashboard|configure\.wizard|capabilities)\.ts$/u,
+      /^src\/commands\/status-all\/(?:report-lines|diagnosis)\.ts$/u,
+      /^src\/auto-reply\/status\.ts$/u,
+      /^src\/acp\/(?:client|types)\.ts$/u,
+      /^src\/hooks\/hooks-status\.ts$/u,
+      /^src\/hooks\/bundled\/[^/]+\/HOOK\.md$/u,
+    ],
+    requiredChecks: ["cli-display-surface-tests", "git-diff-check"],
+    commands: [
+      "pnpm vitest run src/cli/program/register.subclis.test.ts src/cli/program/command-registry.test.ts src/cli/program/help.test.ts src/cli/browser-cli.test.ts src/cli/capabilities-cli.test.ts src/cli/hooks-cli.test.ts src/cli/update-cli.test.ts src/commands/status.test.ts src/commands/dashboard.test.ts src/commands/dashboard.links.test.ts src/commands/capabilities.test.ts src/commands/configure.wizard.test.ts src/commands/doctor-gateway-services.test.ts src/acp/client.test.ts",
+      "git diff --check",
+    ],
+    safetyNotes: [
+      "CLI display-surface changes are presentational only. Do not rename wire identifiers (HTTP headers, Windows task names, relay user-agent), filesystem paths, manifest schema keys, or paired sentinel strings in the same change; those are compatibility changes and need their own migration.",
     ],
   },
   {
@@ -490,8 +543,13 @@ const PATH_RULES: PathRule[] = [
       /^scripts\/operator\/external-channel-sidecar-runtime-bundle\.ts$/u,
       /^test\/lcx-external-channel-compat-status\.test\.ts$/u,
       /^src\/daemon\/inspect\.ts$/u,
-      /^src\/agents\/model-auth/u,
+      /^src\/agents\/model-(?:auth|egress)/u,
+      // The embedded run path asserts the declared model egress route before the first request, so it
+      // participates in the same provider boundary as model auth.
+      /^src\/agents\/pi-embedded-runner\/run\/attempt\.ts$/u,
       /^src\/config\//u,
+      // Documents the provider/model config surface, including the declared egress route.
+      /^docs\/gateway\/configuration-reference\.md$/u,
       /^extensions\/external\/src\/(?:send|monitor)\.ts$/u,
       /^scripts\/live/u,
     ],
@@ -502,6 +560,65 @@ const PATH_RULES: PathRule[] = [
       "node --import tsx scripts/operator/lcx-system-doctor.ts --json",
     ],
     risk: "elevated",
+  },
+  {
+    id: "network_egress_authority",
+    lane: "local_live_boundary",
+    patterns: [
+      // `egress-env` writes the ambient variables so dependencies that read nothing else — the
+      // Bedrock provider's `new ProxyAgent()` — cannot inherit the host's route.
+      /^src\/infra\/net\/(?:fetch-guard|proxy-env|proxy-fetch|ssrf|egress-dispatcher|egress-env)\.ts$/u,
+      /^src\/agents\/tools\/web-guarded-fetch\.ts$/u,
+      /^src\/agents\/tools\/web-(?:search|fetch|search-citation-redirect)\.ts$/u,
+      /^src\/telegram\/fetch\.ts$/u,
+      /^src\/slack\/send\.ts$/u,
+      // `ws` ignores proxy variables entirely, so these two carry the model proxy declaration
+      // explicitly — changing them can re-route model traffic without touching the HTTP path.
+      /^src\/agents\/openai-ws-(?:connection|stream)\.ts$/u,
+      /^src\/media-understanding\/runner\.entries\.ts$/u,
+      /^test\/lcx-egress-authority\.test\.ts$/u,
+      // Installs the startup half of the guard, so a `fetch` issued before the first model turn
+      // (onboarding probes, doctor checks, provider discovery) cannot follow the host's proxy.
+      /^src\/entry\.ts$/u,
+      /^docs\/(?:zh-CN\/)?tools\/web\.md$/u,
+    ],
+    requiredChecks: ["explicit-live-boundary-review"],
+    commands: [
+      "pnpm vitest run test/lcx-egress-authority.test.ts src/infra/net/fetch-guard.ssrf.test.ts src/infra/net/egress-env.test.ts src/agents/tools/web-guarded-fetch.test.ts src/telegram/fetch.test.ts",
+    ],
+    risk: "elevated",
+    safetyNotes: [
+      "Egress routes are declared, never inherited: no module may choose its route from ambient proxy variables.",
+    ],
+  },
+  {
+    // Attribution headers (OpenRouter/Perplexity style) are sent on every outbound request, so a
+    // stale value there is live behaviour rather than dead text. This product is self-owned and
+    // must not identify itself as the upstream project on the wire.
+    id: "outbound_product_identity",
+    lane: "local_live_boundary",
+    patterns: [
+      /^src\/infra\/canonical-identity\.ts$/u,
+      /^src\/agents\/pi-embedded-runner\/extra-params\.ts$/u,
+      // `doctor` prints install instructions for the memory system; pointing them at the upstream
+      // repository would send someone there to fetch code.
+      /^src\/commands\/doctor-workspace\.ts$/u,
+      // User-visible "Website:" / "What now" links. `docs.openclaw.ai` is intentionally left alone
+      // until the docs site moves: rewriting those links first would make them dead.
+      /^src\/channels\/registry\.ts$/u,
+      /^src\/channels\/plugins\/onboarding\/telegram\.ts$/u,
+      /^src\/wizard\/onboarding\.finalize\.ts$/u,
+      // Extension manifests declare where a channel plugin is installed from. `defaultChoice: "npm"`
+      // plus an upstream `npmSpec` fetches upstream code even though the extension ships in-repo.
+      /^extensions\/[^/]+\/package\.json$/u,
+    ],
+    requiredChecks: ["run-changed-tests"],
+    commands: [
+      "pnpm vitest run test/lcx-outbound-identity.test.ts src/agents/pi-embedded-runner-extraparams.test.ts src/agents/tools/web-search.test.ts src/infra/canonical-identity.test.ts",
+    ],
+    safetyNotes: [
+      "Outbound identity headers come from the canonical constants, never from a literal naming the upstream project.",
+    ],
   },
   {
     id: "memory_index_store",
