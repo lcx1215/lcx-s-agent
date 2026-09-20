@@ -102,6 +102,9 @@ tmp-lcx-owner-dashboard*.png
 /state/
 /openclaw-path-alias-*/
 src/canvas-host/a2ui/test-link-*.txt
+# Scratch directories a local-brain planning run leaves behind. Same reason as
+# above: unowned changed files would fail the change-impact owner scan.
+/tmp-lcx-local-brain-plan-*/
 
 # Read-only probe scripts. They must live inside the repository (running them from
 # /tmp fails with ERR_PACKAGE_PATH_NOT_EXPORTED, because tsx cannot resolve the
