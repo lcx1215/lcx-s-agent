@@ -144,15 +144,38 @@ export function fuseSignals(
     };
   }
 
-  // Conviction scales with strength, with the source's own reliability, and
-  // with how much of the room agrees. An unopposed but weak signal stays weak.
-  const weighted =
-    winning.reduce((sum, signal) => sum + signal.strength * signal.confidence, 0) / winning.length;
-  const conviction = weighted * agreement;
+  // Conviction is the confidence-weighted mean strength: sources we trust more
+  // move the answer more, and a loud source we distrust cannot dominate.
+  //
+  // Agreement is deliberately NOT multiplied in here. It already acts as a gate
+  // above - a split below minAgreement is refused outright - so multiplying by
+  // it again would penalise the same disagreement twice. That double count was
+  // also what made the scale collapse: three quantities each at most 1 were
+  // multiplied together, so even a strong, trusted, unanimous signal scored
+  // about 0.65 and a merely good one scored far below any sensible floor.
+  const confidenceSum = winning.reduce((sum, signal) => sum + signal.confidence, 0);
+  const weightedStrength = winning.reduce(
+    (sum, signal) => sum + signal.strength * signal.confidence,
+    0,
+  );
+  // Mean of strength x confidence, so absolute reliability still counts: two
+  // unreliable sources must not score like two reliable ones. A
+  // confidence-weighted mean was tried first and rejected for exactly that -
+  // it is invariant to scaling every confidence by the same factor.
+  const conviction = weightedStrength / winning.length;
   notes.push(
     `fused ${winning.length}/${opinionated.length} opinionated sources on ${direction}; ` +
       `${bySource.size - opinionated.length} source(s) were neutral and did not vote`,
   );
+
+  if (confidenceSum <= 0) {
+    return {
+      ok: false,
+      refusals: [
+        "refuse: the supporting sources carry no confidence; a weightless signal cannot be sized",
+      ],
+    };
+  }
 
   return {
     ok: true,

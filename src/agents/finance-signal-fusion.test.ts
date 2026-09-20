@@ -124,4 +124,39 @@ describe("fuseSignals", () => {
       expect(weak.conclusion.conviction).toBeLessThan(strong.conclusion.conviction);
     }
   });
+
+  it("does not multiply agreement into conviction, because that penalises it twice", () => {
+    // Same strength and confidence; only agreement differs. Agreement already
+    // gates via minAgreement, so it must not also scale the number.
+    const unanimous = fuseSignals([signal("a", "buy"), signal("b", "buy")]);
+    const contested = fuseSignals([signal("a", "buy"), signal("b", "buy"), signal("c", "sell")]);
+    if (unanimous.ok && contested.ok) {
+      expect(contested.conclusion.conviction).toBeCloseTo(unanimous.conclusion.conviction, 10);
+      expect(contested.conclusion.agreement).toBeLessThan(unanimous.conclusion.agreement);
+    }
+  });
+
+  it("lets a trusted source outweigh a loud but unreliable one", () => {
+    const result = fuseSignals([
+      { ...signal("loud", "buy"), strength: 1, confidence: 0.1 },
+      { ...signal("trusted", "buy"), strength: 0.5, confidence: 0.9 },
+    ]);
+    if (result.ok) {
+      // The loud source claims strength 1 but is barely trusted; the answer must
+      // sit far below 1 rather than being dragged up by it.
+      expect(result.conclusion.conviction).toBeLessThan(0.35);
+      expect(result.conclusion.conviction).toBeGreaterThan(0.2);
+    }
+  });
+
+  it("refuses when the supporting sources carry no confidence at all", () => {
+    const result = fuseSignals([
+      { ...signal("a", "buy"), strength: 1, confidence: 0 },
+      { ...signal("b", "buy"), strength: 1, confidence: 0 },
+    ]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.refusals.join()).toMatch(/no confidence/);
+    }
+  });
 });
