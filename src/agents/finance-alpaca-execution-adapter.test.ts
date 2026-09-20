@@ -127,4 +127,69 @@ describe("createAlpacaExecutionAdapter", () => {
       /requires a postJson transport/,
     );
   });
+
+  it("reports the real fill when the order fills asynchronously", async () => {
+    stubCredentials(PAPER);
+    // Submit says filled_qty 0 (the observed behaviour); the fill appears later.
+    const t = transport({ id: "ord-9", status: "accepted", filled_qty: "0" });
+    let polls = 0;
+    const statusFetch = async () => {
+      polls += 1;
+      return {
+        status: 200,
+        body: JSON.stringify(
+          polls < 2
+            ? { id: "ord-9", status: "new", filled_qty: "0" }
+            : { id: "ord-9", status: "filled", filled_qty: "1", filled_avg_price: "101.25" },
+        ),
+      };
+    };
+    const adapter = createAlpacaExecutionAdapter({
+      instruments: ["AAPL"],
+      postJson: t.fn,
+      statusFetch,
+      fillPoll: { timeoutMs: 3000, intervalMs: 10 },
+    });
+    const fill = await adapter.execute(baseIntent, new AbortController().signal);
+    expect(fill.filledQuantity).toBe(1);
+    expect(fill.fillPrice).toBe(101.25);
+    expect(polls).toBeGreaterThanOrEqual(2);
+  });
+
+  it("refuses to report a fill when the state is still unknown at the deadline", async () => {
+    stubCredentials(PAPER);
+    const t = transport({ id: "ord-10", status: "new", filled_qty: "0" });
+    const statusFetch = async () => ({
+      status: 200,
+      body: JSON.stringify({ id: "ord-10", status: "new", filled_qty: "0" }),
+    });
+    const adapter = createAlpacaExecutionAdapter({
+      instruments: ["AAPL"],
+      postJson: t.fn,
+      statusFetch,
+      fillPoll: { timeoutMs: 60, intervalMs: 10 },
+    });
+    // The order id must survive the error: the caller needs it to reconcile.
+    await expect(adapter.execute(baseIntent, new AbortController().signal)).rejects.toThrow(
+      /ord-10.*refusing to report a fill/,
+    );
+  });
+
+  it("reports zero for an order that reaches a terminal unfilled state", async () => {
+    stubCredentials(PAPER);
+    const t = transport({ id: "ord-11", status: "new", filled_qty: "0" });
+    const statusFetch = async () => ({
+      status: 200,
+      body: JSON.stringify({ id: "ord-11", status: "expired", filled_qty: "0" }),
+    });
+    const adapter = createAlpacaExecutionAdapter({
+      instruments: ["AAPL"],
+      postJson: t.fn,
+      statusFetch,
+      fillPoll: { timeoutMs: 3000, intervalMs: 10 },
+    });
+    const fill = await adapter.execute(baseIntent, new AbortController().signal);
+    expect(fill.filledQuantity).toBe(0);
+    expect(fill.fillPrice).toBe(0);
+  });
 });
