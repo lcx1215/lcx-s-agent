@@ -16,6 +16,7 @@ import {
   type FinanceQuotaPolicy,
 } from "./finance-source-quota-policy.js";
 import { createFinanceQuotaGuard } from "./finance-source-quota.js";
+import { financeQuotaProbesDir, financeQuotaStateDir } from "./finance-state-dir.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -230,7 +231,7 @@ describe("shared finance provider quotas", () => {
   });
   it("does not reset an unreadable ledger and silently grant a fresh quota", async () => {
     const fixture = await setup();
-    const directory = path.join(fixture.stateDir, "finance-caseflow", "quota-state");
+    const directory = financeQuotaStateDir(fixture.stateDir);
     await fs.mkdir(directory, { recursive: true });
     await fs.writeFile(path.join(directory, "test.json"), "broken");
     const native = vi.fn<ApiFetch>(async () => response());
@@ -253,7 +254,7 @@ describe("shared finance provider quotas", () => {
   });
   it("imports recent live probe usage instead of resetting consumed quota", async () => {
     const fixture = await setup({}, 1_000_000);
-    const directory = path.join(fixture.stateDir, "finance-caseflow", "quota-probes");
+    const directory = financeQuotaProbesDir(fixture.stateDir);
     await fs.mkdir(directory, { recursive: true });
     await fs.writeFile(
       path.join(directory, "run-test.json"),
@@ -281,7 +282,7 @@ describe("shared finance provider quotas", () => {
     const fixture = await setup({}, 1_000_000);
     const native = vi.fn<ApiFetch>(async () => response());
     await fixture.guard().wrap(native)("https://example.test/quote");
-    const directory = path.join(fixture.stateDir, "finance-caseflow", "quota-probes");
+    const directory = financeQuotaProbesDir(fixture.stateDir);
     await fs.mkdir(directory, { recursive: true });
     await fs.writeFile(
       path.join(directory, "later-test.json"),
@@ -351,4 +352,38 @@ it("reports the same local eligibility time that a rolling daily window enforces
   });
   fixture.advance(day + 1);
   expect((await fixture.guard().inspect())[0].state).toBe("within_local_budget");
+});
+
+/**
+ * A degenerate policy should fail at construction, not hang at call time.
+ *
+ * Measured: `tokenBucket.refillPerSecond: 0` made the wait `Infinity` (a bucket that never refills
+ * can never admit a call it has already spent), and a non-finite `minIntervalMs` / window value
+ * turned the pacing arithmetic into `NaN`. Validating once at construction turns both into a
+ * readable configuration error.
+ */
+describe("a degenerate policy fails at construction", () => {
+  it("refuses a token bucket that can never refill", async () => {
+    const fixture = await setup({ tokenBucket: { capacity: 1, refillPerSecond: 0 } });
+    expect(() => fixture.guard()).toThrow(/refillPerSecond must be a positive number/);
+  });
+
+  it("refuses non-finite pacing and limit values", async () => {
+    for (const overrides of [
+      { minIntervalMs: Number.NaN },
+      { windows: [{ limit: Number.NaN, durationMs: day }] },
+      { windows: [{ limit: 2, durationMs: 0 }] },
+      { windows: [{ limit: 2, durationMs: -day }] },
+    ]) {
+      const fixture = await setup(overrides);
+      expect(() => fixture.guard()).toThrow(/is unusable/);
+    }
+  });
+
+  it("still allows a policy with no windows, governed by the cooldown alone", async () => {
+    // The Bybit cooldown case. An earlier version of the guard required a window or a bucket and
+    // broke this, so it is pinned here rather than left to anyone reading the type.
+    const fixture = await setup({ windows: [] });
+    expect(() => fixture.guard()).not.toThrow();
+  });
 });

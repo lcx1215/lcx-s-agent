@@ -229,3 +229,81 @@ describe("compileExecutionIntent", () => {
     }
   });
 });
+
+/**
+ * The stop's side, the target's side, and which classes may carry a price stop.
+ *
+ * `Math.abs` in the sizing distance erases the sign, so a stop on the wrong side of the entry -- one
+ * that is already breached -- used to size and emit an order. Measured at a reference price of 100: a
+ * long with a stop at 110 compiled to qty=100 with a "sized from stop distance 10" note, and a short
+ * with a stop at 90 did the same. `targetPrice` was worse: it was declared as "used only to check
+ * reward against risk", asked for by the research prompt, parsed by the intake, and read by nothing.
+ */
+describe("coherence of the stop and the target", () => {
+  const refusalFor = (conclusion: FinanceResearchConclusion): string => {
+    const result = compileExecutionIntent({
+      conclusion,
+      market,
+      equity,
+      runAuthorizationId: "auth-1",
+    });
+    return result.ok ? "" : result.refusals.join("; ");
+  };
+
+  it("refuses a long whose stop sits above the entry", () => {
+    expect(refusalFor({ ...equityConclusion, invalidationPrice: 110 })).toMatch(
+      /on the wrong side; the stop is already breached/,
+    );
+  });
+
+  it("refuses a short whose stop sits below the entry", () => {
+    expect(refusalFor({ ...equityConclusion, direction: "sell", invalidationPrice: 90 })).toMatch(
+      /on the wrong side; the stop is already breached/,
+    );
+  });
+
+  it("still accepts the stop on the correct side of each direction", () => {
+    expect(refusalFor({ ...equityConclusion, invalidationPrice: 95 })).toBe("");
+    expect(refusalFor({ ...equityConclusion, direction: "sell", invalidationPrice: 105 })).toBe("");
+  });
+
+  it("still refuses a stop that sits exactly on the entry, for its own reason", () => {
+    expect(refusalFor({ ...equityConclusion, invalidationPrice: 100 })).toMatch(
+      /stop distance is zero/,
+    );
+  });
+
+  it("refuses a target on the wrong side of the entry", () => {
+    expect(refusalFor({ ...equityConclusion, targetPrice: 90 })).toMatch(
+      /target at 90 is on the wrong side/,
+    );
+    expect(
+      refusalFor({
+        ...equityConclusion,
+        direction: "sell",
+        invalidationPrice: 105,
+        targetPrice: 110,
+      }),
+    ).toMatch(/target at 110 is on the wrong side/);
+  });
+
+  it("accepts a target on the correct side, and does not police the reward/risk ratio", () => {
+    // A target nearer than the stop is a strategy judgement, not an incoherence, so it compiles.
+    expect(refusalFor({ ...equityConclusion, targetPrice: 101 })).toBe("");
+    expect(refusalFor({ ...equityConclusion, targetPrice: 130 })).toBe("");
+  });
+
+  it("does not carry a price stop for a condition-driven class, and says so", () => {
+    const result = compileExecutionIntent({
+      conclusion: { ...valueConclusion, invalidationPrice: 95 },
+      market,
+      equity,
+      runAuthorizationId: "auth-1",
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.intent.stopPrice).toBeUndefined();
+      expect(result.notes.join(" ")).toMatch(/not carried as a stop price/);
+    }
+  });
+});

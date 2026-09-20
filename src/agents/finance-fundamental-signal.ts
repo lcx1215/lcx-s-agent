@@ -65,6 +65,34 @@ export function analystTargetSignal(
     " window=" +
     summary.window;
 
+  // The three tunables are caller-supplied and were unvalidated, so a degenerate one manufactured a
+  // vote instead of withholding one. Measured: `fullCredibilityCount: -10` with 100 analysts produced
+  // `confidence = -2.025`; `deadbandFraction: -0.03` turned a target 2% *below* the price into a
+  // `buy`, because both `upside > -0.03` and `upside < 0.03` hold there and the first branch wins;
+  // `maxConfidence: 5` emitted a weight of 5 for a field this module documents as capped below the
+  // technical signal's. Clamping would silently honour part of a contradictory request and still
+  // vote, so an incoherent configuration yields no opinion instead.
+  const configCoherent =
+    Number.isFinite(deadband) &&
+    deadband >= 0 &&
+    Number.isFinite(maxConfidence) &&
+    maxConfidence >= 0 &&
+    maxConfidence <= 1 &&
+    Number.isFinite(fullCredibilityCount) &&
+    fullCredibilityCount >= 1;
+
+  if (!configCoherent) {
+    return {
+      sourceId,
+      kind: "fundamental",
+      direction: "hold",
+      strength: 0,
+      confidence: 0,
+      observedAt: options.observedAt,
+      ref: ref + " config=incoherent",
+    };
+  }
+
   // A target is a claim by someone. With no known claimant there is nothing to
   // weigh, and coverage of zero would otherwise still return a floor of half
   // confidence - a number that sounds modest but was derived from nobody.

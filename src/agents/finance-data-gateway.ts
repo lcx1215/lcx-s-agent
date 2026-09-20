@@ -250,6 +250,14 @@ export function buildFinanceDataGatewaySnapshot(
   if (!Number.isFinite(crossSourceSkewMaxMinutes) || crossSourceSkewMaxMinutes < 0) {
     throw new Error("crossSourceSkewMaxMinutes must be a non-negative number");
   }
+  // `freshnessMaxMinutes` is the other half of the same pair and had no guard, so a non-finite value
+  // silently removed the staleness check. Measured with a 30-day-old observation: the default, `0`
+  // and `-1` all produced a staleness warning and the `refresh_or_label_stale_fields` next step,
+  // while `NaN` and `Infinity` produced neither. A snapshot that can never be stale is worse than one
+  // that is labelled stale, and the guard next door already establishes the convention for this pair.
+  if (!Number.isFinite(freshnessMaxMinutes) || freshnessMaxMinutes < 0) {
+    throw new Error("freshnessMaxMinutes must be a non-negative number");
+  }
 
   for (const [observationIndex, observation] of input.observations.entries()) {
     trimRequired(observation.providerName, `observations[${observationIndex}].providerName`);

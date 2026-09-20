@@ -40,7 +40,10 @@ export type FinanceResearchConclusion = Readonly<{
   invalidationPrice?: number;
   /** Non-price condition that invalidates the thesis. Required for class C. */
   invalidationCondition?: string;
-  /** Target price, used only to check reward against risk. */
+  /**
+   * Target price. Checked only for coherence: a target on the wrong side of the entry is refused.
+   * No reward/risk ratio floor is enforced.
+   */
   targetPrice?: number;
 }>;
 
@@ -135,6 +138,31 @@ export function compileExecutionIntent(
     refusals.push("refuse: the conclusion gives no thesis; an order needs a stated reason");
   }
 
+  // `targetPrice` was declared here as "used only to check reward against risk", asked for by the
+  // research prompt and parsed by the intake -- and then read by nothing at all, so a target on the
+  // wrong side of the entry compiled into an order. A target that sits below a long entry (or above
+  // a short one) is incoherent in the same way a stop on the wrong side is, so it is refused here.
+  //
+  // No reward/risk *ratio* floor is enforced. That is a strategy judgement, and inventing one here
+  // would launder a guess into an enforced decision -- the same reason `classifyFinanceStrategy`
+  // refuses instead of guessing a class.
+  const target = conclusion.targetPrice;
+  if (
+    target !== undefined &&
+    Number.isFinite(target) &&
+    (conclusion.direction === "buy" || conclusion.direction === "sell")
+  ) {
+    const targetOnWrongSide =
+      conclusion.direction === "buy"
+        ? target <= market.referencePrice
+        : target >= market.referencePrice;
+    if (targetOnWrongSide) {
+      refusals.push(
+        `refuse: a ${conclusion.direction} at ${market.referencePrice} with a target at ${target} is on the wrong side`,
+      );
+    }
+  }
+
   // DECISION - the averaging-down boundary.
   //
   // The question was how to tell legitimate tranching from averaging down. The
@@ -166,7 +194,21 @@ export function compileExecutionIntent(
       refusals.push(`refuse: class ${strategyClass} sizes from a price stop and none was given`);
     } else {
       const distance = Math.abs(market.referencePrice - stop);
-      if (distance === 0) {
+      // `Math.abs` above erases the sign, so a stop on the wrong side of the entry -- one that is
+      // already breached -- used to size and emit an order anyway. Measured at a reference price of
+      // 100: a long with a stop at 110 compiled to qty=100 with a "sized from stop distance 10"
+      // note, and a short with a stop at 90 did the same. A breached stop is not a tight stop, and
+      // the size it produces is not a small position: it is a position sized from a distance that
+      // cannot be travelled. The zero-distance case below was already handled; the sign was not.
+      const stopOnWrongSide =
+        conclusion.direction === "buy"
+          ? stop > market.referencePrice
+          : stop < market.referencePrice;
+      if (stopOnWrongSide) {
+        refusals.push(
+          `refuse: a ${conclusion.direction} at ${market.referencePrice} with a stop at ${stop} is on the wrong side; the stop is already breached`,
+        );
+      } else if (distance === 0) {
         refusals.push("refuse: stop distance is zero; size would be unbounded");
       } else {
         quantity = Math.floor((equity * classRules.maxRiskPerTradeFraction) / distance);
@@ -185,6 +227,15 @@ export function compileExecutionIntent(
       notes.push(
         `sized on full position at risk (no price stop) at ${(classRules.maxRiskPerTradeFraction * 100).toFixed(2)}% of equity`,
       );
+      // A conclusion for a condition-driven class may still carry an invalidation price. It is not
+      // this class's stop, and carrying it as one would contradict both the note above and the
+      // class's own rule ("leaves the stop off when the class uses a condition instead of a price").
+      // Saying so out loud keeps it from being silently dropped.
+      if (conclusion.invalidationPrice !== undefined) {
+        notes.push(
+          "note: an invalidation price was supplied, but this class stops on its stated condition; it is not carried as a stop price",
+        );
+      }
     }
   }
 
@@ -209,7 +260,10 @@ export function compileExecutionIntent(
       referencePrice: market.referencePrice,
       referencePriceAt: market.referencePriceAt,
       runAuthorizationId: params.runAuthorizationId,
-      ...(conclusion.invalidationPrice !== undefined
+      // Only a structural stop is a stop. Emitting one for a condition-driven class produced an
+      // intent whose note said "no price stop" while it carried a stop at the price it never sized
+      // from -- measured with a class-C conclusion supplying both a condition and a price.
+      ...(classRules.stopLossKind === "structural" && conclusion.invalidationPrice !== undefined
         ? { stopPrice: conclusion.invalidationPrice }
         : {}),
       rationale: conclusion.thesis ?? "",

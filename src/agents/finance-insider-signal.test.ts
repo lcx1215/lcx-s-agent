@@ -175,3 +175,50 @@ describe("insiderFlowSignal", () => {
     expect(signal.direction).toBe("sell");
   });
 });
+
+/**
+ * The two tunables are caller-supplied and were unvalidated, so a degenerate one manufactured a vote
+ * instead of withholding one -- the same construction, and the same defect, as
+ * `finance-fundamental-signal.ts`.
+ *
+ * Measured before the fix: `deadbandMspr: -5` made `mspr > deadband` hold for a small *negative*
+ * mspr, so a mild sell tilt was reported as a buy; `baseConfidence: 5` and `-1` emitted weights of 5
+ * and -1. Silence rather than a clamp: a clamp would honour part of a contradictory request and still
+ * vote.
+ */
+describe("an incoherent configuration withholds a vote instead of manufacturing one", () => {
+  const signalWith = (options: Parameters<typeof insiderSentimentSignal>[1]) =>
+    insiderSentimentSignal(recentPeriod(1, -2), options);
+
+  it("refuses a negative deadband, which would report a mild sell tilt as a buy", () => {
+    const signal = signalWith({ observedAt: at, window, deadbandMspr: -5 });
+    expect(signal.direction).toBe("hold");
+    expect(signal.confidence).toBe(0);
+  });
+
+  it("refuses a confidence weight outside [0, 1]", () => {
+    for (const baseConfidence of [5, -1, Number.NaN]) {
+      const signal = insiderSentimentSignal(recentPeriod(1, 30), {
+        observedAt: at,
+        window,
+        baseConfidence,
+      });
+      expect(signal.direction).toBe("hold");
+      expect(signal.confidence).toBe(0);
+    }
+  });
+
+  it("still honours every coherent configuration", () => {
+    const buy = insiderSentimentSignal(recentPeriod(1, 30), {
+      observedAt: at,
+      window,
+      baseConfidence: 0.2,
+    });
+    expect(buy.direction).toBe("buy");
+    expect(buy.confidence).toBeCloseTo(0.2, 10);
+    expect(
+      insiderSentimentSignal(recentPeriod(1, 2), { observedAt: at, window, deadbandMspr: 1 })
+        .direction,
+    ).toBe("buy");
+  });
+});

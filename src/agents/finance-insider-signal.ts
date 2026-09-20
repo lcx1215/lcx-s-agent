@@ -108,6 +108,22 @@ export function insiderSentimentSignal(
     return silent("older than the " + options.window.lookbackDays + "-day window");
   }
 
+  // The two tunables are caller-supplied and were unvalidated, so a degenerate one manufactured a
+  // vote instead of withholding one -- the same construction, and the same defect, as
+  // `finance-fundamental-signal.ts`. A negative deadband makes `mspr > deadband` hold for a small
+  // *negative* mspr, so a mild sell tilt would be reported as a buy; a `baseConfidence` outside
+  // [0, 1] is not a weight at all. Silence rather than a clamp: a clamp would honour part of a
+  // contradictory request and still vote.
+  const configCoherent =
+    Number.isFinite(deadband) &&
+    deadband >= 0 &&
+    Number.isFinite(baseConfidence) &&
+    baseConfidence >= 0 &&
+    baseConfidence <= 1;
+  if (!configCoherent) {
+    return silent("incoherent configuration");
+  }
+
   const direction: FinanceSignal["direction"] =
     period.mspr > deadband ? "buy" : period.mspr < -deadband ? "sell" : "hold";
   if (direction === "hold") {

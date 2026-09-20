@@ -150,3 +150,45 @@ describe("finance data gateway cross-source audit", () => {
     expect(snapshot.normalizedFields).toHaveLength(0);
   });
 });
+
+/**
+ * `freshnessMaxMinutes` and `crossSourceSkewMaxMinutes` are the same pair of tunables, and only one
+ * of them was guarded. Measured with a 30-day-old field: the default, `0` and `-1` all produced a
+ * staleness warning and the `refresh_or_label_stale_fields` next step, while `NaN` and `Infinity`
+ * produced neither -- a snapshot that can never be stale. The guard next door already established the
+ * convention for this pair, so the fix adds the same one rather than inventing a new shape.
+ *
+ * The input reuses this file's `observation()` helper so the fixture stays type-correct rather than
+ * being hand-rolled beside it.
+ */
+describe("the freshness window is validated like its sibling", () => {
+  const staleAt = "2026-08-21T00:00:00.000Z";
+  const staleInput = (freshnessMaxMinutes?: number) => ({
+    instrument: "QQQ",
+    assetClass: "etf",
+    useCase: "freshness_window_test",
+    asOf: "2026-09-20T00:00:00.000Z",
+    requireOfficialReference: false,
+    ...(freshnessMaxMinutes === undefined ? {} : { freshnessMaxMinutes }),
+    observations: [observation("p1", "official_or_issuer_reference", staleAt)],
+  });
+
+  it("still flags a stale field under the default window", () => {
+    const snapshot = buildFinanceDataGatewaySnapshot(staleInput());
+    expect(snapshot.freshnessWarnings.join(" ")).toMatch(/old/);
+    expect(snapshot.requiredNextSteps).toContain("refresh_or_label_stale_fields");
+  });
+
+  it("still accepts zero, which means everything must be current", () => {
+    const snapshot = buildFinanceDataGatewaySnapshot(staleInput(0));
+    expect(snapshot.requiredNextSteps).toContain("refresh_or_label_stale_fields");
+  });
+
+  it("refuses a window that would silently remove the staleness check", () => {
+    for (const freshnessMaxMinutes of [Number.NaN, Number.POSITIVE_INFINITY, -1]) {
+      expect(() => buildFinanceDataGatewaySnapshot(staleInput(freshnessMaxMinutes))).toThrow(
+        /freshnessMaxMinutes must be a non-negative number/,
+      );
+    }
+  });
+});

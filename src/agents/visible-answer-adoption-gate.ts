@@ -16,20 +16,86 @@ const HOLD_OR_WAIT_ACTION_ASK_PATTERN =
 const ACTION_STANCE_HEADING_PATTERN =
   /\b(?:current stance|action triggers)\b|##\s*(?:Current Stance|Action Triggers)\b/iu;
 
+/**
+ * English position action language.
+ *
+ * Measured in both directions. The pattern was
+ * `(?:should|recommend|can|must|do not|don't|avoid|wait|hold).{0,32}(?:buy|sell|add|reduce|…)`:
+ *
+ *   "The portfolio can hold its value if rates fall…"   -> refused, though it describes capability
+ *   "I would trim NVDA here and lighten the position."  -> admitted, though it is a recommendation
+ *   "My plan is to exit above 520 and add on weakness." -> admitted
+ *
+ * So bare `can` was reading capability as instruction, while the whole `would / plan to` family and
+ * the ordinary verbs (`trim`, `lighten`, `exit`, `scale in/out`, `take profit`) were missing. `can`
+ * is only advice with a personal subject, so it is now matched as `you/we/i can`; the Chinese side
+ * already binds its modal to an action and needed no change here.
+ */
 const ENGLISH_POSITION_ACTION_PATTERN =
-  /\b(?:should|recommend|can|must|do not|don't|avoid|wait|hold)\b.{0,32}\b(?:buy|sell|add|reduce|average down|cut(?: the)? loss|hold|wait|stop loss|target price)\b/iu;
+  /\b(?:(?:you|we|i)\s+can|should|would|will|recommend|must|do not|don't|avoid|wait|hold|plan(?:s|ned)?\s+(?:is\s+|was\s+)?to|intend(?:s|ed)?\s+to|going\s+to|let'?s)\b.{0,32}\b(?:buy|sell|add|reduce|average\s+(?:down|in)|cut(?:ting)?\s+(?:the\s+)?loss|hold|wait|stop\s+loss|target\s+price|trim|lighten|exit|scale\s+(?:in|out|up|down)|take\s+profit|go\s+long|go\s+short|pyramid)\b/iu;
 
 const CHINESE_POSITION_ACTION_PATTERN =
   /(?:应该|建议|可以|不要|别|先别|不建议|先说结论).{0,22}(买|卖|买入|卖出|加仓|减仓|补仓|摊低|摊平|割肉|砍仓|抄底|止损|止盈|持有|等待|上|冲|追|拿|赌|梭哈|满仓|加保证金|上杠杆|降杠杆)/u;
 
+// No `g` flag: it is used with `.test()` inside `prescribesChineseActionFramework`, and a `g` flag
+// makes `.test()` stateful (`lastIndex` advances), so a second call would start mid-string.
 const CHINESE_ACTION_FRAMEWORK_PATTERN =
   /均价策略|止损策略|减亏两条路|抄底|砍仓|摊低成本|快点回本|赌财报|梭哈|满仓|加保证金|爆仓自救/u;
+
+/**
+ * Warning markers that turn a destructive-action phrase into advice *against* it.
+ *
+ * `CHINESE_ACTION_FRAMEWORK_PATTERN` is a bare alternation, so it refused an answer for *naming* the
+ * behaviour it was warning about. Measured against a position-risk ask, all of these were reported as
+ * `chinese_action_framework_language`:
+ *
+ *   抄底是最大的行为风险，历史上胜率并不高，它属于行为偏差而不是策略。
+ *   满仓和梭哈是账户归零的主要原因，这类行为应当避免。
+ *   砍仓这件事在恐慌里最容易被做错，先想清楚再动。
+ *   摊低成本本身不是错，错在没有先定义失效条件。
+ *
+ * Those are the answers the product wants, not the ones it wants to stop. The list cannot simply be
+ * deleted, though: a bare imperative with no modal ("满仓干。") is a prescription the modal-based
+ * `CHINESE_POSITION_ACTION_PATTERN` does not see, so the check has to keep catching it.
+ *
+ * The rule is therefore positional rather than lexical -- the phrase only counts when the clause it
+ * sits in carries no warning marker. This is the same shape as the per-match negation handling the
+ * position-action patterns already use.
+ */
+const CHINESE_ACTION_WARNING_PATTERN =
+  /不要|别|不能|不应|不该|避免|禁止|警惕|远离|拒绝|风险|危险|归零|亏损|做错|最大的问题|不是策略|不是错/u;
+
+/** Clause boundaries for the warning window: a warning does not reach across a sentence or a comma. */
+const CLAUSE_BOUNDARY_PATTERN = /[。！？；;\n，,]/u;
+
+/**
+ * Whether the answer *prescribes* an action framework rather than discussing one.
+ *
+ * A clause that names the behaviour and carries a warning marker is a warning; a clause that names it
+ * without one is a prescription.
+ */
+function prescribesChineseActionFramework(answerText: string): boolean {
+  const clauses = answerText.split(CLAUSE_BOUNDARY_PATTERN);
+  return clauses.some(
+    (clause) =>
+      CHINESE_ACTION_FRAMEWORK_PATTERN.test(clause) && !CHINESE_ACTION_WARNING_PATTERN.test(clause),
+  );
+}
 
 const STALE_PRIOR_ANSWER_DEFERRAL_PATTERN =
   /我(?:上一条|上条|刚才|前面)已经|上一条已经|已经给出|继续深化|想往哪个方向深|换一个方向|补充权重数据|分发状态/u;
 
+/**
+ * A portfolio-level risk ask.
+ *
+ * The first alternative used to require a literal QQQ/TLT/NVDA between the holding word and the risk
+ * word, so a book of Chinese indices never matched: measured, "我持有 沪深300 和 中证500，风险怎么看？"
+ * fell through to the generic position reply while the QQQ/TLT/NVDA wording got the portfolio
+ * framework. The instrument list is already enforced by the `length < 2` check in
+ * `looksLikeStandalonePortfolioRiskAsk`, so the middle token is not needed here.
+ */
 const STANDALONE_PORTFOLIO_RISK_ASK_PATTERN =
-  /(?:持有|组合|portfolio|holdings?).{0,40}(?:QQQ|TLT|NVDA).{0,80}(?:风险|risk|研究框架|失效条件|invalidation)|(?:QQQ|TLT|NVDA).{0,80}(?:风险|risk|研究框架|失效条件|invalidation)/iu;
+  /(?:持有|组合|portfolio|holdings?).{0,60}(?:风险|risk|研究框架|失效条件|invalidation)|(?:QQQ|TLT|NVDA).{0,80}(?:风险|risk|研究框架|失效条件|invalidation)/iu;
 
 const MODEL_DISAGREEMENT_ARBITRATION_ASK_PATTERN =
   /\b(?:provider council|model disagreement|which model|conflicting models)\b|(?:模型意见|意见不一致|模型分歧|怎么裁决|听谁|谁说得对|采信谁)/u;
@@ -84,8 +150,17 @@ const SHORT_AMBIGUOUS_VISIBLE_ASK_PATTERN =
 const VAGUE_CONSERVATIVE_NONANSWER_PATTERN =
   /(?:这个问题)?(?:比较|很)?复杂|不能一概而论|取决于|需要更多(?:信息|背景|上下文)|信息不足|数据不足|无法(?:判断|确定|给出)|不能(?:判断|确定|给出)|建议(?:谨慎|进一步观察)|需要综合考虑/u;
 
+/**
+ * The whitelist that exempts a vague answer from `VAGUE_CONSERVATIVE_NONANSWER_PATTERN`.
+ *
+ * Same shape as `DIRECT_VISIBLE_VALUE_PATTERN` below: a loose entry is a hole. Measured, the bare
+ * `下一步` and `第一` let this vague non-answer through the vague check --
+ * "这个问题比较复杂，取决于很多因素，需要更多信息。第一步先明确目标，下一步再看。" -- leaving it to be
+ * refused only by the professional-filler check. A bare "下一步再看" is not a useful next step, so the
+ * markers now have to be constructions (`下一步是/先…`, `第一步:`).
+ */
 const USEFUL_VISIBLE_NEXT_STEP_PATTERN =
-  /(?:结论|直接说|先说|现在能说|我能说|可以先|下一步|需要补|缺(?:的)?(?:数据|信息)|数据清单|证据|来源|时间戳|失效条件|风险门|检查|按.{0,10}顺序|1[.、]|第一|第二)/u;
+  /(?:结论[:：]|直接说|先说|现在能说|我能说|可以先|下一步(?:是|先|要|补|给)|需要补|缺(?:的)?(?:数据|信息)|数据清单|证据[:：]|来源[:：]|时间戳|失效条件|风险门|检查清单|检查[:：]|按.{0,10}顺序|1[.、]|第[一二三](?:步|组)[:：])/u;
 
 const NORMAL_VISIBLE_ASK_PATTERN =
   /[？?]|(?:怎么|为什么|帮我|给我|看一下|看下|改|写|总结|解释|判断|分析|到哪|怎么样|风险|要不要|该不该|能不能|可以吗|怎么办|做什么|有什么|多少|学一下|学习一下|现在|今天|明天|日报|报告|链接)/u;
@@ -93,8 +168,20 @@ const NORMAL_VISIBLE_ASK_PATTERN =
 const PROFESSIONAL_FILLER_PATTERN =
   /(?:需要综合考虑|不能一概而论|取决于|需要更多(?:信息|背景|上下文)|正确做法是先|先审计|不能只凭|不能从.{0,24}直接推出|我能给的输出|第一组检查|第二组检查|反证条件|需要先.{0,28}(?:检查|审计|确认|补齐)|要先.{0,28}(?:检查|审计|确认|补齐)|建议先.{0,28}(?:观察|确认|补齐)|需要从.{0,32}(?:维度|角度|层面)|先分(?:三|几)类)/u;
 
+/**
+ * The whitelist that exempts an answer from `PROFESSIONAL_FILLER_PATTERN`.
+ *
+ * Because it is a whitelist, every loose entry in it is a hole: measured, the filler the existing
+ * test refuses --
+ *
+ *   "日报要更有用，需要综合考虑目标、受众和结构，这个问题不能一概而论。建议先明确使用场景。"
+ *
+ * -- becomes admitted when one word changes to "建议**先看**使用场景" (`failures=[]`), because the bare
+ * verb 先看 was in this list. A generic verb is not answer value. The four generic verbs are
+ * therefore bound to a concrete object: "先看数据清单" still counts, "先看使用场景" does not.
+ */
 const DIRECT_VISIBLE_VALUE_PATTERN =
-  /(?:风险结论|当前判断|默认判断|优先级|排序|第一优先|最该看|答案是|结论是|约等于|大概\s*\d|百分之|已确认|还剩|卡在|能确认|不能确认|可以开始|不能说已经|先改|先做|先看|先登记|三档决策树|红灯|黄灯|绿灯|具体阈值|具体做法|下一条直接发|下一步(?:是|先)|直接算|按你给的)/u;
+  /(?:风险结论|当前判断|默认判断|优先级|排序|第一优先|最该看|答案是|结论是|约等于|大概\s*\d|百分之|已确认|还剩|卡在|能确认|不能确认|可以开始|不能说已经|先(?:看|做|改|登记)(?:数据|证据|时间戳|来源|阈值|财报|指引|估值|价格|成本|仓位|组合|风险预算|清单|回执|账本|文件|链接|URL|口径|规则|边界)|三档决策树|红灯|黄灯|绿灯|具体阈值|具体做法|下一条直接发|下一步(?:是|先)|直接算|按你给的)/u;
 
 const PROTOCOL_TRUTH_SURFACE_ASK_PATTERN =
   /(?:现在你是谁|你能做什么|当前可用能力|不可用边界|外部通道|消息通道.{0,24}(?:通信|沟通|媒介|入口)|验收|acceptance code|identity test|protocol truth|真实链路)/iu;
@@ -117,8 +204,18 @@ const IMPLICIT_MISSING_SOURCE_LEARNING_ASK_PATTERN =
 const MODEL_DISAGREEMENT_ARBITRATION_TERMS_PATTERN =
   /\b(?:evidence order|source|timestamp|local gate|cannot directly trust|not final authority|arbitration)\b|证据排序|一手来源|时间戳|本地\s*gate|不能直接采信|不能按模型名|候选意见|最终权威|本地把关|裁决/u;
 
+/**
+ * Who decides when the models disagree.
+ *
+ * `MODEL_DISAGREEMENT_ARBITRATION_TERMS_PATTERN` above only asks whether the arbitration vocabulary
+ * appears, so it is satisfied by the words alone; this one has to carry the actual claim. Measured:
+ * the twenty-character non-answer "证据排序上要谨慎，本地 gate 需要注意。" was admitted with
+ * `failures=[]`, because the bare fragments 证据排序 and 本地 gate were both listed here. Each branch
+ * now requires the construction: a decider bound to the local gate, or an explicit denial of model
+ * authority.
+ */
 const MODEL_DISAGREEMENT_DECIDER_PATTERN =
-  /\b(?:do not decide by model name|majority vote|local gates?|final authority|not final authority|evidence order|arbitration)\b|不能按模型名|不能.*投票|本地\s*gate|最终答案|最终权威|不直接采信|证据排序/u;
+  /(?:说了算|决定|裁决|拍板|把关|采用|decider|decides)[^。\n]{0,16}(?:本地|证据|gate|规则|数据|local|evidence)|(?:本地|证据|gate|规则|local|evidence)[^。\n]{0,16}(?:说了算|决定|裁决|采纳|采用|把关|先过|拍板|decides|adopts)|(?:不|不是|不能|别|\bnot\b|do not)[^。\n]{0,24}(?:按\s*)?(?:听|采信|相信|以)?(?:模型名|多数投票|投票|模型等级|模型排名|某一个模型|任何(?:一个)?模型|单个模型|model name|majority vote|any single model|one model)|不(?:直接)?采信[^。\n]{0,12}(?:模型|任何)|不能由\s*模型/u;
 
 const VISIBLE_INTERNAL_TAIL_LINE_PATTERN =
   /^\s*(?:分发状态|本次识别|识别理由|原始问题|publish|confidence|foundation)\s*[:：].*$/gmu;
@@ -129,23 +226,223 @@ const RAW_WORK_ORDER_VISIBLE_PATTERN =
 const USER_SUPPLIED_ARITHMETIC_PERCENT_ASK_PATTERN =
   /(?:\d[\d,，]*).{0,24}(?:净增|增加|新增|涨|增长|多了|\+).{0,16}(?:\d[\d,，]*)|(?:\d[\d,，]*).{0,16}(?:大概|约|多少).{0,12}(?:比例|百分比|涨幅|增长率)/u;
 
+/**
+ * The same question in English.
+ *
+ * The Chinese pattern above has no English in it, so "6818 gained 46 today, what percentage growth
+ * is that?" was not recognised as arithmetic at all and the candidate answer was left untouched --
+ * the same ask gets a computed ratio in Chinese and nothing in English. This requires a number, a
+ * trend word and a ratio word together rather than any one of them, so ordinary sentences that
+ * merely contain "lost" or "rate" do not turn into arithmetic questions.
+ */
+const ENGLISH_USER_SUPPLIED_ARITHMETIC_PERCENT_ASK_PATTERN =
+  /^(?=.*\d)(?=.*\b(?:gained?|grew|grown|increased?|rose|risen|added|net\s+increase|decreased?|declined|fell|fallen|dropped?|lost)\b).*\b(?:percent|percentage|ratio|rate)\b/iu;
+
+/**
+ * English is part of both patterns below, for the reason recorded at
+ * `ENGLISH_USER_SUPPLIED_ARITHMETIC_PERCENT_ASK_PATTERN`: the renderers have an English branch, so a
+ * Chinese-only ask pattern means the same question gets a checked answer in Chinese and an unchecked
+ * one in English. Measured: "Give me a daily output format for semiconductor and index options
+ * research." and "Which three risks matter most for semiconductor index options?" were both treated
+ * as ordinary asks, and a one-line filler answer was adopted untouched.
+ */
 const DAILY_SEMICONDUCTOR_OPTIONS_FORMAT_ASK_PATTERN =
-  /(?:每天|每日|自动|产出格式|格式).{0,24}(?:半导体|芯片|semiconductor).{0,32}(?:指数期权|期权|options)|(?:半导体|芯片|semiconductor).{0,32}(?:指数期权|期权|options).{0,32}(?:每天|每日|自动|产出格式|格式)/iu;
+  /(?:每天|每日|自动|产出格式|格式|\bdaily\b|\bformat\b|\bautomatic\b).{0,24}(?:半导体|芯片|semiconductor).{0,32}(?:指数期权|期权|options)|(?:半导体|芯片|semiconductor).{0,32}(?:指数期权|期权|options).{0,32}(?:每天|每日|自动|产出格式|格式|\bdaily\b|\bformat\b)/iu;
 
 const SEMICONDUCTOR_OPTIONS_RISK_ASK_PATTERN =
-  /(?:半导体|芯片|semiconductor).{0,32}(?:指数期权|期权|options).{0,32}(?:风险|看哪|关注|危险|三个|3个)|(?:风险|看哪|关注|危险|三个|3个).{0,32}(?:半导体|芯片|semiconductor).{0,32}(?:指数期权|期权|options)/iu;
+  /(?:半导体|芯片|semiconductor).{0,32}(?:指数期权|期权|options).{0,32}(?:风险|看哪|关注|危险|三个|3个|risks?|watch|top)|(?:风险|看哪|关注|危险|三个|3个|risks?|watch|top).{0,32}(?:半导体|芯片|semiconductor).{0,32}(?:指数期权|期权|options)/iu;
 
-function mentionedKnownTickers(text: string): string[] {
+/**
+ * Uppercase tokens that are not stock symbols.
+ *
+ * `mentionedInstrumentNames` used to be a hard-coded three-symbol list (QQQ/TLT/NVDA), so every check
+ * built on it only ever saw those three. Measured, with the same pure-filler answer:
+ *
+ *   "我 NVDA 亏了 20%，该割肉还是补仓？"  -> refused (single_stock_loss_reply_missing_concrete_risk_triage)
+ *   "我 AAPL 亏了 20%，该割肉还是补仓？"  -> admitted with failures=[]
+ *   TSLA / MSFT / 台积电 / 腾讯           -> admitted with failures=[]
+ *
+ * because `looksLikeSingleStockLossRecoveryAsk` requires exactly one recognised symbol and saw none.
+ * The leak check had the mirror problem: an answer that dragged in AAPL while the user asked about
+ * NVDA produced no `unasked_ticker_context_bleed_in_position_reply` at all.
+ *
+ * The detector is therefore general, and this set is what makes it usable: currency codes, macro and
+ * instrument acronyms, and the reporting / technical acronyms an ordinary finance answer uses. `AI`
+ * and `MA` are excluded even though both are also real tickers, because in a finance answer they are
+ * overwhelmingly the acronyms -- a leak of those two names goes undetected, which is the safe
+ * direction for a check that refuses answers. Chinese company names are deliberately not matched:
+ * they would need another name list, and an unrecognised name leaves the ask predicate quiet.
+ */
+const NON_TICKER_TOKENS = new Set([
+  "USD",
+  "EUR",
+  "GBP",
+  "CNY",
+  "JPY",
+  "HKD",
+  "AUD",
+  "CAD",
+  "CHF",
+  "US",
+  "UK",
+  "EU",
+  "CN",
+  "HK",
+  "TW",
+  "JP",
+  "SG",
+  "ETF",
+  "ETN",
+  "ADR",
+  "IPO",
+  "IV",
+  "VIX",
+  "DXY",
+  "OTC",
+  "SPX",
+  "NDX",
+  "DJIA",
+  "GDP",
+  "CPI",
+  "PPI",
+  "PMI",
+  "FED",
+  "ECB",
+  "BOJ",
+  "FOMC",
+  "QE",
+  "QT",
+  "YOY",
+  "QOQ",
+  "MOM",
+  "ROE",
+  "ROA",
+  "ROIC",
+  "PE",
+  "PB",
+  "PS",
+  "EPS",
+  "EBIT",
+  "EBITDA",
+  "FCF",
+  "DCF",
+  "WACC",
+  "EV",
+  "BV",
+  "MA",
+  "EMA",
+  "SMA",
+  "RSI",
+  "MACD",
+  "KDJ",
+  "BOLL",
+  "ATR",
+  "OBV",
+  "CCI",
+  "WR",
+  "AI",
+  "API",
+  "URL",
+  "JSON",
+  "HTTP",
+  "HTTPS",
+  "SDK",
+  "CLI",
+  "UI",
+  "UX",
+  "ID",
+  "OK",
+  "LLM",
+  "GPU",
+  "CPU",
+  "RAM",
+  "CEO",
+  "CFO",
+  "CTO",
+  "COO",
+  "SEC",
+  "IRS",
+  "TA",
+  "FA",
+]);
+
+/**
+ * Common Chinese company names.
+ *
+ * The Latin detector above cannot see them, so "我 台积电 亏了 20%，该割肉还是补仓？" was still treated
+ * as an unnamed ask and skipped the triage check entirely. This is a name list on the *ask* side,
+ * where the input is short and user-authored and recognising one more name only ever turns a check
+ * on -- unlike a name list on the answer side, where a miss means a leak goes undetected and a false
+ * hit refuses a legitimate answer.
+ */
+const CHINESE_COMPANY_NAME_PATTERN =
+  /台积电|台積電|腾讯|騰訊|阿里巴巴|阿里|苹果公司|苹果|微软|英伟达|特斯拉|亚马逊|谷歌|脸书|美团|小米|比亚迪|宁德时代|茅台|招商银行|工商银行|建设银行|中国平安|京东|拼多多|百度|网易|字节跳动|中芯国际|寒武纪|立讯精密|隆基绿能|长江电力|中国移动|中国石油|中国石化/gu;
+
+/**
+ * Named Chinese indices and funds.
+ *
+ * The detector could only see Latin tickers and a list of company names, so a multi-index book read
+ * as a single unnamed position. Measured: both
+ * "我 沪深300 和 中证500 都亏了 20%，该割肉还是补仓？" and
+ * "我 沪深300ETF 和 创业板ETF 都亏了 20%，该割肉还是补仓？" were forced through the single-stock
+ * triage check, and `looksLikeStandalonePortfolioRiskAsk` (which needs two names) never fired.
+ *
+ * Written as a construction rather than another name list: an index qualifier followed by digits or
+ * an 指数/指 suffix, or a Chinese qualifier followed by a fund vehicle. Bare `科创` is not matched
+ * (科技创新) and bare `ETF` is not matched -- an unqualified "ETF" is not a named instrument, and
+ * counting it would re-open the acronym false positive recorded at `STOCK_CONTEXT_PATTERN`.
+ */
+const CHINESE_INDEX_OR_FUND_PATTERN =
+  /(?:沪深|中证|上证|深证|创业板|科创|北证|恒生|日经|富时|标普|纳斯达克|道琼斯|国企|沪指|深指|纳指)(?:\d{1,4}|[\u4e00-\u9fff]{0,4}(?:指数|指))|[\u4e00-\u9fff]{1,6}\d{0,4}(?:ETF|LOF|FOF|REITs?)/gu;
+
+function mentionedInstrumentNames(text: string): string[] {
   const matches = new Set<string>();
-  for (const match of text.matchAll(/\b(QQQ|TLT|NVDA)\b/giu)) {
-    matches.add(match[1].toUpperCase());
+  // At least two uppercase letters, so a lone "A." or a single-letter list marker is not a symbol.
+  for (const match of text.matchAll(/\b[A-Z][A-Z0-9-]{1,9}\b/gu)) {
+    const symbol = match[0];
+    if (!/[A-Z]{2}/u.test(symbol)) {
+      continue;
+    }
+    if (NON_TICKER_TOKENS.has(symbol)) {
+      continue;
+    }
+    matches.add(symbol);
+  }
+  // `matchAll` clones the pattern, so the `g` flag cannot leak `lastIndex` between calls.
+  for (const match of text.matchAll(CHINESE_COMPANY_NAME_PATTERN)) {
+    matches.add(match[0]);
+  }
+  for (const match of text.matchAll(CHINESE_INDEX_OR_FUND_PATTERN)) {
+    matches.add(match[0]);
   }
   return [...matches];
 }
 
+/**
+ * Whether a detected token is named *as a stock* rather than used as an acronym.
+ *
+ * Needed because the leak check runs on the answer, which is full of uppercase acronyms. Measured
+ * false positive without it: "…先看 10Y、DXY、HY spread，再谈风险预算。" was reported as an unasked
+ * ticker leak because `HY` is not a symbol but is also not in `NON_TICKER_TOKENS`. A token only
+ * counts when a position / price / valuation word sits next to it -- which is exactly how a leaked
+ * stock is named ("顺便说，AAPL 现在估值更便宜").
+ */
+const STOCK_CONTEXT_PATTERN =
+  /标的|个股|股票|持仓|仓位|账户|净值|资产|成本|买入|卖出|加仓|减仓|补仓|割肉|止损|止盈|估值|股价|价格|市值|财报|指引|权重|ticker|position|account|net worth|shares?|holding|price|valuation|earnings|weight/iu;
+
+function appearsInStockContext(text: string, token: string): boolean {
+  const escaped = token.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return new RegExp(
+    `(?:${STOCK_CONTEXT_PATTERN.source})[^。\\n]{0,16}${escaped}|${escaped}[^。\\n]{0,16}(?:${STOCK_CONTEXT_PATTERN.source})`,
+    "iu",
+  ).test(text);
+}
+
 function hasUnaskedKnownTickerLeak(userMessage: string, answerText: string): boolean {
-  const requested = new Set(mentionedKnownTickers(userMessage));
-  const answered = mentionedKnownTickers(answerText);
+  const requested = new Set(mentionedInstrumentNames(userMessage));
+  const answered = mentionedInstrumentNames(answerText).filter((token) =>
+    appearsInStockContext(answerText, token),
+  );
   return answered.some((ticker) => !requested.has(ticker));
 }
 
@@ -164,7 +461,7 @@ function shouldPrioritizePositionRiskReply(userMessage: string): boolean {
     return false;
   }
   return (
-    mentionedKnownTickers(userMessage).length > 0 ||
+    mentionedInstrumentNames(userMessage).length > 0 ||
     /买|卖|买入|卖出|加仓|减仓|补仓|摊低|摊平|割肉|砍仓|抄底|止损|止盈|持有|继续拿|等待|杠杆|保证金|爆仓|call|put|margin|leverage/iu.test(
       userMessage,
     )
@@ -176,37 +473,88 @@ function looksLikeStandalonePortfolioRiskAsk(userMessage: string): boolean {
   if (!STANDALONE_PORTFOLIO_RISK_ASK_PATTERN.test(trimmed)) {
     return false;
   }
-  if (mentionedKnownTickers(trimmed).length < 2) {
+  if (mentionedInstrumentNames(trimmed).length < 2) {
     return false;
   }
   return !/^(?:继续|接着|展开|详细说|刚才|上一条|上条|上面|那个|这个)[\s，。:：]/u.test(trimmed);
 }
 
+/**
+ * Whether the ask is about one named position rather than a book.
+ *
+ * `length === 1` also missed the unnamed case: "我亏了 20%，该割肉还是补仓？" names no instrument at all
+ * and was skipped, even though a portfolio question is phrased with a portfolio word. The ask is
+ * still required to carry a loss word, and it must not be the standalone portfolio ask.
+ */
 function looksLikeSingleStockLossRecoveryAsk(userMessage: string): boolean {
+  const targets = mentionedInstrumentNames(userMessage).length;
+  const namesPortfolio = /组合|持仓组合|portfolio|holdings?\b/iu.test(userMessage);
   return (
-    mentionedKnownTickers(userMessage).length === 1 &&
+    (targets === 1 || (targets === 0 && !namesPortfolio)) &&
     /(?:亏|亏损|高位|高点|追高|回本|recover|loss|down|drawdown|near the top|near the highs)/iu.test(
       userMessage,
-    )
+    ) &&
+    !looksLikeStandalonePortfolioRiskAsk(userMessage)
   );
 }
 
+/**
+ * Whether the answer actually performs the single-stock loss triage, as opposed to naming its fields.
+ *
+ * Measured: every one of the four requirements could be satisfied by a token that carries none of the
+ * meaning, so a generic answer passed the check whose entire job is to reject generic answers. This
+ * answer was admitted with `failures=[]`:
+ *
+ *   "先给一个通用风险框架。默认风险门需要重新评估。A. 第一，注意期权这类工具的风险。
+ *    B. 第二，注意仓位管理。C. 第三，关注持有期限。具体结论要等更多信息。"
+ *
+ * -- while the pipeline's own "safe but empty thesis list" negative case is refused. The degenerate
+ * match behind each requirement:
+ *
+ *   - `默认风险门` matched as a bare phrase, with no gate verdict anywhere after it;
+ *   - `A[.、]` matched a single list bullet -- and the "A." inside any ticker ending in A ("NVDA.");
+ *   - the forced-risk branch matched the bare noun `期权`;
+ *   - the next-inputs branch matched the bare noun `持有期限`.
+ *
+ * So each requirement now asks for the *construction* rather than the word: a verdict after the gate,
+ * at least two distinct kinds of branch label, a state verb bound to the forced-risk noun, and either
+ * an explicit request or at least three distinct inputs listed.
+ */
 function extractsConcreteSingleStockLossTriage(answerText: string): boolean {
   const defaultRiskGate =
-    /(?:补仓|加仓)资格\s*[=＝:：]?\s*(?:未通过|不通过|先不通过)|默认风险门|亏损(?:本身)?不是(?:补仓|加仓)理由/u.test(
+    /(?:补仓|加仓)资格\s*[=＝:：]?\s*(?:未通过|不通过|先不通过)|默认风险门\s*[：:][^。\n]{0,24}(?:未通过|不通过|未达标|不达标|先不)|亏损(?:本身)?不是(?:补仓|加仓)理由/u.test(
       answerText,
     );
-  const decisionTree = /(?:红灯|黄灯|绿灯|三档|决策树|A[.、]|B[.、]|C[.、]|①|②|③)/u.test(
-    answerText,
-  );
+  // A lone `A.` is a list bullet, not a decision tree: at least two distinct label kinds are needed.
+  const decisionTree =
+    [
+      /红灯/u,
+      /黄灯/u,
+      /绿灯/u,
+      /三档/u,
+      /决策树/u,
+      /A[.、]/u,
+      /B[.、]/u,
+      /C[.、]/u,
+      /①/u,
+      /②/u,
+      /③/u,
+    ].filter((pattern) => pattern.test(answerText)).length >= 2;
   const concreteThresholdOrForcedRisk =
-    /(?:单票|仓位|组合占比|账户).{0,28}(?:\d{1,2}\s*(?:-|到|~|–)?\s*\d{0,2}\s*%|超过|上限|太重)|(?:杠杆|期权|融资|保证金|最大可承受回撤|强平)/u.test(
+    /(?:单票|仓位|组合占比|账户).{0,28}(?:\d{1,2}\s*(?:-|到|~|–)?\s*\d{0,2}\s*%|超过|上限|太重)|(?:有|没有|无|是否|存在|涉及|用了|带了?)\s*(?:杠杆|期权|融资|保证金|强平)/u.test(
       answerText,
     );
+  const listedInputs = new Set(
+    (
+      answerText.match(
+        /总资产|账户规模|仓位占比|组合占比|成本区间|持有期限|最大可承受回撤|买入\s*(?:thesis|理由)|杠杆|期权/g,
+      ) ?? []
+    ).map((value) => value.replace(/\s+/gu, "")),
+  );
   const nextUserInputs =
-    /(?:你(?:下一条)?(?:发|补)|需要你|下一步(?:先)?(?:补|给)|总资产|账户规模|仓位占比|组合占比|成本区间|持有期限|杠杆|期权|最大可承受回撤)/u.test(
+    /(?:你(?:下一条)?(?:直接)?(?:发|补|给|提供)|需要你|下一步(?:先)?(?:补|给)|请(?:提供|给出|发))/u.test(
       answerText,
-    );
+    ) || listedInputs.size >= 3;
   return defaultRiskGate && decisionTree && concreteThresholdOrForcedRisk && nextUserInputs;
 }
 
@@ -246,7 +594,10 @@ function looksLikeSystemStatusAsk(userMessage: string): boolean {
 }
 
 function looksLikeUserSuppliedArithmeticPercentAsk(userMessage: string): boolean {
-  return USER_SUPPLIED_ARITHMETIC_PERCENT_ASK_PATTERN.test(userMessage);
+  return (
+    USER_SUPPLIED_ARITHMETIC_PERCENT_ASK_PATTERN.test(userMessage) ||
+    ENGLISH_USER_SUPPLIED_ARITHMETIC_PERCENT_ASK_PATTERN.test(userMessage)
+  );
 }
 
 function looksLikeDailySemiconductorOptionsFormatAsk(userMessage: string): boolean {
@@ -308,20 +659,46 @@ function extractsUsefulArithmeticPercent(answerText: string): boolean {
   );
 }
 
+/**
+ * Whether the answer gives a daily output *format*, not merely the words.
+ *
+ * Measured: every requirement was satisfied by a bare word, so a non-answer to a "give me the output
+ * format" request was admitted with `failures=[]`:
+ *
+ *   "每天看半导体指数期权的风险，结论稍后给。来源待补。"
+ *
+ * -- `每天` + `半导体` + `期权` + `风险`, with the fourth requirement met by bare 结论 and 来源. The ask
+ * is for a *format*, so the answer now has to be enumerated and to name at least two distinct fields.
+ */
 function extractsDailyResearchFormat(answerText: string): boolean {
-  return (
-    /(?:每日|每天|日更|日报|固定模板|产出格式)/u.test(answerText) &&
-    /(?:半导体|芯片|SOXX|SMH|NVDA)/iu.test(answerText) &&
-    /(?:指数期权|期权|IV|VIX|skew|偏斜|期限结构|gamma)/iu.test(answerText) &&
-    /(?:数据时间戳|来源|缺失数据|触发条件|风险|结论)/u.test(answerText)
+  const daily = /(?:每日|每天|日更|日报|固定模板|产出格式|\bdaily\b|\bformat\b)/iu.test(answerText);
+  const domain = /(?:半导体|芯片|SOXX|SMH|NVDA|semiconductor)/iu.test(answerText);
+  const options = /(?:指数期权|期权|IV|VIX|skew|偏斜|期限结构|gamma|options)/iu.test(answerText);
+  const enumerated = /(?:格式|\bformat\b|\d\s*[.、)])/iu.test(answerText);
+  const fields = new Set(
+    (
+      answerText.match(
+        /数据时间戳|时间戳|来源|缺失数据|数据缺口|触发条件|失效信号|结论|优先级|明日跟踪|下一步|timestamps?|sources?|missing data|invalidation|conclusion|priority/giu,
+      ) ?? []
+    ).map((value) => value.toLowerCase()),
   );
+  return daily && domain && options && enumerated && fields.size >= 2;
 }
 
+/**
+ * Whether the answer names two distinct concrete risks.
+ *
+ * The first two anchors used to accept the bare content words 风险 and 波动, so a generic answer was
+ * one anchor away from passing: "半导体指数期权的风险主要有几个方面，波动和估值都值得关注。需要更多信息
+ * 才能展开。" satisfied anchors 1 and 2 and only missed `semiconductor_options_risk_answer_incomplete`
+ * because two *other* checks happened to refuse it. Anchors 1 and 2 now require a named risk driver,
+ * with the English wording of the renderer covered too.
+ */
 function extractsSemiconductorOptionsRiskList(answerText: string): boolean {
   const riskAnchors = [
-    /(?:半导体|芯片|SOXX|SMH|NVDA).{0,32}(?:风险|波动|财报|估值|集中度|供需|capex|AI)/iu,
-    /(?:指数期权|期权|VIX|IV|skew|偏斜|期限结构|gamma|dealer).{0,40}(?:风险|波动|挤压|对冲|到期)/iu,
-    /(?:利率|美元|流动性|宏观|美债|收益率|DXY|credit|信用).{0,36}(?:风险|压力|传导|冲击)/iu,
+    /(?:半导体|芯片|SOXX|SMH|NVDA|semiconductor).{0,32}(?:财报|指引|估值|集中度|供需|capex|AI|宽度|beta|breadth|earnings|guidance|valuation|concentration)/iu,
+    /(?:指数期权|期权|VIX|IV|skew|偏斜|期限结构|gamma|dealer|options).{0,40}(?:挤压|对冲|到期|偏斜|期限结构|gamma|dealer|skew|term structure|put-call|pin)/iu,
+    /(?:利率|美元|流动性|宏观|美债|收益率|DXY|credit|信用|macro|rates?|liquidity).{0,36}(?:压力|传导|冲击|信用利差|transmission|pressure|spread|amplif)/iu,
   ];
   return riskAnchors.filter((pattern) => pattern.test(answerText)).length >= 2;
 }
@@ -501,7 +878,7 @@ export function findVisibleAnswerAdoptionGateFailures(params: {
     if (CHINESE_POSITION_ACTION_PATTERN.test(params.answerText)) {
       failures.push("chinese_direct_position_action_language");
     }
-    if (CHINESE_ACTION_FRAMEWORK_PATTERN.test(params.answerText)) {
+    if (prescribesChineseActionFramework(params.answerText)) {
       failures.push("chinese_action_framework_language");
     }
   }
@@ -536,7 +913,7 @@ function renderPortfolioRiskFrameworkReply(userMessage: string): string {
 }
 
 function renderSinglePositionRiskFrameworkReply(userMessage: string): string {
-  const ticker = mentionedKnownTickers(userMessage)[0] ?? "这个标的";
+  const ticker = mentionedInstrumentNames(userMessage)[0] ?? "这个标的";
   if (!prefersChinese(userMessage)) {
     return [
       `Direct answer: ${ticker} loss alone is not a reason to average down. Default risk gate: add-qualification = not passed until thesis, position weight, and forced-risk inputs are checked.`,
@@ -550,7 +927,7 @@ function renderSinglePositionRiskFrameworkReply(userMessage: string): string {
     `风险结论：${ticker} 亏 20% 本身不是补仓理由。默认风险门：补仓资格=未通过，直到你把 thesis、仓位占比和强制风险补齐。`,
     "三档决策树：A. 红灯：有杠杆/期权、仓位对账户太重、快到强平/到期，或者说不清买入 thesis。目标先变成账户风险控制，不能把“想回本”当策略。B. 黄灯：thesis 没坏，但估值被重估或市场流动性在压缩；先做研究复核，等财报/指引/估值证据更新后再谈新增风险。C. 绿灯：thesis 仍成立、单票仓位仍在你的风险预算内、没有杠杆/期权强制风险，且最新数据支持原逻辑，才有资格讨论新的风险预算。",
     "具体阈值：如果单票仓位已经超过你给账户设的上限，或一次下跌已经打到最大可承受回撤，就先按风险预算违约处理；如果没有自己的上限，我会先让你定组合占比、最大回撤和持有期限，再做判断。",
-    "你下一条直接发：总资产或组合占比、NVDA 成本区间、买入 thesis、持有期限、最大可承受回撤、是否有杠杆/期权，以及最近财报/指引/估值数据时间戳。",
+    `你下一条直接发：总资产或组合占比、${ticker} 成本区间、买入 thesis、持有期限、最大可承受回撤、是否有杠杆/期权，以及最近财报/指引/估值数据时间戳。`,
     "我拿到后给你四项：thesis 是否还成立、风险预算是否违约、哪些证据会推翻原判断、接下来优先盯什么；不给执行口令。",
   ].join("\n\n");
 }
@@ -602,26 +979,47 @@ function extractNumericValues(text: string): number[] {
     .filter((value) => Number.isFinite(value));
 }
 
+/** Words that mean the second number is a decrease. Everything else in a trend phrase means growth. */
+const ARITHMETIC_DECREASE_PATTERN =
+  /^(?:净减|减少|减少了|跌了|跌|降了|降|下降|少了|回落|亏损|decreased?|declined|fell|fallen|dropped?|lost)$/iu;
+
 function extractArithmeticBaseAndDelta(text: string): { base: number; delta: number } | null {
   const normalized = text
     .replace(/(?:探针|复测)[A-Z]\d+/giu, "")
     .replace(/\bexternal-canary-[a-z]\d+\b/giu, "")
     .replace(/[，,]/gu, "");
-  const netIncreaseMatch = normalized.match(
-    /(?<base>\d+).{0,20}(?:净增|新增|增加|涨了|涨|增长|多了|\+)\s*(?<delta>\d+)/u,
+  // The gap between the base and the trend word must contain no digit, so the base is the number
+  // *immediately* before the trend word rather than the leftmost number in the whole message.
+  // With a plain `.{0,20}` there, "2026年6818一天净增46条" took 2026 as the base and answered
+  // 46/2026 = 2.27%, and "9月20日6818一天净增46条" took 9 and answered 46/9 = 511.11% -- both
+  // plausible-looking numbers computed from the wrong pair, which is worse than admitting the
+  // question could not be parsed.
+  const trendMatch = normalized.match(
+    /(?<base>\d+)[^\d]{0,20}(?<word>净增|新增|增加|涨了|涨|增长|多了|净减|减少|减少了|跌了|跌|降了|降|下降|少了|回落|亏损|\+|\b(?:gained?|grew|grown|increased?|rose|risen|added)\b|\b(?:decreased?|declined|fell|fallen|dropped?|lost)\b)\s*(?<minus>-)?\s*(?<delta>\d+)/iu,
   );
-  if (netIncreaseMatch?.groups) {
-    const base = Number(netIncreaseMatch.groups.base);
-    const delta = Number(netIncreaseMatch.groups.delta);
-    if (Number.isFinite(base) && Number.isFinite(delta) && base > 0 && delta > 0) {
-      return { base, delta };
+  if (trendMatch?.groups) {
+    const base = Number(trendMatch.groups.base);
+    const magnitude = Number(trendMatch.groups.delta);
+    if (Number.isFinite(base) && Number.isFinite(magnitude) && base > 0 && magnitude > 0) {
+      const word = trendMatch.groups.word ?? "";
+      // A decrease used to be impossible to express: the trend list held only increase words, so
+      // "6818一天跌了46条" fell through to the magnitude-only fallback and was reported as +0.67%.
+      const negative = ARITHMETIC_DECREASE_PATTERN.test(word) || trendMatch.groups.minus === "-";
+      return { base, delta: negative ? -magnitude : magnitude };
     }
   }
 
   const filtered = extractNumericValues(text).filter((value) => value >= 10);
   if (filtered.length >= 2) {
     const sorted = [...filtered].toSorted((a, b) => b - a);
-    return { base: sorted[0], delta: sorted[sorted.length - 1] };
+    const base = sorted[0];
+    const magnitude = sorted[sorted.length - 1];
+    // Same sign bug on the fallback path: no trend phrase was recognised at all, but if the message
+    // plainly says the number went down, the ratio is negative.
+    const negative =
+      /净减|减少|跌了|跌|降了|降|下降|少了|回落|亏损/u.test(text) ||
+      /\b(?:decreased?|declined|fell|fallen|dropped?|lost)\b/iu.test(text);
+    return { base, delta: negative ? -magnitude : magnitude };
   }
   return null;
 }

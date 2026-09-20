@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { resolveStateDir } from "../config/paths.js";
 import { withFileLock } from "../infra/file-lock.js";
 import { ApiCallError, parseApiRetryAfter, type ApiFetch } from "./api-call-contract.js";
 import {
@@ -10,6 +9,11 @@ import {
   FINANCE_SOURCE_QUOTA_POLICIES,
   type FinanceQuotaPolicy,
 } from "./finance-source-quota-policy.js";
+import {
+  financeQuotaProbesDir,
+  financeQuotaStateDir,
+  resolveFinanceStateDir,
+} from "./finance-state-dir.js";
 
 type QuotaEvent = { at: number; weight: number; reservationId?: string };
 type QuotaState = {
@@ -81,6 +85,50 @@ function requestWeight(policy: FinanceQuotaPolicy, url: URL): number {
 }
 
 /** Shared local-process and cross-process quota state; no credentials or request URLs are stored. */
+/**
+ * A policy is configuration, and a degenerate one used to surface as a hang rather than as an error.
+ *
+ * Measured: `tokenBucket.refillPerSecond: 0` made the wait `Infinity` — a bucket that never refills
+ * can never admit a call it has already spent, so the guard waited forever (Node clamps the timer and
+ * the loop keeps asking). A non-finite `minIntervalMs`, window `durationMs` or window `limit` turned
+ * the pacing arithmetic into `NaN` instead. And `windows: []` with no token bucket admitted every
+ * call: the guard ran, applied no constraint, and reported success eight times out of eight.
+ *
+ * `retention()` above already treats an empty `windows` as a case needing its own fallback
+ * (`Math.max(minute, ...)`), so "no windows" is not a supported way to declare "no limits" — and
+ * neither is a bucket that cannot refill. Validate once at construction so the failure is a readable
+ * configuration error instead of an unbounded wait at call time.
+ */
+function assertUsablePolicy(policy: FinanceQuotaPolicy): void {
+  const unusable = (what: string) => new Error(`quota policy ${policy.id} is unusable: ${what}`);
+  if (!Number.isFinite(policy.minIntervalMs) || policy.minIntervalMs < 0) {
+    throw unusable("minIntervalMs must be a non-negative number");
+  }
+  for (const window of policy.windows) {
+    if (!Number.isFinite(window.durationMs) || window.durationMs <= 0) {
+      throw unusable("window.durationMs must be a positive number");
+    }
+    if (!Number.isFinite(window.limit) || window.limit < 0) {
+      throw unusable("window.limit must be a non-negative number");
+    }
+  }
+  if (policy.tokenBucket) {
+    if (!Number.isFinite(policy.tokenBucket.capacity) || policy.tokenBucket.capacity < 0) {
+      throw unusable("tokenBucket.capacity must be a non-negative number");
+    }
+    if (
+      !Number.isFinite(policy.tokenBucket.refillPerSecond) ||
+      policy.tokenBucket.refillPerSecond <= 0
+    ) {
+      throw unusable("tokenBucket.refillPerSecond must be a positive number");
+    }
+  }
+  // Deliberately NOT required: a window or a bucket. A policy with `windows: []` is a supported
+  // declaration -- "governed by the venue cooldown, not by a window" -- and the Bybit cooldown test
+  // relies on it. An earlier version of this check demanded one and broke that case, which is why the
+  // tests are the judge here rather than my reading of the shape.
+}
+
 export function createFinanceQuotaGuard(
   options: {
     stateDir?: string;
@@ -88,10 +136,13 @@ export function createFinanceQuotaGuard(
     now?: () => number;
   } = {},
 ) {
-  const stateDir = options.stateDir ?? resolveStateDir();
+  const stateDir = options.stateDir ?? resolveFinanceStateDir().directory;
   const policies = options.policies ?? FINANCE_SOURCE_QUOTA_POLICIES;
+  for (const policy of policies) {
+    assertUsablePolicy(policy);
+  }
   const now = options.now ?? Date.now;
-  const directory = path.join(stateDir, "finance-caseflow", "quota-state");
+  const directory = financeQuotaStateDir(stateDir);
 
   async function read(file: string, policy: FinanceQuotaPolicy): Promise<QuotaState> {
     let state: QuotaState = {
@@ -132,7 +183,7 @@ export function createFinanceQuotaGuard(
       }
     }
     // Bring this session's real measurements into the budget instead of resetting usage at rollout.
-    const probeDir = path.join(stateDir, "finance-caseflow", "quota-probes");
+    const probeDir = financeQuotaProbesDir(stateDir);
     const names = await fs.readdir(probeDir).catch(() => [] as string[]);
     const seen = new Set<string>();
     state.importedProbeFiles ??= [];

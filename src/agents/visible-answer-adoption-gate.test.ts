@@ -659,3 +659,414 @@ describe("visible answer adoption gate", () => {
     ).toEqual([]);
   });
 });
+
+/**
+ * `single_stock_loss_reply_missing_concrete_risk_triage` exists to reject exactly the answer below --
+ * generic risk framework filler for a loss-recovery ask. Each of its four requirements was satisfied
+ * by a token carrying none of the meaning, so the filler was admitted with `failures=[]`:
+ *
+ *   - `默认风险门` matched as a bare phrase, with no gate verdict after it;
+ *   - `A[.、]` matched a single list bullet (and the "A." inside any ticker ending in A);
+ *   - the forced-risk branch matched the bare noun `期权`;
+ *   - the next-inputs branch matched the bare noun `持有期限`.
+ *
+ * The second half is the over-trigger guard: real triage written with only A./B./C., only ①②③, or
+ * without the phrase 默认风险门 must still be adopted.
+ */
+describe("single-stock loss triage is judged by construction, not by the field names", () => {
+  const ask = "我NVDA亏20%，该割肉还是补仓？";
+
+  const triageFailures = (answerText: string) =>
+    findVisibleAnswerAdoptionGateFailures({ userMessage: ask, answerText });
+
+  const filler = [
+    "先给一个通用风险框架。默认风险门需要重新评估。A. 第一，注意期权这类工具的风险。B. 第二，注意仓位管理。C. 第三，关注持有期限。具体结论要等更多信息。",
+    "关于 NVDA 我建议先看风险。默认风险门：需要重新判断。A. 波动可能变大。B. 市场情绪不稳定。C. 可以再观察。期权、持有期限都要考虑。",
+    "NVDA 需要看仓位、成本、持有期限、期权，还有风险预算。默认风险门要重新判断。A. 观察。",
+  ];
+
+  for (const answerText of filler) {
+    it(`refuses the filler "${answerText.slice(0, 24)}…"`, () => {
+      expect(triageFailures(answerText)).toContain(
+        "single_stock_loss_reply_missing_concrete_risk_triage",
+      );
+    });
+  }
+
+  const realTriage = [
+    // A./B./C. only, no 红黄绿.
+    "默认风险门：补仓资格=未通过，直到补齐 thesis 和仓位。A. 若单票仓位已经超过你给账户设的上限，先按风险预算违约处理。B. 若 thesis 没坏只是估值重估，先做研究复核。C. 若说不清买入 thesis，先控制账户风险。你下一条直接发：组合占比、成本区间、持有期限、最大可承受回撤。",
+    // ①②③ only.
+    "亏损本身不是补仓理由。默认风险门：补仓资格=未通过。① 有杠杆/期权时先降风险。② 单票仓位超过上限时先按违约处理。③ 需要你补：总资产、成本区间、持有期限。",
+    // No 默认风险门 wording at all.
+    "补仓资格=未通过。三档：A. 红灯：有杠杆/期权。B. 黄灯：估值重估。C. 绿灯：thesis 成立。你下一条直接发：组合占比、成本区间、持有期限、最大可承受回撤。",
+    // Forced risk introduced by 是否/涉及.
+    "默认风险门：不通过。决策树：A. 红灯：是否涉及杠杆或保证金。B. 黄灯：仓位超过上限。C. 绿灯：仍在风险预算内。需要你补：总资产、成本区间、持有期限。",
+  ];
+
+  for (const answerText of realTriage) {
+    it(`adopts the triage "${answerText.slice(0, 24)}…"`, () => {
+      expect(triageFailures(answerText)).not.toContain(
+        "single_stock_loss_reply_missing_concrete_risk_triage",
+      );
+    });
+  }
+});
+
+/**
+ * Five completeness / anti-filler checks, each defeated by a token that carries none of the meaning.
+ * Three of the fillers below were admitted with `failures=[]`; the other two were refused only by
+ * *other* checks, so the specific check was dead while the outcome looked right.
+ *
+ * The sharpest one is a single word: the answer the existing test refuses becomes admitted when
+ * "建议先明确使用场景" is written as "建议**先看**使用场景", because the bare verb 先看 was in the
+ * `DIRECT_VISIBLE_VALUE_PATTERN` whitelist.
+ */
+describe("completeness checks are satisfied by construction, not by the field names", () => {
+  const filler = [
+    {
+      reason: "daily_semiconductor_options_format_missing",
+      ask: "每天自动产出半导体指数期权的日报格式。",
+      // Bare 每天 + 半导体 + 期权 + 结论/来源 was enough for all four requirements.
+      answer: "每天看半导体指数期权的风险，结论稍后给。来源待补。",
+    },
+    {
+      reason: "semiconductor_options_risk_answer_incomplete",
+      ask: "半导体指数期权要看哪三个风险？",
+      // Anchors 1 and 2 accepted the bare content words 风险 and 波动.
+      answer: "半导体指数期权的风险主要有几个方面，波动和估值都值得关注。需要更多信息才能展开。",
+    },
+    {
+      reason: "vague_conservative_nonanswer_without_useful_next_step",
+      ask: "这个风险怎么看？",
+      // Bare 下一步 / 第一 counted as "a useful next step".
+      answer: "这个问题比较复杂，取决于很多因素，需要更多信息。第一步先明确目标，下一步再看。",
+    },
+    {
+      reason: "generic_professional_filler_without_answer_value",
+      ask: "帮我改一下日报，怎么更有用？",
+      // The bare verb 先看 counted as "answer value".
+      answer:
+        "日报要更有用，需要综合考虑目标、受众和结构，这个问题不能一概而论。建议先看使用场景。",
+    },
+    {
+      reason: "provider_council_arbitration_answer_missing",
+      ask: "Kimi 和 MiniMax 意见不一致，怎么裁决？",
+      // Bare 证据排序 / 本地 gate satisfied both the terms and the decider requirement.
+      answer: "证据排序上要谨慎，本地 gate 需要注意。",
+    },
+  ];
+
+  for (const { reason, ask, answer } of filler) {
+    it(`refuses the filler for ${reason}`, () => {
+      expect(
+        findVisibleAnswerAdoptionGateFailures({ userMessage: ask, answerText: answer }),
+      ).toContain(reason);
+    });
+  }
+
+  it("still refuses the filler when the generic verb is swapped in", () => {
+    // The one-word difference that used to flip the verdict.
+    const ask = "帮我改一下日报，怎么更有用？";
+    for (const answer of [
+      "日报要更有用，需要综合考虑目标、受众和结构，这个问题不能一概而论。建议先明确使用场景。",
+      "日报要更有用，需要综合考虑目标、受众和结构，这个问题不能一概而论。建议先看使用场景。",
+      "日报要更有用，需要综合考虑目标、受众和结构，这个问题不能一概而论。建议先做优化。",
+    ]) {
+      expect(
+        findVisibleAnswerAdoptionGateFailures({ userMessage: ask, answerText: answer }),
+      ).toContain("generic_professional_filler_without_answer_value");
+    }
+  });
+
+  /**
+   * The gate must not produce a replacement that its own checks refuse. Tightening the five checks
+   * above is exactly the change that can break this, so the property is pinned directly rather than
+   * inferred from the renderers' wording.
+   */
+  it("produces replacements that pass the gate again", () => {
+    for (const { ask, answer } of filler) {
+      const decision = applyVisibleAnswerAdoptionGate({ userMessage: ask, answerText: answer });
+      expect(decision.status).toBe("replaced");
+      expect(
+        findVisibleAnswerAdoptionGateFailures({ userMessage: ask, answerText: decision.text }),
+      ).toEqual([]);
+    }
+  });
+
+  it("keeps the position-risk replacement self-consistent too", () => {
+    const ask = "我持有 QQQ、TLT、NVDA，风险怎么看？";
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage: ask,
+      answerText: "直接结论：现在不能把它翻译成加仓/减仓/持有指令；能给的是研究排序。",
+    });
+    expect(
+      findVisibleAnswerAdoptionGateFailures({ userMessage: ask, answerText: decision.text }),
+    ).toEqual([]);
+  });
+
+  /**
+   * Both semiconductor ask patterns were Chinese-only while the renderers have an English branch, so
+   * the same question was checked in Chinese and unchecked in English -- the same asymmetry recorded
+   * for the arithmetic ask. These cases fail without the English alternatives in the ask patterns.
+   */
+  it("recognises the English asks for the same two checks", () => {
+    expect(
+      findVisibleAnswerAdoptionGateFailures({
+        userMessage: "Give me a daily output format for semiconductor and index options research.",
+        answerText: "I will look at semiconductor options risk daily; conclusion later.",
+      }),
+    ).toContain("daily_semiconductor_options_format_missing");
+
+    expect(
+      findVisibleAnswerAdoptionGateFailures({
+        userMessage: "Which three risks matter most for semiconductor index options?",
+        answerText:
+          "There are several risk aspects for semiconductor index options; volatility and valuation are worth watching.",
+      }),
+    ).toContain("semiconductor_options_risk_answer_incomplete");
+  });
+
+  it("produces self-consistent replacements for the English asks", () => {
+    for (const ask of [
+      "Give me a daily output format for semiconductor and index options research.",
+      "Which three risks matter most for semiconductor index options?",
+    ]) {
+      const decision = applyVisibleAnswerAdoptionGate({
+        userMessage: ask,
+        answerText: "Not sure yet.",
+      });
+      expect(decision.status).toBe("replaced");
+      expect(
+        findVisibleAnswerAdoptionGateFailures({ userMessage: ask, answerText: decision.text }),
+      ).toEqual([]);
+    }
+  });
+});
+
+/**
+ * The instrument detector was a hard-coded three-symbol list (QQQ/TLT/NVDA), so every check built on
+ * it only ever saw those three. Measured, with one and the same pure-filler answer:
+ *
+ *   "我 NVDA 亏了 20%，该割肉还是补仓？"  -> refused
+ *   AAPL / TSLA / MSFT / 台积电 / 腾讯     -> admitted with failures=[]
+ *
+ * and the leak check had the mirror problem: an answer that dragged in AAPL while the user asked
+ * about NVDA produced no leak at all.
+ *
+ * The second half is the over-trigger guard: the detector is now general, so it must not read an
+ * acronym as a ticker ("HY spread") and must not treat a portfolio question as a single position.
+ */
+describe("the instrument detector is general, not a three-symbol list", () => {
+  const filler =
+    "先给一个通用风险框架。默认风险门需要重新评估。A. 第一，注意期权这类工具的风险。B. 第二，注意仓位管理。C. 第三，关注持有期限。具体结论要等更多信息。";
+
+  const lossAsks = [
+    "我 NVDA 亏了 20%，该割肉还是补仓？",
+    "我 AAPL 亏了 20%，该割肉还是补仓？",
+    "我 TSLA 亏了 20%，该割肉还是补仓？",
+    "我 MSFT 亏了 20%，该割肉还是补仓？",
+    "我 台积电 亏了 20%，该割肉还是补仓？",
+    "我 腾讯 亏了 20%，该割肉还是补仓？",
+    // Names no instrument at all, but is still one position, not a book.
+    "我亏了 20%，该割肉还是补仓？",
+  ];
+
+  for (const ask of lossAsks) {
+    it(`runs the triage check for "${ask}"`, () => {
+      expect(
+        findVisibleAnswerAdoptionGateFailures({ userMessage: ask, answerText: filler }),
+      ).toContain("single_stock_loss_reply_missing_concrete_risk_triage");
+    });
+  }
+
+  it("detects a leak of a ticker outside the old list", () => {
+    expect(
+      findVisibleAnswerAdoptionGateFailures({
+        userMessage: "我 NVDA 亏了 20%，该割肉还是补仓？",
+        answerText: "NVDA 亏 20% 本身不是补仓理由。顺便说，AAPL 现在估值更便宜。",
+      }),
+    ).toContain("unasked_ticker_context_bleed_in_position_reply");
+  });
+
+  const acronymAnswers = [
+    "NVDA 亏 20% 本身不是补仓理由。当前 IV 偏高、VIX 上行、DXY 走强，都要看时间戳。",
+    "NVDA 亏 20% 不是补仓理由。ETF 层面的集中度、EPS 指引、ROE 趋势都要核。",
+    "NVDA 亏 20% 不是补仓理由。AI capex 叙事和 10Y 美债收益率是主要变量。",
+    // The measured false positive: HY is not a symbol and is not in the exclusion set either.
+    "NVDA 亏 20% 不是补仓理由。先看 10Y、DXY、HY spread，再谈风险预算。",
+  ];
+
+  for (const answer of acronymAnswers) {
+    it(`does not read an acronym as a ticker in "${answer.slice(0, 26)}…"`, () => {
+      expect(
+        findVisibleAnswerAdoptionGateFailures({
+          userMessage: "我 NVDA 亏了 20%，该割肉还是补仓？",
+          answerText: answer,
+        }),
+      ).not.toContain("unasked_ticker_context_bleed_in_position_reply");
+    });
+  }
+
+  it("does not treat a portfolio question as a single position", () => {
+    for (const ask of [
+      "我组合亏了 20%，该割肉还是补仓？",
+      "我持有的组合亏了 20%，该不该减仓？",
+      "我 QQQ、TLT、NVDA 都亏了 20%，该怎么调？",
+    ]) {
+      expect(
+        findVisibleAnswerAdoptionGateFailures({ userMessage: ask, answerText: filler }),
+      ).not.toContain("single_stock_loss_reply_missing_concrete_risk_triage");
+    }
+  });
+
+  it("names the ticker the user asked about, not a hard-coded one", () => {
+    // The single-position renderer used to end with "…、NVDA 成本区间、…" for every ask, which the
+    // leak check then reported as an unasked ticker once the detector became general.
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage: "我 AAPL 亏了 20%，该割肉还是补仓？",
+      answerText: filler,
+    });
+    expect(decision.status).toBe("replaced");
+    expect(decision.text).toContain("AAPL 成本区间");
+    expect(decision.text).not.toContain("NVDA 成本区间");
+  });
+
+  it("produces self-consistent replacements for every loss ask", () => {
+    for (const ask of lossAsks) {
+      const decision = applyVisibleAnswerAdoptionGate({ userMessage: ask, answerText: filler });
+      expect(decision.status).toBe("replaced");
+      expect(
+        findVisibleAnswerAdoptionGateFailures({ userMessage: ask, answerText: decision.text }),
+      ).toEqual([]);
+    }
+  });
+});
+
+/**
+ * The detector only saw Latin tickers and company names, so a book of Chinese indices read as a
+ * single unnamed position: measured, "我 沪深300 和 中证500 都亏了 20%，该割肉还是补仓？" was forced
+ * through the single-stock triage check, and `looksLikeStandalonePortfolioRiskAsk` -- which needs two
+ * names -- never fired, so a multi-index book got the generic position reply instead of the portfolio
+ * framework.
+ */
+describe("indices and funds count as named instruments", () => {
+  const filler =
+    "先给一个通用风险框架。默认风险门需要重新评估。A. 第一，注意期权这类工具的风险。B. 第二，注意仓位管理。C. 第三，关注持有期限。具体结论要等更多信息。";
+
+  const portfolioAsks = [
+    "我持有 QQQ、TLT、NVDA，风险怎么看？",
+    "我持有 沪深300 和 中证500，风险怎么看？",
+    "我持有 沪深300ETF 和 创业板ETF，风险怎么看？",
+    "我持有 黄金ETF 和 纳指ETF，风险怎么看？",
+  ];
+
+  for (const ask of portfolioAsks) {
+    it(`routes "${ask}" to the portfolio framework`, () => {
+      // The generic entry-exit answer is refused for these asks, so the gate must pick a replacement.
+      const decision = applyVisibleAnswerAdoptionGate({
+        userMessage: ask,
+        answerText:
+          "能弄好，而且出口必须简单：你发一句话，系统内部再复杂，也只能给你一个有用答案。",
+      });
+      expect(decision.status).toBe("replaced");
+      expect(decision.text).toContain("优先级先看利率");
+    });
+  }
+
+  it("does not force a multi-index book through the single-stock triage check", () => {
+    for (const ask of [
+      "我 沪深300 和 中证500 都亏了 20%，该割肉还是补仓？",
+      "我 沪深300ETF 和 创业板ETF 都亏了 20%，该割肉还是补仓？",
+    ]) {
+      expect(
+        findVisibleAnswerAdoptionGateFailures({ userMessage: ask, answerText: filler }),
+      ).not.toContain("single_stock_loss_reply_missing_concrete_risk_triage");
+    }
+  });
+
+  it("detects a leak of an index name in both directions", () => {
+    expect(
+      findVisibleAnswerAdoptionGateFailures({
+        userMessage: "我 NVDA 亏了 20%，该割肉还是补仓？",
+        answerText: "NVDA 亏 20% 不是补仓理由。顺便说，沪深300 的估值更低。",
+      }),
+    ).toContain("unasked_ticker_context_bleed_in_position_reply");
+
+    expect(
+      findVisibleAnswerAdoptionGateFailures({
+        userMessage: "我 沪深300 亏了 20%，该割肉还是补仓？",
+        answerText: "沪深300 亏 20% 不是补仓理由。顺便说，NVDA 的估值更低。",
+      }),
+    ).toContain("unasked_ticker_context_bleed_in_position_reply");
+  });
+
+  /**
+   * The over-trigger guard for the widened pattern. 科创 is not matched on its own because it is a
+   * substring of 科技创新; bare `指数` and bare `ETF` are not matched because neither names an
+   * instrument -- and counting bare `ETF` would re-open the acronym false positive.
+   */
+  it("does not read a generic word as a named instrument", () => {
+    for (const ask of ["帮我写一份关于科技创新的日报。", "这个指数是什么意思？", "ETF 是什么？"]) {
+      const decision = applyVisibleAnswerAdoptionGate({ userMessage: ask, answerText: filler });
+      expect(decision.text).not.toContain("优先级先看利率");
+    }
+  });
+});
+
+/**
+ * The bare action-framework list, and the English action pattern.
+ *
+ * `CHINESE_ACTION_FRAMEWORK_PATTERN` was a pure alternation, so it refused an answer for *naming* the
+ * behaviour it was warning about -- measured: "抄底是最大的行为风险，历史上胜率并不高…",
+ * "满仓和梭哈是账户归零的主要原因，这类行为应当避免。", "砍仓这件事在恐慌里最容易被做错…" and
+ * "摊低成本本身不是错…" were all reported as `chinese_action_framework_language`. Those are the
+ * answers the product wants.
+ *
+ * The English pattern was wrong in both directions at once: bare `can` read capability as instruction
+ * ("The portfolio can hold its value…"), while `would` / `plan to` and the ordinary verbs (`trim`,
+ * `lighten`, `exit`) were missing, so "I would trim NVDA here." was admitted.
+ */
+describe("action language is read as a stance, not as a word", () => {
+  const ask = "我NVDA亏了20%，该割肉还是补仓？";
+  const actionReasons = (answerText: string) =>
+    findVisibleAnswerAdoptionGateFailures({ userMessage: ask, answerText }).filter((reason) =>
+      /action_framework|position_action/.test(reason),
+    );
+
+  const warnings = [
+    "抄底是最大的行为风险，历史上胜率并不高，它属于行为偏差而不是策略。",
+    "满仓和梭哈是账户归零的主要原因，这类行为应当避免。",
+    "砍仓这件事在恐慌里最容易被做错，先想清楚再动。",
+    "摊低成本本身不是错，错在没有先定义失效条件。",
+  ];
+
+  for (const answer of warnings) {
+    it(`does not refuse a warning that names the behaviour: "${answer.slice(0, 18)}…"`, () => {
+      expect(actionReasons(answer)).toEqual([]);
+    });
+  }
+
+  it("still refuses a clause that names an action framework without a warning", () => {
+    expect(actionReasons("减亏两条路：一是止损，二是摊低成本。")).toContain(
+      "chinese_action_framework_language",
+    );
+    // A bare imperative with no modal is the case the modal-based pattern cannot see.
+    expect(actionReasons("满仓干。")).toContain("chinese_action_framework_language");
+  });
+
+  it("does not read an English capability statement as a recommendation", () => {
+    expect(actionReasons("The portfolio can hold its value if rates fall.")).toEqual([]);
+    expect(actionReasons("The position can recover, so waiting is reasonable.")).toEqual([]);
+  });
+
+  it("reads the English recommendation verbs it used to miss", () => {
+    for (const answer of [
+      "I would trim NVDA here and lighten the position.",
+      "My plan is to exit above 520 and add on weakness.",
+      "You should not buy into a falling knife.",
+    ]) {
+      expect(actionReasons(answer)).toContain("english_direct_position_action_language");
+    }
+  });
+});

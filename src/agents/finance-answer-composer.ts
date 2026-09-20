@@ -19,6 +19,7 @@
 // candidate answer object plus the grounding it used, so the existing audit
 // (buildPipelineResult) stays the terminal authority.
 
+import { checkAnswerGrounding, type GroundingGateResult } from "./finance-answer-grounding-gate.js";
 import type { FinanceDataGatewaySnapshot } from "./finance-data-gateway.js";
 
 /**
@@ -48,6 +49,14 @@ export type FinanceComposeResult = {
   groundingContext: string;
   /** Honest data posture derived from the snapshot, not from the model. */
   dataPosture: "grounded_ready" | "grounded_needs_review" | "data_blocked" | "no_snapshot";
+  /**
+   * Output-side check of the composed answer against the snapshot.
+   *
+   * Reported, never applied: this gate does not rewrite the answer. A verdict other than
+   * `verified` is a reason for the caller to rewrite, mark, or refuse — not a signal that the
+   * text has already been made safe.
+   */
+  grounding: GroundingGateResult;
   modelUsed: string;
 };
 
@@ -58,6 +67,11 @@ const RESEARCH_ONLY_SYSTEM_PREAMBLE = [
   "If required data is missing or blocked, say exactly what is missing and what can be checked next;",
   "still give a useful research-grade decision packet (evidence status, thesis/counter-thesis,",
   "catalyst/invalidation, portfolio impact, next safe work).",
+  "End every answer with a fenced `figures` block listing every number you used, as JSON:",
+  '[{"kind":"observed","name":"last_price","value":212.44,"unit":"USD"}].',
+  "Use kind `observed` ONLY for numbers taken from the grounding context above;",
+  "kind `derived` for numbers you computed, `proposed` for scenarios, `cited` for third-party,",
+  "`count` for tallies. An answer without this block cannot be checked and will be refused.",
 ].join(" ");
 
 /**
@@ -149,6 +163,11 @@ export async function composeFinanceAnswer(
     candidateAnswer,
     groundingContext,
     dataPosture: derivePosture(request.snapshot),
+    grounding: checkAnswerGrounding({
+      answerText: candidateAnswer,
+      askText: ask,
+      ...(request.snapshot ? { snapshot: request.snapshot } : {}),
+    }),
     modelUsed: request.model,
   };
 }

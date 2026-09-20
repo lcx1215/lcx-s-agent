@@ -79,3 +79,54 @@ describe("analystTargetSignal", () => {
     expect(Number.isFinite(signal.confidence)).toBe(true);
   });
 });
+
+/**
+ * The three tunables are caller-supplied and were unvalidated, so a degenerate one manufactured a
+ * vote instead of withholding one. Measured before the fix:
+ *
+ *   fullCredibilityCount: -10, 100 analysts  -> confidence = -2.025
+ *   deadbandFraction: -0.03, target 2% BELOW  -> direction = "buy"   (both comparisons hold, first wins)
+ *   maxConfidence: 5                          -> confidence = 5
+ *
+ * An incoherent configuration yields no opinion rather than a clamped one: clamping would honour part
+ * of a contradictory request and still vote, which is the "manufactures conviction" failure this
+ * module's own deadband exists to avoid.
+ */
+describe("an incoherent configuration withholds a vote instead of manufacturing one", () => {
+  const coherent = (options: Parameters<typeof analystTargetSignal>[1]) =>
+    analystTargetSignal(summary(115, 10), options);
+
+  it("refuses a negative credibility count instead of emitting a negative confidence", () => {
+    const signal = analystTargetSignal(summary(120, 100), {
+      observedAt: at,
+      fullCredibilityCount: -10,
+    });
+    expect(signal.direction).toBe("hold");
+    expect(signal.confidence).toBe(0);
+    expect(signal.ref).toContain("config=incoherent");
+  });
+
+  it("refuses a zero credibility count, which would silently drop the coverage weighting", () => {
+    expect(coherent({ observedAt: at, fullCredibilityCount: 0 }).direction).toBe("hold");
+  });
+
+  it("refuses a negative deadband, which would turn a small drop into a buy", () => {
+    const signal = analystTargetSignal(summary(98, 10), {
+      observedAt: at,
+      deadbandFraction: -0.03,
+    });
+    expect(signal.direction).toBe("hold");
+  });
+
+  it("refuses a confidence ceiling outside [0, 1]", () => {
+    expect(coherent({ observedAt: at, maxConfidence: 5 }).confidence).toBe(0);
+    expect(coherent({ observedAt: at, maxConfidence: -1 }).confidence).toBe(0);
+    expect(coherent({ observedAt: at, maxConfidence: Number.NaN }).confidence).toBe(0);
+  });
+
+  it("still honours every coherent configuration", () => {
+    expect(coherent({ observedAt: at, maxConfidence: 0.3 }).confidence).toBeCloseTo(0.3, 10);
+    expect(coherent({ observedAt: at, deadbandFraction: 0 }).direction).toBe("buy");
+    expect(coherent({ observedAt: at, fullCredibilityCount: 3 }).confidence).toBeGreaterThan(0);
+  });
+});
