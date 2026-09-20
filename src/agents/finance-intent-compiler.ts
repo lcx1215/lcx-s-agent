@@ -209,6 +209,9 @@ export function compileExecutionIntent(
       referencePrice: market.referencePrice,
       referencePriceAt: market.referencePriceAt,
       runAuthorizationId: params.runAuthorizationId,
+      ...(conclusion.invalidationPrice !== undefined
+        ? { stopPrice: conclusion.invalidationPrice }
+        : {}),
       rationale: conclusion.thesis ?? "",
     },
   };

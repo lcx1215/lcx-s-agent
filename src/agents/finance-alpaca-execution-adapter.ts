@@ -147,6 +147,12 @@ export function createAlpacaExecutionAdapter(
       if (intent.orderType === "limit") {
         body.limit_price = String(intent.limitPrice);
       }
+      if (intent.stopPrice !== undefined) {
+        // Sizing assumes a stop exists; the order has to carry it or the
+        // assumption is fiction.
+        body.order_class = "bracket";
+        body.stop_loss = { stop_price: String(intent.stopPrice) };
+      }
 
       // The shared finance fetch seam (`FetchImpl = ApiFetch`) is GET-only: it
       // exists to read market data, and it owns the egress guard every finance

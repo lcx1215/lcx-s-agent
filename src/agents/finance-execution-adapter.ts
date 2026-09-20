@@ -44,6 +44,15 @@ export type FinanceExecutionIntent = Readonly<{
   quantity: number;
   /** Required by `limit` and rejected by `market`; a silent default would change the order. */
   limitPrice?: number;
+  /**
+   * Protective stop to attach at the venue.
+   *
+   * Without it, a position sized from a stop distance has no protection: the
+   * stop exists only as a number used for arithmetic and as a boolean that
+   * satisfies the mandate gate. Sizing from a stop and then placing an order
+   * with none is worse than not asking for one, because it looks controlled.
+   */
+  stopPrice?: number;
   /** Last observed price used for the notional checks. */
   referencePrice: number;
   /** ISO datetime the reference price belongs to. "Now" is never assumed. */
@@ -63,7 +72,43 @@ export type FinanceExecutionIntent = Readonly<{
  */
 export const FINANCE_RISK_BUDGET_ANY_INSTRUMENT = "*" as const;
 
+/**
+ * Whether a human is watching the run.
+ *
+ * This is the one fact about a run that only the caller can know and the ledger cannot infer.
+ * It decides whether the caps below are optional or mandatory, so it is a required field: a
+ * caller that forgets to say gets a compile error, not a silent run with no ceiling.
+ *
+ * - `attended` — someone is watching and can stop it. The caps stay opt-in narrowing.
+ * - `unattended` — a scheduled or autonomous run with nobody to intervene. **Every cap must be
+ *   declared.** See `missingUnattendedCaps`.
+ */
+export const FINANCE_RISK_AUTOMATIONS = ["attended", "unattended"] as const;
+
+export type FinanceRiskAutomation = (typeof FINANCE_RISK_AUTOMATIONS)[number];
+
+/** The caps an `unattended` budget must declare, in the order they are reported. */
+export const FINANCE_RISK_UNATTENDED_REQUIRED_CAPS = [
+  "maxOrderNotional",
+  "maxInstrumentNotional",
+  "maxOrdersPerRun",
+] as const;
+
+export type FinanceRiskCapKey = (typeof FINANCE_RISK_UNATTENDED_REQUIRED_CAPS)[number];
+
+/**
+ * Refusal code per missing cap. A literal map rather than a runtime transformation of the key:
+ * the codes are part of the contract a caller asserts on, so they must be greppable.
+ */
+export const UNATTENDED_CAP_REFUSAL_CODES: Record<FinanceRiskCapKey, string> = {
+  maxOrderNotional: "risk_budget_unattended_requires_max_order_notional",
+  maxInstrumentNotional: "risk_budget_unattended_requires_max_instrument_notional",
+  maxOrdersPerRun: "risk_budget_unattended_requires_max_orders_per_run",
+};
+
 export type FinanceRiskBudget = Readonly<{
+  /** Required: only the caller knows whether anyone is watching. See `FinanceRiskAutomation`. */
+  automation: FinanceRiskAutomation;
   /**
    * Optional caps. Omitting one leaves that dimension uncapped; declare it to narrow. Each cap
    * is still enforced whenever it is present, so a run that states a limit cannot exceed it.
@@ -72,6 +117,10 @@ export type FinanceRiskBudget = Readonly<{
    * by a number the caller never chose and could only discover by reading this file. The caps
    * are now opt-in narrowing rather than imposed defaults: declaring one is what creates the
    * boundary. Nothing else about the checks changed.
+   *
+   * The one exception is `automation: "unattended"`, where an undeclared cap is refused. That
+   * is not an imposed default — it is the caller's own choice to run unattended, and choosing
+   * to run unattended while declining to name a boundary is declining to have one.
    */
   maxOrderNotional?: number;
   maxInstrumentNotional?: number;
@@ -84,7 +133,15 @@ export type FinanceRiskBudget = Readonly<{
   allowedInstruments: readonly string[];
 }>;
 
+/**
+ * The default budget is for an **attended** run: someone is watching, so the caps stay opt-in.
+ *
+ * An unattended run must not reuse this object. It has to be built explicitly with
+ * `automation: "unattended"` and every cap, which is deliberate friction — going unattended
+ * should be an act someone performs on purpose, not a default they inherit.
+ */
 export const DEFAULT_FINANCE_RISK_BUDGET: FinanceRiskBudget = Object.freeze({
+  automation: "attended",
   allowedInstruments: Object.freeze([FINANCE_RISK_BUDGET_ANY_INSTRUMENT] as const),
 });
 
@@ -174,6 +231,26 @@ function admitsInstrument(allowlist: readonly string[], instrument: string): boo
 }
 
 /**
+ * Which caps an `unattended` budget still owes, in declaration order.
+ *
+ * Pure and separately exported so an operator entry can say *which* number is missing instead
+ * of making the caller read the refusal code backward. An `attended` budget owes nothing: the
+ * caps are opt-in narrowing there, and imposing them would be refusing a run over a limit
+ * nobody asked for.
+ */
+export function missingUnattendedCaps(budget: FinanceRiskBudget): readonly FinanceRiskCapKey[] {
+  if (budget.automation !== "unattended") {
+    return [];
+  }
+  const present: Record<FinanceRiskCapKey, boolean> = {
+    maxOrderNotional: isPositiveFinite(budget.maxOrderNotional),
+    maxInstrumentNotional: isPositiveFinite(budget.maxInstrumentNotional),
+    maxOrdersPerRun: isPositiveFinite(budget.maxOrdersPerRun),
+  };
+  return FINANCE_RISK_UNATTENDED_REQUIRED_CAPS.filter((key) => !present[key]);
+}
+
+/**
  * Refusals are named codes and the list is ordered, so a caller can assert on the first
  * cause instead of parsing prose. Nothing is executed until every check has passed.
  */
@@ -235,6 +312,12 @@ function collectRefusalReasons(request: FinanceOrderPlacementRequest): string[] 
   // enforced in full. The former "cap must be declared" checks are deliberately gone: they
   // refused a run over a limit the caller never asked for, which is the opposite of a risk
   // control — a control has to be something someone chose.
+  // An unattended run owes a declared ceiling on every dimension. Reported per cap rather than
+  // as one code so a caller can fix all of them in one pass instead of playing whack-a-mole.
+  for (const cap of missingUnattendedCaps(budget)) {
+    reasons.push(UNATTENDED_CAP_REFUSAL_CODES[cap]);
+  }
+
   if (!admitsInstrument(budget.allowedInstruments, intent.instrument)) {
     reasons.push("risk_budget_instrument_not_allowed");
   }

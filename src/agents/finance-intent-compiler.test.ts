@@ -189,6 +189,33 @@ describe("compileExecutionIntent", () => {
     }
   });
 
+  it("attaches the stop it sized from, so the order is not left bare", () => {
+    // The gate is satisfied by a stop price; if the intent does not carry it,
+    // the position is sized from protection it never receives.
+    const result = compileExecutionIntent({
+      conclusion: equityConclusion,
+      market,
+      equity,
+      runAuthorizationId: "auth-1",
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.intent.stopPrice).toBe(95);
+    }
+  });
+
+  it("leaves the stop off when the class uses a condition instead of a price", () => {
+    const result = compileExecutionIntent({
+      conclusion: valueConclusion,
+      market,
+      equity,
+      runAuthorizationId: "auth-1",
+    });
+    if (result.ok) {
+      expect(result.intent.stopPrice).toBeUndefined();
+    }
+  });
+
   it("reports every refusal at once", () => {
     const result = compileExecutionIntent({
       conclusion: { conclusionId: "c3" },
