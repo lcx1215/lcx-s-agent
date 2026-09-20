@@ -43,6 +43,7 @@ import {
   missingUnattendedCaps,
   placeFinanceOrder,
 } from "../../src/agents/finance-execution-adapter.ts";
+import { evaluateFinanceMandate } from "../../src/agents/finance-mandate.js";
 import {
   appendFinanceExecutionReceipt,
   appendFinancePositionMark,
@@ -72,6 +73,24 @@ export type Options = {
   adapter?: "paper" | "alpaca";
   /** Alpaca only: `paper` (default) or `live`. Live needs a funded AK-prefixed key. */
   alpacaMode?: "paper" | "live";
+  /**
+   * Asset class for the trading mandate gate. The gate only runs when this is
+   * declared: without it the strategy class cannot be determined, and guessing a
+   * class would launder a guess into an enforced decision.
+   */
+  assetClass?: string;
+  /** Risk at stake on this order, as a percentage of equity. Required by the gate. */
+  riskPct?: number;
+  /** Current peak-to-trough drawdown as a positive percentage. */
+  drawdownPct?: number;
+  /** Declared stop. Classes that require a stop refuse without one. */
+  stopPrice?: number;
+  /** Declares that significant ACF/PACF structure was found. Absent = refuse. */
+  hasStructure?: boolean;
+  /** Set when this order adds to an existing losing position. */
+  averagingDown?: boolean;
+  /** Set when size was raised to win back a loss. */
+  revengeSizing?: boolean;
   /** Explicit ledger directory. When omitted, the shared resolver decides. */
   ledgerDirectory?: string;
   json: boolean;
@@ -181,6 +200,36 @@ export function parseArgs(args: readonly string[]): Options {
       }
       options.alpacaMode = next;
       index += 1;
+    } else if (arg === "--asset-class") {
+      options.assetClass = next;
+      index += 1;
+    } else if (arg === "--risk-pct") {
+      const parsed = Number(next);
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        throw new Error("--risk-pct expects a non-negative number");
+      }
+      options.riskPct = parsed;
+      index += 1;
+    } else if (arg === "--drawdown-pct") {
+      const parsed = Number(next);
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        throw new Error("--drawdown-pct expects a non-negative number");
+      }
+      options.drawdownPct = parsed;
+      index += 1;
+    } else if (arg === "--stop-price") {
+      const parsed = Number(next);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        throw new Error("--stop-price expects a positive number");
+      }
+      options.stopPrice = parsed;
+      index += 1;
+    } else if (arg === "--has-structure") {
+      options.hasStructure = true;
+    } else if (arg === "--averaging-down") {
+      options.averagingDown = true;
+    } else if (arg === "--revenge-sizing") {
+      options.revengeSizing = true;
     } else if (arg === "--ledger-dir") {
       options.ledgerDirectory = next?.trim() ?? "";
       index += 1;
@@ -260,6 +309,33 @@ export async function buildFinanceLiveExecutionPayload(options: Options) {
   // codes. The adapter refuses either way; this is so the operator reads "you owe
   // maxOrdersPerRun" instead of reverse-engineering it from a snake_case code.
   const unattendedMissingCaps = missingUnattendedCaps(budget);
+
+  // The mandate runs before the order exists: a rule that only reports
+  // afterwards cannot prevent anything. It is skipped unless an asset class is
+  // declared, because a guess at the class would launder a guess into an
+  // enforced decision. Everything the mandate needs is passed explicitly -
+  // nothing is defaulted to "good enough" so the order can proceed.
+  if (options.assetClass !== undefined) {
+    if (options.riskPct === undefined) {
+      throw new Error("--asset-class requires --risk-pct so the mandate can judge the risk");
+    }
+    const mandate = evaluateFinanceMandate({
+      strategy: { assetClass: options.assetClass },
+      riskFractionOfEquity: options.riskPct / 100,
+      drawdownFraction: (options.drawdownPct ?? 0) / 100,
+      ...(options.stopPrice !== undefined ? { stopLossDefined: true } : {}),
+      ...(options.hasStructure !== undefined
+        ? { hasSignificantAutocorrelation: options.hasStructure }
+        : {}),
+      ...(options.averagingDown !== undefined ? { averagingDown: options.averagingDown } : {}),
+      ...(options.revengeSizing !== undefined ? { revengeSizing: options.revengeSizing } : {}),
+    });
+    if (mandate.verdict !== "pass") {
+      throw new Error(
+        `trading mandate ${mandate.verdict} for class ${String(mandate.strategyClass)}: ${mandate.reasons.join("; ")}`,
+      );
+    }
+  }
 
   const placement = await placeFinanceOrder({
     mode: "live_execution",
