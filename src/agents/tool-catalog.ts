@@ -90,6 +90,25 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     includeInOpenClawGroup: true,
   },
   {
+    id: "mcp_list_tools",
+    label: "mcp_list_tools",
+    description: "List tools on MCP servers declared in tools.mcp.servers (stdio or http)",
+    // Same bucket as `finance_data_connector`, which is the existing "list and call MCP tools
+    // over a declared connector" capability. `runtime` is the exec/process group several
+    // deployments deny wholesale; these tools are gated by config declaration, not by argv.
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    id: "mcp_call_tool",
+    label: "mcp_call_tool",
+    description: "Call a tool on a declared MCP server; undeclared servers are refused",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
     id: "aider",
     label: "aider",
     description: "Run bounded aider edits",
@@ -321,10 +340,37 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     includeInOpenClawGroup: true,
   },
   {
+    id: "finance_research_runs_read",
+    label: "finance_research_runs_read",
+    description:
+      "Read-only recall over stored finance research runs: list the runs, open one run's manifest or response, or search what earlier runs concluded",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    id: "finance_calibration_read",
+    label: "finance_calibration_read",
+    description:
+      "Read-only summary of how accurate this system's own finance calls were: hit rate, Brier score, overconfidence gap, pending sample count, and the conviction floor derived from those outcomes if one can be justified",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
     id: "finance_position_ledger_read",
     label: "finance_position_ledger_read",
     description:
       "Read the durable position book: open positions, average cost, realized and unrealized PnL, marks, the equity curve derived from the same stream, and — on request — a behaviour profile of the recorded fills (disposition effect, turnover, momentum chasing, anchoring)",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    id: "finance_bar_ledger",
+    label: "finance_bar_ledger",
+    description:
+      "Append a daily OHLCV batch to the agent's own bar book, or read recorded bars with their derivation and provenance",
     sectionId: "memory",
     profiles: ["coding"],
     includeInOpenClawGroup: true,

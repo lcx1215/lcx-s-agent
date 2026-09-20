@@ -17,7 +17,10 @@ import { createFinanceArticleExtractCapabilityInputTool } from "./tools/finance-
 import { createFinanceArticleSourceCollectionPreflightTool } from "./tools/finance-article-source-collection-preflight-tool.js";
 import { createFinanceArticleSourceRegistryInspectTool } from "./tools/finance-article-source-registry-inspect-tool.js";
 import { createFinanceArticleSourceRegistryRecordTool } from "./tools/finance-article-source-registry-record-tool.js";
+import { createFinanceBarLedgerTool } from "./tools/finance-bar-ledger-tool.js";
+import { createFinanceCalibrationReadTool } from "./tools/finance-calibration-read-tool.js";
 import { createFinanceChartAnalysisTool } from "./tools/finance-chart-analysis-tool.js";
+import { createFinanceDataConnectorTool } from "./tools/finance-data-connector-inspect-tool.js";
 import { createFinanceDataGatewaySnapshotTool } from "./tools/finance-data-gateway-tool.js";
 import { createFinanceDoctrineTeacherFeedbackCandidateInputReconciliationStatusTool } from "./tools/finance-doctrine-teacher-feedback-candidate-input-reconciliation-status-tool.js";
 import { createFinanceDoctrineTeacherFeedbackCandidateInputReconciliationTool } from "./tools/finance-doctrine-teacher-feedback-candidate-input-reconciliation-tool.js";
@@ -48,7 +51,11 @@ import { createFinancePromotionProposalStatusTool } from "./tools/finance-promot
 import { createFinancePromotionReviewTool } from "./tools/finance-promotion-review-tool.js";
 import { createFinanceRealtimeRefreshTool } from "./tools/finance-realtime-refresh-tool.js";
 import { createFinanceResearchRunTool } from "./tools/finance-research-run-tool.js";
+import { createFinanceResearchRunsReadTool } from "./tools/finance-research-runs-read-tool.js";
 import { createFinanceResearchSourceWorkbenchTool } from "./tools/finance-research-source-workbench-tool.js";
+import { createFinanceSourceHealthReadTool } from "./tools/finance-source-health-read-tool.js";
+import { createFinanceStrategyRuleLedgerReadTool } from "./tools/finance-strategy-rule-ledger-read-tool.js";
+import { createFinanceThesisLedgerReadTool } from "./tools/finance-thesis-ledger-read-tool.js";
 import { createGatewayTool } from "./tools/gateway-tool.js";
 import { createGeospatialSourceRefreshTool } from "./tools/geospatial-source-refresh-tool.js";
 import { createGitHubProjectCapabilityIntakeTool } from "./tools/github-project-capability-intake-tool.js";
@@ -56,12 +63,14 @@ import { createImageTool } from "./tools/image-tool.js";
 import { createLobsterWorkfaceAppTool } from "./tools/lobster-workface-app-tool.js";
 import { createLocalMemoryRecordTool } from "./tools/local-memory-record-tool.js";
 import { createLocalSpecialistTool } from "./tools/local-specialist-tool.js";
+import { createMcpCallToolTool, createMcpListToolsTool } from "./tools/mcp-bridge-tools.js";
 import { createMcpContextTool } from "./tools/mcp-context-tool.js";
 import { createMessageTool } from "./tools/message-tool.js";
 import { createModuleLearningPipelinePlanTool } from "./tools/module-learning-pipeline-plan-tool.js";
 import { createModuleLearningPipelineReviewTool } from "./tools/module-learning-pipeline-review-tool.js";
 import { createNodesTool } from "./tools/nodes-tool.js";
 import { createPdfTool } from "./tools/pdf-tool.js";
+import { createQuantLabTool } from "./tools/quant-lab-tool.js";
 import { createQuantMathTool } from "./tools/quant-math-tool.js";
 import { createResearchDataAutopilotTool } from "./tools/research-data-autopilot-tool.js";
 import { createResearchWebAutopilotTool } from "./tools/research-web-autopilot-tool.js";
@@ -227,6 +236,7 @@ export function createOpenClawTools(options?: {
       config: options?.config,
     }),
     createQuantMathTool(),
+    createQuantLabTool(),
     createReviewTierTool(),
     createReviewPanelTool({
       workspaceDir,
@@ -243,6 +253,7 @@ export function createOpenClawTools(options?: {
     createFinanceDataGatewaySnapshotTool({
       workspaceDir,
     }),
+    createFinanceDataConnectorTool(),
     createFinanceRealtimeRefreshTool({
       workspaceDir,
       ...resolveFinanceRealtimeSourceRegistryOptionsFromEnv(),
@@ -254,7 +265,13 @@ export function createOpenClawTools(options?: {
       slotModels: resolveModelFleetSlotModels(options?.config),
     }),
     createFinancePositionLedgerReadTool({ workspaceDir }),
+    createFinanceBarLedgerTool({ workspaceDir }),
     createFinanceOutcomeLedgerReadTool(),
+    createFinanceSourceHealthReadTool({ workspaceDir }),
+    createFinanceResearchRunsReadTool(),
+    createFinanceCalibrationReadTool(),
+    createFinanceThesisLedgerReadTool({ workspaceDir }),
+    createFinanceStrategyRuleLedgerReadTool(),
     createLocalSpecialistTool({ workspaceDir }),
     createResearchDataAutopilotTool({ workspaceDir }),
     createFinanceChartAnalysisTool({
@@ -371,6 +388,8 @@ export function createOpenClawTools(options?: {
       config: options?.config,
       workspaceDir,
     }),
+    createMcpListToolsTool({ config: options?.config }),
+    createMcpCallToolTool({ config: options?.config }),
     createAiderTool({
       workspaceDir,
     }),
