@@ -85,6 +85,54 @@ export const DEFAULT_FINANCE_CLASS_RULES: Readonly<
   }),
 });
 
+/**
+ * Regime: what the environment is doing, not what to buy.
+ *
+ * This is the local brain's kind of output (macro pressure, ETF regime,
+ * cross-asset liquidity) and it is deliberately a *filter* on the rules rather
+ * than a signal that bypasses them. A regime makes the existing caps stricter;
+ * it never loosens them, because the point of a bad regime is to do less.
+ */
+export const FINANCE_REGIMES = ["normal", "risk_off", "liquidity_tightening"] as const;
+export type FinanceRegime = (typeof FINANCE_REGIMES)[number];
+
+export type FinanceRegimeAdjustment = Readonly<{
+  /** Multiplier on the per-trade risk cap. Always <= 1. */
+  riskFractionMultiplier: number;
+  /** Realised volatility, annualised, at which exposure is scaled down. */
+  volatilityGateFraction: number | null;
+}>;
+
+export const DEFAULT_REGIME_ADJUSTMENTS: Readonly<Record<FinanceRegime, FinanceRegimeAdjustment>> =
+  Object.freeze({
+    normal: Object.freeze({ riskFractionMultiplier: 1, volatilityGateFraction: 0.2 }),
+    risk_off: Object.freeze({ riskFractionMultiplier: 0.5, volatilityGateFraction: 0.15 }),
+    liquidity_tightening: Object.freeze({
+      riskFractionMultiplier: 0.75,
+      volatilityGateFraction: 0.15,
+    }),
+  });
+
+/**
+ * Apply a regime to one class's rules. Only ever tightens: a multiplier above 1
+ * is ignored rather than honoured, so a bad regime input cannot secretly
+ * increase risk.
+ */
+export function applyRegimeToClassRules(
+  rules: FinanceClassRules,
+  regime: FinanceRegime,
+  adjustments: Readonly<
+    Record<FinanceRegime, FinanceRegimeAdjustment>
+  > = DEFAULT_REGIME_ADJUSTMENTS,
+): FinanceClassRules {
+  const adjustment = adjustments[regime];
+  const multiplier = Math.min(1, Math.max(0, adjustment.riskFractionMultiplier));
+  return Object.freeze({
+    ...rules,
+    maxRiskPerTradeFraction: rules.maxRiskPerTradeFraction * multiplier,
+  });
+}
+
 export type FinanceStrategyInput = Readonly<{
   assetClass: string;
   /** Intended holding period in days; drives long vs short horizon. */
@@ -132,6 +180,11 @@ export type FinanceMandateContext = Readonly<{
   /** Present only when the class requires it. */
   hasSignificantAutocorrelation?: boolean;
   stopLossDefined?: boolean;
+  /**
+   * Environment regime, typically the local brain's output. Tightens the caps.
+   * Absent means "no regime reading", which leaves the caps as declared.
+   */
+  regime?: FinanceRegime;
 }>;
 
 export type FinanceMandateDecision = Readonly<{
@@ -163,8 +216,14 @@ export function evaluateFinanceMandate(
     };
   }
 
-  const classRules = rules[strategyClass];
+  // A regime tightens the caps; it never widens them.
+  const classRules =
+    context.regime === undefined
+      ? rules[strategyClass]
+      : applyRegimeToClassRules(rules[strategyClass], context.regime);
   const reasons: string[] = [];
+  // The tightened cap is visible through the returned `rules`; it must not be
+  // pushed into `reasons`, because a non-empty `reasons` means refuse.
 
   // Class-independent: these come from the owner's own words.
   if (context.averagingDown === true) {
