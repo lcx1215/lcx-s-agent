@@ -7,7 +7,12 @@ import { resolvePreferredOpenClawTmpDir } from "../infra/tmp-openclaw-dir.js";
 import { readLoggingConfig } from "./config.js";
 import type { ConsoleStyle } from "./console.js";
 import { resolveEnvLogLevelOverride } from "./env-log-level.js";
-import { type LogLevel, levelToMinLevel, normalizeLogLevel } from "./levels.js";
+import {
+  type LogLevel,
+  levelToMinLevel,
+  logLevelToTslogMinLevel,
+  normalizeLogLevel,
+} from "./levels.js";
 import { resolveNodeRequireFromMeta } from "./node-require.js";
 import { loggingState } from "./state.js";
 import { formatLocalIsoWithOffset } from "./timestamps.js";
@@ -126,7 +131,7 @@ export function isFileLogLevelEnabled(level: LogLevel): boolean {
 function buildLogger(settings: ResolvedSettings): TsLogger<LogObj> {
   const logger = new TsLogger<LogObj>({
     name: "openclaw",
-    minLevel: levelToMinLevel(settings.level),
+    minLevel: logLevelToTslogMinLevel(settings.level),
     type: "hidden", // no ansi formatting
   });
 
@@ -223,7 +228,7 @@ export function getChildLogger(
   opts?: { level?: LogLevel },
 ): TsLogger<LogObj> {
   const base = getLogger();
-  const minLevel = opts?.level ? levelToMinLevel(opts.level) : undefined;
+  const minLevel = opts?.level ? logLevelToTslogMinLevel(opts.level) : undefined;
   const name = bindings ? JSON.stringify(bindings) : undefined;
   return base.getSubLogger({
     name,
