@@ -174,8 +174,15 @@ function mergeConfig(
       1,
       overrideRemote?.batch?.concurrency ?? defaultRemote?.batch?.concurrency ?? 2,
     ),
-    pollIntervalMs:
+    // The three batch providers sleep on this directly (`setTimeout(resolve, pollIntervalMs)`), so
+    // a zero does not mean "poll as fast as possible" — it is a busy loop that hammers the remote
+    // batch endpoint for as long as `timeoutMinutes` allows, which is 60 minutes by default. The
+    // config schema admits zero (`nonnegative`, not `positive`), so the floor belongs where the
+    // value is read.
+    pollIntervalMs: Math.max(
+      MIN_BATCH_POLL_INTERVAL_MS,
       overrideRemote?.batch?.pollIntervalMs ?? defaultRemote?.batch?.pollIntervalMs ?? 2000,
+    ),
     timeoutMinutes:
       overrideRemote?.batch?.timeoutMinutes ?? defaultRemote?.batch?.timeoutMinutes ?? 60,
   };
@@ -363,6 +370,12 @@ function mergeConfig(
     },
   };
 }
+
+/**
+ * Floor for the remote batch poll interval. A zero interval is a busy loop against the remote
+ * endpoint, not "poll fast". 50ms caps a misconfigured value at 20 requests/second.
+ */
+const MIN_BATCH_POLL_INTERVAL_MS = 50;
 
 export function resolveMemorySearchConfig(
   cfg: OpenClawConfig,

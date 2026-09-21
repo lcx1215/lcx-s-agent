@@ -261,3 +261,42 @@ describe("memory search config", () => {
     expect(resolved?.sources).toContain("sessions");
   });
 });
+/**
+ * The remote batch poll interval.
+ *
+ * The three batch providers sleep on this value directly (`setTimeout(resolve, pollIntervalMs)`),
+ * so a zero is not "poll fast" — it is a busy loop against the remote batch endpoint for as long as
+ * `timeoutMinutes` allows, which is 60 minutes by default. The config schema admits zero
+ * (`nonnegative`, not `positive`), so the floor has to be applied where the value is read.
+ */
+describe("the remote batch poll interval", () => {
+  const cfgWith = (pollIntervalMs: number) =>
+    asConfig({
+      agents: {
+        defaults: {
+          memorySearch: {
+            enabled: true,
+            remote: { batch: { pollIntervalMs } },
+          },
+        },
+      },
+    });
+
+  it("is never zero, because a zero interval is a busy loop", () => {
+    const resolved = resolveMemorySearchConfig(cfgWith(0), "main");
+    expect(resolved?.remote?.batch?.pollIntervalMs).toBeGreaterThan(0);
+  });
+
+  it("keeps a normal interval exactly as declared", () => {
+    const resolved = resolveMemorySearchConfig(cfgWith(2000), "main");
+    expect(resolved?.remote?.batch?.pollIntervalMs).toBe(2000);
+  });
+
+  it("falls back to the documented default when it is not declared", () => {
+    const resolved = resolveMemorySearchConfig(
+      asConfig({ agents: { defaults: { memorySearch: { enabled: true } } } }),
+      "main",
+    );
+    expect(resolved?.remote?.batch?.pollIntervalMs).toBe(2000);
+  });
+});

@@ -149,6 +149,8 @@ F-27 是典型的"控制被守住了、喂它的数没被守"。凡是形如 `if
 
 | F-37 | `finance-free-market-collection-adapters.ts` | **同一字段 7 处各读一份，退化行为互不相同**（双层：退化配置 + 多层复制）。`request.limit` 在 7 个适配器里各自处理：`slice(0, 0)` ⇒ **空**，`slice(-0)` ⇒ **全部**（与前者相反），`slice(0, -5)` ⇒ **去掉最后 5 条**（不是取 5 条），`NaN` ⇒ 空窗口；发给 venue 的那一路把 `0`/`-5`/`NaN`/`1.5` **原样拼进 URL**。⇒ 同一个请求可能返回空、全量或被悄悄截断，**取决于哪个适配器接了它**；`limit: 0` 尤其返回一个读者无法与"这段时间没数据"区分的空结果。而**同一字段在 `finance-market-collection-registry.ts` 里是完整校验的**（`Number.isInteger && >0 && <=250`）。修法：统一为一个 `declaredLimit(value, fallback)`（未声明保留各自默认值，已声明必须为正整数）。 |
 
+| F-38 | `memory-search.ts` → `batch-{gemini,openai,voyage}.ts` | **轮询间隔无下限 ⇒ 忙循环**：三个批处理 provider 都直接 `setTimeout(resolve, params.pollIntervalMs)`；而配置 schema 是 `z.number().int().nonnegative()`（**允许 0**），`memory-search` 解析处也无守卫（`?? 2000`）。⇒ 配置 `pollIntervalMs: 0` ⇒ 对远程批处理端点**忙轮询直到 `timeoutMinutes`（默认 60 分钟）超时**。修法：在配置解析处加下限（单点，覆盖三个 provider），并把"零不是'尽快轮询'而是忙循环"写进注释。 |
+
 **修法**：**校验配置的连贯性，不连贯 ⇒ 不给意见**（不钳制）。
 
 - 两个信号：返回 `hold/0/0`（并标 `config=incoherent`）。
@@ -161,6 +163,9 @@ F-27 是典型的"控制被守住了、喂它的数没被守"。凡是形如 `if
 **每次还原都核对字节一致**。
 
 **判据（可复用）**：**"这个可调参数的退化值（0 / 负 / NaN / 越界）会产出什么？"**
+**判据（可复用）**：**"这个轮询/等待类参数的下界在哪？"** ——
+凡是被直接喂给 `setTimeout`/`sleep`/`delay` 的值，**零不是"尽快"，是忙循环**；
+非有限值不是"等很久"，是**永不超时**（`Date.now() >= NaN` 恒 false）。schema 用 `nonnegative` 而非 `positive` 的地方要特别看一眼。
 
 ⚠️ **加守卫时别越界 —— 测试才是裁判**：F-34 的第一版我还要求"至少有一个窗口或令牌桶"，
 结果 4 个既有测试红了 —— `windows: []` 是**受支持的声明**（只受 venue 冷却治理、没有窗口上限，
