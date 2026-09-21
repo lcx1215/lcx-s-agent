@@ -782,6 +782,9 @@ type CouncilRoleSummary = {
   role: string;
   model: string;
   providerFamily: string;
+  actualProvider?: string;
+  actualModel?: string;
+  requestedModelHealth: "healthy" | "failed" | "mismatched" | "unknown";
   success: boolean;
   error?: string;
 };
@@ -803,6 +806,15 @@ function summarizeCouncilRoles(payload: Record<string, unknown>): CouncilRoleSum
         model: typeof record.model === "string" ? record.model : "",
         providerFamily:
           typeof record.providerFamily === "string" ? record.providerFamily : "unknown",
+        actualProvider:
+          typeof record.actualProvider === "string" ? record.actualProvider : undefined,
+        actualModel: typeof record.actualModel === "string" ? record.actualModel : undefined,
+        requestedModelHealth:
+          record.requestedModelHealth === "healthy" ||
+          record.requestedModelHealth === "failed" ||
+          record.requestedModelHealth === "mismatched"
+            ? record.requestedModelHealth
+            : "unknown",
         success: record.success === true,
         error: typeof record.error === "string" ? record.error : undefined,
       };
@@ -812,6 +824,30 @@ function summarizeCouncilRoles(payload: Record<string, unknown>): CouncilRoleSum
 
 function incrementCounter(counter: Record<string, number>, key: string): void {
   counter[key] = (counter[key] ?? 0) + 1;
+}
+
+function isConfirmedCouncilRoleHealthy(role: CouncilRoleSummary): boolean {
+  return (
+    role.success &&
+    role.requestedModelHealth === "healthy" &&
+    Boolean(role.actualProvider && role.actualModel) &&
+    `${role.actualProvider}/${role.actualModel}` === role.model
+  );
+}
+
+function summarizeCouncilHealth(roles: readonly CouncilRoleSummary[]) {
+  const roleSuccesses: Record<string, number> = {};
+  const roleFailures: Record<string, number> = {};
+  const roleHealthSuccesses: Record<string, number> = {};
+  const roleHealthUnconfirmed: Record<string, number> = {};
+  for (const role of roles) {
+    incrementCounter(role.success ? roleSuccesses : roleFailures, role.role);
+    incrementCounter(
+      isConfirmedCouncilRoleHealthy(role) ? roleHealthSuccesses : roleHealthUnconfirmed,
+      role.role,
+    );
+  }
+  return { roleSuccesses, roleFailures, roleHealthSuccesses, roleHealthUnconfirmed };
 }
 
 async function modelCouncilProviderEvidenceCheck(): Promise<CheckResult> {
@@ -859,13 +895,8 @@ async function modelCouncilProviderEvidenceCheck(): Promise<CheckResult> {
     } => Boolean(entry),
   );
 
-  const roleSuccesses: Record<string, number> = {};
-  const roleFailures: Record<string, number> = {};
-  for (const artifact of learningCouncilArtifacts) {
-    for (const role of artifact.roles) {
-      incrementCounter(role.success ? roleSuccesses : roleFailures, role.role);
-    }
-  }
+  const { roleSuccesses, roleFailures, roleHealthSuccesses, roleHealthUnconfirmed } =
+    summarizeCouncilHealth(learningCouncilArtifacts.flatMap((artifact) => artifact.roles));
 
   const reviewPanelReceipts = await Promise.all(
     reviewPanelFiles.map(async (entry) => {
@@ -887,9 +918,13 @@ async function modelCouncilProviderEvidenceCheck(): Promise<CheckResult> {
 
   const latestLearningCouncil = learningCouncilArtifacts[0];
   const latestRoleFailures =
-    latestLearningCouncil?.roles.filter((role) => !role.success).map((role) => role.role) ?? [];
+    latestLearningCouncil?.roles
+      .filter((role) => !isConfirmedCouncilRoleHealthy(role))
+      .map((role) => role.role) ?? [];
   const latestLearningCouncilDegraded =
-    latestLearningCouncil?.status === "degraded" || latestRoleFailures.length > 0;
+    !latestLearningCouncil ||
+    latestLearningCouncil.status === "degraded" ||
+    latestRoleFailures.length > 0;
   const reviewPanelProviderBacked = reviewPanelReceipts.filter(
     (receipt) => receipt.providerCallsMade,
   ).length;
@@ -905,10 +940,14 @@ async function modelCouncilProviderEvidenceCheck(): Promise<CheckResult> {
       latestLearningCouncil,
       roleSuccesses,
       roleFailures,
+      roleHealthSuccesses,
+      roleHealthUnconfirmed,
+      outputEvidenceBoundary:
+        "roleSuccesses count usable role output, not requested-model health; only matching actual identity with requestedModelHealth=healthy is confirmed.",
       recentProviderEvidence: {
-        kimi: (roleSuccesses.kimi ?? 0) > 0,
-        minimax: (roleSuccesses.minimax ?? 0) > 0,
-        deepseek: (roleSuccesses.deepseek ?? 0) > 0,
+        kimi: (roleHealthSuccesses.kimi ?? 0) > 0,
+        minimax: (roleHealthSuccesses.minimax ?? 0) > 0,
+        deepseek: (roleHealthSuccesses.deepseek ?? 0) > 0,
         deepseekAttemptedButFailed: (roleFailures.deepseek ?? 0) > 0,
       },
       reviewPanelReceipts: reviewPanelReceipts.length,
@@ -920,7 +959,7 @@ async function modelCouncilProviderEvidenceCheck(): Promise<CheckResult> {
       providerConfigTouched: false,
     },
     error: latestLearningCouncilDegraded
-      ? `latest learning council degraded: status=${latestLearningCouncil?.status}, failedRoles=${latestRoleFailures.join(",") || "unknown"}`
+      ? `latest learning council degraded: status=${latestLearningCouncil?.status}, unconfirmedModelRoles=${latestRoleFailures.join(",") || "unknown"}`
       : undefined,
   };
 }

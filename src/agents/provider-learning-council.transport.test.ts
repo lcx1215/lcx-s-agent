@@ -226,3 +226,60 @@ it("requires gateway ok status and never uses its control summary as answer text
 afterEach(() => {
   vi.unstubAllEnvs();
 });
+
+describe("council visible evidence labels", () => {
+  const role = (name: "kimi" | "deepseek", health: "healthy" | "mismatched" | "unknown") => ({
+    role: name,
+    capability: "synthesis" as const,
+    model: "requested/model",
+    providerFamily: "requested",
+    heading: name,
+    success: true,
+    text: "usable content",
+    requestedModelHealth: health,
+    ...(health === "unknown"
+      ? {}
+      : {
+          actualProvider: health === "healthy" ? "requested" : "replacement",
+          actualModel: "model",
+        }),
+  });
+  it("describes only attempted role outputs when MiniMax is disabled", () => {
+    const lead = __testing.renderLearningCouncilReadableLead({
+      userMessage: "fixture",
+      status: "full",
+      roles: [role("kimi", "healthy"), role("deepseek", "healthy")],
+      rescues: [],
+      mutableFactWarnings: [],
+      sourceCoverageWarnings: [],
+    });
+    expect(lead).toContain("本轮角色产出：kimi、deepseek");
+    expect(lead).not.toContain("三模型");
+    expect(lead).not.toContain("minimax");
+  });
+  it("keeps fallback content useful while stating unproven requested-model health", () => {
+    const lead = __testing.renderLearningCouncilReadableLead({
+      userMessage: "fixture",
+      status: "full",
+      roles: [role("kimi", "mismatched"), role("deepseek", "unknown")],
+      rescues: [],
+      mutableFactWarnings: [],
+      sourceCoverageWarnings: [],
+    });
+    expect(lead).toContain("本轮角色产出：kimi、deepseek");
+    expect(lead).toContain("替代模型 replacement/model");
+    expect(lead).toContain("deepseek: 请求模型健康未证实 (unknown)");
+  });
+  it("labels review inputs with actual model or unknown rather than requested configuration", () => {
+    const prompt = __testing.buildMiniMaxSystemPrompt({
+      userMessage: "fixture",
+      kimiText: "usable",
+      kimiModel: __testing.actualCouncilModel(role("kimi", "mismatched")),
+      deepseekText: "usable",
+      deepseekModel: __testing.actualCouncilModel(role("deepseek", "unknown")),
+    });
+    expect(prompt).toContain("runtime model: replacement/model");
+    expect(prompt).toContain("runtime model: unknown");
+    expect(prompt).not.toContain("requested/model");
+  });
+});

@@ -1612,6 +1612,14 @@ function renderRoleSection(
   return `## ${result.heading}\n${laneReceipt}\n- run_failed: ${result.error ?? "unknown error"}\n- status: low-fidelity for this role in this turn.`.trim();
 }
 
+function actualCouncilModel(
+  result: Pick<LearningCouncilRoleRun, "actualProvider" | "actualModel">,
+): string {
+  return result.actualProvider && result.actualModel
+    ? `${result.actualProvider}/${result.actualModel}`
+    : "unknown";
+}
+
 function renderLearningCouncilReadableLead(params: {
   userMessage: string;
   status: LearningCouncilArtifact["status"];
@@ -1627,16 +1635,21 @@ function renderLearningCouncilReadableLead(params: {
     .filter((rescue) => rescue.success)
     .map((rescue) => `${rescue.targetRole}<=${rescue.helperRole}`);
   const statusLine =
-    params.status === "degraded"
-      ? `本轮没有三模型全绿：${succeeded.join("、") || "暂无模型"} 已产出，${failed.join("、") || "无"} 失败或超时。`
-      : params.status === "full_with_mutable_fact_warnings"
-        ? "三模型审阅已完成，但里面有可变事实或新鲜度提醒，不能直接当成最终事实。"
-        : "三模型审阅已完成，可以进入压缩、复核和后续内化检查。";
+    `本轮角色产出：${succeeded.join("、") || "暂无"}；` +
+    `失败或未完成：${failed.join("、") || "无"}。`;
+  const healthWarnings = params.roles
+    .filter((role) => role.requestedModelHealth !== "healthy")
+    .map((role) =>
+      role.requestedModelHealth === "mismatched"
+        ? `${role.role}: 由替代模型 ${actualCouncilModel(role)} 产出，请求模型健康未证实`
+        : `${role.role}: 请求模型健康未证实 (${role.requestedModelHealth ?? "unknown"})`,
+    );
   const reliability =
     params.status === "degraded"
       ? "结论只能当作临时学习材料：能用成功通道的高信号部分，但不能说已经完整内化。"
       : "结论仍然要经过证据门和后续 receipt，才能升级成稳定规则或长期记忆。";
   const warnings = [
+    ...healthWarnings,
     ...(rescued.length > 0 ? [`兜底覆盖: ${rescued.join("; ")}`] : []),
     ...(params.mutableFactWarnings.length > 0 ? ["存在可变事实新鲜度风险"] : []),
     ...(params.sourceCoverageWarnings.length > 0 ? ["来源覆盖可能偏窄"] : []),
@@ -2082,9 +2095,9 @@ export async function runExternalLearningCouncil(params: {
           buildMiniMaxSystemPrompt({
             userMessage: params.userMessage,
             kimiText: kimi.text || kimi.error || "kimi run unavailable",
-            kimiModel: kimi.model,
+            kimiModel: actualCouncilModel(kimi),
             deepseekText: deepseek.text || deepseek.error || "deepseek run unavailable",
-            deepseekModel: deepseek.model,
+            deepseekModel: actualCouncilModel(deepseek),
             minimaxHeavy: directives.minimaxHeavy,
             bilingualComprehension: directives.bilingualComprehension,
             internalizationFocus: directives.internalizationFocus,
@@ -2114,9 +2127,9 @@ export async function runExternalLearningCouncil(params: {
             buildMiniMaxSystemPrompt({
               userMessage: params.userMessage,
               kimiText: kimi.text || kimi.error || "kimi run unavailable",
-              kimiModel: kimi.model,
+              kimiModel: actualCouncilModel(kimi),
               deepseekText: deepseek.text || deepseek.error || "deepseek run unavailable",
-              deepseekModel: deepseek.model,
+              deepseekModel: actualCouncilModel(deepseek),
               minimaxHeavy: true,
               priorAuditText:
                 minimaxPrimary.text || minimaxPrimary.error || "prior minimax audit unavailable",
@@ -2379,5 +2392,8 @@ export const __testing = {
   runLearningCouncilRoleInProcess,
   runLearningCouncilRole,
   assessLearningCouncilResponse,
+  renderLearningCouncilReadableLead,
+  actualCouncilModel,
+  buildMiniMaxSystemPrompt,
   readPayloadTexts,
 };
