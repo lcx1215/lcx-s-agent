@@ -334,6 +334,16 @@ export async function readFinanceLinkHealth(
   // 6b. Whether what is being settled is what is being traded. A reflection loop can run
   //     perfectly over a set of instruments the plane never touches: the samples are recorded by
   //     hand, so the hit rate they produce says nothing about the book the rules actually run.
+  //
+  //     Why it stays that way is not a missing setting. The sampler has two sources: chart
+  //     structure, which any priced instrument has, and analyst targets, which an ETF does not.
+  //     Fusion wants two independent sources before it will state a direction, so every
+  //     instrument in the rule universe — all ETFs — is sampled as a refusal and never as a call.
+  //     Measured: SPY refuses on "1 distinct source(s) support buy, 2 required", and TLT, GLD and
+  //     EEM on "no source expressed a direction". The plane is not misconfigured; it declines to
+  //     bet on instruments it cannot form a view on, which is the right answer, and it means the
+  //     reflection loop has no calls to settle from the book it trades until a source exists that
+  //     covers those instruments. Do not "fix" this by lowering the source count.
   const sampleUniverse = [
     ...new Set(sampleRows.map((row) => row.instrument).filter((name) => name.length > 0)),
   ].toSorted();

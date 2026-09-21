@@ -412,11 +412,11 @@ samplesFile:  /Users/liuchengxu/.openclaw/workspace/state/finance/research-sampl
 `finance-state-dir.ts` 早就提供了 `financeResearch{Samples,Scored}Path()`，注释里也写了这个症状
 ——"cycle 在配置根写了 5 个样本，而 reader 在工作区解析同名文件报 0"。**但调用点没跟上**：
 
-| 调用点 | 角色 | 原来 |
-| --- | --- | --- |
-| `finance-research-batch.ts` | **写**样本 | `params.recordPath ?? "state/finance/research-samples.jsonl"` |
-| `finance-paper-rank-place-tool.ts` | **读**样本排名下单 | `DEFAULT_RECORD_REL` 字面量 |
-| `finance-reflection-read-tool.ts` | **读**结算结果 | `path.join(resolveWorkspaceRoot(workspaceDir), "state/finance/...")` |
+| 调用点                             | 角色               | 原来                                                                 |
+| ---------------------------------- | ------------------ | -------------------------------------------------------------------- |
+| `finance-research-batch.ts`        | **写**样本         | `params.recordPath ?? "state/finance/research-samples.jsonl"`        |
+| `finance-paper-rank-place-tool.ts` | **读**样本排名下单 | `DEFAULT_RECORD_REL` 字面量                                          |
+| `finance-reflection-read-tool.ts`  | **读**结算结果     | `path.join(resolveWorkspaceRoot(workspaceDir), "state/finance/...")` |
 
 三处都**完全不响应 `LCX_FINANCE_STATE_DIR`**，只在进程恰好从仓库根启动时才是正确的书。
 
@@ -677,14 +677,38 @@ warn  sample_universe_overlap   every recorded call (AAPL, AMD, GOOGL, MSFT, NVD
                                 settled is not the book being traded
 ```
 
-**为什么没顺手修**：闭合它要"每次判断自动记一条样本"，而样本要带 `conviction`，
-结算的 brier / 过度自信差全靠它。规则输出的是目标权重与漂移，**没有置信度**——
-要记录就得从权重差编一个出来，那正是这个项目反复拒绝的事（"没有依据的数字"）。
-所以这里需要的是产品决定：置信度从哪来。可选项——
+**为什么没顺手修（2026-09-21 实测，并更正此处上一版的错误前提）**
 
-1. 只记方向与到期结果，不记 `conviction`，放弃 brier、只算命中率；
-2. 让信号层显式输出它自己的置信度（信号本来就该有，但今天没有）；
-3. 保持现状，但校准读数标注"这批样本不在交易宇宙内"，避免被当成战绩。
+上一版写的是"规则输出没有置信度 ⇒ 记样本就得编一个，而那正是本项目拒绝的事"。
+**这个前提是错的**：`fuseSignals` 本来就有 `conviction`，`runResearchBatch` 也确实把它写进样本
+（信号不足时写 `direction:"none", conviction:0`，即"拒绝下注"，与结算层的 `declined` 是同一件事）。
+
+真正的障碍是**信号源覆盖不到规则宇宙**。实测（用新增的 `directory` 参数隔离到临时目录，
+不碰真实样本）：
+
+```
+SPY → dir=none conv=0   "refuse: 1 distinct source(s) support buy, 2 required"
+TLT → dir=none conv=0   "refuse: no source expressed a direction"
+GLD → dir=none conv=0   "refuse: no source expressed a direction"
+EEM → dir=none conv=0   "refuse: no source expressed a direction"
+```
+
+采样器只有两个信号源：图表结构（`fmp-eod-structure`，凡有价格者皆可用）与**分析师目标价**
+（`analyst_estimates`，ETF 没有）。而 `fuseSignals` 要求 `minSources: 2` ⇒
+**规则宇宙 8 个标的在这个采样器下 100% 产出"拒绝"，永远不会有可结算的判断。**
+
+所以这个错位是**结构性的，不是配置没对**：
+
+- 系统**在交易的**标的（ETF）上从未产生过判断 —— 凑不齐源就拒绝，这本身是**正确的谨慎**；
+- 能产生判断的只有个股（有分析师覆盖），而它们不在规则宇宙里。
+
+选项因此要重写：
+
+1. 扩展信号层到 ETF 适用的来源（资金流 / 相对强度 / 宏观）。⚠️ 要算"独立来源"就不能都来自同一份
+   价格数据 —— `fuseSignals` 按 `sourceId` 去重，同一份 K 线算出的两个指标仍是**一个**源。
+2. **不推荐**：放宽 `minSources` 到 1 —— 那正是融合层刻意避免的"一个热情的来源独自下注"。
+3. 把规则宇宙换成个股 —— 这是交易策略的改变，不是工程决定。
+4. 保持现状，但让"这些标的上根本没有判断可评估"成为**被报出来的事实**，而不是埋在代码里的推论。
 
 ### 路上踩到的两个"字段没接出去"
 
