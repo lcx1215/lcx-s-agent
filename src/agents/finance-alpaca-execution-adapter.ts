@@ -27,6 +27,7 @@ import type {
   FinanceExecutionAdapter,
   FinanceExecutionFill,
   FinanceExecutionIntent,
+  FinanceExecutionProtection,
   FinanceOrderType,
 } from "./finance-execution-adapter.js";
 import type { FetchImpl } from "./finance-live-market-source.js";
@@ -82,6 +83,7 @@ type AlpacaOrderResponse = {
   qty?: unknown;
   type?: unknown;
   limit_price?: unknown;
+  stop_price?: unknown;
   filled_at?: unknown;
   updated_at?: unknown;
 };
@@ -147,6 +149,27 @@ export class AlpacaOrderUncertainError extends Error {
 }
 export function isAlpacaOrderUncertain(error: unknown): error is AlpacaOrderUncertainError {
   return error instanceof AlpacaOrderUncertainError;
+}
+
+export class AlpacaProtectionUncertainError extends Error {
+  readonly code = "alpaca_protection_uncertain";
+  constructor(
+    readonly clientOrderId: string,
+    readonly orderId: string | undefined,
+    cause: unknown,
+  ) {
+    super(
+      `Alpaca entry filled but protective order ${orderId ?? clientOrderId} is not confirmed; refusing to report a fill`,
+      { cause },
+    );
+    this.name = "AlpacaProtectionUncertainError";
+  }
+}
+
+export function isAlpacaProtectionUncertain(
+  error: unknown,
+): error is AlpacaProtectionUncertainError {
+  return error instanceof AlpacaProtectionUncertainError;
 }
 function bounded<T>(run: () => Promise<T>, signal: AbortSignal): Promise<T> {
   signal.throwIfAborted();
@@ -218,10 +241,32 @@ export function createAlpacaExecutionAdapter(
         if (isCrypto && timeInForce !== "gtc" && timeInForce !== "ioc") {
           throw new Error("Alpaca crypto requires gtc or ioc time_in_force");
         }
-        if (isCrypto && intent.side === "buy" && intent.stopPrice !== undefined) {
+        const protectedCryptoBuy =
+          isCrypto && intent.side === "buy" && intent.stopPrice !== undefined;
+        if (isCrypto && intent.side === "buy" && intent.protectionLimitPrice !== undefined) {
+          if (intent.stopPrice === undefined) {
+            throw new Error("crypto protectionLimitPrice requires an explicit stopPrice");
+          }
+          if (
+            !Number.isFinite(intent.protectionLimitPrice) ||
+            intent.protectionLimitPrice <= 0 ||
+            intent.protectionLimitPrice > intent.stopPrice
+          ) {
+            throw new Error(
+              "crypto protectionLimitPrice must be positive and at or below stopPrice",
+            );
+          }
+        }
+        if (protectedCryptoBuy && intent.protectionLimitPrice === undefined) {
           throw new Error(
-            "Alpaca crypto does not support the declared OTO protective stop; refusing unprotected entry",
+            "Alpaca crypto protected buy requires an explicit stop-limit protection limitPrice; refusing unprotected entry",
           );
+        }
+        if (!isCrypto && intent.protectionLimitPrice !== undefined) {
+          throw new Error("crypto stop-limit protection is only supported for crypto instruments");
+        }
+        if (protectedCryptoBuy && options.fillPoll === undefined) {
+          throw new Error("Alpaca crypto protected buy requires confirmed fill polling");
         }
         // The shared contract declares this field as "Instruments this adapter accepts. Empty accepts
         // nothing", and `admitsInstrument` in `finance-execution-adapter.ts` implements exactly that.
@@ -283,7 +328,7 @@ export function createAlpacaExecutionAdapter(
         //
         // This system declares no short selling, so "sell" means "reduce". If shorting is ever
         // admitted, that needs its own flag on the intent, not a bracket inferred from a side.
-        if (intent.stopPrice !== undefined && intent.side === "buy") {
+        if (intent.stopPrice !== undefined && intent.side === "buy" && !isCrypto) {
           // Alpaca's `bracket` requires BOTH exit legs, and it rejects one with only a stop:
           // "bracket orders require take_profit.limit_price". A take-profit is a price target,
           // and this system has no business inventing one — the rule declares an invalidation
@@ -357,6 +402,176 @@ export function createAlpacaExecutionAdapter(
             );
           }
         }
+
+        async function placeCryptoProtection(
+          entryFill: FinanceExecutionFill,
+        ): Promise<FinanceExecutionProtection> {
+          if (
+            !isCrypto ||
+            intent.side !== "buy" ||
+            intent.stopPrice === undefined ||
+            intent.protectionLimitPrice === undefined
+          ) {
+            throw new Error("crypto protection was requested without a complete stop-limit intent");
+          }
+          const entryOrderId = entryFill.terminalOrderIdentity?.orderId;
+          if (!entryOrderId || entryFill.filledQuantity <= 0) {
+            throw new Error("crypto protection requires a positive confirmed entry fill");
+          }
+          const protectionClientOrderId = `lcx-${createHash("sha256")
+            .update(
+              JSON.stringify([
+                mode,
+                intent.runAuthorizationId,
+                intent.intentId,
+                entryOrderId,
+                "protection",
+              ]),
+            )
+            .digest("hex")
+            .slice(0, 40)}`;
+          const protectionBody: Record<string, unknown> = {
+            client_order_id: protectionClientOrderId,
+            symbol,
+            qty: String(entryFill.filledQuantity),
+            side: "sell",
+            type: "stop_limit",
+            time_in_force: "gtc",
+            stop_price: String(intent.stopPrice),
+            limit_price: String(intent.protectionLimitPrice),
+          };
+          let knownProtectionOrderId: string | undefined;
+
+          const matchesProtectionIntent = (candidate: AlpacaOrderResponse): boolean =>
+            candidate.client_order_id === protectionClientOrderId &&
+            candidate.symbol === symbol &&
+            candidate.side === "sell" &&
+            Number(candidate.qty) === entryFill.filledQuantity &&
+            candidate.type === "stop_limit" &&
+            candidate.time_in_force === "gtc" &&
+            asFiniteNumber(candidate.stop_price) === intent.stopPrice &&
+            asFiniteNumber(candidate.limit_price) === intent.protectionLimitPrice &&
+            typeof candidate.id === "string" &&
+            candidate.id.length > 0;
+
+          const recoverProtection = async (cause: unknown): Promise<AlpacaOrderResponse> => {
+            try {
+              const response = await bounded(
+                () =>
+                  statusFetch(
+                    `${host}/v2/orders:by_client_order_id?client_order_id=${encodeURIComponent(protectionClientOrderId)}`,
+                    { headers, signal },
+                  ),
+                signal,
+              );
+              if (response.status !== 200) {
+                throw new Error(`protection reconciliation returned http ${response.status}`);
+              }
+              const found = JSON.parse(response.body) as AlpacaOrderResponse;
+              if (!matchesProtectionIntent(found)) {
+                throw new Error("reconciled protective order does not match authorized intent");
+              }
+              return found;
+            } catch (error) {
+              throw new AlpacaProtectionUncertainError(
+                protectionClientOrderId,
+                knownProtectionOrderId,
+                new AggregateError([cause, error], "protective order reconciliation failed"),
+              );
+            }
+          };
+
+          try {
+            let payload: AlpacaOrderResponse;
+            let response: { status: number; body: string };
+            try {
+              response = await bounded(
+                () =>
+                  options.postJson!(`${host}/v2/orders`, {
+                    headers,
+                    body: JSON.stringify(protectionBody),
+                    signal,
+                  }),
+                signal,
+              );
+            } catch (error) {
+              payload = await recoverProtection(error);
+              response = { status: 200, body: JSON.stringify(payload) };
+            }
+            try {
+              payload = JSON.parse(response.body) as AlpacaOrderResponse;
+            } catch (error) {
+              throw new Error("protective order response was not valid JSON", { cause: error });
+            }
+            if (response.status < 200 || response.status >= 300) {
+              const message =
+                typeof payload.message === "string" ? payload.message : response.body.slice(0, 160);
+              if (
+                response.status >= 500 ||
+                ((response.status === 409 || response.status === 422) &&
+                  /client_order_id/i.test(message))
+              ) {
+                payload = await recoverProtection(
+                  new Error(`protective order submission http ${response.status}`),
+                );
+              } else {
+                throw new Error(`protective order rejected (http ${response.status}): ${message}`);
+              }
+            }
+            if (!matchesProtectionIntent(payload)) {
+              throw new Error("protective order response does not match authorized intent");
+            }
+            const orderId = String(payload.id);
+            knownProtectionOrderId = orderId;
+            const status = typeof payload.status === "string" ? payload.status : "";
+            if (
+              ![
+                "new",
+                "accepted",
+                "pending_new",
+                "partially_filled",
+                "filled",
+                "calculated",
+              ].includes(status)
+            ) {
+              throw new Error(
+                `protective order returned unsupported status ${status || "missing"}`,
+              );
+            }
+            return Object.freeze({
+              orderId,
+              clientOrderId: protectionClientOrderId,
+              side: "sell" as const,
+              orderType: "stop_limit" as const,
+              quantity: entryFill.filledQuantity,
+              timeInForce: "gtc" as const,
+              stopPrice: intent.stopPrice,
+              limitPrice: intent.protectionLimitPrice,
+              status,
+              venueRef: `alpaca:${mode}:${orderId}`,
+            });
+          } catch (error) {
+            if (error instanceof AlpacaProtectionUncertainError) {
+              throw error;
+            }
+            throw new AlpacaProtectionUncertainError(
+              protectionClientOrderId,
+              knownProtectionOrderId,
+              error,
+            );
+          }
+        }
+
+        const attachCryptoProtection = async (
+          entryFill: FinanceExecutionFill,
+        ): Promise<FinanceExecutionFill> => {
+          if (!protectedCryptoBuy || entryFill.filledQuantity === 0) {
+            return entryFill;
+          }
+          const protectionOrder = await placeCryptoProtection(entryFill);
+          return Object.freeze({ ...entryFill, protectionOrder });
+        };
+
         let payload: AlpacaOrderResponse;
         let response: { status: number; body: string };
         try {
@@ -432,7 +647,7 @@ export function createAlpacaExecutionAdapter(
             }
             const terminal = terminalFill(parsed, orderId, venueRef, intent.quantity);
             if (terminal) {
-              return terminal;
+              return await attachCryptoProtection(terminal);
             }
             await bounded(() => delay(intervalMs, undefined, { signal }), signal);
           }
@@ -440,7 +655,7 @@ export function createAlpacaExecutionAdapter(
 
         const terminal = terminalFill(payload, orderId, venueRef, intent.quantity);
         if (terminal) {
-          return terminal;
+          return await attachCryptoProtection(terminal);
         }
         const filledQuantity = asFiniteNumber(payload.filled_qty) ?? 0;
         const fillPrice = asFiniteNumber(payload.filled_avg_price) ?? 0;
@@ -452,7 +667,11 @@ export function createAlpacaExecutionAdapter(
           venueRef,
         });
       } catch (error) {
-        if (submitted && !(error instanceof AlpacaOrderUncertainError)) {
+        if (
+          submitted &&
+          !(error instanceof AlpacaOrderUncertainError) &&
+          !(error instanceof AlpacaProtectionUncertainError)
+        ) {
           throw new AlpacaOrderUncertainError(clientOrderId, knownOrderId, error);
         }
         throw error;

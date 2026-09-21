@@ -397,6 +397,41 @@ describe("the stop price and the budget counters", () => {
     }
   });
 
+  it("requires an explicit crypto protection limit below the stop", async () => {
+    const missingStop = await placeFinanceOrder(
+      request({
+        intent: { ...intent, protectionLimitPrice: 219 } as FinanceExecutionIntent,
+      }),
+    );
+    expect(missingStop.refusalReasons).toContain(
+      "execution_intent_protection_limit_requires_stop_price",
+    );
+
+    const aboveStop = await placeFinanceOrder(
+      request({
+        intent: {
+          ...intent,
+          stopPrice: 220,
+          protectionLimitPrice: 221,
+        } as FinanceExecutionIntent,
+      }),
+    );
+    expect(aboveStop.refusalReasons).toContain(
+      "execution_intent_protection_limit_price_above_stop",
+    );
+
+    const sell = await placeFinanceOrder(
+      request({
+        intent: {
+          ...intent,
+          side: "sell",
+          protectionLimitPrice: 219,
+        } as FinanceExecutionIntent,
+      }),
+    );
+    expect(sell.refusalReasons).toContain("execution_intent_protection_limit_forbidden_for_sell");
+  });
+
   it("still places an order that carries no stop at all", async () => {
     // A stop is optional; refusing a bare order is a different control's job.
     const result = await placeFinanceOrder(request());

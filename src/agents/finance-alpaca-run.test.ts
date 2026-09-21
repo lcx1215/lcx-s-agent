@@ -1,5 +1,8 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-import { syntheticSafetyContext } from "./finance-execution-safety.test-support.js";
+import {
+  syntheticSafetyContext,
+  syntheticSafetyContextForAsset,
+} from "./finance-execution-safety.test-support.js";
 vi.mock("./finance-credential-env.js", () => ({
   resolveFinanceCredentialEnv: () => ({
     ALPACA_API_KEY_ID: process.env.ALPACA_API_KEY_ID,
@@ -418,4 +421,74 @@ it.each([
   expect(result.ok).toBe(true);
   expect(body?.time_in_force).toBe(expected);
   expect(body?.order_class).toBe(longHorizon ? undefined : "oto");
+});
+
+it("carries an explicit crypto protection limit through the run entry and receipt", async () => {
+  stubCredentials();
+  const bodies: Record<string, unknown>[] = [];
+  const transport: FinanceWriteTransport = async (input) => {
+    const body = JSON.parse(input.body) as Record<string, unknown>;
+    bodies.push(body);
+    return body.type === "stop_limit"
+      ? {
+          status: 200,
+          body: JSON.stringify({ ...body, id: "crypto-protection", status: "new" }),
+        }
+      : {
+          status: 200,
+          body: JSON.stringify({ id: "crypto-entry", status: "accepted", filled_qty: "0" }),
+        };
+  };
+  const result = await runFinanceAlpacaOrder(
+    request({
+      createSafetyContext: syntheticSafetyContextForAsset("spot_crypto"),
+      conclusion: {
+        ...CONCLUSION,
+        conclusionId: "cycle:2026-08-31:BTC",
+        instrument: "BTC/USD",
+        assetClass: "crypto",
+      },
+      market: { referencePrice: 100, referencePriceAt: new Date().toISOString() },
+      budget: {
+        automation: "unattended",
+        allowedInstruments: ["BTC/USD"],
+        maxOrderNotional: 50_000,
+        maxInstrumentNotional: 100_000,
+        maxOrdersPerRun: 8,
+      },
+      instruments: ["BTC/USD"],
+      strategyClass: "B",
+      protectionLimitPrice: 89,
+      transport,
+      read: async () => ({
+        status: 200,
+        body: JSON.stringify({
+          id: "crypto-entry",
+          status: "filled",
+          filled_qty: "50",
+          filled_avg_price: "100",
+          filled_at: "2026-09-20T00:00:00.000Z",
+        }),
+      }),
+      fillPoll: { timeoutMs: 100, intervalMs: 0 },
+    }),
+  );
+
+  expect(result.ok).toBe(true);
+  expect(bodies).toHaveLength(2);
+  expect(bodies[1]).toMatchObject({
+    side: "sell",
+    type: "stop_limit",
+    time_in_force: "gtc",
+    stop_price: "90",
+    limit_price: "89",
+  });
+  if (result.ok) {
+    expect(result.receipt.fill.protectionOrder).toMatchObject({
+      orderId: "crypto-protection",
+      quantity: 50,
+      stopPrice: 90,
+      limitPrice: 89,
+    });
+  }
 });
