@@ -10,6 +10,8 @@ import {
 } from "./finance-intent-compiler.js";
 import type { FinanceStrategyClass } from "./finance-mandate.js";
 import { assertNotPlacedToday, markPlaced } from "./finance-order-day-guard.js";
+import { appendFinanceExecutionReceipt } from "./finance-position-ledger.js";
+import { resolveFinanceStateDir } from "./finance-state-dir.js";
 
 /**
  * The missing call site: conclusion -> compiled intent -> paper fill -> receipt.
@@ -19,6 +21,12 @@ import { assertNotPlacedToday, markPlaced } from "./finance-order-day-guard.js";
  * This wires them together and owns nothing else: no model call, no prediction, no
  * market data. Risk control stays where it belongs -- inside the compiler (sizing from a
  * declared stop) and the placement guard (declared budget caps).
+ *
+ * A fill is also filed into the position ledger here, for the same reason the day guard
+ * lives here: this is the single point every paper route passes through. A receipt that
+ * exists only in the caller's memory is lost, and the ledger then describes a book that
+ * was never traded - the system would size against positions it does not hold. Filing is
+ * keyed by receipt id, so a caller that also files cannot double-count.
  *
  * One order per instrument per day is enforced here rather than in any caller. This is
  * the single point every paper route passes through, so a guard here covers all of
@@ -126,6 +134,10 @@ export async function runFinancePaperOrder(
   if (placed.status !== "placed" || placed.receipt === undefined) {
     return Object.freeze({ ok: false, stage: "place", refusals: placed.refusalReasons });
   }
+
+  // Filed before the caller sees the result: a receipt returned to a caller that then
+  // forgets it is a receipt that never existed.
+  await appendFinanceExecutionReceipt(resolveFinanceStateDir().directory, placed.receipt);
 
   await markPlaced({
     instrument,
