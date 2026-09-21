@@ -29,11 +29,19 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { resolveWorkspaceRoot } from "./workspace-dir.js";
 
-export type OverrideKnob = "maxOrdersPerRun" | "topN";
+/**
+ * Only knobs with a reader belong here.
+ *
+ * `topN` was declared alongside this one and had no consumer: the cycle
+ * rebalances, it does not rank a top-N, so an override on it changed nothing
+ * while reporting success. That is the defect this module exists to avoid, at
+ * one remove - so the knob is gone rather than left as decoration. A knob is
+ * added back when something reads it.
+ */
+export type OverrideKnob = "maxOrdersPerRun";
 
 export const OVERRIDE_BOUNDS: Record<OverrideKnob, { min: number; max: number }> = {
   maxOrdersPerRun: { min: 1, max: 10 },
-  topN: { min: 1, max: 10 },
 };
 
 export const OVERRIDE_KNOBS = Object.keys(OVERRIDE_BOUNDS) as OverrideKnob[];
