@@ -22,10 +22,20 @@ import { chartStructureSignal, computeChartStructure } from "./finance-chart-str
 import { resolveFinanceCredentialEnv } from "./finance-credential-env.js";
 import { createFmpFreeBasicEodCollectionAdapter } from "./finance-free-market-collection-adapters.js";
 import { analystTargetSignal } from "./finance-fundamental-signal.js";
-import { runFinanceMarketCollectionRefresh } from "./finance-market-collection-registry.js";
+import {
+  MACRO_LOOKBACK_OBSERVATIONS,
+  macroRouteFor,
+  macroTrendSignal,
+  type MacroObservation,
+} from "./finance-macro-signal.js";
+import {
+  createFredMacroSeriesCollectionAdapter,
+  runFinanceMarketCollectionRefresh,
+} from "./finance-market-collection-registry.js";
 import { createRegisteredCapabilityAdapters } from "./finance-registered-capability-adapters.js";
 import { fuseSignals, type FinanceSignal } from "./finance-signal-fusion.js";
 import { financeResearchSamplesPath, resolveFinanceStateDir } from "./finance-state-dir.js";
+import { readFinanceStrategyRuleLedger } from "./finance-strategy-rule-ledger.js";
 
 export type BatchRecord = Readonly<{
   asOf: string;
@@ -83,6 +93,42 @@ export const DEFAULT_POOL = [
 ] as const;
 
 /**
+ * The instruments an active rule actually trades.
+ *
+ * Sampling a hard-coded pool while trading a different one produces a track
+ * record that cannot be used: the calibration numbers then describe symbols the
+ * system never trades, so a threshold derived from them is derived from the
+ * wrong universe. Link health flags this as `sample_universe_overlap`. Reading
+ * the rule ledger means the two cannot drift apart.
+ *
+ * Falls back to an empty list, and callers keep their own fallback, so a ledger
+ * that cannot be read never silently becomes "sample nothing".
+ */
+async function activeRuleInstruments(): Promise<string[]> {
+  try {
+    const directory = resolveFinanceStateDir({}).directory;
+    const read = (await readFinanceStrategyRuleLedger(directory, {})) as {
+      ledger?: { rules?: readonly unknown[] };
+    };
+    const out = new Set<string>();
+    for (const row of read.ledger?.rules ?? []) {
+      const rule = row as { state?: unknown; instruments?: unknown };
+      if (rule.state !== "active" || !Array.isArray(rule.instruments)) {
+        continue;
+      }
+      for (const symbol of rule.instruments) {
+        if (typeof symbol === "string" && symbol.trim().length > 0) {
+          out.add(symbol.trim().toUpperCase());
+        }
+      }
+    }
+    return [...out];
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Provider keys must not reach a log through an error message, because a fetch
  * error can carry the request URL - and these URLs carry the key.
  */
@@ -120,11 +166,53 @@ export function recordedKeys(path: string): Set<string> {
   );
 }
 
+/**
+ * Macro series from FRED, when a key is configured.
+ *
+ * Absent otherwise, and that is not a failure: an instrument then has one fewer source, the same
+ * as an instrument whose series could not be read. What it must never do is fall back to a number
+ * that looks like the series.
+ */
+function defaultMacroFor(
+  env: Record<string, unknown>,
+): ((seriesId: string) => Promise<readonly MacroObservation[]>) | undefined {
+  const apiKey = keyFrom(env, "FRED_API_KEY");
+  if (apiKey.length === 0) {
+    return undefined;
+  }
+  const adapter = createFredMacroSeriesCollectionAdapter({ apiKey });
+  return async (seriesId) => {
+    const rows = await adapter.collect(
+      {
+        collection: "macro_series",
+        instrument: seriesId,
+        seriesId,
+        assetClass: "macro",
+        asOf: new Date().toISOString(),
+        limit: MACRO_LOOKBACK_OBSERVATIONS + 1,
+      } as never,
+      AbortSignal.timeout(30_000),
+    );
+    return (Array.isArray(rows) ? rows : []).flatMap((row) => {
+      const data = (row as { data?: Record<string, unknown> }).data ?? {};
+      const date = typeof data.date === "string" ? data.date : "";
+      const value = Number(data.value);
+      return date.length > 0 && Number.isFinite(value) ? [{ date, value }] : [];
+    });
+  };
+}
+
 async function collectOne(params: {
   instrument: string;
   asOf: string;
   eodAdapter: ReturnType<typeof createFmpFreeBasicEodCollectionAdapter>;
   targetAdapters: ReturnType<typeof createRegisteredCapabilityAdapters>;
+  /**
+   * Macro series supplier, injectable so sampling is testable without the network. Absent when no
+   * macro provider is configured, in which case the instrument simply gets no macro source — the
+   * same answer as a series that cannot be read.
+   */
+  macroFor?: (seriesId: string) => Promise<readonly MacroObservation[]>;
   warn: (message: string) => void;
 }): Promise<BatchRecord> {
   const { instrument, asOf } = params;
@@ -209,6 +297,23 @@ async function collectOne(params: {
     params.warn("target leg failed for " + instrument + ": " + scrub(String(error)).slice(0, 120));
   }
 
+  // Macro: the source that exists for instruments with no analysts. An ETF has no price targets,
+  // so without this every instrument the rules trade could only ever be sampled as a refusal.
+  const route = macroRouteFor(instrument);
+  if (params.macroFor !== undefined && route !== undefined) {
+    try {
+      const observations = await params.macroFor(route.seriesId);
+      const signal = macroTrendSignal({ route, observations, observedAt: asOf });
+      // A series that has not moved is not a view, and neither is one that could not be read. Both
+      // come back undefined and contribute nothing, rather than becoming a direction.
+      if (signal !== undefined) {
+        signals.push(signal);
+      }
+    } catch (error) {
+      params.warn("macro leg failed for " + instrument + ": " + scrub(String(error)).slice(0, 120));
+    }
+  }
+
   const fused = fuseSignals(signals, { minSources: 2, minAgreement: 0.6 });
   if (!fused.ok) {
     return {
@@ -242,11 +347,14 @@ export async function runResearchBatch(
     /** Finance state directory. Defaults the same way every other finance reader does. */
     directory?: string;
     env?: NodeJS.ProcessEnv;
+    /** Macro series supplier. Defaults to FRED when a key is configured, otherwise no macro source. */
+    macroFor?: (seriesId: string) => Promise<readonly MacroObservation[]>;
     warn?: (message: string) => void;
   } = {},
 ): Promise<{
   asOf: string;
   recordPath: string;
+  universeSource: string;
   requested: number;
   recorded: readonly BatchRecord[];
   skipped: number;
@@ -262,7 +370,9 @@ export async function runResearchBatch(
   const recordPath =
     params.recordPath ??
     financeResearchSamplesPath(resolveFinanceStateDir({ directory: params.directory }).directory);
-  const requested = (params.instruments ?? [...DEFAULT_POOL])
+  const ruleUniverse = await activeRuleInstruments();
+  const pool = ruleUniverse.length > 0 ? ruleUniverse : [...DEFAULT_POOL];
+  const requested = (params.instruments ?? pool)
     .map((value) => value.trim().toUpperCase())
     .filter((value) => value.length > 0);
 
@@ -291,7 +401,16 @@ export async function runResearchBatch(
 
   const recorded: BatchRecord[] = [];
   for (const instrument of todo) {
-    recorded.push(await collectOne({ instrument, asOf, eodAdapter, targetAdapters, warn }));
+    recorded.push(
+      await collectOne({
+        instrument,
+        asOf,
+        eodAdapter,
+        targetAdapters,
+        macroFor: params.macroFor ?? defaultMacroFor(env),
+        warn,
+      }),
+    );
   }
 
   if (recorded.length > 0) {
@@ -302,6 +421,7 @@ export async function runResearchBatch(
   return {
     asOf,
     recordPath,
+    universeSource: ruleUniverse.length > 0 ? "active_rule" : "fallback_pool",
     requested: requested.length,
     recorded,
     skipped,
