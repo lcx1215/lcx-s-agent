@@ -4,10 +4,8 @@ const mocks = vi.hoisted(() => ({
   setLocalGatewayProvider: vi.fn(() => vi.fn()),
   createLocalCronService: vi.fn(),
   createLocalCronGatewayCaller: vi.fn(() => vi.fn()),
-  startHeartbeatRunner: vi.fn(),
   cronStart: vi.fn(),
   cronStop: vi.fn(),
-  heartbeatStop: vi.fn(),
 }));
 
 vi.mock("../agents/tools/gateway.js", () => ({
@@ -20,10 +18,8 @@ vi.mock("../gateway/local-cron-bridge.js", () => ({
   createLocalCronGatewayCaller: mocks.createLocalCronGatewayCaller,
   LOCAL_CRON_METHODS: new Set(["cron.add"]),
 }));
-vi.mock("../infra/heartbeat-runner.js", () => ({
-  startHeartbeatRunner: mocks.startHeartbeatRunner,
-}));
 
+import { hasHeartbeatWakeHandler } from "../infra/heartbeat-wake.js";
 import { installServeLocalCron } from "./serve-cron.js";
 
 describe("installServeLocalCron", () => {
@@ -35,18 +31,32 @@ describe("installServeLocalCron", () => {
       storePath: "/tmp/serve-cron-test.json",
       cronEnabled: true,
     });
-    mocks.startHeartbeatRunner.mockReturnValue({ stop: mocks.heartbeatStop });
   });
 
   it("installs a heartbeat consumer beside the daemon-free cron service", async () => {
-    const handle = installServeLocalCron({ deps: {} as never });
+    const cfg = { agents: { defaults: { heartbeat: { every: "1h" } } } } as never;
+    const handle = installServeLocalCron({ deps: {} as never, cfg });
 
-    expect(mocks.startHeartbeatRunner).toHaveBeenCalledWith({ cfg: undefined });
-    expect(handle.heartbeatRunner).toEqual({ stop: mocks.heartbeatStop });
+    expect(mocks.createLocalCronService).toHaveBeenCalledWith({ deps: {}, cfg });
+    expect(handle.heartbeatRunner).toEqual(
+      expect.objectContaining({ stop: expect.any(Function), updateConfig: expect.any(Function) }),
+    );
     expect(mocks.cronStart).toHaveBeenCalledTimes(1);
 
     await handle.dispose();
-    expect(mocks.heartbeatStop).toHaveBeenCalledTimes(1);
     expect(mocks.cronStop).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops the consumer and cron if provider assembly fails", () => {
+    const cfg = { agents: { defaults: { heartbeat: { every: "1h" } } } } as never;
+    mocks.setLocalGatewayProvider.mockImplementationOnce(() => {
+      throw new Error("provider setup failed");
+    });
+
+    expect(() => installServeLocalCron({ deps: {} as never, cfg })).toThrow(
+      "provider setup failed",
+    );
+    expect(mocks.cronStop).toHaveBeenCalledTimes(1);
+    expect(hasHeartbeatWakeHandler()).toBe(false);
   });
 });

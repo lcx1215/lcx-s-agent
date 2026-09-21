@@ -38,6 +38,8 @@ export type EmbeddedPiRunMeta = {
   timedOut?: boolean;
   /** The timeout occurred while context compaction was in progress or pending. */
   timedOutDuringCompaction?: boolean;
+  /** True when the user prompt completed before a later compaction timeout. */
+  promptCompleted?: boolean;
   systemPromptReport?: SessionSystemPromptReport;
   error?: {
     kind:

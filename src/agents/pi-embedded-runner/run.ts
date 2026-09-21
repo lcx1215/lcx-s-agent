@@ -794,6 +794,7 @@ export async function runEmbeddedPiAgent(
             promptError,
             timedOut,
             timedOutDuringCompaction,
+            promptCompleted,
             sessionIdUsed,
             lastAssistant,
           } = attempt;
@@ -1161,8 +1162,9 @@ export async function runEmbeddedPiAgent(
 
           // Rotate on timeout to try another account/model path in this turn,
           // but exclude post-prompt compaction timeouts (model succeeded; no profile issue).
+          const compactionTimeoutAfterPrompt = timedOutDuringCompaction && promptCompleted === true;
           const shouldRotate =
-            (!aborted && failoverFailure) || (timedOut && !timedOutDuringCompaction);
+            (!aborted && failoverFailure) || (timedOut && !compactionTimeoutAfterPrompt);
 
           if (shouldRotate) {
             if (lastProfileId) {
@@ -1270,7 +1272,7 @@ export async function runEmbeddedPiAgent(
           // Timeout aborts can leave the run without any assistant payloads.
           // Emit an explicit timeout error instead of silently completing, so
           // callers do not lose the turn as an orphaned user message.
-          if (timedOut && !timedOutDuringCompaction && payloads.length === 0) {
+          if (timedOut && !compactionTimeoutAfterPrompt && payloads.length === 0) {
             return {
               payloads: [
                 {
@@ -1286,6 +1288,7 @@ export async function runEmbeddedPiAgent(
                 aborted,
                 timedOut,
                 timedOutDuringCompaction,
+                promptCompleted,
                 systemPromptReport: attempt.systemPromptReport,
               },
               didSendViaMessagingTool: attempt.didSendViaMessagingTool,
@@ -1320,6 +1323,7 @@ export async function runEmbeddedPiAgent(
               aborted,
               timedOut,
               timedOutDuringCompaction,
+              promptCompleted,
               systemPromptReport: attempt.systemPromptReport,
               // Handle client tool calls (OpenResponses hosted tools)
               // Propagate the LLM stop reason so callers (lifecycle events,

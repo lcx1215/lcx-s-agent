@@ -1268,6 +1268,7 @@ export async function runEmbeddedAttempt(
       let aborted = Boolean(params.abortSignal?.aborted);
       let timedOut = false;
       let timedOutDuringCompaction = false;
+      let promptCompleted = false;
       const getAbortReason = (signal: AbortSignal): unknown =>
         "reason" in signal ? (signal as { reason?: unknown }).reason : undefined;
       const makeTimeoutAbortReason = (): Error => {
@@ -1576,6 +1577,7 @@ export async function runEmbeddedAttempt(
           } else {
             await abortable(activeSession.prompt(effectivePrompt));
           }
+          promptCompleted = true;
         } catch (err) {
           promptError = err;
           promptErrorSource = "prompt";
@@ -1786,6 +1788,7 @@ export async function runEmbeddedAttempt(
         aborted,
         timedOut,
         timedOutDuringCompaction,
+        promptCompleted,
         promptError,
         sessionIdUsed,
         bootstrapPromptWarningSignaturesSeen: bootstrapPromptWarning.warningSignaturesSeen,

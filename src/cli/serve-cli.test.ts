@@ -1,6 +1,7 @@
 import { request } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { FailoverError } from "../agents/failover-error.js";
 import { createDefaultDeps } from "./deps.js";
 import {
   DEFAULT_SERVE_PORT,
@@ -11,6 +12,7 @@ import {
   readServeResultFailure,
   readServeResultError,
   readServePayloadTexts,
+  readServeThrownFailure,
   resolveServeBind,
   resolveServeConfig,
   resolveServePort,
@@ -252,11 +254,43 @@ describe("POST /agent", () => {
       },
     });
     const response = await postAgent(url, { message: "ping" });
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(502);
     await expect(response.json()).resolves.toMatchObject({
       ok: false,
       status: "error",
-      error: "provider exploded",
+      error: "agent request failed",
+    });
+  });
+
+  it("maps structured thrown failures without exposing provider details", async () => {
+    const timeout = await startServer({
+      runAgent: async () => {
+        throw new Error("all models failed", {
+          cause: new FailoverError("provider secret detail", {
+            reason: "timeout",
+            provider: "secret-provider",
+            profileId: "secret-profile",
+          }),
+        });
+      },
+    });
+    const timeoutResponse = await postAgent(timeout.url, { message: "ping" });
+    expect(timeoutResponse.status).toBe(504);
+    await expect(timeoutResponse.json()).resolves.toMatchObject({
+      ok: false,
+      error: "agent request timed out",
+    });
+
+    const upstream = await startServer({
+      runAgent: async () => {
+        throw new FailoverError("private auth detail", { reason: "auth" });
+      },
+    });
+    const upstreamResponse = await postAgent(upstream.url, { message: "ping" });
+    expect(upstreamResponse.status).toBe(502);
+    await expect(upstreamResponse.json()).resolves.toMatchObject({
+      ok: false,
+      error: "agent upstream failure",
     });
   });
 
@@ -299,6 +333,24 @@ describe("POST /agent", () => {
       }),
     });
     expect((await postAgent(cancelled.url, { message: "ping" })).status).toBe(409);
+
+    const completedAfterCompaction = await startServer({
+      runAgent: async () => ({
+        payloads: [{ text: "answer" }],
+        meta: {
+          timedOut: true,
+          timedOutDuringCompaction: true,
+          promptCompleted: true,
+          aborted: true,
+        },
+      }),
+    });
+    const completedResponse = await postAgent(completedAfterCompaction.url, { message: "ping" });
+    expect(completedResponse.status).toBe(200);
+    await expect(completedResponse.json()).resolves.toMatchObject({
+      ok: true,
+      payloads: [{ text: "answer" }],
+    });
   });
 });
 
@@ -473,5 +525,35 @@ describe("readServeResultFailure", () => {
       status: 502,
       error: "agent returned an error payload",
     });
+    expect(
+      readServeResultFailure({
+        payloads: [{ text: "partial", isError: true }],
+        meta: { timedOut: true, timedOutDuringCompaction: true, promptCompleted: false },
+      }),
+    ).toEqual({ status: 504, error: "partial" });
+    expect(
+      readServeResultFailure({
+        payloads: [{ text: "answer" }],
+        meta: {
+          timedOut: true,
+          timedOutDuringCompaction: true,
+          promptCompleted: true,
+          aborted: true,
+        },
+      }),
+    ).toBeUndefined();
+  });
+});
+
+describe("readServeThrownFailure", () => {
+  it("follows a bounded structured cause chain", () => {
+    expect(
+      readServeThrownFailure(
+        new Error("wrapper", {
+          cause: new FailoverError("private detail", { reason: "timeout" }),
+        }),
+      ),
+    ).toEqual({ status: 504, error: "agent request timed out" });
+    expect(readServeThrownFailure(new Error("unclassified"))).toBeUndefined();
   });
 });

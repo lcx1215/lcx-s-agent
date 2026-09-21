@@ -1,4 +1,5 @@
 import { setLocalGatewayProvider } from "../agents/tools/gateway.js";
+import { loadConfig } from "../config/config.js";
 import { createLocalCronService } from "../cron/local-service.js";
 import { createLocalCronGatewayCaller, LOCAL_CRON_METHODS } from "../gateway/local-cron-bridge.js";
 import { startHeartbeatRunner, type HeartbeatRunner } from "../infra/heartbeat-runner.js";
@@ -31,19 +32,42 @@ export function installServeLocalCron(params: {
   deps: ReturnType<typeof createDefaultDeps>;
   cfg?: Parameters<typeof createLocalCronService>[0]["cfg"];
 }): ServeCronHandle {
-  const state = createLocalCronService({ deps: params.deps, cfg: params.cfg });
-  // Cron jobs with wakeMode="next-heartbeat" enqueue a wake request. The
-  // Gateway normally owns the consumer, so daemon-free serve must own one too.
-  const heartbeatRunner = startHeartbeatRunner({ cfg: params.cfg });
-  const caller = createLocalCronGatewayCaller({
-    cron: state.cron,
-    cronStorePath: state.storePath,
-  });
+  const cfg = params.cfg ?? loadConfig();
+  const state = createLocalCronService({ deps: params.deps, cfg });
+  let heartbeatRunner: HeartbeatRunner = {
+    stop: () => undefined,
+    updateConfig: () => undefined,
+  };
+  let removeProvider: (() => void) | undefined;
 
-  const removeProvider = setLocalGatewayProvider({
-    methods: new Set<string>(LOCAL_CRON_METHODS),
-    call: (method, opts, callParams, extra) => caller(method, opts, callParams, extra),
-  });
+  try {
+    // Cron jobs with wakeMode="next-heartbeat" enqueue a wake request. The
+    // Gateway normally owns the consumer, so daemon-free serve must own one too.
+    try {
+      heartbeatRunner = startHeartbeatRunner({ cfg });
+    } catch {
+      // Heartbeats are optional for serve. Keep cron and agent requests alive,
+      // but make the missing consumer explicit instead of claiming it works.
+      defaultRuntime.error(
+        "serve: heartbeat consumer unavailable; next-heartbeat jobs are disabled",
+      );
+    }
+
+    const caller = createLocalCronGatewayCaller({
+      cron: state.cron,
+      cronStorePath: state.storePath,
+    });
+
+    removeProvider = setLocalGatewayProvider({
+      methods: new Set<string>(LOCAL_CRON_METHODS),
+      call: (method, opts, callParams, extra) => caller(method, opts, callParams, extra),
+    });
+  } catch (error) {
+    removeProvider?.();
+    heartbeatRunner.stop();
+    state.cron.stop();
+    throw error;
+  }
 
   // `CronService.start()` is async; a failure here is a degraded capability, not a
   // fatal condition, so it is reported and the service keeps running. Same shape
@@ -57,7 +81,7 @@ export function installServeLocalCron(params: {
     cronEnabled: state.cronEnabled,
     heartbeatRunner,
     dispose: async () => {
-      removeProvider();
+      removeProvider?.();
       heartbeatRunner.stop();
       // `CronService.stop()` is synchronous, matching every other call site
       // (`server-close.ts`, `server-reload-handlers.ts`).

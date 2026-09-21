@@ -1,6 +1,7 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { Command } from "commander";
+import { isFailoverError } from "../agents/failover-error.js";
 import { shouldRejectBrowserMutation } from "../browser/csrf.js";
 import { agentCommand } from "../commands/agent.js";
 import type { AgentCommandOpts } from "../commands/agent/types.js";
@@ -261,6 +262,68 @@ export type ServeResultFailure = {
   error: string;
 };
 
+function readStructuredStatus(error: unknown): number | undefined {
+  if (typeof error !== "object" || error === null || !("status" in error)) {
+    return undefined;
+  }
+  const status = error.status;
+  return typeof status === "number" && Number.isInteger(status) ? status : undefined;
+}
+
+function readErrorCause(error: unknown): unknown {
+  if (typeof error !== "object" || error === null || !("cause" in error)) {
+    return undefined;
+  }
+  return error.cause;
+}
+
+/** Maps structured thrown agent failures without inferring status from message text. */
+export function readServeThrownFailure(error: unknown): ServeResultFailure | undefined {
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current !== undefined && !seen.has(current); depth += 1) {
+    seen.add(current);
+    if (isFailoverError(current)) {
+      const status =
+        current.reason === "timeout" || current.status === 408 || current.status === 504
+          ? 504
+          : current.status === 409
+            ? 409
+            : 502;
+      return {
+        status,
+        error:
+          status === 504
+            ? "agent request timed out"
+            : status === 409
+              ? "agent request was cancelled"
+              : "agent upstream failure",
+      };
+    }
+
+    const status = readStructuredStatus(current);
+    const name = current instanceof Error ? current.name : undefined;
+    if (status === 408 || status === 504 || name === "TimeoutError") {
+      return {
+        status: 504,
+        error: "agent request timed out",
+      };
+    }
+    if (status === 409 || name === "AbortError") {
+      return {
+        status: 409,
+        error: "agent request was cancelled",
+      };
+    }
+    if (status === 502 || status === 503) {
+      return { status: 502, error: "agent upstream failure" };
+    }
+
+    current = readErrorCause(current);
+  }
+  return undefined;
+}
+
 /** Maps an accepted agent result onto an HTTP failure without guessing from text. */
 export function readServeResultFailure(result: unknown): ServeResultFailure | undefined {
   if (typeof result !== "object" || result === null) {
@@ -269,14 +332,20 @@ export function readServeResultFailure(result: unknown): ServeResultFailure | un
   const meta = "meta" in result ? result.meta : undefined;
   const metaRecord = typeof meta === "object" && meta !== null ? meta : undefined;
   const resultError = readServeResultError(result);
+  const readMetaFlag = (key: string) =>
+    metaRecord !== undefined && key in metaRecord && metaRecord[key] === true;
+  const timedOut = readMetaFlag("timedOut");
+  const timedOutDuringCompaction = readMetaFlag("timedOutDuringCompaction");
+  const promptCompleted = readMetaFlag("promptCompleted");
+  const completedAfterCompactionTimeout = timedOutDuringCompaction && promptCompleted;
 
-  if (metaRecord && "timedOut" in metaRecord && metaRecord.timedOut === true) {
+  if (timedOut && !completedAfterCompactionTimeout) {
     return {
       status: 504,
       error: resultError ?? "agent request timed out",
     };
   }
-  if (metaRecord && "aborted" in metaRecord && metaRecord.aborted === true) {
+  if (readMetaFlag("aborted") && !completedAfterCompactionTimeout) {
     return {
       status: 409,
       error: resultError ?? "agent request was cancelled",
@@ -467,11 +536,12 @@ export function createServeRequestHandler(options: ServeHandlerOptions) {
         payloads: texts.map((text) => ({ text })),
       });
     } catch (error) {
-      sendJson(res, 500, {
+      const thrownFailure = readServeThrownFailure(error);
+      sendJson(res, thrownFailure?.status ?? 502, {
         ok: false,
         runId,
         status: "error",
-        error: String(error instanceof Error ? error.message : error),
+        error: thrownFailure?.error ?? "agent request failed",
       });
     }
   };
