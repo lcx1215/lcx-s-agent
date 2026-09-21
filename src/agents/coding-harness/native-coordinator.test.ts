@@ -284,6 +284,23 @@ describe("native coding isolation and artifact delivery", () => {
     expect(result.verified).toBe(false);
     expect(docker.live.size).toBe(0);
   });
+  it("honors cancellation before source inspection or container allocation", async () => {
+    const input = await fixture();
+    const docker = fakeDocker();
+    await expect(
+      inspectNativeSource(
+        input.cwd,
+        input.cwd,
+        AbortSignal.abort(new Error("cancelled before scan")),
+      ),
+    ).rejects.toThrow("cancelled before scan");
+    const receipt = await runNativeCodingHarness(
+      { ...input, signal: AbortSignal.abort() },
+      { docker, runner: edit },
+    );
+    expect(receipt.status).toBe("cancelled");
+    expect(docker.create).not.toHaveBeenCalled();
+  });
   it("blocks unrelated cwd, default branches, dirty source and private tracked files", async () => {
     const input = await fixture();
     const other = await fixture();

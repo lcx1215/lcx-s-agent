@@ -163,57 +163,62 @@ export function nativeManifestDigest(manifest: NativeManifest): string {
 export async function inspectNativeSource(
   cwd: string,
   authorizedWorkspaceDir: string,
+  signal?: AbortSignal,
 ): Promise<NativeSource> {
+  signal?.throwIfAborted();
   const root = await fs.realpath(cwd);
   const authorized = await fs.realpath(authorizedWorkspaceDir);
-  const gitRoot = (await nativeGit(root, ["rev-parse", "--show-toplevel"])).trim();
+  const gitRoot = (await nativeGit(root, ["rev-parse", "--show-toplevel"], signal)).trim();
   if (root !== (await fs.realpath(gitRoot))) {
     throw new Error("native coding cwd must be a repository root");
   }
   const commonDir = await fs.realpath(
-    path.resolve(root, (await nativeGit(root, ["rev-parse", "--git-common-dir"])).trim()),
+    path.resolve(root, (await nativeGit(root, ["rev-parse", "--git-common-dir"], signal)).trim()),
   );
   const allowedCommon = await fs.realpath(
     path.resolve(
       authorized,
-      (await nativeGit(authorized, ["rev-parse", "--git-common-dir"])).trim(),
+      (await nativeGit(authorized, ["rev-parse", "--git-common-dir"], signal)).trim(),
     ),
   );
   if (commonDir !== allowedCommon) {
     throw new Error("native coding cwd is outside the authorized repository");
   }
-  const worktrees = await nativeGit(authorized, ["worktree", "list", "--porcelain"]);
+  const worktrees = await nativeGit(authorized, ["worktree", "list", "--porcelain"], signal);
   if (root !== authorized && !worktrees.split("\n").includes(`worktree ${root}`)) {
     throw new Error("cwd is not an authorized linked worktree");
   }
-  const branch = (await nativeGit(root, ["symbolic-ref", "--short", "HEAD"])).trim();
+  const branch = (await nativeGit(root, ["symbolic-ref", "--short", "HEAD"], signal)).trim();
   let defaultBranch = "main";
   try {
-    defaultBranch = (await nativeGit(root, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]))
+    defaultBranch = (
+      await nativeGit(root, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], signal)
+    )
       .trim()
       .replace(/^origin\//, "");
   } catch {
+    signal?.throwIfAborted();
     /* main/master remain blocked without remote metadata. */
   }
   if (["main", "master", defaultBranch].includes(branch)) {
     throw new Error("native coding requires a non-default feature branch");
   }
-  if ((await nativeGit(root, ["status", "--porcelain"])).trim()) {
+  if ((await nativeGit(root, ["status", "--porcelain"], signal)).trim()) {
     throw new Error("native coding requires a clean source worktree");
   }
-  const tracked = (await nativeGit(root, ["ls-files", "-z"])).split("\0").filter(Boolean);
-  const manifest = await snapshotNativeTree(root, undefined, tracked);
+  const tracked = (await nativeGit(root, ["ls-files", "-z"], signal)).split("\0").filter(Boolean);
+  const manifest = await snapshotNativeTree(root, undefined, tracked, signal);
   return {
     root,
     branch,
     commonDir,
-    head: (await nativeGit(root, ["rev-parse", "HEAD"])).trim(),
+    head: (await nativeGit(root, ["rev-parse", "HEAD"], signal)).trim(),
     manifest,
   };
 }
 export async function nativeSourceUnchanged(source: NativeSource): Promise<boolean> {
   try {
-    const latest = await inspectNativeSource(source.root, source.root);
+    const latest = await inspectNativeSource(source.root, source.root, AbortSignal.timeout(5_000));
     return (
       latest.head === source.head &&
       latest.branch === source.branch &&

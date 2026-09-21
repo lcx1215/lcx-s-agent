@@ -155,7 +155,7 @@ export async function runNativeCodingHarness(
     if (!input.task.trim() || !input.requesterSessionKey) {
       throw new Error("task and requester session are required");
     }
-    source = await inspectNativeSource(input.cwd, input.authorizedWorkspaceDir);
+    source = await inspectNativeSource(input.cwd, input.authorizedWorkspaceDir, signal);
     signal.throwIfAborted();
     receipt.baseline = {
       head: source.head,
