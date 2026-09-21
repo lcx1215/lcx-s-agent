@@ -23,13 +23,14 @@ import {
   classifyFinanceStrategy,
   evaluateFinanceMandate,
   type FinanceMandateDecision,
+  type FinanceMandateContext,
   type FinanceRegime,
   type FinanceStrategyClass,
 } from "./finance-mandate.js";
 
 export type ConclusionToMandateResult = Readonly<
   | { ok: false; stage: "intake"; refusals: readonly string[] }
-  | { ok: false; stage: "compile"; refusals: readonly string[] }
+  | { ok: false; stage: "compile" | "risk_context"; refusals: readonly string[] }
   | {
       ok: true;
       stage: "mandate";
@@ -45,9 +46,19 @@ export type ConclusionToMandateResult = Readonly<
     }
 >;
 
+export type FinanceConclusionRiskContext = Readonly<{
+  drawdownFraction: number;
+  averagingDown: boolean;
+  revengeSizing: boolean;
+  hasSignificantAutocorrelation?: boolean;
+  realizedVolatilityFraction?: number;
+}>;
+
 export function evaluateConclusionToMandate(params: {
   /** The model's JSON, unvalidated. */
   raw: unknown;
+  /** Trusted caller state, never read from model JSON. Missing state refuses execution. */
+  riskContext?: FinanceConclusionRiskContext;
   /** Observed price and the time it belongs to. "Now" is never assumed. */
   referencePrice: number;
   referencePriceAt: string;
@@ -78,12 +89,28 @@ export function evaluateConclusionToMandate(params: {
     return { ok: false, stage: "intake", refusals: intake.refusals };
   }
 
-  const strategyClass = classifyFinanceStrategy({
+  const risk = params.riskContext;
+  if (
+    !risk ||
+    typeof risk.averagingDown !== "boolean" ||
+    typeof risk.revengeSizing !== "boolean" ||
+    typeof risk.drawdownFraction !== "number"
+  ) {
+    return {
+      ok: false,
+      stage: "risk_context",
+      refusals: [
+        "trusted caller risk context requires observed drawdown and explicit averagingDown/revengeSizing booleans; model claims cannot supply it",
+      ],
+    };
+  }
+  const strategy: FinanceMandateContext["strategy"] = {
     assetClass: intake.conclusion.assetClass,
     ...(intake.conclusion.horizonDays === undefined
       ? {}
       : { holdingPeriodDays: intake.conclusion.horizonDays }),
-  });
+  };
+  const strategyClass = classifyFinanceStrategy(strategy);
 
   const compiled = compileExecutionIntent({
     conclusion: intake.conclusion,
@@ -108,11 +135,18 @@ export function evaluateConclusionToMandate(params: {
   const riskFractionOfEquity = (compiled.intent.quantity * stopDistance) / params.equity;
 
   const mandate = evaluateFinanceMandate({
-    strategy: { assetClass: intake.conclusion.assetClass },
+    strategy,
     riskFractionOfEquity,
-    drawdownFraction: 0,
+    drawdownFraction: risk.drawdownFraction,
+    averagingDown: risk.averagingDown,
+    revengeSizing: risk.revengeSizing,
+    ...(risk.realizedVolatilityFraction === undefined
+      ? {}
+      : { realizedVolatilityFraction: risk.realizedVolatilityFraction }),
     stopLossDefined: intake.conclusion.invalidationPrice !== undefined,
-    hasSignificantAutocorrelation: true,
+    ...(risk.hasSignificantAutocorrelation === undefined
+      ? {}
+      : { hasSignificantAutocorrelation: risk.hasSignificantAutocorrelation }),
     ...(params.regime === undefined ? {} : { regime: params.regime }),
   });
 

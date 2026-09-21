@@ -131,3 +131,23 @@ describe("evaluateFinanceMandate", () => {
     expect(decision.reasons.join()).toMatch(/drawdown is not a finite/);
   });
 });
+
+it.each([
+  { riskFractionOfEquity: -1 },
+  { drawdownFraction: -1 },
+  { realizedVolatilityFraction: NaN },
+  { realizedVolatilityFraction: Infinity },
+  { realizedVolatilityFraction: -0.1 },
+  { averagingDown: "false" },
+  { revengeSizing: "false" },
+  { stopLossDefined: 1 },
+  { hasSignificantAutocorrelation: "true" },
+  { regime: "unknown" },
+  { regime: "__proto__" },
+])("refuses malformed runtime risk state %j without throwing", (invalid) => {
+  const result = evaluateFinanceMandate({
+    ...base,
+    ...invalid,
+  } as unknown as FinanceMandateContext);
+  expect(result.verdict).toBe("refuse");
+});
