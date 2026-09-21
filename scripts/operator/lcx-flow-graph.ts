@@ -1631,6 +1631,7 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "test/lcx-external-channel-binding.test.ts",
       "test/lcx-mind-model.test.ts",
       "test/lcx-problem-cluster-radar.test.ts",
+      "test/lcx-system-doctor-council-health.test.ts",
       "test/lcx-system-doctor-dataset-inspect.test.ts",
       "test/lcx-system-doctor-train-slice.test.ts",
       "test/lcx-universe-index.test.ts",
