@@ -141,6 +141,16 @@ export type FinanceDailyCycleReport = Readonly<{
     /** `false` means a mark for this instant was already on file: a re-run, or a closed market. */
     appended: boolean;
   }[];
+  /**
+   * Held positions this run could not price, because it collected no bars for them.
+   *
+   * Kept out of `dataIssues` on purpose. `ok` means "this run went through"; a position held
+   * outside every rule is a standing fact about the book, not a fault of this run, and putting
+   * it in `dataIssues` makes `ok` false every single day for as long as that position exists —
+   * which is indistinguishable from a run that genuinely failed. Reported here, and red-flagged
+   * by the link health check, where a standing fact belongs.
+   */
+  unpricedHoldings: readonly string[];
 }>;
 
 type Bar = Readonly<{ date: string; close: number }>;
@@ -635,6 +645,7 @@ export async function runFinanceDailyCycle(
   // it just measured. The mark store is idempotent on (instrument, at), so a re-run adds nothing
   // and a closed market adds nothing either.
   const marksFiled: { instrument: string; price: number; at: string; appended: boolean }[] = [];
+  const unpricedHoldings: string[] = [];
   try {
     const held = await readFinancePositionLedger(directory);
     for (const position of held.ledger.positions) {
@@ -644,8 +655,9 @@ export async function runFinanceDailyCycle(
       const bar = lastBar.get(position.instrument);
       if (bar === undefined) {
         // Held outside the instruments this run collected, so it has no price here and keeps the
-        // one it has. Reported: a position nobody can price is not the same as one worth holding.
-        dataIssues.push(`${position.instrument}: held but not collected this run, not re-priced`);
+        // one it has. Named rather than filed as a data issue: see `unpricedHoldings` in the
+        // report, and the link health check, which flags it as an error in its own right.
+        unpricedHoldings.push(position.instrument);
         continue;
       }
       const at = markInstantForBarDate(bar.date, asOf);
@@ -918,5 +930,6 @@ export async function runFinanceDailyCycle(
     refusals,
     barsFiled,
     marksFiled,
+    unpricedHoldings,
   });
 }

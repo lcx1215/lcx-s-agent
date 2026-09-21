@@ -19,6 +19,7 @@
 
 import { fetchAlpacaAccountSnapshot } from "../../src/agents/finance-alpaca-run.js";
 import { runFinanceDailyCycle } from "../../src/agents/finance-daily-cycle.js";
+import { readFinanceLinkHealth } from "../../src/agents/finance-link-health.js";
 import { backfillOutcomes } from "../../src/agents/finance-outcome-backfill.js";
 import { buildReflection } from "../../src/agents/finance-reflection.js";
 import {
@@ -94,6 +95,25 @@ async function appendScoredOutcomes(
   await writeFile(tmp, `${lines.join("\n")}\n`, "utf8");
   await rename(tmp, path);
   return { path, appended: fresh.length, skipped: rows.length - fresh.length };
+}
+
+/**
+ * The plane's own wiring, asked inside the run that goes unattended.
+ *
+ * Kept from failing the cycle: a health check that aborts the run it is checking would turn an
+ * observation into an outage. It reports its own failure instead, so "the check could not run"
+ * never reads as "the wiring is fine".
+ */
+async function safeLinkHealth(directory: string): Promise<unknown> {
+  try {
+    return await readFinanceLinkHealth({ directory });
+  } catch (error) {
+    return {
+      schemaVersion: "lcx_finance_link_health_v1",
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 type Mode = "day" | "night";
@@ -310,6 +330,14 @@ export async function runFinanceDailyCycleOperator(
         // book, which is the normal steady state. Without this line an operator cannot tell
         // "nothing was filed" from "the run never tried".
         barsFiled: report.barsFiled,
+        // Priced, not just collected: what this run did with the bars it just filed. Left out of
+        // the payload once and it read as "nothing was re-priced" while seven positions had been.
+        marksFiled: report.marksFiled,
+        unpricedHoldings: report.unpricedHoldings,
+        // Whether the plane is still wired together, asked by the run that nobody watches. A
+        // position held outside every rule, or priced with a day the book has passed, does not
+        // show up in this cycle's own numbers — it shows up here or nowhere.
+        linkHealth: await safeLinkHealth(directory),
       };
       if (!options.json) {
         process.stdout.write(`${renderDay(payload)}\n`);

@@ -599,6 +599,27 @@ warn  scheduler_slots       day last fired 2026-09-20, night has never fired
 变异验证（治具目录，双向）：**接好了的状态全绿** exit=0（SPY 在宇宙内、有 bar、mark 落在最新 bar 日期、
 scored 有内容、night 触发过）；上面这份真实状态 3 红 2 黄 ⇒ 检测器既不恒定报红、也不是瞎的。
 
+**已挂进无人值守那一跑**：day cycle 的 payload 现在自带 `linkHealth`（算子会自己问自己接没接好），
+检查逻辑放在 `src/agents/finance-link-health.ts` 以便复用，CLI 只做渲染。真实库副本上跑 day：
+
+```
+cycle ok: true | dataIssues: []
+marksFiled: 7 条（SPY @761.69、QQQ @721.45 …）
+unpricedHoldings: ["AAPL"]
+linkHealth.ok: false | FAIL: orphan_holdings,unpriceable_holdings,mark_freshness
+```
+
+### 路上踩到的两个"字段没接出去"
+
+都是同一形状：下层算对了，上层没把它带出来，于是读数像"什么都没发生"。
+
+1. **`marksFiled` 没进 day payload** ⇒ 7 个持仓明明被重标记了，payload 里看起来是 0 条。
+   payload 是逐字段手工列的，漏一个字段不报错、也不红，只是静默地读成"没做"。
+2. **孤儿持仓把 `ok` 永久污染成 false** ⇒ `ok` 的定义是 `dataIssues.length === 0`，而我最初把
+   "AAPL 持有但本轮没采到"塞进了 `dataIssues`。只要 AAPL 还在账上，day 就**每天 ok=false**，
+   与"这一跑真的失败了"不可分。改为专用字段 `unpricedHoldings`，`ok` 只回答"这一跑顺不顺利"；
+   孤儿持仓由 `linkHealth` 的 error 级项负责（那才是常设事实该待的地方）。
+
 ### 缺口 2：文本/研究 与 论点没有连接键
 
 已单独成文：`ops/external-learning/2026-09-19-thesis-outcome-assessment-gap.md`。
