@@ -2,7 +2,7 @@ import { createAlpacaSafetyReadTransport } from "./finance-alpaca-safety-transpo
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import {
   appendFinanceBrokerHistory,
-  readFinancePositionRecords,
+  readFinanceBrokerHistoryRecords,
 } from "./finance-position-ledger.js";
 import type { FinanceUncachedFetch } from "./finance-write-transport.js";
 
@@ -173,10 +173,8 @@ export async function readFinanceBrokerHistory(directory: string, accountId: str
   if (!accountId.trim()) {
     throw new Error("history account required");
   }
-  const read = await readFinancePositionRecords(directory);
-  const records = read.records.filter(
-    (record) => record.body.kind === "broker_history" && record.body.accountId === accountId,
-  );
+  const read = await readFinanceBrokerHistoryRecords(directory, accountId, "alpaca:paper");
+  const records = read.records;
   const facts = new Map<string, { stream: string; fact: Record<string, unknown> }>();
   for (const record of records) {
     if (record.body.kind !== "broker_history") {

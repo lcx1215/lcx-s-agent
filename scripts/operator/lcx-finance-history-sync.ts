@@ -19,7 +19,7 @@ export async function runFinanceHistorySync(argv = process.argv.slice(2)) {
       "requires --dir --account --after --until; paper GET-only raw history, no position reconciliation",
     );
   }
-  const env = resolveFinanceCredentialEnv(process.env);
+  const env = resolveFinanceCredentialEnv({ ...process.env, LCX_FINANCE_STATE_DIR: values.dir });
   const keyId = env.ALPACA_API_KEY_ID;
   const secretKey = env.ALPACA_API_SECRET_KEY;
   if (!keyId || !secretKey) {

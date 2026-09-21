@@ -312,17 +312,6 @@ const FinanceExecutionReceiptRecordSchema = z
 const FinancePositionRecordBodySchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("receipt"), receipt: FinanceExecutionReceiptRecordSchema }).strict(),
   z.object({ kind: z.literal("mark"), mark: FinancePositionMarkRecordSchema }).strict(),
-  // Raw broker evidence is deliberately excluded from receipt/position projections.
-  z
-    .object({
-      kind: z.literal("broker_history"),
-      accountId: Text,
-      venue: z.literal("alpaca:paper"),
-      query: Text,
-      cursor: z.string(),
-      payload: z.array(z.record(z.string(), z.unknown())),
-    })
-    .strict(),
 ]);
 
 export type FinancePositionRecordBody = z.infer<typeof FinancePositionRecordBodySchema>;
@@ -379,6 +368,8 @@ const databasePath = financePositionLedgerPath;
 
 const POSITION_LEDGER_MIGRATION_LEDGER = "finance_position_migrations";
 const POSITION_LEDGER_MIGRATIONS: readonly SqliteMigration[] = [
+  // Raw history has its own chain: old receipt/mark readers remain compatible.
+
   {
     version: 1,
     description: "append-only execution receipt and mark ledger",
@@ -401,6 +392,15 @@ const POSITION_LEDGER_MIGRATIONS: readonly SqliteMigration[] = [
         ref TEXT, updated_at TEXT NOT NULL
       );
     `,
+  },
+  {
+    version: 3,
+    description: "account scoped raw broker history, separate from position projection",
+    sql: `CREATE TABLE IF NOT EXISTS finance_broker_history (
+      sequence INTEGER PRIMARY KEY, ref TEXT NOT NULL UNIQUE, body TEXT NOT NULL
+    );
+    CREATE TRIGGER IF NOT EXISTS finance_broker_history_no_update BEFORE UPDATE ON finance_broker_history BEGIN SELECT RAISE(ABORT,'broker history is append-only'); END;
+    CREATE TRIGGER IF NOT EXISTS finance_broker_history_no_delete BEFORE DELETE ON finance_broker_history BEGIN SELECT RAISE(ABORT,'broker history is append-only'); END;`,
   },
 ];
 
@@ -815,16 +815,112 @@ export async function readFinanceAccountPositionLedger(
   });
 }
 
-/** Same durable hash chain, not synthetic fills. Replays cannot double-count positions. */
-export async function appendFinanceBrokerHistory(
+const BrokerHistoryBodySchema = z
+  .object({
+    kind: z.literal("broker_history"),
+    accountId: Text,
+    venue: Text,
+    query: Text,
+    cursor: z.string(),
+    payload: z.array(z.record(z.string(), z.unknown())),
+  })
+  .strict();
+type BrokerHistoryBody = z.infer<typeof BrokerHistoryBodySchema>;
+const BrokerHistoryRecordSchema = z
+  .object({
+    sequence: z.number().int().positive(),
+    previousRef: Hash.nullable(),
+    body: BrokerHistoryBodySchema,
+  })
+  .strict();
+function readBrokerHistoryRows(db: PositionDatabase) {
+  if (!hasTable(db, "finance_broker_history")) {
+    return [];
+  }
+  let previousRef: string | null = null;
+  return db
+    .prepare("SELECT ref,body FROM finance_broker_history ORDER BY sequence")
+    .all()
+    .map((row, index) => {
+      if (typeof row.body !== "string" || typeof row.ref !== "string") {
+        throw new Error("invalid broker history row");
+      }
+      const raw: unknown = JSON.parse(row.body);
+      const record = BrokerHistoryRecordSchema.parse(raw);
+      if (
+        caseflowFingerprint(raw) !== row.ref ||
+        record.previousRef !== previousRef ||
+        record.sequence !== index + 1
+      ) {
+        throw new Error("broker history chain mismatch");
+      }
+      previousRef = row.ref;
+      return { ...record, ref: row.ref };
+    });
+}
+
+/** Additive table in the existing database; never appends to the position chain. */
+export async function appendFinanceBrokerHistory(directory: string, body: BrokerHistoryBody) {
+  const validated = BrokerHistoryBodySchema.parse(body);
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const { DatabaseSync } = requireNodeSqlite();
+  const db = new DatabaseSync(databasePath(directory));
+  try {
+    chmodSync(databasePath(directory), 0o600);
+    db.exec("PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;");
+    applySqliteMigrations({
+      db,
+      ledgerTable: POSITION_LEDGER_MIGRATION_LEDGER,
+      migrations: POSITION_LEDGER_MIGRATIONS,
+    });
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const records = readBrokerHistoryRows(db);
+      const fingerprint = caseflowFingerprint(validated);
+      const existing = records.find((record) => caseflowFingerprint(record.body) === fingerprint);
+      if (existing) {
+        db.exec("COMMIT");
+        return { record: existing, appended: false };
+      }
+      const record = {
+        sequence: records.length + 1,
+        previousRef: records.at(-1)?.ref ?? null,
+        body: validated,
+      };
+      const ref = caseflowFingerprint(record);
+      db.prepare("INSERT INTO finance_broker_history(sequence,ref,body) VALUES (?,?,?)").run(
+        record.sequence,
+        ref,
+        JSON.stringify(record),
+      );
+      db.exec("COMMIT");
+      return { record: { ...record, ref }, appended: true };
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  } finally {
+    db.close();
+  }
+}
+export async function readFinanceBrokerHistoryRecords(
   directory: string,
-  body: Extract<FinancePositionRecordBody, { kind: "broker_history" }>,
+  accountId: string,
+  venue: string,
 ) {
-  const validated = FinancePositionRecordBodySchema.parse(body);
-  return appendRecord(
-    directory,
-    validated,
-    `broker-history:${caseflowFingerprint(validated)}`,
-    new Date().toISOString(),
-  );
+  if (!accountId.trim() || !venue.trim()) {
+    throw new Error("broker history requires account and venue");
+  }
+  const db = await openReadOnly(directory);
+  if (!db) {
+    return { records: [], headRef: null };
+  }
+  try {
+    const records = readBrokerHistoryRows(db).filter(
+      (record) => record.body.accountId === accountId && record.body.venue === venue,
+    );
+    return { records, headRef: records.at(-1)?.ref ?? null };
+  } finally {
+    db.close();
+  }
 }

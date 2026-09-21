@@ -1,11 +1,16 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { readFinanceBrokerHistory, syncAlpacaPaperHistory } from "./finance-alpaca-history-sync.js";
 import { FINANCE_EXECUTION_RECEIPT_SCHEMA } from "./finance-execution-adapter.js";
 import {
   appendFinanceExecutionReceipt,
+  appendFinancePositionMark,
+  appendFinanceBrokerHistory,
+  readFinanceBrokerHistoryRecords,
   readFinancePositionRecords,
 } from "./finance-position-ledger.js";
 import type { FinanceUncachedFetch } from "./finance-write-transport.js";
@@ -71,14 +76,72 @@ describe("Alpaca raw history sync", () => {
     const read = await readFinancePositionRecords(options.directory);
     expect(read.receipts).toHaveLength(1);
     expect(read.receipts[0]?.receiptId).toBe("existing-spy");
-    expect(
-      read.records.filter(
-        (row) => row.body.kind === "broker_history" && !row.body.query.startsWith("sync_receipt"),
-      ),
-    ).toHaveLength(2);
+    expect(read.records).toHaveLength(1);
     const history = await readFinanceBrokerHistory(options.directory, options.accountId);
     expect(history.facts.some((item) => item.fact.activity_type === "FEE")).toBe(true);
     expect((await readFinanceBrokerHistory(options.directory, "other-account")).facts).toEqual([]);
+  });
+  it("keeps legacy main receipt/mark reader compatible and isolates venue", async () => {
+    const options = await setup(async (url) =>
+      url.endsWith("/account") ? reply({ id: "synthetic-account" }) : reply([]),
+    );
+    await appendFinancePositionMark(options.directory, {
+      instrument: "SPY",
+      price: 100,
+      at: "2025-01-02T00:00:00Z",
+    });
+    await syncAlpacaPaperHistory(options);
+    await appendFinanceBrokerHistory(options.directory, {
+      kind: "broker_history",
+      accountId: options.accountId,
+      venue: "other:venue",
+      query: "orders:other",
+      cursor: "",
+      payload: [{ id: "other-venue" }],
+    });
+    expect(
+      (await readFinanceBrokerHistoryRecords(options.directory, options.accountId, "other:venue"))
+        .records,
+    ).toHaveLength(1);
+    expect(
+      (await readFinanceBrokerHistory(options.directory, options.accountId)).facts.some(
+        (item) => item.fact.id === "other-venue",
+      ),
+    ).toBe(false);
+    const sourceDir = path.dirname(fileURLToPath(import.meta.url));
+    const legacy = execFileSync(
+      "git",
+      ["show", "3f42be4d2b26b03db2eb70b4d256bd887d6eae3e:src/agents/finance-position-ledger.ts"],
+      {
+        cwd: sourceDir,
+        encoding: "utf8",
+      },
+    );
+    // Run the actual old module's strict parser, only relocating its imports.
+    expect(legacy).not.toContain('z.literal("broker_history")');
+    const relocated = legacy.replace(/from "(\.[^"]+)"/g, (_whole, relative: string) => {
+      const target = path.resolve(sourceDir, relative.replace(/\.js$/, ".ts"));
+      return `from "${pathToFileURL(target).href}"`;
+    });
+    const legacyPath = path.join(options.directory, "legacy-ledger.ts");
+    await fs.writeFile(legacyPath, relocated);
+    // Bare package resolution still comes from the existing installation, no install.
+    await fs.symlink(
+      path.resolve(sourceDir, "../../node_modules"),
+      path.join(options.directory, "node_modules"),
+    );
+    const output = execFileSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "--input-type=module",
+        "-e",
+        `const {readFinancePositionRecords}=await import(${JSON.stringify(pathToFileURL(legacyPath).href)}); const r=await readFinancePositionRecords(${JSON.stringify(options.directory)}); console.log(JSON.stringify({receipts:r.receipts.length,marks:r.marks.length}));`,
+      ],
+      { cwd: path.resolve(sourceDir, "../.."), encoding: "utf8" },
+    );
+    expect(JSON.parse(output.trim())).toEqual({ receipts: 0, marks: 1 });
   });
   it("advances activity tokens and overlaps order timestamps until a short page", async () => {
     const urls: URL[] = [];

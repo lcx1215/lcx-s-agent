@@ -672,7 +672,7 @@ describe("finance position projection watermarks", () => {
         .prepare("SELECT version FROM finance_position_migrations ORDER BY version")
         .all()
         .map((row) => (row as { version: number }).version);
-      expect(versions).toEqual([1, 2]);
+      expect(versions).toEqual([1, 2, 3]);
     } finally {
       db.close();
     }
