@@ -7,6 +7,28 @@ import { createFinanceResearchRunTool } from "./finance-research-run-tool.js";
 
 const roots: string[] = [];
 const input = { ask: "比较股票与国债的风险，列出缺失证据", asOf: "2026-09-11T00:00:00.000Z" };
+const fixtureConfig = {
+  agents: { defaults: { model: { primary: "provider/current" } } },
+  models: {
+    providers: {
+      provider: {
+        baseUrl: "https://provider.invalid",
+        api: "openai-completions" as const,
+        models: [
+          {
+            id: "current",
+            name: "current",
+            reasoning: false,
+            input: ["text" as const],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 32000,
+            maxTokens: 8192,
+          },
+        ],
+      },
+    },
+  },
+};
 async function workspace() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-research-tool-"));
   roots.push(root);
@@ -39,31 +61,9 @@ describe("platform-independent finance workflow tool", () => {
     const executeResearch = vi.fn<typeof runFinanceResearchRun>(async () =>
       runFinanceResearchRun({ input }),
     );
-    const config = {
-      agents: { defaults: { model: { primary: "provider/current" } } },
-      models: {
-        providers: {
-          provider: {
-            baseUrl: "https://provider.invalid",
-            api: "openai-completions" as const,
-            models: [
-              {
-                id: "current",
-                name: "current",
-                reasoning: false,
-                input: ["text" as const],
-                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-                contextWindow: 32000,
-                maxTokens: 8192,
-              },
-            ],
-          },
-        },
-      },
-    };
     const tool = createFinanceResearchRunTool({
       workspaceDir: await workspace(),
-      config,
+      config: fixtureConfig,
       executeResearch,
     });
     await tool.execute("platform-b:message-2", {
@@ -182,4 +182,90 @@ describe("platform-independent finance workflow tool", () => {
       ),
     ).toMatchObject({ status: "cancelled", reason: "total_deadline_exceeded" });
   });
+});
+
+it("returns a usable catalog and accepted plan so a caller can revise its composition", async () => {
+  const root = await workspace();
+  const executeResearch = vi.fn<typeof runFinanceResearchRun>(runFinanceResearchRun);
+  const tool = createFinanceResearchRunTool({ workspaceDir: root, executeResearch });
+  const initial = await tool.execute("module-discovery", input);
+  const first = initial.details as {
+    moduleCatalog: { id: string }[];
+    orchestration: { selectionTrace: { selectionSource: string } };
+    moduleToolsDispatched: boolean;
+  };
+  expect(first.moduleCatalog.map((module) => module.id)).toContain("technical_timing");
+  expect(first.orchestration.selectionTrace.selectionSource).toBe("rules");
+  const selection = {
+    moduleIds: ["technical_timing", "credit_liquidity"],
+    rationale: "Examine a different mechanism after reviewing the initial plan.",
+  };
+  const revised = await tool.execute("module-revision", { ...input, moduleSelection: selection });
+  const details = revised.details as {
+    receiptPath: string;
+    moduleToolsDispatched: boolean;
+    orchestration: { primaryModules: string[]; selectionTrace: { selectionSource: string } };
+  };
+  expect(details.orchestration.primaryModules.slice(0, 2)).toEqual(selection.moduleIds);
+  expect(details.orchestration.selectionTrace.selectionSource).toBe("caller_proposal");
+  expect(details.moduleToolsDispatched).toBe(false);
+  const saved = JSON.parse(await fs.readFile(details.receiptPath, "utf8"));
+  expect(saved.plan.orchestration).toEqual(details.orchestration);
+  expect(executeResearch.mock.calls[1][0]).toMatchObject({
+    input: { moduleSelection: selection },
+    liveFetch: false,
+    allowProviderCalls: false,
+  });
+});
+
+it("rejects an unknown module or gate override before workflow dispatch", async () => {
+  const executeResearch = vi.fn<typeof runFinanceResearchRun>();
+  const tool = createFinanceResearchRunTool({ workspaceDir: await workspace(), executeResearch });
+  for (const moduleSelection of [
+    { moduleIds: ["unregistered"], rationale: "invented tool" },
+    { moduleIds: ["technical_timing"], rationale: "skip", noExecutionAuthority: false },
+  ]) {
+    await expect(tool.execute("invalid-proposal", { ...input, moduleSelection })).rejects.toThrow(
+      "moduleSelection",
+    );
+  }
+  expect(executeResearch).not.toHaveBeenCalled();
+});
+
+it("returns real source-failure feedback and targets for another decision without bypassing the gate", async () => {
+  const executeResearch: typeof runFinanceResearchRun = async (request) =>
+    runFinanceResearchRun({
+      ...request,
+      batchOptions: { ...request.batchOptions, realtimeAdapters: [], collectionAdapters: [] },
+    });
+  const tool = createFinanceResearchRunTool({
+    workspaceDir: await workspace(),
+    config: fixtureConfig,
+    executeResearch,
+  });
+  const targets = [{ id: "spy", instrument: "SPY", assetClass: "us_equity" }];
+  const result = await tool.execute("source-feedback", {
+    ...input,
+    live: true,
+    targets,
+    moduleSelection: {
+      moduleIds: ["credit_liquidity"],
+      rationale: "Check a different mechanism but preserve source requirements.",
+    },
+  });
+  const details = result.details as {
+    status: string;
+    answerDecision: string;
+    plannedTargets: unknown;
+    gates: { id: string; passed: boolean }[];
+    sourceRecovery: { entries: unknown[]; executionAuthority: string };
+    moduleToolsDispatched: boolean;
+  };
+  expect(details.status).toBe("blocked");
+  expect(details.answerDecision).toBe("return_failed_reason");
+  expect(details.plannedTargets).toEqual(targets);
+  expect(details.gates.find((gate) => gate.id === "source")?.passed).toBe(false);
+  expect(details.sourceRecovery.entries.length).toBeGreaterThan(0);
+  expect(details.sourceRecovery.executionAuthority).toBe("none");
+  expect(details.moduleToolsDispatched).toBe(false);
 });

@@ -581,3 +581,36 @@ describe("lcx-change-impact-plan", () => {
     expect(payload.affectedLanes).toEqual(["local_live_boundary"]);
   });
 });
+
+it("keeps scheduler lifecycle owners and verification on the finance unattended lane", async () => {
+  const files = [
+    "src/agents/finance-scheduler-process.ts",
+    "src/agents/finance-scheduler-lock.ts",
+    "src/agents/finance-scheduler-state.ts",
+    "test/operator/lcx-finance-scheduler-lifecycle.test.ts",
+    "docs/tools/finance-scheduler.md",
+  ];
+  const result = await runPlanArgs(files.flatMap((file) => ["--changed", file]));
+  const impact = result.impacts.find((entry) => entry.id === "finance_unattended_cycle");
+  expect(impact?.matchedFiles).toEqual(expect.arrayContaining(files));
+  expect(impact?.commands.join(" ")).toContain("lcx-finance-scheduler-lifecycle.test.ts");
+  expect(result.unmatchedFiles).toEqual([]);
+});
+
+it("routes the model-facing composition entry to the canonical research regression checks", async () => {
+  const result = await runPlanArgs([
+    "--changed",
+    "src/agents/tools/finance-research-run-tool.ts",
+    "--changed",
+    "docs/tools/finance-research-composition.md",
+  ]);
+  const impact = result.impacts.find((entry) => entry.id === "finance_caseflow");
+  expect(impact?.matchedFiles).toEqual(
+    expect.arrayContaining([
+      "src/agents/tools/finance-research-run-tool.ts",
+      "docs/tools/finance-research-composition.md",
+    ]),
+  );
+  expect(impact?.commands.join(" ")).toContain("finance-brain-orchestration.test.ts");
+  expect(result.unmatchedFiles).toEqual([]);
+});

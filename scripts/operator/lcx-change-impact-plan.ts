@@ -87,6 +87,8 @@ const PATH_RULES: PathRule[] = [
       // The read side of the stored research runs. Without it here, the only lane that would
       // claim it is the generic tool-registration rule, which never runs its behaviour test.
       /^src\/agents\/tools\/finance-research-runs-read-tool\.ts$/u,
+      /^src\/agents\/tools\/finance-research-run-tool\.ts$/u,
+      /^docs\/tools\/finance-research-composition\.md$/u,
       /^src\/agents\/tools\/quant-lab-tool\.ts$/u,
       /^src\/agents\/(?:quant-math-advanced|quant-math-inference|quant-math-foundations|finance-calculation-ledger)\.ts$/u,
       /^scripts\/operator\/lcx-(?:finance-research(?:-run|-batch|-turn)?|finance-paper-rank|caseflow-demo|finance-connector-probe)\.ts$/u,
@@ -99,6 +101,7 @@ const PATH_RULES: PathRule[] = [
     commands: [
       "pnpm vitest run src/agents/finance-data-connectors.test.ts src/agents/finance-mcp-client.test.ts src/agents/finance-rest-client.test.ts src/agents/finance-connector-evidence.test.ts src/agents/tools/finance-data-connector-inspect-tool.test.ts src/agents/tools/finance-research-runs-read-tool.test.ts src/agents/finance-answer-grounding-gate.test.ts src/agents/finance-answer-composer.test.ts src/agents/quant-math-advanced.test.ts src/agents/quant-math-inference.test.ts src/agents/quant-math-foundations.test.ts src/agents/openclaw-tools.quant-lab-registration.test.ts test/finance-decision-pipeline.test.ts test/operator/lcx-finance-connector-probe.test.ts test/lcx-commercial-answer-pipeline-grounding.test.ts test/lcx-quant-lab-scenarios.test.ts test/lcx-quant-lab-paper-portfolios.test.ts",
       "pnpm vitest run src/agents/finance-caseflow.test.ts src/agents/finance-research-runner.test.ts src/agents/finance-research-batch-runner.test.ts src/agents/finance-outcome-ledger.test.ts src/agents/finance-caseflow-followups.test.ts src/agents/finance-history-coverage.test.ts src/agents/finance-forecast-calibration.test.ts src/agents/finance-research-assessment.test.ts",
+      "pnpm vitest run src/agents/finance-brain-orchestration.test.ts src/agents/tools/finance-research-run-tool.test.ts src/agents/finance-model-checkpoints.test.ts",
       "node --import tsx scripts/operator/lcx-head-tail-consistency.ts --json",
     ],
     headTailRequired: true,
@@ -174,6 +177,9 @@ const PATH_RULES: PathRule[] = [
     patterns: [
       /^src\/agents\/finance-daily-cycle\.ts$/u,
       /^src\/agents\/finance-cycle-schedule\.ts$/u,
+      /^src\/agents\/finance-scheduler-(?:lock|process|state)(?:\.test)?\.ts$/u,
+      /^test\/operator\/lcx-finance-scheduler(?:-lifecycle)?\.test\.ts$/u,
+      /^docs\/tools\/finance-scheduler\.md$/u,
       /^src\/agents\/finance-paper-run\.ts$/u,
       /^src\/agents\/finance-alpaca-run\.ts$/u,
       /^src\/agents\/finance-alpaca-execution-adapter\.ts$/u,
@@ -185,6 +191,7 @@ const PATH_RULES: PathRule[] = [
     requiredChecks: ["git-diff-check", "head-tail-consistency"],
     commands: [
       "pnpm vitest run src/agents/finance-daily-cycle.test.ts src/agents/finance-cycle-schedule.test.ts src/agents/finance-alpaca-run.test.ts src/agents/finance-alpaca-execution-adapter.test.ts src/agents/finance-universe-selection.test.ts",
+      "pnpm vitest run src/agents/finance-scheduler-lock.test.ts src/agents/finance-scheduler-process.test.ts src/agents/finance-scheduler-state.test.ts src/agents/finance-link-health.test.ts test/operator/lcx-finance-scheduler.test.ts test/operator/lcx-finance-scheduler-lifecycle.test.ts",
       "git diff --check",
       "node --import tsx scripts/operator/lcx-head-tail-consistency.ts --json",
     ],

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseFinanceModuleSelection } from "../finance-brain-orchestration.js";
 import { createFinancePositionLedgerReadTool } from "../tools/finance-position-ledger-read-tool.js";
 import { createFinanceResearchRunTool } from "../tools/finance-research-run-tool.js";
 import { createLearningDistillTool } from "../tools/learning-distill-tool.js";
@@ -367,7 +368,7 @@ async function runOwner(
  * gate refuses any arg that would turn the read into an append or an order.
  */
 function createCapabilityTools(workspaceDir?: string): readonly CentralToolSpec[] {
-  const financeResearch = createFinanceResearchRunTool();
+  const financeResearch = createFinanceResearchRunTool({ workspaceDir });
   const ledgerRead = createFinancePositionLedgerReadTool();
   const learningDistill = createLearningDistillTool({ workspaceDir });
   return [
@@ -385,7 +386,18 @@ function createCapabilityTools(workspaceDir?: string): readonly CentralToolSpec[
       ],
       approve: (args) => {
         const escalation = escalationReason(args);
-        return escalation ? { ok: false, reason: `capability gate: ${escalation}` } : { ok: true };
+        if (escalation) {
+          return { ok: false, reason: `capability gate: ${escalation}` };
+        }
+        try {
+          parseFinanceModuleSelection(args.moduleSelection);
+          return { ok: true };
+        } catch (error) {
+          return {
+            ok: false,
+            reason: `capability gate: ${error instanceof Error ? error.message : "invalid module selection"}`,
+          };
+        }
       },
       execute: async (args, signal) => {
         const result = await financeResearch.execute(

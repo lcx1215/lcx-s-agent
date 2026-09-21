@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { OpenClawConfig } from "../../config/types.js";
 import { createConfiguredFinanceModelAdapter } from "../configured-finance-model-adapter.js";
+import { financeBrainModuleCatalog } from "../finance-brain-orchestration.js";
 import {
   type CentralActionPlan,
   type CentralPerception,
@@ -24,9 +25,35 @@ export const CENTRAL_BRAIN_PROMPT_CACHE_PREFIX = [
   "Return one single-line JSON object only. No prose, no markdown, no thinking blocks.",
 ].join("\n");
 
+/** Trusted, source-derived capability context; separate from volatile perception. */
+export const CENTRAL_FINANCE_CATALOG_BUDGET_BYTES = 8_192;
+
+export function buildCentralFinanceCatalog(): string {
+  const catalog = [
+    "Finance capability: finance_research_run (planning only).",
+    'Use the exact action ownerId "finance_research_run". "finance" is not a registered owner; never abbreviate or invent tool names.',
+    'Action shape: {"ownerId":"finance_research_run","args":{"ask":"<copy the task question>","asOf":"<copy the task timestamp>","moduleSelection":{"moduleIds":["<registered module ID>"],"rationale":"<task-specific reason>"}},"reasoning":"<why this planning action>"}.',
+
+    "Required args: ask (research question), asOf (explicit ISO timestamp).",
+    "Optional moduleSelection: {moduleIds: [registered IDs in preferred order], rationale: nonempty string, max 2000 characters}. No other selection fields; no duplicate IDs.",
+    "Omit moduleSelection to use rule-based routing. Propose a composition when the question or prior evidence warrants it; do not select everything by default.",
+    "Omit live: central tools cannot call providers or place orders. Selection does not change source targets or bypass risk/evidence/review gates.",
+    "Modules are analytical lenses, not proof of tool execution. Inspect prior composition/status/missingEvidence feedback before revising or stopping.",
+    "Registered modules (ID and role):",
+    JSON.stringify(financeBrainModuleCatalog().map(({ id, role }) => ({ id, role }))),
+  ].join("\n");
+  // Fail closed on catalog growth instead of silently dropping valid module IDs.
+  if (Buffer.byteLength(catalog) > CENTRAL_FINANCE_CATALOG_BUDGET_BYTES) {
+    throw new Error("central finance discovery catalog exceeds its context budget");
+  }
+  return catalog;
+}
+
 export function buildCentralBrainPrompt(perception: CentralPerception): string {
   return [
     CENTRAL_BRAIN_PROMPT_CACHE_PREFIX,
+    "",
+    buildCentralFinanceCatalog(),
     "",
     "Perceived state:",
     `observed_at: ${perception.observedAt}`,

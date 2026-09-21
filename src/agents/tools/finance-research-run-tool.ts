@@ -5,6 +5,11 @@ import { Type } from "@sinclair/typebox";
 import { loadConfig } from "../../config/config.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import {
+  FINANCE_BRAIN_MODULES,
+  financeBrainModuleCatalog,
+  parseFinanceModuleSelection,
+} from "../finance-brain-orchestration.js";
+import {
   FINANCE_DECISION_MODES,
   FINANCE_STRATEGY_STAGES,
   type FinanceDecisionMode,
@@ -66,6 +71,23 @@ const schema = Type.Object({
   strategyStage: Type.Optional(
     Type.Union(FINANCE_STRATEGY_STAGES.map((stage) => Type.Literal(stage))),
   ),
+  moduleSelection: Type.Optional(
+    Type.Object(
+      {
+        moduleIds: Type.Array(Type.Union(FINANCE_BRAIN_MODULES.map(({ id }) => Type.Literal(id))), {
+          minItems: 1,
+          maxItems: FINANCE_BRAIN_MODULES.length,
+          uniqueItems: true,
+        }),
+        rationale: Type.String({ minLength: 1, maxLength: 2000 }),
+      },
+      {
+        additionalProperties: false,
+        description:
+          "Optional analytical module composition in preferred order, replacing rule-suggested domain lenses. Required risk, evidence and review gates remain. Use feedback from a previous run to revise the composition; this does not dispatch module tools, change data targets or authorize execution. Supply targets separately when different evidence is needed.",
+      },
+    ),
+  ),
   live: Type.Optional(Type.Boolean({ default: false })),
   maxModelCalls: Type.Optional(Type.Integer({ minimum: 1, maximum: 48, default: 24 })),
   maxApiCalls: Type.Optional(Type.Integer({ minimum: 1, maximum: 64, default: 32 })),
@@ -98,7 +120,7 @@ export function createFinanceResearchRunTool(options?: {
     name: "finance_research_run",
     label: "Finance Research Workflow",
     description:
-      "Plan or explicitly execute the canonical finance research workflow with configured models, independent review and finding closure. Works through any channel's normal agent tool dispatch. Planning is the default; live=true permits bounded source/model calls. decisionMode selects the answer authority (research_only by default; the candidate modes may produce a reviewable strategy or conditional buy/sell candidate) and never grants broker, wallet, or execution authority. strategyStage declares how far a method has been verified (method_only / research_candidate / paper_candidate / conditional_trade_candidate) and binds which decisionMode it may be written up in. Returns a local receipt, never sends a platform message or claims model learning or external delivery.",
+      "Plan or explicitly execute the canonical finance research workflow with configured models, independent review and finding closure. Works through any channel's normal agent tool dispatch. Planning is the default; live=true permits bounded source/model calls. decisionMode selects the answer authority (research_only by default; the candidate modes may produce a reviewable strategy or conditional buy/sell candidate) and never grants broker, wallet, or execution authority. strategyStage declares how far a method has been verified (method_only / research_candidate / paper_candidate / conditional_trade_candidate) and binds which decisionMode it may be written up in. moduleSelection lets the caller compose registered analytical modules while required risk/math/review lanes remain. The response includes the module catalog, accepted orchestration and source-recovery feedback for the next decision. Module selection is not tool execution. Returns a local receipt, never sends a platform message or claims model learning or external delivery.",
     parameters: schema,
     execute: async (toolCallId, args, callerSignal) => {
       callerSignal?.throwIfAborted();
@@ -131,6 +153,7 @@ export function createFinanceResearchRunTool(options?: {
         );
       }
       const strategyStage = rawStrategyStage as FinanceStrategyStage | undefined;
+      const moduleSelection = parseFinanceModuleSelection(params.moduleSelection);
       const maxModelCalls = boundedInteger(params, "maxModelCalls", 24, 48);
       const maxApiCalls = boundedInteger(params, "maxApiCalls", 32, 64);
       const timeoutMs = boundedInteger(params, "timeoutMs", 600_000, 1_200_000, 1_000);
@@ -169,6 +192,7 @@ export function createFinanceResearchRunTool(options?: {
             ...(targets ? { targets } : {}),
             ...(decisionMode ? { decisionMode } : {}),
             ...(strategyStage ? { strategyStage } : {}),
+            ...(moduleSelection ? { moduleSelection } : {}),
           },
           signal,
           liveFetch: params.live === true,
@@ -186,9 +210,25 @@ export function createFinanceResearchRunTool(options?: {
         });
         return jsonResult({
           status: "status" in receipt ? receipt.status : "unknown",
+          // Keep actionable composition feedback ahead of large sections so the
+          // central harness's bounded receipt can inform the next proposal.
+          composition: {
+            selectionSource: receipt.plan.orchestration.selectionTrace.selectionSource,
+            primaryModules: receipt.plan.orchestration.primaryModules.slice(0, 4),
+            omittedPrimaryModules: Math.max(
+              0,
+              receipt.plan.orchestration.primaryModules.length - 4,
+            ),
+            moduleToolsDispatched: false,
+          },
           gates: "gates" in receipt ? receipt.gates : [],
           missingEvidence: "missingEvidence" in receipt ? receipt.missingEvidence : [],
           receiptPath,
+          orchestration: receipt.plan.orchestration,
+          plannedTargets: receipt.plan.targets,
+          moduleCatalog: financeBrainModuleCatalog(),
+          sourceRecovery: receipt.sourceRecovery,
+          moduleToolsDispatched: false,
           answerDecision: receipt.answerDecision,
           artifact:
             receipt.status === "candidate" && receipt.quality?.status === "verified"

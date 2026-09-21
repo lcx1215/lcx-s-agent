@@ -792,3 +792,102 @@ describe("equity symbol extraction", () => {
     }
   });
 });
+
+describe("research module composition reaches actual model request boundaries", () => {
+  const targets = [
+    {
+      id: "spy",
+      instrument: "SPY",
+      assetClass: "us_equity",
+      realtime: { requireOfficialReference: false },
+    },
+  ];
+  const moduleSelection = {
+    moduleIds: ["credit_liquidity", "technical_timing"] as const,
+    rationale: "Check transmission and observed behavior before retaining the rule route.",
+  };
+
+  it("passes the validated combination to both committee and quality invocations", async () => {
+    const committeeRequests: unknown[] = [];
+    const qualityRequests: unknown[] = [];
+    const result = await runFinanceResearchRun({
+      input: { ask: "Review market evidence", asOf: AS_OF, targets, moduleSelection },
+      liveFetch: true,
+      batchOptions: BATCH_OPTIONS,
+      modelInvoker: async (request) => {
+        committeeRequests.push(request);
+        return modelInvoker(request);
+      },
+      qualityModelInvoker: async (request) => {
+        qualityRequests.push(request);
+        return modelInvoker(request);
+      },
+    });
+    expect(result.status).toBe("candidate");
+    expect(committeeRequests.length).toBeGreaterThan(0);
+    expect(qualityRequests.length).toBeGreaterThan(0);
+    for (const request of committeeRequests) {
+      expect(request).toMatchObject({
+        sharedContext: { userConstraints: { financeOrchestration: result.plan.orchestration } },
+      });
+    }
+    for (const request of qualityRequests) {
+      expect(request).toMatchObject({
+        sharedContext: { financeOrchestration: result.plan.orchestration },
+      });
+    }
+    expect(result.plan.orchestration.primaryModules.slice(0, 2)).toEqual(moduleSelection.moduleIds);
+    expect(result.plan.orchestration.requiredTools).toContain("finance_data_gateway_snapshot");
+    expect(result.committee?.model.realModelInferenceObserved).toBe(false);
+    expect(result.notTouched).toContain("trading_execution");
+  });
+
+  it("cannot use module selection to bypass absent source evidence", async () => {
+    const invoke = vi.fn(modelInvoker);
+    const result = await runFinanceResearchRun({
+      input: { ask: "Review market evidence", asOf: AS_OF, targets, moduleSelection },
+      liveFetch: true,
+      batchOptions: { realtimeAdapters: [], collectionAdapters: [] },
+      modelInvoker: invoke,
+      qualityModelInvoker: invoke,
+    });
+    expect(result.status).toBe("blocked");
+    expect(result.answerDecision).toBe("return_failed_reason");
+    expect(result.quarterlyOutput.adopted).toBe(false);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("refuses cached model stages after a composition changes under the same run ID", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-module-checkpoint-"));
+    try {
+      const checkpoint = {
+        path: path.join(directory, "checkpoints.sqlite"),
+        runId: "module-case",
+        executionFingerprint: "fixture-v1",
+      };
+      const invoke = vi.fn(modelInvoker);
+      const options = {
+        input: { ask: "Review market evidence", asOf: AS_OF, targets, moduleSelection },
+        liveFetch: true,
+        batchOptions: { ...BATCH_OPTIONS, checkpoint },
+        modelCheckpoint: { ...checkpoint, maxModelCalls: 32 },
+        modelInvoker: invoke,
+        qualityModelInvoker: invoke,
+      };
+      expect((await runFinanceResearchRun(options)).status).toBe("candidate");
+      const count = invoke.mock.calls.length;
+      await expect(
+        runFinanceResearchRun({
+          ...options,
+          input: {
+            ...options.input,
+            moduleSelection: { moduleIds: ["event_driven"], rationale: "Revised hypothesis" },
+          },
+        }),
+      ).rejects.toThrow("checkpoint input/config mismatch");
+      expect(invoke).toHaveBeenCalledTimes(count);
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
+});

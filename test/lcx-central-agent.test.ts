@@ -18,6 +18,8 @@ import {
 } from "../src/agents/central-harness/harness-loop.js";
 import {
   buildCentralBrainPrompt,
+  buildCentralFinanceCatalog,
+  CENTRAL_FINANCE_CATALOG_BUDGET_BYTES,
   createCentralBrain,
   validateCentralActionPlan,
 } from "../src/agents/central-harness/model-brain.js";
@@ -859,10 +861,10 @@ describe("injected context is bounded by bytes, not by entry count", () => {
     const boundedPrompt = buildCentralBrainPrompt(bounded);
     expect(Buffer.byteLength(unbounded)).toBeGreaterThan(250_000);
     expect(Buffer.byteLength(boundedPrompt)).toBeLessThanOrEqual(
-      CENTRAL_PERCEPTION_BUDGET_BYTES + 1_500, // + the fixed instruction block
+      CENTRAL_PERCEPTION_BUDGET_BYTES + CENTRAL_FINANCE_CATALOG_BUDGET_BYTES + 1_500,
     );
     // The reduction has to be real, not a rounding artefact.
-    expect(Buffer.byteLength(boundedPrompt) * 50).toBeLessThan(Buffer.byteLength(unbounded));
+    expect(Buffer.byteLength(boundedPrompt) * 20).toBeLessThan(Buffer.byteLength(unbounded));
   });
 
   it("hands the brain the bounded perception and records the report on the receipt", async () => {
@@ -1203,5 +1205,111 @@ describe("the owner's own verdict outranks the exit status", () => {
     expect(ownerObservedOk({ summary: {} }, false)).toBe(false);
     expect(ownerObservedOk(undefined, true)).toBe(true);
     expect(ownerObservedOk(undefined, false)).toBe(false);
+  });
+});
+
+describe("finance composition through the central harness", () => {
+  it("carries real planning feedback into the next bounded brain decision", async () => {
+    const workspaceDir = await fsp.mkdtemp(path.join(os.tmpdir(), "finance-harness-"));
+    try {
+      const localRegistry = createCentralToolRegistry({ workspaceDir });
+      const args = {
+        ask: "研究利率与 ETF 的关系",
+        asOf: "2026-09-22T00:00:00.000Z",
+        moduleSelection: { moduleIds: ["macro_rates_inflation"], rationale: "先检查利率证据" },
+      };
+      const first = await runCentralHarnessCycle({
+        perception: perception(),
+        brain: brainWithActions([{ ownerId: "finance_research_run", args, reasoning: "plan" }]),
+        registry: localRegistry,
+      });
+      expect(first.steps[0].status).toBe("ran_ok");
+      const backlog = compactReceipts([first], 5);
+      expect(backlog[0].outcomes[0].outcome?.composition).toMatchObject({
+        selectionSource: "caller_proposal",
+        primaryModules: expect.arrayContaining(["macro_rates_inflation"]),
+        moduleToolsDispatched: false,
+      });
+      expect(Buffer.byteLength(JSON.stringify(first.steps[0].outcome))).toBeLessThanOrEqual(
+        CENTRAL_STEP_OUTCOME_BUDGET_BYTES,
+      );
+      const second = await runCentralHarnessCycle({
+        perception: perception({ backlog }),
+        brain: {
+          propose: async (observed) => {
+            expect(JSON.stringify(observed.backlog)).toContain("macro_rates_inflation");
+            const prompt = buildCentralBrainPrompt(observed);
+            const catalogLine = prompt.split("\n").find((line) => line.startsWith('[{"id":'));
+            const catalog = JSON.parse(catalogLine ?? "[]") as Array<{ id: string; role: string }>;
+            const chosen = catalog.find(({ id }) => id === "etf_regime");
+            expect(chosen?.role).toContain("ETF");
+            return brainWithActions([
+              {
+                ownerId: "finance_research_run",
+                args: {
+                  ...args,
+                  moduleSelection: { moduleIds: [chosen?.id], rationale: "补充 ETF 视角" },
+                },
+                reasoning: "revise composition using prior feedback",
+              },
+            ]).propose();
+          },
+        },
+        registry: localRegistry,
+      });
+      expect(second.steps[0].status).toBe("ran_ok");
+      expect(second.steps[0].outcome?.composition).toMatchObject({
+        primaryModules: expect.arrayContaining(["etf_regime"]),
+        moduleToolsDispatched: false,
+      });
+      const files = await fsp.readdir(path.join(workspaceDir, "state", "finance-research-runs"));
+      expect(files.filter((file) => file.endsWith(".json"))).toHaveLength(2);
+    } finally {
+      await fsp.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a module proposal that tries to change gates before dispatch", async () => {
+    const receipt = await runCentralHarnessCycle({
+      perception: perception(),
+      brain: brainWithActions([
+        {
+          ownerId: "finance_research_run",
+          args: {
+            moduleSelection: { moduleIds: ["etf_regime"], rationale: "test", bypassRisk: true },
+          },
+          reasoning: "invalid proposal",
+        },
+      ]),
+      registry,
+    });
+    expect(receipt.actionsApproved).toBe(0);
+    expect(receipt.steps[0].status).toBe("blocked_by_gate");
+    expect(receipt.steps[0].gateReason).toContain("moduleSelection");
+  });
+});
+
+describe("central finance discovery context", () => {
+  it("advertises a bounded catalog and the executable planning contract", () => {
+    const catalog = buildCentralFinanceCatalog();
+    expect(Buffer.byteLength(catalog)).toBeLessThanOrEqual(CENTRAL_FINANCE_CATALOG_BUDGET_BYTES);
+    expect(catalog).toContain('Use the exact action ownerId "finance_research_run"');
+    expect(catalog).toContain("Omit moduleSelection to use rule-based routing");
+    expect(catalog).toContain("Omit live");
+    expect(catalog).toContain("not proof of tool execution");
+    const prompt = buildCentralBrainPrompt(perception());
+    expect(prompt).toContain(catalog);
+    const modules = JSON.parse(catalog.split("\n").at(-1) ?? "[]") as Array<{
+      id: string;
+      role: string;
+    }>;
+    for (const module of modules) {
+      expect(
+        registry.get("finance_research_run")?.approve({
+          moduleSelection: { moduleIds: [module.id], rationale: module.role },
+        }).ok,
+      ).toBe(true);
+    }
+    expect(modules.length).toBeGreaterThan(10);
   });
 });

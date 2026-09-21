@@ -10,6 +10,11 @@ type FinanceBrainModuleDefinition = {
   triggerPatterns: RegExp[];
 };
 
+export type FinanceModuleSelection = Readonly<{
+  moduleIds: readonly FinanceBrainModuleId[];
+  rationale: string;
+}>;
+
 export type FinanceBrainOrchestrationInput = {
   text: string;
   hasHoldingsOrPortfolioContext?: boolean;
@@ -17,13 +22,19 @@ export type FinanceBrainOrchestrationInput = {
   highStakesConclusion?: boolean;
   writesDurableMemory?: boolean;
   decisionMode?: FinanceDecisionMode;
+  moduleSelection?: FinanceModuleSelection;
 };
 
 export type FinanceBrainOrchestrationPlan = {
   primaryModules: FinanceBrainModuleId[];
   supportingModules: FinanceBrainModuleId[];
+  moduleContracts: Array<Pick<FinanceBrainModuleDefinition, "id" | "role" | "requiredTools">>;
   selectionTrace: {
     financeTask: boolean;
+    selectionSource: "rules" | "caller_proposal";
+    ruleSuggestedModules: FinanceBrainModuleId[];
+    requiredModules: FinanceBrainModuleId[];
+    proposal?: FinanceModuleSelection;
     rawMatchedModules: FinanceBrainModuleId[];
     suppressedModules: Array<{ id: FinanceBrainModuleId; reason: string }>;
     focus: "none" | "focused" | "broad";
@@ -231,6 +242,55 @@ export const FINANCE_BRAIN_MODULES = [
   },
 ] as const satisfies readonly FinanceBrainModuleDefinition[];
 
+/** Descriptions come from the existing module registry, never a second catalog. */
+export function financeBrainModuleCatalog() {
+  return FINANCE_BRAIN_MODULES.map(({ id, role, requiredTools }) => ({
+    id,
+    role,
+    requiredTools: [...requiredTools],
+  }));
+}
+
+/** Runtime validation also covers direct callers that bypass the agent tool schema. */
+export function parseFinanceModuleSelection(value: unknown): FinanceModuleSelection | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("moduleSelection must contain moduleIds and rationale");
+  }
+  const proposal = value as Record<string, unknown>;
+  if (Object.keys(proposal).some((key) => key !== "moduleIds" && key !== "rationale")) {
+    throw new Error("moduleSelection cannot override gates or execution authority");
+  }
+  if (
+    !Array.isArray(proposal.moduleIds) ||
+    proposal.moduleIds.length === 0 ||
+    proposal.moduleIds.length > FINANCE_BRAIN_MODULES.length ||
+    typeof proposal.rationale !== "string" ||
+    !proposal.rationale.trim() ||
+    proposal.rationale.length > 2000
+  ) {
+    throw new Error(
+      "moduleSelection requires a bounded nonempty moduleIds list and rationale (max 2000 characters)",
+    );
+  }
+  const moduleIds = Array.from(proposal.moduleIds, (id: unknown) => {
+    const definition = FINANCE_BRAIN_MODULES.find((module) => module.id === id);
+    if (!definition) {
+      throw new Error("moduleSelection contains an unknown finance module");
+    }
+    return definition.id;
+  });
+  if (new Set(moduleIds).size !== moduleIds.length) {
+    throw new Error("moduleSelection contains duplicate moduleIds");
+  }
+  return Object.freeze({
+    moduleIds: Object.freeze(moduleIds),
+    rationale: proposal.rationale.trim(),
+  });
+}
+
 function normalize(text: string): string {
   return text.trim().toLowerCase();
 }
@@ -302,11 +362,13 @@ function arbitrateFinanceModules(text: string, rawMatched: FinanceBrainModuleId[
 export function planFinanceBrainOrchestration(
   input: FinanceBrainOrchestrationInput,
 ): FinanceBrainOrchestrationPlan {
+  const moduleSelection = parseFinanceModuleSelection(input.moduleSelection);
   const text = normalize(input.text);
   const rawMatched = FINANCE_BRAIN_MODULES.filter((module) => moduleMatches(module, text)).map(
     (module) => module.id,
   );
   const financeTask =
+    moduleSelection !== undefined ||
     hasFinanceTaskSignal(text) ||
     rawMatched.some(
       (id) =>
@@ -316,20 +378,28 @@ export function planFinanceBrainOrchestration(
     ? arbitrateFinanceModules(text, rawMatched)
     : { selected: [], suppressedModules: [], focus: "none" as const };
   const matched = financeTask ? arbitration.selected : [];
-  const seeded = financeTask ? unique<FinanceBrainModuleId>([...matched, "causal_map"]) : matched;
-
-  if (input.hasHoldingsOrPortfolioContext && !seeded.includes("portfolio_risk_gates")) {
-    seeded.push("portfolio_risk_gates");
+  // Domain lenses are replaceable. Required evidence/risk/math lanes survive a
+  // caller proposal; choosing a module never grants permission to execute its tools.
+  const requiredModules: FinanceBrainModuleId[] = financeTask ? ["causal_map"] : [];
+  const selected = moduleSelection?.moduleIds ?? matched;
+  if (
+    input.hasHoldingsOrPortfolioContext ||
+    matched.includes("portfolio_risk_gates") ||
+    selected.includes("portfolio_risk_gates")
+  ) {
+    requiredModules.push("portfolio_risk_gates");
   }
   if (
-    (input.hasLocalMathInputs || seeded.includes("portfolio_risk_gates")) &&
-    !seeded.includes("quant_math")
+    input.hasLocalMathInputs ||
+    matched.includes("quant_math") ||
+    requiredModules.includes("portfolio_risk_gates")
   ) {
-    seeded.push("quant_math");
+    requiredModules.push("quant_math");
   }
-  if (financeTask && !seeded.includes("finance_learning_memory")) {
-    seeded.push("finance_learning_memory");
+  if (financeTask) {
+    requiredModules.push("finance_learning_memory");
   }
+  const seeded = unique<FinanceBrainModuleId>([...selected, ...requiredModules]);
 
   const primaryModules = seeded.filter((id) => id !== "finance_learning_memory");
   const supportingModules = seeded.filter((id) => id === "finance_learning_memory");
@@ -374,11 +444,23 @@ export function planFinanceBrainOrchestration(
   return {
     primaryModules,
     supportingModules,
+    moduleContracts: seeded.flatMap((id) => {
+      const module = moduleById.get(id);
+      return module ? [{ id, role: module.role, requiredTools: [...module.requiredTools] }] : [];
+    }),
     selectionTrace: {
       financeTask,
+      selectionSource: moduleSelection ? "caller_proposal" : "rules",
+      ruleSuggestedModules: unique([...matched, ...requiredModules]),
+      requiredModules,
+      ...(moduleSelection ? { proposal: moduleSelection } : {}),
       rawMatchedModules: rawMatched,
-      suppressedModules: arbitration.suppressedModules,
-      focus: arbitration.focus,
+      suppressedModules: moduleSelection
+        ? unique([...matched, ...arbitration.suppressedModules.map(({ id }) => id)])
+            .filter((id) => !seeded.includes(id))
+            .map((id) => ({ id, reason: "not_selected_by_caller_proposal" }))
+        : arbitration.suppressedModules,
+      focus: moduleSelection ? (seeded.length >= 15 ? "broad" : "focused") : arbitration.focus,
       dataGatewayReason,
     },
     requiredTools: unique([...requiredTools, ...reviewTools]),
