@@ -27,6 +27,7 @@ import { writeFileWithinRoot } from "../infra/fs-safe.js";
 import { recordOperationalAnomaly } from "../infra/operational-anomalies.js";
 import { defaultRuntime } from "../runtime.js";
 import { summarizeLearningCouncilVisibleTopic } from "./learning-visible-topic.js";
+import type { EmbeddedPiRunMeta } from "./pi-embedded-runner/types.js";
 
 type LearningCouncilRole = "kimi" | "minimax" | "deepseek";
 type LearningCouncilCapability = "synthesis" | "challenge" | "extraction";
@@ -36,6 +37,9 @@ type LearningCouncilRoleRun = {
   capability: LearningCouncilCapability;
   model: string;
   providerFamily: string;
+  actualProvider?: string;
+  actualModel?: string;
+  requestedModelHealth?: "healthy" | "failed" | "mismatched" | "unknown";
   heading: string;
   success: boolean;
   text: string;
@@ -104,6 +108,7 @@ type LearningCouncilRescueRun = {
 
 type GatewayAgentPayload = {
   text?: string;
+  isError?: boolean;
 };
 
 type GatewayAgentResponse = {
@@ -111,6 +116,7 @@ type GatewayAgentResponse = {
   status?: string;
   result?: {
     payloads?: GatewayAgentPayload[];
+    meta?: Partial<EmbeddedPiRunMeta>;
   };
 };
 
@@ -314,7 +320,56 @@ function pickGatewayText(response: GatewayAgentResponse): string {
   if (texts.length > 0) {
     return texts.join("\n\n").trim();
   }
-  return response.summary?.trim() ?? "";
+  return "";
+}
+
+/** One result contract shared by both transports; control summaries are never answer text. */
+function assessLearningCouncilResponse(response: GatewayAgentResponse, requestedModel: string) {
+  const meta = response.result?.meta;
+  const actualProvider = meta?.agentMeta?.provider?.trim() || undefined;
+  const actualModel = meta?.agentMeta?.model?.trim() || undefined;
+  const identity = actualProvider && actualModel ? `${actualProvider}/${actualModel}` : undefined;
+  const text = pickGatewayText(response);
+  const completedBeforeCompactionTimeout =
+    meta?.timedOut === true &&
+    meta.timedOutDuringCompaction === true &&
+    meta.promptCompleted === true;
+  let error: string | undefined;
+  if (response.status !== "ok") {
+    error = "agent response status is not ok";
+  } else if (response.result?.payloads?.some((payload) => payload.isError)) {
+    error = "agent returned an error payload";
+  } else if (meta?.error) {
+    error = "agent metadata reports an error";
+  } else if (meta?.stopReason === "error") {
+    error = "agent stopped with an error";
+  } else if (
+    meta?.pendingToolCalls?.length ||
+    meta?.stopReason === "tool_calls" ||
+    meta?.stopReason === "toolUse"
+  ) {
+    error = "agent has unfinished tool calls";
+  } else if ((meta?.timedOut || meta?.aborted) && !completedBeforeCompactionTimeout) {
+    error = "agent timed out or was aborted";
+  } else if (!text) {
+    error = "empty response";
+  }
+  const requestedModelHealth: NonNullable<LearningCouncilRoleRun["requestedModelHealth"]> =
+    !identity
+      ? "unknown"
+      : identity !== requestedModel
+        ? "mismatched"
+        : error
+          ? "failed"
+          : "healthy";
+  return {
+    actualProvider,
+    actualModel,
+    requestedModelHealth,
+    success: !error,
+    text: error ? "" : text,
+    error,
+  };
 }
 
 function normalizeBulletValue(value: string): string {
@@ -1408,7 +1463,7 @@ async function runLearningCouncilRoleInProcess(params: {
   return {
     status: "ok",
     summary: "completed",
-    result: { payloads: readPayloadTexts(result).map((text) => ({ text })) },
+    result: result ?? undefined,
   };
 }
 
@@ -1459,27 +1514,15 @@ async function runLearningCouncilRole(params: {
             timeoutSeconds: params.timeoutSeconds,
             extraSystemPrompt: params.extraSystemPrompt,
           });
-    const text = pickGatewayText(response);
-    if (!text) {
-      return {
-        role: params.role,
-        capability,
-        model,
-        providerFamily,
-        heading,
-        success: false,
-        text: "",
-        error: "empty response",
-      };
-    }
+    const assessed = assessLearningCouncilResponse(response, model);
     return {
       role: params.role,
       capability,
       model,
       providerFamily,
       heading,
-      success: true,
-      text: trimSectionText(text),
+      ...assessed,
+      text: trimSectionText(assessed.text),
     };
   } catch (error) {
     return {
@@ -1491,6 +1534,7 @@ async function runLearningCouncilRole(params: {
       success: false,
       text: "",
       error: String(error),
+      requestedModelHealth: "unknown",
     };
   }
 }
@@ -1549,7 +1593,7 @@ function renderRoleSection(
   result: LearningCouncilRoleRun,
   rescue?: LearningCouncilRescueRun,
 ): string {
-  const laneReceipt = `Lane receipt: contract=${result.capability} (configured role: ${result.role}); runtime provider=${result.providerFamily}; runtime model=${result.model}`;
+  const laneReceipt = `Lane receipt: contract=${result.capability} (configured role: ${result.role}); requested model=${result.model}; runtime provider=${result.actualProvider ?? "unknown"}; runtime model=${result.actualModel ?? "unknown"}; requested model health=${result.requestedModelHealth ?? "unknown"}`;
   if (result.success) {
     return `## ${result.heading}\n${laneReceipt}\n\n${result.text}`.trim();
   }
@@ -2333,5 +2377,7 @@ export async function runExternalLearningCouncil(params: {
 
 export const __testing = {
   runLearningCouncilRoleInProcess,
+  runLearningCouncilRole,
+  assessLearningCouncilResponse,
   readPayloadTexts,
 };

@@ -1,8 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const hoisted = vi.hoisted(() => ({
   agentCommandMock: vi.fn(),
+  gatewayMock: vi.fn(),
   createDefaultDepsMock: vi.fn(() => ({})),
+}));
+
+vi.mock("../gateway/call.js", () => ({
+  callGateway: (...args: unknown[]) => hoisted.gatewayMock(...args),
+  randomIdempotencyKey: () => "fixture-key",
 }));
 
 vi.mock("../commands/agent.js", () => ({
@@ -69,7 +75,10 @@ describe("learning council transport", () => {
     expect(response).toEqual({
       status: "ok",
       summary: "completed",
-      result: { payloads: [{ text: "  kimi says hi  " }] },
+      result: {
+        payloads: [{ text: "  kimi says hi  " }, { text: "   " }, {}],
+        meta: { durationMs: 1 },
+      },
     });
     expect(hoisted.agentCommandMock).toHaveBeenCalledTimes(1);
     const [opts] = hoisted.agentCommandMock.mock.calls[0] as [Record<string, unknown>];
@@ -100,4 +109,120 @@ describe("learning council transport", () => {
 
     expect(response.result?.payloads).toEqual([]);
   });
+});
+
+const agentMeta = { provider: "moonshot", model: "kimi-k2.6", sessionId: "fixture" };
+const roleParams = {
+  cfg: { agents: { defaults: { models: { "moonshot/kimi-k2.6": {} } } } },
+  role: "kimi" as const,
+  userMessage: "synthetic",
+  routeAgentId: "main",
+  baseSessionKey: "fixture",
+  timeoutSeconds: 1,
+  thinking: "off" as const,
+  extraSystemPrompt: "",
+};
+
+describe.each(["in-process", "gateway"] as const)(
+  "council result evidence over %s",
+  (transport) => {
+    beforeEach(() => {
+      vi.stubEnv("OPENCLAW_LEARNING_COUNCIL_KIMI_MODEL", "");
+    });
+    async function run(result: unknown, status = "ok", summary = "completed") {
+      hoisted.agentCommandMock.mockResolvedValue(result);
+      hoisted.gatewayMock.mockResolvedValue({ status, summary, result });
+      return __testing.runLearningCouncilRole({ ...roleParams, transport });
+    }
+    it("reports actual matching model and valid answer as healthy", async () => {
+      const value = await run({ payloads: [{ text: "answer" }], meta: { agentMeta } });
+      expect(value).toMatchObject({
+        success: true,
+        text: "answer",
+        actualProvider: "moonshot",
+        actualModel: "kimi-k2.6",
+        requestedModelHealth: "healthy",
+      });
+    });
+    it.each([
+      { payloads: [{ text: "provider exploded", isError: true }], meta: { agentMeta } },
+      {
+        payloads: [{ text: "answer" }],
+        meta: { agentMeta, error: { kind: "retry_limit", message: "failed" } },
+      },
+      { payloads: [{ text: "answer" }], meta: { agentMeta, stopReason: "error" } },
+      { payloads: [{ text: "answer" }], meta: { agentMeta, timedOut: true } },
+      { payloads: [{ text: "answer" }], meta: { agentMeta, aborted: true } },
+      {
+        payloads: [{ text: "answer" }],
+        meta: { agentMeta, pendingToolCalls: [{ id: "1", name: "tool", arguments: "{}" }] },
+      },
+      { payloads: [{ text: "answer" }], meta: { agentMeta, stopReason: "tool_calls" } },
+      { payloads: [] },
+    ])("rejects nonfinal/error/empty output %#", async (result) => {
+      expect(await run(result)).toMatchObject({ success: false, text: "" });
+    });
+    it("accepts only the completed-prompt compaction timeout exception", async () => {
+      const meta = {
+        agentMeta,
+        timedOut: true,
+        aborted: true,
+        timedOutDuringCompaction: true,
+        promptCompleted: true,
+      };
+      expect(await run({ payloads: [{ text: "answer" }], meta })).toMatchObject({ success: true });
+      expect(
+        await run({ payloads: [{ text: "answer" }], meta: { ...meta, promptCompleted: false } }),
+      ).toMatchObject({ success: false });
+      expect(await run({ payloads: [{ text: "error", isError: true }], meta })).toMatchObject({
+        success: false,
+      });
+      expect(
+        await run({
+          payloads: [{ text: "answer" }],
+          meta: { ...meta, error: { kind: "retry_limit", message: "failed" } },
+        }),
+      ).toMatchObject({ success: false });
+    });
+    it("records fallback separately from requested model health", async () => {
+      expect(
+        await run({
+          payloads: [{ text: "answer" }],
+          meta: { agentMeta: { ...agentMeta, provider: "different", model: "fallback" } },
+        }),
+      ).toMatchObject({
+        success: true,
+        model: "moonshot/kimi-k2.6",
+        actualProvider: "different",
+        actualModel: "fallback",
+        requestedModelHealth: "mismatched",
+      });
+    });
+    it("does not invent model identity without runtime metadata", async () => {
+      expect(await run({ payloads: [{ text: "answer" }] })).toMatchObject({
+        success: true,
+        requestedModelHealth: "unknown",
+        actualProvider: undefined,
+        actualModel: undefined,
+      });
+    });
+  },
+);
+
+it("requires gateway ok status and never uses its control summary as answer text", async () => {
+  hoisted.gatewayMock.mockResolvedValue({
+    status: "error",
+    result: { payloads: [{ text: "answer" }] },
+  });
+  expect(
+    await __testing.runLearningCouncilRole({ ...roleParams, transport: "gateway" }),
+  ).toMatchObject({ success: false });
+  hoisted.gatewayMock.mockResolvedValue({ status: "ok", summary: "completed" });
+  expect(
+    await __testing.runLearningCouncilRole({ ...roleParams, transport: "gateway" }),
+  ).toMatchObject({ success: false, text: "" });
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
