@@ -311,6 +311,7 @@ async function runOwner(
         cwd: REPO_ROOT,
         env: process.env,
         maxBuffer: EXEC_MAX_BUFFER,
+        signal,
       },
     );
     signal.throwIfAborted();
@@ -366,10 +367,10 @@ async function runOwner(
  * the real local ledger and answers "what is held and what is it worth", and the
  * gate refuses any arg that would turn the read into an append or an order.
  */
-function createCapabilityTools(): readonly CentralToolSpec[] {
+function createCapabilityTools(workspaceDir?: string): readonly CentralToolSpec[] {
   const financeResearch = createFinanceResearchRunTool();
   const ledgerRead = createFinancePositionLedgerReadTool();
-  const learningDistill = createLearningDistillTool();
+  const learningDistill = createLearningDistillTool({ workspaceDir });
   return [
     {
       ownerId: "finance_research_run",
@@ -426,6 +427,9 @@ function createCapabilityTools(): readonly CentralToolSpec[] {
       allowedSideEffects: ["local_read", "local_compute", "local_output"],
       boundary: ["research_only", "local_learning_distill_only", "no_execution_authority"],
       approve: (args) => {
+        if ("memoryDir" in args || "stateDir" in args) {
+          return { ok: false, reason: "learning paths are set by the host, not model proposals" };
+        }
         const escalation = escalationReason(args);
         return escalation ? { ok: false, reason: `capability gate: ${escalation}` } : { ok: true };
       },
@@ -450,7 +454,7 @@ function createCapabilityTools(): readonly CentralToolSpec[] {
  * than one slice of it.
  */
 export function createCentralToolRegistry(
-  options: { execute?: typeof runOwner } = {},
+  options: { execute?: typeof runOwner; workspaceDir?: string } = {},
 ): ReadonlyMap<string, CentralToolSpec> {
   const executeFn = options.execute ?? runOwner;
   const ownerSpecs = READ_ONLY_OWNERS.map((owner) => {
@@ -466,7 +470,9 @@ export function createCentralToolRegistry(
     };
     return [owner.id, spec] as const;
   });
-  const capabilitySpecs = createCapabilityTools().map((spec) => [spec.ownerId, spec] as const);
+  const capabilitySpecs = createCapabilityTools(options.workspaceDir).map(
+    (spec) => [spec.ownerId, spec] as const,
+  );
   return new Map([...ownerSpecs, ...capabilitySpecs]);
 }
 

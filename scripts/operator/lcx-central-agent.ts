@@ -443,6 +443,7 @@ async function main(): Promise<void> {
     try {
       receipt = await runCentralHarnessCycle({
         perception,
+        deadlineMs: deadline,
         brain,
         registry,
         planOnly,
@@ -479,7 +480,11 @@ async function main(): Promise<void> {
       break;
     }
     // Bounded pacing: at least a short pause between cycles to stay idle-friendly.
-    await new Promise((resolve) => setTimeout(resolve, 5000));
+    const pauseMs = Math.min(5000, deadline - Date.now());
+    if (pauseMs <= 0) {
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, pauseMs));
   }
   // Always publish the observable snapshot, even on a zero-cycle run, so readers
   // never see a stale or absent central-agent surface.

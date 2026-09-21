@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AnyAgentTool } from "./common.js";
 import {
   createLearningDistillTool,
@@ -13,6 +13,7 @@ import {
 const directories: string[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(
     directories.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
   );
@@ -97,8 +98,12 @@ async function run(
 describe("learning_distill", () => {
   it("reports an absent memory tree as a named failure, not an empty queue", async () => {
     const { stateDir } = await storeRoot();
-    const tool = createLearningDistillTool({});
-    const payload = await run(tool, path.join(stateDir, "no-such-memory"), stateDir);
+    const tool = createLearningDistillTool({ workspaceDir: path.dirname(stateDir) });
+    const payload = await run(
+      tool,
+      path.join(path.dirname(stateDir), "memory", "no-such-memory"),
+      stateDir,
+    );
     expect(payload.ok).toBe(false);
     expect(payload.status).toBe("absent");
     expect(payload.reason).toBe("learning_distill_memory_absent");
@@ -110,7 +115,7 @@ describe("learning_distill", () => {
     await writeNote(memoryDir, "2026-09-11", "review-topic-b", {
       topic: "strategy-audit-and-overfit",
     });
-    const tool = createLearningDistillTool({});
+    const tool = createLearningDistillTool({ workspaceDir: path.dirname(stateDir) });
     const payload = await run(tool, memoryDir, stateDir);
 
     expect(payload.ok).toBe(true);
@@ -144,7 +149,7 @@ describe("learning_distill", () => {
   it("is idempotent: a second run over the same notes distills nothing new", async () => {
     const { memoryDir, stateDir } = await storeRoot();
     await writeNote(memoryDir, "2026-09-10", "review-topic-a");
-    const tool = createLearningDistillTool({});
+    const tool = createLearningDistillTool({ workspaceDir: path.dirname(stateDir) });
     expect((await run(tool, memoryDir, stateDir)).status).toBe("distilled");
 
     const second = await run(tool, memoryDir, stateDir);
@@ -166,7 +171,7 @@ describe("learning_distill", () => {
       sessionKey: "sk-same",
       topic: "fundamental-reading-and-risk",
     });
-    const tool = createLearningDistillTool({});
+    const tool = createLearningDistillTool({ workspaceDir: path.dirname(stateDir) });
     const payload = await run(tool, memoryDir, stateDir);
     const cards = payload.cards as Array<{ replay: boolean }>;
     expect(cards).toHaveLength(2);
@@ -179,12 +184,112 @@ describe("learning_distill", () => {
       path.join(memoryDir, "2026-09-10-review-no-topic.md"),
       "# Learning Review: 2026-09-10 12:00:00 UTC\n- **Session Key**: sk-x\n## Review Note\n- core_principle: x\n",
     );
-    const tool = createLearningDistillTool({});
+    const tool = createLearningDistillTool({ workspaceDir: path.dirname(stateDir) });
     const payload = await run(tool, memoryDir, stateDir);
     expect(payload.ok).toBe(true);
     expect(payload.cards).toHaveLength(0);
     expect(payload.unparsed).toEqual([
       { name: "2026-09-10-review-no-topic.md", reason: "learning_review_topic_missing" },
     ]);
+  });
+});
+
+describe("learning_distill path boundary", () => {
+  it("stops before output writes when cancelled during source reads", async () => {
+    const { stateDir } = await storeRoot();
+    const controller = new AbortController();
+    vi.spyOn(fs, "readdir").mockImplementationOnce(async () => {
+      controller.abort(new Error("cancel during read"));
+      return [];
+    });
+    const tool = createLearningDistillTool({ workspaceDir: path.dirname(stateDir) });
+    await expect(tool.execute("cancelled", {}, controller.signal)).rejects.toThrow(
+      "cancel during read",
+    );
+    expect(await fs.readdir(stateDir)).toEqual([]);
+  });
+
+  it.each(["memoryDir", "stateDir"])("rejects model redirection of %s", async (key) => {
+    const { memoryDir, stateDir } = await storeRoot();
+    const outside = await storeRoot();
+    const tool = createLearningDistillTool({ workspaceDir: path.dirname(stateDir) });
+    await expect(run(tool, memoryDir, stateDir, { [key]: outside.memoryDir })).rejects.toThrow(
+      /inside workspace/,
+    );
+    expect(await fs.readdir(outside.memoryDir)).toEqual([]);
+    expect(await fs.readdir(stateDir)).toEqual([]);
+  });
+
+  it.each([
+    "state",
+    "state/learning-workflow",
+    "state/learning-workflow/runs",
+    "state/lcx-learning-workflow-latest.json",
+    "memory",
+  ])("rejects symlink escape at %s before writing any output", async (relative) => {
+    const { memoryDir, stateDir } = await storeRoot();
+    const root = path.dirname(stateDir);
+    const outside = await storeRoot();
+    const target = path.join(root, relative);
+    const isFile = relative.endsWith(".json");
+    const destination = isFile ? path.join(outside.stateDir, "sentinel.json") : outside.stateDir;
+    if (isFile) {
+      await fs.writeFile(destination, "unchanged");
+    }
+    if (relative === "memory" || relative === "state") {
+      await fs.rmdir(target);
+    }
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.symlink(destination, target);
+    const tool = createLearningDistillTool({ workspaceDir: root });
+    await expect(run(tool, memoryDir, stateDir)).rejects.toThrow(/escape|outside/);
+    expect(await fs.readdir(outside.stateDir)).toEqual(isFile ? ["sentinel.json"] : []);
+    if (isFile) {
+      expect(await fs.readFile(destination, "utf8")).toBe("unchanged");
+    }
+    if (relative === "state/lcx-learning-workflow-latest.json") {
+      await expect(fs.access(path.join(stateDir, "learning-workflow", "runs"))).rejects.toThrow();
+    } else if (relative !== "state") {
+      await expect(
+        fs.access(path.join(stateDir, LEARNING_WORKFLOW_LATEST_FILENAME)),
+      ).rejects.toThrow();
+    }
+  });
+
+  it("rejects an existing hardlinked latest pointer before creating a run", async () => {
+    const { memoryDir, stateDir } = await storeRoot();
+    const outside = await storeRoot();
+    const original = path.join(outside.stateDir, "sentinel.json");
+    await fs.writeFile(original, "unchanged");
+    await fs.link(original, path.join(stateDir, LEARNING_WORKFLOW_LATEST_FILENAME));
+    const tool = createLearningDistillTool({ workspaceDir: path.dirname(stateDir) });
+    await expect(run(tool, memoryDir, stateDir)).rejects.toThrow(/hardlink/i);
+    expect(await fs.readFile(original, "utf8")).toBe("unchanged");
+    expect(await fs.readdir(stateDir)).toEqual([LEARNING_WORKFLOW_LATEST_FILENAME]);
+  });
+
+  it("rejects a state alias into protected memory inside the same workspace", async () => {
+    const { memoryDir, stateDir } = await storeRoot();
+    await fs.rmdir(stateDir);
+    await fs.symlink(memoryDir, stateDir);
+    const tool = createLearningDistillTool({ workspaceDir: path.dirname(stateDir) });
+    await expect(run(tool, memoryDir, stateDir)).rejects.toThrow(/escapes workspace state/);
+    expect(await fs.readdir(memoryDir)).toEqual([]);
+  });
+
+  it("allows a trusted workspace alias and creates its missing state tree", async () => {
+    const { memoryDir, stateDir } = await storeRoot();
+    await fs.rmdir(stateDir);
+    const root = path.dirname(stateDir);
+    const aliasParent = await storeRoot();
+    const alias = path.join(aliasParent.stateDir, "workspace");
+    await fs.symlink(root, alias);
+    const tool = createLearningDistillTool({ workspaceDir: alias });
+    const result = await tool.execute("alias", {});
+    expect(result.details).toMatchObject({ ok: true });
+    await expect(
+      fs.access(path.join(stateDir, LEARNING_WORKFLOW_LATEST_FILENAME)),
+    ).resolves.toBeUndefined();
+    expect(await fs.readdir(memoryDir)).toEqual([]);
   });
 });

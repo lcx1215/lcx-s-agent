@@ -408,6 +408,7 @@ export function createOpenClawTools(options?: {
     createMcpCallToolTool({ config: options?.config }),
     createAiderTool({
       workspaceDir,
+      sandboxed: options?.sandboxed,
     }),
     createCodexCodingHarnessTool({
       workspaceDir,

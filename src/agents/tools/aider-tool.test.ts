@@ -23,6 +23,14 @@ describe("aider tool", () => {
     delete process.env.OPENCLAW_AIDER_BIN;
   });
 
+  it.each([false, true])("blocks sandboxed host execution even with dryRun=%s", async (dryRun) => {
+    process.env.OPENCLAW_AIDER_BIN = "/fixture/custom-aider";
+    const tool = createAiderTool({ workspaceDir: "/fixture/workspace", sandboxed: true });
+    const result = await tool.execute("sandboxed", { prompt: "edit", files: ["file.ts"], dryRun });
+    expect(result.details).toMatchObject({ ok: false, status: "forbidden" });
+    expect(runCommandWithTimeoutMock).not.toHaveBeenCalled();
+  });
+
   it("returns an explicit unavailable payload when aider is missing", async () => {
     workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-aider-"));
     await fs.writeFile(path.join(workspaceDir, "app.ts"), "export const ok = true;\n", "utf8");

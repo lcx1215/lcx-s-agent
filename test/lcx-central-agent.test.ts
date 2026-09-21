@@ -4,7 +4,7 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { projectGovernanceDigest } from "../scripts/operator/lcx-central-agent.js";
 import {
   runCentralHarnessCycle,
@@ -32,6 +32,13 @@ import {
   CENTRAL_GOVERNANCE_OWNER_IDS,
 } from "../src/agents/central-harness/tool-registry.js";
 import type { CentralPerception, CentralRunReceipt } from "../src/agents/central-harness/types.js";
+
+const centralTestRoots: string[] = [];
+afterEach(async () => {
+  await Promise.all(
+    centralTestRoots.splice(0).map((root) => fsp.rm(root, { recursive: true, force: true })),
+  );
+});
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -342,9 +349,10 @@ describe("central harness covers the whole system, not a slice of it", () => {
   });
 
   it("distills pending learning notes through the learning capability, gated as local-only", async () => {
-    const spec = registry.get("learning_distill")!;
-    const memoryDir = path.join(os.tmpdir(), `lcx-central-test-learning-${process.pid}`);
-    const stateDir = path.join(os.tmpdir(), `lcx-central-test-learning-state-${process.pid}`);
+    const workspaceDir = await fsp.mkdtemp(path.join(os.tmpdir(), "lcx-central-learning-"));
+    centralTestRoots.push(workspaceDir);
+    const memoryDir = path.join(workspaceDir, "memory");
+    const registry = createCentralToolRegistry({ workspaceDir });
     await fsp.mkdir(memoryDir, { recursive: true });
     await fsp.writeFile(
       path.join(memoryDir, "2026-09-10-review-harness.md"),
@@ -365,7 +373,10 @@ describe("central harness covers the whole system, not a slice of it", () => {
 
     // The gate treats this as a local-only capability: a write-shaped arg is
     // refused, a plain scan is accepted.
-    expect(spec.approve({ memoryDir, stateDir, windowDays: 366 }).ok).toBe(true);
+    const spec = registry.get("learning_distill")!;
+    expect(spec.approve({ windowDays: 366 }).ok).toBe(true);
+    expect(spec.approve({ memoryDir }).ok).toBe(false);
+    expect(spec.approve({ stateDir: path.join(workspaceDir, "memory") }).ok).toBe(false);
     expect(spec.approve({ write: true }).ok).toBe(false);
     expect(spec.approve({ order: { symbol: "NVDA" } }).ok).toBe(false);
 
@@ -374,7 +385,7 @@ describe("central harness covers the whole system, not a slice of it", () => {
       brain: brainWithActions([
         {
           ownerId: "learning_distill",
-          args: { memoryDir, stateDir, windowDays: 366 },
+          args: { windowDays: 366 },
           reasoning: "fold pending learning notes into cards",
         },
       ]),
@@ -396,8 +407,10 @@ describe("central harness covers the whole system, not a slice of it", () => {
   });
 
   it("dispatches capability steps in plan-only mode but records owners without running them", async () => {
-    const memoryDir = path.join(os.tmpdir(), `lcx-central-test-planonly-${process.pid}`);
-    const stateDir = path.join(os.tmpdir(), `lcx-central-test-planonly-state-${process.pid}`);
+    const workspaceDir = await fsp.mkdtemp(path.join(os.tmpdir(), "lcx-central-planonly-"));
+    centralTestRoots.push(workspaceDir);
+    const memoryDir = path.join(workspaceDir, "memory");
+    const registry = createCentralToolRegistry({ workspaceDir });
     await fsp.mkdir(memoryDir, { recursive: true });
     await fsp.writeFile(
       path.join(memoryDir, "2026-09-10-review-planonly.md"),
@@ -422,7 +435,7 @@ describe("central harness covers the whole system, not a slice of it", () => {
         { ownerId: "contextRecovery", args: {}, reasoning: "scheduled governance owner" },
         {
           ownerId: "learning_distill",
-          args: { memoryDir, stateDir, windowDays: 366 },
+          args: { windowDays: 366 },
           reasoning: "drain the learning workflow in the hourly pass",
         },
       ]),

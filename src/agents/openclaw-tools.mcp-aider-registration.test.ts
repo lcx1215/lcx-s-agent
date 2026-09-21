@@ -15,6 +15,14 @@ async function withTempAgentDir<T>(run: (agentDir: string) => Promise<T>): Promi
 }
 
 describe("createOpenClawTools MCP/aider registration", () => {
+  it("passes sandbox context to Aider before it can resolve a host command", async () => {
+    await withTempAgentDir(async (agentDir) => {
+      const tools = createOpenClawTools({ agentDir, sandboxed: true });
+      const result = await tools.find((tool) => tool.name === "aider")!.execute("sandboxed", {});
+      expect(result.details).toMatchObject({ ok: false, status: "forbidden" });
+    });
+  });
+
   it("includes mcp_context and aider tools", async () => {
     await withTempAgentDir(async (agentDir) => {
       const tools = createOpenClawTools({ agentDir });

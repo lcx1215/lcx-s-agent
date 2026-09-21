@@ -6,7 +6,10 @@ import {
   foundationTemplateForTopic,
   reviewHintsForTopic,
 } from "../../hooks/bundled/learning-review/handler.js";
-import { writeJsonAtomic } from "../central-harness/run-store.js";
+import { resolveBoundaryPath } from "../../infra/boundary-path.js";
+import { readFileWithinRoot, writeFileWithinRoot } from "../../infra/fs-safe.js";
+import { assertNoPathAliasEscape } from "../../infra/path-alias-guards.js";
+import { isPathInside } from "../../infra/path-guards.js";
 import { resolveWorkspaceRoot } from "../workspace-dir.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult, readNumberParam, readStringParam } from "./common.js";
@@ -172,6 +175,29 @@ async function readPriorState(
   }
 }
 
+/** Resolve aliases under the trusted workspace and keep reads/writes in separate trees. */
+async function resolveLearningPath(workspace: string, tree: "memory" | "state", target: string) {
+  const root = path.join(workspace, tree);
+  if (!isPathInside(root, target)) {
+    throw new Error(`learning_distill path must stay inside workspace ${tree}`);
+  }
+  const resolved = await resolveBoundaryPath({
+    rootPath: workspace,
+    rootCanonicalPath: workspace,
+    absolutePath: target,
+    boundaryLabel: `learning_distill ${tree}`,
+  });
+  if (!isPathInside(root, resolved.canonicalPath)) {
+    throw new Error(`learning_distill alias escapes workspace ${tree}`);
+  }
+  await assertNoPathAliasEscape({
+    absolutePath: resolved.canonicalPath,
+    rootPath: workspace,
+    boundaryLabel: `learning_distill ${tree}`,
+  });
+  return resolved.canonicalPath;
+}
+
 /**
  * Deterministic learning-workflow capability for the central harness.
  *
@@ -196,8 +222,27 @@ export function createLearningDistillTool(options?: { workspaceDir?: string }): 
     execute: async (_toolCallId, args, callerSignal) => {
       callerSignal?.throwIfAborted();
       const params = args as Record<string, unknown>;
-      const memoryDir = readStringParam(params, "memoryDir") ?? path.join(workspace, "memory");
-      const stateDir = readStringParam(params, "stateDir") ?? path.join(workspace, "state");
+      const canonicalWorkspace = await fs.realpath(workspace);
+      const resolveDirectory = (tree: "memory" | "state", value: string | undefined) => {
+        const candidate = value ? path.resolve(workspace, value) : path.join(workspace, tree);
+        // Canonicalize the trusted workspace alias, not model-supplied path aliases.
+        const relative = path.relative(workspace, candidate);
+        return resolveLearningPath(
+          canonicalWorkspace,
+          tree,
+          path.resolve(canonicalWorkspace, relative),
+        );
+      };
+      const memoryDir = await resolveDirectory("memory", readStringParam(params, "memoryDir"));
+      const stateDir = await resolveDirectory("state", readStringParam(params, "stateDir"));
+      const latestPath = path.join(stateDir, LEARNING_WORKFLOW_LATEST_FILENAME);
+      // Check every output branch before creating either file or its directories.
+      await resolveLearningPath(canonicalWorkspace, "state", latestPath);
+      await resolveLearningPath(
+        canonicalWorkspace,
+        "state",
+        path.join(stateDir, LEARNING_WORKFLOW_RUNS_RELATIVE_DIR),
+      );
       const windowDays = Math.min(
         Math.max(readNumberParam(params, "windowDays", { integer: true }) ?? 14, 1),
         366,
@@ -246,13 +291,19 @@ export function createLearningDistillTool(options?: { workspaceDir?: string }): 
             .filter((dirent) => dirent.isFile() && dirent.name.endsWith(".md"))
             .map(async (dirent) => ({
               name: dirent.name,
-              content: await fs.readFile(path.join(memoryDir, dirent.name), "utf8"),
+              content: (
+                await readFileWithinRoot({
+                  rootDir: memoryDir,
+                  relativePath: dirent.name,
+                })
+              ).buffer.toString("utf8"),
             })),
         );
         // Only learning-review notes participate; other memory notes are ignored.
         const reviewEntries = entries.filter((entry) => LEARNING_FILE_RE.test(entry.name));
         scanned = reviewEntries.length;
         for (const entry of reviewEntries) {
+          callerSignal?.throwIfAborted();
           const result = parseReviewSnapshot(entry.name, entry.content);
           if (!result.ok) {
             unparsed.push({ name: entry.name, reason: result.reason });
@@ -272,6 +323,7 @@ export function createLearningDistillTool(options?: { workspaceDir?: string }): 
           });
         }
       } catch {
+        callerSignal?.throwIfAborted();
         return jsonResult({
           ok: false,
           status: "unreadable",
@@ -341,8 +393,17 @@ export function createLearningDistillTool(options?: { workspaceDir?: string }): 
       };
       // Both copies of the surface are atomic; the per-run file is written before
       // the pointer, so a crashed run leaves the prior pointer untouched.
-      await writeJsonAtomic(runPath, state);
-      await writeJsonAtomic(path.join(stateDir, LEARNING_WORKFLOW_LATEST_FILENAME), state);
+      const data = `${JSON.stringify(state, null, 2)}\n`;
+      for (const target of [runPath, latestPath]) {
+        callerSignal?.throwIfAborted();
+        const destination = await resolveLearningPath(canonicalWorkspace, "state", target);
+        callerSignal?.throwIfAborted();
+        await writeFileWithinRoot({
+          rootDir: canonicalWorkspace,
+          relativePath: path.relative(canonicalWorkspace, destination),
+          data,
+        });
+      }
 
       callerSignal?.throwIfAborted();
       return jsonResult({

@@ -17,6 +17,9 @@ export type HarnessSettle = Readonly<{
 
 export type HarnessLoopOptions = Readonly<{
   perception: CentralPerception;
+  signal?: AbortSignal;
+  /** Absolute cycle deadline; defaults to two minutes from cycle start. */
+  deadlineMs?: number;
   brain: CentralBrain;
   registry: ReadonlyMap<string, CentralToolSpec>;
   /** Max steps per cycle to stay bounded. */
@@ -71,7 +74,45 @@ function makeStepStep(ownerId: string, args: Readonly<Record<string, unknown>>):
 export async function runCentralHarnessCycle(
   options: HarnessLoopOptions,
 ): Promise<CentralRunReceipt> {
-  const signal = new AbortController().signal;
+  const controller = new AbortController();
+  const remainingMs = (options.deadlineMs ?? Date.now() + 120_000) - Date.now();
+  const expire = () => controller.abort(new Error("central cycle deadline exceeded"));
+  const timer = remainingMs > 0 ? setTimeout(expire, remainingMs) : undefined;
+  if (remainingMs <= 0) {
+    expire();
+  }
+  const signal = options.signal
+    ? AbortSignal.any([options.signal, controller.signal])
+    : controller.signal;
+  try {
+    return await runCycle(options, signal);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
+
+/** Stop waiting even if an adapter fails to cooperate; all real children also receive the signal. */
+async function observeUntilAborted<T>(signal: AbortSignal, run: () => Promise<T>): Promise<T> {
+  signal.throwIfAborted();
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason ?? new Error("central cycle cancelled"));
+    signal.addEventListener("abort", abort, { once: true });
+    Promise.resolve()
+      .then(() => {
+        signal.throwIfAborted();
+        return run();
+      })
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener("abort", abort));
+  });
+}
+
+async function runCycle(
+  options: HarnessLoopOptions,
+  signal: AbortSignal,
+): Promise<CentralRunReceipt> {
   const observer = options.registry;
   const runId = options.runId ?? randomUUID();
   const maxSteps = options.maxSteps ?? 6;
@@ -102,7 +143,9 @@ export async function runCentralHarnessCycle(
   // honestly rather than crashing and leaving its owner with no parseable output.
   let proposal: CentralBrainOutcome | undefined;
   try {
-    proposal = await options.brain.propose(bounded.perception, signal);
+    proposal = await observeUntilAborted(signal, () =>
+      options.brain.propose(bounded.perception, signal),
+    );
   } catch (error) {
     brainCall = {
       provider: "",
@@ -176,11 +219,12 @@ export async function runCentralHarnessCycle(
     }
     const spec = observer.get(step.ownerId)!;
     try {
-      const observation =
+      const observation = await observeUntilAborted(signal, () =>
         options.execute !== undefined
           ? // Test/offline override: deterministic execute given the full spec.
-            await options.execute(step.ownerId, spec, step.args, signal)
-          : await spec.execute(step.args, signal);
+            options.execute(step.ownerId, spec, step.args, signal)
+          : spec.execute(step.args, signal),
+      );
       // `ran_ok` means the harness obtained a receipt. The owner's own verdict
       // rides alongside it, so "it ran and reported a red light" never reads as
       // "it did not run" (and vice versa).
@@ -225,13 +269,16 @@ export async function runCentralHarnessCycle(
 
   // The next action is computed here, by TypeScript, and never by the brain: it
   // is a bounded enum the following cycle can trust, not self-authored guidance.
-  const nextAction =
-    brainCall.outcome === "completed"
-      ? actionsBlockedByGate > 0
-        ? "review_blocked_proposals"
-        : steps.some((step) => step.observedOk === false)
-          ? "follow_up_on_owners_reporting_not_ok"
-          : "continue"
+  const nextAction = signal.aborted
+    ? "halt_and_report"
+    : brainCall.outcome === "completed"
+      ? steps.some((step) => step.status === "ran_failed")
+        ? "follow_up_on_failed_dispatch"
+        : actionsBlockedByGate > 0
+          ? "review_blocked_proposals"
+          : steps.some((step) => step.observedOk === false)
+            ? "follow_up_on_owners_reporting_not_ok"
+            : "continue"
       : brainCall.outcome === "failed"
         ? "halt_and_report"
         : brainCall.outcome === "blocked"
