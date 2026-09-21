@@ -474,6 +474,10 @@ describe("runReplyAgent auto-compaction token update", () => {
   it("updates totalTokens after auto-compaction using lastCallUsage", async () => {
     const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-compact-tokens-"));
     const storePath = path.join(tmp, "sessions.json");
+    await fs.writeFile(
+      path.join(tmp, "AGENTS.md"),
+      "## Session Startup\nRead the scoped fixture instructions.\n",
+    );
     const sessionKey = "main";
     const sessionEntry = {
       sessionId: "session",
@@ -510,6 +514,7 @@ describe("runReplyAgent auto-compaction token update", () => {
       storePath,
       sessionEntry,
       config,
+      workspaceDir: tmp,
     });
 
     await runReplyAgent({
@@ -543,6 +548,9 @@ describe("runReplyAgent auto-compaction token update", () => {
     expect(stored[sessionKey].totalTokens).toBe(10_000);
     // compactionCount should be incremented
     expect(stored[sessionKey].compactionCount).toBe(1);
+    await vi.waitFor(() => {
+      expect(peekSystemEvents(sessionKey).join("\n")).toContain("scoped fixture instructions");
+    });
   });
 
   it("updates totalTokens from lastCallUsage even without compaction", async () => {
@@ -676,6 +684,11 @@ describe("runReplyAgent auto-compaction token update", () => {
       typingMode: "instant",
     });
 
+    await vi.waitFor(() => {
+      expect(runtimeLogMock).toHaveBeenCalledWith(
+        expect.stringContaining("Post-compaction workspace context unavailable"),
+      );
+    });
     const queuedSystemEvents = peekSystemEvents(sessionKey);
     expect(queuedSystemEvents.some((event) => event.includes("Post-Compaction Audit"))).toBe(false);
     expect(queuedSystemEvents.some((event) => event.includes("WORKFLOW_AUTO.md"))).toBe(false);

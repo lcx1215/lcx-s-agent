@@ -19,7 +19,12 @@ import { resolveSubagentSpawnModelSelection } from "./model-selection.js";
 import { resolveSandboxRuntimeStatus } from "./sandbox/runtime-status.js";
 import { buildSubagentSystemPrompt } from "./subagent-announce.js";
 import { getSubagentDepthFromSessionStore } from "./subagent-depth.js";
-import { countActiveRunsForSession, registerSubagentRun } from "./subagent-registry.js";
+import {
+  confirmSubagentDispatch,
+  countActiveRunsForSession,
+  recordSubagentDispatchFailure,
+  registerSubagentRun,
+} from "./subagent-registry.js";
 import { readStringParam } from "./tools/common.js";
 import {
   resolveDisplaySessionKey,
@@ -699,6 +704,39 @@ export async function spawnSubagentDirect(
   const childIdem = crypto.randomUUID();
   let childRunId: string = childIdem;
   try {
+    registerSubagentRun({
+      runId: childIdem,
+      dispatchState: "preparing",
+      childSessionKey,
+      requesterSessionKey: requesterInternalKey,
+      requesterOrigin,
+      requesterDisplayKey,
+      task,
+      cleanup,
+      label: label || undefined,
+      model: resolvedModel,
+      runTimeoutSeconds,
+      expectsCompletionMessage,
+      spawnMode,
+      attachmentsDir: attachmentAbsDir,
+      attachmentsRootDir: attachmentRootDir,
+      retainAttachmentsOnKeep: retainOnSessionKeep,
+    });
+  } catch (err) {
+    if (attachmentAbsDir) {
+      await fs.rm(attachmentAbsDir, { recursive: true, force: true }).catch(() => {});
+    }
+    await cleanupProvisionalSession(childSessionKey, {
+      emitLifecycleHooks: threadBindingReady,
+      deleteTranscript: true,
+    });
+    return {
+      status: "error",
+      error: `Subagent dispatch blocked: ${summarizeError(err)}`,
+      childSessionKey,
+    };
+  }
+  try {
     const response = await callGateway<{ runId: string }>({
       method: "agent",
       params: {
@@ -726,106 +764,64 @@ export async function spawnSubagentDirect(
       childRunId = response.runId;
     }
   } catch (err) {
-    if (attachmentAbsDir) {
-      try {
-        await fs.rm(attachmentAbsDir, { recursive: true, force: true });
-      } catch {
-        // Best-effort cleanup only.
-      }
+    let cancelled = false;
+    const hasEndedHook = threadBindingReady && hookRunner?.hasHooks("subagent_ended") === true;
+    try {
+      await callGateway({
+        method: "sessions.delete",
+        params: {
+          key: childSessionKey,
+          deleteTranscript: true,
+          emitLifecycleHooks: threadBindingReady && !hasEndedHook,
+        },
+        timeoutMs: 10_000,
+      });
+      cancelled = true;
+    } catch {
+      // A transport timeout does not prove the child was never dispatched.
     }
-    if (threadBindingReady) {
-      const hasEndedHook = hookRunner?.hasHooks("subagent_ended") === true;
-      let endedHookEmitted = false;
-      if (hasEndedHook) {
-        try {
-          await hookRunner?.runSubagentEnded(
-            {
-              targetSessionKey: childSessionKey,
-              targetKind: "subagent",
-              reason: "spawn-failed",
-              sendFarewell: true,
-              accountId: requesterOrigin?.accountId,
-              runId: childRunId,
-              outcome: "error",
-              error: "Session failed to start",
-            },
-            {
-              runId: childRunId,
-              childSessionKey,
-              requesterSessionKey: requesterInternalKey,
-            },
-          );
-          endedHookEmitted = true;
-        } catch {
-          // Spawn should still return an actionable error even if cleanup hooks fail.
-        }
-      }
-      // Always delete the provisional child session after a failed spawn attempt.
-      // If we already emitted subagent_ended above, suppress a duplicate lifecycle hook.
+    if (cancelled && hasEndedHook) {
       try {
-        await callGateway({
-          method: "sessions.delete",
-          params: {
-            key: childSessionKey,
-            deleteTranscript: true,
-            emitLifecycleHooks: !endedHookEmitted,
+        await hookRunner?.runSubagentEnded(
+          {
+            targetSessionKey: childSessionKey,
+            targetKind: "subagent",
+            reason: "spawn-failed",
+            sendFarewell: true,
+            accountId: requesterOrigin?.accountId,
+            runId: childRunId,
+            outcome: "error",
+            error: "Session failed to start",
           },
-          timeoutMs: 10_000,
-        });
+          { runId: childRunId, childSessionKey, requesterSessionKey: requesterInternalKey },
+        );
       } catch {
-        // Best-effort only.
+        // Cancellation is confirmed even if the optional notification hook fails.
       }
     }
-    const messageText = summarizeError(err);
-    return {
-      status: "error",
-      error: messageText,
-      childSessionKey,
-      runId: childRunId,
-    };
+    if (cancelled && attachmentAbsDir) {
+      await fs.rm(attachmentAbsDir, { recursive: true, force: true }).catch(() => {});
+    }
+    const error = `Subagent dispatch failed or unconfirmed: ${summarizeError(err)}; cancellation ${cancelled ? "confirmed" : "unconfirmed"}; reconcile preparing receipt ${childIdem}`;
+    recordSubagentDispatchFailure(childIdem, error, cancelled);
+    return { status: "error", error, childSessionKey, runId: childRunId };
   }
 
-  try {
-    registerSubagentRun({
-      runId: childRunId,
-      childSessionKey,
-      requesterSessionKey: requesterInternalKey,
-      requesterOrigin,
-      requesterDisplayKey,
-      task,
-      cleanup,
-      label: label || undefined,
-      model: resolvedModel,
-      runTimeoutSeconds,
-      expectsCompletionMessage,
-      spawnMode,
-      attachmentsDir: attachmentAbsDir,
-      attachmentsRootDir: attachmentRootDir,
-      retainAttachmentsOnKeep: retainOnSessionKeep,
-    });
-  } catch (err) {
-    if (attachmentAbsDir) {
-      try {
-        await fs.rm(attachmentAbsDir, { recursive: true, force: true });
-      } catch {
-        // Best-effort cleanup only.
-      }
-    }
+  if (!confirmSubagentDispatch(childIdem, childRunId)) {
+    let cancelled = false;
     try {
       await callGateway({
         method: "sessions.delete",
         params: { key: childSessionKey, deleteTranscript: true, emitLifecycleHooks: false },
         timeoutMs: 10_000,
       });
+      cancelled = true;
     } catch {
-      // Best-effort cleanup only.
+      // Keep the preparing receipt: an acknowledged child may still be running.
     }
-    return {
-      status: "error",
-      error: `Failed to register subagent run: ${summarizeError(err)}`,
-      childSessionKey,
-      runId: childRunId,
-    };
+    const error = `Subagent dispatch receipt update failed; cancellation ${cancelled ? "confirmed" : "unconfirmed"}; reconcile run ${childRunId} from preparing receipt ${childIdem}`;
+    recordSubagentDispatchFailure(childRunId, error, cancelled);
+    return { status: "error", error, childSessionKey, runId: childRunId };
   }
 
   if (hookRunner?.hasHooks("subagent_spawned")) {

@@ -694,15 +694,19 @@ export async function runReplyAgent(params: {
 
       // Inject post-compaction workspace context for the next agent turn
       if (sessionKey) {
-        const workspaceDir = process.cwd();
+        const workspaceDir = followupRun.run.workspaceDir;
         readPostCompactionContext(workspaceDir, cfg)
           .then((contextContent) => {
             if (contextContent) {
               enqueueSystemEvent(contextContent, { sessionKey });
+            } else {
+              defaultRuntime.log(
+                "[warn] Post-compaction workspace context unavailable: no readable startup sections",
+              );
             }
           })
           .catch(() => {
-            // Silent failure — post-compaction context is best-effort
+            defaultRuntime.log("[warn] Post-compaction workspace context refresh failed");
           });
       }
 

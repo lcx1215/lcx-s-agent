@@ -50,6 +50,7 @@ import { resolveAgentTimeoutMs } from "./timeout.js";
 export type { SubagentRunRecord } from "./subagent-registry.types.js";
 
 const subagentRuns = new Map<string, SubagentRunRecord>();
+const pendingWaitRetries = new Map<string, NodeJS.Timeout>();
 let sweeper: NodeJS.Timeout | null = null;
 let listenerStarted = false;
 let listenerStop: (() => void) | null = null;
@@ -107,7 +108,18 @@ function markAnnounceGiveUp(entry: SubagentRunRecord, reason: "retry-limit" | "e
 }
 
 function persistSubagentRuns() {
-  persistSubagentRunsToDisk(subagentRuns);
+  const retentionMs = resolveArchiveAfterMs();
+  for (const entry of subagentRuns.values()) {
+    // Rebase legacy creation-time deadlines too: retention belongs to terminal runs.
+    entry.archiveAtMs =
+      entry.spawnMode !== "session" && entry.endedAt && retentionMs
+        ? entry.endedAt + retentionMs
+        : undefined;
+  }
+  if ([...subagentRuns.values()].some((entry) => entry.archiveAtMs)) {
+    startSweeper();
+  }
+  return persistSubagentRunsToDisk(subagentRuns);
 }
 
 function findSessionEntryByKey(store: Record<string, SessionEntry>, sessionKey: string) {
@@ -202,6 +214,9 @@ function reconcileOrphanedRestoredRuns() {
   const storeCache = new Map<string, Record<string, SessionEntry>>();
   let changed = false;
   for (const [runId, entry] of subagentRuns.entries()) {
+    if (entry.dispatchState === "preparing" || entry.dispatchState === "uncertain") {
+      continue;
+    }
     const orphanReason = resolveSubagentRunOrphanReason({
       entry,
       storeCache,
@@ -235,6 +250,11 @@ const pendingLifecycleErrorByRunId = new Map<
 >();
 
 function clearPendingLifecycleError(runId: string) {
+  const waitRetry = pendingWaitRetries.get(runId);
+  if (waitRetry) {
+    clearTimeout(waitRetry);
+    pendingWaitRetries.delete(runId);
+  }
   const pending = pendingLifecycleErrorByRunId.get(runId);
   if (!pending) {
     return;
@@ -362,6 +382,12 @@ async function completeSubagentRun(params: {
     persistSubagentRuns();
   }
 
+  // Dispatch can finish before the gateway acknowledgement. Keep its receipt until
+  // the acknowledged ID is committed; cleanup must not race that handoff.
+  if (entry.dispatchState === "preparing") {
+    return;
+  }
+
   const suppressedForSteerRestart = suppressAnnounceForSteerRestart(entry);
   const shouldEmitEndedHook =
     !suppressedForSteerRestart &&
@@ -432,6 +458,12 @@ function resumeSubagentRun(runId: string) {
   }
   const entry = subagentRuns.get(runId);
   if (!entry) {
+    return;
+  }
+  if (entry.dispatchState === "preparing" || entry.dispatchState === "uncertain") {
+    defaultRuntime.log(
+      `[warn] Subagent dispatch requires reconciliation run=${runId} state=${entry.dispatchState}`,
+    );
     return;
   }
   const orphanReason = resolveSubagentRunOrphanReason({ entry });
@@ -518,9 +550,8 @@ function restoreSubagentRunsOnce() {
     if (restoredCount === 0) {
       return;
     }
-    if (reconcileOrphanedRestoredRuns()) {
-      persistSubagentRuns();
-    }
+    reconcileOrphanedRestoredRuns();
+    persistSubagentRuns();
     if (subagentRuns.size === 0) {
       return;
     }
@@ -575,7 +606,13 @@ async function sweepSubagentRuns() {
   const now = Date.now();
   let mutated = false;
   for (const [runId, entry] of subagentRuns.entries()) {
-    if (!entry.archiveAtMs || entry.archiveAtMs > now) {
+    if (
+      !entry.endedAt ||
+      !entry.cleanupCompletedAt ||
+      countPendingDescendantRuns(entry.childSessionKey) > 0 ||
+      !entry.archiveAtMs ||
+      entry.archiveAtMs > now
+    ) {
       continue;
     }
     clearPendingLifecycleError(runId);
@@ -932,10 +969,7 @@ export function replaceSubagentRunAfterSteer(params: {
 
   const now = Date.now();
   const cfg = loadConfig();
-  const archiveAfterMs = resolveArchiveAfterMs(cfg);
   const spawnMode = source.spawnMode === "session" ? "session" : "run";
-  const archiveAtMs =
-    spawnMode === "session" ? undefined : archiveAfterMs ? now + archiveAfterMs : undefined;
   const runTimeoutSeconds = params.runTimeoutSeconds ?? source.runTimeoutSeconds ?? 0;
   const waitTimeoutMs = resolveSubagentWaitTimeoutMs(cfg, runTimeoutSeconds);
 
@@ -953,21 +987,19 @@ export function replaceSubagentRunAfterSteer(params: {
     announceRetryCount: undefined,
     lastAnnounceRetryAt: undefined,
     spawnMode,
-    archiveAtMs,
+    archiveAtMs: undefined,
     runTimeoutSeconds,
   };
 
   subagentRuns.set(nextRunId, next);
   ensureListener();
   persistSubagentRuns();
-  if (archiveAtMs) {
-    startSweeper();
-  }
   void waitForSubagentCompletion(nextRunId, waitTimeoutMs);
   return true;
 }
 
 export function registerSubagentRun(params: {
+  dispatchState?: "preparing";
   runId: string;
   childSessionKey: string;
   requesterSessionKey: string;
@@ -986,13 +1018,11 @@ export function registerSubagentRun(params: {
 }) {
   const now = Date.now();
   const cfg = loadConfig();
-  const archiveAfterMs = resolveArchiveAfterMs(cfg);
   const spawnMode = params.spawnMode === "session" ? "session" : "run";
-  const archiveAtMs =
-    spawnMode === "session" ? undefined : archiveAfterMs ? now + archiveAfterMs : undefined;
   const runTimeoutSeconds = params.runTimeoutSeconds ?? 0;
   const waitTimeoutMs = resolveSubagentWaitTimeoutMs(cfg, runTimeoutSeconds);
   const requesterOrigin = normalizeDeliveryContext(params.requesterOrigin);
+  const previous = subagentRuns.get(params.runId);
   subagentRuns.set(params.runId, {
     runId: params.runId,
     childSessionKey: params.childSessionKey,
@@ -1007,21 +1037,80 @@ export function registerSubagentRun(params: {
     model: params.model,
     runTimeoutSeconds,
     createdAt: now,
-    startedAt: now,
-    archiveAtMs,
+    startedAt: params.dispatchState === "preparing" ? undefined : now,
+    dispatchState: params.dispatchState,
+    archiveAtMs: undefined,
     cleanupHandled: false,
     attachmentsDir: params.attachmentsDir,
     attachmentsRootDir: params.attachmentsRootDir,
     retainAttachmentsOnKeep: params.retainAttachmentsOnKeep,
   });
+  if (!persistSubagentRuns()) {
+    if (previous) {
+      subagentRuns.set(params.runId, previous);
+    } else {
+      subagentRuns.delete(params.runId);
+    }
+    throw new Error("Cannot persist subagent receipt; dispatch blocked");
+  }
   ensureListener();
-  persistSubagentRuns();
-  if (archiveAtMs) {
-    startSweeper();
+  if (params.dispatchState === "preparing") {
+    return;
   }
   // Wait for subagent completion via gateway RPC (cross-process).
   // The in-process lifecycle listener is a fallback for embedded runs.
   void waitForSubagentCompletion(params.runId, waitTimeoutMs);
+}
+
+/** Commit the gateway acknowledgement without losing an early lifecycle completion. */
+export function confirmSubagentDispatch(preparedRunId: string, actualRunId: string): boolean {
+  const entry = subagentRuns.get(preparedRunId);
+  if (!entry) {
+    return false;
+  }
+  if (preparedRunId !== actualRunId) {
+    subagentRuns.delete(preparedRunId);
+    entry.runId = actualRunId;
+    subagentRuns.set(actualRunId, entry);
+  }
+  entry.dispatchState = "dispatched";
+  entry.startedAt ??= Date.now();
+  if (!persistSubagentRuns()) {
+    entry.dispatchState = "uncertain";
+    entry.dispatchError = "Dispatch acknowledged but receipt update failed";
+    return false;
+  }
+  if (!entry.endedAt) {
+    void waitForSubagentCompletion(
+      actualRunId,
+      resolveSubagentWaitTimeoutMs(loadConfig(), entry.runTimeoutSeconds),
+    );
+  } else if (entry.outcome && !entry.cleanupCompletedAt) {
+    void completeSubagentRun({
+      runId: actualRunId,
+      endedAt: entry.endedAt,
+      outcome: entry.outcome,
+      reason: entry.endedReason ?? SUBAGENT_ENDED_REASON_COMPLETE,
+      triggerCleanup: true,
+    });
+  }
+  return true;
+}
+
+export function recordSubagentDispatchFailure(runId: string, error: string, cancelled: boolean) {
+  const entry = subagentRuns.get(runId);
+  if (!entry) {
+    return false;
+  }
+  entry.dispatchState = "uncertain";
+  entry.dispatchError = error;
+  if (cancelled) {
+    entry.endedAt = Date.now();
+    entry.outcome = { status: "error", error };
+    entry.cleanupHandled = true;
+    entry.cleanupCompletedAt = entry.endedAt;
+  }
+  return persistSubagentRuns();
 }
 
 async function waitForSubagentCompletion(runId: string, waitTimeoutMs: number) {
@@ -1045,6 +1134,20 @@ async function waitForSubagentCompletion(runId: string, waitTimeoutMs: number) {
     }
     const entry = subagentRuns.get(runId);
     if (!entry) {
+      return;
+    }
+    // agent.wait timeout is a polling deadline unless it carries a terminal timestamp.
+    if (wait.status === "timeout" && typeof wait.endedAt !== "number") {
+      if (!entry.endedAt && !pendingWaitRetries.has(runId)) {
+        const timer = setTimeout(() => {
+          pendingWaitRetries.delete(runId);
+          if (subagentRuns.get(runId) === entry && !entry.endedAt) {
+            void waitForSubagentCompletion(runId, waitTimeoutMs);
+          }
+        }, 1_000);
+        timer.unref?.();
+        pendingWaitRetries.set(runId, timer);
+      }
       return;
     }
     let mutated = false;
@@ -1090,6 +1193,10 @@ async function waitForSubagentCompletion(runId: string, waitTimeoutMs: number) {
 }
 
 export function resetSubagentRegistryForTests(opts?: { persist?: boolean }) {
+  for (const timer of pendingWaitRetries.values()) {
+    clearTimeout(timer);
+  }
+  pendingWaitRetries.clear();
   subagentRuns.clear();
   resumedRuns.clear();
   endedHookInFlightRunIds.clear();

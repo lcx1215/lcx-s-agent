@@ -394,9 +394,13 @@ export function createSubagentsTool(opts?: { agentSessionKey?: string }): AnyAge
           }).entry;
           const totalTokens = resolveTotalTokens(sessionEntry);
           const usageText = formatTokenUsageDisplay(sessionEntry);
-          const status = resolveRunStatus(entry, {
-            hasPendingDescendants: hasPendingDescendants(entry.childSessionKey),
-          });
+          const status =
+            !entry.endedAt &&
+            (entry.dispatchState === "preparing" || entry.dispatchState === "uncertain")
+              ? "reconciliation-required"
+              : resolveRunStatus(entry, {
+                  hasPendingDescendants: hasPendingDescendants(entry.childSessionKey),
+                });
           const runtime = formatDurationCompact(runtimeMs);
           const label = truncateLine(resolveSubagentLabel(entry), 48);
           const task = truncateLine(entry.task.trim(), 72);
@@ -416,6 +420,8 @@ export function createSubagentsTool(opts?: { agentSessionKey?: string }): AnyAge
             model: resolveModelRef(sessionEntry) || entry.model,
             totalTokens,
             startedAt: entry.startedAt,
+            dispatchState: entry.dispatchState,
+            dispatchError: entry.dispatchError,
             ...(announceNote ? { announceNote } : {}),
           };
           index += 1;

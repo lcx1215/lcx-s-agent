@@ -15,6 +15,9 @@ export type SubagentRunRecord = {
   model?: string;
   runTimeoutSeconds?: number;
   spawnMode?: SpawnSubagentMode;
+  /** Preparing is durable before dispatch; uncertain requires reconciliation, never replay. */
+  dispatchState?: "preparing" | "dispatched" | "uncertain";
+  dispatchError?: string;
   createdAt: number;
   startedAt?: number;
   endedAt?: number;
