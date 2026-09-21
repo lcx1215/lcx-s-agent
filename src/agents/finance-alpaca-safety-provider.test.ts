@@ -210,3 +210,11 @@ it("binds sell bid and explicit stock feed", async () => {
     (await readAlpacaPaperSafetyFacts({ ...f.options, boundQuote: result.boundQuote })).ok,
   ).toBe(false);
 });
+
+it.each(["true", 1, null, false])("rejects non-explicit unhedged evidence %s", async (unhedged) => {
+  const f = fixture();
+  const evidence = { ...f.options.evidence };
+  Object.assign(evidence, { unhedged });
+  expect((await readAlpacaPaperSafetyFacts({ ...f.options, evidence })).ok).toBe(false);
+  expect(f.read).not.toHaveBeenCalled();
+});

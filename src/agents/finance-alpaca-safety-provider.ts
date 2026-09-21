@@ -111,6 +111,7 @@ export async function readAlpacaPaperSafetyFacts(
     evidence.accountId !== options.accountId ||
     !evidence.source?.trim() ||
     !evidence.peakScope?.trim() ||
+    typeof evidence.unhedged !== "boolean" ||
     !evidence.unhedged ||
     !Array.isArray(evidence.unresolvedOrderIds) ||
     evidence.unresolvedOrderIds.length !== 0 ||
