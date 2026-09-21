@@ -131,9 +131,85 @@ describe("agent-supervised local preprocessing", () => {
       source: { text },
     });
   });
+  it("reuses only exact validated duplicates inside one batch, retaining each source", async () => {
+    const { tool, invoke } = await controlledTool({ label: "finance" });
+    const args = {
+      task: "classify",
+      labels: ["finance", "other"],
+      records: [
+        { id: "a", text: "利润下降" },
+        { id: "b", text: "利润下降" },
+        { id: "c", text: "利润下降 " },
+      ],
+    };
+    const result = await tool.execute("batch", args);
+    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(result.details).toMatchObject({
+      inputCount: 3,
+      outputCount: 3,
+      reusedCount: 1,
+      results: [
+        { id: "a" },
+        {
+          id: "b",
+          details: {
+            status: "completed_requires_review",
+            modelCalls: 0,
+            reusedFrom: { recordId: "a" },
+            source: { text: "利润下降" },
+            result: { label: "finance" },
+            reviewRequired: true,
+            finalAuthority: false,
+          },
+        },
+        { id: "c" },
+      ],
+    });
+    const details = result.details as { results: Array<{ details: Record<string, unknown> }> };
+    expect(details.results[1].details).not.toHaveProperty("observation");
+    expect(details.results[2].details.source).toMatchObject({ text: "利润下降 " });
+    await tool.execute("new-batch", args);
+    expect(invoke).toHaveBeenCalledTimes(4);
+  });
+  it("reduces 32 identical records to one inference without crossing a failure boundary", async () => {
+    const { tool, invoke } = await controlledTool({ label: "finance" });
+    const records = Array.from({ length: 32 }, (_, index) => ({
+      id: String(index),
+      text: "利润下降",
+    }));
+    expect(
+      (await tool.execute("duplicates", { ...classifyArgs, text: undefined, records })).details,
+    ).toMatchObject({ inputCount: 32, outputCount: 32, reusedCount: 31, fallbackCount: 0 });
+    expect(invoke).toHaveBeenCalledTimes(1);
+    invoke
+      .mockResolvedValueOnce({ label: "finance" })
+      .mockRejectedValueOnce(new Error("unavailable"));
+    const result = await tool.execute("partial", {
+      ...classifyArgs,
+      text: undefined,
+      records: [
+        { id: "a", text: "利润下降" },
+        { id: "b", text: "different" },
+        { id: "c", text: "利润下降" },
+      ],
+    });
+    expect(result.details).toMatchObject({
+      reusedCount: 0,
+      fallbackCount: 2,
+      results: [
+        { id: "a" },
+        { id: "b" },
+        { id: "c", details: { reason: "local_helper_disabled_after_failure" } },
+      ],
+    });
+    expect(invoke).toHaveBeenCalledTimes(3);
+  });
   it("renews the bounded budget for each batch", async () => {
     const { tool, invoke } = await controlledTool({ label: "finance" });
-    const records = Array.from({ length: 32 }, (_, i) => ({ id: String(i), text: "季度利润下降" }));
+    const records = Array.from({ length: 32 }, (_, i) => ({
+      id: String(i),
+      text: `季度利润下降，记录${i}`,
+    }));
     for (let i = 0; i < 2; i++) {
       expect(
         (await tool.execute(String(i), { task: "classify", labels: ["finance", "other"], records }))

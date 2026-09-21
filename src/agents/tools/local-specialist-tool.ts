@@ -60,7 +60,7 @@ function createLocalSpecialistItemTool(options?: {
       if (task !== "classify" && task !== "extract" && task !== "summarize") {
         throw new ToolInputError("unknown local specialist task");
       }
-      const text = readStringParam(params, "text", { required: true });
+      const text = readStringParam(params, "text", { required: true, trim: false });
       const labels = Array.isArray(params.labels) ? params.labels : [];
       if (
         text.length > 4000 ||
@@ -287,6 +287,8 @@ export function createLocalSpecialistTool(
       const tool = createLocalSpecialistItemTool(options);
       const results: Array<{ id: string; details: unknown }> = [];
       const seen = new Map<string, string>();
+      const accepted = new Map<string, { recordId: string; details: Record<string, unknown> }>();
+      let reusedCount = 0;
       try {
         for (const [index, item] of items.entries()) {
           signal?.throwIfAborted();
@@ -318,6 +320,28 @@ export function createLocalSpecialistTool(
               },
             });
           } else {
+            const cached = accepted.get(item.text);
+            if (cached) {
+              reusedCount++;
+              results.push({
+                id: item.id,
+                details: {
+                  status: "completed_requires_review",
+                  source: cached.details.source,
+                  result: cached.details.result,
+                  reusedFrom: {
+                    recordId: cached.recordId,
+                    receiptPath: cached.details.receiptPath,
+                  },
+                  modelCalls: 0,
+                  apiCalls: 0,
+                  nextAction: "agent_review_against_source",
+                  reviewRequired: true,
+                  finalAuthority: false,
+                },
+              });
+              continue;
+            }
             try {
               const result = await tool.execute(
                 `${callId}:${index}`,
@@ -325,6 +349,21 @@ export function createLocalSpecialistTool(
                 batchSignal,
               );
               results.push({ id: item.id, details: result.details });
+              const details = result.details;
+              if (
+                details &&
+                typeof details === "object" &&
+                "status" in details &&
+                details.status === "completed_requires_review"
+              ) {
+                accepted.set(item.text, {
+                  recordId: item.id,
+                  details: details as Record<string, unknown>,
+                });
+              } else {
+                // Preserve the existing batch failure boundary, including remaining duplicates.
+                accepted.clear();
+              }
             } catch (error) {
               signal?.throwIfAborted();
               if (!controller.signal.aborted) {
@@ -355,6 +394,7 @@ export function createLocalSpecialistTool(
         const receipt = {
           status: fallbackCount ? "batch_partial" : "batch_completed",
           fallbackCount,
+          reusedCount,
           policyRevision: LOCAL_SPECIALIST_POLICY.revision,
           task,
           results,
