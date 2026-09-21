@@ -20,6 +20,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { fetchAlpacaVenueState } from "../../src/agents/finance-alpaca-run.js";
 import { computeChartStructure } from "../../src/agents/finance-chart-structure.js";
 import { parseResearchConclusion } from "../../src/agents/finance-conclusion-intake.js";
 import { resolveFinanceCredentialEnv } from "../../src/agents/finance-credential-env.js";
@@ -336,13 +337,46 @@ async function main(): Promise<void> {
     renderReflection(buildReflection(scored)),
   ].join("\n");
 
+  // What the book actually holds, before asking what to do with it.
+  //
+  // A person deciding whether to add to a position looks at the position first.
+  // Asking for a directional view with no idea what is already held produces a
+  // view that ignores it - the answer may be right about the instrument and
+  // wrong about the portfolio.
+  //
+  // When the venue cannot be read this says so rather than assuming flat. An
+  // assumed flat book and an unknown book are different, and only one of them
+  // should lead to a decision.
+  const venue = await fetchAlpacaVenueState({});
+  const positionLine = venue.ok
+    ? (() => {
+        const held = venue.state.positions.get(instrument) ?? 0;
+        const open = venue.state.openOrders.get(instrument) ?? 0;
+        return (
+          "Current book: holding " +
+          held +
+          " " +
+          instrument +
+          "; " +
+          venue.state.positions.size +
+          " position(s) open in total" +
+          (open > 0 ? "; " + open + " unfilled order(s) already working on this instrument" : "") +
+          ". Judge in the light of what is already held."
+        );
+      })()
+    : "Current book: NOT READABLE (" +
+      venue.reason +
+      "). Judge without it, and do not assume the position is flat - an unknown " +
+      "holding is not an empty one.";
+
   const prompt =
     buildFinanceConclusionPrompt({
       instrument,
       assetClass: "us_equity",
       availableSources: evidence.map((e) => ({ sourceId: e.sourceId, description: e.description })),
       question:
-        "Given the evidence below, is there a directional view for the next 30 days?\n\n" +
+        positionLine +
+        "\n\nGiven the evidence below, is there a directional view for the next 30 days?\n\n" +
         evidence.map((e) => "- " + e.sourceId + ": " + e.detail).join("\n") +
         "\n\n" +
         reflection,
