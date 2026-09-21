@@ -1,0 +1,290 @@
+import { createHash } from "node:crypto";
+import { runFinanceAlpacaOrder, type FinanceAlpacaRunRequest } from "./finance-alpaca-run.js";
+import { parseResearchConclusion } from "./finance-conclusion-intake.js";
+import {
+  evaluateConclusionToMandate,
+  type FinanceConclusionRiskContext,
+} from "./finance-conclusion-to-mandate.js";
+import type { FinanceRegime } from "./finance-mandate.js";
+import { appendFinanceExecutionReceipt } from "./finance-position-ledger.js";
+import { extractFinanceConclusionJson } from "./finance-research-conclusion-prompt.js";
+
+export type FinanceResearchEvidence = Readonly<{
+  sourceId: string;
+  description: string;
+  detail: string;
+  sourceUrlOrArtifact: string;
+  /** Native source time when known; collection time never substitutes for a price observation. */
+  sourceTimestamp?: string;
+  computation?: Readonly<{
+    calculationId: string;
+    module: string;
+    inputSourceIds: readonly string[];
+  }>;
+}>;
+export type FinanceResearchExecutionControl = Readonly<{
+  mode?: "shadow" | "alpaca_paper";
+  /** Canonical controller-owned finance database root, never from model JSON. */
+  stateDirectory?: string;
+  riskContext?: FinanceConclusionRiskContext;
+  /** Controller-only input. Never populated from model JSON or CLI flags. */
+  execution?: Omit<
+    FinanceAlpacaRunRequest,
+    "conclusion" | "strategyClass" | "minConviction" | "mode"
+  >;
+}>;
+export type FinanceResearchBridgeInput = Readonly<{
+  instrument: string;
+  assetClass: "us_equity" | "crypto";
+  modelText: string;
+  evidence: readonly FinanceResearchEvidence[];
+  market: { referencePrice: number; referencePriceAt: string };
+  equity: number;
+  runAuthorizationId: string;
+  regime?: FinanceRegime;
+}>;
+const hash = (value: string) => createHash("sha256").update(value).digest("hex");
+
+function parseObservation(raw: unknown): ReturnType<typeof parseResearchConclusion> {
+  if (
+    typeof raw !== "object" ||
+    raw === null ||
+    !("direction" in raw) ||
+    (raw.direction !== "hold" && raw.direction !== "avoid")
+  ) {
+    return parseResearchConclusion(raw);
+  }
+  if (
+    !("instrument" in raw) ||
+    typeof raw.instrument !== "string" ||
+    !("assetClass" in raw) ||
+    typeof raw.assetClass !== "string" ||
+    !("thesis" in raw) ||
+    typeof raw.thesis !== "string" ||
+    !raw.thesis.trim() ||
+    !("conviction" in raw) ||
+    typeof raw.conviction !== "number" ||
+    !Number.isFinite(raw.conviction) ||
+    raw.conviction < 0 ||
+    raw.conviction > 1 ||
+    !("evidence" in raw) ||
+    !Array.isArray(raw.evidence)
+  ) {
+    return { ok: false, refusals: ["non-trade research observation is incomplete"] };
+  }
+  const evidence = raw.evidence.flatMap((ref: unknown) =>
+    typeof ref === "object" &&
+    ref !== null &&
+    "sourceId" in ref &&
+    typeof ref.sourceId === "string" &&
+    ref.sourceId.trim()
+      ? [{ sourceId: ref.sourceId }]
+      : [],
+  );
+  if (evidence.length !== raw.evidence.length || evidence.length < 2) {
+    return { ok: false, refusals: ["non-trade research requires source evidence"] };
+  }
+  return {
+    ok: true,
+    notes: [],
+    conclusion: {
+      conclusionId: "non-trade-observation",
+      instrument: raw.instrument,
+      assetClass: raw.assetClass,
+      direction: raw.direction,
+      conviction: raw.conviction,
+      thesis: raw.thesis,
+      evidence,
+    },
+  };
+}
+
+/** Existing research/mandate and venue seams, joined only by controller-owned authority. */
+export async function runFinanceResearchExecutionBridge(
+  input: FinanceResearchBridgeInput,
+  control: FinanceResearchExecutionControl = {},
+) {
+  const evidenceReceipt = input.evidence.map((item) => ({
+    sourceId: item.sourceId,
+    sourceUrlOrArtifact: item.sourceUrlOrArtifact,
+    sourceTimestamp: item.sourceTimestamp,
+    detailHash: hash(item.detail),
+    computation: item.computation,
+  }));
+  const receipt = { modelOutputHash: hash(input.modelText), evidence: evidenceReceipt };
+  const extracted = extractFinanceConclusionJson(input.modelText);
+  const intake = parseObservation(extracted);
+  if (!intake.ok) {
+    return { status: "refused" as const, receipt, refusals: intake.refusals };
+  }
+  const conclusion = intake.conclusion;
+  if (conclusion.instrument !== input.instrument || conclusion.assetClass !== input.assetClass) {
+    return {
+      status: "refused" as const,
+      receipt,
+      refusals: ["model conclusion changed the authorized instrument or asset class"],
+    };
+  }
+  const available = new Map(input.evidence.map((item) => [item.sourceId, item]));
+  if (
+    available.size !== input.evidence.length ||
+    conclusion.evidence.some((ref) => {
+      const item = available.get(ref.sourceId);
+      return !item || !item.detail.trim() || !item.sourceUrlOrArtifact.trim();
+    })
+  ) {
+    return {
+      status: "refused" as const,
+      receipt,
+      refusals: [
+        "model citations must resolve to actual collected evidence with source provenance",
+      ],
+    };
+  }
+  const rawEvidence =
+    typeof extracted === "object" &&
+    extracted !== null &&
+    "evidence" in extracted &&
+    Array.isArray(extracted.evidence)
+      ? extracted.evidence
+      : [];
+  const invalidCalculation = rawEvidence.some((ref: unknown) => {
+    if (typeof ref !== "object" || ref === null || !("calculationId" in ref)) {
+      return false;
+    }
+    const sourceId = "sourceId" in ref && typeof ref.sourceId === "string" ? ref.sourceId : "";
+    const calculation = available.get(sourceId)?.computation;
+    return (
+      !calculation ||
+      ref.calculationId !== calculation.calculationId ||
+      !calculation.module.trim() ||
+      calculation.inputSourceIds.length === 0 ||
+      calculation.inputSourceIds.some((id) => id === sourceId || !available.has(id))
+    );
+  });
+  if (invalidCalculation) {
+    return {
+      status: "refused" as const,
+      receipt,
+      refusals: [
+        "claimed calculation must match a collected calculation receipt and its input evidence",
+      ],
+    };
+  }
+
+  // Derived calculations retain their parents: two IDs over the same bars are one source.
+  const roots = (id: string, visiting: ReadonlySet<string> = new Set()): readonly string[] => {
+    if (visiting.has(id)) {
+      throw new Error("cyclic evidence lineage");
+    }
+    const item = available.get(id);
+    if (!item) {
+      throw new Error("missing evidence parent");
+    }
+    const parents = item.computation?.inputSourceIds;
+    if (!parents) {
+      return [item.sourceUrlOrArtifact];
+    }
+    if (parents.length === 0) {
+      throw new Error("calculation has no input evidence");
+    }
+    const next = new Set([...visiting, id]);
+    return parents.flatMap((parent) => roots(parent, next));
+  };
+  try {
+    const independentSources = new Set(conclusion.evidence.flatMap((ref) => roots(ref.sourceId)));
+    if (independentSources.size < 2) {
+      return {
+        status: "refused" as const,
+        receipt,
+        refusals: [
+          "fewer than two independent evidence roots; derived calculations do not create new market corroboration",
+        ],
+      };
+    }
+  } catch (error) {
+    return {
+      status: "refused" as const,
+      receipt,
+      refusals: [error instanceof Error ? error.message : "invalid evidence lineage"],
+    };
+  }
+  if (conclusion.direction === "hold" || conclusion.direction === "avoid") {
+    return { status: "shadow" as const, disposition: "no_trade" as const, receipt, conclusion };
+  }
+
+  const execute = control.mode === "alpaca_paper";
+  if (execute && (!control.execution?.createSafetyContext || !control.stateDirectory)) {
+    return {
+      status: "blocked" as const,
+      receipt,
+      refusals: [
+        "trusted execution controller unavailable; model JSON and CLI labels cannot authorize placement",
+      ],
+    };
+  }
+  const execution = execute ? control.execution : undefined;
+  const decision = evaluateConclusionToMandate({
+    raw: extracted,
+    referencePrice: execution?.market.referencePrice ?? input.market.referencePrice,
+    referencePriceAt: execution?.market.referencePriceAt ?? input.market.referencePriceAt,
+    equity: execution?.equity ?? input.equity,
+    runAuthorizationId: execution?.runAuthorizationId ?? input.runAuthorizationId,
+    riskContext: control.riskContext,
+    ...(input.regime === undefined ? {} : { regime: input.regime }),
+  });
+  if (!decision.ok || !decision.passed) {
+    return {
+      status: "refused" as const,
+      receipt,
+      decision,
+      refusals: decision.ok ? decision.mandate.reasons : decision.refusals,
+    };
+  }
+  if (!execution) {
+    return { status: "shadow" as const, receipt, decision };
+  }
+  try {
+    const placement = await runFinanceAlpacaOrder({
+      ...execution,
+      conclusion: decision.conclusion,
+      ...(decision.strategyClass === "unknown" ? {} : { strategyClass: decision.strategyClass }),
+      mode: "paper",
+    });
+    if (placement.ok) {
+      try {
+        const persisted = await appendFinanceExecutionReceipt(
+          control.stateDirectory!,
+          placement.receipt,
+        );
+        return { status: "placed" as const, receipt, decision, placement, persistence: persisted };
+      } catch (error) {
+        return {
+          status: "executed_persistence_pending" as const,
+          receipt,
+          decision,
+          placement,
+          recovery: {
+            stateDirectory: control.stateDirectory,
+            receiptId: placement.receipt.receiptId,
+            action: "append existing receipt only; do not redispatch",
+          },
+          persistenceError: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
+    return {
+      status: placement.ok ? ("placed" as const) : ("refused" as const),
+      receipt,
+      decision,
+      placement,
+    };
+  } catch (error) {
+    return {
+      status: "unknown" as const,
+      receipt,
+      decision,
+      refusals: [error instanceof Error ? error.message : String(error)],
+    };
+  }
+}
