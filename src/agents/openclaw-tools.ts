@@ -52,6 +52,7 @@ import { createFinancePromotionProposalStatusTool } from "./tools/finance-promot
 import { createFinancePromotionReviewTool } from "./tools/finance-promotion-review-tool.js";
 import { createFinanceRealtimeRefreshTool } from "./tools/finance-realtime-refresh-tool.js";
 import { createFinanceReflectionReadTool } from "./tools/finance-reflection-read-tool.js";
+import { createFinanceResearchBatchTool } from "./tools/finance-research-batch-tool.js";
 import { createFinanceResearchRunTool } from "./tools/finance-research-run-tool.js";
 import { createFinanceResearchRunsReadTool } from "./tools/finance-research-runs-read-tool.js";
 import { createFinanceResearchSourceWorkbenchTool } from "./tools/finance-research-source-workbench-tool.js";
@@ -276,6 +277,7 @@ export function createOpenClawTools(options?: {
     createFinanceReflectionReadTool(),
     createFinanceSourceSweepReadTool(),
     createFinancePaperRankPlaceTool(),
+    createFinanceResearchBatchTool(),
     createFinanceThesisLedgerReadTool({ workspaceDir }),
     createFinanceStrategyRuleLedgerReadTool(),
     createLocalSpecialistTool({ workspaceDir }),

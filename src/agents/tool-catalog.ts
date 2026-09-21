@@ -367,6 +367,15 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     includeInOpenClawGroup: true,
   },
   {
+    id: "finance_research_batch_run",
+    label: "finance_research_batch_run",
+    description:
+      "Sample a pool of instruments and append what the signals said, using the shared deterministic sampler. Idempotent per instrument and day, and reports which were skipped as already recorded",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
     id: "finance_paper_rank_place",
     label: "finance_paper_rank_place",
     description:
