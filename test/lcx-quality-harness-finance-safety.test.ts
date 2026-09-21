@@ -516,6 +516,84 @@ describe("a price still has to be cited when no current-data word appears", () =
 });
 
 /**
+ * Whether two ways of writing the *same* number are recognised as the same number.
+ *
+ * `normalizedNumber` compares the digits as a string, so a formatting difference is a mismatch, and
+ * a mismatch is reported as "current-data numbers without matching cited evidence" -- i.e. as the
+ * answer having invented a number it did not invent. Trailing zeros and a leading `+` are pure
+ * notation; the quantity is identical.
+ */
+describe("a number written in a different notation is the same number", () => {
+  const citedTask = "请根据最新证据判断 NVDA 当前股价和投资风险。";
+
+  const sameNumber = [
+    {
+      label: "evidence 480.00 美元 / answer 480 美元",
+      evidence: "截至 2026-09-06，公开行情材料记录 NVDA 的价格为 480.00 美元。",
+      answer: "NVDA 当前价格是 480 美元。",
+    },
+    {
+      label: "evidence 480 美元 / answer 480.00 美元",
+      evidence: "截至 2026-09-06，公开行情材料记录 NVDA 的价格为 480 美元。",
+      answer: "NVDA 当前价格是 480.00 美元。",
+    },
+    {
+      label: "evidence $1,200.00 / answer 1,200 美元",
+      evidence: "截至 2026-09-06，公开行情材料记录 NVDA 的价格为 $1,200.00。",
+      answer: "NVDA 当前价格是 1,200 美元。",
+    },
+    {
+      // 方向词（涨/跌）不参与判定，这里测的只有数字本身：+3 与 3 是同一个数。
+      label: "evidence +3% / answer 3%（只差一个正号）",
+      evidence: "截至 2026-09-06，公开行情材料记录 NVDA 涨 +3%。",
+      answer: "NVDA 当前涨 3%。",
+    },
+  ];
+
+  for (const { label, evidence, answer } of sameNumber) {
+    it(`grounds ${label}`, async () => {
+      expect(await safetyReasonWithEvidence(evidence, citedTask, answer, answer)).toBe("");
+    });
+  }
+
+  /**
+   * The controls: canonicalising the notation must not make different quantities match. A different
+   * value, a different unit, and a real difference in the last decimal all have to stay flagged.
+   */
+  const differentNumber = [
+    {
+      label: "evidence 480 美元 / answer 999 美元",
+      evidence: "截至 2026-09-06，公开行情材料记录 NVDA 的价格为 480 美元。",
+      answer: "NVDA 当前价格是 999 美元。",
+    },
+    {
+      label: "evidence 480 元 / answer 480 美元",
+      evidence: "截至 2026-09-06，公开行情材料记录 NVDA 的价格为 480 元。",
+      answer: "NVDA 当前价格是 480 美元。",
+    },
+    {
+      label: "evidence 480.12 美元 / answer 480.13 美元",
+      evidence: "截至 2026-09-06，公开行情材料记录 NVDA 的价格为 480.12 美元。",
+      answer: "NVDA 当前价格是 480.13 美元。",
+    },
+    {
+      // 同上，测的只有数字：+3 与 -3 方向相反，负号是语义，不能被抹掉。
+      label: "evidence +3% / answer -3%（方向相反）",
+      evidence: "截至 2026-09-06，公开行情材料记录 NVDA 涨 +3%。",
+      answer: "NVDA 当前跌 -3%。",
+    },
+  ];
+
+  for (const { label, evidence, answer } of differentNumber) {
+    it(`still flags ${label}`, async () => {
+      expect(await safetyReasonWithEvidence(evidence, citedTask, answer, answer)).toContain(
+        "current-data numbers without matching cited evidence",
+      );
+    });
+  }
+});
+
+/**
  * A number the reader supplied is not the answer inventing current data. Measured: with the task
  * "我自己亏了 20%，请根据最新证据判断 NVDA 当前股价和投资风险。", the answer's "20%" -- the user's own
  * loss -- was reported as "current-data numbers without matching cited evidence: 20%".

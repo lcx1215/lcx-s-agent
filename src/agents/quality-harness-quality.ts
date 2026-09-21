@@ -185,9 +185,40 @@ function extractDataNumbers(text: string): string[] {
   ).map((value) => value.replace(/\s+/g, ""));
 }
 
+/**
+ * The digits of a number in one notation, so that two writings of the same quantity compare equal.
+ *
+ * They did not: `normalizedNumber` compared the digits as a string, so a formatting difference was
+ * reported as the answer having invented a number. Measured, evidence on the left:
+ *
+ *   480.00 美元 vs 480 美元, 480 美元 vs 480.00 美元, $1,200.00 vs 1,200 美元, +3% vs 3%
+ *
+ * -- all four reported "current-data numbers without matching cited evidence" for a number the
+ * evidence does carry.
+ *
+ * **Notation only**, and the boundary is the point: this is deliberately NOT any of
+ *
+ *   - a tolerance or rounding -- 480.12 is neither 480.13 nor 480;
+ *   - a unit conversion -- 480 美元 is not 480 元, and 480 港元 is not 480 元;
+ *   - dropping a `-` sign -- `+3%` is `3%`, but `-3%` is the opposite direction.
+ *
+ * So: strip a leading `+` and trailing zeros after the point, and nothing else. Anything beyond
+ * this is a claim about the quantity, not about how it was written, and belongs to whoever decides
+ * what counts as the same number -- not to a formatter.
+ */
+function canonicalNumber(raw: string): string {
+  const unsigned = raw.startsWith("+") ? raw.slice(1) : raw;
+  const point = unsigned.indexOf(".");
+  if (point < 0) {
+    return unsigned;
+  }
+  const fraction = unsigned.slice(point + 1).replace(/0+$/u, "");
+  return fraction === "" ? unsigned.slice(0, point) : `${unsigned.slice(0, point)}.${fraction}`;
+}
+
 function normalizedNumber(value: string): string {
   const compact = value.replace(/\s+/g, "").replace(/,/g, "").toLowerCase();
-  const number = compact.match(/[+-]?\d+(?:\.\d+)?/)?.[0] ?? compact;
+  const number = canonicalNumber(compact.match(/[+-]?\d+(?:\.\d+)?/)?.[0] ?? compact);
   const unit = compact.includes("%")
     ? "percent"
     : /(?:\$|usd|dollars?|美元)/u.test(compact)
