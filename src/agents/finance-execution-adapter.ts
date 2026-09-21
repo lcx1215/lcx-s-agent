@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from "node:crypto";
 /**
  * Declared execution adapter seam for `finance_live_execution_waterflow`.
  *
@@ -25,10 +26,12 @@
  * deliberately ships only the paper adapter so that "capability exists" is never claimed
  * from "a seam exists".
  */
-
-import { createHash, randomUUID } from "node:crypto";
 import type { LcxOntologyFinanceExecutionAuthority } from "../shared/lcx-ontology.js";
 import type { FinanceDecisionMode } from "./finance-decision-policy.js";
+import {
+  withFinanceExecutionSafety,
+  type FinanceExecutionSafetyContext,
+} from "./finance-execution-safety.js";
 
 export const FINANCE_EXECUTION_RECEIPT_SCHEMA = "lcx_finance_execution_receipt_v1" as const;
 
@@ -193,6 +196,8 @@ export type FinanceExecutionReceipt = Readonly<{
 }>;
 
 export type FinanceOrderPlacementRequest = Readonly<{
+  /** Controller-issued only. Missing context always refuses, including internal paper. */
+  safetyContext?: FinanceExecutionSafetyContext;
   /** Must be `live_execution`; every other mode is refused before any adapter is called. */
   mode: FinanceDecisionMode;
   intent: FinanceExecutionIntent;
@@ -417,6 +422,22 @@ function collectRefusalReasons(request: FinanceOrderPlacementRequest): string[] 
 export async function placeFinanceOrder(
   request: FinanceOrderPlacementRequest,
 ): Promise<FinanceOrderPlacementResult> {
+  // Keep the capability object identity, but snapshot all model/caller mutable trade data
+  // before any await; checks, execution and receipt must describe one intent.
+  request = {
+    ...request,
+    intent: Object.freeze(structuredClone(request.intent)),
+    budget: Object.freeze(structuredClone(request.budget)),
+    adapters: request.adapters.map((adapter) => {
+      const snapshot = {
+        ...adapter,
+        instruments: Object.freeze([...adapter.instruments]),
+        orderTypes: Object.freeze([...adapter.orderTypes]),
+      };
+      snapshot.execute = adapter.execute.bind(snapshot);
+      return Object.freeze(snapshot);
+    }),
+  };
   const refusalReasons = collectRefusalReasons(request);
   if (refusalReasons.length > 0) {
     return Object.freeze({
@@ -435,7 +456,23 @@ export async function placeFinanceOrder(
   }
 
   const { intent } = request;
-  const fill = await adapter.execute(intent, request.signal ?? new AbortController().signal);
+  const safety = await withFinanceExecutionSafety({
+    context: request.safetyContext,
+    intent,
+    budget: request.budget,
+    adapterId: adapter.id,
+    venue: adapter.venue,
+    adapterKind: adapter.kind,
+    signal: request.signal,
+    execute: (signal) => adapter.execute(intent, signal),
+  });
+  if (!safety.ok) {
+    return Object.freeze({
+      status: "refused" as const,
+      refusalReasons: Object.freeze(safety.reasons),
+    });
+  }
+  const fill = safety.fill;
   const notional = intent.referencePrice * intent.quantity;
   const recordedAt = request.recordedAt ?? new Date().toISOString();
   const receiptId = `exec-${createHash("sha256")
