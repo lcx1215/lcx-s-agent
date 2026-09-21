@@ -217,6 +217,13 @@ export function projectFinancePositions(params: {
       });
       continue;
     }
+    // Not rejected for predating the fill, and deliberately so: a run that trades at a historical
+    // close records `filledAt` as the moment it placed the order, which is later than the close
+    // the price belongs to. Rejecting a mark older than the fill would therefore refuse the very
+    // price the position was opened at. The live book has both shapes — see the capability map
+    // under the 2026-09-21 audit, where the one non-zero unrealized PnL came from a mark written
+    // the day before its fill by hand, and the same rule that would have caught it also catches
+    // every ordinary mark-to-close.
     const positionUnrealized = (mark.price - position.averageCost) * position.quantity;
     if (unrealizedPnl !== null) {
       unrealizedPnl += positionUnrealized;
