@@ -82,7 +82,7 @@ const PATH_RULES: PathRule[] = [
     id: "finance_caseflow",
     lane: "finance_research_capability",
     patterns: [
-      /^src\/agents\/finance-(?:caseflow(?:-followups)?|forecast-calibration|history-coverage|research-assessment|source-recovery|model-workflow|model-specialist|agent-committee|news-entity|research-evidence|strategy-method-kit|strategy-method-catalog|research-runner|research-batch-runner|run-checkpoints|model-checkpoints|outcome-ledger|free-market-collection-adapters|registered-capability-adapters|market-collection-registry|realtime-source-registry|source-health|data-connectors|connector-evidence|mcp-client|rest-client|answer-grounding-gate|decision-policy)\.ts$/u,
+      /^src\/agents\/finance-(?:caseflow(?:-followups)?|forecast-calibration|history-coverage|research-assessment|source-recovery|model-workflow|model-specialist|agent-committee|news-entity|research-evidence|strategy-method-kit|strategy-method-catalog|research-runner|research-batch(?:-runner)?|run-checkpoints|model-checkpoints|outcome-ledger|free-market-collection-adapters|registered-capability-adapters|market-collection-registry|realtime-source-registry|source-health|data-connectors|connector-evidence|mcp-client|rest-client|answer-grounding-gate|decision-policy)\.ts$/u,
       /^src\/agents\/tools\/finance-data-connector-inspect-tool\.ts$/u,
       // The read side of the stored research runs. Without it here, the only lane that would
       // claim it is the generic tool-registration rule, which never runs its behaviour test.
@@ -138,6 +138,10 @@ const PATH_RULES: PathRule[] = [
       /^scripts\/operator\/lcx-finance-thesis-ledger\.ts$/u,
       /^scripts\/operator\/lcx-finance-strategy-rule-ledger\.ts$/u,
       /^scripts\/operator\/lcx-finance-bar-ledger\.ts$/u,
+      // The plane's own wiring report. It reads the bar, position and rule books this seam
+      // owns and answers whether they agree, so a change to it changes what the system says
+      // about its own execution path - not what the research lane samples.
+      /^src\/agents\/finance-link-health\.ts$/u,
     ],
     requiredChecks: ["git-diff-check", "head-tail-consistency"],
     commands: [
