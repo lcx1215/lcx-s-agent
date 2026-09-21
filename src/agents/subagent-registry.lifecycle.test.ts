@@ -44,15 +44,16 @@ import {
   resetSubagentRegistryForTests,
 } from "./subagent-registry.js";
 
-const makeRun = (id = "fixture"): SubagentRunRecord => ({
-  runId: id,
-  childSessionKey: `agent:main:subagent:${id}`,
-  requesterSessionKey: "agent:main:main",
-  requesterDisplayKey: "main",
-  task: "fixture",
-  cleanup: "keep",
-  createdAt: 1,
-});
+const makeRun = (id = "fixture") =>
+  ({
+    runId: id,
+    childSessionKey: `agent:main:subagent:${id}`,
+    requesterSessionKey: "agent:main:main",
+    requesterDisplayKey: "main",
+    task: "fixture",
+    cleanup: "keep",
+    createdAt: 1,
+  }) satisfies SubagentRunRecord;
 const runs = () => listSubagentRunsForRequester("agent:main:main");
 beforeEach(() => {
   resetSubagentRegistryForTests({ persist: false });

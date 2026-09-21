@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ToolsSchema } from "../config/zod-schema.agent-runtime.js";
 import { emitAgentEvent } from "../infra/agent-events.js";
 import "./test-helpers/fast-core-tools.js";
 import * as harness from "./openclaw-tools.subagents.sessions-spawn.test-harness.js";
@@ -127,10 +128,12 @@ describe("sessions_spawn durable dispatch", () => {
     async (failure) => {
       const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "spawn-delayed-"));
       try {
-        harness.setSessionsSpawnConfigOverride({
+        // The runtime schema accepts sessions_spawn; ToolsConfig has no declaration yet.
+        const config = {
           agents: { defaults: { workspace } },
-          tools: { sessions_spawn: { attachments: { enabled: true } } },
-        });
+          tools: ToolsSchema.parse({ sessions_spawn: { attachments: { enabled: true } } }),
+        };
+        harness.setSessionsSpawnConfigOverride(config);
         let preparing: SubagentRunRecord | undefined;
         let dispatched = false;
         let deleteAcknowledged = false;
