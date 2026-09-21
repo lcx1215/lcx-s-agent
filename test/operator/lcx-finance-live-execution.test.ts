@@ -8,16 +8,18 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildFinanceLiveExecutionPayload,
   parseArgs,
   type Options,
 } from "../../scripts/operator/lcx-finance-live-execution.ts";
+import * as alpacaAdapters from "../../src/agents/finance-alpaca-execution-adapter.js";
 import {
   DEFAULT_FINANCE_RISK_BUDGET,
   FINANCE_RISK_BUDGET_ANY_INSTRUMENT,
 } from "../../src/agents/finance-execution-adapter.ts";
+import * as executionAdapters from "../../src/agents/finance-execution-adapter.ts";
 import { financePositionLedgerPath } from "../../src/agents/finance-state-dir.ts";
 import { createFinancePositionLedgerReadTool } from "../../src/agents/tools/finance-position-ledger-read-tool.ts";
 
@@ -34,6 +36,7 @@ async function storeDirectory(): Promise<string> {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(
     directories.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
   );
@@ -42,6 +45,10 @@ afterEach(async () => {
 function options(overrides: Partial<Options> = {}): Options {
   return {
     instrument: "AAPL",
+    assetClass: "us_equity",
+    riskPct: 0.5,
+    hasStructure: true,
+    stopPrice: 225,
     side: "buy",
     orderType: "market",
     quantity: 10,
@@ -355,5 +362,45 @@ describe("finance live execution unattended ceiling gate", () => {
     expect(DEFAULT_FINANCE_RISK_BUDGET.automation).toBe("attended");
     expect(payload.nodes.order_placement.status).toBe("placed");
     expect(payload.nodes.unattended_requires_caps).toBeUndefined();
+  });
+});
+
+describe("mandatory owner-entry mandate and stop delivery", () => {
+  it.each(["paper", "alpaca"] as const)(
+    "rejects absent class before constructing %s adapter",
+    async (adapter) => {
+      const paperFactory = vi.spyOn(executionAdapters, "createPaperExecutionAdapter");
+      const venueFactory = vi.spyOn(alpacaAdapters, "createAlpacaExecutionAdapter");
+      await expect(
+        buildFinanceLiveExecutionPayload(options({ adapter, assetClass: undefined })),
+      ).rejects.toThrow("--asset-class is required");
+      expect(paperFactory).not.toHaveBeenCalled();
+      expect(venueFactory).not.toHaveBeenCalled();
+    },
+  );
+  it("delivers the same stop approved by mandate to the venue adapter", async () => {
+    const directory = await storeDirectory();
+    const execute = vi.fn(async () => ({
+      filledQuantity: 10,
+      fillPrice: 231.4,
+      filledAt: AS_OF,
+      venueRef: "synthetic:never-sent",
+    }));
+    vi.spyOn(alpacaAdapters, "createAlpacaExecutionAdapter").mockReturnValue({
+      id: "alpaca-venue",
+      venue: "fixture",
+      kind: "venue",
+      orderTypes: ["market"],
+      instruments: ["AAPL"],
+      credentialsAuthority: "external",
+      execute,
+    });
+    await buildFinanceLiveExecutionPayload(
+      options({ adapter: "alpaca", ledgerDirectory: directory, stopPrice: 225 }),
+    );
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({ stopPrice: 225 }),
+      expect.any(AbortSignal),
+    );
   });
 });

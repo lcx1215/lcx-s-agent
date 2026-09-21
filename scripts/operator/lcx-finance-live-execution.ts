@@ -13,6 +13,7 @@
  * Usage:
  *   node --import tsx scripts/operator/lcx-finance-live-execution.ts --json \
  *     --instrument AAPL --quantity 10 --reference-price 231.4 \
+ *     --asset-class us_equity --risk-pct 0.5 --stop-price 225 --has-structure \
  *     --as-of 2026-09-17T21:00:00Z --run-authorization run-2026-09-18-001 \
  *     --mark AAPL=233.1@2026-09-18T02:00:00Z
  *
@@ -273,6 +274,9 @@ export function parseArgs(args: readonly string[]): Options {
 }
 
 export async function buildFinanceLiveExecutionPayload(options: Options) {
+  if (!options.assetClass?.trim()) {
+    throw new Error("--asset-class is required; unknown strategy class cannot bypass the mandate");
+  }
   // The allowlist narrows only when the caller names instruments. With none named the run is
   // open by instrument, and both checks in the adapter seam stay in force — so an explicit
   // empty list, or a list naming other instruments, still refuses.
@@ -313,9 +317,8 @@ export async function buildFinanceLiveExecutionPayload(options: Options) {
   const unattendedMissingCaps = missingUnattendedCaps(budget);
 
   // The mandate runs before the order exists: a rule that only reports
-  // afterwards cannot prevent anything. It is skipped unless an asset class is
-  // declared, because a guess at the class would launder a guess into an
-  // enforced decision. Everything the mandate needs is passed explicitly -
+  // afterwards cannot prevent anything. An asset class must be declared, because
+  // guessing a class would launder a guess into an enforced decision. Everything the mandate needs is passed explicitly -
   // nothing is defaulted to "good enough" so the order can proceed.
   if (options.assetClass !== undefined) {
     if (options.riskPct === undefined) {
@@ -353,6 +356,7 @@ export async function buildFinanceLiveExecutionPayload(options: Options) {
       orderType: options.orderType,
       quantity: options.quantity,
       ...(options.limitPrice === undefined ? {} : { limitPrice: options.limitPrice }),
+      ...(options.stopPrice === undefined ? {} : { stopPrice: options.stopPrice }),
       referencePrice: options.referencePrice ?? Number.NaN,
       referencePriceAt: options.asOf,
       runAuthorizationId: options.runAuthorization,
