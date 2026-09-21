@@ -461,7 +461,7 @@ it("uses the controller book credentials and does not disable Finnhub when Alpha
 
 it("reads persisted broker history into the next research decision without creating a second fill", async () => {
   const f = fixture();
-  await ledger.appendFinanceBrokerHistory(f.control.stateDirectory, {
+  await ledger.appendFinanceBrokerHistory(f.control.stateDirectory!, {
     kind: "broker_history",
     accountId: f.control.recovery!.accountId,
     venue: "alpaca:paper",
@@ -489,8 +489,8 @@ it("reads persisted broker history into the next research decision without creat
     invokeModel,
   });
   expect(invokeModel).toHaveBeenCalledOnce();
-  expect((await ledger.readFinancePositionRecords(f.control.stateDirectory)).receipts).toHaveLength(
-    0,
-  );
+  expect(
+    (await ledger.readFinancePositionRecords(f.control.stateDirectory!)).receipts,
+  ).toHaveLength(0);
   expect(f.transport).not.toHaveBeenCalled();
 });
