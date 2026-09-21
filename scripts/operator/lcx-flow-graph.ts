@@ -1591,6 +1591,7 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "src/agents/tools/finance-outcome-ledger-read-tool.test.ts",
       "src/agents/tools/finance-outcome-ledger-read-tool.ts",
       "test/lcx-finance-research-run.test.ts",
+      "test/operator/lcx-finance-research-turn.test.ts",
     ],
   },
   {
@@ -1634,7 +1635,6 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "test/lcx-system-doctor-council-health.test.ts",
       "test/lcx-system-doctor-dataset-inspect.test.ts",
       "test/lcx-system-doctor-train-slice.test.ts",
-      "test/lcx-system-doctor-dataset-inspect.test.ts",
       "test/lcx-universe-index.test.ts",
     ],
   },
