@@ -33,6 +33,7 @@ import {
   type UniverseMetrics,
   type UniverseQuote,
 } from "../../src/agents/finance-universe-selection.js";
+import { saveJsonFile } from "../../src/infra/json-file.js";
 
 const ASSETS_URL = "https://paper-api.alpaca.markets/v2/assets?status=active&asset_class=us_equity";
 const SNAPSHOT_BATCH = 500;
@@ -103,16 +104,44 @@ function alpacaHeaders(): Record<string, string> {
   };
 }
 
+/**
+ * Returns the cached asset list when it is both fresh and readable, and `null` otherwise.
+ *
+ * A cache that cannot be parsed is answered with `null`, not with an error. Freshness only looks
+ * at existence and mtime, so a half-written cache - left behind because the previous run wrote it
+ * non-atomically and was interrupted - would otherwise throw on every later run until somebody
+ * deleted the file by hand. "Cannot read it" and "it is empty" have to be different answers, and
+ * neither may be "the command is broken until you intervene".
+ */
+export function readFreshAssetCache(cachePath: string): UniverseAsset[] | null {
+  if (!fs.existsSync(cachePath)) {
+    return null;
+  }
+  const ageMs = Date.now() - fs.statSync(cachePath).mtimeMs;
+  if (ageMs >= MAX_ASSET_AGE_DAYS * 86_400_000) {
+    return null;
+  }
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(cachePath, "utf8"));
+    return Array.isArray(parsed) ? (parsed as UniverseAsset[]) : null;
+  } catch {
+    process.stderr.write(`asset cache ${cachePath} could not be parsed; refetching\n`);
+    return null;
+  }
+}
+
+export function writeAssetCache(cachePath: string, assets: readonly UniverseAsset[]): void {
+  // saveJsonFile writes a sibling temp file and renames it into place, so an interrupted run
+  // leaves the previous cache intact instead of a truncated one.
+  saveJsonFile(cachePath, assets);
+}
+
 async function loadAssets(cachePath: string, refresh: boolean): Promise<UniverseAsset[]> {
-  const fresh = (): boolean => {
-    if (!fs.existsSync(cachePath)) {
-      return false;
+  if (!refresh) {
+    const cached = readFreshAssetCache(cachePath);
+    if (cached) {
+      return cached;
     }
-    const ageMs = Date.now() - fs.statSync(cachePath).mtimeMs;
-    return ageMs < MAX_ASSET_AGE_DAYS * 86_400_000;
-  };
-  if (!refresh && fresh()) {
-    return JSON.parse(fs.readFileSync(cachePath, "utf8")) as UniverseAsset[];
   }
   const started = Date.now();
   const response = await fetch(ASSETS_URL, {
@@ -123,8 +152,7 @@ async function loadAssets(cachePath: string, refresh: boolean): Promise<Universe
     throw new Error(`asset list returned ${response.status}`);
   }
   const raw = (await response.json()) as UniverseAsset[];
-  fs.mkdirSync(path.dirname(cachePath), { recursive: true });
-  fs.writeFileSync(cachePath, JSON.stringify(raw));
+  writeAssetCache(cachePath, raw);
   process.stderr.write(`fetched ${raw.length} assets in ${Date.now() - started}ms\n`);
   return raw;
 }
@@ -309,7 +337,9 @@ export async function runUniverseSelect(argv: readonly string[] = process.argv.s
     const ruleDir = path.join(directory, "rule-declarations");
     fs.mkdirSync(ruleDir, { recursive: true });
     const outPath = path.join(ruleDir, `${ruleId}.json`);
-    fs.writeFileSync(outPath, `${JSON.stringify(declaration, null, 2)}\n`);
+    // saveJsonFile for the same reason as the asset cache: a draft declaration is read back by the
+    // step that activates it, and a half-written file is not a draft anyone can review.
+    saveJsonFile(outPath, declaration);
     process.stderr.write(`wrote DRAFT declaration (not activated): ${outPath}\n`);
   }
 
