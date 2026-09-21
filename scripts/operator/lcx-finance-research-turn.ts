@@ -19,7 +19,8 @@
  *     --instrument AAPL --equity 100000 --run-authorization ID [--json]
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fetchAlpacaVenueState } from "../../src/agents/finance-alpaca-run.js";
 import { computeChartStructure } from "../../src/agents/finance-chart-structure.js";
 import { parseResearchConclusion } from "../../src/agents/finance-conclusion-intake.js";
@@ -86,6 +87,26 @@ async function main(): Promise<void> {
   const instrument = (readArg(args, "--instrument") ?? "AAPL").toUpperCase();
   const equity = Number(readArg(args, "--equity") ?? 100_000);
   const authorization = readArg(args, "--run-authorization") ?? "";
+  // Recording what this path decided is the whole point of running it alongside
+  // the mechanical one: a verdict that is only printed cannot be compared with
+  // what the other path actually did.
+  const write = args.includes("--write");
+  const recordShadow = (record: Record<string, unknown>): void => {
+    if (!write) {
+      return;
+    }
+    const file = join(resolveFinanceStateDir().directory, "shadow-verdicts.jsonl");
+    try {
+      mkdirSync(dirname(file), { recursive: true });
+      appendFileSync(file, JSON.stringify(record) + "\n");
+    } catch (error) {
+      process.stdout.write(
+        "\nshadow record NOT written: " +
+          (error instanceof Error ? error.message : String(error)) +
+          "\n",
+      );
+    }
+  };
 
   const env = resolveFinanceCredentialEnv(process.env) as Record<string, unknown>;
   const fmpKey = typeof env.FMP_API_KEY === "string" ? env.FMP_API_KEY : "";
@@ -449,6 +470,14 @@ async function main(): Promise<void> {
         JSON.stringify({ ok: false, refusals: compiled.refusals }, null, 2) +
         "\n",
     );
+    recordShadow({
+      asOf: now,
+      instrument,
+      path: "judgement",
+      outcome: "refused_at_compile",
+      refusals: [...compiled.refusals],
+      claimedConviction: intake.conclusion.conviction,
+    });
     return;
   }
 
@@ -479,6 +508,28 @@ async function main(): Promise<void> {
       ) +
       "\n",
   );
+
+  // The shadow record: what this path wanted, and what stopped it. Compared
+  // later against what the mechanical path actually did on the same day.
+  recordShadow({
+    asOf: now,
+    instrument,
+    path: "judgement",
+    outcome: mandate.verdict === "pass" ? "would_trade" : "refused_at_mandate",
+    claimedConviction: intake.conclusion.conviction,
+    direction: intake.conclusion.direction,
+    mandateVerdict: mandate.verdict,
+    reasons: [...mandate.reasons],
+    ...(mandate.verdict === "pass"
+      ? {
+          wouldBeIntent: {
+            side: compiled.intent.side,
+            quantity: compiled.intent.quantity,
+            stopPrice: compiled.intent.stopPrice ?? null,
+          },
+        }
+      : {}),
+  });
 }
 
 await main();
