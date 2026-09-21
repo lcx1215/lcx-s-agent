@@ -339,33 +339,21 @@ describe("sessions_spawn subagent lifecycle hooks", () => {
     expectSessionsDeleteWithoutAgentStart();
   });
 
-  it("runs subagent_ended cleanup hook when agent start fails after successful bind", async () => {
+  it("does not emit a terminal hook from session deletion after ambiguous dispatch", async () => {
     mockAgentStartFailure();
     const result = await executeDiscordThreadSessionSpawn("call7");
-
-    expect(result.details).toMatchObject({ status: "error" });
-    expect(hookRunnerMocks.runSubagentEnded).toHaveBeenCalledTimes(1);
-    const [event] = (hookRunnerMocks.runSubagentEnded.mock.calls[0] ?? []) as unknown as [
-      Record<string, unknown>,
-    ];
-    expect(event).toMatchObject({
-      targetSessionKey: expect.stringMatching(/^agent:main:subagent:/),
-      accountId: "work",
-      targetKind: "subagent",
-      reason: "spawn-failed",
-      sendFarewell: true,
-      outcome: "error",
-      error: "Session failed to start",
+    expect(result.details).toMatchObject({
+      status: "error",
+      error: expect.stringContaining("completion unconfirmed"),
     });
-    const deleteCall = findGatewayRequest("sessions.delete");
-    expect(deleteCall?.params).toMatchObject({
-      key: event.targetSessionKey,
+    expect(hookRunnerMocks.runSubagentEnded).not.toHaveBeenCalled();
+    expect(findGatewayRequest("sessions.delete")?.params).toMatchObject({
       deleteTranscript: true,
       emitLifecycleHooks: false,
     });
   });
 
-  it("falls back to sessions.delete cleanup when subagent_ended hook is unavailable", async () => {
+  it("requests cancellation without terminal hooks when subagent_ended hook is unavailable", async () => {
     hookRunnerMocks.hasSubagentEndedHook = false;
     mockAgentStartFailure();
     const result = await executeDiscordThreadSessionSpawn("call8");
@@ -377,7 +365,7 @@ describe("sessions_spawn subagent lifecycle hooks", () => {
     const deleteCall = findGatewayRequest("sessions.delete");
     expect(deleteCall?.params).toMatchObject({
       deleteTranscript: true,
-      emitLifecycleHooks: true,
+      emitLifecycleHooks: false,
     });
   });
 });

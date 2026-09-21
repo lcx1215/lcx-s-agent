@@ -1097,20 +1097,26 @@ export function confirmSubagentDispatch(preparedRunId: string, actualRunId: stri
   return true;
 }
 
-export function recordSubagentDispatchFailure(runId: string, error: string, cancelled: boolean) {
+export function recordSubagentDispatchFailure(runId: string, error: string) {
   const entry = subagentRuns.get(runId);
   if (!entry) {
     return false;
   }
   entry.dispatchState = "uncertain";
   entry.dispatchError = error;
-  if (cancelled) {
-    entry.endedAt = Date.now();
-    entry.outcome = { status: "error", error };
-    entry.cleanupHandled = true;
-    entry.cleanupCompletedAt = entry.endedAt;
+  const persisted = persistSubagentRuns();
+  // A terminal lifecycle may have arrived while the acknowledgement was pending.
+  // Preserve that evidence; never manufacture it from a sessions.delete response.
+  if (entry.endedAt && entry.outcome && !entry.cleanupCompletedAt) {
+    void completeSubagentRun({
+      runId,
+      endedAt: entry.endedAt,
+      outcome: entry.outcome,
+      reason: entry.endedReason ?? SUBAGENT_ENDED_REASON_COMPLETE,
+      triggerCleanup: true,
+    });
   }
-  return persistSubagentRuns();
+  return persisted;
 }
 
 async function waitForSubagentCompletion(runId: string, waitTimeoutMs: number) {

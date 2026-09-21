@@ -764,63 +764,38 @@ export async function spawnSubagentDirect(
       childRunId = response.runId;
     }
   } catch (err) {
-    let cancelled = false;
-    const hasEndedHook = threadBindingReady && hookRunner?.hasHooks("subagent_ended") === true;
-    try {
-      await callGateway({
-        method: "sessions.delete",
-        params: {
-          key: childSessionKey,
-          deleteTranscript: true,
-          emitLifecycleHooks: threadBindingReady && !hasEndedHook,
-        },
-        timeoutMs: 10_000,
-      });
-      cancelled = true;
-    } catch {
-      // A transport timeout does not prove the child was never dispatched.
-    }
-    if (cancelled && hasEndedHook) {
-      try {
-        await hookRunner?.runSubagentEnded(
-          {
-            targetSessionKey: childSessionKey,
-            targetKind: "subagent",
-            reason: "spawn-failed",
-            sendFarewell: true,
-            accountId: requesterOrigin?.accountId,
-            runId: childRunId,
-            outcome: "error",
-            error: "Session failed to start",
-          },
-          { runId: childRunId, childSessionKey, requesterSessionKey: requesterInternalKey },
-        );
-      } catch {
-        // Cancellation is confirmed even if the optional notification hook fails.
-      }
-    }
-    if (cancelled && attachmentAbsDir) {
-      await fs.rm(attachmentAbsDir, { recursive: true, force: true }).catch(() => {});
-    }
-    const error = `Subagent dispatch failed or unconfirmed: ${summarizeError(err)}; cancellation ${cancelled ? "confirmed" : "unconfirmed"}; reconcile preparing receipt ${childIdem}`;
-    recordSubagentDispatchFailure(childIdem, error, cancelled);
-    return { status: "error", error, childSessionKey, runId: childRunId };
-  }
-
-  if (!confirmSubagentDispatch(childIdem, childRunId)) {
-    let cancelled = false;
+    let cancellationRequested = false;
     try {
       await callGateway({
         method: "sessions.delete",
         params: { key: childSessionKey, deleteTranscript: true, emitLifecycleHooks: false },
         timeoutMs: 10_000,
       });
-      cancelled = true;
+      cancellationRequested = true;
+    } catch {
+      // A transport timeout does not prove the child was never dispatched.
+    }
+    // Deletion can race asynchronous pre-run setup. Only a terminal lifecycle
+    // event for this run proves it stopped; retain attachments and the receipt.
+    const error = `Subagent dispatch failed or unconfirmed: ${summarizeError(err)}; cancellation ${cancellationRequested ? "requested" : "not requested"}; completion unconfirmed; reconcile preparing receipt ${childIdem}`;
+    recordSubagentDispatchFailure(childIdem, error);
+    return { status: "error", error, childSessionKey, runId: childRunId };
+  }
+
+  if (!confirmSubagentDispatch(childIdem, childRunId)) {
+    let cancellationRequested = false;
+    try {
+      await callGateway({
+        method: "sessions.delete",
+        params: { key: childSessionKey, deleteTranscript: true, emitLifecycleHooks: false },
+        timeoutMs: 10_000,
+      });
+      cancellationRequested = true;
     } catch {
       // Keep the preparing receipt: an acknowledged child may still be running.
     }
-    const error = `Subagent dispatch receipt update failed; cancellation ${cancelled ? "confirmed" : "unconfirmed"}; reconcile run ${childRunId} from preparing receipt ${childIdem}`;
-    recordSubagentDispatchFailure(childRunId, error, cancelled);
+    const error = `Subagent dispatch receipt update failed; cancellation ${cancellationRequested ? "requested" : "not requested"}; completion unconfirmed; reconcile run ${childRunId} from preparing receipt ${childIdem}`;
+    recordSubagentDispatchFailure(childRunId, error);
     return { status: "error", error, childSessionKey, runId: childRunId };
   }
 
