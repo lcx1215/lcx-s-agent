@@ -316,6 +316,7 @@ const FINANCE_ENTITY_ALIASES: readonly Readonly<{ alias: RegExp; canonical: stri
 ];
 
 const NON_ENTITY_TOKENS = new Set([
+  "LLM",
   // Currencies and units first: they appear in almost every finance sentence and would otherwise
   // read as the subject of the claim.
   "CNY",
@@ -404,6 +405,51 @@ function hasEvidenceSourceAndTimestamp(evidence: QualityHarnessEvidence): boolea
   );
 }
 
+// Keep positions and nonmarket units intact: exempting a numeric magnitude globally
+// would let a fixture budget also ground an unrelated real market quote.
+const NON_MARKET_QUANTITY = /(?<![\d.])[+-]?\d[\d,]*(?:\.\d+)?\s*(?:测试单位|秒)/gu;
+
+function nonMarketQuantityKey(value: string): string {
+  return `${normalizedNumber(value)}|${value.endsWith("秒") ? "seconds" : "test-units"}`;
+}
+
+function withoutGroundedNonMarketQuantities(
+  artifact: QualityHarnessArtifact,
+  evidence: readonly QualityHarnessEvidence[],
+): string {
+  const evidenceById = new Map(evidence.map((entry) => [entry.id, entry]));
+  const carries = (text: string, key: string) =>
+    [...text.matchAll(NON_MARKET_QUANTITY)].some((match) => nonMarketQuantityKey(match[0]) === key);
+  return artifact.answer.replace(NON_MARKET_QUANTITY, (value: string, offset: number) => {
+    const key = nonMarketQuantityKey(value);
+    const before =
+      artifact.answer
+        .slice(0, offset)
+        .split(/[。！？;；\n]/u)
+        .at(-1) ?? "";
+    const after = artifact.answer.slice(offset + value.length).split(/[。！？;；\n]/u)[0];
+    const context = `${before}${value}${after}`;
+    const contextEntities = financeEntities(context);
+    const grounded = artifact.claims.some(
+      (claim) =>
+        claim.status === "supported" &&
+        carries(claim.text, key) &&
+        (contextEntities.size === 0 || claimMatchesEvidenceEntity(context, claim.text)) &&
+        claim.evidenceIds.some((id) => {
+          const entry = evidenceById.get(id);
+          return (
+            entry !== undefined &&
+            (entry.kind === "synthetic_fixture" || entry.kind === "policy") &&
+            Boolean(entry.source?.trim()) &&
+            carries(entry.text, key) &&
+            claimMatchesEvidenceEntity(claim.text, entry.text)
+          );
+        }),
+    );
+    return grounded ? " ".repeat(value.length) : value;
+  });
+}
+
 function validateFinanceAnswerSafety(
   artifact: QualityHarnessArtifact | undefined,
   request: QualityHarnessRequest,
@@ -438,9 +484,9 @@ function validateFinanceAnswerSafety(
     // "480 美元" passed. The adoption gate already treats user-supplied numbers this way; a number
     // the reader supplied is not the answer inventing market data.
     const userSuppliedNumbers = new Set(extractDataNumbers(request.task).map(normalizedNumber));
-    const answerNumbers = extractDataNumbers(artifact.answer).filter(
-      (number) => !userSuppliedNumbers.has(normalizedNumber(number)),
-    );
+    const answerNumbers = extractDataNumbers(
+      withoutGroundedNonMarketQuantities(artifact, request.evidence),
+    ).filter((number) => !userSuppliedNumbers.has(normalizedNumber(number)));
     if (answerNumbers.length > 0) {
       const evidenceById = new Map(request.evidence.map((entry) => [entry.id, entry]));
       const supportedClaims = artifact.claims.filter((claim) => claim.status === "supported");

@@ -8,6 +8,8 @@ import {
   QUALITY_HARNESS_REVIEW_AGENTS,
   QUALITY_HARNESS_STAGES,
   runQualityHarness,
+  normalizeQualityRequest,
+  type QualityHarnessArtifact,
   type QualityHarnessModelRequest,
   type QualityHarnessRequest,
   type QualityHarnessStageOutput,
@@ -937,4 +939,130 @@ it("labels zero routed calls and dependency-blocked stages not-executed", async 
       .filter((stage) => stage.status === "blocked")
       .every((stage) => stage.modelId === "not-executed"),
   ).toBe(true);
+});
+
+describe("typed nonmarket finance evidence", () => {
+  const policy = {
+    id: "policy",
+    kind: "policy" as const,
+    source: "controller-test",
+    text: "合成控制策略：预算上限1000测试单位，行情超出60秒上限拒绝执行。",
+  };
+  const synthetic = {
+    id: "fixture",
+    kind: "synthetic_fixture" as const,
+    source: "fixture-test",
+    text: "合成SPY案例：候选500测试单位，行情年龄30秒。",
+  };
+  async function gate(
+    answer: string,
+    claims: QualityHarnessArtifact["claims"],
+    evidence: QualityHarnessRequest["evidence"] = [policy, synthetic],
+  ) {
+    const result = await runQualityHarness({
+      request: { task: "分析美股与加密的合成规则案例，非实时行情，不得执行交易。", evidence },
+      maxAttempts: 1,
+      modelInvoker: async (raw) => {
+        const stage = (raw as QualityHarnessModelRequest).stage;
+        if (stage === "intake") {
+          return { kind: "plan", requirements: ["区分案例与行情"], missingEvidence: [] };
+        }
+        if (stage === "draft" || stage === "format") {
+          return { kind: "artifact", artifact: { answer, claims } };
+        }
+        return passReview();
+      },
+    });
+    return result.attempts[0].gates.find((entry) => entry.id === "finance_answer_safety");
+  }
+  const claims = [
+    {
+      id: "p",
+      text: "LLM与固定规则共享预算上限1000测试单位和60秒上限。",
+      status: "supported" as const,
+      evidenceIds: ["policy"],
+    },
+    {
+      id: "f",
+      text: "SPY合成案例为500测试单位，行情年龄30秒。",
+      status: "supported" as const,
+      evidenceIds: ["fixture"],
+    },
+  ];
+  const answer =
+    "LLM与固定规则共享预算上限1000测试单位和60秒上限。SPY合成案例为500测试单位，行情年龄30秒。以上非实时行情，不得执行。";
+  it("grounds source-cited policy and synthetic quantities without inventing timestamps", async () => {
+    expect(await gate(answer, claims)).toMatchObject({ passed: true });
+    expect(normalizeQualityRequest({ task: "test", evidence: [policy] }).evidence[0].kind).toBe(
+      "policy",
+    );
+  });
+  it.each([
+    "SPY当前价格1000美元。",
+    "假设这是非实时行情，SPY最新收益率30%。",
+    "SPY市值500美元。",
+    "BTC当前价格500美元。",
+  ])("does not launder a real quote through fixture values: %s", async (quote) => {
+    expect(
+      await gate(answer + quote, [
+        ...claims,
+        { id: "quote", text: quote, status: "supported", evidenceIds: ["policy", "fixture"] },
+      ]),
+    ).toMatchObject({ passed: false });
+  });
+  it.each(["SPY合成案例为501测试单位。", "SPY合成案例为500秒。", "SPY合成案例为30测试单位。"])(
+    "rejects mismatched numeric occurrence %s",
+    async (changed) => {
+      expect(await gate(changed, claims)).toMatchObject({ passed: false });
+    },
+  );
+  it("does not infer trusted kind from synthetic words or skip absent sources", async () => {
+    expect(
+      await gate(answer, claims, [
+        { ...policy, kind: undefined },
+        { ...synthetic, kind: undefined },
+      ]),
+    ).toMatchObject({ passed: false });
+    expect(
+      await gate(answer, claims, [
+        { ...policy, source: undefined },
+        { ...synthetic, source: undefined },
+      ]),
+    ).toMatchObject({ passed: false });
+  });
+  it("keeps timestamped market quotes valid alongside nonmarket quantities", async () => {
+    const quote = "SPY当前价格500美元。";
+    expect(
+      await gate(
+        answer + quote,
+        [...claims, { id: "market", text: quote, status: "supported", evidenceIds: ["market"] }],
+        [
+          policy,
+          synthetic,
+          { id: "market", text: "截至2026-09-20，SPY价格500美元。", source: "market-test" },
+        ],
+      ),
+    ).toMatchObject({ passed: true });
+  });
+  it("requires the same cited evidence and entity for each nonmarket occurrence", async () => {
+    expect(
+      await gate("SPY合成案例500测试单位。", [
+        {
+          id: "wrong",
+          text: "SPY合成案例500测试单位。",
+          status: "supported",
+          evidenceIds: ["policy"],
+        },
+      ]),
+    ).toMatchObject({ passed: false });
+    expect(await gate("BTC合成案例500测试单位。", claims)).toMatchObject({ passed: false });
+  });
+  it("rejects unknown evidence kinds", () => {
+    expect(() =>
+      normalizeQualityRequest({
+        task: "test",
+        evidence: [JSON.parse('{"id":"x","text":"test","kind":"assumed"}')],
+      }),
+    ).toThrow("evidence.kind");
+  });
 });

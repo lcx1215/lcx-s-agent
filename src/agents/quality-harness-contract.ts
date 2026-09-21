@@ -42,6 +42,8 @@ export const QUALITY_HARNESS_REVIEW_AGENTS = [
 type QualityHarnessReviewAgentId = (typeof QUALITY_HARNESS_REVIEW_AGENTS)[number];
 
 export type QualityHarnessEvidence = Readonly<{
+  /** Caller-declared evidence semantics; never inferred from model disclaimers. */
+  kind?: "synthetic_fixture" | "policy";
   id: string;
   text: string;
   source?: string;
@@ -309,6 +311,9 @@ export function normalizeQualityRequest(request: QualityHarnessRequest): Quality
       throw new Error(`duplicate evidence id: ${id}`);
     }
     ids.add(id);
+    if (entry.kind !== undefined && entry.kind !== "synthetic_fixture" && entry.kind !== "policy") {
+      throw new Error("evidence.kind must be synthetic_fixture or policy");
+    }
     const source =
       entry.source === undefined
         ? undefined
@@ -317,6 +322,7 @@ export function normalizeQualityRequest(request: QualityHarnessRequest): Quality
       id,
       text: requiredQualityText(entry.text, `evidence[${index}].text`, MAX_EVIDENCE_LENGTH),
       ...(source ? { source } : {}),
+      ...(entry.kind ? { kind: entry.kind } : {}),
     });
   });
   const sharedContext =
