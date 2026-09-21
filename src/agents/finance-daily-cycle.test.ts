@@ -7,6 +7,7 @@ import {
   attemptCycleOrder,
   currentWeightsFromPositions,
   lastCompletedMonthEnd,
+  markInstantForBarDate,
   receiptsForVenue,
   recordCycleFill,
   solveInvalidationPrice,
@@ -51,6 +52,30 @@ describe("lastCompletedMonthEnd", () => {
       ),
     );
     expect([...seen]).toEqual(["2026-08-31"]);
+  });
+});
+
+describe("markInstantForBarDate", () => {
+  it("prices a closed session with its own close", () => {
+    expect(markInstantForBarDate("2026-09-18", "2026-09-20T12:00:00.000Z")).toBe(
+      "2026-09-18T20:00:00.000Z",
+    );
+  });
+
+  it("falls back to the run's instant rather than writing a mark in the future", () => {
+    // A cycle that runs before the close still files today's bar. A mark dated in the future is
+    // rejected by the store, and a rejected mark is a position still priced with yesterday.
+    expect(markInstantForBarDate("2026-09-20", "2026-09-20T12:00:00.000Z")).toBe(
+      "2026-09-20T12:00:00.000Z",
+    );
+  });
+
+  it("gives the same instant to the same date, which is what makes a re-run add nothing", () => {
+    // The mark store is idempotent on (instrument, at), so the whole "one mark per day" property
+    // rests on this being a function of the date alone and not of when the run happened.
+    const first = markInstantForBarDate("2026-09-18", "2026-09-18T21:00:00.000Z");
+    const second = markInstantForBarDate("2026-09-18", "2026-09-19T04:00:00.000Z");
+    expect(first).toBe(second);
   });
 });
 

@@ -477,6 +477,61 @@ night 结算在收敛后复验：第一次 `{"appended":1}`、第二次 `{"appen
 ⚠️ 操作坑：本环境的 **Bash `grep` 会静默返回空**——验证"改动是否落地"必须用专用检索工具或 `node -e` 读文件，
 否则会得出"没改到"的错误结论。
 
+### 全系统配合度审计（2026-09-21）：持仓市值只在成交那天标过一次
+
+从"LLM ↔ 数据库 ↔ 系统 API 数据"三者的接缝查起，唯一够得上"系统不会自己工作"的是这一条。
+
+**实测（真实库）**：持仓库 20 条记录 = 8 条回执 + 12 条 mark。按 sequence 排开，7 条 mark 的
+**时刻与价格逐位等于紧邻那条成交**：
+
+```
+ 7  成交 SPY  2026-09-20T18:37:36  @761.69
+ 8  mark SPY  2026-09-20T18:37:36  @761.69     ← 同一时刻、同一价格
+…（QQQ/IWM/EFA/EEM/GLD/DBC 同形）
+ 2-6 的 5 条 mark 是早期手工写入（其中 AAPL 的 mark 时刻 9-17 早于它 9-18 的成交）
+```
+
+根因：`appendFinancePositionMark` 在 `src/` 里只有一个调用点，`finance-daily-cycle.ts:362`，
+它在 `recordCycleFill` 内部——**只有成交才写 mark**。而它的注释写着 mark 的用途正是
+"下一次 cycle 给这个持仓定价"。规则是月度的，绝大多数日子不下单 ⇒ 不下单就不定价。
+
+后果：每天采 4 万根 bar，却不回流到持仓市值。`unrealizedPnl` 停在成交那天的数，
+`currentWeightsFromPositions` 用的是成交价而不是市值，equity curve 是平的。
+
+**已改**（`src/agents/finance-daily-cycle.ts`）：采集循环之后、算信号之前，用这一跑刚采集的
+`lastBar` 收盘价给每个非零持仓补一条 mark，report 里报 `marksFiled {instrument, price, at, appended}`。
+mark 库的幂等键是 `mark:{instrument}@{at}`，`at` 取 bar 日期的收盘时刻 ⇒ **一天至多一条**，
+重跑不写、休市不写。`markInstantForBarDate` 在 bar 日期晚于当前时刻时退回运行时刻（mark 库拒绝未来时间，
+被拒就等于该持仓仍用昨天的价）。
+
+端到端验证（临时目录 + 真实 FMP 数据，持仓造在 9-01 以 700 买入 10 股）：
+
+```
+跑之前: markPrice=700     unrealizedPnl=0       markRecordCount=1
+跑之后: markPrice=761.69  unrealizedPnl=616.9   markRecordCount=2   ← appended: true
+再跑一次: appended: false，markRecordCount 仍为 2                    ← 幂等
+```
+
+**两个怀疑被证伪**（别去"修"）：
+
+1. 7 个 `markPrice` 恰好等于 `averageCost`、未实现盈亏全 0，看着像"取不到价格退回成本价"。
+   拿 bar 库对账：**成本价 = 9-18 收盘价**（按收盘价成交），mark 用同一个收盘价 ⇒ 0 是真实的。
+2. bar 的 provenance 写着 `sina-us-eod-history` / `tencent-gtimg-qfq-day`，而配额清单里没有这两个名字，
+   看着像"真正供数的源不在监控里"。查 `source-sweep-aapl.json`：适配器 `china_reachable_us_eod_history`
+   在 25 个 working 之列 ⇒ 只是命名不同，监控是覆盖的。
+
+**观察到的未对齐（未改，记在此）**：
+
+| 标的      | 规则宇宙 | bar 数据 | 持仓                                                  |
+| --------- | -------- | -------- | ----------------------------------------------------- |
+| AAPL      | ✗        | ✗        | ✓ 10 股 —— **孤儿持仓：不会被再平衡，也算不出就绪度** |
+| TLT       | ✓        | ✓        | ✗                                                     |
+| 600519.SH | ✗        | ✓        | ✗                                                     |
+
+- `finance_position_projection_state` 0 行：投影游标从未落盘（每次读都全量重算，20 条无所谓，但机制没跑起来）。
+- `finance_outcome_ledger_read` **没有默认目录**（按 case 分区，必须传 `caseDirectory`）⇒ agent 不知道目录就调不动它。
+- 全部 8 笔成交都是 paper（`venueFillCount: 0`），规则 `executionAuthority: none`。
+
 ### 缺口 2：文本/研究 与 论点没有连接键
 
 已单独成文：`ops/external-learning/2026-09-19-thesis-outcome-assessment-gap.md`。

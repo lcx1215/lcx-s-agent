@@ -125,9 +125,46 @@ export type FinanceDailyCycleReport = Readonly<{
     newBarCount: number;
     appended: boolean;
   }[];
+  /**
+   * What this run re-priced in the position book.
+   *
+   * A position is valued with the mark the book holds for it, and a cycle that never trades leaves
+   * that mark untouched — so the price a position was bought at stays the price it is valued at,
+   * unrealized PnL reads zero, and the weights a rebalance is decided from come from cost rather
+   * than from value. Priced here from the bars this run just filed, so the book the cycle trades
+   * against is priced with the same day it just measured.
+   */
+  marksFiled: readonly {
+    instrument: string;
+    price: number;
+    at: string;
+    /** `false` means a mark for this instant was already on file: a re-run, or a closed market. */
+    appended: boolean;
+  }[];
 }>;
 
 type Bar = Readonly<{ date: string; close: number }>;
+
+/**
+ * The instant a bar's close is true of, as a mark timestamp.
+ *
+ * A US cash session closes 16:00 New York, which is 20:00 UTC in the months it matters here. The
+ * mark store rejects an instant in the future, so a bar dated today — filed by a cycle that runs
+ * before the close — falls back to the instant the cycle is running at rather than being rejected
+ * and leaving the position priced with yesterday's number.
+ */
+export function markInstantForBarDate(date: string, asOf: string): string {
+  const close = `${date}T20:00:00.000Z`;
+  const closeMs = Date.parse(close);
+  const asOfMs = Date.parse(asOf);
+  if (!Number.isFinite(closeMs)) {
+    return asOf;
+  }
+  if (Number.isFinite(asOfMs) && closeMs > asOfMs) {
+    return asOf;
+  }
+  return close;
+}
 
 /** The last month end whose month is strictly before `asOf`'s month. */
 export function lastCompletedMonthEnd(months: readonly Bar[], asOf: string): Bar | undefined {
@@ -588,6 +625,58 @@ export async function runFinanceDailyCycle(
     }
   }
 
+  // Marks: price the book with the bars this run just measured.
+  //
+  // The only writer of a mark used to be a fill, so a position that was never traded again kept
+  // the price it was bought at. Measured on the live book: every mark an unattended run had
+  // written carried the same instant and the same price as the fill immediately before it, so
+  // unrealized PnL read zero and the weights a rebalance is decided from came from cost rather
+  // than from value. Priced here so the book the cycle trades against is priced with the same day
+  // it just measured. The mark store is idempotent on (instrument, at), so a re-run adds nothing
+  // and a closed market adds nothing either.
+  const marksFiled: { instrument: string; price: number; at: string; appended: boolean }[] = [];
+  try {
+    const held = await readFinancePositionLedger(directory);
+    for (const position of held.ledger.positions) {
+      if (position.quantity === 0) {
+        continue;
+      }
+      const bar = lastBar.get(position.instrument);
+      if (bar === undefined) {
+        // Held outside the instruments this run collected, so it has no price here and keeps the
+        // one it has. Reported: a position nobody can price is not the same as one worth holding.
+        dataIssues.push(`${position.instrument}: held but not collected this run, not re-priced`);
+        continue;
+      }
+      const at = markInstantForBarDate(bar.date, asOf);
+      try {
+        const result = await appendFinancePositionMark(directory, {
+          instrument: position.instrument,
+          price: bar.close,
+          at,
+        });
+        marksFiled.push({
+          instrument: position.instrument,
+          price: bar.close,
+          at,
+          appended: result.appended,
+        });
+      } catch (error) {
+        dataIssues.push(
+          `${position.instrument}: mark write failed: ` +
+            (error instanceof Error ? error.message : String(error)),
+        );
+      }
+    }
+  } catch (error) {
+    // An unreadable position book must not abort the run for the same reason an unwritable bar
+    // book must not: the cycle's job is the book it trades, and a missing price is reported.
+    dataIssues.push(
+      `position book unreadable, nothing was re-priced: ` +
+        (error instanceof Error ? error.message : String(error)),
+    );
+  }
+
   // Signal: anchored to the last completed month end, constant for the whole month.
   const anchorMonthEnds = new Map<string, Bar>();
   const anchors = new Set<string>();
@@ -828,5 +917,6 @@ export async function runFinanceDailyCycle(
     placed,
     refusals,
     barsFiled,
+    marksFiled,
   });
 }
