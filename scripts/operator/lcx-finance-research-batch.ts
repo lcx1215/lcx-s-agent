@@ -26,34 +26,7 @@
  *     --instruments AAPL,MSFT,NVDA --record PATH
  */
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname } from "node:path";
-import {
-  chartStructureSignal,
-  computeChartStructure,
-} from "../../src/agents/finance-chart-structure.js";
-import { resolveFinanceCredentialEnv } from "../../src/agents/finance-credential-env.js";
-import { createFmpFreeBasicEodCollectionAdapter } from "../../src/agents/finance-free-market-collection-adapters.js";
-import { analystTargetSignal } from "../../src/agents/finance-fundamental-signal.js";
-import { runFinanceMarketCollectionRefresh } from "../../src/agents/finance-market-collection-registry.js";
-import { createRegisteredCapabilityAdapters } from "../../src/agents/finance-registered-capability-adapters.js";
-import { fuseSignals, type FinanceSignal } from "../../src/agents/finance-signal-fusion.js";
-import {
-  financeResearchSamplesPath,
-  resolveFinanceStateDir,
-} from "../../src/agents/finance-state-dir.js";
-
-type Recorded = {
-  asOf: string;
-  instrument: string;
-  direction: string;
-  conviction: number;
-  agreement: number;
-  sources: string[];
-  lastPrice: number;
-  target: number | null;
-  refusals?: string[];
-};
+import { runResearchBatch } from "../../src/agents/finance-research-batch.js";
 
 /**
  * Default pool: large, liquid US names.
@@ -64,272 +37,58 @@ type Recorded = {
  * coverage by the free providers, not because they are expected to be good
  * trades - the pool should be boring, or its composition becomes a hidden bet.
  */
-const DEFAULT_POOL = [
-  "AAPL",
-  "MSFT",
-  "NVDA",
-  "AMZN",
-  "GOOGL",
-  "META",
-  "TSLA",
-  "AVGO",
-  "JPM",
-  "V",
-  "MA",
-  "UNH",
-  "XOM",
-  "JNJ",
-  "PG",
-  "HD",
-  "MRK",
-  "ABBV",
-  "CVX",
-  "LLY",
-  "PEP",
-  "KO",
-  "BAC",
-  "PFE",
-  "TMO",
-  "COST",
-  "WMT",
-  "DIS",
-  "CSCO",
-  "MCD",
-  "ABT",
-  "DHR",
-  "VZ",
-  "ADBE",
-  "NFLX",
-  "CRM",
-  "AMD",
-  "INTC",
-  "QCOM",
-  "TXN",
-];
-
-/**
- * Keys already recorded, as instrument|day.
- *
- * Running twice on the same day used to append a second record for the same
- * instrument, and scoring then counted that observation twice while reporting a
- * larger sample than really exists. A retry, a cron overlap, or a manual re-run
- * after a partial failure all produced duplicates.
- */
-function recordedKeys(path: string): Set<string> {
-  if (!existsSync(path)) {
-    return new Set();
-  }
-  return new Set(
-    readFileSync(path, "utf8")
-      .split("\n")
-      .filter((line) => line.trim().length > 0)
-      .flatMap((line) => {
-        try {
-          const row = JSON.parse(line) as { instrument?: unknown; asOf?: unknown };
-          if (typeof row.instrument === "string" && typeof row.asOf === "string") {
-            return [row.instrument.toUpperCase() + "|" + row.asOf.slice(0, 10)];
-          }
-          return [];
-        } catch {
-          return [];
-        }
-      }),
-  );
-}
-
-/** Never let a provider key reach a log through an error message. */
-function scrub(text: string, secrets: readonly string[]): string {
-  let out = text.replace(/apikey=[^&\s"']+/giu, "apikey=***");
-  for (const secret of secrets) {
-    if (secret.length > 0) {
-      out = out.split(secret).join("***");
-    }
-  }
-  return out;
-}
-
 function readArg(args: readonly string[], name: string): string | undefined {
   const index = args.indexOf(name);
   return index === -1 ? undefined : args[index + 1];
 }
 
-async function collectOne(params: {
-  instrument: string;
-  asOf: string;
-  eodAdapter: ReturnType<typeof createFmpFreeBasicEodCollectionAdapter>;
-  targetAdapters: ReturnType<typeof createRegisteredCapabilityAdapters>;
-}): Promise<Recorded> {
-  const { instrument, asOf } = params;
-  const signals: FinanceSignal[] = [];
-  let lastPrice = 0;
-  let target: number | null = null;
-
-  try {
-    const result = await runFinanceMarketCollectionRefresh({
-      request: {
-        collection: "eod_history",
-        instrument,
-        assetClass: "us_equity",
-        asOf,
-        limit: 250,
-        fromDate: new Date(Date.parse(asOf) - 400 * 86_400_000).toISOString().slice(0, 10),
-        toDate: asOf.slice(0, 10),
-      } as never,
-      adapters: [params.eodAdapter],
-    });
-    const rows = (result.records ?? [])
-      .map(
-        (r) =>
-          ((r as { data?: Record<string, unknown> }).data ?? {}) as Record<string, number | string>,
-      )
-      .filter((row) => Number(row.close) > 0 && typeof row.date === "string")
-      .toSorted((a, b) => String(a.date).localeCompare(String(b.date)));
-    const closes = rows.map((row) => Number(row.close));
-    const volumes = rows.map((row) => Number(row.volume ?? 0));
-    lastPrice = closes[closes.length - 1] ?? 0;
-    const structure = computeChartStructure(closes);
-    if (structure) {
-      const recentVolume = volumes.slice(-10).reduce((a, b) => a + b, 0) / 10;
-      const priorVolume = volumes.slice(-20, -10).reduce((a, b) => a + b, 0) / 10;
-      const ratio = priorVolume > 0 ? recentVolume / priorVolume : 1;
-      signals.push(
-        chartStructureSignal(structure, {
-          sourceId: "fmp-eod-structure",
-          observedAt: asOf,
-          baseConfidence: ratio >= 1.1 ? 0.7 : ratio >= 0.9 ? 0.6 : 0.5,
-          ref: "trend=" + structure.trend + " volumeRatio=" + ratio.toFixed(2),
-        }),
-      );
-    }
-  } catch (error) {
-    process.stderr.write("leg failed: " + scrub(String(error), []).slice(0, 100) + "\n");
-  }
-
-  try {
-    const result = await runFinanceMarketCollectionRefresh({
-      request: {
-        collection: "analyst_estimates",
-        instrument,
-        assetClass: "us_equity",
-        asOf,
-        limit: 3,
-      } as never,
-      adapters: params.targetAdapters,
-    });
-    const first = (result.records ?? [])[0] as
-      | { data?: Record<string, number | string> }
-      | undefined;
-    const data = first?.data ?? {};
-    if (lastPrice > 0 && Number(data.lastMonthAvgPriceTarget) > 0) {
-      target = Number(data.lastMonthAvgPriceTarget);
-      signals.push(
-        analystTargetSignal(
-          {
-            currentPrice: lastPrice,
-            avgTarget: target,
-            analystCount: Number(data.lastMonthCount ?? 0),
-            window: "lastMonth",
-          },
-          { observedAt: asOf },
-        ),
-      );
-    }
-  } catch (error) {
-    process.stderr.write("leg failed: " + scrub(String(error), []).slice(0, 100) + "\n");
-  }
-
-  const fused = fuseSignals(signals, { minSources: 2, minAgreement: 0.6 });
-  if (!fused.ok) {
-    return {
-      asOf,
-      instrument,
-      direction: "none",
-      conviction: 0,
-      agreement: 0,
-      sources: [],
-      lastPrice,
-      target,
-      refusals: [...fused.refusals],
-    };
-  }
-  return {
-    asOf,
-    instrument,
-    direction: fused.conclusion.direction,
-    conviction: Number(fused.conclusion.conviction.toFixed(4)),
-    agreement: Number(fused.conclusion.agreement.toFixed(4)),
-    sources: fused.conclusion.evidence.map((e) => e.sourceId),
-    lastPrice,
-    target,
-  };
-}
-
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
-  const raw = readArg(args, "--instruments") ?? "";
-  const explicit = raw
-    .split(",")
-    .map((value) => value.trim().toUpperCase())
-    .filter((value) => value.length > 0);
-  const instruments = explicit.length > 0 ? explicit : DEFAULT_POOL;
-  if (instruments.length === 0) {
-    process.stdout.write("Usage: --instruments AAPL,MSFT --record PATH\n");
-    return;
-  }
-  const recordPath =
-    readArg(args, "--record") ?? financeResearchSamplesPath(resolveFinanceStateDir().directory);
+  const raw = readArg(args, "--instruments");
+  const instruments = raw
+    ? raw
+        .split(",")
+        .map((value) => value.trim().toUpperCase())
+        .filter((value) => value.length > 0)
+    : undefined;
+  const recordPath = readArg(args, "--record") ?? "state/finance/research-samples.jsonl";
 
-  const env = resolveFinanceCredentialEnv(process.env) as Record<string, unknown>;
-  const fmpKey = typeof env.FMP_API_KEY === "string" ? env.FMP_API_KEY : "";
-  const asOf = new Date().toISOString();
-  const eodAdapter = createFmpFreeBasicEodCollectionAdapter({ apiKey: fmpKey });
-  const targetAdapters = createRegisteredCapabilityAdapters({ fmpApiKey: fmpKey }).filter(
-    (a) => a.id === "fmp_price_target_summary",
-  );
+  // The sampler lives in src on purpose: the tool and this script must not hold
+  // two copies, or they will drift and disagree about what the system believed
+  // on a given day.
+  const result = await runResearchBatch({
+    ...(instruments ? { instruments } : {}),
+    recordPath,
+  });
 
-  const day = asOf.slice(0, 10);
-  const seen = recordedKeys(recordPath);
-  const todo = instruments.filter((i) => !seen.has(i + "|" + day));
-  const skipped = instruments.length - todo.length;
-  if (skipped > 0) {
+  for (const r of result.recorded) {
     process.stdout.write(
-      "skipping " + skipped + " instrument(s) already recorded for " + day + "\n",
-    );
-  }
-
-  const records: Recorded[] = [];
-  for (const instrument of todo) {
-    const record = await collectOne({ instrument, asOf, eodAdapter, targetAdapters });
-    records.push(record);
-    process.stdout.write(
-      record.instrument.padEnd(6) +
+      r.instrument.padEnd(6) +
         " " +
-        record.direction.padEnd(5) +
+        r.direction.padEnd(5) +
         " conviction=" +
-        record.conviction.toFixed(3) +
+        r.conviction.toFixed(3) +
         " agreement=" +
-        record.agreement.toFixed(2) +
-        (record.refusals ? "  [" + record.refusals.join("; ") + "]" : "") +
+        r.agreement.toFixed(2) +
+        (r.refusals ? "  [" + [...r.refusals].join("; ") + "]" : "") +
         "\n",
     );
   }
 
-  mkdirSync(dirname(recordPath), { recursive: true });
-  if (records.length > 0) {
-    mkdirSync(dirname(recordPath), { recursive: true });
-    appendFileSync(recordPath, records.map((r) => JSON.stringify(r)).join("\n") + "\n");
-  }
-  const acted = records.filter((r) => r.direction !== "none").length;
+  const acted = result.recorded.filter((r) => r.direction !== "none").length;
   process.stdout.write(
     "\nrecorded " +
-      records.length +
+      result.recorded.length +
       " to " +
-      recordPath +
+      result.recordPath +
       " (" +
       acted +
       " with a direction, " +
-      (records.length - acted) +
-      " refused)\n",
+      (result.recorded.length - acted) +
+      " refused," +
+      " " +
+      result.skipped +
+      " skipped as already present)\n",
   );
 }
 

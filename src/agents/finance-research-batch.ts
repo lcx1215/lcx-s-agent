@@ -81,6 +81,16 @@ export const DEFAULT_POOL = [
   "TXN",
 ] as const;
 
+/**
+ * Provider keys must not reach a log through an error message, because a fetch
+ * error can carry the request URL - and these URLs carry the key.
+ */
+function scrub(text: string): string {
+  return text
+    .replace(/apikey=[^&\s"']+/giu, "apikey=***")
+    .replace(/token=[^&\s"']+/giu, "token=***");
+}
+
 function keyFrom(env: Record<string, unknown>, name: string): string {
   const value = env[name];
   return typeof value === "string" ? value : "";
@@ -114,6 +124,7 @@ async function collectOne(params: {
   asOf: string;
   eodAdapter: ReturnType<typeof createFmpFreeBasicEodCollectionAdapter>;
   targetAdapters: ReturnType<typeof createRegisteredCapabilityAdapters>;
+  warn: (message: string) => void;
 }): Promise<BatchRecord> {
   const { instrument, asOf } = params;
   const signals: FinanceSignal[] = [];
@@ -157,8 +168,11 @@ async function collectOne(params: {
         }),
       );
     }
-  } catch {
-    // A missing leg simply leaves the pool short for this instrument.
+  } catch (error) {
+    // Reported, not swallowed: a leg that fails for every instrument looks
+    // exactly like a quiet market, and silence is the one failure this loop
+    // cannot afford.
+    params.warn("leg failed for " + instrument + ": " + scrub(String(error)).slice(0, 120));
   }
 
   try {
@@ -190,8 +204,8 @@ async function collectOne(params: {
         ),
       );
     }
-  } catch {
-    // Same: a missing leg leaves the pool short.
+  } catch (error) {
+    params.warn("target leg failed for " + instrument + ": " + scrub(String(error)).slice(0, 120));
   }
 
   const fused = fuseSignals(signals, { minSources: 2, minAgreement: 0.6 });
@@ -225,6 +239,7 @@ export async function runResearchBatch(
     instruments?: readonly string[];
     recordPath?: string;
     env?: NodeJS.ProcessEnv;
+    warn?: (message: string) => void;
   } = {},
 ): Promise<{
   asOf: string;
@@ -256,9 +271,19 @@ export async function runResearchBatch(
   const todo = requested.filter((symbol) => !seen.has(symbol + "|" + day));
   const skipped = requested.length - todo.length;
 
+  const warn =
+    params.warn ??
+    ((message: string) => {
+      try {
+        process.stderr.write(message + "\n");
+      } catch {
+        // A logging failure must never stop sampling.
+      }
+    });
+
   const recorded: BatchRecord[] = [];
   for (const instrument of todo) {
-    recorded.push(await collectOne({ instrument, asOf, eodAdapter, targetAdapters }));
+    recorded.push(await collectOne({ instrument, asOf, eodAdapter, targetAdapters, warn }));
   }
 
   if (recorded.length > 0) {
