@@ -49,8 +49,13 @@ LCX Agent 包含三个 Vitest 测试套件（单元/集成、端到端、实时�
 ### 单元/集成测试（默认）
 
 - 命令：`pnpm test`
-- 配置：`vitest.config.ts`
-- 文件：`src/**/*.test.ts`
+- 配置：`scripts/tests/test-parallel.mjs`，默认**只跑** `vitest.unit.config.ts`（fast core unit lane）。
+  extensions 与 gateway 两条 lane 是每次运行单独的开关：`OPENCLAW_TEST_INCLUDE_EXTENSIONS=1` /
+  `OPENCLAW_TEST_INCLUDE_GATEWAY=1`，CI **两个都不设** ⇒ 需要时直接跑
+  `pnpm test:extensions` / `pnpm test:gateway`。
+- 文件：`vitest.unit.config.ts` 的 include —— `src/**/*.test.ts`、`test/**/*.test.ts`，
+  外加一份显式列出的、能在 node 下跑的 `ui/**` 文件。`extensions/**` 在这一条 lane 里被过滤掉。
+  不在该 include 里的文件**没有门禁**：`pnpm test:ui`（browser/playwright）不在 CI 中。
 - 范围：
   - 纯单元测试
   - 进程内集成测试（Gateway 网关认证、路由、工具、解析、配置）

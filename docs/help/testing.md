@@ -42,8 +42,13 @@ Think of the suites as “increasing realism” (and increasing flakiness/cost):
 ### Unit / integration (default)
 
 - Command: `pnpm test`
-- Config: `scripts/tests/test-parallel.mjs` (runs `vitest.unit.config.ts`, `vitest.extensions.config.ts`, `vitest.gateway.config.ts`)
-- Files: `src/**/*.test.ts`, `extensions/**/*.test.ts`
+- Config: `scripts/tests/test-parallel.mjs`. By default it runs **only** `vitest.unit.config.ts`
+  (the fast core unit lane). The extensions and gateway lanes are opt-in per run via
+  `OPENCLAW_TEST_INCLUDE_EXTENSIONS=1` / `OPENCLAW_TEST_INCLUDE_GATEWAY=1`, and CI sets neither —
+  run them directly with `pnpm test:extensions` / `pnpm test:gateway`.
+- Files: whatever `vitest.unit.config.ts` includes — `src/**/*.test.ts`, `test/**/*.test.ts`, plus an
+  explicit list of node-runnable `ui/**` files. `extensions/**` is filtered out of this lane.
+  Anything not in that include has no gate: `pnpm test:ui` (browser/playwright) is not part of CI.
 - Scope:
   - Pure unit tests
   - In-process integration tests (gateway auth, routing, tooling, parsing, config)
