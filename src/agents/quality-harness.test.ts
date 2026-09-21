@@ -1060,6 +1060,22 @@ describe("typed nonmarket finance evidence", () => {
     ).toMatchObject({ passed: false });
     expect(await gate("BTC合成案例500测试单位。", claims)).toMatchObject({ passed: false });
   });
+  it("does not reuse a synthetic duration claim for a separate real latency assertion", async () => {
+    expect(
+      await gate(
+        "SPY合成案例行情年龄30秒。SPY当前真实行情延迟30秒。",
+        [
+          {
+            id: "duration",
+            text: "SPY合成案例行情年龄30秒。",
+            status: "supported",
+            evidenceIds: ["fixture"],
+          },
+        ],
+        [{ ...synthetic, text: "SPY合成案例行情年龄30秒。" }],
+      ),
+    ).toMatchObject({ passed: false });
+  });
   it("rejects unknown evidence kinds", () => {
     expect(() =>
       normalizeQualityRequest({

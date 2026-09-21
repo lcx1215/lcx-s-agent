@@ -429,10 +429,17 @@ function withoutGroundedNonMarketQuantities(
         .at(-1) ?? "";
     const after = artifact.answer.slice(offset + value.length).split(/[。！？;；\n]/u)[0];
     const context = `${before}${value}${after}`;
+    // Exact assertion binding is intentionally conservative: a shared quantity and
+    // entity cannot prove that a second sentence describes the same synthetic fact.
+    const normalizeAssertion = (text: string) => text.replace(/[\s\p{P}]/gu, "");
+    const contextAssertion = normalizeAssertion(context);
     const contextEntities = financeEntities(context);
     const grounded = artifact.claims.some(
       (claim) =>
         claim.status === "supported" &&
+        claim.text
+          .split(/[。！？;；\n]/u)
+          .some((assertion) => normalizeAssertion(assertion) === contextAssertion) &&
         carries(claim.text, key) &&
         (contextEntities.size === 0 || claimMatchesEvidenceEntity(context, claim.text)) &&
         claim.evidenceIds.some((id) => {
