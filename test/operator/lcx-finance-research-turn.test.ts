@@ -404,3 +404,23 @@ it("blocks a subsequent research execution when the previous claim is unresolved
   expect(f.deps.invokeModel).not.toHaveBeenCalled();
   expect(f.transport).not.toHaveBeenCalled();
 });
+
+it("lets the actual operator consume one valid source and return hold", async () => {
+  const f = fixture();
+  const invokeModel = vi.fn(async (prompt: string) => {
+    expect(prompt).toContain("A single independent source supports only hold or avoid");
+    return JSON.stringify({ ...f.model, direction: "hold", evidence: [{ sourceId: "raw" }] });
+  });
+  const result = await runFinanceResearchTurn(["--instrument", f.instrument], {
+    ...f.deps,
+    invokeModel,
+    control: { ...f.control, mode: "shadow" },
+    gatherEvidence: async () => ({
+      evidence: [f.evidence[0]],
+      market: { referencePrice: 100, referencePriceAt: "" },
+    }),
+  });
+  expect(invokeModel).toHaveBeenCalledOnce();
+  expect(result).toMatchObject({ status: "shadow", disposition: "no_trade" });
+  expect(f.transport).not.toHaveBeenCalled();
+});

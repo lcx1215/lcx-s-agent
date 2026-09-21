@@ -421,9 +421,13 @@ export async function runFinanceResearchTurn(
     process.stdout.write(" " + item.sourceId + ": " + item.detail + "\n");
   }
 
-  if (evidence.length < 2) {
+  if (
+    !evidence.some(
+      (item) => item.sourceId.trim() && item.detail.trim() && item.sourceUrlOrArtifact.trim(),
+    )
+  ) {
     process.stdout.write(
-      "\nRESULT: fewer than two sources returned data; not asking the model to judge.\n",
+      "\nRESULT: no valid source evidence returned data; not asking the model to judge.\n",
     );
     return;
   }
@@ -543,7 +547,8 @@ export async function runFinanceResearchTurn(
         historicalBook +
         "\n" +
         positionLine +
-        "\n\nGiven the evidence below, is there a directional view for the next 30 days?\n\n" +
+        "\n\nA single independent source supports only hold or avoid. Buy/sell candidates require at least two independent evidence roots; derived calculations do not add a source.\n" +
+        "Given the evidence below, is there a directional view for the next 30 days?\n\n" +
         evidence.map((e) => "- " + e.sourceId + ": " + e.detail).join("\n") +
         "\n\n" +
         reflection,
