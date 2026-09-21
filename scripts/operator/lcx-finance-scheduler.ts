@@ -141,7 +141,19 @@ function appendRun(record: RunRecord): void {
   fs.appendFileSync(RUNS_LOG, `${JSON.stringify(record)}\n`);
 }
 
-function runCycle(mode: "day" | "night", extraArgs: readonly string[]): Promise<RunRecord> {
+/** Exit zero alone does not establish that the cycle accepted its inputs. */
+export function cycleOutputSucceeded(stdout: string): boolean {
+  try {
+    const payload: unknown = JSON.parse(stdout);
+    return (
+      typeof payload === "object" && payload !== null && (payload as { ok?: unknown }).ok === true
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function runCycle(mode: "day" | "night", extraArgs: readonly string[]): Promise<RunRecord> {
   const startedAt = Date.now();
   // The resolved root travels with the invocation, so the cycle's book cannot depend on the
   // cwd it happens to be spawned with.
@@ -185,7 +197,7 @@ function runCycle(mode: "day" | "night", extraArgs: readonly string[]): Promise<
         mode,
         exitCode,
         durationMs: Date.now() - startedAt,
-        ok: exitCode === 0,
+        ok: exitCode === 0 && cycleOutputSucceeded(stdout),
         stdout,
         stderr,
       });
@@ -193,12 +205,42 @@ function runCycle(mode: "day" | "night", extraArgs: readonly string[]): Promise<
   });
 }
 
-async function fire(mode: "day" | "night", extraArgs: readonly string[]): Promise<void> {
+export async function fire(mode: "day" | "night", extraArgs: readonly string[]): Promise<void> {
+  const etDate = financeEtClock(new Date()).date;
+  if (readState().lastFired[mode] === etDate) {
+    return;
+  }
+  fs.mkdirSync(STATE_DIR, { recursive: true });
+  const claimPath = path.join(STATE_DIR, `daily-cycle-${etDate}-${mode}.json`);
+  // An exclusive durable claim prevents concurrent schedulers and crash recovery from
+  // replaying a potentially submitted order. An unfinished claim requires reconciliation.
+  try {
+    fs.writeFileSync(claimPath, `${JSON.stringify({ etDate, mode, status: "started" })}\n`, {
+      flag: "wx",
+    });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      process.stderr.write(`cycle blocked: existing claim ${claimPath}; reconcile before retry\n`);
+      process.exitCode = 1;
+      return;
+    }
+    throw error;
+  }
   const record = await runCycle(mode, extraArgs);
   appendRun(record);
-  const state = readState();
-  state.lastFired[mode] = record.etDate;
-  writeState(state);
+  const tmp = `${claimPath}.tmp-${randomUUID()}`;
+  fs.writeFileSync(
+    tmp,
+    `${JSON.stringify({ ...record, status: record.ok ? "succeeded" : "failed" })}\n`,
+  );
+  fs.renameSync(tmp, claimPath);
+  if (record.ok) {
+    const state = readState();
+    state.lastFired[mode] = record.etDate;
+    writeState(state);
+  } else {
+    process.exitCode = 1;
+  }
   process.stdout.write(
     `[${record.firedAt}] ${mode} exit=${record.exitCode} ${record.durationMs}ms ok=${record.ok}\n`,
   );
@@ -214,9 +256,6 @@ async function tick(extraArgs: readonly string[]): Promise<void> {
     if (!isFinanceCycleSlotDue(slot, clock, state.lastFired)) {
       continue;
     }
-    // Mark before running: a crash mid-run must not loop forever.
-    state.lastFired[slot.mode] = clock.date;
-    writeState(state);
     await fire(slot.mode, extraArgs);
   }
 }
@@ -235,11 +274,19 @@ async function loop(extraArgs: readonly string[]): Promise<void> {
   }
 }
 
-function detach(extraArgs: readonly string[]): void {
+export function detach(extraArgs: readonly string[]): void {
   fs.mkdirSync(STATE_DIR, { recursive: true });
   const child = spawn(
     process.execPath,
-    ["--import", "tsx", fileURLToPath(import.meta.url), "--loop", ...extraArgs],
+    [
+      "--import",
+      "tsx",
+      fileURLToPath(import.meta.url),
+      "--loop",
+      "--dir",
+      FINANCE_ROOT.directory,
+      ...extraArgs,
+    ],
     {
       cwd: REPO_ROOT,
       detached: true,
@@ -348,7 +395,9 @@ async function main(): Promise<void> {
   throw new Error("usage: --once day|night | --loop | --detach | --status");
 }
 
-void main().catch((error) => {
-  process.stderr.write(`${String(error)}\n`);
-  process.exitCode = 1;
-});
+if (process.argv[1] !== undefined && import.meta.url === `file://${process.argv[1]}`) {
+  void main().catch((error) => {
+    process.stderr.write(`${String(error)}\n`);
+    process.exitCode = 1;
+  });
+}

@@ -247,7 +247,10 @@ export async function runFinanceDailyCycleOperator(
   let equitySource: "flag" | "default" | "venue" | "venue-failed" = argv.includes("--equity")
     ? "flag"
     : "default";
-  if (options.equityFromVenue) {
+  if (
+    options.equityFromVenue ||
+    (options.mode === "day" && options.place && options.venue === "alpaca")
+  ) {
     if (options.venue !== "alpaca") {
       return {
         directory,
@@ -258,11 +261,34 @@ export async function runFinanceDailyCycleOperator(
       };
     }
     const snapshot = await fetchAlpacaAccountSnapshot();
-    if (snapshot.ok) {
+    if (!snapshot.ok) {
+      return {
+        directory,
+        mode: options.mode,
+        asOf: options.asOf,
+        ok: false,
+        equitySource: "venue-failed",
+        error: `account verification failed: ${snapshot.reason}`,
+      };
+    }
+    if (
+      !Number.isFinite(snapshot.account.equity) ||
+      snapshot.account.equity <= 0 ||
+      snapshot.account.status !== "ACTIVE" ||
+      snapshot.account.tradingBlocked
+    ) {
+      return {
+        directory,
+        mode: options.mode,
+        asOf: options.asOf,
+        ok: false,
+        equitySource: "venue",
+        error: "account is not active, trading is blocked, or equity is invalid",
+      };
+    }
+    if (options.equityFromVenue) {
       equity = snapshot.account.equity;
       equitySource = "venue";
-    } else {
-      equitySource = "venue-failed";
     }
   }
 
