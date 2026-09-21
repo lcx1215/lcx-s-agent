@@ -385,6 +385,15 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     includeInOpenClawGroup: true,
   },
   {
+    id: "finance_claim_ledger",
+    label: "finance_claim_ledger",
+    description:
+      "Record a trade claim the system refused and later see whether refusing it was right. Observation only; it cannot place anything. Record contested claims, not every claim",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
     id: "finance_scoped_override",
     label: "finance_scoped_override",
     description:

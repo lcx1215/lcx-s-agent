@@ -20,6 +20,7 @@ import { createFinanceArticleSourceRegistryRecordTool } from "./tools/finance-ar
 import { createFinanceBarLedgerTool } from "./tools/finance-bar-ledger-tool.js";
 import { createFinanceCalibrationReadTool } from "./tools/finance-calibration-read-tool.js";
 import { createFinanceChartAnalysisTool } from "./tools/finance-chart-analysis-tool.js";
+import { createFinanceClaimLedgerTool } from "./tools/finance-claim-ledger-tool.js";
 import { createFinanceDataConnectorTool } from "./tools/finance-data-connector-inspect-tool.js";
 import { createFinanceDataGatewaySnapshotTool } from "./tools/finance-data-gateway-tool.js";
 import { createFinanceDoctrineTeacherFeedbackCandidateInputReconciliationStatusTool } from "./tools/finance-doctrine-teacher-feedback-candidate-input-reconciliation-status-tool.js";
@@ -282,6 +283,7 @@ export function createOpenClawTools(options?: {
     createFinanceResearchBatchTool(),
     createPlanUpdateTool(),
     createFinanceScopedOverrideTool(),
+    createFinanceClaimLedgerTool(),
     createFinanceThesisLedgerReadTool({ workspaceDir }),
     createFinanceStrategyRuleLedgerReadTool(),
     createLocalSpecialistTool({ workspaceDir }),

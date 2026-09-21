@@ -137,7 +137,6 @@ export function createFinanceScopedOverrideTool(): AnyAgentTool {
         return jsonResult({
           ok: revert.verified,
           schemaVersion: FINANCE_SCOPED_OVERRIDE_SCHEMA_VERSION,
-          knob,
           ...revert,
         });
       }
