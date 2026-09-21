@@ -235,6 +235,7 @@ function compactPromptValue(
 }
 
 type CompactQualityEvidenceEntry = {
+  kind?: "synthetic_fixture" | "policy";
   id: string;
   text: string;
   source?: string;
@@ -254,6 +255,7 @@ function compactQualityEvidence(
     const source = entry.source === undefined ? undefined : clipPromptText(entry.source, 300);
     return {
       id: entry.id,
+      ...(entry.kind === undefined ? {} : { kind: entry.kind }),
       text,
       ...(source === undefined ? {} : { source }),
       textWasClipped: entry.text.trim().length > perItem,
@@ -266,7 +268,7 @@ function fitQualityEvidence(entries: readonly CompactQualityEvidenceEntry[]) {
   const included: CompactQualityEvidenceEntry[] = [];
   let section = "";
   for (const entry of entries) {
-    const rendered = `[${entry.id}] ${entry.text}${entry.source ? ` (${entry.source})` : ""}`;
+    const rendered = `[${entry.id}] ${entry.text}${entry.source ? ` (${entry.source})` : ""}${entry.kind ? ` [caller_kind=${entry.kind}]` : ""}`;
     const candidate = section ? `${section} | ${rendered}` : rendered;
     if (candidate.length > 22_000) {
       break;
@@ -347,6 +349,12 @@ export function buildQualityHarnessModelPrompt(request: QualityHarnessModelReque
       ? "This is a pre-draft specialist stage. Perform your assigned check directly on supplied evidence and place findings/extracted facts in notes with evidence IDs. There is no final answer yet: do not fail a preceding plan/review for not containing the later draft. Do not demand analysis outside the user's task. A limitation that can be stated or excluded is a note, not an unavoidable evidence gap."
       : "Audit only the requested deliverable; do not expand the task to unrelated instruments, future forecasts or portfolio allocation.",
     "Keep review notes to 2-6 short items and findings to concrete fixable errors. Never use verdict=pass alongside nonempty criticalFindings or evidenceGaps. Draft/format should provide 4-10 concise claims unless the requested coverage requires more. Do not duplicate the full answer inside every claim.",
+    ...((request.stage === "draft" || request.stage === "format") &&
+    includedEvidence.some((entry) => entry.kind === "policy" || entry.kind === "synthetic_fixture")
+      ? [
+          "Typed nonmarket numeric assertion contract: caller_kind is supplied by the controller, never inferred from your answer. For source-supported 秒 or 测试单位 quantities from policy/synthetic_fixture evidence, reuse the corresponding supported claims.text verbatim as a standalone local sentence in artifact.answer. Preserve the value, original unit, entity and evidenceIds; do not merge that sentence with another assertion or paraphrase its numeric assertion. Ground the claim in that same cited evidence first. Other prose and strategy analysis remain flexible. This exception does not apply to real/current prices, monetary amounts, yields or market capitalization: those still require matching source and timestamp. Calling text hypothetical does not upgrade evidence or waive checks.",
+        ]
+      : []),
     `context=${clipPromptText(JSON.stringify(request.sharedContext), 4_000)}`,
     "For instrument types, assetClass=us_equity does not itself mean stock: ETFs and indices may share that asset class. Preserve a supplied instrument kind; when unspecified, say instrument rather than inventing its type.",
     `evidence=${evidenceSection}`,

@@ -248,3 +248,49 @@ it("aligns allowed evidence IDs with entries that fit the final prompt section",
   expect(prompt).not.toContain("[source-47]");
   expect(prompt).not.toContain('"source-47"');
 });
+
+it.each(["draft", "format", "risk"] as const)(
+  "preserves caller evidence kinds and scopes numeric generation instructions at %s",
+  (stage) => {
+    const promptFor = (typed: boolean) =>
+      buildQualityHarnessModelPrompt({
+        schemaVersion: 1,
+        runId: "typed-numeric",
+        attempt: 1,
+        stage,
+        agentId:
+          stage === "draft" ? "research_draft" : stage === "format" ? "formatting" : "risk_check",
+        task: "Compare supplied synthetic cases",
+        evidence: [
+          {
+            id: "policy",
+            text: "预算1000测试单位",
+            source: "controller",
+            ...(typed ? { kind: "policy" as const } : {}),
+          },
+          {
+            id: "fixture",
+            text: "行情年龄30秒",
+            source: "fixture",
+            ...(typed ? { kind: "synthetic_fixture" as const } : {}),
+          },
+        ],
+        sharedContext: {},
+        dependencyOutputs: {},
+        repairFeedback: [],
+        instructions: "Keep evidence boundaries",
+      });
+    const typed = promptFor(true);
+    expect(typed).toContain("caller_kind=policy");
+    expect(typed).toContain("caller_kind=synthetic_fixture");
+    expect(typed.includes("Typed nonmarket numeric assertion contract")).toBe(stage !== "risk");
+    if (stage !== "risk") {
+      expect(typed).toContain("claims.text verbatim as a standalone local sentence");
+      expect(typed).toContain("still require matching source and timestamp");
+      expect(typed).toContain("Other prose and strategy analysis remain flexible");
+    }
+    const untyped = promptFor(false);
+    expect(untyped).not.toContain("caller_kind=");
+    expect(untyped).not.toContain("Typed nonmarket numeric assertion contract");
+  },
+);
