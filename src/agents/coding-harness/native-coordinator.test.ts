@@ -18,6 +18,7 @@ import {
 } from "./native-workspace.js";
 const exec = promisify(execFile);
 const roots: string[] = [];
+const trustedArgv = ["/usr/bin/python3", "-I", "-B", "-c", "assert 2 + 3 == 5"] as const;
 afterEach(async () => {
   for (const root of roots.splice(0)) {
     await fs.rm(root, { recursive: true, force: true });
@@ -115,14 +116,14 @@ describe("native coding isolation and artifact delivery", () => {
     docker.verify.mockImplementation(async (container, argv) => {
       expect(docker.live.size).toBe(1);
       expect(container.workspaceDir).toMatch(/verifier$/);
-      expect(argv).toEqual(["python3", "-B", "trusted.py"]);
+      expect(argv).toEqual(trustedArgv);
       expect(await fs.readFile(path.join(container.workspaceDir, "answer.txt"), "utf8")).toBe(
         "after\n",
       );
       return { code: 0, stdout: "pass", stderr: "" };
     });
     const receipt = await runNativeCodingHarness(
-      { ...input, verification: { argv: ["python3", "-B", "trusted.py"] } },
+      { ...input, verification: { argv: trustedArgv } },
       { docker, runner: edit },
     );
     expect(receipt.status).toBe("verified");
@@ -145,7 +146,7 @@ describe("native coding isolation and artifact delivery", () => {
       return { code: 0, stdout: "pass", stderr: "" };
     });
     const result = await runNativeCodingHarness(
-      { ...input, verification: { argv: ["test"] } },
+      { ...input, verification: { argv: trustedArgv } },
       {
         docker,
         runner: async (args) => {
@@ -166,6 +167,69 @@ describe("native coding isolation and artifact delivery", () => {
     expect(await fs.readFile(result.patchPath, "utf8")).toContain(
       "+literal a/base/x and b/artifact/y",
     );
+  });
+  it("blocks artifact-owned acceptance scripts before model dispatch", async () => {
+    const input = await fixture();
+    const docker = fakeDocker();
+    const runner = vi.fn<NativeCodingRunner>(async (args) => {
+      const view = resolveTrustedNativeCodingBinding(args.binding);
+      await fs.writeFile(path.join(view.workspaceDir, "trusted.py"), "raise SystemExit(0)\n");
+      return {
+        status: "completed",
+        executionStarted: true,
+        childRunId: view.runId,
+        childSessionKey: view.sessionKey,
+      };
+    });
+    const receipt = await runNativeCodingHarness(
+      { ...input, verification: { argv: ["python3", "-B", "trusted.py"] } },
+      { docker, runner },
+    );
+    expect(receipt.status).toBe("blocked");
+    expect(receipt.verified).toBe(false);
+    expect(runner).not.toHaveBeenCalled();
+    expect(docker.create).not.toHaveBeenCalled();
+  });
+  it("model replacement of trusted.py cannot replace frozen controller code", async () => {
+    const input = await fixture();
+    const docker = fakeDocker();
+    docker.verify.mockImplementation(async (container, argv) => {
+      expect(await fs.readFile(path.join(container.workspaceDir, "trusted.py"), "utf8")).toBe(
+        "raise SystemExit(0)\n",
+      );
+      expect(argv).toEqual([
+        "/usr/bin/python3",
+        "-I",
+        "-B",
+        "-c",
+        "assert False, 'independent acceptance fails'",
+      ]);
+      return { code: 1, stdout: "", stderr: "independent acceptance fails" };
+    });
+    const receipt = await runNativeCodingHarness(
+      {
+        ...input,
+        verification: {
+          argv: [
+            "/usr/bin/python3",
+            "-I",
+            "-B",
+            "-c",
+            "assert False, 'independent acceptance fails'",
+          ],
+        },
+      },
+      {
+        docker,
+        runner: async (args) => {
+          const view = resolveTrustedNativeCodingBinding(args.binding);
+          await fs.writeFile(path.join(view.workspaceDir, "trusted.py"), "raise SystemExit(0)\n");
+          return edit(args);
+        },
+      },
+    );
+    expect(receipt.status).toBe("failed");
+    expect(receipt.verified).toBe(false);
   });
   it("without acceptance policy only completes unverified", async () => {
     const input = await fixture();
@@ -219,7 +283,7 @@ describe("native coding isolation and artifact delivery", () => {
     const docker = fakeDocker();
     docker.verify.mockResolvedValue({ code: 1, stdout: "", stderr: "failure" });
     const result = await runNativeCodingHarness(
-      { ...input, verification: { argv: ["test"] } },
+      { ...input, verification: { argv: trustedArgv } },
       { docker, runner: edit },
     );
     expect(result.status).toBe("failed");
@@ -233,7 +297,7 @@ describe("native coding isolation and artifact delivery", () => {
     const input = await fixture();
     const docker = fakeDocker();
     const result = await runNativeCodingHarness(
-      { ...input, verification: { argv: ["test"] } },
+      { ...input, verification: { argv: trustedArgv } },
       {
         docker,
         runner: async (args) => {

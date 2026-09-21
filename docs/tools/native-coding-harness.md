@@ -13,7 +13,15 @@ createNativeCodingHarnessTool({
   workspaceDir,
   agentSessionKey,
   config,
-  verification: { argv: ["python3", "-B", "trusted_acceptance.py"] },
+  verification: {
+    argv: [
+      "/usr/bin/python3",
+      "-I",
+      "-B",
+      "-c",
+      "import sys; sys.path.insert(0, '/workspace'); from calculator import add; assert add(2, 3) == 5",
+    ],
+  },
 });
 ```
 
@@ -21,8 +29,14 @@ The optional model-facing `verify` must exactly match that policy. Supplying it
 without a controller policy is blocked. Omitting it uses the controller policy;
 if no policy exists, a completed model run is `completed-unverified`. Controllers
 can also call `runNativeCodingHarness` with a trusted `verification` argument.
-Acceptance commands should check requirements independently; a model-edited test
-alone is weaker evidence. The verifier deadline is at most 30 seconds.
+The first version supports only the exact interpreter/flags shape
+`/usr/bin/python3 -I -B -c CODE`, where `CODE` is supplied and frozen by the
+controller. Script paths inside the artifact, shell entrypoints, and other argv
+shapes are blocked before the model starts. This is not a general script-verifier
+interface. Import required standard-library modules before explicitly adding
+`/workspace` to the module path, and keep independent acceptance assertions in the
+controller program. Model-edited tests must not be the sole acceptance authority.
+The verifier deadline is at most 30 seconds.
 
 The editor has one task mount, no network or credentials, a read-only container
 root, dropped capabilities, and no host/elevated/background execution. The

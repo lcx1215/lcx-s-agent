@@ -152,6 +152,20 @@ export async function runNativeCodingHarness(
   try {
     await event("run/requested", { sourceDir: receipt.sourceDir, delivery: receipt.delivery });
     signal.throwIfAborted();
+    if (
+      verification &&
+      (verification.argv.length !== 5 ||
+        verification.argv[0] !== "/usr/bin/python3" ||
+        verification.argv[1] !== "-I" ||
+        verification.argv[2] !== "-B" ||
+        verification.argv[3] !== "-c" ||
+        !verification.argv[4]?.trim() ||
+        verification.argv.some((value) => value.includes("\0")))
+    ) {
+      throw new Error(
+        "verification requires controller-owned inline Python: /usr/bin/python3 -I -B -c CODE; artifact script entrypoints are not supported",
+      );
+    }
     if (!input.task.trim() || !input.requesterSessionKey) {
       throw new Error("task and requester session are required");
     }

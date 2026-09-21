@@ -33,7 +33,7 @@ export function createNativeCodingHarnessTool(
     label: "Native Coding",
     ownerOnly: true,
     description:
-      "Run an LCX coding task in an isolated Docker copy of a clean feature worktree. Returns durable patch/artifact absolute paths; never changes source or commits. Verification uses controller-configured acceptance commands only; absent that policy, completion is unverified. Requires Docker and the configured model.",
+      "Run an LCX coding task in an isolated Docker copy of a clean feature worktree. Returns durable patch/artifact absolute paths; never changes source or commits. Verification supports only controller-owned inline Python (/usr/bin/python3 -I -B -c CODE), never an artifact script; absent that policy, completion is unverified. Requires Docker and the configured model.",
     parameters: Type.Object(
       {
         task: Type.String({ minLength: 1, maxLength: 40_000 }),

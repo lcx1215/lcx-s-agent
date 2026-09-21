@@ -203,13 +203,14 @@ export const nativeDocker: NativeDocker = {
       ) {
         return false;
       }
-      await docker(["rm", "--force", actual.Id]);
+      const resolvedId = actual.Id;
+      await docker(["rm", "--force", resolvedId]);
       try {
-        await inspect(actual.Id);
+        await inspect(resolvedId);
         return false;
       } catch (error) {
         return (
-          Boolean(identity.id) &&
+          Boolean(resolvedId) &&
           /No such (object|container)/i.test(String((error as { stderr?: string }).stderr ?? error))
         );
       }

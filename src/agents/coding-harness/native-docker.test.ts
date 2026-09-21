@@ -1,5 +1,15 @@
-import { describe, expect, it } from "vitest";
-import { assertNativeContainer } from "./native-docker.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+const execFileAsync = vi.hoisted(() => vi.fn());
+vi.mock("node:child_process", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:child_process")>();
+  const { promisify } = await import("node:util");
+  return {
+    ...original,
+    execFile: Object.defineProperty(vi.fn(), promisify.custom, { value: execFileAsync }),
+  };
+});
+afterEach(() => execFileAsync.mockReset());
+import { assertNativeContainer, nativeDocker } from "./native-docker.js";
 function valid() {
   return {
     Id: "a".repeat(64),
@@ -70,4 +80,30 @@ describe("actual native Docker isolation validation", () => {
     value.Id = "not-an-id";
     expect(() => assertNativeContainer(value, expected)).toThrow();
   });
+});
+
+it("confirms cleanup by resolved ID after recovering a name-only allocation", async () => {
+  execFileAsync
+    .mockResolvedValueOnce({ stdout: JSON.stringify([valid()]), stderr: "" })
+    .mockResolvedValueOnce({ stdout: "", stderr: "" })
+    .mockRejectedValueOnce(Object.assign(new Error("missing"), { stderr: "No such object" }));
+  expect(await nativeDocker.destroy({ name: "fixture", taskId: "task" })).toBe(true);
+  expect(execFileAsync).toHaveBeenNthCalledWith(
+    2,
+    "docker",
+    ["rm", "--force", "a".repeat(64)],
+    expect.any(Object),
+  );
+  expect(execFileAsync).toHaveBeenNthCalledWith(
+    3,
+    "docker",
+    ["inspect", "a".repeat(64)],
+    expect.any(Object),
+  );
+});
+it("keeps an absent never-resolved name-only allocation unconfirmed", async () => {
+  execFileAsync.mockRejectedValueOnce(
+    Object.assign(new Error("missing"), { stderr: "No such object" }),
+  );
+  expect(await nativeDocker.destroy({ name: "fixture", taskId: "task" })).toBe(false);
 });
