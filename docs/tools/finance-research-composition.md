@@ -115,3 +115,22 @@ benchmark. `evidenceKind` is supplied by the caller and must be backed by the
 provider/model receipt and retained invocation evidence before claiming a real
 model run. Current tests use fixtures. Evaluation never promotes a model or
 changes production routing.
+
+## Synthetic tool-feedback evaluation
+
+`evaluateFinanceFeedback` exercises up to three existing Harness cycles against
+an isolated synthetic position ledger. The task declares a primary and backup
+source. A scoped registry permits only those two exact paths and read-only
+ledger arguments. The evaluator retains real tool observations, passes compact
+numeric evidence into the next perception, and checks source recovery, exact
+answer fields, stopping, duplicate reads and rejected or excess proposals.
+A guessed correct answer without tool evidence does not pass. The deterministic
+baseline follows the same tool and evidence path.
+
+This scenario tests a specific Harness protocol, not general financial judgment.
+Zero tool calls from a failed model are noncompletion, not efficiency. Compare
+local models using the existing MLX adapter with network disabled and serialized
+inference. Keep raw-contract normalization, runtime identity, model/adapter path,
+case labels and failures visible; never infer deployment or role qualification
+from cache presence or an old promotion receipt. Prompt/protocol mismatch can
+also cause failures and must be distinguished from a model's reasoning limits.
