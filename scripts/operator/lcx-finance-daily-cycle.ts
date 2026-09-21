@@ -21,10 +21,80 @@ import { fetchAlpacaAccountSnapshot } from "../../src/agents/finance-alpaca-run.
 import { runFinanceDailyCycle } from "../../src/agents/finance-daily-cycle.js";
 import { backfillOutcomes } from "../../src/agents/finance-outcome-backfill.js";
 import { buildReflection } from "../../src/agents/finance-reflection.js";
-import { resolveFinanceStateDir } from "../../src/agents/finance-state-dir.js";
+import {
+  FINANCE_RESEARCH_SAMPLES_FILENAME,
+  FINANCE_RESEARCH_SCORED_FILENAME,
+  resolveFinanceStateDir,
+} from "../../src/agents/finance-state-dir.js";
 import { readFinanceStrategyRuleLedger } from "../../src/agents/finance-strategy-rule-ledger.js";
 
-const SAMPLES_FILE = "research-samples.jsonl";
+// Named in `finance-state-dir.ts` alongside the rest of the plane: the cycle writes these and the
+// calibration reader reads them back, so the names are declared once.
+const SAMPLES_FILE = FINANCE_RESEARCH_SAMPLES_FILENAME;
+const SCORED_FILE = FINANCE_RESEARCH_SCORED_FILENAME;
+
+/**
+ * Read one field of a settled row as text.
+ *
+ * A row comes off disk as parsed JSON, so a field is whatever the file happened to hold. Anything
+ * that is not a string reads as empty rather than as "[object Object]": two rows missing the same
+ * field must not collide into one identity, and an unreadable row must not silently become the
+ * same call as another one.
+ */
+function rowText(row: Record<string, unknown>, field: string): string {
+  const value = row[field];
+  return typeof value === "string" ? value : "";
+}
+
+/** Identity of one settled call, so a re-run does not score it twice. */
+function scoredOutcomeKey(row: Record<string, unknown>): string {
+  return [
+    rowText(row, "instrument").toUpperCase(),
+    rowText(row, "asOf").slice(0, 10),
+    rowText(row, "direction"),
+  ].join("@");
+}
+
+/**
+ * Append settled outcomes to the scored file, skipping calls already on file.
+ *
+ * Written through a temporary file and renamed, the way the rest of this plane is: the scored set
+ * is read back to decide what is already settled, so a half-written file would parse as a short,
+ * wrong history — and a short history reads as "few calls", which is a different claim.
+ */
+async function appendScoredOutcomes(
+  path: string,
+  rows: readonly Record<string, unknown>[],
+): Promise<{ path: string; appended: number; skipped: number }> {
+  let existing: string[] = [];
+  try {
+    const { readFile } = await import("node:fs/promises");
+    existing = (await readFile(path, "utf8")).split("\n").filter((line) => line.trim().length > 0);
+  } catch {
+    existing = [];
+  }
+  const known = new Set<string>();
+  for (const line of existing) {
+    try {
+      known.add(scoredOutcomeKey(JSON.parse(line) as Record<string, unknown>));
+    } catch {
+      // An unparseable line is not evidence that a call was settled, and rewriting the file to
+      // drop it would destroy history to fix formatting. Skipped, and preserved on rewrite.
+    }
+  }
+  const fresh = rows.filter((row) => !known.has(scoredOutcomeKey(row)));
+  if (fresh.length === 0) {
+    return { path, appended: 0, skipped: rows.length };
+  }
+  const { writeFile, rename, mkdir } = await import("node:fs/promises");
+  const { dirname } = await import("node:path");
+  await mkdir(dirname(path), { recursive: true });
+  const lines = [...existing, ...fresh.map((row) => JSON.stringify(row))];
+  const tmp = `${path}.${process.pid}.tmp`;
+  await writeFile(tmp, `${lines.join("\n")}\n`, "utf8");
+  await rename(tmp, path);
+  return { path, appended: fresh.length, skipped: rows.length - fresh.length };
+}
 
 type Mode = "day" | "night";
 
@@ -243,6 +313,15 @@ export async function runFinanceDailyCycleOperator(
       samples: samples as Parameters<typeof backfillOutcomes>[0]["samples"],
       asOf: options.asOf,
     });
+    // Filed, not just computed. A settlement that is worked out every night and then dropped
+    // leaves calibration with nothing to read: the scored file stays empty, and the tool that
+    // tells the model how its last judgement went reports "no history" forever. The samples the
+    // calls came from are append-only, so the scores are too — re-scoring the same call must not
+    // add a second copy of it.
+    const scoredFiled = await appendScoredOutcomes(
+      join(directory, SCORED_FILE),
+      settled.scored as readonly Record<string, unknown>[],
+    );
     const reflection =
       settled.scored.length > 0 ? buildReflection(settled.scored, { instanceLimit: 5 }) : null;
     const payload = {
@@ -252,6 +331,7 @@ export async function runFinanceDailyCycleOperator(
       modelCalls: 0,
       sampleCount: samples.length,
       scored: settled.scored,
+      scoredFiled,
       pending: settled.pending,
       declined: settled.declined,
       reflection,

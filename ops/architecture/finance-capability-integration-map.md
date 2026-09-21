@@ -444,6 +444,39 @@ tmp+rename 原子写，并在 payload 里报 `scoredFiled: { path, appended, ski
 ⚠️ 途中发现：**night 分支在没有活跃规则时直接报错退出**（`no active rule declares any instrument`），
 而结算其实只依赖历史样本、不依赖当前规则 ⇒ 暂停所有规则会连带掐断反思环。未改，记录在此。
 
+### 同族收尾：研究/结算面 5 处 cwd 相对路径 → 单点解析（2026-09-21）
+
+上一节的根因是"根目录由两套逻辑各说一遍"。收尾时把这族的**剩余 5 处**一起收敛到
+`finance-state-dir.ts` 的两个命名函数 + 两个文件名常量：
+
+| 位置                       | 改前                                            | 改后                                                                      |
+| -------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------- |
+| `research-score.ts:60,162` | `state/finance/research-{samples,scored}.jsonl` | `financeResearch{Samples,Scored}Path(resolveFinanceStateDir().directory)` |
+| `research-turn.ts:332`     | 同上（scored，只读）                            | 同上                                                                      |
+| `research-batch.ts:280`    | 同上（samples）                                 | 同上                                                                      |
+| `paper-rank.ts:65,77`      | 同上（samples + scored）                        | 同上                                                                      |
+| `daily-cycle.ts:33-34`     | 两个字面量常量                                  | 复用 `FINANCE_RESEARCH_{SAMPLES,SCORED}_FILENAME`                         |
+
+**实测（临时状态根 + 真实 FMP 价格，带 `credentials.env` 当夹具）**：
+
+```
+research-score:  recordPath /tmp/rs/research-samples.jsonl、scoredPath /tmp/rs/research-scored.jsonl
+                 mature 1 / hitRate 1 / brier 0.1444   仓库那份 scored 仍为 0 行（没被误写）
+paper-rank 对照: 设 env → "1 sample(s) across 1 bucket(s)"      ← 读到临时根
+                 不设 env → "no scored samples"                  ← 读到仓库根
+                 ⇒ 路径真的跟着解析走，而不是跟着 cwd
+```
+
+night 结算在收敛后复验：第一次 `{"appended":1}`、第二次 `{"appended":0,"skipped":1}`（幂等），
+仓库 `research-scored.jsonl` 未被动过。
+
+护栏（`src/agents/finance-state-dir.test.ts` +3 条，共 12）：路径落在给定目录内、**切换 cwd 后结果不变**
+（真正的缺陷形状）、writer 与 reader 得到同一个字符串。变异（让 samples 路径回到 cwd 相对）正好打红
+这 3 条。`tsgo` 0 错；精确受影响面 66/66 全绿。
+
+⚠️ 操作坑：本环境的 **Bash `grep` 会静默返回空**——验证"改动是否落地"必须用专用检索工具或 `node -e` 读文件，
+否则会得出"没改到"的错误结论。
+
 ### 缺口 2：文本/研究 与 论点没有连接键
 
 已单独成文：`ops/external-learning/2026-09-19-thesis-outcome-assessment-gap.md`。
