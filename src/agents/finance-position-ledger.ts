@@ -312,6 +312,17 @@ const FinanceExecutionReceiptRecordSchema = z
 const FinancePositionRecordBodySchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("receipt"), receipt: FinanceExecutionReceiptRecordSchema }).strict(),
   z.object({ kind: z.literal("mark"), mark: FinancePositionMarkRecordSchema }).strict(),
+  // Raw broker evidence is deliberately excluded from receipt/position projections.
+  z
+    .object({
+      kind: z.literal("broker_history"),
+      accountId: Text,
+      venue: z.literal("alpaca:paper"),
+      query: Text,
+      cursor: z.string(),
+      payload: z.array(z.record(z.string(), z.unknown())),
+    })
+    .strict(),
 ]);
 
 export type FinancePositionRecordBody = z.infer<typeof FinancePositionRecordBodySchema>;
@@ -802,4 +813,18 @@ export async function readFinanceAccountPositionLedger(
       .length,
     headRef: read.headRef,
   });
+}
+
+/** Same durable hash chain, not synthetic fills. Replays cannot double-count positions. */
+export async function appendFinanceBrokerHistory(
+  directory: string,
+  body: Extract<FinancePositionRecordBody, { kind: "broker_history" }>,
+) {
+  const validated = FinancePositionRecordBodySchema.parse(body);
+  return appendRecord(
+    directory,
+    validated,
+    `broker-history:${caseflowFingerprint(validated)}`,
+    new Date().toISOString(),
+  );
 }
