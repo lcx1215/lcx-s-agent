@@ -1,3 +1,4 @@
+import { withTimeout } from "../utils/with-timeout.js";
 /**
  * The daytime cycle: everything that can be done without a model.
  *
@@ -23,8 +24,6 @@
  * the high/low of the same bars and have no other supply, so discarding them after one use makes
  * those measures permanently unavailable for rules nobody backfilled by hand.
  */
-
-import { withTimeout } from "../utils/with-timeout.js";
 import { isAlpacaOrderUncertain } from "./finance-alpaca-execution-adapter.js";
 import {
   fetchAlpacaVenueState,
@@ -36,6 +35,10 @@ import type {
   FinanceExecutionIntent,
   FinanceExecutionReceipt,
 } from "./finance-execution-adapter.js";
+import {
+  FinanceExecutionSafetyUncertainError,
+  type FinanceExecutionSafetyContextFactory,
+} from "./finance-execution-safety.js";
 import { createChinaReachableUsEodHistoryCollectionAdapter } from "./finance-free-market-collection-adapters.js";
 import type { FinanceMarketCollectionItem } from "./finance-market-collection-registry.js";
 import { runFinancePaperOrder } from "./finance-paper-run.js";
@@ -125,6 +128,7 @@ export function executionQuoteIssue(
 }
 
 export type FinanceDailyCycleParams = Readonly<{
+  createSafetyContext?: FinanceExecutionSafetyContextFactory;
   instruments: readonly string[];
   equity: number;
   asOf: string;
@@ -520,7 +524,9 @@ export async function attemptCycleOrder(
     return Object.freeze({
       ok: false as const,
       stage: "place" as const,
-      ...(isAlpacaOrderUncertain(error) ? { uncertain: true as const } : {}),
+      ...(isAlpacaOrderUncertain(error) || error instanceof FinanceExecutionSafetyUncertainError
+        ? { uncertain: true as const }
+        : {}),
       refusals: Object.freeze([
         `order path threw — ${error instanceof Error ? error.message : String(error)}`,
       ]),
@@ -959,7 +965,14 @@ export async function runFinanceDailyCycle(
         params.venue === "alpaca" && executionQuote
           ? executionQuote.referencePriceAt
           : `${target.lastBarDate}T20:00:00.000Z`;
+      if (!params.createSafetyContext) {
+        refusals.push(
+          `${item.instrument}: execution_safety_context_required: trusted controller facts unavailable`,
+        );
+        continue;
+      }
       const shared = {
+        createSafetyContext: params.createSafetyContext,
         conclusion: {
           conclusionId: `daily_cycle:${signalAnchor}:${item.instrument}`,
           instrument: item.instrument,

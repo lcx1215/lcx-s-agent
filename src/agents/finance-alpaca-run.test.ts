@@ -1,4 +1,5 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { syntheticSafetyContext } from "./finance-execution-safety.test-support.js";
 vi.mock("./finance-credential-env.js", () => ({
   resolveFinanceCredentialEnv: () => ({
     ALPACA_API_KEY_ID: process.env.ALPACA_API_KEY_ID,
@@ -211,8 +212,9 @@ const CONCLUSION = {
 
 function request(overrides: Partial<FinanceAlpacaRunRequest> = {}): FinanceAlpacaRunRequest {
   return {
+    createSafetyContext: syntheticSafetyContext,
     conclusion: CONCLUSION,
-    market: { referencePrice: 100, referencePriceAt: "2026-09-19T20:00:00.000Z" },
+    market: { referencePrice: 100, referencePriceAt: new Date().toISOString() },
     equity: 100_000,
     runAuthorizationId: "auth-test",
     budget: {
@@ -318,12 +320,9 @@ describe("runFinanceAlpacaOrder fill handling", () => {
         }),
       };
     };
-    const result = await runFinanceAlpacaOrder(request({ read, fillPoll: false }));
-    expect(result.ok).toBe(true);
-    if (!result.ok) {
-      return;
-    }
-    expect(result.receipt.fill.filledQuantity).toBe(0);
+    await expect(runFinanceAlpacaOrder(request({ read, fillPoll: false }))).rejects.toMatchObject({
+      code: "finance_execution_safety_unknown",
+    });
     expect(polls).toBe(0);
   });
 
@@ -341,6 +340,18 @@ describe("runFinanceAlpacaOrder fill handling", () => {
       runFinanceAlpacaOrder(
         request({ read, transport, fillPoll: { timeoutMs: 60, intervalMs: 10 } }),
       ),
-    ).rejects.toThrow(/ord-pending.*fill state is unknown/);
+    ).rejects.toMatchObject({
+      code: "finance_execution_safety_unknown",
+      cause: expect.objectContaining({ code: "alpaca_order_uncertain", orderId: "ord-pending" }),
+    });
   });
+});
+
+it("refuses direct Alpaca placement without controller facts before transport", async () => {
+  const transport = vi.fn();
+  const result = await runFinanceAlpacaOrder(
+    request({ createSafetyContext: undefined, transport }),
+  );
+  expect(result.ok).toBe(false);
+  expect(transport).not.toHaveBeenCalled();
 });

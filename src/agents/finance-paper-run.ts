@@ -4,6 +4,7 @@ import {
   type FinanceExecutionReceipt,
   type FinanceRiskBudget,
 } from "./finance-execution-adapter.js";
+import type { FinanceExecutionSafetyContextFactory } from "./finance-execution-safety.js";
 import {
   compileExecutionIntent,
   type FinanceResearchConclusion,
@@ -42,6 +43,7 @@ import { resolveFinanceStateDir } from "./finance-state-dir.js";
 export const FINANCE_PAPER_ADAPTER_ID = "paper";
 
 export type FinancePaperRunRequest = Readonly<{
+  createSafetyContext?: FinanceExecutionSafetyContextFactory;
   conclusion: FinanceResearchConclusion;
   /** Observed price and the time it belongs to. "Now" is never assumed. */
   market: { referencePrice: number; referencePriceAt: string };
@@ -78,6 +80,14 @@ export async function runFinancePaperOrder(
       ok: false,
       stage: "compile",
       refusals: Object.freeze(["refuse: conclusion needs an id; the intent id derives from it"]),
+    };
+  }
+
+  if (!request.createSafetyContext) {
+    return {
+      ok: false,
+      stage: "place",
+      refusals: ["execution_safety_context_required: trusted controller facts unavailable"],
     };
   }
 
@@ -122,6 +132,12 @@ export async function runFinancePaperOrder(
 
   const placed = await placeFinanceOrder({
     mode: "live_execution",
+    safetyContext: request.createSafetyContext?.({
+      intent: compiled.intent,
+      budget: request.budget,
+      adapterId: adapter.id,
+      venue: adapter.venue,
+    }),
     intent: compiled.intent,
     budget: request.budget,
     adapters: [adapter],

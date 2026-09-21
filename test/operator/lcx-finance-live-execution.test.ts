@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  buildFinanceLiveExecutionPayload,
+  buildFinanceLiveExecutionPayload as buildWithoutController,
   parseArgs,
   type Options,
 } from "../../scripts/operator/lcx-finance-live-execution.ts";
@@ -20,12 +20,17 @@ import {
   FINANCE_RISK_BUDGET_ANY_INSTRUMENT,
 } from "../../src/agents/finance-execution-adapter.ts";
 import * as executionAdapters from "../../src/agents/finance-execution-adapter.ts";
+import { syntheticSafetyContext } from "../../src/agents/finance-execution-safety.test-support.js";
 import { financePositionLedgerPath } from "../../src/agents/finance-state-dir.ts";
 import { createFinancePositionLedgerReadTool } from "../../src/agents/tools/finance-position-ledger-read-tool.ts";
 
+// Existing operator behavior fixtures explicitly authorize a synthetic funded account.
+const buildFinanceLiveExecutionPayload = (input: Options) =>
+  buildWithoutController(input, { createSafetyContext: syntheticSafetyContext });
+
 /** Safely in the past, so the ledger's future-observation guard is never what a test measures. */
-const AS_OF = "2026-09-10T00:00:00Z";
-const MARK_AT = "2026-09-10T01:00:00Z";
+const AS_OF = new Date(Date.now() - 1_000).toISOString();
+const MARK_AT = new Date(Date.now() - 500).toISOString();
 
 const directories: string[] = [];
 
@@ -59,7 +64,12 @@ function options(overrides: Partial<Options> = {}): Options {
     rationale: "test",
     allowInstruments: [],
     marks: [],
-    budget: DEFAULT_FINANCE_RISK_BUDGET,
+    budget: {
+      ...DEFAULT_FINANCE_RISK_BUDGET,
+      maxOrderNotional: 500_000,
+      maxInstrumentNotional: 1_000_000,
+      maxOrdersPerRun: 10,
+    },
     writeLedger: false,
     json: true,
     ...overrides,
@@ -77,7 +87,7 @@ describe("finance live execution operator entry", () => {
     expect(written.ledgerDirectory).toBe("/book");
   });
 
-  it("writes nothing by default, so a run is not a side effect", async () => {
+  it("writes no execution ledger without --write-ledger (safety claims are separate)", async () => {
     const directory = await storeDirectory();
     const payload = await buildFinanceLiveExecutionPayload(options({ ledgerDirectory: directory }));
 
@@ -268,16 +278,18 @@ describe("finance live execution entry allowlist translation", () => {
     expect(payload.nodes.position_ledger?.recordCount).toBe(2);
   });
 
-  it("places a large order when no cap is declared", async () => {
+  it("refuses a risk increase when the attended entry declares no cap", async () => {
     const directory = await storeDirectory();
     // 1000 x 231.4 = 231,400. With no --max-* declared there is no boundary to cross, so this is
     // an ordinary paper fill. A cap nobody declared is not a control, it is a surprise.
     const payload = await buildFinanceLiveExecutionPayload(
-      options({ ledgerDirectory: directory, quantity: 1000 }),
+      options({ ledgerDirectory: directory, quantity: 1000, budget: DEFAULT_FINANCE_RISK_BUDGET }),
     );
 
-    expect(payload.nodes.order_placement.status).toBe("placed");
-    expect(payload.nodes.order_placement.refusalReasons).toEqual([]);
+    expect(payload.nodes.order_placement.status).toBe("refused");
+    expect(payload.nodes.order_placement.refusalReasons).toContain(
+      "execution_safety_increase_requires_complete_budget",
+    );
   });
 
   it("still enforces a cap once the run declares one", async () => {
@@ -353,15 +365,15 @@ describe("finance live execution unattended ceiling gate", () => {
     expect(payload.nodes.unattended_requires_caps).toBeUndefined();
   });
 
-  it("leaves an attended run's caps optional: the default stays attended", async () => {
+  it("does not let attended mode waive the final risk-increase budget", async () => {
     const directory = await storeDirectory();
     // Same absence of caps as the refused case above; the only difference is who is watching.
     const payload = await buildFinanceLiveExecutionPayload(
-      options({ ledgerDirectory: directory, quantity: 1000 }),
+      options({ ledgerDirectory: directory, quantity: 1000, budget: DEFAULT_FINANCE_RISK_BUDGET }),
     );
 
     expect(DEFAULT_FINANCE_RISK_BUDGET.automation).toBe("attended");
-    expect(payload.nodes.order_placement.status).toBe("placed");
+    expect(payload.nodes.order_placement.status).toBe("refused");
     expect(payload.nodes.unattended_requires_caps).toBeUndefined();
   });
 });
@@ -398,6 +410,7 @@ describe("mandatory owner-entry mandate and stop delivery", () => {
       fillPrice: 231.4,
       filledAt: AS_OF,
       venueRef: "synthetic:never-sent",
+      terminalOrderIdentity: { orderId: "synthetic-terminal", terminal: true as const },
     }));
     vi.spyOn(alpacaAdapters, "createAlpacaExecutionAdapter").mockReturnValue({
       id: "alpaca-venue",
@@ -416,4 +429,12 @@ describe("mandatory owner-entry mandate and stop delivery", () => {
       expect.any(AbortSignal),
     );
   });
+});
+
+it("does not treat CLI labels and attended flags as controller authorization", async () => {
+  const factory = vi.spyOn(alpacaAdapters, "createAlpacaExecutionAdapter");
+  await expect(buildWithoutController(options({ adapter: "alpaca" }))).rejects.toThrow(
+    "execution_safety_context_required",
+  );
+  expect(factory).not.toHaveBeenCalled();
 });

@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { FinanceExecutionSafetyUncertainError } from "./finance-execution-safety.js";
+import { syntheticSafetyContext } from "./finance-execution-safety.test-support.js";
 const mocks = vi.hoisted(() => ({
   collect: vi.fn(),
   order: vi.fn(),
@@ -28,6 +30,7 @@ import {
 } from "./finance-daily-cycle.js";
 const asOf = "2026-09-22T19:30:00.000Z";
 const params = {
+  createSafetyContext: syntheticSafetyContext,
   instruments: ["AAPL", "MSFT"],
   equity: 100000,
   asOf,
@@ -173,4 +176,23 @@ describe("daily cycle execution data boundary", () => {
     expect(mocks.paper).toHaveBeenCalledTimes(2);
     expect(mocks.order).not.toHaveBeenCalled();
   });
+});
+
+it("does not dispatch even with good quote when controller facts are unavailable", async () => {
+  const report = await runFinanceDailyCycle({
+    ...params,
+    createSafetyContext: undefined,
+    executionQuotes: quotes(),
+  });
+  expect(report.refusals.join()).toContain("execution_safety_context_required");
+  expect(mocks.order).not.toHaveBeenCalled();
+});
+
+it("stops later orders when the final safety gate reports an unresolved execution", async () => {
+  mocks.order.mockRejectedValueOnce(
+    new FinanceExecutionSafetyUncertainError("synthetic-claim", new Error("lost response")),
+  );
+  const report = await runFinanceDailyCycle({ ...params, executionQuotes: quotes() });
+  expect(mocks.order).toHaveBeenCalledTimes(1);
+  expect(report.dataIssues.join()).toContain("stopped remaining orders");
 });

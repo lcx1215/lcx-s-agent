@@ -1,10 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { Type } from "@sinclair/typebox";
 import { breakEvenFloor, type FloorSample } from "../finance-calibrated-floor.js";
-import {
-  FINANCE_RISK_BUDGET_ANY_INSTRUMENT,
-  type FinanceRiskAutomation,
-} from "../finance-execution-adapter.js";
+import type { FinanceRiskBudget } from "../finance-execution-adapter.js";
+import type { FinanceExecutionSafetyContextFactory } from "../finance-execution-safety.js";
 import { runFinancePaperOrder } from "../finance-paper-run.js";
 import {
   financeResearchSamplesPath,
@@ -60,24 +58,9 @@ const FinancePaperRankPlaceSchema = Type.Object({
   exploreFloor: Type.Optional(
     Type.Number({ description: "Floor used in explore mode (default 0.1)." }),
   ),
-  equity: Type.Optional(
-    Type.Number({ description: "Account equity used for sizing (default 100000)." }),
-  ),
-  automation: Type.Optional(
-    Type.Union([Type.Literal("attended"), Type.Literal("unattended")], {
-      description:
-        "attended leaves the caps optional; unattended requires every one of them. Default attended.",
-    }),
-  ),
   maxOrderNotional: Type.Optional(Type.Number({ description: "Cap on a single order." })),
   maxInstrumentNotional: Type.Optional(Type.Number({ description: "Cap per instrument." })),
   maxOrdersPerRun: Type.Optional(Type.Number({ description: "Cap on orders this run." })),
-  runAuthorizationId: Type.Optional(
-    Type.String({
-      description:
-        "The explicit authorization that admits this run. Required to place; without it the tool only reports.",
-    }),
-  ),
   place: Type.Optional(
     Type.Boolean({ description: "Actually submit. Default false: report only." }),
   ),
@@ -101,15 +84,25 @@ function numberOr(params: Record<string, unknown>, key: string, fallback: number
   return typeof raw === "number" && Number.isFinite(raw) ? raw : fallback;
 }
 
-async function main(_toolCallId: string, params: Record<string, unknown>) {
+export type FinancePaperRankPlaceControl = Readonly<{
+  equity: number;
+  runAuthorizationId: string;
+  budget: FinanceRiskBudget;
+  createSafetyContext: FinanceExecutionSafetyContextFactory;
+}>;
+
+async function main(
+  _toolCallId: string,
+  params: Record<string, unknown>,
+  control?: FinancePaperRankPlaceControl,
+) {
   const day = readStringParam(params, "day") ?? new Date().toISOString().slice(0, 10);
   const top = Math.max(0, Math.floor(numberOr(params, "top", 3)));
   const rankingFloor = numberOr(params, "rankingFloor", 0.15);
   const mode = (readStringParam(params, "mode") ?? "calibrated") as "calibrated" | "explore";
   const exploreFloor = numberOr(params, "exploreFloor", 0.1);
-  const equity = numberOr(params, "equity", 100_000);
-  const automation = (readStringParam(params, "automation") ?? "attended") as FinanceRiskAutomation;
-  const authorization = readStringParam(params, "runAuthorizationId") ?? "";
+  const equity = control?.equity ?? Number.NaN;
+  const authorization = control?.runAuthorizationId ?? "";
   const place = params.place === true;
 
   // Resolved, not relative: a scheduler does not start from the repository root, and a relative
@@ -206,12 +199,24 @@ async function main(_toolCallId: string, params: Record<string, unknown>) {
     });
   }
 
-  const budget = {
-    automation,
-    maxOrderNotional: numberOr(params, "maxOrderNotional", 60_000),
-    maxInstrumentNotional: numberOr(params, "maxInstrumentNotional", 60_000),
-    maxOrdersPerRun: numberOr(params, "maxOrdersPerRun", 3),
-    allowedInstruments: [FINANCE_RISK_BUDGET_ANY_INSTRUMENT],
+  const budget: FinanceRiskBudget = {
+    ...control?.budget,
+    automation: "unattended",
+    allowedInstruments: control?.budget.allowedInstruments ?? [],
+    ...Object.fromEntries(
+      ["maxOrderNotional", "maxInstrumentNotional", "maxOrdersPerRun"].map((key) => {
+        const ceiling = control?.budget[key as keyof FinanceRiskBudget];
+        const requested = params[key];
+        return [
+          key,
+          typeof ceiling === "number"
+            ? typeof requested === "number"
+              ? Math.min(ceiling, requested)
+              : ceiling
+            : undefined,
+        ];
+      }),
+    ),
   };
 
   const results: unknown[] = [];
@@ -224,13 +229,13 @@ async function main(_toolCallId: string, params: Record<string, unknown>) {
         ? Number((s.lastPrice - stopDistance).toFixed(4))
         : Number((s.lastPrice + stopDistance).toFixed(4));
 
-    if (!place || authorization.length === 0) {
+    if (!place || !control || authorization.length === 0) {
       results.push({
         instrument: s.instrument,
         status: "not placed",
         reasons: [
           place
-            ? "runAuthorizationId is empty; the venue refuses unauthorized runs"
+            ? "trusted controller authorization is unavailable; model parameters cannot authorize execution"
             : "place is false; this call reports only",
         ],
       });
@@ -261,6 +266,7 @@ async function main(_toolCallId: string, params: Record<string, unknown>) {
     // day guard and the receipt filing live, and a caller that bypasses it
     // produces fills the ledger never hears about.
     const placed = await runFinancePaperOrder({
+      createSafetyContext: control.createSafetyContext,
       conclusion: {
         conclusionId: "rank-" + s.instrument.toLowerCase() + "-" + day,
         instrument: s.instrument,
@@ -319,13 +325,15 @@ async function main(_toolCallId: string, params: Record<string, unknown>) {
   });
 }
 
-export function createFinancePaperRankPlaceTool(): AnyAgentTool {
+export function createFinancePaperRankPlaceTool(
+  control?: FinancePaperRankPlaceControl,
+): AnyAgentTool {
   return {
     name: "finance_paper_rank_place",
     label: "Finance paper rank and place",
     description:
-      "Rank the day's recorded candidate signals and submit the top ones to the paper venue through placeFinanceOrder, the same seam the operator entry uses. Each selection still clears the intent compiler and the mandate first. Default is report-only: placing requires place:true and a non-empty runAuthorizationId.",
+      "Rank the day's recorded candidate signals and submit the top ones to the paper venue through placeFinanceOrder, the same seam the operator entry uses. Each selection still clears the intent compiler and the mandate first. Default is report-only: placing requires place:true and a trusted controller authorization with verified account facts. Model parameters cannot grant authority.",
     parameters: FinancePaperRankPlaceSchema,
-    execute: main,
+    execute: (id, params) => main(id, params, control),
   };
 }

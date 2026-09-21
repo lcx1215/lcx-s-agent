@@ -10,6 +10,7 @@ import {
   missingUnattendedCaps,
   placeFinanceOrder,
 } from "./finance-execution-adapter.js";
+import { syntheticSafetyContext } from "./finance-execution-safety.test-support.js";
 
 type PlacementRequest = Parameters<typeof placeFinanceOrder>[0];
 
@@ -34,7 +35,7 @@ const intent: FinanceExecutionIntent = {
   orderType: "market",
   quantity: 10,
   referencePrice: 231.4,
-  referencePriceAt: "2026-09-17T21:00:00Z",
+  referencePriceAt: new Date().toISOString(),
   runAuthorizationId: "run-1",
   rationale: "fixture",
 };
@@ -42,7 +43,7 @@ const intent: FinanceExecutionIntent = {
 const paper = createPaperExecutionAdapter({ instruments: ["AAPL"] });
 
 function request(overrides: Partial<PlacementRequest> = {}): PlacementRequest {
-  return {
+  const input: PlacementRequest = {
     mode: "live_execution",
     intent,
     budget,
@@ -53,6 +54,19 @@ function request(overrides: Partial<PlacementRequest> = {}): PlacementRequest {
     recordedAt: "2026-09-18T03:00:00Z",
     ...overrides,
   };
+  const adapter = input.adapters.find((candidate) => candidate.id === input.executionAdapterId);
+  if (adapter) {
+    return {
+      ...input,
+      safetyContext: syntheticSafetyContext({
+        intent: input.intent,
+        budget: input.budget,
+        adapterId: adapter.id,
+        venue: adapter.venue,
+      }),
+    };
+  }
+  return input;
 }
 
 function spyAdapter(): { adapter: FinanceExecutionAdapter; invoke: ReturnType<typeof vi.fn> } {
@@ -61,6 +75,7 @@ function spyAdapter(): { adapter: FinanceExecutionAdapter; invoke: ReturnType<ty
     fillPrice: 1,
     filledAt: "2026-09-18T03:00:00Z",
     venueRef: "spy",
+    terminalOrderIdentity: { orderId: "synthetic-terminal", terminal: true as const },
   }));
   return {
     invoke,
@@ -135,7 +150,7 @@ describe("finance execution adapter seam", () => {
     expect(result.receipt).toBeUndefined();
   });
 
-  it("admits an order under the default budget without deleting the allowlist", async () => {
+  it("preserves the default allowlist but requires a complete risk-increase budget", async () => {
     expect(DEFAULT_FINANCE_RISK_BUDGET.allowedInstruments).toEqual([
       FINANCE_RISK_BUDGET_ANY_INSTRUMENT,
     ]);
@@ -143,8 +158,8 @@ describe("finance execution adapter seam", () => {
       request({ budget: DEFAULT_FINANCE_RISK_BUDGET, adapters: [paper] }),
     );
 
-    expect(result.status).toBe("placed");
-    expect(result.refusalReasons).toEqual([]);
+    expect(result.status).toBe("refused");
+    expect(result.refusalReasons).toContain("execution_safety_increase_requires_complete_budget");
   });
 
   it("still refuses when the allowlist is explicitly empty or names another instrument", async () => {
@@ -204,7 +219,7 @@ describe("finance execution adapter seam", () => {
     ]);
   });
 
-  it("leaves an attended run's caps opt-in: a missing cap is not a boundary", async () => {
+  it("does not let attended mode bypass complete risk-increase caps", async () => {
     const bare = await placeFinanceOrder(
       request({
         budget: {
@@ -217,8 +232,8 @@ describe("finance execution adapter seam", () => {
       }),
     );
 
-    expect(bare.status).toBe("placed");
-    expect(bare.refusalReasons).toEqual([]);
+    expect(bare.status).toBe("refused");
+    expect(bare.refusalReasons).toContain("execution_safety_increase_requires_complete_budget");
     expect(missingUnattendedCaps({ ...budget, automation: "attended" })).toEqual([]);
   });
 

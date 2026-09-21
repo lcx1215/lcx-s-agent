@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPaperExecutionAdapter, placeFinanceOrder } from "../finance-execution-adapter.js";
+import { syntheticSafetyContext } from "../finance-execution-safety.test-support.js";
 import type { FinancePaperRunRequest } from "../finance-paper-run.js";
 const mocks = vi.hoisted(() => ({ run: vi.fn() }));
 vi.mock("../finance-paper-run.js", () => ({ runFinancePaperOrder: mocks.run }));
@@ -16,7 +17,7 @@ vi.mock("../finance-state-dir.js", () => ({
 import { createFinancePaperRankPlaceTool } from "./finance-paper-rank-place-tool.js";
 let root: string;
 const day = "2026-09-22";
-const observation = "2026-09-21T18:42:03.000Z";
+const observation = "2026-09-22T12:00:00.000Z";
 const sample = {
   asOf: `${day}T00:00:00Z`,
   instrument: "AAPL",
@@ -36,19 +37,26 @@ beforeEach(() => {
       id: "fixture",
       instruments: request.instruments,
     });
+    const intent = {
+      intentId: `fixture:${request.conclusion.instrument}`,
+      instrument: request.conclusion.instrument!,
+      side: "buy",
+      orderType: "market",
+      quantity: 1,
+      referencePrice: request.market.referencePrice,
+      referencePriceAt: request.market.referencePriceAt,
+      runAuthorizationId: request.runAuthorizationId,
+      rationale: "fixture",
+    } as const;
     const result = await placeFinanceOrder({
       mode: "live_execution",
-      intent: {
-        intentId: `fixture:${request.conclusion.instrument}`,
-        instrument: request.conclusion.instrument!,
-        side: "buy",
-        orderType: "market",
-        quantity: 1,
-        referencePrice: request.market.referencePrice,
-        referencePriceAt: request.market.referencePriceAt,
-        runAuthorizationId: request.runAuthorizationId,
-        rationale: "fixture",
-      },
+      intent,
+      safetyContext: request.createSafetyContext?.({
+        intent,
+        budget: request.budget,
+        adapterId: adapter.id,
+        venue: adapter.venue,
+      }),
       budget: request.budget,
       adapters: [adapter],
       executionAdapterId: adapter.id,
@@ -69,7 +77,18 @@ async function run(rows: unknown[], place = true, maxOrdersPerRun = 3) {
     path.join(root, "research-samples.jsonl"),
     rows.map((row) => JSON.stringify(row)).join("\n"),
   );
-  const result = await createFinancePaperRankPlaceTool().execute("fixture", {
+  const result = await createFinancePaperRankPlaceTool({
+    equity: 100_000,
+    runAuthorizationId: "synthetic",
+    createSafetyContext: syntheticSafetyContext,
+    budget: {
+      automation: "unattended",
+      allowedInstruments: ["*"],
+      maxOrderNotional: 60_000,
+      maxInstrumentNotional: 60_000,
+      maxOrdersPerRun,
+    },
+  }).execute("fixture", {
     workspaceDir: root,
     day,
     mode: "explore",
@@ -107,5 +126,59 @@ describe("ranked internal-paper price evidence", () => {
     expect(mocks.run.mock.calls.map(([request]) => request.ordersPlacedThisRun)).toEqual([0, 1]);
     expect(result.placedCount).toBe(1);
     expect(result.results[1].status).toBe("refused");
+  });
+});
+
+it("model JSON cannot authorize placement or select attended execution", async () => {
+  fs.writeFileSync(path.join(root, "research-samples.jsonl"), JSON.stringify(sample));
+  const result = await createFinancePaperRankPlaceTool().execute("fixture", {
+    workspaceDir: root,
+    day,
+    mode: "explore",
+    place: true,
+    automation: "attended",
+    runAuthorizationId: "invented",
+    maxOrdersPerRun: 1000,
+  });
+  expect(mocks.run).not.toHaveBeenCalled();
+  expect(JSON.stringify(result.details)).toContain(
+    "trusted controller authorization is unavailable",
+  );
+});
+
+it("keeps controller ceilings and unattended mode when model parameters try to expand authority", async () => {
+  fs.writeFileSync(path.join(root, "research-samples.jsonl"), JSON.stringify(sample));
+  await createFinancePaperRankPlaceTool({
+    equity: 100_000,
+    runAuthorizationId: "controller-plan",
+    createSafetyContext: syntheticSafetyContext,
+    budget: {
+      automation: "unattended",
+      allowedInstruments: ["AAPL"],
+      maxOrderNotional: 500,
+      maxInstrumentNotional: 1000,
+      maxOrdersPerRun: 1,
+    },
+  }).execute("fixture", {
+    workspaceDir: root,
+    day,
+    mode: "explore",
+    place: true,
+    automation: "attended",
+    equity: 1e12,
+    runAuthorizationId: "invented",
+    maxOrderNotional: 1e12,
+    maxInstrumentNotional: 1e12,
+    maxOrdersPerRun: 1000,
+  });
+  expect(mocks.run.mock.calls[0][0]).toMatchObject({
+    equity: 100_000,
+    runAuthorizationId: "controller-plan",
+    budget: {
+      automation: "unattended",
+      maxOrderNotional: 500,
+      maxInstrumentNotional: 1000,
+      maxOrdersPerRun: 1,
+    },
   });
 });

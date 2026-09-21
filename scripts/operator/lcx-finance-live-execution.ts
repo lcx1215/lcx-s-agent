@@ -1,3 +1,4 @@
+import { createAlpacaExecutionAdapter } from "../../src/agents/finance-alpaca-execution-adapter.js";
 /**
  * Owner entry for `finance_live_execution_waterflow`.
  *
@@ -30,8 +31,6 @@
  * `resolveFinancePositionLedgerLocation` the agent's read tool uses (`--ledger-dir`, else
  * `LCX_FINANCE_STATE_DIR`, else the workspace default), and the payload always reports which.
  */
-
-import { createAlpacaExecutionAdapter } from "../../src/agents/finance-alpaca-execution-adapter.js";
 import {
   createPaperExecutionAdapter,
   DEFAULT_FINANCE_RISK_BUDGET,
@@ -43,6 +42,7 @@ import {
   missingUnattendedCaps,
   placeFinanceOrder,
 } from "../../src/agents/finance-execution-adapter.ts";
+import type { FinanceExecutionSafetyContextFactory } from "../../src/agents/finance-execution-safety.js";
 import { evaluateFinanceMandate } from "../../src/agents/finance-mandate.js";
 import {
   appendFinanceExecutionReceipt,
@@ -264,8 +264,9 @@ export function parseArgs(args: readonly string[]): Options {
           "Omitting --allow-instrument leaves the run open by instrument; repeating it narrows " +
           "the run to the named instruments. Each --max-* cap is optional and enforced only when " +
           "declared, EXCEPT under --automation unattended, where all three are required: a run " +
-          "with nobody watching that declines to name a ceiling has none. Without --write-ledger " +
-          "nothing is persisted.",
+          "with nobody watching that declines to name a ceiling has none. Placement also requires " +
+          "an internal controller with verified facts; CLI flags alone cannot authorize it. " +
+          "Execution safety claims persist even without --write-ledger.",
       );
     } else {
       throw new Error(`unknown argument: ${arg}`);
@@ -274,12 +275,20 @@ export function parseArgs(args: readonly string[]): Options {
   return options;
 }
 
-export async function buildFinanceLiveExecutionPayload(options: Options) {
+export async function buildFinanceLiveExecutionPayload(
+  options: Options,
+  control: { createSafetyContext?: FinanceExecutionSafetyContextFactory } = {},
+) {
   if (!options.assetClass?.trim()) {
     throw new Error("--asset-class is required; unknown strategy class cannot bypass the mandate");
   }
   if (options.drawdownPct === undefined) {
     throw new Error("--drawdown-pct is required; missing drawdown is unknown, not zero");
+  }
+  if (!control.createSafetyContext) {
+    throw new Error(
+      "execution_safety_context_required: trusted controller facts unavailable; CLI flags cannot authorize execution",
+    );
   }
   // The allowlist narrows only when the caller names instruments. With none named the run is
   // open by instrument, and both checks in the adapter seam stay in force — so an explicit
@@ -346,6 +355,20 @@ export async function buildFinanceLiveExecutionPayload(options: Options) {
     }
   }
 
+  const intent: Parameters<typeof placeFinanceOrder>[0]["intent"] = {
+    intentId: "owner-entry-intent-1",
+    instrument: options.instrument,
+    side: options.side,
+    orderType: options.orderType,
+    quantity: options.quantity,
+    ...(options.limitPrice === undefined ? {} : { limitPrice: options.limitPrice }),
+    ...(options.stopPrice === undefined ? {} : { stopPrice: options.stopPrice }),
+    referencePrice: options.referencePrice ?? Number.NaN,
+    referencePriceAt: options.asOf,
+    runAuthorizationId: options.runAuthorization,
+    rationale: options.rationale,
+  };
+
   const placement = await placeFinanceOrder({
     mode: "live_execution",
     adapters,
@@ -353,19 +376,13 @@ export async function buildFinanceLiveExecutionPayload(options: Options) {
     budget,
     committedInstrumentNotional: 0,
     ordersPlacedThisRun: 0,
-    intent: {
-      intentId: "owner-entry-intent-1",
-      instrument: options.instrument,
-      side: options.side,
-      orderType: options.orderType,
-      quantity: options.quantity,
-      ...(options.limitPrice === undefined ? {} : { limitPrice: options.limitPrice }),
-      ...(options.stopPrice === undefined ? {} : { stopPrice: options.stopPrice }),
-      referencePrice: options.referencePrice ?? Number.NaN,
-      referencePriceAt: options.asOf,
-      runAuthorizationId: options.runAuthorization,
-      rationale: options.rationale,
-    },
+    intent,
+    safetyContext: control.createSafetyContext?.({
+      intent,
+      budget,
+      adapterId: executionAdapterId,
+      venue: adapters[0].venue,
+    }),
   });
 
   const receipts: readonly FinanceExecutionReceipt[] =

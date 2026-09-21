@@ -5,6 +5,7 @@ import {
   type FinanceExecutionReceipt,
   type FinanceRiskBudget,
 } from "./finance-execution-adapter.js";
+import type { FinanceExecutionSafetyContextFactory } from "./finance-execution-safety.js";
 import {
   compileExecutionIntent,
   type FinanceResearchConclusion,
@@ -259,6 +260,7 @@ export async function fetchAlpacaVenueState(
 }
 
 export type FinanceAlpacaRunRequest = Readonly<{
+  createSafetyContext?: FinanceExecutionSafetyContextFactory;
   conclusion: FinanceResearchConclusion;
   signal?: AbortSignal;
   /** Observed price and the time it belongs to. "Now" is never assumed. */
@@ -308,6 +310,14 @@ export async function runFinanceAlpacaOrder(
     };
   }
 
+  if (!request.createSafetyContext) {
+    return {
+      ok: false,
+      stage: "place",
+      refusals: ["execution_safety_context_required: trusted controller facts unavailable"],
+    };
+  }
+
   const compiled = compileExecutionIntent({
     conclusion: request.conclusion,
     market: request.market,
@@ -337,6 +347,12 @@ export async function runFinanceAlpacaOrder(
 
   const placed = await placeFinanceOrder({
     mode: "live_execution",
+    safetyContext: request.createSafetyContext?.({
+      intent: compiled.intent,
+      budget: request.budget,
+      adapterId: adapter.id,
+      venue: adapter.venue,
+    }),
     signal: request.signal,
     intent: compiled.intent,
     budget: request.budget,
