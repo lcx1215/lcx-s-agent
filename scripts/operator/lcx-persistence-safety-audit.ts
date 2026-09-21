@@ -78,11 +78,6 @@ const EXEMPTIONS: ReadonlyArray<{
     why: "cache: losing it costs a refetch, and the source warns on read failure",
   },
   {
-    file: "src/discord/monitor/thread-bindings.state.ts",
-    kind: "read-then-overwrite",
-    why: "bindings are rebuilt from the channel on next observe; the source warns on read failure",
-  },
-  {
     file: "src/providers/github-copilot-token.ts",
     kind: "read-then-overwrite",
     why: "token cache: a miss re-fetches the token; the source warns on read failure",

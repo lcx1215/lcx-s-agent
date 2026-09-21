@@ -10,7 +10,8 @@ import {
 } from "../../config/identity-migration.js";
 import { resolveStateDir } from "../../config/paths.js";
 import type { LcxIdentityMigrationPlan } from "../../config/paths.js";
-import { loadJsonFile, saveJsonFile } from "../../infra/json-file.js";
+import { loadJsonFileDetailed, saveJsonFile } from "../../infra/json-file.js";
+import { logWarn } from "../../logger.js";
 import { normalizeAccountId, resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import {
   DEFAULT_THREAD_BINDING_IDLE_TIMEOUT_MS,
@@ -34,6 +35,14 @@ type ThreadBindingsGlobalState = {
   persistByAccountId: Map<string, boolean>;
   loadedBindings: boolean;
   lastPersistedAtMs: number;
+  /**
+   * Set when the file on disk exists but could not be read or parsed. Bindings
+   * only exist in that file, and a failed load looks like "no bindings" to
+   * every caller, so persisting from that state would replace the only copy
+   * with an empty document. Writes stay refused until it clears.
+   */
+  blockedPersistReason: string | null;
+  warnedWriteBlocked: boolean;
 };
 
 // Plugin hooks can load this module via Jiti while core imports it via ESM.
@@ -57,6 +66,8 @@ function createThreadBindingsGlobalState(): ThreadBindingsGlobalState {
     persistByAccountId: new Map<string, boolean>(),
     loadedBindings: false,
     lastPersistedAtMs: 0,
+    blockedPersistReason: null,
+    warnedWriteBlocked: false,
   };
 }
 
@@ -502,6 +513,15 @@ export function saveBindingsToDisk(params: { force?: boolean; minIntervalMs?: nu
   ) {
     return;
   }
+  if (THREAD_BINDINGS_STATE.blockedPersistReason) {
+    if (!THREAD_BINDINGS_STATE.warnedWriteBlocked) {
+      THREAD_BINDINGS_STATE.warnedWriteBlocked = true;
+      logWarn(
+        `[discord-thread-bindings] refusing to persist: ${resolveThreadBindingsPath()} could not be read (${THREAD_BINDINGS_STATE.blockedPersistReason}) and would be replaced by an empty document`,
+      );
+    }
+    return;
+  }
   const payload = buildPersistedThreadBindingsPayload();
   saveJsonFile(resolveThreadBindingsPath(), payload);
   THREAD_BINDINGS_STATE.lastPersistedAtMs = now;
@@ -570,7 +590,21 @@ export function ensureBindingsLoaded() {
   BINDINGS_BY_SESSION_KEY.clear();
   REUSABLE_WEBHOOKS_BY_ACCOUNT_CHANNEL.clear();
 
-  const raw = loadJsonFile(resolveThreadBindingsPath());
+  const bindingsPath = resolveThreadBindingsPath();
+  const loaded = loadJsonFileDetailed(bindingsPath);
+  if (loaded.status !== "ok") {
+    // "absent" is a normal first run: there is nothing on disk to protect.
+    // "unreadable"/"corrupt" mean the file is there and holds bindings we
+    // cannot see, so remember that and refuse to write over it below.
+    if (loaded.status !== "absent") {
+      THREAD_BINDINGS_STATE.blockedPersistReason = `${loaded.status}/${loaded.code}`;
+      logWarn(
+        `[discord-thread-bindings] cannot read ${bindingsPath} (${loaded.status}/${loaded.code}); refusing to persist until it is readable again`,
+      );
+    }
+    return;
+  }
+  const raw = loaded.value;
   if (!raw || typeof raw !== "object") {
     return;
   }
@@ -638,4 +672,6 @@ export function resetThreadBindingsForTests() {
   PERSIST_BY_ACCOUNT_ID.clear();
   THREAD_BINDINGS_STATE.loadedBindings = false;
   THREAD_BINDINGS_STATE.lastPersistedAtMs = 0;
+  THREAD_BINDINGS_STATE.blockedPersistReason = null;
+  THREAD_BINDINGS_STATE.warnedWriteBlocked = false;
 }
