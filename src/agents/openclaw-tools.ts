@@ -55,6 +55,7 @@ import { createFinanceResearchRunTool } from "./tools/finance-research-run-tool.
 import { createFinanceResearchRunsReadTool } from "./tools/finance-research-runs-read-tool.js";
 import { createFinanceResearchSourceWorkbenchTool } from "./tools/finance-research-source-workbench-tool.js";
 import { createFinanceSourceHealthReadTool } from "./tools/finance-source-health-read-tool.js";
+import { createFinanceSourceSweepReadTool } from "./tools/finance-source-sweep-read-tool.js";
 import { createFinanceStrategyRuleLedgerReadTool } from "./tools/finance-strategy-rule-ledger-read-tool.js";
 import { createFinanceThesisLedgerReadTool } from "./tools/finance-thesis-ledger-read-tool.js";
 import { createGatewayTool } from "./tools/gateway-tool.js";
@@ -272,6 +273,7 @@ export function createOpenClawTools(options?: {
     createFinanceResearchRunsReadTool(),
     createFinanceCalibrationReadTool(),
     createFinanceReflectionReadTool(),
+    createFinanceSourceSweepReadTool(),
     createFinanceThesisLedgerReadTool({ workspaceDir }),
     createFinanceStrategyRuleLedgerReadTool(),
     createLocalSpecialistTool({ workspaceDir }),

@@ -367,6 +367,15 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     includeInOpenClawGroup: true,
   },
   {
+    id: "finance_source_sweep_read",
+    label: "finance_source_sweep_read",
+    description:
+      "Probe every registered finance source and report which ones actually return data for a symbol right now, with record counts, including the ones that stayed silent. Capped by default and says so when the cap was hit",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
     id: "finance_position_ledger_read",
     label: "finance_position_ledger_read",
     description:
