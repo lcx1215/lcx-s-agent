@@ -51,9 +51,40 @@ export function resolveModel(
   authStorage: AuthStorage;
   modelRegistry: ModelRegistry;
 } {
+  if (options?.readOnly) {
+    assertReadOnlyModelData(cfg?.models?.providers);
+  }
   const resolvedAgentDir = agentDir ?? resolveOpenClawAgentDir();
   const authStorage = discoverAuthStorage(resolvedAgentDir, options);
-  const modelRegistry = discoverModels(authStorage, resolvedAgentDir);
+  const modelRegistry = discoverModels(authStorage, resolvedAgentDir, options);
+  if (options?.readOnly) {
+    const configuredProvider = Object.entries(cfg?.models?.providers ?? {}).find(
+      ([id]) => normalizeProviderId(id) === normalizeProviderId(provider),
+    )?.[1];
+    const configuredModel =
+      configuredProvider?.models.find((entry) => entry.id === modelId) ??
+      (configuredProvider ? modelRegistry.find(provider, modelId) : undefined);
+    if (configuredProvider && configuredModel) {
+      // Pure-data construction preserves trusted provider overrides without SDK
+      // registration, credential helpers, or loading unselected ambient models.
+      const headers = { ...configuredProvider.headers, ...configuredModel.headers };
+      const resolvedHeaders = Object.fromEntries(
+        Object.entries(headers).map(([key, value]) => [key, process.env[value] || value]),
+      );
+      if (configuredProvider.authHeader && typeof configuredProvider.apiKey === "string") {
+        const key = process.env[configuredProvider.apiKey] || configuredProvider.apiKey;
+        resolvedHeaders.Authorization = `Bearer ${key}`;
+      }
+      const model = normalizeModelCompat({
+        ...configuredModel,
+        provider,
+        api: configuredModel.api ?? configuredProvider.api ?? "openai-completions",
+        baseUrl: configuredProvider.baseUrl,
+        headers: resolvedHeaders,
+      } as Model<Api>);
+      return { model, authStorage, modelRegistry };
+    }
+  }
   const model = modelRegistry.find(provider, modelId) as Model<Api> | null;
 
   if (!model) {
@@ -153,4 +184,23 @@ function buildUnknownModelError(provider: string, modelId: string): string {
   const base = `Unknown model: ${provider}/${modelId}`;
   const hint = LOCAL_PROVIDER_HINTS[provider.toLowerCase()];
   return hint ? `${base}. ${hint}` : base;
+}
+
+/** Reject executable config syntax before any SDK resolver sees native config. */
+function assertReadOnlyModelData(value: unknown): void {
+  if (typeof value === "string") {
+    if (value.startsWith("!")) {
+      throw new Error("Read-only model configuration cannot execute credential/header commands");
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      assertReadOnlyModelData(entry);
+    }
+  } else if (value && typeof value === "object") {
+    for (const entry of Object.values(value)) {
+      assertReadOnlyModelData(entry);
+    }
+  }
 }

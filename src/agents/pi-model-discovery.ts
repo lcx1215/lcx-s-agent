@@ -161,6 +161,15 @@ export function discoverAuthStorage(
   return createAuthStorage(PiAuthStorageClass, authPath, credentials, options?.readOnly);
 }
 
-export function discoverModels(authStorage: PiAuthStorage, agentDir: string): PiModelRegistry {
-  return new PiModelRegistryClass(authStorage, path.join(agentDir, "models.json"));
+export function discoverModels(
+  authStorage: PiAuthStorage,
+  agentDir: string,
+  options?: { readOnly?: boolean },
+): PiModelRegistry {
+  // The SDK explicitly treats an empty path as built-ins only. Never feed native
+  // runs ambient models.json: SDK header/API-key resolution executes !commands.
+  return new PiModelRegistryClass(
+    authStorage,
+    options?.readOnly ? "" : path.join(agentDir, "models.json"),
+  );
 }
