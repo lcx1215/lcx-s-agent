@@ -34,10 +34,19 @@ const policy = (
 
 /** Limits are shared across all routes in a provider group, never multiplied by route count. */
 export const FINANCE_SOURCE_QUOTA_POLICIES: readonly FinanceQuotaPolicy[] = [
+  // FMP Basic is documented as a *per day* allowance ("250 Calls / Day"), not a rolling
+  // 24-hour one. Modelling it as rolling cost a full extra day of silence: 195 calls made
+  // between 13:00Z and 15:00Z held the local budget at 250/250 for ~24h after the server had
+  // already rolled over, while a direct call to /stable/historical-price-eod/full still
+  // returned HTTP 200 with real bars. The boundary is the vendor's and is not observable from
+  // here (FMP sends no rate-limit headers), so UTC midnight is the documented reading. If that
+  // reading is wrong the response body says "daily limit" and `classifyFinanceQuotaBody`
+  // converts it into a bounded cooldown -- an honest, attributable refusal instead of a silent
+  // day-long blackout that presents downstream as "this source has no opinion".
   policy(
     "fmp",
     ["financialmodelingprep.com"],
-    [{ limit: 250, durationMs: day }],
+    [{ limit: 250, durationMs: day, alignment: "utc_day" }],
     1_001,
     "observed_and_documented",
     "https://site.financialmodelingprep.com/developer/docs/pricing",
@@ -193,6 +202,82 @@ export const FINANCE_SOURCE_QUOTA_POLICIES: readonly FinanceQuotaPolicy[] = [
     provider: "gdelt",
   },
 ];
+
+/**
+ * Quota is scarce per provider *per day*, and one greedy consumer can silently starve the
+ * others: a single diagnostics sweep took 195 of FMP's 250 calls in two hours, after which the
+ * production sampling that feeds the decision loop got `budget_exhausted` for the rest of the
+ * day and presented downstream as "this source has no opinion". A single shared counter cannot
+ * answer "who spent it", and an answer of "nobody knows" is not an allocation.
+ *
+ * Every call therefore carries the purpose it serves, and the day budget is split by purpose.
+ * Protection only binds under real contention -- see `financeLaneAllowance`.
+ */
+export const FINANCE_QUOTA_LANES = ["production", "calibration", "diagnostics"] as const;
+export type FinanceQuotaLane = (typeof FINANCE_QUOTA_LANES)[number];
+
+/** Calls that never declare a purpose are production: that is what the loop runs on. */
+export const FINANCE_QUOTA_DEFAULT_LANE: FinanceQuotaLane = "production";
+
+/**
+ * Fraction of a provider's day budget protected for each lane. The remainder is a shared
+ * reserve any lane may draw from once its own share is spent.
+ */
+export const FINANCE_QUOTA_LANE_SHARES: Readonly<Record<FinanceQuotaLane, number>> = Object.freeze({
+  production: 0.5,
+  calibration: 0.2,
+  diagnostics: 0.1,
+});
+
+export function isFinanceQuotaLane(value: unknown): value is FinanceQuotaLane {
+  return typeof value === "string" && (FINANCE_QUOTA_LANES as readonly string[]).includes(value);
+}
+
+/** The window that actually makes a provider scarce. Minute-scale windows pace, they do not run out. */
+export function financeQuotaDayWindow(policy: FinanceQuotaPolicy): FinanceQuotaWindow | undefined {
+  return policy.windows.find((window) => window.durationMs >= 86_400_000);
+}
+
+export function financeQuotaReserveShare(): number {
+  const claimed = FINANCE_QUOTA_LANES.reduce(
+    (sum, lane) => sum + FINANCE_QUOTA_LANE_SHARES[lane],
+    0,
+  );
+  return Math.max(0, 1 - claimed);
+}
+
+export type FinanceLaneAllowance = Readonly<{
+  /** Calls this lane can make before it has to borrow from the shared reserve. */
+  own: number;
+  /** Additional calls any lane may draw once its own share is spent. */
+  reserve: number;
+  /**
+   * True when no other lane has spent anything in the window. Protecting shares against lanes
+   * that are not running would waste the budget, so the lane cap is lifted entirely and only
+   * the provider's own limit binds.
+   */
+  uncontended: boolean;
+}>;
+
+/**
+ * Split a provider's day budget for one lane.
+ *
+ * `usedByLane` is the whole window's spend keyed by lane. A lane gets its own share plus the
+ * shared reserve, and -- when it is the only lane that has spent anything -- the entire
+ * remaining provider budget, because holding 50% idle "just in case" is how a scarce free tier
+ * gets wasted.
+ */
+export function financeLaneAllowance(params: {
+  dayLimit: number;
+  lane: FinanceQuotaLane;
+  usedByLane: Readonly<Record<string, number>>;
+}): FinanceLaneAllowance {
+  const own = Math.floor(params.dayLimit * FINANCE_QUOTA_LANE_SHARES[params.lane]);
+  const reserve = Math.floor(params.dayLimit * financeQuotaReserveShare());
+  const others = FINANCE_QUOTA_LANES.filter((lane) => lane !== params.lane);
+  const uncontended = others.every((lane) => (params.usedByLane[lane] ?? 0) === 0);
+  return Object.freeze({ own, reserve, uncontended });
+}
 
 export type FinanceQuotaBodyLimit = "daily" | "monthly" | "rate";
 /** Only error-envelope fields are inspected; news text and numeric data cannot trigger this gate. */

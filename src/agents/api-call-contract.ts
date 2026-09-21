@@ -183,6 +183,24 @@ type CallContext = ApiTransportOptions & {
 };
 const context = new AsyncLocalStorage<CallContext>();
 
+/**
+ * Ambient attribution for the call in flight: which provider, which source adapter, which
+ * operation. Quota accounting reads this so a spent credit can be attributed to a consumer
+ * instead of being an anonymous tick on a shared counter.
+ */
+export function currentApiCallContext(): Readonly<{
+  provider: string;
+  source: string;
+  operation: string;
+}> {
+  const store = context.getStore();
+  return Object.freeze({
+    provider: store?.provider ?? "http",
+    source: store?.source ?? "public-source",
+    operation: store?.operation ?? "http_get",
+  });
+}
+
 export class ApiCallError extends Error {
   constructor(
     readonly kind: NonNullable<ApiCallReceipt["transportError"]>,

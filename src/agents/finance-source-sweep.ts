@@ -25,6 +25,7 @@ import {
   createFinanceMarketCollectionRegistry,
   runFinanceMarketCollectionRefresh,
 } from "./finance-market-collection-registry.js";
+import { withFinanceQuotaLane } from "./finance-source-quota.js";
 
 export type SweepRow = Readonly<{
   adapterId: string;
@@ -79,7 +80,23 @@ function keyFrom(env: Record<string, unknown>, name: string): string {
   return typeof value === "string" ? value : "";
 }
 
-export async function sweepFinanceSources(
+/**
+ * A sweep asks every registered adapter what it supports, which is measurement rather than the
+ * loop's own work. It therefore declares the `diagnostics` lane at the point of use: one
+ * afternoon's sweep spent 195 of FMP's 250 daily calls and left production sampling refused for
+ * the rest of the day, which read downstream as "this source has no opinion".
+ */
+export function sweepFinanceSources(
+  params: {
+    instrument?: string;
+    maxAttempts?: number;
+    env?: NodeJS.ProcessEnv;
+  } = {},
+): Promise<SweepResult> {
+  return withFinanceQuotaLane("diagnostics", () => sweepFinanceSourcesInner(params));
+}
+
+async function sweepFinanceSourcesInner(
   params: {
     instrument?: string;
     maxAttempts?: number;

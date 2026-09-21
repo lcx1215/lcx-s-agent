@@ -1,12 +1,25 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { withFileLock } from "../infra/file-lock.js";
-import { ApiCallError, parseApiRetryAfter, type ApiFetch } from "./api-call-contract.js";
+import {
+  ApiCallError,
+  currentApiCallContext,
+  parseApiRetryAfter,
+  type ApiFetch,
+} from "./api-call-contract.js";
 import {
   classifyFinanceQuotaBody,
+  financeLaneAllowance,
+  financeQuotaDayWindow,
+  FINANCE_QUOTA_DEFAULT_LANE,
+  FINANCE_QUOTA_LANES,
+  FINANCE_QUOTA_LANE_SHARES,
   FINANCE_SOURCE_QUOTA_POLICIES,
+  isFinanceQuotaLane,
+  type FinanceQuotaLane,
   type FinanceQuotaPolicy,
 } from "./finance-source-quota-policy.js";
 import {
@@ -15,7 +28,15 @@ import {
   resolveFinanceStateDir,
 } from "./finance-state-dir.js";
 
-type QuotaEvent = { at: number; weight: number; reservationId?: string };
+/** `lane`/`source` are absent on pre-attribution files; they are never required to read a book. */
+type QuotaEvent = {
+  at: number;
+  weight: number;
+  reservationId?: string;
+  lane?: FinanceQuotaLane;
+  source?: string;
+  fromReserve?: boolean;
+};
 type QuotaState = {
   schemaVersion: 1;
   events: QuotaEvent[];
@@ -29,6 +50,37 @@ type QuotaState = {
 const serial = new Map<string, Promise<void>>();
 const minute = 60_000;
 const day = 86_400_000;
+
+const laneContext = new AsyncLocalStorage<FinanceQuotaLane>();
+
+/**
+ * Declare which purpose the calls inside `operation` serve.
+ *
+ * This is the "record it where you use it" half of quota allocation: the adapter that spends a
+ * credit names the budget it spends from, so a diagnostics sweep can be capped without capping
+ * production, and a spent credit can be attributed afterwards. Anything not wrapped is treated
+ * as `production` -- the loop's own work is the default, not an escape hatch.
+ */
+export function withFinanceQuotaLane<T>(lane: FinanceQuotaLane, operation: () => Promise<T>) {
+  return laneContext.run(lane, operation);
+}
+
+/** Window cutoffs are shared by the per-window accounting and the per-lane accounting. */
+function windowCutoff(window: { durationMs: number; alignment?: "utc_day" }, time: number) {
+  return window.alignment === "utc_day" ? Math.floor(time / day) * day : time - window.durationMs;
+}
+
+function spendByLane(events: readonly QuotaEvent[], cutoff: number): Record<string, number> {
+  const spend: Record<string, number> = {};
+  for (const event of events) {
+    if (event.at < cutoff) {
+      continue;
+    }
+    const lane = event.lane ?? FINANCE_QUOTA_DEFAULT_LANE;
+    spend[lane] = (spend[lane] ?? 0) + event.weight;
+  }
+  return spend;
+}
 
 async function exclusive<T>(file: string, operation: () => Promise<T>): Promise<T> {
   const previous = serial.get(file) ?? Promise.resolve();
@@ -161,6 +213,12 @@ export function createFinanceQuotaGuard(
           (event) =>
             !Number.isFinite(event.at) || !Number.isFinite(event.weight) || event.weight <= 0,
         ) ||
+        data.events.some(
+          (event) =>
+            (event.lane !== undefined && !isFinanceQuotaLane(event.lane)) ||
+            (event.source !== undefined && typeof event.source !== "string") ||
+            (event.fromReserve !== undefined && typeof event.fromReserve !== "boolean"),
+        ) ||
         !Number.isFinite(data.nextStartAt) ||
         !Number.isFinite(data.blockedUntil) ||
         (data.importedProbeFiles !== undefined &&
@@ -231,7 +289,15 @@ export function createFinanceQuotaGuard(
             continue;
           }
           seen.add(call.callId);
-          state.events.push({ at, weight: policy.id === "binance" ? 2 : 1 });
+          // Probe files are written by the limit probe, which is measurement rather than the
+          // loop's own work. Importing them as unlabelled would bill them to `production` and
+          // then cap production for a sweep's spending.
+          state.events.push({
+            at,
+            weight: policy.id === "binance" ? 2 : 1,
+            lane: "diagnostics",
+            source: typeof probe.adapterId === "string" ? probe.adapterId : undefined,
+          });
           if (call.rateLimited || observation.bodyRateLimited) {
             const cooldown = policy.id === "alpha_vantage" ? day : minute;
             state.blockedUntil = Math.max(state.blockedUntil, at + (call.retryAfterMs ?? cooldown));
@@ -276,10 +342,12 @@ export function createFinanceQuotaGuard(
     let serverResetAt: number | undefined;
     for (;;) {
       signal?.throwIfAborted();
+      let usedReserve = false;
       const waitMs = await mutate(
         policy,
         (state) => {
           const time = now();
+          const lane = laneContext.getStore() ?? FINANCE_QUOTA_DEFAULT_LANE;
           if (state.blockedUntil > time) {
             throw new ApiCallError("budget_exhausted", undefined, state.blockedUntil - time);
           }
@@ -322,6 +390,48 @@ export function createFinanceQuotaGuard(
               wait = Math.max(wait, resetAt - time);
             }
           }
+          // Per-lane allocation. Only providers whose budget actually runs out (a day-scale
+          // window) are split; minute-scale windows pace throughput and have nothing to divide.
+          const dayWindow = financeQuotaDayWindow(policy);
+          if (dayWindow) {
+            const cutoff = windowCutoff(dayWindow, time);
+            const inDay = state.events.filter((event) => event.at >= cutoff);
+            const spend = spendByLane(state.events, cutoff);
+            const allowance = financeLaneAllowance({
+              dayLimit: dayWindow.limit,
+              lane,
+              usedByLane: spend,
+            });
+            const usedByThisLane = spend[lane] ?? 0;
+            if (!allowance.uncontended && usedByThisLane + weight > allowance.own) {
+              const reserveUsed = inDay
+                .filter((event) => event.fromReserve === true)
+                .reduce((sum, event) => sum + event.weight, 0);
+              // Marginal need, not cumulative: `reserveUsed` already counts everything this
+              // lane previously borrowed, so adding the cumulative overspend to it would
+              // charge each borrowed credit twice and cut the reserve in half.
+              const need =
+                Math.max(0, usedByThisLane + weight - allowance.own) -
+                Math.max(0, usedByThisLane - allowance.own);
+              if (reserveUsed + need > allowance.reserve) {
+                const refusal = new ApiCallError(
+                  "budget_exhausted",
+                  undefined,
+                  Math.max(1, cutoff + dayWindow.durationMs - time),
+                );
+                // Name the lane and the numbers. "budget_exhausted" on its own reads as
+                // "this source is out of credits", which is a different claim than
+                // "your sweep spent the diagnostics share" -- and the first one gets
+                // believed, silently, all the way down the pipeline.
+                refusal.message =
+                  `API budget_exhausted: lane "${lane}" has spent ${usedByThisLane}/${allowance.own}` +
+                  ` of ${policy.id}'s day budget and the shared reserve is spent` +
+                  ` (${reserveUsed}/${allowance.reserve} used, other lanes active)`;
+                throw refusal;
+              }
+              usedReserve = need > 0;
+            }
+          }
           if (policy.tokenBucket) {
             const { capacity, refillPerSecond } = policy.tokenBucket;
             const tokens = Math.min(
@@ -343,7 +453,14 @@ export function createFinanceQuotaGuard(
             serverResetAt = state.serverBudget.resetAt;
           }
           reservedAt = time;
-          state.events.push({ at: time, weight, reservationId });
+          state.events.push({
+            at: time,
+            weight,
+            reservationId,
+            lane,
+            source: currentApiCallContext().source,
+            ...(usedReserve ? { fromReserve: true } : {}),
+          });
           state.nextStartAt = time + policy.minIntervalMs;
           if (state.tokens !== undefined) {
             state.tokens -= weight;
@@ -514,6 +631,39 @@ export function createFinanceQuotaGuard(
               localRemaining: Math.max(0, window.limit - used),
             };
           });
+          const dayWindow = financeQuotaDayWindow(policy);
+          const lanes = (() => {
+            if (!dayWindow) {
+              return [];
+            }
+            const cutoff = windowCutoff(dayWindow, time);
+            const inDay = state.events.filter((event) => event.at >= cutoff);
+            const spend = spendByLane(state.events, cutoff);
+            const totalUsed = inDay.reduce((sum, event) => sum + event.weight, 0);
+            const reserveUsed = inDay
+              .filter((event) => event.fromReserve === true)
+              .reduce((sum, event) => sum + event.weight, 0);
+            return FINANCE_QUOTA_LANES.map((lane) => {
+              const allowance = financeLaneAllowance({
+                dayLimit: dayWindow.limit,
+                lane,
+                usedByLane: spend,
+              });
+              const used = spend[lane] ?? 0;
+              return {
+                lane,
+                used,
+                share: FINANCE_QUOTA_LANE_SHARES[lane],
+                own: allowance.own,
+                reserveAvailable: Math.max(0, allowance.reserve - reserveUsed),
+                uncontended: allowance.uncontended,
+                remaining: allowance.uncontended
+                  ? Math.max(0, dayWindow.limit - totalUsed)
+                  : Math.max(0, allowance.own - used) +
+                    Math.max(0, allowance.reserve - reserveUsed),
+              };
+            });
+          })();
           const availableTokens = policy.tokenBucket
             ? Math.min(
                 policy.tokenBucket.capacity,
@@ -559,9 +709,10 @@ export function createFinanceQuotaGuard(
                 ? state.serverBudget
                 : undefined,
             windows,
+            lanes,
           };
         } catch {
-          return { ...base, state: "quota_state_unreadable", windows: [] };
+          return { ...base, state: "quota_state_unreadable", windows: [], lanes: [] };
         }
       }),
     );
