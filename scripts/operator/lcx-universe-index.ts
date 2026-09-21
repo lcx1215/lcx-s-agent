@@ -8,6 +8,7 @@ import {
   DEFAULT_WORKSPACE_DIR,
   DEFAULT_WORKSPACE_LOG_DIR,
   LCX_USER_HOME,
+  resolveLocalOperatorLatestPath,
   UNIVERSE_INDEX_LATEST_PATH,
 } from "./lcx-local-paths.ts";
 
@@ -781,7 +782,7 @@ async function main() {
     walkArtifacts(path.join(DEFAULT_WORKSPACE_DIR, "tmp"), nowMs),
     walkArtifacts(EXTERNAL_CHANNEL_RUNTIME_ROOT, nowMs),
     readJson(path.join(DEFAULT_WORKSPACE_DIR, "state", "lcx-governance-autopilot-latest.json")),
-    readJson(path.join(DEFAULT_WORKSPACE_DIR, "state", "lcx-local-operator-latest.json")),
+    readJson(resolveLocalOperatorLatestPath(repoRoot)),
   ]);
 
   const staleSnapshots = [

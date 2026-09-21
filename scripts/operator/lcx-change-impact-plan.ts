@@ -89,7 +89,7 @@ const PATH_RULES: PathRule[] = [
       /^src\/agents\/tools\/finance-research-runs-read-tool\.ts$/u,
       /^src\/agents\/tools\/quant-lab-tool\.ts$/u,
       /^src\/agents\/(?:quant-math-advanced|quant-math-inference|quant-math-foundations|finance-calculation-ledger)\.ts$/u,
-      /^scripts\/operator\/lcx-(?:finance-research(?:-run)?|caseflow-demo|finance-connector-probe)\.ts$/u,
+      /^scripts\/operator\/lcx-(?:finance-research(?:-run|-batch|-turn)?|finance-paper-rank|caseflow-demo|finance-connector-probe)\.ts$/u,
       /^src\/agents\/configured-finance-model-adapter\.ts$/u,
       /^docs\/experiments\/research\/finance-model-workflow\.md$/u,
       /^scripts\/operator\/finance-strategy-(?:method-benchmark|all-methods)\.ts$/u,

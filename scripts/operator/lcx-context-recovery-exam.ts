@@ -9,7 +9,7 @@ import { resolveSkillAutoCue } from "../../src/auto-reply/reply/skill-autocue.ts
 import { loadConfig } from "../../src/config/config.ts";
 import { CONFIG_DIR } from "../../src/utils.ts";
 import {
-  LOCAL_OPERATOR_LATEST_PATH,
+  resolveLocalOperatorLatestPath,
   SELF_REPAIR_HANDS_JSONL_PATH,
   SELF_REPAIR_HANDS_LATEST_PATH,
   SELF_REPAIR_HANDS_MARKDOWN_PATH,
@@ -18,7 +18,7 @@ import {
 const execFileAsync = promisify(execFile);
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(SCRIPT_DIR, "..", "..");
-const LOCAL_OPERATOR_LATEST = LOCAL_OPERATOR_LATEST_PATH;
+const LOCAL_OPERATOR_LATEST = resolveLocalOperatorLatestPath(repoRoot);
 const MAX_OPERATOR_STATE_AGE_MS = 3 * 60 * 60 * 1000;
 const REQUIRED_RUNTIME_SKILLS = [
   "agent-brain-eval",
@@ -1614,7 +1614,7 @@ async function main() {
       "node --import tsx scripts/operator/lcx-live-fadeout-audit.ts --json",
       "node --import tsx scripts/operator/lcx-problem-cluster-radar.ts --json",
       "node --import tsx scripts/operator/lcx-external-agent-upgrade-radar.ts --json",
-      `test -f ${LOCAL_OPERATOR_LATEST_PATH} && sed -n '1,220p' ${LOCAL_OPERATOR_LATEST_PATH}`,
+      `test -f ${LOCAL_OPERATOR_LATEST} && sed -n '1,220p' ${LOCAL_OPERATOR_LATEST}`,
     ],
     checks,
     actionableFailures: failed.map((check) => `${check.id}: ${check.summary}`),

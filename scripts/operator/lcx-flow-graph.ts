@@ -1804,6 +1804,7 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
     allowedPaths: [
       "scripts/operator/lcx-automation-repair-lock.ts",
       "test/lcx-automation-repair-lock.test.ts",
+      "test/lcx-local-operator-slot.test.ts",
     ],
   },
   {

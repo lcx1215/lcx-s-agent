@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -23,11 +24,32 @@ export const DEFAULT_GUARD_LOG_PATH = path.join(
   DEFAULT_WORKSPACE_LOG_DIR,
   "minimax-brain-training-guard-medium.jsonl",
 );
+export const LOCAL_OPERATOR_LATEST_BASENAME = "lcx-local-operator-latest.json";
 export const LOCAL_OPERATOR_LATEST_PATH = path.join(
   DEFAULT_WORKSPACE_DIR,
   "state",
-  "lcx-local-operator-latest.json",
+  LOCAL_OPERATOR_LATEST_BASENAME,
 );
+
+/**
+ * This snapshot describes ONE checkout's workflow surface, so it cannot live in
+ * a single global path: two worktrees of this repo share that path, overwrite
+ * each other's evidence, and then every window is judged against the OTHER
+ * checkout's flow graph - a mismatch neither side can ever fix. Each workspace
+ * keeps its own copy in its own gitignored `state/` dir instead.
+ */
+export function localOperatorLatestPathForWorkspace(workspaceDir: string): string {
+  return path.join(workspaceDir, "state", LOCAL_OPERATOR_LATEST_BASENAME);
+}
+
+/**
+ * Prefer the workspace's own snapshot. The shared global path is only a legacy
+ * fallback for checkouts whose operator loop still writes there.
+ */
+export function resolveLocalOperatorLatestPath(workspaceDir: string): string {
+  const scoped = localOperatorLatestPathForWorkspace(workspaceDir);
+  return fsSync.existsSync(scoped) ? scoped : LOCAL_OPERATOR_LATEST_PATH;
+}
 export const GOVERNANCE_AUTOPILOT_LATEST_PATH = path.join(
   DEFAULT_WORKSPACE_DIR,
   "state",
