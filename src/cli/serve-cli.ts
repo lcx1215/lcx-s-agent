@@ -330,7 +330,8 @@ export function readServeResultFailure(result: unknown): ServeResultFailure | un
     return undefined;
   }
   const meta = "meta" in result ? result.meta : undefined;
-  const metaRecord = typeof meta === "object" && meta !== null ? meta : undefined;
+  const metaRecord =
+    typeof meta === "object" && meta !== null ? (meta as Record<string, unknown>) : undefined;
   const resultError = readServeResultError(result);
   const readMetaFlag = (key: string) =>
     metaRecord !== undefined && key in metaRecord && metaRecord[key] === true;
