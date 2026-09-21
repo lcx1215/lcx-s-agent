@@ -122,6 +122,15 @@ append，不需要任何再整形（再整形就是两处漂移的起点）。�
 
 ⇒ **装配层的价值不是转格式，是在接缝处守住语义**（缺口 4 的真正落点）。
 
+**真实数据上的端到端实测（2026-09-21）**：`finance_bar_ledger read instrument=SPY limit=120`
+→ `chartBars` → `finance_chart_analysis`，返回 `observationCount 120`、`droppedBarCount 0`、
+`ATR14 6.545`、`maxDrawdownPct -4.49%`、`volatilityPct 0.828%`（日波动）、
+`support20 749.6` / `resistance20 775.3`。
+
+`0.828% × √252 ≈ 13.1%`（这一步换算是本文档做的，工具本身只报日波动）—— 与去重后重算的
+0.131 吻合，而重复未折叠时同一段是 0.080。**这条链是发现上面那个重复缺陷的地方，也是验证修好的地方。**
+注意工具**不报年化波动**，只报 `volatilityPct`；要年化得自己换，别把它当成年化值引用。
+
 ## 2.6 已有 API 的 MCP 接入（同花顺，2026-09-21）
 
 不新造供给，直接接 `finance-data-connectors.ts` 里已声明的端点：
@@ -279,6 +288,161 @@ barCount: 42150   recordCount: 17   markCount: 12
 (newest bar 2026-09-18, window starts 2026-09-20), so the range measures fall back to closes`
 
    生产复验（默认根，不带 `directory`）已确认这条出现在真实返回里。
+
+### 写方的根也必须钉死：调度器原来靠 cwd 碰巧对上（2026-09-21）
+
+两个根收敛之后还留着一个隐患：**agent 读的根来自配置 `env.vars`，而每天写账的调度器
+根本不读配置**。它之前是这么对齐的：
+
+- 调度器自己的账本（`lastFired` / `runs.jsonl` / pid）硬编码 `<repo>/state/finance`；
+- 它 spawn 的 cycle 靠 `resolveFinanceStateDir()` 从**自己的 cwd** 解析 —— 而 cwd 恰好
+  也是 `<repo>`（`spawn(..., { cwd: REPO_ROOT })`）。
+
+两处独立陈述同一件事，今天相等纯属巧合。任何一边变动（传了 `--dir`、shell 里 export 了
+`LCX_FINANCE_STATE_DIR`、从另一个 worktree 启动）都会**静默**分裂：cycle 写一本，agent 读
+另一本，而空账本和"平的账户"长得一样。更糟的是 **`--dir` 传给调度器会被静默忽略**
+（`forwardedArgs` 只认 `--place/--venue/--max-*`），意图最明确的那个输入反而最没用。
+
+已改（`scripts/operator/lcx-finance-scheduler.ts`）：
+
+1. 根在**调度器里解析一次**：`--dir` > 配置 `env.vars`（就是 agent 读的那份声明，
+   通过 `applyConfigEnvVars(loadConfig())`）> workspace 默认；
+2. 解析结果同时用于调度器自己的状态文件和 **传给 cycle 的 `--dir`**，
+   子进程不再受 cwd 影响；
+3. 根与它的来源（`explicit`/`env`/`workspace_default`）打进 `--status` 与启动行，
+   配置读不到时**报出来但不自杀**（写错本比不写更坏，但配置一个笔误不该带走夜间那一跑）。
+
+验证：
+
+- `--status` 实测 `finance root: …/state/finance (env)` —— 与 agent 同源；
+- 用一个临时根端到端跑一次：调度器自己的 `runs.jsonl` 和子进程 payload 的 `directory`
+  **都是**那个临时根（已清理，未碰真账本）；
+- 驻留进程已用新代码重启（旧 pid 85132 → 新 32558，存活已确认）；
+- `tsgo` 对这两个文件 0 错。
+
+下一次触发：ET 周一 15:30（day）/17:30（night）。
+
+### 账本里 960 根"重复 bar"：同值重放 ≠ 来源分歧（2026-09-21）
+
+`readFinanceBarLedger` 原本**故意**保留同一 `instrument@date` 的多个观测（注释："两个来源给出不同值，
+是来源的事实，折叠它就藏起来了"）。但实测真账本里的 960 组重复 **100% 同值**（OHLCV/volume/
+sampleCount/origin 全一致），0 组真分歧 —— 它们是**两个采集窗口重叠**的重放，不是来源分歧。
+
+为什么必须折叠：**重复的一天 = 零收益的一天**。SPY 最近 120 行里 60/119 个相邻对是零收益，
+年化波动被压到 **0.080**，同一些天读一次是 **0.131**（cycle 报的 0.129 说明 cycle 自己绕过了，
+但 `finance_bar_ledger` 吐给 `finance_chart_analysis` 的 `chartBars` 没有）⇒ ATR、回撤、
+支撑阻力、波动率全线低估约三分之一。
+
+已改（`src/agents/finance-bar-ledger.ts`）：按 `instrument@date` 记签名，**同值折叠、异值保留**
+（分歧仍然是事实，照旧进 `divergentDates`），并把折叠数量**报出来**（`collapsedRepeats` →
+工具层 `repeatedBarsCollapsed` + 说明），不静默丢。
+
+生产实测（SPY）：`totalBarCount 6584 → 6464`、`repeatedBarsCollapsed: 120`、日期不再重复；
+就绪度 `barCount 42150 → 41190`，`barWindowNote` 同步变 41070。
+
+验证：bar 账本 19 测试全绿（新增"重叠窗口折叠"和"第二来源同值也折叠、异值不折叠"两条）；
+变异（让折叠永不触发）正好只打红这两条；`tsgo` 0 错。
+
+### 同一个缺陷的写侧：每天会再落一份全历史（2026-09-21）
+
+上面只修了读侧，但**因**在写侧。cycle 每次采集的是 `collection: "eod_history", limit: 8000`
+—— **整段历史**，因为厂商没有增量接口。而 append 的幂等键是**整批指纹**（`recordKey` =
+instrument + derivation + origin + 所有 bar 的内容指纹）：
+
+⇒ 只要多出一天，整批指纹就变 ⇒ `appended: true` ⇒ **账本每天多一份全历史副本**。
+实测记录形状印证了这个来源：记录 1-8 是浅采集（8 标的 × 120 根），记录 9-16 是同批深采集
+（SPY 6464 根 / 2001 起），那 960 根重复就是这两批的重叠。按当前规模推：约 41k 根/交易日、
+5MB/天，一年后任何一次 read 都要解析上亿行。
+
+已改（`finance-bar-ledger.ts` 的 `appendFinanceBars`）：**按内容去重，不按批次**——提交批次里
+与书中已有 bar 内容完全相同的那些**不再落账**，只落新的（`repeatsSkipped` 报数）；
+**值变了仍会落**（厂商修订照样进书，读侧照旧算分歧）。cycle 的 `barsFiled` 同时报
+`barCount`（采集到多少）与 `newBarCount`（新落多少）。
+
+验证（临时账本，真实 operator 脚本）：
+
+```
+首次 append 2 根        → record 1: 2 根
+重采全历史再 append 3 根 → record 2: 1 根（只有 09-03 是新的）  ← 不是 3 根
+同样批次再来一次        → recordCount 不变（一条都不落）
+read                   → 3 个日期，collapsedRepeats 0
+```
+
+单元测试 28 个全绿（新增 3 条：只落新天、无新天时啥也不写并说明、修订不被当成重放）；
+变异（让过滤永不生效）正好只打红前两条；`tsgo` 0 错。
+
+⚠️ 存量那 960 根**没动**（账本 append-only，不重写历史），靠上面那条读侧折叠兜住。
+
+**真实厂商数据上复验（周日，数据没变 ⇒ 正好是"全重复、零新增"的极端情形）**：
+
+```
+SPY 采集 6464 / 新落 0 / appended false      IWM 采集 5461 / 新落 0 / appended false
+QQQ 采集 4873 / 新落 0 / appended false      EFA 采集 5461 / 新落 0 / appended false
+TLT 采集 2673 / 新落 0 / appended false      EEM 采集 5461 / 新落 0 / appended false
+GLD 采集 5491 / 新落 0 / appended false      DBC 采集 5186 / 新落 0 / appended false
+```
+
+合计采集 41070 根、新落 0 根；跑完账本仍是 **17 条记录 / 5.28MB**（改之前这一跑会再塞一份
+41k 根的全历史）。
+
+**夜间那一跑首次真实执行**（此前只有 day 跑过一次，night 从未触发过，而它会在 ET 17:30 自动跑）：
+`ok: true`、5 个样本 → 0 已结算 / 3 未到期 / 2 被拒、无 issues。被拒的 2 个是
+`direction` 非 buy/sell（hold 不算赌注，正确排除在命中率之外），**不是缺陷**。
+
+### 同一族第三处：校准工具读的是另一本书（2026-09-21，实测 0 → 5）
+
+`finance_calibration_read` 是 agent 唯一能"看看自己过去判断准不准"的入口。它原来把文件路径拼成
+`resolveWorkspaceRoot() + "state/finance/research-{samples,scored}.jsonl"` —— **没走
+`resolveFinanceStateDir()`**，而写样本的 cycle 走的正是后者。生产实测：
+
+```
+workspaceDir: /Users/liuchengxu/.openclaw/workspace
+samplesFile:  /Users/liuchengxu/.openclaw/workspace/state/finance/research-samples.jsonl  → 0 份
+真实文件：     <repo>/state/finance/research-samples.jsonl                                 → 5 份
+```
+
+于是工具返回 `total 0` + "还没有任何已评分结果，任何校准数字都会是编造的"。
+**"我没有历史战绩" 和 "我找错了地方" 从这里看是完全一样的** —— 正是这一族的形状。
+
+已改：走 `resolveFinanceStateDir()`（新增 `directory` 参数，`workspaceDir` 降级为最弱输入），
+并把 `financeStateDirectory` / `resolvedFrom` 一起报出来，让"空计数"能配上"读的是哪本书"。
+
+生产复验：`total 5 / pending 5 / refused 2`、`resolvedFrom: env`、路径 = 仓库 `state/finance`。
+
+**仍未闭合的同类接缝（未动手，记录在此）**：研究/结算面的样本与评分文件在 **5 处**仍是
+`cwd + "state/finance/..."` 的相对路径 —— `lcx-finance-research-score.ts:156`、
+`lcx-finance-research-turn.ts:328`、`lcx-finance-paper-rank.ts:59,70`、
+`lcx-finance-research-batch.ts:275`。它们靠 cwd=仓库根 与账本侧碰巧对齐，且**都是 operator 脚本
+（人工执行）**，所以优先级低于上面那条（那是 agent 自己读出错误结论）。
+另：`research-scored.jsonl` 目前是空的，且**只有人工跑 research-score 才会写**
+⇒ 无人值守的循环不会自己产出新的评分样本，结算面没有自动供给。
+
+### 结算算完即弃 → 已改为落盘（2026-09-21）
+
+`finance-outcome-backfill.ts` **一处文件写入都没有**（纯算术），cycle 的 night 分支也只是把
+`scored/pending/declined/reflection` 放进返回 payload（调度器把它存进 runs.jsonl 的 stdout）。
+`research-scored.jsonl` 的写方只有人工跑的 `lcx-finance-research-score.ts` ⇒
+
+> 夜间结算**每夜算一遍、然后丢掉**；校准工具读的那个文件永远是空的，
+> 它只能说"没有已评分结果，任何校准数字都会是编造的"。反思环没有输入。
+
+已改（`scripts/operator/lcx-finance-daily-cycle.ts`）：night 分支把 `settled.scored` 追加进
+`<finance root>/research-scored.jsonl`，按 `instrument@asOf@direction` 去重（重跑不会重复计一次调用），
+tmp+rename 原子写，并在 payload 里报 `scoredFiled: { path, appended, skipped }`。
+
+端到端验证（临时目录 + 真实价格序列，一个已到期样本 + 一个未到期）：
+
+```
+第一次 night: 样本 2 → 已结算 1 / 未到期 1，落盘 {"appended":1,"skipped":0}
+第二次 night: 已结算 1，                    落盘 {"appended":0,"skipped":1}   ← 幂等
+文件行: {"instrument":"SPY","asOf":"2026-08-01…","direction":"buy","conviction":0.62,
+         "outcome":1,"movePct":19.8516}
+校准工具读它: counts {total:2, mature:1, pending:1}, hitRate 1, brier 0.1444,
+             floor 仍被拒给("1 个样本、不足 5 次观测，推不出底线")
+```
+
+⚠️ 途中发现：**night 分支在没有活跃规则时直接报错退出**（`no active rule declares any instrument`），
+而结算其实只依赖历史样本、不依赖当前规则 ⇒ 暂停所有规则会连带掐断反思环。未改，记录在此。
 
 ### 缺口 2：文本/研究 与 论点没有连接键
 

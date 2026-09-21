@@ -117,7 +117,14 @@ export type FinanceDailyCycleReport = Readonly<{
    * identical batch and the book deduplicates it by content. So "nothing was filed today" and
    * "the history is already there" are different things, and the count says which.
    */
-  barsFiled: readonly { instrument: string; barCount: number; appended: boolean }[];
+  barsFiled: readonly {
+    instrument: string;
+    /** Bars this run collected, repeats included. */
+    barCount: number;
+    /** Of those, how many were new to the book — the rest were exact replays, not re-filed. */
+    newBarCount: number;
+    appended: boolean;
+  }[];
 }>;
 
 type Bar = Readonly<{ date: string; close: number }>;
@@ -495,7 +502,12 @@ export async function runFinanceDailyCycle(
   // Resolved once, so the bars this run reads are filed into the same book the run then trades
   // against — a supply written to a second directory is invisible to every read that matters.
   const directory = params.directory ?? resolveFinanceStateDir().directory;
-  const barsFiled: { instrument: string; barCount: number; appended: boolean }[] = [];
+  const barsFiled: {
+    instrument: string;
+    barCount: number;
+    newBarCount: number;
+    appended: boolean;
+  }[] = [];
 
   for (const instrument of instruments) {
     try {
@@ -539,7 +551,8 @@ export async function runFinanceDailyCycle(
               sourceUrlOrArtifact: batch.sourceUrlOrArtifact,
               note:
                 `${String(batch.bars.length)} daily bars collected by the unattended daytime ` +
-                "cycle; end-of-day, research-only, not execution-grade",
+                "cycle; end-of-day, research-only, not execution-grade; bars already in the " +
+                "book are not filed again, so a record holds only the days that were new",
             },
             observedAt: batch.observedAt,
             bars: batch.bars,
@@ -547,6 +560,7 @@ export async function runFinanceDailyCycle(
           barsFiled.push({
             instrument,
             barCount: batch.bars.length,
+            newBarCount: batch.bars.length - result.repeatsSkipped,
             appended: result.appended,
           });
         }

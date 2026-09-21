@@ -127,6 +127,10 @@ export function createFinanceBarLedgerTool(options?: { workspaceDir?: string }):
             // An identical batch is not a failure, but it is also not new evidence; saying which
             // one happened keeps "appended nothing" from being read as "appended successfully".
             appended: appended.appended,
+            // How much of the submitted batch was already on file. A daily full-history collection
+            // is almost entirely repeats, so without this an operator cannot tell "filed 6464 bars"
+            // from "filed today's one bar and skipped the 6463 we already had".
+            repeatsSkipped: appended.repeatsSkipped,
             recordCount: appended.recordCount,
             headRef: appended.headRef,
             nextTool:
@@ -207,6 +211,18 @@ export function createFinanceBarLedgerTool(options?: { workspaceDir?: string }):
         instrument: params.instrument ?? null,
         recordCount: ledger.recordCount,
         totalBarCount: ledger.bars.length,
+        // Exact replays of a day (overlapping collection windows) are collapsed before counting:
+        // a duplicated day is a zero-return day, which deflates every range and volatility
+        // measure taken from this series. Reported so the collapse is visible, not silent.
+        ...(ledger.collapsedRepeats > 0
+          ? {
+              repeatedBarsCollapsed: ledger.collapsedRepeats,
+              repeatedBarsCollapsedNote:
+                `${ledger.collapsedRepeats} bar(s) were exact replays of a day already in the book ` +
+                "(same instrument, date, OHLCV and volume) and were collapsed; counting them twice " +
+                "would add zero-return days and understate volatility and range measures.",
+            }
+          : {}),
         returnedBarCount: bars.length,
         ...(bars.length < ledger.bars.length
           ? { truncated: true, hint: `showing the last ${limit}; raise limit for the full series` }

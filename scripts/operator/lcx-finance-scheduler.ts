@@ -22,6 +22,9 @@
  *   node --import tsx scripts/operator/lcx-finance-scheduler.ts --detach     # spawn detached
  *   node --import tsx scripts/operator/lcx-finance-scheduler.ts --status
  *
+ * `--dir PATH` picks the finance state root (default: the config `env.vars` declaration, else
+ * the workspace default — the same resolution the agent's tools use) and is passed down to
+ * every cycle, so the book this loop feeds is the book the agent reads.
  * `--place`, `--venue paper|alpaca`, `--equity-from-venue` and the three `--max-*` caps are
  * forwarded to the cycle. Without `--place` nothing is sent to the venue; without
  * `--venue alpaca` the run stays on the local simulator.
@@ -38,10 +41,56 @@ import {
   financeEtClock,
   isFinanceCycleSlotDue,
 } from "../../src/agents/finance-cycle-schedule.js";
+import {
+  resolveFinanceStateDir,
+  type FinanceStateDir,
+} from "../../src/agents/finance-state-dir.js";
 import { buildDetachedServeEnv } from "../../src/cli/serve-detach.js";
+import { loadConfig } from "../../src/config/config.js";
+import { applyConfigEnvVars } from "../../src/config/env-vars.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const STATE_DIR = path.join(REPO_ROOT, "state", "finance");
+
+/**
+ * Which book this scheduler writes, decided once and handed to the child explicitly.
+ *
+ * It used to be an accident: this process hardcoded `<repo>/state/finance` for its own
+ * bookkeeping while the cycle it spawns resolved `resolveFinanceStateDir()` from *its* cwd.
+ * Those agree only while both are the repository root, and nothing complains when they stop
+ * agreeing — the cycle writes one book, the agent reads the other, and an empty book is
+ * indistinguishable from a flat account. A `--dir` flag passed to this script was silently
+ * ignored, which is the same failure with a clearer intent behind it.
+ *
+ * So the root is resolved here (explicit `--dir` wins, then the config `env.vars` the agent
+ * reads its own root from, then the workspace default) and passed to the cycle as `--dir`.
+ */
+function resolveSchedulerRoot(argv: readonly string[]): {
+  root: FinanceStateDir;
+  configError: string | null;
+} {
+  const dirIndex = argv.indexOf("--dir");
+  const explicit = dirIndex >= 0 ? argv[dirIndex + 1] : undefined;
+  if (dirIndex >= 0 && (!explicit || explicit.startsWith("--"))) {
+    throw new Error("--dir requires a path");
+  }
+  let configError: string | null = null;
+  if (!explicit) {
+    try {
+      applyConfigEnvVars(loadConfig());
+    } catch (error) {
+      // Reported, not fatal: a cycle that writes the wrong book is worse than none, but a
+      // scheduler that dies on a config typo takes the nightly run with it. The root and how
+      // it was resolved are printed by `--status` and by every run record.
+      configError = String(error);
+    }
+  }
+  return { root: resolveFinanceStateDir({ directory: explicit }), configError };
+}
+
+const SCHEDULER_ARGV = process.argv.slice(2);
+const SCHEDULER_ROOT = resolveSchedulerRoot(SCHEDULER_ARGV);
+const FINANCE_ROOT: FinanceStateDir = SCHEDULER_ROOT.root;
+const STATE_DIR = FINANCE_ROOT.directory;
 const STATE_FILE = path.join(STATE_DIR, "daily-cycle-scheduler.json");
 const RUNS_LOG = path.join(STATE_DIR, "daily-cycle-runs.jsonl");
 const PID_FILE = path.join(STATE_DIR, "daily-cycle-scheduler.pid");
@@ -94,7 +143,19 @@ function appendRun(record: RunRecord): void {
 
 function runCycle(mode: "day" | "night", extraArgs: readonly string[]): Promise<RunRecord> {
   const startedAt = Date.now();
-  const args = ["--import", "tsx", CYCLE_SCRIPT, "--json", "--mode", mode, ...extraArgs];
+  // The resolved root travels with the invocation, so the cycle's book cannot depend on the
+  // cwd it happens to be spawned with.
+  const args = [
+    "--import",
+    "tsx",
+    CYCLE_SCRIPT,
+    "--json",
+    "--mode",
+    mode,
+    "--dir",
+    FINANCE_ROOT.directory,
+    ...extraArgs,
+  ];
   return new Promise((resolve) => {
     const child = spawn(process.execPath, args, { cwd: REPO_ROOT });
     let stdout = "";
@@ -163,7 +224,11 @@ async function tick(extraArgs: readonly string[]): Promise<void> {
 async function loop(extraArgs: readonly string[]): Promise<void> {
   fs.mkdirSync(STATE_DIR, { recursive: true });
   fs.writeFileSync(PID_FILE, `${process.pid}\n`);
-  process.stdout.write(`scheduler pid=${process.pid} tz=${MARKET_TZ} slots=${SLOTS.length}\n`);
+  process.stdout.write(
+    `scheduler pid=${process.pid} tz=${MARKET_TZ} slots=${SLOTS.length} ` +
+      `root=${FINANCE_ROOT.directory} (${FINANCE_ROOT.source})` +
+      `${SCHEDULER_ROOT.configError ? ` configError=${SCHEDULER_ROOT.configError}` : ""}\n`,
+  );
   for (;;) {
     await tick(extraArgs);
     await new Promise((resolve) => setTimeout(resolve, TICK_MS));
@@ -212,6 +277,8 @@ function status(): void {
       `tz=${MARKET_TZ}`,
       `et now: ${clock.date} ${clock.weekday} ${clock.minutes} min past midnight`,
       `pid file: ${pid}`,
+      `finance root: ${FINANCE_ROOT.directory} (${FINANCE_ROOT.source})`,
+      ...(SCHEDULER_ROOT.configError ? [`config unavailable: ${SCHEDULER_ROOT.configError}`] : []),
       `lastFired: ${JSON.stringify(state.lastFired)}`,
       `recent runs (${runs.length}):`,
       ...runs,
@@ -254,7 +321,7 @@ function forwardedArgs(argv: readonly string[]): string[] {
 }
 
 async function main(): Promise<void> {
-  const argv = process.argv.slice(2);
+  const argv = SCHEDULER_ARGV;
   const extraArgs = forwardedArgs(argv);
 
   if (argv.includes("--status")) {

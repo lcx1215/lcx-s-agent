@@ -150,13 +150,22 @@ export type FinanceBarRecord = z.infer<typeof StoredRecordSchema> & { ref: strin
 
 export type FinanceBarLedger = Readonly<{
   /**
-   * Bars in `(instrument, date)` order. When two origins observed the same instrument-date with
-   * different values, both are present: the divergence is a fact about the sources, and
-   * collapsing it here would hide it.
+   * Bars in `(instrument, date)` order, one per observed instrument-date *value*.
+   *
+   * Two observations of the same instrument-date stay apart only when they disagree: a divergence
+   * is a fact about the sources, and collapsing it would hide it. An exact replay — the same day
+   * with the same OHLCV, which is what two overlapping collection windows produce — carries no
+   * such fact and is collapsed to one bar, because leaving it in doubles that day in every
+   * downstream measure: a duplicated day is a zero-return day, and zero returns *deflate*
+   * volatility. Measured on the live book, the recent 120 rows were duplicated such that 60 of
+   * 119 adjacent pairs had zero return, giving 0.080 annualised against 0.131 for the same days
+   * read once. A chart analysis handed that series understates risk by roughly a third.
    */
   bars: readonly FinanceBar[];
   /** Instrument-dates observed more than once with differing closes. */
   divergentDates: readonly string[];
+  /** How many exact replays were collapsed out of `bars`. Reported, not silently dropped. */
+  collapsedRepeats: number;
   recordCount: number;
   headRef: string | null;
 }>;
@@ -281,6 +290,19 @@ export type FinanceBarAppend = Readonly<{
   record: FinanceBarRecord;
   /** `false` when the identical record was already present: append-only, and idempotent. */
   appended: boolean;
+  /**
+   * Bars in the submitted batch that were exact replays of a bar already in the book, and were
+   * therefore not filed again.
+   *
+   * This is what keeps a daily full-history collection from growing the book by its own size
+   * every day: the cycle re-collects the whole series (the vendor has no incremental endpoint),
+   * so batch identity cannot be the dedupe key — one new day makes every batch "new", and the
+   * book would gain a full copy of history per run. Content is the key instead: a day that is
+   * already recorded with the same values carries no new evidence. A day whose values *changed*
+   * is not a replay and is still filed, so a vendor revision still reaches the book as a
+   * divergence.
+   */
+  repeatsSkipped: number;
   recordCount: number;
   headRef: string | null;
 }>;
@@ -327,11 +349,44 @@ export async function appendFinanceBars(
     db.exec("BEGIN IMMEDIATE");
     try {
       const records = readStoredRecords(db);
+
+      // Content, not batch identity, decides what is new: see `repeatsSkipped`.
+      const known = new Set<string>();
+      for (const record of records) {
+        for (const bar of record.body.bars) {
+          known.add(barSignature(bar));
+        }
+      }
+      const fresh = body.bars.filter((bar) => !known.has(barSignature(bar)));
+      const repeatsSkipped = body.bars.length - fresh.length;
+
+      if (fresh.length === 0) {
+        db.exec("COMMIT");
+        // Everything here was already on file. Report the record that holds it, so "nothing was
+        // filed" can be told apart from "the book is empty and nothing was ever filed".
+        const first = body.bars[0];
+        const holder = first
+          ? [...records]
+              .toReversed()
+              .find((record) =>
+                record.body.bars.some((bar) => barSignature(bar) === barSignature(first)),
+              )
+          : undefined;
+        return Object.freeze({
+          record: holder ?? records.at(-1)!,
+          appended: false,
+          repeatsSkipped,
+          recordCount: records.length,
+          headRef: records.at(-1)?.ref ?? null,
+        });
+      }
+
+      const filed = { ...body, bars: fresh };
       const recordKey = caseflowFingerprint({
-        instrument: body.instrument,
-        derivation: body.derivation,
-        origin: body.provenance.origin,
-        bars: [...body.bars]
+        instrument: filed.instrument,
+        derivation: filed.derivation,
+        origin: filed.provenance.origin,
+        bars: [...filed.bars]
           .map(
             (bar) =>
               `${bar.date}:${bar.open}:${bar.high}:${bar.low}:${bar.close}:${bar.volume ?? ""}:${bar.sampleCount ?? ""}`,
@@ -344,6 +399,7 @@ export async function appendFinanceBars(
         return Object.freeze({
           record: existing,
           appended: false,
+          repeatsSkipped,
           recordCount: records.length,
           headRef: records.at(-1)?.ref ?? null,
         });
@@ -354,7 +410,7 @@ export async function appendFinanceBars(
         sequence: records.length + 1,
         previousRef: records.at(-1)?.ref ?? null,
         recordedAt: new Date().toISOString(),
-        body,
+        body: filed,
       });
       const ref = caseflowFingerprint(record);
       db.prepare(
@@ -365,6 +421,7 @@ export async function appendFinanceBars(
       return Object.freeze({
         record: { ...record, ref },
         appended: true,
+        repeatsSkipped,
         recordCount: after.length,
         headRef: ref,
       });
@@ -405,6 +462,52 @@ function readStoredRecords(db: BarDatabase): FinanceBarRecord[] {
   });
 }
 
+/**
+ * Identity of one observation's *content*. Two bars with the same signature are the same
+ * measurement, whatever record carried them, so the second one is a replay rather than evidence.
+ * Provenance is deliberately not part of it: two vendors agreeing on a day still describe one
+ * day, and the agreement itself is reported as a collapsed replay count, not as two bars.
+ */
+export function barSignature(bar: FinanceBar): string {
+  return [
+    bar.instrument,
+    bar.date,
+    bar.open,
+    bar.high,
+    bar.low,
+    bar.close,
+    bar.volume ?? "",
+    bar.sampleCount ?? "",
+  ].join("|");
+}
+
+/**
+ * Drop exact replays from a bar series, keeping every genuine second opinion.
+ *
+ * Writes no longer create replays (see `repeatsSkipped`), but the book is append-only: books
+ * written before that change still hold them, and a replay of one day is a zero-return day, which
+ * deflates every range and volatility measure taken from the series. Collapsing on read makes
+ * those books correct without rewriting their history.
+ */
+export function collapseRepeatedBars(bars: readonly FinanceBar[]): {
+  bars: FinanceBar[];
+  collapsedRepeats: number;
+} {
+  const signatures = new Set<string>();
+  const kept: FinanceBar[] = [];
+  let collapsedRepeats = 0;
+  for (const bar of bars) {
+    const signature = barSignature(bar);
+    if (signatures.has(signature)) {
+      collapsedRepeats += 1;
+      continue;
+    }
+    signatures.add(signature);
+    kept.push(bar);
+  }
+  return { bars: kept, collapsedRepeats };
+}
+
 export async function readFinanceBarLedger(
   directory: string,
   options: { asOf?: string; instrument?: string } = {},
@@ -416,6 +519,7 @@ export async function readFinanceBarLedger(
     return Object.freeze({
       bars: Object.freeze([]),
       divergentDates: Object.freeze([]),
+      collapsedRepeats: 0,
       recordCount: 0,
       headRef: null,
     });
@@ -438,25 +542,29 @@ export async function readFinanceBarLedger(
     const bars: FinanceBar[] = [];
     for (const record of scoped) {
       for (const bar of record.body.bars) {
-        bars.push(bar);
         const key = `${bar.instrument}@${bar.date}`;
         const closes = byKey.get(key) ?? new Set<number>();
         closes.add(bar.close);
         byKey.set(key, closes);
+        bars.push(bar);
       }
     }
-    const ordered = bars.toSorted(
-      (left, right) =>
-        left.instrument.localeCompare(right.instrument) || left.date.localeCompare(right.date),
-    );
+    // Divergence is computed before collapsing: which source said what is a fact about the
+    // sources, and it must survive the removal of replays.
     const divergentDates = [...byKey.entries()]
       .filter(([, closes]) => closes.size > 1)
       .map(([key]) => key)
       .toSorted();
+    const collapsed = collapseRepeatedBars(bars);
+    const ordered = collapsed.bars.toSorted(
+      (left, right) =>
+        left.instrument.localeCompare(right.instrument) || left.date.localeCompare(right.date),
+    );
 
     return Object.freeze({
       bars: Object.freeze(ordered),
       divergentDates: Object.freeze(divergentDates),
+      collapsedRepeats: collapsed.collapsedRepeats,
       recordCount: stored.length,
       headRef: stored.at(-1)?.ref ?? null,
     });

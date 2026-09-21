@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
 import { breakEvenFloor, type FloorSample } from "../finance-calibrated-floor.js";
-import { resolveWorkspaceRoot } from "../workspace-dir.js";
+import { resolveFinanceStateDir } from "../finance-state-dir.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult, readStringParam } from "./common.js";
 
@@ -24,14 +24,22 @@ import { jsonResult, readStringParam } from "./common.js";
 
 export const FINANCE_CALIBRATION_READ_SCHEMA_VERSION = "lcx_finance_calibration_read_v1" as const;
 
-const DEFAULT_SCORED_REL = "state/finance/research-scored.jsonl";
-const DEFAULT_SAMPLES_REL = "state/finance/research-samples.jsonl";
+const SCORED_FILENAME = "research-scored.jsonl";
+const SAMPLES_FILENAME = "research-samples.jsonl";
 
 const FinanceCalibrationReadSchema = Type.Object({
+  directory: Type.Optional(
+    Type.String({
+      description:
+        "Finance state directory to read. Defaults to LCX_FINANCE_STATE_DIR, then the workspace " +
+        "default — the same root the daily cycle writes its samples into.",
+    }),
+  ),
   workspaceDir: Type.Optional(
     Type.String({
       description:
-        "Workspace root whose finance state is read. Defaults to the process working directory.",
+        "Workspace root, used only when no finance state directory is configured. It is the " +
+        "weakest input: an explicit `directory` or a configured `LCX_FINANCE_STATE_DIR` wins.",
     }),
   ),
   includeFloor: Type.Optional(
@@ -72,13 +80,17 @@ async function readJsonl(file: string): Promise<Record<string, unknown>[]> {
   }
 }
 
-async function resolveUnderWorkspace(
-  workspaceDir: string | undefined,
-  rel: string,
-): Promise<string> {
-  const root = resolveWorkspaceRoot(workspaceDir);
-  return path.isAbsolute(rel) ? rel : path.join(root, rel);
-}
+/**
+ * Where the samples live, resolved through the finance state root rather than through the
+ * workspace plus a relative path.
+ *
+ * These two files are written by the daily cycle into the finance state directory, so reading them
+ * from `<workspace>/state/finance/...` is only correct while the workspace happens to be that
+ * directory. Measured on this system: the cycle wrote five samples under the configured root while
+ * this tool read `<workspace>/state/finance/research-samples.jsonl` and reported zero — "no scored
+ * outcomes, so no calibration number" is indistinguishable from "I looked in the wrong place",
+ * and the first reading tells the model its own track record does not exist.
+ */
 
 export function createFinanceCalibrationReadTool(): AnyAgentTool {
   return {
@@ -90,10 +102,12 @@ export function createFinanceCalibrationReadTool(): AnyAgentTool {
     execute: async (_toolCallId, params) => {
       const workspaceDir = readStringParam(params, "workspaceDir");
       const includeFloor = params.includeFloor !== false;
-      const root = resolveWorkspaceRoot(workspaceDir);
-
-      const scoredFile = await resolveUnderWorkspace(workspaceDir, DEFAULT_SCORED_REL);
-      const samplesFile = await resolveUnderWorkspace(workspaceDir, DEFAULT_SAMPLES_REL);
+      const state = resolveFinanceStateDir({
+        directory: readStringParam(params, "directory"),
+        workspaceDir,
+      });
+      const scoredFile = path.join(state.directory, SCORED_FILENAME);
+      const samplesFile = path.join(state.directory, SAMPLES_FILENAME);
 
       const scored = await readJsonl(scoredFile);
       const samples = await readJsonl(samplesFile);
@@ -133,7 +147,14 @@ export function createFinanceCalibrationReadTool(): AnyAgentTool {
       return jsonResult({
         ok: true,
         schemaVersion: FINANCE_CALIBRATION_READ_SCHEMA_VERSION,
-        inspectedFrom: { workspaceDir: root, scoredFile, samplesFile },
+        // Which root was read, and how it was chosen: an empty count next to the wrong directory
+        // is a routing bug, and next to the right one it is a fact about the system's record.
+        inspectedFrom: {
+          financeStateDirectory: state.directory,
+          resolvedFrom: state.source,
+          scoredFile,
+          samplesFile,
+        },
         counts,
         hitRate,
         meanClaimedConviction: meanClaimed,

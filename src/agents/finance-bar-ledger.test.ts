@@ -4,10 +4,12 @@ import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   appendFinanceBars,
+  collapseRepeatedBars,
   FINANCE_BAR_DERIVATIONS,
   FINANCE_BAR_RECORD_SCHEMA,
   financeBarLedgerExists,
   readFinanceBarLedger,
+  type FinanceBar,
   type FinanceBarAppendInput,
 } from "./finance-bar-ledger.js";
 
@@ -80,6 +82,67 @@ describe("finance-bar-ledger", () => {
     expect(ledger.bars[0]?.close).toBe(102);
     // A vendor bar carries a real range, so there is nothing to count.
     expect(ledger.bars[0]?.sampleCount).toBeNull();
+  });
+
+  it("files only the days that are new when a full history is re-collected", async () => {
+    const directory = await storeDirectory();
+    // The unattended cycle re-collects the whole series every run (the vendor has no incremental
+    // endpoint). Batching by content rather than by batch identity is what keeps the book from
+    // gaining a full copy of history per run.
+    await appendFinanceBars(
+      directory,
+      ohlcvInput({
+        bars: [ohlcv("2026-09-01", 100, 104, 98, 102), ohlcv("2026-09-02", 102, 106, 100, 104)],
+      }),
+    );
+    const second = await appendFinanceBars(
+      directory,
+      ohlcvInput({
+        bars: [
+          ohlcv("2026-09-01", 100, 104, 98, 102),
+          ohlcv("2026-09-02", 102, 106, 100, 104),
+          ohlcv("2026-09-03", 104, 108, 102, 106),
+        ],
+      }),
+    );
+    expect(second.appended).toBe(true);
+    expect(second.repeatsSkipped).toBe(2);
+    // Only the new day is filed: the two repeats are not new evidence.
+    expect(second.record.body.bars.map((bar) => bar.date)).toEqual(["2026-09-03"]);
+
+    const ledger = await readFinanceBarLedger(directory);
+    expect(ledger.bars.map((bar) => bar.date)).toEqual(["2026-09-01", "2026-09-02", "2026-09-03"]);
+  });
+
+  it("writes nothing when a re-collection brings no new day, and says so", async () => {
+    const directory = await storeDirectory();
+    const bars = [ohlcv("2026-09-01", 100, 104, 98, 102), ohlcv("2026-09-02", 102, 106, 100, 104)];
+    await appendFinanceBars(directory, ohlcvInput({ bars }));
+    const again = await appendFinanceBars(directory, ohlcvInput({ bars }));
+    expect(again.appended).toBe(false);
+    expect(again.repeatsSkipped).toBe(2);
+    expect(again.recordCount).toBe(1);
+  });
+
+  it("still files a day whose values changed, so a vendor revision is not lost", async () => {
+    const directory = await storeDirectory();
+    await appendFinanceBars(
+      directory,
+      ohlcvInput({ bars: [ohlcv("2026-09-01", 100, 104, 98, 102)] }),
+    );
+    const revised = await appendFinanceBars(
+      directory,
+      ohlcvInput({
+        provenance: { origin: "source-b" },
+        bars: [ohlcv("2026-09-01", 100, 104, 98, 103)],
+      }),
+    );
+    // A changed value is not a replay: it is a second opinion, and it must reach the book.
+    expect(revised.appended).toBe(true);
+    expect(revised.repeatsSkipped).toBe(0);
+    const ledger = await readFinanceBarLedger(directory);
+    expect(ledger.bars).toHaveLength(2);
+    expect(ledger.divergentDates).toEqual(["AAA@2026-09-01"]);
   });
 
   it("rejects prices that cannot be true together", async () => {
@@ -226,6 +289,30 @@ describe("finance-bar-ledger", () => {
     // Not collapsed: the disagreement is a fact about the sources, not a duplicate to drop.
     expect(ledger.bars).toHaveLength(2);
     expect(ledger.divergentDates).toEqual(["AAA@2026-09-01"]);
+    expect(ledger.collapsedRepeats).toBe(0);
+  });
+
+  it("collapses exact replays on read but keeps a genuine second opinion", () => {
+    // Writes no longer create replays, but the book is append-only: books written before that
+    // change still hold them, and collapsing on read corrects them without rewriting history.
+    const day: FinanceBar = {
+      instrument: "AAA",
+      date: "2026-09-01",
+      open: 100,
+      high: 104,
+      low: 98,
+      close: 102,
+      volume: 1000,
+      sampleCount: null,
+    };
+    const replay = collapseRepeatedBars([day, { ...day }]);
+    expect(replay.bars).toHaveLength(1);
+    expect(replay.collapsedRepeats).toBe(1);
+
+    // Same day, different close: not a replay, a disagreement.
+    const disagreement = collapseRepeatedBars([day, { ...day, close: 99 }]);
+    expect(disagreement.bars).toHaveLength(2);
+    expect(disagreement.collapsedRepeats).toBe(0);
   });
 
   it("filters by as-of and by instrument", async () => {
