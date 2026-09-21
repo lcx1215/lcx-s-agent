@@ -333,6 +333,16 @@ export async function runFinanceAlpacaOrder(
   const fillPoll =
     request.fillPoll === false ? undefined : (request.fillPoll ?? DEFAULT_ALPACA_FILL_POLL);
 
+  // A DAY OTO stop expires at the close even when its bought shares remain held.
+  // Preserve explicit caller time-in-force and the adapter's crypto/fractional rules.
+  const timeInForce =
+    request.timeInForce ??
+    (request.conclusion.assetClass?.trim().toLowerCase() === "us_equity" &&
+    compiled.intent.side === "buy" &&
+    Number.isInteger(compiled.intent.quantity) &&
+    compiled.intent.stopPrice !== undefined
+      ? "gtc"
+      : undefined);
   const transport = request.transport ?? createFinanceWriteTransport();
   const adapter = createAlpacaExecutionAdapter({
     id: FINANCE_ALPACA_ADAPTER_ID,
@@ -341,7 +351,7 @@ export async function runFinanceAlpacaOrder(
     postJson: (url, init) =>
       transport({ url, headers: init.headers, body: init.body, signal: init.signal }),
     statusFetch: request.read ?? createFinanceUncachedFetch(),
-    ...(request.timeInForce === undefined ? {} : { timeInForce: request.timeInForce }),
+    ...(timeInForce === undefined ? {} : { timeInForce }),
     ...(fillPoll === undefined ? {} : { fillPoll }),
   });
 

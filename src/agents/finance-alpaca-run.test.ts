@@ -355,3 +355,55 @@ it("refuses direct Alpaca placement without controller facts before transport", 
   expect(result.ok).toBe(false);
   expect(transport).not.toHaveBeenCalled();
 });
+
+it.each([
+  {
+    name: "defaults protected whole-share equity to GTC",
+    explicit: undefined,
+    longHorizon: false,
+    expected: "gtc",
+  },
+  {
+    name: "preserves explicit DAY for protected equity",
+    explicit: "day" as const,
+    longHorizon: false,
+    expected: "day",
+  },
+  {
+    name: "retains adapter default without a compiled stop",
+    explicit: undefined,
+    longHorizon: true,
+    expected: "day",
+  },
+])("$name", async ({ explicit, longHorizon, expected }) => {
+  let body: Record<string, unknown> | undefined;
+  const transport: FinanceWriteTransport = async (input) => {
+    body = JSON.parse(input.body) as Record<string, unknown>;
+    return {
+      status: 200,
+      body: JSON.stringify({
+        id: "order-time-in-force",
+        status: "filled",
+        filled_qty: body.qty,
+        filled_avg_price: "100",
+        filled_at: new Date().toISOString(),
+      }),
+    };
+  };
+  const result = await runFinanceAlpacaOrder(
+    request({
+      transport,
+      fillPoll: false,
+      ...(explicit === undefined ? {} : { timeInForce: explicit }),
+      ...(longHorizon
+        ? { conclusion: { ...CONCLUSION, horizonDays: 400 }, strategyClass: "C" }
+        : {}),
+      read: async () => {
+        throw new Error("unexpected read");
+      },
+    }),
+  );
+  expect(result.ok).toBe(true);
+  expect(body?.time_in_force).toBe(expected);
+  expect(body?.order_class).toBe(longHorizon ? undefined : "oto");
+});
