@@ -153,6 +153,8 @@ F-27 是典型的"控制被守住了、喂它的数没被守"。凡是形如 `if
 
 | F-39 | `quality-harness-quality.ts` 的 `NON_ENTITY_TOKENS` | **与 F-36 完全同构**：`financeEntities` 用 `\b[A-Z][A-Z0-9.-]{1,9}\b` 把任何大写词当实体，排除表**只有 8 个**（USD/EUR/GBP/CNY/JPY/ETF/API/URL）；而 `claimMatchesEvidenceEntity` 是"**有任一共同实体**就判匹配"。⇒ 实测：claim「AAA 的 RSI 是 80」vs evidence「BBB 的 RSI 为 80」（**数字相同**，排除数字检查干扰）⇒ **RSI/MACD/EPS 三个都让 gate 放行**，即术语重叠**掩盖了 AAA≠BBB 的错配**。修法：扩充排除表 + 把"它只是黑名单"写进注释。 |
 
+| F-40 | `extensions/nostr/src/seen-tracker.ts` | **退化配置里最严重的一例：会挂死进程**。`add()` 里 `while (entries.size >= maxEntries) { evictLRU(); }` —— `maxEntries: 0` 或负数 ⇒ 条件恒真，而 `evictLRU()` 在空表时直接 return、**不改变 size** ⇒ **同步死循环挂死进程**（实测 SIGTERM；注意 `Promise.race` 超时护栏**防不住同步死循环**，只能防异步等待）。`maxEntries: NaN` ⇒ 比较恒 false ⇒ 永不淘汰 ⇒ **无界增长**（正是这个文件声称要防止的）。`ttlMs: 0/-1` ⇒ 每条都立即过期 ⇒ `has()` 永远报"新" ⇒ **去重彻底失效**；`ttlMs: NaN` ⇒ 永不过期。修法：三个参数全部校验，不合法即抛错；`pruneIntervalMs: 0` 保持合法（那是关闭定时器的既定方式）。 |
+
 **修法**：**校验配置的连贯性，不连贯 ⇒ 不给意见**（不钳制）。
 
 - 两个信号：返回 `hold/0/0`（并标 `config=incoherent`）。

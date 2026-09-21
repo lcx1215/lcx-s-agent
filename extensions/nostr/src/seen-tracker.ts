@@ -46,6 +46,29 @@ export function createSeenTracker(options?: SeenTrackerOptions): SeenTracker {
   const ttlMs = options?.ttlMs ?? 60 * 60 * 1000; // 1 hour
   const pruneIntervalMs = options?.pruneIntervalMs ?? 10 * 60 * 1000; // 10 minutes
 
+  // Every one of these is consumed by a comparison that a degenerate value silently breaks, and
+  // one of them hangs the process. Measured:
+  //   maxEntries: 0    ⇒ `while (entries.size >= maxEntries)` is never false, and `evictLRU()`
+  //                      returns without removing anything when the map is empty — a synchronous
+  //                      infinite loop. Same for any negative value.
+  //   maxEntries: NaN  ⇒ the comparison is always false, so nothing is ever evicted and the map
+  //                      grows without bound (the very thing this file says it prevents).
+  //   ttlMs: 0 or -1   ⇒ every entry is already expired, so `has()` always reports "new" and the
+  //                      tracker stops deduplicating entirely.
+  //   ttlMs: NaN       ⇒ nothing ever expires — again unbounded growth.
+  // `pruneIntervalMs: 0` stays legal: it is the documented way to disable the timer.
+  if (!Number.isInteger(maxEntries) || maxEntries <= 0) {
+    throw new Error(`maxEntries must be a positive integer, received: ${String(maxEntries)}`);
+  }
+  if (!Number.isFinite(ttlMs) || ttlMs <= 0) {
+    throw new Error(`ttlMs must be a positive finite number, received: ${String(ttlMs)}`);
+  }
+  if (!Number.isFinite(pruneIntervalMs) || pruneIntervalMs < 0) {
+    throw new Error(
+      `pruneIntervalMs must be a non-negative finite number, received: ${String(pruneIntervalMs)}`,
+    );
+  }
+
   // Main storage
   const entries = new Map<string, Entry>();
 
