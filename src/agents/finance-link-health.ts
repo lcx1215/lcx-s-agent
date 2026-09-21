@@ -15,6 +15,7 @@
 
 import fs from "node:fs/promises";
 import { readFinanceBarLedger } from "./finance-bar-ledger.js";
+import { DEFAULT_OUTCOME_HORIZON_DAYS } from "./finance-outcome-backfill.js";
 import { readFinancePositionLedger } from "./finance-position-ledger.js";
 import {
   financeResearchSamplesPath,
@@ -239,16 +240,83 @@ export async function readFinanceLinkHealth(
   });
 
   // 6. Settlement supply: are recorded calls being scored, or only ever recorded?
+  //
+  // A recorded call with no result is the normal state of a call still inside its horizon, not a
+  // fault: it settles when it matures. Saying otherwise has this check call the loop broken every
+  // day for a month after any call is recorded, which is how an actual break goes unnoticed — the
+  // one report that matters arrives in a stream of reports that never did. What is worth
+  // reporting is a call that is past its horizon and still has no result.
   const samples = await readLineCount(financeResearchSamplesPath(directory));
   const scored = await readLineCount(financeResearchScoredPath(directory));
+  const sampleRows: {
+    instrument: string;
+    direction: string;
+    asOf: string;
+    horizonDays: number;
+    lastPrice: number;
+  }[] = [];
+  try {
+    const text = await fs.readFile(financeResearchSamplesPath(directory), "utf8");
+    for (const line of text.split("\n")) {
+      if (line.trim().length === 0) {
+        continue;
+      }
+      const row = JSON.parse(line) as {
+        instrument?: unknown;
+        direction?: unknown;
+        asOf?: unknown;
+        horizonDays?: unknown;
+        lastPrice?: unknown;
+      };
+      const horizonDays = Number(row.horizonDays);
+      sampleRows.push({
+        instrument: typeof row.instrument === "string" ? row.instrument.trim().toUpperCase() : "",
+        direction: typeof row.direction === "string" ? row.direction.trim().toLowerCase() : "",
+        asOf: typeof row.asOf === "string" ? row.asOf : "",
+        horizonDays: Number.isFinite(horizonDays) ? horizonDays : DEFAULT_OUTCOME_HORIZON_DAYS,
+        lastPrice: Number(row.lastPrice),
+      });
+    }
+  } catch {
+    sampleRows.length = 0;
+  }
+
+  // Only what settlement would actually score. A call the gate declined is reported and never
+  // scored, so counting it as an unsettled result would report a refusal as a break — the exact
+  // confusion the settlement itself refuses to make.
+  const dueDates = sampleRows
+    .filter(
+      (row) =>
+        (row.direction === "buy" || row.direction === "sell") &&
+        Number.isFinite(row.lastPrice) &&
+        row.lastPrice > 0 &&
+        Number.isFinite(Date.parse(row.asOf)),
+    )
+    .map((row) => ({
+      instrument: row.instrument,
+      dueDay: dayOf(new Date(Date.parse(row.asOf) + row.horizonDays * 86_400_000).toISOString()),
+    }));
+  const matured = dueDates.filter((entry) => entry.dueDay <= today);
+  const waiting = dueDates.filter((entry) => entry.dueDay > today);
+  const earliestDue = waiting.map((entry) => entry.dueDay).toSorted()[0];
+  // Refusals, not bets. They are recorded and never scored, so without this the count of calls
+  // waiting to settle looks like calls went missing.
+  const declinedCount = sampleRows.filter(
+    (row) => row.direction !== "buy" && row.direction !== "sell",
+  ).length;
+  // Maturity is compared by day and settlement accumulates, so this counts calls that are due and
+  // unaccounted for — not a per-call reconciliation.
+  const unsettled = Math.max(0, matured.length - scored.lines);
   checks.push({
     id: "settlement_supply",
-    severity: samples.lines > 0 && scored.lines === 0 ? "warn" : "info",
-    ok: !(samples.lines > 0 && scored.lines === 0),
+    severity: unsettled > 0 ? "warn" : "info",
+    ok: unsettled === 0,
     summary:
-      samples.lines > 0 && scored.lines === 0
-        ? `${samples.lines} call(s) recorded and none scored: calibration can only ever say it has no history`
-        : `${samples.lines} call(s) recorded, ${scored.lines} settled`,
+      unsettled > 0
+        ? `${matured.length} call(s) past their horizon, ${scored.lines} scored: ${unsettled} with no result`
+        : matured.length === 0
+          ? `${samples.lines} recorded: ${waiting.length} inside their horizon${earliestDue ? `, earliest settles ${earliestDue}` : ""}${declinedCount > 0 ? `, ${declinedCount} declined rather than bet` : ""} — nothing due yet`
+          : `${samples.lines} recorded, ${scored.lines} settled${declinedCount > 0 ? `, ${declinedCount} declined rather than bet` : ""}`,
     detail: {
       samplesFile: financeResearchSamplesPath(directory),
       scoredFile: financeResearchScoredPath(directory),
@@ -256,36 +324,35 @@ export async function readFinanceLinkHealth(
       scoredPresent: scored.present,
       sampleCount: samples.lines,
       scoredCount: scored.lines,
+      maturedCount: matured.length,
+      waitingCount: waiting.length,
+      declinedCount,
+      earliestDueDay: earliestDue,
     },
   });
 
   // 6b. Whether what is being settled is what is being traded. A reflection loop can run
   //     perfectly over a set of instruments the plane never touches: the samples are recorded by
   //     hand, so the hit rate they produce says nothing about the book the rules actually run.
-  const sampleInstruments: string[] = [];
-  try {
-    const text = await fs.readFile(financeResearchSamplesPath(directory), "utf8");
-    for (const line of text.split("\n")) {
-      if (line.trim().length === 0) {
-        continue;
-      }
-      const instrument = (JSON.parse(line) as { instrument?: unknown }).instrument;
-      if (typeof instrument === "string" && instrument.length > 0) {
-        sampleInstruments.push(instrument.trim().toUpperCase());
-      }
-    }
-  } catch {
-    sampleInstruments.length = 0;
-  }
-  const sampleUniverse = [...new Set(sampleInstruments)].toSorted();
+  const sampleUniverse = [
+    ...new Set(sampleRows.map((row) => row.instrument).filter((name) => name.length > 0)),
+  ].toSorted();
   const insideUniverse = sampleUniverse.filter((instrument) => universe.has(instrument));
   const outsideUniverse = sampleUniverse.filter((instrument) => !universe.has(instrument));
+  // With no active rule there is no universe to be outside of, and "every call is outside it"
+  // would then be true of every call and say nothing. An empty rule book is `rule_universe`'s
+  // finding to make; this one compares, and there is nothing to compare against.
+  const nothingToCompare = universe.size === 0;
   checks.push({
     id: "sample_universe_overlap",
-    severity: sampleUniverse.length > 0 && insideUniverse.length === 0 ? "warn" : "info",
-    ok: !(sampleUniverse.length > 0 && insideUniverse.length === 0),
-    summary:
-      sampleUniverse.length === 0
+    severity:
+      !nothingToCompare && sampleUniverse.length > 0 && insideUniverse.length === 0
+        ? "warn"
+        : "info",
+    ok: !(!nothingToCompare && sampleUniverse.length > 0 && insideUniverse.length === 0),
+    summary: nothingToCompare
+      ? `no active rule universe to compare ${sampleUniverse.length} recorded instrument(s) against`
+      : sampleUniverse.length === 0
         ? "no recorded calls to compare against the rule universe"
         : insideUniverse.length === 0
           ? `every recorded call (${outsideUniverse.join(", ")}) is outside the rule universe: the track record being settled is not the book being traded`

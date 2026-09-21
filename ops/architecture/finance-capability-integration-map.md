@@ -583,7 +583,7 @@ exit 0 = 接线成立；exit 1 = 有断链（error 级）
 | `orphan_holdings`         | **有持仓但不在宇宙**：永不会被再平衡或重定价                       |
 | `unpriceable_holdings`    | **有持仓但没有 bar**：mark 永远刷不新                              |
 | `mark_freshness`          | mark 的日期 vs 该标的最新 bar 日期（陈旧 / 早于数据 / 领先于数据） |
-| `settlement_supply`       | 记了多少次判断、结算了几条                                         |
+| `settlement_supply`       | **已到期却没结果的判断**（未到期的算"在等"，拒绝的永不计分）       |
 | `scheduler_slots`         | day / night 各上次触发何时，night 是否从未触发过                   |
 | `sample_universe_overlap` | **被结算的判断与规则宇宙是不是同一批标的**                         |
 
@@ -593,9 +593,25 @@ exit 0 = 接线成立；exit 1 = 有断链（error 级）
 FAIL  orphan_holdings       AAPL held but no active rule covers it
 FAIL  unpriceable_holdings  AAPL held with no bars
 FAIL  mark_freshness        AAPL priced from a day the bar book has already moved past
-warn  settlement_supply     5 call(s) recorded and none scored
 warn  scheduler_slots       day last fired 2026-09-20, night has never fired
 ```
+
+`settlement_supply` 在这份数据上是 **ok**，尽管它记了 5 条判断、0 条结算：
+
+```
+ok  settlement_supply  5 recorded: 3 inside their horizon, earliest settles 2026-10-20, 2 declined rather than bet — nothing due yet
+```
+
+第一版把它报成了 warn，措辞是"calibration can only ever say it has no history"。**那是错的**：horizon 默认 30 天，
+9-20 记的判断要到 10-20 才到期，**0 结算是正常等待，不是断裂**。一个把"还没到期"喊成故障的检查，
+会在记下任何判断之后连喊一个月——真断裂的报告到达时，是在一串从来不代表任何事情的报告里到达的。
+现在它只在**已到期却仍无结果**时喊，并把"在等 / 已结算 / 拒绝"三个数分开讲（`direction: "none"`
+是门拒绝下注，结算层本就不计分；把它算成逾期等于把一次拒绝报成一次故障）。
+
+变异验证：把判定改回 `samples.lines > 0 && scored.lines === 0`，**正好那 3 条"不该喊"的用例变红**
+（未到期 / 拒绝 / 计数口径）；还原后 6 条回绿。
+顺带修掉 `sample_universe_overlap` 的边界：**没有活跃规则时"不在宇宙里"是无意义的**
+（每条都满足），改由 `rule_universe` 报"没有规则书"，这条只做比较。
 
 变异验证（治具目录，双向）：**接好了的状态全绿** exit=0（SPY 在宇宙内、有 bar、mark 落在最新 bar 日期、
 scored 有内容、night 触发过）；上面这份真实状态 3 红 2 黄 ⇒ 检测器既不恒定报红、也不是瞎的。
