@@ -21,13 +21,8 @@
  */
 
 import { readFileSync } from "node:fs";
-import { parseResearchConclusion } from "../../src/agents/finance-conclusion-intake.js";
-import { compileExecutionIntent } from "../../src/agents/finance-intent-compiler.js";
-import {
-  classifyFinanceStrategy,
-  evaluateFinanceMandate,
-  type FinanceRegime,
-} from "../../src/agents/finance-mandate.js";
+import { evaluateConclusionToMandate } from "../../src/agents/finance-conclusion-to-mandate.js";
+import type { FinanceRegime } from "../../src/agents/finance-mandate.js";
 
 function readArg(args: readonly string[], name: string): string | undefined {
   const index = args.indexOf(name);
@@ -88,72 +83,42 @@ async function main(): Promise<void> {
     return;
   }
 
-  const intake = parseResearchConclusion(raw);
-  if (!intake.ok) {
-    process.stdout.write(
-      `${JSON.stringify({ ok: false, stage: "intake", refusals: intake.refusals }, null, 2)}\n`,
-    );
-    process.exitCode = 1;
-    return;
-  }
-
-  const strategyClass = classifyFinanceStrategy({
-    assetClass: intake.conclusion.assetClass,
-    ...(intake.conclusion.horizonDays !== undefined
-      ? { holdingPeriodDays: intake.conclusion.horizonDays }
-      : {}),
-  });
-
-  const compiled = compileExecutionIntent({
-    conclusion: intake.conclusion,
-    market: { referencePrice, referencePriceAt: asOf },
+  // The shared back half. One implementation, so this path and the research turn
+  // cannot drift apart again - they already had, on whether a regime reaches the
+  // mandate.
+  const decision = evaluateConclusionToMandate({
+    raw,
+    referencePrice,
+    referencePriceAt: asOf,
     equity,
     runAuthorizationId,
-    ...(strategyClass !== "unknown" ? { strategyClass } : {}),
+    ...(regime === undefined ? {} : { regime }),
   });
-  if (!compiled.ok) {
+
+  if (!decision.ok) {
     process.stdout.write(
-      `${JSON.stringify({ ok: false, stage: "compile", refusals: compiled.refusals }, null, 2)}\n`,
+      `${JSON.stringify({ ok: false, stage: decision.stage, refusals: decision.refusals }, null, 2)}\n`,
     );
     process.exitCode = 1;
     return;
   }
-
-  // Risk, not notional. The mandate caps what is lost if the stop is hit, and
-  // the compiler already sized the trade on that basis; comparing the notional
-  // here would reject every stop-based trade, since notional is many times the
-  // risk whenever a stop is close.
-  const stopDistance =
-    intake.conclusion.invalidationPrice === undefined
-      ? referencePrice
-      : Math.abs(referencePrice - intake.conclusion.invalidationPrice);
-  const riskFractionOfEquity = (compiled.intent.quantity * stopDistance) / equity;
-
-  const mandate = evaluateFinanceMandate({
-    strategy: { assetClass: intake.conclusion.assetClass },
-    riskFractionOfEquity,
-    drawdownFraction: 0,
-    stopLossDefined: intake.conclusion.invalidationPrice !== undefined,
-    hasSignificantAutocorrelation: true,
-    regime,
-  });
 
   process.stdout.write(
     `${JSON.stringify(
       {
-        ok: mandate.verdict === "pass",
+        ok: decision.passed,
         stage: "mandate",
-        strategyClass,
-        regime,
-        mandate,
-        intent: mandate.verdict === "pass" ? compiled.intent : undefined,
-        notes: compiled.notes,
+        strategyClass: decision.strategyClass,
+        regime: decision.regime,
+        mandate: decision.mandate,
+        intent: decision.intent,
+        notes: decision.notes,
       },
       null,
       2,
     )}\n`,
   );
-  if (mandate.verdict !== "pass") {
+  if (!decision.passed) {
     process.exitCode = 1;
   }
 }

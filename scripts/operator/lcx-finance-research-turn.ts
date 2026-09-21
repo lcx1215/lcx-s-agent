@@ -23,7 +23,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fetchAlpacaVenueState } from "../../src/agents/finance-alpaca-run.js";
 import { computeChartStructure } from "../../src/agents/finance-chart-structure.js";
-import { parseResearchConclusion } from "../../src/agents/finance-conclusion-intake.js";
+import { evaluateConclusionToMandate } from "../../src/agents/finance-conclusion-to-mandate.js";
 import { resolveFinanceCredentialEnv } from "../../src/agents/finance-credential-env.js";
 import {
   defaultEvidenceWindow,
@@ -33,12 +33,7 @@ import {
 } from "../../src/agents/finance-evidence-window.js";
 import { createFmpFreeBasicEodCollectionAdapter } from "../../src/agents/finance-free-market-collection-adapters.js";
 import { insiderFlowSignal } from "../../src/agents/finance-insider-signal.js";
-import { compileExecutionIntent } from "../../src/agents/finance-intent-compiler.js";
-import {
-  classifyFinanceStrategy,
-  evaluateFinanceMandate,
-  type FinanceRegime,
-} from "../../src/agents/finance-mandate.js";
+import { type FinanceRegime } from "../../src/agents/finance-mandate.js";
 import {
   createFinanceMarketCollectionRegistry,
   createSecFilingsCollectionAdapter,
@@ -455,53 +450,37 @@ async function main(): Promise<void> {
   }
   process.stdout.write("\n=== model conclusion ===\n" + JSON.stringify(extracted) + "\n");
 
-  const intake = parseResearchConclusion(extracted);
-  if (!intake.ok) {
-    process.stdout.write(
-      "\n=== intake ===\n" +
-        JSON.stringify({ ok: false, refusals: intake.refusals }, null, 2) +
-        "\n",
-    );
-    return;
-  }
-
-  const strategyClass = classifyFinanceStrategy({ assetClass: intake.conclusion.assetClass });
-  const compiled = compileExecutionIntent({
-    conclusion: intake.conclusion,
-    market: { referencePrice: lastPrice, referencePriceAt: now },
+  // The shared back half, so this path and the conclusion-to-order path cannot
+  // drift apart again - they already had, on whether a regime reaches the mandate.
+  const decision = evaluateConclusionToMandate({
+    raw: extracted,
+    referencePrice: lastPrice,
+    referencePriceAt: now,
     equity,
     runAuthorizationId: authorization,
-    ...(strategyClass !== "unknown" ? { strategyClass } : {}),
+    ...(regime === undefined ? {} : { regime }),
   });
-  if (!compiled.ok) {
+
+  if (!decision.ok) {
     process.stdout.write(
-      "\n=== compile ===\n" +
-        JSON.stringify({ ok: false, refusals: compiled.refusals }, null, 2) +
+      "\n=== " +
+        decision.stage +
+        " ===\n" +
+        JSON.stringify({ ok: false, refusals: decision.refusals }, null, 2) +
         "\n",
     );
     recordShadow({
       asOf: now,
       instrument,
       path: "judgement",
-      outcome: "refused_at_compile",
-      refusals: [...compiled.refusals],
-      claimedConviction: intake.conclusion.conviction,
+      outcome: "refused_at_" + decision.stage,
+      refusals: [...decision.refusals],
     });
     return;
   }
 
-  const stopDistance =
-    intake.conclusion.invalidationPrice === undefined
-      ? lastPrice
-      : Math.abs(lastPrice - intake.conclusion.invalidationPrice);
-  const mandate = evaluateFinanceMandate({
-    strategy: { assetClass: intake.conclusion.assetClass },
-    riskFractionOfEquity: (compiled.intent.quantity * stopDistance) / equity,
-    drawdownFraction: 0,
-    stopLossDefined: intake.conclusion.invalidationPrice !== undefined,
-    hasSignificantAutocorrelation: true,
-    ...(regime === undefined ? {} : { regime }),
-  });
+  const strategyClass = decision.strategyClass;
+  const mandate = decision.mandate;
 
   process.stdout.write(
     "\n=== mandate ===\n" +
@@ -511,7 +490,7 @@ async function main(): Promise<void> {
           strategyClass,
           verdict: mandate.verdict,
           reasons: mandate.reasons,
-          intent: mandate.verdict === "pass" ? compiled.intent : undefined,
+          intent: decision.intent,
         },
         null,
         2,
@@ -526,19 +505,19 @@ async function main(): Promise<void> {
     instrument,
     path: "judgement",
     outcome: mandate.verdict === "pass" ? "would_trade" : "refused_at_mandate",
-    claimedConviction: intake.conclusion.conviction,
-    direction: intake.conclusion.direction,
+    claimedConviction: decision.conclusion.conviction,
+    direction: decision.conclusion.direction,
     mandateVerdict: mandate.verdict,
     reasons: [...mandate.reasons],
-    ...(mandate.verdict === "pass"
-      ? {
+    ...(decision.intent === undefined
+      ? {}
+      : {
           wouldBeIntent: {
-            side: compiled.intent.side,
-            quantity: compiled.intent.quantity,
-            stopPrice: compiled.intent.stopPrice ?? null,
+            side: decision.intent.side,
+            quantity: decision.intent.quantity,
+            stopPrice: decision.intent.stopPrice ?? null,
           },
-        }
-      : {}),
+        }),
   });
 }
 
