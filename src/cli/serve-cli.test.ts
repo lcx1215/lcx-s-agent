@@ -1,3 +1,4 @@
+import { request } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDefaultDeps } from "./deps.js";
@@ -53,6 +54,27 @@ function postAgent(url: string, body: unknown, headers: Record<string, string> =
     method: "POST",
     headers: { "content-type": "application/json", ...headers },
     body: typeof body === "string" ? body : JSON.stringify(body),
+  });
+}
+
+// Node fetch can replace Host; use raw HTTP so rebinding tests exercise the wire header.
+function postAgentWithHeaders(url: string, headers: Record<string, string>) {
+  return new Promise<{ status: number }>((resolve, reject) => {
+    const req = request(
+      `${url}/agent`,
+      {
+        method: "POST",
+        setHost: headers.host === undefined,
+        headers: { "content-type": "application/json", ...headers },
+      },
+      (res) => {
+        res.resume();
+        res.on("end", () => resolve({ status: res.statusCode ?? 0 }));
+        res.on("error", reject);
+      },
+    );
+    req.on("error", reject);
+    req.end(JSON.stringify({ message: "test request" }));
   });
 }
 
@@ -241,6 +263,107 @@ describe("POST /agent", () => {
     const response = await postAgent(url, { message: "ping" });
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ ok: true, payloads: [] });
+  });
+});
+
+describe("POST /agent tokenless browser boundary", () => {
+  it.each<Record<string, string>>([
+    { origin: "https://attacker.invalid", "content-type": "text/plain" },
+    { origin: "null" },
+    { origin: "not a URL" },
+    { origin: "http:localhost" },
+    { origin: "http:///localhost" },
+    { origin: "http://localhost/" },
+    { origin: "" },
+    { origin: "file://localhost" },
+    { origin: "ftp://127.0.0.1" },
+    { origin: "http://localhost/foreign/path" },
+    { origin: "http://attacker@localhost" },
+    { "sec-fetch-site": "cross-site" },
+    { origin: "http://localhost", "sec-fetch-site": "cross-site" },
+    { referer: "https://attacker.invalid/form" },
+    { referer: "null" },
+    { referer: "http:localhost/path" },
+    { referer: "file://localhost/form" },
+    { host: "attacker.invalid" },
+    { host: "" },
+    { host: "0.0.0.0:8788" },
+    { host: "attacker.invalid", origin: "http://attacker.invalid" },
+    { host: "attacker.invalid", origin: "http://localhost" },
+    { host: "localhost.attacker.invalid" },
+    { host: "localhost@attacker.invalid" },
+    { host: "127.0.0.1/path" },
+  ])("rejects unsafe ingress before agent dispatch: %j", async (headers) => {
+    const { url, runAgent } = await startServer();
+    const response = await postAgentWithHeaders(url, headers);
+    expect(response.status).toBe(403);
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
+  it.each(["/agent", "/agent/", "/agent///?source=browser"])(
+    "guards route alias %s before reading malformed bodies",
+    async (route) => {
+      const { url, runAgent } = await startServer();
+      const response = await fetch(`${url}${route}`, {
+        method: "POST",
+        headers: { origin: "https://attacker.invalid", "content-type": "text/plain" },
+        body: "invalid JSON",
+      });
+      expect(response.status).toBe(403);
+      expect(runAgent).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each<Record<string, string>>([
+    {},
+    { origin: "http://localhost:3000" },
+    { origin: "https://127.0.0.1:3000" },
+    { origin: "http://[::1]:3000" },
+    { referer: "http://localhost:3000/app?view=agent" },
+    { origin: "http://localhost", "sec-fetch-site": "same-site" },
+    { host: "[::1]:8788" },
+  ])("preserves loopback clients: %j", async (headers) => {
+    const { url, runAgent } = await startServer();
+    const response = await postAgentWithHeaders(url, headers);
+    expect(response.status).toBe(200);
+    expect(runAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves local requests through agent route aliases", async () => {
+    const { url, runAgent } = await startServer();
+    for (const route of ["/agent/", "/agent///?source=cli"]) {
+      const response = await fetch(`${url}${route}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message: "local request" }),
+      });
+      expect(response.status).toBe(200);
+    }
+    expect(runAgent).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves GET and HEAD health probes public", async () => {
+    const { url, runAgent } = await startServer();
+    for (const method of ["GET", "HEAD"]) {
+      const response = await fetch(`${url}/healthz`, {
+        method,
+        headers: { host: "health.internal", origin: "https://monitor.invalid" },
+      });
+      expect(response.status).toBe(200);
+    }
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
+  it("preserves explicitly authenticated LAN clients with foreign browser headers", async () => {
+    const { url, runAgent } = await startServer({ config: { bind: "lan", token: "s3cret" } });
+    const response = await postAgentWithHeaders(url, {
+      authorization: "Bearer s3cret",
+      host: "agent.internal:8788",
+      origin: "https://client.invalid",
+      "sec-fetch-site": "cross-site",
+    });
+    expect(response.status).toBe(200);
+    expect(runAgent).toHaveBeenCalledTimes(1);
   });
 });
 

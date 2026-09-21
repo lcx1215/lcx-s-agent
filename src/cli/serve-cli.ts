@@ -1,8 +1,10 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { Command } from "commander";
+import { shouldRejectBrowserMutation } from "../browser/csrf.js";
 import { agentCommand } from "../commands/agent.js";
 import type { AgentCommandOpts } from "../commands/agent/types.js";
+import { isLoopbackHost } from "../gateway/net.js";
 import { defaultRuntime } from "../runtime.js";
 import { createDefaultDeps } from "./deps.js";
 import { installServeLocalCron, type ServeCronHandle } from "./serve-cron.js";
@@ -128,6 +130,59 @@ export function isServeRequestAuthorized(req: IncomingMessage, token: string | u
     return false;
   }
   return safeEqual(presented, token);
+}
+
+/** Tokenless owner access is local-only, including the browser's initiating site. */
+function isSafeTokenlessServeRequest(req: IncomingMessage): boolean {
+  const host = req.headers.host;
+  if (!host || /[\\/?#@\s]/.test(host)) {
+    return false;
+  }
+  try {
+    if (!isLoopbackHost(new URL(`http://${host}`).hostname)) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+
+  const origin = req.headers.origin;
+  const referer = req.headers.referer;
+  const secFetchSite = req.headers["sec-fetch-site"];
+  if (Array.isArray(origin) || Array.isArray(referer) || Array.isArray(secFetchSite)) {
+    return false;
+  }
+  // The shared guard checks loopback sites. Restrict URL schemes/shape too:
+  // file/opaque origins or URL userinfo must not become trusted local origins.
+  const source = origin ?? referer;
+  if (source !== undefined) {
+    const value = source.trim();
+    if (
+      !/^https?:\/\/[^/\\]/i.test(value) ||
+      (origin !== undefined && !/^https?:\/\/[^\\/?#\s]+$/i.test(value))
+    ) {
+      return false;
+    }
+    try {
+      const parsed = new URL(source);
+      if (
+        !["http:", "https:"].includes(parsed.protocol) ||
+        parsed.username ||
+        parsed.password ||
+        (origin !== undefined && (parsed.pathname !== "/" || parsed.search || parsed.hash))
+      ) {
+        return false;
+      }
+    } catch {
+      return false;
+    }
+  }
+  return !shouldRejectBrowserMutation({
+    method: req.method ?? "POST",
+    origin,
+    referer,
+    secFetchSite,
+  });
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -275,6 +330,11 @@ export function createServeRequestHandler(options: ServeHandlerOptions) {
       return;
     }
 
+    if (!config.token && !isSafeTokenlessServeRequest(req)) {
+      sendJson(res, 403, { ok: false, error: "forbidden request origin or host" });
+      return;
+    }
+
     let body: Record<string, unknown>;
     try {
       body = await readJsonBody(req);
@@ -310,7 +370,7 @@ export function createServeRequestHandler(options: ServeHandlerOptions) {
           runId,
           // Delivery is intentionally off: this entrypoint has no channel adapters.
           deliver: false,
-          // Safe because startup already enforced the bind/token contract.
+          // Startup and request admission enforce the bind/token and browser boundaries.
           senderIsOwner: true,
         },
         runtime,
