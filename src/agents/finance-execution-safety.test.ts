@@ -448,14 +448,16 @@ it.each(["account-expiry", "quote-expiry", "account-age", "quote-age", "instrume
   async (kind) => {
     const f = await fixture();
     const initial = Date.now();
-    const facts = structuredClone(f.facts);
+    const shortExpiry = new Date(initial + 1000).toISOString();
+    const facts = {
+      ...f.facts,
+      expiresAt: kind === "account-expiry" ? shortExpiry : f.facts.expiresAt,
+      quote: {
+        ...f.facts.quote,
+        expiresAt: kind === "quote-expiry" ? shortExpiry : f.facts.quote.expiresAt,
+      },
+    };
     const policy = { ...f.input.policy };
-    if (kind === "account-expiry") {
-      facts.expiresAt = new Date(initial + 1000).toISOString();
-    }
-    if (kind === "quote-expiry") {
-      facts.quote.expiresAt = new Date(initial + 1000).toISOString();
-    }
     if (kind === "account-age") {
       policy.maxAccountAgeMs = 1000;
     }
