@@ -75,6 +75,7 @@ import { createMcpContextTool } from "./tools/mcp-context-tool.js";
 import { createMessageTool } from "./tools/message-tool.js";
 import { createModuleLearningPipelinePlanTool } from "./tools/module-learning-pipeline-plan-tool.js";
 import { createModuleLearningPipelineReviewTool } from "./tools/module-learning-pipeline-review-tool.js";
+import { createNativeCodingHarnessTool } from "./tools/native-coding-harness-tool.js";
 import { createNodesTool } from "./tools/nodes-tool.js";
 import { createPdfTool } from "./tools/pdf-tool.js";
 import { createPlanUpdateTool } from "./tools/plan-update-tool.js";
@@ -408,6 +409,12 @@ export function createOpenClawTools(options?: {
     createMcpCallToolTool({ config: options?.config }),
     createAiderTool({
       workspaceDir,
+      sandboxed: options?.sandboxed,
+    }),
+    createNativeCodingHarnessTool({
+      workspaceDir,
+      agentSessionKey: options?.agentSessionKey,
+      config: options?.config,
       sandboxed: options?.sandboxed,
     }),
     createCodexCodingHarnessTool({

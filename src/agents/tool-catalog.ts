@@ -232,6 +232,15 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     includeInOpenClawGroup: true,
   },
   {
+    id: "native_coding_harness",
+    label: "native_coding_harness",
+    description:
+      "LCX native Docker coding with durable patch/artifact delivery; source remains unchanged. Acceptance policy is controller-owned.",
+    sectionId: "agents",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
     id: "codex_coding_harness",
     label: "codex_coding_harness",
     description:

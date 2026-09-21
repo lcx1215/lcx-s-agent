@@ -20,6 +20,10 @@ describe("createOpenClawTools MCP/aider registration", () => {
       const tools = createOpenClawTools({ agentDir, sandboxed: true });
       const result = await tools.find((tool) => tool.name === "aider")!.execute("sandboxed", {});
       expect(result.details).toMatchObject({ ok: false, status: "forbidden" });
+      const native = await tools
+        .find((tool) => tool.name === "native_coding_harness")!
+        .execute("sandboxed", { task: "fixture" });
+      expect(native.details).toMatchObject({ status: "blocked", verified: false });
     });
   });
 
@@ -28,6 +32,7 @@ describe("createOpenClawTools MCP/aider registration", () => {
       const tools = createOpenClawTools({ agentDir });
       expect(tools.some((tool) => tool.name === "mcp_context")).toBe(true);
       expect(tools.some((tool) => tool.name === "aider")).toBe(true);
+      expect(tools.some((tool) => tool.name === "native_coding_harness")).toBe(true);
     });
   });
 });
