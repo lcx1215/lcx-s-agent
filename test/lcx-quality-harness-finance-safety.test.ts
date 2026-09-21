@@ -422,8 +422,11 @@ describe("a price still has to be cited when no current-data word appears", () =
     "NVDA 报 480 美元。",
     "NVDA 的报价是 480 元。",
     "NVDA 的报价是 480 日元。",
+    "NVDA 报 480 港元。",
     "NVDA trades at $480.",
     "NVDA trades at 480 USD.",
+    "NVDA trades at 480 dollars.",
+    "NVDA trades at 480 euros.",
   ];
 
   for (const answer of prices) {
@@ -448,6 +451,50 @@ describe("a price still has to be cited when no current-data word appears", () =
         "NVDA 报 480 美元。",
       ),
     ).toBe("");
+  });
+
+  /**
+   * The two unit lists -- `extractDataNumbers`'s unit group and `normalizedNumber`'s -- are mirrors,
+   * and a currency added to only one of them is how the Chinese and English sides of this gate drift
+   * apart: the answer would be money on one side and a bare count on the other.
+   */
+  const crossScript = [
+    {
+      label: "answer 480 dollars / evidence 480 美元",
+      evidence: "截至 2026-09-06，公开行情材料记录 NVDA 的价格为 480 美元。",
+      answer: "NVDA trades at 480 dollars.",
+    },
+    {
+      label: "answer 480 美元 / evidence 480 dollars",
+      evidence: "截至 2026-09-06，公开行情材料记录 NVDA 的价格为 480 dollars。",
+      answer: "NVDA 报 480 美元。",
+    },
+    {
+      label: "answer 480 港元 / evidence 480 港元",
+      evidence: "截至 2026-09-06，公开行情材料记录 NVDA 的价格为 480 港元。",
+      answer: "NVDA 报 480 港元。",
+    },
+  ];
+
+  for (const { label, evidence, answer } of crossScript) {
+    it(`grounds ${label}`, async () => {
+      expect(await safetyReasonWithEvidence(evidence, quietTask, answer, answer)).toBe("");
+    });
+  }
+
+  /**
+   * The unit split has to stay a split: 480 港元 must not be satisfied by evidence quoting 480 元.
+   * Before HKD was a unit of its own, both fell through to CNY and the two matched.
+   */
+  it("does not let 港元 be grounded by a 元 quote", async () => {
+    expect(
+      await safetyReasonWithEvidence(
+        "截至 2026-09-06，公开行情材料记录 NVDA 的价格为 480 元。",
+        quietTask,
+        "NVDA 报 480 港元。",
+        "NVDA 报 480 港元。",
+      ),
+    ).toContain("current-data numbers without matching cited evidence");
   });
 
   /**

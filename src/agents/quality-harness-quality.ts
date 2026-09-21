@@ -158,6 +158,10 @@ const EXECUTION_CLAIM_PATTERN =
  *     qualifiers allow no space, so a *level* ("标普 5000 点") is still checked.
  *   - a tenor label of at most two digits (10Y / 3M / 10年期), so a value like "480M" is not stripped.
  *   - a period label (Q3 / H1 / FY24).
+ *
+ * The unit group is mirrored by `normalizedNumber`: a currency written as a word (480 dollars) is
+ * money only if *both* recognise it. So adding a currency means adding it in the two places --
+ * adding it in one is exactly how the Chinese and English sides of this gate drift apart.
  */
 function extractDataNumbers(text: string): string[] {
   const withoutDateLiterals = text
@@ -176,7 +180,7 @@ function extractDataNumbers(text: string): string[] {
     .replace(/\b(?:Q[1-4]|H[12]|FY\s?\d{2,4})\b/giu, " ");
   return (
     withoutNameNumbers.match(
-      /(?<!\d)[+-]?\s*(?:[$€£¥]\s*)?\d[\d,]*(?:\.\d+)?(?:\s*%|\s*(?:USD|EUR|GBP|CNY|JPY|美元|欧元|英镑|人民币|日元|元))?/giu,
+      /(?<!\d)[+-]?\s*(?:[$€£¥]\s*)?\d[\d,]*(?:\.\d+)?(?:\s*%|\s*(?:USD|EUR|GBP|CNY|JPY|HKD|dollars?|euros?|pounds?|yen|yuan|美元|欧元|英镑|人民币|日元|港元|港币|元))?/giu,
     ) ?? []
   ).map((value) => value.replace(/\s+/g, ""));
 }
@@ -186,17 +190,19 @@ function normalizedNumber(value: string): string {
   const number = compact.match(/[+-]?\d+(?:\.\d+)?/)?.[0] ?? compact;
   const unit = compact.includes("%")
     ? "percent"
-    : /(?:\$|usd|美元)/u.test(compact)
+    : /(?:\$|usd|dollars?|美元)/u.test(compact)
       ? "usd"
-      : /(?:€|eur|欧元)/u.test(compact)
+      : /(?:€|eur|euros?|欧元)/u.test(compact)
         ? "eur"
-        : /(?:£|gbp|英镑)/u.test(compact)
+        : /(?:£|gbp|pounds?|英镑)/u.test(compact)
           ? "gbp"
-          : /(?:jpy|日元)/u.test(compact)
+          : /(?:jpy|yen|日元)/u.test(compact)
             ? "jpy"
-            : /(?:¥|cny|人民币|元)/u.test(compact)
-              ? "cny"
-              : "unitless";
+            : /(?:hkd|港元|港币)/u.test(compact)
+              ? "hkd"
+              : /(?:¥|cny|yuan|人民币|元)/u.test(compact)
+                ? "cny"
+                : "unitless";
   return `${number}|${unit}`;
 }
 
