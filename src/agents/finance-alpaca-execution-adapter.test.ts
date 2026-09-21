@@ -12,9 +12,9 @@ beforeEach(() => {
 import {
   createAlpacaExecutionAdapter,
   AlpacaOrderUncertainError,
+  type AlpacaExecutionAdapterOptions,
 } from "./finance-alpaca-execution-adapter.js";
 import type { FinanceExecutionIntent } from "./finance-execution-adapter.js";
-import type { FinanceWriteTransport } from "./finance-write-transport.js";
 
 const PAPER = "PKTESTKEYID0000000000";
 const LIVE = "AKTESTKEYID0000000000";
@@ -456,13 +456,15 @@ describe("submission identity and terminal fill safety", () => {
 it.each(["BTC/USD", "ETH/USD"])(
   "uses crypto GTC and refuses unsupported protection/TIF for %s",
   async (instrument) => {
-    const postJson = vi.fn<FinanceWriteTransport>(async (_url, init) => {
-      expect(JSON.parse(init.body).time_in_force).toBe("gtc");
-      return {
-        status: 200,
-        body: JSON.stringify({ id: "crypto", status: "new", filled_qty: "0" }),
-      };
-    });
+    const postJson = vi.fn<NonNullable<AlpacaExecutionAdapterOptions["postJson"]>>(
+      async (_url, init) => {
+        expect(JSON.parse(init.body).time_in_force).toBe("gtc");
+        return {
+          status: 200,
+          body: JSON.stringify({ id: "crypto", status: "new", filled_qty: "0" }),
+        };
+      },
+    );
     const intent = { ...baseIntent, instrument };
     await createAlpacaExecutionAdapter({ instruments: [instrument], postJson }).execute(
       intent,
