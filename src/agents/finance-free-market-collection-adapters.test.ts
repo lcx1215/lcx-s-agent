@@ -33,6 +33,7 @@ const request = {
   collection: "eod_history",
   fromDate: "2026-09-01",
   toDate: "2026-09-03",
+  asOf: "2026-09-04T00:00:00.000Z",
 } as const;
 
 /**
@@ -44,22 +45,22 @@ const request = {
 describe("a declared collection limit", () => {
   it("is sent through when it is a positive integer", async () => {
     const { urls, adapter } = harness(klines(3));
-    await adapter.collect({ ...request, limit: 500 });
+    await adapter.collect({ ...request, limit: 500 }, new AbortController().signal);
     expect(urls[0] && new URL(urls[0]).searchParams.get("limit")).toBe("500");
   });
 
   it("keeps its own fallback when it is not declared", async () => {
     const { urls, adapter } = harness(klines(3));
-    await adapter.collect(request);
+    await adapter.collect(request, new AbortController().signal);
     expect(urls[0] && new URL(urls[0]).searchParams.get("limit")).toBe("1000");
   });
 
   it("is refused when it would make the window empty, inverted or fractional", async () => {
     for (const limit of [0, -5, 1.5, Number.NaN]) {
       const { adapter } = harness(klines(3));
-      await expect(adapter.collect({ ...request, limit })).rejects.toThrow(
-        /limit must be a positive integer/,
-      );
+      await expect(
+        adapter.collect({ ...request, limit }, new AbortController().signal),
+      ).rejects.toThrow(/limit must be a positive integer/);
     }
   });
 });
