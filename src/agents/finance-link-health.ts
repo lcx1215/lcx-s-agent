@@ -15,6 +15,7 @@
 
 import fs from "node:fs/promises";
 import { readFinanceBarLedger } from "./finance-bar-ledger.js";
+import { resolveFinanceCredentialEnv } from "./finance-credential-env.js";
 import { DEFAULT_OUTCOME_HORIZON_DAYS } from "./finance-outcome-backfill.js";
 import { readFinancePositionLedger } from "./finance-position-ledger.js";
 import {
@@ -77,6 +78,48 @@ function dayOf(instant: string): string {
 function calendarDaysBehind(later: string, earlier: string): number {
   const ms = Date.parse(`${later}T00:00:00Z`) - Date.parse(`${earlier}T00:00:00Z`);
   return Number.isFinite(ms) ? Math.round(ms / 86_400_000) : Number.NaN;
+}
+
+/**
+ * Venue positions, or a reason they could not be read.
+ *
+ * A failure here must not be mistaken for agreement, so the caller is told which it is.
+ */
+async function readVenuePositions(
+  keyId: string,
+  secret: string,
+): Promise<{ ok: true; bySymbol: Map<string, number> } | { ok: false; reason: string }> {
+  try {
+    const response = await fetch("https://paper-api.alpaca.markets/v2/positions", {
+      headers: {
+        "APCA-API-KEY-ID": keyId,
+        "APCA-API-SECRET-KEY": secret,
+        accept: "application/json",
+      },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (response.status !== 200) {
+      return { ok: false, reason: "positions read returned " + response.status };
+    }
+    const parsed = (JSON.parse(await response.text()) ?? []) as {
+      symbol?: unknown;
+      qty?: unknown;
+    }[];
+    const bySymbol = new Map<string, number>();
+    for (const position of parsed) {
+      const symbol = typeof position.symbol === "string" ? position.symbol.toUpperCase() : "";
+      const qty = Number(position.qty);
+      if (symbol.length > 0 && Number.isFinite(qty)) {
+        bySymbol.set(symbol, qty);
+      }
+    }
+    return { ok: true, bySymbol };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: (error instanceof Error ? error.message : String(error)).slice(0, 100),
+    };
+  }
 }
 
 export async function readFinanceLinkHealth(
@@ -405,6 +448,77 @@ export async function readFinanceLinkHealth(
         : `day last fired ${lastFired.day ?? "never"}, night ${lastFired.night ?? "never"}`,
     detail: { schedulerPresent, lastFired, nightEverFired: !nightNeverFired },
   });
+
+  // 7. The book the system thinks it holds, against the book the venue actually holds.
+  //
+  // These diverge silently: an order placed against the venue that never filled, or a fill
+  // the ledger never heard about, leaves two books that disagree with nothing comparing them.
+  // Invisible until someone opens the broker and asks why the positions do not match - which
+  // is exactly how this was found.
+  //
+  // Runs only when credentials exist, and reports when it does not: "not checked" and
+  // "checked and fine" must not look the same.
+  const credentialEnv = resolveFinanceCredentialEnv(process.env) as Record<string, string>;
+  const alpacaKeyId = credentialEnv.ALPACA_API_KEY_ID ?? "";
+  const alpacaSecret = credentialEnv.ALPACA_API_SECRET_KEY ?? "";
+  if (alpacaKeyId.length === 0 || alpacaSecret.length === 0) {
+    checks.push({
+      id: "venue_ledger_parity",
+      severity: "info",
+      ok: true,
+      summary: "venue not checked: no Alpaca credentials configured",
+      detail: { checked: false, reason: "no_credentials" },
+    });
+  } else {
+    const venuePositions = await readVenuePositions(alpacaKeyId, alpacaSecret);
+    if (!venuePositions.ok) {
+      checks.push({
+        id: "venue_ledger_parity",
+        severity: "warn",
+        ok: false,
+        summary: "venue not checked: " + venuePositions.reason,
+        detail: { checked: false, reason: venuePositions.reason },
+      });
+    } else {
+      const ledgerBySymbol = new Map(held.map((p) => [p.instrument.toUpperCase(), p.quantity]));
+      const onlyLedger = [...ledgerBySymbol.entries()]
+        .filter(([symbol, qty]) => qty !== 0 && !venuePositions.bySymbol.has(symbol))
+        .map(([symbol]) => symbol);
+      const onlyVenue = [...venuePositions.bySymbol.keys()].filter(
+        (symbol) => !ledgerBySymbol.has(symbol),
+      );
+      const mismatch = [...ledgerBySymbol.entries()]
+        .filter(([symbol, qty]) => {
+          const venueQty = venuePositions.bySymbol.get(symbol);
+          return venueQty !== undefined && Math.abs(venueQty - qty) > 1e-6;
+        })
+        .map(([symbol]) => symbol);
+      const divergent = onlyLedger.length + onlyVenue.length + mismatch.length;
+      checks.push({
+        id: "venue_ledger_parity",
+        severity: divergent > 0 ? "warn" : "info",
+        ok: divergent === 0,
+        summary:
+          divergent === 0
+            ? `venue and ledger agree on ${venuePositions.bySymbol.size} position(s)`
+            : "venue and ledger disagree: in ledger only [" +
+              onlyLedger.join(", ") +
+              "], at venue only [" +
+              onlyVenue.join(", ") +
+              "], quantity differs [" +
+              mismatch.join(", ") +
+              "]",
+        detail: {
+          checked: true,
+          venueCount: venuePositions.bySymbol.size,
+          ledgerCount: ledgerBySymbol.size,
+          onlyLedger,
+          onlyVenue,
+          mismatch,
+        },
+      });
+    }
+  }
 
   const errors = checks.filter((check) => check.severity === "error");
   const warnings = checks.filter((check) => check.severity === "warn");
