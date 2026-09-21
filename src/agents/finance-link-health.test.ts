@@ -119,3 +119,65 @@ describe("readFinanceLinkHealth sample universe overlap", () => {
     expect(check.summary).toContain("no active rule universe");
   });
 });
+
+describe("scheduler success evidence", () => {
+  it("does not report a missing night attempt as ever fired", async () => {
+    const check = await checkFor("scheduler_slots");
+    expect(check.ok).toBe(false);
+    expect(check.detail).toMatchObject({ nightEverFired: false });
+  });
+
+  it("does not promote legacy attempt markers to successful completion", async () => {
+    await fs.writeFile(
+      path.join(dir, "daily-cycle-scheduler.json"),
+      JSON.stringify({ lastFired: { day: AS_OF, night: AS_OF } }),
+    );
+    const check = await checkFor("scheduler_slots");
+    expect(check.ok).toBe(false);
+    expect(check.summary).toContain("success unverified");
+  });
+
+  it.each(["failed", "timed_out", "cancelled", "running"])(
+    "reports the latest %s attempt even after an earlier same-day success",
+    async (status) => {
+      await fs.writeFile(
+        path.join(dir, "daily-cycle-scheduler.json"),
+        JSON.stringify({
+          lastFired: { day: AS_OF, night: AS_OF },
+          lastSucceeded: { day: AS_OF, night: AS_OF },
+          lastStatus: { day: "succeeded", night: "succeeded" },
+          lastRun: { status },
+        }),
+      );
+      expect((await checkFor("scheduler_slots")).ok).toBe(false);
+    },
+  );
+
+  it("recognizes both successfully completed slots without claiming freshness", async () => {
+    await fs.writeFile(
+      path.join(dir, "daily-cycle-scheduler.json"),
+      JSON.stringify({
+        lastFired: { day: AS_OF, night: AS_OF },
+        lastSucceeded: { day: AS_OF, night: AS_OF },
+        lastStatus: { day: "succeeded", night: "succeeded" },
+        lastRun: { status: "succeeded" },
+      }),
+    );
+    const check = await checkFor("scheduler_slots");
+    expect(check.ok).toBe(true);
+    expect(check.summary).toContain("not a freshness check");
+  });
+});
+
+it("does not hide a failed day rerun behind an earlier same-day success and a successful night", async () => {
+  await fs.writeFile(
+    path.join(dir, "daily-cycle-scheduler.json"),
+    JSON.stringify({
+      lastFired: { day: AS_OF, night: AS_OF },
+      lastSucceeded: { day: AS_OF, night: AS_OF },
+      lastStatus: { day: "failed", night: "succeeded" },
+      lastRun: { status: "succeeded", mode: "night" },
+    }),
+  );
+  expect((await checkFor("scheduler_slots")).ok).toBe(false);
+});

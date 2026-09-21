@@ -1,103 +1,119 @@
-import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ spawn: vi.fn() }));
-vi.mock("node:child_process", () => ({ spawn: mocks.spawn }));
+const mocks = vi.hoisted(() => ({ run: vi.fn() }));
+vi.mock("./finance-scheduler-process.js", () => ({
+  DEFAULT_FINANCE_CYCLE_TIMEOUT_MS: 900000,
+  runFinanceCycleProcess: mocks.run,
+}));
 vi.mock("../config/config.js", () => ({
   loadConfig: () => {
     throw new Error("unexpected config read");
   },
 }));
-vi.mock("../config/env-vars.js", () => ({ applyConfigEnvVars: vi.fn() }));
-vi.mock("../cli/serve-detach.js", () => ({ buildDetachedServeEnv: () => ({}) }));
+import {
+  cycleOutputSucceeded,
+  parseFinanceSchedulerArgs,
+  runFinanceScheduler,
+} from "../../scripts/operator/lcx-finance-scheduler.js";
+import { readFinanceSchedulerState } from "./finance-scheduler-state.js";
 let root: string;
-const originalArgv = process.argv;
-let exitCode: typeof process.exitCode;
 beforeEach(() => {
-  vi.resetModules();
-  vi.useFakeTimers();
-  vi.setSystemTime(new Date("2026-09-22T19:30:00Z"));
   root = fs.mkdtempSync(path.join(os.tmpdir(), "finance-scheduler-"));
-  process.argv = ["node", "/synthetic/importer", "--dir", root];
-  exitCode = process.exitCode;
-  mocks.spawn.mockReset();
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-22T19:30:00Z"));
+  mocks.run.mockReset().mockResolvedValue({
+    exitCode: 0,
+    signal: null,
+    status: "succeeded",
+    ok: true,
+    stdout: '{"ok":true}',
+    stderr: "",
+    outputTruncated: false,
+  });
+  vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+  vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 });
 afterEach(() => {
-  process.argv = originalArgv;
-  process.exitCode = exitCode;
   vi.useRealTimers();
+  vi.restoreAllMocks();
   fs.rmSync(root, { recursive: true, force: true });
 });
-function childResult(stdout: string, code = 0) {
-  const child = Object.assign(new EventEmitter(), {
-    stdout: new EventEmitter(),
-    stderr: new EventEmitter(),
-    unref: vi.fn(),
-    pid: 123,
-  });
-  mocks.spawn.mockImplementationOnce(() => {
-    void Promise.resolve().then(() => {
-      child.stdout.emit("data", stdout);
-      child.emit("close", code);
-    });
-    return child;
-  });
-}
-describe("durable scheduler claims", () => {
-  it("does not call success from exit zero with failed or malformed report", async () => {
-    const { cycleOutputSucceeded } =
-      await import("../../scripts/operator/lcx-finance-scheduler.js");
+describe("durable scheduler claims on the unified lifecycle", () => {
+  it("requires JSON success, not merely exit zero", async () => {
     expect(cycleOutputSucceeded('{"ok":true}')).toBe(true);
-    for (const text of ['{"ok":false}', "{}", "not json"]) {
-      expect(cycleOutputSucceeded(text)).toBe(false);
+    for (const stdout of ['{"ok":false}', "{}", "not json"]) {
+      expect(cycleOutputSucceeded(stdout)).toBe(false);
     }
+    mocks.run.mockResolvedValue({
+      exitCode: 0,
+      status: "succeeded",
+      ok: true,
+      stdout: '{"ok":false}',
+      stderr: "",
+    });
+    expect(await runFinanceScheduler(["--once", "day", "--dir", root])).toBe(1);
+    const state = readFinanceSchedulerState(root);
+    expect(state.lastFired.day).toBe("2026-09-22");
+    expect(state.lastSucceeded.day).toBeUndefined();
+    expect(state.lastStatus.day).toBe("failed");
+    expect(await runFinanceScheduler(["--once", "day", "--dir", root])).toBe(1);
+    expect(mocks.run).toHaveBeenCalledTimes(1);
   });
-  it("records failure without advancing lastFired or replaying on restart", async () => {
-    const { fire } = await import("../../scripts/operator/lcx-finance-scheduler.js");
-    childResult('{"ok":false}');
-    await fire("day", []);
-    expect(
-      JSON.parse(fs.readFileSync(path.join(root, "daily-cycle-2026-09-22-day.json"), "utf8"))
-        .status,
-    ).toBe("failed");
-    expect(fs.existsSync(path.join(root, "daily-cycle-scheduler.json"))).toBe(false);
-    vi.resetModules();
-    await (await import("../../scripts/operator/lcx-finance-scheduler.js")).fire("day", []);
-    expect(mocks.spawn).toHaveBeenCalledTimes(1);
-  });
-  it("preserves interrupted claim and never dispatches an ambiguous run twice", async () => {
+  it("preserves old interrupted claim without dispatch", async () => {
     fs.writeFileSync(
       path.join(root, "daily-cycle-2026-09-22-day.json"),
       JSON.stringify({ status: "started" }),
     );
-    await (await import("../../scripts/operator/lcx-finance-scheduler.js")).fire("day", []);
-    expect(mocks.spawn).not.toHaveBeenCalled();
-    expect(process.exitCode).toBe(1);
+    expect(await runFinanceScheduler(["--once", "day", "--dir", root])).toBe(1);
+    expect(mocks.run).not.toHaveBeenCalled();
   });
-  it("claims atomically before dispatch and completes one concurrent caller", async () => {
-    const { fire } = await import("../../scripts/operator/lcx-finance-scheduler.js");
-    childResult('{"ok":true}');
-    await Promise.all([fire("day", []), fire("day", [])]);
-    expect(mocks.spawn).toHaveBeenCalledTimes(1);
-    expect(
-      JSON.parse(fs.readFileSync(path.join(root, "daily-cycle-scheduler.json"), "utf8")).lastFired
-        .day,
-    ).toBe("2026-09-22");
+  it("does not overwrite an interrupted attempt from an earlier day", async () => {
+    fs.writeFileSync(
+      path.join(root, "daily-cycle-scheduler.json"),
+      JSON.stringify({
+        lastFired: { day: "2026-09-21" },
+        lastStatus: { day: "running" },
+        lastSucceeded: {},
+      }),
+    );
+    expect(await runFinanceScheduler(["--once", "day", "--dir", root])).toBe(1);
+    expect(mocks.run).not.toHaveBeenCalled();
   });
-  it("forwards explicit quote authorization through cycle and detach", async () => {
-    const { forwardedArgs, detach } =
-      await import("../../scripts/operator/lcx-finance-scheduler.js");
+  it("forwards explicit quote authorization through the unified argument parser and cycle", async () => {
     const flags = ["--execution-quote-feed", "sip", "--execution-max-age-ms", "1500"];
-    expect(forwardedArgs(flags)).toEqual(flags);
-    mocks.spawn.mockReturnValue({ unref: vi.fn(), pid: 123 });
-    detach(forwardedArgs(flags));
-    expect(mocks.spawn.mock.calls[0][1]).toEqual(expect.arrayContaining(flags));
+    expect(parseFinanceSchedulerArgs(["--loop", ...flags]).extraArgs).toEqual(flags);
+    expect(await runFinanceScheduler(["--once", "day", "--dir", root, ...flags])).toBe(0);
+    expect(mocks.run.mock.calls[0][0].argv).toEqual(
+      expect.arrayContaining([...flags, "--dir", root]),
+    );
+    expect(() =>
+      parseFinanceSchedulerArgs(["--loop", "--execution-quote-feed", "delayed"]),
+    ).toThrow();
+    expect(() => parseFinanceSchedulerArgs(["--loop", "--execution-max-age-ms", "0"])).toThrow();
   });
-  it("carries the resolved book into detached process", async () => {
-    mocks.spawn.mockReturnValue({ unref: vi.fn(), pid: 123 });
-    (await import("../../scripts/operator/lcx-finance-scheduler.js")).detach(["--place"]);
-    expect(mocks.spawn.mock.calls[0][1]).toEqual(expect.arrayContaining(["--dir", root]));
+  it("allows only one concurrent owner to dispatch", async () => {
+    let release!: () => void;
+    mocks.run.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () =>
+            resolve({
+              exitCode: 0,
+              status: "succeeded",
+              ok: true,
+              stdout: '{"ok":true}',
+              stderr: "",
+            });
+        }),
+    );
+    const first = runFinanceScheduler(["--once", "day", "--dir", root]);
+    await expect(runFinanceScheduler(["--once", "day", "--dir", root])).rejects.toThrow(
+      "lock exists",
+    );
+    release();
+    expect(await first).toBe(0);
+    expect(mocks.run).toHaveBeenCalledTimes(1);
   });
 });

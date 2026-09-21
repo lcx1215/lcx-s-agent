@@ -80,7 +80,7 @@ describe("fetchAlpacaAccountSnapshot", () => {
     const result = await fetchAlpacaAccountSnapshot({
       read: readOnce(200, JSON.stringify({ status: "ACTIVE" })),
     });
-    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({ ok: false, reason: "account read returned no usable equity" });
   });
 
   it("refuses when the body is not JSON", async () => {
@@ -88,6 +88,9 @@ describe("fetchAlpacaAccountSnapshot", () => {
       read: readOnce(200, "<html>maintenance</html>"),
     });
     expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).not.toContain("credentials");
+    }
   });
 
   it("refuses when the read throws", async () => {
@@ -101,6 +104,15 @@ describe("fetchAlpacaAccountSnapshot", () => {
       return;
     }
     expect(result.reason).toContain("socket hang up");
+  });
+
+  it("keeps the credential gate before an injected account transport", async () => {
+    vi.stubEnv("ALPACA_API_KEY_ID", "");
+    vi.stubEnv("ALPACA_API_SECRET_KEY", "");
+    const read = vi.fn(readOnce(200, ACCOUNT_BODY));
+    const result = await fetchAlpacaAccountSnapshot({ read });
+    expect(result).toMatchObject({ ok: false, reason: "Alpaca credentials are not configured" });
+    expect(read).not.toHaveBeenCalled();
   });
 });
 

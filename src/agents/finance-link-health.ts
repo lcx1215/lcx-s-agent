@@ -18,6 +18,7 @@ import { readFinanceBarLedger } from "./finance-bar-ledger.js";
 import { resolveFinanceCredentialEnv } from "./finance-credential-env.js";
 import { DEFAULT_OUTCOME_HORIZON_DAYS } from "./finance-outcome-backfill.js";
 import { readFinancePositionLedger } from "./finance-position-ledger.js";
+import { readFinanceSchedulerState } from "./finance-scheduler-state.js";
 import {
   financeResearchSamplesPath,
   financeResearchScoredPath,
@@ -424,29 +425,45 @@ export async function readFinanceLinkHealth(
     },
   });
 
-  // 7. Has the unattended loop actually fired, on both slots?
-  let lastFired: { day?: string; night?: string } = {};
-  let schedulerPresent = false;
+  // Attempt markers cannot establish that the latest day and night cycles succeeded.
+  let schedulerState: ReturnType<typeof readFinanceSchedulerState> | undefined;
+  let schedulerError: string | undefined;
   try {
-    const parsed = JSON.parse(
-      await fs.readFile(`${directory}/daily-cycle-scheduler.json`, "utf8"),
-    ) as { lastFired?: { day?: string; night?: string } };
-    schedulerPresent = true;
-    lastFired = parsed.lastFired ?? {};
-  } catch {
-    schedulerPresent = false;
+    schedulerState = readFinanceSchedulerState(directory);
+  } catch (error) {
+    schedulerError = String(error);
   }
-  const nightNeverFired = schedulerPresent && lastFired.night === undefined;
+  const lastFired = schedulerState?.lastFired ?? {};
+  const lastSucceeded = schedulerState?.lastSucceeded ?? {};
+  const schedulerPresent = Object.keys(lastFired).length > 0;
+  const recordedStatus = schedulerState?.lastRun?.status;
+  const latestStatus = typeof recordedStatus === "string" ? recordedStatus : undefined;
+  const lastStatus = schedulerState?.lastStatus ?? {};
+  const slotsSucceeded =
+    ["day", "night"].every(
+      (mode) =>
+        lastFired[mode] !== undefined &&
+        lastSucceeded[mode] === lastFired[mode] &&
+        lastStatus[mode] === "succeeded",
+    ) && latestStatus === "succeeded";
   checks.push({
     id: "scheduler_slots",
-    severity: !schedulerPresent ? "warn" : nightNeverFired ? "warn" : "info",
-    ok: schedulerPresent && !nightNeverFired,
-    summary: !schedulerPresent
-      ? "no scheduler state: the unattended loop has never recorded a firing"
-      : nightNeverFired
-        ? `day last fired ${lastFired.day ?? "never"}, night has never fired`
-        : `day last fired ${lastFired.day ?? "never"}, night ${lastFired.night ?? "never"}`,
-    detail: { schedulerPresent, lastFired, nightEverFired: !nightNeverFired },
+    severity: slotsSucceeded ? "info" : "warn",
+    ok: slotsSucceeded,
+    summary: schedulerError
+      ? `scheduler state unreadable: ${schedulerError}`
+      : slotsSucceeded
+        ? `latest recorded day and night attempts succeeded (day ${lastSucceeded.day}, night ${lastSucceeded.night}); this is not a freshness check`
+        : `scheduler success unverified: day attempted ${lastFired.day ?? "never"}, succeeded ${lastSucceeded.day ?? "unknown"}, status ${lastStatus.day ?? "unknown"}; night attempted ${lastFired.night ?? "never"}, succeeded ${lastSucceeded.night ?? "unknown"}, status ${lastStatus.night ?? "unknown"}; latest status ${latestStatus ?? "unknown"}`,
+    detail: {
+      schedulerPresent,
+      lastFired,
+      lastSucceeded,
+      lastStatus,
+      latestStatus,
+      nightEverFired: lastFired.night !== undefined,
+      schedulerError,
+    },
   });
 
   // 7. The book the system thinks it holds, against the book the venue actually holds.
