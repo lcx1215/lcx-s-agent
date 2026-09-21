@@ -259,6 +259,45 @@ export async function readFinanceLinkHealth(
     },
   });
 
+  // 6b. Whether what is being settled is what is being traded. A reflection loop can run
+  //     perfectly over a set of instruments the plane never touches: the samples are recorded by
+  //     hand, so the hit rate they produce says nothing about the book the rules actually run.
+  const sampleInstruments: string[] = [];
+  try {
+    const text = await fs.readFile(financeResearchSamplesPath(directory), "utf8");
+    for (const line of text.split("\n")) {
+      if (line.trim().length === 0) {
+        continue;
+      }
+      const instrument = (JSON.parse(line) as { instrument?: unknown }).instrument;
+      if (typeof instrument === "string" && instrument.length > 0) {
+        sampleInstruments.push(instrument.trim().toUpperCase());
+      }
+    }
+  } catch {
+    sampleInstruments.length = 0;
+  }
+  const sampleUniverse = [...new Set(sampleInstruments)].toSorted();
+  const insideUniverse = sampleUniverse.filter((instrument) => universe.has(instrument));
+  const outsideUniverse = sampleUniverse.filter((instrument) => !universe.has(instrument));
+  checks.push({
+    id: "sample_universe_overlap",
+    severity: sampleUniverse.length > 0 && insideUniverse.length === 0 ? "warn" : "info",
+    ok: !(sampleUniverse.length > 0 && insideUniverse.length === 0),
+    summary:
+      sampleUniverse.length === 0
+        ? "no recorded calls to compare against the rule universe"
+        : insideUniverse.length === 0
+          ? `every recorded call (${outsideUniverse.join(", ")}) is outside the rule universe: the track record being settled is not the book being traded`
+          : `${insideUniverse.length} of ${sampleUniverse.length} recorded instrument(s) are inside the rule universe`,
+    detail: {
+      sampleInstruments: sampleUniverse,
+      insideUniverse,
+      outsideUniverse,
+      universeInstruments: [...universe].toSorted(),
+    },
+  });
+
   // 7. Has the unattended loop actually fired, on both slots?
   let lastFired: { day?: string; night?: string } = {};
   let schedulerPresent = false;

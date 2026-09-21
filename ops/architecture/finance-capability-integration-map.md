@@ -575,16 +575,17 @@ exit 0 = 接线成立；exit 1 = 有断链（error 级）
 
 七项检查，每条都带上"读的是哪本书"，并把**没有**与**读不到**分开（`{present, lines}`，不是行数而已）：
 
-| 检查                   | 判的是什么                                                         |
-| ---------------------- | ------------------------------------------------------------------ |
-| `state_root`           | 从哪个根读的（零计数若读错书，与空书不可分）                       |
-| `bar_supply`           | 有没有 bar、最新一根距今几天（>4 天告警）                          |
-| `rule_universe`        | 有哪几条活跃规则、覆盖哪些标的                                     |
-| `orphan_holdings`      | **有持仓但不在宇宙**：永不会被再平衡或重定价                       |
-| `unpriceable_holdings` | **有持仓但没有 bar**：mark 永远刷不新                              |
-| `mark_freshness`       | mark 的日期 vs 该标的最新 bar 日期（陈旧 / 早于数据 / 领先于数据） |
-| `settlement_supply`    | 记了多少次判断、结算了几条                                         |
-| `scheduler_slots`      | day / night 各上次触发何时，night 是否从未触发过                   |
+| 检查                      | 判的是什么                                                         |
+| ------------------------- | ------------------------------------------------------------------ |
+| `state_root`              | 从哪个根读的（零计数若读错书，与空书不可分）                       |
+| `bar_supply`              | 有没有 bar、最新一根距今几天（>4 天告警）                          |
+| `rule_universe`           | 有哪几条活跃规则、覆盖哪些标的                                     |
+| `orphan_holdings`         | **有持仓但不在宇宙**：永不会被再平衡或重定价                       |
+| `unpriceable_holdings`    | **有持仓但没有 bar**：mark 永远刷不新                              |
+| `mark_freshness`          | mark 的日期 vs 该标的最新 bar 日期（陈旧 / 早于数据 / 领先于数据） |
+| `settlement_supply`       | 记了多少次判断、结算了几条                                         |
+| `scheduler_slots`         | day / night 各上次触发何时，night 是否从未触发过                   |
+| `sample_universe_overlap` | **被结算的判断与规则宇宙是不是同一批标的**                         |
 
 **它一上真实数据就把本次审计的发现全报了出来**（exit=1）：
 
@@ -608,6 +609,32 @@ marksFiled: 7 条（SPY @761.69、QQQ @721.45 …）
 unpricedHoldings: ["AAPL"]
 linkHealth.ok: false | FAIL: orphan_holdings,unpriceable_holdings,mark_freshness
 ```
+
+### 反思环评的不是在交易的那一批（2026-09-21，已可见、未改）
+
+`research-samples.jsonl` 里 5 条是 9-20 人工批量研究的产物，标的是
+**AAPL / MSFT / NVDA / AMD / GOOGL**；而活跃规则覆盖的是
+**SPY / QQQ / IWM / EFA / EEM / TLT / GLD / DBC**——**零重叠**。
+
+> 结算与反思跑在 A 组上，交易跑在 B 组上。hitRate / brier / 底线因此回答的是
+> "我在那批从不交易的标的上准不准"，而它读起来像"我准不准"。
+
+新加的检查 `sample_universe_overlap` 直接把它说出来：
+
+```
+warn  sample_universe_overlap   every recorded call (AAPL, AMD, GOOGL, MSFT, NVDA)
+                                is outside the rule universe: the track record being
+                                settled is not the book being traded
+```
+
+**为什么没顺手修**：闭合它要"每次判断自动记一条样本"，而样本要带 `conviction`，
+结算的 brier / 过度自信差全靠它。规则输出的是目标权重与漂移，**没有置信度**——
+要记录就得从权重差编一个出来，那正是这个项目反复拒绝的事（"没有依据的数字"）。
+所以这里需要的是产品决定：置信度从哪来。可选项——
+
+1. 只记方向与到期结果，不记 `conviction`，放弃 brier、只算命中率；
+2. 让信号层显式输出它自己的置信度（信号本来就该有，但今天没有）；
+3. 保持现状，但校准读数标注"这批样本不在交易宇宙内"，避免被当成战绩。
 
 ### 路上踩到的两个"字段没接出去"
 

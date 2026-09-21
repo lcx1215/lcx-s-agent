@@ -25,7 +25,7 @@ async function main(): Promise<void> {
     for (const check of health.checks) {
       const mark =
         check.severity === "error" ? "FAIL" : check.severity === "warn" ? "warn" : " ok ";
-      process.stdout.write(`${mark}  ${check.id.padEnd(22)}${check.summary}\n`);
+      process.stdout.write(`${mark}  ${check.id.padEnd(25)}${check.summary}\n`);
     }
     process.stdout.write(`\n${health.nextAction}\n`);
   }
