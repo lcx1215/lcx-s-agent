@@ -6,10 +6,9 @@
  *  -> order_placement -> execution_receipt`, plus the position projection that accumulates
  * across runs.
  *
- * It deliberately exercises the paper adapter only. No credential is read, no network call
- * is made, and no venue is contacted, so this entry proves the *seam* and its refusals, not
- * a real order path. A venue adapter replaces `createPaperExecutionAdapter` at the same
- * call site without changing this file's structure.
+ * The default is the paper adapter, which reads no credentials and makes no network call. An
+ * explicit `--adapter alpaca` selects the declared Alpaca venue adapter at the same call site;
+ * that path remains separately gated by its credential and venue authorities.
  *
  * Usage:
  *   node --import tsx scripts/operator/lcx-finance-live-execution.ts --json \
@@ -258,6 +257,7 @@ export function parseArgs(args: readonly string[]): Options {
           "[--limit-price N] [--mark SYM=PRICE@ISO] [--max-order-notional N] " +
           "[--max-instrument-notional N] [--max-orders-per-run N] " +
           "[--automation attended|unattended] " +
+          "[--adapter paper|alpaca] [--alpaca-mode paper|live] " +
           "[--write-ledger] [--ledger-dir PATH]\n" +
           "Omitting --allow-instrument leaves the run open by instrument; repeating it narrows " +
           "the run to the named instruments. Each --max-* cap is optional and enforced only when " +
@@ -304,6 +304,8 @@ export async function buildFinanceLiveExecutionPayload(options: Options) {
         })
       : createPaperExecutionAdapter({ instruments: allowedInstruments }),
   ]);
+  const executionAdapterId = options.adapter === "alpaca" ? "alpaca-venue" : "paper";
+  const paperAdapterOnly = executionAdapterId === "paper";
 
   // Which ceilings an unattended run still owes, spelled out as cap names rather than refusal
   // codes. The adapter refuses either way; this is so the operator reads "you owe
@@ -340,7 +342,7 @@ export async function buildFinanceLiveExecutionPayload(options: Options) {
   const placement = await placeFinanceOrder({
     mode: "live_execution",
     adapters,
-    executionAdapterId: "paper",
+    executionAdapterId,
     budget,
     committedInstrumentNotional: 0,
     ordersPlacedThisRun: 0,
@@ -404,9 +406,12 @@ export async function buildFinanceLiveExecutionPayload(options: Options) {
 
   const after = wrote ? await readFinancePositionLedger(location.directory) : null;
   const recordCount = after?.recordCount ?? before.recordCount;
+  const venueOrderPlaced = !paperAdapterOnly && placement.status === "placed";
 
   return {
-    boundary: "paper_execution_adapter_only_no_credentials_no_venue",
+    boundary: paperAdapterOnly
+      ? "paper_execution_adapter_only_no_credentials_no_venue"
+      : "alpaca_venue_adapter_external_credentials_and_network_authority",
     waterflow: "finance_live_execution_waterflow",
     nodes: {
       execution_intent: {
@@ -420,7 +425,7 @@ export async function buildFinanceLiveExecutionPayload(options: Options) {
         present: options.runAuthorization.trim().length > 0,
       },
       declared_execution_adapter: {
-        adapterId: "paper",
+        adapterId: executionAdapterId,
         // What the adapter actually declares, not the raw flag: with no --allow-instrument the
         // adapter declares the any-instrument token, and reporting the empty flag list here
         // would contradict the placement that just succeeded.
@@ -479,17 +484,20 @@ export async function buildFinanceLiveExecutionPayload(options: Options) {
       ledger: after?.ledger ?? null,
     },
     claims: {
-      paperAdapterOnly: true,
-      credentialsRead: false,
-      networkTouched: false,
-      venueOrderPlaced: false,
-      realOrderPathImplemented: false,
+      paperAdapterOnly,
+      credentialsRead: venueOrderPlaced,
+      networkTouched: venueOrderPlaced,
+      venueOrderPlaced,
+      realOrderPathImplemented: !paperAdapterOnly,
       unrealizedPnlAvailable: ledger.unrealizedPnl !== null,
       databaseWritten: wrote,
     },
-    liveTouched: false,
-    liveTouchedReason:
-      "only the paper adapter ran; no venue, credential, account or network path is used",
+    liveTouched: venueOrderPlaced,
+    liveTouchedReason: paperAdapterOnly
+      ? "only the paper adapter ran; no venue, credential, account or network path is used"
+      : venueOrderPlaced
+        ? "the declared Alpaca venue adapter owned credential and network access for this run"
+        : "the Alpaca adapter was selected, but the order was refused before venue execution",
     providerConfigTouched: false,
     protectedMemoryTouched: false,
   };

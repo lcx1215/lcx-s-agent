@@ -134,6 +134,22 @@ describe("finance live execution operator entry", () => {
     await expect(fs.access(financePositionLedgerPath(directory))).rejects.toThrow();
   });
 
+  it("routes the explicit Alpaca adapter instead of silently falling back to paper", async () => {
+    const directory = await storeDirectory();
+    const payload = await buildFinanceLiveExecutionPayload(
+      options({ adapter: "alpaca", runAuthorization: "", ledgerDirectory: directory }),
+    );
+
+    expect(payload.nodes.declared_execution_adapter.adapterId).toBe("alpaca-venue");
+    expect(payload.nodes.order_placement.refusalReasons).toContain(
+      "explicit_run_authorization_required",
+    );
+    expect(payload.nodes.order_placement.refusalReasons).not.toContain(
+      "declared_execution_adapter_required",
+    );
+    expect(payload.claims.paperAdapterOnly).toBe(false);
+  });
+
   it("announces a write into a location the operator did not name", async () => {
     const directory = await storeDirectory();
     const previous = process.env.LCX_FINANCE_STATE_DIR;

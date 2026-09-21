@@ -8,6 +8,8 @@ import {
   MAX_SERVE_BODY_BYTES,
   assertServeConfigSafe,
   createServeServer,
+  readServeResultFailure,
+  readServeResultError,
   readServePayloadTexts,
   resolveServeBind,
   resolveServeConfig,
@@ -264,6 +266,40 @@ describe("POST /agent", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ ok: true, payloads: [] });
   });
+
+  it("maps a provider error payload to a bad-gateway response", async () => {
+    const { url } = await startServer({
+      runAgent: async () => ({
+        payloads: [{ text: "provider retry limit reached", isError: true }],
+        meta: { error: { kind: "retry_limit", message: "provider retry limit reached" } },
+      }),
+    });
+    const response = await postAgent(url, { message: "ping" });
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      status: "error",
+      error: "provider retry limit reached",
+    });
+  });
+
+  it("maps timeout and cancellation metadata to distinct HTTP responses", async () => {
+    const timeout = await startServer({
+      runAgent: async () => ({
+        payloads: [{ text: "timed out", isError: true }],
+        meta: { timedOut: true, timedOutDuringCompaction: false },
+      }),
+    });
+    expect((await postAgent(timeout.url, { message: "ping" })).status).toBe(504);
+
+    const cancelled = await startServer({
+      runAgent: async () => ({
+        payloads: [{ text: "cancelled", isError: true }],
+        meta: { aborted: true, timedOut: false },
+      }),
+    });
+    expect((await postAgent(cancelled.url, { message: "ping" })).status).toBe(409);
+  });
 });
 
 describe("POST /agent tokenless browser boundary", () => {
@@ -406,5 +442,36 @@ describe("readServePayloadTexts", () => {
     expect(readServePayloadTexts(null)).toEqual([]);
     expect(readServePayloadTexts({ payloads: "nope" })).toEqual([]);
     expect(readServePayloadTexts({ meta: {} })).toEqual([]);
+  });
+});
+
+describe("readServeResultError", () => {
+  it("recognizes payload and meta error shapes", () => {
+    expect(readServeResultError({ payloads: [{ text: "payload failed", isError: true }] })).toBe(
+      "payload failed",
+    );
+    expect(readServeResultError({ meta: { error: { message: "meta failed" } } })).toBe(
+      "meta failed",
+    );
+    expect(readServeResultError({ payloads: [{ text: "ok" }], meta: {} })).toBeUndefined();
+  });
+});
+
+describe("readServeResultFailure", () => {
+  it("uses metadata for status classification and payload text for detail", () => {
+    expect(
+      readServeResultFailure({
+        payloads: [{ text: "slow provider", isError: true }],
+        meta: { timedOut: true },
+      }),
+    ).toEqual({ status: 504, error: "slow provider" });
+    expect(readServeResultFailure({ meta: { aborted: true } })).toEqual({
+      status: 409,
+      error: "agent request was cancelled",
+    });
+    expect(readServeResultFailure({ payloads: [{ isError: true }] })).toEqual({
+      status: 502,
+      error: "agent returned an error payload",
+    });
   });
 });

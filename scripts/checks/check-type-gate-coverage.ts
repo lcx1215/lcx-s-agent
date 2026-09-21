@@ -26,6 +26,10 @@ const OUT_OF_GATE = new Map<string, string>([
   ["vendor/", "vendored third-party copy that ships its own tsconfig.json"],
   [".pi/", "Pi coding-agent workspace extensions, resolved by Pi's own loader"],
   ["dist/", "generated build output"],
+  [
+    "ops/probes/",
+    "read-only diagnostic probes executed individually by their probe harness, not product sources",
+  ],
 ]);
 
 function isTypeScript(filePath: string): boolean {

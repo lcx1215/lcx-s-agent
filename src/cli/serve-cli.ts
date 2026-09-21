@@ -216,6 +216,78 @@ export function readServePayloadTexts(result: unknown): string[] {
   return texts;
 }
 
+/** Detects agent-run failures that are returned as payload metadata instead of thrown. */
+export function readServeResultError(result: unknown): string | undefined {
+  if (typeof result !== "object" || result === null) {
+    return undefined;
+  }
+
+  const payloads = "payloads" in result ? result.payloads : undefined;
+  if (Array.isArray(payloads)) {
+    for (const entry of payloads) {
+      if (
+        typeof entry !== "object" ||
+        entry === null ||
+        !("isError" in entry) ||
+        entry.isError !== true
+      ) {
+        continue;
+      }
+      if ("text" in entry && typeof entry.text === "string" && entry.text.trim() !== "") {
+        return entry.text;
+      }
+      return "agent returned an error payload";
+    }
+  }
+
+  const meta = "meta" in result ? result.meta : undefined;
+  if (typeof meta === "object" && meta !== null && "error" in meta) {
+    const error = meta.error;
+    if (typeof error === "object" && error !== null && "message" in error) {
+      if (typeof error.message === "string" && error.message.trim() !== "") {
+        return error.message;
+      }
+    }
+    if (typeof error === "string" && error.trim() !== "") {
+      return error;
+    }
+    return "agent run failed";
+  }
+  return undefined;
+}
+
+export type ServeResultFailure = {
+  status: 409 | 502 | 504;
+  error: string;
+};
+
+/** Maps an accepted agent result onto an HTTP failure without guessing from text. */
+export function readServeResultFailure(result: unknown): ServeResultFailure | undefined {
+  if (typeof result !== "object" || result === null) {
+    return undefined;
+  }
+  const meta = "meta" in result ? result.meta : undefined;
+  const metaRecord = typeof meta === "object" && meta !== null ? meta : undefined;
+  const resultError = readServeResultError(result);
+
+  if (metaRecord && "timedOut" in metaRecord && metaRecord.timedOut === true) {
+    return {
+      status: 504,
+      error: resultError ?? "agent request timed out",
+    };
+  }
+  if (metaRecord && "aborted" in metaRecord && metaRecord.aborted === true) {
+    return {
+      status: 409,
+      error: resultError ?? "agent request was cancelled",
+    };
+  }
+  if (resultError) {
+    return { status: 502, error: resultError };
+  }
+  return undefined;
+}
+
 async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
   let total = 0;
@@ -376,6 +448,16 @@ export function createServeRequestHandler(options: ServeHandlerOptions) {
         runtime,
         deps,
       );
+      const resultFailure = readServeResultFailure(result);
+      if (resultFailure) {
+        sendJson(res, resultFailure.status, {
+          ok: false,
+          runId,
+          status: "error",
+          error: resultFailure.error,
+        });
+        return;
+      }
       const texts = readServePayloadTexts(result);
       sendJson(res, 200, {
         ok: true,

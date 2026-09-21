@@ -1284,6 +1284,8 @@ export async function runEmbeddedPiAgent(
                 durationMs: Date.now() - started,
                 agentMeta,
                 aborted,
+                timedOut,
+                timedOutDuringCompaction,
                 systemPromptReport: attempt.systemPromptReport,
               },
               didSendViaMessagingTool: attempt.didSendViaMessagingTool,
@@ -1316,6 +1318,8 @@ export async function runEmbeddedPiAgent(
               durationMs: Date.now() - started,
               agentMeta,
               aborted,
+              timedOut,
+              timedOutDuringCompaction,
               systemPromptReport: attempt.systemPromptReport,
               // Handle client tool calls (OpenResponses hosted tools)
               // Propagate the LLM stop reason so callers (lifecycle events,

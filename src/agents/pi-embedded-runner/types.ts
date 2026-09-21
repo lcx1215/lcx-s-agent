@@ -34,6 +34,10 @@ export type EmbeddedPiRunMeta = {
   durationMs: number;
   agentMeta?: EmbeddedPiAgentMeta;
   aborted?: boolean;
+  /** The model turn exceeded its configured timeout. */
+  timedOut?: boolean;
+  /** The timeout occurred while context compaction was in progress or pending. */
+  timedOutDuringCompaction?: boolean;
   systemPromptReport?: SessionSystemPromptReport;
   error?: {
     kind:

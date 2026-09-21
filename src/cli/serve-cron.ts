@@ -1,6 +1,7 @@
 import { setLocalGatewayProvider } from "../agents/tools/gateway.js";
 import { createLocalCronService } from "../cron/local-service.js";
 import { createLocalCronGatewayCaller, LOCAL_CRON_METHODS } from "../gateway/local-cron-bridge.js";
+import { startHeartbeatRunner, type HeartbeatRunner } from "../infra/heartbeat-runner.js";
 import { defaultRuntime } from "../runtime.js";
 import type { createDefaultDeps } from "./deps.js";
 
@@ -22,6 +23,7 @@ import type { createDefaultDeps } from "./deps.js";
 export type ServeCronHandle = {
   storePath: string;
   cronEnabled: boolean;
+  heartbeatRunner: HeartbeatRunner;
   dispose: () => Promise<void>;
 };
 
@@ -30,6 +32,9 @@ export function installServeLocalCron(params: {
   cfg?: Parameters<typeof createLocalCronService>[0]["cfg"];
 }): ServeCronHandle {
   const state = createLocalCronService({ deps: params.deps, cfg: params.cfg });
+  // Cron jobs with wakeMode="next-heartbeat" enqueue a wake request. The
+  // Gateway normally owns the consumer, so daemon-free serve must own one too.
+  const heartbeatRunner = startHeartbeatRunner({ cfg: params.cfg });
   const caller = createLocalCronGatewayCaller({
     cron: state.cron,
     cronStorePath: state.storePath,
@@ -50,8 +55,10 @@ export function installServeLocalCron(params: {
   return {
     storePath: state.storePath,
     cronEnabled: state.cronEnabled,
+    heartbeatRunner,
     dispose: async () => {
       removeProvider();
+      heartbeatRunner.stop();
       // `CronService.stop()` is synchronous, matching every other call site
       // (`server-close.ts`, `server-reload-handlers.ts`).
       state.cron.stop();
