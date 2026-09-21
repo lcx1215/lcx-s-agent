@@ -100,6 +100,35 @@ export async function syncAlpacaPaperHistory(options: AlpacaHistoryOptions) {
           throw new Error("unsupported history page schema");
         }
         const payload = raw as Record<string, unknown>[];
+        for (const row of payload) {
+          if (typeof row.id !== "string" || !row.id.trim()) {
+            throw new Error("history row identity unavailable");
+          }
+          if (stream === "orders") {
+            if (typeof row.submitted_at !== "string") {
+              throw new Error("order timestamp unavailable");
+            }
+            instant(row.submitted_at);
+          } else {
+            if (typeof row.activity_type !== "string" || !row.activity_type.trim()) {
+              throw new Error("activity type unavailable");
+            }
+            if (typeof row.transaction_time === "string") {
+              instant(row.transaction_time);
+            } else if (
+              row.activity_type !== "FILL" &&
+              typeof row.date === "string" &&
+              /^\d{4}-\d{2}-\d{2}$/.test(row.date) &&
+              Number.isFinite(Date.parse(row.date)) &&
+              new Date(row.date).toISOString().slice(0, 10) === row.date
+            ) {
+              // Non-trade activities may carry only a native business date; do not invent time.
+            } else {
+              throw new Error("activity native time/date unavailable");
+            }
+          }
+        }
+
         const saved = await appendFinanceBrokerHistory(options.directory, {
           kind: "broker_history",
           accountId: options.accountId,
@@ -195,4 +224,56 @@ export async function readFinanceBrokerHistory(directory: string, accountId: str
     positionsReconciled: false,
     feesInterpreted: false,
   } as const;
+}
+
+/** Controller-owned recurring seam: account identity and history start come from the broker. */
+export async function syncConfiguredAlpacaPaperHistory(options: {
+  directory: string;
+  env?: NodeJS.ProcessEnv;
+  read?: FinanceUncachedFetch;
+  now?: () => Date;
+  signal?: AbortSignal;
+}) {
+  const { resolveFinanceCredentialEnv } = await import("./finance-credential-env.js");
+  const env = resolveFinanceCredentialEnv({
+    ...(options.env ?? process.env),
+    LCX_FINANCE_STATE_DIR: options.directory,
+  });
+  const keyId = env.ALPACA_API_KEY_ID;
+  const secretKey = env.ALPACA_API_SECRET_KEY;
+  if (!keyId || !secretKey) {
+    throw new Error("history credentials unavailable");
+  }
+  const until = (options.now?.() ?? new Date()).toISOString();
+  const signal = options.signal
+    ? AbortSignal.any([options.signal, AbortSignal.timeout(120_000)])
+    : AbortSignal.timeout(120_000);
+  const read = options.read ?? createAlpacaSafetyReadTransport();
+  const response = await read(`${host}/v2/account`, {
+    headers: { "APCA-API-KEY-ID": keyId, "APCA-API-SECRET-KEY": secretKey },
+    signal,
+  });
+  if (response.status !== 200) {
+    throw new Error("history account discovery failed");
+  }
+  const account: unknown = JSON.parse(response.body);
+  if (
+    !account ||
+    typeof account !== "object" ||
+    !("id" in account) ||
+    typeof account.id !== "string" ||
+    !("created_at" in account) ||
+    typeof account.created_at !== "string"
+  ) {
+    throw new Error("history account id/created_at unavailable");
+  }
+  return syncAlpacaPaperHistory({
+    directory: options.directory,
+    accountId: account.id,
+    after: account.created_at,
+    until,
+    credentials: { keyId, secretKey },
+    read,
+    signal,
+  });
 }

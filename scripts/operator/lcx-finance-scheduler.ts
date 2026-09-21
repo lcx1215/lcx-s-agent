@@ -90,7 +90,11 @@ export function parseFinanceSchedulerArgs(argv: readonly string[]): SchedulerOpt
       }
     } else if (arg === "--json") {
       json = true;
-    } else if (arg === "--place" || arg === "--equity-from-venue") {
+    } else if (
+      arg === "--place" ||
+      arg === "--equity-from-venue" ||
+      arg === "--sync-alpaca-history"
+    ) {
       extraArgs.push(arg);
     } else if (
       [

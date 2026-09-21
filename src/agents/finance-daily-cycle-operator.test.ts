@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ account: vi.fn(), cycle: vi.fn() }));
+vi.mock("./finance-alpaca-history-sync.js", () => ({
+  syncConfiguredAlpacaPaperHistory: vi.fn(() => {
+    throw new Error("unexpected history provider");
+  }),
+}));
 vi.mock("./finance-alpaca-run.js", () => ({ fetchAlpacaAccountSnapshot: mocks.account }));
 vi.mock("./finance-daily-cycle.js", () => ({ runFinanceDailyCycle: mocks.cycle }));
 vi.mock("./finance-link-health.js", () => ({ readFinanceLinkHealth: vi.fn() }));
@@ -105,5 +110,44 @@ describe("account gate before unattended placement", () => {
     await runFinanceDailyCycleOperator(args.filter((arg) => arg !== "--place"));
     expect(mocks.account).not.toHaveBeenCalled();
     expect(mocks.cycle).toHaveBeenCalledWith(expect.objectContaining({ place: false }));
+  });
+});
+
+describe("explicit history sync before daily business", () => {
+  const history = {
+    accountId: "synthetic",
+    venue: "alpaca:paper",
+    after: "2025-01-01T00:00:00Z",
+    until: "2025-02-01T00:00:00Z",
+    status: "raw_history_synced",
+    streams: [],
+    positionsReconciled: false,
+    executionReceiptsCreated: 0,
+  } as const;
+  it.each(["day", "night"])("blocks %s on incomplete sync before business", async (mode) => {
+    const syncHistory = vi.fn(async () => ({
+      ...history,
+      streams: [],
+      status: "incomplete" as const,
+    }));
+    const result = await runFinanceDailyCycleOperator(
+      ["--json", "--dir", "/synthetic/finance", "--mode", mode, "--sync-alpaca-history"],
+      { syncHistory },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.historySync).toEqual(expect.objectContaining({ status: "incomplete" }));
+    expect(mocks.cycle).not.toHaveBeenCalled();
+    expect(syncHistory).toHaveBeenCalledWith({ directory: "/synthetic/finance" });
+  });
+  it("does not sync by default and never enables placement", async () => {
+    const syncHistory = vi.fn(async () => ({ ...history, streams: [] }));
+    await runFinanceDailyCycleOperator(["--json", "--dir", "/synthetic/finance"], { syncHistory });
+    expect(syncHistory).not.toHaveBeenCalled();
+    const result = await runFinanceDailyCycleOperator(
+      ["--json", "--dir", "/synthetic/finance", "--sync-alpaca-history"],
+      { syncHistory },
+    );
+    expect(result.historySync).toEqual(history);
+    expect(mocks.cycle).toHaveBeenLastCalledWith(expect.objectContaining({ place: false }));
   });
 });

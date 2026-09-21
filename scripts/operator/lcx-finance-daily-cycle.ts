@@ -1,3 +1,7 @@
+import {
+  createAlpacaExecutionQuoteProvider,
+  type AlpacaExecutionQuoteFeed,
+} from "../../src/agents/finance-alpaca-execution-quote.js";
 /**
  * Operator entry for the unattended finance day.
  *
@@ -16,11 +20,7 @@
  *   node --import tsx scripts/operator/lcx-finance-daily-cycle.ts [--json] \
  *     [--mode day|night] [--dir PATH] [--as-of ISO] [--equity N] [--band N] [--place]
  */
-
-import {
-  createAlpacaExecutionQuoteProvider,
-  type AlpacaExecutionQuoteFeed,
-} from "../../src/agents/finance-alpaca-execution-quote.js";
+import { syncConfiguredAlpacaPaperHistory } from "../../src/agents/finance-alpaca-history-sync.js";
 import { fetchAlpacaAccountSnapshot } from "../../src/agents/finance-alpaca-run.js";
 import { runFinanceDailyCycle } from "../../src/agents/finance-daily-cycle.js";
 import { readFinanceLinkHealth } from "../../src/agents/finance-link-health.js";
@@ -133,6 +133,7 @@ type Options = Readonly<{
   place: boolean;
   venue: "paper" | "alpaca";
   equityFromVenue: boolean;
+  syncAlpacaHistory: boolean;
   /**
    * Declared risk caps. They are flags rather than constants because a boundary nobody chose
    * is not a boundary: the unattended budget refuses an undeclared cap, and a cap the script
@@ -148,7 +149,7 @@ type Options = Readonly<{
 const USAGE =
   "Usage: node --import tsx scripts/operator/lcx-finance-daily-cycle.ts [--json] " +
   "[--mode day|night] [--dir PATH] [--as-of ISO] [--equity N] [--band N] [--place] " +
-  "[--venue paper|alpaca] [--equity-from-venue] [--execution-quote-feed iex|sip] [--execution-max-age-ms N] " +
+  "[--venue paper|alpaca] [--equity-from-venue] [--sync-alpaca-history] [--execution-quote-feed iex|sip] [--execution-max-age-ms N] " +
   "[--max-order-notional N] [--max-instrument-notional N] [--max-orders N]";
 
 function positiveNumber(raw: string | undefined, flag: string): number {
@@ -169,6 +170,7 @@ function parseArgs(argv: readonly string[]): Options {
     place: false,
     venue: "paper" as "paper" | "alpaca",
     equityFromVenue: false,
+    syncAlpacaHistory: false,
     directory: undefined as string | undefined,
     // Defaults, not constants: they reproduce the previous behaviour when nothing is passed.
     maxOrderNotional: 10_000,
@@ -180,7 +182,9 @@ function parseArgs(argv: readonly string[]): Options {
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     const next = argv[index + 1];
-    if (arg === "--json") {
+    if (arg === "--sync-alpaca-history") {
+      options.syncAlpacaHistory = true;
+    } else if (arg === "--json") {
       options.json = true;
     } else if (arg === "--mode") {
       if (next !== "day" && next !== "night") {
@@ -257,7 +261,10 @@ async function activeInstruments(directory: string): Promise<{
 
 export async function runFinanceDailyCycleOperator(
   argv: readonly string[] = process.argv.slice(2),
-  deps: { createExecutionQuoteProvider?: typeof createAlpacaExecutionQuoteProvider } = {},
+  deps: {
+    createExecutionQuoteProvider?: typeof createAlpacaExecutionQuoteProvider;
+    syncHistory?: typeof syncConfiguredAlpacaPaperHistory;
+  } = {},
 ): Promise<Record<string, unknown>> {
   const options = parseArgs(argv);
   const directory = options.directory ?? resolveFinanceStateDir().directory;
@@ -274,6 +281,30 @@ export async function runFinanceDailyCycleOperator(
       ok: false,
       error: "Alpaca placement requires --execution-quote-feed and --execution-max-age-ms",
     };
+  }
+  let historySync: Awaited<ReturnType<typeof syncConfiguredAlpacaPaperHistory>> | undefined;
+  if (options.syncAlpacaHistory) {
+    try {
+      historySync = await (deps.syncHistory ?? syncConfiguredAlpacaPaperHistory)({ directory });
+      if (historySync.status !== "raw_history_synced") {
+        return {
+          directory,
+          mode: options.mode,
+          asOf: options.asOf,
+          ok: false,
+          error: "Alpaca history sync incomplete; cycle not started",
+          historySync,
+        };
+      }
+    } catch {
+      return {
+        directory,
+        mode: options.mode,
+        asOf: options.asOf,
+        ok: false,
+        error: "Alpaca history sync failed; cycle not started",
+      };
+    }
   }
   let equity = options.equity;
   let equitySource: "flag" | "default" | "venue" | "venue-failed" = argv.includes("--equity")
@@ -336,7 +367,14 @@ export async function runFinanceDailyCycleOperator(
     }
   }
 
-  const base = { directory, mode: options.mode, asOf: options.asOf, equity, equitySource };
+  const base = {
+    directory,
+    mode: options.mode,
+    asOf: options.asOf,
+    equity,
+    equitySource,
+    ...(historySync ? { historySync } : {}),
+  };
 
   try {
     let instruments: readonly string[] = [];

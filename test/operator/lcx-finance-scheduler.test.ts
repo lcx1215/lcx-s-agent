@@ -349,3 +349,9 @@ it("reports schedule timing without calling the cycle or treating old attempts a
   expect(mocks.runCycle).not.toHaveBeenCalled();
   expect(() => parseFinanceSchedulerArgs(["--loop", "--json"])).toThrow("--json requires --status");
 });
+
+it("forwards explicit read-only history synchronization without enabling placement", () => {
+  const options = parseFinanceSchedulerArgs(["--loop", "--sync-alpaca-history"]);
+  expect(options.extraArgs).toEqual(["--sync-alpaca-history"]);
+  expect(options.extraArgs).not.toContain("--place");
+});

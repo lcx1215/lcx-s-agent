@@ -4,7 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { readFinanceBrokerHistory, syncAlpacaPaperHistory } from "./finance-alpaca-history-sync.js";
+import {
+  readFinanceBrokerHistory,
+  syncConfiguredAlpacaPaperHistory,
+  syncAlpacaPaperHistory,
+} from "./finance-alpaca-history-sync.js";
 import { FINANCE_EXECUTION_RECEIPT_SCHEMA } from "./finance-execution-adapter.js";
 import {
   appendFinanceExecutionReceipt,
@@ -39,10 +43,20 @@ describe("Alpaca raw history sync", () => {
       url.endsWith("/account")
         ? reply({ id: "synthetic-account" })
         : url.includes("/activities")
-          ? reply([{ id: "fee-1", activity_type: "FEE", net_amount: "-0.01" }])
+          ? reply([{ id: "fee-1", activity_type: "JNLC", date: "2025-01-02", net_amount: "-0.01" }])
           : reply([
-              { id: "partial", status: "partially_filled", filled_qty: "0.2" },
-              { id: "cancel", status: "canceled", filled_qty: "0" },
+              {
+                id: "partial",
+                submitted_at: "2025-01-02T00:00:00Z",
+                status: "partially_filled",
+                filled_qty: "0.2",
+              },
+              {
+                id: "cancel",
+                submitted_at: "2025-01-02T00:00:00Z",
+                status: "canceled",
+                filled_qty: "0",
+              },
             ]),
     );
     await appendFinanceExecutionReceipt(options.directory, {
@@ -78,7 +92,7 @@ describe("Alpaca raw history sync", () => {
     expect(read.receipts[0]?.receiptId).toBe("existing-spy");
     expect(read.records).toHaveLength(1);
     const history = await readFinanceBrokerHistory(options.directory, options.accountId);
-    expect(history.facts.some((item) => item.fact.activity_type === "FEE")).toBe(true);
+    expect(history.facts.some((item) => item.fact.activity_type === "JNLC")).toBe(true);
     expect((await readFinanceBrokerHistory(options.directory, "other-account")).facts).toEqual([]);
   });
   it("keeps legacy main receipt/mark reader compatible and isolates venue", async () => {
@@ -155,7 +169,11 @@ describe("Alpaca raw history sync", () => {
         return reply(
           url.searchParams.has("page_token")
             ? []
-            : Array.from({ length: 100 }, (_, i) => ({ id: `activity-${i}` })),
+            : Array.from({ length: 100 }, (_, i) => ({
+                id: `activity-${i}`,
+                activity_type: "FILL",
+                transaction_time: "2025-01-02T00:00:00Z",
+              })),
         );
       }
       return reply(
@@ -195,6 +213,38 @@ describe("Alpaca raw history sync", () => {
     ).toBeGreaterThan(0);
     recovered = true;
     expect((await syncAlpacaPaperHistory(options)).status).toBe("raw_history_synced");
+  });
+  it.each([{}, { id: "invalid" }])("rejects malformed short-page facts %j", async (row) => {
+    const options = await setup(async (url) =>
+      url.endsWith("/account") ? reply({ id: "synthetic-account" }) : reply([row]),
+    );
+    expect((await syncAlpacaPaperHistory(options)).status).toBe("incomplete");
+    const history = await readFinanceBrokerHistory(options.directory, options.accountId);
+    expect(history.facts.every((item) => item.stream === "sync_receipt")).toBe(true);
+  });
+  it("discovers account/start and uses fixed control clock with directory-scoped credentials", async () => {
+    const urls: URL[] = [];
+    const options = await setup(async (raw) => {
+      const url = new URL(raw);
+      urls.push(url);
+      return url.pathname === "/v2/account"
+        ? reply({ id: "synthetic-account", created_at: "2025-01-01T00:00:00Z" })
+        : reply([]);
+    });
+    await fs.writeFile(
+      path.join(options.directory, "credentials.env"),
+      "ALPACA_API_KEY_ID=fake\nALPACA_API_SECRET_KEY=fake\n",
+    );
+    const result = await syncConfiguredAlpacaPaperHistory({
+      directory: options.directory,
+      env: {},
+      read: options.read,
+      now: () => new Date("2025-02-01T00:00:00Z"),
+    });
+    expect(result.accountId).toBe("synthetic-account");
+    expect(result.after).toBe("2025-01-01T00:00:00Z");
+    expect(result.until).toBe("2025-02-01T00:00:00.000Z");
+    expect(urls.every((url) => url.hostname === "paper-api.alpaca.markets")).toBe(true);
   });
   it("does not write for another account; malformed endpoint data is incomplete", async () => {
     const wrong = await setup(async () => reply({ id: "other" }));
