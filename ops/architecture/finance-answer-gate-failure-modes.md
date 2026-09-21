@@ -147,6 +147,8 @@ F-27 是典型的"控制被守住了、喂它的数没被守"。凡是形如 `if
 | F-30d | `finance-data-gateway.ts`       | **同一对可调参数只守了一个**：`crossSourceSkewMaxMinutes` 对 `NaN`/`-1` **抛错**，而紧邻的 `freshnessMaxMinutes` 什么都不做。实测一条 30 天前的字段：默认 / `0` / `-1` 都产出陈旧警告 + `refresh_or_label_stale_fields` 下一步，而 **`NaN` 与 `Infinity` 两者都不产出** ⇒ **一份永远不陈旧的快照**。修法：照隔壁已有的约定补同一个守卫（不发明新形状）。 |
 | F-34  | `finance-source-quota.ts`       | **退化策略不是报错，而是挂死**：`tokenBucket.refillPerSecond: 0` ⇒ 等待时间 **`Infinity`**（永不补水的桶永远放不进已经花掉的调用）⇒ Node 报 `TimeoutOverflowWarning` 后循环继续问；`minIntervalMs`/`limit`/`durationMs` 非有限 ⇒ 算术变 `NaN`。修法：在**构造期**校验策略（一次性），把挂死变成可读的配置错误。                                          |
 
+| F-37 | `finance-free-market-collection-adapters.ts` | **同一字段 7 处各读一份，退化行为互不相同**（双层：退化配置 + 多层复制）。`request.limit` 在 7 个适配器里各自处理：`slice(0, 0)` ⇒ **空**，`slice(-0)` ⇒ **全部**（与前者相反），`slice(0, -5)` ⇒ **去掉最后 5 条**（不是取 5 条），`NaN` ⇒ 空窗口；发给 venue 的那一路把 `0`/`-5`/`NaN`/`1.5` **原样拼进 URL**。⇒ 同一个请求可能返回空、全量或被悄悄截断，**取决于哪个适配器接了它**；`limit: 0` 尤其返回一个读者无法与"这段时间没数据"区分的空结果。而**同一字段在 `finance-market-collection-registry.ts` 里是完整校验的**（`Number.isInteger && >0 && <=250`）。修法：统一为一个 `declaredLimit(value, fallback)`（未声明保留各自默认值，已声明必须为正整数）。 |
+
 **修法**：**校验配置的连贯性，不连贯 ⇒ 不给意见**（不钳制）。
 
 - 两个信号：返回 `hold/0/0`（并标 `config=incoherent`）。

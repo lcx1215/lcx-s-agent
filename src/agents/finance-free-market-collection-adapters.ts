@@ -20,6 +20,32 @@ class FreeMarketCollectionAdapterError extends Error {
   }
 }
 
+/**
+ * A declared `limit` must be a positive integer.
+ *
+ * This field was read independently in seven places, and the degenerate values did seven different
+ * things: `slice(0, 0)` yields nothing while `slice(-0)` yields *everything*, `slice(0, -5)` drops
+ * the last five instead of returning five, and a non-integer or NaN counted as an empty window. So
+ * the same request could come back empty, full, or quietly truncated depending on which adapter took
+ * it — and `limit: 0` in particular returns an empty result that a reader cannot tell apart from
+ * "no data for this window".
+ *
+ * `finance-market-collection-registry.ts` already validates this exact field
+ * (`Number.isInteger && > 0 && <= 250`); this is the same rule applied where the value is consumed.
+ * Undeclared keeps its own fallback, so no existing default changes.
+ */
+function declaredLimit(value: number | undefined, fallback: number): number {
+  if (value === undefined) {
+    return fallback;
+  }
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new FreeMarketCollectionAdapterError(
+      `limit must be a positive integer, received: ${String(value)}`,
+    );
+  }
+  return value;
+}
+
 function requiredText(value: string, label: string): string {
   const normalized = value.trim();
   if (!normalized) {
@@ -213,7 +239,7 @@ function createPublicRssNewsCollectionAdapter(options: {
           `${options.providerName} RSS returned no timestamped items`,
         );
       }
-      return items.slice(0, request.limit);
+      return items.slice(0, declaredLimit(request.limit, items.length));
     },
   };
 }
@@ -321,7 +347,7 @@ export function createYahooPublicEodHistoryCollectionAdapter(
     supports: (request) => isUsEquity(request.assetClass) && request.collection === "eod_history",
     collect: async (request) => {
       const symbol = request.instrument.toUpperCase();
-      const limit = request.limit ?? 20;
+      const limit = declaredLimit(request.limit, 20);
       const { period1, period2 } = yahooHistoryWindow(request);
       const fetchImpl = resolveFinanceFetch(options.fetchImpl);
       let lastError: unknown;
@@ -671,7 +697,7 @@ export function createChinaReachableUsEodHistoryCollectionAdapter(
     supports,
     collect: async (request) => {
       const symbol = request.instrument.toUpperCase();
-      const limit = request.limit ?? 20;
+      const limit = declaredLimit(request.limit, 20);
       const fetchImpl = resolveFinanceFetch(options.fetchImpl);
       const headers = {
         "User-Agent": "Mozilla/5.0 (LCX Agent research-only market history)",
@@ -824,7 +850,7 @@ export function createGdeltPublicNewsCollectionAdapter(
       const params: Record<string, string | number> = {
         query: request.seriesId?.trim() || financeNewsQuery(request.instrument),
         mode: "artlist",
-        maxrecords: request.limit ?? 20,
+        maxrecords: declaredLimit(request.limit, 20),
         sort: "datedesc",
         format: "json",
       };
@@ -878,19 +904,21 @@ export function createGdeltPublicNewsCollectionAdapter(
           `GDELT returned no timestamped articles in the requested window for ${request.instrument.toUpperCase()}`,
         );
       }
-      return datedArticles.slice(0, request.limit).map(({ article, timestamp }, index) => {
-        const url = textValue(article.url);
-        return buildItem(request, {
-          itemId: url || `${request.instrument.toUpperCase()}-gdelt-news-${index}`,
-          providerName: "gdelt-public-news",
-          providerRole: "cross_check_market_data",
-          sourceFamily: "market_data_api",
-          sourceTimestamp: timestamp,
-          delayStatus: "delayed",
-          sourceUrlOrArtifact,
-          data: article,
+      return datedArticles
+        .slice(0, declaredLimit(request.limit, datedArticles.length))
+        .map(({ article, timestamp }, index) => {
+          const url = textValue(article.url);
+          return buildItem(request, {
+            itemId: url || `${request.instrument.toUpperCase()}-gdelt-news-${index}`,
+            providerName: "gdelt-public-news",
+            providerRole: "cross_check_market_data",
+            sourceFamily: "market_data_api",
+            sourceTimestamp: timestamp,
+            delayStatus: "delayed",
+            sourceUrlOrArtifact,
+            data: article,
+          });
         });
-      });
     },
   };
 }
@@ -987,7 +1015,7 @@ export function createFmpFreeBasicEodCollectionAdapter(options: {
       if (records.length === 0) {
         throw new FreeMarketCollectionAdapterError(`FMP EOD returned no records for ${symbol}`);
       }
-      return records.slice(0, request.limit).map((record, index) =>
+      return records.slice(0, declaredLimit(request.limit, records.length)).map((record, index) =>
         buildItem(request, {
           itemId: `${symbol}-eod-${textValue(record.date) || index}`,
           providerName: "fmp-free-basic-eod-history",
@@ -1032,7 +1060,7 @@ export function createBinancePublicEodHistoryCollectionAdapter(
         interval: "1d",
         startTime,
         endTime,
-        limit: Math.min(1000, request.limit ?? 1000),
+        limit: Math.min(1000, declaredLimit(request.limit, 1000)),
       });
       const body: unknown = JSON.parse(
         await fetchText(resolveFinanceFetch(options.fetchImpl), url),
@@ -1158,7 +1186,7 @@ export function createFredPublicIndexHistoryCollectionAdapter(
           }),
         );
       }
-      return rows.slice(-(request.limit ?? 1000));
+      return rows.slice(-declaredLimit(request.limit, 1000));
     },
   };
 }
