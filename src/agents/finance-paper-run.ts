@@ -9,6 +9,7 @@ import {
   type FinanceResearchConclusion,
 } from "./finance-intent-compiler.js";
 import type { FinanceStrategyClass } from "./finance-mandate.js";
+import { assertNotPlacedToday, markPlaced } from "./finance-order-day-guard.js";
 
 /**
  * The missing call site: conclusion -> compiled intent -> paper fill -> receipt.
@@ -18,6 +19,11 @@ import type { FinanceStrategyClass } from "./finance-mandate.js";
  * This wires them together and owns nothing else: no model call, no prediction, no
  * market data. Risk control stays where it belongs -- inside the compiler (sizing from a
  * declared stop) and the placement guard (declared budget caps).
+ *
+ * One order per instrument per day is enforced here rather than in any caller. This is
+ * the single point every paper route passes through, so a guard here covers all of
+ * them; a guard held by one caller would leave the others free to double up, and two
+ * routes cannot see each other's orders.
  *
  * "Paper" means the fill is simulated at the intent's own reference price and labelled
  * `venueRef: paper:...`, so no downstream consumer can mistake it for a market
@@ -85,6 +91,27 @@ export async function runFinancePaperOrder(
     ...(request.slippageBps === undefined ? {} : { slippageBps: request.slippageBps }),
   });
 
+  // The compiled intent always carries the instrument; the conclusion type allows it
+  // to be absent, and a guard keyed on `undefined` would silently never match.
+  const instrument = compiled.intent.instrument;
+  const day = (request.recordedAt ?? new Date().toISOString()).slice(0, 10);
+  const guard = await assertNotPlacedToday({ instrument, day });
+  if (!guard.ok) {
+    return Object.freeze({
+      ok: false,
+      stage: "place",
+      refusals: Object.freeze([
+        "refuse: " +
+          instrument +
+          " already placed today by " +
+          guard.existing.route +
+          " (receipt " +
+          guard.existing.receiptId +
+          "); a second order for the same instrument and day is not taken",
+      ]),
+    });
+  }
+
   const placed = await placeFinanceOrder({
     mode: "live_execution",
     intent: compiled.intent,
@@ -99,6 +126,14 @@ export async function runFinancePaperOrder(
   if (placed.status !== "placed" || placed.receipt === undefined) {
     return Object.freeze({ ok: false, stage: "place", refusals: placed.refusalReasons });
   }
+
+  await markPlaced({
+    instrument,
+    day,
+    receiptId: placed.receipt.receiptId,
+    venue: "paper",
+    route: "finance-paper-run",
+  });
 
   return Object.freeze({
     ok: true,
