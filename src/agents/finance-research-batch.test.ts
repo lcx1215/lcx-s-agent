@@ -1,6 +1,8 @@
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { runResearchBatch } from "./finance-research-batch.js";
+import { recordedKeys, runResearchBatch } from "./finance-research-batch.js";
 
 /**
  * Where a sample is recorded decides which book the night run settles.
@@ -50,5 +52,31 @@ describe("runResearchBatch sample path", () => {
     const result = await runResearchBatch({ instruments: [], env: KEY });
     expect(path.isAbsolute(result.recordPath)).toBe(true);
     expect(result.recordPath).not.toContain("state/finance/");
+  });
+});
+
+describe("recordedKeys", () => {
+  const file = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), "sample-keys-")), "s.jsonl");
+
+  it("counts a priced sample as already sampled", () => {
+    const target = file();
+    fs.writeFileSync(
+      target,
+      JSON.stringify({ instrument: "SPY", asOf: "2026-09-21T00:00:00.000Z", lastPrice: 761.69 }) +
+        "\n",
+    );
+    expect(recordedKeys(target).has("SPY|2026-09-21")).toBe(true);
+  });
+
+  it("does not let a priceless sample block re-collection forever", () => {
+    // Recorded while FMP was refusing the symbol: `lastPrice: 0`, not an observation. Counting
+    // it as sampled froze the failure -- every later run skipped it, including the runs after
+    // the cause was fixed.
+    const target = file();
+    fs.writeFileSync(
+      target,
+      JSON.stringify({ instrument: "QQQ", asOf: "2026-09-21T00:00:00.000Z", lastPrice: 0 }) + "\n",
+    );
+    expect(recordedKeys(target).has("QQQ|2026-09-21")).toBe(false);
   });
 });
