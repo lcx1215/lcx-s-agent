@@ -352,16 +352,30 @@ async function main(): Promise<void> {
     ? (() => {
         const held = venue.state.positions.get(instrument) ?? 0;
         const open = venue.state.openOrders.get(instrument) ?? 0;
+        // The whole book, not a count. A judgement made one instrument at a time
+        // still has to be made against everything already held: a count says how
+        // crowded the book is, the list says what it is crowded with.
+        const book = [...venue.state.positions.entries()]
+          .filter(([, qty]) => qty !== 0)
+          .toSorted(([a], [b]) => a.localeCompare(b))
+          .map(([symbol, qty]) => symbol + " " + qty)
+          .join(", ");
         return (
           "Current book: holding " +
           held +
           " " +
           instrument +
-          "; " +
+          ".\n" +
+          "Whole book (" +
           venue.state.positions.size +
-          " position(s) open in total" +
-          (open > 0 ? "; " + open + " unfilled order(s) already working on this instrument" : "") +
-          ". Judge in the light of what is already held."
+          " position(s)): " +
+          (book.length > 0 ? book : "none") +
+          "." +
+          (open > 0
+            ? "\n" + open + " unfilled order(s) already working on " + instrument + "."
+            : "") +
+          "\nJudge in the light of what is already held: adding to a position already held, " +
+          "and opening one that is not, are different decisions."
         );
       })()
     : "Current book: NOT READABLE (" +
