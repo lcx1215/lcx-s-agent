@@ -3,13 +3,9 @@ import { Type } from "@sinclair/typebox";
 import { breakEvenFloor, type FloorSample } from "../finance-calibrated-floor.js";
 import {
   FINANCE_RISK_BUDGET_ANY_INSTRUMENT,
-  createPaperExecutionAdapter,
-  placeFinanceOrder,
   type FinanceRiskAutomation,
 } from "../finance-execution-adapter.js";
-import { compileExecutionIntent } from "../finance-intent-compiler.js";
-import { classifyFinanceStrategy, evaluateFinanceMandate } from "../finance-mandate.js";
-import { assertNotPlacedToday, markPlaced } from "../finance-order-day-guard.js";
+import { runFinancePaperOrder } from "../finance-paper-run.js";
 import {
   financeResearchSamplesPath,
   financeResearchScoredPath,
@@ -214,10 +210,6 @@ async function main(_toolCallId: string, params: Record<string, unknown>) {
     allowedInstruments: [FINANCE_RISK_BUDGET_ANY_INSTRUMENT],
   };
 
-  const paperAdapter = createPaperExecutionAdapter({
-    instruments: samples.map((s) => s.instrument),
-  });
-
   const asOf = new Date().toISOString();
   const results: unknown[] = [];
   let placedCount = 0;
@@ -229,8 +221,23 @@ async function main(_toolCallId: string, params: Record<string, unknown>) {
         ? Number((s.lastPrice - stopDistance).toFixed(4))
         : Number((s.lastPrice + stopDistance).toFixed(4));
 
-    const strategyClass = classifyFinanceStrategy({ assetClass: "us_equity" });
-    const compiled = compileExecutionIntent({
+    if (!place || authorization.length === 0) {
+      results.push({
+        instrument: s.instrument,
+        status: "not placed",
+        reasons: [
+          place
+            ? "runAuthorizationId is empty; the venue refuses unauthorized runs"
+            : "place is false; this call reports only",
+        ],
+      });
+      continue;
+    }
+
+    // Routed through the paper seam rather than around it: that is where the
+    // day guard and the receipt filing live, and a caller that bypasses it
+    // produces fills the ledger never hears about.
+    const placed = await runFinancePaperOrder({
       conclusion: {
         conclusionId: "rank-" + s.instrument.toLowerCase() + "-" + day,
         instrument: s.instrument,
@@ -243,90 +250,25 @@ async function main(_toolCallId: string, params: Record<string, unknown>) {
       market: { referencePrice: s.lastPrice, referencePriceAt: asOf },
       equity,
       runAuthorizationId: authorization,
-      ...(floor !== null ? { minConviction: floor } : {}),
-      ...(strategyClass !== "unknown" ? { strategyClass } : {}),
-    });
-
-    if (!compiled.ok) {
-      results.push({
-        instrument: s.instrument,
-        status: "refused",
-        reasons: [...compiled.refusals],
-      });
-      continue;
-    }
-
-    const mandate = evaluateFinanceMandate({
-      strategy: { assetClass: "us_equity" },
-      riskFractionOfEquity: (compiled.intent.quantity * stopDistance) / equity,
-      drawdownFraction: 0,
-      stopLossDefined: true,
-      hasSignificantAutocorrelation: true,
-    });
-
-    if (mandate.verdict !== "pass") {
-      results.push({ instrument: s.instrument, status: "refused", reasons: mandate.reasons });
-      continue;
-    }
-
-    if (!place || authorization.length === 0) {
-      results.push({
-        instrument: s.instrument,
-        status: place && authorization.length === 0 ? "refused" : "would place",
-        side: compiled.intent.side,
-        quantity: compiled.intent.quantity,
-        stopPrice: compiled.intent.stopPrice ?? null,
-        reasons:
-          place && authorization.length === 0
-            ? ["runAuthorizationId is empty; the venue refuses unauthorized runs"]
-            : undefined,
-      });
-      continue;
-    }
-
-    // Two schedulers can exist in this repo; this guard lives outside both, so
-    // neither has to be trusted to remember what the other did.
-    const guard = await assertNotPlacedToday({ instrument: s.instrument, day });
-    if (!guard.ok) {
-      results.push({
-        instrument: s.instrument,
-        status: "refused",
-        reasons: [
-          "already placed today by " +
-            guard.existing.route +
-            " (receipt " +
-            guard.existing.receiptId +
-            "); refusing a second order",
-        ],
-      });
-      continue;
-    }
-
-    const placed = await placeFinanceOrder({
-      mode: "live_execution",
-      intent: compiled.intent,
       budget,
-      adapters: [paperAdapter],
-      executionAdapterId: paperAdapter.id,
-      committedInstrumentNotional: 0,
-      ordersPlacedThisRun: placedCount,
+      instruments: samples.map((x) => x.instrument),
+      ...(floor !== null ? { minConviction: floor } : {}),
     });
 
-    if (placed.status === "placed") {
-      placedCount += 1;
-      await markPlaced({
+    if (!placed.ok) {
+      results.push({
         instrument: s.instrument,
-        day,
-        receiptId: placed.receipt?.receiptId ?? "unknown",
-        venue: "paper",
-        route: "finance_paper_rank_place",
+        status: "refused",
+        reasons: [...placed.refusals],
       });
+      continue;
     }
+
+    placedCount += 1;
     results.push({
       instrument: s.instrument,
-      status: placed.status,
-      receiptId: placed.receipt?.receiptId ?? null,
-      refusalReasons: placed.refusalReasons,
+      status: "placed",
+      receiptId: placed.receipt.receiptId,
     });
   }
 
