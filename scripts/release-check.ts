@@ -30,6 +30,14 @@ const requiredPathGroups = [
   "dist/plugin-sdk/whatsapp.d.ts",
   "dist/plugin-sdk/line.js",
   "dist/plugin-sdk/line.d.ts",
+  // Keep this list in step with the `./plugin-sdk/*` entries in package.json `exports`.
+  // These two were declared as public subpaths but not guarded here — a build that stops
+  // emitting them would ship a package whose own exports map points at nothing, the same
+  // failure class as #27569. `account-id` and `keyed-async-queue` were both missing.
+  "dist/plugin-sdk/account-id.js",
+  "dist/plugin-sdk/account-id.d.ts",
+  "dist/plugin-sdk/keyed-async-queue.js",
+  "dist/plugin-sdk/keyed-async-queue.d.ts",
   "dist/build-info.json",
 ];
 

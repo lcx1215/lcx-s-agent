@@ -1,3 +1,6 @@
+// Must stay the first import: `./cron.ts` reaches the i18n layer, which touches
+// `localStorage` at import time. See the shim's own comment.
+import "./test-storage-shim.ts";
 import { describe, expect, it } from "vitest";
 import type { CronJob } from "../types.ts";
 import { getVisibleCronJobs } from "./cron.ts";

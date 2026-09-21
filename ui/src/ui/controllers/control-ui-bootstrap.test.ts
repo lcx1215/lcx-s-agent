@@ -1,5 +1,9 @@
-/* @vitest-environment jsdom */
-
+// Both shims must stay the first imports, before the module under test is evaluated:
+// `loadControlUiBootstrapConfig` early-returns unless a `window` exists, and its module
+// graph reaches the i18n layer, which touches `localStorage` at import time.
+// See each shim's own comment.
+import "./test-window-shim.ts";
+import "./test-storage-shim.ts";
 import { describe, expect, it, vi } from "vitest";
 import { CONTROL_UI_BOOTSTRAP_CONFIG_PATH } from "../../../../src/gateway/control-ui-contract.js";
 import { loadControlUiBootstrapConfig } from "./control-ui-bootstrap.ts";

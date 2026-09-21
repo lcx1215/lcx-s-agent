@@ -73,10 +73,29 @@ export default defineConfig({
       "src/**/*.test.ts",
       "extensions/**/*.test.ts",
       "test/**/*.test.ts",
+      // UI files that run under node (no browser, no jsdom). This list is explicit on purpose:
+      // `ui/vitest.config.ts` is a browser(playwright) project that CI never runs, so anything
+      // not named here has no gate at all. Only files verified to pass under the node pool are
+      // listed — see ops/engineering/LCX-LANE-COVERAGE-AUDIT.md for the census and the
+      // files that were tried and rejected (they import `ui/`-only deps such as @noble/ed25519).
       "ui/src/ui/views/agents-utils.test.ts",
+      "ui/src/ui/views/config-form.node.test.ts",
+      "ui/src/ui/views/config-form.search.node.test.ts",
+      "ui/src/ui/views/config-search.node.test.ts",
+      "ui/src/ui/views/overview.node.test.ts",
       "ui/src/ui/views/usage-render-details.test.ts",
+      "ui/src/ui/app-tool-stream.node.test.ts",
+      "ui/src/ui/storage.node.test.ts",
+      "ui/src/ui/usage-helpers.node.test.ts",
       "ui/src/ui/controllers/agents.test.ts",
       "ui/src/ui/controllers/chat.test.ts",
+      "ui/src/ui/controllers/config.test.ts",
+      "ui/src/ui/controllers/config/form-utils.node.test.ts",
+      "ui/src/ui/controllers/control-ui-bootstrap.test.ts",
+      "ui/src/ui/controllers/cron-filters.test.ts",
+      "ui/src/ui/controllers/cron.test.ts",
+      "ui/src/ui/controllers/sessions.test.ts",
+      "ui/src/ui/controllers/usage.node.test.ts",
     ],
     setupFiles: ["test/setup.ts"],
     exclude: [

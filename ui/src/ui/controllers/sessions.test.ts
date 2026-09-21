@@ -1,3 +1,6 @@
+// Must stay the first import: `deleteSessionAndRefresh` calls `window.confirm`.
+// See the shim's own comment.
+import "./test-window-shim.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { deleteSession, deleteSessionAndRefresh, type SessionsState } from "./sessions.ts";
 

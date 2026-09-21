@@ -556,6 +556,24 @@ function renderTextInput(params: {
         : "");
   const displayValue = value ?? "";
 
+  // A text input can only carry a primitive. A non-primitive value here means the
+  // schema resolved to the string branch of a union whose other branch is a
+  // structured value — `string | SecretRef` is the documented case. Rendering it
+  // would show `String(value)` ("[object Object]"), and the first keystroke would
+  // replace the real value with that literal text. The gateway accepts a plain
+  // string at those paths, so the substitution is written without any error.
+  // Report the field instead of offering an edit that cannot be undone.
+  if (typeof displayValue === "object" && displayValue !== null) {
+    return html`
+      <div class="cfg-field">
+        ${showLabel ? html`<label class="cfg-field__label">${label}</label>` : nothing}
+        ${help ? html`<div class="cfg-field__help">${help}</div>` : nothing}
+        ${renderTags(tags)}
+        <div class="cfg-field__help">Structured value. Use Raw mode to edit it.</div>
+      </div>
+    `;
+  }
+
   return html`
     <div class="cfg-field">
       ${showLabel ? html`<label class="cfg-field__label">${label}</label>` : nothing}
