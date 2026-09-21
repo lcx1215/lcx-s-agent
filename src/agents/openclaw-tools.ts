@@ -56,6 +56,7 @@ import { createFinanceResearchBatchTool } from "./tools/finance-research-batch-t
 import { createFinanceResearchRunTool } from "./tools/finance-research-run-tool.js";
 import { createFinanceResearchRunsReadTool } from "./tools/finance-research-runs-read-tool.js";
 import { createFinanceResearchSourceWorkbenchTool } from "./tools/finance-research-source-workbench-tool.js";
+import { createFinanceScopedOverrideTool } from "./tools/finance-scoped-override-tool.js";
 import { createFinanceSourceHealthReadTool } from "./tools/finance-source-health-read-tool.js";
 import { createFinanceSourceSweepReadTool } from "./tools/finance-source-sweep-read-tool.js";
 import { createFinanceStrategyRuleLedgerReadTool } from "./tools/finance-strategy-rule-ledger-read-tool.js";
@@ -74,6 +75,7 @@ import { createModuleLearningPipelinePlanTool } from "./tools/module-learning-pi
 import { createModuleLearningPipelineReviewTool } from "./tools/module-learning-pipeline-review-tool.js";
 import { createNodesTool } from "./tools/nodes-tool.js";
 import { createPdfTool } from "./tools/pdf-tool.js";
+import { createPlanUpdateTool } from "./tools/plan-update-tool.js";
 import { createQuantLabTool } from "./tools/quant-lab-tool.js";
 import { createQuantMathTool } from "./tools/quant-math-tool.js";
 import { createResearchDataAutopilotTool } from "./tools/research-data-autopilot-tool.js";
@@ -278,6 +280,8 @@ export function createOpenClawTools(options?: {
     createFinanceSourceSweepReadTool(),
     createFinancePaperRankPlaceTool(),
     createFinanceResearchBatchTool(),
+    createPlanUpdateTool(),
+    createFinanceScopedOverrideTool(),
     createFinanceThesisLedgerReadTool({ workspaceDir }),
     createFinanceStrategyRuleLedgerReadTool(),
     createLocalSpecialistTool({ workspaceDir }),

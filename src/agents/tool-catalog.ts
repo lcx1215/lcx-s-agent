@@ -376,6 +376,24 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     includeInOpenClawGroup: true,
   },
   {
+    id: "plan_update",
+    label: "plan_update",
+    description:
+      "Maintain an explicit plan of steps and their status so the next action is inspectable before it is taken. Persisted under the workspace.",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    id: "finance_scoped_override",
+    label: "finance_scoped_override",
+    description:
+      "Temporarily adjust a declared cap within bounds, with expiry and a verified revert. Caps only - gates cannot be disabled. Requires a stated reason.",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
     id: "finance_paper_rank_place",
     label: "finance_paper_rank_place",
     description:
