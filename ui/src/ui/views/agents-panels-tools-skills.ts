@@ -2,11 +2,11 @@ import { html, nothing } from "lit";
 import { normalizeToolName } from "../../../../src/agents/tool-policy-shared.js";
 import type { SkillStatusEntry, SkillStatusReport, ToolsCatalogResult } from "../types.ts";
 import {
+  buildToolAccessSteps,
   isAllowedByPolicy,
-  matchesList,
+  isToolEnabledBySteps,
   PROFILE_OPTIONS,
   resolveAgentConfig,
-  resolveToolProfile,
   TOOL_SECTIONS,
 } from "./agents-utils.ts";
 import type { SkillGroup } from "./skills-grouping.ts";
@@ -50,9 +50,10 @@ export function renderAgentTools(params: {
       ? agentTools.alsoAllow
       : [];
   const deny = hasAgentAllow ? [] : Array.isArray(agentTools.deny) ? agentTools.deny : [];
-  const basePolicy = hasAgentAllow
-    ? { allow: agentTools.allow ?? [], deny: agentTools.deny ?? [] }
-    : (resolveToolProfile(profile) ?? undefined);
+  // Displayed access must be the access the server enforces: profile, then
+  // global, then agent — each step narrowing the previous one.
+  const accessSteps = buildToolAccessSteps({ profile, agentTools, globalTools });
+  const profilePolicy = accessSteps[0]?.policy;
   const sections =
     params.toolsCatalogResult?.groups?.length &&
     params.toolsCatalogResult.agentId === params.agentId
@@ -66,14 +67,12 @@ export function renderAgentTools(params: {
   const toolIds = sections.flatMap((section) => section.tools.map((tool) => tool.id));
 
   const resolveAllowed = (toolId: string) => {
-    const baseAllowed = isAllowedByPolicy(toolId, basePolicy);
-    const extraAllowed = matchesList(toolId, alsoAllow);
-    const denied = matchesList(toolId, deny);
-    const allowed = (baseAllowed || extraAllowed) && !denied;
+    // `baseAllowed` is the profile stage on its own; it tells the toggle handlers
+    // whether enabling the tool needs an `alsoAllow` entry.
+    const baseAllowed = isAllowedByPolicy(toolId, profilePolicy);
     return {
-      allowed,
+      allowed: isToolEnabledBySteps(toolId, accessSteps),
       baseAllowed,
-      denied,
     };
   };
   const enabledCount = toolIds.filter((toolId) => resolveAllowed(toolId).allowed).length;

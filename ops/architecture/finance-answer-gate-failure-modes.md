@@ -15,22 +15,23 @@
 
 ## 1. 假阴性（该拦没拦）
 
-**表内 12 条（F-01…F-12）+ 子形态 7 条（§1b 2 + §1c 1 + §1d 3 + §1e 1）⇒ 本侧共 19 条。**
+**表内 13 条（F-01…F-12 + F-41）+ 子形态 7 条（§1b 2 + §1c 1 + §1d 3 + §1e 1）⇒ 本侧共 20 条。**
 
-| ID   | 构造（应该查的）                                                 | 退化匹配（实际查的）                                                                                                                                              | 位置                                                                                                                                                                                                                         | 探针问句                                             |
-| ---- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| F-01 | **上游谓词要覆盖"需求是否产生"**，且**同一语义的每一层**都要覆盖 | `needsFinanceDataGateway` / `resolveNeeds.freshOrCurrentData` / `hasFinanceTaskSignal` **三层**的英文词表都没有 trading/worth/balance/shares                      | `finance-brain-orchestration.ts:253`（`needsFinanceDataGateway`）、`scripts/operator/lcx-commercial-answer-pipeline.ts:630`（`resolveNeeds.freshOrCurrentData`）、`finance-brain-orchestration.ts`（`hasFinanceTaskSignal`） | "同一个洞在几层里各复制了一份？"                     |
-| F-02 | **领域类别清单**（股票/指数/基金/债券/商品/外汇/期权/加密）      | 金融请求词表只有 13 个中文词 + 11 个英文词 ⇒ 外汇/大宗/利率/非美市场全在门外，**整道门禁跳过**                                                                    | `quality-harness-quality.ts` `FINANCE_REQUEST_PATTERN`                                                                                                                                                                       | "把请求按**类别**列一遍，哪几类没进词表？"           |
-| F-03 | 同上，**第二次**                                                 | 补完外汇/大宗后**同一形状**又漏 指数/基金/加密/转债（11 条漏 7 条）                                                                                               | 同上                                                                                                                                                                                                                         | "这次补的是**同义词**还是**类别**？"                 |
-| F-04 | **枚举名单要问"名单外的输入会怎样"**                             | 标的检测是硬编码 `QQQ\|TLT\|NVDA` ⇒ 换 ticker 整条分诊检查不跑                                                                                                    | `visible-answer-adoption-gate.ts` `mentionedInstrumentNames`                                                                                                                                                                 | "把输入里的实体换成一个名单外的，检查还跑吗？"       |
-| F-05 | 同上                                                             | 标的检测缺"指数/基金"这一类                                                                                                                                       | 同上                                                                                                                                                                                                                         | 同上                                                 |
-| F-06 | 同上                                                             | 组合判定依赖"**≥2 个具名标的**"，而组合提问模式又要求中间夹一个美股 ticker ⇒ 中文指数组合整条路由错                                                               | `STANDALONE_PORTFOLIO_RISK_ASK_PATTERN`                                                                                                                                                                                      | "组合的判据是不是也挂在同一个名单上？"               |
-| F-07 | **"存在即通过"的每个子条件都要绑构造**                           | `extractsConcreteSingleStockLossTriage` 四个子条件**每个**都能被无意义词满足（裸 `默认风险门`、`A[.、]`、裸 `期权`、裸 `持有期限`）⇒ **纯填充答案 `failures=[]`** | `visible-answer-adoption-gate.ts`                                                                                                                                                                                            | "逐个列出每个子条件的**最小触发词**，它含该含义吗？" |
-| F-08 | **问"格式"就要求被枚举 + ≥2 个不同字段**                         | 裸 `每天+半导体+期权+风险` 四词即通过                                                                                                                             | `extractsDailyResearchFormat`                                                                                                                                                                                                | "这个检查问的是内容还是形状？形状类要求形状证据。"   |
-| F-09 | **锚点要具名驱动**（估值/财报/capex、偏斜/gamma/期限结构）       | 锚点接受裸 `风险`/`波动`（被别的检查兜住，机制已死）                                                                                                              | `extractsSemiconductorOptionsRiskList`                                                                                                                                                                                       | "这条检查已经死了吗？它是不是被别的检查兜住？"       |
-| F-10 | **"有用的下一步"要成构造**                                       | 裸 `下一步`/`第一` 算有用                                                                                                                                         | `USEFUL_VISIBLE_NEXT_STEP_PATTERN`                                                                                                                                                                                           | 同 F-07                                              |
-| F-11 | **豁免白名单里的裸动词要绑具体宾语**                             | 白名单含裸动词 `先看` ⇒ "建议先明确…" 改成 "建议**先看**…" **一词之差**从被拒变放行                                                                               | `DIRECT_VISIBLE_VALUE_PATTERN`                                                                                                                                                                                               | "这个白名单里最松的一项是哪个？把它单独拿出来试。"   |
-| F-12 | **决定者要成构造**（说了算/决定/采用…本地证据；或否定模型权威）  | 裸 `证据排序` + 裸 `本地 gate` 即可                                                                                                                               | `MODEL_DISAGREEMENT_DECIDER_PATTERN`                                                                                                                                                                                         | 同 F-07                                              |
+| ID   | 构造（应该查的）                                                 | 退化匹配（实际查的）                                                                                                                                                                                                                                                                                                                                                              | 位置                                                                                                                                                                                                                         | 探针问句                                                       |
+| ---- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| F-01 | **上游谓词要覆盖"需求是否产生"**，且**同一语义的每一层**都要覆盖 | `needsFinanceDataGateway` / `resolveNeeds.freshOrCurrentData` / `hasFinanceTaskSignal` **三层**的英文词表都没有 trading/worth/balance/shares                                                                                                                                                                                                                                      | `finance-brain-orchestration.ts:253`（`needsFinanceDataGateway`）、`scripts/operator/lcx-commercial-answer-pipeline.ts:630`（`resolveNeeds.freshOrCurrentData`）、`finance-brain-orchestration.ts`（`hasFinanceTaskSignal`） | "同一个洞在几层里各复制了一份？"                               |
+| F-02 | **领域类别清单**（股票/指数/基金/债券/商品/外汇/期权/加密）      | 金融请求词表只有 13 个中文词 + 11 个英文词 ⇒ 外汇/大宗/利率/非美市场全在门外，**整道门禁跳过**                                                                                                                                                                                                                                                                                    | `quality-harness-quality.ts` `FINANCE_REQUEST_PATTERN`                                                                                                                                                                       | "把请求按**类别**列一遍，哪几类没进词表？"                     |
+| F-03 | 同上，**第二次**                                                 | 补完外汇/大宗后**同一形状**又漏 指数/基金/加密/转债（11 条漏 7 条）                                                                                                                                                                                                                                                                                                               | 同上                                                                                                                                                                                                                         | "这次补的是**同义词**还是**类别**？"                           |
+| F-04 | **枚举名单要问"名单外的输入会怎样"**                             | 标的检测是硬编码 `QQQ\|TLT\|NVDA` ⇒ 换 ticker 整条分诊检查不跑                                                                                                                                                                                                                                                                                                                    | `visible-answer-adoption-gate.ts` `mentionedInstrumentNames`                                                                                                                                                                 | "把输入里的实体换成一个名单外的，检查还跑吗？"                 |
+| F-05 | 同上                                                             | 标的检测缺"指数/基金"这一类                                                                                                                                                                                                                                                                                                                                                       | 同上                                                                                                                                                                                                                         | 同上                                                           |
+| F-06 | 同上                                                             | 组合判定依赖"**≥2 个具名标的**"，而组合提问模式又要求中间夹一个美股 ticker ⇒ 中文指数组合整条路由错                                                                                                                                                                                                                                                                               | `STANDALONE_PORTFOLIO_RISK_ASK_PATTERN`                                                                                                                                                                                      | "组合的判据是不是也挂在同一个名单上？"                         |
+| F-07 | **"存在即通过"的每个子条件都要绑构造**                           | `extractsConcreteSingleStockLossTriage` 四个子条件**每个**都能被无意义词满足（裸 `默认风险门`、`A[.、]`、裸 `期权`、裸 `持有期限`）⇒ **纯填充答案 `failures=[]`**                                                                                                                                                                                                                 | `visible-answer-adoption-gate.ts`                                                                                                                                                                                            | "逐个列出每个子条件的**最小触发词**，它含该含义吗？"           |
+| F-08 | **问"格式"就要求被枚举 + ≥2 个不同字段**                         | 裸 `每天+半导体+期权+风险` 四词即通过                                                                                                                                                                                                                                                                                                                                             | `extractsDailyResearchFormat`                                                                                                                                                                                                | "这个检查问的是内容还是形状？形状类要求形状证据。"             |
+| F-09 | **锚点要具名驱动**（估值/财报/capex、偏斜/gamma/期限结构）       | 锚点接受裸 `风险`/`波动`（被别的检查兜住，机制已死）                                                                                                                                                                                                                                                                                                                              | `extractsSemiconductorOptionsRiskList`                                                                                                                                                                                       | "这条检查已经死了吗？它是不是被别的检查兜住？"                 |
+| F-10 | **"有用的下一步"要成构造**                                       | 裸 `下一步`/`第一` 算有用                                                                                                                                                                                                                                                                                                                                                         | `USEFUL_VISIBLE_NEXT_STEP_PATTERN`                                                                                                                                                                                           | 同 F-07                                                        |
+| F-11 | **豁免白名单里的裸动词要绑具体宾语**                             | 白名单含裸动词 `先看` ⇒ "建议先明确…" 改成 "建议**先看**…" **一词之差**从被拒变放行                                                                                                                                                                                                                                                                                               | `DIRECT_VISIBLE_VALUE_PATTERN`                                                                                                                                                                                               | "这个白名单里最松的一项是哪个？把它单独拿出来试。"             |
+| F-12 | **决定者要成构造**（说了算/决定/采用…本地证据；或否定模型权威）  | 裸 `证据排序` + 裸 `本地 gate` 即可                                                                                                                                                                                                                                                                                                                                               | `MODEL_DISAGREEMENT_DECIDER_PATTERN`                                                                                                                                                                                         | 同 F-07                                                        |
+| F-41 | **"这个检查跑不跑"不该由词表决定**                               | 数字接地检查由 `CURRENT_DATA_PATTERN`（当前/最新/价格/行情…）**触发**。实测：`NVDA 报 480 美元。` 靠 `美元` 进了金融分支，却因为**没有任何触发词**而整段跳过接地；`NVDA 当前报 480 美元。` / `NVDA 报 480 美元，价格偏高。` **一词之差**就被抓住。⇒ 与 F-13 同族但更隐蔽：F-13 的谓词决定"整道门开不开"，这里的触发器只决定"其中一条检查跑不跑"，绿的回执**看不出有检查被跳过**。 | `quality-harness-quality.ts` `validateFinanceAnswerSafety`                                                                                                                                                                   | "**这个检查跑不跑，是由什么决定的？那个决定者自己会不会漏？**" |
 
 ### 1b. 假阴性的两个子形态（值得单独盯）
 
@@ -398,7 +399,7 @@ owner 主动写的那一笔，反而取消了检查。与 §1b 的"上游谓词�
 **它替代不了什么**：它不是"已穷尽"的证明，是"已探 + 明确列出未探"的账本。
 只要契约仍是"正则/关键词判散文"，§0 的两个方向就都还有格子 —— 这也是它必须一直更新的原因。
 
-## 9. 分布总结：42 条按子形态归类（哪族最容易复发）
+## 9. 分布总结：43 条按子形态归类（哪族最容易复发）
 
 | 子形态                                                            | 条数  | 编号                                             |
 | ----------------------------------------------------------------- | ----- | ------------------------------------------------ |
@@ -441,3 +442,73 @@ F-40（`maxEntries: 0` ⇒ 同步死循环挂死）> F-38（忙轮询 60 分钟�
   下一轮应优先 `extensions/`（688 文件，第一个缺陷 F-40 就是挂死级别）与 `ui/`（181 文件，未碰）。
 - **环境限制**：本机 8GB 内存，`vitest` 全量（unit/extensions config）会 OOM/SIGTERM。
   验证要**分批跑**（每批 ≤5 个文件），或只跑改动相关的模块。
+
+> **+ §10 的 4 条（F-41 … F-44，`ui/` 首探）**：属"契约声称了但没校验"族（与 F-22 同形），
+> 累计 **46 条**。§9 的族分布表按本会话口径不再改动，见 §10。
+
+## 10. `ui/` 首探：展示层自己重算了一遍执行层（F-41 … F-44）
+
+**判据换向的理由**：F-30 在 `ui/` 上命中很薄——`?? <数字>` 约 40 处全是累加器与展示兜底；
+唯一可调上界 `sessionsFilterLimit` 有 `limit > 0` 守卫；`storage.ts` 的 `splitRatio`
+有 `[0.4, 0.7]` 范围校验。**`ui/` 的退化配置面是干净的**，这是本轮的一个否定结论。
+
+改判据：**找"第二份实现"**——凡是展示层自己重算一遍执行层的判定，就做**对照实验**：
+把权威实现当 oracle，同一批输入喂两侧，数分歧。判据一句话：
+**"这个界面在替谁做决定？它凭什么和那个决定者算出同一个答案？"**
+
+命中处：`ui/src/ui/views/agents-utils.ts` 与 `agents-panels-tools-skills.ts` 的 Tool Access 面板。
+它自带一份模式引擎（`compilePattern` / `matchesAny`，与服务端 `glob-pattern.ts` 逐字等价）
+并用 `(base || alsoAllow) && !deny` 组合；服务端的权威组合是
+`applyToolPolicyPipeline()`：profile → global → agent **逐级过滤**。
+
+| 编号 | 分歧                                                               | 条数/2835 | 后果                                                                                                                                              |
+| ---- | ------------------------------------------------------------------ | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| F-41 | 面板**完全忽略** global `tools.allow`                              | 305       | 面板自己渲染着一句 "Agent overrides cannot enable tools that are globally blocked"，但网格与 "N/M enabled" 计数把被全局封禁的工具显示为**已启用** |
+| F-42 | 用 agent `tools.allow` **取代** profile，而不是在 profile 之后收窄 | 7         | profile 已排除的工具被显示为启用。服务端不会复活它（`alsoAllow` 才有这个能力，且作用在 profile 级）                                               |
+| F-43 | 把 `apply_patch → exec` 别名用到 **deny** 侧                       | 3         | 服务端只把这个别名用在 allow 侧。面板把 `deny: ["exec"]` 显示成同时封禁 `apply_patch` ⇒ 操作员**以为**存在的限制不存在                            |
+| F-44 | 忽略 global `tools.alsoAllow`                                      | 1         | 服务端在 profile 级合并它（`agentTools.alsoAllow ?? globalTools.alsoAllow`），面板只读 agent 的                                                   |
+
+**共同形状**（与 §0 同一条）：**看起来有保护，实际没有，而且没人会发现。**
+这次的"没人会发现"落在**操作员**身上：Tool Access 面板是操作员判断"这个 agent 能干什么"的
+唯一入口，而它显示的是另一套规则。
+
+**实测 before / after**（同一批 27 个 config × 105 个工具 = **2835 对**，
+oracle = 服务端自己的 `applyToolPolicyPipeline`）：
+
+- 修复前：**316 / 2835 不一致（11.1%）**
+- 修复后：**0 / 2835**
+
+**修法**：不是把面板的逻辑"改对"，而是**删掉那份平行实现**。面板改用服务端自己的原语
+（`glob-pattern.ts` 的 `compileGlobPatterns` / `matchesAnyGlobPattern`）与服务端自己的组合
+辅助（`mergeAlsoAllowPolicy`、`pickSandboxToolPolicy`），按服务端的步骤顺序求合取。
+四个新增导入都验证过浏览器安全（`esbuild --platform=browser` 打包 exit 0，77KB）。
+
+**常驻护栏**：`ui/src/ui/views/agents-utils.test.ts` 新增
+`tool access display matches the enforced pipeline`。它**以服务端的 pipeline 为 oracle**，
+所以以后服务端改语义，这个测试会红，而不是让面板悄悄漂移。
+（该文件本来就在根 `vitest.config.ts` 的 `include` 里，无需改配置。）
+
+**变异对位**（4 条，每条只翻转"自己的用例 + 网格用例"，无重复覆盖 ⇒ 各用例独立钉住）：
+
+1. deny 侧加回 `apply_patch` 别名 → 红：网格 + `does not extend a deny list`
+2. 摘掉 global 步骤 → 红：网格 + `reflects global tools.allow`（`alsoAllow` 那条**保持绿**）
+3. 去掉 global `alsoAllow` 回退 → 红：网格 + `honours global tools.alsoAllow`
+4. profile 步骤在 agent 有 allow 时置空 → 红：网格 + `keeps the profile step narrowing`
+
+**门禁**：`vitest` 12/12；`oxlint` 3 文件 117 规则 0 警告；`oxfmt --check` 通过；
+`tsgo` 123（113 extensions + 4 `src/agents/quality-harness.test.ts` + 6 ui 既有），
+**改动文件 0 错**。
+
+### `ui/` 未探的格子（下一轮的清单）
+
+- `ui/src/ui/controllers/config/form-coerce.ts`：**写配置**的那条路径。`coerceFormValues`
+  的注释声称 "so that `config.set` always receives correctly typed JSON"，但
+  `coerceNumberString` 转换失败时**原样返回字符串**，调用方也把它原样返回 ⇒ 声称与实现不符。
+  **未实测**，标为下一轮第一站。
+- `ui/src/ui/views/usage-helpers.ts`：`has:` 的取值表在**三处**重复
+  （`matchesUsageQuery` 的 `switch`、warning 用的 `allowed` 集合、`usage-query.ts` 的补全列表）。
+  今天三处一致 ⇒ 属**潜在**漂移，不是缺陷。
+- `ui/src/ui/controllers/logs.ts:129`：reset 分支没有 `.slice(-LOG_BUFFER_LIMIT)`，
+  但 `logsLimit` 恒定 500（`app.ts:373`，无任何赋值方）⇒ **当前不可达**，不算缺陷。
+- `ui/vitest.config.ts` 是 browser 模式（playwright），本机未跑；上述验证全部走根 vitest
+  config（node），因此**只覆盖 node 可执行的那部分**。

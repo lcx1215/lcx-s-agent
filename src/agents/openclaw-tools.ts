@@ -62,6 +62,7 @@ import { createFinanceSourceHealthReadTool } from "./tools/finance-source-health
 import { createFinanceSourceSweepReadTool } from "./tools/finance-source-sweep-read-tool.js";
 import { createFinanceStrategyRuleLedgerReadTool } from "./tools/finance-strategy-rule-ledger-read-tool.js";
 import { createFinanceThesisLedgerReadTool } from "./tools/finance-thesis-ledger-read-tool.js";
+import { createFinanceTuningProposalTool } from "./tools/finance-tuning-proposal-tool.js";
 import { createGatewayTool } from "./tools/gateway-tool.js";
 import { createGeospatialSourceRefreshTool } from "./tools/geospatial-source-refresh-tool.js";
 import { createGitHubProjectCapabilityIntakeTool } from "./tools/github-project-capability-intake-tool.js";
@@ -284,6 +285,7 @@ export function createOpenClawTools(options?: {
     createPlanUpdateTool(),
     createFinanceScopedOverrideTool(),
     createFinanceClaimLedgerTool(),
+    createFinanceTuningProposalTool(),
     createFinanceThesisLedgerReadTool({ workspaceDir }),
     createFinanceStrategyRuleLedgerReadTool(),
     createLocalSpecialistTool({ workspaceDir }),

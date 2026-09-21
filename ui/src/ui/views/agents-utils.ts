@@ -1,4 +1,6 @@
 import { html } from "lit";
+import { compileGlobPatterns, matchesAnyGlobPattern } from "../../../../src/agents/glob-pattern.js";
+import { pickSandboxToolPolicy } from "../../../../src/agents/sandbox-tool-policy.js";
 import {
   listCoreToolSections,
   PROFILE_OPTIONS as TOOL_PROFILE_OPTIONS,
@@ -8,6 +10,7 @@ import {
   normalizeToolName,
   resolveToolProfilePolicy,
 } from "../../../../src/agents/tool-policy-shared.js";
+import { mergeAlsoAllowPolicy } from "../../../../src/agents/tool-policy.js";
 import type { AgentIdentityResult, AgentsFilesListResult, AgentsListResult } from "../types.ts";
 
 export const TOOL_SECTIONS = listCoreToolSections();
@@ -16,6 +19,7 @@ export const PROFILE_OPTIONS = TOOL_PROFILE_OPTIONS;
 
 type ToolPolicy = {
   allow?: string[];
+  alsoAllow?: string[];
   deny?: string[];
 };
 
@@ -414,50 +418,20 @@ export function buildModelOptions(
   return options.map((option) => html`<option value=${option.value}>${option.label}</option>`);
 }
 
-type CompiledPattern =
-  | { kind: "all" }
-  | { kind: "exact"; value: string }
-  | { kind: "regex"; value: RegExp };
-
-function compilePattern(pattern: string): CompiledPattern {
-  const normalized = normalizeToolName(pattern);
-  if (!normalized) {
-    return { kind: "exact", value: "" };
-  }
-  if (normalized === "*") {
-    return { kind: "all" };
-  }
-  if (!normalized.includes("*")) {
-    return { kind: "exact", value: normalized };
-  }
-  const escaped = normalized.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&");
-  return { kind: "regex", value: new RegExp(`^${escaped.replaceAll("\\*", ".*")}$`) };
-}
-
-function compilePatterns(patterns?: string[]): CompiledPattern[] {
+/**
+ * Browser-safe mirror of the server's tool-policy matcher.
+ *
+ * The server decides access with `makeToolPolicyMatcher()` in
+ * `src/agents/pi-tools.policy.ts`, built on the shared primitives in
+ * `src/agents/glob-pattern.ts`. This panel only *displays* that decision, so it
+ * reuses the same primitives and the same branch order instead of keeping a
+ * second pattern engine that can drift from the one that is enforced.
+ */
+function compilePolicyPatterns(patterns?: string[]) {
   if (!Array.isArray(patterns)) {
     return [];
   }
-  return expandToolGroups(patterns)
-    .map(compilePattern)
-    .filter((pattern) => {
-      return pattern.kind !== "exact" || pattern.value.length > 0;
-    });
-}
-
-function matchesAny(name: string, patterns: CompiledPattern[]) {
-  for (const pattern of patterns) {
-    if (pattern.kind === "all") {
-      return true;
-    }
-    if (pattern.kind === "exact" && name === pattern.value) {
-      return true;
-    }
-    if (pattern.kind === "regex" && pattern.value.test(name)) {
-      return true;
-    }
-  }
-  return false;
+  return compileGlobPatterns({ raw: expandToolGroups(patterns), normalize: normalizeToolName });
 }
 
 export function isAllowedByPolicy(name: string, policy?: ToolPolicy) {
@@ -465,36 +439,61 @@ export function isAllowedByPolicy(name: string, policy?: ToolPolicy) {
     return true;
   }
   const normalized = normalizeToolName(name);
-  const deny = compilePatterns(policy.deny);
-  if (matchesAny(normalized, deny)) {
+  if (matchesAnyGlobPattern(normalized, compilePolicyPatterns(policy.deny))) {
     return false;
   }
-  const allow = compilePatterns(policy.allow);
+  const allow = compilePolicyPatterns(policy.allow);
   if (allow.length === 0) {
     return true;
   }
-  if (matchesAny(normalized, allow)) {
+  if (matchesAnyGlobPattern(normalized, allow)) {
     return true;
   }
-  if (normalized === "apply_patch" && matchesAny("exec", allow)) {
+  // `apply_patch` inherits the `exec` grant on the allow side only; the server
+  // does not extend `deny` the same way, so neither may this panel.
+  if (normalized === "apply_patch" && matchesAnyGlobPattern("exec", allow)) {
     return true;
   }
   return false;
 }
 
-export function matchesList(name: string, list?: string[]) {
-  if (!Array.isArray(list) || list.length === 0) {
-    return false;
-  }
-  const normalized = normalizeToolName(name);
-  const patterns = compilePatterns(list);
-  if (matchesAny(normalized, patterns)) {
-    return true;
-  }
-  if (normalized === "apply_patch" && matchesAny("exec", patterns)) {
-    return true;
-  }
-  return false;
+export type ToolAccessStep = {
+  label: string;
+  policy: ToolPolicy | undefined;
+};
+
+/**
+ * The profile / global / agent policy steps the server applies, in server order.
+ *
+ * Mirrors the three steps of `buildDefaultToolPolicyPipelineSteps()` in
+ * `src/agents/tool-policy-pipeline.ts` that a core tool can hit, and reuses the
+ * server's own `mergeAlsoAllowPolicy` / `pickSandboxToolPolicy` so `alsoAllow`
+ * widening — including the global `tools.alsoAllow` fallback and the implicit
+ * allow-all — stays identical to what is enforced.
+ */
+export function buildToolAccessSteps(params: {
+  profile: string;
+  agentTools: ToolPolicy;
+  globalTools: ToolPolicy;
+}): ToolAccessStep[] {
+  const { profile, agentTools, globalTools } = params;
+  const profileAlsoAllow = Array.isArray(agentTools.alsoAllow)
+    ? agentTools.alsoAllow
+    : Array.isArray(globalTools.alsoAllow)
+      ? globalTools.alsoAllow
+      : undefined;
+  return [
+    {
+      label: `tools.profile (${profile})`,
+      policy: mergeAlsoAllowPolicy(resolveToolProfile(profile), profileAlsoAllow),
+    },
+    { label: "tools.allow", policy: pickSandboxToolPolicy(globalTools) },
+    { label: "agents.<id>.tools.allow", policy: pickSandboxToolPolicy(agentTools) },
+  ];
+}
+
+export function isToolEnabledBySteps(toolId: string, steps: ToolAccessStep[]) {
+  return steps.every((step) => isAllowedByPolicy(toolId, step.policy));
 }
 
 export function resolveToolProfile(profile: string) {

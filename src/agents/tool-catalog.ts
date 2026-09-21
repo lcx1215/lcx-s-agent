@@ -385,6 +385,15 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     includeInOpenClawGroup: true,
   },
   {
+    id: "finance_tuning_proposal",
+    label: "finance_tuning_proposal",
+    description:
+      "Derive tuning proposals from the settled track record, each carrying re-checkable evidence, and record them. Proposes only - applying is a human step. Says plainly when there is too little data to propose anything",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
     id: "finance_claim_ledger",
     label: "finance_claim_ledger",
     description:
