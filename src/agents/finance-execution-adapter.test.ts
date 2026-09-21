@@ -395,3 +395,33 @@ describe("the stop price and the budget counters", () => {
     expect(widened.refusalReasons).toContain("orders_placed_this_run_must_be_non_negative");
   });
 });
+
+it("uses only explicit terminal venue identity for replay-stable receipts", async () => {
+  const adapter: FinanceExecutionAdapter = {
+    ...paper,
+    id: "venue-test",
+    kind: "venue",
+    venue: "fixture",
+    execute: async () => ({
+      filledQuantity: 10,
+      fillPrice: 231.4,
+      filledAt: "2026-09-17T21:00:00Z",
+      venueRef: "not-assumed-unique",
+      terminalOrderIdentity: { orderId: "order-one", terminal: true },
+    }),
+  };
+  const first = await placeFinanceOrder(
+    request({ adapters: [adapter], executionAdapterId: adapter.id }),
+  );
+  const second = await placeFinanceOrder(
+    request({
+      adapters: [adapter],
+      executionAdapterId: adapter.id,
+      recordedAt: "2026-09-19T03:00:00Z",
+    }),
+  );
+  expect(second.receipt?.receiptId).toBe(first.receipt?.receiptId);
+  const paperFirst = await placeFinanceOrder(request());
+  const paperSecond = await placeFinanceOrder(request({ recordedAt: "2026-09-19T03:00:00Z" }));
+  expect(paperSecond.receipt?.receiptId).not.toBe(paperFirst.receipt?.receiptId);
+});

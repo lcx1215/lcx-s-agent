@@ -20,6 +20,8 @@
  * every other finance source uses. This adapter never logs or returns them.
  */
 
+import { createHash } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { resolveFinanceCredentialEnv } from "./finance-credential-env.js";
 import type {
   FinanceExecutionAdapter,
@@ -72,15 +74,87 @@ type AlpacaOrderResponse = {
   filled_avg_price?: unknown;
   symbol?: unknown;
   message?: unknown;
+  client_order_id?: unknown;
+  side?: unknown;
+  qty?: unknown;
+  type?: unknown;
+  limit_price?: unknown;
+  filled_at?: unknown;
+  updated_at?: unknown;
 };
 
 function normalizeInstrument(value: string): string {
   return value.trim().toUpperCase();
 }
 
+function terminalFill(
+  payload: AlpacaOrderResponse,
+  orderId: string,
+  venueRef: string,
+  quantity: number,
+): FinanceExecutionFill | undefined {
+  if (!["filled", "canceled", "expired", "rejected"].includes(String(payload.status))) {
+    return undefined;
+  }
+  const filledQuantity = asFiniteNumber(payload.filled_qty);
+  const fillPrice = asFiniteNumber(payload.filled_avg_price) ?? 0;
+  if (
+    filledQuantity === undefined ||
+    filledQuantity < 0 ||
+    filledQuantity > quantity ||
+    (filledQuantity > 0 && fillPrice <= 0) ||
+    (payload.status === "filled" && filledQuantity !== quantity)
+  ) {
+    throw new Error("invalid terminal fill quantity or price");
+  }
+  const timestamp = payload.filled_at ?? payload.updated_at;
+  if (typeof timestamp !== "string" || !Number.isFinite(Date.parse(timestamp))) {
+    throw new Error("terminal fill requires venue event timestamp");
+  }
+  return Object.freeze({
+    filledQuantity,
+    fillPrice: filledQuantity === 0 ? 0 : fillPrice,
+    filledAt: new Date(timestamp).toISOString(),
+    venueRef,
+    terminalOrderIdentity: { orderId, terminal: true as const },
+  });
+}
+
 function asFiniteNumber(value: unknown): number | undefined {
   const parsed = typeof value === "number" ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+export class AlpacaOrderUncertainError extends Error {
+  readonly code = "alpaca_order_uncertain";
+  constructor(
+    readonly clientOrderId: string,
+    readonly orderId: string | undefined,
+    cause: unknown,
+  ) {
+    super(
+      `Alpaca order ${orderId ?? clientOrderId} was submitted but its fill state is unknown; refusing to report a fill`,
+      { cause },
+    );
+    this.name = "AlpacaOrderUncertainError";
+  }
+}
+export function isAlpacaOrderUncertain(error: unknown): error is AlpacaOrderUncertainError {
+  return error instanceof AlpacaOrderUncertainError;
+}
+function bounded<T>(run: () => Promise<T>, signal: AbortSignal): Promise<T> {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason ?? new Error("Alpaca request cancelled"));
+    signal.addEventListener("abort", abort, { once: true });
+    Promise.resolve()
+      .then(() => {
+        signal.throwIfAborted();
+        return run();
+      })
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener("abort", abort));
+  });
 }
 
 export function createAlpacaExecutionAdapter(
@@ -90,7 +164,7 @@ export function createAlpacaExecutionAdapter(
   const mode = options.mode ?? "paper";
   const host = mode === "live" ? LIVE_HOST : PAPER_HOST;
   const orderTypes = options.orderTypes ?? (["market", "limit"] as const);
-  const timeInForce = options.timeInForce ?? "day";
+
   const instruments = Object.freeze(options.instruments.map(normalizeInstrument));
 
   return Object.freeze({
@@ -105,194 +179,273 @@ export function createAlpacaExecutionAdapter(
       intent: FinanceExecutionIntent,
       signal: AbortSignal,
     ): Promise<FinanceExecutionFill> => {
-      const symbol = normalizeInstrument(intent.instrument);
-      // The shared contract declares this field as "Instruments this adapter accepts. Empty accepts
-      // nothing", and `admitsInstrument` in `finance-execution-adapter.ts` implements exactly that.
-      // This check was written as `instruments.length > 0 && !instruments.includes(symbol)`, so an
-      // empty list accepted *every* symbol -- the opposite of the contract, and in the widening
-      // direction. `placeFinanceOrder` masks it because it refuses first, but `execute` belongs to the
-      // exported adapter object and both real callers pass a caller-supplied list straight through, so
-      // `instruments: []` reaching here meant "trade anything".
-      if (!instruments.includes(symbol)) {
-        throw new Error(`Alpaca adapter is not declared for instrument ${symbol}`);
+      signal.throwIfAborted();
+      const timeoutMs = options.fillPoll?.timeoutMs ?? 30_000;
+      const intervalMs = options.fillPoll?.intervalMs ?? 200;
+      if (
+        !Number.isFinite(timeoutMs) ||
+        timeoutMs < 0 ||
+        !Number.isFinite(intervalMs) ||
+        intervalMs < 0
+      ) {
+        throw new Error("fillPoll requires a finite non-negative timeoutMs and intervalMs");
       }
-      if (!orderTypes.includes(intent.orderType)) {
-        throw new Error(`Alpaca adapter does not accept order type ${intent.orderType}`);
+      if (!intent.intentId.trim() || !intent.runAuthorizationId.trim()) {
+        throw new Error("Alpaca order requires intent identity and explicit run authorization");
       }
-      if (intent.orderType === "limit" && intent.limitPrice === undefined) {
-        throw new Error("a limit order requires limitPrice; refusing to infer one");
-      }
+      const clientOrderId = `lcx-${createHash("sha256")
+        .update(JSON.stringify([mode, intent.runAuthorizationId, intent.intentId]))
+        .digest("hex")
+        .slice(0, 40)}`;
+      const controller = new AbortController();
+      const timer = setTimeout(
+        () => controller.abort(new Error("Alpaca execution deadline exceeded")),
+        Math.min(timeoutMs, 2_147_483_647),
+      );
+      signal = AbortSignal.any([signal, controller.signal]);
+      let submitted = false;
+      let knownOrderId: string | undefined;
+      try {
+        const symbol = normalizeInstrument(intent.instrument);
+        const isCrypto = symbol.includes("/");
+        const timeInForce = options.timeInForce ?? (isCrypto ? "gtc" : "day");
+        if (isCrypto && timeInForce !== "gtc" && timeInForce !== "ioc") {
+          throw new Error("Alpaca crypto requires gtc or ioc time_in_force");
+        }
+        if (isCrypto && intent.side === "buy" && intent.stopPrice !== undefined) {
+          throw new Error(
+            "Alpaca crypto does not support the declared OTO protective stop; refusing unprotected entry",
+          );
+        }
+        // The shared contract declares this field as "Instruments this adapter accepts. Empty accepts
+        // nothing", and `admitsInstrument` in `finance-execution-adapter.ts` implements exactly that.
+        // This check was written as `instruments.length > 0 && !instruments.includes(symbol)`, so an
+        // empty list accepted *every* symbol -- the opposite of the contract, and in the widening
+        // direction. `placeFinanceOrder` masks it because it refuses first, but `execute` belongs to the
+        // exported adapter object and both real callers pass a caller-supplied list straight through, so
+        // `instruments: []` reaching here meant "trade anything".
+        if (!instruments.includes(symbol)) {
+          throw new Error(`Alpaca adapter is not declared for instrument ${symbol}`);
+        }
+        if (!orderTypes.includes(intent.orderType)) {
+          throw new Error(`Alpaca adapter does not accept order type ${intent.orderType}`);
+        }
+        if (intent.orderType === "limit" && intent.limitPrice === undefined) {
+          throw new Error("a limit order requires limitPrice; refusing to infer one");
+        }
 
-      const env = resolveFinanceCredentialEnv(process.env) as Record<string, unknown>;
-      const keyId = typeof env.ALPACA_API_KEY_ID === "string" ? env.ALPACA_API_KEY_ID.trim() : "";
-      const secret =
-        typeof env.ALPACA_API_SECRET_KEY === "string" ? env.ALPACA_API_SECRET_KEY.trim() : "";
-      if (!keyId || !secret) {
-        throw new Error("Alpaca credentials are not configured");
-      }
+        const env = resolveFinanceCredentialEnv(process.env) as Record<string, unknown>;
+        const keyId = typeof env.ALPACA_API_KEY_ID === "string" ? env.ALPACA_API_KEY_ID.trim() : "";
+        const secret =
+          typeof env.ALPACA_API_SECRET_KEY === "string" ? env.ALPACA_API_SECRET_KEY.trim() : "";
+        if (!keyId || !secret) {
+          throw new Error("Alpaca credentials are not configured");
+        }
 
-      // A `PK` key can only ever 401 against the live host; refuse locally so the
-      // failure is readable instead of an opaque authentication error.
-      if (mode === "live" && keyId.toUpperCase().startsWith("PK")) {
-        throw new Error(
-          "refusing live order: ALPACA_API_KEY_ID is a paper key (PK…); a funded live key (AK…) is required",
-        );
-      }
-      if (mode === "paper" && keyId.toUpperCase().startsWith("AK")) {
-        throw new Error(
-          'refusing paper order: ALPACA_API_KEY_ID is a live key (AK…); pass mode: "live" if that is intended',
-        );
-      }
+        // A `PK` key can only ever 401 against the live host; refuse locally so the
+        // failure is readable instead of an opaque authentication error.
+        if (mode === "live" && keyId.toUpperCase().startsWith("PK")) {
+          throw new Error(
+            "refusing live order: ALPACA_API_KEY_ID is a paper key (PK…); a funded live key (AK…) is required",
+          );
+        }
+        if (mode === "paper" && keyId.toUpperCase().startsWith("AK")) {
+          throw new Error(
+            'refusing paper order: ALPACA_API_KEY_ID is a live key (AK…); pass mode: "live" if that is intended',
+          );
+        }
 
-      const body: Record<string, unknown> = {
-        symbol,
-        qty: String(intent.quantity),
-        side: intent.side,
-        type: intent.orderType,
-        time_in_force: timeInForce,
-      };
-      if (intent.orderType === "limit") {
-        body.limit_price = String(intent.limitPrice);
-      }
-      // A bracket protects an ENTRY. Sizing already assumed a stop and used it, so the stop
-      // has done its real job before this line; whether the order carries one is a different
-      // question.
-      //
-      // For a sell it must not. Two independent reasons: Alpaca requires a sell's `stop_loss`
-      // to sit ABOVE the market (below is a 422), and a sell here is a reduction — the legs
-      // would be acting on a position the order just flattened. Sending it anyway would turn
-      // the exit path into a guaranteed rejection, i.e. a book that can enter and never leave.
-      //
-      // This system declares no short selling, so "sell" means "reduce". If shorting is ever
-      // admitted, that needs its own flag on the intent, not a bracket inferred from a side.
-      if (intent.stopPrice !== undefined && intent.side === "buy") {
-        // Alpaca's `bracket` requires BOTH exit legs, and it rejects one with only a stop:
-        // "bracket orders require take_profit.limit_price". A take-profit is a price target,
-        // and this system has no business inventing one — the rule declares an invalidation
-        // level and no upside target, and a threshold the caller did not state is exactly what
-        // "the model must not carry its own thresholds" forbids.
+        const body: Record<string, unknown> = {
+          client_order_id: clientOrderId,
+          symbol,
+          qty: String(intent.quantity),
+          side: intent.side,
+          type: intent.orderType,
+          time_in_force: timeInForce,
+        };
+        if (intent.orderType === "limit") {
+          body.limit_price = String(intent.limitPrice);
+        }
+        // A bracket protects an ENTRY. Sizing already assumed a stop and used it, so the stop
+        // has done its real job before this line; whether the order carries one is a different
+        // question.
         //
-        // `oto` is the construct that matches what was actually declared: fill the entry, then
-        // place the stop. Nothing is guessed, and the entry still carries its protection.
-        body.order_class = "oto";
-        body.stop_loss = { stop_price: String(intent.stopPrice) };
-      }
+        // For a sell it must not. Two independent reasons: Alpaca requires a sell's `stop_loss`
+        // to sit ABOVE the market (below is a 422), and a sell here is a reduction — the legs
+        // would be acting on a position the order just flattened. Sending it anyway would turn
+        // the exit path into a guaranteed rejection, i.e. a book that can enter and never leave.
+        //
+        // This system declares no short selling, so "sell" means "reduce". If shorting is ever
+        // admitted, that needs its own flag on the intent, not a bracket inferred from a side.
+        if (intent.stopPrice !== undefined && intent.side === "buy") {
+          // Alpaca's `bracket` requires BOTH exit legs, and it rejects one with only a stop:
+          // "bracket orders require take_profit.limit_price". A take-profit is a price target,
+          // and this system has no business inventing one — the rule declares an invalidation
+          // level and no upside target, and a threshold the caller did not state is exactly what
+          // "the model must not carry its own thresholds" forbids.
+          //
+          // `oto` is the construct that matches what was actually declared: fill the entry, then
+          // place the stop. Nothing is guessed, and the entry still carries its protection.
+          body.order_class = "oto";
+          body.stop_loss = { stop_price: String(intent.stopPrice) };
+        }
 
-      // The shared finance fetch seam (`FetchImpl = ApiFetch`) is GET-only: it
-      // exists to read market data, and it owns the egress guard every finance
-      // adapter must go through. Order placement needs a write, so the write path
-      // is injected by the caller instead of being smuggled around that seam.
-      // Keeping it a required option means "who may open an outbound order
-      // connection" stays an explicit, caller-owned decision.
-      if (!options.postJson) {
-        throw new Error("Alpaca adapter requires a postJson transport for order placement");
-      }
-      const response = await options.postJson(`${host}/v2/orders`, {
-        headers: {
+        // The shared finance fetch seam (`FetchImpl = ApiFetch`) is GET-only: it
+        // exists to read market data, and it owns the egress guard every finance
+        // adapter must go through. Order placement needs a write, so the write path
+        // is injected by the caller instead of being smuggled around that seam.
+        // Keeping it a required option means "who may open an outbound order
+        // connection" stays an explicit, caller-owned decision.
+        if (!options.postJson) {
+          throw new Error("Alpaca adapter requires a postJson transport for order placement");
+        }
+        const headers = {
           "APCA-API-KEY-ID": keyId,
           "APCA-API-SECRET-KEY": secret,
           "content-type": "application/json",
-        },
-        body: JSON.stringify(body),
-        signal,
-      });
-
-      const text = response.body;
-      let payload: AlpacaOrderResponse = {};
-      try {
-        payload = JSON.parse(text) as AlpacaOrderResponse;
-      } catch {
-        throw new Error(`Alpaca returned a non-JSON response (http ${response.status})`);
-      }
-
-      if (response.status < 200 || response.status >= 300) {
-        const message = typeof payload.message === "string" ? payload.message : text.slice(0, 160);
-        throw new Error(`Alpaca order rejected (http ${response.status}): ${message}`);
-      }
-
-      const orderId = typeof payload.id === "string" ? payload.id : "unknown-order-id";
-      // Provenance carries the venue host so a paper fill can never be read as a
-      // live market observation, and the order stays traceable.
-      const venueRef = `alpaca:${mode}:${orderId}`;
-
-      // The submit response is not the outcome. Alpaca fills asynchronously: a
-      // paper crypto market order was observed returning filled_qty 0 here and
-      // then filling seconds later. Reporting that snapshot as "unfilled" would
-      // hide a real position from the position ledger, so when the caller opts in
-      // the order is polled until it reaches a terminal state.
-      if (options.fillPoll) {
-        const timeoutMs = options.fillPoll.timeoutMs ?? 10_000;
-        const intervalMs = options.fillPoll.intervalMs ?? 200;
-        // A non-finite bound removes the deadline instead of shortening it: `Date.now() >= NaN` is
-        // false forever, so the poll loop below never reaches its "unknown fill state" exit and keeps
-        // calling the venue. Measured with a status endpoint that never reaches a terminal state:
-        // `timeoutMs: 1` threw the intended "fill state is unknown" error, while `NaN` and `Infinity`
-        // polled past 40 requests with no end. A hang against a live venue is worse than a wrong
-        // number, and the surrounding code already refuses rather than guess, so this refuses too.
-        if (
-          !Number.isFinite(timeoutMs) ||
-          timeoutMs < 0 ||
-          !Number.isFinite(intervalMs) ||
-          intervalMs < 0
-        ) {
-          throw new Error("fillPoll requires a finite non-negative timeoutMs and intervalMs");
-        }
+        };
         const statusFetch = options.statusFetch ?? createFinanceUncachedFetch();
-        const authHeaders = { "APCA-API-KEY-ID": keyId, "APCA-API-SECRET-KEY": secret };
-        const deadline = Date.now() + timeoutMs;
-        for (;;) {
-          const statusResponse = await statusFetch(`${host}/v2/orders/${orderId}`, {
-            headers: authHeaders,
-            signal,
-          });
-          let status = "";
-          let polledQty = 0;
-          let polledPrice = 0;
+        async function recover(cause: unknown): Promise<AlpacaOrderResponse> {
           try {
-            const parsed = JSON.parse(statusResponse.body) as AlpacaOrderResponse;
-            status = typeof parsed.status === "string" ? parsed.status : "";
-            polledQty = asFiniteNumber(parsed.filled_qty) ?? 0;
-            polledPrice = asFiniteNumber(parsed.filled_avg_price) ?? 0;
-          } catch {
-            throw new Error(`Alpaca order ${orderId} returned a non-JSON status response`);
-          }
-          if (polledQty > 0 && polledPrice > 0) {
-            return Object.freeze({
-              filledQuantity: polledQty,
-              fillPrice: polledPrice,
-              filledAt: new Date().toISOString(),
-              venueRef,
-            });
-          }
-          if (status === "canceled" || status === "expired" || status === "rejected") {
-            // A genuinely unfilled order: zero here is true, not assumed.
-            return Object.freeze({
-              filledQuantity: 0,
-              fillPrice: 0,
-              filledAt: new Date().toISOString(),
-              venueRef,
-            });
-          }
-          if (Date.now() >= deadline) {
-            // Unknown is not unfilled, and the fill contract has no slot for
-            // "unknown", so refuse rather than let a caller record a zero.
-            throw new Error(
-              `Alpaca order ${orderId} was submitted but its fill state is unknown after ${timeoutMs}ms; refusing to report a fill`,
+            const response = await bounded(
+              () =>
+                statusFetch(
+                  `${host}/v2/orders:by_client_order_id?client_order_id=${encodeURIComponent(clientOrderId)}`,
+                  { headers, signal },
+                ),
+              signal,
+            );
+            if (response.status !== 200) {
+              throw new Error(`reconciliation returned http ${response.status}`);
+            }
+            const found = JSON.parse(response.body) as AlpacaOrderResponse;
+            if (
+              found.client_order_id !== clientOrderId ||
+              found.symbol !== symbol ||
+              found.side !== intent.side ||
+              Number(found.qty) !== intent.quantity ||
+              found.type !== intent.orderType ||
+              found.time_in_force !== timeInForce ||
+              (body.order_class === "oto" &&
+                (found.order_class !== "oto" ||
+                  !found.legs?.some((leg) => Number(leg.stop_price) === intent.stopPrice))) ||
+              (intent.orderType === "limit" && Number(found.limit_price) !== intent.limitPrice) ||
+              typeof found.id !== "string" ||
+              !found.id
+            ) {
+              throw new Error("reconciled order does not match authorized intent");
+            }
+            return found;
+          } catch (error) {
+            throw new AlpacaOrderUncertainError(
+              clientOrderId,
+              knownOrderId,
+              new AggregateError([cause, error], "submission reconciliation failed"),
             );
           }
-          await new Promise((resolve) => setTimeout(resolve, intervalMs));
         }
+        let payload: AlpacaOrderResponse;
+        let response: { status: number; body: string };
+        try {
+          response = await bounded(() => {
+            submitted = true;
+            return options.postJson!(`${host}/v2/orders`, {
+              headers,
+              body: JSON.stringify(body),
+              signal,
+            });
+          }, signal);
+        } catch (error) {
+          if (!submitted) {
+            throw error;
+          }
+          payload = await recover(error);
+          response = { status: 200, body: JSON.stringify(payload) };
+        }
+        try {
+          payload = JSON.parse(response.body) as AlpacaOrderResponse;
+        } catch (error) {
+          throw new AlpacaOrderUncertainError(clientOrderId, knownOrderId, error);
+        }
+        if (response.status < 200 || response.status >= 300) {
+          const message =
+            typeof payload.message === "string" ? payload.message : response.body.slice(0, 160);
+          if (
+            response.status >= 500 ||
+            ((response.status === 409 || response.status === 422) &&
+              /client_order_id/i.test(message))
+          ) {
+            payload = await recover(new Error(`Alpaca submission http ${response.status}`));
+          } else {
+            submitted = false;
+            throw new Error(`Alpaca order rejected (http ${response.status}): ${message}`);
+          }
+        }
+        const orderId = typeof payload.id === "string" && payload.id ? payload.id : undefined;
+        if (!orderId) {
+          throw new AlpacaOrderUncertainError(
+            clientOrderId,
+            undefined,
+            new Error("missing order identity"),
+          );
+        }
+        knownOrderId = orderId;
+        // Provenance carries the venue host so a paper fill can never be read as a
+        // live market observation, and the order stays traceable.
+        const venueRef = `alpaca:${mode}:${orderId}`;
+
+        // The submit response is not the outcome. Alpaca fills asynchronously: a
+        // paper crypto market order was observed returning filled_qty 0 here and
+        // then filling seconds later. Reporting that snapshot as "unfilled" would
+        // hide a real position from the position ledger, so when the caller opts in
+        // the order is polled until it reaches a terminal state.
+        if (options.fillPoll) {
+          const authHeaders = { "APCA-API-KEY-ID": keyId, "APCA-API-SECRET-KEY": secret };
+          for (;;) {
+            const statusResponse = await bounded(
+              () =>
+                statusFetch(`${host}/v2/orders/${encodeURIComponent(orderId)}`, {
+                  headers: authHeaders,
+                  signal,
+                }),
+              signal,
+            );
+            if (statusResponse.status !== 200) {
+              throw new Error(`order status returned http ${statusResponse.status}`);
+            }
+            const parsed = JSON.parse(statusResponse.body) as AlpacaOrderResponse;
+            if (typeof parsed.id === "string" && parsed.id !== orderId) {
+              throw new Error("order status identity mismatch");
+            }
+            const terminal = terminalFill(parsed, orderId, venueRef, intent.quantity);
+            if (terminal) {
+              return terminal;
+            }
+            await bounded(() => delay(intervalMs, undefined, { signal }), signal);
+          }
+        }
+
+        const terminal = terminalFill(payload, orderId, venueRef, intent.quantity);
+        if (terminal) {
+          return terminal;
+        }
+        const filledQuantity = asFiniteNumber(payload.filled_qty) ?? 0;
+        const fillPrice = asFiniteNumber(payload.filled_avg_price) ?? 0;
+
+        return Object.freeze({
+          filledQuantity,
+          fillPrice,
+          filledAt: new Date().toISOString(),
+          venueRef,
+        });
+      } catch (error) {
+        if (submitted && !(error instanceof AlpacaOrderUncertainError)) {
+          throw new AlpacaOrderUncertainError(clientOrderId, knownOrderId, error);
+        }
+        throw error;
+      } finally {
+        clearTimeout(timer);
       }
-
-      const filledQuantity = asFiniteNumber(payload.filled_qty) ?? 0;
-      const fillPrice = asFiniteNumber(payload.filled_avg_price) ?? 0;
-
-      return Object.freeze({
-        filledQuantity,
-        fillPrice,
-        filledAt: new Date().toISOString(),
-        venueRef,
-      });
     },
   });
 }

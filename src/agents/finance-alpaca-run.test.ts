@@ -1,4 +1,14 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+vi.mock("./finance-credential-env.js", () => ({
+  resolveFinanceCredentialEnv: () => ({
+    ALPACA_API_KEY_ID: process.env.ALPACA_API_KEY_ID,
+    ALPACA_API_SECRET_KEY: process.env.ALPACA_API_SECRET_KEY,
+  }),
+}));
+beforeEach(() => {
+  vi.stubEnv("ALPACA_API_KEY_ID", "PKFIXTURE_ONLY");
+  vi.stubEnv("ALPACA_API_SECRET_KEY", "FIXTURE_ONLY");
+});
 import {
   DEFAULT_ALPACA_FILL_POLL,
   fetchAlpacaAccountSnapshot,
@@ -28,6 +38,19 @@ const ACCOUNT_BODY = JSON.stringify({
 });
 
 describe("fetchAlpacaAccountSnapshot", () => {
+  it.each([undefined, null, "true", "false", 0])(
+    "refuses ambiguous trading_blocked %s",
+    async (value) => {
+      const result = await fetchAlpacaAccountSnapshot({
+        read: readOnce(
+          200,
+          JSON.stringify({ ...JSON.parse(ACCOUNT_BODY), trading_blocked: value }),
+        ),
+      });
+      expect(result.ok).toBe(false);
+    },
+  );
+
   it("parses the real equity from a 200 account response", async () => {
     const result = await fetchAlpacaAccountSnapshot({ read: readOnce(200, ACCOUNT_BODY) });
     expect(result.ok).toBe(true);
@@ -216,6 +239,7 @@ describe("runFinanceAlpacaOrder fill handling", () => {
     // from it would tell the position ledger "you own nothing", and the next cycle would buy
     // the same instrument again.
     let polls = 0;
+    let orderedQty = 0;
     const read: FinanceUncachedFetch = async () => {
       polls += 1;
       return {
@@ -223,39 +247,58 @@ describe("runFinanceAlpacaOrder fill handling", () => {
         body: JSON.stringify({
           id: "ord-fill",
           status: polls < 2 ? "new" : "filled",
-          filled_qty: polls < 2 ? "0" : "10",
+          updated_at: "2026-09-20T00:00:00.000Z",
+          filled_qty: polls < 2 ? "0" : String(orderedQty),
           filled_avg_price: polls < 2 ? null : "100.5",
         }),
       };
     };
-    const result = await runFinanceAlpacaOrder(request({ read }));
+    const result = await runFinanceAlpacaOrder(
+      request({
+        read,
+        transport: async (init) => {
+          orderedQty = Number(JSON.parse(init.body).qty);
+          return acceptingTransport("ord-fill")(init);
+        },
+      }),
+    );
     expect(result.ok).toBe(true);
     if (!result.ok) {
       return;
     }
-    expect(result.receipt.fill.filledQuantity).toBe(10);
+    expect(result.receipt.fill.filledQuantity).toBe(orderedQty);
     expect(result.receipt.fill.fillPrice).toBeCloseTo(100.5, 2);
     expect(polls).toBeGreaterThan(1);
   });
 
   it("polls by default, so forgetting the option cannot lose a position", async () => {
     stubCredentials();
+    let orderedQty = 0;
     const read: FinanceUncachedFetch = async () => ({
       status: 200,
       body: JSON.stringify({
         id: "ord-fill",
         status: "filled",
-        filled_qty: "3",
+        updated_at: "2026-09-20T00:00:00.000Z",
+        filled_qty: String(orderedQty),
         filled_avg_price: "99",
       }),
     });
     // No `fillPoll` in the request at all — the default has to be the one with behaviour.
-    const result = await runFinanceAlpacaOrder(request({ read }));
+    const result = await runFinanceAlpacaOrder(
+      request({
+        read,
+        transport: async (init) => {
+          orderedQty = Number(JSON.parse(init.body).qty);
+          return acceptingTransport("ord-fill")(init);
+        },
+      }),
+    );
     expect(result.ok).toBe(true);
     if (!result.ok) {
       return;
     }
-    expect(result.receipt.fill.filledQuantity).toBe(3);
+    expect(result.receipt.fill.filledQuantity).toBe(orderedQty);
     expect(DEFAULT_ALPACA_FILL_POLL.timeoutMs).toBeGreaterThan(0);
   });
 
@@ -269,6 +312,7 @@ describe("runFinanceAlpacaOrder fill handling", () => {
         body: JSON.stringify({
           id: "ord-fill",
           status: "filled",
+          updated_at: "2026-09-20T00:00:00.000Z",
           filled_qty: "10",
           filled_avg_price: "100.5",
         }),

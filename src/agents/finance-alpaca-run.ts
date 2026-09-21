@@ -100,6 +100,9 @@ export async function fetchAlpacaAccountSnapshot(
     if (!Number.isFinite(equity)) {
       return { ok: false, reason: "account read returned no usable equity" };
     }
+    if (typeof record.trading_blocked !== "boolean") {
+      return { ok: false, reason: "account read returned no explicit trading_blocked boolean" };
+    }
     return {
       ok: true,
       account: Object.freeze({
@@ -108,7 +111,7 @@ export async function fetchAlpacaAccountSnapshot(
         buyingPower: number("buying_power"),
         currency: typeof record.currency === "string" ? record.currency : "USD",
         status: typeof record.status === "string" ? record.status : "UNKNOWN",
-        tradingBlocked: record.trading_blocked === true,
+        tradingBlocked: record.trading_blocked,
       }),
     };
   } catch (error) {
@@ -257,6 +260,7 @@ export async function fetchAlpacaVenueState(
 
 export type FinanceAlpacaRunRequest = Readonly<{
   conclusion: FinanceResearchConclusion;
+  signal?: AbortSignal;
   /** Observed price and the time it belongs to. "Now" is never assumed. */
   market: { referencePrice: number; referencePriceAt: string };
   /** Account equity in the same currency as the reference price. */
@@ -333,6 +337,7 @@ export async function runFinanceAlpacaOrder(
 
   const placed = await placeFinanceOrder({
     mode: "live_execution",
+    signal: request.signal,
     intent: compiled.intent,
     budget: request.budget,
     adapters: [adapter],

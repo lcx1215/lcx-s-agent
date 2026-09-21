@@ -1,6 +1,20 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { createAlpacaExecutionAdapter } from "./finance-alpaca-execution-adapter.js";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+vi.mock("./finance-credential-env.js", () => ({
+  resolveFinanceCredentialEnv: () => ({
+    ALPACA_API_KEY_ID: process.env.ALPACA_API_KEY_ID,
+    ALPACA_API_SECRET_KEY: process.env.ALPACA_API_SECRET_KEY,
+  }),
+}));
+beforeEach(() => {
+  vi.stubEnv("ALPACA_API_KEY_ID", "PKFIXTURE_ONLY");
+  vi.stubEnv("ALPACA_API_SECRET_KEY", "FIXTURE_ONLY");
+});
+import {
+  createAlpacaExecutionAdapter,
+  AlpacaOrderUncertainError,
+} from "./finance-alpaca-execution-adapter.js";
 import type { FinanceExecutionIntent } from "./finance-execution-adapter.js";
+import type { FinanceWriteTransport } from "./finance-write-transport.js";
 
 const PAPER = "PKTESTKEYID0000000000";
 const LIVE = "AKTESTKEYID0000000000";
@@ -150,7 +164,13 @@ describe("createAlpacaExecutionAdapter", () => {
         body: JSON.stringify(
           polls < 2
             ? { id: "ord-9", status: "new", filled_qty: "0" }
-            : { id: "ord-9", status: "filled", filled_qty: "1", filled_avg_price: "101.25" },
+            : {
+                id: "ord-9",
+                status: "filled",
+                updated_at: "2026-09-20T00:00:00.000Z",
+                filled_qty: "1",
+                filled_avg_price: "101.25",
+              },
         ),
       };
     };
@@ -219,7 +239,12 @@ describe("createAlpacaExecutionAdapter", () => {
     const t = transport({ id: "ord-11", status: "new", filled_qty: "0" });
     const statusFetch = async () => ({
       status: 200,
-      body: JSON.stringify({ id: "ord-11", status: "expired", filled_qty: "0" }),
+      body: JSON.stringify({
+        id: "ord-11",
+        status: "expired",
+        updated_at: "2026-09-20T00:00:00.000Z",
+        filled_qty: "0",
+      }),
     });
     const adapter = createAlpacaExecutionAdapter({
       instruments: ["AAPL"],
@@ -299,3 +324,166 @@ describe("an empty allowlist and a non-finite poll bound", () => {
     );
   });
 });
+
+describe("submission identity and terminal fill safety", () => {
+  it.each(["SPY", "BTC/USD", "ETH/USD"])(
+    "recovers a lost response and duplicate submission for %s with one venue identity",
+    async (instrument) => {
+      const intent = { ...baseIntent, instrument };
+      let stored: Record<string, unknown> | undefined;
+      let created = 0;
+      const ids: string[] = [];
+      const adapter = createAlpacaExecutionAdapter({
+        instruments: [instrument],
+        postJson: async (_url, init) => {
+          const body = JSON.parse(init.body);
+          ids.push(body.client_order_id);
+          if (!stored) {
+            created++;
+            stored = {
+              ...body,
+              id: "venue-one",
+              status: "filled",
+              filled_qty: body.qty,
+              filled_avg_price: "100",
+              filled_at: "2026-09-20T00:00:00Z",
+            };
+            throw new Error("response lost");
+          }
+          return {
+            status: 422,
+            body: JSON.stringify({ message: "client_order_id must be unique" }),
+          };
+        },
+        statusFetch: async (url) => {
+          expect(url).toContain("orders:by_client_order_id?client_order_id=");
+          return { status: 200, body: JSON.stringify(stored) };
+        },
+      });
+      const first = await adapter.execute(intent, new AbortController().signal);
+      const second = await adapter.execute(intent, new AbortController().signal);
+      expect(created).toBe(1);
+      expect(ids[0]).toBe(ids[1]);
+      expect(second).toEqual(first);
+      expect(first.terminalOrderIdentity).toEqual({ orderId: "venue-one", terminal: true });
+    },
+  );
+  it("does not reconcile a conflicting intent against an old client order", async () => {
+    const adapter = createAlpacaExecutionAdapter({
+      instruments: ["AAPL"],
+      postJson: async () => {
+        throw new Error("lost");
+      },
+      statusFetch: async () => ({
+        status: 200,
+        body: JSON.stringify({
+          id: "other",
+          client_order_id: "wrong",
+          symbol: "AAPL",
+          side: "buy",
+          qty: "1",
+          type: "market",
+        }),
+      }),
+    });
+    await expect(adapter.execute(baseIntent, new AbortController().signal)).rejects.toBeInstanceOf(
+      AlpacaOrderUncertainError,
+    );
+  });
+  it.each(["filled", "canceled"])(
+    "waits through partial fills until %s and keeps venue event time",
+    async (status) => {
+      let calls = 0;
+      const adapter = createAlpacaExecutionAdapter({
+        instruments: ["AAPL"],
+        postJson: transport({ id: "partial" }).fn,
+        fillPoll: { timeoutMs: 500, intervalMs: 0 },
+        statusFetch: async () => ({
+          status: 200,
+          body: JSON.stringify(
+            ++calls === 1
+              ? { status: "partially_filled", filled_qty: "0.25", filled_avg_price: "100" }
+              : {
+                  status,
+                  filled_qty: status === "filled" ? "1" : "0.25",
+                  filled_avg_price: "101",
+                  updated_at: "2026-09-20T01:00:00Z",
+                },
+          ),
+        }),
+      });
+      const result = await adapter.execute(baseIntent, new AbortController().signal);
+      expect(calls).toBe(2);
+      expect(result.filledQuantity).toBe(status === "filled" ? 1 : 0.25);
+      expect(result.filledAt).toBe("2026-09-20T01:00:00.000Z");
+    },
+  );
+  it("invalid poll settings never submit an order", async () => {
+    const postJson = vi.fn(transport({ id: "never" }).fn);
+    const adapter = createAlpacaExecutionAdapter({
+      instruments: ["AAPL"],
+      postJson,
+      fillPoll: { timeoutMs: NaN },
+    });
+    await expect(adapter.execute(baseIntent, new AbortController().signal)).rejects.toThrow(
+      "finite",
+    );
+    expect(postJson).not.toHaveBeenCalled();
+  });
+  it("bounds an uncooperative status read and preserves submitted identity", async () => {
+    const adapter = createAlpacaExecutionAdapter({
+      instruments: ["AAPL"],
+      postJson: transport({ id: "hanging" }).fn,
+      fillPoll: { timeoutMs: 20, intervalMs: 0 },
+      statusFetch: () => new Promise(() => {}),
+    });
+    await expect(adapter.execute(baseIntent, new AbortController().signal)).rejects.toMatchObject({
+      code: "alpaca_order_uncertain",
+      orderId: "hanging",
+      clientOrderId: expect.stringMatching(/^lcx-/),
+    });
+  });
+  it("pre-cancelled execution sends no order", async () => {
+    const postJson = vi.fn(transport({ id: "never" }).fn);
+    const adapter = createAlpacaExecutionAdapter({ instruments: ["AAPL"], postJson });
+    await expect(
+      adapter.execute(baseIntent, AbortSignal.abort(new Error("cancelled"))),
+    ).rejects.toThrow("cancelled");
+    expect(postJson).not.toHaveBeenCalled();
+  });
+});
+
+it.each(["BTC/USD", "ETH/USD"])(
+  "uses crypto GTC and refuses unsupported protection/TIF for %s",
+  async (instrument) => {
+    const postJson = vi.fn<FinanceWriteTransport>(async (_url, init) => {
+      expect(JSON.parse(init.body).time_in_force).toBe("gtc");
+      return {
+        status: 200,
+        body: JSON.stringify({ id: "crypto", status: "new", filled_qty: "0" }),
+      };
+    });
+    const intent = { ...baseIntent, instrument };
+    await createAlpacaExecutionAdapter({ instruments: [instrument], postJson }).execute(
+      intent,
+      new AbortController().signal,
+    );
+    expect(postJson).toHaveBeenCalledTimes(1);
+    postJson.mockClear();
+    for (const timeInForce of ["day", "fok"] as const) {
+      await expect(
+        createAlpacaExecutionAdapter({ instruments: [instrument], postJson, timeInForce }).execute(
+          intent,
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow("gtc or ioc");
+    }
+    await expect(
+      createAlpacaExecutionAdapter({ instruments: [instrument], postJson }).execute(
+        { ...intent, stopPrice: 90 },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("refusing unprotected entry");
+    expect(postJson).not.toHaveBeenCalled();
+  },
+);

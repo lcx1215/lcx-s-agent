@@ -661,3 +661,39 @@ describe("finance position projection watermarks", () => {
     }
   });
 });
+
+it("replays terminal venue receipt once but rejects changed economic fields or venue event time", async () => {
+  const directory = await storeDirectory();
+  const first = receipt({
+    adapterKind: "venue",
+    adapterId: "alpaca",
+    venue: "alpaca:paper",
+    recordedAt: PAST,
+    fill: {
+      filledQuantity: 10,
+      fillPrice: 100,
+      filledAt: PAST,
+      venueRef: "alpaca:paper:order1",
+      terminalOrderIdentity: { orderId: "order1", terminal: true },
+    },
+  });
+  expect((await appendFinanceExecutionReceipt(directory, first)).appended).toBe(true);
+  expect(
+    (
+      await appendFinanceExecutionReceipt(directory, {
+        ...first,
+        recordedAt: "2026-09-11T00:00:00Z",
+      })
+    ).appended,
+  ).toBe(false);
+  expect((await readFinancePositionLedger(directory)).ledger.positions[0].quantity).toBe(10);
+  await expect(
+    appendFinanceExecutionReceipt(directory, { ...first, fill: { ...first.fill, fillPrice: 101 } }),
+  ).rejects.toThrow("different content");
+  await expect(
+    appendFinanceExecutionReceipt(directory, {
+      ...first,
+      fill: { ...first.fill, filledAt: "2026-09-11T00:00:00Z" },
+    }),
+  ).rejects.toThrow("different content");
+});

@@ -293,6 +293,10 @@ const FinanceExecutionReceiptRecordSchema = z
         fillPrice: z.number().finite().positive(),
         filledAt: z.string().datetime(),
         venueRef: Text,
+        terminalOrderIdentity: z
+          .object({ orderId: Text, terminal: z.literal(true) })
+          .strict()
+          .optional(),
       })
       .strict(),
     executionAuthority: z.enum([...LCX_ONTOLOGY_FINANCE_EXECUTION_AUTHORITIES]),
@@ -451,7 +455,20 @@ async function appendRecord(
         (item) => item.body.kind === body.kind && item.recordKey === recordKey,
       );
       if (existing) {
-        if (caseflowFingerprint(existing.body) !== caseflowFingerprint(body)) {
+        const comparable = (value: typeof body) => {
+          if (
+            value.kind === "receipt" &&
+            value.receipt.adapterKind === "venue" &&
+            value.receipt.fill.terminalOrderIdentity?.terminal
+          ) {
+            const { recordedAt: _observedAt, ...economicReceipt } = value.receipt;
+            return { ...value, receipt: economicReceipt };
+          }
+          return value;
+        };
+        if (
+          caseflowFingerprint(comparable(existing.body)) !== caseflowFingerprint(comparable(body))
+        ) {
           throw new Error(
             `position record ${recordKey} already recorded with different content; ` +
               "the ledger is append-only and has no correction path",

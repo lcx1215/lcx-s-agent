@@ -151,6 +151,8 @@ export type FinanceExecutionFill = Readonly<{
   filledAt: string;
   /** Adapter-declared provenance. A paper fill must never read as a market observation. */
   venueRef: string;
+  /** Explicit stable venue identity, only after terminal status is observed. */
+  terminalOrderIdentity?: Readonly<{ orderId: string; terminal: true }>;
 }>;
 
 export type FinanceExecutionAdapter = Readonly<{
@@ -416,9 +418,15 @@ export async function placeFinanceOrder(
   const recordedAt = request.recordedAt ?? new Date().toISOString();
   const receiptId = `exec-${createHash("sha256")
     .update(
-      [intent.intentId, intent.instrument, intent.side, String(intent.quantity), recordedAt].join(
-        "|",
-      ),
+      adapter.kind === "venue" && fill.terminalOrderIdentity?.terminal === true
+        ? JSON.stringify([adapter.id, adapter.venue, fill.terminalOrderIdentity.orderId])
+        : [
+            intent.intentId,
+            intent.instrument,
+            intent.side,
+            String(intent.quantity),
+            recordedAt,
+          ].join("|"),
     )
     .digest("hex")
     .slice(0, 24)}`;
