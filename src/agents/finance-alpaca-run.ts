@@ -123,11 +123,32 @@ export async function fetchAlpacaAccountSnapshot(
  * ledger that missed a fill cannot answer it, and a guessed answer is how one instrument gets
  * bought twice.
  */
+/**
+ * An order the venue has finished with.
+ *
+ * Reading only open orders makes a cancelled or rejected order indistinguishable
+ * from one that was never sent - the system believed fifteen orders had been
+ * placed while the venue had cancelled every one of them, and nothing could see
+ * it. A person at the computer would notice; this is what lets the system.
+ */
+export type AlpacaVenueOrder = Readonly<{
+  symbol: string;
+  side: string;
+  qty: number;
+  status: string;
+  filledQty: number;
+  filledAvgPrice: number | null;
+  submittedAt: string;
+  terminalAt: string | null;
+}>;
+
 export type AlpacaVenueState = Readonly<{
   /** Unfilled order count per symbol. */
   openOrders: ReadonlyMap<string, number>;
   /** Signed position quantity per symbol; absent means flat there. */
   positions: ReadonlyMap<string, number>;
+  /** Recently closed orders, newest first. The record of what actually happened. */
+  recentOrders: readonly AlpacaVenueOrder[];
 }>;
 
 function parseVenueArray(text: string, what: string): unknown[] {
@@ -157,9 +178,14 @@ export async function fetchAlpacaVenueState(
     accept: "application/json",
   };
   try {
-    const [orders, positions] = await Promise.all([
+    const [orders, positions, closed] = await Promise.all([
       read("https://paper-api.alpaca.markets/v2/orders?status=open&limit=100", { headers }),
       read("https://paper-api.alpaca.markets/v2/positions", { headers }),
+      // Closed orders are the record of what happened. Without them a cancelled
+      // order and an order that was never sent look identical from here.
+      read("https://paper-api.alpaca.markets/v2/orders?status=closed&limit=100&direction=desc", {
+        headers,
+      }),
     ]);
     if (orders.status !== 200) {
       return { ok: false, reason: `open orders read returned ${orders.status}` };
@@ -167,6 +193,37 @@ export async function fetchAlpacaVenueState(
     if (positions.status !== 200) {
       return { ok: false, reason: `positions read returned ${positions.status}` };
     }
+    if (closed.status !== 200) {
+      return { ok: false, reason: `closed orders read returned ${closed.status}` };
+    }
+
+    const recentOrders: AlpacaVenueOrder[] = parseVenueArray(closed.body, "closed orders").flatMap(
+      (row) => {
+        const record = row as Record<string, unknown>;
+        const symbol = typeof record.symbol === "string" ? record.symbol : "";
+        if (symbol.length === 0) {
+          return [];
+        }
+        const filledAvgPrice = Number(record.filled_avg_price);
+        return [
+          {
+            symbol,
+            side: typeof record.side === "string" ? record.side : "",
+            qty: Number(record.qty),
+            status: typeof record.status === "string" ? record.status : "",
+            filledQty: Number(record.filled_qty),
+            filledAvgPrice: Number.isFinite(filledAvgPrice) ? filledAvgPrice : null,
+            submittedAt: typeof record.submitted_at === "string" ? record.submitted_at : "",
+            terminalAt:
+              typeof record.canceled_at === "string"
+                ? record.canceled_at
+                : typeof record.filled_at === "string"
+                  ? record.filled_at
+                  : null,
+          },
+        ];
+      },
+    );
 
     const openOrders = new Map<string, number>();
     for (const row of parseVenueArray(orders.body, "open orders")) {
@@ -192,7 +249,7 @@ export async function fetchAlpacaVenueState(
       held.set(symbol.toUpperCase(), qty);
     }
 
-    return { ok: true, state: Object.freeze({ openOrders, positions: held }) };
+    return { ok: true, state: Object.freeze({ openOrders, positions: held, recentOrders }) };
   } catch (error) {
     return { ok: false, reason: String(error instanceof Error ? error.message : error) };
   }
