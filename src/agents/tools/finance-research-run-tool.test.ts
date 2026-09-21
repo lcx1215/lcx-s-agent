@@ -116,11 +116,30 @@ describe("platform-independent finance workflow tool", () => {
     // Omitted stays omitted: the runner keeps `research_only` as its own default.
     await tool.execute("mode-default", input);
     expect(executeResearch.mock.calls[1]?.[0].input.decisionMode).toBeUndefined();
-    // The candidate modes widen the answer packet; none of them grants execution.
+    // A genuinely unknown mode is rejected before dispatch.
     await expect(
-      tool.execute("mode-live", { ...input, decisionMode: "live_execution" }),
+      tool.execute("mode-invalid", { ...input, decisionMode: "unrestricted_execution" }),
     ).rejects.toThrow("decisionMode must be one of");
     expect(executeResearch).toHaveBeenCalledTimes(2);
+  });
+
+  it("accepts the declared live mode without granting execution authority", async () => {
+    const executeResearch = vi.fn<typeof runFinanceResearchRun>(runFinanceResearchRun);
+    const tool = createFinanceResearchRunTool({ workspaceDir: await workspace(), executeResearch });
+    const result = await tool.execute("mode-live", { ...input, decisionMode: "live_execution" });
+    expect(executeResearch).toHaveBeenCalledTimes(1);
+    expect(executeResearch.mock.calls[0]?.[0]).toMatchObject({
+      input: { decisionMode: "live_execution" },
+      liveFetch: false,
+      allowProviderCalls: false,
+    });
+    const details = result.details as { receiptPath: string; externalChannelApplied: boolean };
+    const receipt = JSON.parse(await fs.readFile(details.receiptPath, "utf8"));
+    expect(receipt.status).toBe("planned");
+    expect(receipt.plan.decisionMode).toBe("live_execution");
+    expect(receipt.plan.boundaries).toContain("no_execution_authority");
+    expect(receipt.notTouched).toContain("trading_execution");
+    expect(details.externalChannelApplied).toBe(false);
   });
 
   it("stops before execution when the platform cancels and rejects invalid budgets", async () => {

@@ -23,6 +23,8 @@ async function fixture() {
     asOf,
     useCase: "checkpoint-acceptance",
     maxApiCalls: 3,
+    // This fixture models one endpoint per source; production reserves two by default.
+    maxHttpCallsPerSource: 1,
     maxConcurrency: 1,
     checkpoint: {
       path: path.join(dir, "source.sqlite"),
@@ -111,6 +113,19 @@ describe("finance batch restart", () => {
       runFinanceResearchBatch({ ...options, asOf: "2026-09-09T00:00:00Z" }),
     ).rejects.toThrow("mismatch");
     expect(calls).toHaveLength(3);
+  });
+  it("retains the default two-call reservation across a restart", async () => {
+    const { options, calls } = await fixture();
+    const defaults = { ...options, maxHttpCallsPerSource: undefined };
+    const first = await runFinanceResearchBatch(defaults);
+    const resumed = await runFinanceResearchBatch(defaults);
+    expect(calls).toEqual(["SPY"]);
+    expect(resumed.jobs[0]).toEqual(first.jobs[0]);
+    expect(first.budget.reservedCallBudget).toBe(2);
+    expect(resumed.checkpoint?.reusedJobIds).toEqual([first.jobs[0].jobId]);
+    expect(resumed.budget.reservedCallBudget).toBe(2);
+    expect(resumed.jobs[1].missingEvidence).toContain("api_call_budget_exhausted");
+    expect(resumed.jobs[2].missingEvidence).toContain("api_call_budget_exhausted");
   });
   it("does not recover exhausted budget by restarting", async () => {
     const { options, calls } = await fixture();
