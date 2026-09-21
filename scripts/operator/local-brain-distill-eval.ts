@@ -5998,8 +5998,10 @@ if (options.receiptPath) {
     },
     shard: result.shard,
   };
-  mkdirSync(path.dirname(options.receiptPath), { recursive: true });
-  writeFileSync(options.receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, "utf8");
+  // The receipt is what lets a later run roll this back. A truncated one is worse than none:
+  // it looks like a receipt, so the rollback believes there is something to undo. This file
+  // already has `writeJsonAtomically` for exactly this — use it.
+  writeJsonAtomically(options.receiptPath, receipt);
 }
 
 process.stdout.write(

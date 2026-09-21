@@ -15,6 +15,7 @@ import {
 } from "lcx-agent/plugin-sdk";
 import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "lcx-agent/plugin-sdk/account-id";
 import { getMatrixRuntime } from "../runtime.js";
+import { writeJsonAtomic } from "./atomic-json.js";
 
 export type MatrixStoredCredentials = {
   homeserver: string;
@@ -201,7 +202,9 @@ export function saveMatrixCredentials(
     lastUsedAt: now,
   };
 
-  fs.writeFileSync(credPath, JSON.stringify(toSave, null, 2), "utf-8");
+  // Account credentials are the only copy: a truncated write would drop the access token and
+  // the device id with it, which looks like "logged out" rather than "write failed".
+  writeJsonAtomic(credPath, toSave);
 }
 
 export function touchMatrixCredentials(
@@ -215,7 +218,7 @@ export function touchMatrixCredentials(
 
   existing.lastUsedAt = new Date().toISOString();
   const credPath = resolveMatrixCredentialsPath(env, accountId);
-  fs.writeFileSync(credPath, JSON.stringify(existing, null, 2), "utf-8");
+  writeJsonAtomic(credPath, existing);
 }
 
 export function clearMatrixCredentials(

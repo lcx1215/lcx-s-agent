@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { saveJsonFile } from "../../src/infra/json-file.js";
 import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "./external-channel-sidecar-runtime-bundle.ts";
 
 const DEFAULT_SOURCE_ROOT = process.cwd();
@@ -156,8 +157,9 @@ export function buildRuntimeFreshnessReceipt(params: {
 }
 
 function writeJson(filePath: string, payload: unknown): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  // Sidecar runtime state is read back on the next run; a truncated write would look like "never
+  // promoted" and start the whole promotion over.
+  saveJsonFile(filePath, payload);
 }
 
 function renderText(receipt: RuntimeFreshnessReceipt): string {

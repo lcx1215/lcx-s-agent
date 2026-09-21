@@ -14,6 +14,7 @@ import {
   type LcxIdentityMigrationPlan,
 } from "lcx-agent/plugin-sdk";
 import { getMatrixRuntime } from "../../runtime.js";
+import { writeJsonAtomic } from "../atomic-json.js";
 import type { MatrixStoragePaths } from "./types.js";
 
 export const DEFAULT_ACCOUNT_KEY = "default";
@@ -297,7 +298,9 @@ export function writeStorageMeta(params: {
   try {
     const payload = buildStorageMetaPayload(params);
     fs.mkdirSync(params.storagePaths.rootDir, { recursive: true });
-    fs.writeFileSync(params.storagePaths.metaPath, JSON.stringify(payload, null, 2), "utf-8");
+    // Sync-store meta records which account owns this store; a half-written file reads as
+    // "no owner" and the store gets rebuilt from scratch.
+    writeJsonAtomic(params.storagePaths.metaPath, payload);
   } catch {
     // ignore meta write failures
   }

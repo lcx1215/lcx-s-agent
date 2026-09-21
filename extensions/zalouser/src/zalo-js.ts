@@ -16,6 +16,7 @@ import {
   type LcxIdentityWriterPathContract,
   type LcxIdentityMigrationPlan,
 } from "lcx-agent/plugin-sdk";
+import { writeJsonAtomic } from "./atomic-json.js";
 import { normalizeZaloReactionIcon } from "./reaction.js";
 import { getZalouserRuntime } from "./runtime.js";
 import type {
@@ -480,17 +481,15 @@ function touchCredentials(profile: string): void {
     ...existing,
     lastUsedAt: new Date().toISOString(),
   };
-  const dir = resolveCredentialsDir();
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(resolveCredentialsPath(profile), JSON.stringify(next, null, 2), "utf-8");
+  // Session credentials are the only copy: a truncated write logs the account out for no reason
+  // the operator can see.
+  writeJsonAtomic(resolveCredentialsPath(profile), next);
 }
 
 function writeCredentials(
   profile: string,
   credentials: Omit<StoredZaloCredentials, "createdAt" | "lastUsedAt">,
 ): void {
-  const dir = resolveCredentialsDir();
-  fs.mkdirSync(dir, { recursive: true });
   const existing = readCredentials(profile);
   const now = new Date().toISOString();
   const next: StoredZaloCredentials = {
@@ -498,7 +497,7 @@ function writeCredentials(
     createdAt: existing?.createdAt ?? now,
     lastUsedAt: now,
   };
-  fs.writeFileSync(resolveCredentialsPath(profile), JSON.stringify(next, null, 2), "utf-8");
+  writeJsonAtomic(resolveCredentialsPath(profile), next);
 }
 
 function clearCredentials(profile: string): boolean {

@@ -21,12 +21,17 @@
  *     [--record PATH] [--horizon-days 30]
  */
 
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, renameSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { resolveFinanceCredentialEnv } from "../../src/agents/finance-credential-env.js";
 import { createFmpFreeBasicEodCollectionAdapter } from "../../src/agents/finance-free-market-collection-adapters.js";
 import { runFinanceMarketCollectionRefresh } from "../../src/agents/finance-market-collection-registry.js";
 import type { ScoredSample } from "../../src/agents/finance-reflection.js";
+import {
+  financeResearchSamplesPath,
+  financeResearchScoredPath,
+  resolveFinanceStateDir,
+} from "../../src/agents/finance-state-dir.js";
 
 type Sample = {
   asOf: string;
@@ -51,7 +56,8 @@ function isoDay(ms: number): string {
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
-  const recordPath = readArg(args, "--record") ?? "state/finance/research-samples.jsonl";
+  const recordPath =
+    readArg(args, "--record") ?? financeResearchSamplesPath(resolveFinanceStateDir().directory);
   const horizonDays = Number(readArg(args, "--horizon-days") ?? 30);
 
   let lines: string[] = [];
@@ -153,12 +159,17 @@ async function main(): Promise<void> {
     });
   }
 
-  const scoredPath = "state/finance/research-scored.jsonl";
+  const scoredPath = financeResearchScoredPath(resolveFinanceStateDir().directory);
   mkdirSync(dirname(scoredPath), { recursive: true });
+  // JSONL, so not `saveJsonFile` (that would pretty-print an array). Same atomicity reason
+  // though: the scored set is read back to compare against the next scoring run, and a
+  // half-written file would parse as a short, wrong history.
+  const scoredTmpPath = `${scoredPath}.${process.pid}.tmp`;
   writeFileSync(
-    scoredPath,
+    scoredTmpPath,
     scored.map((r) => JSON.stringify(r)).join("\n") + (scored.length > 0 ? "\n" : ""),
   );
+  renameSync(scoredTmpPath, scoredPath);
 
   const brier = mature > 0 ? brierSum / mature : null;
   const hitRate = mature > 0 ? hits / mature : null;

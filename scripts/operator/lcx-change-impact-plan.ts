@@ -199,6 +199,7 @@ const PATH_RULES: PathRule[] = [
       /^src\/agents\/finance-source-quota\.ts$/u,
       /^src\/agents\/finance-credential-env\.ts$/u,
       /^scripts\/operator\/lcx-finance-source-limit-probe\.ts$/u,
+      /^scripts\/operator\/lcx-finance-research-score\.ts$/u,
     ],
     requiredChecks: [],
     commands: [
@@ -648,6 +649,7 @@ const PATH_RULES: PathRule[] = [
       /^test\/lcx-external-channel-status\.test\.ts$/u,
       /^scripts\/operator\/lcx-external-channel-compat\.ts$/u,
       /^scripts\/operator\/external-channel-sidecar-runtime-bundle\.ts$/u,
+      /^scripts\/operator\/external-channel-sidecar-runtime-freshness\.ts$/u,
       /^test\/lcx-external-channel-compat-status\.test\.ts$/u,
       /^src\/daemon\/inspect\.ts$/u,
       /^src\/agents\/model-(?:auth|egress)/u,
@@ -875,10 +877,16 @@ const PATH_RULES: PathRule[] = [
       /^src\/browser\/chrome\.profile-decoration\.ts$/u,
       /^src\/gateway\/server-methods\/chat\.ts$/u,
       /^src\/auto-reply\/reply\/session-fork\.ts$/u,
+      /^extensions\/matrix\/src\/matrix\/atomic-json\.ts$/u,
+      /^extensions\/matrix\/src\/matrix\/credentials\.ts$/u,
+      /^extensions\/matrix\/src\/matrix\/client\/storage\.ts$/u,
+      /^extensions\/zalouser\/src\/atomic-json\.ts$/u,
+      /^extensions\/zalouser\/src\/zalo-js\.ts$/u,
     ],
     requiredChecks: ["run-changed-tests"],
     commands: [
       "pnpm vitest run src/agents/subagent-registry-store.corrupt-guard.test.ts src/browser/chrome.profile-decoration.unreadable.test.ts src/infra/device-identity.unreadable-guard.test.ts",
+      "pnpm vitest run extensions/matrix/src/matrix/credentials.identity-migration.test.ts extensions/zalouser/src/accounts.test.ts",
       "pnpm tsx scripts/operator/lcx-persistence-safety-audit.ts --json",
     ],
     safetyNotes: [

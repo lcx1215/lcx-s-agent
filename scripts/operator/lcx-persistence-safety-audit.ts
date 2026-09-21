@@ -95,11 +95,15 @@ const EXEMPTIONS: ReadonlyArray<{
 ];
 
 /**
- * Only runtime state lives under `src`. The operator scripts under `scripts/` write one-shot
- * reports and build artifacts (build info, version manifests, eval output): those are regenerated
- * on every run, so flagging them buries the real signal. Pass `--roots scripts` to audit them too.
+ * Runtime state is written from `src` and from the bundled plugins under `extensions` — which is
+ * where two credential stores were living, unexamined, until this audit was pointed at them.
+ * Defaulting to `src` alone was a coverage gap, not a decision.
+ *
+ * Not included: `scripts/` (one-shot reports and build artifacts, regenerated every run — pass
+ * `--roots scripts` to audit them), and `ui/` (browser-side; it stores state in the browser, not
+ * in files this audit can reason about).
  */
-const SOURCE_ROOTS = ["src"];
+const SOURCE_ROOTS = ["src", "extensions", "packages"];
 
 function stripComments(code: string): string {
   return code.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/[^\n]*/g, "$1");

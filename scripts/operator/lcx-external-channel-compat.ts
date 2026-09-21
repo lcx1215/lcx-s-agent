@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { saveJsonFile } from "../../src/infra/json-file.js";
 import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "./external-channel-sidecar-runtime-bundle.ts";
 
 const DEFAULT_SOURCE_ROOT = process.cwd();
@@ -702,8 +703,9 @@ function applyFileActions(params: {
 }
 
 function writeJson(filePath: string, payload: unknown): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  // Promotion state is what tells the next run that this candidate was already handled; a
+  // truncated write would replay the promotion.
+  saveJsonFile(filePath, payload);
 }
 
 function makeAcceptancePhrase(commit: string): string {

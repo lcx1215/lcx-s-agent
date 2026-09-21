@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
+import { saveJsonFile } from "../src/infra/json-file.js";
 
 const BUG_LABEL = "bug";
 const ENHANCEMENT_LABEL = "enhancement";
@@ -297,8 +298,9 @@ function loadState(statePath: string): LoadedState {
 }
 
 function saveState(statePath: string, state: ScriptState): void {
-  mkdirSync(dirname(statePath), { recursive: true });
-  writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+  // Which issues were already labelled is the only record of that: a truncated write would make
+  // the next run label everything again.
+  saveJsonFile(statePath, state);
 }
 
 function buildStateSnapshot(issueSet: Set<number>, pullRequestSet: Set<number>): ScriptState {

@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { saveJsonFile } from "../../src/infra/json-file.js";
 import { LCX_USER_HOME } from "./lcx-local-paths.ts";
 
 const DEFAULT_SOURCE_ROOT = process.cwd();
@@ -252,8 +253,9 @@ export function buildRuntimeBundleReceipt(params: {
 }
 
 function writeReceipt(receipt: RuntimeBundleReceipt): void {
-  fs.mkdirSync(path.dirname(receipt.receiptPath), { recursive: true });
-  fs.writeFileSync(receipt.receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, "utf8");
+  // The receipt is the rollback authority for the promotion. A half-written one is worse than a
+  // missing one: it parses as a receipt, so the rollback trusts it and undoes the wrong thing.
+  saveJsonFile(receipt.receiptPath, receipt);
 }
 
 function renderText(receipt: RuntimeBundleReceipt): string {
