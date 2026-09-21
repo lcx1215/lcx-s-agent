@@ -425,3 +425,50 @@ it("uses only explicit terminal venue identity for replay-stable receipts", asyn
   const paperSecond = await placeFinanceOrder(request({ recordedAt: "2026-09-19T03:00:00Z" }));
   expect(paperSecond.receipt?.receiptId).not.toBe(paperFirst.receipt?.receiptId);
 });
+
+describe("declared final execution contracts cannot disable the gate", () => {
+  it.each(["maxOrderNotional", "maxInstrumentNotional", "maxOrdersPerRun"] as const)(
+    "rejects invalid declared %s even when attended",
+    async (key) => {
+      for (const value of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, null, "100"]) {
+        const { adapter, invoke } = spyAdapter();
+        const declaredBudget = { ...budget };
+        Reflect.set(declaredBudget, key, value);
+        const result = await placeFinanceOrder(
+          request({ budget: declaredBudget, adapters: [adapter], executionAdapterId: adapter.id }),
+        );
+        expect(result.status).toBe("refused");
+        expect(
+          result.refusalReasons.some(
+            (reason) => reason.startsWith("risk_budget_max_") && reason.endsWith("_invalid"),
+          ),
+        ).toBe(true);
+        expect(invoke).not.toHaveBeenCalled();
+      }
+    },
+  );
+  it("rejects fractional order ceilings", async () => {
+    const { adapter, invoke } = spyAdapter();
+    const result = await placeFinanceOrder(
+      request({
+        budget: { ...budget, maxOrdersPerRun: 1.5 },
+        adapters: [adapter],
+        executionAdapterId: adapter.id,
+      }),
+    );
+    expect(result.refusalReasons).toContain("risk_budget_max_orders_per_run_invalid");
+    expect(invoke).not.toHaveBeenCalled();
+  });
+  it.each(["automation", "side", "orderType"])("rejects an unknown runtime %s", async (field) => {
+    const { adapter, invoke } = spyAdapter();
+    const input = request({
+      budget: { ...budget },
+      intent: { ...intent },
+      adapters: [adapter],
+      executionAdapterId: adapter.id,
+    });
+    Reflect.set(field === "automation" ? input.budget : input.intent, field, "unrecognized");
+    expect((await placeFinanceOrder(input)).status).toBe("refused");
+    expect(invoke).not.toHaveBeenCalled();
+  });
+});

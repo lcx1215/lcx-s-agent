@@ -263,6 +263,28 @@ function collectRefusalReasons(request: FinanceOrderPlacementRequest): string[] 
   if (request.mode !== "live_execution") {
     reasons.push("finance_execution_requires_live_execution_mode");
   }
+  if (intent.side !== "buy" && intent.side !== "sell") {
+    reasons.push("execution_intent_side_invalid");
+  }
+  if (intent.orderType !== "market" && intent.orderType !== "limit") {
+    reasons.push("execution_intent_order_type_invalid");
+  }
+  if (budget.automation !== "attended" && budget.automation !== "unattended") {
+    reasons.push("risk_budget_automation_invalid");
+  }
+  for (const [key, code] of [
+    ["maxOrderNotional", "risk_budget_max_order_notional_invalid"],
+    ["maxInstrumentNotional", "risk_budget_max_instrument_notional_invalid"],
+    ["maxOrdersPerRun", "risk_budget_max_orders_per_run_invalid"],
+  ] as const) {
+    const cap = budget[key];
+    if (
+      cap !== undefined &&
+      (!isPositiveFinite(cap) || (key === "maxOrdersPerRun" && !Number.isSafeInteger(cap)))
+    ) {
+      reasons.push(code);
+    }
+  }
   if (intent.runAuthorizationId.trim().length === 0) {
     reasons.push("explicit_run_authorization_required");
   }
