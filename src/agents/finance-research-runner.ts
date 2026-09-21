@@ -267,24 +267,84 @@ const FINANCE_EQUITY_ALIASES = Object.freeze({
   tesla: "TSLA",
 } as const);
 
+/**
+ * Upper-case words that are *not* tickers.
+ *
+ * `requestedEquitySymbols` treats any run of 1-5 capitals as a ticker unless it is listed here, so
+ * this is a blocklist and it is never complete: every unlisted abbreviation is read as a request to
+ * fetch that instrument. Measured, these all became research targets before the list was widened —
+ * RSI, MACD, EPS, IPO, FED, FOMC, YTD, TTM, NAV, AUM, NYSE — each of which then had history and news
+ * collected against a symbol that does not exist.
+ *
+ * Two rules when adding here:
+ * 1. **Do not add a real ticker.** Several financial abbreviations are listed companies — PEG
+ *    (Public Service Enterprise), ATR (AptarGroup) — and blocking those would break real requests.
+ * 2. A blocklist only shrinks the hole. The durable fix is to require a code context (a `$` prefix,
+ *    or a ticker-shaped token in a position where prose abbreviations do not appear) rather than to
+ *    keep guessing which abbreviations somebody might type.
+ */
 const NON_EQUITY_SYMBOL_TOKENS = new Set([
+  "ADR",
   "AI",
   "API",
+  "ATH",
+  "ATL",
+  "AUM",
   "BLS",
+  "BOLL",
+  "CAGR",
+  "CEO",
+  "CFO",
   "CPI",
   "DAG",
+  "DCF",
+  "DEFI",
+  "DJIA",
+  "EMA",
   "EOD",
+  "EPS",
+  "ESG",
   "ETF",
+  "FED",
+  "FOMC",
+  "FTSE",
+  "FOMO",
+  "GAAP",
   "GDP",
+  "HODL",
   "HTTP",
   "HTTPS",
+  "ICO",
+  "IFRS",
+  "IPO",
   "JSON",
+  "KDJ",
+  "MACD",
   "ML",
+  "MOM",
+  "MSCI",
+  "NASDAQ",
+  "NAV",
+  "NFT",
+  "NYSE",
+  "PPI",
+  "PMI",
+  "QOQ",
+  "QTD",
+  "ROA",
+  "ROE",
+  "ROI",
+  "RSI",
   "SEC",
+  "SMA",
+  "TTM",
   "US",
   "USA",
   "USD",
   "UTC",
+  "WACC",
+  "YOY",
+  "YTD",
 ]);
 
 /** Extract only bounded, caller-supplied equity symbols; prose falls back to the broad canary universe. */

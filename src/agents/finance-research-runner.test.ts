@@ -759,3 +759,36 @@ it("plans every registered source independently and loads configured source cred
     vi.unstubAllEnvs();
   }
 });
+/**
+ * Ticker extraction is a blocklist, so the failure mode is an abbreviation becoming a research
+ * target. Measured before the list was widened: RSI, MACD, EPS, IPO, FED, FOMC, YTD, TTM, NAV, AUM
+ * and NYSE each became an instrument that then had history and news collected against a symbol that
+ * does not exist — a run that looks like research and is not.
+ */
+describe("equity symbol extraction", () => {
+  const instrumentsFor = (ask: string): readonly string[] =>
+    buildDefaultFinanceResearchTargets(ask, 12, "2026-09-20").map((target) => target.instrument);
+
+  it("still reads a real ticker", () => {
+    expect(instrumentsFor("NVDA 现在怎么样")).toContain("NVDA");
+  });
+
+  it("does not read a financial abbreviation as a ticker", () => {
+    const cases: readonly [string, string][] = [
+      ["RSI 现在超买了吗", "RSI"],
+      ["MACD 金叉了吗", "MACD"],
+      ["这家公司 EPS 增长如何", "EPS"],
+      ["IPO 打新值得参与吗", "IPO"],
+      ["FED 加息会怎样", "FED"],
+      ["FOMC 会议纪要说了什么", "FOMC"],
+      ["今年 YTD 表现如何", "YTD"],
+      ["EBITDA 和 TTM 是多少", "TTM"],
+      ["这只基金的 NAV 和 AUM", "NAV"],
+      ["这只基金的 NAV 和 AUM", "AUM"],
+      ["NYSE 上市的公司", "NYSE"],
+    ];
+    for (const [ask, abbreviation] of cases) {
+      expect(instrumentsFor(ask), ask).not.toContain(abbreviation);
+    }
+  });
+});
