@@ -564,6 +564,41 @@ AAPL 最新 mark: 2026-09-17T11:00:00Z @233.1     ← 早于成交
 - `finance_outcome_ledger_read` **没有默认目录**（按 case 分区，必须传 `caseDirectory`）⇒ agent 不知道目录就调不动它。
 - 全部 8 笔成交都是 paper（`venueFillCount: 0`），规则 `executionAuthority: none`。
 
+### 链路自检：让配合度自己会说话（2026-09-21）
+
+上面那些问题是**人工比对三张表**才看出来的——系统自己不知道。所以把那次比对做成常驻脚本：
+
+```
+node --import tsx scripts/operator/lcx-finance-link-health.ts [--json] [--dir <state root>]
+exit 0 = 接线成立；exit 1 = 有断链（error 级）
+```
+
+七项检查，每条都带上"读的是哪本书"，并把**没有**与**读不到**分开（`{present, lines}`，不是行数而已）：
+
+| 检查                   | 判的是什么                                                         |
+| ---------------------- | ------------------------------------------------------------------ |
+| `state_root`           | 从哪个根读的（零计数若读错书，与空书不可分）                       |
+| `bar_supply`           | 有没有 bar、最新一根距今几天（>4 天告警）                          |
+| `rule_universe`        | 有哪几条活跃规则、覆盖哪些标的                                     |
+| `orphan_holdings`      | **有持仓但不在宇宙**：永不会被再平衡或重定价                       |
+| `unpriceable_holdings` | **有持仓但没有 bar**：mark 永远刷不新                              |
+| `mark_freshness`       | mark 的日期 vs 该标的最新 bar 日期（陈旧 / 早于数据 / 领先于数据） |
+| `settlement_supply`    | 记了多少次判断、结算了几条                                         |
+| `scheduler_slots`      | day / night 各上次触发何时，night 是否从未触发过                   |
+
+**它一上真实数据就把本次审计的发现全报了出来**（exit=1）：
+
+```
+FAIL  orphan_holdings       AAPL held but no active rule covers it
+FAIL  unpriceable_holdings  AAPL held with no bars
+FAIL  mark_freshness        AAPL priced from a day the bar book has already moved past
+warn  settlement_supply     5 call(s) recorded and none scored
+warn  scheduler_slots       day last fired 2026-09-20, night has never fired
+```
+
+变异验证（治具目录，双向）：**接好了的状态全绿** exit=0（SPY 在宇宙内、有 bar、mark 落在最新 bar 日期、
+scored 有内容、night 触发过）；上面这份真实状态 3 红 2 黄 ⇒ 检测器既不恒定报红、也不是瞎的。
+
 ### 缺口 2：文本/研究 与 论点没有连接键
 
 已单独成文：`ops/external-learning/2026-09-19-thesis-outcome-assessment-gap.md`。
