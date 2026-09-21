@@ -237,29 +237,30 @@ owner 主动写的那一笔，反而取消了检查。与 §1b 的"上游谓词�
 
 按"构造 × 方向"，本会话**没有覆盖**的面。每条都给了可直接跑的探针。
 
-| #         | 未探面                                                                                                                                                              | 方向    | 探针                                                                                                                                                                        |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| U-1       | `CHINESE_ACTION_FRAMEWORK_PATTERN` = **纯裸词表**（`均价策略\|止损策略\|抄底\|砍仓\|摊低成本\|快点回本\|赌财报\|梭哈\|满仓\|加保证金\|爆仓自救`），**没有任何绑定** | FP      | 一段**讨论概念**的答案（"抄底这个行为在历史上胜率如何"）会不会被拒？                                                                                                        |
-| U-2       | `ENGLISH_POSITION_ACTION_PATTERN`（`should\|recommend\|can\|must\|do not\|wait\|hold` + 32 字内动作词）——英文侧从未直接压过                                         | FP + FN | 中英两版同义句各跑一次（`You should not add.` vs `你不该加仓。`）                                                                                                           |
-| U-3       | `normalizedNumber` 的**单位判定**                                                                                                                                   | FP      | 答案写 `480`（省略单位）、证据写 `480 美元` ⇒ 判不匹配？反向呢（`$480` vs `480 美元`）？                                                                                    |
-| U-4       | `hasEvidenceSourceAndTimestamp`（证据**无日期**时永远无法接地）                                                                                                     | FP      | 证据有 source 无日期 ⇒ 是"必须补日期"还是"不该判失败"？                                                                                                                     |
-| U-5       | `CURRENT_DATA_PATTERN` 作为**触发器**：答案里出现价格但**没有任何触发词**                                                                                           | FN      | `NVDA 报 480 美元。`（无 当前/最新/价格/行情）⇒ 检查跑不跑？                                                                                                                |
-| U-6       | 泄漏类检查 `INTERNAL_VISIBLE_DETAIL_PATTERN` / `SYSTEM_CAPABILITY_VISIBLE_PATTERN` / `RAW_WORK_ORDER_VISIBLE_PATTERN`                                               | FP      | 一段**合法**答案里出现 `receipt path` / `message id` 这类词会不会被当泄漏？                                                                                                 |
-| U-7       | `stripVisibleInternalTail` / `extractVisibleAcceptanceCode` / `looksLikeShortAmbiguousVisibleAsk`                                                                   | 双向    | 逐函数构造边界输入（空串、只有尾行、`≤14` 字边界）                                                                                                                          |
-| U-8       | `finance-decision-policy.ts` 自 round 26 后未再压                                                                                                                   | 双向    | 重跑"真实含义抽掉只留词"自检 + 按类别清单核词表                                                                                                                             |
-| ~~U-10~~  | ~~执行缝三层（intent-compiler / execution-adapter / alpaca-adapter）~~                                                                                              | —       | **已做（01:30–02:22）⇒ 见 §1d 的 F-23…F-27 与 F-32/F-33**（alpaca 那处经用户授权"接手做完"后完成，旁窗未提交 diff 已保留）                                                  |
-| ~~U-10a~~ | ~~`finance-intent-compiler.ts`~~                                                                                                                                    | —       | **已做（01:30）⇒ 见 §1d 的 F-23/F-24/F-25**                                                                                                                                 |
-| ~~U-10b~~ | ~~`finance-execution-adapter.ts`~~                                                                                                                                  | —       | **已做（01:47）⇒ 见 §1d 的 F-26/F-27**                                                                                                                                      |
-| ~~U-1~~   | ~~`CHINESE_ACTION_FRAMEWORK_PATTERN` 纯裸词表~~                                                                                                                     | —       | **已做（01:57）⇒ 见 §2 的 F-28**                                                                                                                                            |
-| ~~U-2~~   | ~~`ENGLISH_POSITION_ACTION_PATTERN` 英文侧~~                                                                                                                        | —       | **已做（01:57）⇒ 见 §2 的 F-29**                                                                                                                                            |
-| ~~U-12~~  | ~~阈值信号（`model-specialist` / `universe-selection` / insider / fundamental）~~                                                                                   | —       | **已做（01:58–02:02）⇒ 见 §1f 的 F-30；`model-specialist` 逐条核过、无缺陷**                                                                                                |
-| ~~U-13~~  | ~~`finance-strategy-method-catalog.ts` 的 74 处字面量表~~                                                                                                           | —       | **已做（02:04）：它是声明式数据目录、无查表；消费方 `finance-strategy-method-kit.ts` 用 `STRATEGY_METHOD_IDS.filter(...)` 过滤 ⇒ 表外 id 永不被选中 = fail-closed，无缺陷** |
-| U-11      | **额度/配额**                                                                                                                                                       | 双向    | 配额归零 / 负数 / 并发耗尽时的行为                                                                                                                                          |
-| ~~U-11a~~ | ~~`finance-data-gateway.ts`~~                                                                                                                                       | —       | **已做（02:14）⇒ 见 §1f 的 F-30d**                                                                                                                                          |
-| ~~U-11b~~ | ~~`finance-source-quota.ts`~~                                                                                                                                       | —       | **已做（02:37，用户授权接手）⇒ 见 §1f 的 F-34**                                                                                                                             |
-| U-12      | **阈值信号**：`finance-model-specialist.ts`(24 / 0.95) / `finance-universe-selection.ts`(8 阈值) / insider / fundamental                                            | 双向    | 阈值边界值 + "阈值从哪来"（模型不得自带阈值）                                                                                                                               |
-| U-13      | `finance-strategy-method-catalog.ts` 的 **74 处字面量表**                                                                                                           | 双向    | 按 F-04/F-05：**表外的输入会怎样**                                                                                                                                          |
-| U-9       | **跨门一致性**：同一语义在 3 个门里的行为                                                                                                                           | 双向    | 列出语义（用户给的数、动作动词、接地实体）→ 看每个门的处理是否一致                                                                                                          |
+| #         | 未探面                                                                                                                                                              | 方向    | 探针                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- |
+| U-1       | `CHINESE_ACTION_FRAMEWORK_PATTERN` = **纯裸词表**（`均价策略\|止损策略\|抄底\|砍仓\|摊低成本\|快点回本\|赌财报\|梭哈\|满仓\|加保证金\|爆仓自救`），**没有任何绑定** | FP      | 一段**讨论概念**的答案（"抄底这个行为在历史上胜率如何"）会不会被拒？                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| U-2       | `ENGLISH_POSITION_ACTION_PATTERN`（`should\|recommend\|can\|must\|do not\|wait\|hold` + 32 字内动作词）——英文侧从未直接压过                                         | FP + FN | 中英两版同义句各跑一次（`You should not add.` vs `你不该加仓。`）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| U-3       | `normalizedNumber` 的**单位判定**                                                                                                                                   | —       | **已探（09-21 16:35）⇒ 判定：不改**。实测：无单位的 `480` **判不匹配**（fail-closed），`$480` vs `480 美元` **匹配**。前者是**故意**的：480 港元 / 480 元 省略单位后都写成"480"，门禁无法判断答案指的是哪一个 ⇒ 想被接地就得写出单位。已用两条用例把这个判定钉住 ⇒ 它是一条**决定**，不是字符串比较的副产品。                                                                                                                                                                                                                                                                                             |
+| U-4       | `hasEvidenceSourceAndTimestamp`（证据**无日期**时永远无法接地）                                                                                                     | —       | **已做（09-21 16:45）⇒ 真缺陷（FP），已修**。两处对"什么是日期"认定不一致：`extractDataNumbers` 在剥 `2026年9月6日`，`hasEvidenceSourceAndTimestamp` 却只认 `2026-09-06` ⇒ **中文日期的证据被当成"没有时间戳"**，它带的每个数字都被报"未接地"（证据明明有日期）。**反向也有洞**：`2026-09` 算时间戳但没被剥 ⇒ 它的 `2026`/`09` 反过来被要求引用。修法：两处共用 `ISO_DATE_PATTERN` / `CHINESE_DATE_PATTERN`（**故意非全局**：`/g` 的 `lastIndex` 会让 `.test` 从字符串中间开始）。**"有 source 但完全无日期"仍判不接地 —— 钉成决定**：current data 没有时间就钉不住。变异：去掉中文日期判定 ⇒ 正好 2 红。 |     |
+| ~~U-5~~   | ~~`CURRENT_DATA_PATTERN` 作为**触发器**：答案里出现价格但**没有任何触发词**~~                                                                                       | —       | **已做（09-21 16:00 + 16:12）⇒ 见 §1 的 F-41**。探针确认：无触发词 ⇒ 跳过接地；加 `当前` / 加 `价格` ⇒ 正常。修法**不是**给词表补币种词（只把洞挪一个词），而是让触发器从数字自带的单位推（复用 `normalizedNumber` ⇒ 不造第二份会漂移的币种表）；随后把两处单位表**对齐补词**（`dollars?`/`HKD`/`港元` 等）并把 HKD 从 CNY 拆出。**残留** ⇒ U-15。                                                                                                                                                                                                                                                        |
+| U-15      | **完全没有单位的裸数**（`NVDA 收在 480。`）                                                                                                                         | FN      | 仍然要靠 `CURRENT_DATA_PATTERN` 里的某个词才被抓住。**未修**：改成"任何数字都触发"会撞 F-16 那族（"分 3 步"、"仓位上限 20%" 都是无单位数字）⇒ 要么接受这个 FP 面，要么给"裸数"找一个**结构性**判据（不是词表，例如紧贴 ticker），尚未定。                                                                                                                                                                                                                                                                                                                                                                 |
+| U-6       | 泄漏类检查 `INTERNAL_VISIBLE_DETAIL_PATTERN` / `SYSTEM_CAPABILITY_VISIBLE_PATTERN` / `RAW_WORK_ORDER_VISIBLE_PATTERN`                                               | FP      | 一段**合法**答案里出现 `receipt path` / `message id` 这类词会不会被当泄漏？                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| U-7       | `stripVisibleInternalTail` / `extractVisibleAcceptanceCode` / `looksLikeShortAmbiguousVisibleAsk`                                                                   | 双向    | 逐函数构造边界输入（空串、只有尾行、`≤14` 字边界）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| U-8       | `finance-decision-policy.ts` 自 round 26 后未再压                                                                                                                   | 双向    | 重跑"真实含义抽掉只留词"自检 + 按类别清单核词表                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ~~U-10~~  | ~~执行缝三层（intent-compiler / execution-adapter / alpaca-adapter）~~                                                                                              | —       | **已做（01:30–02:22）⇒ 见 §1d 的 F-23…F-27 与 F-32/F-33**（alpaca 那处经用户授权"接手做完"后完成，旁窗未提交 diff 已保留）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ~~U-10a~~ | ~~`finance-intent-compiler.ts`~~                                                                                                                                    | —       | **已做（01:30）⇒ 见 §1d 的 F-23/F-24/F-25**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ~~U-10b~~ | ~~`finance-execution-adapter.ts`~~                                                                                                                                  | —       | **已做（01:47）⇒ 见 §1d 的 F-26/F-27**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ~~U-1~~   | ~~`CHINESE_ACTION_FRAMEWORK_PATTERN` 纯裸词表~~                                                                                                                     | —       | **已做（01:57）⇒ 见 §2 的 F-28**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ~~U-2~~   | ~~`ENGLISH_POSITION_ACTION_PATTERN` 英文侧~~                                                                                                                        | —       | **已做（01:57）⇒ 见 §2 的 F-29**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ~~U-12~~  | ~~阈值信号（`model-specialist` / `universe-selection` / insider / fundamental）~~                                                                                   | —       | **已做（01:58–02:02）⇒ 见 §1f 的 F-30；`model-specialist` 逐条核过、无缺陷**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ~~U-13~~  | ~~`finance-strategy-method-catalog.ts` 的 74 处字面量表~~                                                                                                           | —       | **已做（02:04）：它是声明式数据目录、无查表；消费方 `finance-strategy-method-kit.ts` 用 `STRATEGY_METHOD_IDS.filter(...)` 过滤 ⇒ 表外 id 永不被选中 = fail-closed，无缺陷**                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| U-11      | **额度/配额**                                                                                                                                                       | 双向    | 配额归零 / 负数 / 并发耗尽时的行为                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ~~U-11a~~ | ~~`finance-data-gateway.ts`~~                                                                                                                                       | —       | **已做（02:14）⇒ 见 §1f 的 F-30d**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ~~U-11b~~ | ~~`finance-source-quota.ts`~~                                                                                                                                       | —       | **已做（02:37，用户授权接手）⇒ 见 §1f 的 F-34**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| U-12      | **阈值信号**：`finance-model-specialist.ts`(24 / 0.95) / `finance-universe-selection.ts`(8 阈值) / insider / fundamental                                            | 双向    | 阈值边界值 + "阈值从哪来"（模型不得自带阈值）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| U-13      | `finance-strategy-method-catalog.ts` 的 **74 处字面量表**                                                                                                           | 双向    | 按 F-04/F-05：**表外的输入会怎样**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| U-9       | **跨门一致性**：同一语义在 3 个门里的行为                                                                                                                           | 双向    | 列出语义（用户给的数、动作动词、接地实体）→ 看每个门的处理是否一致                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 ## 4. 用法（怎么当检查表用）
 
@@ -510,6 +511,7 @@ oracle = 服务端自己的 `applyToolPolicyPipeline`）：
   的注释声称 "so that `config.set` always receives correctly typed JSON"，但
   `coerceNumberString` 转换失败时**原样返回字符串**，调用方也把它原样返回 ⇒ 声称与实现不符。
   **未实测**，标为下一轮第一站。
+  → **已实测，撤回**：见 §11.1。行为是有意的（让服务端校验去报错），只是注释夸大了保证。
 - `ui/src/ui/views/usage-helpers.ts`：`has:` 的取值表在**三处**重复
   （`matchesUsageQuery` 的 `switch`、warning 用的 `allowed` 集合、`usage-query.ts` 的补全列表）。
   今天三处一致 ⇒ 属**潜在**漂移，不是缺陷。
@@ -517,3 +519,342 @@ oracle = 服务端自己的 `applyToolPolicyPipeline`）：
   但 `logsLimit` 恒定 500（`app.ts:373`，无任何赋值方）⇒ **当前不可达**，不算缺陷。
 - `ui/vitest.config.ts` 是 browser 模式（playwright），本机未跑；上述验证全部走根 vitest
   config（node），因此**只覆盖 node 可执行的那部分**。
+
+---
+
+> **+ §11 的 1 条（F-55）**：累计 **47 条**真缺陷。
+> 另有 **1 条撤回**（§11.1，上一轮标记的第一站经实测为**伪缺陷**，不计入总数）。
+> **+ §12 的 2 条（F-56、F-57）**：累计 **49 条**真缺陷；撤回仍为 **1 条**。
+> **F-56 与 F-57 均已于 09-21 修复**（§12.5 / §12.5b 已改写为"已修 + 门禁结果"）。
+> 计数口径不变：修好一条不改变"曾发现过多少条"。
+> F-57 是 F-56 调查中一并发现的**同族另一实例**（整条 override vs 单个子字段），
+> 机制不同、静默路径不同 ⇒ 单独计数；§12.5b 原文把它写作"F-56 仍然开着的半边"。
+> §9 的族分布表仍按旧口径不动。
+
+## 11. `ui/` 二探：表单把一个"它表示不了"的值渲染成 `[object Object]`（F-55）
+
+### 11.1 先撤回上一轮标记的第一站（**不是缺陷**）
+
+`ui/src/ui/controllers/config/form-coerce.ts` 的 `coerceNumberString` 在转换失败时
+**原样返回字符串**，调用方也原样返回。上一轮据此认为注释 "so that `config.set` always
+receives correctly typed JSON" 与实现不符。
+
+实测结论：**行为是对的，注释夸大了**。
+
+- `config.set` 是**整体替换**（`parseConfigJson5(raw)` → `restoreRedactedValues` →
+  `validateConfigObjectWithPlugins` → `writeConfigFile`），不是合并
+  （`config.patch` 才是合并，走 `applyMergePatch`）。所以"清空字段 = 取消设置"这条注释**成立**。
+- 非法数字串（`"12abc"`）原样提交后，由服务端 `validateConfigObjectWithPlugins` 拒绝，
+  客户端 `saveConfig` 把它写进 `state.lastError`，而 `app-render.ts:328` 把它渲染成
+  danger pill ⇒ **失败是大声的**。静默丢弃用户输入才是更坏的行为。
+- 判据复盘：**我把"注释不精确"当成了"行为有缺陷"**。声称与实现不符只是**需要核实**的信号，
+  不是缺陷本身；核实的方式是问"这条路径的失败对用户可见吗"。
+
+### 11.2 F-55：`string | SecretRef` 字段被折叠成文本输入框
+
+**发现方式**：把上一轮的"找第二份实现"判据换成**"找 UI 表示不了的值"**——沿着
+`config.get` → 表单 → `config.set` 走一遍**往返**，看哪一步会丢信息。
+
+`src/config/types.secrets.ts` 定义 `SecretInput = string | SecretRef`，
+`SecretRef = { source, provider, id }`。`config.get` 的脱敏
+（`redactSecretRefId`）**保留对象形状**，只把 `id` 换成哨兵：
+
+```
+{ "source": "env", "provider": "default", "id": "__OPENCLAW_REDACTED__" }
+```
+
+而 `ui/src/ui/views/config-form.analyze.ts` 的 `normalizeSecretInputUnion()` 会把这个联合
+**折叠成字符串分支**（清掉 `anyOf`/`oneOf`），注释写着 "The form only supports editing the
+string path for now"。于是 `renderTextInput` 用
+`.value=${String(displayValue)}` 渲染 ⇒ 输入框里是 **`"[object Object]"`**。
+
+**实测往返**（`ops/probes/secret-ref-roundtrip.probe.ts`，`gateway.auth.password`）：
+
+| 步骤                     | 结果                                                            |
+| ------------------------ | --------------------------------------------------------------- |
+| 1 `config.get` 交给表单  | `{source:"env",provider:"default",id:"__OPENCLAW_REDACTED__"}`  |
+| 2 归一化后的 schema      | `type: "string"`，`anyOf` 已清空                                |
+| 3 输入框 `.value`        | `"[object Object]"`                                             |
+| 4 **未触碰**该字段就保存 | 对象**存活**（`coerceFormValues` 对非字符串值原样返回）✅ 安全  |
+| 5 **编辑**该字段后提交   | `"password": "[object Object]"`                                 |
+| 6 服务端校验（差分）     | SecretRef 与垃圾串**都是 `ok=true, 0 issues`** ⇒ **0 条新问题** |
+
+**第 6 行是关键**：垃圾串**是合法值**（`string | SecretRef` 的字符串分支），
+所以写入被接受、没有任何诊断 ⇒ **静默**。此后 provider 会拿字面量
+`"[object Object]"` 当密钥去认证。而 `@input` 是**逐键**触发的，一次误触即完成替换。
+
+**覆盖面**（`ops/probes/secret-ref-form.probe.ts`，用 `buildConfigSchema()` 的真实产物）：
+
+- 生成 schema 里 `string | SecretRef` 联合共 **17 处**
+- 其中 **17 / 17 折叠成普通文本输入框**，**0 / 17 被报为 `unsupportedPaths`**
+- 含最高价值的两处：**`gateway.auth.password`**、**`gateway.remote.token`**；
+  另有 `models.providers.*.apiKey`、`tools.web.search.*.apiKey`、
+  `messages.tts.*.apiKey`、`cron.webhookToken`、`talk.apiKey`、`skills.entries.*.apiKey` 等
+
+**修法**：在**唯一**发生"值 → 输入框"有损转换的地方（`renderTextInput`）加护栏：
+值是非 null 对象时，不渲染可编辑输入框，改为报告
+"Structured value. Use Raw mode to edit it."。护栏按**可表示性**而不是按敏感性设条件
+（`typeof displayValue === "object"`）——敏感性只是这个联合的偶然属性，而"文本输入框
+装不下非原始值"是结构事实。
+
+**为什么不做成 `unsupportedPaths`**：那会把这 17 个字段在**值本来就是字符串**时也一并禁掉，
+是更大的回退。护栏必须在**渲染期**（同时看得到 schema 与值），而 `analyzeConfigSchema`
+只接收 schema。
+
+**常驻护栏**：`ui/src/ui/views/config-form.node.test.ts`（7 条）。它同时钉住三环：
+护栏本身、`analyzeConfigSchema` 的折叠行为（若将来分析器学会处理 SecretRef，测试会红并提示）、
+以及"未触碰时对象存活"这个**不能回退**的安全性质。
+
+**变异对位**：整块删除护栏 → 红 **2 条**，正好是断言护栏的那两条；
+"普通字符串仍可编辑""未设置仍可编辑""折叠行为""未触碰存活""替换后是垃圾串" 5 条**保持绿**
+⇒ 无重复覆盖。
+
+**顺带修掉一个门禁盲区**：`ui/src/ui/views/config-form.search.node.test.ts` 名字叫 `.node.test.ts`，
+但根 `vitest.config.ts` 的 `include` 白名单里没有它（`ui/vitest.config.ts` 是 browser 模式）
+⇒ **没有任何 node 配置在跑它**。登记进白名单后它 **3/3 通过**，属纯收益。
+
+**门禁**：`vitest` 22/22（3 文件）；`oxlint` 2 文件 117 规则 0 警告；`oxfmt --check` 通过；
+`tsgo` **123**，与基线**逐根一致**（113 extensions + 4 `src/agents` + 6 ui），改动文件 **0 错**。
+
+**未验证的边界**：`ui/vitest.config.ts` 的 browser（playwright）模式本机未跑，
+因此"护栏在浏览器模式下不破坏既有渲染"**未验证**——但护栏只对"对象值 + 文本输入框"
+这一组合生效，既有用例不该命中。
+
+### `ui/` 仍未探的格子
+
+- `ui/src/ui/views/usage-helpers.ts` 的 `has:` 取值表实为**四处**重复（§10 记的是三处）：
+  `matchesUsageQuery` 的 `switch`、warning 的 `allowed` 集合、
+  `usage-query.ts:207` 的补全列表，**再加** `QUERY_KEYS`。四处今天一致 ⇒ 仍是**潜在**漂移。
+- `ui/src/ui/views/channels.config.ts:59` 的 `EXTRA_CHANNEL_FIELDS` 与
+  `agents-panels-status-files.ts:102` 的 `CHANNEL_EXTRA_FIELDS` 是同一张表的两份拷贝，
+  且 `channel-config-extras.ts` 里**已经有** `resolveChannelExtras()` 这个单一来源，
+  只是 `channels.config.ts` 没用它（自己重写了一遍同样的 `flatMap`）。今天行为一致。
+- `ui/src/ui/views/logs.ts:4` 与 `controllers/logs.ts:19` 的 `LEVELS` 双份拷贝；
+  `renderLogs` 对 `level === null`（无法识别的级别）**直接放行**不过滤。
+  方向安全（过滤器的安全侧是多显示），但两处表需要一起改。
+- `ui/src/ui/views/cron.ts`（1759 行）与 `controllers/cron.ts`（922 行）是 `ui/` 最大的两块，
+  本轮只验证了"**next-run 不由 UI 计算**"（读服务端 `job.state.nextRunAtMs`）这一点，其余未探。
+  ⇒ §12 之后，`failureAlert` 这条路径已探到底；`cron.ts` 的其余部分（1759 行视图层）仍未探。
+
+## 12. `ui/` 三探：一个可见控件在协议上没有对应状态（F-56）
+
+### 12.1 判据（§10/§11 的对偶）
+
+§10/§11 问的是"往返里 UI **表示不了**的值"。对偶同样成立，而且更容易漏：
+
+> **数一数 UI 有几个状态，再数协议能表达几个状态。两个数不等 ⇒ 缺陷候选。**
+
+不等有三种后果，按严重度排序：
+
+1. 多出来的状态被**静默丢弃**（最坏：用户以为改了，其实没改）；
+2. 多出来的状态被服务端**拒绝**（大声，可接受）；
+3. UI 少了状态（能力缺失，用户能感知）。
+
+`failureAlert` 属第 1 种。
+
+### 12.2 F-56：`failureAlert` 的"清空"在协议上不可达，UI 的 `inherit` 静默失效
+
+- **UI 三态**（`ui/src/ui/ui-types.ts:46`）：`"inherit" | "disabled" | "custom"`。
+- **协议两态**（`src/cron/types.ts:69` + `src/gateway/protocol/schema/cron.ts:292`）：
+  `false`（禁用）或 `CronFailureAlert` 对象。**没有"回到 inherit"的表达。**
+
+三层各自都没写错，错在它们不一致：
+
+| 层                                                                    | 对"清空"的约定                                    |
+| --------------------------------------------------------------------- | ------------------------------------------------- |
+| UI `buildFailureAlert()`（`controllers/cron.ts:588-617`）             | 写 `undefined`                                    |
+| 传输 `gateway.ts:346` `ws.send(JSON.stringify(frame))`（无 replacer） | **`undefined` 值键被丢弃** ⇒ 与"键不存在"不可区分 |
+| 服务端 `applyJobPatch`（`service/jobs.ts:555`）                       | `"failureAlert" in patch` ⇒ 键不在就**不改动**    |
+| merge `mergeCronFailureAlert`（`service/jobs.ts:774-814`）            | 实现了 `""`/`0`/负数 ⇒ 清空该字段                 |
+
+⇒ 选 `inherit` 保存：`undefined` → 键消失 → 合并层**根本不会被调用** → **旧 alert 原样保留、无任何提示**。
+`jobToForm`（`controllers/cron.ts:463-468`）是从 job 反推的，所以重新打开编辑表单会显示回 `custom`
+——用户只能靠这个才发现。
+
+### 12.3 探针证据（可复跑）
+
+`ops/probes/cron-failure-alert-clear.probe.ts`：
+
+```
+mode=inherit  wire failureAlert=undefined  -> job.failureAlert = {"after":3,...,"accountId":"coordinator"}  ← 未变
+mode=disabled wire failureAlert=false      -> job.failureAlert = false                                     ← 生效
+mode=custom   wire failureAlert={...}      -> job.failureAlert = {...}                                     ← 生效
+```
+
+`ops/probes/cron-patch-schema-vs-merge.probe.ts`。信封已用两条**应当通过**的基线
+（`failureAlert:{after:2}`、`enabled:true`）验证为合法，所以下表里的"拒绝"确实来自待测字段本身：
+
+| 值                    | wire schema（AJV）         | merge 层会做什么                      |
+| --------------------- | -------------------------- | ------------------------------------- |
+| `after: 0`            | **拒绝**（must be >= 1）   | 清空                                  |
+| `channel: ""`         | **拒绝**（min 1 char）     | 清空                                  |
+| `to: ""`              | **接受**                   | 清空                                  |
+| `cooldownMs: -1`      | **拒绝**（>= 0）           | 清空                                  |
+| `accountId: ""`       | **拒绝**（min 1 char）     | 清空                                  |
+| `failureAlert: null`  | **拒绝**（must be object） | **抛 TypeError**（`"after" in null`） |
+| `failureAlert: false` | 接受                       | 清空为"禁用"                          |
+
+**即 merge 层实现的"空值 = 清空"，协议 schema 恰恰全部禁止**（`to` 是唯一例外，
+它在 schema 里是裸 `Type.String()`）。**两层对"清空长什么样"没有共识。**
+
+补充：`{}` 也不等于 `inherit`。`resolveFailureAlert`（`timer.ts:190-228`）里
+`if (!jobConfig && globalConfig?.enabled !== true) return null` —— 空对象是 truthy ⇒ 会绕过
+"全局未启用则不发"这一条，与 `undefined` 行为不同。**所以没有任何线上取值等于 inherit。**
+
+### 12.4 同一形状已经修过一次，只是没修到 `failureAlert`
+
+`CHANGELOG.md:479`：
+
+> Control UI/Cron editor: include `{ mode: "none" }` in `cron.update` patches when editing an
+> existing job and selecting "Result delivery = None (internal)", so saved jobs no longer keep
+> stale announce delivery mode. Fixes #31075.
+
+`delivery` 走的是同一条"靠键缺失表达清空"的路，当时的修法是**改发一个合法的枚举值**
+（`{mode:"none"}`，见 `controllers/cron.ts:666-667`），不是"靠缺失"。
+`failureAlert` 没被同样处理，因为它的"继承"态**没有对应的合法枚举值**可发。
+
+### 12.5 修法与门禁结果（**已修**，09-21 16:45）
+
+先记上一轮为什么没顺手改：修它要跨 **协议 schema**、`CronJobPatch` 类型、merge、UI 与两侧测试，
+是**共享线上契约的加法**（AGENTS.md 归 G2），而 UI / CLI / agent 工具三个客户端都吃这份 schema。
+这一轮按方案 1（`null` 哨兵）动手。
+
+落地点五处 —— **第五处是跑 `tsgo` 才发现的**：
+
+| #   | 文件                                                                                      | 改动                                                                                                                |
+| --- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| 1   | `src/gateway/protocol/schema/cron.ts`（`CronJobPatchSchema`）                             | union 加 `Type.Null()`。**只改 patch**：新 job 没有 override 可清，`CronJobSchema` / `CronAddParamsSchema` 保持原样 |
+| 2   | `src/cron/types.ts`（`CronJobPatch`）                                                     | `failureAlert?: CronFailureAlert \| false \| null`，**并把 `"failureAlert"` 加进基底的 `Omit` 列表**                |
+| 3   | `src/cron/service/jobs.ts`（`mergeCronFailureAlert`）                                     | 首分支 `if (patch === null) return undefined;`                                                                      |
+| 4   | `ui/src/ui/controllers/cron.ts`（`addCronJob`）                                           | **编辑路径**发 `null`；新增路径仍发 `undefined`                                                                     |
+| 5   | `src/cron/service.failure-alert.test.ts` + `src/gateway/protocol/cron-validators.test.ts` | 各 +2 条用例（见下）                                                                                                |
+
+**第 2 处的坑（值得单独记，因为它又是"声明了但没生效"）**：
+只写 `failureAlert?: ... | null` 是**无效的**。
+`CronJobPatch = Partial<Omit<CronJob, "id" \| "createdAtMs" \| "state" \| "payload">> & { ... }`
+里的 `Omit` 没有排除 `failureAlert`，交叉后得到 `(A) & (A | null)`，而 `A & (A | null) = A`
+⇒ `null` 被窄化掉。`tsgo` 直接报 TS2322（`Type 'null' is not assignable to ...`）。
+修法是把 `"failureAlert"` 从 `Omit` 里排除。**没有 `tsgo` 这一步，这个缺陷会以"类型层拒绝
+schema 层接受的值"的形态留下**，而运行时是好的，所以任何只跑测试的验证都看不见它。
+
+**门禁（G2）**：
+
+- `oxfmt --check`：7 个改动文件 → 正确格式。
+  阳性对照：故意写错格式的临时文件被报出（`1 files`）⇒ 排除"0 文件假绿"。
+- `oxlint`：7 个改动文件 / 117 条规则 → 0 warning、0 error。
+- `vitest`（`--maxWorkers=1 --no-file-parallelism`）：
+  `service.failure-alert` 6 + `cron-validators` 12 + `service.jobs` 31 + `normalize` 27 = **76 passed**。
+- `tsgo`：改前 **124** → 修掉第 2 处后 **123**。
+  按根分布 `extensions 113 / src 4 / ui 6`，与既有基线逐项一致
+  （`src` 那 4 条在 `src/agents/quality-harness.test.ts`，不是本次改动面）。
+
+**变异对位（红的必须正好等于新增的）**：
+
+| 变异                                                | 结果                                                                                                                                                                |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 删 `mergeCronFailureAlert` 的 `patch === null` 分支 | 正好 1 红：`clears a per-job failureAlert override when the patch sends null`；反向用例 `keeps a per-job failureAlert override when the patch omits the key` 保持绿 |
+| 从 patch schema 移除 `Type.Null()`                  | 正好 1 红：`accepts a null failureAlert in update patches`；`rejects a null failureAlert on add` 保持绿                                                             |
+
+两条反向用例是刻意配的：它们证明红的来自"少了哨兵"这件事本身，
+而不是"某处写错了"——即 `undefined`（键缺失）仍**不触碰**，`null` 才清空。
+
+**UI 那条用例的验证：先未验，后已接线（09-21 16:55）**。
+它写在 `ui/src/ui/controllers/cron.test.ts`，原本只能跑在 `ui/vitest.config.ts`（browser / playwright）。
+本机**没有** `ui/node_modules`、也没有 playwright ⇒ 本机跑不了；且 `ci.yml` 只跑
+`lint:ui:no-raw-window-open`，**`pnpm test:ui` 不在任何 workflow 里** ⇒ 那份 ui 测试当时
+**不在任何门禁上**。
+
+第一版尝试（把该文件登记进根 `vitest.config.ts` 的 node 白名单）**失败**：
+`ReferenceError: localStorage is not defined` —— 模块图经 `ui/src/i18n/lib/translate.ts`
+在**导入期**读 `localStorage`。⇒ 已撤回。
+
+**真正的接线**：加一个**作用域限定**的 shim `ui/src/ui/controllers/test-storage-shim.ts`
+（在浏览器里是 no-op），由需要的测试文件**第一行 import**；再登记进根 `include`。实测
+`vitest --config vitest.unit.config.ts ui/src/ui/controllers` → **6 文件 / 77 测试全绿**
+（登记前该目录只有 `agents` + `chat` 2 个文件 / 27 个测试被门禁）。
+
+- **不做成全局 shim**：`ui/src/ui/controllers/usage.ts:43-46` 按 `typeof localStorage !== "undefined"`
+  判环境，全局 shim 会**静默改变它的分支**。
+- **不选"给 CI 装 playwright"**：那是新增基础设施（每个 job 下载 chromium）；node 路径复用
+  现成的 `vitest.unit.config.ts`（`pnpm test` 已在跑它，见 `scripts/tests/test-parallel.mjs`）。
+- **两个原本被排除的文件已补齐（09-21 17:05）**：`sessions.test.ts` 与
+  `control-ui-bootstrap.test.ts` 现在都进了 node 门禁。
+  - 新增 `ui/src/ui/controllers/test-window-shim.ts`（同样作用域限定，只提供
+    `confirm: () => true`，可被 `vi.spyOn(window, "confirm")` 覆盖）。
+  - `control-ui-bootstrap.test.ts` 原有的 `/* @vitest-environment jsdom */` **已删除**：
+    该模块（`control-ui-bootstrap.ts:16`）只需要 `if (typeof window === "undefined") return;`
+    这个**守卫**成立，**不需要任何真实 DOM API** ⇒ jsdom 是多余依赖。删后改为 import 两个 shim。
+  - 实测 `--config vitest.unit.config.ts ui/src/ui/controllers` → **8 文件 / 84 测试全绿**
+    （接线前该目录只有 2 文件 / 27 测试被门禁）。
+  - 两个 shim 都**不放进 `test/setup.ts`**：全局 shim 会让"有没有 `window` / `localStorage`"
+    这类**环境分支**在所有测试里静默塌成同一支。
+- **仍未验**：`pnpm test:ui`（browser 路径）依旧没有 CI 入口，本机也跑不了 ⇒ 不 claim。
+- **未验的残余风险**：新增 6 个文件进了 unit config 的 include ⇒ `pnpm test` 现在会跑它们；
+  本机无法跑完整 unit 套件（8GB，全量会 OOM）⇒ 只做了"同目录 8 文件一起跑"的干扰检查，
+  没有跑全量。
+
+### 12.5b 子字段清空（**已修**，09-21 17:15）
+
+**缺陷形状**：`custom` 模式下清空单个子字段（`after`/`cooldownMs`/`to`/`accountId`）**静默无效**。
+
+**关键取证 —— 它不是"schema 拒了"，而是"两边都不动"**。探针
+`ops/probes/cron-failure-alert-subfield-clear.probe.ts` 实测（修前）：
+
+| 层                            | 对"清空"的读法                                                        |
+| ----------------------------- | --------------------------------------------------------------------- |
+| UI `buildFailureAlert`        | 空 ⇒ `undefined` ⇒ **`JSON.stringify` 丢掉该键**                      |
+| wire schema                   | `after` 是 `minimum:1`、`accountId` 是 `NonEmptyString` ⇒ 空值/0 被拒 |
+| merge `mergeCronFailureAlert` | `if ("after" in patch)` ⇒ **键不在 = 不触碰**                         |
+
+UI 编辑路径实际发出的是 `{"failureAlert":{"channel":"last","mode":"announce"}}`
+（四个字段的键全部消失）⇒ **wire ACCEPTED，merge 原样保留四个旧值**。
+⇒ 不是"报错"，是**编辑什么都没发生**；这就是它没被发现的原因（§11.1 判据：失败对用户不可见）。
+
+**修法（4 处，merge 层 0 改动）**：
+
+| #   | 文件                                     | 改动                                                                                                                                                                        |
+| --- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `src/gateway/protocol/schema/cron.ts`    | 新增 **patch 专用** `CronFailureAlertPatchSchema`（六个子字段各加 `Type.Null()`），`CronJobPatchSchema` 改用它；**job/add 两个 schema 保持严格**（新 job 没有可清空的覆盖） |
+| 2   | `src/cron/types.ts`                      | 新增 `CronFailureAlertPatch`（显式写出，不做 mapped type）；`CronJobPatch.failureAlert` 由 `CronFailureAlert` 改为它                                                        |
+| 3   | `ui/src/ui/controllers/cron.ts`          | `buildFailureAlert(form, { editing })`：**编辑路径空值发 `null`**，新增路径仍 `undefined`                                                                                   |
+| 4   | `src/cli/cron-cli/register.cron-edit.ts` | `channel`/`to`/`accountId` 的空值由 `undefined` 改 `null`（`after`/`cooldownMs` 空值本来就抛错，是 loud，不用改）                                                           |
+
+**merge 层为什么不用改**：它每个子字段的强制转换本来就"非该类型 ⇒ 取清空值"
+（`typeof patch.after === "number" ? ... : 0`），而 `null` 既不是 number 也不是 string。
+所以 `null` 落在 `undefined` 上是**既有语义的自然结果**，不是新分支。
+⇒ 因此**刻意不加** `if (patch.after === null)` 这种并列守卫：两处互为兜底时，
+单独变异任何一处都不会变红，反而会把真回归藏起来。改的是**注释**，把这条约定写明。
+
+**刻意不做的部分（边界）**：`channel` 与 `mode` **在 UI 上没有"清空"这个手势** ——
+两者都是 select，永远带值（`channel` 的 `"last"` 是"不指定频道"的写法，不等于"取消"）。
+schema 现在接受它们的 `null`（统一哨兵），但表单不会发 ⇒ 这是**有意留的边界**，不是漏改。
+
+**门禁**：`oxfmt --check` 11 文件通过｜`oxlint` 11 文件 0/0（117 规则）｜`tsgo` 相对基线
+**新增 0**（总 124 = 基线 123 + 旁窗 1 条 `TS2459`，在 `test/lcx-finance-source-power-audit.test.ts`，
+未跟踪新文件，与本改动面无关）｜`vitest` 见下方测试表。
+
+**变异对位（红的必须正好等于新增的）**：
+
+| 变异                                       | 结果                                                                                                                      |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| patch schema 去掉 `after` 的 `Type.Null()` | 正好 1 红：`accepts a null failureAlert subfield in update patches`；`rejects a null failureAlert subfield on add` 保持绿 |
+| UI `blank` 回退成 `undefined`              | 正好 3 红（三条编辑路径的 `null` 断言）；新增路径用例保持绿                                                               |
+| CLI `channel` 回退成 `undefined`           | 正好 1 红（CLI 的 blank-flag 用例）                                                                                       |
+| merge 的 `after > 0` 改 `>= 0`             | 正好 1 红（服务层"清空子字段后回落全局"用例）                                                                             |
+
+**两处既有断言按新语义改写**（不是"改测试让它变绿"，是旧断言钉的正是旧行为）：
+`ui/.../cron.test.ts` 的 `accountId: undefined` 改为 `null`；
+`omits failureAlert.cooldownMs when custom cooldown is left blank` 改名并改为
+`cooldownMs: null`（编辑路径），另加新增路径"键缺席"的独立用例。
+
+### 12.6 顺带确证（不是独立缺陷）
+
+- `controllers/cron.ts` 原注释 `// Include accountId if explicitly set, or send undefined to allow clearing`
+  **在协议上做不到**。按 §11.1 的判据问"这条路径的失败对用户可见吗"：**不可见**（静默）
+  ⇒ 所以它不只是一句错注释，而是 F-56 家族的一部分，不能按"改注释"处理。
+  **09-21 已按 §12.5b 修掉**（注释同时改写）。
+- CLI（`register.cron-edit.ts`）原来用同样的 `undefined` 写法。但 CLI **没有**
+  "回到 inherit"这个选项（只有 `--no-failure-alert` = `false`）⇒ CLI 没有"撒谎的控件"，
+  只有"清空子字段做不到"这半个问题。**09-21 已一并修**（`channel`/`to`/`accountId` 改发 `null`）。
+  注意 CLI 的 `--failure-alert-after` / `--failure-alert-cooldown` 空值会**抛错**，
+  本来就是 loud，不属于本缺陷。
