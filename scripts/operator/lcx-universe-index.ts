@@ -214,6 +214,16 @@ type GovernanceInventoryArea = {
  */
 const GOVERNANCE_COMPONENT_RULES: GovernanceComponentRule[] = [
   {
+    id: "generated_protocol_contract",
+    patterns: [/^dist\/protocol\.schema\.json$/u],
+    category: "generated_protocol_contract",
+    routeOwner: "scripts/protocol-gen.ts",
+    proofSurface: "pnpm protocol:check plus focused gateway protocol tests",
+    boundary:
+      "generated protocol schema records the contract; it does not prove runtime compatibility",
+    disposition: "governed_source",
+  },
+  {
     id: "deployment_configuration_surface",
     patterns: [/^deploy\//u],
     category: "deployment_configuration",

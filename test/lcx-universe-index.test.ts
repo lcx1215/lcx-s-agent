@@ -166,6 +166,17 @@ describe("LCX universe index", () => {
       payload.summary.workspaceArtifactFiles + payload.summary.liveSidecarFiles,
     );
     expect(payload.ownerCoverage.governanceCoverage.unknownComponents).toEqual([]);
+    expect(
+      payload.ownerCoverage.governanceCoverage.components.find(
+        (component) => component.path === "dist/protocol.schema.json",
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        routeOwner: "scripts/protocol-gen.ts",
+        proofSurface: "pnpm protocol:check plus focused gateway protocol tests",
+        disposition: "governed_source",
+      }),
+    );
     expect(payload.ownerCoverage.governanceCoverage.components).toHaveLength(
       payload.summary.trackedAndVisibleFiles,
     );
