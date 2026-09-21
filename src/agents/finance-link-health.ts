@@ -341,11 +341,15 @@ export async function readFinanceLinkHealth(
   //     this and does speak for all eight. Chart structure does not — with the macro source
   //     disabled, SPY, TLT, GLD and DBC were each sampled as "no source expressed a direction".
   //
-  //     So the traded instruments now have one opinionated source where fusion asks for two, and
-  //     are still recorded as refusals. The plane is not misconfigured; declining to bet on a
-  //     single source is the right answer, and it is why the reflection loop still has no calls
-  //     to settle from the book it trades. What closes this is a second source that speaks about
-  //     ETFs, not lowering the count fusion insists on.
+  //     A macro source was added for exactly the instruments with no analysts, and it does speak
+  //     for all eight: measured, every one of them now expresses a direction from it. Whether
+  //     that is enough is still open — the run that measured it also recorded lastPrice 0 for all
+  //     eight, and the price adapter then answered `budget_exhausted`, so the chart source had
+  //     nothing to compute on. Before the macro source existed, SPY was sampled as "1 distinct
+  //     source(s) support buy, 2 required", and that one source could only have been the chart:
+  //     so the chart does speak for ETFs when it has data. Read a refusal here with that in mind.
+  //     What would close this for certain is a second source that speaks about ETFs; what would
+  //     fake it is lowering the count fusion insists on.
   const sampleUniverse = [
     ...new Set(sampleRows.map((row) => row.instrument).filter((name) => name.length > 0)),
   ].toSorted();

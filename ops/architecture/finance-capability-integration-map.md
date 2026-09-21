@@ -732,14 +732,20 @@ TLT sell str=1 conf=0.6      GLD sell str=1 conf=0.5     DBC buy str=1 conf=0.45
 SPY/QQQ/IWM buy str=0.36     EFA/EEM buy str=0.12
 ```
 
-**但闭环还没合上。** 融合仍要求 2 个有观点的独立源。对照实验（注入空的 `macroFor` 关掉宏观）：
+**⚠️ 闭环是否合上，今天无法定论 —— 我差点把一次采集失败当成结构性事实。**
 
-```
-SPY / TLT / GLD / DBC → 全部 "no source expressed a direction"
-```
+对照实验（注入空的 `macroFor` 关掉宏观）得到 SPY / TLT / GLD / DBC 全部 "no source expressed a
+direction"，我据此写下"图表结构对 ETF 不给方向"。**这个结论是错的**：那批样本的 `lastPrice`
+**全部为 0**，随后直接取数返回 `FMP budget_exhausted` ⇒ EOD 根本没取到，图表结构无数据可算。
+不是横盘，也不是它不给方向。
 
-⇒ 图表结构在这些标的上**不给方向**（横盘，或 EOD 采集失败）。于是只剩宏观 1 个源，仍被拒。
-加了源，从"零个源有观点"变成"一个源有观点"，但**没有变成判断**。
+反证：加宏观源**之前**的第一次实测里 SPY 报 `1 distinct source(s) support buy` —— 那个 buy
+只能来自图表结构，说明 EOD 成功时它**确实**给 ETF 方向。
+
+所以正确的表述是：EOD 成功时图表结构给方向、宏观源也给方向 ⇒ 应有 2 个源，方向一致即可产生判断。
+**待 FMP 额度恢复后重测**才能确认。今天能确认的只有：宏观源在 8 个标的上全部发出方向。
+
+教训：一个把"读不到"说成"没有观点"的结论，和它报告的那个系统的缺陷**是同一个形状**。
 
 采集失败的处理已被真实网络错误验证：连续请求被限流时报 `macro leg failed: … network_error`，
 **warn 且不发信号** —— 不是一个编出来的方向。
