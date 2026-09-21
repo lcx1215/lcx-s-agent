@@ -441,8 +441,20 @@ tmp+rename 原子写，并在 payload 里报 `scoredFiled: { path, appended, ski
              floor 仍被拒给("1 个样本、不足 5 次观测，推不出底线")
 ```
 
-⚠️ 途中发现：**night 分支在没有活跃规则时直接报错退出**（`no active rule declares any instrument`），
-而结算其实只依赖历史样本、不依赖当前规则 ⇒ 暂停所有规则会连带掐断反思环。未改，记录在此。
+⚠️ 途中发现、随后修掉：**night 分支在没有活跃规则时直接报错退出**
+（`no active rule declares any instrument`）。结算读的是已记录的研究样本，**从不读规则库**——
+night 分支只把 `ruleIds` 塞进 payload，`instruments` 一次都没用。所以暂停所有规则会连带掐断反思环，
+而这恰恰是最该保留记录的时候。
+
+已改（`scripts/operator/lcx-finance-daily-cycle.ts`）：空宇宙只拦 day；night 在规则库读不到时
+降级为一条 issue 而不是中止，并在 payload 里报 `rulesActive`（空 `ruleIds` 否则与"规则库读不到"不可分）。
+
+对照实验（临时目录，**不带规则库**）：
+
+```
+night: ok true、error 无、rulesActive false、样本 1 → 已结算 1、落盘 {appended:1}   ← 改前整条不跑
+day  : ok false、error "no active rule declares any instrument"                    ← 保持原行为
+```
 
 ### 同族收尾：研究/结算面 5 处 cwd 相对路径 → 单点解析（2026-09-21）
 

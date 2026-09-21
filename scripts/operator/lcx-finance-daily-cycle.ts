@@ -248,8 +248,28 @@ export async function runFinanceDailyCycleOperator(
   const base = { directory, mode: options.mode, asOf: options.asOf, equity, equitySource };
 
   try {
-    const { instruments, ruleIds } = await activeInstruments(directory);
-    if (instruments.length === 0) {
+    let instruments: readonly string[] = [];
+    let ruleIds: readonly string[] = [];
+    let ruleIssue = "";
+    try {
+      const active = await activeInstruments(directory);
+      instruments = active.instruments;
+      ruleIds = active.ruleIds;
+    } catch (error) {
+      // A day run with no rule book has nothing to collect and nothing to trade, so it stops.
+      // A night run settles calls that were already recorded: it reads the samples, never the
+      // rules. Failing it here would end the reflection loop on a fault in a book it never reads.
+      if (options.mode === "day") {
+        throw error;
+      }
+      ruleIssue =
+        "rule book unreadable, settled the recorded calls anyway: " +
+        (error instanceof Error ? error.message : String(error));
+    }
+    // Only the day run needs a universe. Pausing every rule is a decision about trading, not
+    // about remembering: a night that refuses to settle because nothing is active is a night the
+    // system stops learning from itself, and it does it silently.
+    if (options.mode === "day" && instruments.length === 0) {
       return { ...base, ok: false, error: "no active rule declares any instrument" };
     }
 
@@ -324,10 +344,14 @@ export async function runFinanceDailyCycleOperator(
     );
     const reflection =
       settled.scored.length > 0 ? buildReflection(settled.scored, { instanceLimit: 5 }) : null;
+    const issues = [...settled.issues, ruleIssue].filter((item) => item.length > 0);
     const payload = {
       ...base,
-      ok: settled.issues.length === 0,
+      ok: issues.length === 0,
       ruleIds,
+      // Stated because an empty `ruleIds` is otherwise indistinguishable from a rule book that
+      // could not be read: settlement went ahead either way, and this says which it was.
+      rulesActive: ruleIds.length > 0,
       modelCalls: 0,
       sampleCount: samples.length,
       scored: settled.scored,
@@ -335,7 +359,7 @@ export async function runFinanceDailyCycleOperator(
       pending: settled.pending,
       declined: settled.declined,
       reflection,
-      issues: settled.issues,
+      issues,
     };
     if (!options.json) {
       process.stdout.write(`${renderNight(payload)}\n`);
