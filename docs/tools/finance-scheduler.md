@@ -91,3 +91,20 @@ state or add `--place` to make a restart appear healthy. Restarting remains an
 explicitly authorized operation. Afterward, verify ownership and the next
 scheduled run's receipt independently; a successful start is not a successful
 financial cycle.
+
+### Strategy identity at the daily executor
+
+The daily operator binds one active `cross_asset_trend` version `1` rule emitting
+`target_weights`, with New York month-end signal timing. It passes the declared
+`body.frozenRule.lookbackMonths` (1–120) to the existing trend engine and reports
+`strategyExecution` in the result. Available history can still be insufficient;
+the engine reports missing evidence instead of substituting a different month.
+Direct legacy engine callers retain the 12-month default.
+
+Other forms remain valid strategy declarations but need their own executor.
+Multiple active strategies require an explicit portfolio-composition contract;
+the daily operator no longer unions their instruments and labels a single trend
+calculation as execution of all of them. This binding covers the implemented
+trend signal and inverse-volatility engine, not arbitrary natural-language body
+instructions, an exchange calendar, or general multi-strategy execution. Night
+settlement reads recorded samples independently of active strategy declarations.

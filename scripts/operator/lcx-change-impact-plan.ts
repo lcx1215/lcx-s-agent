@@ -175,7 +175,8 @@ const PATH_RULES: PathRule[] = [
     id: "finance_unattended_cycle",
     lane: "finance_research_capability",
     patterns: [
-      /^src\/agents\/finance-daily-cycle\.ts$/u,
+      /^src\/agents\/finance-daily-(?:cycle|strategy)\.ts$/u,
+      /^test\/operator\/lcx-finance-daily-strategy\.test\.ts$/u,
       /^src\/agents\/finance-cycle-schedule\.ts$/u,
       /^src\/agents\/finance-scheduler-(?:lock|process|state)(?:\.test)?\.ts$/u,
       /^test\/operator\/lcx-finance-scheduler(?:-lifecycle)?\.test\.ts$/u,
@@ -190,7 +191,7 @@ const PATH_RULES: PathRule[] = [
     ],
     requiredChecks: ["git-diff-check", "head-tail-consistency"],
     commands: [
-      "pnpm vitest run src/agents/finance-daily-cycle.test.ts src/agents/finance-cycle-schedule.test.ts src/agents/finance-alpaca-run.test.ts src/agents/finance-alpaca-execution-adapter.test.ts src/agents/finance-universe-selection.test.ts",
+      "pnpm vitest run test/operator/lcx-finance-daily-strategy.test.ts src/agents/finance-daily-cycle.test.ts src/agents/finance-cycle-schedule.test.ts src/agents/finance-alpaca-run.test.ts src/agents/finance-alpaca-execution-adapter.test.ts src/agents/finance-universe-selection.test.ts",
       "pnpm vitest run src/agents/finance-scheduler-lock.test.ts src/agents/finance-scheduler-process.test.ts src/agents/finance-scheduler-state.test.ts src/agents/finance-link-health.test.ts test/operator/lcx-finance-scheduler.test.ts test/operator/lcx-finance-scheduler-lifecycle.test.ts",
       "git diff --check",
       "node --import tsx scripts/operator/lcx-head-tail-consistency.ts --json",

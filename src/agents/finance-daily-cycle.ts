@@ -31,6 +31,7 @@ import {
   type AlpacaVenueState,
 } from "./finance-alpaca-run.js";
 import { appendFinanceBars } from "./finance-bar-ledger.js";
+import { financeMonthlyTrendReturn } from "./finance-daily-strategy.js";
 import type {
   FinanceExecutionIntent,
   FinanceExecutionReceipt,
@@ -136,6 +137,8 @@ export type FinanceDailyCycleParams = Readonly<{
   runAuthorizationId: string;
   /** Absolute weight difference that must be exceeded before a position is touched. */
   rebalanceBand?: number;
+  /** Signal horizon from the bound strategy; direct legacy callers retain 12 months. */
+  lookbackMonths?: number;
   /**
    * Actually place orders. Off by default: a plan is not an order.
    *
@@ -612,6 +615,10 @@ export async function runFinanceDailyCycle(
   params: FinanceDailyCycleParams,
 ): Promise<FinanceDailyCycleReport> {
   const asOf = params.asOf;
+  const lookbackMonths = params.lookbackMonths ?? 12;
+  if (!Number.isSafeInteger(lookbackMonths) || lookbackMonths < 1 || lookbackMonths > 120) {
+    throw new Error("invalid monthly trend lookback");
+  }
   const band = params.rebalanceBand ?? 0.05;
   const instruments = params.instruments.map((item) => item.toUpperCase());
   const dataIssues: string[] = [];
@@ -789,10 +796,11 @@ export async function runFinanceDailyCycle(
     if (!months || !anchor || !priceSeries) {
       continue;
     }
-    const anchorIndex = months.findIndex((row) => row.date === anchor.date);
-    const prior = months[anchorIndex - 12];
-    if (!prior) {
-      dataIssues.push(`${instrument}: fewer than 13 month ends before anchor`);
+    const totalReturn = financeMonthlyTrendReturn(months, anchor, lookbackMonths);
+    if (totalReturn === undefined) {
+      dataIssues.push(
+        `${instrument}: missing month-end evidence for ${lookbackMonths}-month lookback`,
+      );
       continue;
     }
     const vol = annualisedVol(priceSeries);
@@ -800,7 +808,6 @@ export async function runFinanceDailyCycle(
       dataIssues.push(`${instrument}: volatility could not be estimated`);
       continue;
     }
-    const totalReturn = anchor.close / prior.close - 1;
     raw.push({
       instrument,
       signal: totalReturn > 0 ? "hold" : "cash",
