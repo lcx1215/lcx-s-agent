@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
+  inspectFinanceSchedulerStatus,
   parseFinanceSchedulerArgs,
   runFinanceScheduler,
 } from "../../scripts/operator/lcx-finance-scheduler.js";
@@ -303,4 +304,48 @@ it("bounds detached startup and terminates only its own child on timeout", async
   expect(child.disconnect).toHaveBeenCalledOnce();
   expect(child.unref).not.toHaveBeenCalled();
   expect(child.listenerCount("message")).toBe(0);
+});
+
+it("reports schedule timing without calling the cycle or treating old attempts as success", async () => {
+  const root = { directory, source: "explicit" as const };
+  const inspect = (time: string) => inspectFinanceSchedulerStatus(root, new Date(time));
+  expect(inspect("2026-09-21T18:00:00Z").slots.map((slot) => slot.status)).toEqual([
+    "not_due",
+    "not_due",
+  ]);
+  expect(inspect("2026-09-21T20:00:00Z").slots.map((slot) => slot.status)).toEqual([
+    "due_unattempted",
+    "not_due",
+  ]);
+  expect(inspect("2026-09-20T22:00:00Z").slots.map((slot) => slot.status)).toEqual([
+    "outside_schedule",
+    "outside_schedule",
+  ]);
+  fs.writeFileSync(
+    path.join(directory, "daily-cycle-scheduler.json"),
+    JSON.stringify({ lastFired: { day: "2026-09-21" } }),
+  );
+  fs.writeFileSync(path.join(directory, FINANCE_SCHEDULER_PID), String(process.pid));
+  const legacy = inspect("2026-09-21T20:00:00Z");
+  expect(legacy.slots[0].status).toBe("attempted_outcome_unknown");
+  expect(legacy.ownerObservation).toBe("legacy_or_unlocked_process");
+  expect(legacy.executionHealthVerified).toBe(false);
+  fs.writeFileSync(
+    path.join(directory, "daily-cycle-scheduler.json"),
+    JSON.stringify({
+      lastFired: { day: "2026-09-21" },
+      lastSucceeded: { day: "2026-09-21" },
+      lastStatus: { day: "failed" },
+    }),
+  );
+  expect(inspect("2026-09-21T20:00:00Z").slots[0].status).toBe("failed");
+  const stdout = vi.spyOn(process.stdout, "write");
+  await runFinanceScheduler(["--status", "--json", "--dir", directory]);
+  const output = stdout.mock.calls.at(-1)![0];
+  expect(JSON.parse(String(output))).toMatchObject({
+    boundary: "read_only_finance_scheduler_status",
+    executionHealthVerified: false,
+  });
+  expect(mocks.runCycle).not.toHaveBeenCalled();
+  expect(() => parseFinanceSchedulerArgs(["--loop", "--json"])).toThrow("--json requires --status");
 });

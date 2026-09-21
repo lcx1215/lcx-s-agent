@@ -64,3 +64,30 @@ This lock coordinates scheduler invocations only. Direct daily-cycle invocations
 and other finance writers still require their existing execution/idempotency
 controls. A detached process is terminal-independent; installation under a login
 supervisor and live service migration are separate operational actions.
+
+### Read-only cutover observation
+
+Use `--status --json --dir <book-directory>` to inspect the exact book before
+and after an authorized service change. This command does not acquire a lock,
+create the book, dispatch a cycle, or reconcile historical attempts.
+
+Each slot reports `not_due`, `outside_schedule`, `due_unattempted`, or the
+recorded outcome for today's attempt. A legacy attempt without an outcome is
+`attempted_outcome_unknown`, never inferred success. A later failure remains
+visible even if an earlier attempt succeeded on the same date. Due status uses
+the scheduler's existing New York weekday/time rules, not an exchange calendar.
+
+`legacy_or_unlocked_process` means a recorded PID is present without the new
+lock. Even `process_and_lock_present` is only an observation, not process identity
+or execution-health proof. `executionHealthVerified` therefore remains false.
+Corrupt state still fails inspection rather than authorizing a replay. Historical
+run logs may corroborate earlier work, but do not prove that the current process
+has executed successfully.
+
+Before a cutover, identify the candidate revision, current process, exact book,
+original invocation flags and rollback revision. Reconcile any running attempt
+before stopping its owner. Preserve the book and attempt history; never clear
+state or add `--place` to make a restart appear healthy. Restarting remains an
+explicitly authorized operation. Afterward, verify ownership and the next
+scheduled run's receipt independently; a successful start is not a successful
+financial cycle.

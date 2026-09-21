@@ -20,6 +20,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   DEFAULT_FINANCE_CYCLE_SLOTS,
   FINANCE_MARKET_TZ,
+  FINANCE_TRADING_WEEKDAYS,
   financeEtClock,
   isFinanceCycleSlotDue,
 } from "../../src/agents/finance-cycle-schedule.js";
@@ -58,10 +59,12 @@ type SchedulerOptions = {
   directory?: string;
   timeoutMs: number;
   extraArgs: string[];
+  json: boolean;
 };
 
 export function parseFinanceSchedulerArgs(argv: readonly string[]): SchedulerOptions {
   let command: SchedulerOptions["command"] | undefined;
+  let json = false;
   let mode: Mode | undefined;
   let directory: string | undefined;
   let timeoutMs = DEFAULT_FINANCE_CYCLE_TIMEOUT_MS;
@@ -85,6 +88,8 @@ export function parseFinanceSchedulerArgs(argv: readonly string[]): SchedulerOpt
         }
         mode = value;
       }
+    } else if (arg === "--json") {
+      json = true;
     } else if (arg === "--place" || arg === "--equity-from-venue") {
       extraArgs.push(arg);
     } else if (
@@ -139,7 +144,10 @@ export function parseFinanceSchedulerArgs(argv: readonly string[]): SchedulerOpt
   if (!command) {
     throw new Error("usage: --once day|night | --loop | --detach | --status");
   }
-  return { command, mode, directory, timeoutMs, extraArgs };
+  if (json && command !== "status") {
+    throw new Error("--json requires --status");
+  }
+  return { command, mode, directory, timeoutMs, extraArgs, json };
 }
 
 /** Exit zero alone does not establish that the cycle accepted its inputs. */
@@ -314,24 +322,79 @@ async function detach(root: FinanceStateDir, options: SchedulerOptions): Promise
   }
 }
 
-function status(root: FinanceStateDir, configError: string | null): void {
+export function inspectFinanceSchedulerStatus(root: FinanceStateDir, at = new Date()) {
   const state = readFinanceSchedulerState(root.directory);
-  const clock = financeEtClock(new Date());
+  const clock = financeEtClock(at);
   const pid = readFinanceSchedulerPid(root.directory);
+  const processPresent = pid !== null && financeSchedulerPidPresent(pid);
+  const lockPresent = fs.existsSync(path.join(root.directory, FINANCE_SCHEDULER_LOCK));
+  return {
+    boundary: "read_only_finance_scheduler_status",
+    observedAt: at.toISOString(),
+    timezone: FINANCE_MARKET_TZ,
+    clock,
+    root,
+    pid,
+    processPresent,
+    lockPresent,
+    // A PID/lock is not proof of identity, heartbeat or successful work.
+    ownerObservation: processPresent
+      ? lockPresent
+        ? "process_and_lock_present"
+        : "legacy_or_unlocked_process"
+      : lockPresent
+        ? "lock_requires_reconciliation"
+        : "no_process_observed",
+    executionHealthVerified: false,
+    slots: DEFAULT_FINANCE_CYCLE_SLOTS.map((slot) => ({
+      mode: slot.mode,
+      scheduledTime: `${String(slot.hour).padStart(2, "0")}:${String(slot.minute).padStart(2, "0")}`,
+      status:
+        state.lastFired[slot.mode] === clock.date
+          ? (state.lastStatus[slot.mode] ??
+            (state.lastSucceeded[slot.mode] === clock.date
+              ? "succeeded"
+              : "attempted_outcome_unknown"))
+          : !FINANCE_TRADING_WEEKDAYS.includes(clock.weekday)
+            ? "outside_schedule"
+            : isFinanceCycleSlotDue(slot, clock, state.lastFired)
+              ? "due_unattempted"
+              : "not_due",
+      attemptedDate: state.lastFired[slot.mode] ?? null,
+      succeededDate: state.lastSucceeded[slot.mode] ?? null,
+    })),
+    lastRun: state.lastRun
+      ? {
+          runId: state.lastRun.runId,
+          mode: state.lastRun.mode,
+          status: state.lastRun.status,
+          firedAt: state.lastRun.firedAt,
+          exitCode: state.lastRun.exitCode,
+          durationMs: state.lastRun.durationMs,
+        }
+      : null,
+  };
+}
+
+function status(root: FinanceStateDir, configError: string | null, json: boolean): void {
+  const report = { ...inspectFinanceSchedulerStatus(root), configError };
   process.stdout.write(
-    [
-      `tz=${FINANCE_MARKET_TZ}`,
-      `et now: ${clock.date} ${clock.weekday} ${clock.minutes} min past midnight`,
-      `pid file: ${pid ?? "(none)"}; process present: ${pid !== null && financeSchedulerPidPresent(pid)}`,
-      `lock present: ${fs.existsSync(path.join(root.directory, FINANCE_SCHEDULER_LOCK))}`,
-      `finance root: ${root.directory} (${root.source})`,
-      ...(configError ? [`config unavailable: ${configError}`] : []),
-      `lastFired (attempted): ${JSON.stringify(state.lastFired)}`,
-      `lastSucceeded: ${JSON.stringify(state.lastSucceeded)}`,
-      `lastStatus: ${JSON.stringify(state.lastStatus)}`,
-      `lastRun: ${JSON.stringify(state.lastRun ? { runId: state.lastRun.runId, mode: state.lastRun.mode, status: state.lastRun.status, firedAt: state.lastRun.firedAt, exitCode: state.lastRun.exitCode, durationMs: state.lastRun.durationMs } : null)}`,
-      "Process presence is not proof of healthy scheduling; running without an owner requires reconciliation.",
-    ].join("\n") + "\n",
+    json
+      ? `${JSON.stringify(report, null, 2)}\n`
+      : [
+          `tz=${report.timezone}`,
+          `et now: ${report.clock.date} ${report.clock.weekday} ${report.clock.minutes} min past midnight`,
+          `pid file: ${report.pid ?? "(none)"}; process present: ${report.processPresent}`,
+          `lock present: ${report.lockPresent}; owner observation: ${report.ownerObservation}`,
+          `finance root: ${root.directory} (${root.source})`,
+          ...(configError ? [`config unavailable: ${configError}`] : []),
+          ...report.slots.map(
+            (slot) =>
+              `${slot.mode} ${slot.scheduledTime}: ${slot.status}; attempted=${slot.attemptedDate}; succeeded=${slot.succeededDate}`,
+          ),
+          `lastRun: ${JSON.stringify(report.lastRun)}`,
+          "Process presence is not proof of healthy scheduling; running without an owner requires reconciliation.",
+        ].join("\n") + "\n",
   );
 }
 
@@ -349,7 +412,7 @@ export async function runFinanceScheduler(
   }
   const root = resolveFinanceStateDir({ directory: options.directory });
   if (options.command === "status") {
-    status(root, configError);
+    status(root, configError, options.json);
     return 0;
   }
   if (configError) {
