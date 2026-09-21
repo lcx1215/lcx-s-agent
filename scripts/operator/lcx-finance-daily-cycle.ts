@@ -23,6 +23,7 @@ import {
 import { syncConfiguredAlpacaPaperHistory } from "../../src/agents/finance-alpaca-history-sync.js";
 import { fetchAlpacaAccountSnapshot } from "../../src/agents/finance-alpaca-run.js";
 import { runFinanceDailyCycle } from "../../src/agents/finance-daily-cycle.js";
+import { bindFinanceDailyStrategy } from "../../src/agents/finance-daily-strategy.js";
 import { readFinanceLinkHealth } from "../../src/agents/finance-link-health.js";
 import { backfillOutcomes } from "../../src/agents/finance-outcome-backfill.js";
 import { buildReflection } from "../../src/agents/finance-reflection.js";
@@ -249,16 +250,6 @@ function parseArgs(argv: readonly string[]): Options {
   return options;
 }
 
-async function activeInstruments(directory: string): Promise<{
-  instruments: readonly string[];
-  ruleIds: readonly string[];
-}> {
-  const read = await readFinanceStrategyRuleLedger(directory, {});
-  const active = read.ledger.rules.filter((rule) => rule.state === "active");
-  const instruments = [...new Set(active.flatMap((rule) => [...rule.instruments]))];
-  return { instruments, ruleIds: active.map((rule) => rule.ruleId) };
-}
-
 export async function runFinanceDailyCycleOperator(
   argv: readonly string[] = process.argv.slice(2),
   deps: {
@@ -379,21 +370,13 @@ export async function runFinanceDailyCycleOperator(
   try {
     let instruments: readonly string[] = [];
     let ruleIds: readonly string[] = [];
-    let ruleIssue = "";
-    try {
-      const active = await activeInstruments(directory);
-      instruments = active.instruments;
-      ruleIds = active.ruleIds;
-    } catch (error) {
-      // A day run with no rule book has nothing to collect and nothing to trade, so it stops.
-      // A night run settles calls that were already recorded: it reads the samples, never the
-      // rules. Failing it here would end the reflection loop on a fault in a book it never reads.
-      if (options.mode === "day") {
-        throw error;
-      }
-      ruleIssue =
-        "rule book unreadable, settled the recorded calls anyway: " +
-        (error instanceof Error ? error.message : String(error));
+    let strategy: ReturnType<typeof bindFinanceDailyStrategy> | undefined;
+    // Night settlement consumes recorded samples, not today's active strategy.
+    if (options.mode === "day") {
+      const read = await readFinanceStrategyRuleLedger(directory, {});
+      strategy = bindFinanceDailyStrategy(read.ledger.rules);
+      instruments = strategy.instruments;
+      ruleIds = [strategy.ruleId];
     }
     // Only the day run needs a universe. Pausing every rule is a decision about trading, not
     // about remembering: a night that refuses to settle because nothing is active is a night the
@@ -412,6 +395,7 @@ export async function runFinanceDailyCycleOperator(
       });
       const report = await runFinanceDailyCycle({
         instruments,
+        lookbackMonths: strategy!.lookbackMonths,
         equity,
         asOf: options.asOf,
         caps: {
@@ -439,6 +423,7 @@ export async function runFinanceDailyCycleOperator(
         ...base,
         ok: report.ok,
         ruleIds,
+        strategyExecution: strategy,
         modelCalls: report.modelCalls,
         signalAnchor: report.signalAnchor,
         // Reported so a run can be read back against the boundary it actually used.
@@ -498,7 +483,7 @@ export async function runFinanceDailyCycleOperator(
     );
     const reflection =
       settled.scored.length > 0 ? buildReflection(settled.scored, { instanceLimit: 5 }) : null;
-    const issues = [...settled.issues, ruleIssue].filter((item) => item.length > 0);
+    const issues = settled.issues;
     const payload = {
       ...base,
       ok: issues.length === 0,
