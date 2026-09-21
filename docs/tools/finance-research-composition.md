@@ -4,6 +4,13 @@
 module combinations. The optional choice uses the existing finance module
 registry; it does not create another ontology or an execution authority.
 
+The combination is a finite DAG when the caller needs more than a preferred
+list. Each node names one registered module and its upstream node IDs. The
+control layer rejects unknown modules, duplicate IDs, missing dependencies,
+cycles, excessive depth, excessive edges, and more than two bounded replans.
+The planner adds the required memory, causal, math, and portfolio lanes after
+validation; those lanes cannot be removed by a model proposal.
+
 Start with a planning call (`live` omitted or false). The response includes:
 
 - `moduleCatalog`: registered module IDs, roles and declared tool dependencies.
@@ -23,7 +30,15 @@ A subsequent call can provide a different composition:
   "asOf": "2026-09-21T12:00:00.000Z",
   "moduleSelection": {
     "moduleIds": ["credit_liquidity", "cross_asset_liquidity", "technical_timing"],
-    "rationale": "Test funding pressure and cross-market transmission against observed price behavior."
+    "rationale": "Test funding pressure and cross-market transmission against observed price behavior.",
+    "composition": {
+      "nodes": [
+        {"id": "timing", "moduleId": "technical_timing", "dependsOn": []},
+        {"id": "credit", "moduleId": "credit_liquidity", "dependsOn": ["timing"]},
+        {"id": "cross_asset", "moduleId": "cross_asset_liquidity", "dependsOn": ["credit"]}
+      ],
+      "maxReplans": 1
+    }
   },
   "live": false
 }

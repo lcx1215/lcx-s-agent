@@ -1,5 +1,10 @@
 import type { LcxOntologyModuleId } from "../shared/lcx-ontology.js";
 import type { FinanceDecisionMode } from "./finance-decision-policy.js";
+import {
+  buildFinanceModuleComposition,
+  parseFinanceModuleComposition,
+  type FinanceModuleComposition,
+} from "./finance-module-composition.js";
 
 export type FinanceBrainModuleId = LcxOntologyModuleId;
 
@@ -13,6 +18,7 @@ type FinanceBrainModuleDefinition = {
 export type FinanceModuleSelection = Readonly<{
   moduleIds: readonly FinanceBrainModuleId[];
   rationale: string;
+  composition?: FinanceModuleComposition;
 }>;
 
 export type FinanceBrainOrchestrationInput = {
@@ -29,6 +35,7 @@ export type FinanceBrainOrchestrationPlan = {
   primaryModules: FinanceBrainModuleId[];
   supportingModules: FinanceBrainModuleId[];
   moduleContracts: Array<Pick<FinanceBrainModuleDefinition, "id" | "role" | "requiredTools">>;
+  composition: FinanceModuleComposition;
   selectionTrace: {
     financeTask: boolean;
     selectionSource: "rules" | "caller_proposal";
@@ -260,7 +267,11 @@ export function parseFinanceModuleSelection(value: unknown): FinanceModuleSelect
     throw new Error("moduleSelection must contain moduleIds and rationale");
   }
   const proposal = value as Record<string, unknown>;
-  if (Object.keys(proposal).some((key) => key !== "moduleIds" && key !== "rationale")) {
+  if (
+    Object.keys(proposal).some(
+      (key) => key !== "moduleIds" && key !== "rationale" && key !== "composition",
+    )
+  ) {
     throw new Error("moduleSelection cannot override gates or execution authority");
   }
   if (
@@ -285,9 +296,17 @@ export function parseFinanceModuleSelection(value: unknown): FinanceModuleSelect
   if (new Set(moduleIds).size !== moduleIds.length) {
     throw new Error("moduleSelection contains duplicate moduleIds");
   }
+  const composition = parseFinanceModuleComposition(proposal.composition, moduleIds);
+  if (composition) {
+    const composedModuleIds = new Set(composition.nodes.map((node) => node.moduleId));
+    if (moduleIds.some((moduleId) => !composedModuleIds.has(moduleId))) {
+      throw new Error("moduleSelection.composition must include every selected module");
+    }
+  }
   return Object.freeze({
     moduleIds: Object.freeze(moduleIds),
     rationale: proposal.rationale.trim(),
+    ...(composition ? { composition } : {}),
   });
 }
 
@@ -400,6 +419,11 @@ export function planFinanceBrainOrchestration(
     requiredModules.push("finance_learning_memory");
   }
   const seeded = unique<FinanceBrainModuleId>([...selected, ...requiredModules]);
+  const composition = buildFinanceModuleComposition(
+    selected,
+    requiredModules,
+    moduleSelection?.composition,
+  );
 
   const primaryModules = seeded.filter((id) => id !== "finance_learning_memory");
   const supportingModules = seeded.filter((id) => id === "finance_learning_memory");
@@ -448,6 +472,7 @@ export function planFinanceBrainOrchestration(
       const module = moduleById.get(id);
       return module ? [{ id, role: module.role, requiredTools: [...module.requiredTools] }] : [];
     }),
+    composition,
     selectionTrace: {
       financeTask,
       selectionSource: moduleSelection ? "caller_proposal" : "rules",

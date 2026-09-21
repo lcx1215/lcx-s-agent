@@ -54,6 +54,28 @@ const targetSchema = Type.Object({
   collections: Type.Optional(Type.Array(targetCollectionSchema, { maxItems: 16 })),
 });
 
+const moduleCompositionSchema = Type.Object(
+  {
+    nodes: Type.Array(
+      Type.Object(
+        {
+          id: Type.String({ minLength: 1, maxLength: 64, pattern: "^[a-z][a-z0-9_-]*$" }),
+          moduleId: Type.Union(FINANCE_BRAIN_MODULES.map(({ id }) => Type.Literal(id))),
+          dependsOn: Type.Array(Type.String({ minLength: 1, maxLength: 64 }), { maxItems: 24 }),
+        },
+        { additionalProperties: false },
+      ),
+      { minItems: 1, maxItems: 24 },
+    ),
+    maxReplans: Type.Optional(Type.Integer({ minimum: 0, maximum: 2 })),
+  },
+  {
+    additionalProperties: false,
+    description:
+      "Finite analytical module DAG. It cannot grant tools, provider access, memory writes, or execution authority.",
+  },
+);
+
 const schema = Type.Object({
   ask: Type.String({ minLength: 1, maxLength: 12_000 }),
   asOf: Type.String({ description: "Explicit ISO timestamp for the research evidence window" }),
@@ -80,6 +102,7 @@ const schema = Type.Object({
           uniqueItems: true,
         }),
         rationale: Type.String({ minLength: 1, maxLength: 2000 }),
+        composition: Type.Optional(moduleCompositionSchema),
       },
       {
         additionalProperties: false,

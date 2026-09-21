@@ -316,6 +316,52 @@ describe("planFinanceBrainOrchestration", () => {
 });
 
 describe("caller module composition within fixed gates", () => {
+  it("builds a bounded default DAG instead of an unbounded module chain", () => {
+    const plan = planFinanceBrainOrchestration({
+      text: "检查持仓风险和期权波动",
+      hasHoldingsOrPortfolioContext: true,
+      highStakesConclusion: true,
+    });
+    expect(plan.composition.schemaVersion).toBe("lcx_finance_module_composition_v1");
+    expect(plan.composition.nodes.length).toBe(
+      plan.primaryModules.length + plan.supportingModules.length,
+    );
+    expect(plan.composition.maxDepth).toBeLessThanOrEqual(8);
+    expect(plan.composition.topologicalOrder).toEqual(
+      expect.arrayContaining(["finance_learning_memory", "causal_map", "portfolio_risk_gates"]),
+    );
+  });
+
+  it("accepts a caller DAG while preserving required modules and rejecting cycles", () => {
+    const plan = planFinanceBrainOrchestration({
+      text: "研究一个市场假设",
+      moduleSelection: {
+        moduleIds: ["technical_timing", "credit_liquidity"],
+        rationale: "Test price behavior against funding transmission.",
+        composition: {
+          nodes: [
+            { id: "timing", moduleId: "technical_timing", dependsOn: [] },
+            { id: "credit", moduleId: "credit_liquidity", dependsOn: ["timing"] },
+          ],
+          maxReplans: 1,
+        },
+      },
+    });
+    expect(plan.composition.maxReplans).toBe(1);
+    expect(plan.composition.nodes.map((node) => node.id)).toEqual(
+      expect.arrayContaining(["timing", "credit", "causal_map", "finance_learning_memory"]),
+    );
+    expect(() =>
+      parseFinanceModuleSelection({
+        moduleIds: ["technical_timing"],
+        rationale: "cycle",
+        composition: {
+          nodes: [{ id: "timing", moduleId: "technical_timing", dependsOn: ["timing"] }],
+        },
+      }),
+    ).toThrow("composition");
+  });
+
   it("can replace a rule-suggested domain and select a module absent from the keywords", () => {
     const text = "研究宏观利率变化";
     const baseline = planFinanceBrainOrchestration({ text });
