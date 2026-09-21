@@ -53,6 +53,22 @@ describe("account gate before unattended placement", () => {
       expect.objectContaining({ equity: 2000, place: true }),
     );
   });
+  it("sizes an undeclared allocation from the verified small account", async () => {
+    mocks.account.mockResolvedValue({ ok: true, account });
+    await runFinanceDailyCycleOperator(args);
+    expect(mocks.cycle).toHaveBeenCalledWith(expect.objectContaining({ equity: 2000 }));
+  });
+  it("rejects a declared allocation larger than account equity", async () => {
+    mocks.account.mockResolvedValue({ ok: true, account });
+    const result = await runFinanceDailyCycleOperator([...args, "--equity", "3000"]);
+    expect(result.ok).toBe(false);
+    expect(mocks.cycle).not.toHaveBeenCalled();
+  });
+  it("preserves a smaller explicit strategy allocation", async () => {
+    mocks.account.mockResolvedValue({ ok: true, account });
+    await runFinanceDailyCycleOperator([...args, "--equity", "500"]);
+    expect(mocks.cycle).toHaveBeenCalledWith(expect.objectContaining({ equity: 500 }));
+  });
   it("keeps research runs independent of account access", async () => {
     await runFinanceDailyCycleOperator(args.filter((arg) => arg !== "--place"));
     expect(mocks.account).not.toHaveBeenCalled();

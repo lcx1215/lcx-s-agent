@@ -286,9 +286,21 @@ export async function runFinanceDailyCycleOperator(
         error: "account is not active, trading is blocked, or equity is invalid",
       };
     }
-    if (options.equityFromVenue) {
+    if (
+      options.equityFromVenue ||
+      (options.mode === "day" && options.place && !argv.includes("--equity"))
+    ) {
       equity = snapshot.account.equity;
       equitySource = "venue";
+    } else if (options.mode === "day" && options.place && equity > snapshot.account.equity) {
+      return {
+        directory,
+        mode: options.mode,
+        asOf: options.asOf,
+        ok: false,
+        equitySource,
+        error: "declared strategy equity exceeds verified account equity",
+      };
     }
   }
 

@@ -24,13 +24,17 @@
  * those measures permanently unavailable for rules nobody backfilled by hand.
  */
 
+import { isAlpacaOrderUncertain } from "./finance-alpaca-execution-adapter.js";
 import {
   fetchAlpacaVenueState,
   runFinanceAlpacaOrder,
   type AlpacaVenueState,
 } from "./finance-alpaca-run.js";
 import { appendFinanceBars } from "./finance-bar-ledger.js";
-import type { FinanceExecutionReceipt } from "./finance-execution-adapter.js";
+import type {
+  FinanceExecutionIntent,
+  FinanceExecutionReceipt,
+} from "./finance-execution-adapter.js";
 import { createChinaReachableUsEodHistoryCollectionAdapter } from "./finance-free-market-collection-adapters.js";
 import type { FinanceMarketCollectionItem } from "./finance-market-collection-registry.js";
 import { runFinancePaperOrder } from "./finance-paper-run.js";
@@ -51,13 +55,51 @@ export const FINANCE_DAILY_CYCLE_SCHEMA = "lcx_finance_daily_cycle_v1" as const;
  */
 type FinanceCycleOrderOutcome =
   | Awaited<ReturnType<typeof runFinanceAlpacaOrder>>
-  | Awaited<ReturnType<typeof runFinancePaperOrder>>;
+  | Awaited<ReturnType<typeof runFinancePaperOrder>>
+  | Readonly<{ ok: false; stage: "place"; refusals: readonly string[]; uncertain: true }>;
 
 export type FinanceDailyCycleCaps = Readonly<{
   maxOrderNotional: number;
   maxInstrumentNotional: number;
   maxOrdersPerRun: number;
 }>;
+
+/** A trusted caller supplies an execution quote independently of research history. */
+export type FinanceDailyCycleExecutionQuote = Readonly<
+  Pick<FinanceExecutionIntent, "referencePrice" | "referencePriceAt"> & {
+    sourceUrlOrArtifact: string;
+    /** Maximum age authorized by the caller for this quote, not a universal market policy. */
+    maxAgeMs: number;
+  }
+>;
+
+export function executionQuoteIssue(
+  quote: FinanceDailyCycleExecutionQuote | undefined,
+  nowMs: number,
+): string | null {
+  if (!quote) {
+    return "no execution quote; research EOD bars cannot authorize venue placement";
+  }
+  const timestamp = Date.parse(quote.referencePriceAt);
+  if (
+    !Number.isFinite(quote.referencePrice) ||
+    quote.referencePrice <= 0 ||
+    !quote.sourceUrlOrArtifact.trim() ||
+    !Number.isFinite(timestamp) ||
+    !Number.isFinite(quote.maxAgeMs) ||
+    quote.maxAgeMs < 0 ||
+    !Number.isFinite(nowMs)
+  ) {
+    return "execution quote has invalid price, source, timestamp or age policy";
+  }
+  if (timestamp > nowMs) {
+    return "execution quote is in the future";
+  }
+  if (nowMs - timestamp > quote.maxAgeMs) {
+    return "execution quote is stale";
+  }
+  return null;
+}
 
 export type FinanceDailyCycleParams = Readonly<{
   instruments: readonly string[];
@@ -78,6 +120,8 @@ export type FinanceDailyCycleParams = Readonly<{
   venue?: "paper" | "alpaca";
   directory?: string;
   slippageBps?: number;
+  /** Internal caller seam; no default feed and no promotion of EOD data to an execution quote. */
+  executionQuotes?: ReadonlyMap<string, FinanceDailyCycleExecutionQuote>;
 }>;
 
 export type FinanceDailyCycleTarget = Readonly<{
@@ -438,9 +482,8 @@ export async function recordCycleFill(params: {
  * One instrument's order attempt, with the failure contained to that instrument.
  *
  * The order path throws for reasons that say nothing about the rest of the book: a symbol the
- * venue will not accept, a transport error, or a refusal to report an unknown fill state.
- * Letting one of those escape would abort the cycle mid-book, so the remaining targets would
- * never even be considered — and the run would report nothing about them at all.
+ * venue will not accept. An uncertain submitted order is different: it may already consume
+ * exposure, so the caller must stop the remaining book until reconciliation.
  */
 export async function attemptCycleOrder(
   attempt: () => Promise<FinanceCycleOrderOutcome>,
@@ -451,6 +494,7 @@ export async function attemptCycleOrder(
     return Object.freeze({
       ok: false as const,
       stage: "place" as const,
+      ...(isAlpacaOrderUncertain(error) ? { uncertain: true as const } : {}),
       refusals: Object.freeze([
         `order path threw — ${error instanceof Error ? error.message : String(error)}`,
       ]),
@@ -850,6 +894,20 @@ export async function runFinanceDailyCycle(
         );
         continue;
       }
+      const executionQuote = params.executionQuotes?.get(item.instrument);
+      if (params.venue === "alpaca") {
+        const issue = executionQuoteIssue(executionQuote, Date.now());
+        if (issue !== null) {
+          refusals.push(`${item.instrument}: ${issue}`);
+          continue;
+        }
+      }
+      const referencePrice =
+        params.venue === "alpaca" && executionQuote ? executionQuote.referencePrice : target.close;
+      const referencePriceAt =
+        params.venue === "alpaca" && executionQuote
+          ? executionQuote.referencePriceAt
+          : `${target.lastBarDate}T20:00:00.000Z`;
       const shared = {
         conclusion: {
           conclusionId: `daily_cycle:${signalAnchor}:${item.instrument}`,
@@ -858,15 +916,18 @@ export async function runFinanceDailyCycle(
           conviction: 1,
           assetClass: "us_equity",
           horizonDays: 30,
-          invalidationPrice: solveInvalidationPrice(target.close, item.notional, params.equity),
+          invalidationPrice: solveInvalidationPrice(referencePrice, item.notional, params.equity),
           thesis:
             `Daily drift rebalance against frozen monthly target (anchor ${signalAnchor}). ` +
-            `target=${item.target} current=${item.current} band=${band}.`,
+            `target=${item.target} current=${item.current} band=${band}.` +
+            (params.venue === "alpaca" && executionQuote
+              ? ` Execution quote source: ${executionQuote.sourceUrlOrArtifact}.`
+              : ""),
           invalidationCondition: "monthly signal flips to cash, or drift returns inside band",
         },
         market: {
-          referencePrice: target.close,
-          referencePriceAt: `${target.lastBarDate}T20:00:00.000Z`,
+          referencePrice,
+          referencePriceAt,
         },
         equity: params.equity,
         runAuthorizationId: params.runAuthorizationId,
@@ -895,6 +956,12 @@ export async function runFinanceDailyCycle(
       );
       if (!result.ok) {
         refusals.push(`${item.instrument}: ${result.refusals.join("; ")}`);
+        if ("uncertain" in result && result.uncertain) {
+          dataIssues.push(
+            "execution outcome uncertain; stopped remaining orders pending reconciliation",
+          );
+          break;
+        }
         continue;
       }
       const record = await recordCycleFill({
@@ -919,7 +986,7 @@ export async function runFinanceDailyCycle(
 
   return Object.freeze({
     schemaVersion: FINANCE_DAILY_CYCLE_SCHEMA,
-    ok: dataIssues.length === 0,
+    ok: dataIssues.length === 0 && refusals.length === 0,
     asOf,
     signalAnchor,
     modelCalls: 0,
