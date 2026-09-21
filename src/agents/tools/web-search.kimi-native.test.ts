@@ -8,6 +8,7 @@ const params = {
   baseUrl: "https://example.invalid/v1",
   model: "configured-model",
   timeoutSeconds: 5,
+  proxyUrl: undefined,
 };
 beforeEach(() => {
   endpoint.mockReset();

@@ -2,7 +2,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as credentials from "../../src/agents/finance-credential-env.js";
+import * as collections from "../../src/agents/finance-market-collection-registry.js";
 import * as ledger from "../../src/agents/finance-position-ledger.js";
+import * as transport from "../../src/agents/finance-write-transport.js";
 vi.mock("../../src/agents/finance-credential-env.js", () => ({
   resolveFinanceCredentialEnv: () => ({
     ALPACA_API_KEY_ID: "PK_SYNTHETIC",
@@ -422,5 +425,72 @@ it("lets the actual operator consume one valid source and return hold", async ()
   });
   expect(invokeModel).toHaveBeenCalledOnce();
   expect(result).toMatchObject({ status: "shadow", disposition: "no_trade" });
+  expect(f.transport).not.toHaveBeenCalled();
+});
+
+it("uses the controller book credentials and does not disable Finnhub when Alpha Vantage is absent", async () => {
+  const f = fixture();
+  const resolveCredentials = vi
+    .spyOn(credentials, "resolveFinanceCredentialEnv")
+    .mockReturnValue({ FINNHUB_API_KEY: "fixture-finnhub" });
+  const registry = vi
+    .spyOn(collections, "createFinanceMarketCollectionRegistry")
+    .mockReturnValue([]);
+  vi.spyOn(collections, "runFinanceMarketCollectionRefresh").mockRejectedValue(
+    new Error("fixture unavailable"),
+  );
+  vi.spyOn(transport, "createFinanceUncachedFetch").mockReturnValue(async () => ({
+    status: 200,
+    body: "{}",
+  }));
+  vi.spyOn(process.stderr, "write").mockReturnValue(true);
+  const beforeRoot = process.env.LCX_FINANCE_STATE_DIR;
+  await runFinanceResearchTurn(["--instrument", "SPY"], {
+    control: { ...f.control, mode: "shadow" },
+    invokeModel: f.deps.invokeModel,
+  });
+  expect(resolveCredentials).toHaveBeenCalledWith(
+    expect.objectContaining({ LCX_FINANCE_STATE_DIR: f.control.stateDirectory }),
+  );
+  expect(registry).toHaveBeenCalledWith(
+    expect.objectContaining({ finnhubApiKey: "fixture-finnhub" }),
+  );
+  expect(process.env.LCX_FINANCE_STATE_DIR).toBe(beforeRoot);
+  expect(f.deps.invokeModel).not.toHaveBeenCalled();
+});
+
+it("reads persisted broker history into the next research decision without creating a second fill", async () => {
+  const f = fixture();
+  await ledger.appendFinanceBrokerHistory(f.control.stateDirectory, {
+    kind: "broker_history",
+    accountId: f.control.recovery!.accountId,
+    venue: "alpaca:paper",
+    query: "activities:fixture-window",
+    cursor: "",
+    payload: [
+      {
+        id: "historical-btc-fill",
+        activity_type: "FILL",
+        symbol: "BTCUSD",
+        qty: "0.0002",
+        price: "80519.30",
+      },
+    ],
+  });
+  const invokeModel = vi.fn(async (prompt: string) => {
+    expect(prompt).toContain("historical-btc-fill");
+    expect(prompt).toContain("raw_observations_only");
+    expect(prompt).toContain('"positionsReconciled":false');
+    return JSON.stringify({ ...f.model, direction: "hold" });
+  });
+  await runFinanceResearchTurn(["--instrument", "SPY"], {
+    ...f.deps,
+    control: { ...f.control, mode: "shadow" },
+    invokeModel,
+  });
+  expect(invokeModel).toHaveBeenCalledOnce();
+  expect((await ledger.readFinancePositionRecords(f.control.stateDirectory)).receipts).toHaveLength(
+    0,
+  );
   expect(f.transport).not.toHaveBeenCalled();
 });
