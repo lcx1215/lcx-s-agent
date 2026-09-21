@@ -37,6 +37,7 @@ import { compileExecutionIntent } from "../../src/agents/finance-intent-compiler
 import {
   classifyFinanceStrategy,
   evaluateFinanceMandate,
+  type FinanceRegime,
 } from "../../src/agents/finance-mandate.js";
 import {
   createFinanceMarketCollectionRegistry,
@@ -87,6 +88,14 @@ async function main(): Promise<void> {
   const instrument = (readArg(args, "--instrument") ?? "AAPL").toUpperCase();
   const equity = Number(readArg(args, "--equity") ?? 100_000);
   const authorization = readArg(args, "--run-authorization") ?? "";
+  // Regime parity with the other conclusion path. A regime tightens the caps and
+  // never widens them, so without this the same conclusion is judged under
+  // looser rules here than there - a divergence nobody declared.
+  const rawRegime = readArg(args, "--regime");
+  const regime: FinanceRegime | undefined =
+    rawRegime === "normal" || rawRegime === "risk_off" || rawRegime === "liquidity_tightening"
+      ? rawRegime
+      : undefined;
   // Recording what this path decided is the whole point of running it alongside
   // the mechanical one: a verdict that is only printed cannot be compared with
   // what the other path actually did.
@@ -491,6 +500,7 @@ async function main(): Promise<void> {
     drawdownFraction: 0,
     stopLossDefined: intake.conclusion.invalidationPrice !== undefined,
     hasSignificantAutocorrelation: true,
+    ...(regime === undefined ? {} : { regime }),
   });
 
   process.stdout.write(
