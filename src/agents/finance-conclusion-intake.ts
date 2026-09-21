@@ -55,7 +55,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function parseResearchConclusion(
   raw: unknown,
-  options: { minSources?: number } = {},
+  options: {
+    minSources?: number;
+    /**
+     * The track record this claim should be judged against.
+     *
+     * Without it a conclusion is taken at its own word: the model says 0.7 and
+     * the floor is compared against 0.7, even if the model has historically
+     * claimed 0.7 and delivered 0.5. The calibration functions in this file
+     * existed for exactly this and had no caller, so the adjustment was computed
+     * nowhere and applied nowhere.
+     *
+     * Omitted means unadjusted, which is what callers that have no history yet
+     * should get - it is not a silent default of "trust the model".
+     */
+    calibrationRecords?: readonly FinanceCalibrationRecord[];
+    /** The floor before adjustment. Required alongside calibrationRecords. */
+    baseFloor?: number;
+  } = {},
 ): FinanceIntakeResult {
   const minSources = options.minSources ?? 2;
   const refusals: string[] = [];
@@ -87,6 +104,25 @@ export function parseResearchConclusion(
     refusals.push("refuse: conviction is missing or not a number");
   } else if (conviction < 0 || conviction > 1) {
     refusals.push("refuse: conviction must be between 0 and 1");
+  }
+
+  // The calibration gate: a conviction is judged against what this system has
+  // actually delivered, not against what it just claimed.
+  let adjustedFloor: number | null = null;
+  if (options.calibrationRecords !== undefined && options.baseFloor !== undefined) {
+    adjustedFloor = calibrationAdjustedFloor(options.baseFloor, options.calibrationRecords);
+    if (Number.isFinite(conviction) && conviction < adjustedFloor) {
+      refusals.push(
+        "refuse: conviction " +
+          conviction.toFixed(2) +
+          " is below the calibrated floor " +
+          adjustedFloor.toFixed(2) +
+          " (base " +
+          options.baseFloor.toFixed(2) +
+          " raised by the measured overconfidence gap); this system has been claiming more " +
+          "than it delivers, so its own number does not clear the bar it set",
+      );
+    }
   }
 
   const thesis = typeof raw.thesis === "string" ? raw.thesis.trim() : "";
