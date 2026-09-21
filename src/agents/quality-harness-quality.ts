@@ -163,13 +163,28 @@ const EXECUTION_CLAIM_PATTERN =
  * money only if *both* recognise it. So adding a currency means adding it in the two places --
  * adding it in one is exactly how the Chinese and English sides of this gate drift apart.
  */
+/**
+ * What a date looks like -- in one place, because two places used to disagree.
+ *
+ * `extractDataNumbers` stripped `2026年9月6日` before looking for values, while
+ * `hasEvidenceSourceAndTimestamp` only accepted `2026-09-06`. So an evidence dated in a notation
+ * this file already understood elsewhere was treated as *undated*, and every number it carried came
+ * back as "current-data numbers without matching cited evidence" -- the answer was blamed for a
+ * timestamp the evidence did have. The reverse gap existed too: `2026-09` counted as a timestamp but
+ * was not stripped, so its digits were then demanded as values.
+ *
+ * Both now read these two patterns. They are deliberately **not** global: a `/g` regex carries
+ * `lastIndex` between `.test` calls and would make the timestamp check start mid-string. The
+ * extractor makes its own global copy for `.replace`.
+ */
+const ISO_DATE_PATTERN =
+  /\b20\d{2}[-/]\d{1,2}(?:[-/]\d{1,2})?(?:[T ]\d{1,2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2})?)?\b/iu;
+const CHINESE_DATE_PATTERN = /\b20\d{2}年\d{1,2}月\d{1,2}日?/u;
+
 function extractDataNumbers(text: string): string[] {
   const withoutDateLiterals = text
-    .replace(
-      /\b20\d{2}[-/]\d{1,2}[-/]\d{1,2}(?:[T ][0-9]{1,2}:[0-9]{2}(?::[0-9]{2}(?:\.[0-9]+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?\b/giu,
-      " ",
-    )
-    .replace(/\b20\d{2}年\d{1,2}月\d{1,2}日?/gu, " ");
+    .replace(new RegExp(ISO_DATE_PATTERN.source, "giu"), " ")
+    .replace(new RegExp(CHINESE_DATE_PATTERN.source, "gu"), " ");
   const withoutNameNumbers = withoutDateLiterals
     .replace(
       /(?:沪深|中证|上证|深证|创业板|科创|北证|恒生|日经|富时|标普|纳斯达克|道琼斯|国企|罗素)\d{1,4}(?!\d)/gu,
@@ -385,9 +400,7 @@ function claimMatchesEvidenceEntity(claimText: string, evidenceText: string): bo
 function hasEvidenceSourceAndTimestamp(evidence: QualityHarnessEvidence): boolean {
   return Boolean(
     evidence.source?.trim() &&
-    /\b20\d{2}[-/]\d{1,2}(?:[-/]\d{1,2})?(?:[T ]\d{1,2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2})?)?\b/iu.test(
-      evidence.text,
-    ),
+    (ISO_DATE_PATTERN.test(evidence.text) || CHINESE_DATE_PATTERN.test(evidence.text)),
   );
 }
 

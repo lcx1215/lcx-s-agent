@@ -331,6 +331,9 @@ describe("index names and tenor labels are not data numbers", () => {
     "10Y 美债收益率",
     "Q3 财报",
     "中证500 和 沪深300",
+    // A month-precision date is still a date literal: it counted as a timestamp but was not
+    // stripped, so its 2026 and 09 were demanded as values. Both sides now read one pattern.
+    "2026-09",
   ];
 
   for (const name of names) {
@@ -626,6 +629,56 @@ describe("a number without a unit is not grounded by the same digits with a unit
         "NVDA 当前价格是 480 美元。",
       ),
     ).toBe("");
+  });
+});
+
+/**
+ * What counts as a timestamp on a piece of evidence.
+ *
+ * `hasEvidenceSourceAndTimestamp` requires a `20\d{2}[-/]…` date, which is only one way to write a
+ * date. The same file's `extractDataNumbers` already strips `20\d{2}年\d{1,2}月\d{1,2}日?` before
+ * looking for values, so the two disagree about what a date looks like -- and the disagreement lands
+ * on the answer: an evidence dated in the notation the file already understands elsewhere is treated
+ * as undated, so every number it carries is reported as ungrounded.
+ */
+describe("an evidence dated in Chinese notation carries a timestamp", () => {
+  const citedTask = "请根据最新证据判断 NVDA 当前股价和投资风险。";
+
+  const dated = [
+    {
+      label: "2026年9月6日",
+      evidence: "2026年9月6日，公开行情材料记录 NVDA 的价格为 480 美元。",
+    },
+    {
+      label: "2026年09月06日（补零）",
+      evidence: "2026年09月06日，公开行情材料记录 NVDA 的价格为 480 美元。",
+    },
+    { label: "2026-09-06", evidence: "截至 2026-09-06，公开行情材料记录 NVDA 的价格为 480 美元。" },
+    { label: "2026/9/6", evidence: "截至 2026/9/6，公开行情材料记录 NVDA 的价格为 480 美元。" },
+  ];
+
+  for (const { label, evidence } of dated) {
+    it(`grounds an evidence dated "${label}"`, async () => {
+      const answer = "NVDA 当前价格是 480 美元。";
+      expect(await safetyReasonWithEvidence(evidence, citedTask, answer, answer)).toBe("");
+    });
+  }
+
+  /**
+   * U-4's question, answered: an evidence with a source but **no date at all** is still not
+   * groundable, and that is deliberate -- "current data" cannot be pinned to a time without one.
+   * Pinned so it reads as a decision rather than as a side effect of the regex.
+   */
+  it("still flags an evidence that carries no date in any notation", async () => {
+    const answer = "NVDA 当前价格是 480 美元。";
+    expect(
+      await safetyReasonWithEvidence(
+        "公开行情材料记录 NVDA 的价格为 480 美元。",
+        citedTask,
+        answer,
+        answer,
+      ),
+    ).toContain("current-data numbers without matching cited evidence");
   });
 });
 
