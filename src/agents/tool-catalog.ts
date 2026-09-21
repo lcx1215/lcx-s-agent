@@ -358,6 +358,15 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     includeInOpenClawGroup: true,
   },
   {
+    id: "finance_reflection_read",
+    label: "finance_reflection_read",
+    description:
+      "Read-only recall of this system's own finance track record as text: how often calls were right, claimed conviction against delivered accuracy, and concrete past calls, scoped to one instrument or the whole pool",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
     id: "finance_position_ledger_read",
     label: "finance_position_ledger_read",
     description:
