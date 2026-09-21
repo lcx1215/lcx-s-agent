@@ -5,6 +5,7 @@ import { acquireFileLock } from "../plugin-sdk/file-lock.js";
 import type {
   FinanceExecutionIntent,
   FinanceExecutionFill,
+  FinanceExecutionReceipt,
   FinanceOrderSide,
   FinanceRiskBudget,
 } from "./finance-execution-adapter.js";
@@ -124,7 +125,7 @@ export class FinanceExecutionSafetyUncertainError extends Error {
   }
 }
 
-type Claim = {
+export type FinanceExecutionSafetyClaim = {
   id: string;
   run: string;
   instrument: string;
@@ -141,8 +142,10 @@ type Claim = {
     budget: FinanceRiskBudget;
   }>;
   fill?: FinanceExecutionFill;
+  adapterKind?: "paper" | "venue";
+  receipt?: FinanceExecutionReceipt;
 };
-async function readJournal(file: string): Promise<Claim[]> {
+async function readJournal(file: string): Promise<FinanceExecutionSafetyClaim[]> {
   let raw: string;
   try {
     raw = await fs.readFile(file, "utf8");
@@ -152,11 +155,14 @@ async function readJournal(file: string): Promise<Claim[]> {
     }
     throw error;
   }
+  return parseJournal(raw);
+}
+function parseJournal(raw: string): FinanceExecutionSafetyClaim[] {
   return raw
     .split("\n")
     .filter(Boolean)
     .map((line) => {
-      const value = JSON.parse(line) as Claim;
+      const value = JSON.parse(line) as FinanceExecutionSafetyClaim;
       if (
         !text(value.id) ||
         !text(value.run) ||
@@ -171,7 +177,7 @@ async function readJournal(file: string): Promise<Claim[]> {
       return value;
     });
 }
-async function appendJournal(file: string, claim: Claim): Promise<void> {
+async function appendJournal(file: string, claim: FinanceExecutionSafetyClaim): Promise<void> {
   const handle = await fs.open(file, "a", 0o600);
   try {
     await handle.writeFile(JSON.stringify(claim) + "\n");
@@ -217,8 +223,17 @@ export async function withFinanceExecutionSafety(params: {
   venue: string;
   adapterKind: "paper" | "venue";
   signal?: AbortSignal;
+  recordedAt?: string;
+  buildReceipt: (
+    fill: FinanceExecutionFill,
+    recordedAt: string,
+    accountId: string,
+  ) => FinanceExecutionReceipt;
   execute: (signal: AbortSignal) => Promise<FinanceExecutionFill>;
-}): Promise<{ ok: true; fill: FinanceExecutionFill } | { ok: false; reasons: string[] }> {
+}): Promise<
+  | { ok: true; fill: FinanceExecutionFill; receipt: FinanceExecutionReceipt }
+  | { ok: false; reasons: string[] }
+> {
   const refuse = (reason: string) => ({ ok: false as const, reasons: [reason] });
   const binding = params.context && issued.get(params.context);
   if (!binding) {
@@ -446,7 +461,7 @@ export async function withFinanceExecutionSafety(params: {
         return refuse("execution_safety_durable_budget_exceeded");
       }
       signal.throwIfAborted();
-      const claim: Claim = {
+      const claim: FinanceExecutionSafetyClaim = {
         id,
         run: intent.runAuthorizationId,
         instrument: intent.instrument.trim().toUpperCase(),
@@ -486,13 +501,17 @@ export async function withFinanceExecutionSafety(params: {
         if (params.adapterKind === "venue" && !fill.terminalOrderIdentity?.terminal) {
           throw new Error("venue terminal order identity not observed");
         }
+        const recordedAt = params.recordedAt ?? new Date().toISOString();
+        const receipt = structuredClone(params.buildReceipt(fill, recordedAt, binding.accountId));
         await appendJournal(key, {
           ...claim,
           at: new Date().toISOString(),
           status: "confirmed",
           fill,
+          adapterKind: params.adapterKind,
+          receipt,
         });
-        return { ok: true, fill };
+        return { ok: true, fill, receipt };
       } catch (error) {
         await appendJournal(key, {
           ...claim,
@@ -525,5 +544,55 @@ export async function withFinanceExecutionSafety(params: {
         }
       });
     }
+  }
+}
+
+/** Read one append-only snapshot. A concurrent partial append makes parsing fail closed.
+ * This never edits claims or grants reconciliation authority. */
+export async function readFinanceExecutionSafetyClaims(params: {
+  stateDir: string;
+  accountId: string;
+  venue: string;
+  signal?: AbortSignal;
+}): Promise<readonly FinanceExecutionSafetyClaim[]> {
+  params.signal?.throwIfAborted();
+  const root = await fs.realpath(params.stateDir);
+  const file = path.join(
+    root,
+    `execution-safety-${digest([params.venue, params.accountId])}.jsonl`,
+  );
+  const handle = await fs.open(file, "r").catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  });
+  if (!handle) {
+    return [];
+  }
+  try {
+    const max = 16 * 1024 * 1024;
+    const buffer = Buffer.alloc(max + 1);
+    let size = 0;
+    while (size < buffer.length) {
+      params.signal?.throwIfAborted();
+      const read = await handle.read(buffer, size, buffer.length - size, size);
+      if (read.bytesRead === 0) {
+        break;
+      }
+      size += read.bytesRead;
+    }
+    params.signal?.throwIfAborted();
+    if (size > max) {
+      throw new Error("execution safety journal too large for bounded recovery");
+    }
+    const raw = buffer.subarray(0, size).toString("utf8");
+    if (raw && !raw.endsWith("\n")) {
+      throw new Error("incomplete execution safety journal snapshot");
+    }
+    const values = parseJournal(raw);
+    return [...new Map(values.map((claim) => [claim.id, claim])).values()];
+  } finally {
+    await handle.close();
   }
 }

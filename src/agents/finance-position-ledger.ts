@@ -274,6 +274,7 @@ const FinanceExecutionReceiptRecordSchema = z
   .object({
     schemaVersion: z.literal(FINANCE_EXECUTION_RECEIPT_SCHEMA),
     receiptId: Text,
+    accountId: Text.optional(),
     intentId: Text,
     runAuthorizationId: z.string(),
     adapterId: Text,
@@ -775,4 +776,30 @@ export async function advanceFinancePositionProjection(
   } finally {
     db.close();
   }
+}
+
+/** Account-scoped execution history only, not broker-current account equity or risk facts.
+ * Legacy unassigned receipts are reported, never silently attributed to this account.
+ * Unscoped historical marks are deliberately omitted from this projection. */
+export async function readFinanceAccountPositionLedger(
+  directory: string,
+  scope: { accountId: string; venue: string },
+) {
+  if (!scope.accountId.trim() || !scope.venue.trim()) {
+    throw new Error("explicit account and venue scope required");
+  }
+  const read = await readFinancePositionRecords(directory);
+  const receipts = read.receipts.filter(
+    (receipt) => receipt.accountId === scope.accountId && receipt.venue === scope.venue,
+  );
+  return Object.freeze({
+    ledger: projectFinancePositions({ receipts }),
+    receipts: Object.freeze(receipts),
+    historyStatus:
+      receipts.length === 0 ? ("missing" as const) : ("recorded_history_only" as const),
+    excludedReceiptCount: read.receipts.length - receipts.length,
+    unassignedReceiptCount: read.receipts.filter((receipt) => receipt.accountId === undefined)
+      .length,
+    headRef: read.headRef,
+  });
 }

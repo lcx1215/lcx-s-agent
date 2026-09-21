@@ -8,8 +8,10 @@ import {
   DEFAULT_FINANCE_RISK_BUDGET,
   FINANCE_EXECUTION_RECEIPT_SCHEMA,
   type FinanceExecutionReceipt,
+  type FinanceOrderPlacementRequest,
   placeFinanceOrder,
 } from "./finance-execution-adapter.js";
+import { syntheticSafetyContext } from "./finance-execution-safety.test-support.js";
 import {
   advanceFinancePositionProjection,
   appendFinanceExecutionReceipt,
@@ -268,11 +270,17 @@ function openDatabase(directory: string) {
 describe("finance position ledger store", () => {
   it("appends a receipt produced by the real execution seam and re-derives the position", async () => {
     const directory = await storeDirectory();
-    const placement = await placeFinanceOrder({
+    const request: FinanceOrderPlacementRequest = {
       mode: "live_execution",
       adapters: [createPaperExecutionAdapter({ instruments: ["AAPL"] })],
       executionAdapterId: "paper",
-      budget: { ...DEFAULT_FINANCE_RISK_BUDGET, allowedInstruments: ["AAPL"] },
+      budget: {
+        ...DEFAULT_FINANCE_RISK_BUDGET,
+        allowedInstruments: ["AAPL"],
+        maxOrderNotional: 2000,
+        maxInstrumentNotional: 2000,
+        maxOrdersPerRun: 1,
+      },
       committedInstrumentNotional: 0,
       ordersPlacedThisRun: 0,
       intent: {
@@ -282,10 +290,19 @@ describe("finance position ledger store", () => {
         orderType: "market",
         quantity: 10,
         referencePrice: 100,
-        referencePriceAt: PAST,
+        referencePriceAt: new Date().toISOString(),
         runAuthorizationId: "run-1",
         rationale: "store round trip",
       },
+    };
+    const placement = await placeFinanceOrder({
+      ...request,
+      safetyContext: syntheticSafetyContext({
+        intent: request.intent,
+        budget: request.budget,
+        adapterId: "paper",
+        venue: "paper",
+      }),
     });
     if (placement.receipt === undefined) {
       throw new Error(`expected a placed order, got ${placement.refusalReasons.join(",")}`);

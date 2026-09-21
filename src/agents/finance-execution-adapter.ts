@@ -175,6 +175,8 @@ export type FinanceExecutionAdapter = Readonly<{
 export type FinanceExecutionReceipt = Readonly<{
   schemaVersion: typeof FINANCE_EXECUTION_RECEIPT_SCHEMA;
   receiptId: string;
+  /** Absent only on legacy receipts; never infer account membership from venue alone. */
+  accountId?: string;
   intentId: string;
   runAuthorizationId: string;
   adapterId: string;
@@ -413,6 +415,55 @@ function collectRefusalReasons(request: FinanceOrderPlacementRequest): string[] 
   return reasons;
 }
 
+/** One deterministic constructor for normal completion and durable confirmed-claim recovery. */
+export function buildFinanceExecutionReceipt(params: {
+  intent: FinanceExecutionIntent;
+  adapter: Pick<FinanceExecutionAdapter, "id" | "venue" | "kind">;
+  fill: FinanceExecutionFill;
+  recordedAt: string;
+  accountId?: string;
+}): FinanceExecutionReceipt {
+  const { intent, adapter, fill, recordedAt: recordedAtInput, accountId } = params;
+  const notional = intent.referencePrice * intent.quantity;
+  const recordedAt = recordedAtInput;
+  const receiptId = `exec-${createHash("sha256")
+    .update(
+      adapter.kind === "venue" && fill.terminalOrderIdentity?.terminal === true
+        ? JSON.stringify([adapter.id, adapter.venue, fill.terminalOrderIdentity.orderId])
+        : [
+            intent.intentId,
+            intent.instrument,
+            intent.side,
+            String(intent.quantity),
+            recordedAt,
+          ].join("|"),
+    )
+    .digest("hex")
+    .slice(0, 24)}`;
+
+  return Object.freeze({
+    schemaVersion: FINANCE_EXECUTION_RECEIPT_SCHEMA,
+    receiptId,
+    ...(accountId === undefined ? {} : { accountId }),
+    intentId: intent.intentId,
+    runAuthorizationId: intent.runAuthorizationId,
+    adapterId: adapter.id,
+    adapterKind: adapter.kind,
+    venue: adapter.venue,
+    instrument: normalizeInstrument(intent.instrument),
+    side: intent.side,
+    orderType: intent.orderType,
+    quantity: intent.quantity,
+    ...(intent.limitPrice === undefined ? {} : { limitPrice: intent.limitPrice }),
+    referencePrice: intent.referencePrice,
+    referencePriceAt: intent.referencePriceAt,
+    notional,
+    fill,
+    executionAuthority: "declared_execution_adapter_required",
+    recordedAt,
+  });
+}
+
 /**
  * Place one order through a declared adapter, or refuse with named reasons.
  *
@@ -464,6 +515,9 @@ export async function placeFinanceOrder(
     venue: adapter.venue,
     adapterKind: adapter.kind,
     signal: request.signal,
+    recordedAt: request.recordedAt,
+    buildReceipt: (fill, recordedAt, accountId) =>
+      buildFinanceExecutionReceipt({ intent, adapter, fill, recordedAt, accountId }),
     execute: (signal) => adapter.execute(intent, signal),
   });
   if (!safety.ok) {
@@ -472,47 +526,10 @@ export async function placeFinanceOrder(
       refusalReasons: Object.freeze(safety.reasons),
     });
   }
-  const fill = safety.fill;
-  const notional = intent.referencePrice * intent.quantity;
-  const recordedAt = request.recordedAt ?? new Date().toISOString();
-  const receiptId = `exec-${createHash("sha256")
-    .update(
-      adapter.kind === "venue" && fill.terminalOrderIdentity?.terminal === true
-        ? JSON.stringify([adapter.id, adapter.venue, fill.terminalOrderIdentity.orderId])
-        : [
-            intent.intentId,
-            intent.instrument,
-            intent.side,
-            String(intent.quantity),
-            recordedAt,
-          ].join("|"),
-    )
-    .digest("hex")
-    .slice(0, 24)}`;
-
   return Object.freeze({
     status: "placed" as const,
     refusalReasons: Object.freeze([] as const),
-    receipt: Object.freeze({
-      schemaVersion: FINANCE_EXECUTION_RECEIPT_SCHEMA,
-      receiptId,
-      intentId: intent.intentId,
-      runAuthorizationId: intent.runAuthorizationId,
-      adapterId: adapter.id,
-      adapterKind: adapter.kind,
-      venue: adapter.venue,
-      instrument: normalizeInstrument(intent.instrument),
-      side: intent.side,
-      orderType: intent.orderType,
-      quantity: intent.quantity,
-      ...(intent.limitPrice === undefined ? {} : { limitPrice: intent.limitPrice }),
-      referencePrice: intent.referencePrice,
-      referencePriceAt: intent.referencePriceAt,
-      notional,
-      fill,
-      executionAuthority: "declared_execution_adapter_required",
-      recordedAt,
-    }),
+    receipt: safety.receipt,
   });
 }
 
