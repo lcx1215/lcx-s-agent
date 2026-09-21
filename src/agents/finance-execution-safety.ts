@@ -325,11 +325,11 @@ export async function withFinanceExecutionSafety(params: {
       ) {
         return refuse("execution_safety_fresh_account_and_quote_facts_required");
       }
-      const ageOkay = (at: string, maxAge: number) =>
+      const ageOkay = (at: string, maxAge: number, checkedAt = now) =>
         Number.isFinite(Date.parse(at)) &&
         positive(maxAge) &&
-        now >= Date.parse(at) &&
-        now - Date.parse(at) <= maxAge;
+        checkedAt >= Date.parse(at) &&
+        checkedAt - Date.parse(at) <= maxAge;
       const instrumentEvidence = facts.instrumentEvidence;
       if (
         facts.accountId !== binding.accountId ||
@@ -469,6 +469,16 @@ export async function withFinanceExecutionSafety(params: {
         const fill = await bounded(
           Promise.resolve().then(() => {
             signal.throwIfAborted();
+            const dispatchAt = Date.now();
+            if (
+              !fresh(facts.observedAt, facts.expiresAt, dispatchAt) ||
+              !fresh(facts.quote.observedAt, facts.quote.expiresAt, dispatchAt) ||
+              !ageOkay(facts.observedAt, policy.maxAccountAgeMs, dispatchAt) ||
+              !ageOkay(facts.quote.observedAt, policy.maxQuoteAgeMs, dispatchAt) ||
+              !ageOkay(instrumentEvidence.observedAt, policy.maxInstrumentEvidenceAgeMs, dispatchAt)
+            ) {
+              throw new Error("execution safety facts expired before dispatch");
+            }
             return params.execute(signal);
           }),
           signal,

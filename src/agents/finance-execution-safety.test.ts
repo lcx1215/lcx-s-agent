@@ -442,3 +442,65 @@ it("bounds an uncooperative facts reader and forwards cancellation", async () =>
   expect((await pending).status).toBe("refused");
   expect(observed?.aborted).toBe(true);
 });
+
+it.each(["account-expiry", "quote-expiry", "account-age", "quote-age", "instrument-age"])(
+  "does not dispatch when %s elapses during durable reservation sync",
+  async (kind) => {
+    const f = await fixture();
+    const initial = Date.now();
+    const facts = structuredClone(f.facts);
+    const policy = { ...f.input.policy };
+    if (kind === "account-expiry") {
+      facts.expiresAt = new Date(initial + 1000).toISOString();
+    }
+    if (kind === "quote-expiry") {
+      facts.quote.expiresAt = new Date(initial + 1000).toISOString();
+    }
+    if (kind === "account-age") {
+      policy.maxAccountAgeMs = 1000;
+    }
+    if (kind === "quote-age") {
+      policy.maxQuoteAgeMs = 1000;
+    }
+    if (kind === "instrument-age") {
+      policy.maxInstrumentEvidenceAgeMs = 1000;
+    }
+    const execute = vi.fn(f.adapter.execute);
+    const open = fs.open.bind(fs);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(initial);
+    const openSpy = vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+      const handle = await open(...args);
+      if (args[1] === "a") {
+        const sync = handle.sync.bind(handle);
+        vi.spyOn(handle, "sync").mockImplementation(async () => {
+          await sync();
+          clock.mockReturnValue(initial + 2000);
+        });
+      }
+      return handle;
+    });
+    try {
+      await expect(
+        placeFinanceOrder({
+          ...f.request,
+          adapters: [{ ...f.adapter, execute }],
+          safetyContext: createFinanceExecutionSafetyContext({
+            ...f.input,
+            policy,
+            readFacts: async () => facts,
+          }),
+        }),
+      ).rejects.toBeInstanceOf(FinanceExecutionSafetyUncertainError);
+      expect(execute).not.toHaveBeenCalled();
+      const journal = (await fs.readdir(f.input.stateDir)).find((name) => name.endsWith(".jsonl"))!;
+      const entries = (await fs.readFile(path.join(f.input.stateDir, journal), "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { status: string });
+      expect(entries.map((entry) => entry.status)).toEqual(["reserved", "unknown"]);
+    } finally {
+      openSpy.mockRestore();
+      clock.mockRestore();
+    }
+  },
+);
