@@ -70,8 +70,10 @@ Swabble/build/
 apps/macos/.build/
 apps/shared/
 
-# Generated protocol schema (produced via pnpm protocol:gen)
-dist/protocol.schema.json
+# Generated protocol schema (produced via pnpm protocol:gen). Tracked so that
+# `pnpm protocol:check` (gen + git diff) actually detects drift instead of the
+# gitignore making the diff constant-zero.
+!dist/protocol.schema.json
 .ant-colony/
 
 # Local runtime state written by operator scripts and runners (branches/_system)

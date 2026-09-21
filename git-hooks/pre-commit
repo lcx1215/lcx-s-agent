@@ -46,4 +46,15 @@ if [ "${#format_files[@]}" -gt 0 ]; then
   "$RUN_NODE_TOOL" oxfmt --write -- "${format_files[@]}"
 fi
 
-git add -- "${files[@]}"
+# Re-stage only the files the tools above could have rewritten. The original
+# `git add -- "${files[@]}"` broke on force-tracked paths (e.g. the protocol
+# schema, which sits under a gitignored `dist/` directory): `git add` refuses
+# ignored paths even when they are already staged, so any staged-on-purpose
+# ignored file failed the commit. Deletions and unchanged staged files need no
+# re-add.
+if [ "${#lint_files[@]}" -gt 0 ]; then
+  git add -- "${lint_files[@]}"
+fi
+if [ "${#format_files[@]}" -gt 0 ]; then
+  git add -- "${format_files[@]}"
+fi

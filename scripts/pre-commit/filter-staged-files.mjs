@@ -21,7 +21,7 @@ if (mode !== "lint" && mode !== "format") {
 }
 
 const lintExts = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
-const formatExts = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json", ".md", ".mdx"]);
+const formatExts = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".md", ".mdx"]);
 const isVendored = (filePath) => filePath === "vendor" || filePath.startsWith("vendor/");
 
 const shouldSelect = (filePath) => {
