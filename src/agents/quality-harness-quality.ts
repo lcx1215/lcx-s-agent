@@ -82,6 +82,19 @@ function validateGrounding(
  */
 const FINANCE_REQUEST_PATTERN =
   /股票|股价|投资|金融|市场|组合|持仓|ETF|基金|期权|收益|估值|财报|半导体|汇率|外汇|美元|人民币|日元|欧元|英镑|黄金|白银|原油|大宗商品|债券|国债|利率|期货|股指|标普|纳指|恒生|港股|美股|A股|降息|加息|通胀|指数|沪指|深指|上证|深证|创业板|科创板|北证|沪深|中证|国企指数|日经|富时|道琼斯|纳斯达克|转债|可转债|债基|货基|货币基金|QDII|LOF|FOF|比特币|以太坊|加密货币|数字资产|虚拟货币|贵金属|铜价|伦铜|沪铜|认沽|认购|行权|虚值|实值|看涨|看跌|(?:stock|equity|portfolio|finance|market|invest|etf|fund|option|yield|valuation|earnings)|\b(?:bonds?|treasur(?:y|ies)|forex|currenc(?:y|ies)|commodit(?:y|ies)|futures|nasdaq|inflation|oil|gold|indices|index\s+funds?|mutual\s+funds?|convertible\s+bonds?|reits?|bitcoin|ethereum|crypto(?:currency)?|call\s+options?|put\s+options?|strike\s+price|derivatives?|precious\s+metals?|silver)\b/iu;
+/**
+ * One of the two triggers for the numeric-grounding check below.
+ *
+ * Word lists are how this gate has always decided *whether to look*, and that is the gate's weakest
+ * joint: a miss here is silent -- the answer is certified clean with nothing having been examined.
+ * Measured: `NVDA 报 480 美元。` carries a price, enters the finance branch (美元 is in
+ * `FINANCE_REQUEST_PATTERN`) and then skips grounding entirely, because no word in this list appears
+ * in it. `NVDA 当前报 480 美元。` and `NVDA 报 480 美元，价格偏高。` are both caught -- one word apart.
+ *
+ * So money is a trigger of its own, derived from the unit the number already carries (see
+ * `isMonetaryAmount`) rather than from any word here. This list is left as it is: widening it moves
+ * the hole one word along without closing it.
+ */
 const CURRENT_DATA_PATTERN =
   /当前|最新|今天|今日|现在|截至|实时|股价|价格|市值|收益率|行情|current|latest|today|now|as of|price|market cap|yield/iu;
 /**
@@ -185,6 +198,27 @@ function normalizedNumber(value: string): string {
               ? "cny"
               : "unitless";
   return `${number}|${unit}`;
+}
+
+/**
+ * Whether a value in an answer is money, as opposed to a bare count or a percentage.
+ *
+ * The unit comes from `normalizedNumber`, which is already the single place that decides what unit a
+ * value carries -- so there is no second currency list here to drift out of step with it.
+ *
+ * Percentages are deliberately not money for this purpose. A percentage in a finance answer is as
+ * often a rule or a historical statistic as a quote, and demanding a citation for it was measured:
+ * "风险提示：单票仓位超过账户 20% 就属于过度集中", "配置比例的历史均值是 60%" are the sentences the
+ * risk-triage answer this project asks for is built out of. Money has no such ordinary non-quote
+ * use -- nothing states an amount in 美元 that is not a claim about a price.
+ *
+ * Known residual holes, recorded rather than papered over: a bare number with no unit at all
+ * ("NVDA 收在 480。"), and a currency word the extractor does not carry as a unit (480 港元,
+ * 480 dollars) -- both still need one of the words in `CURRENT_DATA_PATTERN` to be caught.
+ */
+function isMonetaryAmount(value: string): boolean {
+  const unit = normalizedNumber(value).split("|")[1];
+  return unit !== undefined && unit !== "unitless" && unit !== "percent";
 }
 
 /**
@@ -341,7 +375,12 @@ function validateFinanceAnswerSafety(
     problems.push("final finance answer contains an execution claim");
   }
 
-  if (CURRENT_DATA_PATTERN.test(request.task) || CURRENT_DATA_PATTERN.test(artifact.answer)) {
+  const answerStatesMoney = extractDataNumbers(artifact.answer).some(isMonetaryAmount);
+  if (
+    CURRENT_DATA_PATTERN.test(request.task) ||
+    CURRENT_DATA_PATTERN.test(artifact.answer) ||
+    answerStatesMoney
+  ) {
     // A number the user supplied is not a claim about current data, so it needs no citation.
     // Measured: with the task "我自己亏了 20%，请根据最新证据判断 NVDA 当前股价和投资风险。", the
     // harness demanded evidence for the answer's "20%" -- the user's own loss -- and reported

@@ -404,6 +404,71 @@ describe("the harness distinguishes a position rule from a position instruction"
 });
 
 /**
+ * Whether the numeric-grounding check runs at all.
+ *
+ * It used to be gated on a word list (`CURRENT_DATA_PATTERN`), so an answer that states a price
+ * without also saying 当前 / 最新 / 价格 / 行情 was certified clean without the numbers ever being
+ * looked at -- while entering the finance branch in the first place, because 美元 is in
+ * `FINANCE_REQUEST_PATTERN`. Measured: "NVDA 报 480 美元。" skipped grounding entirely; adding one
+ * word -- "NVDA 当前报 480 美元。" -- made the identical number get caught.
+ *
+ * The task below is finance (估值 / 持仓) but carries no current-data word, so it isolates the
+ * trigger: before the fix every case in the first group passed.
+ */
+describe("a price still has to be cited when no current-data word appears", () => {
+  const quietTask = "请评估 NVDA 的估值与持仓风险。";
+
+  const prices = [
+    "NVDA 报 480 美元。",
+    "NVDA 的报价是 480 元。",
+    "NVDA 的报价是 480 日元。",
+    "NVDA trades at $480.",
+    "NVDA trades at 480 USD.",
+  ];
+
+  for (const answer of prices) {
+    it(`flags the uncited price in "${answer}"`, async () => {
+      expect(await safetyReasonFor(quietTask, answer)).toContain(
+        "current-data numbers without matching cited evidence",
+      );
+    });
+  }
+
+  /**
+   * The control: the widened trigger must not merely fail everything it now looks at. The same
+   * price, backed by a supported claim whose evidence carries the number, a source and a timestamp,
+   * is still clean.
+   */
+  it("still passes the same price when it is cited", async () => {
+    expect(
+      await safetyReasonWithEvidence(
+        "截至 2026-09-06，公开行情材料记录 NVDA 的价格为 480 美元。",
+        quietTask,
+        "NVDA 报 480 美元。",
+        "NVDA 报 480 美元。",
+      ),
+    ).toBe("");
+  });
+
+  /**
+   * The over-trigger guard. Turning the check on for *every* number would demand a citation for the
+   * sentences this project's risk-triage answer is built out of, so only money trips it: a bare
+   * count and a percentage without a current-data word are still left alone.
+   */
+  const notQuotes = [
+    "这个结论分 3 步说明，先做估值再看风险。",
+    "配置比例的历史均值是 60%，但这是统计描述不是建议。",
+    "风险提示：单票仓位超过账户 20% 就属于过度集中，需要先降风险预算。",
+  ];
+
+  for (const answer of notQuotes) {
+    it(`does not demand a citation for "${answer}"`, async () => {
+      expect(await safetyReasonFor(quietTask, answer)).toBe("");
+    });
+  }
+});
+
+/**
  * A number the reader supplied is not the answer inventing current data. Measured: with the task
  * "我自己亏了 20%，请根据最新证据判断 NVDA 当前股价和投资风险。", the answer's "20%" -- the user's own
  * loss -- was reported as "current-data numbers without matching cited evidence: 20%".
