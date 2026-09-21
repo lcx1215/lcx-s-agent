@@ -326,6 +326,9 @@ function summarizeJson(name: string, payload: Record<string, unknown>): Record<s
   if (name === "local-brain-dataset") {
     return {
       ok: payload.ok,
+      mode: payload.mode,
+      storedSnapshot: payload.storedSnapshot,
+      reason: payload.reason,
       counts: payload.counts,
       sourceKinds: payload.sourceKinds,
       notTouched: payload.notTouched,
@@ -1187,7 +1190,13 @@ checks.push(
   await runCommand({
     name: "local-brain-dataset",
     command: process.execPath,
-    args: ["--import", "tsx", "scripts/operator/local-brain-distill-dataset.ts", "--json"],
+    args: [
+      "--import",
+      "tsx",
+      "scripts/operator/local-brain-distill-dataset.ts",
+      "--inspect",
+      "--json",
+    ],
     parseJson: true,
   }),
 );

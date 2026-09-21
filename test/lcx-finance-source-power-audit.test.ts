@@ -15,10 +15,14 @@
  *      have a value, when a higher layer shadows rather than defers.
  */
 
-import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   auditKey,
   keysReadByCode,
+  layersFromDisk,
   parseConfigEnvVars,
   parseDotenv,
   type Layer,
@@ -184,5 +188,68 @@ describe("the watched list is kept in step with the code", () => {
 
   it("does not mistake an unrelated word for a credential", () => {
     expect(keysReadByCode("const x = env.HOME;").size).toBe(0);
+  });
+});
+
+describe("dedicated finance credential store", () => {
+  const roots: string[] = [];
+  afterEach(() => {
+    for (const root of roots.splice(0)) {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  function fixture() {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "source-power-"));
+    roots.push(root);
+    const state = path.join(root, "finance");
+    fs.mkdirSync(state);
+    fs.writeFileSync(
+      path.join(state, "credentials.env"),
+      'export FRED_API_KEY="fixture-value" # note\n',
+    );
+    return { root, state, env: { HOME: root, LCX_USER_HOME: root, LCX_FINANCE_STATE_DIR: state } };
+  }
+
+  it("uses the runtime parser and reports provenance without exposing values", () => {
+    const { root, env } = fixture();
+    const status = auditKey("FRED_API_KEY", layersFromDisk(env, root).layers);
+    expect(status.powered).toBe(true);
+    expect(status.from).toBe("finance credentials.env (env)");
+    expect(JSON.stringify(status)).not.toContain("fixture-value");
+  });
+
+  it("preserves explicit process and file overrides including empty disabling values", () => {
+    const { root, env } = fixture();
+    expect(
+      auditKey("FRED_API_KEY", layersFromDisk({ ...env, FRED_API_KEY: "" }, root).layers),
+    ).toMatchObject({ powered: false, declaredEmpty: ["process"] });
+    expect(
+      auditKey("FRED_API_KEY", layersFromDisk({ ...env, FRED_API_KEY: "override" }, root).layers),
+    ).toMatchObject({ powered: true, from: "process" });
+    fs.writeFileSync(path.join(root, ".env"), "FRED_API_KEY=\n");
+    expect(auditKey("FRED_API_KEY", layersFromDisk(env, root).layers)).toMatchObject({
+      powered: false,
+      declaredEmpty: ["./.env"],
+    });
+  });
+
+  it("resolves a finance directory declared by a loaded environment layer", () => {
+    const { root, state } = fixture();
+    fs.writeFileSync(path.join(root, ".env"), `LCX_FINANCE_STATE_DIR=${state}\n`);
+    expect(
+      auditKey("FRED_API_KEY", layersFromDisk({ HOME: root, LCX_USER_HOME: root }, root).layers)
+        .powered,
+    ).toBe(true);
+  });
+
+  it("handles an absent store without creating one, and fails on an unreadable store", () => {
+    const { root, state, env } = fixture();
+    const file = path.join(state, "credentials.env");
+    fs.unlinkSync(file);
+    expect(auditKey("FRED_API_KEY", layersFromDisk(env, root).layers).powered).toBe(false);
+    expect(fs.existsSync(file)).toBe(false);
+    fs.mkdirSync(file);
+    expect(() => layersFromDisk(env, root)).toThrow("finance credential store unreadable");
   });
 });

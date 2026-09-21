@@ -26,6 +26,7 @@ type CliOptions = {
   outDir: string;
   maxFiles: number;
   json: boolean;
+  inspect: boolean;
   // Number of infinite-stream generated cases to mix into the TRAIN pool only.
   // 0 (default) keeps the historical receipt-only dataset unchanged.
   mixGenerated: number;
@@ -81,9 +82,10 @@ const SOURCE_KIND_TRUST_TIERS: Record<string, string> = {
 function usage(): never {
   throw new Error(
     [
-      "Usage: node --import tsx scripts/operator/local-brain-distill-dataset.ts [--workspace DIR] [--out DIR] [--max-files N] [--mix-generated N] [--generated-seed N] [--generated-holdout-fraction F] [--include-blind] [--json]",
+      "Usage: node --import tsx scripts/operator/local-brain-distill-dataset.ts [--workspace DIR] [--out DIR] [--max-files N] [--mix-generated N] [--generated-seed N] [--generated-holdout-fraction F] [--include-blind] [--inspect] [--json]",
       "",
       "Builds MLX-LM prompt/completion JSONL for a local auxiliary thought-flow model.",
+      "--inspect reads the existing manifest and split presence without generating or writing data.",
       "",
       "--include-blind mirrors each assisted sample with a blind-format twin (bare user/task, no case hints) so a retrained adapter can pass the guard's strict --hardened --blind promotion gate.",
     ].join("\n"),
@@ -112,6 +114,7 @@ function parseArgs(args: string[]): CliOptions {
     outDir: DEFAULT_OUT_DIR,
     maxFiles: 250,
     json: false,
+    inspect: false,
     mixGenerated: 0,
     generatedSeed: 1,
     generatedHoldoutFraction: 0.2,
@@ -119,7 +122,9 @@ function parseArgs(args: string[]): CliOptions {
   };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
-    if (arg === "--workspace") {
+    if (arg === "--inspect") {
+      options.inspect = true;
+    } else if (arg === "--workspace") {
       options.workspaceDir = readValue(args, index);
       index += 1;
     } else if (arg === "--out") {
@@ -2645,6 +2650,42 @@ async function writeJsonl(filePath: string, examples: DistillExample[]): Promise
 
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
+  if (options.inspect) {
+    let summary: Record<string, unknown>;
+    try {
+      const manifest: unknown = JSON.parse(
+        await fs.readFile(path.join(options.outDir, "manifest.json"), "utf8"),
+      );
+      if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
+        throw new Error("invalid dataset manifest");
+      }
+      const stored = manifest as Record<string, unknown>;
+      for (const split of ["train", "valid", "test"]) {
+        const stat = await fs.stat(path.join(options.outDir, `${split}.jsonl`));
+        if (!stat.isFile()) {
+          throw new Error("dataset split is not a file");
+        }
+      }
+      summary = {
+        ok: stored.ok === true,
+        mode: "inspect",
+        storedSnapshot: true,
+        counts: stored.counts,
+        sourceKinds: stored.sourceKinds,
+        outDir: options.outDir,
+      };
+    } catch {
+      summary = {
+        ok: false,
+        mode: "inspect",
+        reason: "dataset_missing_or_unreadable",
+        outDir: options.outDir,
+      };
+    }
+    process.stdout.write(`${JSON.stringify(summary, null, options.json ? 2 : undefined)}\n`);
+    process.exitCode = summary.ok ? 0 : 1;
+    return;
+  }
   const memoryDir = path.join(options.workspaceDir, "memory");
   const roots = [
     path.join(memoryDir, "external-message-handoff-receipts"),
