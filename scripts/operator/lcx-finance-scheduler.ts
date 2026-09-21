@@ -340,7 +340,7 @@ function status(): void {
  * detached loop that is not told `alpaca` will happily run unattended against a book no venue
  * has ever seen. The venue is a decision, and a resident process must inherit it explicitly.
  */
-function forwardedArgs(argv: readonly string[]): string[] {
+export function forwardedArgs(argv: readonly string[]): string[] {
   const forwarded: string[] = [];
   if (argv.includes("--place")) {
     forwarded.push("--place");
@@ -358,7 +358,13 @@ function forwardedArgs(argv: readonly string[]): string[] {
   }
   // The caps are part of the authorisation, not tuning knobs: an unattended run has to name
   // every ceiling, so they are forwarded rather than left to the cycle's defaults.
-  for (const flag of ["--max-order-notional", "--max-instrument-notional", "--max-orders"]) {
+  for (const flag of [
+    "--max-order-notional",
+    "--max-instrument-notional",
+    "--max-orders",
+    "--execution-quote-feed",
+    "--execution-max-age-ms",
+  ]) {
     const index = argv.indexOf(flag);
     if (index >= 0) {
       forwarded.push(flag, String(argv[index + 1]));

@@ -17,6 +17,10 @@
  *     [--mode day|night] [--dir PATH] [--as-of ISO] [--equity N] [--band N] [--place]
  */
 
+import {
+  createAlpacaExecutionQuoteProvider,
+  type AlpacaExecutionQuoteFeed,
+} from "../../src/agents/finance-alpaca-execution-quote.js";
 import { fetchAlpacaAccountSnapshot } from "../../src/agents/finance-alpaca-run.js";
 import { runFinanceDailyCycle } from "../../src/agents/finance-daily-cycle.js";
 import { readFinanceLinkHealth } from "../../src/agents/finance-link-health.js";
@@ -137,12 +141,14 @@ type Options = Readonly<{
   maxOrderNotional: number;
   maxInstrumentNotional: number;
   maxOrdersPerRun: number;
+  executionQuoteFeed?: AlpacaExecutionQuoteFeed;
+  executionMaxAgeMs?: number;
 }>;
 
 const USAGE =
   "Usage: node --import tsx scripts/operator/lcx-finance-daily-cycle.ts [--json] " +
   "[--mode day|night] [--dir PATH] [--as-of ISO] [--equity N] [--band N] [--place] " +
-  "[--venue paper|alpaca] [--equity-from-venue] " +
+  "[--venue paper|alpaca] [--equity-from-venue] [--execution-quote-feed iex|sip] [--execution-max-age-ms N] " +
   "[--max-order-notional N] [--max-instrument-notional N] [--max-orders N]";
 
 function positiveNumber(raw: string | undefined, flag: string): number {
@@ -168,6 +174,8 @@ function parseArgs(argv: readonly string[]): Options {
     maxOrderNotional: 10_000,
     maxInstrumentNotional: 20_000,
     maxOrdersPerRun: 8,
+    executionQuoteFeed: undefined as AlpacaExecutionQuoteFeed | undefined,
+    executionMaxAgeMs: undefined as number | undefined,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -210,6 +218,15 @@ function parseArgs(argv: readonly string[]): Options {
       index += 1;
     } else if (arg === "--equity-from-venue") {
       options.equityFromVenue = true;
+    } else if (arg === "--execution-quote-feed") {
+      if (next !== "iex" && next !== "sip") {
+        throw new Error("--execution-quote-feed must be iex or sip; no delayed/fallback feed");
+      }
+      options.executionQuoteFeed = next;
+      index += 1;
+    } else if (arg === "--execution-max-age-ms") {
+      options.executionMaxAgeMs = positiveNumber(next, "--execution-max-age-ms");
+      index += 1;
     } else if (arg === "--max-order-notional") {
       options.maxOrderNotional = positiveNumber(next, "--max-order-notional");
       index += 1;
@@ -240,9 +257,24 @@ async function activeInstruments(directory: string): Promise<{
 
 export async function runFinanceDailyCycleOperator(
   argv: readonly string[] = process.argv.slice(2),
+  deps: { createExecutionQuoteProvider?: typeof createAlpacaExecutionQuoteProvider } = {},
 ): Promise<Record<string, unknown>> {
   const options = parseArgs(argv);
   const directory = options.directory ?? resolveFinanceStateDir().directory;
+  if (
+    options.mode === "day" &&
+    options.place &&
+    options.venue === "alpaca" &&
+    (!options.executionQuoteFeed || options.executionMaxAgeMs === undefined)
+  ) {
+    return {
+      directory,
+      mode: options.mode,
+      asOf: options.asOf,
+      ok: false,
+      error: "Alpaca placement requires --execution-quote-feed and --execution-max-age-ms",
+    };
+  }
   let equity = options.equity;
   let equitySource: "flag" | "default" | "venue" | "venue-failed" = argv.includes("--equity")
     ? "flag"
@@ -353,6 +385,16 @@ export async function runFinanceDailyCycleOperator(
         rebalanceBand: options.band,
         place: options.place,
         venue: options.venue,
+        ...(options.place &&
+        options.venue === "alpaca" &&
+        options.executionQuoteFeed &&
+        options.executionMaxAgeMs !== undefined
+          ? {
+              executionQuoteProvider: (
+                deps.createExecutionQuoteProvider ?? createAlpacaExecutionQuoteProvider
+              )({ feed: options.executionQuoteFeed, maxAgeMs: options.executionMaxAgeMs }),
+            }
+          : {}),
         directory,
       });
       const payload = {

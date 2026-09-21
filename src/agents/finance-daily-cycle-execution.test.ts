@@ -119,6 +119,55 @@ describe("daily cycle execution data boundary", () => {
     expect(report.ok).toBe(false);
     expect(report.dataIssues.join()).toContain("stopped remaining orders");
   });
+  it("validates lazy quotes against current control clock, not historical strategy asOf", async () => {
+    const now = Date.parse(asOf) + 600000;
+    const executionQuoteProvider = vi.fn(async () => ({
+      ...quotes().get("AAPL")!,
+      referencePriceAt: new Date(now).toISOString(),
+      bidPrice: 249,
+      askPrice: 251,
+    }));
+    await runFinanceDailyCycle({ ...params, executionNow: () => now, executionQuoteProvider });
+    expect(executionQuoteProvider).toHaveBeenCalledTimes(2);
+    expect(mocks.order).toHaveBeenCalledWith(
+      expect.objectContaining({
+        market: { referencePrice: 251, referencePriceAt: new Date(now).toISOString() },
+      }),
+    );
+  });
+  it("rejects a quote that ages during collection", async () => {
+    const executionQuoteProvider = vi.fn(async () => ({
+      ...quotes().get("AAPL")!,
+      bidPrice: 249,
+      askPrice: 251,
+    }));
+    const report = await runFinanceDailyCycle({
+      ...params,
+      executionNow: () => Date.parse(asOf) + 5000,
+      executionQuoteProvider,
+    });
+    expect(report.refusals.join()).toContain("stale");
+    expect(mocks.order).not.toHaveBeenCalled();
+  });
+  it("bounds a provider that never settles without placing an order", async () => {
+    vi.useFakeTimers();
+    try {
+      const executionQuoteProvider = vi.fn(
+        () => new Promise<FinanceDailyCycleExecutionQuote>(() => {}),
+      );
+      const run = runFinanceDailyCycle({
+        ...params,
+        instruments: ["AAPL"],
+        executionQuoteProvider,
+      });
+      await vi.runAllTimersAsync();
+      const report = await run;
+      expect(report.refusals.join()).toContain("timeout");
+      expect(mocks.order).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it("keeps local paper simulation usable without an execution feed", async () => {
     await runFinanceDailyCycle({ ...params, venue: "paper" });
     expect(mocks.paper).toHaveBeenCalledTimes(2);

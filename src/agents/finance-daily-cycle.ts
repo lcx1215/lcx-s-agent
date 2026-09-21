@@ -24,6 +24,7 @@
  * those measures permanently unavailable for rules nobody backfilled by hand.
  */
 
+import { withTimeout } from "../utils/with-timeout.js";
 import { isAlpacaOrderUncertain } from "./finance-alpaca-execution-adapter.js";
 import {
   fetchAlpacaVenueState,
@@ -68,10 +69,20 @@ export type FinanceDailyCycleCaps = Readonly<{
 export type FinanceDailyCycleExecutionQuote = Readonly<
   Pick<FinanceExecutionIntent, "referencePrice" | "referencePriceAt"> & {
     sourceUrlOrArtifact: string;
+    bidPrice?: number;
+    askPrice?: number;
+    feed?: string;
+    /** Risk reference only; neither bid nor ask guarantees an eventual market fill. */
+    priceBasis?: "bid" | "ask" | "reference";
     /** Maximum age authorized by the caller for this quote, not a universal market policy. */
     maxAgeMs: number;
   }
 >;
+
+export type FinanceDailyCycleExecutionQuoteProvider = (
+  request: { instrument: string; assetClass: string; side: "buy" | "sell" },
+  signal: AbortSignal,
+) => Promise<FinanceDailyCycleExecutionQuote>;
 
 export function executionQuoteIssue(
   quote: FinanceDailyCycleExecutionQuote | undefined,
@@ -79,6 +90,18 @@ export function executionQuoteIssue(
 ): string | null {
   if (!quote) {
     return "no execution quote; research EOD bars cannot authorize venue placement";
+  }
+  if (quote.bidPrice !== undefined || quote.askPrice !== undefined) {
+    if (
+      typeof quote.bidPrice !== "number" ||
+      !Number.isFinite(quote.bidPrice) ||
+      quote.bidPrice <= 0 ||
+      typeof quote.askPrice !== "number" ||
+      !Number.isFinite(quote.askPrice) ||
+      quote.askPrice < quote.bidPrice
+    ) {
+      return "execution quote requires valid noncrossed bid/ask";
+    }
   }
   const timestamp = Date.parse(quote.referencePriceAt);
   if (
@@ -122,6 +145,9 @@ export type FinanceDailyCycleParams = Readonly<{
   slippageBps?: number;
   /** Internal caller seam; no default feed and no promotion of EOD data to an execution quote. */
   executionQuotes?: ReadonlyMap<string, FinanceDailyCycleExecutionQuote>;
+  executionQuoteProvider?: FinanceDailyCycleExecutionQuoteProvider;
+  /** Trusted control-layer clock; never use the strategy's historical asOf for live quote age. */
+  executionNow?: () => number;
 }>;
 
 export type FinanceDailyCycleTarget = Readonly<{
@@ -894,9 +920,34 @@ export async function runFinanceDailyCycle(
         );
         continue;
       }
-      const executionQuote = params.executionQuotes?.get(item.instrument);
+      let executionQuote = params.executionQuotes?.get(item.instrument);
       if (params.venue === "alpaca") {
-        const issue = executionQuoteIssue(executionQuote, Date.now());
+        if (params.executionQuoteProvider) {
+          try {
+            executionQuote = await withTimeout(
+              params.executionQuoteProvider(
+                { instrument: item.instrument, assetClass: "us_equity", side: item.action },
+                AbortSignal.timeout(20_000),
+              ),
+              20_000,
+            );
+            if (executionQuote.bidPrice === undefined || executionQuote.askPrice === undefined) {
+              throw new Error("live execution quote provider must supply bid and ask");
+            }
+            executionQuote = {
+              ...executionQuote,
+              referencePrice:
+                item.action === "buy" ? executionQuote.askPrice : executionQuote.bidPrice,
+              priceBasis: item.action === "buy" ? "ask" : "bid",
+            };
+          } catch (error) {
+            refusals.push(
+              `${item.instrument}: execution quote unavailable (${error instanceof Error ? error.message : String(error)})`,
+            );
+            continue;
+          }
+        }
+        const issue = executionQuoteIssue(executionQuote, (params.executionNow ?? Date.now)());
         if (issue !== null) {
           refusals.push(`${item.instrument}: ${issue}`);
           continue;
@@ -921,7 +972,7 @@ export async function runFinanceDailyCycle(
             `Daily drift rebalance against frozen monthly target (anchor ${signalAnchor}). ` +
             `target=${item.target} current=${item.current} band=${band}.` +
             (params.venue === "alpaca" && executionQuote
-              ? ` Execution quote source: ${executionQuote.sourceUrlOrArtifact}.`
+              ? ` Execution quote source: ${executionQuote.sourceUrlOrArtifact}; feed=${executionQuote.feed ?? "caller-supplied"}; basis=${executionQuote.priceBasis ?? "reference"}; bid=${executionQuote.bidPrice ?? "unknown"}; ask=${executionQuote.askPrice ?? "unknown"}; risk reference, not a guaranteed fill.`
               : ""),
           invalidationCondition: "monthly signal flips to cash, or drift returns inside band",
         },

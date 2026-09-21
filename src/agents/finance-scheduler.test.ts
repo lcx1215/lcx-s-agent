@@ -86,6 +86,15 @@ describe("durable scheduler claims", () => {
         .day,
     ).toBe("2026-09-22");
   });
+  it("forwards explicit quote authorization through cycle and detach", async () => {
+    const { forwardedArgs, detach } =
+      await import("../../scripts/operator/lcx-finance-scheduler.js");
+    const flags = ["--execution-quote-feed", "sip", "--execution-max-age-ms", "1500"];
+    expect(forwardedArgs(flags)).toEqual(flags);
+    mocks.spawn.mockReturnValue({ unref: vi.fn(), pid: 123 });
+    detach(forwardedArgs(flags));
+    expect(mocks.spawn.mock.calls[0][1]).toEqual(expect.arrayContaining(flags));
+  });
   it("carries the resolved book into detached process", async () => {
     mocks.spawn.mockReturnValue({ unref: vi.fn(), pid: 123 });
     (await import("../../scripts/operator/lcx-finance-scheduler.js")).detach(["--place"]);

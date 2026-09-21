@@ -21,7 +21,18 @@ vi.mock("./finance-strategy-rule-ledger.js", () => ({
   })),
 }));
 import { runFinanceDailyCycleOperator } from "../../scripts/operator/lcx-finance-daily-cycle.js";
-const args = ["--json", "--dir", "/synthetic/finance", "--place", "--venue", "alpaca"];
+const args = [
+  "--json",
+  "--dir",
+  "/synthetic/finance",
+  "--place",
+  "--venue",
+  "alpaca",
+  "--execution-quote-feed",
+  "iex",
+  "--execution-max-age-ms",
+  "1000",
+];
 const account = { equity: 2000, status: "ACTIVE", tradingBlocked: false };
 beforeEach(() => {
   vi.clearAllMocks();
@@ -68,6 +79,27 @@ describe("account gate before unattended placement", () => {
     mocks.account.mockResolvedValue({ ok: true, account });
     await runFinanceDailyCycleOperator([...args, "--equity", "500"]);
     expect(mocks.cycle).toHaveBeenCalledWith(expect.objectContaining({ equity: 500 }));
+  });
+  it("blocks missing quote authorization before account or factory access", async () => {
+    const factory = vi.fn();
+    const result = await runFinanceDailyCycleOperator(
+      ["--json", "--dir", "/synthetic/finance", "--place", "--venue", "alpaca"],
+      { createExecutionQuoteProvider: factory },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("--execution-quote-feed");
+    expect(factory).not.toHaveBeenCalled();
+    expect(mocks.account).not.toHaveBeenCalled();
+  });
+  it("injects the explicitly authorized quote factory", async () => {
+    mocks.account.mockResolvedValue({ ok: true, account });
+    const provider = vi.fn();
+    const factory = vi.fn(() => provider);
+    await runFinanceDailyCycleOperator(args, { createExecutionQuoteProvider: factory });
+    expect(factory).toHaveBeenCalledWith({ feed: "iex", maxAgeMs: 1000 });
+    expect(mocks.cycle).toHaveBeenCalledWith(
+      expect.objectContaining({ executionQuoteProvider: provider }),
+    );
   });
   it("keeps research runs independent of account access", async () => {
     await runFinanceDailyCycleOperator(args.filter((arg) => arg !== "--place"));
