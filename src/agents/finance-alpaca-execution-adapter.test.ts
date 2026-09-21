@@ -487,3 +487,23 @@ it.each(["BTC/USD", "ETH/USD"])(
     expect(postJson).not.toHaveBeenCalled();
   },
 );
+
+it.each([null, "", " ", false, undefined, "broken", {}])(
+  "rejects malformed terminal quantity %s as uncertain",
+  async (filled_qty) => {
+    for (const status of ["canceled", "expired", "rejected"]) {
+      const adapter = createAlpacaExecutionAdapter({
+        instruments: ["AAPL"],
+        postJson: transport({
+          id: "bad-fill",
+          status,
+          filled_qty,
+          updated_at: "2026-09-20T00:00:00Z",
+        }).fn,
+      });
+      await expect(
+        adapter.execute(baseIntent, new AbortController().signal),
+      ).rejects.toBeInstanceOf(AlpacaOrderUncertainError);
+    }
+  },
+);

@@ -75,6 +75,9 @@ type AlpacaOrderResponse = {
   symbol?: unknown;
   message?: unknown;
   client_order_id?: unknown;
+  time_in_force?: unknown;
+  order_class?: unknown;
+  legs?: unknown;
   side?: unknown;
   qty?: unknown;
   type?: unknown;
@@ -121,7 +124,10 @@ function terminalFill(
 }
 
 function asFiniteNumber(value: unknown): number | undefined {
-  const parsed = typeof value === "number" ? value : Number(value);
+  if (typeof value !== "number" && (typeof value !== "string" || !value.trim())) {
+    return undefined;
+  }
+  const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
@@ -328,7 +334,14 @@ export function createAlpacaExecutionAdapter(
               found.time_in_force !== timeInForce ||
               (body.order_class === "oto" &&
                 (found.order_class !== "oto" ||
-                  !found.legs?.some((leg) => Number(leg.stop_price) === intent.stopPrice))) ||
+                  !Array.isArray(found.legs) ||
+                  !found.legs.some(
+                    (leg: unknown) =>
+                      typeof leg === "object" &&
+                      leg !== null &&
+                      "stop_price" in leg &&
+                      asFiniteNumber(leg.stop_price) === intent.stopPrice,
+                  ))) ||
               (intent.orderType === "limit" && Number(found.limit_price) !== intent.limitPrice) ||
               typeof found.id !== "string" ||
               !found.id
