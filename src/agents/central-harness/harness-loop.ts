@@ -93,19 +93,39 @@ export async function runCentralHarnessCycle(
   }
 }
 
-/** Stop waiting even if an adapter fails to cooperate; all real children also receive the signal. */
+/** Allow bounded cleanup before recording cancellation; unknown adapters must not imply shutdown. */
 async function observeUntilAborted<T>(signal: AbortSignal, run: () => Promise<T>): Promise<T> {
   signal.throwIfAborted();
   return new Promise<T>((resolve, reject) => {
-    const abort = () => reject(signal.reason ?? new Error("central cycle cancelled"));
+    let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
+    const abort = () => {
+      cleanupTimer = setTimeout(
+        () =>
+          reject(
+            new Error(`${String(signal.reason ?? "central cycle cancelled")}; cleanup_unconfirmed`),
+          ),
+        2_000,
+      );
+    };
     signal.addEventListener("abort", abort, { once: true });
     Promise.resolve()
       .then(() => {
         signal.throwIfAborted();
         return run();
       })
-      .then(resolve, reject)
-      .finally(() => signal.removeEventListener("abort", abort));
+      .then((value) => {
+        if (signal.aborted) {
+          reject(signal.reason);
+        } else {
+          resolve(value);
+        }
+      }, reject)
+      .finally(() => {
+        if (cleanupTimer) {
+          clearTimeout(cleanupTimer);
+        }
+        signal.removeEventListener("abort", abort);
+      });
   });
 }
 

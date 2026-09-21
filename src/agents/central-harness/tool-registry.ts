@@ -1,16 +1,13 @@
-import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { createFinancePositionLedgerReadTool } from "../tools/finance-position-ledger-read-tool.js";
 import { createFinanceResearchRunTool } from "../tools/finance-research-run-tool.js";
 import { createLearningDistillTool } from "../tools/learning-distill-tool.js";
+import { executeOwnedProcess } from "./owned-process.js";
 import type { CentralToolSpec } from "./types.js";
 import { CENTRAL_FORBIDDEN_SIDE_EFFECTS } from "./types.js";
-
-const execFileAsync = promisify(execFile);
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 // src/agents/central-harness/ -> repo root is 3 levels up.
@@ -304,7 +301,7 @@ async function runOwner(
   const cliArgs = [...owner.args];
   void args;
   try {
-    const { stdout } = await execFileAsync(
+    const { stdout } = await executeOwnedProcess(
       process.execPath,
       ["--import", "tsx", owner.script, ...cliArgs],
       {
@@ -327,7 +324,9 @@ async function runOwner(
       ...(ownerReceipt !== undefined ? { receipt: ownerReceipt } : {}),
     };
   } catch (error) {
-    signal.throwIfAborted();
+    if (signal.aborted) {
+      throw error;
+    }
     // A non-zero exit is NOT the same as "could not run". Several governance
     // owners exit 1 exactly when they report a red light, and their stdout is
     // still a complete receipt. Throwing here would discard the single most

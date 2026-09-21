@@ -52,7 +52,7 @@ describe("central cycle cancellation and failure closure", () => {
       deadlineMs: Date.now() + 10,
       settle,
     });
-    await vi.advanceTimersByTimeAsync(10);
+    await vi.advanceTimersByTimeAsync(2_010);
     const receipt = await pending;
     expect(receipt.brainCall.outcome).toBe("failed");
     expect(receipt.nextAction).toBe("halt_and_report");
@@ -68,10 +68,11 @@ describe("central cycle cancellation and failure closure", () => {
       registry: registry(execute),
       deadlineMs: Date.now() + 10,
     });
-    await vi.advanceTimersByTimeAsync(10);
+    await vi.advanceTimersByTimeAsync(2_010);
     const receipt = await pending;
     expect(execute).toHaveBeenCalledTimes(1);
     expect(receipt.steps[0].status).toBe("ran_failed");
+    expect(receipt.steps[0].failureReason).toContain("cleanup_unconfirmed");
     expect(receipt.nextAction).toBe("halt_and_report");
   });
 
