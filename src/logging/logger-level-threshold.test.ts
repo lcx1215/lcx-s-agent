@@ -10,9 +10,16 @@ import type { LogLevel } from "./levels.js";
 // `minLevel`, so a configured level is a floor on severity. The mapping used to
 // be inverted: "trace" suppressed info/debug while "error" let them through,
 // with "info" as the only correct fixed point. These cases pin the direction.
-const FILE_LEVELS: LogLevel[] = ["trace", "debug", "info", "warn", "error", "fatal"];
+/**
+ * Every level except `silent`: silent is a valid thing to *configure* (it drops everything) but
+ * there is no `logger.silent(...)` to call, so no line can be written at it. Indexing the logger
+ * with the full `LogLevel` union fails for exactly this reason.
+ */
+type EmittedLevel = Exclude<LogLevel, "silent">;
 
-function writeOnce(configured: LogLevel, messageLevel: LogLevel): boolean {
+const FILE_LEVELS: EmittedLevel[] = ["trace", "debug", "info", "warn", "error", "fatal"];
+
+function writeOnce(configured: LogLevel, messageLevel: EmittedLevel): boolean {
   const logPath = path.join(os.tmpdir(), `openclaw-log-level-${crypto.randomUUID()}.log`);
   resetLogger();
   setLoggerOverride({ level: configured, file: logPath });

@@ -68,7 +68,10 @@ async function main(): Promise<void> {
   if (!runAuthorizationId) {
     fatal.push("--run-authorization is required");
   }
-  if (fatal.length > 0) {
+  // The `!conclusionFile` clause is redundant at runtime — that case already pushed into `fatal`
+  // — but a check on `fatal.length` does not narrow the argument, so without it the file read
+  // below sees `string | undefined`. Restating it here is what lets the typechecker follow.
+  if (fatal.length > 0 || !conclusionFile) {
     process.stdout.write(`${JSON.stringify({ ok: false, refusals: fatal }, null, 2)}\n`);
     process.exitCode = 1;
     return;
