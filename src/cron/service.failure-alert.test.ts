@@ -204,6 +204,207 @@ describe("CronService failure alerts", () => {
     await store.cleanup();
   });
 
+  // The UI exposes three failure-alert states (inherit / disabled / custom) while the
+  // wire only carries two (`false` / object). "Back to inherit" therefore has no
+  // representable value, and an absent key already means "this patch does not touch
+  // failureAlert". `null` is the sentinel that makes the clear expressible; these two
+  // tests pin both halves of that distinction, so a regression to plain `undefined`
+  // fails here instead of silently keeping the override.
+  it("clears a per-job failureAlert override when the patch sends null", async () => {
+    const store = await makeStorePath();
+    const sendCronFailureAlert = vi.fn(async () => undefined);
+    const runIsolatedAgentJob = vi.fn(async () => ({
+      status: "error" as const,
+      error: "auth error",
+    }));
+
+    const cron = createFailureAlertCron({
+      storePath: store.storePath,
+      cronConfig: {
+        failureAlert: {
+          enabled: true,
+          after: 1,
+        },
+      },
+      runIsolatedAgentJob,
+      sendCronFailureAlert,
+    });
+
+    await cron.start();
+    const job = await cron.add({
+      name: "override then cleared",
+      enabled: true,
+      schedule: { kind: "every", everyMs: 60_000 },
+      sessionTarget: "isolated",
+      wakeMode: "next-heartbeat",
+      payload: { kind: "agentTurn", message: "run report" },
+      delivery: { mode: "announce", channel: "telegram", to: "12345" },
+      failureAlert: false,
+    });
+
+    // The per-job override still suppresses the global config.
+    await cron.run(job.id, "force");
+    expect(sendCronFailureAlert).not.toHaveBeenCalled();
+
+    // `null` removes the override, so the job follows the global config again.
+    await cron.update(job.id, { failureAlert: null });
+    expect(cron.getJob(job.id)?.failureAlert).toBeUndefined();
+
+    await cron.run(job.id, "force");
+    expect(sendCronFailureAlert).toHaveBeenCalledTimes(1);
+    expect(sendCronFailureAlert).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        channel: "telegram",
+        to: "12345",
+      }),
+    );
+
+    cron.stop();
+    await store.cleanup();
+  });
+
+  it("keeps a per-job failureAlert override when the patch omits the key", async () => {
+    const store = await makeStorePath();
+    const sendCronFailureAlert = vi.fn(async () => undefined);
+    const runIsolatedAgentJob = vi.fn(async () => ({
+      status: "error" as const,
+      error: "auth error",
+    }));
+
+    const cron = createFailureAlertCron({
+      storePath: store.storePath,
+      cronConfig: {
+        failureAlert: {
+          enabled: true,
+          after: 1,
+        },
+      },
+      runIsolatedAgentJob,
+      sendCronFailureAlert,
+    });
+
+    await cron.start();
+    const job = await cron.add({
+      name: "override preserved",
+      enabled: true,
+      schedule: { kind: "every", everyMs: 60_000 },
+      sessionTarget: "isolated",
+      wakeMode: "next-heartbeat",
+      payload: { kind: "agentTurn", message: "run report" },
+      delivery: { mode: "announce", channel: "telegram", to: "12345" },
+      failureAlert: false,
+    });
+
+    // No `failureAlert` key in the patch: an unrelated edit must not drop the override.
+    await cron.update(job.id, { enabled: true });
+    expect(cron.getJob(job.id)?.failureAlert).toBe(false);
+
+    await cron.run(job.id, "force");
+    expect(sendCronFailureAlert).not.toHaveBeenCalled();
+
+    cron.stop();
+    await store.cleanup();
+  });
+
+  it("clears individual failureAlert subfields with null so each falls back to the global config", async () => {
+    const store = await makeStorePath();
+    const sendCronFailureAlert = vi.fn(async () => undefined);
+    const runIsolatedAgentJob = vi.fn(async () => ({
+      status: "error" as const,
+      error: "auth error",
+    }));
+
+    const cron = createFailureAlertCron({
+      storePath: store.storePath,
+      cronConfig: {
+        failureAlert: {
+          enabled: true,
+          after: 1,
+          accountId: "global-bot",
+        },
+      },
+      runIsolatedAgentJob,
+      sendCronFailureAlert,
+    });
+
+    await cron.start();
+    const job = await cron.add({
+      name: "subfield override",
+      enabled: true,
+      schedule: { kind: "every", everyMs: 60_000 },
+      sessionTarget: "isolated",
+      wakeMode: "next-heartbeat",
+      payload: { kind: "agentTurn", message: "run report" },
+      delivery: { mode: "announce", channel: "telegram", to: "12345" },
+      failureAlert: { after: 5, accountId: "job-bot" },
+    });
+
+    // `after: 5` overrides the global `after: 1`, so a single failure stays quiet.
+    await cron.run(job.id, "force");
+    expect(sendCronFailureAlert).not.toHaveBeenCalled();
+
+    // `null` drops just these two subfields; the rest of the override is untouched.
+    await cron.update(job.id, { failureAlert: { after: null, accountId: null } });
+    const cleared = cron.getJob(job.id)?.failureAlert;
+    expect(cleared).toBeDefined();
+    expect(cleared).not.toBe(false);
+    expect(typeof cleared === "object" ? cleared.after : undefined).toBeUndefined();
+    expect(typeof cleared === "object" ? cleared.accountId : undefined).toBeUndefined();
+
+    // The dropped subfields now come from the global config, which is observable: the
+    // alert fires on the global `after: 1` and is sent as the global account.
+    await cron.run(job.id, "force");
+    expect(sendCronFailureAlert).toHaveBeenCalledTimes(1);
+    expect(sendCronFailureAlert).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        channel: "telegram",
+        to: "12345",
+        accountId: "global-bot",
+      }),
+    );
+
+    cron.stop();
+    await store.cleanup();
+  });
+
+  it("keeps a failureAlert subfield that the patch does not mention", async () => {
+    const store = await makeStorePath();
+    const sendCronFailureAlert = vi.fn(async () => undefined);
+    const runIsolatedAgentJob = vi.fn(async () => ({
+      status: "error" as const,
+      error: "auth error",
+    }));
+
+    const cron = createFailureAlertCron({
+      storePath: store.storePath,
+      cronConfig: { failureAlert: { enabled: true, after: 1 } },
+      runIsolatedAgentJob,
+      sendCronFailureAlert,
+    });
+
+    await cron.start();
+    const job = await cron.add({
+      name: "subfield kept",
+      enabled: true,
+      schedule: { kind: "every", everyMs: 60_000 },
+      sessionTarget: "isolated",
+      wakeMode: "next-heartbeat",
+      payload: { kind: "agentTurn", message: "run report" },
+      delivery: { mode: "announce", channel: "telegram", to: "12345" },
+      failureAlert: { after: 5, accountId: "job-bot" },
+    });
+
+    // An edit that only touches `accountId` must leave `after` alone -- otherwise every
+    // unrelated save would silently reset the other subfields to the global config.
+    await cron.update(job.id, { failureAlert: { accountId: null } });
+    const merged = cron.getJob(job.id)?.failureAlert;
+    expect(typeof merged === "object" ? merged.after : undefined).toBe(5);
+    expect(typeof merged === "object" ? merged.accountId : undefined).toBeUndefined();
+
+    cron.stop();
+    await store.cleanup();
+  });
+
   it("threads failure alert mode/accountId and skips best-effort jobs", async () => {
     const store = await makeStorePath();
     const sendCronFailureAlert = vi.fn(async () => undefined);

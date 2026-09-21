@@ -31,6 +31,77 @@ describe("cron protocol validators", () => {
     expect(validateCronUpdateParams({ jobId: "job-2", patch: { enabled: true } })).toBe(true);
   });
 
+  it("accepts a null failureAlert in update patches so an override can be cleared", () => {
+    expect(validateCronUpdateParams({ jobId: "job-1", patch: { failureAlert: null } })).toBe(true);
+    expect(validateCronUpdateParams({ jobId: "job-1", patch: { failureAlert: false } })).toBe(true);
+    expect(
+      validateCronUpdateParams({
+        jobId: "job-1",
+        patch: { failureAlert: { after: 2, channel: "telegram" } },
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects a null failureAlert on add, where there is no override to clear", () => {
+    // The add schema is deliberately narrower than the patch schema: a brand new job has
+    // nothing to clear, so `null` stays a patch-only sentinel. Asserting the `false`
+    // branch here as well keeps this from being satisfied by an over-broad widening.
+    expect(validateCronAddParams({ ...minimalAddParams, failureAlert: null })).toBe(false);
+    expect(validateCronAddParams({ ...minimalAddParams, failureAlert: false })).toBe(true);
+  });
+
+  it("accepts a null failureAlert subfield in update patches so one override can be dropped", () => {
+    // Each subfield can be cleared on its own, so a per-job override can fall back to the
+    // global cron `failureAlert` config field by field instead of all at once.
+    for (const subfield of ["after", "channel", "to", "cooldownMs", "mode", "accountId"]) {
+      expect(
+        validateCronUpdateParams({ jobId: "job-1", patch: { failureAlert: { [subfield]: null } } }),
+        `failureAlert.${subfield}: null should be accepted`,
+      ).toBe(true);
+    }
+  });
+
+  it("still enforces the strict subfield types in update patches", () => {
+    // Negative controls for the test above: without these, a schema widened to accept
+    // anything at all would keep it green. `null` is the only added branch, and the
+    // merge layer's own clear values ("", 0, a negative) are deliberately not accepted --
+    // a client must say `null`, not a value that happens to look empty.
+    expect(
+      validateCronUpdateParams({ jobId: "job-1", patch: { failureAlert: { after: 0 } } }),
+    ).toBe(false);
+    expect(
+      validateCronUpdateParams({ jobId: "job-1", patch: { failureAlert: { accountId: "" } } }),
+    ).toBe(false);
+    expect(
+      validateCronUpdateParams({ jobId: "job-1", patch: { failureAlert: { cooldownMs: -1 } } }),
+    ).toBe(false);
+    expect(
+      validateCronUpdateParams({ jobId: "job-1", patch: { failureAlert: { channel: "" } } }),
+    ).toBe(false);
+    expect(
+      validateCronUpdateParams({ jobId: "job-1", patch: { failureAlert: { mode: "email" } } }),
+    ).toBe(false);
+  });
+
+  it("rejects a null failureAlert subfield on add, where there is nothing to drop", () => {
+    for (const subfield of ["after", "channel", "to", "cooldownMs", "mode", "accountId"]) {
+      expect(
+        validateCronAddParams({
+          ...minimalAddParams,
+          failureAlert: { [subfield]: null },
+        }),
+        `failureAlert.${subfield}: null should be rejected on add`,
+      ).toBe(false);
+    }
+    // Same control as above: the real value must still be accepted on add.
+    expect(
+      validateCronAddParams({
+        ...minimalAddParams,
+        failureAlert: { after: 2, accountId: "bot-a" },
+      }),
+    ).toBe(true);
+  });
+
   it("accepts remove params for id and jobId selectors", () => {
     expect(validateCronRemoveParams({ id: "job-1" })).toBe(true);
     expect(validateCronRemoveParams({ jobId: "job-2" })).toBe(true);

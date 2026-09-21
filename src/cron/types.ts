@@ -77,6 +77,23 @@ export type CronFailureAlert = {
   accountId?: string;
 };
 
+/**
+ * Patch shape for a per-job failure alert. Mirrors `CronFailureAlertPatchSchema`: every
+ * subfield may additionally be `null`, which drops that per-job override so the field
+ * falls back to the global cron `failureAlert` config.
+ *
+ * Written out explicitly rather than as a mapped type over {@link CronFailureAlert} so it
+ * stays in lockstep with the wire schema, which widens exactly these six keys.
+ */
+export type CronFailureAlertPatch = {
+  after?: number | null;
+  channel?: CronMessageChannel | null;
+  to?: string | null;
+  cooldownMs?: number | null;
+  mode?: "announce" | "webhook" | null;
+  accountId?: string | null;
+};
+
 export type CronPayload = { kind: "systemEvent"; text: string } | CronAgentTurnPayload;
 
 export type CronPayloadPatch = { kind: "systemEvent"; text?: string } | CronAgentTurnPayloadPatch;
@@ -150,8 +167,28 @@ export type CronJobCreate = Omit<CronJob, "id" | "createdAtMs" | "updatedAtMs" |
   state?: Partial<CronJobState>;
 };
 
-export type CronJobPatch = Partial<Omit<CronJob, "id" | "createdAtMs" | "state" | "payload">> & {
+// `failureAlert` is omitted from the base on purpose: `Partial<Omit<CronJob, ...>>` still
+// carries `failureAlert?: CronFailureAlert | false`, and intersecting that with the
+// widened property below re-narrows `null` away (`A & (A | null)` is `A`). Without the
+// omission the patch type would reject the very value the wire schema accepts.
+export type CronJobPatch = Partial<
+  Omit<CronJob, "id" | "createdAtMs" | "state" | "payload" | "failureAlert">
+> & {
   payload?: CronPayloadPatch;
   delivery?: CronDeliveryPatch;
   state?: Partial<CronJobState>;
+  /**
+   * `null` removes this job's override, so the job follows the global cron
+   * `failureAlert` config again. The other two states are `false` (alerts suppressed
+   * for this job) and an object (per-job override).
+   *
+   * This mirrors the "`null` = explicit clear" convention `normalizeCronJobInput`
+   * already uses for `agentId` and `sessionKey`. It has to exist because `undefined`
+   * cannot express a clear over the wire: `JSON.stringify` drops the key, and an
+   * absent key means "leave this field alone".
+   *
+   * The same rule applies one level down: inside the object, a `null` subfield clears
+   * just that field (see {@link CronFailureAlertPatch}).
+   */
+  failureAlert?: CronFailureAlertPatch | false | null;
 };

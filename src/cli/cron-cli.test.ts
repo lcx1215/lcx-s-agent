@@ -714,4 +714,37 @@ describe("cron cli", () => {
     expect(patch?.patch?.failureAlert?.mode).toBe("webhook");
     expect(patch?.patch?.failureAlert?.accountId).toBe("bot-a");
   });
+
+  it("sends null for explicitly blank failure alert flags so the override is cleared", async () => {
+    callGatewayFromCli.mockClear();
+
+    const program = buildProgram();
+
+    await program.parseAsync(
+      [
+        "cron",
+        "edit",
+        "job-1",
+        "--failure-alert-channel",
+        "",
+        "--failure-alert-to",
+        "",
+        "--failure-alert-account-id",
+        "",
+      ],
+      { from: "user" },
+    );
+
+    const updateCall = callGatewayFromCli.mock.calls.find((call) => call[0] === "cron.update");
+    const patch = updateCall?.[2] as {
+      patch?: { failureAlert?: { channel?: unknown; to?: unknown; accountId?: unknown } };
+    };
+
+    // A flag that is present but blank means "clear this per-job override". `undefined`
+    // would be dropped by `JSON.stringify` on the way to the gateway and read as "leave
+    // the stored value alone", so the clear has to travel as `null`.
+    expect(patch?.patch?.failureAlert?.channel).toBeNull();
+    expect(patch?.patch?.failureAlert?.to).toBeNull();
+    expect(patch?.patch?.failureAlert?.accountId).toBeNull();
+  });
 });

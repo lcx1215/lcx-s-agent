@@ -150,6 +150,32 @@ export const CronFailureAlertSchema = Type.Object(
   { additionalProperties: false },
 );
 
+/**
+ * Patch-only variant of {@link CronFailureAlertSchema}: every subfield also accepts
+ * `null`, meaning "drop this per-job override so the field falls back to the global cron
+ * `failureAlert` config". Same `null` = explicit clear convention as `agentId` /
+ * `sessionKey` and the whole-object `failureAlert: null` above.
+ *
+ * It is a separate schema on purpose. `CronJobSchema` (what gets stored) and
+ * `CronAddParamsSchema` keep the strict types: a new job has no override to clear, so a
+ * `null` subfield there is meaningless and stays rejected. The strict types also stay
+ * meaningful for real values in a patch (`after` is still `minimum: 1`; the merge layer's
+ * own clear values -- `""`, `0`, a negative -- are NOT what a client should send).
+ */
+export const CronFailureAlertPatchSchema = Type.Object(
+  {
+    after: Type.Optional(Type.Union([Type.Integer({ minimum: 1 }), Type.Null()])),
+    channel: Type.Optional(Type.Union([Type.Literal("last"), NonEmptyString, Type.Null()])),
+    to: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+    cooldownMs: Type.Optional(Type.Union([Type.Integer({ minimum: 0 }), Type.Null()])),
+    mode: Type.Optional(
+      Type.Union([Type.Literal("announce"), Type.Literal("webhook"), Type.Null()]),
+    ),
+    accountId: Type.Optional(Type.Union([NonEmptyString, Type.Null()])),
+  },
+  { additionalProperties: false },
+);
+
 export const CronFailureDestinationSchema = Type.Object(
   {
     channel: Type.Optional(Type.Union([Type.Literal("last"), NonEmptyString])),
@@ -289,7 +315,13 @@ export const CronJobPatchSchema = Type.Object(
     wakeMode: Type.Optional(CronWakeModeSchema),
     payload: Type.Optional(CronPayloadPatchSchema),
     delivery: Type.Optional(CronDeliveryPatchSchema),
-    failureAlert: Type.Optional(Type.Union([Type.Literal(false), CronFailureAlertSchema])),
+    // `null` clears the per-job override, so the job follows the global cron
+    // `failureAlert` config again. Same "null = explicit clear" convention as
+    // agentId/sessionKey above. Only the patch schema needs it: a new job has no
+    // override to clear.
+    failureAlert: Type.Optional(
+      Type.Union([Type.Literal(false), Type.Null(), CronFailureAlertPatchSchema]),
+    ),
     state: Type.Optional(Type.Partial(CronJobStateSchema)),
   },
   { additionalProperties: false },

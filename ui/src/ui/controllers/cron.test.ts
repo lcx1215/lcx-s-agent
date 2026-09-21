@@ -1,3 +1,6 @@
+// Must stay the first import: the controller's module graph reaches the i18n layer,
+// which touches `localStorage` at import time. See the shim's own comment.
+import "./test-storage-shim.ts";
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_CRON_FORM } from "../app-defaults.ts";
 import {
@@ -631,7 +634,10 @@ describe("cron controller", () => {
           channel: "telegram",
           to: "123456",
           mode: "announce",
-          accountId: undefined,
+          // The form leaves accountId blank here, and this is an edit, so it goes out as
+          // an explicit clear rather than being dropped. `undefined` would be dropped by
+          // `JSON.stringify` and read by the server as "leave the stored value alone".
+          accountId: null,
         },
       },
     });
@@ -681,7 +687,7 @@ describe("cron controller", () => {
     });
   });
 
-  it("omits failureAlert.cooldownMs when custom cooldown is left blank", async () => {
+  it("clears failureAlert.cooldownMs with null on edit when custom cooldown is left blank", async () => {
     const request = vi.fn(async (method: string, _payload?: unknown) => {
       if (method === "cron.update") {
         return { id: "job-alert-no-cooldown" };
@@ -714,20 +720,107 @@ describe("cron controller", () => {
 
     const updateCall = request.mock.calls.find(([method]) => method === "cron.update");
     expect(updateCall).toBeDefined();
-    expect(updateCall?.[1]).toMatchObject({
-      id: "job-alert-no-cooldown",
-      patch: {
-        failureAlert: {
-          after: 3,
-          channel: "telegram",
-          to: "123456",
-        },
+    const wire = JSON.parse(JSON.stringify(updateCall?.[1])) as {
+      patch: { failureAlert: Record<string, unknown> };
+    };
+    // A blank field must never turn into a bogus `0`, and on an edit it must be an
+    // explicit clear (`null`) rather than a dropped key -- a dropped key reads as "leave
+    // the stored value alone", which is exactly the silent no-op this pins against.
+    expect(wire.patch.failureAlert).toEqual({
+      after: 3,
+      channel: "telegram",
+      to: "123456",
+      cooldownMs: null,
+      mode: "announce",
+      accountId: null,
+    });
+  });
+
+  it("clears every blank optional failureAlert subfield with null on edit", async () => {
+    const request = vi.fn(async (method: string, _payload?: unknown) => {
+      if (method === "cron.update") {
+        return { id: "job-alert-blank" };
+      }
+      if (method === "cron.list") {
+        return { jobs: [{ id: "job-alert-blank" }] };
+      }
+      if (method === "cron.status") {
+        return { enabled: true, jobs: 1, nextWakeAtMs: null };
+      }
+      return {};
+    });
+    const state = createState({
+      client: { request } as unknown as CronState["client"],
+      cronEditingJobId: "job-alert-blank",
+      cronForm: {
+        ...DEFAULT_CRON_FORM,
+        name: "alert job blank",
+        payloadKind: "agentTurn",
+        payloadText: "run it",
+        failureAlertMode: "custom",
+        failureAlertAfter: "",
+        failureAlertCooldownSeconds: "",
+        failureAlertChannel: "telegram",
+        failureAlertTo: "",
+        failureAlertAccountId: "",
       },
     });
-    expect(
-      (updateCall?.[1] as { patch?: { failureAlert?: { cooldownMs?: number } } })?.patch
-        ?.failureAlert,
-    ).not.toHaveProperty("cooldownMs");
+
+    await addCronJob(state);
+
+    const updateCall = request.mock.calls.find(([method]) => method === "cron.update");
+    const wire = JSON.parse(JSON.stringify(updateCall?.[1])) as {
+      patch: { failureAlert: Record<string, unknown> };
+    };
+    expect(wire.patch.failureAlert).toEqual({
+      after: null,
+      channel: "telegram",
+      to: null,
+      cooldownMs: null,
+      mode: "announce",
+      accountId: null,
+    });
+  });
+
+  it("omits blank optional failureAlert subfields on add, where there is nothing to clear", async () => {
+    const request = vi.fn(async (method: string, _payload?: unknown) => {
+      if (method === "cron.add") {
+        return { id: "job-alert-blank-new" };
+      }
+      if (method === "cron.list") {
+        return { jobs: [] };
+      }
+      if (method === "cron.status") {
+        return { enabled: true, jobs: 0, nextWakeAtMs: null };
+      }
+      return {};
+    });
+    const state = createState({
+      client: { request } as unknown as CronState["client"],
+      cronEditingJobId: null,
+      cronForm: {
+        ...DEFAULT_CRON_FORM,
+        name: "new alert job blank",
+        payloadKind: "agentTurn",
+        payloadText: "run it",
+        failureAlertMode: "custom",
+        failureAlertAfter: "",
+        failureAlertCooldownSeconds: "",
+        failureAlertChannel: "telegram",
+        failureAlertTo: "",
+        failureAlertAccountId: "",
+      },
+    });
+
+    await addCronJob(state);
+
+    const addCall = request.mock.calls.find(([method]) => method === "cron.add");
+    const wire = JSON.parse(JSON.stringify(addCall?.[1])) as {
+      failureAlert: Record<string, unknown>;
+    };
+    // The add schema rejects `null` subfields: a brand new job has nothing to fall back
+    // from, so the key must be absent rather than sent as a clear sentinel.
+    expect(wire.failureAlert).toEqual({ channel: "telegram", mode: "announce" });
   });
 
   it("includes failureAlert=false when disabled per job", async () => {
@@ -763,6 +856,84 @@ describe("cron controller", () => {
       id: "job-no-alert",
       patch: { failureAlert: false },
     });
+  });
+
+  // The "inherit" mode has no value of its own: `buildFailureAlert` returns `undefined`,
+  // and `undefined` is dropped by `JSON.stringify` before the frame leaves the browser.
+  // These two tests assert on the post-`JSON.stringify` shape, because that is the layer
+  // the defect lived in: at the object level `undefined` looks like a present key, and
+  // only after the round-trip does "cleared" collapse into "absent".
+  it("sends an explicit null failureAlert when an edit returns the job to inherit", async () => {
+    const request = vi.fn(async (method: string, _payload?: unknown) => {
+      if (method === "cron.update") {
+        return { id: "job-alert-inherit" };
+      }
+      if (method === "cron.list") {
+        return { jobs: [{ id: "job-alert-inherit" }] };
+      }
+      if (method === "cron.status") {
+        return { enabled: true, jobs: 1, nextWakeAtMs: null };
+      }
+      return {};
+    });
+    const state = createState({
+      client: { request } as unknown as CronState["client"],
+      cronEditingJobId: "job-alert-inherit",
+      cronForm: {
+        ...DEFAULT_CRON_FORM,
+        name: "alert inherit",
+        payloadKind: "agentTurn",
+        payloadText: "run it",
+        failureAlertMode: "inherit",
+      },
+    });
+
+    await addCronJob(state);
+
+    const updateCall = request.mock.calls.find(([method]) => method === "cron.update");
+    expect(updateCall).toBeDefined();
+    const wire = JSON.parse(JSON.stringify(updateCall?.[1])) as {
+      patch: Record<string, unknown>;
+    };
+    // A dropped key would be read by the server as "this patch does not touch
+    // failureAlert", leaving the per-job override in place: picking "inherit" would
+    // silently do nothing.
+    expect(wire.patch).toHaveProperty("failureAlert", null);
+  });
+
+  it("omits failureAlert entirely when a new job inherits the global config", async () => {
+    const request = vi.fn(async (method: string, _payload?: unknown) => {
+      if (method === "cron.add") {
+        return { id: "job-new-inherit" };
+      }
+      if (method === "cron.list") {
+        return { jobs: [] };
+      }
+      if (method === "cron.status") {
+        return { enabled: true, jobs: 0, nextWakeAtMs: null };
+      }
+      return {};
+    });
+    const state = createState({
+      client: { request } as unknown as CronState["client"],
+      cronEditingJobId: null,
+      cronForm: {
+        ...DEFAULT_CRON_FORM,
+        name: "new inherit job",
+        payloadKind: "agentTurn",
+        payloadText: "run it",
+        failureAlertMode: "inherit",
+      },
+    });
+
+    await addCronJob(state);
+
+    const addCall = request.mock.calls.find(([method]) => method === "cron.add");
+    expect(addCall).toBeDefined();
+    const wire = JSON.parse(JSON.stringify(addCall?.[1])) as Record<string, unknown>;
+    // A new job has no override to clear, and the add schema rejects `null`, so the
+    // key must be absent rather than sent as a clear sentinel.
+    expect(wire).not.toHaveProperty("failureAlert");
   });
 
   it("maps cron stagger, model, thinking, and best effort into form", () => {

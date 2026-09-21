@@ -11,6 +11,7 @@ import type {
   CronDelivery,
   CronDeliveryPatch,
   CronFailureAlert,
+  CronFailureAlertPatch,
   CronJob,
   CronJobCreate,
   CronJobPatch,
@@ -771,10 +772,31 @@ function mergeCronDelivery(
   return next;
 }
 
+/**
+ * Merge a failureAlert patch onto the existing override.
+ *
+ * Two levels of `null` both mean "clear", and both are deliberately NOT special-cased
+ * below -- the coercion each branch already does reads a non-matching value as the clear
+ * value, so a `null` subfield lands on `undefined` on its own:
+ *
+ *   - `patch === null`  -> drop the whole per-job override (handled explicitly).
+ *   - `patch.x === null` -> drop just that subfield, so it falls back to the global
+ *     `failureAlert` config. `null` is not a `number` / `string`, which is exactly the
+ *     test each branch runs.
+ *
+ * Adding an extra `x === null` guard next to those coercions would be a second line of
+ * defence for the same outcome: mutating either one alone would leave every test green,
+ * so the pair would hide a real regression instead of catching one.
+ */
 function mergeCronFailureAlert(
   existing: CronFailureAlert | false | undefined,
-  patch: CronFailureAlert | false | undefined,
+  patch: CronFailureAlertPatch | false | null | undefined,
 ): CronFailureAlert | false | undefined {
+  if (patch === null) {
+    // Explicit clear: drop the per-job override so the job follows the global config.
+    // Distinct from `undefined`, which means "this patch does not touch failureAlert".
+    return undefined;
+  }
   if (patch === false) {
     return false;
   }

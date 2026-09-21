@@ -307,11 +307,16 @@ export function registerCronEditCommand(cron: Command) {
             }
             if (hasFailureAlertChannel) {
               const channel = String(opts.failureAlertChannel).trim().toLowerCase();
-              failureAlert.channel = channel ? channel : undefined;
+              // An explicitly passed but blank flag means "clear this per-job override".
+              // `undefined` cannot say that: `JSON.stringify` drops the key, and an absent
+              // key tells the merge layer "leave this field alone". `null` is the wire's
+              // explicit-clear sentinel (same as agentId/sessionKey and a whole-object
+              // `failureAlert: null`).
+              failureAlert.channel = channel ? channel : null;
             }
             if (hasFailureAlertTo) {
               const to = String(opts.failureAlertTo).trim();
-              failureAlert.to = to ? to : undefined;
+              failureAlert.to = to ? to : null;
             }
             if (hasFailureAlertCooldown) {
               const cooldownMs = parseDurationMs(String(opts.failureAlertCooldown));
@@ -329,7 +334,7 @@ export function registerCronEditCommand(cron: Command) {
             }
             if (hasFailureAlertAccountId) {
               const accountId = String(opts.failureAlertAccountId).trim();
-              failureAlert.accountId = accountId ? accountId : undefined;
+              failureAlert.accountId = accountId ? accountId : null;
             }
             patch.failureAlert = failureAlert;
           }

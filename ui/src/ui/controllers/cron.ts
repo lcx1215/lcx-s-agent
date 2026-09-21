@@ -585,7 +585,7 @@ export function buildCronPayload(form: CronFormState) {
   return payload;
 }
 
-function buildFailureAlert(form: CronFormState) {
+function buildFailureAlert(form: CronFormState, opts: { editing: boolean }) {
   if (form.failureAlertMode === "disabled") {
     return false as const;
   }
@@ -601,18 +601,32 @@ function buildFailureAlert(form: CronFormState) {
       : undefined;
   const deliveryMode = form.failureAlertDeliveryMode;
   const accountId = form.failureAlertAccountId.trim();
+  // A blank optional field means "drop this per-job override and fall back to the global
+  // cron `failureAlert` config". `undefined` cannot express that: `JSON.stringify` drops
+  // undefined values before the frame leaves the browser, so the server sees no key and
+  // reads it as "leave this field alone" -- the edit would silently keep the stale value.
+  // `null` is the wire's explicit-clear sentinel (same convention as `agentId`,
+  // `sessionKey`, and the whole-object `failureAlert: null`).
+  //
+  // On the add path there is no override to clear, so blank stays `undefined` (the key is
+  // dropped and the field simply is not set). The create schema rejects `null` here, which
+  // is the intended asymmetry -- a new job has nothing to fall back FROM.
+  //
+  // Deliberately not included: `channel`. The form renders it as a select that always
+  // carries a value, so the UI has no "unset" gesture for it; `"last"` is the form's way
+  // of saying "no specific channel". `mode` is in the same position (always sent).
+  const blank = opts.editing ? null : undefined;
   const patch: Record<string, unknown> = {
-    after: after > 0 ? Math.floor(after) : undefined,
+    after: after > 0 ? Math.floor(after) : blank,
     channel: form.failureAlertChannel.trim() || CRON_CHANNEL_LAST,
-    to: form.failureAlertTo.trim() || undefined,
-    ...(cooldownMs !== undefined ? { cooldownMs } : {}),
+    to: form.failureAlertTo.trim() || blank,
+    cooldownMs: cooldownMs ?? blank,
   };
   // Always include mode and accountId so users can switch/clear them
   if (deliveryMode) {
     patch.mode = deliveryMode;
   }
-  // Include accountId if explicitly set, or send undefined to allow clearing
-  patch.accountId = accountId || undefined;
+  patch.accountId = accountId || blank;
   return patch;
 }
 
@@ -666,7 +680,16 @@ export async function addCronJob(state: CronState) {
         : selectedDeliveryMode === "none"
           ? ({ mode: "none" } as const)
           : undefined;
-    const failureAlert = buildFailureAlert(form);
+    // `buildFailureAlert` returns `undefined` for the "inherit" mode. `undefined` values
+    // are dropped by `JSON.stringify` before the frame leaves the browser, so on an edit
+    // the server would see no `failureAlert` key at all, read that as "this patch does
+    // not touch failureAlert", and keep the existing per-job override -- picking
+    // "inherit" would silently do nothing. Send an explicit `null` on the edit path so
+    // the server can tell "clear the override" apart from "not in this patch". On the
+    // add path there is nothing to clear, so `undefined` stays correct.
+    const editing = Boolean(state.cronEditingJobId);
+    const builtFailureAlert = buildFailureAlert(form, { editing });
+    const failureAlert = editing && builtFailureAlert === undefined ? null : builtFailureAlert;
     const agentId = form.clearAgent ? null : form.agentId.trim();
     const sessionKeyRaw = form.sessionKey.trim();
     const sessionKey = sessionKeyRaw || (editingJob?.sessionKey ? null : undefined);
