@@ -1,9 +1,11 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { readFinanceLinkHealth, type FinanceLinkHealthCheck } from "./finance-link-health.js";
-
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  buildFinanceExecutionReceipt,
+  createPaperExecutionAdapter,
+} from "./finance-execution-adapter.js";
 /**
  * These tests exist because this check was wrong in the direction that is hardest to notice.
  * It called a recorded call with no result a broken loop, when a call inside its horizon has no
@@ -12,16 +14,23 @@ import { readFinanceLinkHealth, type FinanceLinkHealthCheck } from "./finance-li
  * saying it long enough that a report of an actual break would have arrived in a stream of
  * reports that never meant anything.
  */
+import { readFinanceLinkHealth, type FinanceLinkHealthCheck } from "./finance-link-health.js";
+import { appendFinanceExecutionReceipt } from "./finance-position-ledger.js";
+import { financeCredentialsPath } from "./finance-state-dir.js";
+import type { FinanceUncachedFetch } from "./finance-write-transport.js";
 
 const AS_OF = "2026-09-21";
 
 let dir: string;
 
 beforeEach(async () => {
+  vi.stubEnv("ALPACA_API_KEY_ID", "");
+  vi.stubEnv("ALPACA_API_SECRET_KEY", "");
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-link-health-"));
 });
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await fs.rm(dir, { recursive: true, force: true });
 });
 
@@ -180,4 +189,106 @@ it("does not hide a failed day rerun behind an earlier same-day success and a su
     }),
   );
   expect((await checkFor("scheduler_slots")).ok).toBe(false);
+});
+
+function venueRead(positions: unknown = []) {
+  return vi.fn<FinanceUncachedFetch>(async (url) => ({
+    status: 200,
+    body: JSON.stringify(url.endsWith("/account") ? { id: "account-a" } : positions),
+  }));
+}
+const fakeEnv = { ALPACA_API_KEY_ID: "FAKE", ALPACA_API_SECRET_KEY: "FAKE" };
+async function storeReceipt(accountId?: string, venue = "paper") {
+  const at = "2026-09-20T00:00:00Z";
+  const receipt = buildFinanceExecutionReceipt({
+    intent: {
+      intentId: "test",
+      runAuthorizationId: "run",
+      instrument: "SPY",
+      side: "buy",
+      orderType: "market",
+      quantity: 1,
+      referencePrice: 100,
+      referencePriceAt: at,
+      rationale: "fixture",
+    },
+    adapter: { ...createPaperExecutionAdapter({ instruments: ["SPY"] }), venue },
+    fill: { filledQuantity: 1, fillPrice: 100, filledAt: at, venueRef: "fixture" },
+    recordedAt: at,
+    accountId,
+  });
+  await appendFinanceExecutionReceipt(dir, receipt);
+}
+it("binds credential file lookup to the explicit ledger root without mutating environment", async () => {
+  await fs.writeFile(
+    financeCredentialsPath(dir),
+    "ALPACA_API_KEY_ID=ROOT_FAKE\nALPACA_API_SECRET_KEY=ROOT_SECRET\n",
+  );
+  const read = venueRead();
+  await readFinanceLinkHealth({ directory: dir, env: {}, read });
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(read.mock.calls[0][1].headers["APCA-API-KEY-ID"]).toBe("ROOT_FAKE");
+  expect(process.env.ALPACA_API_KEY_ID).toBe("");
+});
+it("missing credentials is unavailable and cannot report successful parity", async () => {
+  const read = venueRead();
+  const report = await readFinanceLinkHealth({ directory: dir, read, env: {} });
+  expect(report.checks.find((c) => c.id === "venue_ledger_parity")).toMatchObject({
+    ok: false,
+    severity: "error",
+    detail: { checked: false },
+  });
+  expect(report.ok).toBe(false);
+  expect(read).not.toHaveBeenCalled();
+});
+it("does not compare internal paper or unknown-account fills against broker holdings", async () => {
+  await storeReceipt();
+  const report = await readFinanceLinkHealth({
+    directory: dir,
+    env: fakeEnv,
+    read: venueRead([{ symbol: "SPY", qty: "1" }]),
+  });
+  expect(report.checks.find((c) => c.id === "venue_ledger_parity")).toMatchObject({
+    ok: false,
+    detail: {
+      ledgerCount: 0,
+      onlyVenue: ["SPY"],
+      unassignedReceiptCount: 1,
+      historyStatus: "missing",
+    },
+  });
+});
+it("compares only matching account and venue execution history", async () => {
+  await storeReceipt("account-a", "alpaca:paper");
+  await storeReceipt("account-b", "alpaca:paper");
+  await storeReceipt("account-a", "paper");
+  const report = await readFinanceLinkHealth({
+    directory: dir,
+    env: fakeEnv,
+    read: venueRead([{ symbol: "SPY", qty: "1" }]),
+  });
+  expect(report.checks.find((c) => c.id === "venue_ledger_parity")).toMatchObject({
+    ok: true,
+    detail: { ledgerCount: 1, excludedReceiptCount: 2 },
+  });
+});
+it.each([
+  null,
+  [{ symbol: "SPY", qty: null }],
+  [{ symbol: "SPY", qty: "" }],
+  [
+    { symbol: "SPY", qty: "1" },
+    { symbol: "SPY", qty: "2" },
+  ],
+])("rejects malformed venue positions %j", async (positions) => {
+  const report = await readFinanceLinkHealth({
+    directory: dir,
+    env: fakeEnv,
+    read: venueRead(positions),
+  });
+  expect(report.checks.find((c) => c.id === "venue_ledger_parity")).toMatchObject({
+    ok: false,
+    severity: "error",
+    detail: { checked: false },
+  });
 });

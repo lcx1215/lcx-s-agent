@@ -14,10 +14,14 @@
  */
 
 import fs from "node:fs/promises";
+import { createAlpacaSafetyReadTransport } from "./finance-alpaca-safety-transport.js";
 import { readFinanceBarLedger } from "./finance-bar-ledger.js";
 import { resolveFinanceCredentialEnv } from "./finance-credential-env.js";
 import { DEFAULT_OUTCOME_HORIZON_DAYS } from "./finance-outcome-backfill.js";
-import { readFinancePositionLedger } from "./finance-position-ledger.js";
+import {
+  readFinanceAccountPositionLedger,
+  readFinancePositionLedger,
+} from "./finance-position-ledger.js";
 import { readFinanceSchedulerState } from "./finance-scheduler-state.js";
 import {
   financeResearchSamplesPath,
@@ -26,6 +30,7 @@ import {
   type FinanceStateDirSource,
 } from "./finance-state-dir.js";
 import { readFinanceStrategyRuleLedger } from "./finance-strategy-rule-ledger.js";
+import type { FinanceUncachedFetch } from "./finance-write-transport.js";
 
 export const FINANCE_LINK_HEALTH_SCHEMA = "lcx_finance_link_health_v1" as const;
 
@@ -89,44 +94,79 @@ function calendarDaysBehind(later: string, earlier: string): number {
 async function readVenuePositions(
   keyId: string,
   secret: string,
-): Promise<{ ok: true; bySymbol: Map<string, number> } | { ok: false; reason: string }> {
+  read: FinanceUncachedFetch,
+): Promise<
+  { ok: true; accountId: string; bySymbol: Map<string, number> } | { ok: false; reason: string }
+> {
   try {
-    const response = await fetch("https://paper-api.alpaca.markets/v2/positions", {
-      headers: {
-        "APCA-API-KEY-ID": keyId,
-        "APCA-API-SECRET-KEY": secret,
-        accept: "application/json",
-      },
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (response.status !== 200) {
-      return { ok: false, reason: "positions read returned " + response.status };
+    const signal = AbortSignal.timeout(15_000);
+    const get = async (endpoint: string) => {
+      const response = await read(`https://paper-api.alpaca.markets/v2/${endpoint}`, {
+        headers: {
+          "APCA-API-KEY-ID": keyId,
+          "APCA-API-SECRET-KEY": secret,
+          accept: "application/json",
+        },
+        signal,
+      });
+      if (response.status !== 200) {
+        throw new Error("venue unavailable");
+      }
+      return JSON.parse(response.body) as unknown;
+    };
+    const account = await get("account");
+    if (
+      !account ||
+      typeof account !== "object" ||
+      !("id" in account) ||
+      typeof account.id !== "string" ||
+      !account.id.trim()
+    ) {
+      throw new Error("account identity");
     }
-    const parsed = (JSON.parse(await response.text()) ?? []) as {
-      symbol?: unknown;
-      qty?: unknown;
-    }[];
+    const parsed = await get("positions");
+    if (!Array.isArray(parsed)) {
+      throw new Error("positions list");
+    }
     const bySymbol = new Map<string, number>();
     for (const position of parsed) {
-      const symbol = typeof position.symbol === "string" ? position.symbol.toUpperCase() : "";
+      if (
+        !position ||
+        typeof position !== "object" ||
+        typeof position.symbol !== "string" ||
+        !position.symbol.trim() ||
+        (typeof position.qty !== "number" &&
+          (typeof position.qty !== "string" || !position.qty.trim()))
+      ) {
+        throw new Error("position row");
+      }
       const qty = Number(position.qty);
-      if (symbol.length > 0 && Number.isFinite(qty)) {
+      let symbol = position.symbol.trim().toUpperCase();
+      if (position.asset_class === "crypto" && /^[A-Z0-9]+USD$/.test(symbol)) {
+        symbol = `${symbol.slice(0, -3)}/USD`;
+      }
+      if (!Number.isFinite(qty) || bySymbol.has(symbol)) {
+        throw new Error("quantity or duplicate");
+      }
+      if (qty !== 0) {
         bySymbol.set(symbol, qty);
       }
     }
-    return { ok: true, bySymbol };
-  } catch (error) {
-    return {
-      ok: false,
-      reason: (error instanceof Error ? error.message : String(error)).slice(0, 100),
-    };
+    return { ok: true, accountId: account.id, bySymbol };
+  } catch {
+    return { ok: false, reason: "account_or_positions_unavailable_or_invalid" };
   }
 }
 
 export async function readFinanceLinkHealth(
-  options: Readonly<{ directory?: string; asOf?: string }> = {},
+  options: Readonly<{
+    directory?: string;
+    asOf?: string;
+    env?: NodeJS.ProcessEnv;
+    read?: FinanceUncachedFetch;
+  }> = {},
 ): Promise<FinanceLinkHealth> {
-  const state = resolveFinanceStateDir({ directory: options.directory });
+  const state = resolveFinanceStateDir({ directory: options.directory, env: options.env });
   const directory = state.directory;
   const today = options.asOf?.slice(0, 10) ?? new Date().toISOString().slice(0, 10);
   const checks: FinanceLinkHealthCheck[] = [];
@@ -475,29 +515,56 @@ export async function readFinanceLinkHealth(
   //
   // Runs only when credentials exist, and reports when it does not: "not checked" and
   // "checked and fine" must not look the same.
-  const credentialEnv = resolveFinanceCredentialEnv(process.env) as Record<string, string>;
-  const alpacaKeyId = credentialEnv.ALPACA_API_KEY_ID ?? "";
-  const alpacaSecret = credentialEnv.ALPACA_API_SECRET_KEY ?? "";
+  let credentialEnv: NodeJS.ProcessEnv = {};
+  let credentialStoreUnavailable = false;
+  try {
+    credentialEnv = resolveFinanceCredentialEnv({
+      ...(options.env ?? process.env),
+      LCX_FINANCE_STATE_DIR: directory,
+    });
+  } catch {
+    credentialStoreUnavailable = true;
+  }
+  const alpacaKeyId = credentialEnv.ALPACA_API_KEY_ID?.trim() ?? "";
+  const alpacaSecret = credentialEnv.ALPACA_API_SECRET_KEY?.trim() ?? "";
   if (alpacaKeyId.length === 0 || alpacaSecret.length === 0) {
     checks.push({
       id: "venue_ledger_parity",
-      severity: "info",
-      ok: true,
-      summary: "venue not checked: no Alpaca credentials configured",
-      detail: { checked: false, reason: "no_credentials" },
+      severity: "error",
+      ok: false,
+      summary: credentialStoreUnavailable
+        ? "venue not checked: finance credential store unavailable"
+        : "venue not checked: no Alpaca credentials configured for this finance root",
+      detail: {
+        checked: false,
+        reason: credentialStoreUnavailable ? "credential_store_unavailable" : "no_credentials",
+      },
     });
   } else {
-    const venuePositions = await readVenuePositions(alpacaKeyId, alpacaSecret);
+    const venuePositions = await readVenuePositions(
+      alpacaKeyId,
+      alpacaSecret,
+      options.read ?? createAlpacaSafetyReadTransport(),
+    );
     if (!venuePositions.ok) {
       checks.push({
         id: "venue_ledger_parity",
-        severity: "warn",
+        severity: "error",
         ok: false,
         summary: "venue not checked: " + venuePositions.reason,
         detail: { checked: false, reason: venuePositions.reason },
       });
     } else {
-      const ledgerBySymbol = new Map(held.map((p) => [p.instrument.toUpperCase(), p.quantity]));
+      const scoped = await readFinanceAccountPositionLedger(directory, {
+        accountId: venuePositions.accountId,
+        venue: "alpaca:paper",
+      });
+      const ledgerBySymbol = new Map(
+        scoped.ledger.positions
+          .filter((p) => p.quantity !== 0)
+          .map((p) => [p.instrument.toUpperCase(), p.quantity]),
+      );
+      const historyKnown = scoped.historyStatus !== "missing";
       const onlyLedger = [...ledgerBySymbol.entries()]
         .filter(([symbol, qty]) => qty !== 0 && !venuePositions.bySymbol.has(symbol))
         .map(([symbol]) => symbol);
@@ -513,11 +580,12 @@ export async function readFinanceLinkHealth(
       const divergent = onlyLedger.length + onlyVenue.length + mismatch.length;
       checks.push({
         id: "venue_ledger_parity",
-        severity: divergent > 0 ? "warn" : "info",
-        ok: divergent === 0,
-        summary:
-          divergent === 0
-            ? `venue and ledger agree on ${venuePositions.bySymbol.size} position(s)`
+        severity: divergent > 0 || !historyKnown ? "error" : "info",
+        ok: divergent === 0 && historyKnown,
+        summary: !historyKnown
+          ? "account-scoped execution history missing; cannot claim broker parity"
+          : divergent === 0
+            ? `venue and account-scoped ledger agree on ${venuePositions.bySymbol.size} position(s)`
             : "venue and ledger disagree: in ledger only [" +
               onlyLedger.join(", ") +
               "], at venue only [" +
@@ -527,6 +595,11 @@ export async function readFinanceLinkHealth(
               "]",
         detail: {
           checked: true,
+          venue: "alpaca:paper",
+          accountIdentityVerified: true,
+          historyStatus: scoped.historyStatus,
+          excludedReceiptCount: scoped.excludedReceiptCount,
+          unassignedReceiptCount: scoped.unassignedReceiptCount,
           venueCount: venuePositions.bySymbol.size,
           ledgerCount: ledgerBySymbol.size,
           onlyLedger,
