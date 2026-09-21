@@ -19,11 +19,21 @@ export type AlpacaSafetyControllerEvidence = Readonly<{
 export type AlpacaSafetyQuoteBinding = Readonly<{ kind: "alpaca_safety_quote" }>;
 const quotes = new WeakMap<
   AlpacaSafetyQuoteBinding,
-  { instrument: string; bp: number; ap: number; t: string; expiresAt: number }
+  {
+    instrument: string;
+    side: "buy" | "sell";
+    feed: "iex" | "sip";
+    bp: number;
+    ap: number;
+    t: string;
+    expiresAt: number;
+  }
 >();
 export type AlpacaSafetyProviderOptions = Readonly<{
   accountId: string;
   instrument: string;
+  side: "buy" | "sell";
+  stockFeed: "iex" | "sip";
   credentials: Readonly<{ keyId: string; secret: string }>;
   evidence: AlpacaSafetyControllerEvidence;
   read: FinanceUncachedFetch;
@@ -88,6 +98,8 @@ export async function readAlpacaPaperSafetyFacts(
   const start = Date.now();
   const evidence = structuredClone(options.evidence);
   if (
+    !["buy", "sell"].includes(options.side) ||
+    !["iex", "sip"].includes(options.stockFeed) ||
     !Number.isFinite(options.timeoutMs) ||
     options.timeoutMs <= 0 ||
     options.timeoutMs > 120000 ||
@@ -208,7 +220,13 @@ export async function readAlpacaPaperSafetyFacts(
     let boundQuote = options.boundQuote;
     if (boundQuote) {
       const bound = quotes.get(boundQuote);
-      if (!bound || bound.instrument !== options.instrument || bound.expiresAt <= Date.now()) {
+      if (
+        !bound ||
+        bound.instrument !== options.instrument ||
+        bound.side !== options.side ||
+        bound.feed !== options.stockFeed ||
+        bound.expiresAt <= Date.now()
+      ) {
         throw new Error("quote binding");
       }
       quote = bound;
@@ -217,7 +235,7 @@ export async function readAlpacaPaperSafetyFacts(
         await get(
           crypto
             ? `${DATA}/v1beta3/crypto/us/latest/quotes?symbols=${encodeURIComponent(options.instrument)}`
-            : `${DATA}/v2/stocks/${encodeURIComponent(options.instrument)}/quotes/latest`,
+            : `${DATA}/v2/stocks/${encodeURIComponent(options.instrument)}/quotes/latest?feed=${options.stockFeed}`,
         ),
       );
       quote = record(
@@ -242,6 +260,8 @@ export async function readAlpacaPaperSafetyFacts(
       boundQuote = Object.freeze({ kind: "alpaca_safety_quote" });
       quotes.set(boundQuote, {
         instrument: options.instrument,
+        side: options.side,
+        feed: options.stockFeed,
         bp: bid,
         ap: ask,
         t: quoteAt,
@@ -285,8 +305,8 @@ export async function readAlpacaPaperSafetyFacts(
           grossExposure: gross,
         },
         quote: {
-          source: `${DATA};latest-quote-ask`,
-          price: ask,
+          source: `${DATA};feed=${crypto ? "crypto-us" : options.stockFeed};latest-quote-${options.side === "buy" ? "ask" : "bid"}`,
+          price: options.side === "buy" ? ask : bid,
           observedAt: quoteAt,
           expiresAt: new Date(
             Math.min(Date.parse(quoteAt) + options.maxAgeMs, quotes.get(boundQuote)!.expiresAt),

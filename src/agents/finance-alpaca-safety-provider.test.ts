@@ -53,6 +53,8 @@ function fixture(crypto = false) {
   const options: AlpacaSafetyProviderOptions = {
     accountId: "paper-account",
     instrument,
+    side: "buy",
+    stockFeed: "iex",
     credentials: { keyId: "FAKE", secret: "FAKE" },
     evidence: {
       accountId: "paper-account",
@@ -192,4 +194,19 @@ it("sanitizes transport and malformed response failures", async () => {
   expect(JSON.stringify(await readAlpacaPaperSafetyFacts(f.options))).not.toContain("secret");
   f.read.mockRejectedValue(new Error("credential FAKE"));
   expect(JSON.stringify(await readAlpacaPaperSafetyFacts(f.options))).not.toContain("FAKE");
+});
+
+it("binds sell bid and explicit stock feed", async () => {
+  const f = fixture();
+  const result = await readAlpacaPaperSafetyFacts({ ...f.options, side: "sell", stockFeed: "sip" });
+  expect(result.ok).toBe(true);
+  if (!result.ok) {
+    throw new Error("fixture");
+  }
+  expect(result.facts.quote.price).toBe(99);
+  expect(result.facts.quote.source).toContain("feed=sip;latest-quote-bid");
+  expect(f.read.mock.calls.some(([url]) => url.endsWith("quotes/latest?feed=sip"))).toBe(true);
+  expect(
+    (await readAlpacaPaperSafetyFacts({ ...f.options, boundQuote: result.boundQuote })).ok,
+  ).toBe(false);
 });
