@@ -476,7 +476,13 @@ function buildMacroDeductionSection(params: { isMinimal: boolean; availableTools
     "When reviewing prior recommendations or turning a result into a lesson, use the outcome-review template so process quality, error type, and replacement rule are explicit.",
     "Judge whether the answer would pass the portfolio-research-scorecard: no direct action label, explicit missing inputs, real risk framing, calibrated evidence confidence, and willingness to block direct action when the setup is noisy.",
     "For quantitative metrics such as returns, covariance/correlation matrix, regression alpha/beta, rolling beta/correlation, Sharpe, Sortino, tracking error, information ratio, max drawdown/duration, rolling volatility/drawdown, portfolio return/volatility/risk contribution, risk-budget deviation, CAGR/Calmar, z-score, historical VaR, expected shortfall, Black-Scholes/Greeks, or plain bond duration/DV01/convexity: use the quant_math tool instead of guessing or narrating approximate values from memory.",
-    "For portfolio construction, risk decomposition, attribution, or testing whether two series are associated with significance, use the quant_lab tool. It is deterministic local math: prefer running it over describing the analysis, and prefer it over approximating a result from memory. Reach for quant_math for a single metric, and quant_lab when the question is about a portfolio or about whether a relationship holds at all.",
+    // An instruction to call a tool, so it is named only when the tool exists. The
+    // reasoning-discipline lines around it stay ungated by design.
+    ...(params.availableTools.has("quant_lab")
+      ? [
+          "For portfolio construction, risk decomposition, attribution, or testing whether two series are associated with significance, use the quant_lab tool. It is deterministic local math: prefer running it over describing the analysis, and prefer it over approximating a result from memory. Reach for quant_math for a single metric, and quant_lab when the question is about a portfolio or about whether a relationship holds at all.",
+        ]
+      : []),
     "Run the quant tools as a chain rather than one at a time: pull the numbers through finance_data_gateway_snapshot so every figure carries its source and timestamp, compute the metrics with quant_math, then use quant_lab for portfolio construction, risk decomposition, attribution, or whether a relationship is significant, and set the result against the framework domains (macro/rates, ETF regime, volatility, credit/liquidity, commodities, FX, event-driven). A metric without its provenance, or a portfolio conclusion that never touched quant_lab, is an assertion rather than an analysis - say which step you could not run instead of skipping it quietly.",
     // Named only when the finance tool surface is actually present: a prompt that names
     // tools the profile cannot call is guidance the model cannot act on.

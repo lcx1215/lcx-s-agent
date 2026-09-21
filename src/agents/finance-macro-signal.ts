@@ -192,3 +192,91 @@ export function macroTrendSignal(params: {
 export function macroRouteFor(instrument: string): MacroRoute | undefined {
   return MACRO_ROUTES[instrument.trim().toUpperCase()];
 }
+
+/**
+ * What feeds a route: a function from a FRED series id to its observations.
+ */
+export type MacroSeriesSupplier = (seriesId: string) => Promise<readonly MacroObservation[]>;
+
+/**
+ * FRED's public CSV endpoint: the same host and path the repo already uses for index history, and it
+ * needs no API key.
+ *
+ * This exists because the keyed adapter is not the only way to reach these series, and the sampler
+ * used to have only that one way. `FRED_API_KEY` is absent here -- `~/.openclaw/.env` names it and
+ * sets none of them -- so `defaultMacroFor` returned `undefined`, the sampler's
+ * `if (params.macroFor !== undefined && route !== undefined)` skipped the whole leg, and the
+ * comment there said the absence was not a failure. An instrument therefore kept one fewer source
+ * and nothing anywhere said so. Measured against the live endpoint, `?id=DGS10` answers 200 with
+ * real observations.
+ *
+ * Deliberately not a *silent* better-than-nothing: if the endpoint cannot be read, this throws and
+ * the caller's existing "macro leg failed" warning names the instrument. What it must never do is
+ * return a value that looks like the series.
+ */
+export async function fetchPublicFredMacroSeries(
+  seriesId: string,
+  options: {
+    fetchText?: (url: string) => Promise<string>;
+    asOf?: string;
+    windowDays?: number;
+  } = {},
+): Promise<readonly MacroObservation[]> {
+  const asOf = options.asOf ?? new Date().toISOString().slice(0, 10);
+  const windowDays = options.windowDays ?? 500;
+  const from = isoDayOffset(asOf, -windowDays);
+  const url =
+    `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${encodeURIComponent(seriesId)}` +
+    `&cosd=${from}&coed=${asOf}`;
+  const text = await (options.fetchText ?? defaultFetchText)(url);
+  return parseFredMacroCsv(text, seriesId);
+}
+
+export function createPublicFredMacroSeriesSupplier(
+  options: Parameters<typeof fetchPublicFredMacroSeries>[1] = {},
+): MacroSeriesSupplier {
+  return async (seriesId) => fetchPublicFredMacroSeries(seriesId, options);
+}
+
+/** The CSV the public endpoint returns: a header naming the series, then `date,value` rows. */
+export function parseFredMacroCsv(text: string, seriesId: string): readonly MacroObservation[] {
+  const lines = text.split(/\r?\n/u).filter((line) => line.trim() !== "");
+  const header = lines.shift();
+  if (header !== `observation_date,${seriesId}`) {
+    throw new Error(`unexpected FRED CSV schema for ${seriesId}: ${header ?? "(empty)"}`);
+  }
+  const observations: MacroObservation[] = [];
+  for (const line of lines) {
+    const columns = line.split(",");
+    if (columns.length !== 2) {
+      throw new Error(`invalid FRED CSV row for ${seriesId}: ${line}`);
+    }
+    const [date, raw] = columns;
+    // FRED writes '.' for a missing observation. A gap is a gap, not a zero.
+    if (raw === "." || raw.trim() === "") {
+      continue;
+    }
+    const value = Number(raw);
+    if (!Number.isFinite(value)) {
+      throw new Error(`invalid FRED observation for ${seriesId}: ${line}`);
+    }
+    observations.push(Object.freeze({ date, value }));
+  }
+  return observations;
+}
+
+async function defaultFetchText(url: string): Promise<string> {
+  const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+  if (!response.ok) {
+    throw new Error(`FRED public CSV ${response.status} for ${url}`);
+  }
+  return response.text();
+}
+
+function isoDayOffset(isoDay: string, days: number): string {
+  const epoch = Date.parse(`${isoDay}T00:00:00Z`);
+  if (!Number.isFinite(epoch)) {
+    throw new Error(`not an ISO day: ${isoDay}`);
+  }
+  return new Date(epoch + days * 86_400_000).toISOString().slice(0, 10);
+}

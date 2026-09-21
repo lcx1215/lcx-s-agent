@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   MACRO_ROUTES,
+  fetchPublicFredMacroSeries,
   macroRouteFor,
   macroTrendSignal,
+  parseFredMacroCsv,
   type MacroObservation,
 } from "./finance-macro-signal.js";
 
@@ -129,5 +131,83 @@ describe("macroRouteFor", () => {
   it("has no route for an instrument no relationship has been argued for", () => {
     // Not a plausible neighbour: no route means no macro source, not a borrowed one.
     expect(macroRouteFor("AAPL")).toBeUndefined();
+  });
+});
+
+/**
+ * The keyless transport.
+ *
+ * A route being defined was not the same fact as the series being reachable: `FRED_API_KEY` is
+ * absent here, so `defaultMacroFor` returned `undefined` and the sampler skipped the leg -- silently,
+ * because the code said the absence was not a failure. FRED serves these series without a key, over
+ * the same public endpoint the repo already reads for index history, so the transport below is what
+ * "the loop is closed" actually depends on.
+ */
+describe("the public FRED CSV is read into observations", () => {
+  const asOf = "2026-09-19";
+
+  function csv(seriesId: string, rows: readonly string[]): string {
+    return [`observation_date,${seriesId}`, ...rows].join("\n");
+  }
+
+  it("reads a dated value into an observation", () => {
+    expect(parseFredMacroCsv(csv("DGS10", ["2026-09-17,4.94", "2026-09-18,4.9"]), "DGS10")).toEqual(
+      [
+        { date: "2026-09-17", value: 4.94 },
+        { date: "2026-09-18", value: 4.9 },
+      ],
+    );
+  });
+
+  /**
+   * FRED writes '.' for a missing observation. Dropping it is right; reading it as zero would make
+   * a fall look like a collapse and hand the sampler a direction that did not happen.
+   */
+  it("drops a missing observation instead of reading it as zero", () => {
+    expect(parseFredMacroCsv(csv("DGS10", ["2026-09-17,4.94", "2026-09-18,."]), "DGS10")).toEqual([
+      { date: "2026-09-17", value: 4.94 },
+    ]);
+  });
+
+  it("rejects a response that is not this series", () => {
+    // The header names the series; a different one means the URL asked for something else.
+    expect(() => parseFredMacroCsv(csv("DFII10", ["2026-09-17,2.1"]), "DGS10")).toThrow(/schema/u);
+  });
+
+  it("rejects a value that is not a number", () => {
+    expect(() => parseFredMacroCsv(csv("DGS10", ["2026-09-17,not-a-number"]), "DGS10")).toThrow(
+      /observation/u,
+    );
+  });
+
+  it("asks the public endpoint for the series, bounded to a window", async () => {
+    const seen: string[] = [];
+    const observations = await fetchPublicFredMacroSeries("DGS10", {
+      asOf,
+      windowDays: 30,
+      fetchText: async (url) => {
+        seen.push(url);
+        return csv("DGS10", ["2026-09-17,4.94"]);
+      },
+    });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toContain("fred.stlouisfed.org/graph/fredgraph.csv");
+    expect(seen[0]).toContain("id=DGS10");
+    expect(seen[0]).toContain("coed=2026-09-19");
+    expect(seen[0]).toContain("cosd=2026-08-20");
+    expect(observations).toEqual([{ date: "2026-09-17", value: 4.94 }]);
+  });
+
+  it("feeds a route end to end: a real series produces a signal", async () => {
+    const route = macroRouteFor("TLT");
+    expect(route).toBeDefined();
+    const observations = await fetchPublicFredMacroSeries(route!.seriesId, {
+      asOf,
+      fetchText: async () => csv(route!.seriesId, ["2026-08-17,4.60", "2026-09-17,4.30"]),
+    });
+    const signal = macroTrendSignal({ route: route!, observations, observedAt: asOf });
+    // Yields fell over the window, and the route is inverse, so this is bullish.
+    expect(signal?.direction).toBe("buy");
+    expect(signal?.sourceId).toBe(`fred:${route!.seriesId}`);
   });
 });
