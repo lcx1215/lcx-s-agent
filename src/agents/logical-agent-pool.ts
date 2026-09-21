@@ -9,6 +9,20 @@ import {
 export type { LogicalAgentModelRouting, ModelCallReceipt } from "./logical-agent-model-router.js";
 import { stableStringify } from "./stable-stringify.js";
 
+/** Summarize invoked adapters, retaining failed attempts and provider distinctions. */
+export function summarizeExecutedModelIdentity(calls: readonly ModelCallReceipt[]): string {
+  const identities = [
+    ...new Set(
+      calls.filter((call) => call.adapterInvoked).map((call) => `${call.provider}/${call.modelId}`),
+    ),
+  ];
+  return identities.length === 0
+    ? "not-executed"
+    : identities.length === 1
+      ? identities[0]
+      : `multiple: ${identities.join(", ")}`;
+}
+
 export const LOGICAL_AGENT_IDS = [
   "data_cleaning",
   "financial_extraction",
@@ -596,7 +610,7 @@ export class LogicalAgentPool<TInput, TResult> {
         resolve(
           failedTaskResult<TResult>(
             taskSnapshot,
-            this.#config.modelId,
+            this.#modelRouter ? "not-executed" : this.#config.modelId,
             Date.now(),
             new Error("logical-agent task cancelled before start"),
           ),
@@ -608,7 +622,7 @@ export class LogicalAgentPool<TInput, TResult> {
         resolve(
           failedTaskResult<TResult>(
             taskSnapshot,
-            this.#config.modelId,
+            this.#modelRouter ? "not-executed" : this.#config.modelId,
             Date.now(),
             new Error("logical-agent task cancelled before start"),
           ),
@@ -654,7 +668,7 @@ export class LogicalAgentPool<TInput, TResult> {
         closed: false,
       };
       const modelCalls: ModelCallReceipt[] = [];
-      const selectedModelId = this.#modelRouter?.primaryModelId(agent.id) ?? this.#config.modelId;
+
       const attempt = executeWithTimeout(
         async (signal) => {
           const modelSlot = this.#createTaskModelSlot(
@@ -727,7 +741,10 @@ export class LogicalAgentPool<TInput, TResult> {
           job.resolve(
             Object.freeze({
               ...result,
-              modelId: modelCalls.at(-1)?.modelId ?? selectedModelId,
+              modelId: this.#modelRouter
+                ? (modelCalls.filter((call) => call.adapterInvoked).at(-1)?.modelId ??
+                  "not-executed")
+                : this.#config.modelId,
               modelCalls: Object.freeze([...modelCalls]),
             }),
           );
@@ -1716,7 +1733,7 @@ export async function runLogicalAgentPlan<TInput, TResult>(params: {
           });
           if (failedDependencies.length > 0) {
             state.set(task.id, "blocked");
-            const result = blockedResult<TResult>(task, pool.config.modelId, failedDependencies);
+            const result = blockedResult<TResult>(task, "not-executed", failedDependencies);
             results.set(task.id, result);
             emit("task_blocked", task.id, {
               agentId: task.agentId,

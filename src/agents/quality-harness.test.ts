@@ -671,6 +671,7 @@ describe("quality harness model evidence", () => {
       });
       expect(result.status).toBe("completed-unverified");
       expect(result.execution.modelCalls).toHaveLength(10);
+      expect(result.execution.modelId).toBe("test-local/fixture-model");
       expect(result.execution.evidenceMode).toBe(mode === "adapter" ? "adapter-attested" : mode);
       expect(result.execution.realModelInferenceObserved).toBe(mode === "adapter");
       expect(result.execution.allModelCallsAttested).toBe(mode === "adapter");
@@ -689,6 +690,7 @@ describe("quality harness model evidence", () => {
       maxAttempts: 1,
     });
     expect(result.execution.modelCalls).toHaveLength(10);
+    expect(result.execution.modelId).toBe("Qwen/Qwen3-0.6B");
     expect(result.execution.evidenceMode).toBe("injected");
     expect(result.execution.realModelInferenceObserved).toBe(false);
   });
@@ -850,4 +852,89 @@ describe("a shared abbreviation does not mask an entity mismatch", () => {
     const gate = await currentDataSafetyGate(evidence, answer, answer);
     expect(gate.passed).toBe(true);
   });
+});
+
+it("summarizes both providers and retains failed fallback evidence", async () => {
+  const invoke = demoInvoker({});
+  const adapter = (id: string): LogicalAgentModelAdapter => ({
+    id,
+    provider: id,
+    modelId: "same-model-name",
+    mode: "injected",
+    capabilities: [],
+    requiredTools: [],
+    requiredSideEffects: ["local_compute"],
+    invoke: async (call) => {
+      if (id === "primary") {
+        throw new Error("fixture failure");
+      }
+      return invoke(call.payload);
+    },
+  });
+  const result = await runQualityHarness({
+    request,
+    maxAttempts: 1,
+    modelRouting: {
+      revision: "identity-test",
+      adapters: [adapter("primary"), adapter("fallback")],
+      defaultPolicy: {
+        primary: "primary",
+        fallback: ["fallback"],
+        requiredCapabilities: [],
+        maxInputBytes: 100_000,
+        timeoutMs: 1000,
+      },
+    },
+  });
+  expect(result.execution.modelId).toBe(
+    "multiple: primary/same-model-name, fallback/same-model-name",
+  );
+  expect(
+    result.execution.modelCalls.some(
+      (call) => call.provider === "primary" && call.outcome === "failed",
+    ),
+  ).toBe(true);
+  expect(
+    result.execution.modelCalls.some(
+      (call) => call.provider === "fallback" && call.outcome === "completed",
+    ),
+  ).toBe(true);
+});
+it("labels zero routed calls and dependency-blocked stages not-executed", async () => {
+  let calls = 0;
+  const result = await runQualityHarness({
+    request,
+    maxAttempts: 1,
+    modelRouting: {
+      revision: "no-execution",
+      adapters: [
+        {
+          id: "blocked",
+          provider: "never",
+          modelId: "never",
+          mode: "injected",
+          capabilities: [],
+          requiredTools: [],
+          requiredSideEffects: ["local_compute"],
+          invoke: async () => {
+            calls++;
+            return {};
+          },
+        },
+      ],
+      defaultPolicy: {
+        primary: "blocked",
+        requiredCapabilities: ["unavailable"],
+        maxInputBytes: 100_000,
+        timeoutMs: 1000,
+      },
+    },
+  });
+  expect(calls).toBe(0);
+  expect(result.execution.modelId).toBe("not-executed");
+  expect(
+    result.attempts[0].stages
+      .filter((stage) => stage.status === "blocked")
+      .every((stage) => stage.modelId === "not-executed"),
+  ).toBe(true);
 });

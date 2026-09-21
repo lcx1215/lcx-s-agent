@@ -341,6 +341,11 @@ describe("logical agent pool", () => {
       "input is malformed",
     );
     expect(result.tasks.filter((task) => task.status === "blocked")).toHaveLength(9);
+    expect(
+      result.tasks
+        .filter((task) => task.status === "blocked")
+        .every((task) => task.modelId === "not-executed"),
+    ).toBe(true);
     expect(executed).toEqual(["data_cleaning"]);
   });
 

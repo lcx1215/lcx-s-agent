@@ -3,6 +3,7 @@ import { modelRoutingTaskTimeoutMs, type ModelCallReceipt } from "./logical-agen
 import {
   LogicalAgentPool,
   runLogicalAgentPlan,
+  summarizeExecutedModelIdentity,
   type LogicalAgentPoolStatus,
 } from "./logical-agent-pool.js";
 import {
@@ -111,7 +112,7 @@ function createQualityReceipt(params: {
       modelDiversity: summarizeQualityModelDiversity(
         last?.stages.flatMap((stage) => stage.modelCalls ?? []) ?? [],
       ),
-      modelId: params.pool.modelId,
+      modelId: params.routed ? summarizeExecutedModelIdentity(modelCalls) : params.pool.modelId,
       realModelInferenceObserved: modelCalls.some((call) => call.realModelInferenceObserved),
       allModelCallsAttested:
         modelCalls.length > 0 && modelCalls.every((call) => call.evidence === "adapter-attested"),
