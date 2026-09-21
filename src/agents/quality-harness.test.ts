@@ -760,3 +760,93 @@ it("cancels an uncooperative verifier without reporting verification success", a
   expect(result.attempts).toHaveLength(1);
   expect(verifierAborted).toBe(true);
 });
+
+/** Runs the harness with a stubbed model and returns the finance-safety gate. */
+async function currentDataSafetyGate(
+  evidenceText: string,
+  answer: string,
+  claimText: string,
+): Promise<{ passed: boolean; reason?: string }> {
+  const result = await runQualityHarness({
+    request: {
+      task: "请根据最新证据判断 台积电 当前股价和投资风险。",
+      evidence: [{ id: "market", text: evidenceText, source: "market-feed-test" }],
+    },
+    maxAttempts: 1,
+    modelInvoker: async (raw) => {
+      if (raw.stage === "intake") {
+        return { kind: "plan", requirements: ["回答问题"], missingEvidence: [] };
+      }
+      const artifact = {
+        kind: "artifact",
+        artifact: {
+          answer,
+          claims: [
+            { id: "claim-1", text: claimText, status: "supported", evidenceIds: ["market"] },
+          ],
+        },
+      };
+      if (raw.stage === "format" || raw.stage === "draft") {
+        return raw.stage === "format"
+          ? artifact
+          : {
+              kind: "artifact",
+              artifact: {
+                answer: "候选摘要保留了材料边界。",
+                claims: [
+                  {
+                    id: "c",
+                    text: "候选摘要无数字。",
+                    status: "supported",
+                    evidenceIds: ["market"],
+                  },
+                ],
+              },
+            };
+      }
+      return {
+        kind: "review",
+        review: { verdict: "pass", criticalFindings: [], evidenceGaps: [], notes: ["checked"] },
+      };
+    },
+    createRunId: () => "entity-abbrev-probe",
+  });
+  const gate = result.attempts[0]?.gates.find((entry) => entry.id === "finance_answer_safety");
+  return { passed: gate?.passed === true, reason: gate?.reason };
+}
+
+/**
+ * A shared abbreviation must not make a mismatched pair look matched.
+ *
+ * `claimMatchesEvidenceEntity` accepts the pair when *any* extracted entity is shared, and
+ * `financeEntities` reads every upper-case token as an entity unless it is in
+ * `NON_ENTITY_TOKENS`. So with the term unlisted, "AAA 的 RSI 是 80" and "BBB 的 RSI 为 80" share
+ * the entity RSI and the pair is reported as matched — while AAA and BBB are different instruments.
+ * Measured by removing RSI / MACD / EPS from the blocklist: all three pairs then passed the gate.
+ *
+ * Note the numbers must match in both halves, otherwise the "current-data numbers without matching
+ * cited evidence" check fires first and hides what the entity comparison actually did.
+ */
+describe("a shared abbreviation does not mask an entity mismatch", () => {
+  const cases = [
+    { label: "RSI", term: "RSI" },
+    { label: "MACD", term: "MACD" },
+    { label: "EPS", term: "EPS" },
+  ] as const;
+
+  for (const { label, term } of cases) {
+    it(`refuses a claim about AAA backed by evidence about BBB that shares ${label}`, async () => {
+      const answer = `AAA 的 ${term} 是 80。`;
+      const evidence = `截至 2026-09-06，公开行情材料记录 BBB 的 ${term} 为 80。`;
+      const gate = await currentDataSafetyGate(evidence, answer, answer);
+      expect(gate.passed).toBe(false);
+    });
+  }
+
+  it("still accepts a pair that names the same instrument", async () => {
+    const answer = "AAA 当前价格是 100 美元。";
+    const evidence = "截至 2026-09-06，公开行情材料记录 AAA 的价格为 100 美元。";
+    const gate = await currentDataSafetyGate(evidence, answer, answer);
+    expect(gate.passed).toBe(true);
+  });
+});
