@@ -1,3 +1,5 @@
+import { buildFinanceStrategyMethodKit } from "./finance-strategy-method-kit.js";
+
 /**
  * The wire between the model and the rules: asking for a conclusion in a shape
  * the machine can check, and getting it back out of the model's answer.
@@ -44,6 +46,14 @@ export function buildFinanceConclusionPrompt(params: {
     .map((source) => `- ${source.sourceId}: ${source.description}`)
     .join("\n");
 
+  const methodKit = buildFinanceStrategyMethodKit(
+    [
+      params.question ?? "",
+      `Instrument: ${params.instrument}`,
+      `Asset class: ${params.assetClass}`,
+      ...(params.horizonDays === undefined ? [] : [`Horizon: ${params.horizonDays} days`]),
+    ].join("\n"),
+  );
   const lines = [
     "You are producing a machine-checked research conclusion, not an essay.",
     "",
@@ -56,6 +66,10 @@ export function buildFinanceConclusionPrompt(params: {
     "",
     "Sources you may cite (cite only these; do not invent others):",
     sourceList,
+    "",
+    methodKit.prompt,
+    "Foreground methods are suggestions, not an exclusive selection or a requirement to use one method. You may combine relevant methods from the full catalog when the supplied evidence supports them.",
+    "Explain the chosen mechanism, supporting evidence and failure conditions in the existing thesis and invalidation fields. Method evidence requirements do not authorize invented sources, unsupported numbers or order execution. Do not add fields to the JSON schema below.",
     "",
     "Reply with a single JSON object in this shape and nothing else:",
     FINANCE_CONCLUSION_JSON_SHAPE,
