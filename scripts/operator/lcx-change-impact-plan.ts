@@ -128,6 +128,11 @@ const PATH_RULES: PathRule[] = [
       // The bar book's agent-facing side. Without it here this file is only claimed by the
       // generic tool-registration rule, which never runs the bar ledger's own behaviour test.
       /^src\/agents\/tools\/finance-bar-ledger-tool\.ts$/u,
+      // The bridge from a research conclusion to a mandate verdict. It places no
+      // order itself - it resolves a conclusion into an intent the execution entry
+      // gates - so it belongs to this seam rather than to the research lane: a
+      // change here changes what reaches the single order path.
+      /^scripts\/operator\/lcx-finance-conclusion-to-order\.ts$/u,
       /^scripts\/operator\/lcx-finance-live-execution\.ts$/u,
       /^scripts\/operator\/lcx-finance-position-ledger\.ts$/u,
       /^scripts\/operator\/lcx-finance-thesis-ledger\.ts$/u,
