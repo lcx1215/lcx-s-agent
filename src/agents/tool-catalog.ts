@@ -367,6 +367,15 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     includeInOpenClawGroup: true,
   },
   {
+    id: "finance_paper_rank_place",
+    label: "finance_paper_rank_place",
+    description:
+      "Rank one day's recorded candidate signals and submit the top ones to the paper venue through the system's single order seam. Report-only unless placing is explicitly requested with an authorization id",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
     id: "finance_source_sweep_read",
     label: "finance_source_sweep_read",
     description:

@@ -41,6 +41,7 @@ import { createFinanceLearningPipelineOrchestratorTool } from "./tools/finance-l
 import { createFinanceLearningRetrievalReviewTool } from "./tools/finance-learning-retrieval-review-tool.js";
 import { createFinanceMarketCollectionRefreshTool } from "./tools/finance-market-collection-refresh-tool.js";
 import { createFinanceOutcomeLedgerReadTool } from "./tools/finance-outcome-ledger-read-tool.js";
+import { createFinancePaperRankPlaceTool } from "./tools/finance-paper-rank-place-tool.js";
 import { createFinancePositionLedgerReadTool } from "./tools/finance-position-ledger-read-tool.js";
 import { createFinancePromotionBulkReviewTool } from "./tools/finance-promotion-bulk-review-tool.js";
 import { createFinancePromotionCandidatesTool } from "./tools/finance-promotion-candidates-tool.js";
@@ -274,6 +275,7 @@ export function createOpenClawTools(options?: {
     createFinanceCalibrationReadTool(),
     createFinanceReflectionReadTool(),
     createFinanceSourceSweepReadTool(),
+    createFinancePaperRankPlaceTool(),
     createFinanceThesisLedgerReadTool({ workspaceDir }),
     createFinanceStrategyRuleLedgerReadTool(),
     createLocalSpecialistTool({ workspaceDir }),
