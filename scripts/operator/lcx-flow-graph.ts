@@ -1850,6 +1850,7 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "src/agents/finance-data-gateway.ts",
       "src/agents/finance-research-batch-runner.test.ts",
       "src/agents/finance-research-batch-runner.ts",
+      "src/agents/finance-research-batch.test.ts",
       "src/agents/finance-research-batch.ts",
       "src/agents/openclaw-tools.finance-article-source-registry-registration.test.ts",
       "src/agents/openclaw-tools.finance-data-gateway-registration.test.ts",
