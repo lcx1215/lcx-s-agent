@@ -594,6 +594,42 @@ describe("a number written in a different notation is the same number", () => {
 });
 
 /**
+ * U-3's question, answered: a number written **without** a unit is not the same number as the same
+ * digits written **with** one. "价格为 480" is not evidence for "价格是 480 美元" -- 480 港元 and
+ * 480 元 are both "480" with a unit, and the gate cannot tell which the answer meant.
+ *
+ * This is a deliberate fail-closed, pinned here so it reads as a decision rather than as whatever
+ * the string comparison happens to do: an answer that wants to be grounded has to say its unit.
+ * The second case is the control that the *notation* of a unit is still free -- `$480` and
+ * `480 美元` are the same quantity.
+ */
+describe("a number without a unit is not grounded by the same digits with a unit", () => {
+  const citedTask = "请根据最新证据判断 NVDA 当前股价和投资风险。";
+
+  it("still flags an answer that omits the unit its evidence carries", async () => {
+    expect(
+      await safetyReasonWithEvidence(
+        "截至 2026-09-06，公开行情材料记录 NVDA 的价格为 480 美元。",
+        citedTask,
+        "NVDA 当前价格是 480。",
+        "NVDA 当前价格是 480。",
+      ),
+    ).toContain("current-data numbers without matching cited evidence");
+  });
+
+  it("grounds the same digits once the unit is written in another notation", async () => {
+    expect(
+      await safetyReasonWithEvidence(
+        "截至 2026-09-06，公开行情材料记录 NVDA 的价格为 $480。",
+        citedTask,
+        "NVDA 当前价格是 480 美元。",
+        "NVDA 当前价格是 480 美元。",
+      ),
+    ).toBe("");
+  });
+});
+
+/**
  * A number the reader supplied is not the answer inventing current data. Measured: with the task
  * "我自己亏了 20%，请根据最新证据判断 NVDA 当前股价和投资风险。", the answer's "20%" -- the user's own
  * loss -- was reported as "current-data numbers without matching cited evidence: 20%".
