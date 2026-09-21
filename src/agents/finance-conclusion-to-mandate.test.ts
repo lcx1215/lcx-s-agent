@@ -101,3 +101,29 @@ describe("caller-owned conclusion risk context", () => {
     }
   });
 });
+
+it("measures whole-position risk when class C compiler does not attach the model's price stop", () => {
+  const value = {
+    ...params,
+    raw: {
+      ...raw,
+      horizonDays: 900,
+      invalidationCondition: "thesis fails",
+      invalidationPrice: 99.99,
+    },
+    riskContext: risk,
+  };
+  const normal = evaluateConclusionToMandate(value);
+  expect(normal).toMatchObject({ ok: true, passed: true, strategyClass: "C" });
+  if (!normal.ok || !normal.intent) {
+    throw new Error("expected valid class C intent");
+  }
+  expect(normal.intent.stopPrice).toBeUndefined();
+  expect((normal.intent.quantity * normal.intent.referencePrice) / value.equity).toBeCloseTo(0.03);
+  const tightened = evaluateConclusionToMandate({ ...value, regime: "risk_off" });
+  expect(tightened).toMatchObject({ ok: true, passed: false, intent: undefined });
+  if (!tightened.ok) {
+    throw new Error("expected mandate decision");
+  }
+  expect(tightened.mandate.reasons.join()).toContain("risk 3.00% exceeds the 1.50% cap");
+});

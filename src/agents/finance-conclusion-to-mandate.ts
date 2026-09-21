@@ -129,9 +129,9 @@ export function evaluateConclusionToMandate(params: {
   // would reject every stop-based trade, since notional is many times the risk
   // whenever a stop is close.
   const stopDistance =
-    intake.conclusion.invalidationPrice === undefined
+    compiled.intent.stopPrice === undefined
       ? params.referencePrice
-      : Math.abs(params.referencePrice - intake.conclusion.invalidationPrice);
+      : Math.abs(params.referencePrice - compiled.intent.stopPrice);
   const riskFractionOfEquity = (compiled.intent.quantity * stopDistance) / params.equity;
 
   const mandate = evaluateFinanceMandate({
@@ -143,7 +143,7 @@ export function evaluateConclusionToMandate(params: {
     ...(risk.realizedVolatilityFraction === undefined
       ? {}
       : { realizedVolatilityFraction: risk.realizedVolatilityFraction }),
-    stopLossDefined: intake.conclusion.invalidationPrice !== undefined,
+    stopLossDefined: compiled.intent.stopPrice !== undefined,
     ...(risk.hasSignificantAutocorrelation === undefined
       ? {}
       : { hasSignificantAutocorrelation: risk.hasSignificantAutocorrelation }),
