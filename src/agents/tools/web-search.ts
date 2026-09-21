@@ -1019,7 +1019,17 @@ function extractKimiCitations(data: KimiSearchResponse): string[] {
   return [...new Set(citations)];
 }
 
-function buildKimiToolResultContent(data: KimiSearchResponse): string {
+function buildKimiToolResultContent(data: KimiSearchResponse, toolCall: KimiToolCall): string {
+  if (toolCall.function?.name !== "$web_search") {
+    throw new Error("Kimi returned an unsupported native tool call");
+  }
+  // Native builtin execution returns its opaque result in arguments, including singular
+  // search_result payloads. Echo it unchanged instead of inventing an empty result list.
+  const nativeResult = toolCall.function.arguments;
+  if (typeof nativeResult === "string" && nativeResult.trim()) {
+    return nativeResult;
+  }
+
   return JSON.stringify({
     search_results: (data.search_results ?? []).map((entry) => ({
       title: entry.title ?? "",
@@ -1098,7 +1108,6 @@ async function runKimiSearch(params: {
           tool_calls: toolCalls,
         });
 
-        const toolContent = buildKimiToolResultContent(data);
         let pushedToolResult = false;
         for (const toolCall of toolCalls) {
           const toolCallId = toolCall.id?.trim();
@@ -1109,7 +1118,7 @@ async function runKimiSearch(params: {
           messages.push({
             role: "tool",
             tool_call_id: toolCallId,
-            content: toolContent,
+            content: buildKimiToolResultContent(data, toolCall),
           });
         }
 
@@ -1498,5 +1507,6 @@ export const __testing = {
   resolveKimiModel,
   resolveKimiBaseUrl,
   extractKimiCitations,
+  runKimiSearch,
   resolveRedirectUrl: resolveCitationRedirectUrl,
 } as const;
