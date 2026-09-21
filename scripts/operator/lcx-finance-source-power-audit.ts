@@ -68,7 +68,7 @@ const WATCHED_KEYS: readonly string[] = [
  * environment. That distinction is the whole point -- a file that mentions a key is not a file that
  * sets it.
  */
-type Layer = Readonly<{
+export type Layer = Readonly<{
   name: string;
   values: ReadonlyMap<string, string>;
   template: ReadonlySet<string>;

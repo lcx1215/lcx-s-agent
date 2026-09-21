@@ -774,7 +774,8 @@ async function currentDataSafetyGate(
     },
     maxAttempts: 1,
     modelInvoker: async (raw) => {
-      if (raw.stage === "intake") {
+      const current = raw as QualityHarnessModelRequest;
+      if (current.stage === "intake") {
         return { kind: "plan", requirements: ["回答问题"], missingEvidence: [] };
       }
       const artifact = {
@@ -786,8 +787,8 @@ async function currentDataSafetyGate(
           ],
         },
       };
-      if (raw.stage === "format" || raw.stage === "draft") {
-        return raw.stage === "format"
+      if (current.stage === "format" || current.stage === "draft") {
+        return current.stage === "format"
           ? artifact
           : {
               kind: "artifact",
