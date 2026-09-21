@@ -22,6 +22,7 @@ import { runFinanceDailyCycle } from "../../src/agents/finance-daily-cycle.js";
 import { readFinanceLinkHealth } from "../../src/agents/finance-link-health.js";
 import { backfillOutcomes } from "../../src/agents/finance-outcome-backfill.js";
 import { buildReflection } from "../../src/agents/finance-reflection.js";
+import { resolveScopedOverride } from "../../src/agents/finance-scoped-override.js";
 import {
   FINANCE_RESEARCH_SAMPLES_FILENAME,
   FINANCE_RESEARCH_SCORED_FILENAME,
@@ -294,6 +295,13 @@ export async function runFinanceDailyCycleOperator(
     }
 
     if (options.mode === "day") {
+      // A declared override is resolved here, where the cap is actually read.
+      // Without this the override tool writes a file nothing consults and reports
+      // success for a change that never takes effect.
+      const ordersOverride = await resolveScopedOverride({
+        knob: "maxOrdersPerRun",
+        fallback: options.maxOrdersPerRun,
+      });
       const report = await runFinanceDailyCycle({
         instruments,
         equity,
@@ -301,7 +309,7 @@ export async function runFinanceDailyCycleOperator(
         caps: {
           maxOrderNotional: options.maxOrderNotional,
           maxInstrumentNotional: options.maxInstrumentNotional,
-          maxOrdersPerRun: options.maxOrdersPerRun,
+          maxOrdersPerRun: ordersOverride.value,
         },
         runAuthorizationId: `daily-cycle:${options.asOf.slice(0, 10)}`,
         rebalanceBand: options.band,
@@ -319,7 +327,7 @@ export async function runFinanceDailyCycleOperator(
         caps: {
           maxOrderNotional: options.maxOrderNotional,
           maxInstrumentNotional: options.maxInstrumentNotional,
-          maxOrdersPerRun: options.maxOrdersPerRun,
+          maxOrdersPerRun: ordersOverride.value,
         },
         targets: report.targets,
         drift: report.drift,
