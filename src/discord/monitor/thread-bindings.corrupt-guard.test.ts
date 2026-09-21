@@ -19,7 +19,7 @@ const makeRecord = (threadId: string): ThreadBindingRecord => ({
   accountId: "acct-1",
   channelId: "chan-1",
   threadId,
-  targetKind: "session",
+  targetKind: "subagent",
   targetSessionKey: `session:${threadId}`,
   agentId: "main",
   boundBy: "test",
