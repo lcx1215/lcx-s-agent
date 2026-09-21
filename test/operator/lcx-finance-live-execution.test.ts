@@ -47,6 +47,7 @@ function options(overrides: Partial<Options> = {}): Options {
     instrument: "AAPL",
     assetClass: "us_equity",
     riskPct: 0.5,
+    drawdownPct: 0,
     hasStructure: true,
     stopPrice: 225,
     side: "buy",
@@ -374,6 +375,18 @@ describe("mandatory owner-entry mandate and stop delivery", () => {
       await expect(
         buildFinanceLiveExecutionPayload(options({ adapter, assetClass: undefined })),
       ).rejects.toThrow("--asset-class is required");
+      expect(paperFactory).not.toHaveBeenCalled();
+      expect(venueFactory).not.toHaveBeenCalled();
+    },
+  );
+  it.each(["paper", "alpaca"] as const)(
+    "rejects missing drawdown before constructing %s adapter",
+    async (adapter) => {
+      const paperFactory = vi.spyOn(executionAdapters, "createPaperExecutionAdapter");
+      const venueFactory = vi.spyOn(alpacaAdapters, "createAlpacaExecutionAdapter");
+      await expect(
+        buildFinanceLiveExecutionPayload(options({ adapter, drawdownPct: undefined })),
+      ).rejects.toThrow("missing drawdown is unknown, not zero");
       expect(paperFactory).not.toHaveBeenCalled();
       expect(venueFactory).not.toHaveBeenCalled();
     },

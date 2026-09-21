@@ -13,7 +13,7 @@
  * Usage:
  *   node --import tsx scripts/operator/lcx-finance-live-execution.ts --json \
  *     --instrument AAPL --quantity 10 --reference-price 231.4 \
- *     --asset-class us_equity --risk-pct 0.5 --stop-price 225 --has-structure \
+ *     --asset-class us_equity --risk-pct 0.5 --drawdown-pct 0 --stop-price 225 --has-structure \
  *     --as-of 2026-09-17T21:00:00Z --run-authorization run-2026-09-18-001 \
  *     --mark AAPL=233.1@2026-09-18T02:00:00Z
  *
@@ -260,6 +260,7 @@ export function parseArgs(args: readonly string[]): Options {
           "[--automation attended|unattended] " +
           "[--adapter paper|alpaca] [--alpaca-mode paper|live] " +
           "[--write-ledger] [--ledger-dir PATH]\n" +
+          "--asset-class and --drawdown-pct are required; missing drawdown is unknown, not zero. " +
           "Omitting --allow-instrument leaves the run open by instrument; repeating it narrows " +
           "the run to the named instruments. Each --max-* cap is optional and enforced only when " +
           "declared, EXCEPT under --automation unattended, where all three are required: a run " +
@@ -276,6 +277,9 @@ export function parseArgs(args: readonly string[]): Options {
 export async function buildFinanceLiveExecutionPayload(options: Options) {
   if (!options.assetClass?.trim()) {
     throw new Error("--asset-class is required; unknown strategy class cannot bypass the mandate");
+  }
+  if (options.drawdownPct === undefined) {
+    throw new Error("--drawdown-pct is required; missing drawdown is unknown, not zero");
   }
   // The allowlist narrows only when the caller names instruments. With none named the run is
   // open by instrument, and both checks in the adapter seam stay in force — so an explicit
@@ -327,7 +331,7 @@ export async function buildFinanceLiveExecutionPayload(options: Options) {
     const mandate = evaluateFinanceMandate({
       strategy: { assetClass: options.assetClass },
       riskFractionOfEquity: options.riskPct / 100,
-      drawdownFraction: (options.drawdownPct ?? 0) / 100,
+      drawdownFraction: options.drawdownPct / 100,
       ...(options.stopPrice !== undefined ? { stopLossDefined: true } : {}),
       ...(options.hasStructure !== undefined
         ? { hasSignificantAutocorrelation: options.hasStructure }
