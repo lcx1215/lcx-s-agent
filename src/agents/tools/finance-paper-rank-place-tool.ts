@@ -89,6 +89,10 @@ type Sample = {
   direction: string;
   conviction: number;
   lastPrice: number;
+  /** Exact price observation time from its source, never a collection time or EOD date. */
+  lastPriceAt?: string;
+  lastPriceSource?: string;
+  lastPriceDate?: string;
   sources: string[];
 };
 
@@ -210,7 +214,6 @@ async function main(_toolCallId: string, params: Record<string, unknown>) {
     allowedInstruments: [FINANCE_RISK_BUDGET_ANY_INSTRUMENT],
   };
 
-  const asOf = new Date().toISOString();
   const results: unknown[] = [];
   let placedCount = 0;
 
@@ -234,6 +237,26 @@ async function main(_toolCallId: string, params: Record<string, unknown>) {
       continue;
     }
 
+    if (
+      typeof s.lastPriceAt !== "string" ||
+      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u.test(
+        s.lastPriceAt,
+      ) ||
+      !Number.isFinite(Date.parse(s.lastPriceAt)) ||
+      Date.parse(s.lastPriceAt) > Date.now() ||
+      typeof s.lastPriceSource !== "string" ||
+      !s.lastPriceSource.trim()
+    ) {
+      results.push({
+        instrument: s.instrument,
+        status: "refused",
+        reasons: [
+          "missing valid original price observation time/source; sample asOf and EOD date are not quote timestamps",
+        ],
+      });
+      continue;
+    }
+
     // Routed through the paper seam rather than around it: that is where the
     // day guard and the receipt filing live, and a caller that bypasses it
     // produces fills the ledger never hears about.
@@ -243,14 +266,23 @@ async function main(_toolCallId: string, params: Record<string, unknown>) {
         instrument: s.instrument,
         direction: s.direction === "sell" ? "sell" : "buy",
         conviction: s.conviction,
-        thesis: "ranked top-" + top + " of " + samples.length + " on " + day,
+        thesis:
+          "ranked top-" +
+          top +
+          " of " +
+          samples.length +
+          " on " +
+          day +
+          "; price source: " +
+          s.lastPriceSource,
         assetClass: "us_equity",
         invalidationPrice,
       },
-      market: { referencePrice: s.lastPrice, referencePriceAt: asOf },
+      market: { referencePrice: s.lastPrice, referencePriceAt: s.lastPriceAt },
       equity,
       runAuthorizationId: authorization,
       budget,
+      ordersPlacedThisRun: placedCount,
       instruments: samples.map((x) => x.instrument),
       ...(floor !== null ? { minConviction: floor } : {}),
     });

@@ -1,8 +1,12 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { recordedKeys, runResearchBatch } from "./finance-research-batch.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { recordedKeys, researchPricedRows, runResearchBatch } from "./finance-research-batch.js";
+
+vi.mock("./finance-credential-env.js", () => ({
+  resolveFinanceCredentialEnv: (env: NodeJS.ProcessEnv) => env,
+}));
 
 /**
  * Where a sample is recorded decides which book the night run settles.
@@ -78,5 +82,27 @@ describe("recordedKeys", () => {
       JSON.stringify({ instrument: "QQQ", asOf: "2026-09-21T00:00:00.000Z", lastPrice: 0 }) + "\n",
     );
     expect(recordedKeys(target).has("QQQ|2026-09-21")).toBe(false);
+  });
+});
+
+describe("research price provenance", () => {
+  it("keeps date/source on the same selected price row without turning collection time into quote time", () => {
+    const rows = researchPricedRows([
+      { data: { date: "2026-09-20", close: 100 }, sourceUrlOrArtifact: "fixture://newer" },
+      { data: { date: "2026-09-19", close: 90 }, sourceUrlOrArtifact: "fixture://older" },
+    ]);
+    expect(rows.at(-1)).toMatchObject({
+      date: "2026-09-20",
+      close: 100,
+      sourceUrlOrArtifact: "fixture://newer",
+    });
+    expect(rows.at(-1)).not.toHaveProperty("lastPriceAt");
+  });
+  it("does not borrow provenance from another row", () => {
+    const rows = researchPricedRows([
+      { data: { date: "2026-09-19", close: 90 }, sourceUrlOrArtifact: "fixture://older" },
+      { data: { date: "2026-09-20", close: 100 } },
+    ]);
+    expect(rows.at(-1)?.sourceUrlOrArtifact).toBeUndefined();
   });
 });

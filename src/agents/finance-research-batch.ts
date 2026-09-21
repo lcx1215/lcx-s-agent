@@ -51,6 +51,9 @@ export type BatchRecord = Readonly<{
   agreement: number;
   sources: readonly string[];
   lastPrice: number;
+  /** EOD date only. This is not an intraday observation or an execution quote. */
+  lastPriceDate?: string;
+  lastPriceSource?: string;
   /** Where the price came from: a live provider, the bar book, or nowhere. */
   priceSource: "live_eod" | "bar_ledger" | "none";
   target: number | null;
@@ -299,6 +302,33 @@ function defaultBarFor(directory?: string): (instrument: string) => Promise<read
   };
 }
 
+/** Preserve the selected bar's own provenance; collection timestamps are not close-price times. */
+export function researchPricedRows(
+  records: readonly { data?: Record<string, unknown>; sourceUrlOrArtifact?: unknown }[],
+) {
+  return records
+    .flatMap((record) => {
+      const row = record.data ?? {};
+      if (
+        typeof row.date !== "string" ||
+        !Number.isFinite(Number(row.close)) ||
+        Number(row.close) <= 0
+      ) {
+        return [];
+      }
+      return [
+        {
+          date: row.date,
+          close: Number(row.close),
+          volume: Number(row.volume ?? 0),
+          sourceUrlOrArtifact:
+            typeof record.sourceUrlOrArtifact === "string" ? record.sourceUrlOrArtifact : undefined,
+        },
+      ];
+    })
+    .toSorted((a, b) => a.date.localeCompare(b.date));
+}
+
 async function collectOne(params: {
   instrument: string;
   asOf: string;
@@ -333,10 +363,12 @@ async function collectOne(params: {
   const { instrument, asOf } = params;
   const signals: FinanceSignal[] = [];
   let lastPrice = 0;
+  let lastPriceDate: string | undefined;
+  let lastPriceSource: string | undefined;
   let target: number | null = null;
   let priceSource: "live_eod" | "bar_ledger" | "none" = "none";
 
-  type PricedRow = { date: string; close: number; volume: number };
+  type PricedRow = { date: string; close: number; volume: number; sourceUrlOrArtifact?: string };
   const applyBars = (rows: readonly PricedRow[], sourceId: string): void => {
     if (rows.length === 0) {
       return;
@@ -344,6 +376,8 @@ async function collectOne(params: {
     const closes = rows.map((row) => row.close);
     const volumes = rows.map((row) => row.volume);
     lastPrice = closes[closes.length - 1] ?? 0;
+    lastPriceDate = rows.at(-1)?.date;
+    lastPriceSource = rows.at(-1)?.sourceUrlOrArtifact;
     if (lastPrice <= 0) {
       return;
     }
@@ -385,18 +419,7 @@ async function collectOne(params: {
         .map((r) => (r as { providerName?: unknown }).providerName)
         .find((name): name is string => typeof name === "string" && name.length > 0) ??
       "unknown-eod";
-    const rows = (result.records ?? [])
-      .map(
-        (r) =>
-          ((r as { data?: Record<string, unknown> }).data ?? {}) as Record<string, number | string>,
-      )
-      .filter((row) => Number(row.close) > 0 && typeof row.date === "string")
-      .toSorted((a, b) => String(a.date).localeCompare(String(b.date)))
-      .map((row) => ({
-        date: String(row.date),
-        close: Number(row.close),
-        volume: Number(row.volume ?? 0),
-      }));
+    const rows = researchPricedRows(result.records ?? []);
     applyBars(rows, servedBy + "-eod-structure");
     if (lastPrice > 0) {
       priceSource = "live_eod";
@@ -518,6 +541,8 @@ async function collectOne(params: {
       agreement: 0,
       sources: [],
       lastPrice,
+      lastPriceDate,
+      lastPriceSource,
       priceSource,
       target,
       refusals: [...fused.refusals],
@@ -531,6 +556,8 @@ async function collectOne(params: {
     agreement: Number(fused.conclusion.agreement.toFixed(4)),
     sources: fused.conclusion.evidence.map((e) => e.sourceId),
     lastPrice,
+    lastPriceDate,
+    lastPriceSource,
     priceSource,
     target,
   };
