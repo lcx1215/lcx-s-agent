@@ -5,9 +5,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   FINANCE_OUTCOME_LEDGER_FILENAME,
   FINANCE_POSITION_LEDGER_FILENAME,
+  FINANCE_RESEARCH_SAMPLES_FILENAME,
+  FINANCE_RESEARCH_SCORED_FILENAME,
   FINANCE_STATE_DIR_ENV,
   financeOutcomeLedgerPath,
   financePositionLedgerPath,
+  financeResearchSamplesPath,
+  financeResearchScoredPath,
   resolveFinancePositionLedgerLocation,
   resolveFinanceStateDir,
 } from "./finance-state-dir.js";
@@ -103,5 +107,52 @@ describe("finance state directory resolution", () => {
     expect(financeOutcomeLedgerPath(directory)).toBe(
       path.join(directory, FINANCE_OUTCOME_LEDGER_FILENAME),
     );
+  });
+
+  // The research call log and its settled outcomes used to be reached as
+  // `state/finance/...` relative to the process working directory, so a writer
+  // and a reader only agreed while both happened to be started from the
+  // repository root. Measured failure: the cycle recorded five samples under
+  // the configured root while a reader resolved the same name under the
+  // workspace and reported none. Resolution must not depend on the cwd.
+  it("resolves the research samples and scored files inside the given directory", () => {
+    const directory = path.join(path.sep, "configured", "finance-root");
+    expect(financeResearchSamplesPath(directory)).toBe(
+      path.join(directory, FINANCE_RESEARCH_SAMPLES_FILENAME),
+    );
+    expect(financeResearchScoredPath(directory)).toBe(
+      path.join(directory, FINANCE_RESEARCH_SCORED_FILENAME),
+    );
+  });
+
+  it("resolves the research files independently of the process working directory", async () => {
+    const directory = await temporaryDirectory();
+    const elsewhere = await temporaryDirectory();
+    const original = process.cwd();
+    try {
+      process.chdir(elsewhere);
+      // A cwd-relative `state/finance/...` would land under `elsewhere`.
+      expect(financeResearchSamplesPath(directory)).toBe(
+        path.join(directory, FINANCE_RESEARCH_SAMPLES_FILENAME),
+      );
+      expect(financeResearchScoredPath(directory)).toBe(
+        path.join(directory, FINANCE_RESEARCH_SCORED_FILENAME),
+      );
+    } finally {
+      process.chdir(original);
+    }
+  });
+
+  it("keeps the writer and the reader on one file per name", () => {
+    const resolved = resolveFinanceStateDir({
+      workspaceDir: "/workspace",
+      env: { [FINANCE_STATE_DIR_ENV]: "/env/book" },
+    });
+    // What the daily cycle appends to and what the calibration tool reads must
+    // be the same string, not two spellings of the same idea.
+    expect(financeResearchScoredPath(resolved.directory)).toBe(
+      path.join(resolved.directory, FINANCE_RESEARCH_SCORED_FILENAME),
+    );
+    expect(path.isAbsolute(financeResearchSamplesPath(resolved.directory))).toBe(true);
   });
 });

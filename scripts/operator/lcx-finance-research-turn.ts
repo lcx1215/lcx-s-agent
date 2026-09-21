@@ -51,6 +51,10 @@ import {
   buildFinanceConclusionPrompt,
   extractFinanceConclusionJson,
 } from "../../src/agents/finance-research-conclusion-prompt.js";
+import {
+  financeResearchScoredPath,
+  resolveFinanceStateDir,
+} from "../../src/agents/finance-state-dir.js";
 import { createFinanceUncachedFetch } from "../../src/agents/finance-write-transport.js";
 
 type Evidence = { sourceId: string; description: string; detail: string };
@@ -325,7 +329,7 @@ async function main(): Promise<void> {
 
   // Show the model its own scored record before it judges again. Facts only -
   // it is told what happened, never how much to move its number.
-  const scored = readScored("state/finance/research-scored.jsonl");
+  const scored = readScored(financeResearchScoredPath(resolveFinanceStateDir().directory));
   const reflection = [
     renderReflection(buildReflection(scored, { instrument })),
     "",

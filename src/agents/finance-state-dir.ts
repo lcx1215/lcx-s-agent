@@ -154,6 +154,30 @@ export function financeBarLedgerPath(directory: string): string {
   return path.join(directory, FINANCE_BAR_LEDGER_FILENAME);
 }
 
+/**
+ * The research plane: recorded calls and their settled outcomes.
+ *
+ * They belong beside the ledgers for the same reason the receipts do — the daily cycle writes the
+ * samples and reads them back to settle them, and the calibration tool reads the settled set to
+ * answer "how good have my calls been". Resolved here so a writer and a reader cannot disagree
+ * about which file that is: these two used to be reached as `state/finance/...` relative to the
+ * process working directory, which is only the right book while the caller happens to be started
+ * from the repository root. Measured: the cycle wrote five samples under the configured root while
+ * a reader resolved the same name under the workspace and reported none.
+ */
+export const FINANCE_RESEARCH_SAMPLES_FILENAME = "research-samples.jsonl" as const;
+export const FINANCE_RESEARCH_SCORED_FILENAME = "research-scored.jsonl" as const;
+
+/** Path of the recorded research calls inside `directory`. */
+export function financeResearchSamplesPath(directory: string): string {
+  return path.join(directory, FINANCE_RESEARCH_SAMPLES_FILENAME);
+}
+
+/** Path of the settled outcomes inside `directory`. */
+export function financeResearchScoredPath(directory: string): string {
+  return path.join(directory, FINANCE_RESEARCH_SCORED_FILENAME);
+}
+
 export const FINANCE_BEHAVIOUR_THRESHOLDS_FILENAME = "behaviour-thresholds.json" as const;
 
 export const FINANCE_READINESS_THRESHOLDS_FILENAME = "readiness-thresholds.json" as const;

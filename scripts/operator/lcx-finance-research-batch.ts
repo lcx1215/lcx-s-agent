@@ -38,6 +38,10 @@ import { analystTargetSignal } from "../../src/agents/finance-fundamental-signal
 import { runFinanceMarketCollectionRefresh } from "../../src/agents/finance-market-collection-registry.js";
 import { createRegisteredCapabilityAdapters } from "../../src/agents/finance-registered-capability-adapters.js";
 import { fuseSignals, type FinanceSignal } from "../../src/agents/finance-signal-fusion.js";
+import {
+  financeResearchSamplesPath,
+  resolveFinanceStateDir,
+} from "../../src/agents/finance-state-dir.js";
 
 type Recorded = {
   asOf: string;
@@ -272,7 +276,8 @@ async function main(): Promise<void> {
     process.stdout.write("Usage: --instruments AAPL,MSFT --record PATH\n");
     return;
   }
-  const recordPath = readArg(args, "--record") ?? "state/finance/research-samples.jsonl";
+  const recordPath =
+    readArg(args, "--record") ?? financeResearchSamplesPath(resolveFinanceStateDir().directory);
 
   const env = resolveFinanceCredentialEnv(process.env) as Record<string, unknown>;
   const fmpKey = typeof env.FMP_API_KEY === "string" ? env.FMP_API_KEY : "";

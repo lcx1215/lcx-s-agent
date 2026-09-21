@@ -36,6 +36,11 @@ import {
   classifyFinanceStrategy,
   evaluateFinanceMandate,
 } from "../../src/agents/finance-mandate.js";
+import {
+  financeResearchSamplesPath,
+  financeResearchScoredPath,
+  resolveFinanceStateDir,
+} from "../../src/agents/finance-state-dir.js";
 
 type Sample = {
   asOf: string;
@@ -56,7 +61,8 @@ function readArg(args: readonly string[], name: string): string | undefined {
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
-  const recordPath = readArg(args, "--record") ?? "state/finance/research-samples.jsonl";
+  const recordPath =
+    readArg(args, "--record") ?? financeResearchSamplesPath(resolveFinanceStateDir().directory);
   const day = readArg(args, "--day") ?? new Date().toISOString().slice(0, 10);
   const top = Number(readArg(args, "--top") ?? 3);
   const floor = Number(readArg(args, "--floor") ?? 0.15);
@@ -67,7 +73,8 @@ async function main(): Promise<void> {
   // The floor is either derived from what the system has actually achieved, or
   // explicitly declared as an exploration value. It is never a silent default.
   const mode = readArg(args, "--mode") ?? "calibrated";
-  const scoredPath = readArg(args, "--scored") ?? "state/finance/research-scored.jsonl";
+  const scoredPath =
+    readArg(args, "--scored") ?? financeResearchScoredPath(resolveFinanceStateDir().directory);
   const exploreFloor = Number(readArg(args, "--explore-floor") ?? 0.1);
 
   let effectiveFloor: number | null = floor;
