@@ -151,6 +151,8 @@ F-27 是典型的"控制被守住了、喂它的数没被守"。凡是形如 `if
 
 | F-38 | `memory-search.ts` → `batch-{gemini,openai,voyage}.ts` | **轮询间隔无下限 ⇒ 忙循环**：三个批处理 provider 都直接 `setTimeout(resolve, params.pollIntervalMs)`；而配置 schema 是 `z.number().int().nonnegative()`（**允许 0**），`memory-search` 解析处也无守卫（`?? 2000`）。⇒ 配置 `pollIntervalMs: 0` ⇒ 对远程批处理端点**忙轮询直到 `timeoutMinutes`（默认 60 分钟）超时**。修法：在配置解析处加下限（单点，覆盖三个 provider），并把"零不是'尽快轮询'而是忙循环"写进注释。 |
 
+| F-39 ⚠️ | `quality-harness-quality.ts` 的 `NON_ENTITY_TOKENS` | **与 F-36 完全同构**：`financeEntities` 用 `\b[A-Z][A-Z0-9.-]{1,9}\b` 把任何大写词当实体，排除表**只有 8 个**（USD/EUR/GBP/CNY/JPY/ETF/API/URL）。⇒ RSI/MACD/EPS/IPO/FED/YTD… 都成为"claim 与 evidence 共同谈论的东西" ⇒ **术语重叠会掩盖真正的实体错配**（这个比对本来就是为了抓错配）。**⚠️ 本条是同族推断 + 代码证据，没有独立端到端探针**（该判定埋在 `evaluateQuality` 内部，构造需 mock 模型调用），**也没有测试钉住**；改动只是扩充词表（零回归，25 个既有测试通过）。下轮应补一个能观察实体比对的测试。 |
+
 **修法**：**校验配置的连贯性，不连贯 ⇒ 不给意见**（不钳制）。
 
 - 两个信号：返回 `hold/0/0`（并标 `config=incoherent`）。

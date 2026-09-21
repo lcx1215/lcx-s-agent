@@ -229,7 +229,56 @@ const FINANCE_ENTITY_ALIASES: readonly Readonly<{ alias: RegExp; canonical: stri
   { alias: /\bMNSO\b|名创优品|名創優品/giu, canonical: "MNSO" },
 ];
 
-const NON_ENTITY_TOKENS = new Set(["USD", "EUR", "GBP", "CNY", "JPY", "ETF", "API", "URL"]);
+const NON_ENTITY_TOKENS = new Set([
+  // Currencies and units first: they appear in almost every finance sentence and would otherwise
+  // read as the subject of the claim.
+  "CNY",
+  "EUR",
+  "GBP",
+  "HKD",
+  "JPY",
+  "USD",
+  // Same blocklist shape as `NON_EQUITY_SYMBOL_TOKENS` in finance-research-runner: the extractor
+  // reads any upper-case token as an entity, so an unlisted abbreviation becomes a "thing the claim
+  // and the evidence are both about" — which is exactly what the entity comparison is meant to
+  // catch. A term appearing in both therefore *masks* a genuine entity mismatch.
+  // Not exhaustive by construction; when adding, remember several abbreviations are real tickers
+  // (PEG, ATR) and must not be blocked.
+  "API",
+  "AUM",
+  "CEO",
+  "CFO",
+  "CPI",
+  "DCF",
+  "EPS",
+  "ESG",
+  "ETF",
+  "FED",
+  "FOMC",
+  "GAAP",
+  "GDP",
+  "HTTP",
+  "HTTPS",
+  "IFRS",
+  "IPO",
+  "JSON",
+  "MACD",
+  "NASDAQ",
+  "NAV",
+  "NYSE",
+  "PPI",
+  "PMI",
+  "ROI",
+  "ROE",
+  "ROA",
+  "RSI",
+  "SEC",
+  "TTM",
+  "URL",
+  "WACC",
+  "YOY",
+  "YTD",
+]);
 
 function financeEntities(text: string): Set<string> {
   let normalized = text;
