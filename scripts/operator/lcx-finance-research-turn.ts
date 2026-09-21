@@ -38,7 +38,10 @@ import {
   createSecFilingsCollectionAdapter,
   runFinanceMarketCollectionRefresh,
 } from "../../src/agents/finance-market-collection-registry.js";
-import { readFinancePositionLedger } from "../../src/agents/finance-position-ledger.js";
+import {
+  readFinancePositionLedger,
+  readFinanceAccountPositionLedger,
+} from "../../src/agents/finance-position-ledger.js";
 import {
   buildReflection,
   renderReflection,
@@ -51,6 +54,9 @@ import {
 } from "../../src/agents/finance-research-conclusion-prompt.js";
 import {
   runFinanceResearchExecutionBridge,
+  recoverFinanceResearchHistory,
+  buildFinanceResearchMathEvidence,
+  type FinanceResearchDailyBars,
   type FinanceResearchEvidence,
   type FinanceResearchExecutionControl,
 } from "../../src/agents/finance-research-execution-bridge.js";
@@ -68,6 +74,7 @@ export type FinanceResearchTurnDependencies = Readonly<{
     asOf: string;
   }) => Promise<{
     evidence: readonly Evidence[];
+    dailyBars?: FinanceResearchDailyBars;
     market: { referencePrice: number; referencePriceAt: string };
   }>;
   invokeModel?: (prompt: string) => Promise<string>;
@@ -155,6 +162,9 @@ export async function runFinanceResearchTurn(
   if (deps.gatherEvidence) {
     const gathered = await deps.gatherEvidence({ instrument, assetClass, asOf: now });
     evidence.push(...gathered.evidence);
+    if (gathered.dailyBars) {
+      evidence.push(...buildFinanceResearchMathEvidence(gathered.dailyBars));
+    }
     lastPrice = gathered.market.referencePrice;
     lastPriceAt = gathered.market.referencePriceAt;
   } else {
@@ -187,6 +197,14 @@ export async function runFinanceResearchTurn(
         )
         .filter((row) => Number(row.close) > 0 && typeof row.date === "string")
         .toSorted((a, b) => String(a.date).localeCompare(String(b.date)));
+      evidence.push(
+        ...buildFinanceResearchMathEvidence({
+          sourceId: "fmp-native-daily-bars",
+          sourceUrlOrArtifact: "provider:fmp/eod_history",
+          periodsPerYear: 252,
+          rows: rows.map((row) => ({ date: String(row.date), close: Number(row.close) })),
+        }),
+      );
       const closes = rows.map((row) => Number(row.close));
       const volumes = rows.map((row) => Number(row.volume ?? 0));
       lastPrice = closes[closes.length - 1] ?? 0;
@@ -410,16 +428,40 @@ export async function runFinanceResearchTurn(
     return;
   }
 
+  if (deps.control?.mode === "alpaca_paper") {
+    const recovery = await recoverFinanceResearchHistory(deps.control);
+    if (!recovery.ok) {
+      return {
+        status: "blocked" as const,
+        recovery,
+        refusals: ["execution history recovery or account reconciliation required"],
+      };
+    }
+  }
   let historicalBook: string;
   try {
-    const history = await readFinancePositionLedger(stateDirectory);
-    historicalBook =
-      "Stored mixed-source execution history (account unassigned; not current Alpaca holdings or execution authority): " +
-      JSON.stringify({
-        headRef: history.headRef,
-        receiptCount: history.receiptRecordCount,
-        positions: history.ledger.positions,
-      });
+    if (deps.control?.recovery) {
+      const history = await readFinanceAccountPositionLedger(stateDirectory, deps.control.recovery);
+      historicalBook =
+        "Stored account-scoped history (recorded history only; missing is not broker flat): " +
+        JSON.stringify({
+          headRef: history.headRef,
+          historyStatus: history.historyStatus,
+          receiptCount: history.receipts.length,
+          positions: history.ledger.positions,
+          unassignedReceiptCount: history.unassignedReceiptCount,
+          excludedReceiptCount: history.excludedReceiptCount,
+        });
+    } else {
+      const history = await readFinancePositionLedger(stateDirectory);
+      historicalBook =
+        "Stored mixed-source execution history (account unassigned; not current Alpaca holdings or execution authority): " +
+        JSON.stringify({
+          headRef: history.headRef,
+          receiptCount: history.receiptRecordCount,
+          positions: history.ledger.positions,
+        });
+    }
   } catch (error) {
     historicalBook =
       "Stored execution history unavailable: " +

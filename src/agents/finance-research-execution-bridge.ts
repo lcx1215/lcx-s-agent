@@ -5,9 +5,15 @@ import {
   evaluateConclusionToMandate,
   type FinanceConclusionRiskContext,
 } from "./finance-conclusion-to-mandate.js";
+import { recoverConfirmedFinanceExecutions } from "./finance-execution-recovery.js";
 import type { FinanceRegime } from "./finance-mandate.js";
 import { appendFinanceExecutionReceipt } from "./finance-position-ledger.js";
 import { extractFinanceConclusionJson } from "./finance-research-conclusion-prompt.js";
+import {
+  calculateReturnsFromLevels,
+  calculateRollingVolatility,
+  calculateMaxDrawdown,
+} from "./tools/quant-math-tool.js";
 
 export type FinanceResearchEvidence = Readonly<{
   sourceId: string;
@@ -20,12 +26,99 @@ export type FinanceResearchEvidence = Readonly<{
     calculationId: string;
     module: string;
     inputSourceIds: readonly string[];
+    inputHash?: string;
   }>;
 }>;
+export type FinanceResearchDailyBars = Readonly<{
+  sourceId: string;
+  sourceUrlOrArtifact: string;
+  rows: readonly Readonly<{ date: string; close: number }>[];
+  periodsPerYear: number;
+}>;
+
+/** Reuse the existing quantitative functions on qualified native daily bars, not price guesses. */
+export function buildFinanceResearchMathEvidence(
+  input: FinanceResearchDailyBars,
+): readonly FinanceResearchEvidence[] {
+  if (
+    input.rows.length < 21 ||
+    !input.sourceId.trim() ||
+    !input.sourceUrlOrArtifact.trim() ||
+    !Number.isFinite(input.periodsPerYear) ||
+    input.periodsPerYear <= 0 ||
+    input.rows.some(
+      (row, index) =>
+        !/^\d{4}-\d{2}-\d{2}$/u.test(row.date) ||
+        !Number.isFinite(Date.parse(row.date)) ||
+        !Number.isFinite(row.close) ||
+        row.close <= 0 ||
+        (index > 0 && row.date <= input.rows[index - 1].date),
+    )
+  ) {
+    return [];
+  }
+  const levels = input.rows.map((row) => row.close);
+  const returns = calculateReturnsFromLevels(levels);
+  const volatility = calculateRollingVolatility({
+    series: returns.returns,
+    window: 20,
+    periodsPerYear: input.periodsPerYear,
+  });
+  const drawdown = calculateMaxDrawdown(levels, "levels");
+  const raw = JSON.stringify(input.rows);
+  const inputHash = hash(
+    JSON.stringify({ rows: input.rows, window: 20, periodsPerYear: input.periodsPerYear }),
+  );
+  const sourceTimestamp = input.rows.at(-1)!.date;
+  const results = [
+    {
+      module: "calculateReturnsFromLevels",
+      result: returns,
+      summary: { observations: returns.observations, latestReturn: returns.returns.at(-1) },
+    },
+    {
+      module: "calculateRollingVolatility",
+      result: volatility,
+      summary: {
+        window: 20,
+        periodsPerYear: input.periodsPerYear,
+        latest: volatility.values.at(-1),
+      },
+    },
+    { module: "calculateMaxDrawdown", result: drawdown, summary: drawdown },
+  ];
+  return [
+    {
+      sourceId: input.sourceId,
+      sourceUrlOrArtifact: input.sourceUrlOrArtifact,
+      sourceTimestamp,
+      description: "native historical daily closes, not an execution quote",
+      detail: raw,
+    },
+    ...results.map(({ module, result, summary }) => {
+      const calculationId = hash(JSON.stringify({ inputHash, module, result }));
+      return {
+        sourceId: `${input.sourceId}:${module}`,
+        sourceUrlOrArtifact: `calculation:quant_math:${calculationId}`,
+        sourceTimestamp,
+        description: `computed historical price statistic via quant_math.${module}; not account risk state`,
+        detail: JSON.stringify({ ...summary, calculationId, inputHash }),
+        computation: {
+          calculationId,
+          module: `quant_math.${module}`,
+          inputHash,
+          inputSourceIds: [input.sourceId],
+        },
+      };
+    }),
+  ];
+}
+
 export type FinanceResearchExecutionControl = Readonly<{
   mode?: "shadow" | "alpaca_paper";
   /** Canonical controller-owned finance database root, never from model JSON. */
   stateDirectory?: string;
+  recovery?: Readonly<{ safetyStateDir: string; accountId: string; venue: string }>;
   riskContext?: FinanceConclusionRiskContext;
   /** Controller-only input. Never populated from model JSON or CLI flags. */
   execution?: Omit<
@@ -81,7 +174,7 @@ function parseObservation(raw: unknown): ReturnType<typeof parseResearchConclusi
       ? [{ sourceId: ref.sourceId }]
       : [],
   );
-  if (evidence.length !== raw.evidence.length || evidence.length < 2) {
+  if (evidence.length !== raw.evidence.length || evidence.length < 1) {
     return { ok: false, refusals: ["non-trade research requires source evidence"] };
   }
   return {
@@ -96,6 +189,24 @@ function parseObservation(raw: unknown): ReturnType<typeof parseResearchConclusi
       thesis: raw.thesis,
       evidence,
     },
+  };
+}
+
+export async function recoverFinanceResearchHistory(control: FinanceResearchExecutionControl) {
+  if (!control.stateDirectory || !control.recovery || control.recovery.venue !== "alpaca:paper") {
+    return { ok: false as const, reason: "controller account recovery binding required" };
+  }
+  const recovery = await recoverConfirmedFinanceExecutions({
+    ...control.recovery,
+    ledgerDir: control.stateDirectory,
+    signal: control.execution?.signal,
+  });
+  return {
+    ok:
+      recovery.pendingReconciliation.length === 0 &&
+      recovery.legacyUnsupported.length === 0 &&
+      recovery.failures.length === 0,
+    recovery,
   };
 }
 
@@ -193,7 +304,11 @@ export async function runFinanceResearchExecutionBridge(
   };
   try {
     const independentSources = new Set(conclusion.evidence.flatMap((ref) => roots(ref.sourceId)));
-    if (independentSources.size < 2) {
+    if (
+      independentSources.size < 2 &&
+      conclusion.direction !== "hold" &&
+      conclusion.direction !== "avoid"
+    ) {
       return {
         status: "refused" as const,
         receipt,
@@ -214,7 +329,10 @@ export async function runFinanceResearchExecutionBridge(
   }
 
   const execute = control.mode === "alpaca_paper";
-  if (execute && (!control.execution?.createSafetyContext || !control.stateDirectory)) {
+  if (
+    execute &&
+    (!control.execution?.createSafetyContext || !control.stateDirectory || !control.recovery)
+  ) {
     return {
       status: "blocked" as const,
       receipt,
@@ -222,6 +340,19 @@ export async function runFinanceResearchExecutionBridge(
         "trusted execution controller unavailable; model JSON and CLI labels cannot authorize placement",
       ],
     };
+  }
+  if (execute) {
+    const recovery = await recoverFinanceResearchHistory(control);
+    if (!recovery.ok) {
+      return {
+        status: "blocked" as const,
+        receipt,
+        recovery,
+        refusals: [
+          "stored execution claims require reconciliation or receipt recovery before another dispatch",
+        ],
+      };
+    }
   }
   const execution = execute ? control.execution : undefined;
   const decision = evaluateConclusionToMandate({

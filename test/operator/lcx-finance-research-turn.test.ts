@@ -10,8 +10,11 @@ vi.mock("../../src/agents/finance-credential-env.js", () => ({
   }),
 }));
 import { runFinanceResearchTurn } from "../../scripts/operator/lcx-finance-research-turn.js";
-import { syntheticSafetyContextForAsset } from "../../src/agents/finance-execution-safety.test-support.js";
-import type { FinanceResearchExecutionControl } from "../../src/agents/finance-research-execution-bridge.js";
+import { createFinanceExecutionSafetyContext } from "../../src/agents/finance-execution-safety.js";
+import {
+  buildFinanceResearchMathEvidence,
+  type FinanceResearchExecutionControl,
+} from "../../src/agents/finance-research-execution-bridge.js";
 
 beforeEach(() => {
   vi.spyOn(process.stdout, "write").mockReturnValue(true);
@@ -85,6 +88,7 @@ function fixture(assetClass: "us_equity" | "crypto" = "us_equity") {
   const control: FinanceResearchExecutionControl = {
     mode: "alpaca_paper",
     stateDirectory,
+    recovery: { safetyStateDir: stateDirectory, accountId: stateDirectory, venue: "alpaca:paper" },
     riskContext: {
       drawdownFraction: 0,
       averagingDown: false,
@@ -103,9 +107,62 @@ function fixture(assetClass: "us_equity" | "crypto" = "us_equity") {
         maxInstrumentNotional: 50_000,
         maxOrdersPerRun: 1,
       },
-      createSafetyContext: syntheticSafetyContextForAsset(
-        assetClass === "crypto" ? "spot_crypto" : "spot_equity",
-      ),
+      createSafetyContext: (binding) =>
+        createFinanceExecutionSafetyContext({
+          ...binding,
+          stateDir: stateDirectory,
+          accountId: stateDirectory,
+          policy: {
+            planId: "fixture-plan",
+            revision: "1",
+            riskModel: "fully_funded_unhedged_spot",
+            authorizedSide: binding.intent.side,
+            authorizedQuantity: binding.intent.quantity,
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            maxPortfolioDrawdownFraction: 0.1,
+            maxGrossExposure: 1_000_000,
+            maxAccountAgeMs: 60_000,
+            maxQuoteAgeMs: 60_000,
+            maxInstrumentEvidenceAgeMs: 60_000,
+          },
+          readFacts: async () => ({
+            accountId: stateDirectory,
+            adapterId: binding.adapterId,
+            venue: binding.venue,
+            instrument,
+            snapshotId: "fixture-snapshot",
+            source: "fixture://account",
+            observedAt: at,
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            positionQuantity: 0,
+            openOrderIds: [],
+            unresolvedOrderIds: [],
+            instrumentEvidence: {
+              source: "fixture://asset",
+              observedAt: at,
+              assetType: assetClass === "crypto" ? "spot_crypto" : "spot_equity",
+              fullyPaid: true,
+              marginEnabled: false,
+              hedged: false,
+            },
+            account: {
+              status: "ACTIVE",
+              tradingBlocked: false,
+              equity: 100_000,
+              peakEquity: 100_000,
+              availableCash: 100_000,
+              currency: "USD",
+              grossExposure: 0,
+            },
+            quote: {
+              source: "fixture://quote",
+              price: 100,
+              observedAt: at,
+              expiresAt: new Date(Date.now() + 60_000).toISOString(),
+              currency: "USD",
+            },
+          }),
+        }),
       transport,
       read,
     },
@@ -230,7 +287,7 @@ it("reads the same durable receipt history before the next model decision", asyn
   expect(book.receiptRecordCount).toBe(1);
   const invokeModel = vi.fn(async (prompt: string) => {
     expect(prompt).toContain('"receiptCount":1');
-    expect(prompt).toContain("account unassigned");
+    expect(prompt).toContain("recorded history only");
     return JSON.stringify(f.model);
   });
   await runFinanceResearchTurn(["--instrument", f.instrument], {
@@ -243,7 +300,7 @@ it("reads the same durable receipt history before the next model decision", asyn
 });
 it("blocks execution on unreadable stored history before model or transport", async () => {
   const f = fixture();
-  vi.spyOn(ledger, "readFinancePositionLedger").mockRejectedValueOnce(
+  vi.spyOn(ledger, "readFinanceAccountPositionLedger").mockRejectedValueOnce(
     new Error("synthetic corrupt database"),
   );
   expect(await runFinanceResearchTurn(["--instrument", f.instrument], f.deps)).toMatchObject({
@@ -264,4 +321,86 @@ it("keeps an executed receipt recoverable when ledger persistence fails, without
     recovery: { action: "append existing receipt only; do not redispatch" },
   });
   expect(f.transport).toHaveBeenCalledOnce();
+});
+
+it("actually computes quantitative evidence before the ordinary research prompt", async () => {
+  const f = fixture();
+  const rows = Array.from({ length: 25 }, (_, index) => ({
+    date: new Date(Date.UTC(2026, 0, 1 + index)).toISOString().slice(0, 10),
+    close: 100 + index + Math.sin(index),
+  }));
+  const invokeModel = vi.fn(async (prompt: string) => {
+    expect(prompt).toContain("quant_math.calculateReturnsFromLevels");
+    expect(prompt).toContain("latestReturn");
+    expect(prompt).toContain("annualizedVolatility");
+    expect(prompt).toContain("maxDrawdown");
+    return JSON.stringify({ ...f.model, direction: "hold", evidence: [{ sourceId: "math-bars" }] });
+  });
+  const result = await runFinanceResearchTurn(["--instrument", f.instrument], {
+    ...f.deps,
+    invokeModel,
+    control: { ...f.control, mode: "shadow" },
+    gatherEvidence: async () => ({
+      evidence: [],
+      dailyBars: {
+        sourceId: "math-bars",
+        sourceUrlOrArtifact: "fixture://dated-bars",
+        rows,
+        periodsPerYear: 252,
+      },
+      market: { referencePrice: rows.at(-1)!.close, referencePriceAt: "" },
+    }),
+  });
+  expect(result).toMatchObject({ status: "shadow", disposition: "no_trade" });
+  expect(JSON.stringify(result)).toContain('"sourceTimestamp":"2026-01-25"');
+  expect(JSON.stringify(result)).toContain('"inputSourceIds":["math-bars"]');
+  expect(f.transport).not.toHaveBeenCalled();
+});
+
+it("does not invent math from insufficient or invalid bars", () => {
+  const base = { sourceId: "bars", sourceUrlOrArtifact: "fixture://bars", periodsPerYear: 252 };
+  expect(
+    buildFinanceResearchMathEvidence({ ...base, rows: [{ date: "2026-01-01", close: 100 }] }),
+  ).toEqual([]);
+  expect(
+    buildFinanceResearchMathEvidence({
+      ...base,
+      rows: Array.from({ length: 21 }, (_, i) => ({
+        date: new Date(Date.UTC(2026, 0, i + 1)).toISOString().slice(0, 10),
+        close: i === 3 ? Number.NaN : 100,
+      })),
+    }),
+  ).toEqual([]);
+});
+
+it("recovers a confirmed receipt on the next research turn without replaying the order", async () => {
+  const f = fixture();
+  vi.spyOn(ledger, "appendFinanceExecutionReceipt").mockRejectedValueOnce(
+    new Error("synthetic disk failure"),
+  );
+  expect(await runFinanceResearchTurn(["--instrument", f.instrument], f.deps)).toMatchObject({
+    status: "executed_persistence_pending",
+  });
+  const invokeModel = vi.fn(async (prompt: string) => {
+    expect(prompt).toContain('"receiptCount":1');
+    return JSON.stringify({ ...f.model, direction: "hold" });
+  });
+  expect(
+    await runFinanceResearchTurn(["--instrument", f.instrument], { ...f.deps, invokeModel }),
+  ).toMatchObject({ status: "shadow", disposition: "no_trade" });
+  const history = await ledger.readFinanceAccountPositionLedger(f.control.stateDirectory!, {
+    accountId: f.control.recovery!.accountId,
+    venue: "alpaca:paper",
+  });
+  expect(history.receipts).toHaveLength(1);
+  expect(f.transport).toHaveBeenCalledOnce();
+});
+it("blocks a subsequent research execution when the previous claim is unresolved", async () => {
+  const f = fixture("crypto");
+  const args = ["--asset-class", "crypto", "--instrument", f.instrument];
+  expect(await runFinanceResearchTurn(args, f.deps)).toMatchObject({ status: "unknown" });
+  f.deps.invokeModel.mockClear();
+  expect(await runFinanceResearchTurn(args, f.deps)).toMatchObject({ status: "blocked" });
+  expect(f.deps.invokeModel).not.toHaveBeenCalled();
+  expect(f.transport).not.toHaveBeenCalled();
 });
