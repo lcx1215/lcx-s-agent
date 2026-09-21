@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, expect, it } from "vitest";
 import {
   createPaperExecutionAdapter,
+  buildFinanceExecutionReceipt,
   placeFinanceOrder,
   type FinanceOrderPlacementRequest,
 } from "./finance-execution-adapter.js";
@@ -251,4 +252,50 @@ it("recovers an explicit terminal venue fill with unchanged economic fields", as
   expect((await recoverConfirmedFinanceExecutions(params)).replayed).toHaveLength(1);
   expect((await recoverConfirmedFinanceExecutions(params)).alreadyRecorded).toHaveLength(1);
   expect((await readFinancePositionRecords(params.ledgerDir)).receipts).toEqual([placed.receipt]);
+});
+
+it("stores identical paper intents and times for two accounts without collision", async () => {
+  const first = await runConfirmed();
+  const second = await runConfirmed();
+  const aligned = buildFinanceExecutionReceipt({
+    intent: first.request.intent,
+    adapter: first.adapter,
+    fill: first.receipt.fill,
+    recordedAt: first.receipt.recordedAt,
+    accountId: second.input.accountId,
+  });
+  expect(aligned.receiptId).not.toBe(first.receipt.receiptId);
+  await Promise.all([
+    appendFinanceExecutionReceipt(first.params.ledgerDir, first.receipt),
+    appendFinanceExecutionReceipt(first.params.ledgerDir, aligned),
+  ]);
+  for (const accountId of [first.input.accountId, second.input.accountId]) {
+    const scoped = await readFinanceAccountPositionLedger(first.params.ledgerDir, {
+      accountId,
+      venue: first.adapter.venue,
+    });
+    expect(scoped.receipts).toHaveLength(1);
+    expect(scoped.ledger.positions[0].quantity).toBe(1);
+  }
+});
+it("preserves original ID when recovering a previously persisted legacy-algorithm receipt", async () => {
+  const f = await runConfirmed();
+  const legacy = buildFinanceExecutionReceipt({
+    intent: f.request.intent,
+    adapter: f.adapter,
+    fill: f.receipt.fill,
+    recordedAt: f.receipt.recordedAt,
+    accountId: f.input.accountId,
+    identityVersion: "legacy",
+  });
+  const entries = (await fs.readFile(f.journal, "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  entries[1].receipt = legacy;
+  delete entries[1].receiptIdentityVersion;
+  await fs.writeFile(f.journal, entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+  expect((await recoverConfirmedFinanceExecutions(f.params)).replayed).toHaveLength(1);
+  expect((await recoverConfirmedFinanceExecutions(f.params)).alreadyRecorded).toHaveLength(1);
+  expect((await readFinancePositionRecords(f.params.ledgerDir)).receipts).toEqual([legacy]);
 });

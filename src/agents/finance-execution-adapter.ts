@@ -422,21 +422,40 @@ export function buildFinanceExecutionReceipt(params: {
   fill: FinanceExecutionFill;
   recordedAt: string;
   accountId?: string;
+  /** Recovery of already persisted receipts only; never selected by placement. */
+  identityVersion?: "legacy" | "account-v1";
 }): FinanceExecutionReceipt {
   const { intent, adapter, fill, recordedAt: recordedAtInput, accountId } = params;
   const notional = intent.referencePrice * intent.quantity;
   const recordedAt = recordedAtInput;
+  const legacyIdentity = accountId === undefined || params.identityVersion === "legacy";
   const receiptId = `exec-${createHash("sha256")
     .update(
-      adapter.kind === "venue" && fill.terminalOrderIdentity?.terminal === true
-        ? JSON.stringify([adapter.id, adapter.venue, fill.terminalOrderIdentity.orderId])
-        : [
-            intent.intentId,
-            intent.instrument,
-            intent.side,
-            String(intent.quantity),
-            recordedAt,
-          ].join("|"),
+      !legacyIdentity
+        ? JSON.stringify(
+            adapter.kind === "venue" && fill.terminalOrderIdentity?.terminal
+              ? [accountId, adapter.id, adapter.venue, fill.terminalOrderIdentity.orderId]
+              : [
+                  accountId,
+                  adapter.id,
+                  adapter.venue,
+                  intent.runAuthorizationId,
+                  intent.intentId,
+                  intent.instrument,
+                  intent.side,
+                  intent.quantity,
+                  recordedAt,
+                ],
+          )
+        : adapter.kind === "venue" && fill.terminalOrderIdentity?.terminal === true
+          ? JSON.stringify([adapter.id, adapter.venue, fill.terminalOrderIdentity.orderId])
+          : [
+              intent.intentId,
+              intent.instrument,
+              intent.side,
+              String(intent.quantity),
+              recordedAt,
+            ].join("|"),
     )
     .digest("hex")
     .slice(0, 24)}`;

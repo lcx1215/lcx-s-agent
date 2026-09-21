@@ -54,6 +54,8 @@ export async function recoverConfirmedFinanceExecutions(params: {
         receipt.accountId !== params.accountId ||
         receipt.venue !== params.venue ||
         !["paper", "venue"].includes(adapterKind) ||
+        (claim.receiptIdentityVersion !== undefined &&
+          claim.receiptIdentityVersion !== "account-v1") ||
         !Number.isFinite(Date.parse(receipt.recordedAt)) ||
         (adapterKind === "venue" &&
           (typeof fill.terminalOrderIdentity?.terminal !== "boolean" ||
@@ -67,6 +69,7 @@ export async function recoverConfirmedFinanceExecutions(params: {
         fill,
         recordedAt: receipt.recordedAt,
         accountId: binding.accountId,
+        identityVersion: claim.receiptIdentityVersion ?? "legacy",
       });
       if (stableStringify(expected) !== stableStringify(receipt)) {
         throw new Error("receipt conflict");

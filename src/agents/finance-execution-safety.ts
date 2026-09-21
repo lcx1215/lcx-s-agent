@@ -144,6 +144,7 @@ export type FinanceExecutionSafetyClaim = {
   fill?: FinanceExecutionFill;
   adapterKind?: "paper" | "venue";
   receipt?: FinanceExecutionReceipt;
+  receiptIdentityVersion?: "account-v1";
 };
 async function readJournal(file: string): Promise<FinanceExecutionSafetyClaim[]> {
   let raw: string;
@@ -510,6 +511,7 @@ export async function withFinanceExecutionSafety(params: {
           fill,
           adapterKind: params.adapterKind,
           receipt,
+          receiptIdentityVersion: "account-v1",
         });
         return { ok: true, fill, receipt };
       } catch (error) {

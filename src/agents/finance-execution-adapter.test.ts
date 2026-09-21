@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createPaperExecutionAdapter,
+  buildFinanceExecutionReceipt,
   DEFAULT_FINANCE_RISK_BUDGET,
   FINANCE_EXECUTION_RECEIPT_SCHEMA,
   FINANCE_RISK_BUDGET_ANY_INSTRUMENT,
@@ -342,7 +343,17 @@ describe("finance execution adapter seam", () => {
   it("derives a stable receipt id from the intent rather than a random one", async () => {
     const first = await placeFinanceOrder(request());
     const second = await placeFinanceOrder(request());
-    expect(first.receipt?.receiptId).toBe(second.receipt?.receiptId);
+    expect(first.receipt?.receiptId).not.toBe(second.receipt?.receiptId);
+    const receipt = first.receipt!;
+    expect(
+      buildFinanceExecutionReceipt({
+        intent,
+        adapter: paper,
+        fill: receipt.fill,
+        recordedAt: receipt.recordedAt,
+        accountId: receipt.accountId,
+      }).receiptId,
+    ).toBe(receipt.receiptId);
   });
 });
 
@@ -435,7 +446,16 @@ it("uses only explicit terminal venue identity for replay-stable receipts", asyn
       recordedAt: "2026-09-19T03:00:00Z",
     }),
   );
-  expect(second.receipt?.receiptId).toBe(first.receipt?.receiptId);
+  expect(second.receipt?.receiptId).not.toBe(first.receipt?.receiptId);
+  expect(
+    buildFinanceExecutionReceipt({
+      intent,
+      adapter,
+      fill: first.receipt!.fill,
+      recordedAt: "2026-09-19T03:00:00Z",
+      accountId: first.receipt!.accountId,
+    }).receiptId,
+  ).toBe(first.receipt!.receiptId);
   const paperFirst = await placeFinanceOrder(request());
   const paperSecond = await placeFinanceOrder(request({ recordedAt: "2026-09-19T03:00:00Z" }));
   expect(paperSecond.receipt?.receiptId).not.toBe(paperFirst.receipt?.receiptId);
