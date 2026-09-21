@@ -74,6 +74,29 @@ describe("lcx-finance-research-run", () => {
     ).toBe(true);
   });
 
+  it("keeps workflow selection alone offline and rejects retired local live routing before writes", async () => {
+    const planned = await runResearch(["--workflow-models"]);
+    expect(planned.status).toBe("planned");
+    expect(planned.batch).toBeUndefined();
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "finance-handoff-"));
+    try {
+      await expect(
+        runResearch(["--live", "--write", "--adapter", "/missing"], {
+          OPENCLAW_WORKSPACE_DIR: workspaceDir,
+        }),
+      ).rejects.toThrow("local research/review roles retired");
+      expect(await fs.readdir(workspaceDir)).toEqual([]);
+      await expect(
+        runResearch(["--live", "--write", "--workflow-models", "--adapter", "/missing"], {
+          OPENCLAW_WORKSPACE_DIR: workspaceDir,
+        }),
+      ).rejects.toThrow("cannot combine local model overrides");
+      expect(await fs.readdir(workspaceDir)).toEqual([]);
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
   it("writes an explicit dry receipt only when requested", async () => {
     const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-finance-research-"));
     try {

@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
   createApiSourceGovernanceRegistry,
@@ -10,6 +10,7 @@ import {
 } from "../../src/agents/api-call-contract.ts";
 import type { FinanceDecisionMode } from "../../src/agents/finance-decision-policy.ts";
 import { resolveFinanceMarketCollectionRegistryOptionsFromEnv } from "../../src/agents/finance-market-collection-registry.ts";
+import { createFinanceModelWorkflow } from "../../src/agents/finance-model-workflow.ts";
 import { resolveFinanceRealtimeSourceRegistryOptionsFromEnv } from "../../src/agents/finance-realtime-source-registry.ts";
 import {
   runFinanceResearchRun,
@@ -18,16 +19,13 @@ import {
 } from "../../src/agents/finance-research-runner.ts";
 import {
   createLocalQualityHarnessAdapter,
-  resolveLocalTextModelRuntimeConfig,
   type LocalTextModelRuntimeConfig,
 } from "../../src/agents/local-text-model-adapter.ts";
 import type { LogicalAgentModelRouting } from "../../src/agents/logical-agent-model-router.ts";
+import { loadConfig } from "../../src/config/config.ts";
 import { DEFAULT_WORKSPACE_DIR } from "./lcx-local-paths.ts";
-import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
 
 const execFileAsync = promisify(execFile);
-const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = path.resolve(SCRIPT_DIR, "../..");
 const WORKSPACE_DIR = () => process.env.OPENCLAW_WORKSPACE_DIR?.trim() || DEFAULT_WORKSPACE_DIR;
 
 const DEFAULT_ASK =
@@ -47,6 +45,7 @@ type Options = {
   horizonMonths: number;
   decisionMode: FinanceDecisionMode;
   live: boolean;
+  workflowModels: boolean;
   quality: boolean;
   write: boolean;
   adapterPath?: string;
@@ -85,13 +84,14 @@ function usage(): string {
     `  --horizon-months N                 horizon for the research plan (default: 6, max: ${MAX_HORIZON_MONTHS})`,
     "  --decision-mode MODE               research_only|strategy_candidate|conditional_trade_candidate",
     "  --live                              fetch bounded public/provider sources and run the model DAG",
+    "  --workflow-models                  authorize configured workflow models for research and review",
     "  --skip-quality                     do not run the quality harness (live only)",
-    "  --adapter DIR                      explicit local adapter directory",
-    "  --model MODEL                      local model id (default: Qwen/Qwen3-0.6B)",
-    "  --python PATH                      local model Python runtime",
-    `  --max-tokens N                     bounded local model output tokens (max: ${MAX_MODEL_TOKENS})`,
-    `  --timeout-ms N                     bounded local model timeout (max: ${MAX_MODEL_TIMEOUT_MS})`,
-    "  --allow-model-network              allow the local model runtime to use network",
+    "  --adapter DIR                      retired local override (not valid with workflow models)",
+    "  --model MODEL                      retired local model override",
+    "  --python PATH                      retired local Python override",
+    `  --max-tokens N                     bounded workflow output tokens (default: 8192, max: ${MAX_MODEL_TOKENS})`,
+    `  --timeout-ms N                     bounded workflow model timeout (max: ${MAX_MODEL_TIMEOUT_MS})`,
+    "  --allow-model-network              retired local network override",
     "  --max-api-calls N                  hard source-attempt budget (default: 48, max: 10000)",
     "  --max-concurrency N                batch concurrency (default: 3)",
     "  --max-sources-per-job N            source adapters per job (default: 2)",
@@ -139,10 +139,11 @@ function parseArgs(args: readonly string[]): Options {
     horizonMonths: 6,
     decisionMode: "research_only",
     live: false,
+    workflowModels: false,
     quality: true,
     write: false,
     modelId: DEFAULT_MODEL_ID,
-    maxTokens: 384,
+    maxTokens: 8_192,
     timeoutMs: 120_000,
     allowModelNetwork: false,
     maxApiCalls: 48,
@@ -170,6 +171,8 @@ function parseArgs(args: readonly string[]): Options {
       index += 1;
     } else if (arg === "--live") {
       options.live = true;
+    } else if (arg === "--workflow-models") {
+      options.workflowModels = true;
     } else if (arg === "--skip-quality") {
       options.quality = false;
     } else if (arg === "--adapter") {
@@ -227,6 +230,12 @@ function parseArgs(args: readonly string[]): Options {
       throw new Error(`unknown argument: ${arg}`);
     }
   }
+  if (
+    options.workflowModels &&
+    args.some((arg) => ["--adapter", "--model", "--python", "--allow-model-network"].includes(arg))
+  ) {
+    throw new Error("--workflow-models cannot combine local model overrides");
+  }
   return options;
 }
 
@@ -268,32 +277,6 @@ export function assertIsoTimestamp(value: string): string {
   return new Date(value).toISOString();
 }
 
-async function resolveAdapterPath(options: Options): Promise<string> {
-  if (options.adapterPath?.trim()) {
-    return path.resolve(options.adapterPath);
-  }
-  const result = await execFileAsync(
-    process.execPath,
-    [
-      "--import",
-      "tsx",
-      path.join(REPO_ROOT, "scripts/operator/minimax-brain-training-guard.ts"),
-      "--resolve-current-adapter",
-      "--no-train",
-      "--model",
-      options.modelId,
-      "--current-adapter",
-      "latest-passing",
-    ],
-    { cwd: REPO_ROOT, maxBuffer: 2 * 1024 * 1024, timeout: 30_000 },
-  );
-  const payload = parseJsonObjectFromOutput(result.stdout);
-  if (typeof payload.selectedAdapter !== "string" || !payload.selectedAdapter.trim()) {
-    throw new Error("training guard did not return a selected adapter");
-  }
-  return path.resolve(payload.selectedAdapter);
-}
-
 function routingRevision(prefix: string, runtime: LocalTextModelRuntimeConfig): string {
   return `${prefix}-${createHash("sha256")
     .update(`${runtime.adapterPath}:${runtime.modelId}`)
@@ -307,20 +290,6 @@ export function buildFinanceResearchCommitteeRouting(
   const adapter = createLocalQualityHarnessAdapter(runtime);
   return {
     revision: routingRevision("finance-local-committee-v1", runtime),
-    adapters: [adapter],
-    defaultPolicy: {
-      primary: adapter.id,
-      requiredCapabilities: ["quality_harness"],
-      maxInputBytes: QUALITY_ROUTER_MAX_INPUT_BYTES,
-      timeoutMs: runtime.timeoutMs,
-    },
-  };
-}
-
-function buildQualityRouting(runtime: LocalTextModelRuntimeConfig): LogicalAgentModelRouting {
-  const adapter = createLocalQualityHarnessAdapter(runtime);
-  return {
-    revision: routingRevision("finance-local-quality-v1", runtime),
     adapters: [adapter],
     defaultPolicy: {
       primary: adapter.id,
@@ -511,7 +480,7 @@ export async function preflightFinanceResearchReceiptDestination(
 export async function preflightLocalModelPythonRuntime(pythonPath: string): Promise<void> {
   const normalized = pythonPath.trim();
   if (!normalized) {
-    throw new Error("local model Python runtime is required");
+    throw new Error("retired local Python override is required");
   }
   try {
     await execFileAsync(normalized, ["-c", "import mlx.core, mlx_lm"], {
@@ -567,6 +536,20 @@ async function run(
   if (options.live && !options.write) {
     throw new Error("--write is required with --live to persist the full research receipt");
   }
+  if (options.live && !options.workflowModels) {
+    throw new Error(
+      "local research/review roles retired: use --live --workflow-models --write to authorize the configured finance workflow; omit --live for a plan",
+    );
+  }
+  if (
+    options.workflowModels &&
+    (options.adapterPath ||
+      options.pythonPath ||
+      options.modelId !== DEFAULT_MODEL_ID ||
+      options.allowModelNetwork)
+  ) {
+    throw new Error("--workflow-models cannot combine local model overrides");
+  }
   if (options.live) {
     await preflightFinanceResearchReceiptDestination(asOf);
   }
@@ -598,20 +581,11 @@ async function run(
     const written = options.write ? await writeReceipt(receipt, asOf) : undefined;
     return { receipt, ...(written === undefined ? {} : { written }) };
   }
-  const adapterPath = await resolveAdapterPath(options);
-  await Promise.all([
-    fs.access(path.join(adapterPath, "adapter_config.json")),
-    fs.access(path.join(adapterPath, "adapters.safetensors")),
-  ]);
-  const runtime = resolveLocalTextModelRuntimeConfig({
-    adapterPath,
-    modelId: options.modelId,
-    ...(options.pythonPath === undefined ? {} : { pythonPath: options.pythonPath }),
+  const workflow = createFinanceModelWorkflow(loadConfig(), {
+    maxCalls: 48,
     maxTokens: options.maxTokens,
     timeoutMs: options.timeoutMs,
-    allowNetwork: options.allowModelNetwork,
   });
-  await preflightLocalModelPythonRuntime(runtime.pythonPath);
   const governance = createApiSourceGovernanceRegistry({
     minIntervalMs: 250,
     maxConcurrent: 1,
@@ -623,9 +597,9 @@ async function run(
     input,
     liveFetch: true,
     qualityEnabled: options.quality,
-    modelId: runtime.modelId,
-    modelRouting: buildFinanceResearchCommitteeRouting(runtime),
-    ...(options.quality ? { qualityModelRouting: buildQualityRouting(runtime) } : {}),
+    allowProviderCalls: true,
+    modelRouting: workflow.routing,
+    ...(options.quality ? { qualityModelRouting: workflow.routing } : {}),
     sourceGovernance: governance,
     batchOptions,
   });

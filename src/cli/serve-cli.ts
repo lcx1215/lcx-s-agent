@@ -2,6 +2,7 @@ import { randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { Command } from "commander";
 import { isFailoverError } from "../agents/failover-error.js";
+import { startLocalSpecialistService } from "../agents/tools/local-specialist-tool.js";
 import { shouldRejectBrowserMutation } from "../browser/csrf.js";
 import { agentCommand } from "../commands/agent.js";
 import type { AgentCommandOpts } from "../commands/agent/types.js";
@@ -840,6 +841,18 @@ export function registerServeCli(program: Command): void {
           });
         });
 
+        let localWorker: Awaited<ReturnType<typeof startLocalSpecialistService>> | undefined;
+        try {
+          localWorker = await startLocalSpecialistService();
+        } catch {
+          defaultRuntime.error(
+            "serve: optional local data worker unavailable; agent fallback remains available",
+          );
+        }
+        server.once("close", () => {
+          void localWorker?.stop();
+        });
+
         defaultRuntime.log(
           `${SERVE_SERVICE_NAME} listening on http://${host}:${config.port} ` +
             `(bind=${config.bind}, tokenRequired=${config.token !== undefined})`,
@@ -859,7 +872,7 @@ export function registerServeCli(program: Command): void {
           void cron?.dispose().catch(() => {});
           void clearServePidFile(detachPaths).catch(() => {});
           server.close(() => {
-            defaultRuntime.exit(0);
+            void (localWorker?.stop() ?? Promise.resolve()).finally(() => defaultRuntime.exit(0));
           });
         };
         process.once("SIGINT", shutdown);

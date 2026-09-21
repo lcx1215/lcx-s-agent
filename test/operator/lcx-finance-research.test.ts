@@ -83,7 +83,19 @@ describe("finance research operator", () => {
     expect(receipt.plan.asOf).toBe("2026-09-08T00:00:00Z");
   });
   it("rejects unconfigured live execution before collection", async () => {
-    await expect(runFinanceResearchCli([...input, "--live"])).rejects.toThrow("explicit --model");
+    await expect(runFinanceResearchCli([...input, "--live"])).rejects.toThrow("--workflow-models");
+  });
+  it("rejects retired local research authority even with explicit local artifacts", async () => {
+    await expect(
+      runFinanceResearchCli([
+        ...input,
+        "--live",
+        "--model",
+        "local/test",
+        "--adapter",
+        "/missing-adapter",
+      ]),
+    ).rejects.toThrow("local research/review roles retired");
   });
   it("rejects an invalid API budget", async () => {
     await expect(runFinanceResearchCli([...input, "--max-api-calls", "0"])).rejects.toThrow(

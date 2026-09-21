@@ -38,7 +38,7 @@ const PATH_RULES: PathRule[] = [
     // own instead of falling through `strayGate` as unmatched changes.
     id: "daemon_free_agent_entry",
     lane: "daemon_free_agent_entry",
-    patterns: [/^src\/cli\/serve-detach\.ts$/u, /^src\/cli\/serve-standalone\.ts$/u],
+    patterns: [/^src\/cli\/(?:serve-detach|serve-standalone|serve-cli)\.ts$/u],
     requiredChecks: [],
     commands: ["pnpm vitest run src/cli/serve-detach.test.ts src/cli/serve-cli.test.ts"],
   },
@@ -415,6 +415,11 @@ const PATH_RULES: PathRule[] = [
     patterns: [
       /^src\/agents\/logical-agent-pool\.ts$/u,
       /^src\/agents\/(?:logical-agent-model-router|local-text-model-adapter)\.ts$/u,
+      /^src\/agents\/(?:local-text-worker|local-vision-vlm)\.ts$/u,
+      /^src\/agents\/tools\/local-specialist(?:-contract|-tool)\.ts$/u,
+      /^src\/plugins\/lcx-model-fleet\.ts$/u,
+      /^scripts\/local-model\/lcx_text_worker\.py$/u,
+      /^docs\/tools\/local-data-workers\.md$/u,
       /^src\/agents\/logical-agent-pool\.test\.ts$/u,
       /^scripts\/operator\/lcx-logical-agent-pool\.ts$/u,
       /^ops\/local-brain\/logical-agent-pool\.md$/u,
@@ -423,6 +428,7 @@ const PATH_RULES: PathRule[] = [
     commands: [
       "node --import tsx scripts/operator/lcx-logical-agent-pool.ts --demo --json",
       "pnpm vitest run src/agents/logical-agent-pool.test.ts",
+      "pnpm vitest run src/agents/local-text-worker.test.ts src/agents/tools/local-specialist-tool.test.ts src/agents/local-vision-vlm.test.ts src/plugins/lcx-model-fleet.test.ts",
       "node --import tsx scripts/operator/lcx-head-tail-consistency.ts --json",
     ],
     safetyNotes: [

@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  createLocalQualityHarnessAdapter,
+  resolveLocalTextModelRuntimeConfig,
+} from "./local-text-model-adapter.js";
+import {
   LogicalAgentModelRouter,
   type LogicalAgentModelAdapter,
   type LogicalAgentModelRouting,
@@ -539,5 +543,39 @@ it("preserves one artifact author so a reviewer remains available after provider
     ["unavailable", "adapter_error"],
     ["reviewer", "model_separation_constraint"],
     ["small", undefined],
+  ]);
+});
+
+it("rejects an unqualified local model for final review before dispatch", async () => {
+  const local = createLocalQualityHarnessAdapter(
+    resolveLocalTextModelRuntimeConfig({ adapterPath: "/not-loaded" }),
+  );
+  const router = new LogicalAgentModelRouter({
+    revision: "local-policy",
+    adapters: [local],
+    defaultPolicy: {
+      primary: local.id,
+      requiredCapabilities: ["quality_harness"],
+      maxInputBytes: 1024,
+      timeoutMs: 1000,
+    },
+  });
+  const receipts: { reason?: string; adapterInvoked: boolean }[] = [];
+  const dispatch = vi.fn(async (fn: () => Promise<unknown>) => fn());
+  await expect(
+    router.invoke({
+      role: "final_precheck",
+      taskId: "review",
+      correlationId: "review",
+      payload: {},
+      capabilities: NARROW_GRANT,
+      signal: new AbortController().signal,
+      dispatch,
+      record: (receipt) => receipts.push(receipt),
+    }),
+  ).rejects.toThrow();
+  expect(dispatch).not.toHaveBeenCalled();
+  expect(receipts).toEqual([
+    expect.objectContaining({ reason: "role_scope_constraint", adapterInvoked: false }),
   ]);
 });

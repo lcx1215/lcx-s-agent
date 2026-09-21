@@ -496,7 +496,7 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     id: "local_specialist",
     label: "local_specialist",
     description:
-      "Run bounded offline classification, fact extraction, or summarization on supplied text",
+      "Agent-supervised batches: deterministic cleaning and duplicate marking, preliminary labels and complete quotations; source retained",
     sectionId: "memory",
     profiles: ["coding"],
     includeInOpenClawGroup: true,

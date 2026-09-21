@@ -2,15 +2,17 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
+import { stopLocalTextWorkers } from "../agents/local-text-worker.js";
 import { runLocalVisionVlm, LOW_MEMORY_LOCAL_VISION_MODEL } from "../agents/local-vision-vlm.js";
 import { jsonResult, readStringParam, ToolInputError } from "../agents/tools/common.js";
+import { startLocalSpecialistService } from "../agents/tools/local-specialist-tool.js";
 import type { OpenClawPluginApi } from "./types.js";
 
 export const LOCAL_MODEL_DUTIES = [
   {
     model: "Qwen3.5-2B-4bit",
     status: "active_preprocessing",
-    duties: ["short_summary", "verbatim_extraction", "preliminary_classification"],
+    duties: ["source_complete_verbatim_extraction", "preliminary_classification_requires_review"],
     finalAuthority: false,
   },
   {
@@ -96,7 +98,8 @@ export default {
       cloud: slotModels,
       local: LOCAL_MODEL_DUTIES,
       maxConcurrentLocalInference: 1,
-      localWeightsResidentWhenIdle: false,
+      localTextWorkerLifecycle: "host_service_supervised",
+      localTextWeights: "load_on_first_request_then_reuse",
       reviewRequired: true,
       modelWeightAbsorbed: false,
     });
@@ -110,11 +113,12 @@ export default {
       parameters: Type.Object({}),
       execute: async () => jsonResult(roster()),
     });
+    let visionBusy = false;
     api.registerTool({
       name: "local_vision",
       label: "Local Vision",
       description:
-        "Read a supplied image using the installed low-memory vision model. Returns unverified observations for review; never makes trading decisions. Shares the local inference slot with text tools.",
+        "Read a supplied image using the installed low-memory vision model. Returns unverified observations for review; never makes trading decisions. Shares the local inference slot with text tools. One concurrent call, 30-second limit; failure returns control to the agent without retries.",
       parameters: Type.Object({
         imageBase64: Type.String({ maxLength: 4_000_000 }),
         mimeType: Type.Union([Type.Literal("image/png"), Type.Literal("image/jpeg")]),
@@ -123,6 +127,11 @@ export default {
       execute: async (_id, args, signal) => {
         signal?.throwIfAborted();
         const params = args as Record<string, unknown>;
+        if (
+          Object.keys(params).some((key) => !["imageBase64", "mimeType", "prompt"].includes(key))
+        ) {
+          throw new ToolInputError("local vision accepts only imageBase64, mimeType and prompt");
+        }
         const imageBase64 = readStringParam(params, "imageBase64", { required: true });
         const prompt = readStringParam(params, "prompt", { required: true });
         if (
@@ -132,24 +141,63 @@ export default {
         ) {
           throw new ToolInputError("bounded image and prompt required");
         }
-        const result = await runLocalVisionVlm({
-          modelId: await installedVisionPath(),
-          images: [{ base64: imageBase64, mimeType: String(params.mimeType) }],
-          prompt,
-          maxTokens: 256,
-          timeoutMs: 90_000,
-          signal,
-        });
-        return jsonResult({ ...result, reviewRequired: true, apiCalls: 0 });
+        if (visionBusy) {
+          return jsonResult({
+            status: "fallback_to_agent",
+            reason: "local_vision_busy",
+            nextAction: "agent_review_original_image",
+            finalAuthority: false,
+            reviewRequired: true,
+            apiCalls: 0,
+          });
+        }
+        visionBusy = true;
+        try {
+          const result = await runLocalVisionVlm({
+            modelId: await installedVisionPath(),
+            images: [{ base64: imageBase64, mimeType: String(params.mimeType) }],
+            prompt,
+            maxTokens: 256,
+            timeoutMs: 30_000,
+            signal,
+          });
+          signal?.throwIfAborted();
+          return jsonResult({
+            ...result,
+            status: "completed_requires_review",
+            nextAction: "agent_review_original_image",
+            finalAuthority: false,
+            reviewRequired: true,
+            apiCalls: 0,
+          });
+        } catch {
+          signal?.throwIfAborted();
+          return jsonResult({
+            status: "fallback_to_agent",
+            reason: "local_vision_unavailable",
+            nextAction: "agent_review_original_image",
+            finalAuthority: false,
+            reviewRequired: true,
+            apiCalls: 0,
+          });
+        } finally {
+          visionBusy = false;
+        }
       },
     });
     api.on("before_prompt_build", async () => ({
       prependContext:
-        "LCX model duties: use local_specialist for short supplied-text summaries, verbatim extraction and preliminary labels; do not discard sources based on labels. Use local_vision for supplied images. Use finance_research_run for finance workflow planning; live=true only when the user has authorized source/model calls. lcx_model_roster lists current assignments. Reserve and training models are not final decision authorities. Never claim model learning from tool execution.",
+        "LCX model duties: delegate bounded data batches via local_specialist records; clean uses rules with duplicate marking and retains every record. The worker remains available between batches. Use local_specialist only for source-complete verbatim extraction and preliminary labels under agent review; free-form summaries are disabled. On fallback_to_agent, process the returned original source yourself; do not retry another local model or discard sources based on labels. Use local_vision for supplied images. Use finance_research_run for finance workflow planning; live=true only when the user has authorized source/model calls. lcx_model_roster lists current assignments. Reserve and training models are not final decision authorities. Never claim model learning from tool execution.",
     }));
     api.registerService({
       id: "lcx-model-fleet",
+      stop: async () => stopLocalTextWorkers(),
       start: async () => {
+        await startLocalSpecialistService().catch(() => {
+          api.logger.warn(
+            "lcx-model-fleet: optional local text worker unavailable; agent fallback remains available",
+          );
+        });
         const checks = await Promise.allSettled([
           fs.access(
             path.join(

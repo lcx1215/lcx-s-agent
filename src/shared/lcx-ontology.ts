@@ -374,7 +374,7 @@ export const LCX_ONTOLOGY_AGENT_ROLES = [
 export type LcxOntologyAgentRole = (typeof LCX_ONTOLOGY_AGENT_ROLES)[number];
 
 /** Consumed by finance model routing. Slots describe responsibility, not parameter count. */
-export const LCX_FINANCE_MODEL_WORKFLOW_VERSION = "lcx_finance_model_workflow_v9" as const;
+export const LCX_FINANCE_MODEL_WORKFLOW_VERSION = "lcx_finance_model_workflow_v10" as const;
 export const LCX_FINANCE_WORKFLOW_ROLE_CONTRACTS = {
   data_cleaning: {
     stage: "intake",
@@ -434,7 +434,8 @@ export const LCX_FINANCE_WORKFLOW_ROLE_CONTRACTS = {
   },
   formatting: {
     stage: "format",
-    slot: "fast",
+    // Formatting must use the model that authored the draft (router affinity).
+    slot: "reasoning",
     ontologyRole: "worker",
     output: "artifact",
     localSpecialistEligible: false,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildLocalRoleShadowPrompt,
+  createLocalQualityHarnessAdapter,
   buildQualityHarnessModelPrompt,
   parseLocalModelJson,
   parseLocalBaseModelJson,
@@ -294,3 +295,28 @@ it.each(["draft", "format", "risk"] as const)(
     expect(untyped).not.toContain("Typed nonmarket numeric assertion contract");
   },
 );
+
+it("denies unqualified local research and final-review authority before model loading", async () => {
+  const adapter = createLocalQualityHarnessAdapter(
+    resolveLocalTextModelRuntimeConfig({
+      adapterPath: "/absent/adapter",
+      pythonPath: "/absent/python",
+    }),
+  );
+  expect(adapter.roleScope).toEqual([]);
+  await expect(
+    adapter.invoke(
+      {
+        callId: "test",
+        correlationId: "test",
+        taskId: "test",
+        role: "final_precheck",
+        attempt: 1,
+        provider: adapter.provider,
+        modelId: adapter.modelId,
+        payload: {},
+      },
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow("local_quality_authority_unqualified");
+});

@@ -580,10 +580,19 @@ export function createLocalTextModelAdapter(
 export function createLocalQualityHarnessAdapter(
   runtime: LocalTextModelRuntimeConfig,
 ): LogicalAgentModelAdapter {
-  return createLocalTextModelAdapter(runtime, {
+  const adapter = createLocalTextModelAdapter(runtime, {
     idPrefix: "mlx-local-qwen-quality",
     capabilities: ["quality_harness", "local_model_inference"],
     buildPrompt: (payload) => buildQualityHarnessModelPrompt(payload as QualityHarnessModelRequest),
+  });
+  // No local model has qualified for production research/review authority.
+  // Keep the compatibility entry explicit, but reject before loading weights.
+  return Object.freeze({
+    ...adapter,
+    roleScope: Object.freeze([]),
+    invoke: async () => {
+      throw new Error("local_quality_authority_unqualified: use agent-supervised preprocessing");
+    },
   });
 }
 

@@ -45,6 +45,21 @@ async function runPlan(changedFile: string) {
 }
 
 describe("lcx-change-impact-plan", () => {
+  it("assigns resident workers and host lifecycle to existing owners", async () => {
+    const files = [
+      "src/agents/local-text-worker.ts",
+      "src/agents/local-vision-vlm.ts",
+      "src/plugins/lcx-model-fleet.ts",
+      "docs/tools/local-data-workers.md",
+      "src/cli/serve-cli.ts",
+    ];
+    const result = await runPlanArgs(["--files", ...files]);
+    expect(result.unmatchedFiles).toEqual([]);
+    expect(result.affectedLanes).toEqual(
+      expect.arrayContaining(["agent_workflow_memory", "daemon_free_agent_entry"]),
+    );
+    expect(result.recommendedFastCommands.join(" ")).toContain("local-text-worker.test.ts");
+  });
   it("keeps unknown artifact paths blocked", async () => {
     const result = await runPlan(".artifacts/unowned/report.json");
     expect(result.ok).toBe(false);

@@ -32,10 +32,6 @@ import {
 import type { FinanceResearchRunReceipt } from "../../src/agents/finance-research-runner.ts";
 import { runFinanceResearchRun } from "../../src/agents/finance-research-runner.ts";
 import { runFinanceSourceRecovery } from "../../src/agents/finance-source-recovery.ts";
-import {
-  createLocalQualityHarnessAdapter,
-  resolveLocalTextModelRuntimeConfig,
-} from "../../src/agents/local-text-model-adapter.ts";
 import { loadConfig } from "../../src/config/config.ts";
 import type { OpenClawConfig } from "../../src/config/config.ts";
 import type { CronJob } from "../../src/cron/types.ts";
@@ -345,10 +341,11 @@ export async function runFinanceResearchCli(
   if (
     values.live &&
     !values["sources-only"] &&
-    !(values["configured-model"] || values["workflow-models"]) &&
-    (!values.model?.trim() || !values.adapter?.trim())
+    !(values["configured-model"] || values["workflow-models"])
   ) {
-    throw new Error("--live requires an explicit --model and --adapter before any collection");
+    throw new Error(
+      "--live requires --workflow-models or --configured-model before any collection; local research/review roles retired; use --sources-only for collection only",
+    );
   }
   const execution = {
     model: values.model ?? "none",
@@ -465,26 +462,15 @@ export async function runFinanceResearchCli(
         maxTokens: maxModelTokens,
       })
     : undefined;
-  const runtime =
-    values["configured-model"] || workflow
-      ? { timeoutMs: 120_000, maxTokens: maxModelTokens ?? 8_192 }
-      : resolveLocalTextModelRuntimeConfig({
-          modelId: values.model,
-          adapterPath: values.adapter!,
-          pythonPath: values.python,
-          allowNetwork: false,
-          maxTokens: maxModelTokens,
-        });
+  const runtime = { timeoutMs: 120_000, maxTokens: maxModelTokens ?? 8_192 };
   execution.runtime = { ...runtime };
   const role =
     workflow?.routing.adapters[1] ??
-    ("adapterPath" in runtime
-      ? createLocalQualityHarnessAdapter(runtime)
-      : createConfiguredFinanceModelAdapter(context?.config ?? loadConfig(), {
-          maxCalls: maxModelCalls,
-          timeoutMs: runtime.timeoutMs,
-          maxTokens: runtime.maxTokens,
-        }));
+    createConfiguredFinanceModelAdapter(context?.config ?? loadConfig(), {
+      maxCalls: maxModelCalls,
+      timeoutMs: runtime.timeoutMs,
+      maxTokens: runtime.maxTokens,
+    });
   const quality = role;
   execution.model = role.modelId;
   execution.runtime = { ...execution.runtime, provider: role.provider };
