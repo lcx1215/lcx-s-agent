@@ -18,6 +18,7 @@ import {
   markAuthProfileUsed,
   resolveProfilesUnavailableReason,
 } from "../auth-profiles.js";
+import { resolveTrustedNativeCodingBinding } from "../coding-harness/native-types.js";
 import {
   CONTEXT_WINDOW_HARD_MIN_TOKENS,
   CONTEXT_WINDOW_WARN_BELOW_TOKENS,
@@ -206,6 +207,24 @@ function resolveActiveErrorContext(params: {
 export async function runEmbeddedPiAgent(
   params: RunEmbeddedPiAgentParams,
 ): Promise<EmbeddedPiRunResult> {
+  const native = params.nativeCodingBinding
+    ? resolveTrustedNativeCodingBinding(params.nativeCodingBinding)
+    : undefined;
+  if (native) {
+    params = {
+      ...params,
+      sessionId: native.sessionId,
+      sessionKey: native.sessionKey,
+      runId: native.runId,
+      workspaceDir: native.workspaceDir,
+      sessionFile: native.sessionFile,
+      agentDir: native.agentDir,
+      config: native.config,
+      clientTools: undefined,
+      skillsSnapshot: undefined,
+      timeoutMs: Math.min(params.timeoutMs, native.maxRuntimeMs),
+    };
+  }
   const sessionLane = resolveSessionLane(params.sessionKey?.trim() || params.sessionId);
   const globalLane = resolveGlobalLane(params.lane);
   const enqueueGlobal =
@@ -253,7 +272,9 @@ export async function runEmbeddedPiAgent(
         agentId: params.agentId,
         sessionKey: params.sessionKey,
       });
-      await ensureOpenClawModelsJson(params.config, agentDir);
+      if (!native) {
+        await ensureOpenClawModelsJson(params.config, agentDir);
+      }
 
       // Run before_model_resolve hooks early so plugins can override the
       // provider/model before resolveModel().
@@ -262,7 +283,7 @@ export async function runEmbeddedPiAgent(
       // fields if present. New hook takes precedence when both are set.
       let modelResolveOverride: { providerOverride?: string; modelOverride?: string } | undefined;
       let legacyBeforeAgentStartResult: PluginHookBeforeAgentStartResult | undefined;
-      const hookRunner = getGlobalHookRunner();
+      const hookRunner = native ? undefined : getGlobalHookRunner();
       const hookCtx = {
         agentId: workspaceResolution.agentId,
         sessionKey: params.sessionKey,
@@ -316,6 +337,7 @@ export async function runEmbeddedPiAgent(
         modelId,
         agentDir,
         params.config,
+        { readOnly: Boolean(native) },
       );
       if (!model) {
         throw new FailoverError(error ?? `Unknown model: ${provider}/${modelId}`, {
@@ -352,7 +374,10 @@ export async function runEmbeddedPiAgent(
         );
       }
 
-      const authStore = ensureAuthProfileStore(agentDir, { allowKeychainPrompt: false });
+      const authStore = ensureAuthProfileStore(agentDir, {
+        allowKeychainPrompt: false,
+        readOnly: Boolean(native),
+      });
       const preferredProfileId = params.authProfileId?.trim();
       let lockedProfileId = params.authProfileIdSource === "user" ? preferredProfileId : undefined;
       if (lockedProfileId) {
@@ -538,6 +563,7 @@ export async function runEmbeddedPiAgent(
       const resolveApiKeyForCandidate = async (candidate?: string) => {
         return getApiKeyForModel({
           model,
+          readOnly: Boolean(native),
           cfg: params.config,
           profileId: candidate,
           store: authStore,
@@ -548,6 +574,9 @@ export async function runEmbeddedPiAgent(
       const applyApiKeyInfo = async (candidate?: string): Promise<void> => {
         apiKeyInfo = await resolveApiKeyForCandidate(candidate);
         const resolvedProfileId = apiKeyInfo.profileId ?? candidate;
+        if (native && (!apiKeyInfo.apiKey || model.provider === "github-copilot")) {
+          throw new Error("Native coding requires read-only credentials without token refresh");
+        }
         if (!apiKeyInfo.apiKey) {
           if (apiKeyInfo.mode !== "aws-sdk") {
             throw new Error(
@@ -672,7 +701,7 @@ export async function runEmbeddedPiAgent(
         agentDir?: RunEmbeddedPiAgentParams["agentDir"];
       }) => {
         const { profileId, reason } = failure;
-        if (!profileId || !reason || reason === "timeout") {
+        if (native || !profileId || !reason || reason === "timeout") {
           return;
         }
         await markAuthProfileFailure({
@@ -719,12 +748,16 @@ export async function runEmbeddedPiAgent(
           const copilotAuthRetry = authRetryPending;
           authRetryPending = false;
           attemptedThinking.add(thinkLevel);
+          if (native && params.abortSignal?.aborted) {
+            throw new Error("native-aborted");
+          }
           await fs.mkdir(resolvedWorkspace, { recursive: true });
 
           const prompt =
             provider === "anthropic" ? scrubAnthropicRefusalMagic(params.prompt) : params.prompt;
 
           const attempt = await runEmbeddedAttempt({
+            nativeCodingBinding: params.nativeCodingBinding,
             sessionId: params.sessionId,
             sessionKey: params.sessionKey,
             trigger: params.trigger,
@@ -853,6 +886,9 @@ export async function runEmbeddedPiAgent(
               })()
             : null;
 
+          if (native && contextOverflowError) {
+            throw new Error("native-context-limit");
+          }
           if (contextOverflowError) {
             const overflowDiagId = createCompactionDiagId();
             const errorText = contextOverflowError.text;
@@ -1303,17 +1339,21 @@ export async function runEmbeddedPiAgent(
             `embedded run done: runId=${params.runId} sessionId=${params.sessionId} durationMs=${Date.now() - started} aborted=${aborted}`,
           );
           if (lastProfileId) {
-            await markAuthProfileGood({
-              store: authStore,
-              provider,
-              profileId: lastProfileId,
-              agentDir: params.agentDir,
-            });
-            await markAuthProfileUsed({
-              store: authStore,
-              profileId: lastProfileId,
-              agentDir: params.agentDir,
-            });
+            if (!native) {
+              await markAuthProfileGood({
+                store: authStore,
+                provider,
+                profileId: lastProfileId,
+                agentDir: params.agentDir,
+              });
+            }
+            if (!native) {
+              await markAuthProfileUsed({
+                store: authStore,
+                profileId: lastProfileId,
+                agentDir: params.agentDir,
+              });
+            }
           }
           return {
             payloads: payloads.length ? payloads : undefined,
@@ -1350,7 +1390,9 @@ export async function runEmbeddedPiAgent(
         }
       } finally {
         stopCopilotRefreshTimer();
-        process.chdir(prevCwd);
+        if (!native) {
+          process.chdir(prevCwd);
+        }
       }
     }),
   );

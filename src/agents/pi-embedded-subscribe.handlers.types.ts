@@ -133,6 +133,7 @@ export type EmbeddedPiSubscribeContext = {
 export type ToolHandlerParams = Pick<
   SubscribeEmbeddedPiSessionParams,
   | "runId"
+  | "disableHooks"
   | "onBlockReplyFlush"
   | "onAgentEvent"
   | "onToolResult"

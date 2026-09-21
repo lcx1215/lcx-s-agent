@@ -150,3 +150,20 @@ describe("discoverAuthStorage", () => {
     });
   });
 });
+
+describe("read-only model auth discovery", () => {
+  it("preserves legacy auth bytes instead of scrubbing static credentials", async () => {
+    await withAgentDir(async (agentDir) => {
+      writeRuntimeOpenRouterProfile(agentDir);
+      await writeLegacyAuthJson(agentDir, { fixture: { type: "api_key", key: "synthetic-only" } });
+      const before = await fs.readFile(path.join(agentDir, "auth.json"), "utf8");
+      const profilesBefore = await fs.readFile(path.join(agentDir, "auth-profiles.json"), "utf8");
+      const storage = discoverAuthStorage(agentDir, { readOnly: true });
+      expect(await storage.getApiKey("openrouter")).toBe("sk-or-v1-runtime");
+      expect(await fs.readFile(path.join(agentDir, "auth.json"), "utf8")).toBe(before);
+      expect(await fs.readFile(path.join(agentDir, "auth-profiles.json"), "utf8")).toBe(
+        profilesBefore,
+      );
+    });
+  });
+});

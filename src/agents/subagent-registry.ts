@@ -107,16 +107,19 @@ function markAnnounceGiveUp(entry: SubagentRunRecord, reason: "retry-limit" | "e
   );
 }
 
-function persistSubagentRuns() {
+function persistSubagentRuns(localOnly = false) {
   const retentionMs = resolveArchiveAfterMs();
   for (const entry of subagentRuns.values()) {
+    if (localOnly && entry.completionSource !== "local") {
+      continue;
+    }
     // Rebase legacy creation-time deadlines too: retention belongs to terminal runs.
     entry.archiveAtMs =
       entry.spawnMode !== "session" && entry.endedAt && retentionMs
         ? entry.endedAt + retentionMs
         : undefined;
   }
-  if ([...subagentRuns.values()].some((entry) => entry.archiveAtMs)) {
+  if (!localOnly && [...subagentRuns.values()].some((entry) => entry.archiveAtMs)) {
     startSweeper();
   }
   return persistSubagentRunsToDisk(subagentRuns);
@@ -214,6 +217,14 @@ function reconcileOrphanedRestoredRuns() {
   const storeCache = new Map<string, Record<string, SessionEntry>>();
   let changed = false;
   for (const [runId, entry] of subagentRuns.entries()) {
+    if (entry.completionSource === "local") {
+      if (!entry.endedAt) {
+        entry.dispatchState = "uncertain";
+        entry.dispatchError = "Local runner interrupted; completion requires reconciliation";
+        changed = true;
+      }
+      continue;
+    }
     if (entry.dispatchState === "preparing" || entry.dispatchState === "uncertain") {
       continue;
     }
@@ -359,7 +370,7 @@ async function completeSubagentRun(params: {
 }) {
   clearPendingLifecycleError(params.runId);
   const entry = subagentRuns.get(params.runId);
-  if (!entry) {
+  if (!entry || entry.completionSource === "local") {
     return;
   }
 
@@ -458,6 +469,9 @@ function resumeSubagentRun(runId: string) {
   }
   const entry = subagentRuns.get(runId);
   if (!entry) {
+    return;
+  }
+  if (entry.completionSource === "local") {
     return;
   }
   if (entry.dispatchState === "preparing" || entry.dispatchState === "uncertain") {
@@ -606,6 +620,9 @@ async function sweepSubagentRuns() {
   const now = Date.now();
   let mutated = false;
   for (const [runId, entry] of subagentRuns.entries()) {
+    if (entry.completionSource === "local") {
+      continue;
+    }
     if (
       !entry.endedAt ||
       !entry.cleanupCompletedAt ||
@@ -653,7 +670,7 @@ function ensureListener() {
         return;
       }
       const entry = subagentRuns.get(evt.runId);
-      if (!entry) {
+      if (!entry || entry.completionSource === "local") {
         return;
       }
       const phase = evt.data?.phase;
@@ -999,6 +1016,7 @@ export function replaceSubagentRunAfterSteer(params: {
 }
 
 export function registerSubagentRun(params: {
+  completionSource?: "local";
   dispatchState?: "preparing";
   runId: string;
   childSessionKey: string;
@@ -1016,6 +1034,20 @@ export function registerSubagentRun(params: {
   attachmentsRootDir?: string;
   retainAttachmentsOnKeep?: boolean;
 }) {
+  if (params.completionSource === "local") {
+    // Preserve disk records without resuming unrelated gateway jobs in a daemon-free owner.
+    const known = new Set(subagentRuns.keys());
+    restoreSubagentRunsFromDisk({ runs: subagentRuns, mergeOnly: true });
+    if (subagentRuns.has(params.runId)) {
+      throw new Error("Local subagent run ID already exists; dispatch blocked");
+    }
+    for (const [runId, entry] of subagentRuns) {
+      if (!known.has(runId) && entry.completionSource === "local" && !entry.endedAt) {
+        entry.dispatchState = "uncertain";
+        entry.dispatchError = "Local runner interrupted; completion requires reconciliation";
+      }
+    }
+  }
   const now = Date.now();
   const cfg = loadConfig();
   const spawnMode = params.spawnMode === "session" ? "session" : "run";
@@ -1025,6 +1057,7 @@ export function registerSubagentRun(params: {
   const previous = subagentRuns.get(params.runId);
   subagentRuns.set(params.runId, {
     runId: params.runId,
+    completionSource: params.completionSource,
     childSessionKey: params.childSessionKey,
     requesterSessionKey: params.requesterSessionKey,
     requesterOrigin,
@@ -1045,7 +1078,7 @@ export function registerSubagentRun(params: {
     attachmentsRootDir: params.attachmentsRootDir,
     retainAttachmentsOnKeep: params.retainAttachmentsOnKeep,
   });
-  if (!persistSubagentRuns()) {
+  if (!persistSubagentRuns(params.completionSource === "local")) {
     if (previous) {
       subagentRuns.set(params.runId, previous);
     } else {
@@ -1053,8 +1086,10 @@ export function registerSubagentRun(params: {
     }
     throw new Error("Cannot persist subagent receipt; dispatch blocked");
   }
-  ensureListener();
-  if (params.dispatchState === "preparing") {
+  if (params.completionSource !== "local") {
+    ensureListener();
+  }
+  if (params.completionSource === "local" || params.dispatchState === "preparing") {
     return;
   }
   // Wait for subagent completion via gateway RPC (cross-process).
@@ -1075,10 +1110,13 @@ export function confirmSubagentDispatch(preparedRunId: string, actualRunId: stri
   }
   entry.dispatchState = "dispatched";
   entry.startedAt ??= Date.now();
-  if (!persistSubagentRuns()) {
+  if (!persistSubagentRuns(entry.completionSource === "local")) {
     entry.dispatchState = "uncertain";
     entry.dispatchError = "Dispatch acknowledged but receipt update failed";
     return false;
+  }
+  if (entry.completionSource === "local") {
+    return true;
   }
   if (!entry.endedAt) {
     void waitForSubagentCompletion(
@@ -1104,10 +1142,15 @@ export function recordSubagentDispatchFailure(runId: string, error: string) {
   }
   entry.dispatchState = "uncertain";
   entry.dispatchError = error;
-  const persisted = persistSubagentRuns();
+  const persisted = persistSubagentRuns(entry.completionSource === "local");
   // A terminal lifecycle may have arrived while the acknowledgement was pending.
   // Preserve that evidence; never manufacture it from a sessions.delete response.
-  if (entry.endedAt && entry.outcome && !entry.cleanupCompletedAt) {
+  if (
+    entry.completionSource !== "local" &&
+    entry.endedAt &&
+    entry.outcome &&
+    !entry.cleanupCompletedAt
+  ) {
     void completeSubagentRun({
       runId,
       endedAt: entry.endedAt,
@@ -1301,6 +1344,12 @@ export function markSubagentRunTerminated(params: {
     if (typeof entry.endedAt === "number") {
       continue;
     }
+    if (entry.completionSource === "local") {
+      entry.dispatchState = "uncertain";
+      entry.dispatchError = "Cancellation requested; local owner must confirm completion";
+      persistSubagentRuns(true);
+      continue;
+    }
     entry.endedAt = now;
     entry.outcome = { status: "error", error: reason };
     entry.endedReason = SUBAGENT_ENDED_REASON_KILLED;
@@ -1376,4 +1425,22 @@ export function listDescendantRunsForRequester(rootSessionKey: string): Subagent
 
 export function initSubagentRegistry() {
   restoreSubagentRunsOnce();
+}
+
+/** Only the process-local owner supplies completion evidence; no RPC or delivery hooks. */
+export function completeLocalSubagentRun(runId: string, outcome: SubagentRunOutcome): boolean {
+  const entry = subagentRuns.get(runId);
+  if (!entry || entry.completionSource !== "local") {
+    return false;
+  }
+  entry.endedAt = Date.now();
+  entry.outcome = outcome;
+  entry.cleanupHandled = true;
+  entry.cleanupCompletedAt = entry.endedAt;
+  const persisted = persistSubagentRuns(true);
+  if (!persisted) {
+    entry.dispatchState = "uncertain";
+    entry.dispatchError = "Local completion could not be persisted";
+  }
+  return persisted;
 }

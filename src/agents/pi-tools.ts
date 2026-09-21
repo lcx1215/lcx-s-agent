@@ -15,6 +15,10 @@ import {
   type ProcessToolDefaults,
 } from "./bash-tools.js";
 import { listChannelAgentTools } from "./channel-tools.js";
+import {
+  resolveTrustedNativeCodingBinding,
+  type NativeCodingRunBinding,
+} from "./coding-harness/native-types.js";
 import { resolveImageSanitizationLimits } from "./image-sanitization.js";
 import type { ModelAuthMode } from "./model-auth.js";
 import { createOpenClawTools } from "./openclaw-tools.js";
@@ -555,4 +559,93 @@ export function createOpenClawCodingTools(options?: {
   // pi-ai's Anthropic OAuth transport remaps tool names to Claude Code-style names
   // on the wire and maps them back for tool dispatch.
   return withAbort;
+}
+
+/** Build only sandbox tools; never instantiate plugin, channel, or host tools. */
+export function createNativeSandboxCodingTools(options: {
+  binding: NativeCodingRunBinding;
+  abortSignal: AbortSignal;
+  timeoutMs: number;
+}): AnyAgentTool[] {
+  const native = resolveTrustedNativeCodingBinding(options.binding);
+  const sandbox = native.sandbox;
+  if (
+    !sandbox.enabled ||
+    sandbox.workspaceAccess !== "rw" ||
+    !sandbox.fsBridge ||
+    sandbox.workspaceDir !== native.workspaceDir ||
+    sandbox.agentWorkspaceDir !== native.workspaceDir
+  ) {
+    throw new Error("Native coding requires the inspected task sandbox and filesystem bridge");
+  }
+  const root = sandbox.workspaceDir;
+  const bridge = sandbox.fsBridge;
+  const timeoutSec = Math.max(
+    1,
+    Math.ceil(Math.min(options.timeoutMs, native.maxRuntimeMs) / 1000),
+  );
+  const exec = createExecTool({
+    host: "sandbox",
+    security: "full",
+    ask: "off",
+    cwd: root,
+    allowBackground: false,
+    timeoutSec,
+    notifyOnExit: false,
+    notifyOnExitEmptySuccess: false,
+    elevated: { enabled: false, allowed: false, defaultLevel: "off" },
+    scopeKey: native.runId,
+    sessionKey: native.sessionKey,
+    sandbox: {
+      containerName: sandbox.containerName,
+      workspaceDir: root,
+      containerWorkdir: sandbox.containerWorkdir,
+      env: sandbox.docker.env,
+    },
+  });
+  const boundedExec: AnyAgentTool = {
+    ...exec,
+    description:
+      "Execute a foreground command in the isolated task sandbox with a bounded timeout.",
+    execute: async (id, raw, signal, onUpdate) => {
+      const args = raw as Record<string, unknown>;
+      if (
+        (args.host !== undefined && args.host !== "sandbox") ||
+        args.elevated === true ||
+        args.background !== undefined ||
+        args.yieldMs !== undefined ||
+        args.node !== undefined ||
+        args.pty === true
+      ) {
+        throw new Error(
+          "Native coding exec forbids host override, elevation, background, yield, node, and pty",
+        );
+      }
+      const requested = args.timeout;
+      if (
+        requested !== undefined &&
+        (typeof requested !== "number" || !Number.isFinite(requested) || requested <= 0)
+      ) {
+        throw new Error("Native coding exec timeout must be positive");
+      }
+      return exec.execute(
+        id,
+        {
+          ...args,
+          host: "sandbox",
+          elevated: false,
+          timeout: Math.min(typeof requested === "number" ? requested : timeoutSec, timeoutSec),
+        },
+        signal,
+        onUpdate,
+      );
+    },
+  };
+  return [
+    createSandboxedReadTool({ root, bridge }),
+    createSandboxedWriteTool({ root, bridge }),
+    createSandboxedEditTool({ root, bridge }),
+    createApplyPatchTool({ cwd: root, sandbox: { root, bridge }, workspaceOnly: true }),
+    boundedExec,
+  ].map((tool) => wrapToolWithAbortSignal(normalizeToolParameters(tool), options.abortSignal));
 }

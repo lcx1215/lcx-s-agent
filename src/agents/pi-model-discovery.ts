@@ -91,7 +91,12 @@ function scrubLegacyStaticAuthJsonEntries(pathname: string): void {
   saveJsonFile(pathname, parsed);
 }
 
-function createAuthStorage(AuthStorageLike: unknown, path: string, creds: PiCredentialMap) {
+function createAuthStorage(
+  AuthStorageLike: unknown,
+  path: string,
+  creds: PiCredentialMap,
+  readOnly = false,
+) {
   const withInMemory = AuthStorageLike as { inMemory?: (data?: unknown) => unknown };
   if (typeof withInMemory.inMemory === "function") {
     return withInMemory.inMemory(creds) as PiAuthStorage;
@@ -115,6 +120,9 @@ function createAuthStorage(AuthStorageLike: unknown, path: string, creds: PiCred
     return withFromStorage.fromStorage(backend) as PiAuthStorage;
   }
 
+  if (readOnly) {
+    throw new Error("Read-only authentication requires in-memory auth storage");
+  }
   const withFactory = AuthStorageLike as { create?: (path: string) => unknown };
   const withRuntimeOverride = (
     typeof withFactory.create === "function"
@@ -135,17 +143,22 @@ function createAuthStorage(AuthStorageLike: unknown, path: string, creds: PiCred
   return withRuntimeOverride;
 }
 
-function resolvePiCredentials(agentDir: string): PiCredentialMap {
-  const store = ensureAuthProfileStore(agentDir, { allowKeychainPrompt: false });
+function resolvePiCredentials(agentDir: string, readOnly = false): PiCredentialMap {
+  const store = ensureAuthProfileStore(agentDir, { allowKeychainPrompt: false, readOnly });
   return resolvePiCredentialMapFromStore(store);
 }
 
 // Compatibility helpers for pi-coding-agent 0.50+ (discover* helpers removed).
-export function discoverAuthStorage(agentDir: string): PiAuthStorage {
-  const credentials = resolvePiCredentials(agentDir);
+export function discoverAuthStorage(
+  agentDir: string,
+  options?: { readOnly?: boolean },
+): PiAuthStorage {
+  const credentials = resolvePiCredentials(agentDir, options?.readOnly);
   const authPath = path.join(agentDir, "auth.json");
-  scrubLegacyStaticAuthJsonEntries(authPath);
-  return createAuthStorage(PiAuthStorageClass, authPath, credentials);
+  if (!options?.readOnly) {
+    scrubLegacyStaticAuthJsonEntries(authPath);
+  }
+  return createAuthStorage(PiAuthStorageClass, authPath, credentials, options?.readOnly);
 }
 
 export function discoverModels(authStorage: PiAuthStorage, agentDir: string): PiModelRegistry {

@@ -18,6 +18,7 @@ export type GuardedSessionManager = SessionManager & {
 export function guardSessionManager(
   sessionManager: SessionManager,
   opts?: {
+    disableHooks?: boolean;
     agentId?: string;
     sessionKey?: string;
     inputProvenance?: InputProvenance;
@@ -29,7 +30,7 @@ export function guardSessionManager(
     return sessionManager as GuardedSessionManager;
   }
 
-  const hookRunner = getGlobalHookRunner();
+  const hookRunner = opts?.disableHooks ? undefined : getGlobalHookRunner();
   const beforeMessageWrite = hookRunner?.hasHooks("before_message_write")
     ? (event: { message: import("@mariozechner/pi-agent-core").AgentMessage }) => {
         return hookRunner.runBeforeMessageWrite(event, {

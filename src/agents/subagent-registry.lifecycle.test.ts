@@ -38,6 +38,8 @@ vi.mock("../plugins/hook-runner-global.js", () => ({ getGlobalHookRunner: () => 
 import {
   addSubagentRunForTests,
   confirmSubagentDispatch,
+  completeLocalSubagentRun,
+  markSubagentRunTerminated,
   initSubagentRegistry,
   listSubagentRunsForRequester,
   registerSubagentRun,
@@ -145,4 +147,60 @@ describe("subagent lifecycle boundaries", () => {
     expect(confirmSubagentDispatch("fixture", "fixture")).toBe(true);
     expect(runs()[0]?.endedAt).toBe(2000);
   });
+});
+
+describe("local subagent lifecycle", () => {
+  it("persists preparing and completion without gateway waits, delivery, or deletion", async () => {
+    registerSubagentRun({ ...makeRun(), completionSource: "local", dispatchState: "preparing" });
+    expect(save).toHaveBeenCalled();
+    expect(confirmSubagentDispatch("fixture", "fixture")).toBe(true);
+    expect(completeLocalSubagentRun("fixture", { status: "ok" })).toBe(true);
+    expect(runs()[0]).toMatchObject({
+      completionSource: "local",
+      outcome: { status: "ok" },
+      cleanupHandled: true,
+    });
+    await vi.advanceTimersByTimeAsync(180000);
+    expect(gateway).not.toHaveBeenCalled();
+    expect(runs()).toHaveLength(1);
+  });
+  it("restores unfinished local runs as uncertain without replay or orphan deletion", () => {
+    load.mockReturnValue(
+      new Map([
+        ["fixture", { ...makeRun(), completionSource: "local", dispatchState: "dispatched" }],
+      ]),
+    );
+    initSubagentRegistry();
+    expect(runs()[0]).toMatchObject({
+      dispatchState: "uncertain",
+      dispatchError: expect.stringContaining("interrupted"),
+    });
+    expect(runs()[0]?.endedAt).toBeUndefined();
+    expect(gateway).not.toHaveBeenCalled();
+  });
+  it("reports failed local completion persistence explicitly", () => {
+    registerSubagentRun({ ...makeRun(), completionSource: "local", dispatchState: "preparing" });
+    confirmSubagentDispatch("fixture", "fixture");
+    save.mockReturnValue(false);
+    expect(completeLocalSubagentRun("fixture", { status: "ok" })).toBe(false);
+    expect(runs()[0]?.dispatchState).toBe("uncertain");
+  });
+});
+
+it("preserves unrelated disk records without starting their gateway lifecycle", async () => {
+  load.mockReturnValue(
+    new Map([["old", { ...makeRun("old"), endedAt: 1, cleanupCompletedAt: 1, archiveAtMs: 2 }]]),
+  );
+  registerSubagentRun({ ...makeRun(), completionSource: "local", dispatchState: "preparing" });
+  expect(runs()).toHaveLength(2);
+  await vi.advanceTimersByTimeAsync(180000);
+  expect(runs()).toHaveLength(2);
+  expect(gateway).not.toHaveBeenCalled();
+});
+it("does not infer local completion from an unrelated termination request", () => {
+  registerSubagentRun({ ...makeRun(), completionSource: "local", dispatchState: "preparing" });
+  confirmSubagentDispatch("fixture", "fixture");
+  markSubagentRunTerminated({ runId: "fixture" });
+  expect(runs()[0]).toMatchObject({ dispatchState: "uncertain" });
+  expect(runs()[0]?.endedAt).toBeUndefined();
 });

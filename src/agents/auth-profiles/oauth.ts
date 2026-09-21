@@ -88,6 +88,7 @@ function buildOAuthProfileResult(params: {
 }
 
 type ResolveApiKeyForProfileParams = {
+  readOnly?: boolean;
   cfg?: OpenClawConfig;
   store: AuthProfileStore;
   profileId: string;
@@ -234,6 +235,7 @@ async function tryResolveOAuthProfile(
 }
 
 async function resolveProfileSecretString(params: {
+  readOnly?: boolean;
   profileId: string;
   provider: string;
   value: string | undefined;
@@ -247,6 +249,9 @@ async function resolveProfileSecretString(params: {
   let resolvedValue = params.value?.trim();
   if (resolvedValue) {
     const inlineRef = coerceSecretRef(resolvedValue, params.refDefaults);
+    if (params.readOnly && inlineRef?.source === "exec") {
+      throw new Error("Read-only authentication cannot execute a secret resolver");
+    }
     if (inlineRef) {
       try {
         resolvedValue = await resolveSecretRefString(inlineRef, {
@@ -265,6 +270,9 @@ async function resolveProfileSecretString(params: {
   }
 
   const explicitRef = coerceSecretRef(params.valueRef, params.refDefaults);
+  if (params.readOnly && explicitRef?.source === "exec") {
+    throw new Error("Read-only authentication cannot execute a secret resolver");
+  }
   if (!resolvedValue && explicitRef) {
     try {
       resolvedValue = await resolveSecretRefString(explicitRef, {
@@ -311,6 +319,7 @@ export async function resolveApiKeyForProfile(
 
   if (cred.type === "api_key") {
     const key = await resolveProfileSecretString({
+      readOnly: params.readOnly,
       profileId,
       provider: cred.provider,
       value: cred.key,
@@ -332,6 +341,7 @@ export async function resolveApiKeyForProfile(
       return null;
     }
     const token = await resolveProfileSecretString({
+      readOnly: params.readOnly,
       profileId,
       provider: cred.provider,
       value: cred.token,
@@ -346,6 +356,17 @@ export async function resolveApiKeyForProfile(
       return null;
     }
     return buildApiKeyProfileResult({ apiKey: token, provider: cred.provider, email: cred.email });
+  }
+
+  if (params.readOnly) {
+    if (!Number.isFinite(cred.expires) || Date.now() >= cred.expires) {
+      throw new Error("Read-only authentication cannot refresh expired OAuth credentials");
+    }
+    return buildOAuthProfileResult({
+      provider: cred.provider,
+      credentials: cred,
+      email: cred.email,
+    });
   }
 
   const oauthCred =

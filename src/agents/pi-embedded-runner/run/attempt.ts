@@ -6,6 +6,7 @@ import {
   createAgentSession,
   DefaultResourceLoader,
   SessionManager,
+  SettingsManager,
 } from "@mariozechner/pi-coding-agent";
 import { resolveHeartbeatPrompt } from "../../../auto-reply/heartbeat.js";
 import { resolveChannelCapabilities } from "../../../config/channel-capabilities.js";
@@ -41,6 +42,7 @@ import {
   listChannelSupportedActions,
   resolveChannelMessageToolHints,
 } from "../../channel-tools.js";
+import { resolveTrustedNativeCodingBinding } from "../../coding-harness/native-types.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../defaults.js";
 import { resolveOpenClawDocsPath } from "../../docs-path.js";
 import { isTimeoutError } from "../../failover-error.js";
@@ -63,7 +65,11 @@ import {
 import { subscribeEmbeddedPiSession } from "../../pi-embedded-subscribe.js";
 import { createPreparedEmbeddedPiSettingsManager } from "../../pi-project-settings.js";
 import { toClientToolDefinitions } from "../../pi-tool-definition-adapter.js";
-import { createOpenClawCodingTools, resolveToolLoopDetectionConfig } from "../../pi-tools.js";
+import {
+  createNativeSandboxCodingTools,
+  createOpenClawCodingTools,
+  resolveToolLoopDetectionConfig,
+} from "../../pi-tools.js";
 import { maybeDistillRolloutSummaries } from "../../rollout-distill.js";
 import { scheduleRolloutSummary } from "../../rollout-summary.js";
 import { resolveSandboxContext } from "../../sandbox.js";
@@ -581,7 +587,10 @@ function summarizeSessionContext(messages: AgentMessage[]): {
 export async function runEmbeddedAttempt(
   params: EmbeddedRunAttemptParams,
 ): Promise<EmbeddedRunAttemptResult> {
-  const resolvedWorkspace = resolveUserPath(params.workspaceDir);
+  const native = params.nativeCodingBinding
+    ? resolveTrustedNativeCodingBinding(params.nativeCodingBinding)
+    : undefined;
+  const resolvedWorkspace = resolveUserPath(native?.workspaceDir ?? params.workspaceDir);
   const prevCwd = process.cwd();
   const runAbortController = new AbortController();
 
@@ -598,11 +607,13 @@ export async function runEmbeddedAttempt(
   ensureModelEgressDispatcher(params.config);
 
   const sandboxSessionKey = params.sessionKey?.trim() || params.sessionId;
-  const sandbox = await resolveSandboxContext({
-    config: params.config,
-    sessionKey: sandboxSessionKey,
-    workspaceDir: resolvedWorkspace,
-  });
+  const sandbox =
+    native?.sandbox ??
+    (await resolveSandboxContext({
+      config: params.config,
+      sessionKey: sandboxSessionKey,
+      workspaceDir: resolvedWorkspace,
+    }));
   const effectiveWorkspace = sandbox?.enabled
     ? sandbox.workspaceAccess === "rw"
       ? resolvedWorkspace
@@ -611,41 +622,50 @@ export async function runEmbeddedAttempt(
   await fs.mkdir(effectiveWorkspace, { recursive: true });
 
   let restoreSkillEnv: (() => void) | undefined;
-  process.chdir(effectiveWorkspace);
+  if (!native) {
+    process.chdir(effectiveWorkspace);
+  }
   try {
-    const { shouldLoadSkillEntries, skillEntries } = resolveEmbeddedRunSkillEntries({
-      workspaceDir: effectiveWorkspace,
-      config: params.config,
-      skillsSnapshot: params.skillsSnapshot,
-    });
-    restoreSkillEnv = params.skillsSnapshot
-      ? applySkillEnvOverridesFromSnapshot({
-          snapshot: params.skillsSnapshot,
+    const { shouldLoadSkillEntries, skillEntries } = native
+      ? { shouldLoadSkillEntries: false, skillEntries: [] }
+      : resolveEmbeddedRunSkillEntries({
+          workspaceDir: effectiveWorkspace,
           config: params.config,
-        })
-      : applySkillEnvOverrides({
-          skills: skillEntries ?? [],
+          skillsSnapshot: params.skillsSnapshot,
+        });
+    restoreSkillEnv = native
+      ? undefined
+      : params.skillsSnapshot
+        ? applySkillEnvOverridesFromSnapshot({
+            snapshot: params.skillsSnapshot,
+            config: params.config,
+          })
+        : applySkillEnvOverrides({
+            skills: skillEntries ?? [],
+            config: params.config,
+          });
+
+    const skillsPrompt = native
+      ? ""
+      : resolveSkillsPromptForRun({
+          skillsSnapshot: params.skillsSnapshot,
+          entries: shouldLoadSkillEntries ? skillEntries : undefined,
           config: params.config,
+          workspaceDir: effectiveWorkspace,
         });
 
-    const skillsPrompt = resolveSkillsPromptForRun({
-      skillsSnapshot: params.skillsSnapshot,
-      entries: shouldLoadSkillEntries ? skillEntries : undefined,
-      config: params.config,
-      workspaceDir: effectiveWorkspace,
-    });
-
     const sessionLabel = params.sessionKey ?? params.sessionId;
-    const { bootstrapFiles: hookAdjustedBootstrapFiles, contextFiles } =
-      await resolveBootstrapContextForRun({
-        workspaceDir: effectiveWorkspace,
-        config: params.config,
-        sessionKey: params.sessionKey,
-        sessionId: params.sessionId,
-        warn: makeBootstrapWarn({ sessionLabel, warn: (message) => log.warn(message) }),
-        contextMode: params.bootstrapContextMode,
-        runKind: params.bootstrapContextRunKind,
-      });
+    const { bootstrapFiles: hookAdjustedBootstrapFiles, contextFiles } = native
+      ? { bootstrapFiles: [], contextFiles: [] }
+      : await resolveBootstrapContextForRun({
+          workspaceDir: effectiveWorkspace,
+          config: params.config,
+          sessionKey: params.sessionKey,
+          sessionId: params.sessionId,
+          warn: makeBootstrapWarn({ sessionLabel, warn: (message) => log.warn(message) }),
+          contextMode: params.bootstrapContextMode,
+          runKind: params.bootstrapContextRunKind,
+        });
     const bootstrapMaxChars = resolveBootstrapMaxChars(params.config);
     const bootstrapTotalMaxChars = resolveBootstrapTotalMaxChars(params.config);
     const bootstrapAnalysis = analyzeBootstrapBudget({
@@ -685,58 +705,64 @@ export async function runEmbeddedAttempt(
     const runtimeMessageChannel = normalizeMessageChannelFamilyAlias(
       params.messageChannel ?? params.messageProvider,
     );
-    const toolsRaw = params.disableTools
-      ? []
-      : createOpenClawCodingTools({
-          agentId: sessionAgentId,
-          exec: {
-            ...params.execOverrides,
-            elevated: params.bashElevated,
-          },
-          sandbox,
-          messageProvider: runtimeMessageChannel ?? params.messageProvider,
-          agentAccountId: params.agentAccountId,
-          messageTo: params.messageTo,
-          messageThreadId: params.messageThreadId,
-          groupId: params.groupId,
-          groupChannel: params.groupChannel,
-          groupSpace: params.groupSpace,
-          spawnedBy: params.spawnedBy,
-          senderId: params.senderId,
-          senderName: params.senderName,
-          senderUsername: params.senderUsername,
-          senderE164: params.senderE164,
-          senderIsOwner: params.senderIsOwner,
-          sessionKey: sandboxSessionKey,
-          sessionId: params.sessionId,
-          runId: params.runId,
-          agentDir,
-          workspaceDir: effectiveWorkspace,
-          config: params.config,
+    const toolsRaw = native
+      ? createNativeSandboxCodingTools({
+          binding: params.nativeCodingBinding!,
           abortSignal: runAbortController.signal,
-          modelProvider: params.model.provider,
-          modelId: params.modelId,
-          modelContextWindowTokens: params.model.contextWindow,
-          modelAuthMode: resolveModelAuthMode(params.model.provider, params.config),
-          currentChannelId: params.currentChannelId,
-          currentThreadTs: params.currentThreadTs,
-          currentMessageId: params.currentMessageId,
-          replyToMode: params.replyToMode,
-          hasRepliedRef: params.hasRepliedRef,
-          modelHasVision,
-          requireExplicitMessageTarget:
-            params.requireExplicitMessageTarget ?? isSubagentSessionKey(params.sessionKey),
-          disableMessageTool: params.disableMessageTool,
-        });
+          timeoutMs: params.timeoutMs,
+        })
+      : params.disableTools
+        ? []
+        : createOpenClawCodingTools({
+            agentId: sessionAgentId,
+            exec: {
+              ...params.execOverrides,
+              elevated: params.bashElevated,
+            },
+            sandbox,
+            messageProvider: runtimeMessageChannel ?? params.messageProvider,
+            agentAccountId: params.agentAccountId,
+            messageTo: params.messageTo,
+            messageThreadId: params.messageThreadId,
+            groupId: params.groupId,
+            groupChannel: params.groupChannel,
+            groupSpace: params.groupSpace,
+            spawnedBy: params.spawnedBy,
+            senderId: params.senderId,
+            senderName: params.senderName,
+            senderUsername: params.senderUsername,
+            senderE164: params.senderE164,
+            senderIsOwner: params.senderIsOwner,
+            sessionKey: sandboxSessionKey,
+            sessionId: params.sessionId,
+            runId: params.runId,
+            agentDir,
+            workspaceDir: effectiveWorkspace,
+            config: params.config,
+            abortSignal: runAbortController.signal,
+            modelProvider: params.model.provider,
+            modelId: params.modelId,
+            modelContextWindowTokens: params.model.contextWindow,
+            modelAuthMode: resolveModelAuthMode(params.model.provider, params.config),
+            currentChannelId: params.currentChannelId,
+            currentThreadTs: params.currentThreadTs,
+            currentMessageId: params.currentMessageId,
+            replyToMode: params.replyToMode,
+            hasRepliedRef: params.hasRepliedRef,
+            modelHasVision,
+            requireExplicitMessageTarget:
+              params.requireExplicitMessageTarget ?? isSubagentSessionKey(params.sessionKey),
+            disableMessageTool: params.disableMessageTool,
+          });
     const tools = sanitizeToolsForGoogle({ tools: toolsRaw, provider: params.provider });
     const allowedToolNames = collectAllowedToolNames({
       tools,
-      clientTools: params.clientTools,
+      clientTools: native ? undefined : params.clientTools,
     });
     logToolSchemasForGoogle({ tools, provider: params.provider });
 
     const machineName = await getMachineDisplayName();
-    const runtimeChannel = runtimeMessageChannel;
+    const runtimeChannel = native ? undefined : runtimeMessageChannel;
     let runtimeCapabilities = runtimeChannel
       ? (resolveChannelCapabilities({
           cfg: params.config,
@@ -782,7 +808,7 @@ export async function runEmbeddedAttempt(
             return undefined;
           })()
         : undefined;
-    const sandboxInfo = buildEmbeddedSandboxInfo(sandbox, params.bashElevated);
+    const sandboxInfo = buildEmbeddedSandboxInfo(sandbox, native ? undefined : params.bashElevated);
     const reasoningTagHint = isReasoningTagProvider(params.provider);
     // Resolve channel-specific message actions for system prompt
     const channelActions = runtimeChannel
@@ -808,7 +834,7 @@ export async function runEmbeddedAttempt(
       config: params.config,
       agentId: sessionAgentId,
       workspaceDir: effectiveWorkspace,
-      cwd: process.cwd(),
+      cwd: native ? effectiveWorkspace : process.cwd(),
       runtime: {
         host: machineName,
         os: `${os.type()} ${os.release()}`,
@@ -880,6 +906,9 @@ export async function runEmbeddedAttempt(
         warning: bootstrapPromptWarning,
       }),
       sandbox: (() => {
+        if (native) {
+          return { mode: "all", sandboxed: true };
+        }
         const runtime = resolveSandboxRuntimeStatus({
           cfg: params.config,
           sessionKey: sandboxSessionKey,
@@ -928,6 +957,7 @@ export async function runEmbeddedAttempt(
         inputProvenance: params.inputProvenance,
         allowSyntheticToolResults: transcriptPolicy.allowSyntheticToolResults,
         allowedToolNames,
+        disableHooks: Boolean(native),
       });
       trackSessionManagerAccess(params.sessionFile);
 
@@ -939,24 +969,38 @@ export async function runEmbeddedAttempt(
         cwd: effectiveWorkspace,
       });
 
-      const settingsManager = createPreparedEmbeddedPiSettingsManager({
-        cwd: effectiveWorkspace,
-        agentDir,
-        cfg: params.config,
-      });
+      const settingsManager = native
+        ? SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } })
+        : createPreparedEmbeddedPiSettingsManager({
+            cwd: effectiveWorkspace,
+            agentDir,
+            cfg: params.config,
+          });
 
       // Sets compaction/pruning runtime state and returns extension factories
       // that must be passed to the resource loader for the safeguard to be active.
-      const extensionFactories = buildEmbeddedExtensionFactories({
-        cfg: params.config,
-        sessionManager,
-        provider: params.provider,
-        modelId: params.modelId,
-        model: params.model,
-      });
+      const extensionFactories = native
+        ? []
+        : buildEmbeddedExtensionFactories({
+            cfg: params.config,
+            sessionManager,
+            provider: params.provider,
+            modelId: params.modelId,
+            model: params.model,
+          });
       // Only create an explicit resource loader when there are extension factories
       // to register; otherwise let createAgentSession use its built-in default.
-      let resourceLoader: DefaultResourceLoader | undefined;
+      let resourceLoader: DefaultResourceLoader | undefined = native
+        ? new DefaultResourceLoader({
+            cwd: resolvedWorkspace,
+            agentDir,
+            settingsManager,
+            noExtensions: true,
+            noSkills: true,
+            noPromptTemplates: true,
+            noThemes: true,
+          })
+        : undefined;
       if (extensionFactories.length > 0) {
         resourceLoader = new DefaultResourceLoader({
           cwd: resolvedWorkspace,
@@ -968,7 +1012,7 @@ export async function runEmbeddedAttempt(
       }
 
       // Get hook runner early so it's available when creating tools
-      const hookRunner = getGlobalHookRunner();
+      const hookRunner = native ? undefined : getGlobalHookRunner();
 
       const { builtInTools, customTools } = splitSdkTools({
         tools,
@@ -981,21 +1025,22 @@ export async function runEmbeddedAttempt(
         cfg: params.config,
         agentId: sessionAgentId,
       });
-      const clientToolDefs = params.clientTools
-        ? toClientToolDefinitions(
-            params.clientTools,
-            (toolName, toolParams) => {
-              clientToolCallDetected = { name: toolName, params: toolParams };
-            },
-            {
-              agentId: sessionAgentId,
-              sessionKey: sandboxSessionKey,
-              sessionId: params.sessionId,
-              runId: params.runId,
-              loopDetection: clientToolLoopDetection,
-            },
-          )
-        : [];
+      const clientToolDefs =
+        !native && params.clientTools
+          ? toClientToolDefinitions(
+              params.clientTools,
+              (toolName, toolParams) => {
+                clientToolCallDetected = { name: toolName, params: toolParams };
+              },
+              {
+                agentId: sessionAgentId,
+                sessionKey: sandboxSessionKey,
+                sessionId: params.sessionId,
+                runId: params.runId,
+                loopDetection: clientToolLoopDetection,
+              },
+            )
+          : [];
 
       const allCustomTools = [...customTools, ...clientToolDefs];
 
@@ -1026,27 +1071,31 @@ export async function runEmbeddedAttempt(
           ),
         ),
       });
-      const cacheTrace = createCacheTrace({
-        cfg: params.config,
-        env: process.env,
-        runId: params.runId,
-        sessionId: activeSession.sessionId,
-        sessionKey: params.sessionKey,
-        provider: params.provider,
-        modelId: params.modelId,
-        modelApi: params.model.api,
-        workspaceDir: params.workspaceDir,
-      });
-      const anthropicPayloadLogger = createAnthropicPayloadLogger({
-        env: process.env,
-        runId: params.runId,
-        sessionId: activeSession.sessionId,
-        sessionKey: params.sessionKey,
-        provider: params.provider,
-        modelId: params.modelId,
-        modelApi: params.model.api,
-        workspaceDir: params.workspaceDir,
-      });
+      const cacheTrace = native
+        ? null
+        : createCacheTrace({
+            cfg: params.config,
+            env: process.env,
+            runId: params.runId,
+            sessionId: activeSession.sessionId,
+            sessionKey: params.sessionKey,
+            provider: params.provider,
+            modelId: params.modelId,
+            modelApi: params.model.api,
+            workspaceDir: params.workspaceDir,
+          });
+      const anthropicPayloadLogger = native
+        ? null
+        : createAnthropicPayloadLogger({
+            env: process.env,
+            runId: params.runId,
+            sessionId: activeSession.sessionId,
+            sessionKey: params.sessionKey,
+            provider: params.provider,
+            modelId: params.modelId,
+            modelApi: params.model.api,
+            workspaceDir: params.workspaceDir,
+          });
 
       // Ollama native API: bypass SDK's streamSimple and use direct /api/chat calls
       // for reliable streaming + tool calling support (#11828).
@@ -1321,7 +1370,8 @@ export async function runEmbeddedAttempt(
       const subscription = subscribeEmbeddedPiSession({
         session: activeSession,
         runId: params.runId,
-        hookRunner: getGlobalHookRunner() ?? undefined,
+        hookRunner: native ? undefined : (getGlobalHookRunner() ?? undefined),
+        disableHooks: Boolean(native),
         verboseLevel: params.verboseLevel,
         reasoningMode: params.reasoningLevel ?? "off",
         toolResultFormat: params.toolResultFormat,
@@ -1373,7 +1423,7 @@ export async function runEmbeddedAttempt(
       const isProbeSession = params.sessionId?.startsWith("probe-") ?? false;
       const abortTimer = setTimeout(
         () => {
-          if (!isProbeSession) {
+          if (!native && !isProbeSession) {
             log.warn(
               `embedded run timeout: runId=${params.runId} sessionId=${params.sessionId} timeoutMs=${params.timeoutMs}`,
             );
@@ -1393,7 +1443,7 @@ export async function runEmbeddedAttempt(
               if (!activeSession.isStreaming) {
                 return;
               }
-              if (!isProbeSession) {
+              if (!native && !isProbeSession) {
                 log.warn(
                   `embedded run abort still streaming: runId=${params.runId} sessionId=${params.sessionId}`,
                 );
@@ -1505,20 +1555,22 @@ export async function runEmbeddedAttempt(
 
           // Detect and load images referenced in the prompt for vision-capable models.
           // Images are prompt-local only (pi-like behavior).
-          const imageResult = await detectAndLoadPromptImages({
-            prompt: effectivePrompt,
-            workspaceDir: effectiveWorkspace,
-            model: params.model,
-            existingImages: params.images,
-            maxBytes: MAX_IMAGE_BYTES,
-            maxDimensionPx: resolveImageSanitizationLimits(params.config).maxDimensionPx,
-            workspaceOnly: effectiveFsWorkspaceOnly,
-            // Enforce sandbox path restrictions when sandbox is enabled
-            sandbox:
-              sandbox?.enabled && sandbox?.fsBridge
-                ? { root: sandbox.workspaceDir, bridge: sandbox.fsBridge }
-                : undefined,
-          });
+          const imageResult = native
+            ? { images: [] }
+            : await detectAndLoadPromptImages({
+                prompt: effectivePrompt,
+                workspaceDir: effectiveWorkspace,
+                model: params.model,
+                existingImages: params.images,
+                maxBytes: MAX_IMAGE_BYTES,
+                maxDimensionPx: resolveImageSanitizationLimits(params.config).maxDimensionPx,
+                workspaceOnly: effectiveFsWorkspaceOnly,
+                // Enforce sandbox path restrictions when sandbox is enabled
+                sandbox:
+                  sandbox?.enabled && sandbox?.fsBridge
+                    ? { root: sandbox.workspaceDir, bridge: sandbox.fsBridge }
+                    : undefined,
+              });
 
           cacheTrace?.recordStage("prompt:images", {
             prompt: effectivePrompt,
@@ -1605,7 +1657,7 @@ export async function runEmbeddedAttempt(
               promptError = err;
               promptErrorSource = "compaction";
             }
-            if (!isProbeSession) {
+            if (!native && !isProbeSession) {
               log.debug(
                 `compaction wait aborted: runId=${params.runId} sessionId=${params.sessionId}`,
               );
@@ -1646,7 +1698,7 @@ export async function runEmbeddedAttempt(
           currentSessionId: activeSession.sessionId,
         });
         if (timedOutDuringCompaction) {
-          if (!isProbeSession) {
+          if (!native && !isProbeSession) {
             log.warn(
               `using ${snapshotSelection.source} snapshot: timed out during compaction runId=${params.runId} sessionId=${params.sessionId}`,
             );
@@ -1684,7 +1736,7 @@ export async function runEmbeddedAttempt(
         // Durable per-session digest. Fire-and-forget: a missing summary is a
         // stated limitation, never a run failure. Probe sessions are excluded
         // because they carry no user work.
-        if (!isProbeSession) {
+        if (!native && !isProbeSession) {
           scheduleRolloutSummary({
             workspaceDir: params.workspaceDir,
             sessionId: params.sessionId,
@@ -1832,6 +1884,8 @@ export async function runEmbeddedAttempt(
     }
   } finally {
     restoreSkillEnv?.();
-    process.chdir(prevCwd);
+    if (!native) {
+      process.chdir(prevCwd);
+    }
   }
 }

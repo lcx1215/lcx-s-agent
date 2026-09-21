@@ -5,6 +5,8 @@ import type { SpawnSubagentMode } from "./subagent-spawn.js";
 
 export type SubagentRunRecord = {
   runId: string;
+  /** Local runs are completed by their owning runner, never gateway polling/announce. */
+  completionSource?: "local";
   childSessionKey: string;
   requesterSessionKey: string;
   requesterOrigin?: DeliveryContext;
