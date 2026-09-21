@@ -1,8 +1,7 @@
 import fs from "node:fs/promises";
-import path from "node:path";
 import { Type } from "@sinclair/typebox";
 import { buildReflection, renderReflection, type ScoredSample } from "../finance-reflection.js";
-import { resolveWorkspaceRoot } from "../workspace-dir.js";
+import { financeResearchScoredPath, resolveFinanceStateDir } from "../finance-state-dir.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult, readStringParam } from "./common.js";
 
@@ -26,7 +25,6 @@ import { jsonResult, readStringParam } from "./common.js";
 
 export const FINANCE_REFLECTION_READ_SCHEMA_VERSION = "lcx_finance_reflection_read_v1" as const;
 
-const DEFAULT_SCORED_REL = "state/finance/research-scored.jsonl";
 const DEFAULT_INSTANCE_LIMIT = 5;
 
 const FinanceReflectionReadSchema = Type.Object({
@@ -108,10 +106,11 @@ export function createFinanceReflectionReadTool(): AnyAgentTool {
           ? Math.min(Math.floor(rawLimit), 20)
           : DEFAULT_INSTANCE_LIMIT;
 
-      const root = resolveWorkspaceRoot(workspaceDir);
-      const scoredFile = path.isAbsolute(DEFAULT_SCORED_REL)
-        ? DEFAULT_SCORED_REL
-        : path.join(root, DEFAULT_SCORED_REL);
+      // Resolved the same way the writer resolves it. A relative name made this read a different
+      // book than the cycle wrote whenever the caller was not started from the repository root,
+      // and "no scored history yet" is indistinguishable from "reading the wrong file".
+      const state = resolveFinanceStateDir({ workspaceDir });
+      const scoredFile = financeResearchScoredPath(state.directory);
 
       const scored = await readScored(scoredFile);
 
@@ -124,7 +123,7 @@ export function createFinanceReflectionReadTool(): AnyAgentTool {
       return jsonResult({
         ok: true,
         schemaVersion: FINANCE_REFLECTION_READ_SCHEMA_VERSION,
-        inspectedFrom: { workspaceDir: root, scoredFile },
+        inspectedFrom: { stateDir: state.directory, resolvedFrom: state.source, scoredFile },
         sampleCount: scored.length,
         scope: instrument ? instrument.toUpperCase() : "pool",
         reflection: renderReflection(scoped),

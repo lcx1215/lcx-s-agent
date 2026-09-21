@@ -31,7 +31,8 @@ const FinanceResearchBatchSchema = Type.Object({
   ),
   recordPath: Type.Optional(
     Type.String({
-      description: "Where samples are appended. Defaults to state/finance/research-samples.jsonl.",
+      description:
+        "Where samples are appended. Defaults to the resolved finance state directory — the same file the night run settles. Override only to write somewhere deliberately separate.",
     }),
   ),
   maxInstruments: Type.Optional(

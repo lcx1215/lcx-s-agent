@@ -9,6 +9,12 @@ import {
 } from "../finance-execution-adapter.js";
 import { compileExecutionIntent } from "../finance-intent-compiler.js";
 import { classifyFinanceStrategy, evaluateFinanceMandate } from "../finance-mandate.js";
+import { assertNotPlacedToday, markPlaced } from "../finance-order-day-guard.js";
+import {
+  financeResearchSamplesPath,
+  financeResearchScoredPath,
+  resolveFinanceStateDir,
+} from "../finance-state-dir.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult, readStringParam } from "./common.js";
 
@@ -32,10 +38,13 @@ import { jsonResult, readStringParam } from "./common.js";
 
 export const FINANCE_PAPER_RANK_PLACE_SCHEMA_VERSION = "lcx_finance_paper_rank_place_v1" as const;
 
-const DEFAULT_RECORD_REL = "state/finance/research-samples.jsonl";
-const DEFAULT_SCORED_REL = "state/finance/research-scored.jsonl";
-
 const FinancePaperRankPlaceSchema = Type.Object({
+  workspaceDir: Type.Optional(
+    Type.String({
+      description:
+        "Workspace root whose finance state is read. Defaults to LCX_FINANCE_STATE_DIR, then the workspace default — the same root the daily cycle records its samples into.",
+    }),
+  ),
   day: Type.Optional(
     Type.String({ description: "UTC day of the samples to rank, YYYY-MM-DD. Defaults to today." }),
   ),
@@ -103,8 +112,12 @@ async function main(_toolCallId: string, params: Record<string, unknown>) {
   const authorization = readStringParam(params, "runAuthorizationId") ?? "";
   const place = params.place === true;
 
-  const recordPath = DEFAULT_RECORD_REL;
-  const scoredPath = DEFAULT_SCORED_REL;
+  // Resolved, not relative: a scheduler does not start from the repository root, and a relative
+  // name would then read a second, empty samples file and rank nothing — reporting "no sample
+  // file yet" for samples that are on file in the book the cycle actually writes.
+  const state = resolveFinanceStateDir({ workspaceDir: readStringParam(params, "workspaceDir") });
+  const recordPath = financeResearchSamplesPath(state.directory);
+  const scoredPath = financeResearchScoredPath(state.directory);
 
   if (!existsSync(recordPath)) {
     return jsonResult({
@@ -271,6 +284,24 @@ async function main(_toolCallId: string, params: Record<string, unknown>) {
       continue;
     }
 
+    // Two schedulers can exist in this repo; this guard lives outside both, so
+    // neither has to be trusted to remember what the other did.
+    const guard = await assertNotPlacedToday({ instrument: s.instrument, day });
+    if (!guard.ok) {
+      results.push({
+        instrument: s.instrument,
+        status: "refused",
+        reasons: [
+          "already placed today by " +
+            guard.existing.route +
+            " (receipt " +
+            guard.existing.receiptId +
+            "); refusing a second order",
+        ],
+      });
+      continue;
+    }
+
     const placed = await placeFinanceOrder({
       mode: "live_execution",
       intent: compiled.intent,
@@ -283,6 +314,13 @@ async function main(_toolCallId: string, params: Record<string, unknown>) {
 
     if (placed.status === "placed") {
       placedCount += 1;
+      await markPlaced({
+        instrument: s.instrument,
+        day,
+        receiptId: placed.receipt?.receiptId ?? "unknown",
+        venue: "paper",
+        route: "finance_paper_rank_place",
+      });
     }
     results.push({
       instrument: s.instrument,

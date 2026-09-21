@@ -25,6 +25,7 @@ import { analystTargetSignal } from "./finance-fundamental-signal.js";
 import { runFinanceMarketCollectionRefresh } from "./finance-market-collection-registry.js";
 import { createRegisteredCapabilityAdapters } from "./finance-registered-capability-adapters.js";
 import { fuseSignals, type FinanceSignal } from "./finance-signal-fusion.js";
+import { financeResearchSamplesPath, resolveFinanceStateDir } from "./finance-state-dir.js";
 
 export type BatchRecord = Readonly<{
   asOf: string;
@@ -238,6 +239,8 @@ export async function runResearchBatch(
   params: {
     instruments?: readonly string[];
     recordPath?: string;
+    /** Finance state directory. Defaults the same way every other finance reader does. */
+    directory?: string;
     env?: NodeJS.ProcessEnv;
     warn?: (message: string) => void;
   } = {},
@@ -253,7 +256,12 @@ export async function runResearchBatch(
     unknown
   >;
   const fmpKey = keyFrom(env, "FMP_API_KEY");
-  const recordPath = params.recordPath ?? "state/finance/research-samples.jsonl";
+  // Resolved, not relative. `state/finance/...` is the right book only while the caller happens
+  // to be started from the repository root: a scheduler starts elsewhere and would write a second
+  // samples file next to the first, and the night run would settle the empty one.
+  const recordPath =
+    params.recordPath ??
+    financeResearchSamplesPath(resolveFinanceStateDir({ directory: params.directory }).directory);
   const requested = (params.instruments ?? [...DEFAULT_POOL])
     .map((value) => value.trim().toUpperCase())
     .filter((value) => value.length > 0);

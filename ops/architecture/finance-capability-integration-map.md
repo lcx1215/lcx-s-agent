@@ -407,6 +407,40 @@ samplesFile:  /Users/liuchengxu/.openclaw/workspace/state/finance/research-sampl
 已改：走 `resolveFinanceStateDir()`（新增 `directory` 参数，`workspaceDir` 降级为最弱输入），
 并把 `financeStateDirectory` / `resolvedFrom` 一起报出来，让"空计数"能配上"读的是哪本书"。
 
+### 同一族余下的三处：研究面（2026-09-21 修）
+
+`finance-state-dir.ts` 早就提供了 `financeResearch{Samples,Scored}Path()`，注释里也写了这个症状
+——"cycle 在配置根写了 5 个样本，而 reader 在工作区解析同名文件报 0"。**但调用点没跟上**：
+
+| 调用点 | 角色 | 原来 |
+| --- | --- | --- |
+| `finance-research-batch.ts` | **写**样本 | `params.recordPath ?? "state/finance/research-samples.jsonl"` |
+| `finance-paper-rank-place-tool.ts` | **读**样本排名下单 | `DEFAULT_RECORD_REL` 字面量 |
+| `finance-reflection-read-tool.ts` | **读**结算结果 | `path.join(resolveWorkspaceRoot(workspaceDir), "state/finance/...")` |
+
+三处都**完全不响应 `LCX_FINANCE_STATE_DIR`**，只在进程恰好从仓库根启动时才是正确的书。
+
+对照实验（cwd=`/tmp`、同一参数，**只差 env**）：
+
+```
+不设 env   → "no sample file yet; run the batch before ranking"
+设 env     → candidates: 3    （9-20 那 3 条 buy；2 条 direction:none 被排除）
+```
+
+读到 3 条而不是 5 条是对的：拒绝下注的不算赌注，与 `settlement_supply` 的口径一致 —— 两处独立实现互证。
+
+已改：三处都走 `resolveFinanceStateDir()`，paper-rank 与 reflection-read 新增 `workspaceDir`。
+实测从 `/tmp` 显式传 `directory` 得到与仓库根**相同**的结果（不再被 cwd 左右）。
+
+⚠️ **不能声称"cwd 依赖已修好"**：`resolveFinanceStateDir` 的 `workspace_default` 分支本身就是
+`resolveWorkspaceRoot(cwd)`。既不传 `directory` 也不设 env 时，答案仍然跟着 cwd 走。
+这次修掉的是**更糟的那半**：忽略 env、忽略显式参数。真正让无人值守稳定的仍是**调度器把 `--dir` 传下去**。
+
+剩下两处同类（未修）：`finance-scoped-override.ts:44`、`finance-claim-ledger.ts:32`
+（`path.join(root, "state/finance/...")`，`root` 默认 cwd）。
+
+测试：新建 `finance-research-batch.test.ts`（3 例）。变异验证：把默认值改回字面量 ⇒ **3 条全红**。
+
 生产复验：`total 5 / pending 5 / refused 2`、`resolvedFrom: env`、路径 = 仓库 `state/finance`。
 
 **仍未闭合的同类接缝（未动手，记录在此）**：研究/结算面的样本与评分文件在 **5 处**仍是
