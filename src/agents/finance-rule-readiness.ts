@@ -817,6 +817,18 @@ function buildEntry(
   } else if (elapsedDays === null) {
     ready = null;
     readyUnavailableReason = `could not parse ${since} or ${asOf} as timestamps`;
+  } else if (required.length === 0) {
+    // An empty required set is not "no preference", it is the measure cancelling itself: with
+    // nothing required, `uncovered` is empty by construction and duration alone answers `ready`,
+    // so a rule that sailed through calm markets reads as tested. Measured: a rule on a steadily
+    // rising series with no chop, reversal or gap reported `ready: true` under `requiredAdversity:
+    // []`, where leaving it undeclared (or naming one regime) reported `false`. The module exists
+    // to require exposure to adversity, so a declaration that requires none is unjudgeable rather
+    // than satisfied.
+    ready = null;
+    readyUnavailableReason =
+      "thresholds.requiredAdversity is empty, so no adverse regime is required and duration " +
+      "alone would answer this; readiness is unjudgeable rather than satisfied";
   } else if (unjudgeable.length > 0) {
     ready = null;
     readyUnavailableReason =

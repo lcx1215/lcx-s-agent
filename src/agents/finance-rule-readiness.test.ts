@@ -534,3 +534,58 @@ describe("buildFinanceRuleReadiness", () => {
     expect(result.rules[0]?.ready).toBe(true);
   });
 });
+/**
+ * An empty `requiredAdversity` set.
+ *
+ * It is not "no preference", it is the measure cancelling itself: with nothing required,
+ * `uncovered` is empty by construction and duration alone answers `ready`. Measured: a rule on a
+ * steadily rising series — no chop, no reversal, no gap — reported `ready: true` under
+ * `requiredAdversity: []`, while leaving it undeclared, or naming one regime, reported `false`.
+ */
+describe("an empty required adversity set does not satisfy readiness", () => {
+  /** Steadily rising: no direction flip, no drawdown, no jump. */
+  const calm = [100, 101, 102, 103, 104].map((price, index) =>
+    mark("AAA", price, `2026-09-0${index + 1}T00:00:00Z`),
+  );
+  const base = {
+    minPaperDays: 1,
+    chopMinFlips: 3,
+    reversalDrawdownPercent: 5,
+    gapMovePercent: 5,
+  };
+
+  it("leaves readiness unjudged instead of letting duration answer it", () => {
+    const readiness = buildFinanceRuleReadiness({
+      rules: [rule()],
+      marks: calm,
+      asOf: AS_OF,
+      thresholds: { ...base, requiredAdversity: [] },
+    });
+    expect(readiness.requiredAdversity).toEqual([]);
+    expect(readiness.rules[0]?.ready).toBeNull();
+    expect(readiness.rules[0]?.readyUnavailableReason).toMatch(/requiredAdversity is empty/);
+  });
+
+  it("still reports not ready when a named regime is uncovered", () => {
+    for (const requiredAdversity of [["chop"], ["chop", "gap"]] as FinanceAdversityKind[][]) {
+      const readiness = buildFinanceRuleReadiness({
+        rules: [rule()],
+        marks: calm,
+        asOf: AS_OF,
+        thresholds: { ...base, requiredAdversity },
+      });
+      expect(readiness.rules[0]?.ready).toBe(false);
+    }
+  });
+
+  it("still reports not ready when the set is left undeclared", () => {
+    const readiness = buildFinanceRuleReadiness({
+      rules: [rule()],
+      marks: calm,
+      asOf: AS_OF,
+      thresholds: base,
+    });
+    expect(readiness.requiredAdversity).toEqual([...FINANCE_ADVERSITY_KINDS]);
+    expect(readiness.rules[0]?.ready).toBe(false);
+  });
+});
