@@ -265,6 +265,13 @@ export function financeQuotaProbesDir(directory: string): string {
   return path.join(directory, "quota-probes");
 }
 
+/** Durable provider-level liveness observations; one record per provider, never per route. */
+export const FINANCE_SOURCE_HEARTBEAT_FILENAME = "source-heartbeats.json" as const;
+
+export function financeSourceHeartbeatPath(directory: string): string {
+  return path.join(directory, FINANCE_SOURCE_HEARTBEAT_FILENAME);
+}
+
 /** Path of the dedicated finance credential store. */
 export function financeCredentialsPath(directory: string): string {
   return path.join(directory, "credentials.env");

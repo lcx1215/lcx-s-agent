@@ -52,6 +52,7 @@ import {
   readFinanceSchedulerState,
   writeFinanceSchedulerState,
 } from "../../src/agents/finance-scheduler-state.js";
+import { runFinanceSourceHeartbeat } from "../../src/agents/finance-source-heartbeat.js";
 import {
   FINANCE_DAILY_CYCLE_RUNS_FILENAME,
   resolveFinanceStateDir,
@@ -644,6 +645,36 @@ function writeSchedulerProgress(context: CycleContext, phase: "idle" | "cycle") 
   fs.renameSync(temporary, filename);
 }
 
+/**
+ * Keep provider liveness evidence fresh without making the heartbeat a scheduler single point of
+ * failure. The heartbeat owns its durable due time and diagnostic quota lane; this loop only wakes
+ * it up, so a 60-second scheduler tick does not mean a 60-second API fanout.
+ */
+async function heartbeat(context: CycleContext): Promise<void> {
+  if (context.signal.aborted) {
+    return;
+  }
+  try {
+    const result = await runFinanceSourceHeartbeat({
+      directory: context.root.directory,
+      timeoutMs: Math.min(context.options.timeoutMs, 20_000),
+      maxSourceConcurrency: 4,
+    });
+    if (result.checkedProviders.length > 0) {
+      process.stdout.write(
+        `source-heartbeat checked=${result.checkedProviders.length} ` +
+          `healthy=${result.healthyCount} degraded=${result.degradedCount} ` +
+          `unhealthy=${result.unhealthyCount}\n`,
+      );
+    }
+  } catch (error) {
+    // Source health is diagnostic evidence, not permission to stop scheduled research or trading.
+    process.stderr.write(
+      `source-heartbeat unavailable: ${error instanceof Error ? error.message : "unknown error"}\n`,
+    );
+  }
+}
+
 async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
   if (context.signal.aborted) {
     return false;
@@ -914,6 +945,8 @@ async function tick(context: CycleContext): Promise<void> {
       await fire(context, slot.mode);
     }
   }
+  // Diagnostic provider probes must not delay scheduled research or paper execution.
+  await heartbeat(context);
 }
 
 async function detach(root: FinanceStateDir, options: SchedulerOptions): Promise<void> {

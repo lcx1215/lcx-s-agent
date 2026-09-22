@@ -10,6 +10,7 @@ import {
   resolveFinanceRealtimeSourceRegistryOptionsFromEnv,
 } from "./finance-realtime-source-registry.js";
 import { financeResponseCache } from "./finance-response-cache.js";
+import { readFinanceSourceHeartbeat } from "./finance-source-heartbeat.js";
 import { createFinanceQuotaGuard } from "./finance-source-quota.js";
 import { financeProviderId, financeQuotaGroupId } from "./finance-source-scheduler.js";
 import { financeReceiptsDir, resolveFinanceStateDir } from "./finance-state-dir.js";
@@ -225,6 +226,7 @@ export async function inspectFinanceSourceHealth(options: {
     stateDir: financeDir,
     now: () => inspectionTime,
   }).inspect();
+  const heartbeat = await readFinanceSourceHeartbeat({ directory: financeDir });
   const routes = declared.map((adapter) => {
     const observation = latest.get(adapter.id);
     const ageMs = observation ? inspectionTime - Date.parse(observation.dispatchedAt) : Infinity;
@@ -249,6 +251,7 @@ export async function inspectFinanceSourceHealth(options: {
               ? "recent_success"
               : "recent_failure",
       lastObservation: observation,
+      providerHeartbeat: heartbeat.records[financeProviderId(adapter.id)],
     };
   });
   return {
@@ -257,6 +260,12 @@ export async function inspectFinanceSourceHealth(options: {
     quotas,
     responseReuse: financeResponseCache.inspect(),
     boundary: "inventory_and_recent_call_evidence_not_continuous_uptime",
+    heartbeat: {
+      schemaVersion: heartbeat.schemaVersion,
+      updatedAt: heartbeat.updatedAt,
+      records: heartbeat.records,
+      boundary: "durable_provider_level_observation_no_network_on_read",
+    },
     providerCount: new Set(routes.map((r) => r.provider)).size,
     routeCount: routes.length,
     configuredRouteCount: routes.filter((r) => r.configured).length,

@@ -75,6 +75,10 @@ type Payload = {
   routeCount: number;
   configuredRouteCount: number;
   recentSuccessCount: number;
+  heartbeat: {
+    boundary: string;
+    records: Record<string, unknown>;
+  };
   reported: number;
   filtered: boolean;
   routes: {
@@ -105,6 +109,9 @@ describe("finance source health read tool", () => {
 
     expect(payload.noNetworkCalled).toBe(true);
     expect(payload.boundary).toBe("inventory_and_recent_call_evidence_not_continuous_uptime");
+    expect(payload.heartbeat.boundary).toBe(
+      "durable_provider_level_observation_no_network_on_read",
+    );
     const route = payload.routes.find((entry: { id: string }) => entry.id === "gdelt_public_news");
     expect(route?.callState).toBe("recent_success");
     expect(route?.lastObservation?.status).toBe("succeeded");
