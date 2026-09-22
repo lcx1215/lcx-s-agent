@@ -3,6 +3,7 @@ import type { ApiSourceGovernanceRegistry } from "./api-call-contract.js";
 import {
   buildFinanceCommitteeContext,
   runFinanceCommittee,
+  type FinanceCommitteeEvidence,
   type FinanceCommitteeInput,
   type FinanceCommitteeSharedContext,
 } from "./finance-agent-committee.js";
