@@ -351,6 +351,23 @@ describe("caller module composition within fixed gates", () => {
     expect(plan.composition.nodes.map((node) => node.id)).toEqual(
       expect.arrayContaining(["timing", "credit", "causal_map", "finance_learning_memory"]),
     );
+    expect(plan.composition.control).toMatchObject({
+      hardModuleIds: ["causal_map", "finance_learning_memory"],
+      softModuleIds: ["technical_timing", "credit_liquidity"],
+      maxSoftReplans: 1,
+      hardStopConditions: [
+        "missing_evidence",
+        "risk_gate_blocked",
+        "cancelled",
+        "unresolved_execution",
+      ],
+    });
+    expect(plan.composition.control.hardNodeIds).toEqual(
+      expect.arrayContaining(["causal_map", "finance_learning_memory"]),
+    );
+    expect(plan.composition.control.softNodeIds).toEqual(
+      expect.arrayContaining(["timing", "credit"]),
+    );
     expect(() =>
       parseFinanceModuleSelection({
         moduleIds: ["technical_timing"],

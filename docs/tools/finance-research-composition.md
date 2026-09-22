@@ -11,6 +11,13 @@ cycles, excessive depth, excessive edges, and more than two bounded replans.
 The planner adds the required memory, causal, math, and portfolio lanes after
 validation; those lanes cannot be removed by a model proposal.
 
+The accepted plan also carries derived `composition.control` metadata. Required
+memory, causal, math, and risk lanes are `hard`; caller-selected analytical
+lanes are `soft`. Soft lanes may be reordered or revised within the bounded
+`maxSoftReplans` budget. Hard lanes keep their dependency and stop conditions:
+missing evidence, a blocked risk gate, cancellation, or unresolved execution
+state stops the cycle. The model cannot submit or override this control block.
+
 Start with a planning call (`live` omitted or false). The response includes:
 
 - `moduleCatalog`: registered module IDs, roles and declared tool dependencies.

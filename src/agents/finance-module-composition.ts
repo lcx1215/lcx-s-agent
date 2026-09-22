@@ -22,6 +22,24 @@ export type FinanceModuleCompositionInput = Readonly<{
   maxReplans?: number;
 }>;
 
+/**
+ * Control metadata is derived by the planner. A model can propose soft analytical
+ * modules, but it cannot demote the required hard lanes or widen their stop conditions.
+ */
+export type FinanceModuleCompositionControl = Readonly<{
+  hardModuleIds: readonly FinanceBrainModuleId[];
+  softModuleIds: readonly FinanceBrainModuleId[];
+  hardNodeIds: readonly string[];
+  softNodeIds: readonly string[];
+  maxSoftReplans: number;
+  hardStopConditions: readonly [
+    "missing_evidence",
+    "risk_gate_blocked",
+    "cancelled",
+    "unresolved_execution",
+  ];
+}>;
+
 export type FinanceModuleComposition = Readonly<{
   schemaVersion: typeof FINANCE_MODULE_COMPOSITION_SCHEMA_VERSION;
   nodes: readonly FinanceModuleCompositionNode[];
@@ -30,6 +48,7 @@ export type FinanceModuleComposition = Readonly<{
   leaves: readonly string[];
   maxDepth: number;
   maxReplans: number;
+  control: FinanceModuleCompositionControl;
 }>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -190,6 +209,19 @@ export function parseFinanceModuleComposition(
     leaves: Object.freeze(nodes.filter((node) => !dependents.has(node.id)).map((node) => node.id)),
     maxDepth: Math.max(...depthById.values()),
     maxReplans,
+    control: Object.freeze({
+      hardModuleIds: Object.freeze([]),
+      softModuleIds: Object.freeze(nodes.map((node) => node.moduleId)),
+      hardNodeIds: Object.freeze([]),
+      softNodeIds: Object.freeze(nodes.map((node) => node.id)),
+      maxSoftReplans: maxReplans,
+      hardStopConditions: Object.freeze([
+        "missing_evidence",
+        "risk_gate_blocked",
+        "cancelled",
+        "unresolved_execution",
+      ] as const),
+    }),
   });
 }
 
@@ -229,6 +261,19 @@ export function buildFinanceModuleComposition(
       leaves: Object.freeze([]),
       maxDepth: 0,
       maxReplans: 0,
+      control: Object.freeze({
+        hardModuleIds: Object.freeze([]),
+        softModuleIds: Object.freeze([]),
+        hardNodeIds: Object.freeze([]),
+        softNodeIds: Object.freeze([]),
+        maxSoftReplans: 0,
+        hardStopConditions: Object.freeze([
+          "missing_evidence",
+          "risk_gate_blocked",
+          "cancelled",
+          "unresolved_execution",
+        ] as const),
+      }),
     });
   }
   const proposedByModule = new Map(proposal?.nodes.map((node) => [node.moduleId, node]));
@@ -251,5 +296,29 @@ export function buildFinanceModuleComposition(
   if (!parsed) {
     throw new Error("finance module composition could not be built");
   }
-  return parsed;
+  const hardModuleSet = new Set(requiredModuleIds);
+  const hardModuleIds = allIds.filter((moduleId) => hardModuleSet.has(moduleId));
+  const softModuleIds = allIds.filter((moduleId) => !hardModuleSet.has(moduleId));
+  const hardNodeIds = parsed.nodes
+    .filter((node) => hardModuleSet.has(node.moduleId))
+    .map((node) => node.id);
+  const softNodeIds = parsed.nodes
+    .filter((node) => !hardModuleSet.has(node.moduleId))
+    .map((node) => node.id);
+  return Object.freeze({
+    ...parsed,
+    control: Object.freeze({
+      hardModuleIds: Object.freeze(hardModuleIds),
+      softModuleIds: Object.freeze(softModuleIds),
+      hardNodeIds: Object.freeze(hardNodeIds),
+      softNodeIds: Object.freeze(softNodeIds),
+      maxSoftReplans: parsed.maxReplans,
+      hardStopConditions: Object.freeze([
+        "missing_evidence",
+        "risk_gate_blocked",
+        "cancelled",
+        "unresolved_execution",
+      ] as const),
+    }),
+  });
 }
