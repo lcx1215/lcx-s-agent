@@ -66,6 +66,55 @@ function macroValue(
 }
 const rounded = (value: number) => Math.round(value * 1_000) / 1_000;
 
+/**
+ * Keep fetched non-price collections visible to the model without allowing one provider payload
+ * to consume the whole bounded evidence window. This is a transport summary, not a valuation or
+ * signal: the source record and timestamp remain attached so a later module can do the real work.
+ */
+function compactCollectionValue(value: unknown, depth = 0): unknown {
+  if (value === null || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "string") {
+    return value.length <= 240 ? value : `${value.slice(0, 237)}...`;
+  }
+  if (depth >= 2) {
+    return "[nested value omitted]";
+  }
+  if (Array.isArray(value)) {
+    return value.slice(0, 8).map((item) => compactCollectionValue(item, depth + 1));
+  }
+  if (typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .slice(0, 24)
+        .map(([key, item]) => [key, compactCollectionValue(item, depth + 1)]),
+    );
+  }
+  return typeof value === "bigint" || typeof value === "symbol"
+    ? String(value)
+    : "[unsupported value omitted]";
+}
+
+function renderUnmodeledCollectionEvidence(
+  job: FinanceResearchBatchJob,
+  prefix: string,
+  collection: string,
+  records: readonly FinanceMarketCollectionItem[],
+): string {
+  const samples = records.slice(0, 6).map((record) => ({
+    itemId: record.itemId,
+    providerName: record.providerName,
+    sourceTimestamp: record.sourceTimestamp,
+    sourceUrlOrArtifact: record.sourceUrlOrArtifact,
+    data: compactCollectionValue(record.data),
+  }));
+  return (
+    `${prefix}: ${collection} records=${records.length}; samples=${JSON.stringify(samples)}. ` +
+    "Raw collection evidence is source-bound; no derived signal or valuation was inferred here."
+  );
+}
+
 export function rankFinanceWindowDrawdowns(
   entries: readonly {
     instrument: string;
@@ -311,6 +360,10 @@ export function buildFinanceResearchModelEvidence(
               )
               .join("; ")}`,
           );
+        } else if (collection) {
+          // The runner can deliberately fetch these collections for selected modules. They used
+          // to disappear here, so the module was "collected" but the committee never saw it.
+          facts.push(renderUnmodeledCollectionEvidence(job, prefix, collection, records));
         }
       } else {
         const fields = job.receipt.snapshot?.normalizedFields ?? [];

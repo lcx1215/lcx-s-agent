@@ -287,3 +287,7 @@ heartbeat remains fresh. Missing, malformed, expired or legacy-unknown Alpaca
 policy metadata cannot report execution readiness. This is a diagnostic expiry
 check; the account controller still validates the full policy at execution. It
 never renews a policy or changes its risk limits automatically.
+
+`--core-weight N` is forwarded unchanged to the daily operator, including the
+endpoints 0 and 1. Values must be finite and between 0 and 1. Omitting it retains
+the daily operator's default; scheduling does not choose a different allocation.

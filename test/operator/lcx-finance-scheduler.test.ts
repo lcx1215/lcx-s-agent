@@ -542,3 +542,21 @@ it("requires every native execution input and rejects an unsupported quote lifet
     "--place",
   );
 });
+
+it.each(["0", "0.7", "1"])(
+  "forwards the explicit core allocation unchanged: %s",
+  async (fraction) => {
+    await runFinanceScheduler(["--once", "day", "--dir", directory, "--core-weight", fraction]);
+    expect(mocks.runCycle.mock.calls[0][0].argv).toEqual(
+      expect.arrayContaining(["--core-weight", fraction]),
+    );
+  },
+);
+
+it.each(["-0.1", "1.1", "NaN", "Infinity"])(
+  "rejects invalid core allocation before a cycle: %s",
+  (fraction) => {
+    expect(() => parseFinanceSchedulerArgs(["--loop", "--core-weight", fraction])).toThrow();
+    expect(mocks.runCycle).not.toHaveBeenCalled();
+  },
+);

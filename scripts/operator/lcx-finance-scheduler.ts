@@ -108,6 +108,7 @@ export function parseFinanceSchedulerArgs(argv: readonly string[]): SchedulerOpt
         "--max-order-notional",
         "--max-instrument-notional",
         "--max-orders",
+        "--core-weight",
         "--execution-quote-feed",
         "--execution-max-age-ms",
       ].includes(arg)
@@ -124,6 +125,12 @@ export function parseFinanceSchedulerArgs(argv: readonly string[]): SchedulerOpt
       } else if (arg === "--venue") {
         if (value !== "paper" && value !== "alpaca") {
           throw new Error("--venue must be paper or alpaca");
+        }
+        extraArgs.push(arg, value);
+      } else if (arg === "--core-weight") {
+        const fraction = Number(value);
+        if (!Number.isFinite(fraction) || fraction < 0 || fraction > 1) {
+          throw new Error("--core-weight must be between 0 and 1");
         }
         extraArgs.push(arg, value);
       } else if (arg === "--execution-quote-feed") {

@@ -33,11 +33,12 @@ const M01_RULES = Object.freeze([
   "Use point-in-time evidence and report source timestamps; do not fill missing values with a convenient proxy.",
   "When testing a strategy, separate train/validation/out-of-sample windows and record failed or neutral trials; do not select parameters after seeing the full result.",
   "Treat a local receipt or a plausible explanation as method evidence, not as proof of alpha or model learning.",
+  "Track platform, data, model/token, commission, spread/slippage and financing costs separately; without a complete realized net-cost ledger, do not claim operating-cost or living-expense coverage.",
 ] as const);
 
 const M02_RULES = Object.freeze([
   "For a transparent trend diagnostic, use the prior completed close versus a fixed 200-session moving average; apply the decision on the next session.",
-  "Compare against same-universe buy-and-hold and cash baselines with the same entry, exit, and turnover costs.",
+  "Keep same-universe buy-and-hold as the core baseline; compare any lower-turnover trend overlay against buy-and-hold and cash with the same entry, exit, and turnover costs.",
   "Report CAGR, volatility, maximum drawdown, turnover, worst daily loss, and results by at least three non-overlapping periods.",
   "Stress cost and parameter ranges; a result that survives only one asset, period, or optimistic cost stays research-only.",
 ] as const);

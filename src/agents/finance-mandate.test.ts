@@ -67,10 +67,13 @@ describe("evaluateFinanceMandate", () => {
     expect(value.verdict).toBe("pass");
   });
 
-  it("refuses averaging down in every class", () => {
+  it("refuses unplanned averaging down but allows a planned scale-in within the cap", () => {
     const decision = evaluateFinanceMandate({ ...base, averagingDown: true });
     expect(decision.verdict).toBe("refuse");
-    expect(decision.reasons.join()).toMatch(/losing position/);
+    expect(decision.reasons.join()).toMatch(/pre-budgeted scale-in plan/);
+    expect(
+      evaluateFinanceMandate({ ...base, averagingDown: true, plannedScaleIn: true }).verdict,
+    ).toBe("pass");
   });
 
   it("refuses revenge sizing", () => {
@@ -139,6 +142,7 @@ it.each([
   { realizedVolatilityFraction: Infinity },
   { realizedVolatilityFraction: -0.1 },
   { averagingDown: "false" },
+  { plannedScaleIn: "false" },
   { revengeSizing: "false" },
   { stopLossDefined: 1 },
   { hasSignificantAutocorrelation: "true" },

@@ -150,6 +150,21 @@ describe("compileExecutionIntent", () => {
     }
   });
 
+  it("allows a pre-budgeted scale-in while retaining the normal sizing rules", () => {
+    const result = compileExecutionIntent({
+      conclusion: equityConclusion,
+      market,
+      equity,
+      runAuthorizationId: "auth-1",
+      existingPosition: { quantity: 100, unrealizedFraction: -0.2 },
+      plannedScaleIn: true,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.notes.join(" ")).toContain("planned scale-in");
+    }
+  });
+
   it("still lets a value strategy build a position when nothing is underwater", () => {
     // The point of testing the boundary from both sides: class C must be able to
     // add over time, or the rule meant to stop averaging down would freeze it.

@@ -158,6 +158,8 @@ export type FinanceDailyCycleParams = Readonly<{
   rebalanceBand?: number;
   /** Signal horizon from the bound strategy; direct legacy callers retain 12 months. */
   lookbackMonths?: number;
+  /** Fraction kept in the inverse-volatility core sleeve; the remainder is tactical trend. */
+  coreWeightFraction?: number;
   /** Controller-declared account budgets and reviewed research targets. Never model authority. */
   portfolioPlan?: FinancePortfolioPlan;
   trendStrategies?: readonly {
@@ -185,6 +187,7 @@ export type FinanceDailyCycleParams = Readonly<{
 
 export type FinanceDailyCycleTarget = Readonly<{
   instrument: string;
+  /** Tactical trend state; `cash` leaves the core sleeve intact. */
   signal: "hold" | "cash";
   weight: number;
   annualisedVol: number;
@@ -207,6 +210,8 @@ export type FinanceDailyCycleReport = Readonly<{
   asOf: string;
   /** Month end the signal was computed from. Constant within a calendar month. */
   signalAnchor: string;
+  /** Core buy-and-hold sleeve retained even when the tactical trend signal is cash. */
+  coreWeightFraction: number;
   modelCalls: 0;
   positionBook?: {
     source: "controller_account" | "receipt_ledger";
@@ -657,6 +662,10 @@ export async function runFinanceDailyCycle(
   if (!Number.isSafeInteger(lookbackMonths) || lookbackMonths < 1 || lookbackMonths > 120) {
     throw new Error("invalid monthly trend lookback");
   }
+  const coreWeightFraction = params.coreWeightFraction ?? 0.7;
+  if (!Number.isFinite(coreWeightFraction) || coreWeightFraction < 0 || coreWeightFraction > 1) {
+    throw new Error("coreWeightFraction must be between 0 and 1");
+  }
   if (params.portfolioPlan) {
     validateFinancePortfolioPlan(params.portfolioPlan, asOf, params.venue ?? "paper");
     // The existing live account seam does not yet carry a controller-bound portfolio account.
@@ -921,11 +930,18 @@ export async function runFinanceDailyCycle(
     const inverseSum = raw
       .filter((r) => r.signal === "hold")
       .reduce((sum, r) => sum + r.inverseVol, 0);
+    const coreInverseSum = raw.reduce((sum, r) => sum + r.inverseVol, 0);
     const targets = raw.map(
       (row): FinanceDailyCycleTarget => ({
         instrument: row.instrument,
         signal: row.signal,
-        weight: row.signal === "hold" && inverseSum > 0 ? row.inverseVol / inverseSum : 0,
+        // The trend signal controls only the tactical sleeve. The core sleeve is a
+        // buy-and-hold baseline, so a negative trend no longer liquidates the whole name.
+        weight:
+          (coreInverseSum > 0 ? (coreWeightFraction * row.inverseVol) / coreInverseSum : 0) +
+          (row.signal === "hold" && inverseSum > 0
+            ? ((1 - coreWeightFraction) * row.inverseVol) / inverseSum
+            : 0),
         annualisedVol: row.vol,
         lastBarDate: lastBar.get(row.instrument)?.date ?? "",
         close: lastBar.get(row.instrument)?.close ?? Number.NaN,
@@ -1254,6 +1270,7 @@ export async function runFinanceDailyCycle(
     ok: dataIssues.length === 0 && refusals.length === 0,
     asOf,
     signalAnchor,
+    coreWeightFraction,
     modelCalls: 0,
     positionBook: {
       source: accountBook ? ("controller_account" as const) : ("receipt_ledger" as const),
