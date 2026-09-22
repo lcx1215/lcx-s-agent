@@ -82,6 +82,20 @@ describe("platform-independent finance workflow tool", () => {
     expect(request.modelRouting).toBe(request.qualityModelRouting);
   });
 
+  it("requires live evidence before dispatching module tools", async () => {
+    const executeResearch = vi.fn<typeof runFinanceResearchRun>(async () =>
+      runFinanceResearchRun({ input }),
+    );
+    const tool = createFinanceResearchRunTool({
+      workspaceDir: await workspace(),
+      executeResearch,
+    });
+    await expect(
+      tool.execute("modules-without-live", { ...input, executeModules: true }),
+    ).rejects.toThrow("executeModules requires live=true");
+    expect(executeResearch).not.toHaveBeenCalled();
+  });
+
   it("accepts validated explicit targets for caller-specific instruments", async () => {
     const executeResearch = vi.fn<typeof runFinanceResearchRun>(async () =>
       runFinanceResearchRun({ input }),

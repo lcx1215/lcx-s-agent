@@ -3,6 +3,7 @@ import type { FinanceDecisionMode } from "./finance-decision-policy.js";
 import {
   buildFinanceModuleComposition,
   parseFinanceModuleComposition,
+  type FinanceModuleCompositionInput,
   type FinanceModuleComposition,
 } from "./finance-module-composition.js";
 
@@ -18,7 +19,7 @@ type FinanceBrainModuleDefinition = {
 export type FinanceModuleSelection = Readonly<{
   moduleIds: readonly FinanceBrainModuleId[];
   rationale: string;
-  composition?: FinanceModuleComposition;
+  composition?: FinanceModuleComposition | FinanceModuleCompositionInput;
 }>;
 
 export type FinanceBrainOrchestrationInput = {

@@ -17,6 +17,11 @@ export type FinanceModuleCompositionNode = Readonly<{
   dependsOn: readonly string[];
 }>;
 
+export type FinanceModuleCompositionInput = Readonly<{
+  nodes: readonly FinanceModuleCompositionNode[];
+  maxReplans?: number;
+}>;
+
 export type FinanceModuleComposition = Readonly<{
   schemaVersion: typeof FINANCE_MODULE_COMPOSITION_SCHEMA_VERSION;
   nodes: readonly FinanceModuleCompositionNode[];
@@ -212,7 +217,7 @@ function defaultDependencies(
 export function buildFinanceModuleComposition(
   moduleIds: readonly FinanceBrainModuleId[],
   requiredModuleIds: readonly FinanceBrainModuleId[],
-  proposal: FinanceModuleComposition | undefined,
+  proposal: FinanceModuleComposition | FinanceModuleCompositionInput | undefined,
 ): FinanceModuleComposition {
   const allIds = [...new Set([...moduleIds, ...requiredModuleIds])];
   if (allIds.length === 0) {
