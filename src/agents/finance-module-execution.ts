@@ -226,6 +226,22 @@ function requiredToolNames(moduleId: FinanceBrainModuleId): readonly string[] {
   return definition?.requiredTools ?? [];
 }
 
+function statusFromToolCall(
+  status: FinanceModuleExecutionToolCall["status"],
+  blockedStatus: FinanceModuleExecutionNodeStatus = "blocked_missing_evidence",
+): FinanceModuleExecutionNodeStatus {
+  if (status === "succeeded") {
+    return "succeeded";
+  }
+  if (status === "cancelled") {
+    return "cancelled";
+  }
+  if (status === "failed") {
+    return "failed";
+  }
+  return blockedStatus;
+}
+
 function moduleQuery(moduleId: FinanceBrainModuleId, ask: string): string {
   return `Finance module ${moduleId}. Apply retained guidance to this bounded research question: ${ask}. Use only supplied fresh evidence and state missing inputs; research-only.`;
 }
@@ -352,7 +368,7 @@ export async function executeFinanceModuleComposition(
           );
           toolCalls.push(result.call);
           details = result.details ?? {};
-          status = result.call.status === "succeeded" ? "succeeded" : "failed";
+          status = statusFromToolCall(result.call.status, "failed");
         }
       } else if (moduleId === "finance_learning_memory") {
         const result = await callTool(
@@ -368,7 +384,7 @@ export async function executeFinanceModuleComposition(
         );
         toolCalls.push(result.call);
         details = result.details ?? {};
-        status = result.call.status === "succeeded" ? "succeeded" : "blocked_missing_evidence";
+        status = statusFromToolCall(result.call.status);
         if (status !== "succeeded") {
           missingEvidence.push("retrievable_finance_capability_card");
         }
@@ -382,7 +398,7 @@ export async function executeFinanceModuleComposition(
         );
         toolCalls.push(result.call);
         details = result.details ?? {};
-        status = result.call.status === "succeeded" ? "succeeded" : "blocked_missing_evidence";
+        status = statusFromToolCall(result.call.status);
         if (status !== "succeeded") {
           missingEvidence.push(`durable_framework_core_entry:${moduleId}`);
           missingEvidence.push("domain_producer_model_output_for_new_entry");

@@ -72,7 +72,7 @@ describe("finance module execution", () => {
 
   it("dispatches quant_math from ready historical levels and preserves the evidence link", async () => {
     const plan = planFinanceBrainOrchestration({
-      text: "计算 SPY 的回撤",
+      text: "执行模块取消测试",
       highStakesConclusion: true,
       moduleSelection: {
         moduleIds: ["quant_math", "finance_learning_memory", "causal_map"],
@@ -104,7 +104,7 @@ describe("finance module execution", () => {
         ],
       } as unknown as FinanceResearchBatchEvidencePacket;
       const result = await executeFinanceModuleComposition({
-        ask: "计算 SPY 的回撤",
+        ask: "执行模块取消测试",
         asOf: "2026-09-11T00:00:00.000Z",
         plan,
         batch,
@@ -115,6 +115,42 @@ describe("finance module execution", () => {
       expect(quant?.toolCalls[0]?.toolName).toBe("quant_math");
       expect(quant?.outputEvidenceIds).toEqual(["finance-module:math"]);
       expect(result.evidence.map((entry) => entry.id)).toContain("finance-module:math");
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves cancellation in every node receipt", async () => {
+    const plan = planFinanceBrainOrchestration({
+      text: "执行模块取消测试",
+      highStakesConclusion: true,
+      moduleSelection: {
+        moduleIds: ["quant_math", "finance_learning_memory", "causal_map"],
+        rationale: "bounded cancellation test",
+        composition: {
+          nodes: [
+            { id: "learning", moduleId: "finance_learning_memory", dependsOn: [] },
+            { id: "math", moduleId: "quant_math", dependsOn: [] },
+            { id: "causal", moduleId: "causal_map", dependsOn: [] },
+          ],
+        },
+      },
+    });
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-module-cancel-"));
+    const controller = new AbortController();
+    controller.abort(new Error("test cancellation"));
+    try {
+      const result = await executeFinanceModuleComposition({
+        ask: "执行模块取消测试",
+        asOf: "2026-09-11T00:00:00.000Z",
+        plan,
+        batch: emptyBatch(),
+        workspaceDir,
+        signal: controller.signal,
+      });
+      expect(result.receipt.moduleToolsDispatched).toBe(false);
+      expect(result.receipt.nodes.every((node) => node.status === "cancelled")).toBe(true);
+      expect(result.receipt.nodes.every((node) => node.toolCalls.length === 0)).toBe(true);
     } finally {
       await fs.rm(workspaceDir, { recursive: true, force: true });
     }
