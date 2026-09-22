@@ -15,6 +15,40 @@ const request = {
   limit: 20,
 };
 describe("registered provider capabilities", () => {
+  it("keeps the full 100-plus endpoint catalog discoverable for on-demand system calls", () => {
+    const credentials = {
+      alphaVantageApiKey: "test",
+      finnhubApiKey: "test",
+      massiveApiKey: "test",
+      coinGeckoApiKey: "test",
+      fmpApiKey: "test",
+      fredApiKey: "test",
+      twelveDataApiKey: "test",
+      alpacaApiKeyId: "test",
+      alpacaApiSecretKey: "test",
+    };
+    const adapters = createRegisteredCapabilityAdapters(credentials);
+    const registry = createFinanceMarketCollectionRegistry(credentials);
+    const ids = new Set(adapters.map((adapter) => adapter.id));
+
+    expect(adapters.length).toBeGreaterThanOrEqual(100);
+    expect(ids.size).toBe(adapters.length);
+    expect(registry.length).toBeGreaterThanOrEqual(adapters.length);
+    expect(registry.some((adapter) => adapter.id === "alpaca_indicative_options_chain")).toBe(true);
+    expect(
+      registry.some(
+        (adapter) =>
+          adapter.id === "alpaca_indicative_options_chain" &&
+          adapter.supports({
+            instrument: "SPY",
+            assetClass: "us_equity",
+            collection: "options_chain",
+            asOf,
+          }),
+      ),
+    ).toBe(true);
+  });
+
   it("routes every configured endpoint through the all-source planner including crypto", () => {
     const adapters = createRegisteredCapabilityAdapters({
       alphaVantageApiKey: "test",

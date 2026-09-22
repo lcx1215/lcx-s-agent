@@ -4,6 +4,10 @@ import {
   type FinanceAsOfMode,
 } from "./finance-data-gateway.js";
 import type { FinanceMarketCollectionItem } from "./finance-market-collection-registry.js";
+import {
+  renderFinanceOptionsEvidence,
+  summarizeFinanceOptionsChain,
+} from "./finance-options-evidence.js";
 import type {
   FinanceResearchBatchEvidencePacket,
   FinanceResearchBatchJob,
@@ -232,7 +236,12 @@ export function buildFinanceResearchModelEvidence(
     const priceCandidates: {
       job: FinanceResearchBatchJob;
       summary: ReturnType<typeof summarizeFinancePriceHistory>["summaries"][number];
+      spotAt: string;
     }[] = [];
+    const optionCandidates: Array<{
+      job: FinanceResearchBatchJob;
+      records: readonly FinanceMarketCollectionItem[];
+    }> = [];
     for (const job of jobs) {
       if (
         job.status !== "ready" &&
@@ -261,8 +270,10 @@ export function buildFinanceResearchModelEvidence(
             continue;
           }
           for (const summary of history.summaries) {
-            priceCandidates.push({ job, summary });
+            priceCandidates.push({ job, summary, spotAt: summary.to });
           }
+        } else if (collection === "options_chain") {
+          optionCandidates.push({ job, records });
         } else if (collection === "macro_series") {
           const valid = records
             .filter(
@@ -338,6 +349,21 @@ export function buildFinanceResearchModelEvidence(
       facts.unshift(
         `Price (${candidate.job.status}); assetClass=${candidate.job.request.assetClass}, kind=${h.identity[3]}, unit=${h.identity[4]}; ${h.observations} closes ${h.from}..${h.to}, window=${h.priceReturnPct}%, maxDD_entire_window=${h.maxDrawdownPct}%; last21=${h.returnsByObservationPct[21] ?? "unknown"}% (${window21 ? `${window21.from}..${window21.to}` : "insufficient history"}); last63=${h.returnsByObservationPct[63] ?? "unknown"}% (${window63 ? `${window63.from}..${window63.to}` : "insufficient history"}). Price change, not total return; lookbacks are return intervals, not calendar days. Source=${h.identity[0]}; feed=${h.identity[1]}; adjusted=${h.identity[2]}; Coverage=${candidate.job.historyCoverage?.status ?? "unverified"}; ${priceCandidates.length} series available, not stitched. Receipt=${candidate.job.jobId}.`,
       );
+    }
+    for (const option of optionCandidates) {
+      if (!candidate) {
+        facts.push(
+          `Options chain (${option.job.status}); job=${option.job.jobId}; no usable underlying price series was available, so Greeks were not calculated.`,
+        );
+        continue;
+      }
+      const summary = summarizeFinanceOptionsChain(option.records, {
+        asOf: batch.asOf,
+        underlyingSpot: candidate.summary.last,
+        underlyingSpotAt: candidate.spotAt,
+        futureTimestampLimitMs,
+      });
+      facts.push(renderFinanceOptionsEvidence(summary, option.job.jobId));
     }
     if (facts.length) {
       result.push({

@@ -3,6 +3,7 @@ import {
   createAlpacaExecutionQuoteProvider,
   type AlpacaExecutionQuoteFeed,
 } from "../../src/agents/finance-alpaca-execution-quote.js";
+import { reconcileFinanceBrokerHistory } from "../../src/agents/finance-alpaca-history-reconciliation.js";
 /**
  * Operator entry for the unattended finance day.
  *
@@ -287,17 +288,23 @@ export async function runFinanceDailyCycleOperator(
     };
   }
   let historySync: Awaited<ReturnType<typeof syncConfiguredAlpacaPaperHistory>> | undefined;
+  let historyReconciliation: Awaited<ReturnType<typeof reconcileFinanceBrokerHistory>> | undefined;
   if (options.syncAlpacaHistory) {
     try {
       historySync = await (deps.syncHistory ?? syncConfiguredAlpacaPaperHistory)({ directory });
-      if (historySync.status !== "raw_history_synced") {
+      historyReconciliation = await reconcileFinanceBrokerHistory(directory, historySync.accountId);
+      if (
+        historySync.status !== "raw_history_synced" ||
+        historyReconciliation.historyStatus !== "reconciled"
+      ) {
         return {
           directory,
           mode: options.mode,
           asOf: options.asOf,
           ok: false,
-          error: "Alpaca history sync incomplete; cycle not started",
+          error: "Alpaca history sync/reconciliation incomplete; cycle not started",
           historySync,
+          historyReconciliation,
         };
       }
     } catch {
@@ -378,6 +385,7 @@ export async function runFinanceDailyCycleOperator(
     equity,
     equitySource,
     ...(historySync ? { historySync } : {}),
+    ...(historyReconciliation ? { historyReconciliation } : {}),
   };
 
   try {
