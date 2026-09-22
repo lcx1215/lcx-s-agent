@@ -354,12 +354,15 @@ export async function reconcileFinanceBrokerHistory(
   const historyStatus =
     raw.facts.filter(({ stream }) => stream !== "sync_receipt").length === 0
       ? "missing"
-      : complete && invalidFillCount === 0 && invalidFeeCount === 0
+      : complete &&
+          invalidFillCount === 0 &&
+          invalidFeeCount === 0 &&
+          ordersMissingFillActivityCount === 0 &&
+          unappliedFeeCount === 0
         ? "reconciled"
         : "incomplete";
-  const positionsReconciled =
-    historyStatus === "reconciled" && ordersMissingFillActivityCount === 0;
-  const feesInterpreted = historyStatus === "reconciled";
+  const positionsReconciled = historyStatus === "reconciled";
+  const feesInterpreted = historyStatus === "reconciled" && unappliedFeeCount === 0;
   if (unmatchedFillCount > 0) {
     warnings.push(
       `${unmatchedFillCount} broker fill(s) have no matching durable execution receipt; they remain historical projection only`,

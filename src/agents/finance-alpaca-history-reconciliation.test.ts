@@ -128,9 +128,9 @@ describe("Alpaca broker history reconciliation", () => {
     const result = await reconcileFinanceBrokerHistory(directory, accountId);
 
     expect(result).toMatchObject({
-      historyStatus: "reconciled",
-      positionsReconciled: true,
-      feesInterpreted: true,
+      historyStatus: "incomplete",
+      positionsReconciled: false,
+      feesInterpreted: false,
       brokerFillCount: 2,
       brokerFeeCount: 2,
       matchedReceiptCount: 1,
