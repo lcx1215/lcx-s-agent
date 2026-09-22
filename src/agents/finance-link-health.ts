@@ -181,7 +181,11 @@ export async function readFinanceLinkHealth(
 ): Promise<FinanceLinkHealth> {
   const state = resolveFinanceStateDir({ directory: options.directory, env: options.env });
   const directory = state.directory;
-  const today = options.asOf?.slice(0, 10) ?? new Date().toISOString().slice(0, 10);
+  const observedAt = options.schedulerAt ?? new Date();
+  // The plane schedules and trades on the New York session day. UTC advances four or five
+  // hours earlier, so using `toISOString()` here makes bars and research calls look one day
+  // older between 20:00 and midnight ET. An explicit asOf remains a caller-declared day.
+  const today = options.asOf?.slice(0, 10) ?? financeEtClock(observedAt).date;
   const checks: FinanceLinkHealthCheck[] = [];
 
   // 1. Which book. Every count below is meaningless without it.
@@ -492,7 +496,7 @@ export async function readFinanceLinkHealth(
   const recordedStatus = schedulerState?.lastRun?.status;
   const latestStatus = typeof recordedStatus === "string" ? recordedStatus : undefined;
   const lastStatus = schedulerState?.lastStatus ?? {};
-  const schedulerClock = financeEtClock(options.schedulerAt ?? new Date());
+  const schedulerClock = financeEtClock(observedAt);
   const dueSlots = DEFAULT_FINANCE_CYCLE_SLOTS.filter(
     (slot) =>
       FINANCE_TRADING_WEEKDAYS.includes(schedulerClock.weekday) &&

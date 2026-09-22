@@ -1,4 +1,8 @@
 import { fetch } from "undici";
+import {
+  ALPACA_FINANCE_HTTP_BODY_MAX_BYTES,
+  readBoundedFinanceResponseText,
+} from "./finance-http-body.js";
 import type { FinanceUncachedFetch } from "./finance-write-transport.js";
 
 /** Dedicated uncached GET: no redirects, credential lookup, ambient proxy discovery, or writes. */
@@ -20,28 +24,12 @@ export function createAlpacaSafetyReadTransport(): FinanceUncachedFetch {
       headers: init.headers,
       signal: init.signal,
     });
-    const reader = response.body?.getReader();
-    if (!reader) {
-      throw new Error("Alpaca safety empty response");
-    }
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    try {
-      while (true) {
-        const item = await reader.read();
-        if (item.done) {
-          break;
-        }
-        size += item.value.byteLength;
-        if (size > 2 * 1024 * 1024) {
-          throw new Error("Alpaca safety response too large");
-        }
-        chunks.push(item.value);
-      }
-    } finally {
-      await reader.cancel().catch(() => undefined);
-      reader.releaseLock();
-    }
-    return { status: response.status, body: Buffer.concat(chunks).toString("utf8") };
+    return {
+      status: response.status,
+      body: await readBoundedFinanceResponseText(response, {
+        maxBytes: ALPACA_FINANCE_HTTP_BODY_MAX_BYTES,
+        label: "Alpaca safety",
+      }),
+    };
   };
 }

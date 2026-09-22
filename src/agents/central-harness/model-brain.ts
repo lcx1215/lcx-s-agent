@@ -6,6 +6,7 @@ import {
   type CentralActionPlan,
   type CentralPerception,
   type CentralProposedAction,
+  type CentralToolSpec,
 } from "./types.js";
 
 export type CentralBrainOutcome =
@@ -27,6 +28,28 @@ export const CENTRAL_BRAIN_PROMPT_CACHE_PREFIX = [
 
 /** Trusted, source-derived capability context; separate from volatile perception. */
 export const CENTRAL_FINANCE_CATALOG_BUDGET_BYTES = 8_192;
+export const CENTRAL_TOOL_CATALOG_BUDGET_BYTES = 24_576;
+
+/** The model must discover the same registry the deterministic gate will use. */
+export function buildCentralToolCatalog(tools: readonly CentralToolSpec[]): string {
+  const catalog = [
+    "Registered owner/capability actions (exact ownerId values):",
+    JSON.stringify(
+      tools.map((tool) => ({
+        ownerId: tool.ownerId,
+        description: tool.description,
+        inputKeys: tool.inputKeys ?? [],
+        boundary: tool.boundary,
+        allowedSideEffects: tool.allowedSideEffects,
+      })),
+    ),
+    "Use only an exact registered ownerId. Tool registration is not authority: every proposal is independently gated.",
+  ].join("\n");
+  if (Buffer.byteLength(catalog) > CENTRAL_TOOL_CATALOG_BUDGET_BYTES) {
+    throw new Error("central tool discovery catalog exceeds its context budget");
+  }
+  return catalog;
+}
 
 export function buildCentralFinanceCatalog(): string {
   const catalog = [
@@ -50,9 +73,13 @@ export function buildCentralFinanceCatalog(): string {
   return catalog;
 }
 
-export function buildCentralBrainPrompt(perception: CentralPerception): string {
+export function buildCentralBrainPrompt(
+  perception: CentralPerception,
+  tools: readonly CentralToolSpec[] = [],
+): string {
   return [
     CENTRAL_BRAIN_PROMPT_CACHE_PREFIX,
+    ...(tools.length > 0 ? ["", buildCentralToolCatalog(tools)] : []),
     "",
     buildCentralFinanceCatalog(),
     "",
@@ -125,6 +152,8 @@ export function createCentralBrain(
     modelRef?: string;
     /** Inject a model ref to disable provider use (e.g. tests/offline). */
     adapterDisabled?: boolean;
+    /** Exact registry visible to the deterministic gate for this harness. */
+    tools?: readonly CentralToolSpec[];
   } = {},
 ): CentralBrain {
   let invoke: ((payload: unknown, signal: AbortSignal) => Promise<unknown>) | undefined;
@@ -151,7 +180,8 @@ export function createCentralBrain(
         timeoutMs: options.timeoutMs ?? 120_000,
         maxCalls: options.maxCalls ?? 12,
         modelRef: options.modelRef,
-        buildPrompt: (payload: unknown) => buildCentralBrainPrompt(payload as CentralPerception),
+        buildPrompt: (payload: unknown) =>
+          buildCentralBrainPrompt(payload as CentralPerception, options.tools),
       });
       provider = adapter.provider;
       modelId = adapter.modelId;

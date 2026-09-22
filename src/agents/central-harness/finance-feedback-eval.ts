@@ -80,7 +80,10 @@ export async function evaluateFinanceFeedback(options: {
     recordedAt: at,
   });
   await appendFinancePositionMark(backup, { instrument: "SYNTH", price: 120, at });
-  const spec = createCentralToolRegistry().get("finance_position_ledger_read")!;
+  const spec = createCentralToolRegistry({
+    workspaceDir: options.workspaceDir,
+    financeLedgerDirectories: [primary, backup],
+  }).get("finance_position_ledger_read")!;
   let evidence: Record<string, unknown> | undefined;
   const observations: Array<Record<string, unknown>> = [];
   let toolCalls = 0;

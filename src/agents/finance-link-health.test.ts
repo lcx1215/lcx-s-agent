@@ -74,6 +74,18 @@ async function checkFor(
 }
 
 describe("readFinanceLinkHealth settlement supply", () => {
+  it("uses the New York session day before ET midnight instead of advancing with UTC", async () => {
+    await writeSamples([bet({ asOf: "2026-09-22T14:00:00.000Z", horizonDays: 1 })]);
+    const health = await readFinanceLinkHealth({
+      directory: dir,
+      schedulerAt: new Date("2026-09-23T02:00:00.000Z"),
+      env: {},
+    });
+    const check = health.checks.find((entry) => entry.id === "settlement_supply");
+    expect(check).toMatchObject({ ok: true, severity: "info" });
+    expect(check?.summary).toContain("earliest settles 2026-09-23");
+  });
+
   it("does not call a call that is still inside its horizon unsettled", async () => {
     await writeSamples([bet({ asOf: "2026-09-20T14:00:00.000Z", horizonDays: 30 })]);
     const check = await checkFor("settlement_supply");

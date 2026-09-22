@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   delay: vi.fn(),
   killTree: vi.fn(),
   loadConfig: vi.fn(() => ({})),
+  syncAlpacaHistory: vi.fn(),
 }));
 vi.mock("../../src/process/kill-tree.js", () => ({ killProcessTree: mocks.killTree }));
 vi.mock("node:timers/promises", () => ({ setTimeout: mocks.delay }));
@@ -33,13 +34,17 @@ vi.mock("../../src/agents/finance-scheduler-process.js", () => ({
 vi.mock("../../src/config/config.js", () => ({ loadConfig: mocks.loadConfig }));
 vi.mock("../../src/config/env-vars.js", () => ({ applyConfigEnvVars: vi.fn() }));
 vi.mock("../../src/cli/serve-detach.js", () => ({ buildDetachedServeEnv: () => ({}) }));
+vi.mock("../../src/agents/finance-alpaca-history-sync.js", () => ({
+  syncConfiguredAlpacaPaperHistory: mocks.syncAlpacaHistory,
+}));
 
 const success: FinanceCycleProcessResult = {
   exitCode: 0,
   signal: null,
   status: "succeeded",
   ok: true,
-  stdout: '{"ok":true}',
+  stdout:
+    '{"ok":true,"scoredFiled":{"appended":0,"skipped":0},"pending":[],"declined":[],"issues":[]}',
   stderr: "",
   outputTruncated: false,
 };
@@ -50,6 +55,10 @@ let originalIntListeners: number;
 beforeEach(() => {
   directory = fs.mkdtempSync(path.join(os.tmpdir(), "finance-scheduler-test-"));
   mocks.runCycle.mockResolvedValue(success);
+  mocks.syncAlpacaHistory.mockResolvedValue({
+    accountId: "paper-account",
+    accountReconciliation: { status: "reconciled" },
+  });
   originalTermListeners = process.listenerCount("SIGTERM");
   originalIntListeners = process.listenerCount("SIGINT");
   vi.spyOn(process.stdout, "write").mockImplementation(() => true);
@@ -630,6 +639,27 @@ it("publishes bounded cycle progress and returns to idle without replaying order
   expect(await runFinanceScheduler(["--loop", "--dir", directory, "--place"])).toBe(143);
   expect(mocks.runCycle).toHaveBeenCalledOnce();
   expect(fs.existsSync(path.join(directory, FINANCE_SCHEDULER_LOCK))).toBe(false);
+});
+
+it("refreshes broker reconciliation while an Alpaca history loop is idle", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-22T17:00:00Z"));
+  mocks.delay.mockImplementationOnce(async () => process.emit("SIGTERM"));
+
+  expect(
+    await runFinanceScheduler([
+      "--loop",
+      "--dir",
+      directory,
+      "--sync-alpaca-history",
+      "--venue",
+      "alpaca",
+    ]),
+  ).toBe(143);
+  expect(mocks.syncAlpacaHistory).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({ directory, signal: expect.any(AbortSignal) }),
+  );
+  expect(mocks.runCycle).not.toHaveBeenCalled();
 });
 
 it("exposes an interrupted previous-day attempt that blocks future scheduling", () => {

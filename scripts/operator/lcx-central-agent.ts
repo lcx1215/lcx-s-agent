@@ -414,7 +414,7 @@ async function main(): Promise<void> {
     ? {
         propose: async () => ({ kind: "blocked_no_provider" as const, reason: "dry_run_no_llm" }),
       }
-    : createCentralBrain(loadConfig());
+    : createCentralBrain(loadConfig(), { tools: [...registry.values()] });
 
   const deadline = Date.now() + durationMinutes * 60_000;
   let runs = 0;

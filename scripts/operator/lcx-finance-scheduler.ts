@@ -18,6 +18,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createFinanceAlpacaCycleController } from "../../src/agents/finance-alpaca-cycle-controller.js";
+import { syncConfiguredAlpacaPaperHistory } from "../../src/agents/finance-alpaca-history-sync.js";
 import {
   DEFAULT_FINANCE_CYCLE_SLOTS,
   FINANCE_MARKET_TZ,
@@ -64,6 +65,8 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const CYCLE_SCRIPT = path.join(REPO_ROOT, "scripts", "operator", "lcx-finance-daily-cycle.ts");
 const RESEARCH_SCRIPT = path.join(REPO_ROOT, "scripts", "operator", "lcx-finance-research-run.ts");
 const RUNS_LOG = "daily-cycle-runs.jsonl";
+/** Keep the five-minute reconciliation evidence fresh without coupling it to a trade slot. */
+export const FINANCE_IDLE_RECONCILIATION_INTERVAL_MS = 4 * 60_000;
 type Mode = "day" | "night";
 
 type ResearchPlanConfig = Readonly<{
@@ -491,6 +494,7 @@ type CycleContext = {
   options: SchedulerOptions;
   signal: AbortSignal;
   intradayController?: ReturnType<typeof createFinanceAlpacaCycleController>;
+  lastIdleReconciliationAtMs?: number;
 };
 
 function numericExtra(args: readonly string[], flag: string): number {
@@ -706,6 +710,37 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
 }
 
 async function tick(context: CycleContext): Promise<void> {
+  const args = context.options.extraArgs;
+  const venueIndex = args.indexOf("--venue");
+  const idleReconciliationEnabled =
+    args.includes("--sync-alpaca-history") && venueIndex >= 0 && args[venueIndex + 1] === "alpaca";
+  const now = Date.now();
+  if (
+    idleReconciliationEnabled &&
+    (context.lastIdleReconciliationAtMs === undefined ||
+      now - context.lastIdleReconciliationAtMs >= FINANCE_IDLE_RECONCILIATION_INTERVAL_MS)
+  ) {
+    // Record the attempt time before awaiting so a failing broker cannot turn the
+    // one-minute scheduler heartbeat into an unbounded retry loop. The next
+    // bounded attempt happens after the same interval; placement still performs
+    // its own fresh reconciliation immediately before any order.
+    context.lastIdleReconciliationAtMs = now;
+    try {
+      const refreshed = await syncConfiguredAlpacaPaperHistory({
+        directory: context.root.directory,
+        signal: context.signal,
+      });
+      process.stdout.write(
+        `[${new Date().toISOString()}] idle broker reconciliation=${refreshed.accountReconciliation.status} account=${refreshed.accountId}\n`,
+      );
+    } catch (error) {
+      if (!context.signal.aborted) {
+        process.stderr.write(
+          `[${new Date().toISOString()}] idle broker reconciliation failed: ${error instanceof Error ? error.message : String(error)}\n`,
+        );
+      }
+    }
+  }
   if (context.options.intraday) {
     for (const instrument of context.options.intraday.instruments) {
       try {

@@ -21,6 +21,10 @@
 
 import { Agent, EnvHttpProxyAgent, fetch as undiciFetch } from "undici";
 import { resolveFinanceCredentialEnv } from "./finance-credential-env.js";
+import {
+  ALPACA_FINANCE_HTTP_BODY_MAX_BYTES,
+  readBoundedFinanceResponseText,
+} from "./finance-http-body.js";
 import { decideFinanceProxy } from "./finance-live-market-source.js";
 
 export type FinanceWriteRequest = Readonly<{
@@ -96,7 +100,13 @@ export function createFinanceUncachedFetch(
       headers: init.headers,
       ...(init.signal ? { signal: init.signal } : {}),
     });
-    return { status: response.status, body: await response.text() };
+    return {
+      status: response.status,
+      body: await readBoundedFinanceResponseText(response, {
+        maxBytes: ALPACA_FINANCE_HTTP_BODY_MAX_BYTES,
+        label: "finance uncached GET",
+      }),
+    };
   };
 }
 
@@ -153,6 +163,12 @@ export function createFinanceWriteTransport(
       ...(request.method === "DELETE" ? {} : { body: request.body }),
       ...(request.signal ? { signal: request.signal } : {}),
     });
-    return { status: response.status, body: await response.text() };
+    return {
+      status: response.status,
+      body: await readBoundedFinanceResponseText(response, {
+        maxBytes: ALPACA_FINANCE_HTTP_BODY_MAX_BYTES,
+        label: "finance write",
+      }),
+    };
   };
 }

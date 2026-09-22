@@ -78,6 +78,8 @@ export type CentralToolSpec = Readonly<{
   name: string;
   label: string;
   description: string;
+  /** Source-derived top-level argument names exposed for bounded discovery. */
+  inputKeys?: readonly string[];
   /** Allowed side effects; anything else (esp. forbidden) stays blocked by the gate. */
   allowedSideEffects: readonly CentralAllowedSideEffect[];
   /** Static boundary labels surfaced in receipts (e.g. research_only, no_execution_authority). */

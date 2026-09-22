@@ -8,6 +8,7 @@
  */
 
 import { fetchWithSsrFGuard } from "../infra/net/fetch-guard.js";
+import { readBoundedFinanceResponseText } from "./finance-http-body.js";
 
 export const FINANCE_REST_USER_AGENT = "lcx-agent/1.0 (finance research)";
 
@@ -75,7 +76,9 @@ export async function callConnectorRest(
     return {
       url: result.finalUrl,
       status: result.response.status,
-      body: await result.response.text(),
+      body: await readBoundedFinanceResponseText(result.response, {
+        label: "finance REST connector",
+      }),
     };
   } finally {
     await result.release();

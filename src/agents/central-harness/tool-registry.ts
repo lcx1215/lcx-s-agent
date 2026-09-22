@@ -3,9 +3,18 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseFinanceModuleSelection } from "../finance-brain-orchestration.js";
+import type { AnyAgentTool } from "../tools/common.js";
+import { createFinanceCalibrationReadTool } from "../tools/finance-calibration-read-tool.js";
+import { createFinanceDataGatewaySnapshotTool } from "../tools/finance-data-gateway-tool.js";
 import { createFinancePositionLedgerReadTool } from "../tools/finance-position-ledger-read-tool.js";
+import { createFinanceReflectionReadTool } from "../tools/finance-reflection-read-tool.js";
 import { createFinanceResearchRunTool } from "../tools/finance-research-run-tool.js";
+import { createFinanceResearchRunsReadTool } from "../tools/finance-research-runs-read-tool.js";
+import { createFinanceSourceHealthReadTool } from "../tools/finance-source-health-read-tool.js";
+import { createFinanceStrategyRuleLedgerReadTool } from "../tools/finance-strategy-rule-ledger-read-tool.js";
+import { createFinanceThesisLedgerReadTool } from "../tools/finance-thesis-ledger-read-tool.js";
 import { createLearningDistillTool } from "../tools/learning-distill-tool.js";
+import { createQuantMathTool } from "../tools/quant-math-tool.js";
 import { executeOwnedProcess } from "./owned-process.js";
 import type { CentralToolSpec } from "./types.js";
 import { CENTRAL_FORBIDDEN_SIDE_EFFECTS } from "./types.js";
@@ -161,6 +170,14 @@ export const CENTRAL_EXCLUDED_WRITE_OWNER_IDS = ["selfRepairHands"] as const;
 export const CENTRAL_CAPABILITY_OWNER_IDS = [
   "finance_position_ledger_read",
   "finance_research_run",
+  "finance_data_gateway_snapshot",
+  "finance_source_health_read",
+  "finance_calibration_read",
+  "finance_reflection_read",
+  "finance_research_runs_read",
+  "finance_strategy_rule_ledger_read",
+  "finance_thesis_ledger_read",
+  "quant_math",
   "learning_distill",
 ] as const;
 
@@ -367,16 +384,68 @@ async function runOwner(
  * the real local ledger and answers "what is held and what is it worth", and the
  * gate refuses any arg that would turn the read into an append or an order.
  */
-function createCapabilityTools(workspaceDir?: string): readonly CentralToolSpec[] {
+function createCapabilityTools(
+  workspaceDir?: string,
+  financeLedgerDirectories: readonly string[] = [],
+): readonly CentralToolSpec[] {
   const financeResearch = createFinanceResearchRunTool({ workspaceDir });
-  const ledgerRead = createFinancePositionLedgerReadTool();
+  const ledgerRead = createFinancePositionLedgerReadTool({ workspaceDir });
   const learningDistill = createLearningDistillTool({ workspaceDir });
+  const reusedReadComputeTools = [
+    createFinanceDataGatewaySnapshotTool({ workspaceDir }),
+    createFinanceSourceHealthReadTool({ workspaceDir }),
+    createFinanceCalibrationReadTool(),
+    createFinanceReflectionReadTool(),
+    createFinanceResearchRunsReadTool(),
+    createFinanceStrategyRuleLedgerReadTool(),
+    createFinanceThesisLedgerReadTool({ workspaceDir }),
+    createQuantMathTool(),
+  ];
+  // Directory selection is an operator/host authority, not model reasoning. The
+  // ordinary agent tool keeps its explicit-directory support, while the central
+  // harness admits only exact roots injected by its trusted host (synthetic evals
+  // use this seam). With no allowlist, omitting `directory` reads the configured
+  // finance root and every model-selected root is refused.
+  const allowedFinanceLedgerDirectories = new Set(
+    financeLedgerDirectories.map((directory) => path.resolve(directory)),
+  );
+  const hostOwnedPathKeys = new Set(["directory", "workspaceDir", "caseDirectory"]);
+  const inputKeys = (tool: AnyAgentTool): readonly string[] => {
+    const parameters = tool.parameters as { properties?: Record<string, unknown> } | undefined;
+    return Object.keys(parameters?.properties ?? {}).toSorted();
+  };
+  const wrapReadComputeTool = (tool: AnyAgentTool): CentralToolSpec => ({
+    ownerId: tool.name,
+    name: tool.name,
+    label: tool.label,
+    description: `${tool.description} Central-harness scope: reuse of the canonical agent tool with host-owned paths and no provider, write, messaging, memory, or execution authority.`,
+    inputKeys: inputKeys(tool),
+    allowedSideEffects: ["local_read", "local_compute"],
+    boundary: ["research_only", "canonical_agent_tool_reuse", "no_execution_authority"],
+    approve: (args) => {
+      for (const key of hostOwnedPathKeys) {
+        if (key in args) {
+          return { ok: false, reason: `capability gate: ${key} is selected by the host` };
+        }
+      }
+      const escalation = escalationReason(args);
+      return escalation ? { ok: false, reason: `capability gate: ${escalation}` } : { ok: true };
+    },
+    execute: async (args, signal) => {
+      const result = await tool.execute(`central-capability-${randomUUID()}`, args, signal);
+      const details = (result as { details?: unknown } | undefined)?.details;
+      return details !== null && typeof details === "object" && !Array.isArray(details)
+        ? (details as Record<string, unknown>)
+        : { capability: tool.name, completed: true };
+    },
+  });
   return [
     {
       ownerId: "finance_research_run",
       name: financeResearch.name,
       label: financeResearch.label,
       description: `${financeResearch.description} Central-harness scope: planning only; live provider calls are gated off.`,
+      inputKeys: inputKeys(financeResearch),
       allowedSideEffects: ["local_read", "local_compute", "local_output"],
       boundary: [
         "research_only",
@@ -411,14 +480,28 @@ function createCapabilityTools(workspaceDir?: string): readonly CentralToolSpec[
           : { financeResearchRun: true };
       },
     },
+    ...reusedReadComputeTools.map(wrapReadComputeTool),
     {
       ownerId: "finance_position_ledger_read",
       name: ledgerRead.name,
       label: ledgerRead.label,
       description: `${ledgerRead.description} Central-harness scope: read-only; the gate refuses any arg that smacks of an append, order, or write.`,
+      inputKeys: inputKeys(ledgerRead),
       allowedSideEffects: ["local_read"],
       boundary: ["research_only", "finance_position_ledger_read_only", "no_execution_authority"],
       approve: (args) => {
+        if ("directory" in args) {
+          if (
+            typeof args.directory !== "string" ||
+            args.directory !== path.resolve(args.directory) ||
+            !allowedFinanceLedgerDirectories.has(args.directory)
+          ) {
+            return {
+              ok: false,
+              reason: "capability gate: finance ledger directory must be selected by the host",
+            };
+          }
+        }
         const escalation = escalationReason(args);
         return escalation ? { ok: false, reason: `capability gate: ${escalation}` } : { ok: true };
       },
@@ -435,6 +518,7 @@ function createCapabilityTools(workspaceDir?: string): readonly CentralToolSpec[
       name: learningDistill.name,
       label: learningDistill.label,
       description: `${learningDistill.description} Central-harness scope: local learning distillation only; the gate refuses any arg that would turn the read into a memory edit, provider call, or external send.`,
+      inputKeys: inputKeys(learningDistill),
       allowedSideEffects: ["local_read", "local_compute", "local_output"],
       boundary: ["research_only", "local_learning_distill_only", "no_execution_authority"],
       approve: (args) => {
@@ -465,7 +549,12 @@ function createCapabilityTools(workspaceDir?: string): readonly CentralToolSpec[
  * than one slice of it.
  */
 export function createCentralToolRegistry(
-  options: { execute?: typeof runOwner; workspaceDir?: string } = {},
+  options: {
+    execute?: typeof runOwner;
+    workspaceDir?: string;
+    /** Exact host-owned ledger roots the model may select (synthetic/eval use only). */
+    financeLedgerDirectories?: readonly string[];
+  } = {},
 ): ReadonlyMap<string, CentralToolSpec> {
   const executeFn = options.execute ?? runOwner;
   const ownerSpecs = READ_ONLY_OWNERS.map((owner) => {
@@ -481,9 +570,10 @@ export function createCentralToolRegistry(
     };
     return [owner.id, spec] as const;
   });
-  const capabilitySpecs = createCapabilityTools(options.workspaceDir).map(
-    (spec) => [spec.ownerId, spec] as const,
-  );
+  const capabilitySpecs = createCapabilityTools(
+    options.workspaceDir,
+    options.financeLedgerDirectories,
+  ).map((spec) => [spec.ownerId, spec] as const);
   return new Map([...ownerSpecs, ...capabilitySpecs]);
 }
 

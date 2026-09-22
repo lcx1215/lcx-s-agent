@@ -19,7 +19,9 @@ import {
 import {
   buildCentralBrainPrompt,
   buildCentralFinanceCatalog,
+  buildCentralToolCatalog,
   CENTRAL_FINANCE_CATALOG_BUDGET_BYTES,
+  CENTRAL_TOOL_CATALOG_BUDGET_BYTES,
   createCentralBrain,
   validateCentralActionPlan,
 } from "../src/agents/central-harness/model-brain.js";
@@ -269,6 +271,58 @@ describe("central harness covers the whole system, not a slice of it", () => {
     // The whole-system claim also includes the learning loop: the brain must be
     // able to fold pending review notes into durable cards, not only read them.
     expect(CENTRAL_CAPABILITY_OWNER_IDS).toContain("learning_distill");
+    expect(CENTRAL_CAPABILITY_OWNER_IDS).toContain("quant_math");
+    expect(CENTRAL_CAPABILITY_OWNER_IDS).toContain("finance_source_health_read");
+    expect(CENTRAL_CAPABILITY_OWNER_IDS).toContain("finance_strategy_rule_ledger_read");
+  });
+
+  it("reuses bounded finance and quant tools without exposing consequential tools", async () => {
+    for (const ownerId of [
+      "finance_data_gateway_snapshot",
+      "finance_source_health_read",
+      "finance_calibration_read",
+      "finance_reflection_read",
+      "finance_research_runs_read",
+      "finance_strategy_rule_ledger_read",
+      "finance_thesis_ledger_read",
+      "quant_math",
+    ]) {
+      expect(registry.has(ownerId), ownerId).toBe(true);
+    }
+    for (const ownerId of [
+      "finance_source_sweep_read",
+      "finance_realtime_source_refresh",
+      "finance_paper_rank_place",
+      "message",
+      "sessions_spawn",
+    ]) {
+      expect(registry.has(ownerId), ownerId).toBe(false);
+    }
+
+    expect(registry.get("finance_calibration_read")?.approve({ directory: "/tmp/other" }).ok).toBe(
+      false,
+    );
+    expect(
+      registry.get("finance_source_health_read")?.approve({ workspaceDir: "/tmp/other" }).ok,
+    ).toBe(false);
+    expect(registry.get("finance_data_gateway_snapshot")?.approve({ writeReceipt: true }).ok).toBe(
+      false,
+    );
+
+    const receipt = await runCentralHarnessCycle({
+      perception: perception(),
+      brain: brainWithActions([
+        {
+          ownerId: "quant_math",
+          args: { action: "max_drawdown", series: [100, 110, 88, 99], seriesMode: "levels" },
+          reasoning: "compute instead of guessing",
+        },
+      ]),
+      registry,
+    });
+    expect(receipt.actionsApproved).toBe(1);
+    expect(receipt.steps[0].status).toBe("ran_ok");
+    expect(receipt.steps[0].outcome?.maxDrawdown).toBeCloseTo(-0.2);
   });
 
   it("keeps write-authority owners out, explicitly rather than by omission", () => {
@@ -306,8 +360,23 @@ describe("central harness covers the whole system, not a slice of it", () => {
   });
 
   it("reads the real per-asset book through the ledger capability, gated as read-only", async () => {
-    const spec = registry.get("finance_position_ledger_read")!;
+    const ledgerDir = path.join(os.tmpdir(), `lcx-central-test-ledger-${process.pid}`);
+    const scopedRegistry = createCentralToolRegistry({
+      financeLedgerDirectories: [ledgerDir],
+    });
+    const spec = scopedRegistry.get("finance_position_ledger_read")!;
     expect(spec.approve({ asOf: "2026-09-17T00:00:00.000Z" }).ok).toBe(true);
+    expect(registry.get("finance_position_ledger_read")!.approve({ directory: ledgerDir }).ok).toBe(
+      false,
+    );
+    expect(spec.approve({ directory: path.relative(REPO_ROOT, ledgerDir) }).ok).toBe(false);
+    expect(
+      spec.approve({
+        directory: `${path.dirname(ledgerDir)}/alias/../${path.basename(ledgerDir)}`,
+      }).ok,
+    ).toBe(false);
+    expect(spec.approve({ directory: path.join(ledgerDir, "other") }).ok).toBe(false);
+    expect(spec.approve({ directory: ledgerDir }).ok).toBe(true);
     expect(spec.approve({ order: { symbol: "NVDA" } }).ok).toBe(false);
     expect(spec.approve({ trade: true }).ok).toBe(false);
     expect(spec.approve({ write: true }).ok).toBe(false);
@@ -315,7 +384,6 @@ describe("central harness covers the whole system, not a slice of it", () => {
     // Dispatch against an absent ledger directory: the capability must run, hand
     // back a receipt that names the absent book (not an empty portfolio), and the
     // harness must record ran_ok — "it ran and reported" ≠ "it crashed".
-    const ledgerDir = path.join(os.tmpdir(), `lcx-central-test-ledger-${process.pid}`);
     const receipt = await runCentralHarnessCycle({
       perception: perception(),
       brain: brainWithActions([
@@ -325,7 +393,7 @@ describe("central harness covers the whole system, not a slice of it", () => {
           reasoning: "see what the book holds",
         },
       ]),
-      registry,
+      registry: scopedRegistry,
     });
     expect(receipt.actionsProposed).toBe(1);
     expect(receipt.actionsBlockedByGate).toBe(0);
@@ -1290,6 +1358,22 @@ describe("finance composition through the central harness", () => {
 });
 
 describe("central finance discovery context", () => {
+  it("advertises the exact gated registry instead of a hand-written subset", () => {
+    const tools = [...registry.values()];
+    const catalog = buildCentralToolCatalog(tools);
+    expect(Buffer.byteLength(catalog)).toBeLessThanOrEqual(CENTRAL_TOOL_CATALOG_BUDGET_BYTES);
+    const prompt = buildCentralBrainPrompt(perception(), tools);
+    for (const ownerId of registry.keys()) {
+      expect(prompt, ownerId).toContain(`"ownerId":"${ownerId}"`);
+    }
+    expect(prompt).toContain(
+      '"ownerId":"quant_math","description":"Compute bounded quantitative metrics',
+    );
+    expect(prompt).toContain('"inputKeys":["action","benchmark"');
+    expect(prompt).not.toContain('"ownerId":"finance_paper_rank_place"');
+    expect(prompt).not.toContain('"ownerId":"finance_source_sweep_read"');
+  });
+
   it("advertises a bounded catalog and the executable planning contract", () => {
     const catalog = buildCentralFinanceCatalog();
     expect(Buffer.byteLength(catalog)).toBeLessThanOrEqual(CENTRAL_FINANCE_CATALOG_BUDGET_BYTES);
