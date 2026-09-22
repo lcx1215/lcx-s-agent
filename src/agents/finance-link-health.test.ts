@@ -58,8 +58,11 @@ const bet = (overrides: Record<string, unknown> = {}): Record<string, unknown> =
   ...overrides,
 });
 
-async function checkFor(id: string): Promise<FinanceLinkHealthCheck> {
-  const health = await readFinanceLinkHealth({ directory: dir, asOf: AS_OF });
+async function checkFor(
+  id: string,
+  schedulerAt = new Date("2026-09-21T22:00:00.000Z"),
+): Promise<FinanceLinkHealthCheck> {
+  const health = await readFinanceLinkHealth({ directory: dir, asOf: AS_OF, schedulerAt });
   const found = health.checks.find((entry) => entry.id === id);
   if (found === undefined) {
     throw new Error(`no check with id ${id}`);
@@ -130,6 +133,13 @@ describe("readFinanceLinkHealth sample universe overlap", () => {
 });
 
 describe("scheduler success evidence", () => {
+  it("does not require future slots before their market time", async () => {
+    const check = await checkFor("scheduler_slots", new Date("2026-09-21T13:00:00.000Z"));
+    expect(check.ok).toBe(true);
+    expect(check.summary).toContain("no finance cycle slot is due yet");
+    expect(check.detail).toMatchObject({ dueSlots: [], unresolvedDueSlots: [] });
+  });
+
   it("does not report a missing night attempt as ever fired", async () => {
     const check = await checkFor("scheduler_slots");
     expect(check.ok).toBe(false);

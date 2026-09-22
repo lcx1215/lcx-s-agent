@@ -17,6 +17,11 @@ import fs from "node:fs/promises";
 import { createAlpacaSafetyReadTransport } from "./finance-alpaca-safety-transport.js";
 import { readFinanceBarLedger } from "./finance-bar-ledger.js";
 import { resolveFinanceCredentialEnv } from "./finance-credential-env.js";
+import {
+  DEFAULT_FINANCE_CYCLE_SLOTS,
+  FINANCE_TRADING_WEEKDAYS,
+  financeEtClock,
+} from "./finance-cycle-schedule.js";
 import { DEFAULT_OUTCOME_HORIZON_DAYS } from "./finance-outcome-backfill.js";
 import {
   readFinanceAccountPositionLedger,
@@ -162,6 +167,7 @@ export async function readFinanceLinkHealth(
   options: Readonly<{
     directory?: string;
     asOf?: string;
+    schedulerAt?: Date;
     env?: NodeJS.ProcessEnv;
     read?: FinanceUncachedFetch;
   }> = {},
@@ -479,13 +485,29 @@ export async function readFinanceLinkHealth(
   const recordedStatus = schedulerState?.lastRun?.status;
   const latestStatus = typeof recordedStatus === "string" ? recordedStatus : undefined;
   const lastStatus = schedulerState?.lastStatus ?? {};
-  const slotsSucceeded =
-    ["day", "night"].every(
-      (mode) =>
-        lastFired[mode] !== undefined &&
-        lastSucceeded[mode] === lastFired[mode] &&
-        lastStatus[mode] === "succeeded",
-    ) && latestStatus === "succeeded";
+  const schedulerClock = financeEtClock(options.schedulerAt ?? new Date());
+  const dueSlots = DEFAULT_FINANCE_CYCLE_SLOTS.filter(
+    (slot) =>
+      FINANCE_TRADING_WEEKDAYS.includes(schedulerClock.weekday) &&
+      schedulerClock.minutes >= slot.hour * 60 + slot.minute,
+  );
+  const unresolvedDueSlots = dueSlots.filter(
+    (slot) =>
+      lastFired[slot.mode] !== schedulerClock.date ||
+      lastSucceeded[slot.mode] !== schedulerClock.date ||
+      lastStatus[slot.mode] !== "succeeded",
+  );
+  const lastRunDate =
+    typeof schedulerState?.lastRun?.firedAt === "string" &&
+    Number.isFinite(Date.parse(schedulerState.lastRun.firedAt))
+      ? financeEtClock(new Date(schedulerState.lastRun.firedAt)).date
+      : undefined;
+  const latestRunUnsuccessful =
+    dueSlots.length > 0 &&
+    latestStatus !== undefined &&
+    latestStatus !== "succeeded" &&
+    (lastRunDate === undefined || lastRunDate === schedulerClock.date);
+  const slotsSucceeded = unresolvedDueSlots.length === 0 && !latestRunUnsuccessful;
   checks.push({
     id: "scheduler_slots",
     severity: slotsSucceeded ? "info" : "warn",
@@ -493,8 +515,10 @@ export async function readFinanceLinkHealth(
     summary: schedulerError
       ? `scheduler state unreadable: ${schedulerError}`
       : slotsSucceeded
-        ? `latest recorded day and night attempts succeeded (day ${lastSucceeded.day}, night ${lastSucceeded.night}); this is not a freshness check`
-        : `scheduler success unverified: day attempted ${lastFired.day ?? "never"}, succeeded ${lastSucceeded.day ?? "unknown"}, status ${lastStatus.day ?? "unknown"}; night attempted ${lastFired.night ?? "never"}, succeeded ${lastSucceeded.night ?? "unknown"}, status ${lastStatus.night ?? "unknown"}; latest status ${latestStatus ?? "unknown"}`,
+        ? dueSlots.length === 0
+          ? `no finance cycle slot is due yet (${schedulerClock.date} ${schedulerClock.minutes} ET); this is not a freshness check`
+          : `all due finance cycle slots succeeded (${dueSlots.map((slot) => slot.mode).join(", ")}); this is not a freshness check`
+        : `scheduler success unverified for due slot(s) ${unresolvedDueSlots.map((slot) => slot.mode).join(", ")}: day attempted ${lastFired.day ?? "never"}, succeeded ${lastSucceeded.day ?? "unknown"}, status ${lastStatus.day ?? "unknown"}; night attempted ${lastFired.night ?? "never"}, succeeded ${lastSucceeded.night ?? "unknown"}, status ${lastStatus.night ?? "unknown"}; latest status ${latestStatus ?? "unknown"}`,
     detail: {
       schedulerPresent,
       lastFired,
@@ -502,6 +526,11 @@ export async function readFinanceLinkHealth(
       lastStatus,
       latestStatus,
       nightEverFired: lastFired.night !== undefined,
+      schedulerClock,
+      dueSlots: dueSlots.map((slot) => slot.mode),
+      unresolvedDueSlots: unresolvedDueSlots.map((slot) => slot.mode),
+      lastRunDate: lastRunDate ?? null,
+      latestRunUnsuccessful,
       schedulerError,
     },
   });
