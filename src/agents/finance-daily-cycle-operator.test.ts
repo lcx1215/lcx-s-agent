@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ account: vi.fn(), cycle: vi.fn() }));
+const mocks = vi.hoisted(() => ({ account: vi.fn(), cycle: vi.fn(), reconcile: vi.fn() }));
 vi.mock("./finance-alpaca-history-sync.js", () => ({
   syncConfiguredAlpacaPaperHistory: vi.fn(() => {
     throw new Error("unexpected history provider");
   }),
 }));
 vi.mock("./finance-alpaca-run.js", () => ({ fetchAlpacaAccountSnapshot: mocks.account }));
+vi.mock("./finance-alpaca-history-reconciliation.js", () => ({
+  reconcileFinanceBrokerHistory: mocks.reconcile,
+}));
 vi.mock("./finance-daily-cycle.js", () => ({ runFinanceDailyCycle: mocks.cycle }));
 vi.mock("./finance-link-health.js", () => ({ readFinanceLinkHealth: vi.fn() }));
 vi.mock("./finance-outcome-backfill.js", () => ({ backfillOutcomes: vi.fn() }));
@@ -22,7 +25,20 @@ vi.mock("./finance-state-dir.js", () => ({
 }));
 vi.mock("./finance-strategy-rule-ledger.js", () => ({
   readFinanceStrategyRuleLedger: vi.fn(async () => ({
-    ledger: { rules: [{ state: "active", instruments: ["AAPL"], ruleId: "fixture" }] },
+    ledger: {
+      rules: [
+        {
+          state: "active",
+          instruments: ["AAPL"],
+          ruleId: "fixture",
+          form: "cross_asset_trend",
+          formVersion: "1",
+          emits: "target_weights",
+          schedule: { kind: "monthly", at: "last_trading_day", timezone: "America/New_York" },
+          body: { frozenRule: { lookbackMonths: 12 } },
+        },
+      ],
+    },
   })),
 }));
 import { runFinanceDailyCycleOperator } from "../../scripts/operator/lcx-finance-daily-cycle.js";
@@ -42,6 +58,7 @@ const account = { equity: 2000, status: "ACTIVE", tradingBlocked: false };
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.cycle.mockResolvedValue({ ok: true });
+  mocks.reconcile.mockResolvedValue({ historyStatus: "reconciled" });
 });
 describe("account gate before unattended placement", () => {
   it.each([{ extra: [] }, { extra: ["--equity-from-venue"] }, { extra: ["--equity", "500000"] }])(
