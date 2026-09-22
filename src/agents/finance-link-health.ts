@@ -14,6 +14,7 @@
  */
 
 import fs from "node:fs/promises";
+import { reconcileFinanceBrokerHistory } from "./finance-alpaca-history-reconciliation.js";
 import { createAlpacaSafetyReadTransport } from "./finance-alpaca-safety-transport.js";
 import { readFinanceBarLedger } from "./finance-bar-ledger.js";
 import { resolveFinanceCredentialEnv } from "./finance-credential-env.js";
@@ -588,6 +589,18 @@ export async function readFinanceLinkHealth(
         accountId: venuePositions.accountId,
         venue: "alpaca:paper",
       });
+      let historicalProjection:
+        | Awaited<ReturnType<typeof reconcileFinanceBrokerHistory>>
+        | undefined;
+      try {
+        historicalProjection = await reconcileFinanceBrokerHistory(
+          directory,
+          venuePositions.accountId,
+        );
+      } catch {
+        // Raw broker history remains useful even when an older page is malformed. Keep the
+        // parity check conservative and expose the missing projection in the detail below.
+      }
       const ledgerBySymbol = new Map(
         scoped.ledger.positions
           .filter((p) => p.quantity !== 0)
@@ -607,6 +620,7 @@ export async function readFinanceLinkHealth(
         })
         .map(([symbol]) => symbol);
       const divergent = onlyLedger.length + onlyVenue.length + mismatch.length;
+      const unmatchedHistoricalFills = historicalProjection?.unmatchedFillCount ?? null;
       checks.push({
         id: "venue_ledger_parity",
         severity: divergent > 0 || !historyKnown ? "error" : "info",
@@ -621,7 +635,10 @@ export async function readFinanceLinkHealth(
               onlyVenue.join(", ") +
               "], quantity differs [" +
               mismatch.join(", ") +
-              "]",
+              "]" +
+              (unmatchedHistoricalFills === null
+                ? ""
+                : `; broker history has ${unmatchedHistoricalFills} fill(s) without an LCX receipt`),
         detail: {
           checked: true,
           venue: "alpaca:paper",
@@ -634,6 +651,18 @@ export async function readFinanceLinkHealth(
           onlyLedger,
           onlyVenue,
           mismatch,
+          historicalProjection: historicalProjection
+            ? {
+                historyStatus: historicalProjection.historyStatus,
+                positionsReconciled: historicalProjection.positionsReconciled,
+                feesInterpreted: historicalProjection.feesInterpreted,
+                brokerFillCount: historicalProjection.brokerFillCount,
+                matchedReceiptCount: historicalProjection.matchedReceiptCount,
+                unmatchedFillCount: historicalProjection.unmatchedFillCount,
+                positions: historicalProjection.positions,
+                warnings: historicalProjection.warnings,
+              }
+            : null,
         },
       });
     }
