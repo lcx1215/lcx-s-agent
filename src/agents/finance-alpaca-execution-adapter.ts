@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 /**
  * Alpaca venue execution adapter.
  *
@@ -19,9 +21,6 @@
  * Credentials are resolved through `resolveFinanceCredentialEnv`, the same path
  * every other finance source uses. This adapter never logs or returns them.
  */
-
-import { createHash } from "node:crypto";
-import { setTimeout as delay } from "node:timers/promises";
 import { resolveFinanceCredentialEnv } from "./finance-credential-env.js";
 import type {
   FinanceExecutionAdapter,
@@ -29,7 +28,9 @@ import type {
   FinanceExecutionIntent,
   FinanceOrderType,
 } from "./finance-execution-adapter.js";
+import type { FinanceExecutionSafetyFacts } from "./finance-execution-safety.js";
 import type { FetchImpl } from "./finance-live-market-source.js";
+import { executeFinanceProtectedReduction } from "./finance-protection-coordination.js";
 import {
   createFinanceUncachedFetch,
   type FinanceUncachedFetch,
@@ -39,6 +40,8 @@ const PAPER_HOST = "https://paper-api.alpaca.markets";
 const LIVE_HOST = "https://api.alpaca.markets";
 
 export type AlpacaExecutionAdapterOptions = {
+  /** Controller-owned book; credential reads must use the same root as safety facts. */
+  credentialStateDirectory?: string;
   id?: string;
   instruments: readonly string[];
   orderTypes?: readonly FinanceOrderType[];
@@ -60,6 +63,10 @@ export type AlpacaExecutionAdapterOptions = {
    * opens a real connection, which a unit test must not do.
    */
   statusFetch?: FinanceUncachedFetch;
+  cancelOrder?: (
+    url: string,
+    init: { headers: Record<string, string>; signal: AbortSignal },
+  ) => Promise<{ status: number; body: string }>;
   /**
    * Opt in to waiting for the real fill. Without it the submit response is
    * returned as-is, which reports zero for a fill that completes asynchronously.
@@ -131,6 +138,8 @@ function asFiniteNumber(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+export class AlpacaOrderRejectedError extends Error {}
+
 export class AlpacaOrderUncertainError extends Error {
   readonly code = "alpaca_order_uncertain";
   constructor(
@@ -163,6 +172,174 @@ function bounded<T>(run: () => Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
+function clientOrderIdentity(mode: "paper" | "live", intent: FinanceExecutionIntent): string {
+  return `lcx-${createHash("sha256")
+    .update(JSON.stringify([mode, intent.runAuthorizationId, intent.intentId]))
+    .digest("hex")
+    .slice(0, 40)}`;
+}
+
+function validateRecoveredOrder(
+  found: AlpacaOrderResponse,
+  intent: FinanceExecutionIntent,
+  clientOrderId: string,
+  timeInForce?: string,
+): void {
+  if (
+    found.client_order_id !== clientOrderId ||
+    found.symbol !== normalizeInstrument(intent.instrument) ||
+    found.side !== intent.side ||
+    Number(found.qty) !== intent.quantity ||
+    found.type !== intent.orderType ||
+    typeof found.time_in_force !== "string" ||
+    !["day", "gtc", "ioc", "fok"].includes(found.time_in_force) ||
+    (timeInForce !== undefined && found.time_in_force !== timeInForce) ||
+    (intent.side === "buy" &&
+      intent.stopPrice !== undefined &&
+      (found.order_class !== "oto" ||
+        !Array.isArray(found.legs) ||
+        !found.legs.some(
+          (leg: unknown) =>
+            typeof leg === "object" &&
+            leg !== null &&
+            "stop_price" in leg &&
+            asFiniteNumber(leg.stop_price) === intent.stopPrice,
+        ))) ||
+    (intent.orderType === "limit" && Number(found.limit_price) !== intent.limitPrice) ||
+    typeof found.id !== "string" ||
+    !found.id
+  ) {
+    throw new Error("reconciled order does not match authorized intent");
+  }
+}
+
+/** Read-only restart recovery; 404 and nonterminal states never authorize resubmission. */
+export async function readAlpacaPaperTerminalOrder(options: {
+  accountId: string;
+  intent: FinanceExecutionIntent;
+  credentials: { keyId: string; secret: string };
+  read: FinanceUncachedFetch;
+  signal: AbortSignal;
+  timeInForce?: "day" | "gtc" | "ioc" | "fok";
+}): Promise<FinanceExecutionFill | undefined> {
+  const { intent, signal } = options;
+  const headers = {
+    "APCA-API-KEY-ID": options.credentials.keyId,
+    "APCA-API-SECRET-KEY": options.credentials.secret,
+  };
+  if (
+    !options.accountId.trim() ||
+    !options.credentials.keyId.startsWith("PK") ||
+    !options.credentials.secret
+  ) {
+    throw new Error("paper reconciliation binding invalid");
+  }
+  const account = await bounded(
+    () => options.read(`${PAPER_HOST}/v2/account`, { headers, signal }),
+    signal,
+  );
+  if (account.status !== 200 || JSON.parse(account.body).id !== options.accountId) {
+    throw new Error("paper reconciliation account mismatch");
+  }
+  const clientOrderId = clientOrderIdentity("paper", intent);
+  const response = await bounded(
+    () =>
+      options.read(
+        `${PAPER_HOST}/v2/orders:by_client_order_id?client_order_id=${encodeURIComponent(clientOrderId)}`,
+        { headers, signal },
+      ),
+    signal,
+  );
+  if (response.status === 404) {
+    return undefined;
+  }
+  if (response.status !== 200) {
+    throw new Error("paper reconciliation order unavailable");
+  }
+  const found = JSON.parse(response.body) as AlpacaOrderResponse;
+  // Legacy claims do not persist transport time-in-force. Verify it when supplied;
+  // otherwise reconcile the actual matching broker order without inventing a default.
+  validateRecoveredOrder(found, intent, clientOrderId, options.timeInForce);
+  const orderId = found.id as string;
+  return terminalFill(found, orderId, `alpaca:paper:${orderId}`, intent.quantity);
+}
+
+export async function restoreAlpacaPaperProtection(options: {
+  intent: FinanceExecutionIntent;
+  quantity: number;
+  stopPrice: number;
+  headers: Record<string, string>;
+  signal: AbortSignal;
+  read: FinanceUncachedFetch;
+  postJson: NonNullable<AlpacaExecutionAdapterOptions["postJson"]>;
+}) {
+  const { intent, quantity, stopPrice, headers, signal, read } = options;
+  const clientId = `${clientOrderIdentity("paper", intent)}-protect`;
+  const lookup = () =>
+    bounded(
+      () =>
+        read(
+          `${PAPER_HOST}/v2/orders:by_client_order_id?client_order_id=${encodeURIComponent(clientId)}`,
+          { headers, signal },
+        ),
+      signal,
+    );
+  let response = await lookup();
+  if (response.status === 404) {
+    try {
+      response = await bounded(
+        () =>
+          options.postJson(`${PAPER_HOST}/v2/orders`, {
+            headers,
+            signal,
+            body: JSON.stringify({
+              client_order_id: clientId,
+              symbol: intent.instrument,
+              side: "sell",
+              type: "stop",
+              time_in_force: "gtc",
+              qty: String(quantity),
+              stop_price: String(stopPrice),
+            }),
+          }),
+        signal,
+      );
+    } catch {
+      response = await lookup();
+    }
+    if (response.status === 409 || response.status === 422) {
+      response = await lookup();
+    }
+  }
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error("remaining protection not confirmed");
+  }
+  let stop = JSON.parse(response.body) as Record<string, unknown>;
+  while (["accepted", "pending_new"].includes(typeof stop.status === "string" ? stop.status : "")) {
+    await bounded(() => delay(100, undefined, { signal }), signal);
+    response = await lookup();
+    if (response.status !== 200) {
+      throw new Error("remaining protection status unavailable");
+    }
+    stop = JSON.parse(response.body) as Record<string, unknown>;
+  }
+  if (
+    stop.client_order_id !== clientId ||
+    stop.symbol !== intent.instrument ||
+    stop.side !== "sell" ||
+    stop.type !== "stop" ||
+    stop.time_in_force !== "gtc" ||
+    Number(stop.qty) !== quantity ||
+    Number(stop.stop_price) !== stopPrice ||
+    stop.status !== "new" ||
+    Number(stop.filled_qty) !== 0 ||
+    typeof stop.id !== "string" ||
+    !stop.id
+  ) {
+    throw new Error("remaining protection identity or state mismatch");
+  }
+}
+
 export function createAlpacaExecutionAdapter(
   options: AlpacaExecutionAdapterOptions,
 ): FinanceExecutionAdapter {
@@ -180,12 +357,141 @@ export function createAlpacaExecutionAdapter(
     orderTypes: Object.freeze([...orderTypes]),
     instruments,
     credentialsAuthority: "external" as const,
+    supportsProtectedReduction: mode === "paper" && !!options.cancelOrder && !!options.postJson,
 
     execute: async (
       intent: FinanceExecutionIntent,
       signal: AbortSignal,
+      facts?: FinanceExecutionSafetyFacts,
     ): Promise<FinanceExecutionFill> => {
       signal.throwIfAborted();
+      if (
+        mode === "paper" &&
+        intent.side === "sell" &&
+        facts?.protectiveOrders?.length === 1 &&
+        intent.quantity > facts.positionQuantity - (facts.reservedSellQuantity ?? 0)
+      ) {
+        if (!options.cancelOrder || !options.postJson) {
+          throw new Error("protected reduction transport unavailable");
+        }
+        const reductionSignal = AbortSignal.any([
+          signal,
+          AbortSignal.timeout(options.fillPoll?.timeoutMs ?? 30_000),
+        ]);
+        const env = resolveFinanceCredentialEnv({
+          ...process.env,
+          ...(options.credentialStateDirectory
+            ? { LCX_FINANCE_STATE_DIR: options.credentialStateDirectory }
+            : {}),
+        });
+        const key = env.ALPACA_API_KEY_ID,
+          secret = env.ALPACA_API_SECRET_KEY;
+        if (!key?.startsWith("PK") || !secret) {
+          throw new Error("protected reduction requires paper credentials");
+        }
+        const headers = {
+          "APCA-API-KEY-ID": key,
+          "APCA-API-SECRET-KEY": secret,
+          "content-type": "application/json",
+        };
+        const read =
+          options.statusFetch ??
+          createFinanceUncachedFetch({ directory: options.credentialStateDirectory });
+        const get = async (path: string) => {
+          const response = await bounded(
+            () => read(`${PAPER_HOST}${path}`, { headers, signal: reductionSignal }),
+            reductionSignal,
+          );
+          if (response.status !== 200) {
+            throw new Error("protected reduction read unavailable");
+          }
+          return JSON.parse(response.body) as Record<string, unknown>;
+        };
+        const account = await get("/v2/account");
+        if (account.id !== facts.accountId) {
+          throw new Error("protected reduction account mismatch");
+        }
+        const protection = facts.protectiveOrders[0];
+        return executeFinanceProtectedReduction({
+          instrument: intent.instrument,
+          positionQuantity: facts.positionQuantity,
+          sellQuantity: intent.quantity,
+          protection,
+          signal: reductionSignal,
+          readStop: async () => {
+            const order = await get(`/v2/orders/${encodeURIComponent(protection.id)}`);
+            if (order.type !== "stop" || order.side !== "sell" || order.time_in_force !== "gtc") {
+              throw new Error("protection identity mismatch");
+            }
+            return {
+              id: String(order.id),
+              instrument: String(order.symbol),
+              status: String(order.status),
+              quantity: Number(order.qty),
+              filledQuantity: Number(order.filled_qty),
+              stopPrice: Number(order.stop_price),
+            };
+          },
+          cancelStop: async () => {
+            const response = await bounded(
+              () =>
+                options.cancelOrder!(
+                  `${PAPER_HOST}/v2/orders/${encodeURIComponent(protection.id)}`,
+                  { headers, signal: reductionSignal },
+                ),
+              reductionSignal,
+            );
+            if (![200, 204].includes(response.status)) {
+              throw new Error("protective cancellation unacknowledged");
+            }
+          },
+          readPosition: async () => {
+            const response = await bounded(
+              () =>
+                read(`${PAPER_HOST}/v2/positions/${encodeURIComponent(intent.instrument)}`, {
+                  headers,
+                  signal: reductionSignal,
+                }),
+              reductionSignal,
+            );
+            if (response.status === 404) {
+              return 0;
+            }
+            if (response.status !== 200) {
+              throw new Error("protected position unavailable");
+            }
+            const position = JSON.parse(response.body) as Record<string, unknown>;
+            if (position.symbol !== intent.instrument || position.side !== "long") {
+              throw new Error("protected position identity mismatch");
+            }
+            return Number(position.qty);
+          },
+          isDefinitelyRejected: (error) => error instanceof AlpacaOrderRejectedError,
+          execute: () => {
+            if (
+              Date.parse(facts.expiresAt) <= Date.now() ||
+              Date.parse(facts.quote.expiresAt) <= Date.now()
+            ) {
+              throw new AlpacaOrderRejectedError("facts expired before protected sell dispatch");
+            }
+            return createAlpacaExecutionAdapter({
+              ...options,
+              fillPoll: options.fillPoll ?? { timeoutMs: 30_000 },
+            }).execute(intent, reductionSignal);
+          },
+          restoreProtection: async (quantity, stopPrice) => {
+            await restoreAlpacaPaperProtection({
+              intent,
+              quantity,
+              stopPrice,
+              headers,
+              signal: reductionSignal,
+              read,
+              postJson: options.postJson!,
+            });
+          },
+        });
+      }
       const timeoutMs = options.fillPoll?.timeoutMs ?? 30_000;
       const intervalMs = options.fillPoll?.intervalMs ?? 200;
       if (
@@ -199,10 +505,7 @@ export function createAlpacaExecutionAdapter(
       if (!intent.intentId.trim() || !intent.runAuthorizationId.trim()) {
         throw new Error("Alpaca order requires intent identity and explicit run authorization");
       }
-      const clientOrderId = `lcx-${createHash("sha256")
-        .update(JSON.stringify([mode, intent.runAuthorizationId, intent.intentId]))
-        .digest("hex")
-        .slice(0, 40)}`;
+      const clientOrderId = clientOrderIdentity(mode, intent);
       const controller = new AbortController();
       const timer = setTimeout(
         () => controller.abort(new Error("Alpaca execution deadline exceeded")),
@@ -240,7 +543,12 @@ export function createAlpacaExecutionAdapter(
           throw new Error("a limit order requires limitPrice; refusing to infer one");
         }
 
-        const env = resolveFinanceCredentialEnv(process.env) as Record<string, unknown>;
+        const env = resolveFinanceCredentialEnv({
+          ...process.env,
+          ...(options.credentialStateDirectory
+            ? { LCX_FINANCE_STATE_DIR: options.credentialStateDirectory }
+            : {}),
+        }) as Record<string, unknown>;
         const keyId = typeof env.ALPACA_API_KEY_ID === "string" ? env.ALPACA_API_KEY_ID.trim() : "";
         const secret =
           typeof env.ALPACA_API_SECRET_KEY === "string" ? env.ALPACA_API_SECRET_KEY.trim() : "";
@@ -259,6 +567,33 @@ export function createAlpacaExecutionAdapter(
           throw new Error(
             'refusing paper order: ALPACA_API_KEY_ID is a live key (AK…); pass mode: "live" if that is intended',
           );
+        }
+
+        if (facts) {
+          const read =
+            options.statusFetch ??
+            createFinanceUncachedFetch({ directory: options.credentialStateDirectory });
+          const checked = await bounded(
+            () =>
+              read(`${host}/v2/account`, {
+                headers: { "APCA-API-KEY-ID": keyId, "APCA-API-SECRET-KEY": secret },
+                signal,
+              }),
+            signal,
+          );
+          if (
+            facts.venue !== `alpaca:${mode}` ||
+            checked.status !== 200 ||
+            JSON.parse(checked.body).id !== facts.accountId
+          ) {
+            throw new Error("execution account differs from controller account");
+          }
+          if (
+            Date.parse(facts.expiresAt) <= Date.now() ||
+            Date.parse(facts.quote.expiresAt) <= Date.now()
+          ) {
+            throw new Error("controller facts expired before submission");
+          }
         }
 
         const body: Record<string, unknown> = {
@@ -310,7 +645,9 @@ export function createAlpacaExecutionAdapter(
           "APCA-API-SECRET-KEY": secret,
           "content-type": "application/json",
         };
-        const statusFetch = options.statusFetch ?? createFinanceUncachedFetch();
+        const statusFetch =
+          options.statusFetch ??
+          createFinanceUncachedFetch({ directory: options.credentialStateDirectory });
         async function recover(cause: unknown): Promise<AlpacaOrderResponse> {
           try {
             const response = await bounded(
@@ -325,29 +662,7 @@ export function createAlpacaExecutionAdapter(
               throw new Error(`reconciliation returned http ${response.status}`);
             }
             const found = JSON.parse(response.body) as AlpacaOrderResponse;
-            if (
-              found.client_order_id !== clientOrderId ||
-              found.symbol !== symbol ||
-              found.side !== intent.side ||
-              Number(found.qty) !== intent.quantity ||
-              found.type !== intent.orderType ||
-              found.time_in_force !== timeInForce ||
-              (body.order_class === "oto" &&
-                (found.order_class !== "oto" ||
-                  !Array.isArray(found.legs) ||
-                  !found.legs.some(
-                    (leg: unknown) =>
-                      typeof leg === "object" &&
-                      leg !== null &&
-                      "stop_price" in leg &&
-                      asFiniteNumber(leg.stop_price) === intent.stopPrice,
-                  ))) ||
-              (intent.orderType === "limit" && Number(found.limit_price) !== intent.limitPrice) ||
-              typeof found.id !== "string" ||
-              !found.id
-            ) {
-              throw new Error("reconciled order does not match authorized intent");
-            }
+            validateRecoveredOrder(found, intent, clientOrderId, timeInForce);
             return found;
           } catch (error) {
             throw new AlpacaOrderUncertainError(
@@ -391,7 +706,9 @@ export function createAlpacaExecutionAdapter(
             payload = await recover(new Error(`Alpaca submission http ${response.status}`));
           } else {
             submitted = false;
-            throw new Error(`Alpaca order rejected (http ${response.status}): ${message}`);
+            throw new AlpacaOrderRejectedError(
+              `Alpaca order rejected (http ${response.status}): ${message}`,
+            );
           }
         }
         const orderId = typeof payload.id === "string" && payload.id ? payload.id : undefined;
@@ -427,7 +744,7 @@ export function createAlpacaExecutionAdapter(
               throw new Error(`order status returned http ${statusResponse.status}`);
             }
             const parsed = JSON.parse(statusResponse.body) as AlpacaOrderResponse;
-            if (typeof parsed.id === "string" && parsed.id !== orderId) {
+            if (parsed.id !== orderId) {
               throw new Error("order status identity mismatch");
             }
             const terminal = terminalFill(parsed, orderId, venueRef, intent.quantity);

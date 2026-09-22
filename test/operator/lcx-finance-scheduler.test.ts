@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   inspectFinanceSchedulerStatus,
+  describeFinanceCycleExecution,
   parseFinanceSchedulerArgs,
   runFinanceScheduler,
 } from "../../scripts/operator/lcx-finance-scheduler.js";
@@ -171,7 +172,7 @@ it("records successful completion separately and forwards execution limits uncha
   await expect(
     runFinanceScheduler([
       "--once",
-      "night",
+      "day",
       "--dir",
       directory,
       "--place",
@@ -182,7 +183,7 @@ it("records successful completion separately and forwards execution limits uncha
     ]),
   ).resolves.toBe(0);
   const state = readFinanceSchedulerState(directory);
-  expect(state.lastSucceeded.night).toBe(state.lastFired.night);
+  expect(state.lastSucceeded.day).toBe(state.lastFired.day);
   expect(state.lastRun?.status).toBe("succeeded");
   expect(mocks.runCycle).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -354,4 +355,190 @@ it("forwards explicit read-only history synchronization without enabling placeme
   const options = parseFinanceSchedulerArgs(["--loop", "--sync-alpaca-history"]);
   expect(options.extraArgs).toEqual(["--sync-alpaca-history"]);
   expect(options.extraArgs).not.toContain("--place");
+});
+
+it("distinguishes preview success from enabled trading and blocked execution", () => {
+  const report = JSON.stringify({
+    ok: true,
+    placed: [],
+    drift: [{ action: "sell" }],
+    refusals: [],
+  });
+  expect(describeFinanceCycleExecution(report, ["--sync-alpaca-history"], "day")).toMatchObject({
+    placementEnabled: false,
+    venue: "paper",
+    outcome: "preview_only",
+    tradeIntentCount: 1,
+  });
+  expect(
+    describeFinanceCycleExecution(report, ["--place", "--venue", "alpaca"], "day").outcome,
+  ).toBe("not_executed");
+  expect(
+    describeFinanceCycleExecution(
+      JSON.stringify({ ok: true, placed: [], drift: [], refusals: [] }),
+      ["--place"],
+      "day",
+    ).outcome,
+  ).toBe("no_trade");
+  expect(
+    describeFinanceCycleExecution(
+      JSON.stringify({ ok: true, refusals: ["controller unavailable"] }),
+      ["--place"],
+      "day",
+    ).outcome,
+  ).toBe("blocked_or_partial");
+  expect(describeFinanceCycleExecution("broken", [], "day").outcome).toBe("failed_or_unknown");
+});
+
+it("routes the exact portfolio plan to the cycle with a cwd-independent path", async () => {
+  const plan = "state/finance/portfolio-plan.json";
+  await runFinanceScheduler(["--once", "day", "--dir", directory, "--portfolio-plan", plan]);
+  expect(mocks.runCycle.mock.calls[0][0].argv).toEqual(
+    expect.arrayContaining(["--portfolio-plan", path.resolve(plan)]),
+  );
+  expect(mocks.runCycle.mock.calls[0][0].argv).not.toContain("--place");
+});
+
+it("distinguishes missing, stalled and invalid progress even when the PID is alive", () => {
+  const root = { directory, source: "explicit" as const };
+  const at = new Date("2026-09-22T12:00:00Z");
+  const inspect = () => inspectFinanceSchedulerStatus(root, at);
+  fs.writeFileSync(path.join(directory, FINANCE_SCHEDULER_PID), String(process.pid));
+  fs.mkdirSync(path.join(directory, FINANCE_SCHEDULER_LOCK));
+  expect(inspect().progress.status).toBe("unavailable");
+  const filename = path.join(directory, FINANCE_SCHEDULER_LOCK, "progress.json");
+  const base = {
+    pid: process.pid,
+    observedAt: "2026-09-22T11:57:00Z",
+    phase: "idle",
+    timeoutMs: 900000,
+    placementEnabled: false,
+  };
+  fs.writeFileSync(filename, JSON.stringify(base));
+  expect(inspect().progress.status).toBe("stalled");
+  fs.writeFileSync(filename, JSON.stringify({ ...base, phase: "cycle" }));
+  expect(inspect().progress.status).toBe("responsive");
+  expect(inspect().executionHealthVerified).toBe(false);
+  fs.writeFileSync(filename, JSON.stringify({ ...base, observedAt: "2026-09-22T12:01:00Z" }));
+  expect(inspect().progress.status).toBe("invalid");
+  fs.writeFileSync(filename, JSON.stringify({ ...base, pid: process.pid + 1 }));
+  expect(inspect().progress.status).toBe("invalid");
+  fs.writeFileSync(filename, "{");
+  expect(inspect().progress.status).toBe("unreadable");
+  expect(fs.readFileSync(filename, "utf8")).toBe("{");
+  expect(mocks.runCycle).not.toHaveBeenCalled();
+});
+
+it("publishes bounded cycle progress and returns to idle without replaying orders", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-21T20:00:00Z"));
+  const root = { directory, source: "explicit" as const };
+  mocks.runCycle.mockImplementationOnce(async () => {
+    expect(inspectFinanceSchedulerStatus(root).progress).toMatchObject({
+      status: "responsive",
+      phase: "cycle",
+      placementEnabled: true,
+    });
+    return success;
+  });
+  mocks.delay.mockImplementationOnce(async () => {
+    expect(inspectFinanceSchedulerStatus(root).progress).toMatchObject({
+      status: "responsive",
+      phase: "idle",
+      placementEnabled: true,
+    });
+    process.emit("SIGTERM");
+  });
+  expect(await runFinanceScheduler(["--loop", "--dir", directory, "--place"])).toBe(143);
+  expect(mocks.runCycle).toHaveBeenCalledOnce();
+  expect(fs.existsSync(path.join(directory, FINANCE_SCHEDULER_LOCK))).toBe(false);
+});
+
+it("exposes an interrupted previous-day attempt that blocks future scheduling", () => {
+  fs.writeFileSync(
+    path.join(directory, "daily-cycle-scheduler.json"),
+    JSON.stringify({
+      lastFired: { day: "2026-09-21" },
+      lastSucceeded: {},
+      lastStatus: { day: "running" },
+    }),
+  );
+  const report = inspectFinanceSchedulerStatus(
+    { directory, source: "explicit" },
+    new Date("2026-09-22T20:00:00Z"),
+  );
+  expect(report.slots[0].status).toBe("reconciliation_required");
+  expect(mocks.runCycle).not.toHaveBeenCalled();
+});
+
+it("does not leak daytime placement and equity requirements into night settlement", async () => {
+  await runFinanceScheduler([
+    "--once",
+    "night",
+    "--dir",
+    directory,
+    "--place",
+    "--equity-from-venue",
+    "--venue",
+    "alpaca",
+    "--sync-alpaca-history",
+  ]);
+  const argv = mocks.runCycle.mock.calls[0][0].argv;
+  expect(argv).not.toContain("--place");
+  expect(argv).not.toContain("--equity-from-venue");
+  expect(argv).toContain("--sync-alpaca-history");
+});
+
+it("pins and forwards the local controller policy without changing placement mode", () => {
+  const parsed = parseFinanceSchedulerArgs(["--loop", "--execution-policy", "state/policy.json"]);
+  expect(parsed.extraArgs).toEqual(["--execution-policy", path.resolve("state/policy.json")]);
+});
+
+it.each(["--loop", "--detach", "--once"])(
+  "rejects incomplete Alpaca placement before acquiring ownership: %s",
+  async (command) => {
+    await expect(
+      runFinanceScheduler([
+        command,
+        ...(command === "--once" ? ["day"] : []),
+        "--dir",
+        directory,
+        "--place",
+        "--venue",
+        "alpaca",
+      ]),
+    ).rejects.toThrow("--execution-policy");
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    expect(mocks.runCycle).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(directory, FINANCE_SCHEDULER_LOCK))).toBe(false);
+    expect(fs.existsSync(path.join(directory, FINANCE_SCHEDULER_PID))).toBe(false);
+  },
+);
+
+it("requires every native execution input and rejects an unsupported quote lifetime", () => {
+  const args = [
+    "--loop",
+    "--place",
+    "--venue",
+    "alpaca",
+    "--execution-policy",
+    "policy.json",
+    "--execution-quote-feed",
+    "iex",
+    "--execution-max-age-ms",
+    "30000",
+  ];
+  for (const flag of ["--execution-policy", "--execution-quote-feed", "--execution-max-age-ms"]) {
+    const missing = [...args];
+    missing.splice(missing.indexOf(flag), 2);
+    expect(() => parseFinanceSchedulerArgs(missing)).toThrow(flag);
+  }
+  expect(parseFinanceSchedulerArgs(args).extraArgs).toContain("--place");
+  expect(() => parseFinanceSchedulerArgs([...args.slice(0, -1), "120001"])).toThrow("120000");
+  expect(parseFinanceSchedulerArgs(["--status", "--place", "--venue", "alpaca"]).command).toBe(
+    "status",
+  );
+  expect(parseFinanceSchedulerArgs(["--loop", "--venue", "alpaca"]).extraArgs).not.toContain(
+    "--place",
+  );
 });

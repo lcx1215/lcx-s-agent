@@ -124,7 +124,9 @@ export type FinanceResearchExecutionControl = Readonly<{
   mode?: "shadow" | "alpaca_paper";
   /** Canonical controller-owned finance database root, never from model JSON. */
   stateDirectory?: string;
-  recovery?: Readonly<{ safetyStateDir: string; accountId: string; venue: string }>;
+  recovery?: Readonly<
+    Omit<Parameters<typeof recoverConfirmedFinanceExecutions>[0], "ledgerDir" | "signal">
+  >;
   riskContext?: FinanceConclusionRiskContext;
   /** Controller-only input. Never populated from model JSON or CLI flags. */
   execution?: Omit<
@@ -208,6 +210,100 @@ export async function recoverFinanceResearchHistory(control: FinanceResearchExec
     ...control.recovery,
     ledgerDir: control.stateDirectory,
     signal: control.execution?.signal,
+    resolvePending:
+      control.recovery.resolvePending ??
+      (async (claim, signal) => {
+        if (!claim.binding || claim.binding.venue !== "alpaca:paper") {
+          return undefined;
+        }
+        const { resolveFinanceCredentialEnv } = await import("./finance-credential-env.js");
+        const { readAlpacaPaperTerminalOrder, restoreAlpacaPaperProtection } =
+          await import("./finance-alpaca-execution-adapter.js");
+        const { createFinanceUncachedFetch, createFinanceWriteTransport } =
+          await import("./finance-write-transport.js");
+        const env = resolveFinanceCredentialEnv({
+          ...process.env,
+          LCX_FINANCE_STATE_DIR: control.stateDirectory,
+        });
+        if (!env.ALPACA_API_KEY_ID || !env.ALPACA_API_SECRET_KEY) {
+          return undefined;
+        }
+        const intent = claim.binding.intent;
+        const read = createFinanceUncachedFetch({ directory: control.stateDirectory });
+        const fill = await readAlpacaPaperTerminalOrder({
+          accountId: claim.binding.accountId,
+          intent,
+          credentials: { keyId: env.ALPACA_API_KEY_ID, secret: env.ALPACA_API_SECRET_KEY },
+          read,
+          signal,
+        });
+        const originalQuantity = claim.binding.positionQuantity;
+        const protection = claim.binding.protectiveOrders;
+        if (
+          fill &&
+          intent.side === "sell" &&
+          originalQuantity !== undefined &&
+          protection?.length === 1 &&
+          intent.quantity > originalQuantity - protection[0].quantity
+        ) {
+          const remaining = originalQuantity - fill.filledQuantity;
+          const headers = {
+            "APCA-API-KEY-ID": env.ALPACA_API_KEY_ID,
+            "APCA-API-SECRET-KEY": env.ALPACA_API_SECRET_KEY,
+            "content-type": "application/json",
+          };
+          const old = await read(
+            `https://paper-api.alpaca.markets/v2/orders/${encodeURIComponent(protection[0].id)}`,
+            { headers, signal },
+          );
+          if (old.status !== 200) {
+            throw new Error("old protection unavailable");
+          }
+          const prior = JSON.parse(old.body) as Record<string, unknown>;
+          if (
+            prior.id !== protection[0].id ||
+            prior.symbol !== intent.instrument ||
+            prior.side !== "sell" ||
+            prior.type !== "stop" ||
+            Number(prior.qty) !== protection[0].quantity ||
+            Number(prior.stop_price) !== protection[0].stopPrice ||
+            prior.status !== "canceled" ||
+            Number(prior.filled_qty) !== 0
+          ) {
+            throw new Error("old protection unsettled");
+          }
+          const position = await read(
+            `https://paper-api.alpaca.markets/v2/positions/${encodeURIComponent(intent.instrument)}`,
+            { headers, signal },
+          );
+          const value =
+            position.status === 200
+              ? (JSON.parse(position.body) as Record<string, unknown>)
+              : undefined;
+          const quantity =
+            position.status === 404
+              ? 0
+              : value?.symbol === intent.instrument && value.side === "long"
+                ? Number(value.qty)
+                : NaN;
+          if (quantity !== remaining || remaining < 0) {
+            throw new Error("recovery position mismatch");
+          }
+          if (remaining > 0) {
+            const transport = createFinanceWriteTransport({ directory: control.stateDirectory });
+            await restoreAlpacaPaperProtection({
+              intent,
+              quantity: remaining,
+              stopPrice: protection[0].stopPrice,
+              headers,
+              signal,
+              read,
+              postJson: (url, init) => transport({ url, ...init }),
+            });
+          }
+        }
+        return fill;
+      }),
   });
   return {
     ok:

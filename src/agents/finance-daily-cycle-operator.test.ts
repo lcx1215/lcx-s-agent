@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ account: vi.fn(), cycle: vi.fn() }));
+const mocks = vi.hoisted(() => ({ account: vi.fn(), cycle: vi.fn(), backfill: vi.fn() }));
 vi.mock("./finance-alpaca-history-sync.js", () => ({
   syncConfiguredAlpacaPaperHistory: vi.fn(() => {
     throw new Error("unexpected history provider");
@@ -8,7 +8,7 @@ vi.mock("./finance-alpaca-history-sync.js", () => ({
 vi.mock("./finance-alpaca-run.js", () => ({ fetchAlpacaAccountSnapshot: mocks.account }));
 vi.mock("./finance-daily-cycle.js", () => ({ runFinanceDailyCycle: mocks.cycle }));
 vi.mock("./finance-link-health.js", () => ({ readFinanceLinkHealth: vi.fn() }));
-vi.mock("./finance-outcome-backfill.js", () => ({ backfillOutcomes: vi.fn() }));
+vi.mock("./finance-outcome-backfill.js", () => ({ backfillOutcomes: mocks.backfill }));
 vi.mock("./finance-reflection.js", () => ({ buildReflection: vi.fn() }));
 vi.mock("./finance-scoped-override.js", () => ({
   resolveScopedOverride: vi.fn(async () => ({ value: 8 })),
@@ -22,7 +22,20 @@ vi.mock("./finance-state-dir.js", () => ({
 }));
 vi.mock("./finance-strategy-rule-ledger.js", () => ({
   readFinanceStrategyRuleLedger: vi.fn(async () => ({
-    ledger: { rules: [{ state: "active", instruments: ["AAPL"], ruleId: "fixture" }] },
+    ledger: {
+      rules: [
+        {
+          state: "active",
+          instruments: ["AAPL"],
+          ruleId: "fixture",
+          form: "cross_asset_trend",
+          formVersion: "1",
+          emits: "target_weights",
+          schedule: { kind: "monthly", at: "last_trading_day", timezone: "America/New_York" },
+          body: { frozenRule: { lookbackMonths: 12 } },
+        },
+      ],
+    },
   })),
 }));
 import { runFinanceDailyCycleOperator } from "../../scripts/operator/lcx-finance-daily-cycle.js";
@@ -114,7 +127,24 @@ describe("account gate before unattended placement", () => {
 });
 
 describe("explicit history sync before daily business", () => {
+  const accountReconciliation = {
+    status: "reconciled" as const,
+    quantities: [],
+    fees: [],
+    cashFromActivities: 0,
+    brokerCash: 0,
+    cashDifference: 0,
+    differences: [],
+    issues: [],
+    feesInterpreted: true,
+    protection: { protective: [], unresolved: [] },
+    observedAt: "2025-02-01T00:00:00Z",
+    positions: [],
+    openOrders: [],
+    historyHeadRef: null,
+  };
   const history = {
+    accountReconciliation,
     accountId: "synthetic",
     venue: "alpaca:paper",
     after: "2025-01-01T00:00:00Z",
@@ -139,6 +169,36 @@ describe("explicit history sync before daily business", () => {
     expect(mocks.cycle).not.toHaveBeenCalled();
     expect(syncHistory).toHaveBeenCalledWith({ directory: "/synthetic/finance" });
   });
+  it("settles at night despite unresolved economics when placement flags were inherited", async () => {
+    mocks.backfill.mockResolvedValueOnce({ scored: [], issues: [] });
+    const syncHistory = vi.fn(async () => ({
+      ...history,
+      streams: [],
+      accountReconciliation: {
+        ...accountReconciliation,
+        status: "unresolved" as const,
+      },
+    }));
+    const result = await runFinanceDailyCycleOperator(
+      [
+        "--json",
+        "--dir",
+        "/synthetic/finance",
+        "--mode",
+        "night",
+        "--venue",
+        "alpaca",
+        "--place",
+        "--sync-alpaca-history",
+      ],
+      { syncHistory },
+    );
+    expect(result.ok).toBe(true);
+    expect(mocks.backfill).toHaveBeenCalledOnce();
+    expect(mocks.cycle).not.toHaveBeenCalled();
+    expect(mocks.account).not.toHaveBeenCalled();
+  });
+
   it("does not sync by default and never enables placement", async () => {
     const syncHistory = vi.fn(async () => ({ ...history, streams: [] }));
     await runFinanceDailyCycleOperator(["--json", "--dir", "/synthetic/finance"], { syncHistory });
@@ -150,4 +210,102 @@ describe("explicit history sync before daily business", () => {
     expect(result.historySync).toEqual(history);
     expect(mocks.cycle).toHaveBeenLastCalledWith(expect.objectContaining({ place: false }));
   });
+});
+
+it("installs the account controller from the explicit execution policy at the daily seam", async () => {
+  const fs = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "daily-policy-"));
+  try {
+    const filename = path.join(directory, "policy.json");
+    await fs.writeFile(filename, JSON.stringify({ synthetic: true }));
+    const accountBookProvider = vi.fn();
+    const executionQuoteProvider = vi.fn();
+    const createSafetyContext = vi.fn();
+    const createController = vi.fn(() => ({
+      accountId: "bound-account",
+      inspectReconciliation: vi.fn(),
+      accountBookProvider,
+      executionQuoteProvider,
+      createSafetyContext,
+    }));
+    const result = await runFinanceDailyCycleOperator([...args, "--execution-policy", filename], {
+      createController,
+    });
+    expect(result.ok).toBe(true);
+    expect(createController).toHaveBeenCalledWith(
+      expect.objectContaining({
+        directory: "/synthetic/finance",
+        instruments: ["AAPL"],
+        policy: { synthetic: true },
+      }),
+    );
+    expect(mocks.cycle).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: "bound-account",
+        accountBookProvider,
+        executionQuoteProvider,
+        createSafetyContext,
+      }),
+    );
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("checks reconciliation without collecting quotes or entering the trading cycle", async () => {
+  const fs = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "daily-inspection-"));
+  try {
+    const filename = path.join(directory, "policy.json");
+    await fs.writeFile(filename, "{}");
+    const inspectReconciliation = vi.fn(async () => ({
+      observedAt: new Date().toISOString(),
+      readiness: {
+        status: "restricted" as const,
+        historyStatus: "unresolved" as const,
+        quarantinedInstruments: ["BTC/USD"],
+        uncertaintyReserve: 0.1,
+        reasons: [],
+      },
+    }));
+    const executionQuoteProvider = vi.fn();
+    const createController = vi.fn(() => ({
+      accountId: "synthetic",
+      inspectReconciliation,
+      executionQuoteProvider,
+      accountBookProvider: vi.fn(),
+      createSafetyContext: vi.fn(),
+    }));
+    const result = await runFinanceDailyCycleOperator(
+      [
+        ...args.filter((arg) => arg !== "--place"),
+        "--check-execution",
+        "--execution-policy",
+        filename,
+      ],
+      { createController },
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      boundary: "broker_reconciliation_readiness_only",
+      quotesVerified: false,
+      executionVerified: false,
+      ordersSubmitted: 0,
+    });
+    expect(inspectReconciliation).toHaveBeenCalledOnce();
+    expect(executionQuoteProvider).not.toHaveBeenCalled();
+    expect(mocks.cycle).not.toHaveBeenCalled();
+    await expect(
+      runFinanceDailyCycleOperator([...args, "--check-execution", "--execution-policy", filename], {
+        createController,
+      }),
+    ).rejects.toThrow("without --place");
+    expect(inspectReconciliation).toHaveBeenCalledOnce();
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
 });

@@ -11,6 +11,7 @@ beforeEach(() => {
 });
 import {
   createAlpacaExecutionAdapter,
+  readAlpacaPaperTerminalOrder,
   AlpacaOrderUncertainError,
   type AlpacaExecutionAdapterOptions,
 } from "./finance-alpaca-execution-adapter.js";
@@ -402,8 +403,14 @@ describe("submission identity and terminal fill safety", () => {
           status: 200,
           body: JSON.stringify(
             ++calls === 1
-              ? { status: "partially_filled", filled_qty: "0.25", filled_avg_price: "100" }
+              ? {
+                  id: "partial",
+                  status: "partially_filled",
+                  filled_qty: "0.25",
+                  filled_avg_price: "100",
+                }
               : {
+                  id: "partial",
                   status,
                   filled_qty: status === "filled" ? "1" : "0.25",
                   filled_avg_price: "101",
@@ -509,3 +516,262 @@ it.each([null, "", " ", false, undefined, "broken", {}])(
     }
   },
 );
+
+it.each([undefined, "other-order"])(
+  "rejects terminal polling without the submitted identity: %s",
+  async (id) => {
+    const adapter = createAlpacaExecutionAdapter({
+      instruments: ["AAPL"],
+      postJson: transport({ id: "original" }).fn,
+      fillPoll: { timeoutMs: 1000, intervalMs: 0 },
+      statusFetch: async () => ({
+        status: 200,
+        body: JSON.stringify({
+          id,
+          status: "filled",
+          filled_qty: "1",
+          filled_avg_price: "100",
+          filled_at: "2026-09-20T00:00:00Z",
+        }),
+      }),
+    });
+    await expect(adapter.execute(baseIntent, new AbortController().signal)).rejects.toBeInstanceOf(
+      AlpacaOrderUncertainError,
+    );
+  },
+);
+it.each(["filled", "new", "missing", "wrong-account", "wrong-symbol"])(
+  "restart reconciliation is GET-only and account-bound: %s",
+  async (scenario) => {
+    let submitted: Record<string, unknown> = {};
+    const adapter = createAlpacaExecutionAdapter({
+      instruments: ["AAPL"],
+      postJson: async (_url, init) => {
+        submitted = JSON.parse(init.body);
+        return {
+          status: 200,
+          body: JSON.stringify({ id: "original", status: "new", filled_qty: "0" }),
+        };
+      },
+    });
+    await adapter.execute(baseIntent, new AbortController().signal);
+    const urls: string[] = [];
+    const pending = readAlpacaPaperTerminalOrder({
+      accountId: "account",
+      intent: baseIntent,
+      credentials: { keyId: PAPER, secret: SECRET },
+      signal: new AbortController().signal,
+      read: async (url) => {
+        urls.push(url);
+        if (url.endsWith("/account")) {
+          return {
+            status: 200,
+            body: JSON.stringify({ id: scenario === "wrong-account" ? "other" : "account" }),
+          };
+        }
+        expect(url).toContain(encodeURIComponent(String(submitted.client_order_id)));
+        return {
+          status: scenario === "missing" ? 404 : 200,
+          body: JSON.stringify({
+            ...submitted,
+            id: "original",
+            symbol: scenario === "wrong-symbol" ? "MSFT" : "AAPL",
+            status: scenario === "new" ? "new" : "filled",
+            filled_qty: "1",
+            filled_avg_price: "100",
+            filled_at: "2026-09-20T00:00:00Z",
+          }),
+        };
+      },
+    });
+    if (scenario.startsWith("wrong")) {
+      await expect(pending).rejects.toThrow();
+    } else if (scenario === "filled") {
+      expect((await pending)?.terminalOrderIdentity?.orderId).toBe("original");
+    } else {
+      expect(await pending).toBeUndefined();
+    }
+    expect(urls.every((url) => url.startsWith("https://paper-api.alpaca.markets/"))).toBe(true);
+    if (scenario === "wrong-account") {
+      expect(urls).toHaveLength(1);
+    }
+  },
+);
+it("restores a remaining stop idempotently after a lost response", async () => {
+  const { restoreAlpacaPaperProtection } = await import("./finance-alpaca-execution-adapter.js");
+  let stored: Record<string, unknown> | undefined;
+  let posts = 0;
+  const options = {
+    intent: { ...baseIntent, side: "sell" as const },
+    quantity: 1,
+    stopPrice: 90,
+    headers: {},
+    signal: AbortSignal.timeout(1000),
+    read: async () => ({ status: stored ? 200 : 404, body: JSON.stringify(stored ?? {}) }),
+    postJson: async (_url: string, init: { body: string }) => {
+      posts++;
+      stored = { ...JSON.parse(init.body), id: "remaining-stop", status: "new", filled_qty: "0" };
+      throw new Error("response lost");
+    },
+  };
+  await restoreAlpacaPaperProtection(options);
+  await restoreAlpacaPaperProtection(options);
+  expect(posts).toBe(1);
+  expect(stored?.qty).toBe("1");
+});
+it("coordinates a protected partial exit through the declared Alpaca adapter", async () => {
+  const now = new Date().toISOString(),
+    expires = new Date(Date.now() + 60000).toISOString();
+  let canceled = false,
+    position = 2;
+  const sent: Record<string, unknown>[] = [];
+  const adapter = createAlpacaExecutionAdapter({
+    instruments: ["AAPL"],
+    fillPoll: { timeoutMs: 1000, intervalMs: 0 },
+    cancelOrder: async (url) => {
+      expect(url).toContain("/orders/old-stop");
+      canceled = true;
+      return { status: 204, body: "" };
+    },
+    postJson: async (_url, init) => {
+      const body = JSON.parse(init.body) as Record<string, unknown>;
+      sent.push(body);
+      if (body.type === "market") {
+        position = 1;
+        return {
+          status: 200,
+          body: JSON.stringify({ id: "sale", status: "new", filled_qty: "0" }),
+        };
+      }
+      return {
+        status: 200,
+        body: JSON.stringify({ ...body, id: "remaining", status: "new", filled_qty: "0" }),
+      };
+    },
+    statusFetch: async (url) => {
+      if (url.endsWith("/account")) {
+        return { status: 200, body: JSON.stringify({ id: "account" }) };
+      }
+      if (url.includes("/positions/")) {
+        return {
+          status: 200,
+          body: JSON.stringify({ symbol: "AAPL", side: "long", qty: String(position) }),
+        };
+      }
+      if (url.includes("by_client_order_id")) {
+        return { status: 404, body: "{}" };
+      }
+      if (url.endsWith("/old-stop")) {
+        return {
+          status: 200,
+          body: JSON.stringify({
+            id: "old-stop",
+            symbol: "AAPL",
+            qty: "2",
+            filled_qty: "0",
+            stop_price: "90",
+            type: "stop",
+            side: "sell",
+            time_in_force: "gtc",
+            status: canceled ? "canceled" : "new",
+          }),
+        };
+      }
+      return {
+        status: 200,
+        body: JSON.stringify({
+          id: "sale",
+          status: "filled",
+          filled_qty: "1",
+          filled_avg_price: "100",
+          filled_at: now,
+        }),
+      };
+    },
+  });
+  const fill = await adapter.execute({ ...baseIntent, side: "sell" }, AbortSignal.timeout(1000), {
+    accountId: "account",
+    adapterId: "alpaca-venue",
+    venue: "alpaca:paper",
+    instrument: "AAPL",
+    snapshotId: "snapshot",
+    source: "fixture",
+    observedAt: now,
+    expiresAt: expires,
+    positionQuantity: 2,
+    reservedSellQuantity: 2,
+    protectiveOrders: [{ id: "old-stop", quantity: 2, stopPrice: 90 }],
+    openOrderIds: [],
+    unresolvedOrderIds: [],
+    instrumentEvidence: {
+      source: "fixture",
+      observedAt: now,
+      assetType: "spot_equity",
+      fullyPaid: true,
+      marginEnabled: false,
+      hedged: false,
+    },
+    account: {
+      status: "ACTIVE",
+      tradingBlocked: false,
+      equity: 1000,
+      availableCash: 800,
+      peakEquity: 1000,
+      currency: "USD",
+      grossExposure: 200,
+    },
+    quote: { source: "fixture", price: 100, observedAt: now, expiresAt: expires, currency: "USD" },
+  });
+  expect(fill.filledQuantity).toBe(1);
+  expect(sent.map((body) => [body.type, body.qty])).toEqual([
+    ["market", "1"],
+    ["stop", "1"],
+  ]);
+  expect(canceled).toBe(true);
+});
+
+it("checks the credential account against controller facts before sending a normal order", async () => {
+  const postJson = vi.fn(async () => ({ status: 200, body: "{}" }));
+  const statusFetch = vi.fn(async () => ({
+    status: 200,
+    body: JSON.stringify({ id: "wrong-account" }),
+  }));
+  const adapter = createAlpacaExecutionAdapter({ instruments: ["AAPL"], postJson, statusFetch });
+  const at = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + 60000).toISOString();
+  await expect(
+    adapter.execute(baseIntent, AbortSignal.timeout(1000), {
+      accountId: "authorized-account",
+      adapterId: "alpaca-venue",
+      venue: "alpaca:paper",
+      instrument: "AAPL",
+      instrumentEvidence: {
+        source: "fixture",
+        observedAt: at,
+        assetType: "spot_equity",
+        fullyPaid: true,
+        marginEnabled: false,
+        hedged: false,
+      },
+      snapshotId: "fixture",
+      source: "fixture",
+      observedAt: at,
+      expiresAt,
+      positionQuantity: 0,
+      openOrderIds: [],
+      unresolvedOrderIds: [],
+      account: {
+        status: "ACTIVE",
+        tradingBlocked: false,
+        equity: 1000,
+        availableCash: 1000,
+        peakEquity: 1000,
+        currency: "USD",
+        grossExposure: 0,
+      },
+      quote: { source: "fixture", price: 100, observedAt: at, expiresAt, currency: "USD" },
+    }),
+  ).rejects.toThrow("execution account differs");
+  expect(postJson).not.toHaveBeenCalled();
+  expect(statusFetch).toHaveBeenCalledOnce();
+});

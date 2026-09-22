@@ -99,6 +99,8 @@ export function parseFinanceSchedulerArgs(argv: readonly string[]): SchedulerOpt
     } else if (
       [
         "--dir",
+        "--portfolio-plan",
+        "--execution-policy",
         "--venue",
         "--cycle-timeout-ms",
         "--max-order-notional",
@@ -114,6 +116,9 @@ export function parseFinanceSchedulerArgs(argv: readonly string[]): SchedulerOpt
       }
       if (arg === "--dir") {
         directory = value;
+      } else if (arg === "--portfolio-plan" || arg === "--execution-policy") {
+        // Detached children change cwd; bind the caller's plan before spawning.
+        extraArgs.push(arg, path.resolve(value));
       } else if (arg === "--venue") {
         if (value !== "paper" && value !== "alpaca") {
           throw new Error("--venue must be paper or alpaca");
@@ -151,6 +156,23 @@ export function parseFinanceSchedulerArgs(argv: readonly string[]): SchedulerOpt
   if (json && command !== "status") {
     throw new Error("--json requires --status");
   }
+  // Night settlement and read-only status do not need daytime execution inputs.
+  if (
+    command !== "status" &&
+    !(command === "once" && mode === "night") &&
+    extraArgs.includes("--place") &&
+    extraArgs[extraArgs.indexOf("--venue") + 1] === "alpaca"
+  ) {
+    const required = ["--execution-policy", "--execution-quote-feed", "--execution-max-age-ms"];
+    const missing = required.filter((flag) => !extraArgs.includes(flag));
+    if (missing.length) {
+      throw new Error(`Alpaca scheduler placement requires ${missing.join(", ")}`);
+    }
+    const maxAgeMs = Number(extraArgs[extraArgs.indexOf("--execution-max-age-ms") + 1]);
+    if (maxAgeMs > 120000) {
+      throw new Error("Alpaca execution quote age must not exceed 120000 ms");
+    }
+  }
   return { command, mode, directory, timeoutMs, extraArgs, json };
 }
 
@@ -166,7 +188,118 @@ export function cycleOutputSucceeded(stdout: string): boolean {
   }
 }
 
+/** Process completion and trading outcomes are different evidence. */
+export function describeFinanceCycleExecution(stdout: string, args: readonly string[], mode: Mode) {
+  const placementEnabled = mode === "day" && args.includes("--place");
+  const venueIndex = args.indexOf("--venue");
+  const venue = venueIndex >= 0 ? (args[venueIndex + 1] ?? "unknown") : "paper";
+  let payload: Record<string, unknown> = {};
+  try {
+    const value: unknown = JSON.parse(stdout);
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      payload = value as Record<string, unknown>;
+    }
+  } catch {
+    /* Missing output is unknown, not an empty trading result. */
+  }
+  const reportedPlacements = Array.isArray(payload.placed) ? payload.placed.length : null;
+  const refusals = Array.isArray(payload.refusals) ? payload.refusals : [];
+  const intents = Array.isArray(payload.drift)
+    ? payload.drift.filter(
+        (row: unknown) =>
+          row !== null &&
+          typeof row === "object" &&
+          "action" in row &&
+          ["buy", "sell"].includes(String(row.action)),
+      ).length
+    : null;
+  const outcome =
+    payload.ok !== true
+      ? "failed_or_unknown"
+      : mode === "night"
+        ? "settlement"
+        : !placementEnabled
+          ? "preview_only"
+          : refusals.length
+            ? "blocked_or_partial"
+            : reportedPlacements !== null && reportedPlacements > 0
+              ? "placement_reported"
+              : intents === 0
+                ? "no_trade"
+                : "not_executed";
+  return {
+    placementEnabled,
+    venue,
+    outcome,
+    reportedPlacements,
+    tradeIntentCount: intents,
+    refusalCount: refusals.length,
+  };
+}
+
 type CycleContext = { root: FinanceStateDir; options: SchedulerOptions; signal: AbortSignal };
+
+function writeSchedulerProgress(context: CycleContext, phase: "idle" | "cycle") {
+  const filename = path.join(context.root.directory, FINANCE_SCHEDULER_LOCK, "progress.json");
+  const temporary = `${filename}.tmp`;
+  fs.writeFileSync(
+    temporary,
+    JSON.stringify({
+      pid: process.pid,
+      observedAt: new Date().toISOString(),
+      phase,
+      timeoutMs: context.options.timeoutMs,
+      placementEnabled: context.options.extraArgs.includes("--place"),
+    }),
+  );
+  fs.renameSync(temporary, filename);
+}
+
+/** A responsive process and completed trading work are separate health signals. */
+function inspectSchedulerProgress(
+  directory: string,
+  pid: number | null,
+  present: boolean,
+  now: number,
+) {
+  try {
+    const value: unknown = JSON.parse(
+      fs.readFileSync(path.join(directory, FINANCE_SCHEDULER_LOCK, "progress.json"), "utf8"),
+    );
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return { status: "invalid" };
+    }
+    const progress = value as Record<string, unknown>;
+    const age =
+      typeof progress.observedAt === "string" ? now - Date.parse(progress.observedAt) : NaN;
+    if (
+      progress.pid !== pid ||
+      !Number.isFinite(age) ||
+      age < 0 ||
+      !["idle", "cycle"].includes(String(progress.phase)) ||
+      typeof progress.timeoutMs !== "number" ||
+      !Number.isSafeInteger(progress.timeoutMs) ||
+      progress.timeoutMs <= 0 ||
+      progress.timeoutMs > 2_147_483_647 ||
+      typeof progress.placementEnabled !== "boolean"
+    ) {
+      return { status: "invalid" };
+    }
+    const deadline = 2 * TICK_MS + (progress.phase === "cycle" ? progress.timeoutMs : 0);
+    return {
+      status: !present ? "owner_missing" : age > deadline ? "stalled" : "responsive",
+      observedAt: progress.observedAt,
+      phase: progress.phase,
+      ageMs: age,
+      deadlineMs: deadline,
+      placementEnabled: progress.placementEnabled,
+    };
+  } catch (error) {
+    return {
+      status: (error as NodeJS.ErrnoException).code === "ENOENT" ? "unavailable" : "unreadable",
+    };
+  }
+}
 
 async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
   if (context.signal.aborted) {
@@ -199,6 +332,7 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
   state.lastStatus[mode] = "running";
   state.lastRun = { ...attempt, status: "running" };
   writeFinanceSchedulerState(directory, state);
+  writeSchedulerProgress(context, "cycle");
   const result = await runFinanceCycleProcess({
     argv: [
       "--import",
@@ -209,7 +343,9 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
       mode,
       "--dir",
       directory,
-      ...context.options.extraArgs,
+      ...context.options.extraArgs.filter(
+        (arg) => mode === "day" || (arg !== "--place" && arg !== "--equity-from-venue"),
+      ),
     ],
     cwd: REPO_ROOT,
     timeoutMs: context.options.timeoutMs,
@@ -222,6 +358,7 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
     ok: accepted,
     status: result.ok && !accepted ? ("failed" as const) : result.status,
     durationMs: Date.now() - startedAt,
+    execution: describeFinanceCycleExecution(result.stdout, context.options.extraArgs, mode),
   };
 
   fs.appendFileSync(path.join(directory, RUNS_LOG), `${JSON.stringify(record)}\n`);
@@ -232,7 +369,7 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
   state.lastRun = record;
   writeFinanceSchedulerState(directory, state);
   process.stdout.write(
-    `[${record.firedAt}] ${mode} status=${record.status} exit=${record.exitCode} ${record.durationMs}ms\n`,
+    `[${record.firedAt}] ${mode} status=${record.status} execution=${record.execution.outcome} venue=${record.execution.venue} exit=${record.exitCode} ${record.durationMs}ms\n`,
   );
   if (!record.ok) {
     process.stderr.write(`${record.status}: ${record.stderr.slice(0, 2000)}\n`);
@@ -349,21 +486,24 @@ export function inspectFinanceSchedulerStatus(root: FinanceStateDir, at = new Da
       : lockPresent
         ? "lock_requires_reconciliation"
         : "no_process_observed",
+    progress: inspectSchedulerProgress(root.directory, pid, processPresent, at.getTime()),
     executionHealthVerified: false,
     slots: DEFAULT_FINANCE_CYCLE_SLOTS.map((slot) => ({
       mode: slot.mode,
       scheduledTime: `${String(slot.hour).padStart(2, "0")}:${String(slot.minute).padStart(2, "0")}`,
       status:
-        state.lastFired[slot.mode] === clock.date
-          ? (state.lastStatus[slot.mode] ??
-            (state.lastSucceeded[slot.mode] === clock.date
-              ? "succeeded"
-              : "attempted_outcome_unknown"))
-          : !FINANCE_TRADING_WEEKDAYS.includes(clock.weekday)
-            ? "outside_schedule"
-            : isFinanceCycleSlotDue(slot, clock, state.lastFired)
-              ? "due_unattempted"
-              : "not_due",
+        state.lastStatus[slot.mode] === "running" && state.lastFired[slot.mode] !== clock.date
+          ? "reconciliation_required"
+          : state.lastFired[slot.mode] === clock.date
+            ? (state.lastStatus[slot.mode] ??
+              (state.lastSucceeded[slot.mode] === clock.date
+                ? "succeeded"
+                : "attempted_outcome_unknown"))
+            : !FINANCE_TRADING_WEEKDAYS.includes(clock.weekday)
+              ? "outside_schedule"
+              : isFinanceCycleSlotDue(slot, clock, state.lastFired)
+                ? "due_unattempted"
+                : "not_due",
       attemptedDate: state.lastFired[slot.mode] ?? null,
       succeededDate: state.lastSucceeded[slot.mode] ?? null,
     })),
@@ -375,6 +515,7 @@ export function inspectFinanceSchedulerStatus(root: FinanceStateDir, at = new Da
           firedAt: state.lastRun.firedAt,
           exitCode: state.lastRun.exitCode,
           durationMs: state.lastRun.durationMs,
+          execution: state.lastRun.execution ?? { outcome: "unknown_legacy_run" },
         }
       : null,
   };
@@ -391,6 +532,7 @@ function status(root: FinanceStateDir, configError: string | null, json: boolean
           `pid file: ${report.pid ?? "(none)"}; process present: ${report.processPresent}`,
           `lock present: ${report.lockPresent}; owner observation: ${report.ownerObservation}`,
           `finance root: ${root.directory} (${root.source})`,
+          `progress: ${JSON.stringify(report.progress)}`,
           ...(configError ? [`config unavailable: ${configError}`] : []),
           ...report.slots.map(
             (slot) =>
@@ -456,7 +598,9 @@ export async function runFinanceScheduler(
       process.send?.({ type: "finance-scheduler-ready" });
     }
     while (!controller.signal.aborted) {
+      writeSchedulerProgress(context, "idle");
       await tick(context);
+      writeSchedulerProgress(context, "idle");
       try {
         await delay(TICK_MS, undefined, { signal: controller.signal });
       } catch (error) {

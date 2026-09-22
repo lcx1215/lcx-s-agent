@@ -211,7 +211,28 @@ export async function readFinanceBrokerHistory(directory: string, accountId: str
     }
     const stream = record.body.query.split(":", 1)[0];
     for (const fact of record.body.payload) {
-      facts.set(`${stream}:${caseflowFingerprint(fact)}`, { stream, fact });
+      // Preserve raw revisions in the ledger, but expose one observation per
+      // broker identity to research. Orders and activities have separate IDs.
+      const nativeId = typeof fact.id === "string" ? fact.id.trim() : "";
+      const key =
+        (stream === "orders" || stream === "activities") && nativeId
+          ? `${stream}:id:${nativeId}`
+          : `${stream}:content:${caseflowFingerprint(fact)}`;
+      const previous = facts.get(key);
+      const previousTime = Date.parse(
+        typeof previous?.fact.updated_at === "string" ? previous.fact.updated_at : "",
+      );
+      const nextTime = Date.parse(typeof fact.updated_at === "string" ? fact.updated_at : "");
+      if (
+        Number.isFinite(previousTime) &&
+        (!Number.isFinite(nextTime) || nextTime < previousTime)
+      ) {
+        continue;
+      }
+      // Reinsertion keeps recently observed identities at the end for bounded
+      // history consumers. A stale broker revision must not displace a newer one.
+      facts.delete(key);
+      facts.set(key, { stream, fact });
     }
   }
   return {
@@ -267,7 +288,8 @@ export async function syncConfiguredAlpacaPaperHistory(options: {
   ) {
     throw new Error("history account id/created_at unavailable");
   }
-  return syncAlpacaPaperHistory({
+  const { syncFinanceBrokerReconciliation } = await import("./finance-broker-reconciliation.js");
+  const reconciliation = await syncFinanceBrokerReconciliation({
     directory: options.directory,
     accountId: account.id,
     after: account.created_at,
@@ -276,4 +298,6 @@ export async function syncConfiguredAlpacaPaperHistory(options: {
     read,
     signal,
   });
+  const { historySync, ...accountReconciliation } = reconciliation;
+  return { ...historySync, accountReconciliation };
 }

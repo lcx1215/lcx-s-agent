@@ -31,6 +31,7 @@ import type { FinanceDecisionMode } from "./finance-decision-policy.js";
 import {
   withFinanceExecutionSafety,
   type FinanceExecutionSafetyContext,
+  type FinanceExecutionSafetyFacts,
 } from "./finance-execution-safety.js";
 
 export const FINANCE_EXECUTION_RECEIPT_SCHEMA = "lcx_finance_execution_receipt_v1" as const;
@@ -169,7 +170,12 @@ export type FinanceExecutionAdapter = Readonly<{
   instruments: readonly string[];
   /** Credentials, funding and account binding are a separate authority, never read here. */
   credentialsAuthority: "external";
-  execute: (intent: FinanceExecutionIntent, signal: AbortSignal) => Promise<FinanceExecutionFill>;
+  supportsProtectedReduction?: boolean;
+  execute: (
+    intent: FinanceExecutionIntent,
+    signal: AbortSignal,
+    facts?: FinanceExecutionSafetyFacts,
+  ) => Promise<FinanceExecutionFill>;
 }>;
 
 export type FinanceExecutionReceipt = Readonly<{
@@ -533,11 +539,12 @@ export async function placeFinanceOrder(
     adapterId: adapter.id,
     venue: adapter.venue,
     adapterKind: adapter.kind,
+    supportsProtectedReduction: adapter.supportsProtectedReduction,
     signal: request.signal,
     recordedAt: request.recordedAt,
     buildReceipt: (fill, recordedAt, accountId) =>
       buildFinanceExecutionReceipt({ intent, adapter, fill, recordedAt, accountId }),
-    execute: (signal) => adapter.execute(intent, signal),
+    execute: (signal, facts) => adapter.execute(intent, signal, facts),
   });
   if (!safety.ok) {
     return Object.freeze({

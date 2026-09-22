@@ -58,6 +58,14 @@ it("runs the real idle loop, excludes another CLI writer, and removes ownership 
     timeout: 5000,
   });
   expect(fs.existsSync(path.join(directory, "daily-cycle-scheduler.lock"))).toBe(true);
+  await vi.waitFor(() => {
+    const progress = JSON.parse(
+      fs.readFileSync(path.join(directory, "daily-cycle-scheduler.lock", "progress.json"), "utf8"),
+    );
+    expect(progress.pid).toBe(owner.child.pid);
+    expect(progress.phase).toBe("idle");
+    expect(progress.placementEnabled).toBe(false);
+  });
   const contender = start(["--import", "tsx", script, "--once", "day", "--dir", directory]);
   expect(await contender.closed).toBe(1);
   expect(contender.output.stderr).toContain("lock exists");

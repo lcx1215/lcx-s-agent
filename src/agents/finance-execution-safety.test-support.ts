@@ -17,11 +17,13 @@ afterEach(() => {
 /** Synthetic funded account, held shares and fresh observations. No provider evidence is implied. */
 export function syntheticSafetyContextForAsset(
   assetType: "spot_equity" | "spot_crypto",
+  observeAccount?: (accountId: string) => void,
 ): FinanceExecutionSafetyContextFactory {
   return (binding) => {
     const stateDir = mkdtempSync(join(tmpdir(), "finance-synthetic-safety-"));
     directories.push(stateDir);
     const accountId = stateDir.split("/").at(-1)!;
+    observeAccount?.(accountId);
     const observedAt = new Date(Date.now()).toISOString();
     const expiresAt = new Date(Date.now() + 60_000).toISOString();
     return createFinanceExecutionSafetyContext({

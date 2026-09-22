@@ -1,4 +1,5 @@
 import { readFile as readPortfolioFile } from "node:fs/promises";
+import type { createFinanceAlpacaCycleController } from "../../src/agents/finance-alpaca-cycle-controller.js";
 import {
   createAlpacaExecutionQuoteProvider,
   type AlpacaExecutionQuoteFeed,
@@ -137,10 +138,12 @@ type Options = Readonly<{
   equity: number;
   band: number;
   place: boolean;
+  checkExecution: boolean;
   venue: "paper" | "alpaca";
   equityFromVenue: boolean;
   syncAlpacaHistory: boolean;
   portfolioPlanPath?: string;
+  executionPolicyPath?: string;
   /**
    * Declared risk caps. They are flags rather than constants because a boundary nobody chose
    * is not a boundary: the unattended budget refuses an undeclared cap, and a cap the script
@@ -155,8 +158,8 @@ type Options = Readonly<{
 
 const USAGE =
   "Usage: node --import tsx scripts/operator/lcx-finance-daily-cycle.ts [--json] " +
-  "[--mode day|night] [--dir PATH] [--as-of ISO] [--equity N] [--band N] [--place] " +
-  "[--portfolio-plan PATH] [--venue paper|alpaca] [--equity-from-venue] [--sync-alpaca-history] [--execution-quote-feed iex|sip] [--execution-max-age-ms N] " +
+  "[--mode day|night] [--dir PATH] [--as-of ISO] [--equity N] [--band N] [--place | --check-execution] " +
+  "[--portfolio-plan PATH] [--execution-policy PATH] [--venue paper|alpaca] [--equity-from-venue] [--sync-alpaca-history] [--execution-quote-feed iex|sip] [--execution-max-age-ms N] " +
   "[--max-order-notional N] [--max-instrument-notional N] [--max-orders N]";
 
 function positiveNumber(raw: string | undefined, flag: string): number {
@@ -175,11 +178,13 @@ function parseArgs(argv: readonly string[]): Options {
     equity: 100_000,
     band: 0.05,
     place: false,
+    checkExecution: false,
     venue: "paper" as "paper" | "alpaca",
     equityFromVenue: false,
     syncAlpacaHistory: false,
     directory: undefined as string | undefined,
     portfolioPlanPath: undefined as string | undefined,
+    executionPolicyPath: undefined as string | undefined,
     // Defaults, not constants: they reproduce the previous behaviour when nothing is passed.
     maxOrderNotional: 10_000,
     maxInstrumentNotional: 20_000,
@@ -190,7 +195,15 @@ function parseArgs(argv: readonly string[]): Options {
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     const next = argv[index + 1];
-    if (arg === "--portfolio-plan") {
+    if (arg === "--check-execution") {
+      options.checkExecution = true;
+    } else if (arg === "--execution-policy") {
+      if (!next || next.startsWith("--")) {
+        throw new Error("--execution-policy requires a path");
+      }
+      options.executionPolicyPath = next;
+      index += 1;
+    } else if (arg === "--portfolio-plan") {
       if (!next) {
         throw new Error("--portfolio-plan requires a path");
       }
@@ -268,13 +281,25 @@ export async function runFinanceDailyCycleOperator(
   deps: {
     createExecutionQuoteProvider?: typeof createAlpacaExecutionQuoteProvider;
     syncHistory?: typeof syncConfiguredAlpacaPaperHistory;
+    createController?: typeof createFinanceAlpacaCycleController;
   } = {},
 ): Promise<Record<string, unknown>> {
   const options = parseArgs(argv);
   const directory = options.directory ?? resolveFinanceStateDir().directory;
   if (
+    options.checkExecution &&
+    (options.place ||
+      options.mode !== "day" ||
+      options.venue !== "alpaca" ||
+      !options.executionPolicyPath)
+  ) {
+    throw new Error(
+      "--check-execution requires day, Alpaca and an execution policy, without --place",
+    );
+  }
+  if (
     options.mode === "day" &&
-    options.place &&
+    (options.place || options.checkExecution) &&
     options.venue === "alpaca" &&
     (!options.executionQuoteFeed || options.executionMaxAgeMs === undefined)
   ) {
@@ -290,7 +315,14 @@ export async function runFinanceDailyCycleOperator(
   if (options.syncAlpacaHistory) {
     try {
       historySync = await (deps.syncHistory ?? syncConfiguredAlpacaPaperHistory)({ directory });
-      if (historySync.status !== "raw_history_synced") {
+      if (
+        historySync.status !== "raw_history_synced" ||
+        (options.mode === "day" &&
+          options.place &&
+          options.venue === "alpaca" &&
+          !options.executionPolicyPath &&
+          historySync.accountReconciliation?.status !== "reconciled")
+      ) {
         return {
           directory,
           mode: options.mode,
@@ -327,7 +359,7 @@ export async function runFinanceDailyCycleOperator(
         error: "--equity-from-venue requires --venue alpaca",
       };
     }
-    const snapshot = await fetchAlpacaAccountSnapshot();
+    const snapshot = await fetchAlpacaAccountSnapshot({ directory });
     if (!snapshot.ok) {
       return {
         directory,
@@ -426,6 +458,41 @@ export async function runFinanceDailyCycleOperator(
         knob: "maxOrdersPerRun",
         fallback: options.maxOrdersPerRun,
       });
+      const controller =
+        (options.place || options.checkExecution) &&
+        options.venue === "alpaca" &&
+        options.executionPolicyPath
+          ? (
+              deps.createController ??
+              (await import("../../src/agents/finance-alpaca-cycle-controller.js"))
+                .createFinanceAlpacaCycleController
+            )({
+              directory,
+              instruments,
+              feed: options.executionQuoteFeed!,
+              maxAgeMs: options.executionMaxAgeMs!,
+              policy: JSON.parse(await readPortfolioFile(options.executionPolicyPath, "utf8")),
+            })
+          : undefined;
+      if (options.checkExecution) {
+        if (!controller) {
+          throw new Error("execution controller unavailable");
+        }
+        const inspection = await controller.inspectReconciliation(AbortSignal.timeout(120000));
+        const payload = {
+          ...base,
+          ok: inspection.readiness.status !== "blocked",
+          boundary: "broker_reconciliation_readiness_only",
+          ...inspection,
+          quotesVerified: false,
+          executionVerified: false,
+          ordersSubmitted: 0,
+        };
+        if (!options.json) {
+          process.stdout.write(JSON.stringify(payload, null, 2));
+        }
+        return payload;
+      }
       const report = await runFinanceDailyCycle({
         instruments,
         lookbackMonths: strategy?.lookbackMonths,
@@ -451,6 +518,7 @@ export async function runFinanceDailyCycleOperator(
               )({ feed: options.executionQuoteFeed, maxAgeMs: options.executionMaxAgeMs }),
             }
           : {}),
+        ...controller,
         directory,
       });
       const payload = {
@@ -460,6 +528,7 @@ export async function runFinanceDailyCycleOperator(
         strategyExecution: portfolioPlan ? strategies : strategy,
         ...(report.portfolio ? { portfolio: report.portfolio } : {}),
         modelCalls: report.modelCalls,
+        positionBook: report.positionBook,
         signalAnchor: report.signalAnchor,
         // Reported so a run can be read back against the boundary it actually used.
         caps: {

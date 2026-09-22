@@ -65,9 +65,12 @@ export type AlpacaAccountSnapshot = Readonly<{
 }>;
 
 export async function fetchAlpacaAccountSnapshot(
-  options: { read?: FinanceUncachedFetch } = {},
+  options: { read?: FinanceUncachedFetch; directory?: string } = {},
 ): Promise<{ ok: true; account: AlpacaAccountSnapshot } | { ok: false; reason: string }> {
-  const env = resolveFinanceCredentialEnv(process.env) as Record<string, unknown>;
+  const env = resolveFinanceCredentialEnv({
+    ...process.env,
+    ...(options.directory ? { LCX_FINANCE_STATE_DIR: options.directory } : {}),
+  }) as Record<string, unknown>;
   const keyId = typeof env.ALPACA_API_KEY_ID === "string" ? env.ALPACA_API_KEY_ID.trim() : "";
   const secret =
     typeof env.ALPACA_API_SECRET_KEY === "string" ? env.ALPACA_API_SECRET_KEY.trim() : "";
@@ -75,7 +78,7 @@ export async function fetchAlpacaAccountSnapshot(
     return { ok: false, reason: "Alpaca credentials are not configured" };
   }
 
-  const read = options.read ?? createFinanceUncachedFetch();
+  const read = options.read ?? createFinanceUncachedFetch({ directory: options.directory });
   try {
     const response = await read("https://paper-api.alpaca.markets/v2/account", {
       headers: {
@@ -260,6 +263,7 @@ export async function fetchAlpacaVenueState(
 }
 
 export type FinanceAlpacaRunRequest = Readonly<{
+  credentialStateDirectory?: string;
   createSafetyContext?: FinanceExecutionSafetyContextFactory;
   conclusion: FinanceResearchConclusion;
   signal?: AbortSignal;
@@ -343,14 +347,20 @@ export async function runFinanceAlpacaOrder(
     compiled.intent.stopPrice !== undefined
       ? "gtc"
       : undefined);
-  const transport = request.transport ?? createFinanceWriteTransport();
+  const transport =
+    request.transport ??
+    createFinanceWriteTransport({ directory: request.credentialStateDirectory });
   const adapter = createAlpacaExecutionAdapter({
     id: FINANCE_ALPACA_ADAPTER_ID,
+    credentialStateDirectory: request.credentialStateDirectory,
     instruments: request.instruments,
     ...(request.mode === undefined ? {} : { mode: request.mode }),
     postJson: (url, init) =>
       transport({ url, headers: init.headers, body: init.body, signal: init.signal }),
-    statusFetch: request.read ?? createFinanceUncachedFetch(),
+    cancelOrder: (url, init) =>
+      transport({ url, headers: init.headers, body: "", method: "DELETE", signal: init.signal }),
+    statusFetch:
+      request.read ?? createFinanceUncachedFetch({ directory: request.credentialStateDirectory }),
     ...(timeInForce === undefined ? {} : { timeInForce }),
     ...(fillPoll === undefined ? {} : { fillPoll }),
   });

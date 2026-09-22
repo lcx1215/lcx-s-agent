@@ -3,6 +3,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { acquireFileLock } from "../plugin-sdk/file-lock.js";
 import type {
+  FinanceExecutionReconciliation,
+  FinanceQuantityDifferenceIsolation,
+} from "./finance-broker-reconciliation.js";
+import type {
   FinanceExecutionIntent,
   FinanceExecutionFill,
   FinanceExecutionReceipt,
@@ -12,6 +16,7 @@ import type {
 import { stableStringify } from "./stable-stringify.js";
 
 export type FinanceExecutionSafetyFacts = Readonly<{
+  reconciliation?: FinanceExecutionReconciliation;
   accountId: string;
   adapterId: string;
   venue: string;
@@ -31,6 +36,9 @@ export type FinanceExecutionSafetyFacts = Readonly<{
   /** Exact last confirmed claim included in this fresh account snapshot. */
   reconciledThroughClaimId?: string;
   positionQuantity: number;
+  reservedSellQuantity?: number;
+  protectiveOrderIds?: readonly string[];
+  protectiveOrders?: readonly { id: string; quantity: number; stopPrice: number }[];
   openOrderIds: readonly string[];
   unresolvedOrderIds: readonly string[];
   account: Readonly<{
@@ -51,6 +59,7 @@ export type FinanceExecutionSafetyFacts = Readonly<{
   }>;
 }>;
 export type FinanceExecutionSafetyPolicy = Readonly<{
+  quantityDifferenceIsolation?: FinanceQuantityDifferenceIsolation;
   planId: string;
   revision: string;
   riskModel: "fully_funded_unhedged_spot";
@@ -140,6 +149,9 @@ export type FinanceExecutionSafetyClaim = {
     intent: FinanceExecutionIntent;
     policy: FinanceExecutionSafetyPolicy;
     budget: FinanceRiskBudget;
+    reconciliation?: FinanceExecutionReconciliation;
+    protectiveOrders?: readonly { id: string; quantity: number; stopPrice: number }[];
+    positionQuantity?: number;
   }>;
   fill?: FinanceExecutionFill;
   adapterKind?: "paper" | "venue";
@@ -223,6 +235,7 @@ export async function withFinanceExecutionSafety(params: {
   adapterId: string;
   venue: string;
   adapterKind: "paper" | "venue";
+  supportsProtectedReduction?: boolean;
   signal?: AbortSignal;
   recordedAt?: string;
   buildReceipt: (
@@ -230,7 +243,10 @@ export async function withFinanceExecutionSafety(params: {
     recordedAt: string,
     accountId: string,
   ) => FinanceExecutionReceipt;
-  execute: (signal: AbortSignal) => Promise<FinanceExecutionFill>;
+  execute: (
+    signal: AbortSignal,
+    facts: FinanceExecutionSafetyFacts,
+  ) => Promise<FinanceExecutionFill>;
 }): Promise<
   | { ok: true; fill: FinanceExecutionFill; receipt: FinanceExecutionReceipt }
   | { ok: false; reasons: string[] }
@@ -396,6 +412,63 @@ export async function withFinanceExecutionSafety(params: {
       ) {
         return refuse("execution_safety_account_or_position_not_usable");
       }
+      const reconciliation = facts.reconciliation;
+      const isolation = policy.quantityDifferenceIsolation;
+      let uncertaintyReserve = 0;
+      if (isolation && !reconciliation) {
+        return refuse("execution_safety_reconciliation_scope_required");
+      }
+      if (reconciliation) {
+        if (reconciliation.status === "restricted") {
+          if (
+            !isolation ||
+            reconciliation.historyStatus !== "unresolved" ||
+            !Array.isArray(reconciliation.quarantinedInstruments) ||
+            !reconciliation.quarantinedInstruments.length ||
+            !positive(reconciliation.uncertaintyReserve) ||
+            !positive(isolation.maxUnexplainedNotional) ||
+            reconciliation.uncertaintyReserve > isolation.maxUnexplainedNotional ||
+            !reconciliation.quarantinedInstruments.every((symbol) =>
+              isolation.instruments.includes(symbol),
+            )
+          ) {
+            return refuse("execution_safety_reconciliation_scope_invalid");
+          }
+          if (
+            reconciliation.quarantinedInstruments.includes(intent.instrument.trim().toUpperCase())
+          ) {
+            return refuse("execution_safety_instrument_quarantined");
+          }
+          uncertaintyReserve = reconciliation.uncertaintyReserve;
+        } else if (
+          reconciliation.status !== "ready" ||
+          reconciliation.historyStatus !== "reconciled" ||
+          reconciliation.uncertaintyReserve !== 0 ||
+          reconciliation.quarantinedInstruments.length
+        ) {
+          return refuse("execution_safety_reconciliation_scope_invalid");
+        }
+      }
+
+      const reservedSellQuantity = facts.reservedSellQuantity ?? 0;
+      if (
+        !Number.isFinite(reservedSellQuantity) ||
+        reservedSellQuantity < 0 ||
+        reservedSellQuantity > facts.positionQuantity ||
+        (intent.side === "sell" &&
+          intent.quantity > facts.positionQuantity - reservedSellQuantity &&
+          !(
+            params.supportsProtectedReduction === true &&
+            params.venue === "alpaca:paper" &&
+            facts.protectiveOrders?.length === 1 &&
+            facts.protectiveOrders[0].quantity === facts.positionQuantity &&
+            reservedSellQuantity === facts.positionQuantity
+          ))
+      ) {
+        return refuse(
+          "execution_safety_protection_change_requires_terminal_cancel_and_fresh_position",
+        );
+      }
       const reducing = intent.side === "sell" && intent.quantity <= facts.positionQuantity;
       if (intent.side === "sell" && !reducing) {
         return refuse("execution_safety_spot_cannot_open_or_cross_short");
@@ -410,23 +483,27 @@ export async function withFinanceExecutionSafety(params: {
       ) {
         return refuse("execution_safety_portfolio_exposure_required");
       }
-      if (!reducing && facts.account.grossExposure + notional > policy.maxGrossExposure) {
+      if (
+        !reducing &&
+        facts.account.grossExposure + notional + uncertaintyReserve > policy.maxGrossExposure
+      ) {
         return refuse("execution_safety_portfolio_exposure_exceeded");
       }
       if (!reducing) {
         if (
-          !positive(facts.account.equity) ||
+          !positive(facts.account.equity - uncertaintyReserve) ||
           !positive(facts.account.peakEquity) ||
           facts.account.peakEquity < facts.account.equity ||
           !Number.isFinite(facts.account.availableCash) ||
-          facts.account.availableCash < notional ||
+          facts.account.availableCash - uncertaintyReserve < notional ||
           !positive(policy.maxPortfolioDrawdownFraction) ||
           policy.maxPortfolioDrawdownFraction > 1
         ) {
           return refuse("execution_safety_funding_and_survival_facts_required");
         }
         if (
-          (facts.account.peakEquity - facts.account.equity) / facts.account.peakEquity >=
+          (facts.account.peakEquity - facts.account.equity + uncertaintyReserve) /
+            facts.account.peakEquity >=
           policy.maxPortfolioDrawdownFraction
         ) {
           return refuse("execution_safety_authorized_drawdown_halt");
@@ -477,6 +554,10 @@ export async function withFinanceExecutionSafety(params: {
           intent,
           policy,
           budget,
+          ...(facts.reconciliation ? { reconciliation: facts.reconciliation } : {}),
+          ...(facts.protectiveOrders
+            ? { protectiveOrders: facts.protectiveOrders, positionQuantity: facts.positionQuantity }
+            : {}),
         },
       };
       await appendJournal(key, claim);
@@ -495,7 +576,7 @@ export async function withFinanceExecutionSafety(params: {
             ) {
               throw new Error("execution safety facts expired before dispatch");
             }
-            return params.execute(signal);
+            return params.execute(signal, facts);
           }),
           signal,
         );
@@ -596,5 +677,127 @@ export async function readFinanceExecutionSafetyClaims(params: {
     return [...new Map(values.map((claim) => [claim.id, claim])).values()];
   } finally {
     await handle.close();
+  }
+}
+
+/** Controller-only broker reconciliation under the same lock as order dispatch.
+ * No callback result means unresolved, never permission to resend the order. */
+export async function reconcileFinanceExecutionClaims(params: {
+  stateDir: string;
+  accountId: string;
+  venue: string;
+  signal?: AbortSignal;
+  resolve: (
+    claim: Readonly<FinanceExecutionSafetyClaim>,
+    signal: AbortSignal,
+  ) => Promise<FinanceExecutionFill | undefined>;
+}) {
+  const signal = AbortSignal.any([
+    AbortSignal.timeout(30_000),
+    ...(params.signal ? [params.signal] : []),
+  ]);
+  signal.throwIfAborted();
+  const root = await fs.realpath(params.stateDir);
+  const accountKey = digest([params.venue, params.accountId]);
+  const registeredRoot = accountRoots.get(accountKey);
+  if (registeredRoot !== undefined && registeredRoot !== root) {
+    throw new Error("execution safety account root conflict");
+  }
+  accountRoots.set(accountKey, root);
+  const file = path.join(root, `execution-safety-${accountKey}.jsonl`);
+  const prior = queues.get(file) ?? Promise.resolve();
+  let releaseQueue!: () => void;
+  const own = new Promise<void>((resolve) => {
+    releaseQueue = resolve;
+  });
+  const tail = prior.then(() => own);
+  queues.set(file, tail);
+  try {
+    await bounded(prior, signal);
+    signal.throwIfAborted();
+    const lock = await acquireFileLock(file, {
+      stale: Infinity,
+      retries: { retries: 20, factor: 1, minTimeout: 25, maxTimeout: 25 },
+    });
+    const result = { confirmed: [] as string[], unresolved: [] as string[] };
+    try {
+      const claims = await readFinanceExecutionSafetyClaims(params);
+      for (const claim of claims) {
+        signal.throwIfAborted();
+        if (claim.status === "confirmed") {
+          continue;
+        }
+        const binding = claim.binding;
+        if (
+          !binding ||
+          binding.accountId !== params.accountId ||
+          binding.venue !== params.venue ||
+          claim.id !==
+            digest([
+              binding.accountId,
+              binding.venue,
+              binding.intent.runAuthorizationId,
+              binding.intent.intentId,
+            ])
+        ) {
+          result.unresolved.push(claim.id);
+          continue;
+        }
+        // Clone before handing a claim to an adapter so it cannot rewrite authority.
+        const fill = await bounded(
+          Promise.resolve().then(() => params.resolve(structuredClone(claim), signal)),
+          signal,
+        );
+        signal.throwIfAborted();
+        if (!fill) {
+          result.unresolved.push(claim.id);
+          continue;
+        }
+        if (
+          fill.terminalOrderIdentity?.terminal !== true ||
+          !text(fill.terminalOrderIdentity.orderId) ||
+          !Number.isFinite(fill.filledQuantity) ||
+          fill.filledQuantity < 0 ||
+          fill.filledQuantity > binding.intent.quantity ||
+          !Number.isFinite(fill.fillPrice) ||
+          fill.fillPrice < 0 ||
+          (fill.filledQuantity > 0 && fill.fillPrice <= 0) ||
+          !Number.isFinite(Date.parse(fill.filledAt)) ||
+          !text(fill.venueRef)
+        ) {
+          throw new Error("invalid reconciled terminal fill");
+        }
+        const { buildFinanceExecutionReceipt } = await import("./finance-execution-adapter.js");
+        const at = new Date().toISOString();
+        const receipt = buildFinanceExecutionReceipt({
+          intent: binding.intent,
+          adapter: { id: binding.adapterId, venue: binding.venue, kind: "venue" },
+          fill,
+          recordedAt: at,
+          accountId: binding.accountId,
+          identityVersion: "account-v1",
+        });
+        await appendJournal(file, {
+          ...claim,
+          at,
+          status: "confirmed",
+          fill,
+          adapterKind: "venue",
+          receipt,
+          receiptIdentityVersion: "account-v1",
+        });
+        result.confirmed.push(claim.id);
+      }
+      return result;
+    } finally {
+      await lock.release();
+    }
+  } finally {
+    releaseQueue();
+    void tail.then(() => {
+      if (queues.get(file) === tail) {
+        queues.delete(file);
+      }
+    });
   }
 }

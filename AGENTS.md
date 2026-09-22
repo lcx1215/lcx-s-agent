@@ -26,8 +26,14 @@ Skill. Do not turn this file into a transcript or a second registry.
   compatibility default, while explicit `strategy_candidate` and
   `conditional_trade_candidate` modes may produce reviewable strategy or
   conditional buy/sell candidates. An explicit `live_execution` mode may place
-  real orders, but only through a declared execution adapter, and only for the
-  specific venue, instrument, size, and run the user authorizes. Enabling a mode
+  real-money orders only through a declared execution adapter and within the
+  specific venue, instrument, size, and run the user authorizes. Explicit user
+  authorization for autonomous paper trading permits the controller to choose
+  instruments, sides, sizes, and repeated runs within that paper venue without
+  per-order confirmation. All orders still use the shared execution gate; paper
+  authorization never permits a live account or a fallback to live execution.
+  Evidence, funding, deduplication, and reconciliation checks remain mandatory.
+  Enabling a mode
   never implies credentials, account funding, or wallet keys; those remain
   separate authorities and are never read, stored, or moved as a side effect.
   Current data still needs a source and timestamp, and missing evidence must be

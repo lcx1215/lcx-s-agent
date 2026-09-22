@@ -506,3 +506,158 @@ it.each(["account-expiry", "quote-expiry", "account-age", "quote-age", "instrume
     }
   },
 );
+
+it.each([0, 4, 5])(
+  "does not sell inventory reserved by a protective stop: %s",
+  async (reserved) => {
+    const f = await fixture();
+    const intent = { ...f.input.intent, side: "sell" as const, quantity: 2 };
+    const input = {
+      ...f.input,
+      intent,
+      policy: { ...f.input.policy, authorizedSide: "sell" as const },
+      readFacts: async () => ({ ...f.facts, reservedSellQuantity: reserved }),
+    };
+    const result = await placeFinanceOrder({
+      ...f.request,
+      intent,
+      safetyContext: createFinanceExecutionSafetyContext(input),
+    });
+    expect(result.status).toBe(reserved > 3 ? "refused" : "placed");
+  },
+);
+
+it("passes a protected reduction plan only to its declared capable paper venue and journals it", async () => {
+  const f = await fixture();
+  const intent = { ...f.input.intent, side: "sell" as const, quantity: 2 };
+  const protection = [{ id: "old-stop", quantity: 5, stopPrice: 90 }];
+  const execute = vi.fn(async () => ({
+    filledQuantity: 2,
+    fillPrice: 100,
+    filledAt: new Date().toISOString(),
+    venueRef: "alpaca:paper:sale",
+    terminalOrderIdentity: { orderId: "sale", terminal: true as const },
+  }));
+  const adapter = {
+    ...f.adapter,
+    kind: "venue" as const,
+    venue: "alpaca:paper",
+    supportsProtectedReduction: true,
+    execute,
+  };
+  const input = {
+    ...f.input,
+    venue: adapter.venue,
+    intent,
+    policy: { ...f.input.policy, authorizedSide: "sell" as const },
+    readFacts: async () => ({
+      ...f.facts,
+      venue: adapter.venue,
+      reservedSellQuantity: 5,
+      protectiveOrders: protection,
+    }),
+  };
+  const result = await placeFinanceOrder({
+    ...f.request,
+    adapters: [adapter],
+    intent,
+    safetyContext: createFinanceExecutionSafetyContext(input),
+  });
+  expect(result.status).toBe("placed");
+  expect(execute).toHaveBeenCalledWith(
+    intent,
+    expect.any(AbortSignal),
+    expect.objectContaining({ protectiveOrders: protection }),
+  );
+  const { readFinanceExecutionSafetyClaims } = await import("./finance-execution-safety.js");
+  const claims = await readFinanceExecutionSafetyClaims({
+    stateDir: input.stateDir,
+    accountId: input.accountId,
+    venue: adapter.venue,
+  });
+  expect(claims[0].binding?.protectiveOrders).toEqual(protection);
+});
+
+it.each(["cash", "exposure", "drawdown", "quarantine", "missing_policy", "missing_scope"])(
+  "enforces %s in the shared exit when historical differences are isolated",
+  async (scenario) => {
+    const f = await fixture();
+    const execute = vi.fn(f.adapter.execute);
+    const reconciliation = {
+      status: "restricted" as const,
+      historyStatus: "unresolved" as const,
+      quarantinedInstruments: scenario === "quarantine" ? ["SPY"] : ["BTC/USD"],
+      uncertaintyReserve: 2,
+      reasons: ["synthetic"],
+    };
+    const account = {
+      ...f.facts.account,
+      ...(scenario === "cash" ? { availableCash: 101 } : {}),
+      ...(scenario === "drawdown" ? { equity: 8001 } : {}),
+    };
+    const input = {
+      ...f.input,
+      policy: {
+        ...f.input.policy,
+        maxGrossExposure: scenario === "exposure" ? 601 : f.input.policy.maxGrossExposure,
+        quantityDifferenceIsolation:
+          scenario === "missing_policy"
+            ? undefined
+            : { instruments: ["SPY", "BTC/USD"], maxUnexplainedNotional: 10 },
+      },
+      readFacts: async () => ({
+        ...f.facts,
+        account,
+        reconciliation: scenario === "missing_scope" ? undefined : reconciliation,
+      }),
+    };
+    const result = await placeFinanceOrder({
+      ...f.request,
+      adapters: [{ ...f.adapter, execute }],
+      safetyContext: createFinanceExecutionSafetyContext(input),
+    });
+    expect(result.status).toBe("refused");
+    expect(execute).not.toHaveBeenCalled();
+  },
+);
+
+it("persists the actual restricted scope without changing native cash or equity facts", async () => {
+  const f = await fixture();
+  const reconciliation = {
+    status: "restricted" as const,
+    historyStatus: "unresolved" as const,
+    quarantinedInstruments: ["BTC/USD"],
+    uncertaintyReserve: 2,
+    reasons: ["synthetic"],
+  };
+  const execute = vi.fn(f.adapter.execute);
+  const input = {
+    ...f.input,
+    policy: {
+      ...f.input.policy,
+      quantityDifferenceIsolation: { instruments: ["BTC/USD"], maxUnexplainedNotional: 10 },
+    },
+    readFacts: async () => ({ ...f.facts, reconciliation }),
+  };
+  expect(
+    (
+      await placeFinanceOrder({
+        ...f.request,
+        adapters: [{ ...f.adapter, execute }],
+        safetyContext: createFinanceExecutionSafetyContext(input),
+      })
+    ).status,
+  ).toBe("placed");
+  expect(execute).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.any(AbortSignal),
+    expect.objectContaining({ account: f.facts.account, reconciliation }),
+  );
+  const { readFinanceExecutionSafetyClaims } = await import("./finance-execution-safety.js");
+  const claims = await readFinanceExecutionSafetyClaims({
+    stateDir: f.input.stateDir,
+    accountId: f.input.accountId,
+    venue: f.input.venue,
+  });
+  expect(claims[0].binding?.reconciliation).toEqual(reconciliation);
+});

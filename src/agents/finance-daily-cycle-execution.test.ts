@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   order: vi.fn(),
   paper: vi.fn(),
   venue: vi.fn(),
+  ledger: vi.fn(),
 }));
 vi.mock("./finance-free-market-collection-adapters.js", () => ({
   createChinaReachableUsEodHistoryCollectionAdapter: () => ({ collect: mocks.collect }),
@@ -19,7 +20,7 @@ vi.mock("./finance-bar-ledger.js", () => ({
   appendFinanceBars: async () => ({ repeatsSkipped: 0, appended: true }),
 }));
 vi.mock("./finance-position-ledger.js", () => ({
-  readFinancePositionLedger: async () => ({ ledger: { positions: [] }, receipts: [], marks: [] }),
+  readFinancePositionLedger: mocks.ledger,
   projectFinancePositions: () => ({ positions: [] }),
   appendFinanceExecutionReceipt: vi.fn(),
   appendFinancePositionMark: vi.fn(),
@@ -59,6 +60,7 @@ afterEach(() => {
 });
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.ledger.mockResolvedValue({ ledger: { positions: [] }, receipts: [], marks: [] });
   vi.spyOn(Date, "now").mockReturnValue(Date.parse(asOf));
   // Deliberately old history remains research input, never a current executable quote.
   mocks.collect.mockResolvedValue(
@@ -195,4 +197,95 @@ it("stops later orders when the final safety gate reports an unresolved executio
   const report = await runFinanceDailyCycle({ ...params, executionQuotes: quotes() });
   expect(mocks.order).toHaveBeenCalledTimes(1);
   expect(report.dataIssues.join()).toContain("stopped remaining orders");
+});
+
+it.each(["alpaca", "paper"] as const)(
+  "does not execute %s when the ledger cannot be read",
+  async (venue) => {
+    mocks.ledger.mockRejectedValueOnce(new Error("database corrupt"));
+    await expect(
+      runFinanceDailyCycle({ ...params, venue, executionQuotes: quotes() }),
+    ).rejects.toThrow("unknown holdings cannot be treated as flat");
+    expect(mocks.order).not.toHaveBeenCalled();
+    expect(mocks.paper).not.toHaveBeenCalled();
+  },
+);
+
+it("stops placement when the sizing read fails after successful repricing", async () => {
+  mocks.ledger
+    .mockResolvedValueOnce({ ledger: { positions: [] }, receipts: [], marks: [] })
+    .mockRejectedValueOnce(new Error("database disconnected"));
+  await expect(runFinanceDailyCycle({ ...params, executionQuotes: quotes() })).rejects.toThrow(
+    "unknown holdings cannot be treated as flat",
+  );
+  expect(mocks.order).not.toHaveBeenCalled();
+});
+
+it("uses the controller account book without reading or repricing unrelated receipt holdings", async () => {
+  mocks.ledger.mockRejectedValue(new Error("legacy book must not be consumed"));
+  const report = await runFinanceDailyCycle({
+    ...params,
+    accountId: "bound-account",
+    executionQuotes: quotes(),
+    accountBookProvider: async () => ({
+      accountId: "bound-account",
+      venue: "alpaca:paper",
+      equity: 100000,
+      observedAt: asOf,
+      expiresAt: new Date(Date.parse(asOf) + 60000).toISOString(),
+      positions: [{ instrument: "AAPL", quantity: 200, marketValue: 50000 }],
+    }),
+  });
+  expect(report.drift.find((row) => row.instrument === "AAPL")?.action).toBe("none");
+  expect(mocks.ledger).not.toHaveBeenCalled();
+  expect(mocks.venue).not.toHaveBeenCalled();
+  expect(mocks.order).toHaveBeenCalledTimes(1);
+});
+
+it("refuses a controller account book belonging to a different account", async () => {
+  await expect(
+    runFinanceDailyCycle({
+      ...params,
+      accountId: "bound-account",
+      accountBookProvider: async () => ({
+        accountId: "other-account",
+        venue: "alpaca:paper",
+        equity: 100000,
+        observedAt: asOf,
+        expiresAt: new Date(Date.parse(asOf) + 60000).toISOString(),
+        positions: [],
+      }),
+    }),
+  ).rejects.toThrow("account-bound position snapshot invalid");
+  expect(mocks.order).not.toHaveBeenCalled();
+});
+
+it("keeps quarantined targets out of dispatch and sizes other targets after the uncertainty reserve", async () => {
+  const reconciliation = {
+    status: "restricted" as const,
+    historyStatus: "unresolved" as const,
+    quarantinedInstruments: ["AAPL"],
+    uncertaintyReserve: 10,
+    reasons: ["synthetic gap"],
+  };
+  const report = await runFinanceDailyCycle({
+    ...params,
+    accountId: "bound-account",
+    executionQuotes: quotes(),
+    accountBookProvider: async () => ({
+      accountId: "bound-account",
+      venue: "alpaca:paper",
+      equity: 100000,
+      observedAt: asOf,
+      expiresAt: new Date(Date.parse(asOf) + 60000).toISOString(),
+      positions: [],
+      reconciliation,
+    }),
+  });
+  expect(report.positionBook).toMatchObject({ sizingEquity: 99990, reconciliation });
+  expect(report.refusals.join()).toContain("historical quantity difference quarantined");
+  expect(mocks.order).toHaveBeenCalledTimes(1);
+  expect(mocks.order).toHaveBeenCalledWith(
+    expect.objectContaining({ conclusion: expect.objectContaining({ instrument: "MSFT" }) }),
+  );
 });

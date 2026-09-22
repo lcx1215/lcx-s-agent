@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import {
   createPaperExecutionAdapter,
   buildFinanceExecutionReceipt,
@@ -298,4 +298,74 @@ it("preserves original ID when recovering a previously persisted legacy-algorith
   expect((await recoverConfirmedFinanceExecutions(f.params)).replayed).toHaveLength(1);
   expect((await recoverConfirmedFinanceExecutions(f.params)).alreadyRecorded).toHaveLength(1);
   expect((await readFinancePositionRecords(f.params.ledgerDir)).receipts).toEqual([legacy]);
+});
+
+it.each(["unknown", "reserved"])(
+  "reconciles %s once and delivers one terminal receipt without resubmission",
+  async (status) => {
+    const f = await runConfirmed();
+    const first = JSON.parse((await fs.readFile(f.journal, "utf8")).split("\n")[0]);
+    await fs.writeFile(f.journal, JSON.stringify({ ...first, status }) + "\n");
+    const resolvePending = vi.fn(async () => ({
+      ...f.receipt.fill,
+      terminalOrderIdentity: { orderId: "broker-original", terminal: true as const },
+    }));
+    const recovered = await recoverConfirmedFinanceExecutions({ ...f.params, resolvePending });
+    expect(recovered.failures).toEqual([]);
+    expect(recovered.replayed).toHaveLength(1);
+    expect(recovered.pendingReconciliation).toEqual([]);
+    const repeated = await recoverConfirmedFinanceExecutions({ ...f.params, resolvePending });
+    expect(repeated.alreadyRecorded).toEqual(recovered.replayed);
+    expect(resolvePending).toHaveBeenCalledTimes(1);
+    expect((await readFinancePositionRecords(f.params.ledgerDir)).receipts).toHaveLength(1);
+  },
+);
+it("keeps unknown claims when broker has no terminal answer", async () => {
+  const f = await runConfirmed();
+  const first = JSON.parse((await fs.readFile(f.journal, "utf8")).split("\n")[0]);
+  await fs.writeFile(f.journal, JSON.stringify({ ...first, status: "unknown" }) + "\n");
+  const before = await fs.readFile(f.journal, "utf8");
+  const result = await recoverConfirmedFinanceExecutions({
+    ...f.params,
+    resolvePending: async () => undefined,
+  });
+  expect(result.pendingReconciliation).toHaveLength(1);
+  expect(await fs.readFile(f.journal, "utf8")).toBe(before);
+  expect((await readFinancePositionRecords(f.params.ledgerDir)).receipts).toHaveLength(0);
+});
+it("serializes two reconcilers so the broker resolver and journal confirmation run once", async () => {
+  const f = await runConfirmed();
+  const first = JSON.parse((await fs.readFile(f.journal, "utf8")).split("\n")[0]);
+  await fs.writeFile(f.journal, JSON.stringify({ ...first, status: "unknown" }) + "\n");
+  const resolvePending = vi.fn(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    return {
+      ...f.receipt.fill,
+      terminalOrderIdentity: { orderId: "original", terminal: true as const },
+    };
+  });
+  const results = await Promise.all([
+    recoverConfirmedFinanceExecutions({ ...f.params, resolvePending }),
+    recoverConfirmedFinanceExecutions({ ...f.params, resolvePending }),
+  ]);
+  expect(results.flatMap((result) => result.failures)).toEqual([]);
+  expect(resolvePending).toHaveBeenCalledTimes(1);
+  expect((await readFinancePositionRecords(f.params.ledgerDir)).receipts).toHaveLength(1);
+});
+it("cancellation preserves an unknown claim even if its resolver ignores the signal", async () => {
+  const f = await runConfirmed();
+  const first = JSON.parse((await fs.readFile(f.journal, "utf8")).split("\n")[0]);
+  await fs.writeFile(f.journal, JSON.stringify({ ...first, status: "unknown" }) + "\n");
+  const before = await fs.readFile(f.journal, "utf8");
+  const controller = new AbortController();
+  const result = await recoverConfirmedFinanceExecutions({
+    ...f.params,
+    signal: controller.signal,
+    resolvePending: async () => {
+      controller.abort();
+      return new Promise(() => {});
+    },
+  });
+  expect(result.failures).toHaveLength(1);
+  expect(await fs.readFile(f.journal, "utf8")).toBe(before);
 });

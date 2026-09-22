@@ -218,3 +218,43 @@ it.each(["true", 1, null, false])("rejects non-explicit unhedged evidence %s", a
   expect((await readAlpacaPaperSafetyFacts({ ...f.options, evidence })).ok).toBe(false);
   expect(f.read).not.toHaveBeenCalled();
 });
+
+it("preserves the controller reconciliation watermark while reading fresh broker facts", async () => {
+  const f = fixture(false);
+  const result = await readAlpacaPaperSafetyFacts({
+    ...f.options,
+    evidence: { ...f.options.evidence, reconciledThroughClaimId: "confirmed-claim" },
+  });
+  expect(result.ok).toBe(true);
+  if (result.ok) {
+    expect(result.facts.reconciledThroughClaimId).toBe("confirmed-claim");
+  }
+});
+it("rejects an empty reconciliation watermark", async () => {
+  const f = fixture(false);
+  const result = await readAlpacaPaperSafetyFacts({
+    ...f.options,
+    evidence: { ...f.options.evidence, reconciledThroughClaimId: " " },
+  });
+  expect(result.ok).toBe(false);
+});
+it("classifies a standing protective stop and preserves its reserved inventory", async () => {
+  const f = fixture(false);
+  f.orders.push({
+    id: "stop",
+    symbol: "SPY",
+    qty: "1",
+    filled_qty: "0",
+    stop_price: "90",
+    type: "stop",
+    side: "sell",
+    status: "new",
+    time_in_force: "gtc",
+  });
+  const result = await readAlpacaPaperSafetyFacts(f.options);
+  expect(result.ok).toBe(true);
+  if (result.ok) {
+    expect(result.facts.reservedSellQuantity).toBe(1);
+    expect(result.facts.protectiveOrderIds).toEqual(["stop"]);
+  }
+});

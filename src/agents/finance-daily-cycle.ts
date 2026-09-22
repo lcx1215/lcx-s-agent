@@ -1,4 +1,11 @@
 import { withTimeout } from "../utils/with-timeout.js";
+import { isAlpacaOrderUncertain } from "./finance-alpaca-execution-adapter.js";
+import {
+  fetchAlpacaVenueState,
+  runFinanceAlpacaOrder,
+  type AlpacaVenueState,
+} from "./finance-alpaca-run.js";
+import { appendFinanceBars } from "./finance-bar-ledger.js";
 /**
  * The daytime cycle: everything that can be done without a model.
  *
@@ -24,13 +31,7 @@ import { withTimeout } from "../utils/with-timeout.js";
  * the high/low of the same bars and have no other supply, so discarding them after one use makes
  * those measures permanently unavailable for rules nobody backfilled by hand.
  */
-import { isAlpacaOrderUncertain } from "./finance-alpaca-execution-adapter.js";
-import {
-  fetchAlpacaVenueState,
-  runFinanceAlpacaOrder,
-  type AlpacaVenueState,
-} from "./finance-alpaca-run.js";
-import { appendFinanceBars } from "./finance-bar-ledger.js";
+import type { FinanceExecutionReconciliation } from "./finance-broker-reconciliation.js";
 import { financeMonthlyTrendReturn } from "./finance-daily-strategy.js";
 import type {
   FinanceExecutionIntent,
@@ -134,8 +135,20 @@ export function executionQuoteIssue(
   return null;
 }
 
+export type FinanceDailyAccountBook = Readonly<{
+  reconciliation?: FinanceExecutionReconciliation;
+  accountId: string;
+  venue: "alpaca:paper";
+  observedAt: string;
+  expiresAt: string;
+  equity: number;
+  positions: readonly { instrument: string; quantity: number; marketValue: number }[];
+}>;
+
 export type FinanceDailyCycleParams = Readonly<{
   createSafetyContext?: FinanceExecutionSafetyContextFactory;
+  accountId?: string;
+  accountBookProvider?: (signal: AbortSignal) => Promise<FinanceDailyAccountBook>;
   instruments: readonly string[];
   equity: number;
   asOf: string;
@@ -195,6 +208,13 @@ export type FinanceDailyCycleReport = Readonly<{
   /** Month end the signal was computed from. Constant within a calendar month. */
   signalAnchor: string;
   modelCalls: 0;
+  positionBook?: {
+    source: "controller_account" | "receipt_ledger";
+    accountId?: string;
+    observedAt?: string;
+    sizingEquity: number;
+    reconciliation?: FinanceExecutionReconciliation;
+  };
   portfolio?: ReturnType<typeof composeFinancePortfolioTargets>;
   targets: readonly FinanceDailyCycleTarget[];
   drift: readonly FinanceDailyCycleDrift[];
@@ -640,7 +660,11 @@ export async function runFinanceDailyCycle(
   if (params.portfolioPlan) {
     validateFinancePortfolioPlan(params.portfolioPlan, asOf, params.venue ?? "paper");
     // The existing live account seam does not yet carry a controller-bound portfolio account.
-    if (params.place && params.venue === "alpaca") {
+    if (
+      params.place &&
+      params.venue === "alpaca" &&
+      (!params.accountId || !params.accountBookProvider || !params.createSafetyContext)
+    ) {
       throw new Error(
         "portfolio Alpaca placement requires account-bound controller integration; preview only",
       );
@@ -745,6 +769,54 @@ export async function runFinanceDailyCycle(
     }
   }
 
+  let equity = params.equity;
+  let accountBook: FinanceDailyAccountBook | undefined;
+  if (params.accountBookProvider) {
+    accountBook = await withTimeout(
+      params.accountBookProvider(AbortSignal.timeout(120000)),
+      120000,
+    );
+    const now = (params.executionNow ?? Date.now)();
+    const symbols = new Set<string>();
+    if (
+      params.venue !== "alpaca" ||
+      !params.accountId ||
+      accountBook.accountId !== params.accountId ||
+      accountBook.venue !== "alpaca:paper" ||
+      !Number.isFinite(accountBook.equity) ||
+      accountBook.equity <= 0 ||
+      !Number.isFinite(Date.parse(accountBook.observedAt)) ||
+      Date.parse(accountBook.observedAt) > now ||
+      !(Date.parse(accountBook.expiresAt) > now)
+    ) {
+      throw new Error("account-bound position snapshot invalid or expired");
+    }
+    for (const position of accountBook.positions) {
+      if (
+        !position.instrument ||
+        position.instrument !== position.instrument.toUpperCase() ||
+        symbols.has(position.instrument) ||
+        !Number.isFinite(position.quantity) ||
+        position.quantity <= 0 ||
+        !Number.isFinite(position.marketValue) ||
+        position.marketValue < 0
+      ) {
+        throw new Error("invalid account-bound position");
+      }
+      symbols.add(position.instrument);
+    }
+    const reserve = accountBook.reconciliation?.uncertaintyReserve ?? 0;
+    if (
+      accountBook.reconciliation?.status === "blocked" ||
+      !Number.isFinite(reserve) ||
+      reserve < 0 ||
+      reserve >= accountBook.equity
+    ) {
+      throw new Error("account reconciliation cannot support execution sizing");
+    }
+    equity = Math.min(equity, accountBook.equity - reserve);
+  }
+
   // Marks: price the book with the bars this run just measured.
   //
   // The only writer of a mark used to be a fill, so a position that was never traded again kept
@@ -757,7 +829,9 @@ export async function runFinanceDailyCycle(
   const marksFiled: { instrument: string; price: number; at: string; appended: boolean }[] = [];
   const unpricedHoldings: string[] = [];
   try {
-    const held = await readFinancePositionLedger(directory);
+    const held = accountBook
+      ? { ledger: { positions: [] } }
+      : await readFinancePositionLedger(directory);
     for (const position of held.ledger.positions) {
       if (position.quantity === 0) {
         continue;
@@ -791,8 +865,13 @@ export async function runFinanceDailyCycle(
       }
     }
   } catch (error) {
-    // An unreadable position book must not abort the run for the same reason an unwritable bar
-    // book must not: the cycle's job is the book it trades, and a missing price is reported.
+    if (params.place === true || params.portfolioPlan) {
+      throw new Error(
+        "position ledger unreadable; unknown holdings cannot be treated as flat for execution",
+        { cause: error },
+      );
+    }
+    // Research previews may retain partial data; execution requires a readable book.
     dataIssues.push(
       `position book unreadable, nothing was re-priced: ` +
         (error instanceof Error ? error.message : String(error)),
@@ -896,30 +975,46 @@ export async function runFinanceDailyCycle(
     refusals.push(`${instrument}: conflicting strategy intentions require controller resolution`);
   }
 
+  for (const instrument of accountBook?.reconciliation?.quarantinedInstruments ?? []) {
+    if (targets.some((target) => target.instrument === instrument)) {
+      blockedInstruments.add(instrument);
+      refusals.push(`${instrument}: historical quantity difference quarantined; no order proposed`);
+    }
+  }
+
   // Current weights from the actual ledger, not from an assumed book.
   let currentWeight: ReadonlyMap<string, number> = new Map();
   const unpricedPositions = new Set<string>();
   const ledgerQuantity = new Map<string, number>();
   try {
-    const ledger = await readFinancePositionLedger(directory, { asOf });
-    // Sizing and reconciliation both have to see the book this run trades, not every fill the
-    // ledger has ever seen. See `receiptsForVenue`.
-    const book = projectFinancePositions({
-      receipts: receiptsForVenue(ledger.receipts, params.venue ?? "paper"),
-      marks: ledger.marks,
-    });
-    const derived = currentWeightsFromPositions(book.positions, params.equity);
-    currentWeight = derived.weights;
-    for (const symbol of derived.unpriced) {
-      unpricedPositions.add(symbol);
-    }
-    for (const position of book.positions) {
-      ledgerQuantity.set(position.instrument.toUpperCase(), position.quantity);
+    if (accountBook) {
+      currentWeight = new Map(
+        accountBook.positions.map((p) => [p.instrument, p.marketValue / equity]),
+      );
+      for (const position of accountBook.positions) {
+        ledgerQuantity.set(position.instrument, position.quantity);
+      }
+    } else {
+      const ledger = await readFinancePositionLedger(directory, { asOf });
+      // Sizing and reconciliation both have to see the book this run trades, not every fill the
+      // ledger has ever seen. See `receiptsForVenue`.
+      const book = projectFinancePositions({
+        receipts: receiptsForVenue(ledger.receipts, params.venue ?? "paper"),
+        marks: ledger.marks,
+      });
+      const derived = currentWeightsFromPositions(book.positions, equity);
+      currentWeight = derived.weights;
+      for (const symbol of derived.unpriced) {
+        unpricedPositions.add(symbol);
+      }
+      for (const position of book.positions) {
+        ledgerQuantity.set(position.instrument.toUpperCase(), position.quantity);
+      }
     }
   } catch {
-    if (portfolio) {
+    if (portfolio || params.place === true) {
       throw new Error(
-        "portfolio position ledger unreadable; unknown holdings cannot be treated as flat",
+        "position ledger unreadable; unknown holdings cannot be treated as flat for execution",
       );
     }
     dataIssues.push("position ledger unreadable; treating book as flat");
@@ -962,7 +1057,7 @@ export async function runFinanceDailyCycle(
     const excess = blockedInstruments.has(target.instrument)
       ? 0
       : Math.max(0, Math.abs(delta) - band);
-    const desiredNotional = excess * params.equity;
+    const desiredNotional = excess * equity;
     const notional = Math.min(desiredNotional, params.caps.maxOrderNotional);
     const action = excess <= 0 ? "none" : delta > 0 ? "buy" : "sell";
     return {
@@ -984,7 +1079,7 @@ export async function runFinanceDailyCycle(
   // a fill the local ledger missed shows up here and nowhere else.
   let venueState: AlpacaVenueState | null = null;
   let venueUnverified: string | null = null;
-  if (params.place === true && params.venue === "alpaca") {
+  if (params.place === true && params.venue === "alpaca" && !accountBook) {
     const read = await fetchAlpacaVenueState();
     if (read.ok) {
       venueState = read.state;
@@ -1077,6 +1172,7 @@ export async function runFinanceDailyCycle(
         continue;
       }
       const shared = {
+        credentialStateDirectory: directory,
         createSafetyContext: params.createSafetyContext,
         conclusion: {
           conclusionId: `daily_cycle:${signalAnchor}:${item.instrument}`,
@@ -1085,7 +1181,7 @@ export async function runFinanceDailyCycle(
           conviction: 1,
           assetClass: "us_equity",
           horizonDays: 30,
-          invalidationPrice: solveInvalidationPrice(referencePrice, item.notional, params.equity),
+          invalidationPrice: solveInvalidationPrice(referencePrice, item.notional, equity),
           thesis:
             `Daily drift rebalance against frozen monthly target (anchor ${signalAnchor}). ` +
             `target=${item.target} current=${item.current} band=${band}.` +
@@ -1098,7 +1194,7 @@ export async function runFinanceDailyCycle(
           referencePrice,
           referencePriceAt,
         },
-        equity: params.equity,
+        equity,
         runAuthorizationId: params.runAuthorizationId,
         budget: {
           automation: "unattended",
@@ -1159,6 +1255,14 @@ export async function runFinanceDailyCycle(
     asOf,
     signalAnchor,
     modelCalls: 0,
+    positionBook: {
+      source: accountBook ? ("controller_account" as const) : ("receipt_ledger" as const),
+      ...(accountBook
+        ? { accountId: accountBook.accountId, observedAt: accountBook.observedAt }
+        : {}),
+      sizingEquity: equity,
+      ...(accountBook?.reconciliation ? { reconciliation: accountBook.reconciliation } : {}),
+    },
     ...(portfolio ? { portfolio } : {}),
     targets,
     drift,

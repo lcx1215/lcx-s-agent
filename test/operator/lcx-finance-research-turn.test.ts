@@ -91,7 +91,11 @@ function fixture(assetClass: "us_equity" | "crypto" = "us_equity") {
     });
     return { status: 200, body: terminal };
   });
-  const read = vi.fn(async () => ({ status: 200, body: terminal }));
+  const read = vi.fn(async (url: string) => ({
+    status: 200,
+    body:
+      new URL(url).pathname === "/v2/account" ? JSON.stringify({ id: stateDirectory }) : terminal,
+  }));
   const control: FinanceResearchExecutionControl = {
     mode: "alpaca_paper",
     stateDirectory,
@@ -215,7 +219,7 @@ describe("research operator calls the existing execution bridge", () => {
       },
     });
     expect(f.transport).toHaveBeenCalledOnce();
-    expect(f.read).toHaveBeenCalledOnce();
+    expect(f.read).toHaveBeenCalledTimes(2);
   });
   it("defaults to shadow and never treats model authority fields as a controller", async () => {
     const f = fixture();
@@ -496,5 +500,13 @@ it("reads persisted broker history into the next research decision without creat
   expect(
     (await ledger.readFinancePositionRecords(f.control.stateDirectory!)).receipts,
   ).toHaveLength(0);
+  expect(f.transport).not.toHaveBeenCalled();
+});
+
+it("refuses the research execution before POST when credentials belong to a different account", async () => {
+  const f = fixture();
+  f.read.mockResolvedValueOnce({ status: 200, body: JSON.stringify({ id: "another-account" }) });
+  const result = await runFinanceResearchTurn(["--instrument", f.instrument], f.deps);
+  expect(result).toMatchObject({ status: "unknown" });
   expect(f.transport).not.toHaveBeenCalled();
 });

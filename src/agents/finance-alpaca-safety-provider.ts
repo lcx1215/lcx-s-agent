@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { FinanceExecutionSafetyFacts } from "./finance-execution-safety.js";
+import { classifyFinanceProtectionOrders } from "./finance-protection-coordination.js";
 import type { FinanceUncachedFetch } from "./finance-write-transport.js";
 
 /** Controller evidence, never inferred from model text or current equity. */
@@ -10,11 +11,15 @@ export type AlpacaSafetyControllerEvidence = Readonly<{
   observedAt: string;
   expiresAt: string;
   peakEquity: number;
+  /** Controller persists any newly observed high before issuing execution facts. */
+  trackNewHigh?: boolean;
   peakScope: string;
   /** Explicit evidence that the account has no external/derivative hedge dependencies. */
   unhedged: boolean;
   /** Controller journal reconciliation; empty broker open orders alone is insufficient. */
   unresolvedOrderIds: readonly string[];
+  /** Last confirmed claim covered by controller reconciliation, never inferred from open orders. */
+  reconciledThroughClaimId?: string;
 }>;
 export type AlpacaSafetyQuoteBinding = Readonly<{ kind: "alpaca_safety_quote" }>;
 const quotes = new WeakMap<
@@ -91,6 +96,9 @@ export async function readAlpacaPaperSafetyFacts(
       facts: FinanceExecutionSafetyFacts;
       peakScope: string;
       boundQuote: AlpacaSafetyQuoteBinding;
+      bidPrice: number;
+      askPrice: number;
+      positions: readonly { instrument: string; quantity: number; marketValue: number }[];
     }
   | { ok: false; reason: string }
 > {
@@ -115,6 +123,9 @@ export async function readAlpacaPaperSafetyFacts(
     !evidence.unhedged ||
     !Array.isArray(evidence.unresolvedOrderIds) ||
     evidence.unresolvedOrderIds.length !== 0 ||
+    (evidence.reconciledThroughClaimId !== undefined &&
+      (typeof evidence.reconciledThroughClaimId !== "string" ||
+        !evidence.reconciledThroughClaimId.trim())) ||
     !Number.isFinite(evidence.peakEquity) ||
     evidence.peakEquity <= 0 ||
     !recent(evidence.observedAt, start, options.maxAgeMs) ||
@@ -154,7 +165,7 @@ export async function readAlpacaPaperSafetyFacts(
       account.trading_blocked !== false ||
       account.account_blocked !== false ||
       account.trade_suspended_by_user !== false ||
-      orders.length !== 0 ||
+      orders.length >= 500 ||
       asset.symbol !== options.instrument ||
       asset.status !== "active" ||
       asset.tradable !== true ||
@@ -181,6 +192,8 @@ export async function readAlpacaPaperSafetyFacts(
     let gross = 0,
       quantity = 0;
     const seen = new Set<string>();
+    const quantities = new Map<string, number>();
+    const accountPositions: { instrument: string; quantity: number; marketValue: number }[] = [];
     for (const value of positions) {
       const position = record(value);
       const rawSymbol = string(position.symbol);
@@ -200,10 +213,16 @@ export async function readAlpacaPaperSafetyFacts(
         throw new Error("position");
       }
       seen.add(symbol);
+      quantities.set(symbol, qty);
+      accountPositions.push({ instrument: symbol, quantity: qty, marketValue });
       gross += marketValue;
       if (symbol === options.instrument) {
         quantity = qty;
       }
+    }
+    const protection = classifyFinanceProtectionOrders(orders.map(record), quantities);
+    if (protection.unresolved.length) {
+      throw new Error("orders require reconciliation");
     }
     // Margin capability/buying_power is deliberately unused. These facts prove no current borrowing.
     if (
@@ -213,7 +232,7 @@ export async function readAlpacaPaperSafetyFacts(
       gross > equity ||
       Math.abs(gross - longValue) > 0.01 ||
       Math.abs(cash + longValue - equity) > 0.01 ||
-      evidence.peakEquity < equity
+      (!evidence.trackNewHigh && evidence.peakEquity < equity)
     ) {
       throw new Error("funding");
     }
@@ -276,6 +295,9 @@ export async function readAlpacaPaperSafetyFacts(
       ok: true as const,
       peakScope: evidence.peakScope,
       boundQuote,
+      bidPrice: bid,
+      askPrice: ask,
+      positions: accountPositions,
       facts: {
         accountId: options.accountId,
         adapterId: "alpaca-venue",
@@ -286,8 +308,18 @@ export async function readAlpacaPaperSafetyFacts(
         observedAt: new Date(start).toISOString(),
         expiresAt,
         positionQuantity: quantity,
+        reservedSellQuantity: protection.reserved.get(options.instrument) ?? 0,
+        protectiveOrderIds: protection.protective.map((order) => order.id),
+        protectiveOrders: protection.protective.filter(
+          (order) => order.instrument === options.instrument,
+        ),
         openOrderIds: [],
         unresolvedOrderIds: [],
+        ...(evidence.reconciledThroughClaimId === undefined
+          ? {}
+          : {
+              reconciledThroughClaimId: evidence.reconciledThroughClaimId,
+            }),
         instrumentEvidence: {
           source: `${PAPER}/v2/assets;controller:${evidence.source}`,
           observedAt: new Date(start).toISOString(),
@@ -301,7 +333,7 @@ export async function readAlpacaPaperSafetyFacts(
           tradingBlocked: false,
           equity,
           availableCash: cash,
-          peakEquity: evidence.peakEquity,
+          peakEquity: Math.max(evidence.peakEquity, equity),
           currency,
           grossExposure: gross,
         },

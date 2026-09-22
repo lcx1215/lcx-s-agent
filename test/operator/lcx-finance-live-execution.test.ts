@@ -427,6 +427,11 @@ describe("mandatory owner-entry mandate and stop delivery", () => {
     expect(execute).toHaveBeenCalledWith(
       expect.objectContaining({ stopPrice: 225 }),
       expect.any(AbortSignal),
+      expect.objectContaining({
+        adapterId: "alpaca-venue",
+        instrument: "AAPL",
+        quote: expect.objectContaining({ price: 231.4 }),
+      }),
     );
   });
 });

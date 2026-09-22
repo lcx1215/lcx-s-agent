@@ -38,6 +38,73 @@ function reply(value: unknown) {
   return { status: 200, body: JSON.stringify(value) };
 }
 describe("Alpaca raw history sync", () => {
+  it("projects the newest order revision without losing raw history or merging activity IDs", async () => {
+    const options = await setup(async () => reply([]));
+    const append = (query: string, fact: Record<string, unknown>) =>
+      appendFinanceBrokerHistory(options.directory, {
+        kind: "broker_history",
+        accountId: options.accountId,
+        venue: "alpaca:paper",
+        query,
+        cursor: "",
+        payload: [fact],
+      });
+    await append("orders:first", {
+      id: "same",
+      status: "partially_filled",
+      updated_at: "2025-01-02T00:00:00Z",
+    });
+    await append("orders:second", {
+      id: "same",
+      status: "filled",
+      updated_at: "2025-01-02T00:01:00Z",
+    });
+    await append("orders:stale", { id: "same", status: "new", updated_at: "2025-01-01T00:00:00Z" });
+    await append("orders:undated", { id: "same", status: "new" });
+    await append("activities:first", { id: "same", activity_type: "FILL" });
+    const history = await readFinanceBrokerHistory(options.directory, options.accountId);
+    expect(history.facts.filter(({ stream }) => stream === "orders")).toEqual([
+      {
+        stream: "orders",
+        fact: { id: "same", status: "filled", updated_at: "2025-01-02T00:01:00Z" },
+      },
+    ]);
+    expect(history.facts.filter(({ stream }) => stream === "activities")).toHaveLength(1);
+    expect(
+      (await readFinanceBrokerHistoryRecords(options.directory, options.accountId, "alpaca:paper"))
+        .records,
+    ).toHaveLength(5);
+    expect(history.positionsReconciled).toBe(false);
+    expect(history.feesInterpreted).toBe(false);
+  });
+  it("uses the latest observation for undated activities and retains distinct fee identities", async () => {
+    const options = await setup(async () => reply([]));
+    for (const [cursor, payload] of [
+      [
+        "first",
+        [
+          { id: "fee", net_amount: "-0.01" },
+          { id: "other", net_amount: "-0.01" },
+        ],
+      ],
+      ["second", [{ id: "fee", net_amount: "-0.02" }]],
+    ] as const) {
+      await appendFinanceBrokerHistory(options.directory, {
+        kind: "broker_history",
+        accountId: options.accountId,
+        venue: "alpaca:paper",
+        query: "activities:test",
+        cursor,
+        payload: [...payload],
+      });
+    }
+    const history = await readFinanceBrokerHistory(options.directory, options.accountId);
+    expect(history.facts.map(({ fact }) => [fact.id, fact.net_amount])).toEqual([
+      ["other", "-0.01"],
+      ["fee", "-0.02"],
+    ]);
+  });
+
   it("stores partial fills, cancelled orders and fees without manufacturing receipts; replay is idempotent", async () => {
     const options = await setup(async (url) =>
       url.endsWith("/account")
@@ -228,7 +295,12 @@ describe("Alpaca raw history sync", () => {
       const url = new URL(raw);
       urls.push(url);
       return url.pathname === "/v2/account"
-        ? reply({ id: "synthetic-account", created_at: "2025-01-01T00:00:00Z" })
+        ? reply({
+            id: "synthetic-account",
+            created_at: "2025-01-01T00:00:00Z",
+            currency: "USD",
+            cash: "0",
+          })
         : reply([]);
     });
     await fs.writeFile(

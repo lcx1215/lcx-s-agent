@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-import { syntheticSafetyContext } from "./finance-execution-safety.test-support.js";
+import { syntheticSafetyContextForAsset } from "./finance-execution-safety.test-support.js";
 vi.mock("./finance-credential-env.js", () => ({
   resolveFinanceCredentialEnv: () => ({
     ALPACA_API_KEY_ID: process.env.ALPACA_API_KEY_ID,
@@ -223,8 +223,11 @@ const CONCLUSION = {
 };
 
 function request(overrides: Partial<FinanceAlpacaRunRequest> = {}): FinanceAlpacaRunRequest {
+  let accountId = "";
   return {
-    createSafetyContext: syntheticSafetyContext,
+    createSafetyContext: syntheticSafetyContextForAsset("spot_equity", (id) => {
+      accountId = id;
+    }),
     conclusion: CONCLUSION,
     market: { referencePrice: 100, referencePriceAt: new Date().toISOString() },
     equity: 100_000,
@@ -239,6 +242,15 @@ function request(overrides: Partial<FinanceAlpacaRunRequest> = {}): FinanceAlpac
     instruments: ["SPY"],
     transport: acceptingTransport("ord-fill"),
     ...overrides,
+    read: async (url, init) => {
+      if (new URL(url).pathname === "/v2/account") {
+        return { status: 200, body: JSON.stringify({ id: accountId }) };
+      }
+      if (!overrides.read) {
+        throw new Error("unexpected order poll");
+      }
+      return overrides.read(url, init);
+    },
   };
 }
 

@@ -16,6 +16,7 @@
 import fs from "node:fs/promises";
 import { createAlpacaSafetyReadTransport } from "./finance-alpaca-safety-transport.js";
 import { readFinanceBarLedger } from "./finance-bar-ledger.js";
+import { readFinanceBrokerReconciliation } from "./finance-broker-reconciliation.js";
 import { resolveFinanceCredentialEnv } from "./finance-credential-env.js";
 import { DEFAULT_OUTCOME_HORIZON_DAYS } from "./finance-outcome-backfill.js";
 import {
@@ -555,6 +556,16 @@ export async function readFinanceLinkHealth(
         detail: { checked: false, reason: venuePositions.reason },
       });
     } else {
+      const economic = await readFinanceBrokerReconciliation(directory, venuePositions.accountId);
+      checks.push({
+        id: "broker_economic_reconciliation",
+        severity: economic.ok ? "info" : "error",
+        ok: economic.ok,
+        summary: economic.ok
+          ? "broker activities, fees and positions reconciled"
+          : `broker economic reconciliation ${String(economic.reason)}`,
+        detail: { status: economic.reason, snapshot: economic.snapshot },
+      });
       const scoped = await readFinanceAccountPositionLedger(directory, {
         accountId: venuePositions.accountId,
         venue: "alpaca:paper",

@@ -35,7 +35,12 @@ execution rather than selecting an uncertain book; `--status` remains available.
   does not prove that a cycle has completed or that a login supervisor exists.
 - `--place`, `--venue`, `--equity-from-venue` and risk caps retain the daily-cycle
   operator's semantics. Scheduling does not add permission to place orders.
-  Invalid flags or numeric caps are rejected before a process starts.
+  Invalid flags or numeric caps are rejected before a process starts. Alpaca
+  placement also requires `--execution-policy`, `--execution-quote-feed` and
+  `--execution-max-age-ms` (at most 120000) before ownership or detachment. This
+  structural check does not validate credentials, policy contents or broker
+  readiness; those remain controller checks. Status and night-only settlement
+  remain independent of daytime execution configuration.
 
 ## Receipts and interrupted runs
 
@@ -163,3 +168,108 @@ A target weight is not an order quantity or an execution authorization. Alpaca p
 placement remains blocked until that path receives an account-bound controller;
 `accountId` in a plan is a scope label, not proof of access to that account. The current
 extension supports stock targets and does not silently normalize crypto identifiers.
+
+### Broker economics and protected reductions
+
+Configured Alpaca history synchronization also reads explicit `CFEE`/`FEE`
+activities and persists an account-scoped reconciliation in the existing broker
+history table. Fill quantities, cash movements, asset-denominated fees and cash
+fees are projected separately. Duplicate activity IDs do not duplicate holdings;
+conflicting revisions, unsupported corporate actions, incomplete history and
+unexplained balances remain unresolved. A quantity difference is never promoted
+to a fee merely because it resembles a published fee rate. The link-health
+report checks reconciliation freshness. Placement following an explicitly
+requested history sync requires a reconciled result; research may inspect gaps.
+
+Standing, unfilled GTC sell stops reserve inventory rather than blocking every
+order in the account. Alpaca paper supports a reduction against one stop covering
+the whole position: under the shared execution lock it cancels that exact stop,
+waits for terminal cancellation, verifies unchanged holdings, executes the sell,
+and restores protection for the actual remainder. The protective plan is retained
+in the execution claim. A confirmed sell can resume missing protection with a
+stable client order ID before its recovery is confirmed. A stop fill during
+cancellation or an unknown sell outcome requires reconciliation, never another
+blind sell. Explicit sell rejection restores the original protection. Multiple
+stops, non-GTC protection and unsupported order structures remain blocked for
+controller resolution. No real-money venue is enabled by this paper workflow.
+
+### Progress and routing
+
+`--portfolio-plan PATH` is forwarded to the daily operator. The scheduler resolves
+it to an absolute path before detaching, so a working-directory change cannot select
+a different plan. This does not enable placement.
+
+Status includes `progress` from the current scheduler lock. Each loop records idle
+progress and each child launch records cycle progress. Idle progress becomes stalled
+after two tick intervals; cycle progress gets its declared timeout plus two intervals.
+Missing, unreadable, invalid or absent-owner evidence never counts as responsive.
+Responsiveness does not establish successful work, broker connectivity or a fill.
+An interrupted earlier-day attempt is reported as `reconciliation_required`, since
+it prevents subsequent runs until its effects are reconciled. No health probe steals
+the lock or resubmits a possibly executed order.
+
+A placement cycle with an unreadable position ledger stops rather than sizing from
+an assumed empty portfolio. Preview data issues remain visible in its report.
+
+Night settlement does not inherit `--place` or `--equity-from-venue` from the
+scheduler's daytime configuration. A complete broker history containing unresolved
+economic differences remains visible without preventing night settlement; it blocks Alpaca placement by default. An incomplete history fetch remains a reported failure.
+
+### Account-bound paper controller
+
+For Alpaca placement the daily operator and scheduler accept `--execution-policy PATH`
+alongside the explicit quote feed, freshness window and risk caps. The local policy
+uses schema `lcx_alpaca_cycle_policy_v1` and declares `accountId`, `planId`, `revision`,
+`expiresAt`, `peakEquity`, `peakScope`, `unhedged: true`,
+`maxPortfolioDrawdownFraction` and `maxGrossExposure`. The policy is control-layer
+configuration, not strategy/model output; reading it does not enable `--place`.
+
+The controller restores confirmed journal receipts to the existing SQLite ledger,
+requires complete history and an acceptable reconciliation scope, and calculates weights from the bound
+native account positions. `positionBook` identifies that source and the sizing equity.
+Legacy simulator holdings are neither imported nor repriced as native positions.
+Each dispatch rechecks the last terminal order, reconciliation and fresh account facts
+under the shared account lock while retaining the exact native quote binding. Unknown
+claims, unexplained quantities/cash, account changes and stale quotes stop execution.
+Native protective orders go through the existing protected-reduction coordination.
+
+Newly observed equity highs are appended to an account/scope-specific peak history;
+recreating the controller cannot reset a recorded peak. A corrupt peak history refuses
+facts. Read and write transports use the selected finance root, and the execution
+adapter verifies the credential account against controller facts before submission.
+This path currently trades US equities only. Held crypto remains part of account-wide
+exposure and reconciliation; this controller does not add crypto execution support.
+
+### Bounded historical quantity isolation
+
+The default remains strict reconciliation. A local execution policy may explicitly
+include `quantityDifferenceIsolation` with `instruments` and a positive
+`maxUnexplainedNotional` in account currency. This only permits a bounded negative
+quantity difference in an existing long holding with a positive native market value.
+It does not infer a fee or mark history reconciled. Missing history, cash differences
+outside tolerance, unsupported activities, positive unexplained quantities and
+unresolved protective orders still block the account.
+
+The affected instruments are quarantined from all orders. Their total unexplained
+quantity is valued from native positions and rounded upward to cents as an uncertainty
+reserve. The shared gate subtracts the reserve from usable cash and equity and adds
+it to exposure; daily allocation uses equity after this reserve. Every dispatch checks
+fresh values against the policy limit. Other instruments can proceed only through all
+existing gates. Reports and safety receipts preserve the unresolved history, quarantine
+and reserve separately from unmodified native account facts.
+
+Inspect this boundary without submitting an order:
+
+```sh
+pnpm exec tsx scripts/operator/lcx-finance-daily-cycle.ts \
+  --check-execution --venue alpaca --execution-policy /path/to/policy.json \
+  --execution-quote-feed iex --execution-max-age-ms 30000 \
+  --dir /path/to/finance-state --json
+```
+
+This diagnostic reads broker evidence and updates the local reconciliation ledger.
+It reports `broker_reconciliation_readiness_only`, with `quotesVerified: false`,
+`executionVerified: false` and `ordersSubmitted: 0`. It cannot be combined with
+`--place`; a ready or restricted result does not prove a fresh execution quote or a
+successful trade. Enabling isolation in a deployed service remains a separate policy
+and deployment action.

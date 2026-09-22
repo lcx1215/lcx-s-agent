@@ -1,17 +1,22 @@
 import { buildFinanceExecutionReceipt } from "./finance-execution-adapter.js";
-import { readFinanceExecutionSafetyClaims } from "./finance-execution-safety.js";
+import {
+  readFinanceExecutionSafetyClaims,
+  reconcileFinanceExecutionClaims,
+} from "./finance-execution-safety.js";
 import { appendFinanceExecutionReceipt } from "./finance-position-ledger.js";
 import { stableStringify } from "./stable-stringify.js";
 
 /** Replay durable terminal receipts into the existing SQLite ledger, never replay an order.
  * Read-only journal snapshot: a concurrent incomplete append fails the snapshot as a whole.
- * This restores delivery only; it does not clear claims or certify broker reconciliation. */
+ * An optional controller resolver first reconciles pending claims under the dispatch lock.
+ * Absent that resolver, this restores delivery only and leaves unknown outcomes blocked. */
 export async function recoverConfirmedFinanceExecutions(params: {
   safetyStateDir: string;
   accountId: string;
   venue: string;
   ledgerDir: string;
   signal?: AbortSignal;
+  resolvePending?: Parameters<typeof reconcileFinanceExecutionClaims>[0]["resolve"];
 }) {
   const result = {
     replayed: [] as string[],
@@ -23,6 +28,15 @@ export async function recoverConfirmedFinanceExecutions(params: {
   };
   let claims;
   try {
+    if (params.resolvePending) {
+      await reconcileFinanceExecutionClaims({
+        stateDir: params.safetyStateDir,
+        accountId: params.accountId,
+        venue: params.venue,
+        signal: params.signal,
+        resolve: params.resolvePending,
+      });
+    }
     claims = await readFinanceExecutionSafetyClaims({
       stateDir: params.safetyStateDir,
       accountId: params.accountId,
