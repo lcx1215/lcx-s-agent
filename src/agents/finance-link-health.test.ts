@@ -15,7 +15,10 @@ import {
  * reports that never meant anything.
  */
 import { readFinanceLinkHealth, type FinanceLinkHealthCheck } from "./finance-link-health.js";
-import { appendFinanceExecutionReceipt } from "./finance-position-ledger.js";
+import {
+  appendFinanceBrokerHistory,
+  appendFinanceExecutionReceipt,
+} from "./finance-position-ledger.js";
 import { financeCredentialsPath } from "./finance-state-dir.js";
 import type { FinanceUncachedFetch } from "./finance-write-transport.js";
 
@@ -58,8 +61,11 @@ const bet = (overrides: Record<string, unknown> = {}): Record<string, unknown> =
   ...overrides,
 });
 
-async function checkFor(id: string): Promise<FinanceLinkHealthCheck> {
-  const health = await readFinanceLinkHealth({ directory: dir, asOf: AS_OF });
+async function checkFor(
+  id: string,
+  schedulerAt = new Date("2026-09-21T22:00:00.000Z"),
+): Promise<FinanceLinkHealthCheck> {
+  const health = await readFinanceLinkHealth({ directory: dir, asOf: AS_OF, schedulerAt });
   const found = health.checks.find((entry) => entry.id === id);
   if (found === undefined) {
     throw new Error(`no check with id ${id}`);
@@ -130,6 +136,13 @@ describe("readFinanceLinkHealth sample universe overlap", () => {
 });
 
 describe("scheduler success evidence", () => {
+  it("does not require future slots before their market time", async () => {
+    const check = await checkFor("scheduler_slots", new Date("2026-09-21T13:00:00.000Z"));
+    expect(check.ok).toBe(true);
+    expect(check.summary).toContain("no finance cycle slot is due yet");
+    expect(check.detail).toMatchObject({ dueSlots: [], unresolvedDueSlots: [] });
+  });
+
   it("does not report a missing night attempt as ever fired", async () => {
     const check = await checkFor("scheduler_slots");
     expect(check.ok).toBe(false);
@@ -272,6 +285,58 @@ it("compares only matching account and venue execution history", async () => {
     detail: { ledgerCount: 1, excludedReceiptCount: 2 },
   });
 });
+
+it("uses a reconciled broker-history baseline while keeping receipt coverage explicit", async () => {
+  await storeReceipt("account-a", "alpaca:paper");
+  await appendFinanceBrokerHistory(dir, {
+    kind: "broker_history",
+    accountId: "account-a",
+    venue: "alpaca:paper",
+    query: "orders:window",
+    cursor: "",
+    payload: [{ id: "order-spy", status: "filled", filled_qty: "1" }],
+  });
+  await appendFinanceBrokerHistory(dir, {
+    kind: "broker_history",
+    accountId: "account-a",
+    venue: "alpaca:paper",
+    query: "activities:window",
+    cursor: "",
+    payload: [
+      {
+        id: "fill-spy",
+        activity_type: "FILL",
+        order_id: "order-spy",
+        symbol: "SPY",
+        side: "buy",
+        qty: "1",
+        price: "100",
+        transaction_time: "2026-09-20T00:00:00Z",
+      },
+    ],
+  });
+  await appendFinanceBrokerHistory(dir, {
+    kind: "broker_history",
+    accountId: "account-a",
+    venue: "alpaca:paper",
+    query: "sync_receipt:window",
+    cursor: "",
+    payload: [{ status: "raw_history_synced" }],
+  });
+  const report = await readFinanceLinkHealth({
+    directory: dir,
+    env: fakeEnv,
+    read: venueRead([{ symbol: "SPY", qty: "1" }]),
+  });
+  expect(report.checks.find((c) => c.id === "venue_ledger_parity")).toMatchObject({
+    ok: true,
+    detail: { baselineSource: "broker_history", executionLedgerCount: 1, brokerBaselineCount: 1 },
+  });
+  expect(report.checks.find((c) => c.id === "execution_receipt_coverage")).toMatchObject({
+    ok: false,
+    severity: "warn",
+  });
+});
 it.each([
   null,
   [{ symbol: "SPY", qty: null }],
@@ -291,4 +356,41 @@ it.each([
     severity: "error",
     detail: { checked: false },
   });
+});
+
+it.each([false, true])(
+  "reports resident placement mode independently of due slots: %s",
+  async (placementEnabled) => {
+    const at = new Date("2026-09-21T13:00:00.000Z");
+    await fs.writeFile(path.join(dir, "daily-cycle-scheduler.pid"), String(process.pid));
+    const lock = path.join(dir, "daily-cycle-scheduler.lock");
+    await fs.mkdir(lock);
+    const filename = path.join(lock, "progress.json");
+    const progress = {
+      pid: process.pid,
+      observedAt: at.toISOString(),
+      phase: "idle",
+      timeoutMs: 900000,
+      placementEnabled,
+    };
+    await fs.writeFile(filename, JSON.stringify(progress));
+    expect((await checkFor("scheduler_slots", at)).ok).toBe(true);
+    const current = await checkFor("scheduler_execution_loop", at);
+    expect(current.ok).toBe(placementEnabled);
+    expect(current.summary).toContain(
+      placementEnabled ? "does not verify a broker fill" : "placement is disabled",
+    );
+    await fs.writeFile(
+      filename,
+      JSON.stringify({ ...progress, observedAt: new Date(at.getTime() - 180000).toISOString() }),
+    );
+    expect((await checkFor("scheduler_execution_loop", at)).ok).toBe(false);
+  },
+);
+
+it("keeps corrupt resident ownership visible without breaking unrelated diagnostics", async () => {
+  await fs.writeFile(path.join(dir, "daily-cycle-scheduler.pid"), "not-a-pid");
+  const check = await checkFor("scheduler_execution_loop");
+  expect(check.ok).toBe(false);
+  expect(check.summary).toContain("ownership unreadable");
 });

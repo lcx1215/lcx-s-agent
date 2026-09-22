@@ -82,6 +82,20 @@ describe("platform-independent finance workflow tool", () => {
     expect(request.modelRouting).toBe(request.qualityModelRouting);
   });
 
+  it("requires live evidence before dispatching module tools", async () => {
+    const executeResearch = vi.fn<typeof runFinanceResearchRun>(async () =>
+      runFinanceResearchRun({ input }),
+    );
+    const tool = createFinanceResearchRunTool({
+      workspaceDir: await workspace(),
+      executeResearch,
+    });
+    await expect(
+      tool.execute("modules-without-live", { ...input, executeModules: true }),
+    ).rejects.toThrow("executeModules requires live=true");
+    expect(executeResearch).not.toHaveBeenCalled();
+  });
+
   it("accepts validated explicit targets for caller-specific instruments", async () => {
     const executeResearch = vi.fn<typeof runFinanceResearchRun>(async () =>
       runFinanceResearchRun({ input }),
@@ -192,10 +206,15 @@ it("returns a usable catalog and accepted plan so a caller can revise its compos
   const first = initial.details as {
     moduleCatalog: { id: string }[];
     orchestration: { selectionTrace: { selectionSource: string } };
+    composition: { replanStatus: string; nextAction: string };
     moduleToolsDispatched: boolean;
   };
   expect(first.moduleCatalog.map((module) => module.id)).toContain("technical_timing");
   expect(first.orchestration.selectionTrace.selectionSource).toBe("rules");
+  expect(first.composition).toMatchObject({
+    replanStatus: "not_requested",
+    nextAction: "none",
+  });
   const selection = {
     moduleIds: ["technical_timing", "credit_liquidity"],
     rationale: "Examine a different mechanism after reviewing the initial plan.",

@@ -32,13 +32,14 @@ export function buildCentralFinanceCatalog(): string {
   const catalog = [
     "Finance capability: finance_research_run (planning only).",
     'Use the exact action ownerId "finance_research_run". "finance" is not a registered owner; never abbreviate or invent tool names.',
-    'Action shape: {"ownerId":"finance_research_run","args":{"ask":"<copy the task question>","asOf":"<copy the task timestamp>","moduleSelection":{"moduleIds":["<registered module ID>"],"rationale":"<task-specific reason>"}},"reasoning":"<why this planning action>"}.',
+    'Action shape: {"ownerId":"finance_research_run","args":{"ask":"<copy the task question>","asOf":"<copy the task timestamp>","moduleSelection":{"moduleIds":["<registered module ID>"],"rationale":"<task-specific reason>","composition":{"nodes":[{"id":"<node>","moduleId":"<registered module ID>","dependsOn":["<node>"]}],"maxReplans":0}}},"reasoning":"<why this planning action>"}.',
 
     "Required args: ask (research question), asOf (explicit ISO timestamp).",
-    "Optional moduleSelection: {moduleIds: [registered IDs in preferred order], rationale: nonempty string, max 2000 characters}. No other selection fields; no duplicate IDs.",
+    "Optional moduleSelection: {moduleIds: [registered IDs in preferred order], rationale: nonempty string, composition?: {nodes: [{id, moduleId, dependsOn}], maxReplans?: 0..2}}. The composition is a finite DAG: max 24 nodes, max 48 edges, max depth 8, max 24 dependencies per node, no cycles, and it must include every selected module. Required memory, causal, math, and risk lanes are hard and are inserted by the controller; selected analytical lanes are soft and may be revised only within the bounded replan budget. No authority-changing fields or duplicate IDs.",
     "Omit moduleSelection to use rule-based routing. Propose a composition when the question or prior evidence warrants it; do not select everything by default.",
     "Omit live: central tools cannot call providers or place orders. Selection does not change source targets or bypass risk/evidence/review gates.",
     "Modules are analytical lenses, not proof of tool execution. Inspect prior composition/status/missingEvidence feedback before revising or stopping.",
+    "When composition feedback is replan_soft, revise only the soft analytical nodes within remainingSoftReplans. When it is blocked_hard or soft_replan_budget_exhausted with nextAction stop, do not retry by changing hard lanes or pretending the run completed.",
     "Registered modules (ID and role):",
     JSON.stringify(financeBrainModuleCatalog().map(({ id, role }) => ({ id, role }))),
   ].join("\n");

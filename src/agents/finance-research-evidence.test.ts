@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FinanceMarketCollectionItem } from "./finance-market-collection-registry.js";
+import { summarizeFinanceOptionsChain } from "./finance-options-evidence.js";
 import type { FinanceResearchBatchEvidencePacket } from "./finance-research-batch-runner.js";
 import {
   buildFinanceResearchModelEvidence,
@@ -22,6 +23,48 @@ const row = (
   delayStatus: "end_of_day",
   sourceUrlOrArtifact: "fixture://prices",
   data: { date, close },
+});
+const optionRow = ({
+  ticker,
+  contractType,
+  strike,
+  expiration,
+  impliedVolatility,
+  bid,
+  ask,
+  openInterest,
+  sourceTimestamp = "2026-09-09T20:00:00Z",
+}: {
+  ticker: string;
+  contractType: "call" | "put";
+  strike: number;
+  expiration: string;
+  impliedVolatility: number;
+  bid: number;
+  ask: number;
+  openInterest: number;
+  sourceTimestamp?: string;
+}): FinanceMarketCollectionItem => ({
+  itemId: ticker,
+  collection: "options_chain",
+  providerName: "massive-us-equity-options-chain",
+  providerRole: "primary_market_data",
+  sourceFamily: "market_data_api",
+  sourceTimestamp,
+  observedAt: sourceTimestamp,
+  delayStatus: "delayed",
+  sourceUrlOrArtifact: "https://api.massive.com/v3/snapshot/options/SPY",
+  data: {
+    details: {
+      ticker,
+      contract_type: contractType,
+      strike_price: strike,
+      expiration_date: expiration,
+    },
+    implied_volatility: impliedVolatility,
+    last_quote: { bid, ask },
+    open_interest: openInterest,
+  },
 });
 describe("finance price arithmetic before model prompting", () => {
   it("ranks actual drawdown magnitude without putting every cryptocurrency ahead of stocks", () => {
@@ -157,5 +200,110 @@ describe("finance price arithmetic before model prompting", () => {
     expect(buildFinanceResearchModelEvidence(packet).at(-1)?.text).toContain(
       "latest tot_pub_debt_out_amt=100",
     );
+  });
+
+  it("turns an options chain into source-bound Black-Scholes evidence in the model packet", () => {
+    const packet = {
+      schemaVersion: "lcx_finance_research_batch_v1",
+      boundary: "finance_research_batch_research_only",
+      decisionMode: "research_only",
+      correlationId: "options-evidence",
+      asOf: "2026-09-10T00:00:00Z",
+      useCase: "test",
+      status: "completed",
+      committeeEvidence: [],
+      budget: {},
+      jobs: [
+        {
+          jobId: "spy-prices",
+          request: {
+            instrument: "SPY",
+            assetClass: "us_equity",
+            collection: "eod_history",
+            asOf: "2026-09-10T00:00:00Z",
+          },
+          status: "ready",
+          receipt: { records: [row("2026-09-09", 100)] },
+        },
+        {
+          jobId: "spy-options",
+          request: {
+            instrument: "SPY",
+            assetClass: "us_equity",
+            collection: "options_chain",
+            asOf: "2026-09-10T00:00:00Z",
+          },
+          status: "ready",
+          receipt: {
+            records: [
+              optionRow({
+                ticker: "O:SPY261009C00100000",
+                contractType: "call",
+                strike: 100,
+                expiration: "2026-10-09",
+                impliedVolatility: 0.2,
+                bid: 9,
+                ask: 11,
+                openInterest: 100,
+              }),
+              optionRow({
+                ticker: "O:SPY261009P00100000",
+                contractType: "put",
+                strike: 100,
+                expiration: "2026-10-09",
+                impliedVolatility: 0.25,
+                bid: 8,
+                ask: 10,
+                openInterest: 80,
+              }),
+            ],
+          },
+        },
+      ],
+    } as unknown as FinanceResearchBatchEvidencePacket;
+
+    const evidence = buildFinanceResearchModelEvidence(packet);
+    const spy = evidence.find((item) => item.id === "finance-model:SPY");
+    expect(spy?.text).toContain("Options chain (usable)");
+    expect(spy?.text).toContain("delta=");
+    expect(spy?.text).toContain("gamma=");
+    expect(spy?.text).toContain("OI-weighted gamma=");
+    expect(spy?.text).toContain("put/call OI ratio=0.8");
+  });
+
+  it("blocks an options summary when the quote is too wide or the contract is stale", () => {
+    const summary = summarizeFinanceOptionsChain(
+      [
+        optionRow({
+          ticker: "O:SPY261009C00100000",
+          contractType: "call",
+          strike: 100,
+          expiration: "2026-10-09",
+          impliedVolatility: 0.2,
+          bid: 1,
+          ask: 3,
+          openInterest: 100,
+        }),
+        optionRow({
+          ticker: "O:SPY260801C00100000",
+          contractType: "call",
+          strike: 100,
+          expiration: "2026-08-01",
+          impliedVolatility: 0.2,
+          bid: 9,
+          ask: 10,
+          openInterest: 100,
+          sourceTimestamp: "2026-09-09T20:00:00Z",
+        }),
+      ],
+      {
+        asOf: "2026-09-10T00:00:00Z",
+        underlyingSpot: 100,
+        underlyingSpotAt: "2026-09-09",
+      },
+    );
+    expect(summary.status).toBe("insufficient");
+    expect(summary.eligibleContracts).toBe(0);
+    expect(summary.warnings.join(" ")).toContain("no contract passed liquidity gates");
   });
 });

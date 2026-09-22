@@ -279,6 +279,8 @@ export type FinanceAlpacaRunRequest = Readonly<{
   instruments: readonly string[];
   strategyClass?: FinanceStrategyClass;
   minConviction?: number;
+  /** Required to protect a crypto buy with Alpaca's separate stop-limit order path. */
+  protectionLimitPrice?: number;
   committedInstrumentNotional?: number;
   ordersPlacedThisRun?: number;
   recordedAt?: string;
@@ -334,6 +336,14 @@ export async function runFinanceAlpacaOrder(
     return Object.freeze({ ok: false, stage: "compile", refusals: compiled.refusals });
   }
 
+  const intent =
+    request.protectionLimitPrice === undefined
+      ? compiled.intent
+      : Object.freeze({
+          ...compiled.intent,
+          protectionLimitPrice: request.protectionLimitPrice,
+        });
+
   const fillPoll =
     request.fillPoll === false ? undefined : (request.fillPoll ?? DEFAULT_ALPACA_FILL_POLL);
 
@@ -368,13 +378,13 @@ export async function runFinanceAlpacaOrder(
   const placed = await placeFinanceOrder({
     mode: "live_execution",
     safetyContext: request.createSafetyContext?.({
-      intent: compiled.intent,
+      intent,
       budget: request.budget,
       adapterId: adapter.id,
       venue: adapter.venue,
     }),
     signal: request.signal,
-    intent: compiled.intent,
+    intent,
     budget: request.budget,
     adapters: [adapter],
     executionAdapterId: adapter.id,

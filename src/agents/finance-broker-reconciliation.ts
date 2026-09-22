@@ -1,5 +1,4 @@
 import {
-  readFinanceBrokerHistory,
   syncAlpacaPaperHistory,
   type AlpacaHistoryOptions,
 } from "./finance-alpaca-history-sync.js";
@@ -336,7 +335,6 @@ export async function syncFinanceBrokerReconciliation(
   ) {
     throw new Error("invalid broker snapshot");
   }
-  const history = await readFinanceBrokerHistory(options.directory, options.accountId);
   const rawHistory = await readFinanceBrokerHistoryRecords(
     options.directory,
     options.accountId,
@@ -365,7 +363,7 @@ export async function syncFinanceBrokerReconciliation(
     observedAt: new Date().toISOString(),
     positions,
     openOrders: orders,
-    historyHeadRef: history.headRef,
+    historyHeadRef: rawHistory.headRef,
   };
   await appendFinanceBrokerHistory(options.directory, {
     kind: "broker_history",
@@ -383,7 +381,6 @@ export async function readFinanceBrokerReconciliation(
   accountId: string,
   now = Date.now(),
 ) {
-  const { readFinanceBrokerHistoryRecords } = await import("./finance-position-ledger.js");
   const records = await readFinanceBrokerHistoryRecords(directory, accountId, "alpaca:paper");
   const latest = records.records
     .filter((record) => record.body.query.startsWith("reconciliation:"))

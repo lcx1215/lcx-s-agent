@@ -497,6 +497,120 @@ it.each(["BTC/USD", "ETH/USD"])(
   },
 );
 
+it.each(["BTC/USD", "ETH/USD"])(
+  "submits an explicit GTC stop-limit protection after a confirmed crypto fill for %s",
+  async (instrument) => {
+    stubCredentials(PAPER);
+    const bodies: Record<string, unknown>[] = [];
+    const postJson = vi.fn<NonNullable<AlpacaExecutionAdapterOptions["postJson"]>>(
+      async (_url, init) => {
+        const body = JSON.parse(init.body) as Record<string, unknown>;
+        bodies.push(body);
+        return body.type === "stop_limit"
+          ? {
+              status: 200,
+              body: JSON.stringify({
+                ...body,
+                id: "crypto-protection",
+                status: "new",
+              }),
+            }
+          : {
+              status: 200,
+              body: JSON.stringify({ id: "crypto-entry", status: "accepted", filled_qty: "0" }),
+            };
+      },
+    );
+    const statusFetch = async (url: string) => {
+      expect(url).toContain("/v2/orders/crypto-entry");
+      return {
+        status: 200,
+        body: JSON.stringify({
+          id: "crypto-entry",
+          status: "filled",
+          filled_qty: "1",
+          filled_avg_price: "100",
+          filled_at: "2026-09-20T00:00:00.000Z",
+        }),
+      };
+    };
+    const fill = await createAlpacaExecutionAdapter({
+      instruments: [instrument],
+      postJson,
+      statusFetch,
+      fillPoll: { timeoutMs: 100, intervalMs: 0 },
+    }).execute(
+      {
+        ...baseIntent,
+        instrument,
+        stopPrice: 90,
+        protectionLimitPrice: 89,
+      },
+      new AbortController().signal,
+    );
+
+    expect(postJson).toHaveBeenCalledTimes(2);
+    expect(bodies[0]).toMatchObject({
+      symbol: instrument,
+      side: "buy",
+      type: "market",
+      time_in_force: "gtc",
+    });
+    expect(bodies[0]?.order_class).toBeUndefined();
+    expect(bodies[1]).toMatchObject({
+      symbol: instrument,
+      qty: "1",
+      side: "sell",
+      type: "stop_limit",
+      time_in_force: "gtc",
+      stop_price: "90",
+      limit_price: "89",
+    });
+    expect(fill.protectionOrder).toMatchObject({
+      orderId: "crypto-protection",
+      orderType: "stop_limit",
+      quantity: 1,
+      stopPrice: 90,
+      limitPrice: 89,
+      status: "new",
+      venueRef: "alpaca:paper:crypto-protection",
+    });
+  },
+);
+
+it.each(["BTC/USD", "ETH/USD"])(
+  "refuses a crypto protected entry without an explicit protection limit for %s",
+  async (instrument) => {
+    stubCredentials(PAPER);
+    const postJson = vi.fn<NonNullable<AlpacaExecutionAdapterOptions["postJson"]>>(async () => ({
+      status: 200,
+      body: JSON.stringify({ id: "must-not-submit", status: "new", filled_qty: "0" }),
+    }));
+    await expect(
+      createAlpacaExecutionAdapter({ instruments: [instrument], postJson }).execute(
+        { ...baseIntent, instrument, stopPrice: 90 },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("explicit stop-limit protection limitPrice");
+    expect(postJson).not.toHaveBeenCalled();
+  },
+);
+
+it("refuses a crypto protected entry when the caller disables fill polling", async () => {
+  stubCredentials(PAPER);
+  const postJson = vi.fn<NonNullable<AlpacaExecutionAdapterOptions["postJson"]>>(async () => ({
+    status: 200,
+    body: JSON.stringify({ id: "must-not-submit", status: "new", filled_qty: "0" }),
+  }));
+  await expect(
+    createAlpacaExecutionAdapter({ instruments: ["BTC/USD"], postJson }).execute(
+      { ...baseIntent, instrument: "BTC/USD", stopPrice: 90, protectionLimitPrice: 89 },
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow("requires confirmed fill polling");
+  expect(postJson).not.toHaveBeenCalled();
+});
+
 it.each([null, "", " ", false, undefined, "broken", {}])(
   "rejects malformed terminal quantity %s as uncertain",
   async (filled_qty) => {

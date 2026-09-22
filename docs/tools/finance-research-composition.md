@@ -4,6 +4,20 @@
 module combinations. The optional choice uses the existing finance module
 registry; it does not create another ontology or an execution authority.
 
+The combination is a finite DAG when the caller needs more than a preferred
+list. Each node names one registered module and its upstream node IDs. The
+control layer rejects unknown modules, duplicate IDs, missing dependencies,
+cycles, excessive depth, excessive edges, and more than two bounded replans.
+The planner adds the required memory, causal, math, and portfolio lanes after
+validation; those lanes cannot be removed by a model proposal.
+
+The accepted plan also carries derived `composition.control` metadata. Required
+memory, causal, math, and risk lanes are `hard`; caller-selected analytical
+lanes are `soft`. Soft lanes may be reordered or revised within the bounded
+`maxSoftReplans` budget. Hard lanes keep their dependency and stop conditions:
+missing evidence, a blocked risk gate, cancellation, or unresolved execution
+state stops the cycle. The model cannot submit or override this control block.
+
 Start with a planning call (`live` omitted or false). The response includes:
 
 - `moduleCatalog`: registered module IDs, roles and declared tool dependencies.
@@ -23,7 +37,15 @@ A subsequent call can provide a different composition:
   "asOf": "2026-09-21T12:00:00.000Z",
   "moduleSelection": {
     "moduleIds": ["credit_liquidity", "cross_asset_liquidity", "technical_timing"],
-    "rationale": "Test funding pressure and cross-market transmission against observed price behavior."
+    "rationale": "Test funding pressure and cross-market transmission against observed price behavior.",
+    "composition": {
+      "nodes": [
+        { "id": "timing", "moduleId": "technical_timing", "dependsOn": [] },
+        { "id": "credit", "moduleId": "credit_liquidity", "dependsOn": ["timing"] },
+        { "id": "cross_asset", "moduleId": "cross_asset_liquidity", "dependsOn": ["credit"] }
+      ],
+      "maxReplans": 1
+    }
   },
   "live": false
 }
@@ -44,11 +66,13 @@ new run ID for a changed analysis while preserving the old receipt.
 
 ## Execution scope
 
-`moduleToolsDispatched: false` is intentional. This feature composes analytical
-context for the existing research workflow; it does not execute every tool named
-in the catalog. A declared tool dependency is not proof that the tool is enabled,
-called or successful. Actual tool invocation must use the existing tool runtime,
-its authorization checks and its own receipts.
+`moduleToolsDispatched: false` is the default. This feature composes analytical
+context for the existing research workflow and does not execute every tool named
+in the catalog unless the caller explicitly supplies `live: true` and
+`executeModules: true`. A declared tool dependency is not proof that the tool is
+enabled, called or successful. Actual invocation uses the existing tool runtime,
+its authorization checks and its own receipts; a requested execution with a
+missing hard lane remains blocked.
 
 Module selection does not silently change source targets. Supply `targets` when
 additional instruments, collections or source restrictions are needed. `live:
@@ -71,7 +95,10 @@ no-provider-call boundaries still apply.
 The tool returns a compact `composition` before larger receipt sections so it
 survives the Harness's 512-byte step-outcome budget. It includes selection source,
 the first four primary modules, an explicit omitted count, and
-`moduleToolsDispatched: false`. The full orchestration remains in the durable
+`moduleToolsDispatched: false`. When module execution was requested, it also
+includes `replanStatus`, `nextAction`, hard/soft failure counts and
+`remainingSoftReplans`. `blocked_hard` always stops; `replan_soft` permits only
+a bounded revision of soft lanes. The full orchestration remains in the durable
 research receipt. The next Harness cycle can use its existing backlog to revise
 a proposal; no second scheduler or decision loop is introduced.
 

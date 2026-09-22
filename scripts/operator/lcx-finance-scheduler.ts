@@ -35,6 +35,8 @@ import {
   runFinanceCycleProcess,
 } from "../../src/agents/finance-scheduler-process.js";
 import {
+  FINANCE_SCHEDULER_TICK_MS,
+  inspectFinanceSchedulerProgress,
   readFinanceSchedulerState,
   writeFinanceSchedulerState,
 } from "../../src/agents/finance-scheduler-state.js";
@@ -50,7 +52,6 @@ import { killProcessTree } from "../../src/process/kill-tree.js";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const CYCLE_SCRIPT = path.join(REPO_ROOT, "scripts", "operator", "lcx-finance-daily-cycle.ts");
 const RUNS_LOG = "daily-cycle-runs.jsonl";
-const TICK_MS = 60_000;
 type Mode = "day" | "night";
 
 type SchedulerOptions = {
@@ -255,52 +256,6 @@ function writeSchedulerProgress(context: CycleContext, phase: "idle" | "cycle") 
   fs.renameSync(temporary, filename);
 }
 
-/** A responsive process and completed trading work are separate health signals. */
-function inspectSchedulerProgress(
-  directory: string,
-  pid: number | null,
-  present: boolean,
-  now: number,
-) {
-  try {
-    const value: unknown = JSON.parse(
-      fs.readFileSync(path.join(directory, FINANCE_SCHEDULER_LOCK, "progress.json"), "utf8"),
-    );
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-      return { status: "invalid" };
-    }
-    const progress = value as Record<string, unknown>;
-    const age =
-      typeof progress.observedAt === "string" ? now - Date.parse(progress.observedAt) : NaN;
-    if (
-      progress.pid !== pid ||
-      !Number.isFinite(age) ||
-      age < 0 ||
-      !["idle", "cycle"].includes(String(progress.phase)) ||
-      typeof progress.timeoutMs !== "number" ||
-      !Number.isSafeInteger(progress.timeoutMs) ||
-      progress.timeoutMs <= 0 ||
-      progress.timeoutMs > 2_147_483_647 ||
-      typeof progress.placementEnabled !== "boolean"
-    ) {
-      return { status: "invalid" };
-    }
-    const deadline = 2 * TICK_MS + (progress.phase === "cycle" ? progress.timeoutMs : 0);
-    return {
-      status: !present ? "owner_missing" : age > deadline ? "stalled" : "responsive",
-      observedAt: progress.observedAt,
-      phase: progress.phase,
-      ageMs: age,
-      deadlineMs: deadline,
-      placementEnabled: progress.placementEnabled,
-    };
-  } catch (error) {
-    return {
-      status: (error as NodeJS.ErrnoException).code === "ENOENT" ? "unavailable" : "unreadable",
-    };
-  }
-}
-
 async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
   if (context.signal.aborted) {
     return false;
@@ -486,7 +441,7 @@ export function inspectFinanceSchedulerStatus(root: FinanceStateDir, at = new Da
       : lockPresent
         ? "lock_requires_reconciliation"
         : "no_process_observed",
-    progress: inspectSchedulerProgress(root.directory, pid, processPresent, at.getTime()),
+    progress: inspectFinanceSchedulerProgress(root.directory, pid, processPresent, at.getTime()),
     executionHealthVerified: false,
     slots: DEFAULT_FINANCE_CYCLE_SLOTS.map((slot) => ({
       mode: slot.mode,
@@ -602,7 +557,7 @@ export async function runFinanceScheduler(
       await tick(context);
       writeSchedulerProgress(context, "idle");
       try {
-        await delay(TICK_MS, undefined, { signal: controller.signal });
+        await delay(FINANCE_SCHEDULER_TICK_MS, undefined, { signal: controller.signal });
       } catch (error) {
         if (!controller.signal.aborted) {
           throw error;

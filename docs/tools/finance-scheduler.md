@@ -273,3 +273,10 @@ It reports `broker_reconciliation_readiness_only`, with `quotesVerified: false`,
 `--place`; a ready or restricted result does not prove a fresh execution quote or a
 successful trade. Enabling isolation in a deployed service remains a separate policy
 and deployment action.
+
+The finance link-health report reuses the scheduler's shared progress reader in
+`scheduler_execution_loop`. It distinguishes responsive preview mode, placement
+enabled, stale or missing progress, and unreadable ownership independently of
+whether a cycle is due. A responsive placement loop still does not prove a broker
+fill. Offline research books and legacy processes retain a visible warning rather
+than being mistaken for a verified autonomous trading service.

@@ -51,6 +51,13 @@ calls in that batch, with source preserved for remaining records. A subsequent
 batch receives a fresh budget. Simultaneous batches receive a busy response,
 not an unbounded queue.
 
+Within one batch, byte-for-byte identical text reuses a contract-accepted result
+for the same task and labels. Every record remains present and requires its own
+agent review. Reused items report `modelCalls: 0` and `reusedFrom` with the first
+record and its receipt; they never invent another inference observation. The
+batch reports `reusedCount`. Whitespace differences are not normalized for this
+purpose. Failure clears reuse, and subsequent batches always start fresh.
+
 The result contains one item per input, source text, review status and local
 receipts. `batch_partial` indicates fallback items; `batch_completed` means all
 items were processed, not that model judgments are correct. The source hash

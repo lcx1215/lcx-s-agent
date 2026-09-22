@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { FINANCE_SCHEDULER_LOCK } from "./finance-scheduler-lock.js";
+
+export const FINANCE_SCHEDULER_TICK_MS = 60_000;
 
 const STATE_FILE = "daily-cycle-scheduler.json";
 
@@ -71,5 +74,52 @@ export function writeFinanceSchedulerState(directory: string, state: SchedulerSt
     fs.renameSync(tmp, filename);
   } finally {
     fs.rmSync(tmp, { force: true });
+  }
+}
+
+/** A responsive process and completed trading work are separate health signals. */
+export function inspectFinanceSchedulerProgress(
+  directory: string,
+  pid: number | null,
+  present: boolean,
+  now: number,
+) {
+  try {
+    const value: unknown = JSON.parse(
+      fs.readFileSync(path.join(directory, FINANCE_SCHEDULER_LOCK, "progress.json"), "utf8"),
+    );
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return { status: "invalid" };
+    }
+    const progress = value as Record<string, unknown>;
+    const age =
+      typeof progress.observedAt === "string" ? now - Date.parse(progress.observedAt) : NaN;
+    if (
+      progress.pid !== pid ||
+      !Number.isFinite(age) ||
+      age < 0 ||
+      !["idle", "cycle"].includes(String(progress.phase)) ||
+      typeof progress.timeoutMs !== "number" ||
+      !Number.isSafeInteger(progress.timeoutMs) ||
+      progress.timeoutMs <= 0 ||
+      progress.timeoutMs > 2_147_483_647 ||
+      typeof progress.placementEnabled !== "boolean"
+    ) {
+      return { status: "invalid" };
+    }
+    const deadline =
+      2 * FINANCE_SCHEDULER_TICK_MS + (progress.phase === "cycle" ? progress.timeoutMs : 0);
+    return {
+      status: !present ? "owner_missing" : age > deadline ? "stalled" : "responsive",
+      observedAt: progress.observedAt,
+      phase: progress.phase,
+      ageMs: age,
+      deadlineMs: deadline,
+      placementEnabled: progress.placementEnabled,
+    };
+  } catch (error) {
+    return {
+      status: (error as NodeJS.ErrnoException).code === "ENOENT" ? "unavailable" : "unreadable",
+    };
   }
 }

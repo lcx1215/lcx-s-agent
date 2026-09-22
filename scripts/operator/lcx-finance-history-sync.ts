@@ -1,5 +1,6 @@
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { reconcileFinanceBrokerHistory } from "../../src/agents/finance-alpaca-history-reconciliation.js";
 import { syncAlpacaPaperHistory } from "../../src/agents/finance-alpaca-history-sync.js";
 import { resolveFinanceCredentialEnv } from "../../src/agents/finance-credential-env.js";
 
@@ -16,7 +17,7 @@ export async function runFinanceHistorySync(argv = process.argv.slice(2)) {
   });
   if (!values.dir || !values.account || !values.after || !values.until) {
     throw new Error(
-      "requires --dir --account --after --until; paper GET-only raw history, no position reconciliation",
+      "requires --dir --account --after --until; paper GET-only history sync and reconciliation, no order placement",
     );
   }
   const env = resolveFinanceCredentialEnv({ ...process.env, LCX_FINANCE_STATE_DIR: values.dir });
@@ -32,8 +33,11 @@ export async function runFinanceHistorySync(argv = process.argv.slice(2)) {
     until: values.until,
     credentials: { keyId, secretKey },
   });
-  process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`);
-  return receipt.status === "raw_history_synced" ? 0 : 1;
+  const reconciliation = await reconcileFinanceBrokerHistory(values.dir, values.account);
+  process.stdout.write(`${JSON.stringify({ sync: receipt, reconciliation }, null, 2)}\n`);
+  return receipt.status === "raw_history_synced" && reconciliation.historyStatus === "reconciled"
+    ? 0
+    : 1;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   runFinanceHistorySync()

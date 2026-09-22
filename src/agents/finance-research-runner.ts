@@ -3,6 +3,7 @@ import type { ApiSourceGovernanceRegistry } from "./api-call-contract.js";
 import {
   buildFinanceCommitteeContext,
   runFinanceCommittee,
+  type FinanceCommitteeEvidence,
   type FinanceCommitteeInput,
   type FinanceCommitteeSharedContext,
 } from "./finance-agent-committee.js";
@@ -31,6 +32,11 @@ import {
   FinanceModelStageUncertainError,
   type FinanceModelCheckpointOptions,
 } from "./finance-model-checkpoints.js";
+import {
+  createUnrequestedFinanceModuleExecutionReceipt,
+  executeFinanceModuleComposition,
+  type FinanceModuleExecutionReceipt,
+} from "./finance-module-execution.js";
 import {
   createFinanceRealtimeSourceRegistry,
   resolveFinanceRealtimeSourceRegistryOptionsFromEnv,
@@ -76,6 +82,7 @@ import {
   type QualityHarnessReceipt,
   type QualityHarnessVerifier,
 } from "./quality-harness.js";
+import { resolveWorkspaceRoot } from "./workspace-dir.js";
 
 export const FINANCE_RESEARCH_RUN_SCHEMA_VERSION = "lcx_finance_research_run_v1" as const;
 
@@ -90,6 +97,8 @@ export type FinanceResearchRunInput = Readonly<{
   targets?: readonly FinanceResearchBatchTarget[];
   sourcePolicy?: "prioritized" | "all_registered";
   moduleSelection?: FinanceModuleSelection;
+  /** Explicitly dispatch bounded module tools and attach their receipts to model evidence. */
+  executeModules?: boolean;
 }>;
 
 export type FinanceResearchRunOptions = Readonly<{
@@ -104,6 +113,7 @@ export type FinanceResearchRunOptions = Readonly<{
   modelInvoker?: LogicalAgentModelInvoker;
   qualityModelRouting?: LogicalAgentModelRouting;
   qualityModelInvoker?: LogicalAgentModelInvoker;
+  workspaceDir?: string;
   sourceGovernance?: ApiSourceGovernanceRegistry;
   batchOptions?: Omit<FinanceResearchBatchOptions, "targets" | "asOf" | "useCase">;
 }>;
@@ -134,7 +144,7 @@ export type FinanceResearchPlan = Readonly<{
 }>;
 
 export type FinanceResearchGate = Readonly<{
-  id: "source" | "committee" | "quality" | "quarterly_output";
+  id: "source" | "committee" | "quality" | "module_execution" | "quarterly_output";
   passed: boolean;
   reason: string;
 }>;
@@ -185,6 +195,7 @@ export type FinanceResearchRunReceipt = Readonly<{
     model: FinanceResearchModelExecution;
   }>;
   quality?: QualityHarnessReceipt;
+  moduleExecution?: FinanceModuleExecutionReceipt;
   sourceRecovery?: ReturnType<typeof buildFinanceSourceRecoveryPlan>;
   modelCheckpoint?: ReturnType<ReturnType<typeof openFinanceModelCheckpoints>["summary"]>;
   quarterlyOutput: FinanceQuarterlyOutput;
@@ -788,6 +799,66 @@ function buildPlan(
   });
 }
 
+/**
+ * Module execution may require collections that the small default canary does not fetch. Keep
+ * this opt-in so planning and legacy research retain their existing request budget; explicit
+ * module execution expands only the caller's existing targets and never invents a provider.
+ */
+export function augmentTargetsForFinanceModuleExecution(
+  targets: readonly FinanceResearchBatchTarget[],
+  orchestration: FinanceBrainOrchestrationPlan,
+): readonly FinanceResearchBatchTarget[] {
+  const moduleIds = new Set(orchestration.composition.nodes.map((node) => node.moduleId));
+  const requestedCollections = new Set<string>();
+  if (moduleIds.has("company_fundamentals_value")) {
+    for (const collection of [
+      "financial_statements",
+      "company_profile",
+      "sec_filings",
+      "valuation",
+    ] as const) {
+      requestedCollections.add(collection);
+    }
+  }
+  if (moduleIds.has("options_volatility")) {
+    requestedCollections.add("options_chain");
+  }
+  if (moduleIds.has("event_driven")) {
+    for (const collection of ["event_calendar", "earnings"] as const) {
+      requestedCollections.add(collection);
+    }
+  }
+  if (moduleIds.has("technical_timing")) {
+    requestedCollections.add("technical_indicators");
+  }
+  if (requestedCollections.size === 0) {
+    return targets;
+  }
+  return Object.freeze(
+    targets.map((target) => {
+      if (target.assetClass !== "us_equity") {
+        return target;
+      }
+      const existing = new Set<string>(
+        (target.collections ?? []).map((collection) => collection.collection),
+      );
+      const additions = [...requestedCollections]
+        .filter((collection) => !existing.has(collection))
+        .map((collection) => ({
+          collection,
+          limit: 20,
+          freshnessMaxMinutes:
+            collection === "event_calendar" || collection === "earnings"
+              ? 7 * 24 * 60
+              : 366 * 24 * 60,
+        })) as FinanceResearchBatchCollection[];
+      return additions.length === 0
+        ? target
+        : { ...target, collections: Object.freeze([...(target.collections ?? []), ...additions]) };
+    }),
+  );
+}
+
 function dependencyOutputs<TResult>(
   values: Readonly<Record<string, LogicalAgentTaskResult<TResult>>>,
 ): Readonly<Record<string, unknown>> {
@@ -1109,6 +1180,41 @@ function qualityGate(quality: QualityHarnessReceipt | undefined): FinanceResearc
   };
 }
 
+function moduleExecutionGate(execution: FinanceModuleExecutionReceipt): FinanceResearchGate {
+  return {
+    id: "module_execution",
+    passed: execution.moduleToolsDispatched,
+    reason: execution.moduleToolsDispatched
+      ? `all ${execution.nodes.length} composed module nodes produced evidence`
+      : execution.requested
+        ? `module execution incomplete; succeeded=${execution.nodes.filter((node) => node.status === "succeeded").length}/${execution.nodes.length}`
+        : "module execution was not requested",
+  };
+}
+
+/**
+ * Tool calls are evidence only after the final research conclusion still contains every module
+ * receipt. A successful pre-model dispatch must not be reported as a completed module gate when
+ * the committee or quality stage later blocks the visible answer.
+ */
+function finalizeModuleExecution(
+  execution: FinanceModuleExecutionReceipt,
+  evidence: readonly FinanceCommitteeEvidence[],
+  finalConclusionReady: boolean,
+): FinanceModuleExecutionReceipt {
+  if (!execution.requested) {
+    return execution;
+  }
+  const evidenceIds = new Set(evidence.map((entry) => entry.id));
+  const evidenceIncluded =
+    execution.outputEvidenceIds.length > 0 &&
+    execution.outputEvidenceIds.every((id) => evidenceIds.has(id));
+  return Object.freeze({
+    ...execution,
+    moduleToolsDispatched: finalConclusionReady && execution.allNodesSucceeded && evidenceIncluded,
+  });
+}
+
 export async function runFinanceResearchRun(
   options: FinanceResearchRunOptions,
 ): Promise<FinanceResearchRunReceipt> {
@@ -1143,7 +1249,7 @@ export async function runFinanceResearchRun(
         : {}),
       ...options.batchOptions?.collectionRegistryOptions,
     });
-  const targets =
+  const baseTargets =
     options.input.targets ??
     (options.input.sourcePolicy === "all_registered"
       ? buildAllRegisteredFinanceResearchTargets(
@@ -1153,6 +1259,19 @@ export async function runFinanceResearchRun(
           collectionAdapters,
         )
       : buildDefaultFinanceResearchTargets(ask, horizonMonths, asOf));
+  const executionTargetPlan =
+    options.input.executeModules === true
+      ? planFinanceBrainOrchestration({
+          text: ask,
+          moduleSelection,
+          highStakesConclusion: true,
+          decisionMode,
+        })
+      : undefined;
+  const targets =
+    executionTargetPlan === undefined
+      ? baseTargets
+      : augmentTargetsForFinanceModuleExecution(baseTargets, executionTargetPlan);
   const plan = buildPlan(
     { ...options.input, ask, asOf, decisionMode, moduleSelection },
     targets,
@@ -1219,6 +1338,25 @@ export async function runFinanceResearchRun(
       options.batchOptions?.includeReviewEvidence,
   });
   batch = { ...batch, committeeEvidence: evidence };
+  let moduleExecution = createUnrequestedFinanceModuleExecutionReceipt(plan.orchestration);
+  if (options.input.executeModules === true) {
+    const executed = await executeFinanceModuleComposition({
+      ask,
+      asOf,
+      plan: plan.orchestration,
+      batch,
+      workspaceDir: resolveWorkspaceRoot(options.workspaceDir),
+      signal: options.signal,
+    });
+    moduleExecution = executed.receipt;
+    // Put module receipts first so the bounded quality evidence window cannot clip them after a
+    // broad source batch. The original source/model evidence remains intact after the receipts.
+    evidence = [...executed.evidence, ...evidence];
+    batch = { ...batch, committeeEvidence: evidence };
+  }
+  const moduleMissingEvidence = moduleExecution.nodes.flatMap((node) =>
+    node.missingEvidence.map((item) => `module:${node.moduleId}:${item}`),
+  );
   const baseMissing = [
     ...missingEvidence(batch),
     ...(plan.sourceInventory?.unplannedAdapterIds.map((id) => `source_not_planned:${id}`) ?? []),
@@ -1233,17 +1371,19 @@ export async function runFinanceResearchRun(
     const modelBlockReason = !hasModel ? "model_not_configured" : "source_evidence_unavailable";
     const source = sourceGate(batch, plan);
     const quality = qualityGate(undefined);
+    moduleExecution = finalizeModuleExecution(moduleExecution, evidence, false);
     const quarterlyOutput = buildQuarterlyOutput({
       horizonMonths,
       plan,
       evidenceIds: evidence.map((item) => item.id),
       adopted: false,
-      missingEvidence: [...baseMissing, modelBlockReason],
+      missingEvidence: [...baseMissing, ...moduleMissingEvidence, modelBlockReason],
     });
     const blockedGates: FinanceResearchGate[] = [
       source,
       { id: "committee", passed: false, reason: modelBlockReason },
       quality,
+      ...(moduleExecution.requested ? [moduleExecutionGate(moduleExecution)] : []),
       { id: "quarterly_output", passed: false, reason: "upstream model gate failed" },
     ];
     return Object.freeze({
@@ -1254,9 +1394,10 @@ export async function runFinanceResearchRun(
       plan,
       batch,
       sourceRecovery,
+      moduleExecution,
       quarterlyOutput,
       gates: Object.freeze(blockedGates),
-      missingEvidence: Object.freeze([...baseMissing, modelBlockReason]),
+      missingEvidence: Object.freeze([...baseMissing, ...moduleMissingEvidence, modelBlockReason]),
       notTouched: NOT_TOUCHED,
     });
   }
@@ -1296,6 +1437,7 @@ export async function runFinanceResearchRun(
         researchOnly: true,
         strategyMethodKit,
         financeOrchestration: plan.orchestration,
+        financeModuleExecution: moduleExecution,
       },
     };
     // Validate before starting the DAG so malformed evidence cannot become a partial model run.
@@ -1349,6 +1491,7 @@ export async function runFinanceResearchRun(
           noExecutionAuthority: true,
           strategyMethodKit,
           financeOrchestration: plan.orchestration,
+          financeModuleExecution: moduleExecution,
           ...(requiresFinanceResearchAssessment(ask)
             ? {
                 supportingAnalysisContract: {
@@ -1397,7 +1540,19 @@ export async function runFinanceResearchRun(
     }
     const source = sourceGate(batch, plan);
     const qualityGateResult = qualityGate(quality);
-    const allGatesPassed = source.passed && committeeGateResult.passed && qualityGateResult.passed;
+    moduleExecution = finalizeModuleExecution(
+      moduleExecution,
+      evidence,
+      committeeGateResult.passed && qualityGateResult.passed,
+    );
+    const moduleGateResult = moduleExecution.requested
+      ? moduleExecutionGate(moduleExecution)
+      : undefined;
+    const allGatesPassed =
+      source.passed &&
+      committeeGateResult.passed &&
+      qualityGateResult.passed &&
+      (moduleGateResult === undefined || moduleGateResult.passed);
     const quarterlyOutput = buildQuarterlyOutput({
       horizonMonths,
       plan,
@@ -1405,12 +1560,13 @@ export async function runFinanceResearchRun(
       quality,
       committee: model,
       adopted: allGatesPassed,
-      missingEvidence: baseMissing,
+      missingEvidence: [...baseMissing, ...moduleMissingEvidence],
     });
     const gates: FinanceResearchGate[] = [
       source,
       committeeGateResult,
       qualityGateResult,
+      ...(moduleGateResult === undefined ? [] : [moduleGateResult]),
       {
         id: "quarterly_output" as const,
         passed: allGatesPassed,
@@ -1437,15 +1593,17 @@ export async function runFinanceResearchRun(
       },
       ...(quality === undefined ? {} : { quality }),
       ...(modelCheckpoint ? { modelCheckpoint: modelCheckpoint.summary() } : {}),
+      moduleExecution,
       quarterlyOutput,
       gates: Object.freeze(gates),
-      missingEvidence: Object.freeze(baseMissing),
+      missingEvidence: Object.freeze([...baseMissing, ...moduleMissingEvidence]),
       notTouched: NOT_TOUCHED,
     });
   } catch (error) {
     if (!(error instanceof FinanceModelStageUncertainError)) {
       throw error;
     }
+    moduleExecution = finalizeModuleExecution(moduleExecution, evidence, false);
     return {
       schemaVersion: FINANCE_RESEARCH_RUN_SCHEMA_VERSION,
       boundary: "finance_research_run_research_only",
@@ -1460,17 +1618,24 @@ export async function runFinanceResearchRun(
         plan,
         evidenceIds: evidence.map((item) => item.id),
         adopted: false,
-        missingEvidence: [error.message],
+        missingEvidence: [...baseMissing, ...moduleMissingEvidence, error.message],
       }),
       gates: [
         sourceGate(batch, plan),
-        ...(["committee", "quality", "quarterly_output"] as const).map((id) => ({
+        ...(["committee", "quality"] as const).map((id) => ({
           id,
           passed: false,
           reason: error.message,
         })),
+        ...(moduleExecution.requested ? [moduleExecutionGate(moduleExecution)] : []),
+        {
+          id: "quarterly_output" as const,
+          passed: false,
+          reason: error.message,
+        },
       ],
-      missingEvidence: [...baseMissing, error.message],
+      moduleExecution,
+      missingEvidence: [...baseMissing, ...moduleMissingEvidence, error.message],
       notTouched: NOT_TOUCHED,
     };
   } finally {

@@ -298,6 +298,21 @@ const FinanceExecutionReceiptRecordSchema = z
           .object({ orderId: Text, terminal: z.literal(true) })
           .strict()
           .optional(),
+        protectionOrder: z
+          .object({
+            orderId: Text,
+            clientOrderId: Text,
+            side: z.literal("sell"),
+            orderType: z.literal("stop_limit"),
+            quantity: z.number().finite().positive(),
+            timeInForce: z.literal("gtc"),
+            stopPrice: z.number().finite().positive(),
+            limitPrice: z.number().finite().positive(),
+            status: Text,
+            venueRef: Text,
+          })
+          .strict()
+          .optional(),
       })
       .strict(),
     executionAuthority: z.enum([...LCX_ONTOLOGY_FINANCE_EXECUTION_AUTHORITIES]),

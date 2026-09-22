@@ -54,6 +54,28 @@ const targetSchema = Type.Object({
   collections: Type.Optional(Type.Array(targetCollectionSchema, { maxItems: 16 })),
 });
 
+const moduleCompositionSchema = Type.Object(
+  {
+    nodes: Type.Array(
+      Type.Object(
+        {
+          id: Type.String({ minLength: 1, maxLength: 64, pattern: "^[a-z][a-z0-9_-]*$" }),
+          moduleId: Type.Union(FINANCE_BRAIN_MODULES.map(({ id }) => Type.Literal(id))),
+          dependsOn: Type.Array(Type.String({ minLength: 1, maxLength: 64 }), { maxItems: 24 }),
+        },
+        { additionalProperties: false },
+      ),
+      { minItems: 1, maxItems: 24 },
+    ),
+    maxReplans: Type.Optional(Type.Integer({ minimum: 0, maximum: 2 })),
+  },
+  {
+    additionalProperties: false,
+    description:
+      "Finite analytical module DAG. It cannot grant tools, provider access, memory writes, or execution authority.",
+  },
+);
+
 const schema = Type.Object({
   ask: Type.String({ minLength: 1, maxLength: 12_000 }),
   asOf: Type.String({ description: "Explicit ISO timestamp for the research evidence window" }),
@@ -80,6 +102,7 @@ const schema = Type.Object({
           uniqueItems: true,
         }),
         rationale: Type.String({ minLength: 1, maxLength: 2000 }),
+        composition: Type.Optional(moduleCompositionSchema),
       },
       {
         additionalProperties: false,
@@ -89,6 +112,13 @@ const schema = Type.Object({
     ),
   ),
   live: Type.Optional(Type.Boolean({ default: false })),
+  executeModules: Type.Optional(
+    Type.Boolean({
+      default: false,
+      description:
+        "When true, dispatch the bounded module DAG against the fetched evidence and attach per-node receipts. This remains research-only and does not grant execution authority.",
+    }),
+  ),
   maxModelCalls: Type.Optional(Type.Integer({ minimum: 1, maximum: 48, default: 24 })),
   maxApiCalls: Type.Optional(Type.Integer({ minimum: 1, maximum: 64, default: 32 })),
   timeoutMs: Type.Optional(Type.Integer({ minimum: 1_000, maximum: 1_200_000, default: 600_000 })),
@@ -120,7 +150,7 @@ export function createFinanceResearchRunTool(options?: {
     name: "finance_research_run",
     label: "Finance Research Workflow",
     description:
-      "Plan or explicitly execute the canonical finance research workflow with configured models, independent review and finding closure. Works through any channel's normal agent tool dispatch. Planning is the default; live=true permits bounded source/model calls. decisionMode selects the answer authority (research_only by default; the candidate modes may produce a reviewable strategy or conditional buy/sell candidate) and never grants broker, wallet, or execution authority. strategyStage declares how far a method has been verified (method_only / research_candidate / paper_candidate / conditional_trade_candidate) and binds which decisionMode it may be written up in. moduleSelection lets the caller compose registered analytical modules while required risk/math/review lanes remain. The response includes the module catalog, accepted orchestration and source-recovery feedback for the next decision. Module selection is not tool execution. Returns a local receipt, never sends a platform message or claims model learning or external delivery.",
+      "Plan or explicitly execute the canonical finance research workflow with configured models, independent review and finding closure. Works through any channel's normal agent tool dispatch. Planning is the default; live=true permits bounded source/model calls. decisionMode selects the answer authority (research_only by default; the candidate modes may produce a reviewable strategy or conditional buy/sell candidate) and never grants broker, wallet, or execution authority. strategyStage declares how far a method has been verified (method_only / research_candidate / paper_candidate / conditional_trade_candidate) and binds which decisionMode it may be written up in. moduleSelection composes registered analytical modules while required risk/math/review lanes remain; executeModules explicitly dispatches their existing bounded tools against fetched evidence and returns per-node receipts. Returns a local receipt, never sends a platform message or claims model learning or external delivery.",
     parameters: schema,
     execute: async (toolCallId, args, callerSignal) => {
       callerSignal?.throwIfAborted();
@@ -130,8 +160,16 @@ export function createFinanceResearchRunTool(options?: {
       if (ask.length > 12_000 || !Number.isFinite(Date.parse(asOf))) {
         throw new ToolInputError("ask must be bounded and asOf must be a valid timestamp");
       }
-      if (params.live !== undefined && typeof params.live !== "boolean") {
-        throw new ToolInputError("live must be a boolean");
+      if (
+        (params.live !== undefined && typeof params.live !== "boolean") ||
+        (params.executeModules !== undefined && typeof params.executeModules !== "boolean")
+      ) {
+        throw new ToolInputError("live and executeModules must be booleans");
+      }
+      if (params.executeModules === true && params.live !== true) {
+        throw new ToolInputError(
+          "executeModules requires live=true so module tools receive fetched evidence",
+        );
       }
       const rawDecisionMode = params.decisionMode;
       if (
@@ -193,7 +231,9 @@ export function createFinanceResearchRunTool(options?: {
             ...(decisionMode ? { decisionMode } : {}),
             ...(strategyStage ? { strategyStage } : {}),
             ...(moduleSelection ? { moduleSelection } : {}),
+            ...(params.executeModules === true ? { executeModules: true } : {}),
           },
+          workspaceDir: workspace,
           signal,
           liveFetch: params.live === true,
           allowProviderCalls: params.live === true,
@@ -219,7 +259,12 @@ export function createFinanceResearchRunTool(options?: {
               0,
               receipt.plan.orchestration.primaryModules.length - 4,
             ),
-            moduleToolsDispatched: false,
+            moduleToolsDispatched: receipt.moduleExecution?.moduleToolsDispatched ?? false,
+            replanStatus: receipt.moduleExecution?.replanFeedback.status ?? "not_requested",
+            nextAction: receipt.moduleExecution?.replanFeedback.nextAction ?? "none",
+            hardFailureCount: receipt.moduleExecution?.replanFeedback.hardFailures.length ?? 0,
+            softFailureCount: receipt.moduleExecution?.replanFeedback.softFailures.length ?? 0,
+            remainingSoftReplans: receipt.moduleExecution?.replanFeedback.remainingSoftReplans ?? 0,
           },
           gates: "gates" in receipt ? receipt.gates : [],
           missingEvidence: "missingEvidence" in receipt ? receipt.missingEvidence : [],
@@ -228,7 +273,8 @@ export function createFinanceResearchRunTool(options?: {
           plannedTargets: receipt.plan.targets,
           moduleCatalog: financeBrainModuleCatalog(),
           sourceRecovery: receipt.sourceRecovery,
-          moduleToolsDispatched: false,
+          moduleToolsDispatched: receipt.moduleExecution?.moduleToolsDispatched ?? false,
+          moduleExecution: receipt.moduleExecution,
           answerDecision: receipt.answerDecision,
           artifact:
             receipt.status === "candidate" && receipt.quality?.status === "verified"

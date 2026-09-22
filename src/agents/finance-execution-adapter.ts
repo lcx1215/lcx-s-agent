@@ -57,6 +57,14 @@ export type FinanceExecutionIntent = Readonly<{
    * with none is worse than not asking for one, because it looks controlled.
    */
   stopPrice?: number;
+  /**
+   * Explicit limit price for a crypto stop-limit protection order.
+   *
+   * Alpaca crypto has no OTO order class. A protected crypto entry therefore submits a
+   * separate sell `stop_limit` after the entry is confirmed filled; this field is required
+   * for that path so the adapter never invents a slippage boundary.
+   */
+  protectionLimitPrice?: number;
   /** Last observed price used for the notional checks. */
   referencePrice: number;
   /** ISO datetime the reference price belongs to. "Now" is never assumed. */
@@ -157,6 +165,21 @@ export type FinanceExecutionFill = Readonly<{
   venueRef: string;
   /** Explicit stable venue identity, only after terminal status is observed. */
   terminalOrderIdentity?: Readonly<{ orderId: string; terminal: true }>;
+  /** Venue identity for an independently submitted protective order, when one was requested. */
+  protectionOrder?: FinanceExecutionProtection;
+}>;
+
+export type FinanceExecutionProtection = Readonly<{
+  orderId: string;
+  clientOrderId: string;
+  side: "sell";
+  orderType: "stop_limit";
+  quantity: number;
+  timeInForce: "gtc";
+  stopPrice: number;
+  limitPrice: number;
+  status: string;
+  venueRef: string;
 }>;
 
 export type FinanceExecutionAdapter = Readonly<{
@@ -348,6 +371,24 @@ function collectRefusalReasons(request: FinanceOrderPlacementRequest): string[] 
         : intent.stopPrice <= intent.referencePrice)
     ) {
       reasons.push("execution_intent_stop_price_on_wrong_side");
+    }
+  }
+
+  if (intent.protectionLimitPrice !== undefined) {
+    if (!isPositiveFinite(intent.protectionLimitPrice)) {
+      reasons.push("execution_intent_protection_limit_price_must_be_positive");
+    }
+    if (intent.stopPrice === undefined) {
+      reasons.push("execution_intent_protection_limit_requires_stop_price");
+    } else if (
+      isPositiveFinite(intent.stopPrice) &&
+      isPositiveFinite(intent.protectionLimitPrice) &&
+      intent.protectionLimitPrice > intent.stopPrice
+    ) {
+      reasons.push("execution_intent_protection_limit_price_above_stop");
+    }
+    if (intent.side !== "buy") {
+      reasons.push("execution_intent_protection_limit_forbidden_for_sell");
     }
   }
 
