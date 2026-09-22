@@ -46,6 +46,7 @@ type Options = {
   decisionMode: FinanceDecisionMode;
   live: boolean;
   workflowModels: boolean;
+  executeModules: boolean;
   quality: boolean;
   write: boolean;
   adapterPath?: string;
@@ -61,6 +62,9 @@ type Options = {
   totalTimeoutMs: number;
   retryAttempts: number;
   includeYahooPublicSources: boolean;
+  portfolioContextPath?: string;
+  portfolioPlanOut?: string;
+  controllerEvidencePath?: string;
   json: boolean;
 };
 
@@ -85,6 +89,7 @@ function usage(): string {
     "  --decision-mode MODE               research_only|strategy_candidate|conditional_trade_candidate",
     "  --live                              fetch bounded public/provider sources and run the model DAG",
     "  --workflow-models                  authorize configured workflow models for research and review",
+    "  --execute-modules                  execute the selected finance-module DAG with producer receipts",
     "  --skip-quality                     do not run the quality harness (live only)",
     "  --adapter DIR                      retired local override (not valid with workflow models)",
     "  --model MODEL                      retired local model override",
@@ -99,6 +104,9 @@ function usage(): string {
     `  --total-timeout-ms N               whole batch timeout (default: 180000, max: ${MAX_MODEL_TIMEOUT_MS})`,
     "  --retry-attempts N                 attempts per adapter (default: 1)",
     "  --include-yahoo-public-sources     explicitly opt in to Yahoo public adapters",
+    "  --portfolio-context FILE           controller-owned active-strategy/account envelope",
+    "  --portfolio-plan-out FILE          atomically write a verified portfolio plan",
+    "  --controller-evidence FILE         timestamped controller-owned local evidence packet",
     "  --write                            write the full receipt to workspace state",
     "  --json                             emit a bounded JSON summary",
   ].join("\n");
@@ -140,6 +148,7 @@ function parseArgs(args: readonly string[]): Options {
     decisionMode: "research_only",
     live: false,
     workflowModels: false,
+    executeModules: false,
     quality: true,
     write: false,
     modelId: DEFAULT_MODEL_ID,
@@ -173,6 +182,8 @@ function parseArgs(args: readonly string[]): Options {
       options.live = true;
     } else if (arg === "--workflow-models") {
       options.workflowModels = true;
+    } else if (arg === "--execute-modules") {
+      options.executeModules = true;
     } else if (arg === "--skip-quality") {
       options.quality = false;
     } else if (arg === "--adapter") {
@@ -220,6 +231,15 @@ function parseArgs(args: readonly string[]): Options {
       index += 1;
     } else if (arg === "--include-yahoo-public-sources") {
       options.includeYahooPublicSources = true;
+    } else if (arg === "--portfolio-context") {
+      options.portfolioContextPath = path.resolve(readValue(args, index, arg));
+      index += 1;
+    } else if (arg === "--portfolio-plan-out") {
+      options.portfolioPlanOut = path.resolve(readValue(args, index, arg));
+      index += 1;
+    } else if (arg === "--controller-evidence") {
+      options.controllerEvidencePath = path.resolve(readValue(args, index, arg));
+      index += 1;
     } else if (arg === "--write") {
       options.write = true;
     } else if (arg === "--json") {
@@ -235,6 +255,29 @@ function parseArgs(args: readonly string[]): Options {
     args.some((arg) => ["--adapter", "--model", "--python", "--allow-model-network"].includes(arg))
   ) {
     throw new Error("--workflow-models cannot combine local model overrides");
+  }
+  if (options.portfolioPlanOut && !options.portfolioContextPath) {
+    throw new Error("--portfolio-plan-out requires --portfolio-context");
+  }
+  if (
+    options.portfolioContextPath &&
+    (!options.live || !options.workflowModels || !options.write)
+  ) {
+    throw new Error(
+      "--portfolio-context requires --live --workflow-models --write so an allocation proposal has source, model and quality receipts",
+    );
+  }
+  if (options.portfolioContextPath && options.decisionMode !== "strategy_candidate") {
+    throw new Error("--portfolio-context requires --decision-mode strategy_candidate");
+  }
+  if (options.executeModules && (!options.live || !options.workflowModels || !options.write)) {
+    throw new Error("--execute-modules requires --live --workflow-models --write");
+  }
+  if (
+    options.controllerEvidencePath &&
+    (!options.live || !options.workflowModels || !options.write)
+  ) {
+    throw new Error("--controller-evidence requires --live --workflow-models --write");
   }
   return options;
 }
@@ -527,9 +570,22 @@ export function buildFinanceResearchRegistryOptions(
   } as const;
 }
 
-async function run(
-  options: Options,
-): Promise<{ receipt: FinanceResearchRunReceipt; written?: unknown }> {
+async function writeVerifiedPortfolioPlan(filePath: string, plan: unknown): Promise<string> {
+  const { financePortfolioPlanSchema } =
+    await import("../../src/agents/finance-portfolio-composition.ts");
+  const parsed = financePortfolioPlanSchema.parse(plan);
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  const temporary = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+  await writePrivateReceipt(temporary, `${JSON.stringify(parsed, null, 2)}\n`);
+  await fs.rename(temporary, filePath);
+  return filePath;
+}
+
+async function run(options: Options): Promise<{
+  receipt: FinanceResearchRunReceipt;
+  written?: unknown;
+  portfolioPlanWritten?: string;
+}> {
   const ask = assertResearchAsk(options.ask);
   const asOf = assertIsoTimestamp(options.asOf ?? new Date().toISOString());
   const asOfMode = options.live && options.asOf === undefined ? ("live_now" as const) : undefined;
@@ -558,7 +614,23 @@ async function run(
     asOf,
     horizonMonths: options.horizonMonths,
     decisionMode: options.decisionMode,
+    ...(options.executeModules ? { executeModules: true } : {}),
+    ...(options.controllerEvidencePath
+      ? {
+          controllerEvidence: JSON.parse(
+            await fs.readFile(options.controllerEvidencePath, "utf8"),
+          ) as FinanceResearchRunInput["controllerEvidence"],
+        }
+      : {}),
     ...(asOfMode === undefined ? {} : { asOfMode }),
+    ...(options.portfolioContextPath
+      ? {
+          portfolioContext: JSON.parse(
+            await fs.readFile(options.portfolioContextPath, "utf8"),
+          ) as FinanceResearchRunInput["portfolioContext"],
+          strategyStage: "research_candidate" as const,
+        }
+      : {}),
   };
   const { realtimeRegistryOptions, collectionRegistryOptions } =
     buildFinanceResearchRegistryOptions(options.includeYahooPublicSources);
@@ -604,7 +676,15 @@ async function run(
     batchOptions,
   });
   const written = options.write ? await writeReceipt(receipt, asOf) : undefined;
-  return { receipt, ...(written === undefined ? {} : { written }) };
+  const portfolioPlanWritten =
+    options.portfolioPlanOut && receipt.portfolioPlan
+      ? await writeVerifiedPortfolioPlan(options.portfolioPlanOut, receipt.portfolioPlan)
+      : undefined;
+  return {
+    receipt,
+    ...(written === undefined ? {} : { written }),
+    ...(portfolioPlanWritten === undefined ? {} : { portfolioPlanWritten }),
+  };
 }
 
 async function main(): Promise<number> {
@@ -613,6 +693,9 @@ async function main(): Promise<number> {
   const summary = {
     ...summarizeReceipt(result.receipt, options),
     ...(result.written === undefined ? {} : { written: result.written }),
+    ...(result.portfolioPlanWritten === undefined
+      ? {}
+      : { portfolioPlanWritten: result.portfolioPlanWritten }),
   };
   if (options.json) {
     process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);

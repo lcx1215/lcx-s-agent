@@ -10,6 +10,7 @@ import type {
 } from "./finance-research-batch-runner.js";
 import type { AnyAgentTool } from "./tools/common.js";
 import { createFinanceFrameworkCoreInspectTool } from "./tools/finance-framework-core-inspect-tool.js";
+import { createFinanceFrameworkDomainProducerTools } from "./tools/finance-framework-domain-producer-tools.js";
 import { createFinanceLearningCapabilityApplyTool } from "./tools/finance-learning-capability-apply-tool.js";
 import { createQuantMathTool } from "./tools/quant-math-tool.js";
 
@@ -364,6 +365,10 @@ export async function executeFinanceModuleComposition(
     plan: FinanceBrainOrchestrationPlan;
     batch: FinanceResearchBatchEvidencePacket;
     workspaceDir: string;
+    /** Structured, source-backed model output for an explicitly selected domain producer. */
+    domainProducerInputs?: Readonly<
+      Partial<Record<FinanceBrainModuleId, Readonly<Record<string, unknown>>>>
+    >;
     signal?: AbortSignal;
   }>,
 ): Promise<
@@ -380,6 +385,12 @@ export async function executeFinanceModuleComposition(
   const inspectTool = createFinanceFrameworkCoreInspectTool({
     workspaceDir: params.workspaceDir,
   });
+  const domainProducerTools = new Map(
+    createFinanceFrameworkDomainProducerTools({ workspaceDir: params.workspaceDir }).map((tool) => [
+      tool.name,
+      tool,
+    ]),
+  );
   const nodes: FinanceModuleExecutionNode[] = [];
   const evidence: FinanceCommitteeEvidence[] = [];
   const nodeStatusById = new Map<string, FinanceModuleExecutionNodeStatus>();
@@ -462,16 +473,43 @@ export async function executeFinanceModuleComposition(
           missingEvidence.push("retrievable_finance_capability_card");
         }
       } else if (FRAMEWORK_INSPECT_DOMAINS.has(moduleId)) {
-        const result = await callTool(
-          inspectTool,
-          toolName,
-          { domain: moduleId },
-          inputEvidenceIds,
-          params.signal,
-        );
-        toolCalls.push(result.call);
-        details = result.details ?? {};
-        status = statusFromToolCall(result.call.status);
+        const producerName = moduleRequiredToolNames.find((name) => name.endsWith("_producer"));
+        const producerTool = producerName ? domainProducerTools.get(producerName) : undefined;
+        const producerInput = params.domainProducerInputs?.[moduleId];
+        if (producerName && producerTool && producerInput) {
+          const produced = await callTool(
+            producerTool,
+            producerName,
+            { ...producerInput },
+            inputEvidenceIds,
+            params.signal,
+          );
+          toolCalls.push(produced.call);
+          if (produced.call.status !== "succeeded") {
+            status = statusFromToolCall(produced.call.status);
+            details = { producer: produced.details ?? {} };
+          }
+        } else if (producerName) {
+          missingEvidence.push(`domain_producer_input:${producerName}`);
+        }
+        if (toolCalls.every((call) => call.status === "succeeded")) {
+          const inspected = await callTool(
+            inspectTool,
+            toolName,
+            { domain: moduleId },
+            inputEvidenceIds,
+            params.signal,
+          );
+          toolCalls.push(inspected.call);
+          details = {
+            ...(details.producer ? details : {}),
+            inspect: inspected.details ?? {},
+          };
+          status = statusFromToolCall(inspected.call.status);
+        }
+        if (producerName && !producerInput) {
+          status = "blocked_missing_evidence";
+        }
         if (status !== "succeeded") {
           missingEvidence.push(`durable_framework_core_entry:${moduleId}`);
           missingEvidence.push("domain_producer_model_output_for_new_entry");

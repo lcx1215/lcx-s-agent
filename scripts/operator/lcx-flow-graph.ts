@@ -1195,6 +1195,41 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     ],
   },
   {
+    id: "finance_intraday_paper_waterflow",
+    family: "intraday_point_in_time_paper_validation",
+    objective:
+      "Closed point-in-time intraday bars flow through a frozen no-lookahead rule, the shared cost model and a same-cost retail baseline into a paper-only result receipt; replay evidence never becomes an execution receipt or an alpha claim.",
+    start: "intraday_point_in_time_ledger",
+    end: "intraday_result_score",
+    requiredNodes: [
+      "intraday_point_in_time_ledger",
+      "frozen_intraday_signal",
+      "same_cost_retail_baseline",
+      "paper_replay_receipt",
+      "intraday_result_score",
+    ],
+    requiredFilters: [
+      "closed_bar_only_required",
+      "next_bar_fill_required",
+      "same_cost_baseline_required",
+      "paper_replay_not_execution_receipt",
+      "multi_regime_validation_required",
+      "no_wallet_or_order_execution",
+    ],
+    edges: [
+      ["intraday_point_in_time_ledger", "frozen_intraday_signal"],
+      ["frozen_intraday_signal", "same_cost_retail_baseline"],
+      ["same_cost_retail_baseline", "paper_replay_receipt"],
+      ["paper_replay_receipt", "intraday_result_score"],
+    ],
+    feedbackEdges: [["intraday_result_score", "frozen_intraday_signal"]],
+    receipts: [
+      "finance-intraday-ledger",
+      "finance-intraday-paper-receipt",
+      "same-cost-retail-baseline",
+    ],
+  },
+  {
     id: "finance_live_execution_waterflow",
     family: "authorized_live_execution_and_risk_budget",
     objective:
@@ -1229,6 +1264,84 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "finance-caseflow",
       "finance-outcome-ledger",
       "finance-position-ledger",
+    ],
+  },
+  {
+    id: "finance_automatic_paper_trading_waterflow",
+    family: "automatic_paper_trading_lifecycle",
+    objective:
+      "One finance scheduler owns the automatic paper lifecycle: model-assisted research produces reviewed candidates, deterministic composition produces a bounded plan, execution uses the shared gate and ledger, and night settlement feeds evidence back through a deterministic promotion gate without granting the model trading authority.",
+    start: "schedule_gate",
+    end: "strategy_rule_ledger",
+    requiredNodes: [
+      "schedule_gate",
+      "central_agent_perception",
+      "central_agent_brain_proposal",
+      "central_agent_gate",
+      "finance_research_modules",
+      "finance_data_gateway",
+      "review_panel",
+      "portfolio_candidate",
+      "portfolio_plan",
+      "finance_scheduler",
+      "execution_intent",
+      "explicit_run_authorization",
+      "declared_execution_adapter",
+      "order_placement",
+      "execution_receipt",
+      "position_ledger",
+      "night_settlement",
+      "outcome_ledger",
+      "tuning_proposal",
+      "deterministic_promotion_gate",
+      "strategy_rule_ledger",
+    ],
+    requiredFilters: [
+      "llm_proposes_ts_gate_approves",
+      "central_agent_no_execution_authority",
+      "research_receipt_required",
+      "portfolio_plan_required",
+      "strategy_rule_activation_required",
+      "single_finance_scheduler_owner_required",
+      "paper_venue_only_for_autonomous_cycle",
+      "explicit_run_authorization_required",
+      "risk_budget_required",
+      "execution_receipt_required",
+      "append_only_ledger_required",
+      "night_feedback_requires_scored_outcomes",
+      "deterministic_promotion_gate_required",
+    ],
+    edges: [
+      ["schedule_gate", "central_agent_perception"],
+      ["central_agent_perception", "central_agent_brain_proposal"],
+      ["central_agent_brain_proposal", "central_agent_gate"],
+      ["central_agent_gate", "finance_research_modules"],
+      ["finance_research_modules", "finance_data_gateway"],
+      ["finance_data_gateway", "review_panel"],
+      ["review_panel", "portfolio_candidate"],
+      ["portfolio_candidate", "portfolio_plan"],
+      ["portfolio_plan", "finance_scheduler"],
+      ["finance_scheduler", "execution_intent"],
+      ["execution_intent", "explicit_run_authorization"],
+      ["explicit_run_authorization", "declared_execution_adapter"],
+      ["declared_execution_adapter", "order_placement"],
+      ["order_placement", "execution_receipt"],
+      ["execution_receipt", "position_ledger"],
+      ["position_ledger", "night_settlement"],
+      ["night_settlement", "outcome_ledger"],
+      ["outcome_ledger", "tuning_proposal"],
+      ["tuning_proposal", "deterministic_promotion_gate"],
+      ["deterministic_promotion_gate", "strategy_rule_ledger"],
+    ],
+    feedbackEdges: [["strategy_rule_ledger", "central_agent_perception"]],
+    receipts: [
+      "lcx-finance-research-run-latest",
+      "finance-portfolio-plan",
+      "daily-cycle-runs",
+      "finance-position-ledger",
+      "research-scored",
+      "tuning-proposals",
+      "finance-strategy-rule-ledger",
     ],
   },
   {
@@ -1992,7 +2105,9 @@ const FLOW_DIAGNOSTIC_OWNER_BY_SCENARIO_ID: Record<string, string> = {
     "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
   logical_agent_pool_waterflow: "scripts/operator/lcx-logical-agent-pool.ts",
   prediction_market_research_only_waterflow: "scripts/operator/lcx-external-agent-upgrade-radar.ts",
+  finance_intraday_paper_waterflow: "scripts/operator/lcx-finance-intraday-paper.ts",
   finance_live_execution_waterflow: "scripts/operator/lcx-finance-live-execution.ts",
+  finance_automatic_paper_trading_waterflow: "scripts/operator/lcx-finance-scheduler.ts",
   automation_repair_lock_waterflow: "scripts/operator/lcx-automation-repair-lock.ts",
 };
 
@@ -2040,8 +2155,12 @@ const FLOW_DIAGNOSTIC_FAST_CHECK_BY_SCENARIO_ID: Record<string, string> = {
     "node --import tsx scripts/operator/lcx-logical-agent-pool.ts --demo --json",
   prediction_market_research_only_waterflow:
     "node --import tsx scripts/operator/lcx-external-agent-upgrade-radar.ts --json",
+  finance_intraday_paper_waterflow:
+    "pnpm exec vitest run src/agents/finance-intraday-ledger.test.ts src/agents/finance-intraday-paper.test.ts",
   finance_live_execution_waterflow:
     "node --import tsx scripts/operator/lcx-finance-live-execution.ts --json --instrument AAPL --quantity 1 --reference-price 100 --as-of 2026-09-18T00:00:00Z --run-authorization owner-diagnostic --allow-instrument AAPL",
+  finance_automatic_paper_trading_waterflow:
+    "node --import tsx scripts/operator/lcx-flow-graph.ts --json",
   automation_repair_lock_waterflow:
     "node --import tsx scripts/operator/lcx-automation-repair-lock.ts --mode status --json",
 };
@@ -2375,6 +2494,8 @@ function feedbackCheck(): FlowCheck {
           "same_philosophy_merge_required",
           "license_scope_required",
           "repair_lock_required",
+          "multi_regime_validation_required",
+          "deterministic_promotion_gate_required",
         ].includes(filter),
       ),
   ).map((scenario) => scenario.id);
@@ -2435,6 +2556,86 @@ function buildFlowDiagnosticIndex(): FlowDiagnosticIndexEntry[] {
     ].filter(Boolean),
     boundary: "local_flow_graph_only",
   }));
+}
+
+async function financeAutomaticLifecycleAudit() {
+  const readSource = async (relativePath: string) =>
+    fs.readFile(path.join(repoRoot, relativePath), "utf8").catch(() => "");
+  const [
+    scheduler,
+    researchTurn,
+    researchOperator,
+    researchRunner,
+    tuningLifecycle,
+    paperPromotion,
+    centralAgent,
+  ] = await Promise.all([
+    readSource("scripts/operator/lcx-finance-scheduler.ts"),
+    readSource("scripts/operator/lcx-finance-research-turn.ts"),
+    readSource("scripts/operator/lcx-finance-research-run.ts"),
+    readSource("src/agents/finance-research-runner.ts"),
+    readSource("src/agents/finance-tuning-lifecycle.ts"),
+    readSource("src/agents/finance-paper-promotion.ts"),
+    readSource("scripts/operator/lcx-central-agent.ts"),
+  ]);
+  const handoffs = {
+    researchCanProducePortfolioCandidate: researchTurn.includes(
+      "buildFinanceValuePortfolioCandidate",
+    ),
+    schedulerCanConsumePortfolioPlan: scheduler.includes('"--portfolio-plan"'),
+    scheduledResearchFeedsPortfolioPlan:
+      scheduler.includes("finance-research-run") || scheduler.includes("runFinanceResearch"),
+    scheduledResearchExecutesModuleDag:
+      scheduler.includes('"--execute-modules"') &&
+      researchOperator.includes("executeModules: true") &&
+      researchRunner.includes("producerInputsFromCommittee") &&
+      researchRunner.includes("domainProducerInputs"),
+    intradayRunsUnderFinanceScheduler: scheduler.includes("runFinanceIntradayMonitorTick"),
+    schedulerOwnsNightSettlement:
+      scheduler.includes('mode: "night"') || scheduler.includes("night"),
+    nightSettlementFeedsReviewedModuleResearch:
+      scheduler.includes("buildFinanceNightReviewEvidence") &&
+      scheduler.includes('"--controller-evidence"') &&
+      scheduler.includes('"--execute-modules"'),
+    nightFeedbackDispatchesTuning:
+      scheduler.includes("runFinanceTuningLifecycle") &&
+      scheduler.includes("scoredFiled.appended === 0"),
+    tuningFeedsDeterministicPromotion:
+      tuningLifecycle.includes("deterministicPromotion") &&
+      paperPromotion.includes('authority: "paper_only"') &&
+      paperPromotion.includes("breakEvenFloor(params.samples)"),
+    centralHarnessHasAutomaticFinanceTaskFeed:
+      centralAgent.includes("buildFinanceAutomaticLifecycleFeedback") &&
+      centralAgent.includes("financeAutomaticLifecycle"),
+  };
+  const missingHandoffs = [
+    ...(handoffs.scheduledResearchFeedsPortfolioPlan
+      ? []
+      : ["scheduled_research_to_portfolio_plan"]),
+    ...(handoffs.scheduledResearchExecutesModuleDag
+      ? []
+      : ["scheduled_research_to_finance_module_dag"]),
+    ...(handoffs.nightFeedbackDispatchesTuning
+      ? []
+      : ["night_scored_outcomes_to_tuning_proposal_dispatch"]),
+    ...(handoffs.nightSettlementFeedsReviewedModuleResearch
+      ? []
+      : ["night_settlement_to_reviewed_module_research"]),
+    ...(handoffs.tuningFeedsDeterministicPromotion
+      ? []
+      : ["tuning_proposal_to_deterministic_paper_promotion"]),
+    ...(handoffs.centralHarnessHasAutomaticFinanceTaskFeed
+      ? []
+      : ["central_harness_automatic_finance_task_feed"]),
+  ];
+  return {
+    complete: missingHandoffs.length === 0,
+    owner: "scripts/operator/lcx-finance-scheduler.ts",
+    principle:
+      "one scheduler owns day, intraday and night triggers; model output is candidate evidence and TypeScript owns promotion and execution gates",
+    handoffs,
+    missingHandoffs,
+  };
 }
 
 function consolidationClusterCheck(surfaceTexts: Record<SurfaceGroup, string>): FlowCheck {
@@ -2571,15 +2772,23 @@ async function consolidatedEntrypointCheck(): Promise<FlowCheck> {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const [head, workflow, proof, boundary, missingFiles, consolidatedEntrypoints] =
-    await Promise.all([
-      joinedSurfaceText(SURFACE_FILES.head),
-      joinedSurfaceText(SURFACE_FILES.workflow),
-      joinedSurfaceText(SURFACE_FILES.proof),
-      joinedSurfaceText(SURFACE_FILES.boundary),
-      missingSurfaceFiles(),
-      consolidatedEntrypointCheck(),
-    ]);
+  const [
+    head,
+    workflow,
+    proof,
+    boundary,
+    missingFiles,
+    consolidatedEntrypoints,
+    financeLifecycleAudit,
+  ] = await Promise.all([
+    joinedSurfaceText(SURFACE_FILES.head),
+    joinedSurfaceText(SURFACE_FILES.workflow),
+    joinedSurfaceText(SURFACE_FILES.proof),
+    joinedSurfaceText(SURFACE_FILES.boundary),
+    missingSurfaceFiles(),
+    consolidatedEntrypointCheck(),
+    financeAutomaticLifecycleAudit(),
+  ]);
   const checks = [
     {
       id: "flow_graph_surfaces_readable",
@@ -2626,6 +2835,7 @@ async function main() {
       receipts: scenario.receipts,
     })),
     diagnosticIndex: buildFlowDiagnosticIndex(),
+    financeAutomaticLifecycleAudit: financeLifecycleAudit,
     consolidationClusters: CONSOLIDATION_CLUSTERS,
     consolidatedEntrypointFamilies: CONSOLIDATED_ENTRYPOINT_FAMILIES,
     sharedEntrypointOwnerRules: SHARED_ENTRYPOINT_OWNERS,

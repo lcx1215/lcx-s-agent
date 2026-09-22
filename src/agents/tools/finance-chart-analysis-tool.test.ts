@@ -104,7 +104,7 @@ describe("finance_chart_analysis tool", () => {
         status: "ready",
         normalizedBarCount: 3,
         sourceReceipt: expect.objectContaining({
-          selectedSourceIds: ["yahoo_public_eod_history"],
+          selectedSourceIds: expect.arrayContaining(["yahoo_public_eod_history"]),
         }),
       }),
     );

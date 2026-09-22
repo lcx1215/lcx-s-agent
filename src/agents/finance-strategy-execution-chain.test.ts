@@ -64,6 +64,7 @@ describe("preset research conclusion through the existing execution chain", () =
   it("passes a stock candidate through intake, mandate, final gate and fake Alpaca transport", async () => {
     const { judged, referencePriceAt } = await presetConclusion("us_equity", "SPY");
     let terminalBody = "";
+    let accountId = "";
     const transport = vi.fn(async (request: { body: string }) => {
       const body = JSON.parse(request.body) as { qty: string; stop_loss: { stop_price: string } };
       expect(body.stop_loss.stop_price).toBe("95");
@@ -76,7 +77,11 @@ describe("preset research conclusion through the existing execution chain", () =
       });
       return { status: 200, body: terminalBody };
     });
-    const read = vi.fn(async () => ({ status: 200, body: terminalBody }));
+    const read = vi.fn(async (url: string) =>
+      url.endsWith("/v2/account")
+        ? { status: 200, body: JSON.stringify({ id: accountId }) }
+        : { status: 200, body: terminalBody },
+    );
     const result = await runFinanceAlpacaOrder({
       conclusion: judged.conclusion,
       strategyClass: judged.strategyClass === "unknown" ? undefined : judged.strategyClass,
@@ -91,22 +96,26 @@ describe("preset research conclusion through the existing execution chain", () =
         maxInstrumentNotional: 50_000,
         maxOrdersPerRun: 1,
       },
-      createSafetyContext: syntheticSafetyContextForAsset("spot_equity"),
+      createSafetyContext: syntheticSafetyContextForAsset("spot_equity", (id) => {
+        accountId = id;
+      }),
       transport,
       read,
     });
     expect(result).toMatchObject({ ok: true });
     expect(transport).toHaveBeenCalledOnce();
-    expect(read).toHaveBeenCalledOnce();
+    expect(read).toHaveBeenCalledTimes(2);
   });
   it("blocks a crypto candidate whose protective stop the Alpaca adapter cannot support", async () => {
     const { judged, referencePriceAt } = await presetConclusion("crypto", "BTC/USD");
+    let accountId = "";
     const transport = vi.fn(async () => {
       throw new Error("must not submit");
     });
-    const read = vi.fn(async () => {
-      throw new Error("must not read");
-    });
+    const read = vi.fn(async (url: string) => ({
+      status: 200,
+      body: url.endsWith("/v2/account") ? JSON.stringify({ id: accountId }) : "{}",
+    }));
     await expect(
       runFinanceAlpacaOrder({
         conclusion: judged.conclusion,
@@ -121,14 +130,16 @@ describe("preset research conclusion through the existing execution chain", () =
           maxInstrumentNotional: 50_000,
           maxOrdersPerRun: 1,
         },
-        createSafetyContext: syntheticSafetyContextForAsset("spot_crypto"),
+        createSafetyContext: syntheticSafetyContextForAsset("spot_crypto", (id) => {
+          accountId = id;
+        }),
         transport,
         read,
       }),
     ).rejects.toMatchObject({
       code: "finance_execution_safety_unknown",
       cause: expect.objectContaining({
-        message: expect.stringContaining("does not support the declared OTO protective stop"),
+        message: expect.stringContaining("requires an explicit stop-limit protection limitPrice"),
       }),
     });
     expect(transport).not.toHaveBeenCalled();

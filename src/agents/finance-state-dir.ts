@@ -149,9 +149,26 @@ export const FINANCE_BAR_LEDGER_GENERATION = 1;
 export const FINANCE_BAR_LEDGER_FILENAME =
   `bar-ledger_${FINANCE_BAR_LEDGER_GENERATION}.sqlite` as const;
 
+export const FINANCE_INTRADAY_LEDGER_GENERATION = 1;
+export const FINANCE_INTRADAY_LEDGER_FILENAME =
+  `intraday-ledger_${FINANCE_INTRADAY_LEDGER_GENERATION}.sqlite` as const;
+export const FINANCE_INTRADAY_CONTROL_LEDGER_GENERATION = 1;
+export const FINANCE_INTRADAY_CONTROL_LEDGER_FILENAME =
+  `intraday-control-ledger_${FINANCE_INTRADAY_CONTROL_LEDGER_GENERATION}.sqlite` as const;
+
 /** Resolve the bar book path for a finance state directory. */
 export function financeBarLedgerPath(directory: string): string {
   return path.join(directory, FINANCE_BAR_LEDGER_FILENAME);
+}
+
+/** Resolve the minute/intraday point-in-time book for a finance state directory. */
+export function financeIntradayLedgerPath(directory: string): string {
+  return path.join(directory, FINANCE_INTRADAY_LEDGER_FILENAME);
+}
+
+/** Durable signal decisions and consumption receipts for the resident intraday controller. */
+export function financeIntradayControlLedgerPath(directory: string): string {
+  return path.join(directory, FINANCE_INTRADAY_CONTROL_LEDGER_FILENAME);
 }
 
 /**
@@ -167,6 +184,8 @@ export function financeBarLedgerPath(directory: string): string {
  */
 export const FINANCE_RESEARCH_SAMPLES_FILENAME = "research-samples.jsonl" as const;
 export const FINANCE_RESEARCH_SCORED_FILENAME = "research-scored.jsonl" as const;
+export const FINANCE_TUNING_PROPOSALS_FILENAME = "tuning-proposals.jsonl" as const;
+export const FINANCE_PAPER_PROMOTIONS_FILENAME = "paper-tuning-promotions.jsonl" as const;
 
 /** Path of the recorded research calls inside `directory`. */
 export function financeResearchSamplesPath(directory: string): string {
@@ -176,6 +195,14 @@ export function financeResearchSamplesPath(directory: string): string {
 /** Path of the settled outcomes inside `directory`. */
 export function financeResearchScoredPath(directory: string): string {
   return path.join(directory, FINANCE_RESEARCH_SCORED_FILENAME);
+}
+
+export function financeTuningProposalsPath(directory: string): string {
+  return path.join(directory, FINANCE_TUNING_PROPOSALS_FILENAME);
+}
+
+export function financePaperPromotionsPath(directory: string): string {
+  return path.join(directory, FINANCE_PAPER_PROMOTIONS_FILENAME);
 }
 
 export const FINANCE_BEHAVIOUR_THRESHOLDS_FILENAME = "behaviour-thresholds.json" as const;

@@ -38,6 +38,14 @@ export const financePortfolioPlanSchema = z
       .min(1)
       .max(20),
     candidates: z.array(candidateSchema).max(20),
+    provenance: z
+      .object({
+        kind: z.literal("finance_research_allocation"),
+        receiptId: z.string().min(1),
+        evidenceIds: z.array(z.string().min(1)).min(1),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export type FinancePortfolioPlan = z.infer<typeof financePortfolioPlanSchema>;

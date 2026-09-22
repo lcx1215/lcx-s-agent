@@ -13,7 +13,9 @@ vi.mock("../finance-state-dir.js", () => ({
   }),
   financeResearchSamplesPath: (directory: string) => `${directory}/research-samples.jsonl`,
   financeResearchScoredPath: (directory: string) => `${directory}/scored.jsonl`,
+  financePaperPromotionsPath: (directory: string) => `${directory}/paper-promotions.jsonl`,
 }));
+import { FINANCE_PAPER_PROMOTION_SCHEMA_VERSION } from "../finance-paper-promotion.js";
 import { createFinancePaperRankPlaceTool } from "./finance-paper-rank-place-tool.js";
 let root: string;
 const day = "2026-09-22";
@@ -181,4 +183,41 @@ it("keeps controller ceilings and unattended mode when model parameters try to e
       maxOrdersPerRun: 1,
     },
   });
+});
+
+it("uses the promoted floor in calibrated mode", async () => {
+  fs.writeFileSync(path.join(root, "research-samples.jsonl"), JSON.stringify(sample));
+  fs.writeFileSync(
+    path.join(root, "paper-promotions.jsonl"),
+    JSON.stringify({
+      schemaVersion: FINANCE_PAPER_PROMOTION_SCHEMA_VERSION,
+      promotionId: "paper-floor-fixture",
+      proposalId: "proposal-fixture",
+      knob: "convictionFloor",
+      previous: null,
+      promoted: 0.75,
+      sampleCount: 5,
+      scoredEvidenceRef: "fixture",
+      promotedAt: "2026-09-22T11:00:00.000Z",
+      authority: "paper_only",
+      status: "promoted",
+      basis: "fixture promoted floor",
+    }) + "\n",
+  );
+
+  const result = await createFinancePaperRankPlaceTool({
+    equity: 100_000,
+    runAuthorizationId: "controller-plan",
+    createSafetyContext: syntheticSafetyContext,
+    budget: {
+      automation: "unattended",
+      allowedInstruments: ["AAPL"],
+      maxOrderNotional: 60_000,
+      maxInstrumentNotional: 60_000,
+      maxOrdersPerRun: 1,
+    },
+  }).execute("fixture", { workspaceDir: root, day, mode: "calibrated", place: true });
+
+  expect(result.details).toMatchObject({ floor: 0.75, floorBasis: "fixture promoted floor" });
+  expect(mocks.run.mock.calls[0][0].minConviction).toBe(0.75);
 });

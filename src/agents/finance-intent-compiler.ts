@@ -67,6 +67,8 @@ export type CompileExecutionIntentParams = Readonly<{
   /** Minimum conviction to act. Defaults per class below. */
   minConviction?: number;
   strategyClass?: FinanceStrategyClass;
+  /** Trusted controller-only exact quantity, used to close an observed position without re-sizing. */
+  quantityOverride?: number;
 }>;
 
 const DEFAULT_MIN_CONVICTION: Record<FinanceStrategyClass, number> = {
@@ -195,7 +197,16 @@ export function compileExecutionIntent(
   // price stop risk the whole position, which is deliberately more conservative
   // rather than pretending a missing stop is a tight one.
   let quantity = 0;
-  if (classRules.stopLossKind === "structural") {
+  if (params.quantityOverride !== undefined) {
+    if (!Number.isFinite(params.quantityOverride) || params.quantityOverride <= 0) {
+      refusals.push("refuse: quantity override must be positive and finite");
+    } else {
+      quantity = params.quantityOverride;
+      notes.push(
+        "trusted controller exact-quantity override; risk budget and account gates still apply",
+      );
+    }
+  } else if (classRules.stopLossKind === "structural") {
     const stop = conclusion.invalidationPrice;
     if (stop === undefined || !Number.isFinite(stop) || stop <= 0) {
       refusals.push(`refuse: class ${strategyClass} sizes from a price stop and none was given`);

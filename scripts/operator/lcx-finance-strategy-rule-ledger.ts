@@ -16,18 +16,10 @@
 
 import fs from "node:fs/promises";
 import {
-  readFinancePositionLedger,
-  type FinancePositionMark,
-} from "../../src/agents/finance-position-ledger.js";
-import {
-  buildFinanceRuleReadiness,
-  parseFinanceReadinessThresholds,
-  type FinanceReadinessThresholds,
-} from "../../src/agents/finance-rule-readiness.js";
-import {
-  financeReadinessThresholdsPath,
-  resolveFinancePositionLedgerLocation,
-} from "../../src/agents/finance-state-dir.js";
+  financeRuleReadinessSection,
+  readFinanceRuleReadinessState,
+} from "../../src/agents/finance-rule-readiness-state.js";
+import { resolveFinancePositionLedgerLocation } from "../../src/agents/finance-state-dir.js";
 import {
   activateFinanceStrategyRule,
   declareFinanceStrategyRule,
@@ -129,70 +121,12 @@ function text(value: unknown): string {
  * an undeclared one makes its condition unjudgeable rather than passing. An unreadable file is
  * reported instead of thrown, so a broken sidecar cannot make the book unreadable.
  */
-async function loadReadinessThresholds(file: string): Promise<{
-  thresholds: FinanceReadinessThresholds | null;
-  error: string | null;
-}> {
-  let raw: string;
-  try {
-    raw = await fs.readFile(file, "utf8");
-  } catch {
-    return { thresholds: null, error: null };
-  }
-  let value: unknown;
-  try {
-    value = JSON.parse(raw) as unknown;
-  } catch {
-    return { thresholds: null, error: `${file} is not valid JSON` };
-  }
-  const parsed = parseFinanceReadinessThresholds(value, file);
-  return parsed.ok
-    ? { thresholds: parsed.thresholds, error: null }
-    : { thresholds: null, error: parsed.error };
-}
-
 async function buildReadinessSection(params: {
   directory: string;
   asOf: string;
   rules: readonly FinanceStrategyRule[];
 }): Promise<Record<string, unknown>> {
-  const thresholdsFile = financeReadinessThresholdsPath(params.directory);
-  const loaded = await loadReadinessThresholds(thresholdsFile);
-  let marks: readonly FinancePositionMark[] = [];
-  try {
-    const positions = await readFinancePositionLedger(params.directory, { asOf: params.asOf });
-    marks = positions.marks;
-  } catch {
-    marks = [];
-  }
-  const readiness = buildFinanceRuleReadiness({
-    rules: params.rules,
-    marks,
-    asOf: params.asOf,
-    ...(loaded.thresholds === null ? {} : { thresholds: loaded.thresholds }),
-  });
-  return {
-    readiness: {
-      thresholdsFile,
-      thresholdsDeclared: loaded.thresholds !== null,
-      thresholdsError: loaded.error,
-      markCount: readiness.markCount,
-      requiredAdversity: [...readiness.requiredAdversity],
-      rules: readiness.rules.map((entry) => ({
-        ruleId: entry.ruleId,
-        state: entry.state,
-        since: entry.since,
-        elapsedDays: entry.elapsedDays,
-        observationCount: entry.observationCount,
-        covered: [...entry.covered],
-        uncovered: [...entry.uncovered],
-        durationMet: entry.durationMet,
-        ready: entry.ready,
-        readyUnavailableReason: entry.readyUnavailableReason,
-      })),
-      advice: readiness.advice,
-    },
-  };
+  return financeRuleReadinessSection(await readFinanceRuleReadinessState(params));
 }
 
 function renderText(payload: Record<string, unknown>): string {

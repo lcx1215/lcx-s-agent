@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   paper: vi.fn(),
   venue: vi.fn(),
   ledger: vi.fn(),
+  projection: vi.fn(),
 }));
 vi.mock("./finance-free-market-collection-adapters.js", () => ({
   createChinaReachableUsEodHistoryCollectionAdapter: () => ({ collect: mocks.collect }),
@@ -21,7 +22,7 @@ vi.mock("./finance-bar-ledger.js", () => ({
 }));
 vi.mock("./finance-position-ledger.js", () => ({
   readFinancePositionLedger: mocks.ledger,
-  projectFinancePositions: () => ({ positions: [] }),
+  projectFinancePositions: mocks.projection,
   appendFinanceExecutionReceipt: vi.fn(),
   appendFinancePositionMark: vi.fn(),
 }));
@@ -61,6 +62,7 @@ afterEach(() => {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.ledger.mockResolvedValue({ ledger: { positions: [] }, receipts: [], marks: [] });
+  mocks.projection.mockReturnValue({ positions: [] });
   vi.spyOn(Date, "now").mockReturnValue(Date.parse(asOf));
   // Deliberately old history remains research input, never a current executable quote.
   mocks.collect.mockResolvedValue(
@@ -177,6 +179,47 @@ describe("daily cycle execution data boundary", () => {
     await runFinanceDailyCycle({ ...params, venue: "paper" });
     expect(mocks.paper).toHaveBeenCalledTimes(2);
     expect(mocks.order).not.toHaveBeenCalled();
+  });
+
+  it("refuses venue execution when the latest position mark is ahead of the latest EOD bar", async () => {
+    const staleBarClose = 100 + 499 * 0.1 + Math.sin(499);
+    mocks.ledger.mockResolvedValue({
+      ledger: { positions: [] },
+      receipts: [],
+      marks: [
+        {
+          instrument: "AAPL",
+          price: staleBarClose + 1,
+          at: "2026-09-21T12:00:00.000Z",
+        },
+      ],
+    });
+    mocks.projection.mockReturnValue({
+      positions: [
+        {
+          instrument: "AAPL",
+          quantity: 1,
+          averageCost: 100,
+          realizedPnl: 0,
+          markPrice: staleBarClose + 1,
+          markAt: "2026-09-21T12:00:00.000Z",
+          marketValue: staleBarClose + 1,
+          unrealizedPnl: 1,
+        },
+      ],
+    });
+    mocks.venue.mockResolvedValue({
+      ok: true,
+      state: { openOrders: new Map(), positions: new Map([["AAPL", 1]]) },
+    });
+
+    const report = await runFinanceDailyCycle({ ...params, executionQuotes: quotes() });
+
+    expect(report.refusals.join()).toContain("mark/bar consistency gate failed");
+    expect(mocks.order).toHaveBeenCalledTimes(1);
+    expect(mocks.order).toHaveBeenCalledWith(
+      expect.objectContaining({ conclusion: expect.objectContaining({ instrument: "MSFT" }) }),
+    );
   });
 });
 

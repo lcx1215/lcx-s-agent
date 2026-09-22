@@ -1,17 +1,23 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runFinanceDailyCycleOperator } from "../../scripts/operator/lcx-finance-daily-cycle.js";
 import {
   bindFinanceDailyStrategy,
   financeMonthlyTrendReturn,
 } from "../../src/agents/finance-daily-strategy.js";
-const mocks = vi.hoisted(() => ({ read: vi.fn(), cycle: vi.fn() }));
+const mocks = vi.hoisted(() => ({ read: vi.fn(), cycle: vi.fn(), readiness: vi.fn() }));
 vi.mock("../../src/agents/finance-strategy-rule-ledger.js", () => ({
   readFinanceStrategyRuleLedger: mocks.read,
 }));
 vi.mock("../../src/agents/finance-daily-cycle.js", () => ({ runFinanceDailyCycle: mocks.cycle }));
+vi.mock("../../src/agents/finance-rule-readiness-state.js", () => ({
+  readFinanceRuleReadinessState: mocks.readiness,
+  financeRuleReadinessSection: (state: { readiness: unknown }) => ({
+    readiness: state.readiness,
+  }),
+}));
 vi.mock("../../src/agents/finance-scoped-override.js", () => ({
   resolveScopedOverride: async ({ fallback }: { fallback: number }) => ({ value: fallback }),
 }));
@@ -29,6 +35,11 @@ const rule = {
   body: { frozenRule: { lookbackMonths: 6 } },
 };
 afterEach(() => vi.resetAllMocks());
+beforeEach(() => {
+  mocks.readiness.mockResolvedValue({
+    readiness: { rules: [{ ruleId: "trend", ready: true }] },
+  });
+});
 describe("declared strategy to daily execution", () => {
   it("binds the declared horizon and refuses another strategy form or ambiguous composition", () => {
     expect(bindFinanceDailyStrategy([rule])).toMatchObject({ ruleId: "trend", lookbackMonths: 6 });

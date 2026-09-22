@@ -85,6 +85,12 @@ describe("LCX flow graph exam", () => {
         failureSignals: string[];
         boundary: string;
       }>;
+      financeAutomaticLifecycleAudit: {
+        complete: boolean;
+        owner: string;
+        handoffs: Record<string, boolean>;
+        missingHandoffs: string[];
+      };
       liveTouched: boolean;
       providerConfigTouched: boolean;
       protectedMemoryTouched: boolean;
@@ -108,6 +114,27 @@ describe("LCX flow graph exam", () => {
     expect(payload.summary.consolidatedEntrypointFamilies).toBeGreaterThanOrEqual(9);
     expect(payload.summary.sharedEntrypointOwnerRules).toBeGreaterThanOrEqual(2);
     expect(payload.summary.diagnosticEntries).toBe(payload.summary.scenarios);
+    expect(payload.financeAutomaticLifecycleAudit).toMatchObject({
+      complete: false,
+      owner: "scripts/operator/lcx-finance-scheduler.ts",
+      handoffs: {
+        researchCanProducePortfolioCandidate: true,
+        schedulerCanConsumePortfolioPlan: true,
+        scheduledResearchFeedsPortfolioPlan: true,
+        scheduledResearchExecutesModuleDag: true,
+        intradayRunsUnderFinanceScheduler: true,
+        schedulerOwnsNightSettlement: true,
+        nightSettlementFeedsReviewedModuleResearch: true,
+        nightFeedbackDispatchesTuning: false,
+        tuningFeedsDeterministicPromotion: false,
+        centralHarnessHasAutomaticFinanceTaskFeed: false,
+      },
+      missingHandoffs: [
+        "night_scored_outcomes_to_tuning_proposal_dispatch",
+        "tuning_proposal_to_deterministic_paper_promotion",
+        "central_harness_automatic_finance_task_feed",
+      ],
+    });
     expect(payload.checks).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: "flow_graph_integrity", ok: true }),
@@ -132,6 +159,35 @@ describe("LCX flow graph exam", () => {
     expect(entrypointCheck?.evidence?.orphanEntrypoints).toEqual([]);
     expect(payload.scenarios).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({
+          id: "finance_intraday_paper_waterflow",
+          requiredFilters: expect.arrayContaining([
+            "closed_bar_only_required",
+            "next_bar_fill_required",
+            "same_cost_baseline_required",
+            "paper_replay_not_execution_receipt",
+            "multi_regime_validation_required",
+          ]),
+          receipts: expect.arrayContaining(["finance-intraday-paper-receipt"]),
+        }),
+        expect.objectContaining({
+          id: "finance_automatic_paper_trading_waterflow",
+          feedbackEdgeCount: 1,
+          requiredFilters: expect.arrayContaining([
+            "llm_proposes_ts_gate_approves",
+            "single_finance_scheduler_owner_required",
+            "paper_venue_only_for_autonomous_cycle",
+            "night_feedback_requires_scored_outcomes",
+            "deterministic_promotion_gate_required",
+          ]),
+          receipts: expect.arrayContaining([
+            "lcx-finance-research-run-latest",
+            "finance-portfolio-plan",
+            "daily-cycle-runs",
+            "research-scored",
+            "tuning-proposals",
+          ]),
+        }),
         expect.objectContaining({
           id: "external_finance_research_waterflow",
           requiredFilters: expect.arrayContaining([

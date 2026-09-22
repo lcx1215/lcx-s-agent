@@ -185,6 +185,97 @@ describe("finance module execution", () => {
     }
   });
 
+  it("dispatches the declared domain producer before inspecting its durable output", async () => {
+    const moduleId = "company_fundamentals_value" as const;
+    const plan = planFinanceBrainOrchestration({
+      text: "公司基本面与估值",
+      highStakesConclusion: true,
+      moduleSelection: {
+        moduleIds: [moduleId],
+        rationale: "prove declared producer dispatch",
+        composition: {
+          nodes: [{ id: "fundamentals", moduleId, dependsOn: [] }],
+          maxReplans: 0,
+        },
+      },
+    });
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-module-producer-"));
+    try {
+      const result = await executeFinanceModuleComposition({
+        ask: "公司基本面与估值",
+        asOf: "2026-09-11T00:00:00.000Z",
+        plan,
+        batch: emptyBatch(),
+        workspaceDir,
+        domainProducerInputs: {
+          [moduleId]: {
+            domain: moduleId,
+            sourceArtifacts: ["fixture://fundamentals"],
+            evidenceCategories: ["fundamentals_evidence", "valuation_evidence"],
+            evidenceSummary:
+              "company_fundamentals_value domain evidence contains audited revenue, margin, cash-flow and valuation-multiple observations.",
+            baseCase: "cash flow remains positive while valuation stays near its historical band",
+            bullCase: "margin expansion raises normalized earnings",
+            bearCase: "revenue and free cash flow contract",
+            keyCausalChain: "revenue growth -> margin transmission -> normalized free cash flow",
+            upstreamDrivers: ["reported revenue and operating margin"],
+            downstreamAssetImpacts: ["normalized equity value range"],
+            confidenceOrConviction: "medium",
+            whatChangesMyMind: "two reporting periods contradict the cash-flow premise",
+            noActionReason: "research evidence alone grants no order authority",
+            riskGateNotes: "valuation and balance-sheet evidence require independent review",
+            allowedActionAuthority: "research_only",
+          },
+        },
+      });
+      const node = result.receipt.nodes.find((item) => item.nodeId === "fundamentals");
+      expect(node?.status).toBe("succeeded");
+      expect(node?.toolCalls.map((call) => call.toolName)).toEqual([
+        "finance_framework_company_fundamentals_value_producer",
+        "finance_framework_core_inspect",
+      ]);
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not claim a domain node succeeded when its declared producer input is absent", async () => {
+    const plan = planFinanceBrainOrchestration({
+      text: "公司基本面与估值",
+      highStakesConclusion: true,
+      moduleSelection: {
+        moduleIds: ["company_fundamentals_value"],
+        rationale: "fail closed without producer output",
+        composition: {
+          nodes: [{ id: "fundamentals", moduleId: "company_fundamentals_value", dependsOn: [] }],
+          maxReplans: 0,
+        },
+      },
+    });
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-module-producer-gap-"));
+    try {
+      const result = await executeFinanceModuleComposition({
+        ask: "公司基本面与估值",
+        asOf: "2026-09-11T00:00:00.000Z",
+        plan,
+        batch: emptyBatch(),
+        workspaceDir,
+      });
+      const node = result.receipt.nodes.find(
+        (item) => item.moduleId === "company_fundamentals_value",
+      );
+      expect(node?.status).toBe("blocked_missing_evidence");
+      expect(node?.toolCalls.map((call) => call.toolName)).toEqual([
+        "finance_framework_core_inspect",
+      ]);
+      expect(node?.missingEvidence).toContain(
+        "domain_producer_input:finance_framework_company_fundamentals_value_producer",
+      );
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
   it("preserves cancellation in every node receipt", async () => {
     const plan = planFinanceBrainOrchestration({
       text: "执行模块取消测试",

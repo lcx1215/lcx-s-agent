@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   cycle: vi.fn(),
   backfill: vi.fn(),
   reconcile: vi.fn(),
+  ruleReadiness: vi.fn(),
 }));
 vi.mock("./finance-alpaca-history-sync.js", () => ({
   syncConfiguredAlpacaPaperHistory: vi.fn(() => {
@@ -18,6 +19,12 @@ vi.mock("./finance-daily-cycle.js", () => ({ runFinanceDailyCycle: mocks.cycle }
 vi.mock("./finance-link-health.js", () => ({ readFinanceLinkHealth: vi.fn() }));
 vi.mock("./finance-outcome-backfill.js", () => ({ backfillOutcomes: mocks.backfill }));
 vi.mock("./finance-reflection.js", () => ({ buildReflection: vi.fn() }));
+vi.mock("./finance-rule-readiness-state.js", () => ({
+  readFinanceRuleReadinessState: mocks.ruleReadiness,
+  financeRuleReadinessSection: (state: { readiness: unknown }) => ({
+    readiness: state.readiness,
+  }),
+}));
 vi.mock("./finance-scoped-override.js", () => ({
   resolveScopedOverride: vi.fn(async () => ({ value: 8 })),
 }));
@@ -64,6 +71,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.cycle.mockResolvedValue({ ok: true });
   mocks.reconcile.mockResolvedValue({ historyStatus: "reconciled" });
+  mocks.ruleReadiness.mockResolvedValue({
+    readiness: {
+      rules: [{ ruleId: "fixture", ready: true }],
+    },
+  });
 });
 describe("account gate before unattended placement", () => {
   it.each([{ extra: [] }, { extra: ["--equity-from-venue"] }, { extra: ["--equity", "500000"] }])(
@@ -128,10 +140,42 @@ describe("account gate before unattended placement", () => {
       expect.objectContaining({ executionQuoteProvider: provider }),
     );
   });
+  it("refuses placement when an active rule is not ready under declared evidence", async () => {
+    mocks.account.mockResolvedValue({ ok: true, account });
+    mocks.ruleReadiness.mockResolvedValueOnce({
+      readiness: {
+        rules: [
+          {
+            ruleId: "fixture",
+            ready: false,
+            uncovered: ["chop", "reversal", "gap"],
+          },
+        ],
+      },
+    });
+    const createController = vi.fn();
+    const result = await runFinanceDailyCycleOperator(args, { createController });
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("not paper-ready"),
+      readiness: {
+        rules: [{ ruleId: "fixture", ready: false }],
+      },
+    });
+    expect(createController).not.toHaveBeenCalled();
+    expect(mocks.cycle).not.toHaveBeenCalled();
+  });
   it("keeps research runs independent of account access", async () => {
-    await runFinanceDailyCycleOperator(args.filter((arg) => arg !== "--place"));
+    mocks.ruleReadiness.mockResolvedValueOnce({
+      readiness: { rules: [{ ruleId: "fixture", ready: null }] },
+    });
+    const result = await runFinanceDailyCycleOperator(args.filter((arg) => arg !== "--place"));
     expect(mocks.account).not.toHaveBeenCalled();
     expect(mocks.cycle).toHaveBeenCalledWith(expect.objectContaining({ place: false }));
+    expect(result).toMatchObject({
+      ok: true,
+      readiness: { rules: [{ ruleId: "fixture", ready: null }] },
+    });
   });
 });
 
@@ -269,6 +313,9 @@ it("checks reconciliation without collecting quotes or entering the trading cycl
   const path = await import("node:path");
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "daily-inspection-"));
   try {
+    mocks.ruleReadiness.mockResolvedValue({
+      readiness: { rules: [{ ruleId: "fixture", ready: false }] },
+    });
     const filename = path.join(directory, "policy.json");
     await fs.writeFile(filename, "{}");
     const inspectReconciliation = vi.fn(async () => ({
@@ -301,6 +348,7 @@ it("checks reconciliation without collecting quotes or entering the trading cycl
     expect(result).toMatchObject({
       ok: true,
       boundary: "broker_reconciliation_readiness_only",
+      strategyRuleReadiness: { rules: [{ ruleId: "fixture", ready: false }] },
       quotesVerified: false,
       executionVerified: false,
       ordersSubmitted: 0,

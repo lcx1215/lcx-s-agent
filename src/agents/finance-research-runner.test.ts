@@ -269,6 +269,91 @@ describe("finance research runner", () => {
     );
   });
 
+  it("compiles a grounded dynamic allocation into the existing portfolio plan contract", async () => {
+    const allocationModel = async (request: unknown): Promise<unknown> => {
+      const output = await modelInvoker(request);
+      if (
+        typeof output === "object" &&
+        output !== null &&
+        "kind" in output &&
+        output.kind === "artifact" &&
+        "artifact" in output &&
+        typeof output.artifact === "object" &&
+        output.artifact !== null
+      ) {
+        const artifact = output.artifact as {
+          supportingAnalysis?: Record<string, unknown>;
+          claims: readonly { evidenceIds: readonly string[] }[];
+        };
+        const evidenceId = artifact.claims[0]?.evidenceIds[0];
+        if (!evidenceId) {
+          throw new Error("fixture artifact has no grounded evidence id");
+        }
+        return {
+          ...output,
+          artifact: {
+            ...output.artifact,
+            supportingAnalysis: {
+              ...artifact.supportingAnalysis,
+              portfolioAllocationProposal: {
+                allocations: [
+                  {
+                    strategyId: "trend",
+                    budgetFraction: 0.41,
+                    evidenceIds: [evidenceId],
+                  },
+                ],
+              },
+            },
+            answer:
+              "Strategy candidate using timestamped evidence as of 2026-09-08: if the base scenario persists, retain a bounded allocation. Risk and invalidation are tied to the stated scenario over a six-month horizon. Review only; no automatic execution.",
+          },
+        };
+      }
+      return output;
+    };
+    const result = await runFinanceResearchRun({
+      input: {
+        ask: "分析未来半年美股市场情绪并形成可审阅的策略候选配置。",
+        asOf: AS_OF,
+        horizonMonths: 6,
+        decisionMode: "strategy_candidate",
+        strategyStage: "research_candidate",
+        portfolioContext: {
+          accountId: "paper-account",
+          venue: "alpaca",
+          validityMinutes: 1_440,
+          conflictPolicy: "block",
+          activeStrategyIds: ["trend"],
+        },
+        targets: [
+          {
+            id: "allocation-fixture",
+            instrument: "SPY",
+            assetClass: "us_equity",
+            realtime: { requireOfficialReference: false },
+          },
+        ],
+      },
+      liveFetch: true,
+      modelInvoker,
+      qualityModelInvoker: allocationModel,
+      batchOptions: BATCH_OPTIONS,
+    });
+
+    expect(result.status).toBe("candidate");
+    expect(result.portfolioPlan).toMatchObject({
+      accountId: "paper-account",
+      venue: "alpaca",
+      allocations: [{ strategyId: "trend", budgetFraction: 0.41 }],
+      candidates: [],
+      provenance: {
+        kind: "finance_research_allocation",
+        receiptId: expect.stringMatching(/^quality:/u),
+      },
+    });
+  });
+
   it("retains bounded post-cutoff collection evidence in live-now mode", async () => {
     const postCutoff = "2026-09-08T12:01:00.000Z";
     const requests: unknown[] = [];
@@ -889,5 +974,108 @@ describe("research module composition reaches actual model request boundaries", 
     } finally {
       await fs.rm(directory, { recursive: true, force: true });
     }
+  });
+
+  it("compiles grounded committee producer inputs before dispatching the canonical module DAG", async () => {
+    let captured: unknown;
+    const producerAwareInvoker = async (request: unknown) => {
+      const output = await modelInvoker(request);
+      const payload = request as { stage?: string; evidence?: Array<{ id?: string }> };
+      if (payload.stage !== "draft") {
+        return output;
+      }
+      const evidenceId = payload.evidence?.[0]?.id ?? "finance-batch-summary";
+      const artifact = (output as { artifact: { supportingAnalysis: Record<string, unknown> } })
+        .artifact;
+      artifact.supportingAnalysis.financeFrameworkProducerInputs = {
+        causal_map: {
+          domain: "causal_map",
+          sourceArtifacts: [evidenceId],
+          evidenceCategories: ["causal_chain_evidence"],
+          evidenceSummary:
+            "Timestamped evidence supports a bounded causal-chain hypothesis with an explicit alternative.",
+          baseCase: "the observed transmission remains conditional",
+          bullCase: "supportive transmission persists",
+          bearCase: "the transmission reverses",
+          keyCausalChain: "observed input -> transmission mechanism -> conditional repricing",
+          upstreamDrivers: ["cited observed input"],
+          downstreamAssetImpacts: ["conditional repricing"],
+          confidenceOrConviction: "medium",
+          whatChangesMyMind: "a cited counter-observation breaks the mechanism",
+          noActionReason: "research evidence grants no order authority",
+          riskGateNotes: "portfolio and execution gates remain required",
+          allowedActionAuthority: "research_only",
+        },
+      };
+      return output;
+    };
+    const result = await runFinanceResearchRun({
+      input: {
+        ask: "Review technical timing",
+        asOf: AS_OF,
+        targets,
+        executeModules: true,
+        moduleSelection: {
+          moduleIds: ["technical_timing"],
+          rationale: "Use the registered timing lens.",
+        },
+      },
+      liveFetch: true,
+      batchOptions: BATCH_OPTIONS,
+      modelInvoker: producerAwareInvoker,
+      qualityModelInvoker: producerAwareInvoker,
+      moduleExecutor: async ({ plan, domainProducerInputs, asOf }) => {
+        captured = domainProducerInputs;
+        const nodes = plan.composition.nodes.map((node) => ({
+          nodeId: node.id,
+          moduleId: node.moduleId,
+          requiredToolNames: [],
+          dependsOn: node.dependsOn,
+          status: "succeeded" as const,
+          inputEvidenceIds: ["fixture"],
+          outputEvidenceIds: [`finance-module:${node.id}`],
+          toolCalls: [],
+          missingEvidence: [],
+        }));
+        return {
+          receipt: {
+            schemaVersion: "lcx_finance_module_execution_v1" as const,
+            boundary: "finance_module_execution_research_only" as const,
+            requested: true,
+            allNodesSucceeded: true,
+            moduleToolsDispatched: true,
+            compositionNodeIds: plan.composition.topologicalOrder,
+            outputEvidenceIds: nodes.flatMap((node) => node.outputEvidenceIds),
+            nodes,
+            replanFeedback: {
+              status: "completed" as const,
+              hardNodeIds: plan.composition.control.hardNodeIds,
+              softNodeIds: plan.composition.control.softNodeIds,
+              hardFailures: [],
+              softFailures: [],
+              remainingSoftReplans: plan.composition.control.maxSoftReplans,
+              nextAction: "none" as const,
+            },
+            notTouched: [
+              "provider_config",
+              "external_channel_sender",
+              "trading_execution",
+              "wallet_or_order_authority",
+            ],
+          },
+          evidence: nodes.map((node) => ({
+            id: node.outputEvidenceIds[0],
+            source: "finance-module-execution",
+            timestamp: asOf,
+            text: JSON.stringify({ moduleId: node.moduleId, status: node.status }),
+          })),
+        };
+      },
+    });
+    expect(captured).toMatchObject({ causal_map: { allowedActionAuthority: "research_only" } });
+    expect(result.status).toBe("candidate");
+    expect(result.gates).toContainEqual(
+      expect.objectContaining({ id: "module_execution", passed: true }),
+    );
   });
 });

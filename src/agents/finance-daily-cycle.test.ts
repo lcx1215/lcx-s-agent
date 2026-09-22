@@ -7,6 +7,7 @@ import {
   attemptCycleOrder,
   currentWeightsFromPositions,
   lastCompletedMonthEnd,
+  markBarConsistencyIssue,
   markInstantForBarDate,
   receiptsForVenue,
   recordCycleFill,
@@ -62,12 +63,8 @@ describe("markInstantForBarDate", () => {
     );
   });
 
-  it("falls back to the run's instant rather than writing a mark in the future", () => {
-    // A cycle that runs before the close still files today's bar. A mark dated in the future is
-    // rejected by the store, and a rejected mark is a position still priced with yesterday.
-    expect(markInstantForBarDate("2026-09-20", "2026-09-20T12:00:00.000Z")).toBe(
-      "2026-09-20T12:00:00.000Z",
-    );
+  it("does not relabel an unclosed bar with the run instant", () => {
+    expect(markInstantForBarDate("2026-09-20", "2026-09-20T12:00:00.000Z")).toBeUndefined();
   });
 
   it("gives the same instant to the same date, which is what makes a re-run add nothing", () => {
@@ -76,6 +73,40 @@ describe("markInstantForBarDate", () => {
     const first = markInstantForBarDate("2026-09-18", "2026-09-18T21:00:00.000Z");
     const second = markInstantForBarDate("2026-09-18", "2026-09-19T04:00:00.000Z");
     expect(first).toBe(second);
+  });
+});
+
+describe("markBarConsistencyIssue", () => {
+  const latestBar = { date: "2026-09-18", close: 100 };
+
+  it("accepts a mark from the exact same completed bar", () => {
+    expect(
+      markBarConsistencyIssue(
+        { price: 100, at: "2026-09-18T20:00:00.000Z" },
+        latestBar,
+        "2026-09-21T12:00:00.000Z",
+      ),
+    ).toBeNull();
+  });
+
+  it("rejects a mark whose clock is ahead of the latest bar", () => {
+    expect(
+      markBarConsistencyIssue(
+        { price: 101, at: "2026-09-21T12:00:00.000Z" },
+        latestBar,
+        "2026-09-21T12:00:00.000Z",
+      ),
+    ).toContain("does not match latest EOD bar close");
+  });
+
+  it("rejects a price mismatch at the same close instant", () => {
+    expect(
+      markBarConsistencyIssue(
+        { price: 101, at: "2026-09-18T20:00:00.000Z" },
+        latestBar,
+        "2026-09-21T12:00:00.000Z",
+      ),
+    ).toContain("price 101");
   });
 });
 

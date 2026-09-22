@@ -274,22 +274,48 @@ type Bar = Readonly<{ date: string; close: number }>;
 /**
  * The instant a bar's close is true of, as a mark timestamp.
  *
- * A US cash session closes 16:00 New York, which is 20:00 UTC in the months it matters here. The
- * mark store rejects an instant in the future, so a bar dated today — filed by a cycle that runs
- * before the close — falls back to the instant the cycle is running at rather than being rejected
- * and leaving the position priced with yesterday's number.
+ * A US cash session closes 16:00 New York, which is 20:00 UTC in the months it matters here. A
+ * bar whose close is still in the future is not a completed EOD observation, so it has no valid
+ * mark instant yet. Relabelling it with the run time would create false source chronology.
  */
-export function markInstantForBarDate(date: string, asOf: string): string {
+export function markInstantForBarDate(date: string, asOf: string): string | undefined {
   const close = `${date}T20:00:00.000Z`;
   const closeMs = Date.parse(close);
   const asOfMs = Date.parse(asOf);
   if (!Number.isFinite(closeMs)) {
-    return asOf;
+    return undefined;
   }
   if (Number.isFinite(asOfMs) && closeMs > asOfMs) {
-    return asOf;
+    return undefined;
   }
   return close;
+}
+
+/**
+ * A position mark used for EOD portfolio sizing must describe the same observation as the
+ * newest completed bar. A later fill/quote mark may be real, but mixing it with an older bar
+ * silently changes the denominator of the strategy, so venue execution must wait for a
+ * same-source refresh instead of treating the two clocks as interchangeable.
+ */
+export function markBarConsistencyIssue(
+  mark: Readonly<{ price: number; at: string }> | undefined,
+  bar: Bar | undefined,
+  asOf: string,
+): string | null {
+  if (!mark || !bar) {
+    return null;
+  }
+  const expectedAt = markInstantForBarDate(bar.date, asOf);
+  if (expectedAt === undefined) {
+    return `latest EOD bar ${bar.date} is not closed at ${asOf}`;
+  }
+  if (mark.at !== expectedAt) {
+    return `latest position mark ${mark.at} does not match latest EOD bar close ${expectedAt}`;
+  }
+  if (Math.abs(mark.price - bar.close) > 1e-9) {
+    return `latest position mark price ${mark.price} does not match latest EOD bar close ${bar.close}`;
+  }
+  return null;
 }
 
 /** The last month end whose month is strictly before `asOf`'s month. */
@@ -854,6 +880,12 @@ export async function runFinanceDailyCycle(
         continue;
       }
       const at = markInstantForBarDate(bar.date, asOf);
+      if (at === undefined) {
+        dataIssues.push(
+          `${position.instrument}: latest EOD bar ${bar.date} has not closed; mark not filed`,
+        );
+        continue;
+      }
       try {
         const result = await appendFinancePositionMark(directory, {
           instrument: position.instrument,
@@ -1001,6 +1033,7 @@ export async function runFinanceDailyCycle(
   // Current weights from the actual ledger, not from an assumed book.
   let currentWeight: ReadonlyMap<string, number> = new Map();
   const unpricedPositions = new Set<string>();
+  const inconsistentMarkBars = new Map<string, string>();
   const ledgerQuantity = new Map<string, number>();
   try {
     if (accountBook) {
@@ -1024,7 +1057,17 @@ export async function runFinanceDailyCycle(
         unpricedPositions.add(symbol);
       }
       for (const position of book.positions) {
-        ledgerQuantity.set(position.instrument.toUpperCase(), position.quantity);
+        const instrument = position.instrument.toUpperCase();
+        ledgerQuantity.set(instrument, position.quantity);
+        if (position.quantity !== 0) {
+          const latestMark = ledger.marks
+            .filter((mark) => mark.instrument.toUpperCase() === instrument)
+            .at(-1);
+          const issue = markBarConsistencyIssue(latestMark, lastBar.get(instrument), asOf);
+          if (issue !== null) {
+            inconsistentMarkBars.set(instrument, issue);
+          }
+        }
       }
     }
   } catch {
@@ -1037,6 +1080,9 @@ export async function runFinanceDailyCycle(
   }
   if (unpricedPositions.size > 0) {
     dataIssues.push(`held but unpriced (no mark): ${[...unpricedPositions].toSorted().join(", ")}`);
+  }
+  for (const [instrument, issue] of inconsistentMarkBars) {
+    dataIssues.push(`${instrument}: ${issue}`);
   }
 
   if (portfolio) {
@@ -1139,6 +1185,13 @@ export async function runFinanceDailyCycle(
         // bought twice. Everything this run can still do correctly, it does — just not here.
         refusals.push(
           `${item.instrument}: held but the ledger has no mark price; refusing to size against an unknown book`,
+        );
+        continue;
+      }
+      const markBarIssue = inconsistentMarkBars.get(item.instrument);
+      if (markBarIssue !== undefined) {
+        refusals.push(
+          `${item.instrument}: mark/bar consistency gate failed (${markBarIssue}); refusing venue execution`,
         );
         continue;
       }

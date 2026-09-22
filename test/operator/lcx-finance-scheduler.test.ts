@@ -357,6 +357,49 @@ it("forwards explicit read-only history synchronization without enabling placeme
   expect(options.extraArgs).not.toContain("--place");
 });
 
+it("parses a resident event-driven intraday monitor without granting placement", () => {
+  const options = parseFinanceSchedulerArgs([
+    "--loop",
+    "--intraday-monitor",
+    "--intraday-instruments",
+    "SPY,QQQ",
+    "--intraday-interval-seconds",
+    "300",
+    "--intraday-feed",
+    "iex",
+    "--intraday-opening-range-bars",
+    "6",
+    "--intraday-reward-risk",
+    "2",
+  ]);
+  expect(options.intraday).toEqual({
+    place: false,
+    instruments: ["SPY", "QQQ"],
+    intervalSeconds: 300,
+    feed: "iex",
+    openingRangeBars: 6,
+    rewardRisk: 2,
+  });
+  expect(options.extraArgs).not.toContain("--place");
+});
+
+it("requires shared authorization and explicit caps for intraday paper placement", () => {
+  const base = [
+    "--loop",
+    "--intraday-monitor",
+    "--intraday-place",
+    "--intraday-instruments",
+    "SPY",
+  ];
+  expect(() => parseFinanceSchedulerArgs(base)).toThrow("shared --place authorization");
+});
+
+it("refuses an intraday monitor without an explicit universe", () => {
+  expect(() => parseFinanceSchedulerArgs(["--loop", "--intraday-monitor"])).toThrow(
+    "--intraday-instruments",
+  );
+});
+
 it("distinguishes preview success from enabled trading and blocked execution", () => {
   const report = JSON.stringify({
     ok: true,
@@ -397,6 +440,141 @@ it("routes the exact portfolio plan to the cycle with a cwd-independent path", a
     expect.arrayContaining(["--portfolio-plan", path.resolve(plan)]),
   );
   expect(mocks.runCycle.mock.calls[0][0].argv).not.toContain("--place");
+});
+
+it("refreshes a grounded research plan before the unique day cycle", async () => {
+  const context = path.join(directory, "portfolio-context.json");
+  const plan = path.join(directory, "research-portfolio-plan-latest.json");
+  fs.writeFileSync(context, "{}");
+  mocks.runCycle
+    .mockResolvedValueOnce({
+      ...success,
+      stdout: JSON.stringify({ status: "candidate", portfolioPlanWritten: plan }),
+    })
+    .mockResolvedValueOnce(success);
+
+  await expect(
+    runFinanceScheduler([
+      "--once",
+      "day",
+      "--dir",
+      directory,
+      "--research-portfolio-context",
+      context,
+      "--research-ask",
+      "review active strategy budgets",
+    ]),
+  ).resolves.toBe(0);
+
+  expect(mocks.runCycle).toHaveBeenCalledTimes(2);
+  expect(mocks.runCycle.mock.calls[0][0].argv).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining("lcx-finance-research-run.ts"),
+      "--execute-modules",
+      "--decision-mode",
+      "strategy_candidate",
+      "--portfolio-context",
+      context,
+      "--portfolio-plan-out",
+      plan,
+    ]),
+  );
+  expect(mocks.runCycle.mock.calls[1][0].argv).toEqual(
+    expect.arrayContaining(["--portfolio-plan", plan]),
+  );
+});
+
+it("routes night settlement, ledgers and news through the same module research owner", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-22T22:00:00.000Z"));
+  const context = path.join(directory, "portfolio-context.json");
+  fs.writeFileSync(context, "{}");
+  mocks.runCycle
+    .mockResolvedValueOnce({
+      ...success,
+      stdout: JSON.stringify({
+        ok: true,
+        scoredFiled: { appended: 1, skipped: 0 },
+        reflection: { lesson: "review invalidation" },
+        pending: [],
+        declined: [],
+        issues: [],
+      }),
+    })
+    .mockResolvedValueOnce({ ...success, stdout: JSON.stringify({ status: "candidate" }) });
+
+  await expect(
+    runFinanceScheduler([
+      "--once",
+      "night",
+      "--dir",
+      directory,
+      "--research-portfolio-context",
+      context,
+      "--research-ask",
+      "review active strategy budgets",
+    ]),
+  ).resolves.toBe(0);
+
+  expect(mocks.runCycle).toHaveBeenCalledTimes(2);
+  const evidencePath = path.join(directory, "night-review-evidence-2026-09-22.json");
+  expect(mocks.runCycle.mock.calls[1][0].argv).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining("lcx-finance-research-run.ts"),
+      "--execute-modules",
+      "--decision-mode",
+      "research_only",
+      "--controller-evidence",
+      evidencePath,
+    ]),
+  );
+  expect(JSON.parse(fs.readFileSync(evidencePath, "utf8"))).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ source: "finance-night-settlement" }),
+      expect.objectContaining({ source: "finance-position-ledger" }),
+      expect.objectContaining({ source: "finance-strategy-rule-ledger" }),
+      expect.objectContaining({ source: "finance-intraday-control-ledger" }),
+    ]),
+  );
+  expect(readFinanceSchedulerState(directory).lastSucceeded.night).toBe("2026-09-22");
+});
+
+it("does not enter the day cycle when research plan refresh is unverified", async () => {
+  mocks.runCycle.mockResolvedValueOnce({
+    ...success,
+    stdout: JSON.stringify({ status: "needs_review" }),
+  });
+  await expect(
+    runFinanceScheduler([
+      "--once",
+      "day",
+      "--dir",
+      directory,
+      "--research-portfolio-context",
+      path.join(directory, "context.json"),
+      "--research-ask",
+      "review active strategy budgets",
+    ]),
+  ).resolves.toBe(1);
+  expect(mocks.runCycle).toHaveBeenCalledOnce();
+  expect(readFinanceSchedulerState(directory).lastSucceeded.day).toBeUndefined();
+});
+
+it("requires a complete automatic research plan binding and refuses a competing static plan", () => {
+  expect(() =>
+    parseFinanceSchedulerArgs(["--loop", "--research-portfolio-context", "context.json"]),
+  ).toThrow("requires both");
+  expect(() =>
+    parseFinanceSchedulerArgs([
+      "--loop",
+      "--research-portfolio-context",
+      "context.json",
+      "--research-ask",
+      "review",
+      "--portfolio-plan",
+      "static.json",
+    ]),
+  ).toThrow("cannot combine");
 });
 
 it("distinguishes missing, stalled and invalid progress even when the PID is alive", () => {

@@ -1,15 +1,9 @@
-import fs from "node:fs/promises";
 import { Type } from "@sinclair/typebox";
-import { financeBarLedgerExists, readFinanceBarLedger } from "../finance-bar-ledger.js";
-import { readFinancePositionLedger } from "../finance-position-ledger.js";
 import {
-  buildFinanceRuleReadiness,
-  parseFinanceReadinessThresholds,
-  type FinanceReadinessBar,
-  type FinanceReadinessThresholds,
-} from "../finance-rule-readiness.js";
+  financeRuleReadinessSection,
+  readFinanceRuleReadinessState,
+} from "../finance-rule-readiness-state.js";
 import {
-  financeReadinessThresholdsPath,
   financeStrategyRuleLedgerPath,
   resolveFinanceStateDir,
   type FinanceStateDirSource,
@@ -67,119 +61,6 @@ const FinanceStrategyRuleLedgerReadSchema = Type.Object({
  * if it carried a range. If neither book exists there is nothing to measure, which makes every
  * regime unjudgeable — reported as such, never as "nothing adverse happened".
  */
-async function readReadinessSection(params: {
-  directory: string;
-  asOf: string;
-  rules: Awaited<ReturnType<typeof readFinanceStrategyRuleLedger>>["ledger"]["rules"];
-}): Promise<Record<string, unknown>> {
-  const thresholdsFile = financeReadinessThresholdsPath(params.directory);
-  let declared: FinanceReadinessThresholds | null = null;
-  let thresholdsError: string | null = null;
-  let thresholdsDeclared = false;
-  try {
-    const raw = await fs.readFile(thresholdsFile, "utf8");
-    let value: unknown;
-    try {
-      value = JSON.parse(raw) as unknown;
-    } catch {
-      thresholdsError = `${thresholdsFile} is not valid JSON`;
-    }
-    if (thresholdsError === null) {
-      const parsed = parseFinanceReadinessThresholds(value, thresholdsFile);
-      if (parsed.ok) {
-        declared = parsed.thresholds;
-        thresholdsDeclared = true;
-      } else {
-        thresholdsError = parsed.error;
-      }
-    }
-  } catch {
-    thresholdsError = null;
-  }
-
-  let marks: readonly { instrument: string; price: number; at: string }[] = [];
-  let markSource: string | null = null;
-  try {
-    const positions = await readFinancePositionLedger(params.directory, { asOf: params.asOf });
-    marks = positions.marks;
-    markSource = "finance_position_ledger";
-  } catch {
-    markSource = null;
-  }
-
-  // Bars are the only supply that can answer a range question, so they are read here rather than
-  // left to the caller: a readiness that only ever saw closes would answer "not adverse" for a
-  // rule that lived through a 10% intraday fall and closed flat.
-  let bars: readonly FinanceReadinessBar[] = [];
-  let barSource: string | null = null;
-  try {
-    // An absent bar book reads as an empty one without raising, so "no bars" and "no book" are
-    // indistinguishable from the result alone. Claiming the source anyway would let a reader
-    // conclude the supply exists and happened to be empty, which is the opposite of the truth.
-    if (await financeBarLedgerExists(params.directory)) {
-      const ledger = await readFinanceBarLedger(params.directory, { asOf: params.asOf });
-      bars = ledger.bars.map((bar) => ({
-        instrument: bar.instrument,
-        at: bar.date,
-        open: bar.open,
-        high: bar.high,
-        low: bar.low,
-        close: bar.close,
-        sampleCount: bar.sampleCount,
-      }));
-      barSource = "finance_bar_ledger";
-    }
-  } catch {
-    barSource = null;
-  }
-
-  const readiness = buildFinanceRuleReadiness({
-    rules: params.rules,
-    marks,
-    bars,
-    asOf: params.asOf,
-    ...(declared === null ? {} : { thresholds: declared }),
-  });
-
-  return {
-    readiness: {
-      asOf: readiness.asOf,
-      ruleCount: readiness.ruleCount,
-      markCount: readiness.markCount,
-      markSource,
-      barCount: readiness.barCount,
-      barSource,
-      thresholdsFile,
-      thresholdsDeclared,
-      thresholdsError,
-      declaredThresholds: readiness.declaredThresholds,
-      requiredAdversity: [...readiness.requiredAdversity],
-      rules: readiness.rules.map((entry) => ({
-        ruleId: entry.ruleId,
-        state: entry.state,
-        since: entry.since,
-        elapsedDays: entry.elapsedDays,
-        observationCount: entry.observationCount,
-        ...(entry.barWindowNote === null ? {} : { barWindowNote: entry.barWindowNote }),
-        covered: [...entry.covered],
-        uncovered: [...entry.uncovered],
-        durationMet: entry.durationMet,
-        ready: entry.ready,
-        readyUnavailableReason: entry.readyUnavailableReason,
-        adversity: entry.adversity.map((item) => ({
-          kind: item.kind,
-          observed: item.observed,
-          basis: item.basis,
-          detail: { ...item.detail },
-          unavailableReason: item.unavailableReason,
-        })),
-      })),
-      interpretationBoundary: readiness.interpretationBoundary,
-      advice: readiness.advice,
-    },
-  };
-}
-
 export function createFinanceStrategyRuleLedgerReadTool(): AnyAgentTool {
   return {
     label: "Strategy rule ledger",
@@ -281,11 +162,13 @@ export function createFinanceStrategyRuleLedgerReadTool(): AnyAgentTool {
           retiredAt: rule.retiredAt,
         })),
         ...(includeReadiness
-          ? await readReadinessSection({
-              directory: state.directory,
-              asOf: asOfValue,
-              rules: selected,
-            })
+          ? financeRuleReadinessSection(
+              await readFinanceRuleReadinessState({
+                directory: state.directory,
+                asOf: asOfValue,
+                rules: selected,
+              }),
+            )
           : {}),
         authorityNote:
           "Every record in this book carries executionAuthority 'none'. Declaring a rule records " +

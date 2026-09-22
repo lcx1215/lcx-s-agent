@@ -34,6 +34,11 @@ import {
   validateFinancePortfolioPlan,
 } from "../../src/agents/finance-portfolio-composition.js";
 import { buildReflection } from "../../src/agents/finance-reflection.js";
+import {
+  financeRuleReadinessSection,
+  readFinanceRuleReadinessState,
+  type FinanceRuleReadinessState,
+} from "../../src/agents/finance-rule-readiness-state.js";
 import { resolveScopedOverride } from "../../src/agents/finance-scoped-override.js";
 import {
   FINANCE_RESEARCH_SAMPLES_FILENAME,
@@ -431,6 +436,7 @@ export async function runFinanceDailyCycleOperator(
     let ruleIds: readonly string[] = [];
     let strategy: ReturnType<typeof bindFinanceDailyStrategy> | undefined;
     let strategies: ReturnType<typeof bindFinanceDailyStrategy>[] = [];
+    let strategyReadiness: FinanceRuleReadinessState | undefined;
     const portfolioPlan =
       options.mode === "day" && options.portfolioPlanPath
         ? financePortfolioPlanSchema.parse(
@@ -443,10 +449,9 @@ export async function runFinanceDailyCycleOperator(
     // Night settlement consumes recorded samples, not today's active strategy.
     if (options.mode === "day") {
       const read = await readFinanceStrategyRuleLedger(directory, {});
+      const activeRules = read.ledger.rules.filter((rule) => rule.state === "active");
       strategies = portfolioPlan
-        ? read.ledger.rules
-            .filter((r) => r.state === "active")
-            .map((r) => bindFinanceDailyStrategy([r]))
+        ? activeRules.map((rule) => bindFinanceDailyStrategy([rule]))
         : [bindFinanceDailyStrategy(read.ledger.rules)];
       strategy = strategies[0];
       instruments = [
@@ -456,12 +461,31 @@ export async function runFinanceDailyCycleOperator(
         ]),
       ];
       ruleIds = strategies.map((r) => r.ruleId);
+      strategyReadiness = await readFinanceRuleReadinessState({
+        directory,
+        asOf: options.asOf,
+        rules: activeRules,
+      });
     }
     // Only the day run needs a universe. Pausing every rule is a decision about trading, not
     // about remembering: a night that refuses to settle because nothing is active is a night the
     // system stops learning from itself, and it does it silently.
     if (options.mode === "day" && instruments.length === 0) {
       return { ...base, ok: false, error: "no active rule declares any instrument" };
+    }
+
+    if (
+      options.mode === "day" &&
+      options.place &&
+      strategyReadiness?.readiness.rules.some((rule) => rule.ready !== true)
+    ) {
+      return {
+        ...base,
+        ok: false,
+        error:
+          "active strategy rule is not paper-ready under the declared readiness evidence; execution refused",
+        ...financeRuleReadinessSection(strategyReadiness),
+      };
     }
 
     if (options.mode === "day") {
@@ -497,6 +521,7 @@ export async function runFinanceDailyCycleOperator(
           ...base,
           ok: inspection.readiness.status !== "blocked",
           boundary: "broker_reconciliation_readiness_only",
+          strategyRuleReadiness: strategyReadiness?.readiness,
           ...inspection,
           quotesVerified: false,
           executionVerified: false,
@@ -543,6 +568,7 @@ export async function runFinanceDailyCycleOperator(
         ok: report.ok,
         ruleIds,
         strategyExecution: portfolioPlan ? strategies : strategy,
+        ...(strategyReadiness ? financeRuleReadinessSection(strategyReadiness) : {}),
         ...(report.portfolio ? { portfolio: report.portfolio } : {}),
         modelCalls: report.modelCalls,
         positionBook: report.positionBook,

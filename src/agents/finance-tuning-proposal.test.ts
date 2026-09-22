@@ -56,8 +56,7 @@ describe("finance tuning proposal", () => {
     // Evidence must be re-derivable, so it names the counts it used.
     expect(proposal.evidence).toContain("40 settled calls");
     expect(proposal.sampleCount).toBe(40);
-    // And it must name how a human would apply it, so the last step is not a mystery.
-    expect(proposal.applyWith).toContain("lcx-finance-strategy-rule-ledger");
+    expect(proposal.applyWith).toContain("deterministic paper-promotion");
   });
 
   it("always reports status proposed - it never applies anything", () => {

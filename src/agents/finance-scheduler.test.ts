@@ -17,7 +17,9 @@ import {
   parseFinanceSchedulerArgs,
   runFinanceScheduler,
 } from "../../scripts/operator/lcx-finance-scheduler.js";
+import { readFinancePaperPromotions } from "./finance-paper-promotion.js";
 import { readFinanceSchedulerState } from "./finance-scheduler-state.js";
+import { financeResearchScoredPath } from "./finance-state-dir.js";
 let root: string;
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "finance-scheduler-"));
@@ -115,5 +117,39 @@ describe("durable scheduler claims on the unified lifecycle", () => {
     release();
     expect(await first).toBe(0);
     expect(mocks.run).toHaveBeenCalledTimes(1);
+  });
+  it("dispatches tuning and deterministic paper promotion after new scored outcomes", async () => {
+    fs.writeFileSync(
+      financeResearchScoredPath(root),
+      Array.from({ length: 5 }, () => JSON.stringify({ conviction: 0.7, outcome: 1 })).join("\n") +
+        "\n",
+    );
+    mocks.run.mockResolvedValue({
+      exitCode: 0,
+      signal: null,
+      status: "succeeded",
+      ok: true,
+      stdout: JSON.stringify({
+        ok: true,
+        scoredFiled: { appended: 1, skipped: 0 },
+        reflection: {},
+        pending: [],
+        declined: [],
+        issues: [],
+      }),
+      stderr: "",
+      outputTruncated: false,
+    });
+
+    expect(await runFinanceScheduler(["--once", "night", "--dir", root])).toBe(0);
+    expect(readFinancePaperPromotions(root)).toHaveLength(1);
+    expect(readFinancePaperPromotions(root)[0]).toMatchObject({
+      promoted: 0.7,
+      authority: "paper_only",
+    });
+    expect(readFinanceSchedulerState(root).lastRun?.tuningLifecycle).toMatchObject({
+      ok: true,
+      status: "completed",
+    });
   });
 });

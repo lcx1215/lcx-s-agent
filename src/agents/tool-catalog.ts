@@ -397,7 +397,7 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     id: "finance_tuning_proposal",
     label: "finance_tuning_proposal",
     description:
-      "Derive tuning proposals from the settled track record, each carrying re-checkable evidence, and record them. Proposes only - applying is a human step. Says plainly when there is too little data to propose anything",
+      "Derive tuning proposals from the settled track record, record them, and deterministically promote only a re-derived matching paper calibration; never grants live authority",
     sectionId: "memory",
     profiles: ["coding"],
     includeInOpenClawGroup: true,

@@ -1,14 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { Type } from "@sinclair/typebox";
-import { breakEvenFloor, type FloorSample } from "../finance-calibrated-floor.js";
 import type { FinanceRiskBudget } from "../finance-execution-adapter.js";
 import type { FinanceExecutionSafetyContextFactory } from "../finance-execution-safety.js";
+import { latestFinancePaperPromotion } from "../finance-paper-promotion.js";
 import { runFinancePaperOrder } from "../finance-paper-run.js";
-import {
-  financeResearchSamplesPath,
-  financeResearchScoredPath,
-  resolveFinanceStateDir,
-} from "../finance-state-dir.js";
+import { financeResearchSamplesPath, resolveFinanceStateDir } from "../finance-state-dir.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult, readStringParam } from "./common.js";
 
@@ -20,7 +16,7 @@ import { jsonResult, readStringParam } from "./common.js";
  * Adding a second route to the venue is how a system ends up with two ideas of
  * what was ordered, and the gates only guard the one that is remembered.
  *
- * The floor is either derived from what the system has actually achieved, or
+ * The floor is either the latest deterministically promoted paper floor, or
  * declared explicitly as an exploration value. It is never a silent default: in
  * calibrated mode with no scored outcomes there is no floor and nothing trades,
  * and that is reported rather than worked around.
@@ -110,7 +106,6 @@ async function main(
   // file yet" for samples that are on file in the book the cycle actually writes.
   const state = resolveFinanceStateDir({ workspaceDir: readStringParam(params, "workspaceDir") });
   const recordPath = financeResearchSamplesPath(state.directory);
-  const scoredPath = financeResearchScoredPath(state.directory);
 
   if (!existsSync(recordPath)) {
     return jsonResult({
@@ -147,26 +142,9 @@ async function main(
   let floor: number | null;
   let floorBasis: string;
   if (mode === "calibrated") {
-    const scored: FloorSample[] = existsSync(scoredPath)
-      ? readFileSync(scoredPath, "utf8")
-          .split("\n")
-          .filter((line) => line.trim().length > 0)
-          .flatMap((line) => {
-            try {
-              const row = JSON.parse(line) as { conviction?: unknown; outcome?: unknown };
-              const conviction = Number(row.conviction);
-              if (!Number.isFinite(conviction)) {
-                return [];
-              }
-              return [{ conviction, outcome: row.outcome === 1 ? 1 : 0 }];
-            } catch {
-              return [];
-            }
-          })
-      : [];
-    const derived = breakEvenFloor(scored);
-    floor = derived.floor;
-    floorBasis = derived.basis;
+    const promotion = latestFinancePaperPromotion(state.directory);
+    floor = promotion?.promoted ?? null;
+    floorBasis = promotion?.basis ?? "no deterministic paper promotion is on record";
     if (floor === null) {
       return jsonResult({
         ok: true,
@@ -177,7 +155,7 @@ async function main(
         floorBasis,
         candidates: samples.length,
         placed: [],
-        note: "no data-derived floor, so nothing trades; use explore mode to generate the missing evidence",
+        note: "no promoted data-derived paper floor, so nothing trades; the nightly tuning lifecycle promotes only after re-deriving the scored evidence",
       });
     }
   } else {

@@ -25,6 +25,7 @@ import type {
   CentralPerception,
   CentralRunReceipt,
 } from "../../src/agents/central-harness/types.js";
+import { buildFinanceAutomaticLifecycleFeedback } from "../../src/agents/finance-automatic-lifecycle-feedback.js";
 import { loadConfig } from "../../src/config/io.js";
 import {
   CENTRAL_AGENT_LATEST_PATH,
@@ -126,8 +127,9 @@ async function buildPerception(
     "lcx-learning-workflow-latest.json",
     {},
   );
-  const ownerTotals = extractOwnerTotals(governance);
   const observedAt = new Date().toISOString();
+  const financeAutomaticLifecycle = await buildFinanceAutomaticLifecycleFeedback({ observedAt });
+  const ownerTotals = extractOwnerTotals(governance);
   return {
     observedAt,
     ownerTotals,
@@ -149,6 +151,7 @@ async function buildPerception(
       ...(isPresentObject(governance)
         ? { governanceDigest: projectGovernanceDigest(governance) }
         : {}),
+      financeAutomaticLifecycle,
     },
     backlog,
     boundaries: CLAIMED_BOUNDARIES,

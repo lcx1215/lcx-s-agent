@@ -38,6 +38,12 @@ import {
   type FinanceModuleExecutionReceipt,
 } from "./finance-module-execution.js";
 import {
+  financeProducerInputContract,
+  parseFinanceDomainProducerInputs,
+  type FinanceDomainProducerInputs,
+} from "./finance-module-producer-input.js";
+import type { FinancePortfolioPlan } from "./finance-portfolio-composition.js";
+import {
   createFinanceRealtimeSourceRegistry,
   resolveFinanceRealtimeSourceRegistryOptionsFromEnv,
   inspectFinanceRealtimeSourceRegistry,
@@ -59,6 +65,12 @@ import {
   buildFinanceResearchModelEvidence,
   findUncitedFinanceInstruments,
 } from "./finance-research-evidence.js";
+import {
+  buildFinanceResearchPortfolioPlan,
+  financeResearchPortfolioContextSchema,
+  parseFinanceResearchAllocationProposal,
+  type FinanceResearchPortfolioContext,
+} from "./finance-research-portfolio-plan.js";
 import { buildFinanceSourceRecoveryPlan } from "./finance-source-recovery.js";
 import { buildFinanceStrategyMethodKit } from "./finance-strategy-method-kit.js";
 import { modelRoutingTaskTimeoutMs } from "./logical-agent-model-router.js";
@@ -99,6 +111,10 @@ export type FinanceResearchRunInput = Readonly<{
   moduleSelection?: FinanceModuleSelection;
   /** Explicitly dispatch bounded module tools and attach their receipts to model evidence. */
   executeModules?: boolean;
+  /** Controller-owned, timestamped local-state evidence (for example the night projection). */
+  controllerEvidence?: readonly FinanceCommitteeEvidence[];
+  /** Controller-owned plan envelope. The model may propose allocations only inside this set. */
+  portfolioContext?: FinanceResearchPortfolioContext;
 }>;
 
 export type FinanceResearchRunOptions = Readonly<{
@@ -113,6 +129,8 @@ export type FinanceResearchRunOptions = Readonly<{
   modelInvoker?: LogicalAgentModelInvoker;
   qualityModelRouting?: LogicalAgentModelRouting;
   qualityModelInvoker?: LogicalAgentModelInvoker;
+  /** Test/embedding seam; production uses the canonical module executor. */
+  moduleExecutor?: typeof executeFinanceModuleComposition;
   workspaceDir?: string;
   sourceGovernance?: ApiSourceGovernanceRegistry;
   batchOptions?: Omit<FinanceResearchBatchOptions, "targets" | "asOf" | "useCase">;
@@ -140,6 +158,7 @@ export type FinanceResearchPlan = Readonly<{
     unavailableProviders: readonly { provider: string; requiredEnvironment: readonly string[] }[];
   };
   sourceInspections: readonly FinanceResearchSourceInspection[];
+  portfolioContext?: FinanceResearchPortfolioContext;
   boundaries: readonly string[];
 }>;
 
@@ -199,6 +218,7 @@ export type FinanceResearchRunReceipt = Readonly<{
   sourceRecovery?: ReturnType<typeof buildFinanceSourceRecoveryPlan>;
   modelCheckpoint?: ReturnType<ReturnType<typeof openFinanceModelCheckpoints>["summary"]>;
   quarterlyOutput: FinanceQuarterlyOutput;
+  portfolioPlan?: FinancePortfolioPlan;
   gates: readonly FinanceResearchGate[];
   missingEvidence: readonly string[];
   notTouched: readonly string[];
@@ -221,6 +241,37 @@ function requiredText(value: string, label: string): string {
     throw new Error(`${label} required`);
   }
   return normalized;
+}
+
+function normalizeControllerEvidence(
+  value: readonly FinanceCommitteeEvidence[] | undefined,
+  asOf: string,
+): readonly FinanceCommitteeEvidence[] {
+  if (value === undefined) {
+    return Object.freeze([]);
+  }
+  if (value.length > 16) {
+    throw new Error("controllerEvidence must contain at most 16 items");
+  }
+  let totalBytes = 0;
+  const normalized = value.map((item, index) => {
+    const timestamp = assertIsoTimestamp(item.timestamp, `controllerEvidence[${index}].timestamp`);
+    if (Date.parse(timestamp) > Date.parse(asOf)) {
+      throw new Error(`controllerEvidence[${index}] is newer than asOf`);
+    }
+    const text = requiredText(item.text, `controllerEvidence[${index}].text`);
+    totalBytes += Buffer.byteLength(text, "utf8");
+    return Object.freeze({
+      id: requiredText(item.id, `controllerEvidence[${index}].id`),
+      source: requiredText(item.source, `controllerEvidence[${index}].source`),
+      timestamp,
+      text,
+    });
+  });
+  if (totalBytes > 256_000) {
+    throw new Error("controllerEvidence text must be <= 256000 UTF-8 bytes");
+  }
+  return Object.freeze(normalized);
 }
 
 function positiveInteger(value: number, label: string): number {
@@ -745,6 +796,10 @@ function buildPlan(
   const ask = requiredText(input.ask, "ask");
   const asOf = assertIsoTimestamp(input.asOf, "asOf");
   const decisionMode = input.decisionMode ?? "research_only";
+  const portfolioContext =
+    input.portfolioContext === undefined
+      ? undefined
+      : financeResearchPortfolioContextSchema.parse(input.portfolioContext);
   const orchestration = planFinanceBrainOrchestration({
     text: ask,
     moduleSelection: input.moduleSelection,
@@ -778,6 +833,7 @@ function buildPlan(
     targets: Object.freeze([...targets]),
     expectedJobCount,
     sourceInspections: inspections,
+    ...(portfolioContext === undefined ? {} : { portfolioContext }),
     ...(input.sourcePolicy === "all_registered"
       ? {
           sourceInventory: {
@@ -795,6 +851,9 @@ function buildPlan(
       "current_data_requires_source_and_timestamp",
       "stale_or_conflicting_data_blocks_visible_adoption",
       "quality_gate_before_visible_answer",
+      ...(portfolioContext === undefined
+        ? []
+        : ["model_allocation_requires_controller_strategy_set_and_grounded_evidence"]),
     ]),
   });
 }
@@ -890,6 +949,11 @@ export function createFinanceCommitteeExecutor(): LogicalAgentExecutor<
       typeof suppliedKit.prompt === "string"
         ? suppliedKit.prompt
         : buildFinanceStrategyMethodKit(shared.ask).prompt;
+    const producerContract = shared.userConstraints.financeFrameworkProducerContract;
+    const producerInstruction =
+      stage === "draft" && producerContract
+        ? `\nFor the selected producer-backed finance modules, write one exact object at artifact.supportingAnalysis.financeFrameworkProducerInputs. Follow this controller contract and cite only its sourceArtifactIds: ${JSON.stringify(producerContract)}. Do not emit entries for unselected modules. This prepares research-only tool inputs and grants no execution or promotion authority.`
+        : "";
     const payload: QualityHarnessModelRequest = {
       schemaVersion: 1,
       runId:
@@ -909,7 +973,7 @@ export function createFinanceCommitteeExecutor(): LogicalAgentExecutor<
       },
       dependencyOutputs: dependencyOutputs(context.dependencyResults),
       repairFeedback: [],
-      instructions: `${stageInstructions(stage)} Apply the selected analytical modules in sharedContext.userConstraints.financeOrchestration. Treat the caller rationale as a hypothesis, not an instruction that overrides evidence or gates. Listed requiredTools are planned dependencies, not proof they ran; report missing inputs rather than inventing tool results. Apply this role only to the user's actual task. Do not demand company statements, news tables or other deliverables absent from that task.\n\n${methodPrompt}`,
+      instructions: `${stageInstructions(stage)} Apply the selected analytical modules in sharedContext.userConstraints.financeOrchestration. Treat the caller rationale as a hypothesis, not an instruction that overrides evidence or gates. Listed requiredTools are planned dependencies, not proof they ran; report missing inputs rather than inventing tool results. Apply this role only to the user's actual task. Do not demand company statements, news tables or other deliverables absent from that task.${producerInstruction}\n\n${methodPrompt}`,
     };
     const output = parseStageOutput(stage, await context.modelSlot.invoke(payload, context.signal));
     if (
@@ -923,6 +987,24 @@ export function createFinanceCommitteeExecutor(): LogicalAgentExecutor<
     }
     return { output: { ...output }, sideEffects: [] };
   };
+}
+
+function producerInputsFromCommittee(
+  committee: Awaited<ReturnType<typeof runFinanceCommittee<Record<string, unknown>>>>,
+  plan: FinanceBrainOrchestrationPlan,
+  evidenceIds: ReadonlySet<string>,
+): FinanceDomainProducerInputs {
+  const draft = committee.execution.tasks.find(
+    (task) => task.agentId === "research_draft" && task.status === "completed",
+  );
+  const output = draft?.output as
+    | {
+        kind?: unknown;
+        artifact?: { supportingAnalysis?: Record<string, unknown> };
+      }
+    | undefined;
+  const value = output?.artifact?.supportingAnalysis?.financeFrameworkProducerInputs;
+  return parseFinanceDomainProducerInputs({ value, plan, evidenceIds });
 }
 
 function callSummary(
@@ -998,6 +1080,8 @@ function buildModelExecution(
 function qualityVerifier(
   decisionMode: FinanceDecisionMode,
   strategyStage?: FinanceStrategyStage,
+  portfolioContext?: FinanceResearchPortfolioContext,
+  asOf?: string,
 ): QualityHarnessVerifier {
   return ({ request, artifact }) => {
     const evidenceIds = new Set(request.evidence.map((entry) => entry.id));
@@ -1022,7 +1106,15 @@ function qualityVerifier(
       };
     }
     if (requiresFinanceResearchAssessment(request.task)) {
-      const assessment = verifyFinanceResearchAssessment(artifact.supportingAnalysis, evidenceIds);
+      const assessment = verifyFinanceResearchAssessment(
+        artifact.supportingAnalysis
+          ? {
+              causalHypotheses: artifact.supportingAnalysis.causalHypotheses,
+              scenarios: artifact.supportingAnalysis.scenarios,
+            }
+          : undefined,
+        evidenceIds,
+      );
       if (!assessment.passed) {
         return {
           status: "failed",
@@ -1048,6 +1140,29 @@ function qualityVerifier(
         summary: "finance decision policy rejected the candidate answer",
         details: [...policy.failedReasons, ...policy.requiredEvidence],
       };
+    }
+    if (portfolioContext !== undefined) {
+      try {
+        const proposal = parseFinanceResearchAllocationProposal(artifact.supportingAnalysis);
+        const supportedEvidenceIds = new Set(
+          artifact.claims
+            .filter((claim) => claim.status === "supported")
+            .flatMap((claim) => claim.evidenceIds),
+        );
+        buildFinanceResearchPortfolioPlan({
+          asOf: asOf ?? "",
+          context: portfolioContext,
+          proposal,
+          supportedEvidenceIds,
+          researchReceiptId: "quality:verification",
+        });
+      } catch (error) {
+        return {
+          status: "failed",
+          summary: "portfolio allocation proposal failed deterministic compilation",
+          details: [error instanceof Error ? error.message : String(error)],
+        };
+      }
     }
     return {
       status: "passed",
@@ -1228,9 +1343,13 @@ export async function runFinanceResearchRun(
   const moduleSelection = parseFinanceModuleSelection(options.input.moduleSelection);
   const ask = requiredText(options.input.ask, "ask");
   const asOf = assertIsoTimestamp(options.input.asOf, "asOf");
+  const controllerEvidence = normalizeControllerEvidence(options.input.controllerEvidence, asOf);
   const horizonMonths = normalizeHorizon(options.input.horizonMonths);
   const decisionMode = options.input.decisionMode ?? "research_only";
   const strategyStage = options.input.strategyStage;
+  if (options.input.portfolioContext && decisionMode !== "strategy_candidate") {
+    throw new Error("portfolio allocation research requires decisionMode strategy_candidate");
+  }
   const realtimeAdapters =
     options.batchOptions?.realtimeAdapters ??
     createFinanceRealtimeSourceRegistry({
@@ -1332,31 +1451,18 @@ export async function runFinanceResearchRun(
     realtimeAdapters,
     collectionAdapters,
   });
-  let evidence = buildFinanceResearchModelEvidence(batch, {
-    includeReviewEvidence:
-      options.input.sourcePolicy === "all_registered" ||
-      options.batchOptions?.includeReviewEvidence,
-  });
+  let evidence: readonly FinanceCommitteeEvidence[] = [
+    ...controllerEvidence,
+    ...buildFinanceResearchModelEvidence(batch, {
+      includeReviewEvidence:
+        options.input.sourcePolicy === "all_registered" ||
+        options.batchOptions?.includeReviewEvidence,
+    }),
+  ];
   batch = { ...batch, committeeEvidence: evidence };
   let moduleExecution = createUnrequestedFinanceModuleExecutionReceipt(plan.orchestration);
-  if (options.input.executeModules === true) {
-    const executed = await executeFinanceModuleComposition({
-      ask,
-      asOf,
-      plan: plan.orchestration,
-      batch,
-      workspaceDir: resolveWorkspaceRoot(options.workspaceDir),
-      signal: options.signal,
-    });
-    moduleExecution = executed.receipt;
-    // Put module receipts first so the bounded quality evidence window cannot clip them after a
-    // broad source batch. The original source/model evidence remains intact after the receipts.
-    evidence = [...executed.evidence, ...evidence];
-    batch = { ...batch, committeeEvidence: evidence };
-  }
-  const moduleMissingEvidence = moduleExecution.nodes.flatMap((node) =>
-    node.missingEvidence.map((item) => `module:${node.moduleId}:${item}`),
-  );
+  let moduleMissingEvidence: string[] = [];
+  const producerInputIssues: string[] = [];
   const baseMissing = [
     ...missingEvidence(batch),
     ...(plan.sourceInventory?.unplannedAdapterIds.map((id) => `source_not_planned:${id}`) ?? []),
@@ -1438,6 +1544,14 @@ export async function runFinanceResearchRun(
         strategyMethodKit,
         financeOrchestration: plan.orchestration,
         financeModuleExecution: moduleExecution,
+        ...(options.input.executeModules === true
+          ? {
+              financeFrameworkProducerContract: financeProducerInputContract(
+                plan.orchestration,
+                evidence.map((item) => item.id),
+              ),
+            }
+          : {}),
       },
     };
     // Validate before starting the DAG so malformed evidence cannot become a partial model run.
@@ -1471,6 +1585,41 @@ export async function runFinanceResearchRun(
     const model = buildModelExecution(committee, modelId);
     const committeeGateResult = committeeGate(committee);
 
+    if (options.input.executeModules === true) {
+      let domainProducerInputs: FinanceDomainProducerInputs | undefined;
+      try {
+        domainProducerInputs = producerInputsFromCommittee(
+          committee,
+          plan.orchestration,
+          new Set(evidence.map((item) => item.id)),
+        );
+      } catch (error) {
+        producerInputIssues.push(
+          `module_producer_input:${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      const executed = await (options.moduleExecutor ?? executeFinanceModuleComposition)({
+        ask,
+        asOf,
+        plan: plan.orchestration,
+        batch,
+        workspaceDir: resolveWorkspaceRoot(options.workspaceDir),
+        ...(domainProducerInputs === undefined ? {} : { domainProducerInputs }),
+        signal: options.signal,
+      });
+      moduleExecution = executed.receipt;
+      // Quality reviews the original packet and the real producer/inspect receipts together.
+      // Keep module receipts first so the bounded quality window cannot clip them.
+      evidence = [...executed.evidence, ...evidence];
+      batch = { ...batch, committeeEvidence: evidence };
+      moduleMissingEvidence = [
+        ...producerInputIssues,
+        ...moduleExecution.nodes.flatMap((node) =>
+          node.missingEvidence.map((item) => `module:${node.moduleId}:${item}`),
+        ),
+      ];
+    }
+
     const qualityRequested = options.qualityEnabled !== false;
     let quality: QualityHarnessReceipt | undefined;
     if (
@@ -1478,7 +1627,11 @@ export async function runFinanceResearchRun(
       (options.qualityModelRouting !== undefined || options.qualityModelInvoker !== undefined)
     ) {
       const qualityRequest = {
-        task: `${ask}\nApply the selected analytical modules in sharedContext.financeOrchestration and only the supplied method kit checks relevant to this task. A caller selection does not establish evidence or tool execution. Preserve the requested horizon and deliverable; do not add a forecast or backtest to a factual request. Cite supporting evidence IDs, distinguish inference, and state missing evidence. Keep research-only and do not provide execution instructions.`,
+        task:
+          `${ask}\nApply the selected analytical modules in sharedContext.financeOrchestration and only the supplied method kit checks relevant to this task. A caller selection does not establish evidence or tool execution. Preserve the requested horizon and deliverable; do not add a forecast or backtest to a factual request. Cite supporting evidence IDs, distinguish inference, and state missing evidence. Keep research-only and do not provide execution instructions.` +
+          (plan.portfolioContext
+            ? "\nAlso propose budget fractions for every controller-listed active strategy in supportingAnalysis.portfolioAllocationProposal.allocations. Each allocation must contain only strategyId, budgetFraction, and evidenceIds; cite supplied evidence, keep the total at or below 1, and leave unused capital as cash. This is a reviewable proposal, not execution authority."
+            : ""),
         evidence: qualityEvidence(batch),
         sharedContext: {
           asOf,
@@ -1492,6 +1645,19 @@ export async function runFinanceResearchRun(
           strategyMethodKit,
           financeOrchestration: plan.orchestration,
           financeModuleExecution: moduleExecution,
+          ...(plan.portfolioContext
+            ? {
+                portfolioAllocationContract: {
+                  activeStrategyIds: plan.portfolioContext.activeStrategyIds,
+                  accountId: plan.portfolioContext.accountId,
+                  venue: plan.portfolioContext.venue,
+                  validityMinutes: plan.portfolioContext.validityMinutes,
+                  conflictPolicy: plan.portfolioContext.conflictPolicy,
+                  outputPath: "supportingAnalysis.portfolioAllocationProposal.allocations",
+                  executionAuthority: "none",
+                },
+              }
+            : {}),
           ...(requiresFinanceResearchAssessment(ask)
             ? {
                 supportingAnalysisContract: {
@@ -1532,7 +1698,7 @@ export async function runFinanceResearchRun(
             : 180_000,
           verifierTimeoutMs: 10_000,
           maxAttempts: 2,
-          verify: qualityVerifier(decisionMode, strategyStage),
+          verify: qualityVerifier(decisionMode, strategyStage, plan.portfolioContext, asOf),
         });
       quality = modelCheckpoint
         ? await modelCheckpoint.stage("quality", executeQuality)
@@ -1575,6 +1741,22 @@ export async function runFinanceResearchRun(
           : "quarterly output remains a non-adopted candidate because an upstream gate failed",
       },
     ];
+    const portfolioPlan =
+      allGatesPassed && plan.portfolioContext && quality?.finalArtifact
+        ? buildFinanceResearchPortfolioPlan({
+            asOf,
+            context: plan.portfolioContext,
+            proposal: parseFinanceResearchAllocationProposal(
+              quality.finalArtifact.supportingAnalysis,
+            ),
+            supportedEvidenceIds: new Set(
+              quality.finalArtifact.claims
+                .filter((claim) => claim.status === "supported")
+                .flatMap((claim) => claim.evidenceIds),
+            ),
+            researchReceiptId: `quality:${quality.runId}`,
+          })
+        : undefined;
     return Object.freeze({
       schemaVersion: FINANCE_RESEARCH_RUN_SCHEMA_VERSION,
       boundary: "finance_research_run_research_only",
@@ -1595,6 +1777,7 @@ export async function runFinanceResearchRun(
       ...(modelCheckpoint ? { modelCheckpoint: modelCheckpoint.summary() } : {}),
       moduleExecution,
       quarterlyOutput,
+      ...(portfolioPlan === undefined ? {} : { portfolioPlan }),
       gates: Object.freeze(gates),
       missingEvidence: Object.freeze([...baseMissing, ...moduleMissingEvidence]),
       notTouched: NOT_TOUCHED,

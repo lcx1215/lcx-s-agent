@@ -96,6 +96,21 @@ describe("compileExecutionIntent", () => {
     }
   });
 
+  it("uses a trusted exact quantity when closing an observed position", () => {
+    const result = compileExecutionIntent({
+      conclusion: { ...equityConclusion, direction: "sell", invalidationPrice: undefined },
+      market,
+      equity,
+      runAuthorizationId: "intraday-paper-session",
+      quantityOverride: 17.5,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.intent).toMatchObject({ side: "sell", quantity: 17.5 });
+      expect(result.notes.join()).toMatch(/exact-quantity override/);
+    }
+  });
+
   it("refuses a stop-driven class that gives no stop", () => {
     const result = compileExecutionIntent({
       conclusion: { ...equityConclusion, invalidationPrice: undefined },

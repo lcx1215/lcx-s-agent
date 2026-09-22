@@ -1204,6 +1204,11 @@ export const LCX_ONTOLOGY_WORKFLOW_NODE_IDS = [
   "commercial_acceptance_harness",
   "schedule_gate",
   "repair_lock",
+  "intraday_point_in_time_ledger",
+  "frozen_intraday_signal",
+  "same_cost_retail_baseline",
+  "paper_replay_receipt",
+  "intraday_result_score",
   "execution_intent",
   "explicit_run_authorization",
   "declared_execution_adapter",
@@ -1215,6 +1220,13 @@ export const LCX_ONTOLOGY_WORKFLOW_NODE_IDS = [
   "central_agent_brain_proposal",
   "central_agent_gate",
   "central_agent_latest_receipt",
+  "portfolio_candidate",
+  "portfolio_plan",
+  "strategy_rule_ledger",
+  "finance_scheduler",
+  "night_settlement",
+  "tuning_proposal",
+  "deterministic_promotion_gate",
 ] as const;
 export type LcxOntologyWorkflowNodeId = (typeof LCX_ONTOLOGY_WORKFLOW_NODE_IDS)[number];
 
@@ -1348,10 +1360,22 @@ export const LCX_ONTOLOGY_WORKFLOW_FILTER_IDS = [
   "execution_receipt_required",
   "append_only_ledger_required",
   "mark_required_for_unrealized_pnl",
+  "closed_bar_only_required",
+  "next_bar_fill_required",
+  "same_cost_baseline_required",
+  "paper_replay_not_execution_receipt",
+  "multi_regime_validation_required",
   "declared_period_required_for_annualised_metric",
   "llm_proposes_ts_gate_approves",
   "central_agent_plan_only_no_dispatch",
   "central_agent_no_execution_authority",
+  "research_receipt_required",
+  "portfolio_plan_required",
+  "strategy_rule_activation_required",
+  "single_finance_scheduler_owner_required",
+  "paper_venue_only_for_autonomous_cycle",
+  "night_feedback_requires_scored_outcomes",
+  "deterministic_promotion_gate_required",
 ] as const;
 export type LcxOntologyWorkflowFilterId = (typeof LCX_ONTOLOGY_WORKFLOW_FILTER_IDS)[number];
 
@@ -1379,9 +1403,11 @@ export const LCX_ONTOLOGY_WORKFLOW_SCENARIO_IDS = [
   "multi_agent_pattern_shadow_evaluation_waterflow",
   "logical_agent_pool_waterflow",
   "prediction_market_research_only_waterflow",
+  "finance_intraday_paper_waterflow",
   "finance_live_execution_waterflow",
   "automation_repair_lock_waterflow",
   "central_agent_decision_waterflow",
+  "finance_automatic_paper_trading_waterflow",
 ] as const;
 export type LcxOntologyWorkflowScenarioId = (typeof LCX_ONTOLOGY_WORKFLOW_SCENARIO_IDS)[number];
 
@@ -1408,8 +1434,10 @@ export const LCX_ONTOLOGY_WORKFLOW_FAMILY_IDS = [
   "multi_agent_pattern_shadow_evaluation",
   "logical_agent_pool",
   "prediction_market_research_and_strategy_audit",
+  "intraday_point_in_time_paper_validation",
   "authorized_live_execution_and_risk_budget",
   "codex_auto_repair_and_schedule_guard",
+  "automatic_paper_trading_lifecycle",
 ] as const;
 export type LcxOntologyWorkflowFamilyId = (typeof LCX_ONTOLOGY_WORKFLOW_FAMILY_IDS)[number];
 

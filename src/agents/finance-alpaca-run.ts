@@ -279,6 +279,8 @@ export type FinanceAlpacaRunRequest = Readonly<{
   instruments: readonly string[];
   strategyClass?: FinanceStrategyClass;
   minConviction?: number;
+  /** Trusted controller-only exact quantity for closing an observed venue position. */
+  quantityOverride?: number;
   /** Required to protect a crypto buy with Alpaca's separate stop-limit order path. */
   protectionLimitPrice?: number;
   committedInstrumentNotional?: number;
@@ -331,6 +333,9 @@ export async function runFinanceAlpacaOrder(
     runAuthorizationId: request.runAuthorizationId,
     ...(request.strategyClass === undefined ? {} : { strategyClass: request.strategyClass }),
     ...(request.minConviction === undefined ? {} : { minConviction: request.minConviction }),
+    ...(request.quantityOverride === undefined
+      ? {}
+      : { quantityOverride: request.quantityOverride }),
   });
   if (!compiled.ok) {
     return Object.freeze({ ok: false, stage: "compile", refusals: compiled.refusals });
