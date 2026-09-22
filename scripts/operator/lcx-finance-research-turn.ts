@@ -39,6 +39,8 @@ import {
   createSecFilingsCollectionAdapter,
   runFinanceMarketCollectionRefresh,
 } from "../../src/agents/finance-market-collection-registry.js";
+import { gatherFinanceOperatingEvidence } from "../../src/agents/finance-operating-evidence.js";
+import { buildFinanceValuePortfolioCandidate } from "../../src/agents/finance-portfolio-composition.js";
 import {
   readFinancePositionLedger,
   readFinanceAccountPositionLedger,
@@ -65,6 +67,10 @@ import {
   financeResearchScoredPath,
   resolveFinanceStateDir,
 } from "../../src/agents/finance-state-dir.js";
+import {
+  assessFinanceBusinessValue,
+  type FinanceOperatingFacts,
+} from "../../src/agents/finance-value-assessment.js";
 import { createFinanceUncachedFetch } from "../../src/agents/finance-write-transport.js";
 
 type Evidence = FinanceResearchEvidence;
@@ -76,10 +82,14 @@ export type FinanceResearchTurnDependencies = Readonly<{
   }) => Promise<{
     evidence: readonly Evidence[];
     dailyBars?: FinanceResearchDailyBars;
+    operatingFacts?: FinanceOperatingFacts;
     market: { referencePrice: number; referencePriceAt: string };
   }>;
-  invokeModel?: (prompt: string) => Promise<string>;
+  invokeModel?: (prompt: string, signal?: AbortSignal) => Promise<string>;
+  signal?: AbortSignal;
   positionSummary?: string;
+  /** Controller-owned sleeve target; the model cannot allocate account capital. */
+  portfolioTarget?: { strategyId: string; targetWeight: number };
   reflection?: string;
   control?: FinanceResearchExecutionControl;
 }>;
@@ -158,11 +168,26 @@ export async function runFinanceResearchTurn(
 
   const now = new Date().toISOString();
   const evidence: Evidence[] = [];
+  let operatingFacts: FinanceOperatingFacts | undefined;
+  const researchBasis =
+    readArg(args, "--research-basis") ??
+    (assetClass === "us_equity" ? "business_value" : "market_structure");
+  if (researchBasis !== "business_value" && researchBasis !== "market_structure") {
+    throw new Error("invalid --research-basis");
+  }
+  const horizonDays = Number(
+    readArg(args, "--horizon-days") ?? (researchBasis === "business_value" ? 730 : 30),
+  );
+  if (!Number.isSafeInteger(horizonDays) || horizonDays < 1 || horizonDays > 3650) {
+    throw new Error("--horizon-days must be 1..3650");
+  }
+  let fmpKey = "";
   let lastPrice = 0;
   let lastPriceAt = "";
   if (deps.gatherEvidence) {
     const gathered = await deps.gatherEvidence({ instrument, assetClass, asOf: now });
     evidence.push(...gathered.evidence);
+    operatingFacts = gathered.operatingFacts;
     if (gathered.dailyBars) {
       evidence.push(...buildFinanceResearchMathEvidence(gathered.dailyBars));
     }
@@ -173,9 +198,9 @@ export async function runFinanceResearchTurn(
       ...process.env,
       LCX_FINANCE_STATE_DIR: stateDirectory,
     }) as Record<string, unknown>;
-    const fmpKey = typeof env.FMP_API_KEY === "string" ? env.FMP_API_KEY : "";
+    fmpKey = typeof env.FMP_API_KEY === "string" ? env.FMP_API_KEY : "";
     const avKey = typeof env.ALPHA_VANTAGE_API_KEY === "string" ? env.ALPHA_VANTAGE_API_KEY : "";
-    const window = defaultEvidenceWindow({ horizonDays: 30 });
+    const window = defaultEvidenceWindow({ horizonDays });
 
     // Gather 1: price structure from full OHLCV.
     try {
@@ -577,48 +602,72 @@ export async function runFinanceResearchTurn(
         "). Judge without it, and do not assume the position is flat - an unknown " +
         "holding is not an empty one.");
 
+  // One bounded call per role; a failed reviewer never falls back to the analyst's claim.
+  const invoke =
+    deps.invokeModel ??
+    (async (message: string, signal?: AbortSignal): Promise<string> => {
+      const response = await fetch("http://127.0.0.1:8788/agent", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        signal: AbortSignal.any([AbortSignal.timeout(170_000), ...(signal ? [signal] : [])]),
+        body: JSON.stringify({ message, timeoutSeconds: 150 }),
+      });
+      if (!response.ok) {
+        throw new Error(`research model HTTP ${response.status}`);
+      }
+      const raw = await response.text();
+      try {
+        const parsed = JSON.parse(raw) as { payloads?: Array<{ text?: string }> };
+        return parsed.payloads?.[0]?.text ?? raw;
+      } catch {
+        return raw;
+      }
+    });
+  if (researchBasis === "business_value" && assetClass === "us_equity" && !deps.gatherEvidence) {
+    const gathered = await gatherFinanceOperatingEvidence({
+      instrument,
+      asOf: now,
+      fmpApiKey: fmpKey,
+    });
+    evidence.push(...gathered.evidence);
+    operatingFacts = gathered.facts;
+  }
+  const valueAssessment =
+    researchBasis === "business_value"
+      ? await assessFinanceBusinessValue({
+          instrument,
+          asOf: now,
+          referencePrice: lastPrice,
+          facts: operatingFacts,
+          evidence,
+          invokeModel: invoke,
+          signal: deps.signal,
+        })
+      : undefined;
+
   const prompt =
     buildFinanceConclusionPrompt({
       instrument,
       assetClass,
+      ...(valueAssessment ? { valueAssessmentId: valueAssessment.receiptId } : {}),
       availableSources: evidence.map((e) => ({ sourceId: e.sourceId, description: e.description })),
       question:
         historicalBook +
         "\n" +
         positionLine +
         "\n\nA single independent source supports only hold or avoid. Buy/sell candidates require at least two independent evidence roots; derived calculations do not add a source.\n" +
-        "Given the evidence below, is there a directional view for the next 30 days?\n\n" +
+        (researchBasis === "business_value"
+          ? "Evaluate business value against the current price, using the computed scenarios and opposing review. Charts concern timing/risk only. Cite at least one operating-statement source and explain which valuation scenario informs the decision. If valuation is unavailable or rejected, return hold/avoid.\nVALUE_ASSESSMENT=" +
+            JSON.stringify(valueAssessment) +
+            "\n"
+          : `Evaluate a market-structure strategy over ${horizonDays} days. This is not a claim of intrinsic business value.\n`) +
         evidence.map((e) => "- " + e.sourceId + ": " + e.detail).join("\n") +
         "\n\n" +
         reflection,
-      horizonDays: 30,
+      horizonDays,
     }) + "\n\nReply with the JSON object only.";
 
-  let answer: string;
-  if (deps.invokeModel) {
-    answer = await deps.invokeModel(prompt);
-  } else {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 170_000);
-    const response = await fetch("http://127.0.0.1:8788/agent", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      signal: controller.signal,
-      body: JSON.stringify({ message: prompt, timeoutSeconds: 150 }),
-    });
-    clearTimeout(timer);
-    const raw = await response.text();
-    answer = raw;
-    try {
-      const parsed = JSON.parse(raw) as { payloads?: Array<{ text?: string }> };
-      const first = parsed.payloads?.[0]?.text;
-      if (typeof first === "string") {
-        answer = first;
-      }
-    } catch {
-      // keep the raw body
-    }
-  }
+  const answer = await invoke(prompt, deps.signal);
 
   const extracted = extractFinanceConclusionJson(answer);
   if (extracted === null) {
@@ -634,6 +683,8 @@ export async function runFinanceResearchTurn(
       instrument,
       assetClass,
       modelText: answer,
+      researchBasis,
+      valueAssessment,
       evidence,
       market: { referencePrice: lastPrice, referencePriceAt: lastPriceAt },
       equity,
@@ -674,6 +725,14 @@ export async function runFinanceResearchTurn(
     return bridge;
   }
 
+  const portfolioCandidate =
+    deps.portfolioTarget && valueAssessment?.status === "ready" && decision.passed
+      ? buildFinanceValuePortfolioCandidate({
+          ...deps.portfolioTarget,
+          assessment: valueAssessment,
+          direction: decision.conclusion.direction === "buy" ? "buy" : "sell",
+        })
+      : undefined;
   const strategyClass = decision.strategyClass;
   const mandate = decision.mandate;
 
@@ -703,6 +762,7 @@ export async function runFinanceResearchTurn(
     assetClass,
     evidenceReceipt: bridge.receipt,
     execution: "placement" in bridge ? bridge.placement : undefined,
+    portfolioCandidate,
     claimedConviction: decision.conclusion.conviction,
     direction: decision.conclusion.direction,
     mandateVerdict: mandate.verdict,
@@ -718,7 +778,7 @@ export async function runFinanceResearchTurn(
         }),
   });
   process.stdout.write("\n=== research execution boundary ===\n" + JSON.stringify(bridge) + "\n");
-  return bridge;
+  return { ...bridge, ...(portfolioCandidate ? { portfolioCandidate } : {}) };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

@@ -135,6 +135,7 @@ const PATH_RULES: PathRule[] = [
       // order itself - it resolves a conclusion into an intent the execution entry
       // gates - so it belongs to this seam rather than to the research lane: a
       // change here changes what reaches the single order path.
+      /^src\/agents\/finance-research-(?:execution-bridge|conclusion-prompt)\.ts$/u,
       /^scripts\/operator\/lcx-finance-conclusion-to-order\.ts$/u,
       /^scripts\/operator\/lcx-finance-live-execution\.ts$/u,
       /^scripts\/operator\/lcx-finance-position-ledger\.ts$/u,
@@ -176,6 +177,7 @@ const PATH_RULES: PathRule[] = [
     lane: "finance_research_capability",
     patterns: [
       /^src\/agents\/finance-daily-(?:cycle|strategy)\.ts$/u,
+      /^src\/agents\/finance-(?:value-assessment|operating-evidence|portfolio-composition|portfolio-cycle)(?:\.test)?\.ts$/u,
       /^test\/operator\/lcx-finance-daily-strategy\.test\.ts$/u,
       /^src\/agents\/finance-cycle-schedule\.ts$/u,
       /^src\/agents\/finance-scheduler-(?:lock|process|state)(?:\.test)?\.ts$/u,
@@ -191,7 +193,7 @@ const PATH_RULES: PathRule[] = [
     ],
     requiredChecks: ["git-diff-check", "head-tail-consistency"],
     commands: [
-      "pnpm vitest run test/operator/lcx-finance-daily-strategy.test.ts src/agents/finance-daily-cycle.test.ts src/agents/finance-cycle-schedule.test.ts src/agents/finance-alpaca-run.test.ts src/agents/finance-alpaca-execution-adapter.test.ts src/agents/finance-universe-selection.test.ts",
+      "pnpm vitest run src/agents/finance-value-assessment.test.ts src/agents/finance-portfolio-cycle.test.ts test/operator/lcx-finance-daily-strategy.test.ts src/agents/finance-daily-cycle.test.ts src/agents/finance-cycle-schedule.test.ts src/agents/finance-alpaca-run.test.ts src/agents/finance-alpaca-execution-adapter.test.ts src/agents/finance-universe-selection.test.ts",
       "pnpm vitest run src/agents/finance-scheduler-lock.test.ts src/agents/finance-scheduler-process.test.ts src/agents/finance-scheduler-state.test.ts src/agents/finance-link-health.test.ts test/operator/lcx-finance-scheduler.test.ts test/operator/lcx-finance-scheduler-lifecycle.test.ts",
       "git diff --check",
       "node --import tsx scripts/operator/lcx-head-tail-consistency.ts --json",

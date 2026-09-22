@@ -43,6 +43,12 @@ import {
 import { createChinaReachableUsEodHistoryCollectionAdapter } from "./finance-free-market-collection-adapters.js";
 import type { FinanceMarketCollectionItem } from "./finance-market-collection-registry.js";
 import { runFinancePaperOrder } from "./finance-paper-run.js";
+import {
+  composeFinancePortfolioTargets,
+  validateFinancePortfolioPlan,
+  type FinancePortfolioPlan,
+  type FinancePortfolioCandidate,
+} from "./finance-portfolio-composition.js";
 import type { FinancePosition } from "./finance-position-ledger.js";
 import {
   appendFinanceExecutionReceipt,
@@ -139,6 +145,13 @@ export type FinanceDailyCycleParams = Readonly<{
   rebalanceBand?: number;
   /** Signal horizon from the bound strategy; direct legacy callers retain 12 months. */
   lookbackMonths?: number;
+  /** Controller-declared account budgets and reviewed research targets. Never model authority. */
+  portfolioPlan?: FinancePortfolioPlan;
+  trendStrategies?: readonly {
+    ruleId: string;
+    lookbackMonths: number;
+    instruments: readonly string[];
+  }[];
   /**
    * Actually place orders. Off by default: a plan is not an order.
    *
@@ -182,6 +195,7 @@ export type FinanceDailyCycleReport = Readonly<{
   /** Month end the signal was computed from. Constant within a calendar month. */
   signalAnchor: string;
   modelCalls: 0;
+  portfolio?: ReturnType<typeof composeFinancePortfolioTargets>;
   targets: readonly FinanceDailyCycleTarget[];
   drift: readonly FinanceDailyCycleDrift[];
   dataIssues: readonly string[];
@@ -615,9 +629,22 @@ export async function runFinanceDailyCycle(
   params: FinanceDailyCycleParams,
 ): Promise<FinanceDailyCycleReport> {
   const asOf = params.asOf;
+  if (params.trendStrategies && !params.portfolioPlan) {
+    throw new Error("multiple strategy inputs require an explicit portfolio budget");
+  }
+
   const lookbackMonths = params.lookbackMonths ?? 12;
   if (!Number.isSafeInteger(lookbackMonths) || lookbackMonths < 1 || lookbackMonths > 120) {
     throw new Error("invalid monthly trend lookback");
+  }
+  if (params.portfolioPlan) {
+    validateFinancePortfolioPlan(params.portfolioPlan, asOf, params.venue ?? "paper");
+    // The existing live account seam does not yet carry a controller-bound portfolio account.
+    if (params.place && params.venue === "alpaca") {
+      throw new Error(
+        "portfolio Alpaca placement requires account-bound controller integration; preview only",
+      );
+    }
   }
   const band = params.rebalanceBand ?? 0.05;
   const instruments = params.instruments.map((item) => item.toUpperCase());
@@ -787,45 +814,87 @@ export async function runFinanceDailyCycle(
   }
   const signalAnchor = [...anchors].toSorted().at(-1) ?? "";
 
-  const raw: { instrument: string; signal: "hold" | "cash"; inverseVol: number; vol: number }[] =
-    [];
-  for (const instrument of instruments) {
-    const months = monthSeries.get(instrument);
-    const anchor = anchorMonthEnds.get(instrument);
-    const priceSeries = closes.get(instrument);
-    if (!months || !anchor || !priceSeries) {
-      continue;
+  const strategyDefinitions = params.trendStrategies ?? [
+    { ruleId: "daily-trend", lookbackMonths, instruments },
+  ];
+  const candidates: FinancePortfolioCandidate[] = [];
+  const metadata = new Map<string, FinanceDailyCycleTarget>();
+  for (const strategy of strategyDefinitions) {
+    const raw: { instrument: string; signal: "hold" | "cash"; inverseVol: number; vol: number }[] =
+      [];
+    for (const instrument of strategy.instruments) {
+      const months = monthSeries.get(instrument);
+      const anchor = anchorMonthEnds.get(instrument);
+      const priceSeries = closes.get(instrument);
+      if (!months || !anchor || !priceSeries) {
+        continue;
+      }
+      const totalReturn = financeMonthlyTrendReturn(months, anchor, strategy.lookbackMonths);
+      const vol = annualisedVol(priceSeries);
+      if (totalReturn === undefined || !Number.isFinite(vol) || vol <= 0) {
+        dataIssues.push(
+          `${strategy.ruleId}/${instrument}: missing calendar lookback or volatility`,
+        );
+        continue;
+      }
+      raw.push({ instrument, signal: totalReturn > 0 ? "hold" : "cash", inverseVol: 1 / vol, vol });
     }
-    const totalReturn = financeMonthlyTrendReturn(months, anchor, lookbackMonths);
-    if (totalReturn === undefined) {
-      dataIssues.push(
-        `${instrument}: missing month-end evidence for ${lookbackMonths}-month lookback`,
+    const inverseSum = raw
+      .filter((r) => r.signal === "hold")
+      .reduce((sum, r) => sum + r.inverseVol, 0);
+    const targets = raw.map(
+      (row): FinanceDailyCycleTarget => ({
+        instrument: row.instrument,
+        signal: row.signal,
+        weight: row.signal === "hold" && inverseSum > 0 ? row.inverseVol / inverseSum : 0,
+        annualisedVol: row.vol,
+        lastBarDate: lastBar.get(row.instrument)?.date ?? "",
+        close: lastBar.get(row.instrument)?.close ?? Number.NaN,
+      }),
+    );
+    for (const target of targets) {
+      metadata.set(target.instrument, target);
+    }
+    if (params.portfolioPlan && targets.length !== strategy.instruments.length) {
+      throw new Error(
+        `strategy ${strategy.ruleId}: incomplete evidence cannot redistribute its budget`,
       );
-      continue;
     }
-    const vol = annualisedVol(priceSeries);
-    if (!Number.isFinite(vol) || vol <= 0) {
-      dataIssues.push(`${instrument}: volatility could not be estimated`);
-      continue;
-    }
-    raw.push({
-      instrument,
-      signal: totalReturn > 0 ? "hold" : "cash",
-      inverseVol: 1 / vol,
-      vol,
+    candidates.push({
+      strategyId: strategy.ruleId,
+      basis: "price_strategy",
+      evidenceReceiptId: `trend:${strategy.ruleId}:${signalAnchor}:${strategy.lookbackMonths}`,
+      targets: targets.map((t) => ({
+        instrument: t.instrument,
+        weight: t.weight,
+        stance: t.signal === "hold" ? "accumulate" : "reduce",
+      })),
     });
   }
-
-  const eligible = raw.filter((row) => row.signal === "hold");
-  const inverseSum = eligible.reduce((sum, row) => sum + row.inverseVol, 0);
-  const targets: FinanceDailyCycleTarget[] = raw.map((row) => ({
-    instrument: row.instrument,
-    signal: row.signal,
-    weight: row.signal === "hold" && inverseSum > 0 ? row.inverseVol / inverseSum : 0,
-    annualisedVol: row.vol,
-    lastBarDate: lastBar.get(row.instrument)?.date ?? "",
-    close: lastBar.get(row.instrument)?.close ?? Number.NaN,
-  }));
+  const portfolio = params.portfolioPlan
+    ? composeFinancePortfolioTargets(params.portfolioPlan, [
+        ...candidates,
+        ...params.portfolioPlan.candidates,
+      ])
+    : undefined;
+  const targets: FinanceDailyCycleTarget[] = portfolio
+    ? portfolio.targets.map((t) => ({
+        instrument: t.instrument,
+        weight: t.weight,
+        signal: t.weight > 0 ? "hold" : "cash",
+        annualisedVol:
+          metadata.get(t.instrument)?.annualisedVol ??
+          annualisedVol(closes.get(t.instrument) ?? []),
+        lastBarDate: lastBar.get(t.instrument)?.date ?? "",
+        close: lastBar.get(t.instrument)?.close ?? Number.NaN,
+      }))
+    : [...metadata.values()];
+  const blockedInstruments = new Set(
+    portfolio?.targets.filter((t) => t.blocked).map((t) => t.instrument),
+  );
+  for (const instrument of blockedInstruments) {
+    refusals.push(`${instrument}: conflicting strategy intentions require controller resolution`);
+  }
 
   // Current weights from the actual ledger, not from an assumed book.
   let currentWeight: ReadonlyMap<string, number> = new Map();
@@ -848,10 +917,37 @@ export async function runFinanceDailyCycle(
       ledgerQuantity.set(position.instrument.toUpperCase(), position.quantity);
     }
   } catch {
+    if (portfolio) {
+      throw new Error(
+        "portfolio position ledger unreadable; unknown holdings cannot be treated as flat",
+      );
+    }
     dataIssues.push("position ledger unreadable; treating book as flat");
   }
   if (unpricedPositions.size > 0) {
     dataIssues.push(`held but unpriced (no mark): ${[...unpricedPositions].toSorted().join(", ")}`);
+  }
+
+  if (portfolio) {
+    const managed = new Set(targets.map((t) => t.instrument));
+    const retainedExposure = [...currentWeight]
+      .filter(([symbol]) => !managed.has(symbol))
+      .reduce((sum, [, weight]) => sum + Math.abs(weight), 0);
+    const effectiveTarget = targets.reduce(
+      (sum, target) =>
+        sum +
+        (blockedInstruments.has(target.instrument)
+          ? Math.abs(currentWeight.get(target.instrument) ?? 0)
+          : target.weight),
+      0,
+    );
+    if (
+      unpricedPositions.size ||
+      [...currentWeight.values()].some((w) => w < 0) ||
+      retainedExposure + effectiveTarget > 1 + 1e-12
+    ) {
+      throw new Error("portfolio cannot fund targets alongside retained/unknown/short positions");
+    }
   }
 
   // Only the part OUTSIDE the band is traded, and never more than the declared cap.
@@ -863,7 +959,9 @@ export async function runFinanceDailyCycle(
   const drift: FinanceDailyCycleDrift[] = targets.map((target) => {
     const current = currentWeight.get(target.instrument) ?? 0;
     const delta = target.weight - current;
-    const excess = Math.max(0, Math.abs(delta) - band);
+    const excess = blockedInstruments.has(target.instrument)
+      ? 0
+      : Math.max(0, Math.abs(delta) - band);
     const desiredNotional = excess * params.equity;
     const notional = Math.min(desiredNotional, params.caps.maxOrderNotional);
     const action = excess <= 0 ? "none" : delta > 0 ? "buy" : "sell";
@@ -1061,6 +1159,7 @@ export async function runFinanceDailyCycle(
     asOf,
     signalAnchor,
     modelCalls: 0,
+    ...(portfolio ? { portfolio } : {}),
     targets,
     drift,
     dataIssues,

@@ -116,3 +116,68 @@ describe("declared strategy to daily execution", () => {
     expect(mocks.cycle).not.toHaveBeenCalled();
   });
 });
+
+it("passes multiple declared horizons and explicit budgets into one daily cycle", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multi-strategy-"));
+  try {
+    const planPath = path.join(directory, "plan.json");
+    await fs.writeFile(
+      planPath,
+      JSON.stringify({
+        asOf: "2026-09-21T00:00:00Z",
+        validUntil: "2026-09-22T00:00:00Z",
+        venue: "paper",
+        accountId: "fixture",
+        conflictPolicy: "block",
+        allocations: [
+          { strategyId: "trend", budgetFraction: 0.4 },
+          { strategyId: "slow", budgetFraction: 0.3 },
+        ],
+        candidates: [],
+      }),
+    );
+    mocks.read.mockResolvedValue({
+      ledger: {
+        rules: [rule, { ...rule, ruleId: "slow", body: { frozenRule: { lookbackMonths: 12 } } }],
+      },
+    });
+    mocks.cycle.mockResolvedValue({
+      ok: true,
+      modelCalls: 0,
+      targets: [],
+      drift: [],
+      placed: [],
+      refusals: [],
+      dataIssues: [],
+    });
+    const result = await runFinanceDailyCycleOperator([
+      "--mode",
+      "day",
+      "--dir",
+      directory,
+      "--as-of",
+      "2026-09-21T20:00:00Z",
+      "--portfolio-plan",
+      planPath,
+    ]);
+    expect(result.ok).toBe(true);
+    expect(mocks.cycle).toHaveBeenCalledOnce();
+    expect(mocks.cycle).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instruments: ["SPY"],
+        trendStrategies: [
+          expect.objectContaining({ ruleId: "trend", lookbackMonths: 6 }),
+          expect.objectContaining({ ruleId: "slow", lookbackMonths: 12 }),
+        ],
+        portfolioPlan: expect.objectContaining({
+          allocations: [
+            { strategyId: "trend", budgetFraction: 0.4 },
+            { strategyId: "slow", budgetFraction: 0.3 },
+          ],
+        }),
+      }),
+    );
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
