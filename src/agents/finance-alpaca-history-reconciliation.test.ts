@@ -128,15 +128,16 @@ describe("Alpaca broker history reconciliation", () => {
     const result = await reconcileFinanceBrokerHistory(directory, accountId);
 
     expect(result).toMatchObject({
-      historyStatus: "incomplete",
-      positionsReconciled: false,
-      feesInterpreted: false,
+      historyStatus: "reconciled",
+      positionsReconciled: true,
+      positionBaselineUsable: true,
+      feesInterpreted: true,
       brokerFillCount: 2,
       brokerFeeCount: 2,
       matchedReceiptCount: 1,
       unmatchedFillCount: 1,
-      appliedFeeCount: 1,
-      unappliedFeeCount: 1,
+      appliedFeeCount: 2,
+      unappliedFeeCount: 0,
       feeTotals: [
         { currency: "BTC", amount: 0.001 },
         { currency: "USD", amount: 1.5 },
@@ -145,7 +146,7 @@ describe("Alpaca broker history reconciliation", () => {
     expect(result.positions).toEqual([
       {
         instrument: "BTC/USD",
-        quantity: -0.5,
+        quantity: -0.501,
         averageCost: 200,
         realizedPnl: 0,
         appliedUsdFees: 0,
@@ -197,7 +198,76 @@ describe("Alpaca broker history reconciliation", () => {
 
     expect(result.historyStatus).toBe("incomplete");
     expect(result.positionsReconciled).toBe(false);
+    expect(result.positionBaselineUsable).toBe(false);
     expect(result.invalidFillCount).toBe(1);
     expect(result.ordersMissingFillActivityCount).toBe(1);
+  });
+
+  it("uses an explicit non-USD fee quantity for the net position without inventing order linkage", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alpaca-history-reconcile-"));
+    directories.push(directory);
+    const accountId = "crypto-fee-account";
+    await appendFinanceBrokerHistory(directory, {
+      kind: "broker_history",
+      accountId,
+      venue: "alpaca:paper",
+      query: "orders:window",
+      cursor: "",
+      payload: [{ id: "order-btc", status: "filled", filled_qty: "1" }],
+    });
+    await appendFinanceBrokerHistory(directory, {
+      kind: "broker_history",
+      accountId,
+      venue: "alpaca:paper",
+      query: "activities:window",
+      cursor: "",
+      payload: [
+        {
+          id: "fill-btc",
+          activity_type: "FILL",
+          order_id: "order-btc",
+          symbol: "BTCUSD",
+          side: "buy",
+          qty: "1",
+          price: "100",
+          transaction_time: "2025-01-02T15:00:00Z",
+        },
+        {
+          id: "fee-btc",
+          activity_type: "CFEE",
+          symbol: "BTCUSD",
+          qty: "-0.001",
+          net_amount: "0",
+          currency: "USD",
+          description: "Coin Pair Transaction Fee (Non USD)",
+          created_at: "2025-01-02T15:00:01Z",
+        },
+      ],
+    });
+    await appendFinanceBrokerHistory(directory, {
+      kind: "broker_history",
+      accountId,
+      venue: "alpaca:paper",
+      query: "sync_receipt:window",
+      cursor: "",
+      payload: [{ status: "raw_history_synced" }],
+    });
+
+    const result = await reconcileFinanceBrokerHistory(directory, accountId);
+
+    expect(result.positions).toEqual([
+      {
+        instrument: "BTC/USD",
+        quantity: 0.999,
+        averageCost: 100,
+        realizedPnl: 0,
+        appliedUsdFees: 0,
+      },
+    ]);
+    expect(result.assetFeeAdjustedInstruments).toEqual(["BTC/USD"]);
+    expect(result.appliedFeeCount).toBe(0);
+    expect(result.unappliedFeeCount).toBe(1);
+    expect(result.positionBaselineUsable).toBe(true);
+    expect(result.feesInterpreted).toBe(false);
   });
 });

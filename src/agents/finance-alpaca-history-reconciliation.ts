@@ -31,6 +31,11 @@ function normalizeInstrument(value: string): string {
     : instrument;
 }
 
+function baseAsset(instrument: string): string | undefined {
+  const [asset] = instrument.split("/");
+  return asset && asset.length > 0 ? asset : undefined;
+}
+
 function timestamp(fact: Record<string, unknown>, allowDate: boolean): string | undefined {
   const transaction = text(fact.transaction_time);
   if (transaction && Number.isFinite(Date.parse(transaction))) {
@@ -81,6 +86,8 @@ export type FinanceBrokerHistoryReconciliation = Readonly<{
   venue: "alpaca:paper";
   historyStatus: "missing" | "incomplete" | "reconciled";
   positionsReconciled: boolean;
+  /** True when fills and filled-order coverage are complete, even if a fee needs later allocation. */
+  positionBaselineUsable: boolean;
   feesInterpreted: boolean;
   brokerFillCount: number;
   brokerFeeCount: number;
@@ -93,6 +100,8 @@ export type FinanceBrokerHistoryReconciliation = Readonly<{
   unmatchedFillCount: number;
   appliedFeeCount: number;
   unappliedFeeCount: number;
+  /** Instruments whose net quantity includes a deterministic account-scoped asset-fee adjustment. */
+  assetFeeAdjustedInstruments: readonly string[];
   feeTotals: readonly Readonly<{ currency: string; amount: number }>[];
   positions: readonly FinanceBrokerPosition[];
   fills: readonly FinanceBrokerFillObservation[];
@@ -180,15 +189,38 @@ function parseFill(fact: Record<string, unknown>): FinanceBrokerFillObservation 
 function parseFee(fact: Record<string, unknown>): FinanceBrokerFeeObservation {
   const activityId = text(fact.id);
   const activityType = text(fact.activity_type);
-  const amount = number(fact.net_amount);
-  const currency = text(fact.currency) ?? text(fact.asset);
-  const occurredAt = timestamp(fact, true);
   const instrument = text(fact.symbol);
   const orderId = text(fact.order_id);
+  const normalizedInstrument = instrument ? normalizeInstrument(instrument) : undefined;
+  const description = text(fact.description)?.toLowerCase() ?? "";
+  const rawQuantity = number(fact.qty);
+  const nonUsdCryptoFee =
+    activityType === "CFEE" && description.includes("non usd") && rawQuantity !== undefined;
+  const rawAmount = number(fact.net_amount);
+  const amount = nonUsdCryptoFee
+    ? Math.abs(rawQuantity)
+    : rawAmount === undefined
+      ? undefined
+      : Math.abs(rawAmount);
+  const currency = nonUsdCryptoFee
+    ? normalizedInstrument
+      ? baseAsset(normalizedInstrument)
+      : undefined
+    : (text(fact.currency) ?? text(fact.asset));
+  const occurredAt = timestamp(
+    {
+      ...fact,
+      ...(fact.transaction_time === undefined && fact.created_at !== undefined
+        ? { transaction_time: fact.created_at }
+        : {}),
+    },
+    true,
+  );
   if (
     !activityId ||
     (activityType !== "FEE" && activityType !== "CFEE") ||
     amount === undefined ||
+    amount <= 0 ||
     !currency ||
     !occurredAt
   ) {
@@ -198,8 +230,8 @@ function parseFee(fact: Record<string, unknown>): FinanceBrokerFeeObservation {
     activityId,
     activityType,
     ...(orderId ? { orderId } : {}),
-    ...(instrument ? { instrument: normalizeInstrument(instrument) } : {}),
-    amount: Math.abs(amount),
+    ...(normalizedInstrument ? { instrument: normalizedInstrument } : {}),
+    amount,
     currency: currency.toUpperCase(),
     occurredAt,
     sourceFactRef: caseflowFingerprint(fact),
@@ -277,7 +309,11 @@ export async function reconcileFinanceBrokerHistory(
     feeTotals.set(fee.currency, (feeTotals.get(fee.currency) ?? 0) + fee.amount);
   }
   const usdFeesByOrder = new Map<string, FinanceBrokerFeeObservation[]>();
+  const feesByOrder = new Map<string, FinanceBrokerFeeObservation[]>();
   for (const fee of fees) {
+    if (fee.orderId) {
+      feesByOrder.set(fee.orderId, [...(feesByOrder.get(fee.orderId) ?? []), fee]);
+    }
     if (fee.currency === "USD" && fee.orderId) {
       usdFeesByOrder.set(fee.orderId, [...(usdFeesByOrder.get(fee.orderId) ?? []), fee]);
     }
@@ -300,17 +336,66 @@ export async function reconcileFinanceBrokerHistory(
       (sum, item) => sum + item.quantity,
       0,
     );
-    const usdFee =
-      orderQuantity > 0
-        ? ((usdFeesByOrder.get(fill.orderId) ?? []).reduce((sum, fee) => sum + fee.amount, 0) *
-            fill.quantity) /
-          orderQuantity
-        : 0;
-    for (const fee of usdFeesByOrder.get(fill.orderId) ?? []) {
+    const linkedFees = feesByOrder.get(fill.orderId) ?? [];
+    for (const fee of linkedFees) {
       appliedFeeIds.add(fee.activityId);
     }
-    applyFill(position, fill.side === "buy" ? fill.quantity : -fill.quantity, fill.price, usdFee);
+    const feeRatio = orderQuantity > 0 ? fill.quantity / orderQuantity : 0;
+    const usdFee =
+      (usdFeesByOrder.get(fill.orderId) ?? []).reduce((sum, fee) => sum + fee.amount, 0) * feeRatio;
+    const asset = baseAsset(fill.instrument);
+    const assetFee =
+      asset === undefined
+        ? 0
+        : linkedFees
+            .filter((fee) => fee.currency === asset)
+            .reduce((sum, fee) => sum + fee.amount, 0) * feeRatio;
+    const signedQuantity =
+      fill.side === "buy" ? fill.quantity - assetFee : -(fill.quantity + assetFee);
+    if (!Number.isFinite(signedQuantity) || signedQuantity === 0) {
+      invalidFillCount += 1;
+      warnings.push(`${fill.activityId} fill quantity is fully consumed by a linked asset fee`);
+      continue;
+    }
+    applyFill(position, signedQuantity, fill.price, usdFee);
     byInstrument.set(fill.instrument, position);
+  }
+
+  // Alpaca CFEE rows can omit order_id while still identifying the traded symbol and the fee
+  // asset. Apply those fees to the account-level quantity baseline only; keep them unapplied in
+  // the fee audit because their order-level cost allocation is not proven by the source row.
+  const unlinkedAssetFees = new Map<string, { amount: number; count: number }>();
+  for (const fee of fees) {
+    const asset = fee.instrument ? baseAsset(fee.instrument) : undefined;
+    if (!fee.orderId && asset !== undefined && fee.currency === asset) {
+      const previous = unlinkedAssetFees.get(fee.instrument!);
+      unlinkedAssetFees.set(fee.instrument!, {
+        amount: (previous?.amount ?? 0) + fee.amount,
+        count: (previous?.count ?? 0) + 1,
+      });
+    }
+  }
+  const assetFeeAdjustedInstruments: string[] = [];
+  for (const [instrument, fee] of unlinkedAssetFees) {
+    const position = byInstrument.get(instrument);
+    if (!position || position.quantity === 0) {
+      warnings.push(
+        `${fee.count} unlinked ${baseAsset(instrument) ?? "asset"} fee(s) could not adjust ${instrument}: no open quantity baseline`,
+      );
+      continue;
+    }
+    const adjusted = position.quantity - Math.sign(position.quantity) * fee.amount;
+    if (!Number.isFinite(adjusted) || Math.sign(adjusted) !== Math.sign(position.quantity)) {
+      warnings.push(
+        `${fee.count} unlinked asset fee(s) could not adjust ${instrument}: fee exceeds the projected quantity`,
+      );
+      continue;
+    }
+    position.quantity = adjusted;
+    assetFeeAdjustedInstruments.push(instrument);
+    warnings.push(
+      `${fee.count} unlinked asset fee(s) adjusted the ${instrument} quantity baseline; order-level fee allocation remains pending`,
+    );
   }
 
   const records = await readFinancePositionRecords(directory);
@@ -362,6 +447,8 @@ export async function reconcileFinanceBrokerHistory(
         ? "reconciled"
         : "incomplete";
   const positionsReconciled = historyStatus === "reconciled";
+  const positionBaselineUsable =
+    complete && invalidFillCount === 0 && ordersMissingFillActivityCount === 0;
   const feesInterpreted = historyStatus === "reconciled" && unappliedFeeCount === 0;
   if (unmatchedFillCount > 0) {
     warnings.push(
@@ -381,6 +468,7 @@ export async function reconcileFinanceBrokerHistory(
     venue: "alpaca:paper",
     historyStatus,
     positionsReconciled,
+    positionBaselineUsable,
     feesInterpreted,
     brokerFillCount: fills.length,
     brokerFeeCount: fees.length,
@@ -393,6 +481,7 @@ export async function reconcileFinanceBrokerHistory(
     unmatchedFillCount,
     appliedFeeCount,
     unappliedFeeCount,
+    assetFeeAdjustedInstruments: Object.freeze(assetFeeAdjustedInstruments.toSorted()),
     feeTotals: Object.freeze(feeTotalsResult),
     positions: Object.freeze(positions),
     fills: Object.freeze(fills),

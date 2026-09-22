@@ -14,6 +14,7 @@
  */
 
 import fs from "node:fs/promises";
+import { readFinanceAccountTradingBook } from "./finance-account-trading-book.js";
 import { reconcileFinanceBrokerHistory } from "./finance-alpaca-history-reconciliation.js";
 import { createAlpacaSafetyReadTransport } from "./finance-alpaca-safety-transport.js";
 import { readFinanceBarLedger } from "./finance-bar-ledger.js";
@@ -592,11 +593,14 @@ export async function readFinanceLinkHealth(
       let historicalProjection:
         | Awaited<ReturnType<typeof reconcileFinanceBrokerHistory>>
         | undefined;
+      let accountBook: Awaited<ReturnType<typeof readFinanceAccountTradingBook>> | undefined;
       try {
-        historicalProjection = await reconcileFinanceBrokerHistory(
+        accountBook = await readFinanceAccountTradingBook({
           directory,
-          venuePositions.accountId,
-        );
+          accountId: venuePositions.accountId,
+          venue: "alpaca:paper",
+        });
+        historicalProjection = accountBook.brokerHistory;
       } catch {
         // Raw broker history remains useful even when an older page is malformed. Keep the
         // parity check conservative and expose the missing projection in the detail below.
@@ -621,6 +625,62 @@ export async function readFinanceLinkHealth(
         .map(([symbol]) => symbol);
       const divergent = onlyLedger.length + onlyVenue.length + mismatch.length;
       const unmatchedHistoricalFills = historicalProjection?.unmatchedFillCount ?? null;
+      const historicalBySymbol = new Map(
+        (historicalProjection?.positions ?? [])
+          .filter((position) => position.quantity !== 0)
+          .map((position) => [position.instrument.toUpperCase(), position.quantity]),
+      );
+      const onlyVenueInHistory = [...venuePositions.bySymbol.entries()]
+        .filter(([symbol]) => !historicalBySymbol.has(symbol))
+        .map(([symbol]) => symbol);
+      const onlyHistory = [...historicalBySymbol.entries()]
+        .filter(([symbol]) => !venuePositions.bySymbol.has(symbol))
+        .map(([symbol]) => symbol);
+      const historyMismatch = [...historicalBySymbol.entries()]
+        .filter(([symbol, quantity]) => {
+          const venueQuantity = venuePositions.bySymbol.get(symbol);
+          return venueQuantity !== undefined && Math.abs(venueQuantity - quantity) > 1e-6;
+        })
+        .map(([symbol]) => symbol);
+      const brokerBaselineUsable = accountBook?.brokerBaselineUsable === true;
+      const brokerBaselineMatchesVenue =
+        brokerBaselineUsable &&
+        onlyVenueInHistory.length === 0 &&
+        onlyHistory.length === 0 &&
+        historyMismatch.length === 0;
+      checks.push({
+        id: "broker_history_baseline",
+        severity: brokerBaselineMatchesVenue
+          ? accountBook?.historicalOnlyInstruments.length
+            ? "warn"
+            : "info"
+          : accountBook === undefined || !brokerBaselineUsable
+            ? "warn"
+            : "error",
+        ok: brokerBaselineMatchesVenue,
+        summary:
+          accountBook === undefined
+            ? "broker history baseline unavailable; no historical position baseline was accepted"
+            : !brokerBaselineUsable
+              ? `broker history is ${historicalProjection?.historyStatus ?? "unavailable"}; baseline is not usable`
+              : brokerBaselineMatchesVenue
+                ? accountBook.historicalOnlyInstruments.length > 0
+                  ? `broker history matches current venue positions; ${accountBook.historicalOnlyInstruments.length} instrument(s) remain historical-only outside LCX receipts`
+                  : "broker history baseline matches current venue positions"
+                : `broker history baseline disagrees with venue: history only [${onlyHistory.join(", ")}], venue only [${onlyVenueInHistory.join(", ")}], quantity differs [${historyMismatch.join(", ")}]`,
+        detail: {
+          baselineSource: accountBook?.baselineSource ?? "unavailable",
+          brokerBaselineUsable,
+          brokerBaselineMatchesVenue,
+          historicalOnlyInstruments: accountBook?.historicalOnlyInstruments ?? [],
+          onlyHistory,
+          onlyVenue: onlyVenueInHistory,
+          mismatch: historyMismatch,
+          historyStatus: historicalProjection?.historyStatus ?? null,
+          positionsReconciled: historicalProjection?.positionsReconciled ?? false,
+          positionBaselineUsable: historicalProjection?.positionBaselineUsable ?? false,
+        },
+      });
       checks.push({
         id: "venue_ledger_parity",
         severity: divergent > 0 || !historyKnown ? "error" : "info",
@@ -659,6 +719,7 @@ export async function readFinanceLinkHealth(
                 brokerFillCount: historicalProjection.brokerFillCount,
                 matchedReceiptCount: historicalProjection.matchedReceiptCount,
                 unmatchedFillCount: historicalProjection.unmatchedFillCount,
+                assetFeeAdjustedInstruments: historicalProjection.assetFeeAdjustedInstruments,
                 positions: historicalProjection.positions,
                 warnings: historicalProjection.warnings,
               }
