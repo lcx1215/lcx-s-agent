@@ -33,9 +33,9 @@ A subsequent call can provide a different composition:
     "rationale": "Test funding pressure and cross-market transmission against observed price behavior.",
     "composition": {
       "nodes": [
-        {"id": "timing", "moduleId": "technical_timing", "dependsOn": []},
-        {"id": "credit", "moduleId": "credit_liquidity", "dependsOn": ["timing"]},
-        {"id": "cross_asset", "moduleId": "cross_asset_liquidity", "dependsOn": ["credit"]}
+        { "id": "timing", "moduleId": "technical_timing", "dependsOn": [] },
+        { "id": "credit", "moduleId": "credit_liquidity", "dependsOn": ["timing"] },
+        { "id": "cross_asset", "moduleId": "cross_asset_liquidity", "dependsOn": ["credit"] }
       ],
       "maxReplans": 1
     }
