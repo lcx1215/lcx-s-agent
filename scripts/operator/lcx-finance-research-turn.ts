@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 /**
  * One research turn that the model can actually reason over.
@@ -610,7 +611,12 @@ export async function runFinanceResearchTurn(
         method: "POST",
         headers: { "content-type": "application/json" },
         signal: AbortSignal.any([AbortSignal.timeout(170_000), ...(signal ? [signal] : [])]),
-        body: JSON.stringify({ message, timeoutSeconds: 150 }),
+        body: JSON.stringify({
+          message,
+          // Each role receives its explicit evidence packet, not another run's chat history.
+          sessionKey: `finance-research:${randomUUID()}`,
+          timeoutSeconds: 150,
+        }),
       });
       if (!response.ok) {
         throw new Error(`research model HTTP ${response.status}`);
