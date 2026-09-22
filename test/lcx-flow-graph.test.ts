@@ -115,7 +115,7 @@ describe("LCX flow graph exam", () => {
     expect(payload.summary.sharedEntrypointOwnerRules).toBeGreaterThanOrEqual(2);
     expect(payload.summary.diagnosticEntries).toBe(payload.summary.scenarios);
     expect(payload.financeAutomaticLifecycleAudit).toMatchObject({
-      complete: false,
+      complete: true,
       owner: "scripts/operator/lcx-finance-scheduler.ts",
       handoffs: {
         researchCanProducePortfolioCandidate: true,
@@ -125,15 +125,11 @@ describe("LCX flow graph exam", () => {
         intradayRunsUnderFinanceScheduler: true,
         schedulerOwnsNightSettlement: true,
         nightSettlementFeedsReviewedModuleResearch: true,
-        nightFeedbackDispatchesTuning: false,
-        tuningFeedsDeterministicPromotion: false,
-        centralHarnessHasAutomaticFinanceTaskFeed: false,
+        nightFeedbackDispatchesTuning: true,
+        tuningFeedsDeterministicPromotion: true,
+        centralHarnessHasAutomaticFinanceTaskFeed: true,
       },
-      missingHandoffs: [
-        "night_scored_outcomes_to_tuning_proposal_dispatch",
-        "tuning_proposal_to_deterministic_paper_promotion",
-        "central_harness_automatic_finance_task_feed",
-      ],
+      missingHandoffs: [],
     });
     expect(payload.checks).toEqual(
       expect.arrayContaining([
