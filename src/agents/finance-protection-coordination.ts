@@ -15,7 +15,10 @@ export function classifyFinanceProtectionOrders(
       filled = Number(order.filled_qty),
       stop = Number(order.stop_price);
     if (
-      !id ||
+      ![order.qty, order.filled_qty, order.stop_price].every(
+        (value) => typeof value === "number" || (typeof value === "string" && value.trim() !== ""),
+      ) ||
+      !id.trim() ||
       seen.has(id) ||
       !instrument ||
       order.side !== "sell" ||
@@ -38,7 +41,8 @@ export function classifyFinanceProtectionOrders(
     }
     seen.add(id);
     const total = (reserved.get(instrument) ?? 0) + qty;
-    if (total > (positions.get(instrument) ?? 0) + 1e-10) {
+    const held = positions.get(instrument);
+    if (held === undefined || !Number.isFinite(held) || held < 0 || total > held + 1e-10) {
       unresolved.push(id);
       continue;
     }
@@ -60,7 +64,14 @@ export function planFinanceProtectedReduction(input: {
     input.sellQuantity <= 0 ||
     input.sellQuantity > input.positionQuantity ||
     reserved > input.positionQuantity ||
-    input.protective.some((order) => !order.id || !(order.quantity > 0) || !(order.stopPrice > 0))
+    input.protective.some(
+      (order) =>
+        !order.id.trim() ||
+        !Number.isFinite(order.quantity) ||
+        order.quantity <= 0 ||
+        !Number.isFinite(order.stopPrice) ||
+        order.stopPrice <= 0,
+    )
   ) {
     throw new Error("invalid protected reduction");
   }
@@ -103,11 +114,12 @@ export async function executeFinanceProtectedReduction<
   restoreProtection: (quantity: number, stopPrice: number) => Promise<void>;
 }) {
   const { protection, signal } = options;
-  if (
-    protection.quantity !== options.positionQuantity ||
-    options.sellQuantity <= 0 ||
-    options.sellQuantity > options.positionQuantity
-  ) {
+  planFinanceProtectedReduction({
+    positionQuantity: options.positionQuantity,
+    sellQuantity: options.sellQuantity,
+    protective: [protection],
+  });
+  if (protection.quantity !== options.positionQuantity) {
     throw new Error("protected reduction requires one whole-position stop");
   }
   const verify = (stop: Awaited<ReturnType<typeof options.readStop>>) => {

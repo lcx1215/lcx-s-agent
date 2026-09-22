@@ -372,6 +372,7 @@ it.each([false, true])(
       phase: "idle",
       timeoutMs: 900000,
       placementEnabled,
+      venue: "paper",
     };
     await fs.writeFile(filename, JSON.stringify(progress));
     expect((await checkFor("scheduler_slots", at)).ok).toBe(true);
@@ -393,4 +394,26 @@ it("keeps corrupt resident ownership visible without breaking unrelated diagnost
   const check = await checkFor("scheduler_execution_loop");
   expect(check.ok).toBe(false);
   expect(check.summary).toContain("ownership unreadable");
+});
+
+it("does not call an expired Alpaca policy ready just because its loop is responsive", async () => {
+  const at = new Date("2026-09-21T13:00:00.000Z");
+  await fs.writeFile(path.join(dir, "daily-cycle-scheduler.pid"), String(process.pid));
+  const lock = path.join(dir, "daily-cycle-scheduler.lock");
+  await fs.mkdir(lock);
+  await fs.writeFile(
+    path.join(lock, "progress.json"),
+    JSON.stringify({
+      pid: process.pid,
+      observedAt: at.toISOString(),
+      phase: "idle",
+      timeoutMs: 900000,
+      placementEnabled: true,
+      venue: "alpaca",
+      executionPolicyExpiresAt: at.toISOString(),
+    }),
+  );
+  const current = await checkFor("scheduler_execution_loop", at);
+  expect(current.ok).toBe(false);
+  expect(current.summary).toContain("expired");
 });

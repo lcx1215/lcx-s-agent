@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import {
   classifyFinanceProtectionOrders,
   planFinanceProtectedReduction,
@@ -41,6 +41,12 @@ it.each([
   { status: "pending_cancel" },
   { status: "partially_filled", filled_qty: "0.1" },
   { qty: "3" },
+  { filled_qty: null },
+  { filled_qty: "" },
+  { filled_qty: false },
+  { filled_qty: [] },
+  { qty: true },
+  { stop_price: true },
   { time_in_force: "day" },
   { expires_at: "2020-01-01T00:00:00Z" },
 ])("does not clear unsettled or invalid protection: %j", (patch) => {
@@ -214,4 +220,43 @@ it("restores original protection after a proven sell rejection", async () => {
     }),
   ).rejects.toBe(rejected);
   expect(restored).toBe(2);
+});
+
+it.each([NaN, Infinity, -1, 0])(
+  "rejects invalid reduction sizing before touching protection: %s",
+  async (sellQuantity) => {
+    const { executeFinanceProtectedReduction } =
+      await import("./finance-protection-coordination.js");
+    const readStop = vi.fn();
+    const cancelStop = vi.fn();
+    await expect(
+      executeFinanceProtectedReduction({
+        instrument: "SPY",
+        positionQuantity: 1,
+        sellQuantity,
+        protection: { id: "stop", quantity: 1, stopPrice: 90 },
+        signal: AbortSignal.timeout(1000),
+        readStop,
+        cancelStop,
+        readPosition: vi.fn(),
+        execute: vi.fn(),
+        restoreProtection: vi.fn(),
+      }),
+    ).rejects.toThrow("invalid protected reduction");
+    expect(readStop).not.toHaveBeenCalled();
+    expect(cancelStop).not.toHaveBeenCalled();
+  },
+);
+
+it("does not classify protection against unknown holdings or an infinite stop", () => {
+  expect(classifyFinanceProtectionOrders([stop], new Map([["SPY", NaN]])).unresolved).toEqual([
+    "protect",
+  ]);
+  expect(() =>
+    planFinanceProtectedReduction({
+      positionQuantity: 1,
+      sellQuantity: 1,
+      protective: [{ id: "stop", quantity: 1, stopPrice: Infinity }],
+    }),
+  ).toThrow("invalid protected reduction");
 });

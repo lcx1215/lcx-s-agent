@@ -280,3 +280,10 @@ enabled, stale or missing progress, and unreadable ownership independently of
 whether a cycle is due. A responsive placement loop still does not prove a broker
 fill. Offline research books and legacy processes retain a visible warning rather
 than being mistaken for a verified autonomous trading service.
+
+Progress also publishes the configured venue and policy expiry, re-read each tick.
+The shared reader recalculates expiry against observation time even while the
+heartbeat remains fresh. Missing, malformed, expired or legacy-unknown Alpaca
+policy metadata cannot report execution readiness. This is a diagnostic expiry
+check; the account controller still validates the full policy at execution. It
+never renews a policy or changes its risk limits automatically.

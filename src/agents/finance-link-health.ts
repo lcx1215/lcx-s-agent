@@ -554,15 +554,20 @@ export async function readFinanceLinkHealth(
     );
     const responsive = progress.status === "responsive";
     const placementEnabled = responsive ? progress.placementEnabled : undefined;
+    const policyCurrent =
+      progress.executionPolicyStatus === "current" ||
+      progress.executionPolicyStatus === "not_required";
     checks.push({
       id: "scheduler_execution_loop",
-      severity: responsive && placementEnabled === true ? "info" : "warn",
-      ok: responsive && placementEnabled === true,
+      severity: responsive && placementEnabled === true && policyCurrent ? "info" : "warn",
+      ok: responsive && placementEnabled === true && policyCurrent,
       summary: !responsive
         ? `resident scheduler execution unverified: ${progress.status}`
-        : placementEnabled
-          ? "resident scheduler responsive with placement enabled; this does not verify a broker fill"
-          : "resident scheduler responsive in preview mode; placement is disabled",
+        : !placementEnabled
+          ? "resident scheduler responsive in preview mode; placement is disabled"
+          : !policyCurrent
+            ? `resident scheduler responsive but execution policy ${progress.executionPolicyStatus}; placement readiness unverified`
+            : "resident scheduler responsive with placement enabled; this does not verify a broker fill",
       detail: { pid, processPresent: present, progress, executionHealthVerified: false },
     });
   } catch {

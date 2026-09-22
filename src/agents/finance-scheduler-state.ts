@@ -107,6 +107,22 @@ export function inspectFinanceSchedulerProgress(
     ) {
       return { status: "invalid" };
     }
+    const venue =
+      progress.venue === "paper" || progress.venue === "alpaca" ? progress.venue : "unknown";
+    const expires =
+      typeof progress.executionPolicyExpiresAt === "string"
+        ? Date.parse(progress.executionPolicyExpiresAt)
+        : NaN;
+    const executionPolicyStatus =
+      venue === "paper"
+        ? "not_required"
+        : venue !== "alpaca"
+          ? "unknown"
+          : !Number.isFinite(expires)
+            ? "unavailable"
+            : expires <= now
+              ? "expired"
+              : "current";
     const deadline =
       2 * FINANCE_SCHEDULER_TICK_MS + (progress.phase === "cycle" ? progress.timeoutMs : 0);
     return {
@@ -116,10 +132,30 @@ export function inspectFinanceSchedulerProgress(
       ageMs: age,
       deadlineMs: deadline,
       placementEnabled: progress.placementEnabled,
+      venue,
+      executionPolicyStatus,
+      executionPolicyExpiresAt: Number.isFinite(expires) ? new Date(expires).toISOString() : null,
     };
   } catch (error) {
     return {
       status: (error as NodeJS.ErrnoException).code === "ENOENT" ? "unavailable" : "unreadable",
     };
+  }
+}
+
+/** Diagnostic metadata only. The account controller still validates the complete policy. */
+export function readFinanceSchedulerPolicyExpiry(filename: string | undefined): string | null {
+  if (!filename) {
+    return null;
+  }
+  try {
+    const policy: unknown = JSON.parse(fs.readFileSync(filename, "utf8"));
+    return isObject(policy) &&
+      typeof policy.expiresAt === "string" &&
+      Number.isFinite(Date.parse(policy.expiresAt))
+      ? policy.expiresAt
+      : null;
+  } catch {
+    return null;
   }
 }

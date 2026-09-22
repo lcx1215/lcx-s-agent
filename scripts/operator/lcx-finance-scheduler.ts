@@ -37,6 +37,7 @@ import {
 import {
   FINANCE_SCHEDULER_TICK_MS,
   inspectFinanceSchedulerProgress,
+  readFinanceSchedulerPolicyExpiry,
   readFinanceSchedulerState,
   writeFinanceSchedulerState,
 } from "../../src/agents/finance-scheduler-state.js";
@@ -243,6 +244,10 @@ type CycleContext = { root: FinanceStateDir; options: SchedulerOptions; signal: 
 function writeSchedulerProgress(context: CycleContext, phase: "idle" | "cycle") {
   const filename = path.join(context.root.directory, FINANCE_SCHEDULER_LOCK, "progress.json");
   const temporary = `${filename}.tmp`;
+  const args = context.options.extraArgs;
+  const venueIndex = args.indexOf("--venue");
+  const venue = venueIndex < 0 ? "paper" : args[venueIndex + 1];
+  const policyIndex = args.indexOf("--execution-policy");
   fs.writeFileSync(
     temporary,
     JSON.stringify({
@@ -250,7 +255,12 @@ function writeSchedulerProgress(context: CycleContext, phase: "idle" | "cycle") 
       observedAt: new Date().toISOString(),
       phase,
       timeoutMs: context.options.timeoutMs,
-      placementEnabled: context.options.extraArgs.includes("--place"),
+      placementEnabled: args.includes("--place"),
+      venue,
+      executionPolicyExpiresAt:
+        venue === "alpaca"
+          ? readFinanceSchedulerPolicyExpiry(policyIndex < 0 ? undefined : args[policyIndex + 1])
+          : null,
     }),
   );
   fs.renameSync(temporary, filename);
