@@ -529,6 +529,8 @@ export async function runFinanceResearchTurn(
           unmatchedFillCount: brokerReconciliation.unmatchedFillCount,
           appliedFeeCount: brokerReconciliation.appliedFeeCount,
           unappliedFeeCount: brokerReconciliation.unappliedFeeCount,
+          baselineAppliedFeeCount: brokerReconciliation.baselineAppliedFeeCount,
+          orderAllocatedFeeCount: brokerReconciliation.orderAllocatedFeeCount,
           feeTotals: brokerReconciliation.feeTotals,
           brokerPositions: brokerReconciliation.positions,
           reconciliationWarnings: brokerReconciliation.warnings,

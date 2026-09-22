@@ -100,6 +100,10 @@ export type FinanceBrokerHistoryReconciliation = Readonly<{
   unmatchedFillCount: number;
   appliedFeeCount: number;
   unappliedFeeCount: number;
+  /** Fees deterministically applied to the net position baseline without an order id. */
+  baselineAppliedFeeCount: number;
+  /** Fees applied through an explicit order id and a matching fill. */
+  orderAllocatedFeeCount: number;
   /** Instruments whose net quantity includes a deterministic account-scoped asset-fee adjustment. */
   assetFeeAdjustedInstruments: readonly string[];
   feeTotals: readonly Readonly<{ currency: string; amount: number }>[];
@@ -362,9 +366,12 @@ export async function reconcileFinanceBrokerHistory(
   }
 
   // Alpaca CFEE rows can omit order_id while still identifying the traded symbol and the fee
-  // asset. Apply those fees to the account-level quantity baseline only; keep them unapplied in
-  // the fee audit because their order-level cost allocation is not proven by the source row.
-  const unlinkedAssetFees = new Map<string, { amount: number; count: number }>();
+  // asset. Apply those fees to the account-level quantity baseline only; preserve the missing
+  // order-level linkage as an explicit warning instead of manufacturing an order id.
+  const unlinkedAssetFees = new Map<
+    string,
+    { amount: number; count: number; activityIds: string[] }
+  >();
   for (const fee of fees) {
     const asset = fee.instrument ? baseAsset(fee.instrument) : undefined;
     if (!fee.orderId && asset !== undefined && fee.currency === asset) {
@@ -372,6 +379,7 @@ export async function reconcileFinanceBrokerHistory(
       unlinkedAssetFees.set(fee.instrument!, {
         amount: (previous?.amount ?? 0) + fee.amount,
         count: (previous?.count ?? 0) + 1,
+        activityIds: [...(previous?.activityIds ?? []), fee.activityId],
       });
     }
   }
@@ -392,9 +400,12 @@ export async function reconcileFinanceBrokerHistory(
       continue;
     }
     position.quantity = adjusted;
+    for (const activityId of fee.activityIds) {
+      appliedFeeIds.add(activityId);
+    }
     assetFeeAdjustedInstruments.push(instrument);
     warnings.push(
-      `${fee.count} unlinked asset fee(s) adjusted the ${instrument} quantity baseline; order-level fee allocation remains pending`,
+      `${fee.count} unlinked asset fee(s) applied to the ${instrument} quantity baseline; order-level fee linkage remains unproven`,
     );
   }
 
@@ -435,6 +446,14 @@ export async function reconcileFinanceBrokerHistory(
     .toSorted((left, right) => left.instrument.localeCompare(right.instrument));
   const appliedFeeCount = appliedFeeIds.size;
   const unappliedFeeCount = fees.length - appliedFeeCount;
+  const baselineAppliedFeeCount = [...unlinkedAssetFees.values()].reduce(
+    (sum, fee) =>
+      sum + fee.activityIds.filter((activityId) => appliedFeeIds.has(activityId)).length,
+    0,
+  );
+  const orderAllocatedFeeCount = fees.filter(
+    (fee) => fee.orderId !== undefined && appliedFeeIds.has(fee.activityId),
+  ).length;
   const complete = syncWasComplete(raw.facts);
   const historyStatus =
     raw.facts.filter(({ stream }) => stream !== "sync_receipt").length === 0
@@ -481,6 +500,8 @@ export async function reconcileFinanceBrokerHistory(
     unmatchedFillCount,
     appliedFeeCount,
     unappliedFeeCount,
+    baselineAppliedFeeCount,
+    orderAllocatedFeeCount,
     assetFeeAdjustedInstruments: Object.freeze(assetFeeAdjustedInstruments.toSorted()),
     feeTotals: Object.freeze(feeTotalsResult),
     positions: Object.freeze(positions),

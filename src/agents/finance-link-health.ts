@@ -686,6 +686,10 @@ export async function readFinanceLinkHealth(
           historyStatus: historicalProjection?.historyStatus ?? null,
           positionsReconciled: historicalProjection?.positionsReconciled ?? false,
           positionBaselineUsable: historicalProjection?.positionBaselineUsable ?? false,
+          baselineAppliedFeeCount: historicalProjection?.baselineAppliedFeeCount ?? null,
+          orderAllocatedFeeCount: historicalProjection?.orderAllocatedFeeCount ?? null,
+          appliedFeeCount: historicalProjection?.appliedFeeCount ?? null,
+          unappliedFeeCount: historicalProjection?.unappliedFeeCount ?? null,
         },
       });
       checks.push({
@@ -714,6 +718,10 @@ export async function readFinanceLinkHealth(
           matchedReceiptCount: historicalProjection?.matchedReceiptCount ?? null,
           unmatchedFillCount: historicalProjection?.unmatchedFillCount ?? null,
           positionsReconciled: historicalProjection?.positionsReconciled ?? false,
+          baselineAppliedFeeCount: historicalProjection?.baselineAppliedFeeCount ?? null,
+          orderAllocatedFeeCount: historicalProjection?.orderAllocatedFeeCount ?? null,
+          appliedFeeCount: historicalProjection?.appliedFeeCount ?? null,
+          unappliedFeeCount: historicalProjection?.unappliedFeeCount ?? null,
           historicalOnlyInstruments: accountBook?.historicalOnlyInstruments ?? [],
         },
       });
@@ -761,6 +769,10 @@ export async function readFinanceLinkHealth(
                 brokerFillCount: historicalProjection.brokerFillCount,
                 matchedReceiptCount: historicalProjection.matchedReceiptCount,
                 unmatchedFillCount: historicalProjection.unmatchedFillCount,
+                baselineAppliedFeeCount: historicalProjection.baselineAppliedFeeCount,
+                orderAllocatedFeeCount: historicalProjection.orderAllocatedFeeCount,
+                appliedFeeCount: historicalProjection.appliedFeeCount,
+                unappliedFeeCount: historicalProjection.unappliedFeeCount,
                 assetFeeAdjustedInstruments: historicalProjection.assetFeeAdjustedInstruments,
                 positions: historicalProjection.positions,
                 warnings: historicalProjection.warnings,

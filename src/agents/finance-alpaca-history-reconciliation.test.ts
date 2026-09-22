@@ -138,6 +138,8 @@ describe("Alpaca broker history reconciliation", () => {
       unmatchedFillCount: 1,
       appliedFeeCount: 2,
       unappliedFeeCount: 0,
+      baselineAppliedFeeCount: 0,
+      orderAllocatedFeeCount: 2,
       feeTotals: [
         { currency: "BTC", amount: 0.001 },
         { currency: "USD", amount: 1.5 },
@@ -265,9 +267,58 @@ describe("Alpaca broker history reconciliation", () => {
       },
     ]);
     expect(result.assetFeeAdjustedInstruments).toEqual(["BTC/USD"]);
+    expect(result.appliedFeeCount).toBe(1);
+    expect(result.unappliedFeeCount).toBe(0);
+    expect(result.baselineAppliedFeeCount).toBe(1);
+    expect(result.orderAllocatedFeeCount).toBe(0);
+    expect(result.historyStatus).toBe("reconciled");
+    expect(result.positionBaselineUsable).toBe(true);
+    expect(result.feesInterpreted).toBe(true);
+    expect(result.fees[0]?.orderId).toBeUndefined();
+    expect(result.warnings.join(" ")).toContain("order-level fee linkage remains unproven");
+  });
+
+  it("keeps an unlinked asset fee incomplete when no position baseline can absorb it", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alpaca-history-reconcile-"));
+    directories.push(directory);
+    const accountId = "fee-without-position-account";
+    await appendFinanceBrokerHistory(directory, {
+      kind: "broker_history",
+      accountId,
+      venue: "alpaca:paper",
+      query: "activities:window",
+      cursor: "",
+      payload: [
+        {
+          id: "fee-btc-without-position",
+          activity_type: "CFEE",
+          symbol: "BTCUSD",
+          qty: "-0.001",
+          net_amount: "0",
+          currency: "USD",
+          description: "Coin Pair Transaction Fee (Non USD)",
+          created_at: "2025-01-02T15:00:01Z",
+        },
+      ],
+    });
+    await appendFinanceBrokerHistory(directory, {
+      kind: "broker_history",
+      accountId,
+      venue: "alpaca:paper",
+      query: "sync_receipt:window",
+      cursor: "",
+      payload: [{ status: "raw_history_synced" }],
+    });
+
+    const result = await reconcileFinanceBrokerHistory(directory, accountId);
+
+    expect(result.baselineAppliedFeeCount).toBe(0);
     expect(result.appliedFeeCount).toBe(0);
     expect(result.unappliedFeeCount).toBe(1);
+    expect(result.historyStatus).toBe("incomplete");
     expect(result.positionBaselineUsable).toBe(true);
     expect(result.feesInterpreted).toBe(false);
+    expect(result.positions).toEqual([]);
+    expect(result.warnings.join(" ")).toContain("not allocated to a USD order fill");
   });
 });
