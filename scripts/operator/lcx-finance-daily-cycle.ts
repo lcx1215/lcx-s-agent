@@ -1,3 +1,4 @@
+import { readFile as readPortfolioFile } from "node:fs/promises";
 import {
   createAlpacaExecutionQuoteProvider,
   type AlpacaExecutionQuoteFeed,
@@ -26,6 +27,10 @@ import { runFinanceDailyCycle } from "../../src/agents/finance-daily-cycle.js";
 import { bindFinanceDailyStrategy } from "../../src/agents/finance-daily-strategy.js";
 import { readFinanceLinkHealth } from "../../src/agents/finance-link-health.js";
 import { backfillOutcomes } from "../../src/agents/finance-outcome-backfill.js";
+import {
+  financePortfolioPlanSchema,
+  validateFinancePortfolioPlan,
+} from "../../src/agents/finance-portfolio-composition.js";
 import { buildReflection } from "../../src/agents/finance-reflection.js";
 import { resolveScopedOverride } from "../../src/agents/finance-scoped-override.js";
 import {
@@ -135,6 +140,7 @@ type Options = Readonly<{
   venue: "paper" | "alpaca";
   equityFromVenue: boolean;
   syncAlpacaHistory: boolean;
+  portfolioPlanPath?: string;
   /**
    * Declared risk caps. They are flags rather than constants because a boundary nobody chose
    * is not a boundary: the unattended budget refuses an undeclared cap, and a cap the script
@@ -150,7 +156,7 @@ type Options = Readonly<{
 const USAGE =
   "Usage: node --import tsx scripts/operator/lcx-finance-daily-cycle.ts [--json] " +
   "[--mode day|night] [--dir PATH] [--as-of ISO] [--equity N] [--band N] [--place] " +
-  "[--venue paper|alpaca] [--equity-from-venue] [--sync-alpaca-history] [--execution-quote-feed iex|sip] [--execution-max-age-ms N] " +
+  "[--portfolio-plan PATH] [--venue paper|alpaca] [--equity-from-venue] [--sync-alpaca-history] [--execution-quote-feed iex|sip] [--execution-max-age-ms N] " +
   "[--max-order-notional N] [--max-instrument-notional N] [--max-orders N]";
 
 function positiveNumber(raw: string | undefined, flag: string): number {
@@ -173,6 +179,7 @@ function parseArgs(argv: readonly string[]): Options {
     equityFromVenue: false,
     syncAlpacaHistory: false,
     directory: undefined as string | undefined,
+    portfolioPlanPath: undefined as string | undefined,
     // Defaults, not constants: they reproduce the previous behaviour when nothing is passed.
     maxOrderNotional: 10_000,
     maxInstrumentNotional: 20_000,
@@ -183,7 +190,13 @@ function parseArgs(argv: readonly string[]): Options {
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     const next = argv[index + 1];
-    if (arg === "--sync-alpaca-history") {
+    if (arg === "--portfolio-plan") {
+      if (!next) {
+        throw new Error("--portfolio-plan requires a path");
+      }
+      options.portfolioPlanPath = next;
+      index += 1;
+    } else if (arg === "--sync-alpaca-history") {
       options.syncAlpacaHistory = true;
     } else if (arg === "--json") {
       options.json = true;
@@ -371,12 +384,32 @@ export async function runFinanceDailyCycleOperator(
     let instruments: readonly string[] = [];
     let ruleIds: readonly string[] = [];
     let strategy: ReturnType<typeof bindFinanceDailyStrategy> | undefined;
+    let strategies: ReturnType<typeof bindFinanceDailyStrategy>[] = [];
+    const portfolioPlan =
+      options.mode === "day" && options.portfolioPlanPath
+        ? financePortfolioPlanSchema.parse(
+            JSON.parse(await readPortfolioFile(options.portfolioPlanPath, "utf8")),
+          )
+        : undefined;
+    if (portfolioPlan) {
+      validateFinancePortfolioPlan(portfolioPlan, options.asOf, options.venue);
+    }
     // Night settlement consumes recorded samples, not today's active strategy.
     if (options.mode === "day") {
       const read = await readFinanceStrategyRuleLedger(directory, {});
-      strategy = bindFinanceDailyStrategy(read.ledger.rules);
-      instruments = strategy.instruments;
-      ruleIds = [strategy.ruleId];
+      strategies = portfolioPlan
+        ? read.ledger.rules
+            .filter((r) => r.state === "active")
+            .map((r) => bindFinanceDailyStrategy([r]))
+        : [bindFinanceDailyStrategy(read.ledger.rules)];
+      strategy = strategies[0];
+      instruments = [
+        ...new Set([
+          ...strategies.flatMap((r) => r.instruments),
+          ...(portfolioPlan?.candidates.flatMap((c) => c.targets.map((t) => t.instrument)) ?? []),
+        ]),
+      ];
+      ruleIds = strategies.map((r) => r.ruleId);
     }
     // Only the day run needs a universe. Pausing every rule is a decision about trading, not
     // about remembering: a night that refuses to settle because nothing is active is a night the
@@ -395,7 +428,8 @@ export async function runFinanceDailyCycleOperator(
       });
       const report = await runFinanceDailyCycle({
         instruments,
-        lookbackMonths: strategy!.lookbackMonths,
+        lookbackMonths: strategy?.lookbackMonths,
+        ...(portfolioPlan ? { portfolioPlan, trendStrategies: strategies } : {}),
         equity,
         asOf: options.asOf,
         caps: {
@@ -423,7 +457,8 @@ export async function runFinanceDailyCycleOperator(
         ...base,
         ok: report.ok,
         ruleIds,
-        strategyExecution: strategy,
+        strategyExecution: portfolioPlan ? strategies : strategy,
+        ...(report.portfolio ? { portfolio: report.portfolio } : {}),
         modelCalls: report.modelCalls,
         signalAnchor: report.signalAnchor,
         // Reported so a run can be read back against the boundary it actually used.

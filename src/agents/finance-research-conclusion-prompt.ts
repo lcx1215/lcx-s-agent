@@ -41,6 +41,7 @@ export function buildFinanceConclusionPrompt(params: {
   availableSources: readonly AvailableSource[];
   question?: string;
   horizonDays?: number;
+  valueAssessmentId?: string;
 }): string {
   const sourceList = params.availableSources
     .map((source) => `- ${source.sourceId}: ${source.description}`)
@@ -72,7 +73,12 @@ export function buildFinanceConclusionPrompt(params: {
     "Explain the chosen mechanism, supporting evidence and failure conditions in the existing thesis and invalidation fields. Method evidence requirements do not authorize invented sources, unsupported numbers or order execution. Do not add fields to the JSON schema below.",
     "",
     "Reply with a single JSON object in this shape and nothing else:",
-    FINANCE_CONCLUSION_JSON_SHAPE,
+    params.valueAssessmentId
+      ? FINANCE_CONCLUSION_JSON_SHAPE.replace(
+          "{\n",
+          `{\n  "valueAssessmentId": "${params.valueAssessmentId}",\n`,
+        )
+      : FINANCE_CONCLUSION_JSON_SHAPE,
     "",
     "Rules the checker enforces, so satisfy them or the conclusion is refused:",
     `- cite at least two DISTINCT sourceId values from the list above;`,

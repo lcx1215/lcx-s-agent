@@ -10,6 +10,10 @@ import type { FinanceRegime } from "./finance-mandate.js";
 import { appendFinanceExecutionReceipt } from "./finance-position-ledger.js";
 import { extractFinanceConclusionJson } from "./finance-research-conclusion-prompt.js";
 import {
+  isReadyFinanceValueAssessment,
+  type FinanceValueAssessment,
+} from "./finance-value-assessment.js";
+import {
   calculateReturnsFromLevels,
   calculateRollingVolatility,
   calculateMaxDrawdown,
@@ -22,6 +26,8 @@ export type FinanceResearchEvidence = Readonly<{
   sourceUrlOrArtifact: string;
   /** Native source time when known; collection time never substitutes for a price observation. */
   sourceTimestamp?: string;
+  /** Multiple statements from one issuer/report are not independent corroboration. */
+  independenceKey?: string;
   computation?: Readonly<{
     calculationId: string;
     module: string;
@@ -130,6 +136,8 @@ export type FinanceResearchBridgeInput = Readonly<{
   instrument: string;
   assetClass: "us_equity" | "crypto";
   modelText: string;
+  researchBasis?: "business_value" | "market_structure";
+  valueAssessment?: FinanceValueAssessment;
   evidence: readonly FinanceResearchEvidence[];
   market: { referencePrice: number; referencePriceAt: string };
   equity: number;
@@ -219,10 +227,16 @@ export async function runFinanceResearchExecutionBridge(
     sourceId: item.sourceId,
     sourceUrlOrArtifact: item.sourceUrlOrArtifact,
     sourceTimestamp: item.sourceTimestamp,
+    independenceKey: item.independenceKey,
     detailHash: hash(item.detail),
     computation: item.computation,
   }));
-  const receipt = { modelOutputHash: hash(input.modelText), evidence: evidenceReceipt };
+  const receipt = {
+    modelOutputHash: hash(input.modelText),
+    evidence: evidenceReceipt,
+    researchBasis: input.researchBasis,
+    valueAssessment: input.valueAssessment,
+  };
   const extracted = extractFinanceConclusionJson(input.modelText);
   const intake = parseObservation(extracted);
   if (!intake.ok) {
@@ -294,7 +308,7 @@ export async function runFinanceResearchExecutionBridge(
     }
     const parents = item.computation?.inputSourceIds;
     if (!parents) {
-      return [item.sourceUrlOrArtifact];
+      return [item.independenceKey ?? item.sourceUrlOrArtifact];
     }
     if (parents.length === 0) {
       throw new Error("calculation has no input evidence");
@@ -326,6 +340,40 @@ export async function runFinanceResearchExecutionBridge(
   }
   if (conclusion.direction === "hold" || conclusion.direction === "avoid") {
     return { status: "shadow" as const, disposition: "no_trade" as const, receipt, conclusion };
+  }
+
+  if (
+    input.researchBasis === "business_value" &&
+    (!isReadyFinanceValueAssessment(input.valueAssessment) ||
+      input.valueAssessment.instrument !== input.instrument ||
+      input.valueAssessment.referencePrice !== input.market.referencePrice)
+  ) {
+    return {
+      status: "refused" as const,
+      receipt,
+      refusals: [
+        "business-value trade requires sourced operating facts, computed scenarios and passing opposing review",
+      ],
+    };
+  }
+
+  if (
+    input.researchBasis === "business_value" &&
+    (!extracted ||
+      typeof extracted !== "object" ||
+      !("valueAssessmentId" in extracted) ||
+      extracted.valueAssessmentId !== input.valueAssessment?.receiptId ||
+      !conclusion.evidence.some((ref) =>
+        input.valueAssessment?.facts?.sourceIds.includes(ref.sourceId),
+      ))
+  ) {
+    return {
+      status: "refused" as const,
+      receipt,
+      refusals: [
+        "value conclusion must consume the current valuation receipt and cite operating evidence",
+      ],
+    };
   }
 
   const execute = control.mode === "alpaca_paper";

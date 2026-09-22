@@ -12,12 +12,16 @@ vi.mock("../../src/agents/finance-credential-env.js", () => ({
     ALPACA_API_SECRET_KEY: "SYNTHETIC_ONLY",
   }),
 }));
-import { runFinanceResearchTurn } from "../../scripts/operator/lcx-finance-research-turn.js";
+import { runFinanceResearchTurn as runResearchTurn } from "../../scripts/operator/lcx-finance-research-turn.js";
 import { createFinanceExecutionSafetyContext } from "../../src/agents/finance-execution-safety.js";
 import {
   buildFinanceResearchMathEvidence,
   type FinanceResearchExecutionControl,
 } from "../../src/agents/finance-research-execution-bridge.js";
+
+// Existing price/transport fixtures explicitly exercise the market-structure path.
+const runFinanceResearchTurn: typeof runResearchTurn = (args, deps) =>
+  runResearchTurn([...args, "--research-basis", "market_structure"], deps);
 
 beforeEach(() => {
   vi.spyOn(process.stdout, "write").mockReturnValue(true);

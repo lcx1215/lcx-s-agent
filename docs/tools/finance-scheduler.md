@@ -108,3 +108,58 @@ calculation as execution of all of them. This binding covers the implemented
 trend signal and inverse-volatility engine, not arbitrary natural-language body
 instructions, an exchange calendar, or general multi-strategy execution. Night
 settlement reads recorded samples independently of active strategy declarations.
+
+## Reviewed value research and portfolio composition
+
+The stock research entry defaults to `business_value`. It reuses the registered annual
+income, cash-flow and balance-sheet adapters, joins matching fiscal periods and
+currencies, and rejects unpublished or missing observations. Analyst targets and price
+statistics do not substitute for operating facts. `--research-basis market_structure`
+explicitly selects price research; `--horizon-days` sets the intended holding period
+(default 730 for business value, 30 for market structure). Neither selects execution
+authority.
+
+The value path runs the existing logical-agent pool's `research_draft` and
+`adversarial_challenge` roles. The first proposes bear/base/bull assumptions; TypeScript
+computes their values and the annual cash-flow growth implied by the current price.
+The second reviews the facts, assumptions and calculated results. Missing evidence,
+invalid arithmetic, failed/cancelled review or unresolved material objections withhold
+the valuation. The final directional conclusion must cite operating evidence and the
+current `valueAssessmentId`. `--write` retains the assessment and role receipts through
+the existing research record. Separate role calls do not prove independent models or
+correct forecasts.
+
+The first implemented method is five explicit years plus terminal value using CFO less
+capex as an equity cash-flow proxy, with constant debt and share count assumptions.
+It requires positive cash flow and explicit growth, discount and terminal assumptions.
+Cash and debt inform the review; they are not added/subtracted again as if this were an
+enterprise-value calculation. This method is not suitable for every company and is not
+an ETF, bank, loss-making company or crypto valuation engine. Inapplicable methods
+withhold a value conclusion instead of substituting chart direction.
+
+A controller may request a research `portfolioTarget` (strategy ID and sleeve target
+weight). Only a passing value assessment and mandate produce `portfolioCandidate`.
+The candidate includes the assessment receipt, not just a claim that review passed.
+The controller supplies account budgets separately; the model cannot allocate them.
+
+The daily operator accepts `--portfolio-plan PATH`, a bounded run input with:
+
+- `asOf`, `validUntil`, `venue`, `accountId`, and explicit `conflictPolicy`;
+- `allocations`: unique strategy IDs and equity budget fractions totaling at most one;
+- `candidates`: reviewed research targets, each with its evidence receipt and sleeve weights.
+
+Active declared trend rules still come from the existing strategy ledger. With a plan,
+each rule executes its own declared lookback; their market bars are collected once.
+Each active rule and supplied candidate needs exactly one budget. Missing inputs do not
+redistribute another strategy's capital. Each target is multiplied by its sleeve budget;
+unused equity remains cash. Existing holdings outside the target set and positions held
+because of conflict remain part of the funding check.
+
+`block` freezes a symbol when an accumulation thesis conflicts with a reduction thesis;
+it does not turn a blocked buy into a sell. `budget_weighted` explicitly permits weighted
+composition, while retaining each contribution and the disagreement in the receipt.
+The composed targets enter the existing drift, order-cap and execution-safety path.
+A target weight is not an order quantity or an execution authorization. Alpaca portfolio
+placement remains blocked until that path receives an account-bound controller;
+`accountId` in a plan is a scope label, not proof of access to that account. The current
+extension supports stock targets and does not silently normalize crypto identifiers.
