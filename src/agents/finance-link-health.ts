@@ -610,14 +610,21 @@ export async function readFinanceLinkHealth(
           .filter((p) => p.quantity !== 0)
           .map((p) => [p.instrument.toUpperCase(), p.quantity]),
       );
-      const historyKnown = scoped.historyStatus !== "missing";
-      const onlyLedger = [...ledgerBySymbol.entries()]
+      const baselineBySymbol = new Map(
+        (accountBook?.positions ?? [])
+          .filter((position) => position.quantity !== 0)
+          .map((position) => [position.instrument.toUpperCase(), position.quantity]),
+      );
+      const useBrokerBaseline = accountBook?.brokerBaselineUsable === true;
+      const effectiveBySymbol = useBrokerBaseline ? baselineBySymbol : ledgerBySymbol;
+      const historyKnown = useBrokerBaseline || scoped.historyStatus !== "missing";
+      const onlyLedger = [...effectiveBySymbol.entries()]
         .filter(([symbol, qty]) => qty !== 0 && !venuePositions.bySymbol.has(symbol))
         .map(([symbol]) => symbol);
       const onlyVenue = [...venuePositions.bySymbol.keys()].filter(
-        (symbol) => !ledgerBySymbol.has(symbol),
+        (symbol) => !effectiveBySymbol.has(symbol),
       );
-      const mismatch = [...ledgerBySymbol.entries()]
+      const mismatch = [...effectiveBySymbol.entries()]
         .filter(([symbol, qty]) => {
           const venueQty = venuePositions.bySymbol.get(symbol);
           return venueQty !== undefined && Math.abs(venueQty - qty) > 1e-6;
@@ -682,13 +689,44 @@ export async function readFinanceLinkHealth(
         },
       });
       checks.push({
+        id: "execution_receipt_coverage",
+        severity:
+          historicalProjection === undefined ||
+          historicalProjection.unmatchedFillCount > 0 ||
+          !historicalProjection.positionsReconciled
+            ? "warn"
+            : "info",
+        ok:
+          historicalProjection !== undefined &&
+          historicalProjection.unmatchedFillCount === 0 &&
+          historicalProjection.positionsReconciled,
+        summary:
+          historicalProjection === undefined
+            ? "LCX receipt coverage has no broker-history evidence to compare"
+            : historicalProjection.unmatchedFillCount > 0
+              ? `${historicalProjection.unmatchedFillCount} broker fill(s) remain historical-only; no LCX receipt was inferred`
+              : !historicalProjection.positionsReconciled
+                ? "broker position baseline is usable, but fee/order reconciliation remains incomplete"
+                : "all reconciled broker fills have matching LCX receipts",
+        detail: {
+          executionReceiptCount: scoped.receipts.length,
+          brokerFillCount: historicalProjection?.brokerFillCount ?? null,
+          matchedReceiptCount: historicalProjection?.matchedReceiptCount ?? null,
+          unmatchedFillCount: historicalProjection?.unmatchedFillCount ?? null,
+          positionsReconciled: historicalProjection?.positionsReconciled ?? false,
+          historicalOnlyInstruments: accountBook?.historicalOnlyInstruments ?? [],
+        },
+      });
+      checks.push({
         id: "venue_ledger_parity",
         severity: divergent > 0 || !historyKnown ? "error" : "info",
         ok: divergent === 0 && historyKnown,
         summary: !historyKnown
           ? "account-scoped execution history missing; cannot claim broker parity"
           : divergent === 0
-            ? `venue and account-scoped ledger agree on ${venuePositions.bySymbol.size} position(s)`
+            ? useBrokerBaseline
+              ? `venue and broker-history account baseline agree on ${venuePositions.bySymbol.size} position(s)`
+              : `venue and account-scoped execution ledger agree on ${venuePositions.bySymbol.size} position(s)`
             : "venue and ledger disagree: in ledger only [" +
               onlyLedger.join(", ") +
               "], at venue only [" +
@@ -704,10 +742,14 @@ export async function readFinanceLinkHealth(
           venue: "alpaca:paper",
           accountIdentityVerified: true,
           historyStatus: scoped.historyStatus,
+          baselineSource: accountBook?.baselineSource ?? "unavailable",
+          brokerBaselineUsable: useBrokerBaseline,
           excludedReceiptCount: scoped.excludedReceiptCount,
           unassignedReceiptCount: scoped.unassignedReceiptCount,
           venueCount: venuePositions.bySymbol.size,
-          ledgerCount: ledgerBySymbol.size,
+          ledgerCount: effectiveBySymbol.size,
+          executionLedgerCount: ledgerBySymbol.size,
+          brokerBaselineCount: baselineBySymbol.size,
           onlyLedger,
           onlyVenue,
           mismatch,

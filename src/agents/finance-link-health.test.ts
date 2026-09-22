@@ -15,7 +15,10 @@ import {
  * reports that never meant anything.
  */
 import { readFinanceLinkHealth, type FinanceLinkHealthCheck } from "./finance-link-health.js";
-import { appendFinanceExecutionReceipt } from "./finance-position-ledger.js";
+import {
+  appendFinanceBrokerHistory,
+  appendFinanceExecutionReceipt,
+} from "./finance-position-ledger.js";
 import { financeCredentialsPath } from "./finance-state-dir.js";
 import type { FinanceUncachedFetch } from "./finance-write-transport.js";
 
@@ -280,6 +283,58 @@ it("compares only matching account and venue execution history", async () => {
   expect(report.checks.find((c) => c.id === "venue_ledger_parity")).toMatchObject({
     ok: true,
     detail: { ledgerCount: 1, excludedReceiptCount: 2 },
+  });
+});
+
+it("uses a reconciled broker-history baseline while keeping receipt coverage explicit", async () => {
+  await storeReceipt("account-a", "alpaca:paper");
+  await appendFinanceBrokerHistory(dir, {
+    kind: "broker_history",
+    accountId: "account-a",
+    venue: "alpaca:paper",
+    query: "orders:window",
+    cursor: "",
+    payload: [{ id: "order-spy", status: "filled", filled_qty: "1" }],
+  });
+  await appendFinanceBrokerHistory(dir, {
+    kind: "broker_history",
+    accountId: "account-a",
+    venue: "alpaca:paper",
+    query: "activities:window",
+    cursor: "",
+    payload: [
+      {
+        id: "fill-spy",
+        activity_type: "FILL",
+        order_id: "order-spy",
+        symbol: "SPY",
+        side: "buy",
+        qty: "1",
+        price: "100",
+        transaction_time: "2026-09-20T00:00:00Z",
+      },
+    ],
+  });
+  await appendFinanceBrokerHistory(dir, {
+    kind: "broker_history",
+    accountId: "account-a",
+    venue: "alpaca:paper",
+    query: "sync_receipt:window",
+    cursor: "",
+    payload: [{ status: "raw_history_synced" }],
+  });
+  const report = await readFinanceLinkHealth({
+    directory: dir,
+    env: fakeEnv,
+    read: venueRead([{ symbol: "SPY", qty: "1" }]),
+  });
+  expect(report.checks.find((c) => c.id === "venue_ledger_parity")).toMatchObject({
+    ok: true,
+    detail: { baselineSource: "broker_history", executionLedgerCount: 1, brokerBaselineCount: 1 },
+  });
+  expect(report.checks.find((c) => c.id === "execution_receipt_coverage")).toMatchObject({
+    ok: false,
+    severity: "warn",
   });
 });
 it.each([
