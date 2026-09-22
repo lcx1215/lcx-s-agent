@@ -206,10 +206,15 @@ it("returns a usable catalog and accepted plan so a caller can revise its compos
   const first = initial.details as {
     moduleCatalog: { id: string }[];
     orchestration: { selectionTrace: { selectionSource: string } };
+    composition: { replanStatus: string; nextAction: string };
     moduleToolsDispatched: boolean;
   };
   expect(first.moduleCatalog.map((module) => module.id)).toContain("technical_timing");
   expect(first.orchestration.selectionTrace.selectionSource).toBe("rules");
+  expect(first.composition).toMatchObject({
+    replanStatus: "not_requested",
+    nextAction: "none",
+  });
   const selection = {
     moduleIds: ["technical_timing", "credit_liquidity"],
     rationale: "Examine a different mechanism after reviewing the initial plan.",

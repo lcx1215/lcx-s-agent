@@ -66,11 +66,13 @@ new run ID for a changed analysis while preserving the old receipt.
 
 ## Execution scope
 
-`moduleToolsDispatched: false` is intentional. This feature composes analytical
-context for the existing research workflow; it does not execute every tool named
-in the catalog. A declared tool dependency is not proof that the tool is enabled,
-called or successful. Actual tool invocation must use the existing tool runtime,
-its authorization checks and its own receipts.
+`moduleToolsDispatched: false` is the default. This feature composes analytical
+context for the existing research workflow and does not execute every tool named
+in the catalog unless the caller explicitly supplies `live: true` and
+`executeModules: true`. A declared tool dependency is not proof that the tool is
+enabled, called or successful. Actual invocation uses the existing tool runtime,
+its authorization checks and its own receipts; a requested execution with a
+missing hard lane remains blocked.
 
 Module selection does not silently change source targets. Supply `targets` when
 additional instruments, collections or source restrictions are needed. `live:
@@ -93,7 +95,10 @@ no-provider-call boundaries still apply.
 The tool returns a compact `composition` before larger receipt sections so it
 survives the Harness's 512-byte step-outcome budget. It includes selection source,
 the first four primary modules, an explicit omitted count, and
-`moduleToolsDispatched: false`. The full orchestration remains in the durable
+`moduleToolsDispatched: false`. When module execution was requested, it also
+includes `replanStatus`, `nextAction`, hard/soft failure counts and
+`remainingSoftReplans`. `blocked_hard` always stops; `replan_soft` permits only
+a bounded revision of soft lanes. The full orchestration remains in the durable
 research receipt. The next Harness cycle can use its existing backlog to revise
 a proposal; no second scheduler or decision loop is introduced.
 

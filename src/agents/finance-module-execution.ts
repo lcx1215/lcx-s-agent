@@ -42,6 +42,21 @@ export type FinanceModuleExecutionNode = Readonly<{
   error?: string;
 }>;
 
+export type FinanceModuleReplanFeedback = Readonly<{
+  status:
+    | "not_requested"
+    | "completed"
+    | "replan_soft"
+    | "blocked_hard"
+    | "soft_replan_budget_exhausted";
+  hardNodeIds: readonly string[];
+  softNodeIds: readonly string[];
+  hardFailures: readonly string[];
+  softFailures: readonly string[];
+  remainingSoftReplans: number;
+  nextAction: "none" | "revise_soft_modules" | "stop";
+}>;
+
 export type FinanceModuleExecutionReceipt = Readonly<{
   schemaVersion: typeof FINANCE_MODULE_EXECUTION_SCHEMA_VERSION;
   boundary: "finance_module_execution_research_only";
@@ -51,6 +66,7 @@ export type FinanceModuleExecutionReceipt = Readonly<{
   compositionNodeIds: readonly string[];
   outputEvidenceIds: readonly string[];
   nodes: readonly FinanceModuleExecutionNode[];
+  replanFeedback: FinanceModuleReplanFeedback;
   notTouched: readonly string[];
 }>;
 
@@ -60,6 +76,62 @@ const NOT_TOUCHED = Object.freeze([
   "trading_execution",
   "wallet_or_order_authority",
 ] as const);
+
+export function deriveFinanceModuleReplanFeedback(
+  composition: FinanceBrainOrchestrationPlan["composition"],
+  nodes: readonly FinanceModuleExecutionNode[],
+  requested: boolean,
+): FinanceModuleReplanFeedback {
+  const hardNodeIds = composition.control.hardNodeIds;
+  const softNodeIds = composition.control.softNodeIds;
+  if (!requested) {
+    return Object.freeze({
+      status: "not_requested",
+      hardNodeIds,
+      softNodeIds,
+      hardFailures: Object.freeze([]),
+      softFailures: Object.freeze([]),
+      remainingSoftReplans: composition.control.maxSoftReplans,
+      nextAction: "none",
+    });
+  }
+  const statusById = new Map(nodes.map((node) => [node.nodeId, node.status]));
+  const failed = (nodeId: string) => statusById.get(nodeId) !== "succeeded";
+  const hardFailures = hardNodeIds.filter(failed);
+  const softFailures = softNodeIds.filter(failed);
+  if (hardFailures.length > 0) {
+    return Object.freeze({
+      status: "blocked_hard",
+      hardNodeIds,
+      softNodeIds,
+      hardFailures: Object.freeze(hardFailures),
+      softFailures: Object.freeze(softFailures),
+      remainingSoftReplans: 0,
+      nextAction: "stop",
+    });
+  }
+  if (softFailures.length > 0) {
+    const remainingSoftReplans = composition.control.maxSoftReplans;
+    return Object.freeze({
+      status: remainingSoftReplans > 0 ? "replan_soft" : "soft_replan_budget_exhausted",
+      hardNodeIds,
+      softNodeIds,
+      hardFailures: Object.freeze([]),
+      softFailures: Object.freeze(softFailures),
+      remainingSoftReplans,
+      nextAction: remainingSoftReplans > 0 ? "revise_soft_modules" : "stop",
+    });
+  }
+  return Object.freeze({
+    status: "completed",
+    hardNodeIds,
+    softNodeIds,
+    hardFailures: Object.freeze([]),
+    softFailures: Object.freeze([]),
+    remainingSoftReplans: composition.control.maxSoftReplans,
+    nextAction: "none",
+  });
+}
 
 const FRAMEWORK_INSPECT_DOMAINS = new Set<string>([
   "macro_rates_inflation",
@@ -280,6 +352,7 @@ export function createUnrequestedFinanceModuleExecutionReceipt(
     compositionNodeIds: Object.freeze([...plan.composition.topologicalOrder]),
     outputEvidenceIds: Object.freeze([]),
     nodes: Object.freeze([]),
+    replanFeedback: deriveFinanceModuleReplanFeedback(plan.composition, [], false),
     notTouched: NOT_TOUCHED,
   });
 }
@@ -471,6 +544,7 @@ export async function executeFinanceModuleComposition(
     nodes.length === params.plan.composition.topologicalOrder.length &&
     nodes.every((node) => node.status === "succeeded");
   const outputEvidenceIds = evidence.map((entry) => entry.id);
+  const feedback = deriveFinanceModuleReplanFeedback(params.plan.composition, nodes, true);
   return {
     receipt: Object.freeze({
       schemaVersion: FINANCE_MODULE_EXECUTION_SCHEMA_VERSION,
@@ -481,6 +555,7 @@ export async function executeFinanceModuleComposition(
       compositionNodeIds: Object.freeze([...params.plan.composition.topologicalOrder]),
       outputEvidenceIds: Object.freeze(outputEvidenceIds),
       nodes: Object.freeze(nodes),
+      replanFeedback: feedback,
       notTouched: NOT_TOUCHED,
     }),
     evidence: Object.freeze(evidence),

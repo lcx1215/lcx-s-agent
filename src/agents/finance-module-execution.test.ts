@@ -7,9 +7,11 @@ import {
   planFinanceBrainOrchestration,
 } from "./finance-brain-orchestration.js";
 import {
+  deriveFinanceModuleReplanFeedback,
   executeFinanceModuleComposition,
   financeModuleExecutionRegistryIds,
 } from "./finance-module-execution.js";
+import type { FinanceModuleExecutionNode } from "./finance-module-execution.js";
 import type { FinanceResearchBatchEvidencePacket } from "./finance-research-batch-runner.js";
 
 function emptyBatch(): FinanceResearchBatchEvidencePacket {
@@ -31,6 +33,63 @@ function emptyBatch(): FinanceResearchBatchEvidencePacket {
 describe("finance module execution", () => {
   it("keeps the executor registry aligned with every registered finance module", () => {
     expect(financeModuleExecutionRegistryIds()).toEqual(FINANCE_BRAIN_MODULES.map(({ id }) => id));
+  });
+
+  it("allows only bounded soft replanning after every hard lane succeeds", () => {
+    const withBudget = planFinanceBrainOrchestration({
+      text: "技术择时验证",
+      highStakesConclusion: true,
+      moduleSelection: {
+        moduleIds: ["technical_timing"],
+        rationale: "exercise the soft-lane feedback contract",
+        composition: {
+          nodes: [{ id: "timing", moduleId: "technical_timing", dependsOn: [] }],
+          maxReplans: 1,
+        },
+      },
+    });
+    const nodesFor = (composition: typeof withBudget.composition): FinanceModuleExecutionNode[] =>
+      [...composition.control.hardNodeIds, ...composition.control.softNodeIds].map((nodeId) => ({
+        nodeId,
+        moduleId: "technical_timing",
+        requiredToolNames: [],
+        dependsOn: [],
+        status: composition.control.softNodeIds.includes(nodeId) ? "failed" : "succeeded",
+        inputEvidenceIds: [],
+        outputEvidenceIds: [],
+        toolCalls: [],
+        missingEvidence: [],
+      }));
+    const nodes = nodesFor(withBudget.composition);
+    expect(deriveFinanceModuleReplanFeedback(withBudget.composition, nodes, true)).toMatchObject({
+      status: "replan_soft",
+      nextAction: "revise_soft_modules",
+      remainingSoftReplans: 1,
+    });
+
+    const exhausted = planFinanceBrainOrchestration({
+      text: "技术择时验证",
+      highStakesConclusion: true,
+      moduleSelection: {
+        moduleIds: ["technical_timing"],
+        rationale: "exercise the exhausted soft-lane contract",
+        composition: {
+          nodes: [{ id: "timing", moduleId: "technical_timing", dependsOn: [] }],
+          maxReplans: 0,
+        },
+      },
+    });
+    expect(
+      deriveFinanceModuleReplanFeedback(
+        exhausted.composition,
+        nodesFor(exhausted.composition),
+        true,
+      ),
+    ).toMatchObject({
+      status: "soft_replan_budget_exhausted",
+      nextAction: "stop",
+      remainingSoftReplans: 0,
+    });
   });
 
   it("records every composed node even when no evidence is available", async () => {
@@ -59,6 +118,8 @@ describe("finance module execution", () => {
         expect(node.requiredToolNames).toEqual(definition?.requiredTools);
       }
       expect(result.receipt.moduleToolsDispatched).toBe(false);
+      expect(result.receipt.replanFeedback.status).toBe("blocked_hard");
+      expect(result.receipt.replanFeedback.nextAction).toBe("stop");
       expect(result.evidence).toHaveLength(0);
       expect(
         result.receipt.nodes.every(
@@ -115,6 +176,10 @@ describe("finance module execution", () => {
       expect(quant?.toolCalls[0]?.toolName).toBe("quant_math");
       expect(quant?.outputEvidenceIds).toEqual(["finance-module:math"]);
       expect(result.evidence.map((entry) => entry.id)).toContain("finance-module:math");
+      expect(result.receipt.replanFeedback.status).toBe("blocked_hard");
+      expect(result.receipt.replanFeedback.hardFailures).toEqual(
+        expect.arrayContaining(["causal"]),
+      );
     } finally {
       await fs.rm(workspaceDir, { recursive: true, force: true });
     }
@@ -149,6 +214,11 @@ describe("finance module execution", () => {
         signal: controller.signal,
       });
       expect(result.receipt.moduleToolsDispatched).toBe(false);
+      expect(result.receipt.replanFeedback).toMatchObject({
+        status: "blocked_hard",
+        nextAction: "stop",
+        remainingSoftReplans: 0,
+      });
       expect(result.receipt.nodes.every((node) => node.status === "cancelled")).toBe(true);
       expect(result.receipt.nodes.every((node) => node.toolCalls.length === 0)).toBe(true);
     } finally {

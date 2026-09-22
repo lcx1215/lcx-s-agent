@@ -39,6 +39,7 @@ export function buildCentralFinanceCatalog(): string {
     "Omit moduleSelection to use rule-based routing. Propose a composition when the question or prior evidence warrants it; do not select everything by default.",
     "Omit live: central tools cannot call providers or place orders. Selection does not change source targets or bypass risk/evidence/review gates.",
     "Modules are analytical lenses, not proof of tool execution. Inspect prior composition/status/missingEvidence feedback before revising or stopping.",
+    "When composition feedback is replan_soft, revise only the soft analytical nodes within remainingSoftReplans. When it is blocked_hard or soft_replan_budget_exhausted with nextAction stop, do not retry by changing hard lanes or pretending the run completed.",
     "Registered modules (ID and role):",
     JSON.stringify(financeBrainModuleCatalog().map(({ id, role }) => ({ id, role }))),
   ].join("\n");
