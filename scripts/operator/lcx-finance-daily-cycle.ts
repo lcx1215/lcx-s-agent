@@ -138,6 +138,7 @@ type Options = Readonly<{
   asOf: string;
   equity: number;
   band: number;
+  coreWeightFraction: number;
   place: boolean;
   checkExecution: boolean;
   venue: "paper" | "alpaca";
@@ -160,7 +161,7 @@ type Options = Readonly<{
 const USAGE =
   "Usage: node --import tsx scripts/operator/lcx-finance-daily-cycle.ts [--json] " +
   "[--mode day|night] [--dir PATH] [--as-of ISO] [--equity N] [--band N] [--place | --check-execution] " +
-  "[--portfolio-plan PATH] [--execution-policy PATH] [--venue paper|alpaca] [--equity-from-venue] [--sync-alpaca-history] [--execution-quote-feed iex|sip] [--execution-max-age-ms N] " +
+  "[--portfolio-plan PATH] [--execution-policy PATH] [--venue paper|alpaca] [--equity-from-venue] [--sync-alpaca-history] [--core-weight N] [--execution-quote-feed iex|sip] [--execution-max-age-ms N] " +
   "[--max-order-notional N] [--max-instrument-notional N] [--max-orders N]";
 
 function positiveNumber(raw: string | undefined, flag: string): number {
@@ -178,6 +179,7 @@ function parseArgs(argv: readonly string[]): Options {
     asOf: new Date().toISOString(),
     equity: 100_000,
     band: 0.05,
+    coreWeightFraction: 0.7,
     place: false,
     checkExecution: false,
     venue: "paper" as "paper" | "alpaca",
@@ -239,6 +241,13 @@ function parseArgs(argv: readonly string[]): Options {
         throw new Error(`--band must be a non-negative number\n${USAGE}`);
       }
       options.band = parsed;
+      index += 1;
+    } else if (arg === "--core-weight") {
+      const parsed = Number(next);
+      if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+        throw new Error(`--core-weight must be between 0 and 1\n${USAGE}`);
+      }
+      options.coreWeightFraction = parsed;
       index += 1;
     } else if (arg === "--place") {
       options.place = true;
@@ -504,6 +513,9 @@ export async function runFinanceDailyCycleOperator(
         ...(portfolioPlan ? { portfolioPlan, trendStrategies: strategies } : {}),
         equity,
         asOf: options.asOf,
+        // Keep most capital in the transparent buy-and-hold core; the monthly trend rule is
+        // intentionally a smaller tactical overlay until its net-of-cost edge is demonstrated.
+        coreWeightFraction: options.coreWeightFraction,
         caps: {
           maxOrderNotional: options.maxOrderNotional,
           maxInstrumentNotional: options.maxInstrumentNotional,
@@ -535,6 +547,7 @@ export async function runFinanceDailyCycleOperator(
         modelCalls: report.modelCalls,
         positionBook: report.positionBook,
         signalAnchor: report.signalAnchor,
+        coreWeightFraction: report.coreWeightFraction,
         // Reported so a run can be read back against the boundary it actually used.
         caps: {
           maxOrderNotional: options.maxOrderNotional,

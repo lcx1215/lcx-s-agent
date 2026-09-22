@@ -60,6 +60,8 @@ export type CompileExecutionIntentParams = Readonly<{
   equity: number;
   /** Existing position in this instrument, if any. */
   existingPosition?: { quantity: number; unrealizedFraction: number };
+  /** Trusted controller flag permitting a pre-budgeted add to an underwater position. */
+  plannedScaleIn?: boolean;
   /** The explicit authorization that admitted this run. Empty means unauthorized. */
   runAuthorizationId: string;
   /** Minimum conviction to act. Defaults per class below. */
@@ -171,7 +173,8 @@ export function compileExecutionIntent(
   // direction is the behaviour that destroys accounts, while building a planned
   // position in a name with no losing exposure is ordinary execution. This lets
   // class C build a position over time without being refused for it, while still
-  // catching the real thing. Overrule if the owner prefers plan-based evidence.
+  // catching the real thing. A pre-budgeted scale-in is allowed through this
+  // compiler, but remains subject to the separate account and risk caps.
   const existing = params.existingPosition;
   if (
     existing &&
@@ -179,9 +182,13 @@ export function compileExecutionIntent(
     existing.unrealizedFraction < 0 &&
     conclusion.direction === (existing.quantity > 0 ? "buy" : "sell")
   ) {
-    refusals.push(
-      "refuse: adding to an existing losing position in the same direction (averaging down)",
-    );
+    if (params.plannedScaleIn !== true) {
+      refusals.push(
+        "refuse: adding to an existing losing position (averaging down) without a pre-budgeted scale-in plan",
+      );
+    } else {
+      notes.push("planned scale-in accepted; aggregate account and instrument caps still apply");
+    }
   }
 
   // Sizing. Stop-driven classes risk the distance to the stop; classes without a

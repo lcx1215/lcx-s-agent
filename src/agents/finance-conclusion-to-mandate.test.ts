@@ -48,6 +48,14 @@ describe("caller-owned conclusion risk context", () => {
       ).toMatchObject({ ok: true, passed: false, intent: undefined });
     },
   );
+  it("allows averaging down only when the trusted caller marks a planned scale-in", () => {
+    expect(
+      evaluateConclusionToMandate({
+        ...params,
+        riskContext: { ...risk, averagingDown: true, plannedScaleIn: true },
+      }),
+    ).toMatchObject({ ok: true, passed: true });
+  });
   it("requires observed structure for a predictive class", () => {
     expect(
       evaluateConclusionToMandate({

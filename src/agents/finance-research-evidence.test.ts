@@ -271,6 +271,81 @@ describe("finance price arithmetic before model prompting", () => {
     expect(spy?.text).toContain("put/call OI ratio=0.8");
   });
 
+  it("keeps module-requested operating and technical collections in model evidence", () => {
+    const packet = {
+      schemaVersion: "lcx_finance_research_batch_v1",
+      boundary: "finance_research_batch_research_only",
+      decisionMode: "research_only",
+      correlationId: "module-collections",
+      asOf: "2026-09-10T00:00:00Z",
+      useCase: "test",
+      status: "completed",
+      committeeEvidence: [],
+      budget: {},
+      jobs: [
+        {
+          jobId: "aapl-fundamentals",
+          request: {
+            instrument: "AAPL",
+            assetClass: "us_equity",
+            collection: "financial_statements",
+            asOf: "2026-09-10T00:00:00Z",
+          },
+          status: "ready",
+          receipt: {
+            records: [
+              {
+                itemId: "aapl-cash-flow-1",
+                collection: "financial_statements",
+                providerName: "fixture-financials",
+                providerRole: "issuer_reference",
+                sourceFamily: "company_fundamentals",
+                sourceTimestamp: "2026-07-01T00:00:00Z",
+                observedAt: "2026-09-10T00:00:00Z",
+                delayStatus: "official_lagged",
+                sourceUrlOrArtifact: "fixture://financials",
+                data: { statement: "cash_flow", operatingCashFlow: 100, capex: 20 },
+              },
+            ],
+          },
+        },
+        {
+          jobId: "aapl-technical",
+          request: {
+            instrument: "AAPL",
+            assetClass: "us_equity",
+            collection: "technical_indicators",
+            asOf: "2026-09-10T00:00:00Z",
+          },
+          status: "ready",
+          receipt: {
+            records: [
+              {
+                itemId: "aapl-sma-1",
+                collection: "technical_indicators",
+                providerName: "fixture-technical",
+                providerRole: "derived_market_data",
+                sourceFamily: "market_data_api",
+                sourceTimestamp: "2026-09-09T00:00:00Z",
+                observedAt: "2026-09-10T00:00:00Z",
+                delayStatus: "end_of_day",
+                sourceUrlOrArtifact: "fixture://technical",
+                data: { indicator: "SMA", period: 200, value: 210 },
+              },
+            ],
+          },
+        },
+      ],
+    } as unknown as FinanceResearchBatchEvidencePacket;
+
+    const evidence = buildFinanceResearchModelEvidence(packet);
+    const aapl = evidence.find((item) => item.id === "finance-model:AAPL");
+    expect(aapl?.text).toContain("financial_statements records=1");
+    expect(aapl?.text).toContain("operatingCashFlow");
+    expect(aapl?.text).toContain("technical_indicators records=1");
+    expect(aapl?.text).toContain("SMA");
+  });
+
   it("blocks an options summary when the quote is too wide or the contract is stale", () => {
     const summary = summarizeFinanceOptionsChain(
       [

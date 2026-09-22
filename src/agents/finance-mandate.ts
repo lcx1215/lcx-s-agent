@@ -175,6 +175,8 @@ export type FinanceMandateContext = Readonly<{
   drawdownFraction: number;
   /** True when this order adds to an existing losing position. */
   averagingDown?: boolean;
+  /** True only when the losing-position add was pre-budgeted as a scale-in plan. */
+  plannedScaleIn?: boolean;
   /** True when size was increased after a loss to win it back. */
   revengeSizing?: boolean;
   /** Present only when the class requires it. */
@@ -290,6 +292,7 @@ export function evaluateFinanceMandate(
   }
   for (const key of [
     "averagingDown",
+    "plannedScaleIn",
     "revengeSizing",
     "hasSignificantAutocorrelation",
     "stopLossDefined",
@@ -300,7 +303,9 @@ export function evaluateFinanceMandate(
   }
   // Class-independent: these come from the owner's own words.
   if (context.averagingDown === true) {
-    reasons.push("refuse: adding to a losing position");
+    if (context.plannedScaleIn !== true) {
+      reasons.push("refuse: adding to a losing position without a pre-budgeted scale-in plan");
+    }
   }
   if (context.revengeSizing === true) {
     reasons.push("refuse: increasing size to win back a loss");

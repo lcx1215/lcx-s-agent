@@ -89,6 +89,8 @@ export type Options = {
   hasStructure?: boolean;
   /** Set when this order adds to an existing losing position. */
   averagingDown?: boolean;
+  /** Set only when the owner has pre-budgeted the scale-in. */
+  plannedScaleIn?: boolean;
   /** Set when size was raised to win back a loss. */
   revengeSizing?: boolean;
   /** Explicit ledger directory. When omitted, the shared resolver decides. */
@@ -228,6 +230,8 @@ export function parseArgs(args: readonly string[]): Options {
       options.hasStructure = true;
     } else if (arg === "--averaging-down") {
       options.averagingDown = true;
+    } else if (arg === "--planned-scale-in") {
+      options.plannedScaleIn = true;
     } else if (arg === "--revenge-sizing") {
       options.revengeSizing = true;
     } else if (arg === "--ledger-dir") {
@@ -258,6 +262,7 @@ export function parseArgs(args: readonly string[]): Options {
           "[--limit-price N] [--mark SYM=PRICE@ISO] [--max-order-notional N] " +
           "[--max-instrument-notional N] [--max-orders-per-run N] " +
           "[--automation attended|unattended] " +
+          "[--averaging-down --planned-scale-in] " +
           "[--adapter paper|alpaca] [--alpaca-mode paper|live] " +
           "[--write-ledger] [--ledger-dir PATH]\n" +
           "--asset-class and --drawdown-pct are required; missing drawdown is unknown, not zero. " +
@@ -346,6 +351,7 @@ export async function buildFinanceLiveExecutionPayload(
         ? { hasSignificantAutocorrelation: options.hasStructure }
         : {}),
       ...(options.averagingDown !== undefined ? { averagingDown: options.averagingDown } : {}),
+      ...(options.plannedScaleIn !== undefined ? { plannedScaleIn: options.plannedScaleIn } : {}),
       ...(options.revengeSizing !== undefined ? { revengeSizing: options.revengeSizing } : {}),
     });
     if (mandate.verdict !== "pass") {

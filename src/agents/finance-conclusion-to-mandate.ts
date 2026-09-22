@@ -49,6 +49,7 @@ export type ConclusionToMandateResult = Readonly<
 export type FinanceConclusionRiskContext = Readonly<{
   drawdownFraction: number;
   averagingDown: boolean;
+  plannedScaleIn?: boolean;
   revengeSizing: boolean;
   hasSignificantAutocorrelation?: boolean;
   realizedVolatilityFraction?: number;
@@ -139,6 +140,7 @@ export function evaluateConclusionToMandate(params: {
     riskFractionOfEquity,
     drawdownFraction: risk.drawdownFraction,
     averagingDown: risk.averagingDown,
+    ...(risk.plannedScaleIn === undefined ? {} : { plannedScaleIn: risk.plannedScaleIn }),
     revengeSizing: risk.revengeSizing,
     ...(risk.realizedVolatilityFraction === undefined
       ? {}

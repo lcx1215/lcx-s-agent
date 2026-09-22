@@ -65,17 +65,17 @@ describe("portfolio targets reach the existing cycle drift consumer", () => {
     const result = await run("block");
     expect(result.portfolio?.targets[0]).toMatchObject({
       instrument: "ACME",
-      weight: 0.4,
       conflict: true,
       blocked: true,
     });
+    expect(result.portfolio?.targets[0]?.weight).toBeCloseTo(0.68);
     expect(result.drift[0]).toMatchObject({ action: "none", notional: 0 });
     expect(result.placed).toEqual([]);
   });
   it("uses declared budget weighting only when explicitly chosen and retains cash", async () => {
     const result = await run("budget_weighted");
-    expect(result.targets[0].weight).toBeCloseTo(0.4);
-    expect(result.portfolio?.unallocatedCashWeight).toBeCloseTo(0.6);
+    expect(result.targets[0].weight).toBeCloseTo(0.68);
+    expect(result.portfolio?.unallocatedCashWeight).toBeCloseTo(0.32);
     expect(result.drift[0]).toMatchObject({ action: "buy", notional: 10_000 });
     expect(result.portfolio?.targets[0].contributions.map((c) => c.strategyId)).toEqual([
       "slow",
