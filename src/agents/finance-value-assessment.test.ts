@@ -449,3 +449,60 @@ it("the shared execution gate rejects uncited, unreviewed and falsely independen
     refusals: [expect.stringContaining("independent evidence roots")],
   });
 });
+
+it("default provider calls isolate analyst, opposing review and final judgement sessions", async () => {
+  const { runFinanceResearchTurn } =
+    await import("../../scripts/operator/lcx-finance-research-turn.js");
+  const fs = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "value-sessions-"));
+  const sessions: string[] = [];
+  const stdout = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+  const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, options) => {
+    if (typeof options?.body !== "string") {
+      throw new Error("expected JSON request body");
+    }
+    const request = JSON.parse(options.body) as { sessionKey: string; message: string };
+    sessions.push(request.sessionKey);
+    const answer = request.message.startsWith("ROLE: business")
+      ? proposal
+      : request.message.startsWith("ROLE: opposing")
+        ? review
+        : {
+            instrument: "ACME",
+            assetClass: "us_equity",
+            direction: "hold",
+            thesis: "No investment action follows from this synthetic fixture.",
+            conviction: 0.5,
+            evidence: [{ sourceId: "statements" }],
+          };
+    return new Response(JSON.stringify({ payloads: [{ text: JSON.stringify(answer) }] }), {
+      status: 200,
+    });
+  });
+  try {
+    const result = await runFinanceResearchTurn(["--instrument", "ACME"], {
+      gatherEvidence: async () => ({
+        operatingFacts: facts,
+        evidence,
+        market: { referencePrice: 100, referencePriceAt: new Date().toISOString() },
+      }),
+      positionSummary: "synthetic book",
+      reflection: "",
+      control: { stateDirectory: directory },
+    });
+    expect(result).toMatchObject({
+      status: "shadow",
+      disposition: "no_trade",
+      receipt: { valueAssessment: { status: "ready" } },
+    });
+    expect(sessions).toHaveLength(3);
+    expect(new Set(sessions).size).toBe(3);
+    expect(sessions.every((session) => session.startsWith("finance-research:"))).toBe(true);
+  } finally {
+    stdout.mockRestore();
+    fetchSpy.mockRestore();
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
