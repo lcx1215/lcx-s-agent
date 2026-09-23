@@ -34,12 +34,29 @@ const resolveCommit = () => {
   }
 };
 
+const resolveSourceDirty = () => {
+  try {
+    return (
+      execSync("git status --porcelain --untracked-files=no", {
+        cwd: rootDir,
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+        .toString()
+        .trim().length > 0
+    );
+  } catch {
+    return null;
+  }
+};
+
 const version = readPackageVersion();
 const commit = resolveCommit();
+const sourceDirty = resolveSourceDirty();
 
 const buildInfo = {
   version,
   commit,
+  sourceDirty,
   builtAt: new Date().toISOString(),
 };
 

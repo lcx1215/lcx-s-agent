@@ -7,7 +7,9 @@ import { shouldRejectBrowserMutation } from "../browser/csrf.js";
 import { agentCommand } from "../commands/agent.js";
 import type { AgentCommandOpts } from "../commands/agent/types.js";
 import { isLoopbackHost } from "../gateway/net.js";
+import { resolveCommitHash } from "../infra/git-commit.js";
 import { defaultRuntime } from "../runtime.js";
+import { VERSION } from "../version.js";
 import { createDefaultDeps } from "./deps.js";
 import { installServeLocalCron, type ServeCronHandle } from "./serve-cron.js";
 import {
@@ -451,6 +453,8 @@ export function createServeRequestHandler(options: ServeHandlerOptions) {
         ok: true,
         service: SERVE_SERVICE_NAME,
         status: "ok",
+        version: VERSION,
+        commit: resolveCommitHash(),
         bind: config.bind,
         port: config.port,
         tokenRequired: config.token !== undefined,
