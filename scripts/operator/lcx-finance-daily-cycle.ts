@@ -9,12 +9,11 @@ import { reconcileFinanceBrokerHistory } from "../../src/agents/finance-alpaca-h
  * Operator entry for the unattended finance day.
  *
  * Two modes, and the split is the point:
- *   day   - data, signal, drift, rebalance. Zero model calls.
+ *   day   - data, signal and drift; an eligible Alpaca Paper placement gets one bounded model veto review.
  *   night - settle matured calls and build the reflection. Zero model calls.
  *
- * The one place a model is wanted is the self-calibration step, and that is deliberately NOT in
- * this file. Keeping it out means the daily cost is zero no matter how often cron fires, and the
- * expensive step stays a separate, separately-budgeted invocation.
+ * Strategy generation and execution gates remain TypeScript-owned. The configured model may only
+ * approve or veto exact candidates after readiness passes; it cannot choose instruments or sizing.
  *
  * Instruments come from the ACTIVE rule in the strategy ledger, never from a hard-coded list, so
  * the schedule follows the declared rule instead of drifting from it.
@@ -46,6 +45,11 @@ import {
   resolveFinanceStateDir,
 } from "../../src/agents/finance-state-dir.js";
 import { readFinanceStrategyRuleLedger } from "../../src/agents/finance-strategy-rule-ledger.js";
+import {
+  createFinanceTradeDecisionReviewer,
+  type FinanceTradeDecisionReviewer,
+} from "../../src/agents/finance-trade-decision-review.js";
+import { loadConfig } from "../../src/config/config.js";
 
 // Named in `finance-state-dir.ts` alongside the rest of the plane: the cycle writes these and the
 // calibration reader reads them back, so the names are declared once.
@@ -295,6 +299,7 @@ export async function runFinanceDailyCycleOperator(
   argv: readonly string[] = process.argv.slice(2),
   deps: {
     createExecutionQuoteProvider?: typeof createAlpacaExecutionQuoteProvider;
+    createTradeDecisionReviewer?: () => FinanceTradeDecisionReviewer;
     syncHistory?: typeof syncConfiguredAlpacaPaperHistory;
     createController?: typeof createFinanceAlpacaCycleController;
   } = {},
@@ -532,6 +537,36 @@ export async function runFinanceDailyCycleOperator(
         }
         return payload;
       }
+      let reviewer: FinanceTradeDecisionReviewer | undefined;
+      let reviewerUnavailable = false;
+      const tradeDecisionReviewer: FinanceTradeDecisionReviewer | undefined =
+        options.place && options.venue === "alpaca"
+          ? async (request, signal) => {
+              if (!reviewer && !reviewerUnavailable) {
+                try {
+                  reviewer = (
+                    deps.createTradeDecisionReviewer ??
+                    (() => createFinanceTradeDecisionReviewer(loadConfig()))
+                  )();
+                } catch {
+                  reviewerUnavailable = true;
+                }
+              }
+              if (!reviewer) {
+                return {
+                  status: "failed",
+                  attempted: false,
+                  provider: "unavailable",
+                  modelId: "unavailable",
+                  latencyMs: 0,
+                  providerCallObserved: false,
+                  adapterAttested: false,
+                  failureCode: "reviewer_unavailable",
+                };
+              }
+              return reviewer(request, signal);
+            }
+          : undefined;
       const report = await runFinanceDailyCycle({
         instruments,
         lookbackMonths: strategy?.lookbackMonths,
@@ -560,6 +595,7 @@ export async function runFinanceDailyCycleOperator(
               )({ feed: options.executionQuoteFeed, maxAgeMs: options.executionMaxAgeMs }),
             }
           : {}),
+        ...(tradeDecisionReviewer ? { tradeDecisionReviewer } : {}),
         ...controller,
         directory,
       });
@@ -571,6 +607,7 @@ export async function runFinanceDailyCycleOperator(
         ...(strategyReadiness ? financeRuleReadinessSection(strategyReadiness) : {}),
         ...(report.portfolio ? { portfolio: report.portfolio } : {}),
         modelCalls: report.modelCalls,
+        ...(report.tradeDecisionReview ? { tradeDecisionReview: report.tradeDecisionReview } : {}),
         positionBook: report.positionBook,
         signalAnchor: report.signalAnchor,
         coreWeightFraction: report.coreWeightFraction,
@@ -673,6 +710,17 @@ function renderDay(payload: Record<string, unknown>): string {
   lines.push(
     `  信号锚点: ${String(payload.signalAnchor)}  模型调用: ${String(payload.modelCalls)}`,
   );
+  const review = payload.tradeDecisionReview as
+    | { status?: unknown; candidateCount?: unknown; decisions?: readonly { decision?: unknown }[] }
+    | undefined;
+  if (review) {
+    const decisions = Array.isArray(review.decisions) ? review.decisions : [];
+    const approved = decisions.filter((decision) => decision.decision === "approve").length;
+    const vetoed = decisions.filter((decision) => decision.decision === "veto").length;
+    lines.push(
+      `  模型审阅: ${String(review.status)}  候选: ${String(review.candidateCount)}  批准/否决: ${approved}/${vetoed}`,
+    );
+  }
   const drift = payload.drift as { instrument: string; action: string; notional: number }[];
   const acting = drift.filter((row) => row.action !== "none");
   lines.push(`  需要动作: ${acting.length} / ${drift.length}`);

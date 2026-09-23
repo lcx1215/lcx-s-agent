@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FinanceExecutionSafetyUncertainError } from "./finance-execution-safety.js";
 import { syntheticSafetyContext } from "./finance-execution-safety.test-support.js";
+import type {
+  FinanceTradeDecisionReviewRequest,
+  FinanceTradeDecisionReviewResult,
+} from "./finance-trade-decision-review.js";
 const mocks = vi.hoisted(() => ({
   collect: vi.fn(),
   order: vi.fn(),
@@ -41,6 +45,22 @@ const params = {
   place: true,
   venue: "alpaca" as const,
   directory: "/synthetic/not-written",
+  tradeDecisionReviewer: async (
+    request: FinanceTradeDecisionReviewRequest,
+  ): Promise<FinanceTradeDecisionReviewResult> => ({
+    status: "completed",
+    attempted: true,
+    provider: "fixture-provider",
+    modelId: "fixture-model",
+    latencyMs: 1,
+    providerCallObserved: true,
+    adapterAttested: true,
+    decisions: request.candidates.map((candidate) => ({
+      candidateId: candidate.candidateId,
+      decision: "approve",
+      rationale: "Fixture approves the exact candidate for downstream safety checks.",
+    })),
+  }),
 };
 function quotes(change: Partial<FinanceDailyCycleExecutionQuote> = {}) {
   return new Map(
@@ -112,6 +132,107 @@ describe("daily cycle execution data boundary", () => {
     );
     expect(report.ok).toBe(false);
   });
+  it("sends exact Alpaca Paper candidates for one bounded model review before execution", async () => {
+    const reviewer = vi.fn(
+      async (
+        request: FinanceTradeDecisionReviewRequest,
+      ): Promise<FinanceTradeDecisionReviewResult> => ({
+        status: "completed",
+        attempted: true,
+        provider: "fixture-provider",
+        modelId: "fixture-model",
+        latencyMs: 7,
+        providerCallObserved: true,
+        adapterAttested: true,
+        decisions: request.candidates.map((candidate) => ({
+          candidateId: candidate.candidateId,
+          decision: "approve",
+          rationale: "Approved only for the shared execution gates to continue.",
+        })),
+      }),
+    );
+    const report = await runFinanceDailyCycle({
+      ...params,
+      executionQuotes: quotes(),
+      tradeDecisionReviewer: reviewer,
+    });
+
+    expect(reviewer).toHaveBeenCalledTimes(1);
+    expect(reviewer.mock.calls[0]?.[0]).toMatchObject({
+      venue: "alpaca:paper",
+      ruleIds: expect.any(Array),
+      candidates: expect.arrayContaining([
+        expect.objectContaining({
+          instrument: "AAPL",
+          side: "buy",
+          annualisedVol: expect.any(Number),
+          researchClose: expect.any(Number),
+          executionQuote: expect.objectContaining({
+            referencePrice: 250,
+            referencePriceAt: asOf,
+            ageMs: 0,
+          }),
+        }),
+      ]),
+    });
+    expect(report).toMatchObject({
+      modelCalls: 1,
+      tradeDecisionReview: {
+        status: "completed",
+        candidateCount: 2,
+        provider: "fixture-provider",
+        latencyMs: 7,
+        candidateInputs: expect.arrayContaining([
+          expect.objectContaining({
+            instrument: "AAPL",
+            executionQuote: expect.objectContaining({ referencePrice: 250 }),
+          }),
+        ]),
+      },
+    });
+    expect(mocks.order).toHaveBeenCalledTimes(2);
+  });
+  it("treats a model veto as a successful abstention and does not dispatch", async () => {
+    const report = await runFinanceDailyCycle({
+      ...params,
+      executionQuotes: quotes(),
+      tradeDecisionReviewer: async (request) => ({
+        status: "completed",
+        attempted: true,
+        provider: "fixture-provider",
+        modelId: "fixture-model",
+        latencyMs: 2,
+        providerCallObserved: true,
+        adapterAttested: true,
+        decisions: request.candidates.map((candidate) => ({
+          candidateId: candidate.candidateId,
+          decision: "veto" as const,
+          rationale: "Fixture rejects the candidate.",
+        })),
+      }),
+    });
+
+    expect(report.ok).toBe(true);
+    expect(report.refusals).toHaveLength(2);
+    expect(report.refusals.join()).toContain("model vetoed");
+    expect(report.placed).toHaveLength(0);
+    expect(mocks.order).not.toHaveBeenCalled();
+  });
+  it("fails closed without a completed model review", async () => {
+    const report = await runFinanceDailyCycle({
+      ...params,
+      executionQuotes: quotes(),
+      tradeDecisionReviewer: undefined,
+    });
+
+    expect(report.ok).toBe(false);
+    expect(report.modelCalls).toBe(0);
+    expect(report.tradeDecisionReview).toMatchObject({
+      status: "failed",
+      failureCode: "reviewer_unavailable",
+    });
+    expect(mocks.order).not.toHaveBeenCalled();
+  });
   it("stops the entire book when a submitted order is uncertain", async () => {
     const { AlpacaOrderUncertainError } = await import("./finance-alpaca-execution-adapter.js");
     mocks.order.mockRejectedValueOnce(
@@ -169,7 +290,7 @@ describe("daily cycle execution data boundary", () => {
       });
       await vi.runAllTimersAsync();
       const report = await run;
-      expect(report.refusals.join()).toContain("timeout");
+      expect(report.refusals.join()).toContain("execution quote timeout");
       expect(mocks.order).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();

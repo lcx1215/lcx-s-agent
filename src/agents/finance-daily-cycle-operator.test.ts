@@ -54,6 +54,10 @@ vi.mock("./finance-strategy-rule-ledger.js", () => ({
   })),
 }));
 import { runFinanceDailyCycleOperator } from "../../scripts/operator/lcx-finance-daily-cycle.js";
+import {
+  FINANCE_TRADE_DECISION_REVIEW_SCHEMA,
+  type FinanceTradeDecisionReviewer,
+} from "./finance-trade-decision-review.js";
 const args = [
   "--json",
   "--dir",
@@ -140,6 +144,44 @@ describe("account gate before unattended placement", () => {
       expect.objectContaining({ executionQuoteProvider: provider }),
     );
   });
+  it("lazily wires the configured reviewer only for an eligible Alpaca Paper placement", async () => {
+    mocks.account.mockResolvedValue({ ok: true, account });
+    const reviewer = vi.fn(async () => ({
+      status: "completed" as const,
+      attempted: true,
+      provider: "fixture-provider",
+      modelId: "fixture-model",
+      latencyMs: 3,
+      providerCallObserved: true,
+      adapterAttested: true,
+      decisions: [],
+    }));
+    const factory = vi.fn(() => reviewer as FinanceTradeDecisionReviewer);
+
+    await runFinanceDailyCycleOperator(args, { createTradeDecisionReviewer: factory });
+
+    expect(factory).not.toHaveBeenCalled();
+    const cycleParams = mocks.cycle.mock.calls[0]?.[0];
+    expect(cycleParams).toEqual(expect.objectContaining({ venue: "alpaca", place: true }));
+    expect(typeof cycleParams.tradeDecisionReviewer).toBe("function");
+    const reviewRequest = {
+      schemaVersion: FINANCE_TRADE_DECISION_REVIEW_SCHEMA,
+      venue: "alpaca:paper",
+      asOf: "2026-09-23T19:30:00.000Z",
+      signalAnchor: "2026-08-31",
+      ruleIds: ["fixture"],
+      equity: 2000,
+      rebalanceBand: 0.05,
+      caps: { maxOrderNotional: 1000, maxInstrumentNotional: 2000, maxOrdersPerRun: 8 },
+      reconciliation: { status: "reconciled" },
+      positions: [],
+      candidates: [],
+    } as const;
+    await cycleParams.tradeDecisionReviewer(reviewRequest, AbortSignal.timeout(1000));
+
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(reviewer).toHaveBeenCalledWith(reviewRequest, expect.any(AbortSignal));
+  });
   it("refuses placement when an active rule is not ready under declared evidence", async () => {
     mocks.account.mockResolvedValue({ ok: true, account });
     mocks.ruleReadiness.mockResolvedValueOnce({
@@ -154,7 +196,11 @@ describe("account gate before unattended placement", () => {
       },
     });
     const createController = vi.fn();
-    const result = await runFinanceDailyCycleOperator(args, { createController });
+    const createTradeDecisionReviewer = vi.fn();
+    const result = await runFinanceDailyCycleOperator(args, {
+      createController,
+      createTradeDecisionReviewer,
+    });
     expect(result).toMatchObject({
       ok: false,
       error: expect.stringContaining("not paper-ready"),
@@ -163,6 +209,7 @@ describe("account gate before unattended placement", () => {
       },
     });
     expect(createController).not.toHaveBeenCalled();
+    expect(createTradeDecisionReviewer).not.toHaveBeenCalled();
     expect(mocks.cycle).not.toHaveBeenCalled();
   });
   it("keeps research runs independent of account access", async () => {

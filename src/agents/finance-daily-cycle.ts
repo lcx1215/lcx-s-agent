@@ -7,7 +7,9 @@ import {
 } from "./finance-alpaca-run.js";
 import { appendFinanceBars } from "./finance-bar-ledger.js";
 /**
- * The daytime cycle: everything that can be done without a model.
+ * The daytime cycle computes strategy targets deterministically. On an authorized Alpaca Paper
+ * placement with executable candidates, a configured model can veto the exact proposed actions;
+ * TypeScript still owns readiness, fresh-quote, reconciliation, risk, and execution gates.
  *
  * Two properties are load-bearing here, and both exist because the naive version is wrong:
  *
@@ -23,8 +25,9 @@ import { appendFinanceBars } from "./finance-bar-ledger.js";
  *    band. "Daytime must do work" is satisfied by checking every day; it is not satisfied by
  *    inventing a fresh signal every day.
  *
- * There is no model call anywhere in this file. That is deliberate: the answer to
- * "will an LLM-driven day be expensive?" is that the daytime does not need one.
+ * Model review is bounded to one call per eligible placement run. Preview, non-Alpaca placement,
+ * empty-candidate, and blocked-readiness runs do not call a model; a missing or invalid review
+ * fails closed.
  *
  * One side effect is not about trading: every run files the OHLC bars it already fetched into the
  * bar book. The cycle needs closes to trade; range measures (readiness, true drawdown, ATR) need
@@ -58,6 +61,14 @@ import {
   readFinancePositionLedger,
 } from "./finance-position-ledger.js";
 import { resolveFinanceStateDir } from "./finance-state-dir.js";
+import {
+  FINANCE_TRADE_DECISION_REVIEW_SCHEMA,
+  isValidFinanceTradeDecisionReviewResult,
+  type FinanceTradeDecisionCandidate,
+  type FinanceTradeDecisionReviewReceipt,
+  type FinanceTradeDecisionReviewResult,
+  type FinanceTradeDecisionReviewer,
+} from "./finance-trade-decision-review.js";
 
 export const FINANCE_DAILY_CYCLE_SCHEMA = "lcx_finance_daily_cycle_v1" as const;
 
@@ -181,6 +192,8 @@ export type FinanceDailyCycleParams = Readonly<{
   /** Internal caller seam; no default feed and no promotion of EOD data to an execution quote. */
   executionQuotes?: ReadonlyMap<string, FinanceDailyCycleExecutionQuote>;
   executionQuoteProvider?: FinanceDailyCycleExecutionQuoteProvider;
+  /** Configured-model veto review for exact Alpaca Paper candidates; never creates orders. */
+  tradeDecisionReviewer?: FinanceTradeDecisionReviewer;
   /** Trusted control-layer clock; never use the strategy's historical asOf for live quote age. */
   executionNow?: () => number;
 }>;
@@ -212,7 +225,8 @@ export type FinanceDailyCycleReport = Readonly<{
   signalAnchor: string;
   /** Core buy-and-hold sleeve retained even when the tactical trend signal is cash. */
   coreWeightFraction: number;
-  modelCalls: 0;
+  modelCalls: number;
+  tradeDecisionReview: FinanceTradeDecisionReviewReceipt;
   positionBook?: {
     source: "controller_account" | "receipt_ledger";
     accountId?: string;
@@ -709,6 +723,7 @@ export async function runFinanceDailyCycle(
   const instruments = params.instruments.map((item) => item.toUpperCase());
   const dataIssues: string[] = [];
   const refusals: string[] = [];
+  let modelVetoCount = 0;
   const placed: { instrument: string; quantity: number; notional: number }[] = [];
 
   const adapter = createChinaReachableUsEodHistoryCollectionAdapter();
@@ -1151,6 +1166,216 @@ export async function runFinanceDailyCycle(
     }
   }
 
+  const reviewCandidateId = (item: FinanceDailyCycleDrift) =>
+    [params.runAuthorizationId, signalAnchor, item.instrument, item.action].join(":");
+  const potentialReviewCandidates =
+    params.place === true && params.venue === "alpaca"
+      ? drift.flatMap((item) => {
+          if (
+            item.action === "none" ||
+            venueUnverified !== null ||
+            unpricedPositions.has(item.instrument) ||
+            inconsistentMarkBars.has(item.instrument)
+          ) {
+            return [];
+          }
+          const target = targets.find((row) => row.instrument === item.instrument);
+          if (!target || !Number.isFinite(target.close) || target.close <= 0) {
+            return [];
+          }
+          if (
+            venueState !== null &&
+            venueReconciliationIssue({
+              instrument: item.instrument,
+              openOrders: venueState.openOrders.get(item.instrument) ?? 0,
+              venueQuantity: venueState.positions.get(item.instrument) ?? 0,
+              ledgerQuantity: ledgerQuantity.get(item.instrument) ?? 0,
+            }) !== null
+          ) {
+            return [];
+          }
+          return [
+            {
+              candidateId: reviewCandidateId(item),
+              instrument: item.instrument,
+              side: item.action,
+              targetWeight: item.target,
+              currentWeight: item.current,
+              weightDelta: item.delta,
+              notional: item.notional,
+              strategySignal: target.signal,
+              annualisedVol: target.annualisedVol,
+              researchClose: target.close,
+              lastBarDate: target.lastBarDate,
+            },
+          ];
+        })
+      : [];
+  const executionQuotesByInstrument = new Map<
+    string,
+    FinanceDailyCycleExecutionQuote | undefined
+  >();
+  const executionQuoteErrors = new Map<string, string>();
+  const reviewCandidates: FinanceTradeDecisionCandidate[] = [];
+  for (const candidate of potentialReviewCandidates) {
+    let executionQuote = params.executionQuotes?.get(candidate.instrument);
+    if (params.executionQuoteProvider) {
+      try {
+        executionQuote = await withTimeout(
+          params.executionQuoteProvider(
+            { instrument: candidate.instrument, assetClass: "us_equity", side: candidate.side },
+            AbortSignal.timeout(20_000),
+          ),
+          20_000,
+        );
+        if (executionQuote.bidPrice === undefined || executionQuote.askPrice === undefined) {
+          executionQuoteErrors.set(
+            candidate.instrument,
+            "execution quote unavailable: provider must supply bid and ask",
+          );
+          executionQuote = undefined;
+        } else {
+          executionQuote = {
+            ...executionQuote,
+            referencePrice:
+              candidate.side === "buy" ? executionQuote.askPrice : executionQuote.bidPrice,
+            priceBasis: candidate.side === "buy" ? "ask" : "bid",
+          };
+        }
+      } catch (error) {
+        executionQuoteErrors.set(
+          candidate.instrument,
+          error instanceof Error && error.message === "timeout"
+            ? "execution quote timeout"
+            : "execution quote unavailable",
+        );
+        executionQuote = undefined;
+      }
+    }
+    executionQuotesByInstrument.set(candidate.instrument, executionQuote);
+    const quoteObservedAt = (params.executionNow ?? Date.now)();
+    if (executionQuoteIssue(executionQuote, quoteObservedAt) !== null || !executionQuote) {
+      continue;
+    }
+    reviewCandidates.push({
+      ...candidate,
+      executionQuote: {
+        referencePrice: executionQuote.referencePrice,
+        referencePriceAt: executionQuote.referencePriceAt,
+        ...(executionQuote.bidPrice !== undefined ? { bidPrice: executionQuote.bidPrice } : {}),
+        ...(executionQuote.askPrice !== undefined ? { askPrice: executionQuote.askPrice } : {}),
+        ...(executionQuote.feed !== undefined ? { feed: executionQuote.feed } : {}),
+        ...(executionQuote.priceBasis !== undefined
+          ? { priceBasis: executionQuote.priceBasis }
+          : {}),
+        ageMs: Math.max(0, quoteObservedAt - Date.parse(executionQuote.referencePriceAt)),
+        maxAgeMs: executionQuote.maxAgeMs,
+      },
+    });
+  }
+  const reviewCandidateById = new Map(
+    reviewCandidates.map((candidate) => [candidate.candidateId, candidate]),
+  );
+  let tradeDecisionReview: FinanceTradeDecisionReviewReceipt = {
+    status: "not_needed",
+    candidateCount: 0,
+    modelCalls: 0,
+    reasonCode:
+      params.place === true && params.venue === "alpaca"
+        ? "no_executable_candidates"
+        : "not_alpaca_paper_placement",
+  };
+  const tradeDecisions = new Map<
+    string,
+    { candidateId: string; decision: "approve" | "veto"; rationale: string }
+  >();
+  if (reviewCandidates.length > 0) {
+    const reconciliation = accountBook?.reconciliation;
+    const reviewRequest = {
+      schemaVersion: FINANCE_TRADE_DECISION_REVIEW_SCHEMA,
+      venue: "alpaca:paper",
+      asOf,
+      signalAnchor,
+      ruleIds: strategyDefinitions.map((strategy) => strategy.ruleId),
+      equity,
+      rebalanceBand: band,
+      caps: params.caps,
+      ...(accountBook ? { positionBookObservedAt: accountBook.observedAt } : {}),
+      reconciliation: {
+        status: reconciliation?.status ?? "unverified",
+        ...(reconciliation
+          ? {
+              historyStatus: reconciliation.historyStatus,
+              uncertaintyReserve: reconciliation.uncertaintyReserve,
+              quarantinedInstruments: reconciliation.quarantinedInstruments,
+            }
+          : {}),
+      },
+      positions: [...currentWeight].map(([instrument, weight]) => ({
+        instrument,
+        quantity: ledgerQuantity.get(instrument) ?? 0,
+        marketValue: Number((weight * equity).toFixed(2)),
+      })),
+      candidates: reviewCandidates,
+    } as const;
+    const failedReview = (
+      failureCode: "reviewer_unavailable" | "output_invalid" | "runtime_timeout" | "process_error",
+      attempted: boolean,
+    ) => ({
+      status: "failed" as const,
+      attempted,
+      provider: "unavailable",
+      modelId: "unavailable",
+      latencyMs: 0,
+      providerCallObserved: false,
+      adapterAttested: false,
+      failureCode,
+    });
+    let rawReview: unknown;
+    if (!params.tradeDecisionReviewer) {
+      rawReview = failedReview("reviewer_unavailable", false);
+    } else {
+      try {
+        rawReview = await withTimeout(
+          params.tradeDecisionReviewer(reviewRequest, AbortSignal.timeout(30_000)),
+          35_000,
+        );
+      } catch (error) {
+        rawReview = failedReview(
+          error instanceof Error && error.message === "timeout"
+            ? "runtime_timeout"
+            : "process_error",
+          true,
+        );
+      }
+    }
+    const result: FinanceTradeDecisionReviewResult = isValidFinanceTradeDecisionReviewResult(
+      rawReview,
+      reviewRequest,
+    )
+      ? rawReview
+      : failedReview("output_invalid", true);
+    tradeDecisionReview = {
+      status: result.status,
+      candidateCount: reviewCandidates.length,
+      modelCalls: result.attempted ? 1 : 0,
+      candidateInputs: reviewCandidates,
+      ...(result.status === "failed" ? { failureCode: result.failureCode } : {}),
+      provider: result.provider,
+      modelId: result.modelId,
+      latencyMs: result.latencyMs,
+      providerCallObserved: result.providerCallObserved,
+      adapterAttested: result.adapterAttested,
+      ...(result.requestIdSha256 ? { requestIdSha256: result.requestIdSha256 } : {}),
+      ...(result.status === "completed" ? { decisions: result.decisions } : {}),
+    };
+    if (result.status === "completed") {
+      for (const decision of result.decisions ?? []) {
+        tradeDecisions.set(decision.candidateId, decision);
+      }
+    }
+  }
+
   if (params.place === true) {
     for (const item of drift) {
       if (item.action === "none") {
@@ -1195,36 +1420,43 @@ export async function runFinanceDailyCycle(
         );
         continue;
       }
-      let executionQuote = params.executionQuotes?.get(item.instrument);
+      let executionQuote =
+        params.venue === "alpaca"
+          ? executionQuotesByInstrument.get(item.instrument)
+          : params.executionQuotes?.get(item.instrument);
       if (params.venue === "alpaca") {
-        if (params.executionQuoteProvider) {
-          try {
-            executionQuote = await withTimeout(
-              params.executionQuoteProvider(
-                { instrument: item.instrument, assetClass: "us_equity", side: item.action },
-                AbortSignal.timeout(20_000),
-              ),
-              20_000,
-            );
-            if (executionQuote.bidPrice === undefined || executionQuote.askPrice === undefined) {
-              throw new Error("live execution quote provider must supply bid and ask");
-            }
-            executionQuote = {
-              ...executionQuote,
-              referencePrice:
-                item.action === "buy" ? executionQuote.askPrice : executionQuote.bidPrice,
-              priceBasis: item.action === "buy" ? "ask" : "bid",
-            };
-          } catch (error) {
-            refusals.push(
-              `${item.instrument}: execution quote unavailable (${error instanceof Error ? error.message : String(error)})`,
-            );
-            continue;
-          }
+        const quoteError = executionQuoteErrors.get(item.instrument);
+        if (quoteError) {
+          refusals.push(`${item.instrument}: ${quoteError}`);
+          continue;
         }
         const issue = executionQuoteIssue(executionQuote, (params.executionNow ?? Date.now)());
         if (issue !== null) {
           refusals.push(`${item.instrument}: ${issue}`);
+          continue;
+        }
+        const candidateId = reviewCandidateId(item);
+        if (!reviewCandidateById.has(candidateId)) {
+          refusals.push(
+            item.instrument +
+              ": candidate was not eligible for model review; refusing venue placement",
+          );
+          continue;
+        }
+        if (tradeDecisionReview.status !== "completed") {
+          refusals.push(item.instrument + ": model review unavailable; refusing venue placement");
+          continue;
+        }
+        const decision = tradeDecisions.get(candidateId);
+        if (!decision) {
+          refusals.push(
+            item.instrument + ": model review omitted this candidate; refusing venue placement",
+          );
+          continue;
+        }
+        if (decision.decision === "veto") {
+          modelVetoCount += 1;
+          refusals.push(item.instrument + ": model vetoed the proposed candidate");
           continue;
         }
       }
@@ -1320,11 +1552,12 @@ export async function runFinanceDailyCycle(
 
   return Object.freeze({
     schemaVersion: FINANCE_DAILY_CYCLE_SCHEMA,
-    ok: dataIssues.length === 0 && refusals.length === 0,
+    ok: dataIssues.length === 0 && (refusals.length === 0 || refusals.length === modelVetoCount),
     asOf,
     signalAnchor,
     coreWeightFraction,
-    modelCalls: 0,
+    modelCalls: tradeDecisionReview.modelCalls,
+    tradeDecisionReview,
     positionBook: {
       source: accountBook ? ("controller_account" as const) : ("receipt_ledger" as const),
       ...(accountBook
