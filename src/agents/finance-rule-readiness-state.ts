@@ -5,14 +5,31 @@ import {
   buildFinanceRuleReadiness,
   parseFinanceReadinessThresholds,
   type FinanceRuleReadiness,
+  type FinanceReadinessBarConflict,
   type FinanceReadinessBar,
   type FinanceReadinessThresholds,
 } from "./finance-rule-readiness.js";
-import { financeReadinessThresholdsPath } from "./finance-state-dir.js";
+import { financePositionLedgerPath, financeReadinessThresholdsPath } from "./finance-state-dir.js";
 import type { FinanceStrategyRule } from "./finance-strategy-rule-ledger.js";
 
 export type FinanceRuleReadinessState = Readonly<{
   readiness: FinanceRuleReadiness;
+  dataStores: Readonly<{
+    bars: Readonly<{
+      kind: "sqlite";
+      present: boolean;
+      recordCount: number;
+      instrumentCount: number;
+      newestMarketDate: string | null;
+    }>;
+    positions: Readonly<{
+      kind: "sqlite";
+      present: boolean;
+      recordCount: number;
+      markCount: number;
+      newestMarkAt: string | null;
+    }>;
+  }>;
   thresholdsFile: string;
   thresholdsDeclared: boolean;
   thresholdsError: string | null;
@@ -58,20 +75,49 @@ export async function readFinanceRuleReadinessState(params: {
   }
 
   let marks: Awaited<ReturnType<typeof readFinancePositionLedger>>["marks"] = [];
+  let positionRecordCount = 0;
+  let positionDatabasePresent = false;
   let markSource: FinanceRuleReadinessState["markSource"] = null;
   try {
-    const positions = await readFinancePositionLedger(params.directory, { asOf: params.asOf });
+    const [positions, databasePresent] = await Promise.all([
+      readFinancePositionLedger(params.directory, { asOf: params.asOf }),
+      fs.access(financePositionLedgerPath(params.directory)).then(
+        () => true,
+        () => false,
+      ),
+    ]);
     marks = positions.marks;
+    positionRecordCount = positions.recordCount;
+    positionDatabasePresent = databasePresent;
     markSource = "finance_position_ledger";
   } catch {
     // Missing or unreadable evidence is represented as unavailable, never as a passing zero.
   }
 
   let bars: readonly FinanceReadinessBar[] = [];
+  let barConflicts: readonly FinanceReadinessBarConflict[] = [];
+  let barRecordCount = 0;
+  let instrumentCount = 0;
+  let newestMarketDate: string | null = null;
+  let barDatabasePresent = false;
   let barSource: FinanceRuleReadinessState["barSource"] = null;
   try {
-    if (await financeBarLedgerExists(params.directory)) {
+    barDatabasePresent = await financeBarLedgerExists(params.directory);
+    if (barDatabasePresent) {
       const ledger = await readFinanceBarLedger(params.directory, { asOf: params.asOf });
+      barRecordCount = ledger.recordCount;
+      instrumentCount = new Set(ledger.bars.map((bar) => bar.instrument)).size;
+      newestMarketDate =
+        ledger.bars
+          .map((bar) => bar.date)
+          .toSorted()
+          .at(-1) ?? null;
+      barConflicts = ledger.divergentDates.flatMap((conflict) => {
+        const separator = conflict.lastIndexOf("@");
+        return separator < 1
+          ? []
+          : [{ instrument: conflict.slice(0, separator), at: conflict.slice(separator + 1) }];
+      });
       bars = ledger.bars.map((bar) => ({
         instrument: bar.instrument,
         at: bar.date,
@@ -92,9 +138,30 @@ export async function readFinanceRuleReadinessState(params: {
       rules: params.rules,
       marks,
       bars,
+      barConflicts,
       asOf: params.asOf,
       ...(thresholds === null ? {} : { thresholds }),
     }),
+    dataStores: {
+      bars: {
+        kind: "sqlite" as const,
+        present: barDatabasePresent,
+        recordCount: barRecordCount,
+        instrumentCount,
+        newestMarketDate,
+      },
+      positions: {
+        kind: "sqlite" as const,
+        present: positionDatabasePresent,
+        recordCount: positionRecordCount,
+        markCount: marks.length,
+        newestMarkAt:
+          marks
+            .map((mark) => mark.at)
+            .toSorted()
+            .at(-1) ?? null,
+      },
+    },
     thresholdsFile,
     thresholdsDeclared,
     thresholdsError,
@@ -116,6 +183,7 @@ export function financeRuleReadinessSection(
       markSource: state.markSource,
       barCount: readiness.barCount,
       barSource: state.barSource,
+      barConflicts: readiness.barConflicts,
       thresholdsFile: state.thresholdsFile,
       thresholdsDeclared: state.thresholdsDeclared,
       thresholdsError: state.thresholdsError,
@@ -127,6 +195,7 @@ export function financeRuleReadinessSection(
         since: entry.since,
         elapsedDays: entry.elapsedDays,
         observationCount: entry.observationCount,
+        barConflicts: entry.barConflicts,
         ...(entry.barWindowNote === null ? {} : { barWindowNote: entry.barWindowNote }),
         covered: [...entry.covered],
         uncovered: [...entry.uncovered],
@@ -144,5 +213,6 @@ export function financeRuleReadinessSection(
       interpretationBoundary: readiness.interpretationBoundary,
       advice: readiness.advice,
     },
+    dataStores: state.dataStores,
   };
 }

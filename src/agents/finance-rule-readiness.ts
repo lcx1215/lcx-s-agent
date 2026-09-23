@@ -169,6 +169,12 @@ export type FinanceReadinessBar = Readonly<{
   sampleCount: number | null;
 }>;
 
+/** Same instrument/date was recorded with disagreeing closes across source observations. */
+export type FinanceReadinessBarConflict = Readonly<{
+  instrument: string;
+  at: string;
+}>;
+
 export type FinanceAdversityObservation = Readonly<{
   kind: FinanceAdversityKind;
   /** `true` covered, `false` not seen, `null` cannot be judged from what was declared. */
@@ -193,6 +199,8 @@ export type FinanceRuleReadinessEntry = Readonly<{
   elapsedDays: number | null;
   instruments: readonly string[];
   observationCount: number;
+  /** Conflicted dates in this rule's observation window; any one blocks readiness. */
+  barConflicts: readonly FinanceReadinessBarConflict[];
   /**
    * Set when the window was measured on closes *even though a bar book exists*: without it, a
    * reader cannot tell "this rule has no history yet" from "the history is there and the window
@@ -216,6 +224,8 @@ export type FinanceRuleReadiness = Readonly<{
   markCount: number;
   /** Bars offered to this projection, before windowing. Zero means the mark-only reading. */
   barCount: number;
+  /** Conflicted instrument/date pairs excluded from the bar series. */
+  barConflicts: readonly FinanceReadinessBarConflict[];
   rules: readonly FinanceRuleReadinessEntry[];
   declaredThresholds: Readonly<Record<string, number | null>>;
   requiredAdversity: readonly FinanceAdversityKind[];
@@ -767,6 +777,7 @@ function buildEntry(
   thresholds: FinanceReadinessThresholds,
   minObservations: number,
   required: readonly FinanceAdversityKind[],
+  barConflicts: readonly FinanceReadinessBarConflict[],
 ): FinanceRuleReadinessEntry {
   // The owner's declared clock, never the writer's wall clock: `declaredAt` / `activatedAt` are
   // when the record was written, so windowing history from them makes replay impossible — at a
@@ -777,6 +788,20 @@ function buildEntry(
   const asOfMs = toMillis(asOf);
   const elapsedDays =
     sinceMs === null || asOfMs === null ? null : Math.floor((asOfMs - sinceMs) / MS_PER_DAY);
+  const wantedInstruments = new Set(rule.instruments.map((instrument) => instrument.toUpperCase()));
+  const firstBarDate = dayOf(since);
+  const lastBarDate = dayOf(asOf);
+  const ruleBarConflicts = barConflicts
+    .filter(
+      (conflict) =>
+        wantedInstruments.has(conflict.instrument.toUpperCase()) &&
+        conflict.at >= firstBarDate &&
+        conflict.at <= lastBarDate,
+    )
+    .toSorted(
+      (left, right) =>
+        left.instrument.localeCompare(right.instrument) || left.at.localeCompare(right.at),
+    );
 
   const measures = measureWindow({
     marks,
@@ -811,7 +836,12 @@ function buildEntry(
   const unjudgeable = required.filter((kind) => byKind.get(kind)?.observed === null);
   let ready: boolean | null;
   let readyUnavailableReason: string | null = null;
-  if (declaredDays === undefined) {
+  if (ruleBarConflicts.length > 0) {
+    ready = null;
+    readyUnavailableReason =
+      `${ruleBarConflicts.length} conflicting bar date(s) overlap this rule's observation window; ` +
+      "readiness is unjudgeable until the source disagreement is resolved";
+  } else if (declaredDays === undefined) {
     ready = null;
     readyUnavailableReason = "thresholds.minPaperDays was not declared, so duration is unjudged";
   } else if (elapsedDays === null) {
@@ -845,6 +875,7 @@ function buildEntry(
     elapsedDays,
     instruments: rule.instruments,
     observationCount: measures.observationCount,
+    barConflicts: Object.freeze(ruleBarConflicts),
     barWindowNote: barWindowNote(measures, since),
     adversity: observations,
     covered,
@@ -864,6 +895,8 @@ export type FinanceRuleReadinessOptions = Readonly<{
    * Omitting this keeps the mark-only reading; it is never silently substituted.
    */
   bars?: readonly FinanceReadinessBar[];
+  /** Dates with cross-source close disagreement; excluded from measures and readiness-gated. */
+  barConflicts?: readonly FinanceReadinessBarConflict[];
   asOf: string;
   thresholds?: FinanceReadinessThresholds;
 }>;
@@ -884,9 +917,27 @@ export function buildFinanceRuleReadiness(
       ? FINANCE_ADVERSITY_KINDS
       : FINANCE_ADVERSITY_KINDS.filter((kind) => thresholds.requiredAdversity?.includes(kind));
 
-  const bars = options.bars ?? [];
+  const barConflicts = [...(options.barConflicts ?? [])].toSorted(
+    (left, right) =>
+      left.instrument.localeCompare(right.instrument) || left.at.localeCompare(right.at),
+  );
+  const conflictedKeys = new Set(
+    barConflicts.map((conflict) => `${conflict.instrument.toUpperCase()}@${dayOf(conflict.at)}`),
+  );
+  const bars = (options.bars ?? []).filter(
+    (bar) => !conflictedKeys.has(`${bar.instrument.toUpperCase()}@${dayOf(bar.at)}`),
+  );
   const rules = options.rules.map((rule) =>
-    buildEntry(rule, options.marks, bars, options.asOf, thresholds, minObservations, required),
+    buildEntry(
+      rule,
+      options.marks,
+      bars,
+      options.asOf,
+      thresholds,
+      minObservations,
+      required,
+      barConflicts,
+    ),
   );
 
   const usedOhlc = rules.some((rule) => rule.adversity.some((item) => item.basis === "ohlc"));
@@ -902,6 +953,7 @@ export function buildFinanceRuleReadiness(
     ruleCount: rules.length,
     markCount: options.marks.length,
     barCount: bars.length,
+    barConflicts: Object.freeze(barConflicts),
     rules,
     declaredThresholds: Object.freeze({
       minPaperDays: thresholds.minPaperDays ?? null,

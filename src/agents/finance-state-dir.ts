@@ -186,6 +186,7 @@ export const FINANCE_RESEARCH_SAMPLES_FILENAME = "research-samples.jsonl" as con
 export const FINANCE_RESEARCH_SCORED_FILENAME = "research-scored.jsonl" as const;
 export const FINANCE_TUNING_PROPOSALS_FILENAME = "tuning-proposals.jsonl" as const;
 export const FINANCE_PAPER_PROMOTIONS_FILENAME = "paper-tuning-promotions.jsonl" as const;
+export const FINANCE_DAILY_CYCLE_RUNS_FILENAME = "daily-cycle-runs.jsonl" as const;
 
 /** Path of the recorded research calls inside `directory`. */
 export function financeResearchSamplesPath(directory: string): string {

@@ -25,7 +25,10 @@ import { reconcileFinanceBrokerHistory } from "../../src/agents/finance-alpaca-h
  */
 import { syncConfiguredAlpacaPaperHistory } from "../../src/agents/finance-alpaca-history-sync.js";
 import { fetchAlpacaAccountSnapshot } from "../../src/agents/finance-alpaca-run.js";
-import { runFinanceDailyCycle } from "../../src/agents/finance-daily-cycle.js";
+import {
+  refreshFinanceEodBarsAndMarks,
+  runFinanceDailyCycle,
+} from "../../src/agents/finance-daily-cycle.js";
 import { bindFinanceDailyStrategy } from "../../src/agents/finance-daily-strategy.js";
 import { readFinanceLinkHealth } from "../../src/agents/finance-link-health.js";
 import { backfillOutcomes } from "../../src/agents/finance-outcome-backfill.js";
@@ -184,7 +187,7 @@ function parseArgs(argv: readonly string[]): Options {
     asOf: new Date().toISOString(),
     equity: 100_000,
     band: 0.05,
-    coreWeightFraction: 0.7,
+    coreWeightFraction: 0,
     place: false,
     checkExecution: false,
     venue: "paper" as "paper" | "alpaca",
@@ -437,6 +440,8 @@ export async function runFinanceDailyCycleOperator(
     let strategy: ReturnType<typeof bindFinanceDailyStrategy> | undefined;
     let strategies: ReturnType<typeof bindFinanceDailyStrategy>[] = [];
     let strategyReadiness: FinanceRuleReadinessState | undefined;
+    let dayEodRefresh: Awaited<ReturnType<typeof refreshFinanceEodBarsAndMarks>> | undefined;
+    const dayEodRefreshWarnings: string[] = [];
     const portfolioPlan =
       options.mode === "day" && options.portfolioPlanPath
         ? financePortfolioPlanSchema.parse(
@@ -450,9 +455,15 @@ export async function runFinanceDailyCycleOperator(
     if (options.mode === "day") {
       const read = await readFinanceStrategyRuleLedger(directory, {});
       const activeRules = read.ledger.rules.filter((rule) => rule.state === "active");
+      // Route by the executor contract. Intraday signal rules are active too, but they are owned
+      // by the Scheduler's intraday monitor and must not make the monthly trend binder think that
+      // multiple daily strategies are competing for one budget.
+      const activeDailyTrendRules = activeRules.filter(
+        (rule) => rule.schedule.kind === "monthly" && rule.emits === "target_weights",
+      );
       strategies = portfolioPlan
-        ? activeRules.map((rule) => bindFinanceDailyStrategy([rule]))
-        : [bindFinanceDailyStrategy(read.ledger.rules)];
+        ? activeDailyTrendRules.map((rule) => bindFinanceDailyStrategy([rule]))
+        : [bindFinanceDailyStrategy(activeDailyTrendRules)];
       strategy = strategies[0];
       instruments = [
         ...new Set([
@@ -461,10 +472,27 @@ export async function runFinanceDailyCycleOperator(
         ]),
       ];
       ruleIds = strategies.map((r) => r.ruleId);
+      // Placement readiness must see the newest completed session already filed in the canonical
+      // bar ledger. At the intraday day slot this is normally yesterday's completed bar; the night
+      // refresh below catches today's close. This pass is bounded to one bar per active universe
+      // instrument and reuses the existing provider adapter and SQLite writer.
+      if (options.place && instruments.length > 0) {
+        try {
+          dayEodRefresh = await refreshFinanceEodBarsAndMarks({
+            directory,
+            asOf: options.asOf,
+            instruments,
+          });
+        } catch {
+          dayEodRefreshWarnings.push(
+            "latest completed-bar refresh failed before results were reported; cycle continues",
+          );
+        }
+      }
       strategyReadiness = await readFinanceRuleReadinessState({
         directory,
         asOf: options.asOf,
-        rules: activeRules,
+        rules: activeDailyTrendRules,
       });
     }
     // Only the day run needs a universe. Pausing every rule is a decision about trading, not
@@ -474,17 +502,23 @@ export async function runFinanceDailyCycleOperator(
       return { ...base, ok: false, error: "no active rule declares any instrument" };
     }
 
-    if (
-      options.mode === "day" &&
-      options.place &&
-      strategyReadiness?.readiness.rules.some((rule) => rule.ready !== true)
-    ) {
+    const readiness = strategyReadiness?.readiness;
+    // The 90-day duration criterion is independently configurable, but unresolved adversity or
+    // unavailable readiness evidence remains a hard Paper placement gate per operator policy.
+    const paperReadinessBlocked = readiness?.rules.some((rule) => rule.ready !== true) ?? false;
+    if (options.mode === "day" && options.place && paperReadinessBlocked) {
+      const hasBarConflict =
+        readiness?.rules.some((rule) => (rule.barConflicts?.length ?? 0) > 0) ?? false;
       return {
         ...base,
         ok: false,
-        error:
-          "active strategy rule is not paper-ready under the declared readiness evidence; execution refused",
-        ...financeRuleReadinessSection(strategyReadiness),
+        failureKind: "execution_readiness_gate",
+        error: hasBarConflict
+          ? "active strategy rule has conflicting daily bars; execution refused"
+          : "active strategy rule is not paper-ready under the declared readiness evidence; execution refused",
+        ...(strategyReadiness ? financeRuleReadinessSection(strategyReadiness) : {}),
+        ...(dayEodRefresh ? { eodRefresh: dayEodRefresh } : {}),
+        ...(dayEodRefreshWarnings.length > 0 ? { eodRefreshWarnings: dayEodRefreshWarnings } : {}),
       };
     }
 
@@ -538,8 +572,8 @@ export async function runFinanceDailyCycleOperator(
         ...(portfolioPlan ? { portfolioPlan, trendStrategies: strategies } : {}),
         equity,
         asOf: options.asOf,
-        // Keep most capital in the transparent buy-and-hold core; the monthly trend rule is
-        // intentionally a smaller tactical overlay until its net-of-cost edge is demonstrated.
+        // Paper evaluates the declared trend target weights directly. Shared execution controls
+        // continue to bound account exposure, order size, drawdown, funding, and reconciliation.
         coreWeightFraction: options.coreWeightFraction,
         caps: {
           maxOrderNotional: options.maxOrderNotional,
@@ -593,6 +627,8 @@ export async function runFinanceDailyCycleOperator(
         // the payload once and it read as "nothing was re-priced" while seven positions had been.
         marksFiled: report.marksFiled,
         unpricedHoldings: report.unpricedHoldings,
+        ...(dayEodRefresh ? { eodRefresh: dayEodRefresh } : {}),
+        ...(dayEodRefreshWarnings.length > 0 ? { eodRefreshWarnings: dayEodRefreshWarnings } : {}),
         // Whether the plane is still wired together, asked by the run that nobody watches. A
         // position held outside every rule, or priced with a day the book has passed, does not
         // show up in this cycle's own numbers — it shows up here or nowhere.
@@ -616,6 +652,44 @@ export async function runFinanceDailyCycleOperator(
     } catch {
       samples = [];
     }
+    // Night runs after the cash close. The day slot (15:30 ET) collects EOD bars inside the
+    // session, so its book reaches only the previous completed day; a fill stamped later that same
+    // day then prices a session the book has no data for (link-health `ahead_of_data`). Refresh the
+    // book and re-price open marks with the just-closed session before settlement, so mark
+    // freshness returns to `current`. Fail-open: a quiet source must not stop settlement.
+    let eodRefresh: Awaited<ReturnType<typeof refreshFinanceEodBarsAndMarks>> | undefined;
+    const eodRefreshWarnings: string[] = [];
+    if (options.mode === "night") {
+      let activeInstruments: string[] | undefined;
+      try {
+        const ledgerRead = await readFinanceStrategyRuleLedger(directory, { asOf: options.asOf });
+        const instruments = new Set<string>();
+        for (const rule of ledgerRead.ledger.rules) {
+          if (rule.state !== "active") {
+            continue;
+          }
+          for (const instrument of rule.instruments) {
+            instruments.add(instrument.toUpperCase());
+          }
+        }
+        activeInstruments = [...instruments].toSorted();
+      } catch {
+        eodRefreshWarnings.push("strategy rule ledger unavailable; EOD refresh skipped");
+      }
+      if (activeInstruments?.length) {
+        try {
+          eodRefresh = await refreshFinanceEodBarsAndMarks({
+            directory,
+            asOf: options.asOf,
+            instruments: activeInstruments,
+          });
+        } catch {
+          eodRefreshWarnings.push(
+            "EOD refresh failed before results were reported; settlement continues",
+          );
+        }
+      }
+    }
     const settled = await backfillOutcomes({
       samples: samples as Parameters<typeof backfillOutcomes>[0]["samples"],
       asOf: options.asOf,
@@ -631,7 +705,7 @@ export async function runFinanceDailyCycleOperator(
     );
     const reflection =
       settled.scored.length > 0 ? buildReflection(settled.scored, { instanceLimit: 5 }) : null;
-    const issues = settled.issues;
+    const issues = [...settled.issues, ...(eodRefresh?.dataIssues ?? [])];
     const payload = {
       ...base,
       ok: issues.length === 0,
@@ -647,6 +721,17 @@ export async function runFinanceDailyCycleOperator(
       declined: settled.declined,
       reflection,
       issues,
+      ...(eodRefreshWarnings.length > 0 ? { eodRefreshWarnings } : {}),
+      ...(eodRefresh
+        ? {
+            eodRefresh: {
+              barsFiled: eodRefresh.barsFiled,
+              marksFiled: eodRefresh.marksFiled,
+              unpricedHoldings: eodRefresh.unpricedHoldings,
+              dataIssues: eodRefresh.dataIssues,
+            },
+          }
+        : {}),
     };
     if (!options.json) {
       process.stdout.write(`${renderNight(payload)}\n`);
@@ -689,7 +774,7 @@ function renderDay(payload: Record<string, unknown>): string {
   if (issues.length > 0) {
     lines.push(`  数据问题: ${issues.join("; ")}`);
   }
-  lines.push("边界：不下真实单；未给 --place 只输出计划。");
+  lines.push("边界：仅 Alpaca Paper；LLM 不能创建或改写订单，TypeScript 共享执行门仍为最终控制。");
   return lines.join("\n");
 }
 

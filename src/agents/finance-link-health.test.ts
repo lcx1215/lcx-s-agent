@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { appendFinanceBars } from "./finance-bar-ledger.js";
 import {
   buildFinanceExecutionReceipt,
   createPaperExecutionAdapter,
@@ -133,6 +134,37 @@ describe("readFinanceLinkHealth settlement supply", () => {
     expect(check.ok).toBe(true);
     expect(check.summary).toContain("1 inside their horizon");
     expect(check.summary).toContain("1 declined rather than bet");
+  });
+});
+
+describe("readFinanceLinkHealth bar source consistency", () => {
+  it("reports close conflicts separately from bar freshness", async () => {
+    await appendFinanceBars(dir, {
+      instrument: "SPY",
+      derivation: "ohlcv",
+      provenance: { origin: "source-a", sourceUrlOrArtifact: "fixture://source-a" },
+      observedAt: "2026-09-18T20:00:00.000Z",
+      bars: [{ date: "2026-09-18", open: 100, high: 103, low: 99, close: 102 }],
+    });
+    await appendFinanceBars(dir, {
+      instrument: "SPY",
+      derivation: "ohlcv",
+      provenance: { origin: "source-b", sourceUrlOrArtifact: "fixture://source-b" },
+      observedAt: "2026-09-18T20:00:00.000Z",
+      bars: [{ date: "2026-09-18", open: 100, high: 101, low: 98, close: 99 }],
+    });
+
+    const health = await readFinanceLinkHealth({ directory: dir, asOf: "2026-09-21", env: {} });
+    expect(health.checks.find((check) => check.id === "bar_supply")).toMatchObject({
+      ok: true,
+      severity: "info",
+    });
+    expect(health.checks.find((check) => check.id === "bar_source_consistency")).toMatchObject({
+      ok: false,
+      severity: "warn",
+      summary: expect.stringContaining("1 instrument/date close conflict"),
+      detail: { conflictCount: 1 },
+    });
   });
 });
 

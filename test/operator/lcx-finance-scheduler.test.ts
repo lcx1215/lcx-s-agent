@@ -26,7 +26,10 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("../../src/process/kill-tree.js", () => ({ killProcessTree: mocks.killTree }));
 vi.mock("node:timers/promises", () => ({ setTimeout: mocks.delay }));
-vi.mock("node:child_process", () => ({ spawn: mocks.spawn }));
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return { ...actual, spawn: mocks.spawn };
+});
 vi.mock("../../src/agents/finance-scheduler-process.js", () => ({
   DEFAULT_FINANCE_CYCLE_TIMEOUT_MS: 900_000,
   runFinanceCycleProcess: mocks.runCycle,
@@ -427,6 +430,18 @@ it("distinguishes preview success from enabled trading and blocked execution", (
   ).toBe("not_executed");
   expect(
     describeFinanceCycleExecution(
+      JSON.stringify({
+        ok: true,
+        placed: [],
+        drift: [{ action: "buy" }],
+        refusals: [],
+      }),
+      ["--place", "--venue", "alpaca"],
+      "day",
+    ),
+  ).toMatchObject({ outcome: "not_executed" });
+  expect(
+    describeFinanceCycleExecution(
       JSON.stringify({ ok: true, placed: [], drift: [], refusals: [] }),
       ["--place"],
       "day",
@@ -439,6 +454,18 @@ it("distinguishes preview success from enabled trading and blocked execution", (
       "day",
     ).outcome,
   ).toBe("blocked_or_partial");
+  expect(
+    describeFinanceCycleExecution(
+      JSON.stringify({ ok: false, failureKind: "execution_readiness_gate" }),
+      ["--place", "--venue", "alpaca"],
+      "day",
+    ),
+  ).toMatchObject({
+    venue: "alpaca",
+    placementEnabled: true,
+    outcome: "blocked_by_readiness",
+    blockReason: "paper_readiness_not_met",
+  });
   expect(describeFinanceCycleExecution("broken", [], "day").outcome).toBe("failed_or_unknown");
 });
 

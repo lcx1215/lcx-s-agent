@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_FINANCE_CYCLE_SLOTS,
   financeEtClock,
+  financeUsEquityRegularCloseInstant,
+  isFinanceUsEquityDailyBarComplete,
   isFinanceCycleSlotDue,
   type FinanceCycleSlot,
 } from "./finance-cycle-schedule.js";
@@ -33,6 +35,21 @@ describe("financeEtClock", () => {
   it("normalises midnight to zero minutes", () => {
     // Guard against `hour12: false` rendering midnight as 24 and producing 1440.
     expect(financeEtClock(new Date("2026-09-21T04:30:00Z")).minutes).toBe(30);
+  });
+});
+
+describe("US equity regular close clock", () => {
+  it("resolves summer and winter closes across the DST boundary", () => {
+    expect(financeUsEquityRegularCloseInstant("2026-09-18")).toBe("2026-09-18T20:00:00.000Z");
+    expect(financeUsEquityRegularCloseInstant("2026-01-21")).toBe("2026-01-21T21:00:00.000Z");
+    expect(financeUsEquityRegularCloseInstant("2026-11-02")).toBe("2026-11-02T21:00:00.000Z");
+  });
+
+  it("admits today's bar only after the regular close and rejects invalid clocks", () => {
+    expect(isFinanceUsEquityDailyBarComplete("2026-09-22", "2026-09-22T19:59:59.000Z")).toBe(false);
+    expect(isFinanceUsEquityDailyBarComplete("2026-09-22", "2026-09-22T20:00:00.000Z")).toBe(true);
+    expect(isFinanceUsEquityDailyBarComplete("2026-09-23", "not-a-date")).toBe(false);
+    expect(isFinanceUsEquityDailyBarComplete("2026-02-30", "2026-09-23T20:00:00.000Z")).toBe(false);
   });
 });
 

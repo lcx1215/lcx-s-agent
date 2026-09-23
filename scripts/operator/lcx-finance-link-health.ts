@@ -8,6 +8,8 @@
  */
 
 import { readFinanceLinkHealth } from "../../src/agents/finance-link-health.js";
+import { applyConfigEnvVars } from "../../src/config/env-vars.js";
+import { loadConfig } from "../../src/config/io.js";
 
 function argValue(args: readonly string[], name: string): string | undefined {
   const index = args.indexOf(name);
@@ -17,7 +19,11 @@ function argValue(args: readonly string[], name: string): string | undefined {
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const json = args.includes("--json");
-  const health = await readFinanceLinkHealth({ directory: argValue(args, "--dir") });
+  const directory = argValue(args, "--dir");
+  if (!directory?.trim()) {
+    applyConfigEnvVars(loadConfig());
+  }
+  const health = await readFinanceLinkHealth({ directory });
 
   if (json) {
     process.stdout.write(`${JSON.stringify(health, null, 2)}\n`);

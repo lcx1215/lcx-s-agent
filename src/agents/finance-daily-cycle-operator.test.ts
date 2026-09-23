@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   backfill: vi.fn(),
   reconcile: vi.fn(),
   ruleReadiness: vi.fn(),
+  eodRefresh: vi.fn(),
 }));
 vi.mock("./finance-alpaca-history-sync.js", () => ({
   syncConfiguredAlpacaPaperHistory: vi.fn(() => {
@@ -15,7 +16,10 @@ vi.mock("./finance-alpaca-run.js", () => ({ fetchAlpacaAccountSnapshot: mocks.ac
 vi.mock("./finance-alpaca-history-reconciliation.js", () => ({
   reconcileFinanceBrokerHistory: mocks.reconcile,
 }));
-vi.mock("./finance-daily-cycle.js", () => ({ runFinanceDailyCycle: mocks.cycle }));
+vi.mock("./finance-daily-cycle.js", () => ({
+  refreshFinanceEodBarsAndMarks: mocks.eodRefresh,
+  runFinanceDailyCycle: mocks.cycle,
+}));
 vi.mock("./finance-link-health.js", () => ({ readFinanceLinkHealth: vi.fn() }));
 vi.mock("./finance-outcome-backfill.js", () => ({ backfillOutcomes: mocks.backfill }));
 vi.mock("./finance-reflection.js", () => ({ buildReflection: vi.fn() }));
@@ -49,6 +53,8 @@ vi.mock("./finance-strategy-rule-ledger.js", () => ({
           schedule: { kind: "monthly", at: "last_trading_day", timezone: "America/New_York" },
           body: { frozenRule: { lookbackMonths: 12 } },
         },
+        { state: "draft", instruments: ["DRAFT"], ruleId: "draft" },
+        { state: "retired", instruments: ["RETIRED"], ruleId: "retired" },
       ],
     },
   })),
@@ -72,9 +78,26 @@ beforeEach(() => {
   mocks.cycle.mockResolvedValue({ ok: true });
   mocks.reconcile.mockResolvedValue({ historyStatus: "reconciled" });
   mocks.ruleReadiness.mockResolvedValue({
+    thresholdsDeclared: true,
+    thresholdsError: null,
     readiness: {
-      rules: [{ ruleId: "fixture", ready: true }],
+      declaredThresholds: { minObservations: 3 },
+      rules: [
+        {
+          ruleId: "fixture",
+          ready: true,
+          durationMet: true,
+          observationCount: 3,
+          barConflicts: [],
+        },
+      ],
     },
+  });
+  mocks.eodRefresh.mockResolvedValue({
+    barsFiled: [],
+    marksFiled: [],
+    unpricedHoldings: [],
+    dataIssues: [],
   });
 });
 describe("account gate before unattended placement", () => {
@@ -140,29 +163,64 @@ describe("account gate before unattended placement", () => {
       expect.objectContaining({ executionQuoteProvider: provider }),
     );
   });
-  it("refuses placement when an active rule is not ready under declared evidence", async () => {
+  it("refuses Paper placement until the existing adversity readiness gate is met", async () => {
     mocks.account.mockResolvedValue({ ok: true, account });
     mocks.ruleReadiness.mockResolvedValueOnce({
+      thresholdsDeclared: true,
+      thresholdsError: null,
       readiness: {
+        declaredThresholds: { minObservations: 3 },
         rules: [
           {
             ruleId: "fixture",
             ready: false,
+            durationMet: true,
+            observationCount: 3,
+            barConflicts: [],
             uncovered: ["chop", "reversal", "gap"],
           },
         ],
       },
     });
-    const createController = vi.fn();
-    const result = await runFinanceDailyCycleOperator(args, { createController });
+    const result = await runFinanceDailyCycleOperator(args);
     expect(result).toMatchObject({
       ok: false,
+      failureKind: "execution_readiness_gate",
       error: expect.stringContaining("not paper-ready"),
       readiness: {
         rules: [{ ruleId: "fixture", ready: false }],
       },
     });
-    expect(createController).not.toHaveBeenCalled();
+    expect(mocks.cycle).not.toHaveBeenCalled();
+  });
+  it("fails closed when the other readiness gates cannot be judged", async () => {
+    mocks.account.mockResolvedValue({ ok: true, account });
+    mocks.ruleReadiness.mockResolvedValueOnce({
+      thresholdsDeclared: false,
+      thresholdsError: "missing promotion thresholds",
+      readiness: {
+        declaredThresholds: { minObservations: 3 },
+        rules: [
+          {
+            ruleId: "fixture",
+            ready: null,
+            durationMet: false,
+            observationCount: 0,
+            barConflicts: [],
+            uncovered: ["reversal", "gap"],
+          },
+        ],
+      },
+    });
+
+    const result = await runFinanceDailyCycleOperator(args);
+
+    expect(result).toMatchObject({
+      ok: false,
+      failureKind: "execution_readiness_gate",
+      error: expect.stringContaining("not paper-ready"),
+      readiness: { rules: [{ ready: null }] },
+    });
     expect(mocks.cycle).not.toHaveBeenCalled();
   });
   it("keeps research runs independent of account access", async () => {
@@ -250,6 +308,37 @@ describe("explicit history sync before daily business", () => {
     expect(mocks.backfill).toHaveBeenCalledOnce();
     expect(mocks.cycle).not.toHaveBeenCalled();
     expect(mocks.account).not.toHaveBeenCalled();
+  });
+
+  it("refreshes close-of-day bars and re-prices marks at night with the active rule instruments", async () => {
+    mocks.backfill.mockResolvedValueOnce({ scored: [], issues: [] });
+    const result = await runFinanceDailyCycleOperator(
+      [
+        "--json",
+        "--dir",
+        "/synthetic/finance",
+        "--mode",
+        "night",
+        "--as-of",
+        "2026-09-22T21:30:00.000Z",
+      ],
+      {
+        syncHistory: vi.fn(async () => ({ ...history, streams: [] })),
+      },
+    );
+    expect(mocks.eodRefresh).toHaveBeenCalledWith({
+      directory: "/synthetic/finance",
+      asOf: "2026-09-22T21:30:00.000Z",
+      instruments: ["AAPL"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.eodRefresh).toEqual({
+      barsFiled: [],
+      marksFiled: [],
+      unpricedHoldings: [],
+      dataIssues: [],
+    });
+    expect(mocks.backfill).toHaveBeenCalledOnce();
   });
 
   it("does not sync by default and never enables placement", async () => {

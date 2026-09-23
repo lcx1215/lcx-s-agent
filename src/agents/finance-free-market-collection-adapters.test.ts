@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { createBinancePublicEodHistoryCollectionAdapter } from "./finance-free-market-collection-adapters.js";
+import {
+  createBinancePublicEodHistoryCollectionAdapter,
+  createChinaReachableUsEodHistoryCollectionAdapter,
+} from "./finance-free-market-collection-adapters.js";
 
 const DAY = 86_400_000;
 const BASE = Date.parse("2026-09-01T00:00:00Z");
@@ -62,5 +65,39 @@ describe("a declared collection limit", () => {
         adapter.collect({ ...request, limit }, new AbortController().signal),
       ).rejects.toThrow(/limit must be a positive integer/);
     }
+  });
+});
+
+describe("China-reachable US equity EOD completeness", () => {
+  it("rejects today's partial bar and accepts it after the New York cash close", async () => {
+    const payload = JSON.stringify({
+      data: { klines: ["2026-09-08,100,101,102,99,1000"] },
+    });
+    const adapter = createChinaReachableUsEodHistoryCollectionAdapter({
+      fetchImpl: async () => ({ ok: true, status: 200, text: async () => payload }),
+    });
+    const request = {
+      instrument: "SPY",
+      assetClass: "us_equity",
+      collection: "eod_history",
+      limit: 10,
+    } as const;
+
+    await expect(
+      adapter.collect(
+        { ...request, asOf: "2026-09-08T19:59:59.000Z" },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(/no usable OHLCV rows/);
+    const afterClose = await adapter.collect(
+      { ...request, asOf: "2026-09-08T20:00:00.000Z" },
+      new AbortController().signal,
+    );
+
+    expect(afterClose).toHaveLength(1);
+    expect(afterClose[0]?.sourceTimestamp).toBe("2026-09-08T20:00:00.000Z");
+    expect(afterClose[0]?.data).toEqual(
+      expect.objectContaining({ date: "2026-09-08", close: 101 }),
+    );
   });
 });

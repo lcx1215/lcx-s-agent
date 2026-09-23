@@ -7,11 +7,19 @@ import {
   bindFinanceDailyStrategy,
   financeMonthlyTrendReturn,
 } from "../../src/agents/finance-daily-strategy.js";
-const mocks = vi.hoisted(() => ({ read: vi.fn(), cycle: vi.fn(), readiness: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  read: vi.fn(),
+  cycle: vi.fn(),
+  readiness: vi.fn(),
+  eodRefresh: vi.fn(),
+}));
 vi.mock("../../src/agents/finance-strategy-rule-ledger.js", () => ({
   readFinanceStrategyRuleLedger: mocks.read,
 }));
-vi.mock("../../src/agents/finance-daily-cycle.js", () => ({ runFinanceDailyCycle: mocks.cycle }));
+vi.mock("../../src/agents/finance-daily-cycle.js", () => ({
+  refreshFinanceEodBarsAndMarks: mocks.eodRefresh,
+  runFinanceDailyCycle: mocks.cycle,
+}));
 vi.mock("../../src/agents/finance-rule-readiness-state.js", () => ({
   readFinanceRuleReadinessState: mocks.readiness,
   financeRuleReadinessSection: (state: { readiness: unknown }) => ({
@@ -38,6 +46,12 @@ afterEach(() => vi.resetAllMocks());
 beforeEach(() => {
   mocks.readiness.mockResolvedValue({
     readiness: { rules: [{ ruleId: "trend", ready: true }] },
+  });
+  mocks.eodRefresh.mockResolvedValue({
+    barsFiled: [],
+    marksFiled: [],
+    unpricedHoldings: [],
+    dataIssues: [],
   });
 });
 describe("declared strategy to daily execution", () => {
@@ -93,9 +107,11 @@ describe("declared strategy to daily execution", () => {
       strategyExecution: { ruleId: "trend", lookbackMonths: 6 },
     });
   });
-  it("settles the night independently of active strategy binding", async () => {
+  it("refreshes active rules, not draft-only instruments", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "night-strategy-"));
-    mocks.read.mockRejectedValue(new Error("rule book unavailable"));
+    mocks.read.mockResolvedValue({
+      ledger: { rules: [rule, { ...rule, ruleId: "draft", state: "draft", instruments: ["QQQ"] }] },
+    });
     try {
       const result = await runFinanceDailyCycleOperator([
         "--mode",
@@ -105,7 +121,33 @@ describe("declared strategy to daily execution", () => {
         "--json",
       ]);
       expect(result.mode).toBe("night");
-      expect(mocks.read).not.toHaveBeenCalled();
+      expect(mocks.eodRefresh).toHaveBeenCalledWith({
+        directory,
+        asOf: expect.any(String),
+        instruments: ["SPY"],
+      });
+      expect(mocks.cycle).not.toHaveBeenCalled();
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
+  it("settles when the strategy ledger is unreadable and skips EOD refresh", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "night-strategy-unreadable-"));
+    mocks.read.mockRejectedValue(new Error("rule book unavailable"));
+    try {
+      const result = await runFinanceDailyCycleOperator([
+        "--mode",
+        "night",
+        "--dir",
+        directory,
+        "--json",
+      ]);
+      expect(result).toMatchObject({
+        mode: "night",
+        ok: true,
+        eodRefreshWarnings: ["strategy rule ledger unavailable; EOD refresh skipped"],
+      });
+      expect(mocks.eodRefresh).not.toHaveBeenCalled();
       expect(mocks.cycle).not.toHaveBeenCalled();
     } finally {
       await fs.rm(directory, { recursive: true, force: true });
@@ -123,6 +165,30 @@ describe("declared strategy to daily execution", () => {
     expect(result).toMatchObject({
       ok: false,
       error: expect.stringContaining("refusing to substitute trend logic"),
+    });
+    expect(mocks.cycle).not.toHaveBeenCalled();
+  });
+  it("returns a structured paper-readiness block before any execution dispatch", async () => {
+    mocks.read.mockResolvedValue({ ledger: { rules: [rule] } });
+    mocks.readiness.mockResolvedValue({
+      readiness: { rules: [{ ruleId: "trend", ready: false }] },
+    });
+
+    const result = await runFinanceDailyCycleOperator([
+      "--mode",
+      "day",
+      "--dir",
+      "/unused-fixture-book",
+      "--as-of",
+      "2026-09-21T20:00:00Z",
+      "--place",
+      "--json",
+    ]);
+
+    expect(result).toMatchObject({
+      ok: false,
+      failureKind: "execution_readiness_gate",
+      error: expect.stringContaining("execution refused"),
     });
     expect(mocks.cycle).not.toHaveBeenCalled();
   });

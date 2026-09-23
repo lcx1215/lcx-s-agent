@@ -1,7 +1,8 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { readFinanceBarLedger } from "./finance-bar-ledger.js";
 import {
   annualisedVol,
   attemptCycleOrder,
@@ -11,13 +12,23 @@ import {
   markInstantForBarDate,
   receiptsForVenue,
   recordCycleFill,
+  refreshFinanceEodBarsAndMarks,
   solveInvalidationPrice,
   venueReconciliationIssue,
 } from "./finance-daily-cycle.js";
 import { FINANCE_EXECUTION_RECEIPT_SCHEMA } from "./finance-execution-adapter.js";
 import type { FinanceExecutionReceipt } from "./finance-execution-adapter.js";
 import type { FinancePosition } from "./finance-position-ledger.js";
-import { readFinancePositionLedger } from "./finance-position-ledger.js";
+import {
+  appendFinanceExecutionReceipt,
+  appendFinancePositionMark,
+  readFinancePositionLedger,
+} from "./finance-position-ledger.js";
+
+const refreshCollect = vi.hoisted(() => vi.fn());
+vi.mock("./finance-free-market-collection-adapters.js", () => ({
+  createChinaReachableUsEodHistoryCollectionAdapter: () => ({ collect: refreshCollect }),
+}));
 
 const bar = (date: string, close: number) => ({ date, close });
 
@@ -61,6 +72,13 @@ describe("markInstantForBarDate", () => {
     expect(markInstantForBarDate("2026-09-18", "2026-09-20T12:00:00.000Z")).toBe(
       "2026-09-18T20:00:00.000Z",
     );
+  });
+
+  it("uses the New York close offset for winter bars and rejects an invalid asOf", () => {
+    expect(markInstantForBarDate("2026-01-21", "2026-01-21T22:00:00.000Z")).toBe(
+      "2026-01-21T21:00:00.000Z",
+    );
+    expect(markInstantForBarDate("2026-01-21", "not-a-date")).toBeUndefined();
   });
 
   it("does not relabel an unclosed bar with the run instant", () => {
@@ -407,5 +425,100 @@ describe("annualisedVol", () => {
     const calm = Array.from({ length: 120 }, (_, index) => 100 + (index % 2) * 0.1);
     const wild = Array.from({ length: 120 }, (_, index) => 100 + (index % 2) * 10);
     expect(annualisedVol(wild)).toBeGreaterThan(annualisedVol(calm));
+  });
+});
+
+describe("refreshFinanceEodBarsAndMarks", () => {
+  const collectionRow = (date: string, close: number) => ({
+    providerName: "sina-us-eod-history",
+    sourceTimestamp: `${date}T20:00:00.000Z`,
+    sourceUrlOrArtifact:
+      "https://stock.finance.sina.com.cn/usstock/api/jsonp_v2.php/var%20_lcx/US_MinKService.getDailyK?symbol=SPY&___qn=3",
+    data: { date, open: close, high: close + 1, low: close - 1, close, volume: 1000 },
+  });
+
+  async function openPosition(directory: string, instrument = "SPY"): Promise<void> {
+    await appendFinanceExecutionReceipt(directory, cycleReceipt({ instrument }));
+    await appendFinancePositionMark(directory, {
+      instrument,
+      price: 680,
+      at: "2026-09-16T20:00:00.000Z",
+    });
+  }
+
+  it("files the newest completed session and re-prices an open position with its close", async () => {
+    refreshCollect.mockResolvedValueOnce([
+      collectionRow("2026-09-17", 700),
+      collectionRow("2026-09-18", 710),
+      {
+        ...collectionRow("2026-09-19", 900),
+        data: { date: "2026-09-19", close: 900 },
+      },
+    ]);
+    const directory = await storeDirectory();
+    await openPosition(directory);
+    const result = await refreshFinanceEodBarsAndMarks({
+      directory,
+      asOf: "2026-09-20T00:00:00.000Z",
+      instruments: ["SPY"],
+    });
+
+    expect(result.barsFiled).toEqual([
+      {
+        instrument: "SPY",
+        marketDate: "2026-09-18",
+        providerName: "sina-us-eod-history",
+        sourceObservedAt: "2026-09-18T20:00:00.000Z",
+        barCount: 1,
+        newBarCount: 1,
+        appended: true,
+      },
+    ]);
+    expect(result.marksFiled).toHaveLength(1);
+    expect(result.marksFiled[0]).toEqual(
+      expect.objectContaining({
+        instrument: "SPY",
+        price: 710,
+        at: "2026-09-18T20:00:00.000Z",
+        appended: true,
+      }),
+    );
+    expect(result.dataIssues).toEqual([]);
+    expect(result.unpricedHoldings).toEqual([]);
+    expect(
+      (
+        await readFinanceBarLedger(directory, {
+          instrument: "SPY",
+          asOf: "2026-09-18T19:59:59.000Z",
+        })
+      ).bars,
+    ).toEqual([]);
+    expect(
+      (
+        await readFinanceBarLedger(directory, {
+          instrument: "SPY",
+          asOf: "2026-09-18T20:00:00.000Z",
+        })
+      ).bars,
+    ).toEqual([expect.objectContaining({ date: "2026-09-18", close: 710 })]);
+  });
+
+  it("fails open when the source returns nothing, without touching marks", async () => {
+    refreshCollect.mockResolvedValueOnce([]);
+    const directory = await storeDirectory();
+    await openPosition(directory);
+    const result = await refreshFinanceEodBarsAndMarks({
+      directory,
+      asOf: "2026-09-20T00:00:00.000Z",
+      instruments: ["SPY"],
+    });
+
+    expect(result.barsFiled).toEqual([]);
+    expect(result.marksFiled).toEqual([]);
+    expect(result.unpricedHoldings).toEqual(["SPY"]);
+    expect(refreshCollect).toHaveBeenCalledWith(
+      expect.objectContaining({ instrument: "SPY", collection: "eod_history", limit: 1 }),
+      expect.any(AbortSignal),
+    );
   });
 });

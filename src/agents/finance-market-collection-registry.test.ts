@@ -496,6 +496,42 @@ describe("finance market collection registry", () => {
     expect(bars[0]?.sourceUrlOrArtifact).toContain("period1=");
   });
 
+  it("keeps a same-day Yahoo bar out before the close and admits it after the close", async () => {
+    const fetchImpl = async () => ({
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          chart: {
+            result: [
+              {
+                timestamp: [Date.parse("2026-09-08T00:00:00.000Z") / 1_000],
+                indicators: {
+                  quote: [{ open: [100], high: [102], low: [99], close: [101], volume: [10] }],
+                },
+              },
+            ],
+          },
+        }),
+    });
+    const adapter = createYahooPublicEodHistoryCollectionAdapter({ fetchImpl });
+    const base = { ...EQUITY_REQUEST, collection: "eod_history" as const };
+
+    await expect(
+      adapter.collect({ ...base, asOf: "2026-09-08T19:59:59.000Z" }, new AbortController().signal),
+    ).rejects.toThrow(/no usable OHLCV rows/);
+    const afterClose = await adapter.collect(
+      { ...base, asOf: "2026-09-08T20:00:00.000Z" },
+      new AbortController().signal,
+    );
+
+    expect(afterClose).toHaveLength(1);
+    expect(afterClose[0]?.sourceTimestamp).toBe("2026-09-08T20:00:00.000Z");
+    expect(afterClose[0]?.data).toEqual(
+      expect.objectContaining({ date: "2026-09-08", close: 101 }),
+    );
+  });
+
   it("keeps collection failures visible while still allowing a partial run to be ready", async () => {
     // Owner decision 2026-09-19: a failed *secondary* provider is environmental
     // noise and no longer blocks, because some providers are permanently

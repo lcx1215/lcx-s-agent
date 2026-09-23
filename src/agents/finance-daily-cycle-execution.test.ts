@@ -176,7 +176,8 @@ describe("daily cycle execution data boundary", () => {
     }
   });
   it("keeps local paper simulation usable without an execution feed", async () => {
-    await runFinanceDailyCycle({ ...params, venue: "paper" });
+    const report = await runFinanceDailyCycle({ ...params, venue: "paper" });
+    expect(report.modelCalls).toBe(0);
     expect(mocks.paper).toHaveBeenCalledTimes(2);
     expect(mocks.order).not.toHaveBeenCalled();
   });

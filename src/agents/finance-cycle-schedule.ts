@@ -59,6 +59,57 @@ export function financeEtClock(at: Date, timeZone: string = FINANCE_MARKET_TZ): 
 }
 
 /**
+ * The regular US equity session close as a UTC instant for a market-local calendar day.
+ *
+ * Daily history is sometimes available for the current date while its bar is still forming. A
+ * consumer must not label that partial bar as a completed close; resolve 16:00 New York with the
+ * IANA timezone database rather than assuming a fixed UTC offset across daylight-saving time.
+ * Early-close holidays are intentionally not inferred here; callers that need an exact holiday
+ * close need an exchange calendar.
+ */
+export function financeUsEquityRegularCloseInstant(date: string): string | undefined {
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(date)) {
+    return undefined;
+  }
+  const midnight = Date.parse(`${date}T00:00:00.000Z`);
+  if (!Number.isFinite(midnight) || new Date(midnight).toISOString().slice(0, 10) !== date) {
+    return undefined;
+  }
+  const [year, month, day] = date.split("-").map(Number);
+  const utcCandidate = Date.UTC(year, month - 1, day, 16);
+  const easternClock = financeEtClock(new Date(utcCandidate));
+  if (easternClock.date !== date) {
+    return undefined;
+  }
+  const easternAsUtc = Date.UTC(
+    year,
+    month - 1,
+    day,
+    Math.floor(easternClock.minutes / 60),
+    easternClock.minutes % 60,
+  );
+  const easternOffsetMs = easternAsUtc - utcCandidate;
+  return new Date(Date.UTC(year, month - 1, day, 16) - easternOffsetMs).toISOString();
+}
+
+/** Whether a US equity EOD bar may be treated as complete at the supplied instant. */
+export function isFinanceUsEquityDailyBarComplete(date: string, asOf: string): boolean {
+  const asOfMs = Date.parse(asOf);
+  if (!Number.isFinite(asOfMs) || financeUsEquityRegularCloseInstant(date) === undefined) {
+    return false;
+  }
+  const marketDate = financeEtClock(new Date(asOfMs)).date;
+  if (date < marketDate) {
+    return true;
+  }
+  if (date > marketDate) {
+    return false;
+  }
+  const close = financeUsEquityRegularCloseInstant(date);
+  return close !== undefined && Date.parse(close) <= asOfMs;
+}
+
+/**
  * A slot is due when it is a trading weekday, the market's wall clock has reached the slot, and
  * the slot has not already fired on that market date.
  *

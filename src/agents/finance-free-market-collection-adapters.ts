@@ -1,5 +1,9 @@
 import { createApiRateLimiter } from "./api-call-contract.js";
 import { ApiCallError } from "./api-call-contract.js";
+import {
+  financeUsEquityRegularCloseInstant,
+  isFinanceUsEquityDailyBarComplete,
+} from "./finance-cycle-schedule.js";
 import type {
   FinanceDataDelayStatus,
   FinanceDataProviderRole,
@@ -392,12 +396,14 @@ export function createYahooPublicEodHistoryCollectionAdapter(
         .map((timestamp, index) => {
           const rowTimestamp = yahooSourceTimestamp(timestamp, request.asOf);
           const date = rowTimestamp.slice(0, 10);
+          const sourceCloseAt = financeUsEquityRegularCloseInstant(date);
           const open = optionalFiniteNumber(quote.open?.[index]);
           const high = optionalFiniteNumber(quote.high?.[index]);
           const low = optionalFiniteNumber(quote.low?.[index]);
           const close = optionalFiniteNumber(quote.close?.[index]);
           if (
-            date >= new Date(request.asOf).toISOString().slice(0, 10) ||
+            sourceCloseAt === undefined ||
+            !isFinanceUsEquityDailyBarComplete(date, request.asOf) ||
             open === undefined ||
             high === undefined ||
             low === undefined ||
@@ -410,7 +416,7 @@ export function createYahooPublicEodHistoryCollectionAdapter(
           }
           const volume = optionalFiniteNumber(quote.volume?.[index]);
           return {
-            sourceTimestamp: rowTimestamp,
+            sourceTimestamp: sourceCloseAt,
             date,
             data: {
               symbol,
@@ -517,9 +523,9 @@ function eastmoneyWindow(request: FinanceMarketCollectionRequest): {
  * the open/close range rather than as a crash. Guarding on the OHLC invariant is
  * what makes the field order a checked fact instead of an assumption.
  */
-function sanitizeBar(row: OhlcvRow, asOfDay: string): OhlcvRow | null {
+function sanitizeBar(row: OhlcvRow, asOf: string): OhlcvRow | null {
   const { date, open, high, low, close } = row;
-  if (!/^\d{4}-\d{2}-\d{2}$/u.test(date) || date >= asOfDay) {
+  if (!isFinanceUsEquityDailyBarComplete(date, asOf)) {
     return null;
   }
   if (
@@ -644,13 +650,17 @@ export function createChinaReachableUsEodHistoryCollectionAdapter(
     sourceUrlOrArtifact: string,
     instrumentType?: string,
   ): FinanceMarketCollectionItem[] =>
-    rows.map((row) =>
-      buildItem(request, {
+    rows.map((row) => {
+      const sourceTimestamp = financeUsEquityRegularCloseInstant(row.date);
+      if (sourceTimestamp === undefined) {
+        throw new FreeMarketCollectionAdapterError(`invalid US equity EOD date: ${row.date}`);
+      }
+      return buildItem(request, {
         itemId: `${request.instrument.toUpperCase()}-${providerName}-eod-${row.date}`,
         providerName,
         providerRole: "primary_market_data",
         sourceFamily: "market_data_api",
-        sourceTimestamp: `${row.date}T00:00:00.000Z`,
+        sourceTimestamp,
         delayStatus: "end_of_day",
         sourceUrlOrArtifact,
         data: {
@@ -664,8 +674,8 @@ export function createChinaReachableUsEodHistoryCollectionAdapter(
           unit: "USD",
           ...(instrumentType ? { instrumentType } : {}),
         },
-      }),
-    );
+      });
+    });
 
   const finish = (
     request: FinanceMarketCollectionRequest,
@@ -675,9 +685,8 @@ export function createChinaReachableUsEodHistoryCollectionAdapter(
     limit: number,
     instrumentType?: string,
   ): FinanceMarketCollectionItem[] => {
-    const asOfDay = new Date(request.asOf).toISOString().slice(0, 10);
     const rows = rawRows
-      .map((row) => sanitizeBar(row, asOfDay))
+      .map((row) => sanitizeBar(row, request.asOf))
       .filter((row): row is OhlcvRow => row !== null);
     if (rows.length === 0) {
       throw new FreeMarketCollectionAdapterError(

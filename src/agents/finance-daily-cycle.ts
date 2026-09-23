@@ -7,7 +7,7 @@ import {
 } from "./finance-alpaca-run.js";
 import { appendFinanceBars } from "./finance-bar-ledger.js";
 /**
- * The daytime cycle: everything that can be done without a model.
+ * The daytime cycle: deterministic evidence, sizing, and execution through the shared safety gate.
  *
  * Two properties are load-bearing here, and both exist because the naive version is wrong:
  *
@@ -23,8 +23,8 @@ import { appendFinanceBars } from "./finance-bar-ledger.js";
  *    band. "Daytime must do work" is satisfied by checking every day; it is not satisfied by
  *    inventing a fresh signal every day.
  *
- * There is no model call anywhere in this file. That is deliberate: the answer to
- * "will an LLM-driven day be expensive?" is that the daytime does not need one.
+ * Model output is not part of candidate authorization. A fresh quote and the TypeScript account,
+ * risk, reconciliation, deduplication, and shared execution gates authorize each order.
  *
  * One side effect is not about trading: every run files the OHLC bars it already fetched into the
  * bar book. The cycle needs closes to trade; range measures (readiness, true drawdown, ATR) need
@@ -32,6 +32,7 @@ import { appendFinanceBars } from "./finance-bar-ledger.js";
  * those measures permanently unavailable for rules nobody backfilled by hand.
  */
 import type { FinanceExecutionReconciliation } from "./finance-broker-reconciliation.js";
+import { financeUsEquityRegularCloseInstant } from "./finance-cycle-schedule.js";
 import { financeMonthlyTrendReturn } from "./finance-daily-strategy.js";
 import type {
   FinanceExecutionIntent,
@@ -210,8 +211,9 @@ export type FinanceDailyCycleReport = Readonly<{
   asOf: string;
   /** Month end the signal was computed from. Constant within a calendar month. */
   signalAnchor: string;
-  /** Core buy-and-hold sleeve retained even when the tactical trend signal is cash. */
+  /** Configured buy-and-hold core fraction; zero lets the declared strategy set full target weights. */
   coreWeightFraction: number;
+  /** This deterministic execution cycle makes no configured-model calls. */
   modelCalls: 0;
   positionBook?: {
     source: "controller_account" | "receipt_ledger";
@@ -274,18 +276,18 @@ type Bar = Readonly<{ date: string; close: number }>;
 /**
  * The instant a bar's close is true of, as a mark timestamp.
  *
- * A US cash session closes 16:00 New York, which is 20:00 UTC in the months it matters here. A
- * bar whose close is still in the future is not a completed EOD observation, so it has no valid
- * mark instant yet. Relabelling it with the run time would create false source chronology.
+ * A US cash session closes at 16:00 New York (20:00 UTC in daylight time, 21:00 UTC in standard
+ * time). A bar whose close is still in the future is not a completed EOD observation, so it has
+ * no valid mark instant yet. Relabelling it with the run time would create false source chronology.
  */
 export function markInstantForBarDate(date: string, asOf: string): string | undefined {
-  const close = `${date}T20:00:00.000Z`;
-  const closeMs = Date.parse(close);
+  const close = financeUsEquityRegularCloseInstant(date);
+  const closeMs = close === undefined ? Number.NaN : Date.parse(close);
   const asOfMs = Date.parse(asOf);
-  if (!Number.isFinite(closeMs)) {
+  if (!Number.isFinite(closeMs) || !Number.isFinite(asOfMs)) {
     return undefined;
   }
-  if (Number.isFinite(asOfMs) && closeMs > asOfMs) {
+  if (closeMs > asOfMs) {
     return undefined;
   }
   return close;
@@ -632,6 +634,7 @@ function toOhlcvBatch(rows: readonly FinanceMarketCollectionItem[]): {
     close: number;
     volume?: number;
   }[] = [];
+  const acceptedRows: FinanceMarketCollectionItem[] = [];
   for (const row of rows) {
     const date = typeof row.data.date === "string" ? row.data.date.slice(0, 10) : "";
     const open = Number(row.data.open);
@@ -639,7 +642,7 @@ function toOhlcvBatch(rows: readonly FinanceMarketCollectionItem[]): {
     const low = Number(row.data.low);
     const close = Number(row.data.close);
     const volume = Number(row.data.volume);
-    if (!/^\d{4}-\d{2}-\d{2}$/u.test(date)) {
+    if (!/^\d{4}-\d{2}-\d{2}$/u.test(date) || !Number.isFinite(Date.parse(row.sourceTimestamp))) {
       continue;
     }
     if (![open, high, low, close].every((value) => Number.isFinite(value) && value > 0)) {
@@ -656,6 +659,7 @@ function toOhlcvBatch(rows: readonly FinanceMarketCollectionItem[]): {
       close,
       ...(Number.isFinite(volume) && volume >= 0 ? { volume } : {}),
     });
+    acceptedRows.push(row);
   }
   if (bars.length === 0) {
     return null;
@@ -664,15 +668,15 @@ function toOhlcvBatch(rows: readonly FinanceMarketCollectionItem[]): {
   // The batch's clock is the newest observation it carries, not the moment this run happened:
   // a replay to an earlier `asOf` must still see the history, or "no bars in the window" gets
   // read as "no history existed".
-  const observedAt = rows.reduce(
+  const observedAt = acceptedRows.reduce(
     (latest, row) => (row.sourceTimestamp > latest ? row.sourceTimestamp : latest),
-    rows[0]?.sourceTimestamp ?? "",
+    acceptedRows[0]?.sourceTimestamp ?? "",
   );
   return {
     bars,
     observedAt,
-    providerName: rows[0]?.providerName ?? "unknown",
-    sourceUrlOrArtifact: rows[0]?.sourceUrlOrArtifact ?? "",
+    providerName: acceptedRows[0]?.providerName ?? "unknown",
+    sourceUrlOrArtifact: acceptedRows[0]?.sourceUrlOrArtifact ?? "",
   };
 }
 
@@ -688,7 +692,7 @@ export async function runFinanceDailyCycle(
   if (!Number.isSafeInteger(lookbackMonths) || lookbackMonths < 1 || lookbackMonths > 120) {
     throw new Error("invalid monthly trend lookback");
   }
-  const coreWeightFraction = params.coreWeightFraction ?? 0.7;
+  const coreWeightFraction = params.coreWeightFraction ?? 0;
   if (!Number.isFinite(coreWeightFraction) || coreWeightFraction < 0 || coreWeightFraction > 1) {
     throw new Error("coreWeightFraction must be between 0 and 1");
   }
@@ -1342,5 +1346,153 @@ export async function runFinanceDailyCycle(
     barsFiled,
     marksFiled,
     unpricedHoldings,
+  });
+}
+
+export type FinanceEodRefreshResult = Readonly<{
+  barsFiled: readonly {
+    instrument: string;
+    marketDate: string;
+    providerName: string;
+    sourceObservedAt: string;
+    barCount: number;
+    newBarCount: number;
+    appended: boolean;
+  }[];
+  marksFiled: readonly { instrument: string; price: number; at: string; appended: boolean }[];
+  unpricedHoldings: readonly string[];
+  dataIssues: readonly string[];
+}>;
+
+/**
+ * Refresh the latest completed daily bars and marks before readiness or settlement decisions.
+ *
+ * The day slot runs inside the cash session, so its refresh can only reach the previous completed
+ * session. The night slot repeats the same bounded collection after the close to pick up the
+ * current session. `markInstantForBarDate` prevents an in-progress bar from being filed as a close.
+ *
+ * Fail-open by design: a data source that returns nothing must not stop settlement or a research
+ * cycle, so collection errors are reported in `dataIssues` instead of being thrown.
+ */
+export async function refreshFinanceEodBarsAndMarks(params: {
+  directory: string;
+  asOf: string;
+  instruments: readonly string[];
+}): Promise<FinanceEodRefreshResult> {
+  const directory = params.directory;
+  const adapter = createChinaReachableUsEodHistoryCollectionAdapter();
+  const barsFiled: {
+    instrument: string;
+    barCount: number;
+    newBarCount: number;
+    appended: boolean;
+    marketDate: string;
+    providerName: string;
+    sourceObservedAt: string;
+  }[] = [];
+  const dataIssues: string[] = [];
+  const lastBar = new Map<string, Bar>();
+  for (const instrument of params.instruments) {
+    try {
+      const rows = await adapter.collect(
+        {
+          instrument,
+          assetClass: "us_equity",
+          collection: "eod_history",
+          asOf: params.asOf,
+          // This post-close pass only needs the newest completed session to refresh open marks.
+          // Historical bars are owned by the daytime research cycle; refetching thousands here
+          // needlessly imports cross-provider revisions when the adapter has to use its fallback.
+          limit: 1,
+        },
+        AbortSignal.timeout(60_000),
+      );
+      const batch = toOhlcvBatch(rows);
+      if (batch === null) {
+        dataIssues.push(`${instrument}: no complete OHLC row to file in the bar book`);
+        continue;
+      }
+      const latest = batch.bars.at(-1);
+      if (latest === undefined) {
+        dataIssues.push(`${instrument}: no complete OHLC row to file in the bar book`);
+        continue;
+      }
+      const result = await appendFinanceBars(directory, {
+        instrument,
+        derivation: "ohlcv",
+        provenance: {
+          origin: batch.providerName,
+          sourceUrlOrArtifact: batch.sourceUrlOrArtifact,
+          note: "latest completed daily bar collected after the cash close; end-of-day, research-only, not execution-grade",
+        },
+        observedAt: batch.observedAt,
+        bars: [latest],
+      });
+      barsFiled.push({
+        instrument,
+        marketDate: latest.date,
+        providerName: batch.providerName,
+        sourceObservedAt: batch.observedAt,
+        barCount: 1,
+        newBarCount: 1 - result.repeatsSkipped,
+        appended: result.appended,
+      });
+      lastBar.set(instrument, latest);
+    } catch (error) {
+      dataIssues.push(`${instrument}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  const marksFiled: { instrument: string; price: number; at: string; appended: boolean }[] = [];
+  const unpricedHoldings: string[] = [];
+  try {
+    const book = await readFinancePositionLedger(directory);
+    for (const position of book.ledger.positions) {
+      if (position.quantity === 0) {
+        continue;
+      }
+      const bar = lastBar.get(position.instrument);
+      if (bar === undefined) {
+        unpricedHoldings.push(position.instrument);
+        continue;
+      }
+      const at = markInstantForBarDate(bar.date, params.asOf);
+      if (at === undefined) {
+        dataIssues.push(
+          `${position.instrument}: latest EOD bar ${bar.date} has not closed; mark not filed`,
+        );
+        continue;
+      }
+      try {
+        const result = await appendFinancePositionMark(directory, {
+          instrument: position.instrument,
+          price: bar.close,
+          at,
+        });
+        marksFiled.push({
+          instrument: position.instrument,
+          price: bar.close,
+          at,
+          appended: result.appended,
+        });
+      } catch (error) {
+        dataIssues.push(
+          `${position.instrument}: mark write failed: ` +
+            (error instanceof Error ? error.message : String(error)),
+        );
+      }
+    }
+  } catch (error) {
+    dataIssues.push(
+      `position book unreadable, nothing was re-priced: ` +
+        (error instanceof Error ? error.message : String(error)),
+    );
+  }
+
+  return Object.freeze({
+    barsFiled: Object.freeze(barsFiled),
+    marksFiled: Object.freeze(marksFiled),
+    unpricedHoldings: Object.freeze(unpricedHoldings),
+    dataIssues: Object.freeze(dataIssues),
   });
 }

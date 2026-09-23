@@ -52,6 +52,7 @@ import {
   writeFinanceSchedulerState,
 } from "../../src/agents/finance-scheduler-state.js";
 import {
+  FINANCE_DAILY_CYCLE_RUNS_FILENAME,
   resolveFinanceStateDir,
   type FinanceStateDir,
 } from "../../src/agents/finance-state-dir.js";
@@ -64,7 +65,7 @@ import { killProcessTree } from "../../src/process/kill-tree.js";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const CYCLE_SCRIPT = path.join(REPO_ROOT, "scripts", "operator", "lcx-finance-daily-cycle.ts");
 const RESEARCH_SCRIPT = path.join(REPO_ROOT, "scripts", "operator", "lcx-finance-research-run.ts");
-const RUNS_LOG = "daily-cycle-runs.jsonl";
+const RUNS_LOG = FINANCE_DAILY_CYCLE_RUNS_FILENAME;
 /** Keep the five-minute reconciliation evidence fresh without coupling it to a trade slot. */
 export const FINANCE_IDLE_RECONCILIATION_INTERVAL_MS = 4 * 60_000;
 type Mode = "day" | "night";
@@ -465,8 +466,20 @@ export function describeFinanceCycleExecution(stdout: string, args: readonly str
           ["buy", "sell"].includes(String(row.action)),
       ).length
     : null;
-  const outcome =
-    payload.ok !== true
+  // Readiness is a strategy diagnostic, not proof that this cycle's execution was blocked.
+  // New cycle payloads identify the actual refusal explicitly; recognize the former error text
+  // only for receipts written before `failureKind` existed.
+  const legacyReadinessBlock =
+    payload.ok === false &&
+    typeof payload.error === "string" &&
+    payload.error.includes(
+      "active strategy rule is not paper-ready under the declared readiness evidence",
+    );
+  const readinessBlocked =
+    payload.failureKind === "execution_readiness_gate" || legacyReadinessBlock;
+  const outcome = readinessBlocked
+    ? "blocked_by_readiness"
+    : payload.ok !== true
       ? "failed_or_unknown"
       : mode === "night"
         ? "settlement"
@@ -486,6 +499,7 @@ export function describeFinanceCycleExecution(stdout: string, args: readonly str
     reportedPlacements,
     tradeIntentCount: intents,
     refusalCount: refusals.length,
+    ...(readinessBlocked ? { blockReason: "paper_readiness_not_met" } : {}),
   };
 }
 

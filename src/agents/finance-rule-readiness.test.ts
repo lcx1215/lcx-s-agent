@@ -147,6 +147,43 @@ describe("buildFinanceRuleReadiness", () => {
     expect(entry?.ready).toBe(true);
   });
 
+  it("excludes conflicting source dates and leaves readiness unjudgeable", () => {
+    const result = buildFinanceRuleReadiness({
+      rules: [rule()],
+      marks: [],
+      bars: [
+        bar("2026-08-05", { open: 100, high: 101, low: 99, close: 100 }),
+        bar("2026-08-06", { open: 100, high: 103, low: 99, close: 102 }),
+        bar("2026-08-06", { open: 80, high: 81, low: 79, close: 80 }),
+        bar("2026-08-07", { open: 102, high: 105, low: 101, close: 104 }),
+      ],
+      barConflicts: [{ instrument: "AAA", at: "2026-08-06" }],
+      asOf: AS_OF,
+      thresholds: ALL,
+    });
+
+    expect(result.barConflicts).toHaveLength(1);
+    expect(result.barCount).toBe(2);
+    expect(result.rules[0]?.observationCount).toBe(2);
+    expect(result.rules[0]?.ready).toBeNull();
+    expect(result.rules[0]?.readyUnavailableReason).toMatch(/conflicting bar date/);
+    expect(result.rules[0]?.barConflicts).toEqual([{ instrument: "AAA", at: "2026-08-06" }]);
+  });
+
+  it("does not block a rule for conflicting bars before its exposure window", () => {
+    const result = buildFinanceRuleReadiness({
+      rules: [rule({ activeObservedAt: "2026-08-08T00:00:00Z" })],
+      marks: [],
+      bars: [bar("2026-08-09", { open: 100, high: 103, low: 99, close: 102 })],
+      barConflicts: [{ instrument: "AAA", at: "2026-08-06" }],
+      asOf: AS_OF,
+      thresholds: ALL,
+    });
+
+    expect(result.rules[0]?.barConflicts).toEqual([]);
+    expect(result.rules[0]?.readyUnavailableReason).not.toMatch(/conflicting bar date/);
+  });
+
   it("does not call a flat window ready even when duration is met", () => {
     const result = buildFinanceRuleReadiness({
       rules: [rule()],

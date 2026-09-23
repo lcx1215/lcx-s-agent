@@ -1,8 +1,8 @@
 /**
  * Repository-local machine-readable projection of the full trader-strategy-lab
  * method surface. The source Skill contains the longer evidence and source
- * notes; this catalog makes every method and direction available to LCX model
- * requests regardless of which finance entry point selected the task.
+ * notes; this catalog remains complete in process, while model requests use a
+ * compact index and only the selected operational contracts.
  */
 
 export const FINANCE_STRATEGY_METHOD_CATALOG_SCHEMA_VERSION =
@@ -577,20 +577,16 @@ export const FINANCE_STRATEGY_METHOD_CATALOG = Object.freeze({
 });
 
 export function buildFinanceStrategyCatalogPrompt(): string {
-  const methods = FINANCE_STRATEGY_METHODS.map((item) => {
-    const contract = FINANCE_STRATEGY_METHOD_CONTRACTS[item.id];
-    return `${item.id} ${item.name}: ${item.hypothesis} Mechanism=${contract.mechanism} Inputs=${contract.inputs.join("; ")} Workflow=${contract.workflow.join("; ")} Trigger=${contract.trigger} Invalidation=${contract.invalidation.join("; ")} MinimumEvidence=${contract.minimumEvidence.join("; ")} Checks=${item.requiredChecks.join("; ")} Failure=${item.failureModes.join("; ")} Boundary=${item.personalBoundary}`;
-  });
+  const methods = FINANCE_STRATEGY_METHODS.map((item) => `${item.id} ${item.name}`);
   const directions = FINANCE_STRATEGY_DIRECTIONS.map(
-    (item) =>
-      `${item.id} ${item.name} [${item.modules.join(",")}]: ${item.hypothesis} Minimum=${item.minimumValidation}`,
+    (item) => `${item.id} ${item.name} [${item.modules.join(",")}]`,
   );
   return [
-    "Full trader-strategy-lab method catalog (all 12 methods and all 28 directions) is available for retrieval and cross-checking.",
+    "Full trader-strategy-lab method catalog index (names and method-direction mapping only; detailed contracts are supplied for selected methods).",
     "Methods:",
     ...methods.map((item) => `- ${item}`),
     "Directions:",
     ...directions.map((item) => `- ${item}`),
-    "Select only the methods relevant to the task for the visible answer, but do not lose the full catalog or its boundaries.",
+    "MinimumEvidence= is provided with selected method contracts below. Use the index to identify relevant methods; do not infer that unselected methods were analyzed.",
   ].join("\n");
 }

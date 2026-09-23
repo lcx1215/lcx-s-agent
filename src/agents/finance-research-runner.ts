@@ -72,7 +72,10 @@ import {
   type FinanceResearchPortfolioContext,
 } from "./finance-research-portfolio-plan.js";
 import { buildFinanceSourceRecoveryPlan } from "./finance-source-recovery.js";
-import { buildFinanceStrategyMethodKit } from "./finance-strategy-method-kit.js";
+import {
+  buildFinanceStrategyMethodKit,
+  toFinanceStrategyMethodKitModelContext,
+} from "./finance-strategy-method-kit.js";
 import { modelRoutingTaskTimeoutMs } from "./logical-agent-model-router.js";
 import {
   type LogicalAgentExecutionContext,
@@ -792,6 +795,7 @@ function buildPlan(
   horizonMonths: number,
   realtimeAdapters: readonly FinanceRealtimeSourceAdapter[],
   collectionAdapters: readonly FinanceMarketCollectionAdapter[],
+  plannedOrchestration?: FinanceBrainOrchestrationPlan,
 ): FinanceResearchPlan {
   const ask = requiredText(input.ask, "ask");
   const asOf = assertIsoTimestamp(input.asOf, "asOf");
@@ -800,12 +804,14 @@ function buildPlan(
     input.portfolioContext === undefined
       ? undefined
       : financeResearchPortfolioContextSchema.parse(input.portfolioContext);
-  const orchestration = planFinanceBrainOrchestration({
-    text: ask,
-    moduleSelection: input.moduleSelection,
-    highStakesConclusion: true,
-    decisionMode,
-  });
+  const orchestration =
+    plannedOrchestration ??
+    planFinanceBrainOrchestration({
+      text: ask,
+      moduleSelection: input.moduleSelection,
+      highStakesConclusion: true,
+      decisionMode,
+    });
   const expectedJobCount = targets.reduce(
     (count, target) =>
       count + (target.realtime === false ? 0 : 1) + (target.collections?.length ?? 0),
@@ -1397,6 +1403,7 @@ export async function runFinanceResearchRun(
     horizonMonths,
     realtimeAdapters,
     collectionAdapters,
+    executionTargetPlan,
   );
   const liveFetch = options.liveFetch === true;
   if (!liveFetch) {
@@ -1509,6 +1516,7 @@ export async function runFinanceResearchRun(
   }
 
   const strategyMethodKit = buildFinanceStrategyMethodKit(ask);
+  const strategyMethodKitModelContext = toFinanceStrategyMethodKitModelContext(strategyMethodKit);
   const modelCheckpoint = options.modelCheckpoint
     ? openFinanceModelCheckpoints(options.modelCheckpoint, {
         ask,
@@ -1541,7 +1549,7 @@ export async function runFinanceResearchRun(
         horizonMonths,
         sourceStatus: batch.status,
         researchOnly: true,
-        strategyMethodKit,
+        strategyMethodKit: strategyMethodKitModelContext,
         financeOrchestration: plan.orchestration,
         financeModuleExecution: moduleExecution,
         ...(options.input.executeModules === true
@@ -1642,7 +1650,7 @@ export async function runFinanceResearchRun(
           sourceGatePassed: sourceGate(batch, plan).passed,
           committeeGatePassed: committeeGateResult.passed,
           noExecutionAuthority: true,
-          strategyMethodKit,
+          strategyMethodKit: strategyMethodKitModelContext,
           financeOrchestration: plan.orchestration,
           financeModuleExecution: moduleExecution,
           ...(plan.portfolioContext

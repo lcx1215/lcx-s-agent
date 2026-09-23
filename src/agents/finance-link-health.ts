@@ -229,6 +229,18 @@ export async function readFinanceLinkHealth(
       divergentDates: [...bars.divergentDates],
     },
   });
+  checks.push({
+    id: "bar_source_consistency",
+    severity: bars.divergentDates.length > 0 ? "warn" : "info",
+    ok: bars.divergentDates.length === 0,
+    summary:
+      bars.divergentDates.length === 0
+        ? "no instrument/date close conflicts across recorded bar observations"
+        : `${bars.divergentDates.length} instrument/date close conflict(s); affected rule-readiness windows are withheld`,
+    detail: {
+      conflictCount: bars.divergentDates.length,
+    },
+  });
 
   // 3. The rule universe: what the plane is allowed to trade.
   const rules = await readFinanceStrategyRuleLedger(directory);

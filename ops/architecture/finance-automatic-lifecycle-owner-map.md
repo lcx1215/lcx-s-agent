@@ -126,8 +126,11 @@ root.
    deterministic paper-promotion owner. Its append-only receipt has
    `authority: paper_only`; the paper rank consumer reads only the promoted floor.
 3. Every Central Agent Harness perception receives a bounded, read-only finance
-   lifecycle projection containing scheduler, scored-outcome, tuning, promotion,
-   and active-rule state. The harness still has no execution authority.
+   lifecycle projection containing scheduler process/progress and Paper policy
+   status, day/night receipts, current readiness, the SQLite bar/position stores'
+   presence and latest business timestamps, scored outcomes, tuning, promotion,
+   and active-rule state. The harness still has no execution authority and does
+   not restart the scheduler or refresh market providers.
 4. Flow Graph checks the concrete scheduler, promotion, and harness handoffs.
    Structural green is still not proof that a scheduled cycle has produced a new
    score or that a venue order was executed.

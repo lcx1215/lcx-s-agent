@@ -16,7 +16,7 @@ import {
  */
 
 export const FINANCE_STRATEGY_METHOD_KIT_SCHEMA_VERSION =
-  "lcx_finance_strategy_method_kit_v2" as const;
+  "lcx_finance_strategy_method_kit_v3" as const;
 
 export type FinanceStrategyMethodKit = Readonly<{
   schemaVersion: typeof FINANCE_STRATEGY_METHOD_KIT_SCHEMA_VERSION;
@@ -27,6 +27,25 @@ export type FinanceStrategyMethodKit = Readonly<{
   catalog: typeof FINANCE_STRATEGY_METHOD_CATALOG;
   prompt: string;
 }>;
+
+export type FinanceStrategyMethodKitModelContext = Readonly<
+  Pick<
+    FinanceStrategyMethodKit,
+    "schemaVersion" | "selectedModules" | "taskScope" | "rules" | "requiredOutputChecks"
+  >
+>;
+
+export function toFinanceStrategyMethodKitModelContext(
+  kit: FinanceStrategyMethodKit,
+): FinanceStrategyMethodKitModelContext {
+  return Object.freeze({
+    schemaVersion: kit.schemaVersion,
+    selectedModules: kit.selectedModules,
+    taskScope: kit.taskScope,
+    rules: kit.rules,
+    requiredOutputChecks: kit.requiredOutputChecks,
+  });
+}
 
 const M01_RULES = Object.freeze([
   "Freeze the question, universe, horizon and information cutoff; freeze baseline and costs when testing a strategy.",
