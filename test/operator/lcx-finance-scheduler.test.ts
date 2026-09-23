@@ -469,6 +469,67 @@ it("distinguishes preview success from enabled trading and blocked execution", (
   expect(describeFinanceCycleExecution("broken", [], "day").outcome).toBe("failed_or_unknown");
 });
 
+it("surfaces bounded model-review evidence and distinguishes veto from review failure", () => {
+  const veto = describeFinanceCycleExecution(
+    JSON.stringify({
+      ok: true,
+      placed: [],
+      drift: [{ action: "buy" }],
+      refusals: ["SPY: model vetoed the proposed candidate"],
+      tradeDecisionReview: {
+        status: "completed",
+        candidateCount: 1,
+        modelCalls: 1,
+        provider: "fixture-provider",
+        modelId: "fixture-model",
+        latencyMs: 12,
+        providerCallObserved: true,
+        adapterAttested: true,
+        decisions: [
+          {
+            candidateId: "paper-run:SPY:buy",
+            decision: "veto",
+            rationale: "Do not echo rationale to scheduler status.",
+          },
+        ],
+      },
+    }),
+    ["--place", "--venue", "alpaca"],
+    "day",
+  );
+  expect(veto).toMatchObject({
+    outcome: "model_vetoed",
+    tradeDecisionReview: {
+      status: "completed",
+      candidateCount: 1,
+      modelCalls: 1,
+      vetoedCount: 1,
+      approvedCount: 0,
+      provider: "fixture-provider",
+      latencyMs: 12,
+    },
+  });
+  expect(JSON.stringify(veto)).not.toContain("Do not echo rationale");
+
+  expect(
+    describeFinanceCycleExecution(
+      JSON.stringify({
+        ok: false,
+        placed: [],
+        refusals: ["SPY: model review unavailable"],
+        tradeDecisionReview: {
+          status: "failed",
+          candidateCount: 1,
+          modelCalls: 0,
+          failureCode: "reviewer_unavailable",
+        },
+      }),
+      ["--place", "--venue", "alpaca"],
+      "day",
+    ).outcome,
+  ).toBe("model_review_failed");
+});
+
 it("routes the exact portfolio plan to the cycle with a cwd-independent path", async () => {
   const plan = "state/finance/portfolio-plan.json";
   await runFinanceScheduler(["--once", "day", "--dir", directory, "--portfolio-plan", plan]);

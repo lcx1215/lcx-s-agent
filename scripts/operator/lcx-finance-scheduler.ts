@@ -1,6 +1,7 @@
 /**
- * Standalone weekday finance scheduler. Reuses the daily-cycle operator; it has no
- * model or Gateway dependency. Scheduling uses America/New_York wall clock.
+ * Standalone weekday finance scheduler. Reuses the daily-cycle operator; its only model use is
+ * the cycle's bounded configured-provider veto review for eligible Alpaca Paper candidates.
+ * Scheduling uses America/New_York wall clock.
  *
  * --once day|night | --loop | --detach | --status
  * --dir PATH pins the book for all child processes.
@@ -466,6 +467,61 @@ export function describeFinanceCycleExecution(stdout: string, args: readonly str
           ["buy", "sell"].includes(String(row.action)),
       ).length
     : null;
+  const review =
+    payload.tradeDecisionReview !== null && typeof payload.tradeDecisionReview === "object"
+      ? (payload.tradeDecisionReview as Record<string, unknown>)
+      : undefined;
+  const reviewDecisions: Record<string, unknown>[] = Array.isArray(review?.decisions)
+    ? review.decisions.filter(
+        (decision: unknown): decision is Record<string, unknown> =>
+          decision !== null && typeof decision === "object" && !Array.isArray(decision),
+      )
+    : [];
+  const approvedCount = reviewDecisions.filter(
+    (decision) => decision.decision === "approve",
+  ).length;
+  const vetoedCount = reviewDecisions.filter((decision) => decision.decision === "veto").length;
+  const tradeDecisionReview = review
+    ? {
+        status:
+          review.status === "completed" ||
+          review.status === "failed" ||
+          review.status === "not_needed"
+            ? review.status
+            : "unknown",
+        candidateCount:
+          Number.isSafeInteger(review.candidateCount) && Number(review.candidateCount) >= 0
+            ? Number(review.candidateCount)
+            : null,
+        modelCalls:
+          Number.isSafeInteger(review.modelCalls) && Number(review.modelCalls) >= 0
+            ? Number(review.modelCalls)
+            : null,
+        approvedCount,
+        vetoedCount,
+        ...(typeof review.provider === "string" ? { provider: review.provider } : {}),
+        ...(typeof review.modelId === "string" ? { modelId: review.modelId } : {}),
+        ...(typeof review.latencyMs === "number" && Number.isFinite(review.latencyMs)
+          ? { latencyMs: review.latencyMs }
+          : {}),
+        ...(typeof review.providerCallObserved === "boolean"
+          ? { providerCallObserved: review.providerCallObserved }
+          : {}),
+        ...(typeof review.adapterAttested === "boolean"
+          ? { adapterAttested: review.adapterAttested }
+          : {}),
+        ...(typeof review.requestIdSha256 === "string"
+          ? { requestIdSha256: review.requestIdSha256 }
+          : {}),
+        ...(typeof review.failureCode === "string" ? { failureCode: review.failureCode } : {}),
+      }
+    : null;
+  const reviewFailed = review?.status === "failed";
+  const allCandidatesVetoed =
+    review?.status === "completed" &&
+    Number.isSafeInteger(review.candidateCount) &&
+    Number(review.candidateCount) > 0 &&
+    vetoedCount === Number(review.candidateCount);
   // Readiness is a strategy diagnostic, not proof that this cycle's execution was blocked.
   // New cycle payloads identify the actual refusal explicitly; recognize the former error text
   // only for receipts written before `failureKind` existed.
@@ -479,19 +535,27 @@ export function describeFinanceCycleExecution(stdout: string, args: readonly str
     payload.failureKind === "execution_readiness_gate" || legacyReadinessBlock;
   const outcome = readinessBlocked
     ? "blocked_by_readiness"
-    : payload.ok !== true
-      ? "failed_or_unknown"
-      : mode === "night"
+    : mode === "night"
+      ? payload.ok === true
         ? "settlement"
-        : !placementEnabled
+        : "failed_or_unknown"
+      : !placementEnabled
+        ? payload.ok === true
           ? "preview_only"
-          : refusals.length
-            ? "blocked_or_partial"
-            : reportedPlacements !== null && reportedPlacements > 0
-              ? "placement_reported"
-              : intents === 0
-                ? "no_trade"
-                : "not_executed";
+          : "failed_or_unknown"
+        : reviewFailed
+          ? "model_review_failed"
+          : payload.ok !== true
+            ? "failed_or_unknown"
+            : allCandidatesVetoed
+              ? "model_vetoed"
+              : refusals.length
+                ? "blocked_or_partial"
+                : reportedPlacements !== null && reportedPlacements > 0
+                  ? "placement_reported"
+                  : intents === 0
+                    ? "no_trade"
+                    : "not_executed";
   return {
     placementEnabled,
     venue,
@@ -500,6 +564,7 @@ export function describeFinanceCycleExecution(stdout: string, args: readonly str
     tradeIntentCount: intents,
     refusalCount: refusals.length,
     ...(readinessBlocked ? { blockReason: "paper_readiness_not_met" } : {}),
+    tradeDecisionReview,
   };
 }
 
