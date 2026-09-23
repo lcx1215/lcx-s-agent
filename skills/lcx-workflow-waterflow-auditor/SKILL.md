@@ -12,14 +12,14 @@ sedimentation reviews.
 ## Workflow
 
 1. Run `node --import tsx scripts/operator/lcx-problem-cluster-radar.ts --json`.
-2. Run `node --import tsx scripts/operator/lcx-mind-model.ts --json`,
-   `node --import tsx scripts/operator/lcx-flow-graph.ts --json`, and
-   `node --import tsx scripts/operator/lcx-head-tail-consistency.ts --json` as the
-   relevant owner checks.
+2. Run only the owner checks needed for identified clusters, such as
+   `node --import tsx scripts/operator/lcx-mind-model.ts --json`,
+   `node --import tsx scripts/operator/lcx-flow-graph.ts --json`, or
+   `node --import tsx scripts/operator/lcx-head-tail-consistency.ts --json`.
 3. Follow each problem cluster to its owner; do not duplicate owner truth in a
    second dashboard or parallel repair lane.
-4. Report missing head rule, workflow entrypoint, proof surface, or boundary
-   flag separately.
+4. Report a missing head rule, workflow entrypoint, proof surface, or boundary
+   flag separately, including which entry/runtime surface the evidence covers.
 
 ## Boundaries
 

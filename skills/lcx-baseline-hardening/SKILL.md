@@ -6,8 +6,9 @@ metadata: { "openclaw": { "emoji": "🛡️" } }
 
 # LCX Baseline Hardening
 
-Use this for scoped stability work, silent-failure elimination, recovery/status
-contracts, or repeated regressions.
+Use this for a verified cross-cutting failure family, silent-failure
+elimination, recovery/status contracts, or repeated regressions. Do not trigger
+it for an unverified concern or unrelated cleanup.
 
 ## Workflow
 
@@ -16,7 +17,9 @@ contracts, or repeated regressions.
    with the smallest coherent system upgrade over a tiny symptom patch.
 3. Add the narrowest regression proof that covers the original example and an
    adjacent non-identical case.
-4. Run `pnpm check`, `git diff --check`, and the owner-specific test/CLI.
+4. Run the owner-specific check and focused tests first. Broaden to type,
+   lint, or package-wide checks only when the changed contract/risk spans those
+   surfaces. Always review the scoped diff and run `git diff --check`.
 
 ## Boundaries
 

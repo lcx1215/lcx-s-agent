@@ -1,12 +1,19 @@
 # Trader strategy method kit
 
-This is the runtime-facing extraction from the full `trader-strategy-lab`
-package. The sibling [full Skill](../../trader-strategy-lab/SKILL.md) remains
-the detailed source for practitioner profiles, source records, and longer
-evidence notes. Every finance entry point receives the complete 12-method and
-28-direction catalog; the task only changes which methods are foregrounded in
-the answer. Nothing here reconstructs a private manager's signal or grants
-execution authority.
+This is an LCX-repository runtime-facing extraction from the full
+`trader-strategy-lab` package. The sibling [full Skill](../../trader-strategy-lab/SKILL.md)
+remains the detailed source for practitioner profiles, source records, and
+longer evidence notes. The local 12-method/28-direction catalog is an extensible
+retrieval aid, not a universally complete taxonomy; foreground only methods
+relevant to the task and evidence. Nothing here reconstructs a private manager's
+signal or grants execution authority.
+
+Commands and providers below document this repository's reproducibility checks,
+not required tools for other installations. The explicit `2026-09-10` dates are
+historical frozen-snapshot examples, not current market evidence. For a current
+decision, use a new information cutoff and verify the source's current coverage
+and timestamp; retain the historical command only when reproducing that exact
+run.
 
 ## M01: scientific baseline
 
@@ -33,11 +40,11 @@ execution authority.
 - A breadth gate can reduce drawdown while missing rebounds; describe that
   trade-off instead of calling it a hedge.
 
-## Required answer fields
+## Strategy-specific evidence
 
-Analytical conclusions should carry the applicable fields: thesis, counter-thesis, catalyst or
-follow-up, invalidation, source/timestamp coverage, net-cost comparison to a
-simple baseline when testing a strategy, uncertainties, and the research-only/no-execution boundary.
+Use the deliverable fields in the parent [Finance Learning Researcher Skill](../SKILL.md).
+Backtests also need net-cost comparisons with a simple baseline across
+non-overlapping periods.
 
 The reproducible real-data check is:
 
@@ -57,28 +64,24 @@ pnpm lcx:finance:strategy-stress -- \
   --out .artifacts/finance-strategy/stress-matrix.json
 ```
 
-The benchmark uses Yahoo public end-of-day records for SPY, QQQ, IWM, AAPL,
-MSFT, and NVDA over the preceding three years. It is a method application and
-data-quality receipt; it does not prove profitability, live execution, or model
-weight learning.
+This repository benchmark uses Yahoo public end-of-day records for SPY, QQQ,
+IWM, AAPL, MSFT, and NVDA over the preceding three years. It is a method
+application and data-quality receipt; it does not prove profitability, live
+execution, or model weight learning.
 
-The complete method-surface check is kept separately so a task that foregrounds
-one method cannot silently imply that the other eleven were tested:
+The complete method-surface check is an explicit catalog audit, not a routine
+research step. Run it only when the task asks for full method coverage:
 
 ```sh
 pnpm lcx:finance:strategy-all-methods -- \
   --out .artifacts/finance-strategy/all-methods-20260910.json
 ```
 
-That receipt covers M01–M12 with real Yahoo, Cboe, and S&P Global observations
-or an explicit missing-evidence gate. A diagnostic blocked on point-in-time
-holdings, issuer terms, historical option marks, or execution data remains
-`research_only`.
+That receipt covers M01–M12 with the repository's configured Yahoo, Cboe, and
+S&P Global observations or an explicit missing-evidence gate. A diagnostic
+blocked on point-in-time holdings, issuer terms, historical option marks, or
+execution data remains `research_only`.
 
-The runtime v2 contract selects M01 for every task, M02 for trend or backtest
-requests, and M12 for exposure, breadth, portfolio risk or backtest requests,
-while retaining all other methods and directions in the shared catalog for
-retrieval and cross-checking. Factual extraction does not require an invented
-forecast, thesis, or cost test. The committee and quality stages share the same
-full catalog and selected contract. Its content is part of model checkpoint
-identity, so changed methods cannot reuse old outputs.
+The executable selector foregrounds methods relevant to the request. Unselected
+methods and directions are not evidence that they were analyzed; factual
+extraction does not require a forecast, thesis, backtest, or catalog audit.

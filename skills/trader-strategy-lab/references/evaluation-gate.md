@@ -66,38 +66,6 @@
 - 当前事实与研究假设冲突；
 - 来源只能证明“机构这样宣传”，却被写成“方法有效”。
 
-## 决策包最小格式
+## 决策包
 
-```yaml
-strategy_id: M02-example
-stage: research_candidate
-as_of: "YYYY-MM-DD timezone"
-question: "可证伪的问题"
-universe: "可交易且定义冻结的标的集合"
-data:
-  source: "名称与版本"
-  point_in_time: true
-  freshness: "daily"
-  survivorship_control: true
-rule_version: "git/hash-or-human-readable-version"
-baseline: "同成本简单基线"
-cost_model:
-  fees: "数值或区间"
-  spread_slippage: "数值或区间"
-  financing_borrow_roll: "数值或区间"
-validation:
-  split: "train/validation/oos/paper"
-  oos_periods: 3
-  net_of_costs: true
-  leakage_check: "pass"
-  robustness: "pass/partial/fail"
-risk:
-  max_drawdown: "数值或区间"
-  stress_scenarios: ["..."]
-  liquidity_exit: "可观察规则"
-trigger: "只有条件候选才必填"
-invalidation: "可观察反证"
-open_risks: ["..."]
-```
-
-示例只是字段模板，不是投资建议，也不代表任何真实数据已通过验证。
+使用唯一的[策略决策包模板](decision-packet.md)记录范围、证据、候选条件和复盘信息。此处闸门只定义晋级和停止标准，不再复制输出模板。

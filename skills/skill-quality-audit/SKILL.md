@@ -1,12 +1,14 @@
 ---
 name: skill-quality-audit
-description: Audit, tighten, or decide whether to install an Agent Skill. Use before importing GitHub skills, when a skill may overtrigger, when skill descriptions are vague, or when the user wants installed skills to improve agent speed without polluting context.
+description: Audit, tighten, or decide whether to import an Agent Skill; use for third-party/local candidates, vague or overtriggering descriptions, duplication, or unnecessary context load.
 metadata: { "openclaw": { "emoji": "🔎" } }
 ---
 
-# skill-quality-audit
+# Skill Quality Audit
 
-Use this skill before adding or expanding skills from GitHub or local experiments.
+Use this before adding or expanding a local, external, or third-party Skill, or
+when an existing Skill overtriggers, duplicates another capability, or adds
+unnecessary context.
 
 ## Goal
 
@@ -22,7 +24,8 @@ Install or keep a skill only if it has:
 - clear inputs and outputs
 - no hidden network or credential behavior
 - no broad "always use me" claims
-- obvious fit with Lobster's current operating loop
+- fit with the target runtime's documented owners, contracts, and authority
+  boundaries
 
 Reject or rewrite a skill if it:
 
@@ -42,18 +45,21 @@ Reject or rewrite a skill if it:
 6. Is there a validation command?
 7. Is there a should-trigger and should-not-trigger eval shape?
 
-## Local Validation
+## Validation and Decision
 
-For local repo skills, run:
+Separate syntax validation from behavior: valid frontmatter does not prove
+good trigger fit, safety, or runtime use. Test one realistic should-trigger
+request and one close should-not-trigger request when the Skill is materially
+changed. For a local repository package, use its validator when available; in
+this repository, run:
 
 ```bash
 python3 skills/skill-creator/scripts/quick_validate.py skills/<skill-name>
 ```
 
-For external-message-facing skills, also run the relevant external-channel regression tests after behavior changes.
+For external-message-facing changes, also run the relevant channel regression
+tests. Report syntax, trigger behavior, runtime execution, and external
+visibility as separate evidence levels.
 
-## Public Patterns Reviewed
-
-- Anthropic Skills: skills are folders with `SKILL.md`, optional scripts, references, and assets.
-- Anthropic skill-creator: descriptions are the primary triggering mechanism and should be tested with realistic positives and near-misses.
-- Public skill directories are useful for patterns, but should not be bulk-installed into Lobster without audit.
+Do not install or register a candidate as a side effect of an audit. Use the
+exact user-authorized destination and source revision for any later import.

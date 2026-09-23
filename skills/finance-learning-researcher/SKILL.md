@@ -1,36 +1,43 @@
 ---
 name: finance-learning-researcher
-description: Run source-gated finance, ETF, quant, options, and market-learning work with current-data, denominator, and research-only safeguards.
+description: Run source-aware, provider-neutral finance research and capability-learning workflows across markets, instruments, and business-finance contexts; default to research-only.
 metadata: { "openclaw": { "emoji": "📈" } }
 ---
 
 # Finance Learning Researcher
 
-Use this for finance capability learning or research packets, not direct trade
-execution.
+Use for finance research, evidence packets, strategy learning, and finance-
+domain capability review. It is not an accounting-posting, order-entry, or
+account-operation Skill.
+
+Use [finance-data-methodology](../finance-data-methodology/SKILL.md) for context,
+source selection, provenance, validation, and conflict handling. The workflow
+below adds finance-research and strategy-evaluation requirements.
 
 ## Workflow
 
-1. State the question, observation unit, time window, denominator, and missing
-   data before collecting evidence.
-2. Use the finance data gateway and source registry; timestamp current values
-   and retain source/coverage limits.
-3. The full strategy package is the sibling [trader-strategy-lab](../trader-strategy-lab/SKILL.md):
-   its 12 methods, 28 directions, practitioner/source ledger, decision packet,
-   and evaluation gates are available from this entry too. The local runtime
-   injects the same full catalog and only selects task-relevant methods for the
-   visible answer.
-4. Apply the [runtime method kit](references/trader-strategy-method-kit.md):
-   freeze a simple baseline and costs, use lagged signals, check at least three
-   periods, and inspect shared exposure before calling a result useful.
-5. Produce thesis, counter-thesis, catalyst, invalidation, portfolio impact,
-   and the next safe check. Route learning receipts through the module-learning
-   absorption owner.
-6. Keep a research-only answer: no buy/sell, sizing, options-bet, wallet, or
-   order-routing instruction.
+1. Freeze the research question, universe, benchmark, horizon, signal timing,
+   costs, and invalidation criteria before evaluating results.
+2. For strategy questions, select only relevant methods from the sibling
+   [trader-strategy-lab](../trader-strategy-lab/SKILL.md). In this repository,
+   the local [method kit](references/trader-strategy-method-kit.md) adds
+   reproducible implementation guidance; outside this repository, do not assume
+   that path, code, catalog, or data provider exists.
+3. Deliver the conclusion, thesis and counter-thesis, catalyst or follow-up,
+   invalidation, portfolio/business impact, confidence, coverage limits, and
+   the next safe check.
+4. Treat learning as staged evidence: a stored document or receipt alone does
+   not prove retrieval, application, model absorption, promotion, or user-visible
+   capability. Route proposed learning through its owning review/evaluation
+   process.
 
 ## Boundaries
 
-- Unverified current numbers stay unknown.
-- A paper, blog, or stored source is not learned capability without retrieval,
-  application, and eval proof.
+- Default to research-only. This Skill does not authorize personalized trades,
+  position sizing, orders, transfers, credential access, or accounting-system
+  writes.
+- If another explicitly authorized workflow permits a strategy candidate or
+  paper execution, keep that authority separate and retain its own evidence,
+  funding, shared-gate, deduplication, and reconciliation checks.
+- Unverified current values remain unknown; historical examples are not current
+  evidence.

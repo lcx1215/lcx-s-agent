@@ -43,7 +43,7 @@ execution_authority: "none"
 
 1. 读取 [有效性闸门](evaluation-gate.md) 和 [当前情报](current-intelligence.md)。
 2. 明确研究模式；默认 `research_only`，不自动输出买卖动作。
-3. 读取[多方向策略研究矩阵](multi-direction-matrix.md)，选择需要覆盖的多个方向；为每个方向分别锁定市场、期限、标的、分母、数据时点和基线。
+3. 只有问题确实涉及多个方向时，才读取[多方向策略研究矩阵](multi-direction-matrix.md)并选择相关项；单方向问题直接锁定该方向的市场、期限、标的、分母、数据时点和基线。
 4. 先用真实公开数据做最小测试；数据缺口进入 `unknown`/`gate_status`，不填代理值。
 5. 运行成本、压力、泄漏和流动性检查，再决定保留、降级或停止。
 6. 只有经过样本外和完整纸面周期，才可能进入 `paper_candidate`；条件候选仍需人工确认，执行权限永远为 `none`。
