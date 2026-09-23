@@ -42,6 +42,7 @@ const LATEST_PATH = CENTRAL_AGENT_LATEST_PATH;
 const RUNS_DIR = CENTRAL_AGENT_RUNS_DIR;
 /** Resume window: how many prior cycles the brain is allowed to see (thread-store tail). */
 const RESUME_WINDOW = 40;
+const CENTRAL_CAPABILITY_IDS = new Set(CENTRAL_CAPABILITY_OWNER_IDS);
 
 const CLAIMED_BOUNDARIES = [
   "research_only",
@@ -129,6 +130,12 @@ async function buildPerception(
   );
   const observedAt = new Date().toISOString();
   const financeAutomaticLifecycle = await buildFinanceAutomaticLifecycleFeedback({ observedAt });
+  const controlRoomProjection: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(controlRoom)) {
+    if (key !== "financeAutomaticLifecycle") {
+      controlRoomProjection[key] = value;
+    }
+  }
   const ownerTotals = extractOwnerTotals(governance);
   return {
     observedAt,
@@ -139,7 +146,13 @@ async function buildPerception(
     // deliberately small (counts + verdicts); the full surfaces stay on disk under
     // the latest pointers.
     controlRoom: {
-      ...controlRoom,
+      // Prioritize finance's actionable state within the bounded control-room section.
+      financeAutomaticLifecycle,
+      ...controlRoomProjection,
+      runtimeFreshness: projectRuntimeFreshness(
+        { controlRoom, governance, learningWorkflow },
+        observedAt,
+      ),
       ...(learningWorkflow && typeof learningWorkflow === "object"
         ? { learningWorkflow: projectLearningWorkflow(learningWorkflow) }
         : {}),
@@ -151,7 +164,6 @@ async function buildPerception(
       ...(isPresentObject(governance)
         ? { governanceDigest: projectGovernanceDigest(governance) }
         : {}),
-      financeAutomaticLifecycle,
     },
     backlog,
     boundaries: CLAIMED_BOUNDARIES,
@@ -222,6 +234,55 @@ export function projectGovernanceDigest(
       readStatus: boundedString(reader.readStatus, 40),
       blocked: reader.blocked === true,
     },
+  };
+}
+
+/**
+ * Reports the age of persisted runtime snapshots at perception time. This is
+ * evidence only: no TTL is configured here, and in-flight owner state is not read.
+ */
+export function projectRuntimeFreshness(
+  snapshots: Readonly<Record<string, Readonly<Record<string, unknown>>>>,
+  measuredAt: string,
+): Readonly<Record<string, unknown>> {
+  const measuredAtMs = Date.parse(measuredAt);
+  const sources = Object.fromEntries(
+    Object.entries(snapshots).map(([name, snapshot]) => {
+      if (!snapshot || Object.keys(snapshot).length === 0) {
+        return [name, { status: "snapshot_missing", sourceObservedAt: null, ageMs: null }];
+      }
+      const timestamp = ["checkedAt", "generatedAt", "updatedAt", "observedAt"]
+        .map((key) => snapshot[key])
+        .find((value): value is string => typeof value === "string" && value.trim().length > 0);
+      if (!timestamp) {
+        return [name, { status: "timestamp_missing", sourceObservedAt: null, ageMs: null }];
+      }
+      const sourceObservedAtMs = Date.parse(timestamp);
+      if (!Number.isFinite(sourceObservedAtMs)) {
+        return [name, { status: "timestamp_invalid", sourceObservedAt: timestamp, ageMs: null }];
+      }
+      if (!Number.isFinite(measuredAtMs)) {
+        return [
+          name,
+          { status: "measurement_time_invalid", sourceObservedAt: timestamp, ageMs: null },
+        ];
+      }
+      const ageMs = measuredAtMs - sourceObservedAtMs;
+      return [
+        name,
+        {
+          status: ageMs < 0 ? "clock_skew" : "measured_age",
+          sourceObservedAt: timestamp,
+          ageMs,
+        },
+      ];
+    }),
+  );
+  return {
+    measuredAt,
+    sourceBoundary: "published_latest_snapshots_only",
+    freshnessPolicy: "age_reported_no_cutoff",
+    sources,
   };
 }
 
@@ -313,6 +374,7 @@ function failedCycleReceipt(
   perception: CentralPerception,
   index: number,
   error: unknown,
+  perceptionBuildMs: number,
 ): CentralRunReceipt {
   return {
     schemaVersion: "lcx_central_agent_v1",
@@ -334,6 +396,12 @@ function failedCycleReceipt(
     // was in force rather than claiming an injection happened. The receipt's own
     // brainCall.outcome is what tells a reader no injection occurred.
     contextBudget: boundPerception(perception).report,
+    stageDurationsMs: {
+      perceptionBuildMs,
+      brainProposalMs: null,
+      deterministicGateMs: null,
+      actionDispatchMs: null,
+    },
     liveTouched: false,
     providerConfigTouched: false,
     protectedMemoryTouched: false,
@@ -351,6 +419,7 @@ async function writeLatest(
     droppedNonDecisionCycles: number;
     evidenceWriteFailures: readonly EvidenceWriteFailure[];
     capabilityDrain: readonly string[];
+    receiptPersistenceDurationMs: number | null;
   },
 ): Promise<void> {
   // The pointer is resolved against what is already on disk, so a run that observed
@@ -384,6 +453,8 @@ async function writeLatest(
     resumeDroppedNonDecisionCycles: meta.droppedNonDecisionCycles,
     /** Byte budget actually applied to the brain's perception this cycle. */
     contextBudget: receipt?.contextBudget ?? null,
+    /** JSONL append plus immutable per-cycle snapshot; excludes this latest pointer write. */
+    lastReceiptPersistenceDurationMs: meta.receiptPersistenceDurationMs,
     /** Evidence-write honesty: a completed cycle whose record could not be persisted. */
     evidenceComplete: meta.evidenceWriteFailures.length === 0,
     evidenceWriteFailures: meta.evidenceWriteFailures,
@@ -414,12 +485,13 @@ async function main(): Promise<void> {
     ? {
         propose: async () => ({ kind: "blocked_no_provider" as const, reason: "dry_run_no_llm" }),
       }
-    : createCentralBrain(loadConfig(), { tools: [...registry.values()] });
+    : createCentralBrain(loadConfig(), { tools: [...registry.values()], maxTokens: 8_192 });
 
   const deadline = Date.now() + durationMinutes * 60_000;
   let runs = 0;
   let lastReceipt: CentralRunReceipt | undefined;
   let lastRunSnapshotPath: string | undefined;
+  let lastReceiptPersistenceDurationMs: number | null = null;
   let droppedNonDecisionCycles = 0;
   /**
    * Evidence writes are fail-open, the same way the codex harness treats its audit
@@ -441,7 +513,11 @@ async function main(): Promise<void> {
     // carries no decision, so inheriting it would let an outage read as precedent.
     const resumable = resumableReceipts(history);
     droppedNonDecisionCycles = history.length - resumable.length;
-    const perception = await buildPerception(compactReceipts(resumable, 10));
+    const perceptionBuildStartedAt = performance.now();
+    const perception = await buildPerception(
+      compactReceipts(resumable, 10, CENTRAL_CAPABILITY_IDS),
+    );
+    const perceptionBuildMs = Math.max(0, Math.round(performance.now() - perceptionBuildStartedAt));
     let receipt: CentralRunReceipt;
     try {
       receipt = await runCentralHarnessCycle({
@@ -454,14 +530,16 @@ async function main(): Promise<void> {
         // parallel, so only capability steps dispatch: they have no autopilot
         // equivalent and would otherwise never drain (learning workflow, ledger
         // reads, research plans).
-        capabilityOwnerIds: new Set(CENTRAL_CAPABILITY_OWNER_IDS),
+        capabilityOwnerIds: CENTRAL_CAPABILITY_IDS,
+        perceptionBuildDurationMs: perceptionBuildMs,
         runId: `central-${runs}-${Date.now()}`,
       });
     } catch (error) {
       // Never exit without a receipt: the owner surface stays parseable even when
       // perception or dispatch fails mid-cycle.
-      receipt = failedCycleReceipt(perception, runs, error);
+      receipt = failedCycleReceipt(perception, runs, error, perceptionBuildMs);
     }
+    const receiptPersistenceStartedAt = performance.now();
     try {
       await settle(receipt);
     } catch (error) {
@@ -476,6 +554,10 @@ async function main(): Promise<void> {
       recordEvidenceFailure("run_snapshot", error);
       lastRunSnapshotPath = undefined;
     }
+    lastReceiptPersistenceDurationMs = Math.max(
+      0,
+      Math.round(performance.now() - receiptPersistenceStartedAt),
+    );
     lastReceipt = receipt;
     history = history.concat(receipt).slice(-200);
     runs += 1;
@@ -498,7 +580,8 @@ async function main(): Promise<void> {
       ...(lastRunSnapshotPath !== undefined ? { runSnapshotPath: lastRunSnapshotPath } : {}),
       droppedNonDecisionCycles,
       evidenceWriteFailures,
-      capabilityDrain: dispatchedCapabilities(lastReceipt, new Set(CENTRAL_CAPABILITY_OWNER_IDS)),
+      capabilityDrain: dispatchedCapabilities(lastReceipt, CENTRAL_CAPABILITY_IDS),
+      receiptPersistenceDurationMs: lastReceiptPersistenceDurationMs,
     });
   } catch (error) {
     // stdout is the last surface standing: the summary below still has to print.
@@ -552,6 +635,8 @@ async function main(): Promise<void> {
     resumeDroppedNonDecisionCycles: droppedNonDecisionCycles,
     /** Byte budget applied to the brain's perception, with every dropped key named. */
     contextBudget: lastReceipt?.contextBudget ?? null,
+    stageDurationsMs: lastReceipt?.stageDurationsMs ?? null,
+    receiptPersistenceDurationMs: lastReceiptPersistenceDurationMs,
     /** False when a cycle's evidence could not be persisted; the run still succeeded. */
     evidenceComplete: evidenceWriteFailures.length === 0,
     evidenceWriteFailures,

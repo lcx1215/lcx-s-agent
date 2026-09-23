@@ -612,6 +612,20 @@ it("keeps scheduler lifecycle owners and verification on the finance unattended 
   expect(result.unmatchedFiles).toEqual([]);
 });
 
+it("routes finance health and lifecycle feedback to their owning finance lanes", async () => {
+  const healthCli = "scripts/operator/lcx-finance-link-health.ts";
+  const lifecycleFeedback = "src/agents/finance-automatic-lifecycle-feedback.ts";
+  const result = await runPlanArgs(["--changed", healthCli, "--changed", lifecycleFeedback]);
+
+  expect(
+    result.impacts.find((entry) => entry.id === "finance_live_execution_seam")?.matchedFiles,
+  ).toContain(healthCli);
+  expect(
+    result.impacts.find((entry) => entry.id === "finance_unattended_cycle")?.matchedFiles,
+  ).toContain(lifecycleFeedback);
+  expect(result.unmatchedFiles).toEqual([]);
+});
+
 it("routes the model-facing composition entry to the canonical research regression checks", async () => {
   const result = await runPlanArgs([
     "--changed",

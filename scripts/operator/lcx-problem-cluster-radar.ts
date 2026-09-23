@@ -18,7 +18,7 @@ const EXEC_MAX_BUFFER = 24 * 1024 * 1024;
 type Severity = "P1" | "P2" | "P3" | "info";
 type ClusterActionability = "repair_now" | "blocked_by_owner_gate" | "watch";
 
-type OwnerSnapshot = {
+export type OwnerSnapshot = {
   ok: boolean;
   owner: string;
   command: string;
@@ -46,7 +46,7 @@ type ProblemCluster = {
   boundary: "local_problem_cluster_radar_only";
 };
 
-type RadarInputs = {
+export type RadarInputs = {
   trainingPlan?: OwnerSnapshot;
   moduleAbsorption?: OwnerSnapshot;
   mindModel?: OwnerSnapshot;
@@ -1283,6 +1283,82 @@ export function buildProblemClusterRadar(inputs: RadarInputs) {
   };
 }
 
+export type ProblemRadarSharedSnapshots = Pick<
+  RadarInputs,
+  | "trainingPlan"
+  | "mindModel"
+  | "flowGraph"
+  | "contextRecovery"
+  | "changeImpact"
+  | "externalAgentUpgrade"
+>;
+
+export type ProblemRadarExclusiveSnapshots = Pick<
+  RadarInputs,
+  | "moduleAbsorption"
+  | "learningSedimentationAudit"
+  | "learningSedimentationMap"
+  | "systemMemoryGate"
+  | "multiAgentPatternShadow"
+>;
+
+/** Collect only radar inputs that the governance autopilot does not already execute. */
+export async function collectProblemRadarExclusiveSnapshots(): Promise<ProblemRadarExclusiveSnapshots> {
+  const [
+    moduleAbsorption,
+    learningSedimentationAudit,
+    learningSedimentationMap,
+    systemMemoryGate,
+    shadow,
+  ] = await Promise.all([
+    runJsonOwner(
+      "lcx-module-learning-absorption-gate",
+      "scripts/operator/lcx-module-learning-absorption-gate.ts",
+    ),
+    runJsonOwner(
+      "lcx-learning-sedimentation-audit",
+      "scripts/operator/lcx-learning-sedimentation-audit.ts",
+    ),
+    runJsonOwner(
+      "lcx-learning-sedimentation-map",
+      "scripts/operator/lcx-learning-sedimentation-map.ts",
+    ),
+    runJsonOwner(
+      "lcx-system-memory-sedimentation-gate",
+      "scripts/operator/lcx-system-memory-sedimentation-gate.ts",
+    ),
+    readLatestShadowSnapshot()
+      .then((payload: ShadowLatestSnapshot) => ({
+        ok: payload.status !== "blocked",
+        owner: "lcx-multi-agent-pattern-shadow",
+        command: `read ${payload.latestStatePath}`,
+        payload: payload as unknown as Record<string, unknown>,
+      }))
+      .catch((error) => ({
+        ok: false,
+        owner: "lcx-multi-agent-pattern-shadow",
+        command: "read latest multi-agent pattern shadow snapshot",
+        error: error instanceof Error ? error.message : String(error),
+      })),
+  ]);
+  return {
+    moduleAbsorption,
+    learningSedimentationAudit,
+    learningSedimentationMap,
+    systemMemoryGate,
+    multiAgentPatternShadow: shadow,
+  };
+}
+
+export async function buildProblemClusterRadarFromSnapshots(
+  shared: ProblemRadarSharedSnapshots,
+  exclusive: ProblemRadarExclusiveSnapshots,
+) {
+  const trainingPlanPayload = shared.trainingPlan?.payload;
+  const repairVerification = await buildRepairVerification(trainingPlanPayload);
+  return buildProblemClusterRadar({ ...shared, ...exclusive, repairVerification });
+}
+
 async function runJsonOwner(owner: string, script: string): Promise<OwnerSnapshot> {
   const command = `node --import tsx ${script} --json`;
   try {
@@ -1401,48 +1477,23 @@ async function collectOwnerSnapshots(): Promise<RadarInputs> {
     }));
   const [
     trainingPlan,
-    moduleAbsorption,
     mindModel,
     flowGraph,
     contextRecovery,
-    learningSedimentationAudit,
-    learningSedimentationMap,
-    systemMemoryGate,
     changeImpact,
     externalAgentUpgrade,
-    multiAgentPatternShadow,
+    exclusive,
   ] = await Promise.all([
     trainingPlanPromise,
-    runJsonOwner(
-      "lcx-module-learning-absorption-gate",
-      "scripts/operator/lcx-module-learning-absorption-gate.ts",
-    ),
     runJsonOwner("lcx-mind-model", "scripts/operator/lcx-mind-model.ts"),
     runJsonOwner("lcx-flow-graph", "scripts/operator/lcx-flow-graph.ts"),
     runJsonOwner("lcx-context-recovery-exam", "scripts/operator/lcx-context-recovery-exam.ts"),
-    runJsonOwner(
-      "lcx-learning-sedimentation-audit",
-      "scripts/operator/lcx-learning-sedimentation-audit.ts",
-    ),
-    runJsonOwner(
-      "lcx-learning-sedimentation-map",
-      "scripts/operator/lcx-learning-sedimentation-map.ts",
-    ),
-    runJsonOwner(
-      "lcx-system-memory-sedimentation-gate",
-      "scripts/operator/lcx-system-memory-sedimentation-gate.ts",
-    ),
     runJsonOwner("lcx-change-impact-plan", "scripts/operator/lcx-change-impact-plan.ts"),
     runJsonOwner(
       "lcx-external-agent-upgrade-radar",
       "scripts/operator/lcx-external-agent-upgrade-radar.ts",
     ),
-    readLatestShadowSnapshot().then((payload: ShadowLatestSnapshot) => ({
-      ok: payload.status !== "blocked",
-      owner: "lcx-multi-agent-pattern-shadow",
-      command: `read ${payload.latestStatePath}`,
-      payload: payload as unknown as Record<string, unknown>,
-    })),
+    collectProblemRadarExclusiveSnapshots(),
   ]);
   // The training-plan probe resolves to either a payload-bearing snapshot or an error snapshot.
   // Reading `.payload` off the error branch is `undefined` at runtime; spelling the check out
@@ -1451,16 +1502,12 @@ async function collectOwnerSnapshots(): Promise<RadarInputs> {
   const repairVerification = await buildRepairVerification(trainingPlanPayload);
   return {
     trainingPlan,
-    moduleAbsorption,
     mindModel,
     flowGraph,
     contextRecovery,
-    learningSedimentationAudit,
-    learningSedimentationMap,
-    systemMemoryGate,
     changeImpact,
     externalAgentUpgrade,
-    multiAgentPatternShadow,
+    ...exclusive,
     repairVerification,
   };
 }

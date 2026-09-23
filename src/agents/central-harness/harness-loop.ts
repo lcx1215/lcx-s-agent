@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { CentralBrain, CentralBrainOutcome } from "./model-brain.js";
 import type {
+  CentralBrainCallEvidence,
   CentralContextBudgetReport,
   CentralPerception,
   CentralRunReceipt,
@@ -43,6 +44,8 @@ export type HarnessLoopOptions = Readonly<{
   runId?: string;
   /** Override the injected-context byte budget (tests / offline). */
   contextBudgetBytes?: number;
+  /** Time spent building the perception before entering the harness cycle. */
+  perceptionBuildDurationMs?: number;
   /** Deterministic execute override for tests / offline. */
   execute?: (
     ownerId: string,
@@ -146,6 +149,7 @@ async function runCycle(
     modelId: string;
     outcome: "completed" | "failed" | "blocked" | "skipped";
     reason?: string;
+    modelCall?: CentralBrainCallEvidence;
     note?: string;
   } = {
     provider: "",
@@ -162,6 +166,7 @@ async function runCycle(
   // still settle a receipt. The scheduled harness has to report "the brain failed"
   // honestly rather than crashing and leaving its owner with no parseable output.
   let proposal: CentralBrainOutcome | undefined;
+  const brainProposalStartedAt = performance.now();
   try {
     proposal = await observeUntilAborted(signal, () =>
       options.brain.propose(bounded.perception, signal),
@@ -174,11 +179,14 @@ async function runCycle(
       reason: `brain call failed: ${String(error).slice(0, 300)}`,
     };
   }
+  const brainProposalMs = Math.max(0, Math.round(performance.now() - brainProposalStartedAt));
+  const gateStartedAt = performance.now();
   if (proposal?.kind === "proposed") {
     brainCall = {
       provider: proposal.provider,
       modelId: proposal.modelId,
       outcome: "completed",
+      ...(proposal.modelCall ? { modelCall: proposal.modelCall } : {}),
       ...(proposal.plan.note ? { note: proposal.plan.note } : {}),
     };
     for (const action of proposal.plan.actions) {
@@ -216,6 +224,14 @@ async function runCycle(
       actionsApproved += 1;
       steps.push(makeStepStep(action.ownerId, action.args ?? {}));
     }
+  } else if (proposal?.kind === "failed") {
+    brainCall = {
+      provider: proposal.provider,
+      modelId: proposal.modelId,
+      outcome: "failed",
+      reason: `model call failed: ${proposal.reason}`,
+      modelCall: proposal.modelCall,
+    };
   } else if (proposal !== undefined) {
     brainCall = {
       provider: "",
@@ -224,12 +240,14 @@ async function runCycle(
       reason: proposal.reason,
     };
   }
+  const deterministicGateMs = Math.max(0, Math.round(performance.now() - gateStartedAt));
 
   // Dispatch approved steps strictly sequentially (research-only owners, idempotent reads).
   // `planOnly` stops owner steps before dispatch: the decision is already recorded
   // on the steps, and spawning the owners here would double-run the autopilot's own
   // pass. Capability steps are NOT stopped: no autopilot covers them, and a plan
   // that never drains its capability surface would starve the learning workflow.
+  const actionDispatchStartedAt = performance.now();
   for (const step of steps) {
     if (step.status !== "approved") {
       continue;
@@ -267,8 +285,9 @@ async function runCycle(
           ? observation
           : undefined;
       if (digestSource !== undefined) {
+        const decisionDigest = compactCentralStepOutcome(step.ownerId, digestSource);
         const boundedOutcome = boundObjectSection(
-          digestSource,
+          decisionDigest,
           CENTRAL_STEP_OUTCOME_BUDGET_BYTES,
           // The digest is the whole budget for one step: no single key may take
           // more of it than the digest itself.
@@ -286,6 +305,7 @@ async function runCycle(
     }
     step.finishedAtMs = Date.now();
   }
+  const actionDispatchMs = Math.max(0, Math.round(performance.now() - actionDispatchStartedAt));
 
   // The next action is computed here, by TypeScript, and never by the brain: it
   // is a bounded enum the following cycle can trust, not self-authored guidance.
@@ -317,6 +337,18 @@ async function runCycle(
     brainCall,
     nextAction,
     contextBudget: bounded.report,
+    ...(isPlainRecord(bounded.perception.controlRoom.runtimeFreshness)
+      ? { runtimeFreshness: bounded.perception.controlRoom.runtimeFreshness }
+      : {}),
+    stageDurationsMs: {
+      perceptionBuildMs:
+        options.perceptionBuildDurationMs === undefined
+          ? null
+          : Math.max(0, Math.round(options.perceptionBuildDurationMs)),
+      brainProposalMs,
+      deterministicGateMs,
+      actionDispatchMs,
+    },
     liveTouched: false,
     providerConfigTouched: false,
     protectedMemoryTouched: false,
@@ -361,7 +393,7 @@ export type CompactBacklogEntry = Readonly<{
    * the shape of the gap: `commercialAcceptance` ran and reported not-ok, and the
    * next cycle saw only its name.
    *
-   * The full tool digest rides on the newest entry only; older entries keep the
+   * The bounded tool digest rides on the newest entry only; older entries keep the
    * reason. See `compactReceipts` for why.
    */
   outcomes: readonly Readonly<{
@@ -393,28 +425,32 @@ export function resumableReceipts(
 }
 
 /**
- * Steps whose *why* the next decision actually needs: anything that did not come
- * back cleanly green.
+ * Steps whose outcome the next decision actually needs: red lights plus the
+ * successful capability results the caller elected to carry forward.
  *
- * `approved` and `notOk` already answer *who* for the clean ones, and the control
- * room already carries a per-owner status line, so re-stating a green step as a
- * digest would spend the shared byte budget on the cases that need no action.
- * `ran_ok` with no verdict is included on purpose: an owner that answered
- * something without saying whether it was ok is exactly where the next decision
- * is blind, and its digest is the only thing that can tell it.
+ * A green governance check needs no repeated digest: the control room carries
+ * its status. A green capability read is different; its returned data is the
+ * evidence the next decision needs, even though the owner itself reported ok.
+ * `ran_ok` with no verdict is also included because the next decision is blind
+ * without that receipt.
  */
-function stepsNeedingReason(receipt: CentralRunReceipt): readonly CentralStep[] {
+function stepsToCarry(
+  receipt: CentralRunReceipt,
+  carrySuccessfulOutcomeOwnerIds: ReadonlySet<string>,
+): readonly CentralStep[] {
   return receipt.steps.filter(
     (step) =>
       step.status === "blocked_by_gate" ||
       step.status === "ran_failed" ||
-      (step.status === "ran_ok" && step.observedOk !== true),
+      (step.status === "ran_ok" &&
+        (step.observedOk !== true || carrySuccessfulOutcomeOwnerIds.has(step.ownerId))),
   );
 }
 
 export function compactReceipts(
   receipts: readonly CentralRunReceipt[],
   max: number,
+  carrySuccessfulOutcomeOwnerIds: ReadonlySet<string> = new Set(),
 ): readonly CompactBacklogEntry[] {
   const bounded = Number.isSafeInteger(max) ? Math.max(1, Math.min(max, 200)) : 20;
   const tail = receipts.slice(-bounded);
@@ -425,7 +461,7 @@ export function compactReceipts(
     // the bytes it costs are shared with the control room. Older entries keep the
     // reason and the ids, which is what compaction is for.
     const carriesDigest = index === newestIndex;
-    const interesting = stepsNeedingReason(receipt);
+    const interesting = stepsToCarry(receipt, carrySuccessfulOutcomeOwnerIds);
     const kept = interesting.slice(0, CENTRAL_BACKLOG_MAX_OUTCOMES);
     return {
       atMs: Date.parse(receipt.observedAt) || 0,
@@ -493,6 +529,104 @@ function jsonBytes(value: unknown): number {
 
 function isPlainRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function compactCentralStepOutcome(
+  ownerId: string,
+  source: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> {
+  if (
+    ownerId !== "finance_strategy_rule_ledger_read" ||
+    source.schemaVersion !== "lcx_finance_strategy_rule_ledger_read_v1"
+  ) {
+    return source;
+  }
+
+  const safePart = (value: unknown): string | undefined => {
+    if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
+      return undefined;
+    }
+    const text = String(value)
+      .replace(/[^a-zA-Z0-9 _.,:/=+@-]/gu, "_")
+      .replace(/\s+/gu, " ");
+    return text.length > 0 ? text : undefined;
+  };
+  const listParts = (value: unknown): string[] =>
+    Array.isArray(value)
+      ? value.map(safePart).filter((part): part is string => part !== undefined)
+      : [];
+  const clip = (text: string, limit: number): string =>
+    Buffer.byteLength(text) <= limit
+      ? text
+      : `${Buffer.from(text)
+          .subarray(0, limit - 3)
+          .toString("utf8")}...`;
+
+  const rules = Array.isArray(source.rules) ? source.rules.filter(isPlainRecord) : [];
+  const ruleSummary = rules
+    .map((rule) => {
+      const instruments = listParts(rule.instruments);
+      const parts = [
+        safePart(rule.ruleId),
+        safePart(rule.state),
+        safePart(rule.form),
+        safePart(rule.formVersion),
+        safePart(rule.emits),
+        isPlainRecord(rule.schedule) ? safePart(rule.schedule.kind) : undefined,
+        instruments.length > 0 ? `instruments=${instruments.join(",")}` : undefined,
+        isPlainRecord(rule.body)
+          ? Object.entries(rule.body)
+              .filter(
+                (entry): entry is [string, number | boolean] =>
+                  typeof entry[1] === "number" || typeof entry[1] === "boolean",
+              )
+              .slice(0, 3)
+              .map(([key, value]) => `${safePart(key) ?? "param"}=${value}`)
+              .join(",") || undefined
+          : undefined,
+      ].filter((part): part is string => part !== undefined);
+      return parts.join(" ");
+    })
+    .join("; ");
+  const readiness = isPlainRecord(source.readiness) ? source.readiness : undefined;
+  const readinessRules = Array.isArray(readiness?.rules)
+    ? readiness.rules.filter(isPlainRecord)
+    : [];
+  const readinessSummary = readiness
+    ? readinessRules
+        .map((entry) => {
+          const readinessValue = (value: unknown): string =>
+            value === null ? "null" : (safePart(value) ?? "unknown");
+          const parts = [
+            safePart(entry.ruleId),
+            `ready=${readinessValue(entry.ready)}`,
+            `duration=${readinessValue(entry.durationMet)}`,
+            `elapsedDays=${safePart(entry.elapsedDays) ?? "unknown"}`,
+            `observations=${safePart(entry.observationCount) ?? "unknown"}`,
+            `covered=${listParts(entry.covered).join(",") || "none"}`,
+            `uncovered=${listParts(entry.uncovered).join(",") || "none"}`,
+            `conflicts=${Array.isArray(entry.barConflicts) ? entry.barConflicts.length : "unknown"}`,
+          ];
+          const reason = safePart(entry.readyUnavailableReason);
+          if (reason) {
+            parts.push(`reason=${reason}`);
+          }
+          return parts.join(" ");
+        })
+        .join("; ") ||
+      `readiness has no per-rule entries; thresholdsDeclared=${safePart(readiness.thresholdsDeclared) ?? "unknown"}`
+    : "not_requested";
+
+  return {
+    ...(typeof source.ok === "boolean" ? { ok: source.ok } : {}),
+    ...(typeof source.status === "string" ? { status: source.status } : {}),
+    ...(typeof source.ruleCount === "number" ? { ruleCount: source.ruleCount } : {}),
+    ...(typeof source.activeRuleCount === "number"
+      ? { activeRuleCount: source.activeRuleCount }
+      : {}),
+    ruleSummary: clip(`rules=${rules.length}: ${ruleSummary || "details unavailable"}`, 150),
+    readinessSummary: clip(`readiness=${readinessSummary}`, 190),
+  };
 }
 
 /**

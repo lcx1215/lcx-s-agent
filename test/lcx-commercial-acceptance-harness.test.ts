@@ -4,6 +4,8 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import {
   buildCommercialAcceptanceHarness,
+  collectCommercialAcceptanceExclusiveSnapshots,
+  combineCommercialAcceptanceSnapshots,
   type HarnessInputs,
 } from "../scripts/operator/lcx-commercial-acceptance-harness.js";
 import { parseJsonObjectFromOutput } from "../scripts/operator/smoke-json-output.js";
@@ -332,6 +334,45 @@ async function runJsonScript(script: string) {
 }
 
 describe("lcx-commercial-acceptance-harness", () => {
+  it("collects only acceptance-specific probes when shared owner snapshots are supplied", async () => {
+    const calls: { owner: string; script: string; args: readonly string[] }[] = [];
+    const exclusive = await collectCommercialAcceptanceExclusiveSnapshots(
+      { withChannelProbe: false, skipDoctor: false },
+      async (ownerName, script, args = []) => {
+        calls.push({ owner: ownerName, script, args });
+        return {
+          ok: true,
+          owner: ownerName,
+          command: `${ownerName} --json`,
+          payload: { ok: true },
+        };
+      },
+    );
+
+    expect(calls.map((call) => call.script)).toEqual([
+      "scripts/operator/lcx-commercial-answer-pipeline.ts",
+      "scripts/operator/lcx-external-short-intent-fuzzer.ts",
+      "scripts/operator/lcx-visible-answer-quality-fuzzer.ts",
+      "scripts/operator/lcx-system-doctor.ts",
+      "scripts/operator/finance-data-gateway-smoke.ts",
+      "scripts/operator/finance-data-gateway-smoke.ts",
+    ]);
+    expect(calls.map((call) => call.owner)).not.toContain("lcx-problem-cluster-radar");
+    expect(calls.map((call) => call.owner)).not.toContain("local-brain-training-plan");
+    expect(calls.map((call) => call.owner)).not.toContain("lcx-provider-council-acceleration");
+    expect(exclusive.directedDailyResearchBrief?.payload).toBeDefined();
+
+    const sharedStatus = owner("lcx-external-channel-status", {
+      externalChannelStatus: { externalChannelBound: true },
+    });
+    const combined = combineCommercialAcceptanceSnapshots(
+      { externalChannelStatus: sharedStatus },
+      exclusive,
+    );
+    expect(combined.externalCandidateCapture).toBe(sharedStatus);
+    expect(combined.commercialAnswerPipeline).toBe(exclusive.commercialAnswerPipeline);
+  });
+
   it("passes when commercial, architecture, radar, live, training, and provider gates are clean", () => {
     const result = buildCommercialAcceptanceHarness(baseInputs());
 

@@ -410,9 +410,18 @@ function createCapabilityTools(
     financeLedgerDirectories.map((directory) => path.resolve(directory)),
   );
   const hostOwnedPathKeys = new Set(["directory", "workspaceDir", "caseDirectory"]);
-  const inputKeys = (tool: AnyAgentTool): readonly string[] => {
+  const inputKeys = (
+    tool: AnyAgentTool,
+    hiddenKeys: ReadonlySet<string> = hostOwnedPathKeys,
+  ): readonly string[] => {
     const parameters = tool.parameters as { properties?: Record<string, unknown> } | undefined;
-    return Object.keys(parameters?.properties ?? {}).toSorted();
+    return Object.keys(parameters?.properties ?? {})
+      .filter(
+        (key) =>
+          !hiddenKeys.has(key) &&
+          !AUTHORITY_KEY_TOKENS.some((token) => key.toLowerCase().includes(token)),
+      )
+      .toSorted();
   };
   const wrapReadComputeTool = (tool: AnyAgentTool): CentralToolSpec => ({
     ownerId: tool.name,
@@ -444,7 +453,8 @@ function createCapabilityTools(
       ownerId: "finance_research_run",
       name: financeResearch.name,
       label: financeResearch.label,
-      description: `${financeResearch.description} Central-harness scope: planning only; live provider calls are gated off.`,
+      description:
+        "Run the canonical finance research workflow in planning-only mode: route a question to registered modules and create a local receipt. The central harness cannot call finance providers, execute modules, or trade; the TypeScript gate enforces that boundary.",
       inputKeys: inputKeys(financeResearch),
       allowedSideEffects: ["local_read", "local_compute", "local_output"],
       boundary: [
@@ -486,7 +496,12 @@ function createCapabilityTools(
       name: ledgerRead.name,
       label: ledgerRead.label,
       description: `${ledgerRead.description} Central-harness scope: read-only; the gate refuses any arg that smacks of an append, order, or write.`,
-      inputKeys: inputKeys(ledgerRead),
+      inputKeys: inputKeys(
+        ledgerRead,
+        allowedFinanceLedgerDirectories.size > 0
+          ? new Set(["workspaceDir", "caseDirectory"])
+          : hostOwnedPathKeys,
+      ),
       allowedSideEffects: ["local_read"],
       boundary: ["research_only", "finance_position_ledger_read_only", "no_execution_authority"],
       approve: (args) => {
@@ -518,7 +533,10 @@ function createCapabilityTools(
       name: learningDistill.name,
       label: learningDistill.label,
       description: `${learningDistill.description} Central-harness scope: local learning distillation only; the gate refuses any arg that would turn the read into a memory edit, provider call, or external send.`,
-      inputKeys: inputKeys(learningDistill),
+      inputKeys: inputKeys(
+        learningDistill,
+        new Set([...hostOwnedPathKeys, "memoryDir", "stateDir"]),
+      ),
       allowedSideEffects: ["local_read", "local_compute", "local_output"],
       boundary: ["research_only", "local_learning_distill_only", "no_execution_authority"],
       approve: (args) => {

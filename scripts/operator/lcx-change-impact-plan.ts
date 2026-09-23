@@ -121,6 +121,7 @@ const PATH_RULES: PathRule[] = [
       /^src\/agents\/finance-thesis-ledger\.ts$/u,
       /^src\/agents\/finance-strategy-rule-ledger\.ts$/u,
       /^src\/agents\/finance-rule-readiness\.ts$/u,
+      /^src\/agents\/finance-rule-readiness-state\.ts$/u,
       /^src\/agents\/finance-bar-ledger\.ts$/u,
       /^src\/agents\/finance-state-dir\.ts$/u,
       // The agent-side read surface belongs to this seam as well as to the tool-registration
@@ -146,10 +147,11 @@ const PATH_RULES: PathRule[] = [
       // owns and answers whether they agree, so a change to it changes what the system says
       // about its own execution path - not what the research lane samples.
       /^src\/agents\/finance-link-health\.ts$/u,
+      /^scripts\/operator\/lcx-finance-link-health\.ts$/u,
     ],
     requiredChecks: ["git-diff-check", "head-tail-consistency"],
     commands: [
-      "pnpm vitest run src/agents/finance-execution-adapter.test.ts src/agents/finance-position-ledger.test.ts src/agents/finance-behaviour-profile.test.ts src/agents/finance-thesis-ledger.test.ts src/agents/finance-strategy-rule-ledger.test.ts src/agents/finance-strategy-rule-ledger-read-tool.test.ts src/agents/finance-rule-readiness.test.ts src/agents/finance-bar-ledger.test.ts src/agents/tools/finance-position-ledger-read-tool.test.ts src/agents/tools/finance-bar-ledger-tool.test.ts",
+      "pnpm vitest run src/agents/finance-execution-adapter.test.ts src/agents/finance-position-ledger.test.ts src/agents/finance-behaviour-profile.test.ts src/agents/finance-thesis-ledger.test.ts src/agents/finance-strategy-rule-ledger.test.ts src/agents/finance-strategy-rule-ledger-read-tool.test.ts src/agents/finance-rule-readiness.test.ts src/agents/finance-rule-readiness-state.test.ts src/agents/finance-bar-ledger.test.ts src/agents/tools/finance-position-ledger-read-tool.test.ts src/agents/tools/finance-bar-ledger-tool.test.ts",
       "git diff --check",
       "node --import tsx scripts/operator/lcx-head-tail-consistency.ts --json",
     ],
@@ -180,6 +182,7 @@ const PATH_RULES: PathRule[] = [
       /^src\/agents\/finance-(?:value-assessment|operating-evidence|portfolio-composition|portfolio-cycle)(?:\.test)?\.ts$/u,
       /^test\/operator\/lcx-finance-daily-strategy\.test\.ts$/u,
       /^src\/agents\/finance-cycle-schedule\.ts$/u,
+      /^src\/agents\/finance-automatic-lifecycle-feedback\.ts$/u,
       /^src\/agents\/finance-scheduler-(?:lock|process|state)(?:\.test)?\.ts$/u,
       /^test\/operator\/lcx-finance-scheduler(?:-lifecycle)?\.test\.ts$/u,
       /^docs\/tools\/finance-scheduler\.md$/u,
@@ -806,7 +809,7 @@ const PATH_RULES: PathRule[] = [
       /^docs\/zh-CN\/start\/openclaw\.md$/u,
       // Issue/PR automation and the issue form reply to users with links. A stale one routes a
       // real person upstream at the exact moment they are asking for help.
-      /^\.github\/(?:workflows|ISSUE_TEMPLATE)\/.+$/u,
+      /^\.github\/ISSUE_TEMPLATE\/.+$/u,
     ],
     requiredChecks: ["run-changed-tests"],
     commands: [
@@ -986,9 +989,12 @@ const PATH_RULES: PathRule[] = [
     id: "build_tooling_and_manifests",
     lane: "local_build_tooling",
     patterns: [
+      /^\.github\/workflows\/.+$/u,
+      /^package\.json$/u,
       /^vitest[.-][\w.-]*\.ts$/u,
       /^tsdown\.config\.ts$/u,
       /^tsconfig[\w.-]*\.json$/u,
+      /^scripts\/(?:check-build-identity\.mjs|write-build-info\.ts)$/u,
       /^zizmor\.yml$/u,
       /^pnpm-(?:lock|workspace)\.yaml$/u,
       /^pyproject\.toml$/u,

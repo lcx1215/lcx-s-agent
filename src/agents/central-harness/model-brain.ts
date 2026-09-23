@@ -1,16 +1,31 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { OpenClawConfig } from "../../config/types.js";
 import { createConfiguredFinanceModelAdapter } from "../configured-finance-model-adapter.js";
 import { financeBrainModuleCatalog } from "../finance-brain-orchestration.js";
+import { ModelAdapterError } from "../logical-agent-model-router.js";
 import {
   type CentralActionPlan,
+  type CentralBrainCallEvidence,
   type CentralPerception,
   type CentralProposedAction,
   type CentralToolSpec,
 } from "./types.js";
 
 export type CentralBrainOutcome =
-  | { kind: "proposed"; plan: CentralActionPlan; provider: string; modelId: string }
+  | {
+      kind: "proposed";
+      plan: CentralActionPlan;
+      provider: string;
+      modelId: string;
+      modelCall?: CentralBrainCallEvidence;
+    }
+  | {
+      kind: "failed";
+      provider: string;
+      modelId: string;
+      reason: ModelAdapterError["code"] | "output_invalid";
+      modelCall: CentralBrainCallEvidence;
+    }
   | { kind: "blocked_no_provider"; reason: string };
 
 export type CentralBrain = Readonly<{
@@ -63,6 +78,7 @@ export function buildCentralFinanceCatalog(): string {
     "Omit live: central tools cannot call providers or place orders. Selection does not change source targets or bypass risk/evidence/review gates.",
     "Modules are analytical lenses, not proof of tool execution. Inspect prior composition/status/missingEvidence feedback before revising or stopping.",
     "When composition feedback is replan_soft, revise only the soft analytical nodes within remainingSoftReplans. When it is blocked_hard or soft_replan_budget_exhausted with nextAction stop, do not retry by changing hard lanes or pretending the run completed.",
+    "When a prior step lists outcomeDroppedKeys, those fields are unknown, not absent or resolved. Use a focused read to recover decision-relevant details before concluding.",
     "Registered modules (ID and role):",
     JSON.stringify(financeBrainModuleCatalog().map(({ id, role }) => ({ id, role }))),
   ].join("\n");
@@ -156,7 +172,7 @@ export function createCentralBrain(
     tools?: readonly CentralToolSpec[];
   } = {},
 ): CentralBrain {
-  let invoke: ((payload: unknown, signal: AbortSignal) => Promise<unknown>) | undefined;
+  let adapter: ReturnType<typeof createConfiguredFinanceModelAdapter> | undefined;
   let provider = "";
   let modelId = "";
   /**
@@ -175,7 +191,7 @@ export function createCentralBrain(
   let adapterError: string | undefined;
   if (!options.adapterDisabled) {
     try {
-      const adapter = createConfiguredFinanceModelAdapter(cfg, {
+      adapter = createConfiguredFinanceModelAdapter(cfg, {
         maxTokens: options.maxTokens ?? 4_096,
         timeoutMs: options.timeoutMs ?? 120_000,
         maxCalls: options.maxCalls ?? 12,
@@ -185,28 +201,14 @@ export function createCentralBrain(
       });
       provider = adapter.provider;
       modelId = adapter.modelId;
-      invoke = (payload, signal) => {
-        // adapter.invoke expects { callId, correlationId, taskId, role, attempt, provider, modelId, payload }.
-        const request = {
-          callId: `central-brain-${randomUUID()}`,
-          correlationId: `central-${randomUUID()}`,
-          taskId: "central-harness",
-          role: "final_precheck",
-          attempt: 1,
-          provider: adapter.provider,
-          modelId: adapter.modelId,
-          payload,
-        } as Parameters<typeof adapter.invoke>[0];
-        return adapter.invoke(request, signal);
-      };
     } catch (error) {
       provider = "";
       modelId = "";
-      invoke = undefined;
+      adapter = undefined;
       adapterError = (error instanceof Error ? error.message : String(error)).slice(0, 300);
     }
   }
-  const callable = provider !== "" && modelId !== "" && invoke !== undefined;
+  const callable = provider !== "" && modelId !== "" && adapter !== undefined;
   return {
     propose: async (perception, signal) => {
       if (!callable) {
@@ -217,10 +219,63 @@ export function createCentralBrain(
             : "no configurable finance provider/model available for brain inference",
         };
       }
-      // callable already proved invoke is set; assert to satisfy TS across the closure.
-      const raw = await invoke!(perception, signal);
-      const plan = validateCentralActionPlan(raw);
-      return { kind: "proposed", plan, provider, modelId };
+      // callable already proved the adapter identity is configured.
+      const activeAdapter = adapter!;
+      const requestIdentity = {
+        callId: `central-brain-${randomUUID()}`,
+        correlationId: `central-${randomUUID()}`,
+        taskId: "central-harness",
+        role: "final_precheck" as const,
+        attempt: 1,
+        provider: activeAdapter.provider,
+        modelId: activeAdapter.modelId,
+      };
+      const request = { ...requestIdentity, payload: perception };
+      let raw: unknown;
+      let failure: ModelAdapterError["code"] | undefined;
+      try {
+        raw = await activeAdapter.invoke(request, signal);
+      } catch (error) {
+        failure = error instanceof ModelAdapterError ? error.code : "process_error";
+      }
+
+      // The adapter's observer is an independent transport seam and consumes
+      // its retained response record. Call it after both success and failure:
+      // e.g. a provider response with finish_reason=length is real transport,
+      // but still not a valid model proposal.
+      const observation = activeAdapter.observe?.(requestIdentity);
+      const observed =
+        observation !== undefined &&
+        observation.callId === requestIdentity.callId &&
+        observation.provider === activeAdapter.provider &&
+        observation.modelId === activeAdapter.modelId &&
+        typeof observation.transportRequestId === "string" &&
+        observation.transportRequestId.trim().length > 0 &&
+        observation.kind === "provider_call"
+          ? observation
+          : undefined;
+      const modelCall: CentralBrainCallEvidence = {
+        adapterInvoked: true,
+        providerCallObserved: observed !== undefined,
+        ...(observed
+          ? {
+              observationIdSha256: createHash("sha256")
+                .update(observed.transportRequestId)
+                .digest("hex"),
+              ...(observed.credentialSource ? { credentialSource: observed.credentialSource } : {}),
+              ...(observed.reasoningEffort ? { reasoningEffort: observed.reasoningEffort } : {}),
+            }
+          : {}),
+      };
+      if (failure) {
+        return { kind: "failed", provider, modelId, reason: failure, modelCall };
+      }
+      try {
+        const plan = validateCentralActionPlan(raw);
+        return { kind: "proposed", plan, provider, modelId, modelCall };
+      } catch {
+        return { kind: "failed", provider, modelId, reason: "output_invalid", modelCall };
+      }
     },
   };
 }

@@ -4,8 +4,11 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
-import { projectGovernanceDigest } from "../scripts/operator/lcx-central-agent.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  projectGovernanceDigest,
+  projectRuntimeFreshness,
+} from "../scripts/operator/lcx-central-agent.js";
 import {
   runCentralHarnessCycle,
   boundPerception,
@@ -39,6 +42,7 @@ import type { CentralPerception, CentralRunReceipt } from "../src/agents/central
 
 const centralTestRoots: string[] = [];
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await Promise.all(
     centralTestRoots.splice(0).map((root) => fsp.rm(root, { recursive: true, force: true })),
   );
@@ -90,6 +94,21 @@ function brainWithActions(actions: unknown) {
 const registry = createCentralToolRegistry();
 
 describe("central agent harness gate", () => {
+  it("retains runtime freshness evidence in the cycle receipt", async () => {
+    const runtimeFreshness = {
+      sourceBoundary: "published_latest_snapshots_only",
+      freshnessPolicy: "age_reported_no_cutoff",
+      sources: { governance: { status: "measured_age", ageMs: 60_000 } },
+    };
+    const receipt = await runCentralHarnessCycle({
+      perception: perception({ controlRoom: { runtimeFreshness } }),
+      brain: brainWithActions([]),
+      registry,
+    });
+
+    expect(receipt.runtimeFreshness).toEqual(runtimeFreshness);
+  });
+
   it("blocks proposals for unknown / write-authority owners", async () => {
     const receipt = await runCentralHarnessCycle({
       perception: perception(),
@@ -169,6 +188,61 @@ describe("central agent harness gate", () => {
     expect(receipt.actionsProposed).toBe(0);
   });
 
+  it("keeps safe model and transport provenance when a provider truncates its response", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              id: "fixture-transport-id",
+              choices: [{ finish_reason: "length", message: { content: '{"actions":[' } }],
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+    const brain = createCentralBrain(
+      {
+        agents: { defaults: { model: { primary: "fixture/selected" } } },
+        models: {
+          providers: {
+            fixture: {
+              api: "openai-completions",
+              baseUrl: "https://fixture.invalid/v1",
+              apiKey: "fixture-credential",
+              models: [
+                {
+                  id: "selected",
+                  name: "Selected",
+                  reasoning: false,
+                  input: ["text"],
+                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                  contextWindow: 32_000,
+                  maxTokens: 8_192,
+                },
+              ],
+            },
+          },
+        },
+      } as never,
+      { maxTokens: 128 },
+    );
+
+    const receipt = await runCentralHarnessCycle({ perception: perception(), brain, registry });
+
+    expect(receipt.brainCall).toMatchObject({
+      provider: "fixture",
+      modelId: "selected",
+      outcome: "failed",
+      reason: "model call failed: output_truncated",
+      modelCall: { adapterInvoked: true, providerCallObserved: true },
+    });
+    expect(receipt.brainCall.modelCall?.observationIdSha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(JSON.stringify(receipt.brainCall)).not.toContain("fixture-transport-id");
+    expect(receipt.actionsProposed).toBe(0);
+  });
+
   it("names the real adapter error instead of claiming configuration is absent", async () => {
     // A config with no resolvable provider/model: the adapter throws, and that
     // throw is the only evidence of why the cycle decided nothing.
@@ -200,6 +274,10 @@ describe("central agent harness gate", () => {
     expect(receipt.actionsProposed).toBe(0);
     expect(receipt.steps).toHaveLength(0);
     expect(receipt.brainCall.outcome).toBe("completed");
+    expect(receipt.stageDurationsMs.perceptionBuildMs).toBeNull();
+    expect(receipt.stageDurationsMs.brainProposalMs).toBeGreaterThanOrEqual(0);
+    expect(receipt.stageDurationsMs.deterministicGateMs).toBeGreaterThanOrEqual(0);
+    expect(receipt.stageDurationsMs.actionDispatchMs).toBeGreaterThanOrEqual(0);
   });
 });
 
@@ -708,12 +786,14 @@ describe("central harness is wired into the governance loop, not orphaned", () =
     expect(autopilotSource).toContain("scripts/operator/lcx-central-agent.ts");
   });
 
-  it("runs it cycle-bounded in full dispatch mode so the scheduled pass really drives owners", () => {
-    expect(autopilotSource).toContain('args: ["--max-cycles", "1", "--json"]');
-    expect(autopilotSource).not.toContain('"--max-cycles", "1", "--plan-only", "--json"');
+  it("schedules a bounded plan-only pass to avoid duplicating autopilot owner fanout", () => {
+    expect(autopilotSource).toContain('args: ["--max-cycles", "1", "--plan-only", "--json"]');
+    expect(autopilotSource).not.toContain('args: ["--max-cycles", "1", "--json"]');
+    expect(autopilotSource).toContain("collectCommercialAcceptanceExclusiveSnapshots");
+    expect(autopilotSource).toContain("combineCommercialAcceptanceSnapshots");
   });
 
-  it("keeps plan-only available as an explicit opt-in instead of the scheduled default", () => {
+  it("keeps plan-only mode wired to capability-draining dispatch", () => {
     const cliSource = fs.readFileSync(
       path.join(REPO_ROOT, "scripts/operator/lcx-central-agent.ts"),
       "utf8",
@@ -768,6 +848,7 @@ describe("central harness is wired into the governance loop, not orphaned", () =
 });
 
 function receipt(overrides: Partial<CentralRunReceipt> = {}): CentralRunReceipt {
+  const { stageDurationsMs, ...rest } = overrides;
   return {
     schemaVersion: "lcx_central_agent_v1",
     runId: "central-0-1",
@@ -785,10 +866,16 @@ function receipt(overrides: Partial<CentralRunReceipt> = {}): CentralRunReceipt 
       overBudget: false,
       droppedSections: [],
     },
+    ...rest,
+    stageDurationsMs: stageDurationsMs ?? {
+      perceptionBuildMs: null,
+      brainProposalMs: 0,
+      deterministicGateMs: 0,
+      actionDispatchMs: 0,
+    },
     liveTouched: false,
     providerConfigTouched: false,
     protectedMemoryTouched: false,
-    ...overrides,
   };
 }
 
@@ -1015,16 +1102,38 @@ describe("central agent CLI persists evidence a reader can walk back to", () => 
       const firstSummary = JSON.parse(first.stdout.trim()) as {
         runs: number;
         latestRunPath: string | null;
+        stageDurationsMs: {
+          perceptionBuildMs: number | null;
+          brainProposalMs: number | null;
+          deterministicGateMs: number | null;
+          actionDispatchMs: number | null;
+        } | null;
+        receiptPersistenceDurationMs: number | null;
       };
       expect(firstSummary.runs).toBe(1);
+      expect(firstSummary.stageDurationsMs?.perceptionBuildMs).toBeGreaterThanOrEqual(0);
+      expect(firstSummary.stageDurationsMs?.brainProposalMs).toBeGreaterThanOrEqual(0);
+      expect(firstSummary.stageDurationsMs?.deterministicGateMs).toBeGreaterThanOrEqual(0);
+      expect(firstSummary.stageDurationsMs?.actionDispatchMs).toBeGreaterThanOrEqual(0);
+      expect(firstSummary.receiptPersistenceDurationMs).toBeGreaterThanOrEqual(0);
       expect(await fsp.readdir(runsDir)).toHaveLength(1);
 
       const latest = JSON.parse(
         await fsp.readFile(path.join(stateDir, "lcx-central-agent-latest.json"), "utf8"),
-      ) as { runsDir: string; latestRunId: string | null; latestRunPath: string | null };
+      ) as {
+        runsDir: string;
+        latestRunId: string | null;
+        latestRunPath: string | null;
+        lastReceiptPersistenceDurationMs: number | null;
+      };
       expect(latest.runsDir).toBe(runsDir);
       expect(latest.latestRunPath).toBe(firstSummary.latestRunPath);
       expect(path.basename(latest.latestRunPath ?? "")).toBe(latest.latestRunId + ".json");
+      expect(latest.lastReceiptPersistenceDurationMs).toBeGreaterThanOrEqual(0);
+      const runSnapshot = JSON.parse(await fsp.readFile(latest.latestRunPath!, "utf8")) as {
+        stageDurationsMs: { perceptionBuildMs: number | null };
+      };
+      expect(runSnapshot.stageDurationsMs.perceptionBuildMs).toBeGreaterThanOrEqual(0);
 
       // Second pass: the dry-run brain never completes, so the first cycle is now in
       // the resume window but must not be inherited as context.
@@ -1137,6 +1246,32 @@ describe("governance digest folds the hour's verdict into the budgeted brain vie
       status: "unavailable",
       reason: "governance_state_missing",
     });
+  });
+
+  it("reports persisted snapshot ages without imposing a freshness cutoff", () => {
+    const projection = projectRuntimeFreshness(
+      {
+        governance: { checkedAt: "2026-09-23T11:00:00.000Z" },
+        learningWorkflow: { updatedAt: "2026-09-23T10:45:00.000Z" },
+        missing: {},
+        invalid: { generatedAt: "not-a-timestamp" },
+      },
+      "2026-09-23T11:01:00.000Z",
+    );
+    const sources = projection.sources as Record<string, Record<string, unknown>>;
+
+    expect(projection).toMatchObject({
+      sourceBoundary: "published_latest_snapshots_only",
+      freshnessPolicy: "age_reported_no_cutoff",
+    });
+    expect(sources.governance).toEqual({
+      status: "measured_age",
+      sourceObservedAt: "2026-09-23T11:00:00.000Z",
+      ageMs: 60_000,
+    });
+    expect(sources.learningWorkflow).toMatchObject({ status: "measured_age", ageMs: 16 * 60_000 });
+    expect(sources.missing).toMatchObject({ status: "snapshot_missing", ageMs: null });
+    expect(sources.invalid).toMatchObject({ status: "timestamp_invalid", ageMs: null });
   });
 
   it("survives the budget while the raw section is still named as dropped", () => {

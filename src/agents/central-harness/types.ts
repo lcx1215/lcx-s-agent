@@ -53,9 +53,9 @@ export type CentralStep = {
   /** Why the harness could not run the owner at all (crash, unparseable output). */
   failureReason?: string;
   /**
-   * What the tool actually returned — the owner's parsed receipt when there was
-   * one — bounded, with everything that did not fit named in
-   * `outcomeDroppedKeys`.
+   * Bounded decision digest from the owner's parsed receipt. It is not a
+   * verbatim tool result; omitted fields are named in `outcomeDroppedKeys` so a
+   * later cycle can request a focused read instead of treating them as absent.
    *
    * A Codex-style loop feeds the tool result back to the model so the next
    * decision is made on evidence rather than on the fact that something ran.
@@ -64,7 +64,7 @@ export type CentralStep = {
    * said* — the reason fields were recorded here and then dropped again by
    * `compactReceipts` before the next cycle could see them. The digest is
    * bounded the same way the injected perception is: what is left out is named,
-   * not silently missing, and the full receipt stays on disk either way.
+   * not silently missing.
    */
   outcome?: Readonly<Record<string, unknown>>;
   outcomeDroppedKeys?: readonly string[];
@@ -134,6 +134,27 @@ export type CentralActionPlan = Readonly<{
   note: string;
 }>;
 
+/** Local wall-clock durations for the stages a Central Agent cycle can attribute. */
+export type CentralRunStageDurationsMs = Readonly<{
+  /** Context construction performed by the CLI before the cycle starts. */
+  perceptionBuildMs: number | null;
+  /** Brain adapter call, including response parsing. */
+  brainProposalMs: number | null;
+  /** Deterministic proposal validation and safety-gate work. */
+  deterministicGateMs: number | null;
+  /** Time spent dispatching approved steps. */
+  actionDispatchMs: number | null;
+}>;
+
+/** Safe provenance for one central-brain adapter call; never stores raw response IDs. */
+export type CentralBrainCallEvidence = Readonly<{
+  adapterInvoked: true;
+  providerCallObserved: boolean;
+  observationIdSha256?: string;
+  credentialSource?: "configuration" | "environment" | "auth_profile";
+  reasoningEffort?: "low" | "high" | "max";
+}>;
+
 export type CentralRunReceipt = Readonly<{
   schemaVersion: "lcx_central_agent_v1";
   runId: string;
@@ -149,6 +170,8 @@ export type CentralRunReceipt = Readonly<{
     modelId: string;
     outcome: "completed" | "failed" | "blocked" | "skipped";
     reason?: string;
+    /** Present when this brain is backed by a model adapter, including failed calls. */
+    modelCall?: CentralBrainCallEvidence;
     /** Brain's one-line plan note, retained across turns (codex retained-reasoning pattern). */
     note?: string;
   }>;
@@ -159,6 +182,10 @@ export type CentralRunReceipt = Readonly<{
    * re-derive it, and so the dropped keys are named rather than silently missing.
    */
   contextBudget: CentralContextBudgetReport;
+  /** Ages of published runtime snapshots that were included in the perception. */
+  runtimeFreshness?: Readonly<Record<string, unknown>>;
+  /** Stage-level runtime evidence; persistence timing is reported by the latest pointer. */
+  stageDurationsMs: CentralRunStageDurationsMs;
   liveTouched: false;
   providerConfigTouched: false;
   protectedMemoryTouched: false;

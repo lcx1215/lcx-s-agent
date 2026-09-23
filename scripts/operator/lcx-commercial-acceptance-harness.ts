@@ -13,7 +13,7 @@ const EXEC_MAX_BUFFER = 32 * 1024 * 1024;
 type Severity = "P1" | "P2" | "P3" | "info";
 type GateStatus = "passed" | "failed" | "blocked" | "watch";
 
-type OwnerSnapshot = {
+export type OwnerSnapshot = {
   ok: boolean;
   owner: string;
   command: string;
@@ -54,6 +54,8 @@ type CliOptions = {
   withChannelProbe: boolean;
   skipDoctor: boolean;
 };
+
+export type AcceptanceCollectionOptions = Pick<CliOptions, "withChannelProbe" | "skipDoctor">;
 
 function usage(): never {
   throw new Error(
@@ -1164,45 +1166,19 @@ async function runJsonOwner(owner: string, script: string, args: readonly string
   }
 }
 
-async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs> {
+async function collectSharedOwnerSnapshots(
+  options: AcceptanceCollectionOptions,
+): Promise<Partial<HarnessInputs>> {
   const [
-    commercialAnswerPipeline,
-    shortIntentFuzzer,
-    visibleAnswerQualityFuzzer,
-    directedDailyResearchBrief,
     problemRadar,
     flowGraph,
     mindModel,
     externalChannelStatus,
     externalChannelBindingStatus,
     trainingPlan,
-    systemDoctor,
     providerCouncilAcceleration,
     moduleLearningAbsorptionGate,
-    financeDataGatewaySmoke,
-    financeDataGatewayConflictSmoke,
   ] = await Promise.all([
-    runJsonOwner(
-      "lcx-commercial-answer-pipeline",
-      "scripts/operator/lcx-commercial-answer-pipeline.ts",
-      ["--json"],
-    ),
-    runJsonOwner(
-      "lcx-external-short-intent-fuzzer",
-      "scripts/operator/lcx-external-short-intent-fuzzer.ts",
-      ["--json"],
-    ),
-    runJsonOwner(
-      "lcx-visible-answer-quality-fuzzer",
-      "scripts/operator/lcx-visible-answer-quality-fuzzer.ts",
-      ["--json"],
-    ),
-    Promise.resolve({
-      ok: true,
-      owner: "lcx-directed-daily-research-brief",
-      command: "node --import tsx scripts/operator/lcx-directed-daily-research-brief.ts --json",
-      payload: buildDirectedDailyResearchBrief() as unknown as Record<string, unknown>,
-    }),
     runJsonOwner("lcx-problem-cluster-radar", "scripts/operator/lcx-problem-cluster-radar.ts", [
       "--json",
     ]),
@@ -1221,14 +1197,6 @@ async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs
     runJsonOwner("local-brain-training-plan", "scripts/operator/local-brain-training-plan.ts", [
       "--json",
     ]),
-    options.skipDoctor
-      ? Promise.resolve({
-          ok: false,
-          owner: "lcx-system-doctor",
-          command: "skipped",
-          error: "doctor skipped by --skip-doctor",
-        })
-      : runJsonOwner("lcx-system-doctor", "scripts/operator/lcx-system-doctor.ts", ["--json"]),
     runJsonOwner(
       "lcx-provider-council-acceleration",
       "scripts/operator/lcx-provider-council-acceleration.ts",
@@ -1239,12 +1207,66 @@ async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs
       "scripts/operator/lcx-module-learning-absorption-gate.ts",
       ["--json"],
     ),
-    runJsonOwner(
-      "finance-data-gateway-smoke-clean",
-      "scripts/operator/finance-data-gateway-smoke.ts",
+  ]);
+  return {
+    problemRadar,
+    flowGraph,
+    mindModel,
+    externalChannelStatus,
+    externalChannelBindingStatus,
+    trainingPlan,
+    providerCouncilAcceleration,
+    moduleLearningAbsorptionGate,
+  };
+}
+
+/** Collect only acceptance probes that are not already owned by governance autopilot. */
+export async function collectCommercialAcceptanceExclusiveSnapshots(
+  options: AcceptanceCollectionOptions,
+  runOwner: typeof runJsonOwner = runJsonOwner,
+): Promise<Partial<HarnessInputs>> {
+  const [
+    commercialAnswerPipeline,
+    shortIntentFuzzer,
+    visibleAnswerQualityFuzzer,
+    directedDailyResearchBrief,
+    systemDoctor,
+    financeDataGatewaySmoke,
+    financeDataGatewayConflictSmoke,
+  ] = await Promise.all([
+    runOwner(
+      "lcx-commercial-answer-pipeline",
+      "scripts/operator/lcx-commercial-answer-pipeline.ts",
       ["--json"],
     ),
-    runJsonOwner(
+    runOwner(
+      "lcx-external-short-intent-fuzzer",
+      "scripts/operator/lcx-external-short-intent-fuzzer.ts",
+      ["--json"],
+    ),
+    runOwner(
+      "lcx-visible-answer-quality-fuzzer",
+      "scripts/operator/lcx-visible-answer-quality-fuzzer.ts",
+      ["--json"],
+    ),
+    Promise.resolve({
+      ok: true,
+      owner: "lcx-directed-daily-research-brief",
+      command: "node --import tsx scripts/operator/lcx-directed-daily-research-brief.ts --json",
+      payload: buildDirectedDailyResearchBrief() as unknown as Record<string, unknown>,
+    }),
+    options.skipDoctor
+      ? Promise.resolve({
+          ok: false,
+          owner: "lcx-system-doctor",
+          command: "skipped",
+          error: "doctor skipped by --skip-doctor",
+        })
+      : runOwner("lcx-system-doctor", "scripts/operator/lcx-system-doctor.ts", ["--json"]),
+    runOwner("finance-data-gateway-smoke-clean", "scripts/operator/finance-data-gateway-smoke.ts", [
+      "--json",
+    ]),
+    runOwner(
       "finance-data-gateway-smoke-conflict",
       "scripts/operator/finance-data-gateway-smoke.ts",
       ["--conflict", "--json"],
@@ -1255,19 +1277,29 @@ async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs
     shortIntentFuzzer,
     visibleAnswerQualityFuzzer,
     directedDailyResearchBrief,
-    problemRadar,
-    flowGraph,
-    mindModel,
-    externalChannelStatus,
-    externalChannelBindingStatus,
-    externalCandidateCapture: externalChannelStatus,
-    trainingPlan,
     systemDoctor,
-    providerCouncilAcceleration,
-    moduleLearningAbsorptionGate,
     financeDataGatewaySmoke,
     financeDataGatewayConflictSmoke,
   };
+}
+
+export function combineCommercialAcceptanceSnapshots(
+  shared: Partial<HarnessInputs>,
+  exclusive: Partial<HarnessInputs>,
+): HarnessInputs {
+  const snapshots = { ...shared, ...exclusive };
+  return {
+    ...snapshots,
+    externalCandidateCapture: snapshots.externalCandidateCapture ?? snapshots.externalChannelStatus,
+  };
+}
+
+async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs> {
+  const [shared, exclusive] = await Promise.all([
+    collectSharedOwnerSnapshots(options),
+    collectCommercialAcceptanceExclusiveSnapshots(options),
+  ]);
+  return combineCommercialAcceptanceSnapshots(shared, exclusive);
 }
 
 async function main() {
