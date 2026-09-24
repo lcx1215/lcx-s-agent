@@ -61,8 +61,7 @@ export function deriveDirectionalCalibrationFloor(
     return {
       floor: null,
       samplesUsed: 0,
-      basis:
-        "no scored samples with valid directional outcomes; refusing to invent a calibration floor",
+      basis: "no scored directional samples; refusing to invent a floor for forecast calibration",
       buckets: [],
     };
   }

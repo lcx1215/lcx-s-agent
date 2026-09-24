@@ -161,17 +161,19 @@ root.
    number still omits full account equity, open-position mark-to-market,
    strategy/forecast attribution, and benchmark comparison. The receipt
    contract accepts typed source-decision references and the read tool reports
-   coverage; malformed references are refused before adapter dispatch. Producer
-   call sites still need to supply those references. The current daily-cycle
-   review candidate key is `[runAuthorizationId, signalAnchor, instrument,
+   coverage; malformed references are refused before adapter dispatch. Both
+   daily-cycle and intraday producer call sites now supply references. The
+   current daily-cycle review candidate key is
+   `[runAuthorizationId, signalAnchor, instrument,
 action].join(":")`; the intraday review candidate key is `signalId`. The
    daily intent `conclusionId` (`daily_cycle:${signalAnchor}:${instrument}`)
    is a different, coarser identity and must not silently replace the review
-   candidate key in execution lineage. Missing references remain incomplete
-   lineage. The isolated integration worktree now passes these references
-   through the daily and intraday producers. They remain optional for legacy
-   and manual receipts; source-link coverage still requires a fresh receipt
-   from each path. These changes are unmerged and not behaviorally verified.
+   candidate key in execution lineage. Receipts without references remain
+   incomplete lineage; references remain optional for legacy/manual receipts.
+   The Flow Graph checks source-level wiring, but it does not prove live receipt
+   coverage; a fresh normal-cycle receipt from each path is still needed. These
+   references do not yet identify a stable strategy, version, trial, or forecast
+   cohort.
 5. Central Harness feedback is read-only and includes scheduler process and
    Paper-policy status, day/night receipts, current readiness, and bounded bar
    and position-store facts. It reports that the execution-promotion contract
@@ -203,11 +205,12 @@ proposal and exposes its scope to Central Harness feedback; it does not write a
 paper-execution promotion. The separate position and broker-history owners feed
 gross and fee-adjusted trade diagnostics into the position read tool. The
 intent/receipt contract now accepts explicit source-decision references and the
-read tool reports their coverage. Producer wiring remains open; even a source
-reference would not yet name a stable strategy, strategy version, trial, or full
-forecast cohort. Promotion remains blocked until those economics can be joined
-to strategy decisions and evaluated against a benchmark and out-of-sample
-evidence.
+read tool reports their coverage. Daily and intraday producers pass references,
+and Flow Graph checks that source path; runtime receipt coverage still needs a
+fresh normal cycle. These references do not yet name a stable strategy, version,
+trial, or full forecast cohort. Promotion remains blocked until those economics
+can be joined to strategy decisions and evaluated against a benchmark and
+out-of-sample evidence.
 
 Do not add another night-only model caller, module catalog, portfolio engine,
 execution path, state root, or fixed strategy threshold in the scheduler.

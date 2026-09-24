@@ -29,7 +29,7 @@ describe("finance tuning proposal", () => {
     const losing = [...samples(12, 0.7, 1), ...samples(28, 0.7, 0)];
     const result = proposeTuning({ samples: losing, currentFloor: 0.6, minSamples: 30 });
     expect(result.proposals).toEqual([]);
-    expect(result.basis).toContain("no conviction level");
+    expect(result.basis).toContain("no conviction bucket");
   });
 
   it("proposes nothing when the derived floor already equals the current one", () => {

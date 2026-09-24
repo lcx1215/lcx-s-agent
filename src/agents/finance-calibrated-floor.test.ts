@@ -16,7 +16,7 @@ describe("deriveDirectionalCalibrationFloor", () => {
   it("refuses to invent a floor when there is no data", () => {
     const result = deriveDirectionalCalibrationFloor([]);
     expect(result.floor).toBeNull();
-    expect(result.basis).toMatch(/no scored samples/);
+    expect(result.basis).toMatch(/no scored directional samples/);
   });
 
   it("derives a calibration floor from the lowest conviction bucket meeting the hit-rate baseline", () => {

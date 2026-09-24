@@ -73,7 +73,7 @@ export function proposeTuning(params: {
       ...base,
       proposals: [],
       basis:
-        "no conviction level met the directional hit-rate baseline over " +
+        "no conviction bucket met the directional hit-rate baseline over " +
         derived.samplesUsed +
         " scored calls (" +
         derived.basis +
