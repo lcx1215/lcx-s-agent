@@ -14,6 +14,7 @@ import {
 } from "./finance-intraday-control-ledger.js";
 import { receiptsForIntradayStrategy } from "./finance-intraday-position.js";
 import { projectFinancePositions, readFinancePositionRecords } from "./finance-position-ledger.js";
+import { buildFinanceThesisDecisionContext } from "./finance-thesis-decision-context.js";
 import {
   FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA,
   isValidFinanceTradeDecisionReviewResult,
@@ -113,6 +114,11 @@ export async function executeFinanceIntradayDecision(params: {
       return Object.freeze({ status: "refused" as const, outcome: outcome.input });
     }
     const reconciliation = account.reconciliation;
+    const decisionContext = await buildFinanceThesisDecisionContext({
+      directory: params.directory,
+      asOf: new Date(observedAtMs).toISOString(),
+      instruments: [input.instrument],
+    });
     const reviewRequest: FinanceIntradayTradeDecisionReviewRequest = {
       schemaVersion: FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA,
       venue: "alpaca:paper",
@@ -133,6 +139,7 @@ export async function executeFinanceIntradayDecision(params: {
           : {}),
       },
       positions: account.positions,
+      decisionContext,
       candidates: [
         {
           candidateId: input.signalId,

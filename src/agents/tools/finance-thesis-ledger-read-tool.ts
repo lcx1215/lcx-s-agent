@@ -187,6 +187,7 @@ export function createFinanceThesisLedgerReadTool(options?: {
         recordCount: ledger.recordCount,
         openedRecordCount: ledger.openedRecordCount,
         transitionRecordCount: ledger.transitionRecordCount,
+        evidenceAppendRecordCount: ledger.evidenceAppendRecordCount,
         headRef: ledger.headRef,
         thesisCount: ledger.theses.length,
         // Reported apart on purpose: `invalidated` and `realised` are different outcomes, and a

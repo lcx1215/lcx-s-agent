@@ -8,7 +8,7 @@
  *
  * Following the repository rule, **events are stored, derived state is not**. So:
  *
- * - The two record kinds are `opened` and `transition`. There is no `state` column and no
+ * - Records are `opened`, `evidence_appended`, or `transition`. There is no `state` column and no
  *   `from` field: the current state is whatever replaying the stream produces, and `from` is
  *   always available by replay. Storing either would create a second source of truth that can
  *   drift from the events it claims to summarise.
@@ -33,7 +33,8 @@ const Iso = z.string().datetime();
 const Hash = z.string().regex(/^[a-f0-9]{64}$/u);
 const ThesisId = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,63}$/u);
 
-export const FINANCE_THESIS_RECORD_SCHEMA = "lcx_finance_thesis_record_v1" as const;
+const FINANCE_THESIS_RECORD_SCHEMA_V1 = "lcx_finance_thesis_record_v1" as const;
+export const FINANCE_THESIS_RECORD_SCHEMA = "lcx_finance_thesis_record_v2" as const;
 
 /** A thesis is opened into `active` and leaves it exactly once. */
 export const FINANCE_THESIS_STATES = ["active", "invalidated", "realised"] as const;
@@ -77,6 +78,15 @@ export const FinanceThesisTransitionInput = z
   .strict();
 export type FinanceThesisTransitionInput = z.infer<typeof FinanceThesisTransitionInput>;
 
+export const FinanceThesisEvidenceAppendInput = z
+  .object({
+    thesisId: ThesisId,
+    evidence: z.array(EvidenceLink).min(1),
+    observedAt: Iso,
+  })
+  .strict();
+export type FinanceThesisEvidenceAppendInput = z.infer<typeof FinanceThesisEvidenceAppendInput>;
+
 const OpenedBody = z
   .object({
     kind: z.literal("opened"),
@@ -101,7 +111,28 @@ const TransitionBody = z
   })
   .strict();
 
-const RecordBody = z.discriminatedUnion("kind", [OpenedBody, TransitionBody]);
+const EvidenceAppendedBody = z
+  .object({
+    kind: z.literal("evidence_appended"),
+    thesisId: ThesisId,
+    evidence: z.array(EvidenceLink).min(1),
+    observedAt: Iso,
+  })
+  .strict();
+
+const LegacyRecordBody = z.discriminatedUnion("kind", [OpenedBody, TransitionBody]);
+const RecordBody = z.discriminatedUnion("kind", [OpenedBody, TransitionBody, EvidenceAppendedBody]);
+const StoredRecordV1 = z
+  .object({
+    schemaVersion: z.literal(FINANCE_THESIS_RECORD_SCHEMA_V1),
+    recordKey: Text,
+    sequence: z.number().int().positive(),
+    previousRef: Hash.nullable(),
+    recordedAt: Iso,
+    executionAuthority: z.enum(LCX_ONTOLOGY_FINANCE_EXECUTION_AUTHORITIES),
+    body: LegacyRecordBody,
+  })
+  .strict();
 export type FinanceThesisRecordBody = z.infer<typeof RecordBody>;
 
 const StoredRecordSchema = z
@@ -115,7 +146,9 @@ const StoredRecordSchema = z
     body: RecordBody,
   })
   .strict();
-export type FinanceThesisRecord = z.infer<typeof StoredRecordSchema> & { ref: string };
+export type FinanceThesisRecord =
+  | (z.infer<typeof StoredRecordV1> & { ref: string })
+  | (z.infer<typeof StoredRecordSchema> & { ref: string });
 
 /**
  * The ledger file is generation-suffixed (`thesis-ledger_1.sqlite`). `finance-state-dir.ts`
@@ -157,7 +190,9 @@ function readStoredRecords(db: ThesisDatabase): FinanceThesisRecord[] {
     if (caseflowFingerprint(raw) !== row.ref) {
       throw new Error("thesis record integrity mismatch");
     }
-    const record = StoredRecordSchema.parse(raw);
+    const record = StoredRecordV1.safeParse(raw).success
+      ? StoredRecordV1.parse(raw)
+      : StoredRecordSchema.parse(raw);
     if (record.sequence !== index + 1 || record.previousRef !== previousRef) {
       throw new Error("thesis record chain mismatch");
     }
@@ -194,14 +229,15 @@ export type FinanceThesisLedger = Readonly<{
   recordCount: number;
   openedRecordCount: number;
   transitionRecordCount: number;
+  evidenceAppendRecordCount: number;
   headRef: string | null;
 }>;
 
 /**
  * Project the recorded events into the current state of each thesis.
  *
- * Opening produces `active`; each later transition replaces it. Because nothing is stored but
- * the events, an `asOf` view is just a shorter prefix of the same stream — there is no
+ * Opening produces `active`; evidence appends preserve it; a terminal transition closes it.
+ * Because nothing is stored but the events, an `asOf` view is a filtered history — there is no
  * historical state column to disagree with it.
  */
 export function projectFinanceTheses(
@@ -215,7 +251,7 @@ export function projectFinanceTheses(
       rationale: string | null;
       openedAt: string;
       invalidationConditions: readonly string[];
-      evidence: readonly FinanceThesisEvidence[];
+      evidence: FinanceThesisEvidence[];
       transitions: FinanceThesisTransition[];
       closedAt: string | null;
     }
@@ -234,7 +270,7 @@ export function projectFinanceTheses(
         rationale: body.rationale ?? null,
         openedAt: body.observedAt,
         invalidationConditions: body.invalidationConditions,
-        evidence: body.evidence,
+        evidence: [...body.evidence],
         transitions: [],
         closedAt: null,
       });
@@ -247,6 +283,14 @@ export function projectFinanceTheses(
       throw new Error(
         `thesis ${body.thesisId} was already closed at ${existing.closedAt}; a closed thesis is history`,
       );
+    }
+    if (body.kind === "evidence_appended") {
+      const existingEvidenceIds = new Set(existing.evidence.map((item) => item.id));
+      if (body.evidence.some((item) => existingEvidenceIds.has(item.id))) {
+        throw new Error(`thesis ${body.thesisId} contains duplicate evidence ids`);
+      }
+      existing.evidence.push(...body.evidence);
+      continue;
     }
     existing.transitions.push({
       to: body.to,
@@ -341,7 +385,7 @@ async function appendRecord(
       // Reject against the recorded events, not against a stored state column: the state to
       // transition *from* is whatever replaying the stream says, so there is nothing for a
       // stored column to disagree with.
-      if (body.kind === "transition") {
+      if (body.kind === "transition" || body.kind === "evidence_appended") {
         const opened = records.find(
           (item) => item.body.kind === "opened" && item.body.thesisId === body.thesisId,
         );
@@ -353,6 +397,22 @@ async function appendRecord(
         );
         if (closed) {
           throw new Error(`thesis ${body.thesisId} is already closed; a closed thesis is history`);
+        }
+        if (body.kind === "evidence_appended") {
+          const priorEvidenceIds = new Set(
+            records.flatMap(({ body: prior }) => {
+              if (
+                prior.thesisId !== body.thesisId ||
+                (prior.kind !== "opened" && prior.kind !== "evidence_appended")
+              ) {
+                return [];
+              }
+              return prior.evidence.map((entry) => entry.id);
+            }),
+          );
+          if (body.evidence.some((item) => priorEvidenceIds.has(item.id))) {
+            throw new Error(`thesis ${body.thesisId} already contains an evidence id`);
+          }
         }
       } else if (records.some((item) => item.body.thesisId === body.thesisId)) {
         throw new Error(`thesis ${body.thesisId} is already open`);
@@ -421,6 +481,23 @@ export async function transitionFinanceThesis(
   );
 }
 
+/** Add new evidence to an active thesis without changing its claim or invalidation conditions. */
+export async function appendFinanceThesisEvidence(
+  directory: string,
+  input: unknown,
+): Promise<FinanceThesisAppend> {
+  const data = FinanceThesisEvidenceAppendInput.parse(input);
+  const evidenceIds = new Set(data.evidence.map((item) => item.id));
+  if (evidenceIds.size !== data.evidence.length) {
+    throw new Error("duplicate thesis evidence id");
+  }
+  return appendRecord(
+    directory,
+    { kind: "evidence_appended", ...data },
+    `evidence:${data.thesisId}@${data.observedAt}`,
+  );
+}
+
 function tableExists(db: ThesisDatabase, name: string): boolean {
   const row = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name);
   return row !== undefined;
@@ -446,6 +523,7 @@ export async function readFinanceThesisLedger(
         recordCount: 0,
         openedRecordCount: 0,
         transitionRecordCount: 0,
+        evidenceAppendRecordCount: 0,
         headRef: null,
       });
     }
@@ -460,6 +538,7 @@ export async function readFinanceThesisLedger(
         recordCount: 0,
         openedRecordCount: 0,
         transitionRecordCount: 0,
+        evidenceAppendRecordCount: 0,
         headRef: null,
       });
     }
@@ -474,6 +553,9 @@ export async function readFinanceThesisLedger(
       recordCount: records.length,
       openedRecordCount: records.filter((record) => record.body.kind === "opened").length,
       transitionRecordCount: records.filter((record) => record.body.kind === "transition").length,
+      evidenceAppendRecordCount: records.filter(
+        (record) => record.body.kind === "evidence_appended",
+      ).length,
       headRef: records.at(-1)?.ref ?? null,
     });
   } finally {

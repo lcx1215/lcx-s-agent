@@ -128,6 +128,13 @@ export type CentralContextBudgetReport = Readonly<{
   droppedSections: readonly CentralContextDroppedSection[];
 }>;
 
+/** Bounded Finance lifecycle snapshot present in the perception for this cycle. */
+export type CentralFinancePerceptionEvidence = Readonly<{
+  status: "present" | "omitted_by_budget" | "unavailable";
+  summary?: Readonly<Record<string, unknown>>;
+  omittedBytes?: number;
+}>;
+
 /** The bounded action batch the brain returns (validated by an output contract). */
 export type CentralActionPlan = Readonly<{
   actions: readonly CentralProposedAction[];
@@ -182,6 +189,8 @@ export type CentralRunReceipt = Readonly<{
    * re-derive it, and so the dropped keys are named rather than silently missing.
    */
   contextBudget: CentralContextBudgetReport;
+  /** Finance snapshot that was available in the bounded perception, retained for audit. */
+  financePerception?: CentralFinancePerceptionEvidence;
   /** Ages of published runtime snapshots that were included in the perception. */
   runtimeFreshness?: Readonly<Record<string, unknown>>;
   /** Stage-level runtime evidence; persistence timing is reported by the latest pointer. */

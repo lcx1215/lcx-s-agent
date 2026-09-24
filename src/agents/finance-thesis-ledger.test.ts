@@ -3,8 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { requireNodeSqlite } from "../memory/sqlite.js";
+import { caseflowFingerprint } from "./finance-caseflow.js";
 import { financeThesisLedgerPath } from "./finance-state-dir.js";
 import {
+  appendFinanceThesisEvidence,
   openFinanceThesis,
   projectFinanceTheses,
   readFinanceThesisLedger,
@@ -108,6 +110,97 @@ describe("finance thesis ledger", () => {
     });
     const ledger = await readFinanceThesisLedger(directory);
     expect(ledger.theses[0].state).toBe("realised");
+  });
+
+  it("appends later evidence to the active thesis and exposes it in as-of views", async () => {
+    const directory = await storeDirectory();
+    await openFinanceThesis(directory, openInput());
+    const appended = await appendFinanceThesisEvidence(directory, {
+      thesisId: "thesis-1",
+      evidence: [{ id: "e2", source: "filing", reference: "10-Q 2026 Q3" }],
+      observedAt: LATER,
+    });
+
+    expect(appended.appended).toBe(true);
+    expect(appended.record.body.kind).toBe("evidence_appended");
+    const before = await readFinanceThesisLedger(directory, { asOf: PAST });
+    expect(before.theses[0].evidence.map((entry) => entry.id)).toEqual(["e1"]);
+    const after = await readFinanceThesisLedger(directory, { asOf: LATER });
+    expect(after.theses[0].state).toBe("active");
+    expect(after.theses[0].evidence.map((entry) => entry.id)).toEqual(["e1", "e2"]);
+    expect(after.evidenceAppendRecordCount).toBe(1);
+  });
+
+  it("reads legacy v1 records and continues the chain with v2 evidence events", async () => {
+    const directory = await storeDirectory();
+    await openFinanceThesis(directory, openInput());
+    const { DatabaseSync } = requireNodeSqlite();
+    const db = new DatabaseSync(financeThesisLedgerPath(directory));
+    try {
+      const row = db.prepare("SELECT body FROM finance_thesis_records WHERE sequence=1").get();
+      const legacy = {
+        ...JSON.parse(String(row?.body)),
+        schemaVersion: "lcx_finance_thesis_record_v1",
+      };
+      const ref = caseflowFingerprint(legacy);
+      db.exec("DROP TRIGGER finance_thesis_no_update");
+      db.prepare("UPDATE finance_thesis_records SET ref=?, body=? WHERE sequence=1").run(
+        ref,
+        JSON.stringify(legacy),
+      );
+    } finally {
+      db.close();
+    }
+
+    await appendFinanceThesisEvidence(directory, {
+      thesisId: "thesis-1",
+      evidence: [{ id: "e2", source: "filing", reference: "10-Q 2026 Q3" }],
+      observedAt: LATER,
+    });
+    const ledger = await readFinanceThesisLedger(directory);
+    expect(ledger.recordCount).toBe(2);
+    expect(ledger.theses[0].evidence.map((entry) => entry.id)).toEqual(["e1", "e2"]);
+  });
+
+  it("makes evidence appends idempotent and rejects repeated evidence under another event", async () => {
+    const directory = await storeDirectory();
+    await openFinanceThesis(directory, openInput());
+    const input = {
+      thesisId: "thesis-1",
+      evidence: [{ id: "e2", source: "filing", reference: "10-Q 2026 Q3" }],
+      observedAt: LATER,
+    };
+    expect((await appendFinanceThesisEvidence(directory, input)).appended).toBe(true);
+    expect((await appendFinanceThesisEvidence(directory, input)).appended).toBe(false);
+    await expect(
+      appendFinanceThesisEvidence(directory, {
+        ...input,
+        observedAt: MUCH_LATER,
+      }),
+    ).rejects.toThrow(/already contains an evidence id/);
+    expect((await readFinanceThesisLedger(directory)).recordCount).toBe(2);
+  });
+
+  it("refuses to append evidence to unknown or closed theses", async () => {
+    const directory = await storeDirectory();
+    const input = {
+      thesisId: "thesis-1",
+      evidence: [{ id: "e2", source: "filing", reference: "10-Q 2026 Q3" }],
+      observedAt: LATER,
+    };
+    await expect(appendFinanceThesisEvidence(directory, input)).rejects.toThrow(
+      /has no opening record/,
+    );
+    await openFinanceThesis(directory, openInput());
+    await transitionFinanceThesis(directory, {
+      thesisId: "thesis-1",
+      to: "invalidated",
+      reason: "Evidence falsified the claim.",
+      observedAt: LATER,
+    });
+    await expect(
+      appendFinanceThesisEvidence(directory, { ...input, observedAt: MUCH_LATER }),
+    ).rejects.toThrow(/already closed/);
   });
 
   it("is idempotent: reopening identical content appends nothing", async () => {

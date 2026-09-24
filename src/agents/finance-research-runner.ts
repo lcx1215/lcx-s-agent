@@ -71,6 +71,7 @@ import {
   parseFinanceResearchAllocationProposal,
   type FinanceResearchPortfolioContext,
 } from "./finance-research-portfolio-plan.js";
+import { validateFinanceResearchThesisProposals } from "./finance-research-thesis-learning.js";
 import { buildFinanceSourceRecoveryPlan } from "./finance-source-recovery.js";
 import {
   buildFinanceStrategyMethodKit,
@@ -1088,6 +1089,8 @@ function qualityVerifier(
   strategyStage?: FinanceStrategyStage,
   portfolioContext?: FinanceResearchPortfolioContext,
   asOf?: string,
+  sourceEvidence: readonly FinanceCommitteeEvidence[] = [],
+  instruments: readonly string[] = [],
 ): QualityHarnessVerifier {
   return ({ request, artifact }) => {
     const evidenceIds = new Set(request.evidence.map((entry) => entry.id));
@@ -1109,6 +1112,24 @@ function qualityVerifier(
         status: "failed",
         summary: "supported instrument claims must cite their own supplied evidence",
         details: uncited,
+      };
+    }
+    try {
+      const visibleEvidenceIds = new Set(request.evidence.map((entry) => entry.id));
+      validateFinanceResearchThesisProposals({
+        value: artifact.supportingAnalysis?.financeThesisProposals,
+        claims: artifact.claims,
+        evidence: sourceEvidence.filter((entry) => visibleEvidenceIds.has(entry.id)),
+        instruments,
+        asOf: asOf ?? "",
+        receiptReference: "quality-verification-only",
+        runId: "quality-verification-only",
+      });
+    } catch (error) {
+      return {
+        status: "failed",
+        summary: "finance thesis proposal failed deterministic evidence validation",
+        details: [error instanceof Error ? error.message : String(error)],
       };
     }
     if (requiresFinanceResearchAssessment(request.task)) {
@@ -1639,7 +1660,8 @@ export async function runFinanceResearchRun(
           `${ask}\nApply the selected analytical modules in sharedContext.financeOrchestration and only the supplied method kit checks relevant to this task. A caller selection does not establish evidence or tool execution. Preserve the requested horizon and deliverable; do not add a forecast or backtest to a factual request. Cite supporting evidence IDs, distinguish inference, and state missing evidence. Keep research-only and do not provide execution instructions.` +
           (plan.portfolioContext
             ? "\nAlso propose budget fractions for every controller-listed active strategy in supportingAnalysis.portfolioAllocationProposal.allocations. Each allocation must contain only strategyId, budgetFraction, and evidenceIds; cite supplied evidence, keep the total at or below 1, and leave unused capital as cash. This is a reviewable proposal, not execution authority."
-            : ""),
+            : "") +
+          "\nOptionally propose financeThesisProposals in artifact.supportingAnalysis for investment-relevant, evidence-supported claims only. Each proposal must have claimId (an id in artifact.claims with status supported), instrument (one declared research target), optional rationale, and nonempty invalidationConditions. Do not repeat evidenceIds in the proposal; the system derives them from the supported claim. Omit the field or use an empty array when no adequately supported thesis exists. This is an unadopted research candidate, not a trade instruction.",
         evidence: qualityEvidence(batch),
         sharedContext: {
           asOf,
@@ -1666,6 +1688,12 @@ export async function runFinanceResearchRun(
                 },
               }
             : {}),
+          financeThesisProposalContract: {
+            outputPath: "artifact.supportingAnalysis.financeThesisProposals",
+            declaredInstruments: plan.targets.map((target) => target.instrument),
+            evidenceIdsDerivedFrom: "the referenced supported claim",
+            executionAuthority: "none",
+          },
           ...(requiresFinanceResearchAssessment(ask)
             ? {
                 supportingAnalysisContract: {
@@ -1706,7 +1734,14 @@ export async function runFinanceResearchRun(
             : 180_000,
           verifierTimeoutMs: 10_000,
           maxAttempts: 2,
-          verify: qualityVerifier(decisionMode, strategyStage, plan.portfolioContext, asOf),
+          verify: qualityVerifier(
+            decisionMode,
+            strategyStage,
+            plan.portfolioContext,
+            asOf,
+            evidence,
+            plan.targets.map((target) => target.instrument),
+          ),
         });
       quality = modelCheckpoint
         ? await modelCheckpoint.stage("quality", executeQuality)

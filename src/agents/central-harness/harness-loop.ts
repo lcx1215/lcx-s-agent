@@ -3,6 +3,7 @@ import type { CentralBrain, CentralBrainOutcome } from "./model-brain.js";
 import type {
   CentralBrainCallEvidence,
   CentralContextBudgetReport,
+  CentralFinancePerceptionEvidence,
   CentralPerception,
   CentralRunReceipt,
   CentralStep,
@@ -337,6 +338,7 @@ async function runCycle(
     brainCall,
     nextAction,
     contextBudget: bounded.report,
+    financePerception: projectFinancePerceptionEvidence(bounded),
     ...(isPlainRecord(bounded.perception.controlRoom.runtimeFreshness)
       ? { runtimeFreshness: bounded.perception.controlRoom.runtimeFreshness }
       : {}),
@@ -508,6 +510,7 @@ export function compactReceipts(
  */
 export const CENTRAL_PERCEPTION_BUDGET_BYTES = 12_000;
 export const CENTRAL_PERCEPTION_KEY_BUDGET_BYTES = 2_048;
+export const CENTRAL_FINANCE_PERCEPTION_KEY_BUDGET_BYTES = 3_072;
 /**
  * Caps on the tool-result digest carried back to the next decision, and on how
  * much of a step's reason survives compaction.
@@ -639,6 +642,7 @@ function boundObjectSection(
   source: Readonly<Record<string, unknown>>,
   sectionBudgetBytes: number,
   keyBudgetBytes: number = CENTRAL_PERCEPTION_KEY_BUDGET_BYTES,
+  keyBudgetOverrides: Readonly<Record<string, number>> = {},
 ): {
   value: Record<string, unknown>;
   dropped: readonly Readonly<{ key: string; bytes: number }>[];
@@ -649,7 +653,8 @@ function boundObjectSection(
   for (const [key, value] of Object.entries(source)) {
     const bytes = jsonBytes(value);
     const entryBytes = jsonBytes(key) + bytes + 2; // "key":value,
-    if (bytes > keyBudgetBytes || keptBytes + entryBytes > sectionBudgetBytes) {
+    const keyLimitBytes = keyBudgetOverrides[key] ?? keyBudgetBytes;
+    if (bytes > keyLimitBytes || keptBytes + entryBytes > sectionBudgetBytes) {
       dropped.push({ key, bytes });
       continue;
     }
@@ -687,7 +692,12 @@ export function boundPerception(
     backlog: perception.backlog,
     boundaries: perception.boundaries,
   });
-  const { value, dropped } = boundObjectSection(controlRoom, Math.max(0, budget - fixedBytes));
+  const { value, dropped } = boundObjectSection(
+    controlRoom,
+    Math.max(0, budget - fixedBytes),
+    CENTRAL_PERCEPTION_KEY_BUDGET_BYTES,
+    { financeAutomaticLifecycle: CENTRAL_FINANCE_PERCEPTION_KEY_BUDGET_BYTES },
+  );
   const boundedPerception: CentralPerception = { ...perception, controlRoom: value };
   const injectedBytes = jsonBytes(boundedPerception);
   return {
@@ -713,4 +723,21 @@ export function boundPerception(
           : [],
     },
   };
+}
+
+/** Preserve exactly what the bounded perception carried about Finance. */
+export function projectFinancePerceptionEvidence(
+  bounded: ReturnType<typeof boundPerception>,
+): CentralFinancePerceptionEvidence {
+  const summary = bounded.perception.controlRoom.financeAutomaticLifecycle;
+  if (isPlainRecord(summary)) {
+    return { status: "present", summary };
+  }
+
+  const omitted = bounded.report.droppedSections
+    .flatMap((section) => section.droppedKeys)
+    .find((entry) => entry.key === "financeAutomaticLifecycle");
+  return omitted
+    ? { status: "omitted_by_budget", omittedBytes: omitted.bytes }
+    : { status: "unavailable" };
 }

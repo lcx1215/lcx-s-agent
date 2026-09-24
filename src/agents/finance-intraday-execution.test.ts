@@ -10,6 +10,7 @@ import {
 } from "./finance-intraday-control-ledger.js";
 import { executeFinanceIntradayDecision } from "./finance-intraday-execution.js";
 import { appendFinanceExecutionReceipt } from "./finance-position-ledger.js";
+import { openFinanceThesis } from "./finance-thesis-ledger.js";
 import type {
   FinanceTradeDecisionReviewRequest,
   FinanceTradeDecisionReviewer,
@@ -45,6 +46,14 @@ describe("intraday decision execution bridge", () => {
   it("closes exactly the observed paper position and never replays a terminal signal", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-execution-"));
     temporary.push(directory);
+    await openFinanceThesis(directory, {
+      thesisId: "spy-long-horizon",
+      instrument: "SPY",
+      claim: "Broad earnings growth remains supportive.",
+      evidence: [{ id: "source-1", source: "fixture-source", reference: "fixture://source" }],
+      invalidationConditions: ["Earnings trend reverses."],
+      observedAt: "2026-09-18T14:00:00.000Z",
+    });
     const decision = (
       await appendFinanceIntradayDecision(directory, {
         signalId: "intraday-sell-1",
@@ -165,6 +174,11 @@ describe("intraday decision execution bridge", () => {
       expect.objectContaining({
         schemaVersion: "lcx_finance_intraday_trade_decision_review_v1",
         ruleIds: ["opening_range_breakout_long_next_bar_v1"],
+        decisionContext: expect.objectContaining({
+          schemaVersion: "lcx_finance_thesis_decision_context_v1",
+          activeThesisCount: 1,
+          theses: [expect.objectContaining({ thesisId: "spy-long-horizon", instrument: "SPY" })],
+        }),
         candidates: [
           expect.objectContaining({
             candidateId: "intraday-sell-1",
@@ -181,6 +195,12 @@ describe("intraday decision execution bridge", () => {
       tradeDecisionReview: {
         status: "completed",
         decision: { decision: "approve" },
+        request: expect.objectContaining({
+          decisionContext: expect.objectContaining({
+            activeThesisCount: 1,
+            theses: [expect.objectContaining({ thesisId: "spy-long-horizon" })],
+          }),
+        }),
       },
     });
     expect(runOrderMock.mock.calls[0]?.[0]).toMatchObject({

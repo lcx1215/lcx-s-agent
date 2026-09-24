@@ -508,9 +508,22 @@ export async function runFinanceDailyCycleOperator(
     }
 
     const readiness = strategyReadiness?.readiness;
-    // The 90-day duration criterion is independently configurable, but unresolved adversity or
-    // unavailable readiness evidence remains a hard Paper placement gate per operator policy.
-    const paperReadinessBlocked = readiness?.rules.some((rule) => rule.ready !== true) ?? false;
+    // Adversity is tracked in readiness reporting and evaluation, not as an entry prerequisite.
+    // Keep execution blocked when evidence cannot be judged, the declared duration is unmet, or
+    // an active rule has conflicting bars; those are data-integrity and explicit-policy gates.
+    const paperReadinessBlocked = strategyReadiness
+      ? !strategyReadiness.thresholdsDeclared ||
+        strategyReadiness.thresholdsError !== null ||
+        (readiness?.rules.length ?? 0) === 0 ||
+        (readiness?.rules.some(
+          (rule) =>
+            rule.ready === null ||
+            typeof rule.readyUnavailableReason === "string" ||
+            rule.durationMet !== true ||
+            rule.barConflicts.length > 0,
+        ) ??
+          true)
+      : false;
     if (options.mode === "day" && options.place && paperReadinessBlocked) {
       const hasBarConflict =
         readiness?.rules.some((rule) => (rule.barConflicts?.length ?? 0) > 0) ?? false;
@@ -520,7 +533,7 @@ export async function runFinanceDailyCycleOperator(
         failureKind: "execution_readiness_gate",
         error: hasBarConflict
           ? "active strategy rule has conflicting daily bars; execution refused"
-          : "active strategy rule is not paper-ready under the declared readiness evidence; execution refused",
+          : "active strategy rule lacks determinable evidence or fails the declared duration; execution refused",
         ...(strategyReadiness ? financeRuleReadinessSection(strategyReadiness) : {}),
         ...(dayEodRefresh ? { eodRefresh: dayEodRefresh } : {}),
         ...(dayEodRefreshWarnings.length > 0 ? { eodRefreshWarnings: dayEodRefreshWarnings } : {}),

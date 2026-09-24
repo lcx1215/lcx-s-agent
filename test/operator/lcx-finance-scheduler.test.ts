@@ -660,6 +660,9 @@ it("refreshes a grounded research plan before the unique day cycle", async () =>
       context,
       "--portfolio-plan-out",
       plan,
+      "--persist-theses",
+      "--finance-state-dir",
+      directory,
     ]),
   );
   expect(mocks.runCycle.mock.calls[1][0].argv).toEqual(
@@ -709,6 +712,9 @@ it("routes night settlement, ledgers and news through the same module research o
       "research_only",
       "--controller-evidence",
       evidencePath,
+      "--persist-theses",
+      "--finance-state-dir",
+      directory,
     ]),
   );
   expect(JSON.parse(fs.readFileSync(evidencePath, "utf8"))).toEqual(

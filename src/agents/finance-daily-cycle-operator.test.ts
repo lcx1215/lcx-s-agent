@@ -205,7 +205,7 @@ describe("account gate before unattended placement", () => {
     expect(factory).toHaveBeenCalledTimes(1);
     expect(reviewer).toHaveBeenCalledWith(reviewRequest, expect.any(AbortSignal));
   });
-  it("refuses Paper placement until the existing adversity readiness gate is met", async () => {
+  it("allows Paper execution while adversity evidence remains promotion-only", async () => {
     mocks.account.mockResolvedValue({ ok: true, account });
     mocks.ruleReadiness.mockResolvedValueOnce({
       thresholdsDeclared: true,
@@ -216,6 +216,7 @@ describe("account gate before unattended placement", () => {
           {
             ruleId: "fixture",
             ready: false,
+            readyUnavailableReason: null,
             durationMet: true,
             observationCount: 3,
             barConflicts: [],
@@ -231,16 +232,11 @@ describe("account gate before unattended placement", () => {
       createTradeDecisionReviewer,
     });
     expect(result).toMatchObject({
-      ok: false,
-      failureKind: "execution_readiness_gate",
-      error: expect.stringContaining("not paper-ready"),
-      readiness: {
-        rules: [{ ruleId: "fixture", ready: false }],
-      },
+      ok: true,
+      readiness: { rules: [{ ruleId: "fixture", ready: false }] },
     });
-    expect(createController).not.toHaveBeenCalled();
+    expect(mocks.cycle).toHaveBeenCalledWith(expect.objectContaining({ place: true }));
     expect(createTradeDecisionReviewer).not.toHaveBeenCalled();
-    expect(mocks.cycle).not.toHaveBeenCalled();
   });
   it("fails closed when the other readiness gates cannot be judged", async () => {
     mocks.account.mockResolvedValue({ ok: true, account });
@@ -267,7 +263,7 @@ describe("account gate before unattended placement", () => {
     expect(result).toMatchObject({
       ok: false,
       failureKind: "execution_readiness_gate",
-      error: expect.stringContaining("not paper-ready"),
+      error: expect.stringContaining("lacks determinable evidence or fails the declared duration"),
       readiness: { rules: [{ ready: null }] },
     });
     expect(mocks.cycle).not.toHaveBeenCalled();

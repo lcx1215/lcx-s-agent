@@ -18,6 +18,12 @@ import {
   type FinanceResearchRunReceipt,
 } from "../../src/agents/finance-research-runner.ts";
 import {
+  persistFinanceResearchThesisLearning,
+  validateFinanceResearchThesisProposals,
+  type FinanceResearchThesisLearningResult,
+} from "../../src/agents/finance-research-thesis-learning.ts";
+import { resolveFinanceStateDir } from "../../src/agents/finance-state-dir.ts";
+import {
   createLocalQualityHarnessAdapter,
   type LocalTextModelRuntimeConfig,
 } from "../../src/agents/local-text-model-adapter.ts";
@@ -49,6 +55,8 @@ type Options = {
   executeModules: boolean;
   quality: boolean;
   write: boolean;
+  persistTheses: boolean;
+  financeStateDir?: string;
   adapterPath?: string;
   modelId: string;
   pythonPath?: string;
@@ -107,6 +115,8 @@ function usage(): string {
     "  --portfolio-context FILE           controller-owned active-strategy/account envelope",
     "  --portfolio-plan-out FILE          atomically write a verified portfolio plan",
     "  --controller-evidence FILE         timestamped controller-owned local evidence packet",
+    "  --persist-theses                   store only fully gated, source-linked research thesis candidates",
+    "  --finance-state-dir DIR            exact existing finance state root (required with --persist-theses)",
     "  --write                            write the full receipt to workspace state",
     "  --json                             emit a bounded JSON summary",
   ].join("\n");
@@ -141,7 +151,7 @@ function decisionMode(value: string): FinanceDecisionMode {
   );
 }
 
-function parseArgs(args: readonly string[]): Options {
+export function parseArgs(args: readonly string[]): Options {
   const options: Options = {
     ask: DEFAULT_ASK,
     horizonMonths: 6,
@@ -151,6 +161,7 @@ function parseArgs(args: readonly string[]): Options {
     executeModules: false,
     quality: true,
     write: false,
+    persistTheses: false,
     modelId: DEFAULT_MODEL_ID,
     maxTokens: 8_192,
     timeoutMs: 120_000,
@@ -240,6 +251,11 @@ function parseArgs(args: readonly string[]): Options {
     } else if (arg === "--controller-evidence") {
       options.controllerEvidencePath = path.resolve(readValue(args, index, arg));
       index += 1;
+    } else if (arg === "--persist-theses") {
+      options.persistTheses = true;
+    } else if (arg === "--finance-state-dir") {
+      options.financeStateDir = path.resolve(readValue(args, index, arg));
+      index += 1;
     } else if (arg === "--write") {
       options.write = true;
     } else if (arg === "--json") {
@@ -278,6 +294,20 @@ function parseArgs(args: readonly string[]): Options {
     (!options.live || !options.workflowModels || !options.write)
   ) {
     throw new Error("--controller-evidence requires --live --workflow-models --write");
+  }
+  if (
+    options.persistTheses &&
+    (!options.live || !options.workflowModels || !options.write || !options.quality)
+  ) {
+    throw new Error(
+      "--persist-theses requires --live --workflow-models --write with quality enabled",
+    );
+  }
+  if (options.persistTheses && !options.financeStateDir) {
+    throw new Error("--persist-theses requires an exact --finance-state-dir");
+  }
+  if (!options.persistTheses && options.financeStateDir) {
+    throw new Error("--finance-state-dir is only valid with --persist-theses");
   }
   return options;
 }
@@ -371,6 +401,7 @@ function summarizeReceipt(receipt: FinanceResearchRunReceipt, options: Options) 
       decisionMode: receipt.plan.decisionMode,
       liveFetch: options.live,
       qualityRequested: options.quality,
+      persistTheses: options.persistTheses,
     },
     status: receipt.status,
     answerDecision: receipt.answerDecision,
@@ -585,6 +616,7 @@ async function run(options: Options): Promise<{
   receipt: FinanceResearchRunReceipt;
   written?: unknown;
   portfolioPlanWritten?: string;
+  thesisLearning?: FinanceResearchThesisLearningResult;
 }> {
   const ask = assertResearchAsk(options.ask);
   const asOf = assertIsoTimestamp(options.asOf ?? new Date().toISOString());
@@ -608,6 +640,12 @@ async function run(options: Options): Promise<{
   }
   if (options.live) {
     await preflightFinanceResearchReceiptDestination(asOf);
+  }
+  if (options.persistTheses && options.financeStateDir) {
+    const stateDirectory = await fs.stat(options.financeStateDir).catch(() => undefined);
+    if (!stateDirectory?.isDirectory()) {
+      throw new Error("--finance-state-dir must name an existing finance state directory");
+    }
   }
   const input: FinanceResearchRunInput = {
     ask,
@@ -676,6 +714,38 @@ async function run(options: Options): Promise<{
     batchOptions,
   });
   const written = options.write ? await writeReceipt(receipt, asOf) : undefined;
+  let thesisLearning: FinanceResearchThesisLearningResult | undefined;
+  if (options.persistTheses && written && options.financeStateDir) {
+    const state = resolveFinanceStateDir({ directory: options.financeStateDir });
+    const artifact = receipt.quality?.finalArtifact;
+    try {
+      const proposals = validateFinanceResearchThesisProposals({
+        value: artifact?.supportingAnalysis?.financeThesisProposals,
+        claims: artifact?.claims ?? [],
+        evidence: (receipt.batch?.committeeEvidence ?? []).slice(0, 48),
+        instruments: receipt.plan.targets.map((target) => target.instrument),
+        asOf,
+        receiptReference: written.datedPath,
+        runId: receipt.quality?.runId ?? "",
+      });
+      thesisLearning = await persistFinanceResearchThesisLearning({
+        directory: state.directory,
+        eligible:
+          receipt.status === "candidate" &&
+          receipt.gates.every((gate) => gate.passed) &&
+          receipt.quality?.status === "verified" &&
+          receipt.quality.quality.passed,
+        proposals,
+        observedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      thesisLearning = Object.freeze({
+        status: "refused",
+        reason: error instanceof Error ? error.message : String(error),
+        results: Object.freeze([]),
+      });
+    }
+  }
   const portfolioPlanWritten =
     options.portfolioPlanOut && receipt.portfolioPlan
       ? await writeVerifiedPortfolioPlan(options.portfolioPlanOut, receipt.portfolioPlan)
@@ -684,6 +754,7 @@ async function run(options: Options): Promise<{
     receipt,
     ...(written === undefined ? {} : { written }),
     ...(portfolioPlanWritten === undefined ? {} : { portfolioPlanWritten }),
+    ...(thesisLearning === undefined ? {} : { thesisLearning }),
   };
 }
 
@@ -696,6 +767,7 @@ async function main(): Promise<number> {
     ...(result.portfolioPlanWritten === undefined
       ? {}
       : { portfolioPlanWritten: result.portfolioPlanWritten }),
+    ...(result.thesisLearning === undefined ? {} : { thesisLearning: result.thesisLearning }),
   };
   if (options.json) {
     process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
@@ -706,10 +778,13 @@ async function main(): Promise<number> {
         `answer_decision=${summary.answerDecision}`,
         `expected_jobs=${summary.plan.expectedJobCount}`,
         `gates=${summary.gates.map((gate) => `${gate.id}:${gate.passed ? "pass" : "fail"}`).join(",")}`,
+        ...(result.thesisLearning ? [`thesis_learning=${result.thesisLearning.status}`] : []),
         `not_touched=${summary.notTouched.join(",")}`,
       ].join("\n") + "\n",
     );
   }
+  // A persistence failure stays visible in `thesisLearning`; it does not become a new trading
+  // gate or suppress an otherwise valid research candidate.
   return summary.status === "candidate" || summary.status === "planned" ? 0 : 2;
 }
 

@@ -269,6 +269,69 @@ describe("finance research runner", () => {
     );
   });
 
+  it("withholds a research candidate when a thesis proposal escapes the declared instrument universe", async () => {
+    const unsupportedProposalInvoker = async (request: unknown): Promise<unknown> => {
+      const output = await modelInvoker(request);
+      const payload = request as { stage?: string };
+      if (
+        (payload.stage === "draft" || payload.stage === "format") &&
+        typeof output === "object" &&
+        output !== null &&
+        "kind" in output &&
+        output.kind === "artifact" &&
+        "artifact" in output &&
+        typeof output.artifact === "object" &&
+        output.artifact !== null
+      ) {
+        const artifact = output.artifact as {
+          supportingAnalysis?: Record<string, unknown>;
+        };
+        return {
+          ...output,
+          artifact: {
+            ...output.artifact,
+            supportingAnalysis: {
+              ...artifact.supportingAnalysis,
+              financeThesisProposals: [
+                {
+                  claimId: "claim-1",
+                  instrument: "OUTSIDE-UNIVERSE",
+                  invalidationConditions: ["The cited evidence no longer supports the claim."],
+                },
+              ],
+            },
+          },
+        };
+      }
+      return output;
+    };
+    const result = await runFinanceResearchRun({
+      input: {
+        ask: "分析未来半年美股和比特币的市场情绪。",
+        asOf: AS_OF,
+        horizonMonths: 6,
+        targets: [
+          {
+            id: "btc-thesis-fixture",
+            instrument: "BTCUSDT",
+            assetClass: "crypto",
+            realtime: { requireOfficialReference: false },
+          },
+        ],
+      },
+      liveFetch: true,
+      qualityEnabled: true,
+      modelInvoker,
+      qualityModelInvoker: unsupportedProposalInvoker,
+      modelId: "fixture-model",
+      batchOptions: BATCH_OPTIONS,
+    });
+
+    expect(result.status).toBe("needs_review");
+    expect(result.gates.find((gate) => gate.id === "quality")?.passed).toBe(false);
+    expect(result.quality?.verification.details.join(" ")).toMatch(/declared universe/);
+  });
+
   it("compiles a grounded dynamic allocation into the existing portfolio plan contract", async () => {
     const allocationModel = async (request: unknown): Promise<unknown> => {
       const output = await modelInvoker(request);

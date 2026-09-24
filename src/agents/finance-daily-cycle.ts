@@ -62,6 +62,7 @@ import {
   readFinancePositionLedger,
 } from "./finance-position-ledger.js";
 import { resolveFinanceStateDir } from "./finance-state-dir.js";
+import { buildFinanceThesisDecisionContext } from "./finance-thesis-decision-context.js";
 import {
   FINANCE_TRADE_DECISION_REVIEW_SCHEMA,
   isValidFinanceTradeDecisionReviewResult,
@@ -1295,6 +1296,11 @@ export async function runFinanceDailyCycle(
   >();
   if (reviewCandidates.length > 0) {
     const reconciliation = accountBook?.reconciliation;
+    const decisionContext = await buildFinanceThesisDecisionContext({
+      directory,
+      asOf,
+      instruments: reviewCandidates.map((candidate) => candidate.instrument),
+    });
     const reviewRequest = {
       schemaVersion: FINANCE_TRADE_DECISION_REVIEW_SCHEMA,
       venue: "alpaca:paper",
@@ -1320,6 +1326,7 @@ export async function runFinanceDailyCycle(
         quantity: ledgerQuantity.get(instrument) ?? 0,
         marketValue: Number((weight * equity).toFixed(2)),
       })),
+      decisionContext,
       candidates: reviewCandidates,
     } as const;
     const failedReview = (
@@ -1364,6 +1371,7 @@ export async function runFinanceDailyCycle(
       candidateCount: reviewCandidates.length,
       modelCalls: result.attempted ? 1 : 0,
       candidateInputs: reviewCandidates,
+      decisionContext,
       ...(result.status === "failed" ? { failureCode: result.failureCode } : {}),
       provider: result.provider,
       modelId: result.modelId,

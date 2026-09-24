@@ -5,6 +5,7 @@ import { applySqliteMigrations, type SqliteMigration } from "../memory/sqlite-mi
 import { requireNodeSqlite } from "../memory/sqlite.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import { financeIntradayControlLedgerPath } from "./finance-state-dir.js";
+import { FinanceThesisDecisionContextSchema } from "./finance-thesis-decision-context.js";
 
 const Hash = z.string().regex(/^[a-f0-9]{64}$/u);
 const Text = z.string().trim().min(1);
@@ -114,6 +115,7 @@ const IntradayReviewRequestSchema = z
         })
         .strict(),
     ),
+    decisionContext: FinanceThesisDecisionContextSchema.optional(),
     candidates: z.array(IntradayReviewCandidateSchema).length(1),
   })
   .strict();

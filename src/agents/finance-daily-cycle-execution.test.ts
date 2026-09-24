@@ -161,6 +161,11 @@ describe("daily cycle execution data boundary", () => {
     expect(reviewer.mock.calls[0]?.[0]).toMatchObject({
       venue: "alpaca:paper",
       ruleIds: expect.any(Array),
+      decisionContext: expect.objectContaining({
+        schemaVersion: "lcx_finance_thesis_decision_context_v1",
+        activeThesisCount: 0,
+        theses: [],
+      }),
       candidates: expect.arrayContaining([
         expect.objectContaining({
           instrument: "AAPL",
@@ -182,6 +187,11 @@ describe("daily cycle execution data boundary", () => {
         candidateCount: 2,
         provider: "fixture-provider",
         latencyMs: 7,
+        decisionContext: expect.objectContaining({
+          schemaVersion: "lcx_finance_thesis_decision_context_v1",
+          activeThesisCount: 0,
+          theses: [],
+        }),
         candidateInputs: expect.arrayContaining([
           expect.objectContaining({
             instrument: "AAPL",

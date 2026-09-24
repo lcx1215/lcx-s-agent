@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import {
   boundPerception,
   compactReceipts,
+  projectFinancePerceptionEvidence,
   resumableReceipts,
   runCentralHarnessCycle,
 } from "../../src/agents/central-harness/harness-loop.js";
@@ -376,6 +377,7 @@ function failedCycleReceipt(
   error: unknown,
   perceptionBuildMs: number,
 ): CentralRunReceipt {
+  const bounded = boundPerception(perception);
   return {
     schemaVersion: "lcx_central_agent_v1",
     runId: `central-${index}-${Date.now()}-failed`,
@@ -395,7 +397,8 @@ function failedCycleReceipt(
     // The cycle threw, so nothing reached the brain; this records the budget that
     // was in force rather than claiming an injection happened. The receipt's own
     // brainCall.outcome is what tells a reader no injection occurred.
-    contextBudget: boundPerception(perception).report,
+    contextBudget: bounded.report,
+    financePerception: projectFinancePerceptionEvidence(bounded),
     stageDurationsMs: {
       perceptionBuildMs,
       brainProposalMs: null,
