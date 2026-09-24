@@ -141,4 +141,30 @@ describe("finance provider heartbeat", () => {
     expect(state.records.quota.status).toBe("degraded");
     expect(state.records.quota.reason).toBe("budget_exhausted");
   });
+
+  it("cancels pending probes on shutdown without classifying providers as unhealthy", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "finance-heartbeat-"));
+    roots.push(root);
+    const controller = new AbortController();
+    controller.abort();
+    let calls = 0;
+    const result = await runFinanceSourceHeartbeat({
+      directory: root,
+      signal: controller.signal,
+      asOf: "2026-09-22T07:00:00.000Z",
+      now: () => Date.parse("2026-09-22T07:00:00.000Z"),
+      realtimeAdapters: [
+        adapter("demo_provider_quote", async (request) => {
+          calls += 1;
+          return observation(request);
+        }),
+      ],
+      collectionAdapters: [],
+      maxSourceConcurrency: 1,
+    });
+    const state = await readFinanceSourceHeartbeat({ directory: root });
+    expect(calls).toBe(0);
+    expect(result.unknownCount).toBe(1);
+    expect(state.records.demo).toMatchObject({ status: "unknown", reason: "cancelled" });
+  });
 });

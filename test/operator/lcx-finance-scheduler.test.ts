@@ -23,6 +23,12 @@ const mocks = vi.hoisted(() => ({
   killTree: vi.fn(),
   loadConfig: vi.fn(() => ({})),
   syncAlpacaHistory: vi.fn(),
+  runSourceHeartbeat: vi.fn(async () => ({
+    checkedProviders: [] as string[],
+    healthyCount: 0,
+    degradedCount: 0,
+    unhealthyCount: 0,
+  })),
   createIntradayController: vi.fn(() => ({ accountId: "paper-account" })),
   runIntradayMonitorTick: vi.fn(),
   executeIntradayDecision: vi.fn(),
@@ -38,6 +44,9 @@ vi.mock("node:child_process", async (importOriginal) => {
 vi.mock("../../src/agents/finance-scheduler-process.js", () => ({
   DEFAULT_FINANCE_CYCLE_TIMEOUT_MS: 900_000,
   runFinanceCycleProcess: mocks.runCycle,
+}));
+vi.mock("../../src/agents/finance-source-heartbeat.js", () => ({
+  runFinanceSourceHeartbeat: mocks.runSourceHeartbeat,
 }));
 vi.mock("../../src/config/config.js", () => ({ loadConfig: mocks.loadConfig }));
 vi.mock("../../src/config/env-vars.js", () => ({ applyConfigEnvVars: vi.fn() }));
@@ -78,6 +87,12 @@ beforeEach(() => {
   mocks.syncAlpacaHistory.mockResolvedValue({
     accountId: "paper-account",
     accountReconciliation: { status: "reconciled" },
+  });
+  mocks.runSourceHeartbeat.mockResolvedValue({
+    checkedProviders: [],
+    healthyCount: 0,
+    degradedCount: 0,
+    unhealthyCount: 0,
   });
   originalTermListeners = process.listenerCount("SIGTERM");
   originalIntListeners = process.listenerCount("SIGINT");
@@ -302,6 +317,9 @@ it("releases an idle loop on SIGINT without starting a cycle", async () => {
   });
   await expect(runFinanceScheduler(["--loop", "--dir", directory])).resolves.toBe(130);
   expect(mocks.runCycle).not.toHaveBeenCalled();
+  expect(mocks.runSourceHeartbeat).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({ directory, signal: expect.any(AbortSignal) }),
+  );
   expect(fs.existsSync(path.join(directory, FINANCE_SCHEDULER_LOCK))).toBe(false);
 });
 
@@ -384,6 +402,13 @@ it("forwards explicit read-only history synchronization without enabling placeme
   const options = parseFinanceSchedulerArgs(["--loop", "--sync-alpaca-history"]);
   expect(options.extraArgs).toEqual(["--sync-alpaca-history"]);
   expect(options.extraArgs).not.toContain("--place");
+});
+
+it("enables provider heartbeat by default and supports an explicit isolated-run opt-out", () => {
+  expect(parseFinanceSchedulerArgs(["--loop"]).sourceHeartbeatEnabled).toBe(true);
+  expect(
+    parseFinanceSchedulerArgs(["--loop", "--no-source-heartbeat"]).sourceHeartbeatEnabled,
+  ).toBe(false);
 });
 
 it("parses a resident event-driven intraday monitor without granting placement", () => {

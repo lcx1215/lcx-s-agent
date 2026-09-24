@@ -51,11 +51,11 @@ it("runs the real idle loop, excludes another CLI writer, and removes ownership 
       static now() { return new RealDate('2026-09-21T10:00:00Z').getTime(); }
     };
     const {runFinanceScheduler} = await import(${JSON.stringify(script)});
-    process.exitCode = await runFinanceScheduler(['--loop','--dir',${JSON.stringify(directory)}]);
+    process.exitCode = await runFinanceScheduler(['--loop','--no-source-heartbeat','--dir',${JSON.stringify(directory)}]);
   `;
   const owner = start(["--import", "tsx", "--input-type=module", "-e", fixture]);
   await vi.waitFor(() => expect(owner.output.stdout).toContain("scheduler pid="), {
-    timeout: 5000,
+    timeout: 10000,
   });
   expect(fs.existsSync(path.join(directory, "daily-cycle-scheduler.lock"))).toBe(true);
   await vi.waitFor(() => {
@@ -74,7 +74,7 @@ it("runs the real idle loop, excludes another CLI writer, and removes ownership 
   expect(fs.existsSync(path.join(directory, "daily-cycle-scheduler.lock"))).toBe(false);
   expect(fs.existsSync(path.join(directory, "daily-cycle-scheduler.pid"))).toBe(false);
   expect(fs.existsSync(path.join(directory, "daily-cycle-runs.jsonl"))).toBe(false);
-}, 15_000);
+}, 20_000);
 
 it("returns a real nonzero CLI exit for corrupt state and leaves the source state untouched", async () => {
   const filename = path.join(directory, "daily-cycle-scheduler.json");

@@ -73,6 +73,7 @@ type HeartbeatOptions = Readonly<{
   workspaceDir?: string;
   directory?: string;
   env?: NodeJS.ProcessEnv;
+  signal?: AbortSignal;
   asOf?: string;
   now?: () => number;
   force?: boolean;
@@ -260,14 +261,16 @@ function resultFromReceipts(
   const networkCode =
     outcomeReceipt?.networkCode ?? (error instanceof ApiCallError ? error.networkCode : undefined);
   const status: FinanceSourceHeartbeatStatus =
-    !error && outcomeReceipt?.status === "succeeded" && receipt?.dataAccess?.kind !== "cache"
-      ? "healthy"
-      : kind === "budget_exhausted" ||
-          kind === "forbidden" ||
-          kind === "rate_limited" ||
-          (httpStatus !== undefined && httpStatus >= 400 && httpStatus < 500)
-        ? "degraded"
-        : "unhealthy";
+    kind === "cancelled"
+      ? "unknown"
+      : !error && outcomeReceipt?.status === "succeeded" && receipt?.dataAccess?.kind !== "cache"
+        ? "healthy"
+        : kind === "budget_exhausted" ||
+            kind === "forbidden" ||
+            kind === "rate_limited" ||
+            (httpStatus !== undefined && httpStatus >= 400 && httpStatus < 500)
+          ? "degraded"
+          : "unhealthy";
   const reason: FinanceSourceHeartbeatReason =
     receipt?.dataAccess?.kind === "cache"
       ? "cache_only"
@@ -381,6 +384,9 @@ export async function runFinanceSourceHeartbeat(options: HeartbeatOptions = {}) 
     async (candidate): Promise<ProbeResult> => {
       const receipts: ApiCallReceipt[] = [];
       try {
+        if (options.signal?.aborted) {
+          throw new ApiCallError("cancelled");
+        }
         await withFinanceQuotaLane("diagnostics", async () => {
           const governance = options.sourceGovernance?.forSource(candidate.adapterId);
           await runApiSourceCall(
@@ -389,6 +395,7 @@ export async function runFinanceSourceHeartbeat(options: HeartbeatOptions = {}) 
               source: candidate.adapterId,
               operation: "provider_heartbeat",
               timeoutMs,
+              ...(options.signal ? { signal: options.signal } : {}),
               retry: { attempts: 1 },
               cacheMaxAgeMs: 0,
               authScopeLabel: "configured_read_only",

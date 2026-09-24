@@ -96,6 +96,7 @@ type SchedulerOptions = {
   directory?: string;
   timeoutMs: number;
   extraArgs: string[];
+  sourceHeartbeatEnabled: boolean;
   intraday?: IntradayMonitorConfig;
   researchPlan?: ResearchPlanConfig;
   json: boolean;
@@ -108,6 +109,7 @@ export function parseFinanceSchedulerArgs(argv: readonly string[]): SchedulerOpt
   let directory: string | undefined;
   let timeoutMs = DEFAULT_FINANCE_CYCLE_TIMEOUT_MS;
   const extraArgs: string[] = [];
+  let sourceHeartbeatEnabled = true;
   const seen = new Set<string>();
   let intradayEnabled = false;
   let intradayPlace = false;
@@ -136,6 +138,8 @@ export function parseFinanceSchedulerArgs(argv: readonly string[]): SchedulerOpt
         }
         mode = value;
       }
+    } else if (arg === "--no-source-heartbeat") {
+      sourceHeartbeatEnabled = false;
     } else if (arg === "--json") {
       json = true;
     } else if (arg === "--intraday-monitor") {
@@ -311,6 +315,7 @@ export function parseFinanceSchedulerArgs(argv: readonly string[]): SchedulerOpt
     directory,
     timeoutMs,
     extraArgs,
+    sourceHeartbeatEnabled,
     json,
     ...(intradayEnabled
       ? {
@@ -657,6 +662,7 @@ async function heartbeat(context: CycleContext): Promise<void> {
   try {
     const result = await runFinanceSourceHeartbeat({
       directory: context.root.directory,
+      signal: context.signal,
       timeoutMs: Math.min(context.options.timeoutMs, 20_000),
       maxSourceConcurrency: 4,
     });
@@ -946,7 +952,9 @@ async function tick(context: CycleContext): Promise<void> {
     }
   }
   // Diagnostic provider probes must not delay scheduled research or paper execution.
-  await heartbeat(context);
+  if (context.options.sourceHeartbeatEnabled) {
+    await heartbeat(context);
+  }
 }
 
 async function detach(root: FinanceStateDir, options: SchedulerOptions): Promise<void> {
@@ -964,6 +972,7 @@ async function detach(root: FinanceStateDir, options: SchedulerOptions): Promise
         root.directory,
         "--cycle-timeout-ms",
         String(options.timeoutMs),
+        ...(!options.sourceHeartbeatEnabled ? ["--no-source-heartbeat"] : []),
         ...(options.intraday
           ? [
               "--intraday-monitor",
