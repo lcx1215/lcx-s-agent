@@ -15,6 +15,7 @@ import type { FinanceUncachedFetch } from "./finance-write-transport.js";
 const directories: string[] = [];
 afterEach(async () => {
   vi.unstubAllEnvs();
+  vi.useRealTimers();
   await Promise.all(
     directories.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
@@ -255,6 +256,28 @@ it("reads one quote before review and re-reads broker facts at the final safety 
     "/v2/assets/SPY",
   ]);
   expect(finalReads.some((url) => url.pathname.includes("/quotes/"))).toBe(false);
+});
+
+it("uses a newly bound quote after a slow review outlives the original quote", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-09-22T19:30:00.000Z"));
+  const f = await fixture();
+  const first = await f.controller.executionQuoteProvider(
+    { instrument: "SPY", side: "buy", assetClass: "us_equity" },
+    AbortSignal.timeout(5000),
+  );
+
+  await vi.advanceTimersByTimeAsync(61_000);
+  const refreshed = await f.controller.executionQuoteProvider(
+    { instrument: "SPY", side: "buy", assetClass: "us_equity" },
+    AbortSignal.timeout(5000),
+  );
+
+  expect(Date.parse(first.referencePriceAt)).toBeLessThan(Date.parse(refreshed.referencePriceAt));
+  expect((await f.place("slow-review-refresh", f.controller, refreshed)).status).toBe("placed");
+  expect(
+    f.read.mock.calls.filter(([url]) => new URL(url).pathname.includes("/quotes/")),
+  ).toHaveLength(2);
 });
 
 it("sizes from native positions, executes twice through the shared gate and recovers confirmed receipts on restart", async () => {

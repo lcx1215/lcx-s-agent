@@ -1222,8 +1222,12 @@ export async function runFinanceDailyCycle(
   >();
   const executionQuoteErrors = new Map<string, string>();
   const reviewCandidates: FinanceTradeDecisionCandidate[] = [];
-  for (const candidate of potentialReviewCandidates) {
+  const readExecutionQuote = async (candidate: {
+    instrument: string;
+    side: "buy" | "sell";
+  }): Promise<FinanceDailyCycleExecutionQuote | undefined> => {
     let executionQuote = params.executionQuotes?.get(candidate.instrument);
+    executionQuoteErrors.delete(candidate.instrument);
     if (params.executionQuoteProvider) {
       try {
         executionQuote = await withTimeout(
@@ -1258,6 +1262,10 @@ export async function runFinanceDailyCycle(
       }
     }
     executionQuotesByInstrument.set(candidate.instrument, executionQuote);
+    return executionQuote;
+  };
+  for (const candidate of potentialReviewCandidates) {
+    const executionQuote = await readExecutionQuote(candidate);
     const quoteObservedAt = (params.executionNow ?? Date.now)();
     if (executionQuoteIssue(executionQuote, quoteObservedAt) !== null || !executionQuote) {
       continue;
@@ -1443,18 +1451,26 @@ export async function runFinanceDailyCycle(
           ? executionQuotesByInstrument.get(item.instrument)
           : params.executionQuotes?.get(item.instrument);
       if (params.venue === "alpaca") {
-        const quoteError = executionQuoteErrors.get(item.instrument);
+        let quoteError = executionQuoteErrors.get(item.instrument);
+        let issue = executionQuoteIssue(executionQuote, (params.executionNow ?? Date.now)());
+        if ((quoteError || issue !== null) && params.executionQuoteProvider) {
+          executionQuote = await readExecutionQuote({
+            instrument: item.instrument,
+            side: item.action,
+          });
+          quoteError = executionQuoteErrors.get(item.instrument);
+          issue = executionQuoteIssue(executionQuote, (params.executionNow ?? Date.now)());
+        }
         if (quoteError) {
           refusals.push(`${item.instrument}: ${quoteError}`);
           continue;
         }
-        const issue = executionQuoteIssue(executionQuote, (params.executionNow ?? Date.now)());
         if (issue !== null) {
           refusals.push(`${item.instrument}: ${issue}`);
           continue;
         }
         const candidateId = reviewCandidateId(item);
-        if (!reviewCandidateById.has(candidateId)) {
+        if (tradeDecisionReview.status === "completed" && !reviewCandidateById.has(candidateId)) {
           refusals.push(
             item.instrument +
               ": candidate was not eligible for model review; refusing venue placement",
@@ -1468,7 +1484,7 @@ export async function runFinanceDailyCycle(
           );
           continue;
         }
-        if (tradeDecisionReview.status !== "failed") {
+        if (tradeDecisionReview.status === "completed") {
           const decision = tradeDecisions.get(candidateId);
           if (!decision) {
             refusals.push(

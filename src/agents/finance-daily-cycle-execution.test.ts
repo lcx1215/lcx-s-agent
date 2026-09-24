@@ -202,6 +202,73 @@ describe("daily cycle execution data boundary", () => {
     });
     expect(mocks.order).toHaveBeenCalledTimes(2);
   });
+  it("refreshes expired Alpaca quotes after a slow advisory review", async () => {
+    let executionAt = Date.parse(asOf);
+    const executionQuoteProvider = vi.fn(async () => ({
+      referencePrice: 250,
+      referencePriceAt: new Date(executionAt).toISOString(),
+      sourceUrlOrArtifact: "fixture://execution-quote",
+      bidPrice: 249,
+      askPrice: 250,
+      maxAgeMs: 30_000,
+    }));
+    const tradeDecisionReviewer = vi.fn(async (request: FinanceTradeDecisionReviewRequest) => {
+      executionAt += 40_000;
+      return {
+        status: "completed" as const,
+        attempted: true,
+        provider: "fixture-provider",
+        modelId: "fixture-model",
+        latencyMs: 40_000,
+        providerCallObserved: true,
+        adapterAttested: true,
+        decisions: request.candidates.map((candidate) => ({
+          candidateId: candidate.candidateId,
+          decision: "approve" as const,
+          rationale: "Approved only for the shared execution gates to continue.",
+        })),
+      };
+    });
+
+    await runFinanceDailyCycle({
+      ...params,
+      executionQuoteProvider,
+      executionNow: () => executionAt,
+      tradeDecisionReviewer,
+    });
+
+    expect(executionQuoteProvider).toHaveBeenCalledTimes(4);
+    expect(mocks.order).toHaveBeenCalledTimes(2);
+    expect(mocks.order).toHaveBeenCalledWith(
+      expect.objectContaining({
+        market: {
+          referencePrice: 250,
+          referencePriceAt: new Date(Date.parse(asOf) + 40_000).toISOString(),
+        },
+      }),
+    );
+  });
+  it("retries a transient pre-review quote failure with a fresh quote when review is not needed", async () => {
+    const executionQuoteProvider = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("temporary quote read failure"))
+      .mockRejectedValueOnce(new Error("temporary quote read failure"))
+      .mockResolvedValue({
+        referencePrice: 250,
+        referencePriceAt: asOf,
+        sourceUrlOrArtifact: "fixture://execution-quote",
+        bidPrice: 249,
+        askPrice: 250,
+        maxAgeMs: 1000,
+      });
+
+    const report = await runFinanceDailyCycle({ ...params, executionQuoteProvider });
+
+    expect(executionQuoteProvider).toHaveBeenCalledTimes(4);
+    expect(report.tradeDecisionReview.status).toBe("not_needed");
+    expect(mocks.order).toHaveBeenCalledTimes(2);
+    expect(report.refusals.join()).not.toContain("candidate was not eligible for model review");
+  });
   it("treats a model veto as a successful abstention and does not dispatch", async () => {
     const report = await runFinanceDailyCycle({
       ...params,
