@@ -1704,6 +1704,7 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "src/agents/tools/finance-outcome-ledger-read-tool.test.ts",
       "src/agents/tools/finance-outcome-ledger-read-tool.ts",
       "test/lcx-finance-research-run.test.ts",
+      "test/operator/lcx-finance-research-run.test.ts",
       "test/operator/lcx-finance-research-turn.test.ts",
     ],
   },
@@ -1860,6 +1861,7 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "src/agents/tools/finance-research-runs-read-tool.ts",
       "test/lcx-directed-daily-research-brief.test.ts",
       "test/lcx-finance-research-run.test.ts",
+      "test/operator/lcx-finance-research-run.test.ts",
     ],
   },
   {
@@ -2070,6 +2072,12 @@ const SHARED_ENTRYPOINT_OWNERS: SharedEntrypointOwner[] = [
     familyIds: ["finance_caseflow_entrypoints", "focused_daily_research_product_entrypoints"],
     reason:
       "the finance research operator test proves both caseflow wiring and focused daily research product registration.",
+  },
+  {
+    path: "test/operator/lcx-finance-research-run.test.ts",
+    familyIds: ["finance_caseflow_entrypoints", "focused_daily_research_product_entrypoints"],
+    reason:
+      "the finance research CLI test proves both caseflow wiring and focused daily research product registration.",
   },
   {
     path: "scripts/operator/lcx-finance-research-batch.ts",

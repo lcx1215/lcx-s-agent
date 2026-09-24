@@ -126,8 +126,12 @@ describe("LCX flow graph exam", () => {
         schedulerOwnsNightSettlement: true,
         nightSettlementFeedsReviewedModuleResearch: true,
         nightFeedbackDispatchesTuning: true,
-        tuningFeedsDeterministicPromotion: true,
+        directionalCalibrationIsolatedFromPaperExecution: true,
+        tradingEconomicsUsesLedgerAndQuantMath: true,
+        brokerHistoryFeesReachTradeEconomics: true,
         centralHarnessHasAutomaticFinanceTaskFeed: true,
+        producerDecisionReferencesReachReceiptDiagnostics: true,
+        centralHarnessUsesReadOnlyFinanceSnapshots: true,
       },
       missingHandoffs: [],
     });
