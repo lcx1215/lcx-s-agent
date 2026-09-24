@@ -699,18 +699,54 @@ it("surfaces bounded model-review evidence and distinguishes veto from review fa
   });
   expect(JSON.stringify(veto)).not.toContain("Do not echo rationale");
 
+  const failedReview = {
+    status: "failed",
+    candidateCount: 1,
+    modelCalls: 1,
+    failureCode: "output_truncated",
+  };
+  const placed = describeFinanceCycleExecution(
+    JSON.stringify({
+      ok: true,
+      placed: [{ instrument: "SPY", quantity: 1, notional: 500 }],
+      drift: [{ action: "buy" }],
+      refusals: [],
+      tradeDecisionReview: failedReview,
+    }),
+    ["--place", "--venue", "alpaca"],
+    "day",
+  );
+  expect(placed).toMatchObject({
+    outcome: "placement_reported",
+    reportedPlacements: 1,
+    tradeDecisionReview: { status: "failed", failureCode: "output_truncated" },
+  });
+
+  const refused = describeFinanceCycleExecution(
+    JSON.stringify({
+      ok: false,
+      placed: [],
+      drift: [{ action: "buy" }],
+      refusals: ["SPY: shared execution gate refusal"],
+      tradeDecisionReview: failedReview,
+    }),
+    ["--place", "--venue", "alpaca"],
+    "day",
+  );
+  expect(refused).toMatchObject({
+    outcome: "blocked_or_partial",
+    refusalCount: 1,
+    tradeDecisionReview: { status: "failed", failureCode: "output_truncated" },
+  });
+
   expect(
     describeFinanceCycleExecution(
       JSON.stringify({
-        ok: false,
+        ok: true,
         placed: [],
-        refusals: ["SPY: model review unavailable"],
-        tradeDecisionReview: {
-          status: "failed",
-          candidateCount: 1,
-          modelCalls: 0,
-          failureCode: "reviewer_unavailable",
-        },
+        drift: [{ action: "buy" }],
+        refusals: [],
+        tradeDecisionReview: failedReview,
       }),
       ["--place", "--venue", "alpaca"],
       "day",

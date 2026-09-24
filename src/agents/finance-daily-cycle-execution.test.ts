@@ -228,19 +228,65 @@ describe("daily cycle execution data boundary", () => {
     expect(report.placed).toHaveLength(0);
     expect(mocks.order).not.toHaveBeenCalled();
   });
-  it("fails closed without a completed model review", async () => {
+  it.each(["unavailable", "output_truncated"] as const)(
+    "routes deterministic daily candidates through the shared safety gate when review is %s",
+    async (reviewMode) => {
+      const report = await runFinanceDailyCycle({
+        ...params,
+        executionQuotes: quotes(),
+        tradeDecisionReviewer:
+          reviewMode === "unavailable"
+            ? undefined
+            : async () => ({
+                status: "failed" as const,
+                attempted: true,
+                provider: "fixture-provider",
+                modelId: "fixture-model",
+                latencyMs: 2,
+                providerCallObserved: true,
+                adapterAttested: true,
+                failureCode: "output_truncated" as const,
+              }),
+      });
+
+      expect(report.ok).toBe(false);
+      expect(report.modelCalls).toBe(reviewMode === "unavailable" ? 0 : 1);
+      expect(report.tradeDecisionReview).toMatchObject({
+        status: "failed",
+        failureCode: reviewMode === "unavailable" ? "reviewer_unavailable" : "output_truncated",
+      });
+      expect(mocks.order).toHaveBeenCalledTimes(2);
+      expect(mocks.order).toHaveBeenCalledWith(
+        expect.objectContaining({
+          createSafetyContext: syntheticSafetyContext,
+          budget: expect.objectContaining({ maxOrderNotional: 1000, maxOrdersPerRun: 2 }),
+        }),
+      );
+      expect(report.refusals.join()).toContain("synthetic refusal");
+    },
+  );
+
+  it("does not default approve a completed but unbound daily review result", async () => {
     const report = await runFinanceDailyCycle({
       ...params,
       executionQuotes: quotes(),
-      tradeDecisionReviewer: undefined,
+      tradeDecisionReviewer: async () => ({
+        status: "completed" as const,
+        attempted: true,
+        provider: "fixture-provider",
+        modelId: "fixture-model",
+        latencyMs: 2,
+        providerCallObserved: true,
+        adapterAttested: true,
+        decisions: [],
+      }),
     });
 
-    expect(report.ok).toBe(false);
-    expect(report.modelCalls).toBe(0);
     expect(report.tradeDecisionReview).toMatchObject({
       status: "failed",
-      failureCode: "reviewer_unavailable",
+      failureCode: "output_invalid",
     });
+    expect(report.refusals.join()).toContain("completed model review violated candidate binding");
     expect(mocks.order).not.toHaveBeenCalled();
   });
   it("stops the entire book when a submitted order is uncertain", async () => {

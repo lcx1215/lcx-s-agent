@@ -215,8 +215,8 @@ describe("intraday decision execution bridge", () => {
     expect(tradeDecisionReviewer).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["unavailable", "veto", "invalid"] as const)(
-    "persists the intraday review and refuses placement when the model is %s",
+  it.each(["unavailable", "output_truncated", "veto", "invalid"] as const)(
+    "keeps review failure advisory but preserves valid veto and contract gates (%s)",
     async (reviewMode) => {
       const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-review-gate-"));
       temporary.push(directory);
@@ -254,19 +254,34 @@ describe("intraday decision execution bridge", () => {
                 },
               ],
             })
-          : reviewMode === "invalid"
-            ? ((async () => ({
-                status: "completed",
+          : reviewMode === "output_truncated"
+            ? async () => ({
+                status: "failed",
                 attempted: true,
                 provider: "fixture-provider",
                 modelId: "fixture-model",
                 latencyMs: 3,
                 providerCallObserved: true,
                 adapterAttested: true,
-                decisions: [],
-              })) as unknown as FinanceTradeDecisionReviewer)
-            : undefined;
-      const runOrder = vi.fn();
+                failureCode: "output_truncated",
+              })
+            : reviewMode === "invalid"
+              ? ((async () => ({
+                  status: "completed",
+                  attempted: true,
+                  provider: "fixture-provider",
+                  modelId: "fixture-model",
+                  latencyMs: 3,
+                  providerCallObserved: true,
+                  adapterAttested: true,
+                  decisions: [],
+                })) as unknown as FinanceTradeDecisionReviewer)
+              : undefined;
+      const runOrder = vi.fn(async () => ({
+        ok: false as const,
+        stage: "place" as const,
+        refusals: ["shared execution gate refusal"],
+      }));
 
       const result = await executeFinanceIntradayDecision({
         directory,
@@ -307,20 +322,28 @@ describe("intraday decision execution bridge", () => {
       });
 
       expect(result).toMatchObject({ status: "refused" });
-      expect(runOrder).not.toHaveBeenCalled();
+      const reviewFailed = reviewMode === "unavailable" || reviewMode === "output_truncated";
+      expect(runOrder).toHaveBeenCalledTimes(reviewFailed ? 1 : 0);
       const outcome = await readFinanceIntradayOutcome(directory, signalId);
       expect(outcome).toMatchObject({
         status: "refused",
         tradeDecisionReview:
           reviewMode === "unavailable"
             ? { status: "failed", failureCode: "reviewer_unavailable" }
-            : reviewMode === "invalid"
-              ? { status: "failed", failureCode: "output_invalid" }
-              : {
-                  status: "completed",
-                  decision: { candidateId: signalId, decision: "veto" },
-                },
+            : reviewMode === "output_truncated"
+              ? { status: "failed", failureCode: "output_truncated" }
+              : reviewMode === "invalid"
+                ? { status: "failed", failureCode: "output_invalid" }
+                : {
+                    status: "completed",
+                    decision: { candidateId: signalId, decision: "veto" },
+                  },
       });
+      if (reviewFailed) {
+        expect(outcome?.reasons).toEqual(["shared execution gate refusal"]);
+      } else {
+        expect(outcome?.reasons.join()).toMatch(/model veto|violated candidate binding/u);
+      }
     },
   );
 

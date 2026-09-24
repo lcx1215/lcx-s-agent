@@ -204,9 +204,18 @@ export async function executeFinanceIntradayDecision(params: {
         );
       }
     }
-    const reviewResult = isValidFinanceTradeDecisionReviewResult(rawReview, reviewRequest)
-      ? rawReview
-      : failedReview("output_invalid", true);
+    let reviewContractAnomaly = false;
+    let reviewResult: FinanceTradeDecisionReviewResult;
+    if (isValidFinanceTradeDecisionReviewResult(rawReview, reviewRequest)) {
+      reviewResult = rawReview;
+    } else {
+      reviewContractAnomaly =
+        rawReview !== null &&
+        typeof rawReview === "object" &&
+        "status" in rawReview &&
+        rawReview.status === "completed";
+      reviewResult = failedReview("output_invalid", true);
+    }
     const reviewedDecision =
       reviewResult.status === "completed" ? reviewResult.decisions?.[0] : undefined;
     tradeDecisionReview = FinanceIntradayDecisionReviewReceiptSchema.parse({
@@ -224,11 +233,19 @@ export async function executeFinanceIntradayDecision(params: {
         ? { failureCode: reviewResult.failureCode ?? "output_invalid" }
         : {}),
     });
-    if (reviewResult.status !== "completed" || !reviewedDecision) {
+    if (
+      reviewContractAnomaly ||
+      (reviewResult.status === "completed" && !reviewedDecision) ||
+      signal.aborted
+    ) {
       const outcome = await appendFinanceIntradayOutcome(params.directory, {
         signalId: input.signalId,
         status: "refused",
-        reasons: ["intraday model review unavailable or invalid; refusing paper placement"],
+        reasons: [
+          reviewContractAnomaly || (reviewResult.status === "completed" && !reviewedDecision)
+            ? "completed intraday model review violated candidate binding; refusing paper placement"
+            : "intraday decision was cancelled before execution",
+        ],
         tradeDecisionReview,
       });
       return Object.freeze({
@@ -237,7 +254,7 @@ export async function executeFinanceIntradayDecision(params: {
         tradeDecisionReview,
       });
     }
-    if (reviewedDecision.decision === "veto") {
+    if (reviewedDecision?.decision === "veto") {
       const outcome = await appendFinanceIntradayOutcome(params.directory, {
         signalId: input.signalId,
         status: "refused",

@@ -553,16 +553,18 @@ export function describeFinanceCycleExecution(stdout: string, args: readonly str
         ? payload.ok === true
           ? "preview_only"
           : "failed_or_unknown"
-        : reviewFailed
-          ? "model_review_failed"
-          : payload.ok !== true
-            ? "failed_or_unknown"
-            : allCandidatesVetoed
-              ? "model_vetoed"
-              : refusals.length
-                ? "blocked_or_partial"
-                : reportedPlacements !== null && reportedPlacements > 0
-                  ? "placement_reported"
+        : reportedPlacements !== null && reportedPlacements > 0
+          ? refusals.length > 0
+            ? "blocked_or_partial"
+            : "placement_reported"
+          : allCandidatesVetoed
+            ? "model_vetoed"
+            : refusals.length > 0
+              ? "blocked_or_partial"
+              : reviewFailed
+                ? "model_review_failed"
+                : payload.ok !== true
+                  ? "failed_or_unknown"
                   : intents === 0
                     ? "no_trade"
                     : "not_executed";

@@ -1294,6 +1294,7 @@ export async function runFinanceDailyCycle(
     string,
     { candidateId: string; decision: "approve" | "veto"; rationale: string }
   >();
+  let reviewContractAnomaly = false;
   if (reviewCandidates.length > 0) {
     const reconciliation = accountBook?.reconciliation;
     const decisionContext = await buildFinanceThesisDecisionContext({
@@ -1360,12 +1361,17 @@ export async function runFinanceDailyCycle(
         );
       }
     }
-    const result: FinanceTradeDecisionReviewResult = isValidFinanceTradeDecisionReviewResult(
-      rawReview,
-      reviewRequest,
-    )
-      ? rawReview
-      : failedReview("output_invalid", true);
+    let result: FinanceTradeDecisionReviewResult;
+    if (isValidFinanceTradeDecisionReviewResult(rawReview, reviewRequest)) {
+      result = rawReview;
+    } else {
+      reviewContractAnomaly =
+        rawReview !== null &&
+        typeof rawReview === "object" &&
+        "status" in rawReview &&
+        rawReview.status === "completed";
+      result = failedReview("output_invalid", true);
+    }
     tradeDecisionReview = {
       status: result.status,
       candidateCount: reviewCandidates.length,
@@ -1455,21 +1461,26 @@ export async function runFinanceDailyCycle(
           );
           continue;
         }
-        if (tradeDecisionReview.status !== "completed") {
-          refusals.push(item.instrument + ": model review unavailable; refusing venue placement");
-          continue;
-        }
-        const decision = tradeDecisions.get(candidateId);
-        if (!decision) {
+        if (reviewContractAnomaly) {
           refusals.push(
-            item.instrument + ": model review omitted this candidate; refusing venue placement",
+            item.instrument +
+              ": completed model review violated candidate binding; refusing venue placement",
           );
           continue;
         }
-        if (decision.decision === "veto") {
-          modelVetoCount += 1;
-          refusals.push(item.instrument + ": model vetoed the proposed candidate");
-          continue;
+        if (tradeDecisionReview.status !== "failed") {
+          const decision = tradeDecisions.get(candidateId);
+          if (!decision) {
+            refusals.push(
+              item.instrument + ": model review omitted this candidate; refusing venue placement",
+            );
+            continue;
+          }
+          if (decision.decision === "veto") {
+            modelVetoCount += 1;
+            refusals.push(item.instrument + ": model vetoed the proposed candidate");
+            continue;
+          }
         }
       }
       const referencePrice =
