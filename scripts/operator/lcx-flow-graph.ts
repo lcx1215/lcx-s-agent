@@ -2567,16 +2567,42 @@ async function financeAutomaticLifecycleAudit() {
     researchOperator,
     researchRunner,
     tuningLifecycle,
+    tuningProposal,
     paperPromotion,
+    paperRankPlace,
+    positionLedger,
+    positionLedgerRead,
+    accountTradingBook,
+    brokerReconciliation,
     centralAgent,
+    dailyCycle,
+    intradayExecution,
+    executionAdapter,
+    financeFeedback,
+    ruleReadinessState,
+    strategyRuleLedger,
+    barLedger,
   ] = await Promise.all([
     readSource("scripts/operator/lcx-finance-scheduler.ts"),
     readSource("scripts/operator/lcx-finance-research-turn.ts"),
     readSource("scripts/operator/lcx-finance-research-run.ts"),
     readSource("src/agents/finance-research-runner.ts"),
     readSource("src/agents/finance-tuning-lifecycle.ts"),
+    readSource("src/agents/finance-tuning-proposal.ts"),
     readSource("src/agents/finance-paper-promotion.ts"),
+    readSource("src/agents/tools/finance-paper-rank-place-tool.ts"),
+    readSource("src/agents/finance-position-ledger.ts"),
+    readSource("src/agents/tools/finance-position-ledger-read-tool.ts"),
+    readSource("src/agents/finance-account-trading-book.ts"),
+    readSource("src/agents/finance-alpaca-history-reconciliation.ts"),
     readSource("scripts/operator/lcx-central-agent.ts"),
+    readSource("src/agents/finance-daily-cycle.ts"),
+    readSource("src/agents/finance-intraday-execution.ts"),
+    readSource("src/agents/finance-execution-adapter.ts"),
+    readSource("src/agents/finance-automatic-lifecycle-feedback.ts"),
+    readSource("src/agents/finance-rule-readiness-state.ts"),
+    readSource("src/agents/finance-strategy-rule-ledger.ts"),
+    readSource("src/agents/finance-bar-ledger.ts"),
   ]);
   const handoffs = {
     researchCanProducePortfolioCandidate: researchTurn.includes(
@@ -2600,13 +2626,47 @@ async function financeAutomaticLifecycleAudit() {
     nightFeedbackDispatchesTuning:
       scheduler.includes("runFinanceTuningLifecycle") &&
       scheduler.includes("scoredFiled.appended === 0"),
-    tuningFeedsDeterministicPromotion:
-      tuningLifecycle.includes("deterministicPromotion") &&
-      paperPromotion.includes('authority: "paper_only"') &&
-      paperPromotion.includes("breakEvenFloor(params.samples)"),
+    directionalCalibrationIsolatedFromPaperExecution:
+      !tuningLifecycle.includes("deterministicPromotion") &&
+      tuningProposal.includes('scope: "forecast_calibration_only"') &&
+      tuningLifecycle.includes("FINANCE_DIRECTIONAL_CALIBRATION_BLOCK_REASON") &&
+      paperPromotion.includes('"directional_forecast_outcomes_are_not_net_trade_pnl"') &&
+      paperPromotion.includes('"net_trade_economics_promotion_contract_unavailable"') &&
+      paperPromotion.includes('evidenceScope: "legacy_directional_calibration_only"') &&
+      paperRankPlace.includes("no net-trade-economics promotion exists"),
+    tradingEconomicsUsesLedgerAndQuantMath:
+      positionLedger.includes('pnlBasis: "gross_fill_price_only"') &&
+      positionLedgerRead.includes("calculateMaxDrawdown") &&
+      positionLedgerRead.includes("gross_marked_ledger_diagnostic_only"),
+    brokerHistoryFeesReachTradeEconomics:
+      positionLedgerRead.includes("readFinanceAccountTradingBook") &&
+      positionLedgerRead.includes("realizedTradePnlAfterFees") &&
+      accountTradingBook.includes("reconcileFinanceBrokerHistory") &&
+      brokerReconciliation.includes("const closingFee") &&
+      brokerReconciliation.includes("const effectivePrice"),
     centralHarnessHasAutomaticFinanceTaskFeed:
       centralAgent.includes("buildFinanceAutomaticLifecycleFeedback") &&
       centralAgent.includes("financeAutomaticLifecycle"),
+    producerDecisionReferencesReachReceiptDiagnostics:
+      dailyCycle.includes('source: "daily_cycle_candidate"') &&
+      dailyCycle.includes(
+        "[params.runAuthorizationId, signalAnchor, item.instrument, item.action].join",
+      ) &&
+      intradayExecution.includes('source: "intraday_signal"') &&
+      intradayExecution.includes("id: input.signalId") &&
+      executionAdapter.includes("decisionRef: intent.decisionRef") &&
+      positionLedger.includes("decisionRef:") &&
+      positionLedgerRead.includes("decisionLinkCoverage"),
+    centralHarnessUsesReadOnlyFinanceSnapshots:
+      centralAgent.includes("buildFinanceAutomaticLifecycleFeedback") &&
+      financeFeedback.includes("readFinanceStrategyRuleLedger") &&
+      ruleReadinessState.includes("readFinanceBarLedger") &&
+      strategyRuleLedger.includes(
+        "new DatabaseSync(databasePath(directory), { readOnly: true })",
+      ) &&
+      strategyRuleLedger.includes("const db = openReadOnlyDatabase(directory)") &&
+      barLedger.includes("new DatabaseSync(financeBarLedgerPath(directory), { readOnly: true })") &&
+      barLedger.includes("const db = openReadOnlyDatabase(directory)"),
   };
   const missingHandoffs = [
     ...(handoffs.scheduledResearchFeedsPortfolioPlan
@@ -2621,18 +2681,30 @@ async function financeAutomaticLifecycleAudit() {
     ...(handoffs.nightSettlementFeedsReviewedModuleResearch
       ? []
       : ["night_settlement_to_reviewed_module_research"]),
-    ...(handoffs.tuningFeedsDeterministicPromotion
+    ...(handoffs.directionalCalibrationIsolatedFromPaperExecution
       ? []
-      : ["tuning_proposal_to_deterministic_paper_promotion"]),
+      : ["forecast_calibration_to_paper_execution_separation"]),
+    ...(handoffs.tradingEconomicsUsesLedgerAndQuantMath
+      ? []
+      : ["execution_ledger_to_quant_trading_economics_diagnostic"]),
+    ...(handoffs.brokerHistoryFeesReachTradeEconomics
+      ? []
+      : ["broker_fee_history_to_trade_economics_diagnostic"]),
     ...(handoffs.centralHarnessHasAutomaticFinanceTaskFeed
       ? []
       : ["central_harness_automatic_finance_task_feed"]),
+    ...(handoffs.producerDecisionReferencesReachReceiptDiagnostics
+      ? []
+      : ["producer_decision_ids_to_execution_receipt_diagnostics"]),
+    ...(handoffs.centralHarnessUsesReadOnlyFinanceSnapshots
+      ? []
+      : ["central_harness_to_read_only_finance_ledgers"]),
   ];
   return {
     complete: missingHandoffs.length === 0,
     owner: "scripts/operator/lcx-finance-scheduler.ts",
     principle:
-      "one scheduler owns day, intraday and night triggers; model output is candidate evidence and TypeScript owns promotion and execution gates",
+      "one scheduler owns lifecycle triggers; forecast accuracy and realized trade economics remain separate evidence paths, and only reconciled net-trade evidence may change a paper execution threshold",
     handoffs,
     missingHandoffs,
   };

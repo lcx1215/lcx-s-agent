@@ -19,42 +19,66 @@ observe state
   -> compile a bounded portfolio/strategy candidate
   -> deterministic readiness, mandate, risk, quote and reconciliation gates
   -> paper adapter
-  -> execution and position receipts
+  -> execution and position receipts with optional source-decision references
   -> night settlement, reflection and news review
-  -> scored outcomes
-  -> tuning proposal
-  -> deterministic paper-promotion decision
-  -> promoted paper calibration consumed by paper rank / intent compiler
-  -> next observation cycle
+  -> scored directional outcomes
+  -> forecast-calibration proposal (ends at review; no execution promotion)
+
+execution receipts + scoped broker history
+  -> fill and fee reconciliation
+  -> account trading book
+  -> gross marked-value and fee-adjusted realized-trade diagnostics
+  -> source-decision link coverage (where producers supply stable references)
+  -> strategy/candidate attribution + benchmark + out-of-sample net evidence
+  -> paper-execution promotion contract [not implemented]
 ```
 
 An arrow exists only when the downstream owner consumes an upstream durable
 receipt. A Flow Graph edge, imported module, configured connector, tool name,
 or successful model call is not proof of that handoff.
 
+## Profit-first quantitative rule
+
+Directional hit rate is a forecast-classification measure, not economic
+break-even. A trade threshold must start from payoff and costs, for example
+`E[net P&L] = p * E[win] - (1 - p) * E[loss] - E[costs]`, with costs and
+payoffs scoped to the same strategy, instrument, venue, and observation window.
+Risk, drawdown, benchmark, and out-of-sample evidence then decide whether the
+result is usable. This describes the evidence contract to build; it is not a
+claim that the current promotion path implements it.
+
+Statistical appraisal follows that economic definition. Keep return measurement,
+decision attribution, and skill appraisal separate; declare a comparable,
+investable benchmark before scoring; retain the full tested-trial count and
+return distribution before applying selection-bias or non-normality corrections.
+The current receipts do not yet carry enough strategy/trial lineage or net-return
+history to calculate those corrections.
+
 ## Canonical owners
 
-| Concern                                        | Canonical owner                                                                                             |
-| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| Resident timing, phase deduplication, recovery | `scripts/operator/lcx-finance-scheduler.ts`                                                                 |
-| Day allocation and rebalance                   | `scripts/operator/lcx-finance-daily-cycle.ts`, `src/agents/finance-daily-cycle.ts`                          |
-| Intraday observation and paper action          | `src/agents/finance-intraday-monitor.ts`, `src/agents/finance-intraday-execution.ts`                        |
-| Research source batch                          | `src/agents/finance-research-batch.ts`, `src/agents/finance-research-batch-runner.ts`                       |
-| Finance-module selection and DAG               | `src/agents/finance-brain-orchestration.ts`, `src/agents/finance-module-composition.ts`                     |
-| Module tool dispatch and receipts              | `src/agents/finance-module-execution.ts`                                                                    |
-| Model committee and quality review             | `src/agents/finance-agent-committee.ts`, `src/agents/quality-harness.ts`                                    |
-| Research run and visible candidate gate        | `src/agents/finance-research-runner.ts`                                                                     |
-| Strategy budget proposal compilation           | `src/agents/finance-research-portfolio-plan.ts`, `src/agents/finance-portfolio-composition.ts`              |
-| Strategy lifecycle                             | `src/agents/finance-strategy-rule-ledger.ts`                                                                |
-| Readiness                                      | `src/agents/finance-rule-readiness-state.ts`                                                                |
-| Execution authority and safety                 | `src/agents/finance-intent-compiler.ts`, `src/agents/finance-execution-safety.ts`, execution adapter owners |
-| Positions and broker reconciliation            | `src/agents/finance-position-ledger.ts`, Alpaca history/reconciliation owners                               |
-| Night outcome settlement                       | `scripts/operator/lcx-finance-daily-cycle.ts`, `src/agents/finance-outcome-backfill.ts`                     |
-| Reflection                                     | `src/agents/finance-reflection.ts`                                                                          |
-| Tuning proposal                                | `src/agents/finance-tuning-proposal.ts`                                                                     |
-| Deterministic paper calibration promotion      | `src/agents/finance-paper-promotion.ts`, `src/agents/finance-tuning-lifecycle.ts`                           |
-| Central Harness finance feedback               | `src/agents/finance-automatic-lifecycle-feedback.ts`                                                        |
-| Structural wrong-flow detection                | `scripts/operator/lcx-flow-graph.ts`                                                                        |
+| Concern                                        | Canonical owner                                                                                                                      |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Resident timing, phase deduplication, recovery | `scripts/operator/lcx-finance-scheduler.ts`                                                                                          |
+| Day allocation and rebalance                   | `scripts/operator/lcx-finance-daily-cycle.ts`, `src/agents/finance-daily-cycle.ts`                                                   |
+| Intraday observation and paper action          | `src/agents/finance-intraday-monitor.ts`, `src/agents/finance-intraday-execution.ts`                                                 |
+| Research source batch                          | `src/agents/finance-research-batch.ts`, `src/agents/finance-research-batch-runner.ts`                                                |
+| Finance-module selection and DAG               | `src/agents/finance-brain-orchestration.ts`, `src/agents/finance-module-composition.ts`                                              |
+| Module tool dispatch and receipts              | `src/agents/finance-module-execution.ts`                                                                                             |
+| Model committee and quality review             | `src/agents/finance-agent-committee.ts`, `src/agents/quality-harness.ts`                                                             |
+| Research run and visible candidate gate        | `src/agents/finance-research-runner.ts`                                                                                              |
+| Strategy budget proposal compilation           | `src/agents/finance-research-portfolio-plan.ts`, `src/agents/finance-portfolio-composition.ts`                                       |
+| Strategy lifecycle                             | `src/agents/finance-strategy-rule-ledger.ts`                                                                                         |
+| Readiness                                      | `src/agents/finance-rule-readiness-state.ts`                                                                                         |
+| Execution authority and safety                 | `src/agents/finance-intent-compiler.ts`, `src/agents/finance-execution-safety.ts`, execution adapter owners                          |
+| Positions and broker reconciliation            | `src/agents/finance-position-ledger.ts`, `src/agents/finance-account-trading-book.ts`, Alpaca history/reconciliation owners          |
+| Gross diagnostics and drawdown                 | `src/agents/finance-equity-curve.ts`, `src/agents/tools/quant-math-tool.ts`, `src/agents/tools/finance-position-ledger-read-tool.ts` |
+| Night outcome settlement                       | `scripts/operator/lcx-finance-daily-cycle.ts`, `src/agents/finance-outcome-backfill.ts`                                              |
+| Reflection                                     | `src/agents/finance-reflection.ts`                                                                                                   |
+| Forecast-direction calibration                 | `src/agents/finance-calibrated-floor.ts`, `src/agents/tools/finance-calibration-read-tool.ts`                                        |
+| Forecast-calibration proposal                  | `src/agents/finance-tuning-proposal.ts`, `src/agents/finance-tuning-lifecycle.ts`                                                    |
+| Paper-execution promotion                      | Not implemented; `src/agents/finance-paper-promotion.ts` excludes legacy directional records from execution                          |
+| Central Harness finance feedback               | `src/agents/finance-automatic-lifecycle-feedback.ts`                                                                                 |
+| Structural wrong-flow detection                | `scripts/operator/lcx-flow-graph.ts`                                                                                                 |
 
 ## Soft and hard responsibilities
 
@@ -66,8 +90,10 @@ a candidate.
 TypeScript owns source timestamps and provenance, schemas, actual module-tool
 dispatch receipts, DAG dependency failure, stage and mode compatibility,
 readiness, portfolio bounds, execution mandate, quote freshness, reconciliation,
-deduplication, recovery, venue binding, order safety, ledger writes, and
-promotion. Numeric limits are controller-declared policy/state and may be
+deduplication, recovery, venue binding, order safety, and ledger writes.
+Forecast-direction calibration may describe hit rate and Brier score, but it
+cannot promote a paper execution threshold. Promotion requires a separate
+strategy-attributed, reconciled net-trade evidence contract. Numeric limits are controller-declared policy/state and may be
 changed only through their owner transition; they are not hidden constants
 invented by a model or by the scheduler.
 
@@ -117,23 +143,46 @@ JSON/JSONL receipts own scheduler attempts, research samples/scores, proposals,
 and bounded latest views. No owner may silently introduce another finance state
 root.
 
-## Closed orchestration handoffs (2026-09-23 source)
+## Current handoff status (2026-09-24 source)
 
-1. A successful night settlement with newly appended scored outcomes dispatches
-   the canonical tuning lifecycle. The proposal owner does not invent an extra
-   total-sample threshold unless one is explicitly declared.
-2. Every fresh proposal is re-derived from the same scored ledger by the
-   deterministic paper-promotion owner. Its append-only receipt has
-   `authority: paper_only`; the paper rank consumer reads only the promoted floor.
-3. Every Central Agent Harness perception receives a bounded, read-only finance
-   lifecycle projection containing scheduler process/progress and Paper policy
-   status, day/night receipts, current readiness, the SQLite bar/position stores'
-   presence and latest business timestamps, scored outcomes, tuning, promotion,
-   and active-rule state. The harness still has no execution authority and does
-   not restart the scheduler or refresh market providers.
-4. Flow Graph checks the concrete scheduler, promotion, and harness handoffs.
-   Structural green is still not proof that a scheduled cycle has produced a new
-   score or that a venue order was executed.
+1. Night settlement may dispatch the canonical tuning lifecycle after newly
+   appended scored outcomes. Its input is binary forecast-direction accuracy;
+   `lcx_finance_tuning_proposal_v2` records review-only calibration proposals.
+2. Legacy paper-promotion rows are preserved for audit and may seed the
+   historical calibration comparison. They are tagged
+   `legacy_directional_calibration_only`, are never returned as current paper
+   promotions, and cannot authorize paper selection or execution.
+3. Calibrated paper rank/place declines until a strategy-attributed net-trade
+   promotion exists. Explicit `explore` mode remains an evidence-generation
+   path under the existing execution gates.
+4. Position-ledger read keeps the gross receipt projection distinct from the
+   optional account-scoped Alpaca paper history. It may expose realized trade
+   P&L after supported fees only when fill and fee history reconciles. That
+   number still omits full account equity, open-position mark-to-market,
+   strategy/forecast attribution, and benchmark comparison. The receipt
+   contract accepts typed source-decision references and the read tool reports
+   coverage; malformed references are refused before adapter dispatch. Producer
+   call sites still need to supply those references. The current daily-cycle
+   review candidate key is `[runAuthorizationId, signalAnchor, instrument,
+action].join(":")`; the intraday review candidate key is `signalId`. The
+   daily intent `conclusionId` (`daily_cycle:${signalAnchor}:${instrument}`)
+   is a different, coarser identity and must not silently replace the review
+   candidate key in execution lineage. Missing references remain incomplete
+   lineage. The isolated integration worktree now passes these references
+   through the daily and intraday producers. They remain optional for legacy
+   and manual receipts; source-link coverage still requires a fresh receipt
+   from each path. These changes are unmerged and not behaviorally verified.
+5. Central Harness feedback is read-only and includes scheduler process and
+   Paper-policy status, day/night receipts, current readiness, and bounded bar
+   and position-store facts. It reports that the execution-promotion contract
+   is unavailable, plus the next evidence task. The Harness has no execution
+   authority and does not restart the scheduler or refresh market providers.
+   The strategy-rule and bar snapshots now use existing-database read-only
+   connections and skip directory creation, permission changes, and schema
+   migrations; writers retain the migration path.
+6. Flow Graph checks source-level handoffs, including the separation between
+   forecast calibration and execution economics. A green structural check does
+   not prove runtime loading, a completed paper cycle, an order, or profitability.
 
 ## Implemented lifecycle slice
 
@@ -148,11 +197,17 @@ evidence. When automatic research is configured, the same source/module/
 committee/quality owner performs the news and reflection review and persists its
 normal research receipt; no separate night model caller exists.
 
-The night scheduler dispatches tuning only when settlement reports newly
-appended scored outcomes. The tuning lifecycle records the proposal, re-derives
-it, writes the paper-only promotion receipt, and exposes the bounded state to
-the Central Harness. Promotion remains separate from model output and from
-strategy-rule lifecycle state.
+The night scheduler dispatches forecast calibration only when settlement
+reports newly appended scored outcomes. The lifecycle records a versioned
+proposal and exposes its scope to Central Harness feedback; it does not write a
+paper-execution promotion. The separate position and broker-history owners feed
+gross and fee-adjusted trade diagnostics into the position read tool. The
+intent/receipt contract now accepts explicit source-decision references and the
+read tool reports their coverage. Producer wiring remains open; even a source
+reference would not yet name a stable strategy, strategy version, trial, or full
+forecast cohort. Promotion remains blocked until those economics can be joined
+to strategy decisions and evaluated against a benchmark and out-of-sample
+evidence.
 
 Do not add another night-only model caller, module catalog, portfolio engine,
 execution path, state root, or fixed strategy threshold in the scheduler.

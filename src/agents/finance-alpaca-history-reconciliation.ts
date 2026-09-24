@@ -132,13 +132,16 @@ function applyFill(
   usdFee: number,
 ): void {
   const openQuantity = position.quantity;
+  const fillQuantity = Math.abs(signedQuantity);
   const closing =
     Math.sign(openQuantity) === Math.sign(signedQuantity)
       ? 0
       : Math.min(Math.abs(openQuantity), Math.abs(signedQuantity));
+  const closingFee = fillQuantity === 0 ? 0 : (usdFee * closing) / fillQuantity;
+  const openingFee = usdFee - closingFee;
   if (closing > 0) {
-    position.realizedPnl += closing * (price - position.averageCost) * Math.sign(openQuantity);
-    position.realizedPnl -= usdFee;
+    position.realizedPnl +=
+      closing * (price - position.averageCost) * Math.sign(openQuantity) - closingFee;
   }
   const nextQuantity = openQuantity + signedQuantity;
   const sameSide = Math.sign(nextQuantity) === Math.sign(openQuantity) && openQuantity !== 0;
@@ -150,10 +153,11 @@ function applyFill(
     position.averageCost =
       (Math.abs(openQuantity) * position.averageCost +
         Math.abs(signedQuantity) * price +
-        (signedQuantity > 0 ? usdFee : 0)) /
+        Math.sign(signedQuantity) * openingFee) /
       (Math.abs(openQuantity) + Math.abs(signedQuantity));
   } else {
-    position.averageCost = price + (signedQuantity > 0 ? usdFee / Math.abs(signedQuantity) : 0);
+    position.averageCost =
+      price + (Math.sign(signedQuantity) * openingFee) / Math.abs(nextQuantity);
   }
   position.quantity = nextQuantity;
   position.appliedUsdFees += usdFee;
@@ -361,7 +365,10 @@ export async function reconcileFinanceBrokerHistory(
       warnings.push(`${fill.activityId} fill quantity is fully consumed by a linked asset fee`);
       continue;
     }
-    applyFill(position, signedQuantity, fill.price, usdFee);
+    // A fee paid in the traded base asset changes the net units received or delivered.
+    // Preserve cash notional by adjusting the per-unit basis before applying USD fees.
+    const effectivePrice = (fill.price * fill.quantity) / Math.abs(signedQuantity);
+    applyFill(position, signedQuantity, effectivePrice, usdFee);
     byInstrument.set(fill.instrument, position);
   }
 

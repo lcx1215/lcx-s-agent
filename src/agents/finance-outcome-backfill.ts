@@ -1,9 +1,10 @@
 /**
- * Close the loop on recorded calls: turn "what was claimed" into "what happened".
+ * Close the forecast-calibration loop: turn a recorded direction claim into a
+ * later market-direction observation.
  *
  * The ledger already stores conviction and target at decision time. What it never stored was the
- * result, so every downstream calibration had nothing to calibrate against. This module supplies
- * the missing half and hands it to `buildReflection` in the shape that expects.
+ * result, so directional calibration had nothing to measure. This module supplies that outcome
+ * and hands it to `buildReflection`; it does not read execution receipts or calculate trade P&L.
  *
  * One judgement is worth stating because it changes the numbers. Samples whose direction is
  * `none` were REFUSED, not wrong — the gate declined to bet. Counting a declined call as a loss

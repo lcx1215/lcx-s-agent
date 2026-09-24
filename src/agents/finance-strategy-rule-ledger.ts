@@ -415,6 +415,21 @@ function openDatabase(directory: string): RuleDatabase {
   return db;
 }
 
+function openReadOnlyDatabase(directory: string): RuleDatabase {
+  const { DatabaseSync } = requireNodeSqlite();
+  const db = new DatabaseSync(databasePath(directory), { readOnly: true });
+  db.exec("PRAGMA busy_timeout=5000; PRAGMA query_only=ON;");
+  return db;
+}
+
+function hasStrategyRuleRecordsTable(db: RuleDatabase): boolean {
+  return (
+    db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+      .get("finance_strategy_rule_records") !== undefined
+  );
+}
+
 export type FinanceStrategyRuleAppend = Readonly<{
   record: FinanceStrategyRuleRecord;
   /** `false` when the identical record was already present: append-only, and idempotent. */
@@ -562,8 +577,16 @@ export async function readFinanceStrategyRuleLedger(
       databasePresent: false,
     });
   }
-  const db = openDatabase(directory);
+  const db = openReadOnlyDatabase(directory);
   try {
+    if (!hasStrategyRuleRecordsTable(db)) {
+      return Object.freeze({
+        ledger: emptyLedger(),
+        recordCount: 0,
+        headRef: null,
+        databasePresent: true,
+      });
+    }
     const stored = readStoredRecords(db);
     const records =
       asOf === undefined || asOf.length === 0

@@ -1,5 +1,5 @@
 /**
- * Position and PnL ledger derived from execution receipts.
+ * Position and gross price-PnL ledger derived from execution receipts.
  *
  * One domain, two halves:
  *
@@ -19,9 +19,9 @@
  * 2. A mark without a usable timestamp is rejected into `rejectedMarks`. A price with no
  *    "as of" cannot be called current.
  *
- * Average cost is used, and shorts are handled with the same arithmetic as longs: a fill
- * that reduces the open quantity realizes PnL against the average cost, and a fill that
- * flips the sign starts a new average at its own fill price.
+ * Filled quantity and average cost are used, and shorts are handled with the same arithmetic
+ * as longs. This is gross price PnL: receipts currently carry no fee/commission amount, and
+ * the projection does not model cash flows, dividends, borrow, or financing costs.
  *
  * The store adds three properties the pure projection cannot have:
  *
@@ -43,12 +43,13 @@ import { LCX_ONTOLOGY_FINANCE_EXECUTION_AUTHORITIES } from "../shared/lcx-ontolo
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import type { FinanceExecutionReceipt } from "./finance-execution-adapter.js";
 import {
+  FINANCE_DECISION_REFERENCE_SOURCES,
   FINANCE_EXECUTION_RECEIPT_SCHEMA,
   fingerprintFinanceExecutionReceipts,
 } from "./finance-execution-adapter.js";
 import { financePositionLedgerPath } from "./finance-state-dir.js";
 
-export const FINANCE_POSITION_LEDGER_SCHEMA = "lcx_finance_position_ledger_v1" as const;
+export const FINANCE_POSITION_LEDGER_SCHEMA = "lcx_finance_position_ledger_v2" as const;
 
 export type FinancePositionMark = Readonly<{
   instrument: string;
@@ -79,6 +80,8 @@ export type FinancePositionLedger = Readonly<{
   /** Paper and venue fills are counted apart so a simulated ledger is never read as real. */
   paperFillCount: number;
   venueFillCount: number;
+  /** Gross fill-price PnL only; this ledger does not establish net profitability. */
+  pnlBasis: "gross_fill_price_only";
   positions: readonly FinancePosition[];
   /** Instruments holding an open quantity but no usable mark. */
   instrumentsWithoutMark: readonly string[];
@@ -166,7 +169,10 @@ export function projectFinancePositions(params: {
       averageCost: 0,
       realizedPnl: 0,
     };
-    const signedQuantity = receipt.side === "buy" ? receipt.quantity : -receipt.quantity;
+    // `quantity` is requested size. Position accounting must use what the adapter
+    // actually reported as filled, especially when an order is only partly filled.
+    const signedQuantity =
+      receipt.side === "buy" ? receipt.fill.filledQuantity : -receipt.fill.filledQuantity;
     applyFill(position, signedQuantity, receipt.fill.fillPrice);
     byInstrument.set(instrument, position);
     if (receipt.adapterKind === "paper") {
@@ -245,6 +251,7 @@ export function projectFinancePositions(params: {
     receiptCount: ordered.length,
     paperFillCount,
     venueFillCount,
+    pnlBasis: "gross_fill_price_only",
     positions: Object.freeze(positions),
     instrumentsWithoutMark: Object.freeze(instrumentsWithoutMark),
     rejectedMarks: Object.freeze(rejectedMarks),
@@ -276,6 +283,13 @@ const FinanceExecutionReceiptRecordSchema = z
     receiptId: Text,
     accountId: Text.optional(),
     intentId: Text,
+    decisionRef: z
+      .object({
+        source: z.enum(FINANCE_DECISION_REFERENCE_SOURCES),
+        id: Text,
+      })
+      .strict()
+      .optional(),
     runAuthorizationId: z.string(),
     adapterId: Text,
     adapterKind: z.enum(["paper", "venue"]),

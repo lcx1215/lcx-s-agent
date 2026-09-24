@@ -118,7 +118,7 @@ describe("durable scheduler claims on the unified lifecycle", () => {
     expect(await first).toBe(0);
     expect(mocks.run).toHaveBeenCalledTimes(1);
   });
-  it("dispatches tuning and deterministic paper promotion after new scored outcomes", async () => {
+  it("dispatches directional tuning without promoting a paper execution gate", async () => {
     fs.writeFileSync(
       financeResearchScoredPath(root),
       Array.from({ length: 5 }, () => JSON.stringify({ conviction: 0.7, outcome: 1 })).join("\n") +
@@ -142,14 +142,16 @@ describe("durable scheduler claims on the unified lifecycle", () => {
     });
 
     expect(await runFinanceScheduler(["--once", "night", "--dir", root])).toBe(0);
-    expect(readFinancePaperPromotions(root)).toHaveLength(1);
-    expect(readFinancePaperPromotions(root)[0]).toMatchObject({
-      promoted: 0.7,
-      authority: "paper_only",
-    });
+    expect(readFinancePaperPromotions(root)).toHaveLength(0);
     expect(readFinanceSchedulerState(root).lastRun?.tuningLifecycle).toMatchObject({
       ok: true,
       status: "completed",
+      result: {
+        paperExecutionPromotion: {
+          status: "blocked",
+          reason: "directional_forecast_outcomes_are_not_net_trade_pnl",
+        },
+      },
     });
   });
 });

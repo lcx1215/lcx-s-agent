@@ -24,16 +24,17 @@ function appendScores(conviction: number, outcomes: readonly (0 | 1)[]) {
 }
 
 describe("automatic finance tuning lifecycle", () => {
-  it("promotes the first re-derived floor for paper use and is idempotent", () => {
+  it("records directional calibration proposals but blocks paper execution promotion", () => {
     appendScores(0.7, [1, 1, 1, 1, 1]);
     const first = runFinanceTuningLifecycle({
       directory,
       generatedAt: "2026-09-23T00:00:00.000Z",
     });
     expect(first.newlyRecorded).toBe(1);
-    expect(first.promotions[0]).toMatchObject({
-      appended: true,
-      promotion: { previous: null, promoted: 0.7, authority: "paper_only" },
+    expect(first.promotions).toEqual([]);
+    expect(first.paperExecutionPromotion).toMatchObject({
+      status: "blocked",
+      reason: "directional_forecast_outcomes_are_not_net_trade_pnl",
     });
 
     const replay = runFinanceTuningLifecycle({
