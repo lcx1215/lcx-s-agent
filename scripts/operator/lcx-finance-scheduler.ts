@@ -1,6 +1,6 @@
 /**
- * Standalone weekday finance scheduler. Reuses the daily-cycle operator; its only model use is
- * the cycle's bounded configured-provider veto review for eligible Alpaca Paper candidates.
+ * Standalone weekday finance scheduler. Daily and actionable intraday Alpaca Paper candidates
+ * receive bounded configured-provider veto review; model output never replaces execution gates.
  * Scheduling uses America/New_York wall clock.
  *
  * --once day|night | --loop | --detach | --status
@@ -57,6 +57,10 @@ import {
   resolveFinanceStateDir,
   type FinanceStateDir,
 } from "../../src/agents/finance-state-dir.js";
+import {
+  createFinanceTradeDecisionReviewer,
+  type FinanceTradeDecisionReviewer,
+} from "../../src/agents/finance-trade-decision-review.js";
 import { runFinanceTuningLifecycle } from "../../src/agents/finance-tuning-lifecycle.js";
 import { buildDetachedServeEnv } from "../../src/cli/serve-detach.js";
 import { loadConfig } from "../../src/config/config.js";
@@ -573,12 +577,28 @@ type CycleContext = {
   options: SchedulerOptions;
   signal: AbortSignal;
   intradayController?: ReturnType<typeof createFinanceAlpacaCycleController>;
+  intradayTradeDecisionReviewer?: FinanceTradeDecisionReviewer;
+  intradayTradeDecisionReviewerUnavailable?: boolean;
   lastIdleReconciliationAtMs?: number;
 };
 
 function numericExtra(args: readonly string[], flag: string): number {
   const index = args.indexOf(flag);
   return index < 0 ? Number.NaN : Number(args[index + 1]);
+}
+
+function getIntradayTradeDecisionReviewer(context: CycleContext) {
+  if (context.intradayTradeDecisionReviewerUnavailable) {
+    return undefined;
+  }
+  if (!context.intradayTradeDecisionReviewer) {
+    try {
+      context.intradayTradeDecisionReviewer = createFinanceTradeDecisionReviewer(loadConfig());
+    } catch {
+      context.intradayTradeDecisionReviewerUnavailable = true;
+    }
+  }
+  return context.intradayTradeDecisionReviewer;
 }
 
 function writeSchedulerProgress(context: CycleContext, phase: "idle" | "cycle") {
@@ -857,10 +877,16 @@ async function tick(context: CycleContext): Promise<void> {
                 ),
                 maxOrdersPerRun: numericExtra(context.options.extraArgs, "--max-orders"),
               },
+              tradeDecisionReviewer: getIntradayTradeDecisionReviewer(context),
               signal: context.signal,
             });
+            const tradeDecisionReview =
+              "tradeDecisionReview" in execution ? execution.tradeDecisionReview : undefined;
+            const reviewStatus = tradeDecisionReview
+              ? `${tradeDecisionReview.status}/${tradeDecisionReview.decision?.decision ?? tradeDecisionReview.failureCode ?? "unknown"}`
+              : "not_reached";
             process.stdout.write(
-              `[${new Date().toISOString()}] intraday ${instrument} execution=${execution.status}\n`,
+              `[${new Date().toISOString()}] intraday ${instrument} execution=${execution.status} modelReview=${reviewStatus}${tradeDecisionReview ? ` latencyMs=${tradeDecisionReview.latencyMs}` : ""}\n`,
             );
           }
         }

@@ -4,9 +4,16 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { runFinanceAlpacaOrder } from "./finance-alpaca-run.js";
 import { buildFinanceExecutionReceipt } from "./finance-execution-adapter.js";
-import { appendFinanceIntradayDecision } from "./finance-intraday-control-ledger.js";
+import {
+  appendFinanceIntradayDecision,
+  readFinanceIntradayOutcome,
+} from "./finance-intraday-control-ledger.js";
 import { executeFinanceIntradayDecision } from "./finance-intraday-execution.js";
 import { appendFinanceExecutionReceipt } from "./finance-position-ledger.js";
+import type {
+  FinanceTradeDecisionReviewRequest,
+  FinanceTradeDecisionReviewer,
+} from "./finance-trade-decision-review.js";
 
 const temporary: string[] = [];
 afterEach(async () => {
@@ -14,6 +21,25 @@ afterEach(async () => {
     temporary.splice(0).map((item) => fs.rm(item, { recursive: true, force: true })),
   );
 });
+
+function approvingReviewer() {
+  return vi.fn(async (request: FinanceTradeDecisionReviewRequest) => ({
+    status: "completed" as const,
+    attempted: true,
+    provider: "fixture-provider",
+    modelId: "fixture-model",
+    latencyMs: 5,
+    providerCallObserved: true,
+    adapterAttested: true,
+    decisions: [
+      {
+        candidateId: request.candidates[0]?.candidateId ?? "missing-candidate",
+        decision: "approve" as const,
+        rationale: "The exact supplied signal and quote are consistent.",
+      },
+    ],
+  }));
+}
 
 describe("intraday decision execution bridge", () => {
   it("closes exactly the observed paper position and never replays a terminal signal", async () => {
@@ -95,6 +121,7 @@ describe("intraday decision execution bridge", () => {
       committedNotional: 1890,
       refusal: null,
     }));
+    const tradeDecisionReviewer = approvingReviewer();
     const controller = {
       accountId: "paper-account",
       accountBookProvider: vi.fn(async () => ({
@@ -120,11 +147,42 @@ describe("intraday decision execution bridge", () => {
       decision,
       controller,
       caps: { maxOrderNotional: 5_000, maxInstrumentNotional: 10_000, maxOrdersPerRun: 1 },
+      tradeDecisionReviewer,
+      now: () => Date.parse("2026-09-18T15:00:02.000Z"),
       runOrder,
       recordFill,
     };
-    expect(await executeFinanceIntradayDecision(request)).toMatchObject({ status: "placed" });
+    expect(await executeFinanceIntradayDecision(request)).toMatchObject({
+      status: "placed",
+      tradeDecisionReview: {
+        status: "completed",
+        decision: { candidateId: "intraday-sell-1", decision: "approve" },
+      },
+    });
     expect(runOrderMock).toHaveBeenCalledTimes(1);
+    expect(tradeDecisionReviewer).toHaveBeenCalledTimes(1);
+    expect(tradeDecisionReviewer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        schemaVersion: "lcx_finance_intraday_trade_decision_review_v1",
+        ruleIds: ["opening_range_breakout_long_next_bar_v1"],
+        candidates: [
+          expect.objectContaining({
+            candidateId: "intraday-sell-1",
+            instrument: "SPY",
+            side: "sell",
+            intradayOwnedQuantity: 17.5,
+            brokerPositionQuantity: 67.5,
+          }),
+        ],
+      }),
+      expect.any(AbortSignal),
+    );
+    expect(await readFinanceIntradayOutcome(directory, "intraday-sell-1")).toMatchObject({
+      tradeDecisionReview: {
+        status: "completed",
+        decision: { decision: "approve" },
+      },
+    });
     expect(runOrderMock.mock.calls[0]?.[0]).toMatchObject({
       quantityOverride: 17.5,
       mode: "paper",
@@ -134,7 +192,117 @@ describe("intraday decision execution bridge", () => {
       outcome: { status: "placed", receiptId: "receipt-1" },
     });
     expect(runOrderMock).toHaveBeenCalledTimes(1);
+    expect(tradeDecisionReviewer).toHaveBeenCalledTimes(1);
   });
+
+  it.each(["unavailable", "veto", "invalid"] as const)(
+    "persists the intraday review and refuses placement when the model is %s",
+    async (reviewMode) => {
+      const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-review-gate-"));
+      temporary.push(directory);
+      const signalId = `intraday-review-${reviewMode}`;
+      const decision = (
+        await appendFinanceIntradayDecision(directory, {
+          signalId,
+          instrument: "SPY",
+          sessionDate: "2026-09-18",
+          action: "buy",
+          reason: "opening_range_breakout",
+          referencePrice: 500,
+          referencePriceAt: "2026-09-18T15:00:00.000Z",
+          stopPrice: 498,
+          targetPrice: 504,
+          datasetHeadRef: "d".repeat(64),
+          strategyRule: "opening_range_breakout_long_next_bar_v1",
+        })
+      ).record;
+      const tradeDecisionReviewer: FinanceTradeDecisionReviewer | undefined =
+        reviewMode === "veto"
+          ? async (request) => ({
+              status: "completed",
+              attempted: true,
+              provider: "fixture-provider",
+              modelId: "fixture-model",
+              latencyMs: 3,
+              providerCallObserved: true,
+              adapterAttested: true,
+              decisions: [
+                {
+                  candidateId: request.candidates[0]?.candidateId ?? "missing-candidate",
+                  decision: "veto",
+                  rationale: "The supplied candidate is not sufficiently supported.",
+                },
+              ],
+            })
+          : reviewMode === "invalid"
+            ? ((async () => ({
+                status: "completed",
+                attempted: true,
+                provider: "fixture-provider",
+                modelId: "fixture-model",
+                latencyMs: 3,
+                providerCallObserved: true,
+                adapterAttested: true,
+                decisions: [],
+              })) as unknown as FinanceTradeDecisionReviewer)
+            : undefined;
+      const runOrder = vi.fn();
+
+      const result = await executeFinanceIntradayDecision({
+        directory,
+        decision,
+        controller: {
+          accountId: "paper-account",
+          accountBookProvider: vi.fn(async () => ({
+            accountId: "paper-account",
+            venue: "alpaca:paper" as const,
+            observedAt: "2026-09-18T15:00:01.000Z",
+            expiresAt: "2026-09-18T15:01:01.000Z",
+            equity: 100_000,
+            positions: [],
+            reconciliation: {
+              status: "ready" as const,
+              historyStatus: "reconciled" as const,
+              uncertaintyReserve: 0,
+              quarantinedInstruments: [],
+              reasons: [],
+            },
+          })),
+          executionQuoteProvider: vi.fn(async () => ({
+            referencePrice: 500,
+            referencePriceAt: "2026-09-18T15:00:01.000Z",
+            sourceUrlOrArtifact: "fixture quote source",
+            bidPrice: 499.9,
+            askPrice: 500,
+            feed: "iex",
+            priceBasis: "ask" as const,
+            maxAgeMs: 30_000,
+          })),
+          createSafetyContext: vi.fn(),
+        },
+        caps: { maxOrderNotional: 5_000, maxInstrumentNotional: 10_000, maxOrdersPerRun: 1 },
+        tradeDecisionReviewer,
+        now: () => Date.parse("2026-09-18T15:00:02.000Z"),
+        runOrder: runOrder as never,
+      });
+
+      expect(result).toMatchObject({ status: "refused" });
+      expect(runOrder).not.toHaveBeenCalled();
+      const outcome = await readFinanceIntradayOutcome(directory, signalId);
+      expect(outcome).toMatchObject({
+        status: "refused",
+        tradeDecisionReview:
+          reviewMode === "unavailable"
+            ? { status: "failed", failureCode: "reviewer_unavailable" }
+            : reviewMode === "invalid"
+              ? { status: "failed", failureCode: "output_invalid" }
+              : {
+                  status: "completed",
+                  decision: { candidateId: signalId, decision: "veto" },
+                },
+      });
+    },
+  );
 
   it("recovers a placed outcome from an existing receipt instead of resending", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-execution-"));

@@ -23,6 +23,11 @@ const mocks = vi.hoisted(() => ({
   killTree: vi.fn(),
   loadConfig: vi.fn(() => ({})),
   syncAlpacaHistory: vi.fn(),
+  createIntradayController: vi.fn(() => ({ accountId: "paper-account" })),
+  runIntradayMonitorTick: vi.fn(),
+  executeIntradayDecision: vi.fn(),
+  createTradeDecisionReviewer: vi.fn(),
+  tradeDecisionReviewer: vi.fn(),
 }));
 vi.mock("../../src/process/kill-tree.js", () => ({ killProcessTree: mocks.killTree }));
 vi.mock("node:timers/promises", () => ({ setTimeout: mocks.delay }));
@@ -39,6 +44,18 @@ vi.mock("../../src/config/env-vars.js", () => ({ applyConfigEnvVars: vi.fn() }))
 vi.mock("../../src/cli/serve-detach.js", () => ({ buildDetachedServeEnv: () => ({}) }));
 vi.mock("../../src/agents/finance-alpaca-history-sync.js", () => ({
   syncConfiguredAlpacaPaperHistory: mocks.syncAlpacaHistory,
+}));
+vi.mock("../../src/agents/finance-alpaca-cycle-controller.js", () => ({
+  createFinanceAlpacaCycleController: mocks.createIntradayController,
+}));
+vi.mock("../../src/agents/finance-intraday-monitor.js", () => ({
+  runFinanceIntradayMonitorTick: mocks.runIntradayMonitorTick,
+}));
+vi.mock("../../src/agents/finance-intraday-execution.js", () => ({
+  executeFinanceIntradayDecision: mocks.executeIntradayDecision,
+}));
+vi.mock("../../src/agents/finance-trade-decision-review.js", () => ({
+  createFinanceTradeDecisionReviewer: mocks.createTradeDecisionReviewer,
 }));
 
 const success: FinanceCycleProcessResult = {
@@ -404,6 +421,75 @@ it("requires shared authorization and explicit caps for intraday paper placement
     "SPY",
   ];
   expect(() => parseFinanceSchedulerArgs(base)).toThrow("shared --place authorization");
+});
+
+it("routes an actionable intraday Paper decision through the configured review owner", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-21T15:00:00Z"));
+  const policy = path.join(directory, "alpaca-policy.json");
+  fs.writeFileSync(policy, "{}");
+  const decision = { input: { signalId: "intraday-signal-1" } };
+  const reviewer = vi.fn();
+  mocks.createTradeDecisionReviewer.mockReturnValue(reviewer);
+  mocks.runIntradayMonitorTick.mockResolvedValue({
+    status: "decision_recorded",
+    signal: { action: "buy", reason: "opening_range_breakout", signalId: "intraday-signal-1" },
+    decision,
+  });
+  mocks.executeIntradayDecision.mockResolvedValue({
+    status: "placed",
+    tradeDecisionReview: {
+      status: "completed",
+      latencyMs: 4,
+      decision: { decision: "approve" },
+    },
+  });
+  mocks.delay.mockImplementationOnce(async () => {
+    process.emit("SIGTERM");
+  });
+
+  await expect(
+    runFinanceScheduler([
+      "--loop",
+      "--dir",
+      directory,
+      "--intraday-monitor",
+      "--intraday-place",
+      "--intraday-instruments",
+      "SPY",
+      "--intraday-interval-seconds",
+      "300",
+      "--intraday-feed",
+      "iex",
+      "--intraday-opening-range-bars",
+      "6",
+      "--intraday-reward-risk",
+      "2",
+      "--place",
+      "--venue",
+      "alpaca",
+      "--execution-policy",
+      policy,
+      "--execution-quote-feed",
+      "iex",
+      "--execution-max-age-ms",
+      "30000",
+      "--max-order-notional",
+      "1000",
+      "--max-instrument-notional",
+      "5000",
+      "--max-orders",
+      "8",
+    ]),
+  ).resolves.toBe(143);
+  expect(mocks.createTradeDecisionReviewer).toHaveBeenCalledOnce();
+  expect(mocks.createTradeDecisionReviewer).toHaveBeenCalledWith({});
+  expect(mocks.executeIntradayDecision).toHaveBeenCalledWith(
+    expect.objectContaining({
+      decision,
+      tradeDecisionReviewer: reviewer,
+    }),
+  );
 });
 
 it("refuses an intraday monitor without an explicit universe", () => {

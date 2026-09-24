@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import {
+  FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA,
   FINANCE_TRADE_DECISION_REVIEW_SCHEMA,
   createFinanceTradeDecisionReviewer,
+  type FinanceIntradayTradeDecisionReviewRequest,
   type FinanceTradeDecisionReviewRequest,
 } from "./finance-trade-decision-review.js";
 import type { LogicalAgentModelAdapter } from "./logical-agent-model-router.js";
@@ -38,6 +40,46 @@ const request: FinanceTradeDecisionReviewRequest = {
         askPrice: 501,
         feed: "iex",
         priceBasis: "ask",
+        ageMs: 1000,
+        maxAgeMs: 5000,
+      },
+    },
+  ],
+};
+
+const intradayRequest: FinanceIntradayTradeDecisionReviewRequest = {
+  schemaVersion: FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA,
+  venue: "alpaca:paper",
+  asOf: "2026-09-23T19:30:00.000Z",
+  signalAnchor: "intraday-signal-1",
+  ruleIds: ["opening_range_breakout_long_next_bar_v1"],
+  equity: 100_000,
+  caps: { maxOrderNotional: 1_000, maxInstrumentNotional: 2_000, maxOrdersPerRun: 1 },
+  positionBookObservedAt: "2026-09-23T19:29:59.000Z",
+  reconciliation: { status: "ready", historyStatus: "reconciled", uncertaintyReserve: 0 },
+  positions: [{ instrument: "SPY", quantity: 0, marketValue: 0 }],
+  candidates: [
+    {
+      candidateId: "intraday-signal-1",
+      instrument: "SPY",
+      side: "buy",
+      strategyRule: "opening_range_breakout_long_next_bar_v1",
+      signalReason: "opening_range_breakout",
+      signalReferencePrice: 500,
+      signalReferencePriceAt: "2026-09-23T19:29:55.000Z",
+      stopPrice: 498,
+      targetPrice: 504,
+      datasetHeadRef: "c".repeat(64),
+      intradayOwnedQuantity: 0,
+      brokerPositionQuantity: 0,
+      executionQuote: {
+        referencePrice: 501,
+        referencePriceAt: "2026-09-23T19:29:59.000Z",
+        bidPrice: 500,
+        askPrice: 501,
+        feed: "iex",
+        priceBasis: "ask",
+        sourceUrlOrArtifact: "fixture quote source",
         ageMs: 1000,
         maxAgeMs: 5000,
       },
@@ -98,6 +140,54 @@ describe("configured finance trade decision reviewer", () => {
       expect.objectContaining({ role: "risk_check", payload: request }),
       expect.any(AbortSignal),
     );
+  });
+
+  it("binds an intraday review to one exact signal and its own response schema", async () => {
+    const model = adapter({
+      schemaVersion: FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA,
+      decisions: [
+        {
+          candidateId: intradayRequest.candidates[0].candidateId,
+          decision: "approve",
+          rationale: "The supplied signal, quote, and reconciled account facts are consistent.",
+        },
+      ],
+    });
+    const reviewer = createFinanceTradeDecisionReviewer({} as OpenClawConfig, {
+      adapterFactory: () => model,
+    });
+
+    const result = await reviewer(intradayRequest, AbortSignal.timeout(1000));
+
+    expect(result).toMatchObject({
+      status: "completed",
+      decisions: [{ candidateId: "intraday-signal-1", decision: "approve" }],
+    });
+    expect(model.invoke).toHaveBeenCalledWith(
+      expect.objectContaining({ role: "risk_check", payload: intradayRequest }),
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("does not accept a daily-review response schema for an intraday request", async () => {
+    const model = adapter({
+      schemaVersion: FINANCE_TRADE_DECISION_REVIEW_SCHEMA,
+      decisions: [
+        {
+          candidateId: intradayRequest.candidates[0].candidateId,
+          decision: "approve",
+          rationale: "Wrong response contract.",
+        },
+      ],
+    });
+    const reviewer = createFinanceTradeDecisionReviewer({} as OpenClawConfig, {
+      adapterFactory: () => model,
+    });
+
+    const result = await reviewer(intradayRequest, AbortSignal.timeout(1000));
+
+    expect(result).toMatchObject({ status: "failed", failureCode: "output_contract" });
+    expect(result.decisions).toBeUndefined();
   });
 
   it.each([

@@ -4,6 +4,8 @@ import { createConfiguredFinanceModelAdapter } from "./configured-finance-model-
 import { ModelAdapterError, type ModelCallRequest } from "./logical-agent-model-router.js";
 
 export const FINANCE_TRADE_DECISION_REVIEW_SCHEMA = "lcx_finance_trade_decision_review_v1" as const;
+export const FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA =
+  "lcx_finance_intraday_trade_decision_review_v1" as const;
 
 export type FinanceTradeDecisionCandidate = Readonly<{
   candidateId: string;
@@ -29,7 +31,7 @@ export type FinanceTradeDecisionCandidate = Readonly<{
   }>;
 }>;
 
-export type FinanceTradeDecisionReviewRequest = Readonly<{
+export type FinanceDailyTradeDecisionReviewRequest = Readonly<{
   schemaVersion: typeof FINANCE_TRADE_DECISION_REVIEW_SCHEMA;
   venue: "alpaca:paper";
   asOf: string;
@@ -56,6 +58,63 @@ export type FinanceTradeDecisionReviewRequest = Readonly<{
   }>[];
   candidates: readonly FinanceTradeDecisionCandidate[];
 }>;
+
+export type FinanceIntradayTradeDecisionCandidate = Readonly<{
+  candidateId: string;
+  instrument: string;
+  side: "buy" | "sell";
+  strategyRule: string;
+  signalReason: "opening_range_breakout" | "opening_range_stop" | "reward_target";
+  signalReferencePrice: number;
+  signalReferencePriceAt: string;
+  stopPrice?: number;
+  targetPrice?: number;
+  datasetHeadRef: string;
+  intradayOwnedQuantity: number;
+  brokerPositionQuantity: number;
+  executionQuote: Readonly<{
+    referencePrice: number;
+    referencePriceAt: string;
+    bidPrice?: number;
+    askPrice?: number;
+    feed?: string;
+    priceBasis?: "bid" | "ask" | "reference";
+    sourceUrlOrArtifact: string;
+    ageMs: number;
+    maxAgeMs: number;
+  }>;
+}>;
+
+export type FinanceIntradayTradeDecisionReviewRequest = Readonly<{
+  schemaVersion: typeof FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA;
+  venue: "alpaca:paper";
+  asOf: string;
+  signalAnchor: string;
+  ruleIds: readonly string[];
+  equity: number;
+  caps: Readonly<{
+    maxOrderNotional: number;
+    maxInstrumentNotional: number;
+    maxOrdersPerRun: number;
+  }>;
+  positionBookObservedAt: string;
+  reconciliation: Readonly<{
+    status: string;
+    historyStatus?: string;
+    uncertaintyReserve?: number;
+    quarantinedInstruments?: readonly string[];
+  }>;
+  positions: readonly Readonly<{
+    instrument: string;
+    quantity: number;
+    marketValue: number;
+  }>[];
+  candidates: readonly [FinanceIntradayTradeDecisionCandidate];
+}>;
+
+export type FinanceTradeDecisionReviewRequest =
+  | FinanceDailyTradeDecisionReviewRequest
+  | FinanceIntradayTradeDecisionReviewRequest;
 
 export type FinanceTradeDecision = Readonly<{
   candidateId: string;
@@ -128,7 +187,7 @@ export function parseFinanceTradeDecisionReviewOutput(
   }
   if (
     Object.keys(output).toSorted().join(",") !== "decisions,schemaVersion" ||
-    output.schemaVersion !== FINANCE_TRADE_DECISION_REVIEW_SCHEMA ||
+    output.schemaVersion !== request.schemaVersion ||
     !Array.isArray(output.decisions)
   ) {
     return undefined;
@@ -206,20 +265,29 @@ export function isValidFinanceTradeDecisionReviewResult(
     value.failureCode === undefined &&
     Array.isArray(value.decisions) &&
     parseFinanceTradeDecisionReviewOutput(
-      { schemaVersion: FINANCE_TRADE_DECISION_REVIEW_SCHEMA, decisions: value.decisions },
+      { schemaVersion: request.schemaVersion, decisions: value.decisions },
       request,
     ) !== undefined
   );
 }
 
 function reviewPrompt(payload: unknown): string {
+  const intraday =
+    isRecord(payload) && payload.schemaVersion === FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA;
+  const schemaVersion = intraday
+    ? FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA
+    : FINANCE_TRADE_DECISION_REVIEW_SCHEMA;
   return [
-    "You are a constrained risk reviewer for an autonomous Alpaca PAPER trading cycle.",
+    intraday
+      ? "You are a constrained risk reviewer for an autonomous Alpaca PAPER intraday decision."
+      : "You are a constrained risk reviewer for an autonomous Alpaca PAPER trading cycle.",
     "Use only the supplied decision packet. Do not use external or unstated market facts.",
-    "You may only approve or veto each exact candidateId. Never add candidates or change instrument, side, weight, notional, price, order type, or timing.",
-    "The researchClose is a completed-bar reference; executionQuote is a time-sensitive observed quote, not a guaranteed fill. Approval is advisory only: TypeScript will re-check quote freshness, account reconciliation, risk caps, deduplication, and the shared execution gate after your response.",
-    "If evidence is incomplete, contradictory, or not sufficient to justify the proposed rebalance, veto that candidate. Return exactly one decision for every candidate and no extra fields.",
-    `Return one JSON object with schemaVersion "${FINANCE_TRADE_DECISION_REVIEW_SCHEMA}" and decisions [{candidateId, decision: "approve"|"veto", rationale}].`,
+    "You may only approve or veto each exact candidateId. Never add candidates or change instrument, side, quantity, notional, price, stop, target, order type, or timing.",
+    intraday
+      ? "The strategy has already emitted the exact intraday signal. signalReferencePrice comes from its recorded bar evidence; executionQuote is a separate time-sensitive observed quote, not a guaranteed fill. Approval is advisory only: TypeScript will re-check quote freshness, reconciliation, limits, deduplication, and the shared execution gate."
+      : "The researchClose is a completed-bar reference; executionQuote is a time-sensitive observed quote, not a guaranteed fill. Approval is advisory only: TypeScript will re-check quote freshness, account reconciliation, risk caps, deduplication, and the shared execution gate after your response.",
+    `If evidence is incomplete, contradictory, or not sufficient to justify the proposed ${intraday ? "intraday signal" : "rebalance"}, veto that candidate. Return exactly one decision for every candidate and no extra fields.`,
+    `Return one JSON object with schemaVersion "${schemaVersion}" and decisions [{candidateId, decision: "approve"|"veto", rationale}].`,
     "Decision packet:",
     JSON.stringify(payload),
   ].join("\n");
@@ -234,7 +302,7 @@ function modelFailureCode(error: unknown): FinanceTradeDecisionReviewFailureCode
 
 /**
  * Create one bounded, configured-provider review call. This is invoked by the resident Paper
- * scheduler only when a ready daily cycle has executable candidates; it creates no credentials,
+ * scheduler only when a ready daily cycle or executable intraday signal needs review; it creates no credentials,
  * configuration, local model process, or execution authority.
  */
 export function createFinanceTradeDecisionReviewer(

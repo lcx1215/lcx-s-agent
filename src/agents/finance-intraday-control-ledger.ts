@@ -38,6 +38,128 @@ const RecordSchema = z
   .strict();
 export type FinanceIntradayDecisionRecord = z.infer<typeof RecordSchema> & { ref: string };
 
+const ReviewFailureCode = z.enum([
+  "output_contract",
+  "reviewer_unavailable",
+  "output_invalid",
+  "output_truncated",
+  "provider_auth",
+  "provider_rate_limit",
+  "process_error",
+  "output_limit",
+  "runtime_timeout",
+  "call_budget_exhausted",
+]);
+
+const IntradayReviewCandidateSchema = z
+  .object({
+    candidateId: Text,
+    instrument: Text,
+    side: z.enum(["buy", "sell"]),
+    strategyRule: Text,
+    signalReason: z.enum(["opening_range_breakout", "opening_range_stop", "reward_target"]),
+    signalReferencePrice: z.number().finite().positive(),
+    signalReferencePriceAt: Iso,
+    stopPrice: z.number().finite().positive().optional(),
+    targetPrice: z.number().finite().positive().optional(),
+    datasetHeadRef: Hash,
+    intradayOwnedQuantity: z.number().finite(),
+    brokerPositionQuantity: z.number().finite(),
+    executionQuote: z
+      .object({
+        referencePrice: z.number().finite().positive(),
+        referencePriceAt: Iso,
+        bidPrice: z.number().finite().positive().optional(),
+        askPrice: z.number().finite().positive().optional(),
+        feed: Text.optional(),
+        priceBasis: z.enum(["bid", "ask", "reference"]).optional(),
+        sourceUrlOrArtifact: Text,
+        ageMs: z.number().finite().nonnegative(),
+        maxAgeMs: z.number().finite().nonnegative(),
+      })
+      .strict(),
+  })
+  .strict();
+
+const IntradayReviewRequestSchema = z
+  .object({
+    schemaVersion: z.literal("lcx_finance_intraday_trade_decision_review_v1"),
+    venue: z.literal("alpaca:paper"),
+    asOf: Iso,
+    signalAnchor: Text,
+    ruleIds: z.array(Text).min(1),
+    equity: z.number().finite().positive(),
+    caps: z
+      .object({
+        maxOrderNotional: z.number().finite().positive(),
+        maxInstrumentNotional: z.number().finite().positive(),
+        maxOrdersPerRun: z.number().int().positive(),
+      })
+      .strict(),
+    positionBookObservedAt: Iso,
+    reconciliation: z
+      .object({
+        status: Text,
+        historyStatus: Text.optional(),
+        uncertaintyReserve: z.number().finite().nonnegative().optional(),
+        quarantinedInstruments: z.array(Text).optional(),
+      })
+      .strict(),
+    positions: z.array(
+      z
+        .object({
+          instrument: Text,
+          quantity: z.number().finite(),
+          marketValue: z.number().finite(),
+        })
+        .strict(),
+    ),
+    candidates: z.array(IntradayReviewCandidateSchema).length(1),
+  })
+  .strict();
+
+const IntradayReviewDecisionSchema = z
+  .object({
+    candidateId: Text,
+    decision: z.enum(["approve", "veto"]),
+    rationale: Text.max(800),
+  })
+  .strict();
+
+export const FinanceIntradayDecisionReviewReceiptSchema = z
+  .object({
+    request: IntradayReviewRequestSchema,
+    status: z.enum(["completed", "failed"]),
+    attempted: z.boolean(),
+    provider: Text,
+    modelId: Text,
+    latencyMs: z.number().finite().nonnegative(),
+    providerCallObserved: z.boolean(),
+    adapterAttested: z.boolean(),
+    requestIdSha256: Hash.optional(),
+    decision: IntradayReviewDecisionSchema.optional(),
+    failureCode: ReviewFailureCode.optional(),
+  })
+  .strict()
+  .superRefine((receipt, context) => {
+    const candidateId = receipt.request.candidates[0]?.candidateId;
+    if (receipt.status === "completed") {
+      if (
+        !receipt.attempted ||
+        !receipt.decision ||
+        receipt.decision.candidateId !== candidateId ||
+        receipt.failureCode !== undefined
+      ) {
+        context.addIssue({ code: "custom", message: "completed review must bind one decision" });
+      }
+    } else if (receipt.decision !== undefined || receipt.failureCode === undefined) {
+      context.addIssue({ code: "custom", message: "failed review requires a failure code only" });
+    }
+  });
+export type FinanceIntradayDecisionReviewReceipt = z.infer<
+  typeof FinanceIntradayDecisionReviewReceiptSchema
+>;
+
 const MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -74,6 +196,7 @@ export const FinanceIntradayOutcomeInput = z
     status: z.enum(["placed", "refused", "uncertain"]),
     receiptId: Text.optional(),
     reasons: z.array(Text),
+    tradeDecisionReview: FinanceIntradayDecisionReviewReceiptSchema.optional(),
   })
   .strict();
 export type FinanceIntradayOutcomeInput = z.infer<typeof FinanceIntradayOutcomeInput>;
