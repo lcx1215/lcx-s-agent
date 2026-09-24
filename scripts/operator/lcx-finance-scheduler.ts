@@ -58,10 +58,7 @@ import {
   resolveFinanceStateDir,
   type FinanceStateDir,
 } from "../../src/agents/finance-state-dir.js";
-import {
-  createFinanceTradeDecisionReviewer,
-  type FinanceTradeDecisionReviewer,
-} from "../../src/agents/finance-trade-decision-review.js";
+import { createFinanceTradeDecisionReviewer } from "../../src/agents/finance-trade-decision-review.js";
 import { runFinanceTuningLifecycle } from "../../src/agents/finance-tuning-lifecycle.js";
 import { buildDetachedServeEnv } from "../../src/cli/serve-detach.js";
 import { loadConfig } from "../../src/config/config.js";
@@ -586,8 +583,6 @@ type CycleContext = {
   options: SchedulerOptions;
   signal: AbortSignal;
   intradayController?: ReturnType<typeof createFinanceAlpacaCycleController>;
-  intradayTradeDecisionReviewer?: FinanceTradeDecisionReviewer;
-  intradayTradeDecisionReviewerUnavailable?: boolean;
   lastIdleReconciliationAtMs?: number;
 };
 
@@ -596,18 +591,13 @@ function numericExtra(args: readonly string[], flag: string): number {
   return index < 0 ? Number.NaN : Number(args[index + 1]);
 }
 
-function getIntradayTradeDecisionReviewer(context: CycleContext) {
-  if (context.intradayTradeDecisionReviewerUnavailable) {
+function createIntradayTradeDecisionReviewer() {
+  try {
+    // Each reviewer owns a single-call model adapter, so scope it to one decision.
+    return createFinanceTradeDecisionReviewer(loadConfig());
+  } catch {
     return undefined;
   }
-  if (!context.intradayTradeDecisionReviewer) {
-    try {
-      context.intradayTradeDecisionReviewer = createFinanceTradeDecisionReviewer(loadConfig());
-    } catch {
-      context.intradayTradeDecisionReviewerUnavailable = true;
-    }
-  }
-  return context.intradayTradeDecisionReviewer;
 }
 
 function writeSchedulerProgress(context: CycleContext, phase: "idle" | "cycle") {
@@ -920,7 +910,7 @@ async function tick(context: CycleContext): Promise<void> {
                 ),
                 maxOrdersPerRun: numericExtra(context.options.extraArgs, "--max-orders"),
               },
-              tradeDecisionReviewer: getIntradayTradeDecisionReviewer(context),
+              tradeDecisionReviewer: createIntradayTradeDecisionReviewer(),
               signal: context.signal,
             });
             const tradeDecisionReview =

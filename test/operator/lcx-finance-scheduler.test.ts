@@ -15,6 +15,10 @@ import {
 } from "../../src/agents/finance-scheduler-lock.js";
 import type { FinanceCycleProcessResult } from "../../src/agents/finance-scheduler-process.js";
 import { readFinanceSchedulerState } from "../../src/agents/finance-scheduler-state.js";
+import type {
+  FinanceTradeDecisionReviewer,
+  FinanceTradeDecisionReviewRequest,
+} from "../../src/agents/finance-trade-decision-review.js";
 
 const mocks = vi.hoisted(() => ({
   spawn: vi.fn(),
@@ -448,30 +452,102 @@ it("requires shared authorization and explicit caps for intraday paper placement
   expect(() => parseFinanceSchedulerArgs(base)).toThrow("shared --place authorization");
 });
 
-it("routes an actionable intraday Paper decision through the configured review owner", async () => {
+it("creates and calls a fresh single-use reviewer for each actionable intraday decision", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-09-21T15:00:00Z"));
   const policy = path.join(directory, "alpaca-policy.json");
   fs.writeFileSync(policy, "{}");
-  const decision = { input: { signalId: "intraday-signal-1" } };
-  const reviewer = vi.fn();
-  mocks.createTradeDecisionReviewer.mockReturnValue(reviewer);
-  mocks.runIntradayMonitorTick.mockResolvedValue({
-    status: "decision_recorded",
-    signal: { action: "buy", reason: "opening_range_breakout", signalId: "intraday-signal-1" },
-    decision,
-  });
-  mocks.executeIntradayDecision.mockResolvedValue({
-    status: "placed",
-    tradeDecisionReview: {
-      status: "completed",
-      latencyMs: 4,
-      decision: { decision: "approve" },
-    },
-  });
-  mocks.delay.mockImplementationOnce(async () => {
-    process.emit("SIGTERM");
-  });
+  const decisions = ["intraday-signal-1", "intraday-signal-2"].map((signalId) => ({
+    input: { signalId },
+  }));
+  const createSingleUseReviewer = (candidateId: string): FinanceTradeDecisionReviewer => {
+    let calls = 0;
+    return vi.fn(async (request: FinanceTradeDecisionReviewRequest) => {
+      calls += 1;
+      if (calls > 1) {
+        return {
+          status: "failed" as const,
+          attempted: false,
+          provider: "fixture-provider",
+          modelId: "fixture-model",
+          latencyMs: 0,
+          providerCallObserved: false,
+          adapterAttested: false,
+          failureCode: "call_budget_exhausted" as const,
+        };
+      }
+      return {
+        status: "completed" as const,
+        attempted: true,
+        provider: "fixture-provider",
+        modelId: "fixture-model",
+        latencyMs: 1,
+        providerCallObserved: true,
+        adapterAttested: true,
+        decisions: [
+          {
+            candidateId: request.candidates[0]?.candidateId ?? candidateId,
+            decision: "approve" as const,
+            rationale: "The supplied paper candidate is valid for this fixture.",
+          },
+        ],
+      };
+    });
+  };
+  const reviewers = decisions.map(({ input }) => createSingleUseReviewer(input.signalId));
+  const usedReviewers: FinanceTradeDecisionReviewer[] = [];
+  const reviewedSignalIds: string[] = [];
+  const reviewedCandidateIds: string[] = [];
+  mocks.createTradeDecisionReviewer
+    .mockReturnValueOnce(reviewers[0])
+    .mockReturnValueOnce(reviewers[1]);
+  for (const decision of decisions) {
+    mocks.runIntradayMonitorTick.mockResolvedValueOnce({
+      status: "decision_recorded",
+      signal: {
+        action: "buy",
+        reason: "opening_range_breakout",
+        signalId: decision.input.signalId,
+      },
+      decision,
+    });
+  }
+  const invokeReviewer = async (params: {
+    decision: { input: { signalId: string } };
+    tradeDecisionReviewer?: FinanceTradeDecisionReviewer;
+  }) => {
+    const reviewer = params.tradeDecisionReviewer;
+    if (!reviewer) {
+      throw new Error("actionable intraday decision requires its reviewer");
+    }
+    const signalId = params.decision.input.signalId;
+    usedReviewers.push(reviewer);
+    reviewedSignalIds.push(signalId);
+    const result = await reviewer(
+      { candidates: [{ candidateId: signalId }] } as never,
+      new AbortController().signal,
+    );
+    const decision = result.decisions?.[0];
+    if (decision) {
+      reviewedCandidateIds.push(decision.candidateId);
+    }
+    return {
+      status: result.status === "completed" ? ("placed" as const) : ("refused" as const),
+      tradeDecisionReview: {
+        status: result.status,
+        ...(decision ? { decision } : {}),
+        ...(result.failureCode ? { failureCode: result.failureCode } : {}),
+      },
+    };
+  };
+  mocks.executeIntradayDecision
+    .mockImplementationOnce(invokeReviewer)
+    .mockImplementationOnce(invokeReviewer);
+  mocks.delay
+    .mockImplementationOnce(async () => {})
+    .mockImplementationOnce(async () => {
+      process.emit("SIGTERM");
+    });
 
   await expect(
     runFinanceScheduler([
@@ -507,14 +583,15 @@ it("routes an actionable intraday Paper decision through the configured review o
       "8",
     ]),
   ).resolves.toBe(143);
-  expect(mocks.createTradeDecisionReviewer).toHaveBeenCalledOnce();
-  expect(mocks.createTradeDecisionReviewer).toHaveBeenCalledWith({});
-  expect(mocks.executeIntradayDecision).toHaveBeenCalledWith(
-    expect.objectContaining({
-      decision,
-      tradeDecisionReviewer: reviewer,
-    }),
-  );
+  expect(mocks.createTradeDecisionReviewer).toHaveBeenCalledTimes(2);
+  expect(mocks.createTradeDecisionReviewer).toHaveBeenNthCalledWith(1, {});
+  expect(mocks.createTradeDecisionReviewer).toHaveBeenNthCalledWith(2, {});
+  expect(mocks.executeIntradayDecision).toHaveBeenCalledTimes(2);
+  expect(usedReviewers).toEqual(reviewers);
+  expect(reviewedSignalIds).toEqual(["intraday-signal-1", "intraday-signal-2"]);
+  expect(reviewedCandidateIds).toEqual(reviewedSignalIds);
+  expect(reviewers[0]).toHaveBeenCalledOnce();
+  expect(reviewers[1]).toHaveBeenCalledOnce();
 });
 
 it("refuses an intraday monitor without an explicit universe", () => {
