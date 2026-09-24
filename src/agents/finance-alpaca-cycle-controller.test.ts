@@ -175,11 +175,17 @@ async function fixture() {
     credentialsAuthority: "external",
     execute,
   };
-  async function place(id: string, use = controller) {
-    const quote = await use.executionQuoteProvider(
-      { instrument: "SPY", side: "buy", assetClass: "us_equity" },
-      AbortSignal.timeout(5000),
-    );
+  async function place(
+    id: string,
+    use = controller,
+    quoteOverride?: Awaited<ReturnType<typeof controller.executionQuoteProvider>>,
+  ) {
+    const quote =
+      quoteOverride ??
+      (await use.executionQuoteProvider(
+        { instrument: "SPY", side: "buy", assetClass: "us_equity" },
+        AbortSignal.timeout(5000),
+      ));
     const intent: FinanceExecutionIntent = {
       intentId: id,
       instrument: "SPY",
@@ -228,6 +234,29 @@ async function fixture() {
   };
 }
 
+it("reads one quote before review and re-reads broker facts at the final safety gate", async () => {
+  const f = await fixture();
+  const quote = await f.controller.executionQuoteProvider(
+    { instrument: "SPY", side: "buy", assetClass: "us_equity" },
+    AbortSignal.timeout(5000),
+  );
+  expect(f.read).toHaveBeenCalledTimes(1);
+  const quoteUrl = new URL(f.read.mock.calls[0][0]);
+  expect(quoteUrl.hostname).toBe("data.alpaca.markets");
+  expect(quoteUrl.pathname).toBe("/v2/stocks/SPY/quotes/latest");
+  expect(quoteUrl.searchParams.get("feed")).toBe("iex");
+
+  expect((await f.place("quote-only", f.controller, quote)).status).toBe("placed");
+  const finalReads = f.read.mock.calls.slice(1).map(([url]) => new URL(url));
+  expect(finalReads.slice(-4).map((url) => url.pathname)).toEqual([
+    "/v2/account",
+    "/v2/positions",
+    "/v2/orders",
+    "/v2/assets/SPY",
+  ]);
+  expect(finalReads.some((url) => url.pathname.includes("/quotes/"))).toBe(false);
+});
+
 it("sizes from native positions, executes twice through the shared gate and recovers confirmed receipts on restart", async () => {
   const f = await fixture();
   const book = await f.controller.accountBookProvider(AbortSignal.timeout(5000));
@@ -273,10 +302,14 @@ it("persists a newly observed equity high across controller recreation", async (
   const f = await fixture();
   f.account.equity = "1100";
   f.account.cash = "1000";
-  await f.controller.executionQuoteProvider(
-    { instrument: "SPY", side: "buy", assetClass: "us_equity" },
-    AbortSignal.timeout(5000),
-  );
+  f.activities.push({
+    id: "high-deposit",
+    activity_type: "JNLC",
+    status: "executed",
+    net_amount: "100",
+    date: new Date().toISOString().slice(0, 10),
+  });
+  await f.controller.accountBookProvider(AbortSignal.timeout(5000));
   const filename = (await fs.readdir(f.directory)).find((name) =>
     name.startsWith("account-peak-"),
   )!;
@@ -285,12 +318,9 @@ it("persists a newly observed equity high across controller recreation", async (
   ).toBe(1100);
   await fs.writeFile(path.join(f.directory, filename), "{broken");
   const restart = createFinanceAlpacaCycleController(f.options);
-  await expect(
-    restart.executionQuoteProvider(
-      { instrument: "SPY", side: "buy", assetClass: "us_equity" },
-      AbortSignal.timeout(5000),
-    ),
-  ).rejects.toThrow("incomplete account peak");
+  await expect(restart.accountBookProvider(AbortSignal.timeout(5000))).rejects.toThrow(
+    "incomplete account peak",
+  );
 });
 
 it("retains an unknown outcome and refuses another cycle without repeating the order", async () => {
@@ -310,12 +340,23 @@ it("uses persisted highs for the drawdown gate after a restart", async () => {
   const f = await fixture();
   f.account.equity = "1100";
   f.account.cash = "1000";
-  await f.controller.executionQuoteProvider(
-    { instrument: "SPY", side: "buy", assetClass: "us_equity" },
-    AbortSignal.timeout(5000),
-  );
+  f.activities.push({
+    id: "high-deposit",
+    activity_type: "JNLC",
+    status: "executed",
+    net_amount: "100",
+    date: new Date().toISOString().slice(0, 10),
+  });
+  await f.controller.accountBookProvider(AbortSignal.timeout(5000));
   f.account.equity = "1000";
   f.account.cash = "900";
+  f.activities.push({
+    id: "high-withdrawal",
+    activity_type: "CSW",
+    status: "executed",
+    net_amount: "-100",
+    date: new Date().toISOString().slice(0, 10),
+  });
   const restart = createFinanceAlpacaCycleController({
     ...f.options,
     policy: { ...f.policy, maxPortfolioDrawdownFraction: 0.05 },

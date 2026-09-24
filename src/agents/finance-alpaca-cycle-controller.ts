@@ -4,6 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 import { readAlpacaPaperTerminalOrder } from "./finance-alpaca-execution-adapter.js";
 import {
+  readAlpacaPaperSafetyQuote,
   readAlpacaPaperSafetyFacts,
   type AlpacaSafetyQuoteBinding,
 } from "./finance-alpaca-safety-provider.js";
@@ -313,12 +314,29 @@ export function createFinanceAlpacaCycleController(options: {
       if (request.assetClass !== "us_equity") {
         throw new Error("daily controller supports US equities only");
       }
-      const observed = await facts(request.instrument, request.side, signal);
+      if (!instruments.has(request.instrument)) {
+        throw new Error("instrument outside controller universe");
+      }
+      const observed = await readAlpacaPaperSafetyQuote(
+        {
+          instrument: request.instrument,
+          side: request.side,
+          stockFeed: options.feed,
+          credentials,
+          read,
+          timeoutMs: 20000,
+          maxAgeMs: options.maxAgeMs,
+        },
+        signal,
+      );
+      if (!observed.ok) {
+        throw new Error(observed.reason);
+      }
       quoteBindings.set(`${request.instrument}:${request.side}`, observed.boundQuote);
       return {
-        referencePrice: observed.facts.quote.price,
-        referencePriceAt: observed.facts.quote.observedAt,
-        sourceUrlOrArtifact: observed.facts.quote.source,
+        referencePrice: observed.referencePrice,
+        referencePriceAt: observed.observedAt,
+        sourceUrlOrArtifact: observed.source,
         bidPrice: observed.bidPrice,
         askPrice: observed.askPrice,
         feed: options.feed,

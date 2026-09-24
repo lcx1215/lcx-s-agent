@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vitest";
 import {
+  readAlpacaPaperSafetyQuote,
   readAlpacaPaperSafetyFacts,
   type AlpacaSafetyProviderOptions,
 } from "./finance-alpaca-safety-provider.js";
@@ -177,6 +178,144 @@ it("reuses only bound quote and re-reads account facts, never claiming reconcili
     ).ok,
   ).toBe(false);
 });
+it("reads only the stock quote endpoint and reuses its opaque binding for final safety facts", async () => {
+  const f = fixture();
+  const quote = await readAlpacaPaperSafetyQuote({
+    instrument: f.options.instrument,
+    side: "sell",
+    stockFeed: "sip",
+    credentials: f.options.credentials,
+    read: f.options.read,
+    timeoutMs: f.options.timeoutMs,
+    maxAgeMs: f.options.maxAgeMs,
+  });
+  expect(quote.ok).toBe(true);
+  if (!quote.ok) {
+    return;
+  }
+  expect(quote).toMatchObject({ bidPrice: 99, askPrice: 100, referencePrice: 99 });
+  expect(f.read).toHaveBeenCalledTimes(1);
+  const quoteUrl = new URL(f.read.mock.calls[0][0]);
+  expect(quoteUrl.hostname).toBe("data.alpaca.markets");
+  expect(quoteUrl.pathname).toBe("/v2/stocks/SPY/quotes/latest");
+  expect(quoteUrl.searchParams.get("feed")).toBe("sip");
+
+  const final = await readAlpacaPaperSafetyFacts({
+    ...f.options,
+    side: "sell",
+    stockFeed: "sip",
+    boundQuote: quote.boundQuote,
+  });
+  expect(final.ok).toBe(true);
+  const finalUrls = f.read.mock.calls.slice(1).map(([url]) => new URL(url));
+  expect(finalUrls.map((url) => url.pathname)).toEqual([
+    "/v2/account",
+    "/v2/positions",
+    "/v2/orders",
+    "/v2/assets/SPY",
+  ]);
+});
+
+it("rejects expired and mismatched opaque quote bindings", async () => {
+  const f = fixture();
+  const quote = await readAlpacaPaperSafetyQuote({
+    instrument: f.options.instrument,
+    side: f.options.side,
+    stockFeed: f.options.stockFeed,
+    credentials: f.options.credentials,
+    read: f.options.read,
+    timeoutMs: f.options.timeoutMs,
+    maxAgeMs: f.options.maxAgeMs,
+  });
+  expect(quote.ok).toBe(true);
+  if (!quote.ok) {
+    return;
+  }
+
+  const wrongBinding = await readAlpacaPaperSafetyFacts({
+    ...f.options,
+    side: "sell",
+    boundQuote: quote.boundQuote,
+  });
+  expect(wrongBinding).toEqual({ ok: false, reason: "alpaca_safety_quote_binding_invalid" });
+  const wrongFeedBinding = await readAlpacaPaperSafetyFacts({
+    ...f.options,
+    stockFeed: "sip",
+    boundQuote: quote.boundQuote,
+  });
+  expect(wrongFeedBinding).toEqual({ ok: false, reason: "alpaca_safety_quote_binding_invalid" });
+
+  const now = Date.now();
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(now + f.options.maxAgeMs + 1);
+    const expired = await readAlpacaPaperSafetyFacts({
+      ...f.options,
+      evidence: {
+        ...f.options.evidence,
+        observedAt: new Date(Date.now()).toISOString(),
+        expiresAt: new Date(Date.now() + f.options.maxAgeMs).toISOString(),
+      },
+      boundQuote: quote.boundQuote,
+    });
+    expect(expired).toEqual({ ok: false, reason: "alpaca_safety_quote_expired" });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("rejects a stale quote before creating an execution binding", async () => {
+  const f = fixture();
+  f.quote.t = "2020-01-01T00:00:00Z";
+  const quote = await readAlpacaPaperSafetyQuote({
+    instrument: f.options.instrument,
+    side: f.options.side,
+    stockFeed: f.options.stockFeed,
+    credentials: f.options.credentials,
+    read: f.options.read,
+    timeoutMs: f.options.timeoutMs,
+    maxAgeMs: f.options.maxAgeMs,
+  });
+  expect(quote).toEqual({ ok: false, reason: "alpaca_safety_quote_expired" });
+});
+
+it.each(["zero-bid", "crossed-market"])("rejects invalid quote prices: %s", async (kind) => {
+  const f = fixture();
+  if (kind === "zero-bid") {
+    f.quote.bp = 0;
+  } else {
+    f.quote.bp = 101;
+  }
+  const quote = await readAlpacaPaperSafetyQuote({
+    instrument: f.options.instrument,
+    side: f.options.side,
+    stockFeed: f.options.stockFeed,
+    credentials: f.options.credentials,
+    read: f.options.read,
+    timeoutMs: f.options.timeoutMs,
+    maxAgeMs: f.options.maxAgeMs,
+  });
+  expect(quote).toEqual({ ok: false, reason: "alpaca_safety_facts_inconsistent" });
+});
+
+it("rejects an invalid quote side before reading the data endpoint", async () => {
+  const f = fixture();
+  const quote = await readAlpacaPaperSafetyQuote({
+    instrument: f.options.instrument,
+    side: "hold" as "buy",
+    stockFeed: f.options.stockFeed,
+    credentials: f.options.credentials,
+    read: f.options.read,
+    timeoutMs: f.options.timeoutMs,
+    maxAgeMs: f.options.maxAgeMs,
+  });
+  expect(quote).toEqual({
+    ok: false,
+    reason: "alpaca_safety_quote_parameters_invalid",
+  });
+  expect(f.read).not.toHaveBeenCalled();
+});
+
 it("bounds uncooperative transport without logging response or credentials", async () => {
   const f = fixture();
   const read = vi.fn<AlpacaSafetyProviderOptions["read"]>(() => new Promise(() => {}));
