@@ -4,11 +4,15 @@ import { pathToFileURL } from "node:url";
 import {
   boundPerception,
   compactReceipts,
+  nextCycleContinuation,
   projectFinancePerceptionEvidence,
   resumableReceipts,
   runCentralHarnessCycle,
 } from "../../src/agents/central-harness/harness-loop.js";
-import type { CompactBacklogEntry } from "../../src/agents/central-harness/harness-loop.js";
+import type {
+  CentralCycleContinuation,
+  CompactBacklogEntry,
+} from "../../src/agents/central-harness/harness-loop.js";
 import { createCentralBrain } from "../../src/agents/central-harness/model-brain.js";
 import type { CentralBrain } from "../../src/agents/central-harness/model-brain.js";
 import {
@@ -423,6 +427,7 @@ async function writeLatest(
     evidenceWriteFailures: readonly EvidenceWriteFailure[];
     capabilityDrain: readonly string[];
     receiptPersistenceDurationMs: number | null;
+    continuation?: CentralCycleContinuation;
   },
 ): Promise<void> {
   // The pointer is resolved against what is already on disk, so a run that observed
@@ -454,6 +459,8 @@ async function writeLatest(
     supersededThisRun: pointer.superseded && receipt ? receipt.runId : null,
     /** Resume-window honesty: cycles dropped because they produced no decision. */
     resumeDroppedNonDecisionCycles: meta.droppedNonDecisionCycles,
+    /** Why this invocation stopped, from the TypeScript-authored receipt verdict. */
+    continuation: meta.continuation ?? null,
     /** Byte budget actually applied to the brain's perception this cycle. */
     contextBudget: receipt?.contextBudget ?? null,
     /** JSONL append plus immutable per-cycle snapshot; excludes this latest pointer write. */
@@ -496,6 +503,7 @@ async function main(): Promise<void> {
   let lastRunSnapshotPath: string | undefined;
   let lastReceiptPersistenceDurationMs: number | null = null;
   let droppedNonDecisionCycles = 0;
+  let lastContinuation: CentralCycleContinuation | undefined;
   /**
    * Evidence writes are fail-open, the same way the codex harness treats its audit
    * trail: an unwritable log must not turn a completed cycle into an unparseable
@@ -564,7 +572,8 @@ async function main(): Promise<void> {
     lastReceipt = receipt;
     history = history.concat(receipt).slice(-200);
     runs += 1;
-    if (dryRun || runs >= maxCycles) {
+    lastContinuation = nextCycleContinuation(receipt, runs, maxCycles);
+    if (dryRun || !lastContinuation.run) {
       break;
     }
     // Bounded pacing: at least a short pause between cycles to stay idle-friendly.
@@ -585,6 +594,7 @@ async function main(): Promise<void> {
       evidenceWriteFailures,
       capabilityDrain: dispatchedCapabilities(lastReceipt, CENTRAL_CAPABILITY_IDS),
       receiptPersistenceDurationMs: lastReceiptPersistenceDurationMs,
+      ...(lastContinuation ? { continuation: lastContinuation } : {}),
     });
   } catch (error) {
     // stdout is the last surface standing: the summary below still has to print.
@@ -608,6 +618,7 @@ async function main(): Promise<void> {
     coverage: centralCoverage(),
     brainOutcome,
     brainAvailable: brainOutcome === "completed",
+    brainReason: lastReceipt?.brainCall.reason ?? null,
     actionsProposed: lastReceipt?.actionsProposed ?? 0,
     actionsApproved: lastReceipt?.actionsApproved ?? 0,
     actionsBlockedByGate: lastReceipt?.actionsBlockedByGate ?? 0,
@@ -629,6 +640,8 @@ async function main(): Promise<void> {
         })) ?? [],
     /** TypeScript-computed next step; never model-authored. */
     nextAction: lastReceipt?.nextAction ?? null,
+    /** Why the loop stopped; null when the invocation completed zero cycles. */
+    continuation: lastContinuation ?? null,
     /** The brain's own one-line rationale, so readers see *why*, not just *what*. */
     brainNote: lastReceipt?.brainCall.note ?? null,
     /** Where this invocation's own cycle receipt was written, for direct reading. */

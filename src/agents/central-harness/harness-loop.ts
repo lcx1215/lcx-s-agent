@@ -426,6 +426,47 @@ export function resumableReceipts(
   return receipts.filter((receipt) => receipt.brainCall.outcome === "completed");
 }
 
+/** TypeScript-authored loop verdict: continue only when this receipt names work. */
+export type CentralCycleContinuation =
+  | {
+      run: true;
+      because: "dispatch_failed" | "proposals_blocked_by_gate" | "owners_reported_not_ok";
+    }
+  | {
+      run: false;
+      because: "max_cycles_reached" | "brain_made_no_decision" | "nothing_left_to_follow_up";
+    };
+
+const FOLLOW_UP_VERDICTS: Readonly<
+  Record<string, "dispatch_failed" | "proposals_blocked_by_gate" | "owners_reported_not_ok">
+> = {
+  follow_up_on_failed_dispatch: "dispatch_failed",
+  review_blocked_proposals: "proposals_blocked_by_gate",
+  follow_up_on_owners_reporting_not_ok: "owners_reported_not_ok",
+};
+
+/**
+ * Decide whether another bounded cycle can make progress, using the receipt's
+ * verdict rather than re-deriving model intent or repeating an unchanged failure.
+ */
+export function nextCycleContinuation(
+  receipt: CentralRunReceipt,
+  cyclesRun: number,
+  maxCycles: number,
+): CentralCycleContinuation {
+  if (receipt.brainCall.outcome !== "completed") {
+    return { run: false, because: "brain_made_no_decision" };
+  }
+  const because = FOLLOW_UP_VERDICTS[receipt.nextAction];
+  if (!because) {
+    return { run: false, because: "nothing_left_to_follow_up" };
+  }
+  if (cyclesRun >= maxCycles) {
+    return { run: false, because: "max_cycles_reached" };
+  }
+  return { run: true, because };
+}
+
 /**
  * Steps whose outcome the next decision actually needs: red lights plus the
  * successful capability results the caller elected to carry forward.

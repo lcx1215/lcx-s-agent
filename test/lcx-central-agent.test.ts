@@ -13,6 +13,7 @@ import {
   runCentralHarnessCycle,
   boundPerception,
   compactReceipts,
+  nextCycleContinuation,
   resumableReceipts,
   CENTRAL_BACKLOG_MAX_OUTCOMES,
   CENTRAL_PERCEPTION_BUDGET_BYTES,
@@ -842,6 +843,10 @@ describe("central harness is wired into the governance loop, not orphaned", () =
     // only read the owner payload — not the on-disk snapshot.
     expect(centralCli).toContain("brainNote: lastReceipt?.brainCall.note");
     expect(autopilotSource).toContain("brainNote: payload.brainNote");
+    expect(centralCli).toContain("brainReason: lastReceipt?.brainCall.reason");
+    expect(autopilotSource).toContain("brainReason: payload.brainReason");
+    expect(centralCli).toContain("nextCycleContinuation(receipt, runs, maxCycles)");
+    expect(centralCli).toContain("if (dryRun || !lastContinuation.run)");
     // Guard the exact bug this replaced: reading a field the owner never emits.
     expect(autopilotSource).not.toContain("recordValue(payload.latestReceipt)");
   });
@@ -910,6 +915,104 @@ describe("terminal cycles are evidence, not resumable context", () => {
     expect(compactReceipts(resumableReceipts([failed]), 10)).toEqual([]);
     // The same cycle stays visible as evidence: dropping it from context is not deleting it.
     expect(compactReceipts([failed], 10)[0].brainOutcome).toBe("failed");
+  });
+});
+
+describe("central harness continuation follows the receipt's own verdict", () => {
+  async function cycleReceipt(
+    brain: Parameters<typeof runCentralHarnessCycle>[0]["brain"],
+    execute?: Parameters<typeof runCentralHarnessCycle>[0]["execute"],
+  ) {
+    return runCentralHarnessCycle({
+      perception: perception(),
+      brain,
+      registry,
+      ...(execute ? { execute } : {}),
+    });
+  }
+
+  it("continues when an owner reported not-ok", async () => {
+    const receipt = await cycleReceipt(
+      brainWithActions([{ ownerId: "commercialAcceptance", args: {}, reasoning: "check" }]),
+      async () => ({ output: '{"ok":false}', exitCode: 1, observedOk: false }),
+    );
+    expect(receipt.nextAction).toBe("follow_up_on_owners_reporting_not_ok");
+    expect(nextCycleContinuation(receipt, 1, 5)).toEqual({
+      run: true,
+      because: "owners_reported_not_ok",
+    });
+  });
+
+  it("continues when a proposal was blocked by the gate", async () => {
+    const receipt = await cycleReceipt(
+      brainWithActions([{ ownerId: "notAnOwner", args: {}, reasoning: "guess" }]),
+    );
+    expect(receipt.nextAction).toBe("review_blocked_proposals");
+    expect(nextCycleContinuation(receipt, 1, 5)).toEqual({
+      run: true,
+      because: "proposals_blocked_by_gate",
+    });
+  });
+
+  it("continues when an owner dispatch failed and the receipt asks for follow-up", async () => {
+    const receipt = await cycleReceipt(
+      brainWithActions([{ ownerId: "commercialAcceptance", args: {}, reasoning: "check" }]),
+      async () => {
+        throw new Error("temporary owner failure");
+      },
+    );
+    expect(receipt.nextAction).toBe("follow_up_on_failed_dispatch");
+    expect(nextCycleContinuation(receipt, 1, 5)).toEqual({
+      run: true,
+      because: "dispatch_failed",
+    });
+  });
+
+  it("stops rather than repeating an unchanged brain failure", async () => {
+    const receipt = await cycleReceipt({
+      propose: async () => {
+        throw new Error("provider unreachable");
+      },
+    });
+    expect(receipt.nextAction).toBe("halt_and_report");
+    expect(nextCycleContinuation(receipt, 1, 5)).toEqual({
+      run: false,
+      because: "brain_made_no_decision",
+    });
+  });
+
+  it("stops when the completed cycle has nothing left to follow up", async () => {
+    const receipt = await cycleReceipt(
+      brainWithActions([{ ownerId: "mindModel", args: {}, reasoning: "supervise" }]),
+      async () => ({ output: '{"ok":true}', exitCode: 0, observedOk: true }),
+    );
+    expect(receipt.nextAction).toBe("continue");
+    expect(nextCycleContinuation(receipt, 1, 5)).toEqual({
+      run: false,
+      because: "nothing_left_to_follow_up",
+    });
+  });
+
+  it("respects the cycle cap when a follow-up verdict remains", async () => {
+    const receipt = await cycleReceipt(
+      brainWithActions([{ ownerId: "commercialAcceptance", args: {}, reasoning: "check" }]),
+      async () => ({ output: '{"ok":false}', exitCode: 1, observedOk: false }),
+    );
+    expect(nextCycleContinuation(receipt, 3, 3)).toEqual({
+      run: false,
+      because: "max_cycles_reached",
+    });
+  });
+
+  it("fails closed for a future unrecognized verdict", async () => {
+    const receipt = await cycleReceipt(
+      brainWithActions([{ ownerId: "mindModel", args: {}, reasoning: "supervise" }]),
+      async () => ({ output: '{"ok":true}', exitCode: 0, observedOk: true }),
+    );
+    expect(nextCycleContinuation({ ...receipt, nextAction: "future_verdict" }, 1, 5)).toEqual({
+      run: false,
+      because: "nothing_left_to_follow_up",
+    });
   });
 });
 
