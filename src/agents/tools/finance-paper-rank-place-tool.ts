@@ -2,7 +2,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { Type } from "@sinclair/typebox";
 import type { FinanceRiskBudget } from "../finance-execution-adapter.js";
 import type { FinanceExecutionSafetyContextFactory } from "../finance-execution-safety.js";
-import { latestFinancePaperPromotion } from "../finance-paper-promotion.js";
 import { runFinancePaperOrder } from "../finance-paper-run.js";
 import { financeResearchSamplesPath, resolveFinanceStateDir } from "../finance-state-dir.js";
 import type { AnyAgentTool } from "./common.js";
@@ -16,17 +15,17 @@ import { jsonResult, readStringParam } from "./common.js";
  * Adding a second route to the venue is how a system ends up with two ideas of
  * what was ordered, and the gates only guard the one that is remembered.
  *
- * The floor is either the latest deterministically promoted paper floor, or
- * declared explicitly as an exploration value. It is never a silent default: in
- * calibrated mode with no scored outcomes there is no floor and nothing trades,
- * and that is reported rather than worked around.
+ * Calibrated execution requires realized net-trade evidence. Forecast direction
+ * hit rate is not used as a trading floor. Until a promotion is derived from
+ * reconciled trade economics, calibrated mode declines to place; explore mode
+ * remains an explicit evidence-generation path.
  *
  * Nothing here loosens a gate. Each selection still goes through the compiler
  * and the mandate - stop declared, risk capped, class resolved - and then
  * through placeFinanceOrder with its own budget.
  */
 
-export const FINANCE_PAPER_RANK_PLACE_SCHEMA_VERSION = "lcx_finance_paper_rank_place_v1" as const;
+export const FINANCE_PAPER_RANK_PLACE_SCHEMA_VERSION = "lcx_finance_paper_rank_place_v2" as const;
 
 const FinancePaperRankPlaceSchema = Type.Object({
   workspaceDir: Type.Optional(
@@ -48,7 +47,7 @@ const FinancePaperRankPlaceSchema = Type.Object({
   mode: Type.Optional(
     Type.Union([Type.Literal("calibrated"), Type.Literal("explore")], {
       description:
-        "calibrated: derive the conviction floor from scored outcomes, and refuse if none can be justified. explore: use exploreFloor, explicitly for generating evidence rather than profit. Default calibrated.",
+        "calibrated: requires a paper execution threshold derived from reconciled net trade economics; forecast hit rate is insufficient. explore: use exploreFloor, explicitly for generating evidence rather than profit. Default calibrated.",
     }),
   ),
   exploreFloor: Type.Optional(
@@ -139,29 +138,22 @@ async function main(
   const eligible = ranked.filter((s) => s.conviction >= rankingFloor);
   const chosen = eligible.slice(0, top);
 
-  let floor: number | null;
-  let floorBasis: string;
   if (mode === "calibrated") {
-    const promotion = latestFinancePaperPromotion(state.directory);
-    floor = promotion?.promoted ?? null;
-    floorBasis = promotion?.basis ?? "no deterministic paper promotion is on record";
-    if (floor === null) {
-      return jsonResult({
-        ok: true,
-        schemaVersion: FINANCE_PAPER_RANK_PLACE_SCHEMA_VERSION,
-        day,
-        mode,
-        floor: null,
-        floorBasis,
-        candidates: samples.length,
-        placed: [],
-        note: "no promoted data-derived paper floor, so nothing trades; the nightly tuning lifecycle promotes only after re-deriving the scored evidence",
-      });
-    }
-  } else {
-    floor = exploreFloor;
-    floorBasis = "explore mode: declared for evidence generation, not profit";
+    return jsonResult({
+      ok: true,
+      schemaVersion: FINANCE_PAPER_RANK_PLACE_SCHEMA_VERSION,
+      day,
+      mode,
+      floor: null,
+      floorBasis:
+        "no net-trade-economics promotion exists; legacy forecast-direction promotions are not valid execution evidence",
+      candidates: samples.length,
+      placed: [],
+      note: "calibrated mode is blocked until actual fills, costs, and strategy attribution support a net-P&L threshold; use explore mode only when explicitly generating paper evidence",
+    });
   }
+  const floor = exploreFloor;
+  const floorBasis = "explore mode: declared for evidence generation, not profit";
 
   if (chosen.length === 0) {
     return jsonResult({

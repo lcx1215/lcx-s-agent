@@ -274,7 +274,9 @@ describe("finance_position_ledger_read", () => {
     });
 
     expect(payload.ok).toBe(true);
-    expect(payload.asOfCaveat).toContain("only marks are limited to asOf");
+    expect(payload.asOfCaveat).toContain(
+      "gross curve includes only receipts and marks recorded by asOf",
+    );
   });
 
   it("rejects a malformed as-of instant and a non-positive initial capital by name", async () => {

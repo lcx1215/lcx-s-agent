@@ -126,7 +126,7 @@ describe("LCX flow graph exam", () => {
         schedulerOwnsNightSettlement: true,
         nightSettlementFeedsReviewedModuleResearch: true,
         nightFeedbackDispatchesTuning: true,
-        tuningFeedsDeterministicPromotion: true,
+        directionalCalibrationIsolatedFromPaperExecution: true,
         centralHarnessHasAutomaticFinanceTaskFeed: true,
       },
       missingHandoffs: [],

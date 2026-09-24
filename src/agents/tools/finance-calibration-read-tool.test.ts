@@ -82,6 +82,6 @@ describe("finance_calibration_read", () => {
     expect(floor.value).toBeNull();
     expect(floor.samplesUsed).toBe(0);
     expect(floor.basis).toMatch(/refusing to invent a floor/);
-    expect(String(result.note)).toMatch(/No scored outcomes yet/);
+    expect(String(result.note)).toMatch(/No scored directional outcomes yet/);
   });
 });

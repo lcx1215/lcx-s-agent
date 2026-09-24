@@ -9,7 +9,7 @@ import type { AnyAgentTool } from "./common.js";
 import { jsonResult, readStringParam } from "./common.js";
 
 /**
- * Generate, recall and deterministically promote paper-only tuning proposals.
+ * Generate and recall forecast-calibration proposals from directional outcomes.
  *
  * The reflection loop ended at a printed number: the system could say it was
  * inaccurate and had no next step. This is the next step, and it stops short of
@@ -20,12 +20,13 @@ import { jsonResult, readStringParam } from "./common.js";
  * and the most valuable thing to re-examine is exactly the one that was turned
  * down before the evidence was in.
  *
- * Promotion is owned by the shared lifecycle and re-derives the proposal from
- * the scored ledger. It cannot grant a venue or live execution authority.
+ * This lifecycle no longer promotes directional hit-rate evidence into a paper
+ * execution threshold. Trade-economics promotion requires reconciled fills,
+ * costs, and attribution through a separate owner.
  */
 
 export const FINANCE_TUNING_PROPOSAL_TOOL_SCHEMA_VERSION =
-  "lcx_finance_tuning_proposal_tool_v1" as const;
+  "lcx_finance_tuning_proposal_tool_v2" as const;
 
 const FinanceTuningProposalSchema = Type.Object({
   action: Type.Union([Type.Literal("propose"), Type.Literal("list")], {
@@ -40,7 +41,7 @@ export function createFinanceTuningProposalTool(): AnyAgentTool {
     name: "finance_tuning_proposal",
     label: "Finance tuning proposal",
     description:
-      "Derive tuning proposals from the settled track record, record them, then independently re-derive and promote only the matching paper calibration. Says plainly when the evidence supports no change.",
+      "Derive and record forecast-calibration proposals from settled directional outcomes. These proposals cannot change paper selection or execution gates; actual net-trade economics are a separate requirement. Says plainly when the evidence supports no calibration change.",
     parameters: FinanceTuningProposalSchema,
     execute: async (_toolCallId, params) => {
       const action = readStringParam(params, "action") ?? "propose";
@@ -71,7 +72,8 @@ export function createFinanceTuningProposalTool(): AnyAgentTool {
         proposals: result.proposals,
         newlyRecorded: lifecycle.newlyRecorded,
         promotions: lifecycle.promotions,
-        note: "Every new proposal is independently re-derived and promoted only to the paper calibration policy; no live venue authority is granted.",
+        paperExecutionPromotion: lifecycle.paperExecutionPromotion,
+        note: "Directional outcomes are retained for forecast calibration only. Paper execution thresholds remain blocked until reconciled trade costs and strategy attribution support a separate net-P&L assessment.",
       });
     },
   };

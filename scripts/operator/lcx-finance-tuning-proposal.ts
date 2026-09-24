@@ -3,11 +3,11 @@
  *
  * The nightly cycle settles matured calls and builds the reflection, and that was
  * where the chain ended: the numbers got printed and nothing followed. This runs
- * the shared proposal and deterministic paper-promotion lifecycle.
+ * the shared forecast-calibration proposal lifecycle.
  *
  * It exists as an operator entry rather than only as a tool because a step that
  * only a conversation can reach is a step that does not happen on a schedule.
- * The loop closes only for paper calibration; venue and live authority remain separate.
+ * Directional outcomes never promote a paper execution threshold. Net-trade evidence is a separate gate.
  *
  * Usage:
  *   node --import tsx scripts/operator/lcx-finance-tuning-proposal.ts [--json] \
@@ -43,7 +43,7 @@ async function main(): Promise<void> {
   }
 
   process.stdout.write(
-    "tuning proposal: promoted floor " +
+    "forecast calibration baseline " +
       String(result.currentFloor ?? "none") +
       ", " +
       result.samplesUsed +
@@ -74,14 +74,15 @@ async function main(): Promise<void> {
       );
     }
   }
+  process.stdout.write(
+    "  paper execution promotion: " +
+      lifecycle.paperExecutionPromotion.status +
+      " (" +
+      lifecycle.paperExecutionPromotion.reason +
+      ")\n",
+  );
   if (lifecycle.newlyRecorded > 0) {
-    process.stdout.write(
-      "  recorded " +
-        lifecycle.newlyRecorded +
-        " new proposal(s), promoted " +
-        lifecycle.promotions.filter((item) => item.appended).length +
-        " for paper use\n",
-    );
+    process.stdout.write("  recorded " + lifecycle.newlyRecorded + " new proposal(s)\n");
   }
 }
 

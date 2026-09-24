@@ -149,7 +149,7 @@ describe("Alpaca broker history reconciliation", () => {
       {
         instrument: "BTC/USD",
         quantity: -0.501,
-        averageCost: 200,
+        averageCost: 199.600798,
         realizedPnl: 0,
         appliedUsdFees: 0,
       },

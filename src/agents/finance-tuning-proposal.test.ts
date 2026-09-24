@@ -24,13 +24,12 @@ describe("finance tuning proposal", () => {
     expect(result.basis).toContain("noise");
   });
 
-  it("proposes nothing when no conviction level has demonstrated break-even", () => {
-    // Losing at every level. A coin-flip would still meet the default break-even
-    // line of 0.5, so the case that must produce no floor is a signal that loses.
+  it("proposes nothing when no conviction bucket meets the directional baseline", () => {
+    // A signal that loses at every conviction level cannot support a calibration floor.
     const losing = [...samples(12, 0.7, 1), ...samples(28, 0.7, 0)];
     const result = proposeTuning({ samples: losing, currentFloor: 0.6, minSamples: 30 });
     expect(result.proposals).toEqual([]);
-    expect(result.basis).toContain("no conviction level");
+    expect(result.basis).toContain("no conviction bucket");
   });
 
   it("proposes nothing when the derived floor already equals the current one", () => {
@@ -51,12 +50,14 @@ describe("finance tuning proposal", () => {
     });
     expect(result.proposals).toHaveLength(1);
     const proposal = result.proposals[0];
-    expect(proposal.knob).toBe("convictionFloor");
+    expect(proposal.scope).toBe("forecast_calibration_only");
+    expect(proposal.knob).toBe("directionalConfidenceFloor");
     expect(proposal.status).toBe("proposed");
     // Evidence must be re-derivable, so it names the counts it used.
-    expect(proposal.evidence).toContain("40 settled calls");
+    expect(proposal.evidence).toContain("40 settled directional calls");
+    expect(proposal.evidence).toContain("not an economic break-even estimate");
     expect(proposal.sampleCount).toBe(40);
-    expect(proposal.applyWith).toContain("deterministic paper-promotion");
+    expect(proposal.applyWith).toContain("forecast-calibration review only");
   });
 
   it("always reports status proposed - it never applies anything", () => {

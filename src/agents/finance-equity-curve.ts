@@ -1,5 +1,5 @@
 /**
- * Equity curve seam: turn the durable receipt+mark stream into an equity *level* series.
+ * Equity-curve seam: turn the durable receipt+mark stream into gross marked-value levels.
  *
  * The metrics themselves already exist (`src/agents/tools/quant-math-tool.ts`: max drawdown,
  * drawdown duration, CAGR, Calmar, Sharpe, Sortino, tracking error, ...). This module
@@ -28,13 +28,13 @@ import {
   type FinancePositionMark,
 } from "./finance-position-ledger.js";
 
-export const FINANCE_EQUITY_CURVE_SCHEMA = "lcx_finance_equity_curve_v1" as const;
+export const FINANCE_EQUITY_CURVE_SCHEMA = "lcx_finance_equity_curve_v2" as const;
 
 export type FinanceEquitySample = Readonly<{
   at: string;
   realizedPnl: number;
   unrealizedPnl: number | null;
-  /** `initialCapital + realizedPnl + unrealizedPnl`; `null` when an open position has no mark. */
+  /** Gross proxy: `initialCapital + realizedPnl + unrealizedPnl`; not brokerage net equity. */
   equity: number | null;
   openInstruments: readonly string[];
   instrumentsWithoutMark: readonly string[];
@@ -43,6 +43,7 @@ export type FinanceEquitySample = Readonly<{
 export type FinanceEquityCurve = Readonly<{
   schemaVersion: typeof FINANCE_EQUITY_CURVE_SCHEMA;
   boundary: "equity_curve_from_ledger_stream_only";
+  pnlBasis: "gross_fill_price_only";
   initialCapital: number;
   sampleCount: number;
   samples: readonly FinanceEquitySample[];
@@ -53,6 +54,7 @@ export type FinanceEquityCurve = Readonly<{
   undefinedEquityAt: readonly string[];
   /** Fills recorded after the last mark; they are reflected in no sample. */
   receiptsAfterLastMark: number;
+  /** Gross marked-value proxy at the latest fully defined mark instant, not net account equity. */
   finalEquity: number | null;
   /**
    * Mean spacing between adjacent defined samples, in seconds. Present so a caller that
@@ -146,6 +148,7 @@ export function buildFinanceEquityCurve(params: {
   return Object.freeze({
     schemaVersion: FINANCE_EQUITY_CURVE_SCHEMA,
     boundary: "equity_curve_from_ledger_stream_only",
+    pnlBasis: "gross_fill_price_only",
     initialCapital: params.initialCapital,
     sampleCount: instants.length,
     samples: Object.freeze(samples),

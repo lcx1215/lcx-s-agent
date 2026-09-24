@@ -14,7 +14,7 @@ beforeEach(() => {
 
 afterEach(() => fs.rmSync(directory, { recursive: true, force: true }));
 
-it("projects promoted finance lifecycle state for automatic harness perception", async () => {
+it("projects directional calibration separately from blocked paper execution promotion", async () => {
   fs.writeFileSync(
     financeResearchScoredPath(directory),
     Array.from({ length: 5 }, () => JSON.stringify({ conviction: 0.75, outcome: 1 })).join("\n") +
@@ -35,10 +35,19 @@ it("projects promoted finance lifecycle state for automatic harness perception",
     scoredOutcomeCount: 5,
     tuning: {
       proposalCount: 1,
-      promotionCount: 1,
-      latestPromotion: { promoted: 0.75, authority: "paper_only" },
+      promotionCount: 0,
+      latestPromotion: null,
     },
-    nextTask: "monitor_promoted_paper_calibration",
-    boundary: expect.arrayContaining(["no_execution_authority"]),
+    paperExecutionPromotion: {
+      status: "blocked",
+      reason: "net_trade_economics_promotion_contract_unavailable",
+      contributingReasons: ["directional_forecast_outcomes_are_not_net_trade_pnl"],
+      executionThresholdPromotionEligible: false,
+    },
+    nextTask: "review_directional_calibration_proposal",
+    boundary: expect.arrayContaining([
+      "directional_calibration_is_not_execution_promotion",
+      "no_execution_authority",
+    ]),
   });
 });

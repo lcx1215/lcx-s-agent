@@ -1,4 +1,8 @@
-import { readFinancePaperPromotions } from "./finance-paper-promotion.js";
+import {
+  FINANCE_DIRECTIONAL_CALIBRATION_BLOCK_REASON,
+  FINANCE_PAPER_EXECUTION_BLOCK_REASON,
+  readFinancePaperPromotions,
+} from "./finance-paper-promotion.js";
 import { readFinanceSchedulerState } from "./finance-scheduler-state.js";
 import { resolveFinanceStateDir } from "./finance-state-dir.js";
 import { readFinanceStrategyRuleLedger } from "./finance-strategy-rule-ledger.js";
@@ -8,7 +12,7 @@ import {
 } from "./finance-tuning-lifecycle.js";
 
 export const FINANCE_AUTOMATIC_LIFECYCLE_FEEDBACK_SCHEMA_VERSION =
-  "lcx_finance_automatic_lifecycle_feedback_v1" as const;
+  "lcx_finance_automatic_lifecycle_feedback_v2" as const;
 
 function compactLastRun(value: Record<string, unknown> | undefined) {
   if (!value) {
@@ -57,10 +61,10 @@ export async function buildFinanceAutomaticLifecycleFeedback(
       scheduler.lastRun?.ok === false
         ? "inspect_failed_finance_cycle"
         : latestProposal && latestProposal.proposalId !== latestPromotion?.proposalId
-          ? "inspect_unpromoted_tuning_proposal"
+          ? "review_directional_calibration_proposal"
           : latestPromotion === null
-            ? "accumulate_scored_outcomes_for_calibration"
-            : "monitor_promoted_paper_calibration";
+            ? "prepare_reconciled_net_trade_economics_evidence"
+            : "monitor_net_trade_economics_promotion";
     return Object.freeze({
       schemaVersion: FINANCE_AUTOMATIC_LIFECYCLE_FEEDBACK_SCHEMA_VERSION,
       status: "present",
@@ -78,11 +82,21 @@ export async function buildFinanceAutomaticLifecycleFeedback(
         promotionCount: promotions.length,
         latestPromotion,
       },
+      paperExecutionPromotion: {
+        status: "blocked",
+        reason: FINANCE_PAPER_EXECUTION_BLOCK_REASON,
+        contributingReasons: [FINANCE_DIRECTIONAL_CALIBRATION_BLOCK_REASON],
+        executionThresholdPromotionEligible: false,
+      },
       activeRules: rules.ledger.rules
         .filter((rule) => rule.state === "active")
         .map((rule) => ({ ruleId: rule.ruleId, form: rule.form, instruments: rule.instruments })),
       nextTask,
-      boundary: ["read_only_feedback", "paper_promotion_only", "no_execution_authority"],
+      boundary: [
+        "read_only_feedback",
+        "directional_calibration_is_not_execution_promotion",
+        "no_execution_authority",
+      ],
     });
   } catch (error) {
     return Object.freeze({

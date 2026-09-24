@@ -361,7 +361,7 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     id: "finance_calibration_read",
     label: "finance_calibration_read",
     description:
-      "Read-only summary of how accurate this system's own finance calls were: hit rate, Brier score, overconfidence gap, pending sample count, and the conviction floor derived from those outcomes if one can be justified",
+      "Read-only summary of forecast directional accuracy: hit rate, Brier score, overconfidence gap, pending sample count, and a directional calibration floor when supported. These measures do not establish trade profitability or execution eligibility",
     sectionId: "memory",
     profiles: ["coding"],
     includeInOpenClawGroup: true,
@@ -397,7 +397,7 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     id: "finance_tuning_proposal",
     label: "finance_tuning_proposal",
     description:
-      "Derive tuning proposals from the settled track record, record them, and deterministically promote only a re-derived matching paper calibration; never grants live authority",
+      "Derive and record forecast-calibration proposals from directional outcomes. They cannot change paper selection or execution gates; reconciled net-trade economics are required separately",
     sectionId: "memory",
     profiles: ["coding"],
     includeInOpenClawGroup: true,
@@ -442,7 +442,7 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     id: "finance_position_ledger_read",
     label: "finance_position_ledger_read",
     description:
-      "Read the durable position book: open positions, average cost, realized and unrealized PnL, marks, the equity curve derived from the same stream, and — on request — a behaviour profile of the recorded fills (disposition effect, turnover, momentum chasing, anchoring)",
+      "Read the durable position book and gross marked-value/drawdown diagnostics. With an explicit broker account id, also read stored Alpaca paper history and show fee-adjusted realized trade P&L only when the fill and fee history reconciles. Strategy profitability and execution-threshold promotion remain unproven",
     sectionId: "memory",
     profiles: ["coding"],
     includeInOpenClawGroup: true,
