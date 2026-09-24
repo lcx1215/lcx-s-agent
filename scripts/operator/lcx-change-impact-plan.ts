@@ -261,6 +261,25 @@ const PATH_RULES: PathRule[] = [
     risk: "elevated",
   },
   {
+    id: "model_request_metadata_trajectory",
+    lane: "agent_workflow_memory",
+    patterns: [
+      /^src\/agents\/model-request-trajectory(?:\.test)?\.ts$/u,
+      /^src\/agents\/configured-finance-model-adapter\.ts$/u,
+      /^src\/agents\/central-harness\/model-brain\.ts$/u,
+      /^src\/agents\/pi-embedded-runner\/run\/attempt\.ts$/u,
+      /^scripts\/operator\/lcx-model-trajectory\.ts$/u,
+    ],
+    requiredChecks: ["model-request-trajectory-tests"],
+    commands: [
+      "pnpm vitest run src/agents/model-request-trajectory.test.ts src/agents/configured-finance-model-adapter.test.ts src/agents/pi-embedded-runner/run/attempt.test.ts src/agents/pi-embedded-runner/run/attempt.egress.test.ts test/lcx-central-agent.test.ts",
+    ],
+    safetyNotes: [
+      "The trajectory records request metadata only; prompt/message bodies, credentials, endpoints, and raw provider errors are never persisted.",
+    ],
+    risk: "elevated",
+  },
+  {
     id: "physical_path_migration",
     lane: "repository_cleanup",
     patterns: [

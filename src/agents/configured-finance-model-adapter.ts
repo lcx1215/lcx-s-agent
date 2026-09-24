@@ -14,6 +14,11 @@ import {
 } from "./logical-agent-model-router.js";
 import type { LogicalAgentId } from "./logical-agent-pool.js";
 import { getCustomProviderApiKey, resolveEnvApiKey } from "./model-auth.js";
+import {
+  recordModelRequestStart,
+  recordModelRequestUpdate,
+  type ModelRequestSource,
+} from "./model-request-trajectory.js";
 import { buildInlineProviderModels } from "./pi-embedded-runner/model.js";
 import type { QualityHarnessModelRequest } from "./quality-harness-contract.js";
 
@@ -126,6 +131,8 @@ export function createConfiguredFinanceModelAdapter(
     /** Must resolve to an existing definition; never creates a provider. */
     modelRef?: string;
     callBudget?: ReturnType<typeof createFinanceModelCallBudget>;
+    /** Identifies the existing caller without changing provider or model selection. */
+    trajectorySource?: Exclude<ModelRequestSource, "agent_session">;
   } = {},
 ): LogicalAgentModelAdapter {
   const selection = cfg.agents?.defaults?.model;
@@ -202,10 +209,22 @@ export function createConfiguredFinanceModelAdapter(
       }
       options.callBudget?.reserve();
       calls += 1;
+      const promptText = options.buildPrompt
+        ? options.buildPrompt(request.payload)
+        : buildQualityHarnessModelPrompt(request.payload as QualityHarnessModelRequest);
+      const trajectoryTicket = recordModelRequestStart({
+        source: options.trajectorySource ?? "finance_engine",
+        provider,
+        modelId,
+        modelApi: model.api,
+        inputBytes: Buffer.byteLength(promptText, "utf8"),
+        messageCount: 1,
+      });
       let response: {
         id?: string;
         choices?: { finish_reason?: string; message?: { content?: string } }[];
       };
+      let receivedHttpResponse = false;
       try {
         const http = await fetch(endpoint, {
           method: "POST",
@@ -218,19 +237,17 @@ export function createConfiguredFinanceModelAdapter(
           },
           body: JSON.stringify({
             model: modelId,
-            messages: [
-              {
-                role: "user",
-                content: options.buildPrompt
-                  ? options.buildPrompt(request.payload)
-                  : buildQualityHarnessModelPrompt(request.payload as QualityHarnessModelRequest),
-              },
-            ],
+            messages: [{ role: "user", content: promptText }],
             max_tokens: maxTokens,
             ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
             response_format: { type: "json_object" },
             stream: false,
           }),
+        });
+        receivedHttpResponse = true;
+        recordModelRequestUpdate(trajectoryTicket, {
+          stage: "response_received",
+          httpStatus: http.status,
         });
         if (!http.ok) {
           await http.body?.cancel();
@@ -244,6 +261,12 @@ export function createConfiguredFinanceModelAdapter(
         }
         response = (await http.json()) as typeof response;
       } catch (error) {
+        if (!receivedHttpResponse) {
+          recordModelRequestUpdate(trajectoryTicket, {
+            stage: "request_error",
+            errorKind: "transport",
+          });
+        }
         throw error instanceof ModelAdapterError ? error : new ModelAdapterError("process_error");
       }
       if (response.id) {

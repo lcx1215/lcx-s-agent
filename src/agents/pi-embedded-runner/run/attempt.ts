@@ -49,6 +49,7 @@ import { isTimeoutError } from "../../failover-error.js";
 import { resolveImageSanitizationLimits } from "../../image-sanitization.js";
 import { resolveModelAuthMode } from "../../model-auth.js";
 import { ensureModelEgressDispatcher } from "../../model-egress.js";
+import { wrapStreamFnForTrajectory } from "../../model-request-trajectory.js";
 import { normalizeProviderId, resolveDefaultModelForAgent } from "../../model-selection.js";
 import { createOllamaStreamFn, OLLAMA_NATIVE_BASE_URL } from "../../ollama-stream.js";
 import { createOpenAIWebSocketStreamFn, releaseWsSession } from "../../openai-ws-stream.js";
@@ -1133,6 +1134,10 @@ export async function runEmbeddedAttempt(
       activeSession.agent.streamFn = wrapStreamFnEgressAssertion(
         activeSession.agent.streamFn,
         params.config,
+      );
+      activeSession.agent.streamFn = wrapStreamFnForTrajectory(
+        activeSession.agent.streamFn,
+        "agent_session",
       );
 
       // Ollama with OpenAI-compatible API needs num_ctx in payload.options.

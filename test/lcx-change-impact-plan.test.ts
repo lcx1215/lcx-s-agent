@@ -97,6 +97,33 @@ describe("lcx-change-impact-plan", () => {
       ]),
     );
   });
+
+  it("routes metadata-only model request trajectory through its owner and regressions", async () => {
+    const payload = await runPlanArgs([
+      "--files",
+      "src/agents/model-request-trajectory.ts",
+      "src/agents/model-request-trajectory.test.ts",
+      "src/agents/configured-finance-model-adapter.ts",
+      "src/agents/central-harness/model-brain.ts",
+      "src/agents/pi-embedded-runner/run/attempt.ts",
+      "scripts/operator/lcx-model-trajectory.ts",
+    ]);
+
+    expect(payload.ok).toBe(true);
+    expect(payload.unmatchedFiles).toEqual([]);
+    expect(payload.affectedLanes).toContain("agent_workflow_memory");
+    expect(payload.impacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "model_request_metadata_trajectory",
+          requiredChecks: ["model-request-trajectory-tests"],
+        }),
+      ]),
+    );
+    expect(payload.recommendedFastCommands.join("\n")).toContain(
+      "src/agents/model-request-trajectory.test.ts",
+    );
+  });
   it("routes every test file through the single main vitest configuration", async () => {
     const result = await runPlanArgs([
       "--files",
