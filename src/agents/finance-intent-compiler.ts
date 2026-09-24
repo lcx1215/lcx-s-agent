@@ -16,7 +16,11 @@
  * It is reversible and should be overruled by the owner if wrong.
  */
 
-import type { FinanceExecutionIntent, FinanceOrderSide } from "./finance-execution-adapter.js";
+import type {
+  FinanceDecisionReference,
+  FinanceExecutionIntent,
+  FinanceOrderSide,
+} from "./finance-execution-adapter.js";
 import {
   DEFAULT_FINANCE_CLASS_RULES,
   classifyFinanceStrategy,
@@ -27,6 +31,8 @@ export type FinanceConclusionDirection = "buy" | "sell" | "hold" | "avoid";
 
 export type FinanceResearchConclusion = Readonly<{
   conclusionId: string;
+  /** Optional upstream source key; absent callers retain only the conclusion id in the intent. */
+  decisionRef?: FinanceDecisionReference;
   instrument?: string;
   direction?: FinanceConclusionDirection;
   /** 0..1. Absent is treated as unknown, not as maximum conviction. */
@@ -84,6 +90,16 @@ export function compileExecutionIntent(
   const { conclusion, market, equity } = params;
   const refusals: string[] = [];
   const notes: string[] = [];
+  const decisionRef: FinanceDecisionReference | undefined = conclusion.decisionRef
+    ? { ...conclusion.decisionRef, id: conclusion.decisionRef.id.trim() }
+    : undefined;
+
+  if (!conclusion.conclusionId.trim()) {
+    refusals.push("refuse: conclusion needs an id; the intent id derives from it");
+  }
+  if (conclusion.decisionRef !== undefined && !decisionRef?.id) {
+    refusals.push("refuse: decision reference needs a stable source id");
+  }
 
   if (!params.runAuthorizationId.trim()) {
     refusals.push("refuse: no run authorization; an unauthorized run produces no order");
@@ -271,6 +287,7 @@ export function compileExecutionIntent(
     notes,
     intent: {
       intentId: `intent:${conclusion.conclusionId}`,
+      ...(decisionRef === undefined ? {} : { decisionRef }),
       instrument,
       side,
       orderType: "market",

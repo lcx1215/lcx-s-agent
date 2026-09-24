@@ -185,7 +185,7 @@ it("keeps controller ceilings and unattended mode when model parameters try to e
   });
 });
 
-it("uses the promoted floor in calibrated mode", async () => {
+it("ignores legacy forecast calibration promotions in calibrated mode", async () => {
   fs.writeFileSync(path.join(root, "research-samples.jsonl"), JSON.stringify(sample));
   fs.writeFileSync(
     path.join(root, "paper-promotions.jsonl"),
@@ -218,6 +218,12 @@ it("uses the promoted floor in calibrated mode", async () => {
     },
   }).execute("fixture", { workspaceDir: root, day, mode: "calibrated", place: true });
 
-  expect(result.details).toMatchObject({ floor: 0.75, floorBasis: "fixture promoted floor" });
-  expect(mocks.run.mock.calls[0][0].minConviction).toBe(0.75);
+  expect(result.details).toMatchObject({
+    floor: null,
+    floorBasis:
+      "no net-trade-economics promotion exists; legacy forecast-direction promotions are not valid execution evidence",
+    placed: [],
+  });
+  expect(JSON.stringify(result.details)).toContain("actual fills, costs, and strategy attribution");
+  expect(mocks.run).not.toHaveBeenCalled();
 });

@@ -1481,6 +1481,10 @@ export async function runFinanceDailyCycle(
         createSafetyContext: params.createSafetyContext,
         conclusion: {
           conclusionId: `daily_cycle:${signalAnchor}:${item.instrument}`,
+          decisionRef: {
+            source: "daily_cycle_candidate",
+            id: [params.runAuthorizationId, signalAnchor, item.instrument, item.action].join(":"),
+          },
           instrument: item.instrument,
           direction: item.action,
           conviction: 1,

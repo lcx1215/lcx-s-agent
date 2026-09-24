@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import { Type } from "@sinclair/typebox";
+import { readFinanceAccountTradingBook } from "../finance-account-trading-book.js";
 import {
   buildFinanceBehaviourProfile,
   parseFinanceBehaviourThresholds,
@@ -18,9 +19,164 @@ import {
 } from "../finance-state-dir.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult, readNumberParam, readStringParam } from "./common.js";
+import { calculateMaxDrawdown } from "./quant-math-tool.js";
 
 export const FINANCE_POSITION_LEDGER_READ_SCHEMA_VERSION =
-  "lcx_finance_position_ledger_read_v1" as const;
+  "lcx_finance_position_ledger_read_v2" as const;
+
+function decisionLinkCoverage(receipts: readonly FinanceExecutionReceipt[]) {
+  const sourceCounts = new Map<string, number>();
+  for (const receipt of receipts) {
+    const source = receipt.decisionRef?.source;
+    if (source !== undefined) {
+      sourceCounts.set(source, (sourceCounts.get(source) ?? 0) + 1);
+    }
+  }
+  const explicitSourceLinkCount = receipts.filter(
+    (receipt) => receipt.decisionRef !== undefined,
+  ).length;
+  const unlinkedReceiptCount = receipts.filter(
+    (receipt) => receipt.decisionRef === undefined,
+  ).length;
+
+  return Object.freeze({
+    executionReceiptCount: receipts.length,
+    explicitSourceLinkCount,
+    unlinkedReceiptCount,
+    bySource: Object.freeze(Object.fromEntries(sourceCounts)),
+    strategyAttribution: "incomplete" as const,
+  });
+}
+
+function grossPerformanceDiagnostic(params: {
+  curve: ReturnType<typeof buildFinanceEquityCurve>;
+  receipts: readonly FinanceExecutionReceipt[];
+}) {
+  const { curve } = params;
+  const links = decisionLinkCoverage(params.receipts);
+  const completeMarkCoverage =
+    curve.undefinedEquityAt.length === 0 && curve.receiptsAfterLastMark === 0;
+  const grossPnlAtLastDefinedMark =
+    curve.finalEquity === null
+      ? null
+      : Number((curve.finalEquity - curve.initialCapital).toFixed(6));
+  const grossReturnPctAtLastDefinedMark =
+    curve.finalEquity === null
+      ? null
+      : Number(
+          (((curve.finalEquity - curve.initialCapital) / curve.initialCapital) * 100).toFixed(6),
+        );
+  const observedMaxDrawdown =
+    curve.levels.length < 2 ? null : calculateMaxDrawdown([...curve.levels], "levels").maxDrawdown;
+
+  return Object.freeze({
+    boundary: "gross_marked_ledger_diagnostic_only" as const,
+    status:
+      params.receipts.length === 0
+        ? ("no_execution_history" as const)
+        : curve.levels.length < 2
+          ? ("insufficient_mark_history" as const)
+          : completeMarkCoverage
+            ? ("gross_observation_only" as const)
+            : ("partial_gross_observation" as const),
+    pnlBasis: curve.pnlBasis,
+    executionReceiptCount: params.receipts.length,
+    decisionLinkCoverage: links,
+    grossPnlAtLastDefinedMark,
+    grossReturnPctAtLastDefinedMark,
+    observedMaxDrawdown,
+    netProfitability: "not_proven" as const,
+    executionThresholdPromotionEligible: false,
+    blockers: Object.freeze([
+      "execution receipts do not record transaction fees or commissions",
+      "the position projection does not include account cash flows, dividends, borrow, or financing costs",
+      ...(links.unlinkedReceiptCount > 0
+        ? [
+            `${links.unlinkedReceiptCount} execution receipt(s) have no durable source-decision reference`,
+          ]
+        : []),
+      "source-decision references do not yet identify a stable strategy, strategy version, trial, or forecast cohort",
+      "no aligned benchmark series was supplied",
+    ]),
+  });
+}
+
+function brokerTradeEconomicsDiagnostic(
+  book: Awaited<ReturnType<typeof readFinanceAccountTradingBook>>,
+) {
+  const { brokerHistory } = book;
+  const links = decisionLinkCoverage(book.execution.receipts);
+  const unsupportedFeeCount = brokerHistory.fees.filter((fee) => {
+    if (fee.currency === "USD") {
+      return false;
+    }
+    const baseAsset = fee.instrument?.split("/")[0];
+    return baseAsset === undefined || fee.currency !== baseAsset;
+  }).length;
+  const feeCoverageComplete =
+    brokerHistory.historyStatus === "reconciled" &&
+    brokerHistory.feesInterpreted &&
+    brokerHistory.unappliedFeeCount === 0 &&
+    brokerHistory.baselineAppliedFeeCount === 0 &&
+    unsupportedFeeCount === 0;
+  const hasTradeHistory = brokerHistory.brokerFillCount > 0;
+  const realizedTradePnlAfterFees =
+    feeCoverageComplete && hasTradeHistory
+      ? Number(
+          brokerHistory.positions
+            .reduce((total, position) => total + position.realizedPnl, 0)
+            .toFixed(6),
+        )
+      : null;
+  const status =
+    brokerHistory.historyStatus === "missing"
+      ? "no_broker_history"
+      : !feeCoverageComplete
+        ? "incomplete_cost_coverage"
+        : !hasTradeHistory
+          ? "no_trade_history"
+          : "realized_trade_pnl_after_fees";
+  const blockers = [
+    ...(brokerHistory.historyStatus !== "reconciled"
+      ? ["complete broker fills and fee reconciliation are not available"]
+      : []),
+    ...(unsupportedFeeCount > 0
+      ? [`${unsupportedFeeCount} fee(s) use currencies the trade projection cannot value`]
+      : []),
+    ...(brokerHistory.baselineAppliedFeeCount > 0
+      ? ["some asset fees are applied to account quantity without order-level attribution"]
+      : []),
+    ...(links.unlinkedReceiptCount > 0
+      ? [
+          `${links.unlinkedReceiptCount} execution receipt(s) have no durable source-decision reference`,
+        ]
+      : []),
+    "source-decision references do not yet identify a stable strategy, strategy version, trial, or forecast cohort",
+    "this projection does not include current open-position marks or full account equity",
+    "dividends, other corporate actions, borrow, financing, and an aligned benchmark are not included",
+  ];
+
+  return Object.freeze({
+    status,
+    pnlBasis: "broker_fills_after_supported_fees_only" as const,
+    historyStatus: brokerHistory.historyStatus,
+    positionsReconciled: brokerHistory.positionsReconciled,
+    positionBaselineUsable: brokerHistory.positionBaselineUsable,
+    brokerFillCount: brokerHistory.brokerFillCount,
+    matchedReceiptCount: brokerHistory.matchedReceiptCount,
+    unmatchedFillCount: brokerHistory.unmatchedFillCount,
+    decisionLinkCoverage: links,
+    brokerFeeCount: brokerHistory.brokerFeeCount,
+    feeCoverageComplete,
+    unsupportedFeeCount,
+    feeTotals: brokerHistory.feeTotals,
+    realizedTradePnlAfterFees,
+    netProfitability: "not_proven" as const,
+    executionThresholdPromotionEligible: false,
+    blockers: Object.freeze(blockers),
+    warnings: book.warnings,
+  });
+}
 
 const FinancePositionLedgerReadSchema = Type.Object({
   directory: Type.Optional(
@@ -33,6 +189,12 @@ const FinancePositionLedgerReadSchema = Type.Object({
     Type.String({
       description:
         "ISO datetime for a point-in-time view. Only marks at or before this instant are used.",
+    }),
+  ),
+  brokerAccountId: Type.Optional(
+    Type.String({
+      description:
+        "Optional explicit Alpaca paper account id. Reads already-stored broker history through the account trading-book owner; it makes no network request and does not read credentials.",
     }),
   ),
   initialCapital: Type.Optional(
@@ -138,16 +300,33 @@ export function createFinancePositionLedgerReadTool(options?: {
     label: "Finance Position Ledger Read",
     name: "finance_position_ledger_read",
     description:
-      "Read the durable position book: open positions, average cost, realized and unrealized PnL, marks, and (when initial capital is supplied) the equity curve derived from the same stream. Use this before answering anything that depends on what is currently held or on how a prior position is doing. With includeBehaviour it also describes how the owner has actually traded — disposition effect, turnover, momentum chasing, anchoring — as measurements over the recorded fills. Read-only: it never appends a fill, places an order, or touches a venue.",
+      "Read the durable position book and, when initial capital is supplied, a gross marked-value diagnostic with observed drawdown. With an explicit brokerAccountId it also reads stored Alpaca paper history through the account trading-book owner and reports fee-adjusted realized trade P&L only when broker history and fee coverage reconcile. Neither view proves strategy profitability or promotes an execution threshold. Read-only: it never appends a fill, places an order, or touches a venue.",
     parameters: FinancePositionLedgerReadSchema,
     execute: async (_toolCallId, args) => {
       const params = args as Record<string, unknown>;
       const directory = readStringParam(params, "directory");
       const asOf = readStringParam(params, "asOf");
+      const brokerAccountId = readStringParam(params, "brokerAccountId")?.trim();
       const initialCapital = readNumberParam(params, "initialCapital");
       const includeCurveLevels = params.includeCurveLevels === true;
       const includeBehaviour = params.includeBehaviour === true;
 
+      if (brokerAccountId !== undefined && brokerAccountId.length === 0) {
+        return jsonResult({
+          ok: false,
+          schemaVersion: FINANCE_POSITION_LEDGER_READ_SCHEMA_VERSION,
+          boundary: "finance_position_ledger_read_only",
+          status: "invalid_scope",
+          reason: "broker_account_id_required",
+          notTouched: [
+            "trading_execution",
+            "order_placement",
+            "provider_config",
+            "external_channel_sender",
+            "protected_memory",
+          ],
+        });
+      }
       const location = resolveFinancePositionLedgerLocation({
         workspaceDir: options?.workspaceDir,
         directory,
@@ -159,6 +338,23 @@ export function createFinancePositionLedgerReadTool(options?: {
           reason: "finance_position_ledger_as_of_invalid",
           asOf,
           action: "Pass asOf as an ISO datetime, or omit it for the current book.",
+        });
+      }
+      if (brokerAccountId !== undefined && asOf !== undefined) {
+        return jsonResult({
+          ok: false,
+          schemaVersion: FINANCE_POSITION_LEDGER_READ_SCHEMA_VERSION,
+          boundary: "finance_position_ledger_read_only",
+          status: "unsupported_scope",
+          reason: "broker_history_as_of_filter_not_supported",
+          action: "read the account-wide broker history without asOf, or omit brokerAccountId",
+          notTouched: [
+            "trading_execution",
+            "order_placement",
+            "provider_config",
+            "external_channel_sender",
+            "protected_memory",
+          ],
         });
       }
       if (
@@ -212,6 +408,14 @@ export function createFinancePositionLedgerReadTool(options?: {
         asOf === undefined ? {} : { asOf },
       );
       const { ledger } = ledgerRead;
+      const accountTradingBook =
+        brokerAccountId === undefined
+          ? null
+          : await readFinanceAccountTradingBook({
+              directory: location.directory,
+              accountId: brokerAccountId,
+              venue: "alpaca:paper",
+            });
 
       const openPositions = ledger.positions.filter((position) => position.quantity !== 0);
       const status =
@@ -225,20 +429,30 @@ export function createFinancePositionLedgerReadTool(options?: {
         initialCapital === undefined
           ? { status: "not_requested" as const }
           : (() => {
+              const asOfMs = asOf === undefined ? Number.POSITIVE_INFINITY : Date.parse(asOf);
+              const curveReceipts = read.receipts.filter(
+                (receipt) => Date.parse(receipt.recordedAt) <= asOfMs,
+              );
+              const curveMarks = read.marks.filter((mark) => Date.parse(mark.at) <= asOfMs);
               const curve = buildFinanceEquityCurve({
-                receipts: read.receipts,
-                marks: read.marks,
+                receipts: curveReceipts,
+                marks: curveMarks,
                 initialCapital,
               });
               return {
                 status: "computed" as const,
                 initialCapital,
+                pnlBasis: curve.pnlBasis,
                 sampleCount: curve.sampleCount,
                 finalEquity: curve.finalEquity,
                 definedLevelCount: curve.levels.length,
                 undefinedEquityAt: curve.undefinedEquityAt,
                 receiptsAfterLastMark: curve.receiptsAfterLastMark,
                 meanSampleSpacingSeconds: curve.meanSampleSpacingSeconds,
+                grossPerformanceDiagnostic: grossPerformanceDiagnostic({
+                  curve,
+                  receipts: curveReceipts,
+                }),
                 ...(includeCurveLevels
                   ? { levels: curve.levels, levelTimestamps: curve.levelTimestamps }
                   : {}),
@@ -262,12 +476,12 @@ export function createFinancePositionLedgerReadTool(options?: {
         resolvedFrom: location.source,
         databasePath: location.database,
         asOf: asOf ?? null,
-        // Stated because the ledger's own as-of view filters marks only: a fill recorded after
-        // the instant still contributes to the position it opened.
+        // The position view keeps its existing all-receipts behavior; the curve below is
+        // filtered to asOf so its historical fills and marks describe the requested window.
         asOfCaveat:
           asOf === undefined
             ? null
-            : "positions include every recorded fill; only marks are limited to asOf",
+            : "positions include every recorded fill; the gross curve includes only receipts and marks recorded by asOf",
         recordCount: ledgerRead.recordCount,
         receiptRecordCount: ledgerRead.receiptRecordCount,
         markRecordCount: ledgerRead.markRecordCount,
@@ -278,6 +492,15 @@ export function createFinancePositionLedgerReadTool(options?: {
         positionCount: ledger.positions.length,
         openPositionCount: openPositions.length,
         positions: ledger.positions,
+        pnlBasis: ledger.pnlBasis,
+        brokerTradeEconomics: accountTradingBook
+          ? {
+              accountId: accountTradingBook.accountId,
+              venue: accountTradingBook.venue,
+              baselineSource: accountTradingBook.baselineSource,
+              diagnostic: brokerTradeEconomicsDiagnostic(accountTradingBook),
+            }
+          : { status: "not_requested" },
         realizedPnl: ledger.realizedPnl,
         unrealizedPnl: ledger.unrealizedPnl,
         unrealizedUnavailableReason:

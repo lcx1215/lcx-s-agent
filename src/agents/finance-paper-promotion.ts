@@ -1,12 +1,13 @@
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import path from "node:path";
-import { breakEvenFloor, type FloorSample } from "./finance-calibrated-floor.js";
-import { caseflowFingerprint } from "./finance-caseflow.js";
+import { existsSync, readFileSync } from "node:fs";
 import { financePaperPromotionsPath } from "./finance-state-dir.js";
-import type { TuningProposal } from "./finance-tuning-proposal.js";
 
+/** Legacy records are retained for audit, but no longer control paper execution. */
 export const FINANCE_PAPER_PROMOTION_SCHEMA_VERSION =
   "lcx_finance_paper_tuning_promotion_v1" as const;
+export const FINANCE_DIRECTIONAL_CALIBRATION_BLOCK_REASON =
+  "directional_forecast_outcomes_are_not_net_trade_pnl" as const;
+export const FINANCE_PAPER_EXECUTION_BLOCK_REASON =
+  "net_trade_economics_promotion_contract_unavailable" as const;
 
 export type FinancePaperPromotion = Readonly<{
   schemaVersion: typeof FINANCE_PAPER_PROMOTION_SCHEMA_VERSION;
@@ -21,9 +22,17 @@ export type FinancePaperPromotion = Readonly<{
   authority: "paper_only";
   status: "promoted";
   basis: string;
+  /** Added on read: the historical evidence was forecast direction, not trade P&L. */
+  evidenceScope: "legacy_directional_calibration_only";
+  executionEligible: false;
 }>;
 
-function isPromotion(value: unknown): value is FinancePaperPromotion {
+type StoredFinancePaperPromotion = Omit<
+  FinancePaperPromotion,
+  "evidenceScope" | "executionEligible"
+>;
+
+function isPromotion(value: unknown): value is StoredFinancePaperPromotion {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return false;
   }
@@ -33,10 +42,17 @@ function isPromotion(value: unknown): value is FinancePaperPromotion {
     typeof row.promotionId === "string" &&
     typeof row.proposalId === "string" &&
     row.knob === "convictionFloor" &&
-    (row.previous === null || typeof row.previous === "number") &&
+    (row.previous === null ||
+      (typeof row.previous === "number" &&
+        Number.isFinite(row.previous) &&
+        row.previous >= 0 &&
+        row.previous <= 1)) &&
     typeof row.promoted === "number" &&
     Number.isFinite(row.promoted) &&
+    row.promoted >= 0 &&
+    row.promoted <= 1 &&
     Number.isSafeInteger(row.sampleCount) &&
+    Number(row.sampleCount) > 0 &&
     typeof row.scoredEvidenceRef === "string" &&
     typeof row.promotedAt === "string" &&
     row.authority === "paper_only" &&
@@ -45,7 +61,10 @@ function isPromotion(value: unknown): value is FinancePaperPromotion {
   );
 }
 
-export function readFinancePaperPromotions(directory: string): readonly FinancePaperPromotion[] {
+/** Read historical directional-calibration promotions with their execution boundary attached. */
+export function readFinancePaperPromotionHistory(
+  directory: string,
+): readonly FinancePaperPromotion[] {
   const filename = financePaperPromotionsPath(directory);
   if (!existsSync(filename)) {
     return [];
@@ -56,77 +75,29 @@ export function readFinancePaperPromotions(directory: string): readonly FinanceP
     .map((line, index) => {
       const value: unknown = JSON.parse(line);
       if (!isPromotion(value)) {
-        throw new Error(`invalid paper promotion record at line ${index + 1}`);
+        throw new Error(`invalid legacy paper calibration record at line ${index + 1}`);
       }
-      return Object.freeze(value);
+      return Object.freeze({
+        ...value,
+        evidenceScope: "legacy_directional_calibration_only" as const,
+        executionEligible: false as const,
+      });
     });
 }
 
-export function latestFinancePaperPromotion(directory: string): FinancePaperPromotion | null {
-  return readFinancePaperPromotions(directory).at(-1) ?? null;
+/** Current trade-economics promotions; v1 directional-only history never qualifies. */
+export function readFinancePaperPromotions(_directory: string): readonly FinancePaperPromotion[] {
+  return [];
 }
 
-/**
- * Promote only after independently re-deriving the proposal from the scored ledger.
- * This owner can change paper selection behaviour; it never grants a venue or live authority.
- */
-export function deterministicPromotion(params: {
-  directory: string;
-  proposal: TuningProposal;
-  samples: readonly FloorSample[];
-  promotedAt?: string;
-}): Readonly<{ promotion: FinancePaperPromotion; appended: boolean }> {
-  const latest = latestFinancePaperPromotion(params.directory);
-  const derived = breakEvenFloor(params.samples);
-  if (derived.floor === null) {
-    throw new Error(`paper promotion refused: ${derived.basis}`);
-  }
-  if (params.proposal.knob !== "convictionFloor" || params.proposal.status !== "proposed") {
-    throw new Error("paper promotion refused: unsupported proposal contract");
-  }
-  if (
-    params.proposal.proposed !== derived.floor ||
-    params.proposal.sampleCount !== derived.samplesUsed
-  ) {
-    throw new Error("paper promotion refused: proposal no longer matches the scored ledger");
-  }
+/** Most recent historical forecast-calibration baseline; never an execution authorization. */
+export function latestFinanceDirectionalCalibrationPromotion(
+  directory: string,
+): FinancePaperPromotion | null {
+  return readFinancePaperPromotionHistory(directory).at(-1) ?? null;
+}
 
-  const scoredEvidenceRef = caseflowFingerprint(params.samples);
-  const promotionId = `paper-floor-${caseflowFingerprint({
-    proposalId: params.proposal.proposalId,
-    previous: params.proposal.current,
-    promoted: derived.floor,
-    scoredEvidenceRef,
-  }).slice(0, 24)}`;
-  const existing = readFinancePaperPromotions(params.directory).find(
-    (item) => item.promotionId === promotionId,
-  );
-  if (existing) {
-    return Object.freeze({ promotion: existing, appended: false });
-  }
-  if (params.proposal.current !== (latest?.promoted ?? null)) {
-    throw new Error(
-      "paper promotion refused: proposal does not start from the promoted paper floor",
-    );
-  }
-
-  const promotion: FinancePaperPromotion = Object.freeze({
-    schemaVersion: FINANCE_PAPER_PROMOTION_SCHEMA_VERSION,
-    promotionId,
-    proposalId: params.proposal.proposalId,
-    knob: "convictionFloor",
-    previous: params.proposal.current,
-    promoted: derived.floor,
-    sampleCount: derived.samplesUsed,
-    scoredEvidenceRef,
-    promotedAt: params.promotedAt ?? new Date().toISOString(),
-    authority: "paper_only",
-    status: "promoted",
-    basis: derived.basis,
-  });
-  const filename = financePaperPromotionsPath(params.directory);
-  mkdirSync(path.dirname(filename), { recursive: true, mode: 0o700 });
-  appendFileSync(filename, `${JSON.stringify(promotion)}\n`, { mode: 0o600 });
-  chmodSync(filename, 0o600);
-  return Object.freeze({ promotion, appended: true });
+/** Current paper execution promotion; unavailable until a net-trade evidence contract exists. */
+export function latestFinancePaperPromotion(_directory: string): FinancePaperPromotion | null {
+  return null;
 }

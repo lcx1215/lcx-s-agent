@@ -248,6 +248,7 @@ export async function executeFinanceIntradayDecision(params: {
       createSafetyContext: params.controller.createSafetyContext,
       conclusion: {
         conclusionId: input.signalId,
+        decisionRef: { source: "intraday_signal", id: input.signalId },
         instrument: input.instrument,
         direction: input.action,
         conviction: 1,

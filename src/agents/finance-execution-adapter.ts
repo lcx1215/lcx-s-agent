@@ -39,9 +39,23 @@ export const FINANCE_EXECUTION_RECEIPT_SCHEMA = "lcx_finance_execution_receipt_v
 export type FinanceOrderSide = "buy" | "sell";
 export type FinanceOrderType = "market" | "limit";
 
+export const FINANCE_DECISION_REFERENCE_SOURCES = [
+  "daily_cycle_candidate",
+  "intraday_signal",
+  "research_receipt",
+] as const;
+
+/** A durable pointer back to the decision evidence that originated an order. */
+export type FinanceDecisionReference = Readonly<{
+  source: (typeof FINANCE_DECISION_REFERENCE_SOURCES)[number];
+  id: string;
+}>;
+
 /** The `execution_intent` node. Every field is required: an order path is never inferred. */
 export type FinanceExecutionIntent = Readonly<{
   intentId: string;
+  /** Points to the upstream candidate/signal record; it is not a strategy-performance claim. */
+  decisionRef?: FinanceDecisionReference;
   instrument: string;
   side: FinanceOrderSide;
   orderType: FinanceOrderType;
@@ -207,6 +221,8 @@ export type FinanceExecutionReceipt = Readonly<{
   /** Absent only on legacy receipts; never infer account membership from venue alone. */
   accountId?: string;
   intentId: string;
+  /** Optional for legacy/manual intents; never infer missing decision lineage from an instrument. */
+  decisionRef?: FinanceDecisionReference;
   runAuthorizationId: string;
   adapterId: string;
   adapterKind: FinanceExecutionAdapter["kind"];
@@ -254,6 +270,20 @@ function isPositiveFinite(value: unknown): value is number {
 
 function normalizeInstrument(instrument: string): string {
   return instrument.trim().toUpperCase();
+}
+
+function isFinanceDecisionReference(value: unknown): value is FinanceDecisionReference {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const reference = value as Record<string, unknown>;
+  return (
+    Object.keys(reference).toSorted().join(",") === "id,source" &&
+    typeof reference.id === "string" &&
+    reference.id.trim().length > 0 &&
+    typeof reference.source === "string" &&
+    FINANCE_DECISION_REFERENCE_SOURCES.some((source) => source === reference.source)
+  );
 }
 
 /**
@@ -332,6 +362,9 @@ function collectRefusalReasons(request: FinanceOrderPlacementRequest): string[] 
 
   if (intent.intentId.trim().length === 0) {
     reasons.push("execution_intent_id_required");
+  }
+  if (intent.decisionRef !== undefined && !isFinanceDecisionReference(intent.decisionRef)) {
+    reasons.push("execution_intent_decision_reference_invalid");
   }
   if (intent.rationale.trim().length === 0) {
     reasons.push("execution_intent_rationale_required");
@@ -512,6 +545,7 @@ export function buildFinanceExecutionReceipt(params: {
     receiptId,
     ...(accountId === undefined ? {} : { accountId }),
     intentId: intent.intentId,
+    ...(intent.decisionRef === undefined ? {} : { decisionRef: intent.decisionRef }),
     runAuthorizationId: intent.runAuthorizationId,
     adapterId: adapter.id,
     adapterKind: adapter.kind,

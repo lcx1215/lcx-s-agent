@@ -1,5 +1,5 @@
 /**
- * Turn past claims and their outcomes into something a model can be shown.
+ * Turn past forecast claims and their directional outcomes into something a model can be shown.
  *
  * The design rule here is the whole point, so it is worth stating plainly:
  * this reports facts, it does not issue corrections.
@@ -24,13 +24,14 @@ export type ScoredSample = Readonly<{
   asOf: string;
   direction: "buy" | "sell";
   conviction: number;
-  /** 1 if the call was right, 0 if not. */
+  /** 1 if the forecast direction was right, 0 if not. This is not a trade P&L result. */
   outcome: 0 | 1;
   /** Percentage move over the horizon, signed. */
   movePct: number;
 }>;
 
 export type ReflectionSummary = Readonly<{
+  scope: "forecast_directional_accuracy_only";
   instrument: string | null;
   samples: number;
   hitRate: number | null;
@@ -58,6 +59,7 @@ export function buildReflection(
 
   if (pool.length === 0) {
     return {
+      scope: "forecast_directional_accuracy_only",
       instrument: instrument ?? null,
       samples: 0,
       hitRate: null,
@@ -92,6 +94,7 @@ export function buildReflection(
     );
 
   return {
+    scope: "forecast_directional_accuracy_only",
     instrument: instrument ?? null,
     samples: pool.length,
     hitRate,
@@ -118,6 +121,9 @@ export function renderReflection(summary: ReflectionSummary): string {
   }
 
   const lines: string[] = [];
+  lines.push(
+    "Scope: forecast direction accuracy only; these scores do not measure executed or net trading P&L.",
+  );
   const scope = summary.instrument ? " on " + summary.instrument : " across the pool";
   lines.push("Your track record" + scope + " over " + summary.samples + " scored calls:");
   if (summary.hitRate !== null) {

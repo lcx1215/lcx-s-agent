@@ -1,34 +1,27 @@
 /**
- * Derive the conviction floor from observed outcomes instead of inventing one.
+ * Derive a directional-calibration floor from observed forecast outcomes.
  *
- * The floor that has been gating every trade up to now was a constant picked
- * while writing the class rules. Nothing derived it, nothing validated it, and
- * it silently decided that no trade would ever happen. A number like that is not
- * a risk control, it is an opinion with veto power.
+ * This owner answers one question only: from what claimed conviction upward
+ * has directional hit rate met a declared classification baseline? A right/wrong
+ * label contains no payoff size, transaction costs, or execution evidence, so it
+ * cannot establish economic break-even or trading profitability.
  *
- * The floor should answer one question: from what conviction upward has this
- * system actually broken even? Below that point, taking the trade destroys
- * money on average, however confident it sounds.
- *
- * So the samples are bucketed by claimed conviction and each bucket's realised
- * hit rate is compared against break-even. The floor is the lowest conviction
- * that has demonstrated it.
- *
- * When no bucket has demonstrated break-even, the answer is null - not a
- * fallback constant. Falling back to a guessed number in the absence of
- * evidence is exactly the failure this replaces. A caller holding null should
- * decline to trade, or trade only in a mode whose stated purpose is to produce
- * the evidence that is missing.
+ * The default 0.5 is a coin-flip classification reference, not an economic
+ * break-even estimate. When no bucket meets the declared baseline, the answer
+ * is null rather than an invented fallback.
  */
 
-export type FloorSample = Readonly<{
+export type DirectionalOutcomeSample = Readonly<{
   /** What the system claimed, 0..1. */
   conviction: number;
-  /** 1 if the call was right, 0 if not. */
+  /** 1 if the forecast direction was right, 0 if not. */
   outcome: 0 | 1;
 }>;
 
-export type CalibratedFloor = Readonly<{
+/** @deprecated Use DirectionalOutcomeSample to distinguish forecasts from trade P&L. */
+export type FloorSample = DirectionalOutcomeSample;
+
+export type DirectionalCalibrationFloor = Readonly<{
   /** The derived floor, or null when the data cannot support one. */
   floor: number | null;
   samplesUsed: number;
@@ -38,45 +31,45 @@ export type CalibratedFloor = Readonly<{
   buckets: readonly { from: number; to: number; n: number; hitRate: number }[];
 }>;
 
-export function breakEvenFloor(
-  samples: readonly FloorSample[],
+/** @deprecated Use DirectionalCalibrationFloor for forecast accuracy only. */
+export type CalibratedFloor = DirectionalCalibrationFloor;
+
+export function deriveDirectionalCalibrationFloor(
+  samples: readonly DirectionalOutcomeSample[],
   options: {
-    /** Hit rate needed to break even on a symmetric payoff. Default 0.5. */
-    breakEvenHitRate?: number;
+    /** Directional hit-rate classification baseline. Default 0.5; not trade break-even. */
+    minimumHitRate?: number;
     /** Samples a bucket needs before its hit rate means anything. Default 5. */
     minBucketSamples?: number;
     /** Bucket width in conviction. Default 0.05. */
     bucketWidth?: number;
   } = {},
-): CalibratedFloor {
-  const breakEvenHitRate = options.breakEvenHitRate ?? 0.5;
+): DirectionalCalibrationFloor {
+  const minimumHitRate = options.minimumHitRate ?? 0.5;
   const minBucketSamples = options.minBucketSamples ?? 5;
   const bucketWidth = options.bucketWidth ?? 0.05;
 
   const usable = samples.filter(
-    (s) =>
-      Number.isFinite(s.conviction) &&
-      s.conviction >= 0 &&
-      s.conviction <= 1 &&
-      (s.outcome === 0 || s.outcome === 1),
+    (sample) =>
+      Number.isFinite(sample.conviction) &&
+      sample.conviction >= 0 &&
+      sample.conviction <= 1 &&
+      (sample.outcome === 0 || sample.outcome === 1),
   );
 
   if (usable.length === 0) {
     return {
       floor: null,
       samplesUsed: 0,
-      basis: "no scored samples; refusing to invent a floor",
+      basis:
+        "no scored samples with valid directional outcomes; refusing to invent a calibration floor",
       buckets: [],
     };
   }
 
-  // Bucket by claimed conviction.
   const buckets = new Map<number, { n: number; wins: number }>();
   for (const sample of usable) {
-    // Epsilon before flooring: 0.6 / 0.05 evaluates to 11.9999... in binary
-    // floating point, which would drop the sample into the bucket below and
-    // shift every boundary down by one - and the floor is the bucket edge, so
-    // the error would land directly in the number being derived.
+    // Avoid moving exact decimal boundaries down a bucket through binary rounding.
     const index = Math.min(
       Math.floor(sample.conviction / bucketWidth + 1e-9),
       Math.ceil(1 / bucketWidth) - 1,
@@ -92,12 +85,12 @@ export function breakEvenFloor(
       from: Number((index * bucketWidth).toFixed(4)),
       to: Number(((index + 1) * bucketWidth).toFixed(4)),
       n: bucket.n,
-      hitRate: bucket.n > 0 ? bucket.wins / bucket.n : 0,
+      hitRate: bucket.wins / bucket.n,
     }))
-    .toSorted((a, b) => a.from - b.from);
+    .toSorted((left, right) => left.from - right.from);
 
   const qualifying = rows.filter(
-    (row) => row.n >= minBucketSamples && row.hitRate >= breakEvenHitRate,
+    (row) => row.n >= minBucketSamples && row.hitRate >= minimumHitRate,
   );
 
   if (qualifying.length === 0) {
@@ -106,31 +99,29 @@ export function breakEvenFloor(
       samplesUsed: usable.length,
       basis:
         usable.length +
-        " sample(s) across " +
+        " directional sample(s) across " +
         rows.length +
-        " bucket(s), but none reached break-even (" +
-        breakEvenHitRate +
+        " bucket(s), but none met the directional hit-rate baseline (" +
+        minimumHitRate +
         ") on at least " +
         minBucketSamples +
-        " observations; no floor can be justified",
+        " observations; no calibration floor can be justified",
       buckets: rows,
     };
   }
 
-  // Every bucket at or above the chosen one must also break even, otherwise a
-  // single lucky low bucket would set the bar for all the worse ones above it.
+  // Require the observed relationship to remain monotonic above the proposed floor.
   const lowest = Math.min(...qualifying.map((row) => row.from));
   const atOrAbove = rows.filter((row) => row.from >= lowest && row.n >= minBucketSamples);
-  const allHold = atOrAbove.every((row) => row.hitRate >= breakEvenHitRate);
+  const allHold = atOrAbove.every((row) => row.hitRate >= minimumHitRate);
 
   if (!allHold) {
     return {
       floor: null,
       samplesUsed: usable.length,
       basis:
-        "a lower bucket clears break-even but a higher one does not, so the " +
-        "relationship is not monotonic yet; waiting for more samples rather than " +
-        "trusting the lucky bucket",
+        "a lower conviction bucket meets the directional hit-rate baseline but a higher one does not; " +
+        "the relationship is not monotonic yet",
       buckets: rows,
     };
   }
@@ -139,11 +130,32 @@ export function breakEvenFloor(
     floor: Number(lowest.toFixed(4)),
     samplesUsed: usable.length,
     basis:
-      "lowest bucket clearing break-even (" +
-      breakEvenHitRate +
+      "lowest conviction bucket meeting the directional hit-rate baseline (" +
+      minimumHitRate +
       ") on >= " +
       minBucketSamples +
-      " observations, with every bucket above it also clearing",
+      " observations, with every sufficiently sampled bucket above it also meeting that baseline",
     buckets: rows,
   };
+}
+
+/**
+ * Compatibility entry point for older callers. The old name implied an
+ * economic conclusion that binary directional outcomes cannot support.
+ */
+export function breakEvenFloor(
+  samples: readonly FloorSample[],
+  options: {
+    breakEvenHitRate?: number;
+    minBucketSamples?: number;
+    bucketWidth?: number;
+  } = {},
+): CalibratedFloor {
+  return deriveDirectionalCalibrationFloor(samples, {
+    ...(options.breakEvenHitRate === undefined ? {} : { minimumHitRate: options.breakEvenHitRate }),
+    ...(options.minBucketSamples === undefined
+      ? {}
+      : { minBucketSamples: options.minBucketSamples }),
+    ...(options.bucketWidth === undefined ? {} : { bucketWidth: options.bucketWidth }),
+  });
 }

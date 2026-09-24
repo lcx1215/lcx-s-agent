@@ -211,6 +211,21 @@ function openDatabase(directory: string): BarDatabase {
   return db;
 }
 
+function openReadOnlyDatabase(directory: string): BarDatabase {
+  const { DatabaseSync } = requireNodeSqlite();
+  const db = new DatabaseSync(financeBarLedgerPath(directory), { readOnly: true });
+  db.exec("PRAGMA busy_timeout=5000; PRAGMA query_only=ON;");
+  return db;
+}
+
+function hasBarRecordsTable(db: BarDatabase): boolean {
+  return (
+    db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+      .get("finance_bar_records") !== undefined
+  );
+}
+
 /**
  * Reject a bar whose four prices cannot be true together. This is the same sanity rule the
  * collection adapters apply to vendor history, reused rather than restated.
@@ -524,8 +539,17 @@ export async function readFinanceBarLedger(
       headRef: null,
     });
   }
-  const db = openDatabase(directory);
+  const db = openReadOnlyDatabase(directory);
   try {
+    if (!hasBarRecordsTable(db)) {
+      return Object.freeze({
+        bars: Object.freeze([]),
+        divergentDates: Object.freeze([]),
+        collapsedRepeats: 0,
+        recordCount: 0,
+        headRef: null,
+      });
+    }
     const stored = readStoredRecords(db);
     const asOf = options.asOf;
     const scoped = stored.filter((record) => {
