@@ -96,19 +96,19 @@ it.each([false, true])(
   },
 );
 it.each([
-  "null-cash",
-  "blocked-type",
-  "borrowed",
-  "short",
-  "unknown-asset",
-  "bad-position",
-  "pending",
-  "future-quote",
-  "old-quote",
-  "currency",
-  "missing-peak",
-  "unknown-order",
-])("refuses %s", async (kind) => {
+  ["null-cash", "alpaca_safety_facts_inconsistent"],
+  ["blocked-type", "alpaca_safety_facts_inconsistent"],
+  ["borrowed", "alpaca_safety_facts_inconsistent"],
+  ["short", "alpaca_safety_facts_inconsistent"],
+  ["unknown-asset", "alpaca_safety_facts_inconsistent"],
+  ["bad-position", "alpaca_safety_facts_inconsistent"],
+  ["pending", "alpaca_safety_facts_inconsistent"],
+  ["future-quote", "alpaca_safety_facts_inconsistent"],
+  ["old-quote", "alpaca_safety_quote_expired"],
+  ["currency", "alpaca_safety_facts_inconsistent"],
+  ["missing-peak", "alpaca_safety_controller_evidence_or_parameters_invalid"],
+  ["unknown-order", "alpaca_safety_controller_evidence_or_parameters_invalid"],
+])("refuses %s with a stable code", async (kind, reason) => {
   const f = fixture();
   if (kind === "null-cash") {
     Object.assign(f.account, { cash: null });
@@ -145,7 +145,10 @@ it.each([
     ...(kind === "missing-peak" ? { peakEquity: NaN } : {}),
     ...(kind === "unknown-order" ? { unresolvedOrderIds: ["unknown"] } : {}),
   };
-  expect((await readAlpacaPaperSafetyFacts({ ...f.options, evidence })).ok).toBe(false);
+  expect(await readAlpacaPaperSafetyFacts({ ...f.options, evidence })).toEqual({
+    ok: false,
+    reason,
+  });
 });
 it("reuses only bound quote and re-reads account facts, never claiming reconciliation", async () => {
   const f = fixture();
@@ -185,15 +188,49 @@ it("honors cancellation before any request", async () => {
   const f = fixture();
   const controller = new AbortController();
   controller.abort();
-  expect((await readAlpacaPaperSafetyFacts(f.options, controller.signal)).ok).toBe(false);
+  expect(await readAlpacaPaperSafetyFacts(f.options, controller.signal)).toEqual({
+    ok: false,
+    reason: "alpaca_safety_cancelled_or_timed_out",
+  });
   expect(f.read).not.toHaveBeenCalled();
 });
-it("sanitizes transport and malformed response failures", async () => {
+it("classifies snapshot read failures without leaking transport or response details", async () => {
+  const transport = fixture();
+  transport.read.mockRejectedValue(
+    new Error(
+      "GET https://user:pass@example.test/v2/account?token=SECRET credential=FAKE account=paper-account",
+    ),
+  );
+  const readFailure = await readAlpacaPaperSafetyFacts(transport.options);
+  expect(readFailure).toEqual({
+    ok: false,
+    reason: "alpaca_safety_snapshot_read_unavailable",
+  });
+  expect(JSON.stringify(readFailure)).not.toMatch(/SECRET|FAKE|paper-account|user:pass/);
+
+  const httpFailure = fixture();
+  httpFailure.read.mockResolvedValue({ status: 503, body: "account=paper-account token=SECRET" });
+  expect(await readAlpacaPaperSafetyFacts(httpFailure.options)).toEqual({
+    ok: false,
+    reason: "alpaca_safety_snapshot_read_unavailable",
+  });
+
+  const malformed = fixture();
+  malformed.read.mockResolvedValue({ status: 200, body: "secret malformed account=paper-account" });
+  const responseFailure = await readAlpacaPaperSafetyFacts(malformed.options);
+  expect(responseFailure).toEqual({
+    ok: false,
+    reason: "alpaca_safety_snapshot_response_invalid",
+  });
+  expect(JSON.stringify(responseFailure)).not.toMatch(/secret|paper-account/);
+});
+
+it("classifies a successfully read but inconsistent snapshot separately", async () => {
   const f = fixture();
-  f.read.mockResolvedValue({ status: 200, body: "secret malformed" });
-  expect(JSON.stringify(await readAlpacaPaperSafetyFacts(f.options))).not.toContain("secret");
-  f.read.mockRejectedValue(new Error("credential FAKE"));
-  expect(JSON.stringify(await readAlpacaPaperSafetyFacts(f.options))).not.toContain("FAKE");
+  f.account.id = "different-account";
+  const failure = await readAlpacaPaperSafetyFacts(f.options);
+  expect(failure).toEqual({ ok: false, reason: "alpaca_safety_facts_inconsistent" });
+  expect(JSON.stringify(failure)).not.toContain("different-account");
 });
 
 it("binds sell bid and explicit stock feed", async () => {

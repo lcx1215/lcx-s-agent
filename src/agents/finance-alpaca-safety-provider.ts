@@ -47,33 +47,54 @@ export type AlpacaSafetyProviderOptions = Readonly<{
   timeoutMs: number;
   maxAgeMs: number;
 }>;
+type AlpacaSafetyFailureCode =
+  | "alpaca_safety_controller_evidence_or_parameters_invalid"
+  | "alpaca_safety_controller_evidence_expired"
+  | "alpaca_safety_cancelled_or_timed_out"
+  | "alpaca_safety_snapshot_read_unavailable"
+  | "alpaca_safety_snapshot_response_invalid"
+  | "alpaca_safety_facts_inconsistent"
+  | "alpaca_safety_quote_binding_invalid"
+  | "alpaca_safety_quote_expired";
+
+class AlpacaSafetyProviderFailure extends Error {
+  constructor(readonly code: AlpacaSafetyFailureCode) {
+    super(code);
+    this.name = "AlpacaSafetyProviderFailure";
+  }
+}
+
+function refuse(code: AlpacaSafetyFailureCode): never {
+  throw new AlpacaSafetyProviderFailure(code);
+}
+
 const PAPER = "https://paper-api.alpaca.markets";
 const DATA = "https://data.alpaca.markets";
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("record");
+    refuse("alpaca_safety_facts_inconsistent");
   }
   return value as Record<string, unknown>;
 }
 function numeric(value: unknown): number {
   if (typeof value !== "number" && (typeof value !== "string" || !value.trim())) {
-    throw new Error("number");
+    refuse("alpaca_safety_facts_inconsistent");
   }
   const n = Number(value);
   if (!Number.isFinite(n)) {
-    throw new Error("number");
+    refuse("alpaca_safety_facts_inconsistent");
   }
   return n;
 }
 function string(value: unknown): string {
   if (typeof value !== "string" || !value.trim()) {
-    throw new Error("string");
+    refuse("alpaca_safety_facts_inconsistent");
   }
   return value;
 }
 function array(value: unknown): unknown[] {
   if (!Array.isArray(value)) {
-    throw new Error("array");
+    refuse("alpaca_safety_facts_inconsistent");
   }
   return value;
 }
@@ -100,7 +121,7 @@ export async function readAlpacaPaperSafetyFacts(
       askPrice: number;
       positions: readonly { instrument: string; quantity: number; marketValue: number }[];
     }
-  | { ok: false; reason: string }
+  | { ok: false; reason: AlpacaSafetyFailureCode }
 > {
   options = { ...options, credentials: { ...options.credentials } };
   const start = Date.now();
@@ -144,15 +165,24 @@ export async function readAlpacaPaperSafetyFacts(
   };
   const get = async (url: string): Promise<unknown> => {
     signal.throwIfAborted();
-    const response = await options.read(url, { headers: { ...headers }, signal });
+    let response: Awaited<ReturnType<FinanceUncachedFetch>>;
+    try {
+      response = await options.read(url, { headers: { ...headers }, signal });
+    } catch {
+      refuse("alpaca_safety_snapshot_read_unavailable");
+    }
     signal.throwIfAborted();
     if (response.status !== 200) {
-      throw new Error("status");
+      refuse("alpaca_safety_snapshot_read_unavailable");
     }
     if (Buffer.byteLength(response.body) > 2 * 1024 * 1024) {
-      throw new Error("size");
+      refuse("alpaca_safety_snapshot_response_invalid");
     }
-    return JSON.parse(response.body) as unknown;
+    try {
+      return JSON.parse(response.body) as unknown;
+    } catch {
+      refuse("alpaca_safety_snapshot_response_invalid");
+    }
   };
   const run = async () => {
     const account = record(await get(`${PAPER}/v2/account`));
@@ -171,11 +201,11 @@ export async function readAlpacaPaperSafetyFacts(
       asset.tradable !== true ||
       !["us_equity", "crypto"].includes(string(asset.class))
     ) {
-      throw new Error("unsupported");
+      refuse("alpaca_safety_facts_inconsistent");
     }
     const crypto = asset.class === "crypto";
     if (crypto !== options.instrument.includes("/")) {
-      throw new Error("asset");
+      refuse("alpaca_safety_facts_inconsistent");
     }
     const currency = string(account.currency);
     if (
@@ -183,7 +213,7 @@ export async function readAlpacaPaperSafetyFacts(
       currency !== evidence.currency ||
       (crypto && !options.instrument.endsWith("/USD"))
     ) {
-      throw new Error("currency");
+      refuse("alpaca_safety_facts_inconsistent");
     }
     const equity = numeric(account.equity),
       cash = numeric(account.cash);
@@ -210,7 +240,7 @@ export async function readAlpacaPaperSafetyFacts(
         qty <= 0 ||
         marketValue < 0
       ) {
-        throw new Error("position");
+        refuse("alpaca_safety_facts_inconsistent");
       }
       seen.add(symbol);
       quantities.set(symbol, qty);
@@ -222,7 +252,7 @@ export async function readAlpacaPaperSafetyFacts(
     }
     const protection = classifyFinanceProtectionOrders(orders.map(record), quantities);
     if (protection.unresolved.length) {
-      throw new Error("orders require reconciliation");
+      refuse("alpaca_safety_facts_inconsistent");
     }
     // Margin capability/buying_power is deliberately unused. These facts prove no current borrowing.
     if (
@@ -234,7 +264,7 @@ export async function readAlpacaPaperSafetyFacts(
       Math.abs(cash + longValue - equity) > 0.01 ||
       (!evidence.trackNewHigh && evidence.peakEquity < equity)
     ) {
-      throw new Error("funding");
+      refuse("alpaca_safety_facts_inconsistent");
     }
     let quote: Record<string, unknown>;
     let boundQuote = options.boundQuote;
@@ -244,10 +274,12 @@ export async function readAlpacaPaperSafetyFacts(
         !bound ||
         bound.instrument !== options.instrument ||
         bound.side !== options.side ||
-        bound.feed !== options.stockFeed ||
-        bound.expiresAt <= Date.now()
+        bound.feed !== options.stockFeed
       ) {
-        throw new Error("quote binding");
+        refuse("alpaca_safety_quote_binding_invalid");
+      }
+      if (bound.expiresAt <= Date.now()) {
+        refuse("alpaca_safety_quote_expired");
       }
       quote = bound;
     } else {
@@ -266,6 +298,7 @@ export async function readAlpacaPaperSafetyFacts(
       ask = numeric(quote.ap),
       quoteAt = string(quote.t);
     const now = Date.now();
+    const quoteAtMs = Date.parse(quoteAt);
     if (
       bid <= 0 ||
       ask < bid ||
@@ -274,7 +307,18 @@ export async function readAlpacaPaperSafetyFacts(
       !recent(evidence.observedAt, now, options.maxAgeMs) ||
       Date.parse(evidence.expiresAt) <= now
     ) {
-      throw new Error("stale");
+      if (bid <= 0 || ask < bid || !Number.isFinite(quoteAtMs) || quoteAtMs > now) {
+        refuse("alpaca_safety_facts_inconsistent");
+      }
+      if (now - quoteAtMs > options.maxAgeMs || now - start > options.maxAgeMs) {
+        refuse("alpaca_safety_quote_expired");
+      }
+      if (
+        !recent(evidence.observedAt, now, options.maxAgeMs) ||
+        Date.parse(evidence.expiresAt) <= now
+      ) {
+        refuse("alpaca_safety_controller_evidence_expired");
+      }
     }
     if (!boundQuote) {
       boundQuote = Object.freeze({ kind: "alpaca_safety_quote" });
@@ -361,12 +405,14 @@ export async function readAlpacaPaperSafetyFacts(
         }
       }),
     ]);
-  } catch {
+  } catch (error) {
     return {
       ok: false,
       reason: signal.aborted
         ? "alpaca_safety_cancelled_or_timed_out"
-        : "alpaca_safety_facts_unavailable_or_inconsistent",
+        : error instanceof AlpacaSafetyProviderFailure
+          ? error.code
+          : "alpaca_safety_facts_inconsistent",
     };
   } finally {
     if (abort) {
