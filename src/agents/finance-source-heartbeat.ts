@@ -191,7 +191,18 @@ function candidateForAdapter(
     return undefined;
   }
   const realtime = adapter as FinanceRealtimeSourceAdapter;
-  for (const request of realtimeRequests(asOf)) {
+  const requests = realtime.sampleRequest
+    ? [
+        {
+          ...realtime.sampleRequest,
+          useCase: "provider_heartbeat",
+          asOf,
+          asOfMode: "live_now" as const,
+          freshnessMaxMinutes: 60,
+        },
+      ]
+    : realtimeRequests(asOf);
+  for (const request of requests) {
     try {
       if (realtime.supports(request)) {
         return {
@@ -284,8 +295,16 @@ function resultFromReceipts(
           : ((kind as FinanceSourceHeartbeatReason | undefined) ??
             (!error && outcomeReceipt?.status === "succeeded" ? "ok" : "source_error"));
   const latencyMs = Math.max(0, outcomeReceipt?.latencyMs ?? Date.now() - checkedAt);
-  const nextCheckMs =
-    checkedAt + (status === "healthy" ? intervalMs : FINANCE_SOURCE_HEARTBEAT_FAILURE_INTERVAL_MS);
+  const baseCheckDelayMs =
+    status === "healthy" ? intervalMs : FINANCE_SOURCE_HEARTBEAT_FAILURE_INTERVAL_MS;
+  const retryAfterMs =
+    outcomeReceipt?.retryAfterMs ??
+    (error instanceof ApiCallError ? error.retryAfterMs : undefined);
+  const boundedRetryAfterMs =
+    typeof retryAfterMs === "number" && Number.isFinite(retryAfterMs) && retryAfterMs >= 0
+      ? Math.min(retryAfterMs, FINANCE_SOURCE_HEARTBEAT_MAX_TIMER_MS)
+      : 0;
+  const nextCheckMs = checkedAt + Math.max(baseCheckDelayMs, boundedRetryAfterMs);
   return {
     provider: candidate.provider,
     providerName: candidate.providerName,
@@ -299,8 +318,8 @@ function resultFromReceipts(
     ...(httpStatus !== undefined ? { httpStatus } : {}),
     ...(networkCode ? { networkCode } : {}),
     ...(transportError ? { transportError } : {}),
-    ...(outcomeReceipt?.retryAfterMs !== undefined
-      ? { retryAfterMs: outcomeReceipt.retryAfterMs }
+    ...(typeof retryAfterMs === "number" && Number.isFinite(retryAfterMs) && retryAfterMs >= 0
+      ? { retryAfterMs }
       : {}),
   };
 }

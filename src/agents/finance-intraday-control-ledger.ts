@@ -167,6 +167,7 @@ export const FinanceIntradayDecisionReviewReceiptSchema = z
     request: IntradayReviewRequestSchema,
     status: z.enum(["completed", "failed"]),
     attempted: z.boolean(),
+    modelCalls: z.number().int().nonnegative().max(2).optional(),
     provider: Text,
     modelId: Text,
     latencyMs: z.number().finite().nonnegative(),

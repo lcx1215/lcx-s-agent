@@ -437,6 +437,34 @@ it("releases an idle loop on SIGINT without starting a cycle", async () => {
   expect(fs.existsSync(path.join(directory, FINANCE_SCHEDULER_LOCK))).toBe(false);
 });
 
+it("does not block the resident scheduler loop on a slow provider heartbeat", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-21T10:00:00Z"));
+  let finishHeartbeat: (() => void) | undefined;
+  mocks.runSourceHeartbeat.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finishHeartbeat = () =>
+          resolve({ checkedProviders: [], healthyCount: 0, degradedCount: 0, unhealthyCount: 0 });
+      }),
+  );
+  mocks.delay.mockImplementationOnce(async () => {
+    process.emit("SIGTERM");
+  });
+
+  const running = runFinanceScheduler(["--loop", "--dir", directory]);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const schedulerReachedNextTick = mocks.delay.mock.calls.length === 1;
+  if (!schedulerReachedNextTick) {
+    process.emit("SIGTERM");
+  }
+  finishHeartbeat?.();
+
+  await expect(running).resolves.toBe(143);
+  expect(schedulerReachedNextTick).toBe(true);
+  expect(mocks.runSourceHeartbeat).toHaveBeenCalledOnce();
+});
+
 it("handles a detached spawn error without reporting ready", async () => {
   const child = Object.assign(new EventEmitter(), { connected: false, unref: vi.fn() });
   mocks.spawn.mockImplementation(() => {

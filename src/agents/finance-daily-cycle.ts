@@ -1,5 +1,6 @@
 import { withTimeout } from "../utils/with-timeout.js";
 import { isAlpacaOrderUncertain } from "./finance-alpaca-execution-adapter.js";
+import { AlpacaExecutionQuoteError } from "./finance-alpaca-execution-quote.js";
 import {
   fetchAlpacaVenueState,
   runFinanceAlpacaOrder,
@@ -156,6 +157,10 @@ function executionQuoteProviderFailure(error: unknown): string {
   const message = error instanceof Error ? error.message : "";
   if (message === "timeout") {
     return "execution quote timeout";
+  }
+  if (error instanceof AlpacaExecutionQuoteError) {
+    const status = error.httpStatus === undefined ? "" : `_http_${error.httpStatus}`;
+    return `execution quote unavailable (${error.failureCode}${status})`;
   }
   if (isAlpacaSafetyFailureCode(message)) {
     return `execution quote unavailable (${message})`;
@@ -1396,7 +1401,7 @@ export async function runFinanceDailyCycle(
     tradeDecisionReview = {
       status: result.status,
       candidateCount: reviewCandidates.length,
-      modelCalls: result.attempted ? 1 : 0,
+      modelCalls: result.modelCalls ?? (result.attempted ? 1 : 0),
       candidateInputs: reviewCandidates,
       decisionContext,
       ...(result.status === "failed" ? { failureCode: result.failureCode } : {}),

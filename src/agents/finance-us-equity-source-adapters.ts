@@ -296,6 +296,7 @@ export function createSecCompanyFactsAdapter(
     providerName: "sec-edgar-companyfacts",
     providerRole: "official_or_issuer_reference",
     priority: 11,
+    sampleRequest: { instrument: "AAPL", assetClass: "us_equity" },
     supports: (request) => isUsEquityRequest(request.assetClass),
     collect: async (request) => {
       const fetchImpl = resolveFinanceFetch(options.fetchImpl);

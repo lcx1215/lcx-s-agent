@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { createAlpacaExecutionQuoteProvider } from "./finance-alpaca-execution-quote.js";
+import {
+  AlpacaExecutionQuoteError,
+  createAlpacaExecutionQuoteProvider,
+} from "./finance-alpaca-execution-quote.js";
 const credentials = { apiKeyId: "synthetic-key", apiSecretKey: "synthetic-secret" };
 const quote = { bp: 100, ap: 101, t: "2026-09-22T10:00:00.123456789Z" };
 function fixture(change: Record<string, unknown> = {}) {
@@ -69,6 +72,75 @@ describe("strict Alpaca execution reference source", () => {
       expect(read).not.toHaveBeenCalled();
     },
   );
+  it.each([
+    { status: 401, failureCode: "unauthorized" },
+    { status: 403, failureCode: "forbidden" },
+    { status: 429, failureCode: "rate_limited" },
+    { status: 503, failureCode: "provider_error" },
+  ])(
+    "classifies safe HTTP failure metadata without retaining a body",
+    async ({ status, failureCode }) => {
+      const read = vi.fn(async () => ({ status, body: "synthetic response detail" }));
+      const provider = createAlpacaExecutionQuoteProvider({
+        credentials,
+        read,
+        feed: "iex",
+        maxAgeMs: 2000,
+      });
+      let error: unknown;
+      try {
+        await provider(
+          { instrument: "AAPL", assetClass: "us_equity", side: "buy" },
+          new AbortController().signal,
+        );
+      } catch (caught) {
+        error = caught;
+      }
+      expect(error).toBeInstanceOf(AlpacaExecutionQuoteError);
+      expect(error).toMatchObject({ failureCode, httpStatus: status });
+      expect(String(error)).not.toContain("synthetic response detail");
+    },
+  );
+  it("distinguishes transport and malformed-response errors", async () => {
+    const transport = createAlpacaExecutionQuoteProvider({
+      credentials,
+      read: vi.fn().mockRejectedValue(new Error("synthetic socket detail")),
+      feed: "iex",
+      maxAgeMs: 2000,
+    });
+    await expect(
+      transport(
+        { instrument: "AAPL", assetClass: "us_equity", side: "buy" },
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ failureCode: "transport_error" });
+
+    const malformed = createAlpacaExecutionQuoteProvider({
+      credentials,
+      read: vi.fn(async () => ({ status: 200, body: "not json" })),
+      feed: "iex",
+      maxAgeMs: 2000,
+    });
+    await expect(
+      malformed(
+        { instrument: "AAPL", assetClass: "us_equity", side: "buy" },
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ failureCode: "invalid_json" });
+
+    const emptyPayload = createAlpacaExecutionQuoteProvider({
+      credentials,
+      read: vi.fn(async () => ({ status: 200, body: "null" })),
+      feed: "iex",
+      maxAgeMs: 2000,
+    });
+    await expect(
+      emptyPayload(
+        { instrument: "AAPL", assetClass: "us_equity", side: "buy" },
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ failureCode: "invalid_quote" });
+  });
   it("returns on cancellation even if an injected read has not settled", async () => {
     const read = vi.fn(() => new Promise<{ status: number; body: string }>(() => {}));
     const provider = createAlpacaExecutionQuoteProvider({

@@ -7,6 +7,7 @@ import {
   type FinanceIntradayTradeDecisionReviewRequest,
   type FinanceTradeDecisionReviewRequest,
 } from "./finance-trade-decision-review.js";
+import { ModelAdapterError } from "./logical-agent-model-router.js";
 import type { LogicalAgentModelAdapter } from "./logical-agent-model-router.js";
 
 const request: FinanceTradeDecisionReviewRequest = {
@@ -152,6 +153,134 @@ describe("configured finance trade decision reviewer", () => {
       expect.objectContaining({ role: "risk_check", payload: request }),
       expect.any(AbortSignal),
     );
+    expect(result.modelCalls).toBe(1);
+  });
+
+  it("does not claim an observed provider call when the adapter has no transport attestation", async () => {
+    const model = adapter({
+      schemaVersion: FINANCE_TRADE_DECISION_REVIEW_SCHEMA,
+      decisions: [
+        {
+          candidateId: request.candidates[0].candidateId,
+          decision: "approve",
+          rationale: "The supplied evidence supports this exact candidate.",
+        },
+      ],
+    });
+    const reviewer = createFinanceTradeDecisionReviewer({} as OpenClawConfig, {
+      adapterFactory: () => ({ ...model, observe: undefined }),
+    });
+
+    const result = await reviewer(request, AbortSignal.timeout(1000));
+
+    expect(result).toMatchObject({
+      status: "completed",
+      attempted: true,
+      modelCalls: 1,
+      providerCallObserved: false,
+      adapterAttested: false,
+    });
+    expect(result.requestIdSha256).toBeUndefined();
+  });
+
+  it("keeps local model inference evidence distinct from a provider call", async () => {
+    const model = adapter({
+      schemaVersion: FINANCE_TRADE_DECISION_REVIEW_SCHEMA,
+      decisions: [
+        {
+          candidateId: request.candidates[0].candidateId,
+          decision: "approve",
+          rationale: "The supplied evidence supports this exact candidate.",
+        },
+      ],
+    });
+    const localModel = {
+      ...model,
+      observe: vi.fn((call) => ({
+        ...call,
+        transportRequestId: "local-inference-receipt",
+        kind: "model_inference" as const,
+      })),
+    };
+    const reviewer = createFinanceTradeDecisionReviewer({} as OpenClawConfig, {
+      adapterFactory: () => localModel,
+    });
+
+    const result = await reviewer(request, AbortSignal.timeout(1000));
+
+    expect(result).toMatchObject({
+      status: "completed",
+      providerCallObserved: false,
+      adapterAttested: true,
+    });
+    expect(result.requestIdSha256).toMatch(/^[a-f\d]{64}$/u);
+  });
+
+  it("retries once with a larger budget only after explicit truncation", async () => {
+    const truncated = adapter(null);
+    vi.mocked(truncated.invoke).mockRejectedValueOnce(new ModelAdapterError("output_truncated"));
+    const completed = adapter({
+      schemaVersion: FINANCE_TRADE_DECISION_REVIEW_SCHEMA,
+      decisions: [
+        {
+          candidateId: request.candidates[0].candidateId,
+          decision: "approve",
+          rationale: "The supplied evidence supports this exact candidate.",
+        },
+      ],
+    });
+    const adapterFactory = vi.fn().mockReturnValueOnce(truncated).mockReturnValueOnce(completed);
+    const reviewer = createFinanceTradeDecisionReviewer({} as OpenClawConfig, { adapterFactory });
+
+    const result = await reviewer(request, AbortSignal.timeout(1000));
+
+    expect(result).toMatchObject({ status: "completed", modelCalls: 2 });
+    expect(adapterFactory.mock.calls.map(([_, options]) => options?.maxTokens)).toEqual([
+      4_096, 8_192,
+    ]);
+    expect(completed.invoke).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attempt: 2,
+        provider: "fixture-provider",
+        modelId: "fixture-model",
+      }),
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("stays fail-closed when the single truncation retry is also truncated", async () => {
+    const first = adapter(null);
+    const second = adapter(null);
+    vi.mocked(first.invoke).mockRejectedValueOnce(new ModelAdapterError("output_truncated"));
+    vi.mocked(second.invoke).mockRejectedValueOnce(new ModelAdapterError("output_truncated"));
+    const adapterFactory = vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second);
+    const reviewer = createFinanceTradeDecisionReviewer({} as OpenClawConfig, { adapterFactory });
+
+    const result = await reviewer(request, AbortSignal.timeout(1000));
+
+    expect(result).toMatchObject({
+      status: "failed",
+      failureCode: "output_truncated",
+      attempted: true,
+      modelCalls: 2,
+    });
+    expect(adapterFactory).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry provider errors other than explicit output truncation", async () => {
+    const model = adapter(null);
+    vi.mocked(model.invoke).mockRejectedValueOnce(new ModelAdapterError("provider_rate_limit"));
+    const adapterFactory = vi.fn(() => model);
+    const reviewer = createFinanceTradeDecisionReviewer({} as OpenClawConfig, { adapterFactory });
+
+    const result = await reviewer(request, AbortSignal.timeout(1000));
+
+    expect(result).toMatchObject({
+      status: "failed",
+      failureCode: "provider_rate_limit",
+      modelCalls: 1,
+    });
+    expect(adapterFactory).toHaveBeenCalledOnce();
   });
 
   it("binds an intraday review to one exact signal and its own response schema", async () => {

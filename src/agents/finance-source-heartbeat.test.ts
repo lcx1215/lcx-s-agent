@@ -10,6 +10,7 @@ import {
   readFinanceSourceHeartbeat,
   runFinanceSourceHeartbeat,
 } from "./finance-source-heartbeat.js";
+import { createSecCompanyFactsAdapter } from "./finance-us-equity-source-adapters.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -66,6 +67,74 @@ describe("finance provider heartbeat", () => {
     expect(plan.candidates.map((candidate) => candidate.adapterId)).toEqual([
       "demo_provider_news",
       "other_provider_quote",
+    ]);
+  });
+
+  it("uses a realtime adapter's declared sample instead of an unrelated generic symbol", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "finance-heartbeat-sample-"));
+    roots.push(root);
+    const requested: string[] = [];
+    const secAdapter: FinanceRealtimeSourceAdapter = {
+      ...adapter("sec_edgar_companyfacts", async (request) => {
+        requested.push(request.instrument);
+        return observation(request);
+      }),
+      sampleRequest: { instrument: "AAPL", assetClass: "us_equity" },
+    };
+
+    const result = await runFinanceSourceHeartbeat({
+      directory: root,
+      asOf: "2026-09-22T07:00:00.000Z",
+      now: () => Date.parse("2026-09-22T07:00:00.000Z"),
+      realtimeAdapters: [secAdapter],
+      collectionAdapters: [],
+      maxSourceConcurrency: 1,
+    });
+
+    expect(result.healthyCount).toBe(1);
+    expect(requested).toEqual(["AAPL"]);
+  });
+
+  it("probes the real SEC company-facts adapter with its declared AAPL sample", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "finance-heartbeat-sec-"));
+    roots.push(root);
+    const requestedUrls: string[] = [];
+    const secAdapter = createSecCompanyFactsAdapter({
+      fetchImpl: async (url) => {
+        requestedUrls.push(url);
+        return {
+          ok: true,
+          status: 200,
+          text: async () =>
+            url.includes("company_tickers")
+              ? JSON.stringify({ 0: { cik_str: 320193, ticker: "AAPL", title: "Apple Inc." } })
+              : JSON.stringify({
+                  entityName: "Apple Inc.",
+                  facts: {
+                    "us-gaap": {
+                      Assets: {
+                        units: { USD: [{ val: 5000, filed: "2026-09-01", end: "2026-06-30" }] },
+                      },
+                    },
+                  },
+                }),
+        };
+      },
+    });
+
+    const result = await runFinanceSourceHeartbeat({
+      directory: root,
+      asOf: "2026-09-22T07:00:00.000Z",
+      now: () => Date.parse("2026-09-22T07:00:00.000Z"),
+      realtimeAdapters: [secAdapter],
+      collectionAdapters: [],
+      maxSourceConcurrency: 1,
+    });
+
+    expect(result.healthyCount).toBe(1);
+    expect(requestedUrls).toEqual([
+      "https://www.sec.gov/files/company_tickers.json",
+      "https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json",
     ]);
   });
 
@@ -141,6 +210,50 @@ describe("finance provider heartbeat", () => {
     expect(state.records.quota.status).toBe("degraded");
     expect(state.records.quota.reason).toBe("budget_exhausted");
   });
+
+  it.each([
+    { retryAfterMs: 10 * 60_000, expectedDelayMs: 10 * 60_000 },
+    { retryAfterMs: 2 * 60_000, expectedDelayMs: 5 * 60_000 },
+  ])(
+    "honors Retry-After without shortening the heartbeat failure cooldown (%o)",
+    async ({ retryAfterMs, expectedDelayMs }) => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), "finance-heartbeat-retry-after-"));
+      roots.push(root);
+      const checkedAt = Date.parse("2026-09-22T07:00:00.000Z");
+      let calls = 0;
+      const adapters = [
+        adapter("limited_provider_quote", async () => {
+          calls += 1;
+          throw new ApiCallError("rate_limited", 429, retryAfterMs);
+        }),
+      ];
+      const first = await runFinanceSourceHeartbeat({
+        directory: root,
+        asOf: new Date(checkedAt).toISOString(),
+        now: () => checkedAt,
+        realtimeAdapters: adapters,
+        collectionAdapters: [],
+        maxSourceConcurrency: 1,
+      });
+      const state = await readFinanceSourceHeartbeat({ directory: root });
+      expect(first.degradedCount).toBe(1);
+      expect(Date.parse(state.records.limited.nextCheckAt)).toBe(checkedAt + expectedDelayMs);
+      expect(state.records.limited.retryAfterMs).toBe(retryAfterMs);
+
+      const beforeRetryAt = checkedAt + expectedDelayMs - 1;
+      const premature = await runFinanceSourceHeartbeat({
+        directory: root,
+        asOf: new Date(beforeRetryAt).toISOString(),
+        now: () => beforeRetryAt,
+        realtimeAdapters: adapters,
+        collectionAdapters: [],
+        maxSourceConcurrency: 1,
+      });
+      expect(premature.checkedProviders).toEqual([]);
+      expect(premature.skippedProviders).toEqual(["limited"]);
+      expect(calls).toBe(1);
+    },
+  );
 
   it("cancels pending probes on shutdown without classifying providers as unhealthy", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "finance-heartbeat-"));

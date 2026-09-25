@@ -311,6 +311,7 @@ export async function executeFinanceIntradayDecision(params: {
       request: reviewRequest,
       status: reviewResult.status,
       attempted: reviewResult.attempted,
+      modelCalls: reviewResult.modelCalls ?? (reviewResult.attempted ? 1 : 0),
       provider: reviewResult.provider,
       modelId: reviewResult.modelId,
       latencyMs: reviewResult.latencyMs,

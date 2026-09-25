@@ -67,6 +67,8 @@ export type FinanceRealtimeSourceAdapter = Readonly<{
   providerName: string;
   providerRole: FinanceDataGatewayObservationInput["providerRole"];
   priority: number;
+  /** Provider-specific, non-trading representative used only by bounded liveness probes. */
+  sampleRequest?: Pick<FinanceRealtimeSourceRequest, "instrument" | "assetClass">;
   supports: (request: FinanceRealtimeSourceRequest) => boolean;
   collect: (
     request: FinanceRealtimeSourceRequest,

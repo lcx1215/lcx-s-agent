@@ -8,6 +8,7 @@ export const FINANCE_TRADE_DECISION_REVIEW_SCHEMA = "lcx_finance_trade_decision_
 export const FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA =
   "lcx_finance_intraday_trade_decision_review_v1" as const;
 export const FINANCE_TRADE_DECISION_REVIEW_MAX_TOKENS = 4_096;
+const FINANCE_TRADE_DECISION_REVIEW_RETRY_MAX_TOKENS = FINANCE_TRADE_DECISION_REVIEW_MAX_TOKENS * 2;
 export const FINANCE_TRADE_DECISION_REVIEW_TIMEOUT_MS = 60_000;
 
 export type FinanceTradeDecisionCandidate = Readonly<{
@@ -147,6 +148,8 @@ export type FinanceTradeDecisionReviewResult = Readonly<{
   latencyMs: number;
   providerCallObserved: boolean;
   adapterAttested: boolean;
+  /** Number of configured model-adapter invocations, including one bounded truncation retry. */
+  modelCalls?: number;
   requestIdSha256?: string;
   decisions?: readonly FinanceTradeDecision[];
   failureCode?: FinanceTradeDecisionReviewFailureCode;
@@ -246,6 +249,11 @@ export function isValidFinanceTradeDecisionReviewResult(
     value.latencyMs < 0 ||
     typeof value.providerCallObserved !== "boolean" ||
     typeof value.adapterAttested !== "boolean" ||
+    (value.modelCalls !== undefined &&
+      (typeof value.modelCalls !== "number" ||
+        !Number.isSafeInteger(value.modelCalls) ||
+        value.modelCalls < 0 ||
+        value.modelCalls > 2)) ||
     (value.requestIdSha256 !== undefined &&
       (typeof value.requestIdSha256 !== "string" || !/^[a-f\d]{64}$/u.test(value.requestIdSha256)))
   ) {
@@ -317,29 +325,26 @@ export function createFinanceTradeDecisionReviewer(
   dependencies: ReviewerDependencies = {},
 ): FinanceTradeDecisionReviewer {
   const factory = dependencies.adapterFactory ?? createConfiguredFinanceModelAdapter;
-  const adapter = factory(cfg, {
-    maxCalls: 1,
-    maxTokens: FINANCE_TRADE_DECISION_REVIEW_MAX_TOKENS,
-    timeoutMs: FINANCE_TRADE_DECISION_REVIEW_TIMEOUT_MS,
-    buildPrompt: reviewPrompt,
-  });
+  const createAdapter = (maxTokens: number) =>
+    factory(cfg, {
+      maxCalls: 1,
+      maxTokens,
+      timeoutMs: FINANCE_TRADE_DECISION_REVIEW_TIMEOUT_MS,
+      buildPrompt: reviewPrompt,
+    });
+  const adapter = createAdapter(FINANCE_TRADE_DECISION_REVIEW_MAX_TOKENS);
   const now = dependencies.now ?? Date.now;
 
   return async (reviewRequest, signal) => {
     const startedAt = now();
-    const call: ModelCallRequest = {
-      callId: randomUUID(),
-      correlationId: `finance-trade-review:${reviewRequest.asOf}`,
-      taskId: `finance-trade-review:${reviewRequest.asOf.slice(0, 10)}`,
-      role: "risk_check",
-      attempt: 1,
-      provider: adapter.provider,
-      modelId: adapter.modelId,
-      payload: reviewRequest,
-    };
-    const observed = () => {
+    let activeAdapter = adapter;
+    let modelCalls = 0;
+    let providerCallObserved = false;
+    let adapterAttested = false;
+    let requestIdSha256: string | undefined;
+    const observe = (currentAdapter: typeof adapter, call: ModelCallRequest) => {
       try {
-        return adapter.observe?.({
+        const observation = currentAdapter.observe?.({
           callId: call.callId,
           correlationId: call.correlationId,
           taskId: call.taskId,
@@ -348,73 +353,113 @@ export function createFinanceTradeDecisionReviewer(
           provider: call.provider,
           modelId: call.modelId,
         });
+        if (
+          !observation ||
+          observation.callId !== call.callId ||
+          observation.provider !== call.provider ||
+          observation.modelId !== call.modelId ||
+          typeof observation.transportRequestId !== "string" ||
+          observation.transportRequestId.trim().length === 0 ||
+          !["model_inference", "provider_call"].includes(observation.kind)
+        ) {
+          return undefined;
+        }
+        return observation;
       } catch {
         return undefined;
       }
     };
     const latencyMs = () => Math.max(0, Math.round(now() - startedAt));
+    const recordObservation = (observation: ReturnType<typeof observe>) => {
+      if (!observation) {
+        return;
+      }
+      providerCallObserved ||= observation.kind === "provider_call";
+      adapterAttested = true;
+      requestIdSha256 = createHash("sha256").update(observation.transportRequestId).digest("hex");
+    };
+    const failureResult = (error: unknown): FinanceTradeDecisionReviewResult => {
+      const deadlineExpired =
+        signal.aborted && signal.reason instanceof Error && signal.reason.name === "TimeoutError";
+      return {
+        status: "failed",
+        attempted: modelCalls > 0,
+        provider: activeAdapter.provider,
+        modelId: activeAdapter.modelId,
+        latencyMs: latencyMs(),
+        providerCallObserved,
+        adapterAttested,
+        modelCalls,
+        ...(requestIdSha256 ? { requestIdSha256 } : {}),
+        failureCode: deadlineExpired ? "runtime_timeout" : modelFailureCode(error),
+      };
+    };
 
-    try {
-      const output = await adapter.invoke(call, signal);
-      const observation = observed();
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      if (attempt === 2) {
+        try {
+          const retryAdapter = createAdapter(FINANCE_TRADE_DECISION_REVIEW_RETRY_MAX_TOKENS);
+          if (
+            retryAdapter.provider !== adapter.provider ||
+            retryAdapter.modelId !== adapter.modelId
+          ) {
+            return failureResult(new ModelAdapterError("process_error"));
+          }
+          activeAdapter = retryAdapter;
+        } catch (error) {
+          return failureResult(error);
+        }
+      }
+      const call: ModelCallRequest = {
+        callId: randomUUID(),
+        correlationId: `finance-trade-review:${reviewRequest.asOf}`,
+        taskId: `finance-trade-review:${reviewRequest.asOf.slice(0, 10)}`,
+        role: "risk_check",
+        attempt,
+        provider: activeAdapter.provider,
+        modelId: activeAdapter.modelId,
+        payload: reviewRequest,
+      };
+      let output: unknown;
+      modelCalls += 1;
+      try {
+        output = await activeAdapter.invoke(call, signal);
+      } catch (error) {
+        recordObservation(observe(activeAdapter, call));
+        if (attempt === 1 && modelFailureCode(error) === "output_truncated" && !signal.aborted) {
+          continue;
+        }
+        return failureResult(error);
+      }
+      recordObservation(observe(activeAdapter, call));
       const decisions = parseFinanceTradeDecisionReviewOutput(output, reviewRequest);
       if (!decisions) {
         return {
           status: "failed",
           attempted: true,
-          provider: adapter.provider,
-          modelId: adapter.modelId,
+          provider: activeAdapter.provider,
+          modelId: activeAdapter.modelId,
           latencyMs: latencyMs(),
-          providerCallObserved: true,
-          adapterAttested: observation !== undefined,
-          ...(observation?.transportRequestId
-            ? {
-                requestIdSha256: createHash("sha256")
-                  .update(observation.transportRequestId)
-                  .digest("hex"),
-              }
-            : {}),
+          providerCallObserved,
+          adapterAttested,
+          modelCalls,
+          ...(requestIdSha256 ? { requestIdSha256 } : {}),
           failureCode: "output_contract",
         };
       }
       return {
         status: "completed",
         attempted: true,
-        provider: adapter.provider,
-        modelId: adapter.modelId,
+        provider: activeAdapter.provider,
+        modelId: activeAdapter.modelId,
         latencyMs: latencyMs(),
-        providerCallObserved: true,
-        adapterAttested: observation !== undefined,
-        ...(observation?.transportRequestId
-          ? {
-              requestIdSha256: createHash("sha256")
-                .update(observation.transportRequestId)
-                .digest("hex"),
-            }
-          : {}),
+        providerCallObserved,
+        adapterAttested,
+        modelCalls,
+        ...(requestIdSha256 ? { requestIdSha256 } : {}),
         decisions,
       };
-    } catch (error) {
-      const observation = observed();
-      const deadlineExpired =
-        signal.aborted && signal.reason instanceof Error && signal.reason.name === "TimeoutError";
-      return {
-        status: "failed",
-        attempted: true,
-        provider: adapter.provider,
-        modelId: adapter.modelId,
-        latencyMs: latencyMs(),
-        providerCallObserved: observation !== undefined,
-        adapterAttested: observation !== undefined,
-        ...(observation?.transportRequestId
-          ? {
-              requestIdSha256: createHash("sha256")
-                .update(observation.transportRequestId)
-                .digest("hex"),
-            }
-          : {}),
-        failureCode: deadlineExpired ? "runtime_timeout" : modelFailureCode(error),
-      };
     }
+    return failureResult(new ModelAdapterError("output_truncated"));
   };
 }

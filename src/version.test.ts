@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   readVersionFromBuildInfoForModuleUrl,
   readVersionFromPackageJsonForModuleUrl,
+  VERSION,
   resolveBinaryVersion,
   resolveRuntimeServiceVersion,
   resolveUsableRuntimeVersion,
@@ -49,6 +50,15 @@ describe("version resolution", () => {
       const moduleUrl = await ensureModuleFixture(root);
       expect(readVersionFromPackageJsonForModuleUrl(moduleUrl)).toBe("1.2.3");
       expect(resolveVersionFromModuleUrl(moduleUrl)).toBe("1.2.3");
+    });
+  });
+
+  it("resolves the canonical LCX Agent package version", async () => {
+    await withTempDir(async (root) => {
+      await writeJsonFixture(root, "package.json", { name: "lcx-agent", version: "2026.3.3" });
+      const moduleUrl = await ensureModuleFixture(root);
+      expect(readVersionFromPackageJsonForModuleUrl(moduleUrl)).toBe("2026.3.3");
+      expect(resolveVersionFromModuleUrl(moduleUrl)).toBe("2026.3.3");
     });
   });
 
@@ -154,19 +164,27 @@ describe("version resolution", () => {
 
   it("uses service/package markers when runtime VERSION is the unusable fallback", () => {
     expect(
-      resolveRuntimeServiceVersion({
-        OPENCLAW_VERSION: "   ",
-        OPENCLAW_SERVICE_VERSION: "  2.0.0  ",
-        npm_package_version: "1.0.0",
-      }),
+      resolveRuntimeServiceVersion(
+        {
+          OPENCLAW_VERSION: "   ",
+          OPENCLAW_SERVICE_VERSION: "  2.0.0  ",
+          npm_package_version: "1.0.0",
+        },
+        undefined,
+        "0.0.0",
+      ),
     ).toBe("2.0.0");
 
     expect(
-      resolveRuntimeServiceVersion({
-        OPENCLAW_VERSION: " ",
-        OPENCLAW_SERVICE_VERSION: "\t",
-        npm_package_version: " 1.0.0-package ",
-      }),
+      resolveRuntimeServiceVersion(
+        {
+          OPENCLAW_VERSION: " ",
+          OPENCLAW_SERVICE_VERSION: "\t",
+          npm_package_version: " 1.0.0-package ",
+        },
+        undefined,
+        "0.0.0",
+      ),
     ).toBe("1.0.0-package");
 
     expect(
@@ -177,7 +195,12 @@ describe("version resolution", () => {
           npm_package_version: "",
         },
         "fallback",
+        "0.0.0",
       ),
     ).toBe("fallback");
+  });
+
+  it("prefers the canonical package runtime version over a stale service marker", () => {
+    expect(resolveRuntimeServiceVersion({ OPENCLAW_SERVICE_VERSION: "2.0.0" })).toBe(VERSION);
   });
 });

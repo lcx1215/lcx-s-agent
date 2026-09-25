@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AlpacaExecutionQuoteError } from "./finance-alpaca-execution-quote.js";
 import { FinanceExecutionSafetyUncertainError } from "./finance-execution-safety.js";
 import { syntheticSafetyContext } from "./finance-execution-safety.test-support.js";
 import type {
@@ -122,6 +123,17 @@ describe("daily cycle execution data boundary", () => {
   ])("rejects unusable quote %j before any placement", async (change) => {
     const report = await runFinanceDailyCycle({ ...params, executionQuotes: quotes(change) });
     expect(report.ok).toBe(false);
+    expect(mocks.order).not.toHaveBeenCalled();
+  });
+  it("records sanitized Alpaca quote HTTP status categories in refusals", async () => {
+    const executionQuoteProvider = vi.fn(async () => {
+      throw new AlpacaExecutionQuoteError("forbidden", 403);
+    });
+
+    const report = await runFinanceDailyCycle({ ...params, executionQuoteProvider });
+
+    expect(report.refusals).toContain("AAPL: execution quote unavailable (forbidden_http_403)");
+    expect(JSON.stringify(report)).not.toContain("synthetic-secret");
     expect(mocks.order).not.toHaveBeenCalled();
   });
   it("uses the independent current quote and reports placement refusal as failure", async () => {

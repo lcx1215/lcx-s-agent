@@ -643,6 +643,7 @@ type CycleContext = {
   signal: AbortSignal;
   intradayController?: ReturnType<typeof createFinanceAlpacaCycleController>;
   lastIdleReconciliationAtMs?: number;
+  sourceHeartbeatInFlight?: boolean;
 };
 
 type UniverseSelectionReceipt = Readonly<{
@@ -1384,9 +1385,22 @@ async function tick(context: CycleContext): Promise<void> {
       await fire(context, slot.mode);
     }
   }
-  // Diagnostic provider probes must not delay scheduled research or paper execution.
-  if (context.options.sourceHeartbeatEnabled) {
-    await heartbeat(context);
+  // Diagnostic provider probes must not hold the resident scheduling loop open. A
+  // degraded source may take several bounded timeout batches, but that work is independent
+  // of the next scheduler tick and trading decision.
+  if (context.options.sourceHeartbeatEnabled && !context.sourceHeartbeatInFlight) {
+    context.sourceHeartbeatInFlight = true;
+    void heartbeat(context).then(
+      () => {
+        context.sourceHeartbeatInFlight = false;
+      },
+      (error: unknown) => {
+        context.sourceHeartbeatInFlight = false;
+        process.stderr.write(
+          `source-heartbeat task failed: ${error instanceof Error ? error.message : "unknown error"}\n`,
+        );
+      },
+    );
   }
 }
 
