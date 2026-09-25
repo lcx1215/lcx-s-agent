@@ -1202,7 +1202,7 @@ it("clears a previously bound universe when the night selector fails", async () 
       .readFileSync(path.join(directory, "finance-universe-selection-runs.jsonl"), "utf8")
       .trim()
       .split("\n")
-      .at(-1),
+      .at(-1)!,
   );
   expect(selectionReceipt).toMatchObject({ status: "failed" });
   expect(fs.existsSync(path.join(directory, FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME))).toBe(
@@ -1293,7 +1293,7 @@ it("keeps failed receipt appends fail-closed across restart and preserves snapsh
       message.includes("universe selection receipt append failed: simulated receipt disk failure"),
     ),
   ).toBe(true);
-  const latestReceipt = fs.readFileSync(universeReceiptPath, "utf8").trim().split("\n").at(-1);
+  const latestReceipt = fs.readFileSync(universeReceiptPath, "utf8").trim().split("\n").at(-1)!;
   expect(JSON.parse(latestReceipt)).toMatchObject({ status: "started" });
 
   mocks.runIntradayMonitorTick.mockClear();
@@ -1369,7 +1369,7 @@ it("does not run selector when the started receipt append fails", async () => {
   expect(fs.existsSync(path.join(directory, FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME))).toBe(
     false,
   );
-  const latestReceipt = fs.readFileSync(universeReceiptPath, "utf8").trim().split("\n").at(-1);
+  const latestReceipt = fs.readFileSync(universeReceiptPath, "utf8").trim().split("\n").at(-1)!;
   expect(JSON.parse(latestReceipt)).toMatchObject({ status: "failed" });
   expect(
     fs.existsSync(
@@ -1423,7 +1423,7 @@ it("rejects the old snapshot on restart when rename fails but a failed receipt p
     .readFileSync(path.join(directory, "finance-universe-selection-runs.jsonl"), "utf8")
     .trim()
     .split("\n")
-    .at(-1);
+    .at(-1)!;
   expect(JSON.parse(latestReceipt)).toMatchObject({ status: "failed" });
 
   mocks.runIntradayMonitorTick.mockClear();
@@ -1815,7 +1815,7 @@ it("routes night settlement, ledgers and news through the same module research o
       .readFileSync(path.join(directory, "finance-universe-selection-runs.jsonl"), "utf8")
       .trim()
       .split("\n")
-      .at(-1),
+      .at(-1)!,
   );
   expect(universeReceipt).toMatchObject({ status: "selected", selectedCount: 2 });
   expect(readFinanceSchedulerState(directory).lastSucceeded.night).toBe("2026-09-22");
@@ -2034,7 +2034,7 @@ it("keeps night settlement success independent from a failed universe refresh", 
       .readFileSync(path.join(directory, "finance-universe-selection-runs.jsonl"), "utf8")
       .trim()
       .split("\n")
-      .at(-1),
+      .at(-1)!,
   );
   expect(run).toMatchObject({
     ok: true,
