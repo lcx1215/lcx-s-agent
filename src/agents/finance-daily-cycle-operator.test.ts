@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
   reconcile: vi.fn(),
   ruleReadiness: vi.fn(),
   eodRefresh: vi.fn(),
+  universe: vi.fn(),
+  positionLedger: vi.fn(),
 }));
 vi.mock("./finance-alpaca-history-sync.js", () => ({
   syncConfiguredAlpacaPaperHistory: vi.fn(() => {
@@ -28,6 +30,12 @@ vi.mock("./finance-rule-readiness-state.js", () => ({
   financeRuleReadinessSection: (state: { readiness: unknown }) => ({
     readiness: state.readiness,
   }),
+}));
+vi.mock("./finance-research-runner.js", () => ({
+  readFinanceResearchEquityUniverseSnapshot: mocks.universe,
+}));
+vi.mock("./finance-position-ledger.js", () => ({
+  readFinancePositionLedger: mocks.positionLedger,
 }));
 vi.mock("./finance-scoped-override.js", () => ({
   resolveScopedOverride: vi.fn(async () => ({ value: 8 })),
@@ -79,7 +87,43 @@ const args = [
 const account = { equity: 2000, status: "ACTIVE", tradingBlocked: false };
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.universe.mockReturnValue({
+    schemaVersion: "lcx_finance_universe_selection_v1",
+    asOf: "2026-09-24T20:00:00.000Z",
+    generatedAt: "2026-09-24T20:15:00.000Z",
+    sources: {},
+    freshnessBasis: "latest_completed_weekday_16_00_et_without_holiday_calendar",
+    selected: ["MSFT", "NVDA"],
+    screenLimit: 120,
+    candidateCount: 100,
+    screenedCount: 50,
+    eligibleCount: 12,
+    assetCount: 100,
+    unreadableCount: 0,
+    selectedMetrics: [],
+    thresholds: {},
+    liquidityPreScreen: {
+      basis: "latest_completed_regular_session",
+      source: "alpaca_snapshot.dailyBar_or_prevDailyBar.close_times_volume",
+      sessionDate: "2026-09-24",
+    },
+    selectionEvidence: {
+      method: "liquidity_seed_then_iterative_minimum_worst_correlation",
+      maxCorrelation: 0.85,
+      selected: [],
+      excluded: [],
+    },
+    rejected: [],
+  });
   mocks.cycle.mockResolvedValue({ ok: true });
+  mocks.positionLedger.mockResolvedValue({
+    ledger: {
+      positions: [
+        { instrument: "AAPL", quantity: 1 },
+        { instrument: "BTC/USD", quantity: 0.01 },
+      ],
+    },
+  });
   mocks.reconcile.mockResolvedValue({ historyStatus: "reconciled" });
   mocks.ruleReadiness.mockResolvedValue({
     thresholdsDeclared: true,
@@ -129,6 +173,92 @@ describe("account gate before unattended placement", () => {
     expect(mocks.cycle).toHaveBeenCalledWith(
       expect.objectContaining({ equity: 2000, place: true }),
     );
+  });
+  it("binds the active daily method and all execution seams to the validated dynamic universe", async () => {
+    mocks.account.mockResolvedValue({ ok: true, account });
+    const result = await runFinanceDailyCycleOperator(args);
+    expect(result).toMatchObject({
+      strategyUniverse: {
+        source: "finance-universe-selection-latest.json",
+        selected: ["MSFT", "NVDA"],
+        selectedCount: 2,
+      },
+    });
+    expect(mocks.ruleReadiness).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rules: [expect.objectContaining({ ruleId: "fixture", instruments: ["MSFT", "NVDA"] })],
+      }),
+    );
+    expect(mocks.cycle).toHaveBeenCalledWith(
+      expect.objectContaining({ instruments: ["MSFT", "NVDA"], lookbackMonths: 12 }),
+    );
+    expect(mocks.eodRefresh).toHaveBeenCalledWith(
+      expect.objectContaining({
+        directory: "/synthetic/finance",
+        instruments: ["AAPL", "MSFT", "NVDA"],
+      }),
+    );
+  });
+  it("fails closed before provider sync or cycle work when the selector snapshot is missing or stale", async () => {
+    mocks.universe.mockImplementationOnce(() => {
+      throw new Error("equity universe snapshot not found");
+    });
+    const syncHistory = vi.fn();
+    const result = await runFinanceDailyCycleOperator([...args, "--sync-alpaca-history"], {
+      syncHistory,
+    });
+    expect(result).toMatchObject({ ok: false, failureKind: "universe_selection_gate" });
+    expect(result.error).toContain("snapshot not found");
+    expect(syncHistory).not.toHaveBeenCalled();
+    expect(mocks.account).not.toHaveBeenCalled();
+    expect(mocks.cycle).not.toHaveBeenCalled();
+  });
+  it("does not revive the ledger tickers when a valid selection is empty", async () => {
+    mocks.universe.mockReturnValueOnce({
+      ...mocks.universe(),
+      selected: [],
+    });
+    const result = await runFinanceDailyCycleOperator(args);
+    expect(result).toMatchObject({ ok: false, failureKind: "universe_selection_gate" });
+    expect(result.error).toContain("no strategy fallback");
+    expect(mocks.account).not.toHaveBeenCalled();
+    expect(mocks.cycle).not.toHaveBeenCalled();
+  });
+  it("rejects a research portfolio plan that escapes the selected universe", async () => {
+    mocks.account.mockResolvedValue({ ok: true, account });
+    const fs = await import("node:fs/promises");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "daily-universe-plan-"));
+    try {
+      const filename = path.join(directory, "plan.json");
+      const now = Date.now();
+      await fs.writeFile(
+        filename,
+        JSON.stringify({
+          asOf: new Date(now).toISOString(),
+          validUntil: new Date(now + 60_000).toISOString(),
+          venue: "alpaca",
+          accountId: "synthetic",
+          conflictPolicy: "block",
+          allocations: [{ strategyId: "fixture", budgetFraction: 1 }],
+          candidates: [
+            {
+              strategyId: "fixture",
+              basis: "price_strategy",
+              evidenceReceiptId: "plan-evidence",
+              targets: [{ instrument: "AAPL", weight: 0.5, stance: "neutral" }],
+            },
+          ],
+        }),
+      );
+      const result = await runFinanceDailyCycleOperator([...args, "--portfolio-plan", filename]);
+      expect(result).toMatchObject({ ok: false });
+      expect(result.error).toContain("outside the validated selected universe: AAPL");
+      expect(mocks.cycle).not.toHaveBeenCalled();
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
   });
   it("sizes an undeclared allocation from the verified small account", async () => {
     mocks.account.mockResolvedValue({ ok: true, account });
@@ -357,6 +487,14 @@ describe("explicit history sync before daily business", () => {
 
   it("refreshes close-of-day bars and re-prices marks at night with the active rule instruments", async () => {
     mocks.backfill.mockResolvedValueOnce({ scored: [], issues: [] });
+    mocks.positionLedger.mockResolvedValueOnce({
+      ledger: {
+        positions: [
+          { instrument: "MSFT", quantity: 2 },
+          { instrument: "BTC/USD", quantity: 1 },
+        ],
+      },
+    });
     const result = await runFinanceDailyCycleOperator(
       [
         "--json",
@@ -374,7 +512,7 @@ describe("explicit history sync before daily business", () => {
     expect(mocks.eodRefresh).toHaveBeenCalledWith({
       directory: "/synthetic/finance",
       asOf: "2026-09-22T21:30:00.000Z",
-      instruments: ["AAPL"],
+      instruments: ["AAPL", "MSFT"],
     });
     expect(result.ok).toBe(true);
     expect(result.eodRefresh).toEqual({
@@ -424,7 +562,7 @@ it("installs the account controller from the explicit execution policy at the da
     expect(createController).toHaveBeenCalledWith(
       expect.objectContaining({
         directory: "/synthetic/finance",
-        instruments: ["AAPL"],
+        instruments: ["MSFT", "NVDA"],
         policy: { synthetic: true },
       }),
     );

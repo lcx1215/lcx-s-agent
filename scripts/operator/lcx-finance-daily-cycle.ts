@@ -15,8 +15,10 @@ import { reconcileFinanceBrokerHistory } from "../../src/agents/finance-alpaca-h
  * Strategy generation and execution gates remain TypeScript-owned. The configured model may only
  * approve or veto exact candidates after readiness passes; it cannot choose instruments or sizing.
  *
- * Instruments come from the ACTIVE rule in the strategy ledger, never from a hard-coded list, so
- * the schedule follows the declared rule instead of drifting from it.
+ * The active monthly rule supplies the strategy method and risk parameters; a fresh, validated
+ * universe-selection snapshot supplies this run's symbols. The rule's historical instrument list
+ * is not silently treated as the owner's fixed universe, and a missing/stale snapshot never falls
+ * back to it.
  *
  * Usage:
  *   node --import tsx scripts/operator/lcx-finance-daily-cycle.ts [--json] \
@@ -35,7 +37,12 @@ import {
   financePortfolioPlanSchema,
   validateFinancePortfolioPlan,
 } from "../../src/agents/finance-portfolio-composition.js";
+import { readFinancePositionLedger } from "../../src/agents/finance-position-ledger.js";
 import { buildReflection } from "../../src/agents/finance-reflection.js";
+import {
+  readFinanceResearchEquityUniverseSnapshot,
+  type FinanceResearchEquityUniverseSnapshot,
+} from "../../src/agents/finance-research-runner.js";
 import {
   financeRuleReadinessSection,
   readFinanceRuleReadinessState,
@@ -58,6 +65,18 @@ import { loadConfig } from "../../src/config/config.js";
 // calibration reader reads them back, so the names are declared once.
 const SAMPLES_FILE = FINANCE_RESEARCH_SAMPLES_FILENAME;
 const SCORED_FILE = FINANCE_RESEARCH_SCORED_FILENAME;
+
+async function readOpenEquityPositionSymbols(directory: string, asOf: string): Promise<string[]> {
+  const { ledger } = await readFinancePositionLedger(directory, { asOf });
+  return [
+    ...new Set(
+      ledger.positions
+        .filter((position) => position.quantity !== 0)
+        .map((position) => position.instrument.toUpperCase())
+        .filter((instrument) => /^[A-Z][A-Z0-9.]{0,14}$/u.test(instrument)),
+    ),
+  ].toSorted();
+}
 
 /**
  * Read one field of a settled row as text.
@@ -334,6 +353,53 @@ export async function runFinanceDailyCycleOperator(
       error: "Alpaca placement requires --execution-quote-feed and --execution-max-age-ms",
     };
   }
+
+  let universeSnapshot: FinanceResearchEquityUniverseSnapshot | undefined;
+  if (options.mode === "day") {
+    try {
+      universeSnapshot = readFinanceResearchEquityUniverseSnapshot(directory, options.asOf);
+    } catch (error) {
+      return {
+        directory,
+        mode: options.mode,
+        asOf: options.asOf,
+        ok: false,
+        failureKind: "universe_selection_gate",
+        error:
+          error instanceof Error
+            ? `validated equity universe unavailable: ${error.message}`
+            : "validated equity universe unavailable",
+      };
+    }
+    if (universeSnapshot.selected.length === 0) {
+      return {
+        directory,
+        mode: options.mode,
+        asOf: options.asOf,
+        ok: false,
+        failureKind: "universe_selection_gate",
+        error: "validated equity universe is empty; no strategy fallback is permitted",
+      };
+    }
+  }
+
+  const strategyUniverse = universeSnapshot
+    ? {
+        source: "finance-universe-selection-latest.json",
+        schemaVersion: universeSnapshot.schemaVersion,
+        asOf: universeSnapshot.asOf,
+        generatedAt: universeSnapshot.generatedAt,
+        liquiditySessionDate: universeSnapshot.liquidityPreScreen.sessionDate,
+        selectionMethod: universeSnapshot.selectionEvidence.method,
+        screenLimit: universeSnapshot.screenLimit,
+        candidateCount: universeSnapshot.candidateCount,
+        screenedCount: universeSnapshot.screenedCount,
+        eligibleCount: universeSnapshot.eligibleCount,
+        selectedCount: universeSnapshot.selected.length,
+        selected: [...universeSnapshot.selected],
+      }
+    : undefined;
+
   let historySync: Awaited<ReturnType<typeof syncConfiguredAlpacaPaperHistory>> | undefined;
   let historyReconciliation: Awaited<ReturnType<typeof reconcileFinanceBrokerHistory>> | undefined;
   if (options.syncAlpacaHistory) {
@@ -368,6 +434,7 @@ export async function runFinanceDailyCycleOperator(
       };
     }
   }
+
   let equity = options.equity;
   let equitySource: "flag" | "default" | "venue" | "venue-failed" = argv.includes("--equity")
     ? "flag"
@@ -435,6 +502,7 @@ export async function runFinanceDailyCycleOperator(
     asOf: options.asOf,
     equity,
     equitySource,
+    ...(strategyUniverse ? { strategyUniverse } : {}),
     ...(historySync ? { historySync } : {}),
     ...(historyReconciliation ? { historyReconciliation } : {}),
   };
@@ -455,6 +523,20 @@ export async function runFinanceDailyCycleOperator(
         : undefined;
     if (portfolioPlan) {
       validateFinancePortfolioPlan(portfolioPlan, options.asOf, options.venue);
+      const selected = new Set(universeSnapshot?.selected ?? []);
+      const outsideUniverse = [
+        ...new Set(
+          portfolioPlan.candidates
+            .flatMap((candidate) => candidate.targets.map((target) => target.instrument))
+            .map((instrument) => instrument.toUpperCase())
+            .filter((instrument) => !selected.has(instrument)),
+        ),
+      ];
+      if (outsideUniverse.length > 0) {
+        throw new Error(
+          `portfolio plan contains symbols outside the validated selected universe: ${outsideUniverse.join(", ")}`,
+        );
+      }
     }
     // Night settlement consumes recorded samples, not today's active strategy.
     if (options.mode === "day") {
@@ -466,9 +548,16 @@ export async function runFinanceDailyCycleOperator(
       const activeDailyTrendRules = activeRules.filter(
         (rule) => rule.schedule.kind === "monthly" && rule.emits === "target_weights",
       );
+      if (!universeSnapshot) {
+        throw new Error("day strategy requires a validated equity universe snapshot");
+      }
+      const universeBoundDailyTrendRules = activeDailyTrendRules.map((rule) => ({
+        ...rule,
+        instruments: [...universeSnapshot.selected],
+      }));
       strategies = portfolioPlan
-        ? activeDailyTrendRules.map((rule) => bindFinanceDailyStrategy([rule]))
-        : [bindFinanceDailyStrategy(activeDailyTrendRules)];
+        ? universeBoundDailyTrendRules.map((rule) => bindFinanceDailyStrategy([rule]))
+        : [bindFinanceDailyStrategy(universeBoundDailyTrendRules)];
       strategy = strategies[0];
       instruments = [
         ...new Set([
@@ -482,11 +571,24 @@ export async function runFinanceDailyCycleOperator(
       // refresh below catches today's close. This pass is bounded to one bar per active universe
       // instrument and reuses the existing provider adapter and SQLite writer.
       if (options.place && instruments.length > 0) {
+        let refreshInstruments = [...instruments];
+        try {
+          refreshInstruments = [
+            ...new Set([
+              ...refreshInstruments,
+              ...(await readOpenEquityPositionSymbols(directory, options.asOf)),
+            ]),
+          ].toSorted();
+        } catch {
+          dayEodRefreshWarnings.push(
+            "open-position ledger unavailable; EOD refresh is limited to the selected strategy universe",
+          );
+        }
         try {
           dayEodRefresh = await refreshFinanceEodBarsAndMarks({
             directory,
             asOf: options.asOf,
-            instruments,
+            instruments: refreshInstruments,
           });
         } catch {
           dayEodRefreshWarnings.push(
@@ -497,7 +599,7 @@ export async function runFinanceDailyCycleOperator(
       strategyReadiness = await readFinanceRuleReadinessState({
         directory,
         asOf: options.asOf,
-        rules: activeDailyTrendRules,
+        rules: universeBoundDailyTrendRules,
       });
     }
     // Only the day run needs a universe. Pausing every rule is a decision about trading, not
@@ -721,6 +823,15 @@ export async function runFinanceDailyCycleOperator(
           for (const instrument of rule.instruments) {
             instruments.add(instrument.toUpperCase());
           }
+        }
+        try {
+          for (const instrument of await readOpenEquityPositionSymbols(directory, options.asOf)) {
+            instruments.add(instrument);
+          }
+        } catch {
+          eodRefreshWarnings.push(
+            "open-position ledger unavailable; nightly EOD refresh is limited to declared rules",
+          );
         }
         activeInstruments = [...instruments].toSorted();
       } catch {
