@@ -281,6 +281,7 @@ export function createNasdaqExchangeMarketAdapter(
     providerName: "nasdaq-exchange-public-quote",
     providerRole: "cross_check_market_data",
     priority: 12,
+    sampleRequest: { instrument: "SPY", assetClass: "etf" },
     supports: (request) => request.assetClass.trim().toLowerCase() !== "crypto",
     collect: async (request) => {
       const assetClass = request.assetClass.trim().toLowerCase();
