@@ -14,7 +14,14 @@ import {
   type UniverseAsset,
 } from "../src/agents/finance-universe-selection.ts";
 
-const { mockHistoryCollect } = vi.hoisted(() => ({ mockHistoryCollect: vi.fn(async () => []) }));
+const { mockHistoryCollect, collectedHistorySymbols } = vi.hoisted(() => {
+  const collectedHistorySymbols: string[] = [];
+  const mockHistoryCollect = vi.fn(async (request: { instrument: string }) => {
+    collectedHistorySymbols.push(request.instrument);
+    return [];
+  });
+  return { mockHistoryCollect, collectedHistorySymbols };
+});
 
 vi.mock("../src/agents/finance-free-market-collection-adapters.js", async (importOriginal) => {
   const actual =
@@ -48,12 +55,55 @@ function writeRaw(dir: string, contents: string): string {
   return cachePath;
 }
 
+function makeUniverseAsset(symbol: string): UniverseAsset {
+  return {
+    symbol,
+    name: `${symbol} Example Common Stock`,
+    exchange: "NASDAQ",
+    tradable: true,
+    status: "active",
+  };
+}
+
+function stubSelectionInputs(directory: string, snapshots: Readonly<Record<string, unknown>>) {
+  writeAssetCache(
+    path.join(directory, "alpaca-assets.json"),
+    Object.keys(snapshots).map(makeUniverseAsset),
+  );
+  vi.stubEnv("OPENCLAW_STATE_DIR", directory);
+  vi.stubEnv("ALPACA_API_KEY_ID", "test-key");
+  vi.stubEnv("ALPACA_API_SECRET_KEY", "test-secret");
+  vi.setSystemTime(new Date("2026-09-25T03:09:00.000Z"));
+
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const requestUrl =
+      input instanceof URL ? input : new URL(typeof input === "string" ? input : input.url);
+    expect(requestUrl.hostname).toBe("data.alpaca.markets");
+    const symbols = requestUrl.searchParams.get("symbols")?.split(",") ?? [];
+    return Response.json(
+      Object.fromEntries(symbols.map((symbol) => [symbol, snapshots[symbol] ?? {}])),
+    );
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+async function runUniverseSelectSilently(argv: readonly string[]): Promise<void> {
+  const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+  try {
+    await runUniverseSelect(argv);
+  } finally {
+    stdout.mockRestore();
+  }
+}
+
 afterEach(() => {
   fs.writeFileSync = ORIGINAL_WRITE_FILE_SYNC;
   vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
-  mockHistoryCollect.mockReset();
+  mockHistoryCollect.mockClear();
+  collectedHistorySymbols.splice(0);
   for (const dir of dirs.splice(0)) {
     fsSync.rmSync(dir, { recursive: true, force: true });
   }
@@ -176,5 +226,65 @@ describe("universe selection command bounds", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(mockHistoryCollect).not.toHaveBeenCalled();
     expect(fsSync.readFileSync(snapshotPath, "utf8")).toBe(previousSnapshot);
+  });
+
+  it("screens only the latest completed session and records older-session evidence", async () => {
+    const directory = makeCacheDir();
+    const fetchMock = stubSelectionInputs(directory, {
+      ALPHA: { dailyBar: { t: "2026-09-24T20:00:00.000Z", c: 10, v: 100 } },
+      BETA: { dailyBar: { t: "2026-09-24T20:00:00.000Z", c: 20, v: 100 } },
+      OLDER: { prevDailyBar: { t: "2026-09-23T20:00:00.000Z", c: 1_000, v: 1_000 } },
+    });
+    const snapshotPath = path.join(directory, FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME);
+
+    await runUniverseSelectSilently([
+      "--json",
+      "--write-snapshot",
+      "--screen",
+      "2",
+      "--dir",
+      directory,
+    ]);
+
+    const snapshot = JSON.parse(fsSync.readFileSync(snapshotPath, "utf8")) as {
+      screenedCount: number;
+      liquidityPreScreen: {
+        sessionDate: string;
+        sessionDateDistribution: { sessionDate: string; quoteCount: number }[];
+        excludedOlderSessionCount: number;
+        excludedOlderCandidateCount: number;
+      };
+    };
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(collectedHistorySymbols.toSorted()).toEqual(["ALPHA", "BETA"]);
+    expect(snapshot.screenedCount).toBe(2);
+    expect(snapshot.liquidityPreScreen).toEqual({
+      basis: "latest_completed_regular_session",
+      source: "alpaca_snapshot.dailyBar_or_prevDailyBar.close_times_volume",
+      sessionDate: "2026-09-24",
+      sessionDateDistribution: [
+        { sessionDate: "2026-09-23", quoteCount: 1 },
+        { sessionDate: "2026-09-24", quoteCount: 2 },
+      ],
+      excludedOlderSessionCount: 1,
+      excludedOlderCandidateCount: 1,
+    });
+  });
+
+  it("fails closed when the newest completed session has no usable dollar-volume bars", async () => {
+    const directory = makeCacheDir();
+    const fetchMock = stubSelectionInputs(directory, {
+      ZERO: { dailyBar: { t: "2026-09-24T20:00:00.000Z", c: 0, v: 100 } },
+      OLD: { prevDailyBar: { t: "2026-09-23T20:00:00.000Z", c: 100, v: 100 } },
+    });
+    const snapshotPath = path.join(directory, FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME);
+
+    await expect(
+      runUniverseSelectSilently(["--json", "--write-snapshot", "--dir", directory]),
+    ).rejects.toThrow("latest completed-session liquidity data has no usable dollar-volume bars");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(collectedHistorySymbols).toEqual([]);
+    expect(fsSync.existsSync(snapshotPath)).toBe(false);
   });
 });

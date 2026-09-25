@@ -258,16 +258,44 @@ export async function runUniverseSelect(argv: readonly string[] = process.argv.s
 
   const asOf = new Date().toISOString();
   const quotes = await loadQuotes(symbols, asOf);
-  const ranked = rankByDollarVolume(quotes).filter((entry) =>
-    /^\d{4}-\d{2}-\d{2}$/u.test(entry.sessionDate ?? ""),
+  const ranked = rankByDollarVolume(quotes);
+  const sessionDateCounts = new Map<string, number>();
+  for (const quote of Object.values(quotes)) {
+    const sessionDate = quote.sessionDate;
+    if (!/^\d{4}-\d{2}-\d{2}$/u.test(sessionDate ?? "")) {
+      continue;
+    }
+    sessionDateCounts.set(sessionDate, (sessionDateCounts.get(sessionDate) ?? 0) + 1);
+  }
+  const liquiditySessionDates = [...sessionDateCounts.keys()].toSorted();
+  const latestLiquiditySessionDate = liquiditySessionDates.at(-1);
+  if (!latestLiquiditySessionDate) {
+    throw new Error("previous completed-session liquidity data is missing; no universe selected");
+  }
+  const latestSessionRanked = ranked.filter(
+    (entry) => entry.sessionDate === latestLiquiditySessionDate,
   );
-  const liquiditySessionDates = [...new Set(ranked.map((entry) => entry.sessionDate))];
-  if (ranked.length === 0 || liquiditySessionDates.length !== 1) {
+  if (latestSessionRanked.length === 0) {
     throw new Error(
-      "previous completed-session liquidity data is missing or spans multiple sessions; no universe selected",
+      "latest completed-session liquidity data has no usable dollar-volume bars; no universe selected",
     );
   }
-  const screened = ranked.slice(0, options.screen).map((entry) => entry.symbol);
+  const sessionDateDistribution = liquiditySessionDates.map((sessionDate) => ({
+    sessionDate,
+    quoteCount: sessionDateCounts.get(sessionDate) ?? 0,
+  }));
+  const excludedOlderSessionCount = sessionDateDistribution
+    .filter((entry) => entry.sessionDate < latestLiquiditySessionDate)
+    .reduce((count, entry) => count + entry.quoteCount, 0);
+  const excludedOlderCandidateCount = ranked.filter((entry) => {
+    const sessionDate = entry.sessionDate;
+    return (
+      typeof sessionDate === "string" &&
+      /^\d{4}-\d{2}-\d{2}$/u.test(sessionDate) &&
+      sessionDate < latestLiquiditySessionDate
+    );
+  }).length;
+  const screened = latestSessionRanked.slice(0, options.screen).map((entry) => entry.symbol);
 
   const adapter = createChinaReachableUsEodHistoryCollectionAdapter();
   const series = new Map<string, UniverseBar[]>();
@@ -349,7 +377,10 @@ export async function runUniverseSelect(argv: readonly string[] = process.argv.s
     liquidityPreScreen: {
       basis: "latest_completed_regular_session",
       source: "alpaca_snapshot.dailyBar_or_prevDailyBar.close_times_volume",
-      sessionDate: liquiditySessionDates[0],
+      sessionDate: latestLiquiditySessionDate,
+      sessionDateDistribution,
+      excludedOlderSessionCount,
+      excludedOlderCandidateCount,
     },
     unreadableCount: unreadable.length,
     eligibleCount: ordered.length,
