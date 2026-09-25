@@ -72,6 +72,7 @@ import {
 import { readFinanceStrategyRuleLedger } from "../../src/agents/finance-strategy-rule-ledger.js";
 import { createFinanceTradeDecisionReviewer } from "../../src/agents/finance-trade-decision-review.js";
 import { runFinanceTuningLifecycle } from "../../src/agents/finance-tuning-lifecycle.js";
+import { FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME } from "../../src/agents/finance-universe-selection.js";
 import { buildDetachedServeEnv } from "../../src/cli/serve-detach.js";
 import { loadConfig } from "../../src/config/config.js";
 import { applyConfigEnvVars } from "../../src/config/env-vars.js";
@@ -671,6 +672,8 @@ function assertUniverseSnapshotNotSupersededByFailure(
     contents = fs.readFileSync(path.join(directory, UNIVERSE_SELECTION_RUNS_LOG), "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      // The selector may have been run independently for a first-run bootstrap. The shared
+      // snapshot reader has already validated source evidence and freshness in this case.
       return;
     }
     throw error;
@@ -701,14 +704,55 @@ function assertUniverseSnapshotNotSupersededByFailure(
     throw new Error("latest universe selection attempt receipt is invalid");
   }
 
-  const attemptedAtMs = Date.parse(value.completedAt);
+  const completedAtMs = Date.parse(value.completedAt);
   const snapshotGeneratedAtMs = Date.parse(snapshot.generatedAt);
-  if (!Number.isFinite(attemptedAtMs) || !Number.isFinite(snapshotGeneratedAtMs)) {
+  if (!Number.isFinite(completedAtMs) || !Number.isFinite(snapshotGeneratedAtMs)) {
     throw new Error("latest universe selection attempt or snapshot timestamp is invalid");
   }
-  if (value.status === "failed" && attemptedAtMs > snapshotGeneratedAtMs) {
-    throw new Error("latest universe selector attempt failed after the persisted snapshot");
+  if (value.status === "failed") {
+    if (completedAtMs >= snapshotGeneratedAtMs) {
+      throw new Error("latest universe selector attempt failed at or after the persisted snapshot");
+    }
+    // A separately produced, validated snapshot newer than the failed scheduler attempt may
+    // bootstrap/recover monitoring; the failed attempt still takes precedence over its old data.
+    return;
   }
+  if (
+    typeof value.snapshotRef !== "string" ||
+    value.snapshotRef !== caseflowFingerprint(snapshot) ||
+    value.generatedAt !== snapshot.generatedAt ||
+    value.selectedCount !== snapshot.selected.length
+  ) {
+    throw new Error("latest universe selection receipt does not bind the current snapshot");
+  }
+}
+
+function preserveUniverseSnapshot(
+  directory: string,
+  runId: string,
+  suffix: "previous" | "unaccepted" | "unreceipted",
+): string | undefined {
+  const snapshotPath = path.join(directory, FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME);
+  try {
+    fs.lstatSync(snapshotPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
+
+  const backupPath = path.join(directory, `finance-universe-selection-${runId}-${suffix}.json`);
+  try {
+    fs.lstatSync(backupPath);
+    throw new Error(`universe snapshot backup already exists: ${path.basename(backupPath)}`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
+  fs.renameSync(snapshotPath, backupPath);
+  return backupPath;
 }
 
 function replaceIntradaySystemUniverse(
@@ -798,6 +842,7 @@ async function refreshFinanceUniverseSelection(params: {
   let error: string | undefined;
   let status: UniverseSelectionReceipt["status"] = "failed";
   try {
+    preserveUniverseSnapshot(params.context.root.directory, params.attempt.runId, "previous");
     processResult = await runFinanceCycleProcess({
       argv: [
         "--import",
@@ -840,15 +885,60 @@ async function refreshFinanceUniverseSelection(params: {
     completedAt = new Date().toISOString();
     error = failure instanceof Error ? failure.message : String(failure);
   }
-  // A long-lived scheduler must not keep monitoring a prior universe after a refresh
-  // attempt fails. On success, replace candidates and scope together before the next tick.
-  replaceIntradaySystemUniverse(params.context, snapshotForRuntime);
+  if (status === "selected" && snapshotForRuntime) {
+    const selectedReceipt: UniverseSelectionReceipt = Object.freeze({
+      schemaVersion: "lcx_finance_universe_selection_attempt_v1",
+      runId: params.attempt.runId,
+      attemptedAt: startedAt,
+      completedAt,
+      status,
+      processStatus: processResult.status,
+      exitCode: processResult.exitCode,
+      ...(snapshotRef ? { snapshotRef } : {}),
+      ...(generatedAt ? { generatedAt } : {}),
+      ...(selectedCount === undefined ? {} : { selectedCount }),
+    });
+    try {
+      fs.appendFileSync(
+        path.join(params.context.root.directory, UNIVERSE_SELECTION_RUNS_LOG),
+        `${JSON.stringify(selectedReceipt)}\n`,
+      );
+      replaceIntradaySystemUniverse(params.context, snapshotForRuntime);
+      return selectedReceipt;
+    } catch (writeError) {
+      status = "failed";
+      error = `universe selection receipt append failed: ${writeError instanceof Error ? writeError.message : String(writeError)}`;
+      snapshotForRuntime = undefined;
+      completedAt = new Date().toISOString();
+      process.stderr.write(`${error}\n`);
+      try {
+        preserveUniverseSnapshot(
+          params.context.root.directory,
+          params.attempt.runId,
+          "unreceipted",
+        );
+      } catch (preserveError) {
+        process.stderr.write(
+          `unreceipted universe snapshot could not be quarantined: ${preserveError instanceof Error ? preserveError.message : String(preserveError)}\n`,
+        );
+      }
+    }
+  } else {
+    try {
+      preserveUniverseSnapshot(params.context.root.directory, params.attempt.runId, "unaccepted");
+    } catch (preserveError) {
+      error = `${error ?? "selector did not produce an accepted snapshot"}; unaccepted snapshot could not be quarantined: ${preserveError instanceof Error ? preserveError.message : String(preserveError)}`;
+      process.stderr.write(`${error}\n`);
+    }
+  }
+
+  replaceIntradaySystemUniverse(params.context);
   const receipt: UniverseSelectionReceipt = Object.freeze({
     schemaVersion: "lcx_finance_universe_selection_attempt_v1",
     runId: params.attempt.runId,
     attemptedAt: startedAt,
     completedAt,
-    status,
+    status: "failed",
     processStatus: processResult.status,
     exitCode: processResult.exitCode,
     ...(snapshotRef ? { snapshotRef } : {}),
