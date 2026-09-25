@@ -37,6 +37,7 @@ import {
   MAX_UNIVERSE_SCREEN_SIZE,
   filterUniverseAssets,
   logReturnSeries,
+  orderSelectedUniverseMetrics,
   rankByDollarVolume,
   selectDiversifiedUniverseWithEvidence,
   summariseUniverseSeries,
@@ -407,7 +408,7 @@ export async function runUniverseSelect(argv: readonly string[] = process.argv.s
     },
     // Metrics of the selected symbols, straight from the screened set — never a `{ symbol }`
     // placeholder, which would make every numeric column silently unprintable.
-    selectedMetrics: ordered.filter((entry) => selected.includes(entry.symbol)),
+    selectedMetrics: orderSelectedUniverseMetrics(selected, ordered),
     thresholds: DEFAULT_UNIVERSE_THRESHOLDS,
     rejected,
   };

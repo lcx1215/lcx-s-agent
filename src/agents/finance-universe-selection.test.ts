@@ -4,12 +4,14 @@ import {
   correlation,
   filterUniverseAssets,
   logReturnSeries,
+  orderSelectedUniverseMetrics,
   rankByDollarVolume,
   selectDiversifiedUniverse,
   selectDiversifiedUniverseWithEvidence,
   summariseUniverseSeries,
   universeRejectionReason,
   type UniverseAsset,
+  type UniverseMetrics,
 } from "./finance-universe-selection.js";
 
 function asset(overrides: Partial<UniverseAsset> & { symbol: string }): UniverseAsset {
@@ -96,6 +98,34 @@ describe("rankByDollarVolume", () => {
     expect(ranked.map((entry) => entry.symbol)).toEqual(["B", "A"]);
     expect(ranked[0]?.dollarVolume).toBe(5000);
     expect(ranked[0]?.sessionDate).toBe("2026-09-22");
+  });
+});
+
+describe("orderSelectedUniverseMetrics", () => {
+  const metric = (symbol: string): UniverseMetrics => ({
+    symbol,
+    bars: 800,
+    firstDate: "2020-01-01",
+    lastDate: "2026-09-24",
+    medianDollarVolume: 5_000_000,
+    annualisedVol: 0.2,
+    outlierCount: 0,
+    maxGapDays: 4,
+  });
+
+  it("binds metric receipts to the diversified symbol order, not liquidity order", () => {
+    const liquidityOrdered = [metric("SPY"), metric("AAPL"), metric("TLT")];
+    expect(
+      orderSelectedUniverseMetrics(["SPY", "TLT", "AAPL"], liquidityOrdered).map(
+        (metrics) => metrics.symbol,
+      ),
+    ).toEqual(["SPY", "TLT", "AAPL"]);
+  });
+
+  it("fails if a selected symbol has no matching metrics", () => {
+    expect(() => orderSelectedUniverseMetrics(["SPY", "AAPL"], [metric("SPY")])).toThrow(
+      "selected universe symbol is missing eligibility metrics: AAPL",
+    );
   });
 });
 

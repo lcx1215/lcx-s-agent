@@ -68,6 +68,21 @@ export type UniverseMetrics = Readonly<{
   maxGapDays: number;
 }>;
 
+/** Keeps selected metric receipts in the exact order used by diversification evidence. */
+export function orderSelectedUniverseMetrics(
+  selectedSymbols: readonly string[],
+  eligibleMetrics: readonly UniverseMetrics[],
+): readonly UniverseMetrics[] {
+  const bySymbol = new Map(eligibleMetrics.map((metrics) => [metrics.symbol, metrics] as const));
+  return selectedSymbols.map((symbol) => {
+    const metrics = bySymbol.get(symbol);
+    if (!metrics) {
+      throw new Error(`selected universe symbol is missing eligibility metrics: ${symbol}`);
+    }
+    return metrics;
+  });
+}
+
 export type UniverseThresholds = Readonly<{
   /** Minimum EOD bars. A monthly signal needs 13 month-ends; this leaves room to spare. */
   minBars: number;
