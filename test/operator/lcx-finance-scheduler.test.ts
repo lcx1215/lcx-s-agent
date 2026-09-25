@@ -997,9 +997,14 @@ it("clears a previously bound universe when the night selector fails", async () 
       stderr: "selector failed",
     });
   mocks.runIntradayMonitorTick.mockResolvedValue({ status: "no_signal" });
+  let progressAtStop: Record<string, unknown> | undefined;
   mocks.delay
     .mockImplementationOnce(async () => {})
     .mockImplementationOnce(async () => {
+      const progress = JSON.parse(
+        fs.readFileSync(path.join(directory, FINANCE_SCHEDULER_LOCK, "progress.json"), "utf8"),
+      ) as { intraday?: Record<string, unknown> };
+      progressAtStop = progress.intraday;
       process.emit("SIGTERM");
     });
 
@@ -1019,11 +1024,105 @@ it("clears a previously bound universe when the night selector fails", async () 
   ]);
   expect(mocks.readUniverse).toHaveBeenCalledOnce();
   expect(mocks.runIntradayMonitorTick).toHaveBeenCalledTimes(2);
+  expect(progressAtStop).toMatchObject({
+    placementEnabled: false,
+    universeStatus: "unavailable",
+    instruments: [],
+    executionInstruments: [],
+  });
   const selectionReceipt = JSON.parse(
     fs.readFileSync(path.join(directory, "finance-universe-selection-runs.jsonl"), "utf8").trim(),
   );
   expect(selectionReceipt).toMatchObject({ status: "failed" });
   expect(readFinanceSchedulerState(directory).lastSucceeded.night).toBe("2026-09-22");
+});
+
+it("does not re-arm a same-date snapshot invalidated by a failed receipt, then recovers on success", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-22T22:00:00.000Z"));
+  await activateIntradayRule();
+  writeFinanceSchedulerState(directory, {
+    lastFired: { day: "2026-09-22" },
+    lastSucceeded: {},
+    lastStatus: {},
+  });
+  const priorSnapshot = {
+    generatedAt: "2026-09-22T21:55:00.000Z",
+    selected: ["SPY", "INVALIDATED"],
+  } as never;
+  const recoveredSnapshot = {
+    generatedAt: "2026-09-22T22:00:00.000Z",
+    selected: ["SPY", "RECOVERED"],
+  } as never;
+  fs.writeFileSync(
+    path.join(directory, "finance-universe-selection-runs.jsonl"),
+    `${JSON.stringify({
+      schemaVersion: "lcx_finance_universe_selection_attempt_v1",
+      runId: "failed-before-restart",
+      attemptedAt: "2026-09-22T21:54:00.000Z",
+      completedAt: "2026-09-22T21:56:00.000Z",
+      status: "failed",
+      processStatus: "failed",
+      exitCode: 1,
+      error: "selector unavailable",
+    })}\n`,
+  );
+  mocks.readUniverse
+    .mockReturnValueOnce(priorSnapshot)
+    .mockReturnValueOnce(recoveredSnapshot)
+    .mockReturnValueOnce(recoveredSnapshot);
+  mocks.runCycle
+    .mockResolvedValueOnce({
+      ...success,
+      stdout: JSON.stringify({
+        ok: true,
+        scoredFiled: { appended: 0, skipped: 0 },
+        pending: [],
+        declined: [],
+        issues: [],
+      }),
+    })
+    .mockResolvedValueOnce({
+      ...success,
+      stdout: JSON.stringify({
+        snapshotPersisted: true,
+        generatedAt: "2026-09-22T22:00:00.000Z",
+        selected: ["SPY", "RECOVERED"],
+      }),
+    });
+  mocks.runIntradayMonitorTick.mockResolvedValue({ status: "no_signal" });
+  mocks.delay
+    .mockImplementationOnce(async () => {})
+    .mockImplementationOnce(async () => {
+      process.emit("SIGTERM");
+    });
+
+  const args = ["--loop", "--dir", directory, "--intraday-monitor", "--no-source-heartbeat"];
+  await expect(runFinanceScheduler(args)).resolves.toBe(143);
+  expect(mocks.runIntradayMonitorTick.mock.calls.map(([call]) => call.instrument)).toEqual([
+    "SPY",
+    "RECOVERED",
+  ]);
+  const receipts = fs
+    .readFileSync(path.join(directory, "finance-universe-selection-runs.jsonl"), "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  expect(receipts.map((receipt) => receipt.status)).toEqual(["failed", "selected"]);
+
+  mocks.runIntradayMonitorTick.mockClear();
+  mocks.delay.mockImplementationOnce(async () => {
+    process.emit("SIGTERM");
+  });
+  await expect(runFinanceScheduler(args)).resolves.toBe(143);
+  expect(mocks.runIntradayMonitorTick.mock.calls.map(([call]) => call.instrument)).toEqual([
+    "SPY",
+    "RECOVERED",
+  ]);
+  expect(mocks.runIntradayMonitorTick.mock.calls[0]?.[0].scope).toMatchObject({
+    kind: "system_universe",
+    selectedInstruments: ["SPY", "RECOVERED"],
+  });
 });
 
 it("distinguishes preview success from enabled trading and blocked execution", () => {

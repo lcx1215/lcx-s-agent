@@ -658,6 +658,59 @@ type UniverseSelectionReceipt = Readonly<{
   error?: string;
 }>;
 
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function assertUniverseSnapshotNotSupersededByFailure(
+  directory: string,
+  snapshot: FinanceResearchEquityUniverseSnapshot,
+): void {
+  let contents: string;
+  try {
+    contents = fs.readFileSync(path.join(directory, UNIVERSE_SELECTION_RUNS_LOG), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+
+  const lastLine = contents
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .at(-1);
+  if (!lastLine) {
+    return;
+  }
+
+  let value: unknown;
+  try {
+    value = JSON.parse(lastLine);
+  } catch {
+    throw new Error("latest universe selection attempt receipt is unreadable");
+  }
+  if (
+    !isObjectRecord(value) ||
+    value.schemaVersion !== "lcx_finance_universe_selection_attempt_v1" ||
+    typeof value.runId !== "string" ||
+    typeof value.completedAt !== "string" ||
+    (value.status !== "selected" && value.status !== "failed")
+  ) {
+    throw new Error("latest universe selection attempt receipt is invalid");
+  }
+
+  const attemptedAtMs = Date.parse(value.completedAt);
+  const snapshotGeneratedAtMs = Date.parse(snapshot.generatedAt);
+  if (!Number.isFinite(attemptedAtMs) || !Number.isFinite(snapshotGeneratedAtMs)) {
+    throw new Error("latest universe selection attempt or snapshot timestamp is invalid");
+  }
+  if (value.status === "failed" && attemptedAtMs > snapshotGeneratedAtMs) {
+    throw new Error("latest universe selector attempt failed after the persisted snapshot");
+  }
+}
+
 function replaceIntradaySystemUniverse(
   context: CycleContext,
   snapshot?: FinanceResearchEquityUniverseSnapshot,
@@ -1474,6 +1527,7 @@ export async function runFinanceScheduler(
             root.directory,
             new Date().toISOString(),
           );
+          assertUniverseSnapshotNotSupersededByFailure(root.directory, snapshot);
           instruments = snapshot.selected;
           executionInstruments = strategyContract.instruments.filter((instrument) =>
             snapshot.selected.includes(instrument),
