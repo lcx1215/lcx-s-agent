@@ -19,6 +19,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { resolveFinanceCredentialEnv } from "../../src/agents/finance-credential-env.js";
 import { isFinanceUsEquityDailyBarComplete } from "../../src/agents/finance-cycle-schedule.js";
 import { createChinaReachableUsEodHistoryCollectionAdapter } from "../../src/agents/finance-free-market-collection-adapters.js";
@@ -437,7 +438,9 @@ export async function runUniverseSelect(argv: readonly string[] = process.argv.s
   );
 }
 
-void runUniverseSelect().catch((error) => {
-  process.stderr.write(`${String(error)}\n`);
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  void runUniverseSelect().catch((error) => {
+    process.stderr.write(`${String(error)}\n`);
+    process.exitCode = 1;
+  });
+}
