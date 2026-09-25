@@ -474,6 +474,7 @@ export function validateFinanceResearchEquityUniverseSnapshot(
     Number(value.candidateCount) > Number(value.assetCount) ||
     Number(value.screenedCount) >
       Math.min(Number(value.candidateCount), Number(value.screenLimit)) ||
+    Number(value.unreadableCount) > Number(value.screenedCount) ||
     Number(value.eligibleCount) > Number(value.screenedCount)
   ) {
     throw new Error("equity universe snapshot violates its candidate/count resource bounds");

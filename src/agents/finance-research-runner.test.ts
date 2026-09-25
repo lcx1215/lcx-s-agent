@@ -269,6 +269,14 @@ describe("finance research runner", () => {
     expect(targets.some((target) => target.instrument === "SPY")).toBe(false);
   });
 
+  it("rejects a universe snapshot whose unreadable count exceeds the screened candidates", () => {
+    const invalidSnapshot = universeSnapshot({ unreadableCount: 101 });
+
+    expect(() =>
+      validateFinanceResearchEquityUniverseSnapshot(invalidSnapshot, "2026-09-10T12:00:00.000Z"),
+    ).toThrow("candidate/count resource bounds");
+  });
+
   it("accepts a Friday receipt through Monday before close, but expires it after Monday close", () => {
     const fridaySnapshot = universeSnapshot({
       asOf: "2026-09-11T20:05:00.000Z",
