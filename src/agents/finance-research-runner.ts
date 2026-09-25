@@ -585,8 +585,27 @@ export function validateFinanceResearchEquityUniverseSnapshot(
       throw new Error("equity universe snapshot selection evidence does not bind to its symbols");
     }
   }
-  if (!Array.isArray(value.rejected) || value.rejected.some((row) => !isRecord(row))) {
-    throw new Error("equity universe snapshot is missing rejected-candidate reasons");
+  const rejected = value.rejected;
+  if (
+    !Array.isArray(rejected) ||
+    rejected.length !== Number(value.screenedCount) - Number(value.eligibleCount) ||
+    rejected.some(
+      (row) =>
+        !isRecord(row) ||
+        typeof row.symbol !== "string" ||
+        !EQUITY_SYMBOL_SHAPE.test(row.symbol) ||
+        typeof row.reason !== "string" ||
+        row.reason.trim().length === 0,
+    )
+  ) {
+    throw new Error("equity universe snapshot has inconsistent rejected-candidate evidence");
+  }
+  const rejectedSymbols = rejected.map((row) => (row as Record<string, unknown>).symbol as string);
+  if (
+    new Set(rejectedSymbols).size !== rejectedSymbols.length ||
+    rejectedSymbols.some((symbol) => selected.includes(symbol))
+  ) {
+    throw new Error("equity universe snapshot has inconsistent rejected-candidate evidence");
   }
   return value as unknown as FinanceResearchEquityUniverseSnapshot;
 }

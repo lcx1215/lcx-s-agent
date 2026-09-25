@@ -80,7 +80,10 @@ function universeSnapshot(
       ],
       excluded: [],
     },
-    rejected: [],
+    rejected: Array.from({ length: 70 }, (_, index) => ({
+      symbol: `${String.fromCharCode(65 + Math.floor(index / 26))}${String.fromCharCode(65 + (index % 26))}`,
+      reason: "not eligible",
+    })),
     ...overrides,
   };
 }
@@ -283,6 +286,21 @@ describe("finance research runner", () => {
     expect(() =>
       validateFinanceResearchEquityUniverseSnapshot(invalidSnapshot, "2026-09-10T12:00:00.000Z"),
     ).toThrow("candidate/count resource bounds");
+  });
+
+  it("rejects rejected-candidate evidence with a wrong count, duplicates, or selected symbols", () => {
+    const valid = universeSnapshot();
+    const duplicateRejected = [...valid.rejected];
+    duplicateRejected[1] = { ...duplicateRejected[1], symbol: duplicateRejected[0].symbol };
+    const selectedRejected = [...valid.rejected];
+    selectedRejected[0] = { ...selectedRejected[0], symbol: valid.selected[0] };
+
+    for (const rejected of [[], duplicateRejected, selectedRejected]) {
+      const invalidSnapshot = universeSnapshot({ rejected });
+      expect(() =>
+        validateFinanceResearchEquityUniverseSnapshot(invalidSnapshot, "2026-09-10T12:00:00.000Z"),
+      ).toThrow("rejected-candidate evidence");
+    }
   });
 
   it("accepts a Friday receipt through Monday before close, but expires it after Monday close", () => {
