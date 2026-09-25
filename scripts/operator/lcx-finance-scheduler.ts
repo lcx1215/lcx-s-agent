@@ -844,8 +844,8 @@ async function refreshFinanceUniverseSelection(params: {
   let selectedCount: number | undefined;
   let error: string | undefined;
   let status: UniverseSelectionReceipt["status"] = "failed";
+  let startedReceiptPersisted = false;
   try {
-    preserveUniverseSnapshot(params.context.root.directory, params.attempt.runId, "previous");
     const startedReceipt: UniverseSelectionReceipt = Object.freeze({
       schemaVersion: "lcx_finance_universe_selection_attempt_v1",
       runId: params.attempt.runId,
@@ -859,6 +859,8 @@ async function refreshFinanceUniverseSelection(params: {
       path.join(params.context.root.directory, UNIVERSE_SELECTION_RUNS_LOG),
       `${JSON.stringify(startedReceipt)}\n`,
     );
+    startedReceiptPersisted = true;
+    preserveUniverseSnapshot(params.context.root.directory, params.attempt.runId, "previous");
     processResult = await runFinanceCycleProcess({
       argv: [
         "--import",
@@ -939,7 +941,7 @@ async function refreshFinanceUniverseSelection(params: {
         );
       }
     }
-  } else {
+  } else if (startedReceiptPersisted) {
     try {
       preserveUniverseSnapshot(params.context.root.directory, params.attempt.runId, "unaccepted");
     } catch (preserveError) {

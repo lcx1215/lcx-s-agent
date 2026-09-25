@@ -1338,11 +1338,20 @@ it("does not run selector when the started receipt append fails", async () => {
   });
   const universeReceiptPath = path.join(directory, "finance-universe-selection-runs.jsonl");
   const appendFile = fs.appendFileSync.bind(fs);
+  const canonicalPath = path.join(directory, FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME);
+  const rename = fs.renameSync.bind(fs);
+  const canonicalRenameAttempts: string[] = [];
   vi.spyOn(fs, "appendFileSync").mockImplementation((filename, data, options) => {
     if (String(filename) === universeReceiptPath && String(data).includes('"status":"started"')) {
       throw new Error("simulated started receipt disk failure");
     }
     return appendFile(filename, data, options);
+  });
+  vi.spyOn(fs, "renameSync").mockImplementation((oldPath, newPath) => {
+    if (String(oldPath) === canonicalPath) {
+      canonicalRenameAttempts.push(String(newPath));
+    }
+    return rename(oldPath, newPath);
   });
   mocks.runIntradayMonitorTick.mockResolvedValue({ status: "no_signal" });
   mocks.delay
@@ -1366,19 +1375,10 @@ it("does not run selector when the started receipt append fails", async () => {
     "SPY",
     "PRIOR",
   ]);
-  expect(fs.existsSync(path.join(directory, FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME))).toBe(
-    false,
-  );
+  expect(fs.readFileSync(canonicalPath, "utf8").trim()).toBe(JSON.stringify(priorSnapshot));
+  expect(canonicalRenameAttempts).toEqual([]);
   const latestReceipt = fs.readFileSync(universeReceiptPath, "utf8").trim().split("\n").at(-1)!;
   expect(JSON.parse(latestReceipt)).toMatchObject({ status: "failed" });
-  expect(
-    fs.existsSync(
-      path.join(
-        directory,
-        `finance-universe-selection-${JSON.parse(latestReceipt).runId}-previous.json`,
-      ),
-    ),
-  ).toBe(true);
 });
 
 it("rejects the old snapshot on restart when rename fails but a failed receipt persists", async () => {
@@ -1398,8 +1398,23 @@ it("rejects the old snapshot on restart when rename fails but a failed receipt p
   mocks.readUniverse.mockReturnValue(priorSnapshot);
   const canonicalPath = path.join(directory, FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME);
   const rename = fs.renameSync.bind(fs);
+  const appendFile = fs.appendFileSync.bind(fs);
+  const universeReceiptPath = path.join(directory, "finance-universe-selection-runs.jsonl");
+  const eventOrder: string[] = [];
+  vi.spyOn(fs, "appendFileSync").mockImplementation((filename, data, options) => {
+    if (String(filename) === universeReceiptPath) {
+      if (String(data).includes('"status":"started"')) {
+        eventOrder.push("started");
+      }
+      if (String(data).includes('"status":"failed"')) {
+        throw new Error("simulated final failed receipt disk failure");
+      }
+    }
+    return appendFile(filename, data, options);
+  });
   vi.spyOn(fs, "renameSync").mockImplementation((oldPath, newPath) => {
     if (String(oldPath) === canonicalPath) {
+      eventOrder.push("rename");
       throw new Error("simulated persistent snapshot rename failure");
     }
     return rename(oldPath, newPath);
@@ -1414,6 +1429,7 @@ it("rejects the old snapshot on restart when rename fails but a failed receipt p
 
   await expect(runFinanceScheduler(args)).resolves.toBe(143);
   expect(mocks.runCycle).toHaveBeenCalledOnce();
+  expect(eventOrder.slice(0, 2)).toEqual(["started", "rename"]);
   expect(fs.readFileSync(canonicalPath, "utf8").trim()).toBe(JSON.stringify(priorSnapshot));
   expect(mocks.runIntradayMonitorTick.mock.calls.map(([call]) => call.instrument)).toEqual([
     "SPY",
@@ -1424,7 +1440,7 @@ it("rejects the old snapshot on restart when rename fails but a failed receipt p
     .trim()
     .split("\n")
     .at(-1)!;
-  expect(JSON.parse(latestReceipt)).toMatchObject({ status: "failed" });
+  expect(JSON.parse(latestReceipt)).toMatchObject({ status: "started" });
 
   mocks.runIntradayMonitorTick.mockClear();
   mocks.delay.mockImplementationOnce(async () => {
