@@ -21,7 +21,10 @@ import {
   FINANCE_SCHEDULER_PID,
 } from "../../src/agents/finance-scheduler-lock.js";
 import type { FinanceCycleProcessResult } from "../../src/agents/finance-scheduler-process.js";
-import { readFinanceSchedulerState } from "../../src/agents/finance-scheduler-state.js";
+import {
+  readFinanceSchedulerState,
+  writeFinanceSchedulerState,
+} from "../../src/agents/finance-scheduler-state.js";
 import {
   activateFinanceStrategyRule,
   declareFinanceStrategyRule,
@@ -789,6 +792,238 @@ it("has no intraday candidates when the dynamic universe receipt is missing or s
   ).resolves.toBe(143);
   expect(mocks.readUniverse).toHaveBeenCalledOnce();
   expect(mocks.runIntradayMonitorTick).not.toHaveBeenCalled();
+});
+
+it("rebinds a long-lived monitor to the universe written by a successful night refresh", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-22T22:00:00.000Z"));
+  await activateIntradayRule({
+    measuredResult: { status: "paper_contract_only", executionAuthority: "none" },
+  });
+  writeFinanceSchedulerState(directory, {
+    lastFired: { day: "2026-09-22" },
+    lastSucceeded: {},
+    lastStatus: {},
+  });
+  const priorSnapshot = {
+    generatedAt: "2026-09-21T22:00:00.000Z",
+    selected: ["SPY", "OLD"],
+  } as never;
+  const refreshedSnapshot = {
+    generatedAt: "2026-09-22T22:00:00.000Z",
+    selected: ["SPY", "NEW"],
+  } as never;
+  mocks.readUniverse.mockReturnValueOnce(priorSnapshot).mockReturnValueOnce(refreshedSnapshot);
+  mocks.runCycle
+    .mockResolvedValueOnce({
+      ...success,
+      stdout: JSON.stringify({
+        ok: true,
+        scoredFiled: { appended: 0, skipped: 0 },
+        pending: [],
+        declined: [],
+        issues: [],
+      }),
+    })
+    .mockResolvedValueOnce({
+      ...success,
+      stdout: JSON.stringify({
+        snapshotPersisted: true,
+        generatedAt: "2026-09-22T22:00:00.000Z",
+        selected: ["SPY", "NEW"],
+      }),
+    });
+  mocks.runIntradayMonitorTick.mockResolvedValue({ status: "no_signal" });
+  let progressAtStop: Record<string, unknown> | undefined;
+  mocks.delay
+    .mockImplementationOnce(async () => {})
+    .mockImplementationOnce(async () => {
+      const progress = JSON.parse(
+        fs.readFileSync(path.join(directory, FINANCE_SCHEDULER_LOCK, "progress.json"), "utf8"),
+      ) as { intraday?: Record<string, unknown> };
+      progressAtStop = progress.intraday;
+      process.emit("SIGTERM");
+    });
+
+  await expect(
+    runFinanceScheduler([
+      "--loop",
+      "--dir",
+      directory,
+      "--intraday-monitor",
+      "--intraday-place",
+      "--no-source-heartbeat",
+      "--place",
+      "--venue",
+      "alpaca",
+      "--execution-policy",
+      path.join(directory, "alpaca-policy.json"),
+      "--execution-quote-feed",
+      "iex",
+      "--execution-max-age-ms",
+      "30000",
+      "--max-order-notional",
+      "1000",
+      "--max-instrument-notional",
+      "5000",
+      "--max-orders",
+      "8",
+    ]),
+  ).resolves.toBe(143);
+
+  expect(mocks.readUniverse).toHaveBeenCalledTimes(2);
+  expect(mocks.runIntradayMonitorTick.mock.calls.map(([call]) => call.instrument)).toEqual([
+    "SPY",
+    "OLD",
+    "SPY",
+    "NEW",
+  ]);
+  const firstScope = mocks.runIntradayMonitorTick.mock.calls[0]?.[0].scope;
+  const refreshedScope = mocks.runIntradayMonitorTick.mock.calls[2]?.[0].scope;
+  expect(firstScope).toMatchObject({
+    kind: "system_universe",
+    selectedInstruments: ["SPY", "OLD"],
+  });
+  expect(refreshedScope).toMatchObject({
+    kind: "system_universe",
+    selectedInstruments: ["SPY", "NEW"],
+  });
+  expect(refreshedScope?.universeSnapshotRef).not.toBe(firstScope?.universeSnapshotRef);
+  expect(mocks.createIntradayController).not.toHaveBeenCalled();
+  expect(mocks.executeIntradayDecision).not.toHaveBeenCalled();
+  expect(progressAtStop).toMatchObject({
+    placementEnabled: false,
+    placementEligibility: "paper_contract_only",
+    universeStatus: "validated",
+    instruments: ["SPY", "NEW"],
+    executionInstruments: [],
+  });
+});
+
+it("recovers a long-lived monitor after startup without a universe and a successful refresh", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-22T22:00:00.000Z"));
+  await activateIntradayRule();
+  writeFinanceSchedulerState(directory, {
+    lastFired: { day: "2026-09-22" },
+    lastSucceeded: {},
+    lastStatus: {},
+  });
+  mocks.readUniverse
+    .mockImplementationOnce(() => {
+      throw new Error("no startup snapshot");
+    })
+    .mockReturnValueOnce({
+      generatedAt: "2026-09-22T22:00:00.000Z",
+      selected: ["SPY", "RECOVERED"],
+    } as never);
+  mocks.runCycle
+    .mockResolvedValueOnce({
+      ...success,
+      stdout: JSON.stringify({
+        ok: true,
+        scoredFiled: { appended: 0, skipped: 0 },
+        pending: [],
+        declined: [],
+        issues: [],
+      }),
+    })
+    .mockResolvedValueOnce({
+      ...success,
+      stdout: JSON.stringify({
+        snapshotPersisted: true,
+        generatedAt: "2026-09-22T22:00:00.000Z",
+        selected: ["SPY", "RECOVERED"],
+      }),
+    });
+  mocks.runIntradayMonitorTick.mockResolvedValue({ status: "no_signal" });
+  mocks.delay
+    .mockImplementationOnce(async () => {})
+    .mockImplementationOnce(async () => {
+      process.emit("SIGTERM");
+    });
+
+  await expect(
+    runFinanceScheduler([
+      "--loop",
+      "--dir",
+      directory,
+      "--intraday-monitor",
+      "--no-source-heartbeat",
+    ]),
+  ).resolves.toBe(143);
+
+  expect(mocks.readUniverse).toHaveBeenCalledTimes(2);
+  expect(mocks.runIntradayMonitorTick.mock.calls.map(([call]) => call.instrument)).toEqual([
+    "SPY",
+    "RECOVERED",
+  ]);
+  expect(mocks.runIntradayMonitorTick.mock.calls[0]?.[0].scope).toMatchObject({
+    kind: "system_universe",
+    selectedInstruments: ["SPY", "RECOVERED"],
+  });
+});
+
+it("clears a previously bound universe when the night selector fails", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-22T22:00:00.000Z"));
+  await activateIntradayRule();
+  writeFinanceSchedulerState(directory, {
+    lastFired: { day: "2026-09-22" },
+    lastSucceeded: {},
+    lastStatus: {},
+  });
+  mocks.readUniverse.mockReturnValueOnce({
+    generatedAt: "2026-09-21T22:00:00.000Z",
+    selected: ["SPY", "STALE"],
+  } as never);
+  mocks.runCycle
+    .mockResolvedValueOnce({
+      ...success,
+      stdout: JSON.stringify({
+        ok: true,
+        scoredFiled: { appended: 0, skipped: 0 },
+        pending: [],
+        declined: [],
+        issues: [],
+      }),
+    })
+    .mockResolvedValueOnce({
+      ...success,
+      ok: false,
+      exitCode: 1,
+      status: "failed",
+      stdout: "",
+      stderr: "selector failed",
+    });
+  mocks.runIntradayMonitorTick.mockResolvedValue({ status: "no_signal" });
+  mocks.delay
+    .mockImplementationOnce(async () => {})
+    .mockImplementationOnce(async () => {
+      process.emit("SIGTERM");
+    });
+
+  await expect(
+    runFinanceScheduler([
+      "--loop",
+      "--dir",
+      directory,
+      "--intraday-monitor",
+      "--no-source-heartbeat",
+    ]),
+  ).resolves.toBe(143);
+
+  expect(mocks.runIntradayMonitorTick.mock.calls.map(([call]) => call.instrument)).toEqual([
+    "SPY",
+    "STALE",
+  ]);
+  expect(mocks.readUniverse).toHaveBeenCalledOnce();
+  expect(mocks.runIntradayMonitorTick).toHaveBeenCalledTimes(2);
+  const selectionReceipt = JSON.parse(
+    fs.readFileSync(path.join(directory, "finance-universe-selection-runs.jsonl"), "utf8").trim(),
+  );
+  expect(selectionReceipt).toMatchObject({ status: "failed" });
+  expect(readFinanceSchedulerState(directory).lastSucceeded.night).toBe("2026-09-22");
 });
 
 it("distinguishes preview success from enabled trading and blocked execution", () => {

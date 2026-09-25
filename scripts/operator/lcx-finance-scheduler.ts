@@ -41,7 +41,10 @@ import {
   writeFinanceNightReviewEvidence,
   type FinanceNightSettlementSummary,
 } from "../../src/agents/finance-night-review-context.js";
-import { readFinanceResearchEquityUniverseSnapshot } from "../../src/agents/finance-research-runner.js";
+import {
+  readFinanceResearchEquityUniverseSnapshot,
+  type FinanceResearchEquityUniverseSnapshot,
+} from "../../src/agents/finance-research-runner.js";
 import {
   acquireFinanceSchedulerLock,
   FINANCE_SCHEDULER_LOCK,
@@ -655,32 +658,108 @@ type UniverseSelectionReceipt = Readonly<{
   error?: string;
 }>;
 
+function replaceIntradaySystemUniverse(
+  context: CycleContext,
+  snapshot?: FinanceResearchEquityUniverseSnapshot,
+): void {
+  const current = context.options.intraday;
+  if (!current || current.instrumentSource !== "system_universe") {
+    return;
+  }
+
+  if (!snapshot || !current.strategyContract) {
+    const nextIntraday = {
+      ...current,
+      instruments: [],
+      executionInstruments: [],
+      place: false,
+      placementEligibility: current.placementRequested
+        ? current.strategyContract?.eligibility.status === "paper_contract_only"
+          ? "paper_contract_only"
+          : "universe_unavailable"
+        : "not_requested",
+    } satisfies IntradayMonitorConfig;
+    delete nextIntraday.scope;
+    context.options = { ...context.options, intraday: nextIntraday };
+    return;
+  }
+
+  const executionCandidates = current.strategyContract.instruments.filter((instrument) =>
+    snapshot.selected.includes(instrument),
+  );
+  const executionBindingUnchanged =
+    JSON.stringify([...executionCandidates].toSorted()) ===
+    JSON.stringify([...current.executionInstruments].toSorted());
+  const keepPlacement =
+    current.place &&
+    executionBindingUnchanged &&
+    current.strategyContract.eligibility.automatedPaperPlacementAllowed &&
+    executionCandidates.length > 0;
+  const placementEligibility: IntradayMonitorConfig["placementEligibility"] =
+    !current.placementRequested
+      ? "not_requested"
+      : !current.strategyContract.eligibility.automatedPaperPlacementAllowed
+        ? current.strategyContract.eligibility.status
+        : executionCandidates.length === 0
+          ? "instrument_scope_mismatch"
+          : !executionBindingUnchanged
+            ? "universe_unavailable"
+            : current.strategyContract.eligibility.status;
+
+  context.options = {
+    ...context.options,
+    intraday: {
+      ...current,
+      instruments: snapshot.selected,
+      executionInstruments: keepPlacement ? executionCandidates : [],
+      place: keepPlacement,
+      placementEligibility,
+      scope: {
+        kind: "system_universe",
+        universeSnapshotRef: caseflowFingerprint(snapshot),
+        selectedInstruments: snapshot.selected,
+      },
+    },
+  };
+}
+
 async function refreshFinanceUniverseSelection(params: {
   context: CycleContext;
   attempt: { runId: string; firedAt: string };
 }): Promise<UniverseSelectionReceipt> {
   const startedAt = new Date().toISOString();
-  const processResult = await runFinanceCycleProcess({
-    argv: [
-      "--import",
-      "tsx",
-      UNIVERSE_SELECTION_SCRIPT,
-      "--json",
-      "--write-snapshot",
-      "--dir",
-      params.context.root.directory,
-    ],
-    cwd: REPO_ROOT,
-    timeoutMs: Math.min(params.context.options.timeoutMs, 15 * 60_000),
-    signal: params.context.signal,
-  });
-  const completedAt = new Date().toISOString();
+  let completedAt = startedAt;
+  let processResult: FinanceCycleProcessResult = {
+    exitCode: null,
+    signal: null,
+    status: "spawn_error",
+    ok: false,
+    stdout: "",
+    stderr: "",
+    outputTruncated: false,
+  };
+  let snapshotForRuntime: FinanceResearchEquityUniverseSnapshot | undefined;
   let snapshotRef: string | undefined;
   let generatedAt: string | undefined;
   let selectedCount: number | undefined;
   let error: string | undefined;
   let status: UniverseSelectionReceipt["status"] = "failed";
   try {
+    processResult = await runFinanceCycleProcess({
+      argv: [
+        "--import",
+        "tsx",
+        UNIVERSE_SELECTION_SCRIPT,
+        "--json",
+        "--write-snapshot",
+        "--dir",
+        params.context.root.directory,
+      ],
+      cwd: REPO_ROOT,
+      timeoutMs: Math.min(params.context.options.timeoutMs, 15 * 60_000),
+      signal: params.context.signal,
+    });
+    completedAt = new Date().toISOString();
     const payload = JSON.parse(processResult.stdout) as Record<string, unknown>;
     if (!processResult.ok || payload.snapshotPersisted !== true) {
       throw new Error("selector did not confirm atomic snapshot persistence");
@@ -702,10 +781,15 @@ async function refreshFinanceUniverseSelection(params: {
     snapshotRef = caseflowFingerprint(snapshot);
     generatedAt = snapshot.generatedAt;
     selectedCount = snapshot.selected.length;
+    snapshotForRuntime = snapshot;
     status = "selected";
   } catch (failure) {
+    completedAt = new Date().toISOString();
     error = failure instanceof Error ? failure.message : String(failure);
   }
+  // A long-lived scheduler must not keep monitoring a prior universe after a refresh
+  // attempt fails. On success, replace candidates and scope together before the next tick.
+  replaceIntradaySystemUniverse(params.context, snapshotForRuntime);
   const receipt: UniverseSelectionReceipt = Object.freeze({
     schemaVersion: "lcx_finance_universe_selection_attempt_v1",
     runId: params.attempt.runId,
