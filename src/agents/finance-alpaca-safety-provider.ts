@@ -45,16 +45,25 @@ export type AlpacaSafetyProviderOptions = Readonly<{
   timeoutMs: number;
   maxAgeMs: number;
 }>;
-type AlpacaSafetyFailureCode =
-  | "alpaca_safety_controller_evidence_or_parameters_invalid"
-  | "alpaca_safety_controller_evidence_expired"
-  | "alpaca_safety_cancelled_or_timed_out"
-  | "alpaca_safety_snapshot_read_unavailable"
-  | "alpaca_safety_snapshot_response_invalid"
-  | "alpaca_safety_facts_inconsistent"
-  | "alpaca_safety_quote_parameters_invalid"
-  | "alpaca_safety_quote_binding_invalid"
-  | "alpaca_safety_quote_expired";
+const ALPACA_SAFETY_FAILURE_CODES = [
+  "alpaca_safety_controller_evidence_or_parameters_invalid",
+  "alpaca_safety_controller_evidence_expired",
+  "alpaca_safety_cancelled_or_timed_out",
+  "alpaca_safety_snapshot_read_unavailable",
+  "alpaca_safety_snapshot_response_invalid",
+  "alpaca_safety_facts_inconsistent",
+  "alpaca_safety_quote_parameters_invalid",
+  "alpaca_safety_quote_binding_invalid",
+  "alpaca_safety_quote_expired",
+] as const;
+type AlpacaSafetyFailureCode = (typeof ALPACA_SAFETY_FAILURE_CODES)[number];
+
+export function isAlpacaSafetyFailureCode(value: unknown): value is AlpacaSafetyFailureCode {
+  return (
+    typeof value === "string" &&
+    ALPACA_SAFETY_FAILURE_CODES.includes(value as AlpacaSafetyFailureCode)
+  );
+}
 
 class AlpacaSafetyProviderFailure extends Error {
   constructor(readonly code: AlpacaSafetyFailureCode) {

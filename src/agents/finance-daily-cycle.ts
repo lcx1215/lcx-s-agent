@@ -5,6 +5,7 @@ import {
   runFinanceAlpacaOrder,
   type AlpacaVenueState,
 } from "./finance-alpaca-run.js";
+import { isAlpacaSafetyFailureCode } from "./finance-alpaca-safety-provider.js";
 import { appendFinanceBars } from "./finance-bar-ledger.js";
 /**
  * The daytime cycle computes strategy targets deterministically. For an authorized Alpaca Paper
@@ -156,7 +157,7 @@ function executionQuoteProviderFailure(error: unknown): string {
   if (message === "timeout") {
     return "execution quote timeout";
   }
-  if (/^alpaca_safety_[a-z\d_]+$/u.test(message)) {
+  if (isAlpacaSafetyFailureCode(message)) {
     return `execution quote unavailable (${message})`;
   }
   return "execution quote unavailable";

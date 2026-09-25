@@ -442,6 +442,31 @@ describe("daily cycle execution data boundary", () => {
       vi.useRealTimers();
     }
   });
+  it("reports only allowlisted Alpaca safety codes from quote failures", async () => {
+    const executionQuoteProvider = vi
+      .fn()
+      .mockRejectedValue(new Error("alpaca_safety_quote_expired"));
+    const report = await runFinanceDailyCycle({
+      ...params,
+      instruments: ["AAPL"],
+      executionQuoteProvider,
+    });
+    expect(report.refusals.join()).toContain(
+      "execution quote unavailable (alpaca_safety_quote_expired)",
+    );
+  });
+  it("does not echo unknown Alpaca-prefixed provider errors", async () => {
+    const executionQuoteProvider = vi
+      .fn()
+      .mockRejectedValue(new Error("alpaca_safety_fake_secret_value"));
+    const report = await runFinanceDailyCycle({
+      ...params,
+      instruments: ["AAPL"],
+      executionQuoteProvider,
+    });
+    expect(report.refusals.join()).toContain("execution quote unavailable");
+    expect(report.refusals.join()).not.toContain("fake_secret_value");
+  });
   it("keeps local paper simulation usable without an execution feed", async () => {
     const report = await runFinanceDailyCycle({ ...params, venue: "paper" });
     expect(report.modelCalls).toBe(0);
