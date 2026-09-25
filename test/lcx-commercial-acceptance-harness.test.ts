@@ -17,6 +17,7 @@ const EXEC_MAX_BUFFER = 24 * 1024 * 1024;
 function owner(ownerName: string, payload: Record<string, unknown>) {
   return {
     ok: true,
+    commandSucceeded: true,
     owner: ownerName,
     command: `${ownerName} --json`,
     payload,
@@ -782,6 +783,7 @@ describe("lcx-commercial-acceptance-harness", () => {
   it("blocks release when external handoffs exist but candidate capture is missing", () => {
     const inputs = baseInputs();
     inputs.externalCandidateCapture = owner("lcx-external-channel-status", {
+      ok: false,
       externalCandidateCapture: {
         handoffReceiptCount: 12,
         latestHandoffPath: "memory/external-message-handoff-receipts/2026-06-01/real.json",
@@ -800,6 +802,7 @@ describe("lcx-commercial-acceptance-harness", () => {
     const result = buildCommercialAcceptanceHarness(inputs);
 
     expect(result.ok).toBe(false);
+    expect(result.failedGates).not.toContain("lcx-external-channel-status_owner_unavailable");
     expect(result.blockedGates).toContain("external_candidate_capture_missing");
     expect(result.gates).toEqual(
       expect.arrayContaining([
@@ -810,6 +813,50 @@ describe("lcx-commercial-acceptance-harness", () => {
         }),
       ]),
     );
+  });
+
+  it("keeps candidate capture unavailable when its owner command fails", () => {
+    const inputs = baseInputs();
+    inputs.externalCandidateCapture = {
+      ...owner("lcx-external-channel-status", {
+        ok: false,
+        externalCandidateCapture: {
+          handoffReceiptCount: 12,
+          candidateArtifactCount: 0,
+          candidateCount: 0,
+        },
+      }),
+      commandSucceeded: false,
+      ok: false,
+      error: "owner command failed",
+    };
+
+    const result = buildCommercialAcceptanceHarness(inputs);
+
+    expect(result.failedGates).toContain("lcx-external-channel-status_owner_unavailable");
+    expect(result.blockedGates).not.toContain("external_candidate_capture_missing");
+  });
+
+  it("uses a blocked owner receipt when the command exits nonzero", () => {
+    const inputs = baseInputs();
+    inputs.externalCandidateCapture = {
+      ...owner("lcx-external-channel-status", {
+        ok: false,
+        runReceipt: { status: "blocked" },
+        externalCandidateCapture: {
+          handoffReceiptCount: 12,
+          candidateArtifactCount: 0,
+          candidateCount: 0,
+        },
+      }),
+      commandSucceeded: false,
+      ok: false,
+    };
+
+    const result = buildCommercialAcceptanceHarness(inputs);
+
+    expect(result.failedGates).not.toContain("lcx-external-channel-status_owner_unavailable");
+    expect(result.blockedGates).toContain("external_candidate_capture_missing");
   });
 
   it("watches release when no real external candidates have been observed", () => {

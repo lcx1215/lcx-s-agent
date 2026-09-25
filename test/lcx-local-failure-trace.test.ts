@@ -4,6 +4,20 @@ import {
   buildLocalFailureTraceReceipt,
   summarizeTraceForHandoff,
 } from "../scripts/operator/lcx-local-failure-trace.ts";
+import { boundaryFromFlags, buildLcxRunReceipt } from "../src/shared/lcx-run-receipt.ts";
+
+function ownerReceipt(status: "blocked" | "failed") {
+  const checkedAt = "2026-09-25T10:30:00.000Z";
+  return buildLcxRunReceipt({
+    runId: `owner-${status}`,
+    owner: "commercialAcceptance",
+    phase: "observe",
+    status,
+    checkedAt,
+    boundary: boundaryFromFlags({ scope: "test_owner_only" }),
+    nextAction: "review_owner_result",
+  });
+}
 
 describe("LCX local failure trace", () => {
   it("builds one compact failure card from existing owner evidence", () => {
@@ -140,6 +154,90 @@ describe("LCX local failure trace", () => {
     expect(summarizeTraceForHandoff(receipt)).toContain("能否变训练材料: false");
     expect(summarizeTraceForHandoff(receipt)).toContain(
       "边界: 只做索引，不碰线上、不碰配置、不碰受保护记忆、不启动训练",
+    );
+  });
+
+  it("classifies a blocked owner receipt with a nonzero exit as a blocked gate", () => {
+    const checkedAt = "2026-09-25T10:30:00.000Z";
+    const receipt = buildLocalFailureTraceReceipt({
+      checkedAt,
+      workspaceDir: "/tmp/lcx-workspace",
+      repo: { cwd: "/repo", statusShortBranch: "## codex/example", dirtyCount: 0 },
+      activePidSummary: { guard: [], eval: [], mlx: [], teacher: [], quota: [] },
+      source: "governance_autopilot",
+      sourceArtifacts: [],
+      writtenArtifacts: [],
+      ownerCommands: [
+        {
+          id: "commercialAcceptance",
+          command: "node lcx-commercial-acceptance-harness.ts --json",
+          parsed: true,
+          ok: false,
+          exitCode: 1,
+          runReceipt: ownerReceipt("blocked"),
+        },
+      ],
+      summary: {
+        structuralOwnerFailures: ["commercialAcceptance"],
+        blockedGates: ["commercial_release_blocked"],
+        failedGates: [],
+        blockedClusters: [],
+        fastestSafeNextAction: "repair_release_blocker",
+      },
+      boundaryFlags: {
+        liveTouched: false,
+        providerConfigTouched: false,
+        protectedMemoryTouched: false,
+      },
+    });
+
+    expect(receipt).toEqual(
+      expect.objectContaining({
+        result: "blocked",
+        firstFailedGate: "commercial_release_blocked",
+        nextSafeAction: "repair_release_blocker",
+      }),
+    );
+  });
+
+  it("keeps a failed owner receipt as an execution failure", () => {
+    const checkedAt = "2026-09-25T10:30:00.000Z";
+    const receipt = buildLocalFailureTraceReceipt({
+      checkedAt,
+      workspaceDir: "/tmp/lcx-workspace",
+      repo: { cwd: "/repo", statusShortBranch: "## codex/example", dirtyCount: 0 },
+      activePidSummary: { guard: [], eval: [], mlx: [], teacher: [], quota: [] },
+      source: "governance_autopilot",
+      sourceArtifacts: [],
+      writtenArtifacts: [],
+      ownerCommands: [
+        {
+          id: "commercialAcceptance",
+          command: "node lcx-commercial-acceptance-harness.ts --json",
+          parsed: true,
+          ok: false,
+          exitCode: 1,
+          runReceipt: ownerReceipt("failed"),
+        },
+      ],
+      summary: {
+        structuralOwnerFailures: ["commercialAcceptance"],
+        blockedGates: [],
+        failedGates: [],
+        blockedClusters: [],
+      },
+      boundaryFlags: {
+        liveTouched: false,
+        providerConfigTouched: false,
+        protectedMemoryTouched: false,
+      },
+    });
+
+    expect(receipt).toEqual(
+      expect.objectContaining({
+        result: "failed",
+        firstFailedGate: "owner_exit_failed:commercialAcceptance",
+      }),
     );
   });
 });

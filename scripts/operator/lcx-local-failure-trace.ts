@@ -107,7 +107,11 @@ function inferFirstFailedGate(params: {
   if (parseFailure) {
     return `owner_parse_failed:${parseFailure.id}`;
   }
-  const exitFailure = params.ownerCommands.find((owner) => owner.exitCode !== 0);
+  const exitFailure = params.ownerCommands.find(
+    (owner) =>
+      owner.runReceipt?.status === "failed" ||
+      (owner.exitCode !== 0 && owner.runReceipt?.status !== "blocked"),
+  );
   if (exitFailure) {
     return `owner_exit_failed:${exitFailure.id}`;
   }

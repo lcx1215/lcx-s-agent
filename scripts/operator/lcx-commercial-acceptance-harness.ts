@@ -15,6 +15,7 @@ type GateStatus = "passed" | "failed" | "blocked" | "watch";
 
 export type OwnerSnapshot = {
   ok: boolean;
+  commandSucceeded?: boolean;
   owner: string;
   command: string;
   payload?: Record<string, unknown>;
@@ -168,6 +169,16 @@ function ownerOk(snapshot: OwnerSnapshot | undefined): boolean {
   return Boolean(snapshot?.ok && snapshot.payload && booleanValue(snapshot.payload.ok) !== false);
 }
 
+function ownerOutputAvailable(snapshot: OwnerSnapshot | undefined): boolean {
+  if (!snapshot?.payload) {
+    return false;
+  }
+  if (snapshot.commandSucceeded ?? snapshot.ok) {
+    return true;
+  }
+  return recordValue(snapshot.payload.runReceipt)?.status === "blocked";
+}
+
 function commercialAnswerGate(snapshot: OwnerSnapshot | undefined): AcceptanceGate {
   if (!ownerOk(snapshot)) {
     return ownerUnavailableGate("lcx-commercial-answer-pipeline", snapshot);
@@ -318,7 +329,7 @@ function visibleAnswerQualityFuzzerGate(snapshot: OwnerSnapshot | undefined): Ac
 }
 
 function externalCandidateCaptureGate(snapshot: OwnerSnapshot | undefined): AcceptanceGate {
-  if (!ownerOk(snapshot)) {
+  if (!ownerOutputAvailable(snapshot)) {
     return ownerUnavailableGate("lcx-external-channel-status", snapshot);
   }
   const capture = recordValue(
@@ -1140,7 +1151,13 @@ async function runJsonOwner(owner: string, script: string, args: readonly string
       timeout: 120_000,
     });
     const payload = parseJsonObjectFromOutput(result.stdout);
-    return { ok: booleanValue(payload.ok) !== false, owner, command, payload };
+    return {
+      ok: booleanValue(payload.ok) !== false,
+      commandSucceeded: true,
+      owner,
+      command,
+      payload,
+    };
   } catch (error) {
     const details = error as { stdout?: string; stderr?: string; message?: string };
     if (details.stdout) {
@@ -1148,6 +1165,7 @@ async function runJsonOwner(owner: string, script: string, args: readonly string
         const payload = parseJsonObjectFromOutput(details.stdout);
         return {
           ok: false,
+          commandSucceeded: false,
           owner,
           command,
           payload,
@@ -1159,6 +1177,7 @@ async function runJsonOwner(owner: string, script: string, args: readonly string
     }
     return {
       ok: false,
+      commandSucceeded: false,
       owner,
       command,
       error: [details.message, details.stderr?.slice(-500)].filter(Boolean).join("\n"),
