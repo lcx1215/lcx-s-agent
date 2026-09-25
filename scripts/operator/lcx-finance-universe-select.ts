@@ -11,21 +11,30 @@
  *
  * Usage:
  *   node --import tsx scripts/operator/lcx-finance-universe-select.ts [--json] \
- *     [--screen N] [--target N] [--refresh-assets] [--write-rule]
+ *     [--screen N] [--refresh-assets] [--write-rule] [--write-snapshot]
+ *
+ * `--screen` bounds the candidate work sent to external data sources. Final membership is
+ * determined by measured eligibility and diversification, not by a requested symbol count.
  */
 
 import fs from "node:fs";
 import path from "node:path";
 import { resolveFinanceCredentialEnv } from "../../src/agents/finance-credential-env.js";
+import { isFinanceUsEquityDailyBarComplete } from "../../src/agents/finance-cycle-schedule.js";
 import { createChinaReachableUsEodHistoryCollectionAdapter } from "../../src/agents/finance-free-market-collection-adapters.js";
 import { resolveFinanceStateDir } from "../../src/agents/finance-state-dir.js";
 import {
   DEFAULT_UNIVERSE_THRESHOLDS,
+  DEFAULT_UNIVERSE_SCREEN_SIZE,
   FINANCE_UNIVERSE_SELECTION_SCHEMA,
+  FINANCE_UNIVERSE_SELECTION_FRESHNESS_BASIS,
+  FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME,
+  FINANCE_UNIVERSE_SELECTION_SOURCES,
+  MAX_UNIVERSE_SCREEN_SIZE,
   filterUniverseAssets,
   logReturnSeries,
   rankByDollarVolume,
-  selectDiversifiedUniverse,
+  selectDiversifiedUniverseWithEvidence,
   summariseUniverseSeries,
   universeRejectionReason,
   type UniverseAsset,
@@ -41,29 +50,29 @@ const HISTORY_LIMIT = 1200;
 const MAX_ASSET_AGE_DAYS = 7;
 const CONCURRENCY = 6;
 
-type Options = Readonly<{
+export type UniverseSelectOptions = Readonly<{
   json: boolean;
   screen: number;
-  target: number;
   refreshAssets: boolean;
   writeRule: boolean;
+  writeSnapshot: boolean;
   directory?: string;
 }>;
 
-function parseArgs(argv: readonly string[]): Options {
+export function parseUniverseSelectArgs(argv: readonly string[]): UniverseSelectOptions {
   const options: {
     json: boolean;
     screen: number;
-    target: number;
     refreshAssets: boolean;
     writeRule: boolean;
+    writeSnapshot: boolean;
     directory?: string;
   } = {
     json: false,
-    screen: 120,
-    target: 8,
+    screen: DEFAULT_UNIVERSE_SCREEN_SIZE,
     refreshAssets: false,
     writeRule: false,
+    writeSnapshot: false,
     directory: undefined,
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -72,21 +81,30 @@ function parseArgs(argv: readonly string[]): Options {
     if (arg === "--json") {
       options.json = true;
     } else if (arg === "--screen") {
-      options.screen = Number(next);
+      const screen = Number(next);
+      if (!Number.isSafeInteger(screen) || screen < 1 || screen > MAX_UNIVERSE_SCREEN_SIZE) {
+        throw new Error(`--screen must be a positive integer <= ${MAX_UNIVERSE_SCREEN_SIZE}`);
+      }
+      options.screen = screen;
       index += 1;
     } else if (arg === "--target") {
-      options.target = Number(next);
-      index += 1;
+      throw new Error(
+        "--target is no longer supported; final universe size is evidence-driven, and --screen is only a candidate-work ceiling",
+      );
     } else if (arg === "--refresh-assets") {
       options.refreshAssets = true;
     } else if (arg === "--write-rule") {
       options.writeRule = true;
+    } else if (arg === "--write-snapshot") {
+      options.writeSnapshot = true;
     } else if (arg === "--dir") {
       options.directory = next;
       index += 1;
+    } else {
+      throw new Error(`unknown argument: ${arg}`);
     }
   }
-  return options;
+  return Object.freeze(options);
 }
 
 function alpacaHeaders(): Record<string, string> {
@@ -157,7 +175,10 @@ async function loadAssets(cachePath: string, refresh: boolean): Promise<Universe
   return raw;
 }
 
-async function loadQuotes(symbols: readonly string[]): Promise<Record<string, UniverseQuote>> {
+async function loadQuotes(
+  symbols: readonly string[],
+  asOf: string,
+): Promise<Record<string, UniverseQuote>> {
   const headers = alpacaHeaders();
   const out: Record<string, UniverseQuote> = {};
   for (let index = 0; index < symbols.length; index += SNAPSHOT_BATCH) {
@@ -171,10 +192,34 @@ async function loadQuotes(symbols: readonly string[]): Promise<Record<string, Un
     }
     const parsed = (await response.json()) as Record<
       string,
-      { dailyBar?: { c?: number; v?: number } }
+      {
+        dailyBar?: { t?: string; c?: number; v?: number };
+        prevDailyBar?: { t?: string; c?: number; v?: number };
+      }
     >;
     for (const [symbol, value] of Object.entries(parsed)) {
-      out[symbol] = { close: value?.dailyBar?.c, volume: value?.dailyBar?.v };
+      // Use today's bar only after its regular session is complete; otherwise use the previous
+      // completed bar. Partial current-session volume must never bias the candidate screen. Final
+      // ranking still uses multi-year median dollar volume from complete EOD history.
+      const current = value?.dailyBar;
+      const previous = value?.prevDailyBar;
+      const currentDate = typeof current?.t === "string" ? current.t.slice(0, 10) : "";
+      const previousDate = typeof previous?.t === "string" ? previous.t.slice(0, 10) : "";
+      const bar =
+        currentDate && isFinanceUsEquityDailyBarComplete(currentDate, asOf)
+          ? current
+          : previousDate && isFinanceUsEquityDailyBarComplete(previousDate, asOf)
+            ? previous
+            : undefined;
+      out[symbol] = {
+        close: bar?.c,
+        volume: bar?.v,
+        ...(bar === current && currentDate
+          ? { sessionDate: currentDate }
+          : bar === previous && previousDate
+            ? { sessionDate: previousDate }
+            : {}),
+      };
     }
   }
   return out;
@@ -202,7 +247,7 @@ async function mapWithConcurrency<T, R>(
 }
 
 export async function runUniverseSelect(argv: readonly string[] = process.argv.slice(2)) {
-  const options = parseArgs(argv);
+  const options = parseUniverseSelectArgs(argv);
   const directory = options.directory ?? resolveFinanceStateDir().directory;
   const cachePath = path.join(directory, "alpaca-assets.json");
 
@@ -210,12 +255,20 @@ export async function runUniverseSelect(argv: readonly string[] = process.argv.s
   const candidates = filterUniverseAssets(assets);
   const symbols = candidates.map((asset) => asset.symbol);
 
-  const quotes = await loadQuotes(symbols);
-  const ranked = rankByDollarVolume(quotes);
+  const asOf = new Date().toISOString();
+  const quotes = await loadQuotes(symbols, asOf);
+  const ranked = rankByDollarVolume(quotes).filter((entry) =>
+    /^\d{4}-\d{2}-\d{2}$/u.test(entry.sessionDate ?? ""),
+  );
+  const liquiditySessionDates = [...new Set(ranked.map((entry) => entry.sessionDate))];
+  if (ranked.length === 0 || liquiditySessionDates.length !== 1) {
+    throw new Error(
+      "previous completed-session liquidity data is missing or spans multiple sessions; no universe selected",
+    );
+  }
   const screened = ranked.slice(0, options.screen).map((entry) => entry.symbol);
 
   const adapter = createChinaReachableUsEodHistoryCollectionAdapter();
-  const asOf = new Date().toISOString();
   const series = new Map<string, UniverseBar[]>();
   const unreadable: string[] = [];
 
@@ -271,31 +324,51 @@ export async function runUniverseSelect(argv: readonly string[] = process.argv.s
     (entry) => universeRejectionReason(entry, DEFAULT_UNIVERSE_THRESHOLDS) === "",
   );
   const ordered = [...eligible].toSorted((a, b) => b.medianDollarVolume - a.medianDollarVolume);
-  const selected = selectDiversifiedUniverse(
+  const selectionEvidence = selectDiversifiedUniverseWithEvidence(
     ordered.map((entry) => ({
       symbol: entry.symbol,
       returns: logReturnSeries((series.get(entry.symbol) ?? []).map((bar) => bar.close)),
     })),
-    { target: options.target, maxCorrelation: 0.9 },
+    { maxCorrelation: 0.9 },
   );
+  const selected = selectionEvidence.selected;
+  const generatedAt = new Date().toISOString();
 
   const result = {
     schemaVersion: FINANCE_UNIVERSE_SELECTION_SCHEMA,
-    directory,
     asOf,
+    generatedAt,
     modelCalls: 0,
+    sources: FINANCE_UNIVERSE_SELECTION_SOURCES,
+    freshnessBasis: FINANCE_UNIVERSE_SELECTION_FRESHNESS_BASIS,
     assetCount: assets.length,
     candidateCount: candidates.length,
     screenedCount: screened.length,
+    screenLimit: options.screen,
+    liquidityPreScreen: {
+      basis: "latest_completed_regular_session",
+      source: "alpaca_snapshot.dailyBar_or_prevDailyBar.close_times_volume",
+      sessionDate: liquiditySessionDates[0],
+    },
     unreadableCount: unreadable.length,
     eligibleCount: ordered.length,
     selected,
+    selectionEvidence: {
+      method: "liquidity_seed_then_iterative_minimum_worst_correlation",
+      maxCorrelation: 0.9,
+      selected: selectionEvidence.selectedEvidence,
+      excluded: selectionEvidence.exclusions,
+    },
     // Metrics of the selected symbols, straight from the screened set — never a `{ symbol }`
     // placeholder, which would make every numeric column silently unprintable.
     selectedMetrics: ordered.filter((entry) => selected.includes(entry.symbol)),
     thresholds: DEFAULT_UNIVERSE_THRESHOLDS,
-    rejected: rejected.slice(0, 40),
+    rejected,
   };
+
+  if (options.writeSnapshot) {
+    saveJsonFile(path.join(directory, FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME), result);
+  }
 
   if (options.writeRule && selected.length > 0) {
     const ruleId = `trend_risk_normalised_auto_v1`;
@@ -344,7 +417,9 @@ export async function runUniverseSelect(argv: readonly string[] = process.argv.s
   }
 
   if (options.json) {
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    process.stdout.write(
+      `${JSON.stringify({ ...result, snapshotPersisted: options.writeSnapshot }, null, 2)}\n`,
+    );
     return;
   }
   process.stdout.write(
@@ -352,6 +427,7 @@ export async function runUniverseSelect(argv: readonly string[] = process.argv.s
       `assets=${result.assetCount} candidates=${result.candidateCount} screened=${result.screenedCount}`,
       `unreadable=${result.unreadableCount} eligible=${result.eligibleCount}`,
       `selected (${selected.length}): ${selected.join(", ")}`,
+      ...(options.writeSnapshot ? ["current universe snapshot persisted atomically"] : []),
       "",
       ...result.selectedMetrics.map(
         (m) =>

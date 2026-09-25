@@ -11,10 +11,79 @@ import type {
 import type { FinanceRealtimeSourceAdapter } from "./finance-realtime-source-registry.js";
 import {
   buildDefaultFinanceResearchTargets,
+  readFinanceResearchEquityUniverseSnapshot,
   runFinanceResearchRun,
+  validateFinanceResearchEquityUniverseSnapshot,
+  type FinanceResearchEquityUniverseSnapshot,
 } from "./finance-research-runner.js";
+import {
+  DEFAULT_UNIVERSE_THRESHOLDS,
+  FINANCE_UNIVERSE_SELECTION_FRESHNESS_BASIS,
+  FINANCE_UNIVERSE_SELECTION_SCHEMA,
+  FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME,
+  FINANCE_UNIVERSE_SELECTION_SOURCES,
+} from "./finance-universe-selection.js";
 
 const AS_OF = "2026-09-08T12:00:00.000Z";
+
+function universeSnapshot(
+  overrides: Partial<FinanceResearchEquityUniverseSnapshot> = {},
+): FinanceResearchEquityUniverseSnapshot {
+  const selected = ["NVDA", "MSFT", "AAPL"];
+  const selectedMetrics = selected.map((symbol) => ({
+    symbol,
+    bars: 800,
+    firstDate: "2023-07-01",
+    lastDate: "2026-09-09",
+    medianDollarVolume: 10_000_000,
+    annualisedVol: 0.2,
+    outlierCount: 0,
+    maxGapDays: 4,
+  }));
+  return {
+    schemaVersion: FINANCE_UNIVERSE_SELECTION_SCHEMA,
+    asOf: "2026-09-10T11:30:00.000Z",
+    generatedAt: "2026-09-10T11:45:00.000Z",
+    sources: FINANCE_UNIVERSE_SELECTION_SOURCES,
+    freshnessBasis: FINANCE_UNIVERSE_SELECTION_FRESHNESS_BASIS,
+    assetCount: 2_000,
+    candidateCount: 1_000,
+    screenedCount: 100,
+    screenLimit: 120,
+    unreadableCount: 0,
+    eligibleCount: 30,
+    selected,
+    selectedMetrics,
+    thresholds: DEFAULT_UNIVERSE_THRESHOLDS,
+    liquidityPreScreen: {
+      basis: "latest_completed_regular_session",
+      source: "alpaca_snapshot.dailyBar_or_prevDailyBar.close_times_volume",
+      sessionDate: "2026-09-09",
+    },
+    selectionEvidence: {
+      method: "liquidity_seed_then_iterative_minimum_worst_correlation",
+      maxCorrelation: 0.9,
+      selected: [
+        { symbol: "NVDA", rank: 1, reason: "highest_liquidity_eligible_seed" },
+        {
+          symbol: "MSFT",
+          rank: 2,
+          reason: "lowest_correlation_to_selected",
+          maxCorrelationToPriorMembers: 0.4,
+        },
+        {
+          symbol: "AAPL",
+          rank: 3,
+          reason: "lowest_correlation_to_selected",
+          maxCorrelationToPriorMembers: 0.6,
+        },
+      ],
+      excluded: [],
+    },
+    rejected: [],
+    ...overrides,
+  };
+}
 
 function realtimeObservation(
   providerName: string,
@@ -150,7 +219,7 @@ const BATCH_OPTIONS = {
 } as const;
 
 describe("finance research runner", () => {
-  it("targets the caller-supplied equity ticker instead of the broad canary universe", () => {
+  it("targets the caller-supplied equity ticker", () => {
     const targets = buildDefaultFinanceResearchTargets("Analyze AAPL stock", 6, AS_OF);
     expect(
       targets
@@ -168,31 +237,118 @@ describe("finance research runner", () => {
     ).toEqual(["NVDA"]);
   });
 
-  it("builds an explicit six-month target window and preserves research boundaries", () => {
+  it("does not substitute fixed symbols for a broad-market request without a snapshot", () => {
     const targets = buildDefaultFinanceResearchTargets(
       "分析未来半年美股和加密货币市场情绪，并考虑美国中期选举。",
       6,
       AS_OF,
     );
-    const history = targets
-      .flatMap((target) => target.collections ?? [])
-      .filter((collection) => collection.collection === "eod_history");
+    const instruments = targets.map((target) => target.instrument);
+    expect(instruments).not.toContain("BTCUSDT"); // A broad crypto request does not imply BTC.
+    expect(instruments).not.toContain("SPY");
+    expect(instruments).not.toContain("QQQ");
+    expect(targets.some((target) => target.assetClass === "us_equity")).toBe(false);
+  });
 
-    expect(history.length).toBeGreaterThanOrEqual(3);
-    expect(history.every((collection) => collection.fromDate === "2026-03-08")).toBe(true);
-    expect(history.every((collection) => collection.toDate === "2026-09-07")).toBe(true);
-    expect(targets.some((target) => target.assetClass === "crypto")).toBe(true);
-    expect(targets.some((target) => target.assetClass === "us_equity")).toBe(true);
-    const sentiment = targets.find((target) => target.id === "cross-asset-sentiment-news");
-    expect(sentiment?.instrument).toBe("SPY");
-    expect(sentiment?.collections?.[0]?.seriesId).toBe("market sentiment");
+  it("uses every selected symbol from a validated dynamic universe snapshot", () => {
+    const snapshot = universeSnapshot();
+    const targets = buildDefaultFinanceResearchTargets(
+      "Review the broad US stock market",
+      6,
+      "2026-09-10T12:00:00.000Z",
+      snapshot,
+    );
+    expect(
+      targets
+        .filter((target) => target.id.startsWith("us-equity-"))
+        .map((target) => target.instrument),
+    ).toEqual(snapshot.selected);
+    expect(targets.find((target) => target.id === "cross-asset-sentiment-news")?.instrument).toBe(
+      "NVDA",
+    );
+    expect(targets.some((target) => target.instrument === "SPY")).toBe(false);
+  });
+
+  it("accepts a Friday receipt through Monday before close, but expires it after Monday close", () => {
+    const fridaySnapshot = universeSnapshot({
+      asOf: "2026-09-11T20:05:00.000Z",
+      generatedAt: "2026-09-11T20:10:00.000Z",
+      selectedMetrics: universeSnapshot().selectedMetrics.map((metrics) => ({
+        ...metrics,
+        lastDate: "2026-09-11",
+      })),
+      liquidityPreScreen: {
+        basis: "latest_completed_regular_session",
+        source: "alpaca_snapshot.dailyBar_or_prevDailyBar.close_times_volume",
+        sessionDate: "2026-09-11",
+      },
+    });
+    expect(
+      validateFinanceResearchEquityUniverseSnapshot(fridaySnapshot, "2026-09-14T19:30:00.000Z"),
+    ).toEqual(fridaySnapshot);
+    expect(() =>
+      validateFinanceResearchEquityUniverseSnapshot(fridaySnapshot, "2026-09-14T20:05:00.000Z"),
+    ).toThrow("latest completed weekday session");
+  });
+
+  it("reads the shared latest-snapshot path and fails closed when it is absent", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-universe-reader-"));
+    try {
+      const snapshot = universeSnapshot();
+      await fs.writeFile(
+        path.join(directory, FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME),
+        JSON.stringify(snapshot),
+      );
+      expect(
+        readFinanceResearchEquityUniverseSnapshot(directory, "2026-09-10T12:00:00.000Z"),
+      ).toEqual(snapshot);
+      await fs.rm(path.join(directory, FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME));
+      expect(() =>
+        readFinanceResearchEquityUniverseSnapshot(directory, "2026-09-10T12:00:00.000Z"),
+      ).toThrow("equity universe snapshot absent");
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("reports missing broad-market universe coverage instead of silently using proxies", async () => {
+    const receipt = await runFinanceResearchRun({
+      input: { ask: "美股和加密市场展望", asOf: AS_OF },
+      batchOptions: BATCH_OPTIONS,
+    });
+    const instruments = receipt.plan.targets.map((target) => target.instrument);
+    expect(instruments).not.toContain("BTCUSDT");
+    expect(instruments).not.toContain("SPY");
+    expect(instruments).not.toContain("QQQ");
+    expect(receipt.plan.limitations).toContain(
+      "equity_universe_snapshot_missing:no equity ticker was substituted for a broad-market request",
+    );
+    expect(receipt.plan.limitations).toContain(
+      "crypto_instrument_universe_missing:no crypto ticker was substituted for a broad request",
+    );
+    expect(receipt.missingEvidence).toEqual(expect.arrayContaining([...receipt.plan.limitations]));
   });
 
   it("clamps month-end history windows and the registry collection limit", () => {
+    const snapshot = universeSnapshot({
+      asOf: "2026-03-31T11:00:00.000Z",
+      generatedAt: "2026-03-31T11:30:00.000Z",
+      selectedMetrics: universeSnapshot().selectedMetrics.map((metrics) => ({
+        ...metrics,
+        firstDate: "2023-03-31",
+        lastDate: "2026-03-30",
+      })),
+      liquidityPreScreen: {
+        basis: "latest_completed_regular_session",
+        source: "alpaca_snapshot.dailyBar_or_prevDailyBar.close_times_volume",
+        sessionDate: "2026-03-30",
+      },
+    });
     const targets = buildDefaultFinanceResearchTargets(
       "分析美股历史",
       12,
       "2026-03-31T12:00:00.000Z",
+      snapshot,
     );
     const history = targets
       .flatMap((target) => target.collections ?? [])

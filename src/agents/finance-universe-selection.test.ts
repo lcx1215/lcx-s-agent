@@ -6,6 +6,7 @@ import {
   logReturnSeries,
   rankByDollarVolume,
   selectDiversifiedUniverse,
+  selectDiversifiedUniverseWithEvidence,
   summariseUniverseSeries,
   universeRejectionReason,
   type UniverseAsset,
@@ -65,13 +66,22 @@ describe("filterUniverseAssets", () => {
     ).toEqual(["SHV"]);
   });
 
-  it("drops foreign single stocks whose name contains American Depositary Shares", () => {
-    // Observed failure: ADRs entered the pool because the fund hint matched a bare "Shares".
+  it("includes tradable common stocks and ADRs rather than requiring a fund name", () => {
     expect(
       filterUniverseAssets([
+        asset({ symbol: "AAPL", name: "Apple Inc. Common Stock" }),
         asset({ symbol: "EQNR", name: "Equinor ASA American Depositary Shares" }),
       ]),
-    ).toHaveLength(0);
+    ).toMatchObject([{ symbol: "AAPL" }, { symbol: "EQNR" }]);
+  });
+
+  it("accepts a listed share-class symbol and excludes warrants", () => {
+    expect(
+      filterUniverseAssets([
+        asset({ symbol: "BRK.B", name: "Berkshire Hathaway Inc. Class B" }),
+        asset({ symbol: "AAPLW", name: "Apple Inc. Warrant" }),
+      ]).map((entry) => entry.symbol),
+    ).toEqual(["BRK.B"]);
   });
 });
 
@@ -79,12 +89,13 @@ describe("rankByDollarVolume", () => {
   it("ranks by close times volume and drops unusable rows", () => {
     const ranked = rankByDollarVolume({
       A: { close: 10, volume: 100 },
-      B: { close: 100, volume: 50 },
+      B: { close: 100, volume: 50, sessionDate: "2026-09-22" },
       C: { close: 0, volume: 999 },
       D: { close: 10 },
     });
     expect(ranked.map((entry) => entry.symbol)).toEqual(["B", "A"]);
     expect(ranked[0]?.dollarVolume).toBe(5000);
+    expect(ranked[0]?.sessionDate).toBe("2026-09-22");
   });
 });
 
@@ -170,6 +181,12 @@ describe("universeRejectionReason", () => {
       universeRejectionReason({ ...base, medianDollarVolume: 1000 }, DEFAULT_UNIVERSE_THRESHOLDS),
     ).toContain("too illiquid");
   });
+
+  it("rejects unmeasurable liquidity rather than treating it as eligible", () => {
+    expect(universeRejectionReason({ ...base, medianDollarVolume: Number.NaN })).toContain(
+      "liquidity not computable",
+    );
+  });
 });
 
 describe("correlation and diversification", () => {
@@ -191,21 +208,20 @@ describe("correlation and diversification", () => {
         { symbol: "TWIN", returns: logReturnSeries(twin.map((v) => 100 * Math.exp(v))) },
         { symbol: "OTHER", returns: logReturnSeries(unrelated.map((v) => 100 * Math.exp(v))) },
       ],
-      { target: 2 },
+      {},
     );
     expect(chosen).toEqual(["BASE", "OTHER"]);
   });
 
   it("returns empty when nothing is measurable", () => {
-    expect(selectDiversifiedUniverse([{ symbol: "X", returns: [] }], { target: 3 })).toEqual([]);
+    expect(selectDiversifiedUniverse([{ symbol: "X", returns: [] }])).toEqual([]);
   });
 });
 
 /**
  * An incoherent `maxCorrelation` silently removed the diversification constraint this function exists
- * to apply. Measured with 7 near-duplicates of one series among 8 candidates: the default 0.95
- * returned 2 symbols, while `maxCorrelation: 5` and `Number.NaN` both returned all 8 -- padded with
- * exactly the near-duplicates the cap is there to exclude.
+ * to apply. The fixture contains near-duplicates and an independent series; the default 0.95
+ * returns only the evidence-supported diversified subset, while invalid bounds must not disable it.
  *
  * Selecting nothing is the same outcome the module already documents for "nothing fits", and it is
  * the fail-closed one for a selector. Clamping is deliberately not used: it would honour part of a
@@ -225,30 +241,38 @@ describe("an incoherent selection configuration selects nothing", () => {
   ];
 
   it("still applies the cap with the default configuration", () => {
-    // A and H are the only pair the default 0.95 admits.
-    expect(selectDiversifiedUniverse(candidates, { target: 8 })).toEqual(["A", "H"]);
+    // A and H are the only pair the default 0.95 admits; the resulting count is data-driven.
+    expect(selectDiversifiedUniverse(candidates)).toEqual(["A", "H"]);
+    const evidence = selectDiversifiedUniverseWithEvidence(candidates);
+    expect(evidence.selectedEvidence.map((entry) => entry.symbol)).toEqual(["A", "H"]);
+    expect(evidence.exclusions.some((entry) => entry.reason === "max_correlation_exceeded")).toBe(
+      true,
+    );
   });
 
   it("refuses a correlation cap outside [-1, 1] instead of padding the set", () => {
     for (const maxCorrelation of [5, Number.NaN, Number.POSITIVE_INFINITY]) {
-      expect(selectDiversifiedUniverse(candidates, { target: 8, maxCorrelation })).toEqual([]);
+      expect(selectDiversifiedUniverse(candidates, { maxCorrelation })).toEqual([]);
     }
   });
 
-  it("refuses a target that is not a usable count", () => {
-    for (const target of [Number.NaN, 0, -5]) {
-      expect(selectDiversifiedUniverse(candidates, { target })).toEqual([]);
+  it("refuses an explicit resource ceiling that is not a usable count", () => {
+    for (const maxMembers of [Number.NaN, 0, -5, 1.5]) {
+      expect(selectDiversifiedUniverse(candidates, { maxMembers })).toEqual([]);
     }
   });
 
-  it("still honours the coherent bounds", () => {
-    // A cap of exactly 1 admits every pair, so the set fills: coherent, just not selective.
-    expect(selectDiversifiedUniverse(candidates, { target: 8, maxCorrelation: 1 })).toHaveLength(8);
-    expect(selectDiversifiedUniverse(candidates, { target: 8, maxCorrelation: 0.9 })).toEqual([
-      "A",
-      "H",
-    ]);
+  it("has no default final-count cap and keeps an explicit resource cap distinct", () => {
+    const tenCandidates = Array.from({ length: 10 }, (_, index) => ({
+      symbol: `S${String.fromCharCode(65 + index)}`,
+      returns: base,
+    }));
+    expect(selectDiversifiedUniverse(tenCandidates, { maxCorrelation: 1 })).toHaveLength(10);
+    expect(
+      selectDiversifiedUniverse(tenCandidates, { maxCorrelation: 1, maxMembers: 3 }),
+    ).toHaveLength(3);
+    expect(selectDiversifiedUniverse(candidates, { maxCorrelation: 0.9 })).toEqual(["A", "H"]);
     // -1 admits nothing beyond the seed, which is the documented "returned shorter" behaviour.
-    expect(selectDiversifiedUniverse(candidates, { target: 8, maxCorrelation: -1 })).toEqual(["A"]);
+    expect(selectDiversifiedUniverse(candidates, { maxCorrelation: -1 })).toEqual(["A"]);
   });
 });

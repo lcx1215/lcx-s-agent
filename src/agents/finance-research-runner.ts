@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
+import path from "node:path";
+import { loadJsonFileDetailed } from "../infra/json-file.js";
 import type { ApiSourceGovernanceRegistry } from "./api-call-contract.js";
 import {
   buildFinanceCommitteeContext,
@@ -13,6 +15,7 @@ import {
   type FinanceModuleSelection,
   type FinanceBrainOrchestrationPlan,
 } from "./finance-brain-orchestration.js";
+import { financeEtClock } from "./finance-cycle-schedule.js";
 import type { FinanceAsOfMode } from "./finance-data-gateway.js";
 import {
   evaluateFinanceDecisionPolicy,
@@ -77,6 +80,17 @@ import {
   buildFinanceStrategyMethodKit,
   toFinanceStrategyMethodKitModelContext,
 } from "./finance-strategy-method-kit.js";
+import {
+  FINANCE_UNIVERSE_SELECTION_SCHEMA,
+  FINANCE_UNIVERSE_SELECTION_FRESHNESS_BASIS,
+  FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME,
+  FINANCE_UNIVERSE_SELECTION_SOURCES,
+  MAX_UNIVERSE_SCREEN_SIZE,
+  universeRejectionReason,
+  type UniverseMetrics,
+  type UniverseSelectionEvidence,
+  type UniverseThresholds,
+} from "./finance-universe-selection.js";
 import { modelRoutingTaskTimeoutMs } from "./logical-agent-model-router.js";
 import {
   type LogicalAgentExecutionContext,
@@ -102,6 +116,36 @@ import { resolveWorkspaceRoot } from "./workspace-dir.js";
 
 export const FINANCE_RESEARCH_RUN_SCHEMA_VERSION = "lcx_finance_research_run_v1" as const;
 
+export type FinanceResearchEquityUniverseSnapshot = Readonly<{
+  schemaVersion: typeof FINANCE_UNIVERSE_SELECTION_SCHEMA;
+  asOf: string;
+  generatedAt: string;
+  sources: typeof FINANCE_UNIVERSE_SELECTION_SOURCES;
+  freshnessBasis: typeof FINANCE_UNIVERSE_SELECTION_FRESHNESS_BASIS;
+  /** Actual selected symbols; screenLimit is a resource ceiling, not a target count. */
+  selected: readonly string[];
+  screenLimit: number;
+  candidateCount: number;
+  screenedCount: number;
+  eligibleCount: number;
+  assetCount: number;
+  unreadableCount: number;
+  selectedMetrics: readonly UniverseMetrics[];
+  thresholds: UniverseThresholds;
+  liquidityPreScreen: Readonly<{
+    basis: "latest_completed_regular_session";
+    source: "alpaca_snapshot.dailyBar_or_prevDailyBar.close_times_volume";
+    sessionDate: string;
+  }>;
+  selectionEvidence: Readonly<{
+    method: "liquidity_seed_then_iterative_minimum_worst_correlation";
+    maxCorrelation: number;
+    selected: UniverseSelectionEvidence["selectedEvidence"];
+    excluded: UniverseSelectionEvidence["exclusions"];
+  }>;
+  rejected: readonly Readonly<{ symbol: string; reason: string }>[];
+}>;
+
 export type FinanceResearchRunInput = Readonly<{
   ask: string;
   asOf: string;
@@ -111,6 +155,11 @@ export type FinanceResearchRunInput = Readonly<{
   /** Declared research maturity stage; binds which `decisionMode` the run may use. */
   strategyStage?: FinanceStrategyStage;
   targets?: readonly FinanceResearchBatchTarget[];
+  /**
+   * Controller-produced output from the evidence-driven venue/liquidity/history selector.
+   * Broad equity requests never silently substitute a fixed ticker set when this is absent.
+   */
+  equityUniverseSnapshot?: FinanceResearchEquityUniverseSnapshot;
   sourcePolicy?: "prioritized" | "all_registered";
   moduleSelection?: FinanceModuleSelection;
   /** Explicitly dispatch bounded module tools and attach their receipts to model evidence. */
@@ -156,6 +205,7 @@ export type FinanceResearchPlan = Readonly<{
   orchestration: FinanceBrainOrchestrationPlan;
   targets: readonly FinanceResearchBatchTarget[];
   expectedJobCount: number;
+  limitations: readonly string[];
   sourceInventory?: {
     registeredAdapterIds: readonly string[];
     unplannedAdapterIds: readonly string[];
@@ -325,6 +375,232 @@ function isUsEquityAsk(text: string): boolean {
   return /美股|股票|指数|SPY|QQQ|US equities|US stocks|equity|stock/iu.test(text);
 }
 
+function isBroadMarketAsk(text: string): boolean {
+  return /市场|行情|大盘|market(?: overview| outlook| sentiment)?|financial market|portfolio|资产配置/iu.test(
+    text,
+  );
+}
+
+function requestedCryptoSymbols(text: string): readonly string[] {
+  return /\bBTC(?:USDT)?\b|bitcoin|比特币/iu.test(text) ? ["BTCUSDT"] : [];
+}
+
+const EQUITY_SYMBOL_SHAPE = /^[A-Z]{1,5}(?:\.[A-Z])?$/u;
+const DATE_SHAPE = /^\d{4}-\d{2}-\d{2}$/u;
+const UNIVERSE_MAX_WALL_AGE_MS = 7 * 86_400_000;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function validCalendarDate(value: unknown): value is string {
+  if (typeof value !== "string" || !DATE_SHAPE.test(value)) {
+    return false;
+  }
+  const parsed = Date.parse(`${value}T00:00:00.000Z`);
+  return Number.isFinite(parsed) && new Date(parsed).toISOString().slice(0, 10) === value;
+}
+
+function latestCompletedWeekdaySessionDate(asOf: string): string {
+  const asOfMs = Date.parse(assertIsoTimestamp(asOf, "referenceAsOf"));
+  const clock = financeEtClock(new Date(asOfMs));
+  const isWeekday = ["Mon", "Tue", "Wed", "Thu", "Fri"].includes(clock.weekday);
+  const regularSessionClosed = clock.minutes >= 16 * 60;
+  let cursor = Date.parse(`${clock.date}T00:00:00.000Z`);
+  if (!isWeekday || !regularSessionClosed) {
+    cursor -= 86_400_000;
+  }
+  for (let attempts = 0; attempts < 7; attempts += 1) {
+    const candidate = new Date(cursor);
+    if (candidate.getUTCDay() !== 0 && candidate.getUTCDay() !== 6) {
+      return candidate.toISOString().slice(0, 10);
+    }
+    cursor -= 86_400_000;
+  }
+  throw new Error("unable to resolve latest completed weekday session");
+}
+
+/**
+ * Validate a selector receipt before a caller uses its symbols. Regular weekdays and the 16:00
+ * ET close are used as the freshness boundary; this deliberately fails closed on exchange
+ * holidays because this contract does not carry an authoritative holiday-calendar version.
+ */
+export function validateFinanceResearchEquityUniverseSnapshot(
+  value: unknown,
+  referenceAsOf: string,
+): FinanceResearchEquityUniverseSnapshot {
+  if (!isRecord(value) || value.schemaVersion !== FINANCE_UNIVERSE_SELECTION_SCHEMA) {
+    throw new Error("equity universe snapshot is missing the supported schemaVersion");
+  }
+  const referenceMs = Date.parse(assertIsoTimestamp(referenceAsOf, "referenceAsOf"));
+  const asOf = typeof value.asOf === "string" ? value.asOf : "";
+  const generatedAt = typeof value.generatedAt === "string" ? value.generatedAt : "";
+  const asOfMs = Date.parse(asOf);
+  const generatedAtMs = Date.parse(generatedAt);
+  if (!Number.isFinite(asOfMs) || !Number.isFinite(generatedAtMs)) {
+    throw new Error("equity universe snapshot requires ISO asOf and generatedAt timestamps");
+  }
+  if (asOfMs > generatedAtMs || generatedAtMs > referenceMs) {
+    throw new Error("equity universe snapshot is future-dated or has inconsistent timestamps");
+  }
+  if (referenceMs - generatedAtMs > UNIVERSE_MAX_WALL_AGE_MS) {
+    throw new Error("equity universe snapshot is older than the maximum wall-clock safety bound");
+  }
+  if (!isRecord(value.sources)) {
+    throw new Error("equity universe snapshot is missing source provenance");
+  }
+  if (value.freshnessBasis !== FINANCE_UNIVERSE_SELECTION_FRESHNESS_BASIS) {
+    throw new Error("equity universe snapshot freshness basis is unsupported");
+  }
+  for (const [key, source] of Object.entries(FINANCE_UNIVERSE_SELECTION_SOURCES)) {
+    if (value.sources[key] !== source) {
+      throw new Error(`equity universe snapshot has unsupported source provenance: ${key}`);
+    }
+  }
+  const counts = [
+    "assetCount",
+    "candidateCount",
+    "screenedCount",
+    "eligibleCount",
+    "unreadableCount",
+  ] as const;
+  if (counts.some((key) => !Number.isSafeInteger(value[key]) || Number(value[key]) < 0)) {
+    throw new Error("equity universe snapshot has invalid candidate counts");
+  }
+  if (
+    !Number.isSafeInteger(value.screenLimit) ||
+    Number(value.screenLimit) < 1 ||
+    Number(value.screenLimit) > MAX_UNIVERSE_SCREEN_SIZE ||
+    Number(value.candidateCount) > Number(value.assetCount) ||
+    Number(value.screenedCount) >
+      Math.min(Number(value.candidateCount), Number(value.screenLimit)) ||
+    Number(value.eligibleCount) > Number(value.screenedCount)
+  ) {
+    throw new Error("equity universe snapshot violates its candidate/count resource bounds");
+  }
+  if (!Array.isArray(value.selected) || !Array.isArray(value.selectedMetrics)) {
+    throw new Error("equity universe snapshot is missing selected symbols or their metrics");
+  }
+  const selected = value.selected;
+  if (
+    selected.some((symbol) => typeof symbol !== "string" || !EQUITY_SYMBOL_SHAPE.test(symbol)) ||
+    new Set(selected).size !== selected.length ||
+    selected.length > Number(value.eligibleCount) ||
+    selected.length !== value.selectedMetrics.length
+  ) {
+    throw new Error("equity universe snapshot has invalid or inconsistent selected symbols");
+  }
+  if (!isRecord(value.thresholds)) {
+    throw new Error("equity universe snapshot is missing eligibility thresholds");
+  }
+  const thresholds = value.thresholds as unknown as UniverseThresholds;
+  if (
+    !Number.isSafeInteger(thresholds.minBars) ||
+    thresholds.minBars < 1 ||
+    !Number.isFinite(thresholds.minVol) ||
+    thresholds.minVol < 0 ||
+    !Number.isFinite(thresholds.maxVol) ||
+    thresholds.maxVol <= thresholds.minVol ||
+    !Number.isFinite(thresholds.minMedianDollarVolume) ||
+    thresholds.minMedianDollarVolume < 0 ||
+    !Number.isFinite(thresholds.maxAbsDailyMove) ||
+    thresholds.maxAbsDailyMove <= 0 ||
+    !Number.isSafeInteger(thresholds.maxOutliers) ||
+    thresholds.maxOutliers < 0 ||
+    !Number.isSafeInteger(thresholds.maxGapDays) ||
+    thresholds.maxGapDays < 1
+  ) {
+    throw new Error("equity universe snapshot has invalid eligibility thresholds");
+  }
+  const metrics = value.selectedMetrics as unknown[];
+  for (let index = 0; index < metrics.length; index += 1) {
+    const row = metrics[index];
+    if (
+      !isRecord(row) ||
+      row.symbol !== selected[index] ||
+      !Number.isSafeInteger(row.bars) ||
+      typeof row.firstDate !== "string" ||
+      typeof row.lastDate !== "string" ||
+      !validCalendarDate(row.firstDate) ||
+      !validCalendarDate(row.lastDate) ||
+      row.firstDate > row.lastDate ||
+      row.lastDate > asOf.slice(0, 10) ||
+      !Number.isFinite(row.medianDollarVolume) ||
+      !Number.isFinite(row.annualisedVol) ||
+      !Number.isSafeInteger(row.outlierCount) ||
+      !Number.isFinite(row.maxGapDays)
+    ) {
+      throw new Error("equity universe snapshot has malformed selected-candidate metrics");
+    }
+    if (universeRejectionReason(row as unknown as UniverseMetrics, thresholds) !== "") {
+      throw new Error(
+        `equity universe snapshot selected an ineligible instrument: ${String(row.symbol)}`,
+      );
+    }
+  }
+  if (!isRecord(value.liquidityPreScreen)) {
+    throw new Error("equity universe snapshot is missing completed-session liquidity evidence");
+  }
+  if (
+    value.liquidityPreScreen.basis !== "latest_completed_regular_session" ||
+    value.liquidityPreScreen.source !==
+      "alpaca_snapshot.dailyBar_or_prevDailyBar.close_times_volume" ||
+    !validCalendarDate(value.liquidityPreScreen.sessionDate)
+  ) {
+    throw new Error("equity universe snapshot has invalid completed-session liquidity evidence");
+  }
+  if (value.liquidityPreScreen.sessionDate !== latestCompletedWeekdaySessionDate(referenceAsOf)) {
+    throw new Error("equity universe snapshot is not from the latest completed weekday session");
+  }
+  if (!isRecord(value.selectionEvidence)) {
+    throw new Error("equity universe snapshot is missing selection provenance");
+  }
+  const selection = value.selectionEvidence;
+  const maxCorrelation = Number(selection.maxCorrelation);
+  if (
+    selection.method !== "liquidity_seed_then_iterative_minimum_worst_correlation" ||
+    !Number.isFinite(maxCorrelation) ||
+    maxCorrelation < -1 ||
+    maxCorrelation > 1 ||
+    !Array.isArray(selection.selected) ||
+    !Array.isArray(selection.excluded) ||
+    selection.selected.length !== selected.length
+  ) {
+    throw new Error("equity universe snapshot has invalid diversification evidence");
+  }
+  for (let index = 0; index < selection.selected.length; index += 1) {
+    const evidence = selection.selected[index];
+    if (
+      !isRecord(evidence) ||
+      evidence.symbol !== selected[index] ||
+      evidence.rank !== index + 1 ||
+      (index === 0 && evidence.reason !== "highest_liquidity_eligible_seed") ||
+      (index > 0 &&
+        (evidence.reason !== "lowest_correlation_to_selected" ||
+          !Number.isFinite(evidence.maxCorrelationToPriorMembers) ||
+          Number(evidence.maxCorrelationToPriorMembers) > maxCorrelation))
+    ) {
+      throw new Error("equity universe snapshot selection evidence does not bind to its symbols");
+    }
+  }
+  if (!Array.isArray(value.rejected) || value.rejected.some((row) => !isRecord(row))) {
+    throw new Error("equity universe snapshot is missing rejected-candidate reasons");
+  }
+  return value as unknown as FinanceResearchEquityUniverseSnapshot;
+}
+
+export function readFinanceResearchEquityUniverseSnapshot(
+  financeStateDir: string,
+  referenceAsOf: string,
+): FinanceResearchEquityUniverseSnapshot {
+  const snapshotPath = path.join(financeStateDir, FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME);
+  const loaded = loadJsonFileDetailed(snapshotPath);
+  if (loaded.status !== "ok") {
+    throw new Error(`equity universe snapshot ${loaded.status}: ${loaded.code}`);
+  }
+  return validateFinanceResearchEquityUniverseSnapshot(loaded.value, referenceAsOf);
+}
+
 const FINANCE_EQUITY_ALIASES = Object.freeze({
   apple: "AAPL",
   amazon: "AMZN",
@@ -416,7 +692,7 @@ const NON_EQUITY_SYMBOL_TOKENS = new Set([
   "YTD",
 ]);
 
-/** Extract only bounded, caller-supplied equity symbols; prose falls back to the broad canary universe. */
+/** Extract only bounded, caller-supplied equity symbols; broad discovery needs a validated snapshot. */
 function requestedEquitySymbols(text: string): readonly string[] {
   const symbols = new Set<string>();
   for (const match of text.matchAll(
@@ -471,21 +747,38 @@ function buildMacroCollection(seriesId: string, limit = 20): FinanceResearchBatc
   };
 }
 
-/** The default universe is deliberately small enough for a live canary but broad enough to cross-check the ask. */
 export function buildDefaultFinanceResearchTargets(
   ask: string,
   horizonMonths = DEFAULT_HORIZON_MONTHS,
   asOf?: string,
+  equityUniverseSnapshot?: FinanceResearchEquityUniverseSnapshot,
 ): readonly FinanceResearchBatchTarget[] {
   const normalizedAsk = ask.trim();
-  const crypto = isCryptoAsk(normalizedAsk);
-  const equity = isUsEquityAsk(normalizedAsk);
+  const cryptoSymbols = requestedCryptoSymbols(normalizedAsk);
+  const equitySymbolsRequested = requestedEquitySymbols(normalizedAsk);
+  const equityDiscoveryRequested = isUsEquityAsk(normalizedAsk) || isBroadMarketAsk(normalizedAsk);
+  const needsDiscoveredEquityUniverse =
+    equityDiscoveryRequested &&
+    (equitySymbolsRequested.length === 0 || isBroadMarketAsk(normalizedAsk));
+  const validatedUniverse =
+    equityUniverseSnapshot === undefined || !needsDiscoveredEquityUniverse
+      ? undefined
+      : validateFinanceResearchEquityUniverseSnapshot(
+          equityUniverseSnapshot,
+          asOf ?? new Date().toISOString(),
+        );
+  const equitySymbols = Object.freeze([
+    ...new Set([
+      ...(needsDiscoveredEquityUniverse ? (validatedUniverse?.selected ?? []) : []),
+      ...equitySymbolsRequested,
+    ]),
+  ]);
   const history = buildHistoryCollection(horizonMonths, asOf);
   const targets: FinanceResearchBatchTarget[] = [];
-  if (crypto || (!crypto && !equity)) {
+  for (const symbol of cryptoSymbols) {
     targets.push({
-      id: "crypto-btc",
-      instrument: "BTCUSDT",
+      id: `crypto-${symbol.toLowerCase()}`,
+      instrument: symbol,
       assetClass: "crypto",
       realtime: {
         freshnessMaxMinutes: 30,
@@ -495,52 +788,52 @@ export function buildDefaultFinanceResearchTargets(
       collections: [history],
     });
   }
-  if (equity || (!crypto && !equity)) {
-    const symbols = requestedEquitySymbols(normalizedAsk);
-    for (const symbol of symbols.length > 0 ? symbols : ["SPY", "QQQ"]) {
-      targets.push({
-        id: `us-equity-${symbol.toLowerCase()}`,
-        instrument: symbol,
-        assetClass: "us_equity",
-        realtime: {
-          freshnessMaxMinutes: 24 * 60,
-          crossSourceSkewMaxMinutes: 60,
-          requireOfficialReference: false,
-        },
-        collections: [history, buildNewsCollection()],
-      });
-    }
-    // The directed daily brief's index-options task declares implied volatility,
-    // term structure, and skew as required fresh inputs and invalidates its
-    // conclusion without them, but the prioritized default set collected no
-    // options data at all: `options_chain` was reachable only through
-    // all_registered. Reuse the already-registered collection instead of adding
-    // a provider, a registry entry, or a parallel source owner.
+  for (const symbol of equitySymbols) {
     targets.push({
-      id: "us-index-options-chain",
-      instrument: "SPY",
+      id: `us-equity-${symbol.toLowerCase().replace(".", "-")}`,
+      instrument: symbol,
       assetClass: "us_equity",
-      realtime: false,
-      collections: [
-        {
-          collection: "options_chain",
-          limit: 20,
-          // Three days tolerates a weekend or holiday close without accepting a
-          // genuinely stale chain.
-          freshnessMaxMinutes: 3 * 24 * 60,
-        },
-      ],
+      realtime: {
+        freshnessMaxMinutes: 24 * 60,
+        crossSourceSkewMaxMinutes: 60,
+        requireOfficialReference: false,
+      },
+      collections: [history, buildNewsCollection()],
     });
   }
-  targets.push({
-    id: "cross-asset-sentiment-news",
-    // Ticker-oriented providers need a bounded instrument, while GDELT uses
-    // the explicit topic query instead of treating prose as a symbol.
-    instrument: "SPY",
-    assetClass: "us_equity",
-    realtime: false,
-    collections: [{ ...buildNewsCollection(), seriesId: "market sentiment" }],
-  });
+  const optionsRequested =
+    equitySymbols.length > 0 &&
+    /期权|options? chain|implied volatility|隐含波动率|volatility skew|波动率偏斜/iu.test(
+      normalizedAsk,
+    );
+  if (optionsRequested) {
+    const symbol = equitySymbols[0];
+    if (symbol) {
+      targets.push({
+        id: `us-equity-options-chain-${symbol.toLowerCase().replace(".", "-")}`,
+        instrument: symbol,
+        assetClass: "us_equity",
+        realtime: false,
+        collections: [
+          {
+            collection: "options_chain",
+            limit: 20,
+            freshnessMaxMinutes: 3 * 24 * 60,
+          },
+        ],
+      });
+    }
+  }
+  const sentimentInstrument = equitySymbols[0] ?? cryptoSymbols[0];
+  if (sentimentInstrument) {
+    targets.push({
+      id: "cross-asset-sentiment-news",
+      instrument: sentimentInstrument,
+      assetClass: equitySymbols.length > 0 ? "us_equity" : "crypto",
+      realtime: false,
+      collections: [{ ...buildNewsCollection(), seriesId: "market sentiment" }],
+    });
+  }
   targets.push(
     {
       id: "macro-debt-to-penny",
@@ -565,6 +858,36 @@ export function buildDefaultFinanceResearchTargets(
     },
   );
   return Object.freeze(targets);
+}
+
+function financeResearchLimitations(
+  ask: string,
+  equityUniverseSnapshot: FinanceResearchEquityUniverseSnapshot | undefined,
+  hasCallerTargets: boolean,
+): readonly string[] {
+  const limitations: string[] = [];
+  const explicitEquitySymbols = requestedEquitySymbols(ask);
+  const equityDiscoveryRequested = isUsEquityAsk(ask) || isBroadMarketAsk(ask);
+  const broadDiscoveryRequested = isBroadMarketAsk(ask);
+  if (
+    !hasCallerTargets &&
+    equityDiscoveryRequested &&
+    (explicitEquitySymbols.length === 0 || broadDiscoveryRequested)
+  ) {
+    if (equityUniverseSnapshot === undefined) {
+      limitations.push(
+        "equity_universe_snapshot_missing:no equity ticker was substituted for a broad-market request",
+      );
+    } else if (equityUniverseSnapshot.selected.length === 0) {
+      limitations.push("equity_universe_empty:no candidates passed measured eligibility");
+    }
+  }
+  if (!hasCallerTargets && isCryptoAsk(ask) && requestedCryptoSymbols(ask).length === 0) {
+    limitations.push(
+      "crypto_instrument_universe_missing:no crypto ticker was substituted for a broad request",
+    );
+  }
+  return Object.freeze(limitations);
 }
 
 /** All-source mode assigns each adapter its own evidence job; priority cannot starve a source. */
@@ -800,6 +1123,11 @@ function buildPlan(
 ): FinanceResearchPlan {
   const ask = requiredText(input.ask, "ask");
   const asOf = assertIsoTimestamp(input.asOf, "asOf");
+  const limitations = financeResearchLimitations(
+    ask,
+    input.equityUniverseSnapshot,
+    input.targets !== undefined,
+  );
   const decisionMode = input.decisionMode ?? "research_only";
   const portfolioContext =
     input.portfolioContext === undefined
@@ -839,6 +1167,7 @@ function buildPlan(
     orchestration,
     targets: Object.freeze([...targets]),
     expectedJobCount,
+    limitations,
     sourceInspections: inspections,
     ...(portfolioContext === undefined ? {} : { portfolioContext }),
     ...(input.sourcePolicy === "all_registered"
@@ -858,6 +1187,7 @@ function buildPlan(
       "current_data_requires_source_and_timestamp",
       "stale_or_conflicting_data_blocks_visible_adoption",
       "quality_gate_before_visible_answer",
+      ...limitations,
       ...(portfolioContext === undefined
         ? []
         : ["model_allocation_requires_controller_strategy_set_and_grounded_evidence"]),
@@ -866,7 +1196,7 @@ function buildPlan(
 }
 
 /**
- * Module execution may require collections that the small default canary does not fetch. Keep
+ * Module execution may require collections that a default research plan does not fetch. Keep
  * this opt-in so planning and legacy research retain their existing request budget; explicit
  * module execution expands only the caller's existing targets and never invents a provider.
  */
@@ -1370,6 +1700,13 @@ export async function runFinanceResearchRun(
   const moduleSelection = parseFinanceModuleSelection(options.input.moduleSelection);
   const ask = requiredText(options.input.ask, "ask");
   const asOf = assertIsoTimestamp(options.input.asOf, "asOf");
+  const needsDiscoveredEquityUniverse =
+    (isUsEquityAsk(ask) || isBroadMarketAsk(ask)) &&
+    (requestedEquitySymbols(ask).length === 0 || isBroadMarketAsk(ask));
+  const equityUniverseSnapshot =
+    options.input.equityUniverseSnapshot === undefined || !needsDiscoveredEquityUniverse
+      ? undefined
+      : validateFinanceResearchEquityUniverseSnapshot(options.input.equityUniverseSnapshot, asOf);
   const controllerEvidence = normalizeControllerEvidence(options.input.controllerEvidence, asOf);
   const horizonMonths = normalizeHorizon(options.input.horizonMonths);
   const decisionMode = options.input.decisionMode ?? "research_only";
@@ -1404,7 +1741,7 @@ export async function runFinanceResearchRun(
           realtimeAdapters,
           collectionAdapters,
         )
-      : buildDefaultFinanceResearchTargets(ask, horizonMonths, asOf));
+      : buildDefaultFinanceResearchTargets(ask, horizonMonths, asOf, equityUniverseSnapshot));
   const executionTargetPlan =
     options.input.executeModules === true
       ? planFinanceBrainOrchestration({
@@ -1419,7 +1756,14 @@ export async function runFinanceResearchRun(
       ? baseTargets
       : augmentTargetsForFinanceModuleExecution(baseTargets, executionTargetPlan);
   const plan = buildPlan(
-    { ...options.input, ask, asOf, decisionMode, moduleSelection },
+    {
+      ...options.input,
+      ask,
+      asOf,
+      decisionMode,
+      moduleSelection,
+      ...(equityUniverseSnapshot === undefined ? {} : { equityUniverseSnapshot }),
+    },
     targets,
     horizonMonths,
     realtimeAdapters,
@@ -1449,7 +1793,11 @@ export async function runFinanceResearchRun(
       plan,
       quarterlyOutput,
       gates: Object.freeze(dryGates),
-      missingEvidence: Object.freeze(["live_fetch_not_requested", "model_analysis_not_requested"]),
+      missingEvidence: Object.freeze([
+        "live_fetch_not_requested",
+        "model_analysis_not_requested",
+        ...plan.limitations,
+      ]),
       notTouched: NOT_TOUCHED,
     });
   }
@@ -1492,6 +1840,7 @@ export async function runFinanceResearchRun(
   let moduleMissingEvidence: string[] = [];
   const producerInputIssues: string[] = [];
   const baseMissing = [
+    ...plan.limitations,
     ...missingEvidence(batch),
     ...(plan.sourceInventory?.unplannedAdapterIds.map((id) => `source_not_planned:${id}`) ?? []),
     ...(plan.sourceInventory?.unavailableProviders.map(
@@ -1570,6 +1919,7 @@ export async function runFinanceResearchRun(
         horizonMonths,
         sourceStatus: batch.status,
         researchOnly: true,
+        financeResearchLimitations: plan.limitations,
         strategyMethodKit: strategyMethodKitModelContext,
         financeOrchestration: plan.orchestration,
         financeModuleExecution: moduleExecution,

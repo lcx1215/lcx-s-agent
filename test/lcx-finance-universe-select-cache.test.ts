@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  parseUniverseSelectArgs,
   readFreshAssetCache,
   writeAssetCache,
 } from "../scripts/operator/lcx-finance-universe-select.ts";
@@ -84,5 +85,17 @@ describe("writeAssetCache", () => {
       expect(target).not.toBe(cachePath);
     }
     expect(JSON.parse(fsSync.readFileSync(cachePath, "utf8"))).toEqual([{ symbol: "MSFT" }]);
+  });
+});
+
+describe("universe selection command bounds", () => {
+  it("uses the screen only as a candidate-work ceiling and rejects the old fixed target option", () => {
+    expect(parseUniverseSelectArgs([])).toMatchObject({ screen: 120, writeSnapshot: false });
+    expect(parseUniverseSelectArgs(["--screen", "37"]).screen).toBe(37);
+    expect(parseUniverseSelectArgs(["--write-snapshot", "--json"]).writeSnapshot).toBe(true);
+    expect(() => parseUniverseSelectArgs(["--target", "8"])).toThrow(
+      "--target is no longer supported",
+    );
+    expect(() => parseUniverseSelectArgs(["--screen", "501"])).toThrow("--screen must");
   });
 });
