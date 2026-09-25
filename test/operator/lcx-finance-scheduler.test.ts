@@ -7,14 +7,25 @@ import {
   inspectFinanceSchedulerStatus,
   describeFinanceCycleExecution,
   parseFinanceSchedulerArgs,
+  resolveActiveIntradayRule,
   runFinanceScheduler,
 } from "../../scripts/operator/lcx-finance-scheduler.js";
+import {
+  FINANCE_INTRADAY_OPENING_RANGE_EMITS,
+  FINANCE_INTRADAY_OPENING_RANGE_FORM,
+  FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION,
+  FINANCE_INTRADAY_OPENING_RANGE_RULE,
+} from "../../src/agents/finance-intraday-paper.js";
 import {
   FINANCE_SCHEDULER_LOCK,
   FINANCE_SCHEDULER_PID,
 } from "../../src/agents/finance-scheduler-lock.js";
 import type { FinanceCycleProcessResult } from "../../src/agents/finance-scheduler-process.js";
 import { readFinanceSchedulerState } from "../../src/agents/finance-scheduler-state.js";
+import {
+  activateFinanceStrategyRule,
+  declareFinanceStrategyRule,
+} from "../../src/agents/finance-strategy-rule-ledger.js";
 import type {
   FinanceTradeDecisionReviewer,
   FinanceTradeDecisionReviewRequest,
@@ -38,6 +49,7 @@ const mocks = vi.hoisted(() => ({
   executeIntradayDecision: vi.fn(),
   createTradeDecisionReviewer: vi.fn(),
   tradeDecisionReviewer: vi.fn(),
+  readUniverse: vi.fn(),
 }));
 vi.mock("../../src/process/kill-tree.js", () => ({ killProcessTree: mocks.killTree }));
 vi.mock("node:timers/promises", () => ({ setTimeout: mocks.delay }));
@@ -70,6 +82,11 @@ vi.mock("../../src/agents/finance-intraday-execution.js", () => ({
 vi.mock("../../src/agents/finance-trade-decision-review.js", () => ({
   createFinanceTradeDecisionReviewer: mocks.createTradeDecisionReviewer,
 }));
+vi.mock("../../src/agents/finance-research-runner.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../src/agents/finance-research-runner.js")>();
+  return { ...actual, readFinanceResearchEquityUniverseSnapshot: mocks.readUniverse };
+});
 
 const success: FinanceCycleProcessResult = {
   exitCode: 0,
@@ -85,6 +102,35 @@ let directory: string;
 let originalTermListeners: number;
 let originalIntListeners: number;
 
+async function activateIntradayRule(
+  overrides: Record<string, unknown> = {},
+  ruleId: string = FINANCE_INTRADAY_OPENING_RANGE_RULE,
+  targetDirectory = directory,
+): Promise<void> {
+  await declareFinanceStrategyRule(targetDirectory, {
+    kind: "declared",
+    ruleId,
+    form: FINANCE_INTRADAY_OPENING_RANGE_FORM,
+    formVersion: FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION,
+    displayName: "ORB fixture",
+    instruments: ["SPY"],
+    emits: FINANCE_INTRADAY_OPENING_RANGE_EMITS,
+    schedule: { kind: "intraday", timezone: "America/New_York" },
+    body: {
+      universe: ["SPY"],
+      frozenRule: { openingRangeBars: 6, rewardRisk: 2 },
+      data: { intervalSeconds: 300, feed: "iex" },
+      ...overrides,
+    },
+    observedAt: "2026-09-20T12:00:00Z",
+  });
+  await activateFinanceStrategyRule(targetDirectory, {
+    kind: "activated",
+    ruleId,
+    observedAt: "2026-09-20T12:01:00Z",
+  });
+}
+
 beforeEach(() => {
   directory = fs.mkdtempSync(path.join(os.tmpdir(), "finance-scheduler-test-"));
   mocks.runCycle.mockResolvedValue(success);
@@ -97,6 +143,9 @@ beforeEach(() => {
     healthyCount: 0,
     degradedCount: 0,
     unhealthyCount: 0,
+  });
+  mocks.readUniverse.mockImplementation(() => {
+    throw new Error("fixture has no current dynamic universe snapshot");
   });
   originalTermListeners = process.listenerCount("SIGTERM");
   originalIntListeners = process.listenerCount("SIGINT");
@@ -292,7 +341,7 @@ it("continues to the night slot after a failed day without retrying either slot 
     process.emit("SIGTERM");
   });
   await expect(runFinanceScheduler(["--loop", "--dir", directory])).resolves.toBe(143);
-  expect(mocks.runCycle).toHaveBeenCalledTimes(2);
+  expect(mocks.runCycle).toHaveBeenCalledTimes(3);
   const state = readFinanceSchedulerState(directory);
   expect(state.lastFired).toEqual({ day: "2026-09-21", night: "2026-09-21" });
   expect(state.lastSucceeded).toEqual({ night: "2026-09-21" });
@@ -432,13 +481,99 @@ it("parses a resident event-driven intraday monitor without granting placement",
   ]);
   expect(options.intraday).toEqual({
     place: false,
+    placementRequested: false,
+    placementEligibility: "not_requested",
+    instrumentSource: "explicit",
     instruments: ["SPY", "QQQ"],
+    executionInstruments: [],
     intervalSeconds: 300,
     feed: "iex",
     openingRangeBars: 6,
     rewardRisk: 2,
   });
   expect(options.extraArgs).not.toContain("--place");
+});
+
+it("accepts the active-rule instrument source without a duplicated ticker list", () => {
+  const options = parseFinanceSchedulerArgs([
+    "--loop",
+    "--intraday-monitor",
+    "--intraday-active-rule",
+  ]);
+  expect(options.intraday).toMatchObject({
+    instrumentSource: "active_rule",
+    instruments: [],
+    openingRangeBars: 6,
+    rewardRisk: 2,
+  });
+  expect(() =>
+    parseFinanceSchedulerArgs([
+      "--loop",
+      "--intraday-monitor",
+      "--intraday-active-rule",
+      "--intraday-instruments",
+      "SPY",
+    ]),
+  ).toThrow("choose either --intraday-active-rule or --intraday-instruments");
+});
+
+it("resolves only one compatible active intraday rule and refuses draft or conflicting rules", async () => {
+  await declareFinanceStrategyRule(directory, {
+    kind: "declared",
+    ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+    form: FINANCE_INTRADAY_OPENING_RANGE_FORM,
+    formVersion: FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION,
+    instruments: ["SPY"],
+    emits: FINANCE_INTRADAY_OPENING_RANGE_EMITS,
+    schedule: { kind: "intraday" },
+    body: {
+      universe: ["SPY"],
+      frozenRule: { openingRangeBars: 6, rewardRisk: 2 },
+      data: { intervalSeconds: 300, feed: "iex" },
+      measuredResult: { status: "paper_contract_only", executionAuthority: "none" },
+    },
+    observedAt: "2026-09-20T12:00:00Z",
+  });
+  await expect(
+    resolveActiveIntradayRule(directory, {
+      openingRangeBars: 6,
+      rewardRisk: 2,
+      intervalSeconds: 300,
+      feed: "iex",
+    }),
+  ).rejects.toThrow("found 0");
+  await activateFinanceStrategyRule(directory, {
+    kind: "activated",
+    ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+    observedAt: "2026-09-20T12:01:00Z",
+  });
+  await expect(
+    resolveActiveIntradayRule(directory, {
+      openingRangeBars: 6,
+      rewardRisk: 2,
+      intervalSeconds: 300,
+      feed: "iex",
+    }),
+  ).resolves.toMatchObject({
+    instruments: ["SPY"],
+    eligibility: { status: "paper_contract_only", automatedPaperPlacementAllowed: false },
+  });
+
+  const conflictingDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "finance-intraday-conflict-"));
+  try {
+    await activateIntradayRule({}, "alternate_orb_rule", conflictingDirectory);
+    await activateIntradayRule({}, FINANCE_INTRADAY_OPENING_RANGE_RULE, conflictingDirectory);
+    await expect(
+      resolveActiveIntradayRule(conflictingDirectory, {
+        openingRangeBars: 6,
+        rewardRisk: 2,
+        intervalSeconds: 300,
+        feed: "iex",
+      }),
+    ).rejects.toThrow("found 2");
+  } finally {
+    fs.rmSync(conflictingDirectory, { recursive: true, force: true });
+  }
 });
 
 it("requires shared authorization and explicit caps for intraday paper placement", () => {
@@ -455,6 +590,7 @@ it("requires shared authorization and explicit caps for intraday paper placement
 it("creates and calls a fresh single-use reviewer for each actionable intraday decision", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-09-21T15:00:00Z"));
+  await activateIntradayRule({ paperExecutionEligibility: "paper_execution_eligible" });
   const policy = path.join(directory, "alpaca-policy.json");
   fs.writeFileSync(policy, "{}");
   const decisions = ["intraday-signal-1", "intraday-signal-2"].map((signalId) => ({
@@ -556,8 +692,7 @@ it("creates and calls a fresh single-use reviewer for each actionable intraday d
       directory,
       "--intraday-monitor",
       "--intraday-place",
-      "--intraday-instruments",
-      "SPY",
+      "--intraday-active-rule",
       "--intraday-interval-seconds",
       "300",
       "--intraday-feed",
@@ -594,10 +729,66 @@ it("creates and calls a fresh single-use reviewer for each actionable intraday d
   expect(reviewers[1]).toHaveBeenCalledOnce();
 });
 
-it("refuses an intraday monitor without an explicit universe", () => {
-  expect(() => parseFinanceSchedulerArgs(["--loop", "--intraday-monitor"])).toThrow(
-    "--intraday-instruments",
-  );
+it("uses the validated system universe when monitoring has no explicit diagnostic symbols", () => {
+  expect(parseFinanceSchedulerArgs(["--loop", "--intraday-monitor"]).intraday).toMatchObject({
+    instrumentSource: "system_universe",
+    instruments: [],
+  });
+});
+
+it("monitors only symbols from the validated dynamic universe, never a static ticker fallback", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-21T14:30:00.000Z"));
+  await activateIntradayRule();
+  const snapshot = { selected: ["AAA", "BBB"] } as never;
+  mocks.readUniverse.mockReturnValue(snapshot);
+  mocks.runIntradayMonitorTick.mockResolvedValue({ status: "no_signal" });
+  mocks.delay.mockImplementationOnce(async () => {
+    process.emit("SIGTERM");
+  });
+  await expect(
+    runFinanceScheduler([
+      "--loop",
+      "--dir",
+      directory,
+      "--intraday-monitor",
+      "--no-source-heartbeat",
+    ]),
+  ).resolves.toBe(143);
+  expect(mocks.readUniverse).toHaveBeenCalledOnce();
+  expect(mocks.runIntradayMonitorTick.mock.calls.map(([call]) => call.instrument)).toEqual([
+    "AAA",
+    "BBB",
+  ]);
+  expect(mocks.runIntradayMonitorTick.mock.calls[0]?.[0]).toMatchObject({
+    scope: {
+      kind: "system_universe",
+      universeSnapshotRef: expect.any(String),
+      selectedInstruments: ["AAA", "BBB"],
+    },
+    strategyContract: { instruments: ["SPY"] },
+  });
+});
+
+it("has no intraday candidates when the dynamic universe receipt is missing or stale", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-21T14:30:00.000Z"));
+  await activateIntradayRule();
+  mocks.runIntradayMonitorTick.mockResolvedValue({ status: "no_signal" });
+  mocks.delay.mockImplementationOnce(async () => {
+    process.emit("SIGTERM");
+  });
+  await expect(
+    runFinanceScheduler([
+      "--loop",
+      "--dir",
+      directory,
+      "--intraday-monitor",
+      "--no-source-heartbeat",
+    ]),
+  ).resolves.toBe(143);
+  expect(mocks.readUniverse).toHaveBeenCalledOnce();
+  expect(mocks.runIntradayMonitorTick).not.toHaveBeenCalled();
 });
 
 it("distinguishes preview success from enabled trading and blocked execution", () => {
@@ -825,7 +1016,19 @@ it("routes night settlement, ledgers and news through the same module research o
         issues: [],
       }),
     })
+    .mockResolvedValueOnce({
+      ...success,
+      stdout: JSON.stringify({
+        snapshotPersisted: true,
+        generatedAt: "2026-09-22T22:00:00.000Z",
+        selected: ["AAA", "BBB"],
+      }),
+    })
     .mockResolvedValueOnce({ ...success, stdout: JSON.stringify({ status: "candidate" }) });
+  mocks.readUniverse.mockReturnValue({
+    generatedAt: "2026-09-22T22:00:00.000Z",
+    selected: ["AAA", "BBB"],
+  } as never);
 
   await expect(
     runFinanceScheduler([
@@ -840,9 +1043,18 @@ it("routes night settlement, ledgers and news through the same module research o
     ]),
   ).resolves.toBe(0);
 
-  expect(mocks.runCycle).toHaveBeenCalledTimes(2);
+  expect(mocks.runCycle).toHaveBeenCalledTimes(3);
   const evidencePath = path.join(directory, "night-review-evidence-2026-09-22.json");
   expect(mocks.runCycle.mock.calls[1][0].argv).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining("lcx-finance-universe-select.ts"),
+      "--json",
+      "--write-snapshot",
+      "--dir",
+      directory,
+    ]),
+  );
+  expect(mocks.runCycle.mock.calls[2][0].argv).toEqual(
     expect.arrayContaining([
       expect.stringContaining("lcx-finance-research-run.ts"),
       "--execute-modules",
@@ -863,6 +1075,10 @@ it("routes night settlement, ledgers and news through the same module research o
       expect.objectContaining({ source: "finance-intraday-control-ledger" }),
     ]),
   );
+  const universeReceipt = JSON.parse(
+    fs.readFileSync(path.join(directory, "finance-universe-selection-runs.jsonl"), "utf8").trim(),
+  );
+  expect(universeReceipt).toMatchObject({ status: "selected", selectedCount: 2 });
   expect(readFinanceSchedulerState(directory).lastSucceeded.night).toBe("2026-09-22");
 });
 
@@ -1067,6 +1283,23 @@ it("requires every native execution input and rejects an unsupported quote lifet
   expect(parseFinanceSchedulerArgs(["--loop", "--venue", "alpaca"]).extraArgs).not.toContain(
     "--place",
   );
+});
+
+it("keeps night settlement success independent from a failed universe refresh", async () => {
+  await expect(runFinanceScheduler(["--once", "night", "--dir", directory])).resolves.toBe(0);
+  const run = JSON.parse(
+    fs.readFileSync(path.join(directory, "daily-cycle-runs.jsonl"), "utf8").trim(),
+  );
+  const selection = JSON.parse(
+    fs.readFileSync(path.join(directory, "finance-universe-selection-runs.jsonl"), "utf8").trim(),
+  );
+  expect(run).toMatchObject({
+    ok: true,
+    status: "succeeded",
+    universeSelection: { status: "failed" },
+  });
+  expect(selection).toMatchObject({ status: "failed" });
+  expect(readFinanceSchedulerState(directory).lastSucceeded.night).toBeDefined();
 });
 
 it.each(["0", "0.7", "1"])(

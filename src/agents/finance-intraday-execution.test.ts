@@ -3,21 +3,42 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { runFinanceAlpacaOrder } from "./finance-alpaca-run.js";
+import { caseflowFingerprint } from "./finance-caseflow.js";
 import { buildFinanceExecutionReceipt } from "./finance-execution-adapter.js";
 import {
   appendFinanceIntradayDecision,
   readFinanceIntradayOutcome,
+  type FinanceIntradayStrategyBinding,
 } from "./finance-intraday-control-ledger.js";
 import { executeFinanceIntradayDecision } from "./finance-intraday-execution.js";
+import {
+  FINANCE_INTRADAY_OPENING_RANGE_EMITS,
+  FINANCE_INTRADAY_OPENING_RANGE_FORM,
+  FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION,
+  FINANCE_INTRADAY_OPENING_RANGE_RULE,
+  resolveFinanceIntradayActiveRuleContract,
+} from "./finance-intraday-paper.js";
 import { appendFinanceExecutionReceipt } from "./finance-position-ledger.js";
+import {
+  activateFinanceStrategyRule,
+  declareFinanceStrategyRule,
+  readFinanceStrategyRuleLedger,
+} from "./finance-strategy-rule-ledger.js";
 import { openFinanceThesis } from "./finance-thesis-ledger.js";
 import type {
   FinanceTradeDecisionReviewRequest,
   FinanceTradeDecisionReviewer,
 } from "./finance-trade-decision-review.js";
 
+const readerMocks = vi.hoisted(() => ({ readUniverse: vi.fn() }));
+vi.mock("./finance-research-runner.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./finance-research-runner.js")>();
+  return { ...actual, readFinanceResearchEquityUniverseSnapshot: readerMocks.readUniverse };
+});
+
 const temporary: string[] = [];
 afterEach(async () => {
+  readerMocks.readUniverse.mockReset();
   await Promise.all(
     temporary.splice(0).map((item) => fs.rm(item, { recursive: true, force: true })),
   );
@@ -42,10 +63,59 @@ function approvingReviewer() {
   }));
 }
 
+async function activeRuleBinding(
+  directory: string,
+  eligibility: "paper_execution_eligible" | "paper_contract_only" = "paper_execution_eligible",
+): Promise<FinanceIntradayStrategyBinding> {
+  await declareFinanceStrategyRule(directory, {
+    kind: "declared",
+    ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+    form: FINANCE_INTRADAY_OPENING_RANGE_FORM,
+    formVersion: FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION,
+    instruments: ["SPY"],
+    emits: FINANCE_INTRADAY_OPENING_RANGE_EMITS,
+    schedule: { kind: "intraday", timezone: "America/New_York" },
+    body: {
+      universe: ["SPY"],
+      frozenRule: { openingRangeBars: 6, rewardRisk: 2 },
+      data: { intervalSeconds: 300, feed: "iex" },
+      ...(eligibility === "paper_contract_only"
+        ? { measuredResult: { status: "paper_contract_only", executionAuthority: "none" } }
+        : { paperExecutionEligibility: eligibility }),
+    },
+    observedAt: "2026-09-17T00:00:00Z",
+  });
+  await activateFinanceStrategyRule(directory, {
+    kind: "activated",
+    ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+    reason: "user Paper authority is not an eligibility override",
+    observedAt: "2026-09-17T00:01:00Z",
+  });
+  const read = await readFinanceStrategyRuleLedger(directory);
+  const rule = read.ledger.rules[0];
+  if (!rule) {
+    throw new Error("expected active ORB fixture");
+  }
+  const contract = resolveFinanceIntradayActiveRuleContract(rule);
+  return {
+    declarationRef: contract.declarationRef,
+    activationRef: contract.activationRef,
+    declaredInstruments: [...contract.instruments],
+    parameters: {
+      openingRangeBars: contract.openingRangeBars,
+      rewardRisk: contract.rewardRisk,
+      intervalSeconds: contract.intervalSeconds,
+      feed: contract.feed,
+    },
+    scope: "strategy_universe",
+  };
+}
+
 describe("intraday decision execution bridge", () => {
   it("closes exactly the observed paper position and never replays a terminal signal", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-execution-"));
     temporary.push(directory);
+    const strategyBinding = await activeRuleBinding(directory);
     await openFinanceThesis(directory, {
       thesisId: "spy-long-horizon",
       instrument: "SPY",
@@ -65,6 +135,7 @@ describe("intraday decision execution bridge", () => {
         referencePriceAt: "2026-09-18T15:00:00.000Z",
         datasetHeadRef: "a".repeat(64),
         strategyRule: "opening_range_breakout_long_next_bar_v1",
+        strategyBinding,
       })
     ).record;
     const coreReceipt = buildFinanceExecutionReceipt({
@@ -220,6 +291,7 @@ describe("intraday decision execution bridge", () => {
     async (reviewMode) => {
       const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-review-gate-"));
       temporary.push(directory);
+      const strategyBinding = await activeRuleBinding(directory);
       const signalId = `intraday-review-${reviewMode}`;
       const decision = (
         await appendFinanceIntradayDecision(directory, {
@@ -234,6 +306,7 @@ describe("intraday decision execution bridge", () => {
           targetPrice: 504,
           datasetHeadRef: "d".repeat(64),
           strategyRule: "opening_range_breakout_long_next_bar_v1",
+          strategyBinding,
         })
       ).record;
       const tradeDecisionReviewer: FinanceTradeDecisionReviewer | undefined =
@@ -415,5 +488,289 @@ describe("intraday decision execution bridge", () => {
       outcome: { status: "placed", receiptId: receipt.receiptId },
     });
     expect(runOrderMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a legacy pending decision without strategy provenance before any venue adapter call", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-legacy-pending-"));
+    temporary.push(directory);
+    const decision = (
+      await appendFinanceIntradayDecision(directory, {
+        signalId: "intraday-legacy-pending",
+        instrument: "SPY",
+        sessionDate: "2026-09-18",
+        action: "buy",
+        reason: "opening_range_breakout",
+        referencePrice: 500,
+        referencePriceAt: "2026-09-18T15:00:00.000Z",
+        stopPrice: 498,
+        targetPrice: 504,
+        datasetHeadRef: "c".repeat(64),
+        strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+      })
+    ).record;
+    const accountBookProvider = vi.fn();
+    const executionQuoteProvider = vi.fn();
+    const runOrder = vi.fn();
+    const result = await executeFinanceIntradayDecision({
+      directory,
+      decision,
+      controller: {
+        accountId: "paper-account",
+        accountBookProvider: accountBookProvider as never,
+        executionQuoteProvider: executionQuoteProvider as never,
+        createSafetyContext: vi.fn(),
+      },
+      caps: { maxOrderNotional: 5_000, maxInstrumentNotional: 10_000, maxOrdersPerRun: 1 },
+      runOrder: runOrder as never,
+    });
+    expect(result).toMatchObject({ status: "refused" });
+    expect(await readFinanceIntradayOutcome(directory, decision.input.signalId)).toMatchObject({
+      status: "refused",
+      reasons: [expect.stringContaining("no active-strategy provenance")],
+    });
+    expect(accountBookProvider).not.toHaveBeenCalled();
+    expect(executionQuoteProvider).not.toHaveBeenCalled();
+    expect(runOrder).not.toHaveBeenCalled();
+  });
+
+  it("does not let a generic Paper activation override paper_contract_only eligibility", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-paper-contract-only-"));
+    temporary.push(directory);
+    const strategyBinding = await activeRuleBinding(directory, "paper_contract_only");
+    const decision = (
+      await appendFinanceIntradayDecision(directory, {
+        signalId: "intraday-paper-contract-only",
+        instrument: "SPY",
+        sessionDate: "2026-09-18",
+        action: "buy",
+        reason: "opening_range_breakout",
+        referencePrice: 500,
+        referencePriceAt: "2026-09-18T15:00:00.000Z",
+        stopPrice: 498,
+        targetPrice: 504,
+        datasetHeadRef: "e".repeat(64),
+        strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+        strategyBinding,
+      })
+    ).record;
+    const accountBookProvider = vi.fn();
+    const executionQuoteProvider = vi.fn();
+    const runOrder = vi.fn();
+    const result = await executeFinanceIntradayDecision({
+      directory,
+      decision,
+      controller: {
+        accountId: "paper-account",
+        accountBookProvider: accountBookProvider as never,
+        executionQuoteProvider: executionQuoteProvider as never,
+        createSafetyContext: vi.fn(),
+      },
+      caps: { maxOrderNotional: 5_000, maxInstrumentNotional: 10_000, maxOrdersPerRun: 1 },
+      runOrder: runOrder as never,
+    });
+    expect(result).toMatchObject({ status: "refused" });
+    expect(await readFinanceIntradayOutcome(directory, decision.input.signalId)).toMatchObject({
+      status: "refused",
+      reasons: [expect.stringContaining("paper_contract_only")],
+    });
+    expect(accountBookProvider).not.toHaveBeenCalled();
+    expect(executionQuoteProvider).not.toHaveBeenCalled();
+    expect(runOrder).not.toHaveBeenCalled();
+  });
+
+  it("rechecks the current declaration and refuses a stale or tampered pending binding", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-stale-binding-"));
+    temporary.push(directory);
+    const strategyBinding = await activeRuleBinding(directory);
+    const decision = (
+      await appendFinanceIntradayDecision(directory, {
+        signalId: "intraday-stale-binding",
+        instrument: "SPY",
+        sessionDate: "2026-09-18",
+        action: "buy",
+        reason: "opening_range_breakout",
+        referencePrice: 500,
+        referencePriceAt: "2026-09-18T15:00:00.000Z",
+        stopPrice: 498,
+        targetPrice: 504,
+        datasetHeadRef: "f".repeat(64),
+        strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+        strategyBinding: { ...strategyBinding, declarationRef: "0".repeat(64) },
+      })
+    ).record;
+    const accountBookProvider = vi.fn();
+    const executionQuoteProvider = vi.fn();
+    const runOrder = vi.fn();
+    const result = await executeFinanceIntradayDecision({
+      directory,
+      decision,
+      controller: {
+        accountId: "paper-account",
+        accountBookProvider: accountBookProvider as never,
+        executionQuoteProvider: executionQuoteProvider as never,
+        createSafetyContext: vi.fn(),
+      },
+      caps: { maxOrderNotional: 5_000, maxInstrumentNotional: 10_000, maxOrdersPerRun: 1 },
+      runOrder: runOrder as never,
+    });
+    expect(result).toMatchObject({ status: "refused" });
+    expect(await readFinanceIntradayOutcome(directory, decision.input.signalId)).toMatchObject({
+      status: "refused",
+      reasons: [expect.stringContaining("does not match the currently active strategy contract")],
+    });
+    expect(accountBookProvider).not.toHaveBeenCalled();
+    expect(executionQuoteProvider).not.toHaveBeenCalled();
+    expect(runOrder).not.toHaveBeenCalled();
+  });
+
+  it("re-refuses an otherwise valid pending signal if the active ORB declaration becomes ambiguous", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-ambiguous-active-rule-"));
+    temporary.push(directory);
+    const strategyBinding = await activeRuleBinding(directory);
+    await declareFinanceStrategyRule(directory, {
+      kind: "declared",
+      ruleId: "alternate_orb_rule",
+      form: FINANCE_INTRADAY_OPENING_RANGE_FORM,
+      formVersion: FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION,
+      instruments: ["SPY"],
+      emits: FINANCE_INTRADAY_OPENING_RANGE_EMITS,
+      schedule: { kind: "intraday", timezone: "America/New_York" },
+      body: {
+        universe: ["SPY"],
+        frozenRule: { openingRangeBars: 6, rewardRisk: 2 },
+        data: { intervalSeconds: 300, feed: "iex" },
+        paperExecutionEligibility: "paper_execution_eligible",
+      },
+      observedAt: "2026-09-17T00:00:00Z",
+    });
+    await activateFinanceStrategyRule(directory, {
+      kind: "activated",
+      ruleId: "alternate_orb_rule",
+      observedAt: "2026-09-17T00:01:00Z",
+    });
+    const decision = (
+      await appendFinanceIntradayDecision(directory, {
+        signalId: "intraday-ambiguous-rule",
+        instrument: "SPY",
+        sessionDate: "2026-09-18",
+        action: "buy",
+        reason: "opening_range_breakout",
+        referencePrice: 500,
+        referencePriceAt: "2026-09-18T15:00:00.000Z",
+        stopPrice: 498,
+        targetPrice: 504,
+        datasetHeadRef: "3".repeat(64),
+        strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+        strategyBinding,
+      })
+    ).record;
+    const accountBookProvider = vi.fn();
+    const result = await executeFinanceIntradayDecision({
+      directory,
+      decision,
+      controller: {
+        accountId: "paper-account",
+        accountBookProvider: accountBookProvider as never,
+        executionQuoteProvider: vi.fn() as never,
+        createSafetyContext: vi.fn(),
+      },
+      caps: { maxOrderNotional: 5_000, maxInstrumentNotional: 10_000, maxOrdersPerRun: 1 },
+      runOrder: vi.fn() as never,
+    });
+    expect(result).toMatchObject({ status: "refused" });
+    expect(accountBookProvider).not.toHaveBeenCalled();
+  });
+
+  it("refuses explicit diagnostic scope even with otherwise eligible active-strategy provenance", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-diagnostic-scope-"));
+    temporary.push(directory);
+    const strategyBinding = await activeRuleBinding(directory);
+    const decision = (
+      await appendFinanceIntradayDecision(directory, {
+        signalId: "intraday-diagnostic-scope",
+        instrument: "SPY",
+        sessionDate: "2026-09-18",
+        action: "buy",
+        reason: "opening_range_breakout",
+        referencePrice: 500,
+        referencePriceAt: "2026-09-18T15:00:00.000Z",
+        stopPrice: 498,
+        targetPrice: 504,
+        datasetHeadRef: "1".repeat(64),
+        strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+        strategyBinding: { ...strategyBinding, scope: "explicit_diagnostic" },
+      })
+    ).record;
+    const accountBookProvider = vi.fn();
+    const runOrder = vi.fn();
+    const result = await executeFinanceIntradayDecision({
+      directory,
+      decision,
+      controller: {
+        accountId: "paper-account",
+        accountBookProvider: accountBookProvider as never,
+        executionQuoteProvider: vi.fn() as never,
+        createSafetyContext: vi.fn(),
+      },
+      caps: { maxOrderNotional: 5_000, maxInstrumentNotional: 10_000, maxOrdersPerRun: 1 },
+      runOrder: runOrder as never,
+    });
+    expect(result).toMatchObject({ status: "refused" });
+    expect(accountBookProvider).not.toHaveBeenCalled();
+    expect(runOrder).not.toHaveBeenCalled();
+  });
+
+  it("re-reads the dynamic snapshot and refuses a pending signal after its universe changes", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-changed-universe-"));
+    temporary.push(directory);
+    const strategyBinding = await activeRuleBinding(directory);
+    const decisionSnapshot = { selected: ["SPY"] } as never;
+    const currentSnapshot = { selected: ["QQQ"] } as never;
+    readerMocks.readUniverse.mockReturnValue(currentSnapshot);
+    const decision = (
+      await appendFinanceIntradayDecision(directory, {
+        signalId: "intraday-changed-universe",
+        instrument: "SPY",
+        sessionDate: "2026-09-18",
+        action: "buy",
+        reason: "opening_range_breakout",
+        referencePrice: 500,
+        referencePriceAt: "2026-09-18T15:00:00.000Z",
+        stopPrice: 498,
+        targetPrice: 504,
+        datasetHeadRef: "2".repeat(64),
+        strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+        strategyBinding: {
+          ...strategyBinding,
+          scope: "system_universe",
+          universeSnapshotRef: caseflowFingerprint(decisionSnapshot),
+        },
+      })
+    ).record;
+    const accountBookProvider = vi.fn();
+    const executionQuoteProvider = vi.fn();
+    const runOrder = vi.fn();
+    const result = await executeFinanceIntradayDecision({
+      directory,
+      decision,
+      controller: {
+        accountId: "paper-account",
+        accountBookProvider: accountBookProvider as never,
+        executionQuoteProvider: executionQuoteProvider as never,
+        createSafetyContext: vi.fn(),
+      },
+      caps: { maxOrderNotional: 5_000, maxInstrumentNotional: 10_000, maxOrdersPerRun: 1 },
+      runOrder: runOrder as never,
+      now: () => Date.parse("2026-09-18T15:00:02.000Z"),
+    });
+    expect(readerMocks.readUniverse).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ status: "refused" });
+    expect(await readFinanceIntradayOutcome(directory, decision.input.signalId)).toMatchObject({
+      status: "refused",
+      reasons: [expect.stringContaining("no longer matches the current validated snapshot")],
+    });
+    expect(accountBookProvider).not.toHaveBeenCalled();
+    expect(executionQuoteProvider).not.toHaveBeenCalled();
+    expect(runOrder).not.toHaveBeenCalled();
   });
 });

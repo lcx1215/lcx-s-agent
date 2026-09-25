@@ -20,6 +20,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createFinanceAlpacaCycleController } from "../../src/agents/finance-alpaca-cycle-controller.js";
 import { syncConfiguredAlpacaPaperHistory } from "../../src/agents/finance-alpaca-history-sync.js";
+import { caseflowFingerprint } from "../../src/agents/finance-caseflow.js";
 import {
   DEFAULT_FINANCE_CYCLE_SLOTS,
   FINANCE_MARKET_TZ,
@@ -30,10 +31,17 @@ import {
 import { executeFinanceIntradayDecision } from "../../src/agents/finance-intraday-execution.js";
 import { runFinanceIntradayMonitorTick } from "../../src/agents/finance-intraday-monitor.js";
 import {
+  FINANCE_INTRADAY_OPENING_RANGE_FORM,
+  resolveFinanceIntradayActiveRuleContract,
+  type FinanceIntradayActiveRuleContract,
+  type FinanceIntradayMonitorScope,
+} from "../../src/agents/finance-intraday-paper.js";
+import {
   buildFinanceNightReviewEvidence,
   writeFinanceNightReviewEvidence,
   type FinanceNightSettlementSummary,
 } from "../../src/agents/finance-night-review-context.js";
+import { readFinanceResearchEquityUniverseSnapshot } from "../../src/agents/finance-research-runner.js";
 import {
   acquireFinanceSchedulerLock,
   FINANCE_SCHEDULER_LOCK,
@@ -58,6 +66,7 @@ import {
   resolveFinanceStateDir,
   type FinanceStateDir,
 } from "../../src/agents/finance-state-dir.js";
+import { readFinanceStrategyRuleLedger } from "../../src/agents/finance-strategy-rule-ledger.js";
 import { createFinanceTradeDecisionReviewer } from "../../src/agents/finance-trade-decision-review.js";
 import { runFinanceTuningLifecycle } from "../../src/agents/finance-tuning-lifecycle.js";
 import { buildDetachedServeEnv } from "../../src/cli/serve-detach.js";
@@ -68,7 +77,14 @@ import { killProcessTree } from "../../src/process/kill-tree.js";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const CYCLE_SCRIPT = path.join(REPO_ROOT, "scripts", "operator", "lcx-finance-daily-cycle.ts");
 const RESEARCH_SCRIPT = path.join(REPO_ROOT, "scripts", "operator", "lcx-finance-research-run.ts");
+const UNIVERSE_SELECTION_SCRIPT = path.join(
+  REPO_ROOT,
+  "scripts",
+  "operator",
+  "lcx-finance-universe-select.ts",
+);
 const RUNS_LOG = FINANCE_DAILY_CYCLE_RUNS_FILENAME;
+const UNIVERSE_SELECTION_RUNS_LOG = "finance-universe-selection-runs.jsonl";
 /** Keep the five-minute reconciliation evidence fresh without coupling it to a trade slot. */
 export const FINANCE_IDLE_RECONCILIATION_INTERVAL_MS = 4 * 60_000;
 type Mode = "day" | "night";
@@ -80,11 +96,26 @@ type ResearchPlanConfig = Readonly<{
 
 type IntradayMonitorConfig = Readonly<{
   place: boolean;
+  placementRequested: boolean;
+  placementEligibility:
+    | "not_requested"
+    | "eligibility_missing"
+    | "paper_contract_only"
+    | "paper_execution_eligible"
+    | "eligibility_invalid"
+    | "explicit_diagnostic_only"
+    | "instrument_scope_mismatch"
+    | "universe_unavailable"
+    | "active_rule_unavailable";
+  instrumentSource: "explicit" | "active_rule" | "system_universe";
   instruments: readonly string[];
+  executionInstruments: readonly string[];
   intervalSeconds: 60 | 300 | 900;
   feed: "iex" | "sip";
   openingRangeBars: number;
   rewardRisk: number;
+  strategyContract?: FinanceIntradayActiveRuleContract;
+  scope?: FinanceIntradayMonitorScope;
 }>;
 
 type SchedulerOptions = {
@@ -111,6 +142,8 @@ export function parseFinanceSchedulerArgs(argv: readonly string[]): SchedulerOpt
   let intradayEnabled = false;
   let intradayPlace = false;
   let intradayInstruments: string[] = [];
+  let intradayInstrumentsProvided = false;
+  let intradayActiveRule = false;
   let intradayIntervalSeconds: 60 | 300 | 900 = 300;
   let intradayFeed: "iex" | "sip" = "iex";
   let intradayOpeningRangeBars = 6;
@@ -143,6 +176,8 @@ export function parseFinanceSchedulerArgs(argv: readonly string[]): SchedulerOpt
       intradayEnabled = true;
     } else if (arg === "--intraday-place") {
       intradayPlace = true;
+    } else if (arg === "--intraday-active-rule") {
+      intradayActiveRule = true;
     } else if (
       arg === "--place" ||
       arg === "--equity-from-venue" ||
@@ -182,6 +217,7 @@ export function parseFinanceSchedulerArgs(argv: readonly string[]): SchedulerOpt
       } else if (arg === "--research-ask") {
         researchAsk = value;
       } else if (arg === "--intraday-instruments") {
+        intradayInstrumentsProvided = true;
         intradayInstruments = [
           ...new Set(
             value
@@ -259,8 +295,17 @@ export function parseFinanceSchedulerArgs(argv: readonly string[]): SchedulerOpt
   if (json && command !== "status") {
     throw new Error("--json requires --status");
   }
-  if (intradayEnabled && intradayInstruments.length === 0) {
-    throw new Error("--intraday-monitor requires --intraday-instruments");
+  if (intradayActiveRule && intradayInstrumentsProvided) {
+    throw new Error("choose either --intraday-active-rule or --intraday-instruments, not both");
+  }
+  if (intradayActiveRule && !intradayEnabled) {
+    throw new Error("--intraday-active-rule requires --intraday-monitor");
+  }
+  if (intradayInstrumentsProvided && !intradayEnabled) {
+    throw new Error("--intraday-instruments requires --intraday-monitor");
+  }
+  if (intradayInstrumentsProvided && intradayInstruments.length === 0) {
+    throw new Error("--intraday-instruments must contain at least one symbol");
   }
   if (Boolean(researchContextPath) !== Boolean(researchAsk)) {
     throw new Error(
@@ -318,7 +363,15 @@ export function parseFinanceSchedulerArgs(argv: readonly string[]): SchedulerOpt
       ? {
           intraday: {
             place: intradayPlace,
+            placementRequested: intradayPlace,
+            placementEligibility: intradayPlace ? "eligibility_missing" : "not_requested",
+            instrumentSource: intradayActiveRule
+              ? "active_rule"
+              : intradayInstrumentsProvided
+                ? "explicit"
+                : "system_universe",
             instruments: Object.freeze(intradayInstruments),
+            executionInstruments: Object.freeze([]),
             intervalSeconds: intradayIntervalSeconds,
             feed: intradayFeed,
             openingRangeBars: intradayOpeningRangeBars,
@@ -588,6 +641,132 @@ type CycleContext = {
   lastIdleReconciliationAtMs?: number;
 };
 
+type UniverseSelectionReceipt = Readonly<{
+  schemaVersion: "lcx_finance_universe_selection_attempt_v1";
+  runId: string;
+  attemptedAt: string;
+  completedAt: string;
+  status: "selected" | "failed";
+  processStatus: string;
+  exitCode: number | null;
+  snapshotRef?: string;
+  generatedAt?: string;
+  selectedCount?: number;
+  error?: string;
+}>;
+
+async function refreshFinanceUniverseSelection(params: {
+  context: CycleContext;
+  attempt: { runId: string; firedAt: string };
+}): Promise<UniverseSelectionReceipt> {
+  const startedAt = new Date().toISOString();
+  const processResult = await runFinanceCycleProcess({
+    argv: [
+      "--import",
+      "tsx",
+      UNIVERSE_SELECTION_SCRIPT,
+      "--json",
+      "--write-snapshot",
+      "--dir",
+      params.context.root.directory,
+    ],
+    cwd: REPO_ROOT,
+    timeoutMs: Math.min(params.context.options.timeoutMs, 15 * 60_000),
+    signal: params.context.signal,
+  });
+  const completedAt = new Date().toISOString();
+  let snapshotRef: string | undefined;
+  let generatedAt: string | undefined;
+  let selectedCount: number | undefined;
+  let error: string | undefined;
+  let status: UniverseSelectionReceipt["status"] = "failed";
+  try {
+    const payload = JSON.parse(processResult.stdout) as Record<string, unknown>;
+    if (!processResult.ok || payload.snapshotPersisted !== true) {
+      throw new Error("selector did not confirm atomic snapshot persistence");
+    }
+    const snapshot = readFinanceResearchEquityUniverseSnapshot(
+      params.context.root.directory,
+      completedAt,
+    );
+    const generatedAtMs = Date.parse(snapshot.generatedAt);
+    if (
+      !Number.isFinite(generatedAtMs) ||
+      payload.generatedAt !== snapshot.generatedAt ||
+      JSON.stringify(payload.selected) !== JSON.stringify(snapshot.selected) ||
+      generatedAtMs < Date.parse(startedAt) ||
+      generatedAtMs > Date.parse(completedAt) + 1_000
+    ) {
+      throw new Error("persisted universe snapshot is not from this selector attempt");
+    }
+    snapshotRef = caseflowFingerprint(snapshot);
+    generatedAt = snapshot.generatedAt;
+    selectedCount = snapshot.selected.length;
+    status = "selected";
+  } catch (failure) {
+    error = failure instanceof Error ? failure.message : String(failure);
+  }
+  const receipt: UniverseSelectionReceipt = Object.freeze({
+    schemaVersion: "lcx_finance_universe_selection_attempt_v1",
+    runId: params.attempt.runId,
+    attemptedAt: startedAt,
+    completedAt,
+    status,
+    processStatus: processResult.status,
+    exitCode: processResult.exitCode,
+    ...(snapshotRef ? { snapshotRef } : {}),
+    ...(generatedAt ? { generatedAt } : {}),
+    ...(selectedCount === undefined ? {} : { selectedCount }),
+    ...(error ? { error } : {}),
+  });
+  try {
+    fs.appendFileSync(
+      path.join(params.context.root.directory, UNIVERSE_SELECTION_RUNS_LOG),
+      `${JSON.stringify(receipt)}\n`,
+    );
+  } catch (writeError) {
+    process.stderr.write(
+      `universe selection receipt append failed: ${writeError instanceof Error ? writeError.message : String(writeError)}\n`,
+    );
+  }
+  return receipt;
+}
+
+/**
+ * Resolve the supported ORB runtime universe from its explicit active rule event. The strategy
+ * ledger's top-level `instruments` field is authoritative; nested replay metadata is only checked
+ * for disagreement and never used to supply the execution universe.
+ */
+export async function resolveActiveIntradayRule(
+  directory: string,
+  config: Pick<
+    IntradayMonitorConfig,
+    "openingRangeBars" | "rewardRisk" | "intervalSeconds" | "feed"
+  >,
+): Promise<FinanceIntradayActiveRuleContract> {
+  const { ledger } = await readFinanceStrategyRuleLedger(directory);
+  const activeIntradayRules = ledger.rules.filter(
+    (rule) => rule.state === "active" && rule.form === FINANCE_INTRADAY_OPENING_RANGE_FORM,
+  );
+  if (activeIntradayRules.length !== 1) {
+    throw new Error(
+      `active intraday rule resolution requires exactly one ${FINANCE_INTRADAY_OPENING_RANGE_FORM} rule; found ${activeIntradayRules.length}`,
+    );
+  }
+  const contract = resolveFinanceIntradayActiveRuleContract(activeIntradayRules[0]);
+  if (
+    contract.openingRangeBars !== config.openingRangeBars ||
+    contract.rewardRisk !== config.rewardRisk ||
+    contract.intervalSeconds !== config.intervalSeconds ||
+    contract.feed !== config.feed
+  ) {
+    throw new Error(
+      `active intraday strategy ${contract.ruleId} has parameters incompatible with scheduler settings`,
+    );
+  }
+  return contract;
+}
+
 function numericExtra(args: readonly string[], flag: string): number {
   const index = args.indexOf(flag);
   return index < 0 ? Number.NaN : Number(args[index + 1]);
@@ -626,7 +805,18 @@ function writeSchedulerProgress(context: CycleContext, phase: "idle" | "cycle") 
         ? {
             enabled: true,
             placementEnabled: context.options.intraday.place,
+            placementRequested: context.options.intraday.placementRequested,
+            placementEligibility: context.options.intraday.placementEligibility,
+            instrumentSource: context.options.intraday.instrumentSource,
             instruments: context.options.intraday.instruments,
+            universeStatus:
+              context.options.intraday.instrumentSource !== "system_universe"
+                ? "not_applicable"
+                : context.options.intraday.scope?.universeSnapshotRef
+                  ? "validated"
+                  : "unavailable",
+            universeSnapshotRef: context.options.intraday.scope?.universeSnapshotRef ?? null,
+            executionInstruments: context.options.intraday.executionInstruments,
             intervalSeconds: context.options.intraday.intervalSeconds,
             feed: context.options.intraday.feed,
           }
@@ -774,6 +964,9 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
   const cycleAccepted = result.ok && cycleOutputSucceeded(result.stdout);
   const settlement =
     mode === "night" && cycleAccepted ? parseNightSettlement(result.stdout) : undefined;
+  const universeSelection = settlement
+    ? await refreshFinanceUniverseSelection({ context, attempt })
+    : undefined;
   const tuningLifecycle = settlement
     ? runNightTuning({ directory, firedAt: attempt.firedAt, settlement })
     : undefined;
@@ -824,6 +1017,7 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
           },
         }
       : {}),
+    ...(universeSelection ? { universeSelection } : {}),
     ...(tuningLifecycle ? { tuningLifecycle } : {}),
   };
 
@@ -888,6 +1082,8 @@ async function tick(context: CycleContext): Promise<void> {
           feed: context.options.intraday.feed,
           openingRangeBars: context.options.intraday.openingRangeBars,
           rewardRisk: context.options.intraday.rewardRisk,
+          strategyContract: context.options.intraday.strategyContract!,
+          scope: context.options.intraday.scope!,
           signal: context.signal,
         });
         if (
@@ -969,8 +1165,11 @@ async function detach(root: FinanceStateDir, options: SchedulerOptions): Promise
           ? [
               "--intraday-monitor",
               ...(options.intraday.place ? ["--intraday-place"] : []),
-              "--intraday-instruments",
-              options.intraday.instruments.join(","),
+              ...(options.intraday.instrumentSource === "active_rule"
+                ? ["--intraday-active-rule"]
+                : options.intraday.instrumentSource === "explicit"
+                  ? ["--intraday-instruments", options.intraday.instruments.join(",")]
+                  : []),
               "--intraday-interval-seconds",
               String(options.intraday.intervalSeconds),
               "--intraday-feed",
@@ -1153,6 +1352,90 @@ export async function runFinanceScheduler(
     await detach(root, options);
     return 0;
   }
+  let runtimeOptions = options;
+  if (options.command === "loop" && options.intraday) {
+    let strategyContract: FinanceIntradayActiveRuleContract | undefined;
+    try {
+      strategyContract = await resolveActiveIntradayRule(root.directory, options.intraday);
+    } catch (error) {
+      process.stderr.write(
+        `intraday strategy resolution unavailable; monitoring and placement disabled: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
+      runtimeOptions = {
+        ...options,
+        intraday: {
+          ...options.intraday,
+          instruments: [],
+          executionInstruments: [],
+          place: false,
+          placementEligibility: "active_rule_unavailable",
+        },
+      };
+    }
+    if (strategyContract) {
+      let instruments: readonly string[] = [];
+      let executionInstruments: readonly string[] = [];
+      let scope: FinanceIntradayMonitorScope | undefined;
+      let universeUnavailable = false;
+      if (options.intraday.instrumentSource === "active_rule") {
+        instruments = strategyContract.instruments;
+        executionInstruments = strategyContract.instruments;
+        scope = { kind: "strategy_universe" };
+      } else if (options.intraday.instrumentSource === "explicit") {
+        instruments = options.intraday.instruments;
+        scope = { kind: "explicit_diagnostic" };
+      } else {
+        try {
+          const snapshot = readFinanceResearchEquityUniverseSnapshot(
+            root.directory,
+            new Date().toISOString(),
+          );
+          instruments = snapshot.selected;
+          executionInstruments = strategyContract.instruments.filter((instrument) =>
+            snapshot.selected.includes(instrument),
+          );
+          scope = {
+            kind: "system_universe",
+            universeSnapshotRef: caseflowFingerprint(snapshot),
+            selectedInstruments: snapshot.selected,
+          };
+        } catch (error) {
+          universeUnavailable = true;
+          process.stderr.write(
+            `intraday system universe unavailable; no static fallback candidates: ${error instanceof Error ? error.message : String(error)}\n`,
+          );
+        }
+      }
+      const placementEligibility = !options.intraday.placementRequested
+        ? "not_requested"
+        : options.intraday.instrumentSource === "explicit"
+          ? "explicit_diagnostic_only"
+          : universeUnavailable
+            ? "universe_unavailable"
+            : options.intraday.instrumentSource === "system_universe" &&
+                executionInstruments.length === 0
+              ? "instrument_scope_mismatch"
+              : strategyContract.eligibility.status;
+      const place =
+        options.intraday.placementRequested &&
+        options.intraday.instrumentSource !== "explicit" &&
+        !universeUnavailable &&
+        executionInstruments.length > 0 &&
+        strategyContract.eligibility.automatedPaperPlacementAllowed;
+      runtimeOptions = {
+        ...options,
+        intraday: {
+          ...options.intraday,
+          instruments,
+          executionInstruments: place ? executionInstruments : [],
+          place,
+          placementEligibility,
+          strategyContract,
+          ...(scope ? { scope } : {}),
+        },
+      };
+    }
+  }
   const controller = new AbortController();
   let signalExitCode = 0;
   const onTerm = () => {
@@ -1169,29 +1452,37 @@ export async function runFinanceScheduler(
   try {
     release = acquireFinanceSchedulerLock(root.directory);
     readFinanceSchedulerState(root.directory);
-    const intradayController = options.intraday?.place
-      ? createFinanceAlpacaCycleController({
-          directory: root.directory,
-          instruments: options.intraday.instruments,
-          feed: options.extraArgs[options.extraArgs.indexOf("--execution-quote-feed") + 1] as
-            | "iex"
-            | "sip",
-          maxAgeMs: numericExtra(options.extraArgs, "--execution-max-age-ms"),
-          policy: JSON.parse(
-            fs.readFileSync(
-              options.extraArgs[options.extraArgs.indexOf("--execution-policy") + 1],
-              "utf8",
+    const intradayController =
+      runtimeOptions.command === "loop" && runtimeOptions.intraday?.place
+        ? createFinanceAlpacaCycleController({
+            directory: root.directory,
+            instruments: runtimeOptions.intraday.executionInstruments,
+            feed: runtimeOptions.extraArgs[
+              runtimeOptions.extraArgs.indexOf("--execution-quote-feed") + 1
+            ] as "iex" | "sip",
+            maxAgeMs: numericExtra(runtimeOptions.extraArgs, "--execution-max-age-ms"),
+            policy: JSON.parse(
+              fs.readFileSync(
+                runtimeOptions.extraArgs[
+                  runtimeOptions.extraArgs.indexOf("--execution-policy") + 1
+                ],
+                "utf8",
+              ),
             ),
-          ),
-        })
-      : undefined;
-    const context = { root, options, signal: controller.signal, intradayController };
+          })
+        : undefined;
+    const context = {
+      root,
+      options: runtimeOptions,
+      signal: controller.signal,
+      intradayController,
+    };
     if (options.command === "once") {
       const ok = await fire(context, options.mode!);
       return signalExitCode || (ok ? 0 : 1);
     }
     process.stdout.write(
-      `scheduler pid=${process.pid} tz=${FINANCE_MARKET_TZ} root=${root.directory} timeoutMs=${options.timeoutMs}\n`,
+      `scheduler pid=${process.pid} tz=${FINANCE_MARKET_TZ} root=${root.directory} timeoutMs=${runtimeOptions.timeoutMs}\n`,
     );
     if (process.connected) {
       process.send?.({ type: "finance-scheduler-ready" });

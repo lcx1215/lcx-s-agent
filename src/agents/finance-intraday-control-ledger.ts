@@ -10,6 +10,38 @@ import { FinanceThesisDecisionContextSchema } from "./finance-thesis-decision-co
 const Hash = z.string().regex(/^[a-f0-9]{64}$/u);
 const Text = z.string().trim().min(1);
 const Iso = z.string().datetime();
+const StrategyBinding = z
+  .object({
+    declarationRef: Hash,
+    activationRef: Hash,
+    declaredInstruments: z.array(Text).min(1),
+    parameters: z
+      .object({
+        openingRangeBars: z.number().int().min(2).max(12),
+        rewardRisk: z.number().finite().positive().max(10),
+        intervalSeconds: z.union([z.literal(60), z.literal(300), z.literal(900)]),
+        feed: z.enum(["iex", "sip"]),
+      })
+      .strict(),
+    scope: z.enum(["strategy_universe", "system_universe", "explicit_diagnostic"]),
+    universeSnapshotRef: Hash.optional(),
+  })
+  .strict()
+  .superRefine((binding, context) => {
+    if (binding.scope === "system_universe" && binding.universeSnapshotRef === undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "system-universe decision requires its validated snapshot reference",
+      });
+    }
+    if (binding.scope !== "system_universe" && binding.universeSnapshotRef !== undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "only system-universe decisions may carry a universe snapshot reference",
+      });
+    }
+  });
+export type FinanceIntradayStrategyBinding = z.infer<typeof StrategyBinding>;
 
 export const FinanceIntradayDecisionInput = z
   .object({
@@ -24,6 +56,8 @@ export const FinanceIntradayDecisionInput = z
     targetPrice: z.number().finite().positive().optional(),
     datasetHeadRef: Hash,
     strategyRule: z.literal("opening_range_breakout_long_next_bar_v1"),
+    /** Optional only for backward reading; the execution owner rejects legacy unbound signals. */
+    strategyBinding: StrategyBinding.optional(),
   })
   .strict();
 export type FinanceIntradayDecisionInput = z.infer<typeof FinanceIntradayDecisionInput>;

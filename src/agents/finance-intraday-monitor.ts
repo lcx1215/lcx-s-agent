@@ -1,4 +1,5 @@
 import { syncAlpacaIntradayBars } from "./finance-alpaca-intraday.js";
+import { caseflowFingerprint } from "./finance-caseflow.js";
 import { financeEtClock, FINANCE_TRADING_WEEKDAYS } from "./finance-cycle-schedule.js";
 import {
   appendFinanceIntradayDecision,
@@ -6,10 +7,17 @@ import {
   readFinanceIntradayOutcome,
 } from "./finance-intraday-control-ledger.js";
 import { readFinanceIntradayLedger } from "./finance-intraday-ledger.js";
-import { FINANCE_INTRADAY_OPENING_RANGE_RULE } from "./finance-intraday-paper.js";
+import {
+  FINANCE_INTRADAY_OPENING_RANGE_FORM,
+  resolveFinanceIntradayActiveRuleContract,
+  type FinanceIntradayActiveRuleContract,
+  type FinanceIntradayMonitorScope,
+} from "./finance-intraday-paper.js";
 import { receiptsForIntradayStrategy } from "./finance-intraday-position.js";
 import { evaluateFinanceIntradaySignal } from "./finance-intraday-signal.js";
 import { projectFinancePositions, readFinancePositionLedger } from "./finance-position-ledger.js";
+import { readFinanceResearchEquityUniverseSnapshot } from "./finance-research-runner.js";
+import { readFinanceStrategyRuleLedger } from "./finance-strategy-rule-ledger.js";
 
 export type FinanceIntradayMonitorOptions = Readonly<{
   directory: string;
@@ -19,6 +27,8 @@ export type FinanceIntradayMonitorOptions = Readonly<{
   feed: "iex" | "sip";
   openingRangeBars: number;
   rewardRisk: number;
+  strategyContract?: FinanceIntradayActiveRuleContract;
+  scope?: FinanceIntradayMonitorScope;
   now?: Date;
   signal?: AbortSignal;
   sync?: typeof syncAlpacaIntradayBars;
@@ -34,7 +44,91 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
   ) {
     return Object.freeze({ status: "outside_cash_session" as const, clock });
   }
+  if (!options.strategyContract || !options.scope) {
+    return Object.freeze({ status: "blocked_missing_strategy_binding" as const, clock });
+  }
   const instrument = options.instrument.trim().toUpperCase();
+  const strategyRead = await readFinanceStrategyRuleLedger(options.directory);
+  const activeRules = strategyRead.ledger.rules.filter(
+    (rule) => rule.state === "active" && rule.form === FINANCE_INTRADAY_OPENING_RANGE_FORM,
+  );
+  if (activeRules.length !== 1) {
+    return Object.freeze({
+      status: "blocked_active_strategy_missing_or_ambiguous" as const,
+      clock,
+    });
+  }
+  let activeContract: FinanceIntradayActiveRuleContract;
+  try {
+    activeContract = resolveFinanceIntradayActiveRuleContract(activeRules[0]);
+  } catch {
+    return Object.freeze({ status: "blocked_incompatible_active_strategy" as const, clock });
+  }
+  if (
+    options.strategyContract.ruleId !== activeContract.ruleId ||
+    activeContract.declarationRef !== options.strategyContract.declarationRef ||
+    activeContract.activationRef !== options.strategyContract.activationRef ||
+    JSON.stringify([...activeContract.instruments].toSorted()) !==
+      JSON.stringify([...options.strategyContract.instruments].toSorted()) ||
+    activeContract.openingRangeBars !== options.openingRangeBars ||
+    activeContract.rewardRisk !== options.rewardRisk ||
+    activeContract.intervalSeconds !== options.intervalSeconds ||
+    activeContract.feed !== options.feed ||
+    activeContract.openingRangeBars !== options.strategyContract.openingRangeBars ||
+    activeContract.rewardRisk !== options.strategyContract.rewardRisk ||
+    activeContract.intervalSeconds !== options.strategyContract.intervalSeconds ||
+    activeContract.feed !== options.strategyContract.feed ||
+    activeContract.eligibility.status !== options.strategyContract.eligibility.status ||
+    activeContract.eligibility.automatedPaperPlacementAllowed !==
+      options.strategyContract.eligibility.automatedPaperPlacementAllowed
+  ) {
+    return Object.freeze({
+      status: "blocked_stale_or_incompatible_strategy_contract" as const,
+      clock,
+    });
+  }
+  if (
+    options.scope.kind === "strategy_universe" &&
+    !activeContract.instruments.includes(instrument)
+  ) {
+    return Object.freeze({ status: "blocked_outside_strategy_universe" as const, clock });
+  }
+  if (
+    options.scope.kind === "system_universe" &&
+    (!/^[a-f0-9]{64}$/u.test(options.scope.universeSnapshotRef ?? "") ||
+      !options.scope.selectedInstruments?.includes(instrument))
+  ) {
+    return Object.freeze({ status: "blocked_invalid_system_universe_snapshot" as const, clock });
+  }
+  if (options.scope.kind === "system_universe") {
+    try {
+      const snapshot = readFinanceResearchEquityUniverseSnapshot(
+        options.directory,
+        now.toISOString(),
+      );
+      if (
+        caseflowFingerprint(snapshot) !== options.scope.universeSnapshotRef ||
+        JSON.stringify(snapshot.selected) !== JSON.stringify(options.scope.selectedInstruments) ||
+        !snapshot.selected.includes(instrument)
+      ) {
+        return Object.freeze({
+          status: "blocked_invalid_system_universe_snapshot" as const,
+          clock,
+        });
+      }
+    } catch {
+      return Object.freeze({
+        status: "blocked_invalid_system_universe_snapshot" as const,
+        clock,
+      });
+    }
+  }
+  if (
+    options.scope.kind === "explicit_diagnostic" &&
+    options.scope.universeSnapshotRef !== undefined
+  ) {
+    return Object.freeze({ status: "blocked_invalid_monitor_scope" as const, clock });
+  }
   const sync = options.sync ?? syncAlpacaIntradayBars;
   const syncReceipt = await sync({
     directory: options.directory,
@@ -155,7 +249,22 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
     ...(signal.stopPrice === undefined ? {} : { stopPrice: signal.stopPrice }),
     ...(signal.targetPrice === undefined ? {} : { targetPrice: signal.targetPrice }),
     datasetHeadRef: intraday.headRef,
-    strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+    strategyRule: activeContract.ruleId,
+    strategyBinding: {
+      declarationRef: activeContract.declarationRef,
+      activationRef: activeContract.activationRef,
+      declaredInstruments: [...activeContract.instruments],
+      parameters: {
+        openingRangeBars: activeContract.openingRangeBars,
+        rewardRisk: activeContract.rewardRisk,
+        intervalSeconds: activeContract.intervalSeconds,
+        feed: activeContract.feed,
+      },
+      scope: options.scope.kind,
+      ...(options.scope.universeSnapshotRef
+        ? { universeSnapshotRef: options.scope.universeSnapshotRef }
+        : {}),
+    },
   });
   return Object.freeze({
     status: appended.appended ? ("decision_recorded" as const) : ("decision_replayed" as const),

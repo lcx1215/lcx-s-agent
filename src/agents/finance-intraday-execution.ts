@@ -1,5 +1,6 @@
 import { withTimeout } from "../utils/with-timeout.js";
 import { runFinanceAlpacaOrder } from "./finance-alpaca-run.js";
+import { caseflowFingerprint } from "./finance-caseflow.js";
 import {
   executionQuoteIssue,
   recordCycleFill,
@@ -12,8 +13,14 @@ import {
   type FinanceIntradayDecisionRecord,
   type FinanceIntradayDecisionReviewReceipt,
 } from "./finance-intraday-control-ledger.js";
+import {
+  FINANCE_INTRADAY_OPENING_RANGE_FORM,
+  resolveFinanceIntradayActiveRuleContract,
+} from "./finance-intraday-paper.js";
 import { receiptsForIntradayStrategy } from "./finance-intraday-position.js";
 import { projectFinancePositions, readFinancePositionRecords } from "./finance-position-ledger.js";
+import { readFinanceResearchEquityUniverseSnapshot } from "./finance-research-runner.js";
+import { readFinanceStrategyRuleLedger } from "./finance-strategy-rule-ledger.js";
 import { buildFinanceThesisDecisionContext } from "./finance-thesis-decision-context.js";
 import {
   FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA,
@@ -29,6 +36,71 @@ type Controller = Required<
     "accountId" | "accountBookProvider" | "executionQuoteProvider" | "createSafetyContext"
   >
 >;
+
+async function strategyBindingIssue(
+  directory: string,
+  decision: FinanceIntradayDecisionRecord,
+  asOf: string,
+): Promise<string | null> {
+  const binding = decision.input.strategyBinding;
+  if (!binding) {
+    return "legacy intraday decision has no active-strategy provenance";
+  }
+  if (binding.scope === "explicit_diagnostic") {
+    return "diagnostic ticker override cannot authorize Paper placement";
+  }
+  const { ledger } = await readFinanceStrategyRuleLedger(directory);
+  const matching = ledger.rules.filter(
+    (rule) => rule.state === "active" && rule.form === FINANCE_INTRADAY_OPENING_RANGE_FORM,
+  );
+  if (matching.length !== 1 || matching[0]?.ruleId !== decision.input.strategyRule) {
+    return "intraday strategy is missing, ambiguous, or no longer active";
+  }
+  let contract;
+  try {
+    contract = resolveFinanceIntradayActiveRuleContract(matching[0]);
+  } catch (error) {
+    return error instanceof Error ? error.message : "intraday strategy contract is incompatible";
+  }
+  if (
+    binding.declarationRef !== contract.declarationRef ||
+    binding.activationRef !== contract.activationRef ||
+    JSON.stringify([...binding.declaredInstruments].toSorted()) !==
+      JSON.stringify([...contract.instruments].toSorted()) ||
+    binding.parameters.openingRangeBars !== contract.openingRangeBars ||
+    binding.parameters.rewardRisk !== contract.rewardRisk ||
+    binding.parameters.intervalSeconds !== contract.intervalSeconds ||
+    binding.parameters.feed !== contract.feed
+  ) {
+    return "intraday signal provenance does not match the currently active strategy contract";
+  }
+  if (!contract.eligibility.automatedPaperPlacementAllowed) {
+    return `intraday strategy eligibility blocks Paper placement: ${contract.eligibility.status}`;
+  }
+  if (!contract.instruments.includes(decision.input.instrument.toUpperCase())) {
+    return "intraday signal instrument is outside the active strategy execution scope";
+  }
+  if (binding.scope === "strategy_universe" && binding.universeSnapshotRef !== undefined) {
+    return "strategy-universe decision unexpectedly carries a system snapshot reference";
+  }
+  if (binding.scope === "system_universe" && !binding.universeSnapshotRef) {
+    return "system-universe decision is missing its validated snapshot reference";
+  }
+  if (binding.scope === "system_universe") {
+    try {
+      const snapshot = readFinanceResearchEquityUniverseSnapshot(directory, asOf);
+      if (
+        caseflowFingerprint(snapshot) !== binding.universeSnapshotRef ||
+        !snapshot.selected.includes(decision.input.instrument.toUpperCase())
+      ) {
+        return "system-universe signal no longer matches the current validated snapshot";
+      }
+    } catch {
+      return "system-universe snapshot is missing, stale, or invalid";
+    }
+  }
+  return null;
+}
 
 export async function executeFinanceIntradayDecision(params: {
   directory: string;
@@ -50,7 +122,6 @@ export async function executeFinanceIntradayDecision(params: {
   const now = params.now ?? Date.now;
   let tradeDecisionReview: FinanceIntradayDecisionReviewReceipt | undefined;
   try {
-    const account = await params.controller.accountBookProvider(signal);
     const positionRecords = await readFinancePositionRecords(params.directory);
     const recoveredReceipt = positionRecords.receipts.find(
       (receipt) =>
@@ -72,6 +143,20 @@ export async function executeFinanceIntradayDecision(params: {
         receipt: recoveredReceipt,
       });
     }
+    const strategyIssue = await strategyBindingIssue(
+      params.directory,
+      params.decision,
+      new Date(now()).toISOString(),
+    );
+    if (strategyIssue) {
+      const outcome = await appendFinanceIntradayOutcome(params.directory, {
+        signalId: input.signalId,
+        status: "refused",
+        reasons: [strategyIssue],
+      });
+      return Object.freeze({ status: "refused" as const, outcome: outcome.input });
+    }
+    const account = await params.controller.accountBookProvider(signal);
     const brokerHeld =
       account.positions.find((position) => position.instrument === input.instrument)?.quantity ?? 0;
     const owned =

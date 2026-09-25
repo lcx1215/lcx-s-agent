@@ -1,11 +1,167 @@
 import { z } from "zod";
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import type { FinanceIntradayBar } from "./finance-intraday-ledger.js";
+import type { FinanceStrategyRule } from "./finance-strategy-rule-ledger.js";
 import { turnoverAndCost } from "./quant-math-advanced.js";
 
 export const FINANCE_INTRADAY_PAPER_SCHEMA = "lcx_finance_intraday_paper_v1" as const;
 export const FINANCE_INTRADAY_OPENING_RANGE_RULE =
   "opening_range_breakout_long_next_bar_v1" as const;
+export const FINANCE_INTRADAY_OPENING_RANGE_FORM = "intraday_opening_range_breakout" as const;
+export const FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION = "1" as const;
+export const FINANCE_INTRADAY_OPENING_RANGE_EMITS = "paper_signal" as const;
+export const FINANCE_INTRADAY_PAPER_EXECUTION_ELIGIBILITY_FIELD =
+  "paperExecutionEligibility" as const;
+
+export type FinanceIntradayPaperExecutionEligibility = Readonly<{
+  status:
+    | "eligibility_missing"
+    | "paper_contract_only"
+    | "paper_execution_eligible"
+    | "eligibility_invalid";
+  automatedPaperPlacementAllowed: boolean;
+}>;
+
+export type FinanceIntradayActiveRuleContract = Readonly<{
+  ruleId: typeof FINANCE_INTRADAY_OPENING_RANGE_RULE;
+  declarationRef: string;
+  activationRef: string;
+  instruments: readonly string[];
+  openingRangeBars: number;
+  rewardRisk: number;
+  intervalSeconds: 60 | 300 | 900;
+  feed: "iex" | "sip";
+  eligibility: FinanceIntradayPaperExecutionEligibility;
+}>;
+
+export type FinanceIntradayMonitorScope = Readonly<{
+  kind: "strategy_universe" | "system_universe" | "explicit_diagnostic";
+  universeSnapshotRef?: string;
+  selectedInstruments?: readonly string[];
+}>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Missing or unknown eligibility is never interpreted as permission to place Paper orders. */
+export function resolveFinanceIntradayPaperExecutionEligibility(
+  ruleBody: Readonly<Record<string, unknown>>,
+): FinanceIntradayPaperExecutionEligibility {
+  const value = ruleBody[FINANCE_INTRADAY_PAPER_EXECUTION_ELIGIBILITY_FIELD];
+  const measuredResult = ruleBody.measuredResult;
+  if (
+    isRecord(measuredResult) &&
+    (measuredResult.status === "paper_contract_only" ||
+      measuredResult.executionAuthority === "none")
+  ) {
+    return Object.freeze({ status: "paper_contract_only", automatedPaperPlacementAllowed: false });
+  }
+  if (value === undefined) {
+    return Object.freeze({
+      status: "eligibility_missing",
+      automatedPaperPlacementAllowed: false,
+    });
+  }
+  if (value === "paper_contract_only") {
+    return Object.freeze({ status: "paper_contract_only", automatedPaperPlacementAllowed: false });
+  }
+  if (value === "paper_execution_eligible") {
+    return Object.freeze({
+      status: "paper_execution_eligible",
+      automatedPaperPlacementAllowed: true,
+    });
+  }
+  return Object.freeze({ status: "eligibility_invalid", automatedPaperPlacementAllowed: false });
+}
+
+/**
+ * Validates the active ledger declaration against the one ORB implementation shipped here.
+ * Research prose is ignored; only the versioned envelope and recognized machine fields bind.
+ */
+export function resolveFinanceIntradayActiveRuleContract(
+  rule: FinanceStrategyRule,
+): FinanceIntradayActiveRuleContract {
+  if (
+    rule.ruleId !== FINANCE_INTRADAY_OPENING_RANGE_RULE ||
+    rule.state !== "active" ||
+    rule.form !== FINANCE_INTRADAY_OPENING_RANGE_FORM ||
+    rule.formVersion !== FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION ||
+    rule.emits !== FINANCE_INTRADAY_OPENING_RANGE_EMITS ||
+    rule.schedule.kind !== "intraday"
+  ) {
+    throw new Error(`active intraday strategy ${rule.ruleId} has an incompatible contract`);
+  }
+  const declarations = rule.transitions.filter((record) => record.body.kind === "declared");
+  const activations = rule.transitions.filter((record) => record.body.kind === "activated");
+  if (declarations.length !== 1 || activations.length !== 1) {
+    throw new Error(`active intraday strategy ${rule.ruleId} has ambiguous lifecycle events`);
+  }
+
+  const instruments = rule.instruments.map((instrument) => instrument.toUpperCase());
+  if (
+    instruments.length === 0 ||
+    instruments.some((instrument) => !/^[A-Z0-9][A-Z0-9./_-]{0,19}$/u.test(instrument)) ||
+    new Set(instruments).size !== instruments.length
+  ) {
+    throw new Error(
+      `active intraday strategy ${rule.ruleId} has an empty or ambiguous instrument scope`,
+    );
+  }
+
+  const bodyUniverse = rule.body.universe;
+  if (bodyUniverse !== undefined) {
+    const normalizedBodyUniverse = Array.isArray(bodyUniverse)
+      ? bodyUniverse.filter((instrument): instrument is string => typeof instrument === "string")
+      : [];
+    if (
+      !Array.isArray(bodyUniverse) ||
+      normalizedBodyUniverse.length !== bodyUniverse.length ||
+      JSON.stringify(
+        normalizedBodyUniverse.map((instrument) => instrument.toUpperCase()).toSorted(),
+      ) !== JSON.stringify([...instruments].toSorted())
+    ) {
+      throw new Error(
+        `active intraday strategy ${rule.ruleId} has conflicting top-level and replay universes`,
+      );
+    }
+  }
+
+  const frozenRule = isRecord(rule.body.frozenRule) ? rule.body.frozenRule : undefined;
+  const data = isRecord(rule.body.data) ? rule.body.data : undefined;
+  if (
+    frozenRule === undefined ||
+    typeof frozenRule.openingRangeBars !== "number" ||
+    !Number.isInteger(frozenRule.openingRangeBars) ||
+    frozenRule.openingRangeBars < 2 ||
+    frozenRule.openingRangeBars > 12 ||
+    typeof frozenRule.rewardRisk !== "number" ||
+    !Number.isFinite(frozenRule.rewardRisk) ||
+    frozenRule.rewardRisk <= 0 ||
+    frozenRule.rewardRisk > 10 ||
+    data === undefined ||
+    (data.intervalSeconds !== 60 && data.intervalSeconds !== 300 && data.intervalSeconds !== 900) ||
+    (data.feed !== "iex" && data.feed !== "sip")
+  ) {
+    throw new Error(
+      `active intraday strategy ${rule.ruleId} has an unsupported rule parameter set`,
+    );
+  }
+
+  const eligibility = resolveFinanceIntradayPaperExecutionEligibility(rule.body);
+
+  return Object.freeze({
+    ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+    declarationRef: declarations[0].ref,
+    activationRef: activations[0].ref,
+    instruments: Object.freeze(instruments),
+    openingRangeBars: frozenRule.openingRangeBars,
+    rewardRisk: frozenRule.rewardRisk,
+    intervalSeconds: data.intervalSeconds,
+    feed: data.feed,
+    eligibility,
+  });
+}
 
 const Config = z
   .object({
