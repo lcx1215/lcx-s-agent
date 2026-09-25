@@ -343,6 +343,7 @@ describe("lcx-commercial-acceptance-harness", () => {
         calls.push({ owner: ownerName, script, args });
         return {
           ok: true,
+          commandSucceeded: true,
           owner: ownerName,
           command: `${ownerName} --json`,
           payload: { ok: true },
