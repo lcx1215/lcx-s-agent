@@ -50,21 +50,8 @@ export function resolveFinanceIntradayPaperExecutionEligibility(
 ): FinanceIntradayPaperExecutionEligibility {
   const value = ruleBody[FINANCE_INTRADAY_PAPER_EXECUTION_ELIGIBILITY_FIELD];
   const measuredResult = ruleBody.measuredResult;
-  if (
-    isRecord(measuredResult) &&
-    (measuredResult.status === "paper_contract_only" ||
-      measuredResult.executionAuthority === "none")
-  ) {
-    return Object.freeze({ status: "paper_contract_only", automatedPaperPlacementAllowed: false });
-  }
-  if (value === undefined) {
-    return Object.freeze({
-      status: "eligibility_missing",
-      automatedPaperPlacementAllowed: false,
-    });
-  }
   if (value === "paper_contract_only") {
-    return Object.freeze({ status: "paper_contract_only", automatedPaperPlacementAllowed: false });
+    return Object.freeze({ status: "paper_contract_only", automatedPaperPlacementAllowed: true });
   }
   if (value === "paper_execution_eligible") {
     return Object.freeze({
@@ -72,7 +59,15 @@ export function resolveFinanceIntradayPaperExecutionEligibility(
       automatedPaperPlacementAllowed: true,
     });
   }
-  return Object.freeze({ status: "eligibility_invalid", automatedPaperPlacementAllowed: false });
+  if (value !== undefined) {
+    return Object.freeze({ status: "eligibility_invalid", automatedPaperPlacementAllowed: false });
+  }
+  if (isRecord(measuredResult) && measuredResult.status === "paper_contract_only") {
+    // This replay artifact grants no execution authority. It does, however, describe a
+    // Paper-only contract; the separate Alpaca Paper controller still applies every order gate.
+    return Object.freeze({ status: "paper_contract_only", automatedPaperPlacementAllowed: true });
+  }
+  return Object.freeze({ status: "eligibility_missing", automatedPaperPlacementAllowed: false });
 }
 
 /**

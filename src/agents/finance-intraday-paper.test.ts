@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { FinanceIntradayBar } from "./finance-intraday-ledger.js";
-import { runFinanceIntradayPaperReplay } from "./finance-intraday-paper.js";
+import {
+  resolveFinanceIntradayPaperExecutionEligibility,
+  runFinanceIntradayPaperReplay,
+} from "./finance-intraday-paper.js";
 
 function session(prices: readonly number[], day = "2026-01-05"): FinanceIntradayBar[] {
   const start = Date.parse(`${day}T14:30:00.000Z`);
@@ -31,6 +34,31 @@ const config = {
 } as const;
 
 describe("finance intraday paper replay", () => {
+  it.each([
+    {
+      ruleBody: { measuredResult: { status: "paper_contract_only", executionAuthority: "none" } },
+      expected: { status: "paper_contract_only", automatedPaperPlacementAllowed: true },
+    },
+    {
+      ruleBody: { paperExecutionEligibility: "paper_contract_only" },
+      expected: { status: "paper_contract_only", automatedPaperPlacementAllowed: true },
+    },
+    {
+      ruleBody: { paperExecutionEligibility: "paper_execution_eligible" },
+      expected: { status: "paper_execution_eligible", automatedPaperPlacementAllowed: true },
+    },
+    {
+      ruleBody: {},
+      expected: { status: "eligibility_missing", automatedPaperPlacementAllowed: false },
+    },
+    {
+      ruleBody: { paperExecutionEligibility: "unknown" },
+      expected: { status: "eligibility_invalid", automatedPaperPlacementAllowed: false },
+    },
+  ])("resolves Paper-only placement separately from live authority", ({ ruleBody, expected }) => {
+    expect(resolveFinanceIntradayPaperExecutionEligibility(ruleBody)).toEqual(expected);
+  });
+
   it("freezes the opening range and enters only at the bar after the signal", () => {
     const bars = session([100, 101, 100, 102, 103, 104]);
     const receipt = runFinanceIntradayPaperReplay({ bars, ledgerHeadRef: "head", config });

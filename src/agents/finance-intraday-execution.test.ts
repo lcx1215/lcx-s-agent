@@ -88,7 +88,7 @@ async function activeRuleBinding(
   await activateFinanceStrategyRule(directory, {
     kind: "activated",
     ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE,
-    reason: "user Paper authority is not an eligibility override",
+    reason: "Paper-only contract; the shared Paper controller owns execution gates",
     observedAt: "2026-09-17T00:01:00Z",
   });
   const read = await readFinanceStrategyRuleLedger(directory);
@@ -533,7 +533,7 @@ describe("intraday decision execution bridge", () => {
     expect(runOrder).not.toHaveBeenCalled();
   });
 
-  it("does not let a generic Paper activation override paper_contract_only eligibility", async () => {
+  it("routes a Paper-only contract through the shared Paper execution gates", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-paper-contract-only-"));
     temporary.push(directory);
     const strategyBinding = await activeRuleBinding(directory, "paper_contract_only");
@@ -553,9 +553,37 @@ describe("intraday decision execution bridge", () => {
         strategyBinding,
       })
     ).record;
-    const accountBookProvider = vi.fn();
-    const executionQuoteProvider = vi.fn();
-    const runOrder = vi.fn();
+    const accountBookProvider = vi.fn(async () => ({
+      accountId: "paper-account",
+      venue: "alpaca:paper" as const,
+      observedAt: "2026-09-18T15:00:01.000Z",
+      expiresAt: "2026-09-18T15:01:01.000Z",
+      equity: 100_000,
+      positions: [],
+      reconciliation: {
+        status: "ready" as const,
+        historyStatus: "reconciled" as const,
+        uncertaintyReserve: 0,
+        quarantinedInstruments: [],
+        reasons: [],
+      },
+    }));
+    const executionQuoteProvider = vi.fn(async () => ({
+      referencePrice: 500,
+      referencePriceAt: "2026-09-18T15:00:01.000Z",
+      sourceUrlOrArtifact: "fixture quote source",
+      bidPrice: 499.9,
+      askPrice: 500,
+      feed: "iex" as const,
+      priceBasis: "ask" as const,
+      maxAgeMs: 30_000,
+    }));
+    const runOrder = vi.fn(async () => ({
+      ok: false as const,
+      stage: "place" as const,
+      refusals: ["shared execution gate refusal"],
+    }));
+    const tradeDecisionReviewer = approvingReviewer();
     const result = await executeFinanceIntradayDecision({
       directory,
       decision,
@@ -566,16 +594,19 @@ describe("intraday decision execution bridge", () => {
         createSafetyContext: vi.fn(),
       },
       caps: { maxOrderNotional: 5_000, maxInstrumentNotional: 10_000, maxOrdersPerRun: 1 },
+      tradeDecisionReviewer,
+      now: () => Date.parse("2026-09-18T15:00:02.000Z"),
       runOrder: runOrder as never,
     });
     expect(result).toMatchObject({ status: "refused" });
     expect(await readFinanceIntradayOutcome(directory, decision.input.signalId)).toMatchObject({
       status: "refused",
-      reasons: [expect.stringContaining("paper_contract_only")],
+      reasons: ["shared execution gate refusal"],
     });
-    expect(accountBookProvider).not.toHaveBeenCalled();
-    expect(executionQuoteProvider).not.toHaveBeenCalled();
-    expect(runOrder).not.toHaveBeenCalled();
+    expect(accountBookProvider).toHaveBeenCalledTimes(1);
+    expect(executionQuoteProvider).toHaveBeenCalledTimes(1);
+    expect(tradeDecisionReviewer).toHaveBeenCalledTimes(1);
+    expect(runOrder).toHaveBeenCalledTimes(1);
   });
 
   it("rechecks the current declaration and refuses a stale or tampered pending binding", async () => {
