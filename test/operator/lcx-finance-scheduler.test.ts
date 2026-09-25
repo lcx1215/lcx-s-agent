@@ -192,6 +192,8 @@ beforeEach(() => {
   directory = fs.mkdtempSync(path.join(os.tmpdir(), "finance-scheduler-test-"));
   stderrMessages = [];
   mocks.runCycle.mockResolvedValue(success);
+  mocks.loadConfig.mockReturnValue({});
+  mocks.createIntradayController.mockReturnValue({ accountId: "paper-account" });
   mocks.syncAlpacaHistory.mockResolvedValue({
     accountId: "paper-account",
     accountReconciliation: { status: "reconciled" },
@@ -220,7 +222,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
-  vi.clearAllMocks();
+  vi.resetAllMocks();
 });
 
 it.each(["explicit", "env"])(
@@ -645,7 +647,7 @@ it("resolves only one compatible active intraday rule and refuses draft or confl
     }),
   ).resolves.toMatchObject({
     instruments: ["SPY"],
-    eligibility: { status: "paper_contract_only", automatedPaperPlacementAllowed: false },
+    eligibility: { status: "paper_contract_only", automatedPaperPlacementAllowed: true },
   });
 
   const conflictingDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "finance-intraday-conflict-"));
@@ -985,6 +987,7 @@ it("rebinds a long-lived monitor to the universe written by a successful night r
   await activateIntradayRule({
     measuredResult: { status: "paper_contract_only", executionAuthority: "none" },
   });
+  fs.writeFileSync(path.join(directory, "alpaca-policy.json"), "{}\n");
   writeFinanceSchedulerState(directory, {
     lastFired: { day: "2026-09-22" },
     lastSucceeded: {},
@@ -1078,14 +1081,14 @@ it("rebinds a long-lived monitor to the universe written by a successful night r
     selectedInstruments: ["SPY", "NEW"],
   });
   expect(refreshedScope?.universeSnapshotRef).not.toBe(firstScope?.universeSnapshotRef);
-  expect(mocks.createIntradayController).not.toHaveBeenCalled();
+  expect(mocks.createIntradayController).toHaveBeenCalledOnce();
   expect(mocks.executeIntradayDecision).not.toHaveBeenCalled();
   expect(progressAtStop).toMatchObject({
-    placementEnabled: false,
+    placementEnabled: true,
     placementEligibility: "paper_contract_only",
     universeStatus: "validated",
     instruments: ["SPY", "NEW"],
-    executionInstruments: [],
+    executionInstruments: ["SPY"],
   });
 });
 
