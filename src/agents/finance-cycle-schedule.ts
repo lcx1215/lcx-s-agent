@@ -110,6 +110,32 @@ export function isFinanceUsEquityDailyBarComplete(date: string, asOf: string): b
 }
 
 /**
+ * Resolve the latest completed weekday session using the same weekday/16:00 ET contract used by
+ * universe snapshot consumers. Exchange holidays and early closes are intentionally not inferred.
+ */
+export function latestCompletedWeekdaySessionDate(asOf: string): string {
+  const asOfMs = Date.parse(asOf.trim());
+  if (!asOf.trim() || !Number.isFinite(asOfMs)) {
+    throw new Error("referenceAsOf must be an ISO timestamp");
+  }
+  const clock = financeEtClock(new Date(asOfMs));
+  const isWeekday = FINANCE_TRADING_WEEKDAYS.includes(clock.weekday);
+  const regularSessionClosed = clock.minutes >= 16 * 60;
+  let cursor = Date.parse(`${clock.date}T00:00:00.000Z`);
+  if (!isWeekday || !regularSessionClosed) {
+    cursor -= 86_400_000;
+  }
+  for (let attempts = 0; attempts < 7; attempts += 1) {
+    const candidate = new Date(cursor);
+    if (candidate.getUTCDay() !== 0 && candidate.getUTCDay() !== 6) {
+      return candidate.toISOString().slice(0, 10);
+    }
+    cursor -= 86_400_000;
+  }
+  throw new Error("unable to resolve latest completed weekday session");
+}
+
+/**
  * A slot is due when it is a trading weekday, the market's wall clock has reached the slot, and
  * the slot has not already fired on that market date.
  *

@@ -303,6 +303,70 @@ describe("finance research runner", () => {
     }
   });
 
+  it("validates optional liquidity-date audit metadata while accepting legacy snapshots", () => {
+    const valid = universeSnapshot({
+      liquidityPreScreen: {
+        basis: "latest_completed_regular_session",
+        source: "alpaca_snapshot.dailyBar_or_prevDailyBar.close_times_volume",
+        sessionDate: "2026-09-09",
+        sessionDateDistribution: [
+          { sessionDate: "2026-09-08", quoteCount: 5 },
+          { sessionDate: "2026-09-09", quoteCount: 20 },
+        ],
+        excludedOlderSessionBarCount: 5,
+        excludedOlderCandidateCount: 3,
+      },
+    });
+    expect(
+      validateFinanceResearchEquityUniverseSnapshot(valid, "2026-09-10T12:00:00.000Z"),
+    ).toEqual(valid);
+
+    const inconsistent = universeSnapshot({
+      liquidityPreScreen: {
+        ...valid.liquidityPreScreen,
+        excludedOlderSessionBarCount: 4,
+      },
+    });
+    expect(() =>
+      validateFinanceResearchEquityUniverseSnapshot(inconsistent, "2026-09-10T12:00:00.000Z"),
+    ).toThrow("inconsistent liquidity-date audit evidence");
+
+    const legacy = universeSnapshot();
+    expect(
+      validateFinanceResearchEquityUniverseSnapshot(legacy, "2026-09-10T12:00:00.000Z"),
+    ).toEqual(legacy);
+
+    const transitionalV1 = universeSnapshot({
+      liquidityPreScreen: {
+        basis: "latest_completed_regular_session",
+        source: "alpaca_snapshot.dailyBar_or_prevDailyBar.close_times_volume",
+        sessionDate: "2026-09-09",
+        sessionDateDistribution: [
+          { sessionDate: "2026-09-08", quoteCount: 5 },
+          { sessionDate: "2026-09-09", quoteCount: 20 },
+        ],
+        excludedOlderSessionCount: 5,
+        excludedOlderCandidateCount: 3,
+      },
+    });
+    expect(
+      validateFinanceResearchEquityUniverseSnapshot(transitionalV1, "2026-09-10T12:00:00.000Z"),
+    ).toEqual(transitionalV1);
+
+    const inconsistentTransitionalV1 = universeSnapshot({
+      liquidityPreScreen: {
+        ...transitionalV1.liquidityPreScreen,
+        excludedOlderSessionCount: 4,
+      },
+    });
+    expect(() =>
+      validateFinanceResearchEquityUniverseSnapshot(
+        inconsistentTransitionalV1,
+        "2026-09-10T12:00:00.000Z",
+      ),
+    ).toThrow("inconsistent liquidity-date audit evidence");
+  });
+
   it("accepts a Friday receipt through Monday before close, but expires it after Monday close", () => {
     const fridaySnapshot = universeSnapshot({
       asOf: "2026-09-11T20:05:00.000Z",

@@ -15,7 +15,7 @@ import {
   type FinanceModuleSelection,
   type FinanceBrainOrchestrationPlan,
 } from "./finance-brain-orchestration.js";
-import { financeEtClock } from "./finance-cycle-schedule.js";
+import { latestCompletedWeekdaySessionDate } from "./finance-cycle-schedule.js";
 import type { FinanceAsOfMode } from "./finance-data-gateway.js";
 import {
   evaluateFinanceDecisionPolicy,
@@ -136,6 +136,15 @@ export type FinanceResearchEquityUniverseSnapshot = Readonly<{
     basis: "latest_completed_regular_session";
     source: "alpaca_snapshot.dailyBar_or_prevDailyBar.close_times_volume";
     sessionDate: string;
+    /** Added in v1 snapshots as optional audit metadata to preserve older stored receipts. */
+    sessionDateDistribution?: readonly Readonly<{
+      sessionDate: string;
+      quoteCount: number;
+    }>[];
+    excludedOlderSessionBarCount?: number;
+    excludedOlderCandidateCount?: number;
+    /** @deprecated Older v1 writers used this name for the number of bars, not session dates. */
+    excludedOlderSessionCount?: number;
   }>;
   selectionEvidence: Readonly<{
     method: "liquidity_seed_then_iterative_minimum_worst_correlation";
@@ -401,25 +410,6 @@ function validCalendarDate(value: unknown): value is string {
   return Number.isFinite(parsed) && new Date(parsed).toISOString().slice(0, 10) === value;
 }
 
-function latestCompletedWeekdaySessionDate(asOf: string): string {
-  const asOfMs = Date.parse(assertIsoTimestamp(asOf, "referenceAsOf"));
-  const clock = financeEtClock(new Date(asOfMs));
-  const isWeekday = ["Mon", "Tue", "Wed", "Thu", "Fri"].includes(clock.weekday);
-  const regularSessionClosed = clock.minutes >= 16 * 60;
-  let cursor = Date.parse(`${clock.date}T00:00:00.000Z`);
-  if (!isWeekday || !regularSessionClosed) {
-    cursor -= 86_400_000;
-  }
-  for (let attempts = 0; attempts < 7; attempts += 1) {
-    const candidate = new Date(cursor);
-    if (candidate.getUTCDay() !== 0 && candidate.getUTCDay() !== 6) {
-      return candidate.toISOString().slice(0, 10);
-    }
-    cursor -= 86_400_000;
-  }
-  throw new Error("unable to resolve latest completed weekday session");
-}
-
 /**
  * Validate a selector receipt before a caller uses its symbols. Regular weekdays and the 16:00
  * ET close are used as the freshness boundary; this deliberately fails closed on exchange
@@ -553,6 +543,65 @@ export function validateFinanceResearchEquityUniverseSnapshot(
   }
   if (value.liquidityPreScreen.sessionDate !== latestCompletedWeekdaySessionDate(referenceAsOf)) {
     throw new Error("equity universe snapshot is not from the latest completed weekday session");
+  }
+  const liquidityPreScreen = value.liquidityPreScreen;
+  const liquiditySessionDate = liquidityPreScreen.sessionDate;
+  if (!validCalendarDate(liquiditySessionDate)) {
+    throw new Error("equity universe snapshot has invalid completed-session liquidity evidence");
+  }
+  const liquidityAuditKeys = [
+    "sessionDateDistribution",
+    "excludedOlderSessionBarCount",
+    "excludedOlderCandidateCount",
+    "excludedOlderSessionCount",
+  ] as const;
+  if (liquidityAuditKeys.some((key) => Object.hasOwn(liquidityPreScreen, key))) {
+    const distribution = liquidityPreScreen.sessionDateDistribution;
+    const currentOlderBarCount = liquidityPreScreen.excludedOlderSessionBarCount;
+    const legacyOlderBarCount = liquidityPreScreen.excludedOlderSessionCount;
+    const olderBarCount = currentOlderBarCount ?? legacyOlderBarCount;
+    const olderCandidateCount = liquidityPreScreen.excludedOlderCandidateCount;
+    if (
+      !Array.isArray(distribution) ||
+      !Number.isSafeInteger(olderBarCount) ||
+      Number(olderBarCount) < 0 ||
+      (currentOlderBarCount !== undefined &&
+        legacyOlderBarCount !== undefined &&
+        currentOlderBarCount !== legacyOlderBarCount) ||
+      !Number.isSafeInteger(olderCandidateCount) ||
+      Number(olderCandidateCount) < 0
+    ) {
+      throw new Error("equity universe snapshot has malformed liquidity-date audit evidence");
+    }
+    let previousDate = "";
+    let totalQuoteCount = 0;
+    let expectedOlderBarCount = 0;
+    for (const entry of distribution) {
+      if (
+        !isRecord(entry) ||
+        !validCalendarDate(entry.sessionDate) ||
+        !Number.isSafeInteger(entry.quoteCount) ||
+        Number(entry.quoteCount) < 1 ||
+        entry.sessionDate <= previousDate ||
+        entry.sessionDate > liquiditySessionDate
+      ) {
+        throw new Error("equity universe snapshot has malformed liquidity-date audit evidence");
+      }
+      previousDate = entry.sessionDate;
+      totalQuoteCount += Number(entry.quoteCount);
+      if (entry.sessionDate < liquiditySessionDate) {
+        expectedOlderBarCount += Number(entry.quoteCount);
+      }
+    }
+    if (
+      distribution.length === 0 ||
+      previousDate !== liquiditySessionDate ||
+      totalQuoteCount > Number(value.candidateCount) ||
+      Number(olderBarCount) !== expectedOlderBarCount ||
+      Number(olderCandidateCount) > expectedOlderBarCount
+    ) {
+      throw new Error("equity universe snapshot has inconsistent liquidity-date audit evidence");
+    }
   }
   if (!isRecord(value.selectionEvidence)) {
     throw new Error("equity universe snapshot is missing selection provenance");

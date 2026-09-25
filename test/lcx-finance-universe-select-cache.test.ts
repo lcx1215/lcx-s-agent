@@ -14,11 +14,13 @@ import {
   type UniverseAsset,
 } from "../src/agents/finance-universe-selection.ts";
 
+type MockHistoryItem = Readonly<{ data: Readonly<Record<string, unknown>> }>;
+
 const { mockHistoryCollect, collectedHistorySymbols } = vi.hoisted(() => {
   const collectedHistorySymbols: string[] = [];
   const mockHistoryCollect = vi.fn(async (request: { instrument: string }) => {
     collectedHistorySymbols.push(request.instrument);
-    return [];
+    return [] as MockHistoryItem[];
   });
   return { mockHistoryCollect, collectedHistorySymbols };
 });
@@ -63,6 +65,25 @@ function makeUniverseAsset(symbol: string): UniverseAsset {
     tradable: true,
     status: "active",
   };
+}
+
+function makeMockHistoryRows(endDate: string, count: number): MockHistoryItem[] {
+  const cursor = new Date(`${endDate}T12:00:00.000Z`);
+  const rows: MockHistoryItem[] = [];
+  while (rows.length < count) {
+    if (cursor.getUTCDay() !== 0 && cursor.getUTCDay() !== 6) {
+      const index = rows.length;
+      rows.push({
+        data: {
+          date: cursor.toISOString().slice(0, 10),
+          close: 100 + 5 * Math.sin(index / 6),
+          volume: 1_000_000,
+        },
+      });
+    }
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+  }
+  return rows.toReversed();
 }
 
 function stubSelectionInputs(directory: string, snapshots: Readonly<Record<string, unknown>>) {
@@ -251,7 +272,7 @@ describe("universe selection command bounds", () => {
       liquidityPreScreen: {
         sessionDate: string;
         sessionDateDistribution: { sessionDate: string; quoteCount: number }[];
-        excludedOlderSessionCount: number;
+        excludedOlderSessionBarCount: number;
         excludedOlderCandidateCount: number;
       };
     };
@@ -266,9 +287,53 @@ describe("universe selection command bounds", () => {
         { sessionDate: "2026-09-23", quoteCount: 1 },
         { sessionDate: "2026-09-24", quoteCount: 2 },
       ],
-      excludedOlderSessionCount: 1,
+      excludedOlderSessionBarCount: 1,
       excludedOlderCandidateCount: 1,
     });
+  });
+
+  it("fails closed when all observed liquidity bars predate the expected completed session", async () => {
+    const directory = makeCacheDir();
+    const fetchMock = stubSelectionInputs(directory, {
+      OLD: { prevDailyBar: { t: "2026-09-23T20:00:00.000Z", c: 10, v: 100 } },
+    });
+    const snapshotPath = path.join(directory, FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME);
+
+    await expect(
+      runUniverseSelectSilently(["--json", "--write-snapshot", "--dir", directory]),
+    ).rejects.toThrow("does not match expected completed session 2026-09-24");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mockHistoryCollect).not.toHaveBeenCalled();
+    expect(fsSync.existsSync(snapshotPath)).toBe(false);
+  });
+
+  it("fails closed without writing when selection crosses the regular-session close", async () => {
+    const directory = makeCacheDir();
+    stubSelectionInputs(directory, {
+      ALPHA: {
+        dailyBar: { t: "2026-09-24T20:00:00.000Z", c: 100, v: 1 },
+        prevDailyBar: { t: "2026-09-23T20:00:00.000Z", c: 10, v: 100 },
+      },
+    });
+    vi.setSystemTime(new Date("2026-09-24T19:59:00.000Z"));
+    mockHistoryCollect.mockImplementationOnce(async () => {
+      vi.setSystemTime(new Date("2026-09-24T20:01:00.000Z"));
+      return makeMockHistoryRows("2026-09-23", 800);
+    });
+    const snapshotPath = path.join(directory, FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME);
+    const rulePath = path.join(
+      directory,
+      "rule-declarations",
+      "trend_risk_normalised_auto_v1.json",
+    );
+
+    await expect(
+      runUniverseSelectSilently(["--json", "--write-snapshot", "--write-rule", "--dir", directory]),
+    ).rejects.toThrow("latest completed session changed while selecting the universe");
+
+    expect(fsSync.existsSync(snapshotPath)).toBe(false);
+    expect(fsSync.existsSync(rulePath)).toBe(false);
   });
 
   it("fails closed when the newest completed session has no usable dollar-volume bars", async () => {

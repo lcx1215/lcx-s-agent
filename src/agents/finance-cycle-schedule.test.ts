@@ -5,6 +5,7 @@ import {
   financeUsEquityRegularCloseInstant,
   isFinanceUsEquityDailyBarComplete,
   isFinanceCycleSlotDue,
+  latestCompletedWeekdaySessionDate,
   type FinanceCycleSlot,
 } from "./finance-cycle-schedule.js";
 
@@ -50,6 +51,18 @@ describe("US equity regular close clock", () => {
     expect(isFinanceUsEquityDailyBarComplete("2026-09-22", "2026-09-22T20:00:00.000Z")).toBe(true);
     expect(isFinanceUsEquityDailyBarComplete("2026-09-23", "not-a-date")).toBe(false);
     expect(isFinanceUsEquityDailyBarComplete("2026-02-30", "2026-09-23T20:00:00.000Z")).toBe(false);
+  });
+});
+
+describe("latest completed weekday session", () => {
+  it("uses the previous weekday before close and the current weekday after close", () => {
+    expect(latestCompletedWeekdaySessionDate("2026-09-24T19:59:00.000Z")).toBe("2026-09-23");
+    expect(latestCompletedWeekdaySessionDate("2026-09-24T20:01:00.000Z")).toBe("2026-09-24");
+  });
+
+  it("backs over weekends and rejects invalid timestamps", () => {
+    expect(latestCompletedWeekdaySessionDate("2026-09-26T18:00:00.000Z")).toBe("2026-09-25");
+    expect(() => latestCompletedWeekdaySessionDate("not-a-date")).toThrow("ISO timestamp");
   });
 });
 

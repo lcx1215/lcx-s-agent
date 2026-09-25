@@ -21,7 +21,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { resolveFinanceCredentialEnv } from "../../src/agents/finance-credential-env.js";
-import { isFinanceUsEquityDailyBarComplete } from "../../src/agents/finance-cycle-schedule.js";
+import {
+  isFinanceUsEquityDailyBarComplete,
+  latestCompletedWeekdaySessionDate,
+} from "../../src/agents/finance-cycle-schedule.js";
 import { createChinaReachableUsEodHistoryCollectionAdapter } from "../../src/agents/finance-free-market-collection-adapters.js";
 import { resolveFinanceStateDir } from "../../src/agents/finance-state-dir.js";
 import {
@@ -262,7 +265,7 @@ export async function runUniverseSelect(argv: readonly string[] = process.argv.s
   const sessionDateCounts = new Map<string, number>();
   for (const quote of Object.values(quotes)) {
     const sessionDate = quote.sessionDate;
-    if (!/^\d{4}-\d{2}-\d{2}$/u.test(sessionDate ?? "")) {
+    if (typeof sessionDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/u.test(sessionDate)) {
       continue;
     }
     sessionDateCounts.set(sessionDate, (sessionDateCounts.get(sessionDate) ?? 0) + 1);
@@ -271,6 +274,12 @@ export async function runUniverseSelect(argv: readonly string[] = process.argv.s
   const latestLiquiditySessionDate = liquiditySessionDates.at(-1);
   if (!latestLiquiditySessionDate) {
     throw new Error("previous completed-session liquidity data is missing; no universe selected");
+  }
+  const expectedLiquiditySessionDate = latestCompletedWeekdaySessionDate(asOf);
+  if (latestLiquiditySessionDate !== expectedLiquiditySessionDate) {
+    throw new Error(
+      `latest observed liquidity session ${latestLiquiditySessionDate} does not match expected completed session ${expectedLiquiditySessionDate}; no universe selected`,
+    );
   }
   const latestSessionRanked = ranked.filter(
     (entry) => entry.sessionDate === latestLiquiditySessionDate,
@@ -284,7 +293,7 @@ export async function runUniverseSelect(argv: readonly string[] = process.argv.s
     sessionDate,
     quoteCount: sessionDateCounts.get(sessionDate) ?? 0,
   }));
-  const excludedOlderSessionCount = sessionDateDistribution
+  const excludedOlderSessionBarCount = sessionDateDistribution
     .filter((entry) => entry.sessionDate < latestLiquiditySessionDate)
     .reduce((count, entry) => count + entry.quoteCount, 0);
   const excludedOlderCandidateCount = ranked.filter((entry) => {
@@ -362,6 +371,11 @@ export async function runUniverseSelect(argv: readonly string[] = process.argv.s
   );
   const selected = selectionEvidence.selected;
   const generatedAt = new Date().toISOString();
+  if (latestLiquiditySessionDate !== latestCompletedWeekdaySessionDate(generatedAt)) {
+    throw new Error(
+      "latest completed session changed while selecting the universe; no snapshot or rule written",
+    );
+  }
 
   const result = {
     schemaVersion: FINANCE_UNIVERSE_SELECTION_SCHEMA,
@@ -379,7 +393,7 @@ export async function runUniverseSelect(argv: readonly string[] = process.argv.s
       source: "alpaca_snapshot.dailyBar_or_prevDailyBar.close_times_volume",
       sessionDate: latestLiquiditySessionDate,
       sessionDateDistribution,
-      excludedOlderSessionCount,
+      excludedOlderSessionBarCount,
       excludedOlderCandidateCount,
     },
     unreadableCount: unreadable.length,
