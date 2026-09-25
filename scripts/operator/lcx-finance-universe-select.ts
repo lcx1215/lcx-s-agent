@@ -189,7 +189,7 @@ async function loadQuotes(
       { headers, signal: AbortSignal.timeout(60_000) },
     );
     if (response.status !== 200) {
-      continue;
+      throw new Error(`snapshot batch ${index / SNAPSHOT_BATCH + 1} returned ${response.status}`);
     }
     const parsed = (await response.json()) as Record<
       string,
