@@ -650,7 +650,7 @@ type UniverseSelectionReceipt = Readonly<{
   runId: string;
   attemptedAt: string;
   completedAt: string;
-  status: "selected" | "failed";
+  status: "started" | "selected" | "failed";
   processStatus: string;
   exitCode: number | null;
   snapshotRef?: string;
@@ -699,7 +699,7 @@ function assertUniverseSnapshotNotSupersededByFailure(
     value.schemaVersion !== "lcx_finance_universe_selection_attempt_v1" ||
     typeof value.runId !== "string" ||
     typeof value.completedAt !== "string" ||
-    (value.status !== "selected" && value.status !== "failed")
+    (value.status !== "started" && value.status !== "selected" && value.status !== "failed")
   ) {
     throw new Error("latest universe selection attempt receipt is invalid");
   }
@@ -708,6 +708,9 @@ function assertUniverseSnapshotNotSupersededByFailure(
   const snapshotGeneratedAtMs = Date.parse(snapshot.generatedAt);
   if (!Number.isFinite(completedAtMs) || !Number.isFinite(snapshotGeneratedAtMs)) {
     throw new Error("latest universe selection attempt or snapshot timestamp is invalid");
+  }
+  if (value.status === "started") {
+    throw new Error("latest universe selector attempt did not complete with a selected receipt");
   }
   if (value.status === "failed") {
     if (completedAtMs >= snapshotGeneratedAtMs) {
@@ -843,6 +846,19 @@ async function refreshFinanceUniverseSelection(params: {
   let status: UniverseSelectionReceipt["status"] = "failed";
   try {
     preserveUniverseSnapshot(params.context.root.directory, params.attempt.runId, "previous");
+    const startedReceipt: UniverseSelectionReceipt = Object.freeze({
+      schemaVersion: "lcx_finance_universe_selection_attempt_v1",
+      runId: params.attempt.runId,
+      attemptedAt: startedAt,
+      completedAt: startedAt,
+      status: "started",
+      processStatus: "running",
+      exitCode: null,
+    });
+    fs.appendFileSync(
+      path.join(params.context.root.directory, UNIVERSE_SELECTION_RUNS_LOG),
+      `${JSON.stringify(startedReceipt)}\n`,
+    );
     processResult = await runFinanceCycleProcess({
       argv: [
         "--import",

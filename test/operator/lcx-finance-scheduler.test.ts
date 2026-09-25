@@ -139,6 +139,21 @@ function appendSelectedUniverseReceipt(
   );
 }
 
+function appendStartedUniverseReceipt(runId: string, startedAt: string): void {
+  fs.appendFileSync(
+    path.join(directory, "finance-universe-selection-runs.jsonl"),
+    `${JSON.stringify({
+      schemaVersion: "lcx_finance_universe_selection_attempt_v1",
+      runId,
+      attemptedAt: startedAt,
+      completedAt: startedAt,
+      status: "started",
+      processStatus: "running",
+      exitCode: null,
+    })}\n`,
+  );
+}
+
 function seedSelectedUniverse(snapshot: UniverseSnapshotFixture): void {
   writeUniverseSnapshot(snapshot);
   appendSelectedUniverseReceipt(snapshot);
@@ -850,6 +865,35 @@ it("allows a receipt-free validated snapshot to bootstrap a first scheduler run"
   ]);
 });
 
+it("rejects a fresh canonical snapshot when the latest receipt is still started", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-20T14:30:00.000Z"));
+  await activateIntradayRule();
+  const snapshot = {
+    generatedAt: "2026-09-20T14:20:00.000Z",
+    selected: ["INTERRUPTED"],
+  };
+  writeUniverseSnapshot(snapshot);
+  appendStartedUniverseReceipt("crashed-before-selected-receipt", "2026-09-20T14:10:00.000Z");
+  mocks.readUniverse.mockReturnValue(snapshot);
+  mocks.delay.mockImplementationOnce(async () => {
+    process.emit("SIGTERM");
+  });
+
+  await expect(
+    runFinanceScheduler([
+      "--loop",
+      "--dir",
+      directory,
+      "--intraday-monitor",
+      "--no-source-heartbeat",
+    ]),
+  ).resolves.toBe(143);
+
+  expect(mocks.runIntradayMonitorTick).not.toHaveBeenCalled();
+  expect(mocks.runCycle).not.toHaveBeenCalled();
+});
+
 it("has no intraday candidates when the dynamic universe receipt is missing or stale", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-09-21T14:30:00.000Z"));
@@ -1158,7 +1202,7 @@ it("clears a previously bound universe when the night selector fails", async () 
       .readFileSync(path.join(directory, "finance-universe-selection-runs.jsonl"), "utf8")
       .trim()
       .split("\n")
-      .at(-1)!,
+      .at(-1),
   );
   expect(selectionReceipt).toMatchObject({ status: "failed" });
   expect(fs.existsSync(path.join(directory, FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME))).toBe(
@@ -1219,7 +1263,7 @@ it("keeps failed receipt appends fail-closed across restart and preserves snapsh
   const universeReceiptPath = path.join(directory, "finance-universe-selection-runs.jsonl");
   const appendFile = fs.appendFileSync.bind(fs);
   vi.spyOn(fs, "appendFileSync").mockImplementation((filename, data, options) => {
-    if (String(filename) === universeReceiptPath) {
+    if (String(filename) === universeReceiptPath && !String(data).includes('"status":"started"')) {
       throw new Error("simulated receipt disk failure");
     }
     return appendFile(filename, data, options);
@@ -1249,6 +1293,8 @@ it("keeps failed receipt appends fail-closed across restart and preserves snapsh
       message.includes("universe selection receipt append failed: simulated receipt disk failure"),
     ),
   ).toBe(true);
+  const latestReceipt = fs.readFileSync(universeReceiptPath, "utf8").trim().split("\n").at(-1);
+  expect(JSON.parse(latestReceipt)).toMatchObject({ status: "started" });
 
   mocks.runIntradayMonitorTick.mockClear();
   mocks.readUniverse.mockImplementation(() => {
@@ -1258,6 +1304,129 @@ it("keeps failed receipt appends fail-closed across restart and preserves snapsh
     }
     return JSON.parse(fs.readFileSync(snapshotPath, "utf8")) as UniverseSnapshotFixture;
   });
+  mocks.delay.mockImplementationOnce(async () => {
+    process.emit("SIGTERM");
+  });
+  await expect(runFinanceScheduler(args)).resolves.toBe(143);
+  expect(mocks.runIntradayMonitorTick).not.toHaveBeenCalled();
+});
+
+it("does not run selector when the started receipt append fails", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-22T22:00:00.000Z"));
+  await activateIntradayRule();
+  writeFinanceSchedulerState(directory, {
+    lastFired: { day: "2026-09-22" },
+    lastSucceeded: {},
+    lastStatus: {},
+  });
+  const priorSnapshot = {
+    generatedAt: "2026-09-21T22:00:00.000Z",
+    selected: ["SPY", "PRIOR"],
+  };
+  seedSelectedUniverse(priorSnapshot);
+  mocks.readUniverse.mockReturnValue(priorSnapshot);
+  mocks.runCycle.mockResolvedValueOnce({
+    ...success,
+    stdout: JSON.stringify({
+      ok: true,
+      scoredFiled: { appended: 0, skipped: 0 },
+      pending: [],
+      declined: [],
+      issues: [],
+    }),
+  });
+  const universeReceiptPath = path.join(directory, "finance-universe-selection-runs.jsonl");
+  const appendFile = fs.appendFileSync.bind(fs);
+  vi.spyOn(fs, "appendFileSync").mockImplementation((filename, data, options) => {
+    if (String(filename) === universeReceiptPath && String(data).includes('"status":"started"')) {
+      throw new Error("simulated started receipt disk failure");
+    }
+    return appendFile(filename, data, options);
+  });
+  mocks.runIntradayMonitorTick.mockResolvedValue({ status: "no_signal" });
+  mocks.delay
+    .mockImplementationOnce(async () => {})
+    .mockImplementationOnce(async () => {
+      process.emit("SIGTERM");
+    });
+
+  await expect(
+    runFinanceScheduler([
+      "--loop",
+      "--dir",
+      directory,
+      "--intraday-monitor",
+      "--no-source-heartbeat",
+    ]),
+  ).resolves.toBe(143);
+
+  expect(mocks.runCycle).toHaveBeenCalledOnce();
+  expect(mocks.runIntradayMonitorTick.mock.calls.map(([call]) => call.instrument)).toEqual([
+    "SPY",
+    "PRIOR",
+  ]);
+  expect(fs.existsSync(path.join(directory, FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME))).toBe(
+    false,
+  );
+  const latestReceipt = fs.readFileSync(universeReceiptPath, "utf8").trim().split("\n").at(-1);
+  expect(JSON.parse(latestReceipt)).toMatchObject({ status: "failed" });
+  expect(
+    fs.existsSync(
+      path.join(
+        directory,
+        `finance-universe-selection-${JSON.parse(latestReceipt).runId}-previous.json`,
+      ),
+    ),
+  ).toBe(true);
+});
+
+it("rejects the old snapshot on restart when rename fails but a failed receipt persists", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-22T22:00:00.000Z"));
+  await activateIntradayRule();
+  writeFinanceSchedulerState(directory, {
+    lastFired: { day: "2026-09-22" },
+    lastSucceeded: {},
+    lastStatus: {},
+  });
+  const priorSnapshot = {
+    generatedAt: "2026-09-21T22:00:00.000Z",
+    selected: ["SPY", "OLD"],
+  };
+  seedSelectedUniverse(priorSnapshot);
+  mocks.readUniverse.mockReturnValue(priorSnapshot);
+  const canonicalPath = path.join(directory, FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME);
+  const rename = fs.renameSync.bind(fs);
+  vi.spyOn(fs, "renameSync").mockImplementation((oldPath, newPath) => {
+    if (String(oldPath) === canonicalPath) {
+      throw new Error("simulated persistent snapshot rename failure");
+    }
+    return rename(oldPath, newPath);
+  });
+  mocks.runIntradayMonitorTick.mockResolvedValue({ status: "no_signal" });
+  mocks.delay
+    .mockImplementationOnce(async () => {})
+    .mockImplementationOnce(async () => {
+      process.emit("SIGTERM");
+    });
+  const args = ["--loop", "--dir", directory, "--intraday-monitor", "--no-source-heartbeat"];
+
+  await expect(runFinanceScheduler(args)).resolves.toBe(143);
+  expect(mocks.runCycle).toHaveBeenCalledOnce();
+  expect(fs.readFileSync(canonicalPath, "utf8").trim()).toBe(JSON.stringify(priorSnapshot));
+  expect(mocks.runIntradayMonitorTick.mock.calls.map(([call]) => call.instrument)).toEqual([
+    "SPY",
+    "OLD",
+  ]);
+  const latestReceipt = fs
+    .readFileSync(path.join(directory, "finance-universe-selection-runs.jsonl"), "utf8")
+    .trim()
+    .split("\n")
+    .at(-1);
+  expect(JSON.parse(latestReceipt)).toMatchObject({ status: "failed" });
+
+  mocks.runIntradayMonitorTick.mockClear();
   mocks.delay.mockImplementationOnce(async () => {
     process.emit("SIGTERM");
   });
@@ -1340,7 +1509,7 @@ it("does not re-arm a same-millisecond failed snapshot receipt, then recovers on
     .trim()
     .split("\n")
     .map((line) => JSON.parse(line));
-  expect(receipts.map((receipt) => receipt.status)).toEqual(["failed", "selected"]);
+  expect(receipts.map((receipt) => receipt.status)).toEqual(["failed", "started", "selected"]);
 
   mocks.runIntradayMonitorTick.mockClear();
   mocks.delay.mockImplementationOnce(async () => {
@@ -1642,7 +1811,11 @@ it("routes night settlement, ledgers and news through the same module research o
     ]),
   );
   const universeReceipt = JSON.parse(
-    fs.readFileSync(path.join(directory, "finance-universe-selection-runs.jsonl"), "utf8").trim(),
+    fs
+      .readFileSync(path.join(directory, "finance-universe-selection-runs.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .at(-1),
   );
   expect(universeReceipt).toMatchObject({ status: "selected", selectedCount: 2 });
   expect(readFinanceSchedulerState(directory).lastSucceeded.night).toBe("2026-09-22");
@@ -1857,7 +2030,11 @@ it("keeps night settlement success independent from a failed universe refresh", 
     fs.readFileSync(path.join(directory, "daily-cycle-runs.jsonl"), "utf8").trim(),
   );
   const selection = JSON.parse(
-    fs.readFileSync(path.join(directory, "finance-universe-selection-runs.jsonl"), "utf8").trim(),
+    fs
+      .readFileSync(path.join(directory, "finance-universe-selection-runs.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .at(-1),
   );
   expect(run).toMatchObject({
     ok: true,
