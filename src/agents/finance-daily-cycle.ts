@@ -26,8 +26,10 @@ import { appendFinanceBars } from "./finance-bar-ledger.js";
  *    inventing a fresh signal every day.
  *
  * Model review is bounded to one call per eligible placement run. Preview, non-Alpaca placement,
- * empty-candidate, and blocked-readiness runs do not call a model. A missing or invalid review
- * fails closed; a model approval is not execution authority.
+ * empty-candidate, and blocked-readiness runs do not call a model. A valid model veto or a
+ * completed response that breaks exact-candidate binding blocks the affected order. An
+ * unavailable/failed advisory review is recorded but does not itself approve or veto a
+ * deterministic candidate; the shared TypeScript execution gates remain authoritative.
  *
  * One side effect is not about trading: every run files the OHLC bars it already fetched into the
  * bar book. The cycle needs closes to trade; range measures (readiness, true drawdown, ATR) need
@@ -65,6 +67,7 @@ import { resolveFinanceStateDir } from "./finance-state-dir.js";
 import { buildFinanceThesisDecisionContext } from "./finance-thesis-decision-context.js";
 import {
   FINANCE_TRADE_DECISION_REVIEW_SCHEMA,
+  FINANCE_TRADE_DECISION_REVIEW_TIMEOUT_MS,
   isValidFinanceTradeDecisionReviewResult,
   type FinanceTradeDecisionCandidate,
   type FinanceTradeDecisionReviewReceipt,
@@ -146,6 +149,17 @@ export function executionQuoteIssue(
     return "execution quote is stale";
   }
   return null;
+}
+
+function executionQuoteProviderFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  if (message === "timeout") {
+    return "execution quote timeout";
+  }
+  if (/^alpaca_safety_[a-z\d_]+$/u.test(message)) {
+    return `execution quote unavailable (${message})`;
+  }
+  return "execution quote unavailable";
 }
 
 export type FinanceDailyAccountBook = Readonly<{
@@ -1252,12 +1266,7 @@ export async function runFinanceDailyCycle(
           };
         }
       } catch (error) {
-        executionQuoteErrors.set(
-          candidate.instrument,
-          error instanceof Error && error.message === "timeout"
-            ? "execution quote timeout"
-            : "execution quote unavailable",
-        );
+        executionQuoteErrors.set(candidate.instrument, executionQuoteProviderFailure(error));
         executionQuote = undefined;
       }
     }
@@ -1357,8 +1366,11 @@ export async function runFinanceDailyCycle(
     } else {
       try {
         rawReview = await withTimeout(
-          params.tradeDecisionReviewer(reviewRequest, AbortSignal.timeout(30_000)),
-          35_000,
+          params.tradeDecisionReviewer(
+            reviewRequest,
+            AbortSignal.timeout(FINANCE_TRADE_DECISION_REVIEW_TIMEOUT_MS),
+          ),
+          FINANCE_TRADE_DECISION_REVIEW_TIMEOUT_MS + 5_000,
         );
       } catch (error) {
         rawReview = failedReview(

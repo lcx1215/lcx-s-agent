@@ -7,6 +7,8 @@ import { ModelAdapterError, type ModelCallRequest } from "./logical-agent-model-
 export const FINANCE_TRADE_DECISION_REVIEW_SCHEMA = "lcx_finance_trade_decision_review_v1" as const;
 export const FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA =
   "lcx_finance_intraday_trade_decision_review_v1" as const;
+export const FINANCE_TRADE_DECISION_REVIEW_MAX_TOKENS = 4_096;
+export const FINANCE_TRADE_DECISION_REVIEW_TIMEOUT_MS = 60_000;
 
 export type FinanceTradeDecisionCandidate = Readonly<{
   candidateId: string;
@@ -317,8 +319,8 @@ export function createFinanceTradeDecisionReviewer(
   const factory = dependencies.adapterFactory ?? createConfiguredFinanceModelAdapter;
   const adapter = factory(cfg, {
     maxCalls: 1,
-    maxTokens: 2_048,
-    timeoutMs: 30_000,
+    maxTokens: FINANCE_TRADE_DECISION_REVIEW_MAX_TOKENS,
+    timeoutMs: FINANCE_TRADE_DECISION_REVIEW_TIMEOUT_MS,
     buildPrompt: reviewPrompt,
   });
   const now = dependencies.now ?? Date.now;

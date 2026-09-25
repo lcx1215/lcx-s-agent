@@ -106,6 +106,18 @@ function adapter(output: unknown): LogicalAgentModelAdapter {
 }
 
 describe("configured finance trade decision reviewer", () => {
+  it("uses a bounded output and timeout budget for a complete structured review", () => {
+    const model = adapter(null);
+    const adapterFactory = vi.fn(() => model);
+
+    createFinanceTradeDecisionReviewer({} as OpenClawConfig, { adapterFactory });
+
+    expect(adapterFactory).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ maxCalls: 1, maxTokens: 4_096, timeoutMs: 60_000 }),
+    );
+  });
+
   it("returns only exact candidate-bound approve/veto decisions and hashes transport identity", async () => {
     const model = adapter({
       schemaVersion: FINANCE_TRADE_DECISION_REVIEW_SCHEMA,

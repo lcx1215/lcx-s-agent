@@ -24,6 +24,7 @@ import { readFinanceStrategyRuleLedger } from "./finance-strategy-rule-ledger.js
 import { buildFinanceThesisDecisionContext } from "./finance-thesis-decision-context.js";
 import {
   FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA,
+  FINANCE_TRADE_DECISION_REVIEW_TIMEOUT_MS,
   isValidFinanceTradeDecisionReviewResult,
   type FinanceIntradayTradeDecisionReviewRequest,
   type FinanceTradeDecisionReviewResult,
@@ -274,9 +275,12 @@ export async function executeFinanceIntradayDecision(params: {
         rawReview = await withTimeout(
           params.tradeDecisionReviewer(
             reviewRequest,
-            AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
+            AbortSignal.any([
+              signal,
+              AbortSignal.timeout(FINANCE_TRADE_DECISION_REVIEW_TIMEOUT_MS),
+            ]),
           ),
-          35_000,
+          FINANCE_TRADE_DECISION_REVIEW_TIMEOUT_MS + 5_000,
         );
       } catch (error) {
         rawReview = failedReview(

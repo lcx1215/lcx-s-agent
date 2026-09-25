@@ -269,6 +269,29 @@ describe("daily cycle execution data boundary", () => {
     expect(mocks.order).toHaveBeenCalledTimes(2);
     expect(report.refusals.join()).not.toContain("candidate was not eligible for model review");
   });
+  it.each([
+    {
+      errorMessage: "alpaca_safety_quote_expired",
+      expectedRefusal: "AAPL: execution quote unavailable (alpaca_safety_quote_expired)",
+    },
+    {
+      errorMessage: "synthetic provider secret",
+      expectedRefusal: "AAPL: execution quote unavailable",
+      hiddenText: "synthetic provider secret",
+    },
+  ])("preserves safe quote failure codes and redacts provider text", async (testCase) => {
+    const executionQuoteProvider = vi.fn(async () => {
+      throw new Error(testCase.errorMessage);
+    });
+
+    const report = await runFinanceDailyCycle({ ...params, executionQuoteProvider });
+
+    expect(report.refusals).toContain(testCase.expectedRefusal);
+    if ("hiddenText" in testCase) {
+      expect(JSON.stringify(report)).not.toContain(testCase.hiddenText);
+    }
+    expect(mocks.order).not.toHaveBeenCalled();
+  });
   it("treats a model veto as a successful abstention and does not dispatch", async () => {
     const report = await runFinanceDailyCycle({
       ...params,
