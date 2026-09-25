@@ -68,6 +68,7 @@ function checkTextContains(params: {
   text: string | null;
   fileLabel: string;
   required: string[];
+  requiredAny?: string[];
   summary: string;
 }): DoctrineCheck {
   if (params.text === null) {
@@ -77,12 +78,22 @@ function checkTextContains(params: {
       summary: `${params.fileLabel} missing`,
     };
   }
-  const missing = params.required.filter((needle) => !params.text?.includes(needle));
+  const normalizedText = params.text.replace(/\s+/gu, " ").toLowerCase();
+  const missing = params.required
+    .filter((needle) => !normalizedText.includes(needle.toLowerCase()))
+    .map((needle) => `missing: ${needle}`);
+  if (
+    params.requiredAny !== undefined &&
+    params.requiredAny.length > 0 &&
+    !params.requiredAny.some((needle) => normalizedText.includes(needle.toLowerCase()))
+  ) {
+    missing.push(`missing one of: ${params.requiredAny.join(" | ")}`);
+  }
   return {
     id: params.id,
     ok: missing.length === 0,
     summary: params.summary,
-    evidence: missing.map((needle) => `missing: ${needle}`),
+    evidence: missing,
   };
 }
 
@@ -103,7 +114,6 @@ async function main() {
     l5Skill,
     l4Skill,
     l5SkillScript,
-    l4SkillScript,
   ] = await Promise.all([
     readOptionalText(path.join(repoRoot, "AGENTS.md")),
     readOptionalText(path.join(repoRoot, "README.md")),
@@ -120,9 +130,6 @@ async function main() {
     readOptionalText(path.join(codexSkillsRoot, "l4-regression-batterer", "SKILL.md")),
     readOptionalText(
       path.join(codexSkillsRoot, "l5-regression-batterer", "scripts", "l5-regression-batterer.sh"),
-    ),
-    readOptionalText(
-      path.join(codexSkillsRoot, "l4-regression-batterer", "scripts", "l4-regression-batterer.sh"),
     ),
   ]);
 
@@ -155,7 +162,8 @@ async function main() {
       id: "l4_legacy_alias_only",
       text: [agents, runbook, evolutionSkill, l4Skill].filter(Boolean).join("\n"),
       fileLabel: "L4 alias entrypoints",
-      required: ["legacy compatibility alias", "Prefer the L5 skill"],
+      required: ["legacy compatibility alias"],
+      requiredAny: ["Prefer the L5 skill"],
       summary: "legacy L4 path must be described as compatibility only",
     }),
   );
@@ -165,7 +173,8 @@ async function main() {
       id: "baseline_failure_family_not_tiny_patch",
       text: [agents, readme, baselineSkill].filter(Boolean).join("\n"),
       fileLabel: "baseline doctrine",
-      required: ["failure family", "smallest coherent system upgrade", "over a tiny symptom patch"],
+      required: ["failure family", "smallest coherent system upgrade"],
+      requiredAny: ["over a tiny symptom patch", "over a symptom-only patch"],
       summary: "baseline hardening should repair shared failure families, not isolated symptoms",
     }),
   );
@@ -373,24 +382,27 @@ async function main() {
     evidence: l5ScriptInstalled ? [] : [`missing: ${l5ScriptPath}`],
   });
 
-  const l5RuntimeScriptText = [l5SkillScript, l4SkillScript].filter(Boolean).join("\n");
-  const l5RuntimePinned =
-    l5RuntimeScriptText.includes("PINNED_NODE_BIN") &&
-    l5RuntimeScriptText.includes("node-v22.14.0-darwin-arm64/bin") &&
+  const l5RuntimeScriptText = l5SkillScript ?? "";
+  const l5RuntimeValidated =
+    l5RuntimeScriptText.includes("LCX_NODE_BIN") &&
+    l5RuntimeScriptText.includes("command -v node") &&
+    l5RuntimeScriptText.includes("process.versions.node") &&
+    l5RuntimeScriptText.includes("major < 22") &&
+    l5RuntimeScriptText.includes("minor < 12") &&
     l5RuntimeScriptText.includes("export PATH=") &&
-    l5RuntimeScriptText.includes("pnpm");
+    l5RuntimeScriptText.includes("pnpm exec");
   checks.push({
-    id: "l5_skill_runtime_path_pinned",
-    ok: l5RuntimePinned,
+    id: "l5_skill_runtime_is_validated",
+    ok: l5RuntimeValidated,
     summary:
-      "L5 regression skill runtime should pin the Node 22 pnpm path or future windows can fail from PATH drift",
-    evidence: l5RuntimePinned
+      "L5 regression skill should discover or accept Node, enforce Node 22.12+, and expose that runtime to pnpm",
+    evidence: l5RuntimeValidated
       ? []
       : [
-          `missing pinned runtime in ${path.join(
+          `missing portable Node/version/PATH contract in ${path.join(
             codexSkillsRoot,
             "l5-regression-batterer/scripts/l5-regression-batterer.sh",
-          )} or delegated legacy script`,
+          )}`,
         ],
   });
 

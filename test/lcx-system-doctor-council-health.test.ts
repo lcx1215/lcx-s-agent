@@ -20,6 +20,14 @@ const evaluate = (roles: unknown[]) =>
     roleHealthSuccesses: Record<string, number>;
     roleHealthUnconfirmed: Record<string, number>;
   };
+const evaluateFailureReason = (
+  latest: { status: string; roles: unknown[] } | undefined,
+  unconfirmedRoles: string[],
+) =>
+  vm.runInNewContext(`${pure}\nlatestLearningCouncilFailureReason(latest, unconfirmedRoles)`, {
+    latest,
+    unconfirmedRoles,
+  }) as string | undefined;
 
 describe("doctor separates usable output from requested-model evidence", () => {
   it("keeps legacy and fallback successes unconfirmed", () => {
@@ -55,5 +63,19 @@ describe("doctor separates usable output from requested-model evidence", () => {
     ]);
     expect(result.roleHealthSuccesses).toEqual({ kimi: 1 });
     expect(result.roleHealthUnconfirmed).toEqual({ kimi: 3 });
+  });
+  it("explains missing recent evidence without undefined status placeholders", () => {
+    const reason = evaluateFailureReason(undefined, []);
+    expect(reason).toContain("no learning-council artifact in the 7-day evidence window");
+    expect(reason).toContain("provider health is unconfirmed");
+    expect(reason).not.toContain("undefined");
+  });
+  it("distinguishes missing role evidence from unconfirmed provider roles", () => {
+    expect(evaluateFailureReason({ status: "unknown", roles: [] }, [])).toContain(
+      "unconfirmedModelRoles=no_role_evidence",
+    );
+    expect(
+      evaluateFailureReason({ status: "degraded", roles: [{ role: "kimi" }] }, ["kimi"]),
+    ).toContain("unconfirmedModelRoles=kimi");
   });
 });

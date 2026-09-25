@@ -850,6 +850,19 @@ function summarizeCouncilHealth(roles: readonly CouncilRoleSummary[]) {
   return { roleSuccesses, roleFailures, roleHealthSuccesses, roleHealthUnconfirmed };
 }
 
+function latestLearningCouncilFailureReason(
+  latest: { status: string; roles: readonly CouncilRoleSummary[] } | undefined,
+  unconfirmedRoles: readonly string[],
+): string | undefined {
+  if (!latest) {
+    return "no learning-council artifact in the 7-day evidence window; provider health is unconfirmed";
+  }
+  const roleEvidence =
+    unconfirmedRoles.join(",") ||
+    (latest.roles.length > 0 ? "provider_identity_or_health_unconfirmed" : "no_role_evidence");
+  return `latest learning council degraded: status=${latest.status}, unconfirmedModelRoles=${roleEvidence}`;
+}
+
 async function modelCouncilProviderEvidenceCheck(): Promise<CheckResult> {
   const startedAt = Date.now();
   const [learningCouncilFiles, reviewPanelFiles] = await Promise.all([
@@ -925,6 +938,9 @@ async function modelCouncilProviderEvidenceCheck(): Promise<CheckResult> {
     !latestLearningCouncil ||
     latestLearningCouncil.status === "degraded" ||
     latestRoleFailures.length > 0;
+  const latestLearningCouncilError = latestLearningCouncilDegraded
+    ? latestLearningCouncilFailureReason(latestLearningCouncil, latestRoleFailures)
+    : undefined;
   const reviewPanelProviderBacked = reviewPanelReceipts.filter(
     (receipt) => receipt.providerCallsMade,
   ).length;
@@ -937,6 +953,11 @@ async function modelCouncilProviderEvidenceCheck(): Promise<CheckResult> {
     summary: {
       windowDays: MODEL_COUNCIL_AUDIT_WINDOW_MS / (24 * 60 * 60 * 1000),
       learningCouncilArtifacts: learningCouncilArtifacts.length,
+      latestProviderEvidenceState: latestLearningCouncil
+        ? latestLearningCouncilDegraded
+          ? "unconfirmed"
+          : "healthy"
+        : "missing_recent_artifact",
       latestLearningCouncil,
       roleSuccesses,
       roleFailures,
@@ -958,9 +979,7 @@ async function modelCouncilProviderEvidenceCheck(): Promise<CheckResult> {
       liveTouched: false,
       providerConfigTouched: false,
     },
-    error: latestLearningCouncilDegraded
-      ? `latest learning council degraded: status=${latestLearningCouncil?.status}, unconfirmedModelRoles=${latestRoleFailures.join(",") || "unknown"}`
-      : undefined,
+    error: latestLearningCouncilError,
   };
 }
 
