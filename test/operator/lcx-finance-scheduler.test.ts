@@ -1381,7 +1381,7 @@ it("does not run selector when the started receipt append fails", async () => {
   expect(JSON.parse(latestReceipt)).toMatchObject({ status: "failed" });
 });
 
-it("rejects the old snapshot on restart when rename fails but a failed receipt persists", async () => {
+it("rejects the old snapshot when rename and failed receipt writes fail after started persists", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-09-22T22:00:00.000Z"));
   await activateIntradayRule();
