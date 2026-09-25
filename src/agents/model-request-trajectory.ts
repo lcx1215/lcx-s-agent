@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import fs from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import path from "node:path";
+import { createInterface } from "node:readline";
 import type { AgentMessage, StreamFn } from "@mariozechner/pi-agent-core";
 import { resolveStateDir } from "../config/paths.js";
 import { resolveUserPath } from "../utils.js";
@@ -340,57 +341,108 @@ export async function readModelRequestTrajectory(
 ): Promise<ModelRequestRecord[]> {
   const env = params.env ?? process.env;
   const filePath = params.filePath ?? modelRequestTrajectoryPath(env);
-  let contents: string;
-  try {
-    contents = await fs.readFile(filePath, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return [];
-    }
-    throw error;
-  }
   const records: ModelRequestRecord[] = [];
-  for (const line of contents.split(/\r?\n/u)) {
-    if (!line.trim()) {
-      continue;
-    }
-    try {
-      const record = parseRecord(JSON.parse(line) as unknown);
-      if (record) {
-        records.push(record);
-      }
-    } catch {
-      // Ignore incomplete or malformed final lines without exposing their content.
-    }
-  }
+  await forEachModelRequestTrajectoryRecord(filePath, (record) => records.push(record));
   return records;
 }
 
-export function summarizeModelRequestTrajectory(records: readonly ModelRequestRecord[]) {
-  const bySource = Object.fromEntries(
-    SOURCES.map((source) => [source, { attempts: 0, responses: 0, errors: 0, aborted: 0 }]),
-  ) as Record<
+type MutableModelRequestTrajectorySummary = {
+  events: number;
+  attempts: number;
+  responses: number;
+  errors: number;
+  aborted: number;
+  bySource: Record<
     ModelRequestSource,
     { attempts: number; responses: number; errors: number; aborted: number }
   >;
-  for (const record of records) {
-    const count = bySource[record.source];
-    if (record.stage === "attempt_started") {
-      count.attempts += 1;
-    } else if (record.stage === "response_received") {
-      count.responses += 1;
-    } else if (record.stage === "request_error") {
-      count.errors += 1;
-    } else {
-      count.aborted += 1;
-    }
-  }
+};
+
+function emptyModelRequestTrajectorySummary(): MutableModelRequestTrajectorySummary {
   return {
-    events: records.length,
-    attempts: records.filter((record) => record.stage === "attempt_started").length,
-    responses: records.filter((record) => record.stage === "response_received").length,
-    errors: records.filter((record) => record.stage === "request_error").length,
-    aborted: records.filter((record) => record.stage === "request_aborted").length,
-    bySource,
+    events: 0,
+    attempts: 0,
+    responses: 0,
+    errors: 0,
+    aborted: 0,
+    bySource: Object.fromEntries(
+      SOURCES.map((source) => [source, { attempts: 0, responses: 0, errors: 0, aborted: 0 }]),
+    ) as MutableModelRequestTrajectorySummary["bySource"],
   };
+}
+
+function addRecordToTrajectorySummary(
+  summary: MutableModelRequestTrajectorySummary,
+  record: ModelRequestRecord,
+): void {
+  const count = summary.bySource[record.source];
+  summary.events += 1;
+  if (record.stage === "attempt_started") {
+    summary.attempts += 1;
+    count.attempts += 1;
+  } else if (record.stage === "response_received") {
+    summary.responses += 1;
+    count.responses += 1;
+  } else if (record.stage === "request_error") {
+    summary.errors += 1;
+    count.errors += 1;
+  } else {
+    summary.aborted += 1;
+    count.aborted += 1;
+  }
+}
+
+async function forEachModelRequestTrajectoryRecord(
+  filePath: string,
+  visit: (record: ModelRequestRecord) => void,
+): Promise<void> {
+  const input = createReadStream(filePath, { encoding: "utf8" });
+  const lines = createInterface({ input, crlfDelay: Infinity });
+  try {
+    for await (const line of lines) {
+      if (!line.trim()) {
+        continue;
+      }
+      try {
+        const record = parseRecord(JSON.parse(line) as unknown);
+        if (record) {
+          visit(record);
+        }
+      } catch {
+        // Ignore incomplete or malformed lines without exposing their content.
+      }
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return;
+    }
+    throw error;
+  } finally {
+    lines.close();
+    input.destroy();
+  }
+}
+
+/** Summarizes the append-only trajectory with memory independent of the total file size. */
+export async function summarizeModelRequestTrajectoryFile(
+  params: {
+    filePath?: string;
+    env?: NodeJS.ProcessEnv;
+  } = {},
+): Promise<ReturnType<typeof emptyModelRequestTrajectorySummary>> {
+  const env = params.env ?? process.env;
+  const filePath = params.filePath ?? modelRequestTrajectoryPath(env);
+  const summary = emptyModelRequestTrajectorySummary();
+  await forEachModelRequestTrajectoryRecord(filePath, (record) =>
+    addRecordToTrajectorySummary(summary, record),
+  );
+  return summary;
+}
+
+export function summarizeModelRequestTrajectory(records: readonly ModelRequestRecord[]) {
+  const summary = emptyModelRequestTrajectorySummary();
+  for (const record of records) {
+    addRecordToTrajectorySummary(summary, record);
+  }
+  return summary;
 }

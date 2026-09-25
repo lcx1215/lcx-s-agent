@@ -1,13 +1,9 @@
 #!/usr/bin/env node
 import { pathToFileURL } from "node:url";
-import {
-  readModelRequestTrajectory,
-  summarizeModelRequestTrajectory,
-} from "../../src/agents/model-request-trajectory.js";
+import { summarizeModelRequestTrajectoryFile } from "../../src/agents/model-request-trajectory.js";
 
 export async function runModelRequestTrajectoryCli() {
-  const records = await readModelRequestTrajectory();
-  const summary = summarizeModelRequestTrajectory(records);
+  const summary = await summarizeModelRequestTrajectoryFile();
   process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
   return summary;
 }
