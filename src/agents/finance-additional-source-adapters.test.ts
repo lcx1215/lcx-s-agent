@@ -75,12 +75,12 @@ describe("additional finance source adapters", () => {
       };
     };
     const adapter = createNasdaqExchangeMarketAdapter({ fetchImpl });
-    expect(adapter.sampleRequest).toEqual({ instrument: "SPY", assetClass: "etf" });
+    expect(adapter.sampleRequest).toEqual({ instrument: "AAPL", assetClass: "us_equity" });
     const observation = await adapter.collect(
       { ...REQUEST, ...adapter.sampleRequest },
       new AbortController().signal,
     );
-    expect(requestedUrl).toContain("/quote/SPY/info?assetclass=etfs");
+    expect(requestedUrl).toContain("/quote/AAPL/info?assetclass=stocks");
     expect(observation.providerRole).toBe("cross_check_market_data");
     expect(observation.fields[0]).toEqual(
       expect.objectContaining({
