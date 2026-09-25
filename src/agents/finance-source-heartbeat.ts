@@ -19,8 +19,10 @@ import {
   type FinanceRealtimeSourceRequest,
 } from "./finance-realtime-source-registry.js";
 import {
+  acquireFinanceSourceHeartbeatLock,
   FINANCE_SOURCE_HEARTBEAT_DEFAULT_INTERVAL_MS,
   FINANCE_SOURCE_HEARTBEAT_FAILURE_INTERVAL_MS,
+  FINANCE_SOURCE_HEARTBEAT_MAX_TIMER_MS,
   FINANCE_SOURCE_HEARTBEAT_SCHEMA_VERSION,
   persistFinanceSourceHeartbeat,
   readFinanceSourceHeartbeat,
@@ -36,6 +38,7 @@ import { resolveFinanceStateDir } from "./finance-state-dir.js";
 export {
   FINANCE_SOURCE_HEARTBEAT_DEFAULT_INTERVAL_MS,
   FINANCE_SOURCE_HEARTBEAT_FAILURE_INTERVAL_MS,
+  FINANCE_SOURCE_HEARTBEAT_MAX_TIMER_MS,
   FINANCE_SOURCE_HEARTBEAT_SCHEMA_VERSION,
   persistFinanceSourceHeartbeat,
   readFinanceSourceHeartbeat,
@@ -355,100 +358,139 @@ export async function runFinanceSourceHeartbeat(options: HeartbeatOptions = {}) 
   const asOf = options.asOf ?? new Date(checkedAt).toISOString();
   const timeoutMs = options.timeoutMs ?? 15_000;
   const intervalMs = options.intervalMs ?? FINANCE_SOURCE_HEARTBEAT_DEFAULT_INTERVAL_MS;
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    throw new Error("heartbeat timeoutMs must be positive");
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs <= 0 ||
+    timeoutMs > FINANCE_SOURCE_HEARTBEAT_MAX_TIMER_MS
+  ) {
+    throw new Error(
+      `heartbeat timeoutMs must be a positive safe integer no greater than ${FINANCE_SOURCE_HEARTBEAT_MAX_TIMER_MS}`,
+    );
   }
-  if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
-    throw new Error("heartbeat intervalMs must be positive");
+  if (
+    !Number.isSafeInteger(intervalMs) ||
+    intervalMs <= 0 ||
+    intervalMs > FINANCE_SOURCE_HEARTBEAT_MAX_TIMER_MS
+  ) {
+    throw new Error(
+      `heartbeat intervalMs must be a positive safe integer no greater than ${FINANCE_SOURCE_HEARTBEAT_MAX_TIMER_MS}`,
+    );
   }
   const stateDir = resolveFinanceStateDir(options).directory;
-  const previous = await readFinanceSourceHeartbeat({ directory: stateDir });
   const configured = registryOptions(env, options.fetchImpl);
   const candidates = selectCandidates(
     asOf,
     options.realtimeAdapters ?? createFinanceRealtimeSourceRegistry(configured.realtime),
     options.collectionAdapters ?? createFinanceMarketCollectionRegistry(configured.collection),
   );
-  const due = candidates.filter((candidate) => {
-    if (options.force) {
-      return true;
-    }
-    const previousRecord = previous.records[candidate.provider];
-    return !previousRecord || Date.parse(previousRecord.nextCheckAt) <= checkedAt;
-  });
-  const skippedProviders = candidates
-    .filter((candidate) => !due.includes(candidate))
-    .map((candidate) => candidate.provider);
-  const results = await mapFinanceSourceLanes(
-    due,
-    async (candidate): Promise<ProbeResult> => {
-      const receipts: ApiCallReceipt[] = [];
-      try {
-        if (options.signal?.aborted) {
-          throw new ApiCallError("cancelled");
-        }
-        await withFinanceQuotaLane("diagnostics", async () => {
-          const governance = options.sourceGovernance?.forSource(candidate.adapterId);
-          await runApiSourceCall(
-            {
-              provider: candidate.provider,
-              source: candidate.adapterId,
-              operation: "provider_heartbeat",
-              timeoutMs,
-              ...(options.signal ? { signal: options.signal } : {}),
-              retry: { attempts: 1 },
-              cacheMaxAgeMs: 0,
-              authScopeLabel: "configured_read_only",
-              ...(governance
-                ? { rateLimiter: governance.rateLimiter, circuitBreaker: governance.circuitBreaker }
-                : {}),
-              onReceipt: (receipt) => receipts.push(receipt),
-            },
-            (signal) =>
-              candidate.kind === "realtime"
-                ? (candidate.adapter as FinanceRealtimeSourceAdapter)
-                    .collect(candidate.request as FinanceRealtimeSourceRequest, signal)
-                    .then(() => undefined)
-                : (candidate.adapter as FinanceMarketCollectionAdapter)
-                    .collect(candidate.request as FinanceMarketCollectionRequest, signal)
-                    .then(() => undefined),
-          );
-        });
-        return {
-          provider: candidate.provider,
-          record: resultFromReceipts(candidate, checkedAt, intervalMs, receipts),
-        };
-      } catch (error) {
-        return {
-          provider: candidate.provider,
-          record: resultFromReceipts(candidate, checkedAt, intervalMs, receipts, error),
-        };
-      }
-    },
-    options.maxSourceConcurrency ?? 4,
-  );
-  const records: Record<string, FinanceSourceHeartbeatRecord> = { ...previous.records };
-  for (const result of results) {
-    records[result.provider] = result.record;
+  const requestedConcurrency = options.maxSourceConcurrency ?? 4;
+  if (
+    !Number.isSafeInteger(requestedConcurrency) ||
+    requestedConcurrency < 1 ||
+    requestedConcurrency > 8
+  ) {
+    throw new Error("heartbeat maxSourceConcurrency must be an integer between 1 and 8");
   }
-  const state = await persistFinanceSourceHeartbeat(stateDir, records, checkedAt);
-  return {
-    schemaVersion: FINANCE_SOURCE_HEARTBEAT_SCHEMA_VERSION,
-    networkCalled: due.length > 0,
-    asOf,
-    state,
-    checkedProviders: due.map((candidate) => candidate.provider),
-    skippedProviders,
-    providerCount: candidates.length,
-    healthyCount: due.filter((candidate) => records[candidate.provider]?.status === "healthy")
-      .length,
-    degradedCount: due.filter((candidate) => records[candidate.provider]?.status === "degraded")
-      .length,
-    unhealthyCount: due.filter((candidate) => records[candidate.provider]?.status === "unhealthy")
-      .length,
-    unknownCount: due.filter((candidate) => records[candidate.provider]?.status === "unknown")
-      .length,
-  };
+  const maxSourceConcurrency = Math.min(requestedConcurrency, Math.max(1, candidates.length));
+  const maxLockHoldMs = Math.max(
+    60_000,
+    Math.ceil(candidates.length / maxSourceConcurrency) * timeoutMs + 30_000,
+  );
+  if (
+    !Number.isSafeInteger(maxLockHoldMs) ||
+    maxLockHoldMs > FINANCE_SOURCE_HEARTBEAT_MAX_TIMER_MS
+  ) {
+    throw new Error("heartbeat maximum probe duration exceeds the supported timer bound");
+  }
+  const releaseLock = await acquireFinanceSourceHeartbeatLock(stateDir, maxLockHoldMs);
+  try {
+    const previous = await readFinanceSourceHeartbeat({ directory: stateDir });
+    const due = candidates.filter((candidate) => {
+      if (options.force) {
+        return true;
+      }
+      const previousRecord = previous.records[candidate.provider];
+      return !previousRecord || Date.parse(previousRecord.nextCheckAt) <= checkedAt;
+    });
+    const skippedProviders = candidates
+      .filter((candidate) => !due.includes(candidate))
+      .map((candidate) => candidate.provider);
+    const results = await mapFinanceSourceLanes(
+      due,
+      async (candidate): Promise<ProbeResult> => {
+        const receipts: ApiCallReceipt[] = [];
+        try {
+          if (options.signal?.aborted) {
+            throw new ApiCallError("cancelled");
+          }
+          await withFinanceQuotaLane("diagnostics", async () => {
+            const governance = options.sourceGovernance?.forSource(candidate.adapterId);
+            await runApiSourceCall(
+              {
+                provider: candidate.provider,
+                source: candidate.adapterId,
+                operation: "provider_heartbeat",
+                timeoutMs,
+                ...(options.signal ? { signal: options.signal } : {}),
+                retry: { attempts: 1 },
+                cacheMaxAgeMs: 0,
+                authScopeLabel: "configured_read_only",
+                ...(governance
+                  ? {
+                      rateLimiter: governance.rateLimiter,
+                      circuitBreaker: governance.circuitBreaker,
+                    }
+                  : {}),
+                onReceipt: (receipt) => receipts.push(receipt),
+              },
+              (signal) =>
+                candidate.kind === "realtime"
+                  ? (candidate.adapter as FinanceRealtimeSourceAdapter)
+                      .collect(candidate.request as FinanceRealtimeSourceRequest, signal)
+                      .then(() => undefined)
+                  : (candidate.adapter as FinanceMarketCollectionAdapter)
+                      .collect(candidate.request as FinanceMarketCollectionRequest, signal)
+                      .then(() => undefined),
+            );
+          });
+          return {
+            provider: candidate.provider,
+            record: resultFromReceipts(candidate, checkedAt, intervalMs, receipts),
+          };
+        } catch (error) {
+          return {
+            provider: candidate.provider,
+            record: resultFromReceipts(candidate, checkedAt, intervalMs, receipts, error),
+          };
+        }
+      },
+      maxSourceConcurrency,
+    );
+    const records: Record<string, FinanceSourceHeartbeatRecord> = { ...previous.records };
+    for (const result of results) {
+      records[result.provider] = result.record;
+    }
+    const state = await persistFinanceSourceHeartbeat(stateDir, records, checkedAt);
+    return {
+      schemaVersion: FINANCE_SOURCE_HEARTBEAT_SCHEMA_VERSION,
+      networkCalled: due.length > 0,
+      asOf,
+      state,
+      checkedProviders: due.map((candidate) => candidate.provider),
+      skippedProviders,
+      providerCount: candidates.length,
+      healthyCount: due.filter((candidate) => records[candidate.provider]?.status === "healthy")
+        .length,
+      degradedCount: due.filter((candidate) => records[candidate.provider]?.status === "degraded")
+        .length,
+      unhealthyCount: due.filter((candidate) => records[candidate.provider]?.status === "unhealthy")
+        .length,
+      unknownCount: due.filter((candidate) => records[candidate.provider]?.status === "unknown")
+        .length,
+    };
+  } finally {
+    await releaseLock();
+  }
 }
 
 export function heartbeatErrorText(error: unknown): string {

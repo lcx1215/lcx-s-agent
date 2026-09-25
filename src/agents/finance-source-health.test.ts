@@ -90,6 +90,24 @@ describe("finance source health evidence envelopes", () => {
       expect.objectContaining({ callState: "not_configured_or_disabled" }),
     );
   });
+  it("keeps route diagnostics available when heartbeat state is corrupt", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "source-health-corrupt-heartbeat-"));
+    roots.push(root);
+    await fs.mkdir(root, { recursive: true });
+    await fs.writeFile(path.join(root, "source-heartbeats.json"), "{not-json", { mode: 0o600 });
+    const health = await inspectFinanceSourceHealth({
+      workspaceDir: path.join(root, "workspace"),
+      env: { LCX_FINANCE_STATE_DIR: root },
+      asOf: "2026-09-09T04:00:00Z",
+    });
+    expect(health.noNetworkCalled).toBe(true);
+    expect(health.heartbeat).toMatchObject({
+      stateStatus: "unavailable",
+      errorCode: "state_unavailable",
+      records: {},
+    });
+    expect(health.routes.length).toBeGreaterThan(0);
+  });
   it("keeps newer failures visible and rejects dry or evaluation wrappers at every level", async () => {
     const health = await setup({
       old: receipt("gdelt_public_news_titles"),

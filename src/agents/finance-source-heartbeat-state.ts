@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import { financeSourceHeartbeatPath, resolveFinanceStateDir } from "./finance-state-dir.js";
+import { acquireSessionWriteLock } from "./session-write-lock.js";
 
 export const FINANCE_SOURCE_HEARTBEAT_SCHEMA_VERSION = 1 as const;
 export const FINANCE_SOURCE_HEARTBEAT_DEFAULT_INTERVAL_MS = 15 * 60_000;
 export const FINANCE_SOURCE_HEARTBEAT_FAILURE_INTERVAL_MS = 5 * 60_000;
+export const FINANCE_SOURCE_HEARTBEAT_MAX_TIMER_MS = 2_147_483_647;
 
 export type FinanceSourceHeartbeatStatus = "healthy" | "degraded" | "unhealthy" | "unknown";
 
@@ -143,14 +145,48 @@ export async function readFinanceSourceHeartbeat(
   } = {},
 ): Promise<FinanceSourceHeartbeatState> {
   const directory = resolveFinanceStateDir(options).directory;
+  const filename = financeSourceHeartbeatPath(directory);
+  let raw: string;
   try {
-    const state = parseState(
-      JSON.parse(await fs.readFile(financeSourceHeartbeatPath(directory), "utf8")),
-    );
-    return state ?? EMPTY_STATE;
-  } catch {
-    return EMPTY_STATE;
+    raw = await fs.readFile(filename, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return EMPTY_STATE;
+    }
+    throw new Error("finance source heartbeat state is unreadable; refusing provider probes", {
+      cause: error,
+    });
   }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("finance source heartbeat state is invalid JSON; refusing provider probes");
+  }
+  const state = parseState(parsed);
+  if (!state) {
+    throw new Error(
+      "finance source heartbeat state has an invalid schema; refusing provider probes",
+    );
+  }
+  return state;
+}
+
+/** Serialize probe scheduling and state replacement across the scheduler and standalone CLI. */
+export async function acquireFinanceSourceHeartbeatLock(
+  directory: string,
+  maxHoldMs: number,
+): Promise<() => Promise<void>> {
+  const lock = await acquireSessionWriteLock({
+    sessionFile: financeSourceHeartbeatPath(directory),
+    // This is non-critical diagnostics. A contending cycle skips rather than delaying a
+    // scheduled paper run for the full provider probe window.
+    timeoutMs: 1_000,
+    staleMs: maxHoldMs + 60_000,
+    maxHoldMs,
+    allowReentrant: false,
+  });
+  return lock.release;
 }
 
 export async function persistFinanceSourceHeartbeat(

@@ -2,6 +2,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import {
+  FINANCE_SOURCE_HEARTBEAT_MAX_TIMER_MS,
   planFinanceSourceHeartbeat,
   readFinanceSourceHeartbeat,
   runFinanceSourceHeartbeat,
@@ -15,8 +16,14 @@ function value(argv: readonly string[], flag: string): string | undefined {
 function numberValue(argv: readonly string[], flag: string, fallback: number): number {
   const raw = value(argv, flag);
   const parsed = raw === undefined ? fallback : Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new Error(`${flag} must be a positive number`);
+  if (
+    !Number.isSafeInteger(parsed) ||
+    parsed <= 0 ||
+    parsed > FINANCE_SOURCE_HEARTBEAT_MAX_TIMER_MS
+  ) {
+    throw new Error(
+      `${flag} must be a positive safe integer no greater than ${FINANCE_SOURCE_HEARTBEAT_MAX_TIMER_MS}`,
+    );
   }
   return parsed;
 }
