@@ -537,6 +537,72 @@ describe("explicit history sync before daily business", () => {
   });
 });
 
+describe("human-readable daily summary", () => {
+  it("shows refusal and reviewer failure details instead of misattributing zero fills", async () => {
+    mocks.account.mockResolvedValue({ ok: true, account });
+    mocks.cycle.mockResolvedValue({
+      ok: false,
+      modelCalls: 1,
+      tradeDecisionReview: {
+        status: "failed",
+        candidateCount: 1,
+        modelCalls: 1,
+        failureCode: "output_truncated",
+      },
+      drift: [{ instrument: "AAPL", action: "buy", notional: 500 }],
+      placed: [],
+      refusals: [
+        "AAPL: execution quote unavailable (alpaca_safety_quote_expired)",
+        ...Array.from({ length: 8 }, (_, index) => `ETF${index + 1}: provider quote unavailable`),
+      ],
+      dataIssues: [],
+    });
+    const stdout = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    let output = "";
+    try {
+      await runFinanceDailyCycleOperator(args.filter((arg) => arg !== "--json"));
+      output = stdout.mock.calls.map(([chunk]) => String(chunk)).join("");
+    } finally {
+      stdout.mockRestore();
+    }
+    expect(output).toContain("执行场所: Alpaca Paper");
+    expect(output).toContain("--place: 已提供");
+    expect(output).toContain("动态标的范围: selected=2 / eligible=12 / candidates=100");
+    expect(output).toContain("数据筛选不代表策略表现验证");
+    expect(output).toContain("已记录成交: 无");
+    expect(output).toContain("执行拒绝: 9");
+    expect(output).toContain("alpaca_safety_quote_expired");
+    expect(output).toContain("ETF8: provider quote unavailable");
+    expect(output).toContain("ETF1: provider quote unavailable");
+    expect(output).not.toContain("其余");
+    expect(output).toContain("失败码: output_truncated");
+    expect(output).not.toContain("未给 --place 或无需动作");
+  });
+
+  it("distinguishes the local Paper simulator when placement was not requested", async () => {
+    mocks.cycle.mockResolvedValue({
+      ok: true,
+      modelCalls: 0,
+      tradeDecisionReview: { status: "not_needed", candidateCount: 0, modelCalls: 0 },
+      drift: [],
+      placed: [],
+      refusals: [],
+      dataIssues: [],
+    });
+    const stdout = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    let output = "";
+    try {
+      await runFinanceDailyCycleOperator(["--dir", "/synthetic/finance", "--venue", "paper"]);
+      output = stdout.mock.calls.map(([chunk]) => String(chunk)).join("");
+    } finally {
+      stdout.mockRestore();
+    }
+    expect(output).toContain("执行场所: LCX Paper 模拟器");
+    expect(output).toContain("--place: 未提供");
+    expect(output).toContain("已记录成交: 无");
+  });
+});
+
 it("installs the account controller from the explicit execution policy at the daily seam", async () => {
   const fs = await import("node:fs/promises");
   const os = await import("node:os");

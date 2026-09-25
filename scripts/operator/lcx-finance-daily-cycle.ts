@@ -787,7 +787,7 @@ export async function runFinanceDailyCycleOperator(
         linkHealth: await safeLinkHealth(directory),
       };
       if (!options.json) {
-        process.stdout.write(`${renderDay(payload)}\n`);
+        process.stdout.write(`${renderDay(payload, options.venue, options.place)}\n`);
       }
       return payload;
     }
@@ -911,23 +911,51 @@ export async function runFinanceDailyCycleOperator(
   }
 }
 
-function renderDay(payload: Record<string, unknown>): string {
+function renderDay(
+  payload: Record<string, unknown>,
+  venue: "paper" | "alpaca",
+  placementRequested: boolean,
+): string {
   const lines: string[] = [];
   lines.push("Finance daily cycle — day");
   lines.push(`  目录: ${String(payload.directory)}`);
   lines.push(`  规则: ${(payload.ruleIds as string[]).join(", ")}`);
+  lines.push(`  执行场所: ${venue === "alpaca" ? "Alpaca Paper" : "LCX Paper 模拟器"}`);
+  lines.push(`  --place: ${placementRequested ? "已提供" : "未提供"}`);
+  const universe = payload.strategyUniverse as
+    | {
+        selectedCount?: unknown;
+        eligibleCount?: unknown;
+        candidateCount?: unknown;
+        asOf?: unknown;
+      }
+    | undefined;
+  if (universe) {
+    lines.push(
+      `  动态标的范围: selected=${String(universe.selectedCount)} / eligible=${String(universe.eligibleCount)} / candidates=${String(universe.candidateCount)} (snapshot=${String(universe.asOf)}; 数据筛选不代表策略表现验证)`,
+    );
+  }
   lines.push(
     `  信号锚点: ${String(payload.signalAnchor)}  模型调用: ${String(payload.modelCalls)}`,
   );
   const review = payload.tradeDecisionReview as
-    | { status?: unknown; candidateCount?: unknown; decisions?: readonly { decision?: unknown }[] }
+    | {
+        status?: unknown;
+        candidateCount?: unknown;
+        failureCode?: unknown;
+        decisions?: readonly { decision?: unknown }[];
+      }
     | undefined;
   if (review) {
     const decisions = Array.isArray(review.decisions) ? review.decisions : [];
     const approved = decisions.filter((decision) => decision.decision === "approve").length;
     const vetoed = decisions.filter((decision) => decision.decision === "veto").length;
+    const failureCode =
+      typeof review.failureCode === "string" && /^[a-z\d_]{1,64}$/u.test(review.failureCode)
+        ? `  失败码: ${review.failureCode}`
+        : "";
     lines.push(
-      `  模型审阅: ${String(review.status)}  候选: ${String(review.candidateCount)}  批准/否决: ${approved}/${vetoed}`,
+      `  模型审阅: ${String(review.status)}  候选: ${String(review.candidateCount)}  批准/否决: ${approved}/${vetoed}${failureCode}`,
     );
   }
   const drift = payload.drift as { instrument: string; action: string; notional: number }[];
@@ -938,15 +966,27 @@ function renderDay(payload: Record<string, unknown>): string {
   }
   const placed = payload.placed as { instrument: string; quantity: number }[];
   if (placed.length > 0) {
-    lines.push(`  已成交: ${placed.map((row) => `${row.instrument}x${row.quantity}`).join(", ")}`);
+    lines.push(
+      `  已记录成交: ${placed.map((row) => `${row.instrument}x${row.quantity}`).join(", ")}`,
+    );
   } else {
-    lines.push("  已成交: 无（未给 --place 或无需动作）");
+    lines.push("  已记录成交: 无");
+  }
+  const refusals = Array.isArray(payload.refusals)
+    ? payload.refusals.filter((value): value is string => typeof value === "string")
+    : [];
+  lines.push(`  执行拒绝: ${refusals.length}`);
+  for (const refusal of refusals) {
+    const oneLine = refusal.replace(/\s+/gu, " ").trim();
+    lines.push(
+      `    - ${oneLine.length > 240 ? `${oneLine.slice(0, 237)}... [单条摘要已截断]` : oneLine}`,
+    );
   }
   const issues = payload.dataIssues as string[];
   if (issues.length > 0) {
     lines.push(`  数据问题: ${issues.join("; ")}`);
   }
-  lines.push("边界：仅 Alpaca Paper；LLM 不能创建或改写订单，TypeScript 共享执行门仍为最终控制。");
+  lines.push("边界：LLM 不能创建或改写订单，TypeScript 共享执行门仍为最终控制。");
   return lines.join("\n");
 }
 
