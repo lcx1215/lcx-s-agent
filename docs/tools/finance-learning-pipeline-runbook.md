@@ -133,6 +133,33 @@ timezone, field definition, unit/currency, adjusted status, and source
 URL/artifact. Conflicted values route to `data_provenance_quality_review_input`;
 they must not become unstated model assumptions.
 
+## Research Claim Provenance
+
+Quality-harness claims may carry `epistemicClass` (`source_observation`,
+`source_report`, `derived_measure`, `estimate`, `inference`, `hypothesis`, or
+`unclassified`) and an `evidenceRelations` entry for each cited evidence ID
+(`supports`, `contradicts`, `context`, or `unknown`). These are model annotations,
+not truth or source-quality verdicts. A source report remains attributed to its
+source. Derived measures need a calculation basis, estimates need an explicit
+assumption basis, and inferences or hypotheses need a stated reasoning basis.
+
+When a supported claim is proposed for the durable thesis ledger, the research
+path requires a non-`unclassified` epistemic class, a complete evidence-relation
+map, at least one supporting item, and a basis for derived measures, estimates,
+inferences, or hypotheses. Contradicting and contextual items remain attached
+to the candidate. The ledger records the evidence packet's as-of time;
+that timestamp does not replace an underlying filing or data row's own source
+timestamp. Legacy ledger records are read as `unclassified` with evidence
+relations `unknown`. Thesis persistence is research memory only and grants no
+strategy promotion or execution authority.
+
+Automatic reuse of an existing thesis requires the same classification, basis,
+and invalidation conditions. Reusing an evidence ID with changed content is
+refused; changed provenance needs an explicit revision workflow. The bounded
+decision context prioritizes contradicting evidence and reports how many items
+were omitted, so an early set of supporting items cannot crowd out later
+counterevidence. The projection is still a partial view of the ledger.
+
 Supported smoke cases:
 
 - `manual-paste`

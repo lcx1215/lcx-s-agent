@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { readFinanceThesisLedger } from "./finance-thesis-ledger.js";
+import {
+  FINANCE_THESIS_CLAIM_EPISTEMIC_CLASSES,
+  FINANCE_THESIS_EVIDENCE_RELATIONS,
+  readFinanceThesisLedger,
+} from "./finance-thesis-ledger.js";
 
 const Hash = z.string().regex(/^[a-f0-9]{64}$/u);
 const Text = z.string().trim().min(1);
@@ -10,6 +14,8 @@ const EvidenceSchema = z
     source: Text.max(120),
     reference: Text.max(240),
     summary: Text.max(240).optional(),
+    relation: z.enum(FINANCE_THESIS_EVIDENCE_RELATIONS).optional(),
+    evidenceAsOf: z.string().datetime().optional(),
   })
   .strict();
 
@@ -18,6 +24,8 @@ const ThesisSchema = z
     thesisId: Text.max(64),
     instrument: Text.max(120),
     claim: Text.max(480),
+    claimEpistemicClass: z.enum(FINANCE_THESIS_CLAIM_EPISTEMIC_CLASSES).optional(),
+    claimBasis: Text.max(1_000).nullable().optional(),
     rationale: Text.max(320).nullable(),
     openedAt: z.string().datetime(),
     invalidationConditions: z.array(Text.max(240)).max(5),
@@ -70,17 +78,28 @@ export async function buildFinanceThesisDecisionContext(params: {
     thesisId: bounded(thesis.thesisId, 64),
     instrument: bounded(thesis.instrument, 120),
     claim: bounded(thesis.claim, 480),
+    claimEpistemicClass: thesis.claimEpistemicClass,
+    claimBasis: thesis.claimBasis === null ? null : bounded(thesis.claimBasis, 1_000),
     rationale: thesis.rationale === null ? null : bounded(thesis.rationale, 320),
     openedAt: thesis.openedAt,
     invalidationConditions: thesis.invalidationConditions
       .slice(0, 5)
       .map((condition) => bounded(condition, 240)),
-    evidence: thesis.evidence.slice(0, 4).map((item) => ({
-      id: bounded(item.id, 120),
-      source: bounded(item.source, 120),
-      reference: bounded(item.reference, 240),
-      ...(item.summary === undefined ? {} : { summary: bounded(item.summary, 240) }),
-    })),
+    // Put counterevidence first so a bounded projection cannot hide it behind early support.
+    evidence: thesis.evidence
+      .toSorted(
+        (left, right) =>
+          Number(right.relation === "contradicts") - Number(left.relation === "contradicts"),
+      )
+      .slice(0, 4)
+      .map((item) => ({
+        id: bounded(item.id, 120),
+        source: bounded(item.source, 120),
+        reference: bounded(item.reference, 240),
+        ...(item.summary === undefined ? {} : { summary: bounded(item.summary, 240) }),
+        ...(item.relation === undefined ? {} : { relation: item.relation }),
+        ...(item.evidenceAsOf === undefined ? {} : { evidenceAsOf: item.evidenceAsOf }),
+      })),
     omittedEvidenceCount: Math.max(0, thesis.evidence.length - 4),
   }));
 

@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { FinanceCommitteeEvidence } from "./finance-agent-committee.js";
+import { financeResearchClaimRequiresBasis } from "./finance-research-provenance.js";
 import {
   appendFinanceThesisEvidence,
   openFinanceThesis,
   readFinanceThesisLedger,
+  type FinanceThesisClaimEpistemicClass,
   type FinanceThesisEvidence,
   type FinanceThesisOpenInput,
 } from "./finance-thesis-ledger.js";
@@ -42,6 +44,8 @@ type ValidatedProposal = Readonly<{
   thesisId: string;
   instrument: string;
   claim: string;
+  claimEpistemicClass: FinanceThesisClaimEpistemicClass;
+  claimBasis: string | null;
   rationale: string;
   invalidationConditions: readonly string[];
   evidence: readonly FinanceThesisEvidence[];
@@ -107,6 +111,33 @@ export function validateFinanceResearchThesisProposals(params: {
       if (!claim || claim.status !== "supported") {
         throw new Error(`thesis proposal claim is not a supported claim: ${proposal.claimId}`);
       }
+      if (!claim.epistemicClass || claim.epistemicClass === "unclassified") {
+        throw new Error(
+          `thesis proposal claim has no usable epistemic classification: ${proposal.claimId}`,
+        );
+      }
+      if (financeResearchClaimRequiresBasis(claim.epistemicClass) && !claim.basis?.trim()) {
+        throw new Error(
+          `thesis proposal claim is missing its method or reasoning basis: ${proposal.claimId}`,
+        );
+      }
+      const evidenceRelations = claim.evidenceRelations;
+      if (
+        !evidenceRelations ||
+        evidenceRelations.length !== claim.evidenceIds.length ||
+        new Set(evidenceRelations.map((entry) => entry.evidenceId)).size !==
+          evidenceRelations.length ||
+        claim.evidenceIds.some((id) => !evidenceRelations.some((entry) => entry.evidenceId === id))
+      ) {
+        throw new Error(
+          `thesis proposal claim must classify every cited evidence item: ${proposal.claimId}`,
+        );
+      }
+      if (!evidenceRelations.some((entry) => entry.relation === "supports")) {
+        throw new Error(
+          `thesis proposal claim has no evidence marked as supporting: ${proposal.claimId}`,
+        );
+      }
       const instrument = instruments.get(proposal.instrument.trim().toUpperCase());
       if (!instrument) {
         throw new Error(`thesis proposal instrument is outside this run's declared universe`);
@@ -137,15 +168,27 @@ export function validateFinanceResearchThesisProposals(params: {
         thesisId: id,
         instrument,
         claim: claim.text,
+        claimEpistemicClass: claim.epistemicClass,
+        claimBasis: claim.basis?.trim() ?? null,
         rationale: proposal.rationale ?? "",
         invalidationConditions: Object.freeze([...proposal.invalidationConditions]),
         evidence: Object.freeze(
-          evidence.map((item) => ({
-            id: `${params.runId}:${item.id}`,
-            source: item.source,
-            reference: `${params.receiptReference}#evidence=${encodeURIComponent(item.id)}`,
-            summary: item.text,
-          })),
+          evidence.map((item) => {
+            const relation = evidenceRelations.find(
+              (entry) => entry.evidenceId === item.id,
+            )?.relation;
+            if (!relation) {
+              throw new Error(`thesis proposal evidence relation missing: ${item.id}`);
+            }
+            return {
+              id: `${params.runId}:${item.id}`,
+              source: item.source,
+              reference: `${params.receiptReference}#evidence=${encodeURIComponent(item.id)}`,
+              summary: item.text,
+              relation,
+              evidenceAsOf: new Date(item.timestamp).toISOString(),
+            };
+          }),
         ),
       });
     }),
@@ -163,6 +206,8 @@ function openInput(proposal: ValidatedProposal, observedAt: string): FinanceThes
     thesisId: proposal.thesisId,
     instrument: proposal.instrument,
     claim: proposal.claim,
+    claimEpistemicClass: proposal.claimEpistemicClass,
+    ...(proposal.claimBasis === null ? {} : { claimBasis: proposal.claimBasis }),
     rationale,
     evidence: [...proposal.evidence],
     invalidationConditions: [...proposal.invalidationConditions],
@@ -215,12 +260,31 @@ export async function persistFinanceResearchThesisLearning(params: {
       if (
         existing.instrument !== proposal.instrument ||
         normalized(existing.claim) !== normalized(proposal.claim) ||
+        existing.claimEpistemicClass !== proposal.claimEpistemicClass ||
+        existing.claimBasis !== proposal.claimBasis ||
         !sameConditions(existing.invalidationConditions, proposal.invalidationConditions)
       ) {
-        throw new Error(`thesis ${proposal.thesisId} changed claim or invalidation conditions`);
+        throw new Error(
+          `thesis ${proposal.thesisId} changed claim, provenance, or invalidation conditions`,
+        );
       }
-      const existingEvidenceIds = new Set(existing.evidence.map((item) => item.id));
-      const newEvidence = proposal.evidence.filter((item) => !existingEvidenceIds.has(item.id));
+      const existingEvidence = new Map(existing.evidence.map((item) => [item.id, item]));
+      const newEvidence = proposal.evidence.filter((item) => {
+        const prior = existingEvidence.get(item.id);
+        if (!prior) {
+          return true;
+        }
+        if (
+          prior.source !== item.source ||
+          prior.reference !== item.reference ||
+          prior.summary !== item.summary ||
+          prior.relation !== item.relation ||
+          prior.evidenceAsOf !== item.evidenceAsOf
+        ) {
+          throw new Error(`thesis ${proposal.thesisId} reused evidence id with different content`);
+        }
+        return false;
+      });
       return {
         proposal: { ...proposal, evidence: Object.freeze(newEvidence) },
         action: newEvidence.length === 0 ? ("unchanged" as const) : ("evidence_appended" as const),

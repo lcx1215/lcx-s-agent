@@ -2,6 +2,10 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
+import {
+  FINANCE_RESEARCH_CLAIM_EPISTEMIC_CLASSES,
+  FINANCE_RESEARCH_EVIDENCE_RELATIONS,
+} from "./finance-research-provenance.js";
 import { buildLocalModelProcessEnv } from "./local-model-process-env.js";
 import { buildLocalMlxCommand } from "./local-model-slot.js";
 import type {
@@ -315,7 +319,7 @@ function qualityStageContract(stage: QualityHarnessModelRequest["stage"]): strin
     return 'kind="plan"; requirements=string[]; missingEvidence=string[]. Requirements must name the actual task and evidence to check. Do not expand the task to unavailable future events or unrelated deliverables. Missing evidence means a fact required for a proposed claim; disclosed limits can instead restrict the claim.';
   }
   if (stage === "draft" || stage === "format") {
-    return 'kind="artifact"; artifact={answer:string,claims:[{id:string,text:string,status:"supported"|"uncertain",evidenceIds:string[],uncertainty?:string}]}. Write a concise real answer in the task language, compare values from the SAME period and explain limits. Separate supported numeric observations from uncertain interpretations into as many concise claims as needed. A supported multi-instrument claim must cite each named instrument\'s supplied evidence item; an unrelated valid ID is not support. Never call statistics contemporaneous when their windows differ. Never return placeholders, extra keys or recursive objects.';
+    return `kind="artifact"; artifact={answer:string,claims:[{id:string,text:string,status:"supported"|"uncertain",evidenceIds:string[],epistemicClass?:"${FINANCE_RESEARCH_CLAIM_EPISTEMIC_CLASSES.join('"|"')}",basis?:string,evidenceRelations?:[{evidenceId:string,relation:"${FINANCE_RESEARCH_EVIDENCE_RELATIONS.join('"|"')}"}],uncertainty?:string}]}. Write a concise real answer in the task language, compare values from the SAME period and explain limits. Separate supported numeric observations from uncertain interpretations into as many concise claims as needed. Epistemic class describes where a claim comes from, not whether it is true or reliable; provide basis for calculations, estimates, inferences, and hypotheses. When evidenceRelations is present, classify every cited evidence ID exactly once and preserve contrary evidence. A supported multi-instrument claim must cite each named instrument's supplied evidence item; an unrelated valid ID is not support. Never call statistics contemporaneous when their windows differ. Never return placeholders, extra keys or recursive objects.`;
   }
   return 'kind="review"; review={verdict:"pass"|"revise"|"reject",criticalFindings:string[],evidenceGaps:string[],notes:string[]}. criticalFindings contains actual errors or unsafe claims, not ordinary market risks or extracted facts. evidenceGaps contains evidence required by a proposed claim, not a wish list of future data. Put disclosed limitations, extracted facts and market risks in notes with evidence IDs. Do not merely announce a pass. If an error or required gap exists, use revise or reject; never hide it to obtain pass.';
 }

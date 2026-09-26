@@ -1,4 +1,8 @@
 import {
+  FINANCE_RESEARCH_CLAIM_EPISTEMIC_CLASSES,
+  FINANCE_RESEARCH_EVIDENCE_RELATIONS,
+} from "./finance-research-provenance.js";
+import {
   buildDefaultLogicalAgentPlan,
   type LogicalAgentExecutionContext,
   type LogicalAgentModelInvoker,
@@ -39,6 +43,9 @@ export const QUALITY_HARNESS_REVIEW_AGENTS = [
   "final_precheck",
 ] as const;
 
+export const QUALITY_HARNESS_CLAIM_EPISTEMIC_CLASSES = FINANCE_RESEARCH_CLAIM_EPISTEMIC_CLASSES;
+export const QUALITY_HARNESS_EVIDENCE_RELATIONS = FINANCE_RESEARCH_EVIDENCE_RELATIONS;
+
 type QualityHarnessReviewAgentId = (typeof QUALITY_HARNESS_REVIEW_AGENTS)[number];
 
 export type QualityHarnessEvidence = Readonly<{
@@ -61,6 +68,15 @@ export type QualityHarnessClaim = Readonly<{
   text: string;
   status: "supported" | "uncertain";
   evidenceIds: readonly string[];
+  /** Epistemic origin is a model annotation, not a truth, source-quality, or promotion verdict. */
+  epistemicClass?: (typeof QUALITY_HARNESS_CLAIM_EPISTEMIC_CLASSES)[number];
+  /** Calculation method, estimate assumptions, or reasoning bridge for non-source claims. */
+  basis?: string;
+  /** When present, classifies every cited evidence ID exactly once. */
+  evidenceRelations?: readonly Readonly<{
+    evidenceId: string;
+    relation: (typeof QUALITY_HARNESS_EVIDENCE_RELATIONS)[number];
+  }>[];
   uncertainty?: string;
 }>;
 
@@ -412,11 +428,11 @@ export function stageInstructions(stage: QualityHarnessStage): string {
     case "exposure":
       return "Check scope, concentration, dependencies, and missing inputs relevant to the task. Return a review JSON.";
     case "draft":
-      return "Return JSON {kind:'artifact',artifact:{answer:string,claims:[{id,text,status:'supported'|'uncertain',evidenceIds:string[],uncertainty?:string}]}}. Every supported claim must cite evidence ids; mark gaps uncertain.";
+      return `Return JSON {kind:'artifact',artifact:{answer:string,claims:[{id,text,status:'supported'|'uncertain',evidenceIds:string[],epistemicClass?:'${FINANCE_RESEARCH_CLAIM_EPISTEMIC_CLASSES.join("'|'")}',basis?:string,evidenceRelations?:[{evidenceId,relation:'${FINANCE_RESEARCH_EVIDENCE_RELATIONS.join("'|'")}'}],uncertainty?:string}]}}. Every supported claim must cite evidence IDs. For each claim classify epistemic origin without implying truth or source quality; provide basis for calculations, estimates, inferences, and hypotheses; when evidenceRelations is present, include every cited evidence ID exactly once and do not hide contrary evidence. Mark gaps uncertain.`;
     case "adversarial":
       return "Try to falsify the draft. Return JSON review. Use pass only when there is no critical finding and no evidence gap.";
     case "format":
-      return "Rewrite the draft after the challenge without dropping caveats or evidence links. Return the artifact JSON contract exactly.";
+      return "Rewrite the draft after the challenge without dropping caveats, claim provenance, or evidence links. Return the artifact JSON contract exactly.";
     case "precheck":
       return "Perform the final independent role check. Return JSON review and reject unsupported claims, missing evidence, unsafe overclaiming, or dropped uncertainty.";
   }
@@ -527,6 +543,73 @@ function parseArtifact(value: unknown): QualityHarnessArtifact {
       entry.evidenceIds,
       `artifact.claims[${index}].evidenceIds`,
     );
+    const rawEpistemicClass = entry.epistemicClass;
+    let epistemicClass: (typeof QUALITY_HARNESS_CLAIM_EPISTEMIC_CLASSES)[number] | undefined;
+    if (rawEpistemicClass !== undefined) {
+      if (
+        typeof rawEpistemicClass !== "string" ||
+        !QUALITY_HARNESS_CLAIM_EPISTEMIC_CLASSES.includes(
+          rawEpistemicClass as (typeof QUALITY_HARNESS_CLAIM_EPISTEMIC_CLASSES)[number],
+        )
+      ) {
+        throw new Error(`artifact.claims[${index}].epistemicClass is invalid`);
+      }
+      epistemicClass =
+        rawEpistemicClass as (typeof QUALITY_HARNESS_CLAIM_EPISTEMIC_CLASSES)[number];
+    }
+    const basis =
+      entry.basis === undefined
+        ? undefined
+        : requiredQualityText(entry.basis, "claim.basis", 2_000);
+    let evidenceRelations:
+      | readonly Readonly<{
+          evidenceId: string;
+          relation: (typeof QUALITY_HARNESS_EVIDENCE_RELATIONS)[number];
+        }>[]
+      | undefined;
+    if (entry.evidenceRelations !== undefined) {
+      if (!Array.isArray(entry.evidenceRelations)) {
+        throw new Error(`artifact.claims[${index}].evidenceRelations must be an array`);
+      }
+      const relations = entry.evidenceRelations.map((relationEntry, relationIndex) => {
+        if (!isQualityRecord(relationEntry)) {
+          throw new Error(
+            `artifact.claims[${index}].evidenceRelations[${relationIndex}] must be an object`,
+          );
+        }
+        const evidenceId = requiredQualityText(
+          relationEntry.evidenceId,
+          `artifact.claims[${index}].evidenceRelations[${relationIndex}].evidenceId`,
+          200,
+        );
+        const relation = relationEntry.relation;
+        if (
+          typeof relation !== "string" ||
+          !QUALITY_HARNESS_EVIDENCE_RELATIONS.includes(
+            relation as (typeof QUALITY_HARNESS_EVIDENCE_RELATIONS)[number],
+          )
+        ) {
+          throw new Error(
+            `artifact.claims[${index}].evidenceRelations[${relationIndex}].relation is invalid`,
+          );
+        }
+        return Object.freeze({
+          evidenceId,
+          relation: relation as (typeof QUALITY_HARNESS_EVIDENCE_RELATIONS)[number],
+        });
+      });
+      const relationIds = relations.map((item) => item.evidenceId);
+      if (
+        new Set(relationIds).size !== relationIds.length ||
+        relationIds.length !== evidenceIds.length ||
+        evidenceIds.some((id) => !relationIds.includes(id))
+      ) {
+        throw new Error(
+          `artifact.claims[${index}].evidenceRelations must classify every evidenceId exactly once`,
+        );
+      }
+      evidenceRelations = Object.freeze(relations);
+    }
     const uncertainty =
       entry.uncertainty === undefined
         ? undefined
@@ -542,6 +625,9 @@ function parseArtifact(value: unknown): QualityHarnessArtifact {
       text: requiredQualityText(entry.text, `artifact.claims[${index}].text`, 4_000),
       status,
       evidenceIds: Object.freeze(evidenceIds),
+      ...(epistemicClass === undefined ? {} : { epistemicClass }),
+      ...(basis === undefined ? {} : { basis }),
+      ...(evidenceRelations === undefined ? {} : { evidenceRelations }),
       ...(uncertainty ? { uncertainty } : {}),
     });
   });
