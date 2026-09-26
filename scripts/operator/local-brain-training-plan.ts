@@ -34,6 +34,7 @@ type EvalSnapshot = {
   total: number;
   passRate: number;
   promotionReady: boolean;
+  trainingSliceRef?: string;
   failedCaseIds: string[];
   parseErrorCaseIds: string[];
   parseRecoveredCaseIds: string[];
@@ -973,6 +974,7 @@ function evalSnapshotFromEvent(event: JsonRecord): EvalSnapshot | undefined {
           ? passed / total
           : 0,
     promotionReady: summaryRecord.promotionReady === true && event.event === "step_ok",
+    trainingSliceRef: stringField(recordValue(resultRecord.trainingSliceIdentity), "ref"),
     failedCaseIds,
     parseErrorCaseIds,
     parseRecoveredCaseIds,
@@ -1735,6 +1737,7 @@ function trainSliceSummary(event: JsonRecord | undefined): JsonRecord | undefine
     sourceDataDir: record.sourceDataDir,
     outDir: record.outDir,
     policy: record.policy,
+    trainingSliceIdentity: record.trainingSliceIdentity,
     counts: record.counts,
     sourceKinds: record.sourceKinds,
     writtenSourceKinds: record.writtenSourceKinds,

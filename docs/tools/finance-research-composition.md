@@ -161,3 +161,187 @@ inference. Keep raw-contract normalization, runtime identity, model/adapter path
 case labels and failures visible; never infer deployment or role qualification
 from cache presence or an old promotion receipt. Prompt/protocol mismatch can
 also cause failures and must be distinguished from a model's reasoning limits.
+
+## Applying AutoScientist-Quant to LCX
+
+[AutoScientist-Quant](https://arxiv.org/abs/2608.28632) contributes a bounded
+research-control pattern: use one proposal protocol to choose among improving a
+candidate, combining candidates, pivoting to a new hypothesis, or stopping; keep
+parentage and failed trials; spend an explicit evaluation budget; and keep the
+final holdout outside the search loop. LCX can reuse that control pattern without
+turning the paper's objective, candidate types, or execution assumptions into
+LCX policy.
+
+The shared part is the **decision and evidence protocol**, not one score or one
+owner for all three research phases:
+
+| Paper phase             | Nearest LCX analogues                                                                                                                                                 | What transfers                                                                                                                                                       | What it does not establish                                                                                                                                                                                                                                                                                                |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Alpha discovery         | `finance-research-runner.ts`, `finance-research-execution-bridge.ts`, and the scheduled day research path                                                             | Use the source-bound research receipt as the evidence root; any iterative search must add explicit candidate IDs and parent links.                                   | A model-generated hypothesis or code change is not a validated alpha. The existing research path does not become an unrestricted code-evolution runner.                                                                                                                                                                   |
+| Alpha-library filtering | `finance-strategy-rule-ledger.ts`, `finance-rule-readiness-state.ts`, `finance-research-portfolio-plan.ts`, and the portfolio composition/execution gates             | Keep candidate lifecycle, readiness, allocation, and execution eligibility as distinct steps, each rechecking its own inputs.                                        | An active rule, a readiness result, or a paper allocation is not proof of positive net returns or independent diversification.                                                                                                                                                                                            |
+| Model search            | `scripts/operator/local-brain-training-plan.ts` and `scripts/operator/local-brain-distill-eval.ts`; separately, `finance-tuning-proposal.ts` for forecast calibration | Retain model identity, evaluation inputs, failures, and proposal evidence under their existing owners. Keep forecast calibration separate from model qualification.  | The conviction-floor proposal uses scored call correctness; it is neither model-weight/hyperparameter search nor realized strategy P&L. A calibration proposal or legacy promotion record is not strategy-level execution eligibility. Model-evaluation scores cannot be averaged with strategy returns to select trades. |
+| Outcome feedback        | Scheduler night settlement, `finance-outcome-backfill.ts`, reflection, tuning lifecycle, and the Central Harness lifecycle projection                                 | Feed settled, attributable outcomes back to the owner that can interpret them; keep forecast calibration separate from strategy economics and execution eligibility. | A settled paper outcome does not prove that a strategy is profitable, that an LLM learned, or that live behavior should change.                                                                                                                                                                                           |
+
+The current `finance-strategy-all-methods.ts` is a research receipt aggregator
+for the 12-method surface. It reads `experiments/manifest.json` only to check
+the readiness of `source_receipts`, joins pre-existing benchmark and method
+artifacts, and emits a `research_only_no_execution` receipt. Its version 2 M02
+section carries all 48 fixed parameter-sensitivity cells—including
+underperforming cells, both same-cost baselines, and period metrics—with a
+completeness gate; each row is explicitly labeled as a sensitivity cell, not a
+search candidate. This preserves the existing grid evidence in the aggregate,
+but does not make the receipt an adaptive experiment or trial registry. The
+manifest is not a candidate/trial registry, and the aggregate still provides no
+immutable candidate parentage, cross-run evaluation budget, or enforced holdout
+boundary. Reuse these artifacts as evidence inputs when a search owner exists;
+do not infer search lineage or promotion from source readiness or catalog
+coverage.
+
+The strategy-rule ledger already supplies immutable declared-rule references
+and explicit activation/retirement events, but its contract deliberately has no
+score or ranking fields; comparative rule evaluation belongs to a separate
+factor/alpha evolution loop with its own acceptance gates. A future trial record
+should therefore reference the exact declared-rule `ref` instead of copying
+rule identity into a second registry. If no existing receipt owner can carry
+trial lineage, budget accounting, and split enforcement, the open architecture
+decision is one canonical research-only experiment/evaluation owner linked to
+those rule refs—not an evaluation feature hidden inside the rule ledger or the
+12-method aggregator.
+
+### Typed identity and search actions
+
+At integration, connect existing receipts with typed references; do not reuse
+one identifier for different objects:
+
+- `thesisId` identifies an epistemic claim whose evidence can accumulate.
+- `searchCandidateRef` identifies an immutable strategy-rule or model-artifact
+  version and carries an explicit kind. Do not reuse a bare `candidateId`:
+  finance owner contracts already use that name for exact trade-review items
+  and article-derived learning-capability records, which are different objects
+  from a versioned strategy or model under experiment.
+- `searchId` identifies one bounded controller run and its declared scope and
+  resource envelope.
+- `experimentId` identifies a preregistered evaluation protocol binding a
+  `searchCandidateRef` to point-in-time data, split, baseline, cost model,
+  objective version, and evaluator version. Each actual evaluation gets its
+  own `evaluationId`; repeated attempts remain visible and count toward
+  selection bias and resource use.
+- `requestId` identifies one model call, while a source-decision reference
+  identifies an actual downstream decision. Neither is a candidate or an
+  experiment. Request metadata can establish call attempts and outcomes, but
+  without explicit linkage and token/cost evidence it cannot establish search
+  lineage or enforce a model-spend ceiling.
+
+One thesis may motivate several search candidates; one search candidate may
+have several experiments; one experiment may have several evaluation attempts;
+an evaluation may use multiple model calls. Preserve those links in receipts.
+Where the selected integration includes them, the thesis ledger owns claims and
+evidence, and the model-request trajectory owns provider-call metadata.
+Strategy-lab experiment guidance defines what a frozen evaluation should
+record, but by itself does not prove a durable runtime experiment store. Any
+new search coordinator must link existing records rather than duplicate their
+state.
+
+Give the four controller actions auditable semantics: `improve` creates a child
+of one search candidate and records the exact change; `combine` creates a child
+of at least two compatible parent references and deduplicates overlapping
+evidence; `pivot` creates a new branch while retaining the rejected or
+untestable parent and the observation or reason that caused the pivot; `stop`
+appends a terminal event to that search cycle. None of these actions edits or
+erases prior evidence, changes the scheduler, or grants promotion or execution
+authority.
+
+Every behavior-changing `improve`, `combine`, or `pivot` creates a new immutable
+candidate reference and requires a fresh evaluation under a preregistered
+protocol; a parent's score never transfers to its child. `combine` is allowed
+only when the parents share compatible market, instrument/universe, horizon,
+data/label semantics, objective version, and evaluation protocol. If those
+contracts differ, start a new hypothesis with a new experiment instead. A child
+may cite its parents' evidence to motivate the change, but inherited or
+overlapping evidence is not independent support and is not the child's result.
+
+For LCX's current module-planning seam, `improve`, `combine`, `pivot`, and
+`stop` are design semantics, not new typed actions in the run schema. The Central
+Harness accepts a planning-only module proposal and retains its rationale and
+research receipt; it does not automatically generate, combine, or evaluate
+strategy/code candidates across runs. Within planning, the four labels can guide
+selection or revision of registered analytical modules inside the existing
+finite DAG and replan cap. Any future candidate-search owner must make parent
+links explicit: `combine` cannot count duplicate or derived evidence as
+independent support, and `pivot` must retain the rejected parent and the
+observation that falsified it or made it untestable. `stop` is required when a
+hard evidence/risk gate fails, the relevant budget is exhausted, or another
+candidate cannot change the decision. The scheduled finance lifecycle remains
+owned by the scheduler and its canonical research, risk, execution, settlement,
+and separately declared calibration/promotion owners.
+
+These labels govern how the system seeks evidence; they do not change
+`decisionMode`, `strategyStage`, risk policy, or venue authority. A candidate is
+still a claim awaiting its next evidence gate. `stop` ends the current research
+branch or search cycle; it does not stop unrelated settlement, risk monitoring,
+or already-authorized scheduler phases.
+
+Use lexicographic gates before candidate ranking: first require provenance,
+freshness, causal/data validity, and all declared risk constraints; then compare
+only candidates admissible for that stage. Strategy performance, model
+capability, and portfolio risk are different quantities and must not be collapsed
+into one dynamically standardized score. If a stage needs a scalar objective,
+freeze its metric definitions, reference population, costs, normalization,
+weights, and version before search, and show sensitivity to the declared ranges.
+A stage-specific Pareto or constrained comparison is preferable when no
+defensible exchange rate exists between metrics. No reward score may compensate
+for a failed hard gate.
+
+Treat budgets as a vector of separately enforced ceilings, not as one fungible
+number: candidate evaluations, model calls/tokens, provider/API dispatches, and
+wall-clock time have different units and owners. Existing research API limits,
+model-call checkpoints, Harness context/action bounds, and soft-replan limits
+remain authoritative for their own resources. They do not yet form one
+cross-phase candidate-search budget. A future search loop must reserve each
+resource before dispatch, retain uncertain dispatches as spent until reconciled,
+and stop when any required ceiling is exhausted; a model proposal cannot enlarge
+those ceilings.
+
+For any adaptive strategy search, use chronological point-in-time data and
+separate training, validation, research-feedback, and final holdout intervals.
+Purge or embargo observations whose label or holding horizon overlaps a split
+boundary. The search controller must not receive the final holdout through
+candidate prompts, selection metrics, controller-visible diagnostics, or
+next-cycle feedback. A designated final evaluator may inspect it once and write
+the result to a final evaluation receipt/report. If that result is used to change
+the candidate, retire the set to development feedback and require a new
+untouched evaluation set. LCX's strategy-method guidance calls for
+train/validation/out-of-sample separation, but that instruction alone is not
+evidence of an enforced, inaccessible holdout boundary.
+
+Nightly paper outcomes that reflection or tuning consumes are feedback data,
+not a permanently untouched holdout. Keep directional-call correctness,
+reconciled net trade P&L, and model-task evaluation as separate evidence types;
+each answers a different question, and only strategy-attributed,
+cost-complete records can support claims about that strategy's economics.
+
+The local-brain train-slice manifest now emits a content-addressed
+`trainingSliceIdentity` over its source training data, output splits, and
+selection/alignment policy. Treat this as the identity of one research input,
+not the model candidate or a learning result. The local-brain evaluation receipt
+result in the training guard log now links that verified slice ref to the exact
+adapter under evaluation. The training guard only supplies the ref to a newly
+trained candidate's eval; a stable-champion eval is never attributed to the
+newest slice. This closes data-input lineage for that edge, but does not yet
+record a complete training experiment, parent adapter, vector-budget
+reconciliation, or cross-run search decision.
+
+Before claiming the paper's full self-evolving search is integrated, LCX still
+needs a versioned candidate lineage across the phases, a cross-phase budget
+receipt, and an enforced holdout boundary tied to each experiment. If generated
+candidate code is ever executed, it also needs an isolated evaluator with no
+secrets, provider/network access, state writes, or trading authority. Keep rule
+identity, lifecycle, evaluation, promotion, and execution as separate contracts;
+any new experiment/evaluation owner must be the single canonical owner and link
+existing rule, source, and outcome records rather than duplicate their authority.
+The paper's reported performance remains a research claim from its preprint,
+not LCX performance evidence.
+
+## Optiver 的连续决策闭环
+
+Optiver 文章的证据范围、与 LCX 的代码所有者映射、已补的持仓恢复/执行反馈/日历门禁，以及 EV、仓位校准和对手反应等未解决假设，见[研究映射](../experiments/research/optiver-trading-decision-loop.md)。文章用于提出可检验的闭环要求，不作为收益或模型能力证明。

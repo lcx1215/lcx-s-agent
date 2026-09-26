@@ -1,6 +1,13 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  createReadStream,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_WORKSPACE_DIR } from "./lcx-local-paths.js";
@@ -36,6 +43,7 @@ type CliOptions = {
   responsePrefill: boolean;
   contractOnly: boolean;
   caseFile?: string;
+  trainingSliceManifest?: string;
   progress: boolean;
   summaryOnly: boolean;
   timeoutMs: number;
@@ -48,6 +56,16 @@ type AdapterResolution = {
   selectedAdapter?: string;
   trainingSeedAdapter?: string;
 };
+
+type LocalBrainTrainingSliceIdentity = Readonly<{
+  schemaVersion: "lcx_local_brain_training_slice_identity_v1";
+  ref: string;
+  candidateKind: "training_data_slice";
+  sourceTrainSha256: string;
+  outputSha256: Readonly<{ train: string; valid: string; test: string }>;
+  evalVocabularySourceSha256?: string;
+  verification: "manifest_ref_and_output_split_bytes_verified";
+}>;
 
 const REQUIRED_KEYS = [
   "task_family",
@@ -237,6 +255,7 @@ function usage(): never {
       "       add --blind (or --neutral) for a raw contract eval with no case-specific hints, hardening, or retry",
       "       combine --hardened --blind --no-response-prefill for the strict neutral promotion gate",
       "       add --case-file JSONL with --blind to score generated cases without putting labels in prompts",
+      "       add --training-slice-manifest PATH to bind an eval to the exact train-slice inputs",
       "       add --no-response-prefill to measure self-started JSON separately from structural prefill",
       "       add --checkpoint PATH --resume to persist and continue completed eval shards",
       "",
@@ -299,6 +318,9 @@ function parseArgs(args: string[]): CliOptions {
     } else if (arg === "--case-file") {
       options.caseFile = path.resolve(readValue(args, index));
       index += 1;
+    } else if (arg === "--training-slice-manifest") {
+      options.trainingSliceManifest = path.resolve(readValue(args, index));
+      index += 1;
     } else if (arg === "--no-adapter") {
       options.noAdapter = true;
     } else if (arg === "--python") {
@@ -354,6 +376,9 @@ function parseArgs(args: string[]): CliOptions {
     usage();
   }
   if (options.caseFile && options.caseIds.length > 0) {
+    usage();
+  }
+  if (options.trainingSliceManifest && (options.contractOnly || options.noAdapter)) {
     usage();
   }
   if (options.resume && !options.receiptPath && !options.checkpointPath) {
@@ -4551,6 +4576,117 @@ function hashText(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 16);
 }
 
+async function sha256File(filePath: string): Promise<string> {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(filePath)) {
+    hash.update(chunk);
+  }
+  return hash.digest("hex");
+}
+
+async function readTrainingSliceIdentity(
+  manifestPath: string,
+): Promise<LocalBrainTrainingSliceIdentity> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(manifestPath, "utf8")) as unknown;
+  } catch (error) {
+    throw new Error(`training-slice manifest could not be read: ${String(error)}`, {
+      cause: error,
+    });
+  }
+  const manifest =
+    parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  const rawIdentity = manifest?.trainingSliceIdentity;
+  const identity =
+    rawIdentity && typeof rawIdentity === "object" && !Array.isArray(rawIdentity)
+      ? (rawIdentity as Record<string, unknown>)
+      : undefined;
+  const rawBasis = identity?.identityBasis;
+  const basis =
+    rawBasis && typeof rawBasis === "object" && !Array.isArray(rawBasis)
+      ? (rawBasis as Record<string, unknown>)
+      : undefined;
+  if (
+    manifest?.ok !== true ||
+    manifest.boundary !== "local_auxiliary_thought_flow_only" ||
+    !identity ||
+    !basis ||
+    identity.schemaVersion !== "lcx_local_brain_training_slice_identity_v1" ||
+    basis.schemaVersion !== identity.schemaVersion ||
+    identity.candidateKind !== "training_data_slice" ||
+    basis.candidateKind !== identity.candidateKind
+  ) {
+    throw new Error("training-slice manifest has no supported trainingSliceIdentity");
+  }
+  const sourceTrainSha256 = basis.sourceTrainSha256;
+  const outputRecord = basis.outputSha256;
+  const policyRecord = basis.policy;
+  const outputSha256 =
+    outputRecord && typeof outputRecord === "object" && !Array.isArray(outputRecord)
+      ? (outputRecord as Record<string, unknown>)
+      : undefined;
+  const policy =
+    policyRecord && typeof policyRecord === "object" && !Array.isArray(policyRecord)
+      ? (policyRecord as Record<string, unknown>)
+      : undefined;
+  const hashPattern = /^[0-9a-f]{64}$/u;
+  if (
+    typeof sourceTrainSha256 !== "string" ||
+    !hashPattern.test(sourceTrainSha256) ||
+    !outputSha256 ||
+    ![outputSha256.train, outputSha256.valid, outputSha256.test].every(
+      (value) => typeof value === "string" && hashPattern.test(value),
+    ) ||
+    !policy
+  ) {
+    throw new Error("training-slice identity contains malformed content hashes or policy");
+  }
+  const expectedRef = `local_brain_training_slice:sha256:${createHash("sha256")
+    .update(JSON.stringify(basis), "utf8")
+    .digest("hex")}`;
+  if (
+    identity.ref !== expectedRef ||
+    identity.sourceTrainSha256 !== sourceTrainSha256 ||
+    JSON.stringify(identity.outputSha256) !== JSON.stringify(outputSha256) ||
+    identity.evalVocabularySourceSha256 !== policy.evalVocabularySourceSha256
+  ) {
+    throw new Error(
+      "training-slice identity ref or summary fields do not match its identity basis",
+    );
+  }
+  const manifestDir = path.dirname(manifestPath);
+  for (const split of ["train", "valid", "test"] as const) {
+    const actualSha256 = await sha256File(path.join(manifestDir, `${split}.jsonl`));
+    if (actualSha256 !== outputSha256[split]) {
+      throw new Error(`training-slice ${split} bytes do not match the declared identity`);
+    }
+  }
+  const evalVocabularySourceSha256 = policy.evalVocabularySourceSha256;
+  if (
+    evalVocabularySourceSha256 !== undefined &&
+    (typeof evalVocabularySourceSha256 !== "string" ||
+      !hashPattern.test(evalVocabularySourceSha256))
+  ) {
+    throw new Error("training-slice evaluator source hash is malformed");
+  }
+  return {
+    schemaVersion: "lcx_local_brain_training_slice_identity_v1",
+    ref: expectedRef,
+    candidateKind: "training_data_slice",
+    sourceTrainSha256,
+    outputSha256: {
+      train: outputSha256.train as string,
+      valid: outputSha256.valid as string,
+      test: outputSha256.test as string,
+    },
+    evalVocabularySourceSha256,
+    verification: "manifest_ref_and_output_split_bytes_verified",
+  };
+}
+
 function cacheSafeSlug(value: string): string {
   return (
     value
@@ -5373,6 +5509,7 @@ type EvalShardCheckpoint = {
     caseIds: string[];
     caseFile: string | null;
     caseFileSha256: string | null;
+    trainingSliceRef?: string;
     caseSource: "fixed_registry" | "generated_holdout_file";
     hardened: boolean;
     blind: boolean;
@@ -5425,6 +5562,9 @@ const resolvedOptions: CliOptions = {
   ...options,
   adapterPath: adapterResolution.adapterPath,
 };
+const trainingSliceIdentity = options.trainingSliceManifest
+  ? await readTrainingSliceIdentity(options.trainingSliceManifest)
+  : undefined;
 const generatedCaseFile = options.caseFile ? readGeneratedCaseFile(options.caseFile) : undefined;
 const generatedEvalCases = generatedCaseFile?.cases;
 const requestedCaseIds = generatedEvalCases?.map((evalCase) => evalCase.id) ?? options.caseIds;
@@ -5457,6 +5597,7 @@ const shardFingerprint = hashText(
     evalCaseIds: evalCases.map((evalCase) => evalCase.id),
     caseFile: options.caseFile ?? null,
     caseFileSha256: generatedCaseFile?.fileSha256 ?? null,
+    ...(trainingSliceIdentity ? { trainingSliceRef: trainingSliceIdentity.ref } : {}),
     hardened: options.hardened,
     blind: options.blind,
     responsePrefill: options.responsePrefill,
@@ -5514,6 +5655,7 @@ const writeShardCheckpoint = (state: "running" | "complete") => {
       caseIds: requestedCaseIds,
       caseFile: options.caseFile ?? null,
       caseFileSha256: generatedCaseFile?.fileSha256 ?? null,
+      trainingSliceRef: trainingSliceIdentity?.ref,
       caseSource: options.caseFile ? "generated_holdout_file" : "fixed_registry",
       hardened: options.hardened,
       blind: options.blind,
@@ -5861,6 +6003,7 @@ const result = {
   caseFileSha256: generatedCaseFile?.fileSha256 ?? null,
   caseFileBytes: generatedCaseFile?.fileBytes ?? null,
   caseFileProvenance: generatedCaseFile?.provenance ?? null,
+  trainingSliceIdentity: trainingSliceIdentity ?? null,
   evaluationMode: options.contractOnly
     ? "contract_only"
     : options.blind
@@ -5942,6 +6085,7 @@ if (options.receiptPath) {
       adapter: options.adapterPath ?? null,
       caseIds: requestedCaseIds,
       caseFile: options.caseFile ?? null,
+      trainingSliceRef: trainingSliceIdentity?.ref ?? null,
       caseSource: options.caseFile ? "generated_holdout_file" : "fixed_registry",
       caseFileSha256: generatedCaseFile?.fileSha256 ?? null,
       caseFileBytes: generatedCaseFile?.fileBytes ?? null,
@@ -5974,6 +6118,8 @@ if (options.receiptPath) {
       generatedHoldoutProvenanceVerified: Boolean(generatedCaseFile),
       caseFileSha256: generatedCaseFile?.fileSha256 ?? null,
       caseFileProvenance: generatedCaseFile?.provenance ?? null,
+      trainingSliceRef: trainingSliceIdentity?.ref ?? null,
+      trainingSliceIdentityVerified: Boolean(trainingSliceIdentity),
       promptMode: result.promptMode,
       labelDisclosure: result.labelDisclosure,
       responsePrefill: result.responsePrefill,

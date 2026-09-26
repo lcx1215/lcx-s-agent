@@ -2397,6 +2397,9 @@ try {
           options.model,
           "--adapter",
           candidateAdapter,
+          ...(options.noTrainSlice
+            ? []
+            : ["--training-slice-manifest", path.join(trained.trainDataDir, "manifest.json")]),
           "--hardened",
           "--blind",
           "--no-response-prefill",
