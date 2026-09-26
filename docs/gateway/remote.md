@@ -130,9 +130,18 @@ Runbook: [Remote Gateway Setup](/gateway/remote-gateway-readme).
 Short version: **keep the Gateway loopback-only** unless you’re sure you need a bind.
 
 - **Loopback + SSH/Tailscale Serve** is the safest default (no public exposure).
+- Direct `lan`, `custom`, `tailnet`, or non-loopback `auto` binds require both authentication
+  and `gateway.tls.enabled: true`; clients use `wss://` and should pin or trust the
+  Gateway certificate. TLS on Fly or another edge proxy does not secure a plain
+  proxy-to-Gateway hop.
+- Direct `tailnet` binding still requires Gateway TLS and authentication. Binding
+  a socket to a Tailscale IP does not prove that every packet reached that
+  address through WireGuard; use `wss://` and trust or pin the Gateway
+  certificate. For a TLS-terminating Tailscale edge, keep the Gateway on
+  loopback and use Tailscale Serve.
 - Plaintext `ws://` is loopback-only by default. For trusted private networks,
-  set `OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=1` on the client process as break-glass.
-- **Non-loopback binds** (`lan`/`tailnet`/`custom`, or `auto` when loopback is unavailable) must use auth tokens/passwords.
+  `OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=1` remains a client-side break-glass
+  override; it does not disable the server's TLS requirement for non-loopback binds.
 - `gateway.remote.token` / `.password` are client credential sources. They do **not** configure server auth by themselves.
 - Local call paths can use `gateway.remote.*` as fallback when `gateway.auth.*` is unset.
 - `gateway.remote.tlsFingerprint` pins the remote TLS cert when using `wss://`.

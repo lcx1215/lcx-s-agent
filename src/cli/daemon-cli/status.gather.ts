@@ -39,6 +39,7 @@ type ConfigSummary = {
   path: string;
   exists: boolean;
   valid: boolean;
+  tlsEnabled: boolean;
   issues?: Array<{ path: string; message: string }>;
   controlUi?: GatewayControlUiConfig;
 };
@@ -213,6 +214,7 @@ export async function gatherDaemonStatus(
     valid: cliSnapshot?.valid ?? true,
     ...(cliSnapshot?.issues?.length ? { issues: cliSnapshot.issues } : {}),
     controlUi: cliCfg.gateway?.controlUi,
+    tlsEnabled: cliCfg.gateway?.tls?.enabled === true,
   };
   const daemonConfigSummary: ConfigSummary = {
     path: daemonSnapshot?.path ?? daemonConfigPath,
@@ -220,6 +222,7 @@ export async function gatherDaemonStatus(
     valid: daemonSnapshot?.valid ?? true,
     ...(daemonSnapshot?.issues?.length ? { issues: daemonSnapshot.issues } : {}),
     controlUi: daemonCfg.gateway?.controlUi,
+    tlsEnabled: daemonCfg.gateway?.tls?.enabled === true,
   };
   const configMismatch = cliConfigSummary.path !== daemonConfigSummary.path;
 

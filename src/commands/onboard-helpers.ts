@@ -206,10 +206,12 @@ export function formatControlUiSshHint(params: {
   port: number;
   basePath?: string;
   token?: string;
+  tlsEnabled?: boolean;
 }): string {
   const basePath = normalizeControlUiBasePath(params.basePath);
   const uiPath = basePath ? `${basePath}/` : "/";
-  const localUrl = `http://localhost:${params.port}${uiPath}`;
+  const scheme = params.tlsEnabled === true ? "https" : "http";
+  const localUrl = `${scheme}://localhost:${params.port}${uiPath}`;
   const authedUrl = params.token
     ? `${localUrl}#token=${encodeURIComponent(params.token)}`
     : undefined;
@@ -461,6 +463,7 @@ export function resolveControlUiLinks(params: {
   bind?: "auto" | "lan" | "loopback" | "custom" | "tailnet";
   customBindHost?: string;
   basePath?: string;
+  tlsEnabled?: boolean;
 }): { httpUrl: string; wsUrl: string } {
   const port = params.port;
   const bind = params.bind ?? "loopback";
@@ -481,8 +484,10 @@ export function resolveControlUiLinks(params: {
   const basePath = normalizeControlUiBasePath(params.basePath);
   const uiPath = basePath ? `${basePath}/` : "/";
   const wsPath = basePath ? basePath : "";
+  const httpScheme = params.tlsEnabled === true ? "https" : "http";
+  const wsScheme = params.tlsEnabled === true ? "wss" : "ws";
   return {
-    httpUrl: `http://${host}:${port}${uiPath}`,
-    wsUrl: `ws://${host}:${port}${wsPath}`,
+    httpUrl: `${httpScheme}://${host}:${port}${uiPath}`,
+    wsUrl: `${wsScheme}://${host}:${port}${wsPath}`,
   };
 }

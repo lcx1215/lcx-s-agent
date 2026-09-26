@@ -2891,6 +2891,7 @@ LCX Agent 可以为 LCX Agent 启动一个**专用、隔离的** Chrome/Brave/Ed
     bind: "loopback",
     // controlUi: { enabled: true, basePath: "/openclaw" }
     // auth: { mode: "token", token: "your-token" } // token 控制 WS + 控制台 UI 访问
+    // 若 bind 直接监听 LAN/custom，需同时设置 tls: { enabled: true }。
     // tailscale: { mode: "off" | "serve" | "funnel" }
   },
 }
@@ -2915,6 +2916,7 @@ LCX Agent 可以为 LCX Agent 启动一个**专用、隔离的** Chrome/Brave/Ed
 信任的代理：
 
 - `gateway.trustedProxies`：在 Gateway 网关前面终止 TLS 的反向代理 IP 列表。
+- Gateway 使用非回环监听时，代理到 Gateway 的这一段也必须启用 TLS 并校验证书；同一主机上的代理可以改为连接仅监听回环的 Gateway。
 - 当连接来自这些 IP 之一时，LCX Agent 使用 `x-forwarded-for`（或 `x-real-ip`）来确定客户端 IP，用于本地配对检查和 HTTP 认证/本地检查。
 - 仅列出你完全控制的代理，并确保它们**覆盖**传入的 `x-forwarded-for`。
 
@@ -2924,7 +2926,7 @@ LCX Agent 可以为 LCX Agent 启动一个**专用、隔离的** Chrome/Brave/Ed
 - `gateway.port` 控制用于 WebSocket + HTTP（控制台 UI、hooks、A2UI）的单一多路复用端口。
 - OpenAI Chat Completions 端点：**默认禁用**；通过 `gateway.http.endpoints.chatCompletions.enabled: true` 启用。
 - 优先级：`--port` > `OPENCLAW_GATEWAY_PORT` > `gateway.port` > 默认 `18789`。
-- 默认需要 Gateway 网关认证（token/密码或 Tailscale Serve 身份）。非 local loopback 绑定需要共享 token/密码。
+- 默认需要 Gateway 网关认证（token/密码或 Tailscale Serve 身份）。所有直接非回环绑定（LAN、custom、tailnet，以及解析到非回环地址的 auto）都需要共享 token/密码和 `gateway.tls.enabled: true`。把 socket 绑定到 Tailnet IP 不能证明每个数据包都经过 WireGuard。
 - 新手引导向导默认生成 gateway token（即使在 local loopback 上）。
 - `gateway.remote.token` **仅**用于远程 CLI 调用；它不启用本地 gateway 认证。`gateway.token` 被忽略。
 

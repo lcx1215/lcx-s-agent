@@ -173,6 +173,11 @@ fi
 if [[ -n "${OPENCLAW_UID:-}" && -d /run/user ]] && command -v systemctl &>/dev/null; then
   run_root systemctl start "user@${OPENCLAW_UID}.service" 2>/dev/null || true
 fi
+OPENCLAW_GID="$(id -g "$OPENCLAW_USER" 2>/dev/null || true)"
+if [[ -z "$OPENCLAW_UID" || -z "$OPENCLAW_GID" ]]; then
+  echo "Cannot resolve numeric UID/GID for $OPENCLAW_USER; refusing the rootless Podman config check." >&2
+  exit 1
+fi
 
 # Rootless Podman needs subuid/subgid for the run user
 if ! grep -q "^${OPENCLAW_USER}:" /etc/subuid 2>/dev/null; then
@@ -203,9 +208,9 @@ fi
 # Make first-run non-interactive; users can run the wizard later to configure channels/providers.
 OPENCLAW_JSON="$OPENCLAW_CONFIG/openclaw.json"
 if ! run_as_openclaw test -f "$OPENCLAW_JSON"; then
-  printf '%s\n' '{ gateway: { mode: "local" } }' | run_as_openclaw tee "$OPENCLAW_JSON" >/dev/null
+  printf '%s\n' '{ gateway: { mode: "local", bind: "lan", tls: { enabled: true }, controlUi: { allowedOrigins: ["https://127.0.0.1:18789"] } } }' | run_as_openclaw tee "$OPENCLAW_JSON" >/dev/null
   run_as_openclaw chmod 600 "$OPENCLAW_JSON" 2>/dev/null || true
-  echo "Created $OPENCLAW_JSON (minimal gateway.mode=local)."
+  echo "Created $OPENCLAW_JSON with local mode, Gateway TLS, and the local Control UI origin."
 fi
 
 echo "Building image from $REPO_PATH..."
@@ -219,6 +224,16 @@ chmod 644 "$TMP_IMAGE"
 (cd /tmp && run_as_user "$OPENCLAW_USER" env HOME="$OPENCLAW_HOME" podman load -i "$TMP_IMAGE")
 rm -f "$TMP_IMAGE"
 trap - EXIT
+
+echo "Ensuring the Podman Gateway uses TLS without replacing existing Control UI origins..."
+run_as_openclaw podman run --rm --network none \
+  --userns=keep-id \
+  --user "$OPENCLAW_UID:$OPENCLAW_GID" \
+  -v "$OPENCLAW_CONFIG:/home/node/.openclaw:Z" \
+  --env-file "$OPENCLAW_CONFIG/.env" \
+  -e HOME=/home/node \
+  --entrypoint node \
+  lcx:local scripts/podman/ensure-gateway-tls-config.mjs
 
 echo "Copying launch script to $LAUNCH_SCRIPT_DST..."
 run_root cat "$RUN_SCRIPT_SRC" | run_as_openclaw tee "$LAUNCH_SCRIPT_DST" >/dev/null

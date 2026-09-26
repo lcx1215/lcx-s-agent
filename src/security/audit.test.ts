@@ -303,6 +303,59 @@ description: test skill
     }
   });
 
+  it("flags a LAN bind without Gateway TLS as critical", async () => {
+    const cfg: OpenClawConfig = {
+      gateway: {
+        bind: "lan",
+        auth: { mode: "token", token: "test-token" },
+      },
+    };
+
+    const res = await audit(cfg, { env: {} });
+
+    expect(hasFinding(res, "gateway.bind_no_tls", "critical")).toBe(true);
+  });
+
+  it("does not flag a loopback custom bind without Gateway TLS", async () => {
+    const cfg: OpenClawConfig = {
+      gateway: {
+        bind: "custom",
+        customBindHost: "127.0.0.1",
+        auth: { mode: "token", token: "test-token" },
+      },
+    };
+
+    const res = await audit(cfg, { env: {} });
+
+    expectNoFinding(res, "gateway.bind_no_tls");
+  });
+
+  it("flags a direct tailnet bind without Gateway TLS as critical", async () => {
+    const cfg: OpenClawConfig = {
+      gateway: {
+        bind: "tailnet",
+        auth: { mode: "token", token: "test-token" },
+      },
+    };
+
+    const res = await audit(cfg, { env: {} });
+
+    expect(hasFinding(res, "gateway.bind_no_tls", "critical")).toBe(true);
+  });
+
+  it("warns when an auto bind without TLS could fall back beyond loopback", async () => {
+    const cfg: OpenClawConfig = {
+      gateway: {
+        bind: "auto",
+        auth: { mode: "token", token: "test-token" },
+      },
+    };
+
+    const res = await audit(cfg, { env: {} });
+
+    expect(hasFinding(res, "gateway.auto_bind_may_no_tls", "warn")).toBe(true);
+  });
+
   it("does not flag non-loopback bind without auth when gateway password uses SecretRef", async () => {
     const cfg: OpenClawConfig = {
       gateway: {

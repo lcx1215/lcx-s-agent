@@ -62,6 +62,14 @@ vi.mock("./client.js", () => ({
   },
 }));
 
+vi.mock("../infra/tls/gateway.js", () => ({
+  loadGatewayTlsRuntime: async () => ({
+    enabled: true,
+    required: true,
+    fingerprintSha256: "sha256:local-fingerprint",
+  }),
+}));
+
 const { buildGatewayConnectionDetails, callGateway, callGatewayCli, callGatewayScoped } =
   await import("./call.js");
 
@@ -282,6 +290,68 @@ describe("callGateway url resolution", () => {
     await callGateway({
       method: "health",
       url: "wss://override.example:9443/ws",
+      token: "explicit-token",
+    });
+
+    expect(lastClientOptions?.tlsFingerprint).toBeUndefined();
+  });
+
+  it("uses the local TLS fingerprint for the exact configured loopback endpoint", async () => {
+    loadConfig.mockReturnValue({
+      gateway: { mode: "local", tls: { enabled: true } },
+    } as unknown as OpenClawConfig);
+    setGatewayNetworkDefaults(18789);
+
+    await callGateway({
+      method: "health",
+      url: "wss://127.0.0.1:18789",
+      token: "local-token",
+    });
+
+    expect(lastClientOptions?.tlsFingerprint).toBe("sha256:local-fingerprint");
+  });
+
+  it("uses the local TLS fingerprint for the configured LAN listener address", async () => {
+    loadConfig.mockReturnValue({
+      gateway: { mode: "local", bind: "lan", tls: { enabled: true } },
+    } as unknown as OpenClawConfig);
+    setGatewayNetworkDefaults(18789);
+    pickPrimaryLanIPv4.mockReturnValue("192.168.1.20");
+
+    await callGateway({
+      method: "health",
+      url: "wss://192.168.1.20:18789",
+      token: "local-token",
+    });
+
+    expect(lastClientOptions?.tlsFingerprint).toBe("sha256:local-fingerprint");
+  });
+
+  it("does not use the local TLS fingerprint for another LAN host", async () => {
+    loadConfig.mockReturnValue({
+      gateway: { mode: "local", bind: "lan", tls: { enabled: true } },
+    } as unknown as OpenClawConfig);
+    setGatewayNetworkDefaults(18789);
+    pickPrimaryLanIPv4.mockReturnValue("192.168.1.20");
+
+    await callGateway({
+      method: "health",
+      url: "wss://192.168.1.21:18789",
+      token: "explicit-token",
+    });
+
+    expect(lastClientOptions?.tlsFingerprint).toBeUndefined();
+  });
+
+  it("does not apply the local TLS fingerprint to another WSS endpoint", async () => {
+    loadConfig.mockReturnValue({
+      gateway: { mode: "local", tls: { enabled: true } },
+    } as unknown as OpenClawConfig);
+    setGatewayNetworkDefaults(18789);
+
+    await callGateway({
+      method: "health",
+      url: "wss://attacker.example:18789",
       token: "explicit-token",
     });
 

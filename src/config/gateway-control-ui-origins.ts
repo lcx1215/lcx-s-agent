@@ -31,14 +31,16 @@ export function buildDefaultControlUiAllowedOrigins(params: {
   port: number;
   bind: unknown;
   customBindHost?: string;
+  tlsEnabled?: boolean;
 }): string[] {
+  const scheme = params.tlsEnabled === true ? "https" : "http";
   const origins = new Set<string>([
-    `http://localhost:${params.port}`,
-    `http://127.0.0.1:${params.port}`,
+    `${scheme}://localhost:${params.port}`,
+    `${scheme}://127.0.0.1:${params.port}`,
   ]);
   const customBindHost = params.customBindHost?.trim();
-  if (params.bind === "custom" && customBindHost) {
-    origins.add(`http://${customBindHost}:${params.port}`);
+  if (params.bind === "custom" && customBindHost && customBindHost !== "0.0.0.0") {
+    origins.add(`${scheme}://${customBindHost}:${params.port}`);
   }
   return [...origins];
 }
@@ -73,6 +75,7 @@ export function ensureControlUiAllowedOriginsForNonLoopbackBind(
     port,
     bind,
     customBindHost: config.gateway?.customBindHost,
+    tlsEnabled: config.gateway?.tls?.enabled === true,
   });
   return {
     config: {

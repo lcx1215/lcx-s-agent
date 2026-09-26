@@ -257,6 +257,7 @@ describe("onboard (non-interactive): gateway and remote auth", () => {
           bind?: string;
           port?: number;
           auth?: { mode?: string; token?: string };
+          tls?: { enabled?: boolean };
         };
       }>(configPath);
 
@@ -264,6 +265,7 @@ describe("onboard (non-interactive): gateway and remote auth", () => {
       expect(cfg.gateway?.port).toBe(port);
       expect(cfg.gateway?.auth?.mode).toBe("token");
       expect((cfg.gateway?.auth?.token ?? "").length).toBeGreaterThan(8);
+      expect(cfg.gateway?.tls?.enabled).toBe(true);
     });
   }, 60_000);
 });

@@ -324,7 +324,7 @@ Gateway 网关在单个端口上复用 **WebSocket + HTTP**：
 绑定模式控制 Gateway 网关在哪里监听：
 
 - `gateway.bind: "loopback"`（默认）：只有本地客户端可以连接。
-- 非回环绑定（`"lan"`、`"tailnet"`、`"custom"`）扩大了攻击面。只有在使用共享令牌/密码和真正的防火墙时才使用它们。
+- 所有直接非回环绑定（`lan`/`custom`/`tailnet`，以及解析到非回环地址的 `auto`）都会扩大攻击面，必须配置共享令牌/密码和 `gateway.tls.enabled: true`。把 socket 绑定到 Tailnet IP 不能证明每个入站数据包都经过 WireGuard。条件允许时，优先让 Gateway 保持回环并通过 SSH/Tailscale Serve 访问。
 
 经验法则：
 

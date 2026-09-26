@@ -123,6 +123,7 @@ export async function statusAllCommand(
     const gatewayProbe = await probeGateway({
       url: connection.url,
       auth: probeAuth,
+      config: cfg,
       timeoutMs: Math.min(5000, opts?.timeoutMs ?? 10_000),
     }).catch(() => null);
     const gatewayReachable = gatewayProbe?.ok === true;
@@ -236,6 +237,7 @@ export async function statusAllCommand(
           bind: cfg.gateway?.bind,
           customBindHost: cfg.gateway?.customBindHost,
           basePath: cfg.gateway?.controlUi?.basePath,
+          tlsEnabled: cfg.gateway?.tls?.enabled === true,
         }).httpUrl
       : null;
 

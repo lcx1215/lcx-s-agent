@@ -87,7 +87,13 @@ ensure_control_ui_allowed_origins() {
 
   local allowed_origin_json
   local current_allowed_origins
-  allowed_origin_json="$(printf '["http://127.0.0.1:%s"]' "$OPENCLAW_GATEWAY_PORT")"
+  local legacy_http_origin_json
+  local origin_scheme="http"
+  case "$OPENCLAW_GATEWAY_BIND" in
+    lan|custom) origin_scheme="https" ;;
+  esac
+  allowed_origin_json="$(printf '["%s://127.0.0.1:%s"]' "$origin_scheme" "$OPENCLAW_GATEWAY_PORT")"
+  legacy_http_origin_json="$(printf '["http://127.0.0.1:%s"]' "$OPENCLAW_GATEWAY_PORT")"
   current_allowed_origins="$(
     docker compose "${COMPOSE_ARGS[@]}" run --rm lcx-cli \
       config get gateway.controlUi.allowedOrigins 2>/dev/null || true
@@ -95,6 +101,12 @@ ensure_control_ui_allowed_origins() {
   current_allowed_origins="${current_allowed_origins//$'\r'/}"
 
   if [[ -n "$current_allowed_origins" && "$current_allowed_origins" != "null" && "$current_allowed_origins" != "[]" ]]; then
+    if [[ "$origin_scheme" == "https" && "$current_allowed_origins" == "$legacy_http_origin_json" ]]; then
+      docker compose "${COMPOSE_ARGS[@]}" run --rm lcx-cli \
+        config set gateway.controlUi.allowedOrigins "$allowed_origin_json" --strict-json >/dev/null
+      echo "Updated the generated local Control UI origin to use HTTPS."
+      return 0
+    fi
     echo "Control UI allowlist already configured; leaving gateway.controlUi.allowedOrigins unchanged."
     return 0
   fi
@@ -109,6 +121,12 @@ sync_gateway_mode_and_bind() {
     config set gateway.mode local >/dev/null
   docker compose "${COMPOSE_ARGS[@]}" run --rm lcx-cli \
     config set gateway.bind "$OPENCLAW_GATEWAY_BIND" >/dev/null
+  case "$OPENCLAW_GATEWAY_BIND" in
+    lan|custom)
+      docker compose "${COMPOSE_ARGS[@]}" run --rm lcx-cli \
+        config set gateway.tls.enabled true >/dev/null
+      ;;
+  esac
   echo "Pinned gateway.mode=local and gateway.bind=$OPENCLAW_GATEWAY_BIND for Docker setup."
 }
 

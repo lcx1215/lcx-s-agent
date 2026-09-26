@@ -203,6 +203,7 @@ export async function finalizeOnboardingWizard(
       port: settings.port,
       customBindHost: nextConfig.gateway?.customBindHost,
       basePath: undefined,
+      tlsEnabled: nextConfig.gateway?.tls?.enabled === true,
     });
     // Daemon install/restart can briefly flap the WS; wait a bit so health check doesn't false-fail.
     await waitForGatewayReachable({
@@ -241,6 +242,7 @@ export async function finalizeOnboardingWizard(
     port: settings.port,
     customBindHost: settings.customBindHost,
     basePath: controlUiBasePath,
+    tlsEnabled: nextConfig.gateway?.tls?.enabled === true,
   });
   const authedUrl =
     settings.authMode === "token" && settings.gatewayToken
@@ -361,6 +363,7 @@ export async function finalizeOnboardingWizard(
             port: settings.port,
             basePath: controlUiBasePath,
             token: settings.authMode === "token" ? settings.gatewayToken : undefined,
+            tlsEnabled: nextConfig.gateway?.tls?.enabled === true,
           });
         }
       } else {
@@ -368,6 +371,7 @@ export async function finalizeOnboardingWizard(
           port: settings.port,
           basePath: controlUiBasePath,
           token: settings.authMode === "token" ? settings.gatewayToken : undefined,
+          tlsEnabled: nextConfig.gateway?.tls?.enabled === true,
         });
       }
       await prompter.note(
@@ -421,6 +425,7 @@ export async function finalizeOnboardingWizard(
           port: settings.port,
           basePath: controlUiBasePath,
           token: settings.gatewayToken,
+          tlsEnabled: nextConfig.gateway?.tls?.enabled === true,
         });
       }
     } else {
@@ -428,6 +433,7 @@ export async function finalizeOnboardingWizard(
         port: settings.port,
         basePath: controlUiBasePath,
         token: settings.gatewayToken,
+        tlsEnabled: nextConfig.gateway?.tls?.enabled === true,
       });
     }
 

@@ -1,5 +1,27 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveGatewayRuntimeConfig } from "./server-runtime-config.js";
+
+const tailscaleMocks = vi.hoisted(() => ({
+  host: undefined as string | undefined,
+}));
+
+vi.mock("../infra/tailnet.js", () => ({
+  pickPrimaryTailnetIPv4: () => tailscaleMocks.host,
+}));
+
+vi.mock("./net.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./net.js")>();
+  return {
+    ...actual,
+    resolveGatewayBindHost: async (
+      mode: Parameters<typeof actual.resolveGatewayBindHost>[0],
+      customHost?: Parameters<typeof actual.resolveGatewayBindHost>[1],
+    ) =>
+      mode === "tailnet"
+        ? (tailscaleMocks.host ?? "127.0.0.1")
+        : actual.resolveGatewayBindHost(mode, customHost),
+  };
+});
 
 const TRUSTED_PROXY_AUTH = {
   mode: "trusted-proxy" as const,
@@ -14,6 +36,43 @@ const TOKEN_AUTH = {
 };
 
 describe("resolveGatewayRuntimeConfig", () => {
+  describe("direct tailnet transport", () => {
+    it("requires Gateway TLS even when the local Tailscale daemon owns the bind address", async () => {
+      tailscaleMocks.host = "100.100.0.9";
+
+      await expect(
+        resolveGatewayRuntimeConfig({
+          cfg: {
+            gateway: {
+              bind: "tailnet",
+              auth: TOKEN_AUTH,
+              controlUi: { allowedOrigins: ["https://control.example.com"] },
+            },
+          },
+          port: 18789,
+        }),
+      ).rejects.toThrow("non-loopback Gateway binds require gateway.tls.enabled=true");
+    });
+
+    it("allows a direct tailnet bind when Gateway TLS is enabled", async () => {
+      tailscaleMocks.host = "100.100.0.9";
+
+      const result = await resolveGatewayRuntimeConfig({
+        cfg: {
+          gateway: {
+            bind: "tailnet",
+            tls: { enabled: true },
+            auth: TOKEN_AUTH,
+            controlUi: { allowedOrigins: ["https://control.example.com"] },
+          },
+        },
+        port: 18789,
+      });
+
+      expect(result.bindHost).toBe("100.100.0.9");
+    });
+  });
+
   describe("trusted-proxy auth mode", () => {
     // This test validates BOTH validation layers:
     // 1. CLI validation in src/cli/gateway-cli/run.ts (line 246)
@@ -25,6 +84,7 @@ describe("resolveGatewayRuntimeConfig", () => {
         cfg: {
           gateway: {
             bind: "lan" as const,
+            tls: { enabled: true },
             auth: TRUSTED_PROXY_AUTH,
             trustedProxies: ["192.168.1.1"],
             controlUi: { allowedOrigins: ["https://control.example.com"] },
@@ -93,6 +153,7 @@ describe("resolveGatewayRuntimeConfig", () => {
         cfg: {
           gateway: {
             bind: "lan" as const,
+            tls: { enabled: true },
             auth: TRUSTED_PROXY_AUTH,
             trustedProxies: [],
             controlUi: { allowedOrigins: ["https://control.example.com"] },
@@ -100,6 +161,18 @@ describe("resolveGatewayRuntimeConfig", () => {
         },
         expectedMessage:
           "gateway auth mode=trusted-proxy requires gateway.trustedProxies to be configured",
+      },
+      {
+        name: "lan binding with trusted proxy auth but TLS disabled",
+        cfg: {
+          gateway: {
+            bind: "lan" as const,
+            auth: TRUSTED_PROXY_AUTH,
+            trustedProxies: ["192.168.1.1"],
+            controlUi: { allowedOrigins: ["https://control.example.com"] },
+          },
+        },
+        expectedMessage: "non-loopback Gateway binds require gateway.tls.enabled=true",
       },
     ])("rejects $name", async ({ cfg, expectedMessage }) => {
       await expect(resolveGatewayRuntimeConfig({ cfg, port: 18789 })).rejects.toThrow(
@@ -130,6 +203,7 @@ describe("resolveGatewayRuntimeConfig", () => {
         cfg: {
           gateway: {
             bind: "lan" as const,
+            tls: { enabled: true },
             auth: TOKEN_AUTH,
             controlUi: { allowedOrigins: ["https://control.example.com"] },
           },
@@ -155,6 +229,29 @@ describe("resolveGatewayRuntimeConfig", () => {
         cfg: { gateway: { bind: "lan" as const, auth: { mode: "token" as const } } },
         expectedMessage:
           "gateway auth mode is token, but no token was configured (set gateway.auth.token or OPENCLAW_GATEWAY_TOKEN)",
+      },
+      {
+        name: "lan binding with token but TLS disabled",
+        cfg: {
+          gateway: {
+            bind: "lan" as const,
+            auth: TOKEN_AUTH,
+            controlUi: { allowedOrigins: ["https://control.example.com"] },
+          },
+        },
+        expectedMessage: "non-loopback Gateway binds require gateway.tls.enabled=true",
+      },
+      {
+        name: "tailnet bind with an explicit host override but TLS disabled",
+        cfg: {
+          gateway: {
+            bind: "tailnet" as const,
+            auth: TOKEN_AUTH,
+            controlUi: { allowedOrigins: ["https://control.example.com"] },
+          },
+        },
+        host: "192.168.1.25",
+        expectedMessage: "non-loopback Gateway binds require gateway.tls.enabled=true",
       },
       {
         name: "lan binding with explicit none auth",
@@ -207,6 +304,7 @@ describe("resolveGatewayRuntimeConfig", () => {
           cfg: {
             gateway: {
               bind: "lan",
+              tls: { enabled: true },
               auth: TOKEN_AUTH,
             },
           },
@@ -220,6 +318,7 @@ describe("resolveGatewayRuntimeConfig", () => {
         cfg: {
           gateway: {
             bind: "lan",
+            tls: { enabled: true },
             auth: TOKEN_AUTH,
             controlUi: {
               dangerouslyAllowHostHeaderOriginFallback: true,

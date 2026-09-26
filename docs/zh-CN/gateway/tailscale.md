@@ -52,12 +52,13 @@ LCX Agent 仅在请求从 loopback 到达并带有 Tailscale 的 `x-forwarded-fo
 
 ### 仅限 Tailnet（绑定到 Tailnet IP）
 
-当你希望 Gateway 网关直接监听 Tailnet IP 时使用此方式（无 Serve/Funnel）。
+当你希望 Gateway 网关直接监听 Tailnet IP 时使用此方式（不使用 Serve/Funnel）。请为 Tailnet IP 或 MagicDNS 名称配置客户端信任的证书。
 
 ```json5
 {
   gateway: {
     bind: "tailnet",
+    tls: { enabled: true },
     auth: { mode: "token", token: "your-token" },
   },
 }
@@ -65,10 +66,10 @@ LCX Agent 仅在请求从 loopback 到达并带有 Tailscale 的 `x-forwarded-fo
 
 从另一个 Tailnet 设备连接：
 
-- 控制 UI：`http://<tailscale-ip>:18789/`
-- WebSocket：`ws://<tailscale-ip>:18789`
+- 控制 UI：`https://<tailscale-ip>:18789/`
+- WebSocket：`wss://<tailscale-ip>:18789`
 
-注意：在此模式下 loopback（`http://127.0.0.1:18789`）将**不**工作。
+客户端需要信任或固定 Gateway 证书。浏览器客户端应使用 SAN 包含 Tailnet IP 或 MagicDNS 名称的证书。在此模式下 loopback（`http://127.0.0.1:18789`）将**不**工作。
 
 ### 公共互联网（Funnel + 共享密码）
 
@@ -96,7 +97,7 @@ lcx gateway --tailscale funnel --auth password
 - Tailscale Serve/Funnel 需要安装并登录 `tailscale` CLI。
 - `tailscale.mode: "funnel"` 除非认证模式为 `password`，否则拒绝启动，以避免公共暴露。
 - 如果你希望 LCX Agent 在关闭时撤销 `tailscale serve` 或 `tailscale funnel` 配置，设置 `gateway.tailscale.resetOnExit`。
-- `gateway.bind: "tailnet"` 是直接 Tailnet 绑定（无 HTTPS，无 Serve/Funnel）。
+- `gateway.bind: "tailnet"` 是直接 Tailnet 绑定（不使用 Tailscale Serve/Funnel），仍必须启用 Gateway TLS 和认证。把 socket 绑定到 Tailnet IP 不能证明每个入站数据包都经 WireGuard 到达；客户端使用 `wss://` 并信任或固定 Gateway 证书。
 - `gateway.bind: "auto"` 优先 loopback；如果你想要仅 Tailnet，使用 `tailnet`。
 - Serve/Funnel 仅暴露 **Gateway 网关控制 UI + WS**。节点通过相同的 Gateway 网关 WS 端点连接，因此 Serve 可以用于节点访问。
 
