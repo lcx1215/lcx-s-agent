@@ -1445,6 +1445,9 @@ async function runLearningCouncilRoleInProcess(params: {
   timeoutSeconds: number;
   extraSystemPrompt: string;
 }): Promise<GatewayAgentResponse> {
+  // The council consumes this payload itself. Keep the agent's CLI-facing reply out of stdout so
+  // operator commands that promise JSON can emit one machine-readable document.
+  const councilRuntime = { ...defaultRuntime, log: () => {} };
   const result = await agentCommand(
     {
       message: params.message,
@@ -1457,7 +1460,7 @@ async function runLearningCouncilRoleInProcess(params: {
       extraSystemPrompt: params.extraSystemPrompt,
       senderIsOwner: false,
     },
-    defaultRuntime,
+    councilRuntime,
     createDefaultDeps(),
   );
   return {
