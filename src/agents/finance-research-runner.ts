@@ -74,6 +74,11 @@ import {
   parseFinanceResearchAllocationProposal,
   type FinanceResearchPortfolioContext,
 } from "./finance-research-portfolio-plan.js";
+import {
+  FINANCE_RESEARCH_CLAIM_EPISTEMIC_CLASSES,
+  FINANCE_RESEARCH_EVIDENCE_RELATIONS,
+  financeResearchClaimRequiresBasis,
+} from "./finance-research-provenance.js";
 import { validateFinanceResearchThesisProposals } from "./finance-research-thesis-learning.js";
 import { buildFinanceSourceRecoveryPlan } from "./finance-source-recovery.js";
 import {
@@ -1494,16 +1499,37 @@ function qualityVerifier(
 ): QualityHarnessVerifier {
   return ({ request, artifact }) => {
     const evidenceIds = new Set(request.evidence.map((entry) => entry.id));
-    const invalidClaims = artifact.claims.filter(
-      (claim) =>
-        claim.status === "supported" &&
-        (claim.evidenceIds.length === 0 || claim.evidenceIds.some((id) => !evidenceIds.has(id))),
-    );
+    const invalidClaims = artifact.claims.filter((claim) => {
+      const invalidEvidenceReference = claim.evidenceIds.some((id) => !evidenceIds.has(id));
+      return (
+        invalidEvidenceReference || (claim.status === "supported" && claim.evidenceIds.length === 0)
+      );
+    });
     if (invalidClaims.length > 0) {
       return {
         status: "failed",
-        summary: "supported claims must cite supplied evidence ids",
-        details: [`invalid_supported_claims=${invalidClaims.length}`],
+        summary: "claim evidence references must resolve to supplied evidence ids",
+        details: [`claims_with_invalid_evidence_ids=${invalidClaims.length}`],
+      };
+    }
+    const missingClaimProvenance = artifact.claims.filter((claim) => {
+      const relations = claim.evidenceRelations;
+      return (
+        claim.epistemicClass === undefined ||
+        (financeResearchClaimRequiresBasis(claim.epistemicClass) && !claim.basis?.trim()) ||
+        relations === undefined ||
+        relations.length !== claim.evidenceIds.length ||
+        new Set(relations.map((entry) => entry.evidenceId)).size !== relations.length ||
+        claim.evidenceIds.some((id) => !relations.some((entry) => entry.evidenceId === id)) ||
+        (claim.status === "supported" && !relations.some((entry) => entry.relation === "supports"))
+      );
+    });
+    if (missingClaimProvenance.length > 0) {
+      return {
+        status: "failed",
+        summary:
+          "finance claims require class, applicable basis, and relations for every cited item",
+        details: [`claims_missing_provenance=${missingClaimProvenance.length}`],
       };
     }
     const uncited = findUncitedFinanceInstruments(request.evidence, artifact.claims);
@@ -2077,7 +2103,7 @@ export async function runFinanceResearchRun(
     ) {
       const qualityRequest = {
         task:
-          `${ask}\nApply the selected analytical modules in sharedContext.financeOrchestration and only the supplied method kit checks relevant to this task. A caller selection does not establish evidence or tool execution. Preserve the requested horizon and deliverable; do not add a forecast or backtest to a factual request. Cite supporting evidence IDs, distinguish inference, and state missing evidence. Keep research-only and do not provide execution instructions.` +
+          `${ask}\nApply the selected analytical modules in sharedContext.financeOrchestration and only the supplied method kit checks relevant to this task. A caller selection does not establish evidence or tool execution. Preserve the requested horizon and deliverable; do not add a forecast or backtest to a factual request. For every claim, provide epistemicClass as ${FINANCE_RESEARCH_CLAIM_EPISTEMIC_CLASSES.join(", ")}. This describes claim origin, not truth, source quality, or readiness. For derived measures, estimates, inferences, and hypotheses, provide basis describing the calculation method, assumptions, or reasoning bridge. Provide evidenceRelations for every claim, mapping each evidenceId exactly once to ${FINANCE_RESEARCH_EVIDENCE_RELATIONS.join(", ")}. Preserve contrary evidence and never treat a source report as independently verified. State missing evidence. Keep research-only and do not provide execution instructions.` +
           (plan.portfolioContext
             ? "\nAlso propose budget fractions for every controller-listed active strategy in supportingAnalysis.portfolioAllocationProposal.allocations. Each allocation must contain only strategyId, budgetFraction, and evidenceIds; cite supplied evidence, keep the total at or below 1, and leave unused capital as cash. This is a reviewable proposal, not execution authority."
             : "") +

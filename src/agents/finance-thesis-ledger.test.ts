@@ -138,9 +138,38 @@ describe("finance thesis ledger", () => {
     const db = new DatabaseSync(financeThesisLedgerPath(directory));
     try {
       const row = db.prepare("SELECT body FROM finance_thesis_records WHERE sequence=1").get();
+      const current = JSON.parse(String(row?.body)) as {
+        schemaVersion: string;
+        body: {
+          kind: "opened";
+          thesisId: string;
+          instrument: string;
+          claim: string;
+          rationale?: string;
+          evidence: readonly { id: string; source: string; reference: string; summary?: string }[];
+          invalidationConditions: readonly string[];
+          observedAt: string;
+        };
+        [key: string]: unknown;
+      };
       const legacy = {
-        ...JSON.parse(String(row?.body)),
+        ...current,
         schemaVersion: "lcx_finance_thesis_record_v1",
+        body: {
+          kind: current.body.kind,
+          thesisId: current.body.thesisId,
+          instrument: current.body.instrument,
+          claim: current.body.claim,
+          ...(current.body.rationale === undefined ? {} : { rationale: current.body.rationale }),
+          evidence: current.body.evidence.map(({ id, source, reference, summary }) => ({
+            id,
+            source,
+            reference,
+            ...(summary === undefined ? {} : { summary }),
+          })),
+          invalidationConditions: current.body.invalidationConditions,
+          observedAt: current.body.observedAt,
+        },
       };
       const ref = caseflowFingerprint(legacy);
       db.exec("DROP TRIGGER finance_thesis_no_update");
