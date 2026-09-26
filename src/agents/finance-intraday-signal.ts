@@ -15,7 +15,12 @@ export type FinanceIntradaySignal = Readonly<{
   signalId: string;
   instrument: string;
   action: "buy" | "sell" | "hold";
-  reason: "opening_range_breakout" | "opening_range_stop" | "reward_target" | "no_trigger";
+  reason:
+    | "opening_range_breakout"
+    | "opening_range_stop"
+    | "reward_target"
+    | "pre_close"
+    | "no_trigger";
   referencePrice: number;
   referencePriceAt: string;
   stopPrice?: number;
@@ -32,6 +37,7 @@ export function evaluateFinanceIntradaySignal(params: {
   openingRangeBars?: number;
   rewardRisk?: number;
   position?: FinanceIntradayPositionState;
+  preCloseExit?: boolean;
 }): FinanceIntradaySignal {
   const openingRangeBars = params.openingRangeBars ?? 6;
   const rewardRisk = params.rewardRisk ?? 2;
@@ -74,6 +80,9 @@ export function evaluateFinanceIntradaySignal(params: {
       action = "sell";
       reason = "reward_target";
       referencePrice = params.position.targetPrice;
+    } else if (params.preCloseExit === true) {
+      action = "sell";
+      reason = "pre_close";
     }
   } else if (bars.length > openingRangeBars) {
     const opening = bars.slice(0, openingRangeBars);

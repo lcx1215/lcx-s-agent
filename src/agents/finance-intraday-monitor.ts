@@ -1,6 +1,16 @@
 import { syncAlpacaIntradayBars } from "./finance-alpaca-intraday.js";
+import {
+  financeAlpacaMarketSessionIssue,
+  type FinanceAlpacaMarketSession,
+  type FinanceAlpacaMarketSessionResolver,
+} from "./finance-alpaca-market-calendar.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
-import { financeEtClock, FINANCE_TRADING_WEEKDAYS } from "./finance-cycle-schedule.js";
+import {
+  financeEtClock,
+  financeUsEquityLocalTimeInstant,
+  FINANCE_TRADING_WEEKDAYS,
+} from "./finance-cycle-schedule.js";
+import type { FinanceExecutionReceipt } from "./finance-execution-adapter.js";
 import {
   appendFinanceIntradayDecision,
   readFinanceIntradayDecisions,
@@ -9,6 +19,8 @@ import {
 import { readFinanceIntradayLedger } from "./finance-intraday-ledger.js";
 import {
   FINANCE_INTRADAY_OPENING_RANGE_FORM,
+  FINANCE_INTRADAY_OPENING_RANGE_RULE_V2,
+  financeIntradayPreCloseExitBarMinute,
   resolveFinanceIntradayActiveRuleContract,
   type FinanceIntradayActiveRuleContract,
   type FinanceIntradayMonitorScope,
@@ -18,6 +30,58 @@ import { evaluateFinanceIntradaySignal } from "./finance-intraday-signal.js";
 import { projectFinancePositions, readFinancePositionLedger } from "./finance-position-ledger.js";
 import { readFinanceResearchEquityUniverseSnapshot } from "./finance-research-runner.js";
 import { readFinanceStrategyRuleLedger } from "./finance-strategy-rule-ledger.js";
+
+function decisionForOpenIntradayPosition(params: {
+  decisions: Awaited<ReturnType<typeof readFinanceIntradayDecisions>>;
+  receipts: readonly FinanceExecutionReceipt[];
+  instrument: string;
+  quantity: number;
+}) {
+  const lots: Array<{ intentId: string; quantity: number }> = [];
+  const receipts = params.receipts
+    .filter((receipt) => receipt.instrument.toUpperCase() === params.instrument)
+    .toSorted((left, right) =>
+      left.recordedAt === right.recordedAt
+        ? left.receiptId.localeCompare(right.receiptId)
+        : left.recordedAt.localeCompare(right.recordedAt),
+    );
+
+  for (const receipt of receipts) {
+    if (receipt.side === "buy") {
+      const existing = lots.find((lot) => lot.intentId === receipt.intentId);
+      if (existing) {
+        existing.quantity += receipt.fill.filledQuantity;
+      } else {
+        lots.push({ intentId: receipt.intentId, quantity: receipt.fill.filledQuantity });
+      }
+      continue;
+    }
+    let toClose = receipt.fill.filledQuantity;
+    while (toClose > 1e-6 && lots.length > 0) {
+      const lot = lots[0];
+      const closed = Math.min(toClose, lot.quantity);
+      lot.quantity -= closed;
+      toClose -= closed;
+      if (lot.quantity <= 1e-6) {
+        lots.shift();
+      }
+    }
+    if (toClose > 1e-6) {
+      return null;
+    }
+  }
+
+  const openLots = lots.filter((lot) => lot.quantity > 1e-6);
+  if (
+    openLots.length !== 1 ||
+    Math.abs(openLots[0].quantity - params.quantity) > 1e-6 ||
+    !openLots[0].intentId.startsWith("intent:")
+  ) {
+    return null;
+  }
+  const signalId = openLots[0].intentId.slice("intent:".length);
+  return params.decisions.find((record) => record.input.signalId === signalId) ?? null;
+}
 
 export type FinanceIntradayMonitorOptions = Readonly<{
   directory: string;
@@ -32,16 +96,37 @@ export type FinanceIntradayMonitorOptions = Readonly<{
   now?: Date;
   signal?: AbortSignal;
   sync?: typeof syncAlpacaIntradayBars;
+  resolveMarketSession?: FinanceAlpacaMarketSessionResolver;
 }>;
 
 export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMonitorOptions) {
   const now = options.now ?? new Date();
   const clock = financeEtClock(now);
-  if (
-    !FINANCE_TRADING_WEEKDAYS.includes(clock.weekday) ||
-    clock.minutes < 570 ||
-    clock.minutes >= 960
-  ) {
+  if (!FINANCE_TRADING_WEEKDAYS.includes(clock.weekday)) {
+    return Object.freeze({ status: "outside_cash_session" as const, clock });
+  }
+  if (!options.resolveMarketSession) {
+    return Object.freeze({ status: "blocked_missing_market_calendar" as const, clock });
+  }
+  let marketSession: FinanceAlpacaMarketSession | null;
+  try {
+    marketSession = await options.resolveMarketSession(clock.date, options.signal);
+  } catch {
+    return Object.freeze({ status: "blocked_market_calendar_unavailable" as const, clock });
+  }
+  if (!marketSession) {
+    return Object.freeze({ status: "market_closed" as const, clock });
+  }
+  const marketOpenAt = Date.parse(marketSession.openAt);
+  const marketCloseAt = Date.parse(marketSession.closeAt);
+  const marketSessionIssue = financeAlpacaMarketSessionIssue(marketSession, {
+    asOf: now.toISOString(),
+    maxObservedAgeMs: 5 * 60_000,
+  });
+  if (marketSession.date !== clock.date || marketSessionIssue !== null) {
+    return Object.freeze({ status: "blocked_invalid_market_calendar" as const, clock });
+  }
+  if (now.getTime() < marketOpenAt || now.getTime() >= marketCloseAt) {
     return Object.freeze({ status: "outside_cash_session" as const, clock });
   }
   if (!options.strategyContract || !options.scope) {
@@ -66,6 +151,8 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
   }
   if (
     options.strategyContract.ruleId !== activeContract.ruleId ||
+    options.strategyContract.formVersion !== activeContract.formVersion ||
+    options.strategyContract.preCloseExitEnabled !== activeContract.preCloseExitEnabled ||
     activeContract.declarationRef !== options.strategyContract.declarationRef ||
     activeContract.activationRef !== options.strategyContract.activationRef ||
     JSON.stringify([...activeContract.instruments].toSorted()) !==
@@ -145,11 +232,12 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
     return Object.freeze({ status: "no_intraday_head" as const, clock, syncReceipt });
   }
   const sessionBars = intraday.bars.filter((bar) => {
-    const barClock = financeEtClock(new Date(bar.startAt));
+    const barStartAt = Date.parse(bar.startAt);
     return (
-      barClock.date === clock.date &&
-      barClock.minutes >= 570 &&
-      barClock.minutes < 960 &&
+      financeEtClock(new Date(bar.startAt)).date === clock.date &&
+      barStartAt >= marketOpenAt &&
+      barStartAt < marketCloseAt &&
+      bar.intervalSeconds === options.intervalSeconds &&
       Date.parse(bar.endAt) <= now.getTime()
     );
   });
@@ -168,72 +256,176 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
   if (position && position.quantity < 0) {
     return Object.freeze({ status: "blocked_short_position" as const, clock, syncReceipt });
   }
-  const decisions = await readFinanceIntradayDecisions(options.directory, {
-    instrument,
-    sessionDate: clock.date,
-  });
-  const priorBuy = decisions.find((record) => record.input.action === "buy");
-  const priorSell = decisions.find((record) => record.input.action === "sell");
-  if (priorSell) {
-    const outcome = await readFinanceIntradayOutcome(options.directory, priorSell.input.signalId);
-    return Object.freeze(
-      outcome
-        ? {
-            status: "sell_already_terminal" as const,
-            clock,
-            syncReceipt,
-            decision: priorSell,
-            outcome,
-          }
-        : {
-            status: "decision_pending_execution" as const,
-            clock,
-            syncReceipt,
-            decision: priorSell,
-          },
+  const decisions = await readFinanceIntradayDecisions(options.directory, { instrument });
+  const sessionDecisions = decisions.filter((record) => record.input.sessionDate === clock.date);
+  const sessionBuys = sessionDecisions.filter((record) => record.input.action === "buy");
+  const sessionSells = sessionDecisions.filter((record) => record.input.action === "sell");
+  const latestBar = sessionBars.at(-1)!;
+  let entryDecision: (typeof decisions)[number] | null = null;
+
+  if (position) {
+    const strategyReceipts = receiptsForIntradayStrategy(
+      positionRecords.receipts,
+      options.accountId,
     );
-  }
-  if (!position && priorBuy) {
-    const outcome = await readFinanceIntradayOutcome(options.directory, priorBuy.input.signalId);
-    return Object.freeze(
-      outcome
-        ? {
-            status: "buy_already_terminal" as const,
-            clock,
-            syncReceipt,
-            decision: priorBuy,
-            outcome,
-          }
-        : { status: "decision_pending_execution" as const, clock, syncReceipt, decision: priorBuy },
-    );
-  }
-  if (position && (!priorBuy?.input.stopPrice || !priorBuy.input.targetPrice)) {
-    return Object.freeze({
-      status: "blocked_position_without_strategy_state" as const,
-      clock,
-      syncReceipt,
+    entryDecision = decisionForOpenIntradayPosition({
+      decisions,
+      receipts: strategyReceipts,
+      instrument,
+      quantity: position.quantity,
     });
+    if (
+      !entryDecision ||
+      !entryDecision.input.stopPrice ||
+      !entryDecision.input.targetPrice ||
+      !entryDecision.input.strategyBinding ||
+      entryDecision.input.strategyBinding.parameters.intervalSeconds !== options.intervalSeconds
+    ) {
+      return Object.freeze({
+        status: "blocked_position_without_strategy_state" as const,
+        clock,
+        syncReceipt,
+      });
+    }
+    const priorOpenSell = decisions
+      .filter(
+        (record) => record.sequence > entryDecision!.sequence && record.input.action === "sell",
+      )
+      .at(-1);
+    if (priorOpenSell) {
+      const outcome = await readFinanceIntradayOutcome(
+        options.directory,
+        priorOpenSell.input.signalId,
+      );
+      if (!outcome || outcome.status !== "refused") {
+        return Object.freeze({
+          status: outcome
+            ? ("sell_already_terminal" as const)
+            : ("decision_pending_execution" as const),
+          clock,
+          syncReceipt,
+          decision: priorOpenSell,
+          ...(outcome ? { outcome } : {}),
+        });
+      }
+      if (Date.parse(latestBar.endAt) <= Date.parse(priorOpenSell.input.referencePriceAt)) {
+        return Object.freeze({
+          status: "sell_refused_waiting_for_new_bar" as const,
+          clock,
+          syncReceipt,
+          decision: priorOpenSell,
+          outcome,
+        });
+      }
+    }
+  } else {
+    const priorSell = sessionSells.at(-1);
+    if (priorSell) {
+      const outcome = await readFinanceIntradayOutcome(options.directory, priorSell.input.signalId);
+      if (!outcome || outcome.status !== "refused") {
+        return Object.freeze({
+          status: outcome
+            ? ("sell_already_terminal" as const)
+            : ("decision_pending_execution" as const),
+          clock,
+          syncReceipt,
+          decision: priorSell,
+          ...(outcome ? { outcome } : {}),
+        });
+      }
+      if (Date.parse(latestBar.endAt) <= Date.parse(priorSell.input.referencePriceAt)) {
+        return Object.freeze({
+          status: "sell_refused_waiting_for_new_bar" as const,
+          clock,
+          syncReceipt,
+          decision: priorSell,
+          outcome,
+        });
+      }
+    }
+    const priorBuy = sessionBuys.at(-1);
+    if (priorBuy) {
+      const outcome = await readFinanceIntradayOutcome(options.directory, priorBuy.input.signalId);
+      if (!outcome || outcome.status !== "refused") {
+        return Object.freeze({
+          status: outcome
+            ? ("buy_already_terminal" as const)
+            : ("decision_pending_execution" as const),
+          clock,
+          syncReceipt,
+          decision: priorBuy,
+          ...(outcome ? { outcome } : {}),
+        });
+      }
+      if (Date.parse(latestBar.endAt) <= Date.parse(priorBuy.input.referencePriceAt)) {
+        return Object.freeze({
+          status: "buy_refused_waiting_for_new_bar" as const,
+          clock,
+          syncReceipt,
+          decision: priorBuy,
+          outcome,
+        });
+      }
+    }
   }
+
+  const preCloseBarMinute = financeIntradayPreCloseExitBarMinute(
+    options.intervalSeconds,
+    marketSession.closeMinute,
+  );
+  const preCloseBarStartAt = financeUsEquityLocalTimeInstant(clock.date, preCloseBarMinute);
+  if (!preCloseBarStartAt) {
+    return Object.freeze({ status: "blocked_invalid_market_calendar" as const, clock });
+  }
+  const preCloseBarStartAtMs = Date.parse(preCloseBarStartAt);
+  const preCloseBarEndAtMs = preCloseBarStartAtMs + options.intervalSeconds * 1_000;
+  const entryCutoffDue =
+    activeContract.preCloseExitEnabled && now.getTime() >= preCloseBarStartAtMs;
+  const positionUsesPreCloseExit =
+    entryDecision?.input.strategyRule === FINANCE_INTRADAY_OPENING_RANGE_RULE_V2;
+  const positionPreCloseDue = positionUsesPreCloseExit && now.getTime() >= preCloseBarStartAtMs;
+  const preCloseBarAvailable =
+    positionPreCloseDue &&
+    sessionBars.some((bar) => Date.parse(bar.startAt) === preCloseBarStartAtMs);
+  const preCloseBarEndMinute = financeEtClock(new Date(preCloseBarEndAtMs)).minutes;
 
   const signal = evaluateFinanceIntradaySignal({
     bars: sessionBars,
     openingRangeBars: options.openingRangeBars,
     rewardRisk: options.rewardRisk,
-    ...(position && priorBuy
+    ...(position && entryDecision
       ? {
           position: {
             instrument,
-            enteredAt: priorBuy.input.referencePriceAt,
+            enteredAt: entryDecision.input.referencePriceAt,
             entryPrice: position.averageCost,
-            stopPrice: priorBuy.input.stopPrice!,
-            targetPrice: priorBuy.input.targetPrice!,
+            stopPrice: entryDecision.input.stopPrice!,
+            targetPrice: entryDecision.input.targetPrice!,
             quantity: position.quantity,
           },
         }
       : {}),
+    preCloseExit: positionPreCloseDue && preCloseBarAvailable,
   });
   if (signal.action === "hold") {
+    if (positionPreCloseDue && !preCloseBarAvailable) {
+      return Object.freeze({
+        status:
+          clock.minutes < preCloseBarEndMinute
+            ? ("session_exit_bar_pending" as const)
+            : ("session_exit_bar_missing" as const),
+        clock,
+        syncReceipt,
+        signal,
+      });
+    }
+    if (entryCutoffDue) {
+      return Object.freeze({ status: "entry_cutoff_reached" as const, clock, syncReceipt, signal });
+    }
     return Object.freeze({ status: "no_signal" as const, clock, syncReceipt, signal });
+  }
+  if (signal.action === "buy" && entryCutoffDue) {
+    return Object.freeze({ status: "entry_cutoff_reached" as const, clock, syncReceipt, signal });
   }
   if (signal.reason === "no_trigger") {
     throw new Error("actionable intraday signal cannot have no_trigger reason");
@@ -260,6 +452,7 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
         intervalSeconds: activeContract.intervalSeconds,
         feed: activeContract.feed,
       },
+      marketSession,
       scope: options.scope.kind,
       ...(options.scope.universeSnapshotRef
         ? { universeSnapshotRef: options.scope.universeSnapshotRef }

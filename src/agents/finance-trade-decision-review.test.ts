@@ -71,6 +71,16 @@ const intradayRequest: FinanceIntradayTradeDecisionReviewRequest = {
       stopPrice: 498,
       targetPrice: 504,
       datasetHeadRef: "c".repeat(64),
+      marketSession: {
+        date: "2026-09-23",
+        openAt: "2026-09-23T13:30:00.000Z",
+        closeAt: "2026-09-23T20:00:00.000Z",
+        openMinute: 570,
+        closeMinute: 960,
+        observedAt: "2026-09-23T19:00:00.000Z",
+        calendarRef: "d".repeat(64),
+        sourceUrlOrArtifact: "fixture://market-calendar",
+      },
       intradayOwnedQuantity: 0,
       brokerPositionQuantity: 0,
       executionQuote: {
@@ -308,6 +318,44 @@ describe("configured finance trade decision reviewer", () => {
       expect.objectContaining({ role: "risk_check", payload: intradayRequest }),
       expect.any(AbortSignal),
     );
+  });
+
+  it("accepts a versioned pre-close sell candidate for review", async () => {
+    const preCloseRequest: FinanceIntradayTradeDecisionReviewRequest = {
+      ...intradayRequest,
+      signalAnchor: "intraday-pre-close-signal",
+      ruleIds: ["opening_range_breakout_long_pre_close_v2"],
+      candidates: [
+        {
+          ...intradayRequest.candidates[0],
+          side: "sell",
+          strategyRule: "opening_range_breakout_long_pre_close_v2",
+          signalReason: "pre_close",
+          intradayOwnedQuantity: 1,
+          brokerPositionQuantity: 1,
+        },
+      ],
+    };
+    const model = adapter({
+      schemaVersion: FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA,
+      decisions: [
+        {
+          candidateId: preCloseRequest.candidates[0].candidateId,
+          decision: "approve",
+          rationale: "The pre-close policy is bound to the active versioned rule.",
+        },
+      ],
+    });
+    const reviewer = createFinanceTradeDecisionReviewer({} as OpenClawConfig, {
+      adapterFactory: () => model,
+    });
+
+    const result = await reviewer(preCloseRequest, AbortSignal.timeout(1000));
+
+    expect(result).toMatchObject({
+      status: "completed",
+      decisions: [{ candidateId: "intraday-signal-1", decision: "approve" }],
+    });
   });
 
   it("does not accept a daily-review response schema for an intraday request", async () => {

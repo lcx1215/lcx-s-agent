@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  financeAlpacaMarketSessionIssue,
+  type FinanceAlpacaMarketSession,
+} from "./finance-alpaca-market-calendar.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import type { FinanceIntradayBar } from "./finance-intraday-ledger.js";
 import type { FinanceStrategyRule } from "./finance-strategy-rule-ledger.js";
@@ -7,8 +11,11 @@ import { turnoverAndCost } from "./quant-math-advanced.js";
 export const FINANCE_INTRADAY_PAPER_SCHEMA = "lcx_finance_intraday_paper_v1" as const;
 export const FINANCE_INTRADAY_OPENING_RANGE_RULE =
   "opening_range_breakout_long_next_bar_v1" as const;
+export const FINANCE_INTRADAY_OPENING_RANGE_RULE_V2 =
+  "opening_range_breakout_long_pre_close_v2" as const;
 export const FINANCE_INTRADAY_OPENING_RANGE_FORM = "intraday_opening_range_breakout" as const;
 export const FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION = "1" as const;
+export const FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V2 = "2" as const;
 export const FINANCE_INTRADAY_OPENING_RANGE_EMITS = "paper_signal" as const;
 export const FINANCE_INTRADAY_PAPER_EXECUTION_ELIGIBILITY_FIELD =
   "paperExecutionEligibility" as const;
@@ -23,7 +30,13 @@ export type FinanceIntradayPaperExecutionEligibility = Readonly<{
 }>;
 
 export type FinanceIntradayActiveRuleContract = Readonly<{
-  ruleId: typeof FINANCE_INTRADAY_OPENING_RANGE_RULE;
+  ruleId:
+    | typeof FINANCE_INTRADAY_OPENING_RANGE_RULE
+    | typeof FINANCE_INTRADAY_OPENING_RANGE_RULE_V2;
+  formVersion:
+    | typeof FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION
+    | typeof FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V2;
+  preCloseExitEnabled: boolean;
   declarationRef: string;
   activationRef: string;
   instruments: readonly string[];
@@ -33,6 +46,10 @@ export type FinanceIntradayActiveRuleContract = Readonly<{
   feed: "iex" | "sip";
   eligibility: FinanceIntradayPaperExecutionEligibility;
 }>;
+
+export type FinanceIntradayOpeningRangeRuleId =
+  | typeof FINANCE_INTRADAY_OPENING_RANGE_RULE
+  | typeof FINANCE_INTRADAY_OPENING_RANGE_RULE_V2;
 
 export type FinanceIntradayMonitorScope = Readonly<{
   kind: "strategy_universe" | "system_universe" | "explicit_diagnostic";
@@ -77,11 +94,15 @@ export function resolveFinanceIntradayPaperExecutionEligibility(
 export function resolveFinanceIntradayActiveRuleContract(
   rule: FinanceStrategyRule,
 ): FinanceIntradayActiveRuleContract {
+  const supportedVersion =
+    (rule.ruleId === FINANCE_INTRADAY_OPENING_RANGE_RULE &&
+      rule.formVersion === FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION) ||
+    (rule.ruleId === FINANCE_INTRADAY_OPENING_RANGE_RULE_V2 &&
+      rule.formVersion === FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V2);
   if (
-    rule.ruleId !== FINANCE_INTRADAY_OPENING_RANGE_RULE ||
+    !supportedVersion ||
     rule.state !== "active" ||
     rule.form !== FINANCE_INTRADAY_OPENING_RANGE_FORM ||
-    rule.formVersion !== FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION ||
     rule.emits !== FINANCE_INTRADAY_OPENING_RANGE_EMITS ||
     rule.schedule.kind !== "intraday"
   ) {
@@ -145,8 +166,18 @@ export function resolveFinanceIntradayActiveRuleContract(
 
   const eligibility = resolveFinanceIntradayPaperExecutionEligibility(rule.body);
 
+  const resolvedRuleId: FinanceIntradayOpeningRangeRuleId =
+    rule.ruleId === FINANCE_INTRADAY_OPENING_RANGE_RULE_V2
+      ? FINANCE_INTRADAY_OPENING_RANGE_RULE_V2
+      : FINANCE_INTRADAY_OPENING_RANGE_RULE;
+  const resolvedFormVersion =
+    resolvedRuleId === FINANCE_INTRADAY_OPENING_RANGE_RULE_V2
+      ? FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V2
+      : FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION;
   return Object.freeze({
-    ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+    ruleId: resolvedRuleId,
+    formVersion: resolvedFormVersion,
+    preCloseExitEnabled: resolvedRuleId === FINANCE_INTRADAY_OPENING_RANGE_RULE_V2,
     declarationRef: declarations[0].ref,
     activationRef: activations[0].ref,
     instruments: Object.freeze(instruments),
@@ -178,7 +209,7 @@ export type FinanceIntradayPaperTrade = Readonly<{
   signalAt: string;
   entryAt: string;
   exitAt: string;
-  exitReason: "opening_range_stop" | "reward_target" | "session_end";
+  exitReason: "opening_range_stop" | "reward_target" | "session_end" | "pre_close";
   quantity: number;
   entryReferencePrice: number;
   exitReferencePrice: number;
@@ -200,8 +231,9 @@ export type FinanceIntradayPaperReceipt = Readonly<{
   schemaVersion: typeof FINANCE_INTRADAY_PAPER_SCHEMA;
   status: "paper_contract_only";
   executionAuthority: "none";
-  strategyRule: typeof FINANCE_INTRADAY_OPENING_RANGE_RULE;
+  strategyRule: FinanceIntradayOpeningRangeRuleId;
   datasetRef: string;
+  marketCalendarRef?: string;
   config: z.output<typeof Config>;
   trades: readonly FinanceIntradayPaperTrade[];
   strategy: Metric;
@@ -237,6 +269,38 @@ function sessionParts(instant: string): { date: string; minute: number } {
   };
 }
 
+/**
+ * The final bar that can be acted on before the cash close starts one interval earlier than the
+ * final market bar. Its close leaves one full interval for order submission before the close.
+ */
+export function financeIntradayPreCloseExitBarMinute(
+  intervalSeconds: 60 | 300 | 900,
+  marketCloseMinute = 960,
+): number {
+  return marketCloseMinute - 2 * (intervalSeconds / 60);
+}
+
+function isCompleteSession(
+  bars: readonly FinanceIntradayBar[],
+  intervalSeconds: 60 | 300 | 900,
+  marketOpenMinute: number,
+  marketCloseMinute: number,
+): boolean {
+  const intervalMinutes = intervalSeconds / 60;
+  const expectedBars = ((marketCloseMinute - marketOpenMinute) * 60) / intervalSeconds;
+  return (
+    Number.isInteger(expectedBars) &&
+    bars.length === expectedBars &&
+    bars.every((bar, index) => {
+      const expectedStartMinute = marketOpenMinute + index * intervalMinutes;
+      return (
+        sessionParts(bar.startAt).minute === expectedStartMinute &&
+        Date.parse(bar.endAt) === Date.parse(bar.startAt) + intervalSeconds * 1_000
+      );
+    })
+  );
+}
+
 function metric(returns: readonly number[], trades: number): Metric {
   let equity = 1;
   let peak = 1;
@@ -270,8 +334,12 @@ export function runFinanceIntradayPaperReplay(params: {
   bars: readonly FinanceIntradayBar[];
   ledgerHeadRef: string | null;
   config: FinanceIntradayPaperConfig;
+  strategyRule?: FinanceIntradayOpeningRangeRuleId;
+  marketSessions?: readonly FinanceAlpacaMarketSession[];
 }): FinanceIntradayPaperReceipt {
   const config = Config.parse(params.config);
+  const strategyRule = params.strategyRule ?? FINANCE_INTRADAY_OPENING_RANGE_RULE;
+  const preCloseExitEnabled = strategyRule === FINANCE_INTRADAY_OPENING_RANGE_RULE_V2;
   if (params.bars.length === 0) {
     throw new Error("intraday replay requires bars");
   }
@@ -280,12 +348,48 @@ export function runFinanceIntradayPaperReplay(params: {
   if (instruments.size !== 1 || intervals.size !== 1) {
     throw new Error("intraday replay requires one instrument and one interval");
   }
+  const intervalSeconds = [...intervals][0];
+  if (intervalSeconds !== 60 && intervalSeconds !== 300 && intervalSeconds !== 900) {
+    throw new Error("intraday replay received an unsupported interval");
+  }
+  if (preCloseExitEnabled && !params.marketSessions) {
+    throw new Error("pre-close replay requires an Alpaca market-calendar snapshot");
+  }
+  const marketSessions = params.marketSessions ?? [];
+  const sessionsByDate = new Map(marketSessions.map((session) => [session.date, session]));
+  if (
+    sessionsByDate.size !== marketSessions.length ||
+    (preCloseExitEnabled &&
+      marketSessions.some((session) => financeAlpacaMarketSessionIssue(session) !== null))
+  ) {
+    throw new Error("intraday replay received an invalid or duplicate market-calendar session");
+  }
   const bySession = new Map<string, FinanceIntradayBar[]>();
+  const replayCalendarDates = new Set<string>();
   for (const bar of params.bars.toSorted((left, right) =>
     left.startAt.localeCompare(right.startAt),
   )) {
     const session = sessionParts(bar.startAt);
-    if (session.minute < 570 || session.minute >= 960) {
+    if (preCloseExitEnabled) {
+      const marketSession = sessionsByDate.get(session.date);
+      if (!marketSession) {
+        if (session.minute >= 570 && session.minute < 960) {
+          throw new Error("pre-close replay is missing an official market-calendar session");
+        }
+        continue;
+      }
+      const barStart = Date.parse(bar.startAt);
+      if (
+        barStart < Date.parse(marketSession.openAt) ||
+        barStart >= Date.parse(marketSession.closeAt)
+      ) {
+        continue;
+      }
+      if (Date.parse(bar.endAt) > Date.parse(marketSession.closeAt)) {
+        throw new Error("pre-close replay contains a bar that crosses the official market close");
+      }
+      replayCalendarDates.add(session.date);
+    } else if (session.minute < 570 || session.minute >= 960) {
       continue;
     }
     const rows = bySession.get(session.date) ?? [];
@@ -307,19 +411,48 @@ export function runFinanceIntradayPaperReplay(params: {
     left.localeCompare(right),
   )) {
     const bars = rows.toSorted((left, right) => left.startAt.localeCompare(right.startAt));
+    const marketSession = sessionsByDate.get(sessionDate);
+    if (preCloseExitEnabled) {
+      if (
+        !marketSession ||
+        !isCompleteSession(
+          bars,
+          intervalSeconds,
+          marketSession.openMinute,
+          marketSession.closeMinute,
+        )
+      ) {
+        continue;
+      }
+    }
     if (bars.length <= config.openingRangeBars + 1) {
       continue;
     }
     const opening = bars.slice(0, config.openingRangeBars);
     const openingHigh = Math.max(...opening.map((bar) => bar.high));
     const baselineEntry = bars[config.openingRangeBars];
-    const exit = bars.at(-1)!;
-    baselineReturns.push(round(exit.close / baselineEntry.open - 1 - roundTripCost));
+    const sessionEnd = bars.at(-1)!;
+    baselineReturns.push(round(sessionEnd.close / baselineEntry.open - 1 - roundTripCost));
+    const preCloseMinute = marketSession?.closeMinute ?? 960;
+    const preCloseIndex = preCloseExitEnabled
+      ? bars.findIndex(
+          (bar) =>
+            sessionParts(bar.startAt).minute ===
+            financeIntradayPreCloseExitBarMinute(intervalSeconds, preCloseMinute),
+        )
+      : -1;
+    if (preCloseExitEnabled && preCloseIndex < 0) {
+      continue;
+    }
+    const exitIndex = preCloseExitEnabled ? preCloseIndex : bars.length - 1;
+    const exit = bars[exitIndex];
+    const latestSignalIndex = preCloseExitEnabled ? exitIndex - 2 : bars.length - 2;
 
     const signalIndex = bars.findIndex(
-      (bar, index) => index >= config.openingRangeBars && bar.close > openingHigh,
+      (bar, index) =>
+        index >= config.openingRangeBars && index <= latestSignalIndex && bar.close > openingHigh,
     );
-    if (signalIndex < 0 || signalIndex + 1 >= bars.length) {
+    if (signalIndex < 0 || signalIndex + 1 >= bars.length || signalIndex > latestSignalIndex) {
       strategyReturns.push(0);
       continue;
     }
@@ -339,8 +472,10 @@ export function runFinanceIntradayPaperReplay(params: {
     const targetPrice = entry.open + riskPerShare * config.rewardRisk;
     let chosenExit = exit;
     let exitPrice = exit.close;
-    let exitReason: FinanceIntradayPaperTrade["exitReason"] = "session_end";
-    for (const candidate of bars.slice(signalIndex + 1)) {
+    let exitReason: FinanceIntradayPaperTrade["exitReason"] = preCloseExitEnabled
+      ? "pre_close"
+      : "session_end";
+    for (const candidate of bars.slice(signalIndex + 1, exitIndex + 1)) {
       // When both touch within one OHLC bar the path is unknowable; choose the adverse outcome.
       if (candidate.low <= stopPrice) {
         chosenExit = candidate;
@@ -376,18 +511,28 @@ export function runFinanceIntradayPaperReplay(params: {
     );
   }
   if (strategyReturns.length === 0) {
-    throw new Error("intraday replay has no complete regular-market sessions");
+    throw new Error("intraday replay has no complete sessions with the required market calendar");
   }
+  const marketCalendarRef = preCloseExitEnabled
+    ? caseflowFingerprint(
+        marketSessions
+          .filter((session) => replayCalendarDates.has(session.date))
+          .map(({ date, calendarRef }) => ({ date, calendarRef }))
+          .toSorted((left, right) => left.date.localeCompare(right.date)),
+      )
+    : undefined;
   const datasetRef = caseflowFingerprint({
     ledgerHeadRef: params.ledgerHeadRef,
     bars: params.bars,
+    ...(marketCalendarRef ? { marketCalendarRef } : {}),
   });
   const body = {
     schemaVersion: FINANCE_INTRADAY_PAPER_SCHEMA,
     status: "paper_contract_only" as const,
     executionAuthority: "none" as const,
-    strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+    strategyRule,
     datasetRef,
+    ...(marketCalendarRef ? { marketCalendarRef } : {}),
     config,
     trades: Object.freeze(trades),
     strategy: metric(strategyReturns, trades.length),
@@ -406,6 +551,12 @@ export function runFinanceIntradayPaperReplay(params: {
       "A replay validates mechanics, not future alpha.",
       "Promotion needs real point-in-time data across at least three non-overlapping market regimes.",
       "Paper fills do not prove live liquidity, latency, capacity, or profitability.",
+      ...(preCloseExitEnabled
+        ? [
+            "The pre-close rule accepts only complete calendar-backed sessions and exits before the closing bar.",
+            "The Alpaca market-calendar snapshot is fingerprinted into this replay receipt.",
+          ]
+        : []),
     ]),
   };
   return Object.freeze({ ...body, receiptRef: caseflowFingerprint(body) });

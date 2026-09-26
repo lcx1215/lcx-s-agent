@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
+import {
+  FINANCE_ALPACA_MARKET_CALENDAR_SOURCE,
+  FINANCE_ALPACA_MARKET_CALENDAR_URL,
+  type FinanceAlpacaMarketSession,
+} from "./finance-alpaca-market-calendar.js";
+import { caseflowFingerprint } from "./finance-caseflow.js";
+import { financeUsEquityLocalTimeInstant } from "./finance-cycle-schedule.js";
 import type { FinanceIntradayBar } from "./finance-intraday-ledger.js";
 import {
+  FINANCE_INTRADAY_OPENING_RANGE_RULE_V2,
+  financeIntradayPreCloseExitBarMinute,
   resolveFinanceIntradayPaperExecutionEligibility,
   runFinanceIntradayPaperReplay,
 } from "./finance-intraday-paper.js";
@@ -15,6 +24,53 @@ function session(prices: readonly number[], day = "2026-01-05"): FinanceIntraday
       intervalSeconds: 300,
       startAt,
       endAt: new Date(start + (index + 1) * 300_000).toISOString(),
+      open,
+      high: Math.max(open, close),
+      low: Math.min(open, close),
+      close,
+      volume: 1000,
+    };
+  });
+}
+
+function marketCalendarSession(date: string): FinanceAlpacaMarketSession {
+  const openMinute = 570;
+  const closeMinute = 960;
+  const openAt = financeUsEquityLocalTimeInstant(date, openMinute)!;
+  const closeAt = financeUsEquityLocalTimeInstant(date, closeMinute)!;
+  const sourceUrlOrArtifact = `${FINANCE_ALPACA_MARKET_CALENDAR_URL}?start=${date}&end=${date}&date_type=TRADING`;
+  return {
+    date,
+    openAt,
+    closeAt,
+    openMinute,
+    closeMinute,
+    observedAt: new Date(Date.parse(openAt) - 60_000).toISOString(),
+    calendarRef: caseflowFingerprint({
+      source: FINANCE_ALPACA_MARKET_CALENDAR_SOURCE,
+      sourceUrlOrArtifact,
+      date,
+      openAt,
+      closeAt,
+    }),
+    sourceUrlOrArtifact,
+  };
+}
+
+function completeRegularSession(): FinanceIntradayBar[] {
+  const start = Date.parse("2026-09-18T13:30:00.000Z");
+  const intervalMs = 300_000;
+  return Array.from({ length: 78 }, (_, index) => {
+    const previousClose = index === 0 ? 100 : index <= 3 ? 100 : index === 4 ? 103 : 103.5;
+    const close =
+      index < 3 ? 100 : index === 3 ? 103 : index === 76 ? 108 : index === 77 ? 110 : 103.5;
+    const startAt = new Date(start + index * intervalMs).toISOString();
+    const open = index === 0 ? 100 : previousClose;
+    return {
+      instrument: "SPY",
+      intervalSeconds: 300,
+      startAt,
+      endAt: new Date(start + (index + 1) * intervalMs).toISOString(),
       open,
       high: Math.max(open, close),
       low: Math.min(open, close),
@@ -102,5 +158,37 @@ describe("finance intraday paper replay", () => {
     });
     expect(costly.trades[0]?.grossReturn).toBeGreaterThan(0);
     expect(costly.trades[0]?.netReturn).toBeLessThan(0);
+  });
+
+  it("replays v2 exits before the closing bar and rejects incomplete sessions", () => {
+    const bars = completeRegularSession();
+    const receipt = runFinanceIntradayPaperReplay({
+      bars,
+      ledgerHeadRef: "head",
+      config,
+      strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE_V2,
+      marketSessions: [marketCalendarSession("2026-09-18")],
+    });
+    expect(receipt.strategyRule).toBe(FINANCE_INTRADAY_OPENING_RANGE_RULE_V2);
+    expect(receipt.trades[0]).toMatchObject({
+      exitAt: bars[76]?.endAt,
+      exitReferencePrice: 108,
+      exitReason: "pre_close",
+    });
+    expect(() =>
+      runFinanceIntradayPaperReplay({
+        bars: session([100, 101, 100, 102, 103, 104]),
+        ledgerHeadRef: "partial",
+        config,
+        strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE_V2,
+        marketSessions: [marketCalendarSession("2026-01-05")],
+      }),
+    ).toThrow(/complete sessions with the required market calendar/);
+  });
+
+  it("leaves one full bar interval between the exit signal bar and the cash close", () => {
+    expect(financeIntradayPreCloseExitBarMinute(60)).toBe(958);
+    expect(financeIntradayPreCloseExitBarMinute(300)).toBe(950);
+    expect(financeIntradayPreCloseExitBarMinute(900)).toBe(930);
   });
 });

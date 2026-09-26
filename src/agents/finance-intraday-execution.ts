@@ -1,4 +1,5 @@
 import { withTimeout } from "../utils/with-timeout.js";
+import { financeAlpacaMarketSessionIssue } from "./finance-alpaca-market-calendar.js";
 import { runFinanceAlpacaOrder } from "./finance-alpaca-run.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import {
@@ -49,6 +50,23 @@ async function strategyBindingIssue(
   }
   if (binding.scope === "explicit_diagnostic") {
     return "diagnostic ticker override cannot authorize Paper placement";
+  }
+  const marketSession = binding.marketSession;
+  if (!marketSession || marketSession.date !== decision.input.sessionDate) {
+    return "intraday decision is missing its bound market-calendar session";
+  }
+  const marketSessionIssue = financeAlpacaMarketSessionIssue(marketSession, {
+    asOf,
+    maxObservedAgeMs: 5 * 60_000,
+  });
+  if (
+    marketSessionIssue !== null ||
+    Date.parse(asOf) < Date.parse(marketSession.openAt) ||
+    Date.parse(asOf) >= Date.parse(marketSession.closeAt) ||
+    Date.parse(decision.input.referencePriceAt) < Date.parse(marketSession.openAt) ||
+    Date.parse(decision.input.referencePriceAt) >= Date.parse(marketSession.closeAt)
+  ) {
+    return marketSessionIssue ?? "intraday decision is outside its bound market-calendar session";
   }
   const { ledger } = await readFinanceStrategyRuleLedger(directory);
   const matching = ledger.rules.filter(
@@ -238,6 +256,7 @@ export async function executeFinanceIntradayDecision(params: {
           ...(input.stopPrice === undefined ? {} : { stopPrice: input.stopPrice }),
           ...(input.targetPrice === undefined ? {} : { targetPrice: input.targetPrice }),
           datasetHeadRef: input.datasetHeadRef,
+          marketSession: input.strategyBinding!.marketSession!,
           intradayOwnedQuantity: owned,
           brokerPositionQuantity: brokerHeld,
           executionQuote: {
@@ -349,6 +368,24 @@ export async function executeFinanceIntradayDecision(params: {
         signalId: input.signalId,
         status: "refused",
         reasons: [`intraday model veto: ${reviewedDecision.rationale}`],
+        tradeDecisionReview,
+      });
+      return Object.freeze({
+        status: "refused" as const,
+        outcome: outcome.input,
+        tradeDecisionReview,
+      });
+    }
+    const finalCalendarIssue = await strategyBindingIssue(
+      params.directory,
+      params.decision,
+      new Date(now()).toISOString(),
+    );
+    if (finalCalendarIssue) {
+      const outcome = await appendFinanceIntradayOutcome(params.directory, {
+        signalId: input.signalId,
+        status: "refused",
+        reasons: [finalCalendarIssue],
         tradeDecisionReview,
       });
       return Object.freeze({

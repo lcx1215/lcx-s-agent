@@ -2,8 +2,14 @@
 
 import { pathToFileURL } from "node:url";
 import { syncAlpacaIntradayBars } from "../../src/agents/finance-alpaca-intraday.js";
+import { readFinanceAlpacaMarketCalendar } from "../../src/agents/finance-alpaca-market-calendar.js";
+import { financeEtClock } from "../../src/agents/finance-cycle-schedule.js";
 import { readFinanceIntradayLedger } from "../../src/agents/finance-intraday-ledger.js";
-import { runFinanceIntradayPaperReplay } from "../../src/agents/finance-intraday-paper.js";
+import {
+  FINANCE_INTRADAY_OPENING_RANGE_RULE,
+  FINANCE_INTRADAY_OPENING_RANGE_RULE_V2,
+  runFinanceIntradayPaperReplay,
+} from "../../src/agents/finance-intraday-paper.js";
 import { resolveFinanceStateDir } from "../../src/agents/finance-state-dir.js";
 
 function valueAfter(args: readonly string[], flag: string): string | undefined {
@@ -43,6 +49,13 @@ export async function buildFinanceIntradayPaperPayload(args: readonly string[]) 
   if (feed !== "iex" && feed !== "sip") {
     throw new Error("--feed must be iex or sip");
   }
+  const strategyRule = valueAfter(args, "--strategy-rule") ?? FINANCE_INTRADAY_OPENING_RANGE_RULE;
+  if (
+    strategyRule !== FINANCE_INTRADAY_OPENING_RANGE_RULE &&
+    strategyRule !== FINANCE_INTRADAY_OPENING_RANGE_RULE_V2
+  ) {
+    throw new Error("--strategy-rule is unsupported");
+  }
   const sync = args.includes("--sync-alpaca")
     ? await syncAlpacaIntradayBars({
         directory: location.directory,
@@ -57,9 +70,19 @@ export async function buildFinanceIntradayPaperPayload(args: readonly string[]) 
   // later collection timestamp remains in the ledger and must not be rewritten as if known then.
   const ledger = await readFinanceIntradayLedger(location.directory, { instrument });
   const bars = ledger.bars.filter((bar) => bar.startAt >= from && bar.endAt <= to);
+  const marketCalendarSync =
+    strategyRule === FINANCE_INTRADAY_OPENING_RANGE_RULE_V2
+      ? await readFinanceAlpacaMarketCalendar({
+          startDate: financeEtClock(new Date(Date.parse(from))).date,
+          endDate: financeEtClock(new Date(Date.parse(to))).date,
+          directory: location.directory,
+        })
+      : null;
   const receipt = runFinanceIntradayPaperReplay({
     bars,
     ledgerHeadRef: ledger.headRef,
+    strategyRule,
+    ...(marketCalendarSync ? { marketSessions: marketCalendarSync } : {}),
     config: {
       openingRangeBars: Number(valueAfter(args, "--opening-range-bars") ?? 6),
       capital: numberAfter(args, "--capital"),
@@ -82,11 +105,20 @@ export async function buildFinanceIntradayPaperPayload(args: readonly string[]) 
       from,
       to,
       sync,
+      marketCalendar: marketCalendarSync
+        ? {
+            source: "Alpaca Paper market calendar",
+            sourceUrlOrArtifact: "https://paper-api.alpaca.markets/v2/calendar",
+            sessions: marketCalendarSync.length,
+            calendarRef: receipt.marketCalendarRef,
+            observedAt: marketCalendarSync[0]?.observedAt ?? null,
+          }
+        : null,
     },
     receipt,
     claims: {
-      networkTouched: sync !== null,
-      credentialsRead: sync !== null,
+      networkTouched: sync !== null || marketCalendarSync !== null,
+      credentialsRead: sync !== null || marketCalendarSync !== null,
       orderPlaced: false,
       alphaProven: false,
     },
@@ -100,7 +132,8 @@ async function main(): Promise<void> {
       "Usage: lcx-finance-intraday-paper --instrument SPY --from ISO --to ISO --capital N " +
         "--max-allocation FRACTION --fee-bps-per-side N --spread-bps N " +
         "--slippage-bps-per-side N [--opening-range-bars N] [--ledger-dir DIR] " +
-        "[--reward-risk N] [--sync-alpaca --interval-seconds 60|300|900 --feed iex|sip] [--json]\n",
+        "[--reward-risk N] [--strategy-rule opening_range_breakout_long_next_bar_v1|opening_range_breakout_long_pre_close_v2] " +
+        "[--sync-alpaca --interval-seconds 60|300|900 --feed iex|sip] [--json]\n",
     );
     return;
   }

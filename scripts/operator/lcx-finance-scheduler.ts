@@ -20,6 +20,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createFinanceAlpacaCycleController } from "../../src/agents/finance-alpaca-cycle-controller.js";
 import { syncConfiguredAlpacaPaperHistory } from "../../src/agents/finance-alpaca-history-sync.js";
+import { createFinanceAlpacaMarketSessionResolver } from "../../src/agents/finance-alpaca-market-calendar.js";
 import { caseflowFingerprint } from "../../src/agents/finance-caseflow.js";
 import {
   DEFAULT_FINANCE_CYCLE_SLOTS,
@@ -642,6 +643,7 @@ type CycleContext = {
   options: SchedulerOptions;
   signal: AbortSignal;
   intradayController?: ReturnType<typeof createFinanceAlpacaCycleController>;
+  resolveMarketSession?: ReturnType<typeof createFinanceAlpacaMarketSessionResolver>;
   lastIdleReconciliationAtMs?: number;
   sourceHeartbeatInFlight?: boolean;
 };
@@ -1330,6 +1332,9 @@ async function tick(context: CycleContext): Promise<void> {
           rewardRisk: context.options.intraday.rewardRisk,
           strategyContract: context.options.intraday.strategyContract!,
           scope: context.options.intraday.scope!,
+          ...(context.resolveMarketSession
+            ? { resolveMarketSession: context.resolveMarketSession }
+            : {}),
           signal: context.signal,
         });
         if (
@@ -1731,11 +1736,16 @@ export async function runFinanceScheduler(
             ),
           })
         : undefined;
+    const resolveMarketSession =
+      runtimeOptions.command === "loop" && runtimeOptions.intraday
+        ? createFinanceAlpacaMarketSessionResolver({ directory: root.directory })
+        : undefined;
     const context = {
       root,
       options: runtimeOptions,
       signal: controller.signal,
       intradayController,
+      resolveMarketSession,
     };
     if (options.command === "once") {
       const ok = await fire(context, options.mode!);

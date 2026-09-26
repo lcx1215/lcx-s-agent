@@ -2,16 +2,34 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  FINANCE_ALPACA_MARKET_CALENDAR_SOURCE,
+  FINANCE_ALPACA_MARKET_CALENDAR_URL,
+  type FinanceAlpacaMarketSession,
+} from "./finance-alpaca-market-calendar.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
+import { financeUsEquityLocalTimeInstant } from "./finance-cycle-schedule.js";
+import { buildFinanceExecutionReceipt } from "./finance-execution-adapter.js";
+import {
+  appendFinanceIntradayDecision,
+  appendFinanceIntradayOutcome,
+  readFinanceIntradayDecisions,
+} from "./finance-intraday-control-ledger.js";
 import { appendFinanceIntradayBars } from "./finance-intraday-ledger.js";
-import { runFinanceIntradayMonitorTick } from "./finance-intraday-monitor.js";
+import {
+  runFinanceIntradayMonitorTick,
+  type FinanceIntradayMonitorOptions,
+} from "./finance-intraday-monitor.js";
 import {
   resolveFinanceIntradayActiveRuleContract,
+  FINANCE_INTRADAY_OPENING_RANGE_RULE_V2,
   FINANCE_INTRADAY_OPENING_RANGE_EMITS,
   FINANCE_INTRADAY_OPENING_RANGE_FORM,
   FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION,
+  FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V2,
   FINANCE_INTRADAY_OPENING_RANGE_RULE,
 } from "./finance-intraday-paper.js";
+import { appendFinanceExecutionReceipt } from "./finance-position-ledger.js";
 import {
   activateFinanceStrategyRule,
   declareFinanceStrategyRule,
@@ -31,6 +49,39 @@ afterEach(async () => {
     temporary.splice(0).map((item) => fs.rm(item, { recursive: true, force: true })),
   );
 });
+
+function fixtureMarketSession(date: string, observedAt: string): FinanceAlpacaMarketSession {
+  const openMinute = 570;
+  const closeMinute = 960;
+  const openAt = financeUsEquityLocalTimeInstant(date, openMinute)!;
+  const closeAt = financeUsEquityLocalTimeInstant(date, closeMinute)!;
+  const sourceUrlOrArtifact = `${FINANCE_ALPACA_MARKET_CALENDAR_URL}?start=${date}&end=${date}&date_type=TRADING`;
+  return {
+    date,
+    openAt,
+    closeAt,
+    openMinute,
+    closeMinute,
+    observedAt,
+    calendarRef: caseflowFingerprint({
+      source: FINANCE_ALPACA_MARKET_CALENDAR_SOURCE,
+      sourceUrlOrArtifact,
+      date,
+      openAt,
+      closeAt,
+    }),
+    sourceUrlOrArtifact,
+  };
+}
+
+async function monitorTickWithFixtureCalendar(options: FinanceIntradayMonitorOptions) {
+  const asOf = (options.now ?? new Date()).toISOString();
+  return runFinanceIntradayMonitorTick({
+    ...options,
+    resolveMarketSession:
+      options.resolveMarketSession ?? (async (date) => fixtureMarketSession(date, asOf)),
+  });
+}
 
 async function seed(directory: string): Promise<void> {
   const closes = [100, 100.5, 100.2, 100.4, 100.1, 100.3, 101];
@@ -54,17 +105,71 @@ async function seed(directory: string): Promise<void> {
   });
 }
 
+function regularSessionBars(
+  day: string,
+  count = 77,
+  options: { breakout?: boolean; lastLow?: number } = {},
+) {
+  const start = Date.parse(`${day}T13:30:00.000Z`);
+  const closes = Array.from({ length: count }, (_, index) => {
+    if (index < 6) {
+      return index === 1 ? 100.5 : 100;
+    }
+    return options.breakout ? 101 : 100;
+  });
+  return closes.map((close, index) => {
+    const open = index === 0 ? close : closes[index - 1];
+    return {
+      startAt: new Date(start + index * 300_000).toISOString(),
+      open,
+      high: Math.max(open, close),
+      low:
+        index === count - 1 && options.lastLow !== undefined
+          ? options.lastLow
+          : Math.min(open, close),
+      close,
+      volume: 100,
+    };
+  });
+}
+
+async function appendSession(
+  directory: string,
+  day: string,
+  bars = regularSessionBars(day),
+): Promise<void> {
+  const lastEndAt = new Date(Date.parse(bars.at(-1)!.startAt) + 300_000).toISOString();
+  await appendFinanceIntradayBars(directory, {
+    instrument: "SPY",
+    intervalSeconds: 300,
+    observedAt: lastEndAt,
+    provenance: { origin: "monitor fixture" },
+    bars,
+  });
+}
+
 async function activeContract(
   directory: string,
   body: Record<string, unknown> = {
     measuredResult: { status: "paper_contract_only", executionAuthority: "none" },
   },
+  requestedRule: {
+    ruleId:
+      | typeof FINANCE_INTRADAY_OPENING_RANGE_RULE
+      | typeof FINANCE_INTRADAY_OPENING_RANGE_RULE_V2;
+    formVersion:
+      | typeof FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION
+      | typeof FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V2;
+  } = {
+    ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+    formVersion: FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION,
+  },
 ) {
   await declareFinanceStrategyRule(directory, {
     kind: "declared",
-    ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+    ruleId: requestedRule.ruleId,
     form: FINANCE_INTRADAY_OPENING_RANGE_FORM,
-    formVersion: FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION,
+    formVersion: requestedRule.formVersion,
     instruments: ["SPY"],
     emits: FINANCE_INTRADAY_OPENING_RANGE_EMITS,
     schedule: { kind: "intraday", timezone: "America/New_York" },
@@ -78,7 +183,7 @@ async function activeContract(
   });
   await activateFinanceStrategyRule(directory, {
     kind: "activated",
-    ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+    ruleId: requestedRule.ruleId,
     reason: "generic Paper activation must not override machine eligibility",
     observedAt: "2026-09-17T00:01:00Z",
   });
@@ -109,21 +214,183 @@ describe("resident intraday monitor tick", () => {
       now: new Date("2026-09-18T15:00:00.000Z"),
       sync,
     };
-    expect(await runFinanceIntradayMonitorTick(options)).toMatchObject({
+    expect(await monitorTickWithFixtureCalendar(options)).toMatchObject({
       status: "decision_recorded",
       signal: { action: "buy", reason: "opening_range_breakout" },
       executionAuthority: "none",
     });
-    expect(await runFinanceIntradayMonitorTick(options)).toMatchObject({
+    expect(await monitorTickWithFixtureCalendar(options)).toMatchObject({
       status: "decision_pending_execution",
       decision: { input: { signalId: expect.stringMatching(/^intraday-/) } },
     });
     expect(sync).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps v1 unchanged and blocks v2 entries once the pre-close window starts", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-monitor-v2-cutoff-"));
+    temporary.push(directory);
+    const strategyContract = await activeContract(directory, undefined, {
+      ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE_V2,
+      formVersion: FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V2,
+    });
+    await appendSession(
+      directory,
+      "2026-09-18",
+      regularSessionBars("2026-09-18", 77, { breakout: true }),
+    );
+    const result = await monitorTickWithFixtureCalendar({
+      directory,
+      instrument: "SPY",
+      intervalSeconds: 300 as const,
+      feed: "iex" as const,
+      openingRangeBars: 6,
+      rewardRisk: 2,
+      strategyContract,
+      scope: { kind: "strategy_universe" as const },
+      now: new Date("2026-09-18T19:55:00.000Z"),
+      sync: vi.fn(async () => ({}) as never),
+    });
+    expect(strategyContract).toMatchObject({
+      ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE_V2,
+      formVersion: FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V2,
+      preCloseExitEnabled: true,
+    });
+    expect(result).toMatchObject({
+      status: "entry_cutoff_reached",
+      signal: { action: "buy", reason: "opening_range_breakout" },
+    });
+    expect(await readFinanceIntradayDecisions(directory)).toHaveLength(0);
+  });
+
+  it("restores the open entry across sessions, exits pre-close, and re-evaluates a refused sell on a fresh bar", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-monitor-v2-recovery-"));
+    temporary.push(directory);
+    const contract = await activeContract(directory, undefined, {
+      ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE_V2,
+      formVersion: FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V2,
+    });
+    const signalId = "intraday-v2-historical-entry";
+    const strategyBinding = {
+      declarationRef: contract.declarationRef,
+      activationRef: contract.activationRef,
+      declaredInstruments: [...contract.instruments],
+      parameters: {
+        openingRangeBars: contract.openingRangeBars,
+        rewardRisk: contract.rewardRisk,
+        intervalSeconds: contract.intervalSeconds,
+        feed: contract.feed,
+      },
+      scope: "strategy_universe" as const,
+    };
+    await appendFinanceIntradayDecision(directory, {
+      signalId,
+      instrument: "SPY",
+      sessionDate: "2026-09-17",
+      action: "buy",
+      reason: "opening_range_breakout",
+      referencePrice: 100,
+      referencePriceAt: "2026-09-17T19:55:00.000Z",
+      stopPrice: 99,
+      targetPrice: 110,
+      datasetHeadRef: "a".repeat(64),
+      strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE_V2,
+      strategyBinding,
+    });
+    const entryReceipt = buildFinanceExecutionReceipt({
+      intent: {
+        intentId: `intent:${signalId}`,
+        instrument: "SPY",
+        side: "buy",
+        orderType: "market",
+        quantity: 1,
+        referencePrice: 100,
+        referencePriceAt: "2026-09-17T19:55:00.000Z",
+        runAuthorizationId: "intraday-monitor-v2-fixture",
+        rationale: "historical intraday entry fixture",
+      },
+      adapter: { id: "alpaca-venue", venue: "alpaca:paper", kind: "venue" },
+      fill: {
+        filledQuantity: 1,
+        fillPrice: 100,
+        filledAt: "2026-09-17T19:55:01.000Z",
+        venueRef: "alpaca:paper:intraday-entry-fixture",
+        terminalOrderIdentity: { orderId: "intraday-entry-fixture", terminal: true },
+      },
+      recordedAt: "2026-09-17T19:55:01.000Z",
+      accountId: "paper-account",
+    });
+    await appendFinanceExecutionReceipt(directory, entryReceipt);
+    await appendSession(directory, "2026-09-18", regularSessionBars("2026-09-18", 76));
+
+    const baseOptions = {
+      directory,
+      accountId: "paper-account",
+      instrument: "SPY",
+      intervalSeconds: 300 as const,
+      feed: "iex" as const,
+      openingRangeBars: 6,
+      rewardRisk: 2,
+      strategyContract: contract,
+      scope: { kind: "strategy_universe" as const },
+      sync: vi.fn(async () => ({}) as never),
+    };
+    const pending = await monitorTickWithFixtureCalendar({
+      ...baseOptions,
+      now: new Date("2026-09-18T19:50:00.000Z"),
+    });
+    expect(pending.status).toBe("session_exit_bar_pending");
+    const missing = await monitorTickWithFixtureCalendar({
+      ...baseOptions,
+      now: new Date("2026-09-18T19:55:00.000Z"),
+    });
+    expect(missing.status).toBe("session_exit_bar_missing");
+
+    await appendSession(directory, "2026-09-18", [regularSessionBars("2026-09-18", 77).at(-1)!]);
+    const first = await monitorTickWithFixtureCalendar({
+      ...baseOptions,
+      now: new Date("2026-09-18T19:55:00.000Z"),
+    });
+    expect(first).toMatchObject({
+      status: "decision_recorded",
+      signal: { action: "sell", reason: "pre_close" },
+      decision: { input: { strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE_V2 } },
+    });
+    if (!("decision" in first)) {
+      throw new Error("expected the pre-close decision to be recorded");
+    }
+    await appendFinanceIntradayOutcome(directory, {
+      signalId: first.decision.input.signalId,
+      status: "refused",
+      reasons: ["fixture refusal"],
+    });
+
+    await appendSession(
+      directory,
+      "2026-09-21",
+      regularSessionBars("2026-09-21", 5, { lastLow: 98 }),
+    );
+    const retry = await monitorTickWithFixtureCalendar({
+      directory,
+      accountId: "paper-account",
+      instrument: "SPY",
+      intervalSeconds: 300,
+      feed: "iex",
+      openingRangeBars: 6,
+      rewardRisk: 2,
+      strategyContract: contract,
+      scope: { kind: "strategy_universe" },
+      now: new Date("2026-09-21T13:55:00.000Z"),
+      sync: vi.fn(async () => ({}) as never),
+    });
+    expect(retry).toMatchObject({
+      status: "decision_recorded",
+      signal: { action: "sell", reason: "opening_range_stop" },
+    });
+  });
+
   it("does not touch the data source outside the cash session", async () => {
     const sync = vi.fn(async () => ({}) as never);
-    const result = await runFinanceIntradayMonitorTick({
+    const result = await monitorTickWithFixtureCalendar({
       directory: "/not-used",
       instrument: "SPY",
       intervalSeconds: 300,
@@ -151,7 +418,7 @@ describe("resident intraday monitor tick", () => {
       now: new Date("2026-09-18T15:00:00.000Z"),
       sync,
     };
-    await expect(runFinanceIntradayMonitorTick(base)).resolves.toMatchObject({
+    await expect(monitorTickWithFixtureCalendar(base)).resolves.toMatchObject({
       status: "blocked_missing_strategy_binding",
     });
     expect(sync).not.toHaveBeenCalled();
@@ -177,7 +444,7 @@ describe("resident intraday monitor tick", () => {
       observedAt: "2026-09-17T00:01:00Z",
     });
     await expect(
-      runFinanceIntradayMonitorTick({
+      monitorTickWithFixtureCalendar({
         ...base,
         strategyContract: contract,
         scope: { kind: "strategy_universe" },
@@ -191,7 +458,7 @@ describe("resident intraday monitor tick", () => {
     temporary.push(directory);
     const contract = await activeContract(directory);
     const sync = vi.fn(async () => ({}) as never);
-    const result = await runFinanceIntradayMonitorTick({
+    const result = await monitorTickWithFixtureCalendar({
       directory,
       instrument: "SPY",
       intervalSeconds: 300,
@@ -214,7 +481,7 @@ describe("resident intraday monitor tick", () => {
     const snapshot = { selected: ["SPY", "QQQ"] } as never;
     readerMocks.readUniverse.mockReturnValue(snapshot);
     const sync = vi.fn(async () => ({}) as never);
-    const result = await runFinanceIntradayMonitorTick({
+    const result = await monitorTickWithFixtureCalendar({
       directory,
       instrument: "QQQ",
       intervalSeconds: 300,
@@ -239,7 +506,7 @@ describe("resident intraday monitor tick", () => {
     temporary.push(directory);
     const contract = await activeContract(directory);
     const sync = vi.fn(async () => ({}) as never);
-    const result = await runFinanceIntradayMonitorTick({
+    const result = await monitorTickWithFixtureCalendar({
       directory,
       instrument: "QQQ",
       intervalSeconds: 300,
@@ -267,7 +534,7 @@ describe("resident intraday monitor tick", () => {
       throw new Error("equity universe snapshot is stale");
     });
     const sync = vi.fn(async () => ({}) as never);
-    const result = await runFinanceIntradayMonitorTick({
+    const result = await monitorTickWithFixtureCalendar({
       directory,
       instrument: "SPY",
       intervalSeconds: 300,

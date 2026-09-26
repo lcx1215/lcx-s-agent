@@ -2,6 +2,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  FINANCE_ALPACA_MARKET_CALENDAR_SOURCE,
+  FINANCE_ALPACA_MARKET_CALENDAR_URL,
+} from "./finance-alpaca-market-calendar.js";
 import type { runFinanceAlpacaOrder } from "./finance-alpaca-run.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import { buildFinanceExecutionReceipt } from "./finance-execution-adapter.js";
@@ -108,6 +112,28 @@ async function activeRuleBinding(
       feed: contract.feed,
     },
     scope: "strategy_universe",
+    marketSession: (() => {
+      const date = "2026-09-18";
+      const openAt = "2026-09-18T13:30:00.000Z";
+      const closeAt = "2026-09-18T20:00:00.000Z";
+      const sourceUrlOrArtifact = `${FINANCE_ALPACA_MARKET_CALENDAR_URL}?start=${date}&end=${date}&date_type=TRADING`;
+      return {
+        date,
+        openAt,
+        closeAt,
+        openMinute: 570,
+        closeMinute: 960,
+        observedAt: "2026-09-18T14:59:59.000Z",
+        calendarRef: caseflowFingerprint({
+          source: FINANCE_ALPACA_MARKET_CALENDAR_SOURCE,
+          sourceUrlOrArtifact,
+          date,
+          openAt,
+          closeAt,
+        }),
+        sourceUrlOrArtifact,
+      };
+    })(),
   };
 }
 
@@ -521,6 +547,7 @@ describe("intraday decision execution bridge", () => {
         createSafetyContext: vi.fn(),
       },
       caps: { maxOrderNotional: 5_000, maxInstrumentNotional: 10_000, maxOrdersPerRun: 1 },
+      now: () => Date.parse("2026-09-18T15:00:02.000Z"),
       runOrder: runOrder as never,
     });
     expect(result).toMatchObject({ status: "refused" });
@@ -642,6 +669,7 @@ describe("intraday decision execution bridge", () => {
         createSafetyContext: vi.fn(),
       },
       caps: { maxOrderNotional: 5_000, maxInstrumentNotional: 10_000, maxOrdersPerRun: 1 },
+      now: () => Date.parse("2026-09-18T15:00:02.000Z"),
       runOrder: runOrder as never,
     });
     expect(result).toMatchObject({ status: "refused" });
@@ -744,6 +772,7 @@ describe("intraday decision execution bridge", () => {
         createSafetyContext: vi.fn(),
       },
       caps: { maxOrderNotional: 5_000, maxInstrumentNotional: 10_000, maxOrdersPerRun: 1 },
+      now: () => Date.parse("2026-09-18T15:00:02.000Z"),
       runOrder: runOrder as never,
     });
     expect(result).toMatchObject({ status: "refused" });

@@ -24,6 +24,19 @@ const StrategyBinding = z
       })
       .strict(),
     scope: z.enum(["strategy_universe", "system_universe", "explicit_diagnostic"]),
+    marketSession: z
+      .object({
+        date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u),
+        openAt: Iso,
+        closeAt: Iso,
+        openMinute: z.number().int().min(0).max(1439),
+        closeMinute: z.number().int().min(1).max(1440),
+        observedAt: Iso,
+        calendarRef: Hash,
+        sourceUrlOrArtifact: Text,
+      })
+      .strict()
+      .optional(),
     universeSnapshotRef: Hash.optional(),
   })
   .strict()
@@ -49,13 +62,16 @@ export const FinanceIntradayDecisionInput = z
     instrument: Text,
     sessionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u),
     action: z.enum(["buy", "sell"]),
-    reason: z.enum(["opening_range_breakout", "opening_range_stop", "reward_target"]),
+    reason: z.enum(["opening_range_breakout", "opening_range_stop", "reward_target", "pre_close"]),
     referencePrice: z.number().finite().positive(),
     referencePriceAt: Iso,
     stopPrice: z.number().finite().positive().optional(),
     targetPrice: z.number().finite().positive().optional(),
     datasetHeadRef: Hash,
-    strategyRule: z.literal("opening_range_breakout_long_next_bar_v1"),
+    strategyRule: z.enum([
+      "opening_range_breakout_long_next_bar_v1",
+      "opening_range_breakout_long_pre_close_v2",
+    ]),
     /** Optional only for backward reading; the execution owner rejects legacy unbound signals. */
     strategyBinding: StrategyBinding.optional(),
   })
@@ -92,12 +108,30 @@ const IntradayReviewCandidateSchema = z
     instrument: Text,
     side: z.enum(["buy", "sell"]),
     strategyRule: Text,
-    signalReason: z.enum(["opening_range_breakout", "opening_range_stop", "reward_target"]),
+    signalReason: z.enum([
+      "opening_range_breakout",
+      "opening_range_stop",
+      "reward_target",
+      "pre_close",
+    ]),
     signalReferencePrice: z.number().finite().positive(),
     signalReferencePriceAt: Iso,
     stopPrice: z.number().finite().positive().optional(),
     targetPrice: z.number().finite().positive().optional(),
     datasetHeadRef: Hash,
+    marketSession: z
+      .object({
+        date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u),
+        openAt: Iso,
+        closeAt: Iso,
+        openMinute: z.number().int().min(0).max(1439),
+        closeMinute: z.number().int().min(1).max(1440),
+        observedAt: Iso,
+        calendarRef: Hash,
+        sourceUrlOrArtifact: Text,
+      })
+      .strict()
+      .optional(),
     intradayOwnedQuantity: z.number().finite(),
     brokerPositionQuantity: z.number().finite(),
     executionQuote: z

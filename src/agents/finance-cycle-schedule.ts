@@ -67,8 +67,11 @@ export function financeEtClock(at: Date, timeZone: string = FINANCE_MARKET_TZ): 
  * Early-close holidays are intentionally not inferred here; callers that need an exact holiday
  * close need an exchange calendar.
  */
-export function financeUsEquityRegularCloseInstant(date: string): string | undefined {
+export function financeUsEquityLocalTimeInstant(date: string, minutes: number): string | undefined {
   if (!/^\d{4}-\d{2}-\d{2}$/u.test(date)) {
+    return undefined;
+  }
+  if (!Number.isInteger(minutes) || minutes < 0 || minutes >= 24 * 60) {
     return undefined;
   }
   const midnight = Date.parse(`${date}T00:00:00.000Z`);
@@ -76,20 +79,30 @@ export function financeUsEquityRegularCloseInstant(date: string): string | undef
     return undefined;
   }
   const [year, month, day] = date.split("-").map(Number);
-  const utcCandidate = Date.UTC(year, month - 1, day, 16);
-  const easternClock = financeEtClock(new Date(utcCandidate));
-  if (easternClock.date !== date) {
+  const utcNoon = Date.UTC(year, month - 1, day, 12);
+  const easternAtNoon = financeEtClock(new Date(utcNoon));
+  if (easternAtNoon.date !== date) {
     return undefined;
   }
   const easternAsUtc = Date.UTC(
     year,
     month - 1,
     day,
-    Math.floor(easternClock.minutes / 60),
-    easternClock.minutes % 60,
+    Math.floor(easternAtNoon.minutes / 60),
+    easternAtNoon.minutes % 60,
   );
-  const easternOffsetMs = easternAsUtc - utcCandidate;
-  return new Date(Date.UTC(year, month - 1, day, 16) - easternOffsetMs).toISOString();
+  const easternOffsetMs = easternAsUtc - utcNoon;
+  const timestamp =
+    Date.UTC(year, month - 1, day, Math.floor(minutes / 60), minutes % 60) - easternOffsetMs;
+  const resolved = financeEtClock(new Date(timestamp));
+  if (resolved.date !== date || resolved.minutes !== minutes) {
+    return undefined;
+  }
+  return new Date(timestamp).toISOString();
+}
+
+export function financeUsEquityRegularCloseInstant(date: string): string | undefined {
+  return financeUsEquityLocalTimeInstant(date, 16 * 60);
 }
 
 /** Whether a US equity EOD bar may be treated as complete at the supplied instant. */
