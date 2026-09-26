@@ -40,6 +40,8 @@ export type AlpacaSafetyProviderOptions = Readonly<{
   credentials: Readonly<{ keyId: string; secret: string }>;
   evidence: AlpacaSafetyControllerEvidence;
   read: FinanceUncachedFetch;
+  /** Opt in to a fixed, non-sensitive refusal stage for controller diagnostics. */
+  diagnostics?: boolean;
   /** Previously observed quote only; account state is always fetched again. */
   boundQuote?: AlpacaSafetyQuoteBinding;
   timeoutMs: number;
@@ -57,6 +59,26 @@ const ALPACA_SAFETY_FAILURE_CODES = [
   "alpaca_safety_quote_expired",
 ] as const;
 type AlpacaSafetyFailureCode = (typeof ALPACA_SAFETY_FAILURE_CODES)[number];
+type AlpacaSafetyDiagnosticStage =
+  | "account_snapshot"
+  | "account_status"
+  | "position_snapshot"
+  | "open_order_snapshot"
+  | "open_order_limit"
+  | "instrument_asset_snapshot"
+  | "instrument_asset_status"
+  | "instrument_asset_class"
+  | "instrument_asset_identity"
+  | "account_currency"
+  | "account_values"
+  | "position_values"
+  | "protective_order_classification"
+  | "account_arithmetic"
+  | "quote_binding"
+  | "quote_snapshot"
+  | "quote_values"
+  | "quote_freshness"
+  | "controller_evidence_freshness";
 
 export function isAlpacaSafetyFailureCode(value: unknown): value is AlpacaSafetyFailureCode {
   return (
@@ -309,7 +331,7 @@ export async function readAlpacaPaperSafetyFacts(
       askPrice: number;
       positions: readonly { instrument: string; quantity: number; marketValue: number }[];
     }
-  | { ok: false; reason: AlpacaSafetyFailureCode }
+  | { ok: false; reason: AlpacaSafetyFailureCode; diagnostic?: AlpacaSafetyDiagnosticStage }
 > {
   options = { ...options, credentials: { ...options.credentials } };
   const start = Date.now();
@@ -348,29 +370,48 @@ export async function readAlpacaPaperSafetyFacts(
   ]);
   const headers = safetyHeaders(options.credentials);
   const get = (url: string) => readJson(options.read, url, headers, signal);
+  let failureStage: AlpacaSafetyDiagnosticStage = "account_snapshot";
   const run = async () => {
+    failureStage = "account_snapshot";
     const account = record(await get(`${PAPER}/v2/account`));
+    failureStage = "position_snapshot";
     const positions = array(await get(`${PAPER}/v2/positions`));
+    failureStage = "open_order_snapshot";
     const orders = array(await get(`${PAPER}/v2/orders?status=open&limit=500&nested=true`));
+    failureStage = "instrument_asset_snapshot";
     const asset = record(await get(`${PAPER}/v2/assets/${encodeURIComponent(options.instrument)}`));
+    failureStage = "account_status";
     if (
       account.id !== options.accountId ||
       account.status !== "ACTIVE" ||
       account.trading_blocked !== false ||
       account.account_blocked !== false ||
-      account.trade_suspended_by_user !== false ||
-      orders.length >= 500 ||
-      asset.symbol !== options.instrument ||
-      asset.status !== "active" ||
-      asset.tradable !== true ||
-      !["us_equity", "crypto"].includes(string(asset.class))
+      account.trade_suspended_by_user !== false
     ) {
       refuse("alpaca_safety_facts_inconsistent");
     }
+    failureStage = "open_order_limit";
+    if (orders.length >= 500) {
+      refuse("alpaca_safety_facts_inconsistent");
+    }
+    failureStage = "instrument_asset_status";
+    if (
+      asset.symbol !== options.instrument ||
+      asset.status !== "active" ||
+      asset.tradable !== true
+    ) {
+      refuse("alpaca_safety_facts_inconsistent");
+    }
+    failureStage = "instrument_asset_class";
+    if (!["us_equity", "crypto"].includes(string(asset.class))) {
+      refuse("alpaca_safety_facts_inconsistent");
+    }
     const crypto = asset.class === "crypto";
+    failureStage = "instrument_asset_identity";
     if (crypto !== options.instrument.includes("/")) {
       refuse("alpaca_safety_facts_inconsistent");
     }
+    failureStage = "account_currency";
     const currency = string(account.currency);
     if (
       currency !== "USD" ||
@@ -379,6 +420,7 @@ export async function readAlpacaPaperSafetyFacts(
     ) {
       refuse("alpaca_safety_facts_inconsistent");
     }
+    failureStage = "account_values";
     const equity = numeric(account.equity),
       cash = numeric(account.cash);
     const longValue = numeric(account.long_market_value),
@@ -389,6 +431,7 @@ export async function readAlpacaPaperSafetyFacts(
     const quantities = new Map<string, number>();
     const accountPositions: { instrument: string; quantity: number; marketValue: number }[] = [];
     for (const value of positions) {
+      failureStage = "position_values";
       const position = record(value);
       const rawSymbol = string(position.symbol);
       const symbol =
@@ -414,11 +457,13 @@ export async function readAlpacaPaperSafetyFacts(
         quantity = qty;
       }
     }
+    failureStage = "protective_order_classification";
     const protection = classifyFinanceProtectionOrders(orders.map(record), quantities);
     if (protection.unresolved.length) {
       refuse("alpaca_safety_facts_inconsistent");
     }
     // Margin capability/buying_power is deliberately unused. These facts prove no current borrowing.
+    failureStage = "account_arithmetic";
     if (
       equity <= 0 ||
       cash < 0 ||
@@ -433,6 +478,7 @@ export async function readAlpacaPaperSafetyFacts(
     let quote: Record<string, unknown>;
     let boundQuote = options.boundQuote;
     if (boundQuote) {
+      failureStage = "quote_binding";
       const bound = quotes.get(boundQuote);
       if (
         !bound ||
@@ -447,6 +493,7 @@ export async function readAlpacaPaperSafetyFacts(
       }
       quote = bound;
     } else {
+      failureStage = "quote_snapshot";
       const quoteEnvelope = record(
         await get(
           crypto
@@ -458,11 +505,14 @@ export async function readAlpacaPaperSafetyFacts(
         crypto ? record(quoteEnvelope.quotes)[options.instrument] : quoteEnvelope.quote,
       );
     }
+    failureStage = "quote_values";
     const bid = numeric(quote.bp),
       ask = numeric(quote.ap),
       quoteAt = string(quote.t);
     const now = Date.now();
+    failureStage = "quote_freshness";
     assertFreshQuote(bid, ask, quoteAt, start, now, options.maxAgeMs);
+    failureStage = "controller_evidence_freshness";
     if (
       !recent(evidence.observedAt, now, options.maxAgeMs) ||
       Date.parse(evidence.expiresAt) <= now
@@ -561,6 +611,7 @@ export async function readAlpacaPaperSafetyFacts(
         : error instanceof AlpacaSafetyProviderFailure
           ? error.code
           : "alpaca_safety_facts_inconsistent",
+      ...(options.diagnostics ? { diagnostic: failureStage } : {}),
     };
   } finally {
     if (abort) {

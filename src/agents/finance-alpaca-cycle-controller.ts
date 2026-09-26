@@ -159,6 +159,7 @@ export function createFinanceAlpacaCycleController(options: {
         stockFeed: options.feed,
         credentials,
         read,
+        diagnostics: true,
         timeoutMs: 20000,
         maxAgeMs: options.maxAgeMs,
         boundQuote,
@@ -179,7 +180,9 @@ export function createFinanceAlpacaCycleController(options: {
       signal,
     );
     if (!result.ok) {
-      throw new Error(result.reason);
+      throw new Error(
+        result.diagnostic ? `${result.reason} [${result.diagnostic}]` : result.reason,
+      );
     }
     signal.throwIfAborted();
     if (result.facts.account.peakEquity > peak) {
