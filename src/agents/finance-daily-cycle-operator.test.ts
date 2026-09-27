@@ -423,7 +423,12 @@ describe("explicit history sync before daily business", () => {
     differences: [],
     issues: [],
     feesInterpreted: true,
-    protection: { protective: [], unresolved: [] },
+    protection: {
+      protective: [],
+      unresolved: [],
+      coverage: [],
+      coverageBasis: "recognized_working_sell_stops" as const,
+    },
     observedAt: "2025-02-01T00:00:00Z",
     positions: [],
     openOrders: [],

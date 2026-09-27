@@ -359,7 +359,12 @@ export async function syncFinanceBrokerReconciliation(
   );
   const snapshot = {
     ...result,
-    protection: { protective: protection.protective, unresolved: protection.unresolved },
+    protection: {
+      protective: protection.protective,
+      unresolved: protection.unresolved,
+      coverage: protection.coverage,
+      coverageBasis: "recognized_working_sell_stops" as const,
+    },
     observedAt: new Date().toISOString(),
     positions,
     openOrders: orders,

@@ -260,3 +260,44 @@ it("does not classify protection against unknown holdings or an infinite stop", 
     }),
   ).toThrow("invalid protected reduction");
 });
+
+it("reports uncovered holdings even when every open order is valid", () => {
+  const result = classifyFinanceProtectionOrders(
+    [stop],
+    new Map([
+      ["SPY", 1],
+      ["BTC/USD", 0.000399],
+    ]),
+  );
+  expect(result.unresolved).toEqual([]);
+  expect(result.coverage).toEqual([
+    {
+      instrument: "SPY",
+      positionQuantity: 1,
+      recognizedStopQuantity: 1,
+      uncoveredQuantity: 0,
+      status: "covered",
+    },
+    {
+      instrument: "BTC/USD",
+      positionQuantity: 0.000399,
+      recognizedStopQuantity: 0,
+      uncoveredQuantity: 0.000399,
+      status: "no_recognized_stop",
+    },
+  ]);
+});
+it("distinguishes partial coverage and excludes invalid stops from coverage", () => {
+  expect(classifyFinanceProtectionOrders([stop], new Map([["SPY", 2]])).coverage[0]).toMatchObject({
+    status: "partial",
+    uncoveredQuantity: 1,
+  });
+  expect(
+    classifyFinanceProtectionOrders([{ ...stop, status: "pending_cancel" }], new Map([["SPY", 1]]))
+      .coverage[0],
+  ).toMatchObject({ status: "no_recognized_stop", uncoveredQuantity: 1 });
+  expect(classifyFinanceProtectionOrders([], new Map([["SPY", -1]])).coverage[0]).toMatchObject({
+    status: "unsupported_position",
+    uncoveredQuantity: null,
+  });
+});

@@ -56,9 +56,11 @@ type Controller = Required<
     "accountId" | "accountBookProvider" | "executionQuoteProvider" | "createSafetyContext"
   >
 > & {
-  inspectReconciliation: (
-    signal: AbortSignal,
-  ) => Promise<{ readiness: FinanceExecutionReconciliation; observedAt: string }>;
+  inspectReconciliation: (signal: AbortSignal) => Promise<{
+    readiness: FinanceExecutionReconciliation;
+    observedAt: string;
+    protection?: Awaited<ReturnType<typeof syncFinanceBrokerReconciliation>>["protection"];
+  }>;
 };
 
 export function createFinanceAlpacaCycleController(options: {
@@ -292,7 +294,7 @@ export function createFinanceAlpacaCycleController(options: {
   return {
     inspectReconciliation: async (signal) => {
       const { snapshot, readiness } = await reconcile(signal, true);
-      return { readiness, observedAt: snapshot.observedAt };
+      return { readiness, observedAt: snapshot.observedAt, protection: snapshot.protection };
     },
     accountId: policy.accountId,
     accountBookProvider: async (signal) => {

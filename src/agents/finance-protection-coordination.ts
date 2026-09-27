@@ -49,7 +49,27 @@ export function classifyFinanceProtectionOrders(
     reserved.set(instrument, total);
     protective.push({ id, instrument, quantity: qty, stopPrice: stop });
   }
-  return { reserved, protective, unresolved };
+  // Order validity alone says nothing about holdings with no recognized stop.
+  // This is observed order coverage, not a guarantee of exit price or loss.
+  const coverage = [...positions].map(([instrument, held]) => {
+    const supported = Number.isFinite(held) && held > 0;
+    const recognizedStopQuantity = supported ? Math.min(held, reserved.get(instrument) ?? 0) : 0;
+    const uncoveredQuantity = supported ? Math.max(0, held - recognizedStopQuantity) : null;
+    return {
+      instrument,
+      positionQuantity: Number.isFinite(held) ? held : null,
+      recognizedStopQuantity,
+      uncoveredQuantity,
+      status: !supported
+        ? ("unsupported_position" as const)
+        : uncoveredQuantity === 0
+          ? ("covered" as const)
+          : recognizedStopQuantity > 0
+            ? ("partial" as const)
+            : ("no_recognized_stop" as const),
+    };
+  });
+  return { reserved, protective, unresolved, coverage };
 }
 
 export function planFinanceProtectedReduction(input: {

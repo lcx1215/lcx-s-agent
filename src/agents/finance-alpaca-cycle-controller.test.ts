@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { createFinanceAlpacaCycleController } from "./finance-alpaca-cycle-controller.js";
+import { readFinanceBrokerReconciliation } from "./finance-broker-reconciliation.js";
 import {
   placeFinanceOrder,
   type FinanceExecutionAdapter,
@@ -403,6 +404,18 @@ it("accepts an existing protective stop as a reservation rather than a duplicate
   });
   const book = await f.controller.accountBookProvider(AbortSignal.timeout(5000));
   expect(book.positions[0].quantity).toBe(1);
+  const inspection = await f.controller.inspectReconciliation(AbortSignal.timeout(5000));
+  const stored = await readFinanceBrokerReconciliation(f.directory, f.policy.accountId);
+  expect(stored.snapshot?.protection).toEqual(inspection.protection);
+  expect(inspection.protection?.coverage).toEqual([
+    {
+      instrument: "SPY",
+      positionQuantity: 1,
+      recognizedStopQuantity: 1,
+      uncoveredQuantity: 0,
+      status: "covered",
+    },
+  ]);
   expect(f.execute).not.toHaveBeenCalled();
 });
 
@@ -490,6 +503,11 @@ it("isolates a bounded BTC gap while unrelated executions and recovery retain un
     quarantinedInstruments: ["BTC/USD"],
   });
   expect(inspection.readiness.uncertaintyReserve).toBeGreaterThan(0.1);
+  expect(inspection.protection?.coverage).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ instrument: "BTC/USD", status: "no_recognized_stop" }),
+    ]),
+  );
   expect(f.read.mock.calls.some(([url]) => new URL(url).pathname.includes("quotes"))).toBe(false);
   const book = await controller.accountBookProvider(AbortSignal.timeout(5000));
   expect(book.reconciliation).toEqual(inspection.readiness);
