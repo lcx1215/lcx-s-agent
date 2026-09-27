@@ -126,6 +126,20 @@ describe("planFinanceBrainOrchestration", () => {
   });
 
   it.each([
+    "Review the currently active trend strategy",
+    "Evaluate a mean-reversion strategy after costs",
+    "评估趋势策略的失效条件",
+  ])("routes an analyst strategy question: %s", (text) => {
+    expect(planFinanceBrainOrchestration({ text }).selectionTrace.financeTask).toBe(true);
+  });
+  it("does not treat a marketing strategy as a finance task", () => {
+    expect(
+      planFinanceBrainOrchestration({ text: "Review our marketing strategy" }).selectionTrace
+        .financeTask,
+    ).toBe(false);
+  });
+
+  it.each([
     "分析未来半年美股和加密货币的市场情绪，考虑美国中期选举的影响。",
     "展望未来六个月美股和比特币的风险偏好，以及美国中期选举和政策变化。",
     "Assess market sentiment for US equities and crypto over the next six months, considering US midterm elections.",

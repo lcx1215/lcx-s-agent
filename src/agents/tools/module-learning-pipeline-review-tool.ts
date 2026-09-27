@@ -8,6 +8,8 @@ import { jsonResult, readNumberParam, readStringParam, ToolInputError } from "./
 import {
   MODULE_LEARNING_EVIDENCE_STATUSES,
   MODULE_LEARNING_TARGETS,
+  inspectEvidenceFile,
+  verifyApplicationEvaluation,
 } from "./module-learning-pipeline-plan-tool.js";
 import { readReceiptDirectory, type ReceiptDirectoryIssue } from "./receipt-directory.js";
 
@@ -357,6 +359,8 @@ function activeReceiptKey(receipt: ModuleLearningPlanReceipt): string {
 }
 
 export function buildModuleLearningPipelineReview(params: {
+  verifiedEvaluationPaths?: ReadonlySet<string>;
+  verifiedApplicationPaths?: ReadonlySet<string>;
   workspaceDir: string;
   dateKey: string;
   targetModule?: string;
@@ -400,7 +404,14 @@ export function buildModuleLearningPipelineReview(params: {
         ? normalizeRelativePath(path.relative(params.workspaceDir, latestForKey))
         : null);
     const superseded = supersededByReceiptPath !== null;
-    const status = statusKey(receipt.status);
+    const declaredStatus = statusKey(receipt.status);
+    const evaluationVerified = params.verifiedEvaluationPaths?.has(result.path) === true;
+    const status =
+      declaredStatus === "eval_absorbed" && !evaluationVerified
+        ? params.verifiedApplicationPaths?.has(result.path)
+          ? "application_ready"
+          : "missing_evidence"
+        : declaredStatus;
     const financePipelineArgs = recordValue(receipt.financePipelineArgs);
     const structuredDataReviewTargetViolation =
       receipt.targetModule === "data_provenance_quality" &&
@@ -414,7 +425,12 @@ export function buildModuleLearningPipelineReview(params: {
       receipt.liveTouched === true ||
       receipt.providerConfigTouched === true ||
       receipt.protectedMemoryTouched === true;
-    const missingEvidence = stringArrayValue(receipt.missingEvidence);
+    const missingEvidence = [
+      ...stringArrayValue(receipt.missingEvidence),
+      ...(declaredStatus === "eval_absorbed" && !evaluationVerified
+        ? ["unverified_source_bound_application_eval"]
+        : []),
+    ];
     const proofCompleteness = buildProofCompleteness({
       receipt,
       boundaryViolation,
@@ -440,6 +456,8 @@ export function buildModuleLearningPipelineReview(params: {
       moduleFamily: receipt.moduleFamily ?? null,
       status,
       claimStatus: claimStatus(status),
+      declaredStatus,
+      evaluationVerified,
       sourceUrlOrPath: receipt.sourceUrlOrPath ?? null,
       learningIntent: receipt.learningIntent ?? null,
       actualReadingScope: receipt.actualReadingScope ?? null,
@@ -648,7 +666,41 @@ export function createModuleLearningPipelineReviewTool(options?: {
         targetModule,
         maxFiles,
       });
+      const verifiedEvaluationPaths = new Set<string>();
+      const verifiedApplicationPaths = new Set<string>();
+      for (const result of receiptResults) {
+        if (!result.ok || result.receipt.status !== "eval_absorbed") {
+          continue;
+        }
+        const receipt = result.receipt;
+        const paths = [
+          receipt.sourceRegistryRecordPath,
+          receipt.retrievalReceiptPath,
+          receipt.applicationValidationReceiptPath,
+          receipt.trainingOrEvalAbsorptionEvidencePath,
+        ];
+        const evidence = await Promise.all(
+          paths.map((value) => inspectEvidenceFile(workspaceDir, value ?? null)),
+        );
+        if (evidence.slice(0, 3).every(Boolean)) {
+          verifiedApplicationPaths.add(result.path);
+        }
+        if (
+          evidence.every(Boolean) &&
+          (await verifyApplicationEvaluation({
+            workspaceDir,
+            text: evidence[3]!.text,
+            targetModule: receipt.targetModule ?? "",
+            sourceUrlOrPath: receipt.sourceUrlOrPath ?? null,
+            freshAdjacentApplicationTask: receipt.freshAdjacentApplicationTask ?? null,
+          }))
+        ) {
+          verifiedEvaluationPaths.add(result.path);
+        }
+      }
       const review = buildModuleLearningPipelineReview({
+        verifiedEvaluationPaths,
+        verifiedApplicationPaths,
         workspaceDir,
         dateKey,
         targetModule,

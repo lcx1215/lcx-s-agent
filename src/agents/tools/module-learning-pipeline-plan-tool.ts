@@ -657,6 +657,82 @@ function chooseFinancePipelineSourceType(params: {
   return "market_data_snapshot_source";
 }
 
+export async function inspectEvidenceFile(workspaceDir: string, evidencePath: string | null) {
+  if (!evidencePath) {
+    return null;
+  }
+  try {
+    const filename = path.resolve(workspaceDir, evidencePath);
+    const stat = await fs.stat(filename);
+    if (!stat.isFile() || stat.size === 0 || stat.size > 1_048_576) {
+      return null;
+    }
+    const bytes = await fs.readFile(filename);
+    if (bytes.length > 1_048_576) {
+      return null;
+    }
+    return {
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      text: bytes.toString("utf8"),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function verifyApplicationEvaluation(params: {
+  workspaceDir: string;
+  text: string;
+  targetModule: string;
+  sourceUrlOrPath: string | null;
+  freshAdjacentApplicationTask: string | null;
+}): Promise<boolean> {
+  try {
+    const value: unknown = JSON.parse(params.text);
+    if (!value || typeof value !== "object") {
+      return false;
+    }
+    const receipt = value as Record<string, unknown>;
+    if (
+      receipt.schemaVersion !== "lcx_module_learning_eval_v1" ||
+      receipt.verdict !== "passed" ||
+      receipt.targetModule !== params.targetModule ||
+      receipt.sourceUrlOrPath !== params.sourceUrlOrPath ||
+      receipt.freshAdjacentApplicationTask !== params.freshAdjacentApplicationTask ||
+      !Array.isArray(receipt.checks) ||
+      receipt.checks.length === 0 ||
+      receipt.checks.length > 100
+    ) {
+      return false;
+    }
+    const ids = new Set<string>();
+    for (const value of receipt.checks) {
+      if (!value || typeof value !== "object") {
+        return false;
+      }
+      const check = value as Record<string, unknown>;
+      if (
+        typeof check.id !== "string" ||
+        !check.id.trim() ||
+        ids.has(check.id) ||
+        check.passed !== true ||
+        typeof check.evidencePath !== "string" ||
+        typeof check.sha256 !== "string"
+      ) {
+        return false;
+      }
+      ids.add(check.id);
+      const artifact = await inspectEvidenceFile(params.workspaceDir, check.evidencePath);
+      if (!artifact || artifact.sha256 !== check.sha256) {
+        return false;
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function resolveEvidenceStatus(params: {
   sourceUrlOrPath: string | null;
   actualReadingScope: string | null;
@@ -863,13 +939,43 @@ export function createModuleLearningPipelinePlanTool(options?: {
         : [];
       const weakEvidenceGateSatisfied =
         !weakEvidenceGateRequired || weakEvidenceGateMissing.length === 0;
+      const evidenceFiles = await Promise.all(
+        [
+          sourceRegistryRecordPath,
+          retrievalReceiptPath,
+          applicationValidationReceiptPath,
+          trainingOrEvalAbsorptionEvidencePath,
+        ].map((value) => inspectEvidenceFile(workspaceDir, value)),
+      );
+      const evaluationVerified =
+        Boolean(evidenceFiles[3]) &&
+        (await verifyApplicationEvaluation({
+          workspaceDir,
+          text: evidenceFiles[3]!.text,
+          targetModule,
+          sourceUrlOrPath,
+          freshAdjacentApplicationTask,
+        }));
+      const evidenceVerification = {
+        sourceRegistryVerified: Boolean(evidenceFiles[0]),
+        retrievalReceiptVerified: Boolean(evidenceFiles[1]),
+        applicationReceiptVerified: Boolean(evidenceFiles[2]),
+        evaluationVerified,
+        artifactHashes: evidenceFiles.map((file) => file?.sha256 ?? null),
+        boundary:
+          "Local source-bound evaluation integrity only; not model training, trading promotion or runtime success.",
+      };
       const evidenceStatus = resolveEvidenceStatus({
         sourceUrlOrPath,
         actualReadingScope,
-        sourceRegistryRecordPath,
-        retrievalReceiptPath,
-        applicationValidationReceiptPath,
-        trainingOrEvalAbsorptionEvidencePath,
+        sourceRegistryRecordPath: evidenceFiles[0] ? sourceRegistryRecordPath : null,
+        retrievalReceiptPath: evidenceFiles[1] ? retrievalReceiptPath : null,
+        applicationValidationReceiptPath: evidenceFiles[2]
+          ? applicationValidationReceiptPath
+          : null,
+        trainingOrEvalAbsorptionEvidencePath: evaluationVerified
+          ? trainingOrEvalAbsorptionEvidencePath
+          : null,
         freshAdjacentApplicationTask,
         keepDownrankDiscardDecision,
         weakEvidenceGateSatisfied,
@@ -887,6 +993,17 @@ export function createModuleLearningPipelinePlanTool(options?: {
           ? null
           : "keep_downrank_or_discard_decision",
         ...weakEvidenceGateMissing,
+        ...[
+          sourceRegistryRecordPath,
+          retrievalReceiptPath,
+          applicationValidationReceiptPath,
+          trainingOrEvalAbsorptionEvidencePath,
+        ].flatMap((value, index) =>
+          value && !evidenceFiles[index] ? [`unreadable_evidence_file:${value}`] : [],
+        ),
+        trainingOrEvalAbsorptionEvidencePath && !evaluationVerified
+          ? "unverified_source_bound_application_eval"
+          : null,
       ].filter((item): item is string => Boolean(item));
 
       const financePipelineArgs =
@@ -961,6 +1078,7 @@ export function createModuleLearningPipelinePlanTool(options?: {
         applicationValidationTask,
         safetyBoundaries: schema.safetyBoundaries,
         missingEvidence,
+        evidenceVerification,
         internalizationChain: [
           "prior_art_search",
           "source_registry_record",

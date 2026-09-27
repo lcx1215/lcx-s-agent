@@ -1772,6 +1772,7 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "scripts/operator/lcx-system-memory-sedimentation-gate.ts",
       "scripts/operator/module-learning-pipeline-plan.ts",
       "scripts/operator/module-learning-pipeline-review.ts",
+      "src/agents/module-learning-source-register.ts",
       "src/agents/openclaw-tools.module-learning-pipeline-plan-registration.test.ts",
       "src/agents/tools/module-learning-pipeline-plan-tool.test.ts",
       "src/agents/tools/module-learning-pipeline-plan-tool.ts",

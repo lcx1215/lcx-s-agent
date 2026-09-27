@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -123,15 +124,15 @@ describe("module learning pipeline review tool", () => {
           supersededReceiptFiles: 0,
           validReceipts: 2,
           invalidReceipts: 1,
-          missingEvidence: 0,
+          missingEvidence: 1,
           storedOnly: 1,
           retrievalReady: 0,
           applicationReady: 0,
-          evalAbsorbed: 1,
-          weakModuleLearning: 1,
+          evalAbsorbed: 0,
+          weakModuleLearning: 2,
           boundaryViolations: 0,
           structuredDataReviewTargetViolations: 0,
-          exactMissingProofReceipts: 1,
+          exactMissingProofReceipts: 2,
         }),
         proofGapSummary: expect.objectContaining({
           module_specific_capability_rule: 1,
@@ -329,8 +330,8 @@ describe("module learning pipeline review tool", () => {
         updated: false,
         counts: expect.objectContaining({
           validReceipts: 1,
-          evalAbsorbed: 1,
-          weakModuleLearning: 0,
+          evalAbsorbed: 0,
+          weakModuleLearning: 1,
           boundaryViolations: 0,
           structuredDataReviewTargetViolations: 0,
         }),
@@ -390,7 +391,7 @@ describe("module learning pipeline review tool", () => {
         ok: true,
         counts: expect.objectContaining({
           validReceipts: 1,
-          evalAbsorbed: 1,
+          evalAbsorbed: 0,
           weakModuleLearning: 1,
           structuredDataReviewTargetViolations: 1,
         }),
@@ -402,6 +403,55 @@ describe("module learning pipeline review tool", () => {
         ],
       }),
     );
+  });
+
+  it("rechecks evaluation artifacts instead of trusting a previously absorbed receipt", async () => {
+    workspaceDir = await makeTempWorkspace("module-review-integrity-");
+    await fs.writeFile(path.join(workspaceDir, "artifact.json"), "actual output");
+    const receipt = {
+      boundary: "local_module_learning_pipeline_plan",
+      targetModule: "options_volatility",
+      status: "eval_absorbed",
+      sourceUrlOrPath: "source",
+      actualReadingScope: "full",
+      sourceRegistryRecordPath: "artifact.json",
+      retrievalReceiptPath: "artifact.json",
+      applicationValidationReceiptPath: "artifact.json",
+      trainingOrEvalAbsorptionEvidencePath: "eval.json",
+      freshAdjacentApplicationTask: "adjacent case",
+      keepDownrankDiscardDecision: "keep",
+      moduleSpecificCapabilityRule: "retain provenance",
+      safetyBoundaries: ["research_only"],
+      missingEvidence: [],
+    };
+    await seedJson(
+      workspaceDir,
+      "memory/module-learning-pipeline-plan-receipts/2026-05-12/valid.json",
+      receipt,
+    );
+    await seedJson(workspaceDir, "eval.json", {
+      schemaVersion: "lcx_module_learning_eval_v1",
+      verdict: "passed",
+      targetModule: receipt.targetModule,
+      sourceUrlOrPath: receipt.sourceUrlOrPath,
+      freshAdjacentApplicationTask: receipt.freshAdjacentApplicationTask,
+      checks: [
+        {
+          id: "independent-check",
+          passed: true,
+          evidencePath: "artifact.json",
+          sha256: createHash("sha256").update("actual output").digest("hex"),
+        },
+      ],
+    });
+    const tool = createModuleLearningPipelineReviewTool({ workspaceDir });
+    expect((await tool.execute("before", { writeReview: false })).details).toMatchObject({
+      counts: { evalAbsorbed: 1 },
+    });
+    await fs.writeFile(path.join(workspaceDir, "artifact.json"), "changed output");
+    expect((await tool.execute("after", { writeReview: false })).details).toMatchObject({
+      counts: { evalAbsorbed: 0, applicationReady: 1 },
+    });
   });
 
   it("reports an unreadable receipt directory instead of reporting an empty pipeline", async () => {

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -266,7 +267,7 @@ describe("module learning pipeline plan tool", () => {
 
     expect(absorbed.details).toEqual(
       expect.objectContaining({
-        status: "eval_absorbed",
+        status: "missing_evidence",
         sourceEvidenceClass: "weak_alternative_source",
         sourceReliabilityGrade: "d",
         weakEvidenceGate: expect.objectContaining({
@@ -283,10 +284,39 @@ describe("module learning pipeline plan tool", () => {
     );
   });
 
-  it("writes a receipt and upgrades status when evidence paths are present", async () => {
+  it("requires source-bound evaluation and artifact integrity before upgrading status", async () => {
     const workspaceDir = await makeTempWorkspace("openclaw-module-learning-plan-");
     const tool = createModuleLearningPipelinePlanTool({ workspaceDir });
 
+    const files = [
+      "memory/research-sources/options-iv-event-note.md",
+      "memory/finance-learning-retrieval-receipts/2026-05-12/r.json",
+      "memory/finance-learning-apply-usage-receipts/2026-05-12/a.json",
+    ];
+    for (const file of files) {
+      await fs.mkdir(path.dirname(path.join(workspaceDir, file)), { recursive: true });
+      await fs.writeFile(path.join(workspaceDir, file), "fixture evidence");
+    }
+    const evalPath = "ops/local-brain/eval/options-iv-event.json";
+    await fs.mkdir(path.dirname(path.join(workspaceDir, evalPath)), { recursive: true });
+    await fs.writeFile(
+      path.join(workspaceDir, evalPath),
+      JSON.stringify({
+        schemaVersion: "lcx_module_learning_eval_v1",
+        verdict: "passed",
+        targetModule: "options_volatility",
+        sourceUrlOrPath: files[0],
+        freshAdjacentApplicationTask: "Apply to an FOMC QQQ gap-risk prompt without contracts.",
+        checks: [
+          {
+            id: "adjacent-case",
+            passed: true,
+            evidencePath: files[2],
+            sha256: createHash("sha256").update("fixture evidence").digest("hex"),
+          },
+        ],
+      }),
+    );
     try {
       const result = await tool.execute("options-receipt", {
         targetModule: "options_volatility",
@@ -330,6 +360,57 @@ describe("module learning pipeline plan tool", () => {
       await fs.rm(workspaceDir, { recursive: true, force: true });
     }
   });
+
+  it.each(["missing", "mismatched-source", "tampered-artifact", "failed-check"])(
+    "rejects %s evaluation evidence",
+    async (mode) => {
+      const workspaceDir = await makeTempWorkspace("module-evidence-adversarial-");
+      try {
+        const tool = createModuleLearningPipelinePlanTool({ workspaceDir });
+        await fs.writeFile(path.join(workspaceDir, "artifact.json"), "actual output");
+        if (mode !== "missing") {
+          await fs.writeFile(
+            path.join(workspaceDir, "eval.json"),
+            JSON.stringify({
+              schemaVersion: "lcx_module_learning_eval_v1",
+              verdict: "passed",
+              targetModule: "options_volatility",
+              sourceUrlOrPath:
+                mode === "mismatched-source" ? "other-source" : "https://example.com/source",
+              freshAdjacentApplicationTask: "new case",
+              checks: [
+                {
+                  id: "test",
+                  passed: mode !== "failed-check",
+                  evidencePath: "artifact.json",
+                  sha256: createHash("sha256")
+                    .update(mode === "tampered-artifact" ? "old output" : "actual output")
+                    .digest("hex"),
+                },
+              ],
+            }),
+          );
+        }
+        const result = await tool.execute("adversarial", {
+          targetModule: "options_volatility",
+          sourceUrlOrPath: "https://example.com/source",
+          actualReadingScope: "full",
+          sourceRegistryRecordPath: "artifact.json",
+          retrievalReceiptPath: "artifact.json",
+          applicationValidationReceiptPath: "artifact.json",
+          trainingOrEvalAbsorptionEvidencePath: "eval.json",
+          freshAdjacentApplicationTask: "new case",
+          keepDownrankDiscardDecision: "keep",
+        });
+        expect(result.details).toMatchObject({
+          status: "application_ready",
+          evidenceVerification: { evaluationVerified: false },
+        });
+      } finally {
+        await fs.rm(workspaceDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("keeps receipt paths distinct for same-intent superseding receipts from different sources", async () => {
     const workspaceDir = await makeTempWorkspace("openclaw-module-learning-plan-");

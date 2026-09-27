@@ -374,6 +374,10 @@ function buildGate(params: {
     Boolean(params.latestEvalTimeout?.at) &&
     (!params.latestEval?.at || params.latestEvalTimeout!.at! > params.latestEval.at);
 
+  if (params.planReceiptFiles === 0) {
+    blockers.push("module_learning_plan_receipts_missing");
+    nextActions.push("create source-bound application receipts before claiming absorption");
+  }
   if (!params.review) {
     blockers.push("module_learning_review_missing");
     nextActions.push(

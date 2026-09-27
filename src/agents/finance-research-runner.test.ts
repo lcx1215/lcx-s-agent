@@ -225,6 +225,19 @@ const BATCH_OPTIONS = {
 } as const;
 
 describe("finance research runner", () => {
+  it("separates explicit slow research from executable/current quote requirements", () => {
+    const target = (ask: string) =>
+      buildDefaultFinanceResearchTargets(ask, 6, AS_OF).find((row) => row.id === "us-equity-spy");
+    expect(target("SPY long-term risk research")?.realtime).toBe(false);
+    expect(
+      target("SPY long-term risk research")?.collections?.some(
+        (row) => row.collection === "eod_history",
+      ),
+    ).toBe(true);
+    expect(target("SPY long-term research and current price")?.realtime).not.toBe(false);
+    expect(target("SPY intraday risk research")?.realtime).not.toBe(false);
+  });
+
   it("targets the caller-supplied equity ticker", () => {
     const targets = buildDefaultFinanceResearchTargets("Analyze AAPL stock", 6, AS_OF);
     expect(

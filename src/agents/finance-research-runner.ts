@@ -829,6 +829,13 @@ export function buildDefaultFinanceResearchTargets(
   equityUniverseSnapshot?: FinanceResearchEquityUniverseSnapshot,
 ): readonly FinanceResearchBatchTarget[] {
   const normalizedAsk = ask.trim();
+  // Explicit slow research needs timestamped history, not an executable quote.
+  // Ambiguous or action/current-price requests retain the existing quote gate.
+  const slowResearch =
+    /long[- ]term|multi[- ]month|six[- ]month|长期|半年|六个月/iu.test(normalizedAsk) &&
+    !/intraday|day trad|\b(?:now|current|latest|today|buy|sell|quote|price)\b|日内|当前|最新|今天|现在|买入|卖出|报价|价格/iu.test(
+      normalizedAsk,
+    );
   const cryptoSymbols = requestedCryptoSymbols(normalizedAsk);
   const equitySymbolsRequested = requestedEquitySymbols(normalizedAsk);
   const equityDiscoveryRequested = isUsEquityAsk(normalizedAsk) || isBroadMarketAsk(normalizedAsk);
@@ -868,11 +875,13 @@ export function buildDefaultFinanceResearchTargets(
       id: `us-equity-${symbol.toLowerCase().replace(".", "-")}`,
       instrument: symbol,
       assetClass: "us_equity",
-      realtime: {
-        freshnessMaxMinutes: 24 * 60,
-        crossSourceSkewMaxMinutes: 60,
-        requireOfficialReference: false,
-      },
+      realtime: slowResearch
+        ? false
+        : {
+            freshnessMaxMinutes: 24 * 60,
+            crossSourceSkewMaxMinutes: 60,
+            requireOfficialReference: false,
+          },
       collections: [history, buildNewsCollection()],
     });
   }

@@ -159,7 +159,7 @@ describe("module-learning-pipeline-review CLI", () => {
     );
   });
 
-  it("counts superseding eval-absorbed receipts as active and keeps old receipts as history", async () => {
+  it("keeps superseding receipts active but rejects their unverified absorption claims", async () => {
     workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-module-review-cli-"));
     await seedJson(
       workspaceDir,
@@ -222,16 +222,16 @@ describe("module-learning-pipeline-review CLI", () => {
           receiptFiles: 1,
           rawReceiptFiles: 2,
           supersededReceiptFiles: 1,
-          evalAbsorbed: 1,
-          weakModuleLearning: 0,
-          exactMissingProofReceipts: 0,
+          evalAbsorbed: 0,
+          weakModuleLearning: 1,
+          exactMissingProofReceipts: 1,
         }),
-        proofGapSummary: {},
+        proofGapSummary: expect.objectContaining({ unverified_source_bound_application_eval: 1 }),
       }),
     );
     expect(parsed.rows).toEqual([
       expect.objectContaining({
-        status: "eval_absorbed",
+        status: "missing_evidence",
         supersedesReceiptPath: "memory/module-learning-pipeline-plan-receipts/2026-05-12/old.json",
         superseded: false,
       }),

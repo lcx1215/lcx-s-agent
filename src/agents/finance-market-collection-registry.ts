@@ -969,15 +969,28 @@ export function createFredMacroSeriesCollectionAdapter(options: {
   fetchImpl?: FetchImpl;
 }): FinanceMarketCollectionAdapter {
   const apiKey = requiredText(options.apiKey, "FRED apiKey");
+  const foreignSeries = new Set([
+    "debt_to_penny",
+    "avg_interest_rates",
+    "CUUR0000SA0",
+    "CUSR0000SA0",
+  ]);
   return {
     id: "fred_macro_series",
     providerName: "fred-macro-series",
     providerRole: "official_or_issuer_reference",
     priority: 30,
     supports: (request) =>
-      isMacroSeries(request) && Boolean(request.seriesId ?? request.instrument),
+      isMacroSeries(request) &&
+      Boolean(request.seriesId ?? request.instrument) &&
+      !foreignSeries.has(request.seriesId ?? request.instrument),
     collect: async (request) => {
       const seriesId = requiredText(request.seriesId ?? request.instrument, "FRED seriesId");
+      if (foreignSeries.has(seriesId)) {
+        throw new FinanceMarketCollectionAdapterError(
+          "source-native series requires its declared provider; no implicit FRED substitution",
+        );
+      }
       const baseUrl = "https://api.stlouisfed.org/fred/series/observations";
       const params = {
         series_id: seriesId,

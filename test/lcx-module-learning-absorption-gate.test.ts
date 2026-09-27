@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -19,6 +20,44 @@ async function seedJsonl(workspaceDir: string, relativePath: string, lines: unkn
   await fs.mkdir(path.dirname(absolutePath), { recursive: true });
   await fs.writeFile(absolutePath, `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`);
   return absolutePath;
+}
+
+async function seedSourceReceiptsFromFixture(workspaceDir: string) {
+  const fixture = JSON.parse(
+    await fs.readFile(
+      path.join(workspaceDir, "memory/module-learning-pipeline-reviews/2026-05-14.json"),
+      "utf8",
+    ),
+  ) as { rows: Array<Record<string, unknown>> };
+  for (const row of fixture.rows) {
+    const artifact = `evidence/${String(row.targetModule)}.json`;
+    await seedJson(workspaceDir, artifact, { testResult: "passed" });
+    const hash = createHash("sha256")
+      .update(await fs.readFile(path.join(workspaceDir, artifact)))
+      .digest("hex");
+    const source = `fixture-source:${String(row.targetModule)}`;
+    await seedJson(workspaceDir, String(row.receiptPath), {
+      ...row,
+      boundary: "local_module_learning_pipeline_plan",
+      sourceUrlOrPath: source,
+      actualReadingScope: "fixture source",
+      sourceRegistryRecordPath: artifact,
+      retrievalReceiptPath: artifact,
+      applicationValidationReceiptPath: artifact,
+      moduleSpecificCapabilityRule: "retain source binding",
+      safetyBoundaries: ["research_only"],
+    });
+    if (row.status === "eval_absorbed") {
+      await seedJson(workspaceDir, String(row.trainingOrEvalAbsorptionEvidencePath), {
+        schemaVersion: "lcx_module_learning_eval_v1",
+        verdict: "passed",
+        targetModule: row.targetModule,
+        sourceUrlOrPath: source,
+        freshAdjacentApplicationTask: row.freshAdjacentApplicationTask,
+        checks: [{ id: "source-case", passed: true, evidencePath: artifact, sha256: hash }],
+      });
+    }
+  }
 }
 
 function runCli(args: string[], workspaceDir: string) {
@@ -113,6 +152,7 @@ describe("lcx-module-learning-absorption-gate", () => {
       ],
     });
 
+    await seedSourceReceiptsFromFixture(workspaceDir);
     const result = runCli(
       ["--date", "2026-05-14", "--eval-summary", evalSummaryPath],
       workspaceDir,
@@ -177,6 +217,7 @@ describe("lcx-module-learning-absorption-gate", () => {
       ],
     });
 
+    await seedSourceReceiptsFromFixture(workspaceDir);
     const result = runCli(
       ["--date", "2026-05-14", "--eval-summary", evalSummaryPath],
       workspaceDir,
@@ -238,6 +279,7 @@ describe("lcx-module-learning-absorption-gate", () => {
       ],
     });
 
+    await seedSourceReceiptsFromFixture(workspaceDir);
     const result = runCli(
       ["--date", "2026-05-14", "--eval-summary", evalSummaryPath],
       workspaceDir,
@@ -350,10 +392,10 @@ describe("lcx-module-learning-absorption-gate", () => {
         reviewPath: "memory/module-learning-pipeline-reviews/2026-05-14.json",
       }),
     );
-    expect(parsed.blockers).toContain("module_learning_review_missing");
+    expect(parsed.blockers).toContain("module_learning_plan_receipts_missing");
   });
 
-  it("flags an empty review as stale when plan receipts already exist", async () => {
+  it("rebuilds a stale empty review from current plan receipts", async () => {
     workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-absorption-gate-"));
     const evalSummaryPath = await seedJson(workspaceDir, "eval-summary.json", cleanEvalSummary());
     await seedJson(
@@ -396,15 +438,11 @@ describe("lcx-module-learning-absorption-gate", () => {
     expect(parsed.counts).toEqual(
       expect.objectContaining({
         planReceiptFiles: 1,
-        reviewRows: 0,
+        reviewRows: 1,
       }),
     );
-    expect(parsed.blockers).toContain("module_learning_review_stale_or_empty");
-    expect(parsed.nextActions).toEqual(
-      expect.arrayContaining([
-        "rerun module-learning-pipeline-review so absorption gate sees the current plan receipts",
-      ]),
-    );
+    expect(parsed.blockers).toContain("module_receipts_not_eval_absorbed");
+    expect(parsed.blockers).not.toContain("module_learning_review_stale_or_empty");
   });
 
   it("does not manufacture per-source absorption or adjacent-task proof from a clean global eval", async () => {

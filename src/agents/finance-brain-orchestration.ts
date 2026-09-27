@@ -326,7 +326,7 @@ function moduleMatches(module: FinanceBrainModuleDefinition, text: string): bool
 function hasFinanceTaskSignal(text: string): boolean {
   // `shares?` and `holdings?` were missing, so "how many shares do I own" was not a finance task at
   // all and therefore never reached the data-gateway condition below, which is gated on financeTask.
-  return /\b(finance|market|stock|shares?|holdings?|equity|etf|portfolio|macro|earnings|valuation|quant|trading|investing|investment|candlestick)\b|金融|市场|股市|股票|美股|A股|a股|指数|基金|组合|持仓|宏观|财报|估值|量化|投资|K线|k线|图线|蜡烛图/u.test(
+  return /\b(?:trend|momentum|mean[- ]reversion|arbitrage|intraday|investment|trading) strateg(?:y|ies)\b|趋势策略|动量策略|套利策略|日内策略|\b(finance|market|stock|shares?|holdings?|equity|etf|portfolio|macro|earnings|valuation|quant|trading|investing|investment|candlestick)\b|金融|市场|股市|股票|美股|A股|a股|指数|基金|组合|持仓|宏观|财报|估值|量化|投资|K线|k线|图线|蜡烛图/u.test(
     text,
   );
 }

@@ -291,6 +291,26 @@ describe("finance market collection registry", () => {
     expect(news[0]?.providerRole).toBe("cross_check_market_data");
   });
 
+  it("does not send Treasury or BLS identifiers to FRED", async () => {
+    let calls = 0;
+    const adapter = createFredMacroSeriesCollectionAdapter({
+      apiKey: "fixture",
+      fetchImpl: async () => {
+        calls++;
+        throw new Error("must not fetch");
+      },
+    });
+    for (const seriesId of ["debt_to_penny", "avg_interest_rates", "CUUR0000SA0", "CUSR0000SA0"]) {
+      const request = { ...MACRO_REQUEST, seriesId, instrument: seriesId };
+      expect(adapter.supports(request)).toBe(false);
+      await expect(adapter.collect(request, new AbortController().signal)).rejects.toThrow(
+        "source-native series",
+      );
+    }
+    expect(calls).toBe(0);
+    expect(adapter.supports({ ...MACRO_REQUEST, seriesId: "FEDFUNDS" })).toBe(true);
+  });
+
   it("collects official BLS, Treasury, and keyed FRED macro records", async () => {
     const adapters = [
       createBlsMacroSeriesCollectionAdapter({ fetchImpl: fakeFetch }),
@@ -302,7 +322,10 @@ describe("finance market collection registry", () => {
       { ...MACRO_REQUEST, instrument: "debt_to_penny", seriesId: "debt_to_penny" },
       new AbortController().signal,
     );
-    const fred = await adapters[2].collect(MACRO_REQUEST, new AbortController().signal);
+    const fred = await adapters[2].collect(
+      { ...MACRO_REQUEST, instrument: "FEDFUNDS", seriesId: "FEDFUNDS" },
+      new AbortController().signal,
+    );
     expect(bls[0]?.sourceFamily).toBe("official_macro_data");
     expect(treasury[0]?.data).toEqual(expect.objectContaining({ record_date: "2026-09-04" }));
     expect(fred[0]?.sourceUrlOrArtifact).not.toContain("fred-secret");

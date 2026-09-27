@@ -382,3 +382,11 @@ background model calls or activate research candidates automatically.
 The output compares cash and fixed allocation, scores probabilities, and applies additional cost scenarios. Previously inspected data remains retrospective, not an untouched holdout. Outputs always have no execution authority and cannot promote or change the active trading strategy. A zero allocation is an abstention, not proof of profitable skill.
 
 Central-agent loops default to five cycles, reject non-finite duration/cycle inputs, and stop when consecutive failed owner actions repeat with identical arguments and outcomes. Changed arguments or outcomes remain eligible for bounded follow-up.
+
+### Verifying local learning evaluations
+
+A path string is not evidence. Module-learning plans inspect bounded, nonempty local evidence files before reporting retrieval or application readiness. To report `eval_absorbed`, the evaluation JSON must use `schemaVersion: "lcx_module_learning_eval_v1"`, `verdict: "passed"`, and match the request's `targetModule`, `sourceUrlOrPath`, and `freshAdjacentApplicationTask`. Its nonempty `checks` array contains unique `id` values, `passed: true`, and an `evidencePath` plus the file's SHA-256 in `sha256`. Reviews re-read and hash the artifacts, so old declarations and modified outputs are not counted as verified absorption. Legacy unverified absorption claims remain visible as declared status and require review; no stored receipt is rewritten.
+
+This verifies source binding and local evaluation integrity. It does not prove that an evaluator is correct, that model weights changed, that a strategy is profitable, or that execution has been authorized.
+
+Explicit long-term research without an immediate action or current-price request uses dated historical evidence instead of requiring an executable quote. Current-price and intraday requests retain their quote gates. Provider-native macro identifiers are not interchangeable: Treasury and BLS identifiers must not be sent to FRED as implicit fallbacks.
