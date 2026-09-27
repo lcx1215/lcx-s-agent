@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { summarizeFinanceBrokerFills } from "./finance-broker-profit-feedback.js";
+import {
+  summarizeFinanceBrokerFills,
+  summarizeFinanceBrokerFillsByInstrument,
+  attributeFinanceBrokerFills,
+} from "./finance-broker-profit-feedback.js";
+import type { FinanceExecutionReceipt } from "./finance-execution-adapter.js";
 const fill = (id: string, side: string, qty: string, price: string) => ({
   id,
   activity_type: "FILL",
@@ -58,4 +63,111 @@ it("does not invent ordering between opposing fills at the same timestamp", () =
     netMatchedPnl: null,
     issues: ["ambiguous_same_time_fill_order"],
   });
+});
+
+it("allocates explicit cash fees proportionally across partial fills without double counting", () => {
+  const rows = [
+    { ...fill("1", "buy", "2", "100"), order_id: "buy" },
+    { ...fill("2", "sell", "1", "110"), order_id: "sell" },
+    {
+      id: "buy-fee",
+      activity_type: "FEE",
+      order_id: "buy",
+      status: "executed",
+      currency: "USD",
+      net_amount: "-2",
+    },
+    {
+      id: "sell-fee",
+      activity_type: "FEE",
+      order_id: "sell",
+      status: "executed",
+      currency: "USD",
+      net_amount: "-0.5",
+    },
+  ];
+  expect(summarizeFinanceBrokerFills([...rows, rows[2]], true)).toMatchObject({
+    grossMatchedPnl: 10,
+    netMatchedPnl: 8.5,
+    allocatedClosedCashFees: 1.5,
+    feeActivityCount: 2,
+    openLotCount: 1,
+  });
+});
+
+it("isolates coin fees from equities but retains unlinked account fee uncertainty", () => {
+  const rows = [
+    fill("1", "buy", "1", "100"),
+    fill("2", "sell", "1", "110"),
+    {
+      id: "coin-fee",
+      activity_type: "CFEE",
+      symbol: "BTCUSD",
+      qty: "-0.01",
+      net_amount: "0",
+      currency: "USD",
+      status: "executed",
+    },
+  ];
+  expect(summarizeFinanceBrokerFillsByInstrument(rows, true)[0]).toMatchObject({
+    instrument: "SPY",
+    netMatchedPnl: 10,
+  });
+  expect(
+    summarizeFinanceBrokerFillsByInstrument(
+      [
+        ...rows,
+        {
+          id: "unknown-fee",
+          activity_type: "FEE",
+          net_amount: "-1",
+          currency: "USD",
+          status: "executed",
+        },
+      ],
+      true,
+    )[0].netMatchedPnl,
+  ).toBeNull();
+});
+it("requires matching account, order receipt and decision before attributing a fill", () => {
+  const row = { ...fill("1", "buy", "1", "100"), order_id: "order-1" };
+  const receipt: FinanceExecutionReceipt = {
+    schemaVersion: "lcx_finance_execution_receipt_v1",
+    receiptId: "r1",
+    intentId: "intent:signal-1",
+    runAuthorizationId: "paper-run",
+    adapterId: "alpaca",
+    adapterKind: "venue",
+    venue: "alpaca",
+    accountId: "account-a",
+    instrument: "SPY",
+    side: "buy",
+    orderType: "market",
+    quantity: 1,
+    referencePrice: 100,
+    referencePriceAt: row.transaction_time,
+    notional: 100,
+    fill: {
+      filledQuantity: 1,
+      fillPrice: 100,
+      filledAt: row.transaction_time,
+      venueRef: "alpaca:paper:order-1",
+    },
+    executionAuthority: "declared_execution_adapter_required",
+    recordedAt: row.transaction_time,
+  };
+  const decisions = [
+    { input: { signalId: "signal-1", instrument: "SPY", action: "buy", strategyRule: "rule-a" } },
+  ];
+  expect(attributeFinanceBrokerFills([row, row], [receipt], decisions, "account-a")).toMatchObject({
+    attributedFillCount: 1,
+    unattributedFillCount: 0,
+    strategies: [{ strategyRule: "rule-a", fillCount: 1 }],
+  });
+  expect(
+    attributeFinanceBrokerFills([row], [receipt], decisions, "account-b").unattributedFillCount,
+  ).toBe(1);
+  expect(attributeFinanceBrokerFills([row], [receipt], [], "account-a").unattributedFillCount).toBe(
+    1,
+  );
 });
