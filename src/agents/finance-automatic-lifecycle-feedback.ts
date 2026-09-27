@@ -197,8 +197,35 @@ function compactCycleRun(value: unknown) {
     !Array.isArray(record.execution)
       ? (record.execution as Record<string, unknown>)
       : null;
+  const review = output.tradeDecisionReview;
+  const decisions =
+    review && typeof review === "object" && !Array.isArray(review)
+      ? (review as Record<string, unknown>).decisions
+      : undefined;
+  const modelVetoes = Array.isArray(decisions)
+    ? decisions
+        .flatMap((decision) => {
+          if (
+            !decision ||
+            typeof decision !== "object" ||
+            Array.isArray(decision) ||
+            decision.decision !== "veto"
+          ) {
+            return [];
+          }
+          return [
+            {
+              origin: "model_review" as const,
+              candidateId: boundedText(decision.candidateId, 160),
+              rationale: boundedText(decision.rationale, 800),
+            },
+          ];
+        })
+        .slice(0, 8)
+    : [];
   return {
     firedAt: boundedText(record.firedAt, 40),
+    ...(modelVetoes.length > 0 ? { modelVetoes } : {}),
     status: boundedText(record.status, 32),
     execution: rawExecution
       ? {

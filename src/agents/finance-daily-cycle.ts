@@ -1512,7 +1512,9 @@ export async function runFinanceDailyCycle(
           }
           if (decision.decision === "veto") {
             modelVetoCount += 1;
-            refusals.push(item.instrument + ": model vetoed the proposed candidate");
+            refusals.push(
+              item.instrument + ": model vetoed the proposed candidate: " + decision.rationale,
+            );
             continue;
           }
         }

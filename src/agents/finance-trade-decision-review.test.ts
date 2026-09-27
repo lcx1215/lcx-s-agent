@@ -117,6 +117,23 @@ function adapter(output: unknown): LogicalAgentModelAdapter {
 }
 
 describe("configured finance trade decision reviewer", () => {
+  it("does not impose an all-evidence-complete veto on daily or intraday candidates", () => {
+    const prompts: string[] = [];
+    createFinanceTradeDecisionReviewer({} as OpenClawConfig, {
+      adapterFactory: (_cfg, options) => {
+        prompts.push(options.buildPrompt(request), options.buildPrompt(intradayRequest));
+        return adapter(null);
+      },
+    });
+    for (const prompt of prompts) {
+      expect(prompt).toContain(
+        "Incomplete or conflicting auxiliary evidence alone is not a mandatory veto",
+      );
+      expect(prompt).toContain("label that as model judgment");
+      expect(prompt).toContain("Never add candidates or change instrument");
+      expect(prompt).not.toContain("If evidence is incomplete, contradictory, or not sufficient");
+    }
+  });
   it("uses a bounded output and timeout budget for a complete structured review", () => {
     const model = adapter(null);
     const adapterFactory = vi.fn(() => model);

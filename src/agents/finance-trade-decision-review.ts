@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { OpenClawConfig } from "../config/config.js";
 import { createConfiguredFinanceModelAdapter } from "./configured-finance-model-adapter.js";
 import type { FinanceAlpacaMarketSession } from "./finance-alpaca-market-calendar.js";
+import { FINANCE_CONDITION_ORIGIN_GUIDANCE } from "./finance-decision-policy.js";
 import type { FinanceThesisDecisionContext } from "./finance-thesis-decision-context.js";
 import { ModelAdapterError, type ModelCallRequest } from "./logical-agent-model-router.js";
 
@@ -303,7 +304,8 @@ function reviewPrompt(payload: unknown): string {
     intraday
       ? "The strategy has already emitted the exact intraday signal. signalReferencePrice comes from its recorded bar evidence; marketSession binds the official open and close, including an early close; executionQuote is a separate time-sensitive observed quote, not a guaranteed fill. Approval is advisory only: TypeScript will re-check the calendar session, quote freshness, reconciliation, limits, deduplication, and the shared execution gate."
       : "The researchClose is a completed-bar reference; executionQuote is a time-sensitive observed quote, not a guaranteed fill. Approval is advisory only: TypeScript will re-check quote freshness, account reconciliation, risk caps, deduplication, and the shared execution gate after your response.",
-    `If evidence is incomplete, contradictory, or not sufficient to justify the proposed ${intraday ? "intraday signal" : "rebalance"}, veto that candidate. Return exactly one decision for every candidate and no extra fields.`,
+    FINANCE_CONDITION_ORIGIN_GUIDANCE,
+    "For a veto, the rationale must identify the candidate-specific risk or violated supplied condition and its supporting packet facts. If you cannot justify approval, explain exactly which decision-critical input is absent and why it matters. Do not claim a TypeScript gate failed unless that failure is supplied. Return exactly one decision for every candidate and no extra fields.",
     `Return one JSON object with schemaVersion "${schemaVersion}" and decisions [{candidateId, decision: "approve"|"veto", rationale}].`,
     "Decision packet:",
     JSON.stringify(payload),

@@ -119,3 +119,44 @@ it("exposes skipped execution and its research-stage cause to the harness", asyn
     },
   });
 });
+
+it("preserves candidate-bound model veto reasons without calling them execution gate failures", async () => {
+  writeFinanceSchedulerState(directory, {
+    lastFired: { day: "2026-09-21" },
+    lastSucceeded: {},
+    lastStatus: { day: "succeeded" },
+    lastRun: {
+      runId: "veto-reason",
+      mode: "day",
+      status: "succeeded",
+      stdout: JSON.stringify({
+        ok: true,
+        tradeDecisionReview: {
+          decisions: [
+            {
+              candidateId: "candidate-A",
+              decision: "veto",
+              rationale: "The supplied thesis invalidation is already met.",
+            },
+          ],
+        },
+      }),
+    },
+  });
+  const result = await buildFinanceAutomaticLifecycleFeedback({ directory });
+  expect(result).toMatchObject({
+    scheduler: {
+      latestCycleByMode: {
+        day: {
+          modelVetoes: [
+            {
+              origin: "model_review",
+              candidateId: "candidate-A",
+              rationale: "The supplied thesis invalidation is already met.",
+            },
+          ],
+        },
+      },
+    },
+  });
+});

@@ -18,10 +18,14 @@ export const FINANCE_DECISION_MODES = [
 
 export type FinanceDecisionMode = (typeof FINANCE_DECISION_MODES)[number];
 
+export const FINANCE_CONDITION_ORIGIN_GUIDANCE =
+  "Distinguish supplied strategy conditions, actual controller execution gates, and your own proposed conditions. Never invent a requirement that every indicator agree or every auxiliary source be verified. Incomplete or conflicting auxiliary evidence alone is not a mandatory veto: explain its specific effect on this candidate's expected outcome and risk. You may recommend waiting or veto on a concrete candidate-specific concern, but label that as model judgment and state the supplied facts and reasoning; do not present it as an existing system rule. A new confirmation condition is a proposal, not an adopted strategy requirement. Do not replace this explanation with research-only disclaimers.";
+
 /** Language guides a decision; execution authority remains in the controller gate. */
 export function financeDecisionInstructions(mode: FinanceDecisionMode): string {
   return [
     `Decision mode: ${mode}. Lead with the answer to the user's question.`,
+    FINANCE_CONDITION_ORIGIN_GUIDANCE,
     'Do not append generic disclaimers such as "not investment advice", "仅供研究", or "不能作为操作建议". State specific uncertainties and their effect on the decision instead.',
     mode === "research_only"
       ? "Answer the analytical question directly, including directional implications and what would change the conclusion. Do not invent an approved order or a funded position."
