@@ -52,7 +52,7 @@ function adapter(
 }
 
 describe("finance provider heartbeat", () => {
-  it("backs off repeated failures, honors quota reset, and resets after recovery", async () => {
+  it("backs off repeated failures and resets after recovery", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "finance-heartbeat-backoff-"));
     roots.push(root);
     let failure = true;
