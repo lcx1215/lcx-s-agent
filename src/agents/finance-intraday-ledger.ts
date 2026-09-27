@@ -262,7 +262,7 @@ export async function appendFinanceIntradayBars(
 
 export async function readFinanceIntradayLedger(
   directory: string,
-  options: { instrument?: string; asOf?: string } = {},
+  options: { instrument?: string; asOf?: string; feed?: string } = {},
 ): Promise<FinanceIntradayLedger> {
   try {
     await fs.stat(financeIntradayLedgerPath(directory));
@@ -275,7 +275,8 @@ export async function readFinanceIntradayLedger(
     const visible = records.filter(
       (record) =>
         (!options.instrument || record.body.instrument === options.instrument) &&
-        (!options.asOf || record.body.observedAt <= options.asOf),
+        (!options.asOf || record.body.observedAt <= options.asOf) &&
+        (!options.feed || record.body.provenance.feed === options.feed),
     );
     const bars = visible
       .flatMap((record) => record.body.bars)

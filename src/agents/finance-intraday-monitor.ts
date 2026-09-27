@@ -217,17 +217,39 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
     return Object.freeze({ status: "blocked_invalid_monitor_scope" as const, clock });
   }
   const sync = options.sync ?? syncAlpacaIntradayBars;
-  const syncReceipt = await sync({
-    directory: options.directory,
+  // Resume at the first missing session bar, not a rolling twelve-hour replay.
+  // Feed-scoped reads prevent a previous feed from satisfying this feed's coverage.
+  const priorBars = await readFinanceIntradayLedger(options.directory, {
     instrument,
-    start: new Date(now.getTime() - 12 * 60 * 60 * 1_000).toISOString(),
-    end: now.toISOString(),
-    intervalSeconds: options.intervalSeconds,
     feed: options.feed,
-    now: () => now,
-    signal: options.signal,
   });
-  const intraday = await readFinanceIntradayLedger(options.directory, { instrument });
+  const intervalMs = options.intervalSeconds * 1_000;
+  const starts = new Set(
+    priorBars.bars
+      .filter((bar) => bar.intervalSeconds === options.intervalSeconds)
+      .map((bar) => Date.parse(bar.startAt)),
+  );
+  let syncStart = marketOpenAt;
+  while (syncStart + intervalMs <= now.getTime() && starts.has(syncStart)) {
+    syncStart += intervalMs;
+  }
+  const syncReceipt =
+    syncStart + intervalMs > now.getTime()
+      ? null
+      : await sync({
+          directory: options.directory,
+          instrument,
+          start: new Date(syncStart).toISOString(),
+          end: now.toISOString(),
+          intervalSeconds: options.intervalSeconds,
+          feed: options.feed,
+          now: () => now,
+          signal: options.signal,
+        });
+  const intraday = await readFinanceIntradayLedger(options.directory, {
+    instrument,
+    feed: options.feed,
+  });
   if (!intraday.headRef) {
     return Object.freeze({ status: "no_intraday_head" as const, clock, syncReceipt });
   }
@@ -245,6 +267,20 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
     return Object.freeze({ status: "no_closed_session_bar" as const, clock, syncReceipt });
   }
 
+  if (!activeContract.instruments.includes(instrument)) {
+    return Object.freeze({
+      status: "research_only" as const,
+      clock,
+      syncReceipt,
+      signal: evaluateFinanceIntradaySignal({
+        bars: sessionBars,
+        openingRangeBars: options.openingRangeBars,
+        rewardRisk: options.rewardRisk,
+      }),
+      datasetHeadRef: intraday.headRef,
+      executionAuthority: "none" as const,
+    });
+  }
   const positionRecords = await readFinancePositionLedger(options.directory);
   const intradayBook = projectFinancePositions({
     receipts: receiptsForIntradayStrategy(positionRecords.receipts, options.accountId),

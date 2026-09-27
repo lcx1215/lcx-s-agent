@@ -89,6 +89,14 @@ const EvidenceLinkInput = z
 export type FinanceThesisEvidence = z.infer<typeof EvidenceLinkV3>;
 export type FinanceThesisEvidenceInput = z.infer<typeof EvidenceLinkInput>;
 
+export const FinanceThesisApplicabilitySchema = z
+  .object({
+    horizon: z.enum(["intraday", "swing", "long_term"]),
+    validUntil: Iso,
+  })
+  .strict();
+export type FinanceThesisApplicability = z.infer<typeof FinanceThesisApplicabilitySchema>;
+
 export const FinanceThesisOpenInput = z
   .object({
     thesisId: ThesisId,
@@ -96,6 +104,7 @@ export const FinanceThesisOpenInput = z
     claim: Text,
     claimEpistemicClass: z.enum(FINANCE_THESIS_CLAIM_EPISTEMIC_CLASSES).optional(),
     claimBasis: Text.max(2_000).optional(),
+    applicability: FinanceThesisApplicabilitySchema.optional(),
     rationale: Text.optional(),
     evidence: z.array(EvidenceLinkInput).min(1),
     invalidationConditions: z.array(Text).min(1),
@@ -145,6 +154,7 @@ const OpenedBodyV3 = z
     claim: Text,
     claimEpistemicClass: z.enum(FINANCE_THESIS_CLAIM_EPISTEMIC_CLASSES),
     claimBasis: Text.nullable(),
+    applicability: FinanceThesisApplicabilitySchema.optional(),
     rationale: Text.optional(),
     evidence: z.array(EvidenceLinkV3).min(1),
     invalidationConditions: z.array(Text).min(1),
@@ -387,6 +397,7 @@ export type FinanceThesis = Readonly<{
   claim: string;
   claimEpistemicClass: FinanceThesisClaimEpistemicClass;
   claimBasis: string | null;
+  applicability?: FinanceThesisApplicability;
   rationale: string | null;
   /** Derived by replay, never stored. */
   state: FinanceThesisState;
@@ -424,6 +435,7 @@ export function projectFinanceTheses(
       claim: string;
       claimEpistemicClass: FinanceThesisClaimEpistemicClass;
       claimBasis: string | null;
+      applicability?: FinanceThesisApplicability;
       rationale: string | null;
       openedAt: string;
       invalidationConditions: readonly string[];
@@ -446,6 +458,9 @@ export function projectFinanceTheses(
         claimEpistemicClass:
           "claimEpistemicClass" in body ? body.claimEpistemicClass : "unclassified",
         claimBasis: "claimBasis" in body ? body.claimBasis : null,
+        ...("applicability" in body && body.applicability
+          ? { applicability: body.applicability }
+          : {}),
         rationale: body.rationale ?? null,
         openedAt: body.observedAt,
         invalidationConditions: body.invalidationConditions,
@@ -488,6 +503,7 @@ export function projectFinanceTheses(
       claim: draft.claim,
       claimEpistemicClass: draft.claimEpistemicClass,
       claimBasis: draft.claimBasis,
+      ...(draft.applicability ? { applicability: draft.applicability } : {}),
       rationale: draft.rationale,
       state: draft.transitions.at(-1)?.to ?? "active",
       openedAt: draft.openedAt,
@@ -638,6 +654,12 @@ export async function openFinanceThesis(
   input: unknown,
 ): Promise<FinanceThesisAppend> {
   const data = FinanceThesisOpenInput.parse(input);
+  if (
+    data.applicability &&
+    Date.parse(data.applicability.validUntil) <= Date.parse(data.observedAt)
+  ) {
+    throw new Error("thesis applicability must expire after its observation");
+  }
   const claimEpistemicClass = data.claimEpistemicClass ?? "unclassified";
   if (financeResearchClaimRequiresBasis(claimEpistemicClass) && !data.claimBasis?.trim()) {
     throw new Error("derived, estimated, inferred, or hypothesized thesis claims require a basis");

@@ -3,6 +3,8 @@ import {
   FINANCE_THESIS_CLAIM_EPISTEMIC_CLASSES,
   FINANCE_THESIS_EVIDENCE_RELATIONS,
   readFinanceThesisLedger,
+  FinanceThesisApplicabilitySchema,
+  type FinanceThesisApplicability,
 } from "./finance-thesis-ledger.js";
 
 const Hash = z.string().regex(/^[a-f0-9]{64}$/u);
@@ -28,6 +30,7 @@ const ThesisSchema = z
     claimBasis: Text.max(1_000).nullable().optional(),
     rationale: Text.max(320).nullable(),
     openedAt: z.string().datetime(),
+    applicability: FinanceThesisApplicabilitySchema.optional(),
     invalidationConditions: z.array(Text.max(240)).max(5),
     evidence: z.array(EvidenceSchema).max(4),
     omittedEvidenceCount: z.number().int().nonnegative(),
@@ -42,6 +45,8 @@ export const FinanceThesisDecisionContextSchema = z
     activeThesisCount: z.number().int().nonnegative(),
     theses: z.array(ThesisSchema).max(8),
     omittedThesisCount: z.number().int().nonnegative(),
+    excludedThesisCount: z.number().int().nonnegative().optional(),
+    horizon: z.enum(["intraday", "swing", "long_term"]).optional(),
   })
   .strict();
 
@@ -59,11 +64,20 @@ export async function buildFinanceThesisDecisionContext(params: {
   directory: string;
   asOf: string;
   instruments: readonly string[];
+  horizon?: FinanceThesisApplicability["horizon"];
 }): Promise<FinanceThesisDecisionContext> {
   const ledger = await readFinanceThesisLedger(params.directory, { asOf: params.asOf });
   const instruments = new Set(params.instruments.map((item) => item.trim().toUpperCase()));
+  const activeCount = ledger.theses.filter((thesis) => thesis.state === "active").length;
   const active = ledger.theses
     .filter((thesis) => thesis.state === "active")
+    .filter(
+      (thesis) =>
+        !params.horizon ||
+        (instruments.has(thesis.instrument.trim().toUpperCase()) &&
+          thesis.applicability?.horizon === params.horizon &&
+          Date.parse(thesis.applicability.validUntil) > Date.parse(params.asOf)),
+    )
     .toSorted((left, right) => {
       const leftMatches = instruments.has(left.instrument.trim().toUpperCase());
       const rightMatches = instruments.has(right.instrument.trim().toUpperCase());
@@ -82,6 +96,7 @@ export async function buildFinanceThesisDecisionContext(params: {
     claimBasis: thesis.claimBasis === null ? null : bounded(thesis.claimBasis, 1_000),
     rationale: thesis.rationale === null ? null : bounded(thesis.rationale, 320),
     openedAt: thesis.openedAt,
+    ...(thesis.applicability ? { applicability: thesis.applicability } : {}),
     invalidationConditions: thesis.invalidationConditions
       .slice(0, 5)
       .map((condition) => bounded(condition, 240)),
@@ -107,7 +122,10 @@ export async function buildFinanceThesisDecisionContext(params: {
     schemaVersion: "lcx_finance_thesis_decision_context_v1",
     observedAt: params.asOf,
     ledgerHeadRef: ledger.headRef,
-    activeThesisCount: active.length,
+    activeThesisCount: activeCount,
+    ...(params.horizon
+      ? { horizon: params.horizon, excludedThesisCount: activeCount - active.length }
+      : {}),
     theses,
     omittedThesisCount: Math.max(0, active.length - theses.length),
   });

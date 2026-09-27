@@ -69,6 +69,36 @@ describe("finance thesis decision context", () => {
     expect(afterInvalidation.theses.map((thesis) => thesis.thesisId)).toEqual(["macro-thesis"]);
   });
 
+  it("isolates intraday context by instrument, declared horizon and expiry", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "thesis-horizon-"));
+    temporary.push(directory);
+    for (const [id, instrument, horizon, validUntil] of [
+      ["relevant", "SPY", "intraday", "2026-09-15T20:00:00Z"],
+      ["expired", "SPY", "intraday", "2026-09-14T20:00:00Z"],
+      ["long", "SPY", "long_term", "2026-10-15T20:00:00Z"],
+      ["other", "QQQ", "intraday", "2026-09-15T20:00:00Z"],
+      ["legacy", "SPY", undefined, undefined],
+    ]) {
+      await openFinanceThesis(directory, {
+        thesisId: id,
+        instrument,
+        claim: "Evidence-linked claim",
+        ...(horizon ? { applicability: { horizon, validUntil } } : {}),
+        evidence: [{ id: "source", source: "fixture", reference: "fixture://source" }],
+        invalidationConditions: ["Signal invalidated"],
+        observedAt: "2026-09-14T12:00:00Z",
+      });
+    }
+    const context = await buildFinanceThesisDecisionContext({
+      directory,
+      instruments: ["SPY"],
+      horizon: "intraday",
+      asOf: "2026-09-15T15:00:00Z",
+    });
+    expect(context.theses.map((thesis) => thesis.thesisId)).toEqual(["relevant"]);
+    expect(context).toMatchObject({ activeThesisCount: 5, excludedThesisCount: 4 });
+  });
+
   it("reports an empty existing owner without manufacturing thesis evidence", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-thesis-context-empty-"));
     temporary.push(directory);

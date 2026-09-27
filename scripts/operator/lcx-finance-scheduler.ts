@@ -1318,7 +1318,16 @@ async function tick(context: CycleContext): Promise<void> {
     }
   }
   if (context.options.intraday) {
-    for (const instrument of context.options.intraday.instruments) {
+    const executionInstruments = new Set(context.options.intraday.executionInstruments);
+    // Process executable instruments before spending this tick on research monitoring.
+    const instruments = context.options.intraday.instruments.toSorted(
+      (left, right) =>
+        Number(executionInstruments.has(right)) - Number(executionInstruments.has(left)),
+    );
+    for (const instrument of instruments) {
+      if (context.signal.aborted) {
+        break;
+      }
       try {
         const result = await runFinanceIntradayMonitorTick({
           directory: context.root.directory,
@@ -1346,7 +1355,11 @@ async function tick(context: CycleContext): Promise<void> {
               `[${new Date().toISOString()}] intraday ${instrument} action=${result.signal.action} reason=${result.signal.reason} signal=${result.signal.signalId}\n`,
             );
           }
-          if (context.options.intraday.place && context.intradayController) {
+          if (
+            context.options.intraday.place &&
+            context.intradayController &&
+            executionInstruments.has(instrument)
+          ) {
             const execution = await executeFinanceIntradayDecision({
               directory: context.root.directory,
               decision: result.decision,

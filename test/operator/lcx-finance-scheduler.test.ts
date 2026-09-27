@@ -820,6 +820,58 @@ it("creates and calls a fresh single-use reviewer for each actionable intraday d
   expect(reviewers[1]).toHaveBeenCalledOnce();
 });
 
+it("prioritizes executable instruments and never submits research-scope signals", async () => {
+  fs.writeFileSync(path.join(directory, "alpaca-policy.json"), "{}");
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-21T15:00:00Z"));
+  await activateIntradayRule({ paperExecutionEligibility: "paper_execution_eligible" });
+  const snapshot = { generatedAt: "2026-09-21T14:30:00Z", selected: ["QQQ", "SPY"] };
+  seedSelectedUniverse(snapshot);
+  mocks.readUniverse.mockReturnValue(snapshot);
+  mocks.runIntradayMonitorTick.mockImplementation(async ({ instrument }) => ({
+    status: "decision_recorded",
+    signal: { action: "buy", signalId: instrument },
+    decision: { input: { signalId: instrument } },
+  }));
+  mocks.executeIntradayDecision.mockResolvedValue({ status: "placed" });
+  mocks.delay.mockImplementationOnce(async () => {
+    process.emit("SIGTERM");
+  });
+  await runFinanceScheduler([
+    "--loop",
+    "--dir",
+    directory,
+    "--intraday-monitor",
+    "--intraday-place",
+    "--no-source-heartbeat",
+    "--place",
+    "--venue",
+    "alpaca",
+    "--execution-policy",
+    path.join(directory, "alpaca-policy.json"),
+    "--execution-quote-feed",
+    "iex",
+    "--execution-max-age-ms",
+    "30000",
+    "--max-order-notional",
+    "1000",
+    "--max-instrument-notional",
+    "5000",
+    "--max-orders",
+    "8",
+  ]);
+  expect(mocks.runIntradayMonitorTick.mock.calls.map(([call]) => call.instrument)).toEqual([
+    "SPY",
+    "QQQ",
+  ]);
+  expect(mocks.executeIntradayDecision).toHaveBeenCalledOnce();
+  expect(mocks.executeIntradayDecision).toHaveBeenCalledWith(
+    expect.objectContaining({
+      decision: { input: { signalId: "SPY" } },
+    }),
+  );
+});
+
 it("uses the validated system universe when monitoring has no explicit diagnostic symbols", () => {
   expect(parseFinanceSchedulerArgs(["--loop", "--intraday-monitor"]).intraday).toMatchObject({
     instrumentSource: "system_universe",

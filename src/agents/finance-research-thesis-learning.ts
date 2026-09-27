@@ -4,6 +4,8 @@ import type { FinanceCommitteeEvidence } from "./finance-agent-committee.js";
 import { financeResearchClaimRequiresBasis } from "./finance-research-provenance.js";
 import {
   appendFinanceThesisEvidence,
+  FinanceThesisApplicabilitySchema,
+  type FinanceThesisApplicability,
   openFinanceThesis,
   readFinanceThesisLedger,
   type FinanceThesisClaimEpistemicClass,
@@ -19,6 +21,7 @@ export const FinanceResearchThesisProposalSchema = z
     claimId: Text,
     instrument: Text,
     rationale: Text.optional(),
+    applicability: FinanceThesisApplicabilitySchema.optional(),
     invalidationConditions: z.array(Text).min(1),
   })
   .strict();
@@ -47,6 +50,7 @@ type ValidatedProposal = Readonly<{
   claimEpistemicClass: FinanceThesisClaimEpistemicClass;
   claimBasis: string | null;
   rationale: string;
+  applicability?: FinanceThesisApplicability;
   invalidationConditions: readonly string[];
   evidence: readonly FinanceThesisEvidence[];
 }>;
@@ -55,9 +59,19 @@ function normalized(value: string): string {
   return value.trim().replace(/\s+/gu, " ").toLocaleLowerCase("en-US");
 }
 
-function thesisId(instrument: string, claim: string): string {
+function thesisId(
+  instrument: string,
+  claim: string,
+  applicability?: FinanceThesisApplicability,
+): string {
   return createHash("sha256")
-    .update(JSON.stringify([instrument.trim().toUpperCase(), normalized(claim)]))
+    .update(
+      JSON.stringify([
+        instrument.trim().toUpperCase(),
+        normalized(claim),
+        ...(applicability ? [applicability.horizon, applicability.validUntil] : []),
+      ]),
+    )
     .digest("hex");
 }
 
@@ -159,7 +173,10 @@ export function validateFinanceResearchThesisProposals(params: {
       if (!evidence.some((item) => instrumentEvidenceMatches(item, instrument))) {
         throw new Error(`thesis proposal lacks cited evidence tied to ${instrument}`);
       }
-      const id = thesisId(instrument, claim.text);
+      if (proposal.applicability && Date.parse(proposal.applicability.validUntil) <= asOfMs) {
+        throw new Error("thesis proposal applicability is already expired");
+      }
+      const id = thesisId(instrument, claim.text, proposal.applicability);
       if (seenTheses.has(id)) {
         throw new Error(`duplicate thesis proposal for ${instrument}`);
       }
@@ -171,6 +188,7 @@ export function validateFinanceResearchThesisProposals(params: {
         claimEpistemicClass: claim.epistemicClass,
         claimBasis: claim.basis?.trim() ?? null,
         rationale: proposal.rationale ?? "",
+        ...(proposal.applicability ? { applicability: proposal.applicability } : {}),
         invalidationConditions: Object.freeze([...proposal.invalidationConditions]),
         evidence: Object.freeze(
           evidence.map((item) => {
@@ -210,6 +228,7 @@ function openInput(proposal: ValidatedProposal, observedAt: string): FinanceThes
     ...(proposal.claimBasis === null ? {} : { claimBasis: proposal.claimBasis }),
     rationale,
     evidence: [...proposal.evidence],
+    ...(proposal.applicability ? { applicability: proposal.applicability } : {}),
     invalidationConditions: [...proposal.invalidationConditions],
     observedAt,
   };
@@ -262,6 +281,7 @@ export async function persistFinanceResearchThesisLearning(params: {
         normalized(existing.claim) !== normalized(proposal.claim) ||
         existing.claimEpistemicClass !== proposal.claimEpistemicClass ||
         existing.claimBasis !== proposal.claimBasis ||
+        JSON.stringify(existing.applicability) !== JSON.stringify(proposal.applicability) ||
         !sameConditions(existing.invalidationConditions, proposal.invalidationConditions)
       ) {
         throw new Error(

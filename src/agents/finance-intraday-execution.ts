@@ -199,11 +199,11 @@ export async function executeFinanceIntradayDecision(params: {
       });
       return Object.freeze({ status: "refused" as const, outcome: outcome.input });
     }
-    const quote = await params.controller.executionQuoteProvider(
+    let quote = await params.controller.executionQuoteProvider(
       { instrument: input.instrument, assetClass: "us_equity", side: input.action },
       signal,
     );
-    const referencePrice = input.action === "buy" ? quote.askPrice : quote.bidPrice;
+    let referencePrice = input.action === "buy" ? quote.askPrice : quote.bidPrice;
     if (referencePrice === undefined || !Number.isFinite(referencePrice) || referencePrice <= 0) {
       throw new Error("intraday execution requires a side-specific live quote");
     }
@@ -217,164 +217,196 @@ export async function executeFinanceIntradayDecision(params: {
       });
       return Object.freeze({ status: "refused" as const, outcome: outcome.input });
     }
-    const reconciliation = account.reconciliation;
-    const decisionContext = await buildFinanceThesisDecisionContext({
-      directory: params.directory,
-      asOf: new Date(observedAtMs).toISOString(),
-      instruments: [input.instrument],
-    });
-    const reviewRequest: FinanceIntradayTradeDecisionReviewRequest = {
-      schemaVersion: FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA,
-      venue: "alpaca:paper",
-      asOf: new Date(observedAtMs).toISOString(),
-      signalAnchor: input.signalId,
-      ruleIds: [input.strategyRule],
-      equity: account.equity,
-      caps: params.caps,
-      positionBookObservedAt: account.observedAt,
-      reconciliation: {
-        status: reconciliation?.status ?? "unverified",
-        ...(reconciliation
-          ? {
-              historyStatus: reconciliation.historyStatus,
-              uncertaintyReserve: reconciliation.uncertaintyReserve,
-              quarantinedInstruments: reconciliation.quarantinedInstruments,
-            }
-          : {}),
-      },
-      positions: account.positions,
-      decisionContext,
-      candidates: [
-        {
-          candidateId: input.signalId,
-          instrument: input.instrument,
-          side: input.action,
-          strategyRule: input.strategyRule,
-          signalReason: input.reason,
-          signalReferencePrice: input.referencePrice,
-          signalReferencePriceAt: input.referencePriceAt,
-          ...(input.stopPrice === undefined ? {} : { stopPrice: input.stopPrice }),
-          ...(input.targetPrice === undefined ? {} : { targetPrice: input.targetPrice }),
-          datasetHeadRef: input.datasetHeadRef,
-          marketSession: input.strategyBinding!.marketSession!,
-          intradayOwnedQuantity: owned,
-          brokerPositionQuantity: brokerHeld,
-          executionQuote: {
-            referencePrice: quote.referencePrice,
-            referencePriceAt: quote.referencePriceAt,
-            ...(quote.bidPrice === undefined ? {} : { bidPrice: quote.bidPrice }),
-            ...(quote.askPrice === undefined ? {} : { askPrice: quote.askPrice }),
-            ...(quote.feed === undefined ? {} : { feed: quote.feed }),
-            ...(quote.priceBasis === undefined ? {} : { priceBasis: quote.priceBasis }),
-            sourceUrlOrArtifact: quote.sourceUrlOrArtifact,
-            ageMs: observedAtMs - Date.parse(quote.referencePriceAt),
-            maxAgeMs: quote.maxAgeMs,
-          },
+    // Only strategy-bound, owned-position reductions bypass discretionary model review.
+    const protectiveExit =
+      input.action === "sell" &&
+      ["opening_range_stop", "reward_target", "pre_close"].includes(input.reason);
+    if (!protectiveExit) {
+      const reconciliation = account.reconciliation;
+      const decisionContext = await buildFinanceThesisDecisionContext({
+        directory: params.directory,
+        asOf: new Date(observedAtMs).toISOString(),
+        instruments: [input.instrument],
+        horizon: "intraday",
+      });
+      const reviewRequest: FinanceIntradayTradeDecisionReviewRequest = {
+        schemaVersion: FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA,
+        venue: "alpaca:paper",
+        asOf: new Date(observedAtMs).toISOString(),
+        signalAnchor: input.signalId,
+        ruleIds: [input.strategyRule],
+        equity: account.equity,
+        caps: params.caps,
+        positionBookObservedAt: account.observedAt,
+        reconciliation: {
+          status: reconciliation?.status ?? "unverified",
+          ...(reconciliation
+            ? {
+                historyStatus: reconciliation.historyStatus,
+                uncertaintyReserve: reconciliation.uncertaintyReserve,
+                quarantinedInstruments: reconciliation.quarantinedInstruments,
+              }
+            : {}),
         },
-      ],
-    };
-    const failedReview = (
-      failureCode: "reviewer_unavailable" | "output_invalid" | "runtime_timeout" | "process_error",
-      attempted: boolean,
-    ): FinanceTradeDecisionReviewResult => ({
-      status: "failed" as const,
-      attempted,
-      provider: "unavailable",
-      modelId: "unavailable",
-      latencyMs: 0,
-      providerCallObserved: false,
-      adapterAttested: false,
-      failureCode,
-    });
-    let rawReview: unknown;
-    if (!params.tradeDecisionReviewer) {
-      rawReview = failedReview("reviewer_unavailable", false);
-    } else {
-      try {
-        rawReview = await withTimeout(
-          params.tradeDecisionReviewer(
-            reviewRequest,
-            AbortSignal.any([
-              signal,
-              AbortSignal.timeout(FINANCE_TRADE_DECISION_REVIEW_TIMEOUT_MS),
-            ]),
-          ),
-          FINANCE_TRADE_DECISION_REVIEW_TIMEOUT_MS + 5_000,
-        );
-      } catch (error) {
-        rawReview = failedReview(
-          error instanceof Error && error.message === "timeout"
-            ? "runtime_timeout"
-            : signal.aborted
+        positions: account.positions,
+        decisionContext,
+        candidates: [
+          {
+            candidateId: input.signalId,
+            instrument: input.instrument,
+            side: input.action,
+            strategyRule: input.strategyRule,
+            signalReason: input.reason,
+            signalReferencePrice: input.referencePrice,
+            signalReferencePriceAt: input.referencePriceAt,
+            ...(input.stopPrice === undefined ? {} : { stopPrice: input.stopPrice }),
+            ...(input.targetPrice === undefined ? {} : { targetPrice: input.targetPrice }),
+            datasetHeadRef: input.datasetHeadRef,
+            marketSession: input.strategyBinding!.marketSession!,
+            intradayOwnedQuantity: owned,
+            brokerPositionQuantity: brokerHeld,
+            executionQuote: {
+              referencePrice: quote.referencePrice,
+              referencePriceAt: quote.referencePriceAt,
+              ...(quote.bidPrice === undefined ? {} : { bidPrice: quote.bidPrice }),
+              ...(quote.askPrice === undefined ? {} : { askPrice: quote.askPrice }),
+              ...(quote.feed === undefined ? {} : { feed: quote.feed }),
+              ...(quote.priceBasis === undefined ? {} : { priceBasis: quote.priceBasis }),
+              sourceUrlOrArtifact: quote.sourceUrlOrArtifact,
+              ageMs: observedAtMs - Date.parse(quote.referencePriceAt),
+              maxAgeMs: quote.maxAgeMs,
+            },
+          },
+        ],
+      };
+      const reviewStartedAt = now();
+      const failedReview = (
+        failureCode:
+          | "reviewer_unavailable"
+          | "output_invalid"
+          | "runtime_timeout"
+          | "process_error",
+        attempted: boolean,
+      ): FinanceTradeDecisionReviewResult => ({
+        status: "failed" as const,
+        attempted,
+        provider: "unavailable",
+        modelId: "unavailable",
+        latencyMs: attempted ? Math.max(0, now() - reviewStartedAt) : 0,
+        providerCallObserved: false,
+        adapterAttested: false,
+        failureCode,
+      });
+      let rawReview: unknown;
+      if (!params.tradeDecisionReviewer) {
+        rawReview = failedReview("reviewer_unavailable", false);
+      } else {
+        const reviewSignal = AbortSignal.any([
+          signal,
+          AbortSignal.timeout(FINANCE_TRADE_DECISION_REVIEW_TIMEOUT_MS),
+        ]);
+        try {
+          rawReview = await withTimeout(
+            params.tradeDecisionReviewer(reviewRequest, reviewSignal),
+            FINANCE_TRADE_DECISION_REVIEW_TIMEOUT_MS + 5_000,
+          );
+        } catch (error) {
+          rawReview = failedReview(
+            error instanceof Error && error.message === "timeout"
               ? "runtime_timeout"
-              : "process_error",
-          true,
-        );
+              : reviewSignal.aborted
+                ? "runtime_timeout"
+                : "process_error",
+            true,
+          );
+        }
+      }
+      let reviewContractAnomaly = false;
+      let reviewResult: FinanceTradeDecisionReviewResult;
+      if (isValidFinanceTradeDecisionReviewResult(rawReview, reviewRequest)) {
+        reviewResult = rawReview;
+      } else {
+        reviewContractAnomaly =
+          rawReview !== null &&
+          typeof rawReview === "object" &&
+          "status" in rawReview &&
+          rawReview.status === "completed";
+        reviewResult = failedReview("output_invalid", true);
+      }
+      const reviewedDecision =
+        reviewResult.status === "completed" ? reviewResult.decisions?.[0] : undefined;
+      tradeDecisionReview = FinanceIntradayDecisionReviewReceiptSchema.parse({
+        request: reviewRequest,
+        status: reviewResult.status,
+        attempted: reviewResult.attempted,
+        modelCalls: reviewResult.modelCalls ?? (reviewResult.attempted ? 1 : 0),
+        provider: reviewResult.provider,
+        modelId: reviewResult.modelId,
+        latencyMs: reviewResult.latencyMs,
+        providerCallObserved: reviewResult.providerCallObserved,
+        adapterAttested: reviewResult.adapterAttested,
+        ...(reviewResult.requestIdSha256 ? { requestIdSha256: reviewResult.requestIdSha256 } : {}),
+        ...(reviewedDecision ? { decision: reviewedDecision } : {}),
+        ...(reviewResult.status === "failed"
+          ? { failureCode: reviewResult.failureCode ?? "output_invalid" }
+          : {}),
+      });
+      if (
+        reviewContractAnomaly ||
+        (reviewResult.status === "completed" && !reviewedDecision) ||
+        signal.aborted
+      ) {
+        const outcome = await appendFinanceIntradayOutcome(params.directory, {
+          signalId: input.signalId,
+          status: "refused",
+          reasons: [
+            reviewContractAnomaly || (reviewResult.status === "completed" && !reviewedDecision)
+              ? "completed intraday model review violated candidate binding; refusing paper placement"
+              : "intraday decision was cancelled before execution",
+          ],
+          tradeDecisionReview,
+        });
+        return Object.freeze({
+          status: "refused" as const,
+          outcome: outcome.input,
+          tradeDecisionReview,
+        });
+      }
+      if (reviewedDecision?.decision === "veto") {
+        const outcome = await appendFinanceIntradayOutcome(params.directory, {
+          signalId: input.signalId,
+          status: "refused",
+          reasons: [`intraday model veto: ${reviewedDecision.rationale}`],
+          tradeDecisionReview,
+        });
+        return Object.freeze({
+          status: "refused" as const,
+          outcome: outcome.input,
+          tradeDecisionReview,
+        });
       }
     }
-    let reviewContractAnomaly = false;
-    let reviewResult: FinanceTradeDecisionReviewResult;
-    if (isValidFinanceTradeDecisionReviewResult(rawReview, reviewRequest)) {
-      reviewResult = rawReview;
-    } else {
-      reviewContractAnomaly =
-        rawReview !== null &&
-        typeof rawReview === "object" &&
-        "status" in rawReview &&
-        rawReview.status === "completed";
-      reviewResult = failedReview("output_invalid", true);
+    if (signal.aborted) {
+      throw new Error("intraday decision was cancelled before execution");
     }
-    const reviewedDecision =
-      reviewResult.status === "completed" ? reviewResult.decisions?.[0] : undefined;
-    tradeDecisionReview = FinanceIntradayDecisionReviewReceiptSchema.parse({
-      request: reviewRequest,
-      status: reviewResult.status,
-      attempted: reviewResult.attempted,
-      modelCalls: reviewResult.modelCalls ?? (reviewResult.attempted ? 1 : 0),
-      provider: reviewResult.provider,
-      modelId: reviewResult.modelId,
-      latencyMs: reviewResult.latencyMs,
-      providerCallObserved: reviewResult.providerCallObserved,
-      adapterAttested: reviewResult.adapterAttested,
-      ...(reviewResult.requestIdSha256 ? { requestIdSha256: reviewResult.requestIdSha256 } : {}),
-      ...(reviewedDecision ? { decision: reviewedDecision } : {}),
-      ...(reviewResult.status === "failed"
-        ? { failureCode: reviewResult.failureCode ?? "output_invalid" }
-        : {}),
-    });
+    // Model review and ledger reads can outlive the quote; refresh once, then fail closed.
+    if (executionQuoteIssue(quote, now()) !== null) {
+      quote = await params.controller.executionQuoteProvider(
+        { instrument: input.instrument, assetClass: "us_equity", side: input.action },
+        signal,
+      );
+    }
+    const finalQuoteIssue = executionQuoteIssue(quote, now());
+    referencePrice = input.action === "buy" ? quote.askPrice : quote.bidPrice;
     if (
-      reviewContractAnomaly ||
-      (reviewResult.status === "completed" && !reviewedDecision) ||
-      signal.aborted
+      finalQuoteIssue !== null ||
+      referencePrice === undefined ||
+      !Number.isFinite(referencePrice) ||
+      referencePrice <= 0
     ) {
-      const outcome = await appendFinanceIntradayOutcome(params.directory, {
-        signalId: input.signalId,
-        status: "refused",
-        reasons: [
-          reviewContractAnomaly || (reviewResult.status === "completed" && !reviewedDecision)
-            ? "completed intraday model review violated candidate binding; refusing paper placement"
-            : "intraday decision was cancelled before execution",
-        ],
-        tradeDecisionReview,
-      });
-      return Object.freeze({
-        status: "refused" as const,
-        outcome: outcome.input,
-        tradeDecisionReview,
-      });
-    }
-    if (reviewedDecision?.decision === "veto") {
-      const outcome = await appendFinanceIntradayOutcome(params.directory, {
-        signalId: input.signalId,
-        status: "refused",
-        reasons: [`intraday model veto: ${reviewedDecision.rationale}`],
-        tradeDecisionReview,
-      });
-      return Object.freeze({
-        status: "refused" as const,
-        outcome: outcome.input,
-        tradeDecisionReview,
-      });
+      throw new Error(
+        `intraday execution quote refused: ${finalQuoteIssue ?? "missing side price"}`,
+      );
     }
     const finalCalendarIssue = await strategyBindingIssue(
       params.directory,
@@ -458,7 +490,9 @@ export async function executeFinanceIntradayDecision(params: {
       signalId: input.signalId,
       status: "placed",
       receiptId: result.receipt.receiptId,
-      reasons: [],
+      reasons: protectiveExit
+        ? ["strategy-owned protective exit; discretionary model review bypassed"]
+        : [],
       tradeDecisionReview,
     });
     return Object.freeze({

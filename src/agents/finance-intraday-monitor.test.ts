@@ -90,7 +90,7 @@ async function seed(directory: string): Promise<void> {
     instrument: "SPY",
     intervalSeconds: 300,
     observedAt: "2026-09-18T15:00:00.000Z",
-    provenance: { origin: "monitor fixture" },
+    provenance: { origin: "monitor fixture", feed: "iex" },
     bars: closes.map((close, index) => {
       const open = index === 0 ? close : closes[index - 1];
       return {
@@ -143,7 +143,7 @@ async function appendSession(
     instrument: "SPY",
     intervalSeconds: 300,
     observedAt: lastEndAt,
-    provenance: { origin: "monitor fixture" },
+    provenance: { origin: "monitor fixture", feed: "iex" },
     bars,
   });
 }
@@ -224,6 +224,90 @@ describe("resident intraday monitor tick", () => {
       decision: { input: { signalId: expect.stringMatching(/^intraday-/) } },
     });
     expect(sync).toHaveBeenCalledTimes(2);
+  });
+
+  it("resumes missing bars and skips a fully collected closed interval, including after restart", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-incremental-"));
+    temporary.push(directory);
+    const strategyContract = await activeContract(directory);
+    const bars = regularSessionBars("2026-09-18", 7);
+    await appendFinanceIntradayBars(directory, {
+      instrument: "SPY",
+      intervalSeconds: 300,
+      observedAt: "2026-09-18T14:05:00Z",
+      provenance: { origin: "fixture", feed: "iex" },
+      bars: bars.slice(0, 6),
+    });
+    const sync = vi.fn(async () => {
+      await appendFinanceIntradayBars(directory, {
+        instrument: "SPY",
+        intervalSeconds: 300,
+        observedAt: "2026-09-18T14:05:00Z",
+        provenance: { origin: "fixture", feed: "iex" },
+        bars: bars.slice(6),
+      });
+      return {} as never;
+    });
+    const options = {
+      directory,
+      instrument: "SPY",
+      intervalSeconds: 300 as const,
+      feed: "iex" as const,
+      openingRangeBars: 6,
+      rewardRisk: 2,
+      strategyContract,
+      scope: { kind: "strategy_universe" as const },
+      now: new Date("2026-09-18T14:05:30Z"),
+      sync,
+    };
+    await monitorTickWithFixtureCalendar(options);
+    expect(sync).toHaveBeenCalledWith(
+      expect.objectContaining({ start: "2026-09-18T14:00:00.000Z" }),
+    );
+    await monitorTickWithFixtureCalendar({ ...options, now: new Date("2026-09-18T14:06:30Z") });
+    expect(sync).toHaveBeenCalledOnce();
+    await monitorTickWithFixtureCalendar({ ...options, now: new Date("2026-09-18T14:10:30Z") });
+    expect(sync).toHaveBeenCalledTimes(2);
+    expect(sync).toHaveBeenLastCalledWith(
+      expect.objectContaining({ start: "2026-09-18T14:05:00.000Z" }),
+    );
+  });
+
+  it("keeps out-of-scope research signals out of the execution decision ledger", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-research-split-"));
+    temporary.push(directory);
+    const strategyContract = await activeContract(directory);
+    const snapshot = { selected: ["SPY", "QQQ"] };
+    readerMocks.readUniverse.mockReturnValue(snapshot);
+    await appendFinanceIntradayBars(directory, {
+      instrument: "QQQ",
+      intervalSeconds: 300,
+      observedAt: "2026-09-18T14:05:00Z",
+      provenance: { origin: "fixture", feed: "iex" },
+      bars: regularSessionBars("2026-09-18", 7, { breakout: true }),
+    });
+    const result = await monitorTickWithFixtureCalendar({
+      directory,
+      instrument: "QQQ",
+      intervalSeconds: 300,
+      feed: "iex",
+      openingRangeBars: 6,
+      rewardRisk: 2,
+      strategyContract,
+      scope: {
+        kind: "system_universe",
+        selectedInstruments: snapshot.selected,
+        universeSnapshotRef: caseflowFingerprint(snapshot),
+      },
+      now: new Date("2026-09-18T14:05:30Z"),
+      sync: vi.fn(async () => ({}) as never),
+    });
+    expect(result).toMatchObject({
+      status: "research_only",
+      executionAuthority: "none",
+      signal: { action: "buy" },
+    });
+    expect(await readFinanceIntradayDecisions(directory)).toEqual([]);
   });
 
   it("keeps v1 unchanged and blocks v2 entries once the pre-close window starts", async () => {

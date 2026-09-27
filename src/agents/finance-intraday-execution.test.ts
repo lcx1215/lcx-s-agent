@@ -138,179 +138,171 @@ async function activeRuleBinding(
 }
 
 describe("intraday decision execution bridge", () => {
-  it("closes exactly the observed paper position and never replays a terminal signal", async () => {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-execution-"));
-    temporary.push(directory);
-    const strategyBinding = await activeRuleBinding(directory);
-    await openFinanceThesis(directory, {
-      thesisId: "spy-long-horizon",
-      instrument: "SPY",
-      claim: "Broad earnings growth remains supportive.",
-      evidence: [{ id: "source-1", source: "fixture-source", reference: "fixture://source" }],
-      invalidationConditions: ["Earnings trend reverses."],
-      observedAt: "2026-09-18T14:00:00.000Z",
-    });
-    const decision = (
-      await appendFinanceIntradayDecision(directory, {
-        signalId: "intraday-sell-1",
+  it.each(["opening_range_stop", "reward_target", "pre_close"] as const)(
+    "executes owned protective %s without model veto and never replays it",
+    async (reason) => {
+      const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-execution-"));
+      temporary.push(directory);
+      const strategyBinding = await activeRuleBinding(directory);
+      await openFinanceThesis(directory, {
+        thesisId: "spy-long-horizon",
         instrument: "SPY",
-        sessionDate: "2026-09-18",
-        action: "sell",
-        reason: "reward_target",
-        referencePrice: 108,
-        referencePriceAt: "2026-09-18T15:00:00.000Z",
-        datasetHeadRef: "a".repeat(64),
-        strategyRule: "opening_range_breakout_long_next_bar_v1",
-        strategyBinding,
-      })
-    ).record;
-    const coreReceipt = buildFinanceExecutionReceipt({
-      intent: {
-        intentId: "intent:daily-cycle-core",
-        instrument: "SPY",
-        side: "buy",
-        orderType: "market",
-        quantity: 50,
-        referencePrice: 100,
-        referencePriceAt: "2026-09-18T14:00:00.000Z",
-        runAuthorizationId: "daily-cycle:2026-09-18",
-        rationale: "core fixture",
-      },
-      adapter: { id: "alpaca-venue", venue: "alpaca:paper", kind: "venue" },
-      fill: {
-        filledQuantity: 50,
-        fillPrice: 100,
-        filledAt: "2026-09-18T14:00:01.000Z",
-        venueRef: "alpaca:paper:core-order",
-        terminalOrderIdentity: { orderId: "core-order", terminal: true },
-      },
-      recordedAt: "2026-09-18T14:00:01.000Z",
-      accountId: "paper-account",
-    });
-    const intradayReceipt = buildFinanceExecutionReceipt({
-      intent: {
-        intentId: "intent:intraday-owned-entry",
-        instrument: "SPY",
-        side: "buy",
-        orderType: "market",
-        quantity: 17.5,
-        referencePrice: 107,
-        referencePriceAt: "2026-09-18T14:30:00.000Z",
-        runAuthorizationId: "intraday-paper:2026-09-18:intraday-owned-entry",
-        rationale: "intraday fixture",
-      },
-      adapter: { id: "alpaca-venue", venue: "alpaca:paper", kind: "venue" },
-      fill: {
-        filledQuantity: 17.5,
-        fillPrice: 107,
-        filledAt: "2026-09-18T14:30:01.000Z",
-        venueRef: "alpaca:paper:intraday-order",
-        terminalOrderIdentity: { orderId: "intraday-order", terminal: true },
-      },
-      recordedAt: "2026-09-18T14:30:01.000Z",
-      accountId: "paper-account",
-    });
-    await appendFinanceExecutionReceipt(directory, coreReceipt);
-    await appendFinanceExecutionReceipt(directory, intradayReceipt);
-    const receipt = { receiptId: "receipt-1" } as never;
-    const runOrderMock = vi.fn(async (_request: Parameters<typeof runFinanceAlpacaOrder>[0]) => ({
-      ok: true as const,
-      receipt,
-      notes: [],
-    }));
-    const runOrder = runOrderMock as unknown as typeof runFinanceAlpacaOrder;
-    const recordFill = vi.fn(async () => ({
-      recorded: true,
-      marked: true,
-      quantity: 17.5,
-      notional: 1890,
-      committedNotional: 1890,
-      refusal: null,
-    }));
-    const tradeDecisionReviewer = approvingReviewer();
-    const controller = {
-      accountId: "paper-account",
-      accountBookProvider: vi.fn(async () => ({
+        claim: "Broad earnings growth remains supportive.",
+        evidence: [{ id: "source-1", source: "fixture-source", reference: "fixture://source" }],
+        invalidationConditions: ["Earnings trend reverses."],
+        observedAt: "2026-09-18T14:00:00.000Z",
+      });
+      const decision = (
+        await appendFinanceIntradayDecision(directory, {
+          signalId: "intraday-sell-1",
+          instrument: "SPY",
+          sessionDate: "2026-09-18",
+          action: "sell",
+          reason,
+          referencePrice: 108,
+          referencePriceAt: "2026-09-18T15:00:00.000Z",
+          datasetHeadRef: "a".repeat(64),
+          strategyRule: "opening_range_breakout_long_next_bar_v1",
+          strategyBinding,
+        })
+      ).record;
+      const coreReceipt = buildFinanceExecutionReceipt({
+        intent: {
+          intentId: "intent:daily-cycle-core",
+          instrument: "SPY",
+          side: "buy",
+          orderType: "market",
+          quantity: 50,
+          referencePrice: 100,
+          referencePriceAt: "2026-09-18T14:00:00.000Z",
+          runAuthorizationId: "daily-cycle:2026-09-18",
+          rationale: "core fixture",
+        },
+        adapter: { id: "alpaca-venue", venue: "alpaca:paper", kind: "venue" },
+        fill: {
+          filledQuantity: 50,
+          fillPrice: 100,
+          filledAt: "2026-09-18T14:00:01.000Z",
+          venueRef: "alpaca:paper:core-order",
+          terminalOrderIdentity: { orderId: "core-order", terminal: true },
+        },
+        recordedAt: "2026-09-18T14:00:01.000Z",
         accountId: "paper-account",
-        venue: "alpaca:paper" as const,
-        observedAt: "2026-09-18T15:00:01.000Z",
-        expiresAt: "2026-09-18T15:01:01.000Z",
-        equity: 100_000,
-        positions: [{ instrument: "SPY", quantity: 67.5, marketValue: 7_290 }],
-      })),
-      executionQuoteProvider: vi.fn(async () => ({
-        referencePrice: 107.9,
-        referencePriceAt: "2026-09-18T15:00:01.000Z",
-        sourceUrlOrArtifact: "fixture",
-        bidPrice: 107.9,
-        askPrice: 108,
-        maxAgeMs: 30_000,
-      })),
-      createSafetyContext: vi.fn(() => ({ kind: "controller_execution_safety" as const })),
-    };
-    const request = {
-      directory,
-      decision,
-      controller,
-      caps: { maxOrderNotional: 5_000, maxInstrumentNotional: 10_000, maxOrdersPerRun: 1 },
-      tradeDecisionReviewer,
-      now: () => Date.parse("2026-09-18T15:00:02.000Z"),
-      runOrder,
-      recordFill,
-    };
-    expect(await executeFinanceIntradayDecision(request)).toMatchObject({
-      status: "placed",
-      tradeDecisionReview: {
-        status: "completed",
-        decision: { candidateId: "intraday-sell-1", decision: "approve" },
-      },
-    });
-    expect(runOrderMock).toHaveBeenCalledTimes(1);
-    expect(tradeDecisionReviewer).toHaveBeenCalledTimes(1);
-    expect(tradeDecisionReviewer).toHaveBeenCalledWith(
-      expect.objectContaining({
-        schemaVersion: "lcx_finance_intraday_trade_decision_review_v1",
-        ruleIds: ["opening_range_breakout_long_next_bar_v1"],
-        decisionContext: expect.objectContaining({
-          schemaVersion: "lcx_finance_thesis_decision_context_v1",
-          activeThesisCount: 1,
-          theses: [expect.objectContaining({ thesisId: "spy-long-horizon", instrument: "SPY" })],
-        }),
-        candidates: [
-          expect.objectContaining({
-            candidateId: "intraday-sell-1",
-            instrument: "SPY",
-            side: "sell",
-            intradayOwnedQuantity: 17.5,
-            brokerPositionQuantity: 67.5,
+      });
+      const intradayReceipt = buildFinanceExecutionReceipt({
+        intent: {
+          intentId: "intent:intraday-owned-entry",
+          instrument: "SPY",
+          side: "buy",
+          orderType: "market",
+          quantity: 17.5,
+          referencePrice: 107,
+          referencePriceAt: "2026-09-18T14:30:00.000Z",
+          runAuthorizationId: "intraday-paper:2026-09-18:intraday-owned-entry",
+          rationale: "intraday fixture",
+        },
+        adapter: { id: "alpaca-venue", venue: "alpaca:paper", kind: "venue" },
+        fill: {
+          filledQuantity: 17.5,
+          fillPrice: 107,
+          filledAt: "2026-09-18T14:30:01.000Z",
+          venueRef: "alpaca:paper:intraday-order",
+          terminalOrderIdentity: { orderId: "intraday-order", terminal: true },
+        },
+        recordedAt: "2026-09-18T14:30:01.000Z",
+        accountId: "paper-account",
+      });
+      await appendFinanceExecutionReceipt(directory, coreReceipt);
+      await appendFinanceExecutionReceipt(directory, intradayReceipt);
+      const receipt = { receiptId: "receipt-1" } as never;
+      const runOrderMock = vi.fn(async (_request: Parameters<typeof runFinanceAlpacaOrder>[0]) => ({
+        ok: true as const,
+        receipt,
+        notes: [],
+      }));
+      const runOrder = runOrderMock as unknown as typeof runFinanceAlpacaOrder;
+      const recordFill = vi.fn(async () => ({
+        recorded: true,
+        marked: true,
+        quantity: 17.5,
+        notional: 1890,
+        committedNotional: 1890,
+        refusal: null,
+      }));
+      const tradeDecisionReviewer = approvingReviewer();
+      const controller = {
+        accountId: "paper-account",
+        accountBookProvider: vi.fn(async () => ({
+          accountId: "paper-account",
+          venue: "alpaca:paper" as const,
+          observedAt: "2026-09-18T15:00:01.000Z",
+          expiresAt: "2026-09-18T15:01:01.000Z",
+          equity: 100_000,
+          positions: [{ instrument: "SPY", quantity: 67.5, marketValue: 7_290 }],
+        })),
+        executionQuoteProvider: vi.fn(async () => ({
+          referencePrice: 107.9,
+          referencePriceAt: "2026-09-18T15:00:01.000Z",
+          sourceUrlOrArtifact: "fixture",
+          bidPrice: 107.9,
+          askPrice: 108,
+          maxAgeMs: 30_000,
+        })),
+        createSafetyContext: vi.fn(() => ({ kind: "controller_execution_safety" as const })),
+      };
+      const request = {
+        directory,
+        decision,
+        controller,
+        caps: { maxOrderNotional: 5_000, maxInstrumentNotional: 10_000, maxOrdersPerRun: 1 },
+        tradeDecisionReviewer,
+        now: () => Date.parse("2026-09-18T15:00:02.000Z"),
+        runOrder,
+        recordFill,
+      };
+      expect(await executeFinanceIntradayDecision(request)).toMatchObject({ status: "placed" });
+      expect(runOrderMock).toHaveBeenCalledTimes(1);
+      expect(tradeDecisionReviewer).not.toHaveBeenCalled();
+      expect(await readFinanceIntradayOutcome(directory, "intraday-sell-1")).toMatchObject({
+        reasons: ["strategy-owned protective exit; discretionary model review bypassed"],
+      });
+      expect(runOrderMock.mock.calls[0]?.[0]).toMatchObject({
+        quantityOverride: 17.5,
+        mode: "paper",
+      });
+      expect(await executeFinanceIntradayDecision(request)).toMatchObject({
+        status: "already_terminal",
+        outcome: { status: "placed", receiptId: "receipt-1" },
+      });
+      expect(runOrderMock).toHaveBeenCalledTimes(1);
+      expect(tradeDecisionReviewer).not.toHaveBeenCalled();
+      const unownedDecision = (
+        await appendFinanceIntradayDecision(directory, {
+          ...decision.input,
+          signalId: `unowned-${reason}`,
+        })
+      ).record;
+      const refused = await executeFinanceIntradayDecision({
+        ...request,
+        decision: unownedDecision,
+        controller: {
+          ...controller,
+          accountBookProvider: async () => ({
+            ...(await controller.accountBookProvider()),
+            positions: [],
           }),
-        ],
-      }),
-      expect.any(AbortSignal),
-    );
-    expect(await readFinanceIntradayOutcome(directory, "intraday-sell-1")).toMatchObject({
-      tradeDecisionReview: {
-        status: "completed",
-        decision: { decision: "approve" },
-        request: expect.objectContaining({
-          decisionContext: expect.objectContaining({
-            activeThesisCount: 1,
-            theses: [expect.objectContaining({ thesisId: "spy-long-horizon" })],
-          }),
-        }),
-      },
-    });
-    expect(runOrderMock.mock.calls[0]?.[0]).toMatchObject({
-      quantityOverride: 17.5,
-      mode: "paper",
-    });
-    expect(await executeFinanceIntradayDecision(request)).toMatchObject({
-      status: "already_terminal",
-      outcome: { status: "placed", receiptId: "receipt-1" },
-    });
-    expect(runOrderMock).toHaveBeenCalledTimes(1);
-    expect(tradeDecisionReviewer).toHaveBeenCalledTimes(1);
-  });
+        },
+      });
+      expect(refused).toMatchObject({
+        status: "refused",
+        outcome: {
+          reasons: [expect.stringContaining("position gate refused")],
+        },
+      });
+      expect(runOrderMock).toHaveBeenCalledTimes(1);
+      expect(tradeDecisionReviewer).not.toHaveBeenCalled();
+    },
+  );
 
   it.each(["unavailable", "output_truncated", "veto", "invalid"] as const)(
     "keeps review failure advisory but preserves valid veto and contract gates (%s)",
@@ -442,6 +434,98 @@ describe("intraday decision execution bridge", () => {
         expect(outcome?.reasons).toEqual(["shared execution gate refusal"]);
       } else {
         expect(outcome?.reasons.join()).toMatch(/model veto|violated candidate binding/u);
+      }
+    },
+  );
+
+  it.each(["fresh", "stale", "timeout", "abort"] as const)(
+    "revalidates quotes after review and records actual fallback time (%s)",
+    async (mode) => {
+      const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-refresh-"));
+      temporary.push(directory);
+      const strategyBinding = await activeRuleBinding(directory);
+      let clock = Date.parse("2026-09-18T15:00:02.000Z");
+      const decision = (
+        await appendFinanceIntradayDecision(directory, {
+          signalId: `refresh-${mode}`,
+          instrument: "SPY",
+          sessionDate: "2026-09-18",
+          action: "buy",
+          reason: "opening_range_breakout",
+          referencePrice: 500,
+          referencePriceAt: "2026-09-18T15:00:00.000Z",
+          datasetHeadRef: "d".repeat(64),
+          strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+          strategyBinding,
+        })
+      ).record;
+      const cancellation = new AbortController();
+      const quoteProvider = vi.fn(async () => ({
+        referencePrice: 500,
+        bidPrice: 499,
+        askPrice: 501,
+        maxAgeMs: 30_000,
+        referencePriceAt:
+          mode === "stale" ? "2026-09-18T15:00:01.000Z" : new Date(clock).toISOString(),
+        sourceUrlOrArtifact: "fixture://quote",
+      }));
+      const runOrder = vi.fn(async () => ({
+        ok: false as const,
+        stage: "place" as const,
+        refusals: ["fixture shared gate"],
+      }));
+      const reviewer: FinanceTradeDecisionReviewer = async (request) => {
+        clock += 65_000;
+        if (mode === "timeout") {
+          throw new Error("timeout");
+        }
+        if (mode === "abort") {
+          cancellation.abort();
+        }
+        return approvingReviewer()(request);
+      };
+      const result = await executeFinanceIntradayDecision({
+        directory,
+        decision,
+        controller: {
+          accountId: "paper-account",
+          accountBookProvider: async () => ({
+            accountId: "paper-account",
+            venue: "alpaca:paper",
+            observedAt: new Date(clock).toISOString(),
+            expiresAt: new Date(clock + 120_000).toISOString(),
+            equity: 100_000,
+            positions: [],
+          }),
+          executionQuoteProvider: quoteProvider,
+          createSafetyContext: vi.fn(),
+        },
+        caps: { maxOrderNotional: 1000, maxInstrumentNotional: 5000, maxOrdersPerRun: 1 },
+        tradeDecisionReviewer: reviewer,
+        now: () => clock,
+        signal: cancellation.signal,
+        runOrder,
+      });
+      expect(result.status).toBe("refused");
+      expect(quoteProvider).toHaveBeenCalledTimes(mode === "abort" ? 1 : 2);
+      expect(runOrder).toHaveBeenCalledTimes(mode === "stale" || mode === "abort" ? 0 : 1);
+      if (mode === "fresh" || mode === "timeout") {
+        expect(runOrder).toHaveBeenCalledWith(
+          expect.objectContaining({
+            market: {
+              referencePrice: 501,
+              referencePriceAt: new Date(clock).toISOString(),
+            },
+          }),
+        );
+      }
+      if (mode === "timeout") {
+        expect(
+          "tradeDecisionReview" in result ? result.tradeDecisionReview : undefined,
+        ).toMatchObject({
+          failureCode: "runtime_timeout",
+          latencyMs: 65_000,
+        });
       }
     },
   );

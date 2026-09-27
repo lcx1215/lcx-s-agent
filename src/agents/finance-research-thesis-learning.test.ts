@@ -7,6 +7,7 @@ import {
   persistFinanceResearchThesisLearning,
   validateFinanceResearchThesisProposals,
 } from "./finance-research-thesis-learning.js";
+import { buildFinanceThesisDecisionContext } from "./finance-thesis-decision-context.js";
 import { readFinanceThesisLedger } from "./finance-thesis-ledger.js";
 
 const AS_OF = "2026-09-10T12:00:00.000Z";
@@ -31,13 +32,16 @@ function sourceEvidence(
   };
 }
 
-function validate(runId: string, timestamp = AS_OF) {
+function validate(runId: string, timestamp = AS_OF, intraday = false) {
   const evidence = sourceEvidence({ timestamp });
   return validateFinanceResearchThesisProposals({
     value: [
       {
         claimId: "spy-claim",
         instrument: "SPY",
+        ...(intraday
+          ? { applicability: { horizon: "intraday", validUntil: "2026-09-10T20:00:00Z" } }
+          : {}),
         rationale: "The evidence is limited to the observed window.",
         invalidationConditions: ["The stated market structure no longer holds."],
       },
@@ -66,6 +70,34 @@ describe("finance research thesis learning", () => {
     await Promise.all(
       directories.map((directory) => fs.rm(directory, { recursive: true, force: true })),
     );
+  });
+
+  it("carries source-bound research into eligible decision context without trade authority", async () => {
+    const directory = await storeDirectory();
+    const proposals = validate("bound-source", AS_OF, true);
+    const result = await persistFinanceResearchThesisLearning({
+      directory,
+      eligible: true,
+      proposals,
+      observedAt: AS_OF,
+    });
+    expect(result.status).toBe("persisted");
+    const context = await buildFinanceThesisDecisionContext({
+      directory,
+      asOf: AS_OF,
+      instruments: ["SPY"],
+      horizon: "intraday",
+    });
+    expect(context.theses).toHaveLength(1);
+    expect(context.theses[0]?.evidence[0]?.reference).toContain("research-bound-source.json");
+    expect(context.theses[0]?.applicability?.horizon).toBe("intraday");
+    const expired = await buildFinanceThesisDecisionContext({
+      directory,
+      asOf: LATER,
+      instruments: ["SPY"],
+      horizon: "intraday",
+    });
+    expect(expired.theses).toEqual([]);
   });
 
   it("accepts only supported claims tied to declared instruments and cited in-run evidence", () => {

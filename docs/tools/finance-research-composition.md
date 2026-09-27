@@ -345,3 +345,32 @@ not LCX performance evidence.
 ## Optiver 的连续决策闭环
 
 Optiver 文章的证据范围、与 LCX 的代码所有者映射、已补的持仓恢复/执行反馈/日历门禁，以及 EV、仓位校准和对手反应等未解决假设，见[研究映射](../experiments/research/optiver-trading-decision-loop.md)。文章用于提出可检验的闭环要求，不作为收益或模型能力证明。
+
+## Research applicability and intraday execution
+
+Evidence-backed thesis proposals may include `applicability` with `horizon`
+(`intraday`, `swing`, or `long_term`) and an ISO `validUntil` after the research
+as-of. The source and quality gates still apply. Applicability participates in
+the research thesis identity, so a new horizon or validity window produces a
+new claim record instead of silently extending an old one. Legacy records
+remain readable but are not inferred to apply to intraday decisions.
+
+Intraday review selects only active, unexpired, explicitly intraday theses for
+the candidate instrument. Its receipt records the selected sources and the
+excluded thesis count. Empty context means no eligible evidence, not successful
+research absorption. Source coverage, thesis persistence, strategy evaluation,
+activation and actual use in an order remain separate evidence steps.
+
+Strategy-bound protective exits (`opening_range_stop`, `reward_target`, and
+`pre_close`) bypass discretionary model review after owned-position checks.
+Cancellation, market calendar, current strategy binding, quote and shared
+execution gates still apply. Entry candidates retain model veto. Quotes that
+expire during review are refreshed once and validated again; fallback review
+receipts retain elapsed time.
+
+The scheduler processes executable instruments first. Research-scope signals
+remain outside the execution decision ledger. Bar collection resumes at the
+first missing closed session interval for the configured feed and skips network
+collection when all closed intervals are already present. Research refresh and
+nightly review remain explicit scheduler options; these code paths do not enable
+background model calls or activate research candidates automatically.
