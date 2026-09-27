@@ -24,6 +24,7 @@ const FinanceDataGatewayFieldSchema = Type.Object({
   fieldDefinition: Type.String(),
   sourceTimestamp: Type.String(),
   sourceUrlOrArtifact: Type.String(),
+  upstreamSourceUrlOrArtifact: Type.Optional(Type.String()),
 });
 
 const FinanceDataGatewayObservationSchema = Type.Object({
@@ -84,7 +85,7 @@ export function createFinanceDataGatewaySnapshotTool(options?: {
     label: "Finance Data Gateway Snapshot",
     name: "finance_data_gateway_snapshot",
     description:
-      "Normalize one research-only finance data snapshot from primary, cross-check, and official/issuer sources. It requires timestamps, field definitions, provider roles, and conflict visibility before sourced numbers are used. Each primary field needs a different declared provider and source address for its cross-check. It cannot detect shared upstream provenance or copied reports at different URLs; sourceIndependence.upstreamLineage remains not_assessed.",
+      "Normalize one research-only finance data snapshot from primary, cross-check, and official/issuer sources. It requires timestamps, field definitions, provider roles, and conflict visibility before sourced numbers are used. Each primary field needs a different declared provider and source address for its cross-check. Declared shared upstream documents and tracking-only URL differences cannot qualify as cross-checks. Undeclared upstream provenance and paraphrased copies cannot be detected; sourceIndependence.upstreamLineage remains not_assessed.",
     parameters: FinanceDataGatewaySnapshotSchema,
     execute: async (_toolCallId, args) => {
       const params = args as FinanceDataGatewayInput & { writeReceipt?: boolean };

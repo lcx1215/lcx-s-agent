@@ -1140,3 +1140,37 @@ describe("institutional counterevidence laundering", () => {
     },
   );
 });
+
+describe("deterministic evidence scope", () => {
+  it("overrides caller assertions and carries repeated reports to every role and the receipt", async () => {
+    const requests: QualityHarnessModelRequest[] = [];
+    const result = await runQualityHarness({
+      request: {
+        task: "Summarize this research packet.",
+        evidence: [
+          { id: "brief", text: "one report", source: "https://one.test/a" },
+          { id: "copy", text: "one report", source: "https://two.test/b" },
+        ],
+        sharedContext: {
+          evidenceMultiplicity: { independentSourceCount: 99, semanticTruth: "verified" },
+        },
+      },
+      modelInvoker: demoInvoker({ requests }),
+      maxAttempts: 1,
+      verify: () => ({ status: "passed", summary: "references checked only", details: [] }),
+    });
+    expect(requests.length).toBeGreaterThan(0);
+    for (const stage of requests) {
+      expect(stage.sharedContext.evidenceMultiplicity).toMatchObject({
+        distinctPacketGroups: 1,
+        duplicateGroups: [["brief", "copy"]],
+        independentSourceCount: null,
+        semanticTruth: "not_assessed",
+      });
+    }
+    expect(result.evidenceScope).toMatchObject({
+      independentSourceCount: null,
+      semanticTruth: "not_assessed",
+    });
+  });
+});

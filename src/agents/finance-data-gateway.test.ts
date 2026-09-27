@@ -227,3 +227,45 @@ describe("declared cross-check identity", () => {
     },
   );
 });
+
+describe("declared upstream cross-check identity", () => {
+  it.each(["shared upstream", "primary is upstream", "tracking address"])(
+    "rejects %s as corroboration",
+    (mode) => {
+      const primary = observation("first", "primary_market_data", "2026-09-07T10:00:00.000Z");
+      const cross = observation("second", "cross_check_market_data", "2026-09-07T10:00:00.000Z");
+      const original = "https://original.test/report?id=1";
+      primary.fields[0].sourceUrlOrArtifact =
+        mode === "shared upstream" ? "https://copy-one.test/report" : original;
+      cross.fields[0].sourceUrlOrArtifact =
+        mode === "tracking address"
+          ? original + "&utm_source=copy"
+          : "https://copy-two.test/report";
+      const snapshot = buildFinanceDataGatewaySnapshot({
+        instrument: "QQQ",
+        assetClass: "etf",
+        useCase: "research",
+        asOf: "2026-09-07T10:15:00.000Z",
+        requireOfficialReference: false,
+        observations: [
+          {
+            ...primary,
+            fields: primary.fields.map((field) => ({
+              ...field,
+              ...(mode === "shared upstream" ? { upstreamSourceUrlOrArtifact: original } : {}),
+            })),
+          },
+          {
+            ...cross,
+            fields: cross.fields.map((field) => ({
+              ...field,
+              ...(mode !== "tracking address" ? { upstreamSourceUrlOrArtifact: original } : {}),
+            })),
+          },
+        ],
+      });
+      expect(snapshot.qualityStatus).toBe("blocked");
+      expect(snapshot.missingEvidence).toContain("distinct_cross_check_source:last_price");
+    },
+  );
+});

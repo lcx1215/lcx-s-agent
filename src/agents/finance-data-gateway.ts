@@ -8,6 +8,7 @@ import {
   type LcxOntologyFinanceDataQualityStatus,
   type LcxOntologyFinanceDataSourceFamily,
 } from "../shared/lcx-ontology.js";
+import { evidenceSourceIdentity } from "./evidence-source-identity.js";
 
 /** Compatibility exports; the canonical values live in the shared ontology. */
 export const FINANCE_DATA_PROVIDER_ROLES = LCX_ONTOLOGY_FINANCE_DATA_PROVIDER_ROLES;
@@ -32,6 +33,8 @@ export type FinanceDataGatewayFieldInput = {
   fieldDefinition: string;
   sourceTimestamp: string;
   sourceUrlOrArtifact: string;
+  /** Caller-declared original document; an equality can disqualify a cross-check, never prove independence. */
+  upstreamSourceUrlOrArtifact?: string;
 };
 
 export type FinanceDataGatewayObservationInput = {
@@ -68,6 +71,7 @@ export type FinanceDataGatewayNormalizedField = {
   sourceTimestamp: string;
   fieldDefinition: string;
   sourceUrlOrArtifact: string;
+  upstreamSourceUrlOrArtifact?: string;
 };
 
 export type FinanceDataGatewayConflict = {
@@ -95,6 +99,8 @@ export type FinanceDataGatewaySnapshot = {
   sourceIndependence?: {
     assessed: "declared_provider_and_source_identity_only";
     upstreamLineage: "not_assessed";
+    declaredUpstreamIdentityChecked?: true;
+    semanticTruth?: "not_assessed";
     unverifiedCrossCheckFields: string[];
   };
   sourceFamiliesPresent: FinanceDataSourceFamily[];
@@ -170,6 +176,7 @@ function selectPrimaryField(
     sourceTimestamp: selected.field.sourceTimestamp.trim(),
     fieldDefinition: selected.field.fieldDefinition.trim(),
     sourceUrlOrArtifact: selected.field.sourceUrlOrArtifact.trim(),
+    upstreamSourceUrlOrArtifact: selected.field.upstreamSourceUrlOrArtifact?.trim() || undefined,
   };
 }
 
@@ -231,17 +238,6 @@ function buildCrossSourceTimestampWarnings(
   });
 }
 
-function sourceIdentity(value: string): string {
-  try {
-    const url = new URL(value.trim());
-    url.hash = "";
-    url.searchParams.sort();
-    return url.href;
-  } catch {
-    return value.trim();
-  }
-}
-
 function unverifiedCrossCheckFields(
   observations: readonly FinanceDataGatewayObservationInput[],
 ): string[] {
@@ -259,8 +255,16 @@ function unverifiedCrossCheckFields(
                 candidate.fields.some(
                   (other) =>
                     other.name.trim() === field.name.trim() &&
-                    sourceIdentity(other.sourceUrlOrArtifact) !==
-                      sourceIdentity(field.sourceUrlOrArtifact),
+                    ![other.sourceUrlOrArtifact, other.upstreamSourceUrlOrArtifact]
+                      .filter((value): value is string => !!value?.trim())
+                      .some((value) =>
+                        [field.sourceUrlOrArtifact, field.upstreamSourceUrlOrArtifact]
+                          .filter((origin): origin is string => !!origin?.trim())
+                          .some(
+                            (origin) =>
+                              evidenceSourceIdentity(value) === evidenceSourceIdentity(origin),
+                          ),
+                      ),
                 ),
             ),
         )
@@ -440,6 +444,8 @@ export function buildFinanceDataGatewaySnapshot(
     sourceIndependence: {
       assessed: "declared_provider_and_source_identity_only",
       upstreamLineage: "not_assessed",
+      declaredUpstreamIdentityChecked: true,
+      semanticTruth: "not_assessed",
       unverifiedCrossCheckFields: unverifiedCrossChecks,
     },
     sourceFamiliesPresent,

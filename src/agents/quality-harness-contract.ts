@@ -1,3 +1,4 @@
+import { inspectEvidenceMultiplicity } from "./evidence-source-identity.js";
 import {
   FINANCE_RESEARCH_CLAIM_EPISTEMIC_CLASSES,
   FINANCE_RESEARCH_EVIDENCE_RELATIONS,
@@ -240,6 +241,7 @@ export type QualityHarnessReceipt = Readonly<{
     providerCallsMade: "not-observed" | "caller-attested" | "adapter-attested";
     externalSideEffects: "not-observed" | "caller-attested" | "adapter-attested";
   }>;
+  evidenceScope?: ReturnType<typeof inspectEvidenceMultiplicity>;
   plannedStages: readonly QualityHarnessStage[];
   attempts: readonly QualityHarnessAttemptReceipt[];
   finalArtifact?: QualityHarnessArtifact;
@@ -348,7 +350,10 @@ export function normalizeQualityRequest(request: QualityHarnessRequest): Quality
   return Object.freeze({
     task,
     evidence: Object.freeze(evidence),
-    ...(sharedContext === undefined ? {} : { sharedContext }),
+    sharedContext: Object.freeze({
+      ...sharedContext,
+      evidenceMultiplicity: inspectEvidenceMultiplicity(evidence),
+    }),
   });
 }
 
@@ -428,7 +433,7 @@ export function stageInstructions(stage: QualityHarnessStage): string {
     case "exposure":
       return "Check scope, concentration, dependencies, and missing inputs relevant to the task. Return a review JSON.";
     case "draft":
-      return `Return JSON {kind:'artifact',artifact:{answer:string,claims:[{id,text,status:'supported'|'uncertain',evidenceIds:string[],epistemicClass?:'${FINANCE_RESEARCH_CLAIM_EPISTEMIC_CLASSES.join("'|'")}',basis?:string,evidenceRelations?:[{evidenceId,relation:'${FINANCE_RESEARCH_EVIDENCE_RELATIONS.join("'|'")}'}],uncertainty?:string}]}}. Every supported claim must cite evidence IDs. For each claim classify epistemic origin without implying truth or source quality; provide basis for calculations, estimates, inferences, and hypotheses; when evidenceRelations is present, include every cited evidence ID exactly once and do not hide contrary evidence. Mark gaps uncertain.`;
+      return `Return JSON {kind:'artifact',artifact:{answer:string,claims:[{id,text,status:'supported'|'uncertain',evidenceIds:string[],epistemicClass?:'${FINANCE_RESEARCH_CLAIM_EPISTEMIC_CLASSES.join("'|'")}',basis?:string,evidenceRelations?:[{evidenceId,relation:'${FINANCE_RESEARCH_EVIDENCE_RELATIONS.join("'|'")}'}],uncertainty?:string}]}}. Every supported claim must cite evidence IDs. sharedContext.evidenceMultiplicity is computed from the supplied packet: duplicateGroups are not independent corroboration; distinctPacketGroups is not an independent source count. Upstream lineage and semantic truth remain unassessed. For each claim classify epistemic origin without implying truth or source quality; provide basis for calculations, estimates, inferences, and hypotheses; when evidenceRelations is present, include every cited evidence ID exactly once and do not hide contrary evidence. Mark gaps uncertain.`;
     case "adversarial":
       return "Try to falsify the draft. Return JSON review. Use pass only when there is no critical finding and no evidence gap.";
     case "format":

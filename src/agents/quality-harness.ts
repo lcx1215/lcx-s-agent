@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { inspectEvidenceMultiplicity } from "./evidence-source-identity.js";
 import { modelRoutingTaskTimeoutMs, type ModelCallReceipt } from "./logical-agent-model-router.js";
 import {
   LogicalAgentPool,
@@ -121,6 +122,7 @@ function createQualityReceipt(params: {
         : "not-observed",
       externalSideEffects: "not-observed",
     }),
+    evidenceScope: inspectEvidenceMultiplicity(params.request.evidence),
     plannedStages: QUALITY_HARNESS_STAGES,
     attempts: Object.freeze([...params.attempts]),
     ...(params.artifact ? { finalArtifact: params.artifact } : {}),

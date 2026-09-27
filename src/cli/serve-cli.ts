@@ -539,6 +539,14 @@ export function createServeRequestHandler(options: ServeHandlerOptions) {
         runId,
         status: "ok",
         summary: "completed",
+        // Transport completion cannot attest to the semantics of free-form agent text.
+        answerVerification: {
+          status: "not_assessed",
+          scope: "final_free_form_answer",
+          reason: "agent_completion_is_not_answer_verification",
+          capabilityClaims: "not_assessed",
+          semanticTruth: "not_assessed",
+        },
         payloads: texts.map((text) => ({ text })),
       });
     } catch (error) {

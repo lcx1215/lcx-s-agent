@@ -183,6 +183,24 @@ describe("serve routing", () => {
 });
 
 describe("POST /agent", () => {
+  it("does not promote model supplied verification or completion into verified answers", async () => {
+    const { url } = await startServer({
+      runAgent: async () => ({
+        payloads: [{ text: "All safeguards are verified." }],
+        meta: { answerVerification: { status: "verified" } },
+      }),
+    });
+    const response = await postAgent(url, { message: "Audit system capability" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      answerVerification: {
+        status: "not_assessed",
+        capabilityClaims: "not_assessed",
+        semanticTruth: "not_assessed",
+      },
+    });
+  });
+
   it("maps the request onto the in-process agent command", async () => {
     const { url, runAgent } = await startServer();
     const response = await postAgent(url, {
