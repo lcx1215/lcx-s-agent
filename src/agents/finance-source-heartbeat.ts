@@ -5,7 +5,10 @@ import {
   type ApiCallReceipt,
   type ApiSourceGovernanceRegistry,
 } from "./api-call-contract.js";
+import { resolveFinanceCredentialEnv } from "./finance-credential-env.js";
+import { appendFinanceFundamentalSnapshot } from "./finance-fundamental-store.js";
 import type { FetchImpl } from "./finance-live-market-source.js";
+import { FINANCE_MARKET_COLLECTION_SCHEMA_VERSION } from "./finance-market-collection-registry.js";
 import {
   createFinanceMarketCollectionRegistry,
   resolveFinanceMarketCollectionRegistryOptionsFromEnv,
@@ -167,7 +170,7 @@ function candidateForAdapter(
             ...collection.sampleRequest,
             asOf,
             asOfMode: "live_now" as const,
-            limit: 1,
+            limit: collection.sampleRequest.collection === "financial_statements" ? 3 : 1,
           },
         ]
       : collectionRequests(asOf);
@@ -226,6 +229,8 @@ function selectCandidates(
   asOf: string,
   realtimeAdapters: readonly FinanceRealtimeSourceAdapter[],
   collectionAdapters: readonly FinanceMarketCollectionAdapter[],
+  history: Readonly<Record<string, FinanceSourceHeartbeatRecord>> = {},
+  checkedAt = Date.parse(asOf),
 ): Candidate[] {
   const candidates = [
     ...realtimeAdapters.map((adapter) => candidateForAdapter(adapter, "realtime", asOf)),
@@ -234,6 +239,10 @@ function selectCandidates(
     .filter((candidate): candidate is Candidate => candidate !== undefined)
     .toSorted(
       (left, right) =>
+        Number(Date.parse(history[left.adapterId]?.nextCheckAt ?? "1970-01-01") > checkedAt) -
+          Number(Date.parse(history[right.adapterId]?.nextCheckAt ?? "1970-01-01") > checkedAt) ||
+        Date.parse(history[left.adapterId]?.checkedAt ?? "1970-01-01") -
+          Date.parse(history[right.adapterId]?.checkedAt ?? "1970-01-01") ||
         left.adapter.priority - right.adapter.priority ||
         left.adapterId.localeCompare(right.adapterId),
     );
@@ -341,17 +350,30 @@ function registryOptions(env: NodeJS.ProcessEnv, fetchImpl?: FetchImpl) {
 export function planFinanceSourceHeartbeat(
   options: Pick<
     HeartbeatOptions,
-    "env" | "asOf" | "fetchImpl" | "realtimeAdapters" | "collectionAdapters"
+    | "env"
+    | "directory"
+    | "workspaceDir"
+    | "asOf"
+    | "fetchImpl"
+    | "realtimeAdapters"
+    | "collectionAdapters"
   > = {},
 ): FinanceSourceHeartbeatPlan {
   const env = options.env ?? process.env;
   const asOf = options.asOf ?? new Date().toISOString();
-  const configured = registryOptions(env, options.fetchImpl);
-  const candidates = selectCandidates(
-    asOf,
-    options.realtimeAdapters ?? createFinanceRealtimeSourceRegistry(configured.realtime),
-    options.collectionAdapters ?? createFinanceMarketCollectionRegistry(configured.collection),
+  const configured = registryOptions(
+    options.env ??
+      resolveFinanceCredentialEnv({
+        ...env,
+        LCX_FINANCE_STATE_DIR: resolveFinanceStateDir(options).directory,
+      }),
+    options.fetchImpl,
   );
+  const realtimeAdapters =
+    options.realtimeAdapters ?? createFinanceRealtimeSourceRegistry(configured.realtime);
+  const collectionAdapters =
+    options.collectionAdapters ?? createFinanceMarketCollectionRegistry(configured.collection);
+  let candidates = selectCandidates(asOf, realtimeAdapters, collectionAdapters);
   return {
     networkCalled: false,
     asOf,
@@ -366,7 +388,8 @@ export function planFinanceSourceHeartbeat(
 }
 
 /**
- * Probe at most one cheap representative per provider and persist only a redacted liveness record.
+ * Rotate at most one supported representative per provider per due interval; retain endpoint history.
+ * Successful financial-statement probes also feed the existing fundamental store.
  * Callers must opt into this function for network activity; the source-health read path remains
  * strictly local and calls `readFinanceSourceHeartbeat` instead.
  */
@@ -396,12 +419,19 @@ export async function runFinanceSourceHeartbeat(options: HeartbeatOptions = {}) 
     );
   }
   const stateDir = resolveFinanceStateDir(options).directory;
-  const configured = registryOptions(env, options.fetchImpl);
-  const candidates = selectCandidates(
-    asOf,
-    options.realtimeAdapters ?? createFinanceRealtimeSourceRegistry(configured.realtime),
-    options.collectionAdapters ?? createFinanceMarketCollectionRegistry(configured.collection),
+  const configured = registryOptions(
+    options.env ??
+      resolveFinanceCredentialEnv({
+        ...env,
+        LCX_FINANCE_STATE_DIR: resolveFinanceStateDir(options).directory,
+      }),
+    options.fetchImpl,
   );
+  const realtimeAdapters =
+    options.realtimeAdapters ?? createFinanceRealtimeSourceRegistry(configured.realtime);
+  const collectionAdapters =
+    options.collectionAdapters ?? createFinanceMarketCollectionRegistry(configured.collection);
+  let candidates = selectCandidates(asOf, realtimeAdapters, collectionAdapters);
   const requestedConcurrency = options.maxSourceConcurrency ?? 4;
   if (
     !Number.isSafeInteger(requestedConcurrency) ||
@@ -424,12 +454,43 @@ export async function runFinanceSourceHeartbeat(options: HeartbeatOptions = {}) 
   const releaseLock = await acquireFinanceSourceHeartbeatLock(stateDir, maxLockHoldMs);
   try {
     const previous = await readFinanceSourceHeartbeat({ directory: stateDir });
+    const endpointRecords: Record<string, FinanceSourceHeartbeatRecord> = {
+      ...Object.fromEntries(
+        Object.values(previous.records).map((record) => [record.adapterId, record]),
+      ),
+      ...previous.endpointRecords,
+    };
+    candidates = selectCandidates(
+      asOf,
+      realtimeAdapters,
+      collectionAdapters,
+      endpointRecords,
+      checkedAt,
+    );
+    const collectionWrites: {
+      adapterId: string;
+      status: "stored" | "failed" | "empty";
+      snapshotId?: string;
+      recordCount: number;
+    }[] = [];
     const due = candidates.filter((candidate) => {
       if (options.force) {
         return true;
       }
       const previousRecord = previous.records[candidate.provider];
-      return !previousRecord || Date.parse(previousRecord.nextCheckAt) <= checkedAt;
+      if (!previousRecord) {
+        return true;
+      }
+      if (previousRecord.reason === "rate_limited") {
+        return Date.parse(previousRecord.nextCheckAt) <= checkedAt;
+      }
+      if (previousRecord.adapterId !== candidate.adapterId) {
+        return (
+          Date.parse(previousRecord.checkedAt) + intervalMs <= checkedAt &&
+          Date.parse(endpointRecords[candidate.adapterId]?.nextCheckAt ?? "1970-01-01") <= checkedAt
+        );
+      }
+      return Date.parse(previousRecord.nextCheckAt) <= checkedAt;
     });
     const skippedProviders = candidates
       .filter((candidate) => !due.includes(candidate))
@@ -469,7 +530,53 @@ export async function runFinanceSourceHeartbeat(options: HeartbeatOptions = {}) 
                       .then(() => undefined)
                   : (candidate.adapter as FinanceMarketCollectionAdapter)
                       .collect(candidate.request as FinanceMarketCollectionRequest, signal)
-                      .then(() => undefined),
+                      .then((records) => {
+                        const request = candidate.request as FinanceMarketCollectionRequest;
+                        if (request.collection !== "financial_statements") {
+                          return;
+                        }
+                        if (!records.length) {
+                          collectionWrites.push({
+                            adapterId: candidate.adapterId,
+                            status: "empty",
+                            recordCount: 0,
+                          });
+                          return;
+                        }
+                        try {
+                          const snapshotId = appendFinanceFundamentalSnapshot({
+                            directory: stateDir,
+                            sourceId: candidate.adapterId,
+                            capturedAt: new Date(now()).toISOString(),
+                            receipt: {
+                              schemaVersion: FINANCE_MARKET_COLLECTION_SCHEMA_VERSION,
+                              refreshId: `heartbeat:${candidate.adapterId}:${asOf}`,
+                              boundary: "finance_market_collection_research_only",
+                              request,
+                              status: "needs_review",
+                              records,
+                              sourceAttempts: [],
+                              selectedSourceIds: [candidate.adapterId],
+                              missingEvidence: ["heartbeat_collection_not_research_assessment"],
+                              requiredNextSteps: [],
+                              adaptersCalled: true,
+                              notTouched: ["trading"],
+                            },
+                          });
+                          collectionWrites.push({
+                            adapterId: candidate.adapterId,
+                            status: "stored",
+                            snapshotId,
+                            recordCount: records.length,
+                          });
+                        } catch {
+                          collectionWrites.push({
+                            adapterId: candidate.adapterId,
+                            status: "failed",
+                            recordCount: records.length,
+                          });
+                        }
+                      }),
             );
           });
           return {
@@ -487,7 +594,7 @@ export async function runFinanceSourceHeartbeat(options: HeartbeatOptions = {}) 
     );
     const records: Record<string, FinanceSourceHeartbeatRecord> = { ...previous.records };
     for (const result of results) {
-      const prior = previous.records[result.provider];
+      const prior = endpointRecords[result.record.adapterId];
       const failures =
         result.record.status === "healthy"
           ? 0
@@ -495,7 +602,8 @@ export async function runFinanceSourceHeartbeat(options: HeartbeatOptions = {}) 
       // Keep provider Retry-After and quota reset authoritative; repeated failures
       // must not consume the same diagnostic budget every five minutes forever.
       const delay =
-        result.record.reason === "forbidden"
+        result.record.reason === "forbidden" ||
+        [401, 402, 403].includes(result.record.httpStatus ?? 0)
           ? 6 * 60 * 60_000
           : Math.min(
               60 * 60_000,
@@ -504,6 +612,13 @@ export async function runFinanceSourceHeartbeat(options: HeartbeatOptions = {}) 
       records[result.provider] = {
         ...result.record,
         consecutiveFailures: failures,
+        ...(collectionWrites.find((write) => write.adapterId === result.record.adapterId)
+          ? {
+              collectionWrite: collectionWrites.find(
+                (write) => write.adapterId === result.record.adapterId,
+              ),
+            }
+          : {}),
         nextCheckAt:
           failures === 0
             ? result.record.nextCheckAt
@@ -511,13 +626,24 @@ export async function runFinanceSourceHeartbeat(options: HeartbeatOptions = {}) 
                 Math.max(Date.parse(result.record.nextCheckAt), checkedAt + delay),
               ).toISOString(),
       };
+      endpointRecords[result.record.adapterId] = records[result.provider];
     }
-    const state = await persistFinanceSourceHeartbeat(stateDir, records, checkedAt);
+    const state = await persistFinanceSourceHeartbeat(
+      stateDir,
+      records,
+      checkedAt,
+      endpointRecords,
+    );
     return {
       schemaVersion: FINANCE_SOURCE_HEARTBEAT_SCHEMA_VERSION,
       networkCalled: due.length > 0,
       asOf,
       state,
+      collectionWrites,
+      endpointCoverage: {
+        checkedEndpointCount: Object.keys(endpointRecords).length,
+        scope: "registered_representative_requests_only" as const,
+      },
       checkedProviders: due.map((candidate) => candidate.provider),
       skippedProviders,
       providerCount: candidates.length,

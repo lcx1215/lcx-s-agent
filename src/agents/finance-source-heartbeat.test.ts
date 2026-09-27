@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ApiCallError } from "./api-call-contract.js";
 import type { FinanceDataGatewayObservationInput } from "./finance-data-gateway.js";
+import { readFinanceFundamentalSnapshot } from "./finance-fundamental-store.js";
 import type { FinanceRealtimeSourceAdapter } from "./finance-realtime-source-registry.js";
 import {
   planFinanceSourceHeartbeat,
@@ -52,6 +53,89 @@ function adapter(
 }
 
 describe("finance provider heartbeat", () => {
+  it("rotates routes across runs without resetting each endpoint failure history", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "heartbeat-rotate-"));
+    roots.push(root);
+    let now = Date.parse("2026-09-22T07:00:00.000Z");
+    const adapters = [
+      adapter("rotate_a", async () => {
+        throw new ApiCallError("forbidden", 403);
+      }),
+      adapter("rotate_b", async (request) => observation(request)),
+    ];
+    const run = () =>
+      runFinanceSourceHeartbeat({
+        directory: root,
+        now: () => now,
+        realtimeAdapters: adapters,
+        collectionAdapters: [],
+      });
+    const first = await run();
+    expect(first.state.records.rotate.adapterId).toBe("rotate_a");
+    now += 15 * 60_000;
+    const second = await run();
+    expect(second.state.records.rotate.adapterId).toBe("rotate_b");
+    expect(second.state.endpointRecords?.rotate_a.reason).toBe("forbidden");
+    expect(second.state.endpointRecords?.rotate_b.adapterId).toBe("rotate_b");
+    expect((await readFinanceSourceHeartbeat({ directory: root })).endpointRecords).toEqual(
+      second.state.endpointRecords,
+    );
+    expect(second.checkedProviders).toEqual(["rotate"]);
+  });
+  it("stores successful statement payloads for research instead of discarding the heartbeat data", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "heartbeat-statements-"));
+    roots.push(root);
+    const asOf = "2026-09-22T07:00:00.000Z";
+    const result = await runFinanceSourceHeartbeat({
+      directory: root,
+      asOf,
+      now: () => Date.parse(asOf),
+      realtimeAdapters: [],
+      collectionAdapters: [
+        {
+          id: "sec_edgar_annual_operating",
+          providerName: "SEC",
+          providerRole: "official_or_issuer_reference",
+          priority: 1,
+          sampleRequest: {
+            instrument: "AAPL",
+            assetClass: "us_equity",
+            collection: "financial_statements",
+          },
+          supports: (r) => r.collection === "financial_statements",
+          collect: async () => [
+            {
+              itemId: "annual",
+              collection: "financial_statements",
+              providerName: "SEC",
+              providerRole: "official_or_issuer_reference",
+              sourceFamily: "official_filing",
+              sourceTimestamp: "2026-02-01T00:00:00Z",
+              observedAt: asOf,
+              delayStatus: "official_lagged",
+              sourceUrlOrArtifact: "https://example.test/filing",
+              data: { revenue: 100, date: "2025-12-31", filingDate: "2026-02-01" },
+            },
+          ],
+        },
+      ],
+    });
+    expect(result.collectionWrites[0]).toMatchObject({ status: "stored", recordCount: 1 });
+    const stored = readFinanceFundamentalSnapshot({
+      directory: root,
+      instrument: "AAPL",
+      assetClass: "us_equity",
+      collection: "financial_statements",
+      sourceId: "sec_edgar_annual_operating",
+      asOf,
+      knownBy: asOf,
+      maxAgeMs: 0,
+    });
+    expect(stored?.receipt.records[0].data.revenue).toBe(100);
+    expect(Object.values(result.state.endpointRecords ?? {})[0].collectionWrite?.snapshotId).toBe(
+      stored?.snapshotId,
+    );
+  });
   it("backs off repeated failures and resets after recovery", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "finance-heartbeat-backoff-"));
     roots.push(root);

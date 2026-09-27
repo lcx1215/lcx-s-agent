@@ -48,7 +48,7 @@ export async function runFinanceSourceHeartbeatCli(
 
   if (!live) {
     const [plan, state] = await Promise.all([
-      planFinanceSourceHeartbeat({ asOf }),
+      planFinanceSourceHeartbeat({ asOf, directory }),
       readFinanceSourceHeartbeat({ directory }),
     ]);
     const result = { ...plan, persistedState: state, liveRequired: true };

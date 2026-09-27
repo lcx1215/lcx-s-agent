@@ -39,12 +39,18 @@ export type FinanceSourceHeartbeatRecord = Readonly<{
   transportError?: string;
   retryAfterMs?: number;
   consecutiveFailures?: number;
+  collectionWrite?: {
+    status: "stored" | "failed" | "empty";
+    snapshotId?: string;
+    recordCount: number;
+  };
 }>;
 
 export type FinanceSourceHeartbeatState = Readonly<{
   schemaVersion: typeof FINANCE_SOURCE_HEARTBEAT_SCHEMA_VERSION;
   updatedAt: string;
   records: Readonly<Record<string, FinanceSourceHeartbeatRecord>>;
+  endpointRecords?: Readonly<Record<string, FinanceSourceHeartbeatRecord>>;
 }>;
 
 const EMPTY_STATE: FinanceSourceHeartbeatState = Object.freeze({
@@ -131,7 +137,24 @@ function parseState(value: unknown): FinanceSourceHeartbeatState | undefined {
   if (Object.keys(records).some((provider) => !provider || !validRecord(records[provider]))) {
     return undefined;
   }
+  const endpointRecords = state.endpointRecords;
+  if (
+    endpointRecords !== undefined &&
+    (typeof endpointRecords !== "object" ||
+      endpointRecords === null ||
+      Array.isArray(endpointRecords) ||
+      Object.values(endpointRecords).some((record) => !validRecord(record)))
+  ) {
+    return undefined;
+  }
   return {
+    ...(endpointRecords
+      ? {
+          endpointRecords: Object.freeze({ ...endpointRecords }) as Readonly<
+            Record<string, FinanceSourceHeartbeatRecord>
+          >,
+        }
+      : {}),
     schemaVersion: FINANCE_SOURCE_HEARTBEAT_SCHEMA_VERSION,
     updatedAt: state.updatedAt,
     records: Object.freeze({ ...records }) as Readonly<
@@ -197,11 +220,13 @@ export async function persistFinanceSourceHeartbeat(
   directory: string,
   records: Readonly<Record<string, FinanceSourceHeartbeatRecord>>,
   now: number,
+  endpointRecords?: Readonly<Record<string, FinanceSourceHeartbeatRecord>>,
 ): Promise<FinanceSourceHeartbeatState> {
   await fs.mkdir(directory, { recursive: true, mode: 0o700 });
   const state: FinanceSourceHeartbeatState = {
     schemaVersion: FINANCE_SOURCE_HEARTBEAT_SCHEMA_VERSION,
     updatedAt: new Date(now).toISOString(),
+    ...(endpointRecords ? { endpointRecords: Object.freeze({ ...endpointRecords }) } : {}),
     records: Object.freeze({ ...records }),
   };
   const file = financeSourceHeartbeatPath(directory);

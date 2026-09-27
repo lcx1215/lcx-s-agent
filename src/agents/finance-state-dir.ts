@@ -265,7 +265,7 @@ export function financeQuotaProbesDir(directory: string): string {
   return path.join(directory, "quota-probes");
 }
 
-/** Durable provider-level liveness observations; one record per provider, never per route. */
+/** Durable latest provider observations plus optional per-endpoint probe history. */
 export const FINANCE_SOURCE_HEARTBEAT_FILENAME = "source-heartbeats.json" as const;
 
 export function financeSourceHeartbeatPath(directory: string): string {

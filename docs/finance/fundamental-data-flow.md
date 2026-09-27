@@ -97,3 +97,33 @@ Reviewer instructions require candidate- and horizon-relevant evidence for a vet
 this instruction does not independently prove the semantic validity of model objections.
 Normal scheduled collection, candidate generation, actual review and order/fill remain
 separate runtime evidence layers.
+
+## Resident collection and short/long horizon coordination
+
+The existing finance scheduler owns the source heartbeat; no additional daemon is
+required. Each due provider contributes at most one representative request per run.
+Routes rotate by least recent endpoint observation, with endpoint history persisted
+alongside the compatible latest-provider view. A failed entitled route is retained even
+when another route works. Provider rate-limit cooldowns and diagnostic quota lanes still
+apply; unsupported requests and missing credentials do not become callable by rotation.
+
+Successful financial-statement probes are stored in the existing fundamental database,
+with a separate durable collection-write result. A healthy transport is not a verified
+research conclusion or proof that every endpoint is healthy. These are representative
+collection requests, not yet a complete active-portfolio acquisition schedule.
+
+Two separate decisions must remain explicit:
+
+- Capital weights already belong to `finance-research-portfolio-plan` and
+  `finance-portfolio-composition`: eligible strategy IDs, cited evidence, account budget,
+  cash remainder and declared conflict policy. A model proposal cannot create a new
+  strategy or silently redirect another strategy's budget.
+- Review emphasis belongs to the operation's horizon. Intraday timing is dominated by
+  the declared price signal, liquidity, cost, stop and session. Fundamental information
+  can expose relevant event/solvency risk but cannot cancel a protective exit. A business
+  value sleeve uses business cash flow and valuation; short-term prices inform execution.
+  A daily schedule alone does not establish a value-investment mandate.
+
+No new fixed short/long percentage is imposed. Missing context is not automatically
+negative evidence; any veto needs a concrete risk relevant to the candidate. Model
+objections and their claimed numerical thresholds remain hypotheses requiring evidence.
