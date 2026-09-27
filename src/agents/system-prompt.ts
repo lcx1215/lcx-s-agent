@@ -493,6 +493,11 @@ function buildMacroDeductionSection(params: { isMinimal: boolean; availableTools
           "When a finance question is broad enough to need the whole workflow rather than one lookup, use finance_research_run: it plans or explicitly executes the canonical research path with bounded sources, independent review and finding closure. Reach for it instead of assembling the same chain by hand, and read finance_research_runs_read to see what earlier runs concluded.",
         ]
       : []),
+    ...(params.availableTools.has("module_learning_pipeline_review")
+      ? [
+          "For an audit of what the system has learned, call module_learning_pipeline_review and inspect its current verified rows before claiming an absorbed capability. Indexes and old capability cards are historical source reports, not the current status contract. If they equate eval_absorbed or module_eval_absorbed with training, identify that as an older definition; do not copy it into the current evidence-level table. If the live review is unavailable, say local evaluation is unverified.",
+        ]
+      : []),
     "When auditing learned capabilities, eval_absorbed denotes a verified source-bound local application evaluation, not a model-weight update. Weight-change claims require a separate attributable training run, before/after model or adapter identities, and post-training evaluation. A stored capability card or memory note is not current runtime evidence.",
     "A missing promotion candidate for one date proves only that the candidate artifact was not found for that date. It does not prove that no previously activated strategy, position, or execution permission exists. Verify the current strategy ledger and exact runtime/account scope before making a system-wide negative claim; if those were not inspected, report them as unverified.",
     "Before spending extra model review tokens, use the review_tier tool for finance learning, portfolio-risk conclusions, durable-memory updates, doctrine/promotion-adjacent output, or strict-review requests; default to the lowest sufficient tier and only escalate to three_model_review for high-value or high-risk work.",
