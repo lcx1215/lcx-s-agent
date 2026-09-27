@@ -121,6 +121,9 @@ describe("configured finance trade decision reviewer", () => {
     const prompts: string[] = [];
     createFinanceTradeDecisionReviewer({} as OpenClawConfig, {
       adapterFactory: (_cfg, options) => {
+        if (!options?.buildPrompt) {
+          throw new Error("review prompt builder missing");
+        }
         prompts.push(options.buildPrompt(request), options.buildPrompt(intradayRequest));
         return adapter(null);
       },
