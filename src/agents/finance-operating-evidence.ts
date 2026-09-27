@@ -1,3 +1,8 @@
+import {
+  appendFinanceFundamentalSnapshot,
+  readFinanceFundamentalSnapshot,
+} from "./finance-fundamental-store.js";
+import type { FinanceMarketCollectionAdapter } from "./finance-market-collection-registry.js";
 import { runFinanceMarketCollectionRefresh } from "./finance-market-collection-registry.js";
 import { createRegisteredCapabilityAdapters } from "./finance-registered-capability-adapters.js";
 import type { FinanceResearchEvidence } from "./finance-research-execution-bridge.js";
@@ -35,7 +40,9 @@ export function normalizeFinanceOperatingStatements(
   );
   const periods = [...new Set(known.map(({ data }) => String(data.date)))].toSorted().toReversed();
   for (const period of periods) {
-    const rows = known.filter(({ data }) => data.date === period);
+    const rows = known
+      .filter(({ data }) => data.date === period)
+      .toSorted((a, b) => publicationTime(b.data) - publicationTime(a.data));
     const income = rows.find((row) => row.sourceId === "fmp_income_statement_annual");
     const cash = rows.find((row) => row.sourceId === "fmp_cash_flow_statement_annual");
     const balance = rows.find((row) => row.sourceId === "fmp_balance_sheet_statement_annual");
@@ -74,48 +81,139 @@ export async function gatherFinanceOperatingEvidence(input: {
   instrument: string;
   asOf: string;
   fmpApiKey?: string;
+  alphaVantageApiKey?: string;
+  directory?: string;
+  write?: boolean;
+  adapters?: readonly FinanceMarketCollectionAdapter[];
+  now?: () => string;
 }) {
   const ids = [
     "fmp_income_statement_annual",
     "fmp_cash_flow_statement_annual",
     "fmp_balance_sheet_statement_annual",
   ];
-  const adapters = createRegisteredCapabilityAdapters({ fmpApiKey: input.fmpApiKey });
+  const adapters =
+    input.adapters ??
+    createRegisteredCapabilityAdapters({
+      fmpApiKey: input.fmpApiKey,
+      alphaVantageApiKey: input.alphaVantageApiKey,
+    });
+  const fallbackIds: Record<string, string> = {
+    fmp_income_statement_annual: "alpha_vantage_income_statement",
+    fmp_cash_flow_statement_annual: "alpha_vantage_cash_flow",
+    fmp_balance_sheet_statement_annual: "alpha_vantage_balance_sheet",
+  };
+  const queueFallback = (id: string) => {
+    const fallback = fallbackIds[id];
+    if (fallback && adapters.some((a) => a.id === fallback)) {
+      ids.push(fallback);
+    }
+  };
+  const now = input.now ?? (() => new Date().toISOString());
+  const storage: { sourceId: string; access: string; snapshotId?: string }[] = [];
   const evidence: FinanceResearchEvidence[] = [];
   const statements: Statement[] = [];
   const issues: string[] = [];
   for (const id of ids) {
     try {
-      const result = await runFinanceMarketCollectionRefresh({
-        request: {
-          collection: "financial_statements",
-          instrument: input.instrument,
-          assetClass: "us_equity",
-          asOf: input.asOf,
-          limit: 3,
-        },
-        adapters: adapters.filter((a) => a.id === id),
+      const cached = input.directory
+        ? readFinanceFundamentalSnapshot({
+            directory: input.directory,
+            instrument: input.instrument,
+            assetClass: "us_equity",
+            collection: "financial_statements",
+            sourceId: id,
+            asOf: input.asOf,
+            knownBy: input.asOf,
+            maxAgeMs: 6 * 3600_000,
+          })
+        : undefined;
+      let result = cached?.receipt;
+      let snapshotId = cached?.snapshotId;
+      if (!result) {
+        result = await runFinanceMarketCollectionRefresh({
+          request: {
+            collection: "financial_statements",
+            instrument: input.instrument,
+            assetClass: "us_equity",
+            asOf: input.asOf,
+            limit: 3,
+          },
+          adapters: adapters.filter((a) => a.id === id),
+        });
+        if (input.directory && input.write) {
+          const capturedAt = now();
+          snapshotId = appendFinanceFundamentalSnapshot({
+            directory: input.directory,
+            sourceId: id,
+            capturedAt,
+            receipt: result,
+          });
+          // Consume the durable snapshot, not a second in-memory interpretation.
+          if (result.records.length) {
+            const stored = readFinanceFundamentalSnapshot({
+              directory: input.directory,
+              instrument: input.instrument,
+              assetClass: "us_equity",
+              collection: "financial_statements",
+              sourceId: id,
+              asOf: input.asOf,
+              knownBy: capturedAt,
+              maxAgeMs: 0,
+            });
+            if (!stored || stored.snapshotId !== snapshotId) {
+              throw new Error("fundamental snapshot readback failed");
+            }
+            result = stored.receipt;
+          }
+        }
+      }
+      storage.push({
+        sourceId: id,
+        access: cached
+          ? "database_reuse"
+          : snapshotId
+            ? result.records.length
+              ? "database_readback"
+              : "database_recorded_empty"
+            : result.adaptersCalled
+              ? "collected_unpersisted"
+              : "no_adapter",
+        snapshotId,
       });
       const rows = result.records.map((record) => record.data as Record<string, unknown>);
       if (!rows.length) {
-        issues.push(`${id}: no financial statements`);
+        const failures = result.sourceAttempts
+          .filter((a) => a.status === "failed")
+          .map((a) => a.error ?? "source unavailable");
+        issues.push(
+          `${id}: no financial statements${failures.length ? "; " + failures.join("; ") : ""}`,
+        );
+        queueFallback(id);
         continue;
       }
       statements.push(...rows.map((data) => ({ sourceId: id, data })));
       evidence.push({
         sourceId: id,
-        sourceUrlOrArtifact: `provider:fmp/${id.slice(4)}`,
+        sourceUrlOrArtifact: result.records[0].sourceUrlOrArtifact,
         independenceKey: `issuer:${input.instrument}:annual-statements`,
         description: "annual operating statement; publication and fiscal period retained",
-        detail: JSON.stringify(rows),
+        detail: JSON.stringify({
+          snapshotId,
+          access: cached ? "database_reuse" : "collected",
+          collectedAt: cached?.capturedAt ?? result.records[0].observedAt,
+          records: result.records,
+        }),
       });
     } catch {
-      issues.push(`${id}: statement collection unavailable`);
+      issues.push(`${id}: statement collection or database verification unavailable`);
+      queueFallback(id);
     }
   }
   return {
     evidence,
     facts: normalizeFinanceOperatingStatements(input.instrument, input.asOf, statements),
     issues,
+    storage,
   };
 }

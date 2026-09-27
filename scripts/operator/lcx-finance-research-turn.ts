@@ -184,6 +184,7 @@ export async function runFinanceResearchTurn(
     throw new Error("--horizon-days must be 1..3650");
   }
   let fmpKey = "";
+  let statementAvKey = "";
   let lastPrice = 0;
   let lastPriceAt = "";
   if (deps.gatherEvidence) {
@@ -202,6 +203,7 @@ export async function runFinanceResearchTurn(
     }) as Record<string, unknown>;
     fmpKey = typeof env.FMP_API_KEY === "string" ? env.FMP_API_KEY : "";
     const avKey = typeof env.ALPHA_VANTAGE_API_KEY === "string" ? env.ALPHA_VANTAGE_API_KEY : "";
+    statementAvKey = avKey;
     const window = defaultEvidenceWindow({ horizonDays });
 
     // Gather 1: price structure from full OHLCV.
@@ -652,7 +654,16 @@ export async function runFinanceResearchTurn(
       instrument,
       asOf: now,
       fmpApiKey: fmpKey,
+      directory: stateDirectory,
+      alphaVantageApiKey: statementAvKey,
+      write,
     });
+    process.stdout.write(
+      JSON.stringify({
+        operatingEvidenceStorage: gathered.storage,
+        operatingEvidenceIssues: gathered.issues,
+      }) + "\n",
+    );
     evidence.push(...gathered.evidence);
     operatingFacts = gathered.facts;
   }
