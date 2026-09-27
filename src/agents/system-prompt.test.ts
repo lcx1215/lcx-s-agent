@@ -18,6 +18,8 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("answer the requested decision directly");
     expect(prompt).toContain("without per-order human confirmation");
     expect(prompt).toContain("actual adapter receipts");
+    expect(prompt).toContain("never call it a guaranteed maximum loss");
+    expect(prompt).toContain("does not verify the truth of an unconfirmed report");
     expect(prompt).not.toContain(
       "convert the request into position-risk research, not an action stance",
     );

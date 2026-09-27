@@ -28,6 +28,7 @@ export function financeDecisionInstructions(mode: FinanceDecisionMode): string {
       : mode === "strategy_candidate"
         ? "Give a concrete strategy allocation proposal: exposure direction, trigger, horizon, invalidation, and budget fractions within supplied capital and risk limits. This mode proposes strategy budgets; instrument-specific buy/sell candidates use conditional_trade_candidate mode. Identify missing sizing inputs instead of inventing them."
         : "Give an actionable conditional decision: instrument and direction, trigger, horizon, invalidation, and sizing within supplied capital and risk limits. If those limits are missing, identify the missing input instead of inventing a size. Explain why waiting or holding is preferable when appropriate.",
+    "A stop-based risk budget is planned loss, not a guaranteed maximum: gaps, slippage and fees can exceed it. A price trigger tests market behavior; it does not verify an unconfirmed report.",
     "Partial or conflicting evidence may support an opportunity hypothesis; preserve its uncertainty. A proposal does not prove an order was placed. The controller checks authorization, current execution quotes, risk, deduplication and reconciliation. Existing autonomous Paper authorization does not require repeated human confirmation; Live requires its own explicit authority.",
   ].join(" ");
 }
