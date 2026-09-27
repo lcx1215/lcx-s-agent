@@ -1085,3 +1085,58 @@ describe("typed nonmarket finance evidence", () => {
     ).toThrow("evidence.kind");
   });
 });
+
+describe("institutional counterevidence laundering", () => {
+  it.each(["contradicts", "context", "unknown", "supports"] as const)(
+    "only supporting evidence can ground a number (%s)",
+    async (relation) => {
+      const result = await runQualityHarness({
+        request: {
+          task: "Review the current NVDA stock price evidence",
+          evidence: [
+            { id: "policy", source: "policy", text: "Research only; no execution authority." },
+            { id: "quote", source: "fixture-feed", text: "As of 2026-09-06 NVDA price 480 USD." },
+          ],
+        },
+        maxAttempts: 1,
+        verify: () => ({ status: "passed", summary: "fixture verifier", details: [] }),
+        modelInvoker: async (raw) => {
+          const current = raw as QualityHarnessModelRequest;
+          if (current.stage === "intake") {
+            return { kind: "plan", requirements: ["bounded research"], missingEvidence: [] };
+          }
+          if (current.stage === "draft" || current.stage === "format") {
+            return {
+              kind: "artifact",
+              artifact: {
+                answer: "NVDA current price is 480 USD. Research only.",
+                claims: [
+                  {
+                    id: "price",
+                    text: "NVDA current price is 480 USD.",
+                    status: "supported",
+                    evidenceIds: ["policy", "quote"],
+                    epistemicClass: "source_observation",
+                    evidenceRelations: [
+                      { evidenceId: "policy", relation: "supports" },
+                      { evidenceId: "quote", relation },
+                    ],
+                  },
+                ],
+              },
+            };
+          }
+          return passReview();
+        },
+      });
+      if (relation === "supports") {
+        expect(result.status).toBe("verified");
+      } else {
+        expect(result.status).toBe("quality-failed");
+        expect(
+          result.attempts[0].gates.find((gate) => gate.id === "finance_answer_safety")?.passed,
+        ).toBe(false);
+      }
+    },
+  );
+});

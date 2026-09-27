@@ -26,7 +26,7 @@ function snapshotWith(values: Array<string | number>): FinanceDataGatewaySnapsho
     qualityStatus: "ready",
     boundary: "research_only",
     normalizedFields: values.map((value, index) => ({
-      name: `f${index}`,
+      name: index === 0 ? "last_price" : `f${index}`,
       value,
       providerName: "test_provider",
       providerRole: "official_or_issuer_reference" as FinanceDataProviderRole,
@@ -116,7 +116,7 @@ describe("checkAnswerGrounding", () => {
       ]),
       snapshot: snapshotWith([212.44]),
     });
-    expect(result.verdict).toBe("verified");
+    expect(result.verdict).toBe("not_verifiable");
     expect(result.ungrounded).toHaveLength(0);
     expect(result.reasons.join(" ")).toMatch(/not observations/);
   });
@@ -132,7 +132,9 @@ describe("checkAnswerGrounding", () => {
 
   it("accepts a float that differs only by representation noise", () => {
     const result = checkAnswerGrounding({
-      answerText: answerWithFigures([{ kind: "observed", value: 212.4400000001 }]),
+      answerText: answerWithFigures([
+        { kind: "observed", name: "last_price", value: 212.4400000001 },
+      ]),
       snapshot: snapshotWith([212.44]),
     });
     expect(result.verdict).toBe("verified");
@@ -175,7 +177,7 @@ describe("derived figures", () => {
     const result = checkAnswerGrounding({
       answerText: answerWithFigures([{ kind: "derived", name: "portfolio_vol", value: 0.9999 }]),
     });
-    expect(result.verdict).toBe("verified");
+    expect(result.verdict).toBe("not_verifiable");
     expect(result.reasons.join(" ")).toMatch(/recorded, not verified/);
   });
 });
@@ -271,4 +273,54 @@ describe("collectObservedValues", () => {
     const values = collectObservedValues(snapshotWith([212.44, "212.44"]));
     expect(values.size).toBe(1);
   });
+});
+
+describe("institutional evidence identity", () => {
+  it.each(["cited", "derived", "proposed", "count"])(
+    "does not certify an unchecked %s declaration",
+    (kind) => {
+      expect(
+        checkAnswerGrounding({ answerText: answerWithFigures([{ kind, value: 70 }]) }).verdict,
+      ).toBe("not_verifiable");
+    },
+  );
+  it("does not use the same magnitude under another field or unit", () => {
+    const snapshot = snapshotWith([2.4]);
+    snapshot.normalizedFields[0] = {
+      ...snapshot.normalizedFields[0],
+      name: "inflation_yoy",
+      unit: "percent",
+    };
+    for (const [name, unit] of [
+      ["recession_probability", "percent"],
+      ["inflation_yoy", "USD"],
+    ]) {
+      expect(
+        checkAnswerGrounding({
+          snapshot,
+          answerText: answerWithFigures([{ kind: "observed", name, unit, value: 2.4 }]),
+        }).verdict,
+      ).toBe("ungrounded");
+    }
+    expect(
+      checkAnswerGrounding({
+        snapshot,
+        answerText: answerWithFigures([
+          { kind: "observed", name: "inflation_yoy", unit: "percent", value: 2.4 },
+        ]),
+      }).verdict,
+    ).toBe("verified");
+  });
+  it.each(["blocked", "needs_review"] as const)(
+    "does not certify numbers from a %s snapshot",
+    (qualityStatus) => {
+      const snapshot = { ...snapshotWith([2.4]), qualityStatus };
+      expect(
+        checkAnswerGrounding({
+          snapshot,
+          answerText: answerWithFigures([{ kind: "observed", name: "last_price", value: 2.4 }]),
+        }).verdict,
+      ).toBe("not_verifiable");
+    },
+  );
 });

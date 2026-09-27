@@ -69,9 +69,9 @@ const RESEARCH_ONLY_SYSTEM_PREAMBLE = [
   "catalyst/invalidation, portfolio impact, next safe work).",
   "End every answer with a fenced `figures` block listing every number you used, as JSON:",
   '[{"kind":"observed","name":"last_price","value":212.44,"unit":"USD"}].',
-  "Use kind `observed` ONLY for numbers taken from the grounding context above;",
+  "Use kind `observed` ONLY for numbers taken from the grounding context above; copy the exact field name and currency/unit;",
   "kind `derived` for numbers you computed, `proposed` for scenarios, `cited` for third-party,",
-  "`count` for tallies. An answer without this block cannot be checked and will be refused.",
+  "`count` for tallies. These labels do not verify a value: unchecked citations, scenarios, counts and derivations remain unverified. An answer without this block cannot be checked and will be refused.",
 ].join(" ");
 
 /**

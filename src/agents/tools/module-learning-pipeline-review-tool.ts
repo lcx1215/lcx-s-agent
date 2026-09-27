@@ -531,7 +531,7 @@ export function buildModuleLearningPipelineReview(params: {
             : row.status === "retrieval_ready"
               ? "Run module-specific application validation on a fresh adjacent task before claiming application-ready learning."
               : row.status === "application_ready"
-                ? "Add Qwen eval or training absorption evidence plus keep/downrank/discard decision before claiming eval_absorbed."
+                ? "Add verified source-bound local application evaluation plus a keep/downrank/discard decision before claiming eval_absorbed; model training is assessed separately."
                 : "Fix receipt status or boundary fields before using this as module-learning evidence.",
     }));
   const proofGapSummary = rows.reduce<Record<string, number>>((summary, row) => {
@@ -556,7 +556,7 @@ export function buildModuleLearningPipelineReview(params: {
           : row.nextProofOwner === "module_learning_pipeline_apply_validation"
             ? "Add module capability/retrieval/apply validation evidence and a fresh adjacent task."
             : row.nextProofOwner === "local_brain_eval_or_training_absorption"
-              ? "Wait for or attach Qwen eval/training absorption evidence through the existing local-brain path."
+              ? "Attach source-bound local application evaluation with verified check artifacts. The legacy proof-owner name does not establish model training."
               : row.nextProofOwner === "operator_keep_downrank_discard_decision"
                 ? "Record an explicit keep/downrank/discard decision after reviewing the eval or application evidence."
                 : row.nextProofOwner === "boundary_repair"

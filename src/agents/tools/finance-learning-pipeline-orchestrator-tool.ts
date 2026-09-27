@@ -21,6 +21,8 @@ import {
 } from "./finance-learning-retrieval-review-tool.js";
 import { createFinanceResearchSourceWorkbenchTool } from "./finance-research-source-workbench-tool.js";
 import {
+  inspectEvidenceFile,
+  verifyApplicationEvaluation,
   MODULE_LEARNING_DECISIONS,
   MODULE_LEARNING_TARGETS,
 } from "./module-learning-pipeline-plan-tool.js";
@@ -271,7 +273,7 @@ async function writeLearningRetrievalReceipt(params: {
   freshAdjacentApplicationTask: string | undefined;
   keepDownrankDiscardDecision: string | undefined;
   trainingOrEvalAbsorptionEvidencePath: string | undefined;
-  sourceIntakeEvidenceChain: Record<string, unknown>;
+  sourceIntakeEvidenceChain: Awaited<ReturnType<typeof buildSourceIntakeEvidenceChain>>;
 }): Promise<string> {
   const preflightCandidateCount = countRetrievedCandidates(params.preflightCapabilityRetrieval);
   const postAttachCandidateCount = countRetrievedCandidates(params.postAttachCapabilityRetrieval);
@@ -301,20 +303,23 @@ async function writeLearningRetrievalReceipt(params: {
     workspaceDir: params.workspaceDir,
     receiptRelPath,
     buildContent: (normalizedReceiptRelPath) => {
+      const status = chooseSourceIntakeStatus({
+        sourceArtifactPresent: true,
+        retrievalReceiptPath: normalizedReceiptRelPath,
+        applicationValidationReceiptPath,
+        evaluationVerified: params.sourceIntakeEvidenceChain.evaluationVerified,
+        freshAdjacentApplicationTask: params.freshAdjacentApplicationTask,
+        keepDownrankDiscardDecision: params.keepDownrankDiscardDecision,
+      });
       const sourceIntakeEvidenceChain = {
         ...params.sourceIntakeEvidenceChain,
         retrievalReceiptPath: normalizedReceiptRelPath,
-        status:
-          applicationValidationReceiptPath &&
-          params.trainingOrEvalAbsorptionEvidencePath &&
-          params.freshAdjacentApplicationTask &&
-          hasKeepDownrankDiscardDecision(params.keepDownrankDiscardDecision)
-            ? "eval_absorbed"
-            : applicationValidationReceiptPath
-              ? "application_ready"
-              : "retrieval_ready",
+        status,
+        evalAbsorbed: status === "eval_absorbed",
         readyForModulePlanReceipt: !missingEvidenceAfterReceipt.some(
-          (item) => item !== "training_or_eval_absorption_evidence",
+          (item) =>
+            item !== "training_or_eval_absorption_evidence" &&
+            item !== "unverified_source_bound_application_eval",
         ),
         missingEvidence: missingEvidenceAfterReceipt,
       };
@@ -434,7 +439,7 @@ function chooseSourceIntakeStatus(params: {
   sourceArtifactPresent: boolean;
   retrievalReceiptPath: string | null;
   applicationValidationReceiptPath: string | null;
-  trainingOrEvalAbsorptionEvidencePath: string | undefined;
+  evaluationVerified: boolean;
   freshAdjacentApplicationTask: string | undefined;
   keepDownrankDiscardDecision: string | undefined;
 }): SourceIntakeStatus {
@@ -448,7 +453,7 @@ function chooseSourceIntakeStatus(params: {
     return "retrieval_ready";
   }
   if (
-    params.trainingOrEvalAbsorptionEvidencePath &&
+    params.evaluationVerified &&
     params.freshAdjacentApplicationTask &&
     hasKeepDownrankDiscardDecision(params.keepDownrankDiscardDecision)
   ) {
@@ -457,7 +462,8 @@ function chooseSourceIntakeStatus(params: {
   return "application_ready";
 }
 
-function buildSourceIntakeEvidenceChain(params: {
+async function buildSourceIntakeEvidenceChain(params: {
+  workspaceDir: string;
   targetModule: string | undefined;
   sourceUrlOrPath: string | null;
   normalizedArticleArtifactPaths: string[];
@@ -475,11 +481,26 @@ function buildSourceIntakeEvidenceChain(params: {
     params.normalizedArticleArtifactPaths.length > 0 ||
     params.normalizedReferenceArtifactPaths.length > 0 ||
     Boolean(params.sourceUrlOrPath);
+  const evaluationFile = await inspectEvidenceFile(
+    params.workspaceDir,
+    params.trainingOrEvalAbsorptionEvidencePath ?? null,
+  );
+  const evaluationVerified =
+    typeof params.targetModule === "string" &&
+    Boolean(params.sourceUrlOrPath && params.freshAdjacentApplicationTask) &&
+    evaluationFile !== null &&
+    (await verifyApplicationEvaluation({
+      workspaceDir: params.workspaceDir,
+      text: evaluationFile.text,
+      targetModule: params.targetModule,
+      sourceUrlOrPath: params.sourceUrlOrPath,
+      freshAdjacentApplicationTask: params.freshAdjacentApplicationTask ?? null,
+    }));
   const status = chooseSourceIntakeStatus({
     sourceArtifactPresent,
     retrievalReceiptPath: params.retrievalReceiptPath,
     applicationValidationReceiptPath: params.applicationValidationReceiptPath,
-    trainingOrEvalAbsorptionEvidencePath: params.trainingOrEvalAbsorptionEvidencePath,
+    evaluationVerified,
     freshAdjacentApplicationTask: params.freshAdjacentApplicationTask,
     keepDownrankDiscardDecision: params.keepDownrankDiscardDecision,
   });
@@ -494,11 +515,21 @@ function buildSourceIntakeEvidenceChain(params: {
     hasKeepDownrankDiscardDecision(params.keepDownrankDiscardDecision)
       ? null
       : "keep_downrank_or_discard_decision",
-    params.trainingOrEvalAbsorptionEvidencePath ? null : "training_or_eval_absorption_evidence",
+    params.trainingOrEvalAbsorptionEvidencePath
+      ? evaluationVerified
+        ? null
+        : "unverified_source_bound_application_eval"
+      : "training_or_eval_absorption_evidence",
   ].filter((item): item is string => Boolean(item));
 
   return {
     status,
+    evaluationVerified,
+    evidenceScope: {
+      assessed: "source_bound_local_application_evaluation",
+      modelTraining: "not_assessed",
+      tradingAuthority: "not_assessed",
+    },
     readyForModulePlanReceipt:
       Boolean(params.targetModule) &&
       sourceArtifactPresent &&
@@ -524,7 +555,7 @@ function buildSourceIntakeEvidenceChain(params: {
     keepDownrankDiscardDecision: params.keepDownrankDiscardDecision ?? "not_decided",
     trainingOrEvalAbsorptionEvidencePath: params.trainingOrEvalAbsorptionEvidencePath ?? null,
     claimBoundary:
-      "stored source is not learned capability; retrieval_ready is not application_ready; application_ready is not eval_absorbed without local-brain eval/training evidence and a keep/downrank/discard decision",
+      "eval_absorbed means verified source-bound local application evaluation plus an explicit decision; it establishes neither model training nor trading authority",
   };
 }
 
@@ -762,7 +793,8 @@ export function createFinanceLearningPipelineOrchestratorTool(options?: {
         const contentKind = await readContentKind(workspaceDir, normalizedArticleArtifactPaths[0]);
         if (contentKind === "metadata_only_reference") {
           const referencePaths = normalizedArticleArtifactPaths;
-          const sourceIntakeEvidenceChain = buildSourceIntakeEvidenceChain({
+          const sourceIntakeEvidenceChain = await buildSourceIntakeEvidenceChain({
+            workspaceDir,
             targetModule,
             sourceUrlOrPath: referencePaths[0] ?? intakeArgs.userProvidedUrl ?? null,
             normalizedArticleArtifactPaths: [],
@@ -815,7 +847,8 @@ export function createFinanceLearningPipelineOrchestratorTool(options?: {
       }
 
       if (normalizedArticleArtifactPaths.length === 0) {
-        const sourceIntakeEvidenceChain = buildSourceIntakeEvidenceChain({
+        const sourceIntakeEvidenceChain = await buildSourceIntakeEvidenceChain({
+          workspaceDir,
           targetModule,
           sourceUrlOrPath:
             normalizedReferenceArtifactPaths[0] ??
@@ -1071,7 +1104,8 @@ export function createFinanceLearningPipelineOrchestratorTool(options?: {
         null;
       const applicationValidationReceiptPath =
         applicationValidationReceiptSummary?.usageReceiptPath ?? null;
-      const sourceIntakeEvidenceChainBeforeReceipt = buildSourceIntakeEvidenceChain({
+      const sourceIntakeEvidenceChainBeforeReceipt = await buildSourceIntakeEvidenceChain({
+        workspaceDir,
         targetModule,
         sourceUrlOrPath,
         normalizedArticleArtifactPaths,
@@ -1106,7 +1140,8 @@ export function createFinanceLearningPipelineOrchestratorTool(options?: {
             sourceIntakeEvidenceChain: sourceIntakeEvidenceChainBeforeReceipt,
           })
         : null;
-      const sourceIntakeEvidenceChain = buildSourceIntakeEvidenceChain({
+      const sourceIntakeEvidenceChain = await buildSourceIntakeEvidenceChain({
+        workspaceDir,
         targetModule,
         sourceUrlOrPath,
         normalizedArticleArtifactPaths,
@@ -1141,7 +1176,7 @@ export function createFinanceLearningPipelineOrchestratorTool(options?: {
         writeReceipt: false,
         missingEvidence: sourceIntakeEvidenceChain.missingEvidence,
         claimBoundary:
-          "This is a plan candidate only. Writing a plan receipt is not Qwen eval absorption; eval_absorbed still requires local-brain eval/training evidence.",
+          "This is a plan candidate only. eval_absorbed requires verified source-bound local application evaluation; writing a receipt proves neither model training nor trading authority.",
       };
       const retrievalReview =
         learningIntent && retrievalReceiptPath

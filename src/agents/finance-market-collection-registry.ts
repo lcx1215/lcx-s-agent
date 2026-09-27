@@ -239,6 +239,33 @@ function normalizeRequest(request: FinanceMarketCollectionRequest): FinanceMarke
   };
 }
 
+function historicalMacroVintageVerified(
+  record: FinanceMarketCollectionItem,
+  request: FinanceMarketCollectionRequest,
+): boolean {
+  if (request.collection !== "macro_series" || request.asOfMode === "live_now") {
+    return true;
+  }
+  // Older collectors stamped observedAt from the requested asOf. That field alone
+  // cannot authenticate an archived capture, including when reusing cached receipts.
+  if (record.providerName !== "fred-macro-series") {
+    return false;
+  }
+  const vintageDay = new Date(Date.parse(request.asOf) - 86_400_000).toISOString().slice(0, 10);
+  const start = record.data.realtime_start;
+  const end = record.data.realtime_end;
+  return (
+    typeof start === "string" &&
+    typeof end === "string" &&
+    /^\d{4}-\d{2}-\d{2}$/u.test(start) &&
+    /^\d{4}-\d{2}-\d{2}$/u.test(end) &&
+    Number.isFinite(Date.parse(start)) &&
+    Number.isFinite(Date.parse(end)) &&
+    start <= vintageDay &&
+    end >= vintageDay
+  );
+}
+
 function collectionRecordInRequestWindow(
   record: FinanceMarketCollectionItem,
   request: FinanceMarketCollectionRequest,
@@ -430,7 +457,7 @@ function buildItem(
     providerRole: params.providerRole,
     sourceFamily: params.sourceFamily,
     sourceTimestamp: params.sourceTimestamp,
-    observedAt: request.asOf,
+    observedAt: new Date().toISOString(),
     delayStatus: params.delayStatus,
     sourceUrlOrArtifact: params.sourceUrlOrArtifact,
     data: params.data,
@@ -992,8 +1019,22 @@ export function createFredMacroSeriesCollectionAdapter(options: {
         );
       }
       const baseUrl = "https://api.stlouisfed.org/fred/series/observations";
+      // FRED defaults to today's revised vintage. A historical replay must request what
+      // was available then. Use the prior UTC day because FRED vintages have day precision.
+      const vintageDate = new Date(Date.parse(request.asOf) - 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+      const observationEnd =
+        request.toDate && request.toDate < request.asOf.slice(0, 10)
+          ? request.toDate
+          : request.asOf.slice(0, 10);
       const params = {
         series_id: seriesId,
+        ...(request.asOfMode === "live_now"
+          ? {}
+          : { realtime_start: vintageDate, realtime_end: vintageDate }),
+        ...(request.fromDate ? { observation_start: request.fromDate } : {}),
+        observation_end: observationEnd,
         file_type: "json",
         sort_order: "desc",
         limit: request.limit ?? 20,
@@ -1227,6 +1268,9 @@ export async function runFinanceMarketCollectionRefresh(options: {
   const invalidRecordCount = records.filter(
     (record) => !collectionRecordInRequestWindow(record, request),
   ).length;
+  const unverifiedVintageCount = records.filter(
+    (record) => !historicalMacroVintageVerified(record, request),
+  ).length;
   const baseReceipt = {
     schemaVersion: FINANCE_MARKET_COLLECTION_SCHEMA_VERSION,
     refreshId: `${request.collection}:${request.instrument}:${request.asOf}`,
@@ -1264,9 +1308,10 @@ export async function runFinanceMarketCollectionRefresh(options: {
   //
   // A failed attempt at a secondary provider is therefore now environmental
   // noise, reported in `sourceAttempts` and in `requiredNextSteps` but no longer
-  // blocking. Two conditions still gate:
+  // blocking. Data-quality conditions still gate:
   //   1. at least one *selected* source actually succeeded, and
-  //   2. no out-of-window records (a real data-quality defect, not environment).
+  //   2. no out-of-window records (a real data-quality defect, not environment), and
+  //   3. historical macro values have a provider vintage covering the requested cutoff.
   const succeededSourceIds = new Set(
     sourceAttempts.filter((attempt) => attempt.status === "succeeded").map((a) => a.adapterId),
   );
@@ -1274,16 +1319,23 @@ export async function runFinanceMarketCollectionRefresh(options: {
   return {
     ...baseReceipt,
     status:
-      records.length > 0 && anySelectedSucceeded && invalidRecordCount === 0
+      records.length > 0 &&
+      anySelectedSucceeded &&
+      invalidRecordCount === 0 &&
+      unverifiedVintageCount === 0
         ? "ready"
         : "needs_review",
     missingEvidence: [
       ...(anySelectedSucceeded ? [] : ["successful_finance_market_collection"]),
       ...invalidEvidence,
+      ...(unverifiedVintageCount > 0 ? ["point_in_time_macro_vintage"] : []),
     ],
     requiredNextSteps: [
       ...(failedAttempts.length > 0 ? ["inspect_source_attempt_failures"] : []),
       ...(invalidRecordCount > 0 ? ["inspect_out_of_window_collection_records"] : []),
+      ...(unverifiedVintageCount > 0
+        ? ["obtain_macro_vintage_available_before_asof_or_use_live_now_for_current_research"]
+        : []),
     ],
   };
 }

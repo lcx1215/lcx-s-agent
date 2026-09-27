@@ -35,6 +35,18 @@ function normalizeFeedback(feedback: readonly string[]): string[] {
     .slice(0, 12);
 }
 
+// Relation labels can restrict support; a contrary/context citation must never certify a claim.
+// Older artifacts without relation annotations retain their existing citation contract.
+function supportingEvidenceIds(claim: QualityHarnessArtifact["claims"][number]): readonly string[] {
+  return claim.evidenceRelations === undefined
+    ? claim.evidenceIds
+    : claim.evidenceIds.filter((id) =>
+        claim.evidenceRelations?.some(
+          (entry) => entry.evidenceId === id && entry.relation === "supports",
+        ),
+      );
+}
+
 function validateGrounding(
   artifact: QualityHarnessArtifact | undefined,
   evidence: readonly QualityHarnessEvidence[],
@@ -49,8 +61,8 @@ function validateGrounding(
     if (unknown.length > 0) {
       problems.push(`claim ${claim.id} cites unknown evidence: ${unknown.join(", ")}`);
     }
-    if (claim.status === "supported" && claim.evidenceIds.length === 0) {
-      problems.push(`claim ${claim.id} has no evidence`);
+    if (claim.status === "supported" && supportingEvidenceIds(claim).length === 0) {
+      problems.push(`claim ${claim.id} has no supporting evidence`);
     }
     if (claim.status === "uncertain" && !claim.uncertainty) {
       problems.push(`claim ${claim.id} hides its uncertainty reason`);
@@ -442,7 +454,7 @@ function withoutGroundedNonMarketQuantities(
           .some((assertion) => normalizeAssertion(assertion) === contextAssertion) &&
         carries(claim.text, key) &&
         (contextEntities.size === 0 || claimMatchesEvidenceEntity(context, claim.text)) &&
-        claim.evidenceIds.some((id) => {
+        supportingEvidenceIds(claim).some((id) => {
           const entry = evidenceById.get(id);
           return (
             entry !== undefined &&
@@ -506,7 +518,7 @@ function validateFinanceAnswerSafety(
           if (!claimCarriesNumber) {
             return false;
           }
-          return claim.evidenceIds
+          return supportingEvidenceIds(claim)
             .map((id) => evidenceById.get(id))
             .filter((entry): entry is QualityHarnessEvidence => entry !== undefined)
             .some(

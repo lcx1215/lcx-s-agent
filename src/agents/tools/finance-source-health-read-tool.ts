@@ -181,6 +181,12 @@ export function createFinanceSourceHealthReadTool(
         // Stated rather than implied: an agent that reads "health" and hears "uptime" will treat
         // "no recent success" as "the source is down", which is not what this evidence says.
         boundary: "inventory_and_recent_call_evidence_not_continuous_uptime",
+        evidenceScope: {
+          assessed: "stored_route_call_receipts_only",
+          systemWideFreshDataAvailability: "not_assessed",
+          sourceIndependence: "not_assessed",
+          rule: "Zero recent successes in this inventory does not prove no fresh data exists elsewhere. Route count is not independent-source count. Inspect the relevant collection or research-run receipt before making a system-wide claim.",
+        },
         asOf: health.asOf,
         inspectedFrom: { workspaceDir: root },
         noNetworkCalled: health.noNetworkCalled,

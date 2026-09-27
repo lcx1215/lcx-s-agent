@@ -35,7 +35,7 @@ export type FigureDeclaration = Readonly<{
 }>;
 
 export type GroundingGateVerdict =
-  /** Every declared observation matched the snapshot. */
+  /** Every declaration was checked against usable evidence; not a semantic truth verdict. */
   | "verified"
   /** At least one declared observation is not in the snapshot. */
   | "ungrounded"
@@ -44,7 +44,7 @@ export type GroundingGateVerdict =
    * accounts for. See `undeclaredProseValues`.
    */
   | "undeclared_figures"
-  /** No usable declaration block, so nothing could be checked. Not a pass. */
+  /** Missing declarations, unchecked figure kinds, or an unusable snapshot. Not a pass. */
   | "not_verifiable"
   /** Observations were declared but there is no snapshot to check them against. */
   | "no_snapshot";
@@ -234,9 +234,9 @@ export function collectObservedValues(snapshot: FinanceDataGatewaySnapshot): Set
 /**
  * Check a composed answer against the snapshot it was grounded on.
  *
- * Only `observed` figures are required to match. A derived ratio, a proposed target, a cited
- * third-party figure and a count are all legitimate things to write; requiring them to appear in
- * the snapshot would reject honest analysis. They are recorded, not rejected.
+ * Observations must match the field identity, unit and value in a usable snapshot.
+ * Other kinds remain legitimate research content, but an unchecked declaration prevents
+ * certification. A model cannot turn an observation into proof by relabeling it as cited.
  */
 /** The reason line for undeclared prose numbers, so every branch reports them the same way. */
 function undeclaredReasons(undeclared: readonly string[]): string[] {
@@ -357,7 +357,9 @@ export function checkAnswerGrounding(params: {
           ? "ungrounded"
           : undeclared.length > 0
             ? "undeclared_figures"
-            : "verified",
+            : declarations.length > derivedChecked
+              ? "not_verifiable"
+              : "verified",
       declarations,
       grounded,
       ungrounded,
@@ -374,15 +376,26 @@ export function checkAnswerGrounding(params: {
     };
   }
 
-  const allowed = collectObservedValues(params.snapshot);
+  const snapshotUsable = params.snapshot.qualityStatus === "ready";
+  if (observed.length > 0 && !snapshotUsable) {
+    reasons.push(
+      `snapshot quality is ${params.snapshot.qualityStatus}; matching values cannot certify observations`,
+    );
+  }
 
   for (const declaration of observed) {
-    if (allowed.has(normalizeComparable(declaration.value))) {
+    const matchingField = params.snapshot.normalizedFields.some(
+      (field) =>
+        declaration.name === field.name &&
+        (declaration.unit ?? "") === (field.currency ?? field.unit ?? "") &&
+        normalizeComparable(declaration.value) === normalizeComparable(field.value),
+    );
+    if (matchingField && snapshotUsable) {
       grounded.push(declaration);
-    } else {
+    } else if (!matchingField) {
       ungrounded.push(declaration);
       reasons.push(
-        `observed figure ${declaration.name ?? "(unnamed)"} = ${String(declaration.value)} is not present in the snapshot`,
+        `observed figure ${declaration.name ?? "(unnamed)"} = ${String(declaration.value)} does not match field identity, unit and value in the snapshot`,
       );
     }
   }
@@ -400,7 +413,9 @@ export function checkAnswerGrounding(params: {
         ? "ungrounded"
         : undeclared.length > 0
           ? "undeclared_figures"
-          : "verified",
+          : notChecked > 0 || (observed.length > 0 && !snapshotUsable)
+            ? "not_verifiable"
+            : "verified",
     declarations,
     grounded,
     ungrounded,

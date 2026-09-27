@@ -337,7 +337,7 @@ export function buildFinanceResearchModelEvidence(
             const latest = macroValue(last.data);
             const prior = previous ? macroValue(previous.data) : undefined;
             facts.push(
-              `${prefix}: ${typeof last.data.seriesId === "string" ? last.data.seriesId : instrument}, latest ${latest?.field ?? "value"}=${String(latest?.value ?? "unknown")}, observation period=${last.sourceTimestamp}; previous=${String(prior?.value ?? "unknown")} (${previous?.sourceTimestamp ?? "unknown"}). Observation period is not publication time; units and revisions need source review.`,
+              `${prefix}: ${typeof last.data.seriesId === "string" ? last.data.seriesId : instrument}, latest ${latest?.field ?? "value"}=${String(latest?.value ?? "unknown")}, observation period=${last.sourceTimestamp}; previous=${String(prior?.value ?? "unknown")} (${previous?.sourceTimestamp ?? "unknown"}). Observation period is not publication time; vintage interval=${typeof last.data.realtime_start === "string" ? last.data.realtime_start : "unverified"}..${typeof last.data.realtime_end === "string" ? last.data.realtime_end : "unverified"}. Historical FRED queries conservatively use the prior UTC day, not intraday release availability. Units and revisions need source review.`,
             );
           }
         } else if (collection === "news") {
