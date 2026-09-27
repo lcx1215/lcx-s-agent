@@ -86,6 +86,7 @@ function decisionForOpenIntradayPosition(params: {
 export type FinanceIntradayMonitorOptions = Readonly<{
   directory: string;
   accountId?: string;
+  exitOnly?: boolean;
   instrument: string;
   intervalSeconds: 60 | 300 | 900;
   feed: "iex" | "sip";
@@ -135,7 +136,11 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
   const instrument = options.instrument.trim().toUpperCase();
   const strategyRead = await readFinanceStrategyRuleLedger(options.directory);
   const activeRules = strategyRead.ledger.rules.filter(
-    (rule) => rule.state === "active" && rule.form === FINANCE_INTRADAY_OPENING_RANGE_FORM,
+    (rule) =>
+      rule.form === FINANCE_INTRADAY_OPENING_RANGE_FORM &&
+      (options.exitOnly
+        ? rule.state === "retired" && rule.ruleId === options.strategyContract?.ruleId
+        : rule.state === "active"),
   );
   if (activeRules.length !== 1) {
     return Object.freeze({
@@ -145,7 +150,9 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
   }
   let activeContract: FinanceIntradayActiveRuleContract;
   try {
-    activeContract = resolveFinanceIntradayActiveRuleContract(activeRules[0]);
+    activeContract = resolveFinanceIntradayActiveRuleContract(activeRules[0], {
+      allowRetiredExit: options.exitOnly,
+    });
   } catch {
     return Object.freeze({ status: "blocked_incompatible_active_strategy" as const, clock });
   }
@@ -289,6 +296,9 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
   const position = intradayBook.positions.find(
     (item) => item.instrument === instrument && item.quantity !== 0,
   );
+  if (options.exitOnly && (!options.accountId || !position)) {
+    return Object.freeze({ status: "exit_only_no_owned_position" as const, clock, syncReceipt });
+  }
   if (position && position.quantity < 0) {
     return Object.freeze({ status: "blocked_short_position" as const, clock, syncReceipt });
   }
@@ -312,6 +322,10 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
     });
     if (
       !entryDecision ||
+      (options.exitOnly &&
+        (entryDecision.input.strategyRule !== activeContract.ruleId ||
+          entryDecision.input.strategyBinding?.declarationRef !== activeContract.declarationRef ||
+          entryDecision.input.strategyBinding?.activationRef !== activeContract.activationRef)) ||
       !entryDecision.input.stopPrice ||
       !entryDecision.input.targetPrice ||
       !entryDecision.input.strategyBinding ||
@@ -333,7 +347,16 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
         options.directory,
         priorOpenSell.input.signalId,
       );
-      if (!outcome || outcome.status !== "refused") {
+      const completedPartialExit =
+        options.exitOnly &&
+        outcome?.status === "placed" &&
+        strategyReceipts.some(
+          (receipt) =>
+            receipt.receiptId === outcome.receiptId &&
+            receipt.intentId === `intent:${priorOpenSell.input.signalId}` &&
+            receipt.side === "sell",
+        );
+      if (!outcome || (outcome.status !== "refused" && !completedPartialExit)) {
         return Object.freeze({
           status: outcome
             ? ("sell_already_terminal" as const)
@@ -459,6 +482,9 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
       return Object.freeze({ status: "entry_cutoff_reached" as const, clock, syncReceipt, signal });
     }
     return Object.freeze({ status: "no_signal" as const, clock, syncReceipt, signal });
+  }
+  if (options.exitOnly && signal.action !== "sell") {
+    return Object.freeze({ status: "exit_only_no_exit_signal" as const, clock, syncReceipt });
   }
   if (signal.action === "buy" && entryCutoffDue) {
     return Object.freeze({ status: "entry_cutoff_reached" as const, clock, syncReceipt, signal });

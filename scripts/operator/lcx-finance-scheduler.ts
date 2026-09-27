@@ -18,7 +18,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { createFinanceAlpacaCycleController } from "../../src/agents/finance-alpaca-cycle-controller.js";
+import {
+  createFinanceAlpacaCycleController,
+  financeAlpacaCyclePolicySchema,
+} from "../../src/agents/finance-alpaca-cycle-controller.js";
 import { syncConfiguredAlpacaPaperHistory } from "../../src/agents/finance-alpaca-history-sync.js";
 import { createFinanceAlpacaMarketSessionResolver } from "../../src/agents/finance-alpaca-market-calendar.js";
 import { caseflowFingerprint } from "../../src/agents/finance-caseflow.js";
@@ -37,6 +40,7 @@ import {
   type FinanceIntradayActiveRuleContract,
   type FinanceIntradayMonitorScope,
 } from "../../src/agents/finance-intraday-paper.js";
+import { readFinanceRetiredIntradayExitTargets } from "../../src/agents/finance-intraday-position.js";
 import {
   buildFinanceNightReviewEvidence,
   writeFinanceNightReviewEvidence,
@@ -1294,6 +1298,82 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
   return record.ok;
 }
 
+export async function runFinanceRetiredIntradayExitTick(context: CycleContext): Promise<void> {
+  const args = context.options.extraArgs;
+  if (
+    context.options.intraday?.placementRequested &&
+    context.options.intraday.instrumentSource !== "explicit" &&
+    context.resolveMarketSession
+  ) {
+    try {
+      const policyIndex = args.indexOf("--execution-policy");
+      if (policyIndex < 0 || !args[policyIndex + 1]) {
+        throw new Error("retired exits require an execution policy");
+      }
+      const policy: unknown = JSON.parse(fs.readFileSync(args[policyIndex + 1], "utf8"));
+      const parsedPolicy = financeAlpacaCyclePolicySchema.parse(policy);
+      const targets = await readFinanceRetiredIntradayExitTargets(
+        context.root.directory,
+        parsedPolicy.accountId,
+      );
+      for (const target of targets) {
+        if (context.signal.aborted) {
+          break;
+        }
+        const exitController = createFinanceAlpacaCycleController({
+          directory: context.root.directory,
+          policy,
+          instruments: [target.instrument],
+          feed: target.contract.feed,
+          maxAgeMs: numericExtra(args, "--execution-max-age-ms"),
+        });
+        const result = await runFinanceIntradayMonitorTick({
+          directory: context.root.directory,
+          accountId: exitController.accountId,
+          instrument: target.instrument,
+          exitOnly: true,
+          intervalSeconds: target.contract.intervalSeconds,
+          feed: target.contract.feed,
+          openingRangeBars: target.contract.openingRangeBars,
+          rewardRisk: target.contract.rewardRisk,
+          strategyContract: target.contract,
+          scope: { kind: "strategy_universe" },
+          resolveMarketSession: context.resolveMarketSession,
+          signal: context.signal,
+        });
+        if (
+          (result.status === "decision_recorded" ||
+            result.status === "decision_pending_execution") &&
+          result.decision.input.action === "sell"
+        ) {
+          const execution = await executeFinanceIntradayDecision({
+            directory: context.root.directory,
+            decision: result.decision,
+            controller: exitController,
+            caps: {
+              maxOrderNotional: numericExtra(args, "--max-order-notional"),
+              maxInstrumentNotional: numericExtra(args, "--max-instrument-notional"),
+              maxOrdersPerRun: numericExtra(args, "--max-orders"),
+            },
+            signal: context.signal,
+          });
+          process.stdout.write(
+            `[${new Date().toISOString()}] retired intraday ${target.instrument} execution=${execution.status}\n`,
+          );
+        } else {
+          process.stdout.write(
+            `[${new Date().toISOString()}] retired intraday ${target.instrument} monitor=${result.status}\n`,
+          );
+        }
+      }
+    } catch (error) {
+      process.stderr.write(
+        `retired intraday exit cycle failed: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
+    }
+  }
+}
+
 async function tick(context: CycleContext): Promise<void> {
   const args = context.options.extraArgs;
   const venueIndex = args.indexOf("--venue");
@@ -1326,6 +1406,7 @@ async function tick(context: CycleContext): Promise<void> {
       }
     }
   }
+  await runFinanceRetiredIntradayExitTick(context);
   if (context.options.intraday) {
     const executionInstruments = new Set(context.options.intraday.executionInstruments);
     // Process executable instruments before spending this tick on research monitoring.
