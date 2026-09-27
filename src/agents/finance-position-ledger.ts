@@ -953,3 +953,35 @@ export async function readFinanceBrokerHistoryRecords(
     db.close();
   }
 }
+
+/** Latest reconciliations per book, with chain validation and no migration or writes. */
+export async function readFinanceLatestBrokerReconciliations(directory: string) {
+  const db = await openReadOnly(directory);
+  if (!db) {
+    return { records: [], omittedAccounts: 0 };
+  }
+  try {
+    const rows = readBrokerHistoryRows(db);
+    const latest = new Map<string, (typeof rows)[number]>();
+    const heads = new Map<string, string>();
+    for (const row of rows) {
+      const key = JSON.stringify([row.body.venue, row.body.accountId]);
+      heads.set(key, row.ref);
+      if (row.body.query.startsWith("reconciliation:")) {
+        latest.set(key, row);
+      }
+    }
+    const selected = [...latest.entries()].toSorted((a, b) => b[1].sequence - a[1].sequence);
+    return {
+      records: selected.slice(0, 3).map(([key, row]) => ({
+        ref: row.ref,
+        venue: row.body.venue,
+        superseded: heads.get(key) !== row.ref,
+        snapshot: row.body.payload[0],
+      })),
+      omittedAccounts: Math.max(0, selected.length - 3),
+    };
+  } finally {
+    db.close();
+  }
+}

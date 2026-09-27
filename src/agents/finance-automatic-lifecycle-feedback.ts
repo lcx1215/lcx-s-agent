@@ -6,6 +6,7 @@ import {
   FINANCE_PAPER_EXECUTION_BLOCK_REASON,
   readFinancePaperPromotions,
 } from "./finance-paper-promotion.js";
+import { readFinancePositionManagementFeedback } from "./finance-position-management-feedback.js";
 import { readFinanceRuleReadinessState } from "./finance-rule-readiness-state.js";
 import { readFinanceSchedulerDatabaseRuns } from "./finance-scheduler-ledger.js";
 import { financeSchedulerPidPresent, readFinanceSchedulerPid } from "./finance-scheduler-lock.js";
@@ -416,6 +417,11 @@ export async function buildFinanceAutomaticLifecycleFeedback(
       };
     }
     const intradayExecution = await readFinanceIntradayExecutionCoverage(state.directory);
+    const positionManagement = await readFinancePositionManagementFeedback({
+      directory: state.directory,
+      observedAt,
+      rules: rules.ledger.rules,
+    });
     const latestProposal = proposals.at(-1) ?? null;
     const latestPromotion = promotions.at(-1) ?? null;
     const failedCycleModes = ["day", "night"].filter((mode) =>
@@ -439,8 +445,9 @@ export async function buildFinanceAutomaticLifecycleFeedback(
           ? false
           : runtimeVenue !== "alpaca" || runtimePolicyStatus !== "current")
       : schedulerHasHistory;
-    const nextTask =
-      failedCycleModes.length > 0 || scheduler.lastRun?.ok === false
+    const nextTask = positionManagement.needsInspection
+      ? "inspect_finance_position_management"
+      : failedCycleModes.length > 0 || scheduler.lastRun?.ok === false
         ? "inspect_failed_finance_cycle"
         : schedulerRuntimeNeedsInspection
           ? "inspect_finance_scheduler_runtime"
@@ -467,6 +474,7 @@ export async function buildFinanceAutomaticLifecycleFeedback(
       },
       currentReadiness,
       intradayExecution,
+      positionManagement,
       scoredOutcomeCount: samples.length,
       tuning: {
         proposalCount: proposals.length,
