@@ -192,3 +192,38 @@ describe("the freshness window is validated like its sibling", () => {
     }
   });
 });
+
+describe("declared cross-check identity", () => {
+  it.each(["same_provider", "same_source", "same_url_fragment", "unrelated_field", "distinct"])(
+    "does not certify copied evidence as independent (%s)",
+    (mode) => {
+      const at = "2026-09-07T10:15:00.000Z";
+      const primary = observation("primary", "primary_market_data", at);
+      const cross = observation(
+        mode === "same_provider" ? "PRIMARY" : "cross",
+        "cross_check_market_data",
+        at,
+      );
+      if (mode === "same_source" || mode === "same_url_fragment") {
+        cross.fields[0].sourceUrlOrArtifact =
+          primary.fields[0].sourceUrlOrArtifact + (mode === "same_url_fragment" ? "#copy" : "");
+      }
+      if (mode === "unrelated_field") {
+        cross.fields[0].name = "unrelated_volume";
+      }
+      const result = buildFinanceDataGatewaySnapshot({
+        instrument: "QQQ",
+        assetClass: "etf",
+        useCase: "copied_source_audit",
+        asOf: at,
+        requireOfficialReference: false,
+        observations: [primary, cross],
+      });
+      expect(result.qualityStatus).toBe(mode === "distinct" ? "ready" : "blocked");
+      expect(result.sourceIndependence?.upstreamLineage).toBe("not_assessed");
+      if (mode !== "distinct") {
+        expect(result.missingEvidence).toContain("distinct_cross_check_source:last_price");
+      }
+    },
+  );
+});
