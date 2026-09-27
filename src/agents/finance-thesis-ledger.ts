@@ -27,6 +27,10 @@ import { requireNodeSqlite } from "../memory/sqlite.js";
 import { LCX_ONTOLOGY_FINANCE_EXECUTION_AUTHORITIES } from "../shared/lcx-ontology.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import {
+  FinanceExpectationGapSchema,
+  type FinanceExpectationGap,
+} from "./finance-expectation-gap.js";
+import {
   FINANCE_RESEARCH_CLAIM_EPISTEMIC_CLASSES,
   FINANCE_RESEARCH_EVIDENCE_RELATIONS,
   financeResearchClaimRequiresBasis,
@@ -105,6 +109,7 @@ export const FinanceThesisOpenInput = z
     claimEpistemicClass: z.enum(FINANCE_THESIS_CLAIM_EPISTEMIC_CLASSES).optional(),
     claimBasis: Text.max(2_000).optional(),
     applicability: FinanceThesisApplicabilitySchema.optional(),
+    expectationGap: FinanceExpectationGapSchema.optional(),
     rationale: Text.optional(),
     evidence: z.array(EvidenceLinkInput).min(1),
     invalidationConditions: z.array(Text).min(1),
@@ -155,6 +160,7 @@ const OpenedBodyV3 = z
     claimEpistemicClass: z.enum(FINANCE_THESIS_CLAIM_EPISTEMIC_CLASSES),
     claimBasis: Text.nullable(),
     applicability: FinanceThesisApplicabilitySchema.optional(),
+    expectationGap: FinanceExpectationGapSchema.optional(),
     rationale: Text.optional(),
     evidence: z.array(EvidenceLinkV3).min(1),
     invalidationConditions: z.array(Text).min(1),
@@ -341,7 +347,11 @@ function projectLegacyBody(
   };
 
   if (body.kind === "opened") {
-    if (body.claimEpistemicClass !== "unclassified" || body.claimBasis !== null) {
+    if (
+      body.claimEpistemicClass !== "unclassified" ||
+      body.claimBasis !== null ||
+      body.expectationGap !== undefined
+    ) {
       return undefined;
     }
     const evidence = legacyEvidence(body.evidence);
@@ -398,6 +408,7 @@ export type FinanceThesis = Readonly<{
   claimEpistemicClass: FinanceThesisClaimEpistemicClass;
   claimBasis: string | null;
   applicability?: FinanceThesisApplicability;
+  expectationGap?: FinanceExpectationGap;
   rationale: string | null;
   /** Derived by replay, never stored. */
   state: FinanceThesisState;
@@ -436,6 +447,7 @@ export function projectFinanceTheses(
       claimEpistemicClass: FinanceThesisClaimEpistemicClass;
       claimBasis: string | null;
       applicability?: FinanceThesisApplicability;
+      expectationGap?: FinanceExpectationGap;
       rationale: string | null;
       openedAt: string;
       invalidationConditions: readonly string[];
@@ -460,6 +472,9 @@ export function projectFinanceTheses(
         claimBasis: "claimBasis" in body ? body.claimBasis : null,
         ...("applicability" in body && body.applicability
           ? { applicability: body.applicability }
+          : {}),
+        ...("expectationGap" in body && body.expectationGap
+          ? { expectationGap: body.expectationGap }
           : {}),
         rationale: body.rationale ?? null,
         openedAt: body.observedAt,
@@ -504,6 +519,7 @@ export function projectFinanceTheses(
       claimEpistemicClass: draft.claimEpistemicClass,
       claimBasis: draft.claimBasis,
       ...(draft.applicability ? { applicability: draft.applicability } : {}),
+      ...(draft.expectationGap ? { expectationGap: draft.expectationGap } : {}),
       rationale: draft.rationale,
       state: draft.transitions.at(-1)?.to ?? "active",
       openedAt: draft.openedAt,

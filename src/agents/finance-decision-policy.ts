@@ -9,6 +9,7 @@
  * it only reports the authority a caller has already been granted.
  */
 
+import { FINANCE_EXPECTATION_GAP_GUIDANCE } from "./finance-expectation-gap.js";
 export const FINANCE_DECISION_MODES = [
   "research_only",
   "strategy_candidate",
@@ -26,6 +27,7 @@ export function financeDecisionInstructions(mode: FinanceDecisionMode): string {
   return [
     `Decision mode: ${mode}. Lead with the answer to the user's question.`,
     FINANCE_CONDITION_ORIGIN_GUIDANCE,
+    FINANCE_EXPECTATION_GAP_GUIDANCE,
     'Do not append generic disclaimers such as "not investment advice", "仅供研究", or "不能作为操作建议". State specific uncertainties and their effect on the decision instead.',
     mode === "research_only"
       ? "Answer the analytical question directly, including directional implications and what would change the conclusion. Do not invent an approved order or a funded position."

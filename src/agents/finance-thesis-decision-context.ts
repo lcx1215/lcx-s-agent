@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { FinanceExpectationGapSchema } from "./finance-expectation-gap.js";
 import {
   FINANCE_THESIS_CLAIM_EPISTEMIC_CLASSES,
   FINANCE_THESIS_EVIDENCE_RELATIONS,
@@ -29,6 +30,7 @@ const ThesisSchema = z
     claimEpistemicClass: z.enum(FINANCE_THESIS_CLAIM_EPISTEMIC_CLASSES).optional(),
     claimBasis: Text.max(1_000).nullable().optional(),
     rationale: Text.max(320).nullable(),
+    expectationGap: FinanceExpectationGapSchema.optional(),
     openedAt: z.string().datetime(),
     applicability: FinanceThesisApplicabilitySchema.optional(),
     invalidationConditions: z.array(Text.max(240)).max(5),
@@ -95,6 +97,7 @@ export async function buildFinanceThesisDecisionContext(params: {
     claimEpistemicClass: thesis.claimEpistemicClass,
     claimBasis: thesis.claimBasis === null ? null : bounded(thesis.claimBasis, 1_000),
     rationale: thesis.rationale === null ? null : bounded(thesis.rationale, 320),
+    ...(thesis.expectationGap ? { expectationGap: thesis.expectationGap } : {}),
     openedAt: thesis.openedAt,
     ...(thesis.applicability ? { applicability: thesis.applicability } : {}),
     invalidationConditions: thesis.invalidationConditions

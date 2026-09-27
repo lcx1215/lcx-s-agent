@@ -1,5 +1,6 @@
 import type { LcxOntologyModuleId } from "../shared/lcx-ontology.js";
 import type { FinanceDecisionMode } from "./finance-decision-policy.js";
+import { FINANCE_FUNDAMENTAL_EXPECTATION_GUIDANCE } from "./finance-expectation-gap.js";
 import {
   buildFinanceModuleComposition,
   parseFinanceModuleComposition,
@@ -136,7 +137,9 @@ export const FINANCE_BRAIN_MODULES = [
   },
   {
     id: "company_fundamentals_value",
-    role: "Inspect business quality, earnings, cash flow, balance sheet, valuation, moat, capex conversion, power/supply-chain constraints, and thesis durability.",
+    role:
+      "Inspect business quality, earnings, cash flow, balance sheet, valuation, moat, capex conversion, power/supply-chain constraints, and thesis durability. " +
+      FINANCE_FUNDAMENTAL_EXPECTATION_GUIDANCE,
     requiredTools: [
       "finance_framework_core_inspect",
       "finance_framework_company_fundamentals_value_producer",

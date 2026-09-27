@@ -32,6 +32,15 @@ function sourceEvidence(
   };
 }
 
+const expectationGap = {
+  origin: "model_hypothesis" as const,
+  edgeKind: "fundamentals" as const,
+  marketExpectation: null,
+  variantView: "Working capital may improve more than the public narrative implies.",
+  catalyst: "Next cash-flow disclosure",
+  invalidation: "Receivables continue growing faster than sales",
+  costRiskAssessment: "Valuation and costs remain uncertain.",
+};
 function validate(runId: string, timestamp = AS_OF, intraday = false) {
   const evidence = sourceEvidence({ timestamp });
   return validateFinanceResearchThesisProposals({
@@ -43,6 +52,7 @@ function validate(runId: string, timestamp = AS_OF, intraday = false) {
           ? { applicability: { horizon: "intraday", validUntil: "2026-09-10T20:00:00Z" } }
           : {}),
         rationale: "The evidence is limited to the observed window.",
+        expectationGap,
         invalidationConditions: ["The stated market structure no longer holds."],
       },
     ],
@@ -89,6 +99,10 @@ describe("finance research thesis learning", () => {
       horizon: "intraday",
     });
     expect(context.theses).toHaveLength(1);
+    expect(context.theses[0]?.expectationGap).toEqual(expectationGap);
+    expect((await readFinanceThesisLedger(directory)).theses[0]?.expectationGap).toEqual(
+      expectationGap,
+    );
     expect(context.theses[0]?.evidence[0]?.reference).toContain("research-bound-source.json");
     expect(context.theses[0]?.applicability?.horizon).toBe("intraday");
     const expired = await buildFinanceThesisDecisionContext({

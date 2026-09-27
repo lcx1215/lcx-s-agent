@@ -1,3 +1,4 @@
+import { FINANCE_FUNDAMENTAL_EXPECTATION_GUIDANCE } from "./finance-expectation-gap.js";
 import { buildFinanceStrategyMethodKit } from "./finance-strategy-method-kit.js";
 
 /**
@@ -11,9 +12,9 @@ import { buildFinanceStrategyMethodKit } from "./finance-strategy-method-kit.js"
  * into JSON, which is where invented numbers get in.
  *
  * The prompt therefore states the requirements, lists only the sources that
- * actually exist, and tells the model to answer `hold` when it does not know.
- * An honest hold is worth more than a confident guess: hold is treated as no
- * opinion, while a guess becomes a trade.
+ * actually exist, and preserves unknown inputs as unknown. Conditional ideas and
+ * waiting both need reasons; neither a hypothesis nor a parsed conclusion proves
+ * an executed order.
  */
 
 export const FINANCE_CONCLUSION_JSON_SHAPE = `{
@@ -22,6 +23,7 @@ export const FINANCE_CONCLUSION_JSON_SHAPE = `{
   "direction": "buy" | "sell" | "hold",
   "conviction": <number between 0 and 1>,
   "thesis": "one or two sentences of reasoning",
+  "expectationGap": { "origin": "model_hypothesis", "edgeKind": "fundamentals" | "valuation" | "interpretation" | "timing" | "flow" | "risk_rebalance" | "unknown", "marketExpectation": "baseline hypothesis or null", "variantView": "different driver or null", "catalyst": "event and horizon or null", "invalidation": "falsification or null", "costRiskAssessment": "cost and downside implications or null" },
   "assetClass": "us_equity" | "crypto" | "...",
   "evidence": [{ "sourceId": "<one of the listed sources>", "ref": "<optional locator>" }],
   "invalidationPrice": <number, optional>,
@@ -69,6 +71,8 @@ export function buildFinanceConclusionPrompt(params: {
     sourceList,
     "",
     methodKit.prompt,
+    FINANCE_FUNDAMENTAL_EXPECTATION_GUIDANCE,
+    "For an investment candidate include expectationGap with each text field at most 180 characters, or null when unknown. It is a source-bound research hypothesis, never measured consensus or execution authority.",
     "Foreground methods are suggestions, not an exclusive selection or a requirement to use one method. You may combine relevant methods from the full catalog when the supplied evidence supports them.",
     "Explain the chosen mechanism, supporting evidence and failure conditions in the existing thesis and invalidation fields. Method evidence requirements do not authorize invented sources, unsupported numbers or order execution. Do not add fields to the JSON schema below.",
     "",
@@ -87,11 +91,11 @@ export function buildFinanceConclusionPrompt(params: {
     "  do not write 0.9 because the tone of the question is optimistic.",
     "- thesis is required and must state the reason, not restate the direction.",
     '- if the evidence does not support a direction, answer "hold".',
-    "  A hold is treated as no opinion and costs nothing; a guess becomes a trade.",
+    "  State the opportunity cost of waiting; uncertainty alone does not require hold when a bounded, evidence-linked conditional thesis is available.",
     "- use invalidationPrice when a price would prove you wrong, or",
     "  invalidationCondition when a fact would.",
     "",
-    "Do not wrap the JSON in prose. If you are unsure, answer hold.",
+    "Do not wrap the JSON in prose. Preserve uncertainty without inventing facts or forcing a direction.",
   ];
   return lines.join("\n");
 }

@@ -115,3 +115,25 @@ describe("calibration", () => {
     expect(calibrationAdjustedFloor(0.6, [])).toBe(0.6);
   });
 });
+
+it("retains an optional research expectation gap and refuses fabricated provenance", () => {
+  const expectationGap = {
+    origin: "model_hypothesis",
+    edgeKind: "interpretation",
+    marketExpectation: null,
+    variantView: "Cash conversion may exceed expectations",
+    catalyst: "Next earnings report",
+    invalidation: "Receivable days rise",
+    costRiskAssessment: null,
+  };
+  expect(parseResearchConclusion({ ...valid, expectationGap })).toMatchObject({
+    ok: true,
+    conclusion: { expectationGap },
+  });
+  expect(
+    parseResearchConclusion({
+      ...valid,
+      expectationGap: { ...expectationGap, origin: "verified_fact" },
+    }),
+  ).toMatchObject({ ok: false });
+});

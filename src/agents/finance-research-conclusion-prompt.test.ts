@@ -14,7 +14,7 @@ const sources = [
 ];
 
 describe("buildFinanceConclusionPrompt", () => {
-  it("exposes the complete existing method catalog without changing conclusion authority or schema", () => {
+  it("exposes the complete existing method catalog while retaining authority and exposing the opportunity hypothesis", () => {
     const prompt = buildFinanceConclusionPrompt({
       instrument: "SPY",
       assetClass: "us_equity",
@@ -36,9 +36,11 @@ describe("buildFinanceConclusionPrompt", () => {
     expect(prompt.indexOf("Reply with a single JSON object")).toBeGreaterThan(
       prompt.indexOf("Full trader-strategy-lab method catalog"),
     );
-    expect(prompt.endsWith("Do not wrap the JSON in prose. If you are unsure, answer hold.")).toBe(
-      true,
-    );
+    expect(
+      prompt.endsWith(
+        "Do not wrap the JSON in prose. Preserve uncertainty without inventing facts or forcing a direction.",
+      ),
+    ).toBe(true);
   });
   it("adapts foreground contracts to the question while retaining other methods", () => {
     const make = (question: string) =>
@@ -67,14 +69,17 @@ describe("buildFinanceConclusionPrompt", () => {
     expect(prompt).toContain("do not invent others");
   });
 
-  it("tells the model that a hold is free and a guess is not", () => {
+  it("retains unknowns without describing waiting as costless", () => {
     const prompt = buildFinanceConclusionPrompt({
       instrument: "AAPL",
       assetClass: "us_equity",
       availableSources: sources,
     });
     expect(prompt).toContain("hold");
-    expect(prompt.toLowerCase()).toContain("a guess becomes a trade");
+    expect(prompt).toContain("opportunity cost of waiting");
+    expect(prompt).toContain("testable expectation gap");
+    expect(prompt).toContain("expectationGap");
+    expect(prompt).not.toContain("costs nothing");
   });
 
   it("requires two distinct sources explicitly", () => {

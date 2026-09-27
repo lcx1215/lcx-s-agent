@@ -1,5 +1,15 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
+import { buildFinanceOpportunityContext } from "./finance-expectation-gap.js";
+import {
+  FinanceIntradayDecisionReviewReceiptSchema,
+  appendFinanceIntradayDecision,
+  appendFinanceIntradayOutcome,
+  readFinanceIntradayOutcome,
+} from "./finance-intraday-control-ledger.js";
 import {
   FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA,
   FINANCE_TRADE_DECISION_REVIEW_SCHEMA,
@@ -480,3 +490,121 @@ describe("configured finance trade decision reviewer", () => {
     expect(JSON.stringify(result)).not.toContain("synthetic deadline");
   });
 });
+
+it("keeps conditional upside separate from net expected value and handles unknown quote costs", () => {
+  expect(buildFinanceOpportunityContext(intradayRequest)[0]).toMatchObject({
+    spreadPerUnit: 1,
+    conditionalUpsidePerUnit: 3,
+    plannedStopDistancePerUnit: 3,
+    totalRoundTripCost: null,
+    netExpectedValue: null,
+  });
+  const candidate = intradayRequest.candidates[0];
+  expect(
+    buildFinanceOpportunityContext({
+      ...intradayRequest,
+      candidates: [
+        { ...candidate, executionQuote: { ...candidate.executionQuote, bidPrice: undefined } },
+      ],
+    })[0],
+  ).toMatchObject({ spreadPerUnit: null, conditionalUpsidePerUnit: null, netExpectedValue: null });
+  expect(
+    buildFinanceOpportunityContext({
+      ...intradayRequest,
+      candidates: [{ ...candidate, targetPrice: 500 }],
+    })[0],
+  ).toMatchObject({ conditionalUpsidePerUnit: -1 });
+});
+it("persists a candidate-bound opportunity hypothesis without treating it as measured consensus", async () => {
+  const expectationGap = {
+    origin: "model_hypothesis",
+    edgeKind: "timing",
+    marketExpectation: null,
+    variantView: "A supplied breakout may continue despite uncertain fundamental consensus.",
+    catalyst: "Continuation during this session",
+    invalidation: "Supplied stop fails",
+    costRiskAssessment: "Spread known; fees, slippage and expected win rate unknown.",
+  };
+  const reviewer = createFinanceTradeDecisionReviewer({} as OpenClawConfig, {
+    adapterFactory: () =>
+      adapter({
+        schemaVersion: intradayRequest.schemaVersion,
+        decisions: [
+          {
+            candidateId: intradayRequest.candidates[0].candidateId,
+            decision: "approve",
+            rationale: "Trade the supplied signal within its Paper budget.",
+            expectationGap,
+          },
+        ],
+      }),
+  });
+  const result = await reviewer(intradayRequest, AbortSignal.timeout(1000));
+  expect(result).toMatchObject({
+    status: "completed",
+    decisions: [{ decision: "approve", expectationGap }],
+  });
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "expectation-gap-"));
+  try {
+    await appendFinanceIntradayDecision(directory, {
+      signalId: "intraday-signal-1",
+      instrument: "SPY",
+      sessionDate: "2026-09-23",
+      action: "buy",
+      reason: "opening_range_breakout",
+      referencePrice: 500,
+      referencePriceAt: "2026-09-23T19:29:55.000Z",
+      datasetHeadRef: "c".repeat(64),
+      strategyRule: "opening_range_breakout_long_next_bar_v1",
+    });
+    await appendFinanceIntradayOutcome(directory, {
+      signalId: "intraday-signal-1",
+      status: "refused",
+      reasons: ["synthetic fixture, no broker execution"],
+      tradeDecisionReview: FinanceIntradayDecisionReviewReceiptSchema.parse({
+        request: intradayRequest,
+        status: "completed",
+        attempted: result.attempted,
+        provider: result.provider,
+        modelId: result.modelId,
+        latencyMs: result.latencyMs,
+        providerCallObserved: result.providerCallObserved,
+        adapterAttested: result.adapterAttested,
+        decision: result.decisions?.[0],
+      }),
+    });
+    expect(await readFinanceIntradayOutcome(directory, "intraday-signal-1")).toMatchObject({
+      tradeDecisionReview: { decision: { expectationGap } },
+    });
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+it.each(["verified_fact", "market_consensus"])(
+  "rejects an assessment that upgrades model origin to %s",
+  async (origin) => {
+    const reviewer = createFinanceTradeDecisionReviewer({} as OpenClawConfig, {
+      adapterFactory: () =>
+        adapter({
+          schemaVersion: request.schemaVersion,
+          decisions: [
+            {
+              candidateId: request.candidates[0].candidateId,
+              decision: "approve",
+              rationale: "fixture",
+              expectationGap: {
+                origin,
+                edgeKind: "unknown",
+                marketExpectation: null,
+                variantView: null,
+                catalyst: null,
+                invalidation: null,
+                costRiskAssessment: null,
+              },
+            },
+          ],
+        }),
+    });
+    expect(await reviewer(request, AbortSignal.timeout(1000))).toMatchObject({ status: "failed" });
+  },
+);

@@ -23,6 +23,7 @@ import {
   type FinanceDecisionMode,
   type FinanceStrategyStage,
 } from "./finance-decision-policy.js";
+import { FINANCE_FUNDAMENTAL_EXPECTATION_GUIDANCE } from "./finance-expectation-gap.js";
 import {
   createFinanceMarketCollectionRegistry,
   resolveFinanceMarketCollectionRegistryOptionsFromEnv,
@@ -2122,7 +2123,8 @@ export async function runFinanceResearchRun(
           (plan.portfolioContext
             ? "\nAlso propose budget fractions for every controller-listed active strategy in supportingAnalysis.portfolioAllocationProposal.allocations. Each allocation must contain only strategyId, budgetFraction, and evidenceIds; cite supplied evidence, keep the total at or below 1, and leave unused capital as cash. This is a reviewable proposal, not execution authority."
             : "") +
-          "\nOptionally propose financeThesisProposals in artifact.supportingAnalysis for investment-relevant, evidence-supported claims only. Each proposal must have claimId (an id in artifact.claims with status supported), instrument (one declared research target), optional rationale, and nonempty invalidationConditions. When supported by the cited evidence, include applicability with horizon (intraday, swing, or long_term) and validUntil (ISO timestamp after the research as-of). Do not infer an intraday horizon from long-term evidence; unspecified applicability is excluded from intraday review. Do not repeat evidenceIds in the proposal; the system derives them from the supported claim. Omit the field or use an empty array when no adequately supported thesis exists. This is an unadopted research candidate, not a trade instruction.",
+          FINANCE_FUNDAMENTAL_EXPECTATION_GUIDANCE +
+          "\nOptionally propose financeThesisProposals in artifact.supportingAnalysis for investment-relevant, evidence-supported claims only. Each proposal must have claimId (an id in artifact.claims with status supported), instrument (one declared research target), optional rationale, optional expectationGap {origin: model_hypothesis, edgeKind: fundamentals|valuation|interpretation|timing|flow|risk_rebalance|unknown, marketExpectation, variantView, catalyst, invalidation, costRiskAssessment} with each text at most 180 characters or null, and nonempty invalidationConditions. For an investment-relevant thesis include this expectation-gap hypothesis with unknown fields null; it is not a new admission gate. When supported by the cited evidence, include applicability with horizon (intraday, swing, or long_term) and validUntil (ISO timestamp after the research as-of). Do not infer an intraday horizon from long-term evidence; unspecified applicability is excluded from intraday review. Do not repeat evidenceIds in the proposal; the system derives them from the supported claim. Omit the field or use an empty array when no adequately supported thesis exists. This is an unadopted research candidate, not a trade instruction.",
         evidence: qualityEvidence(batch),
         sharedContext: {
           asOf,

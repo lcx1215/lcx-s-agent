@@ -3,6 +3,12 @@ import type { OpenClawConfig } from "../config/config.js";
 import { createConfiguredFinanceModelAdapter } from "./configured-finance-model-adapter.js";
 import type { FinanceAlpacaMarketSession } from "./finance-alpaca-market-calendar.js";
 import { FINANCE_CONDITION_ORIGIN_GUIDANCE } from "./finance-decision-policy.js";
+import {
+  FinanceExpectationGapSchema,
+  FINANCE_EXPECTATION_GAP_GUIDANCE,
+  buildFinanceOpportunityContext,
+  type FinanceExpectationGap,
+} from "./finance-expectation-gap.js";
 import type { FinanceThesisDecisionContext } from "./finance-thesis-decision-context.js";
 import { ModelAdapterError, type ModelCallRequest } from "./logical-agent-model-router.js";
 
@@ -129,6 +135,7 @@ export type FinanceTradeDecision = Readonly<{
   candidateId: string;
   decision: "approve" | "veto";
   rationale: string;
+  expectationGap?: FinanceExpectationGap;
 }>;
 
 export type FinanceTradeDecisionReviewFailureCode =
@@ -216,7 +223,9 @@ export function parseFinanceTradeDecisionReviewOutput(
   for (const value of output.decisions) {
     if (
       !isRecord(value) ||
-      Object.keys(value).toSorted().join(",") !== "candidateId,decision,rationale" ||
+      !["candidateId,decision,rationale", "candidateId,decision,expectationGap,rationale"].includes(
+        Object.keys(value).toSorted().join(","),
+      ) ||
       typeof value.candidateId !== "string" ||
       !expectedIds.has(value.candidateId) ||
       seen.has(value.candidateId) ||
@@ -227,11 +236,19 @@ export function parseFinanceTradeDecisionReviewOutput(
     ) {
       return undefined;
     }
+    const expectationGap =
+      value.expectationGap === undefined
+        ? undefined
+        : FinanceExpectationGapSchema.safeParse(value.expectationGap);
+    if (expectationGap && !expectationGap.success) {
+      return undefined;
+    }
     seen.add(value.candidateId);
     decisions.push({
       candidateId: value.candidateId,
       decision: value.decision,
       rationale: value.rationale.trim(),
+      ...(expectationGap?.success ? { expectationGap: expectationGap.data } : {}),
     });
   }
   return seen.size === expectedIds.size ? Object.freeze(decisions) : undefined;
@@ -305,8 +322,11 @@ function reviewPrompt(payload: unknown): string {
       ? "The strategy has already emitted the exact intraday signal. signalReferencePrice comes from its recorded bar evidence; marketSession binds the official open and close, including an early close; executionQuote is a separate time-sensitive observed quote, not a guaranteed fill. Approval is advisory only: TypeScript will re-check the calendar session, quote freshness, reconciliation, limits, deduplication, and the shared execution gate."
       : "The researchClose is a completed-bar reference; executionQuote is a time-sensitive observed quote, not a guaranteed fill. Approval is advisory only: TypeScript will re-check quote freshness, account reconciliation, risk caps, deduplication, and the shared execution gate after your response.",
     FINANCE_CONDITION_ORIGIN_GUIDANCE,
+    FINANCE_EXPECTATION_GAP_GUIDANCE,
     "For a veto, the rationale must identify the candidate-specific risk or violated supplied condition and its supporting packet facts. If you cannot justify approval, explain exactly which decision-critical input is absent and why it matters. Do not claim a TypeScript gate failed unless that failure is supplied. Return exactly one decision for every candidate and no extra fields.",
-    `Return one JSON object with schemaVersion "${schemaVersion}" and decisions [{candidateId, decision: "approve"|"veto", rationale}].`,
+    `Return one JSON object with schemaVersion "${schemaVersion}" and decisions [{candidateId, decision: "approve"|"veto", rationale, expectationGap: {origin: "model_hypothesis", edgeKind: "fundamentals"|"valuation"|"interpretation"|"timing"|"flow"|"risk_rebalance"|"unknown", marketExpectation, variantView, catalyst, invalidation, costRiskAssessment}}]. Each hypothesis field is a concise string of at most 180 characters or null when unknown.`,
+    "Deterministic opportunity context (not proof of positive expected return):",
+    JSON.stringify(buildFinanceOpportunityContext(payload as FinanceTradeDecisionReviewRequest)),
     "Decision packet:",
     JSON.stringify(payload),
   ].join("\n");

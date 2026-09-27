@@ -4,6 +4,7 @@ import { z } from "zod";
 import { applySqliteMigrations, type SqliteMigration } from "../memory/sqlite-migrations.js";
 import { requireNodeSqlite } from "../memory/sqlite.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
+import { FinanceExpectationGapSchema } from "./finance-expectation-gap.js";
 import { financeIntradayControlLedgerPath } from "./finance-state-dir.js";
 import { FinanceThesisDecisionContextSchema } from "./finance-thesis-decision-context.js";
 
@@ -193,6 +194,7 @@ const IntradayReviewDecisionSchema = z
     candidateId: Text,
     decision: z.enum(["approve", "veto"]),
     rationale: Text.max(800),
+    expectationGap: FinanceExpectationGapSchema.optional(),
   })
   .strict();
 

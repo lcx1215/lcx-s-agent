@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { FinanceCommitteeEvidence } from "./finance-agent-committee.js";
+import {
+  FinanceExpectationGapSchema,
+  type FinanceExpectationGap,
+} from "./finance-expectation-gap.js";
 import { financeResearchClaimRequiresBasis } from "./finance-research-provenance.js";
 import {
   appendFinanceThesisEvidence,
@@ -21,6 +25,7 @@ export const FinanceResearchThesisProposalSchema = z
     claimId: Text,
     instrument: Text,
     rationale: Text.optional(),
+    expectationGap: FinanceExpectationGapSchema.optional(),
     applicability: FinanceThesisApplicabilitySchema.optional(),
     invalidationConditions: z.array(Text).min(1),
   })
@@ -50,6 +55,7 @@ type ValidatedProposal = Readonly<{
   claimEpistemicClass: FinanceThesisClaimEpistemicClass;
   claimBasis: string | null;
   rationale: string;
+  expectationGap?: FinanceExpectationGap;
   applicability?: FinanceThesisApplicability;
   invalidationConditions: readonly string[];
   evidence: readonly FinanceThesisEvidence[];
@@ -188,6 +194,7 @@ export function validateFinanceResearchThesisProposals(params: {
         claimEpistemicClass: claim.epistemicClass,
         claimBasis: claim.basis?.trim() ?? null,
         rationale: proposal.rationale ?? "",
+        ...(proposal.expectationGap ? { expectationGap: proposal.expectationGap } : {}),
         ...(proposal.applicability ? { applicability: proposal.applicability } : {}),
         invalidationConditions: Object.freeze([...proposal.invalidationConditions]),
         evidence: Object.freeze(
@@ -227,6 +234,7 @@ function openInput(proposal: ValidatedProposal, observedAt: string): FinanceThes
     claimEpistemicClass: proposal.claimEpistemicClass,
     ...(proposal.claimBasis === null ? {} : { claimBasis: proposal.claimBasis }),
     rationale,
+    ...(proposal.expectationGap ? { expectationGap: proposal.expectationGap } : {}),
     evidence: [...proposal.evidence],
     ...(proposal.applicability ? { applicability: proposal.applicability } : {}),
     invalidationConditions: [...proposal.invalidationConditions],
@@ -281,6 +289,7 @@ export async function persistFinanceResearchThesisLearning(params: {
         normalized(existing.claim) !== normalized(proposal.claim) ||
         existing.claimEpistemicClass !== proposal.claimEpistemicClass ||
         existing.claimBasis !== proposal.claimBasis ||
+        JSON.stringify(existing.expectationGap) !== JSON.stringify(proposal.expectationGap) ||
         JSON.stringify(existing.applicability) !== JSON.stringify(proposal.applicability) ||
         !sameConditions(existing.invalidationConditions, proposal.invalidationConditions)
       ) {
