@@ -606,7 +606,7 @@ describe("finance research runner", () => {
     const allocationModel = async (request: unknown): Promise<unknown> => {
       const prompt = (request as { task: string }).task;
       expect(prompt).toContain("Decision mode: strategy_candidate");
-      expect(prompt).toContain("instrument and direction, trigger, horizon, invalidation");
+      expect(prompt).toContain("exposure direction, trigger, horizon, invalidation");
       expect(prompt).not.toContain("Keep research-only and do not provide execution instructions");
       const output = await modelInvoker(request);
       if (

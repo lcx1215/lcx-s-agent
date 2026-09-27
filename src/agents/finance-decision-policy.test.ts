@@ -52,7 +52,7 @@ describe("finance decision policy", () => {
     expect(result.executionAuthority).toBe("none");
     expect(result.requiredEvidence).toEqual([]);
     const instructions = financeDecisionInstructions("strategy_candidate");
-    expect(instructions).toContain("instrument and direction, trigger, horizon, invalidation");
+    expect(instructions).toContain("exposure direction, trigger, horizon, invalidation");
     expect(instructions).toContain("does not require repeated human confirmation");
     expect(instructions).not.toContain("Keep research-only");
   });

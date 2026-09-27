@@ -25,7 +25,9 @@ export function financeDecisionInstructions(mode: FinanceDecisionMode): string {
     'Do not append generic disclaimers such as "not investment advice", "仅供研究", or "不能作为操作建议". State specific uncertainties and their effect on the decision instead.',
     mode === "research_only"
       ? "Answer the analytical question directly, including directional implications and what would change the conclusion. Do not invent an approved order or a funded position."
-      : "Give an actionable conditional decision: instrument and direction, trigger, horizon, invalidation, and sizing within supplied capital and risk limits. If those limits are missing, identify the missing input instead of inventing a size. Explain why waiting or holding is preferable when appropriate.",
+      : mode === "strategy_candidate"
+        ? "Give a concrete strategy allocation proposal: exposure direction, trigger, horizon, invalidation, and budget fractions within supplied capital and risk limits. This mode proposes strategy budgets; instrument-specific buy/sell candidates use conditional_trade_candidate mode. Identify missing sizing inputs instead of inventing them."
+        : "Give an actionable conditional decision: instrument and direction, trigger, horizon, invalidation, and sizing within supplied capital and risk limits. If those limits are missing, identify the missing input instead of inventing a size. Explain why waiting or holding is preferable when appropriate.",
     "Partial or conflicting evidence may support an opportunity hypothesis; preserve its uncertainty. A proposal does not prove an order was placed. The controller checks authorization, current execution quotes, risk, deduplication and reconciliation. Existing autonomous Paper authorization does not require repeated human confirmation; Live requires its own explicit authority.",
   ].join(" ");
 }
