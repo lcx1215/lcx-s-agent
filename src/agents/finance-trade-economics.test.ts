@@ -64,3 +64,43 @@ describe("research trade economics", () => {
     expect(result.decisions[0].estimate.allocationFraction).toBe(0);
   });
 });
+
+describe("net profit diagnostics", () => {
+  const evaluate = (returns: number[], costs = 0) =>
+    evaluateFinanceTradeEconomics({
+      observations: returns.map((grossReturn, i) => ({
+        ...observations[i],
+        grossReturn,
+        costFraction: costs,
+      })),
+      policy,
+      additionalCostFraction: 0,
+      assumedRoundTripCostFraction: costs,
+    });
+  it("exposes frequent small wins erased by one large loss", () => {
+    const result = evaluate([0.01, 0.01, 0.01, 0.01, -0.06]);
+    const net = result.netEconomics.allOpportunities;
+    expect(net.netWinRate).toBe(0.8);
+    expect(net.meanNetReturn).toBeCloseTo(-0.004);
+    expect(net.profitFactor).toBeCloseTo(2 / 3);
+    expect(net.averageWinsErasedByLargestLoss).toBe(6);
+    expect(result.calibrationTarget).toBe("gross_return_positive_before_costs");
+  });
+  it("counts costs that turn apparent winners into losses and does not call skipped trades wins", () => {
+    const result = evaluate([0.001, 0.001], 0.002);
+    expect(result.netEconomics.grossWinnersLostAfterCosts).toBe(2);
+    expect(result.netEconomics.allOpportunities.netWins).toBe(0);
+    expect(result.netEconomics.allOpportunities.netLosses).toBe(2);
+    expect(result.netEconomics.selectedOpportunities.observations).toBe(0);
+    expect(result.netEconomics.selectedOpportunities.netWinRate).toBeNull();
+    expect(result.netEconomics.skippedOpportunities).toBe(2);
+  });
+  it("keeps missing denominators explicit for empty, no-loss and no-win samples", () => {
+    expect(evaluate([]).netEconomics.allOpportunities.meanNetReturn).toBeNull();
+    expect(evaluate([0.01]).netEconomics.allOpportunities.profitFactor).toBeNull();
+    expect(
+      evaluate([-0.01]).netEconomics.allOpportunities.averageWinsErasedByLargestLoss,
+    ).toBeNull();
+    expect(evaluate([0]).netEconomics.allOpportunities.netBreakevens).toBe(1);
+  });
+});

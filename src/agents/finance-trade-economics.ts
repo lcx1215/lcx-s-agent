@@ -142,6 +142,27 @@ export function evaluateFinanceTradeEconomics(params: {
     }
     return { tradeId: row.id, estimate, actualNetReturn: actualNet, equity };
   });
+  const summarizeNet = (returns: readonly number[]) => {
+    const wins = returns.filter((value) => value > 0);
+    const losses = returns.filter((value) => value < 0);
+    const profit = wins.reduce((sum, value) => sum + value, 0);
+    const loss = -losses.reduce((sum, value) => sum + value, 0);
+    const meanWin = wins.length ? profit / wins.length : null;
+    const largestLoss = Math.max(0, ...losses.map((value) => -value));
+    return {
+      observations: returns.length,
+      netWins: wins.length,
+      netLosses: losses.length,
+      netBreakevens: returns.length - wins.length - losses.length,
+      netWinRate: returns.length ? wins.length / returns.length : null,
+      meanNetReturn: returns.length ? (profit - loss) / returns.length : null,
+      meanNetWin: meanWin,
+      meanNetLoss: losses.length ? loss / losses.length : null,
+      profitFactor: loss > 0 ? profit / loss : null,
+      largestNetLoss: largestLoss,
+      averageWinsErasedByLargestLoss: meanWin === null ? null : largestLoss / meanWin,
+    };
+  };
   return {
     schemaVersion: "lcx_finance_trade_economics_eval_v1",
     executionAuthority: "none",
@@ -152,7 +173,21 @@ export function evaluateFinanceTradeEconomics(params: {
     assumedRoundTripCostFraction: assumedCost,
     trades: observations.length,
     sizedTrades: decisions.filter((row) => row.estimate.allocationFraction > 0).length,
+    calibrationTarget: "gross_return_positive_before_costs",
     brierScore: scored ? brier / scored : null,
+    netEconomics: {
+      basis: "per_trade_return_fractions_not_currency_pnl",
+      allOpportunities: summarizeNet(decisions.map((row) => row.actualNetReturn)),
+      selectedOpportunities: summarizeNet(
+        decisions
+          .filter((row) => row.estimate.allocationFraction > 0)
+          .map((row) => row.actualNetReturn),
+      ),
+      skippedOpportunities: decisions.filter((row) => row.estimate.allocationFraction === 0).length,
+      grossWinnersLostAfterCosts: observations.filter(
+        (row) => row.grossReturn > 0 && row.grossReturn - row.costFraction - additional <= 0,
+      ).length,
+    },
     constantHalfBrier: scored ? baselineBrier / scored : null,
     scoredPredictions: scored,
     totalReturn: equity - 1,
