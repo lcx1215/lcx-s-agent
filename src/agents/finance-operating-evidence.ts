@@ -6,6 +6,7 @@ import type { FinanceMarketCollectionAdapter } from "./finance-market-collection
 import { runFinanceMarketCollectionRefresh } from "./finance-market-collection-registry.js";
 import { createRegisteredCapabilityAdapters } from "./finance-registered-capability-adapters.js";
 import type { FinanceResearchEvidence } from "./finance-research-execution-bridge.js";
+import { createSecAnnualOperatingStatementsAdapter } from "./finance-us-equity-source-adapters.js";
 import type { FinanceOperatingFacts } from "./finance-value-assessment.js";
 
 type Statement = { sourceId: string; data: Record<string, unknown> };
@@ -43,35 +44,49 @@ export function normalizeFinanceOperatingStatements(
     const rows = known
       .filter(({ data }) => data.date === period)
       .toSorted((a, b) => publicationTime(b.data) - publicationTime(a.data));
-    const income = rows.find((row) => row.sourceId === "fmp_income_statement_annual");
-    const cash = rows.find((row) => row.sourceId === "fmp_cash_flow_statement_annual");
-    const balance = rows.find((row) => row.sourceId === "fmp_balance_sheet_statement_annual");
-    if (!income || !cash || !balance) {
-      continue;
+    const official = rows.filter((row) => row.sourceId === "sec_edgar_annual_operating");
+    const candidates = [
+      ...official.map((row) => [row, row, row]),
+      [
+        rows.find((row) => row.sourceId === "fmp_income_statement_annual"),
+        rows.find((row) => row.sourceId === "fmp_cash_flow_statement_annual"),
+        rows.find((row) => row.sourceId === "fmp_balance_sheet_statement_annual"),
+      ],
+    ];
+    for (const [income, cash, balance] of candidates) {
+      if (!income || !cash || !balance) {
+        continue;
+      }
+      const num = (row: Statement, key: string) =>
+        typeof row.data[key] === "number" ? row.data[key] : Number.NaN;
+      const facts: FinanceOperatingFacts = {
+        instrument,
+        currency: "USD",
+        periodEnd: period,
+        publishedAt: [income, cash, balance]
+          .map(({ data }) => new Date(publicationTime(data)).toISOString())
+          .toSorted()
+          .at(-1)!,
+        ...(income.sourceId === "sec_edgar_annual_operating"
+          ? {
+              publicationTimeBasis: "conservative_known_by" as const,
+              debtDefinition: String(balance.data.debtDefinition),
+            }
+          : {}),
+        revenue: num(income, "revenue"),
+        netIncome: num(income, "netIncome"),
+        dilutedShares: num(income, "weightedAverageShsOutDil"),
+        operatingCashFlow: num(cash, "operatingCashFlow"),
+        capitalExpenditure: Math.abs(num(cash, "capitalExpenditure")),
+        cash: num(balance, "cashAndCashEquivalents"),
+        debt: num(balance, "totalDebt"),
+        sourceIds: [...new Set([income.sourceId, cash.sourceId, balance.sourceId])],
+      };
+      if (Object.values(facts).some((v) => typeof v === "number" && !Number.isFinite(v))) {
+        continue;
+      }
+      return facts;
     }
-    const num = (row: Statement, key: string) =>
-      typeof row.data[key] === "number" ? row.data[key] : Number.NaN;
-    const facts: FinanceOperatingFacts = {
-      instrument,
-      currency: "USD",
-      periodEnd: period,
-      publishedAt: [income, cash, balance]
-        .map(({ data }) => new Date(publicationTime(data)).toISOString())
-        .toSorted()
-        .at(-1)!,
-      revenue: num(income, "revenue"),
-      netIncome: num(income, "netIncome"),
-      dilutedShares: num(income, "weightedAverageShsOutDil"),
-      operatingCashFlow: num(cash, "operatingCashFlow"),
-      capitalExpenditure: Math.abs(num(cash, "capitalExpenditure")),
-      cash: num(balance, "cashAndCashEquivalents"),
-      debt: num(balance, "totalDebt"),
-      sourceIds: [income.sourceId, cash.sourceId, balance.sourceId],
-    };
-    if (Object.values(facts).some((v) => typeof v === "number" && !Number.isFinite(v))) {
-      continue;
-    }
-    return facts;
   }
   return undefined;
 }
@@ -88,16 +103,21 @@ export async function gatherFinanceOperatingEvidence(input: {
   now?: () => string;
 }) {
   const ids = [
+    "sec_edgar_annual_operating",
     "fmp_income_statement_annual",
     "fmp_cash_flow_statement_annual",
     "fmp_balance_sheet_statement_annual",
   ];
-  const adapters =
-    input.adapters ??
-    createRegisteredCapabilityAdapters({
+  const adapters = input.adapters ?? [
+    createSecAnnualOperatingStatementsAdapter(),
+    ...createRegisteredCapabilityAdapters({
       fmpApiKey: input.fmpApiKey,
       alphaVantageApiKey: input.alphaVantageApiKey,
-    });
+    }),
+  ];
+  if (!adapters.some((a) => a.id === "sec_edgar_annual_operating")) {
+    ids.shift();
+  }
   const fallbackIds: Record<string, string> = {
     fmp_income_statement_annual: "alpha_vantage_income_statement",
     fmp_cash_flow_statement_annual: "alpha_vantage_cash_flow",
@@ -115,6 +135,12 @@ export async function gatherFinanceOperatingEvidence(input: {
   const statements: Statement[] = [];
   const issues: string[] = [];
   for (const id of ids) {
+    if (
+      id !== "sec_edgar_annual_operating" &&
+      normalizeFinanceOperatingStatements(input.instrument, input.asOf, statements)
+    ) {
+      break;
+    }
     try {
       const cached = input.directory
         ? readFinanceFundamentalSnapshot({

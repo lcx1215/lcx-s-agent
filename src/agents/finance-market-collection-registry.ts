@@ -30,6 +30,7 @@ import { createGdeltNewsTitlesAdapter } from "./finance-gdelt-news-titles.js";
 import { resolveFinanceFetch, type FetchImpl } from "./finance-live-market-source.js";
 import { assessFinanceNewsEntity } from "./finance-news-entity.js";
 import { mapFinanceSourceLanes } from "./finance-source-scheduler.js";
+import { createSecAnnualOperatingStatementsAdapter } from "./finance-us-equity-source-adapters.js";
 
 export {
   createBinancePublicEodHistoryCollectionAdapter,
@@ -1372,6 +1373,7 @@ export function createFinanceMarketCollectionRegistry(
     createTreasuryDebtCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createTreasuryAverageInterestRatesCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createSecFilingsCollectionAdapter({ fetchImpl: options.fetchImpl }),
+    createSecAnnualOperatingStatementsAdapter({ fetchImpl: options.fetchImpl }),
     createGdeltPublicNewsCollectionAdapter({ fetchImpl: options.fetchImpl }),
     createGdeltNewsTitlesAdapter({ fetchImpl: options.fetchImpl }),
     createGoogleNewsRssCollectionAdapter({ fetchImpl: options.fetchImpl }),

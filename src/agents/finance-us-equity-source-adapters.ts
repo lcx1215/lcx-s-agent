@@ -1,6 +1,8 @@
 import type { FinanceDataGatewayFieldInput } from "./finance-data-gateway.js";
 import { resolveFinanceFetch, type FetchImpl } from "./finance-live-market-source.js";
+import type { FinanceMarketCollectionAdapter } from "./finance-market-collection-registry.js";
 import type { FinanceRealtimeSourceAdapter } from "./finance-realtime-source-registry.js";
+import { secAnnualOperatingStatements } from "./finance-sec-operating-statements.js";
 
 const SEC_USER_AGENT = "LCX Agent research-only contact=local";
 
@@ -117,6 +119,7 @@ function field(
 }
 
 type SecFactUnit = {
+  accn?: string;
   val?: unknown;
   filed?: unknown;
   end?: unknown;
@@ -127,7 +130,7 @@ type SecFactUnit = {
   frame?: unknown;
 };
 
-type SecFactsPayload = {
+export type SecFactsPayload = {
   entityName?: string;
   facts?: Record<string, Record<string, { label?: string; units?: Record<string, SecFactUnit[]> }>>;
 };
@@ -822,6 +825,51 @@ export function createTwelveDataUsEquityQuoteAdapter(options: {
         delayStatus: "delayed",
         fields,
       };
+    },
+  };
+}
+
+/** Official annual facts retain accession-level lineage, unlike a latest-field snapshot. */
+export function createSecAnnualOperatingStatementsAdapter(
+  options: { fetchImpl?: FetchImpl } = {},
+): FinanceMarketCollectionAdapter {
+  const tickerMap: { value?: Promise<Map<string, string>> } = {};
+  return {
+    id: "sec_edgar_annual_operating",
+    sampleRequest: {
+      instrument: "AAPL",
+      assetClass: "us_equity",
+      collection: "financial_statements",
+    },
+    providerName: "sec-edgar",
+    providerRole: "official_or_issuer_reference",
+    priority: 10,
+    supports: (request) =>
+      isUsEquityRequest(request.assetClass) && request.collection === "financial_statements",
+    collect: async (request, signal) => {
+      const fetchImpl = resolveFinanceFetch(options.fetchImpl, { signal });
+      const cik = await resolveSecCik(request.instrument, fetchImpl, {}, tickerMap);
+      const sourceUrlOrArtifact = `https://data.sec.gov/api/xbrl/companyfacts/CIK${cik}.json`;
+      const payload = (await fetchJson(fetchImpl, sourceUrlOrArtifact, {
+        "User-Agent": SEC_USER_AGENT,
+      })) as SecFactsPayload;
+      const observedAt = new Date().toISOString();
+      return secAnnualOperatingStatements(payload, request.instrument, request.asOf)
+        .slice(0, request.limit ?? 3)
+        .map((data) => ({
+          itemId: `${cik}:${data.accessionNumber}:${data.periodStart}:${data.date}`,
+          collection: "financial_statements",
+          providerName: "sec-edgar",
+          providerRole: "official_or_issuer_reference",
+          sourceFamily: "official_filing",
+          sourceTimestamp: new Date(
+            Date.parse(data.filingDate + "T00:00:00Z") + 36 * 3600_000,
+          ).toISOString(),
+          observedAt,
+          delayStatus: "official_lagged",
+          sourceUrlOrArtifact,
+          data: { ...data, cik },
+        }));
     },
   };
 }
