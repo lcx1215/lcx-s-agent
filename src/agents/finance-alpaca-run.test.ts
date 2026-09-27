@@ -506,3 +506,59 @@ it("carries an explicit crypto protection limit through the run entry and receip
     });
   }
 });
+
+it("fits a Paper entry inside order and remaining instrument caps before placement", async () => {
+  const bodies: Record<string, unknown>[] = [];
+  const result = await runFinanceAlpacaOrder(
+    request({
+      strategyClass: "A",
+      fillPoll: false,
+      committedInstrumentNotional: 4500,
+      budget: {
+        automation: "unattended",
+        allowedInstruments: ["SPY"],
+        maxOrderNotional: 1000,
+        maxInstrumentNotional: 5000,
+        maxOrdersPerRun: 8,
+      },
+      transport: async (init) => {
+        bodies.push(JSON.parse(init.body));
+        return {
+          status: 200,
+          body: JSON.stringify({
+            id: "bounded-entry",
+            status: "filled",
+            filled_qty: "5",
+            filled_avg_price: "100",
+            updated_at: new Date().toISOString(),
+          }),
+        };
+      },
+    }),
+  );
+  expect(result.ok).toBe(true);
+  expect(bodies[0]).toMatchObject({ qty: "5" });
+  if (result.ok) {
+    expect(result.notes.join()).toContain("entry size reduced");
+  }
+});
+it("does not submit a token order when remaining Paper headroom cannot buy one unit", async () => {
+  const transport = vi.fn(acceptingTransport("never"));
+  const result = await runFinanceAlpacaOrder(
+    request({
+      strategyClass: "A",
+      fillPoll: false,
+      committedInstrumentNotional: 4990,
+      budget: {
+        automation: "unattended",
+        allowedInstruments: ["SPY"],
+        maxOrderNotional: 1000,
+        maxInstrumentNotional: 5000,
+        maxOrdersPerRun: 8,
+      },
+      transport,
+    }),
+  );
+  expect(result.ok).toBe(false);
+  expect(transport).not.toHaveBeenCalled();
+});

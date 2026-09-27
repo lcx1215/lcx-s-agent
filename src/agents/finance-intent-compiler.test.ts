@@ -96,6 +96,20 @@ describe("compileExecutionIntent", () => {
     }
   });
 
+  it("shrinks a valid entry to supplied headroom instead of discarding it", () => {
+    const base = { conclusion: equityConclusion, market, equity, runAuthorizationId: "auth-1" };
+    const result = compileExecutionIntent({
+      ...base,
+      maxEntryNotional: market.referencePrice * 3.5,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.intent.quantity).toBe(3);
+      expect(result.notes.join()).toContain("entry size reduced");
+    }
+    expect(compileExecutionIntent({ ...base, maxEntryNotional: 0 }).ok).toBe(false);
+    expect(compileExecutionIntent({ ...base, maxEntryNotional: NaN }).ok).toBe(false);
+  });
   it("uses a trusted exact quantity when closing an observed position", () => {
     const result = compileExecutionIntent({
       conclusion: { ...equityConclusion, direction: "sell", invalidationPrice: undefined },
@@ -103,6 +117,7 @@ describe("compileExecutionIntent", () => {
       equity,
       runAuthorizationId: "intraday-paper-session",
       quantityOverride: 17.5,
+      maxEntryNotional: 0,
     });
     expect(result.ok).toBe(true);
     if (result.ok) {

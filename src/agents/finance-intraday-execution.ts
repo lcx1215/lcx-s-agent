@@ -444,6 +444,17 @@ export async function executeFinanceIntradayDecision(params: {
       },
       market: { referencePrice, referencePriceAt: quote.referencePriceAt },
       equity: account.equity,
+      ...(input.action === "buy"
+        ? {
+            committedInstrumentNotional: Math.max(
+              Math.abs(
+                account.positions.find((position) => position.instrument === input.instrument)
+                  ?.marketValue ?? 0,
+              ),
+              Math.abs(brokerHeld * referencePrice),
+            ),
+          }
+        : {}),
       runAuthorizationId: `intraday-paper:${input.sessionDate}:${input.signalId}`,
       budget: {
         automation: "unattended",

@@ -326,10 +326,29 @@ export async function runFinanceAlpacaOrder(
     };
   }
 
+  const committed = request.committedInstrumentNotional ?? 0;
+  const orderCap = request.budget.maxOrderNotional;
+  const instrumentCap = request.budget.maxInstrumentNotional;
+  const sizeWithinPaperCaps =
+    (request.mode ?? "paper") === "paper" &&
+    request.conclusion.direction === "buy" &&
+    request.quantityOverride === undefined &&
+    typeof orderCap === "number" &&
+    Number.isFinite(orderCap) &&
+    orderCap > 0 &&
+    typeof instrumentCap === "number" &&
+    Number.isFinite(instrumentCap) &&
+    instrumentCap > 0 &&
+    Number.isFinite(committed) &&
+    committed >= 0;
+  const entryHeadroom = sizeWithinPaperCaps
+    ? Math.max(0, Math.min(orderCap, instrumentCap - committed))
+    : undefined;
   const compiled = compileExecutionIntent({
     conclusion: request.conclusion,
     market: request.market,
     equity: request.equity,
+    ...(entryHeadroom === undefined ? {} : { maxEntryNotional: entryHeadroom }),
     runAuthorizationId: request.runAuthorizationId,
     ...(request.strategyClass === undefined ? {} : { strategyClass: request.strategyClass }),
     ...(request.minConviction === undefined ? {} : { minConviction: request.minConviction }),

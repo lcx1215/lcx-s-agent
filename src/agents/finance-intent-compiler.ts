@@ -76,6 +76,8 @@ export type CompileExecutionIntentParams = Readonly<{
   strategyClass?: FinanceStrategyClass;
   /** Trusted controller-only exact quantity, used to close an observed position without re-sizing. */
   quantityOverride?: number;
+  /** Trusted entry notional headroom; never resizes an exact closing quantity. */
+  maxEntryNotional?: number;
 }>;
 
 const DEFAULT_MIN_CONVICTION: Record<FinanceStrategyClass, number> = {
@@ -282,6 +284,27 @@ export function compileExecutionIntent(
           "note: an invalidation price was supplied, but this class stops on its stated condition; it is not carried as a stop price",
         );
       }
+    }
+  }
+
+  if (
+    params.maxEntryNotional !== undefined &&
+    params.quantityOverride === undefined &&
+    conclusion.direction === "buy"
+  ) {
+    if (!Number.isFinite(params.maxEntryNotional) || params.maxEntryNotional < 0) {
+      refusals.push("refuse: entry notional headroom must be finite and nonnegative");
+    } else if (Number.isFinite(market.referencePrice) && market.referencePrice > 0) {
+      const bounded = Math.min(
+        quantity,
+        Math.floor(params.maxEntryNotional / market.referencePrice),
+      );
+      if (bounded < quantity) {
+        notes.push(
+          `entry size reduced from ${quantity} to ${bounded} within supplied notional headroom ${params.maxEntryNotional}`,
+        );
+      }
+      quantity = bounded;
     }
   }
 
