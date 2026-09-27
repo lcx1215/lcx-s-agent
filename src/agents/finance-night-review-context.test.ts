@@ -12,6 +12,7 @@ import {
   appendFinanceBrokerHistory,
   appendFinanceExecutionReceipt,
 } from "./finance-position-ledger.js";
+import { buildQualityHarnessModelPrompt } from "./local-text-model-adapter.js";
 
 describe("finance night review context", () => {
   it("projects settlement and durable intraday refusals into bounded evidence", async () => {
@@ -102,16 +103,37 @@ describe("finance night review context", () => {
       });
       expect(evidence.map((item) => item.source)).toEqual([
         "finance-night-settlement",
+        "finance-broker-profit-summary",
         "finance-position-ledger",
         "finance-strategy-rule-ledger",
         "finance-intraday-control-ledger",
       ]);
-      expect(evidence[3].text).toContain("risk_gate_blocked");
+      expect(evidence[4].text).toContain("risk_gate_blocked");
       const review = JSON.parse(evidence[0].text).profitReview;
       expect(review.questions).toHaveLength(5);
       expect(review.boundaries.join(" ")).toContain("do not invent missed profits");
-      const portfolio = JSON.parse(evidence[1].text);
+      const portfolio = JSON.parse(evidence[2].text);
       expect(portfolio.costsReconciled).toBe(false);
+      // Exercise the real model prompt compactor, including a noisy portfolio entry.
+      const prompt = buildQualityHarnessModelPrompt({
+        schemaVersion: 1,
+        runId: "night",
+        attempt: 1,
+        stage: "adversarial",
+        agentId: "adversarial_challenge",
+        task: "review profit",
+        evidence: evidence.map((item) =>
+          item.source === "finance-position-ledger" ? { ...item, text: "x".repeat(5000) } : item,
+        ),
+        sharedContext: {},
+        repairFeedback: [],
+        instructions: "review",
+        dependencyOutputs: {},
+      });
+      expect(prompt).toContain('"netMatchedPnl":null');
+      expect(prompt).toContain('"sellFills":0');
+      expect(prompt).toContain('"unattributedFillCount":1');
+      expect(evidence[1].text.length).toBeLessThan(2000);
       expect(portfolio.brokerProfit.accounts[0]).toMatchObject({
         buyFills: 1,
         sellFills: 0,

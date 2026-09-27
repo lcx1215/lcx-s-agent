@@ -84,6 +84,37 @@ export async function buildFinanceNightReviewEvidence(params: {
     )
     .slice(-100)
     .map(compactReceipt);
+  const brokerSummary: FinanceCommitteeEvidence = {
+    id: `finance-night:broker-profit:${params.etDate}`,
+    source: "finance-broker-profit-summary",
+    timestamp: params.asOf,
+    text: JSON.stringify({
+      boundary:
+        "broker_paper_not_local_simulation; net excludes tax/fx; fill ownership is not strategy PnL",
+      status: brokerProfit.status,
+      ...(brokerProfit.status === "unavailable" ? { reason: brokerProfit.reason } : {}),
+      accounts:
+        "accounts" in brokerProfit
+          ? brokerProfit.accounts?.map((account) => ({
+              status: account.status,
+              ...("netMatchedPnl" in account
+                ? {
+                    netMatchedPnl: account.netMatchedPnl,
+                    buyFills: account.buyFills,
+                    sellFills: account.sellFills,
+                    matchedLotCount: account.matchedLotCount,
+                    feeActivityCount: account.feeActivityCount,
+                    unallocatedFeeActivityCount: account.unallocatedFeeActivityCount,
+                    attributedFillCount: account.strategyAttribution.attributedFillCount,
+                    unattributedFillCount: account.strategyAttribution.unattributedFillCount,
+                    observedAt: account.observedAt,
+                    freshness: account.freshness,
+                  }
+                : {}),
+            }))
+          : [],
+    }),
+  };
   return Object.freeze([
     Object.freeze({
       id: `finance-night:settlement:${params.etDate}`,
@@ -123,6 +154,7 @@ export async function buildFinanceNightReviewEvidence(params: {
         issues: params.settlement.issues,
       }),
     }),
+    Object.freeze(brokerSummary),
     Object.freeze({
       id: `finance-night:portfolio:${params.etDate}`,
       source: "finance-position-ledger",
