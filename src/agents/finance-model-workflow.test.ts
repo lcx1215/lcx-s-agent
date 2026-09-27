@@ -214,3 +214,38 @@ describe("ontology backed finance workflow", () => {
     expect(receipts.every((r) => !r.adapterInvoked)).toBe(true);
   });
 });
+
+it("preserves long intake tasks within the per-requirement output contract", async () => {
+  const workflow = createFinanceModelWorkflow(cfg, {
+    adapterFactory: (_cfg, options) => ({
+      id: options!.modelRef!,
+      provider: "test",
+      modelId: options!.modelRef!,
+      mode: "adapter",
+      capabilities: ["quality_harness"],
+      requiredTools: [],
+      requiredSideEffects: [],
+      invoke: async () => review,
+    }),
+  });
+  const intake = workflow.routing.adapters.find((a) => a.id === "finance-deterministic-intake")!;
+  const task = "Review profitable exits and actual costs. ".repeat(100);
+  const payload = { agentId: "data_cleaning", stage: "intake", task, evidence: [{ id: "facts" }] };
+  const output = await intake.invoke(
+    {
+      callId: "long-task",
+      correlationId: "long-task",
+      taskId: "long-task",
+      role: "data_cleaning",
+      attempt: 1,
+      provider: "lcx",
+      modelId: "deterministic-intake-v1",
+      payload,
+    },
+    new AbortController().signal,
+  );
+  expect(validateFinanceWorkflowOutput("data_cleaning", output, payload)).toBe(true);
+  const requirements = (output as { requirements: string[] }).requirements;
+  expect(requirements.slice(0, -1).join("")).toBe(task);
+  expect(requirements.every((text) => text.length <= 1000)).toBe(true);
+});

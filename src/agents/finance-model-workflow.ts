@@ -198,7 +198,8 @@ export function createFinanceModelWorkflow(
       return {
         kind: "plan",
         requirements: [
-          request.task,
+          // 500 Unicode code points fit the 1,000 UTF-16-unit requirement limit.
+          ...(request.task.match(/[\s\S]{1,500}/gu) ?? []).filter((part) => part.trim()),
           "Audit supplied evidence and restrict conclusions to supported scope; no source sufficiency claim is made by intake.",
         ],
         missingEvidence: request.evidence.length
