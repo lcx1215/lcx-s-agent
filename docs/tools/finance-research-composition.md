@@ -390,3 +390,5 @@ A path string is not evidence. Module-learning plans inspect bounded, nonempty l
 This verifies source binding and local evaluation integrity. It does not prove that an evaluator is correct, that model weights changed, that a strategy is profitable, or that execution has been authorized.
 
 Explicit long-term research without an immediate action or current-price request uses dated historical evidence instead of requiring an executable quote. Current-price and intraday requests retain their quote gates. Provider-native macro identifiers are not interchangeable: Treasury and BLS identifiers must not be sent to FRED as implicit fallbacks.
+
+Module-learning and finance retrieval review tools default to read-only. Persisting a report requires `writeReview: true`; the operator CLI retains its explicit write/no-write option.

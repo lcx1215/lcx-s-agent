@@ -110,6 +110,7 @@ describe("module learning pipeline review tool", () => {
 
     const result = await tool.execute("review", {
       dateKey: "2026-05-12",
+      writeReview: true,
     });
 
     expect(result.details).toEqual(
@@ -176,13 +177,12 @@ describe("module learning pipeline review tool", () => {
     );
   });
 
-  it("supports dry-run review without writing a review file", async () => {
+  it("defaults to read-only review without writing a review file", async () => {
     workspaceDir = await makeTempWorkspace("openclaw-module-learning-review-");
     const tool = createModuleLearningPipelineReviewTool({ workspaceDir });
 
     const result = await tool.execute("dry", {
       dateKey: "2026-05-12",
-      writeReview: false,
     });
 
     expect(result.details).toEqual(

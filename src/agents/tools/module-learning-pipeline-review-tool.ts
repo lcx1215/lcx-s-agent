@@ -667,7 +667,7 @@ export function createModuleLearningPipelineReviewTool(options?: {
         readStringParam(params, "targetModule", { allowEmpty: true }),
       );
       const maxFiles = readNumberParam(params, "maxFiles");
-      const writeReviewFlag = params.writeReview !== false;
+      const writeReviewFlag = params.writeReview === true;
       const { results: receiptResults, issues } = await readDailyReceipts({
         workspaceDir,
         dateKey,
