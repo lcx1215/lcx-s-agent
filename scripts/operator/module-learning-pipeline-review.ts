@@ -104,6 +104,12 @@ function renderText(details: Record<string, unknown>): string {
     `weak_module_learning=${numberValue(counts.weakModuleLearning)}`,
     `boundary_violations=${numberValue(counts.boundaryViolations)}`,
   ];
+  const sourceCoverage = details.sourceCoverage as Record<string, unknown> | undefined;
+  if (sourceCoverage) {
+    lines.push(`registered_sources=${numberValue(sourceCoverage.registeredSources)}`);
+    lines.push(`sources_without_receipts=${numberValue(sourceCoverage.sourcesWithoutReceipts)}`);
+    lines.push(`unresolved_sources=${numberValue(sourceCoverage.unresolvedSources)}`);
+  }
   const reviewPath = stringValue(details.reviewPath, "");
   if (reviewPath) {
     lines.push(`review_path=${reviewPath}`);

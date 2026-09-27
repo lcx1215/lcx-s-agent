@@ -1,6 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { listModuleLearningReceiptPaths } from "../../src/agents/tools/module-learning-pipeline-review-tool.ts";
+import {
+  createModuleLearningPipelineReviewTool,
+  listModuleLearningReceiptPaths,
+} from "../../src/agents/tools/module-learning-pipeline-review-tool.ts";
 import { DEFAULT_GUARD_LOG_PATH, DEFAULT_WORKSPACE_DIR } from "./lcx-local-paths.ts";
 
 type CliOptions = {
@@ -276,13 +279,14 @@ async function readReview(params: { workspaceDir: string; dateKey: string }) {
     .join(REVIEW_DIR, `${params.dateKey}.json`)
     .split(path.sep)
     .join("/");
-  const reviewPath = path.join(params.workspaceDir, reviewRelativePath);
-  try {
-    const review = JSON.parse(await fs.readFile(reviewPath, "utf8")) as JsonRecord;
-    return { review, reviewRelativePath };
-  } catch {
-    return { review: undefined, reviewRelativePath };
-  }
+  // Read current receipts through the same owner; a saved review can predate intake.
+  const result = await createModuleLearningPipelineReviewTool({
+    workspaceDir: params.workspaceDir,
+  }).execute("module-learning-absorption-gate-review", {
+    dateKey: params.dateKey,
+    writeReview: false,
+  });
+  return { review: result.details as JsonRecord, reviewRelativePath };
 }
 
 async function countPlanReceiptFiles(params: {
@@ -412,13 +416,25 @@ function buildGate(params: {
     );
   }
 
-  const absorptionReady = perReceiptAbsorbed && globalEvalClean && !evalTimeoutNewerThanEval;
+  const sourceCoverage = recordValue(params.review?.sourceCoverage);
+  const sourceCoverageReady =
+    Boolean(sourceCoverage) && numberValue(sourceCoverage?.unresolvedSources) === 0;
+  if (!sourceCoverageReady) {
+    blockers.push("registered_sources_missing_application_or_eval_evidence");
+    nextActions.push(
+      "Resolve each registered source through the existing module-learning owner; code mappings and historical unrelated evaluations do not satisfy source-specific evidence.",
+    );
+  }
+  const absorptionReady =
+    perReceiptAbsorbed && globalEvalClean && !evalTimeoutNewerThanEval && sourceCoverageReady;
   return {
     ok: true,
     boundary: "local_module_learning_absorption_gate_only",
     dateKey: params.dateKey,
     reviewPath: params.reviewPath,
     evalEvidenceSource: params.evalEvidenceSource,
+    reviewReadMode: "fresh_read_only",
+    sourceCoverage,
     absorptionReady,
     gateDecision: absorptionReady ? "ready_for_eval_absorbed_review" : "hold_at_application_ready",
     counts: {

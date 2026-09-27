@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
+import { buildModuleLearningSourceCoverage } from "../module-learning-source-register.js";
 import { resolveWorkspaceRoot } from "../workspace-dir.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult, readNumberParam, readStringParam, ToolInputError } from "./common.js";
@@ -569,6 +570,7 @@ export function buildModuleLearningPipelineReview(params: {
       exactMissingProofReceipts: rows.filter((row) => row.exactMissingProof.length > 0).length,
     },
     countsByStatus,
+    sourceCoverage: buildModuleLearningSourceCoverage(rows, params.targetModule, params.dateKey),
     proofGapSummary,
     nextProofQueue,
     receiptSource: {

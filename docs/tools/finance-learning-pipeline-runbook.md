@@ -160,6 +160,41 @@ decision context prioritizes contradicting evidence and reports how many items
 were omitted, so an early set of supporting items cannot crowd out later
 counterevidence. The projection is still a partial view of the ledger.
 
+### Source coverage before absorption claims
+
+The versioned intake register in `src/agents/module-learning-source-register.ts`
+links each selected article to its reading limits, canonical module target,
+existing implementation paths, adjacent application task and remaining work.
+Registering a source does not create an application receipt or imply model learning.
+The initial intake covers AutoScientist-Quant, Optiver, Zen backtest-to-broker,
+Zen supply-chain shocks, DRAM ETF due diligence and the publicly readable Skill
+Eval excerpt. No unavailable article content is treated as read.
+
+`module-learning-pipeline-review --json --no-write` reports `sourceCoverage`
+even when a registered source has no receipt. Matching uses the source URL and
+module target, not title similarity or another article's evaluation. A dated or
+module-filtered review reports coverage within that selected scope, excluding
+sources registered after the selected date. All current
+matching receipts must be resolved; one historical success cannot hide a newer
+incomplete application. Local artifact sources must preserve the canonical URL
+in the source-bound plan receipt to match this register.
+
+The absorption gate reads a fresh review through the same owner without writing
+protected memory or saved reviews. It holds when a registered source lacks its
+application/evaluation evidence. Code paths are navigation aids; neither they
+nor receipt path strings independently prove successful application. Preserve
+source-bound retrieval, application, adjacent-task and evaluation artifacts in
+the existing pipeline, then record keep/downrank/discard. A terminal discard
+resolves an intake obligation but does not mean the source was absorbed. The
+remaining-work list is a design backlog, not a claim that every article feature
+must be deployed before a bounded method can be evaluated.
+
+Most of this intake improves finance: research provenance, position continuity,
+execution feedback, calendar correctness and research reproducibility. Shared
+source coverage and fresh evidence review improve the system's audit machinery.
+They do not establish better general reasoning, autonomous learning, model
+weights, profitability or execution authority.
+
 Supported smoke cases:
 
 - `manual-paste`
