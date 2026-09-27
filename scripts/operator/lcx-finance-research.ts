@@ -382,6 +382,9 @@ export async function runFinanceResearchCli(
               "../../src/agents/finance-model-workflow.ts",
               "../../src/agents/configured-finance-model-adapter.ts",
               "../../src/agents/quality-harness.ts",
+              "../../src/agents/quality-harness-quality.ts",
+              "../../src/agents/quality-harness-findings.ts",
+              "../../src/agents/evidence-source-identity.ts",
               "./lcx-finance-research.ts",
             ].map(async (file) => [
               file,
