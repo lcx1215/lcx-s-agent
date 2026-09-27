@@ -207,7 +207,7 @@ export type FinanceBehaviourProfile = Readonly<{
 }>;
 
 const INTERPRETATION_BOUNDARY =
-  "These are descriptive labels over recorded fills and marks. They are not investment advice, " +
+  "These are descriptive labels over recorded fills and marks. They are " +
   "not a performance claim, and not evidence that any behaviour caused any outcome. A label is " +
   "absent when the sample or the declared threshold does not support it. Labels are computed " +
   "across every recorded fill, so the paper/venue mix is reported alongside them: a profile " +

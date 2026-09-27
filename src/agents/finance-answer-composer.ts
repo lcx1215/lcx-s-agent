@@ -21,6 +21,7 @@
 
 import { checkAnswerGrounding, type GroundingGateResult } from "./finance-answer-grounding-gate.js";
 import type { FinanceDataGatewaySnapshot } from "./finance-data-gateway.js";
+import { financeDecisionInstructions } from "./finance-decision-policy.js";
 
 /**
  * Minimal shape of the real gateway model call the agent already uses
@@ -61,8 +62,8 @@ export type FinanceComposeResult = {
 };
 
 const RESEARCH_ONLY_SYSTEM_PREAMBLE = [
-  "You are LCX Agent composing a research-only finance answer.",
-  "Hard rules: no buy/sell/add/reduce instructions, no position sizing, no options bet instructions.",
+  "You are LCX Agent composing a finance analysis.",
+  financeDecisionInstructions("research_only"),
   "Cite every current number with its source and timestamp, or mark it unverified.",
   "If required data is missing or blocked, say exactly what is missing and what can be checked next;",
   "still give a useful research-grade decision packet (evidence status, thesis/counter-thesis,",
@@ -86,7 +87,7 @@ export function buildGroundingContext(snapshot?: FinanceDataGatewaySnapshot): st
   }
   const lines: string[] = [
     `Finance data gateway snapshot for ${snapshot.instrument} (${snapshot.assetClass}), asOf ${snapshot.asOf}.`,
-    `Data quality: ${snapshot.qualityStatus}. Research-only; ${snapshot.boundary}.`,
+    `Data quality: ${snapshot.qualityStatus}. Data scope: ${snapshot.boundary}.`,
   ];
   if (snapshot.normalizedFields.length > 0) {
     lines.push("Fields (each usable only with its source and timestamp):");

@@ -378,7 +378,7 @@ describe("buildFinanceRuleReadiness", () => {
     const result = buildFinanceRuleReadiness({ rules: [rule()], marks: [], asOf: AS_OF });
     expect(result.advice).toBe(false);
     expect(result.schemaVersion).toBe(FINANCE_RULE_READINESS_SCHEMA);
-    expect(result.interpretationBoundary).toContain("not investment advice");
+    expect(result.interpretationBoundary).not.toContain("not investment advice");
   });
 
   it("reads a reversal off the traded range, which a close series cannot see", () => {

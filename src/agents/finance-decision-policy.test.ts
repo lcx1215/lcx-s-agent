@@ -3,6 +3,7 @@ import {
   FINANCE_STAGE_ALLOWED_MODES,
   FINANCE_STAGE_MODE_REFUSAL,
   evaluateFinanceDecisionPolicy,
+  financeDecisionInstructions,
 } from "./finance-decision-policy.js";
 
 const candidateContext = {
@@ -39,6 +40,22 @@ describe("finance decision policy", () => {
     expect(result.requiredEvidence).toEqual([]);
   });
 
+  it("accepts a complete conditional decision without a disclaimer or repeated human confirmation", () => {
+    const result = evaluateFinanceDecisionPolicy({
+      mode: "conditional_trade_candidate",
+      ask: "NVDA 现在适合买吗？",
+      answer:
+        "候选买入 NVDA：如果财报指引保持则触发，依据截至 2026-09-07 的财报数据来源。持有周期一个月，主要风险是估值压缩，失效条件是指引下修。",
+      candidateContext,
+    });
+    expect(result.allowed).toBe(true);
+    expect(result.executionAuthority).toBe("none");
+    expect(result.requiredEvidence).toEqual([]);
+    const instructions = financeDecisionInstructions("strategy_candidate");
+    expect(instructions).toContain("instrument and direction, trigger, horizon, invalidation");
+    expect(instructions).toContain("does not require repeated human confirmation");
+    expect(instructions).not.toContain("Keep research-only");
+  });
   it("allows a conditional buy candidate without granting execution authority", () => {
     const result = evaluateFinanceDecisionPolicy({
       mode: "conditional_trade_candidate",
@@ -63,11 +80,7 @@ describe("finance decision policy", () => {
     expect(result.allowed).toBe(false);
     expect(result.failedReasons).toContain("finance_candidate_contract_incomplete");
     expect(result.requiredEvidence).toEqual(
-      expect.arrayContaining([
-        "source_and_timestamped_evidence",
-        "risk_and_invalidation",
-        "human_review_and_no_automatic_execution_boundary",
-      ]),
+      expect.arrayContaining(["source_and_timestamped_evidence", "risk_and_invalidation"]),
     );
   });
 

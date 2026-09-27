@@ -236,7 +236,7 @@ export type FinanceRuleReadiness = Readonly<{
 
 const INTERPRETATION_BOUNDARY_CORE =
   "This says whether a declared rule has been exposed to adverse price action for long enough. " +
-  "It is not investment advice, not a performance claim, and not evidence that the rule works: " +
+  "It measures price adversity, not strategy returns or proof that the rule works: " +
   "a rule can survive chop and still be wrong. Adversity is measured on observed prices, so it " +
   "describes what the market did, never what the rule earned.";
 

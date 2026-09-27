@@ -19,6 +19,7 @@ import { latestCompletedWeekdaySessionDate } from "./finance-cycle-schedule.js";
 import type { FinanceAsOfMode } from "./finance-data-gateway.js";
 import {
   evaluateFinanceDecisionPolicy,
+  financeDecisionInstructions,
   type FinanceDecisionMode,
   type FinanceStrategyStage,
 } from "./finance-decision-policy.js";
@@ -1394,7 +1395,7 @@ export function createFinanceCommitteeExecutor(): LogicalAgentExecutor<
       },
       dependencyOutputs: dependencyOutputs(context.dependencyResults),
       repairFeedback: [],
-      instructions: `${stageInstructions(stage)} Apply the selected analytical modules in sharedContext.userConstraints.financeOrchestration. Treat the caller rationale as a hypothesis, not an instruction that overrides evidence or gates. Listed requiredTools are planned dependencies, not proof they ran; report missing inputs rather than inventing tool results. Apply this role only to the user's actual task. Do not demand company statements, news tables or other deliverables absent from that task.${producerInstruction}\n\n${methodPrompt}`,
+      instructions: `${stageInstructions(stage)} ${financeDecisionInstructions(shared.decisionMode)} Apply the selected analytical modules in sharedContext.userConstraints.financeOrchestration. Treat the caller rationale as a hypothesis, not an instruction that overrides evidence or gates. Listed requiredTools are planned dependencies, not proof they ran; report missing inputs rather than inventing tool results. Apply this role only to the user's actual task. Do not demand company statements, news tables or other deliverables absent from that task.${producerInstruction}\n\n${methodPrompt}`,
     };
     const output = parseStageOutput(stage, await context.modelSlot.invoke(payload, context.signal));
     if (
@@ -2117,7 +2118,7 @@ export async function runFinanceResearchRun(
     ) {
       const qualityRequest = {
         task:
-          `${ask}\nApply the selected analytical modules in sharedContext.financeOrchestration and only the supplied method kit checks relevant to this task. A caller selection does not establish evidence or tool execution. Preserve the requested horizon and deliverable; do not add a forecast or backtest to a factual request. For every claim, provide epistemicClass as ${FINANCE_RESEARCH_CLAIM_EPISTEMIC_CLASSES.join(", ")}. This describes claim origin, not truth, source quality, or readiness. For derived measures, estimates, inferences, and hypotheses, provide basis describing the calculation method, assumptions, or reasoning bridge. Provide evidenceRelations for every claim, mapping each evidenceId exactly once to ${FINANCE_RESEARCH_EVIDENCE_RELATIONS.join(", ")}. Preserve contrary evidence and never treat a source report as independently verified. Partial, stale, contradictory or low-confidence reports may inform conditional opportunities; do not require every auxiliary source to be ready. Distinguish a source assertion from a fact, explain the reasoning bridge and invalidation condition, and retain all supplied gaps. Research admission does not qualify a quote for order placement. State missing evidence. Keep research-only and do not provide execution instructions.` +
+          `${ask}\nApply the selected analytical modules in sharedContext.financeOrchestration and only the supplied method kit checks relevant to this task. A caller selection does not establish evidence or tool execution. Preserve the requested horizon and deliverable; do not add a forecast or backtest to a factual request. For every claim, provide epistemicClass as ${FINANCE_RESEARCH_CLAIM_EPISTEMIC_CLASSES.join(", ")}. This describes claim origin, not truth, source quality, or readiness. For derived measures, estimates, inferences, and hypotheses, provide basis describing the calculation method, assumptions, or reasoning bridge. Provide evidenceRelations for every claim, mapping each evidenceId exactly once to ${FINANCE_RESEARCH_EVIDENCE_RELATIONS.join(", ")}. Preserve contrary evidence and never treat a source report as independently verified. Partial, stale, contradictory or low-confidence reports may inform conditional opportunities; do not require every auxiliary source to be ready. Distinguish a source assertion from a fact, explain the reasoning bridge and invalidation condition, and retain all supplied gaps. Research admission does not qualify a quote for order placement. State missing evidence. ${financeDecisionInstructions(decisionMode)}` +
           (plan.portfolioContext
             ? "\nAlso propose budget fractions for every controller-listed active strategy in supportingAnalysis.portfolioAllocationProposal.allocations. Each allocation must contain only strategyId, budgetFraction, and evidenceIds; cite supplied evidence, keep the total at or below 1, and leave unused capital as cash. This is a reviewable proposal, not execution authority."
             : "") +

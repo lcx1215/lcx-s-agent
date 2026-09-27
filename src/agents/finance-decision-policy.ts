@@ -18,6 +18,18 @@ export const FINANCE_DECISION_MODES = [
 
 export type FinanceDecisionMode = (typeof FINANCE_DECISION_MODES)[number];
 
+/** Language guides a decision; execution authority remains in the controller gate. */
+export function financeDecisionInstructions(mode: FinanceDecisionMode): string {
+  return [
+    `Decision mode: ${mode}. Lead with the answer to the user's question.`,
+    'Do not append generic disclaimers such as "not investment advice", "仅供研究", or "不能作为操作建议". State specific uncertainties and their effect on the decision instead.',
+    mode === "research_only"
+      ? "Answer the analytical question directly, including directional implications and what would change the conclusion. Do not invent an approved order or a funded position."
+      : "Give an actionable conditional decision: instrument and direction, trigger, horizon, invalidation, and sizing within supplied capital and risk limits. If those limits are missing, identify the missing input instead of inventing a size. Explain why waiting or holding is preferable when appropriate.",
+    "Partial or conflicting evidence may support an opportunity hypothesis; preserve its uncertainty. A proposal does not prove an order was placed. The controller checks authorization, current execution quotes, risk, deduplication and reconciliation. Existing autonomous Paper authorization does not require repeated human confirmation; Live requires its own explicit authority.",
+  ].join(" ");
+}
+
 /**
  * Research maturity stages as the trader-strategy-lab skill names them.
  *
@@ -254,8 +266,6 @@ const RISK_PATTERN =
  */
 const HORIZON_PATTERN =
   /短线|中线|长线|持有期|周期|期限|一周|一个月|季度|\b(?:horizon|timeframe|terms?|weeks?|months?|quarters?)\b/iu;
-const REVIEW_BOUNDARY_PATTERN =
-  /仅候选|候选意见|需要确认|人工确认|不自动下单|不执行|执行前确认|仅供审阅|no automatic execution|human confirmation|review only|not execution/iu;
 /**
  * Whether the answer claims an execution happened.
  *
@@ -415,9 +425,6 @@ export function evaluateFinanceDecisionPolicy(params: {
   }
   if (!HORIZON_PATTERN.test(answer)) {
     requiredEvidence.push("time_horizon");
-  }
-  if (!REVIEW_BOUNDARY_PATTERN.test(answer)) {
-    requiredEvidence.push("human_review_and_no_automatic_execution_boundary");
   }
 
   if (mode === "strategy_candidate" && hasAction) {

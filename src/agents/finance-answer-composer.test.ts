@@ -126,9 +126,9 @@ describe("composeFinanceAnswer", () => {
     expect(result.dataPosture).toBe("data_blocked");
     expect(result.modelUsed).toBe("moonshot/kimi-k2.5");
     expect(result.candidateAnswer).toContain("725.17");
-    // The model must have been handed the research-only preamble + grounding.
+    // The model receives concrete decision language plus the grounded data.
     expect(model.seen).toHaveLength(1);
-    expect(model.seen[0].systemContext).toContain("research-only");
+    expect(model.seen[0].systemContext).toContain("Decision mode: research_only");
     expect(model.seen[0].systemContext).toContain("725.17");
     expect(model.seen[0].userMessage).toBe("QQQ 最近风险怎么看?");
   });

@@ -604,6 +604,10 @@ describe("finance research runner", () => {
 
   it("compiles a grounded dynamic allocation into the existing portfolio plan contract", async () => {
     const allocationModel = async (request: unknown): Promise<unknown> => {
+      const prompt = (request as { task: string }).task;
+      expect(prompt).toContain("Decision mode: strategy_candidate");
+      expect(prompt).toContain("instrument and direction, trigger, horizon, invalidation");
+      expect(prompt).not.toContain("Keep research-only and do not provide execution instructions");
       const output = await modelInvoker(request);
       if (
         typeof output === "object" &&
@@ -639,7 +643,7 @@ describe("finance research runner", () => {
               },
             },
             answer:
-              "Strategy candidate using timestamped evidence as of 2026-09-08: if the base scenario persists, retain a bounded allocation. Risk and invalidation are tied to the stated scenario over a six-month horizon. Review only; no automatic execution.",
+              "Strategy candidate using timestamped evidence as of 2026-09-08: if the base scenario persists, retain a bounded allocation. Risk and invalidation are tied to the stated scenario over a six-month horizon.",
           },
         };
       }

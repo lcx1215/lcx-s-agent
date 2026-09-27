@@ -401,7 +401,7 @@ describe("finance behaviour profile", () => {
         ...FINANCE_BEHAVIOUR_DIMENSIONS,
       ]);
       expect(profile.advice).toBe(false);
-      expect(profile.interpretationBoundary).toContain("not investment advice");
+      expect(profile.interpretationBoundary).not.toContain("not investment advice");
       expect(profile.minObservations).toBe(3);
       expect(profile.declaredThresholds).toEqual({
         dispositionGapThreshold: 0.1,
