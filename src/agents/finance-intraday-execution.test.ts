@@ -27,6 +27,7 @@ import {
   activateFinanceStrategyRule,
   declareFinanceStrategyRule,
   readFinanceStrategyRuleLedger,
+  retireFinanceStrategyRule,
 } from "./finance-strategy-rule-ledger.js";
 import { openFinanceThesis } from "./finance-thesis-ledger.js";
 import type {
@@ -138,9 +139,16 @@ async function activeRuleBinding(
 }
 
 describe("intraday decision execution bridge", () => {
-  it.each(["opening_range_stop", "reward_target", "pre_close"] as const)(
-    "executes owned protective %s without model veto and never replays it",
-    async (reason) => {
+  it.each([
+    { reason: "opening_range_stop", retired: false },
+    { reason: "reward_target", retired: false },
+    { reason: "pre_close", retired: false },
+    { reason: "opening_range_stop", retired: true },
+    { reason: "reward_target", retired: true },
+    { reason: "pre_close", retired: true },
+  ] as const)(
+    "executes owned protective exit without model veto or replay (%j)",
+    async ({ reason, retired }) => {
       const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-execution-"));
       temporary.push(directory);
       const strategyBinding = await activeRuleBinding(directory);
@@ -214,6 +222,14 @@ describe("intraday decision execution bridge", () => {
       });
       await appendFinanceExecutionReceipt(directory, coreReceipt);
       await appendFinanceExecutionReceipt(directory, intradayReceipt);
+      if (retired) {
+        await retireFinanceStrategyRule(directory, {
+          kind: "retired",
+          ruleId: decision.input.strategyRule,
+          observedAt: "2026-09-18T15:00:01.000Z",
+          reason: "disable new entries",
+        });
+      }
       const receipt = { receiptId: "receipt-1" } as never;
       const runOrderMock = vi.fn(async (_request: Parameters<typeof runFinanceAlpacaOrder>[0]) => ({
         ok: true as const,
@@ -260,6 +276,56 @@ describe("intraday decision execution bridge", () => {
         runOrder,
         recordFill,
       };
+      if (retired) {
+        const withoutOwnership = (
+          await appendFinanceIntradayDecision(directory, {
+            ...decision.input,
+            signalId: "intraday-unproven-exit",
+          })
+        ).record;
+        expect(
+          await executeFinanceIntradayDecision({ ...request, decision: withoutOwnership }),
+        ).toMatchObject({
+          status: "refused",
+          outcome: { reasons: [expect.stringContaining("entry ownership")] },
+        });
+        expect(runOrderMock).not.toHaveBeenCalled();
+        await appendFinanceIntradayDecision(directory, {
+          ...decision.input,
+          signalId: "intraday-owned-entry",
+          action: "buy",
+          reason: "opening_range_breakout",
+          referencePriceAt: "2026-09-18T14:30:00.000Z",
+        });
+        const newEntry = (
+          await appendFinanceIntradayDecision(directory, {
+            ...decision.input,
+            signalId: "intraday-retired-new-entry",
+            action: "buy",
+            reason: "opening_range_breakout",
+          })
+        ).record;
+        expect(
+          await executeFinanceIntradayDecision({ ...request, decision: newEntry }),
+        ).toMatchObject({ status: "refused" });
+        const wrongAccount = (
+          await appendFinanceIntradayDecision(directory, {
+            ...decision.input,
+            signalId: "intraday-wrong-account-exit",
+          })
+        ).record;
+        expect(
+          await executeFinanceIntradayDecision({
+            ...request,
+            decision: wrongAccount,
+            controller: { ...controller, accountId: "another-account" },
+          }),
+        ).toMatchObject({
+          status: "refused",
+          outcome: { reasons: [expect.stringContaining("entry ownership")] },
+        });
+        expect(runOrderMock).not.toHaveBeenCalled();
+      }
       expect(await executeFinanceIntradayDecision(request)).toMatchObject({ status: "placed" });
       expect(runOrderMock).toHaveBeenCalledTimes(1);
       expect(tradeDecisionReviewer).not.toHaveBeenCalled();

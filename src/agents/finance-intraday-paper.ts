@@ -93,6 +93,7 @@ export function resolveFinanceIntradayPaperExecutionEligibility(
  */
 export function resolveFinanceIntradayActiveRuleContract(
   rule: FinanceStrategyRule,
+  options: { allowRetiredExit?: boolean } = {},
 ): FinanceIntradayActiveRuleContract {
   const supportedVersion =
     (rule.ruleId === FINANCE_INTRADAY_OPENING_RANGE_RULE &&
@@ -101,7 +102,7 @@ export function resolveFinanceIntradayActiveRuleContract(
       rule.formVersion === FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V2);
   if (
     !supportedVersion ||
-    rule.state !== "active" ||
+    (rule.state !== "active" && !(options.allowRetiredExit && rule.state === "retired")) ||
     rule.form !== FINANCE_INTRADAY_OPENING_RANGE_FORM ||
     rule.emits !== FINANCE_INTRADAY_OPENING_RANGE_EMITS ||
     rule.schedule.kind !== "intraday"

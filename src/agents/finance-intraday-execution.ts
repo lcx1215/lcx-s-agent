@@ -11,6 +11,7 @@ import {
   appendFinanceIntradayOutcome,
   FinanceIntradayDecisionReviewReceiptSchema,
   readFinanceIntradayOutcome,
+  readFinanceIntradayDecisions,
   type FinanceIntradayDecisionRecord,
   type FinanceIntradayDecisionReviewReceipt,
 } from "./finance-intraday-control-ledger.js";
@@ -43,6 +44,7 @@ async function strategyBindingIssue(
   directory: string,
   decision: FinanceIntradayDecisionRecord,
   asOf: string,
+  accountId: string,
 ): Promise<string | null> {
   const binding = decision.input.strategyBinding;
   if (!binding) {
@@ -69,15 +71,27 @@ async function strategyBindingIssue(
     return marketSessionIssue ?? "intraday decision is outside its bound market-calendar session";
   }
   const { ledger } = await readFinanceStrategyRuleLedger(directory);
+  const retiredExit =
+    decision.input.action === "sell" &&
+    ["opening_range_stop", "reward_target", "pre_close"].includes(decision.input.reason) &&
+    ledger.rules.some(
+      (rule) => rule.ruleId === decision.input.strategyRule && rule.state === "retired",
+    );
   const matching = ledger.rules.filter(
-    (rule) => rule.state === "active" && rule.form === FINANCE_INTRADAY_OPENING_RANGE_FORM,
+    (rule) =>
+      rule.form === FINANCE_INTRADAY_OPENING_RANGE_FORM &&
+      (retiredExit
+        ? rule.ruleId === decision.input.strategyRule && rule.state === "retired"
+        : rule.state === "active"),
   );
   if (matching.length !== 1 || matching[0]?.ruleId !== decision.input.strategyRule) {
     return "intraday strategy is missing, ambiguous, or no longer active";
   }
   let contract;
   try {
-    contract = resolveFinanceIntradayActiveRuleContract(matching[0]);
+    contract = resolveFinanceIntradayActiveRuleContract(matching[0], {
+      allowRetiredExit: retiredExit,
+    });
   } catch (error) {
     return error instanceof Error ? error.message : "intraday strategy contract is incompatible";
   }
@@ -98,6 +112,37 @@ async function strategyBindingIssue(
   }
   if (!contract.instruments.includes(decision.input.instrument.toUpperCase())) {
     return "intraday signal instrument is outside the active strategy execution scope";
+  }
+  if (retiredExit) {
+    const records = await readFinancePositionRecords(directory);
+    const decisions = await readFinanceIntradayDecisions(directory, {
+      instrument: decision.input.instrument,
+    });
+    const receipts = receiptsForIntradayStrategy(records.receipts, accountId).filter(
+      (receipt) => receipt.instrument === decision.input.instrument,
+    );
+    const boundReceipts = receipts.filter((receipt) =>
+      decisions.some(
+        (record) =>
+          `intent:${record.input.signalId}` === receipt.intentId &&
+          record.input.action === receipt.side &&
+          record.input.strategyRule === decision.input.strategyRule &&
+          record.input.strategyBinding?.declarationRef === binding.declarationRef &&
+          record.input.strategyBinding?.activationRef === binding.activationRef &&
+          record.input.strategyBinding?.scope !== "explicit_diagnostic",
+      ),
+    );
+    const net = (items: typeof receipts) =>
+      projectFinancePositions({ receipts: items }).positions.find(
+        (position) => position.instrument === decision.input.instrument,
+      )?.quantity ?? 0;
+    const owned = net(boundReceipts);
+    if (owned <= 0 || owned !== net(receipts)) {
+      return "retired strategy exit lacks unambiguous account-bound entry ownership";
+    }
+    // Retirement removes entry authority, not the obligation to close proven inventory.
+    // The original declaration, session, quote, broker holding and execution gates still apply.
+    return null;
   }
   if (binding.scope === "strategy_universe" && binding.universeSnapshotRef !== undefined) {
     return "strategy-universe decision unexpectedly carries a system snapshot reference";
@@ -166,6 +211,7 @@ export async function executeFinanceIntradayDecision(params: {
       params.directory,
       params.decision,
       new Date(now()).toISOString(),
+      params.controller.accountId,
     );
     if (strategyIssue) {
       const outcome = await appendFinanceIntradayOutcome(params.directory, {
@@ -412,6 +458,7 @@ export async function executeFinanceIntradayDecision(params: {
       params.directory,
       params.decision,
       new Date(now()).toISOString(),
+      params.controller.accountId,
     );
     if (finalCalendarIssue) {
       const outcome = await appendFinanceIntradayOutcome(params.directory, {
