@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { readFinanceIntradayExecutionCoverage } from "./finance-intraday-control-ledger.js";
 import {
   FINANCE_DIRECTIONAL_CALIBRATION_BLOCK_REASON,
   FINANCE_PAPER_EXECUTION_BLOCK_REASON,
@@ -414,6 +415,7 @@ export async function buildFinanceAutomaticLifecycleFeedback(
         reason: error instanceof Error ? error.message.slice(0, 240) : String(error).slice(0, 240),
       };
     }
+    const intradayExecution = await readFinanceIntradayExecutionCoverage(state.directory);
     const latestProposal = proposals.at(-1) ?? null;
     const latestPromotion = promotions.at(-1) ?? null;
     const failedCycleModes = ["day", "night"].filter((mode) =>
@@ -442,14 +444,16 @@ export async function buildFinanceAutomaticLifecycleFeedback(
         ? "inspect_failed_finance_cycle"
         : schedulerRuntimeNeedsInspection
           ? "inspect_finance_scheduler_runtime"
-          : currentReadiness.status !== "present" ||
-              Number(currentReadiness.unreadyActiveRuleCount) > 0
-            ? "inspect_finance_readiness"
-            : latestProposal && latestProposal.proposalId !== latestPromotion?.proposalId
-              ? "review_directional_calibration_proposal"
-              : latestPromotion === null
-                ? "prepare_reconciled_net_trade_economics_evidence"
-                : "monitor_net_trade_economics_promotion";
+          : intradayExecution.status === "present" && intradayExecution.needsExecutionInspection
+            ? "inspect_unexecuted_finance_candidates"
+            : currentReadiness.status !== "present" ||
+                Number(currentReadiness.unreadyActiveRuleCount) > 0
+              ? "inspect_finance_readiness"
+              : latestProposal && latestProposal.proposalId !== latestPromotion?.proposalId
+                ? "review_directional_calibration_proposal"
+                : latestPromotion === null
+                  ? "prepare_reconciled_net_trade_economics_evidence"
+                  : "monitor_net_trade_economics_promotion";
     return Object.freeze({
       schemaVersion: FINANCE_AUTOMATIC_LIFECYCLE_FEEDBACK_SCHEMA_VERSION,
       status: "present",
@@ -462,6 +466,7 @@ export async function buildFinanceAutomaticLifecycleFeedback(
         runtime: schedulerRuntime,
       },
       currentReadiness,
+      intradayExecution,
       scoredOutcomeCount: samples.length,
       tuning: {
         proposalCount: proposals.length,

@@ -590,7 +590,8 @@ export function compactReceipts(
  */
 export const CENTRAL_PERCEPTION_BUDGET_BYTES = 12_000;
 export const CENTRAL_PERCEPTION_KEY_BUDGET_BYTES = 2_048;
-export const CENTRAL_FINANCE_PERCEPTION_KEY_BUDGET_BYTES = 3_072;
+// Finance includes bounded execution coverage so refused candidates remain visible.
+export const CENTRAL_FINANCE_PERCEPTION_KEY_BUDGET_BYTES = 6_144;
 /**
  * Caps on the tool-result digest carried back to the next decision, and on how
  * much of a step's reason survives compaction.

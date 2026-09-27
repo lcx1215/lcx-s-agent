@@ -3,6 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { buildFinanceAutomaticLifecycleFeedback } from "./finance-automatic-lifecycle-feedback.js";
+import {
+  appendFinanceIntradayDecision,
+  appendFinanceIntradayOutcome,
+} from "./finance-intraday-control-ledger.js";
 import { writeFinanceSchedulerState } from "./finance-scheduler-state.js";
 import { financeResearchScoredPath } from "./finance-state-dir.js";
 import { runFinanceTuningLifecycle } from "./finance-tuning-lifecycle.js";
@@ -158,5 +162,29 @@ it("preserves candidate-bound model veto reasons without calling them execution 
         },
       },
     },
+  });
+});
+
+it("surfaces unexecuted intraday signals before asking for more research readiness", async () => {
+  await appendFinanceIntradayDecision(directory, {
+    signalId: "idle-candidate",
+    instrument: "SPY",
+    sessionDate: "2026-09-18",
+    action: "buy",
+    reason: "opening_range_breakout",
+    referencePrice: 100,
+    referencePriceAt: "2026-09-18T14:05:00.000Z",
+    datasetHeadRef: "a".repeat(64),
+    strategyRule: "opening_range_breakout_long_next_bar_v1",
+  });
+  await appendFinanceIntradayOutcome(directory, {
+    signalId: "idle-candidate",
+    status: "refused",
+    reasons: ["model veto"],
+  });
+  expect(await buildFinanceAutomaticLifecycleFeedback({ directory })).toMatchObject({
+    status: "present",
+    nextTask: "inspect_unexecuted_finance_candidates",
+    intradayExecution: { candidates: 1, refused: 1, placed: 0 },
   });
 });

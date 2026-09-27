@@ -432,3 +432,94 @@ export async function readFinanceIntradayDecisions(
     db.close();
   }
 }
+
+/** Read-only bounded execution coverage; a placement is not a fill or profit. */
+export async function readFinanceIntradayExecutionCoverage(directory: string) {
+  const filename = financeIntradayControlLedgerPath(directory);
+  try {
+    await fs.stat(filename);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { status: "absent" as const };
+    }
+    throw error;
+  }
+  const { DatabaseSync } = requireNodeSqlite();
+  const db = new DatabaseSync(filename, { readOnly: true });
+  try {
+    const rows = db
+      .prepare(`SELECT d.ref, d.body, d.signal_id, o.body AS outcome
+      FROM finance_intraday_decisions d LEFT JOIN finance_intraday_outcomes o ON o.signal_id=d.signal_id
+      ORDER BY d.sequence DESC LIMIT 100`)
+      .all();
+    const counts = {
+      candidates: rows.length,
+      placed: 0,
+      refused: 0,
+      uncertain: 0,
+      missingOutcome: 0,
+    };
+    const reasons = new Map<string, number>();
+    const unresolved: { signalId: string; action: string; reason: string; status: string }[] = [];
+    const signalTimes: string[] = [];
+    for (const row of rows) {
+      if (typeof row.body !== "string" || caseflowFingerprint(JSON.parse(row.body)) !== row.ref) {
+        throw new Error("intraday coverage decision integrity mismatch");
+      }
+      const record = RecordSchema.parse(JSON.parse(row.body));
+      if (record.input.signalId !== row.signal_id) {
+        throw new Error("intraday coverage signal binding mismatch");
+      }
+      const at = record.input.referencePriceAt;
+      signalTimes.push(at);
+      const outcome =
+        row.outcome === null
+          ? null
+          : FinanceIntradayOutcomeInput.parse(JSON.parse(String(row.outcome)));
+      if (outcome && outcome.signalId !== record.input.signalId) {
+        throw new Error("intraday coverage outcome binding mismatch");
+      }
+      if (outcome && (outcome.status === "placed") !== Boolean(outcome.receiptId)) {
+        throw new Error("intraday coverage receipt binding mismatch");
+      }
+      if (outcome) {
+        counts[outcome.status]++;
+      } else {
+        counts.missingOutcome++;
+      }
+      for (const reason of new Set(outcome?.reasons ?? [])) {
+        reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
+      }
+      if (outcome?.status !== "placed" && unresolved.length < 4) {
+        unresolved.push({
+          signalId: record.input.signalId,
+          action: record.input.action,
+          reason: record.input.reason,
+          status: outcome?.status ?? "missing_outcome",
+        });
+      }
+    }
+    return {
+      status: "present" as const,
+      scope: "latest_100_recorded_signals",
+      limit: 100,
+      newestSignalAt: signalTimes.toSorted().at(-1) ?? null,
+      oldestSignalAt: signalTimes.toSorted().at(0) ?? null,
+      ...counts,
+      allRecordedCandidatesUnexecuted: counts.candidates > 0 && counts.placed === 0,
+      needsExecutionInspection:
+        counts.uncertain > 0 ||
+        counts.missingOutcome > 0 ||
+        (counts.candidates > 0 && counts.placed === 0),
+      topReasons: [...reasons]
+        .toSorted((a, b) => b[1] - a[1])
+        .slice(0, 4)
+        .map(([reason, count]) => ({ reason: reason.slice(0, 240), count })),
+      recentUnexecuted: unresolved,
+      interpretation:
+        "Historical signal coverage, not current market readiness. Placed is not filled. Refusal can be correct; missed-opportunity PnL is not assessed. Never replay an unresolved signal automatically.",
+    };
+  } finally {
+    db.close();
+  }
+}
