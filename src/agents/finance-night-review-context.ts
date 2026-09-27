@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { FinanceCommitteeEvidence } from "./finance-agent-committee.js";
+import { readFinanceBrokerProfitFeedback } from "./finance-broker-profit-feedback.js";
 import { financeEtClock } from "./finance-cycle-schedule.js";
 import {
   readFinanceIntradayDecisions,
@@ -46,10 +47,11 @@ export async function buildFinanceNightReviewEvidence(params: {
   etDate: string;
   settlement: FinanceNightSettlementSummary;
 }): Promise<readonly FinanceCommitteeEvidence[]> {
-  const [positions, strategyRules, decisions] = await Promise.all([
+  const [positions, strategyRules, decisions, brokerProfit] = await Promise.all([
     readFinancePositionLedger(params.directory, { asOf: params.asOf }),
     readFinanceStrategyRuleLedger(params.directory, { asOf: params.asOf }),
     readFinanceIntradayDecisions(params.directory, { sessionDate: params.etDate }),
+    readFinanceBrokerProfitFeedback(params.directory, params.asOf),
   ]);
   const outcomes = await Promise.all(
     decisions.map(async (decision) => ({
@@ -131,6 +133,7 @@ export async function buildFinanceNightReviewEvidence(params: {
         positions: positions.ledger.positions,
         pnlBasis: "ledger_projection_not_broker_reconciled_net_profit",
         costsReconciled: false,
+        brokerProfit,
         realizedPnl: positions.ledger.realizedPnl,
         unrealizedPnl: positions.ledger.unrealizedPnl,
         instrumentsWithoutMark: positions.ledger.instrumentsWithoutMark,

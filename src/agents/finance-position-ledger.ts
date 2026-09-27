@@ -975,6 +975,8 @@ export async function readFinanceLatestBrokerReconciliations(directory: string) 
     return {
       records: selected.slice(0, 3).map(([key, row]) => ({
         ref: row.ref,
+        accountId: row.body.accountId,
+        sequence: row.sequence,
         venue: row.body.venue,
         superseded: heads.get(key) !== row.ref,
         snapshot: row.body.payload[0],

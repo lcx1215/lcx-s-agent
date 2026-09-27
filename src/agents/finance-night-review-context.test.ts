@@ -8,7 +8,10 @@ import {
   appendFinanceIntradayOutcome,
 } from "./finance-intraday-control-ledger.js";
 import { buildFinanceNightReviewEvidence } from "./finance-night-review-context.js";
-import { appendFinanceExecutionReceipt } from "./finance-position-ledger.js";
+import {
+  appendFinanceBrokerHistory,
+  appendFinanceExecutionReceipt,
+} from "./finance-position-ledger.js";
 
 describe("finance night review context", () => {
   it("projects settlement and durable intraday refusals into bounded evidence", async () => {
@@ -56,6 +59,35 @@ describe("finance night review context", () => {
         executionAuthority: "declared_execution_adapter_required",
         recordedAt: "2026-09-22T15:00:02.000Z",
       });
+      await appendFinanceBrokerHistory(directory, {
+        kind: "broker_history",
+        accountId: "test-account",
+        venue: "alpaca:paper",
+        query: "activities:window",
+        cursor: "",
+        payload: [
+          {
+            id: "broker-fill",
+            activity_type: "FILL",
+            type: "fill",
+            symbol: "SPY",
+            side: "buy",
+            qty: "1",
+            price: "502",
+            transaction_time: "2026-09-22T15:00:01.000Z",
+          },
+        ],
+      });
+      await appendFinanceBrokerHistory(directory, {
+        kind: "broker_history",
+        accountId: "test-account",
+        venue: "alpaca:paper",
+        query: "reconciliation:window",
+        cursor: "",
+        payload: [
+          { observedAt: "2026-09-22T21:59:00.000Z", status: "reconciled", feesInterpreted: true },
+        ],
+      });
       const evidence = await buildFinanceNightReviewEvidence({
         directory,
         asOf: "2026-09-22T22:00:00.000Z",
@@ -80,6 +112,13 @@ describe("finance night review context", () => {
       expect(review.boundaries.join(" ")).toContain("do not invent missed profits");
       const portfolio = JSON.parse(evidence[1].text);
       expect(portfolio.costsReconciled).toBe(false);
+      expect(portfolio.brokerProfit.accounts[0]).toMatchObject({
+        buyFills: 1,
+        sellFills: 0,
+        status: "no_closed_matches",
+        netMatchedPnl: null,
+      });
+      expect(JSON.stringify(portfolio.brokerProfit)).not.toContain("test-account");
       expect(portfolio.dayReceipts[0]).toMatchObject({
         quantity: 2,
         referencePrice: 500,
