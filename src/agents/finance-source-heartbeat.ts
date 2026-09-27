@@ -487,7 +487,30 @@ export async function runFinanceSourceHeartbeat(options: HeartbeatOptions = {}) 
     );
     const records: Record<string, FinanceSourceHeartbeatRecord> = { ...previous.records };
     for (const result of results) {
-      records[result.provider] = result.record;
+      const prior = previous.records[result.provider];
+      const failures =
+        result.record.status === "healthy"
+          ? 0
+          : Math.min(13, (prior?.status === "healthy" ? 0 : (prior?.consecutiveFailures ?? 0)) + 1);
+      // Keep provider Retry-After and quota reset authoritative; repeated failures
+      // must not consume the same diagnostic budget every five minutes forever.
+      const delay =
+        result.record.reason === "forbidden"
+          ? 6 * 60 * 60_000
+          : Math.min(
+              60 * 60_000,
+              FINANCE_SOURCE_HEARTBEAT_FAILURE_INTERVAL_MS * 2 ** Math.max(0, failures - 1),
+            );
+      records[result.provider] = {
+        ...result.record,
+        consecutiveFailures: failures,
+        nextCheckAt:
+          failures === 0
+            ? result.record.nextCheckAt
+            : new Date(
+                Math.max(Date.parse(result.record.nextCheckAt), checkedAt + delay),
+              ).toISOString(),
+      };
     }
     const state = await persistFinanceSourceHeartbeat(stateDir, records, checkedAt);
     return {

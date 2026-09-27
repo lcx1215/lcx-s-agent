@@ -52,6 +52,43 @@ function adapter(
 }
 
 describe("finance provider heartbeat", () => {
+  it("backs off repeated failures, honors quota reset, and resets after recovery", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "finance-heartbeat-backoff-"));
+    roots.push(root);
+    let failure = true;
+    const adapters = [
+      adapter("repeat_provider_quote", async (request) => {
+        if (failure) {
+          throw new ApiCallError("timeout");
+        }
+        return observation(request);
+      }),
+    ];
+    let now = Date.parse("2026-09-22T07:00:00.000Z");
+    for (const delay of [5, 10, 20, 40, 60, 60]) {
+      const run = await runFinanceSourceHeartbeat({
+        directory: root,
+        asOf: new Date(now).toISOString(),
+        now: () => now,
+        realtimeAdapters: adapters,
+        collectionAdapters: [],
+      });
+      const record = run.state.records.repeat;
+      expect(Date.parse(record.nextCheckAt) - now).toBe(delay * 60_000);
+      now = Date.parse(record.nextCheckAt);
+    }
+    failure = false;
+    const recovered = await runFinanceSourceHeartbeat({
+      directory: root,
+      asOf: new Date(now).toISOString(),
+      now: () => now,
+      realtimeAdapters: adapters,
+      collectionAdapters: [],
+    });
+    expect(recovered.state.records.repeat.consecutiveFailures).toBe(0);
+    expect(recovered.state.records.repeat.status).toBe("healthy");
+  });
+
   it("selects one representative per provider instead of probing every route", () => {
     const plan = planFinanceSourceHeartbeat({
       asOf: "2026-09-22T07:00:00.000Z",

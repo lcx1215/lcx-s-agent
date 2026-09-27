@@ -38,6 +38,7 @@ export type FinanceSourceHeartbeatRecord = Readonly<{
   networkCode?: string;
   transportError?: string;
   retryAfterMs?: number;
+  consecutiveFailures?: number;
 }>;
 
 export type FinanceSourceHeartbeatState = Readonly<{
@@ -94,6 +95,9 @@ function validRecord(value: unknown): value is FinanceSourceHeartbeatRecord {
     typeof record.attempts === "number" &&
     Number.isSafeInteger(record.attempts) &&
     record.attempts >= 0 &&
+    (record.consecutiveFailures === undefined ||
+      (Number.isSafeInteger(record.consecutiveFailures) &&
+        Number(record.consecutiveFailures) >= 0)) &&
     (record.httpStatus === undefined ||
       (typeof record.httpStatus === "number" &&
         Number.isSafeInteger(record.httpStatus) &&
