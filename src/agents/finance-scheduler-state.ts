@@ -1,7 +1,13 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import {
+  commitFinanceSchedulerDatabaseState,
+  FINANCE_SCHEDULER_DATABASE,
+  readFinanceSchedulerDatabaseState,
+} from "./finance-scheduler-ledger.js";
 import { FINANCE_SCHEDULER_LOCK } from "./finance-scheduler-lock.js";
+import { FINANCE_DAILY_CYCLE_RUNS_FILENAME } from "./finance-state-dir.js";
 
 export const FINANCE_SCHEDULER_TICK_MS = 60_000;
 
@@ -19,6 +25,10 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 export function readFinanceSchedulerState(directory: string): SchedulerState {
+  const databaseState = readFinanceSchedulerDatabaseState(directory);
+  if (databaseState !== undefined) {
+    return parseSchedulerState(databaseState);
+  }
   let raw: string;
   try {
     raw = fs.readFileSync(path.join(directory, STATE_FILE), "utf8");
@@ -28,6 +38,14 @@ export function readFinanceSchedulerState(directory: string): SchedulerState {
     }
     throw error;
   }
+  const legacy: unknown = JSON.parse(raw);
+  if (isObject(legacy) && legacy.storageAuthority === FINANCE_SCHEDULER_DATABASE) {
+    throw new Error("scheduler database missing after migration; refusing stale file fallback");
+  }
+  return parseSchedulerState(raw);
+}
+
+function parseSchedulerState(raw: string): SchedulerState {
   const parsed: unknown = JSON.parse(raw);
   const dates = (value: unknown): value is Record<string, string> =>
     isObject(value) &&
@@ -66,11 +84,61 @@ export function readFinanceSchedulerState(directory: string): SchedulerState {
   };
 }
 
+/** Migration runs after acquiring the scheduler lock; status reads never create a database. */
+export function initializeFinanceSchedulerDatabase(directory: string): void {
+  if (readFinanceSchedulerDatabaseState(directory) !== undefined) {
+    return;
+  }
+  const state = readFinanceSchedulerState(directory);
+  let legacyRuns: Record<string, unknown>[] = [];
+  try {
+    legacyRuns = fs
+      .readFileSync(path.join(directory, FINANCE_DAILY_CYCLE_RUNS_FILENAME), "utf8")
+      .split("\n")
+      .filter((line) => line.trim())
+      .map((line) => {
+        const record: unknown = JSON.parse(line);
+        if (!isObject(record)) {
+          throw new Error("invalid legacy scheduler run");
+        }
+        return record;
+      });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
+  if (legacyRuns.length > 0 && !fs.existsSync(path.join(directory, STATE_FILE))) {
+    throw new Error("scheduler history exists without recovery state; reconciliation required");
+  }
+  commitFinanceSchedulerDatabaseState(directory, JSON.stringify(state), legacyRuns);
+  writeCompatibilityState(directory, state);
+}
+
 export function writeFinanceSchedulerState(directory: string, state: SchedulerState): void {
+  const body = JSON.stringify(parseSchedulerState(JSON.stringify(state)));
+  initializeFinanceSchedulerDatabase(directory);
+  const terminal =
+    state.lastRun &&
+    ["succeeded", "failed", "timed_out", "cancelled", "spawn_error"].includes(
+      String(state.lastRun.status),
+    ) &&
+    (state.lastRun.mode === "day" || state.lastRun.mode === "night")
+      ? [state.lastRun]
+      : [];
+  commitFinanceSchedulerDatabaseState(directory, body, terminal);
+  writeCompatibilityState(directory, state);
+}
+
+function writeCompatibilityState(directory: string, state: SchedulerState): void {
   const filename = path.join(directory, STATE_FILE);
   const tmp = `${filename}.tmp-${randomUUID()}`;
   try {
-    fs.writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`);
+    fs.writeFileSync(
+      tmp,
+      `${JSON.stringify({ ...state, storageAuthority: FINANCE_SCHEDULER_DATABASE }, null, 2)}\n`,
+      { mode: 0o600 },
+    );
     fs.renameSync(tmp, filename);
   } finally {
     fs.rmSync(tmp, { force: true });

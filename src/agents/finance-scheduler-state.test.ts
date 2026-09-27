@@ -2,11 +2,17 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
+import { requireNodeSqlite } from "../memory/sqlite.js";
+import {
+  FINANCE_SCHEDULER_DATABASE,
+  readFinanceSchedulerDatabaseRuns,
+} from "./finance-scheduler-ledger.js";
 import {
   readFinanceSchedulerState,
   readFinanceSchedulerPolicyExpiry,
   inspectFinanceSchedulerProgress,
   writeFinanceSchedulerState,
+  initializeFinanceSchedulerDatabase,
 } from "./finance-scheduler-state.js";
 
 let directory: string;
@@ -51,7 +57,10 @@ it("atomically replaces a valid state without leaving temporary files", () => {
   };
   writeFinanceSchedulerState(directory, state);
   expect(readFinanceSchedulerState(directory)).toEqual(state);
-  expect(fs.readdirSync(directory)).toEqual(["daily-cycle-scheduler.json"]);
+  expect(fs.readdirSync(directory)).toEqual(
+    expect.arrayContaining(["daily-cycle-scheduler.json", FINANCE_SCHEDULER_DATABASE]),
+  );
+  expect(fs.readdirSync(directory).some((file) => file.includes(".tmp-"))).toBe(false);
 });
 
 it("re-reads policy expiry and keeps missing or malformed metadata unavailable", () => {
@@ -95,4 +104,80 @@ it("re-reads policy expiry and keeps missing or malformed metadata unavailable",
     JSON.stringify({ expiresAt: new Date(at.getTime() + 5000).toISOString() }),
   );
   expect(readFinanceSchedulerPolicyExpiry(filename)).not.toBe(expiry);
+});
+
+it("keeps fresh status reads read-only", () => {
+  expect(readFinanceSchedulerState(directory).lastFired).toEqual({});
+  expect(fs.readdirSync(directory)).toEqual([]);
+});
+
+it("migrates legacy history once and reads the database despite a stale compatibility file", () => {
+  const old = {
+    lastFired: { day: "2026-09-21" },
+    lastStatus: { day: "running" },
+    lastSucceeded: {},
+  };
+  fs.writeFileSync(path.join(directory, "daily-cycle-scheduler.json"), JSON.stringify(old));
+  const run = {
+    runId: "old-night",
+    mode: "night",
+    status: "succeeded",
+    stdout: "x".repeat(300000),
+  };
+  fs.writeFileSync(path.join(directory, "daily-cycle-runs.jsonl"), JSON.stringify(run) + "\n");
+  initializeFinanceSchedulerDatabase(directory);
+  initializeFinanceSchedulerDatabase(directory);
+  fs.writeFileSync(path.join(directory, "daily-cycle-scheduler.json"), "{}");
+  fs.writeFileSync(path.join(directory, "daily-cycle-runs.jsonl"), "corrupt legacy mirror");
+  expect(readFinanceSchedulerState(directory)).toEqual(old);
+  expect(readFinanceSchedulerDatabaseRuns(directory)?.night).toEqual(run);
+});
+
+it("atomically preserves the old claim when a conflicting terminal result cannot be stored", () => {
+  const old = {
+    lastFired: { day: "2026-09-21" },
+    lastStatus: { day: "failed" },
+    lastSucceeded: {},
+    lastRun: {
+      runId: "one",
+      mode: "day",
+      status: "failed",
+      researchPlanRefresh: { processResult: { stdout: "source failure" } },
+    },
+  };
+  writeFinanceSchedulerState(directory, old);
+  writeFinanceSchedulerState(directory, old);
+  expect(() =>
+    writeFinanceSchedulerState(directory, {
+      ...old,
+      lastSucceeded: { day: "2026-09-21" },
+      lastRun: { runId: "one", mode: "day", status: "succeeded" },
+    }),
+  ).toThrow("identity conflict");
+  expect(readFinanceSchedulerState(directory)).toEqual(old);
+  expect(readFinanceSchedulerDatabaseRuns(directory)?.day).toEqual(old.lastRun);
+});
+
+it("fails closed on corrupt database state rather than falling back to an empty file", () => {
+  writeFinanceSchedulerState(directory, {
+    lastFired: { day: "2026-09-21" },
+    lastStatus: { day: "running" },
+    lastSucceeded: {},
+  });
+  const { DatabaseSync } = requireNodeSqlite();
+  const db = new DatabaseSync(path.join(directory, FINANCE_SCHEDULER_DATABASE));
+  db.exec("UPDATE scheduler_states SET body='{}'");
+  db.close();
+  fs.writeFileSync(path.join(directory, "daily-cycle-scheduler.json"), '{"lastFired":{}}');
+  expect(() => readFinanceSchedulerState(directory)).toThrow("corrupt");
+});
+
+it("does not replay a stale compatibility snapshot after the migrated database disappears", () => {
+  writeFinanceSchedulerState(directory, {
+    lastFired: { day: "2026-09-21" },
+    lastStatus: { day: "running" },
+    lastSucceeded: {},
+  });
+  fs.unlinkSync(path.join(directory, FINANCE_SCHEDULER_DATABASE));
+  expect(() => readFinanceSchedulerState(directory)).toThrow("missing after migration");
 });

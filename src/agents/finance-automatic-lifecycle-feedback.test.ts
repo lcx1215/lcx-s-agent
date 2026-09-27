@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { buildFinanceAutomaticLifecycleFeedback } from "./finance-automatic-lifecycle-feedback.js";
+import { writeFinanceSchedulerState } from "./finance-scheduler-state.js";
 import { financeResearchScoredPath } from "./finance-state-dir.js";
 import { runFinanceTuningLifecycle } from "./finance-tuning-lifecycle.js";
 
@@ -50,4 +51,39 @@ it("projects directional calibration separately from blocked paper execution pro
       "no_execution_authority",
     ]),
   });
+});
+
+it("recovers both cycle modes from SQLite even when a large review hides file-tail history", async () => {
+  writeFinanceSchedulerState(directory, {
+    lastFired: { day: "2026-09-21" },
+    lastStatus: { day: "failed" },
+    lastSucceeded: {},
+    lastRun: {
+      runId: "day",
+      mode: "day",
+      status: "failed",
+      firedAt: "2026-09-21T19:30:00Z",
+      stdout: '{"ok":false}',
+    },
+  });
+  writeFinanceSchedulerState(directory, {
+    lastFired: { day: "2026-09-21", night: "2026-09-21" },
+    lastStatus: { day: "failed", night: "succeeded" },
+    lastSucceeded: { night: "2026-09-21" },
+    lastRun: {
+      runId: "night",
+      mode: "night",
+      status: "succeeded",
+      firedAt: "2026-09-21T21:30:00Z",
+      stdout: JSON.stringify({ ok: true, review: "x".repeat(300000) }),
+    },
+  });
+  fs.unlinkSync(path.join(directory, "daily-cycle-scheduler.json"));
+  const result = await buildFinanceAutomaticLifecycleFeedback({
+    directory,
+    observedAt: "2026-09-22T00:00:00Z",
+  });
+  expect(result).toMatchObject({ status: "present", nextTask: "inspect_failed_finance_cycle" });
+  expect(JSON.stringify(result)).toContain('"day"');
+  expect(JSON.stringify(result)).toContain('"night"');
 });

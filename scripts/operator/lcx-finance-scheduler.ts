@@ -63,6 +63,7 @@ import {
   readFinanceSchedulerPolicyExpiry,
   readFinanceSchedulerState,
   writeFinanceSchedulerState,
+  initializeFinanceSchedulerDatabase,
 } from "../../src/agents/finance-scheduler-state.js";
 import { runFinanceSourceHeartbeat } from "../../src/agents/finance-source-heartbeat.js";
 import {
@@ -1251,6 +1252,7 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
             status: research.status,
             exitCode: research.exitCode,
             planPath: researchAccepted ? portfolioPlanPath : null,
+            processResult: research,
           },
         }
       : {}),
@@ -1262,6 +1264,7 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
             exitCode: nightReview.exitCode,
             evidencePath: path.join(directory, `night-review-evidence-${attempt.etDate}.json`),
             receiptPersisted: nightReviewAccepted,
+            processResult: nightReview,
           },
         }
       : {}),
@@ -1269,13 +1272,13 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
     ...(tuningLifecycle ? { tuningLifecycle } : {}),
   };
 
-  fs.appendFileSync(path.join(directory, RUNS_LOG), `${JSON.stringify(record)}\n`);
   if (record.ok) {
     state.lastSucceeded[mode] = attempt.etDate;
   }
   state.lastStatus[mode] = record.status;
   state.lastRun = record;
   writeFinanceSchedulerState(directory, state);
+  fs.appendFileSync(path.join(directory, RUNS_LOG), `${JSON.stringify(record)}\n`);
   process.stdout.write(
     `[${record.firedAt}] ${mode} status=${record.status} execution=${record.execution.outcome} venue=${record.execution.venue} exit=${record.exitCode} ${record.durationMs}ms\n`,
   );
@@ -1729,7 +1732,7 @@ export async function runFinanceScheduler(
   let release: (() => void) | undefined;
   try {
     release = acquireFinanceSchedulerLock(root.directory);
-    readFinanceSchedulerState(root.directory);
+    initializeFinanceSchedulerDatabase(root.directory);
     const intradayController =
       runtimeOptions.command === "loop" && runtimeOptions.intraday?.place
         ? createFinanceAlpacaCycleController({

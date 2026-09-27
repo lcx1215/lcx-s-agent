@@ -6,6 +6,7 @@ import {
   readFinancePaperPromotions,
 } from "./finance-paper-promotion.js";
 import { readFinanceRuleReadinessState } from "./finance-rule-readiness-state.js";
+import { readFinanceSchedulerDatabaseRuns } from "./finance-scheduler-ledger.js";
 import { financeSchedulerPidPresent, readFinanceSchedulerPid } from "./finance-scheduler-lock.js";
 import {
   inspectFinanceSchedulerProgress,
@@ -247,6 +248,12 @@ function compactCycleRun(value: unknown) {
 }
 
 async function readLatestCycleByMode(directory: string) {
+  const stored = readFinanceSchedulerDatabaseRuns(directory);
+  if (stored !== undefined) {
+    return Object.fromEntries(
+      Object.entries(stored).map(([mode, run]) => [mode, compactCycleRun(run)]),
+    );
+  }
   let handle: fs.FileHandle | undefined;
   try {
     handle = await fs.open(path.join(directory, FINANCE_DAILY_CYCLE_RUNS_FILENAME), "r");
