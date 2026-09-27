@@ -434,7 +434,11 @@ export type CentralCycleContinuation =
     }
   | {
       run: false;
-      because: "max_cycles_reached" | "brain_made_no_decision" | "nothing_left_to_follow_up";
+      because:
+        | "max_cycles_reached"
+        | "brain_made_no_decision"
+        | "nothing_left_to_follow_up"
+        | "unchanged_failure";
     };
 
 const FOLLOW_UP_VERDICTS: Readonly<
@@ -453,6 +457,7 @@ export function nextCycleContinuation(
   receipt: CentralRunReceipt,
   cyclesRun: number,
   maxCycles: number,
+  previous?: CentralRunReceipt,
 ): CentralCycleContinuation {
   if (receipt.brainCall.outcome !== "completed") {
     return { run: false, because: "brain_made_no_decision" };
@@ -464,7 +469,41 @@ export function nextCycleContinuation(
   if (cyclesRun >= maxCycles) {
     return { run: false, because: "max_cycles_reached" };
   }
+  // Ignore model prose and wall-clock timings: they do not resolve a blocked action.
+  const signature = (value: CentralRunReceipt) =>
+    JSON.stringify(
+      value.steps.map((step) => ({
+        ownerId: step.ownerId,
+        args: canonicalContinuationValue(step.args),
+        status: step.status,
+        observedOk: step.observedOk,
+        reason: step.gateReason ?? step.failureReason,
+        outcome: canonicalContinuationValue(step.outcome),
+      })),
+    );
+  if (
+    previous &&
+    receipt.steps.length > 0 &&
+    previous.nextAction === receipt.nextAction &&
+    signature(previous) === signature(receipt)
+  ) {
+    return { run: false, because: "unchanged_failure" };
+  }
   return { run: true, because };
+}
+
+function canonicalContinuationValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(canonicalContinuationValue);
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .toSorted(([a], [b]) => a.localeCompare(b))
+        .map(([key, item]) => [key, canonicalContinuationValue(item)]),
+    );
+  }
+  return value;
 }
 
 /**

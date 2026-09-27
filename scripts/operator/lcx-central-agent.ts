@@ -65,7 +65,7 @@ function parseArgs(args: string[]): Record<string, string | boolean | number> {
     durationMinutes: 2,
     dryRun: false,
     planOnly: false,
-    maxCycles: Number.POSITIVE_INFINITY,
+    maxCycles: 5,
   };
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
@@ -90,6 +90,16 @@ function parseArgs(args: string[]): Record<string, string | boolean | number> {
         "Usage: node --import tsx scripts/operator/lcx-central-agent.ts [--duration-minutes N] [--max-cycles N] [--plan-only] [--dry-run] [--json]",
       );
     }
+  }
+  if (
+    !Number.isFinite(out.durationMinutes) ||
+    Number(out.durationMinutes) <= 0 ||
+    Number(out.durationMinutes) > 60 ||
+    !Number.isSafeInteger(out.maxCycles) ||
+    Number(out.maxCycles) < 1 ||
+    Number(out.maxCycles) > 100
+  ) {
+    throw new ParseError("duration must be finite in (0, 60] minutes; max cycles must be 1..100");
   }
   return out;
 }
@@ -572,7 +582,7 @@ async function main(): Promise<void> {
     lastReceipt = receipt;
     history = history.concat(receipt).slice(-200);
     runs += 1;
-    lastContinuation = nextCycleContinuation(receipt, runs, maxCycles);
+    lastContinuation = nextCycleContinuation(receipt, runs, maxCycles, history.at(-2));
     if (dryRun || !lastContinuation.run) {
       break;
     }

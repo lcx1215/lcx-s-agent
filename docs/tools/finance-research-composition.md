@@ -374,3 +374,11 @@ first missing closed session interval for the configured feed and skips network
 collection when all closed intervals are already present. Research refresh and
 nightly review remain explicit scheduler options; these code paths do not enable
 background model calls or activate research candidates automatically.
+
+### Research trade economics
+
+`node --import tsx scripts/operator/lcx-finance-trade-economics-eval.ts --replay <replay.json> --policy <policy.json> --output <new-output.json>` evaluates an existing replay without broker calls. Freeze policy and assumed round-trip costs before evaluation. The estimator uses only outcomes closed before each decision, updates gross-profit probability, subtracts explicit costs, and caps fractional-Kelly allocation by allocation and observed-loss budgets. The uncertainty penalty is not a confidence interval and historical losses do not bound future losses.
+
+The output compares cash and fixed allocation, scores probabilities, and applies additional cost scenarios. Previously inspected data remains retrospective, not an untouched holdout. Outputs always have no execution authority and cannot promote or change the active trading strategy. A zero allocation is an abstention, not proof of profitable skill.
+
+Central-agent loops default to five cycles, reject non-finite duration/cycle inputs, and stop when consecutive failed owner actions repeat with identical arguments and outcomes. Changed arguments or outcomes remain eligible for bounded follow-up.

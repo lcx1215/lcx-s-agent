@@ -845,7 +845,7 @@ describe("central harness is wired into the governance loop, not orphaned", () =
     expect(autopilotSource).toContain("brainNote: payload.brainNote");
     expect(centralCli).toContain("brainReason: lastReceipt?.brainCall.reason");
     expect(autopilotSource).toContain("brainReason: payload.brainReason");
-    expect(centralCli).toContain("nextCycleContinuation(receipt, runs, maxCycles)");
+    expect(centralCli).toContain("nextCycleContinuation(receipt, runs, maxCycles, history.at(-2))");
     expect(centralCli).toContain("if (dryRun || !lastContinuation.run)");
     // Guard the exact bug this replaced: reading a field the owner never emits.
     expect(autopilotSource).not.toContain("recordValue(payload.latestReceipt)");
@@ -998,6 +998,30 @@ describe("central harness continuation follows the receipt's own verdict", () =>
       brainWithActions([{ ownerId: "commercialAcceptance", args: {}, reasoning: "check" }]),
       async () => ({ output: '{"ok":false}', exitCode: 1, observedOk: false }),
     );
+    const repeated = {
+      ...receipt,
+      steps: [
+        {
+          stepId: "one",
+          ownerId: "blocked",
+          args: { b: 2, a: 1 },
+          status: "blocked_by_gate" as const,
+          gateReason: "authority missing",
+        },
+      ],
+    };
+    expect(
+      nextCycleContinuation(repeated, 2, 5, {
+        ...repeated,
+        steps: [{ ...repeated.steps[0], stepId: "earlier", args: { a: 1, b: 2 } }],
+      }),
+    ).toEqual({ run: false, because: "unchanged_failure" });
+    expect(
+      nextCycleContinuation(repeated, 2, 5, {
+        ...repeated,
+        steps: [{ ...repeated.steps[0], args: { a: 3 } }],
+      }).run,
+    ).toBe(true);
     expect(nextCycleContinuation(receipt, 3, 3)).toEqual({
       run: false,
       because: "max_cycles_reached",
@@ -1194,6 +1218,28 @@ describe("central agent CLI persists evidence a reader can walk back to", () => 
       },
     );
   }
+
+  it.each([
+    ["--duration-minutes", "Infinity"],
+    ["--max-cycles", "Infinity"],
+    ["--max-cycles", "0"],
+  ])("rejects unbounded loop inputs %s %s before running", (flag, value) => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        path.join(REPO_ROOT, "scripts/operator/lcx-central-agent.ts"),
+        flag,
+        value,
+        "--dry-run",
+      ],
+      { cwd: REPO_ROOT, encoding: "utf8", timeout: 30_000 },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.status).toBe(2);
+    expect(result.stdout + result.stderr).toContain("duration must be finite");
+  });
 
   it("writes one immutable snapshot per cycle and points latest at it", async () => {
     const userHome = await fsp.mkdtemp(path.join(os.tmpdir(), "lcx-central-home-"));
