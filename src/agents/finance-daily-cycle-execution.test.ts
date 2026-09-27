@@ -177,6 +177,11 @@ describe("daily cycle execution data boundary", () => {
         schemaVersion: "lcx_finance_thesis_decision_context_v1",
         activeThesisCount: 0,
         theses: [],
+        fundamentals: expect.objectContaining({
+          instruments: expect.arrayContaining([
+            expect.objectContaining({ instrument: "AAPL", status: "missing_or_outside_window" }),
+          ]),
+        }),
       }),
       candidates: expect.arrayContaining([
         expect.objectContaining({

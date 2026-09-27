@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { FinanceExpectationGapSchema } from "./finance-expectation-gap.js";
 import {
+  buildFinanceFundamentalDecisionContext,
+  FinanceFundamentalDecisionContextSchema,
+} from "./finance-fundamental-decision-context.js";
+import {
   FINANCE_THESIS_CLAIM_EPISTEMIC_CLASSES,
   FINANCE_THESIS_EVIDENCE_RELATIONS,
   readFinanceThesisLedger,
@@ -49,6 +53,7 @@ export const FinanceThesisDecisionContextSchema = z
     omittedThesisCount: z.number().int().nonnegative(),
     excludedThesisCount: z.number().int().nonnegative().optional(),
     horizon: z.enum(["intraday", "swing", "long_term"]).optional(),
+    fundamentals: FinanceFundamentalDecisionContextSchema.optional(),
   })
   .strict();
 
@@ -125,6 +130,7 @@ export async function buildFinanceThesisDecisionContext(params: {
     schemaVersion: "lcx_finance_thesis_decision_context_v1",
     observedAt: params.asOf,
     ledgerHeadRef: ledger.headRef,
+    fundamentals: buildFinanceFundamentalDecisionContext(params),
     activeThesisCount: activeCount,
     ...(params.horizon
       ? { horizon: params.horizon, excludedThesisCount: activeCount - active.length }

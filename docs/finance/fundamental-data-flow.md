@@ -74,3 +74,26 @@ period start/end and the exact selected XBRL tags remain in the evidence packet.
 The supported debt decomposition is current/noncurrent long-term debt plus explicitly
 reported commercial paper. It is identified as such for the model and does not establish
 absence of leases or other obligations. Unsupported decompositions remain incomplete.
+
+## Shared trading decision context
+
+`buildFinanceThesisDecisionContext` now also reads the fundamental store for both daily
+and intraday advisory reviews. This read-only projection performs no collection and
+creates no database. It selects up to four exact candidate symbols, reports omitted
+symbol count, and never substitutes a constituent company for an ETF.
+
+The projection uses snapshots captured no later than the decision cutoff and within
+30 days. This is a bounded context window, distinct from the six-hour collection reuse
+policy; it does not prove the absence of more recent filings. Source/capture timestamps,
+fiscal period, currency, snapshot hash, missing publication time and limited debt
+coverage remain visible. SEC cohorts take precedence; existing FMP and Alpha Vantage
+statement snapshots provide fallback. Up to two records per selected source are retained.
+Numeric provider fields preserve their native capex signs. It is not a normalized
+valuation or a current execution quote.
+
+Missing/corrupt/partial fundamentals are coverage observations, not a new trading gate.
+The same TypeScript execution, reconciliation and protective-exit gates still apply.
+Reviewer instructions require candidate- and horizon-relevant evidence for a veto;
+this instruction does not independently prove the semantic validity of model objections.
+Normal scheduled collection, candidate generation, actual review and order/fill remain
+separate runtime evidence layers.
