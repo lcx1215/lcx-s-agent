@@ -5,6 +5,26 @@ import { withTempHome } from "./home-env.test-harness.js";
 import { createConfigIO } from "./io.js";
 
 describe("config read warnings", () => {
+  it("does not recurse when the logger reads config to resolve its settings", async () => {
+    await withTempHome("config-warnings-logger-", async (home) => {
+      const configPath = path.join(home, "config.json");
+      await fs.writeFile(
+        configPath,
+        JSON.stringify({ plugins: { entries: { "missing-warning-logger": { enabled: false } } } }),
+      );
+      const warn = vi.fn(() => {
+        // Bound the regression so a broken guard fails without overflowing the stack.
+        if (warn.mock.calls.length < 3) {
+          read();
+        }
+      });
+      const read = () =>
+        createConfigIO({ configPath, logger: { warn, error: vi.fn() } }).loadConfig();
+      read();
+      expect(warn).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("deduplicates repeated reads across IO instances and reports changed warnings", async () => {
     await withTempHome("config-warnings-", async (home) => {
       const configPath = path.join(home, "config.json");

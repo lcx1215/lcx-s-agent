@@ -865,7 +865,7 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
       if (!warningDetails) {
         loggedConfigWarnings.delete(configPath);
       } else if (loggedConfigWarnings.get(configPath) !== warningDetails) {
-        deps.logger.warn(`Config warnings:\n${warningDetails}`);
+        // Logging can itself read config; mark before emitting to prevent recursion.
         loggedConfigWarnings.delete(configPath);
         loggedConfigWarnings.set(configPath, warningDetails);
         if (loggedConfigWarnings.size > MAX_LOGGED_CONFIG_WARNING_PATHS) {
@@ -874,6 +874,7 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
             loggedConfigWarnings.delete(oldestPath);
           }
         }
+        deps.logger.warn(`Config warnings:\n${warningDetails}`);
       }
       warnIfConfigFromFuture(validated.config, deps.logger);
       const cfg = applyTalkConfigNormalization(
