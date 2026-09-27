@@ -1210,7 +1210,7 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
         signal: context.signal,
       })
     : research;
-  const cycleAccepted = result.ok && cycleOutputSucceeded(result.stdout);
+  const cycleAccepted = researchAccepted && result.ok && cycleOutputSucceeded(result.stdout);
   const settlement =
     mode === "night" && cycleAccepted ? parseNightSettlement(result.stdout) : undefined;
   const universeSelection = settlement
@@ -1244,7 +1244,13 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
     ok: accepted,
     status: result.ok && !accepted ? ("failed" as const) : result.status,
     durationMs: Date.now() - startedAt,
-    execution: describeFinanceCycleExecution(result.stdout, context.options.extraArgs, mode),
+    execution: researchAccepted
+      ? describeFinanceCycleExecution(result.stdout, context.options.extraArgs, mode)
+      : {
+          ...describeFinanceCycleExecution("", context.options.extraArgs, mode),
+          outcome: "not_run",
+          blockReason: "research_plan_not_accepted",
+        },
     ...(research
       ? {
           researchPlanRefresh: {

@@ -87,3 +87,35 @@ it("recovers both cycle modes from SQLite even when a large review hides file-ta
   expect(JSON.stringify(result)).toContain('"day"');
   expect(JSON.stringify(result)).toContain('"night"');
 });
+
+it("exposes skipped execution and its research-stage cause to the harness", async () => {
+  writeFinanceSchedulerState(directory, {
+    lastFired: { day: "2026-09-21" },
+    lastStatus: { day: "failed" },
+    lastSucceeded: {},
+    lastRun: {
+      runId: "research-only",
+      mode: "day",
+      status: "failed",
+      stdout: JSON.stringify({ ok: true }),
+      execution: {
+        outcome: "not_run",
+        blockReason: "research_plan_not_accepted",
+        reportedPlacements: null,
+      },
+    },
+  });
+  const result = await buildFinanceAutomaticLifecycleFeedback({ directory });
+  expect(result).toMatchObject({
+    status: "present",
+    nextTask: "inspect_failed_finance_cycle",
+    scheduler: {
+      latestCycleByMode: {
+        day: {
+          status: "failed",
+          execution: { outcome: "not_run", blockReason: "research_plan_not_accepted" },
+        },
+      },
+    },
+  });
+});

@@ -34,6 +34,9 @@ function compactExecutionOutcome(
   execution: Record<string, unknown>,
   readinessBlocked: boolean,
 ): string | null {
+  if (execution.outcome === "not_run") {
+    return "not_run";
+  }
   if (readinessBlocked) {
     return "blocked_by_readiness";
   }
@@ -200,7 +203,12 @@ function compactCycleRun(value: unknown) {
     execution: rawExecution
       ? {
           outcome: compactExecutionOutcome(record, output, rawExecution, readinessBlocked),
-          ...(readinessBlocked ? { blockReason: "paper_readiness_not_met" } : {}),
+          ...(rawExecution.outcome === "not_run" &&
+          rawExecution.blockReason === "research_plan_not_accepted"
+            ? { blockReason: "research_plan_not_accepted" }
+            : readinessBlocked
+              ? { blockReason: "paper_readiness_not_met" }
+              : {}),
           ...(typeof rawExecution.reportedPlacements === "number"
             ? { reportedPlacements: rawExecution.reportedPlacements }
             : {}),

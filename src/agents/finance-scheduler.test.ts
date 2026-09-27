@@ -63,6 +63,72 @@ describe("durable scheduler claims on the unified lifecycle", () => {
     expect(await runFinanceScheduler(["--once", "day", "--dir", root])).toBe(1);
     expect(mocks.run).toHaveBeenCalledTimes(1);
   });
+  it.each(["rejected", "candidate"])(
+    "does not turn unaccepted research %s into a successful trading cycle",
+    async (status) => {
+      mocks.run.mockResolvedValue({
+        exitCode: 0,
+        status: "succeeded",
+        ok: true,
+        stdout: JSON.stringify({
+          ok: true,
+          status,
+          portfolioPlanWritten: "wrong-plan.json",
+          placed: [{}],
+        }),
+        stderr: "",
+        outputTruncated: false,
+      });
+      expect(
+        await runFinanceScheduler([
+          "--once",
+          "day",
+          "--dir",
+          root,
+          "--research-portfolio-context",
+          path.join(root, "context.json"),
+          "--research-ask",
+          "Review opportunities",
+        ]),
+      ).toBe(1);
+      expect(mocks.run).toHaveBeenCalledTimes(1);
+      const state = readFinanceSchedulerState(root);
+      expect(state.lastSucceeded.day).toBeUndefined();
+      expect(state.lastStatus.day).toBe("failed");
+      expect(state.lastRun?.execution).toMatchObject({
+        outcome: "not_run",
+        blockReason: "research_plan_not_accepted",
+        reportedPlacements: null,
+      });
+    },
+  );
+  it("runs the trading cycle after an accepted research plan", async () => {
+    mocks.run.mockResolvedValueOnce({
+      exitCode: 0,
+      status: "succeeded",
+      ok: true,
+      stdout: JSON.stringify({
+        status: "candidate",
+        portfolioPlanWritten: path.join(root, "research-portfolio-plan-latest.json"),
+      }),
+      stderr: "",
+      outputTruncated: false,
+    });
+    expect(
+      await runFinanceScheduler([
+        "--once",
+        "day",
+        "--dir",
+        root,
+        "--research-portfolio-context",
+        path.join(root, "context.json"),
+        "--research-ask",
+        "Review opportunities",
+      ]),
+    ).toBe(0);
+    expect(mocks.run).toHaveBeenCalledTimes(2);
+    expect(readFinanceSchedulerState(root).lastSucceeded.day).toBe("2026-09-22");
+  });
   it("preserves old interrupted claim without dispatch", async () => {
     fs.writeFileSync(
       path.join(root, "daily-cycle-2026-09-22-day.json"),
