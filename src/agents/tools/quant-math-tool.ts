@@ -1,9 +1,17 @@
 import { Type } from "@sinclair/typebox";
+import { calculateFinancePositionSize } from "../finance-position-sizing.js";
 import type { AnyAgentTool } from "./common.js";
 import { ToolInputError, jsonResult, readNumberParam, readStringParam } from "./common.js";
 
 const QuantMathSchema = Type.Object({
   action: Type.String(),
+  side: Type.Optional(Type.String()),
+  entryPrice: Type.Optional(Type.Number()),
+  stopPrice: Type.Optional(Type.Number()),
+  riskBudget: Type.Optional(Type.Number()),
+  maxNotional: Type.Optional(Type.Number()),
+  roundTripCostPerUnit: Type.Optional(Type.Number()),
+  fixedCosts: Type.Optional(Type.Number()),
   series: Type.Optional(Type.Array(Type.Number())),
   benchmark: Type.Optional(Type.Array(Type.Number())),
   seriesMatrix: Type.Optional(Type.Array(Type.Array(Type.Number()))),
@@ -31,6 +39,7 @@ const QuantMathSchema = Type.Object({
 });
 
 type QuantAction =
+  | "position_size"
   | "beta"
   | "correlation"
   | "returns_from_levels"
@@ -886,12 +895,44 @@ export function createQuantMathTool(): AnyAgentTool {
     label: "Quant Math",
     name: "quant_math",
     description:
-      "Compute bounded quantitative metrics such as returns, covariance/correlation matrix, regression alpha/beta, rolling beta/correlation, Sharpe, Sortino, tracking error, information ratio, max drawdown/duration, portfolio return/volatility/risk contribution, risk-budget deviation, CAGR/Calmar, z-score, historical VaR/expected shortfall, Black-Scholes European option price/Greeks, and plain-vanilla bond duration/DV01 from explicit inputs. Use this instead of guessing portfolio math in prose.",
+      "Compute bounded quantitative metrics such as returns, covariance/correlation matrix, regression alpha/beta, rolling beta/correlation, Sharpe, Sortino, tracking error, information ratio, max drawdown/duration, portfolio return/volatility/risk contribution, risk-budget deviation, CAGR/Calmar, z-score, historical VaR/expected shortfall, Black-Scholes European option price/Greeks, and plain-vanilla bond duration/DV01 from explicit inputs. For position_size, supply side, entryPrice, stopPrice and riskBudget, with optional maxNotional, roundTripCostPerUnit and fixedCosts. Call separately for each entry scenario; returned plannedLoss is not a guaranteed maximum loss. Use this instead of guessing portfolio math in prose.",
     parameters: QuantMathSchema,
     execute: async (_toolCallId, params) => {
       const action = readStringParam(params, "action", { required: true }) as QuantAction;
 
       switch (action) {
+        case "position_size": {
+          for (const key of [
+            "entryPrice",
+            "stopPrice",
+            "riskBudget",
+            "maxNotional",
+            "roundTripCostPerUnit",
+            "fixedCosts",
+          ]) {
+            if (
+              params[key] !== undefined &&
+              (typeof params[key] !== "number" || !Number.isFinite(params[key]))
+            ) {
+              throw new ToolInputError(`${key} must be a finite number`);
+            }
+          }
+          const side = readStringParam(params, "side", { required: true });
+          if (side !== "buy" && side !== "sell") {
+            throw new ToolInputError("side must be buy or sell");
+          }
+          return jsonResult(
+            calculateFinancePositionSize({
+              side,
+              entryPrice: readNumberParam(params, "entryPrice", { required: true })!,
+              stopPrice: readNumberParam(params, "stopPrice", { required: true })!,
+              riskBudget: readNumberParam(params, "riskBudget", { required: true })!,
+              maxNotional: readNumberParam(params, "maxNotional"),
+              roundTripCostPerUnit: readNumberParam(params, "roundTripCostPerUnit"),
+              fixedCosts: readNumberParam(params, "fixedCosts"),
+            }),
+          );
+        }
         case "beta":
           return jsonResult(
             calculateBeta(readNumberArray(params, "series"), readNumberArray(params, "benchmark")),

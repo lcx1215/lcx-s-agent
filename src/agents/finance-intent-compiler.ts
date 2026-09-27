@@ -26,6 +26,7 @@ import {
   classifyFinanceStrategy,
   type FinanceStrategyClass,
 } from "./finance-mandate.js";
+import { calculateFinancePositionSize } from "./finance-position-sizing.js";
 
 export type FinanceConclusionDirection = "buy" | "sell" | "hold" | "avoid";
 
@@ -245,9 +246,20 @@ export function compileExecutionIntent(
       } else if (distance === 0) {
         refusals.push("refuse: stop distance is zero; size would be unbounded");
       } else {
-        quantity = Math.floor((equity * classRules.maxRiskPerTradeFraction) / distance);
+        try {
+          quantity = calculateFinancePositionSize({
+            side: conclusion.direction === "buy" ? "buy" : "sell",
+            entryPrice: market.referencePrice,
+            stopPrice: stop,
+            riskBudget: equity * classRules.maxRiskPerTradeFraction,
+          }).quantity;
+        } catch (error) {
+          refusals.push(
+            `refuse: invalid position size: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
         notes.push(
-          `sized from stop distance ${distance.toFixed(4)} at ${(classRules.maxRiskPerTradeFraction * 100).toFixed(2)}% risk`,
+          `sized from stop distance ${distance.toFixed(4)} at ${(classRules.maxRiskPerTradeFraction * 100).toFixed(2)}% planned risk; costs excluded and gap loss is not capped`,
         );
       }
     }
