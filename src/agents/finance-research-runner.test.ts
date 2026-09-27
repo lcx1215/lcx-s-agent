@@ -849,7 +849,7 @@ describe("finance research runner", () => {
     expect(result.quarterlyOutput.adopted).toBe(false);
   });
 
-  it("keeps a stale collection out of adopted output even when the model DAG completes", async () => {
+  it("allows an opportunity despite a stale auxiliary collection without relabeling its quality", async () => {
     const staleCollection: FinanceMarketCollectionAdapter = {
       ...collectionAdapter(),
       collect: async (request) => [
@@ -887,9 +887,15 @@ describe("finance research runner", () => {
       batchOptions: { ...BATCH_OPTIONS, collectionAdapters: [staleCollection] },
     });
 
-    expect(result.status).toBe("needs_review");
-    expect(result.gates.find((gate) => gate.id === "source")?.passed).toBe(false);
-    expect(result.quarterlyOutput.adopted).toBe(false);
+    expect(result.status).toBe("candidate");
+    expect(result.gates.find((gate) => gate.id === "source")?.passed).toBe(true);
+    expect(result.quarterlyOutput.adopted).toBe(true);
+    expect(result.batch?.jobs.some((job) => job.status === "needs_review")).toBe(true);
+    expect(
+      result.batch?.committeeEvidence.some((entry) =>
+        entry.text.includes("unverified research context only"),
+      ),
+    ).toBe(true);
     expect(
       result.missingEvidence.some((item) =>
         item.includes("stale_or_invalid_collection_provenance"),
@@ -961,8 +967,8 @@ describe("finance research runner", () => {
       batchOptions: { ...BATCH_OPTIONS, collectionAdapters: [denied] },
     });
     expect(JSON.stringify(result.batch)).toContain("403");
-    expect(result.status).toBe("needs_review");
-    expect(result.quarterlyOutput.adopted).toBe(false);
+    expect(result.status).toBe("candidate");
+    expect(result.quarterlyOutput.adopted).toBe(true);
   });
 
   it("does not accept an unknown evidence citation", async () => {
@@ -1001,7 +1007,7 @@ describe("finance research runner", () => {
     expect(result.quarterlyOutput.adopted).toBe(false);
   });
 
-  it("keeps fresh but unverified historical coverage in review", async () => {
+  it("admits incomplete historical observations as research while retaining coverage gaps", async () => {
     const result = await runFinanceResearchRun({
       input: {
         ask: "Review six months of history",
@@ -1028,9 +1034,9 @@ describe("finance research runner", () => {
       qualityModelInvoker: modelInvoker,
       batchOptions: BATCH_OPTIONS,
     });
-    expect(result.status).toBe("needs_review");
+    expect(result.status).toBe("candidate");
     expect(result.missingEvidence).toContain("history:historical_window_coverage_incomplete");
-    expect(result.quarterlyOutput.adopted).toBe(false);
+    expect(result.quarterlyOutput.adopted).toBe(true);
   });
   it("resumes committee and quality stages without new model calls", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-model-resume-"));
@@ -1411,4 +1417,128 @@ describe("research module composition reaches actual model request boundaries", 
       expect.objectContaining({ id: "module_execution", passed: true }),
     );
   });
+});
+
+describe("partial research input boundaries", () => {
+  it("does not invent coverage for a target with no supplied material", async () => {
+    const result = await runFinanceResearchRun({
+      input: {
+        ask: "Compare available evidence",
+        asOf: AS_OF,
+        targets: [
+          {
+            id: "covered",
+            instrument: "SPY",
+            assetClass: "us_equity",
+            realtime: { requireOfficialReference: false },
+          },
+          {
+            id: "uncovered",
+            instrument: "QQQ",
+            assetClass: "us_equity",
+            realtime: false,
+            collections: [{ collection: "news", freshnessMaxMinutes: 60 }],
+          },
+        ],
+      },
+      liveFetch: true,
+      modelInvoker,
+      qualityModelInvoker: modelInvoker,
+      batchOptions: {
+        ...BATCH_OPTIONS,
+        collectionAdapters: [
+          {
+            ...collectionAdapter(),
+            collect: async () => {
+              throw new Error("unavailable fixture");
+            },
+          },
+        ],
+      },
+    });
+    expect(result.gates.find((gate) => gate.id === "source")).toMatchObject({
+      passed: false,
+      reason: expect.stringContaining("uncovered=QQQ"),
+    });
+    expect(result.quarterlyOutput.adopted).toBe(false);
+  });
+
+  it("passes conflicted quotes to research as unverified context without resolving the conflict", async () => {
+    const result = await runFinanceResearchRun({
+      input: {
+        ask: "Investigate a possible price discrepancy",
+        asOf: AS_OF,
+        targets: [
+          {
+            id: "conflict",
+            instrument: "SPY",
+            assetClass: "us_equity",
+            realtime: { requireOfficialReference: false },
+          },
+        ],
+      },
+      liveFetch: true,
+      modelInvoker,
+      qualityModelInvoker: modelInvoker,
+      batchOptions: {
+        ...BATCH_OPTIONS,
+        realtimeAdapters: [
+          realtimeAdapter("first", "primary_market_data"),
+          {
+            ...realtimeAdapter("second", "cross_check_market_data"),
+            collect: async () => {
+              const observation = realtimeObservation("second", "cross_check_market_data");
+              observation.fields[0].value = 110;
+              return observation;
+            },
+          },
+        ],
+      },
+    });
+    expect(result.status).toBe("candidate");
+    expect(result.batch?.jobs[0].status).toBe("needs_review");
+    expect(
+      result.batch?.committeeEvidence.some((entry) =>
+        entry.text.includes("unverified research context only"),
+      ),
+    ).toBe(true);
+    expect(result.missingEvidence.some((entry) => entry.includes("conflict"))).toBe(true);
+    expect(
+      result.batch?.committeeEvidence.some((entry) => entry.text.includes('"value":110')),
+    ).toBe(true);
+    expect(result.notTouched).toContain("trading_execution");
+  });
+});
+
+it("does not admit future observations as historical opportunity evidence", async () => {
+  const invoke = vi.fn(modelInvoker);
+  const adapters = BATCH_OPTIONS.realtimeAdapters.map((adapter) => ({
+    ...adapter,
+    collect: async () => {
+      const observation = realtimeObservation(adapter.providerName, adapter.providerRole);
+      observation.fields[0].sourceTimestamp = "2026-09-09T12:00:00.000Z";
+      return observation;
+    },
+  }));
+  const result = await runFinanceResearchRun({
+    input: {
+      ask: "Investigate a historical opportunity",
+      asOf: AS_OF,
+      targets: [
+        {
+          id: "future",
+          instrument: "SPY",
+          assetClass: "us_equity",
+          realtime: { requireOfficialReference: false },
+        },
+      ],
+    },
+    liveFetch: true,
+    modelInvoker: invoke,
+    qualityModelInvoker: invoke,
+    batchOptions: { ...BATCH_OPTIONS, realtimeAdapters: adapters },
+  });
+  expect(invoke).not.toHaveBeenCalled();
+  expect(result.quarterlyOutput.adopted).toBe(false);
+  expect(result.missingEvidence).toContain("source_evidence_unavailable");
 });

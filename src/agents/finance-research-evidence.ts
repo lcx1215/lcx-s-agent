@@ -301,7 +301,11 @@ export function buildFinanceResearchModelEvidence(
       if (!job.receipt) {
         continue;
       }
-      const prefix = `${job.jobId} (${job.status}; ${
+      const reviewCaveats =
+        job.status === "ready"
+          ? ""
+          : `; unverified research context only; gaps=${JSON.stringify(job.missingEvidence)}; freshness=${JSON.stringify(job.freshnessWarnings)}; conflicts=${JSON.stringify(job.conflicts)}`;
+      const prefix = `${job.jobId} (${job.status}${reviewCaveats}; ${
         batch.asOfMode === "live_now" ? "collection-time evidence" : "frozen-asOf evidence"
       })`;
       if ("records" in job.receipt) {
@@ -369,7 +373,7 @@ export function buildFinanceResearchModelEvidence(
         const fields = job.receipt.snapshot?.normalizedFields ?? [];
         if (fields.length) {
           facts.push(
-            `${prefix}: quote fields ${JSON.stringify(fields.slice(0, 3).map((f) => ({ name: f.name, value: f.value, sourceTimestamp: f.sourceTimestamp })))}`,
+            `${prefix}: quote fields ${JSON.stringify(fields.slice(0, 3).map((f) => ({ name: f.name, value: f.value, sourceTimestamp: f.sourceTimestamp })))}; unresolved provider values=${JSON.stringify(job.receipt.snapshot?.conflicts ?? [])}`,
           );
         }
       }

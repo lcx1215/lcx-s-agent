@@ -1702,16 +1702,21 @@ function sourceGate(
   const inventory = plan.sourceInventory;
   const coverageMissing =
     (inventory?.unplannedAdapterIds.length ?? 0) + (inventory?.unavailableProviders.length ?? 0);
-  const passed =
-    batch.status === "completed" &&
-    batch.jobs.every((job) => job.status === "ready") &&
-    coverageMissing === 0;
+  const covered = new Set(
+    batch.committeeEvidence
+      .filter((entry) => entry.id.startsWith("finance-model:"))
+      .map((entry) => entry.id),
+  );
+  const uncovered = [...new Set(plan.targets.map((target) => target.instrument))].filter(
+    (instrument) => !covered.has(`finance-model:${encodeURIComponent(instrument)}`),
+  );
+  // This gate admits research inputs, not execution quotes or verified facts.
+  // A failed auxiliary fetch must not veto an otherwise grounded opportunity.
+  const passed = covered.size > 0 && uncovered.length === 0;
   return {
     id: "source",
     passed,
-    reason: passed
-      ? "all bounded source jobs are ready"
-      : `source evidence is ${batch.status}; ready=${batch.budget.readyJobs}/${batch.budget.requestedJobs}; review=${batch.budget.reviewJobs}; blocked=${batch.budget.blockedJobs}; unregistered_or_unplanned=${coverageMissing}`,
+    reason: `${passed ? "research input coverage available" : "research input coverage missing"}; uncovered=${uncovered.join(",") || "none"}; source evidence is ${batch.status}; ready=${batch.budget.readyJobs}/${batch.budget.requestedJobs}; review=${batch.budget.reviewJobs}; blocked=${batch.budget.blockedJobs}; unregistered_or_unplanned=${coverageMissing}; admission is not source verification or execution readiness`,
   };
 }
 
@@ -1907,9 +1912,11 @@ export async function runFinanceResearchRun(
     });
   }
 
+  const includeReviewEvidence = options.batchOptions?.includeReviewEvidence ?? true;
   let batch = await runFinanceResearchBatch({
+    includeReviewEvidence,
     ...(options.input.sourcePolicy === "all_registered"
-      ? { maxSourcesPerJob: 1, maxHttpCallsPerSource: 3, includeReviewEvidence: true }
+      ? { maxSourcesPerJob: 1, maxHttpCallsPerSource: 3 }
       : {}),
     ...options.batchOptions,
     ...(options.signal
@@ -1935,9 +1942,7 @@ export async function runFinanceResearchRun(
   let evidence: readonly FinanceCommitteeEvidence[] = [
     ...controllerEvidence,
     ...buildFinanceResearchModelEvidence(batch, {
-      includeReviewEvidence:
-        options.input.sourcePolicy === "all_registered" ||
-        options.batchOptions?.includeReviewEvidence,
+      includeReviewEvidence,
     }),
   ];
   batch = { ...batch, committeeEvidence: evidence };
@@ -2112,7 +2117,7 @@ export async function runFinanceResearchRun(
     ) {
       const qualityRequest = {
         task:
-          `${ask}\nApply the selected analytical modules in sharedContext.financeOrchestration and only the supplied method kit checks relevant to this task. A caller selection does not establish evidence or tool execution. Preserve the requested horizon and deliverable; do not add a forecast or backtest to a factual request. For every claim, provide epistemicClass as ${FINANCE_RESEARCH_CLAIM_EPISTEMIC_CLASSES.join(", ")}. This describes claim origin, not truth, source quality, or readiness. For derived measures, estimates, inferences, and hypotheses, provide basis describing the calculation method, assumptions, or reasoning bridge. Provide evidenceRelations for every claim, mapping each evidenceId exactly once to ${FINANCE_RESEARCH_EVIDENCE_RELATIONS.join(", ")}. Preserve contrary evidence and never treat a source report as independently verified. State missing evidence. Keep research-only and do not provide execution instructions.` +
+          `${ask}\nApply the selected analytical modules in sharedContext.financeOrchestration and only the supplied method kit checks relevant to this task. A caller selection does not establish evidence or tool execution. Preserve the requested horizon and deliverable; do not add a forecast or backtest to a factual request. For every claim, provide epistemicClass as ${FINANCE_RESEARCH_CLAIM_EPISTEMIC_CLASSES.join(", ")}. This describes claim origin, not truth, source quality, or readiness. For derived measures, estimates, inferences, and hypotheses, provide basis describing the calculation method, assumptions, or reasoning bridge. Provide evidenceRelations for every claim, mapping each evidenceId exactly once to ${FINANCE_RESEARCH_EVIDENCE_RELATIONS.join(", ")}. Preserve contrary evidence and never treat a source report as independently verified. Partial, stale, contradictory or low-confidence reports may inform conditional opportunities; do not require every auxiliary source to be ready. Distinguish a source assertion from a fact, explain the reasoning bridge and invalidation condition, and retain all supplied gaps. Research admission does not qualify a quote for order placement. State missing evidence. Keep research-only and do not provide execution instructions.` +
           (plan.portfolioContext
             ? "\nAlso propose budget fractions for every controller-listed active strategy in supportingAnalysis.portfolioAllocationProposal.allocations. Each allocation must contain only strategyId, budgetFraction, and evidenceIds; cite supplied evidence, keep the total at or below 1, and leave unused capital as cash. This is a reviewable proposal, not execution authority."
             : "") +
@@ -2125,6 +2130,7 @@ export async function runFinanceResearchRun(
           decisionMode,
           sourceStatus: batch.status,
           sourceGatePassed: sourceGate(batch, plan).passed,
+          sourceGateScope: "research_input_coverage_not_verified_facts_or_execution_quotes",
           committeeGatePassed: committeeGateResult.passed,
           noExecutionAuthority: true,
           strategyMethodKit: strategyMethodKitModelContext,
