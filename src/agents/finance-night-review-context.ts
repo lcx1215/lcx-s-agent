@@ -36,6 +36,7 @@ function compactReceipt(
     referencePrice: receipt.referencePrice,
     referencePriceAt: receipt.referencePriceAt,
     recordedAt: receipt.recordedAt,
+    fill: receipt.fill ?? null,
   };
 }
 
@@ -89,6 +90,30 @@ export async function buildFinanceNightReviewEvidence(params: {
       text: JSON.stringify({
         schemaVersion: FINANCE_NIGHT_REVIEW_CONTEXT_SCHEMA_VERSION,
         etDate: params.etDate,
+        profitReview: {
+          objective:
+            "Improve realized profit after costs within the existing strategy and risk budget.",
+          questions: [
+            "Which executed opportunities made or lost money after costs? Separate gross gains, net gains and unrealized marks.",
+            "Were profitable opportunities refused or delayed? Use subsequent market data and the original executable constraints; a refusal alone proves no missed profit.",
+            "Did exits truncate winners? Compare the declared exit with a pre-specified alternative over the same horizon, including adverse excursion and costs.",
+            "When could holding or adding to a winner improve net returns within the total position loss budget? Do not infer an edge from a recent win alone.",
+            "How many average net wins does the largest net loss erase? Report sample size and missing cost or round-trip evidence.",
+          ],
+          requiredProposalFields: [
+            "evidenceIds",
+            "hypothesis",
+            "validationConditions",
+            "riskBudgetImpact",
+          ],
+          boundaries: [
+            "Zero trades is not success; trade count and gross win rate are not profit objectives.",
+            "Use actual fills for execution analysis. Reference quotes are not fills; local simulation and broker Paper are separate evidence.",
+            "No known costs means net profit is unknown, not zero-cost profit. Per-trade return ratios are not currency PnL.",
+            "Missing counterfactual prices or fills must remain unknown; do not invent missed profits or claim an exit was premature.",
+            "Propose testable candidates only; this review cannot change execution permissions, stops, leverage or risk budgets.",
+          ],
+        },
         scoredFiled: params.settlement.scoredFiled,
         reflection: params.settlement.reflection,
         pending: params.settlement.pending,
@@ -104,6 +129,8 @@ export async function buildFinanceNightReviewEvidence(params: {
         headRef: positions.headRef,
         receiptCount: positions.receiptRecordCount,
         positions: positions.ledger.positions,
+        pnlBasis: "ledger_projection_not_broker_reconciled_net_profit",
+        costsReconciled: false,
         realizedPnl: positions.ledger.realizedPnl,
         unrealizedPnl: positions.ledger.unrealizedPnl,
         instrumentsWithoutMark: positions.ledger.instrumentsWithoutMark,

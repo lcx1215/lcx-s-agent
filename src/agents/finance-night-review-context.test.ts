@@ -2,11 +2,13 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { FINANCE_EXECUTION_RECEIPT_SCHEMA } from "./finance-execution-adapter.js";
 import {
   appendFinanceIntradayDecision,
   appendFinanceIntradayOutcome,
 } from "./finance-intraday-control-ledger.js";
 import { buildFinanceNightReviewEvidence } from "./finance-night-review-context.js";
+import { appendFinanceExecutionReceipt } from "./finance-position-ledger.js";
 
 describe("finance night review context", () => {
   it("projects settlement and durable intraday refusals into bounded evidence", async () => {
@@ -30,6 +32,30 @@ describe("finance night review context", () => {
         status: "refused",
         reasons: ["risk_gate_blocked"],
       });
+      await appendFinanceExecutionReceipt(directory, {
+        schemaVersion: FINANCE_EXECUTION_RECEIPT_SCHEMA,
+        receiptId: "fill-1",
+        intentId: "intent-1",
+        runAuthorizationId: "paper-run",
+        adapterId: "paper",
+        adapterKind: "paper",
+        venue: "paper",
+        instrument: "SPY",
+        side: "buy",
+        orderType: "market",
+        quantity: 2,
+        referencePrice: 500,
+        referencePriceAt: "2026-09-22T15:00:00.000Z",
+        notional: 1000,
+        fill: {
+          filledQuantity: 1,
+          fillPrice: 501,
+          filledAt: "2026-09-22T15:00:01.000Z",
+          venueRef: "paper",
+        },
+        executionAuthority: "declared_execution_adapter_required",
+        recordedAt: "2026-09-22T15:00:02.000Z",
+      });
       const evidence = await buildFinanceNightReviewEvidence({
         directory,
         asOf: "2026-09-22T22:00:00.000Z",
@@ -49,6 +75,16 @@ describe("finance night review context", () => {
         "finance-intraday-control-ledger",
       ]);
       expect(evidence[3].text).toContain("risk_gate_blocked");
+      const review = JSON.parse(evidence[0].text).profitReview;
+      expect(review.questions).toHaveLength(5);
+      expect(review.boundaries.join(" ")).toContain("do not invent missed profits");
+      const portfolio = JSON.parse(evidence[1].text);
+      expect(portfolio.costsReconciled).toBe(false);
+      expect(portfolio.dayReceipts[0]).toMatchObject({
+        quantity: 2,
+        referencePrice: 500,
+        fill: { filledQuantity: 1, fillPrice: 501 },
+      });
       expect(evidence[0].text).toContain('"appended":1');
     } finally {
       await fs.rm(directory, { recursive: true, force: true });

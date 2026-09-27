@@ -464,7 +464,7 @@ async function runNightResearchReview(params: {
         "--as-of",
         params.attempt.firedAt,
         "--ask",
-        `Night review, reflection, portfolio risk and fresh news follow-up. Reassess the active evidence and invalidations for: ${params.context.options.researchPlan!.ask}`,
+        `Night review of net profit, missed opportunities, premature exits, winner retention, portfolio risk and fresh news. Follow the profitReview questions and evidence boundaries in controller evidence. Propose validated experiments, never silently change execution authority or risk limits. Reassess the active evidence and invalidations for: ${params.context.options.researchPlan!.ask}`,
         "--controller-evidence",
         evidencePath,
         "--persist-theses",
