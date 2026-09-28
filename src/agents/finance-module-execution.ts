@@ -323,6 +323,31 @@ function moduleQuery(moduleId: FinanceBrainModuleId, ask: string): string {
   return `Finance module ${moduleId}. Apply retained guidance to this bounded research question: ${ask}. Use only supplied fresh evidence and state missing inputs; research-only.`;
 }
 
+// Put the substantive result before repeated call metadata: downstream prompts
+// deliberately clip each evidence item. This is model analysis, not new source proof.
+function frameworkAnalysis(details: ToolDetails): ToolDetails | undefined {
+  const entry = asRecord(asRecord(details.inspect).entry);
+  if (typeof entry.evidenceSummary !== "string") {
+    return undefined;
+  }
+  const excerpt = (value: unknown, limit: number) =>
+    typeof value === "string"
+      ? value.length <= limit
+        ? value
+        : `${value.slice(0, limit)}…`
+      : null;
+  return {
+    basis: "module_analysis_not_independent_source_verification",
+    confidence: entry.confidenceOrConviction,
+    evidenceSummary: excerpt(entry.evidenceSummary, 180),
+    riskGateNotes: excerpt(entry.riskGateNotes, 160),
+    invalidation: excerpt(entry.whatChangesMyMind, 140),
+    keyCausalChain: excerpt(entry.keyCausalChain, 180),
+    sourceArtifacts: entry.sourceArtifacts,
+    allowedActionAuthority: "research_only",
+  };
+}
+
 function outputEvidence(
   node: FinanceModuleExecutionNode,
   details: ToolDetails,
@@ -334,13 +359,14 @@ function outputEvidence(
     source: "finance-module-execution",
     timestamp,
     text: JSON.stringify({
+      researchOnly: true,
+      analysis: frameworkAnalysis(details),
+      toolOutput: details,
       nodeId: node.nodeId,
       moduleId: node.moduleId,
       status: node.status,
       inputEvidenceIds: node.inputEvidenceIds,
       toolCalls: node.toolCalls,
-      toolOutput: details,
-      researchOnly: true,
     }),
   };
 }

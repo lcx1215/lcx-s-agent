@@ -398,7 +398,8 @@ Module-learning and finance retrieval review tools default to read-only. Persist
 
 When module execution and the quality harness are both enabled, the preliminary
 committee runs deterministic intake and one `research_draft` to prepare producer
-inputs. Evidence, risk and exposure reviews run in the post-module quality harness
+inputs. These are two preparation roles, not a two-module limit: the draft receives
+the evidence packet and must supply separate inputs for every selected producer. Evidence, risk and exposure reviews run in the post-module quality harness
 instead of being repeated before the modules exist.
 Its receipt says `producer_preparation`; it does not claim a complete committee
 review. This preliminary draft must satisfy the producer schema and cite existing
@@ -456,3 +457,9 @@ when an optional lens is missing. The receipt retains every optional failure and
 its source gap. The soft-replan budget governs further attempts, not permission to
 claim unavailable methods succeeded. Candidate status remains separate from
 execution authority.
+
+Domain module evidence places a bounded analytical summary, confidence, risk and
+invalidation before repeated tool-call metadata, so prompt clipping does not hide
+the useful result behind execution bookkeeping. The summary remains model analysis,
+not independent source verification; full tool output and source references remain
+in the receipt. Clipped text does not count as fully reviewed evidence.

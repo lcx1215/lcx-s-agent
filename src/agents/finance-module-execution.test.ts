@@ -13,6 +13,7 @@ import {
 } from "./finance-module-execution.js";
 import type { FinanceModuleExecutionNode } from "./finance-module-execution.js";
 import type { FinanceResearchBatchEvidencePacket } from "./finance-research-batch-runner.js";
+import { buildQualityHarnessModelPrompt } from "./local-text-model-adapter.js";
 
 function emptyBatch(): FinanceResearchBatchEvidencePacket {
   return {
@@ -235,6 +236,39 @@ describe("finance module execution", () => {
         "finance_framework_company_fundamentals_value_producer",
         "finance_framework_core_inspect",
       ]);
+      const moduleEvidence = result.evidence.find(
+        (entry) => entry.id === "finance-module:fundamentals",
+      );
+      expect(moduleEvidence).toBeDefined();
+      if (!moduleEvidence) {
+        throw new Error("missing actual module evidence");
+      }
+      for (const count of [1, 16]) {
+        const prompt = buildQualityHarnessModelPrompt({
+          schemaVersion: 1,
+          runId: "module-handoff",
+          attempt: 1,
+          stage: "evidence",
+          agentId: "evidence_integrity",
+          task: "Review fundamental module findings",
+          evidence: [
+            moduleEvidence,
+            ...Array.from({ length: count - 1 }, (_, index) => ({
+              id: `other-${index}`,
+              text: "Other evidence",
+            })),
+          ],
+          sharedContext: {},
+          repairFeedback: [],
+          instructions: "Review the supplied analysis and its limits",
+          dependencyOutputs: {},
+        });
+        expect(prompt).toContain("module_analysis_not_independent_source_verification");
+        expect(prompt).toContain("audited revenue, margin, cash-flow");
+        expect(prompt).toContain("valuation and balance-sheet evidence require independent review");
+        expect(prompt).toContain("two reporting periods contradict the cash-flow premise");
+        expect(prompt).toContain("revenue growth -> margin transmission");
+      }
     } finally {
       await fs.rm(workspaceDir, { recursive: true, force: true });
     }
