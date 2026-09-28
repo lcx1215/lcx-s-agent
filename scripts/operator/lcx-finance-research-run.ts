@@ -29,6 +29,7 @@ import {
 } from "../../src/agents/local-text-model-adapter.ts";
 import type { LogicalAgentModelRouting } from "../../src/agents/logical-agent-model-router.ts";
 import { loadConfig } from "../../src/config/config.ts";
+import { runCheckpointedFinanceResearch } from "./lcx-finance-research-checkpoint-run.ts";
 import { DEFAULT_WORKSPACE_DIR } from "./lcx-local-paths.ts";
 
 const execFileAsync = promisify(execFile);
@@ -62,6 +63,8 @@ type Options = {
   pythonPath?: string;
   maxTokens: number;
   timeoutMs: number;
+  runTimeoutMs: number;
+  maxModelCalls: number;
   allowModelNetwork: boolean;
   maxApiCalls: number;
   maxConcurrency: number;
@@ -104,6 +107,8 @@ function usage(): string {
     "  --python PATH                      retired local Python override",
     `  --max-tokens N                     bounded workflow output tokens (default: 8192, max: ${MAX_MODEL_TOKENS})`,
     `  --timeout-ms N                     bounded workflow model timeout (max: ${MAX_MODEL_TIMEOUT_MS})`,
+    "  --run-timeout-ms N                 source + model cancellation deadline (default: 840000)",
+    "  --max-model-calls N                whole-run model attempt budget (default: 48)",
     "  --allow-model-network              retired local network override",
     "  --max-api-calls N                  hard source-attempt budget (default: 48, max: 10000)",
     "  --max-concurrency N                batch concurrency (default: 3)",
@@ -165,6 +170,8 @@ export function parseArgs(args: readonly string[]): Options {
     modelId: DEFAULT_MODEL_ID,
     maxTokens: 8_192,
     timeoutMs: 120_000,
+    runTimeoutMs: 840_000,
+    maxModelCalls: 48,
     allowModelNetwork: false,
     maxApiCalls: 48,
     maxConcurrency: 3,
@@ -211,6 +218,16 @@ export function parseArgs(args: readonly string[]): Options {
       index += 1;
     } else if (arg === "--timeout-ms") {
       options.timeoutMs = positiveInteger(readValue(args, index, arg), arg, MAX_MODEL_TIMEOUT_MS);
+      index += 1;
+    } else if (arg === "--run-timeout-ms") {
+      options.runTimeoutMs = positiveInteger(
+        readValue(args, index, arg),
+        arg,
+        MAX_MODEL_TIMEOUT_MS,
+      );
+      index += 1;
+    } else if (arg === "--max-model-calls") {
+      options.maxModelCalls = positiveInteger(readValue(args, index, arg), arg, 10_000);
       index += 1;
     } else if (arg === "--allow-model-network") {
       options.allowModelNetwork = true;
@@ -692,7 +709,7 @@ async function run(options: Options): Promise<{
     return { receipt, ...(written === undefined ? {} : { written }) };
   }
   const workflow = createFinanceModelWorkflow(loadConfig(), {
-    maxCalls: 48,
+    maxCalls: options.maxModelCalls,
     maxTokens: options.maxTokens,
     timeoutMs: options.timeoutMs,
   });
@@ -703,16 +720,23 @@ async function run(options: Options): Promise<{
     failureThreshold: 3,
     resetAfterMs: 30_000,
   });
-  const receipt = await runFinanceResearchRun({
-    input,
-    liveFetch: true,
-    qualityEnabled: options.quality,
-    allowProviderCalls: true,
-    modelRouting: workflow.routing,
-    ...(options.quality ? { qualityModelRouting: workflow.routing } : {}),
-    sourceGovernance: governance,
-    batchOptions,
-  });
+  const receipt = await runCheckpointedFinanceResearch(
+    {
+      input,
+      liveFetch: true,
+      qualityEnabled: options.quality,
+      allowProviderCalls: true,
+      modelRouting: workflow.routing,
+      ...(options.quality ? { qualityModelRouting: workflow.routing } : {}),
+      sourceGovernance: governance,
+      batchOptions,
+    },
+    {
+      directory: path.join(WORKSPACE_DIR(), "state", "finance-research-checkpoints"),
+      runTimeoutMs: options.runTimeoutMs,
+      maxModelCalls: options.maxModelCalls,
+    },
+  );
   const written = options.write ? await writeReceipt(receipt, asOf) : undefined;
   let thesisLearning: FinanceResearchThesisLearningResult | undefined;
   if (options.persistTheses && written && options.financeStateDir) {

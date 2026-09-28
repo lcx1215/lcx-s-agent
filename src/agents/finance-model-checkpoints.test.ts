@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { requireNodeSqlite } from "../memory/sqlite.js";
 import { openFinanceModelCheckpoints } from "./finance-model-checkpoints.js";
 
 const directories: string[] = [];
@@ -102,6 +103,54 @@ describe("finance model checkpoints", () => {
     const opts = await options();
     openFinanceModelCheckpoints(opts, { evidence: "old" }).close();
     expect(() => openFinanceModelCheckpoints(opts, { evidence: "new" })).toThrow("mismatch");
+  });
+  it("records transport outcomes without claiming contract acceptance", async () => {
+    const opts = await options();
+    const store = openFinanceModelCheckpoints(opts, {});
+    await store.invoker(async () => ({ secret: "must not persist per-call output" }))!(
+      {},
+      new AbortController().signal,
+    );
+    store.close();
+    const { DatabaseSync } = requireNodeSqlite();
+    const db = new DatabaseSync(opts.path);
+    try {
+      const row = db
+        .prepare("SELECT job_id, status, result FROM finance_checkpoint_nodes WHERE cost=1")
+        .get()!;
+      expect(row.job_id).toMatch(/^call:legacy:/);
+      expect(row.status).toBe("completed");
+      expect(JSON.parse(String(row.result))).toMatchObject({
+        transportOutcome: "returned",
+        contractAcceptance: "not_assessed",
+      });
+      expect(String(row.result)).not.toContain("secret");
+    } finally {
+      db.close();
+    }
+  });
+  it("does not write late transport results into a closed checkpoint", async () => {
+    const opts = await options();
+    const store = openFinanceModelCheckpoints(opts, {});
+    let finish!: (value: unknown) => void;
+    const pending = store.invoker(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    )!({}, new AbortController().signal);
+    store.close();
+    finish("late");
+    await expect(pending).resolves.toBe("late");
+    const { DatabaseSync } = requireNodeSqlite();
+    const db = new DatabaseSync(opts.path);
+    try {
+      expect(
+        db.prepare("SELECT status FROM finance_checkpoint_nodes WHERE cost=1").get()?.status,
+      ).toBe("reserved");
+    } finally {
+      db.close();
+    }
   });
   it("does not charge or invoke a cancelled dispatch", async () => {
     const store = openFinanceModelCheckpoints(await options(), {});

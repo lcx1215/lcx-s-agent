@@ -62,18 +62,42 @@ export function openFinanceModelCheckpoints(
   );
   const reusedStages: string[] = [];
   let newModelCalls = 0;
-  const invoke = (call: () => Promise<unknown>, signal: AbortSignal) => {
+  let closed = false;
+  const invoke = (call: () => Promise<unknown>, signal: AbortSignal, identity = "legacy") => {
     if (signal.aborted) {
       throw new Error("model_checkpoint_cancelled_before_dispatch");
     }
-    const reservation = store.reserve(`call:${randomUUID()}`, 1);
+    const startedAt = new Date().toISOString();
+    const key = `call:${identity}:${startedAt}:${randomUUID()}`;
+    const reservation = store.reserve(key, 1);
     if (reservation.status !== "reserved") {
       throw new Error("model_call_budget_exhausted");
     }
     newModelCalls++;
     // A reserved call remains charged even if it times out or throws. No late
     // transport completion may write into a database closed by its stage owner.
-    return call();
+    return (async () => {
+      const finish = (transportOutcome: string) => {
+        if (!closed) {
+          store.complete(key, reservation.token, {
+            startedAt,
+            finishedAt: new Date().toISOString(),
+            transportOutcome,
+            // Transport return is not output-contract acceptance or stage success.
+            contractAcceptance: "not_assessed",
+          });
+        }
+      };
+      let result: unknown;
+      try {
+        result = await call();
+      } catch (error) {
+        finish(signal.aborted ? "aborted" : "threw");
+        throw error;
+      }
+      finish(signal.aborted ? "returned_after_abort" : "returned");
+      return result;
+    })();
   };
   return {
     invoker(original: LogicalAgentModelInvoker | undefined): LogicalAgentModelInvoker | undefined {
@@ -87,7 +111,12 @@ export function openFinanceModelCheckpoints(
             ...original,
             adapters: original.adapters.map((adapter) => ({
               ...adapter,
-              invoke: (request, signal) => invoke(() => adapter.invoke(request, signal), signal),
+              invoke: (request, signal) =>
+                invoke(
+                  () => adapter.invoke(request, signal),
+                  signal,
+                  `${request.role}:${adapter.id}:${request.attempt}`,
+                ),
             })),
           }
         : undefined;
@@ -117,6 +146,7 @@ export function openFinanceModelCheckpoints(
       };
     },
     close() {
+      closed = true;
       store.close();
     },
   };
