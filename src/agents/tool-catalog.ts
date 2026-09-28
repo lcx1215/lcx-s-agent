@@ -493,6 +493,24 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     includeInOpenClawGroup: true,
   },
   {
+    id: "api_capability_health_read",
+    label: "api_capability_health_read",
+    description:
+      "Read a no-network snapshot of local EchoAPI CLI and CoinGecko finance route health, including stored call evidence and provider heartbeat",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
+    id: "echoapi_cli_health",
+    label: "echoapi_cli_health",
+    description:
+      "Read the pinned EchoAPI CLI installation and latest receipt, or run one bounded public read-only smoke when installed",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
     id: "local_specialist",
     label: "local_specialist",
     description:
