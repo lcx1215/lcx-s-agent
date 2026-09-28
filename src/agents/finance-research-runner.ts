@@ -1375,7 +1375,7 @@ export function createFinanceCommitteeExecutor(): LogicalAgentExecutor<
     const producerContract = shared.userConstraints.financeFrameworkProducerContract;
     const producerInstruction =
       stage === "draft" && producerContract
-        ? `\nFor the selected producer-backed finance modules, write one exact object at artifact.supportingAnalysis.financeFrameworkProducerInputs. Follow this controller contract and cite only its sourceArtifactIds: ${JSON.stringify(producerContract)}. Do not emit entries for unselected modules. This prepares research-only tool inputs and grants no execution or promotion authority.`
+        ? `\nFor the selected producer-backed finance modules, write one exact object at artifact.supportingAnalysis.financeFrameworkProducerInputs. Follow the complete producer_input_contract section and cite only its sourceArtifactIds. Do not emit entries for unselected modules. This prepares research-only tool inputs and grants no execution or promotion authority.`
         : "";
     const payload: QualityHarnessModelRequest = {
       schemaVersion: 1,
@@ -1417,10 +1417,11 @@ function producerInputsFromCommittee(
   plan: FinanceBrainOrchestrationPlan,
   evidenceIds: ReadonlySet<string>,
 ): FinanceDomainProducerInputs {
-  const draft = committee.execution.tasks.find(
-    (task) => task.agentId === "research_draft" && task.status === "completed",
-  );
-  const output = draft?.output as
+  const draft = committee.execution.tasks.find((task) => task.agentId === "research_draft");
+  if (!draft || draft.status !== "completed") {
+    throw new Error(`upstream_research_draft_${draft?.status ?? "missing"}`);
+  }
+  const output = draft.output as
     | {
         kind?: unknown;
         artifact?: { supportingAnalysis?: Record<string, unknown> };

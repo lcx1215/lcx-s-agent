@@ -320,3 +320,52 @@ it("denies unqualified local research and final-review authority before model lo
     ),
   ).rejects.toThrow("local_quality_authority_unqualified");
 });
+
+it("preserves producer contracts outside clipped instructions and limits IDs to visible evidence", () => {
+  const contract = {
+    outputPath: "artifact.supportingAnalysis.financeFrameworkProducerInputs",
+    requiredFields: ["allowedActionAuthority"],
+    description: "x".repeat(4500),
+    allowedActionAuthority: "research_only",
+    sourceArtifactIds: ["visible", "omitted"],
+  };
+  const prompt = buildQualityHarnessModelPrompt({
+    schemaVersion: 1,
+    runId: "producer",
+    attempt: 1,
+    stage: "draft",
+    agentId: "research_draft",
+    task: "review",
+    evidence: [{ id: "visible", text: "fact" }],
+    sharedContext: {
+      userConstraints: { padding: "x".repeat(5000), financeFrameworkProducerContract: contract },
+    },
+    instructions: "x".repeat(3000),
+    repairFeedback: [],
+    dependencyOutputs: {},
+  });
+  const line = prompt.split("\n").find((line) => line.startsWith("producer_input_contract="))!;
+  expect(JSON.parse(line.slice("producer_input_contract=".length))).toEqual({
+    ...contract,
+    sourceArtifactIds: ["visible"],
+  });
+  expect(() =>
+    buildQualityHarnessModelPrompt({
+      schemaVersion: 1,
+      runId: "oversized",
+      attempt: 1,
+      stage: "draft",
+      agentId: "research_draft",
+      task: "review",
+      evidence: [{ id: "visible", text: "fact" }],
+      sharedContext: {
+        userConstraints: {
+          financeFrameworkProducerContract: { ...contract, description: "x".repeat(21000) },
+        },
+      },
+      instructions: "review",
+      repairFeedback: [],
+      dependencyOutputs: {},
+    }),
+  ).toThrow("exceeds prompt budget");
+});

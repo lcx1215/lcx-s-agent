@@ -1319,6 +1319,39 @@ describe("research module composition reaches actual model request boundaries", 
     }
   });
 
+  it("reports failed upstream drafts instead of misdiagnosing an absent producer object", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-upstream-producer-"));
+    try {
+      const result = await runFinanceResearchRun({
+        input: {
+          ask: "Review technical timing",
+          asOf: AS_OF,
+          targets,
+          executeModules: true,
+          moduleSelection,
+        },
+        workspaceDir: directory,
+        liveFetch: true,
+        batchOptions: BATCH_OPTIONS,
+        modelInvoker: async (request) => {
+          if ((request as { stage?: string }).stage === "draft") {
+            throw new Error("diagnostic draft failed");
+          }
+          return modelInvoker(request);
+        },
+      });
+      expect(result.missingEvidence).toContain(
+        "module_producer_input:upstream_research_draft_failed",
+      );
+      expect(result.missingEvidence).not.toContain(
+        "module_producer_input:financeFrameworkProducerInputs must be an object",
+      );
+      expect(result.status).not.toBe("candidate");
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("compiles grounded committee producer inputs before dispatching the canonical module DAG", async () => {
     let captured: unknown;
     const producerAwareInvoker = async (request: unknown) => {

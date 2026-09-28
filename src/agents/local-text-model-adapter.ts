@@ -341,6 +341,32 @@ export function buildQualityHarnessModelPrompt(request: QualityHarnessModelReque
     .slice(0, 8)
     .map((item) => clipPromptText(item, 300));
   const { section: evidenceSection, included: includedEvidence } = fitQualityEvidence(evidence);
+  const constraints = request.sharedContext.userConstraints;
+  const producerContract =
+    request.stage === "draft" &&
+    constraints &&
+    typeof constraints === "object" &&
+    "financeFrameworkProducerContract" in constraints
+      ? constraints.financeFrameworkProducerContract
+      : undefined;
+  let producerContractText: string | undefined;
+  if (
+    producerContract &&
+    typeof producerContract === "object" &&
+    !Array.isArray(producerContract)
+  ) {
+    const contract = producerContract as Record<string, unknown>;
+    const visibleIds = new Set(includedEvidence.map((entry) => entry.id));
+    producerContractText = JSON.stringify({
+      ...contract,
+      sourceArtifactIds: Array.isArray(contract.sourceArtifactIds)
+        ? contract.sourceArtifactIds.filter((id) => typeof id === "string" && visibleIds.has(id))
+        : [],
+    });
+    if (producerContractText.length > 20_000) {
+      throw new Error("finance producer input contract exceeds prompt budget");
+    }
+  }
   const evidenceTextMayBeClipped =
     includedEvidence.length !== request.evidence.length ||
     includedEvidence.some((entry) => entry.textWasClipped || entry.sourceWasClipped);
@@ -349,6 +375,7 @@ export function buildQualityHarnessModelPrompt(request: QualityHarnessModelReque
     `stage=${request.stage}; agent=${request.agentId}`,
     `task=${clipPromptText(request.task, 1_200)}`,
     `instructions=${clipPromptText(request.instructions, 2_000)}`,
+    ...(producerContractText ? [`producer_input_contract=${producerContractText}`] : []),
     ["extraction", "classification", "evidence", "risk", "exposure"].includes(request.stage)
       ? "This is a pre-draft specialist stage. Perform your assigned check directly on supplied evidence and place findings/extracted facts in notes with evidence IDs. There is no final answer yet: do not fail a preceding plan/review for not containing the later draft. Do not demand analysis outside the user's task. A limitation that can be stated or excluded is a note, not an unavoidable evidence gap."
       : "Audit only the requested deliverable; do not expand the task to unrelated instruments, future forecasts or portfolio allocation.",
