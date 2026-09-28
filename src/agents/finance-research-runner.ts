@@ -1789,11 +1789,12 @@ function qualityGate(quality: QualityHarnessReceipt | undefined): FinanceResearc
 }
 
 function moduleExecutionGate(execution: FinanceModuleExecutionReceipt): FinanceResearchGate {
+  const passed = execution.requiredEvidenceReady ?? execution.moduleToolsDispatched;
   return {
     id: "module_execution",
-    passed: execution.moduleToolsDispatched,
-    reason: execution.moduleToolsDispatched
-      ? `all ${execution.nodes.length} composed module nodes produced evidence`
+    passed,
+    reason: passed
+      ? `required module evidence reviewed; succeeded=${execution.nodes.filter((node) => node.status === "succeeded").length}/${execution.nodes.length}; optional gaps remain disclosed`
       : execution.requested
         ? `module execution incomplete; succeeded=${execution.nodes.filter((node) => node.status === "succeeded").length}/${execution.nodes.length}`
         : "module execution was not requested",
@@ -1820,6 +1821,10 @@ function finalizeModuleExecution(
   return Object.freeze({
     ...execution,
     moduleToolsDispatched: finalConclusionReady && execution.allNodesSucceeded && evidenceIncluded,
+    requiredEvidenceReady:
+      finalConclusionReady &&
+      (execution.requiredNodesSucceeded ?? execution.allNodesSucceeded) &&
+      evidenceIncluded,
   });
 }
 

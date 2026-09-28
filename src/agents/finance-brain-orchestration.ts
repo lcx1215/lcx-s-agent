@@ -419,12 +419,25 @@ export function planFinanceBrainOrchestration(
   ) {
     requiredModules.push("quant_math");
   }
-  if (financeTask) {
+  const requiresRetainedMethod =
+    /\b(?:reuse|apply|retrieve|use)\b.{0,50}\b(?:retained|learned|previous|memory|capability cards?)\b|(?:复用|应用|检索|根据).{0,25}(?:已学|学过|保留|历史方法|记忆|能力卡)|(?:以前|学过|已学习).{0,25}(?:应用|复用)/u.test(
+      text,
+    );
+  if (
+    moduleSelection?.moduleIds.includes("finance_learning_memory") ||
+    (financeTask && requiresRetainedMethod)
+  ) {
     requiredModules.push("finance_learning_memory");
   }
-  const seeded = unique<FinanceBrainModuleId>([...selected, ...requiredModules]);
+  // Attempt retained guidance on every finance task, but an empty learning store
+  // must not prevent new source-backed research. Explicit selection remains strict.
+  const analyticalModules = unique<FinanceBrainModuleId>([
+    ...selected,
+    ...(financeTask ? ["finance_learning_memory" as const] : []),
+  ]);
+  const seeded = unique<FinanceBrainModuleId>([...analyticalModules, ...requiredModules]);
   const composition = buildFinanceModuleComposition(
-    selected,
+    analyticalModules,
     requiredModules,
     moduleSelection?.composition,
   );

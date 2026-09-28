@@ -53,6 +53,7 @@ describe("planFinanceBrainOrchestration", () => {
       expect.arrayContaining(["etf_regime", "technical_timing", "causal_map"]),
     );
     expect(plan.supportingModules).toEqual(["finance_learning_memory"]);
+    expect(plan.composition.control.hardModuleIds).toContain("finance_learning_memory");
     expect(plan.requiredTools).toContain("finance_learning_capability_apply");
     expect(plan.boundaries).toContain("no_execution_authority");
   });
@@ -330,6 +331,33 @@ describe("planFinanceBrainOrchestration", () => {
 });
 
 describe("caller module composition within fixed gates", () => {
+  it("keeps implicit learning optional but preserves explicitly requested dependencies", () => {
+    const plan = planFinanceBrainOrchestration({ text: "Review SPY profit capture" });
+    expect(plan.composition.control.softModuleIds).toContain("finance_learning_memory");
+    expect(
+      plan.composition.nodes.find((node) => node.moduleId === "etf_regime")?.dependsOn,
+    ).toEqual([]);
+    expect(
+      plan.composition.nodes.find((node) => node.moduleId === "causal_map")?.dependsOn,
+    ).toEqual([]);
+    const explicit = planFinanceBrainOrchestration({
+      text: "Review SPY profit capture",
+      moduleSelection: {
+        moduleIds: ["finance_learning_memory", "etf_regime"],
+        rationale: "This request depends on a retained method.",
+        composition: {
+          nodes: [
+            { id: "memory", moduleId: "finance_learning_memory", dependsOn: [] },
+            { id: "etf", moduleId: "etf_regime", dependsOn: ["memory"] },
+          ],
+        },
+      },
+    });
+    expect(explicit.composition.control.hardNodeIds).toContain("memory");
+    expect(explicit.composition.nodes.find((node) => node.id === "etf")?.dependsOn).toEqual([
+      "memory",
+    ]);
+  });
   it("builds a bounded default DAG instead of an unbounded module chain", () => {
     const plan = planFinanceBrainOrchestration({
       text: "检查持仓风险和期权波动",
@@ -366,8 +394,8 @@ describe("caller module composition within fixed gates", () => {
       expect.arrayContaining(["timing", "credit", "causal_map", "finance_learning_memory"]),
     );
     expect(plan.composition.control).toMatchObject({
-      hardModuleIds: ["causal_map", "finance_learning_memory"],
-      softModuleIds: ["technical_timing", "credit_liquidity"],
+      hardModuleIds: ["causal_map"],
+      softModuleIds: ["technical_timing", "credit_liquidity", "finance_learning_memory"],
       maxSoftReplans: 1,
       hardStopConditions: [
         "missing_evidence",
@@ -376,9 +404,7 @@ describe("caller module composition within fixed gates", () => {
         "unresolved_execution",
       ],
     });
-    expect(plan.composition.control.hardNodeIds).toEqual(
-      expect.arrayContaining(["causal_map", "finance_learning_memory"]),
-    );
+    expect(plan.composition.control.hardNodeIds).toEqual(expect.arrayContaining(["causal_map"]));
     expect(plan.composition.control.softNodeIds).toEqual(
       expect.arrayContaining(["timing", "credit"]),
     );

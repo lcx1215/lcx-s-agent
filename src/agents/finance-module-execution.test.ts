@@ -230,6 +230,7 @@ describe("finance module execution", () => {
       });
       const node = result.receipt.nodes.find((item) => item.nodeId === "fundamentals");
       expect(node?.status).toBe("succeeded");
+      expect(node?.inputEvidenceIds).toContain("fixture://fundamentals");
       expect(node?.toolCalls.map((call) => call.toolName)).toEqual([
         "finance_framework_company_fundamentals_value_producer",
         "finance_framework_core_inspect",

@@ -260,6 +260,8 @@ export function createFinanceResearchRunTool(options?: {
               receipt.plan.orchestration.primaryModules.length - 4,
             ),
             moduleToolsDispatched: receipt.moduleExecution?.moduleToolsDispatched ?? false,
+            requiredEvidenceReady: receipt.moduleExecution?.requiredEvidenceReady ?? false,
+            allNodesSucceeded: receipt.moduleExecution?.allNodesSucceeded ?? false,
             replanStatus: receipt.moduleExecution?.replanFeedback.status ?? "not_requested",
             nextAction: receipt.moduleExecution?.replanFeedback.nextAction ?? "none",
             hardFailureCount: receipt.moduleExecution?.replanFeedback.hardFailures.length ?? 0,

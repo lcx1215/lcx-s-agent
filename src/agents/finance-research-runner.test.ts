@@ -8,6 +8,7 @@ import type {
   FinanceMarketCollectionAdapter,
   FinanceMarketCollectionItem,
 } from "./finance-market-collection-registry.js";
+import { deriveFinanceModuleReplanFeedback } from "./finance-module-execution.js";
 import type { FinanceRealtimeSourceAdapter } from "./finance-realtime-source-registry.js";
 import {
   buildDefaultFinanceResearchTargets,
@@ -1402,115 +1403,138 @@ describe("research module composition reaches actual model request boundaries", 
     }
   });
 
-  it("compiles grounded committee producer inputs before dispatching the canonical module DAG", async () => {
-    let captured: unknown;
-    const producerAwareInvoker = async (request: unknown) => {
-      const output = await modelInvoker(request);
-      const payload = request as { stage?: string; evidence?: Array<{ id?: string }> };
-      if (payload.stage !== "draft") {
-        return output;
-      }
-      const evidenceId = payload.evidence?.[0]?.id ?? "finance-batch-summary";
-      const artifact = (output as { artifact: { supportingAnalysis: Record<string, unknown> } })
-        .artifact;
-      artifact.supportingAnalysis.financeFrameworkProducerInputs = {
-        causal_map: {
-          domain: "causal_map",
-          sourceArtifacts: [evidenceId],
-          evidenceCategories: ["causal_chain_evidence"],
-          evidenceSummary:
-            "Timestamped evidence supports a bounded causal-chain hypothesis with an explicit alternative.",
-          baseCase: "the observed transmission remains conditional",
-          bullCase: "supportive transmission persists",
-          bearCase: "the transmission reverses",
-          keyCausalChain: "observed input -> transmission mechanism -> conditional repricing",
-          upstreamDrivers: ["cited observed input"],
-          downstreamAssetImpacts: ["conditional repricing"],
-          confidenceOrConviction: "medium",
-          whatChangesMyMind: "a cited counter-observation breaks the mechanism",
-          noActionReason: "research evidence grants no order authority",
-          riskGateNotes: "portfolio and execution gates remain required",
-          allowedActionAuthority: "research_only",
-        },
-      };
-      return output;
-    };
-    const result = await runFinanceResearchRun({
-      input: {
-        ask: "Review technical timing",
-        asOf: AS_OF,
-        targets,
-        executeModules: true,
-        moduleSelection: {
-          moduleIds: ["technical_timing"],
-          rationale: "Use the registered timing lens.",
-        },
-      },
-      liveFetch: true,
-      batchOptions: BATCH_OPTIONS,
-      modelInvoker: producerAwareInvoker,
-      qualityModelInvoker: producerAwareInvoker,
-      moduleExecutor: async ({ plan, domainProducerInputs, asOf }) => {
-        captured = domainProducerInputs;
-        const nodes = plan.composition.nodes.map((node) => ({
-          nodeId: node.id,
-          moduleId: node.moduleId,
-          requiredToolNames: [],
-          dependsOn: node.dependsOn,
-          status: "succeeded" as const,
-          inputEvidenceIds: ["fixture"],
-          outputEvidenceIds: [`finance-module:${node.id}`],
-          toolCalls: [],
-          missingEvidence: [],
-        }));
-        return {
-          receipt: {
-            schemaVersion: "lcx_finance_module_execution_v1" as const,
-            boundary: "finance_module_execution_research_only" as const,
-            requested: true,
-            allNodesSucceeded: true,
-            moduleToolsDispatched: true,
-            compositionNodeIds: plan.composition.topologicalOrder,
-            outputEvidenceIds: nodes.flatMap((node) => node.outputEvidenceIds),
-            nodes,
-            replanFeedback: {
-              status: "completed" as const,
-              hardNodeIds: plan.composition.control.hardNodeIds,
-              softNodeIds: plan.composition.control.softNodeIds,
-              hardFailures: [],
-              softFailures: [],
-              remainingSoftReplans: plan.composition.control.maxSoftReplans,
-              nextAction: "none" as const,
-            },
-            notTouched: [
-              "provider_config",
-              "external_channel_sender",
-              "trading_execution",
-              "wallet_or_order_authority",
-            ],
+  it.each(["all", "optional_missing", "required_missing", "receipt_missing"] as const)(
+    "checks module evidence after full quality review: %s",
+    async (outcome) => {
+      let captured: unknown;
+      const producerAwareInvoker = async (request: unknown) => {
+        const output = await modelInvoker(request);
+        const payload = request as { stage?: string; evidence?: Array<{ id?: string }> };
+        if (payload.stage !== "draft") {
+          return output;
+        }
+        const evidenceId = payload.evidence?.[0]?.id ?? "finance-batch-summary";
+        const artifact = (output as { artifact: { supportingAnalysis: Record<string, unknown> } })
+          .artifact;
+        artifact.supportingAnalysis.financeFrameworkProducerInputs = {
+          causal_map: {
+            domain: "causal_map",
+            sourceArtifacts: [evidenceId],
+            evidenceCategories: ["causal_chain_evidence"],
+            evidenceSummary:
+              "Timestamped evidence supports a bounded causal-chain hypothesis with an explicit alternative.",
+            baseCase: "the observed transmission remains conditional",
+            bullCase: "supportive transmission persists",
+            bearCase: "the transmission reverses",
+            keyCausalChain: "observed input -> transmission mechanism -> conditional repricing",
+            upstreamDrivers: ["cited observed input"],
+            downstreamAssetImpacts: ["conditional repricing"],
+            confidenceOrConviction: "medium",
+            whatChangesMyMind: "a cited counter-observation breaks the mechanism",
+            noActionReason: "research evidence grants no order authority",
+            riskGateNotes: "portfolio and execution gates remain required",
+            allowedActionAuthority: "research_only",
           },
-          evidence: nodes.map((node) => ({
-            id: node.outputEvidenceIds[0],
-            source: "finance-module-execution",
-            timestamp: asOf,
-            text: JSON.stringify({ moduleId: node.moduleId, status: node.status }),
-          })),
         };
-      },
-    });
-    expect(captured).toMatchObject({ causal_map: { allowedActionAuthority: "research_only" } });
-    expect(result.committee?.model.purpose).toBe("producer_preparation");
-    expect(result.committee?.model.roleCount).toBe(7);
-    expect(result.committee?.coverage.equivalenceStatus).toBe("not_ready");
-    expect(result.quality?.status).toBe("verified");
-    expect(result.quality?.attempts[0]?.stages.map((stage) => stage.agentId)).toEqual(
-      expect.arrayContaining(["adversarial_challenge", "formatting", "final_precheck"]),
-    );
-    expect(result.status).toBe("candidate");
-    expect(result.gates).toContainEqual(
-      expect.objectContaining({ id: "module_execution", passed: true }),
-    );
-  });
+        return output;
+      };
+      const result = await runFinanceResearchRun({
+        input: {
+          ask: "Review technical timing",
+          asOf: AS_OF,
+          targets,
+          executeModules: true,
+          moduleSelection: {
+            moduleIds: ["technical_timing"],
+            rationale: "Use the registered timing lens.",
+          },
+        },
+        liveFetch: true,
+        batchOptions: BATCH_OPTIONS,
+        modelInvoker: producerAwareInvoker,
+        qualityModelInvoker: producerAwareInvoker,
+        moduleExecutor: async ({ plan, domainProducerInputs, asOf }) => {
+          captured = domainProducerInputs;
+          const failedNode =
+            outcome === "optional_missing"
+              ? plan.composition.control.softNodeIds[0]
+              : outcome === "required_missing"
+                ? plan.composition.control.hardNodeIds[0]
+                : undefined;
+          const nodes = plan.composition.nodes.map((node) => ({
+            nodeId: node.id,
+            moduleId: node.moduleId,
+            requiredToolNames: [],
+            dependsOn: node.dependsOn,
+            status:
+              node.id === failedNode
+                ? ("blocked_missing_evidence" as const)
+                : ("succeeded" as const),
+            inputEvidenceIds: ["fixture"],
+            outputEvidenceIds: node.id === failedNode ? [] : [`finance-module:${node.id}`],
+            toolCalls: [],
+            missingEvidence: node.id === failedNode ? ["unavailable_fixture_input"] : [],
+          }));
+          return {
+            receipt: {
+              schemaVersion: "lcx_finance_module_execution_v1" as const,
+              boundary: "finance_module_execution_research_only" as const,
+              requested: true,
+              allNodesSucceeded: failedNode === undefined,
+              requiredNodesSucceeded: outcome !== "required_missing",
+              moduleToolsDispatched: failedNode === undefined,
+              compositionNodeIds: plan.composition.topologicalOrder,
+              outputEvidenceIds: nodes.flatMap((node) => node.outputEvidenceIds),
+              nodes,
+              replanFeedback: deriveFinanceModuleReplanFeedback(plan.composition, nodes, true),
+              notTouched: [
+                "provider_config",
+                "external_channel_sender",
+                "trading_execution",
+                "wallet_or_order_authority",
+              ],
+            },
+            evidence:
+              outcome === "receipt_missing"
+                ? []
+                : nodes
+                    .filter((node) => node.status === "succeeded")
+                    .map((node) => ({
+                      id: node.outputEvidenceIds[0],
+                      source: "finance-module-execution",
+                      timestamp: asOf,
+                      text: JSON.stringify({ moduleId: node.moduleId, status: node.status }),
+                    })),
+          };
+        },
+      });
+      expect(captured).toMatchObject({ causal_map: { allowedActionAuthority: "research_only" } });
+      expect(result.committee?.model.purpose).toBe("producer_preparation");
+      expect(result.committee?.model.roleCount).toBe(7);
+      expect(result.committee?.coverage.equivalenceStatus).toBe("not_ready");
+      expect(result.quality?.status).toBe("verified");
+      expect(result.quality?.attempts[0]?.stages.map((stage) => stage.agentId)).toEqual(
+        expect.arrayContaining(["adversarial_challenge", "formatting", "final_precheck"]),
+      );
+      const accepted = outcome === "all" || outcome === "optional_missing";
+      expect(result.status).toBe(accepted ? "candidate" : "needs_review");
+      expect(result.gates).toContainEqual(
+        expect.objectContaining({ id: "module_execution", passed: accepted }),
+      );
+      if (outcome === "optional_missing") {
+        expect(result.moduleExecution).toMatchObject({
+          allNodesSucceeded: false,
+          moduleToolsDispatched: false,
+          requiredEvidenceReady: true,
+        });
+        expect(
+          result.moduleExecution?.nodes.some((node) =>
+            node.missingEvidence.includes("unavailable_fixture_input"),
+          ),
+        ).toBe(true);
+      }
+    },
+  );
 });
 
 describe("partial research input boundaries", () => {

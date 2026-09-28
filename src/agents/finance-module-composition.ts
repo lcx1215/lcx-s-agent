@@ -228,13 +228,16 @@ export function parseFinanceModuleComposition(
 function defaultDependencies(
   moduleId: FinanceBrainModuleId,
   moduleIds: readonly FinanceBrainModuleId[],
+  requiredModuleIds: readonly FinanceBrainModuleId[],
 ): FinanceBrainModuleId[] {
   if (moduleId === "finance_learning_memory") {
     return [];
   }
   if (moduleId === "causal_map") {
     return moduleIds.filter(
-      (id) => !["causal_map", "portfolio_risk_gates", "finance_learning_memory"].includes(id),
+      (id) =>
+        requiredModuleIds.includes(id) &&
+        !["causal_map", "portfolio_risk_gates", "finance_learning_memory"].includes(id),
     );
   }
   if (moduleId === "portfolio_risk_gates") {
@@ -242,7 +245,7 @@ function defaultDependencies(
       moduleIds.includes(id as FinanceBrainModuleId),
     ) as FinanceBrainModuleId[];
   }
-  return moduleIds.includes("finance_learning_memory") ? ["finance_learning_memory"] : [];
+  return requiredModuleIds.includes("finance_learning_memory") ? ["finance_learning_memory"] : [];
 }
 
 /** Build the bounded default graph while preserving caller-proposed edges when supplied. */
@@ -284,7 +287,7 @@ export function buildFinanceModuleComposition(
       moduleId,
       dependsOn:
         proposed?.dependsOn ??
-        defaultDependencies(moduleId, allIds).map(
+        defaultDependencies(moduleId, allIds, requiredModuleIds).map(
           (dependency) => proposedByModule.get(dependency)?.id ?? dependency,
         ),
     };

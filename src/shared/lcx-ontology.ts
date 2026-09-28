@@ -374,7 +374,7 @@ export const LCX_ONTOLOGY_AGENT_ROLES = [
 export type LcxOntologyAgentRole = (typeof LCX_ONTOLOGY_AGENT_ROLES)[number];
 
 /** Consumed by finance model routing. Slots describe responsibility, not parameter count. */
-export const LCX_FINANCE_MODEL_WORKFLOW_VERSION = "lcx_finance_model_workflow_v12" as const;
+export const LCX_FINANCE_MODEL_WORKFLOW_VERSION = "lcx_finance_model_workflow_v13" as const;
 export const LCX_FINANCE_WORKFLOW_ROLE_CONTRACTS = {
   data_cleaning: {
     stage: "intake",

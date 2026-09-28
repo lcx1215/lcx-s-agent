@@ -63,6 +63,10 @@ export type FinanceModuleExecutionReceipt = Readonly<{
   boundary: "finance_module_execution_research_only";
   requested: boolean;
   allNodesSucceeded: boolean;
+  /** Mandatory lanes only; optional failures remain visible in nodes and feedback. */
+  requiredNodesSucceeded?: boolean;
+  /** Set by the research runner after final quality review and evidence inclusion. */
+  requiredEvidenceReady?: boolean;
   moduleToolsDispatched: boolean;
   compositionNodeIds: readonly string[];
   outputEvidenceIds: readonly string[];
@@ -405,7 +409,15 @@ export async function executeFinanceModuleComposition(
     }
     const moduleId = compositionNode.moduleId;
     const moduleRequiredToolNames = requiredToolNames(moduleId);
-    const inputEvidenceIds = source.inputEvidenceIds;
+    const producerSources = params.domainProducerInputs?.[moduleId]?.sourceArtifacts;
+    const inputEvidenceIds = Object.freeze([
+      ...new Set([
+        ...source.inputEvidenceIds,
+        ...(Array.isArray(producerSources)
+          ? producerSources.filter((id): id is string => typeof id === "string")
+          : []),
+      ]),
+    ]);
     const missingEvidence: string[] = [];
     const toolCalls: FinanceModuleExecutionToolCall[] = [];
     let details: ToolDetails = {};
@@ -589,6 +601,10 @@ export async function executeFinanceModuleComposition(
       boundary: "finance_module_execution_research_only",
       requested: true,
       allNodesSucceeded,
+      requiredNodesSucceeded:
+        !params.signal?.aborted &&
+        feedback.hardNodeIds.length > 0 &&
+        feedback.hardFailures.length === 0,
       moduleToolsDispatched: allNodesSucceeded && outputEvidenceIds.length === nodes.length,
       compositionNodeIds: Object.freeze([...params.plan.composition.topologicalOrder]),
       outputEvidenceIds: Object.freeze(outputEvidenceIds),

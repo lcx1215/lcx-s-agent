@@ -8,11 +8,12 @@ The combination is a finite DAG when the caller needs more than a preferred
 list. Each node names one registered module and its upstream node IDs. The
 control layer rejects unknown modules, duplicate IDs, missing dependencies,
 cycles, excessive depth, excessive edges, and more than two bounded replans.
-The planner adds the required memory, causal, math, and portfolio lanes after
-validation; those lanes cannot be removed by a model proposal.
+The planner adds required causal, math, and portfolio lanes after validation;
+those requirements cannot be removed by a model proposal. Retained learning is
+auxiliary unless explicitly selected or the task requires a retained method.
 
 The accepted plan also carries derived `composition.control` metadata. Required
-memory, causal, math, and risk lanes are `hard`; caller-selected analytical
+causal, math, risk and explicitly required retained-method lanes are `hard`; analytical
 lanes are `soft`. Soft lanes may be reordered or revised within the bounded
 `maxSoftReplans` budget. Hard lanes keep their dependency and stop conditions:
 missing evidence, a blocked risk gate, cancellation, or unresolved execution
@@ -431,3 +432,25 @@ Causal/scenario requirements are selected from the original user request, not
 from system guidance appended to the model task. When required, the structured
 analysis contract has its own bounded prompt section so context truncation cannot
 hide fields that the deterministic verifier later requires.
+
+### Module selection with incomplete retained knowledge
+
+The existing Harness can propose a bounded `moduleSelection` through
+`finance_research_run`; the central planning surface retains its existing authority.
+Select lenses for the question, decision horizon, available inputs and exposure.
+An ordinary ledger review need not become an entry-timing or allocation study.
+
+Retained learning is attempted as an auxiliary source. A missing capability card
+remains a failed node and cannot be described as an applied method. It does not
+block independent source-backed producers. Explicitly selecting retained learning,
+requesting a retained method, or declaring a dependency on it preserves that
+requirement. Default dependencies connect mandatory lanes; explicit DAG edges
+are preserved. Portfolio, arithmetic and causal requirements are not removed.
+
+`requiredEvidenceReady` reports whether mandatory module outputs survived full
+quality review and remain in the evidence packet. `allNodesSucceeded` and
+`moduleToolsDispatched` still report complete module coverage; they stay false
+when an optional lens is missing. The receipt retains every optional failure and
+its source gap. The soft-replan budget governs further attempts, not permission to
+claim unavailable methods succeeded. Candidate status remains separate from
+execution authority.
