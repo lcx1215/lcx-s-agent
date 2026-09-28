@@ -13,6 +13,19 @@ export const ECHOAPI_CLI_PACKAGE = "echoapi-cli" as const;
 export const ECHOAPI_CLI_VERSION = "3.0.0" as const;
 export const ECHOAPI_CLI_TARBALL_INTEGRITY =
   "sha512-QvZN4pXUs+2jCJviHgsl3qM37D3yKy+X3aG6gEV+hqvbI+EDGlT0/4o7VqQY8Y7Khncsqn13lCiMro/QccEsEg==" as const;
+export const ECHOAPI_HEALTH_SCHEMA_VERSION = "lcx_echoapi_cli_health_v1" as const;
+
+type PersistedEchoApiHealth = Readonly<{
+  schemaVersion: typeof ECHOAPI_HEALTH_SCHEMA_VERSION;
+  checkedAt: string;
+  mode: "local_public_snapshot_case" | "echoapi_ci_case";
+  status: "succeeded" | "failed";
+  target?: Readonly<{ hostname: string; pathname: string }>;
+  cliVersion?: string;
+  reportVerified?: boolean;
+  exitCode?: number;
+  errorCode?: string;
+}>;
 
 export type EchoApiCliRunOptions = Readonly<{
   ciUrl?: string;
@@ -295,17 +308,139 @@ async function resolveExecutable(requested?: string): Promise<{
   return { ...activeState, source: "canonical_state_root" };
 }
 
+function echoApiOutputDir(outputDir?: string): string {
+  return outputDir ?? path.join(resolveStateDir(), "reports", "echoapi");
+}
+
+async function persistLatestEchoApiHealth(
+  outputDir: string,
+  health: PersistedEchoApiHealth,
+): Promise<void> {
+  await mkdir(outputDir, { recursive: true });
+  await writeFile(
+    path.join(outputDir, "lcx-echoapi-health-latest.json"),
+    `${JSON.stringify(health, null, 2)}\n`,
+    "utf8",
+  );
+}
+
+async function readLatestEchoApiHealth(
+  outputDir: string,
+): Promise<PersistedEchoApiHealth | undefined> {
+  try {
+    const parsed = JSON.parse(
+      await readFile(path.join(outputDir, "lcx-echoapi-health-latest.json"), "utf8"),
+    ) as Partial<PersistedEchoApiHealth>;
+    if (
+      parsed.schemaVersion !== ECHOAPI_HEALTH_SCHEMA_VERSION ||
+      typeof parsed.checkedAt !== "string" ||
+      !Number.isFinite(Date.parse(parsed.checkedAt)) ||
+      (parsed.mode !== "local_public_snapshot_case" && parsed.mode !== "echoapi_ci_case") ||
+      (parsed.status !== "succeeded" && parsed.status !== "failed")
+    ) {
+      return undefined;
+    }
+    return parsed as PersistedEchoApiHealth;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Read local CLI availability and the latest invocation receipt without network activity. */
+export async function inspectEchoApiCliHealth(
+  options: {
+    outputDir?: string;
+    asOf?: string;
+    maxAgeMs?: number;
+  } = {},
+) {
+  const asOf = options.asOf ?? new Date().toISOString();
+  const checkedAt = Date.parse(asOf);
+  if (!Number.isFinite(checkedAt)) {
+    throw new Error("EchoAPI health asOf must be an ISO timestamp");
+  }
+  const runtimeRoot = echoApiRuntimeRoot();
+  const executable = echoApiExecutablePath(runtimeRoot);
+  const installedVersion = await readInstalledVersion(runtimeRoot);
+  const executableAvailable = await installedExecutableIsUsable(executable);
+  const latest = await readLatestEchoApiHealth(echoApiOutputDir(options.outputDir));
+  const ageMs = latest ? checkedAt - Date.parse(latest.checkedAt) : Number.POSITIVE_INFINITY;
+  const maxAgeMs = options.maxAgeMs ?? 24 * 60 * 60_000;
+  const invocationStatus = !latest
+    ? "unverified"
+    : ageMs < 0
+      ? "invalid"
+      : ageMs > maxAgeMs
+        ? "verification_expired"
+        : latest.status === "succeeded"
+          ? "recent_success"
+          : "recent_failure";
+  const cliAvailable = installedVersion === ECHOAPI_CLI_VERSION && executableAvailable;
+  return {
+    schemaVersion: ECHOAPI_HEALTH_SCHEMA_VERSION,
+    asOf,
+    noNetworkCalled: true,
+    boundary: "local_cli_and_last_invocation_evidence_not_continuous_echoapi_service_uptime",
+    installation: {
+      status: cliAvailable ? "available" : "unavailable",
+      expectedVersion: ECHOAPI_CLI_VERSION,
+      installedVersion: installedVersion ?? null,
+      executableAvailable,
+    },
+    latestInvocation: latest
+      ? {
+          status: invocationStatus,
+          checkedAt: latest.checkedAt,
+          mode: latest.mode,
+          target: latest.target,
+          cliVersion: latest.cliVersion,
+          reportVerified: latest.reportVerified,
+          errorCode: latest.errorCode,
+        }
+      : { status: invocationStatus },
+    echoApiCloudCaseStatus: latest?.mode === "echoapi_ci_case" ? invocationStatus : "not_assessed",
+  };
+}
+
 export async function runEchoApiCliCase(
   options: EchoApiCliRunOptions,
 ): Promise<EchoApiCliRunReceipt> {
   if (Boolean(options.ciUrl) === Boolean(options.builtinPublicCase)) {
     throw new Error("Specify exactly one ciUrl or builtinPublicCase");
   }
-  if (options.builtinPublicCase) {
-    return runBuiltinPublicCase(options);
+  const mode = options.builtinPublicCase ? "local_public_snapshot_case" : "echoapi_ci_case";
+  const outputDir = echoApiOutputDir(options.outputDir);
+  try {
+    const receipt = options.builtinPublicCase
+      ? await runBuiltinPublicCase(options)
+      : await (() => {
+          const url = validateEchoApiCiUrl(options.ciUrl ?? "", options);
+          return executeEchoApiCase(options, url.href, {
+            hostname: url.hostname,
+            pathname: url.pathname,
+          });
+        })();
+    await persistLatestEchoApiHealth(outputDir, {
+      schemaVersion: ECHOAPI_HEALTH_SCHEMA_VERSION,
+      checkedAt: new Date().toISOString(),
+      mode,
+      status: receipt.passed ? "succeeded" : "failed",
+      target: receipt.target,
+      cliVersion: receipt.cliVersion,
+      reportVerified: receipt.reportVerified,
+      exitCode: receipt.exitCode,
+    });
+    return receipt;
+  } catch (error) {
+    await persistLatestEchoApiHealth(outputDir, {
+      schemaVersion: ECHOAPI_HEALTH_SCHEMA_VERSION,
+      checkedAt: new Date().toISOString(),
+      mode,
+      status: "failed",
+      errorCode: error instanceof Error ? error.name : "unknown_error",
+    });
+    throw error;
   }
-  const url = validateEchoApiCiUrl(options.ciUrl ?? "", options);
-  return executeEchoApiCase(options, url.href, { hostname: url.hostname, pathname: url.pathname });
 }
 
 export function verifyEchoApiReport(report: unknown): boolean {

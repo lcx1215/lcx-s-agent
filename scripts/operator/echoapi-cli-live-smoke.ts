@@ -2,6 +2,7 @@
 
 import {
   ensureCanonicalEchoApiCli,
+  inspectEchoApiCliHealth,
   runEchoApiCliCase,
 } from "../../src/agents/echoapi-cli-runner.ts";
 
@@ -18,10 +19,16 @@ async function main() {
     process.stdout.write(`${JSON.stringify(installation, null, 2)}\n`);
     return 0;
   }
+  if (args.includes("--status")) {
+    const health = await inspectEchoApiCliHealth({ outputDir: readFlag(args, "--output-dir") });
+    process.stdout.write(`${JSON.stringify(health, null, 2)}\n`);
+    return health.installation.status === "available" ? 0 : 1;
+  }
   if (!args.includes("--live")) {
     process.stdout.write(
       [
         "echoapi-cli-live-smoke: dry mode (no EchoAPI case executed).",
+        "Run pnpm lcx:echoapi:health to inspect local CLI availability and its latest invocation receipt.",
         "Run pnpm lcx:echoapi:ensure to install or reuse the exact CLI in the active LCX state root.",
         "Pass --live --ci-url <EchoAPI CI case URL> to execute one real case iteration.",
         "Pass --live --builtin-public-case to test a real public market snapshot without a CI URL.",

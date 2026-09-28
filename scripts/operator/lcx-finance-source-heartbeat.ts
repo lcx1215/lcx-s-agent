@@ -37,6 +37,7 @@ export async function runFinanceSourceHeartbeatCli(
   const json = argv.includes("--json");
   const directory = value(argv, "--dir");
   const asOf = value(argv, "--as-of");
+  const adapterId = value(argv, "--adapter-id");
   const intervalMs = numberValue(argv, "--interval-ms", 15 * 60_000);
   const timeoutMs = numberValue(argv, "--timeout-ms", 15_000);
   if (loop && !live) {
@@ -48,7 +49,7 @@ export async function runFinanceSourceHeartbeatCli(
 
   if (!live) {
     const [plan, state] = await Promise.all([
-      planFinanceSourceHeartbeat({ asOf, directory }),
+      planFinanceSourceHeartbeat({ asOf, directory, adapterId }),
       readFinanceSourceHeartbeat({ directory }),
     ]);
     const result = { ...plan, persistedState: state, liveRequired: true };
@@ -61,6 +62,7 @@ export async function runFinanceSourceHeartbeatCli(
     last = await runFinanceSourceHeartbeat({
       directory,
       asOf,
+      adapterId,
       force,
       intervalMs,
       timeoutMs,

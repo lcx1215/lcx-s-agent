@@ -399,7 +399,7 @@ export function parseCoinGeckoCryptoPrice(
   if (!quote) {
     throw new CryptoSourceAdapterError(`CoinGecko returned no quote for ${crypto.coinGecko}`);
   }
-  const sourceTimestamp = parseTimestamp(quote.last_updated_at, observedAt, "CoinGecko timestamp");
+  const sourceTimestamp = parseTimestamp(quote.last_updated_at, "", "CoinGecko timestamp");
   return cryptoObservation({
     providerName: "coingecko-public-api",
     providerRole: "cross_check_market_data",
@@ -434,17 +434,30 @@ export function createCoinGeckoCryptoPriceAdapter(options: {
     collect: async (request) => {
       const crypto = cryptoRequest(request);
       const sourceUrlOrArtifact = `https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(crypto.coinGecko)}&vs_currencies=usd&include_last_updated_at=true`;
-      const url = `${sourceUrlOrArtifact}&x_cg_demo_api_key=${encodeURIComponent(apiKey)}`;
-      const payload = await fetchJson(resolveFinanceFetch(options.fetchImpl), url, {
+      const payload = await fetchJson(resolveFinanceFetch(options.fetchImpl), sourceUrlOrArtifact, {
         Accept: "application/json",
+        "x-cg-demo-api-key": apiKey,
       });
       const observedAt = new Date().toISOString();
-      return parseCoinGeckoCryptoPrice(
+      const observation = parseCoinGeckoCryptoPrice(
         payload,
         request.instrument,
         sourceUrlOrArtifact,
         observedAt,
       );
+      if (request.freshnessMaxMinutes !== undefined) {
+        const sourceTimestamp = observation.fields.find(
+          (field) => field.name === "last_price",
+        )?.sourceTimestamp;
+        const ageMs = Date.parse(request.asOf) - Date.parse(sourceTimestamp ?? "");
+        const maxAgeMs = request.freshnessMaxMinutes * 60_000;
+        if (!Number.isFinite(ageMs) || ageMs > maxAgeMs || ageMs < -5 * 60_000) {
+          throw new CryptoSourceAdapterError(
+            "CoinGecko price timestamp is outside the freshness window",
+          );
+        }
+      }
+      return observation;
     },
   };
 }

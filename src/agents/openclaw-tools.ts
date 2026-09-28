@@ -8,11 +8,13 @@ import type { SandboxFsBridge } from "./sandbox/fs-bridge.js";
 import type { ToolFsPolicy } from "./tool-fs-policy.js";
 import { createAgentsListTool } from "./tools/agents-list-tool.js";
 import { createAiderTool } from "./tools/aider-tool.js";
+import { createApiCapabilityHealthReadTool } from "./tools/api-capability-health-read-tool.js";
 import { createBrowserTool } from "./tools/browser-tool.js";
 import { createCanvasTool } from "./tools/canvas-tool.js";
 import { createCodexCodingHarnessTool } from "./tools/codex-coding-harness-tool.js";
 import type { AnyAgentTool } from "./tools/common.js";
 import { createCronTool } from "./tools/cron-tool.js";
+import { createEchoApiCliHealthTool } from "./tools/echoapi-cli-health-tool.js";
 import { createFinanceArticleExtractCapabilityInputTool } from "./tools/finance-article-extract-capability-input-tool.js";
 import { createFinanceArticleSourceCollectionPreflightTool } from "./tools/finance-article-source-collection-preflight-tool.js";
 import { createFinanceArticleSourceRegistryInspectTool } from "./tools/finance-article-source-registry-inspect-tool.js";
@@ -263,6 +265,8 @@ export function createOpenClawTools(options?: {
       workspaceDir,
     }),
     createFinanceDataConnectorTool(),
+    createEchoApiCliHealthTool(),
+    createApiCapabilityHealthReadTool({ workspaceDir }),
     createFinanceRealtimeRefreshTool({
       workspaceDir,
       ...resolveFinanceRealtimeSourceRegistryOptionsFromEnv(),

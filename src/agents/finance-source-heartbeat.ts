@@ -56,6 +56,7 @@ export type {
 export type FinanceSourceHeartbeatPlan = Readonly<{
   networkCalled: false;
   asOf: string;
+  adapterId?: string;
   providerCount: number;
   candidates: readonly Readonly<{
     provider: string;
@@ -86,6 +87,7 @@ type HeartbeatOptions = Readonly<{
   intervalMs?: number;
   timeoutMs?: number;
   maxSourceConcurrency?: number;
+  adapterId?: string;
   sourceGovernance?: ApiSourceGovernanceRegistry;
   fetchImpl?: FetchImpl;
   realtimeAdapters?: readonly FinanceRealtimeSourceAdapter[];
@@ -257,6 +259,13 @@ function selectCandidates(
   );
 }
 
+function filterCandidatesByAdapterId(candidates: Candidate[], adapterId?: string): Candidate[] {
+  const requested = adapterId?.trim();
+  return requested
+    ? candidates.filter((candidate) => candidate.adapterId === requested)
+    : candidates;
+}
+
 function latestNetworkReceipt(receipts: readonly ApiCallReceipt[]): ApiCallReceipt | undefined {
   return [...receipts]
     .filter((receipt) => receipt.operation === "http_get" || receipt.operation === "http_get_total")
@@ -354,6 +363,7 @@ export function planFinanceSourceHeartbeat(
     | "directory"
     | "workspaceDir"
     | "asOf"
+    | "adapterId"
     | "fetchImpl"
     | "realtimeAdapters"
     | "collectionAdapters"
@@ -373,10 +383,14 @@ export function planFinanceSourceHeartbeat(
     options.realtimeAdapters ?? createFinanceRealtimeSourceRegistry(configured.realtime);
   const collectionAdapters =
     options.collectionAdapters ?? createFinanceMarketCollectionRegistry(configured.collection);
-  let candidates = selectCandidates(asOf, realtimeAdapters, collectionAdapters);
+  const candidates = filterCandidatesByAdapterId(
+    selectCandidates(asOf, realtimeAdapters, collectionAdapters),
+    options.adapterId,
+  );
   return {
     networkCalled: false,
     asOf,
+    ...(options.adapterId ? { adapterId: options.adapterId } : {}),
     providerCount: candidates.length,
     candidates: candidates.map(({ provider, providerName, adapterId, kind }) => ({
       provider,
@@ -431,7 +445,10 @@ export async function runFinanceSourceHeartbeat(options: HeartbeatOptions = {}) 
     options.realtimeAdapters ?? createFinanceRealtimeSourceRegistry(configured.realtime);
   const collectionAdapters =
     options.collectionAdapters ?? createFinanceMarketCollectionRegistry(configured.collection);
-  let candidates = selectCandidates(asOf, realtimeAdapters, collectionAdapters);
+  let candidates = filterCandidatesByAdapterId(
+    selectCandidates(asOf, realtimeAdapters, collectionAdapters),
+    options.adapterId,
+  );
   const requestedConcurrency = options.maxSourceConcurrency ?? 4;
   if (
     !Number.isSafeInteger(requestedConcurrency) ||
@@ -460,12 +477,9 @@ export async function runFinanceSourceHeartbeat(options: HeartbeatOptions = {}) 
       ),
       ...previous.endpointRecords,
     };
-    candidates = selectCandidates(
-      asOf,
-      realtimeAdapters,
-      collectionAdapters,
-      endpointRecords,
-      checkedAt,
+    candidates = filterCandidatesByAdapterId(
+      selectCandidates(asOf, realtimeAdapters, collectionAdapters, endpointRecords, checkedAt),
+      options.adapterId,
     );
     const collectionWrites: {
       adapterId: string;
@@ -638,6 +652,7 @@ export async function runFinanceSourceHeartbeat(options: HeartbeatOptions = {}) 
       schemaVersion: FINANCE_SOURCE_HEARTBEAT_SCHEMA_VERSION,
       networkCalled: due.length > 0,
       asOf,
+      ...(options.adapterId ? { adapterId: options.adapterId } : {}),
       state,
       collectionWrites,
       endpointCoverage: {
