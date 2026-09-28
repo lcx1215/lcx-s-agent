@@ -175,14 +175,25 @@ export async function runQualityHarness(
     details: [],
   });
 
+  // Same-run source preparation can survive a downstream transport/contract failure.
+  // Never reuse draft-dependent reviews or carry a receipt across runs/evidence packets.
+  const reusable = new Map<string, QualityHarnessStageOutput>();
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const reusedStageIds: string[] = [];
     const plan = await runLogicalAgentPlan({
       pool,
       runId: `${runId}:attempt:${attempt}`,
       signal: options.signal,
       tasks: buildQualityHarnessPlan({ runId, attempt, request, repairFeedback: feedback }),
       finalTaskId: "final_precheck",
-      executor: createQualityHarnessStageExecutor,
+      executor: (context) => {
+        const cached = reusable.get(context.task.id);
+        if (cached) {
+          reusedStageIds.push(context.task.id);
+          return Promise.resolve({ output: cached, sideEffects: [] as const });
+        }
+        return createQualityHarnessStageExecutor(context);
+      },
       sharedContext: request.sharedContext ?? {},
     });
     const quality = evaluateQuality(plan, request);
@@ -216,6 +227,7 @@ export async function runQualityHarness(
         status,
         planStatus: plan.status,
         stages: Object.freeze(plan.tasks.map(summarizeQualityStageResult)),
+        reusedStageIds: Object.freeze([...reusedStageIds]),
         gates: quality.gates,
         findings: quality.findings,
         feedback: Object.freeze(attemptFeedback),
@@ -235,6 +247,36 @@ export async function runQualityHarness(
         maxAttempts,
         routed: options.modelRouting !== undefined,
       });
+    }
+    reusable.clear();
+    const downstreamFailed = plan.tasks.some(
+      (task) =>
+        (task.agentId === "research_draft" || task.agentId === "formatting") &&
+        task.status === "failed",
+    );
+    if (downstreamFailed && !options.signal?.aborted) {
+      const preparation = plan.tasks.filter((task) =>
+        ["data_cleaning", "financial_extraction", "news_classification"].includes(task.agentId),
+      );
+      if (
+        preparation.length === 3 &&
+        preparation.every(
+          (task) =>
+            task.status === "completed" &&
+            task.sideEffects.length === 0 &&
+            (task.output?.kind === "plan" ||
+              (task.output?.kind === "review" &&
+                task.output.review.verdict === "pass" &&
+                task.output.review.criticalFindings.length === 0 &&
+                task.output.review.evidenceGaps.length === 0)),
+        )
+      ) {
+        for (const task of preparation) {
+          if (task.output) {
+            reusable.set(task.taskId, task.output);
+          }
+        }
+      }
     }
     feedback = attemptFeedback;
     if (options.signal?.aborted) {

@@ -103,6 +103,45 @@ function demoInvoker(params: {
 }
 
 describe("quality harness", () => {
+  it.each([false, true])(
+    "reuses only clean preparation after a formatter failure (gap=%s)",
+    async (gap) => {
+      const requests: QualityHarnessModelRequest[] = [];
+      const invoke = demoInvoker({});
+      const result = await runQualityHarness({
+        request,
+        maxAttempts: 2,
+        modelInvoker: async (raw) => {
+          const current = raw as QualityHarnessModelRequest;
+          requests.push(current);
+          if (current.attempt === 1 && current.stage === "format") {
+            throw new Error("formatter contract failure");
+          }
+          if (gap && current.attempt === 1 && current.stage === "extraction") {
+            return {
+              kind: "review",
+              review: {
+                verdict: "revise",
+                criticalFindings: [],
+                evidenceGaps: ["missing extraction"],
+                notes: ["retry extraction"],
+              },
+            };
+          }
+          return invoke(raw);
+        },
+        verify: async () => ({ status: "passed", summary: "verified", details: [] }),
+      });
+      expect(result.status).toBe("verified");
+      expect(result.attempts[1]?.reusedStageIds?.toSorted()).toEqual(
+        gap ? [] : ["data_cleaning", "financial_extraction", "news_classification"],
+      );
+      expect(requests.filter((entry) => entry.stage === "extraction")).toHaveLength(gap ? 2 : 1);
+      expect(requests.filter((entry) => entry.stage === "evidence")).toHaveLength(2);
+      expect(requests.filter((entry) => entry.stage === "draft")).toHaveLength(2);
+    },
+  );
+
   it("passes one shared fact packet to every specialist and reviewer", async () => {
     const requests: QualityHarnessModelRequest[] = [];
     await runQualityHarness({

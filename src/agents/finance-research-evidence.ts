@@ -31,6 +31,8 @@ export function financeInstrumentCitationScope(evidence: readonly { id: string; 
             (candidate) =>
               candidate.id === entry.id ||
               (!candidate.id.startsWith("finance-model:") &&
+                // This owner emits account aggregates, even if its context mentions a ticker.
+                !candidate.id.startsWith("finance-night:broker-profit:") &&
                 typeof candidate.text === "string" &&
                 pattern.test(candidate.text)),
           )
@@ -53,7 +55,14 @@ export function findUncitedFinanceInstruments(
     for (const entry of instruments) {
       if (
         entry.pattern.test(claim.text) &&
-        !claim.evidenceIds.some((id) => entry.evidenceIds.includes(id))
+        !claim.evidenceIds.some(
+          (id) =>
+            entry.evidenceIds.includes(id) &&
+            (claim.evidenceRelations === undefined ||
+              claim.evidenceRelations.some(
+                (relation) => relation.evidenceId === id && relation.relation === "supports",
+              )),
+        )
       ) {
         missing.push(`${claim.id}:${entry.canonicalId}`);
       }

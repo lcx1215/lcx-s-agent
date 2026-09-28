@@ -201,6 +201,8 @@ export type QualityHarnessAttemptReceipt = Readonly<{
     | "verification-blocked";
   planStatus: LogicalAgentPlanResult<QualityHarnessStageOutput>["status"];
   stages: readonly QualityHarnessStageReceipt[];
+  /** Same-run preparation outputs reused without a new model call. */
+  reusedStageIds?: readonly string[];
   gates: readonly QualityHarnessGate[];
   findings?: readonly QualityFindingReceipt[];
   feedback: readonly string[];

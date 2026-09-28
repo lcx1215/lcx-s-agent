@@ -104,6 +104,10 @@ describe("finance price arithmetic before model prompting", () => {
       { id: "finance-model:SPY", text: "SPY price series" },
       { id: "ledger", text: 'Position {"instrument":"SPY","quantity":27}' },
       { id: "fees", text: "Account-wide fees are unallocated" },
+      {
+        id: "finance-night:broker-profit:2026-09-28",
+        text: "Account totals: 3 buy fills. Requested review: SPY",
+      },
       { id: "other", text: "SPYG position" },
     ];
     const claim = {
@@ -113,7 +117,20 @@ describe("finance price arithmetic before model prompting", () => {
       evidenceIds: ["ledger"],
     };
     expect(findUncitedFinanceInstruments(evidence, [claim])).toEqual([]);
-    for (const id of ["fees", "other", "nonexistent"]) {
+    expect(
+      findUncitedFinanceInstruments(evidence, [
+        {
+          ...claim,
+          evidenceIds: ["ledger", "fees"],
+          evidenceRelations: [
+            { evidenceId: "ledger", relation: "context" },
+            { evidenceId: "fees", relation: "supports" },
+          ],
+        },
+      ]),
+    ).toEqual(["position:finance-model:SPY"]);
+
+    for (const id of ["fees", "other", "nonexistent", "finance-night:broker-profit:2026-09-28"]) {
       expect(findUncitedFinanceInstruments(evidence, [{ ...claim, evidenceIds: [id] }])).toEqual([
         "position:finance-model:SPY",
       ]);

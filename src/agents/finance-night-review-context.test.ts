@@ -130,6 +130,8 @@ describe("finance night review context", () => {
         instructions: "review",
         dependencyOutputs: {},
       });
+      expect(prompt).toContain("account_totals_not_instrument_or_strategy_totals");
+      expect(prompt).toContain("do not assign account fill counts or fees");
       expect(prompt).toContain('"netMatchedPnl":null');
       expect(prompt).toContain('"sellFills":0');
       expect(prompt).toContain('"unattributedFillCount":1');

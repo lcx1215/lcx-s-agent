@@ -89,6 +89,9 @@ export async function buildFinanceNightReviewEvidence(params: {
     source: "finance-broker-profit-summary",
     timestamp: params.asOf,
     text: JSON.stringify({
+      attributionScope: "account_totals_not_instrument_or_strategy_totals",
+      instrumentAttribution:
+        "not_provided; do not assign account fill counts or fees to the requested instrument",
       boundary:
         "broker_paper_not_local_simulation; net excludes tax/fx; fill ownership is not strategy PnL",
       status: brokerProfit.status,
