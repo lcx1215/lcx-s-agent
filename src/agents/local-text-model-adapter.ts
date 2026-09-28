@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { financeInstrumentCitationScope } from "./finance-research-evidence.js";
@@ -15,7 +15,14 @@ import type {
   ModelCallRequest,
 } from "./logical-agent-model-router.js";
 import { ModelAdapterError } from "./logical-agent-model-router.js";
-import type { QualityHarnessModelRequest } from "./quality-harness-contract.js";
+import type {
+  QualityHarnessEvidence,
+  QualityHarnessModelRequest,
+} from "./quality-harness-contract.js";
+import {
+  QUALITY_HARNESS_MAX_EVIDENCE_BATCHES,
+  QUALITY_HARNESS_MAX_EVIDENCE_ITEMS_PER_BATCH,
+} from "./quality-harness-contract.js";
 
 export const LOCAL_TEXT_MODEL_PROVIDER = "mlx-local" as const;
 export const DEFAULT_LOCAL_TEXT_MODEL = "Qwen/Qwen3-0.6B" as const;
@@ -217,7 +224,12 @@ function compactPromptValue(
     return value;
   }
   if (Array.isArray(value)) {
-    const limit = preserveQualityCitations && (key === "claims" || key === "evidenceIds") ? 50 : 8;
+    const limit =
+      preserveQualityCitations && (key === "claims" || key === "evidenceIds")
+        ? 50
+        : preserveQualityCitations && key === "notes"
+          ? 16
+          : 8;
     return value
       .slice(0, limit)
       .map((entry) => compactPromptValue(entry, depth + 1, preserveQualityCitations, key));
@@ -251,20 +263,20 @@ type CompactQualityEvidenceEntry = {
 function compactQualityEvidence(
   request: QualityHarnessModelRequest,
 ): CompactQualityEvidenceEntry[] {
-  const perItem = Math.max(
-    200,
-    Math.min(2_000, Math.floor(18_000 / Math.max(1, Math.min(48, request.evidence.length)))),
+  const perItem = Math.min(
+    6_000,
+    Math.floor(18_000 / Math.max(1, Math.min(48, request.evidence.length))),
   );
   return request.evidence.slice(0, 48).map((entry) => {
     const text = clipPromptText(entry.text, perItem);
-    const source = entry.source === undefined ? undefined : clipPromptText(entry.source, 300);
+    const source = entry.source === undefined ? undefined : clipPromptText(entry.source, 1_000);
     return {
       id: entry.id,
       ...(entry.kind === undefined ? {} : { kind: entry.kind }),
       text,
       ...(source === undefined ? {} : { source }),
       textWasClipped: entry.text.trim().length > perItem,
-      sourceWasClipped: entry.source !== undefined && entry.source.trim().length > 300,
+      sourceWasClipped: entry.source !== undefined && entry.source.trim().length > 1_000,
     };
   });
 }
@@ -285,11 +297,46 @@ function fitQualityEvidence(entries: readonly CompactQualityEvidenceEntry[]) {
 }
 
 function compactQualityDependencies(request: QualityHarnessModelRequest) {
+  const entries = Object.entries(request.dependencyOutputs);
+  const batchEntries = entries.filter(([taskId]) => taskId.startsWith("evidence_batch_"));
+  const otherEntries = entries.filter(([taskId]) => !taskId.startsWith("evidence_batch_"));
+  const maxEntries = 12;
   return Object.fromEntries(
-    Object.entries(request.dependencyOutputs)
-      .slice(0, 10)
-      .map(([taskId, output]) => [taskId, compactPromptValue(output, 0, true)]),
+    [
+      ...otherEntries.slice(0, Math.max(0, maxEntries - batchEntries.length)),
+      ...batchEntries.slice(0, maxEntries),
+    ].map(([taskId, output]) => [
+      taskId,
+      request.evidenceBatchMode === "final_artifact_audit" && taskId === "formatting"
+        ? output
+        : compactPromptValue(output, 0, true),
+    ]),
   );
+}
+
+function collectReferencedEvidenceIds(value: unknown, depth = 0): string[] {
+  if (depth > 8) {
+    return [];
+  }
+  if (typeof value === "string") {
+    return [...value.matchAll(/\[([^\]]+)\]/gu)].map((match) => match[1] ?? "");
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => collectReferencedEvidenceIds(entry, depth + 1));
+  }
+  if (typeof value !== "object" || value === null) {
+    return [];
+  }
+  return Object.entries(value).flatMap(([key, entry]) => {
+    if (
+      key === "evidenceIds" &&
+      Array.isArray(entry) &&
+      entry.every((id) => typeof id === "string")
+    ) {
+      return entry;
+    }
+    return collectReferencedEvidenceIds(entry, depth + 1);
+  });
 }
 
 function formatPromptSectionValue(value: unknown, depth = 0): string {
@@ -325,7 +372,10 @@ function qualityStageContract(stage: QualityHarnessModelRequest["stage"]): strin
   return 'kind="review"; review={verdict:"pass"|"revise"|"reject",criticalFindings:string[],evidenceGaps:string[],notes:string[]}. criticalFindings contains actual errors or unsafe claims, not ordinary market risks or extracted facts. evidenceGaps contains evidence required by a proposed claim, not a wish list of future data. Put disclosed limitations, extracted facts and market risks in notes with evidence IDs. Do not merely announce a pass. If an error or required gap exists, use revise or reject; never hide it to obtain pass.';
 }
 
-export function buildQualityHarnessModelPrompt(request: QualityHarnessModelRequest): string {
+export function buildQualityHarnessModelPromptWithCoverage(request: QualityHarnessModelRequest): {
+  prompt: string;
+  evidenceCoverage: NonNullable<ModelCallObservation["evidenceCoverage"]>;
+} {
   const hasFindings = (request.findingPacket?.findings.length ?? 0) > 0;
   const contractExample =
     qualityStageContract(request.stage) +
@@ -338,10 +388,42 @@ export function buildQualityHarnessModelPrompt(request: QualityHarnessModelReque
   const dependencyValuesMayBeClipped =
     dependencyEntries.length !== Object.keys(dependencyOutputs).length ||
     JSON.stringify(dependencyOutputs) !== JSON.stringify(request.dependencyOutputs);
+  const dependencyJson = JSON.stringify(dependencyOutputs);
+  const hasBatchDependencies = dependencyEntries.some(([taskId]) =>
+    taskId.startsWith("evidence_batch_"),
+  );
+  const batchDependencyEntries = dependencyEntries.filter(([taskId]) =>
+    taskId.startsWith("evidence_batch_"),
+  );
+  const compactBatchDependencyEntries = Object.fromEntries(
+    batchDependencyEntries.map(([taskId, output]) => [taskId, compactPromptValue(output, 0, true)]),
+  );
+  const batchDependencyValuesMayBeClipped =
+    JSON.stringify(compactBatchDependencyEntries) !==
+    JSON.stringify(Object.fromEntries(batchDependencyEntries));
+  const batchDependencyLimit =
+    request.stage === "precheck" && hasBatchDependencies ? 28_000 : 16_000;
+  if (
+    ((request.stage === "draft" && hasBatchDependencies) ||
+      (request.stage === "precheck" && hasBatchDependencies) ||
+      request.evidenceBatchMode === "final_artifact_audit") &&
+    (batchDependencyValuesMayBeClipped || dependencyJson.length > batchDependencyLimit)
+  ) {
+    throw new Error("quality evidence batch dependencies exceed the review prompt budget");
+  }
   const repairFeedback = request.repairFeedback
     .slice(0, 8)
     .map((item) => clipPromptText(item, 300));
   const { section: evidenceSection, included: includedEvidence } = fitQualityEvidence(evidence);
+  const controllerEvidenceIds = new Set(
+    request.evidenceCoverage?.selectedEvidenceIds ?? request.evidence.map((entry) => entry.id),
+  );
+  const referencedEvidenceIds = collectReferencedEvidenceIds(dependencyOutputs).filter((id) =>
+    controllerEvidenceIds.has(id),
+  );
+  const allowedEvidenceIds = [
+    ...new Set([...includedEvidence.map((entry) => entry.id), ...referencedEvidenceIds]),
+  ];
   const constraints = request.sharedContext.userConstraints;
   const producerContract =
     request.stage === "draft" &&
@@ -400,10 +482,14 @@ export function buildQualityHarnessModelPrompt(request: QualityHarnessModelReque
           'For draft/format only, optionally include artifact.supportingAnalysis.financeThesisProposals as an array of {claimId,instrument,invalidationConditions:string[],rationale?:string,applicability?:{horizon:"intraday"|"swing"|"long_term",validUntil:ISO timestamp},expectationGap?:{origin:"model_hypothesis",edgeKind:"fundamentals"|"valuation"|"interpretation"|"timing"|"flow"|"risk_rebalance"|"unknown",marketExpectation:string|null,variantView:string|null,catalyst:string|null,invalidation:string|null,costRiskAssessment:string|null}}. Each proposal must reference a supported claim with epistemicClass, basis for derived claims, and evidenceRelations covering all cited evidence IDs with at least one supports relation. Use only declared instruments, nonempty invalidationConditions, and no extra proposal keys. Expectation-gap text fields are at most 180 characters; unknowns are null. Applicability must be evidence-supported and expire after asOf; never infer intraday applicability from long-term evidence. Evidence IDs are derived from the claim, not repeated in a proposal. Omit proposals when evidence does not support one. Formatting must preserve valid proposals and their referenced claim IDs or remove proposals whose support was removed. These are unadopted research candidates, not execution authority.',
         ]
       : []),
-    ["extraction", "classification", "evidence", "risk", "exposure"].includes(request.stage)
-      ? "This is a pre-draft specialist stage. Perform your assigned check directly on supplied evidence and place findings/extracted facts in notes with evidence IDs. There is no final answer yet: do not fail a preceding plan/review for not containing the later draft. Do not demand analysis outside the user's task. A limitation that can be stated or excluded is a note, not an unavoidable evidence gap."
-      : "Audit only the requested deliverable; do not expand the task to unrelated instruments, future forecasts or portfolio allocation.",
-    "Keep review notes to 2-6 short items and findings to concrete fixable errors. Never use verdict=pass alongside nonempty criticalFindings or evidenceGaps. Draft/format should provide 4-10 concise claims unless the requested coverage requires more. Do not duplicate the full answer inside every claim.",
+    request.evidenceBatchMode === "final_artifact_audit"
+      ? "This is a final-artifact evidence audit. Compare the formatted artifact with the exact evidence packet supplied here. Report unsupported or contradicted claims with evidence IDs. Other evidence batches are reviewed separately and are compared by final_precheck."
+      : ["extraction", "classification", "evidence", "risk", "exposure"].includes(request.stage)
+        ? "This is a pre-draft specialist stage. Perform your assigned check directly on supplied evidence and place findings/extracted facts in notes with evidence IDs. There is no final answer yet: do not fail a preceding plan/review for not containing the later draft. Do not demand analysis outside the user's task. A limitation that can be stated or excluded is a note, not an unavoidable evidence gap."
+        : "Audit only the requested deliverable; do not expand the task to unrelated instruments, future forecasts or portfolio allocation.",
+    request.evidenceBatchMode
+      ? "For this evidence batch pass, include one concise note for every supplied evidence ID exactly as required by instructions; keep notes factual and brief. Put only concrete errors in findings. Never use verdict=pass alongside nonempty criticalFindings or evidenceGaps."
+      : "Keep review notes to 2-6 short items and findings to concrete fixable errors. Never use verdict=pass alongside nonempty criticalFindings or evidenceGaps. Draft/format should provide 4-10 concise claims unless the requested coverage requires more. Do not duplicate the full answer inside every claim.",
     ...((request.stage === "draft" || request.stage === "format") &&
     includedEvidence.some((entry) => entry.kind === "policy" || entry.kind === "synthetic_fixture")
       ? [
@@ -415,7 +501,7 @@ export function buildQualityHarnessModelPrompt(request: QualityHarnessModelReque
     `evidence=${evidenceSection}`,
     `instrument_citation_scope=${JSON.stringify(financeInstrumentCitationScope(includedEvidence).map(({ instrument, evidenceIds }) => ({ instrument, evidenceIds })))}`,
     "For supported claims naming an instrument, cite a supplied item covering that instrument. Broker, filing and controller records can be valid citations; a price packet is not mandatory for fill or fee statements. The instrument scope is a citation coverage hint, not proof of semantic support. Account-wide fee gaps cannot establish an instrument-specific fee fact. If the evidence does not support the instrument-specific assertion, narrow it or label it uncertain with an explicit uncertainty explanation.",
-    `allowed_evidence_ids=${JSON.stringify(includedEvidence.map((entry) => entry.id))}; evidenceIds MUST be selected from this list exactly, never invented or renumbered.`,
+    `allowed_evidence_ids=${JSON.stringify(allowedEvidenceIds)}; evidenceIds MUST be selected from this list exactly, never invented or renumbered. For IDs from evidence_batch_extract or evidence_batch_review dependencies, cite them only when the corresponding note states how the source bears on the claim.`,
     ...(request.sharedContext.supportingAnalysisContract
       ? [
           "Also include artifact.supportingAnalysis according to the context contract, without recursive or additional fields.",
@@ -431,7 +517,7 @@ export function buildQualityHarnessModelPrompt(request: QualityHarnessModelReque
           'For every finding in finding_packet, independently check whether the FINAL artifact fixes it using the supplied evidence. Add review.findingClosure={artifactSha256,evidenceSha256,resolutions:[{findingId,status:"resolved"|"unresolved",evidenceIds:string[],artifactClaimId:string,artifactQuote?:string,rationale:string}]}. Copy both packet hashes and every findingId exactly. Include exactly one resolution per finding, cite supporting evidence IDs and artifactClaimId naming the exact current final claim; omit artifactQuote only when the claim text itself should be used. Explain why that current claim fixes the issue. Never quote a prior draft. A prior revise is not proof the final answer is still wrong. Never close a still-present error or missing evidence by assertion. Mark unresolved when unsure. Retain the normal review fields; use pass only if the final artifact passes.',
         ]
       : []),
-    `previous=${clipPromptText(JSON.stringify(dependencyOutputs), 16_000) || "none"}`,
+    `previous=${clipPromptText(dependencyJson, batchDependencyLimit) || "none"}`,
     ...(repairFeedback.length > 0
       ? [`repair=${clipPromptText(formatPromptSectionValue(repairFeedback), 600)}`]
       : []),
@@ -442,11 +528,112 @@ export function buildQualityHarnessModelPrompt(request: QualityHarnessModelReque
             "MANDATORY: include review.findingClosure with both hashes and one resolution for EACH supplied finding. Do not omit it even when verdict=pass.",
           ]
         : [
-            'Valid review structure: {"kind":"review","review":{"verdict":"pass","criticalFindings":[],"evidenceGaps":[],"notes":[]}}. Fill notes with 2-6 concise evidence-based checks. Select verdict from actual findings. Keep every list closed with ] and both objects closed with }. Do not copy an empty review.',
+            request.evidenceBatchMode
+              ? 'Valid review structure: {"kind":"review","review":{"verdict":"pass","criticalFindings":[],"evidenceGaps":[],"notes":[]}}. Include one concise note beginning with each supplied evidence ID in brackets. Select verdict from actual findings. Keep every list and both objects complete.'
+              : 'Valid review structure: {"kind":"review","review":{"verdict":"pass","criticalFindings":[],"evidenceGaps":[],"notes":[]}}. Fill notes with 2-6 concise evidence-based checks. Select verdict from actual findings. Keep every list closed with ] and both objects closed with }. Do not copy an empty review.',
           ]
       : []),
   ];
-  return sections.join("\n");
+  const prompt = sections.join("\n");
+  const suppliedEvidenceIds = request.evidence.map((entry) => entry.id);
+  const includedEvidenceIds = includedEvidence.map((entry) => entry.id);
+  const includedIds = new Set(includedEvidenceIds);
+  return {
+    prompt,
+    evidenceCoverage: Object.freeze({
+      boundary: "canonical_prompt",
+      suppliedEvidenceIds: Object.freeze(suppliedEvidenceIds),
+      includedEvidenceIds: Object.freeze(includedEvidenceIds),
+      omittedEvidenceIds: Object.freeze(suppliedEvidenceIds.filter((id) => !includedIds.has(id))),
+      clippedEvidenceIds: Object.freeze(
+        includedEvidence
+          .filter((entry) => entry.textWasClipped || entry.sourceWasClipped)
+          .map((entry) => entry.id),
+      ),
+      promptSha256: createHash("sha256").update(prompt, "utf8").digest("hex"),
+    }),
+  };
+}
+
+export function buildQualityHarnessModelPrompt(request: QualityHarnessModelRequest): string {
+  return buildQualityHarnessModelPromptWithCoverage(request).prompt;
+}
+
+/**
+ * Partition evidence by the exact canonical prompt builder used by the local adapter.
+ * A batch is accepted only when every supplied ID is present and no item's text or
+ * source has been clipped. The caller still needs model-call receipts for the pass.
+ */
+export function planQualityHarnessEvidenceBatches(params: {
+  task: string;
+  evidence: readonly QualityHarnessEvidence[];
+  sharedContext: Readonly<Record<string, unknown>>;
+}): Readonly<{
+  batches: readonly (readonly QualityHarnessEvidence[])[];
+  issues: readonly string[];
+}> {
+  const batches: QualityHarnessEvidence[][] = [];
+  const issues: string[] = [];
+  let current: QualityHarnessEvidence[] = [];
+  const fits = (entries: readonly QualityHarnessEvidence[]) => {
+    const ids = entries.map((entry) => entry.id);
+    const result = buildQualityHarnessModelPromptWithCoverage({
+      schemaVersion: 1,
+      runId: "evidence-batch-plan",
+      attempt: 1,
+      stage: "evidence",
+      agentId: "evidence_integrity",
+      task: params.task,
+      evidence: entries,
+      sharedContext: params.sharedContext,
+      dependencyOutputs: {},
+      repairFeedback: [],
+      instructions: "Plan bounded evidence coverage.",
+    }).evidenceCoverage;
+    return (
+      JSON.stringify(result.suppliedEvidenceIds) === JSON.stringify(ids) &&
+      JSON.stringify(result.includedEvidenceIds) === JSON.stringify(ids) &&
+      result.omittedEvidenceIds.length === 0 &&
+      result.clippedEvidenceIds.length === 0
+    );
+  };
+
+  for (const entry of params.evidence) {
+    const candidate = [...current, entry];
+    if (candidate.length <= QUALITY_HARNESS_MAX_EVIDENCE_ITEMS_PER_BATCH && fits(candidate)) {
+      current = candidate;
+      continue;
+    }
+    if (current.length > 0) {
+      batches.push(current);
+      current = [];
+    }
+    if (!fits([entry])) {
+      issues.push(`evidence_item_exceeds_canonical_prompt_budget:${entry.id}`);
+      continue;
+    }
+    current = [entry];
+  }
+  if (current.length > 0) {
+    batches.push(current);
+  }
+
+  if (batches.length > QUALITY_HARNESS_MAX_EVIDENCE_BATCHES) {
+    const excessIds = batches
+      .slice(QUALITY_HARNESS_MAX_EVIDENCE_BATCHES)
+      .flatMap((batch) => batch.map((entry) => entry.id));
+    issues.push(
+      `evidence_batch_limit_exceeded:${QUALITY_HARNESS_MAX_EVIDENCE_BATCHES}:${excessIds.join(",")}`,
+    );
+  }
+  return Object.freeze({
+    batches: Object.freeze(
+      batches
+        .slice(0, QUALITY_HARNESS_MAX_EVIDENCE_BATCHES)
+        .map((batch) => Object.freeze([...batch])),
+    ),
+    issues: Object.freeze(issues),
+  });
 }
 
 export function buildLocalRoleShadowPrompt(request: LocalRoleShadowRequest): string {
@@ -590,9 +777,19 @@ export function createLocalTextModelAdapter(
     idPrefix: string;
     capabilities: readonly string[];
     buildPrompt: (payload: unknown) => string;
+    buildQualityPromptWithCoverage?: (
+      payload: unknown,
+    ) => ReturnType<typeof buildQualityHarnessModelPromptWithCoverage>;
   },
 ): LogicalAgentModelAdapter {
-  const observations = new Map<string, { id: string; normalized: boolean }>();
+  const observations = new Map<
+    string,
+    {
+      id: string;
+      normalized: boolean;
+      evidenceCoverage?: ModelCallObservation["evidenceCoverage"];
+    }
+  >();
   const adapterId = `${options.idPrefix}-${randomUUID().slice(0, 8)}`;
   return Object.freeze({
     id: adapterId,
@@ -603,13 +800,18 @@ export function createLocalTextModelAdapter(
     requiredTools: Object.freeze([]),
     requiredSideEffects: Object.freeze(["local_compute"] as const),
     invoke: async (request: ModelCallRequest, signal: AbortSignal) => {
-      const prompt = options.buildPrompt(request.payload);
+      const coveredPrompt = options.buildQualityPromptWithCoverage?.(request.payload);
+      const prompt = coveredPrompt?.prompt ?? options.buildPrompt(request.payload);
       const result = await runMlxGenerate(
         runtime,
         prompt,
         signal,
         (transportRequestId, normalized) => {
-          observations.set(request.callId, { id: transportRequestId, normalized });
+          observations.set(request.callId, {
+            id: transportRequestId,
+            normalized,
+            ...(coveredPrompt ? { evidenceCoverage: coveredPrompt.evidenceCoverage } : {}),
+          });
         },
       );
       return result.value;
@@ -628,6 +830,9 @@ export function createLocalTextModelAdapter(
         ...(transportRequestId.normalized
           ? { outputNormalization: "json_extraction" as const }
           : {}),
+        ...(transportRequestId.evidenceCoverage
+          ? { evidenceCoverage: transportRequestId.evidenceCoverage }
+          : {}),
         kind: "model_inference",
       };
     },
@@ -641,6 +846,8 @@ export function createLocalQualityHarnessAdapter(
     idPrefix: "mlx-local-qwen-quality",
     capabilities: ["quality_harness", "local_model_inference"],
     buildPrompt: (payload) => buildQualityHarnessModelPrompt(payload as QualityHarnessModelRequest),
+    buildQualityPromptWithCoverage: (payload) =>
+      buildQualityHarnessModelPromptWithCoverage(payload as QualityHarnessModelRequest),
   });
   // No local model has qualified for production research/review authority.
   // Keep the compatibility entry explicit, but reject before loading weights.

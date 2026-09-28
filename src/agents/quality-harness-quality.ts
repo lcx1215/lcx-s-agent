@@ -568,6 +568,8 @@ function reviewPassed(
 export function evaluateQuality(
   result: LogicalAgentPlanResult<QualityHarnessStageOutput>,
   request: QualityHarnessRequest,
+  evidenceBatches: readonly (readonly QualityHarnessEvidence[])[] = [request.evidence],
+  auditEvidenceBatches = false,
 ): QualityEvaluation {
   const format = findQualityStageResult(result, "formatting");
   const artifact =
@@ -602,14 +604,47 @@ export function evaluateQuality(
   ];
   const adversarialReview = reconciledReview("adversarial_challenge", "adversarial");
   const precheck = reviewPassed(findQualityStageResult(result, "final_precheck"), "precheck");
-  const allStagesCompleted = result.status === "completed" && result.tasks.length === 10;
+  const additionalBatchReviews: string[] = [];
+  for (let index = 0; auditEvidenceBatches && index < evidenceBatches.length; index += 1) {
+    const batch = evidenceBatches[index] ?? [];
+    const batchNumber = index + 1;
+    const taskChecks = [
+      ...(index > 0 ? ([{ suffix: "extract", label: "context extraction" }] as const) : []),
+      { suffix: "review", label: "final artifact audit" },
+    ];
+    for (const { suffix, label } of taskChecks) {
+      const taskId = `evidence_batch_${suffix}_${batchNumber}`;
+      const stageResult = findQualityStageResult(result, taskId);
+      const reviewResult = reviewPassed(
+        stageResult,
+        suffix === "extract" ? "extraction" : "evidence",
+      );
+      const output = stageResult?.status === "completed" ? stageResult.output : undefined;
+      const review = output?.kind === "review" ? output.review : undefined;
+      const uncoveredIds = batch
+        .map((entry) => entry.id)
+        .filter((id) => !review?.notes.some((note) => note.includes(`[${id}]`)));
+      if (!reviewResult.passed || uncoveredIds.length > 0) {
+        additionalBatchReviews.push(
+          `batch ${batchNumber} ${label} incomplete${uncoveredIds.length > 0 ? `; missing note IDs: ${uncoveredIds.join(",")}` : `; ${reviewResult.reason}`}`,
+        );
+      }
+    }
+  }
+  const allStagesCompleted =
+    result.status === "completed" &&
+    result.tasks.length ===
+      10 +
+        (auditEvidenceBatches
+          ? Math.max(0, evidenceBatches.length - 1) + evidenceBatches.length
+          : 0);
   const sideEffects = result.tasks.flatMap((entry) => entry.sideEffects);
   const gates: QualityHarnessGate[] = [
     {
       id: "all_stages_completed",
       passed: allStagesCompleted,
       reason: allStagesCompleted
-        ? "all ten existing role stages completed"
+        ? "all planned base and evidence-batch stages completed"
         : "one or more role stages failed or were blocked",
     },
     {
@@ -641,6 +676,16 @@ export function evaluateQuality(
       id: "evidence_integrity_review",
       passed: evidenceReview.passed,
       reason: evidenceReview.reason,
+    },
+    {
+      id: "evidence_batch_reviews",
+      passed: additionalBatchReviews.length === 0,
+      reason:
+        additionalBatchReviews.length === 0
+          ? auditEvidenceBatches
+            ? `all ${evidenceBatches.length} evidence batches have ID-covered final-artifact review and additional batches have ID-covered extraction`
+            : "single evidence batch requires no additional passes"
+          : additionalBatchReviews.slice(0, 12).join("; "),
     },
     {
       id: "adversarial_review",
@@ -676,6 +721,7 @@ export function evaluateQuality(
       ),
     ...supportingReviews.flatMap((review) => review.feedback),
     ...evidenceReview.feedback,
+    ...additionalBatchReviews,
     ...adversarialReview.feedback,
     ...precheck.feedback,
     ...gates.filter((gate) => !gate.passed).map((gate) => gate.reason),

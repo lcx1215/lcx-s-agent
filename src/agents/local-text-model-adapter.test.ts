@@ -3,6 +3,7 @@ import {
   buildLocalRoleShadowPrompt,
   createLocalQualityHarnessAdapter,
   buildQualityHarnessModelPrompt,
+  buildQualityHarnessModelPromptWithCoverage,
   parseLocalModelJson,
   parseLocalBaseModelJson,
   resolveLocalTextModelRuntimeConfig,
@@ -248,6 +249,84 @@ it("aligns allowed evidence IDs with entries that fit the final prompt section",
   expect(prompt).toContain("text_may_be_clipped:true");
   expect(prompt).not.toContain("[source-47]");
   expect(prompt).not.toContain('"source-47"');
+});
+
+it("returns adapter-authored prompt coverage IDs and a stable digest", () => {
+  const request = {
+    schemaVersion: 1 as const,
+    runId: "coverage-proof",
+    attempt: 1,
+    stage: "draft" as const,
+    agentId: "research_draft",
+    task: "Review supplied evidence",
+    evidence: [
+      { id: "early", text: "positive observation", source: "feed" },
+      { id: "clipped", text: "x".repeat(2_500), source: "s".repeat(350) },
+      { id: "contradiction", text: "contrary observation", source: "feed" },
+    ],
+    sharedContext: {},
+    dependencyOutputs: {},
+    repairFeedback: [],
+    instructions: "Keep coverage complete",
+  };
+  const first = buildQualityHarnessModelPromptWithCoverage(request);
+  const second = buildQualityHarnessModelPromptWithCoverage(request);
+  expect(first.evidenceCoverage).toMatchObject({
+    boundary: "canonical_prompt",
+    suppliedEvidenceIds: ["early", "clipped", "contradiction"],
+    includedEvidenceIds: ["early", "clipped", "contradiction"],
+    omittedEvidenceIds: [],
+    clippedEvidenceIds: ["clipped"],
+  });
+  expect(first.evidenceCoverage.promptSha256).toMatch(/^[a-f0-9]{64}$/u);
+  expect(first.evidenceCoverage.promptSha256).toBe(second.evidenceCoverage.promptSha256);
+
+  const complete = buildQualityHarnessModelPromptWithCoverage({
+    ...request,
+    evidence: [{ id: "complete", text: "all supplied text", source: "feed" }],
+  });
+  expect(complete.evidenceCoverage).toMatchObject({
+    suppliedEvidenceIds: ["complete"],
+    includedEvidenceIds: ["complete"],
+    omittedEvidenceIds: [],
+    clippedEvidenceIds: [],
+  });
+});
+
+it("names evidence omitted by both the 48-item and evidence-section budgets", () => {
+  const base = {
+    schemaVersion: 1 as const,
+    runId: "coverage-budget",
+    attempt: 1,
+    stage: "draft" as const,
+    agentId: "research_draft",
+    task: "Review supplied evidence",
+    sharedContext: {},
+    dependencyOutputs: {},
+    repairFeedback: [],
+    instructions: "Preserve all evidence",
+  };
+  const overItemLimit = buildQualityHarnessModelPromptWithCoverage({
+    ...base,
+    evidence: [
+      ...Array.from({ length: 48 }, (_, index) => ({ id: `early-${index}`, text: "fact" })),
+      { id: "contradiction-after-48", text: "contrary fact" },
+    ],
+  });
+  expect(overItemLimit.evidenceCoverage.omittedEvidenceIds).toEqual(["contradiction-after-48"]);
+
+  const overSectionLimit = buildQualityHarnessModelPromptWithCoverage({
+    ...base,
+    evidence: [
+      ...Array.from({ length: 40 }, (_, index) => ({
+        id: `section-fill-${index}`,
+        text: "x".repeat(300),
+        source: "s".repeat(300),
+      })),
+      { id: "section-omission", text: "contrary fact" },
+    ],
+  });
+  expect(overSectionLimit.evidenceCoverage.omittedEvidenceIds).toContain("section-omission");
 });
 
 it.each(["draft", "format", "risk"] as const)(

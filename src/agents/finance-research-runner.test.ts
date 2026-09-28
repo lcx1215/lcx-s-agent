@@ -24,6 +24,14 @@ import {
   FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME,
   FINANCE_UNIVERSE_SELECTION_SOURCES,
 } from "./finance-universe-selection.js";
+import { buildQualityHarnessModelPromptWithCoverage } from "./local-text-model-adapter.js";
+import type {
+  LogicalAgentModelAdapter,
+  LogicalAgentModelRouting,
+  ModelCallObservation,
+  ModelCallRequest,
+} from "./logical-agent-model-router.js";
+import type { QualityHarnessModelRequest } from "./quality-harness-contract.js";
 
 const AS_OF = "2026-09-08T12:00:00.000Z";
 
@@ -156,7 +164,8 @@ function collectionAdapter(): FinanceMarketCollectionAdapter {
 async function modelInvoker(request: unknown): Promise<unknown> {
   const payload = request as {
     stage?: string;
-    evidence?: readonly { id: string }[];
+    evidence?: readonly { id: string; text?: string }[];
+    evidenceBatchMode?: "context_extraction" | "final_artifact_audit";
   };
   if (payload.stage === "intake") {
     return { kind: "plan", requirements: ["timestamped evidence"], missingEvidence: [] };
@@ -202,6 +211,23 @@ async function modelInvoker(request: unknown): Promise<unknown> {
       },
     };
   }
+  if (payload.evidenceBatchMode) {
+    const contradictions =
+      payload.evidenceBatchMode === "final_artifact_audit"
+        ? (payload.evidence ?? []).filter((entry) =>
+            entry.text?.includes("contradictory evidence refutes the early thesis"),
+          )
+        : [];
+    return {
+      kind: "review",
+      review: {
+        verdict: contradictions.length > 0 ? "revise" : "pass",
+        criticalFindings: contradictions.map((entry) => `[${entry.id}] contradicts the draft.`),
+        evidenceGaps: [],
+        notes: (payload.evidence ?? []).map((entry) => `[${entry.id}] reviewed against the draft.`),
+      },
+    };
+  }
   return {
     kind: "review",
     review: {
@@ -209,6 +235,53 @@ async function modelInvoker(request: unknown): Promise<unknown> {
       criticalFindings: [],
       evidenceGaps: [],
       notes: ["Checked supplied timestamps and coverage; no additional fact was inferred."],
+    },
+  };
+}
+
+function mockQualityPromptRouting(
+  invoke: (request: unknown) => Promise<unknown>,
+): LogicalAgentModelRouting {
+  const coverageByCall = new Map<string, ModelCallObservation["evidenceCoverage"]>();
+  const adapter: LogicalAgentModelAdapter = {
+    id: "mock-quality-prompt",
+    provider: "fixture",
+    modelId: "quality-fixture",
+    mode: "adapter",
+    capabilities: ["quality_harness"],
+    requiredTools: [],
+    requiredSideEffects: [],
+    invoke: async (request: ModelCallRequest) => {
+      const payload = request.payload as Parameters<
+        typeof buildQualityHarnessModelPromptWithCoverage
+      >[0];
+      const rendered = buildQualityHarnessModelPromptWithCoverage(payload);
+      coverageByCall.set(request.callId, rendered.evidenceCoverage);
+      return invoke(payload);
+    },
+    observe: (request) => {
+      const evidenceCoverage = coverageByCall.get(request.callId);
+      if (!evidenceCoverage) {
+        return undefined;
+      }
+      return {
+        callId: request.callId,
+        provider: "fixture",
+        modelId: "quality-fixture",
+        transportRequestId: `fixture:${request.callId}`,
+        kind: "model_inference",
+        evidenceCoverage,
+      };
+    },
+  };
+  return {
+    revision: "mock-quality-prompt-coverage-v1",
+    adapters: [adapter],
+    defaultPolicy: {
+      primary: adapter.id,
+      requiredCapabilities: ["quality_harness"],
+      maxInputBytes: 1_000_000,
+      timeoutMs: 10_000,
     },
   };
 }
@@ -521,7 +594,7 @@ describe("finance research runner", () => {
       liveFetch: true,
       qualityEnabled: true,
       modelInvoker,
-      qualityModelInvoker: modelInvoker,
+      qualityModelRouting: mockQualityPromptRouting(modelInvoker),
       modelId: "fixture-model",
       batchOptions: BATCH_OPTIONS,
     });
@@ -538,6 +611,159 @@ describe("finance research runner", () => {
     expect(result.notTouched).toEqual(
       expect.arrayContaining(["provider_config", "external_channel_sender", "trading_execution"]),
     );
+  });
+
+  it("audits a contradictory Finance item after item 48 and blocks adoption", async () => {
+    const source = {
+      ...collectionAdapter(),
+      collect: async (request: Parameters<FinanceMarketCollectionAdapter["collect"]>[0]) => {
+        const index = Number(request.instrument.slice("COV".length));
+        const item: FinanceMarketCollectionItem = {
+          itemId:
+            index === 48
+              ? "late-contradictory-evidence"
+              : `coverage-item-${String(index).padStart(3, "0")}`,
+          collection: request.collection,
+          providerName: "fixture-collection",
+          providerRole: "primary_market_data",
+          sourceFamily: "market_data_api",
+          sourceTimestamp: AS_OF,
+          observedAt: AS_OF,
+          delayStatus: "realtime",
+          sourceUrlOrArtifact: `fixture://coverage/${index}`,
+          data: {
+            title:
+              index === 48
+                ? "contradictory evidence refutes the early thesis"
+                : `positive evidence ${index}`,
+            close: 100,
+          },
+        };
+        return [item];
+      },
+    };
+    const targets = Array.from({ length: 49 }, (_, index) => ({
+      id: `coverage-target-${String(index).padStart(3, "0")}`,
+      instrument: `COV${String(index).padStart(3, "0")}`,
+      assetClass: "us_equity" as const,
+      realtime: false as const,
+      collections: [{ collection: "sec_filings" as const, limit: 1, freshnessMaxMinutes: 60 }],
+    }));
+    const qualityRequests: QualityHarnessModelRequest[] = [];
+    const qualityResponses: Array<{ request: QualityHarnessModelRequest; response: unknown }> = [];
+    const qualityInvoker = async (request: unknown) => {
+      const current = request as QualityHarnessModelRequest;
+      qualityRequests.push(current);
+      const response = await modelInvoker(request);
+      if (
+        current.evidenceBatchMode === "final_artifact_audit" &&
+        current.evidence.some((entry) => entry.id === "finance-model:COV048")
+      ) {
+        qualityResponses.push({ request: current, response });
+      }
+      return response;
+    };
+    const result = await runFinanceResearchRun({
+      input: {
+        ask: "Summarize the supplied market evidence and retain contradictory reports.",
+        asOf: AS_OF,
+        targets,
+      },
+      liveFetch: true,
+      modelInvoker,
+      qualityModelRouting: mockQualityPromptRouting(qualityInvoker),
+      batchOptions: { ...BATCH_OPTIONS, collectionAdapters: [source] },
+    });
+
+    const contradictionId = "finance-model:COV048";
+    const contradiction = result.batch?.committeeEvidence.find(
+      (entry) => entry.id === contradictionId,
+    );
+    expect(contradiction?.text).toContain("late-contradictory-evidence");
+    expect(contradiction?.text).toContain("contradictory evidence refutes the early thesis");
+    expect(result.quality?.status).toBe("quality-failed");
+    expect(result.quality?.verification.status).toBe("not-requested");
+    const lateAudit = qualityRequests.find(
+      (request) =>
+        request.evidenceBatchMode === "final_artifact_audit" &&
+        request.evidence.some((entry) => entry.id === contradictionId),
+    );
+    expect(lateAudit?.dependencyOutputs.formatting).toMatchObject({
+      status: "completed",
+      output: { kind: "artifact" },
+    });
+    expect(qualityResponses[0]?.response).toMatchObject({
+      kind: "review",
+      review: {
+        verdict: "revise",
+        criticalFindings: [expect.stringContaining(contradictionId)],
+      },
+    });
+    expect(
+      result.quality?.attempts[0]?.gates.find((gate) => gate.id === "evidence_batch_reviews"),
+    ).toMatchObject({ passed: false, reason: expect.stringContaining("final artifact audit") });
+    expect(result.quality?.evidenceCoverage?.controller?.sourceEvidenceIds).toContain(
+      contradictionId,
+    );
+    expect(result.quality?.evidenceCoverage?.controller?.selectedEvidenceIds).toContain(
+      contradictionId,
+    );
+    expect(result.quality?.evidenceCoverage?.controller?.runnerOmittedEvidenceIds).not.toContain(
+      contradictionId,
+    );
+    expect(result.quality?.evidenceCoverage?.issues).toEqual([]);
+    expect(result.quarterlyOutput.adopted).toBe(false);
+
+    const complete = await runFinanceResearchRun({
+      input: {
+        ask: "Summarize the supplied BTC evidence.",
+        asOf: AS_OF,
+        targets: [
+          {
+            id: "complete-coverage-target",
+            instrument: "BTCUSDT",
+            assetClass: "crypto",
+            realtime: { requireOfficialReference: false },
+            collections: [{ collection: "news", limit: 1, freshnessMaxMinutes: 60 }],
+          },
+        ],
+      },
+      liveFetch: true,
+      modelInvoker,
+      qualityModelRouting: mockQualityPromptRouting(modelInvoker),
+      batchOptions: BATCH_OPTIONS,
+    });
+    expect(complete.quality?.status).toBe("verified");
+    expect(complete.quality?.evidenceCoverage).toMatchObject({ passed: true, issues: [] });
+    expect(complete.quarterlyOutput.adopted).toBe(true);
+  });
+
+  it("does not adopt quality output from an injected invoker without prompt coverage", async () => {
+    const result = await runFinanceResearchRun({
+      input: {
+        ask: "Summarize the supplied BTC evidence.",
+        asOf: AS_OF,
+        targets: [
+          {
+            id: "unobserved-quality-target",
+            instrument: "BTCUSDT",
+            assetClass: "crypto",
+            realtime: { requireOfficialReference: false },
+            collections: [{ collection: "news", limit: 1, freshnessMaxMinutes: 60 }],
+          },
+        ],
+      },
+      liveFetch: true,
+      modelInvoker,
+      qualityModelInvoker: modelInvoker,
+      batchOptions: BATCH_OPTIONS,
+    });
+
+    expect(result.quality?.status).toBe("quality-failed");
+    expect(result.quality?.evidenceCoverage?.issues.join("\n")).toContain(
+      "evidence_coverage_attestation_missing",
+    );
+    expect(result.quarterlyOutput.adopted).toBe(false);
   });
 
   it.each([
@@ -576,7 +802,7 @@ describe("finance research runner", () => {
         liveFetch: true,
         qualityEnabled: true,
         modelInvoker: withoutAssessment,
-        qualityModelInvoker: withoutAssessment,
+        qualityModelRouting: mockQualityPromptRouting(withoutAssessment),
         modelId: "fixture-model",
         batchOptions: BATCH_OPTIONS,
       });
@@ -643,7 +869,7 @@ describe("finance research runner", () => {
       liveFetch: true,
       qualityEnabled: true,
       modelInvoker,
-      qualityModelInvoker: unsupportedProposalInvoker,
+      qualityModelRouting: mockQualityPromptRouting(unsupportedProposalInvoker),
       modelId: "fixture-model",
       batchOptions: BATCH_OPTIONS,
     });
@@ -725,7 +951,7 @@ describe("finance research runner", () => {
       },
       liveFetch: true,
       modelInvoker,
-      qualityModelInvoker: allocationModel,
+      qualityModelRouting: mockQualityPromptRouting(allocationModel),
       batchOptions: BATCH_OPTIONS,
     });
 
@@ -782,10 +1008,10 @@ describe("finance research runner", () => {
         requests.push(request);
         return modelInvoker(request);
       },
-      qualityModelInvoker: async (request) => {
+      qualityModelRouting: mockQualityPromptRouting(async (request) => {
         requests.push(request);
         return modelInvoker(request);
-      },
+      }),
       batchOptions: { ...BATCH_OPTIONS, collectionAdapters: [liveCollection] },
     });
 
@@ -833,7 +1059,7 @@ describe("finance research runner", () => {
       },
       liveFetch: true,
       modelInvoker: capture,
-      qualityModelInvoker: capture,
+      qualityModelRouting: mockQualityPromptRouting(capture),
       batchOptions: BATCH_OPTIONS,
     });
 
@@ -883,7 +1109,7 @@ describe("finance research runner", () => {
       },
       liveFetch: true,
       modelInvoker: invoke,
-      qualityModelInvoker: invoke,
+      qualityModelRouting: mockQualityPromptRouting(invoke),
       batchOptions: {
         ...BATCH_OPTIONS,
         collectionAdapters: [
@@ -938,7 +1164,7 @@ describe("finance research runner", () => {
       },
       liveFetch: true,
       modelInvoker,
-      qualityModelInvoker: modelInvoker,
+      qualityModelRouting: mockQualityPromptRouting(modelInvoker),
       batchOptions: { ...BATCH_OPTIONS, collectionAdapters: [staleCollection] },
     });
 
@@ -978,7 +1204,9 @@ describe("finance research runner", () => {
         },
         liveFetch: true,
         modelInvoker: stage === "committee" ? failingModel : modelInvoker,
-        qualityModelInvoker: stage === "quality" ? failingModel : modelInvoker,
+        qualityModelRouting: mockQualityPromptRouting(
+          stage === "quality" ? failingModel : modelInvoker,
+        ),
         batchOptions: BATCH_OPTIONS,
       });
       expect(result.batch?.status).toBe("completed");
@@ -1018,7 +1246,7 @@ describe("finance research runner", () => {
       },
       liveFetch: true,
       modelInvoker,
-      qualityModelInvoker: modelInvoker,
+      qualityModelRouting: mockQualityPromptRouting(modelInvoker),
       batchOptions: { ...BATCH_OPTIONS, collectionAdapters: [denied] },
     });
     expect(JSON.stringify(result.batch)).toContain("403");
@@ -1042,7 +1270,7 @@ describe("finance research runner", () => {
       },
       liveFetch: true,
       modelInvoker,
-      qualityModelInvoker: async () => ({
+      qualityModelRouting: mockQualityPromptRouting(async () => ({
         kind: "artifact",
         artifact: {
           answer: "Research candidate",
@@ -1055,10 +1283,245 @@ describe("finance research runner", () => {
             },
           ],
         },
+      })),
+      batchOptions: BATCH_OPTIONS,
+    });
+    expect(result.gates.find((gate) => gate.id === "quality")?.passed).toBe(false);
+    expect(result.quarterlyOutput.adopted).toBe(false);
+  });
+
+  it("blocks account-only SPY fill claims through the quality verifier", async () => {
+    const brokerEvidenceId = "finance-night:broker-profit:2026-09-08";
+    const result = await runFinanceResearchRun({
+      input: {
+        ask: "Review SPY fills",
+        asOf: AS_OF,
+        targets: [
+          {
+            id: "spy-fill-attribution",
+            instrument: "SPY",
+            assetClass: "us_equity",
+            realtime: { requireOfficialReference: false },
+          },
+        ],
+        controllerEvidence: [
+          {
+            id: brokerEvidenceId,
+            source: "paper_broker_controller",
+            timestamp: AS_OF,
+            text: "Account totals: buyFills=3; unattributedFillCount=3.",
+          },
+        ],
+      },
+      liveFetch: true,
+      modelInvoker,
+      qualityModelRouting: mockQualityPromptRouting(async (request) => {
+        const stage = (request as { stage?: string }).stage;
+        if (stage !== "draft" && stage !== "format") {
+          return modelInvoker(request);
+        }
+        const evidence = (request as { evidence: readonly { id: string }[] }).evidence;
+        const cited = evidence
+          .filter((entry) => entry.id === brokerEvidenceId || entry.id === "finance-model:SPY")
+          .map((entry) => entry.id);
+        return {
+          kind: "artifact",
+          artifact: {
+            answer: "Three SPY buy fills are recorded.",
+            claims: [
+              {
+                id: "spy-fill-claim",
+                text: "Three SPY buy fills are recorded",
+                status: "supported",
+                evidenceIds: cited,
+                epistemicClass: "source_observation",
+                evidenceRelations: cited.map((evidenceId) => ({
+                  evidenceId,
+                  relation: "supports",
+                })),
+              },
+            ],
+          },
+        };
       }),
       batchOptions: BATCH_OPTIONS,
     });
     expect(result.gates.find((gate) => gate.id === "quality")?.passed).toBe(false);
+    expect(result.quality?.verification.details).toContain(
+      "spy-fill-claim:finance-model:SPY:instrument_fill_claim_cites_account_aggregate_only",
+    );
+    expect(result.quarterlyOutput.adopted).toBe(false);
+  });
+
+  it("blocks a supported rule claim that transfers provenance scope across strategies", async () => {
+    const rulesEvidenceId = "finance-night:rules:2026-09-27";
+    const rulesEvidenceText = JSON.stringify({
+      activeRules: [
+        {
+          ruleId: "trend_risk_normalised_v1",
+          instruments: ["SPY", "QQQ"],
+          provenance: {
+            readScope: "research_only",
+            notes:
+              "公开方法蒸馏，不是任何管理人的实际参数；skill 明确声明当前状态为材料与规则可复核，不是收益验证",
+          },
+        },
+        {
+          ruleId: "opening_range_breakout_long_pre_close_v2",
+          instruments: ["SPY"],
+          provenance: {
+            readScope: "Alpaca Paper calendar and IEX 5-minute bars",
+            notes:
+              "Adds a calendar-bound pre-close exit to the frozen v1 entry, stop, and reward-target rules. Optiver article informs the decision-loop design, not the alpha signal.",
+          },
+        },
+      ],
+    });
+    const result = await runFinanceResearchRun({
+      input: {
+        ask: "Review the supplied SPY strategy provenance.",
+        asOf: AS_OF,
+        targets: [
+          {
+            id: "spy-rule-scope",
+            instrument: "SPY",
+            assetClass: "us_equity",
+            realtime: { requireOfficialReference: false },
+          },
+        ],
+        controllerEvidence: [
+          {
+            id: rulesEvidenceId,
+            source: "strategy_rule_controller",
+            timestamp: AS_OF,
+            text: rulesEvidenceText,
+          },
+        ],
+      },
+      liveFetch: true,
+      modelInvoker,
+      qualityModelRouting: mockQualityPromptRouting(async (request) => {
+        const current = request as QualityHarnessModelRequest;
+        if (current.stage !== "draft" && current.stage !== "format") {
+          return modelInvoker(request);
+        }
+        const cited = current.evidence
+          .filter((entry) => entry.id === rulesEvidenceId || entry.id === "finance-model:SPY")
+          .map((entry) => entry.id);
+        return {
+          kind: "artifact",
+          artifact: {
+            answer: "Both active SPY rules are research_only and have no return validation.",
+            claims: [
+              {
+                id: "combined-rule-scope",
+                text: "Both trend_risk_normalised_v1 and opening_range_breakout_long_pre_close_v2 are research_only and have no return validation.",
+                status: "supported",
+                evidenceIds: cited,
+                epistemicClass: "source_observation",
+                evidenceRelations: cited.map((evidenceId) => ({
+                  evidenceId,
+                  relation: "supports",
+                })),
+              },
+            ],
+          },
+        };
+      }),
+      batchOptions: BATCH_OPTIONS,
+    });
+
+    expect(result.gates.find((gate) => gate.id === "quality")?.passed).toBe(false);
+    expect(result.quality?.verification.details).toContain(
+      "combined-rule-scope:finance-night:rules:2026-09-27:multi_rule_scope_claim_requires_split",
+    );
+    expect(result.quarterlyOutput.adopted).toBe(false);
+  });
+
+  it("does not infer zero SPY execution from an empty decision log and unattributed fills", async () => {
+    const intradayEvidenceId = "finance-night:intraday:2026-09-27";
+    const brokerEvidenceId = "finance-night:broker-profit:2026-09-27";
+    const result = await runFinanceResearchRun({
+      input: {
+        ask: "Review SPY execution evidence",
+        asOf: AS_OF,
+        targets: [
+          {
+            id: "spy-execution-absence",
+            instrument: "SPY",
+            assetClass: "us_equity",
+            realtime: { requireOfficialReference: false },
+          },
+        ],
+        controllerEvidence: [
+          {
+            id: intradayEvidenceId,
+            source: "paper_intraday_controller",
+            timestamp: AS_OF,
+            text: '{"decisions":[]}',
+          },
+          {
+            id: brokerEvidenceId,
+            source: "paper_broker_controller",
+            timestamp: AS_OF,
+            text: JSON.stringify({
+              accounts: [
+                {
+                  buyFills: 3,
+                  sellFills: 0,
+                  attributedFillCount: 0,
+                  unattributedFillCount: 3,
+                },
+              ],
+            }),
+          },
+        ],
+      },
+      liveFetch: true,
+      modelInvoker,
+      qualityModelRouting: mockQualityPromptRouting(async (request) => {
+        const current = request as QualityHarnessModelRequest;
+        if (current.stage !== "draft" && current.stage !== "format") {
+          return modelInvoker(request);
+        }
+        const cited = current.evidence
+          .filter(
+            (entry) =>
+              entry.id === intradayEvidenceId ||
+              entry.id === brokerEvidenceId ||
+              entry.id === "finance-model:SPY",
+          )
+          .map((entry) => entry.id);
+        return {
+          kind: "artifact",
+          artifact: {
+            answer: "The controller record does not establish SPY trade execution.",
+            claims: [
+              {
+                id: "no-spy-execution",
+                text: "No controller-authorized SPY trades executed on 2026-09-27",
+                status: "supported",
+                evidenceIds: cited,
+                epistemicClass: "source_observation",
+                evidenceRelations: cited.map((evidenceId) => ({
+                  evidenceId,
+                  relation: "supports",
+                })),
+              },
+            ],
+          },
+        };
+      }),
+      batchOptions: BATCH_OPTIONS,
+    });
+
+    expect(result.gates.find((gate) => gate.id === "quality")?.passed).toBe(false);
+    expect(result.quality?.verification).toMatchObject({
+      status: "failed",
+      details: expect.arrayContaining([
+        "no-spy-execution:finance-model:SPY:empty_intraday_decisions_do_not_establish_zero_instrument_fills",
+      ]),
+    });
     expect(result.quarterlyOutput.adopted).toBe(false);
   });
 
@@ -1086,7 +1549,7 @@ describe("finance research runner", () => {
       },
       liveFetch: true,
       modelInvoker,
-      qualityModelInvoker: modelInvoker,
+      qualityModelRouting: mockQualityPromptRouting(modelInvoker),
       batchOptions: BATCH_OPTIONS,
     });
     expect(result.status).toBe("candidate");
@@ -1121,7 +1584,7 @@ describe("finance research runner", () => {
         },
         liveFetch: true,
         modelInvoker: countedModel,
-        qualityModelInvoker: countedModel,
+        qualityModelRouting: mockQualityPromptRouting(countedModel),
         batchOptions: { ...BATCH_OPTIONS, checkpoint },
         modelCheckpoint: { ...checkpoint, maxModelCalls: 32 },
       };
@@ -1179,7 +1642,7 @@ describe("finance research runner", () => {
         },
         liveFetch: true,
         modelInvoker: countedModel,
-        qualityModelInvoker: countedModel,
+        qualityModelRouting: mockQualityPromptRouting(countedModel),
         batchOptions: { ...BATCH_OPTIONS, checkpoint },
         modelCheckpoint: { ...checkpoint, maxModelCalls: 1 },
       };
@@ -1297,10 +1760,10 @@ describe("research module composition reaches actual model request boundaries", 
         committeeRequests.push(request);
         return modelInvoker(request);
       },
-      qualityModelInvoker: async (request) => {
+      qualityModelRouting: mockQualityPromptRouting(async (request) => {
         qualityRequests.push(request);
         return modelInvoker(request);
-      },
+      }),
     });
     expect(result.status).toBe("candidate");
     expect(committeeRequests.length).toBeGreaterThan(0);
@@ -1328,7 +1791,7 @@ describe("research module composition reaches actual model request boundaries", 
       liveFetch: true,
       batchOptions: { realtimeAdapters: [], collectionAdapters: [] },
       modelInvoker: invoke,
-      qualityModelInvoker: invoke,
+      qualityModelRouting: mockQualityPromptRouting(invoke),
     });
     expect(result.status).toBe("blocked");
     expect(result.answerDecision).toBe("return_failed_reason");
@@ -1351,7 +1814,7 @@ describe("research module composition reaches actual model request boundaries", 
         batchOptions: { ...BATCH_OPTIONS, checkpoint },
         modelCheckpoint: { ...checkpoint, maxModelCalls: 32 },
         modelInvoker: invoke,
-        qualityModelInvoker: invoke,
+        qualityModelRouting: mockQualityPromptRouting(invoke),
       };
       expect((await runFinanceResearchRun(options)).status).toBe("candidate");
       const count = invoke.mock.calls.length;
@@ -1452,7 +1915,7 @@ describe("research module composition reaches actual model request boundaries", 
         liveFetch: true,
         batchOptions: BATCH_OPTIONS,
         modelInvoker: producerAwareInvoker,
-        qualityModelInvoker: producerAwareInvoker,
+        qualityModelRouting: mockQualityPromptRouting(producerAwareInvoker),
         moduleExecutor: async ({ plan, domainProducerInputs, asOf }) => {
           captured = domainProducerInputs;
           const failedNode =
@@ -1561,7 +2024,7 @@ describe("partial research input boundaries", () => {
       },
       liveFetch: true,
       modelInvoker,
-      qualityModelInvoker: modelInvoker,
+      qualityModelRouting: mockQualityPromptRouting(modelInvoker),
       batchOptions: {
         ...BATCH_OPTIONS,
         collectionAdapters: [
@@ -1597,7 +2060,7 @@ describe("partial research input boundaries", () => {
       },
       liveFetch: true,
       modelInvoker,
-      qualityModelInvoker: modelInvoker,
+      qualityModelRouting: mockQualityPromptRouting(modelInvoker),
       batchOptions: {
         ...BATCH_OPTIONS,
         realtimeAdapters: [
@@ -1653,7 +2116,7 @@ it("does not admit future observations as historical opportunity evidence", asyn
     },
     liveFetch: true,
     modelInvoker: invoke,
-    qualityModelInvoker: invoke,
+    qualityModelRouting: mockQualityPromptRouting(invoke),
     batchOptions: { ...BATCH_OPTIONS, realtimeAdapters: adapters },
   });
   expect(invoke).not.toHaveBeenCalled();

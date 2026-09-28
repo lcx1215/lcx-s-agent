@@ -57,6 +57,20 @@ export type QualityHarnessEvidence = Readonly<{
   source?: string;
 }>;
 
+/** At most 17 model stages per attempt, before the shared workflow call budget. */
+export const QUALITY_HARNESS_MAX_EVIDENCE_BATCHES = 4;
+export const QUALITY_HARNESS_MAX_EVIDENCE_ITEMS_PER_BATCH = 16;
+export const QUALITY_HARNESS_MAX_EVIDENCE_ITEMS =
+  QUALITY_HARNESS_MAX_EVIDENCE_BATCHES * QUALITY_HARNESS_MAX_EVIDENCE_ITEMS_PER_BATCH;
+
+/** Controller-authored coverage from the original evidence packet through runner selection. */
+export type QualityHarnessEvidenceCoverage = Readonly<{
+  sourceEvidenceIds: readonly string[];
+  selectedEvidenceIds: readonly string[];
+  runnerOmittedEvidenceIds: readonly string[];
+  runnerClippedEvidenceIds: readonly string[];
+}>;
+
 export type QualityHarnessRequest = Readonly<{
   task: string;
   evidence: readonly QualityHarnessEvidence[];
@@ -122,7 +136,11 @@ export type QualityHarnessModelRequest = Readonly<{
   dependencyOutputs: Readonly<Record<string, unknown>>;
   repairFeedback: readonly string[];
   instructions: string;
+  /** Identifies controller-planned review passes over a bounded evidence packet. */
+  evidenceBatchMode?: "context_extraction" | "final_artifact_audit";
   findingPacket?: QualityFindingPacket;
+  /** Trusted controller metadata; this is never read from a model response. */
+  evidenceCoverage?: QualityHarnessEvidenceCoverage;
 }>;
 
 export type QualityHarnessVerification = Readonly<{
@@ -141,6 +159,8 @@ export type QualityHarnessVerifier = (params: {
 export type QualityHarnessOptions = Readonly<{
   allowProviderCalls?: boolean;
   request: QualityHarnessRequest;
+  requireEvidenceCoverage?: boolean;
+  evidenceCoverage?: QualityHarnessEvidenceCoverage;
   modelInvoker?: LogicalAgentModelInvoker;
   modelRouting?: LogicalAgentModelRouting;
   signal?: AbortSignal;
@@ -160,6 +180,8 @@ export type QualityHarnessStageInput = Readonly<{
   attempt: number;
   stage: QualityHarnessStage;
   request: QualityHarnessRequest;
+  evidenceBatchMode?: "context_extraction" | "final_artifact_audit";
+  evidenceCoverage?: QualityHarnessEvidenceCoverage;
   repairFeedback: readonly string[];
 }>;
 
@@ -173,6 +195,8 @@ export type QualityHarnessGate = Readonly<{
     | "adversarial_review"
     | "final_precheck"
     | "finance_answer_safety"
+    | "evidence_coverage"
+    | "evidence_batch_reviews"
     | "no_forbidden_side_effects";
   passed: boolean;
   reason: string;
@@ -244,6 +268,16 @@ export type QualityHarnessReceipt = Readonly<{
     externalSideEffects: "not-observed" | "caller-attested" | "adapter-attested";
   }>;
   evidenceScope?: ReturnType<typeof inspectEvidenceMultiplicity>;
+  evidenceCoverage?: Readonly<{
+    controller?: QualityHarnessEvidenceCoverage;
+    batches?: readonly Readonly<{
+      index: number;
+      total: number;
+      evidenceIds: readonly string[];
+    }>[];
+    passed: boolean;
+    issues: readonly string[];
+  }>;
   plannedStages: readonly QualityHarnessStage[];
   attempts: readonly QualityHarnessAttemptReceipt[];
   finalArtifact?: QualityHarnessArtifact;
@@ -385,39 +419,100 @@ export function buildQualityHarnessPlan(params: {
   runId: string;
   attempt: number;
   request: QualityHarnessRequest;
+  evidenceBatches?: readonly (readonly QualityHarnessEvidence[])[];
+  auditEvidenceBatches?: boolean;
+  evidenceCoverage?: QualityHarnessEvidenceCoverage;
   repairFeedback?: readonly string[];
 }): Array<LogicalAgentTask<QualityHarnessStageInput>> {
-  const input = (stage: QualityHarnessStage): QualityHarnessStageInput =>
+  const evidenceBatches = params.evidenceBatches ?? [params.request.evidence];
+  const primaryRequest = Object.freeze({
+    ...params.request,
+    evidence: evidenceBatches[0] ?? params.request.evidence,
+  });
+  const batchExtractTaskIds = params.auditEvidenceBatches
+    ? evidenceBatches.slice(1).map((_, index) => `evidence_batch_extract_${index + 2}`)
+    : [];
+  const batchReviewTaskIds = params.auditEvidenceBatches
+    ? evidenceBatches.map((_, index) => `evidence_batch_review_${index + 1}`)
+    : [];
+  const input = (
+    stage: QualityHarnessStage,
+    request = primaryRequest,
+    evidenceBatchMode?: QualityHarnessStageInput["evidenceBatchMode"],
+  ): QualityHarnessStageInput =>
     Object.freeze({
       runId: requiredQualityText(params.runId, "runId", 200),
       attempt: params.attempt,
       stage,
-      request: params.request,
+      request,
+      ...(evidenceBatchMode ? { evidenceBatchMode } : {}),
+      ...(params.evidenceCoverage ? { evidenceCoverage: params.evidenceCoverage } : {}),
       repairFeedback: Object.freeze(normalizeFeedback(params.repairFeedback ?? [])),
     });
   const basePlan = buildDefaultLogicalAgentPlan({
-    ask: params.request.task,
-    evidence: params.request.evidence.map((entry) => `[${entry.id}] ${entry.text}`),
+    ask: primaryRequest.task,
+    evidence: primaryRequest.evidence.map((entry) => `[${entry.id}] ${entry.text}`),
   });
-  return basePlan.map((task) => {
+  const plan = basePlan.map((task) => {
     const stage = STAGE_BY_AGENT_ID[task.agentId];
     if (!stage) {
       throw new Error(`quality harness has no stage mapping for ${task.agentId}`);
     }
+    const extraDependencies =
+      task.id === "research_draft"
+        ? batchExtractTaskIds
+        : task.id === "final_precheck"
+          ? batchReviewTaskIds
+          : [];
     return {
       id: task.id,
       agentId: task.agentId,
-      input: input(stage),
+      input: input(stage, primaryRequest),
       ...(task.dependsOn
         ? {
             dependsOn:
               task.id === "final_precheck"
-                ? [...new Set([...task.dependsOn, ...RECONCILABLE_REVIEW_ROLES, "research_draft"])]
-                : task.dependsOn,
+                ? [
+                    ...new Set([
+                      ...task.dependsOn,
+                      ...RECONCILABLE_REVIEW_ROLES,
+                      "research_draft",
+                      ...extraDependencies,
+                    ]),
+                  ]
+                : task.id === "research_draft"
+                  ? [...new Set([...task.dependsOn, ...extraDependencies])]
+                  : task.dependsOn,
           }
         : {}),
     };
   });
+  for (let index = 1; params.auditEvidenceBatches && index < evidenceBatches.length; index += 1) {
+    const batchNumber = index + 1;
+    const evidence = evidenceBatches[index];
+    if (!evidence) {
+      continue;
+    }
+    const batchRequest = Object.freeze({ ...params.request, evidence });
+    plan.push({
+      id: `evidence_batch_extract_${batchNumber}`,
+      agentId: "evidence_integrity",
+      input: input("extraction", batchRequest, "context_extraction"),
+      dependsOn: ["data_cleaning"],
+    });
+  }
+  if (params.auditEvidenceBatches) {
+    evidenceBatches.forEach((evidence, index) => {
+      const batchRequest = Object.freeze({ ...params.request, evidence });
+      plan.push({
+        id: `evidence_batch_review_${index + 1}`,
+        agentId: "evidence_integrity",
+        input: input("evidence", batchRequest, "final_artifact_audit"),
+        dependsOn: ["formatting"],
+      });
+    });
+  }
+  return plan;
 }
 
 export function stageInstructions(stage: QualityHarnessStage): string {
@@ -479,6 +574,9 @@ function buildModelRequest(
     };
   }
   const format = context.dependencyResults.formatting?.output;
+  const hasEvidenceBatchReviews = Object.keys(context.dependencyResults).some((taskId) =>
+    taskId.startsWith("evidence_batch_review_"),
+  );
   const findingPacket =
     context.input.stage === "precheck" && format?.kind === "artifact"
       ? qualityFindingPacket(
@@ -502,10 +600,21 @@ function buildModelRequest(
     agentId: context.agent.id,
     task: context.input.request.task,
     evidence: context.input.request.evidence,
+    ...(context.input.evidenceCoverage ? { evidenceCoverage: context.input.evidenceCoverage } : {}),
     sharedContext: context.sharedContext,
     dependencyOutputs: Object.freeze(dependencyOutputs),
     repairFeedback: context.input.repairFeedback,
-    instructions: stageInstructions(context.input.stage),
+    instructions:
+      context.input.evidenceBatchMode === "context_extraction"
+        ? `${stageInstructions(context.input.stage)} Review only this bounded evidence batch. Add one concise note for every supplied item, beginning with its exact ID in brackets, such as [item-id]. State its source/time limits and whether it supports, contradicts, contextualizes, or does not address the task. Preserve material facts for the draft stage.`
+        : context.input.evidenceBatchMode === "final_artifact_audit"
+          ? `${stageInstructions(context.input.stage)} Review the final formatted artifact in dependencyOutputs.formatting against only this bounded evidence batch. Add one concise note for every supplied item, beginning with its exact ID in brackets, such as [item-id]. State whether it supports, contradicts, contextualizes, or does not address each claim it bears on. Flag unsupported claims and cross-source contradictions with evidence IDs; do not infer a global pass from this packet-local review.`
+          : hasEvidenceBatchReviews && context.input.stage === "precheck"
+            ? `${stageInstructions(context.input.stage)} Compare every evidence_batch_review output with the final artifact and with the other batch reviews. Reconcile contradictions by source and time; if they cannot be reconciled, narrow the affected claim or mark it uncertain. A packet-local pass does not establish global consistency.`
+            : stageInstructions(context.input.stage),
+    ...(context.input.evidenceBatchMode
+      ? { evidenceBatchMode: context.input.evidenceBatchMode }
+      : {}),
   });
 }
 
@@ -715,6 +824,51 @@ function parseReview(value: unknown): QualityHarnessReview {
   });
 }
 
+const PRE_DRAFT_ARTIFACT_ABSENCE =
+  /\b(?:final|formatted|draft)\s+(?:research\s+)?artifact\b.{0,80}\b(?:missing|absent|not\s+(?:present|available|created))\b/iu;
+
+function normalizePreDraftReview(
+  stage: QualityHarnessStage,
+  review: QualityHarnessReview,
+): QualityHarnessReview {
+  if (stage !== "extraction" && stage !== "classification") {
+    return review;
+  }
+
+  const deferred: string[] = [];
+  const retainFinding = (finding: string) => {
+    if (PRE_DRAFT_ARTIFACT_ABSENCE.test(finding)) {
+      deferred.push(finding);
+      return false;
+    }
+    return true;
+  };
+  const criticalFindings = review.criticalFindings.filter(retainFinding);
+  const evidenceGaps = review.evidenceGaps.filter(retainFinding);
+  if (deferred.length === 0) {
+    return review;
+  }
+
+  const hasActionableFindings = criticalFindings.length > 0 || evidenceGaps.length > 0;
+  const verdict = !hasActionableFindings
+    ? "pass"
+    : review.verdict === "reject" && criticalFindings.length === 0
+      ? "revise"
+      : review.verdict;
+  return Object.freeze({
+    ...review,
+    verdict,
+    criticalFindings: Object.freeze(criticalFindings),
+    evidenceGaps: Object.freeze(evidenceGaps),
+    notes: Object.freeze([
+      ...review.notes,
+      ...deferred.map(
+        (finding) => `[pre-draft observation; final artifact is created downstream] ${finding}`,
+      ),
+    ]),
+  });
+}
+
 export function parseStageOutput(
   stage: QualityHarnessStage,
   value: unknown,
@@ -735,7 +889,10 @@ export function parseStageOutput(
   if (stage === "draft" || stage === "format") {
     return Object.freeze({ kind: "artifact", artifact: parseArtifact(value) });
   }
-  return Object.freeze({ kind: "review", review: parseReview(value) });
+  return Object.freeze({
+    kind: "review",
+    review: normalizePreDraftReview(stage, parseReview(value)),
+  });
 }
 
 export function createQualityHarnessStageExecutor(

@@ -1,10 +1,12 @@
 import crypto from "node:crypto";
 import { inspectEvidenceMultiplicity } from "./evidence-source-identity.js";
+import { planQualityHarnessEvidenceBatches } from "./local-text-model-adapter.js";
 import { modelRoutingTaskTimeoutMs, type ModelCallReceipt } from "./logical-agent-model-router.js";
 import {
   LogicalAgentPool,
   runLogicalAgentPlan,
   summarizeExecutedModelIdentity,
+  type LogicalAgentPlanResult,
   type LogicalAgentPoolStatus,
 } from "./logical-agent-pool.js";
 import {
@@ -83,6 +85,11 @@ function createQualityReceipt(params: {
   status: QualityHarnessReceipt["status"];
   maxAttempts: 1 | 2;
   routed: boolean;
+  evidenceCoverage?: {
+    manifest?: QualityHarnessOptions["evidenceCoverage"];
+    batches?: readonly (readonly QualityHarnessRequest["evidence"][number][])[];
+    issues: readonly string[];
+  };
 }): QualityHarnessReceipt {
   const last = params.attempts.at(-1);
   const modelCalls = params.attempts.flatMap((attempt) =>
@@ -123,19 +130,46 @@ function createQualityReceipt(params: {
       externalSideEffects: "not-observed",
     }),
     evidenceScope: inspectEvidenceMultiplicity(params.request.evidence),
+    ...(params.evidenceCoverage
+      ? {
+          evidenceCoverage: Object.freeze({
+            ...(params.evidenceCoverage.manifest
+              ? { controller: params.evidenceCoverage.manifest }
+              : {}),
+            ...(params.evidenceCoverage.batches
+              ? {
+                  batches: Object.freeze(
+                    params.evidenceCoverage.batches.map((batch, index) =>
+                      Object.freeze({
+                        index: index + 1,
+                        total: params.evidenceCoverage?.batches?.length ?? 0,
+                        evidenceIds: Object.freeze(batch.map((entry) => entry.id)),
+                      }),
+                    ),
+                  ),
+                }
+              : {}),
+            passed: params.evidenceCoverage.issues.length === 0,
+            issues: Object.freeze([...params.evidenceCoverage.issues]),
+          }),
+        }
+      : {}),
     plannedStages: QUALITY_HARNESS_STAGES,
     attempts: Object.freeze([...params.attempts]),
     ...(params.artifact ? { finalArtifact: params.artifact } : {}),
     verification: params.verification,
     quality: Object.freeze({
       passed: last?.gates.every((gate) => gate.passed) === true,
-      independentRoleReviewCount:
-        last?.stages.filter(
-          (stage) =>
-            stage.outputKind === "review" &&
-            stage.status === "completed" &&
-            (QUALITY_HARNESS_REVIEW_AGENTS as readonly string[]).includes(stage.agentId),
-        ).length ?? 0,
+      independentRoleReviewCount: new Set(
+        last?.stages
+          .filter(
+            (stage) =>
+              stage.outputKind === "review" &&
+              stage.status === "completed" &&
+              (QUALITY_HARNESS_REVIEW_AGENTS as readonly string[]).includes(stage.agentId),
+          )
+          .map((stage) => stage.agentId) ?? [],
+      ).size,
       reviewAgents: QUALITY_HARNESS_REVIEW_AGENTS,
     }),
     repair: Object.freeze({
@@ -144,6 +178,142 @@ function createQualityReceipt(params: {
       repairTriggered: params.attempts.length > 1,
     }),
   });
+}
+
+function verifyEvidenceCoverage(params: {
+  required: boolean;
+  request: QualityHarnessRequest;
+  manifest?: QualityHarnessOptions["evidenceCoverage"];
+  batches: readonly (readonly QualityHarnessRequest["evidence"][number][])[];
+  plan: LogicalAgentPlanResult<QualityHarnessStageOutput>;
+  reusedStageIds?: readonly string[];
+  attestedReusableStageIds?: ReadonlySet<string>;
+}): string[] {
+  if (!params.required) {
+    return [];
+  }
+  const issues: string[] = controllerEvidenceCoverageIssues(params.request, params.manifest);
+  const appendIdIssues = (prefix: string, ids: readonly string[]) => {
+    for (const id of ids) {
+      issues.push(`${prefix}:${id}`);
+    }
+  };
+  const selectedIds = params.request.evidence.map((entry) => entry.id);
+  const batchedIds = params.batches.flatMap((batch) => batch.map((entry) => entry.id));
+  if (
+    JSON.stringify([...batchedIds].toSorted()) !== JSON.stringify([...selectedIds].toSorted()) ||
+    new Set(batchedIds).size !== batchedIds.length
+  ) {
+    appendIdIssues("evidence_coverage_batch_partition_mismatch", selectedIds);
+  }
+  const batchesByTaskId = new Map<string, readonly string[]>();
+  for (const task of params.plan.tasks) {
+    const match = /^evidence_batch_(?:extract|review)_(\d+)$/u.exec(task.taskId);
+    const batchIndex = match ? Number(match[1]) - 1 : 0;
+    const batch = params.batches[batchIndex];
+    if (batch) {
+      batchesByTaskId.set(
+        task.taskId,
+        batch.map((entry) => entry.id),
+      );
+    }
+  }
+  const calls = params.plan.tasks.flatMap((task) => {
+    const expectedIds =
+      batchesByTaskId.get(task.taskId) ?? params.batches[0]?.map((entry) => entry.id);
+    if (!expectedIds) {
+      return [];
+    }
+    const taskCalls = (task.modelCalls ?? []).filter(
+      (call) =>
+        call.mode !== "deterministic" && call.adapterInvoked && call.outcome === "completed",
+    );
+    if (
+      taskCalls.length === 0 &&
+      params.reusedStageIds?.includes(task.taskId) &&
+      params.attestedReusableStageIds?.has(task.taskId)
+    ) {
+      return [];
+    }
+    if (/^evidence_batch_(?:extract|review)_\d+$/u.test(task.taskId) && taskCalls.length === 0) {
+      issues.push(`evidence_batch_model_call_missing:${task.taskId}`);
+    }
+    return taskCalls.map((call) => ({ call, expectedIds, taskId: task.taskId }));
+  });
+  if (calls.length === 0) {
+    issues.push("evidence_coverage_model_calls_missing");
+  }
+  for (const { call, expectedIds, taskId } of calls) {
+    const coverage = call.evidenceCoverage;
+    if (!coverage) {
+      issues.push(`evidence_coverage_attestation_missing:${taskId}`);
+      appendIdIssues("evidence_coverage_attestation_missing_id", expectedIds);
+      continue;
+    }
+    const boundary: unknown = coverage.boundary;
+    if (boundary !== "canonical_prompt") {
+      issues.push(`evidence_coverage_boundary_mismatch:${taskId}`);
+    }
+    if (
+      boundary === "canonical_prompt" &&
+      (!coverage.promptSha256 || !/^[a-f0-9]{64}$/u.test(coverage.promptSha256))
+    ) {
+      issues.push(`evidence_coverage_prompt_digest_missing:${taskId}`);
+    }
+    if (JSON.stringify(coverage.suppliedEvidenceIds) !== JSON.stringify(expectedIds)) {
+      issues.push(`evidence_coverage_supplied_ids_mismatch:${taskId}`);
+    }
+    if (JSON.stringify(coverage.includedEvidenceIds) !== JSON.stringify(expectedIds)) {
+      issues.push(`evidence_omitted_from_prompt:${taskId}`);
+      appendIdIssues("evidence_omitted_from_prompt_id", coverage.omittedEvidenceIds);
+      appendIdIssues(
+        "evidence_omitted_from_prompt_missing_id",
+        expectedIds.filter((id) => !coverage.includedEvidenceIds.includes(id)),
+      );
+    }
+    if (coverage.omittedEvidenceIds.length > 0) {
+      issues.push(`evidence_omitted_from_prompt:${taskId}`);
+      appendIdIssues("evidence_omitted_from_prompt_id", coverage.omittedEvidenceIds);
+    }
+    if (coverage.clippedEvidenceIds.length > 0) {
+      issues.push(`evidence_clipped_in_prompt:${taskId}`);
+      appendIdIssues("evidence_clipped_in_prompt_id", coverage.clippedEvidenceIds);
+    }
+  }
+  return [...new Set(issues)];
+}
+
+function controllerEvidenceCoverageIssues(
+  request: QualityHarnessRequest,
+  manifest?: QualityHarnessOptions["evidenceCoverage"],
+): string[] {
+  if (!manifest) {
+    return ["evidence_coverage_manifest_missing"];
+  }
+  const issues: string[] = [];
+  const selectedIds = request.evidence.map((entry) => entry.id);
+  const sourceIds = [...manifest.sourceEvidenceIds].toSorted();
+  const selectedAndOmitted = [
+    ...manifest.selectedEvidenceIds,
+    ...manifest.runnerOmittedEvidenceIds,
+  ].toSorted();
+  if (JSON.stringify(sourceIds) !== JSON.stringify(selectedAndOmitted)) {
+    issues.push("evidence_coverage_controller_partition_mismatch");
+  }
+  if (JSON.stringify(manifest.selectedEvidenceIds) !== JSON.stringify(selectedIds)) {
+    issues.push("evidence_coverage_selected_ids_mismatch");
+  }
+  if (manifest.runnerOmittedEvidenceIds.length > 0) {
+    issues.push(
+      ...manifest.runnerOmittedEvidenceIds.map((id) => `evidence_omitted_by_runner:${id}`),
+    );
+  }
+  if (manifest.runnerClippedEvidenceIds.length > 0) {
+    issues.push(
+      ...manifest.runnerClippedEvidenceIds.map((id) => `evidence_clipped_by_runner:${id}`),
+    );
+  }
+  return issues;
 }
 
 export async function runQualityHarness(
@@ -155,6 +325,28 @@ export async function runQualityHarness(
     throw new Error("quality harness maxAttempts must be 1 or 2");
   }
   const runId = options.createRunId?.() ?? crypto.randomUUID();
+  let evidenceBatches: readonly (readonly QualityHarnessRequest["evidence"][number][])[] = [
+    request.evidence,
+  ];
+  let auditEvidenceBatches = false;
+  let controllerPlanningIssues: string[] = [];
+  const batchPlanningIssues: string[] = [];
+  if (options.requireEvidenceCoverage) {
+    controllerPlanningIssues = controllerEvidenceCoverageIssues(request, options.evidenceCoverage);
+    if (controllerPlanningIssues.length === 0) {
+      const plan = planQualityHarnessEvidenceBatches({
+        task: request.task,
+        evidence: request.evidence,
+        sharedContext: request.sharedContext ?? {},
+      });
+      evidenceBatches = plan.batches;
+      batchPlanningIssues.push(...plan.issues);
+      auditEvidenceBatches = plan.issues.length === 0;
+      if (plan.batches.length === 0 && request.evidence.length > 0) {
+        batchPlanningIssues.push("evidence_batch_plan_empty");
+      }
+    }
+  }
   const pool = new LogicalAgentPool<QualityHarnessStageInput, QualityHarnessStageOutput>({
     allowProviderCalls: options.allowProviderCalls,
     modelId: options.modelId,
@@ -169,6 +361,7 @@ export async function runQualityHarness(
   const attempts: QualityHarnessAttemptReceipt[] = [];
   let feedback: string[] = [];
   let finalArtifact: QualityHarnessArtifact | undefined;
+  let finalCoverageIssues: string[] = [];
   let finalVerification: QualityHarnessVerification = Object.freeze({
     status: "not-requested",
     summary: "deterministic verifier was not supplied",
@@ -178,13 +371,61 @@ export async function runQualityHarness(
   // Same-run source preparation can survive a downstream transport/contract failure.
   // Never reuse draft-dependent reviews or carry a receipt across runs/evidence packets.
   const reusable = new Map<string, QualityHarnessStageOutput>();
+  const attestedReusableStageIds = new Set<string>();
+  const preflightIssues = [...controllerPlanningIssues, ...batchPlanningIssues];
+  if (preflightIssues.length > 0) {
+    const verification = normalizeQualityVerification({
+      status: "failed",
+      summary: "evidence coverage failed its bounded multi-pass preflight",
+      details: preflightIssues,
+    });
+    const attempt: QualityHarnessAttemptReceipt = Object.freeze({
+      attempt: 1,
+      status: "quality-failed",
+      planStatus: "blocked",
+      stages: Object.freeze([]),
+      reusedStageIds: Object.freeze([]),
+      gates: Object.freeze([
+        Object.freeze({
+          id: "evidence_coverage" as const,
+          passed: false,
+          reason: preflightIssues.join("; "),
+        }),
+      ]),
+      feedback: Object.freeze(preflightIssues),
+      verification,
+    });
+    return createQualityReceipt({
+      runId,
+      request,
+      pool: pool.status,
+      attempts: [attempt],
+      verification,
+      status: "quality-failed",
+      maxAttempts,
+      routed: options.modelRouting !== undefined,
+      evidenceCoverage: {
+        ...(options.evidenceCoverage ? { manifest: options.evidenceCoverage } : {}),
+        batches: controllerPlanningIssues.length > 0 ? [] : evidenceBatches,
+        issues: preflightIssues,
+      },
+    });
+  }
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const reusedStageIds: string[] = [];
     const plan = await runLogicalAgentPlan({
       pool,
       runId: `${runId}:attempt:${attempt}`,
       signal: options.signal,
-      tasks: buildQualityHarnessPlan({ runId, attempt, request, repairFeedback: feedback }),
+      tasks: buildQualityHarnessPlan({
+        runId,
+        attempt,
+        request,
+        evidenceBatches,
+        auditEvidenceBatches,
+        evidenceCoverage: options.evidenceCoverage,
+        repairFeedback: feedback,
+      }),
       finalTaskId: "final_precheck",
       executor: (context) => {
         const cached = reusable.get(context.task.id);
@@ -196,14 +437,40 @@ export async function runQualityHarness(
       },
       sharedContext: request.sharedContext ?? {},
     });
-    const quality = evaluateQuality(plan, request);
+    const evaluatedQuality = evaluateQuality(plan, request, evidenceBatches, auditEvidenceBatches);
+    const coverageIssues = verifyEvidenceCoverage({
+      required: options.requireEvidenceCoverage === true,
+      request,
+      manifest: options.evidenceCoverage,
+      batches: evidenceBatches,
+      plan,
+      reusedStageIds,
+      attestedReusableStageIds,
+    });
+    finalCoverageIssues = coverageIssues;
+    const quality = coverageIssues.length
+      ? Object.freeze({
+          ...evaluatedQuality,
+          passed: false,
+          gates: Object.freeze([
+            ...evaluatedQuality.gates,
+            Object.freeze({
+              id: "evidence_coverage" as const,
+              passed: false,
+              reason: coverageIssues.join("; "),
+            }),
+          ]),
+        })
+      : evaluatedQuality;
     finalArtifact = quality.artifact ?? finalArtifact;
     let verification = normalizeQualityVerification({
-      status: "not-requested",
-      summary: options.verify
-        ? "quality gates did not pass"
-        : "deterministic verifier was not supplied",
-      details: [],
+      status: coverageIssues.length > 0 ? "failed" : "not-requested",
+      summary: coverageIssues.length
+        ? "quality evidence coverage is incomplete"
+        : options.verify
+          ? "quality gates did not pass"
+          : "deterministic verifier was not supplied",
+      details: coverageIssues,
     });
     if (quality.passed && quality.artifact && options.verify) {
       verification = await runQualityVerifier(
@@ -246,6 +513,37 @@ export async function runQualityHarness(
         status: options.verify ? "verified" : "completed-unverified",
         maxAttempts,
         routed: options.modelRouting !== undefined,
+        ...(options.requireEvidenceCoverage
+          ? {
+              evidenceCoverage: {
+                ...(options.evidenceCoverage ? { manifest: options.evidenceCoverage } : {}),
+                batches: evidenceBatches,
+                issues: coverageIssues,
+              },
+            }
+          : {}),
+      });
+    }
+    if (coverageIssues.length > 0) {
+      return createQualityReceipt({
+        runId,
+        request,
+        pool: pool.status,
+        attempts,
+        ...(quality.artifact ? { artifact: quality.artifact } : {}),
+        verification,
+        status: "quality-failed",
+        maxAttempts,
+        routed: options.modelRouting !== undefined,
+        ...(options.requireEvidenceCoverage
+          ? {
+              evidenceCoverage: {
+                ...(options.evidenceCoverage ? { manifest: options.evidenceCoverage } : {}),
+                batches: evidenceBatches,
+                issues: coverageIssues,
+              },
+            }
+          : {}),
       });
     }
     reusable.clear();
@@ -255,11 +553,15 @@ export async function runQualityHarness(
         task.status === "failed",
     );
     if (downstreamFailed && !options.signal?.aborted) {
-      const preparation = plan.tasks.filter((task) =>
-        ["data_cleaning", "financial_extraction", "news_classification"].includes(task.agentId),
-      );
+      const preparationIds = new Set([
+        "data_cleaning",
+        "financial_extraction",
+        "news_classification",
+        ...evidenceBatches.slice(1).map((_, index) => `evidence_batch_extract_${index + 2}`),
+      ]);
+      const preparation = plan.tasks.filter((task) => preparationIds.has(task.taskId));
       if (
-        preparation.length === 3 &&
+        preparation.length === preparationIds.size &&
         preparation.every(
           (task) =>
             task.status === "completed" &&
@@ -268,12 +570,24 @@ export async function runQualityHarness(
               (task.output?.kind === "review" &&
                 task.output.review.verdict === "pass" &&
                 task.output.review.criticalFindings.length === 0 &&
-                task.output.review.evidenceGaps.length === 0)),
+                task.output.review.evidenceGaps.length === 0 &&
+                (task.taskId.startsWith("evidence_batch_extract_")
+                  ? evidenceBatches[
+                      Number(task.taskId.slice("evidence_batch_extract_".length)) - 1
+                    ]?.every(
+                      (entry) =>
+                        task.output?.kind === "review" &&
+                        task.output.review.notes.some((note) => note.includes(`[${entry.id}]`)),
+                    )
+                  : true))),
         )
       ) {
         for (const task of preparation) {
           if (task.output) {
             reusable.set(task.taskId, task.output);
+            if (coverageIssues.length === 0) {
+              attestedReusableStageIds.add(task.taskId);
+            }
           }
         }
       }
@@ -303,5 +617,14 @@ export async function runQualityHarness(
     status,
     maxAttempts,
     routed: options.modelRouting !== undefined,
+    ...(options.requireEvidenceCoverage
+      ? {
+          evidenceCoverage: {
+            ...(options.evidenceCoverage ? { manifest: options.evidenceCoverage } : {}),
+            batches: evidenceBatches,
+            issues: finalCoverageIssues,
+          },
+        }
+      : {}),
   });
 }

@@ -71,6 +71,439 @@ export function findUncitedFinanceInstruments(
   return missing;
 }
 
+/**
+ * Rejects narrow scope mismatches that can be identified from structured controller evidence:
+ * instrument fill counts sourced from account aggregates, execution claims based on an empty
+ * decision log while broker fills remain unattributed, instrument fee-loss causation when cited
+ * controller records leave fees unallocated, and multi-rule scope claims that cannot be attributed.
+ */
+export function findUnsupportedFinanceClaimScope(
+  evidence: readonly { id: string; text?: string }[],
+  claims: QualityHarnessArtifact["claims"],
+  declaredInstruments: readonly string[] = [],
+): readonly string[] {
+  const instruments = new Map(
+    financeInstrumentCitationScope(evidence).map((entry) => [entry.instrument, entry] as const),
+  );
+  for (const value of declaredInstruments) {
+    const instrument = value.trim();
+    if (!instrument || instruments.has(instrument)) {
+      continue;
+    }
+    const escaped = instrument.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    instruments.set(instrument, {
+      instrument,
+      canonicalId: `finance-model:${encodeURIComponent(instrument)}`,
+      pattern: new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "iu"),
+      evidenceIds: [],
+    });
+  }
+  const problems = [...findAmbiguousFinanceRuleScopeClaims(evidence, claims)];
+  for (const claim of claims) {
+    if (claim.status !== "supported") {
+      continue;
+    }
+    const namedInstruments = [...instruments.values()].filter((entry) =>
+      entry.pattern.test(claim.text),
+    );
+    if (namedInstruments.length === 0) {
+      continue;
+    }
+    const cited = evidence.filter((entry) => claim.evidenceIds.includes(entry.id));
+    const citedText = cited.map((entry) => entry.text ?? "").join("\n");
+    const claimFill = parseInstrumentFillClaim(claim.text);
+    const citesAccountAggregate = cited.some(
+      (entry) =>
+        entry.id.startsWith("finance-night:broker-profit:") &&
+        /\b(?:buyFills|sellFills|unattributedFillCount|matchedLots|netMatchedPnl)\b|账户汇总|买入成交数|卖出成交数|未归因成交数/iu.test(
+          entry.text ?? "",
+        ),
+    );
+    const hasInstrumentFillBridge =
+      claimFill !== undefined &&
+      cited.some(
+        (entry) =>
+          typeof entry.text === "string" &&
+          namedInstruments.some(
+            (instrument) =>
+              structuredInstrumentFillCount(entry.text!, instrument.instrument, claimFill.side) ===
+              claimFill.count,
+          ),
+      );
+    if (claimFill !== undefined && citesAccountAggregate && !hasInstrumentFillBridge) {
+      for (const entry of namedInstruments) {
+        problems.push(
+          `${claim.id}:${entry.canonicalId}:instrument_fill_claim_cites_account_aggregate_only`,
+        );
+      }
+      continue;
+    }
+
+    if (claimFill === undefined && claimsNoInstrumentExecution(claim.text)) {
+      const hasEmptyDecisionLog = cited.some(hasEmptyIntradayDecisionLog);
+      const hasUnattributedBrokerFills = cited.some(hasPositiveUnattributedBrokerFills);
+      if (hasEmptyDecisionLog && hasUnattributedBrokerFills) {
+        for (const instrument of namedInstruments) {
+          const scopedFillCounts = cited
+            .map((entry) => {
+              if (typeof entry.text !== "string") {
+                return undefined;
+              }
+              const buy = structuredInstrumentFillCount(entry.text, instrument.instrument, "buy");
+              const sell = structuredInstrumentFillCount(entry.text, instrument.instrument, "sell");
+              return buy === undefined && sell === undefined ? undefined : { buy, sell };
+            })
+            .filter(
+              (counts): counts is { buy: number | undefined; sell: number | undefined } =>
+                counts !== undefined,
+            );
+          if (scopedFillCounts.some((counts) => (counts.buy ?? 0) > 0 || (counts.sell ?? 0) > 0)) {
+            problems.push(
+              `${claim.id}:${instrument.canonicalId}:no_execution_claim_conflicts_with_instrument_fills`,
+            );
+          } else if (!scopedFillCounts.some((counts) => counts.buy === 0 && counts.sell === 0)) {
+            problems.push(
+              `${claim.id}:${instrument.canonicalId}:empty_intraday_decisions_do_not_establish_zero_instrument_fills`,
+            );
+          }
+        }
+      }
+    }
+
+    const hasInstrumentFeeBridge = cited.some(
+      (entry) =>
+        typeof entry.text === "string" &&
+        namedInstruments.some(
+          (instrument) =>
+            hasStructuredInstrumentRef(entry.text!, instrument.instrument) &&
+            /["'](?:feeAmount|fees|costAmount|手续费|费用)["']\s*[:：]/iu.test(entry.text!) &&
+            /["'](?:allocated|attributed|已分配|已归因)["']\s*:\s*true/iu.test(entry.text!) &&
+            !/unallocated|未分配|未归因/iu.test(entry.text!),
+        ),
+    );
+    const isInstrumentFeeLossCausation =
+      /\b(?:fee|fees|cost|costs)\b|手续费|费用|成本/iu.test(claim.text) &&
+      /\b(?:caus(?:e|es|ed|ing)|reduc(?:e|es|ed|ing)|increas(?:e|es|ed|ing)|impact(?:s|ed|ing)?)\b|导致|造成|引发|减少|增加|推高|压低|侵蚀/iu.test(
+        claim.text,
+      ) &&
+      /\b(?:loss|losses|net\s+(?:pnl|profit)|profit)\b|亏损|损失|净利润|净收益|利润|盈利/iu.test(
+        claim.text,
+      ) &&
+      /\b(?:unallocated|not\s+reconciled)\b|未分配|未归因|未对账|尚未对账/iu.test(citedText) &&
+      !hasInstrumentFeeBridge;
+    if (isInstrumentFeeLossCausation) {
+      for (const entry of namedInstruments) {
+        problems.push(
+          `${claim.id}:${entry.canonicalId}:instrument_fee_loss_claim_lacks_attributed_fee_bridge`,
+        );
+      }
+    }
+  }
+  return problems;
+}
+
+/**
+ * Provenance labels belong to individual strategy rules. Require a supported claim that discusses
+ * scope or return validation to name only one rule when it cites a multi-rule ledger record.
+ */
+function findAmbiguousFinanceRuleScopeClaims(
+  evidence: readonly { id: string; text?: string }[],
+  claims: QualityHarnessArtifact["claims"],
+): readonly string[] {
+  const scopeTerms =
+    /\bresearch[_ -]only\b|\bread\s*scope\b|\breturn[ -]+validat(?:ion|ed)\b|仅研究|研究专用|数据范围|收益验证|回报验证/iu;
+  const problems: string[] = [];
+  for (const claim of claims) {
+    if (claim.status !== "supported" || !scopeTerms.test(claim.text)) {
+      continue;
+    }
+    for (const entry of evidence) {
+      if (!entry.id.startsWith("finance-night:rules:") || !claim.evidenceIds.includes(entry.id)) {
+        continue;
+      }
+      const referencedRuleIds = new Set(
+        financeRuleIds(entry.text).filter((ruleId) => claim.text.includes(ruleId)),
+      );
+      if (referencedRuleIds.size > 1) {
+        problems.push(`${claim.id}:${entry.id}:multi_rule_scope_claim_requires_split`);
+      }
+    }
+  }
+  return problems;
+}
+
+function financeRuleIds(text: string | undefined): readonly string[] {
+  if (typeof text !== "string") {
+    return [];
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return [];
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return [];
+  }
+  const activeRules = (parsed as Record<string, unknown>).activeRules;
+  if (!Array.isArray(activeRules)) {
+    return [];
+  }
+  return activeRules.flatMap((rule) => {
+    if (typeof rule !== "object" || rule === null || Array.isArray(rule)) {
+      return [];
+    }
+    const ruleId = (rule as Record<string, unknown>).ruleId;
+    return typeof ruleId === "string" && ruleId.length > 0 ? [ruleId] : [];
+  });
+}
+
+function claimsNoInstrumentExecution(text: string): boolean {
+  return (
+    /\b(?:no|zero|none)\b[^.!?\n]{0,100}\b(?:trades?|fills?|executions?)\b[^.!?\n]{0,40}\b(?:executed|occurred|recorded|filled)\b/iu.test(
+      text,
+    ) ||
+    /(?:没有|无|零)[^。！？;\n]{0,30}(?:交易|成交|执行)[^。！？;\n]{0,16}(?:执行|发生|记录)/u.test(
+      text,
+    )
+  );
+}
+
+function hasEmptyIntradayDecisionLog(entry: { id: string; text?: string }): boolean {
+  if (!entry.id.startsWith("finance-night:intraday:") || typeof entry.text !== "string") {
+    return false;
+  }
+  let root: unknown;
+  try {
+    root = JSON.parse(entry.text) as unknown;
+  } catch {
+    return false;
+  }
+  return hasEmptyArrayField(root, "decisions");
+}
+
+function hasEmptyArrayField(value: unknown, field: string): boolean {
+  if (Array.isArray(value)) {
+    return value.some((item) => hasEmptyArrayField(item, field));
+  }
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  if (Array.isArray(record[field]) && record[field].length === 0) {
+    return true;
+  }
+  return Object.values(record).some((child) => hasEmptyArrayField(child, field));
+}
+
+function hasPositiveUnattributedBrokerFills(entry: { id: string; text?: string }): boolean {
+  if (!entry.id.startsWith("finance-night:broker-profit:") || typeof entry.text !== "string") {
+    return false;
+  }
+  try {
+    return hasPositiveCountField(JSON.parse(entry.text) as unknown, "unattributedFillCount");
+  } catch {
+    return /["']?unattributedFillCount["']?\s*[:=]\s*["']?[1-9]\d*/iu.test(entry.text);
+  }
+}
+
+function hasPositiveCountField(value: unknown, field: string): boolean {
+  if (Array.isArray(value)) {
+    return value.some((item) => hasPositiveCountField(item, field));
+  }
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  const count = parseStructuredCount(record[field]);
+  return (
+    (count !== undefined && count > 0) ||
+    Object.values(record).some((child) => hasPositiveCountField(child, field))
+  );
+}
+
+function hasStructuredInstrumentRef(text: string, instrument: string): boolean {
+  const escaped = instrument.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const value = `(?:${escaped}|${encodeURIComponent(instrument)})`;
+  return new RegExp(
+    `(?:["'](?:instrument|symbol|ticker|证券代码|标的)["']\\s*:\\s*["']${value}["'])`,
+    "iu",
+  ).test(text);
+}
+
+function parseInstrumentFillClaim(
+  text: string,
+): { side: "buy" | "sell"; count: number } | undefined {
+  const side = /\b(?:buy|purchase)\s+fills?\b|买入(?:成交|成交笔数|成交记录)/iu.test(text)
+    ? "buy"
+    : /\b(?:sell|sale)\s+fills?\b|卖出(?:成交|成交笔数|成交记录)/iu.test(text)
+      ? "sell"
+      : undefined;
+  if (side === undefined) {
+    return undefined;
+  }
+
+  const zero = /\b(?:zero|no|none)\b|零(?:笔|个)?|无(?:任何)?|没有|未有/iu.test(text);
+  if (zero) {
+    return { side, count: 0 };
+  }
+  const digit = text.match(/\b(\d+)\b/u)?.[1];
+  if (digit !== undefined) {
+    return { side, count: Number(digit) };
+  }
+  const englishNumber = text
+    .match(/\b(one|two|three|four|five|six|seven|eight|nine|ten)\b/iu)?.[1]
+    ?.toLowerCase();
+  const englishCounts: Readonly<Record<string, number>> = {
+    one: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+    six: 6,
+    seven: 7,
+    eight: 8,
+    nine: 9,
+    ten: 10,
+  };
+  if (englishNumber !== undefined) {
+    return { side, count: englishCounts[englishNumber] };
+  }
+  const chineseNumber = text.match(/[一二三四五六七八九十]+\s*(?:笔|个)?/u)?.[0]?.trim();
+  const count = chineseNumber === undefined ? undefined : parseChineseCount(chineseNumber);
+  return count === undefined ? undefined : { side, count };
+}
+
+function parseChineseCount(value: string): number | undefined {
+  const digitValues: Readonly<Record<string, number>> = {
+    一: 1,
+    二: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    七: 7,
+    八: 8,
+    九: 9,
+  };
+  const text = value.replace(/(?:笔|个)/gu, "");
+  if (text === "十") {
+    return 10;
+  }
+  if (text.startsWith("十")) {
+    const ones = digitValues[text.slice(1)];
+    return ones === undefined ? undefined : 10 + ones;
+  }
+  if (text.endsWith("十")) {
+    const tens = digitValues[text.slice(0, -1)];
+    return tens === undefined ? undefined : tens * 10;
+  }
+  return digitValues[text];
+}
+
+function structuredInstrumentFillCount(
+  text: string,
+  instrument: string,
+  side: "buy" | "sell",
+): number | undefined {
+  let root: unknown;
+  try {
+    root = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  const countKeys =
+    side === "buy"
+      ? ["buyFills", "buyFillCount", "买入成交数"]
+      : ["sellFills", "sellFillCount", "卖出成交数"];
+  const rowKeys = ["fills", "fillRows", "成交记录"];
+  const sideKeys = ["side", "orderSide", "direction", "买卖方向"];
+  const instrumentKeys = ["instrument", "symbol", "ticker", "证券代码", "标的"];
+  const desiredSide = side === "buy" ? /^(?:buy|purchase|买入)$/iu : /^(?:sell|sale|卖出)$/iu;
+  const visit = (value: unknown, inheritedScope: boolean): number | undefined => {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const result = visit(item, inheritedScope);
+        if (result !== undefined) {
+          return result;
+        }
+      }
+      return undefined;
+    }
+    if (typeof value !== "object" || value === null) {
+      return undefined;
+    }
+    const record = value as Record<string, unknown>;
+    const explicitInstrument = instrumentKeys
+      .map((key) => record[key])
+      .find((item): item is string => typeof item === "string");
+    const scoped =
+      inheritedScope ||
+      (explicitInstrument !== undefined &&
+        normalizeInstrument(explicitInstrument).toLowerCase() === instrument.toLowerCase());
+    if (scoped) {
+      for (const key of countKeys) {
+        const count = parseStructuredCount(record[key]);
+        if (count !== undefined) {
+          return count;
+        }
+      }
+      for (const key of rowKeys) {
+        const rows = record[key];
+        if (!Array.isArray(rows) || rows.length === 0) {
+          continue;
+        }
+        let matched = 0;
+        for (const row of rows) {
+          if (typeof row !== "object" || row === null) {
+            continue;
+          }
+          const fill = row as Record<string, unknown>;
+          const rowInstrument = instrumentKeys
+            .map((item) => fill[item])
+            .find((item): item is string => typeof item === "string");
+          if (
+            rowInstrument !== undefined &&
+            normalizeInstrument(rowInstrument).toLowerCase() !== instrument.toLowerCase()
+          ) {
+            continue;
+          }
+          const rowSide = sideKeys
+            .map((item) => fill[item])
+            .find((item): item is string => typeof item === "string");
+          if (rowSide !== undefined && desiredSide.test(rowSide)) {
+            matched += 1;
+          }
+        }
+        if (matched > 0) {
+          return matched;
+        }
+      }
+    }
+    for (const child of Object.values(record)) {
+      const result = visit(child, scoped);
+      if (result !== undefined) {
+        return result;
+      }
+    }
+    return undefined;
+  };
+  return visit(root, false);
+}
+
+function normalizeInstrument(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function parseStructuredCount(value: unknown): number | undefined {
+  const number = typeof value === "string" && /^\d+$/u.test(value) ? Number(value) : value;
+  return typeof number === "number" && Number.isInteger(number) && number >= 0 ? number : undefined;
+}
+
 function number(value: unknown): number | undefined {
   if (typeof value === "string" && /^[+-]?\d+(\.\d+)?$/u.test(value.trim())) {
     value = Number(value);

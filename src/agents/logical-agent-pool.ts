@@ -7,6 +7,7 @@ import {
   type ModelCallReceipt,
 } from "./logical-agent-model-router.js";
 export type { LogicalAgentModelRouting, ModelCallReceipt } from "./logical-agent-model-router.js";
+export type { ModelEvidenceCoverage } from "./logical-agent-model-router.js";
 import { stableStringify } from "./stable-stringify.js";
 
 /** Summarize invoked adapters, retaining failed attempts and provider distinctions. */

@@ -28,6 +28,7 @@ import {
   type LocalTextModelRuntimeConfig,
 } from "../../src/agents/local-text-model-adapter.ts";
 import type { LogicalAgentModelRouting } from "../../src/agents/logical-agent-model-router.ts";
+import { QUALITY_HARNESS_MAX_EVIDENCE_ITEMS } from "../../src/agents/quality-harness-contract.ts";
 import { loadConfig } from "../../src/config/config.ts";
 import { runCheckpointedFinanceResearch } from "./lcx-finance-research-checkpoint-run.ts";
 import { DEFAULT_WORKSPACE_DIR } from "./lcx-local-paths.ts";
@@ -43,7 +44,7 @@ const MAX_RESEARCH_ASK_BYTES = 32_768;
 const MAX_MODEL_TOKENS = 16_384;
 const MAX_MODEL_TIMEOUT_MS = 2_147_483_647;
 // The local adapter compacts evidence and dependency output before prompting; allow the
-// router to receive the contract's bounded 48-item quality packet before that compaction.
+// router to receive the contract's bounded 64-item quality packet before that compaction.
 export const QUALITY_ROUTER_MAX_INPUT_BYTES = 1_000_000;
 
 type Options = {
@@ -755,7 +756,10 @@ export async function run(options: Options): Promise<{
       const proposals = validateFinanceResearchThesisProposals({
         value: artifact?.supportingAnalysis?.financeThesisProposals,
         claims: artifact?.claims ?? [],
-        evidence: (receipt.batch?.committeeEvidence ?? []).slice(0, 48),
+        evidence: (receipt.batch?.committeeEvidence ?? []).slice(
+          0,
+          QUALITY_HARNESS_MAX_EVIDENCE_ITEMS,
+        ),
         instruments: receipt.plan.targets.map((target) => target.instrument),
         asOf,
         receiptReference: written.datedPath,

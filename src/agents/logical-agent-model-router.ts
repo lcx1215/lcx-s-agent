@@ -52,6 +52,17 @@ export type ModelCallObservation = Readonly<{
   outputNormalization?: "terminal_delimiters" | "json_extraction";
   credentialSource?: "configuration" | "environment" | "auth_profile";
   reasoningEffort?: "low" | "high" | "max";
+  /** Adapter-authored evidence coverage for the exact request boundary. */
+  evidenceCoverage?: ModelEvidenceCoverage;
+}>;
+
+export type ModelEvidenceCoverage = Readonly<{
+  boundary: "canonical_prompt";
+  suppliedEvidenceIds: readonly string[];
+  includedEvidenceIds: readonly string[];
+  omittedEvidenceIds: readonly string[];
+  clippedEvidenceIds: readonly string[];
+  promptSha256?: string;
 }>;
 
 export type LogicalAgentModelAdapter = Readonly<{
@@ -125,6 +136,7 @@ export type ModelCallReceipt = Readonly<{
   outputNormalization?: "terminal_delimiters" | "json_extraction";
   credentialSource?: "configuration" | "environment" | "auth_profile";
   reasoningEffort?: "low" | "high" | "max";
+  evidenceCoverage?: ModelEvidenceCoverage;
   workload?: string;
   outputContractRevision?: string;
   qualificationId?: string;
@@ -495,6 +507,9 @@ export class LogicalAgentModelRouter {
               : {}),
             ...(observation?.outputNormalization
               ? { outputNormalization: observation.outputNormalization }
+              : {}),
+            ...(observation?.evidenceCoverage
+              ? { evidenceCoverage: observation.evidenceCoverage }
               : {}),
             ...(observation
               ? {

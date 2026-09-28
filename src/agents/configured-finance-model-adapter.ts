@@ -6,7 +6,7 @@ import {
   resolveAuthProfileOrder,
   type AuthProfileStore,
 } from "./auth-profiles.js";
-import { buildQualityHarnessModelPrompt } from "./local-text-model-adapter.js";
+import { buildQualityHarnessModelPromptWithCoverage } from "./local-text-model-adapter.js";
 import {
   ModelAdapterError,
   type LogicalAgentModelAdapter,
@@ -182,6 +182,7 @@ export function createConfiguredFinanceModelAdapter(
       normalized?: boolean;
       reasoningEffort?: "low" | "high" | "max";
       credentialSource: "configuration" | "environment" | "auth_profile";
+      evidenceCoverage?: ModelCallObservation["evidenceCoverage"];
     }
   >();
   return {
@@ -209,9 +210,17 @@ export function createConfiguredFinanceModelAdapter(
       }
       options.callBudget?.reserve();
       calls += 1;
-      const promptText = options.buildPrompt
-        ? options.buildPrompt(request.payload)
-        : buildQualityHarnessModelPrompt(request.payload as QualityHarnessModelRequest);
+      let promptText: string;
+      let evidenceCoverage: ModelCallObservation["evidenceCoverage"];
+      if (options.buildPrompt) {
+        promptText = options.buildPrompt(request.payload);
+      } else {
+        const built = buildQualityHarnessModelPromptWithCoverage(
+          request.payload as QualityHarnessModelRequest,
+        );
+        promptText = built.prompt;
+        evidenceCoverage = built.evidenceCoverage;
+      }
       const trajectoryTicket = recordModelRequestStart({
         source: options.trajectorySource ?? "finance_engine",
         provider,
@@ -274,6 +283,7 @@ export function createConfiguredFinanceModelAdapter(
           id: response.id,
           credentialSource: auth.source,
           ...(reasoningEffort ? { reasoningEffort } : {}),
+          ...(evidenceCoverage ? { evidenceCoverage } : {}),
         });
       }
       const choice = response.choices?.[0];
@@ -297,6 +307,7 @@ export function createConfiguredFinanceModelAdapter(
               normalized: true,
               credentialSource: auth.source,
               ...(reasoningEffort ? { reasoningEffort } : {}),
+              ...(evidenceCoverage ? { evidenceCoverage } : {}),
             });
           }
           return value;
@@ -319,6 +330,7 @@ export function createConfiguredFinanceModelAdapter(
         kind: "provider_call",
         credentialSource: observation.credentialSource,
         ...(observation.reasoningEffort ? { reasoningEffort: observation.reasoningEffort } : {}),
+        ...(observation.evidenceCoverage ? { evidenceCoverage: observation.evidenceCoverage } : {}),
         ...(observation.normalized ? { outputNormalization: "terminal_delimiters" as const } : {}),
       };
     },

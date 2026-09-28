@@ -6,6 +6,7 @@ import {
   buildFinanceResearchModelEvidence,
   summarizeFinancePriceHistory,
   findUncitedFinanceInstruments,
+  findUnsupportedFinanceClaimScope,
   rankFinanceWindowDrawdowns,
 } from "./finance-research-evidence.js";
 const row = (
@@ -135,6 +136,427 @@ describe("finance price arithmetic before model prompting", () => {
         "position:finance-model:SPY",
       ]);
     }
+  });
+
+  it("rejects instrument fill claims backed only by account aggregates, even with a price citation", () => {
+    const evidence = [
+      { id: "finance-model:SPY", text: "SPY price series" },
+      {
+        id: "finance-night:broker-profit:2026-09-28",
+        text: "Account totals: buyFills=3; unattributedFillCount=3. Requested review: SPY",
+      },
+    ];
+    const claim = {
+      id: "spy-buys",
+      text: "Three SPY buy fills are recorded",
+      status: "supported" as const,
+      evidenceIds: evidence.map((item) => item.id),
+      evidenceRelations: evidence.map((item) => ({
+        evidenceId: item.id,
+        relation: "supports" as const,
+      })),
+    };
+    expect(findUnsupportedFinanceClaimScope(evidence, [claim])).toEqual([
+      "spy-buys:finance-model:SPY:instrument_fill_claim_cites_account_aggregate_only",
+    ]);
+  });
+
+  it("rejects broker aggregate fill attribution without a finance-model packet when the target is declared", () => {
+    const evidence = [
+      {
+        id: "finance-night:broker-profit:2026-09-28",
+        text: "Account totals: buyFills=3; unattributedFillCount=3.",
+      },
+    ];
+    const claim = {
+      id: "spy-buys-no-price",
+      text: "Three SPY buy fills are recorded",
+      status: "supported" as const,
+      evidenceIds: [evidence[0].id],
+    };
+    expect(findUnsupportedFinanceClaimScope(evidence, [claim], ["SPY"])).toEqual([
+      "spy-buys-no-price:finance-model:SPY:instrument_fill_claim_cites_account_aggregate_only",
+    ]);
+  });
+
+  it("does not accept a ticker context sentence as an instrument-specific fill bridge", () => {
+    const evidence = [
+      { id: "finance-model:SPY", text: "SPY price series" },
+      {
+        id: "finance-night:broker-profit:2026-09-28",
+        text: "Account totals: buyFills=3; unattributedFillCount=3.",
+      },
+      { id: "news", text: "SPY has three buy fills according to the review context." },
+    ];
+    const claim = {
+      id: "spy-buys-context",
+      text: "Three SPY buy fills are recorded",
+      status: "supported" as const,
+      evidenceIds: evidence.map((item) => item.id),
+    };
+    expect(findUnsupportedFinanceClaimScope(evidence, [claim])).toHaveLength(1);
+    expect(
+      findUnsupportedFinanceClaimScope(
+        [
+          ...evidence,
+          {
+            id: "fills",
+            text: '{"instrument":"SPY","fills":[{"side":"buy"},{"side":"buy"},{"side":"buy"}]}',
+          },
+        ],
+        [{ ...claim, evidenceIds: [...claim.evidenceIds, "fills"] }],
+      ),
+    ).toEqual([]);
+    expect(
+      findUnsupportedFinanceClaimScope(
+        [
+          ...evidence,
+          {
+            id: "spy-fills",
+            text: '{"instrument":"SPY","buyFills":3}',
+          },
+        ],
+        [{ ...claim, evidenceIds: [...claim.evidenceIds, "spy-fills"] }],
+      ),
+    ).toEqual([]);
+  });
+
+  it("rejects zero-count sell claims in English and Chinese", () => {
+    const evidence = [
+      { id: "finance-model:SPY", text: "SPY price series" },
+      {
+        id: "finance-night:broker-profit:2026-09-28",
+        text: "Account totals: sellFills=0; unattributedFillCount=3.",
+      },
+    ];
+    const claims = [
+      {
+        id: "spy-zero-sells",
+        text: "Zero SPY sell fills were recorded",
+        status: "supported" as const,
+        evidenceIds: evidence.map((item) => item.id),
+      },
+      {
+        id: "spy-no-sells",
+        text: "No SPY sell fills were recorded",
+        status: "supported" as const,
+        evidenceIds: evidence.map((item) => item.id),
+      },
+      {
+        id: "spy-cn-no-sells",
+        text: "SPY 没有卖出成交",
+        status: "supported" as const,
+        evidenceIds: evidence.map((item) => item.id),
+      },
+      {
+        id: "spy-cn-zero-sells",
+        text: "SPY 零笔卖出成交",
+        status: "supported" as const,
+        evidenceIds: evidence.map((item) => item.id),
+      },
+    ];
+    expect(findUnsupportedFinanceClaimScope(evidence, claims)).toEqual(
+      claims.map(
+        (claim) =>
+          `${claim.id}:finance-model:SPY:instrument_fill_claim_cites_account_aggregate_only`,
+      ),
+    );
+  });
+
+  it("does not infer zero instrument executions from an empty decision log and unattributed fills", () => {
+    const evidence = [
+      { id: "finance-night:intraday:2026-09-27", text: '{"decisions":[]}' },
+      {
+        id: "finance-night:broker-profit:2026-09-27",
+        text: JSON.stringify({
+          accounts: [
+            {
+              buyFills: 3,
+              sellFills: 0,
+              attributedFillCount: 0,
+              unattributedFillCount: 3,
+            },
+          ],
+        }),
+      },
+    ];
+    const claim = {
+      id: "no-spy-execution",
+      text: "No controller-authorized SPY trades executed on 2026-09-27",
+      status: "supported" as const,
+      evidenceIds: evidence.map((entry) => entry.id),
+      evidenceRelations: evidence.map((entry) => ({
+        evidenceId: entry.id,
+        relation: "supports" as const,
+      })),
+    };
+
+    expect(findUnsupportedFinanceClaimScope(evidence, [claim], ["SPY"])).toEqual([
+      "no-spy-execution:finance-model:SPY:empty_intraday_decisions_do_not_establish_zero_instrument_fills",
+    ]);
+    expect(
+      findUnsupportedFinanceClaimScope(evidence, [{ ...claim, status: "uncertain" }], ["SPY"]),
+    ).toEqual([]);
+
+    const withInstrumentFill = [
+      ...evidence,
+      {
+        id: "finance-night:broker-profit:instrument-detail",
+        text: '{"accounts":[{"instruments":[{"instrument":"SPY","buyFills":1,"sellFills":0}]}]}',
+      },
+    ];
+    const claimWithInstrumentFill = {
+      ...claim,
+      evidenceIds: withInstrumentFill.map((entry) => entry.id),
+      evidenceRelations: withInstrumentFill.map((entry) => ({
+        evidenceId: entry.id,
+        relation: "supports" as const,
+      })),
+    };
+    expect(
+      findUnsupportedFinanceClaimScope(withInstrumentFill, [claimWithInstrumentFill], ["SPY"]),
+    ).toEqual([
+      "no-spy-execution:finance-model:SPY:no_execution_claim_conflicts_with_instrument_fills",
+    ]);
+  });
+
+  it("only accepts instrument fill bridges whose structured side and count match the claim", () => {
+    const evidence = [
+      { id: "finance-model:SPY", text: "SPY price series" },
+      {
+        id: "finance-night:broker-profit:2026-09-28",
+        text: "Account totals: buyFills=3; unattributedFillCount=3.",
+      },
+      { id: "empty", text: '{"instrument":"SPY","fills":[]}' },
+      {
+        id: "wrong-count",
+        text: '{"instrument":"SPY","fills":[{"side":"buy"},{"side":"buy"}]}',
+      },
+      {
+        id: "wrong-side",
+        text: '{"instrument":"SPY","fills":[{"side":"sell"},{"side":"sell"},{"side":"sell"}]}',
+      },
+      {
+        id: "wrong-count-field",
+        text: '{"instrument":"SPY","buyFills":2}',
+      },
+    ];
+    const claim = {
+      id: "spy-buys-matched",
+      text: "Three SPY buy fills are recorded",
+      status: "supported" as const,
+      evidenceIds: evidence.map((item) => item.id),
+    };
+    for (const id of ["empty", "wrong-count", "wrong-side", "wrong-count-field"]) {
+      expect(
+        findUnsupportedFinanceClaimScope(evidence, [
+          {
+            ...claim,
+            evidenceIds: ["finance-model:SPY", "finance-night:broker-profit:2026-09-28", id],
+          },
+        ]),
+      ).toEqual([
+        "spy-buys-matched:finance-model:SPY:instrument_fill_claim_cites_account_aggregate_only",
+      ]);
+    }
+    expect(
+      findUnsupportedFinanceClaimScope(evidence, [
+        {
+          ...claim,
+          evidenceIds: ["finance-model:SPY", "finance-night:broker-profit:2026-09-28"],
+        },
+      ]),
+    ).toEqual([
+      "spy-buys-matched:finance-model:SPY:instrument_fill_claim_cites_account_aggregate_only",
+    ]);
+    expect(
+      findUnsupportedFinanceClaimScope(
+        [
+          ...evidence,
+          {
+            id: "matching-rows",
+            text: '{"instrument":"SPY","fills":[{"side":"buy"},{"side":"buy"},{"side":"buy"}]}',
+          },
+          { id: "matching-count", text: '{"instrument":"SPY","buyFills":3}' },
+        ],
+        [
+          {
+            ...claim,
+            evidenceIds: [
+              "finance-model:SPY",
+              "finance-night:broker-profit:2026-09-28",
+              "matching-rows",
+              "matching-count",
+            ],
+          },
+        ],
+      ),
+    ).toEqual([]);
+  });
+
+  it("recognizes Chinese fill and fee-loss counterexamples", () => {
+    const evidence = [
+      { id: "finance-model:SPY", text: "SPY price series" },
+      {
+        id: "finance-night:broker-profit:2026-09-28",
+        text: "账户汇总：买入成交数=3，未归因成交数=3；两笔手续费未分配。",
+      },
+    ];
+    const claims = [
+      {
+        id: "spy-cn-fills",
+        text: "SPY 有三笔买入成交",
+        status: "supported" as const,
+        evidenceIds: evidence.map((item) => item.id),
+      },
+      {
+        id: "spy-cn-loss",
+        text: "未分配手续费导致 SPY 亏损",
+        status: "supported" as const,
+        evidenceIds: evidence.map((item) => item.id),
+      },
+    ];
+    expect(findUnsupportedFinanceClaimScope(evidence, claims)).toEqual([
+      "spy-cn-fills:finance-model:SPY:instrument_fill_claim_cites_account_aggregate_only",
+      "spy-cn-loss:finance-model:SPY:instrument_fee_loss_claim_lacks_attributed_fee_bridge",
+    ]);
+    expect(
+      findUnsupportedFinanceClaimScope(
+        [
+          ...evidence,
+          {
+            id: "spy-fee-allocation",
+            text: '{"instrument":"SPY","feeAmount":1.25,"allocated":true}',
+          },
+        ],
+        [{ ...claims[1], evidenceIds: [...claims[1].evidenceIds, "spy-fee-allocation"] }],
+      ),
+    ).toEqual([]);
+  });
+
+  it("rejects instrument-specific causal fee claims when cited records say fees are unallocated", () => {
+    const evidence = [
+      { id: "finance-model:SPY", text: "SPY price series" },
+      {
+        id: "finance-night:broker-profit:2026-09-28",
+        text: "Two fee activities are unallocated; costs are not reconciled.",
+      },
+    ];
+    const claim = {
+      id: "spy-fee-loss",
+      text: "Unallocated fees caused SPY net losses",
+      status: "supported" as const,
+      evidenceIds: evidence.map((item) => item.id),
+      evidenceRelations: evidence.map((item) => ({
+        evidenceId: item.id,
+        relation: "supports" as const,
+      })),
+    };
+    expect(findUnsupportedFinanceClaimScope(evidence, [claim])).toEqual([
+      "spy-fee-loss:finance-model:SPY:instrument_fee_loss_claim_lacks_attributed_fee_bridge",
+    ]);
+  });
+
+  it("requires saved multi-rule provenance claims to be split by rule", () => {
+    const rulesEvidenceId = "finance-night:rules:2026-09-27";
+    const evidence = [
+      {
+        id: rulesEvidenceId,
+        text: JSON.stringify({
+          activeRules: [
+            {
+              ruleId: "trend_risk_normalised_v1",
+              instruments: ["SPY", "QQQ"],
+              provenance: {
+                readScope: "research_only",
+                notes:
+                  "公开方法蒸馏，不是任何管理人的实际参数；skill 明确声明当前状态为材料与规则可复核，不是收益验证",
+              },
+            },
+            {
+              ruleId: "opening_range_breakout_long_pre_close_v2",
+              instruments: ["SPY"],
+              provenance: {
+                readScope: "Alpaca Paper calendar and IEX 5-minute bars",
+                notes:
+                  "Adds a calendar-bound pre-close exit to the frozen v1 entry, stop, and reward-target rules. Optiver article informs the decision-loop design, not the alpha signal.",
+              },
+            },
+          ],
+        }),
+      },
+    ];
+    const combinedClaim = {
+      id: "combined-rule-scope",
+      text: "Both trend_risk_normalised_v1 and opening_range_breakout_long_pre_close_v2 are research_only and have no return validation.",
+      status: "supported" as const,
+      evidenceIds: [rulesEvidenceId],
+    };
+
+    expect(findUnsupportedFinanceClaimScope(evidence, [combinedClaim], ["SPY"])).toEqual([
+      "combined-rule-scope:finance-night:rules:2026-09-27:multi_rule_scope_claim_requires_split",
+    ]);
+    expect(
+      findUnsupportedFinanceClaimScope(
+        evidence,
+        [
+          {
+            ...combinedClaim,
+            text: "Both trend_risk_normalised_v1 and opening_range_breakout_long_pre_close_v2 are listed in the active rule ledger.",
+          },
+        ],
+        ["SPY"],
+      ),
+    ).toEqual([]);
+    expect(
+      findUnsupportedFinanceClaimScope(
+        evidence,
+        [
+          {
+            ...combinedClaim,
+            id: "trend-rule-scope",
+            text: "Active rule trend_risk_normalised_v1 includes SPY and has provenance research_only and no return validation.",
+          },
+          {
+            ...combinedClaim,
+            id: "opening-rule-scope",
+            text: "opening_range_breakout_long_pre_close_v2 is SPY only and has readScope Alpaca Paper calendar and IEX 5-minute bars; no research_only or return validation statement is present in its provenance.",
+          },
+        ],
+        ["SPY"],
+      ),
+    ).toEqual([]);
+  });
+
+  it("keeps account observations, qualified fee limitations, and instrument ledger quantities admissible", () => {
+    const evidence = [
+      { id: "finance-model:SPY", text: "SPY price series" },
+      { id: "ledger", text: 'Position {"instrument":"SPY","quantity":27}' },
+      { id: "broker", text: "Account totals: 3 unattributed buy fills; fees are unallocated." },
+    ];
+    const claims = [
+      {
+        id: "account-fills",
+        text: "The account reports 3 unattributed buy fills",
+        status: "supported" as const,
+        evidenceIds: ["broker"],
+      },
+      {
+        id: "fee-limit",
+        text: "SPY-specific fees cannot be determined from the unallocated activities",
+        status: "uncertain" as const,
+        evidenceIds: ["broker"],
+        basis: "The broker record marks those fee activities unallocated.",
+        uncertainty: "The activities may include SPY but lack instrument attribution.",
+      },
+      {
+        id: "spy-quantity",
+        text: "SPY ledger quantity is 27",
+        status: "supported" as const,
+        evidenceIds: ["ledger"],
+      },
+    ];
+    expect(findUnsupportedFinanceClaimScope(evidence, claims)).toEqual([]);
   });
 
   it("computes path drawdown and window return rather than counting rows", () => {

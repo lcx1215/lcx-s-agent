@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { buildQualityHarnessModelPromptWithCoverage } from "./local-text-model-adapter.js";
 import type {
   LogicalAgentModelAdapter,
+  LogicalAgentModelRouting,
   ModelCallObservation,
 } from "./logical-agent-model-router.js";
 import {
@@ -102,6 +104,134 @@ function demoInvoker(params: {
   };
 }
 
+function coveredEvidenceRouting(
+  params: {
+    requests?: QualityHarnessModelRequest[];
+    batchResponses?: Array<{ request: QualityHarnessModelRequest; response: unknown }>;
+    omitFinalAuditNoteId?: string;
+  } = {},
+): LogicalAgentModelRouting {
+  const observations = new Map<string, ModelCallObservation>();
+  const adapter: LogicalAgentModelAdapter = {
+    id: "covered-evidence-fixture",
+    provider: "fixture",
+    modelId: "covered-evidence-fixture",
+    mode: "adapter",
+    capabilities: ["quality_harness"],
+    requiredTools: [],
+    requiredSideEffects: [],
+    invoke: async (call) => {
+      const current = call.payload as QualityHarnessModelRequest;
+      params.requests?.push(current);
+      const rendered = buildQualityHarnessModelPromptWithCoverage(current);
+      observations.set(call.callId, {
+        callId: call.callId,
+        provider: "fixture",
+        modelId: "covered-evidence-fixture",
+        transportRequestId: `fixture:${call.callId}`,
+        kind: "model_inference",
+        evidenceCoverage: rendered.evidenceCoverage,
+      });
+      if (current.stage === "intake") {
+        return {
+          kind: "plan",
+          requirements: ["review all supplied evidence"],
+          missingEvidence: [],
+        };
+      }
+      if (current.stage === "draft" || current.stage === "format") {
+        const evidenceId = current.evidence[0]?.id ?? "missing-evidence";
+        return {
+          kind: "artifact",
+          artifact: {
+            answer: "The supplied packet is summarized with its evidence limits retained.",
+            claims: [
+              {
+                id: "claim-1",
+                text: "The packet contains a recorded observation.",
+                status: "supported",
+                evidenceIds: [evidenceId],
+              },
+            ],
+          },
+        };
+      }
+      if (current.evidenceBatchMode) {
+        const missingNote =
+          current.evidenceBatchMode === "final_artifact_audit"
+            ? params.omitFinalAuditNoteId
+            : undefined;
+        const notes = current.evidence
+          .filter((entry) => entry.id !== missingNote)
+          .map((entry) => `[${entry.id}] reviewed against the formatted artifact.`);
+        const contradictions =
+          current.evidenceBatchMode === "final_artifact_audit"
+            ? current.evidence.filter((entry) =>
+                entry.text.includes("contradicts the early thesis"),
+              )
+            : [];
+        const response = {
+          kind: "review",
+          review: {
+            verdict: contradictions.length > 0 ? "revise" : "pass",
+            criticalFindings: contradictions.map(
+              (entry) => `[${entry.id}] contradicts the summary.`,
+            ),
+            evidenceGaps: [],
+            notes,
+          },
+        };
+        params.batchResponses?.push({ request: current, response });
+        return response;
+      }
+      return passReview();
+    },
+    observe: (call) => observations.get(call.callId),
+  };
+  return {
+    revision: "covered-evidence-fixture-v1",
+    adapters: [adapter],
+    defaultPolicy: {
+      primary: adapter.id,
+      requiredCapabilities: ["quality_harness"],
+      maxInputBytes: 1_000_000,
+      timeoutMs: 1_000,
+    },
+  };
+}
+
+function coverageRequest(itemCount: number): {
+  request: QualityHarnessRequest;
+  evidenceCoverage: {
+    sourceEvidenceIds: string[];
+    selectedEvidenceIds: string[];
+    runnerOmittedEvidenceIds: string[];
+    runnerClippedEvidenceIds: string[];
+  };
+} {
+  const evidence = Array.from({ length: itemCount }, (_, index) => ({
+    id: `e-${String(index).padStart(3, "0")}`,
+    text:
+      index === 48
+        ? "Late report contradicts the early thesis and refutes the summary."
+        : `Fixture observation ${index}.`,
+    source: "fixture-source",
+  }));
+  const evidenceIds = evidence.map((entry) => entry.id);
+  return {
+    request: {
+      task: "Summarize this evidence packet while retaining contradictory reports.",
+      evidence,
+    },
+    evidenceCoverage: {
+      sourceEvidenceIds: evidenceIds,
+      selectedEvidenceIds: evidenceIds,
+      runnerOmittedEvidenceIds: [],
+      runnerClippedEvidenceIds: [],
+    },
+  };
+}
+
 describe("quality harness", () => {
   it.each([false, true])(
     "reuses only clean preparation after a formatter failure (gap=%s)",
@@ -141,6 +271,198 @@ describe("quality harness", () => {
       expect(requests.filter((entry) => entry.stage === "draft")).toHaveLength(2);
     },
   );
+
+  it("fails closed before deterministic verification when controller coverage omits evidence", async () => {
+    const verify = vi.fn(async () => ({
+      status: "passed" as const,
+      summary: "verified",
+      details: [],
+    }));
+    const receipt = await runQualityHarness({
+      request,
+      maxAttempts: 1,
+      modelInvoker: demoInvoker({}),
+      requireEvidenceCoverage: true,
+      evidenceCoverage: {
+        sourceEvidenceIds: ["market", "contradiction"],
+        selectedEvidenceIds: ["market"],
+        runnerOmittedEvidenceIds: ["contradiction"],
+        runnerClippedEvidenceIds: [],
+      },
+      verify,
+    });
+
+    expect(receipt.status).toBe("quality-failed");
+    expect(receipt.verification.status).toBe("failed");
+    expect(receipt.verification.details.join("\n")).toContain("contradiction");
+    expect(receipt.evidenceCoverage).toMatchObject({
+      passed: false,
+      controller: { runnerOmittedEvidenceIds: ["contradiction"] },
+    });
+    expect(receipt.attempts[0]?.gates.find((gate) => gate.id === "evidence_coverage")?.passed).toBe(
+      false,
+    );
+    expect(verify).not.toHaveBeenCalled();
+  });
+
+  it("rejects evidence handoff attestations that do not identify a built prompt", async () => {
+    const observations = new Map<string, ModelCallObservation>();
+    const invoke = demoInvoker({});
+    const adapter: LogicalAgentModelAdapter = {
+      id: "unverified-boundary",
+      provider: "fixture",
+      modelId: "fixture-model",
+      mode: "adapter",
+      capabilities: ["json"],
+      requiredTools: [],
+      requiredSideEffects: [],
+      invoke: async (call) => {
+        observations.set(call.callId, {
+          callId: call.callId,
+          provider: "fixture",
+          modelId: "fixture-model",
+          transportRequestId: call.callId,
+          kind: "model_inference",
+          evidenceCoverage: {
+            boundary: "structured_request_handoff",
+            suppliedEvidenceIds: ["brief"],
+            includedEvidenceIds: ["brief"],
+            omittedEvidenceIds: [],
+            clippedEvidenceIds: [],
+          } as unknown as NonNullable<ModelCallObservation["evidenceCoverage"]>,
+        });
+        return invoke(call.payload);
+      },
+      observe: (call) => observations.get(call.callId),
+    };
+    const receipt = await runQualityHarness({
+      request,
+      maxAttempts: 1,
+      modelRouting: {
+        revision: "unverified-boundary-v1",
+        adapters: [adapter],
+        defaultPolicy: {
+          primary: adapter.id,
+          requiredCapabilities: ["json"],
+          maxInputBytes: 100_000,
+          timeoutMs: 1_000,
+        },
+      },
+      requireEvidenceCoverage: true,
+      evidenceCoverage: {
+        sourceEvidenceIds: ["brief"],
+        selectedEvidenceIds: ["brief"],
+        runnerOmittedEvidenceIds: [],
+        runnerClippedEvidenceIds: [],
+      },
+    });
+
+    expect(receipt.status).toBe("quality-failed");
+    expect(receipt.evidenceCoverage?.issues.join("\n")).toContain(
+      "evidence_coverage_boundary_mismatch",
+    );
+  });
+
+  it("sends a contradiction after item 48 to a later final-artifact audit", async () => {
+    const { request: evidenceRequest, evidenceCoverage } = coverageRequest(49);
+    const requests: QualityHarnessModelRequest[] = [];
+    const batchResponses: Array<{ request: QualityHarnessModelRequest; response: unknown }> = [];
+    const verify = vi.fn(async () => ({
+      status: "passed" as const,
+      summary: "verified",
+      details: [],
+    }));
+    const receipt = await runQualityHarness({
+      request: evidenceRequest,
+      maxAttempts: 1,
+      modelRouting: coveredEvidenceRouting({ requests, batchResponses }),
+      requireEvidenceCoverage: true,
+      evidenceCoverage,
+      verify,
+    });
+
+    const lateEvidenceId = evidenceRequest.evidence[48]?.id;
+    expect(lateEvidenceId).toBe("e-048");
+    expect(receipt.evidenceCoverage?.batches?.flatMap((batch) => batch.evidenceIds)).toContain(
+      lateEvidenceId,
+    );
+    const lateAudit = requests.find(
+      (entry) =>
+        entry.evidenceBatchMode === "final_artifact_audit" &&
+        entry.evidence.some((item) => item.id === lateEvidenceId),
+    );
+    expect(lateAudit?.dependencyOutputs.formatting).toMatchObject({
+      status: "completed",
+      output: { kind: "artifact", artifact: { answer: expect.stringContaining("packet") } },
+    });
+    const lateAuditResponse = batchResponses.find(
+      ({ request: batchRequest }) =>
+        batchRequest.evidenceBatchMode === "final_artifact_audit" &&
+        batchRequest.evidence.some((item) => item.id === lateEvidenceId),
+    )?.response;
+    expect(lateAuditResponse).toMatchObject({
+      kind: "review",
+      review: {
+        verdict: "revise",
+        criticalFindings: [expect.stringContaining(lateEvidenceId)],
+      },
+    });
+    expect(receipt.status).toBe("quality-failed");
+    expect(
+      receipt.attempts[0]?.gates.find((gate) => gate.id === "evidence_batch_reviews"),
+    ).toMatchObject({ passed: false, reason: expect.stringContaining("final artifact audit") });
+    expect(verify).not.toHaveBeenCalled();
+  });
+
+  it("blocks verification when a final batch review omits an evidence ID note", async () => {
+    const { request: evidenceRequest, evidenceCoverage } = coverageRequest(1);
+    const verify = vi.fn(async () => ({
+      status: "passed" as const,
+      summary: "verified",
+      details: [],
+    }));
+    const receipt = await runQualityHarness({
+      request: evidenceRequest,
+      maxAttempts: 1,
+      modelRouting: coveredEvidenceRouting({ omitFinalAuditNoteId: "e-000" }),
+      requireEvidenceCoverage: true,
+      evidenceCoverage,
+      verify,
+    });
+
+    expect(receipt.status).toBe("quality-failed");
+    expect(
+      receipt.attempts[0]?.gates.find((gate) => gate.id === "evidence_batch_reviews"),
+    ).toMatchObject({ passed: false, reason: expect.stringContaining("e-000") });
+    expect(verify).not.toHaveBeenCalled();
+  });
+
+  it("blocks before model invocation when evidence needs more than four batches", async () => {
+    const { request: evidenceRequest, evidenceCoverage } = coverageRequest(65);
+    const requests: QualityHarnessModelRequest[] = [];
+    const verify = vi.fn(async () => ({
+      status: "passed" as const,
+      summary: "verified",
+      details: [],
+    }));
+    const receipt = await runQualityHarness({
+      request: evidenceRequest,
+      maxAttempts: 1,
+      modelRouting: coveredEvidenceRouting({ requests }),
+      requireEvidenceCoverage: true,
+      evidenceCoverage,
+      verify,
+    });
+
+    expect(receipt.status).toBe("quality-failed");
+    expect(receipt.evidenceCoverage?.issues.join("\n")).toContain(
+      "evidence_batch_limit_exceeded:4",
+    );
+    expect(receipt.attempts[0]?.planStatus).toBe("blocked");
+    expect(receipt.attempts[0]?.stages).toEqual([]);
+    expect(requests).toEqual([]);
+    expect(verify).not.toHaveBeenCalled();
+  });
 
   it("passes one shared fact packet to every specialist and reviewer", async () => {
     const requests: QualityHarnessModelRequest[] = [];

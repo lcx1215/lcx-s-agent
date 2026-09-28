@@ -69,6 +69,7 @@ import {
 import {
   buildFinanceResearchModelEvidence,
   findUncitedFinanceInstruments,
+  findUnsupportedFinanceClaimScope,
 } from "./finance-research-evidence.js";
 import {
   buildFinanceResearchPortfolioPlan,
@@ -108,6 +109,7 @@ import {
   type LogicalAgentExecutor,
 } from "./logical-agent-pool.js";
 import {
+  QUALITY_HARNESS_MAX_EVIDENCE_ITEMS,
   parseStageOutput,
   stageInstructions,
   STAGE_BY_AGENT_ID,
@@ -116,6 +118,7 @@ import {
 import {
   runQualityHarness,
   type QualityHarnessArtifact,
+  type QualityHarnessEvidenceCoverage,
   type QualityHarnessReceipt,
   type QualityHarnessVerifier,
 } from "./quality-harness.js";
@@ -1557,6 +1560,18 @@ function qualityVerifier(
         details: uncited,
       };
     }
+    const unsupportedClaimScope = findUnsupportedFinanceClaimScope(
+      request.evidence,
+      artifact.claims,
+      instruments,
+    );
+    if (unsupportedClaimScope.length > 0) {
+      return {
+        status: "failed",
+        summary: "instrument-specific claims exceed cited controller evidence scope",
+        details: [...unsupportedClaimScope],
+      };
+    }
     try {
       const visibleEvidenceIds = new Set(request.evidence.map((entry) => entry.id));
       validateFinanceResearchThesisProposals({
@@ -1647,16 +1662,32 @@ function qualityVerifier(
   };
 }
 
-function qualityEvidence(batch: FinanceResearchBatchEvidencePacket): readonly {
-  id: string;
-  text: string;
-  source: string;
-}[] {
-  return batch.committeeEvidence.slice(0, 48).map((item) => ({
-    id: item.id,
-    text: item.text.length <= 5_000 ? item.text : `${item.text.slice(0, 5_000)}…`,
-    source: item.source,
-  }));
+function qualityEvidence(batch: FinanceResearchBatchEvidencePacket): {
+  evidence: readonly { id: string; text: string; source: string }[];
+  coverage: QualityHarnessEvidenceCoverage;
+} {
+  const source = batch.committeeEvidence;
+  const maximumEvidenceItems = QUALITY_HARNESS_MAX_EVIDENCE_ITEMS;
+  const selected = source.slice(0, maximumEvidenceItems);
+  return {
+    evidence: selected.map((item) => ({
+      id: item.id,
+      text: item.text.length <= 6_000 ? item.text : `${item.text.slice(0, 5_999)}…`,
+      source: item.source.length <= 1_000 ? item.source : item.source.slice(0, 1_000),
+    })),
+    coverage: Object.freeze({
+      sourceEvidenceIds: Object.freeze(source.map((item) => item.id)),
+      selectedEvidenceIds: Object.freeze(selected.map((item) => item.id)),
+      runnerOmittedEvidenceIds: Object.freeze(
+        source.slice(maximumEvidenceItems).map((item) => item.id),
+      ),
+      runnerClippedEvidenceIds: Object.freeze(
+        selected
+          .filter((item) => item.text.length > 6_000 || item.source.length > 1_000)
+          .map((item) => item.id),
+      ),
+    }),
+  };
 }
 
 function buildQuarterlyOutput(params: {
@@ -2149,6 +2180,7 @@ export async function runFinanceResearchRun(
       qualityRequested &&
       (options.qualityModelRouting !== undefined || options.qualityModelInvoker !== undefined)
     ) {
+      const qualityEvidenceSelection = qualityEvidence(batch);
       const qualityRequest = {
         task:
           `${ask}\nApply the selected analytical modules in sharedContext.financeOrchestration and only the supplied method kit checks relevant to this task. A caller selection does not establish evidence or tool execution. Preserve the requested horizon and deliverable; do not add a forecast or backtest to a factual request. For every claim, provide epistemicClass as ${FINANCE_RESEARCH_CLAIM_EPISTEMIC_CLASSES.join(", ")}. This describes claim origin, not truth, source quality, or readiness. For derived measures, estimates, inferences, and hypotheses, provide basis describing the calculation method, assumptions, or reasoning bridge. Provide evidenceRelations for every claim, mapping each evidenceId exactly once to ${FINANCE_RESEARCH_EVIDENCE_RELATIONS.join(", ")}. Preserve contrary evidence and never treat a source report as independently verified. Partial, stale, contradictory or low-confidence reports may inform conditional opportunities; do not require every auxiliary source to be ready. Distinguish a source assertion from a fact, explain the reasoning bridge and invalidation condition, and retain all supplied gaps. Research admission does not qualify a quote for order placement. State missing evidence. ${financeDecisionInstructions(decisionMode)}` +
@@ -2157,7 +2189,7 @@ export async function runFinanceResearchRun(
             : "") +
           FINANCE_FUNDAMENTAL_EXPECTATION_GUIDANCE +
           "\nOptionally propose financeThesisProposals in artifact.supportingAnalysis for investment-relevant, evidence-supported claims only. Each proposal must have claimId (an id in artifact.claims with status supported), instrument (one declared research target), optional rationale, optional expectationGap {origin: model_hypothesis, edgeKind: fundamentals|valuation|interpretation|timing|flow|risk_rebalance|unknown, marketExpectation, variantView, catalyst, invalidation, costRiskAssessment} with each text at most 180 characters or null, and nonempty invalidationConditions. For an investment-relevant thesis include this expectation-gap hypothesis with unknown fields null; it is not a new admission gate. When supported by the cited evidence, include applicability with horizon (intraday, swing, or long_term) and validUntil (ISO timestamp after the research as-of). Do not infer an intraday horizon from long-term evidence; unspecified applicability is excluded from intraday review. Do not repeat evidenceIds in the proposal; the system derives them from the supported claim. Omit the field or use an empty array when no adequately supported thesis exists. This is an unadopted research candidate, not a trade instruction.",
-        evidence: qualityEvidence(batch),
+        evidence: qualityEvidenceSelection.evidence,
         sharedContext: {
           asOf,
           ...(options.input.asOfMode === undefined ? {} : { asOfMode: options.input.asOfMode }),
@@ -2208,6 +2240,8 @@ export async function runFinanceResearchRun(
           signal: options.signal,
           allowProviderCalls: options.allowProviderCalls,
           request: qualityRequest,
+          requireEvidenceCoverage: true,
+          evidenceCoverage: qualityEvidenceSelection.coverage,
           modelId,
           ...(options.qualityModelRouting === undefined
             ? {}

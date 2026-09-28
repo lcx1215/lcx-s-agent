@@ -145,6 +145,34 @@ describe("configured research model transport", () => {
     expect(http).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(cfg)).toBe(before);
   });
+  it("attests canonical prompt coverage but leaves custom prompt coverage unknown", async () => {
+    const http = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            id: "coverage-response",
+            choices: [{ finish_reason: "stop", message: { content: "{}" } }],
+          }),
+          { status: 200 },
+        ),
+    );
+    vi.stubGlobal("fetch", http);
+    const canonical = createConfiguredFinanceModelAdapter(cfg);
+    await canonical.invoke(request, new AbortController().signal);
+    const canonicalObservation = canonical.observe?.(request);
+    expect(canonicalObservation?.evidenceCoverage).toMatchObject({
+      boundary: "canonical_prompt",
+      suppliedEvidenceIds: ["e1"],
+      includedEvidenceIds: ["e1"],
+      omittedEvidenceIds: [],
+      clippedEvidenceIds: [],
+    });
+    expect(canonicalObservation?.evidenceCoverage?.promptSha256).toMatch(/^[a-f0-9]{64}$/u);
+
+    const custom = createConfiguredFinanceModelAdapter(cfg, { buildPrompt: () => "custom" });
+    await custom.invoke(request, new AbortController().signal);
+    expect(custom.observe?.(request)?.evidenceCoverage).toBeUndefined();
+  });
   it("reserves at most one call when concurrent callers await credentials", async () => {
     const http = vi.fn(
       async () =>
