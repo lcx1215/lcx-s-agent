@@ -192,6 +192,7 @@ export function evaluateFinanceCommitteeCoverage<TResult>(
 }
 
 export async function runFinanceCommittee<TResult>(params: {
+  purpose?: "full_review" | "producer_preparation";
   maxConcurrency?: 1 | 2;
   allowProviderCalls?: boolean;
   signal?: AbortSignal;
@@ -204,6 +205,7 @@ export async function runFinanceCommittee<TResult>(params: {
   modelInvoker?: LogicalAgentModelInvoker;
   runId?: string;
 }): Promise<{
+  purpose: "full_review" | "producer_preparation";
   execution: LogicalAgentPlanResult<TResult>;
   context: FinanceCommitteeSharedContext;
   coverage: FinanceCommitteeCoverage;
@@ -231,16 +233,31 @@ export async function runFinanceCommittee<TResult>(params: {
       ...(params.modelRouting === undefined ? {} : { modelRouting: params.modelRouting }),
       ...(params.modelInvoker === undefined ? {} : { modelInvoker: params.modelInvoker }),
     });
+  const purpose = params.purpose ?? "full_review";
+  const fullPlan = buildDefaultLogicalAgentPlan(request);
+  const finalTaskId = purpose === "producer_preparation" ? "research_draft" : "final_precheck";
+  const needed = new Set<string>();
+  const include = (id: string) => {
+    if (needed.has(id)) {
+      return;
+    }
+    needed.add(id);
+    for (const dependency of fullPlan.find((task) => task.id === id)?.dependsOn ?? []) {
+      include(dependency);
+    }
+  };
+  include(finalTaskId);
   const execution = await runLogicalAgentPlan({
     signal: params.signal,
-    tasks: buildDefaultLogicalAgentPlan(request),
+    tasks: fullPlan.filter((task) => needed.has(task.id)),
     executor: params.executor,
     pool,
     ...(params.runId === undefined ? {} : { runId: params.runId }),
-    finalTaskId: "final_precheck",
+    finalTaskId,
     sharedContext: context,
   });
   return Object.freeze({
+    purpose,
     execution,
     context,
     coverage: evaluateFinanceCommitteeCoverage(execution),

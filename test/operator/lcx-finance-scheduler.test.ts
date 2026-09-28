@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   inspectFinanceSchedulerStatus,
+  inspectFinanceResearchReceiptPersistence,
   describeFinanceCycleExecution,
   parseFinanceSchedulerArgs,
   resolveActiveIntradayRule,
@@ -2161,3 +2162,33 @@ it.each(["-0.1", "1.1", "NaN", "Infinity"])(
     expect(mocks.runCycle).not.toHaveBeenCalled();
   },
 );
+
+it("checks the actual research receipt independently of candidate acceptance", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "research-storage-proof-"));
+  try {
+    const datedPath = path.join(dir, "receipt.json");
+    const summary = {
+      status: "needs_review",
+      plan: { asOf: "2026-09-28T00:00:00Z" },
+      written: { datedPath },
+    };
+    expect(inspectFinanceResearchReceiptPersistence(JSON.stringify(summary))).toBe(false);
+    fs.writeFileSync(
+      datedPath,
+      JSON.stringify({ schemaVersion: "lcx_finance_research_run_v1", ...summary }),
+    );
+    expect(inspectFinanceResearchReceiptPersistence(JSON.stringify(summary))).toBe(true);
+    expect(
+      inspectFinanceResearchReceiptPersistence(JSON.stringify({ ...summary, status: "candidate" })),
+    ).toBe(false);
+    expect(
+      inspectFinanceResearchReceiptPersistence(
+        JSON.stringify({ ...summary, plan: { asOf: "2026-09-29T00:00:00Z" } }),
+      ),
+    ).toBe(false);
+    fs.writeFileSync(datedPath, "not-json");
+    expect(inspectFinanceResearchReceiptPersistence(JSON.stringify(summary))).toBe(false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -392,3 +392,37 @@ This verifies source binding and local evaluation integrity. It does not prove t
 Explicit long-term research without an immediate action or current-price request uses dated historical evidence instead of requiring an executable quote. Current-price and intraday requests retain their quote gates. Provider-native macro identifiers are not interchangeable: Treasury and BLS identifiers must not be sent to FRED as implicit fallbacks.
 
 Module-learning and finance retrieval review tools default to read-only. Persisting a report requires `writeReview: true`; the operator CLI retains its explicit write/no-write option.
+
+### Research handoff and bounded review
+
+When module execution and the quality harness are both enabled, the preliminary
+committee runs the ancestors of `research_draft` to prepare producer inputs.
+Its receipt says `producer_preparation`; it does not claim a complete committee
+review. This preliminary draft must satisfy the producer schema and cite existing
+evidence IDs, but its instrument-specific interpretations remain provisional.
+Instrument citation coverage is enforced in the full post-module drafting,
+formatting and final verifier; a preparation draft cannot qualify a final answer. The post-module quality harness still runs the full review, including
+adversarial challenge, formatting, independent final checking and deterministic
+verification. Other callers retain the full preliminary committee.
+
+Instrument citation coverage accepts explicit instrument coverage in supplied
+broker, filing and controller evidence as well as market packets. This is a
+structural citation check, not semantic validation. Account-wide fee gaps do not
+establish instrument-specific costs, and unrelated instrument citations remain
+invalid. Contract failures provide a bounded diagnostic to the existing fallback;
+they do not add retries, increase the call budget, or relax validation. Checkpoints
+record the diagnostic without storing raw rejected answers.
+
+Thesis proposals have a dedicated prompt section so normal context truncation
+cannot silently remove the database handoff contract. Eligible proposals are
+validated against the final supported claims and the exact evidence packet before
+entering the existing thesis ledger. Empty proposals remain an explicit outcome.
+Daily and intraday decision contexts both exclude explicitly expired theses;
+legacy entries without applicability remain available only under the existing
+horizon rules. Storage success, quality acceptance, decision consumption, order
+execution and profitability remain separate observations.
+
+The research CLI passes its resolved workspace to module execution as well as
+checkpoint and receipt storage. An explicit workspace must not silently fall back
+to the shell's working directory for framework writes. The separately requested
+finance state directory remains the thesis-ledger destination.

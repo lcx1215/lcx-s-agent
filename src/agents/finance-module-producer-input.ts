@@ -61,6 +61,24 @@ export function financeProducerInputContract(
 ) {
   return Object.freeze({
     outputPath: "artifact.supportingAnalysis.financeFrameworkProducerInputs",
+    container: "object keyed by every selectedModuleId, never a flat producer object or an array",
+    jsonSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: selectedFinanceProducerModuleIds(plan),
+      properties: Object.fromEntries(
+        selectedFinanceProducerModuleIds(plan).map((moduleId) => [
+          moduleId,
+          {
+            allOf: [
+              { $ref: "#/$defs/producerInput" },
+              { properties: { domain: { const: moduleId } } },
+            ],
+          },
+        ]),
+      ),
+      $defs: { producerInput: z.toJSONSchema(ProducerInput) },
+    },
     selectedModuleIds: selectedFinanceProducerModuleIds(plan),
     sourceArtifactIds: Object.freeze([...evidenceIds]),
     requiredFields: Object.freeze([

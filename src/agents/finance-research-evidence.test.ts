@@ -99,6 +99,27 @@ describe("finance price arithmetic before model prompting", () => {
       ]),
     ).toEqual([]);
   });
+  it("accepts instrument-bound ledger evidence without demanding a market-price citation", () => {
+    const evidence = [
+      { id: "finance-model:SPY", text: "SPY price series" },
+      { id: "ledger", text: 'Position {"instrument":"SPY","quantity":27}' },
+      { id: "fees", text: "Account-wide fees are unallocated" },
+      { id: "other", text: "SPYG position" },
+    ];
+    const claim = {
+      id: "position",
+      text: "SPY quantity is 27",
+      status: "supported" as const,
+      evidenceIds: ["ledger"],
+    };
+    expect(findUncitedFinanceInstruments(evidence, [claim])).toEqual([]);
+    for (const id of ["fees", "other", "nonexistent"]) {
+      expect(findUncitedFinanceInstruments(evidence, [{ ...claim, evidenceIds: [id] }])).toEqual([
+        "position:finance-model:SPY",
+      ]);
+    }
+  });
+
   it("computes path drawdown and window return rather than counting rows", () => {
     const result = summarizeFinancePriceHistory(
       [

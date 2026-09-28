@@ -63,7 +63,12 @@ export function openFinanceModelCheckpoints(
   const reusedStages: string[] = [];
   let newModelCalls = 0;
   let closed = false;
-  const invoke = (call: () => Promise<unknown>, signal: AbortSignal, identity = "legacy") => {
+  const invoke = (
+    call: () => Promise<unknown>,
+    signal: AbortSignal,
+    identity = "legacy",
+    diagnose?: (result: unknown) => { passed: boolean; detail?: string },
+  ) => {
     if (signal.aborted) {
       throw new Error("model_checkpoint_cancelled_before_dispatch");
     }
@@ -77,7 +82,10 @@ export function openFinanceModelCheckpoints(
     // A reserved call remains charged even if it times out or throws. No late
     // transport completion may write into a database closed by its stage owner.
     return (async () => {
-      const finish = (transportOutcome: string) => {
+      const finish = (
+        transportOutcome: string,
+        contractCheck?: { passed: boolean; detail?: string },
+      ) => {
         if (!closed) {
           store.complete(key, reservation.token, {
             startedAt,
@@ -85,6 +93,7 @@ export function openFinanceModelCheckpoints(
             transportOutcome,
             // Transport return is not output-contract acceptance or stage success.
             contractAcceptance: "not_assessed",
+            ...(contractCheck ? { contractCheck } : {}),
           });
         }
       };
@@ -95,7 +104,15 @@ export function openFinanceModelCheckpoints(
         finish(signal.aborted ? "aborted" : "threw");
         throw error;
       }
-      finish(signal.aborted ? "returned_after_abort" : "returned");
+      let contractCheck: { passed: boolean; detail?: string } | undefined;
+      if (!signal.aborted && diagnose) {
+        try {
+          contractCheck = diagnose(result);
+        } catch {
+          /* Diagnostics cannot alter dispatch results. */
+        }
+      }
+      finish(signal.aborted ? "returned_after_abort" : "returned", contractCheck);
       return result;
     })();
   };
@@ -116,6 +133,22 @@ export function openFinanceModelCheckpoints(
                   () => adapter.invoke(request, signal),
                   signal,
                   `${request.role}:${adapter.id}:${request.attempt}`,
+                  (result) => {
+                    const contract = (original.roles?.[request.role] ?? original.defaultPolicy)
+                      .outputContract;
+                    if (!contract) {
+                      throw new Error("output contract unavailable");
+                    }
+                    const passed = contract.validate(result, request.payload);
+                    return {
+                      passed,
+                      ...(!passed && contract.describeFailure
+                        ? {
+                            detail: contract.describeFailure(result, request.payload).slice(0, 600),
+                          }
+                        : {}),
+                    };
+                  },
                 ),
             })),
           }

@@ -257,6 +257,7 @@ export type FinanceQuarterlyOutput = Readonly<{
 }>;
 
 export type FinanceResearchModelExecution = Readonly<{
+  purpose?: "full_review" | "producer_preparation";
   status: "completed" | "failed" | "not_configured";
   modelId: string;
   roleCount: number;
@@ -1486,6 +1487,7 @@ function buildModelExecution(
   const modelCalls = result.execution.tasks.flatMap((task) => task.modelCalls ?? []);
   const summary = callSummary(modelCalls);
   return Object.freeze({
+    purpose: result.purpose,
     status: result.execution.status === "completed" ? "completed" : "failed",
     modelId,
     roleCount: result.execution.tasks.length,
@@ -1744,14 +1746,31 @@ function missingEvidence(batch: FinanceResearchBatchEvidencePacket): string[] {
 function committeeGate(
   committee: Awaited<ReturnType<typeof runFinanceCommittee<Record<string, unknown>>>>,
 ): FinanceResearchGate {
+  const preparation = committee.purpose === "producer_preparation";
   const passed =
     committee.execution.status === "completed" &&
-    committee.coverage.equivalenceStatus === "committee_candidate";
+    (preparation
+      ? [
+          "data_cleaning",
+          "financial_extraction",
+          "news_classification",
+          "evidence_integrity",
+          "risk_check",
+          "portfolio_exposure",
+          "research_draft",
+        ].every((role) =>
+          committee.execution.tasks.some(
+            (task) => task.agentId === role && task.status === "completed",
+          ),
+        )
+      : committee.coverage.equivalenceStatus === "committee_candidate");
   return {
     id: "committee",
     passed,
     reason: passed
-      ? "all required logical-agent committee lanes completed"
+      ? preparation
+        ? "producer preparation completed; full post-module quality review remains required"
+        : "all required logical-agent committee lanes completed"
       : `committee status=${committee.execution.status}; missing=${committee.coverage.missingLanes.join(",") || "none"}`,
   };
 }
@@ -2002,6 +2021,12 @@ export async function runFinanceResearchRun(
 
   const strategyMethodKit = buildFinanceStrategyMethodKit(ask);
   const strategyMethodKitModelContext = toFinanceStrategyMethodKitModelContext(strategyMethodKit);
+  const committeePurpose =
+    options.input.executeModules === true &&
+    options.qualityEnabled !== false &&
+    (options.qualityModelRouting !== undefined || options.qualityModelInvoker !== undefined)
+      ? ("producer_preparation" as const)
+      : ("full_review" as const);
   const modelCheckpoint = options.modelCheckpoint
     ? openFinanceModelCheckpoints(options.modelCheckpoint, {
         ask,
@@ -2015,6 +2040,7 @@ export async function runFinanceResearchRun(
         ),
         strategyMethodKit,
         financeOrchestration: plan.orchestration,
+        committeePurpose,
         maxModelConcurrency: options.maxModelConcurrency ?? 1,
         qualityEnabled: options.qualityEnabled ?? true,
         allowProviderCalls: options.allowProviderCalls === true,
@@ -2036,6 +2062,7 @@ export async function runFinanceResearchRun(
         sourceStatus: batch.status,
         researchOnly: true,
         financeResearchLimitations: plan.limitations,
+        financeProducerPreparationOnly: committeePurpose === "producer_preparation",
         strategyMethodKit: strategyMethodKitModelContext,
         financeOrchestration: plan.orchestration,
         financeModuleExecution: moduleExecution,
@@ -2053,6 +2080,7 @@ export async function runFinanceResearchRun(
     buildFinanceCommitteeContext(committeeInput);
     const executeCommittee = () =>
       runFinanceCommittee<Record<string, unknown>>({
+        purpose: committeePurpose,
         maxConcurrency: options.maxModelConcurrency,
         signal: options.signal,
         allowProviderCalls: options.allowProviderCalls,

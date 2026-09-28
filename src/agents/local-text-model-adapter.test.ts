@@ -369,3 +369,39 @@ it("preserves producer contracts outside clipped instructions and limits IDs to 
     }),
   ).toThrow("exceeds prompt budget");
 });
+
+it.each(["draft", "format"] as const)(
+  "keeps thesis handoff instructions visible in a long %s request",
+  (stage) => {
+    const contract = { declaredInstruments: ["SPY"], executionAuthority: "none" };
+    const request = {
+      schemaVersion: 1 as const,
+      runId: "thesis",
+      attempt: 1,
+      stage,
+      agentId: stage === "draft" ? "research_draft" : "formatting",
+      task: "x".repeat(5000),
+      instructions: "x".repeat(3000),
+      evidence: [{ id: "e1", text: "SPY observation" }],
+      sharedContext: { padding: "x".repeat(5000), financeThesisProposalContract: contract },
+      dependencyOutputs: {},
+      repairFeedback: [],
+    };
+    const prompt = buildQualityHarnessModelPrompt(request);
+    const line = prompt.split("\n").find((line) => line.startsWith("thesis_proposal_contract="))!;
+    expect(JSON.parse(line.slice("thesis_proposal_contract=".length))).toEqual(contract);
+    expect(prompt).toContain("invalidationConditions:string[]");
+    expect(prompt).toContain('For status="uncertain", uncertainty is REQUIRED');
+    expect(prompt).toContain("supportingAnalysis?:object");
+    expect(prompt).toContain("Formatting must preserve valid proposals");
+    expect(prompt).toContain("Omit proposals when evidence does not support one");
+    expect(() =>
+      buildQualityHarnessModelPrompt({
+        ...request,
+        sharedContext: {
+          financeThesisProposalContract: { padding: "x".repeat(5001) },
+        },
+      }),
+    ).toThrow("exceeds prompt budget");
+  },
+);

@@ -7,6 +7,8 @@ import {
   createConfiguredFinanceModelAdapter,
   createFinanceModelCallBudget,
 } from "./configured-finance-model-adapter.js";
+import type { FinanceBrainOrchestrationPlan } from "./finance-brain-orchestration.js";
+import { parseFinanceDomainProducerInputs } from "./finance-module-producer-input.js";
 import { findUncitedFinanceInstruments } from "./finance-research-evidence.js";
 import {
   type LogicalAgentModelAdapter,
@@ -94,6 +96,33 @@ export function inspectFinanceModelWorkflow(
   };
 }
 
+function checkProducerArtifact(
+  role: LogicalAgentId,
+  artifact: { supportingAnalysis?: Record<string, unknown> },
+  request: QualityHarnessModelRequest,
+) {
+  if (role !== "research_draft") {
+    return;
+  }
+  const constraints = request.sharedContext?.userConstraints as
+    | {
+        financeFrameworkProducerContract?: unknown;
+        financeOrchestration?: FinanceBrainOrchestrationPlan;
+      }
+    | undefined;
+  if (!constraints?.financeFrameworkProducerContract) {
+    return;
+  }
+  if (!constraints.financeOrchestration) {
+    throw new Error("producer plan missing");
+  }
+  parseFinanceDomainProducerInputs({
+    value: artifact.supportingAnalysis?.financeFrameworkProducerInputs,
+    plan: constraints.financeOrchestration,
+    evidenceIds: new Set(request.evidence.map((item) => item.id)),
+  });
+}
+
 export function validateFinanceWorkflowOutput(
   role: LogicalAgentId,
   output: unknown,
@@ -139,13 +168,68 @@ export function validateFinanceWorkflowOutput(
           (parsed.review.criticalFindings.length === 0 && parsed.review.evidenceGaps.length === 0))
       );
     }
+    checkProducerArtifact(role, parsed.artifact, request);
+    const constraints = request.sharedContext?.userConstraints as
+      | Record<string, unknown>
+      | undefined;
+    const preparationOnly =
+      role === "research_draft" &&
+      constraints?.financeProducerPreparationOnly === true &&
+      Boolean(constraints.financeFrameworkProducerContract && constraints.financeOrchestration);
     const ids = new Set(request.evidence.map((item) => item.id));
     return (
       parsed.artifact.claims.every((claim) => claim.evidenceIds.every((id) => ids.has(id))) &&
-      findUncitedFinanceInstruments(request.evidence, parsed.artifact.claims).length === 0
+      (preparationOnly ||
+        findUncitedFinanceInstruments(request.evidence, parsed.artifact.claims).length === 0)
     );
   } catch {
     return false;
+  }
+}
+
+function contractRepairFeedback(
+  role: LogicalAgentId,
+  output: unknown,
+  request: QualityHarnessModelRequest,
+): string {
+  try {
+    const parsed = parseStageOutput(LCX_FINANCE_WORKFLOW_ROLE_CONTRACTS[role].stage, output);
+    if (parsed.kind === "artifact") {
+      try {
+        checkProducerArtifact(role, parsed.artifact, request);
+      } catch {
+        return "Previous attempt rejected: financeFrameworkProducerInputs must be keyed by ALL selectedModuleIds, each value an object with matching domain. Follow producer_input_contract.jsonSchema types and required fields. Use listed sourceArtifactIds and enum values; no flat object or array.";
+      }
+      const ids = new Set(request.evidence.map((item) => item.id));
+      if (parsed.artifact.claims.some((claim) => claim.evidenceIds.some((id) => !ids.has(id)))) {
+        return "Previous attempt rejected: a claim cited a nonexistent evidence ID. Use only allowed_evidence_ids; retain uncertainty rather than invent support.";
+      }
+      if (findUncitedFinanceInstruments(request.evidence, parsed.artifact.claims).length) {
+        const indexes = parsed.artifact.claims
+          .flatMap((claim, index) =>
+            findUncitedFinanceInstruments(request.evidence, [claim]).length ? [index] : [],
+          )
+          .slice(0, 8);
+        return `Previous attempt rejected: claims at zero-based indexes ${JSON.stringify(indexes)} lack instrument-bound citations. Follow instrument_citation_scope; narrow the claim or use uncertain with uncertainty when support is absent. Never add unrelated citations to pass.`;
+      }
+    }
+    return "Previous attempt rejected by the role contract. Provide required fields, nonempty review notes, consistent verdict/findings, and complete findingClosure when supplied. Do not change evidence or hide unresolved findings.";
+  } catch (error) {
+    // Parser errors may interpolate model-authored IDs. Emit fixed reasons instead
+    // of promoting those strings into the next model's repair instructions.
+    const message = error instanceof Error ? error.message : "";
+    const reason = message.includes("must explain uncertainty")
+      ? "uncertain claims require a nonempty uncertainty explanation"
+      : message.includes("must cite evidence")
+        ? "supported claims require supplied evidence IDs"
+        : message.includes("duplicate artifact claim id")
+          ? "claim IDs must be unique"
+          : message.includes("epistemicClass")
+            ? "epistemicClass must use the declared enum"
+            : message.includes("evidenceRelations")
+              ? "evidenceRelations must classify each cited ID exactly once"
+              : "stage structure, required fields or field types are invalid";
+    return `Previous attempt rejected by JSON schema: ${reason}. Follow the field contract; preserve missing evidence.`;
   }
 }
 
@@ -163,8 +247,11 @@ export function createFinanceModelWorkflow(
   const manifest = inspectFinanceModelWorkflow(cfg, options);
   const callBudget = createFinanceModelCallBudget(options.maxCalls ?? 48);
   const factory = options.adapterFactory ?? createConfiguredFinanceModelAdapter;
-  const cloud = manifest.models.map((modelRef) =>
-    factory(cfg, {
+  // Carry a bounded validator hint to the existing fallback, not a new retry loop.
+  // Keys keep roles, tasks and runs isolated; the original evidence packet is unchanged.
+  const rejected = new Map<string, string>();
+  const cloud = manifest.models.map((modelRef) => {
+    const adapter = factory(cfg, {
       modelRef,
       callBudget,
       maxCalls: options.maxCalls ?? 48,
@@ -181,8 +268,26 @@ export function createFinanceModelWorkflow(
             } as const,
           }
         : {}),
-    }),
-  );
+    });
+    return {
+      ...adapter,
+      invoke: async (call, signal) => {
+        const key = JSON.stringify([call.correlationId, call.taskId, call.role]);
+        const prior = rejected.get(key);
+        const original = call.payload as QualityHarnessModelRequest;
+        const payload = prior
+          ? { ...original, repairFeedback: [prior, ...(original.repairFeedback ?? []).slice(0, 7)] }
+          : original;
+        const output = await adapter.invoke({ ...call, payload }, signal);
+        if (validateFinanceWorkflowOutput(call.role, output, payload)) {
+          rejected.delete(key);
+        } else {
+          rejected.set(key, contractRepairFeedback(call.role, output, payload));
+        }
+        return output;
+      },
+    } satisfies LogicalAgentModelAdapter;
+  });
   const byRef = new Map(manifest.models.map((ref, index) => [ref, cloud[index]]));
   const intake: LogicalAgentModelAdapter = {
     id: "finance-deterministic-intake",
@@ -231,6 +336,8 @@ export function createFinanceModelWorkflow(
         outputContract: {
           revision: `${manifest.revision}:${role}`,
           validate: (output, input) => validateFinanceWorkflowOutput(role, output, input),
+          describeFailure: (output, input) =>
+            contractRepairFeedback(role, output, input as QualityHarnessModelRequest),
         },
       };
       return [role, policy];

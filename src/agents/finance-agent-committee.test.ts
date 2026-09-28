@@ -116,6 +116,27 @@ describe("finance agent committee", () => {
     },
   );
 
+  it("prepares producer inputs without claiming a complete committee review", async () => {
+    const result = await runFinanceCommittee({
+      input,
+      purpose: "producer_preparation",
+      executor: ({ task }) => ({ output: task.agentId, sideEffects: [] }),
+    });
+    expect(result.execution.status).toBe("completed");
+    expect(result.purpose).toBe("producer_preparation");
+    expect(result.execution.tasks.map((task) => task.agentId)).toEqual([
+      "data_cleaning",
+      "financial_extraction",
+      "news_classification",
+      "evidence_integrity",
+      "risk_check",
+      "portfolio_exposure",
+      "research_draft",
+    ]);
+    expect(result.coverage.equivalenceStatus).toBe("not_ready");
+    expect(result.coverage.missingRequiredLanes).toContain("final_precheck");
+  });
+
   it("builds one immutable fact packet shared by every role", () => {
     const context = buildFinanceCommitteeContext(input);
     expect(context.schemaVersion).toBe("lcx_finance_committee_context_v1");

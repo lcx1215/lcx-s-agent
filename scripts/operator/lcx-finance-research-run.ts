@@ -635,7 +635,7 @@ async function writeVerifiedPortfolioPlan(filePath: string, plan: unknown): Prom
   return filePath;
 }
 
-async function run(options: Options): Promise<{
+export async function run(options: Options): Promise<{
   receipt: FinanceResearchRunReceipt;
   written?: unknown;
   portfolioPlanWritten?: string;
@@ -708,6 +708,7 @@ async function run(options: Options): Promise<{
   if (!options.live) {
     const receipt = await runFinanceResearchRun({
       input,
+      workspaceDir: WORKSPACE_DIR(),
       liveFetch: false,
       batchOptions,
     });
@@ -729,6 +730,7 @@ async function run(options: Options): Promise<{
   const receipt = await runCheckpointedFinanceResearch(
     {
       input,
+      workspaceDir: WORKSPACE_DIR(),
       liveFetch: true,
       qualityEnabled: options.quality,
       allowProviderCalls: true,

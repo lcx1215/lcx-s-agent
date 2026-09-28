@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { planFinanceBrainOrchestration } from "./finance-brain-orchestration.js";
+import { validateFinanceWorkflowOutput } from "./finance-model-workflow.js";
 import {
   financeProducerInputContract,
   parseFinanceDomainProducerInputs,
@@ -40,6 +41,19 @@ describe("finance module producer input", () => {
       selectedModuleIds: ["event_driven", "causal_map"],
       sourceArtifactIds: ["evidence-1"],
       allowedActionAuthority: "research_only",
+      jsonSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["event_driven", "causal_map"],
+        $defs: {
+          producerInput: {
+            properties: {
+              sourceArtifacts: { type: "array" },
+              allowedActionAuthority: { const: "research_only" },
+            },
+          },
+        },
+      },
     });
   });
 
@@ -59,6 +73,60 @@ describe("finance module producer input", () => {
         evidenceIds: new Set(["evidence-1"]),
       }),
     ).toEqual(value);
+    const request = {
+      agentId: "research_draft",
+      stage: "draft",
+      evidence: [{ id: "evidence-1" }],
+      sharedContext: {
+        userConstraints: {
+          financeOrchestration: plan(),
+          financeFrameworkProducerContract: financeProducerInputContract(plan(), ["evidence-1"]),
+        },
+      },
+    };
+    const output = (producerInputs: unknown) => ({
+      kind: "artifact",
+      artifact: {
+        answer: "A bounded event hypothesis.",
+        claims: [
+          { id: "c1", text: "Event observation", status: "supported", evidenceIds: ["evidence-1"] },
+        ],
+        supportingAnalysis: { financeFrameworkProducerInputs: producerInputs },
+      },
+    });
+    expect(validateFinanceWorkflowOutput("research_draft", output(value), request)).toBe(true);
+    expect(validateFinanceWorkflowOutput("research_draft", output(input()), request)).toBe(false);
+    const scopedRequest = {
+      ...request,
+      evidence: [...request.evidence, { id: "finance-model:SPY" }],
+      sharedContext: {
+        userConstraints: {
+          ...request.sharedContext.userConstraints,
+          financeProducerPreparationOnly: true,
+        },
+      },
+    };
+    const provisional = output(value);
+    provisional.artifact.claims[0].text = "SPY provisional interpretation";
+    expect(validateFinanceWorkflowOutput("research_draft", provisional, scopedRequest)).toBe(true);
+    expect(
+      validateFinanceWorkflowOutput("research_draft", provisional, {
+        ...scopedRequest,
+        sharedContext: request.sharedContext,
+      }),
+    ).toBe(false);
+    expect(
+      validateFinanceWorkflowOutput("formatting", provisional, {
+        ...scopedRequest,
+        agentId: "formatting",
+        stage: "format",
+      }),
+    ).toBe(false);
+    provisional.artifact.claims[0].evidenceIds = ["invented"];
+    expect(validateFinanceWorkflowOutput("research_draft", provisional, scopedRequest)).toBe(false);
+    expect(
+      validateFinanceWorkflowOutput("research_draft", output({ event_driven: input() }), request),
+    ).toBe(false);
   });
 
   it("rejects missing, unselected, or uncited producer material", () => {

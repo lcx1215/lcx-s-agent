@@ -14,29 +14,48 @@ import type {
 } from "./finance-research-batch-runner.js";
 import type { QualityHarnessArtifact } from "./quality-harness-contract.js";
 
-/** Exact instrument labels only; this checks citation coverage, not semantic truth. */
+/** Instrument citation coverage only; source text is not semantic or truth validation. */
+export function financeInstrumentCitationScope(evidence: readonly { id: string; text?: string }[]) {
+  return evidence
+    .filter((entry) => entry.id.startsWith("finance-model:"))
+    .map((entry) => {
+      const instrument = decodeURIComponent(entry.id.slice("finance-model:".length));
+      const escaped = instrument.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+      const pattern = new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "iu");
+      return {
+        instrument,
+        canonicalId: entry.id,
+        pattern,
+        evidenceIds: evidence
+          .filter(
+            (candidate) =>
+              candidate.id === entry.id ||
+              (!candidate.id.startsWith("finance-model:") &&
+                typeof candidate.text === "string" &&
+                pattern.test(candidate.text)),
+          )
+          .map((candidate) => candidate.id),
+      };
+    });
+}
+
+/** Broker/filing/controller evidence may cover an instrument without being a price packet. */
 export function findUncitedFinanceInstruments(
-  evidence: readonly { id: string }[],
+  evidence: readonly { id: string; text?: string }[],
   claims: QualityHarnessArtifact["claims"],
 ): readonly string[] {
-  const instruments = evidence
-    .filter((entry) => entry.id.startsWith("finance-model:"))
-    .map((entry) => ({
-      id: entry.id,
-      instrument: decodeURIComponent(entry.id.slice("finance-model:".length)),
-    }));
+  const instruments = financeInstrumentCitationScope(evidence);
   const missing: string[] = [];
   for (const claim of claims) {
     if (claim.status !== "supported") {
       continue;
     }
     for (const entry of instruments) {
-      const escaped = entry.instrument.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
       if (
-        new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "iu").test(claim.text) &&
-        !claim.evidenceIds.includes(entry.id)
+        entry.pattern.test(claim.text) &&
+        !claim.evidenceIds.some((id) => entry.evidenceIds.includes(id))
       ) {
-        missing.push(`${claim.id}:${entry.id}`);
+        missing.push(`${claim.id}:${entry.canonicalId}`);
       }
     }
   }

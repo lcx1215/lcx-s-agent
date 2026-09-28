@@ -89,6 +89,8 @@ export type LogicalAgentRoleModelPolicy = Readonly<{
     /** Included in checkpoint identity; change when validation semantics change. */
     revision: string;
     validate: (output: unknown, input: unknown) => boolean;
+    /** Bounded diagnostic only; cannot approve an output or launch another call. */
+    describeFailure?: (output: unknown, input: unknown) => string;
   }>;
 }>;
 

@@ -129,6 +129,66 @@ describe("finance model checkpoints", () => {
       db.close();
     }
   });
+  it("records bounded contract failures without changing or retaining the raw model output", async () => {
+    const opts = await options();
+    const store = openFinanceModelCheckpoints(opts, {});
+    const output = { arbitrary: "model text" };
+    const routing = store.routing({
+      revision: "fixture",
+      adapters: [
+        {
+          id: "fixture",
+          provider: "fixture",
+          modelId: "fixture",
+          mode: "deterministic",
+          capabilities: [],
+          requiredTools: [],
+          requiredSideEffects: [],
+          invoke: async () => output,
+        },
+      ],
+      defaultPolicy: {
+        primary: "fixture",
+        requiredCapabilities: [],
+        maxInputBytes: 10000,
+        timeoutMs: 1000,
+        outputContract: {
+          revision: "fixture",
+          validate: () => false,
+          describeFailure: () => "missing uncertainty ".repeat(100),
+        },
+      },
+    })!;
+    expect(
+      await routing.adapters[0].invoke(
+        {
+          callId: "c",
+          correlationId: "r",
+          taskId: "draft",
+          role: "research_draft",
+          attempt: 1,
+          provider: "fixture",
+          modelId: "fixture",
+          payload: {},
+        },
+        new AbortController().signal,
+      ),
+    ).toBe(output);
+    store.close();
+    const { DatabaseSync } = requireNodeSqlite();
+    const db = new DatabaseSync(opts.path);
+    try {
+      const row = db.prepare("SELECT result FROM finance_checkpoint_nodes WHERE cost=1").get()!;
+      const result = JSON.parse(String(row.result));
+      expect(result.contractCheck.passed).toBe(false);
+      expect(result.contractCheck.detail).toHaveLength(600);
+      expect(result.contractAcceptance).toBe("not_assessed");
+      expect(String(row.result)).not.toContain("model text");
+    } finally {
+      db.close();
+    }
+  });
+
   it("does not write late transport results into a closed checkpoint", async () => {
     const opts = await options();
     const store = openFinanceModelCheckpoints(opts, {});

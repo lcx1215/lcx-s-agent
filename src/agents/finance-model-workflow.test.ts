@@ -128,6 +128,8 @@ describe("ontology backed finance workflow", () => {
     ).toBe(true);
   });
   it("falls back on output contract failure and shares a terminal call budget", async () => {
+    const payloads: unknown[] = [];
+    const before = JSON.stringify(request);
     const workflow = createFinanceModelWorkflow(cfg, {
       maxCalls: 2,
       adapterFactory: (_cfg, options) => ({
@@ -138,7 +140,8 @@ describe("ontology backed finance workflow", () => {
         capabilities: ["quality_harness"],
         requiredTools: [],
         requiredSideEffects: [],
-        invoke: async () => {
+        invoke: async ({ payload }) => {
+          payloads.push(payload);
           options!.callBudget!.reserve();
           return options!.modelRef === "a/reason" ? {} : review;
         },
@@ -159,6 +162,11 @@ describe("ontology backed finance workflow", () => {
       },
     };
     expect(await router.invoke(args)).toEqual(review);
+    expect((payloads[1] as { repairFeedback: string[] }).repairFeedback[0]).toContain(
+      "Previous attempt rejected",
+    );
+    expect((payloads[1] as typeof request).evidence).toEqual(request.evidence);
+    expect(JSON.stringify(request)).toBe(before);
     expect(receipts.map((r) => r.reason ?? r.outcome)).toEqual(["output_contract", "completed"]);
     await expect(router.invoke(args)).rejects.toThrow("call_budget_exhausted");
     expect(receipts).toHaveLength(3);

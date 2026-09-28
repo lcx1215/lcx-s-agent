@@ -396,6 +396,37 @@ export function parseFinanceSchedulerArgs(argv: readonly string[]): SchedulerOpt
 }
 
 /** Exit zero alone does not establish that the cycle accepted its inputs. */
+/** Storage success and research acceptance are separate observations. */
+export function inspectFinanceResearchReceiptPersistence(stdout: string): boolean {
+  try {
+    const summary = JSON.parse(stdout) as {
+      status?: string;
+      plan?: { asOf?: string };
+      written?: { datedPath?: string };
+    };
+    const receiptPath = summary.written?.datedPath;
+    if (!receiptPath || !summary.plan?.asOf) {
+      return false;
+    }
+    const stat = fs.statSync(receiptPath);
+    if (!stat.isFile() || stat.size > 20 * 1024 * 1024) {
+      return false;
+    }
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf8")) as {
+      schemaVersion?: string;
+      status?: string;
+      plan?: { asOf?: string };
+    };
+    return (
+      receipt.schemaVersion === "lcx_finance_research_run_v1" &&
+      receipt.status === summary.status &&
+      receipt.plan?.asOf === summary.plan.asOf
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function cycleOutputSucceeded(stdout: string): boolean {
   try {
     const payload: unknown = JSON.parse(stdout);
@@ -1273,7 +1304,7 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
             status: nightReview.status,
             exitCode: nightReview.exitCode,
             evidencePath: path.join(directory, `night-review-evidence-${attempt.etDate}.json`),
-            receiptPersisted: nightReviewAccepted,
+            receiptPersisted: inspectFinanceResearchReceiptPersistence(nightReview.stdout),
             processResult: nightReview,
           },
         }

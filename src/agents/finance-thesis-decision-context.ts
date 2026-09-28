@@ -78,6 +78,13 @@ export async function buildFinanceThesisDecisionContext(params: {
   const activeCount = ledger.theses.filter((thesis) => thesis.state === "active").length;
   const active = ledger.theses
     .filter((thesis) => thesis.state === "active")
+    // Expiry applies to every decision surface, including the daily caller that
+    // does not select a horizon. Unclassified legacy theses retain compatibility.
+    .filter(
+      (thesis) =>
+        !thesis.applicability ||
+        Date.parse(thesis.applicability.validUntil) > Date.parse(params.asOf),
+    )
     .filter(
       (thesis) =>
         !params.horizon ||
@@ -132,9 +139,8 @@ export async function buildFinanceThesisDecisionContext(params: {
     ledgerHeadRef: ledger.headRef,
     fundamentals: buildFinanceFundamentalDecisionContext(params),
     activeThesisCount: activeCount,
-    ...(params.horizon
-      ? { horizon: params.horizon, excludedThesisCount: activeCount - active.length }
-      : {}),
+    excludedThesisCount: activeCount - active.length,
+    ...(params.horizon ? { horizon: params.horizon } : {}),
     theses,
     omittedThesisCount: Math.max(0, active.length - theses.length),
   });

@@ -97,6 +97,20 @@ describe("finance thesis decision context", () => {
     });
     expect(context.theses.map((thesis) => thesis.thesisId)).toEqual(["relevant"]);
     expect(context).toMatchObject({ activeThesisCount: 5, excludedThesisCount: 4 });
+    const daily = await buildFinanceThesisDecisionContext({
+      directory,
+      instruments: ["SPY"],
+      asOf: "2026-09-15T15:00:00Z",
+    });
+    expect(daily.theses.map((thesis) => thesis.thesisId)).not.toContain("expired");
+    expect(daily.theses.map((thesis) => thesis.thesisId)).toContain("legacy");
+    expect(daily.theses.map((thesis) => thesis.thesisId)).toContain("long");
+    const atExpiry = await buildFinanceThesisDecisionContext({
+      directory,
+      instruments: ["SPY"],
+      asOf: "2026-09-15T20:00:00Z",
+    });
+    expect(atExpiry.theses.map((thesis) => thesis.thesisId)).not.toContain("relevant");
   });
 
   it("reports an empty existing owner without manufacturing thesis evidence", async () => {
