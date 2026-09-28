@@ -886,10 +886,19 @@ export class LogicalAgentPool<TInput, TResult> {
   }
 
   #pumpModelInvocations() {
-    while (
-      this.#activeModelInvocations < SHARED_MODEL_INVOCATION_CONCURRENCY &&
-      this.#modelInvocationQueue.length > 0
-    ) {
+    // Local/mixed routes still share one resident model. Explicit provider-only
+    // routes can use the caller's bounded task slots without loading local models.
+    const adapters = this.#modelRouter?.routing.adapters;
+    const providerOnly =
+      this.#allowProviderCalls &&
+      adapters?.length &&
+      adapters.every(
+        (adapter) =>
+          adapter.mode === "deterministic" ||
+          (adapter.mode === "adapter" && adapter.requiredSideEffects.includes("provider_call")),
+      );
+    const limit = providerOnly ? this.#config.maxConcurrency : SHARED_MODEL_INVOCATION_CONCURRENCY;
+    while (this.#activeModelInvocations < limit && this.#modelInvocationQueue.length > 0) {
       const job = this.#modelInvocationQueue.shift();
       if (!job) {
         return;

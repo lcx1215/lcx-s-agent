@@ -187,6 +187,8 @@ export type FinanceResearchRunInput = Readonly<{
 }>;
 
 export type FinanceResearchRunOptions = Readonly<{
+  /** Bounded model concurrency; legacy/local callers retain one slot. */
+  maxModelConcurrency?: 1 | 2;
   signal?: AbortSignal;
   allowProviderCalls?: boolean;
   input: FinanceResearchRunInput;
@@ -2013,6 +2015,7 @@ export async function runFinanceResearchRun(
         ),
         strategyMethodKit,
         financeOrchestration: plan.orchestration,
+        maxModelConcurrency: options.maxModelConcurrency ?? 1,
         qualityEnabled: options.qualityEnabled ?? true,
         allowProviderCalls: options.allowProviderCalls === true,
         committeeConfigured: hasModel,
@@ -2050,6 +2053,7 @@ export async function runFinanceResearchRun(
     buildFinanceCommitteeContext(committeeInput);
     const executeCommittee = () =>
       runFinanceCommittee<Record<string, unknown>>({
+        maxConcurrency: options.maxModelConcurrency,
         signal: options.signal,
         allowProviderCalls: options.allowProviderCalls,
         input: committeeInput,
@@ -2192,7 +2196,7 @@ export async function runFinanceResearchRun(
                   modelCheckpoint?.invoker(options.qualityModelInvoker) ??
                   options.qualityModelInvoker,
               }),
-          maxConcurrency: 1,
+          maxConcurrency: options.maxModelConcurrency ?? 1,
           memoryBudgetMb: 3_072,
           taskTimeoutMs: options.qualityModelRouting
             ? modelRoutingTaskTimeoutMs(options.qualityModelRouting)

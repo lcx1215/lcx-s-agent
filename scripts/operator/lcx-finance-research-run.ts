@@ -65,6 +65,7 @@ type Options = {
   timeoutMs: number;
   runTimeoutMs: number;
   maxModelCalls: number;
+  maxModelConcurrency: 1 | 2;
   allowModelNetwork: boolean;
   maxApiCalls: number;
   maxConcurrency: number;
@@ -108,6 +109,7 @@ function usage(): string {
     `  --max-tokens N                     bounded workflow output tokens (default: 8192, max: ${MAX_MODEL_TOKENS})`,
     `  --timeout-ms N                     bounded workflow model timeout (max: ${MAX_MODEL_TIMEOUT_MS})`,
     "  --run-timeout-ms N                 source + model cancellation deadline (default: 840000)",
+    "  --max-model-concurrency N          model DAG slots, 1 or 2 (default: 2)",
     "  --max-model-calls N                whole-run model attempt budget (default: 48)",
     "  --allow-model-network              retired local network override",
     "  --max-api-calls N                  hard source-attempt budget (default: 48, max: 10000)",
@@ -172,6 +174,7 @@ export function parseArgs(args: readonly string[]): Options {
     timeoutMs: 120_000,
     runTimeoutMs: 840_000,
     maxModelCalls: 48,
+    maxModelConcurrency: 2,
     allowModelNetwork: false,
     maxApiCalls: 48,
     maxConcurrency: 3,
@@ -225,6 +228,9 @@ export function parseArgs(args: readonly string[]): Options {
         arg,
         MAX_MODEL_TIMEOUT_MS,
       );
+      index += 1;
+    } else if (arg === "--max-model-concurrency") {
+      options.maxModelConcurrency = positiveInteger(readValue(args, index, arg), arg, 2) as 1 | 2;
       index += 1;
     } else if (arg === "--max-model-calls") {
       options.maxModelCalls = positiveInteger(readValue(args, index, arg), arg, 10_000);
@@ -726,6 +732,7 @@ async function run(options: Options): Promise<{
       liveFetch: true,
       qualityEnabled: options.quality,
       allowProviderCalls: true,
+      maxModelConcurrency: options.maxModelConcurrency,
       modelRouting: workflow.routing,
       ...(options.quality ? { qualityModelRouting: workflow.routing } : {}),
       sourceGovernance: governance,

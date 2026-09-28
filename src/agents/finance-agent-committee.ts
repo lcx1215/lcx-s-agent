@@ -192,6 +192,7 @@ export function evaluateFinanceCommitteeCoverage<TResult>(
 }
 
 export async function runFinanceCommittee<TResult>(params: {
+  maxConcurrency?: 1 | 2;
   allowProviderCalls?: boolean;
   signal?: AbortSignal;
   input: FinanceCommitteeInput;
@@ -225,6 +226,7 @@ export async function runFinanceCommittee<TResult>(params: {
       taskTimeoutMs: params.modelRouting
         ? modelRoutingTaskTimeoutMs(params.modelRouting)
         : undefined,
+      maxConcurrency: params.maxConcurrency,
       allowProviderCalls: params.allowProviderCalls,
       ...(params.modelRouting === undefined ? {} : { modelRouting: params.modelRouting }),
       ...(params.modelInvoker === undefined ? {} : { modelInvoker: params.modelInvoker }),

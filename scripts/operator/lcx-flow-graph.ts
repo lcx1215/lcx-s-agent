@@ -1678,6 +1678,8 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "scripts/operator/lcx-finance-research.ts",
       "scripts/operator/lcx-finance-research-batch.ts",
       "scripts/operator/lcx-finance-research-run.ts",
+      "scripts/operator/lcx-finance-research-checkpoint-run.ts",
+      "test/operator/lcx-finance-research-checkpoint-run.test.ts",
       "scripts/operator/lcx-finance-research-score.ts",
       "scripts/operator/lcx-finance-research-turn.ts",
       "test/operator/lcx-finance-research.test.ts",

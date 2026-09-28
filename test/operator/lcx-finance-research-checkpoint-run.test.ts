@@ -32,11 +32,14 @@ describe("research CLI checkpoint budget", () => {
       totalTimeoutMs: 180000,
       runTimeoutMs: 840000,
       maxModelCalls: 48,
+      maxModelConcurrency: 2,
     });
     expect(parseArgs(["--run-timeout-ms", "100", "--max-model-calls", "3"])).toMatchObject({
       runTimeoutMs: 100,
       maxModelCalls: 3,
     });
+    expect(parseArgs(["--max-model-concurrency", "1"]).maxModelConcurrency).toBe(1);
+    expect(() => parseArgs(["--max-model-concurrency", "3"])).toThrow();
     expect(() => parseArgs(["--run-timeout-ms", "0"])).toThrow();
     expect(() => parseArgs(["--max-model-calls", "-1"])).toThrow();
   });

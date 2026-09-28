@@ -322,6 +322,69 @@ describe("logical agent pool", () => {
     expect(result.pool.maxObservedModelConcurrency).toBe(1);
   });
 
+  it.each([false, true])(
+    "bounds provider calls and preserves mixed-route serialization (mixed=%s)",
+    async (mixed) => {
+      let active = 0;
+      let peak = 0;
+      const remote = {
+        id: "remote",
+        provider: "fixture",
+        modelId: "remote",
+        mode: "adapter" as const,
+        capabilities: ["json"],
+        requiredTools: [],
+        requiredSideEffects: ["provider_call" as const],
+        invoke: async () => {
+          active++;
+          peak = Math.max(peak, active);
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          active--;
+          return { ok: true };
+        },
+      };
+      const pool = new LogicalAgentPool({
+        maxConcurrency: 2,
+        allowProviderCalls: true,
+        modelRouting: {
+          revision: "provider-concurrency-test",
+          adapters: [
+            remote,
+            ...(mixed
+              ? [
+                  {
+                    ...remote,
+                    id: "local",
+                    mode: "injected" as const,
+                    requiredSideEffects: ["local_compute" as const],
+                  },
+                ]
+              : []),
+          ],
+          defaultPolicy: {
+            primary: "remote",
+            requiredCapabilities: ["json"],
+            maxInputBytes: 10000,
+            timeoutMs: 1000,
+          },
+        },
+      });
+      const result = await runLogicalAgentPlan({
+        pool,
+        tasks: [
+          { id: "one", agentId: "financial_extraction", input: {} },
+          { id: "two", agentId: "news_classification", input: {} },
+        ],
+        executor: async ({ modelSlot, signal }) => ({
+          output: await modelSlot.invoke({}, signal),
+          sideEffects: [],
+        }),
+      });
+      expect(result.status).toBe("completed");
+      expect(peak).toBe(mixed ? 1 : 2);
+    },
+  );
+
   it("blocks descendants after a failed role without running them", async () => {
     const plan = buildDefaultLogicalAgentPlan({ ask: "失败传播测试" });
     const executed: string[] = [];
