@@ -126,11 +126,6 @@ describe("finance agent committee", () => {
     expect(result.purpose).toBe("producer_preparation");
     expect(result.execution.tasks.map((task) => task.agentId)).toEqual([
       "data_cleaning",
-      "financial_extraction",
-      "news_classification",
-      "evidence_integrity",
-      "risk_check",
-      "portfolio_exposure",
       "research_draft",
     ]);
     expect(result.coverage.equivalenceStatus).toBe("not_ready");

@@ -397,7 +397,9 @@ Module-learning and finance retrieval review tools default to read-only. Persist
 ### Research handoff and bounded review
 
 When module execution and the quality harness are both enabled, the preliminary
-committee runs the ancestors of `research_draft` to prepare producer inputs.
+committee runs deterministic intake and one `research_draft` to prepare producer
+inputs. Evidence, risk and exposure reviews run in the post-module quality harness
+instead of being repeated before the modules exist.
 Its receipt says `producer_preparation`; it does not claim a complete committee
 review. This preliminary draft must satisfy the producer schema and cite existing
 evidence IDs, but its instrument-specific interpretations remain provisional.

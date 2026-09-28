@@ -1752,15 +1752,7 @@ function committeeGate(
   const passed =
     committee.execution.status === "completed" &&
     (preparation
-      ? [
-          "data_cleaning",
-          "financial_extraction",
-          "news_classification",
-          "evidence_integrity",
-          "risk_check",
-          "portfolio_exposure",
-          "research_draft",
-        ].every((role) =>
+      ? ["data_cleaning", "research_draft"].every((role) =>
           committee.execution.tasks.some(
             (task) => task.agentId === role && task.status === "completed",
           ),

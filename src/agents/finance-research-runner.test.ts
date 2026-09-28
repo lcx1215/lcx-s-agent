@@ -1510,7 +1510,7 @@ describe("research module composition reaches actual model request boundaries", 
       });
       expect(captured).toMatchObject({ causal_map: { allowedActionAuthority: "research_only" } });
       expect(result.committee?.model.purpose).toBe("producer_preparation");
-      expect(result.committee?.model.roleCount).toBe(7);
+      expect(result.committee?.model.roleCount).toBe(2);
       expect(result.committee?.coverage.equivalenceStatus).toBe("not_ready");
       expect(result.quality?.status).toBe("verified");
       expect(result.quality?.attempts[0]?.stages.map((stage) => stage.agentId)).toEqual(

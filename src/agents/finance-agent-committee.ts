@@ -236,20 +236,19 @@ export async function runFinanceCommittee<TResult>(params: {
   const purpose = params.purpose ?? "full_review";
   const fullPlan = buildDefaultLogicalAgentPlan(request);
   const finalTaskId = purpose === "producer_preparation" ? "research_draft" : "final_precheck";
-  const needed = new Set<string>();
-  const include = (id: string) => {
-    if (needed.has(id)) {
-      return;
-    }
-    needed.add(id);
-    for (const dependency of fullPlan.find((task) => task.id === id)?.dependsOn ?? []) {
-      include(dependency);
-    }
-  };
-  include(finalTaskId);
+  // Producer preparation is a provisional schema-building step, not a second
+  // review committee. The runner enables it only with full post-module quality.
+  const tasks =
+    purpose === "producer_preparation"
+      ? fullPlan
+          .filter((task) => task.id === "data_cleaning" || task.id === "research_draft")
+          .map((task) =>
+            task.id === "research_draft" ? { ...task, dependsOn: ["data_cleaning"] } : task,
+          )
+      : fullPlan;
   const execution = await runLogicalAgentPlan({
     signal: params.signal,
-    tasks: fullPlan.filter((task) => needed.has(task.id)),
+    tasks,
     executor: params.executor,
     pool,
     ...(params.runId === undefined ? {} : { runId: params.runId }),
