@@ -150,7 +150,7 @@ export function parseFinanceSchedulerArgs(argv: readonly string[]): SchedulerOpt
   let sourceHeartbeatEnabled = true;
   const seen = new Set<string>();
   let intradayEnabled = false;
-  let intradayPlace = false;
+  let legacyIntradayPlace = false;
   let intradayInstruments: string[] = [];
   let intradayInstrumentsProvided = false;
   let intradayActiveRule = false;
@@ -185,7 +185,9 @@ export function parseFinanceSchedulerArgs(argv: readonly string[]): SchedulerOpt
     } else if (arg === "--intraday-monitor") {
       intradayEnabled = true;
     } else if (arg === "--intraday-place") {
-      intradayPlace = true;
+      // Keep old supervisor invocations parseable, but do not make this a second
+      // order-placement switch. The shared --place flag is the only authority.
+      legacyIntradayPlace = true;
     } else if (arg === "--intraday-active-rule") {
       intradayActiveRule = true;
     } else if (
@@ -325,13 +327,14 @@ export function parseFinanceSchedulerArgs(argv: readonly string[]): SchedulerOpt
   if (researchContextPath && extraArgs.includes("--portfolio-plan")) {
     throw new Error("automatic research plan refresh cannot combine a static --portfolio-plan");
   }
-  if (intradayPlace && !intradayEnabled) {
+  if (legacyIntradayPlace && !intradayEnabled) {
     throw new Error("--intraday-place requires --intraday-monitor");
   }
-  if (intradayEnabled && intradayPlace) {
-    if (!extraArgs.includes("--place")) {
-      throw new Error("--intraday-place requires the shared --place authorization");
-    }
+  const placementEnabled = extraArgs.includes("--place");
+  if (intradayEnabled && legacyIntradayPlace && !placementEnabled) {
+    throw new Error("--intraday-place requires the shared --place authorization");
+  }
+  if (intradayEnabled && placementEnabled) {
     if (extraArgs[extraArgs.indexOf("--venue") + 1] !== "alpaca") {
       throw new Error("intraday placement requires --venue alpaca (paper account only)");
     }
@@ -372,9 +375,9 @@ export function parseFinanceSchedulerArgs(argv: readonly string[]): SchedulerOpt
     ...(intradayEnabled
       ? {
           intraday: {
-            place: intradayPlace,
-            placementRequested: intradayPlace,
-            placementEligibility: intradayPlace ? "eligibility_missing" : "not_requested",
+            place: placementEnabled,
+            placementRequested: placementEnabled,
+            placementEligibility: placementEnabled ? "eligibility_missing" : "not_requested",
             instrumentSource: intradayActiveRule
               ? "active_rule"
               : intradayInstrumentsProvided
@@ -1562,7 +1565,6 @@ async function detach(root: FinanceStateDir, options: SchedulerOptions): Promise
         ...(options.intraday
           ? [
               "--intraday-monitor",
-              ...(options.intraday.place ? ["--intraday-place"] : []),
               ...(options.intraday.instrumentSource === "active_rule"
                 ? ["--intraday-active-rule"]
                 : options.intraday.instrumentSource === "explicit"

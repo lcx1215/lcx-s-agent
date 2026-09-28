@@ -42,6 +42,40 @@ execution rather than selecting an uncertain book; `--status` remains available.
   readiness; those remain controller checks. Status and night-only settlement
   remain independent of daytime execution configuration.
 
+`--place` is the scheduler's single order-placement master switch. With
+`--intraday-monitor`, it also permits the scheduler to consider intraday orders
+for the active, paper-eligible strategy and its declared instruments. The
+strategy contract, system-universe match, Alpaca Paper controller, quote
+freshness, order caps, shared execution gate, deduplication and reconciliation
+remain required. Monitoring without `--place` stays read-only. The old
+`--intraday-place` argument is accepted only for compatibility, requires
+`--place`, and grants no additional authority; new invocations should omit it.
+
+## 24-hour resident operation
+
+Use one operating-system supervisor, one `--loop` scheduler process, one
+canonical finance state directory, and one scheduler lock per book. The
+supervisor owns process lifetime (`RunAtLoad`/`KeepAlive` on macOS or an
+equivalent service policy); the scheduler owns minute-level ticks, strategy
+cadence, receipts, and the book lock. Do not start a second detached scheduler
+for the same book under that supervisor.
+
+The process can stay resident outside market sessions, while strategy and
+market-session gates decide when to read market data or consider orders. This
+does not mean markets or feeds are available 24 hours a day, and it does not
+authorize orders outside the declared strategy, instrument, quote-freshness,
+cap, and shared execution gates. Without `--place`, the resident process remains
+monitor-only.
+
+On macOS, a user LaunchAgent can restart an exited process while its login
+session and host are available; sleep, shutdown, logout, power, or network loss
+can still interrupt monitoring. Uninterrupted 24-hour host availability needs
+an always-on host and persistent state storage. A successful supervisor start
+or a present PID alone is not a health proof: reconcile the supervisor's target
+and process arguments with fresh scheduler progress and the latest cycle and
+execution receipts. Installing or reloading a service is a separate operational
+change from editing this scheduler.
+
 ## Receipts and interrupted runs
 
 `daily-cycle-scheduler.json` keeps `lastFired` for compatibility: it means an

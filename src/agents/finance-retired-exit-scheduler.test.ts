@@ -55,7 +55,6 @@ it.each(["sell", "buy"] as const)(
     const options = parseFinanceSchedulerArgs([
       "--loop",
       "--intraday-monitor",
-      "--intraday-place",
       "--place",
       "--venue",
       "alpaca",

@@ -161,6 +161,54 @@ describe("durable scheduler claims on the unified lifecycle", () => {
     ).toThrow();
     expect(() => parseFinanceSchedulerArgs(["--loop", "--execution-max-age-ms", "0"])).toThrow();
   });
+  it("uses --place as the only placement switch while retaining intraday scope and caps", () => {
+    const boundedAlpacaPlacement = [
+      "--place",
+      "--venue",
+      "alpaca",
+      "--execution-policy",
+      path.join(root, "policy.json"),
+      "--execution-quote-feed",
+      "iex",
+      "--execution-max-age-ms",
+      "30000",
+      "--max-order-notional",
+      "1000",
+      "--max-instrument-notional",
+      "5000",
+      "--max-orders",
+      "8",
+    ];
+    const withoutLegacySwitch = parseFinanceSchedulerArgs([
+      "--loop",
+      "--intraday-monitor",
+      ...boundedAlpacaPlacement,
+    ]);
+    expect(withoutLegacySwitch.intraday).toMatchObject({
+      place: true,
+      placementRequested: true,
+      placementEligibility: "eligibility_missing",
+    });
+
+    const withLegacySwitch = parseFinanceSchedulerArgs([
+      "--loop",
+      "--intraday-monitor",
+      "--intraday-place",
+      ...boundedAlpacaPlacement,
+    ]);
+    expect(withLegacySwitch.intraday).toMatchObject({
+      place: true,
+      placementRequested: true,
+    });
+
+    expect(() =>
+      parseFinanceSchedulerArgs(["--loop", "--intraday-monitor", "--intraday-place"]),
+    ).toThrow("--intraday-place requires the shared --place authorization");
+    expect(parseFinanceSchedulerArgs(["--loop", "--intraday-monitor"]).intraday).toMatchObject({
+      place: false,
+      placementRequested: false,
+    });
+  });
   it("allows only one concurrent owner to dispatch", async () => {
     let release!: () => void;
     mocks.run.mockImplementation(
