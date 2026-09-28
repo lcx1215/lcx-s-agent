@@ -1708,6 +1708,7 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "test/lcx-finance-research-run.test.ts",
       "test/operator/lcx-finance-research-run.test.ts",
       "test/operator/lcx-finance-research-turn.test.ts",
+      "test/operator/lcx-finance-research-workspace.test.ts",
     ],
   },
   {
