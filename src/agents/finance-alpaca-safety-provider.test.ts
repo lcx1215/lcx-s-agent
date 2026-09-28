@@ -96,6 +96,63 @@ it.each([false, true])(
     ).toBe(true);
   },
 );
+it("accepts bounded cross-snapshot valuation drift and budgets against the higher gross", async () => {
+  const f = fixture();
+  f.account.cash = "199.73";
+  f.account.long_market_value = "800.27";
+  f.positions.splice(
+    0,
+    1,
+    {
+      symbol: "BTCUSD",
+      side: "long",
+      qty: "0.000399",
+      market_value: "33.3555",
+      asset_class: "crypto",
+    },
+    {
+      symbol: "SPY",
+      side: "long",
+      qty: "1",
+      market_value: "766.89",
+      asset_class: "us_equity",
+    },
+  );
+  const result = await readAlpacaPaperSafetyFacts(f.options);
+  expect(result.ok).toBe(true);
+  if (result.ok) {
+    expect(result.facts.account.grossExposure).toBe(800.27);
+  }
+});
+it("refuses account valuation drift above the bounded tolerance", async () => {
+  const f = fixture();
+  f.options = { ...f.options, diagnostics: true };
+  f.account.cash = "199.70";
+  f.account.long_market_value = "800.30";
+  f.positions.splice(
+    0,
+    1,
+    {
+      symbol: "BTCUSD",
+      side: "long",
+      qty: "0.000399",
+      market_value: "33.3555",
+      asset_class: "crypto",
+    },
+    {
+      symbol: "SPY",
+      side: "long",
+      qty: "1",
+      market_value: "766.89",
+      asset_class: "us_equity",
+    },
+  );
+  expect(await readAlpacaPaperSafetyFacts(f.options)).toEqual({
+    ok: false,
+    reason: "alpaca_safety_facts_inconsistent",
+    diagnostic: "account_arithmetic",
+  });
+});
 it.each([
   ["null-cash", "alpaca_safety_facts_inconsistent"],
   ["blocked-type", "alpaca_safety_facts_inconsistent"],

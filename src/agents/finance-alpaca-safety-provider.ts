@@ -464,12 +464,16 @@ export async function readAlpacaPaperSafetyFacts(
     }
     // Margin capability/buying_power is deliberately unused. These facts prove no current borrowing.
     failureStage = "account_arithmetic";
+    // Account and position valuations come from separate Alpaca snapshots. Accept only
+    // cents-scale drift, bounded at $0.05, and use the higher gross for exposure caps.
+    const accountGross = Math.max(gross, longValue);
+    const grossDriftTolerance = Math.min(0.05, Math.max(0.01, accountGross * 0.00005));
     if (
       equity <= 0 ||
       cash < 0 ||
       shortValue !== 0 ||
-      gross > equity ||
-      Math.abs(gross - longValue) > 0.01 ||
+      accountGross > equity ||
+      Math.abs(gross - longValue) > grossDriftTolerance ||
       Math.abs(cash + longValue - equity) > 0.01 ||
       (!evidence.trackNewHigh && evidence.peakEquity < equity)
     ) {
@@ -577,7 +581,7 @@ export async function readAlpacaPaperSafetyFacts(
           availableCash: cash,
           peakEquity: Math.max(evidence.peakEquity, equity),
           currency,
-          grossExposure: gross,
+          grossExposure: accountGross,
         },
         quote: {
           source: `${DATA};feed=${crypto ? "crypto-us" : options.stockFeed};latest-quote-${options.side === "buy" ? "ask" : "bid"}`,
