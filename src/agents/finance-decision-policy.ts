@@ -374,7 +374,9 @@ export function evaluateFinanceDecisionPolicy(params: {
   const answer = params.answer.trim();
   const executionAdapter = params.executionAdapter?.trim() ?? "";
   const asksForAction = CANDIDATE_ACTION_PATTERN.test(ask);
-  const hasAction = hasAssetAction(answer);
+  // Counted broker fills describe executions; their buy/sell labels are not commands.
+  const actionText = answer.replace(/\b\d+\s+(?:buy|sell)\s+fills?\b/giu, "reported executions");
+  const hasAction = hasAssetAction(actionText);
   const failedReasons: string[] = [];
   const requiredEvidence: string[] = [];
 
@@ -408,7 +410,7 @@ export function evaluateFinanceDecisionPolicy(params: {
   }
 
   if (mode === "research_only") {
-    if (DIRECT_ACTION_PATTERN.test(answer) || hasDirectAssetAction(answer)) {
+    if (DIRECT_ACTION_PATTERN.test(actionText) || hasDirectAssetAction(actionText)) {
       failedReasons.push("direct_trade_or_position_action_language");
     }
     return Object.freeze({

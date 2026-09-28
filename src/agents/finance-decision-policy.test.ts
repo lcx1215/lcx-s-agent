@@ -15,6 +15,24 @@ const candidateContext = {
 };
 
 describe("finance decision policy", () => {
+  it("distinguishes counted broker fills from a new trade instruction", () => {
+    const summary = "Broker summary shows 3 buy fills, 0 sell fills and 2 unallocated fees.";
+    expect(
+      evaluateFinanceDecisionPolicy({ ask: "Review SPY fills", answer: summary }),
+    ).toMatchObject({
+      allowed: true,
+      executionAuthority: "none",
+    });
+    for (const instruction of ["Buy SPY now.", "Sell SPY now.", "Buy more shares."]) {
+      expect(
+        evaluateFinanceDecisionPolicy({
+          ask: "Review SPY fills",
+          answer: `${summary} ${instruction}`,
+        }).failedReasons,
+      ).toContain("direct_trade_or_position_action_language");
+    }
+  });
+
   it("keeps the legacy research-only mode unable to adopt direct trade language", () => {
     const result = evaluateFinanceDecisionPolicy({
       ask: "NVDA 现在能买吗？",
