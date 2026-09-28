@@ -1512,6 +1512,7 @@ function qualityVerifier(
   asOf?: string,
   sourceEvidence: readonly FinanceCommitteeEvidence[] = [],
   instruments: readonly string[] = [],
+  assessmentRequired = false,
 ): QualityHarnessVerifier {
   return ({ request, artifact }) => {
     const evidenceIds = new Set(request.evidence.map((entry) => entry.id));
@@ -1574,7 +1575,8 @@ function qualityVerifier(
         details: [error instanceof Error ? error.message : String(error)],
       };
     }
-    if (requiresFinanceResearchAssessment(request.task)) {
+    // Classify the original user request, not our appended scenario guidance.
+    if (assessmentRequired) {
       const assessment = verifyFinanceResearchAssessment(
         artifact.supportingAnalysis
           ? {
@@ -2238,6 +2240,7 @@ export async function runFinanceResearchRun(
             asOf,
             evidence,
             plan.targets.map((target) => target.instrument),
+            requiresFinanceResearchAssessment(ask),
           ),
         });
       quality = modelCheckpoint

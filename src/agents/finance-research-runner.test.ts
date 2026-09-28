@@ -539,6 +539,56 @@ describe("finance research runner", () => {
     );
   });
 
+  it.each([
+    ["Summarize the supplied BTC evidence.", true],
+    ["Why did BTC move? Provide causal scenarios.", false],
+  ] as const)(
+    "derives assessment requirements from the original ask: %s",
+    async (ask, accepted) => {
+      const tasks: string[] = [];
+      const withoutAssessment = async (request: unknown) => {
+        const task = (request as { task?: string }).task;
+        if (task) {
+          tasks.push(task);
+        }
+        const output = (await modelInvoker(request)) as { artifact?: Record<string, unknown> };
+        if (!output.artifact) {
+          return output;
+        }
+        const { supportingAnalysis: _omitted, ...artifact } = output.artifact;
+        return { ...output, artifact };
+      };
+      const result = await runFinanceResearchRun({
+        input: {
+          ask,
+          asOf: AS_OF,
+          targets: [
+            {
+              id: "btc-fixture",
+              instrument: "BTCUSDT",
+              assetClass: "crypto",
+              realtime: { requireOfficialReference: false },
+              collections: [{ collection: "news", limit: 1, freshnessMaxMinutes: 60 }],
+            },
+          ],
+        },
+        liveFetch: true,
+        qualityEnabled: true,
+        modelInvoker: withoutAssessment,
+        qualityModelInvoker: withoutAssessment,
+        modelId: "fixture-model",
+        batchOptions: BATCH_OPTIONS,
+      });
+      expect(tasks.some((task) => /scenario/iu.test(task))).toBe(true);
+      expect(result.quality?.status === "verified").toBe(accepted);
+      if (!accepted) {
+        expect(result.quality?.attempts[0]?.verification.summary).toBe(
+          "causal_scenario_assessment_missing_or_invalid",
+        );
+      }
+    },
+  );
+
   it("withholds a research candidate when a thesis proposal escapes the declared instrument universe", async () => {
     const unsupportedProposalInvoker = async (request: unknown): Promise<unknown> => {
       const output = await modelInvoker(request);

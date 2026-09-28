@@ -383,7 +383,14 @@ it.each(["draft", "format"] as const)(
       task: "x".repeat(5000),
       instructions: "x".repeat(3000),
       evidence: [{ id: "e1", text: "SPY observation" }],
-      sharedContext: { padding: "x".repeat(5000), financeThesisProposalContract: contract },
+      sharedContext: {
+        padding: "x".repeat(5000),
+        financeThesisProposalContract: contract,
+        supportingAnalysisContract: {
+          causalHypotheses: "two hypotheses",
+          scenarios: "three scenarios",
+        },
+      },
       dependencyOutputs: {},
       repairFeedback: [],
     };
@@ -395,6 +402,19 @@ it.each(["draft", "format"] as const)(
     expect(prompt).toContain("supportingAnalysis?:object");
     expect(prompt).toContain("Formatting must preserve valid proposals");
     expect(prompt).toContain("Omit proposals when evidence does not support one");
+    const analysis = prompt
+      .split("\n")
+      .find((line) => line.startsWith("supporting_analysis_contract="))!;
+    expect(JSON.parse(analysis.slice("supporting_analysis_contract=".length))).toEqual(
+      request.sharedContext.supportingAnalysisContract,
+    );
+    expect(prompt).toContain("Formatting must preserve required structured analysis");
+    expect(() =>
+      buildQualityHarnessModelPrompt({
+        ...request,
+        sharedContext: { supportingAnalysisContract: { padding: "x".repeat(5001) } },
+      }),
+    ).toThrow("supporting analysis contract exceeds prompt budget");
     expect(() =>
       buildQualityHarnessModelPrompt({
         ...request,

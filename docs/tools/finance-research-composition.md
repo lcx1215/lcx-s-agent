@@ -426,3 +426,8 @@ The research CLI passes its resolved workspace to module execution as well as
 checkpoint and receipt storage. An explicit workspace must not silently fall back
 to the shell's working directory for framework writes. The separately requested
 finance state directory remains the thesis-ledger destination.
+
+Causal/scenario requirements are selected from the original user request, not
+from system guidance appended to the model task. When required, the structured
+analysis contract has its own bounded prompt section so context truncation cannot
+hide fields that the deterministic verifier later requires.
