@@ -962,6 +962,131 @@ describe("finance price arithmetic before model prompting", () => {
     expect(reused).toContain("latest tot_pub_debt_out_amt=100");
   });
 
+  it("keeps Treasury security categories separate when they share an observation date", () => {
+    const packet = macroPacket([
+      macroRecord("2026-08-31", "United States Savings Securities", "3.145"),
+      macroRecord("2026-08-31", "United States Savings Inflation Securities", "4.496"),
+    ]);
+
+    const text = buildFinanceResearchModelEvidence(packet).at(-1)?.text ?? "";
+    expect(text).toContain("United States Savings Securities");
+    expect(text).toContain("latest avg_interest_rate_amt=3.145");
+    expect(text).toContain("United States Savings Inflation Securities");
+    expect(text).toContain("latest avg_interest_rate_amt=4.496");
+    expect(text).not.toContain("previous=3.145");
+  });
+
+  it("compares observations only within the same macro series dimensions", () => {
+    const packet = macroPacket([
+      macroRecord("2026-07-31", "United States Savings Securities", "3.100"),
+      macroRecord("2026-08-31", "United States Savings Securities", "3.145"),
+    ]);
+
+    const text = buildFinanceResearchModelEvidence(packet).at(-1)?.text ?? "";
+    expect(text).toContain("latest avg_interest_rate_amt=3.145");
+    expect(text).toContain("previous=3.1 (2026-07-31)");
+  });
+
+  it("reports conflicting values for one macro series on the same date", () => {
+    const packet = macroPacket([
+      macroRecord("2026-08-31", "United States Savings Securities", "3.145"),
+      macroRecord("2026-08-31", "United States Savings Securities", "3.200"),
+    ]);
+
+    const text = buildFinanceResearchModelEvidence(packet).at(-1)?.text ?? "";
+    expect(text).toContain("same observation date has conflicting values");
+    expect(text).toContain("3.145");
+    expect(text).toContain("3.2");
+    expect(text).not.toContain("latest avg_interest_rate_amt=3.2");
+  });
+
+  it("preserves the single-series macro summary and discloses missing vintage data", () => {
+    const packet = macroPacket([
+      macroRecord("2026-07-31", undefined, "3.100", "DGS10"),
+      macroRecord("2026-08-31", undefined, "3.145", "DGS10"),
+    ]);
+
+    const text = buildFinanceResearchModelEvidence(packet).at(-1)?.text ?? "";
+    expect(text).toContain("DGS10");
+    expect(text).toContain("latest value=3.145");
+    expect(text).toContain("previous=3.1 (2026-07-31)");
+    expect(text).toContain("vintage interval=unverified..unverified");
+  });
+
+  it("keeps units as part of macro series identity", () => {
+    const packet = macroPacket([
+      macroRecord("2026-08-31", undefined, "3.145", "DGS10", "percent"),
+      macroRecord("2026-08-31", undefined, "314.5", "DGS10", "basis points"),
+    ]);
+
+    const text = buildFinanceResearchModelEvidence(packet).at(-1)?.text ?? "";
+    expect(text).toContain('"unit":"percent"');
+    expect(text).toContain('"unit":"basis points"');
+    expect(text).not.toContain("same observation date has conflicting values");
+  });
+
+  it("labels the observation period separately from the source capture timestamp", () => {
+    const record = macroRecord("2026-08-31", undefined, "3.145", "DGS10");
+    const packet = macroPacket([{ ...record, sourceTimestamp: "2026-09-09T00:00:00.000Z" }]);
+    const text = buildFinanceResearchModelEvidence(packet).at(-1)?.text ?? "";
+    expect(text).toContain("observation period=2026-08-31");
+    expect(text).not.toContain("observation period=2026-09-09");
+    expect(text).toContain("publication time=unverified");
+  });
+
+  function macroPacket(records: FinanceMarketCollectionItem[]): FinanceResearchBatchEvidencePacket {
+    return {
+      schemaVersion: "lcx_finance_research_batch_v1",
+      boundary: "finance_research_batch_research_only",
+      decisionMode: "research_only",
+      correlationId: "macro-dimensions",
+      asOf: "2026-09-10T00:00:00Z",
+      useCase: "test",
+      status: "completed",
+      committeeEvidence: [],
+      budget: {},
+      jobs: [
+        {
+          request: {
+            instrument: "avg_interest_rates",
+            assetClass: "macro_series",
+            collection: "macro_series",
+            asOf: "2026-09-10T00:00:00Z",
+          },
+          status: "ready",
+          receipt: { records },
+        },
+      ],
+    } as unknown as FinanceResearchBatchEvidencePacket;
+  }
+
+  function macroRecord(
+    date: string,
+    securityDescription: string | undefined,
+    value: string,
+    seriesId = "avg_interest_rates",
+    unit?: string,
+  ): FinanceMarketCollectionItem {
+    return {
+      itemId: `${seriesId}-${date}-${securityDescription ?? ""}`,
+      collection: "macro_series",
+      providerName: "official-macro-data",
+      providerRole: "official_or_issuer_reference",
+      sourceFamily: "official_macro_data",
+      sourceTimestamp: `${date}T00:00:00.000Z`,
+      observedAt: `${date}T00:00:00.000Z`,
+      delayStatus: "official_lagged",
+      sourceUrlOrArtifact: "https://example.test/macro",
+      data: {
+        ...(seriesId === "avg_interest_rates" ? {} : { seriesId }),
+        record_date: date,
+        ...(securityDescription ? { security_desc: securityDescription } : {}),
+        ...(unit ? { unit } : {}),
+        ...(seriesId === "avg_interest_rates" ? { avg_interest_rate_amt: value } : { value }),
+      },
+    } as FinanceMarketCollectionItem;
+  }
+
   it("turns an options chain into source-bound Black-Scholes evidence in the model packet", () => {
     const packet = {
       schemaVersion: "lcx_finance_research_batch_v1",

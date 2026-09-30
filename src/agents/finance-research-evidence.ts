@@ -775,6 +775,122 @@ function macroValue(
   }
   return undefined;
 }
+
+const MACRO_SERIES_IDENTITY_FIELDS = [
+  "seriesId",
+  "series_id",
+  "series",
+  "security_type_desc",
+  "security_desc",
+  "unit",
+  "units",
+  "unit_desc",
+  "unit_name",
+  "unit_description",
+  "unit_of_measure",
+  "unitOfMeasure",
+  "measure",
+  "frequency",
+  "seasonal_adjustment",
+] as const;
+
+function macroSeriesIdentity(data: Readonly<Record<string, unknown>>): string {
+  const dimensions = Object.fromEntries(
+    MACRO_SERIES_IDENTITY_FIELDS.flatMap((field) => {
+      const value = data[field];
+      return typeof value === "string" || typeof value === "number" ? [[field, value]] : [];
+    }),
+  );
+  return JSON.stringify(dimensions);
+}
+
+function macroObservationDate(record: FinanceMarketCollectionItem): string {
+  for (const field of ["date", "observation_date", "observationDate", "record_date", "period"]) {
+    const value = record.data[field];
+    if (typeof value === "string" && value.length > 0) {
+      return value;
+    }
+  }
+  return record.sourceTimestamp;
+}
+
+function summarizeMacroSeries(
+  records: readonly FinanceMarketCollectionItem[],
+  instrument: string,
+  prefix: string,
+): string[] {
+  const series = new Map<string, FinanceMarketCollectionItem[]>();
+  for (const record of records) {
+    const key = macroSeriesIdentity(record.data);
+    const grouped = series.get(key) ?? [];
+    grouped.push(record);
+    series.set(key, grouped);
+  }
+
+  return [...series.values()].map((observations) => {
+    const dimensions = JSON.parse(macroSeriesIdentity(observations[0].data)) as Record<
+      string,
+      string | number
+    >;
+    const dimensionNames = Object.keys(dimensions);
+    const seriesIdField = dimensionNames.find((field) =>
+      ["seriesId", "series_id", "series"].includes(field),
+    );
+    const identity =
+      dimensionNames.length === 0
+        ? instrument
+        : dimensionNames.length === 1 && seriesIdField
+          ? String(dimensions[seriesIdField])
+          : JSON.stringify(dimensions);
+    const byDate = new Map<string, FinanceMarketCollectionItem[]>();
+    for (const observation of observations) {
+      const date = macroObservationDate(observation);
+      const sameDate = byDate.get(date) ?? [];
+      sameDate.push(observation);
+      byDate.set(date, sameDate);
+    }
+    const dates = [...byDate.keys()].toSorted((a, b) => a.localeCompare(b));
+    const latestDate = dates.at(-1);
+    const previousDate = dates.at(-2);
+    const latestRecords = latestDate ? byDate.get(latestDate)! : [];
+    const latestValues = [
+      ...new Set(latestRecords.map((record) => macroValue(record.data)?.value)),
+    ].filter((value): value is number => value !== undefined);
+    const previousRecords = previousDate ? byDate.get(previousDate)! : [];
+    const previousValues = [
+      ...new Set(previousRecords.map((record) => macroValue(record.data)?.value)),
+    ].filter((value): value is number => value !== undefined);
+    const latestConflict = latestValues.length > 1;
+    const previousConflict = previousValues.length > 1;
+    const latest = latestRecords[0] ? macroValue(latestRecords[0].data) : undefined;
+    const previous = previousRecords[0] ? macroValue(previousRecords[0].data) : undefined;
+    const latestPeriod = latestDate ?? "unknown";
+    const previousPeriod = previousDate ?? "unknown";
+    const conflictFacts = dates.flatMap((date) => {
+      const values = [
+        ...new Set((byDate.get(date) ?? []).map((record) => macroValue(record.data)?.value)),
+      ].filter((value): value is number => value !== undefined);
+      return values.length > 1
+        ? [`same observation date has conflicting values on ${date}: ${values.join(", ")}`]
+        : [];
+    });
+    const latestText = latestConflict
+      ? `latest ${latest?.field ?? "value"}=unavailable (conflict on ${latestDate})`
+      : `latest ${latest?.field ?? "value"}=${String(latest?.value ?? "unknown")}`;
+    const previousText = previousConflict
+      ? `conflict on ${previousDate}: ${previousValues.join(", ")}`
+      : `${String(previous?.value ?? "unknown")} (${previousPeriod})`;
+    const vintageRecord = latestConflict ? undefined : latestRecords[0];
+    const publicationTime = vintageRecord
+      ? ["publication_time", "published_at", "release_date"].find(
+          (field) => typeof vintageRecord.data[field] === "string",
+        )
+      : undefined;
+    const realtimeStart = vintageRecord?.data.realtime_start;
+    const realtimeEnd = vintageRecord?.data.realtime_end;
+    return `${prefix}: ${identity}, ${latestText}, observation period=${latestPeriod}; previous=${previousText}. Observation period is not publication time; publication time=${publicationTime ? String(vintageRecord!.data[publicationTime]) : "unverified"}; vintage interval=${typeof realtimeStart === "string" ? realtimeStart : "unverified"}..${typeof realtimeEnd === "string" ? realtimeEnd : "unverified"}. ${conflictFacts.join("; ")}${conflictFacts.length > 0 ? ". " : ""}Historical FRED queries conservatively use the prior UTC day, not intraday release availability. Units and revisions need source review.`;
+  });
+}
 const rounded = (value: number) => Math.round(value * 1_000) / 1_000;
 
 /**
@@ -861,6 +977,10 @@ export function summarizeFinancePriceHistory(
       ? Date.parse(asOf)
       : Date.now() + FINANCE_LIVE_NOW_MAX_FUTURE_SKEW_MINUTES * 60_000);
   const series = new Map<string, Map<string, number>>();
+  const seriesQuality = new Map<
+    string,
+    { invalid: number; duplicates: number; conflicts: number }
+  >();
   let invalid = 0;
   let duplicates = 0;
   let conflicts = 0;
@@ -873,6 +993,16 @@ export function summarizeFinancePriceHistory(
       ? date >= asOf.slice(0, 10)
       : !Number.isFinite(dateMs) || dateMs > futureTimestampLimitMs;
     const sourceTimestampMs = Date.parse(row.sourceTimestamp);
+    // Feed and adjustment basis are part of identity; do not stitch different definitions.
+    const key = JSON.stringify([
+      row.providerName,
+      row.data.feed ?? "unspecified",
+      row.data.adjusted ?? "unspecified",
+      row.data.instrumentType ?? "unspecified",
+      row.data.unit ?? "unspecified",
+    ]);
+    const quality = seriesQuality.get(key) ?? { invalid: 0, duplicates: 0, conflicts: 0 };
+    seriesQuality.set(key, quality);
     if (
       !/^\d{4}-\d{2}-\d{2}$/u.test(date) ||
       !Number.isFinite(Date.parse(date)) ||
@@ -884,21 +1014,16 @@ export function summarizeFinancePriceHistory(
       close <= 0
     ) {
       invalid += 1;
+      quality.invalid += 1;
       continue;
     }
-    // Feed and adjustment basis are part of identity; do not stitch different definitions.
-    const key = JSON.stringify([
-      row.providerName,
-      row.data.feed ?? "unspecified",
-      row.data.adjusted ?? "unspecified",
-      row.data.instrumentType ?? "unspecified",
-      row.data.unit ?? "unspecified",
-    ]);
     const values = series.get(key) ?? new Map<string, number>();
     if (values.has(date)) {
       duplicates += 1;
+      quality.duplicates += 1;
       if (values.get(date) !== close) {
         conflicts += 1;
+        quality.conflicts += 1;
       }
     } else {
       values.set(date, close);
@@ -940,6 +1065,10 @@ export function summarizeFinancePriceHistory(
         : Number.NaN;
     return {
       identity: JSON.parse(identity) as string[],
+      invalid: seriesQuality.get(identity)?.invalid ?? 0,
+      duplicates: seriesQuality.get(identity)?.duplicates ?? 0,
+      conflicts: seriesQuality.get(identity)?.conflicts ?? 0,
+      orderedCloses: ordered.map(([date, close]) => ({ date, close })),
       observations: prices.length,
       from: ordered[0][0],
       to: ordered.at(-1)![0],
@@ -966,6 +1095,12 @@ export function summarizeFinancePriceHistory(
     invalid,
     duplicates,
     conflicts,
+    invalidSeries: [...seriesQuality]
+      .filter(([, quality]) => quality.invalid > 0)
+      .map(([identity, quality]) => ({
+        identity: JSON.parse(identity) as string[],
+        invalid: quality.invalid,
+      })),
     summaries,
     usable: conflicts === 0 && summaries.length > 0,
     basis:
@@ -1074,16 +1209,8 @@ export function buildFinanceResearchModelEvidence(
                 macroValue(r.data) !== undefined &&
                 Date.parse(r.sourceTimestamp) <= futureTimestampLimitMs,
             )
-            .toSorted((a, b) => a.sourceTimestamp.localeCompare(b.sourceTimestamp));
-          const last = valid.at(-1),
-            previous = valid.at(-2);
-          if (last) {
-            const latest = macroValue(last.data);
-            const prior = previous ? macroValue(previous.data) : undefined;
-            facts.push(
-              `${prefix}: ${typeof last.data.seriesId === "string" ? last.data.seriesId : instrument}, latest ${latest?.field ?? "value"}=${String(latest?.value ?? "unknown")}, observation period=${last.sourceTimestamp}; previous=${String(prior?.value ?? "unknown")} (${previous?.sourceTimestamp ?? "unknown"}). Observation period is not publication time; vintage interval=${typeof last.data.realtime_start === "string" ? last.data.realtime_start : "unverified"}..${typeof last.data.realtime_end === "string" ? last.data.realtime_end : "unverified"}. Historical FRED queries conservatively use the prior UTC day, not intraday release availability. Units and revisions need source review.`,
-            );
-          }
+            .toSorted((a, b) => macroObservationDate(a).localeCompare(macroObservationDate(b)));
+          facts.push(...summarizeMacroSeries(valid, instrument, prefix));
         } else if (collection === "news") {
           const eligible = records.filter((r) => {
             const match = r.data.entityMatch;

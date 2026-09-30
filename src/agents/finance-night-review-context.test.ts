@@ -461,6 +461,21 @@ it("limits portfolio research scope to the exact active strategy ids", async () 
     expect(
       JSON.parse(scope.evidence[0].text).activeRules.map((rule: { ruleId: string }) => rule.ruleId),
     ).toEqual(["mean"]);
+    expect(JSON.parse(scope.evidence[0].text)).toMatchObject({
+      scope: "portfolio_allocation_subset",
+      allControllerActiveRuleIds: ["trend", "mean"],
+      allocationStrategyIds: ["mean"],
+      ruleScope: expect.stringContaining("does not enumerate every active controller rule"),
+    });
+    const allRules = await buildFinanceActiveStrategyResearchEvidence({
+      directory,
+      asOf: "2026-09-05T00:00:00Z",
+    });
+    expect(JSON.parse(allRules[0].text)).toMatchObject({
+      scope: "all_controller_active_rules",
+      allControllerActiveRuleIds: ["trend", "mean"],
+    });
+    expect(JSON.parse(allRules[0].text)).not.toHaveProperty("allocationStrategyIds");
     await expect(
       readFinanceActiveStrategyResearchScope({
         directory,

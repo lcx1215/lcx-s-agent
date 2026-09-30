@@ -6,6 +6,7 @@ import {
   FINANCE_BRAIN_MODULES,
   planFinanceBrainOrchestration,
 } from "./finance-brain-orchestration.js";
+import type { FinanceMarketCollectionItem } from "./finance-market-collection-registry.js";
 import {
   deriveFinanceModuleReplanFeedback,
   executeFinanceModuleComposition,
@@ -28,6 +29,32 @@ function emptyBatch(): FinanceResearchBatchEvidencePacket {
     committeeEvidence: [],
     budget: {} as FinanceResearchBatchEvidencePacket["budget"],
     notTouched: [],
+  };
+}
+
+function eodRecord(
+  date: string,
+  close: number,
+  source: { providerName?: string; feed?: string; adjusted?: boolean } = {},
+): FinanceMarketCollectionItem {
+  const sourceTimestamp =
+    date === "not-a-date" ? "2026-09-02T00:00:00.000Z" : `${date}T00:00:00.000Z`;
+  return {
+    itemId: `eod-${source.providerName ?? "fixture"}-${date}-${close}`,
+    collection: "eod_history",
+    providerName: source.providerName ?? "fixture-eod",
+    providerRole: "official_or_issuer_reference",
+    sourceFamily: "official_macro_data",
+    sourceTimestamp,
+    observedAt: sourceTimestamp,
+    delayStatus: "official_lagged",
+    sourceUrlOrArtifact: "https://example.test/eod",
+    data: {
+      date,
+      close,
+      ...(source.feed ? { feed: source.feed } : {}),
+      ...(source.adjusted !== undefined ? { adjusted: source.adjusted } : {}),
+    },
   };
 }
 
@@ -161,6 +188,12 @@ describe("finance module execution", () => {
             timestamp: "2026-09-11T00:00:00.000Z",
             text: "SPY daily closes summarized from the ready batch receipt.",
           },
+          {
+            id: "finance-model:QQQ",
+            source: "finance-research-batch-runner",
+            timestamp: "2026-09-11T00:00:00.000Z",
+            text: "QQQ daily closes summarized from the ready batch receipt.",
+          },
         ],
         jobs: [
           {
@@ -168,13 +201,29 @@ describe("finance module execution", () => {
             status: "ready",
             request: { collection: "eod_history", instrument: "SPY", assetClass: "us_equity" },
             receipt: {
-              records: [{ data: { close: 100 } }, { data: { close: 95 } }, { data: { close: 97 } }],
+              records: [
+                eodRecord("2026-09-03", 97),
+                eodRecord("2026-09-02", 95),
+                eodRecord("2026-09-01", 100),
+              ],
+            },
+          },
+          {
+            jobId: "finance-batch:qqq-eod",
+            status: "ready",
+            request: { collection: "eod_history", instrument: "QQQ", assetClass: "us_equity" },
+            receipt: {
+              records: [
+                eodRecord("2026-09-03", 297),
+                eodRecord("2026-09-02", 295),
+                eodRecord("2026-09-01", 300),
+              ],
             },
           },
         ],
       } as unknown as FinanceResearchBatchEvidencePacket;
       const result = await executeFinanceModuleComposition({
-        ask: "执行模块取消测试",
+        ask: "SPY historical drawdown",
         asOf: "2026-09-11T00:00:00.000Z",
         plan,
         batch,
@@ -186,6 +235,12 @@ describe("finance module execution", () => {
       expect(quant?.inputEvidenceIds).not.toContain("finance-batch:spy-eod");
       expect(quant?.toolCalls[0]?.toolName).toBe("quant_math");
       expect(quant?.outputEvidenceIds).toEqual(["finance-module:math"]);
+      expect(quant?.inputEvidenceIds).toEqual(["finance-model:SPY"]);
+      expect(result.evidence[0]?.text).toContain('"maxDrawdown":-0.05');
+      expect(result.evidence[0]?.text).toContain('"instrument":"SPY"');
+      expect(result.evidence[0]?.text).toContain('"fromDate":"2026-09-01"');
+      expect(result.evidence[0]?.text).toContain('"toDate":"2026-09-03"');
+      expect(result.evidence[0]?.text).toContain("stored_close_history_not_adjusted_total_return");
       expect(result.evidence.map((entry) => entry.id)).toContain("finance-module:math");
       expect(result.receipt.replanFeedback.status).toBe("blocked_hard");
       expect(result.receipt.replanFeedback.hardFailures).toEqual(
@@ -198,22 +253,299 @@ describe("finance module execution", () => {
         moduleSelection: { moduleIds: ["quant_math"], rationale: "citeable history regression" },
       });
       const rawReceiptOnly = await executeFinanceModuleComposition({
-        ask: "执行模块取消测试",
+        ask: "SPY historical drawdown",
         asOf: "2026-09-11T00:00:00.000Z",
         plan: quantOnlyPlan,
-        batch: { ...batch, committeeEvidence: [] },
+        batch: { ...batch, jobs: [batch.jobs[0]], committeeEvidence: [] },
         workspaceDir,
       });
       const blockedQuant = rawReceiptOnly.receipt.nodes.find(
         (node) => node.moduleId === "quant_math",
       );
       expect(blockedQuant?.status).toBe("blocked_missing_evidence");
-      expect(blockedQuant?.missingEvidence).toContain("citeable_source_history_evidence_packet");
+      expect(blockedQuant?.missingEvidence).toContain(
+        "citeable_source_history_evidence_packet:SPY",
+      );
       expect(blockedQuant?.inputEvidenceIds).not.toContain("finance-batch:spy-eod");
+
+      const instruments = ["SPY", "QQQ", "IWM", "DIA", "VTI", "VOO", "XLK", "XLF"];
+      const portfolioBatch = {
+        ...emptyBatch(),
+        status: "completed",
+        committeeEvidence: instruments.map((instrument) => ({
+          id: `finance-model:${instrument}`,
+          source: "finance-research-batch-runner",
+          timestamp: "2026-09-11T00:00:00.000Z",
+          text: `${instrument} daily closes summarized from the ready batch receipt.`,
+        })),
+        jobs: instruments.map((instrument, index) => {
+          const base = 100 + (index + 1) * 100;
+          return {
+            jobId: `finance-batch:${instrument.toLowerCase()}-eod`,
+            status: "ready",
+            request: { collection: "eod_history", instrument, assetClass: "us_equity" },
+            receipt: {
+              records: [
+                eodRecord("2026-09-03", base * 0.97),
+                eodRecord("2026-09-02", base * 0.95),
+                eodRecord("2026-09-01", base),
+              ],
+            },
+          };
+        }),
+      } as unknown as FinanceResearchBatchEvidencePacket;
+      const portfolio = await executeFinanceModuleComposition({
+        ask: "drawdown across ETF histories",
+        asOf: "2026-09-11T00:00:00.000Z",
+        plan: quantOnlyPlan,
+        batch: portfolioBatch,
+        workspaceDir,
+      });
+      const portfolioQuant = portfolio.receipt.nodes.find((node) => node.moduleId === "quant_math");
+      expect(portfolioQuant?.status).toBe("succeeded");
+      expect(portfolioQuant?.toolCalls).toHaveLength(instruments.length);
+      expect(portfolioQuant?.inputEvidenceIds).toEqual(
+        instruments.map((id) => `finance-model:${id}`),
+      );
+      const portfolioEvidence = portfolio.evidence.find(
+        (item) => item.id === "finance-module:quant_math",
+      );
+      const portfolioOutput = JSON.parse(portfolioEvidence?.text ?? "{}") as {
+        toolOutput?: {
+          instrumentResults?: Array<{
+            maxDrawdown?: number;
+            historySource?: { instrument?: string; fromDate?: string; toDate?: string };
+          }>;
+        };
+      };
+      expect(portfolioOutput.toolOutput?.instrumentResults).toHaveLength(instruments.length);
+      expect(
+        portfolioOutput.toolOutput?.instrumentResults?.map(
+          (item) => item.historySource?.instrument,
+        ),
+      ).toEqual(instruments);
+      expect(
+        portfolioOutput.toolOutput?.instrumentResults?.every((item) => item.maxDrawdown === -0.05),
+      ).toBe(true);
+      expect(
+        portfolioOutput.toolOutput?.instrumentResults?.every(
+          (item) =>
+            item.historySource?.fromDate === "2026-09-01" &&
+            item.historySource.toDate === "2026-09-03",
+        ),
+      ).toBe(true);
     } finally {
       await fs.rm(workspaceDir, { recursive: true, force: true });
     }
   });
+
+  it("keeps separate provider windows separate for the same instrument", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-provider-quant-"));
+    try {
+      const plan = planFinanceBrainOrchestration({
+        text: "SPY drawdown",
+        moduleSelection: {
+          moduleIds: ["quant_math"],
+          rationale: "source identity regression",
+          composition: {
+            nodes: [{ id: "math", moduleId: "quant_math", dependsOn: [] }],
+            maxReplans: 0,
+          },
+        },
+      });
+      const batch = {
+        ...emptyBatch(),
+        committeeEvidence: [
+          {
+            id: "finance-model:SPY",
+            source: "finance-research-batch-runner",
+            timestamp: "2026-09-11T00:00:00.000Z",
+            text: "SPY close history summarized from source receipts.",
+          },
+        ],
+        jobs: [
+          {
+            jobId: "finance-batch:spy-alpha",
+            status: "ready",
+            request: { collection: "eod_history", instrument: "SPY", assetClass: "us_equity" },
+            receipt: {
+              records: [
+                eodRecord("2026-09-01", 100, { providerName: "feed-alpha" }),
+                eodRecord("2026-09-02", 95, { providerName: "feed-alpha" }),
+              ],
+            },
+          },
+          {
+            jobId: "finance-batch:spy-beta",
+            status: "ready",
+            request: { collection: "eod_history", instrument: "SPY", assetClass: "us_equity" },
+            receipt: {
+              records: [
+                eodRecord("2026-09-05", 200, { providerName: "feed-beta" }),
+                eodRecord("2026-09-06", 190, { providerName: "feed-beta" }),
+              ],
+            },
+          },
+        ],
+      } as unknown as FinanceResearchBatchEvidencePacket;
+      const result = await executeFinanceModuleComposition({
+        ask: "SPY drawdown",
+        asOf: "2026-09-11T00:00:00.000Z",
+        plan,
+        batch,
+        workspaceDir,
+      });
+      const quant = result.receipt.nodes.find((node) => node.moduleId === "quant_math");
+      expect(quant?.status).toBe("succeeded");
+      expect(quant?.toolCalls).toHaveLength(2);
+      const evidence = result.evidence.find((item) => item.id === "finance-module:math");
+      const parsed = JSON.parse(evidence?.text ?? "{}") as {
+        toolOutput?: {
+          instrumentResults?: Array<{
+            historySource?: {
+              instrument?: string;
+              identity?: string[];
+              fromDate?: string;
+              toDate?: string;
+            };
+          }>;
+        };
+      };
+      expect(
+        parsed.toolOutput?.instrumentResults?.map((item) => ({
+          identity: item.historySource?.identity?.[0],
+          from: item.historySource?.fromDate,
+          to: item.historySource?.toDate,
+        })),
+      ).toEqual([
+        { identity: "feed-alpha", from: "2026-09-01", to: "2026-09-02" },
+        { identity: "feed-beta", from: "2026-09-05", to: "2026-09-06" },
+      ]);
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts same-day EOD history under the existing live-now cutoff", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-live-now-quant-"));
+    try {
+      const asOf = new Date().toISOString();
+      const toDate = asOf.slice(0, 10);
+      const prior = new Date(`${toDate}T00:00:00.000Z`);
+      prior.setUTCDate(prior.getUTCDate() - 1);
+      const fromDate = prior.toISOString().slice(0, 10);
+      const plan = planFinanceBrainOrchestration({
+        text: "SPY same-day drawdown",
+        moduleSelection: {
+          moduleIds: ["quant_math"],
+          rationale: "live-now daily close eligibility",
+        },
+      });
+      const batch = {
+        ...emptyBatch(),
+        asOf,
+        asOfMode: "live_now",
+        committeeEvidence: [
+          {
+            id: "finance-model:SPY",
+            source: "finance-research-batch-runner",
+            timestamp: asOf,
+            text: "SPY live-now daily close history.",
+          },
+        ],
+        jobs: [
+          {
+            jobId: "finance-batch:spy-live-now",
+            status: "ready",
+            request: { collection: "eod_history", instrument: "SPY", assetClass: "us_equity" },
+            receipt: {
+              records: [eodRecord(fromDate, 100), eodRecord(toDate, 98)],
+            },
+          },
+        ],
+      } as unknown as FinanceResearchBatchEvidencePacket;
+      const result = await executeFinanceModuleComposition({
+        ask: "SPY same-day drawdown",
+        asOf,
+        plan,
+        batch,
+        workspaceDir,
+      });
+      const quant = result.receipt.nodes.find((node) => node.moduleId === "quant_math");
+      expect(quant?.status).toBe("succeeded");
+      const evidence = result.evidence.find((item) => item.id === "finance-module:quant_math");
+      expect(evidence?.text).toContain(toDate);
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["conflict", "invalid"])(
+    "blocks %s EOD rows instead of silently choosing a point",
+    async (variant) => {
+      const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-module-quant-conflict-"));
+      try {
+        const plan = planFinanceBrainOrchestration({
+          text: "historical drawdown",
+          moduleSelection: { moduleIds: ["quant_math"], rationale: "conflicting close regression" },
+        });
+        const batch = {
+          ...emptyBatch(),
+          committeeEvidence: [
+            {
+              id: "finance-model:SPY",
+              source: "finance-research-batch-runner",
+              timestamp: "2026-09-11T00:00:00.000Z",
+              text: "SPY daily closes.",
+            },
+          ],
+          jobs: [
+            {
+              jobId: "finance-batch:spy-eod",
+              status: "ready",
+              request: { collection: "eod_history", instrument: "SPY", assetClass: "us_equity" },
+              receipt: {
+                records:
+                  variant === "conflict"
+                    ? [
+                        eodRecord("2026-09-03", 97),
+                        eodRecord("2026-09-02", 95),
+                        eodRecord("2026-09-02", 96),
+                        eodRecord("2026-09-01", 100),
+                      ]
+                    : [
+                        eodRecord("2026-09-03", 97),
+                        eodRecord("not-a-date", 95),
+                        eodRecord("2026-09-01", 100),
+                      ],
+              },
+            },
+          ],
+        } as unknown as FinanceResearchBatchEvidencePacket;
+        const result = await executeFinanceModuleComposition({
+          ask: "historical drawdown",
+          asOf: "2026-09-11T00:00:00.000Z",
+          plan,
+          batch,
+          workspaceDir,
+        });
+        const quant = result.receipt.nodes.find((node) => node.moduleId === "quant_math");
+        expect(quant?.status).toBe("blocked_missing_evidence");
+        expect(quant?.toolCalls).toHaveLength(0);
+        expect(
+          quant?.missingEvidence.some((issue) =>
+            issue.startsWith(
+              variant === "conflict"
+                ? "conflict_free_eod_close_history:SPY:"
+                : "valid_dated_positive_eod_closes:SPY:",
+            ),
+          ),
+        ).toBe(true);
+      } finally {
+        await fs.rm(workspaceDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("dispatches the declared domain producer before inspecting its durable output", async () => {
     const moduleId = "company_fundamentals_value" as const;
@@ -443,3 +775,61 @@ it.each(["valid", "conflict", "duplicate", "future", "count", "invalid_price"])(
     }
   },
 );
+
+it("keeps every controller fallback instrument distinct", async () => {
+  const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-controller-portfolio-quant-"));
+  try {
+    const plan = planFinanceBrainOrchestration({
+      text: "historical drawdown",
+      moduleSelection: {
+        moduleIds: ["quant_math"],
+        rationale: "controller portfolio history",
+        composition: {
+          nodes: [{ id: "math", moduleId: "quant_math", dependsOn: [] }],
+          maxReplans: 0,
+        },
+      },
+    });
+    const controllerEvidence = ["SPY", "QQQ"].map((instrument, index) => ({
+      id: `finance-controller:eod:${instrument}`,
+      source: "finance-bar-ledger",
+      timestamp: "2026-09-11T00:00:00Z",
+      text: JSON.stringify({
+        instrument,
+        fromDate: "2026-09-01",
+        toDate: "2026-09-03",
+        suppliedBarCount: 3,
+        divergentDates: [],
+        closes: [
+          ["2026-09-01", 100 + index * 100],
+          ["2026-09-02", 95 + index * 100],
+          ["2026-09-03", 97 + index * 100],
+        ],
+      }),
+    }));
+    const result = await executeFinanceModuleComposition({
+      ask: "historical drawdown",
+      asOf: "2026-09-11T00:00:00Z",
+      plan,
+      batch: emptyBatch(),
+      workspaceDir,
+      controllerEvidence,
+    });
+    const quant = result.receipt.nodes.find((node) => node.moduleId === "quant_math");
+    expect(quant?.status).toBe("succeeded");
+    expect(quant?.toolCalls).toHaveLength(2);
+    expect(quant?.inputEvidenceIds).toEqual([
+      "finance-controller:eod:SPY",
+      "finance-controller:eod:QQQ",
+    ]);
+    const output = result.evidence.find((item) => item.id === "finance-module:math");
+    const parsed = JSON.parse(output?.text ?? "{}") as {
+      toolOutput?: { instrumentResults?: Array<{ historySource?: { instrument?: string } }> };
+    };
+    expect(
+      parsed.toolOutput?.instrumentResults?.map((item) => item.historySource?.instrument),
+    ).toEqual(["SPY", "QQQ"]);
+  } finally {
+    await fs.rm(workspaceDir, { recursive: true, force: true });
+  }
+});

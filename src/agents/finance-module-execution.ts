@@ -8,6 +8,7 @@ import type {
   FinanceResearchBatchEvidencePacket,
   FinanceResearchBatchJob,
 } from "./finance-research-batch-runner.js";
+import { summarizeFinancePriceHistory } from "./finance-research-evidence.js";
 import type { AnyAgentTool } from "./tools/common.js";
 import { createFinanceFrameworkCoreInspectTool } from "./tools/finance-framework-core-inspect-tool.js";
 import { createFinanceFrameworkDomainProducerTools } from "./tools/finance-framework-domain-producer-tools.js";
@@ -166,10 +167,34 @@ function compact(value: unknown, maxLength = 2_000): string {
   }
 }
 
-function recordsForJobs(batch: FinanceResearchBatchEvidencePacket): Readonly<{
+type QuantHistory = Readonly<{
+  levels: readonly number[];
+  instrument: string;
+  fromDate: string;
+  toDate: string;
+  evidenceId: string;
+  identity?: readonly string[];
+  basis: "stored_close_history_not_adjusted_total_return";
+}>;
+
+function validDate(value: string): boolean {
+  return (
+    /^\d{4}-\d{2}-\d{2}$/u.test(value) &&
+    Number.isFinite(Date.parse(value)) &&
+    new Date(value).toISOString().slice(0, 10) === value
+  );
+}
+
+function recordsForJobs(
+  batch: FinanceResearchBatchEvidencePacket,
+  asOf: string,
+  ask: string,
+): Readonly<{
   jobs: readonly FinanceResearchBatchJob[];
   inputEvidenceIds: readonly string[];
-  levels: readonly number[];
+  quantHistories: readonly QuantHistory[];
+  quantHistoryIssues: readonly string[];
+  hasEodHistory: boolean;
   summary: string;
 }> {
   const jobs = batch.jobs.filter((job) => job.status === "ready" && job.receipt !== undefined);
@@ -183,92 +208,159 @@ function recordsForJobs(batch: FinanceResearchBatchEvidencePacket): Readonly<{
         .filter((id) => visibleEvidenceIds.has(id)),
     ),
   ];
-  const levels: number[] = [];
   const collections = new Map<string, number>();
-  let selectedHistory: FinanceResearchBatchJob | undefined;
+  const eodJobs: FinanceResearchBatchJob[] = [];
   for (const job of jobs) {
-    if (!("records" in job.receipt!)) {
-      continue;
-    }
-    const records = job.receipt.records;
-    if (!("collection" in job.request)) {
+    if (!job.receipt || !("records" in job.receipt) || !("collection" in job.request)) {
       continue;
     }
     collections.set(
       job.request.collection,
-      (collections.get(job.request.collection) ?? 0) + records.length,
+      (collections.get(job.request.collection) ?? 0) + job.receipt.records.length,
     );
-    if (job.request.collection !== "eod_history") {
-      continue;
-    }
-    if (
-      selectedHistory === undefined ||
-      ("records" in selectedHistory.receipt! &&
-        records.length > selectedHistory.receipt.records.length)
-    ) {
-      selectedHistory = job;
+    if (job.request.collection === "eod_history") {
+      eodJobs.push(job);
     }
   }
-  if (selectedHistory?.receipt && "records" in selectedHistory.receipt) {
-    for (const record of selectedHistory.receipt.records) {
-      const value = record.data.close ?? record.data.c ?? record.data.price;
-      if (typeof value === "number" && Number.isFinite(value) && value > 0) {
-        levels.push(value);
-      } else if (typeof value === "string" && Number.isFinite(Number(value)) && Number(value) > 0) {
-        levels.push(Number(value));
+  const mentionedInstruments = new Set(
+    [...new Set(eodJobs.map((job) => job.request.instrument))].filter((instrument) =>
+      new RegExp(
+        `(^|[^A-Z0-9])${instrument.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}(?=$|[^A-Z0-9])`,
+        "iu",
+      ).test(ask),
+    ),
+  );
+  const requestedJobs =
+    mentionedInstruments.size > 0
+      ? eodJobs.filter((job) => mentionedInstruments.has(job.request.instrument))
+      : eodJobs;
+  const jobsByInstrument = new Map<string, FinanceResearchBatchJob[]>();
+  for (const job of requestedJobs) {
+    const group = jobsByInstrument.get(job.request.instrument) ?? [];
+    group.push(job);
+    jobsByInstrument.set(job.request.instrument, group);
+  }
+  const quantHistories: QuantHistory[] = [];
+  const quantHistoryIssues: string[] = [];
+  for (const [instrument, instrumentJobs] of jobsByInstrument) {
+    const records = instrumentJobs.flatMap((job) =>
+      job.receipt && "records" in job.receipt ? job.receipt.records : [],
+    );
+    const history = summarizeFinancePriceHistory(records, asOf, { asOfMode: batch.asOfMode });
+    const evidenceId = `finance-model:${encodeURIComponent(instrument)}`;
+    if (history.summaries.length === 0) {
+      quantHistoryIssues.push(`ready_eod_history_with_at_least_two_positive_levels:${instrument}`);
+    }
+    const summarizedInvalidIdentities = new Set<string>();
+    for (const summary of history.summaries) {
+      const identity = JSON.stringify(summary.identity);
+      if (summary.invalid > 0) {
+        summarizedInvalidIdentities.add(identity);
+        quantHistoryIssues.push(`valid_dated_positive_eod_closes:${instrument}:${identity}`);
+      }
+      if (summary.conflicts > 0) {
+        quantHistoryIssues.push(`conflict_free_eod_close_history:${instrument}:${identity}`);
+      }
+      if (summary.orderedCloses.length < 2) {
+        quantHistoryIssues.push(`at_least_two_valid_eod_closes:${instrument}:${identity}`);
+      }
+      if (!visibleEvidenceIds.has(evidenceId)) {
+        quantHistoryIssues.push(`citeable_source_history_evidence_packet:${instrument}`);
+      }
+      if (
+        summary.invalid === 0 &&
+        summary.conflicts === 0 &&
+        summary.orderedCloses.length >= 2 &&
+        visibleEvidenceIds.has(evidenceId)
+      ) {
+        quantHistories.push(
+          Object.freeze({
+            levels: Object.freeze(summary.orderedCloses.map((row) => row.close)),
+            instrument,
+            fromDate: summary.from,
+            toDate: summary.to,
+            evidenceId,
+            identity: Object.freeze([...summary.identity]),
+            basis: "stored_close_history_not_adjusted_total_return",
+          }),
+        );
+      }
+    }
+    for (const invalidSeries of history.invalidSeries) {
+      const identity = JSON.stringify(invalidSeries.identity);
+      if (!summarizedInvalidIdentities.has(identity)) {
+        quantHistoryIssues.push(`valid_dated_positive_eod_closes:${instrument}:${identity}`);
       }
     }
   }
   return {
     jobs,
     inputEvidenceIds: Object.freeze(inputEvidenceIds),
-    levels: Object.freeze(levels),
+    quantHistories: Object.freeze(quantHistories),
+    quantHistoryIssues: Object.freeze(quantHistoryIssues),
+    hasEodHistory: eodJobs.length > 0,
     summary: [...collections.entries()]
       .map(([collection, count]) => `${collection}=${count}`)
       .join(", "),
   };
 }
 
-/** Accept only the controller's bounded, unambiguous close projection; never mix instruments. */
-function controllerCloseHistory(evidence: readonly FinanceCommitteeEvidence[], asOf: string) {
-  for (const item of evidence) {
-    if (
-      item.source !== "finance-bar-ledger" ||
-      !item.id.startsWith("finance-controller:eod:") ||
-      !Number.isFinite(Date.parse(item.timestamp)) ||
-      Date.parse(item.timestamp) > Date.parse(asOf)
-    ) {
-      continue;
-    }
+/** Accept only bounded controller close projections and retain every instrument independently. */
+function controllerCloseHistories(
+  evidence: readonly FinanceCommitteeEvidence[],
+  asOf: string,
+  ask: string,
+): Readonly<{
+  histories: readonly QuantHistory[];
+  issues: readonly string[];
+  hasControllerHistory: boolean;
+}> {
+  const visible = evidence.filter(
+    (item) =>
+      item.source === "finance-bar-ledger" &&
+      item.id.startsWith("finance-controller:eod:") &&
+      Number.isFinite(Date.parse(item.timestamp)) &&
+      Date.parse(item.timestamp) <= Date.parse(asOf),
+  );
+  const historiesByInstrument = new Map<string, QuantHistory[]>();
+  const issues: string[] = [];
+  for (const item of visible) {
+    let instrument = item.id.slice("finance-controller:eod:".length);
     try {
-      const value = JSON.parse(item.text) as Record<string, unknown>;
+      const value: unknown = JSON.parse(item.text);
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new Error("invalid controller close projection");
+      }
+      const record = value as Record<string, unknown>;
+      if (typeof record.instrument === "string") {
+        instrument = record.instrument;
+      }
       if (
-        typeof value.instrument !== "string" ||
-        item.id !== `finance-controller:eod:${value.instrument}` ||
-        !Array.isArray(value.divergentDates) ||
-        value.divergentDates.length > 0 ||
-        !Array.isArray(value.closes) ||
-        value.closes.length < 2 ||
-        value.closes.length > 400 ||
-        value.suppliedBarCount !== value.closes.length ||
-        typeof value.fromDate !== "string" ||
-        typeof value.toDate !== "string"
+        typeof record.instrument !== "string" ||
+        item.id !== `finance-controller:eod:${record.instrument}` ||
+        !Array.isArray(record.divergentDates) ||
+        record.divergentDates.length > 0 ||
+        !Array.isArray(record.closes) ||
+        record.closes.length < 2 ||
+        record.closes.length > 400 ||
+        record.suppliedBarCount !== record.closes.length ||
+        typeof record.fromDate !== "string" ||
+        typeof record.toDate !== "string"
       ) {
-        continue;
+        throw new Error("invalid controller close projection");
       }
       let previous = "";
+      let firstDate = "";
       const levels: number[] = [];
-      for (const row of value.closes) {
+      for (const row of record.closes) {
         if (
           !Array.isArray(row) ||
           row.length !== 2 ||
           typeof row[0] !== "string" ||
-          !/^\d{4}-\d{2}-\d{2}$/.test(row[0]) ||
-          !Number.isFinite(Date.parse(row[0])) ||
-          new Date(row[0]).toISOString().slice(0, 10) !== row[0] ||
+          !validDate(row[0]) ||
           row[0] <= previous ||
-          row[0] < value.fromDate ||
-          row[0] > value.toDate ||
+          row[0] < record.fromDate ||
+          row[0] > record.toDate ||
           Date.parse(row[0]) >= Date.parse(asOf) ||
           typeof row[1] !== "number" ||
           !Number.isFinite(row[1]) ||
@@ -276,15 +368,48 @@ function controllerCloseHistory(evidence: readonly FinanceCommitteeEvidence[], a
         ) {
           throw new Error("invalid controller close projection");
         }
+        firstDate ||= row[0];
         previous = row[0];
         levels.push(row[1]);
       }
-      return { levels, evidenceId: item.id, instrument: value.instrument };
+      const group = historiesByInstrument.get(instrument) ?? [];
+      group.push({
+        levels,
+        evidenceId: item.id,
+        instrument,
+        fromDate: firstDate,
+        toDate: previous,
+        basis: "stored_close_history_not_adjusted_total_return",
+      });
+      historiesByInstrument.set(instrument, group);
     } catch {
-      // Missing or conflicting history remains a module evidence gap.
+      issues.push(`valid_controller_close_history:${instrument}`);
     }
   }
-  return undefined;
+  const mentionedInstruments = new Set(
+    [...historiesByInstrument.keys()].filter((instrument) =>
+      new RegExp(
+        `(^|[^A-Z0-9])${instrument.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}(?=$|[^A-Z0-9])`,
+        "iu",
+      ).test(ask),
+    ),
+  );
+  const requestedInstruments =
+    mentionedInstruments.size > 0 ? mentionedInstruments : new Set(historiesByInstrument.keys());
+  const histories: QuantHistory[] = [];
+  for (const instrument of requestedInstruments) {
+    const group = historiesByInstrument.get(instrument) ?? [];
+    if (group.length !== 1) {
+      issues.push(`unambiguous_controller_history:${instrument}`);
+      continue;
+    }
+    histories.push(group[0]);
+  }
+  return {
+    histories: Object.freeze(histories),
+    issues: Object.freeze(issues),
+    hasControllerHistory: visible.length > 0,
+  };
 }
 
 function toolResultDetails(result: unknown): ToolDetails {
@@ -475,16 +600,16 @@ export async function executeFinanceModuleComposition(
     evidence: readonly FinanceCommitteeEvidence[];
   }>
 > {
-  const batchSource = recordsForJobs(params.batch);
-  const history =
-    batchSource.levels.length < 2
-      ? controllerCloseHistory(params.controllerEvidence ?? [], params.asOf)
-      : undefined;
-  const source = history
+  const batchSource = recordsForJobs(params.batch, params.asOf, params.ask);
+  const controllerSource = !batchSource.hasEodHistory
+    ? controllerCloseHistories(params.controllerEvidence ?? [], params.asOf, params.ask)
+    : undefined;
+  const source = controllerSource
     ? {
         ...batchSource,
-        levels: history.levels,
-        inputEvidenceIds: [...batchSource.inputEvidenceIds, history.evidenceId],
+        quantHistories: controllerSource.histories,
+        quantHistoryIssues: controllerSource.issues,
+        hasEodHistory: controllerSource.hasControllerHistory,
       }
     : batchSource;
   const quantTool = createQuantMathTool();
@@ -517,8 +642,10 @@ export async function executeFinanceModuleComposition(
     const producerSources = params.domainProducerInputs?.[moduleId]?.sourceArtifacts;
     const inputEvidenceIds = Object.freeze([
       ...new Set([
-        ...source.inputEvidenceIds,
-        ...(Array.isArray(producerSources)
+        ...(moduleId === "quant_math"
+          ? source.quantHistories.map((history) => history.evidenceId)
+          : source.inputEvidenceIds),
+        ...(moduleId !== "quant_math" && Array.isArray(producerSources)
           ? producerSources.filter((id): id is string => typeof id === "string")
           : []),
       ]),
@@ -557,32 +684,51 @@ export async function executeFinanceModuleComposition(
       params.signal?.throwIfAborted();
       const toolName = selectedToolName(moduleId);
       if (moduleId === "quant_math") {
-        if (source.levels.length < 2) {
+        if (source.quantHistoryIssues.length > 0) {
+          missingEvidence.push(...source.quantHistoryIssues);
+        } else if (source.quantHistories.length === 0) {
           missingEvidence.push("ready_eod_history_with_at_least_two_positive_levels");
-        } else if (source.inputEvidenceIds.length === 0) {
-          missingEvidence.push("citeable_source_history_evidence_packet");
         } else {
-          const result = await callTool(
-            quantTool,
-            toolName,
-            { action: "max_drawdown", series: [...source.levels], seriesMode: "levels" },
-            inputEvidenceIds,
-            params.signal,
-          );
-          toolCalls.push(result.call);
-          details = {
-            ...result.details,
-            ...(history
+          const results: Array<{ details: ToolDetails; historySource: QuantHistory }> = [];
+          for (const quantHistory of source.quantHistories) {
+            const result = await callTool(
+              quantTool,
+              toolName,
+              { action: "max_drawdown", series: [...quantHistory.levels], seriesMode: "levels" },
+              [quantHistory.evidenceId],
+              params.signal,
+            );
+            toolCalls.push(result.call);
+            results.push({ details: result.details ?? {}, historySource: quantHistory });
+          }
+          const failedCall = toolCalls.find((call) => call.status !== "succeeded");
+          status = failedCall ? statusFromToolCall(failedCall.status, "failed") : "succeeded";
+          details =
+            results.length === 1
               ? {
+                  ...results[0].details,
                   historySource: {
-                    instrument: history.instrument,
-                    evidenceId: history.evidenceId,
-                    basis: "stored_close_history_not_adjusted_total_return",
+                    instrument: results[0].historySource.instrument,
+                    evidenceId: results[0].historySource.evidenceId,
+                    fromDate: results[0].historySource.fromDate,
+                    toDate: results[0].historySource.toDate,
+                    identity: results[0].historySource.identity,
+                    basis: results[0].historySource.basis,
                   },
                 }
-              : {}),
-          };
-          status = statusFromToolCall(result.call.status, "failed");
+              : {
+                  instrumentResults: results.map(({ details: resultDetails, historySource }) => ({
+                    ...resultDetails,
+                    historySource: {
+                      instrument: historySource.instrument,
+                      evidenceId: historySource.evidenceId,
+                      fromDate: historySource.fromDate,
+                      toDate: historySource.toDate,
+                      identity: historySource.identity,
+                      basis: historySource.basis,
+                    },
+                  })),
+                };
         }
       } else if (moduleId === "finance_learning_memory") {
         const result = await callTool(

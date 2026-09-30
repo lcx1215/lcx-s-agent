@@ -334,7 +334,13 @@ export async function buildFinanceActiveStrategyResearchEvidence(params: {
     text: JSON.stringify({
       boundary:
         "controller state only; activation does not prove readiness, performance or Live authority",
+      scope: requestedIds ? "portfolio_allocation_subset" : "all_controller_active_rules",
+      allControllerActiveRuleIds: allActiveRules.map((rule) => rule.ruleId),
+      ...(requestedIds ? { allocationStrategyIds: requestedIds } : {}),
       ruleScope:
+        (requestedIds
+          ? "This allocation review does not enumerate every active controller rule. Other active rule IDs above remain outside this portfolio allocation scope; their parameters and readiness require their own controller evidence. "
+          : "Review all controller rules active at this asOf. ") +
         "Review these declared rule bodies; generic method-kit examples do not replace the active rule parameters.",
       activeRules: activeRules.map((rule) => ({
         ruleId: rule.ruleId,
