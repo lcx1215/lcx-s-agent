@@ -20,6 +20,7 @@ import { readFinanceIntradayLedger } from "./finance-intraday-ledger.js";
 import {
   FINANCE_INTRADAY_OPENING_RANGE_FORM,
   FINANCE_INTRADAY_OPENING_RANGE_RULE_V2,
+  FINANCE_INTRADAY_OPENING_RANGE_RULE_V3,
   financeIntradayPreCloseExitBarMinute,
   resolveFinanceIntradayActiveRuleContract,
   type FinanceIntradayActiveRuleContract,
@@ -30,6 +31,10 @@ import { evaluateFinanceIntradaySignal } from "./finance-intraday-signal.js";
 import { projectFinancePositions, readFinancePositionLedger } from "./finance-position-ledger.js";
 import { readFinanceResearchEquityUniverseSnapshot } from "./finance-research-runner.js";
 import { readFinanceStrategyRuleLedger } from "./finance-strategy-rule-ledger.js";
+import {
+  normalizeUsEquityProtectionPrices,
+  type UsEquityPriceNormalizationProvenance,
+} from "./finance-us-equity-price-normalization.js";
 
 function decisionForOpenIntradayPosition(params: {
   decisions: Awaited<ReturnType<typeof readFinanceIntradayDecisions>>;
@@ -146,7 +151,10 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
     (rule) =>
       rule.form === FINANCE_INTRADAY_OPENING_RANGE_FORM &&
       (options.exitOnly
-        ? rule.state === "retired" && rule.ruleId === options.strategyContract?.ruleId
+        ? rule.ruleId === options.strategyContract?.ruleId &&
+          (rule.state === "retired" ||
+            (rule.state === "active" &&
+              rule.body.paperUniverseScope === "fresh_us_equity_selection_v1"))
         : rule.state === "active"),
   );
   if (activeRules.length !== 1) {
@@ -179,6 +187,7 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
     activeContract.rewardRisk !== options.strategyContract.rewardRisk ||
     activeContract.intervalSeconds !== options.strategyContract.intervalSeconds ||
     activeContract.feed !== options.strategyContract.feed ||
+    activeContract.paperUniverseScope !== options.strategyContract.paperUniverseScope ||
     activeContract.eligibility.status !== options.strategyContract.eligibility.status ||
     activeContract.eligibility.automatedPaperPlacementAllowed !==
       options.strategyContract.eligibility.automatedPaperPlacementAllowed
@@ -197,7 +206,10 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
   if (
     options.scope.kind === "system_universe" &&
     (!/^[a-f0-9]{64}$/u.test(options.scope.universeSnapshotRef ?? "") ||
-      !options.scope.selectedInstruments?.includes(instrument))
+      (!options.scope.selectedInstruments?.includes(instrument) &&
+        !(
+          options.exitOnly && activeContract.paperUniverseScope === "fresh_us_equity_selection_v1"
+        )))
   ) {
     return Object.freeze({ status: "blocked_invalid_system_universe_snapshot" as const, clock });
   }
@@ -210,7 +222,10 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
       if (
         caseflowFingerprint(snapshot) !== options.scope.universeSnapshotRef ||
         JSON.stringify(snapshot.selected) !== JSON.stringify(options.scope.selectedInstruments) ||
-        !snapshot.selected.includes(instrument)
+        (!snapshot.selected.includes(instrument) &&
+          !(
+            options.exitOnly && activeContract.paperUniverseScope === "fresh_us_equity_selection_v1"
+          ))
       ) {
         return Object.freeze({
           status: "blocked_invalid_system_universe_snapshot" as const,
@@ -227,6 +242,21 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
   if (
     options.scope.kind === "explicit_diagnostic" &&
     options.scope.universeSnapshotRef !== undefined
+  ) {
+    return Object.freeze({ status: "blocked_invalid_monitor_scope" as const, clock });
+  }
+  if (
+    options.scope.kind === "managed_position_exit" &&
+    (!options.exitOnly ||
+      activeContract.paperUniverseScope !== "fresh_us_equity_selection_v1" ||
+      !options.accountId?.trim())
+  ) {
+    return Object.freeze({ status: "blocked_invalid_monitor_scope" as const, clock });
+  }
+  if (
+    activeContract.paperUniverseScope === "fresh_us_equity_selection_v1" &&
+    options.scope.kind !== "system_universe" &&
+    options.scope.kind !== "managed_position_exit"
   ) {
     return Object.freeze({ status: "blocked_invalid_monitor_scope" as const, clock });
   }
@@ -281,7 +311,19 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
     return Object.freeze({ status: "no_closed_session_bar" as const, clock, syncReceipt });
   }
 
-  if (!activeContract.instruments.includes(instrument)) {
+  const dynamicSystemEntry =
+    options.scope.kind === "system_universe" &&
+    activeContract.paperUniverseScope === "fresh_us_equity_selection_v1" &&
+    options.scope.selectedInstruments?.includes(instrument) === true;
+  const managedDynamicExit =
+    options.exitOnly &&
+    options.scope.kind === "managed_position_exit" &&
+    activeContract.paperUniverseScope === "fresh_us_equity_selection_v1";
+  if (
+    !activeContract.instruments.includes(instrument) &&
+    !dynamicSystemEntry &&
+    !managedDynamicExit
+  ) {
     return Object.freeze({
       status: "research_only" as const,
       clock,
@@ -315,6 +357,14 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
   const sessionSells = sessionDecisions.filter((record) => record.input.action === "sell");
   const latestBar = sessionBars.at(-1)!;
   let entryDecision: (typeof decisions)[number] | null = null;
+  let managedExitProof:
+    | {
+        accountId: string;
+        entryDecisionRef: string;
+        entryReceiptId: string;
+        positionQuantity: number;
+      }
+    | undefined;
 
   if (position) {
     const strategyReceipts = receiptsForIntradayStrategy(
@@ -327,6 +377,33 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
       instrument,
       quantity: position.quantity,
     });
+    if (managedDynamicExit && entryDecision && options.accountId?.trim()) {
+      const entryReceipt = strategyReceipts.find(
+        (receipt) =>
+          receipt.accountId === options.accountId &&
+          receipt.venue === "alpaca:paper" &&
+          receipt.instrument === instrument &&
+          receipt.intentId === `intent:${entryDecision!.input.signalId}` &&
+          receipt.side === "buy" &&
+          receipt.fill.filledQuantity > 0 &&
+          receipt.fill.terminalOrderIdentity?.terminal === true &&
+          Boolean(receipt.fill.terminalOrderIdentity.orderId.trim()),
+      );
+      if (
+        entryReceipt &&
+        entryDecision.input.strategyRule === activeContract.ruleId &&
+        entryDecision.input.strategyBinding?.declarationRef === activeContract.declarationRef &&
+        entryDecision.input.strategyBinding?.activationRef === activeContract.activationRef &&
+        entryDecision.input.strategyBinding?.scope === "system_universe"
+      ) {
+        managedExitProof = {
+          accountId: options.accountId,
+          entryDecisionRef: entryDecision.ref,
+          entryReceiptId: entryReceipt.receiptId,
+          positionQuantity: position.quantity,
+        };
+      }
+    }
     if (
       !entryDecision ||
       (options.exitOnly &&
@@ -338,6 +415,13 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
       !entryDecision.input.strategyBinding ||
       entryDecision.input.strategyBinding.parameters.intervalSeconds !== options.intervalSeconds
     ) {
+      return Object.freeze({
+        status: "blocked_position_without_strategy_state" as const,
+        clock,
+        syncReceipt,
+      });
+    }
+    if (managedDynamicExit && !managedExitProof) {
       return Object.freeze({
         status: "blocked_position_without_strategy_state" as const,
         clock,
@@ -458,14 +542,15 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
   const entryCutoffDue =
     activeContract.preCloseExitEnabled && now.getTime() >= preCloseBarStartAtMs;
   const positionUsesPreCloseExit =
-    entryDecision?.input.strategyRule === FINANCE_INTRADAY_OPENING_RANGE_RULE_V2;
+    entryDecision?.input.strategyRule === FINANCE_INTRADAY_OPENING_RANGE_RULE_V2 ||
+    entryDecision?.input.strategyRule === FINANCE_INTRADAY_OPENING_RANGE_RULE_V3;
   const positionPreCloseDue = positionUsesPreCloseExit && now.getTime() >= preCloseBarStartAtMs;
   const preCloseBarAvailable =
     positionPreCloseDue &&
     sessionBars.some((bar) => Date.parse(bar.startAt) === preCloseBarStartAtMs);
   const preCloseBarEndMinute = financeEtClock(new Date(preCloseBarEndAtMs)).minutes;
 
-  const signal = evaluateFinanceIntradaySignal({
+  let signal = evaluateFinanceIntradaySignal({
     bars: sessionBars,
     openingRangeBars: options.openingRangeBars,
     rewardRisk: options.rewardRisk,
@@ -483,6 +568,33 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
       : {}),
     preCloseExit: positionPreCloseDue && preCloseBarAvailable,
   });
+  let priceNormalization: UsEquityPriceNormalizationProvenance | undefined;
+  if (signal.action === "buy" && signal.stopPrice !== undefined) {
+    const normalized = normalizeUsEquityProtectionPrices({
+      instrument,
+      assetClass: "us_equity",
+      side: "buy",
+      entryPrice: signal.referencePrice,
+      stopPrice: signal.stopPrice,
+      ...(signal.targetPrice === undefined ? {} : { targetPrice: signal.targetPrice }),
+      rewardRisk: options.rewardRisk,
+    });
+    if (!normalized.ok) {
+      return Object.freeze({
+        status: "research_only" as const,
+        reason: `price_contract_refused: ${normalized.refusal}`,
+        clock,
+        syncReceipt,
+        executionAuthority: "none" as const,
+      });
+    }
+    priceNormalization = normalized.provenance;
+    signal = {
+      ...signal,
+      stopPrice: normalized.stopPrice,
+      ...(normalized.targetPrice === undefined ? {} : { targetPrice: normalized.targetPrice }),
+    };
+  }
   if (signal.action === "hold") {
     if (positionPreCloseDue && !preCloseBarAvailable) {
       return Object.freeze({
@@ -536,6 +648,8 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
       ...(options.scope.universeSnapshotRef
         ? { universeSnapshotRef: options.scope.universeSnapshotRef }
         : {}),
+      ...(managedExitProof ? { managedExitProof } : {}),
+      ...(priceNormalization ? { priceNormalization } : {}),
     },
   });
   return Object.freeze({

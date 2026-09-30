@@ -108,12 +108,38 @@ checkpoint; they never advertise an accepted portfolio plan.
 
 `--place` is the scheduler's single order-placement master switch. With
 `--intraday-monitor`, it also permits the scheduler to consider intraday orders
-for the active, paper-eligible strategy and its declared instruments. The
+for the active, paper-eligible strategy and its authorized instrument scope. The
 strategy contract, system-universe match, Alpaca Paper controller, quote
 freshness, order caps, shared execution gate, deduplication and reconciliation
 remain required. Monitoring without `--place` stays read-only. The old
 `--intraday-place` argument is accepted only for compatibility, requires
 `--place`, and grants no additional authority; new invocations should omit it.
+
+The versioned dynamic ORB Paper contract opts into
+`paperUniverseScope: "fresh_us_equity_selection_v1"`. In the default
+system-universe mode, new entries use the exact fresh, validated selection
+snapshot, with its reference bound to each decision. The selector uses the
+venue's tradable US-equity list and recorded liquidity/history evidence; SPY is
+not a permanent whitelist. Legacy static contracts retain their declared
+instrument intersection, and explicit ticker overrides remain diagnostic only.
+Do not use `--intraday-active-rule` when requesting the dynamic system universe:
+that option selects the rule's static declaration list.
+
+Each tick refreshes the active binding, so a valid selection change can replace
+the controller safely. Held lots leaving the entry universe retain an exit-only
+path backed by their same-account entry decision, terminal receipt and current
+owned quantity. This does not authorize new purchases outside the current
+selection or adoption of unrelated holdings. US-session ORB wiring is not an
+execution path for crypto, options or every product the venue advertises.
+
+Before discretionary review, known pending account execution claims refuse a
+new candidate through the existing shared safety boundary. No model call can
+resolve an unknown order. New US-equity signals normalize Alpaca protective
+stop precision before review and sizing, retain original/normalized provenance,
+and recompute their monitored reward target. Alpaca preflight refuses illegal
+or too-close OTO stops; the adapter validates without rounding. Local-paper math
+and crypto use their existing contracts. The native order remains OTO with the
+declared stop, while the existing monitor manages its reward-target exit.
 
 ## 24-hour resident operation
 

@@ -13,9 +13,12 @@ export const FINANCE_INTRADAY_OPENING_RANGE_RULE =
   "opening_range_breakout_long_next_bar_v1" as const;
 export const FINANCE_INTRADAY_OPENING_RANGE_RULE_V2 =
   "opening_range_breakout_long_pre_close_v2" as const;
+export const FINANCE_INTRADAY_OPENING_RANGE_RULE_V3 =
+  "opening_range_breakout_long_dynamic_universe_v3" as const;
 export const FINANCE_INTRADAY_OPENING_RANGE_FORM = "intraday_opening_range_breakout" as const;
 export const FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION = "1" as const;
 export const FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V2 = "2" as const;
+export const FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V3 = "3" as const;
 export const FINANCE_INTRADAY_OPENING_RANGE_EMITS = "paper_signal" as const;
 export const FINANCE_INTRADAY_PAPER_EXECUTION_ELIGIBILITY_FIELD =
   "paperExecutionEligibility" as const;
@@ -32,14 +35,18 @@ export type FinanceIntradayPaperExecutionEligibility = Readonly<{
 export type FinanceIntradayActiveRuleContract = Readonly<{
   ruleId:
     | typeof FINANCE_INTRADAY_OPENING_RANGE_RULE
-    | typeof FINANCE_INTRADAY_OPENING_RANGE_RULE_V2;
+    | typeof FINANCE_INTRADAY_OPENING_RANGE_RULE_V2
+    | typeof FINANCE_INTRADAY_OPENING_RANGE_RULE_V3;
   formVersion:
     | typeof FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION
-    | typeof FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V2;
+    | typeof FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V2
+    | typeof FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V3;
   preCloseExitEnabled: boolean;
   declarationRef: string;
   activationRef: string;
   instruments: readonly string[];
+  /** Explicit Paper-only opt-in: fresh US-equity selector may authorize current entries. */
+  paperUniverseScope: "static" | "fresh_us_equity_selection_v1";
   openingRangeBars: number;
   rewardRisk: number;
   intervalSeconds: 60 | 300 | 900;
@@ -49,10 +56,11 @@ export type FinanceIntradayActiveRuleContract = Readonly<{
 
 export type FinanceIntradayOpeningRangeRuleId =
   | typeof FINANCE_INTRADAY_OPENING_RANGE_RULE
-  | typeof FINANCE_INTRADAY_OPENING_RANGE_RULE_V2;
+  | typeof FINANCE_INTRADAY_OPENING_RANGE_RULE_V2
+  | typeof FINANCE_INTRADAY_OPENING_RANGE_RULE_V3;
 
 export type FinanceIntradayMonitorScope = Readonly<{
-  kind: "strategy_universe" | "system_universe" | "explicit_diagnostic";
+  kind: "strategy_universe" | "system_universe" | "managed_position_exit" | "explicit_diagnostic";
   universeSnapshotRef?: string;
   selectedInstruments?: readonly string[];
 }>;
@@ -99,7 +107,9 @@ export function resolveFinanceIntradayActiveRuleContract(
     (rule.ruleId === FINANCE_INTRADAY_OPENING_RANGE_RULE &&
       rule.formVersion === FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION) ||
     (rule.ruleId === FINANCE_INTRADAY_OPENING_RANGE_RULE_V2 &&
-      rule.formVersion === FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V2);
+      rule.formVersion === FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V2) ||
+    (rule.ruleId === FINANCE_INTRADAY_OPENING_RANGE_RULE_V3 &&
+      rule.formVersion === FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V3);
   if (
     !supportedVersion ||
     (rule.state !== "active" && !(options.allowRetiredExit && rule.state === "retired")) ||
@@ -166,28 +176,58 @@ export function resolveFinanceIntradayActiveRuleContract(
   }
 
   const eligibility = resolveFinanceIntradayPaperExecutionEligibility(rule.body);
+  const paperUniverseScope = rule.body.paperUniverseScope;
+  if (paperUniverseScope !== undefined && paperUniverseScope !== "fresh_us_equity_selection_v1") {
+    throw new Error(
+      `active intraday strategy ${rule.ruleId} has an unsupported Paper universe scope`,
+    );
+  }
+  if (
+    (rule.ruleId === FINANCE_INTRADAY_OPENING_RANGE_RULE_V3 &&
+      paperUniverseScope !== "fresh_us_equity_selection_v1") ||
+    (rule.ruleId !== FINANCE_INTRADAY_OPENING_RANGE_RULE_V3 && paperUniverseScope !== undefined)
+  ) {
+    throw new Error(`active intraday strategy ${rule.ruleId} has a version/scope mismatch`);
+  }
 
   const resolvedRuleId: FinanceIntradayOpeningRangeRuleId =
-    rule.ruleId === FINANCE_INTRADAY_OPENING_RANGE_RULE_V2
-      ? FINANCE_INTRADAY_OPENING_RANGE_RULE_V2
-      : FINANCE_INTRADAY_OPENING_RANGE_RULE;
+    rule.ruleId === FINANCE_INTRADAY_OPENING_RANGE_RULE_V3
+      ? FINANCE_INTRADAY_OPENING_RANGE_RULE_V3
+      : rule.ruleId === FINANCE_INTRADAY_OPENING_RANGE_RULE_V2
+        ? FINANCE_INTRADAY_OPENING_RANGE_RULE_V2
+        : FINANCE_INTRADAY_OPENING_RANGE_RULE;
   const resolvedFormVersion =
-    resolvedRuleId === FINANCE_INTRADAY_OPENING_RANGE_RULE_V2
-      ? FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V2
-      : FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION;
+    resolvedRuleId === FINANCE_INTRADAY_OPENING_RANGE_RULE_V3
+      ? FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V3
+      : resolvedRuleId === FINANCE_INTRADAY_OPENING_RANGE_RULE_V2
+        ? FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V2
+        : FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION;
   return Object.freeze({
     ruleId: resolvedRuleId,
     formVersion: resolvedFormVersion,
-    preCloseExitEnabled: resolvedRuleId === FINANCE_INTRADAY_OPENING_RANGE_RULE_V2,
+    preCloseExitEnabled: resolvedRuleId !== FINANCE_INTRADAY_OPENING_RANGE_RULE,
     declarationRef: declarations[0].ref,
     activationRef: activations[0].ref,
     instruments: Object.freeze(instruments),
+    paperUniverseScope: paperUniverseScope ?? "static",
     openingRangeBars: frozenRule.openingRangeBars,
     rewardRisk: frozenRule.rewardRisk,
     intervalSeconds: data.intervalSeconds,
     feed: data.feed,
     eligibility,
   });
+}
+
+/** Dynamic Paper opt-in uses only the current selected snapshot; legacy rules stay intersected. */
+export function financeIntradayExecutionUniverse(
+  contract: Pick<FinanceIntradayActiveRuleContract, "instruments" | "paperUniverseScope">,
+  selectedInstruments: readonly string[],
+): readonly string[] {
+  return contract.paperUniverseScope === "fresh_us_equity_selection_v1"
+    ? Object.freeze([...new Set(selectedInstruments.map((instrument) => instrument.toUpperCase()))])
+    : Object.freeze(
+        contract.instruments.filter((instrument) => selectedInstruments.includes(instrument)),
+      );
 }
 
 const Config = z
@@ -340,7 +380,9 @@ export function runFinanceIntradayPaperReplay(params: {
 }): FinanceIntradayPaperReceipt {
   const config = Config.parse(params.config);
   const strategyRule = params.strategyRule ?? FINANCE_INTRADAY_OPENING_RANGE_RULE;
-  const preCloseExitEnabled = strategyRule === FINANCE_INTRADAY_OPENING_RANGE_RULE_V2;
+  const preCloseExitEnabled =
+    strategyRule === FINANCE_INTRADAY_OPENING_RANGE_RULE_V2 ||
+    strategyRule === FINANCE_INTRADAY_OPENING_RANGE_RULE_V3;
   if (params.bars.length === 0) {
     throw new Error("intraday replay requires bars");
   }

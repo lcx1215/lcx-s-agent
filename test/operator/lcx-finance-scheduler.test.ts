@@ -19,6 +19,8 @@ import {
   FINANCE_INTRADAY_OPENING_RANGE_FORM,
   FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION,
   FINANCE_INTRADAY_OPENING_RANGE_RULE,
+  FINANCE_INTRADAY_OPENING_RANGE_RULE_V3,
+  FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V3,
 } from "../../src/agents/finance-intraday-paper.js";
 import {
   FINANCE_SCHEDULER_LOCK,
@@ -196,12 +198,13 @@ async function activateIntradayRule(
   overrides: Record<string, unknown> = {},
   ruleId: string = FINANCE_INTRADAY_OPENING_RANGE_RULE,
   targetDirectory = directory,
+  formVersion: string = FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION,
 ): Promise<void> {
   await declareFinanceStrategyRule(targetDirectory, {
     kind: "declared",
     ruleId,
     form: FINANCE_INTRADAY_OPENING_RANGE_FORM,
-    formVersion: FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION,
+    formVersion,
     displayName: "ORB fixture",
     instruments: ["SPY"],
     emits: FINANCE_INTRADAY_OPENING_RANGE_EMITS,
@@ -255,6 +258,111 @@ beforeEach(() => {
     stderrMessages.push(String(chunk));
     return true;
   });
+});
+
+it("rebinds dynamic v3 controller candidates to the refreshed selected universe", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-22T22:00:00.000Z"));
+  await activateIntradayRule(
+    {
+      measuredResult: { status: "paper_contract_only", executionAuthority: "none" },
+      paperExecutionEligibility: "paper_execution_eligible",
+      paperUniverseScope: "fresh_us_equity_selection_v1",
+    },
+    FINANCE_INTRADAY_OPENING_RANGE_RULE_V3,
+    directory,
+    FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V3,
+  );
+  const policyPath = path.join(directory, "alpaca-policy.json");
+  fs.writeFileSync(policyPath, JSON.stringify({ expiresAt: "2026-09-22T23:00:00.000Z" }));
+  mocks.createIntradayController.mockReturnValue({
+    accountId: "paper-account",
+    executionPolicyExpiresAt: "2026-09-22T23:00:00.000Z",
+    inspectReconciliation: vi.fn(async () => ({
+      readiness: { status: "reconciled" },
+      observedAt: "2026-09-22T21:59:00.000Z",
+      protection: { status: "none" },
+    })),
+  });
+  writeFinanceSchedulerState(directory, {
+    lastFired: { day: "2026-09-22" },
+    lastSucceeded: {},
+    lastStatus: {},
+  });
+  const priorSnapshot = { generatedAt: "2026-09-21T22:00:00.000Z", selected: ["SPY", "OLD"] };
+  const refreshedSnapshot = { generatedAt: "2026-09-22T22:00:00.000Z", selected: ["SPY", "NEW"] };
+  seedSelectedUniverse(priorSnapshot);
+  mocks.readUniverse
+    .mockReturnValueOnce(priorSnapshot)
+    .mockImplementationOnce(() => {
+      writeUniverseSnapshot(refreshedSnapshot);
+      return refreshedSnapshot;
+    })
+    .mockReturnValue(refreshedSnapshot);
+  mocks.runCycle
+    .mockResolvedValueOnce({
+      ...success,
+      stdout: JSON.stringify({
+        ok: true,
+        scoredFiled: { appended: 0, skipped: 0 },
+        pending: [],
+        declined: [],
+        issues: [],
+      }),
+    })
+    .mockResolvedValueOnce({
+      ...success,
+      stdout: JSON.stringify({
+        snapshotPersisted: true,
+        generatedAt: refreshedSnapshot.generatedAt,
+        selected: refreshedSnapshot.selected,
+      }),
+    });
+  mocks.runIntradayMonitorTick.mockResolvedValue({ status: "no_signal" });
+  mocks.delay
+    .mockImplementationOnce(async () => {})
+    .mockImplementationOnce(async () => process.emit("SIGTERM"));
+
+  await expect(
+    runFinanceScheduler([
+      "--loop",
+      "--dir",
+      directory,
+      "--intraday-monitor",
+      "--intraday-place",
+      "--no-source-heartbeat",
+      "--place",
+      "--venue",
+      "alpaca",
+      "--execution-policy",
+      policyPath,
+      "--execution-quote-feed",
+      "iex",
+      "--execution-max-age-ms",
+      "30000",
+      "--max-order-notional",
+      "1000",
+      "--max-instrument-notional",
+      "5000",
+      "--max-orders",
+      "8",
+    ]),
+  ).resolves.toBe(143);
+
+  expect(mocks.runIntradayMonitorTick.mock.calls.map(([call]) => call.instrument)).toEqual([
+    "SPY",
+    "OLD",
+    "SPY",
+    "NEW",
+  ]);
+  expect(mocks.createIntradayController).toHaveBeenCalledTimes(2);
+  const controllerCalls = mocks.createIntradayController.mock.calls as unknown as Array<
+    [{ instruments: string[] }]
+  >;
+  expect(controllerCalls.map(([options]) => options.instruments)).toEqual([
+    ["SPY", "OLD"],
+    ["SPY", "NEW"],
+  ]);
 });
 afterEach(() => {
   expect(process.listenerCount("SIGTERM")).toBe(originalTermListeners);
@@ -943,7 +1051,7 @@ it("monitors only symbols from the validated dynamic universe, never a static ti
       "--no-source-heartbeat",
     ]),
   ).resolves.toBe(143);
-  expect(mocks.readUniverse).toHaveBeenCalledOnce();
+  expect(mocks.readUniverse).toHaveBeenCalledTimes(2);
   expect(mocks.runIntradayMonitorTick.mock.calls.map(([call]) => call.instrument)).toEqual([
     "AAA",
     "BBB",
@@ -1034,7 +1142,7 @@ it("has no intraday candidates when the dynamic universe receipt is missing or s
       "--no-source-heartbeat",
     ]),
   ).resolves.toBe(143);
-  expect(mocks.readUniverse).toHaveBeenCalledOnce();
+  expect(mocks.readUniverse).toHaveBeenCalledTimes(2);
   expect(mocks.runIntradayMonitorTick).not.toHaveBeenCalled();
 });
 
@@ -1106,10 +1214,13 @@ it("rebinds a long-lived monitor to the universe written by a successful night r
     selected: ["SPY", "NEW"],
   };
   seedSelectedUniverse(priorSnapshot);
-  mocks.readUniverse.mockReturnValueOnce(priorSnapshot).mockImplementationOnce(() => {
-    writeUniverseSnapshot(refreshedSnapshot);
-    return refreshedSnapshot;
-  });
+  mocks.readUniverse
+    .mockReturnValueOnce(priorSnapshot)
+    .mockImplementationOnce(() => {
+      writeUniverseSnapshot(refreshedSnapshot);
+      return refreshedSnapshot;
+    })
+    .mockReturnValue(refreshedSnapshot);
   mocks.runCycle
     .mockResolvedValueOnce({
       ...success,
@@ -1168,7 +1279,7 @@ it("rebinds a long-lived monitor to the universe written by a successful night r
     ]),
   ).resolves.toBe(143);
 
-  expect(mocks.readUniverse).toHaveBeenCalledTimes(2);
+  expect(mocks.readUniverse).toHaveBeenCalledTimes(4);
   expect(mocks.runIntradayMonitorTick.mock.calls.map(([call]) => call.instrument)).toEqual([
     "SPY",
     "OLD",
@@ -1186,7 +1297,7 @@ it("rebinds a long-lived monitor to the universe written by a successful night r
     selectedInstruments: ["SPY", "NEW"],
   });
   expect(refreshedScope?.universeSnapshotRef).not.toBe(firstScope?.universeSnapshotRef);
-  expect(mocks.createIntradayController).toHaveBeenCalledOnce();
+  expect(mocks.createIntradayController).toHaveBeenCalledTimes(2);
   expect(mocks.executeIntradayDecision).not.toHaveBeenCalled();
   expect(progressAtStop).toMatchObject({
     executionPolicyExpiresAt: "2026-09-23T00:00:00.000Z",
@@ -1221,6 +1332,10 @@ it("recovers a long-lived monitor after startup without a universe and a success
       };
       writeUniverseSnapshot(snapshot);
       return snapshot;
+    })
+    .mockReturnValue({
+      generatedAt: "2026-09-22T22:00:00.000Z",
+      selected: ["SPY", "RECOVERED"],
     });
   mocks.runCycle
     .mockResolvedValueOnce({
@@ -1258,8 +1373,10 @@ it("recovers a long-lived monitor after startup without a universe and a success
     ]),
   ).resolves.toBe(143);
 
-  expect(mocks.readUniverse).toHaveBeenCalledTimes(2);
+  expect(mocks.readUniverse).toHaveBeenCalledTimes(4);
   expect(mocks.runIntradayMonitorTick.mock.calls.map(([call]) => call.instrument)).toEqual([
+    "SPY",
+    "RECOVERED",
     "SPY",
     "RECOVERED",
   ]);
@@ -1328,13 +1445,14 @@ it("clears a previously bound universe when the night selector fails", async () 
   expect(mocks.runIntradayMonitorTick.mock.calls.map(([call]) => call.instrument)).toEqual([
     "SPY",
     "STALE",
+    "SPY",
+    "STALE",
   ]);
-  expect(mocks.readUniverse).toHaveBeenCalledOnce();
-  expect(mocks.runIntradayMonitorTick).toHaveBeenCalledTimes(2);
+  expect(mocks.readUniverse).toHaveBeenCalledTimes(3);
   expect(progressAtStop).toMatchObject({
     placementEnabled: false,
     universeStatus: "unavailable",
-    instruments: [],
+    instruments: ["SPY", "STALE"],
     executionInstruments: [],
   });
   const selectionReceipt = JSON.parse(
@@ -1420,6 +1538,8 @@ it("keeps failed receipt appends fail-closed across restart and preserves snapsh
   expect(mocks.runIntradayMonitorTick.mock.calls.map(([call]) => call.instrument)).toEqual([
     "SPY",
     "PRIOR",
+    "SPY",
+    "PRIOR",
   ]);
   expect(fs.existsSync(path.join(directory, FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME))).toBe(
     false,
@@ -1427,7 +1547,7 @@ it("keeps failed receipt appends fail-closed across restart and preserves snapsh
   const preservedSnapshots = fs
     .readdirSync(directory)
     .filter((name) => name.endsWith("-previous.json") || name.endsWith("-unreceipted.json"));
-  expect(preservedSnapshots).toHaveLength(2);
+  expect(preservedSnapshots).toHaveLength(1);
   expect(
     stderrMessages.some((message) =>
       message.includes("universe selection receipt append failed: simulated receipt disk failure"),
@@ -1514,6 +1634,8 @@ it("does not run selector when the started receipt append fails", async () => {
   expect(mocks.runIntradayMonitorTick.mock.calls.map(([call]) => call.instrument)).toEqual([
     "SPY",
     "PRIOR",
+    "SPY",
+    "PRIOR",
   ]);
   expect(fs.readFileSync(canonicalPath, "utf8").trim()).toBe(JSON.stringify(priorSnapshot));
   expect(canonicalRenameAttempts).toEqual([]);
@@ -1574,6 +1696,8 @@ it("rejects the old snapshot when rename and failed receipt writes fail after st
   expect(mocks.runIntradayMonitorTick.mock.calls.map(([call]) => call.instrument)).toEqual([
     "SPY",
     "OLD",
+    "SPY",
+    "OLD",
   ]);
   const latestReceipt = fs
     .readFileSync(path.join(directory, "finance-universe-selection-runs.jsonl"), "utf8")
@@ -1627,7 +1751,7 @@ it("does not re-arm a same-millisecond failed snapshot receipt, then recovers on
       writeUniverseSnapshot(recoveredSnapshot);
       return recoveredSnapshot;
     })
-    .mockReturnValueOnce(recoveredSnapshot);
+    .mockReturnValue(recoveredSnapshot);
   mocks.runCycle
     .mockResolvedValueOnce({
       ...success,
@@ -1657,6 +1781,8 @@ it("does not re-arm a same-millisecond failed snapshot receipt, then recovers on
   const args = ["--loop", "--dir", directory, "--intraday-monitor", "--no-source-heartbeat"];
   await expect(runFinanceScheduler(args)).resolves.toBe(143);
   expect(mocks.runIntradayMonitorTick.mock.calls.map(([call]) => call.instrument)).toEqual([
+    "SPY",
+    "RECOVERED",
     "SPY",
     "RECOVERED",
   ]);

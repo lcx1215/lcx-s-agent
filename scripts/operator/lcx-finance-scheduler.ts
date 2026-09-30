@@ -37,11 +37,15 @@ import { executeFinanceIntradayDecision } from "../../src/agents/finance-intrada
 import { runFinanceIntradayMonitorTick } from "../../src/agents/finance-intraday-monitor.js";
 import {
   FINANCE_INTRADAY_OPENING_RANGE_FORM,
+  financeIntradayExecutionUniverse,
   resolveFinanceIntradayActiveRuleContract,
   type FinanceIntradayActiveRuleContract,
   type FinanceIntradayMonitorScope,
 } from "../../src/agents/finance-intraday-paper.js";
-import { readFinanceRetiredIntradayExitTargets } from "../../src/agents/finance-intraday-position.js";
+import {
+  readFinanceDynamicIntradayExitTargets,
+  readFinanceRetiredIntradayExitTargets,
+} from "../../src/agents/finance-intraday-position.js";
 import {
   buildFinanceNightReviewEvidence,
   writeFinanceNightReviewEvidence,
@@ -846,7 +850,8 @@ function replaceIntradaySystemUniverse(
   if (!snapshot || !current.strategyContract) {
     const nextIntraday = {
       ...current,
-      instruments: [],
+      // Retain the last observed symbols for non-execution monitoring, but remove
+      // the snapshot binding and all entry placement authority until a fresh read.
       executionInstruments: [],
       place: false,
       placementEligibility: current.placementRequested
@@ -857,18 +862,22 @@ function replaceIntradaySystemUniverse(
     } satisfies IntradayMonitorConfig;
     delete nextIntraday.scope;
     context.options = { ...context.options, intraday: nextIntraday };
+    context.intradayController = undefined;
     return;
   }
 
-  const executionCandidates = current.strategyContract.instruments.filter((instrument) =>
-    snapshot.selected.includes(instrument),
+  const dynamicUniverse =
+    current.strategyContract.paperUniverseScope === "fresh_us_equity_selection_v1";
+  const executionCandidates = financeIntradayExecutionUniverse(
+    current.strategyContract,
+    snapshot.selected,
   );
   const executionBindingUnchanged =
     JSON.stringify([...executionCandidates].toSorted()) ===
     JSON.stringify([...current.executionInstruments].toSorted());
   const keepPlacement =
-    current.place &&
-    executionBindingUnchanged &&
+    current.placementRequested &&
+    (dynamicUniverse || executionBindingUnchanged) &&
     current.strategyContract.eligibility.automatedPaperPlacementAllowed &&
     executionCandidates.length > 0;
   const placementEligibility: IntradayMonitorConfig["placementEligibility"] =
@@ -878,7 +887,7 @@ function replaceIntradaySystemUniverse(
         ? current.strategyContract.eligibility.status
         : executionCandidates.length === 0
           ? "instrument_scope_mismatch"
-          : !executionBindingUnchanged
+          : !dynamicUniverse && !executionBindingUnchanged
             ? "universe_unavailable"
             : current.strategyContract.eligibility.status;
 
@@ -897,6 +906,26 @@ function replaceIntradaySystemUniverse(
       },
     },
   };
+  context.intradayController = undefined;
+  try {
+    context.intradayController = createIntradayControllerForOptions(
+      context.root.directory,
+      context.options,
+    );
+  } catch (error) {
+    context.options = {
+      ...context.options,
+      intraday: {
+        ...context.options.intraday!,
+        place: false,
+        executionInstruments: [],
+        placementEligibility: "controller_unavailable",
+      },
+    };
+    process.stderr.write(
+      `intraday system-universe controller refresh failed: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+  }
 }
 
 async function refreshFinanceUniverseSelection(params: {
@@ -1514,10 +1543,22 @@ export async function runFinanceRetiredIntradayExitTick(context: CycleContext): 
       }
       const policy: unknown = JSON.parse(fs.readFileSync(args[policyIndex + 1], "utf8"));
       const parsedPolicy = financeAlpacaCyclePolicySchema.parse(policy);
-      const targets = await readFinanceRetiredIntradayExitTargets(
+      const retiredTargets = await readFinanceRetiredIntradayExitTargets(
         context.root.directory,
         parsedPolicy.accountId,
       );
+      const dynamicTargets =
+        context.options.intraday?.instrumentSource === "system_universe" &&
+        context.options.intraday.strategyContract
+          ? await readFinanceDynamicIntradayExitTargets(
+              context.root.directory,
+              parsedPolicy.accountId,
+              context.options.intraday.scope?.kind === "system_universe"
+                ? context.options.intraday.instruments
+                : [],
+            )
+          : [];
+      const targets = [...retiredTargets, ...dynamicTargets];
       for (const target of targets) {
         if (context.signal.aborted) {
           break;
@@ -1539,7 +1580,11 @@ export async function runFinanceRetiredIntradayExitTick(context: CycleContext): 
           openingRangeBars: target.contract.openingRangeBars,
           rewardRisk: target.contract.rewardRisk,
           strategyContract: target.contract,
-          scope: { kind: "strategy_universe" },
+          scope:
+            context.options.intraday?.instrumentSource === "system_universe" &&
+            target.contract.paperUniverseScope === "fresh_us_equity_selection_v1"
+              ? { kind: "managed_position_exit" }
+              : { kind: "strategy_universe" },
           resolveMarketSession: context.resolveMarketSession,
           signal: context.signal,
         });
@@ -1622,8 +1667,9 @@ async function resolveIntradayRuntimeOptions(
           );
           assertUniverseSnapshotNotSupersededByFailure(directory, snapshot);
           instruments = snapshot.selected;
-          executionInstruments = strategyContract.instruments.filter((instrument) =>
-            snapshot.selected.includes(instrument),
+          executionInstruments = financeIntradayExecutionUniverse(
+            strategyContract,
+            snapshot.selected,
           );
           scope = {
             kind: "system_universe",
@@ -1632,6 +1678,9 @@ async function resolveIntradayRuntimeOptions(
           };
         } catch (error) {
           universeUnavailable = true;
+          // Preserve the last observed symbols for monitor-only work. The missing scope
+          // and empty executionInstruments below keep them out of entry authority.
+          instruments = options.intraday.instruments;
           process.stderr.write(
             `intraday system universe unavailable; no static fallback candidates: ${error instanceof Error ? error.message : String(error)}\n`,
           );
@@ -1686,7 +1735,10 @@ function createIntradayControllerForOptions(directory: string, options: Schedule
 
 /** Refresh the active binding before admitting this tick's new entry candidates. */
 async function refreshActiveIntradayBinding(context: CycleContext): Promise<void> {
-  if (context.options.intraday?.instrumentSource !== "active_rule") {
+  if (
+    context.options.intraday?.instrumentSource !== "active_rule" &&
+    context.options.intraday?.instrumentSource !== "system_universe"
+  ) {
     return;
   }
   const next = await resolveIntradayRuntimeOptions(context.root.directory, context.options);
@@ -1739,6 +1791,7 @@ function buildIntradayLastTickCandidate(
     ...(!symbolMatches
       ? { reason: "monitor_result_invalid" }
       : {
+          ...(typeof result.reason === "string" ? { reason: result.reason } : {}),
           ...(signal &&
           (signal.action === "buy" || signal.action === "sell" || signal.action === "hold")
             ? { action: signal.action }
@@ -1756,6 +1809,7 @@ function buildIntradayLastTickCandidate(
 
 async function runTradingTick(context: CycleContext): Promise<void> {
   const args = context.options.extraArgs;
+  await refreshActiveIntradayBinding(context);
   const venueIndex = args.indexOf("--venue");
   const idleReconciliationEnabled =
     args.includes("--sync-alpaca-history") && venueIndex >= 0 && args[venueIndex + 1] === "alpaca";
@@ -1794,7 +1848,6 @@ async function runTradingTick(context: CycleContext): Promise<void> {
     }
   }
   await runFinanceRetiredIntradayExitTick(context);
-  await refreshActiveIntradayBinding(context);
   if (context.options.intraday) {
     const executionInstruments = new Set(context.options.intraday.executionInstruments);
     // Process executable instruments before spending this tick on research monitoring.

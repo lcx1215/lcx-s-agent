@@ -23,13 +23,18 @@ import {
 import {
   resolveFinanceIntradayActiveRuleContract,
   FINANCE_INTRADAY_OPENING_RANGE_RULE_V2,
+  FINANCE_INTRADAY_OPENING_RANGE_RULE_V3,
   FINANCE_INTRADAY_OPENING_RANGE_EMITS,
   FINANCE_INTRADAY_OPENING_RANGE_FORM,
   FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION,
   FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V2,
+  FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V3,
   FINANCE_INTRADAY_OPENING_RANGE_RULE,
 } from "./finance-intraday-paper.js";
-import { readFinanceRetiredIntradayExitTargets } from "./finance-intraday-position.js";
+import {
+  readFinanceDynamicIntradayExitTargets,
+  readFinanceRetiredIntradayExitTargets,
+} from "./finance-intraday-position.js";
 import { appendFinanceExecutionReceipt } from "./finance-position-ledger.js";
 import {
   activateFinanceStrategyRule,
@@ -159,10 +164,12 @@ async function activeContract(
   requestedRule: {
     ruleId:
       | typeof FINANCE_INTRADAY_OPENING_RANGE_RULE
-      | typeof FINANCE_INTRADAY_OPENING_RANGE_RULE_V2;
+      | typeof FINANCE_INTRADAY_OPENING_RANGE_RULE_V2
+      | typeof FINANCE_INTRADAY_OPENING_RANGE_RULE_V3;
     formVersion:
       | typeof FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION
-      | typeof FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V2;
+      | typeof FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V2
+      | typeof FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V3;
   } = {
     ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE,
     formVersion: FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION,
@@ -330,6 +337,309 @@ async function seedUncertainPartialSell(
 }
 
 describe("resident intraday monitor tick", () => {
+  it("requires a versioned v3 declaration before dynamic-universe Paper scope is accepted", async () => {
+    const legacyDirectory = await fs.mkdtemp(
+      path.join(os.tmpdir(), "intraday-dynamic-v2-refusal-"),
+    );
+    temporary.push(legacyDirectory);
+    await expect(
+      activeContract(
+        legacyDirectory,
+        { paperUniverseScope: "fresh_us_equity_selection_v1" },
+        {
+          ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE_V2,
+          formVersion: FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V2,
+        },
+      ),
+    ).rejects.toThrow(/version\/scope mismatch/u);
+
+    const dynamicDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-dynamic-v3-"));
+    temporary.push(dynamicDirectory);
+    const contract = await activeContract(
+      dynamicDirectory,
+      { paperUniverseScope: "fresh_us_equity_selection_v1" },
+      {
+        ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE_V3,
+        formVersion: FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V3,
+      },
+    );
+    expect(contract).toMatchObject({
+      ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE_V3,
+      formVersion: FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V3,
+      preCloseExitEnabled: true,
+      paperUniverseScope: "fresh_us_equity_selection_v1",
+    });
+    const notExitOnly = await monitorTickWithFixtureCalendar({
+      directory: dynamicDirectory,
+      instrument: "SPY",
+      intervalSeconds: 300,
+      feed: "iex",
+      openingRangeBars: 6,
+      rewardRisk: 2,
+      strategyContract: contract,
+      scope: { kind: "managed_position_exit" },
+      now: new Date("2026-09-18T15:00:00.000Z"),
+    });
+    expect(notExitOnly.status).toBe("blocked_invalid_monitor_scope");
+    const seedIsNotSelection = await monitorTickWithFixtureCalendar({
+      directory: dynamicDirectory,
+      instrument: "SPY",
+      intervalSeconds: 300,
+      feed: "iex",
+      openingRangeBars: 6,
+      rewardRisk: 2,
+      strategyContract: contract,
+      scope: { kind: "strategy_universe" },
+      now: new Date("2026-09-18T15:00:00.000Z"),
+    });
+    expect(seedIsNotSelection.status).toBe("blocked_invalid_monitor_scope");
+  });
+
+  it("retains only same-account canonical positions outside the fresh dynamic entry snapshot", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-dynamic-exit-target-"));
+    temporary.push(directory);
+    const contract = await activeContract(
+      directory,
+      {
+        paperUniverseScope: "fresh_us_equity_selection_v1",
+        paperExecutionEligibility: "paper_execution_eligible",
+      },
+      {
+        ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE_V3,
+        formVersion: FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V3,
+      },
+    );
+    const oldSnapshotRef = caseflowFingerprint({ selected: ["QQQ"] });
+    const entry = await appendFinanceIntradayDecision(directory, {
+      signalId: "intraday-dynamic-position-entry",
+      instrument: "QQQ",
+      sessionDate: "2026-09-17",
+      action: "buy",
+      reason: "opening_range_breakout",
+      referencePrice: 100,
+      referencePriceAt: "2026-09-17T19:55:00.000Z",
+      stopPrice: 99,
+      targetPrice: 102,
+      datasetHeadRef: "e".repeat(64),
+      strategyRule: contract.ruleId,
+      strategyBinding: {
+        declarationRef: contract.declarationRef,
+        activationRef: contract.activationRef,
+        declaredInstruments: [...contract.instruments],
+        parameters: {
+          openingRangeBars: contract.openingRangeBars,
+          rewardRisk: contract.rewardRisk,
+          intervalSeconds: contract.intervalSeconds,
+          feed: contract.feed,
+        },
+        scope: "system_universe",
+        universeSnapshotRef: oldSnapshotRef,
+      },
+    });
+    const receipt = buildFinanceExecutionReceipt({
+      intent: {
+        intentId: `intent:${entry.record.input.signalId}`,
+        instrument: "QQQ",
+        side: "buy",
+        orderType: "market",
+        quantity: 2,
+        referencePrice: 100,
+        referencePriceAt: "2026-09-17T19:55:00.000Z",
+        runAuthorizationId: "dynamic-exit-fixture",
+        rationale: "fixture confirmed entry",
+      },
+      adapter: { id: "alpaca-venue", venue: "alpaca:paper", kind: "venue" },
+      fill: {
+        filledQuantity: 2,
+        fillPrice: 100,
+        filledAt: "2026-09-17T19:55:01.000Z",
+        venueRef: "alpaca:paper:dynamic-entry",
+        terminalOrderIdentity: { orderId: "dynamic-entry", terminal: true },
+      },
+      recordedAt: "2026-09-17T19:55:01.000Z",
+      accountId: "paper-account",
+    });
+    await appendFinanceExecutionReceipt(directory, receipt);
+    expect(
+      await readFinanceDynamicIntradayExitTargets(directory, "paper-account", ["MSFT"]),
+    ).toEqual([{ instrument: "QQQ", quantity: 2, contract }]);
+    expect(
+      await readFinanceDynamicIntradayExitTargets(directory, "other-account", ["MSFT"]),
+    ).toEqual([]);
+    expect(
+      await readFinanceDynamicIntradayExitTargets(directory, "paper-account", ["QQQ"]),
+    ).toEqual([]);
+    expect(await readFinanceDynamicIntradayExitTargets(directory, "paper-account", [])).toEqual([
+      { instrument: "QQQ", quantity: 2, contract },
+    ]);
+    await retireFinanceStrategyRule(directory, {
+      kind: "retired",
+      ruleId: contract.ruleId,
+      observedAt: "2026-09-18T20:00:00.000Z",
+      reason: "fixture retirement keeps owned position managed",
+    });
+    const liveSignalId = "intraday-dynamic-live-not-paper";
+    await appendFinanceIntradayDecision(directory, {
+      signalId: liveSignalId,
+      instrument: "QQQ",
+      sessionDate: "2026-09-17",
+      action: "buy",
+      reason: "opening_range_breakout",
+      referencePrice: 100,
+      referencePriceAt: "2026-09-17T19:55:00.000Z",
+      stopPrice: 99,
+      targetPrice: 102,
+      datasetHeadRef: "f".repeat(64),
+      strategyRule: contract.ruleId,
+      strategyBinding: {
+        declarationRef: contract.declarationRef,
+        activationRef: contract.activationRef,
+        declaredInstruments: [...contract.instruments],
+        parameters: {
+          openingRangeBars: contract.openingRangeBars,
+          rewardRisk: contract.rewardRisk,
+          intervalSeconds: contract.intervalSeconds,
+          feed: contract.feed,
+        },
+        scope: "system_universe",
+        universeSnapshotRef: oldSnapshotRef,
+      },
+    });
+    await appendFinanceExecutionReceipt(
+      directory,
+      buildFinanceExecutionReceipt({
+        intent: {
+          intentId: `intent:${liveSignalId}`,
+          instrument: "QQQ",
+          side: "buy",
+          orderType: "market",
+          quantity: 20,
+          referencePrice: 100,
+          referencePriceAt: "2026-09-17T19:55:00.000Z",
+          runAuthorizationId: "dynamic-live-not-paper",
+          rationale: "same account live receipt must not be borrowed by Paper exit ownership",
+        },
+        adapter: { id: "alpaca-venue", venue: "alpaca:live", kind: "venue" },
+        fill: {
+          filledQuantity: 20,
+          fillPrice: 100,
+          filledAt: "2026-09-17T19:55:01.000Z",
+          venueRef: "alpaca:live:dynamic-entry",
+          terminalOrderIdentity: { orderId: "dynamic-live-entry", terminal: true },
+        },
+        recordedAt: "2026-09-17T19:55:01.000Z",
+        accountId: "paper-account",
+      }),
+    );
+    expect(await readFinanceRetiredIntradayExitTargets(directory, "paper-account")).toEqual([
+      { instrument: "QQQ", quantity: 2, contract },
+    ]);
+  });
+
+  it("binds an out-of-selection exit to the original dynamic entry decision and same-account terminal fill", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-dynamic-managed-exit-"));
+    temporary.push(directory);
+    const contract = await activeContract(
+      directory,
+      { paperUniverseScope: "fresh_us_equity_selection_v1" },
+      {
+        ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE_V3,
+        formVersion: FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V3,
+      },
+    );
+    const priorSnapshotRef = caseflowFingerprint({ selected: ["QQQ"] });
+    const entry = await appendFinanceIntradayDecision(directory, {
+      signalId: "intraday-dynamic-exit-entry",
+      instrument: "QQQ",
+      sessionDate: "2026-09-18",
+      action: "buy",
+      reason: "opening_range_breakout",
+      referencePrice: 100,
+      referencePriceAt: "2026-09-18T13:55:00.000Z",
+      stopPrice: 99,
+      targetPrice: 102,
+      datasetHeadRef: "d".repeat(64),
+      strategyRule: contract.ruleId,
+      strategyBinding: {
+        declarationRef: contract.declarationRef,
+        activationRef: contract.activationRef,
+        declaredInstruments: [...contract.instruments],
+        parameters: {
+          openingRangeBars: contract.openingRangeBars,
+          rewardRisk: contract.rewardRisk,
+          intervalSeconds: contract.intervalSeconds,
+          feed: contract.feed,
+        },
+        scope: "system_universe",
+        universeSnapshotRef: priorSnapshotRef,
+      },
+    });
+    const entryReceipt = buildFinanceExecutionReceipt({
+      intent: {
+        intentId: `intent:${entry.record.input.signalId}`,
+        instrument: "QQQ",
+        side: "buy",
+        orderType: "market",
+        quantity: 2,
+        referencePrice: 100,
+        referencePriceAt: "2026-09-18T13:55:00.000Z",
+        runAuthorizationId: "dynamic-exit-entry",
+        rationale: "fixture entry",
+      },
+      adapter: { id: "alpaca-venue", venue: "alpaca:paper", kind: "venue" },
+      fill: {
+        filledQuantity: 2,
+        fillPrice: 100,
+        filledAt: "2026-09-18T13:56:00.000Z",
+        venueRef: "alpaca:paper:dynamic-exit-entry",
+        terminalOrderIdentity: { orderId: "dynamic-exit-entry", terminal: true },
+      },
+      recordedAt: "2026-09-18T13:56:00.000Z",
+      accountId: "paper-account",
+    });
+    await appendFinanceExecutionReceipt(directory, entryReceipt);
+    const bars = regularSessionBars("2026-09-18", 7, { lastLow: 98 });
+    const observedAt = new Date(Date.parse(bars.at(-1)!.startAt) + 300_000).toISOString();
+    await appendFinanceIntradayBars(directory, {
+      instrument: "QQQ",
+      intervalSeconds: 300,
+      observedAt,
+      provenance: { origin: "dynamic managed-exit fixture", feed: "iex" },
+      bars,
+    });
+    const result = await monitorTickWithFixtureCalendar({
+      directory,
+      instrument: "QQQ",
+      intervalSeconds: 300,
+      feed: "iex",
+      openingRangeBars: 6,
+      rewardRisk: 2,
+      strategyContract: contract,
+      scope: { kind: "managed_position_exit" },
+      accountId: "paper-account",
+      exitOnly: true,
+      now: new Date("2026-09-18T15:00:00.000Z"),
+      sync: vi.fn(async () => ({}) as never),
+    });
+    expect(result).toMatchObject({
+      status: "decision_recorded",
+      signal: { action: "sell", reason: "opening_range_stop" },
+      decision: {
+        input: {
+          instrument: "QQQ",
+          strategyBinding: {
+            managedExitProof: {
+              accountId: "paper-account",
+              entryDecisionRef: entry.record.ref,
+              entryReceiptId: entryReceipt.receiptId,
+              positionQuantity: 2,
+            },
+          },
+        },
+      },
+    });
+  });
+
   it("uses the post-resolution time for an unpinned live clock", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-calendar-clock-race-"));
     temporary.push(directory);
@@ -971,6 +1281,66 @@ describe("resident intraday monitor tick", () => {
     });
     expect(result.status).toBe("no_intraday_head");
     expect(sync).toHaveBeenCalledOnce();
+  });
+
+  it("records a fresh-snapshot symbol only for an explicitly dynamic Paper rule and persists normalized protection", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-monitor-dynamic-paper-"));
+    temporary.push(directory);
+    const contract = await activeContract(
+      directory,
+      {
+        paperUniverseScope: "fresh_us_equity_selection_v1",
+      },
+      {
+        ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE_V3,
+        formVersion: FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V3,
+      },
+    );
+    const bars = regularSessionBars("2026-09-18", 7, { breakout: true });
+    const observedAt = new Date(Date.parse(bars.at(-1)!.startAt) + 300_000).toISOString();
+    await appendFinanceIntradayBars(directory, {
+      instrument: "QQQ",
+      intervalSeconds: 300,
+      observedAt,
+      provenance: { origin: "dynamic-universe fixture", feed: "iex" },
+      bars,
+    });
+    const snapshot = { selected: ["QQQ"] } as never;
+    readerMocks.readUniverse.mockReturnValue(snapshot);
+    const result = await monitorTickWithFixtureCalendar({
+      directory,
+      instrument: "QQQ",
+      intervalSeconds: 300,
+      feed: "iex",
+      openingRangeBars: 6,
+      rewardRisk: 2,
+      strategyContract: contract,
+      scope: {
+        kind: "system_universe",
+        universeSnapshotRef: caseflowFingerprint(snapshot),
+        selectedInstruments: ["QQQ"],
+      },
+      now: new Date("2026-09-18T15:00:00.000Z"),
+      sync: vi.fn(async () => ({}) as never),
+    });
+    expect(result).toMatchObject({
+      status: "decision_recorded",
+      signal: { action: "buy", reason: "opening_range_breakout" },
+      decision: {
+        input: {
+          instrument: "QQQ",
+          strategyBinding: {
+            declaredInstruments: ["SPY"],
+            scope: "system_universe",
+            universeSnapshotRef: caseflowFingerprint(snapshot),
+            priceNormalization: {
+              policyVersion: "alpaca_us_equity_stop_precision_v1",
+              instrument: "QQQ",
+            },
+          },
+        },
+      },
+    });
   });
 
   it("rejects malformed or out-of-snapshot system candidates before data sync", async () => {

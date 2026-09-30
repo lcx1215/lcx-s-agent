@@ -14,6 +14,7 @@ import {
 import {
   FinanceExecutionSafetyFactsError,
   FinanceExecutionSafetyUncertainError,
+  readFinanceExecutionSafetyClaims,
 } from "./finance-execution-safety.js";
 import {
   appendFinanceIntradayOutcome,
@@ -25,6 +26,7 @@ import {
 } from "./finance-intraday-control-ledger.js";
 import {
   FINANCE_INTRADAY_OPENING_RANGE_FORM,
+  type FinanceIntradayActiveRuleContract,
   resolveFinanceIntradayActiveRuleContract,
 } from "./finance-intraday-paper.js";
 import { receiptsForIntradayStrategy } from "./finance-intraday-position.js";
@@ -48,6 +50,95 @@ type Controller = Required<
   >
 >;
 
+async function managedDynamicExitProofIssue(
+  directory: string,
+  decision: FinanceIntradayDecisionRecord,
+  accountId: string,
+  contract: FinanceIntradayActiveRuleContract,
+): Promise<string | null> {
+  const binding = decision.input.strategyBinding;
+  const proof = binding?.managedExitProof;
+  if (!proof) {
+    return "dynamic-universe exit is missing its managed-position proof";
+  }
+  if (
+    contract.paperUniverseScope !== "fresh_us_equity_selection_v1" ||
+    decision.input.action !== "sell" ||
+    !["opening_range_stop", "reward_target", "pre_close"].includes(decision.input.reason) ||
+    proof.accountId !== accountId ||
+    proof.positionQuantity <= 0
+  ) {
+    return "dynamic-universe exit proof is outside the opted-in Paper exit contract";
+  }
+  const decisions = await readFinanceIntradayDecisions(directory, {
+    instrument: decision.input.instrument,
+  });
+  const entry = decisions.find((record) => record.ref === proof.entryDecisionRef);
+  if (
+    !entry ||
+    entry.input.action !== "buy" ||
+    entry.input.instrument !== decision.input.instrument ||
+    entry.input.strategyRule !== contract.ruleId ||
+    entry.input.strategyBinding?.scope !== "system_universe" ||
+    entry.input.strategyBinding.declarationRef !== contract.declarationRef ||
+    entry.input.strategyBinding.activationRef !== contract.activationRef
+  ) {
+    return "dynamic-universe exit entry decision is not bound to the active strategy activation";
+  }
+  const positionRecords = await readFinancePositionRecords(directory);
+  const entryReceipt = positionRecords.receipts.find(
+    (receipt) => receipt.receiptId === proof.entryReceiptId,
+  );
+  if (
+    !entryReceipt ||
+    entryReceipt.adapterKind !== "venue" ||
+    entryReceipt.venue !== "alpaca:paper" ||
+    entryReceipt.accountId !== accountId ||
+    entryReceipt.instrument !== decision.input.instrument ||
+    entryReceipt.intentId !== `intent:${entry.input.signalId}` ||
+    entryReceipt.side !== "buy" ||
+    entryReceipt.fill.filledQuantity <= 0 ||
+    entryReceipt.fill.terminalOrderIdentity?.terminal !== true ||
+    !entryReceipt.fill.terminalOrderIdentity.orderId.trim()
+  ) {
+    return "dynamic-universe exit lacks its same-account terminal Paper entry receipt";
+  }
+  const ownedActions = new Map(
+    decisions
+      .filter(
+        (record) =>
+          record.input.strategyRule === contract.ruleId &&
+          record.input.strategyBinding?.declarationRef === contract.declarationRef &&
+          record.input.strategyBinding?.activationRef === contract.activationRef,
+      )
+      .map((record) => [record.input.signalId, record.input.action] as const),
+  );
+  const currentQuantity = positionRecords.receipts
+    .filter(
+      (receipt) =>
+        receipt.adapterKind === "venue" &&
+        receipt.venue === "alpaca:paper" &&
+        receipt.accountId === accountId &&
+        receipt.instrument === decision.input.instrument &&
+        receipt.intentId.startsWith("intent:") &&
+        receipt.fill.filledQuantity > 0 &&
+        receipt.fill.terminalOrderIdentity?.terminal === true &&
+        ownedActions.get(receipt.intentId.slice("intent:".length)) === receipt.side,
+    )
+    .reduce(
+      (sum, receipt) => sum + (receipt.side === "buy" ? 1 : -1) * receipt.fill.filledQuantity,
+      0,
+    );
+  if (
+    !Number.isFinite(currentQuantity) ||
+    currentQuantity <= 0 ||
+    Math.abs(currentQuantity - proof.positionQuantity) > 1e-6
+  ) {
+    return "dynamic-universe exit proof does not match the canonical current owned quantity";
+  }
+  return null;
+}
+
 async function strategyBindingIssue(
   directory: string,
   decision: FinanceIntradayDecisionRecord,
@@ -60,6 +151,12 @@ async function strategyBindingIssue(
   }
   if (binding.scope === "explicit_diagnostic") {
     return "diagnostic ticker override cannot authorize Paper placement";
+  }
+  if (
+    binding.scope === "managed_position_exit" &&
+    (decision.input.action !== "sell" || binding.managedExitProof === undefined)
+  ) {
+    return "managed-position scope only authorizes a proven existing-position exit";
   }
   const marketSession = binding.marketSession;
   if (!marketSession || marketSession.date !== decision.input.sessionDate) {
@@ -118,8 +215,32 @@ async function strategyBindingIssue(
   if (!contract.eligibility.automatedPaperPlacementAllowed) {
     return `intraday strategy eligibility blocks Paper placement: ${contract.eligibility.status}`;
   }
-  if (!contract.instruments.includes(decision.input.instrument.toUpperCase())) {
+  const managedDynamicExit = binding.managedExitProof !== undefined;
+  const dynamicSystemScope =
+    binding.scope === "system_universe" &&
+    contract.paperUniverseScope === "fresh_us_equity_selection_v1";
+  if (
+    contract.paperUniverseScope === "fresh_us_equity_selection_v1" &&
+    !dynamicSystemScope &&
+    !managedDynamicExit
+  ) {
+    return "dynamic-universe placement requires a fresh selected scope or a proven managed exit";
+  }
+  if (
+    !contract.instruments.includes(decision.input.instrument.toUpperCase()) &&
+    !managedDynamicExit &&
+    !dynamicSystemScope
+  ) {
     return "intraday signal instrument is outside the active strategy execution scope";
+  }
+  if (managedDynamicExit) {
+    if (retiredExit && contract.paperUniverseScope !== "fresh_us_equity_selection_v1") {
+      return "retired exits use the existing retired-strategy proof path";
+    }
+    const issue = await managedDynamicExitProofIssue(directory, decision, accountId, contract);
+    if (issue) {
+      return issue;
+    }
   }
   if (retiredExit) {
     const records = await readFinancePositionRecords(directory);
@@ -163,7 +284,8 @@ async function strategyBindingIssue(
       const snapshot = readFinanceResearchEquityUniverseSnapshot(directory, asOf);
       if (
         caseflowFingerprint(snapshot) !== binding.universeSnapshotRef ||
-        !snapshot.selected.includes(decision.input.instrument.toUpperCase())
+        (!snapshot.selected.includes(decision.input.instrument.toUpperCase()) &&
+          !managedDynamicExit)
       ) {
         return "system-universe signal no longer matches the current validated snapshot";
       }
@@ -194,6 +316,20 @@ export async function executeFinanceIntradayDecision(params: {
   const now = params.now ?? Date.now;
   let tradeDecisionReview: FinanceIntradayDecisionReviewReceipt | undefined;
   try {
+    const safetyClaims = await readFinanceExecutionSafetyClaims({
+      stateDir: params.directory,
+      accountId: params.controller.accountId,
+      venue: "alpaca:paper",
+      signal,
+    });
+    if (safetyClaims.some((claim) => claim.status === "reserved" || claim.status === "unknown")) {
+      const outcome = await appendFinanceIntradayOutcome(params.directory, {
+        signalId: input.signalId,
+        status: "refused",
+        reasons: ["account_execution_safety_claim_pending_before_model_review"],
+      });
+      return Object.freeze({ status: "refused" as const, outcome: outcome.input });
+    }
     const positionRecords = await readFinancePositionRecords(params.directory);
     const recoveredReceipt = positionRecords.receipts.find(
       (receipt) =>
@@ -230,6 +366,23 @@ export async function executeFinanceIntradayDecision(params: {
       return Object.freeze({ status: "refused" as const, outcome: outcome.input });
     }
     const account = await params.controller.accountBookProvider(signal);
+    const reconciliation = account.reconciliation;
+    if (
+      reconciliation?.status === "blocked" ||
+      (reconciliation?.status === "restricted" &&
+        reconciliation.quarantinedInstruments.includes(input.instrument.toUpperCase()))
+    ) {
+      const outcome = await appendFinanceIntradayOutcome(params.directory, {
+        signalId: input.signalId,
+        status: "refused",
+        reasons: [
+          reconciliation.status === "blocked"
+            ? "broker reconciliation blocked before model review"
+            : "instrument is quarantined by broker reconciliation before model review",
+        ],
+      });
+      return Object.freeze({ status: "refused" as const, outcome: outcome.input });
+    }
     const brokerHeld =
       account.positions.find((position) => position.instrument === input.instrument)?.quantity ?? 0;
     const owned =
@@ -239,9 +392,11 @@ export async function executeFinanceIntradayDecision(params: {
           params.controller.accountId,
         ),
       }).positions.find((position) => position.instrument === input.instrument)?.quantity ?? 0;
+    const sellQuantity = input.strategyBinding?.managedExitProof?.positionQuantity ?? owned;
     const positionRefused =
       (input.action === "buy" && owned !== 0) ||
-      (input.action === "sell" && (owned <= 0 || owned > brokerHeld));
+      (input.action === "sell" &&
+        (sellQuantity <= 0 || sellQuantity > owned || sellQuantity > brokerHeld));
     if (positionRefused) {
       const outcome = await appendFinanceIntradayOutcome(params.directory, {
         signalId: input.signalId,
@@ -284,7 +439,13 @@ export async function executeFinanceIntradayDecision(params: {
         horizonDays: 1,
         thesis: `${input.strategyRule}: ${input.reason}; dataset ${input.datasetHeadRef}`,
         ...(input.action === "buy" && input.stopPrice !== undefined
-          ? { invalidationPrice: input.stopPrice, targetPrice: input.targetPrice }
+          ? {
+              invalidationPrice: input.stopPrice,
+              targetPrice: input.targetPrice,
+              ...(input.strategyBinding?.priceNormalization
+                ? { priceNormalization: input.strategyBinding.priceNormalization }
+                : {}),
+            }
           : {}),
       },
       market: { referencePrice: price, referencePriceAt: quote.referencePriceAt },
@@ -308,7 +469,7 @@ export async function executeFinanceIntradayDecision(params: {
       },
       instruments: [input.instrument],
       strategyClass: "A",
-      ...(input.action === "sell" ? { quantityOverride: owned } : {}),
+      ...(input.action === "sell" ? { quantityOverride: sellQuantity } : {}),
       mode: "paper",
       signal,
     });

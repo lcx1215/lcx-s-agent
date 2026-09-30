@@ -10,6 +10,7 @@ import type { FinanceIntradayBar } from "./finance-intraday-ledger.js";
 import {
   FINANCE_INTRADAY_OPENING_RANGE_RULE_V2,
   financeIntradayPreCloseExitBarMinute,
+  financeIntradayExecutionUniverse,
   resolveFinanceIntradayPaperExecutionEligibility,
   runFinanceIntradayPaperReplay,
 } from "./finance-intraday-paper.js";
@@ -90,6 +91,22 @@ const config = {
 } as const;
 
 describe("finance intraday paper replay", () => {
+  it("expands only an explicitly opted-in Paper rule to the fresh selected snapshot", () => {
+    const selected = ["QQQ", "MSFT"];
+    expect(
+      financeIntradayExecutionUniverse(
+        { instruments: ["SPY"], paperUniverseScope: "static" },
+        selected,
+      ),
+    ).toEqual([]);
+    expect(
+      financeIntradayExecutionUniverse(
+        { instruments: ["SPY"], paperUniverseScope: "fresh_us_equity_selection_v1" },
+        selected,
+      ),
+    ).toEqual(selected);
+  });
+
   it.each([
     {
       ruleBody: { measuredResult: { status: "paper_contract_only", executionAuthority: "none" } },

@@ -67,7 +67,12 @@ const StrategyBinding = z
         feed: z.enum(["iex", "sip"]),
       })
       .strict(),
-    scope: z.enum(["strategy_universe", "system_universe", "explicit_diagnostic"]),
+    scope: z.enum([
+      "strategy_universe",
+      "system_universe",
+      "managed_position_exit",
+      "explicit_diagnostic",
+    ]),
     marketSession: z
       .object({
         date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u),
@@ -82,6 +87,37 @@ const StrategyBinding = z
       .strict()
       .optional(),
     universeSnapshotRef: Hash.optional(),
+    managedExitProof: z
+      .object({
+        accountId: Text,
+        entryDecisionRef: Hash,
+        entryReceiptId: Text,
+        positionQuantity: z.number().finite().positive(),
+      })
+      .strict()
+      .optional(),
+    priceNormalization: z
+      .object({
+        policyVersion: z.literal("alpaca_us_equity_stop_precision_v1"),
+        instrument: Text,
+        original: z
+          .object({
+            entryPrice: z.number().finite().positive(),
+            stopPrice: z.number().finite().positive(),
+            targetPrice: z.number().finite().positive().optional(),
+          })
+          .strict(),
+        normalized: z
+          .object({
+            entryPrice: z.number().finite().positive(),
+            stopPrice: z.number().finite().positive(),
+            targetPrice: z.number().finite().positive().optional(),
+          })
+          .strict(),
+        rewardRisk: z.number().finite().positive().optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .superRefine((binding, context) => {
@@ -115,6 +151,7 @@ export const FinanceIntradayDecisionInput = z
     strategyRule: z.enum([
       "opening_range_breakout_long_next_bar_v1",
       "opening_range_breakout_long_pre_close_v2",
+      "opening_range_breakout_long_dynamic_universe_v3",
     ]),
     /** Optional only for backward reading; the execution owner rejects legacy unbound signals. */
     strategyBinding: StrategyBinding.optional(),
