@@ -6,6 +6,7 @@ import {
   type FinanceConclusionRiskContext,
 } from "./finance-conclusion-to-mandate.js";
 import { recoverConfirmedFinanceExecutions } from "./finance-execution-recovery.js";
+import { FinanceExecutionSafetyTerminalFailureError } from "./finance-execution-safety.js";
 import type { FinanceRegime } from "./finance-mandate.js";
 import { appendFinanceExecutionReceipt } from "./finance-position-ledger.js";
 import { extractFinanceConclusionJson } from "./finance-research-conclusion-prompt.js";
@@ -614,6 +615,14 @@ export async function runFinanceResearchExecutionBridge(
       placement,
     };
   } catch (error) {
+    if (error instanceof FinanceExecutionSafetyTerminalFailureError) {
+      return {
+        status: "refused" as const,
+        receipt,
+        decision,
+        refusals: [error.status === "rejected" ? "venue_rejected_order" : "dispatch_not_started"],
+      };
+    }
     return {
       status: "unknown" as const,
       receipt,

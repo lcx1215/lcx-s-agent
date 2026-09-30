@@ -12,6 +12,7 @@ import { buildFinanceExecutionReceipt } from "./finance-execution-adapter.js";
 import {
   createFinanceExecutionSafetyContext,
   FinanceExecutionSafetyFactsError,
+  FinanceExecutionSafetyTerminalFailureError,
   FinanceExecutionSafetyUncertainError,
   readFinanceExecutionSafetyClaims,
   withFinanceExecutionSafety,
@@ -1069,6 +1070,7 @@ describe("intraday decision execution bridge", () => {
     "invalid",
     "uncertain_execution",
     "definite_rejection",
+    "terminal_rejection",
     "not_started",
   ] as const)(
     "keeps review failure advisory but preserves valid veto and contract gates (%s)",
@@ -1096,8 +1098,15 @@ describe("intraday decision execution bridge", () => {
       const attemptMode =
         reviewMode === "uncertain_execution" ||
         reviewMode === "definite_rejection" ||
+        reviewMode === "terminal_rejection" ||
         reviewMode === "not_started";
-      const disposition = reviewMode === "uncertain_execution" ? "outcome_unresolved" : reviewMode;
+      const uncertainMode = reviewMode === "uncertain_execution";
+      const disposition =
+        reviewMode === "uncertain_execution"
+          ? "outcome_unresolved"
+          : reviewMode === "terminal_rejection"
+            ? "definite_rejection"
+            : reviewMode;
       const attempt = attemptMode
         ? {
             phase: reviewMode === "not_started" ? ("not_started" as const) : ("execute" as const),
@@ -1161,6 +1170,19 @@ describe("intraday decision execution bridge", () => {
       }));
       if (reviewMode === "unavailable") {
         runOrder.mockRejectedValueOnce(new Error("secret provider body must not persist"));
+      } else if (
+        reviewMode === "terminal_rejection" ||
+        reviewMode === "definite_rejection" ||
+        reviewMode === "not_started"
+      ) {
+        runOrder.mockRejectedValueOnce(
+          new FinanceExecutionSafetyTerminalFailureError(
+            "claim",
+            reviewMode === "not_started" ? "not_started" : "rejected",
+            attempt!,
+            new Error("private response body"),
+          ),
+        );
       } else if (attempt) {
         runOrder.mockRejectedValueOnce(
           new FinanceExecutionSafetyUncertainError(
@@ -1210,7 +1232,7 @@ describe("intraday decision execution bridge", () => {
       });
 
       expect(result).toMatchObject({
-        status: attemptMode ? "uncertain" : "refused",
+        status: uncertainMode ? "uncertain" : "refused",
       });
       const reviewFailed =
         reviewMode === "unavailable" ||
@@ -1219,7 +1241,7 @@ describe("intraday decision execution bridge", () => {
       expect(runOrder).toHaveBeenCalledTimes(reviewFailed || attemptMode ? 1 : 0);
       const outcome = await readFinanceIntradayOutcome(directory, signalId);
       expect(outcome).toMatchObject({
-        status: attemptMode ? "uncertain" : "refused",
+        status: uncertainMode ? "uncertain" : "refused",
         tradeDecisionReview:
           reviewMode === "unavailable"
             ? { status: "failed", failureCode: "reviewer_unavailable" }
@@ -1239,7 +1261,7 @@ describe("intraday decision execution bridge", () => {
         expect(outcome?.reasons).toEqual([
           reviewMode === "not_started"
             ? "execution_dispatch_not_started"
-            : reviewMode === "definite_rejection"
+            : reviewMode === "definite_rejection" || reviewMode === "terminal_rejection"
               ? "execution_venue_rejected"
               : "execution_outcome_unresolved",
         ]);

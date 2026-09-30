@@ -267,10 +267,18 @@ export function createFinanceAlpacaCycleController(options: {
       throw new FinanceExecutionSafetyFactsError("execution_recovery_incomplete");
     }
     const claims = await readFinanceExecutionSafetyClaims({ ...account, signal });
-    if (claims.some((c) => c.status !== "confirmed" || !c.binding || !c.fill)) {
+    if (
+      claims.some(
+        (c) =>
+          c.status === "reserved" ||
+          c.status === "unknown" ||
+          (c.status === "confirmed" && (!c.binding || !c.fill)),
+      )
+    ) {
       throw new FinanceExecutionSafetyFactsError("unresolved_execution_claims");
     }
-    const last = claims.at(-1);
+    const last = claims.toReversed().find((claim) => claim.status === "confirmed");
+    const latestClaim = claims.at(-1);
     if (last?.binding && last.fill) {
       const terminal = await readAlpacaPaperTerminalOrder({
         accountId: policy.accountId,
@@ -306,7 +314,7 @@ export function createFinanceAlpacaCycleController(options: {
     if (!inspectOnly && readiness.status === "blocked") {
       throw new FinanceExecutionSafetyFactsError("broker_reconciliation_blocked");
     }
-    return { snapshot, last, readiness };
+    return { snapshot, last, latestClaim, readiness };
   }
 
   function readinessFor(
@@ -424,20 +432,20 @@ export function createFinanceAlpacaCycleController(options: {
           }
           // The execution gate already owns the account dispatch lock and has
           // rejected pending claims. Do not reacquire that lock during facts reads.
-          const { snapshot, last } = await reconcile(signal, { recoverPending: false }).catch(
-            (error: unknown) => {
-              if (error instanceof FinanceExecutionSafetyFactsError) {
-                throw error;
-              }
-              throw new FinanceExecutionSafetyFactsError("broker_reconciliation_unavailable");
-            },
-          );
+          const { snapshot, latestClaim } = await reconcile(signal, {
+            recoverPending: false,
+          }).catch((error: unknown) => {
+            if (error instanceof FinanceExecutionSafetyFactsError) {
+              throw error;
+            }
+            throw new FinanceExecutionSafetyFactsError("broker_reconciliation_unavailable");
+          });
           const observed = await facts(
             binding.intent.instrument,
             binding.intent.side,
             signal,
             quote,
-            last?.id,
+            latestClaim?.id,
           );
           assertSamePositions(observed.positions, snapshot.positions);
           if (Math.abs(observed.facts.account.availableCash - snapshot.brokerCash) > 0.01) {

@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { AlpacaOrderUncertainError } from "./finance-alpaca-execution-adapter.js";
 import {
   createPaperExecutionAdapter,
   placeFinanceOrder,
@@ -14,6 +15,7 @@ import {
   FinanceExecutionSafetyUncertainError,
   type FinanceExecutionSafetyContextInput,
   type FinanceExecutionSafetyFacts,
+  readFinanceExecutionSafetyClaims,
   withFinanceExecutionSafety,
 } from "./finance-execution-safety.js";
 const directories: string[] = [];
@@ -308,12 +310,16 @@ it("allows proven spot reduction but never crossing zero", async () => {
     ).status,
   ).toBe("refused");
 });
-it("retains unknown submission across a fresh issuer and never retries automatically", async () => {
+it("keeps an Alpaca client-id lookup 404 unknown blocking and never retries automatically", async () => {
   const f = await fixture();
   const failing = {
     ...f.adapter,
     execute: async () => {
-      throw new Error("lost response");
+      throw new AlpacaOrderUncertainError(
+        "client-order-id",
+        undefined,
+        new Error("client-order-id lookup returned 404"),
+      );
     },
   };
   await expect(
@@ -323,6 +329,25 @@ it("retains unknown submission across a fresh issuer and never retries automatic
       safetyContext: createFinanceExecutionSafetyContext(f.input),
     }),
   ).rejects.toBeInstanceOf(FinanceExecutionSafetyUncertainError);
+  const journalFile = (await fs.readdir(f.input.stateDir)).find((name) => name.endsWith(".jsonl"))!;
+  const journalPath = path.join(f.input.stateDir, journalFile);
+  const legacyEntries = (await fs.readFile(journalPath, "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  legacyEntries[legacyEntries.length - 1] = {
+    ...legacyEntries.at(-1),
+    status: "unknown",
+    failure: {
+      phase: "execute",
+      disposition: "definite_rejection",
+      venueResponse: { httpStatus: 422 },
+    },
+  };
+  await fs.writeFile(
+    journalPath,
+    legacyEntries.map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+  );
   const intent = { ...f.request.intent, intentId: "new-id" };
   expect(
     (
@@ -333,18 +358,103 @@ it("retains unknown submission across a fresh issuer and never retries automatic
       })
     ).refusalReasons,
   ).toContain("execution_safety_account_requires_reconciliation");
-  const journal = (await fs.readdir(f.input.stateDir)).find((name) => name.endsWith(".jsonl"))!;
-  const entries = (await fs.readFile(path.join(f.input.stateDir, journal), "utf8"))
+  const entries = (await fs.readFile(journalPath, "utf8"))
     .trim()
     .split("\n")
     .map((line) => JSON.parse(line) as { status: string; failure?: unknown });
   expect(entries.at(-1)).toMatchObject({
     status: "unknown",
-    failure: { phase: "execute", disposition: "outcome_unresolved" },
+    failure: { phase: "execute", disposition: "definite_rejection" },
   });
 });
 
-it("persists only typed venue rejection fields and preserves unknown status", async () => {
+it("keeps terminal claim snapshots ordered by their last durable append, even with equal timestamps", async () => {
+  const f = await fixture();
+  expect(
+    (
+      await placeFinanceOrder({
+        ...f.request,
+        safetyContext: createFinanceExecutionSafetyContext(f.input),
+      })
+    ).status,
+  ).toBe("placed");
+  const journalName = (await fs.readdir(f.input.stateDir)).find((name) => name.endsWith(".jsonl"))!;
+  const journalPath = path.join(f.input.stateDir, journalName);
+  const original = JSON.parse((await fs.readFile(journalPath, "utf8")).trim().split("\n").at(-1)!);
+  const sameTime = original.at;
+  const first = { ...original, id: "first-id", at: sameTime };
+  const second = { ...original, id: "second-id", at: sameTime };
+  await fs.writeFile(
+    journalPath,
+    [first, second, first].map((claim) => JSON.stringify(claim)).join("\n") + "\n",
+  );
+  const claims = await readFinanceExecutionSafetyClaims({
+    stateDir: f.input.stateDir,
+    accountId: f.input.accountId,
+    venue: f.input.venue,
+  });
+  expect(claims.map((claim) => claim.id)).toEqual(["second-id", "first-id"]);
+});
+
+it("rejects terminal journal markers without matching typed proof or with a fill", async () => {
+  const f = await fixture();
+  expect(
+    (
+      await placeFinanceOrder({
+        ...f.request,
+        safetyContext: createFinanceExecutionSafetyContext(f.input),
+      })
+    ).status,
+  ).toBe("placed");
+  const journalName = (await fs.readdir(f.input.stateDir)).find((name) => name.endsWith(".jsonl"))!;
+  const journalPath = path.join(f.input.stateDir, journalName);
+  const confirmed = JSON.parse((await fs.readFile(journalPath, "utf8")).trim().split("\n").at(-1)!);
+  const clean = { ...confirmed, status: "rejected" as const };
+  delete clean.fill;
+  delete clean.receipt;
+  const invalidMarkers = [
+    { ...clean, failure: undefined },
+    { ...clean, failure: { phase: "not_started", disposition: "not_started" } },
+    {
+      ...clean,
+      failure: {
+        phase: "execute",
+        disposition: "definite_rejection",
+        venueResponse: { httpStatus: 422 },
+      },
+      fill: confirmed.fill,
+    },
+    {
+      ...clean,
+      failure: {
+        phase: "execute",
+        disposition: "definite_rejection",
+        venueResponse: { httpStatus: 422 },
+      },
+      receipt: confirmed.receipt,
+    },
+    ...[408, 499].map((httpStatus) => ({
+      ...clean,
+      failure: {
+        phase: "execute",
+        disposition: "definite_rejection",
+        venueResponse: { httpStatus },
+      },
+    })),
+  ];
+  for (const marker of invalidMarkers) {
+    await fs.writeFile(journalPath, JSON.stringify(marker) + "\n");
+    await expect(
+      readFinanceExecutionSafetyClaims({
+        stateDir: f.input.stateDir,
+        accountId: f.input.accountId,
+        venue: f.input.venue,
+      }),
+    ).rejects.toThrow("invalid execution safety journal");
+  }
+});
+
+it("persists typed venue rejection as terminal and permits only a distinct later intent", async () => {
   expect(
     () =>
       new FinanceExecutionSafetyDispatchError({
@@ -355,6 +465,12 @@ it("persists only typed venue rejection fields and preserves unknown status", as
   expect(
     () => new FinanceExecutionSafetyDispatchError({ executionStage: "venue_response" }),
   ).toThrow();
+  for (const httpStatus of [408, 499]) {
+    expect(
+      () =>
+        new FinanceExecutionSafetyDispatchError({ executionStage: "venue_response", httpStatus }),
+    ).toThrow();
+  }
   const f = await fixture();
   const execute = vi.fn(async () => {
     throw new FinanceExecutionSafetyDispatchError({
@@ -371,6 +487,7 @@ it("persists only typed venue rejection fields and preserves unknown status", as
       safetyContext: createFinanceExecutionSafetyContext(f.input),
     }),
   ).rejects.toMatchObject({
+    status: "rejected",
     attempt: {
       phase: "execute",
       disposition: "definite_rejection",
@@ -380,13 +497,45 @@ it("persists only typed venue rejection fields and preserves unknown status", as
   expect(execute).toHaveBeenCalledTimes(1);
   const journal = (await fs.readdir(f.input.stateDir)).find((name) => name.endsWith(".jsonl"))!;
   const raw = await fs.readFile(path.join(f.input.stateDir, journal), "utf8");
-  expect(raw).toContain('"status":"unknown"');
+  expect(raw).toContain('"status":"rejected"');
   expect(raw).toContain('"disposition":"definite_rejection"');
   expect(raw).toContain('"httpStatus":422');
   expect(raw).not.toContain("secret broker response body");
+  const duplicate = await placeFinanceOrder({
+    ...f.request,
+    adapters: [{ ...f.adapter, execute: vi.fn() }],
+    safetyContext: createFinanceExecutionSafetyContext(f.input),
+  });
+  expect(duplicate.refusalReasons).toContain("execution_safety_intent_already_claimed");
+  await new Promise((resolve) => setTimeout(resolve, 3));
+  const observedAt = new Date().toISOString();
+  const lastClaimId = JSON.parse(raw.trim().split("\n").at(-1)!).id as string;
+  const distinctIntent = {
+    ...f.request.intent,
+    intentId: "after-rejection",
+    runAuthorizationId: "next-run-after-rejection",
+    referencePriceAt: observedAt,
+  };
+  const next = await placeFinanceOrder({
+    ...f.request,
+    intent: distinctIntent,
+    safetyContext: createFinanceExecutionSafetyContext({
+      ...f.input,
+      intent: distinctIntent,
+      readFacts: async () => ({
+        ...f.facts,
+        snapshotId: "after-rejection",
+        reconciledThroughClaimId: lastClaimId,
+        observedAt,
+        quote: { ...f.facts.quote, observedAt },
+        instrumentEvidence: { ...f.facts.instrumentEvidence, observedAt },
+      }),
+    }),
+  });
+  expect(next).toMatchObject({ status: "placed" });
 });
 
-it("records a typed pre-dispatch refusal without permitting another automatic attempt", async () => {
+it("records typed pre-dispatch as terminal while retaining same-intent deduplication", async () => {
   const f = await fixture();
   const execute = vi.fn(async () => {
     throw new FinanceExecutionSafetyDispatchError({ executionStage: "pre_dispatch" });
@@ -397,6 +546,7 @@ it("records a typed pre-dispatch refusal without permitting another automatic at
     safetyContext: createFinanceExecutionSafetyContext(f.input),
   };
   await expect(placeFinanceOrder(request)).rejects.toMatchObject({
+    status: "not_started",
     attempt: { phase: "not_started", disposition: "not_started" },
   });
   const retry = await placeFinanceOrder({
@@ -404,10 +554,91 @@ it("records a typed pre-dispatch refusal without permitting another automatic at
     safetyContext: createFinanceExecutionSafetyContext(f.input),
   });
   expect(retry.status).toBe("refused");
+  expect(retry.refusalReasons).toContain("execution_safety_intent_already_claimed");
+  expect(execute).toHaveBeenCalledTimes(1);
+  await new Promise((resolve) => setTimeout(resolve, 3));
+  const observedAt = new Date().toISOString();
+  const journalFile = (await fs.readdir(f.input.stateDir)).find((name) => name.endsWith(".jsonl"))!;
+  const lastClaimId = JSON.parse(
+    (await fs.readFile(path.join(f.input.stateDir, journalFile), "utf8"))
+      .trim()
+      .split("\n")
+      .at(-1)!,
+  ).id as string;
+  const distinctIntent = {
+    ...f.request.intent,
+    intentId: "after-predispatch",
+    runAuthorizationId: "next-run-after-predispatch",
+    referencePriceAt: observedAt,
+  };
+  const next = await placeFinanceOrder({
+    ...f.request,
+    intent: distinctIntent,
+    safetyContext: createFinanceExecutionSafetyContext({
+      ...f.input,
+      intent: distinctIntent,
+      readFacts: async () => ({
+        ...f.facts,
+        snapshotId: "after-predispatch",
+        reconciledThroughClaimId: lastClaimId,
+        observedAt,
+        quote: { ...f.facts.quote, observedAt },
+        instrumentEvidence: { ...f.facts.instrumentEvidence, observedAt },
+      }),
+    }),
+  });
+  expect(next).toMatchObject({ status: "placed" });
+});
+
+it("keeps the reservation blocking when appending a typed terminal marker fails", async () => {
+  const f = await fixture();
+  const execute = vi.fn(async () => {
+    throw new FinanceExecutionSafetyDispatchError({
+      executionStage: "venue_response",
+      httpStatus: 422,
+    });
+  });
+  const open = fs.open.bind(fs);
+  let appendCalls = 0;
+  const openSpy = vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+    if (args[1] === "a" && ++appendCalls === 2) {
+      throw new Error("fixture terminal append failure");
+    }
+    return open(...args);
+  });
+  try {
+    await expect(
+      placeFinanceOrder({
+        ...f.request,
+        adapters: [{ ...f.adapter, execute }],
+        safetyContext: createFinanceExecutionSafetyContext(f.input),
+      }),
+    ).rejects.toMatchObject({
+      name: "FinanceExecutionSafetyUncertainError",
+      attempt: { phase: "execute", disposition: "definite_rejection" },
+    });
+  } finally {
+    openSpy.mockRestore();
+  }
+  expect(appendCalls).toBe(2);
+  expect(execute).toHaveBeenCalledTimes(1);
+  const journalName = (await fs.readdir(f.input.stateDir)).find((name) => name.endsWith(".jsonl"))!;
+  const journal = (await fs.readFile(path.join(f.input.stateDir, journalName), "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as { status: string });
+  expect(journal.map((claim) => claim.status)).toEqual(["reserved"]);
+  const intent = { ...f.request.intent, intentId: "blocked-after-marker-failure" };
+  const retry = await placeFinanceOrder({
+    ...f.request,
+    intent,
+    safetyContext: createFinanceExecutionSafetyContext({ ...f.input, intent }),
+  });
+  expect(retry.refusalReasons).toContain("execution_safety_account_requires_reconciliation");
   expect(execute).toHaveBeenCalledTimes(1);
 });
 
-it.each(["ordinary", "dispatch_shaped"] as const)(
+it.each(["ordinary", "dispatch_shaped", "pre_dispatch_shaped"] as const)(
   "keeps a receipt-stage error unresolved even if its type claims rejection (%s)",
   async (errorKind) => {
     const f = await fixture();
@@ -426,7 +657,9 @@ it.each(["ordinary", "dispatch_shaped"] as const)(
                 executionStage: "venue_response",
                 httpStatus: 422,
               })
-            : new Error("secret receipt detail");
+            : errorKind === "pre_dispatch_shaped"
+              ? new FinanceExecutionSafetyDispatchError({ executionStage: "pre_dispatch" })
+              : new Error("secret receipt detail");
         },
       }),
     ).rejects.toMatchObject({ attempt: { phase: "receipt", disposition: "outcome_unresolved" } });
@@ -657,17 +890,55 @@ it.each(["account-expiry", "quote-expiry", "account-age", "quote-age", "instrume
             readFacts: async () => facts,
           }),
         }),
-      ).rejects.toBeInstanceOf(FinanceExecutionSafetyUncertainError);
+      ).rejects.toMatchObject({ status: "not_started" });
       expect(execute).not.toHaveBeenCalled();
       const journal = (await fs.readdir(f.input.stateDir)).find((name) => name.endsWith(".jsonl"))!;
       const entries = (await fs.readFile(path.join(f.input.stateDir, journal), "utf8"))
         .trim()
         .split("\n")
         .map((line) => JSON.parse(line) as { status: string });
-      expect(entries.map((entry) => entry.status)).toEqual(["reserved", "unknown"]);
+      expect(entries.map((entry) => entry.status)).toEqual(["reserved", "not_started"]);
+      expect(entries.at(-1)).toMatchObject({
+        failure: { phase: "not_started", disposition: "not_started" },
+      });
     } finally {
       openSpy.mockRestore();
       clock.mockRestore();
+    }
+    if (kind === "account-expiry") {
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      const observedAt = new Date().toISOString();
+      const journalName = (await fs.readdir(f.input.stateDir)).find((name) =>
+        name.endsWith(".jsonl"),
+      )!;
+      const lastClaimId = JSON.parse(
+        (await fs.readFile(path.join(f.input.stateDir, journalName), "utf8"))
+          .trim()
+          .split("\n")
+          .at(-1)!,
+      ).id as string;
+      const intent = {
+        ...f.request.intent,
+        intentId: "fresh-after-facts-refusal",
+        referencePriceAt: observedAt,
+      };
+      const next = await placeFinanceOrder({
+        ...f.request,
+        intent,
+        safetyContext: createFinanceExecutionSafetyContext({
+          ...f.input,
+          intent,
+          readFacts: async () => ({
+            ...f.facts,
+            snapshotId: "fresh-after-facts-refusal",
+            reconciledThroughClaimId: lastClaimId,
+            observedAt,
+            quote: { ...f.facts.quote, observedAt },
+            instrumentEvidence: { ...f.facts.instrumentEvidence, observedAt },
+          }),
+        }),
+      });
+      expect(next.status).toBe("placed");
     }
   },
 );

@@ -10,7 +10,10 @@ import {
   type FinanceExecutionAdapter,
   type FinanceExecutionIntent,
 } from "./finance-execution-adapter.js";
-import { readFinanceExecutionSafetyClaims } from "./finance-execution-safety.js";
+import {
+  FinanceExecutionSafetyDispatchError,
+  readFinanceExecutionSafetyClaims,
+} from "./finance-execution-safety.js";
 import { readFinanceAccountPositionLedger } from "./finance-position-ledger.js";
 import type { FinanceUncachedFetch } from "./finance-write-transport.js";
 
@@ -372,6 +375,34 @@ it("retains an unknown outcome and refuses another cycle without repeating the o
     "execution_recovery_incomplete",
   );
   expect(f.execute).toHaveBeenCalledTimes(1);
+});
+
+it("anchors snapshots to the latest rejected claim while verifying only confirmed fills", async () => {
+  const f = await fixture();
+  expect((await f.place("confirmed-before-rejection")).status).toBe("placed");
+  f.execute.mockRejectedValueOnce(
+    new FinanceExecutionSafetyDispatchError({
+      executionStage: "venue_response",
+      httpStatus: 422,
+      brokerCode: 42210000,
+    }),
+  );
+  await expect(f.place("rejected-order")).rejects.toMatchObject({ status: "rejected" });
+  const claims = await readFinanceExecutionSafetyClaims({
+    stateDir: f.directory,
+    accountId: f.accountId,
+    venue: "alpaca:paper",
+  });
+  expect(claims.at(-1)).toMatchObject({
+    status: "rejected",
+    failure: { phase: "execute", disposition: "definite_rejection" },
+  });
+  const restart = createFinanceAlpacaCycleController(f.options);
+  await expect(restart.accountBookProvider(AbortSignal.timeout(5000))).resolves.toMatchObject({
+    positions: [{ instrument: "SPY", quantity: 2 }],
+  });
+  expect((await f.place("after-rejection")).status).toBe("placed");
+  expect(f.execute).toHaveBeenCalledTimes(3);
 });
 
 it.each([

@@ -98,7 +98,11 @@ export class FinanceExecutionSafetyDispatchError extends Error {
       (params.executionStage !== "venue_response" &&
         (params.httpStatus !== undefined || params.brokerCode !== undefined)) ||
       (params.executionStage === "venue_response" &&
-        (params.httpStatus === undefined || params.httpStatus < 400 || params.httpStatus >= 500))
+        (params.httpStatus === undefined ||
+          params.httpStatus < 400 ||
+          params.httpStatus >= 500 ||
+          params.httpStatus === 408 ||
+          params.httpStatus === 499))
     ) {
       throw new Error("invalid execution dispatch diagnostic");
     }
@@ -151,7 +155,7 @@ export type FinanceExecutionSafetyFacts = Readonly<{
   source: string;
   observedAt: string;
   expiresAt: string;
-  /** Exact last confirmed claim included in this fresh account snapshot. */
+  /** Exact latest durable claim included in this fresh account snapshot. */
   reconciledThroughClaimId?: string;
   positionQuantity: number;
   reservedSellQuantity?: number;
@@ -293,6 +297,19 @@ export class FinanceExecutionSafetyUncertainError extends Error {
   }
 }
 
+/** A typed dispatch failure whose durable terminal claim proves no open outcome remains. */
+export class FinanceExecutionSafetyTerminalFailureError extends Error {
+  constructor(
+    readonly claimId: string,
+    readonly status: "not_started" | "rejected",
+    readonly attempt: FinanceExecutionSafetyAttempt,
+    cause: unknown,
+  ) {
+    super("execution was not accepted by the venue", { cause });
+    this.name = "FinanceExecutionSafetyTerminalFailureError";
+  }
+}
+
 export type FinanceExecutionSafetyClaim = {
   id: string;
   run: string;
@@ -300,7 +317,7 @@ export type FinanceExecutionSafetyClaim = {
   notional: number;
   snapshotId: string;
   at: string;
-  status: "reserved" | "confirmed" | "unknown";
+  status: "reserved" | "confirmed" | "unknown" | "not_started" | "rejected";
   failure?: FinanceExecutionSafetyAttempt;
   binding?: Readonly<{
     accountId: string;
@@ -343,7 +360,28 @@ function parseJournal(raw: string): FinanceExecutionSafetyClaim[] {
         !positive(value.notional) ||
         !text(value.snapshotId) ||
         !Number.isFinite(Date.parse(value.at)) ||
-        !["reserved", "confirmed", "unknown"].includes(value.status)
+        !["reserved", "confirmed", "unknown", "not_started", "rejected"].includes(value.status) ||
+        (value.status === "not_started" &&
+          (!value.binding ||
+            value.failure?.phase !== "not_started" ||
+            value.failure.disposition !== "not_started" ||
+            value.failure.venueResponse !== undefined ||
+            value.fill !== undefined ||
+            value.receipt !== undefined)) ||
+        (value.status === "rejected" &&
+          (!value.binding ||
+            value.failure?.phase !== "execute" ||
+            value.failure.disposition !== "definite_rejection" ||
+            !Number.isInteger(value.failure.venueResponse?.httpStatus) ||
+            value.failure.venueResponse!.httpStatus! < 400 ||
+            value.failure.venueResponse!.httpStatus! >= 500 ||
+            value.failure.venueResponse!.httpStatus === 408 ||
+            value.failure.venueResponse!.httpStatus === 499 ||
+            (value.failure.venueResponse!.brokerCode !== undefined &&
+              (!Number.isSafeInteger(value.failure.venueResponse!.brokerCode) ||
+                value.failure.venueResponse!.brokerCode < 0)) ||
+            value.fill !== undefined ||
+            value.receipt !== undefined))
       ) {
         throw new Error("invalid execution safety journal");
       }
@@ -501,7 +539,11 @@ export async function withFinanceExecutionSafety(params: {
       failureOperation = "read_execution_journal";
       const journal = await readJournal(key);
       const latest = new Map(journal.map((claim) => [claim.id, claim]));
-      if ([...latest.values()].some((claim) => claim.status !== "confirmed")) {
+      if (
+        [...latest.values()].some(
+          (claim) => claim.status === "reserved" || claim.status === "unknown",
+        )
+      ) {
         return refuse("execution_safety_account_requires_reconciliation");
       }
       const id = digest([
@@ -791,7 +833,7 @@ export async function withFinanceExecutionSafety(params: {
               !ageOkay(facts.quote.observedAt, policy.maxQuoteAgeMs, dispatchAt) ||
               !ageOkay(instrumentEvidence.observedAt, policy.maxInstrumentEvidenceAgeMs, dispatchAt)
             ) {
-              throw new Error("execution safety facts expired before dispatch");
+              throw new FinanceExecutionSafetyDispatchError({ executionStage: "pre_dispatch" });
             }
             attemptPhase = "execute";
             failureStage = "execution";
@@ -854,12 +896,30 @@ export async function withFinanceExecutionSafety(params: {
             : attempt.phase === "receipt"
               ? "record_execution_receipt"
               : "execute_order";
+        const terminalStatus =
+          error instanceof FinanceExecutionSafetyDispatchError &&
+          error.executionStage === "pre_dispatch" &&
+          attempt.phase === "not_started" &&
+          attempt.disposition === "not_started"
+            ? "not_started"
+            : error instanceof FinanceExecutionSafetyDispatchError &&
+                error.executionStage === "venue_response" &&
+                attempt.phase === "execute" &&
+                attempt.disposition === "definite_rejection"
+              ? "rejected"
+              : undefined;
         await appendJournal(key, {
           ...claim,
           at: new Date().toISOString(),
-          status: "unknown",
+          status: terminalStatus ?? "unknown",
           failure: attempt,
-        }).catch(() => undefined);
+        }).catch(() => {
+          // The original reservation remains the account-level blocker if this append fails.
+          throw new FinanceExecutionSafetyUncertainError(id, error, attempt);
+        });
+        if (terminalStatus) {
+          throw new FinanceExecutionSafetyTerminalFailureError(id, terminalStatus, attempt, error);
+        }
         throw new FinanceExecutionSafetyUncertainError(id, error, attempt);
       }
     } finally {
@@ -867,6 +927,9 @@ export async function withFinanceExecutionSafety(params: {
     }
   } catch (error) {
     if (error instanceof FinanceExecutionSafetyUncertainError) {
+      throw error;
+    }
+    if (error instanceof FinanceExecutionSafetyTerminalFailureError) {
       throw error;
     }
     if (signal.aborted) {
@@ -951,7 +1014,13 @@ export async function readFinanceExecutionSafetyClaims(params: {
       throw new Error("incomplete execution safety journal snapshot");
     }
     const values = parseJournal(raw);
-    return [...new Map(values.map((claim) => [claim.id, claim])).values()];
+    const latest = new Map<string, FinanceExecutionSafetyClaim>();
+    for (const claim of values) {
+      // Delete before setting so order reflects each id's last durable append, not its first reserve.
+      latest.delete(claim.id);
+      latest.set(claim.id, claim);
+    }
+    return [...latest.values()];
   } finally {
     await handle.close();
   }
@@ -1001,7 +1070,11 @@ export async function reconcileFinanceExecutionClaims(params: {
       const claims = await readFinanceExecutionSafetyClaims(params);
       for (const claim of claims) {
         signal.throwIfAborted();
-        if (claim.status === "confirmed") {
+        if (
+          claim.status === "confirmed" ||
+          claim.status === "not_started" ||
+          claim.status === "rejected"
+        ) {
           continue;
         }
         const binding = claim.binding;

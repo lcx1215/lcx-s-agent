@@ -18,6 +18,7 @@ import {
 } from "./finance-daily-cycle.js";
 import { FINANCE_EXECUTION_RECEIPT_SCHEMA } from "./finance-execution-adapter.js";
 import type { FinanceExecutionReceipt } from "./finance-execution-adapter.js";
+import { FinanceExecutionSafetyTerminalFailureError } from "./finance-execution-safety.js";
 import type { FinancePosition } from "./finance-position-ledger.js";
 import {
   appendFinanceExecutionReceipt,
@@ -202,6 +203,21 @@ describe("attemptCycleOrder", () => {
     }
     // The order id must reach the operator: the order exists even though the receipt does not.
     expect(result.refusals.join(" ")).toContain("ord-77");
+  });
+
+  it("keeps a durable typed rejection as a contained refusal, not an uncertain book stop", async () => {
+    const result = await attemptCycleOrder(async () => {
+      throw new FinanceExecutionSafetyTerminalFailureError(
+        "claim",
+        "rejected",
+        { phase: "execute", disposition: "definite_rejection", venueResponse: { httpStatus: 422 } },
+        new Error("private response"),
+      );
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect("uncertain" in result).toBe(false);
+    }
   });
 });
 

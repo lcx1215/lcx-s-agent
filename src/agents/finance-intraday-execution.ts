@@ -13,6 +13,7 @@ import {
 } from "./finance-daily-cycle.js";
 import {
   FinanceExecutionSafetyFactsError,
+  FinanceExecutionSafetyTerminalFailureError,
   FinanceExecutionSafetyUncertainError,
   readFinanceExecutionSafetyClaims,
 } from "./finance-execution-safety.js";
@@ -744,6 +745,8 @@ export async function executeFinanceIntradayDecision(params: {
     });
   } catch (error) {
     const uncertain = error instanceof FinanceExecutionSafetyUncertainError;
+    const terminalFailure = error instanceof FinanceExecutionSafetyTerminalFailureError;
+    const attempt = uncertain || terminalFailure ? error.attempt : undefined;
     const factsFailure =
       error instanceof FinanceExecutionSafetyFactsError
         ? {
@@ -757,10 +760,10 @@ export async function executeFinanceIntradayDecision(params: {
       signalId: input.signalId,
       status: uncertain ? "uncertain" : "refused",
       reasons: [
-        uncertain
-          ? error.attempt.disposition === "not_started"
+        attempt
+          ? attempt.disposition === "not_started"
             ? "execution_dispatch_not_started"
-            : error.attempt.disposition === "definite_rejection"
+            : attempt.disposition === "definite_rejection"
               ? "execution_venue_rejected"
               : "execution_outcome_unresolved"
           : factsFailure
@@ -768,23 +771,23 @@ export async function executeFinanceIntradayDecision(params: {
             : "intraday_execution_unexpected_error",
       ],
       ...(factsFailure ? { executionSafetyFailure: factsFailure } : {}),
-      ...(uncertain
+      ...(attempt
         ? {
             executionSafetyFailure: {
               stage:
-                error.attempt.phase === "not_started"
+                attempt.phase === "not_started"
                   ? ("reservation" as const)
-                  : error.attempt.phase === "receipt"
+                  : attempt.phase === "receipt"
                     ? ("receipt" as const)
                     : ("execution" as const),
               category: "unexpected" as const,
               operation:
-                error.attempt.phase === "not_started"
+                attempt.phase === "not_started"
                   ? ("reserve_execution_claim" as const)
-                  : error.attempt.phase === "receipt"
+                  : attempt.phase === "receipt"
                     ? ("record_execution_receipt" as const)
                     : ("execute_order" as const),
-              attempt: error.attempt,
+              attempt,
             },
           }
         : {}),

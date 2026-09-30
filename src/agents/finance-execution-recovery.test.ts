@@ -376,7 +376,18 @@ it.each(["unknown", "reserved"])(
 it("keeps unknown claims when broker has no terminal answer", async () => {
   const f = await runConfirmed();
   const first = JSON.parse((await fs.readFile(f.journal, "utf8")).split("\n")[0]);
-  await fs.writeFile(f.journal, JSON.stringify({ ...first, status: "unknown" }) + "\n");
+  await fs.writeFile(
+    f.journal,
+    JSON.stringify({
+      ...first,
+      status: "unknown",
+      failure: {
+        phase: "execute",
+        disposition: "definite_rejection",
+        venueResponse: { httpStatus: 422 },
+      },
+    }) + "\n",
+  );
   const before = await fs.readFile(f.journal, "utf8");
   const result = await recoverConfirmedFinanceExecutions({
     ...f.params,
@@ -385,6 +396,24 @@ it("keeps unknown claims when broker has no terminal answer", async () => {
   expect(result.pendingReconciliation).toHaveLength(1);
   expect(await fs.readFile(f.journal, "utf8")).toBe(before);
   expect((await readFinancePositionRecords(f.params.ledgerDir)).receipts).toHaveLength(0);
+});
+it.each([
+  ["not_started", { phase: "not_started", disposition: "not_started" }],
+  [
+    "rejected",
+    { phase: "execute", disposition: "definite_rejection", venueResponse: { httpStatus: 422 } },
+  ],
+] as const)("does not resolve or deliver terminal %s claims", async (status, failure) => {
+  const f = await runConfirmed();
+  const first = JSON.parse((await fs.readFile(f.journal, "utf8")).split("\n")[0]);
+  await fs.writeFile(f.journal, JSON.stringify({ ...first, status, failure }) + "\n");
+  const resolvePending = vi.fn(async () => undefined);
+  const result = await recoverConfirmedFinanceExecutions({ ...f.params, resolvePending });
+  expect(result.pendingReconciliation).toEqual([]);
+  expect(result.failures).toEqual([]);
+  expect(result.replayed).toEqual([]);
+  expect(resolvePending).not.toHaveBeenCalled();
+  expect((await readFinancePositionRecords(f.params.ledgerDir)).receipts).toEqual([]);
 });
 it("serializes two reconcilers so the broker resolver and journal confirmation run once", async () => {
   const f = await runConfirmed();

@@ -141,6 +141,23 @@ or too-close OTO stops; the adapter validates without rounding. Local-paper math
 and crypto use their existing contracts. The native order remains OTO with the
 declared stop, while the existing monitor manages its reward-target exit.
 
+A verified failure before dispatch or an explicit, unambiguous venue rejection
+ends that new attempt as `not_started` or `rejected`. Its identity and budget
+attempt remain recorded, so it cannot be resent as the same intent; it does not
+leave the entire account waiting for an order that was never accepted. Transport
+ambiguity, duplicate-client-identity responses, nonterminal orders and receipt
+delivery failures remain unresolved. Old `unknown` claims are never reclassified
+from later empty queries, a 404 or a suspected bad input.
+
+The execution response feeds the caller immediately after confirmation. The
+shared safety journal durably records the outcome before the position ledger
+projects its receipt, and recovery can finish that delivery after a crash without
+placing another order. An accepted submission is distinct from a fill; subsequent
+status reads resolve it. The current resident path uses REST responses and polling,
+with broker-history reads for reconciliation. Alpaca's
+[order event stream](https://docs.alpaca.markets/us/docs/websocket-streaming)
+is an available transport, not a claim that this scheduler subscribes to it.
+
 ## 24-hour resident operation
 
 Use one operating-system supervisor, one `--loop` scheduler process, one

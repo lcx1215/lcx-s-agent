@@ -437,6 +437,74 @@ describe("submission identity and terminal fill safety", () => {
       expect(first.terminalOrderIdentity).toEqual({ orderId: "venue-one", terminal: true });
     },
   );
+  it.each([408, 409, 499])(
+    "resolves ambiguous submit status %s through exact client identity without a second POST",
+    async (status) => {
+      stubCredentials(PAPER);
+      let submitted: Record<string, unknown> = {};
+      let postCalls = 0;
+      let byClientIdCalls = 0;
+      const recovered = () => ({
+        ...submitted,
+        id: "recovered-terminal",
+        status: "filled",
+        filled_qty: "1",
+        filled_avg_price: "100",
+        filled_at: "2026-09-20T00:00:00Z",
+      });
+      const adapter = createAlpacaExecutionAdapter({
+        instruments: ["AAPL"],
+        fillPoll: { timeoutMs: 100, intervalMs: 0 },
+        postJson: async (_url, init) => {
+          postCalls += 1;
+          submitted = JSON.parse(init.body);
+          return { status, body: JSON.stringify({ message: "request outcome ambiguous" }) };
+        },
+        statusFetch: async (url) => {
+          if (url.includes("orders:by_client_order_id")) {
+            byClientIdCalls += 1;
+            expect(url).toContain(encodeURIComponent(String(submitted.client_order_id)));
+            return { status: 200, body: JSON.stringify(recovered()) };
+          }
+          expect(url).toContain("/v2/orders/recovered-terminal");
+          return { status: 200, body: JSON.stringify(recovered()) };
+        },
+      });
+      const fill = await adapter.execute(baseIntent, new AbortController().signal);
+      expect(fill.terminalOrderIdentity).toEqual({ orderId: "recovered-terminal", terminal: true });
+      expect(fill.filledQuantity).toBe(1);
+      expect(postCalls).toBe(1);
+      expect(byClientIdCalls).toBe(1);
+    },
+  );
+  it.each([408, 409, 499])(
+    "keeps ambiguous submit status %s unresolved when exact client lookup is missing",
+    async (status) => {
+      stubCredentials(PAPER);
+      let submitted: Record<string, unknown> = {};
+      let postCalls = 0;
+      let lookupCalls = 0;
+      const adapter = createAlpacaExecutionAdapter({
+        instruments: ["AAPL"],
+        postJson: async (_url, init) => {
+          postCalls += 1;
+          submitted = JSON.parse(init.body);
+          return { status, body: JSON.stringify({ message: "request outcome ambiguous" }) };
+        },
+        statusFetch: async (url) => {
+          lookupCalls += 1;
+          expect(url).toContain("orders:by_client_order_id");
+          expect(url).toContain(encodeURIComponent(String(submitted.client_order_id)));
+          return { status: 404, body: JSON.stringify({ message: "not found" }) };
+        },
+      });
+      await expect(
+        adapter.execute(baseIntent, new AbortController().signal),
+      ).rejects.toBeInstanceOf(AlpacaOrderUncertainError);
+      expect(postCalls).toBe(1);
+      expect(lookupCalls).toBe(1);
+    },
+  );
   it("does not reconcile a conflicting intent against an old client order", async () => {
     const adapter = createAlpacaExecutionAdapter({
       instruments: ["AAPL"],

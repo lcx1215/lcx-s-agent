@@ -983,8 +983,10 @@ export function createAlpacaExecutionAdapter(
             typeof payload.message === "string" ? payload.message : response.body.slice(0, 160);
           if (
             response.status >= 500 ||
-            ((response.status === 409 || response.status === 422) &&
-              /client_order_id/i.test(message))
+            response.status === 408 ||
+            response.status === 409 ||
+            response.status === 499 ||
+            (response.status === 422 && /client_order_id/i.test(message))
           ) {
             payload = await recover(new Error(`Alpaca submission http ${response.status}`));
           } else {
