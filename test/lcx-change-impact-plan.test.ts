@@ -97,6 +97,32 @@ describe("lcx-change-impact-plan", () => {
       ]),
     );
   });
+  it("routes commodity-pair source and replay artifacts to the M13 research owner", async () => {
+    const files = [
+      "src/agents/quant-math-pair-spread.ts",
+      "docs/experiments/research/commodity-pair-y2501-p2501/README.md",
+      "docs/experiments/research/commodity-pair-y-maturity-panel/capture.mts",
+      "docs/experiments/research/commodity-pair-y-maturity-panel/capture.json",
+      "docs/experiments/research/commodity-pair-y-maturity-panel/input.csv",
+      "docs/experiments/research/commodity-pair-y-maturity-panel/replay.mts",
+      "docs/experiments/research/commodity-pair-y-maturity-panel/result.json",
+    ];
+    const result = await runPlanArgs(["--files", ...files]);
+
+    expect(result.ok).toBe(true);
+    expect(result.unmatchedFiles).toEqual([]);
+    expect(result.impacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "commodity_pair_research_replay",
+          matchedFiles: expect.arrayContaining(files),
+          commands: expect.arrayContaining([
+            "node --import tsx docs/experiments/research/commodity-pair-y-maturity-panel/replay.mts",
+          ]),
+        }),
+      ]),
+    );
+  });
 
   it("routes metadata-only model request trajectory through its owner and regressions", async () => {
     const payload = await runPlanArgs([

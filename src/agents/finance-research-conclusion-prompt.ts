@@ -73,7 +73,7 @@ export function buildFinanceConclusionPrompt(params: {
     methodKit.prompt,
     FINANCE_FUNDAMENTAL_EXPECTATION_GUIDANCE,
     "For an investment candidate include expectationGap with each text field at most 180 characters, or null when unknown. It is a source-bound research hypothesis, never measured consensus or execution authority.",
-    "Foreground methods are suggestions, not an exclusive selection or a requirement to use one method. You may combine relevant methods from the full catalog when the supplied evidence supports them.",
+    "Foreground methods come from deterministic task matching and are not an exclusive catalog selection. When the request explicitly asks to design or evaluate a matched method, address its contract or state why it is inapplicable or blocked by missing evidence; do not force a method into a purely factual task. You may combine relevant methods from the full catalog when the supplied evidence supports them.",
     "Explain the chosen mechanism, supporting evidence and failure conditions in the existing thesis and invalidation fields. Method evidence requirements do not authorize invented sources, unsupported numbers or order execution. Do not add fields to the JSON schema below.",
     "",
     "Reply with a single JSON object in this shape and nothing else:",

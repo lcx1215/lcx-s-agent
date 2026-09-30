@@ -21,13 +21,14 @@ describe("buildFinanceConclusionPrompt", () => {
       question: "研究趋势机会",
       availableSources: sources,
     });
-    expect(FINANCE_STRATEGY_METHODS).toHaveLength(12);
-    expect(FINANCE_STRATEGY_DIRECTIONS).toHaveLength(28);
+    expect(FINANCE_STRATEGY_METHODS).toHaveLength(13);
+    expect(FINANCE_STRATEGY_DIRECTIONS).toHaveLength(29);
     for (const item of [...FINANCE_STRATEGY_METHODS, ...FINANCE_STRATEGY_DIRECTIONS]) {
       expect(prompt).toContain(`${item.id} ${item.name}`);
     }
     expect(prompt).toContain("MinimumEvidence=");
-    expect(prompt).toContain("Foreground methods are suggestions, not an exclusive selection");
+    expect(prompt).toContain("Foreground methods come from deterministic task matching");
+    expect(prompt).toContain("address its contract or state why it is inapplicable");
     expect(prompt).toContain("You may combine relevant methods");
     expect(prompt).toContain("existing thesis and invalidation fields");
     expect(prompt).toContain("executionAuthority=none");
@@ -56,6 +57,20 @@ describe("buildFinanceConclusionPrompt", () => {
     expect(trend).not.toContain("M03 ");
     expect(macro).toContain("M03 ");
     expect(macro).not.toContain("M02 ");
+  });
+
+  it("puts the commodity-pair contract in the actual conclusion prompt", () => {
+    const prompt = buildFinanceConclusionPrompt({
+      instrument: "豆油 / 棕榈油",
+      assetClass: "commodity futures spread",
+      question: "研究这组商品配对价差是否可检验为套利",
+      availableSources: sources,
+    });
+
+    expect(prompt).toContain("M13 商品期货配对价差");
+    expect(prompt).toContain("MinimumEvidence=");
+    expect(prompt).toContain("两腿使用下一可交易时点");
+    expect(prompt).toContain("相关性只描述共同变化");
   });
 
   it("lists only the sources that exist, so the model cannot invent one", () => {

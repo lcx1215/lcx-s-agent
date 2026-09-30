@@ -1,0 +1,230 @@
+{
+  "capturedAtUtc": "2026-09-30T05:21:46.019Z",
+  "source": "Sina Finance exact-contract daily series via AKShare-documented endpoint",
+  "sourceDocumentationUrl": "https://github.com/akfamily/akshare/blob/main/docs/data/futures/futures.md?plain=1",
+  "fieldMapping": {
+    "d": "date",
+    "o": "open",
+    "h": "high",
+    "l": "low",
+    "c": "close",
+    "v": "volume",
+    "p": "open interest",
+    "s": "daily settlement"
+  },
+  "series": {
+    "Y2201": {
+      "url": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=Y2201",
+      "rawRows": 242,
+      "firstDate": "2021-01-18",
+      "lastDate": "2022-01-14",
+      "sha256": "699ee18d04554858219eae010402e1b105feb4b5b9c725f5476371d6a2e74b6f"
+    },
+    "P2201": {
+      "url": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=P2201",
+      "rawRows": 243,
+      "firstDate": "2021-01-18",
+      "lastDate": "2022-01-17",
+      "sha256": "f319a0347e4debf739c99df1a171c2950314cb7ef538d2d4bf2cc2412a928bdb"
+    },
+    "Y2301": {
+      "url": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=Y2301",
+      "rawRows": 239,
+      "firstDate": "2022-01-18",
+      "lastDate": "2023-01-16",
+      "sha256": "9e1faf60ecec941cd68f1a9f32e1c7d81d14812f2d6098014888099ed6fdffc1"
+    },
+    "P2301": {
+      "url": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=P2301",
+      "rawRows": 240,
+      "firstDate": "2022-01-18",
+      "lastDate": "2023-01-16",
+      "sha256": "3ba638ce186fa7a635a12bb127a6930f5ed5412ccc8bbd3104ee44f7b6d000c5"
+    },
+    "Y2401": {
+      "url": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=Y2401",
+      "rawRows": 237,
+      "firstDate": "2023-01-17",
+      "lastDate": "2024-01-10",
+      "sha256": "cc71f61189a7d9d59f27573c3129a31f14fa5e543f91ac5816cc3ea8f485be9f"
+    },
+    "P2401": {
+      "url": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=P2401",
+      "rawRows": 239,
+      "firstDate": "2023-01-17",
+      "lastDate": "2024-01-11",
+      "sha256": "e1098a92a51704b9eea9165d7d9ab025735b0f70aa52f40e7d14a44d820fcfd9"
+    },
+    "Y2501": {
+      "url": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=Y2501",
+      "rawRows": 237,
+      "firstDate": "2024-01-16",
+      "lastDate": "2025-01-09",
+      "sha256": "ba93d50b326743ce76518112a5b4e4fc41205cf45807ef9a6589418e0eb79da1"
+    },
+    "P2501": {
+      "url": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=P2501",
+      "rawRows": 242,
+      "firstDate": "2024-01-16",
+      "lastDate": "2025-01-15",
+      "sha256": "c5918b1a38a4901145829deb762ccb9f85aaae524581b9871c7d34d1af37607b"
+    },
+    "Y2601": {
+      "url": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=Y2601",
+      "rawRows": 239,
+      "firstDate": "2025-01-16",
+      "lastDate": "2026-01-16",
+      "sha256": "6f50f8c41866db8b5b42a535f0b0f5ddaa3d7bad57f65dd66397287760ac2638"
+    },
+    "P2601": {
+      "url": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=P2601",
+      "rawRows": 242,
+      "firstDate": "2025-01-16",
+      "lastDate": "2026-01-16",
+      "sha256": "e472b4c90161cf964274a6477deac4174a01ee9d5a812f82a93b44c84de26301"
+    },
+    "Y2205": {
+      "url": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=Y2205",
+      "rawRows": 239,
+      "firstDate": "2021-05-20",
+      "lastDate": "2022-05-18",
+      "sha256": "ffdafe622927c56bcfdb0eebc388b077f80c654fa58b981c61892e9fc43001e5"
+    },
+    "P2205": {
+      "url": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=P2205",
+      "rawRows": 241,
+      "firstDate": "2021-05-20",
+      "lastDate": "2022-05-18",
+      "sha256": "12c5ac03871f311959e0859f9ff7b26d9bbaecf588a155ff0cb584dea83b6542"
+    },
+    "Y2305": {
+      "url": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=Y2305",
+      "rawRows": 241,
+      "firstDate": "2022-05-19",
+      "lastDate": "2023-05-17",
+      "sha256": "f898793db874b30440dc6c984641fc53d4bbfeb3e88c63952d99cded551222c7"
+    },
+    "P2305": {
+      "url": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=P2305",
+      "rawRows": 240,
+      "firstDate": "2022-05-19",
+      "lastDate": "2023-05-17",
+      "sha256": "904f937f3eb3bb00e870c916db3b4c9847dfa8d31e844350a8742d7ac2907299"
+    },
+    "Y2405": {
+      "url": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=Y2405",
+      "rawRows": 240,
+      "firstDate": "2023-05-18",
+      "lastDate": "2024-05-16",
+      "sha256": "953038a72523bbbae8ef4cc48a4ddbf5c78a261cbaae6f56d99544f1e6a90b2a"
+    },
+    "P2405": {
+      "url": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=P2405",
+      "rawRows": 241,
+      "firstDate": "2023-05-18",
+      "lastDate": "2024-05-17",
+      "sha256": "47cd447615af8deec83527f3ba96e0a5af5ce39894dad2730cbcd7481012869d"
+    },
+    "Y2505": {
+      "url": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=Y2505",
+      "rawRows": 240,
+      "firstDate": "2024-05-20",
+      "lastDate": "2025-05-19",
+      "sha256": "e58560bfcb9c56800be1ac4f45365486cc33318a7264c606be459b335c90413c"
+    },
+    "P2505": {
+      "url": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=P2505",
+      "rawRows": 240,
+      "firstDate": "2024-05-20",
+      "lastDate": "2025-05-19",
+      "sha256": "d86748f7459823f118a3f2ee8adb0aaa26bb61cc6cb807c1d5bdceab98a53c5e"
+    },
+    "Y2605": {
+      "url": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=Y2605",
+      "rawRows": 239,
+      "firstDate": "2025-05-20",
+      "lastDate": "2026-05-19",
+      "sha256": "1d6cb53ee2074525c8bf7ee85b44306b0502a1a0f84b7240da79668aa273be36"
+    },
+    "P2605": {
+      "url": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=P2605",
+      "rawRows": 241,
+      "firstDate": "2025-05-20",
+      "lastDate": "2026-05-19",
+      "sha256": "7ffc17f415ce6847f79e9bd50c01bc8c799075c5891acc0b33002971cfa99a34"
+    },
+    "Y2209": {
+      "url": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=Y2209",
+      "rawRows": 239,
+      "firstDate": "2021-09-15",
+      "lastDate": "2022-09-15",
+      "sha256": "d2a807562a6bc67fe49742c14e24034e4d7fb66e355d2eeac199798d986bf046"
+    },
+    "P2209": {
+      "url": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=P2209",
+      "rawRows": 241,
+      "firstDate": "2021-09-15",
+      "lastDate": "2022-09-15",
+      "sha256": "a2b011cf78cbd3daff36dfa306ef6cf08dd0fba06d0db2b2ed1ff7f8d9bbc436"
+    },
+    "Y2309": {
+      "url": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=Y2309",
+      "rawRows": 240,
+      "firstDate": "2022-09-16",
+      "lastDate": "2023-09-12",
+      "sha256": "1da854e608655629fa5b7751c4cf52c664cef5959f12aae128cc84e77353ebb3"
+    },
+    "P2309": {
+      "url": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=P2309",
+      "rawRows": 239,
+      "firstDate": "2022-09-16",
+      "lastDate": "2023-09-14",
+      "sha256": "bea6aa0293212442f9108ffb1c21473acb1bdc1ad13c7ef2037634f478569bc3"
+    },
+    "Y2409": {
+      "url": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=Y2409",
+      "rawRows": 240,
+      "firstDate": "2023-09-15",
+      "lastDate": "2024-09-13",
+      "sha256": "ae57d8c8b48e65810c7d28115a9eb1d48c81ae412bf87a9b7afec9652c3c4eeb"
+    },
+    "P2409": {
+      "url": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=P2409",
+      "rawRows": 240,
+      "firstDate": "2023-09-15",
+      "lastDate": "2024-09-13",
+      "sha256": "637f1eb20eff4a21deb601569aab891ad698de8c3fe6069f632f22e3aaa983f1"
+    },
+    "Y2509": {
+      "url": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=Y2509",
+      "rawRows": 241,
+      "firstDate": "2024-09-18",
+      "lastDate": "2025-09-12",
+      "sha256": "ef5fa9c86a24ad3a30bdf9a20ebb73c5eb8391f6c4a41a590765225411183a27"
+    },
+    "P2509": {
+      "url": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=P2509",
+      "rawRows": 240,
+      "firstDate": "2024-09-18",
+      "lastDate": "2025-09-12",
+      "sha256": "ff356e03f8229f05b61ecf26e01bea9554d40b0a3531300ff18f00f3fffbcad9"
+    },
+    "Y2609": {
+      "url": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=Y2609",
+      "rawRows": 241,
+      "firstDate": "2025-09-15",
+      "lastDate": "2026-09-14",
+      "sha256": "8a51a1afa634bb5f68aeae2df1c6710da8b28cc34cfbdfb10af65c3da081985d"
+    },
+    "P2609": {
+      "url": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=P2609",
+      "rawRows": 242,
+      "firstDate": "2025-09-15",
+      "lastDate": "2026-09-14",
+      "sha256": "57f2ed9ad447d049d2788f01f6d1cace000a971e4891ec6cc56b3407a5b6af36"
+    }
+  },
+  "csvSha256": "3df09aab3b4154bd133be26d6a69b64301d831e310881b8973ac19ccd341335e",
+  "csvBytes": 393466,
+  "rowCount": 7205
+}

@@ -294,6 +294,20 @@ describe("planFinanceBrainOrchestration", () => {
     );
   });
 
+  it("routes cross-commodity pair-spread language to the commodities owner", () => {
+    for (const text of [
+      "研究豆油和棕榈油商品期货配对价差",
+      "螺纹钢与热卷的跨品种套利机制",
+      "commodity futures spread research",
+    ]) {
+      const plan = planFinanceBrainOrchestration({ text });
+
+      expect(plan.selectionTrace.financeTask).toBe(true);
+      expect(plan.primaryModules).toContain("commodities_oil_gold");
+      expect(plan.requiredTools).toContain("finance_framework_commodities_oil_gold_producer");
+    }
+  });
+
   it("keeps ordinary currency requests from fanning into two overlapping FX owners", () => {
     const plan = planFinanceBrainOrchestration({
       text: "美元流动性变化会怎样影响我的组合？",

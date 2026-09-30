@@ -111,6 +111,25 @@ const PATH_RULES: PathRule[] = [
     ],
   },
   {
+    id: "commodity_pair_research_replay",
+    lane: "finance_research_capability",
+    patterns: [
+      /^src\/agents\/quant-math-pair-spread\.ts$/u,
+      /^docs\/experiments\/research\/commodity-pair-y2501-p2501\/(?:README\.md|capture\.json|input\.csv|replay\.mts|result\.json)$/u,
+      /^docs\/experiments\/research\/commodity-pair-y-maturity-panel\/(?:README\.md|capture\.mts|capture\.json|input\.csv|replay\.mts|result\.json)$/u,
+    ],
+    requiredChecks: ["commodity-pair-replay", "git-diff-check"],
+    commands: [
+      "node --import tsx docs/experiments/research/commodity-pair-y2501-p2501/replay.mts",
+      "node --import tsx docs/experiments/research/commodity-pair-y-maturity-panel/replay.mts",
+      "pnpm vitest run src/agents/quant-math-pair-spread.test.ts",
+      "git diff --check",
+    ],
+    safetyNotes: [
+      "These exact-contract commodity-pair replays are research-only; their close-price models and assumed costs do not authorize or prove orders, fills, or profitability.",
+    ],
+  },
+  {
     id: "finance_live_execution_seam",
     lane: "finance_research_capability",
     patterns: [

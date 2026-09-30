@@ -54,6 +54,13 @@ import {
   regressionDiagnostics,
   spuriousRegressionCheck,
 } from "../quant-math-inference.js";
+import {
+  diagnosePairSpread,
+  replayPairSpreadReversion,
+  type PairSpreadConstruction,
+  type PairSpreadObservation,
+  type PairSpreadReplayContract,
+} from "../quant-math-pair-spread.js";
 import type { AnyAgentTool } from "./common.js";
 import { ToolInputError, jsonResult, readStringParam } from "./common.js";
 
@@ -80,6 +87,57 @@ const QuantLabSchema = Type.Object({
   benchmarkReturns: Type.Optional(NumberArray),
   sectors: Type.Optional(Type.Array(Type.String())),
   scenarios: Type.Optional(Type.Array(Type.Object({ name: Type.String(), shocks: NumberArray }))),
+  observations: Type.Optional(
+    Type.Array(
+      Type.Object({
+        timestamp: Type.String(),
+        priceA: Type.Number(),
+        priceB: Type.Number(),
+      }),
+    ),
+  ),
+  contractA: Type.Optional(
+    Type.Object({
+      instrument: Type.String(),
+      exchange: Type.String(),
+      contractId: Type.String(),
+      contractMonth: Type.String(),
+      contracts: Type.Number(),
+      multiplier: Type.Number(),
+      settlementCurrency: Type.String(),
+      commissionPerContractPerSide: Type.Number(),
+      bidAskSpreadPoints: Type.Number(),
+      slippagePointsPerSide: Type.Number(),
+      initialMarginPerContract: Type.Number(),
+    }),
+  ),
+  contractB: Type.Optional(
+    Type.Object({
+      instrument: Type.String(),
+      exchange: Type.String(),
+      contractId: Type.String(),
+      contractMonth: Type.String(),
+      contracts: Type.Number(),
+      multiplier: Type.Number(),
+      settlementCurrency: Type.String(),
+      commissionPerContractPerSide: Type.Number(),
+      bidAskSpreadPoints: Type.Number(),
+      slippagePointsPerSide: Type.Number(),
+      initialMarginPerContract: Type.Number(),
+    }),
+  ),
+  pairId: Type.Optional(Type.String()),
+  instrumentA: Type.Optional(Type.String()),
+  instrumentB: Type.Optional(Type.String()),
+  relationshipRationale: Type.Optional(Type.String()),
+  sourceRef: Type.Optional(Type.String()),
+  construction: Type.Optional(Type.String()),
+  hedgeRatio: Type.Optional(Type.Number()),
+  lookbackWindow: Type.Optional(Type.Number()),
+  entryZScore: Type.Optional(Type.Number()),
+  exitZScore: Type.Optional(Type.Number()),
+  stopZScore: Type.Optional(Type.Number()),
+  maxHoldingObservations: Type.Optional(Type.Number()),
   estimationWindow: Type.Optional(NumberArray),
   eventWindow: Type.Optional(NumberArray),
   lower: Type.Optional(Type.Number()),
@@ -121,6 +179,22 @@ function optionalNumbers(params: Params, key: string): number[] | undefined {
     return undefined;
   }
   return numbers(params, key);
+}
+
+function finiteNumber(params: Params, key: string): number {
+  const value = params[key];
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new ToolInputError(`${key} must be a finite number`);
+  }
+  return value;
+}
+
+function replayContract(params: Params, key: string): PairSpreadReplayContract {
+  const value = params[key];
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ToolInputError(`${key} is required for pair_spread_reversion_replay`);
+  }
+  return value as PairSpreadReplayContract;
 }
 
 function matrix(params: Params, key: string): number[][] {
@@ -166,6 +240,33 @@ function pair(params: Params, key: string): [number, number] {
   return [value[0], value[1]];
 }
 
+function pairSpreadObservations(params: Params): PairSpreadObservation[] {
+  const value = params.observations;
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new ToolInputError("observations is required for pair_spread_diagnostics");
+  }
+  return value.map((row, index) => {
+    if (!row || typeof row !== "object" || Array.isArray(row)) {
+      throw new ToolInputError(`observations[${index}] must be an object`);
+    }
+    const observation = row as Record<string, unknown>;
+    if (
+      typeof observation.timestamp !== "string" ||
+      typeof observation.priceA !== "number" ||
+      !Number.isFinite(observation.priceA) ||
+      typeof observation.priceB !== "number" ||
+      !Number.isFinite(observation.priceB)
+    ) {
+      throw new ToolInputError(`observations[${index}] must contain a timestamp and finite prices`);
+    }
+    return {
+      timestamp: observation.timestamp,
+      priceA: observation.priceA,
+      priceB: observation.priceB,
+    };
+  });
+}
+
 export const QUANT_LAB_ACTIONS = [
   "min_variance",
   "max_sharpe",
@@ -196,6 +297,8 @@ export const QUANT_LAB_ACTIONS = [
   "granger_causality",
   "rolling_correlation",
   "shrink_covariance",
+  "pair_spread_diagnostics",
+  "pair_spread_reversion_replay",
 ] as const;
 
 export function createQuantLabTool(options: { ledger?: CalculationLedger } = {}): AnyAgentTool {
@@ -207,7 +310,7 @@ export function createQuantLabTool(options: { ledger?: CalculationLedger } = {})
     label: "Quant Lab",
     name: "quant_lab",
     description:
-      "Full quantitative toolkit: portfolio construction (min variance, max Sharpe, risk parity, max diversification, Black-Litterman), risk decomposition (component VaR, Cornish-Fisher VaR, EWMA covariance, stress tests), attribution (Brinson), association testing (correlation with p-values, regression diagnostics, spurious-regression guard, lead-lag, event study) and foundational statistics (covariance and correlation matrices, ADF stationarity, rolling correlation, Granger predictive precedence, multiple-comparison correction). Use these instead of computing portfolio maths or claiming a relationship in prose: every result comes with the significance or identity that makes it checkable. Run adf_test before regression on price levels, and adjust_p_values whenever more than one hypothesis was screened. When a portfolio action rejects the covariance as not positive definite, run shrink_covariance on the same returns matrix first: that is the usual consequence of having as many assets as observations. A solution that comes back with illConditioned true needs the same treatment even though nothing was rejected — it means two holdings are nearly the same asset, the weights are an artefact of that dependency, and grossExposure will be far above 1 as a result. Always read grossExposure before quoting weights: it is 1 for a fully invested long-only book and larger as soon as the solution is levered or short.",
+      "Full quantitative toolkit: portfolio construction (min variance, max Sharpe, risk parity, max diversification, Black-Litterman), risk decomposition (component VaR, Cornish-Fisher VaR, EWMA covariance, stress tests), attribution (Brinson), association testing (correlation with p-values, regression diagnostics, spurious-regression guard, lead-lag, event study), foundational statistics, research-only pair_spread_diagnostics, and pair_spread_reversion_replay. Pair diagnostics report a caller-defined formula, latest z-score, descriptive AR(1), and ADF with limitations; they do not select pairs or prove cointegration, convergence, or profit. The bounded replay accepts only fixed spreads and requires synchronized observations, caller-chosen thresholds, contract legs matched to the named instruments, and per-leg integer lots, multipliers, currency, commission per contract per side, full quoted bid-ask width, slippage per side, and initial margin. Its event policy is first threshold touch while armed, no overlap, and rearm after z-score returns inside the entry threshold. It uses next-observation close prices as a proxy, includes P&L and round-trip costs only for resolved events, reports open censored entry costs and mark-to-market separately, does not model actual order-book fills, rolls, or legging, and has no execution authority. Use these instead of computing portfolio maths or claiming a relationship in prose: each result includes a checkable calculation or stated statistical test, with statistical significance reported only where calculated. Run adf_test before regression on price levels, and adjust_p_values whenever more than one hypothesis was screened. When a portfolio action rejects the covariance as not positive definite, run shrink_covariance on the same returns matrix first: that is the usual consequence of having as many assets as observations. A solution that comes back with illConditioned true needs the same treatment even though nothing was rejected — it means two holdings are nearly the same asset, the weights are an artefact of that dependency, and grossExposure will be far above 1 as a result. Always read grossExposure before quoting weights: it is 1 for a fully invested long-only book and larger as soon as the solution is levered or short.",
     parameters: QuantLabSchema,
     execute: async (_toolCallId, params) => {
       const action = readStringParam(params, "action", { required: true });
@@ -528,6 +631,71 @@ export function createQuantLabTool(options: { ledger?: CalculationLedger } = {})
                   : {}),
               }) as never,
             };
+          }
+          case "pair_spread_diagnostics": {
+            const construction = typed.construction;
+            if (construction !== "fixed_spread" && construction !== "price_ratio") {
+              throw new ToolInputError("construction must be one of fixed_spread, price_ratio");
+            }
+            const lookbackWindow = typed.lookbackWindow;
+            if (typeof lookbackWindow !== "number" || !Number.isFinite(lookbackWindow)) {
+              throw new ToolInputError("lookbackWindow is required");
+            }
+            const hedgeRatio = typed.hedgeRatio;
+            if (
+              hedgeRatio !== undefined &&
+              (typeof hedgeRatio !== "number" || !Number.isFinite(hedgeRatio))
+            ) {
+              throw new ToolInputError("hedgeRatio must be finite when supplied");
+            }
+            const inputs = {
+              pairId: readStringParam(typed, "pairId", { required: true }),
+              instrumentA: readStringParam(typed, "instrumentA", { required: true }),
+              instrumentB: readStringParam(typed, "instrumentB", { required: true }),
+              relationshipRationale: readStringParam(typed, "relationshipRationale", {
+                required: true,
+              }),
+              sourceRef: readStringParam(typed, "sourceRef", { required: true }),
+              construction: construction as PairSpreadConstruction,
+              ...(hedgeRatio !== undefined ? { hedgeRatio } : {}),
+              lookbackWindow,
+              observations: pairSpreadObservations(typed),
+            };
+            return { inputs, output: diagnosePairSpread(inputs) as never };
+          }
+          case "pair_spread_reversion_replay": {
+            const construction = typed.construction;
+            if (construction !== undefined && construction !== "fixed_spread") {
+              throw new ToolInputError(
+                "pair_spread_reversion_replay only supports construction=fixed_spread",
+              );
+            }
+            const stopZScore = typed.stopZScore;
+            if (
+              stopZScore !== undefined &&
+              (typeof stopZScore !== "number" || !Number.isFinite(stopZScore))
+            ) {
+              throw new ToolInputError("stopZScore must be finite when supplied");
+            }
+            const inputs = {
+              pairId: readStringParam(typed, "pairId", { required: true }),
+              instrumentA: readStringParam(typed, "instrumentA", { required: true }),
+              instrumentB: readStringParam(typed, "instrumentB", { required: true }),
+              relationshipRationale: readStringParam(typed, "relationshipRationale", {
+                required: true,
+              }),
+              sourceRef: readStringParam(typed, "sourceRef", { required: true }),
+              hedgeRatio: finiteNumber(typed, "hedgeRatio"),
+              lookbackWindow: finiteNumber(typed, "lookbackWindow"),
+              entryZScore: finiteNumber(typed, "entryZScore"),
+              exitZScore: finiteNumber(typed, "exitZScore"),
+              ...(stopZScore !== undefined ? { stopZScore } : {}),
+              maxHoldingObservations: finiteNumber(typed, "maxHoldingObservations"),
+              contractA: replayContract(typed, "contractA"),
+              contractB: replayContract(typed, "contractB"),
+              observations: pairSpreadObservations(typed),
+            };
+            return { inputs, output: replayPairSpreadReversion(inputs) as never };
           }
           default:
             throw new ToolInputError(`action must be one of ${QUANT_LAB_ACTIONS.join(", ")}`);

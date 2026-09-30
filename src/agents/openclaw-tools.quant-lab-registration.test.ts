@@ -14,6 +14,10 @@ describe("createOpenClawTools quant_lab registration", () => {
     expect(tool).toBeTruthy();
     expect(tool?.description).toContain("risk parity");
     expect(tool?.description).toContain("significance");
+    expect(tool?.description).toContain("pair_spread_diagnostics");
+    expect(tool?.description).toContain("pair_spread_reversion_replay");
+    expect(tool?.description).toContain("next-observation close prices as a proxy");
+    expect(tool?.description).toContain("do not select pairs");
   });
 });
 
