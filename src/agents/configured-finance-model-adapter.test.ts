@@ -1,7 +1,14 @@
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import {
   createConfiguredFinanceModelAdapter,
+  createFinanceModelCallBudget,
+  FINANCE_PROVIDER_PAYMENT_COOLDOWN_MS,
   resolveConfiguredFinanceAuth,
 } from "./configured-finance-model-adapter.js";
 import type { ModelCallRequest } from "./logical-agent-model-router.js";
@@ -51,8 +58,235 @@ const request: ModelCallRequest = {
   },
 };
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+});
+
+describe("configured model payment cooldown", () => {
+  function account(name: string) {
+    const result = structuredClone(cfg);
+    result.models!.providers!.fixture.apiKey = `payment-test-${name}`;
+    result.models!.providers!.fixture.models.push({
+      ...result.models!.providers!.fixture.models[0],
+      id: "alternative",
+    });
+    return result;
+  }
+
+  const success = () =>
+    new Response(
+      JSON.stringify({
+        id: "paid-transport-fixture",
+        choices: [{ finish_reason: "stop", message: { content: "{}" } }],
+      }),
+    );
+
+  it("shares payment failure across models and callers without charging another call", async () => {
+    const config = account("shared");
+    const before = JSON.stringify(config);
+    const http = vi.fn(async () => new Response("private billing details", { status: 402 }));
+    vi.stubGlobal("fetch", http);
+    const budget = createFinanceModelCallBudget(3);
+    const first = createConfiguredFinanceModelAdapter(config, { callBudget: budget });
+    await expect(first.invoke(request, new AbortController().signal)).rejects.toMatchObject({
+      code: "provider_payment_required",
+    });
+    const central = createConfiguredFinanceModelAdapter(config, {
+      modelRef: "fixture/alternative",
+      trajectorySource: "central_brain",
+      callBudget: budget,
+    });
+    await expect(central.invoke(request, new AbortController().signal)).rejects.toMatchObject({
+      code: "provider_payment_required",
+    });
+    expect(central.unavailableReason?.()).toBe("provider_payment_required");
+    expect(central.observe?.(request)).toBeUndefined();
+    expect(http).toHaveBeenCalledTimes(1);
+    expect(budget.snapshot().reserved).toBe(1);
+    expect(JSON.stringify(config)).toBe(before);
+  });
+
+  it("does not block a replacement credential or a different endpoint", async () => {
+    const config = account("replacement");
+    const http = vi.fn().mockResolvedValueOnce(new Response("", { status: 402 }));
+    http.mockImplementation(async () => success());
+    vi.stubGlobal("fetch", http);
+    await expect(
+      createConfiguredFinanceModelAdapter(config).invoke(request, new AbortController().signal),
+    ).rejects.toMatchObject({ code: "provider_payment_required" });
+    const changedKey = structuredClone(config);
+    changedKey.models!.providers!.fixture.apiKey = "payment-test-another-credential";
+    await createConfiguredFinanceModelAdapter(changedKey).invoke(
+      request,
+      new AbortController().signal,
+    );
+    const changedEndpoint = structuredClone(config);
+    changedEndpoint.models!.providers!.fixture.baseUrl = "https://other-fixture.invalid/v1";
+    await createConfiguredFinanceModelAdapter(changedEndpoint).invoke(
+      request,
+      new AbortController().signal,
+    );
+    expect(http).toHaveBeenCalledTimes(3);
+  });
+
+  it("permits recovery after a bounded cooldown without extending it on blocked calls", async () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1_900_000_000_000);
+    const config = account("recovery");
+    const http = vi.fn().mockResolvedValueOnce(new Response("", { status: 402 }));
+    http.mockImplementation(async () => success());
+    vi.stubGlobal("fetch", http);
+    const adapter = createConfiguredFinanceModelAdapter(config);
+    await expect(adapter.invoke(request, new AbortController().signal)).rejects.toMatchObject({
+      code: "provider_payment_required",
+    });
+    clock.mockReturnValue(1_900_000_000_000 + FINANCE_PROVIDER_PAYMENT_COOLDOWN_MS - 1);
+    await expect(adapter.invoke(request, new AbortController().signal)).rejects.toMatchObject({
+      code: "provider_payment_required",
+    });
+    clock.mockReturnValue(1_900_000_000_000 + FINANCE_PROVIDER_PAYMENT_COOLDOWN_MS);
+    await adapter.invoke(request, new AbortController().signal);
+    expect(adapter.unavailableReason?.()).toBeUndefined();
+    expect(http).toHaveBeenCalledTimes(2);
+  });
+
+  it("persists only an opaque account key and cooldown for a fresh runtime", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "finance-payment-"));
+    try {
+      const config = account("durable");
+      const http = vi.fn(async () => new Response("private billing details", { status: 402 }));
+      vi.stubGlobal("fetch", http);
+      await expect(
+        createConfiguredFinanceModelAdapter(config, {
+          availabilityStateDirectory: directory,
+        }).invoke(request, new AbortController().signal),
+      ).rejects.toMatchObject({ code: "provider_payment_required" });
+      const [filename] = fs.readdirSync(directory);
+      expect(filename).toMatch(/^[a-f0-9]{64}\.json$/u);
+      const stored = fs.readFileSync(path.join(directory, filename), "utf8");
+      expect(stored).not.toContain(config.models!.providers!.fixture.apiKey);
+      expect(stored).not.toContain("private billing");
+      expect(JSON.parse(stored)).toEqual({
+        schema: "finance_provider_payment_cooldown_v1",
+        until: expect.any(Number),
+      });
+      vi.resetModules();
+      const freshRuntime = await import("./configured-finance-model-adapter.js");
+      await expect(
+        freshRuntime
+          .createConfiguredFinanceModelAdapter(config, {
+            modelRef: "fixture/alternative",
+            availabilityStateDirectory: directory,
+          })
+          .invoke(request, new AbortController().signal),
+      ).rejects.toMatchObject({ code: "provider_payment_required" });
+      expect(http).toHaveBeenCalledTimes(1);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("loads production cooldown state in a separate process before transport", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "finance-payment-process-"));
+    try {
+      const config = account("child-process");
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => new Response("", { status: 402 })),
+      );
+      await expect(
+        createConfiguredFinanceModelAdapter(config, {
+          availabilityStateDirectory: path.join(directory, "model-provider-cooldowns"),
+        }).invoke(request, new AbortController().signal),
+      ).rejects.toMatchObject({ code: "provider_payment_required" });
+      const moduleUrl = pathToFileURL(
+        path.resolve("src/agents/configured-finance-model-adapter.ts"),
+      );
+      const script = `
+        import { createConfiguredFinanceModelAdapter } from ${JSON.stringify(moduleUrl.href)};
+        let transportCalls = 0;
+        globalThis.fetch = async () => { transportCalls++; throw new Error("transport forbidden"); };
+        const adapter = createConfiguredFinanceModelAdapter(${JSON.stringify(config)}, {
+          modelRef: "fixture/alternative", trajectorySource: "central_brain"
+        });
+        try {
+          await adapter.invoke(${JSON.stringify(request)}, new AbortController().signal);
+          process.stdout.write(JSON.stringify({ code: "unexpected_success", transportCalls }));
+        } catch (error) {
+          process.stdout.write(JSON.stringify({ code: error.code, transportCalls }));
+        }
+      `;
+      const output = execFileSync(
+        process.execPath,
+        ["--import", "tsx", "--input-type=module", "-e", script],
+        {
+          env: {
+            ...process.env,
+            NODE_ENV: "production",
+            OPENCLAW_STATE_DIR: directory,
+            LCX_MODEL_TRAJECTORY: "0",
+          },
+          encoding: "utf8",
+          timeout: 30_000,
+        },
+      );
+      expect(JSON.parse(output)).toEqual({ code: "provider_payment_required", transportCalls: 0 });
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks subsequent calls after a failure while preserving already dispatched requests", async () => {
+    const config = account("concurrent");
+    const pending: Array<(response: Response) => void> = [];
+    const http = vi.fn(() => new Promise<Response>((resolve) => pending.push(resolve)));
+    vi.stubGlobal("fetch", http);
+    const first = createConfiguredFinanceModelAdapter(config);
+    const second = createConfiguredFinanceModelAdapter(config, { modelRef: "fixture/alternative" });
+    const results = Promise.allSettled([
+      first.invoke(request, new AbortController().signal),
+      second.invoke({ ...request, callId: "in-flight" }, new AbortController().signal),
+    ]);
+    await vi.waitFor(() => expect(http).toHaveBeenCalledTimes(2));
+    pending[0](new Response("", { status: 402 }));
+    await vi.waitFor(() => expect(first.unavailableReason?.()).toBe("provider_payment_required"));
+    await expect(second.invoke(request, new AbortController().signal)).rejects.toMatchObject({
+      code: "provider_payment_required",
+    });
+    expect(http).toHaveBeenCalledTimes(2);
+    pending[1](success());
+    expect((await results).map((result) => result.status)).toEqual(["rejected", "fulfilled"]);
+  });
+
+  it("keeps the classified failure and in-process block when persistence is unavailable", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "finance-payment-storage-"));
+    try {
+      const config = account("storage-unavailable");
+      const http = vi.fn(async () => new Response("", { status: 402 }));
+      vi.stubGlobal("fetch", http);
+      const write = vi.spyOn(fs, "writeFileSync").mockImplementation(() => {
+        throw new Error("fixture storage unavailable");
+      });
+      const options = { availabilityStateDirectory: directory };
+      await expect(
+        createConfiguredFinanceModelAdapter(config, options).invoke(
+          request,
+          new AbortController().signal,
+        ),
+      ).rejects.toMatchObject({ code: "provider_payment_required" });
+      write.mockRestore();
+      await expect(
+        createConfiguredFinanceModelAdapter(config, options).invoke(
+          request,
+          new AbortController().signal,
+        ),
+      ).rejects.toMatchObject({ code: "provider_payment_required" });
+      expect(fs.readdirSync(directory)).toEqual([]);
+      expect(http).toHaveBeenCalledTimes(1);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
 });
 describe("configured research model transport", () => {
   it("uses the bounded role-specific output budget in the provider request", async () => {

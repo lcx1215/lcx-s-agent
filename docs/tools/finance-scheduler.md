@@ -54,7 +54,20 @@ phases. After an authentication, payment-required (HTTP 402), or rate-limit resp
 before dispatch for the remainder of the run; eligible configured fallbacks must
 still satisfy model separation and author affinity. Skips retain rejection
 receipts and consume no additional provider calls. A new scheduled run creates a
-fresh workflow; this does not change credentials, provider configuration or quotas.
+fresh workflow. Payment failures also establish a 15-minute account cooldown at
+the configured transport seam, shared by finance and central-brain callers and
+retained across restarts under the existing state root. The identity covers the
+provider, endpoint and credential, so changing a configured credential or endpoint
+does not inherit another account's cooldown. Blocked attempts consume no call
+budget and do not extend the cooldown; expiry permits a fresh attempt. Requests
+already in flight when payment failure is first observed remain governed by their
+existing concurrency, timeout and call limits.
+
+Cooldown files contain only an opaque account hash and an expiry, never a
+credential, prompt or provider error body. A malformed or unreadable file blocks
+transport. If saving the failure is impossible, the current process still blocks
+the account, but restart persistence cannot be claimed until storage is repaired.
+This does not change credentials, provider configuration or quotas.
 
 An automatic portfolio run skips further quality calls when mandatory producer or
 module preparation has already failed; its failed gate remains explicit. Ordinary

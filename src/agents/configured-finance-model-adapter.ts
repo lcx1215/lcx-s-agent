@@ -1,5 +1,8 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import type { OpenClawConfig } from "../config/config.js";
+import { resolveStateDir } from "../config/paths.js";
 import {
   loadAuthProfileStoreForSecretsRuntime,
   resolveApiKeyForProfile,
@@ -21,6 +24,71 @@ import {
 } from "./model-request-trajectory.js";
 import { buildInlineProviderModels } from "./pi-embedded-runner/model.js";
 import type { QualityHarnessModelRequest } from "./quality-harness-contract.js";
+
+export const FINANCE_PROVIDER_PAYMENT_COOLDOWN_MS = 15 * 60_000;
+const paymentCooldowns = new Map<string, number>();
+
+/** Account-scoped operational facts, separate from credentials and auth configuration. */
+function paymentCooldownKey(provider: string, endpoint: string, apiKey: string): string {
+  return createHash("sha256")
+    .update(JSON.stringify([provider, endpoint, apiKey]))
+    .digest("hex");
+}
+
+function readPaymentCooldown(key: string, directory: string | undefined): number {
+  let until = paymentCooldowns.get(key) ?? 0;
+  if (directory) {
+    try {
+      const value: unknown = JSON.parse(
+        fs.readFileSync(path.join(directory, `${key}.json`), "utf8"),
+      );
+      if (
+        typeof value !== "object" ||
+        value === null ||
+        !("schema" in value) ||
+        value.schema !== "finance_provider_payment_cooldown_v1" ||
+        !("until" in value) ||
+        typeof value.until !== "number" ||
+        !Number.isSafeInteger(value.until)
+      ) {
+        throw new ModelAdapterError("process_error");
+      }
+      until = Math.max(until, value.until);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw new ModelAdapterError("process_error");
+      }
+    }
+  }
+  return until;
+}
+
+function markPaymentCooldown(key: string, directory: string | undefined): void {
+  const until = Date.now() + FINANCE_PROVIDER_PAYMENT_COOLDOWN_MS;
+  paymentCooldowns.set(key, until);
+  if (!directory) {
+    return;
+  }
+  const filename = path.join(directory, `${key}.json`);
+  const temporary = `${filename}.${randomUUID()}.tmp`;
+  try {
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(
+      temporary,
+      JSON.stringify({ schema: "finance_provider_payment_cooldown_v1", until }),
+      { mode: 0o600 },
+    );
+    fs.renameSync(temporary, filename);
+  } catch {
+    // Keep the original payment failure and in-process block if persistence fails.
+  } finally {
+    try {
+      fs.rmSync(temporary, { force: true });
+    } catch {
+      // Temporary-file cleanup must not hide a classified payment failure.
+    }
+  }
+}
 
 /** One attempt budget shared by every model and fallback in a workflow. */
 export function createFinanceModelCallBudget(limit: number) {
@@ -134,6 +202,8 @@ export function createConfiguredFinanceModelAdapter(
     callBudget?: ReturnType<typeof createFinanceModelCallBudget>;
     /** Identifies the existing caller without changing provider or model selection. */
     trajectorySource?: Exclude<ModelRequestSource, "agent_session">;
+    /** Isolated operational state for tests; production shares the existing state root. */
+    availabilityStateDirectory?: string;
   } = {},
 ): LogicalAgentModelAdapter {
   const selection = cfg.agents?.defaults?.model;
@@ -183,6 +253,12 @@ export function createConfiguredFinanceModelAdapter(
     model.compat?.supportsReasoningEffort === true ||
     (new URL(model.baseUrl).hostname === "api.deepseek.com" && modelId.startsWith("deepseek-v4-"));
   const endpoint = `${model.baseUrl.replace(/\/$/u, "")}/chat/completions`;
+  const availabilityDirectory =
+    options.availabilityStateDirectory ??
+    (process.env.NODE_ENV === "test"
+      ? undefined
+      : path.join(resolveStateDir(), "model-provider-cooldowns"));
+  let accountKey: string | undefined;
   const observations = new Map<
     string,
     {
@@ -201,6 +277,10 @@ export function createConfiguredFinanceModelAdapter(
     capabilities: ["quality_harness"],
     requiredTools: [],
     requiredSideEffects: ["provider_call"],
+    unavailableReason: () =>
+      accountKey && readPaymentCooldown(accountKey, availabilityDirectory) > Date.now()
+        ? "provider_payment_required"
+        : undefined,
     invoke: async (request, signal) => {
       if (calls >= maxCalls) {
         throw new ModelAdapterError("call_budget_exhausted");
@@ -230,6 +310,10 @@ export function createConfiguredFinanceModelAdapter(
         );
       }
       const auth = await resolveConfiguredFinanceAuth(cfg, provider);
+      accountKey = paymentCooldownKey(provider, endpoint, auth.apiKey);
+      if (readPaymentCooldown(accountKey, availabilityDirectory) > Date.now()) {
+        throw new ModelAdapterError("provider_payment_required");
+      }
       // Auth resolution may yield; recheck before the synchronous reservation.
       if (calls >= maxCalls) {
         throw new ModelAdapterError("call_budget_exhausted");
@@ -278,6 +362,9 @@ export function createConfiguredFinanceModelAdapter(
           httpStatus: http.status,
         });
         if (!http.ok) {
+          if (http.status === 402) {
+            markPaymentCooldown(accountKey, availabilityDirectory);
+          }
           await http.body?.cancel();
           throw new ModelAdapterError(
             [401, 403].includes(http.status)
