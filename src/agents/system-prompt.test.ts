@@ -855,6 +855,23 @@ describe("buildAgentSystemPrompt", () => {
     );
   });
 
+  it("makes pair-spread diagnostics and the bounded reversion replay discoverable only when quant_lab is available", () => {
+    const withQuantLab = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+      toolNames: ["quant_lab"],
+    });
+    const withoutQuantLab = buildAgentSystemPrompt({ workspaceDir: "/tmp/openclaw" });
+
+    expect(withQuantLab).toContain("pair_spread_diagnostics");
+    expect(withQuantLab).toContain("pair_spread_reversion_replay");
+    expect(withQuantLab).toContain("full quoted bid-ask width");
+    expect(withQuantLab).toContain("open censored entry costs");
+    expect(withQuantLab).toContain("synchronized timestamped observations");
+    expect(withQuantLab).toContain("does not select pairs");
+    expect(withoutQuantLab).not.toContain("pair_spread_diagnostics");
+    expect(withoutQuantLab).not.toContain("pair_spread_reversion_replay");
+  });
+
   it("includes a CLI quick reference section", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",

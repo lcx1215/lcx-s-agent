@@ -68,6 +68,22 @@ const M12_RULES = Object.freeze([
   "Surface concentration, liquidity, financing, borrow, gap, and exit-day limits even when the test is long-only and unlevered.",
 ] as const);
 
+const M13_RULES = Object.freeze([
+  "Treat a commodity pair as a testable relative-value hypothesis, not an arbitrage: state the physical or market mechanism that could repair the spread and what could permanently change it.",
+  "Separate same-underlying calendar spreads from cross-commodity pairs; map each exchange, contract month, unit, multiplier, expiry, and roll before comparing prices.",
+  "Choose an industrial formula, fixed spread, ratio, or residual for its economic meaning; explain scale sensitivity and any rolling hedge-ratio estimation window.",
+  "Use only supplied, synchronized, timestamped observations with known source and contract mapping. If these are absent, name the missing data and do not invent a series.",
+  "When quant_lab is available, use pair_spread_diagnostics for supplied aligned series; its z-score, AR(1), and ADF are limited diagnostics, not proof of cointegration, convergence, or profit.",
+  "If quant_lab is available, use pair_spread_reversion_replay only for a frozen fixed-spread hypothesis with synchronized observations, caller-chosen entry/exit/stop/holding thresholds, and both exact contract legs explicitly matched to instrument, exchange, month, integer quantity, multiplier, currency, commission per side, full quoted bid-ask width, per-side slippage, and initial margin. Never fill missing inputs with guessed or zero values; if the action is unavailable, say the replay could not run and list the missing capability or inputs.",
+  "Interpret replay entries and exits as next-observation close proxies, not executable fills. Read resolved-event net P&L separately from open censored positions, their entry costs, and last-observation mark-to-market; it excludes rolls, order-book fills, legging, and portfolio risk, and proves neither convergence nor profitability.",
+  "Report the replay's fixed event policy: first threshold touch while armed, no overlapping events, and rearm only after the absolute z-score moves back inside the entry threshold. Do not present that rule as an empirically selected optimum.",
+  "Before discussing a candidate, require event-based recovery rates and holding-time distributions including maximum adverse excursion, timeouts, failed years, and regime changes.",
+  "Model both legs at the next tradable time with integer lots, multipliers, commissions, bid-ask, slippage, margin, rolls, capacity, and legging risk; a close-price spread curve is not a net backtest.",
+  "For a later question about the soybean-oil/palm-oil pair, retrieve docs/experiments/research/commodity-pair-y2501-p2501/README.md as one exact-contract failure case; do not generalize its single maturity or assumed execution costs to other pairs or periods.",
+  "For multiple delivery-month evidence, retrieve docs/experiments/research/commodity-pair-y-maturity-panel/README.md; it is a fixed-rule robustness panel with overlapping May/September lifecycles, not a portfolio result or a clean preregistered out-of-sample claim.",
+  "If the work has only a diagnostic or historical association, keep it research-only and state that no pair selection, signal, contract-level backtest, or execution was established.",
+] as const);
+
 const REQUIRED_OUTPUT_CHECKS = Object.freeze([
   "source facts versus research inference",
   "current data timestamp and coverage",
@@ -128,12 +144,18 @@ const METHOD_MATCHERS: readonly Readonly<{
     pattern:
       /暴露|敞口|广度|分散|组合|风险|回撤|拥挤|融资|保证金|流动性|exposure|breadth|diversif|portfolio|risk|drawdown|crowding|financing/iu,
   },
+  {
+    method: "M13",
+    pattern:
+      /商品.{0,16}(?:套利|价差|配对|价比|相对价值|相关性)|(?:套利|价差|配对|价比|相对价值).{0,16}(?:商品|期货|品种)|商品期货|跨品种|跨商品|期货配对|豆油.{0,12}(?:棕榈油|棕油)|(?:棕榈油|棕油).{0,12}豆油|螺纹.{0,12}热卷|热卷.{0,12}螺纹|commodity spread|commodity pairs?|futures spread|pairs trading/iu,
+  },
 ]);
 
 const BASE_RULES: Partial<Record<StrategyMethodId, readonly string[]>> = Object.freeze({
   M01: M01_RULES,
   M02: M02_RULES,
   M12: M12_RULES,
+  M13: M13_RULES,
 });
 
 export function selectFinanceStrategyMethodIds(ask: string): readonly StrategyMethodId[] {

@@ -205,14 +205,15 @@ export const FINANCE_BRAIN_MODULES = [
   },
   {
     id: "commodities_oil_gold",
-    role: "Connect oil, gold, commodities, inventory, supply shocks, inflation hedge, energy, and terms-of-trade evidence.",
+    role: "Connect commodities, inventory, supply shocks, inflation hedge, energy, terms of trade, and the industrial mechanisms behind substitution, shared costs, processing margins, and cross-commodity spreads.",
     requiredTools: [
       "finance_framework_core_inspect",
       "finance_framework_commodities_oil_gold_producer",
     ],
     triggerPatterns: [
       /\b(?:commodity|commodities|oil|gold|energy|copper|inventory|supply shock|strait of hormuz|opec|spr|inflation hedge)\b/u,
-      /商品|原油|黄金|能源|铜|库存|供给冲击|霍尔木兹|OPEC|战略储备/u,
+      /\b(?:commodity|futures) (?:spread|pair|relative value)\b|\b(?:intercommodity|calendar) spread\b/u,
+      /商品.{0,12}(?:期货|价差|套利|配对|跨品种)|(?:期货|价差|套利|配对|跨品种).{0,12}商品|跨品种(?:价差|套利|配对)?|商品替代|共同成本|加工利润|豆油|棕榈油|棕油|螺纹钢?|热卷|塑料|聚丙烯|国际铜|沪铜|原油|黄金|能源|铜|库存|供给冲击|霍尔木兹|OPEC|战略储备/u,
     ],
   },
   {

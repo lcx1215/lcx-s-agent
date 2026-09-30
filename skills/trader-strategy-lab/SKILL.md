@@ -12,7 +12,7 @@ description: "将公开研究者、投资机构与交易者的方法转成可检
 - 人物/流派：读 [人物档案](references/practitioners.md)，按来源 ID 查 [来源账本](references/sources.json)。
 - 策略设计：读 [方法模块](references/strategy-modules.md)。
 - 晋级判断：读 [有效性闸门](references/evaluation-gate.md)；只有问题涉及本地模块成熟度或研究排期时，才参考[模块评分卡](references/method-scorecard.md)，并先核验其日期和最新收据。
-- 多方向实证：仅当问题涉及多个方向时，按需查[方向矩阵](references/multi-direction-matrix.md)选取相关项，再查[优先实验](references/priority-experiments.md)中的适用协议。D01–D28 是目录，不是待办队列；完整覆盖须由用户明确要求并有相应证据。
+- 多方向实证：仅当问题涉及多个方向时，按需查[方向矩阵](references/multi-direction-matrix.md)选取相关项，再查[优先实验](references/priority-experiments.md)中的适用协议。D01–D29 是目录，不是待办队列；完整覆盖须由用户明确要求并有相应证据。
 - 数据受阻：读 [沙箱验证](references/sandbox-validation.md)；只验证合同、时点、成本和阻断逻辑。
 - 当前环境/新闻：读 [当前情报](references/current-intelligence.md) 和 [新闻更新](references/news-and-refresh.md)，需要时刷新网络。
 - 决策输出：用 [决策包](references/decision-packet.md)；AI/科技对象先读人物档案的对应章节。

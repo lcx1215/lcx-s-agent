@@ -1,0 +1,525 @@
+{
+  "objective": "research-only replay of one exact DCE cross-commodity contract pair",
+  "capture": {
+    "capturedAtUtc": "2026-09-30T04:31:28.232860+00:00",
+    "source": "Sina Finance exact-contract daily series",
+    "sourceUrls": {
+      "Y2501": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=Y2501",
+      "P2501": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=P2501"
+    },
+    "seriesRowCounts": {
+      "Y2501": 237,
+      "P2501": 242
+    },
+    "overlapRows": 237,
+    "overlapStart": "2024-01-16",
+    "overlapEnd": "2025-01-09",
+    "csvSha256": "a4b9c369bb6cf14ce7a7dbd39bafef36e3cdb26d29297bb0c6d259fbf8cbf8c5",
+    "csvBytes": 25628,
+    "dataFields": "date, OHLC close, volume, open interest, daily settlement; price unit is CNY/metric ton per cited DCE contract specs"
+  },
+  "dataQuality": {
+    "synchronizedRows": 237,
+    "duplicateDates": 0,
+    "ohlcInconsistentRows": 0,
+    "rowsWithZeroVolumeOrOpenInterest": 0,
+    "firstTenSessionsMedianVolume": {
+      "Y2501": 172.5,
+      "P2501": 73.5
+    },
+    "crossCheck20240826": {
+      "Y2501Close": 7566,
+      "P2501Close": 8078,
+      "matchedIndependentPublishedValues": true
+    }
+  },
+  "fixedParameters": {
+    "construction": "Y2501 close - P2501 close",
+    "lotCount": "1 contract per leg",
+    "multiplierPerLeg": "10 metric tons per contract",
+    "lookbackWindow": 60,
+    "entryZScore": 2,
+    "exitZScore": 0.5,
+    "stopZScore": 3.5,
+    "maxHoldingObservations": 20,
+    "parameterOrigin": "chosen before event-level replay, after source coverage and basic integrity inspection; not preregistered before data retrieval and not optimized"
+  },
+  "closeSpreadStatistics": {
+    "observations": 237,
+    "mean": -295.0042194092827,
+    "median": 82,
+    "sampleStandardDeviation": 854.0994588309617,
+    "minimum": -2370,
+    "maximum": 498,
+    "first": 496,
+    "last": -2260
+  },
+  "dailyCloseReturnPearsonCorrelation": 0.7435505900800006,
+  "diagnostics": {
+    "researchMode": "research_only",
+    "pairId": "DCE:Y2501-P2501",
+    "instrumentA": "Y2501",
+    "instrumentB": "P2501",
+    "relationshipRationale": "Y2501 and P2501 are DCE edible-oil contracts with the same delivery month and matching 10-metric-ton lot size; one lot per leg expresses a fixed Y-P price spread. Their downstream uses overlap, but they are not identical deliverables and the relationship is only a research hypothesis.",
+    "sourceRef": "Sina exact-contract daily bars captured 2026-09-30T04:31:28Z; input.csv + capture.json; closes cross-checked against Yonghui Futures 2024-08-26 daily report",
+    "construction": {
+      "kind": "fixed_spread",
+      "formula": "priceA - hedgeRatio * priceB",
+      "hedgeRatio": 1
+    },
+    "observations": 237,
+    "firstTimestamp": "2024-01-16T15:00:00+08:00",
+    "lastTimestamp": "2025-01-09T15:00:00+08:00",
+    "sampleFrequency": "caller_supplied_not_inferred",
+    "latestSpread": -2260,
+    "latestObservationZScore": -1.2158156810960963,
+    "zScoreBaseline": {
+      "observations": 60,
+      "firstTimestamp": "2024-10-15T15:00:00+08:00",
+      "lastTimestamp": "2025-01-08T15:00:00+08:00",
+      "standardDeviation": "sample_n_minus_1",
+      "excludesLatestObservation": true
+    },
+    "ar1Decay": {
+      "coefficient": 1.0055205933883464,
+      "halfLifeObservations": null,
+      "note": "The conventional positive-phi AR(1) decay half-life is undefined for this estimate; this alone does not establish stationarity or nonstationarity."
+    },
+    "stationarityTest": {
+      "status": "assessed",
+      "result": {
+        "observations": 237,
+        "effectiveObservations": 222,
+        "regression": "drift",
+        "lagsUsed": 14,
+        "statistic": 1.4521252646071563,
+        "criticalValues": [
+          {
+            "level": "1%",
+            "value": -3.43
+          },
+          {
+            "level": "5%",
+            "value": -2.86
+          },
+          {
+            "level": "10%",
+            "value": -2.57
+          }
+        ],
+        "verdict": "unit_root",
+        "note": "Asymptotic (Fuller 1976) critical values, not sample-size-adjusted MacKinnon values: short windows over-reject, so read 'stationary' on a long series. 'inconclusive' means rejection at 10% but not at 5%."
+      }
+    },
+    "signalProduced": false,
+    "executionAuthority": "none",
+    "limitations": [
+      "The pair, rationale, source reference, timestamp alignment, and completed-bar status are caller supplied and are not independently verified.",
+      "The reported spread is a price formula, not exchange-currency P&L or a contract-multiplier and lot-size-neutral hedge; margin, fees, bid-ask spread, slippage, rolls, and legging risk are excluded.",
+      "ADF tests the supplied formula as a univariate series using asymptotic Fuller critical values. It is not proof of future convergence; if hedgeRatio was estimated from this sample, these critical values are not Engle-Granger/MacKinnon cointegration calibration.",
+      "The AR(1) half-life and latest z-score are in-sample descriptors; no confidence interval, regime break analysis, multiple-testing correction, walk-forward test, or execution backtest is performed.",
+      "No trading signal, position size, portfolio risk aggregation, margin estimate, or order is produced."
+    ]
+  },
+  "scenarios": [
+    {
+      "id": "one_tick_width_one_tick_slippage",
+      "assumptions": {
+        "id": "one_tick_width_one_tick_slippage",
+        "feePerContractPerSide": 2.5,
+        "bidAskSpreadPoints": 2,
+        "slippagePointsPerSide": 2,
+        "assumption": "one-tick full quoted width per leg and one adverse tick per order; no historical bid/ask or fill data"
+      },
+      "contractMarginFloorProxyCnyPerLot": {
+        "Y2501": 4420,
+        "P2501": 5214
+      },
+      "summary": {
+        "pnlAccountingScope": "resolved_events_only",
+        "signalEvents": 4,
+        "resolvedEvents": 4,
+        "recoveredEvents": 0,
+        "stoppedEvents": 1,
+        "timedOutEvents": 3,
+        "censoredEvents": 0,
+        "recoveryRateAmongResolved": 0,
+        "recoveryRateAmongAllSignals": 0,
+        "allSignalRecoveryInterpretation": "censored_and_unfilled_signals_count_as_not_recovered",
+        "medianRecoveryObservations": null,
+        "meanRecoveryObservations": null,
+        "medianResolvedHoldingObservations": 20,
+        "meanResolvedHoldingObservations": 17,
+        "grossPnlCurrency": -10780,
+        "commissionCurrency": 40,
+        "bidAskCurrency": 160,
+        "slippageCurrency": 320,
+        "totalCostsCurrency": 520,
+        "netPnlCurrency": -11300,
+        "openPositionEvents": 0,
+        "openPositionEntryCostsCurrency": 0,
+        "openPositionMarkToMarketCurrency": 0,
+        "peakSingleTradeMarginEstimateCurrency": 9634,
+        "worstObservedAdverseLossCurrency": 6730
+      },
+      "events": [
+        {
+          "signalTimestamp": "2024-07-12T15:00:00+08:00",
+          "signalZScore": -2.4245905862710386,
+          "direction": "long_spread",
+          "status": "timed_out",
+          "entryTimestamp": "2024-07-15T15:00:00+08:00",
+          "entryPriceA": 7672,
+          "entryPriceB": 7580,
+          "entryCostsCurrency": {
+            "commission": 5,
+            "bidAsk": 20,
+            "slippage": 40,
+            "total": 65
+          },
+          "initialMarginEstimateCurrency": 9634,
+          "exitTimestamp": "2024-08-12T15:00:00+08:00",
+          "exitPriceA": 7516,
+          "exitPriceB": 7568,
+          "exitTrigger": "time_limit",
+          "observationsHeld": 20,
+          "grossPnlCurrency": -1440,
+          "costsCurrency": {
+            "commission": 10,
+            "bidAsk": 40,
+            "slippage": 80,
+            "total": 130
+          },
+          "netPnlCurrency": -1570,
+          "lastObservedMarkToMarketCurrency": -1440,
+          "maxAdverseLossCurrency": 1790,
+          "entryVolume": {
+            "Y2501": 80184,
+            "P2501": 94640
+          },
+          "exitVolume": {
+            "Y2501": 247320,
+            "P2501": 347192
+          }
+        },
+        {
+          "signalTimestamp": "2024-08-14T15:00:00+08:00",
+          "signalZScore": -2.091382814420505,
+          "direction": "long_spread",
+          "status": "stopped",
+          "entryTimestamp": "2024-08-15T15:00:00+08:00",
+          "entryPriceA": 7364,
+          "entryPriceB": 7496,
+          "entryCostsCurrency": {
+            "commission": 5,
+            "bidAsk": 20,
+            "slippage": 40,
+            "total": 65
+          },
+          "initialMarginEstimateCurrency": 9634,
+          "exitTimestamp": "2024-08-27T15:00:00+08:00",
+          "exitPriceA": 7632,
+          "exitPriceB": 8062,
+          "exitTrigger": "adverse_stop",
+          "observationsHeld": 8,
+          "grossPnlCurrency": -2980,
+          "costsCurrency": {
+            "commission": 10,
+            "bidAsk": 40,
+            "slippage": 80,
+            "total": 130
+          },
+          "netPnlCurrency": -3110,
+          "lastObservedMarkToMarketCurrency": -2980,
+          "maxAdverseLossCurrency": 3930,
+          "entryVolume": {
+            "Y2501": 388984,
+            "P2501": 604328
+          },
+          "exitVolume": {
+            "Y2501": 534636,
+            "P2501": 693715
+          }
+        },
+        {
+          "signalTimestamp": "2024-09-27T15:00:00+08:00",
+          "signalZScore": -2.071599680393707,
+          "direction": "long_spread",
+          "status": "timed_out",
+          "entryTimestamp": "2024-09-30T15:00:00+08:00",
+          "entryPriceA": 8148,
+          "entryPriceB": 8568,
+          "entryCostsCurrency": {
+            "commission": 5,
+            "bidAsk": 20,
+            "slippage": 40,
+            "total": 65
+          },
+          "initialMarginEstimateCurrency": 9634,
+          "exitTimestamp": "2024-11-04T15:00:00+08:00",
+          "exitPriceA": 8670,
+          "exitPriceB": 9714,
+          "exitTrigger": "time_limit",
+          "observationsHeld": 20,
+          "grossPnlCurrency": -6240,
+          "costsCurrency": {
+            "commission": 10,
+            "bidAsk": 40,
+            "slippage": 80,
+            "total": 130
+          },
+          "netPnlCurrency": -6370,
+          "lastObservedMarkToMarketCurrency": -6240,
+          "maxAdverseLossCurrency": 6730,
+          "entryVolume": {
+            "Y2501": 450264,
+            "P2501": 704928
+          },
+          "exitVolume": {
+            "Y2501": 610287,
+            "P2501": 829633
+          }
+        },
+        {
+          "signalTimestamp": "2024-11-29T15:00:00+08:00",
+          "signalZScore": -2.195033318576874,
+          "direction": "long_spread",
+          "status": "timed_out",
+          "entryTimestamp": "2024-12-02T15:00:00+08:00",
+          "entryPriceA": 8100,
+          "entryPriceB": 10210,
+          "entryCostsCurrency": {
+            "commission": 5,
+            "bidAsk": 20,
+            "slippage": 40,
+            "total": 65
+          },
+          "initialMarginEstimateCurrency": 9634,
+          "exitTimestamp": "2024-12-30T15:00:00+08:00",
+          "exitPriceA": 7772,
+          "exitPriceB": 9894,
+          "exitTrigger": "time_limit",
+          "observationsHeld": 20,
+          "grossPnlCurrency": -120,
+          "costsCurrency": {
+            "commission": 10,
+            "bidAsk": 40,
+            "slippage": 80,
+            "total": 130
+          },
+          "netPnlCurrency": -250,
+          "lastObservedMarkToMarketCurrency": -120,
+          "maxAdverseLossCurrency": 2730,
+          "entryVolume": {
+            "Y2501": 378969,
+            "P2501": 1208801
+          },
+          "exitVolume": {
+            "Y2501": 6064,
+            "P2501": 16898
+          }
+        }
+      ]
+    },
+    {
+      "id": "two_tick_width_two_tick_slippage_published_account_fee",
+      "assumptions": {
+        "id": "two_tick_width_two_tick_slippage_published_account_fee",
+        "feePerContractPerSide": 7.5,
+        "bidAskSpreadPoints": 4,
+        "slippagePointsPerSide": 4,
+        "assumption": "two-tick full quoted width per leg, two adverse ticks per order, and 7.5 CNY/side/contract published account-facing fee from the contemporaneous 2024-05 schedule; not the user's actual tariff"
+      },
+      "contractMarginFloorProxyCnyPerLot": {
+        "Y2501": 4420,
+        "P2501": 5214
+      },
+      "summary": {
+        "pnlAccountingScope": "resolved_events_only",
+        "signalEvents": 4,
+        "resolvedEvents": 4,
+        "recoveredEvents": 0,
+        "stoppedEvents": 1,
+        "timedOutEvents": 3,
+        "censoredEvents": 0,
+        "recoveryRateAmongResolved": 0,
+        "recoveryRateAmongAllSignals": 0,
+        "allSignalRecoveryInterpretation": "censored_and_unfilled_signals_count_as_not_recovered",
+        "medianRecoveryObservations": null,
+        "meanRecoveryObservations": null,
+        "medianResolvedHoldingObservations": 20,
+        "meanResolvedHoldingObservations": 17,
+        "grossPnlCurrency": -10780,
+        "commissionCurrency": 120,
+        "bidAskCurrency": 320,
+        "slippageCurrency": 640,
+        "totalCostsCurrency": 1080,
+        "netPnlCurrency": -11860,
+        "openPositionEvents": 0,
+        "openPositionEntryCostsCurrency": 0,
+        "openPositionMarkToMarketCurrency": 0,
+        "peakSingleTradeMarginEstimateCurrency": 9634,
+        "worstObservedAdverseLossCurrency": 6870
+      },
+      "events": [
+        {
+          "signalTimestamp": "2024-07-12T15:00:00+08:00",
+          "signalZScore": -2.4245905862710386,
+          "direction": "long_spread",
+          "status": "timed_out",
+          "entryTimestamp": "2024-07-15T15:00:00+08:00",
+          "entryPriceA": 7672,
+          "entryPriceB": 7580,
+          "entryCostsCurrency": {
+            "commission": 15,
+            "bidAsk": 40,
+            "slippage": 80,
+            "total": 135
+          },
+          "initialMarginEstimateCurrency": 9634,
+          "exitTimestamp": "2024-08-12T15:00:00+08:00",
+          "exitPriceA": 7516,
+          "exitPriceB": 7568,
+          "exitTrigger": "time_limit",
+          "observationsHeld": 20,
+          "grossPnlCurrency": -1440,
+          "costsCurrency": {
+            "commission": 30,
+            "bidAsk": 80,
+            "slippage": 160,
+            "total": 270
+          },
+          "netPnlCurrency": -1710,
+          "lastObservedMarkToMarketCurrency": -1440,
+          "maxAdverseLossCurrency": 1930,
+          "entryVolume": {
+            "Y2501": 80184,
+            "P2501": 94640
+          },
+          "exitVolume": {
+            "Y2501": 247320,
+            "P2501": 347192
+          }
+        },
+        {
+          "signalTimestamp": "2024-08-14T15:00:00+08:00",
+          "signalZScore": -2.091382814420505,
+          "direction": "long_spread",
+          "status": "stopped",
+          "entryTimestamp": "2024-08-15T15:00:00+08:00",
+          "entryPriceA": 7364,
+          "entryPriceB": 7496,
+          "entryCostsCurrency": {
+            "commission": 15,
+            "bidAsk": 40,
+            "slippage": 80,
+            "total": 135
+          },
+          "initialMarginEstimateCurrency": 9634,
+          "exitTimestamp": "2024-08-27T15:00:00+08:00",
+          "exitPriceA": 7632,
+          "exitPriceB": 8062,
+          "exitTrigger": "adverse_stop",
+          "observationsHeld": 8,
+          "grossPnlCurrency": -2980,
+          "costsCurrency": {
+            "commission": 30,
+            "bidAsk": 80,
+            "slippage": 160,
+            "total": 270
+          },
+          "netPnlCurrency": -3250,
+          "lastObservedMarkToMarketCurrency": -2980,
+          "maxAdverseLossCurrency": 4070,
+          "entryVolume": {
+            "Y2501": 388984,
+            "P2501": 604328
+          },
+          "exitVolume": {
+            "Y2501": 534636,
+            "P2501": 693715
+          }
+        },
+        {
+          "signalTimestamp": "2024-09-27T15:00:00+08:00",
+          "signalZScore": -2.071599680393707,
+          "direction": "long_spread",
+          "status": "timed_out",
+          "entryTimestamp": "2024-09-30T15:00:00+08:00",
+          "entryPriceA": 8148,
+          "entryPriceB": 8568,
+          "entryCostsCurrency": {
+            "commission": 15,
+            "bidAsk": 40,
+            "slippage": 80,
+            "total": 135
+          },
+          "initialMarginEstimateCurrency": 9634,
+          "exitTimestamp": "2024-11-04T15:00:00+08:00",
+          "exitPriceA": 8670,
+          "exitPriceB": 9714,
+          "exitTrigger": "time_limit",
+          "observationsHeld": 20,
+          "grossPnlCurrency": -6240,
+          "costsCurrency": {
+            "commission": 30,
+            "bidAsk": 80,
+            "slippage": 160,
+            "total": 270
+          },
+          "netPnlCurrency": -6510,
+          "lastObservedMarkToMarketCurrency": -6240,
+          "maxAdverseLossCurrency": 6870,
+          "entryVolume": {
+            "Y2501": 450264,
+            "P2501": 704928
+          },
+          "exitVolume": {
+            "Y2501": 610287,
+            "P2501": 829633
+          }
+        },
+        {
+          "signalTimestamp": "2024-11-29T15:00:00+08:00",
+          "signalZScore": -2.195033318576874,
+          "direction": "long_spread",
+          "status": "timed_out",
+          "entryTimestamp": "2024-12-02T15:00:00+08:00",
+          "entryPriceA": 8100,
+          "entryPriceB": 10210,
+          "entryCostsCurrency": {
+            "commission": 15,
+            "bidAsk": 40,
+            "slippage": 80,
+            "total": 135
+          },
+          "initialMarginEstimateCurrency": 9634,
+          "exitTimestamp": "2024-12-30T15:00:00+08:00",
+          "exitPriceA": 7772,
+          "exitPriceB": 9894,
+          "exitTrigger": "time_limit",
+          "observationsHeld": 20,
+          "grossPnlCurrency": -120,
+          "costsCurrency": {
+            "commission": 30,
+            "bidAsk": 80,
+            "slippage": 160,
+            "total": 270
+          },
+          "netPnlCurrency": -390,
+          "lastObservedMarkToMarketCurrency": -120,
+          "maxAdverseLossCurrency": 2870,
+          "entryVolume": {
+            "Y2501": 378969,
+            "P2501": 1208801
+          },
+          "exitVolume": {
+            "Y2501": 6064,
+            "P2501": 16898
+          }
+        }
+      ]
+    }
+  ],
+  "interpretation": "One historical maturity is a descriptive case only. The cost scenarios use explicit assumptions because daily OHLC data does not contain historical bid/ask quotes, market depth, fills, or legging; account brokerage fees and time-varying margin are not reconstructed."
+}

@@ -204,7 +204,7 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     id: "quant_lab",
     label: "quant_lab",
     description:
-      "Deterministic quant toolkit: portfolio construction, risk decomposition, attribution, and association testing with significance",
+      "Deterministic quant toolkit: portfolio construction, risk decomposition, attribution, association testing with significance, caller-supplied pair-spread diagnostics, and bounded fixed-spread reversion replay with explicit futures contract/cost assumptions and next-observation close proxies",
     sectionId: "memory",
     profiles: ["coding"],
     includeInOpenClawGroup: true,

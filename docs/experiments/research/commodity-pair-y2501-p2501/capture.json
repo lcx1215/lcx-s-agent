@@ -1,0 +1,18 @@
+{
+  "capturedAtUtc": "2026-09-30T04:31:28.232860+00:00",
+  "source": "Sina Finance exact-contract daily series",
+  "sourceUrls": {
+    "Y2501": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=Y2501",
+    "P2501": "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/InnerFuturesNewService.getDailyKLine?symbol=P2501"
+  },
+  "seriesRowCounts": {
+    "Y2501": 237,
+    "P2501": 242
+  },
+  "overlapRows": 237,
+  "overlapStart": "2024-01-16",
+  "overlapEnd": "2025-01-09",
+  "csvSha256": "a4b9c369bb6cf14ce7a7dbd39bafef36e3cdb26d29297bb0c6d259fbf8cbf8c5",
+  "csvBytes": 25628,
+  "dataFields": "date, OHLC close, volume, open interest, daily settlement; price unit is CNY/metric ton per cited DCE contract specs"
+}
