@@ -35,6 +35,7 @@ import {
   type FinanceExecutionSafetyFailure,
   type FinanceExecutionSafetyFacts,
 } from "./finance-execution-safety.js";
+import type { UsEquityPriceNormalizationProvenance } from "./finance-us-equity-price-normalization.js";
 
 export const FINANCE_EXECUTION_RECEIPT_SCHEMA = "lcx_finance_execution_receipt_v1" as const;
 
@@ -128,6 +129,8 @@ export type FinanceExecutionIntent = Readonly<{
    * with none is worse than not asking for one, because it looks controlled.
    */
   stopPrice?: number;
+  /** Deterministic, non-authorizing source/normalized price provenance. */
+  priceNormalization?: UsEquityPriceNormalizationProvenance;
   /**
    * Explicit limit price for a crypto stop-limit protection order.
    *

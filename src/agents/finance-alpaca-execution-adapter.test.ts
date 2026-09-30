@@ -240,6 +240,39 @@ describe("createAlpacaExecutionAdapter", () => {
     expect(t.bodies[0]?.order_class).toBe("oto");
     expect(t.bodies[0]?.stop_loss).toEqual({ stop_price: "90" });
     expect(t.bodies[0]?.take_profit).toBeUndefined();
+
+    const blockedPost = vi.fn();
+    const blocked = createAlpacaExecutionAdapter({ instruments: ["AAPL"], postJson: blockedPost });
+    await expect(
+      blocked.execute({ ...baseIntent, stopPrice: 90.001 }, new AbortController().signal),
+    ).rejects.toMatchObject({ executionStage: "pre_dispatch" });
+    expect(blockedPost).not.toHaveBeenCalled();
+  });
+
+  it("refuses Alpaca OTO stops less than one cent below the market, but accepts one cent", async () => {
+    for (const [referencePrice, stopPrice] of [
+      [1, 0.995],
+      [100.005, 100],
+    ] as const) {
+      const blockedPost = vi.fn();
+      const blocked = createAlpacaExecutionAdapter({
+        instruments: ["AAPL"],
+        postJson: blockedPost,
+      });
+      await expect(
+        blocked.execute({ ...baseIntent, referencePrice, stopPrice }, new AbortController().signal),
+      ).rejects.toMatchObject({ executionStage: "pre_dispatch" });
+      expect(blockedPost).not.toHaveBeenCalled();
+    }
+
+    stubCredentials(PAPER);
+    const t = capturingTransport("ord-12-cent");
+    const adapter = createAlpacaExecutionAdapter({ instruments: ["AAPL"], postJson: t.fn });
+    await adapter.execute(
+      { ...baseIntent, referencePrice: 100.01, stopPrice: 100 },
+      new AbortController().signal,
+    );
+    expect(t.bodies[0]?.stop_loss).toEqual({ stop_price: "100" });
   });
 
   it("sends a sell as a plain order, because a stop below the market would be rejected", async () => {
@@ -255,6 +288,19 @@ describe("createAlpacaExecutionAdapter", () => {
     expect(t.bodies[0]?.order_class).toBeUndefined();
     expect(t.bodies[0]?.stop_loss).toBeUndefined();
     expect(t.bodies[0]?.side).toBe("sell");
+
+    const offGridAuditStop = capturingTransport("ord-13-off-grid-audit");
+    const auditStopAdapter = createAlpacaExecutionAdapter({
+      instruments: ["AAPL"],
+      postJson: offGridAuditStop.fn,
+    });
+    await auditStopAdapter.execute(
+      { ...baseIntent, side: "sell", stopPrice: 90.001 },
+      new AbortController().signal,
+    );
+    expect(offGridAuditStop.bodies[0]).toMatchObject({ side: "sell", qty: "1" });
+    expect(offGridAuditStop.bodies[0]?.stop_loss).toBeUndefined();
+    expect(offGridAuditStop.bodies[0]?.order_class).toBeUndefined();
   });
 
   it("reports zero for an order that reaches a terminal unfilled state", async () => {

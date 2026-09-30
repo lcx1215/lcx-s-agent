@@ -3,6 +3,7 @@ import {
   compileExecutionIntent,
   type FinanceResearchConclusion,
 } from "./finance-intent-compiler.js";
+import { normalizeUsEquityProtectionPrices } from "./finance-us-equity-price-normalization.js";
 
 const market = { referencePrice: 100, referencePriceAt: "2026-09-20T00:00:00.000Z" };
 const equity = 100_000;
@@ -265,6 +266,51 @@ describe("compileExecutionIntent", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.intent.stopPrice).toBe(95);
+    }
+  });
+
+  it("keeps generic prices unchanged and binds pre-normalized provenance without creating a target leg", () => {
+    const conclusion = { ...equityConclusion, invalidationPrice: 95.004, targetPrice: 110.006 };
+    const generic = compileExecutionIntent({
+      conclusion,
+      market,
+      equity,
+      runAuthorizationId: "auth-1",
+    });
+    expect(generic.ok).toBe(true);
+    if (generic.ok) {
+      expect(generic.intent.stopPrice).toBe(95.004);
+      expect(generic.intent.priceNormalization).toBeUndefined();
+    }
+
+    const normalized = normalizeUsEquityProtectionPrices({
+      instrument: "AAPL",
+      assetClass: "us_equity",
+      side: "buy",
+      entryPrice: 100,
+      stopPrice: 95.004,
+      targetPrice: 110.006,
+    });
+    expect(normalized.ok).toBe(true);
+    if (!normalized.ok) {
+      return;
+    }
+    const bound = compileExecutionIntent({
+      conclusion: {
+        ...conclusion,
+        invalidationPrice: normalized.stopPrice,
+        targetPrice: normalized.targetPrice,
+        priceNormalization: normalized.provenance,
+      },
+      market,
+      equity,
+      runAuthorizationId: "auth-1",
+    });
+    expect(bound.ok).toBe(true);
+    if (bound.ok) {
+      expect(bound.intent.stopPrice).toBe(normalized.stopPrice);
+      expect(bound.intent.priceNormalization).toEqual(normalized.provenance);
+      expect(bound.intent).not.toHaveProperty("targetPrice");
     }
   });
 

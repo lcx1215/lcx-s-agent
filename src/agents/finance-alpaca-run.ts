@@ -18,6 +18,10 @@ import {
 } from "./finance-intent-compiler.js";
 import type { FinanceStrategyClass } from "./finance-mandate.js";
 import {
+  isLegalUsEquityPrice,
+  isValidAlpacaLongStopDistance,
+} from "./finance-us-equity-price-normalization.js";
+import {
   createFinanceUncachedFetch,
   createFinanceWriteTransport,
   type FinanceUncachedFetch,
@@ -326,6 +330,25 @@ export type FinanceAlpacaRunResult = Readonly<
 export function compileFinanceAlpacaOrderIntent(
   request: FinanceAlpacaRunRequest,
 ): FinanceIntentCompilationResult {
+  const { conclusion } = request;
+  const usEquityLong =
+    (conclusion.assetClass?.trim().toLowerCase() === "us_equity" ||
+      conclusion.assetClass?.trim().toLowerCase() === "etf") &&
+    conclusion.direction === "buy" &&
+    /^[A-Z][A-Z0-9.-]{0,9}$/u.test(conclusion.instrument?.trim().toUpperCase() ?? "");
+  if (
+    usEquityLong &&
+    conclusion.invalidationPrice !== undefined &&
+    (!isLegalUsEquityPrice(conclusion.invalidationPrice) ||
+      !isValidAlpacaLongStopDistance(conclusion.invalidationPrice, request.market.referencePrice))
+  ) {
+    return {
+      ok: false,
+      refusals: [
+        "refuse: Alpaca US-equity stop price violates venue tick or minimum-distance rules",
+      ],
+    };
+  }
   const committed = request.committedInstrumentNotional ?? 0;
   const orderCap = request.budget.maxOrderNotional;
   const instrumentCap = request.budget.maxInstrumentNotional;

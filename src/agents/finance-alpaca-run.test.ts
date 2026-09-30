@@ -677,6 +677,72 @@ it("preflights the same Paper sizing without reading or claiming execution state
   expect(read).not.toHaveBeenCalled();
 });
 
+it("refuses an off-tick US-equity stop before model review or execution state access", () => {
+  const createSafetyContext = vi.fn();
+  const transport = vi.fn();
+  const read = vi.fn();
+  const compiled = compileFinanceAlpacaOrderIntent(
+    request({
+      conclusion: { ...CONCLUSION, invalidationPrice: 90.001 },
+      createSafetyContext,
+      transport,
+      read,
+    }),
+  );
+  expect(compiled).toMatchObject({
+    ok: false,
+    refusals: [expect.stringContaining("venue tick")],
+  });
+  expect(createSafetyContext).not.toHaveBeenCalled();
+  expect(transport).not.toHaveBeenCalled();
+  expect(read).not.toHaveBeenCalled();
+});
+
+it("refuses an Alpaca OTO stop inside the venue one-cent threshold before execution access", () => {
+  const createSafetyContext = vi.fn();
+  const transport = vi.fn();
+  const read = vi.fn();
+  const compiled = compileFinanceAlpacaOrderIntent(
+    request({
+      conclusion: { ...CONCLUSION, invalidationPrice: 100 },
+      market: { referencePrice: 100.005, referencePriceAt: new Date().toISOString() },
+      createSafetyContext,
+      transport,
+      read,
+    }),
+  );
+  expect(compiled).toMatchObject({
+    ok: false,
+    refusals: [expect.stringContaining("minimum-distance")],
+  });
+  expect(createSafetyContext).not.toHaveBeenCalled();
+  expect(transport).not.toHaveBeenCalled();
+  expect(read).not.toHaveBeenCalled();
+});
+
+it("allows exactly one cent of Alpaca OTO stop clearance during preflight", () => {
+  const compiled = compileFinanceAlpacaOrderIntent(
+    request({
+      conclusion: { ...CONCLUSION, invalidationPrice: 100 },
+      market: { referencePrice: 100.01, referencePriceAt: new Date().toISOString() },
+    }),
+  );
+  expect(compiled).toMatchObject({ ok: true, intent: { stopPrice: 100, referencePrice: 100.01 } });
+});
+
+it("rejects a legal sub-dollar stop that is less than one cent below entry", () => {
+  const compiled = compileFinanceAlpacaOrderIntent(
+    request({
+      conclusion: { ...CONCLUSION, invalidationPrice: 0.995 },
+      market: { referencePrice: 1, referencePriceAt: new Date().toISOString() },
+    }),
+  );
+  expect(compiled).toMatchObject({
+    ok: false,
+    refusals: [expect.stringContaining("minimum-distance")],
+  });
+});
+
 it("fits a Paper entry inside order and remaining instrument caps before placement", async () => {
   const bodies: Record<string, unknown>[] = [];
   const result = await runFinanceAlpacaOrder(

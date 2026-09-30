@@ -27,6 +27,10 @@ import {
   type FinanceStrategyClass,
 } from "./finance-mandate.js";
 import { calculateFinancePositionSize } from "./finance-position-sizing.js";
+import {
+  US_EQUITY_PRICE_POLICY_VERSION,
+  type UsEquityPriceNormalizationProvenance,
+} from "./finance-us-equity-price-normalization.js";
 
 export type FinanceConclusionDirection = "buy" | "sell" | "hold" | "avoid";
 
@@ -48,10 +52,12 @@ export type FinanceResearchConclusion = Readonly<{
   /** Non-price condition that invalidates the thesis. Required for class C. */
   invalidationCondition?: string;
   /**
-   * Target price. Checked only for coherence: a target on the wrong side of the entry is refused.
-   * No reward/risk ratio floor is enforced.
+   * Target price retained as candidate evidence for pre-review venue normalization and coherence.
+   * It is never an execution-intent target. No reward/risk ratio floor is enforced here.
    */
   targetPrice?: number;
+  /** Host-bound audit provenance for prices normalized before review; never model authority. */
+  priceNormalization?: UsEquityPriceNormalizationProvenance;
 }>;
 
 export type FinanceIntentCompilationResult = Readonly<
@@ -92,9 +98,28 @@ const DEFAULT_MIN_CONVICTION: Record<FinanceStrategyClass, number> = {
 export function compileExecutionIntent(
   params: CompileExecutionIntentParams,
 ): FinanceIntentCompilationResult {
-  const { conclusion, market, equity } = params;
+  const { market, equity } = params;
+  const conclusion = params.conclusion;
   const refusals: string[] = [];
   const notes: string[] = [];
+  const strategyClass =
+    params.strategyClass ??
+    classifyFinanceStrategy({
+      assetClass: conclusion.assetClass ?? "",
+      ...(conclusion.horizonDays !== undefined
+        ? { holdingPeriodDays: conclusion.horizonDays }
+        : {}),
+    });
+  const priceNormalization = conclusion.priceNormalization;
+  if (
+    priceNormalization &&
+    (priceNormalization.policyVersion !== US_EQUITY_PRICE_POLICY_VERSION ||
+      priceNormalization.instrument !== conclusion.instrument?.trim().toUpperCase() ||
+      priceNormalization.normalized.stopPrice !== conclusion.invalidationPrice ||
+      priceNormalization.normalized.targetPrice !== conclusion.targetPrice)
+  ) {
+    refusals.push("refuse: normalized price provenance does not match this candidate and quote");
+  }
   const decisionRef: FinanceDecisionReference | undefined = conclusion.decisionRef
     ? { ...conclusion.decisionRef, id: conclusion.decisionRef.id.trim() }
     : undefined;
@@ -132,14 +157,6 @@ export function compileExecutionIntent(
     refusals.push("refuse: equity is missing or not positive");
   }
 
-  const strategyClass =
-    params.strategyClass ??
-    classifyFinanceStrategy({
-      assetClass: conclusion.assetClass ?? "",
-      ...(conclusion.horizonDays !== undefined
-        ? { holdingPeriodDays: conclusion.horizonDays }
-        : {}),
-    });
   if (strategyClass === "unknown") {
     refusals.push("refuse: strategy class cannot be determined from the conclusion");
   }
@@ -172,6 +189,9 @@ export function compileExecutionIntent(
   // would launder a guess into an enforced decision -- the same reason `classifyFinanceStrategy`
   // refuses instead of guessing a class.
   const target = conclusion.targetPrice;
+  if (target !== undefined && (!Number.isFinite(target) || target <= 0)) {
+    refusals.push("refuse: target price must be positive and finite");
+  }
   if (
     target !== undefined &&
     Number.isFinite(target) &&
@@ -363,6 +383,7 @@ export function compileExecutionIntent(
       ...(classRules.stopLossKind === "structural" && conclusion.invalidationPrice !== undefined
         ? { stopPrice: conclusion.invalidationPrice }
         : {}),
+      ...(priceNormalization === undefined ? {} : { priceNormalization }),
       rationale: conclusion.thesis ?? "",
     },
   };

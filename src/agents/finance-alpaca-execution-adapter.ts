@@ -36,6 +36,10 @@ import {
 import type { FetchImpl } from "./finance-live-market-source.js";
 import { executeFinanceProtectedReduction } from "./finance-protection-coordination.js";
 import {
+  isLegalUsEquityPrice,
+  isValidAlpacaLongStopDistance,
+} from "./finance-us-equity-price-normalization.js";
+import {
   createFinanceUncachedFetch,
   type FinanceUncachedFetch,
 } from "./finance-write-transport.js";
@@ -597,6 +601,20 @@ export function createAlpacaExecutionAdapter(
       try {
         const symbol = normalizeInstrument(intent.instrument);
         const isCrypto = symbol.includes("/");
+        if (!isCrypto && /^[A-Z][A-Z0-9.-]{0,9}$/u.test(symbol)) {
+          const invalidTick =
+            intent.side === "buy" &&
+            intent.stopPrice !== undefined &&
+            !isLegalUsEquityPrice(intent.stopPrice);
+          if (
+            invalidTick ||
+            (intent.stopPrice !== undefined &&
+              intent.side === "buy" &&
+              !isValidAlpacaLongStopDistance(intent.stopPrice, intent.referencePrice))
+          ) {
+            throw new AlpacaOrderRejectedError({ executionStage: "pre_dispatch" });
+          }
+        }
         const timeInForce = options.timeInForce ?? (isCrypto ? "gtc" : "day");
         if (isCrypto && timeInForce !== "gtc" && timeInForce !== "ioc") {
           throw new Error("Alpaca crypto requires gtc or ioc time_in_force");
@@ -721,14 +739,7 @@ export function createAlpacaExecutionAdapter(
         // This system declares no short selling, so "sell" means "reduce". If shorting is ever
         // admitted, that needs its own flag on the intent, not a bracket inferred from a side.
         if (intent.stopPrice !== undefined && intent.side === "buy" && !isCrypto) {
-          // Alpaca's `bracket` requires BOTH exit legs, and it rejects one with only a stop:
-          // "bracket orders require take_profit.limit_price". A take-profit is a price target,
-          // and this system has no business inventing one — the rule declares an invalidation
-          // level and no upside target, and a threshold the caller did not state is exactly what
-          // "the model must not carry its own thresholds" forbids.
-          //
-          // `oto` is the construct that matches what was actually declared: fill the entry, then
-          // place the stop. Nothing is guessed, and the entry still carries its protection.
+          // OTO attaches the declared stop without inventing a take-profit threshold.
           body.order_class = "oto";
           body.stop_loss = { stop_price: String(intent.stopPrice) };
         }
