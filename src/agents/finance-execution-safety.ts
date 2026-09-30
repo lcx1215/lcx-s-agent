@@ -317,7 +317,15 @@ export type FinanceExecutionSafetyClaim = {
   notional: number;
   snapshotId: string;
   at: string;
-  status: "reserved" | "confirmed" | "unknown" | "not_started" | "rejected";
+  status: "reserved" | "confirmed" | "unknown" | "not_started" | "rejected" | "operator_retired";
+  operatorRetirement?: Readonly<{
+    authorizedBy: "user";
+    authorizationRef: string;
+    reason: string;
+    brokerObservationRef: string;
+    retiredAt: string;
+    originalStatus: "reserved" | "unknown";
+  }>;
   failure?: FinanceExecutionSafetyAttempt;
   binding?: Readonly<{
     accountId: string;
@@ -348,7 +356,7 @@ async function readJournal(file: string): Promise<FinanceExecutionSafetyClaim[]>
   return parseJournal(raw);
 }
 function parseJournal(raw: string): FinanceExecutionSafetyClaim[] {
-  return raw
+  const rows = raw
     .split("\n")
     .filter(Boolean)
     .map((line) => {
@@ -360,7 +368,14 @@ function parseJournal(raw: string): FinanceExecutionSafetyClaim[] {
         !positive(value.notional) ||
         !text(value.snapshotId) ||
         !Number.isFinite(Date.parse(value.at)) ||
-        !["reserved", "confirmed", "unknown", "not_started", "rejected"].includes(value.status) ||
+        ![
+          "reserved",
+          "confirmed",
+          "unknown",
+          "not_started",
+          "rejected",
+          "operator_retired",
+        ].includes(value.status) ||
         (value.status === "not_started" &&
           (!value.binding ||
             value.failure?.phase !== "not_started" ||
@@ -381,12 +396,55 @@ function parseJournal(raw: string): FinanceExecutionSafetyClaim[] {
               (!Number.isSafeInteger(value.failure.venueResponse!.brokerCode) ||
                 value.failure.venueResponse!.brokerCode < 0)) ||
             value.fill !== undefined ||
-            value.receipt !== undefined))
+            value.receipt !== undefined)) ||
+        (value.status === "operator_retired" &&
+          (!value.binding ||
+            value.binding.venue !== "alpaca:paper" ||
+            !text(value.binding.accountId) ||
+            value.id !==
+              digest([
+                value.binding.accountId,
+                value.binding.venue,
+                value.binding.intent.runAuthorizationId,
+                value.binding.intent.intentId,
+              ]) ||
+            !value.operatorRetirement ||
+            value.operatorRetirement.authorizedBy !== "user" ||
+            !text(value.operatorRetirement.authorizationRef) ||
+            value.operatorRetirement.authorizationRef.length > 500 ||
+            !text(value.operatorRetirement.reason) ||
+            value.operatorRetirement.reason.length > 1000 ||
+            !/^(?:sha256:)?[a-f0-9]{64}$/.test(value.operatorRetirement.brokerObservationRef) ||
+            !Number.isFinite(Date.parse(value.operatorRetirement.retiredAt)) ||
+            !["reserved", "unknown"].includes(value.operatorRetirement.originalStatus) ||
+            value.fill !== undefined ||
+            value.receipt !== undefined ||
+            value.adapterKind !== undefined))
       ) {
         throw new Error("invalid execution safety journal");
       }
       return value;
     });
+  const prior = new Map<string, FinanceExecutionSafetyClaim>();
+  for (const row of rows) {
+    if (row.status === "operator_retired") {
+      const previous = prior.get(row.id);
+      if (
+        !previous ||
+        (previous.status !== "reserved" && previous.status !== "unknown") ||
+        row.operatorRetirement?.originalStatus !== previous.status ||
+        row.run !== previous.run ||
+        row.instrument !== previous.instrument ||
+        row.notional !== previous.notional ||
+        row.snapshotId !== previous.snapshotId ||
+        stableStringify(row.binding) !== stableStringify(previous.binding)
+      ) {
+        throw new Error("invalid execution safety journal");
+      }
+    }
+    prior.set(row.id, row);
+  }
+  return rows;
 }
 async function appendJournal(file: string, claim: FinanceExecutionSafetyClaim): Promise<void> {
   const handle = await fs.open(file, "a", 0o600);
@@ -1026,6 +1084,145 @@ export async function readFinanceExecutionSafetyClaims(params: {
   }
 }
 
+/**
+ * Operator-only retirement of one explicitly authorized Paper pending claim.
+ * This appends an audit marker; it never represents broker cancellation or fill.
+ */
+export async function retireFinancePaperExecutionClaim(params: {
+  stateDir: string;
+  accountId: string;
+  claimId: string;
+  authorizationRef: string;
+  reason: string;
+  brokerObservationRef: string;
+  expectedJournalHash: string;
+  signal?: AbortSignal;
+}): Promise<Readonly<{ retired: true; alreadyRetired: boolean; journalHash: string }>> {
+  if (
+    !text(params.accountId) ||
+    !text(params.claimId) ||
+    !text(params.authorizationRef) ||
+    params.authorizationRef.length > 500 ||
+    !text(params.reason) ||
+    params.reason.length > 1000 ||
+    !/^(?:sha256:)?[a-f0-9]{64}$/.test(params.brokerObservationRef) ||
+    !/^[a-f0-9]{64}$/.test(params.expectedJournalHash)
+  ) {
+    throw new Error("invalid Paper execution retirement proof");
+  }
+  const signal = AbortSignal.any([
+    AbortSignal.timeout(30_000),
+    ...(params.signal ? [params.signal] : []),
+  ]);
+  signal.throwIfAborted();
+  const root = await fs.realpath(params.stateDir);
+  const accountKey = digest(["alpaca:paper", params.accountId]);
+  const registeredRoot = accountRoots.get(accountKey);
+  if (registeredRoot !== undefined && registeredRoot !== root) {
+    throw new Error("execution safety account root conflict");
+  }
+  accountRoots.set(accountKey, root);
+  const file = path.join(root, `execution-safety-${accountKey}.jsonl`);
+  const prior = queues.get(file) ?? Promise.resolve();
+  let releaseQueue!: () => void;
+  const own = new Promise<void>((resolve) => {
+    releaseQueue = resolve;
+  });
+  const tail = prior.then(() => own);
+  queues.set(file, tail);
+  try {
+    await bounded(prior, signal);
+    signal.throwIfAborted();
+    const lock = await acquireFileLock(file, {
+      stale: Infinity,
+      retries: { retries: 20, factor: 1, minTimeout: 25, maxTimeout: 25 },
+    });
+    try {
+      let raw: string;
+      try {
+        raw = await fs.readFile(file, "utf8");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+          throw new Error("Paper execution retirement claim not found", { cause: error });
+        }
+        throw new Error("Paper execution retirement journal unavailable", { cause: error });
+      }
+      const journalHash = createHash("sha256").update(raw).digest("hex");
+      if (journalHash !== params.expectedJournalHash) {
+        throw new Error("Paper execution retirement journal conflict");
+      }
+      const journal = parseJournal(raw);
+      const latest = new Map<string, FinanceExecutionSafetyClaim>();
+      for (const claim of journal) {
+        latest.delete(claim.id);
+        latest.set(claim.id, claim);
+      }
+      const claim = latest.get(params.claimId);
+      if (!claim?.binding || claim.binding.accountId !== params.accountId) {
+        throw new Error("Paper execution retirement claim not found");
+      }
+      if (claim.status === "operator_retired") {
+        const proof = claim.operatorRetirement;
+        if (
+          proof?.authorizedBy === "user" &&
+          proof.authorizationRef === params.authorizationRef &&
+          proof.reason === params.reason &&
+          proof.brokerObservationRef === params.brokerObservationRef
+        ) {
+          return { retired: true, alreadyRetired: true, journalHash };
+        }
+        throw new Error("Paper execution claim already retired under different proof");
+      }
+      if (
+        (claim.status !== "reserved" && claim.status !== "unknown") ||
+        claim.adapterKind !== undefined ||
+        claim.binding.venue !== "alpaca:paper" ||
+        claim.id !==
+          digest([
+            claim.binding.accountId,
+            claim.binding.venue,
+            claim.binding.intent.runAuthorizationId,
+            claim.binding.intent.intentId,
+          ])
+      ) {
+        throw new Error("Paper execution retirement claim is not eligible");
+      }
+      const { failure: _failure, fill: _fill, receipt: _receipt, ...base } = claim;
+      const at = new Date().toISOString();
+      const retired: FinanceExecutionSafetyClaim = {
+        ...base,
+        at,
+        status: "operator_retired",
+        operatorRetirement: {
+          authorizedBy: "user",
+          authorizationRef: params.authorizationRef,
+          reason: params.reason,
+          brokerObservationRef: params.brokerObservationRef,
+          retiredAt: at,
+          originalStatus: claim.status,
+        },
+      };
+      await appendJournal(file, retired);
+      return {
+        retired: true,
+        alreadyRetired: false,
+        journalHash: createHash("sha256")
+          .update(await fs.readFile(file))
+          .digest("hex"),
+      };
+    } finally {
+      await lock.release();
+    }
+  } finally {
+    releaseQueue();
+    void tail.then(() => {
+      if (queues.get(file) === tail) {
+        queues.delete(file);
+      }
+    });
+  }
+}
+
 /** Controller-only broker reconciliation under the same lock as order dispatch.
  * No callback result means unresolved, never permission to resend the order. */
 export async function reconcileFinanceExecutionClaims(params: {
@@ -1073,7 +1270,8 @@ export async function reconcileFinanceExecutionClaims(params: {
         if (
           claim.status === "confirmed" ||
           claim.status === "not_started" ||
-          claim.status === "rejected"
+          claim.status === "rejected" ||
+          claim.status === "operator_retired"
         ) {
           continue;
         }

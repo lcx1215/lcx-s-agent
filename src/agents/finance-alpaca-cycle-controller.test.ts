@@ -13,6 +13,7 @@ import {
 import {
   FinanceExecutionSafetyDispatchError,
   readFinanceExecutionSafetyClaims,
+  retireFinancePaperExecutionClaim,
 } from "./finance-execution-safety.js";
 import { readFinanceAccountPositionLedger } from "./finance-position-ledger.js";
 import type { FinanceUncachedFetch } from "./finance-write-transport.js";
@@ -375,6 +376,54 @@ it("retains an unknown outcome and refuses another cycle without repeating the o
     "execution_recovery_incomplete",
   );
   expect(f.execute).toHaveBeenCalledTimes(1);
+});
+
+it("allows a fresh controller cycle only after an explicitly retired Paper claim", async () => {
+  const f = await fixture();
+  f.execute.mockRejectedValueOnce(new Error("connection lost after submit"));
+  await expect(f.place("unknown-before-retirement")).rejects.toMatchObject({
+    code: "finance_execution_safety_unknown",
+  });
+  const before = await readFinanceExecutionSafetyClaims({
+    stateDir: f.directory,
+    accountId: f.accountId,
+    venue: "alpaca:paper",
+  });
+  const unknown = before.at(-1)!;
+  const raw = await fs.readFile(
+    path.join(
+      f.directory,
+      `execution-safety-${createHash("sha256")
+        .update(JSON.stringify(["alpaca:paper", f.accountId]))
+        .digest("hex")}.jsonl`,
+    ),
+    "utf8",
+  );
+  await retireFinancePaperExecutionClaim({
+    stateDir: f.directory,
+    accountId: f.accountId,
+    claimId: unknown.id,
+    authorizationRef: "user-authorized-retirement-fixture",
+    reason: "Fixture represents explicit operator authorization after broker observation.",
+    brokerObservationRef: `sha256:${"b".repeat(64)}`,
+    expectedJournalHash: createHash("sha256").update(raw).digest("hex"),
+  });
+
+  const restart = createFinanceAlpacaCycleController(f.options);
+  await expect(restart.accountBookProvider(AbortSignal.timeout(5000))).resolves.toMatchObject({
+    positions: [{ instrument: "SPY", quantity: 1 }],
+  });
+  expect((await f.place("fresh-after-retirement", restart)).status).toBe("placed");
+  expect(f.execute).toHaveBeenCalledTimes(2);
+  const after = await readFinanceExecutionSafetyClaims({
+    stateDir: f.directory,
+    accountId: f.accountId,
+    venue: "alpaca:paper",
+  });
+  expect(after.at(0)).toMatchObject({ id: unknown.id, status: "operator_retired" });
+  expect(after.at(0)?.fill).toBeUndefined();
+  expect(after.at(0)?.receipt).toBeUndefined();
+  expect(after.at(1)?.status).toBe("confirmed");
 });
 
 it("anchors snapshots to the latest rejected claim while verifying only confirmed fills", async () => {

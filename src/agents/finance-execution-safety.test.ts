@@ -1,13 +1,16 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { AlpacaOrderUncertainError } from "./finance-alpaca-execution-adapter.js";
 import {
+  buildFinanceExecutionReceipt,
   createPaperExecutionAdapter,
   placeFinanceOrder,
   type FinanceOrderPlacementRequest,
 } from "./finance-execution-adapter.js";
+import { recoverConfirmedFinanceExecutions } from "./finance-execution-recovery.js";
 import {
   createFinanceExecutionSafetyContext,
   FinanceExecutionSafetyFactsError,
@@ -16,6 +19,7 @@ import {
   type FinanceExecutionSafetyContextInput,
   type FinanceExecutionSafetyFacts,
   readFinanceExecutionSafetyClaims,
+  retireFinancePaperExecutionClaim,
   withFinanceExecutionSafety,
 } from "./finance-execution-safety.js";
 const directories: string[] = [];
@@ -115,6 +119,52 @@ async function fixture() {
     ordersPlacedThisRun: 0,
   };
   return { input, request, facts, adapter };
+}
+
+async function seedAlpacaPendingClaim(
+  f: Awaited<ReturnType<typeof fixture>>,
+  venue = "alpaca:paper",
+) {
+  const adapterId = "alpaca-venue-fixture";
+  const intent = f.input.intent;
+  const readFacts = async () => ({ ...f.facts, venue, adapterId });
+  const input = { ...f.input, venue, adapterId, readFacts };
+  await expect(
+    withFinanceExecutionSafety({
+      context: createFinanceExecutionSafetyContext(input),
+      intent,
+      budget: input.budget,
+      adapterId,
+      venue,
+      adapterKind: "venue",
+      execute: async () => {
+        throw new Error("fixture submit remains unresolved");
+      },
+      buildReceipt: () => {
+        throw new Error("fixture receipt must not be built");
+      },
+    }),
+  ).rejects.toBeInstanceOf(FinanceExecutionSafetyUncertainError);
+  const journalName = (await fs.readdir(input.stateDir)).find((name) => name.endsWith(".jsonl"))!;
+  const journalPath = path.join(input.stateDir, journalName);
+  const raw = await fs.readFile(journalPath, "utf8");
+  const latest = JSON.parse(raw.trim().split("\n").at(-1)!);
+  return { input, journalPath, raw, claim: latest as { id: string } };
+}
+
+function retirementParams(
+  pending: Awaited<ReturnType<typeof seedAlpacaPendingClaim>>,
+  expectedJournalHash = createHash("sha256").update(pending.raw).digest("hex"),
+) {
+  return {
+    stateDir: pending.input.stateDir,
+    accountId: pending.input.accountId,
+    claimId: pending.claim.id,
+    authorizationRef: "user-authorization-fixture",
+    reason: "Explicitly retire one unresolved Paper claim after recorded broker observation.",
+    brokerObservationRef: "sha256:" + "a".repeat(64),
+    expectedJournalHash,
+  };
 }
 it("requires genuine context for attended and internal paper; copied JSON cannot authorize", async () => {
   const f = await fixture();
@@ -636,6 +686,293 @@ it("keeps the reservation blocking when appending a typed terminal marker fails"
   });
   expect(retry.refusalReasons).toContain("execution_safety_account_requires_reconciliation");
   expect(execute).toHaveBeenCalledTimes(1);
+});
+
+it("retires only one explicitly authorized Paper unknown claim while preserving dedup and recovery semantics", async () => {
+  const f = await fixture();
+  const pending = await seedAlpacaPendingClaim(f);
+  const args = retirementParams(pending);
+  const retired = await retireFinancePaperExecutionClaim(args);
+  expect(retired).toMatchObject({ retired: true, alreadyRetired: false });
+
+  const claims = await readFinanceExecutionSafetyClaims({
+    stateDir: args.stateDir,
+    accountId: args.accountId,
+    venue: "alpaca:paper",
+  });
+  expect(claims.at(-1)).toMatchObject({
+    id: args.claimId,
+    status: "operator_retired",
+    notional: 100,
+    operatorRetirement: {
+      authorizedBy: "user",
+      originalStatus: "unknown",
+      authorizationRef: args.authorizationRef,
+      brokerObservationRef: args.brokerObservationRef,
+    },
+  });
+  expect(claims.at(-1)?.fill).toBeUndefined();
+  expect(claims.at(-1)?.receipt).toBeUndefined();
+
+  const recovery = await recoverConfirmedFinanceExecutions({
+    safetyStateDir: args.stateDir,
+    accountId: args.accountId,
+    venue: "alpaca:paper",
+    ledgerDir: path.join(args.stateDir, "ledger"),
+    resolvePending: vi.fn(async () => undefined),
+  });
+  expect(recovery).toMatchObject({ replayed: [], pendingReconciliation: [], noFill: [] });
+  expect(recovery.failures).toEqual([]);
+
+  const sameIntent = await placeFinanceOrder({
+    ...f.request,
+    executionAdapterId: "alpaca-venue-fixture",
+    adapters: [
+      { ...f.adapter, id: "alpaca-venue-fixture", venue: "alpaca:paper", execute: vi.fn() },
+    ],
+    safetyContext: createFinanceExecutionSafetyContext({
+      ...f.input,
+      venue: "alpaca:paper",
+      adapterId: "alpaca-venue-fixture",
+      readFacts: async () => ({
+        ...f.facts,
+        venue: "alpaca:paper",
+        adapterId: "alpaca-venue-fixture",
+      }),
+    }),
+  });
+  expect(sameIntent.refusalReasons).toContain("execution_safety_intent_already_claimed");
+  expect(sameIntent.status).toBe("refused");
+
+  await new Promise((resolve) => setTimeout(resolve, 3));
+  const observedAt = new Date().toISOString();
+  const newIntent = {
+    ...f.input.intent,
+    intentId: "after-operator-retirement",
+    runAuthorizationId: "next-run-after-retirement",
+    referencePriceAt: observedAt,
+  };
+  const execute = vi.fn(async () => ({
+    filledQuantity: 1,
+    fillPrice: 100,
+    filledAt: observedAt,
+    venueRef: "alpaca:paper:new-paper-order",
+    terminalOrderIdentity: { orderId: "new-paper-order", terminal: true as const },
+  }));
+  const next = await placeFinanceOrder({
+    ...f.request,
+    intent: newIntent,
+    executionAdapterId: "alpaca-venue-fixture",
+    adapters: [{ ...f.adapter, id: "alpaca-venue-fixture", venue: "alpaca:paper", execute }],
+    safetyContext: createFinanceExecutionSafetyContext({
+      ...f.input,
+      intent: newIntent,
+      venue: "alpaca:paper",
+      adapterId: "alpaca-venue-fixture",
+      readFacts: async () => ({
+        ...f.facts,
+        venue: "alpaca:paper",
+        adapterId: "alpaca-venue-fixture",
+        snapshotId: "after-operator-retirement",
+        reconciledThroughClaimId: args.claimId,
+        observedAt,
+        quote: { ...f.facts.quote, observedAt },
+        instrumentEvidence: { ...f.facts.instrumentEvidence, observedAt },
+      }),
+    }),
+  });
+  expect(next.status).toBe("placed");
+  expect(execute).toHaveBeenCalledTimes(1);
+});
+
+it("keeps retirement append-only, idempotent, CAS-protected, and fail-closed", async () => {
+  const f = await fixture();
+  const pending = await seedAlpacaPendingClaim(f);
+  const args = retirementParams(pending);
+  const first = await retireFinancePaperExecutionClaim(args);
+  const afterFirst = await fs.readFile(pending.journalPath, "utf8");
+  const repeated = await retireFinancePaperExecutionClaim({
+    ...args,
+    expectedJournalHash: first.journalHash,
+  });
+  expect(repeated.alreadyRetired).toBe(true);
+  expect(await fs.readFile(pending.journalPath, "utf8")).toBe(afterFirst);
+  await expect(retireFinancePaperExecutionClaim(args)).rejects.toThrow(
+    "Paper execution retirement journal conflict",
+  );
+
+  const f2 = await fixture();
+  const pending2 = await seedAlpacaPendingClaim(f2);
+  const args2 = retirementParams(pending2);
+  const open = fs.open.bind(fs);
+  const openSpy = vi.spyOn(fs, "open").mockImplementation(async (...params) => {
+    if (params[1] === "a") {
+      throw new Error("fixture retirement append failure");
+    }
+    return open(...params);
+  });
+  try {
+    await expect(retireFinancePaperExecutionClaim(args2)).rejects.toThrow(
+      "fixture retirement append failure",
+    );
+  } finally {
+    openSpy.mockRestore();
+  }
+  const unchanged = await readFinanceExecutionSafetyClaims({
+    stateDir: args2.stateDir,
+    accountId: args2.accountId,
+    venue: "alpaca:paper",
+  });
+  expect(unchanged.at(-1)).toMatchObject({ id: args2.claimId, status: "unknown" });
+  const stillBlocked = await placeFinanceOrder({
+    ...f2.request,
+    executionAdapterId: "alpaca-venue-fixture",
+    adapters: [{ ...f2.adapter, id: "alpaca-venue-fixture", venue: "alpaca:paper" }],
+    intent: { ...f2.request.intent, intentId: "after-failed-retirement" },
+    safetyContext: createFinanceExecutionSafetyContext({
+      ...f2.input,
+      intent: { ...f2.request.intent, intentId: "after-failed-retirement" },
+      venue: "alpaca:paper",
+      adapterId: "alpaca-venue-fixture",
+      readFacts: async () => ({
+        ...f2.facts,
+        venue: "alpaca:paper",
+        adapterId: "alpaca-venue-fixture",
+      }),
+    }),
+  });
+  expect(stillBlocked.refusalReasons).toContain("execution_safety_account_requires_reconciliation");
+});
+
+it("refuses to retire live, confirmed, unbound, or malformed Paper claims", async () => {
+  const f = await fixture();
+  const live = await seedAlpacaPendingClaim(f, "alpaca:live");
+  await expect(retireFinancePaperExecutionClaim(retirementParams(live))).rejects.toThrow(
+    "Paper execution retirement claim not found",
+  );
+
+  const confirmedFixture = await fixture();
+  const confirmedInput = {
+    ...confirmedFixture.input,
+    venue: "alpaca:paper",
+    adapterId: "alpaca-venue-fixture",
+    readFacts: async () => ({
+      ...confirmedFixture.facts,
+      venue: "alpaca:paper",
+      adapterId: "alpaca-venue-fixture",
+    }),
+  };
+  await withFinanceExecutionSafety({
+    context: createFinanceExecutionSafetyContext(confirmedInput),
+    intent: confirmedInput.intent,
+    budget: confirmedInput.budget,
+    adapterId: confirmedInput.adapterId,
+    venue: confirmedInput.venue,
+    adapterKind: "venue",
+    execute: async () => ({
+      filledQuantity: 1,
+      fillPrice: 100,
+      filledAt: new Date().toISOString(),
+      venueRef: "alpaca:paper:confirmed-fixture",
+      terminalOrderIdentity: { orderId: "confirmed-fixture", terminal: true },
+    }),
+    buildReceipt: (fill) =>
+      buildFinanceExecutionReceipt({
+        intent: confirmedInput.intent,
+        adapter: { id: confirmedInput.adapterId, venue: confirmedInput.venue, kind: "venue" },
+        fill,
+        recordedAt: new Date().toISOString(),
+        accountId: confirmedInput.accountId,
+        identityVersion: "account-v1",
+      }),
+  });
+  const confirmedFile = (await fs.readdir(confirmedInput.stateDir)).find((name) =>
+    name.endsWith(".jsonl"),
+  )!;
+  const confirmedRaw = await fs.readFile(path.join(confirmedInput.stateDir, confirmedFile), "utf8");
+  const confirmedRow = JSON.parse(confirmedRaw.trim().split("\n").at(-1)!) as {
+    id: string;
+  };
+  await expect(
+    retireFinancePaperExecutionClaim({
+      ...retirementParams({
+        input: confirmedInput,
+        journalPath: path.join(confirmedInput.stateDir, confirmedFile),
+        raw: confirmedRaw,
+        claim: confirmedRow,
+      }),
+      claimId: confirmedRow.id,
+    }),
+  ).rejects.toThrow("Paper execution retirement claim is not eligible");
+
+  const paper = await seedAlpacaPendingClaim(await fixture());
+  const paperArgs = retirementParams(paper);
+  const raw = await fs.readFile(paper.journalPath, "utf8");
+  const lines = raw.trim().split("\n");
+  const row = JSON.parse(lines.at(-1)!);
+  row.status = "operator_retired";
+  row.operatorRetirement = {
+    authorizedBy: "user",
+    authorizationRef: "fixture",
+    reason: "fixture",
+    brokerObservationRef: "bad-ref",
+    retiredAt: new Date().toISOString(),
+    originalStatus: "unknown",
+  };
+  lines[lines.length - 1] = JSON.stringify(row);
+  await fs.writeFile(paper.journalPath, `${lines.join("\n")}\n`);
+  const mutated = await fs.readFile(paper.journalPath, "utf8");
+  const malformedArgs = retirementParams(
+    { ...paper, raw: mutated },
+    createHash("sha256").update(mutated).digest("hex"),
+  );
+  await expect(retireFinancePaperExecutionClaim(malformedArgs)).rejects.toThrow(
+    "invalid execution safety journal",
+  );
+  await expect(
+    retireFinancePaperExecutionClaim({ ...paperArgs, brokerObservationRef: "not-a-hash" }),
+  ).rejects.toThrow("invalid Paper execution retirement proof");
+});
+
+it("refuses legacy pending rows with adapterKind before appending an operator retirement marker", async () => {
+  const f = await fixture();
+  const pending = await seedAlpacaPendingClaim(f);
+  const rows = pending.raw.trim().split("\n");
+  const claim = JSON.parse(rows.at(-1)!);
+  claim.adapterKind = "venue";
+  rows[rows.length - 1] = JSON.stringify(claim);
+  const rawWithAdapterKind = `${rows.join("\n")}\n`;
+  await fs.writeFile(pending.journalPath, rawWithAdapterKind);
+
+  const parsed = await readFinanceExecutionSafetyClaims({
+    stateDir: pending.input.stateDir,
+    accountId: pending.input.accountId,
+    venue: "alpaca:paper",
+  });
+  expect(parsed.at(-1)).toMatchObject({
+    id: pending.claim.id,
+    status: "unknown",
+    adapterKind: "venue",
+  });
+
+  await expect(
+    retireFinancePaperExecutionClaim(
+      retirementParams(
+        { ...pending, raw: rawWithAdapterKind },
+        createHash("sha256").update(rawWithAdapterKind).digest("hex"),
+      ),
+    ),
+  ).rejects.toThrow("Paper execution retirement claim is not eligible");
+  expect(await fs.readFile(pending.journalPath, "utf8")).toBe(rawWithAdapterKind);
+  expect(
+    (
+      await readFinanceExecutionSafetyClaims({
+        stateDir: pending.input.stateDir,
+        accountId: pending.input.accountId,
+        venue: "alpaca:paper",
+      })
+    ).at(-1),
+  ).toMatchObject({ id: pending.claim.id, status: "unknown", adapterKind: "venue" });
 });
 
 it.each(["ordinary", "dispatch_shaped", "pre_dispatch_shaped"] as const)(

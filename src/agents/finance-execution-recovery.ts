@@ -56,7 +56,11 @@ export async function recoverConfirmedFinanceExecutions(params: {
       result.pendingReconciliation.push(claim.id);
       continue;
     }
-    if (claim.status === "not_started" || claim.status === "rejected") {
+    if (
+      claim.status === "not_started" ||
+      claim.status === "rejected" ||
+      claim.status === "operator_retired"
+    ) {
       continue;
     }
     const { binding, receipt, fill, adapterKind } = claim;

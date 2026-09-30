@@ -149,6 +149,16 @@ ambiguity, duplicate-client-identity responses, nonterminal orders and receipt
 delivery failures remain unresolved. Old `unknown` claims are never reclassified
 from later empty queries, a 404 or a suspected bad input.
 
+An explicit operator decision can retire one legacy Alpaca Paper claim from the
+blocking queue with `operator_retired`. The journal appends the exact claim,
+authorization and broker-observation references after checking the expected
+journal hash under the account lock. It retains the original rows, intent
+identity and attempted notional; it neither declares a broker cancellation nor
+creates a fill. This operator-only operation is unavailable to automatic model
+or tool decisions and refuses Live claims. Subsequent orders still need fresh
+broker reconciliation, account facts, quotes and the original risk limits;
+later broker activity can block the account again.
+
 The execution response feeds the caller immediately after confirmation. The
 shared safety journal durably records the outcome before the position ledger
 projects its receipt, and recovery can finish that delivery after a crash without
