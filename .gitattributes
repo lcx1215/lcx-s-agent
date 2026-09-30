@@ -4,5 +4,5 @@ src/gateway/server-methods/CLAUDE.md -text
 # Normalizes repository file handling for generated assets, docs, and source files.
 
 # Keep captured market data byte-exact because capture.json records the raw hash.
-docs/experiments/research/commodity-pair-y-maturity-panel/input.csv -text -eol
-docs/experiments/research/commodity-pair-y2501-p2501/input.csv -text -eol
+docs/experiments/research/commodity-pair-y-maturity-panel/input.csv -text -eol whitespace=cr-at-eol
+docs/experiments/research/commodity-pair-y2501-p2501/input.csv -text -eol whitespace=cr-at-eol
