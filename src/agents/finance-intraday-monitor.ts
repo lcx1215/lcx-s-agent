@@ -101,8 +101,8 @@ export type FinanceIntradayMonitorOptions = Readonly<{
 }>;
 
 export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMonitorOptions) {
-  const now = options.now ?? new Date();
-  const clock = financeEtClock(now);
+  let now = options.now ?? new Date();
+  let clock = financeEtClock(now);
   if (!FINANCE_TRADING_WEEKDAYS.includes(clock.weekday)) {
     return Object.freeze({ status: "outside_cash_session" as const, clock });
   }
@@ -114,6 +114,13 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
     marketSession = await options.resolveMarketSession(clock.date, options.signal);
   } catch {
     return Object.freeze({ status: "blocked_market_calendar_unavailable" as const, clock });
+  }
+  if (options.now === undefined) {
+    now = new Date();
+    clock = financeEtClock(now);
+    if (!FINANCE_TRADING_WEEKDAYS.includes(clock.weekday)) {
+      return Object.freeze({ status: "outside_cash_session" as const, clock });
+    }
   }
   if (!marketSession) {
     return Object.freeze({ status: "market_closed" as const, clock });

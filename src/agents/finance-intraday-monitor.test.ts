@@ -46,6 +46,7 @@ vi.mock("./finance-research-runner.js", async (importOriginal) => {
 
 const temporary: string[] = [];
 afterEach(async () => {
+  vi.useRealTimers();
   readerMocks.readUniverse.mockReset();
   await Promise.all(
     temporary.splice(0).map((item) => fs.rm(item, { recursive: true, force: true })),
@@ -329,6 +330,88 @@ async function seedUncertainPartialSell(
 }
 
 describe("resident intraday monitor tick", () => {
+  it("uses the post-resolution time for an unpinned live clock", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-calendar-clock-race-"));
+    temporary.push(directory);
+    const strategyContract = await activeContract(directory);
+    const initial = new Date("2026-09-18T15:00:00.000Z");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(initial);
+    const sync = vi.fn(async () => ({}) as never);
+    const result = await runFinanceIntradayMonitorTick({
+      directory,
+      instrument: "SPY",
+      intervalSeconds: 300,
+      feed: "iex",
+      openingRangeBars: 6,
+      rewardRisk: 2,
+      strategyContract,
+      scope: { kind: "strategy_universe" },
+      sync,
+      resolveMarketSession: async (date) => {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        vi.setSystemTime(new Date(initial.getTime() + 100));
+        return fixtureMarketSession(date, new Date().toISOString());
+      },
+    });
+    expect(result.status).toBe("no_intraday_head");
+    expect(sync).toHaveBeenCalledOnce();
+  });
+
+  it("keeps an explicit offline as-of when the calendar resolves later", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-calendar-explicit-asof-"));
+    temporary.push(directory);
+    const strategyContract = await activeContract(directory);
+    const explicitAsOf = new Date("2026-09-18T15:00:00.000Z");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(explicitAsOf);
+    const sync = vi.fn(async () => ({}) as never);
+    const result = await runFinanceIntradayMonitorTick({
+      directory,
+      instrument: "SPY",
+      intervalSeconds: 300,
+      feed: "iex",
+      openingRangeBars: 6,
+      rewardRisk: 2,
+      strategyContract,
+      scope: { kind: "strategy_universe" },
+      now: explicitAsOf,
+      sync,
+      resolveMarketSession: async (date) => {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        vi.setSystemTime(new Date(explicitAsOf.getTime() + 100));
+        return fixtureMarketSession(date, new Date().toISOString());
+      },
+    });
+    expect(result.status).toBe("blocked_invalid_market_calendar");
+    expect(sync).not.toHaveBeenCalled();
+  });
+
+  it("still rejects a genuinely future calendar observation", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-calendar-future-asof-"));
+    temporary.push(directory);
+    const strategyContract = await activeContract(directory);
+    const now = new Date("2026-09-18T15:00:00.000Z");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(now);
+    const sync = vi.fn(async () => ({}) as never);
+    const result = await runFinanceIntradayMonitorTick({
+      directory,
+      instrument: "SPY",
+      intervalSeconds: 300,
+      feed: "iex",
+      openingRangeBars: 6,
+      rewardRisk: 2,
+      strategyContract,
+      scope: { kind: "strategy_universe" },
+      sync,
+      resolveMarketSession: async (date) =>
+        fixtureMarketSession(date, new Date(now.getTime() + 100).toISOString()),
+    });
+    expect(result.status).toBe("blocked_invalid_market_calendar");
+    expect(sync).not.toHaveBeenCalled();
+  });
+
   it.each([
     {
       label: "canonical partial receipt",
