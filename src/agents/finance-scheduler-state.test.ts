@@ -7,6 +7,7 @@ import {
   FINANCE_SCHEDULER_DATABASE,
   readFinanceSchedulerDatabaseRuns,
 } from "./finance-scheduler-ledger.js";
+import { FINANCE_SCHEDULER_LOCK } from "./finance-scheduler-lock.js";
 import {
   readFinanceSchedulerState,
   readFinanceSchedulerPolicyExpiry,
@@ -210,4 +211,141 @@ it("does not replay a stale compatibility snapshot after the migrated database d
   });
   fs.unlinkSync(path.join(directory, FINANCE_SCHEDULER_DATABASE));
   expect(() => readFinanceSchedulerState(directory)).toThrow("missing after migration");
+});
+
+it("exposes only fresh, schema-valid intraday monitor results from progress", () => {
+  const observedAt = "2026-09-22T12:00:00.000Z";
+  const referenceTime = "2026-09-22T11:55:00.000Z";
+  const now = Date.parse(observedAt);
+  const filename = path.join(directory, FINANCE_SCHEDULER_LOCK, "progress.json");
+  fs.mkdirSync(path.dirname(filename));
+  const base = {
+    pid: 1,
+    observedAt,
+    phase: "idle",
+    timeoutMs: 900000,
+    placementEnabled: false,
+    intraday: {
+      enabled: true,
+      placementEnabled: false,
+      placementRequested: false,
+      placementEligibility: "not_requested",
+      instrumentSource: "active_rule",
+      instruments: ["SPY"],
+      executionInstruments: [],
+      intervalSeconds: 300,
+      feed: "iex",
+    },
+  };
+  const inspect = (lastTick?: Record<string, unknown>, at = now) => {
+    fs.writeFileSync(
+      filename,
+      JSON.stringify({ ...base, intraday: { ...base.intraday, lastTick } }),
+    );
+    return inspectFinanceSchedulerProgress(directory, 1, true, at);
+  };
+
+  expect(inspect(undefined).intraday?.lastTick).toBeNull();
+  expect(
+    inspect({
+      instrument: "SPY",
+      observedAt,
+      monitorStatus: "no_signal",
+      action: "hold",
+      reason: "no_trigger",
+      referenceTime,
+    }).intraday?.lastTick,
+  ).toMatchObject({ monitorStatus: "no_signal", action: "hold", reason: "no_trigger" });
+  expect(
+    inspect({ instrument: "SPY", observedAt, monitorStatus: "outside_cash_session" }).intraday
+      ?.lastTick,
+  ).toMatchObject({ monitorStatus: "outside_cash_session" });
+  expect(
+    inspect({ instrument: "SPY", observedAt, monitorStatus: "blocked_market_calendar_unavailable" })
+      .intraday?.lastTick,
+  ).toMatchObject({ monitorStatus: "blocked_market_calendar_unavailable" });
+  expect(
+    inspect({
+      instrument: "SPY",
+      observedAt,
+      monitorStatus: "decision_recorded",
+      action: "buy",
+      reason: "opening_range_breakout",
+      referenceTime,
+      executionStatus: "refused",
+    }).intraday?.lastTick,
+  ).toMatchObject({ monitorStatus: "decision_recorded", executionStatus: "refused" });
+  expect(
+    inspect({
+      instrument: "SPY",
+      observedAt,
+      monitorStatus: "buy_already_terminal",
+      action: "buy",
+      reason: "opening_range_breakout",
+      referenceTime: "2026-09-22T08:00:00.000Z",
+    }).intraday?.lastTick,
+  ).toMatchObject({
+    monitorStatus: "buy_already_terminal",
+    referenceTime: "2026-09-22T08:00:00.000Z",
+  });
+  for (const outcomeStatus of ["placed", "refused"] as const) {
+    expect(
+      inspect({
+        instrument: "SPY",
+        observedAt,
+        monitorStatus: "sell_already_terminal",
+        outcomeStatus,
+      }).intraday?.lastTick,
+    ).toMatchObject({ monitorStatus: "sell_already_terminal", outcomeStatus });
+  }
+
+  const invalid = [
+    { instrument: "SPY", observedAt: "2026-09-22T12:01:00Z", monitorStatus: "no_signal" },
+    { instrument: "SPY", observedAt: "2026-09-22T11:57:00Z", monitorStatus: "no_signal" },
+    {
+      instrument: "SPY",
+      observedAt,
+      monitorStatus: "decision_recorded",
+      action: "buy",
+      reason: "opening_range_breakout",
+      referenceTime: "2026-09-22T08:00:00.000Z",
+    },
+    { instrument: "WRONG", observedAt, monitorStatus: "outside_cash_session" },
+    { instrument: "SPY", observedAt, monitorStatus: "future_status" },
+    {
+      instrument: "SPY",
+      observedAt,
+      monitorStatus: "no_signal",
+      action: "buy",
+      reason: "no_trigger",
+      referenceTime,
+    },
+    {
+      instrument: "SPY",
+      observedAt,
+      monitorStatus: "no_signal",
+      action: "hold",
+      reason: "no_trigger",
+      referenceTime: "2026-09-22T12:00:01Z",
+      executionStatus: "placed",
+    },
+    {
+      instrument: "SPY",
+      observedAt,
+      monitorStatus: "no_signal",
+      action: "hold",
+      reason: "no_trigger",
+      referenceTime,
+      outcomeStatus: "placed",
+    },
+    {
+      instrument: "SPY",
+      observedAt,
+      monitorStatus: "buy_already_terminal",
+      outcomeStatus: "pending",
+    },
+  ];
+  for (const tick of invalid) {
+    expect(inspect(tick).intraday?.lastTick).toBeNull();
+  }
 });

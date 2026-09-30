@@ -131,6 +131,37 @@ authorize orders outside the declared strategy, instrument, quote-freshness,
 cap, and shared execution gates. Without `--place`, the resident process remains
 monitor-only.
 
+With Alpaca history synchronization enabled, the existing four-minute idle
+reconciliation slot first uses the available Paper controller to query pending
+execution claims and deliver confirmed receipts into the canonical position
+ledger. This runs before position exits and new-entry monitoring, including
+when no new trade signal exists. Without that controller, the slot retains its
+history-sync fallback. It does not resubmit an order. A missing, active or
+mismatched broker order remains unresolved; a sell requiring restoration of
+reserved protection stays with the existing protection-recovery owner. Failed
+reconciliation is recorded and the resident loop continues. Pending claims
+still allow broker account and position snapshots to refresh; they never grant
+placement authority. Placement requires its own fresh account and execution
+checks.
+
+A recovered partial sell receipt also feeds the existing strategy-owned position
+projection. When inventory remains, a matching account-bound receipt lets the
+monitor reconsider its exit on a later closed bar, even if the original signal's
+audit outcome was uncertain. The original intent is not replayed and that audit
+record is retained. Missing receipts or another account's receipts cannot unlock
+the position.
+
+The read-only status includes `progress.intraday.lastTick`, a bounded observation
+of the last monitored instrument: its time, monitor status, available action and
+reference time, and execution result when dispatch was attempted. `outcomeStatus`
+retains the known `placed`, `refused` or `uncertain` ledger outcome separately
+from a function result such as `already_terminal`; an existing record need not
+be a confirmed fill. A fresh
+`no_signal` / `hold` observation explains a completed monitoring pass without
+adding a trading decision to the ledger. Legacy, invalid or stale observations
+are reported as `null`. This observation does not certify all monitored
+instruments, broker health, fills, or uninterrupted 24-hour uptime.
+
 On macOS, a user LaunchAgent can restart an exited process while its login
 session and host are available; sleep, shutdown, logout, power, or network loss
 can still interrupt monitoring. Uninterrupted 24-hour host availability needs

@@ -65,7 +65,10 @@ import {
 } from "../../src/agents/finance-scheduler-process.js";
 import {
   FINANCE_SCHEDULER_TICK_MS,
+  FINANCE_SCHEDULER_INTRADAY_MONITOR_STATUSES,
+  normalizeFinanceSchedulerIntradayLastTick,
   type FinanceSchedulerCycleStage,
+  type FinanceSchedulerIntradayLastTick,
   inspectFinanceSchedulerProgress,
   readFinanceSchedulerPolicyExpiry,
   readFinanceSchedulerState,
@@ -715,6 +718,7 @@ type CycleContext = {
   resolveMarketSession?: ReturnType<typeof createFinanceAlpacaMarketSessionResolver>;
   lastIdleReconciliationAtMs?: number;
   sourceHeartbeatInFlight?: boolean;
+  lastIntradayTick?: FinanceSchedulerIntradayLastTick | null;
 };
 
 type UniverseSelectionReceipt = Readonly<{
@@ -1109,6 +1113,13 @@ function writeSchedulerProgress(
   const venueIndex = args.indexOf("--venue");
   const venue = venueIndex < 0 ? "paper" : args[venueIndex + 1];
   const policyIndex = args.indexOf("--execution-policy");
+  const intradayLastTick = context.options.intraday
+    ? normalizeFinanceSchedulerIntradayLastTick(context.lastIntradayTick, {
+        instruments: context.options.intraday.instruments,
+        nowMs: Date.now(),
+        intervalSeconds: context.options.intraday.intervalSeconds,
+      })
+    : null;
   fs.writeFileSync(
     temporary,
     JSON.stringify({
@@ -1141,6 +1152,7 @@ function writeSchedulerProgress(
                   : "unavailable",
             universeSnapshotRef: context.options.intraday.scope?.universeSnapshotRef ?? null,
             executionInstruments: context.options.intraday.executionInstruments,
+            lastTick: intradayLastTick,
             intervalSeconds: context.options.intraday.intervalSeconds,
             feed: context.options.intraday.feed,
           }
@@ -1703,6 +1715,45 @@ async function refreshActiveIntradayBinding(context: CycleContext): Promise<void
   }
 }
 
+function buildIntradayLastTickCandidate(
+  instrument: string,
+  observedAt: string,
+  result: Record<string, unknown>,
+): Record<string, unknown> {
+  const decisionInput =
+    isObjectRecord(result.decision) && isObjectRecord(result.decision.input)
+      ? result.decision.input
+      : undefined;
+  const signal = isObjectRecord(result.signal) ? result.signal : decisionInput;
+  const reportedInstrument = typeof signal?.instrument === "string" ? signal.instrument : undefined;
+  const symbolMatches = reportedInstrument === undefined || reportedInstrument === instrument;
+  const status = FINANCE_SCHEDULER_INTRADAY_MONITOR_STATUSES.some(
+    (candidate) => candidate === result.status,
+  )
+    ? result.status
+    : "invalid_result";
+  return {
+    instrument,
+    observedAt,
+    monitorStatus: symbolMatches ? status : "invalid_result",
+    ...(!symbolMatches
+      ? { reason: "monitor_result_invalid" }
+      : {
+          ...(signal &&
+          (signal.action === "buy" || signal.action === "sell" || signal.action === "hold")
+            ? { action: signal.action }
+            : {}),
+          ...(typeof signal?.reason === "string" ? { reason: signal.reason } : {}),
+          ...(typeof signal?.referencePriceAt === "string"
+            ? { referenceTime: signal.referencePriceAt }
+            : {}),
+          ...(isObjectRecord(result.outcome) && typeof result.outcome.status === "string"
+            ? { outcomeStatus: result.outcome.status }
+            : {}),
+        }),
+  };
+}
+
 async function runTradingTick(context: CycleContext): Promise<void> {
   const args = context.options.extraArgs;
   const venueIndex = args.indexOf("--venue");
@@ -1720,13 +1771,20 @@ async function runTradingTick(context: CycleContext): Promise<void> {
     // its own fresh reconciliation immediately before any order.
     context.lastIdleReconciliationAtMs = now;
     try {
-      const refreshed = await syncConfiguredAlpacaPaperHistory({
-        directory: context.root.directory,
-        signal: context.signal,
-      });
-      process.stdout.write(
-        `[${new Date().toISOString()}] idle broker reconciliation=${refreshed.accountReconciliation.status} account=${refreshed.accountId}\n`,
-      );
+      if (context.intradayController) {
+        const refreshed = await context.intradayController.inspectReconciliation(context.signal);
+        process.stdout.write(
+          `[${new Date().toISOString()}] idle broker reconciliation=${refreshed.readiness.status} account=${context.intradayController.accountId}\n`,
+        );
+      } else {
+        const refreshed = await syncConfiguredAlpacaPaperHistory({
+          directory: context.root.directory,
+          signal: context.signal,
+        });
+        process.stdout.write(
+          `[${new Date().toISOString()}] idle broker reconciliation=${refreshed.accountReconciliation.status} account=${refreshed.accountId}\n`,
+        );
+      }
     } catch (error) {
       if (!context.signal.aborted) {
         process.stderr.write(
@@ -1748,6 +1806,10 @@ async function runTradingTick(context: CycleContext): Promise<void> {
       if (context.signal.aborted) {
         break;
       }
+      let observedAt: string;
+      let monitorReturned = false;
+      let executionStarted = false;
+      let progressCandidate: Record<string, unknown> | undefined;
       try {
         const result = await runFinanceIntradayMonitorTick({
           directory: context.root.directory,
@@ -1766,6 +1828,18 @@ async function runTradingTick(context: CycleContext): Promise<void> {
             : {}),
           signal: context.signal,
         });
+        monitorReturned = true;
+        observedAt = new Date().toISOString();
+        progressCandidate = buildIntradayLastTickCandidate(
+          instrument,
+          observedAt,
+          result as unknown as Record<string, unknown>,
+        );
+        context.lastIntradayTick = normalizeFinanceSchedulerIntradayLastTick(progressCandidate, {
+          instruments: context.options.intraday.instruments,
+          nowMs: Date.now(),
+          intervalSeconds: context.options.intraday.intervalSeconds,
+        });
         if (
           result.status === "decision_recorded" ||
           result.status === "decision_pending_execution"
@@ -1780,6 +1854,7 @@ async function runTradingTick(context: CycleContext): Promise<void> {
             context.intradayController &&
             executionInstruments.has(instrument)
           ) {
+            executionStarted = true;
             const execution = await executeFinanceIntradayDecision({
               directory: context.root.directory,
               decision: result.decision,
@@ -1795,6 +1870,21 @@ async function runTradingTick(context: CycleContext): Promise<void> {
               tradeDecisionReviewer: createIntradayTradeDecisionReviewer(),
               signal: context.signal,
             });
+            context.lastIntradayTick = normalizeFinanceSchedulerIntradayLastTick(
+              {
+                ...progressCandidate,
+                executionStatus: execution.status,
+                ...(isObjectRecord(execution.outcome) &&
+                typeof execution.outcome.status === "string"
+                  ? { outcomeStatus: execution.outcome.status }
+                  : {}),
+              },
+              {
+                instruments: context.options.intraday.instruments,
+                nowMs: Date.now(),
+                intervalSeconds: context.options.intraday.intervalSeconds,
+              },
+            );
             const tradeDecisionReview =
               "tradeDecisionReview" in execution ? execution.tradeDecisionReview : undefined;
             const reviewStatus = tradeDecisionReview
@@ -1806,6 +1896,31 @@ async function runTradingTick(context: CycleContext): Promise<void> {
           }
         }
       } catch (error) {
+        if (!monitorReturned) {
+          observedAt = new Date().toISOString();
+          context.lastIntradayTick = normalizeFinanceSchedulerIntradayLastTick(
+            {
+              instrument,
+              observedAt,
+              monitorStatus: "tick_failed",
+              reason: "monitor_tick_failed",
+            },
+            {
+              instruments: context.options.intraday.instruments,
+              nowMs: Date.now(),
+              intervalSeconds: context.options.intraday.intervalSeconds,
+            },
+          );
+        } else if (executionStarted && progressCandidate) {
+          context.lastIntradayTick = normalizeFinanceSchedulerIntradayLastTick(
+            { ...progressCandidate, executionStatus: "failed" },
+            {
+              instruments: context.options.intraday.instruments,
+              nowMs: Date.now(),
+              intervalSeconds: context.options.intraday.intervalSeconds,
+            },
+          );
+        }
         process.stderr.write(
           `[${new Date().toISOString()}] intraday ${instrument} tick failed: ${error instanceof Error ? error.message : String(error)}\n`,
         );

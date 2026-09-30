@@ -204,12 +204,59 @@ export function createFinanceAlpacaCycleController(options: {
     return result;
   }
 
-  async function reconcile(signal: AbortSignal, inspectOnly = false) {
+  async function reconcile(
+    signal: AbortSignal,
+    { inspectOnly = false, recoverPending = true } = {},
+  ) {
     const recovery = await recoverConfirmedFinanceExecutions({
       safetyStateDir: options.directory,
       accountId: policy.accountId,
       venue: account.venue,
       ledgerDir: options.directory,
+      signal,
+      resolvePending: recoverPending
+        ? async (claim, recoverySignal) => {
+            const binding = claim.binding;
+            if (
+              !binding ||
+              binding.accountId !== policy.accountId ||
+              binding.venue !== account.venue ||
+              binding.adapterId !== "alpaca-venue"
+            ) {
+              return undefined;
+            }
+            const { intent, protectiveOrders, positionQuantity } = binding;
+            // A sell that consumed reserved protection also needs the existing
+            // protection-recovery owner. A terminal fill alone cannot complete it.
+            if (
+              intent.side === "sell" &&
+              protectiveOrders?.length &&
+              (positionQuantity === undefined ||
+                intent.quantity >
+                  positionQuantity -
+                    protectiveOrders.reduce((sum, order) => sum + order.quantity, 0))
+            ) {
+              return undefined;
+            }
+            return readAlpacaPaperTerminalOrder({
+              accountId: policy.accountId,
+              intent,
+              credentials,
+              read,
+              signal: recoverySignal,
+            });
+          }
+        : undefined,
+    });
+    // Pending execution authority must not stop the resident account feed.
+    // Refresh broker facts before reporting the unchanged recovery refusal.
+    const snapshot = await syncFinanceBrokerReconciliation({
+      directory: options.directory,
+      accountId: policy.accountId,
+      after: "1970-01-01T00:00:00.000Z",
+      until: new Date().toISOString(),
+      credentials: { keyId: credentials.keyId, secretKey: credentials.secret },
+      read,
       signal,
     });
     if (
@@ -241,15 +288,6 @@ export function createFinanceAlpacaCycleController(options: {
         throw new FinanceExecutionSafetyFactsError("terminal_order_mismatch");
       }
     }
-    const snapshot = await syncFinanceBrokerReconciliation({
-      directory: options.directory,
-      accountId: policy.accountId,
-      after: "1970-01-01T00:00:00.000Z",
-      until: new Date().toISOString(),
-      credentials: { keyId: credentials.keyId, secretKey: credentials.secret },
-      read,
-      signal,
-    });
     let readiness = readinessFor(
       snapshot,
       snapshot.positions.map((p) => ({
@@ -297,7 +335,7 @@ export function createFinanceAlpacaCycleController(options: {
 
   return {
     inspectReconciliation: async (signal) => {
-      const { snapshot, readiness } = await reconcile(signal, true);
+      const { snapshot, readiness } = await reconcile(signal, { inspectOnly: true });
       return { readiness, observedAt: snapshot.observedAt, protection: snapshot.protection };
     },
     accountId: policy.accountId,
@@ -384,12 +422,16 @@ export function createFinanceAlpacaCycleController(options: {
           if (!quote) {
             throw new FinanceExecutionSafetyFactsError("quote_binding_missing");
           }
-          const { snapshot, last } = await reconcile(signal).catch((error: unknown) => {
-            if (error instanceof FinanceExecutionSafetyFactsError) {
-              throw error;
-            }
-            throw new FinanceExecutionSafetyFactsError("broker_reconciliation_unavailable");
-          });
+          // The execution gate already owns the account dispatch lock and has
+          // rejected pending claims. Do not reacquire that lock during facts reads.
+          const { snapshot, last } = await reconcile(signal, { recoverPending: false }).catch(
+            (error: unknown) => {
+              if (error instanceof FinanceExecutionSafetyFactsError) {
+                throw error;
+              }
+              throw new FinanceExecutionSafetyFactsError("broker_reconciliation_unavailable");
+            },
+          );
           const observed = await facts(
             binding.intent.instrument,
             binding.intent.side,

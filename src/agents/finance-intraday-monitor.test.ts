@@ -197,7 +197,222 @@ async function activeContract(
   return resolveFinanceIntradayActiveRuleContract(rule);
 }
 
+async function seedUncertainPartialSell(
+  receiptAccountId?: string,
+  outcomeStatus: "uncertain" | "placed" = "uncertain",
+  receiptInstrument = "SPY",
+  receiptVenue = "alpaca:paper",
+) {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-uncertain-partial-sell-"));
+  temporary.push(directory);
+  const contract = await activeContract(
+    directory,
+    {
+      paperExecutionEligibility: "paper_execution_eligible",
+    },
+    {
+      ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE_V2,
+      formVersion: FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V2,
+    },
+  );
+  const strategyBinding = {
+    declarationRef: contract.declarationRef,
+    activationRef: contract.activationRef,
+    declaredInstruments: [...contract.instruments],
+    parameters: {
+      openingRangeBars: contract.openingRangeBars,
+      rewardRisk: contract.rewardRisk,
+      intervalSeconds: contract.intervalSeconds,
+      feed: contract.feed,
+    },
+    scope: "strategy_universe" as const,
+  };
+  const entrySignalId = "intraday-partial-entry";
+  await appendFinanceIntradayDecision(directory, {
+    signalId: entrySignalId,
+    instrument: "SPY",
+    sessionDate: "2026-09-17",
+    action: "buy",
+    reason: "opening_range_breakout",
+    referencePrice: 100,
+    referencePriceAt: "2026-09-17T19:55:00.000Z",
+    stopPrice: 99,
+    targetPrice: 110,
+    datasetHeadRef: "b".repeat(64),
+    strategyRule: contract.ruleId,
+    strategyBinding,
+  });
+  const entryReceipt = buildFinanceExecutionReceipt({
+    intent: {
+      intentId: `intent:${entrySignalId}`,
+      instrument: "SPY",
+      side: "buy",
+      orderType: "market",
+      quantity: 1,
+      referencePrice: 100,
+      referencePriceAt: "2026-09-17T19:55:00.000Z",
+      runAuthorizationId: "uncertain-partial-exit-fixture",
+      rationale: "fixture entry",
+    },
+    adapter: { id: "alpaca-venue", venue: "alpaca:paper", kind: "venue" },
+    fill: {
+      filledQuantity: 1,
+      fillPrice: 100,
+      filledAt: "2026-09-17T19:55:01.000Z",
+      venueRef: "alpaca:paper:entry",
+      terminalOrderIdentity: { orderId: "entry", terminal: true },
+    },
+    recordedAt: "2026-09-17T19:55:01.000Z",
+    accountId: "paper-account",
+  });
+  await appendFinanceExecutionReceipt(directory, entryReceipt);
+  await appendSession(directory, "2026-09-18", regularSessionBars("2026-09-18", 76));
+  const baseOptions = {
+    directory,
+    accountId: "paper-account",
+    instrument: "SPY",
+    intervalSeconds: 300 as const,
+    feed: "iex" as const,
+    openingRangeBars: 6,
+    rewardRisk: 2,
+    strategyContract: contract,
+    scope: { kind: "strategy_universe" as const },
+    sync: vi.fn(async () => ({}) as never),
+  };
+  await monitorTickWithFixtureCalendar({
+    ...baseOptions,
+    now: new Date("2026-09-18T19:50:00.000Z"),
+  });
+  await appendSession(directory, "2026-09-18", [regularSessionBars("2026-09-18", 77).at(-1)!]);
+  const exit = await monitorTickWithFixtureCalendar({
+    ...baseOptions,
+    now: new Date("2026-09-18T19:55:00.000Z"),
+  });
+  if (!("decision" in exit) || exit.decision.input.action !== "sell") {
+    throw new Error(`fixture should record a pre-close sell: ${JSON.stringify(exit)}`);
+  }
+  let recoveredReceiptId: string | undefined;
+  if (receiptAccountId !== undefined) {
+    const receipt = buildFinanceExecutionReceipt({
+      intent: {
+        intentId: `intent:${exit.decision.input.signalId}`,
+        instrument: receiptInstrument,
+        side: "sell",
+        orderType: "market",
+        quantity: 0.5,
+        referencePrice: 100,
+        referencePriceAt: "2026-09-18T19:55:00.000Z",
+        runAuthorizationId: "uncertain-partial-exit-fixture",
+        rationale: "fixture partial sell",
+      },
+      adapter: { id: "alpaca-venue", venue: receiptVenue, kind: "venue" },
+      fill: {
+        filledQuantity: 0.5,
+        fillPrice: 100,
+        filledAt: "2026-09-18T19:55:01.000Z",
+        venueRef: `${receiptVenue}:partial-exit`,
+        terminalOrderIdentity: { orderId: "partial-exit", terminal: true },
+      },
+      recordedAt: "2026-09-18T19:55:01.000Z",
+      accountId: receiptAccountId,
+    });
+    await appendFinanceExecutionReceipt(directory, receipt);
+    recoveredReceiptId = receipt.receiptId;
+  }
+  await appendFinanceIntradayOutcome(directory, {
+    signalId: exit.decision.input.signalId,
+    status: outcomeStatus,
+    ...(outcomeStatus === "placed" && recoveredReceiptId ? { receiptId: recoveredReceiptId } : {}),
+    reasons: ["fixture broker terminal fill recovered later"],
+  });
+  return { directory, baseOptions, sellDecision: exit.decision };
+}
+
 describe("resident intraday monitor tick", () => {
+  it.each([
+    {
+      label: "canonical partial receipt",
+      receiptAccountId: "paper-account",
+      nextBar: true,
+      expected: "decision_recorded",
+    },
+    {
+      label: "placed partial receipt",
+      receiptAccountId: "paper-account",
+      outcomeStatus: "placed" as const,
+      nextBar: true,
+      expected: "decision_recorded",
+    },
+    {
+      label: "no receipt",
+      receiptAccountId: undefined,
+      nextBar: true,
+      expected: "sell_already_terminal",
+    },
+    {
+      label: "wrong-account receipt",
+      receiptAccountId: "other-account",
+      nextBar: true,
+      expected: "sell_already_terminal",
+    },
+    {
+      label: "wrong-instrument receipt",
+      receiptAccountId: "paper-account",
+      receiptInstrument: "MSFT",
+      nextBar: true,
+      expected: "sell_already_terminal",
+    },
+    {
+      label: "non-paper receipt",
+      receiptAccountId: "paper-account",
+      receiptVenue: "alpaca:live",
+      nextBar: true,
+      expected: "sell_already_terminal",
+    },
+    {
+      label: "unbound monitor account",
+      receiptAccountId: "paper-account",
+      omitAccountId: true,
+      nextBar: true,
+      expected: "sell_already_terminal",
+    },
+    {
+      label: "same bar",
+      receiptAccountId: "paper-account",
+      nextBar: false,
+      expected: "sell_refused_waiting_for_new_bar",
+    },
+  ])(
+    "continues residual-position exit management after uncertain sell only with $label",
+    async (scenario) => {
+      const f = await seedUncertainPartialSell(
+        scenario.receiptAccountId,
+        scenario.outcomeStatus,
+        scenario.receiptInstrument,
+        scenario.receiptVenue,
+      );
+      if (scenario.nextBar) {
+        await appendSession(
+          f.directory,
+          "2026-09-21",
+          regularSessionBars("2026-09-21", 5, { lastLow: 98 }),
+        );
+      }
+      const { accountId: _accountId, ...unboundOptions } = f.baseOptions;
+      const result = await monitorTickWithFixtureCalendar({
+        ...(scenario.omitAccountId ? unboundOptions : f.baseOptions),
+        now: new Date(scenario.nextBar ? "2026-09-21T13:55:00.000Z" : "2026-09-18T19:55:00.000Z"),
+      });
+      expect(result.status).toBe(scenario.expected);
+      if (scenario.expected === "decision_recorded") {
+        expect(result).toMatchObject({ signal: { action: "sell", reason: "opening_range_stop" } });
+      }
+      expect(await readFinanceIntradayDecisions(f.directory)).toHaveLength(
+        scenario.expected === "decision_recorded" ? 3 : 2,
+      );
+    },
+  );
+
   it("records one durable buy decision and does not repeat it after restart", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-monitor-"));
     temporary.push(directory);

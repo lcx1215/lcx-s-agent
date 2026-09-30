@@ -18,6 +18,74 @@ export const FINANCE_SCHEDULER_CYCLE_STAGES = [
 ] as const;
 export type FinanceSchedulerCycleStage = (typeof FINANCE_SCHEDULER_CYCLE_STAGES)[number];
 
+export const FINANCE_SCHEDULER_INTRADAY_MONITOR_STATUSES = [
+  "blocked_active_strategy_missing_or_ambiguous",
+  "blocked_incompatible_active_strategy",
+  "blocked_invalid_market_calendar",
+  "blocked_invalid_monitor_scope",
+  "blocked_invalid_system_universe_snapshot",
+  "blocked_market_calendar_unavailable",
+  "blocked_missing_market_calendar",
+  "blocked_missing_strategy_binding",
+  "blocked_outside_strategy_universe",
+  "blocked_position_without_strategy_state",
+  "blocked_short_position",
+  "blocked_stale_or_incompatible_strategy_contract",
+  "buy_refused_waiting_for_new_bar",
+  "buy_already_terminal",
+  "decision_pending_execution",
+  "decision_recorded",
+  "decision_replayed",
+  "entry_cutoff_reached",
+  "exit_only_no_exit_signal",
+  "exit_only_no_owned_position",
+  "market_closed",
+  "no_closed_session_bar",
+  "no_intraday_head",
+  "no_signal",
+  "outside_cash_session",
+  "research_only",
+  "sell_already_terminal",
+  "sell_refused_waiting_for_new_bar",
+  "session_exit_bar_missing",
+  "session_exit_bar_pending",
+  "tick_failed",
+  "invalid_result",
+] as const;
+
+export type FinanceSchedulerIntradayMonitorStatus =
+  (typeof FINANCE_SCHEDULER_INTRADAY_MONITOR_STATUSES)[number];
+
+export type FinanceSchedulerIntradayLastTick = Readonly<{
+  instrument: string;
+  observedAt: string;
+  monitorStatus: FinanceSchedulerIntradayMonitorStatus;
+  action?: "buy" | "sell" | "hold";
+  reason?:
+    | "opening_range_breakout"
+    | "opening_range_stop"
+    | "reward_target"
+    | "pre_close"
+    | "no_trigger"
+    | "monitor_tick_failed"
+    | "monitor_result_invalid";
+  referenceTime?: string;
+  outcomeStatus?: "placed" | "refused" | "uncertain";
+  executionStatus?:
+    | "already_terminal"
+    | "placed"
+    | "recovered_placed"
+    | "refused"
+    | "uncertain"
+    | "failed";
+}>;
+
+function isFinanceSchedulerIntradayMonitorStatus(
+  value: unknown,
+): value is FinanceSchedulerIntradayMonitorStatus {
+  return FINANCE_SCHEDULER_INTRADAY_MONITOR_STATUSES.some((status) => status === value);
+}
+
 const STATE_FILE = "daily-cycle-scheduler.json";
 
 export type SchedulerState = {
@@ -29,6 +97,138 @@ export type SchedulerState = {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+const FINANCE_SCHEDULER_INTRADAY_EXECUTION_STATUSES = new Set([
+  "already_terminal",
+  "placed",
+  "recovered_placed",
+  "refused",
+  "uncertain",
+  "failed",
+]);
+const FINANCE_SCHEDULER_INTRADAY_OUTCOME_STATUSES = new Set(["placed", "refused", "uncertain"]);
+const FINANCE_SCHEDULER_INTRADAY_OUTCOME_MONITOR_STATUSES = new Set([
+  "buy_already_terminal",
+  "sell_already_terminal",
+  "buy_refused_waiting_for_new_bar",
+  "sell_refused_waiting_for_new_bar",
+]);
+const FINANCE_SCHEDULER_INTRADAY_ACTIONS = new Set(["buy", "sell", "hold"]);
+const FINANCE_SCHEDULER_INTRADAY_REASONS = new Set([
+  "opening_range_breakout",
+  "opening_range_stop",
+  "reward_target",
+  "pre_close",
+  "no_trigger",
+  "monitor_tick_failed",
+  "monitor_result_invalid",
+]);
+
+/**
+ * Read a bounded last-tick observation from scheduler progress. Unknown, old, future,
+ * mismatched-symbol, or semantically inconsistent fields remain unreported.
+ */
+export function normalizeFinanceSchedulerIntradayLastTick(
+  value: unknown,
+  params: { instruments: readonly string[]; nowMs: number; intervalSeconds: number },
+): FinanceSchedulerIntradayLastTick | null {
+  if (![60, 300, 900].includes(params.intervalSeconds)) {
+    return null;
+  }
+  if (!isObject(value)) {
+    return null;
+  }
+  const instrument = value.instrument;
+  const observedAt = value.observedAt;
+  const monitorStatus = value.monitorStatus;
+  if (
+    typeof instrument !== "string" ||
+    !/^[A-Z0-9][A-Z0-9./:_-]{0,31}$/.test(instrument) ||
+    !params.instruments.includes(instrument) ||
+    typeof observedAt !== "string" ||
+    !Number.isFinite(Date.parse(observedAt)) ||
+    Date.parse(observedAt) > params.nowMs ||
+    params.nowMs - Date.parse(observedAt) > 2 * FINANCE_SCHEDULER_TICK_MS ||
+    !isFinanceSchedulerIntradayMonitorStatus(monitorStatus)
+  ) {
+    return null;
+  }
+
+  const action = value.action;
+  const reason = value.reason;
+  const referenceTime = value.referenceTime;
+  const outcomeStatus = value.outcomeStatus;
+  const executionStatus = value.executionStatus;
+  if (
+    (action !== undefined &&
+      (typeof action !== "string" || !FINANCE_SCHEDULER_INTRADAY_ACTIONS.has(action))) ||
+    (reason !== undefined &&
+      (typeof reason !== "string" || !FINANCE_SCHEDULER_INTRADAY_REASONS.has(reason))) ||
+    (outcomeStatus !== undefined &&
+      (typeof outcomeStatus !== "string" ||
+        !FINANCE_SCHEDULER_INTRADAY_OUTCOME_STATUSES.has(outcomeStatus))) ||
+    (executionStatus !== undefined &&
+      (typeof executionStatus !== "string" ||
+        !FINANCE_SCHEDULER_INTRADAY_EXECUTION_STATUSES.has(executionStatus)))
+  ) {
+    return null;
+  }
+
+  const observedAtMs = Date.parse(observedAt);
+  if (referenceTime !== undefined) {
+    if (
+      typeof referenceTime !== "string" ||
+      !Number.isFinite(Date.parse(referenceTime)) ||
+      Date.parse(referenceTime) > observedAtMs ||
+      ((monitorStatus === "decision_recorded" ||
+        monitorStatus === "decision_replayed" ||
+        executionStatus !== undefined) &&
+        observedAtMs - Date.parse(referenceTime) > params.intervalSeconds * 3_000)
+    ) {
+      return null;
+    }
+  }
+  if (
+    (monitorStatus === "no_signal" &&
+      (action !== "hold" || reason !== "no_trigger" || referenceTime === undefined)) ||
+    ((monitorStatus === "decision_recorded" || monitorStatus === "decision_replayed") &&
+      ((action !== "buy" && action !== "sell") ||
+        referenceTime === undefined ||
+        (reason !== "opening_range_breakout" &&
+          reason !== "opening_range_stop" &&
+          reason !== "reward_target" &&
+          reason !== "pre_close"))) ||
+    (executionStatus !== undefined &&
+      monitorStatus !== "decision_recorded" &&
+      monitorStatus !== "decision_pending_execution") ||
+    (outcomeStatus !== undefined &&
+      executionStatus === undefined &&
+      !FINANCE_SCHEDULER_INTRADAY_OUTCOME_MONITOR_STATUSES.has(monitorStatus)) ||
+    ((monitorStatus === "tick_failed" || monitorStatus === "invalid_result") &&
+      (action !== undefined || executionStatus !== undefined))
+  ) {
+    return null;
+  }
+
+  return {
+    instrument,
+    observedAt,
+    monitorStatus,
+    ...(action !== undefined
+      ? { action: action as FinanceSchedulerIntradayLastTick["action"] }
+      : {}),
+    ...(reason !== undefined
+      ? { reason: reason as FinanceSchedulerIntradayLastTick["reason"] }
+      : {}),
+    ...(referenceTime !== undefined ? { referenceTime } : {}),
+    ...(outcomeStatus !== undefined
+      ? { outcomeStatus: outcomeStatus as FinanceSchedulerIntradayLastTick["outcomeStatus"] }
+      : {}),
+    ...(executionStatus !== undefined
+      ? { executionStatus: executionStatus as FinanceSchedulerIntradayLastTick["executionStatus"] }
+      : {}),
+  };
 }
 
 export function readFinanceSchedulerState(directory: string): SchedulerState {
@@ -256,6 +456,16 @@ export function inspectFinanceSchedulerProgress(
               intradayConfig.intervalSeconds === 900
                 ? intradayConfig.intervalSeconds
                 : null,
+            lastTick: normalizeFinanceSchedulerIntradayLastTick(intradayConfig.lastTick, {
+              instruments: symbolList(intradayConfig.instruments) ? intradayConfig.instruments : [],
+              nowMs: now,
+              intervalSeconds:
+                intradayConfig.intervalSeconds === 60 ||
+                intradayConfig.intervalSeconds === 300 ||
+                intradayConfig.intervalSeconds === 900
+                  ? intradayConfig.intervalSeconds
+                  : 0,
+            }),
             feed:
               intradayConfig.feed === "iex" || intradayConfig.feed === "sip"
                 ? intradayConfig.feed

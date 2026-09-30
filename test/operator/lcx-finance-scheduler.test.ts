@@ -57,6 +57,11 @@ const mocks = vi.hoisted(() => ({
   createIntradayController: vi.fn(() => ({
     accountId: "paper-account",
     executionPolicyExpiresAt: "2026-09-30T23:00:00.000Z",
+    inspectReconciliation: vi.fn(async () => ({
+      readiness: { status: "reconciled" },
+      observedAt: "2026-09-21T14:59:00.000Z",
+      protection: { status: "none" },
+    })),
   })),
   runIntradayMonitorTick: vi.fn(),
   executeIntradayDecision: vi.fn(),
@@ -224,6 +229,11 @@ beforeEach(() => {
   mocks.createIntradayController.mockReturnValue({
     accountId: "paper-account",
     executionPolicyExpiresAt: "2026-09-30T23:00:00.000Z",
+    inspectReconciliation: vi.fn(async () => ({
+      readiness: { status: "reconciled" },
+      observedAt: "2026-09-21T14:59:00.000Z",
+      protection: { status: "none" },
+    })),
   });
   mocks.syncAlpacaHistory.mockResolvedValue({
     accountId: "paper-account",
@@ -1076,6 +1086,11 @@ it("rebinds a long-lived monitor to the universe written by a successful night r
   mocks.createIntradayController.mockReturnValue({
     accountId: "paper-account",
     executionPolicyExpiresAt: loadedPolicyExpiry,
+    inspectReconciliation: vi.fn(async () => ({
+      readiness: { status: "reconciled" },
+      observedAt: "2026-09-22T21:59:00.000Z",
+      protection: { status: "none" },
+    })),
   });
   writeFinanceSchedulerState(directory, {
     lastFired: { day: "2026-09-22" },
@@ -2157,6 +2172,173 @@ it("publishes bounded cycle progress and returns to idle without replaying order
   expect(fs.existsSync(path.join(directory, FINANCE_SCHEDULER_LOCK))).toBe(false);
 });
 
+it("publishes a no-signal monitor result through the existing progress status", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-21T14:30:00.000Z"));
+  await activateIntradayRule();
+  const referenceTime = "2026-09-21T14:25:00.000Z";
+  mocks.runIntradayMonitorTick.mockResolvedValue({
+    status: "no_signal",
+    signal: {
+      instrument: "SPY",
+      action: "hold",
+      reason: "no_trigger",
+      referencePriceAt: referenceTime,
+    },
+  });
+  mocks.delay.mockImplementationOnce(async () => {
+    const status = inspectFinanceSchedulerStatus(
+      { directory, source: "explicit" },
+      new Date("2026-09-21T14:30:00.000Z"),
+    );
+    expect(status.progress.intraday?.lastTick).toMatchObject({
+      instrument: "SPY",
+      monitorStatus: "no_signal",
+      action: "hold",
+      reason: "no_trigger",
+      referenceTime,
+    });
+    expect(status.progress.intraday?.lastTick).not.toHaveProperty("outcomeStatus");
+    process.emit("SIGTERM");
+  });
+
+  await expect(
+    runFinanceScheduler([
+      "--loop",
+      "--dir",
+      directory,
+      "--intraday-monitor",
+      "--intraday-instruments",
+      "SPY",
+      "--no-source-heartbeat",
+    ]),
+  ).resolves.toBe(143);
+  expect(mocks.runIntradayMonitorTick).toHaveBeenCalledOnce();
+});
+
+it("publishes the actual outcome of an already-terminal monitor decision", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-21T15:00:00.000Z"));
+  await activateIntradayRule();
+  const referenceTime = "2026-09-21T08:00:00.000Z";
+  mocks.runIntradayMonitorTick.mockResolvedValue({
+    status: "buy_already_terminal",
+    decision: {
+      input: {
+        instrument: "SPY",
+        action: "buy",
+        reason: "opening_range_breakout",
+        referencePriceAt: referenceTime,
+        signalId: "intraday-prior-buy",
+      },
+    },
+    outcome: { status: "uncertain" },
+  });
+  mocks.delay.mockImplementationOnce(async () => {
+    const status = inspectFinanceSchedulerStatus(
+      { directory, source: "explicit" },
+      new Date("2026-09-21T15:00:00.000Z"),
+    );
+    expect(status.progress.intraday?.lastTick).toMatchObject({
+      instrument: "SPY",
+      monitorStatus: "buy_already_terminal",
+      action: "buy",
+      referenceTime,
+      outcomeStatus: "uncertain",
+    });
+    expect(status.progress.intraday?.lastTick).not.toHaveProperty("executionStatus");
+    process.emit("SIGTERM");
+  });
+
+  await expect(
+    runFinanceScheduler([
+      "--loop",
+      "--dir",
+      directory,
+      "--intraday-monitor",
+      "--intraday-instruments",
+      "SPY",
+      "--no-source-heartbeat",
+    ]),
+  ).resolves.toBe(143);
+  expect(mocks.runIntradayMonitorTick).toHaveBeenCalledOnce();
+  expect(mocks.executeIntradayDecision).not.toHaveBeenCalled();
+});
+
+it("publishes the actual execution result beside its monitored decision", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-21T15:00:00.000Z"));
+  await activateIntradayRule({ paperExecutionEligibility: "paper_execution_eligible" });
+  fs.writeFileSync(path.join(directory, "alpaca-policy.json"), "{}");
+  const referenceTime = "2026-09-21T14:55:00.000Z";
+  const decision = {
+    input: {
+      instrument: "SPY",
+      action: "buy",
+      reason: "opening_range_breakout",
+      referencePriceAt: referenceTime,
+      signalId: "intraday-test-signal",
+    },
+  };
+  mocks.runIntradayMonitorTick.mockResolvedValue({
+    status: "decision_recorded",
+    signal: { ...decision.input },
+    decision,
+  });
+  mocks.executeIntradayDecision.mockResolvedValue({
+    status: "already_terminal",
+    outcome: { status: "uncertain" },
+  });
+  mocks.delay.mockImplementationOnce(async () => {
+    const status = inspectFinanceSchedulerStatus(
+      { directory, source: "explicit" },
+      new Date("2026-09-21T15:00:00.000Z"),
+    );
+    expect(status.progress.intraday?.lastTick).toMatchObject({
+      instrument: "SPY",
+      monitorStatus: "decision_recorded",
+      action: "buy",
+      reason: "opening_range_breakout",
+      referenceTime,
+      executionStatus: "already_terminal",
+      outcomeStatus: "uncertain",
+    });
+    process.emit("SIGTERM");
+  });
+
+  await expect(
+    runFinanceScheduler([
+      "--loop",
+      "--dir",
+      directory,
+      "--intraday-monitor",
+      "--intraday-place",
+      "--intraday-active-rule",
+      "--intraday-interval-seconds",
+      "300",
+      "--intraday-feed",
+      "iex",
+      "--place",
+      "--venue",
+      "alpaca",
+      "--execution-policy",
+      path.join(directory, "alpaca-policy.json"),
+      "--execution-quote-feed",
+      "iex",
+      "--execution-max-age-ms",
+      "30000",
+      "--max-order-notional",
+      "1000",
+      "--max-instrument-notional",
+      "5000",
+      "--max-orders",
+      "8",
+      "--no-source-heartbeat",
+    ]),
+  ).resolves.toBe(143);
+  expect(mocks.executeIntradayDecision).toHaveBeenCalledOnce();
+});
+
 it("refreshes broker reconciliation while an Alpaca history loop is idle", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-09-22T17:00:00Z"));
@@ -2176,6 +2358,111 @@ it("refreshes broker reconciliation while an Alpaca history loop is idle", async
     expect.objectContaining({ directory, signal: expect.any(AbortSignal) }),
   );
   expect(mocks.runCycle).not.toHaveBeenCalled();
+});
+
+it("uses the live intraday controller for bounded idle recovery before monitoring", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-21T15:00:00Z"));
+  await activateIntradayRule({ paperExecutionEligibility: "paper_execution_eligible" });
+  const policy = path.join(directory, "alpaca-policy.json");
+  fs.writeFileSync(policy, "{}");
+  const inspectReconciliation = vi.fn(async () => ({
+    readiness: { status: "reconciled" },
+    observedAt: "2026-09-21T14:59:00.000Z",
+    protection: { status: "none" },
+  }));
+  mocks.createIntradayController.mockReturnValue({
+    accountId: "paper-account",
+    executionPolicyExpiresAt: "2026-09-30T23:00:00.000Z",
+    inspectReconciliation,
+  });
+  mocks.runIntradayMonitorTick.mockImplementation(async () => {
+    expect(inspectReconciliation).toHaveBeenCalledOnce();
+    return { status: "no_signal" };
+  });
+  mocks.delay.mockImplementationOnce(async () => process.emit("SIGTERM"));
+
+  await expect(
+    runFinanceScheduler([
+      "--loop",
+      "--dir",
+      directory,
+      "--intraday-monitor",
+      "--intraday-active-rule",
+      "--intraday-place",
+      "--sync-alpaca-history",
+      "--no-source-heartbeat",
+      "--place",
+      "--venue",
+      "alpaca",
+      "--execution-policy",
+      policy,
+      "--execution-quote-feed",
+      "iex",
+      "--execution-max-age-ms",
+      "30000",
+      "--max-order-notional",
+      "1000",
+      "--max-instrument-notional",
+      "5000",
+      "--max-orders",
+      "8",
+    ]),
+  ).resolves.toBe(143);
+  expect(inspectReconciliation).toHaveBeenCalledOnce();
+  expect(mocks.syncAlpacaHistory).not.toHaveBeenCalled();
+  expect(mocks.executeIntradayDecision).not.toHaveBeenCalled();
+});
+
+it("continues monitor-only ticks after bounded idle recovery fails", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-21T15:00:00Z"));
+  await activateIntradayRule({ paperExecutionEligibility: "paper_execution_eligible" });
+  const policy = path.join(directory, "alpaca-policy.json");
+  fs.writeFileSync(policy, "{}");
+  const inspectReconciliation = vi.fn(async () => {
+    throw new Error("execution_recovery_incomplete");
+  });
+  mocks.createIntradayController.mockReturnValue({
+    accountId: "paper-account",
+    executionPolicyExpiresAt: "2026-09-30T23:00:00.000Z",
+    inspectReconciliation,
+  });
+  mocks.runIntradayMonitorTick.mockResolvedValue({ status: "no_signal" });
+  mocks.delay.mockImplementationOnce(async () => process.emit("SIGTERM"));
+
+  await expect(
+    runFinanceScheduler([
+      "--loop",
+      "--dir",
+      directory,
+      "--intraday-monitor",
+      "--intraday-active-rule",
+      "--intraday-place",
+      "--sync-alpaca-history",
+      "--no-source-heartbeat",
+      "--place",
+      "--venue",
+      "alpaca",
+      "--execution-policy",
+      policy,
+      "--execution-quote-feed",
+      "iex",
+      "--execution-max-age-ms",
+      "30000",
+      "--max-order-notional",
+      "1000",
+      "--max-instrument-notional",
+      "5000",
+      "--max-orders",
+      "8",
+    ]),
+  ).resolves.toBe(143);
+  expect(inspectReconciliation).toHaveBeenCalledOnce();
+  expect(mocks.runIntradayMonitorTick).toHaveBeenCalledOnce();
+  expect(mocks.syncAlpacaHistory).not.toHaveBeenCalled();
+  expect(mocks.executeIntradayDecision).not.toHaveBeenCalled();
+  expect(stderrMessages.join("\n")).toContain("idle broker reconciliation failed");
 });
 
 it("exposes an interrupted previous-day attempt that blocks future scheduling", () => {

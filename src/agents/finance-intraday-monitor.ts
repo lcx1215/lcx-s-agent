@@ -347,15 +347,25 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
         options.directory,
         priorOpenSell.input.signalId,
       );
+      const recoveredSellReceipt =
+        typeof options.accountId === "string" && options.accountId.trim()
+          ? strategyReceipts.find(
+              (receipt) =>
+                receipt.accountId === options.accountId &&
+                receipt.venue === "alpaca:paper" &&
+                receipt.instrument === priorOpenSell.input.instrument &&
+                receipt.intentId === `intent:${priorOpenSell.input.signalId}` &&
+                receipt.side === "sell" &&
+                receipt.fill.filledQuantity > 0 &&
+                receipt.fill.filledQuantity <= receipt.quantity &&
+                receipt.fill.terminalOrderIdentity?.terminal === true &&
+                Boolean(receipt.fill.terminalOrderIdentity.orderId.trim()),
+            )
+          : undefined;
       const completedPartialExit =
-        options.exitOnly &&
-        outcome?.status === "placed" &&
-        strategyReceipts.some(
-          (receipt) =>
-            receipt.receiptId === outcome.receiptId &&
-            receipt.intentId === `intent:${priorOpenSell.input.signalId}` &&
-            receipt.side === "sell",
-        );
+        recoveredSellReceipt !== undefined &&
+        (outcome?.status === "uncertain" ||
+          (outcome?.status === "placed" && recoveredSellReceipt.receiptId === outcome.receiptId));
       if (!outcome || (outcome.status !== "refused" && !completedPartialExit)) {
         return Object.freeze({
           status: outcome

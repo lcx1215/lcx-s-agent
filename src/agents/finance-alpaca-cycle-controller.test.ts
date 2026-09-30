@@ -10,6 +10,7 @@ import {
   type FinanceExecutionAdapter,
   type FinanceExecutionIntent,
 } from "./finance-execution-adapter.js";
+import { readFinanceExecutionSafetyClaims } from "./finance-execution-safety.js";
 import { readFinanceAccountPositionLedger } from "./finance-position-ledger.js";
 import type { FinanceUncachedFetch } from "./finance-write-transport.js";
 
@@ -371,6 +372,226 @@ it("retains an unknown outcome and refuses another cycle without repeating the o
     "execution_recovery_incomplete",
   );
   expect(f.execute).toHaveBeenCalledTimes(1);
+});
+
+it.each([
+  { status: "filled", quantity: "1", expectedReceipts: 1 },
+  { status: "canceled", quantity: "0", expectedReceipts: 0 },
+])(
+  "reconciles a broker-terminal unknown $status claim without resubmitting",
+  async ({ status, quantity, expectedReceipts }) => {
+    const f = await fixture();
+    f.execute.mockImplementationOnce(async (intent) => {
+      const clientOrderId = `lcx-${createHash("sha256")
+        .update(JSON.stringify(["paper", intent.runAuthorizationId, intent.intentId]))
+        .digest("hex")
+        .slice(0, 40)}`;
+      const at = new Date().toISOString();
+      f.orders.push({
+        id: "broker-terminal",
+        client_order_id: clientOrderId,
+        symbol: intent.instrument,
+        side: intent.side,
+        qty: String(intent.quantity),
+        type: intent.orderType,
+        time_in_force: "day",
+        status,
+        filled_qty: quantity,
+        filled_avg_price: quantity === "0" ? "0" : "100",
+        filled_at: at,
+        submitted_at: at,
+        updated_at: at,
+      });
+      if (quantity !== "0") {
+        f.positions[0].qty = String(Number(f.positions[0].qty) + Number(quantity));
+        f.positions[0].market_value = String(Number(f.positions[0].qty) * 100);
+        f.account.cash = String(Number(f.account.cash) - Number(quantity) * 100);
+        f.account.long_market_value = String(Number(f.positions[0].market_value));
+        f.activities.push({
+          id: "broker-terminal",
+          activity_type: "FILL",
+          type: "fill",
+          side: intent.side,
+          symbol: intent.instrument,
+          qty: quantity,
+          price: "100",
+          transaction_time: at,
+        });
+      }
+      throw new Error("connection lost after broker accepted order");
+    });
+    await expect(f.place(`terminal-${status}`)).rejects.toMatchObject({
+      code: "finance_execution_safety_unknown",
+    });
+    const executeCalls = f.execute.mock.calls.length;
+    f.read.mockClear();
+
+    const restart = createFinanceAlpacaCycleController(f.options);
+    const inspection = await restart.inspectReconciliation(AbortSignal.timeout(5000));
+
+    expect(inspection.readiness.status).toBe("ready");
+    expect(
+      f.read.mock.calls.some(([url]) => new URL(url).pathname === "/v2/orders:by_client_order_id"),
+    ).toBe(true);
+    expect(f.execute).toHaveBeenCalledTimes(executeCalls);
+    const ledger = await readFinanceAccountPositionLedger(f.directory, {
+      accountId: f.accountId,
+      venue: "alpaca:paper",
+    });
+    expect(ledger.receipts).toHaveLength(expectedReceipts);
+    if (expectedReceipts) {
+      expect(ledger.ledger.positions[0].quantity).toBe(1);
+    }
+  },
+);
+
+it.each(["active", "missing", "wrong-identity"])(
+  "keeps unknown execution blocked for %s broker order without resubmission",
+  async (scenario) => {
+    const f = await fixture();
+    f.execute.mockImplementationOnce(async (intent) => {
+      const clientOrderId = `lcx-${createHash("sha256")
+        .update(JSON.stringify(["paper", intent.runAuthorizationId, intent.intentId]))
+        .digest("hex")
+        .slice(0, 40)}`;
+      const at = new Date().toISOString();
+      f.orders.push({
+        id: "broker-original",
+        client_order_id: clientOrderId,
+        symbol: scenario === "wrong-identity" ? "MSFT" : intent.instrument,
+        side: intent.side,
+        qty: String(intent.quantity),
+        type: intent.orderType,
+        time_in_force: "day",
+        status: scenario === "active" ? "new" : "filled",
+        filled_qty: scenario === "active" ? "0" : String(intent.quantity),
+        filled_avg_price: scenario === "active" ? "0" : "100",
+        filled_at: at,
+        submitted_at: at,
+        updated_at: at,
+      });
+      if (scenario === "missing") {
+        f.orders.splice(0);
+      }
+      throw new Error("connection lost after broker accepted order");
+    });
+    await expect(f.place(`blocked-${scenario}`)).rejects.toMatchObject({
+      code: "finance_execution_safety_unknown",
+    });
+    const executeCalls = f.execute.mock.calls.length;
+    f.read.mockClear();
+
+    await expect(
+      createFinanceAlpacaCycleController(f.options).inspectReconciliation(
+        AbortSignal.timeout(5000),
+      ),
+    ).rejects.toThrow("execution_recovery_incomplete");
+
+    expect(
+      f.read.mock.calls.some(([url]) => new URL(url).pathname === "/v2/orders:by_client_order_id"),
+    ).toBe(true);
+    expect(f.execute).toHaveBeenCalledTimes(executeCalls);
+    if (scenario === "missing") {
+      const stored = await readFinanceBrokerReconciliation(f.directory, f.accountId);
+      expect(stored.snapshot).toBeDefined();
+      const observedAt = stored.snapshot?.observedAt;
+      if (typeof observedAt !== "string") {
+        throw new Error("broker snapshot observation time missing");
+      }
+      const ageMs = Date.now() - Date.parse(observedAt);
+      expect(ageMs).toBeGreaterThanOrEqual(0);
+      expect(ageMs).toBeLessThan(5000);
+    }
+  },
+);
+
+it("keeps a protected sell unknown pending until its original protection can be restored", async () => {
+  const f = await fixture();
+  f.openOrders.push({
+    id: "original-protection",
+    symbol: "SPY",
+    side: "sell",
+    type: "stop",
+    time_in_force: "gtc",
+    status: "new",
+    qty: "1",
+    filled_qty: "0",
+    stop_price: "90",
+  });
+  const quote = await f.controller.executionQuoteProvider(
+    { instrument: "SPY", side: "sell", assetClass: "us_equity" },
+    AbortSignal.timeout(5000),
+  );
+  const intent: FinanceExecutionIntent = {
+    intentId: "protected-unknown-sell",
+    instrument: "SPY",
+    side: "sell",
+    quantity: 1,
+    orderType: "market",
+    referencePrice: quote.referencePrice,
+    referencePriceAt: quote.referencePriceAt,
+    runAuthorizationId: "test-run",
+    rationale: "synthetic protected reduction",
+  };
+  const adapter: FinanceExecutionAdapter = {
+    id: "alpaca-venue",
+    venue: "alpaca:paper",
+    kind: "venue",
+    instruments: ["SPY"],
+    orderTypes: ["market"],
+    credentialsAuthority: "external",
+    supportsProtectedReduction: true,
+    execute: f.execute,
+  };
+  f.execute.mockRejectedValueOnce(new Error("connection lost after sell submit"));
+  await expect(
+    placeFinanceOrder({
+      mode: "live_execution",
+      committedInstrumentNotional: 0,
+      ordersPlacedThisRun: 0,
+      executionAdapterId: adapter.id,
+      adapters: [adapter],
+      intent,
+      budget: {
+        automation: "unattended",
+        allowedInstruments: ["SPY"],
+        maxOrderNotional: 200,
+        maxInstrumentNotional: 500,
+        maxOrdersPerRun: 3,
+      },
+      safetyContext: f.controller.createSafetyContext({
+        intent,
+        budget: {
+          automation: "unattended",
+          allowedInstruments: ["SPY"],
+          maxOrderNotional: 200,
+          maxInstrumentNotional: 500,
+          maxOrdersPerRun: 3,
+        },
+        adapterId: adapter.id,
+        venue: adapter.venue,
+      }),
+    }),
+  ).rejects.toMatchObject({ code: "finance_execution_safety_unknown" });
+
+  const claims = await readFinanceExecutionSafetyClaims({
+    stateDir: f.directory,
+    accountId: f.accountId,
+    venue: "alpaca:paper",
+  });
+  expect(claims[0].status).toBe("unknown");
+  expect(claims[0].binding?.protectiveOrders).toHaveLength(1);
+  const executeCalls = f.execute.mock.calls.length;
+  f.read.mockClear();
+
+  await expect(
+    createFinanceAlpacaCycleController(f.options).inspectReconciliation(AbortSignal.timeout(5000)),
+  ).rejects.toThrow("execution_recovery_incomplete");
+
+  expect(f.execute).toHaveBeenCalledTimes(executeCalls);
+  expect(
+    f.read.mock.calls.some(([url]) => new URL(url).pathname === "/v2/orders:by_client_order_id"),
+  ).toBe(false);
 });
 
 it("uses persisted highs for the drawdown gate after a restart", async () => {

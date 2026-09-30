@@ -158,6 +158,59 @@ it("recovers confirmed-before-SQLite crash window twice with exactly the origina
     ).ledger.positions[0].quantity,
   ).toBe(1);
 });
+it("classifies confirmed venue zero-fill terminal cancellation without writing a receipt or position", async () => {
+  const f = await runConfirmed();
+  const entries = (await fs.readFile(f.journal, "utf8"))
+    .trim()
+    .split("\n")
+    .map(
+      (line) =>
+        JSON.parse(line) as {
+          id: string;
+          binding: { intent: typeof f.input.intent };
+          [key: string]: unknown;
+        },
+    );
+  const claim = entries.at(-1)!;
+  const fill = {
+    filledQuantity: 0,
+    fillPrice: 0,
+    filledAt: new Date().toISOString(),
+    venueRef: "alpaca:paper:zero-fill-order",
+    terminalOrderIdentity: { orderId: "zero-fill-order", terminal: true as const },
+  };
+  const receipt = buildFinanceExecutionReceipt({
+    intent: claim.binding.intent,
+    adapter: { id: f.adapter.id, venue: f.adapter.venue, kind: "venue" },
+    fill,
+    recordedAt: f.receipt.recordedAt,
+    accountId: f.input.accountId,
+    identityVersion: "account-v1",
+  });
+  entries[entries.length - 1] = {
+    ...claim,
+    adapterKind: "venue",
+    fill,
+    receipt,
+    receiptIdentityVersion: "account-v1",
+  };
+  await fs.writeFile(f.journal, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+  const first = await recoverConfirmedFinanceExecutions(f.params);
+  const second = await recoverConfirmedFinanceExecutions(f.params);
+  expect(first.noFill).toEqual([claim.id]);
+  expect(second.noFill).toEqual([claim.id]);
+  expect(first.replayed).toEqual([]);
+  expect(second.alreadyRecorded).toEqual([]);
+  expect((await readFinancePositionRecords(f.params.ledgerDir)).receipts).toEqual([]);
+  expect(
+    (
+      await readFinanceAccountPositionLedger(f.params.ledgerDir, {
+        accountId: f.input.accountId,
+        venue: f.adapter.venue,
+      })
+    ).ledger.positions,
+  ).toEqual([]);
+});
 it.each(["unknown", "reserved"])("never writes or guesses completion for %s", async (status) => {
   const f = await runConfirmed();
   const entries = (await fs.readFile(f.journal, "utf8"))
