@@ -287,12 +287,18 @@ async function runCycle(
           : undefined;
       if (digestSource !== undefined) {
         const decisionDigest = compactCentralStepOutcome(step.ownerId, digestSource);
+        const outcomeBudget =
+          step.ownerId === "finance_bar_ledger" ||
+          (step.ownerId === "finance_position_ledger_read" &&
+            ["receipt", "order", "fill", "fee"].includes(String(step.args.historyKind)))
+            ? CENTRAL_READ_PAGE_OUTCOME_BUDGET_BYTES
+            : CENTRAL_STEP_OUTCOME_BUDGET_BYTES;
         const boundedOutcome = boundObjectSection(
           decisionDigest,
-          CENTRAL_STEP_OUTCOME_BUDGET_BYTES,
+          outcomeBudget,
           // The digest is the whole budget for one step: no single key may take
           // more of it than the digest itself.
-          CENTRAL_STEP_OUTCOME_BUDGET_BYTES,
+          outcomeBudget,
         );
         step.outcome = boundedOutcome.value;
         if (boundedOutcome.dropped.length > 0) {
@@ -407,6 +413,8 @@ export type CompactBacklogEntry = Readonly<{
   }>[];
   /** Steps that had a reason worth carrying but did not fit the cap. */
   outcomesOmitted?: number;
+  /** Older cycles omitted to keep the always-injected backlog within its byte ceiling. */
+  backlogEntriesOmitted?: number;
 }>;
 
 /**
@@ -536,13 +544,21 @@ export function compactReceipts(
 ): readonly CompactBacklogEntry[] {
   const bounded = Number.isSafeInteger(max) ? Math.max(1, Math.min(max, 200)) : 20;
   const tail = receipts.slice(-bounded);
+  const isLargeReadPage = (step: CentralStep): boolean =>
+    step.ownerId === "finance_bar_ledger" ||
+    (step.ownerId === "finance_position_ledger_read" && isPlainRecord(step.outcome?.history));
   const newestIndex = tail.length - 1;
-  return tail.map((receipt, index) => {
+  const newestHistoryReceiptIndex = tail.findLastIndex((receipt) =>
+    receipt.steps.some(isLargeReadPage),
+  );
+  const newestHistoryStep = tail[newestHistoryReceiptIndex]?.steps.filter(isLargeReadPage).at(-1);
+  const mapped: CompactBacklogEntry[] = tail.map((receipt, index) => {
     // The digest rides on the newest entry only. A reason for an older cycle is
     // either still failing — and so reappears here — or already handled, while
     // the bytes it costs are shared with the control room. Older entries keep the
     // reason and the ids, which is what compaction is for.
     const carriesDigest = index === newestIndex;
+    const carriesHistory = index === newestHistoryReceiptIndex;
     const interesting = stepsToCarry(receipt, carrySuccessfulOutcomeOwnerIds);
     const kept = interesting.slice(0, CENTRAL_BACKLOG_MAX_OUTCOMES);
     return {
@@ -563,9 +579,23 @@ export function compactReceipts(
           ownerId: step.ownerId,
           status: step.status,
           ...(reason ? { reason: reason.slice(0, CENTRAL_STEP_REASON_CHARS) } : {}),
-          ...(carriesDigest && step.outcome ? { outcome: step.outcome } : {}),
-          ...(carriesDigest && step.outcomeDroppedKeys
-            ? { outcomeDroppedKeys: step.outcomeDroppedKeys }
+          ...(step.outcome &&
+          (isLargeReadPage(step) ? carriesHistory && step === newestHistoryStep : carriesDigest)
+            ? { outcome: step.outcome }
+            : {}),
+          ...((isLargeReadPage(step) && step !== newestHistoryStep) ||
+          ((carriesDigest || (carriesHistory && step === newestHistoryStep)) &&
+            step.outcomeDroppedKeys)
+            ? {
+                outcomeDroppedKeys: [
+                  ...(carriesDigest || (carriesHistory && step === newestHistoryStep)
+                    ? (step.outcomeDroppedKeys ?? [])
+                    : []),
+                  ...(isLargeReadPage(step) && step !== newestHistoryStep
+                    ? ["read_page_superseded_in_backlog"]
+                    : []),
+                ],
+              }
             : {}),
         };
       }),
@@ -574,6 +604,29 @@ export function compactReceipts(
         : {}),
     };
   });
+  const byteLimit = 8_500;
+  let omitted = 0;
+  const carriesFocusPage = (entry: CompactBacklogEntry): boolean =>
+    entry.outcomes.some((outcome) =>
+      Boolean(
+        outcome.outcome &&
+        (outcome.ownerId === "finance_bar_ledger" ||
+          (outcome.ownerId === "finance_position_ledger_read" &&
+            isPlainRecord(outcome.outcome.history))),
+      ),
+    );
+  while (mapped.length > 1 && jsonBytes(mapped) + (omitted > 0 ? 60 : 0) > byteLimit) {
+    const removeIndex = mapped.findIndex((entry) => !carriesFocusPage(entry));
+    if (removeIndex < 0) {
+      break;
+    }
+    mapped.splice(removeIndex, 1);
+    omitted += 1;
+  }
+  if (omitted > 0 && mapped.length > 0) {
+    mapped[0] = { ...mapped[0], backlogEntriesOmitted: omitted };
+  }
+  return mapped;
 }
 
 /**
@@ -604,6 +657,7 @@ export const CENTRAL_FINANCE_PERCEPTION_KEY_BUDGET_BYTES = 6_144;
  * missing, and the full receipt stays on disk either way.
  */
 export const CENTRAL_STEP_OUTCOME_BUDGET_BYTES = 512;
+export const CENTRAL_READ_PAGE_OUTCOME_BUDGET_BYTES = 4096;
 export const CENTRAL_BACKLOG_MAX_OUTCOMES = 6;
 export const CENTRAL_STEP_REASON_CHARS = 240;
 
@@ -619,6 +673,15 @@ function compactCentralStepOutcome(
   ownerId: string,
   source: Readonly<Record<string, unknown>>,
 ): Readonly<Record<string, unknown>> {
+  if (ownerId === "finance_position_ledger_read" && isPlainRecord(source.history)) {
+    return {
+      schemaVersion: source.schemaVersion,
+      status: source.status,
+      historyKind: source.historyKind,
+      history: source.history,
+      ...(source.historyDroppedKeys ? { historyDroppedKeys: source.historyDroppedKeys } : {}),
+    };
+  }
   if (
     ownerId !== "finance_strategy_rule_ledger_read" ||
     source.schemaVersion !== "lcx_finance_strategy_rule_ledger_read_v1"

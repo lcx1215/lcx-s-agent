@@ -84,6 +84,8 @@ export type FinanceBrokerPosition = Readonly<{
 export type FinanceBrokerHistoryReconciliation = Readonly<{
   accountId: string;
   venue: "alpaca:paper";
+  /** Head of the same verified broker-history snapshot used for fills/fees. */
+  sourceHeadRef?: string | null;
   historyStatus: "missing" | "incomplete" | "reconciled";
   positionsReconciled: boolean;
   /** True when fills and filled-order coverage are complete, even if a fee needs later allocation. */
@@ -492,6 +494,7 @@ export async function reconcileFinanceBrokerHistory(
   return Object.freeze({
     accountId,
     venue: "alpaca:paper",
+    sourceHeadRef: raw.headRef,
     historyStatus,
     positionsReconciled,
     positionBaselineUsable,

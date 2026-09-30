@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { reconcileFinanceBrokerHistory } from "./finance-alpaca-history-reconciliation.js";
+import { readFinanceBrokerHistory } from "./finance-alpaca-history-sync.js";
 import { FINANCE_EXECUTION_RECEIPT_SCHEMA } from "./finance-execution-adapter.js";
 import {
   appendFinanceBrokerHistory,
@@ -126,6 +127,9 @@ describe("Alpaca broker history reconciliation", () => {
     });
 
     const result = await reconcileFinanceBrokerHistory(directory, accountId);
+    expect(result.sourceHeadRef).toBe(
+      (await readFinanceBrokerHistory(directory, accountId)).headRef,
+    );
 
     expect(result).toMatchObject({
       historyStatus: "reconciled",

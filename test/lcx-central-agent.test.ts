@@ -40,6 +40,8 @@ import {
   CENTRAL_GOVERNANCE_OWNER_IDS,
 } from "../src/agents/central-harness/tool-registry.js";
 import type { CentralPerception, CentralRunReceipt } from "../src/agents/central-harness/types.js";
+import { appendFinanceBars } from "../src/agents/finance-bar-ledger.js";
+import { appendFinanceBrokerHistory } from "../src/agents/finance-position-ledger.js";
 
 const centralTestRoots: string[] = [];
 afterEach(async () => {
@@ -414,6 +416,7 @@ describe("central harness covers the whole system, not a slice of it", () => {
     // The whole-system claim includes the real book: the brain must be able to
     // see what is held (per-asset state), not only counts of what ran.
     expect(CENTRAL_CAPABILITY_OWNER_IDS).toContain("finance_position_ledger_read");
+    expect(CENTRAL_CAPABILITY_OWNER_IDS).toContain("finance_bar_ledger");
     // The whole-system claim also includes the learning loop: the brain must be
     // able to fold pending review notes into durable cards, not only read them.
     expect(CENTRAL_CAPABILITY_OWNER_IDS).toContain("learning_distill");
@@ -552,6 +555,39 @@ describe("central harness covers the whole system, not a slice of it", () => {
     expect(step.outcome?.reason).toBe("finance_position_ledger_absent");
     expect(receipt.liveTouched).toBe(false);
     expect(receipt.providerConfigTouched).toBe(false);
+  });
+
+  it("registers a host-root finance bar read and hard-blocks append and path selection", async () => {
+    const workspaceDir = await fsp.mkdtemp(path.join(os.tmpdir(), "lcx-central-bars-"));
+    centralTestRoots.push(workspaceDir);
+    const stateDir = path.join(workspaceDir, "state", "finance");
+    await appendFinanceBars(stateDir, {
+      instrument: "AAPL",
+      derivation: "ohlcv",
+      provenance: { origin: "fixture" },
+      observedAt: "2026-09-10T00:00:00.000Z",
+      bars: [{ date: "2026-09-09", open: 100, high: 105, low: 99, close: 104, volume: 10 }],
+    });
+    const scoped = createCentralToolRegistry({ workspaceDir });
+    const spec = scoped.get("finance_bar_ledger")!;
+    expect(spec.approve({ action: "read", instrument: "AAPL" }).ok).toBe(true);
+    expect(spec.approve({ action: "append", batch: {} }).ok).toBe(false);
+    expect(spec.approve({ action: "read", directory: stateDir }).ok).toBe(false);
+    expect(spec.approve({ action: "read", limit: 26 }).ok).toBe(false);
+    const receipt = await runCentralHarnessCycle({
+      perception: perception(),
+      brain: brainWithActions([
+        {
+          ownerId: "finance_bar_ledger",
+          args: { action: "read", instrument: "AAPL", limit: 1 },
+          reasoning: "inspect recorded bars",
+        },
+      ]),
+      registry: scoped,
+    });
+    expect(receipt.steps[0]?.status).toBe("ran_ok");
+    expect(receipt.steps[0]?.outcome?.instrument).toBe("AAPL");
+    expect(receipt.steps[0]?.outcome?.bars).toBeDefined();
   });
 
   it("never appends an extra CLI flag to an owner command", () => {
@@ -1530,6 +1566,244 @@ describe("the loop feeds the owner's own output back to the next decision", () =
     // The envelope's raw stdout is what a byte budget drops first, so digesting
     // the envelope instead of the receipt would hand the brain nothing at all.
     expect(entry.outcomes[0].outcome).not.toHaveProperty("output");
+  });
+
+  it("carries one bounded finance history page through backlog, perception, and model prompt", () => {
+    const cycle = receipt({
+      steps: [
+        {
+          stepId: "history-step",
+          ownerId: "finance_position_ledger_read",
+          args: { historyKind: "receipt" },
+          status: "ran_ok",
+          observedOk: false,
+          outcome: {
+            status: "ready",
+            historyKind: "receipt",
+            history: {
+              status: "available",
+              headRef: "head-1",
+              items: [{ receiptId: "receipt-focus" }],
+              nextCursor: "cursor-next",
+            },
+          },
+        },
+      ],
+    });
+    const backlog = compactReceipts(
+      [cycle, receipt({ runId: "following-cycle" })],
+      10,
+      new Set(["finance_position_ledger_read"]),
+    );
+    const bounded = boundPerception(perception({ backlog }), CENTRAL_PERCEPTION_BUDGET_BYTES);
+    const prompt = buildCentralBrainPrompt(bounded.perception);
+    expect(bounded.report.overBudget).toBe(false);
+    expect(prompt).toContain("receipt-focus");
+    expect(prompt).toContain("cursor-next");
+  });
+
+  it("retains only the newest bar or position read page across a multi-instrument cycle", () => {
+    const cycles = Array.from({ length: 6 }, (_, index) =>
+      receipt({
+        runId: `page-${index}`,
+        steps: [
+          {
+            stepId: `bar-${index}`,
+            ownerId: index % 2 === 0 ? "finance_bar_ledger" : "finance_position_ledger_read",
+            args: { instrument: `SYM${index}`, historyKind: "receipt" },
+            status: "ran_ok",
+            observedOk: true,
+            outcome:
+              index % 2 === 0
+                ? {
+                    ok: true,
+                    instrument: `SYM${index}`,
+                    page: `p${index}`,
+                    padding: "x".repeat(3_200),
+                  }
+                : {
+                    status: "ready",
+                    historyKind: "receipt",
+                    history: {
+                      status: "available",
+                      headRef: `h${index}`,
+                      items: [{ id: index, padding: "x".repeat(3_000) }],
+                      nextCursor: `c${index}`,
+                    },
+                  },
+          },
+        ],
+      }),
+    );
+    const backlog = compactReceipts(
+      cycles,
+      10,
+      new Set(["finance_bar_ledger", "finance_position_ledger_read"]),
+    );
+    const pages = backlog.flatMap((entry) => entry.outcomes.filter((item) => item.outcome));
+    expect(pages).toHaveLength(1);
+    expect(JSON.stringify(pages[0]?.outcome)).toContain("h5");
+    expect(
+      backlog
+        .flatMap((entry) => entry.outcomes)
+        .filter((item) => item.outcomeDroppedKeys?.includes("read_page_superseded_in_backlog")),
+    ).toHaveLength(5);
+    const bounded = boundPerception(perception({ backlog }), CENTRAL_PERCEPTION_BUDGET_BYTES);
+    expect(bounded.report.overBudget).toBe(false);
+    expect(Buffer.byteLength(JSON.stringify(bounded.perception))).toBeLessThanOrEqual(
+      CENTRAL_PERCEPTION_BUDGET_BYTES,
+    );
+  });
+
+  it("keeps clipped-field markers with a retained bar page after a later non-read cycle", () => {
+    const cycle = receipt({
+      steps: [
+        {
+          stepId: "clipped-bar-page",
+          ownerId: "finance_bar_ledger",
+          args: { action: "read", instrument: "SPY" },
+          status: "ran_ok",
+          observedOk: true,
+          outcome: { ok: true, bars: [{ date: "2026-09-29", close: 768.46 }] },
+          outcomeDroppedKeys: ["divergentDates"],
+        },
+      ],
+    });
+    const backlog = compactReceipts(
+      [cycle, receipt({ runId: "no-read-cycle" })],
+      10,
+      new Set(["finance_bar_ledger"]),
+    );
+    const bounded = boundPerception(perception({ backlog }), CENTRAL_PERCEPTION_BUDGET_BYTES);
+    const prompt = buildCentralBrainPrompt(bounded.perception);
+    expect(prompt).toContain("divergentDates");
+    expect(prompt).toContain("768.46");
+    expect(bounded.report.overBudget).toBe(false);
+  });
+
+  it("caps backlog bytes and reports omitted older cycles", () => {
+    const cycles = Array.from({ length: 80 }, (_, index) =>
+      receipt({
+        runId: `cycle-${index}`,
+        brainCall: {
+          provider: "test",
+          modelId: "test",
+          outcome: "completed",
+          note: "n".repeat(300),
+        },
+      }),
+    );
+    const backlog = compactReceipts(cycles, 100);
+    expect(Buffer.byteLength(JSON.stringify(backlog))).toBeLessThanOrEqual(8_500);
+    expect(backlog[0]?.backlogEntriesOmitted).toBeGreaterThan(0);
+  });
+
+  it("protects the latest focus page when later no-page cycles fill the backlog", () => {
+    const focus = receipt({
+      runId: "focus",
+      steps: [
+        {
+          stepId: "focus-bar",
+          ownerId: "finance_bar_ledger",
+          args: { action: "read", instrument: "SPY" },
+          status: "ran_ok",
+          observedOk: true,
+          outcome: { ok: true, bars: [{ close: 768.46 }] },
+          outcomeDroppedKeys: ["divergentDates"],
+        },
+      ],
+    });
+    const later = Array.from({ length: 30 }, (_, index) =>
+      receipt({
+        runId: `no-page-${index}`,
+        steps: [
+          {
+            stepId: `failure-${index}`,
+            ownerId: "commercialAcceptance",
+            args: {},
+            status: "ran_failed",
+            observedOk: false,
+            failureReason: "x".repeat(240),
+          },
+        ],
+      }),
+    );
+    const backlog = compactReceipts([focus, ...later], 100, new Set(["finance_bar_ledger"]));
+    const prompt = buildCentralBrainPrompt(boundPerception(perception({ backlog })).perception);
+    expect(prompt).toContain("768.46");
+    expect(prompt).toContain("divergentDates");
+    expect(backlog[0]?.backlogEntriesOmitted).toBeGreaterThan(0);
+    expect(Buffer.byteLength(JSON.stringify(backlog))).toBeLessThanOrEqual(8500);
+  });
+
+  it("carries a real normalized broker fill and continuation cursor to the next brain prompt", async () => {
+    const workspaceDir = await fsp.mkdtemp(path.join(os.tmpdir(), "lcx-central-history-"));
+    centralTestRoots.push(workspaceDir);
+    const stateDir = path.join(workspaceDir, "state", "finance");
+    await appendFinanceBrokerHistory(stateDir, {
+      kind: "broker_history",
+      accountId: "acct-central",
+      venue: "alpaca:paper",
+      query: "activities:fixture",
+      cursor: "",
+      payload: [
+        {
+          id: "fill-central-1",
+          activity_type: "FILL",
+          order_id: "order-1",
+          symbol: "AAPL",
+          side: "buy",
+          qty: "1",
+          price: "100",
+          transaction_time: "2026-09-10T00:00:00Z",
+        },
+        {
+          id: "fill-central-2",
+          activity_type: "FILL",
+          order_id: "order-2",
+          symbol: "AAPL",
+          side: "buy",
+          qty: "1",
+          price: "101",
+          transaction_time: "2026-09-10T01:00:00Z",
+        },
+      ],
+    });
+    const scoped = createCentralToolRegistry({ workspaceDir });
+    const cycle = await runCentralHarnessCycle({
+      perception: perception(),
+      brain: brainWithActions([
+        {
+          ownerId: "finance_position_ledger_read",
+          args: {
+            historyKind: "fill",
+            historyAccountId: "acct-central",
+            historyVenue: "alpaca:paper",
+            historyLimit: 1,
+          },
+          reasoning: "inspect broker fills",
+        },
+      ]),
+      registry: scoped,
+    });
+    const history = cycle.steps[0]?.outcome?.history as {
+      items: { activityId: string; sourceFactRef: string }[];
+      nextCursor: string;
+    };
+    expect(history.items[0]).toMatchObject({ activityId: "fill-central-1" });
+    expect(history.items[0]?.sourceFactRef).toBeTruthy();
+    expect(history.nextCursor).toBeTruthy();
+    const backlog = compactReceipts(
+      [cycle, receipt({ runId: "following-cycle" })],
+      10,
+      new Set(["finance_position_ledger_read"]),
+    );
+    const bounded = boundPerception(perception({ backlog }), CENTRAL_PERCEPTION_BUDGET_BYTES);
+    const prompt = buildCentralBrainPrompt(bounded.perception);
+    expect(bounded.report.overBudget).toBe(false);
+    expect(prompt).toContain("fill-central-1");
+    expect(prompt).toContain(history.items[0].sourceFactRef);
+    expect(prompt).toContain(history.nextCursor);
   });
 
   it("spends no digest on owners that came back cleanly green", async () => {

@@ -516,3 +516,19 @@ sent. An unavailable discretionary intraday reviewer stays advisory; a completed
 veto or a completed review with invalid candidate binding refuses. Required research-plan admission remains
 a separate gate. Broker receipts, rather than model conclusions, update executed
 positions and feed the next cycle.
+
+Central reuses `finance_bar_ledger` with `action: "read"` for stored market bars
+by instrument, time and row limit. The registry rejects append and model-selected
+paths. `finance_position_ledger_read` keeps its summary view and offers focused
+history pages with explicit account, venue, kind and optional instrument/time
+filters. Execution receipts and stored broker observations keep separate provenance;
+neither an empty page nor a local order status releases an unresolved execution claim.
+
+Follow the returned history cursor with the same scope and filters. A changed book
+head invalidates the cursor; restart that read rather than stitching different book
+versions together. Missing or partial broker history remains visible. The model
+receives a bounded page and retains only the newest history page in its next-cycle
+backlog; superseded or clipped fields are named. This reader-specific context budget
+does not increase the total perception budget. The existing ledger owners still
+validate the underlying stored chains, so model-context pagination is not a claim
+that database reads themselves have become incremental.

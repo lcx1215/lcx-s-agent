@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseFinanceModuleSelection } from "../finance-brain-orchestration.js";
 import type { AnyAgentTool } from "../tools/common.js";
+import { createFinanceBarLedgerTool } from "../tools/finance-bar-ledger-tool.js";
 import { createFinanceCalibrationReadTool } from "../tools/finance-calibration-read-tool.js";
 import { createFinanceDataGatewaySnapshotTool } from "../tools/finance-data-gateway-tool.js";
 import { createFinancePositionLedgerReadTool } from "../tools/finance-position-ledger-read-tool.js";
@@ -168,6 +169,7 @@ export const CENTRAL_EXCLUDED_WRITE_OWNER_IDS = ["selfRepairHands"] as const;
  * state surface, never the memory notes it reads.
  */
 export const CENTRAL_CAPABILITY_OWNER_IDS = [
+  "finance_bar_ledger",
   "finance_position_ledger_read",
   "finance_research_run",
   "finance_data_gateway_snapshot",
@@ -389,6 +391,7 @@ function createCapabilityTools(
   financeLedgerDirectories: readonly string[] = [],
 ): readonly CentralToolSpec[] {
   const financeResearch = createFinanceResearchRunTool({ workspaceDir });
+  const financeBarLedger = createFinanceBarLedgerTool({ workspaceDir });
   const ledgerRead = createFinancePositionLedgerReadTool({ workspaceDir });
   const learningDistill = createLearningDistillTool({ workspaceDir });
   const reusedReadComputeTools = [
@@ -450,6 +453,45 @@ function createCapabilityTools(
   });
   return [
     {
+      ownerId: financeBarLedger.name,
+      name: financeBarLedger.name,
+      label: financeBarLedger.label,
+      description: `${financeBarLedger.description} Central-harness scope: use action=read only. The finance directory is selected by the host; append and directory selection are rejected.`,
+      inputKeys: inputKeys(financeBarLedger),
+      allowedSideEffects: ["local_read"],
+      boundary: ["research_only", "finance_bar_ledger_read_only", "no_execution_authority"],
+      approve: (args) => {
+        if ("directory" in args || args.action !== "read" || "batch" in args) {
+          return {
+            ok: false,
+            reason: "capability gate: finance bar ledger permits only host-root reads",
+          };
+        }
+        if (
+          args.limit !== undefined &&
+          (!Number.isInteger(args.limit) || Number(args.limit) < 1 || Number(args.limit) > 25)
+        ) {
+          return {
+            ok: false,
+            reason: "capability gate: finance bar read limit must be an integer from 1 to 25",
+          };
+        }
+        const escalation = escalationReason(args);
+        return escalation ? { ok: false, reason: `capability gate: ${escalation}` } : { ok: true };
+      },
+      execute: async (args, signal) => {
+        const result = await financeBarLedger.execute(
+          `central-capability-${randomUUID()}`,
+          { ...args, limit: args.limit ?? 25 },
+          signal,
+        );
+        const details = (result as { details?: unknown } | undefined)?.details;
+        return details !== null && typeof details === "object" && !Array.isArray(details)
+          ? (details as Record<string, unknown>)
+          : { financeBarLedgerRead: true };
+      },
+    },
+    {
       ownerId: "finance_research_run",
       name: financeResearch.name,
       label: financeResearch.label,
@@ -495,7 +537,7 @@ function createCapabilityTools(
       ownerId: "finance_position_ledger_read",
       name: ledgerRead.name,
       label: ledgerRead.label,
-      description: `${ledgerRead.description} Central-harness scope: read-only; the gate refuses any arg that smacks of an append, order, or write.`,
+      description: `${ledgerRead.description} Central-harness scope: the finance directory is selected by the host. Use historyKind=receipt|order|fill|fee with historyAccountId and historyVenue; page size is 1-25 and returned historyCursor continues the same account, venue, filters, and book head. Orders are safe-field raw observations only; fills/fees are normalized alpaca:paper broker facts. Append is unavailable.`,
       inputKeys: inputKeys(
         ledgerRead,
         allowedFinanceLedgerDirectories.size > 0
