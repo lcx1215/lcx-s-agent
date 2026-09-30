@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { killProcessTree } from "../process/kill-tree.js";
 
 export const DEFAULT_FINANCE_CYCLE_TIMEOUT_MS = 15 * 60_000;
-const OUTPUT_LIMIT = 64 * 1024;
+const OUTPUT_LIMIT = 1024 * 1024;
 
 export type FinanceCycleProcessResult = {
   exitCode: number | null;
@@ -18,6 +18,7 @@ export type FinanceCycleProcessResult = {
 export async function runFinanceCycleProcess(params: {
   argv: readonly string[];
   cwd: string;
+  env?: NodeJS.ProcessEnv;
   timeoutMs: number;
   signal?: AbortSignal;
   killGraceMs?: number;
@@ -48,6 +49,7 @@ export async function runFinanceCycleProcess(params: {
   try {
     const child = spawn(process.execPath, [...params.argv], {
       cwd: params.cwd,
+      ...(params.env ? { env: params.env } : {}),
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
     });

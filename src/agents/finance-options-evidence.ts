@@ -327,6 +327,7 @@ export function summarizeFinanceOptionsChain(
 export function renderFinanceOptionsEvidence(
   summary: FinanceOptionsChainSummary,
   jobId: string,
+  evidenceId: string,
 ): string {
   const representativeText = summary.representatives
     .map(
@@ -335,7 +336,7 @@ export function renderFinanceOptionsEvidence(
     )
     .join("; ");
   return [
-    `Options chain (${summary.status}); job=${jobId}; underlying spot=${summary.underlyingSpot} observed=${summary.underlyingSpotAt}; evaluated=${summary.evaluatedContracts}, eligible=${summary.eligibleContracts}; median IV=${summary.medianImpliedVolatility ?? "unknown"}; median bid-ask spread=${summary.medianSpreadPct ?? "unknown"}; put/call OI ratio=${summary.putCallOpenInterestRatio ?? "unknown"}; OI-weighted gamma=${summary.openInterestWeightedGamma ?? "unknown"}.`,
+    `Options chain (${summary.status}); audit receipt ID only=${jobId}; cite this observation as ${evidenceId}; underlying spot=${summary.underlyingSpot} observed=${summary.underlyingSpotAt}; evaluated=${summary.evaluatedContracts}, eligible=${summary.eligibleContracts}; median IV=${summary.medianImpliedVolatility ?? "unknown"}; median bid-ask spread=${summary.medianSpreadPct ?? "unknown"}; put/call OI ratio=${summary.putCallOpenInterestRatio ?? "unknown"}; OI-weighted gamma=${summary.openInterestWeightedGamma ?? "unknown"}.`,
     `Expiry buckets=${JSON.stringify(summary.expirations)}. Representative contracts=${representativeText || "none"}.`,
     `Warnings=${summary.warnings.join(" ")}`,
   ].join(" ");

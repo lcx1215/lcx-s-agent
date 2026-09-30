@@ -1,4 +1,5 @@
 import { ApiCallError } from "./api-call-contract.js";
+import { isFinanceUsEquityDailyBarComplete } from "./finance-cycle-schedule.js";
 import { extendedFinanceCapabilities } from "./finance-extended-capability-catalog.js";
 import { resolveFinanceFetch } from "./finance-live-market-source.js";
 import type {
@@ -187,143 +188,158 @@ export function createRegisteredCapabilityAdapters(
   capabilities.push(...extendedFinanceCapabilities(options));
   return capabilities
     .filter((c) => c.key?.trim())
-    .map((c) => ({
-      id: c.id,
-      providerName: c.provider,
-      providerRole: "cross_check_market_data",
-      priority: 65,
-      sampleRequest: c.sample,
-      supports: (r) =>
-        r.collection === c.collection &&
-        (c.accepts
-          ? c.accepts(r)
-          : c.crypto
-            ? r.assetClass === "crypto"
-            : ["us_equity", "stock", "equity", "common_stock"].includes(r.assetClass)),
-      collect: async (r, signal) => {
-        const endpoint = c.url(r);
-        const sourceUrlOrArtifact = endpoint.toString();
-        const headers: Record<string, string> = { ...c.extraHeaders };
-        if (c.auth === "apikey") {
-          endpoint.searchParams.set(c.auth, c.key!.trim());
-        } else {
-          headers[c.auth === "apikey-header" ? "apikey" : c.auth] =
-            c.auth === "Authorization" ? `Bearer ${c.key!.trim()}` : c.key!.trim();
-        }
-        let response;
-        try {
-          response = await resolveFinanceFetch(options.fetchImpl, { signal })(endpoint.toString(), {
-            headers,
-          });
-        } catch (error) {
-          if (error instanceof ApiCallError) {
-            throw error;
+    .map((c) => {
+      const alpacaDailyHistory = c.id === "alpaca_daily_history";
+      return {
+        id: c.id,
+        providerName: c.provider,
+        providerRole: alpacaDailyHistory ? "primary_market_data" : "cross_check_market_data",
+        // Place configured Alpaca bars just after the regional primary so a two-source budget can
+        // include the credentialed feed before lower-ranked public alternatives.
+        priority: alpacaDailyHistory ? 15 : 65,
+        sampleRequest: c.sample,
+        supports: (r) =>
+          r.collection === c.collection &&
+          (c.accepts
+            ? c.accepts(r)
+            : c.crypto
+              ? r.assetClass === "crypto"
+              : ["us_equity", "stock", "equity", "common_stock"].includes(r.assetClass)),
+        collect: async (r, signal) => {
+          const endpoint = c.url(r);
+          const sourceUrlOrArtifact = endpoint.toString();
+          const headers: Record<string, string> = { ...c.extraHeaders };
+          if (c.auth === "apikey") {
+            endpoint.searchParams.set(c.auth, c.key!.trim());
+          } else {
+            headers[c.auth === "apikey-header" ? "apikey" : c.auth] =
+              c.auth === "Authorization" ? `Bearer ${c.key!.trim()}` : c.key!.trim();
           }
-          throw new ApiCallError("network_error");
-        }
-        const responseText = await response.text();
-        const observedAt = new Date().toISOString();
-        let rawArtifact: string | undefined;
-        let safeBody = responseText;
-        for (const secret of [c.key, ...Object.values(c.extraHeaders ?? {})]) {
-          if (secret) {
-            safeBody = safeBody.replaceAll(secret, "[REDACTED]");
-          }
-        }
-        if (options.captureRawResponse) {
-          rawArtifact = await options.captureRawResponse({
-            adapterId: c.id,
-            sourceUrlOrArtifact,
-            observedAt,
-            httpStatus: response.status,
-            body: safeBody,
-          });
-        }
-        if (!response.ok) {
-          throw new ApiCallError(
-            response.status === 403
-              ? "forbidden"
-              : response.status === 429
-                ? "rate_limited"
-                : "http_error",
-            response.status,
-          );
-        }
-        let raw: unknown;
-        try {
-          raw = c.decode ? c.decode(safeBody) : (JSON.parse(safeBody) as unknown);
-        } catch {
-          throw new Error(`${c.id}: invalid JSON`);
-        }
-        const body = object(raw);
-        if (
-          body.Note ||
-          body.Information ||
-          body["Error Message"] ||
-          body.error ||
-          body.status === "ERROR" ||
-          body.status === "error"
-        ) {
-          throw new Error(`${c.id}: provider rejected request (quota, entitlement or parameters)`);
-        }
-        const parsed = c
-          .parse(body, raw)
-          .filter((row) => {
-            if (!row.time) {
-              return c.snapshot || c.collection === "company_profile";
-            }
-            if (c.collection === "eod_history") {
-              const price = row.data.close ?? row.data.price;
-              if (
-                typeof price !== "number" ||
-                !Number.isFinite(price) ||
-                price <= 0 ||
-                row.time.slice(0, 10) >= r.asOf.slice(0, 10)
-              ) {
-                return false;
-              }
-            }
-            const date = row.time.slice(0, 10);
-            return (
-              Date.parse(row.time) <= Date.parse(r.asOf) &&
-              (!r.fromDate || date >= r.fromDate) &&
-              (!r.toDate || date <= r.toDate)
+          let response;
+          try {
+            response = await resolveFinanceFetch(options.fetchImpl, { signal })(
+              endpoint.toString(),
+              {
+                headers,
+              },
             );
-          })
-          .toSorted((a, b) => (b.time ?? "").localeCompare(a.time ?? ""))
-          .slice(0, r.limit ?? 20);
-        if (!parsed.length) {
-          throw new Error(`${c.id}: no usable records in requested window`);
-        }
-        return parsed.map((row, index) => ({
-          itemId: `${c.id}:${r.instrument}:${row.time ?? r.asOf}:${index}`,
-          collection: r.collection,
-          providerName: c.provider,
-          providerRole: "cross_check_market_data",
-          sourceFamily:
-            c.collection === "eod_history" || c.collection === "options_chain"
-              ? "market_data_api"
-              : "fundamentals_api",
-          sourceTimestamp: row.time ?? observedAt,
-          observedAt,
-          // `manual_or_unknown` is rejected as unusable provenance, so it must not be the
-          // default for a collection whose delay the adapter itself enforces: `eod_history`
-          // rows are filtered to days strictly before `asOf`, which makes them completed
-          // end-of-day bars by construction. Everything else keeps the conservative default
-          // and stays excluded until someone declares what it is.
-          delayStatus:
-            c.delayStatus ?? (c.collection === "eod_history" ? "end_of_day" : "manual_or_unknown"),
-          sourceUrlOrArtifact,
-          data: {
-            ...row.data,
-            capabilityId: c.id,
-            ...(rawArtifact ? { rawArtifact } : {}),
-            coverage: "bounded_response_not_full_provider_database",
-            sourceTimestampMeaning: row.time
-              ? "observation_or_fiscal_period_not_publication"
-              : "retrieved_snapshot_provider_timestamp_unavailable",
-          },
-        }));
-      },
-    }));
+          } catch (error) {
+            if (error instanceof ApiCallError) {
+              throw error;
+            }
+            throw new ApiCallError("network_error");
+          }
+          const responseText = await response.text();
+          const observedAt = new Date().toISOString();
+          let rawArtifact: string | undefined;
+          let safeBody = responseText;
+          for (const secret of [c.key, ...Object.values(c.extraHeaders ?? {})]) {
+            if (secret) {
+              safeBody = safeBody.replaceAll(secret, "[REDACTED]");
+            }
+          }
+          if (options.captureRawResponse) {
+            rawArtifact = await options.captureRawResponse({
+              adapterId: c.id,
+              sourceUrlOrArtifact,
+              observedAt,
+              httpStatus: response.status,
+              body: safeBody,
+            });
+          }
+          if (!response.ok) {
+            throw new ApiCallError(
+              response.status === 403
+                ? "forbidden"
+                : response.status === 429
+                  ? "rate_limited"
+                  : "http_error",
+              response.status,
+            );
+          }
+          let raw: unknown;
+          try {
+            raw = c.decode ? c.decode(safeBody) : (JSON.parse(safeBody) as unknown);
+          } catch {
+            throw new Error(`${c.id}: invalid JSON`);
+          }
+          const body = object(raw);
+          if (
+            body.Note ||
+            body.Information ||
+            body["Error Message"] ||
+            body.error ||
+            body.status === "ERROR" ||
+            body.status === "error"
+          ) {
+            throw new Error(
+              `${c.id}: provider rejected request (quota, entitlement or parameters)`,
+            );
+          }
+          const parsed = c
+            .parse(body, raw)
+            .filter((row) => {
+              if (!row.time) {
+                return c.snapshot || c.collection === "company_profile";
+              }
+              if (c.collection === "eod_history") {
+                const price = row.data.close ?? row.data.price;
+                const marketDate = row.time.slice(0, 10);
+                if (
+                  typeof price !== "number" ||
+                  !Number.isFinite(price) ||
+                  price <= 0 ||
+                  !isFinanceUsEquityDailyBarComplete(marketDate, r.asOf)
+                ) {
+                  return false;
+                }
+              }
+              const date = row.time.slice(0, 10);
+              return (
+                Date.parse(row.time) <= Date.parse(r.asOf) &&
+                (!r.fromDate || date >= r.fromDate) &&
+                (!r.toDate || date <= r.toDate)
+              );
+            })
+            .toSorted((a, b) => (b.time ?? "").localeCompare(a.time ?? ""))
+            .slice(0, r.limit ?? 20);
+          if (!parsed.length) {
+            throw new Error(`${c.id}: no usable records in requested window`);
+          }
+          return parsed.map((row, index) => ({
+            itemId: `${c.id}:${r.instrument}:${row.time ?? r.asOf}:${index}`,
+            collection: r.collection,
+            providerName: c.provider,
+            providerRole: "cross_check_market_data",
+            sourceFamily:
+              c.collection === "eod_history" || c.collection === "options_chain"
+                ? "market_data_api"
+                : "fundamentals_api",
+            sourceTimestamp: row.time ?? observedAt,
+            observedAt,
+            // `manual_or_unknown` is rejected as unusable provenance, so it must not be the
+            // default for a collection whose delay the adapter itself enforces: `eod_history`
+            // rows are filtered to days strictly before `asOf`, which makes them completed
+            // end-of-day bars by construction. Everything else keeps the conservative default
+            // and stays excluded until someone declares what it is.
+            delayStatus:
+              c.delayStatus ??
+              (c.collection === "eod_history" ? "end_of_day" : "manual_or_unknown"),
+            sourceUrlOrArtifact,
+            data: {
+              ...row.data,
+              capabilityId: c.id,
+              ...(rawArtifact ? { rawArtifact } : {}),
+              coverage: "bounded_response_not_full_provider_database",
+              sourceTimestampMeaning:
+                c.id === "alpaca_daily_history"
+                  ? "new_york_session_date_label_not_close_time"
+                  : row.time
+                    ? "observation_or_fiscal_period_not_publication"
+                    : "retrieved_snapshot_provider_timestamp_unavailable",
+            },
+          }));
+        },
+      };
+    });
 }

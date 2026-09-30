@@ -21,6 +21,7 @@ import type {
 } from "./quality-harness-contract.js";
 import {
   QUALITY_HARNESS_MAX_EVIDENCE_BATCHES,
+  QUALITY_HARNESS_MAX_EVIDENCE_TEXT_LENGTH,
   QUALITY_HARNESS_MAX_EVIDENCE_ITEMS_PER_BATCH,
 } from "./quality-harness-contract.js";
 
@@ -263,10 +264,9 @@ type CompactQualityEvidenceEntry = {
 function compactQualityEvidence(
   request: QualityHarnessModelRequest,
 ): CompactQualityEvidenceEntry[] {
-  const perItem = Math.min(
-    6_000,
-    Math.floor(18_000 / Math.max(1, Math.min(48, request.evidence.length))),
-  );
+  // Large source records remain whole. The existing batch planner separates them;
+  // it still refuses omitted/clipped evidence and retains the four-batch limit.
+  const perItem = QUALITY_HARNESS_MAX_EVIDENCE_TEXT_LENGTH;
   return request.evidence.slice(0, 48).map((entry) => {
     const text = clipPromptText(entry.text, perItem);
     const source = entry.source === undefined ? undefined : clipPromptText(entry.source, 1_000);
@@ -284,10 +284,11 @@ function compactQualityEvidence(
 function fitQualityEvidence(entries: readonly CompactQualityEvidenceEntry[]) {
   const included: CompactQualityEvidenceEntry[] = [];
   let section = "";
+  const sectionLimit = 64_000;
   for (const entry of entries) {
     const rendered = `[${entry.id}] ${entry.text}${entry.source ? ` (${entry.source})` : ""}${entry.kind ? ` [caller_kind=${entry.kind}]` : ""}`;
     const candidate = section ? `${section} | ${rendered}` : rendered;
-    if (candidate.length > 22_000) {
+    if (candidate.length > sectionLimit) {
       break;
     }
     included.push(entry);
@@ -296,21 +297,41 @@ function fitQualityEvidence(entries: readonly CompactQualityEvidenceEntry[]) {
   return { section, included };
 }
 
-function compactQualityDependencies(request: QualityHarnessModelRequest) {
+function compactQualityDependencies(
+  request: Pick<QualityHarnessModelRequest, "dependencyOutputs" | "evidenceBatchMode"> &
+    Partial<Pick<QualityHarnessModelRequest, "stage">>,
+) {
   const entries = Object.entries(request.dependencyOutputs);
   const batchEntries = entries.filter(([taskId]) => taskId.startsWith("evidence_batch_"));
   const otherEntries = entries.filter(([taskId]) => !taskId.startsWith("evidence_batch_"));
-  const maxEntries = 12;
+  const maxEntries = request.stage === "precheck" ? 16 : 12;
   return Object.fromEntries(
     [
       ...otherEntries.slice(0, Math.max(0, maxEntries - batchEntries.length)),
       ...batchEntries.slice(0, maxEntries),
     ].map(([taskId, output]) => [
       taskId,
-      request.evidenceBatchMode === "final_artifact_audit" && taskId === "formatting"
+      taskId.startsWith("evidence_batch_") ||
+      request.stage === "precheck" ||
+      (request.stage === "draft" && batchEntries.length > 0) ||
+      (request.evidenceBatchMode === "final_artifact_audit" && taskId === "formatting")
         ? output
         : compactPromptValue(output, 0, true),
     ]),
+  );
+}
+
+function dependencyEntriesMatch(
+  selected: Readonly<Record<string, unknown>>,
+  expectedEntries: readonly (readonly [string, unknown])[],
+): boolean {
+  return (
+    Object.keys(selected).length === expectedEntries.length &&
+    expectedEntries.every(
+      ([taskId, expected]) =>
+        Object.hasOwn(selected, taskId) &&
+        JSON.stringify(selected[taskId]) === JSON.stringify(expected),
+    )
   );
 }
 
@@ -337,6 +358,31 @@ function collectReferencedEvidenceIds(value: unknown, depth = 0): string[] {
     }
     return collectReferencedEvidenceIds(entry, depth + 1);
   });
+}
+
+/** IDs actually supplied in this packet or referenced by its visible dependencies. */
+export function qualityHarnessAllowedEvidenceIds(
+  request: Pick<
+    QualityHarnessModelRequest,
+    "evidence" | "evidenceCoverage" | "dependencyOutputs" | "evidenceBatchMode"
+  > &
+    Partial<Pick<QualityHarnessModelRequest, "stage">>,
+  visibleEvidence: readonly { id: string }[] = request.evidence,
+): string[] {
+  const controllerIds = new Set(
+    request.evidenceCoverage?.selectedEvidenceIds ?? request.evidence.map((item) => item.id),
+  );
+  const dependencies = compactQualityDependencies({
+    ...request,
+    ...(request.stage === undefined ? {} : { stage: request.stage }),
+    dependencyOutputs: request.dependencyOutputs ?? {},
+  });
+  return [
+    ...new Set([
+      ...visibleEvidence.map((item) => item.id),
+      ...collectReferencedEvidenceIds(dependencies).filter((id) => controllerIds.has(id)),
+    ]),
+  ];
 }
 
 function formatPromptSectionValue(value: unknown, depth = 0): string {
@@ -385,9 +431,10 @@ export function buildQualityHarnessModelPromptWithCoverage(request: QualityHarne
   const evidence = compactQualityEvidence(request);
   const dependencyOutputs = compactQualityDependencies(request);
   const dependencyEntries = Object.entries(request.dependencyOutputs);
-  const dependencyValuesMayBeClipped =
-    dependencyEntries.length !== Object.keys(dependencyOutputs).length ||
-    JSON.stringify(dependencyOutputs) !== JSON.stringify(request.dependencyOutputs);
+  const dependencyValuesMayBeClipped = !dependencyEntriesMatch(
+    dependencyOutputs,
+    dependencyEntries,
+  );
   const dependencyJson = JSON.stringify(dependencyOutputs);
   const hasBatchDependencies = dependencyEntries.some(([taskId]) =>
     taskId.startsWith("evidence_batch_"),
@@ -395,19 +442,26 @@ export function buildQualityHarnessModelPromptWithCoverage(request: QualityHarne
   const batchDependencyEntries = dependencyEntries.filter(([taskId]) =>
     taskId.startsWith("evidence_batch_"),
   );
-  const compactBatchDependencyEntries = Object.fromEntries(
-    batchDependencyEntries.map(([taskId, output]) => [taskId, compactPromptValue(output, 0, true)]),
+  const selectedBatchDependencyEntries = Object.fromEntries(
+    Object.entries(dependencyOutputs).filter(([taskId]) => taskId.startsWith("evidence_batch_")),
   );
-  const batchDependencyValuesMayBeClipped =
-    JSON.stringify(compactBatchDependencyEntries) !==
-    JSON.stringify(Object.fromEntries(batchDependencyEntries));
+  const batchDependencyValuesMayBeClipped = !dependencyEntriesMatch(
+    selectedBatchDependencyEntries,
+    batchDependencyEntries,
+  );
   const batchDependencyLimit =
-    request.stage === "precheck" && hasBatchDependencies ? 28_000 : 16_000;
+    request.stage === "precheck" || request.evidenceBatchMode === "final_artifact_audit"
+      ? 44_000
+      : request.stage === "draft" && hasBatchDependencies
+        ? 20_000
+        : 16_000;
+  const completeHandoffRequired =
+    request.stage === "precheck" || (request.stage === "draft" && hasBatchDependencies);
   if (
-    ((request.stage === "draft" && hasBatchDependencies) ||
-      (request.stage === "precheck" && hasBatchDependencies) ||
-      request.evidenceBatchMode === "final_artifact_audit") &&
-    (batchDependencyValuesMayBeClipped || dependencyJson.length > batchDependencyLimit)
+    (completeHandoffRequired || request.evidenceBatchMode === "final_artifact_audit") &&
+    (batchDependencyValuesMayBeClipped ||
+      (completeHandoffRequired && dependencyValuesMayBeClipped) ||
+      dependencyJson.length > batchDependencyLimit)
   ) {
     throw new Error("quality evidence batch dependencies exceed the review prompt budget");
   }
@@ -415,15 +469,7 @@ export function buildQualityHarnessModelPromptWithCoverage(request: QualityHarne
     .slice(0, 8)
     .map((item) => clipPromptText(item, 300));
   const { section: evidenceSection, included: includedEvidence } = fitQualityEvidence(evidence);
-  const controllerEvidenceIds = new Set(
-    request.evidenceCoverage?.selectedEvidenceIds ?? request.evidence.map((entry) => entry.id),
-  );
-  const referencedEvidenceIds = collectReferencedEvidenceIds(dependencyOutputs).filter((id) =>
-    controllerEvidenceIds.has(id),
-  );
-  const allowedEvidenceIds = [
-    ...new Set([...includedEvidence.map((entry) => entry.id), ...referencedEvidenceIds]),
-  ];
+  const allowedEvidenceIds = qualityHarnessAllowedEvidenceIds(request, includedEvidence);
   const constraints = request.sharedContext.userConstraints;
   const producerContract =
     request.stage === "draft" &&
@@ -453,6 +499,13 @@ export function buildQualityHarnessModelPromptWithCoverage(request: QualityHarne
   const evidenceTextMayBeClipped =
     includedEvidence.length !== request.evidence.length ||
     includedEvidence.some((entry) => entry.textWasClipped || entry.sourceWasClipped);
+  const allocationContract = request.sharedContext.portfolioAllocationContract;
+  const allocationContractText = allocationContract
+    ? JSON.stringify(allocationContract)
+    : undefined;
+  if (allocationContractText && allocationContractText.length > 5_000) {
+    throw new Error("finance portfolio allocation contract exceeds prompt budget");
+  }
   const thesisContract = request.sharedContext.financeThesisProposalContract;
   const thesisContractText = thesisContract ? JSON.stringify(thesisContract) : undefined;
   if (thesisContractText && thesisContractText.length > 5_000) {
@@ -496,6 +549,12 @@ export function buildQualityHarnessModelPromptWithCoverage(request: QualityHarne
           "Typed nonmarket numeric assertion contract: caller_kind is supplied by the controller, never inferred from your answer. For source-supported 秒 or 测试单位 quantities from policy/synthetic_fixture evidence, reuse the corresponding supported claims.text verbatim as a standalone local sentence in artifact.answer. Preserve the value, original unit, entity and evidenceIds; do not merge that sentence with another assertion or paraphrase its numeric assertion. Ground the claim in that same cited evidence first. Other prose and strategy analysis remain flexible. This exception does not apply to real/current prices, monetary amounts, yields or market capitalization: those still require matching source and timestamp. Calling text hypothetical does not upgrade evidence or waive checks.",
         ]
       : []),
+    ...(allocationContractText
+      ? [
+          `portfolio_allocation_contract=${allocationContractText}`,
+          'Draft and formatting must preserve the controller portfolio outcome contract and return exactly one portfolioAllocationProposal shape: either {allocations:[{strategyId,budgetFraction,evidenceIds}]} covering each listed activeStrategyId exactly once, with fractions greater than 0 and at most 1 and total at most 1; or {decision:"no_allocation",reason,evidenceIds} when supplied evidence does not justify positive budgets. The abstention reason must be concise and cite only evidence IDs from supported claims. Never combine shapes or use zero/tiny allocations to imitate abstention. Positive fractions are strategy budget ceilings, not mandatory holdings or orders; unallocated capital remains cash. Do not invent or activate strategies. This proposal has no execution authority.',
+        ]
+      : []),
     `context=${clipPromptText(JSON.stringify(request.sharedContext), 4_000)}`,
     "For instrument types, assetClass=us_equity does not itself mean stock: ETFs and indices may share that asset class. Preserve a supplied instrument kind; when unspecified, say instrument rather than inventing its type.",
     `evidence=${evidenceSection}`,
@@ -512,8 +571,7 @@ export function buildQualityHarnessModelPromptWithCoverage(request: QualityHarne
     ...(request.findingPacket?.findings.length
       ? [
           `finding_packet=${JSON.stringify(request.findingPacket)}`,
-          `closure_artifact=${JSON.stringify((request.dependencyOutputs.formatting as { output?: unknown } | undefined)?.output)}`,
-          `closure_evidence=${JSON.stringify(request.evidence)}`,
+          "The complete final artifact is present once in dependencyOutputs.formatting; finding_packet.evidenceSha256 binds the full normalized evidence set, including records reviewed in other batches.",
           'For every finding in finding_packet, independently check whether the FINAL artifact fixes it using the supplied evidence. Add review.findingClosure={artifactSha256,evidenceSha256,resolutions:[{findingId,status:"resolved"|"unresolved",evidenceIds:string[],artifactClaimId:string,artifactQuote?:string,rationale:string}]}. Copy both packet hashes and every findingId exactly. Include exactly one resolution per finding, cite supporting evidence IDs and artifactClaimId naming the exact current final claim; omit artifactQuote only when the claim text itself should be used. Explain why that current claim fixes the issue. Never quote a prior draft. A prior revise is not proof the final answer is still wrong. Never close a still-present error or missing evidence by assertion. Mark unresolved when unsure. Retain the normal review fields; use pass only if the final artifact passes.',
         ]
       : []),
@@ -616,6 +674,26 @@ export function planQualityHarnessEvidenceBatches(params: {
   }
   if (current.length > 0) {
     batches.push(current);
+  }
+
+  // Backfill unused space before rejecting the packet. Keep every source whole
+  // and retain the normal ordered plan whenever it already fits the budget.
+  if (batches.length > QUALITY_HARNESS_MAX_EVIDENCE_BATCHES) {
+    const packed: QualityHarnessEvidence[][] = [];
+    for (const entry of batches.flat()) {
+      const target = packed.find(
+        (batch) =>
+          batch.length < QUALITY_HARNESS_MAX_EVIDENCE_ITEMS_PER_BATCH && fits([...batch, entry]),
+      );
+      if (target) {
+        target.push(entry);
+      } else {
+        packed.push([entry]);
+      }
+    }
+    if (packed.length < batches.length) {
+      batches.splice(0, batches.length, ...packed);
+    }
   }
 
   if (batches.length > QUALITY_HARNESS_MAX_EVIDENCE_BATCHES) {

@@ -1,5 +1,11 @@
 import type { FinanceCommitteeEvidence } from "./finance-agent-committee.js";
 import {
+  annualisedVol,
+  bindFinanceDailyStrategy,
+  FINANCE_DAILY_VOLATILITY_LOOKBACK_CLOSES,
+  financeMonthlyTrendReturn,
+} from "./finance-daily-strategy.js";
+import {
   FINANCE_LIVE_NOW_MAX_FUTURE_SKEW_MINUTES,
   type FinanceAsOfMode,
 } from "./finance-data-gateway.js";
@@ -13,6 +19,250 @@ import type {
   FinanceResearchBatchJob,
 } from "./finance-research-batch-runner.js";
 import type { QualityHarnessArtifact } from "./quality-harness-contract.js";
+
+type FinanceEvidenceRecord = Record<string, unknown>;
+
+function isEvidenceRecord(value: unknown): value is FinanceEvidenceRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isCalendarDate(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/u.test(value)) {
+    return false;
+  }
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function closeHistoryByMonth(
+  rows: readonly (readonly [string, number])[],
+): readonly { date: string; close: number }[] {
+  const byMonth = new Map<string, { date: string; close: number }>();
+  for (const [date, close] of rows) {
+    const month = date.slice(0, 7);
+    const previous = byMonth.get(month);
+    if (!previous || date > previous.date) {
+      byMonth.set(month, { date, close });
+    }
+  }
+  return [...byMonth.values()].toSorted((left, right) => left.date.localeCompare(right.date));
+}
+
+/**
+ * Derive citeable observed-close arithmetic from an already captured controller packet.
+ * This uses the daytime engine's rule binder and return function, but cannot verify that the
+ * stored latest monthly observation was the venue's actual last trading session.
+ */
+export function buildFinanceMonthlyTrendDerivedEvidence(
+  controllerEvidence: readonly FinanceCommitteeEvidence[],
+  asOf: string,
+): readonly FinanceCommitteeEvidence[] {
+  const asOfTime = Date.parse(asOf);
+  if (!Number.isFinite(asOfTime) || new Date(asOfTime).toISOString() !== asOf) {
+    return [];
+  }
+  const activeRuleItems = controllerEvidence.filter(
+    (item) =>
+      item.id === "finance-controller:active-strategies" &&
+      item.source === "finance-strategy-rule-ledger",
+  );
+  if (activeRuleItems.length !== 1 || activeRuleItems[0].timestamp !== asOf) {
+    return [];
+  }
+  let activeRules: unknown[];
+  try {
+    const parsed: unknown = JSON.parse(activeRuleItems[0].text);
+    if (!isEvidenceRecord(parsed) || !Array.isArray(parsed.activeRules)) {
+      return [];
+    }
+    activeRules = parsed.activeRules as unknown[];
+  } catch {
+    return [];
+  }
+  const trendRules = activeRules.filter(
+    (value): value is FinanceEvidenceRecord =>
+      isEvidenceRecord(value) && value.form === "cross_asset_trend",
+  );
+  if (trendRules.length !== 1) {
+    return [];
+  }
+  const rule = trendRules[0];
+  const ruleInstrumentsValue = rule.instruments;
+  if (
+    typeof rule.ruleId !== "string" ||
+    typeof rule.formVersion !== "string" ||
+    typeof rule.emits !== "string" ||
+    typeof rule.activeObservedAt !== "string" ||
+    !Number.isFinite(Date.parse(rule.activeObservedAt)) ||
+    Date.parse(rule.activeObservedAt) > asOfTime ||
+    !isEvidenceRecord(rule.schedule) ||
+    rule.schedule.kind !== "monthly" ||
+    rule.schedule.at !== "last_trading_day" ||
+    rule.schedule.timezone !== "America/New_York" ||
+    !isEvidenceRecord(rule.body) ||
+    !Array.isArray(ruleInstrumentsValue) ||
+    ruleInstrumentsValue.some((instrument: unknown) => typeof instrument !== "string")
+  ) {
+    return [];
+  }
+  const ruleInstruments = ruleInstrumentsValue.filter(
+    (instrument: unknown): instrument is string => typeof instrument === "string",
+  );
+  if (ruleInstruments.length !== ruleInstrumentsValue.length) {
+    return [];
+  }
+  let boundRule: ReturnType<typeof bindFinanceDailyStrategy>;
+  try {
+    const bound = bindFinanceDailyStrategy([
+      {
+        ruleId: rule.ruleId,
+        form: "cross_asset_trend",
+        formVersion: rule.formVersion,
+        emits: rule.emits,
+        schedule: { kind: "monthly", at: "last_trading_day", timezone: "America/New_York" },
+        body: rule.body,
+        instruments: ruleInstruments,
+        state: "active",
+      },
+    ]);
+    boundRule = bound;
+  } catch {
+    return [];
+  }
+  const instruments = [
+    ...new Set(boundRule.instruments.map((instrument) => instrument.toUpperCase())),
+  ];
+  if (instruments.length === 0 || instruments.length !== boundRule.instruments.length) {
+    return [];
+  }
+
+  const histories = new Map<string, FinanceCommitteeEvidence[]>();
+  for (const item of controllerEvidence) {
+    if (item.source !== "finance-bar-ledger" || !item.id.startsWith("finance-controller:eod:")) {
+      continue;
+    }
+    const instrument = item.id.slice("finance-controller:eod:".length).toUpperCase();
+    const matches = histories.get(instrument) ?? [];
+    matches.push(item);
+    histories.set(instrument, matches);
+  }
+
+  const result: FinanceCommitteeEvidence[] = [];
+  for (const instrument of instruments) {
+    const matchingItems = histories.get(instrument);
+    if (!matchingItems || matchingItems.length !== 1 || matchingItems[0].timestamp !== asOf) {
+      continue;
+    }
+    const historyItem = matchingItems[0];
+    let payload: FinanceEvidenceRecord;
+    try {
+      const parsed: unknown = JSON.parse(historyItem.text);
+      if (!isEvidenceRecord(parsed)) {
+        continue;
+      }
+      payload = parsed;
+    } catch {
+      continue;
+    }
+    if (
+      payload.instrument !== instrument ||
+      !Array.isArray(payload.divergentDates) ||
+      payload.divergentDates.length > 0 ||
+      !Array.isArray(payload.closes) ||
+      payload.closes.length < 2 ||
+      payload.suppliedBarCount !== payload.closes.length
+    ) {
+      continue;
+    }
+    const closeByDate = new Map<string, number>();
+    let invalid = false;
+    for (const row of payload.closes) {
+      if (
+        !Array.isArray(row) ||
+        row.length !== 2 ||
+        !isCalendarDate(row[0]) ||
+        typeof row[1] !== "number" ||
+        !Number.isFinite(row[1]) ||
+        row[1] <= 0 ||
+        row[0] >= asOf.slice(0, 10)
+      ) {
+        invalid = true;
+        break;
+      }
+      const previous = closeByDate.get(row[0]);
+      if (previous !== undefined && previous !== row[1]) {
+        invalid = true;
+        break;
+      }
+      closeByDate.set(row[0], row[1]);
+    }
+    if (invalid) {
+      continue;
+    }
+    const rows = [...closeByDate.entries()].toSorted(([left], [right]) =>
+      left.localeCompare(right),
+    );
+    const volatilityRows = rows.slice(-FINANCE_DAILY_VOLATILITY_LOOKBACK_CLOSES);
+    const dailyVolatility =
+      volatilityRows.length === FINANCE_DAILY_VOLATILITY_LOOKBACK_CLOSES
+        ? annualisedVol(volatilityRows.map(([, close]) => close))
+        : Number.NaN;
+    const sourceIds = [activeRuleItems[0].id, historyItem.id];
+    if (Number.isFinite(dailyVolatility) && dailyVolatility > 0) {
+      result.push({
+        id: `finance-derived:annualised-volatility:${encodeURIComponent(boundRule.ruleId)}:${encodeURIComponent(instrument)}`,
+        source: "finance-bar-ledger; deterministic daily-return risk-normalisation",
+        timestamp: asOf,
+        text:
+          `Deterministic annualised daily-return volatility for ${instrument}, active rule ${boundRule.ruleId}: ` +
+          `annualisedVol=${dailyVolatility.toFixed(8)} (${(dailyVolatility * 100).toFixed(2)}%); ` +
+          `method=log(close_t/close_t-1), sample variance (n-1), sqrt(variance*252); ` +
+          `${volatilityRows.length} supplied closes and ${volatilityRows.length - 1} daily-return intervals from ${volatilityRows[0]?.[0]} to ${volatilityRows.at(-1)?.[0]}; ` +
+          `the value matches the daytime engine calculation over the same latest ${FINANCE_DAILY_VOLATILITY_LOOKBACK_CLOSES} closes; ` +
+          `this is a 252-observation trading window, not a claim about exact calendar-month boundaries; ` +
+          `asOf=${asOf}; raw evidence IDs=${sourceIds.join(",")}.`,
+      });
+    }
+    const months = closeHistoryByMonth(rows);
+    // Align with the daytime calendar selection: use the latest observed close in a calendar
+    // month strictly before asOf's month. This does not verify last-session coverage.
+    const asOfMonth = asOf.slice(0, 7);
+    const anchor = months.toReversed().find((row) => row.date.slice(0, 7) < asOfMonth);
+    if (!anchor) {
+      continue;
+    }
+    const prior = months.find((row) => {
+      const target = new Date(`${anchor.date.slice(0, 7)}-01T00:00:00.000Z`);
+      target.setUTCMonth(target.getUTCMonth() - boundRule.lookbackMonths);
+      return row.date.slice(0, 7) === target.toISOString().slice(0, 7);
+    });
+    const returnFraction = financeMonthlyTrendReturn(months, anchor, boundRule.lookbackMonths);
+    if (
+      !prior ||
+      returnFraction === undefined ||
+      !Number.isFinite(returnFraction) ||
+      !Number.isFinite(returnFraction * 100) ||
+      prior.date >= anchor.date
+    ) {
+      continue;
+    }
+    const changePct = `${returnFraction >= 0 ? "+" : ""}${(returnFraction * 100).toFixed(1)}%`;
+    result.push({
+      id: `finance-derived:monthly-close-change:${encodeURIComponent(boundRule.ruleId)}:${encodeURIComponent(instrument)}`,
+      source: "finance-bar-ledger; deterministic monthly trend arithmetic",
+      timestamp: asOf,
+      text:
+        `Deterministic observed-close price-only arithmetic for ${instrument}, rule context ${boundRule.ruleId}: ` +
+        `anchor close ${anchor.close} on ${anchor.date} divided by prior close ${prior.close} on ${prior.date}, ` +
+        `formula (anchor/prior - 1) * 100 = ${changePct}; lookback=${boundRule.lookbackMonths} calendar months; ` +
+        `asOf=${asOf}; raw evidence IDs=${sourceIds.join(",")}; ` +
+        "latest observed close in each calendar month; month-end session coverage is unverified; " +
+        "not a validated strategy signal or execution readiness; stored close observations only, " +
+        "not dividend-reinvested total return.",
+    });
+  }
+  return Object.freeze(result);
+}
 
 /** Instrument citation coverage only; source text is not semantic or truth validation. */
 export function financeInstrumentCitationScope(evidence: readonly { id: string; text?: string }[]) {
@@ -681,6 +931,13 @@ export function summarizeFinancePriceHistory(
           : null,
       ]),
     );
+    const volatilityRows = ordered.slice(-FINANCE_DAILY_VOLATILITY_LOOKBACK_CLOSES);
+    const dailyVolatility =
+      invalid === 0 &&
+      duplicates === 0 &&
+      volatilityRows.length === FINANCE_DAILY_VOLATILITY_LOOKBACK_CLOSES
+        ? annualisedVol(volatilityRows.map(([, close]) => close))
+        : Number.NaN;
     return {
       identity: JSON.parse(identity) as string[],
       observations: prices.length,
@@ -691,6 +948,16 @@ export function summarizeFinancePriceHistory(
       priceReturnPct: rounded((last / prices[0] - 1) * 100),
       returnsByObservationPct: returns,
       observationWindows,
+      dailyVolatility:
+        Number.isFinite(dailyVolatility) && dailyVolatility > 0
+          ? {
+              annualisedVolatility: dailyVolatility,
+              from: volatilityRows[0][0],
+              to: volatilityRows.at(-1)![0],
+              closeCount: volatilityRows.length,
+              returnCount: volatilityRows.length - 1,
+            }
+          : null,
       maxDrawdownPct: rounded(drawdown * 100),
       currentDrawdownPct: rounded((last / peak - 1) * 100),
     };
@@ -706,7 +973,7 @@ export function summarizeFinancePriceHistory(
   };
 }
 
-/** Build model-sized facts before prompt clipping, retaining the raw job IDs for audit. */
+/** Build model-sized facts before prompt clipping, retaining raw job IDs as audit references. */
 export function buildFinanceResearchModelEvidence(
   batch: FinanceResearchBatchEvidencePacket,
   options: { includeReviewEvidence?: boolean } = {},
@@ -743,10 +1010,13 @@ export function buildFinanceResearchModelEvidence(
   ];
   for (const [instrument, jobs] of groups) {
     const facts: string[] = [];
+    const modelEvidenceId = `finance-model:${encodeURIComponent(instrument)}`;
     const priceCandidates: {
       job: FinanceResearchBatchJob;
       summary: ReturnType<typeof summarizeFinancePriceHistory>["summaries"][number];
       spotAt: string;
+      invalid: number;
+      duplicates: number;
     }[] = [];
     const optionCandidates: Array<{
       job: FinanceResearchBatchJob;
@@ -766,9 +1036,12 @@ export function buildFinanceResearchModelEvidence(
         job.status === "ready"
           ? ""
           : `; unverified research context only; gaps=${JSON.stringify(job.missingEvidence)}; freshness=${JSON.stringify(job.freshnessWarnings)}; conflicts=${JSON.stringify(job.conflicts)}`;
-      const prefix = `${job.jobId} (${job.status}${reviewCaveats}; ${
-        batch.asOfMode === "live_now" ? "collection-time evidence" : "frozen-asOf evidence"
-      })`;
+      const captureBoundary = job.sourceReuse
+        ? `stored source snapshot=${job.sourceReuse.snapshotId}; originally capturedAt=${job.sourceReuse.capturedAt}; no new source fetch`
+        : batch.asOfMode === "live_now"
+          ? "collection-time evidence"
+          : "frozen-asOf evidence";
+      const prefix = `${job.jobId} (audit receipt ID only; cite this observation as ${modelEvidenceId}; ${job.status}${reviewCaveats}; ${captureBoundary})`;
       if ("records" in job.receipt) {
         const records = job.receipt.records;
         const collection = "collection" in job.request ? job.request.collection : undefined;
@@ -784,7 +1057,13 @@ export function buildFinanceResearchModelEvidence(
             continue;
           }
           for (const summary of history.summaries) {
-            priceCandidates.push({ job, summary, spotAt: summary.to });
+            priceCandidates.push({
+              job,
+              summary,
+              spotAt: summary.to,
+              invalid: history.invalid,
+              duplicates: history.duplicates,
+            });
           }
         } else if (collection === "options_chain") {
           optionCandidates.push({ job, records });
@@ -864,14 +1143,18 @@ export function buildFinanceResearchModelEvidence(
       }
       const window21 = h.observationWindows[21];
       const window63 = h.observationWindows[63];
+      const volatility = h.dailyVolatility;
+      const volatilityText = volatility
+        ? `annualisedDailyVol=${volatility.annualisedVolatility.toFixed(8)}; volatilityWindow=${volatility.closeCount} closes/${volatility.returnCount} returns ${volatility.from}..${volatility.to}; method=log(close_t/close_t-1), sample variance (n-1), sqrt(variance*252)`
+        : `annualisedDailyVol=unavailable; requires ${FINANCE_DAILY_VOLATILITY_LOOKBACK_CLOSES} clean unique daily closes; observed=${h.observations}, invalidRows=${candidate.invalid}, duplicateRows=${candidate.duplicates}`;
       facts.unshift(
-        `Price (${candidate.job.status}); assetClass=${candidate.job.request.assetClass}, kind=${h.identity[3]}, unit=${h.identity[4]}; ${h.observations} closes ${h.from}..${h.to}, window=${h.priceReturnPct}%, maxDD_entire_window=${h.maxDrawdownPct}%; last21=${h.returnsByObservationPct[21] ?? "unknown"}% (${window21 ? `${window21.from}..${window21.to}` : "insufficient history"}); last63=${h.returnsByObservationPct[63] ?? "unknown"}% (${window63 ? `${window63.from}..${window63.to}` : "insufficient history"}). Price change, not total return; lookbacks are return intervals, not calendar days. Source=${h.identity[0]}; feed=${h.identity[1]}; adjusted=${h.identity[2]}; Coverage=${candidate.job.historyCoverage?.status ?? "unverified"}; ${priceCandidates.length} series available, not stitched. Receipt=${candidate.job.jobId}.`,
+        `Price (${candidate.job.status}); audit receipt ID only=${candidate.job.jobId}; cite this observation as ${modelEvidenceId}; assetClass=${candidate.job.request.assetClass}, kind=${h.identity[3]}, unit=${h.identity[4]}; ${h.observations} closes ${h.from}..${h.to}, window=${h.priceReturnPct}%, maxDD_entire_window=${h.maxDrawdownPct}%; last21=${h.returnsByObservationPct[21] ?? "unknown"}% (${window21 ? `${window21.from}..${window21.to}` : "insufficient history"}); last63=${h.returnsByObservationPct[63] ?? "unknown"}% (${window63 ? `${window63.from}..${window63.to}` : "insufficient history"}); ${volatilityText}. Price change, not total return; lookbacks are return intervals, not calendar days. Source=${h.identity[0]}; feed=${h.identity[1]}; adjusted=${h.identity[2]}; Coverage=${candidate.job.historyCoverage?.status ?? "unverified"}; ${priceCandidates.length} source series available, not stitched.`,
       );
     }
     for (const option of optionCandidates) {
       if (!candidate) {
         facts.push(
-          `Options chain (${option.job.status}); job=${option.job.jobId}; no usable underlying price series was available, so Greeks were not calculated.`,
+          `Options chain (${option.job.status}); audit receipt ID only; cite this observation as ${modelEvidenceId}; no usable underlying price series was available, so Greeks were not calculated.`,
         );
         continue;
       }
@@ -881,11 +1164,11 @@ export function buildFinanceResearchModelEvidence(
         underlyingSpotAt: candidate.spotAt,
         futureTimestampLimitMs,
       });
-      facts.push(renderFinanceOptionsEvidence(summary, option.job.jobId));
+      facts.push(renderFinanceOptionsEvidence(summary, option.job.jobId, modelEvidenceId));
     }
     if (facts.length) {
       result.push({
-        id: `finance-model:${encodeURIComponent(instrument)}`,
+        id: modelEvidenceId,
         source: "finance-research-batch-runner",
         timestamp: batch.asOf,
         text: `${instrument}\n${facts.join("\n")}`,

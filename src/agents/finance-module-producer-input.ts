@@ -3,10 +3,15 @@ import {
   FINANCE_EVIDENCE_CATEGORIES,
   FINANCE_FRAMEWORK_CONFIDENCE_OR_CONVICTION_LEVELS,
 } from "../hooks/bundled/lobster-brain-registry.js";
+import type { FinanceFrameworkCoreDomain } from "../hooks/bundled/lobster-brain-registry.js";
 import type {
   FinanceBrainModuleId,
   FinanceBrainOrchestrationPlan,
 } from "./finance-brain-orchestration.js";
+import {
+  FINANCE_DOMAIN_EVIDENCE_CATEGORY_REQUIREMENTS,
+  validateFinanceDomainEvidenceGate,
+} from "./tools/finance-evidence-gates.js";
 import { FINANCE_FRAMEWORK_DOMAIN_PRODUCER_SPECS } from "./tools/finance-framework-domain-producer-tools.js";
 
 const producerDomains = new Set<FinanceBrainModuleId>(
@@ -41,6 +46,37 @@ const ProducerInput = z
   })
   .strict();
 
+/** Fixed schema diagnostics only: never echo provider output, IDs, or unknown keys. */
+export function describeFinanceProducerInputError(error: unknown): string {
+  if (error instanceof z.ZodError) {
+    const fields = new Set(Object.keys(ProducerInput.shape));
+    const defects = error.issues.slice(0, 8).map((issue) => {
+      const field = issue.path.find((part) => typeof part === "string" && fields.has(part));
+      return issue.code === "unrecognized_keys"
+        ? "unexpected_fields"
+        : `${typeof field === "string" ? field : "module_object"}:${issue.code}`;
+    });
+    return `producer schema invalid (${[...new Set(defects)].join(", ")})`;
+  }
+  const message = error instanceof Error ? error.message : "";
+  if (message.includes("cites unknown evidence")) {
+    return "sourceArtifacts must use only listed sourceArtifactIds";
+  }
+  if (message.includes("invalid evidence categories")) {
+    return "evidenceCategories must use allowedEvidenceCategories";
+  }
+  if (message.includes("invalid confidenceOrConviction")) {
+    return "confidenceOrConviction must use allowedConfidenceLevels";
+  }
+  if (message.includes("domain must match")) {
+    return "domain must match its selected module key";
+  }
+  if (message.includes("selected domain evidence gate")) {
+    return "evidenceCategories, evidenceSummary, and causal links must satisfy evidenceGateByModule; do not invent or relabel evidence";
+  }
+  return "financeFrameworkProducerInputs must contain exactly ALL selectedModuleIds as object keys";
+}
+
 export type FinanceDomainProducerInputs = Readonly<
   Partial<Record<FinanceBrainModuleId, Readonly<Record<string, unknown>>>>
 >;
@@ -59,27 +95,78 @@ export function financeProducerInputContract(
   plan: FinanceBrainOrchestrationPlan,
   evidenceIds: readonly string[],
 ) {
+  const selectedModuleIds = selectedFinanceProducerModuleIds(plan);
+  const categoryRequirements = Object.fromEntries(
+    selectedModuleIds.map((moduleId) => {
+      const requirements =
+        FINANCE_DOMAIN_EVIDENCE_CATEGORY_REQUIREMENTS[moduleId as FinanceFrameworkCoreDomain];
+      return [
+        moduleId,
+        {
+          requiredAllCategories: requirements.requiredAllCategories,
+          requiredAnyCategoryGroups: requirements.requiredAnyCategoryGroups,
+          evidenceSummary: "at least 40 characters of concrete domain-specific evidence",
+          ...(moduleId === "causal_map"
+            ? {
+                causalLinks:
+                  "include a mechanism marker or arrow, plus supported upstream drivers and downstream asset impacts",
+              }
+            : {}),
+        },
+      ];
+    }),
+  );
+  const evidenceCategoriesSchema = (moduleId: FinanceBrainModuleId) => {
+    const requirements =
+      FINANCE_DOMAIN_EVIDENCE_CATEGORY_REQUIREMENTS[moduleId as FinanceFrameworkCoreDomain];
+    const containsCategory = (category: string) => ({
+      contains: { const: category },
+      minContains: 1,
+    });
+    return {
+      type: "array",
+      items: { type: "string", enum: [...FINANCE_EVIDENCE_CATEGORIES] },
+      allOf: [
+        ...requirements.requiredAllCategories.map(containsCategory),
+        ...(requirements.requiredAnyCategoryGroups.length === 0
+          ? []
+          : [
+              {
+                anyOf: requirements.requiredAnyCategoryGroups.map((group) => ({
+                  allOf: group.map(containsCategory),
+                })),
+              },
+            ]),
+      ],
+    };
+  };
   return Object.freeze({
     outputPath: "artifact.supportingAnalysis.financeFrameworkProducerInputs",
     container: "object keyed by every selectedModuleId, never a flat producer object or an array",
     jsonSchema: {
       type: "object",
       additionalProperties: false,
-      required: selectedFinanceProducerModuleIds(plan),
+      required: selectedModuleIds,
       properties: Object.fromEntries(
-        selectedFinanceProducerModuleIds(plan).map((moduleId) => [
+        selectedModuleIds.map((moduleId) => [
           moduleId,
           {
             allOf: [
               { $ref: "#/$defs/producerInput" },
-              { properties: { domain: { const: moduleId } } },
+              {
+                properties: {
+                  domain: { const: moduleId },
+                  evidenceCategories: evidenceCategoriesSchema(moduleId),
+                },
+              },
             ],
           },
         ]),
       ),
       $defs: { producerInput: z.toJSONSchema(ProducerInput) },
     },
-    selectedModuleIds: selectedFinanceProducerModuleIds(plan),
+    selectedModuleIds,
+    evidenceGateByModule: categoryRequirements,
     sourceArtifactIds: Object.freeze([...evidenceIds]),
     requiredFields: Object.freeze([
       "domain",
@@ -145,6 +232,18 @@ export function parseFinanceDomainProducerInputs(params: {
     }
     if (!confidenceLevels.has(input.confidenceOrConviction)) {
       throw new Error(`producer input ${moduleId} has invalid confidenceOrConviction`);
+    }
+    try {
+      validateFinanceDomainEvidenceGate({
+        domain: moduleId as FinanceFrameworkCoreDomain,
+        evidenceCategories: input.evidenceCategories,
+        evidenceSummary: input.evidenceSummary,
+        keyCausalChain: input.keyCausalChain,
+        upstreamDrivers: input.upstreamDrivers,
+        downstreamAssetImpacts: input.downstreamAssetImpacts,
+      });
+    } catch {
+      throw new Error("finance producer input failed selected domain evidence gate");
     }
     parsed[moduleId] = Object.freeze({ ...input });
   }

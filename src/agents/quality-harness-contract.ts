@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { inspectEvidenceMultiplicity } from "./evidence-source-identity.js";
 import {
   FINANCE_RESEARCH_CLAIM_EPISTEMIC_CLASSES,
@@ -18,6 +19,7 @@ import {
 import {
   collectQualityFindings,
   qualityFindingPacket,
+  qualityFindingReviewRole,
   RECONCILABLE_REVIEW_ROLES,
   type QualityFindingClosure,
   type QualityFindingPacket,
@@ -180,6 +182,8 @@ export type QualityHarnessStageInput = Readonly<{
   attempt: number;
   stage: QualityHarnessStage;
   request: QualityHarnessRequest;
+  /** Full normalized evidence used only to bind final-precheck closure hashes. */
+  findingEvidence?: readonly QualityHarnessEvidence[];
   evidenceBatchMode?: "context_extraction" | "final_artifact_audit";
   evidenceCoverage?: QualityHarnessEvidenceCoverage;
   repairFeedback: readonly string[];
@@ -319,7 +323,7 @@ export const STAGE_BY_AGENT_ID: Readonly<Record<string, QualityHarnessStage>> = 
   final_precheck: "precheck",
 });
 const MAX_TEXT_LENGTH = 12_000;
-const MAX_EVIDENCE_LENGTH = 6_000;
+export const QUALITY_HARNESS_MAX_EVIDENCE_TEXT_LENGTH = 60_000;
 
 export function isQualityRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -374,7 +378,11 @@ export function normalizeQualityRequest(request: QualityHarnessRequest): Quality
         : requiredQualityText(entry.source, "evidence.source", 1_000);
     return Object.freeze({
       id,
-      text: requiredQualityText(entry.text, `evidence[${index}].text`, MAX_EVIDENCE_LENGTH),
+      text: requiredQualityText(
+        entry.text,
+        `evidence[${index}].text`,
+        QUALITY_HARNESS_MAX_EVIDENCE_TEXT_LENGTH,
+      ),
       ...(source ? { source } : {}),
       ...(entry.kind ? { kind: entry.kind } : {}),
     });
@@ -445,6 +453,7 @@ export function buildQualityHarnessPlan(params: {
       attempt: params.attempt,
       stage,
       request,
+      ...(stage === "precheck" ? { findingEvidence: params.request.evidence } : {}),
       ...(evidenceBatchMode ? { evidenceBatchMode } : {}),
       ...(params.evidenceCoverage ? { evidenceCoverage: params.evidenceCoverage } : {}),
       repairFeedback: Object.freeze(normalizeFeedback(params.repairFeedback ?? [])),
@@ -459,11 +468,11 @@ export function buildQualityHarnessPlan(params: {
       throw new Error(`quality harness has no stage mapping for ${task.agentId}`);
     }
     const extraDependencies =
-      task.id === "research_draft"
-        ? batchExtractTaskIds
-        : task.id === "final_precheck"
-          ? batchReviewTaskIds
-          : [];
+      task.id === "final_precheck"
+        ? [...batchExtractTaskIds, ...batchReviewTaskIds]
+        : task.id === "data_cleaning" || task.id === "financial_extraction"
+          ? []
+          : batchExtractTaskIds;
     return {
       id: task.id,
       agentId: task.agentId,
@@ -480,9 +489,7 @@ export function buildQualityHarnessPlan(params: {
                       ...extraDependencies,
                     ]),
                   ]
-                : task.id === "research_draft"
-                  ? [...new Set([...task.dependsOn, ...extraDependencies])]
-                  : task.dependsOn,
+                : [...new Set([...task.dependsOn, ...extraDependencies])],
           }
         : {}),
     };
@@ -530,13 +537,13 @@ export function stageInstructions(stage: QualityHarnessStage): string {
     case "exposure":
       return "Check scope, concentration, dependencies, and missing inputs relevant to the task. Return a review JSON.";
     case "draft":
-      return `Return JSON {kind:'artifact',artifact:{answer:string,claims:[{id,text,status:'supported'|'uncertain',evidenceIds:string[],epistemicClass?:'${FINANCE_RESEARCH_CLAIM_EPISTEMIC_CLASSES.join("'|'")}',basis?:string,evidenceRelations?:[{evidenceId,relation:'${FINANCE_RESEARCH_EVIDENCE_RELATIONS.join("'|'")}'}],uncertainty?:string}]}}. Every supported claim must cite evidence IDs. sharedContext.evidenceMultiplicity is computed from the supplied packet: duplicateGroups are not independent corroboration; distinctPacketGroups is not an independent source count. Upstream lineage and semantic truth remain unassessed. For each claim classify epistemic origin without implying truth or source quality; provide basis for calculations, estimates, inferences, and hypotheses; when evidenceRelations is present, include every cited evidence ID exactly once and do not hide contrary evidence. Mark gaps uncertain.`;
+      return `Return JSON {kind:'artifact',artifact:{answer:string,claims:[{id,text,status:'supported'|'uncertain',evidenceIds:string[],epistemicClass?:'${FINANCE_RESEARCH_CLAIM_EPISTEMIC_CLASSES.join("'|'")}',basis?:string,evidenceRelations?:[{evidenceId,relation:'${FINANCE_RESEARCH_EVIDENCE_RELATIONS.join("'|'")}'}],uncertainty?:string}]}}. Every supported claim must cite evidence IDs. sharedContext.evidenceMultiplicity is computed from the supplied packet: duplicateGroups are not independent corroboration; distinctPacketGroups is not an independent source count. Upstream lineage and semantic truth remain unassessed. For each claim classify epistemic origin without implying truth or source quality; provide basis for calculations, estimates, inferences, and hypotheses; when evidenceRelations is present, include every cited evidence ID exactly once and do not hide contrary evidence. A relation describes whether that evidence supports or refutes this claim: a source containing conflicting values supports the claim that those values conflict; use contradicts only when it refutes the claim itself. Mark gaps uncertain.`;
     case "adversarial":
-      return "Try to falsify the draft. Return JSON review. Use pass only when there is no critical finding and no evidence gap.";
+      return "Try to falsify the draft. Return concise JSON review. Do not quote supplied evidence or restate the draft; keep each note, critical finding, and evidence gap to one short sentence. Preserve every independent actionable finding and unresolved evidence gap. Use pass only when there is no critical finding and no evidence gap.";
     case "format":
-      return "Rewrite the draft after the challenge without dropping caveats, claim provenance, or evidence links. Return the artifact JSON contract exactly.";
+      return "Rewrite the draft after the challenge without dropping caveats, claim provenance, or evidence links. Recheck evidenceRelations against the rewritten claim itself: evidence supports a claim describing its own conflicting values, unless it refutes that claim. Return the artifact JSON contract exactly.";
     case "precheck":
-      return "Perform the final independent role check. Return JSON review and reject unsupported claims, missing evidence, unsafe overclaiming, or dropped uncertainty.";
+      return "Perform the final independent role check. Return concise JSON review and reject unsupported claims, missing evidence, unsafe overclaiming, or dropped uncertainty. Do not quote or reproduce the artifact or evidence. Keep each note, critical finding, and evidence gap to one short sentence while preserving every independent actionable issue and required version-bound findingClosure resolution. Upstream reviews may include bounded note previews; anything actionable must appear in criticalFindings or evidenceGaps. Do not infer the contents of omitted or truncated notes.";
   }
 }
 
@@ -556,20 +563,56 @@ function compactOutput(output: QualityHarnessStageOutput): unknown {
   };
 }
 
+function precheckDependencyProjection(
+  result: LogicalAgentTaskResult<QualityHarnessStageOutput>,
+): unknown {
+  const output = result.output;
+  const outputSha256 = output
+    ? createHash("sha256").update(JSON.stringify(output)).digest("hex")
+    : undefined;
+  const notePreviewLimit = 4;
+  const noteTextLimit = 500;
+  return {
+    projection: "lcx_quality_precheck_stage_summary_v1",
+    ...(outputSha256 ? { outputSha256 } : {}),
+    ...(output?.kind === "review"
+      ? {
+          review: {
+            verdict: output.review.verdict,
+            criticalFindings: output.review.criticalFindings,
+            evidenceGaps: output.review.evidenceGaps,
+            noteCount: output.review.notes.length,
+            notes: output.review.notes.slice(0, notePreviewLimit).map((note) => ({
+              text: note.slice(0, noteTextLimit),
+              truncated: note.length > noteTextLimit,
+            })),
+            notesOmittedCount: Math.max(0, output.review.notes.length - notePreviewLimit),
+          },
+        }
+      : { outputKind: output?.kind ?? null }),
+  };
+}
+
 function buildModelRequest(
   context: LogicalAgentExecutionContext<QualityHarnessStageInput, QualityHarnessStageOutput>,
 ): QualityHarnessModelRequest {
   const dependencyOutputs: Record<string, unknown> = {};
   for (const [taskId, result] of Object.entries(context.dependencyResults)) {
+    const precheckKeepsExactOutput =
+      taskId === "formatting" || taskId.startsWith("evidence_batch_review_");
     dependencyOutputs[taskId] = {
       agentId: result.agentId,
       status: result.status,
       output:
         result.output === undefined
           ? undefined
-          : context.input.stage === "precheck" && taskId === "formatting"
-            ? result.output
-            : compactOutput(result.output),
+          : context.input.stage === "precheck" && !precheckKeepsExactOutput
+            ? precheckDependencyProjection(result)
+            : taskId === "formatting" &&
+                (context.input.stage === "precheck" ||
+                  context.input.evidenceBatchMode === "final_artifact_audit")
+              ? result.output
+              : compactOutput(result.output),
       error: result.error,
     };
   }
@@ -577,15 +620,20 @@ function buildModelRequest(
   const hasEvidenceBatchReviews = Object.keys(context.dependencyResults).some((taskId) =>
     taskId.startsWith("evidence_batch_review_"),
   );
+  const packetIds = new Set(context.input.request.evidence.map((item) => item.id));
+  const isPartialSourceAudit =
+    context.input.stage === "evidence" &&
+    context.input.evidenceBatchMode === undefined &&
+    context.input.evidenceCoverage?.selectedEvidenceIds.some((id) => !packetIds.has(id));
   const findingPacket =
     context.input.stage === "precheck" && format?.kind === "artifact"
       ? qualityFindingPacket(
           format.artifact,
-          context.input.request.evidence,
+          context.input.findingEvidence ?? context.input.request.evidence,
           collectQualityFindings(
             Object.values(context.dependencyResults).flatMap((result) =>
               result.status === "completed" && result.output?.kind === "review"
-                ? [{ role: result.agentId, review: result.output.review }]
+                ? [{ role: qualityFindingReviewRole(result), review: result.output.review }]
                 : [],
             ),
           ),
@@ -606,12 +654,14 @@ function buildModelRequest(
     repairFeedback: context.input.repairFeedback,
     instructions:
       context.input.evidenceBatchMode === "context_extraction"
-        ? `${stageInstructions(context.input.stage)} Review only this bounded evidence batch. Add one concise note for every supplied item, beginning with its exact ID in brackets, such as [item-id]. State its source/time limits and whether it supports, contradicts, contextualizes, or does not address the task. Preserve material facts for the draft stage.`
+        ? `${stageInstructions(context.input.stage)} Review only this bounded evidence batch. Evidence assigned to other packets is not a local evidence gap. Do not mention IDs outside this packet in notes, critical findings, or evidence gaps, and do not demand global strategy readiness from a packet that does not contain strategy evidence. The full final_precheck reconciles all batches and checks global completeness. Add one concise note for every supplied item, beginning with its exact ID in brackets, such as [item-id]. State its source/time limits and whether it supports, contradicts, contextualizes, or does not address the task. Preserve material facts and flag actual contradictions or missing fields within this packet. A local pass does not establish global readiness.`
         : context.input.evidenceBatchMode === "final_artifact_audit"
-          ? `${stageInstructions(context.input.stage)} Review the final formatted artifact in dependencyOutputs.formatting against only this bounded evidence batch. Add one concise note for every supplied item, beginning with its exact ID in brackets, such as [item-id]. State whether it supports, contradicts, contextualizes, or does not address each claim it bears on. Flag unsupported claims and cross-source contradictions with evidence IDs; do not infer a global pass from this packet-local review.`
-          : hasEvidenceBatchReviews && context.input.stage === "precheck"
-            ? `${stageInstructions(context.input.stage)} Compare every evidence_batch_review output with the final artifact and with the other batch reviews. Reconcile contradictions by source and time; if they cannot be reconciled, narrow the affected claim or mark it uncertain. A packet-local pass does not establish global consistency.`
-            : stageInstructions(context.input.stage),
+          ? `${stageInstructions(context.input.stage)} Review the batch projection in dependencyOutputs.formatting against only this bounded evidence batch. It contains the complete formatted artifact's SHA-256 identity and only the full claim objects that cite evidence in this batch; the original answer is intentionally omitted. Do not infer or claim that you saw the answer. Return only a review object with concise notes: exactly one note for each supplied evidence ID, beginning with its exact ID in brackets, such as [item-id]. Do not mention IDs outside this packet in notes, critical findings, or evidence gaps. Artifact claims may cite evidence assigned to another batch; their absence here is not a gap and must not make this packet revise. Assess only claims that cite this packet's evidence; defer claims citing other IDs to their assigned batch and the full final_precheck, which reviews the complete artifact and reconciles all batches. Flag unsupported claims or contradictions only when this packet's evidence shows them. Do not infer a global pass from this packet-local review. Never reproduce, summarize, or quote the artifact itself.`
+          : isPartialSourceAudit
+            ? `${stageInstructions(context.input.stage)} This source audit receives only the primary raw evidence packet and supplied upstream extraction summaries. evidenceCoverage routes other evidence IDs to other packets; those IDs being absent from this raw packet is not an evidence gap. Assess facts and source limits visible in this packet or its supplied summaries, and flag actual conflicts or unsupported assumptions there. Global completeness is checked by all final-artifact batch audits and the full final_precheck; do not infer global readiness from a local pass.`
+            : hasEvidenceBatchReviews && context.input.stage === "precheck"
+              ? `${stageInstructions(context.input.stage)} Compare every evidence_batch_review output with the final artifact and with the other batch reviews. Reconcile contradictions by source and time; if they cannot be reconciled, narrow the affected claim or mark it uncertain. A packet-local pass does not establish global consistency.`
+              : stageInstructions(context.input.stage),
     ...(context.input.evidenceBatchMode
       ? { evidenceBatchMode: context.input.evidenceBatchMode }
       : {}),

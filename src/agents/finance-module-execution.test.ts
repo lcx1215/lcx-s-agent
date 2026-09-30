@@ -154,9 +154,17 @@ describe("finance module execution", () => {
       const batch = {
         ...emptyBatch(),
         status: "completed",
+        committeeEvidence: [
+          {
+            id: "finance-model:SPY",
+            source: "finance-research-batch-runner",
+            timestamp: "2026-09-11T00:00:00.000Z",
+            text: "SPY daily closes summarized from the ready batch receipt.",
+          },
+        ],
         jobs: [
           {
-            jobId: "eod:spy",
+            jobId: "finance-batch:spy-eod",
             status: "ready",
             request: { collection: "eod_history", instrument: "SPY", assetClass: "us_equity" },
             receipt: {
@@ -174,6 +182,8 @@ describe("finance module execution", () => {
       });
       const quant = result.receipt.nodes.find((node) => node.moduleId === "quant_math");
       expect(quant?.status).toBe("succeeded");
+      expect(quant?.inputEvidenceIds).toContain("finance-model:SPY");
+      expect(quant?.inputEvidenceIds).not.toContain("finance-batch:spy-eod");
       expect(quant?.toolCalls[0]?.toolName).toBe("quant_math");
       expect(quant?.outputEvidenceIds).toEqual(["finance-module:math"]);
       expect(result.evidence.map((entry) => entry.id)).toContain("finance-module:math");
@@ -181,6 +191,25 @@ describe("finance module execution", () => {
       expect(result.receipt.replanFeedback.hardFailures).toEqual(
         expect.arrayContaining(["causal"]),
       );
+
+      const quantOnlyPlan = planFinanceBrainOrchestration({
+        text: "执行模块取消测试",
+        highStakesConclusion: true,
+        moduleSelection: { moduleIds: ["quant_math"], rationale: "citeable history regression" },
+      });
+      const rawReceiptOnly = await executeFinanceModuleComposition({
+        ask: "执行模块取消测试",
+        asOf: "2026-09-11T00:00:00.000Z",
+        plan: quantOnlyPlan,
+        batch: { ...batch, committeeEvidence: [] },
+        workspaceDir,
+      });
+      const blockedQuant = rawReceiptOnly.receipt.nodes.find(
+        (node) => node.moduleId === "quant_math",
+      );
+      expect(blockedQuant?.status).toBe("blocked_missing_evidence");
+      expect(blockedQuant?.missingEvidence).toContain("citeable_source_history_evidence_packet");
+      expect(blockedQuant?.inputEvidenceIds).not.toContain("finance-batch:spy-eod");
     } finally {
       await fs.rm(workspaceDir, { recursive: true, force: true });
     }
@@ -352,3 +381,65 @@ describe("finance module execution", () => {
     }
   });
 });
+
+it.each(["valid", "conflict", "duplicate", "future", "count", "invalid_price"])(
+  "uses controller history only when its projection is valid: %s",
+  async (variant) => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-controller-quant-"));
+    try {
+      const plan = planFinanceBrainOrchestration({
+        text: "bounded drawdown",
+        moduleSelection: {
+          moduleIds: ["quant_math"],
+          rationale: "controller history",
+          composition: {
+            nodes: [{ id: "math", moduleId: "quant_math", dependsOn: [] }],
+            maxReplans: 0,
+          },
+        },
+      });
+      const value = {
+        instrument: "SPY",
+        fromDate: "2026-09-01",
+        toDate: "2026-09-10",
+        suppliedBarCount: variant === "count" ? 4 : 3,
+        divergentDates: variant === "conflict" ? ["SPY@2026-09-09"] : [],
+        closes: [
+          ["2026-09-08", 100],
+          [variant === "duplicate" ? "2026-09-08" : "2026-09-09", 95],
+          [
+            variant === "future" ? "2026-09-12" : "2026-09-10",
+            variant === "invalid_price" ? -1 : 97,
+          ],
+        ],
+      };
+      const result = await executeFinanceModuleComposition({
+        ask: "historical drawdown",
+        asOf: "2026-09-11T00:00:00Z",
+        plan,
+        batch: emptyBatch(),
+        workspaceDir,
+        controllerEvidence: [
+          {
+            id: "finance-controller:eod:SPY",
+            source: "finance-bar-ledger",
+            timestamp: "2026-09-11T00:00:00Z",
+            text: JSON.stringify(value),
+          },
+        ],
+      });
+      const quant = result.receipt.nodes.find((node) => node.moduleId === "quant_math");
+      expect(quant?.status).toBe(variant === "valid" ? "succeeded" : "blocked_missing_evidence");
+      if (variant === "valid") {
+        expect(quant?.inputEvidenceIds).toContain("finance-controller:eod:SPY");
+        expect(result.evidence[0]?.text).toContain(
+          "stored_close_history_not_adjusted_total_return",
+        );
+      } else {
+        expect(quant?.toolCalls).toHaveLength(0);
+      }
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  },
+);

@@ -133,7 +133,36 @@ describe("finance execution adapter seam", () => {
 
   it("requires an explicit run authorization and a declared adapter", async () => {
     const noAuthorization = await placeFinanceOrder(
-      request({ intent: { ...intent, runAuthorizationId: "  " } }),
+      request({
+        intent: {
+          ...intent,
+          runAuthorizationId: "  ",
+          researchLineage: {
+            portfolioPlan: {
+              asOf: "2026-09-18T00:00:00.000Z",
+              validUntil: "2026-09-19T00:00:00.000Z",
+              accountId: "fixture-account",
+              venue: "paper",
+              provenance: {
+                kind: "finance_research_allocation",
+                receiptId: "quality:fixture",
+                evidenceIds: ["source:fixture"],
+              },
+            },
+            targetWeight: 0.25,
+            contributions: [
+              {
+                strategyId: "fixture-strategy",
+                evidenceReceiptId: "candidate:fixture",
+                stance: "accumulate",
+                sleeveWeight: 0.5,
+                accountWeight: 0.25,
+                evidenceIds: ["source:fixture"],
+              },
+            ],
+          },
+        },
+      }),
     );
     expect(noAuthorization.refusalReasons).toContain("explicit_run_authorization_required");
 
@@ -149,6 +178,47 @@ describe("finance execution adapter seam", () => {
     expect(result.refusalReasons).toContain("declared_adapter_instrument_unsupported");
     expect(result.refusalReasons).toContain("declared_adapter_order_type_unsupported");
     expect(result.receipt).toBeUndefined();
+  });
+
+  it("refuses target authorization when it contradicts research lineage", async () => {
+    const { adapter, invoke } = spyAdapter();
+    const result = await placeFinanceOrder(
+      request({
+        intent: {
+          ...intent,
+          researchLineage: {
+            portfolioPlan: {
+              asOf: "2026-09-18T00:00:00.000Z",
+              validUntil: "2026-09-19T00:00:00.000Z",
+              accountId: "fixture-account",
+              venue: "paper",
+            },
+            targetWeight: 0.25,
+            contributions: [
+              {
+                strategyId: "fixture-strategy",
+                evidenceReceiptId: "candidate:fixture",
+                stance: "accumulate",
+                sleeveWeight: 0.5,
+                accountWeight: 0.25,
+              },
+            ],
+          },
+          targetWeightAuthorization: {
+            targetWeight: 0.3,
+            driftBandFraction: 0.05,
+            maxOrderNotional: 5_000,
+          },
+        },
+        adapters: [adapter],
+        executionAdapterId: adapter.id,
+      }),
+    );
+
+    expect(result.status).toBe("refused");
+    expect(result.refusalReasons).toContain("execution_intent_target_weight_lineage_mismatch");
+    expect(result.receipt).toBeUndefined();
+    expect(invoke).not.toHaveBeenCalled();
   });
 
   it("preserves the default allowlist but requires a complete risk-increase budget", async () => {

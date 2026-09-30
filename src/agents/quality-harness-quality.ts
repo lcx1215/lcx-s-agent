@@ -1,3 +1,4 @@
+import { hasFinanceExecutionClaim } from "./finance-decision-policy.js";
 import type { LogicalAgentPlanResult, LogicalAgentTaskResult } from "./logical-agent-pool.js";
 import {
   findQualityStageResult,
@@ -37,7 +38,9 @@ function normalizeFeedback(feedback: readonly string[]): string[] {
 
 // Relation labels can restrict support; a contrary/context citation must never certify a claim.
 // Older artifacts without relation annotations retain their existing citation contract.
-function supportingEvidenceIds(claim: QualityHarnessArtifact["claims"][number]): readonly string[] {
+export function supportingEvidenceIds(
+  claim: QualityHarnessArtifact["claims"][number],
+): readonly string[] {
   return claim.evidenceRelations === undefined
     ? claim.evidenceIds
     : claim.evidenceIds.filter((id) =>
@@ -142,21 +145,6 @@ const DIRECT_TRADE_ACTION_PATTERN =
 const POSITION_SIZING_PATTERN =
   /(?:\b(?:allocate|allocation|position\s*(?:size|sizing)|portfolio\s*(?:weight|allocation)|invest)\b[^.!?\n]{0,10}\b\d+(?:\.\d+)?\s*%|\b\d+(?:\.\d+)?\s*%[^.!?\n]{0,40}\b(?:portfolio|position|allocate|allocation)\b|(?:配置|仓位|投入|分配)(?!上限|下限|占比|比例|均值|预算|红线|约束|门槛|区间|范围)[^。！？\n]{0,4}\d+(?:\.\d+)?\s*%)/imu;
 /**
- * Sibling copy of `EXECUTION_CLAIM_PATTERN` in `finance-decision-policy.ts`.
- *
- * Measured here: an answer saying "已成交 NVDA。" / "NVDA 已建仓。" / "该笔交易已执行" /
- * "Filled NVDA at the open." was graded clean -- the gate reported "contains no direct trade
- * instruction or ungrounded current-data number" for an answer that claimed a fill. Only 已下单 and
- * friends were caught, because they were the words that happened to be listed.
- *
- * The two copies must be kept in step; if this list ever drifts from the policy module's, an answer
- * can be refused by one and certified by the other. 成交 is not matched bare: 成交额 / 成交量 are
- * market commentary, not claims about a fill.
- */
-const EXECUTION_CLAIM_PATTERN =
-  /已下单|下单成功|已经买入|已经卖出|已开仓|已平仓|交易已完成|转账成功|已(?:成交|建仓|加仓|减仓|清仓|交割|报单)|已委托[^。！？?\n]{0,6}(?:买入|卖出|下单|成交|交易)|(?:已|已经)[^。！？?\n]{0,8}成交(?!额|量)|已执行(?:买入|卖出|下单|交易|委托)|(?:交易|委托|订单|指令)已执行|(?:委托|订单|报单)已成交|成交完成|order filled|order placed|position opened|position closed|funds transferred|(?:\b(?:your|the|an?)\s+)?[A-Z][A-Z0-9.-]{1,9}\s+order\b.{0,24}\b(?:executed|filled|placed|completed)\b|\b(?:filled|executed)\b\s+(?:\d+|[A-Z][A-Z0-9.-]{1,9}\b)|\b(?:i|we)\s+(?:bought|sold|purchased|opened|closed|exited)\b/iu;
-
-/**
  * The numbers in an answer that are *values*, as opposed to parts of a name or a label.
  *
  * Measured: the extractor took every digit run, so an index name or a tenor label contributed a
@@ -204,7 +192,12 @@ function extractDataNumbers(text: string): string[] {
     )
     .replace(/\b(?:S&P|SP|NASDAQ|RUSSELL|MSCI)[\s-]*\d{1,4}(?!\d)/giu, " ")
     .replace(/\b\d{1,2}(?:[YMWD]|年期?)(?!\d)/gu, " ")
-    .replace(/\b(?:Q[1-4]|H[12]|FY\s?\d{2,4})\b/giu, " ");
+    .replace(/\b(?:Q[1-4]|H[12]|FY\s?\d{2,4})\b/giu, " ")
+    // A named metric's window (12-month volatility) labels the method, not its value.
+    .replace(
+      /\b\d{1,3}[- ](?:months?|days?|years?)\b(?=\s+(?:daily[- ]return\s+)?(?:volatility|lookback|moving[- ]average|momentum)\b)/giu,
+      " ",
+    );
   return (
     withoutNameNumbers.match(
       /(?<!\d)[+-]?\s*(?:[$€£¥]\s*)?\d[\d,]*(?:\.\d+)?(?:\s*%|\s*(?:USD|EUR|GBP|CNY|JPY|HKD|dollars?|euros?|pounds?|yen|yuan|美元|欧元|英镑|人民币|日元|港元|港币|元))?/giu,
@@ -486,7 +479,7 @@ function validateFinanceAnswerSafety(
   ) {
     problems.push("final finance answer contains a direct trade action or recommendation");
   }
-  if (EXECUTION_CLAIM_PATTERN.test(artifact.answer)) {
+  if (hasFinanceExecutionClaim(artifact.answer)) {
     problems.push("final finance answer contains an execution claim");
   }
 
@@ -615,18 +608,60 @@ export function evaluateQuality(
     for (const { suffix, label } of taskChecks) {
       const taskId = `evidence_batch_${suffix}_${batchNumber}`;
       const stageResult = findQualityStageResult(result, taskId);
-      const reviewResult = reviewPassed(
-        stageResult,
-        suffix === "extract" ? "extraction" : "evidence",
-      );
+      const reviewResult =
+        suffix === "extract"
+          ? reconciledReview(taskId, "extraction")
+          : reviewPassed(stageResult, "evidence");
       const output = stageResult?.status === "completed" ? stageResult.output : undefined;
       const review = output?.kind === "review" ? output.review : undefined;
       const uncoveredIds = batch
         .map((entry) => entry.id)
         .filter((id) => !review?.notes.some((note) => note.includes(`[${id}]`)));
-      if (!reviewResult.passed || uncoveredIds.length > 0) {
+      const allowedIds = new Set(batch.map((entry) => entry.id));
+      const reviewedText = [
+        ...(review?.notes ?? []),
+        ...(review?.criticalFindings ?? []),
+        ...(review?.evidenceGaps ?? []),
+      ];
+      const referencedOutOfScopeIds = request.evidence
+        .map((entry) => entry.id)
+        .filter((id) => !allowedIds.has(id))
+        .filter((id) =>
+          reviewedText.some((text) => {
+            let offset = 0;
+            while (offset < text.length) {
+              const index = text.indexOf(id, offset);
+              if (index < 0) {
+                return false;
+              }
+              const before = text[index - 1];
+              const after = text[index + id.length];
+              if (
+                (before === undefined || !/[\p{L}\p{N}_.:-]/u.test(before)) &&
+                (after === undefined || !/[\p{L}\p{N}_.:-]/u.test(after))
+              ) {
+                return true;
+              }
+              offset = index + 1;
+            }
+            return false;
+          }),
+        );
+      const outOfScopeIds = [
+        ...new Set(
+          [
+            ...(review?.notes ?? []),
+            ...(review?.criticalFindings ?? []),
+            ...(review?.evidenceGaps ?? []),
+          ]
+            .flatMap((note) => [...note.matchAll(/\[([^\]]+)\]/gu)].map((match) => match[1]))
+            .filter((id) => !allowedIds.has(id))
+            .concat(referencedOutOfScopeIds),
+        ),
+      ];
+      if (!reviewResult.passed || uncoveredIds.length > 0 || outOfScopeIds.length > 0) {
         additionalBatchReviews.push(
-          `batch ${batchNumber} ${label} incomplete${uncoveredIds.length > 0 ? `; missing note IDs: ${uncoveredIds.join(",")}` : `; ${reviewResult.reason}`}`,
+          `batch ${batchNumber} ${label} incomplete${uncoveredIds.length > 0 ? `; missing note IDs: ${uncoveredIds.join(",")}` : ""}${outOfScopeIds.length > 0 ? `; out-of-scope note IDs: ${outOfScopeIds.join(",")}` : ""}${!reviewResult.passed ? `; ${reviewResult.reason}` : ""}`,
         );
       }
     }

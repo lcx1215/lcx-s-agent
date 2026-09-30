@@ -3,6 +3,22 @@ import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { runFinanceResearchRun } from "../../src/agents/finance-research-runner.ts";
 
+export class FinanceResearchRunFailure extends Error {
+  constructor(
+    readonly reason:
+      | "research_run_deadline_exceeded"
+      | "research_run_cancelled"
+      | "research_run_failed",
+    readonly runId: string,
+    readonly checkpointPath: string,
+    readonly startedAt: string,
+    cause?: unknown,
+  ) {
+    super(reason, { cause });
+    this.name = "FinanceResearchRunFailure";
+  }
+}
+
 /** The scheduler remains the hard process deadline owner; this deadline cancels the DAG. */
 export async function runCheckpointedFinanceResearch(
   input: Parameters<typeof runFinanceResearchRun>[0],
@@ -81,15 +97,13 @@ export async function runCheckpointedFinanceResearch(
     record("completed", receipt.status);
     return receipt;
   } catch (error) {
-    record(
-      signal.aborted ? "aborted" : "failed",
-      controller.signal.aborted
-        ? "research_run_deadline_exceeded"
-        : signal.aborted
-          ? "research_run_cancelled"
-          : "research_run_failed",
-    );
-    throw error;
+    const reason = controller.signal.aborted
+      ? "research_run_deadline_exceeded"
+      : signal.aborted
+        ? "research_run_cancelled"
+        : "research_run_failed";
+    record(signal.aborted ? "aborted" : "failed", reason);
+    throw new FinanceResearchRunFailure(reason, runId, checkpoint.path, startedAt, error);
   } finally {
     clearTimeout(timer);
   }

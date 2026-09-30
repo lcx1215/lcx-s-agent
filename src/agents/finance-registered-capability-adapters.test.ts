@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { decodeFinanceBulk } from "./finance-extended-capability-catalog.js";
+import { assessFinanceHistoryCoverage } from "./finance-history-coverage.js";
 import {
   createFinanceMarketCollectionRegistry,
+  inspectFinanceMarketCollectionRegistry,
   runFinanceMarketCollectionRefresh,
 } from "./finance-market-collection-registry.js";
 import { createRegisteredCapabilityAdapters } from "./finance-registered-capability-adapters.js";
@@ -283,6 +285,191 @@ describe("extended capability contracts", () => {
     expect(new URL(requestedUrl).searchParams.get("feed")).toBe("iex");
     expect(receipt.records[0].data.continuationRequired).toBe(true);
     expect(JSON.stringify(receipt)).not.toContain("private-");
+  });
+  it("requests the complete Alpaca end date and accepts its session date after the NY close", async () => {
+    let requestedUrl = "";
+    const adapters = createRegisteredCapabilityAdapters({
+      alpacaApiKeyId: "test-id",
+      alpacaApiSecretKey: "test-secret",
+      fetchImpl: async (url) => {
+        requestedUrl = String(url);
+        return {
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify({
+              bars: [
+                { t: "2026-09-11T04:00:00Z", o: 101, h: 103, l: 100, c: 102, v: 15 },
+                { t: "2026-09-10T04:00:00Z", o: 100, h: 102, l: 99, c: 101, v: 20 },
+                { t: "2026-09-09T04:00:00Z", o: 99, h: 101, l: 98, c: 100, v: 42 },
+              ],
+            }),
+        };
+      },
+    });
+    const receipt = await runFinanceMarketCollectionRefresh({
+      request: {
+        ...request,
+        asOf: "2026-09-10T20:00:01Z",
+        fromDate: "2026-09-04",
+        toDate: "2026-09-10",
+        collection: "eod_history",
+      },
+      adapters: adapters.filter((adapter) => adapter.id === "alpaca_daily_history"),
+    });
+    expect(new URL(requestedUrl).searchParams.get("end")).toBe("2026-09-10T23:59:59.999Z");
+    expect(receipt.records.map((record) => record.sourceTimestamp)).toEqual([
+      "2026-09-10T04:00:00.000Z",
+      "2026-09-09T04:00:00.000Z",
+    ]);
+    expect(receipt.records[0]?.data).toMatchObject({
+      date: "2026-09-10",
+      open: 100,
+      high: 102,
+      low: 99,
+      close: 101,
+      volume: 20,
+      feed: "iex",
+      sourceTimestampMeaning: "new_york_session_date_label_not_close_time",
+    });
+  });
+
+  it("collects every session in a 13-month NYSE window for controller risk warmup", async () => {
+    const closures = new Set([
+      "2025-09-01",
+      "2025-11-27",
+      "2025-12-25",
+      "2026-01-01",
+      "2026-01-19",
+      "2026-02-16",
+      "2026-04-03",
+      "2026-05-25",
+      "2026-06-19",
+      "2026-07-03",
+      "2026-09-07",
+    ]);
+    const bars: Record<string, unknown>[] = [];
+    for (
+      let timestamp = Date.parse("2025-08-30T00:00:00Z");
+      timestamp <= Date.parse("2026-09-29T00:00:00Z");
+      timestamp += 86_400_000
+    ) {
+      const date = new Date(timestamp).toISOString().slice(0, 10);
+      const weekday = new Date(timestamp).getUTCDay();
+      if (weekday !== 0 && weekday !== 6 && !closures.has(date)) {
+        bars.push({ t: `${date}T04:00:00Z`, o: 100, h: 101, l: 99, c: 100, v: 10 });
+      }
+    }
+    let requestedUrl = "";
+    const adapters = createRegisteredCapabilityAdapters({
+      alpacaApiKeyId: "test-id",
+      alpacaApiSecretKey: "test-secret",
+      fetchImpl: async (url) => {
+        requestedUrl = String(url);
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ bars: bars.toReversed() }),
+        };
+      },
+    }).filter((adapter) => adapter.id === "alpaca_daily_history");
+    const windowRequest = {
+      instrument: "SPY",
+      assetClass: "us_equity",
+      collection: "eod_history" as const,
+      asOf: "2026-09-30T02:00:00Z",
+      fromDate: "2025-08-30",
+      toDate: "2026-09-29",
+      limit: 280,
+    };
+    const receipt = await runFinanceMarketCollectionRefresh({
+      request: windowRequest,
+      adapters,
+    });
+
+    expect(new URL(requestedUrl).searchParams.get("limit")).toBe("280");
+    expect(receipt.records).toHaveLength(271);
+    expect(receipt.records.some((record) => record.data.continuationRequired === true)).toBe(false);
+    expect(assessFinanceHistoryCoverage(windowRequest, receipt.records)).toMatchObject({
+      status: "complete",
+      expectedDays: 271,
+    });
+    await expect(
+      runFinanceMarketCollectionRefresh({
+        request: { ...windowRequest, limit: 281 },
+        adapters,
+      }),
+    ).rejects.toThrow("limit must be an integer between 1 and 280");
+  });
+
+  it("does not treat the current Alpaca session label as a completed bar before the NY close", async () => {
+    const adapters = createRegisteredCapabilityAdapters({
+      alpacaApiKeyId: "test-id",
+      alpacaApiSecretKey: "test-secret",
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({
+            bars: [
+              { t: "2026-09-10T04:00:00Z", o: 100, h: 102, l: 99, c: 101, v: 20 },
+              { t: "2026-09-09T04:00:00Z", o: 99, h: 101, l: 98, c: 100, v: 42 },
+            ],
+          }),
+      }),
+    });
+    const receipt = await runFinanceMarketCollectionRefresh({
+      request: {
+        ...request,
+        asOf: "2026-09-10T19:59:59Z",
+        fromDate: "2026-09-04",
+        toDate: "2026-09-10",
+        collection: "eod_history",
+      },
+      adapters: adapters.filter((adapter) => adapter.id === "alpaca_daily_history"),
+    });
+    expect(receipt.records.map((record) => record.data.date)).toEqual(["2026-09-09"]);
+  });
+  it("keeps configured Alpaca daily history inside the bounded primary-source selection", () => {
+    const registry = createFinanceMarketCollectionRegistry({
+      alpacaApiKeyId: "test-id",
+      alpacaApiSecretKey: "test-secret",
+      includeYahooPublicSources: true,
+    });
+    const inspection = inspectFinanceMarketCollectionRegistry(
+      {
+        instrument: "EFA",
+        assetClass: "us_equity",
+        collection: "eod_history",
+        asOf: "2026-09-30T00:08:59.000Z",
+        fromDate: "2026-09-01",
+        toDate: "2026-09-29",
+        limit: 20,
+      },
+      registry,
+    );
+
+    expect(inspection.noNetworkCalled).toBe(true);
+    expect(inspection.candidateAdapters.slice(0, 3)).toEqual([
+      {
+        id: "china_reachable_us_eod_history",
+        providerName: "china-reachable-us-eod-history",
+        providerRole: "primary_market_data",
+        priority: 10,
+      },
+      {
+        id: "alpaca_daily_history",
+        providerName: "Alpaca",
+        providerRole: "primary_market_data",
+        priority: 15,
+      },
+      {
+        id: "yahoo_public_eod_history",
+        providerName: "yahoo-public-eod-history",
+        providerRole: "primary_market_data",
+        priority: 20,
+      },
+    ]);
   });
   it("treats Twelve Data entitlement envelopes as failures, even with HTTP 200", async () => {
     const adapters = createRegisteredCapabilityAdapters({

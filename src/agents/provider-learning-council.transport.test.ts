@@ -134,6 +134,46 @@ describe.each(["in-process", "gateway"] as const)(
       hoisted.gatewayMock.mockResolvedValue({ status, summary, result });
       return __testing.runLearningCouncilRole({ ...roleParams, transport });
     }
+    it("uses the configured replacement for a legacy role without claiming the old provider", async () => {
+      vi.stubEnv("OPENCLAW_LEARNING_COUNCIL_KIMI_MODEL", "custom-api-deepseek-com/deepseek-v4-pro");
+      const value = await run({
+        payloads: [{ text: "answer" }],
+        meta: {
+          agentMeta: {
+            provider: "custom-api-deepseek-com",
+            model: "deepseek-v4-pro",
+            sessionId: "fixture",
+          },
+        },
+      });
+      expect(value).toMatchObject({
+        success: true,
+        model: "custom-api-deepseek-com/deepseek-v4-pro",
+        providerFamily: "custom-api-deepseek-com",
+        requestedModelHealth: "healthy",
+      });
+      expect(value.heading).toBe("Synthesis (custom-api-deepseek-com/deepseek-v4-pro)");
+    });
+    it("keeps the same role usable with another configured API", async () => {
+      vi.stubEnv("OPENCLAW_LEARNING_COUNCIL_KIMI_MODEL", "replacement-provider/reviewer-v1");
+      const value = await run({
+        payloads: [{ text: "answer" }],
+        meta: {
+          agentMeta: {
+            provider: "replacement-provider",
+            model: "reviewer-v1",
+            sessionId: "fixture",
+          },
+        },
+      });
+      expect(value).toMatchObject({
+        success: true,
+        model: "replacement-provider/reviewer-v1",
+        providerFamily: "replacement-provider",
+        requestedModelHealth: "healthy",
+      });
+      expect(value.heading).toBe("Synthesis (replacement-provider/reviewer-v1)");
+    });
     it("reports actual matching model and valid answer as healthy", async () => {
       const value = await run({ payloads: [{ text: "answer" }], meta: { agentMeta } });
       expect(value).toMatchObject({

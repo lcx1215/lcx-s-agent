@@ -259,6 +259,19 @@ it("reads one quote before review and re-reads broker facts at the final safety 
   expect(finalReads.some((url) => url.pathname.includes("/quotes/"))).toBe(false);
 });
 
+it("classifies a broker reconciliation transport failure without dispatch or raw error leakage", async () => {
+  const f = await fixture();
+  const quote = await f.controller.executionQuoteProvider(
+    { instrument: "SPY", side: "buy", assetClass: "us_equity" },
+    AbortSignal.timeout(5000),
+  );
+  f.read.mockRejectedValueOnce(new Error("fetch failed secret=do-not-persist"));
+  await expect(f.place("failed-reconciliation", f.controller, quote)).rejects.toThrow(
+    "execution_safety_broker_reconciliation_unavailable",
+  );
+  expect(f.execute).not.toHaveBeenCalled();
+});
+
 it("uses a newly bound quote after a slow review outlives the original quote", async () => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-09-22T19:30:00.000Z"));
@@ -304,7 +317,7 @@ it("does not fill an unexplained quantity gap with invented fees", async () => {
   const f = await fixture();
   f.positions[0].qty = "0.999";
   await expect(f.controller.accountBookProvider(AbortSignal.timeout(5000))).rejects.toThrow(
-    "economics",
+    "broker_reconciliation_blocked",
   );
   expect(f.execute).not.toHaveBeenCalled();
 });
@@ -318,7 +331,7 @@ it("rejects account changes and never retries a missing previously confirmed ord
   f.account.id = f.accountId;
   expect((await f.place("first")).status).toBe("placed");
   f.orders.splice(0);
-  await expect(f.place("second")).rejects.toThrow("execution_safety_state_unavailable");
+  await expect(f.place("second")).rejects.toThrow("execution_safety_terminal_order_mismatch");
   expect(f.execute).toHaveBeenCalledTimes(1);
 });
 
@@ -355,7 +368,7 @@ it("retains an unknown outcome and refuses another cycle without repeating the o
   });
   const restart = createFinanceAlpacaCycleController(f.options);
   await expect(restart.accountBookProvider(AbortSignal.timeout(5000))).rejects.toThrow(
-    "recovery incomplete",
+    "execution_recovery_incomplete",
   );
   expect(f.execute).toHaveBeenCalledTimes(1);
 });
@@ -519,7 +532,7 @@ it("isolates a bounded BTC gap while unrelated executions and recovery retain un
   expect(f.orders.map((order) => order.symbol)).toEqual(["SPY", "SPY"]);
   f.positions[1].market_value = "10000";
   await expect(controller.accountBookProvider(AbortSignal.timeout(5000))).rejects.toThrow(
-    "economics",
+    "broker_reconciliation_blocked",
   );
   expect(f.execute).toHaveBeenCalledTimes(2);
 });

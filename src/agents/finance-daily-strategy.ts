@@ -1,5 +1,7 @@
 import type { FinanceStrategyRule } from "./finance-strategy-rule-ledger.js";
 
+export const FINANCE_DAILY_VOLATILITY_LOOKBACK_CLOSES = 253;
+
 /** Bind the existing daily trend engine, not a dispatcher for arbitrary rule bodies. */
 export function bindFinanceDailyStrategy(
   rules: readonly Pick<
@@ -79,4 +81,26 @@ export function financeMonthlyTrendReturn(
     return undefined;
   }
   return anchor.close / prior.close - 1;
+}
+
+/** Shared with research evidence so review can inspect the same volatility the engine sizes on. */
+export function annualisedVol(dailyCloses: readonly number[]): number {
+  if (dailyCloses.length < 30) {
+    return Number.NaN;
+  }
+  const returns: number[] = [];
+  for (let index = 1; index < dailyCloses.length; index += 1) {
+    const previous = dailyCloses[index - 1];
+    const current = dailyCloses[index];
+    if (previous && current && previous > 0) {
+      returns.push(Math.log(current / previous));
+    }
+  }
+  if (returns.length < 30) {
+    return Number.NaN;
+  }
+  const mean = returns.reduce((sum, value) => sum + value, 0) / returns.length;
+  const variance =
+    returns.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (returns.length - 1);
+  return Math.sqrt(variance * 252);
 }

@@ -34,8 +34,8 @@ class FreeMarketCollectionAdapterError extends Error {
  * it — and `limit: 0` in particular returns an empty result that a reader cannot tell apart from
  * "no data for this window".
  *
- * `finance-market-collection-registry.ts` already validates this exact field
- * (`Number.isInteger && > 0 && <= 250`); this is the same rule applied where the value is consumed.
+ * `finance-market-collection-registry.ts` applies collection-specific maximums;
+ * this enforces the shared positive-integer rule where the value is consumed.
  * Undeclared keeps its own fallback, so no existing default changes.
  */
 function declaredLimit(value: number | undefined, fallback: number): number {

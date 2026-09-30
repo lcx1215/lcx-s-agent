@@ -19,6 +19,7 @@ import type { FinanceDailyCycleParams } from "./finance-daily-cycle.js";
 import { recoverConfirmedFinanceExecutions } from "./finance-execution-recovery.js";
 import {
   createFinanceExecutionSafetyContext,
+  FinanceExecutionSafetyFactsError,
   readFinanceExecutionSafetyClaims,
 } from "./finance-execution-safety.js";
 import {
@@ -56,6 +57,8 @@ type Controller = Required<
     "accountId" | "accountBookProvider" | "executionQuoteProvider" | "createSafetyContext"
   >
 > & {
+  /** Expiry of the policy snapshot validated when this controller was created. */
+  executionPolicyExpiresAt: string;
   inspectReconciliation: (signal: AbortSignal) => Promise<{
     readiness: FinanceExecutionReconciliation;
     observedAt: string;
@@ -182,9 +185,10 @@ export function createFinanceAlpacaCycleController(options: {
       signal,
     );
     if (!result.ok) {
-      throw new Error(
-        result.diagnostic ? `${result.reason} [${result.diagnostic}]` : result.reason,
-      );
+      throw new FinanceExecutionSafetyFactsError("account_snapshot_unavailable", {
+        reason: result.reason,
+        stage: result.diagnostic,
+      });
     }
     signal.throwIfAborted();
     if (result.facts.account.peakEquity > peak) {
@@ -213,11 +217,11 @@ export function createFinanceAlpacaCycleController(options: {
       recovery.pendingReconciliation.length ||
       recovery.legacyUnsupported.length
     ) {
-      throw new Error("account execution recovery incomplete");
+      throw new FinanceExecutionSafetyFactsError("execution_recovery_incomplete");
     }
     const claims = await readFinanceExecutionSafetyClaims({ ...account, signal });
     if (claims.some((c) => c.status !== "confirmed" || !c.binding || !c.fill)) {
-      throw new Error("account has unresolved execution claims; recovery required");
+      throw new FinanceExecutionSafetyFactsError("unresolved_execution_claims");
     }
     const last = claims.at(-1);
     if (last?.binding && last.fill) {
@@ -234,7 +238,7 @@ export function createFinanceAlpacaCycleController(options: {
         terminal.filledQuantity !== last.fill.filledQuantity ||
         terminal.fillPrice !== last.fill.fillPrice
       ) {
-        throw new Error("last confirmed execution no longer matches broker evidence");
+        throw new FinanceExecutionSafetyFactsError("terminal_order_mismatch");
       }
     }
     const snapshot = await syncFinanceBrokerReconciliation({
@@ -262,7 +266,7 @@ export function createFinanceAlpacaCycleController(options: {
       };
     }
     if (!inspectOnly && readiness.status === "blocked") {
-      throw new Error("broker economics or open orders unresolved; placement unavailable");
+      throw new FinanceExecutionSafetyFactsError("broker_reconciliation_blocked");
     }
     return { snapshot, last, readiness };
   }
@@ -287,7 +291,7 @@ export function createFinanceAlpacaCycleController(options: {
       positions.length !== expected.size ||
       positions.some((p) => expected.get(p.instrument) !== p.quantity)
     ) {
-      throw new Error("positions changed after reconciliation; refresh required");
+      throw new FinanceExecutionSafetyFactsError("positions_changed");
     }
   }
 
@@ -297,6 +301,7 @@ export function createFinanceAlpacaCycleController(options: {
       return { readiness, observedAt: snapshot.observedAt, protection: snapshot.protection };
     },
     accountId: policy.accountId,
+    executionPolicyExpiresAt: policy.expiresAt,
     accountBookProvider: async (signal) => {
       const { snapshot } = await reconcile(signal);
       const observed = await facts(options.instruments[0], "buy", signal);
@@ -377,9 +382,14 @@ export function createFinanceAlpacaCycleController(options: {
         },
         readFacts: async (signal) => {
           if (!quote) {
-            throw new Error("controller quote binding missing");
+            throw new FinanceExecutionSafetyFactsError("quote_binding_missing");
           }
-          const { snapshot, last } = await reconcile(signal);
+          const { snapshot, last } = await reconcile(signal).catch((error: unknown) => {
+            if (error instanceof FinanceExecutionSafetyFactsError) {
+              throw error;
+            }
+            throw new FinanceExecutionSafetyFactsError("broker_reconciliation_unavailable");
+          });
           const observed = await facts(
             binding.intent.instrument,
             binding.intent.side,
@@ -389,7 +399,7 @@ export function createFinanceAlpacaCycleController(options: {
           );
           assertSamePositions(observed.positions, snapshot.positions);
           if (Math.abs(observed.facts.account.availableCash - snapshot.brokerCash) > 0.01) {
-            throw new Error("cash changed after reconciliation; refresh required");
+            throw new FinanceExecutionSafetyFactsError("cash_changed");
           }
           return { ...observed.facts, reconciliation: readinessFor(snapshot, observed.positions) };
         },

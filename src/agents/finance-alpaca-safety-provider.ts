@@ -47,7 +47,7 @@ export type AlpacaSafetyProviderOptions = Readonly<{
   timeoutMs: number;
   maxAgeMs: number;
 }>;
-const ALPACA_SAFETY_FAILURE_CODES = [
+export const ALPACA_SAFETY_FAILURE_CODES = [
   "alpaca_safety_controller_evidence_or_parameters_invalid",
   "alpaca_safety_controller_evidence_expired",
   "alpaca_safety_cancelled_or_timed_out",
@@ -58,27 +58,29 @@ const ALPACA_SAFETY_FAILURE_CODES = [
   "alpaca_safety_quote_binding_invalid",
   "alpaca_safety_quote_expired",
 ] as const;
-type AlpacaSafetyFailureCode = (typeof ALPACA_SAFETY_FAILURE_CODES)[number];
-type AlpacaSafetyDiagnosticStage =
-  | "account_snapshot"
-  | "account_status"
-  | "position_snapshot"
-  | "open_order_snapshot"
-  | "open_order_limit"
-  | "instrument_asset_snapshot"
-  | "instrument_asset_status"
-  | "instrument_asset_class"
-  | "instrument_asset_identity"
-  | "account_currency"
-  | "account_values"
-  | "position_values"
-  | "protective_order_classification"
-  | "account_arithmetic"
-  | "quote_binding"
-  | "quote_snapshot"
-  | "quote_values"
-  | "quote_freshness"
-  | "controller_evidence_freshness";
+export type AlpacaSafetyFailureCode = (typeof ALPACA_SAFETY_FAILURE_CODES)[number];
+export const ALPACA_SAFETY_DIAGNOSTIC_STAGES = [
+  "account_snapshot",
+  "account_status",
+  "position_snapshot",
+  "open_order_snapshot",
+  "open_order_limit",
+  "instrument_asset_snapshot",
+  "instrument_asset_status",
+  "instrument_asset_class",
+  "instrument_asset_identity",
+  "account_currency",
+  "account_values",
+  "position_values",
+  "protective_order_classification",
+  "account_arithmetic",
+  "quote_binding",
+  "quote_snapshot",
+  "quote_values",
+  "quote_freshness",
+  "controller_evidence_freshness",
+] as const;
+export type AlpacaSafetyDiagnosticStage = (typeof ALPACA_SAFETY_DIAGNOSTIC_STAGES)[number];
 
 export function isAlpacaSafetyFailureCode(value: unknown): value is AlpacaSafetyFailureCode {
   return (

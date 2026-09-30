@@ -181,10 +181,20 @@ it("surfaces unexecuted intraday signals before asking for more research readine
     signalId: "idle-candidate",
     status: "refused",
     reasons: ["model veto"],
+    executionSafetyFailure: {
+      stage: "facts",
+      category: "cash_changed",
+      operation: "read_account_safety_facts",
+    },
   });
   expect(await buildFinanceAutomaticLifecycleFeedback({ directory })).toMatchObject({
     status: "present",
     nextTask: "inspect_unexecuted_finance_candidates",
-    intradayExecution: { candidates: 1, refused: 1, placed: 0 },
+    intradayExecution: {
+      candidates: 1,
+      refused: 1,
+      placed: 0,
+      topExecutionSafetyFailures: [{ stage: "facts", category: "cash_changed", count: 1 }],
+    },
   });
 });

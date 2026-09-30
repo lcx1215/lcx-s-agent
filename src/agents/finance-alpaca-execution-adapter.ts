@@ -291,13 +291,46 @@ export async function restoreAlpacaPaperProtection(options: {
   intent: FinanceExecutionIntent;
   quantity: number;
   stopPrice: number;
+  /** Omitted only for legacy stop protection claims. */
+  orderType?: "stop" | "stop_limit";
+  limitPrice?: number;
   headers: Record<string, string>;
   signal: AbortSignal;
   read: FinanceUncachedFetch;
   postJson: NonNullable<AlpacaExecutionAdapterOptions["postJson"]>;
 }) {
   const { intent, quantity, stopPrice, headers, signal, read } = options;
+  const orderType = options.orderType ?? "stop";
+  if (
+    !Number.isFinite(quantity) ||
+    quantity <= 0 ||
+    !Number.isFinite(stopPrice) ||
+    stopPrice <= 0 ||
+    !["stop", "stop_limit"].includes(orderType) ||
+    (orderType === "stop" && options.limitPrice !== undefined) ||
+    (orderType === "stop_limit" &&
+      (!Number.isFinite(options.limitPrice) ||
+        options.limitPrice! <= 0 ||
+        options.limitPrice! > stopPrice))
+  ) {
+    throw new Error("invalid protective order restoration intent");
+  }
   const clientId = `${clientOrderIdentity("paper", intent)}-protect`;
+  const matchesProtection = (stop: Record<string, unknown>) =>
+    stop.client_order_id === clientId &&
+    stop.symbol === intent.instrument &&
+    stop.side === "sell" &&
+    stop.type === orderType &&
+    stop.time_in_force === "gtc" &&
+    asFiniteNumber(stop.qty) === quantity &&
+    asFiniteNumber(stop.stop_price) === stopPrice &&
+    (orderType === "stop_limit"
+      ? asFiniteNumber(stop.limit_price) === options.limitPrice
+      : stop.limit_price === undefined || stop.limit_price === null) &&
+    stop.status === "new" &&
+    asFiniteNumber(stop.filled_qty) === 0 &&
+    typeof stop.id === "string" &&
+    !!stop.id;
   const lookup = () =>
     bounded(
       () =>
@@ -319,10 +352,11 @@ export async function restoreAlpacaPaperProtection(options: {
               client_order_id: clientId,
               symbol: intent.instrument,
               side: "sell",
-              type: "stop",
+              type: orderType,
               time_in_force: "gtc",
               qty: String(quantity),
               stop_price: String(stopPrice),
+              ...(orderType === "stop_limit" ? { limit_price: String(options.limitPrice) } : {}),
             }),
           }),
         signal,
@@ -346,19 +380,7 @@ export async function restoreAlpacaPaperProtection(options: {
     }
     stop = JSON.parse(response.body) as Record<string, unknown>;
   }
-  if (
-    stop.client_order_id !== clientId ||
-    stop.symbol !== intent.instrument ||
-    stop.side !== "sell" ||
-    stop.type !== "stop" ||
-    stop.time_in_force !== "gtc" ||
-    Number(stop.qty) !== quantity ||
-    Number(stop.stop_price) !== stopPrice ||
-    stop.status !== "new" ||
-    Number(stop.filled_qty) !== 0 ||
-    typeof stop.id !== "string" ||
-    !stop.id
-  ) {
+  if (!matchesProtection(stop)) {
     throw new Error("remaining protection identity or state mismatch");
   }
 }
@@ -435,6 +457,7 @@ export function createAlpacaExecutionAdapter(
           throw new Error("protected reduction account mismatch");
         }
         const protection = facts.protectiveOrders[0];
+        const protectionType = protection.orderType ?? "stop";
         return executeFinanceProtectedReduction({
           instrument: intent.instrument,
           positionQuantity: facts.positionQuantity,
@@ -443,7 +466,17 @@ export function createAlpacaExecutionAdapter(
           signal: reductionSignal,
           readStop: async () => {
             const order = await get(`/v2/orders/${encodeURIComponent(protection.id)}`);
-            if (order.type !== "stop" || order.side !== "sell" || order.time_in_force !== "gtc") {
+            if (
+              order.type !== protectionType ||
+              order.side !== "sell" ||
+              order.time_in_force !== "gtc" ||
+              [order.qty, order.stop_price, order.filled_qty].some(
+                (value) => asFiniteNumber(value) === undefined,
+              ) ||
+              (protectionType === "stop_limit"
+                ? asFiniteNumber(order.limit_price) !== protection.limitPrice
+                : order.limit_price !== undefined && order.limit_price !== null)
+            ) {
               throw new Error("protection identity mismatch");
             }
             return {
@@ -453,6 +486,10 @@ export function createAlpacaExecutionAdapter(
               quantity: Number(order.qty),
               filledQuantity: Number(order.filled_qty),
               stopPrice: Number(order.stop_price),
+              orderType: order.type === "stop_limit" ? "stop_limit" : "stop",
+              ...(order.type === "stop_limit"
+                ? { limitPrice: asFiniteNumber(order.limit_price) }
+                : {}),
             };
           },
           cancelStop: async () => {
@@ -502,11 +539,13 @@ export function createAlpacaExecutionAdapter(
               fillPoll: options.fillPoll ?? { timeoutMs: 30_000 },
             }).execute(intent, reductionSignal);
           },
-          restoreProtection: async (quantity, stopPrice) => {
+          restoreProtection: async (quantity, stopPrice, orderType, limitPrice) => {
             await restoreAlpacaPaperProtection({
               intent,
               quantity,
               stopPrice,
+              orderType,
+              ...(limitPrice === undefined ? {} : { limitPrice }),
               headers,
               signal: reductionSignal,
               read,

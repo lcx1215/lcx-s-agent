@@ -125,6 +125,244 @@ describe("local text model adapter contract", () => {
     expect(prompt).toContain("previous=");
   });
 
+  it("preserves all batch-review notes and critical findings within the dependency budget", () => {
+    const notes = Array.from({ length: 17 }, (_, index) => `review-note-${index + 1}`);
+    const criticalFindings = Array.from(
+      { length: 9 },
+      (_, index) => `critical-finding-${index + 1}`,
+    );
+    const reviewOutput = {
+      status: "completed",
+      output: {
+        kind: "review",
+        review: { verdict: "revise", criticalFindings, evidenceGaps: [], notes },
+      },
+    };
+    const prompt = buildQualityHarnessModelPrompt({
+      schemaVersion: 1,
+      runId: "batch-dependency",
+      attempt: 1,
+      stage: "draft",
+      agentId: "research_draft",
+      task: "ground the draft in batch reviews",
+      evidence: [{ id: "e1", text: "source fact" }],
+      sharedContext: {},
+      repairFeedback: [],
+      instructions: "draft",
+      dependencyOutputs: { evidence_batch_review_1: reviewOutput },
+    });
+
+    expect(prompt).toContain(JSON.stringify(reviewOutput));
+    expect(prompt).toContain("review-note-17");
+    expect(prompt).toContain("critical-finding-9");
+    expect(prompt).toContain("values_may_be_clipped:false");
+  });
+
+  it("rejects a raw batch review dependency that exceeds the existing prompt cap", () => {
+    expect(() =>
+      buildQualityHarnessModelPrompt({
+        schemaVersion: 1,
+        runId: "oversized-batch-dependency",
+        attempt: 1,
+        stage: "draft",
+        agentId: "research_draft",
+        task: "ground the draft in batch reviews",
+        evidence: [{ id: "e1", text: "source fact" }],
+        sharedContext: {},
+        repairFeedback: [],
+        instructions: "draft",
+        dependencyOutputs: {
+          evidence_batch_review_1: {
+            status: "completed",
+            output: {
+              kind: "review",
+              review: {
+                verdict: "revise",
+                criticalFindings: [],
+                evidenceGaps: [],
+                notes: ["x".repeat(20_001)],
+              },
+            },
+          },
+        },
+      }),
+    ).toThrow("quality evidence batch dependencies exceed the review prompt budget");
+  });
+
+  it("preserves a complete final artifact for bounded evidence-batch audits", () => {
+    const artifact = {
+      answer: `${"Full formatted artifact. ".repeat(800)}FINAL_ARTIFACT_TAIL`,
+      claims: [{ id: "claim-1", text: "A supported claim.", status: "supported" }],
+    };
+    const dependencyOutputs = {
+      formatting: { status: "completed", output: { kind: "artifact", artifact } },
+    };
+    expect(JSON.stringify(dependencyOutputs).length).toBeGreaterThan(16_000);
+    expect(JSON.stringify(dependencyOutputs).length).toBeLessThan(44_000);
+
+    const prompt = buildQualityHarnessModelPrompt({
+      schemaVersion: 1,
+      runId: "full-final-artifact-audit",
+      attempt: 1,
+      stage: "evidence",
+      agentId: "evidence_integrity",
+      task: "audit the formatted artifact against this evidence batch",
+      evidence: [{ id: "source-1", text: "A bounded source fact." }],
+      sharedContext: {},
+      repairFeedback: [],
+      instructions: "review only this evidence batch",
+      evidenceBatchMode: "final_artifact_audit",
+      dependencyOutputs,
+    });
+
+    expect(prompt).toContain("FINAL_ARTIFACT_TAIL");
+    expect(prompt).toContain(JSON.stringify(dependencyOutputs));
+    expect(prompt).toContain("values_may_be_clipped:false");
+  });
+
+  it("still rejects a final artifact audit handoff above its hard prompt cap", () => {
+    expect(() =>
+      buildQualityHarnessModelPrompt({
+        schemaVersion: 1,
+        runId: "oversized-final-artifact-audit",
+        attempt: 1,
+        stage: "evidence",
+        agentId: "evidence_integrity",
+        task: "audit the formatted artifact against this evidence batch",
+        evidence: [{ id: "source-1", text: "A bounded source fact." }],
+        sharedContext: {},
+        repairFeedback: [],
+        instructions: "review only this evidence batch",
+        evidenceBatchMode: "final_artifact_audit",
+        dependencyOutputs: {
+          formatting: {
+            status: "completed",
+            output: { kind: "artifact", artifact: { answer: "x".repeat(44_001) } },
+          },
+        },
+      }),
+    ).toThrow("quality evidence batch dependencies exceed the review prompt budget");
+  });
+
+  it("keeps the complete draft handoff under its bounded dependency budget", () => {
+    const dependencyOutputs: Record<string, unknown> = Object.fromEntries(
+      Array.from({ length: 6 }, (_, index) => [
+        `review_${index}`,
+        { status: "completed", output: { note: `review-${index}:${"x".repeat(2_800)}` } },
+      ]),
+    );
+    dependencyOutputs.evidence_batch_review_1 = {
+      status: "completed",
+      output: {
+        kind: "review",
+        review: {
+          verdict: "pass",
+          criticalFindings: [],
+          evidenceGaps: [],
+          notes: ["last-batch-note"],
+        },
+      },
+    };
+    const prompt = buildQualityHarnessModelPrompt({
+      schemaVersion: 1,
+      runId: "bounded-draft-handoff",
+      attempt: 1,
+      stage: "draft",
+      agentId: "research_draft",
+      task: "draft from all reviews",
+      evidence: [{ id: "e1", text: "source fact" }],
+      sharedContext: {},
+      repairFeedback: [],
+      instructions: "draft",
+      dependencyOutputs,
+    });
+
+    const serialized = JSON.stringify(dependencyOutputs);
+    expect(serialized.length).toBeGreaterThan(16_000);
+    expect(serialized.length).toBeLessThan(20_000);
+    expect(prompt).toContain(`previous=${serialized}`);
+    expect(prompt).toContain("values_may_be_clipped:false");
+  });
+
+  it("preserves every precheck dependency, including interleaved batch outputs, within the larger cap", () => {
+    const dependencyOutputs: Record<string, unknown> = Object.fromEntries(
+      Array.from({ length: 15 }, (_, index) => [
+        index % 3 === 1 ? `evidence_batch_review_${Math.floor(index / 3) + 1}` : `review_${index}`,
+        {
+          status: "completed",
+          output: {
+            kind: "review",
+            review: {
+              verdict: "pass",
+              criticalFindings: index === 14 ? ["tail-critical-finding"] : [],
+              evidenceGaps: [],
+              notes: [`review-${index}:${"x".repeat(2_500)}`],
+            },
+          },
+        },
+      ]),
+    );
+    const serialized = JSON.stringify(dependencyOutputs);
+    expect(Object.keys(dependencyOutputs)).toHaveLength(15);
+    expect(serialized.length).toBeGreaterThan(28_000);
+    expect(serialized.length).toBeLessThan(44_000);
+
+    const prompt = buildQualityHarnessModelPrompt({
+      schemaVersion: 1,
+      runId: "complete-precheck-handoff",
+      attempt: 1,
+      stage: "precheck",
+      agentId: "final_precheck",
+      task: "audit the complete artifact",
+      evidence: [{ id: "e1", text: "source fact" }],
+      sharedContext: {},
+      repairFeedback: [],
+      instructions: "review all dependencies",
+      dependencyOutputs,
+    });
+
+    const previous = prompt.split("previous=")[1]?.split("\n")[0];
+    expect(previous).toBeDefined();
+    expect(JSON.parse(previous ?? "null")).toEqual(dependencyOutputs);
+    expect(prompt).toContain("tail-critical-finding");
+    expect(prompt).toContain("values_may_be_clipped:false");
+  });
+
+  it("fails closed when a complete precheck handoff exceeds its cap or entry bound", () => {
+    const request = {
+      schemaVersion: 1 as const,
+      runId: "oversized-precheck-handoff",
+      attempt: 1,
+      stage: "precheck" as const,
+      agentId: "final_precheck",
+      task: "audit the complete artifact",
+      evidence: [{ id: "e1", text: "source fact" }],
+      sharedContext: {},
+      repairFeedback: [],
+      instructions: "review all dependencies",
+    };
+    expect(() =>
+      buildQualityHarnessModelPrompt({
+        ...request,
+        dependencyOutputs: {
+          formatting: { status: "completed", output: { artifact: "x".repeat(44_001) } },
+        },
+      }),
+    ).toThrow("quality evidence batch dependencies exceed the review prompt budget");
+
+    expect(() =>
+      buildQualityHarnessModelPrompt({
+        ...request,
+        dependencyOutputs: Object.fromEntries(
+          Array.from({ length: 17 }, (_, index) => [
+            `review_${index}`,
+            { status: "completed", output: { note: `review-${index}` } },
+          ]),
+        ),
+      }),
+    ).toThrow("quality evidence batch dependencies exceed the review prompt budget");
+  });
+
   it("supports explicitly selected base weights without loading an incompatible LoRA", () => {
     expect(
       resolveLocalTextModelRuntimeConfig({
@@ -222,7 +460,7 @@ it("does not silently drop later evidence, stage instructions or analysis requir
   expect(prompt).toContain("[e19] asset-19");
   expect(prompt).toContain("Compare equivalent periods");
   expect(prompt).toContain("three conditional scenarios");
-  expect(prompt).toContain("evidence_coverage=provided:20; included:20; text_may_be_clipped:true");
+  expect(prompt).toContain("evidence_coverage=provided:20; included:20; text_may_be_clipped:false");
   expect(prompt).not.toContain('"answer":"bounded answer"');
 });
 
@@ -236,7 +474,7 @@ it("aligns allowed evidence IDs with entries that fit the final prompt section",
     task: "Compare supplied observations",
     evidence: Array.from({ length: 48 }, (_, index) => ({
       id: `source-${index}`,
-      text: `fact-${index} ` + "value ".repeat(100),
+      text: `fact-${index} ` + "value ".repeat(400),
       source: `source-${index} ` + "x".repeat(600),
     })),
     sharedContext: {},
@@ -261,7 +499,7 @@ it("returns adapter-authored prompt coverage IDs and a stable digest", () => {
     task: "Review supplied evidence",
     evidence: [
       { id: "early", text: "positive observation", source: "feed" },
-      { id: "clipped", text: "x".repeat(2_500), source: "s".repeat(350) },
+      { id: "clipped", text: "x".repeat(65_000), source: "s".repeat(350) },
       { id: "contradiction", text: "contrary observation", source: "feed" },
     ],
     sharedContext: {},
@@ -320,8 +558,8 @@ it("names evidence omitted by both the 48-item and evidence-section budgets", ()
     evidence: [
       ...Array.from({ length: 40 }, (_, index) => ({
         id: `section-fill-${index}`,
-        text: "x".repeat(300),
-        source: "s".repeat(300),
+        text: "x".repeat(2000),
+        source: "s".repeat(900),
       })),
       { id: "section-omission", text: "contrary fact" },
     ],
@@ -504,3 +742,110 @@ it.each(["draft", "format"] as const)(
     ).toThrow("exceeds prompt budget");
   },
 );
+
+it("keeps large source records and their final counterevidence intact within four batches", async () => {
+  const { planQualityHarnessEvidenceBatches } = await import("./local-text-model-adapter.js");
+  const evidence = [
+    ...Array.from({ length: 3 }, (_, index) => ({
+      id: `module-${index}`,
+      text: "x".repeat(39500) + "COUNTEREVIDENCE",
+    })),
+    ...[2908, 354, 1824, 1318, 4591, 314, 6895, 574, 561].map((size, index) => ({
+      id: `fact-${index}`,
+      text: "y".repeat(size),
+    })),
+  ];
+  const plan = planQualityHarnessEvidenceBatches({ task: "review", evidence, sharedContext: {} });
+  expect(plan.issues).toEqual([]);
+  expect(plan.batches.length).toBeLessThanOrEqual(4);
+  expect(plan.batches.flat()).toEqual(evidence);
+  for (const batch of plan.batches) {
+    const rendered = buildQualityHarnessModelPromptWithCoverage({
+      schemaVersion: 1,
+      runId: "large",
+      attempt: 1,
+      stage: "evidence",
+      agentId: "evidence_integrity",
+      task: "review",
+      evidence: batch,
+      sharedContext: {},
+      dependencyOutputs: {},
+      repairFeedback: [],
+      instructions: "review",
+    });
+    expect(rendered.evidenceCoverage.clippedEvidenceIds).toEqual([]);
+    expect(rendered.evidenceCoverage.omittedEvidenceIds).toEqual([]);
+    if (batch.some((item) => item.id.startsWith("module-"))) {
+      expect(rendered.prompt).toContain("COUNTEREVIDENCE");
+    }
+  }
+  const oversized = planQualityHarnessEvidenceBatches({
+    task: "review",
+    sharedContext: {},
+    evidence: [{ id: "oversized", text: "x".repeat(60001) }],
+  });
+  expect(oversized.issues).toContain("evidence_item_exceeds_canonical_prompt_budget:oversized");
+});
+
+it("backfills batch space without dropping later evidence or increasing the four-batch cap", async () => {
+  const { planQualityHarnessEvidenceBatches } = await import("./local-text-model-adapter.js");
+  const evidence = [58000, 42000, 42000, 43000, 18000, 18000].map((size, index) => ({
+    id: `mixed-${index}`,
+    text: "x".repeat(size - 20) + "CONTRARY-END-EVIDENCE",
+  }));
+  const plan = planQualityHarnessEvidenceBatches({ task: "review", evidence, sharedContext: {} });
+  expect(plan.issues).toEqual([]);
+  expect(plan.batches).toHaveLength(4);
+  expect(plan.batches.flat().toSorted((a, b) => a.id.localeCompare(b.id))).toEqual(evidence);
+  for (const batch of plan.batches) {
+    const rendered = buildQualityHarnessModelPromptWithCoverage({
+      schemaVersion: 1,
+      runId: "backfilled",
+      attempt: 1,
+      stage: "evidence",
+      agentId: "evidence_integrity",
+      task: "review",
+      evidence: batch,
+      sharedContext: {},
+      dependencyOutputs: {},
+      repairFeedback: [],
+      instructions: "review",
+    });
+    expect(rendered.evidenceCoverage.clippedEvidenceIds).toEqual([]);
+    expect(rendered.evidenceCoverage.omittedEvidenceIds).toEqual([]);
+    expect(rendered.prompt).toContain("CONTRARY-END-EVIDENCE");
+  }
+});
+
+it("keeps the allocation contract intact after a large general context", () => {
+  const contract = {
+    activeStrategyIds: ["controller-rule"],
+    venue: "paper",
+    executionAuthority: "none",
+  };
+  const prompt = buildQualityHarnessModelPrompt({
+    schemaVersion: 1,
+    runId: "allocation",
+    attempt: 1,
+    stage: "draft",
+    agentId: "research_draft",
+    task: "allocate only declared rules",
+    evidence: [{ id: "e1", text: "fact" }],
+    sharedContext: {
+      largeUnrelatedContext: "x".repeat(10000),
+      portfolioAllocationContract: contract,
+    },
+    repairFeedback: [],
+    instructions: "review",
+    dependencyOutputs: {},
+  });
+  expect(prompt).toContain(`portfolio_allocation_contract=${JSON.stringify(contract)}`);
+  expect(prompt).toContain("unallocated capital remains cash");
+  expect(prompt).toContain("greater than 0 and at most 1");
+  expect(prompt).toContain("not mandatory holdings or orders");
+  expect(prompt).toContain('{decision:"no_allocation",reason,evidenceIds}');
+  expect(prompt).toContain(
+    "Never combine shapes or use zero/tiny allocations to imitate abstention",
+  );
+  expect(prompt).not.toContain("Fractions must be nonnegative");
+});

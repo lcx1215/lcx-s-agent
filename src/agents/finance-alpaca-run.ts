@@ -2,12 +2,18 @@ import { createAlpacaExecutionAdapter } from "./finance-alpaca-execution-adapter
 import { resolveFinanceCredentialEnv } from "./finance-credential-env.js";
 import {
   placeFinanceOrder,
+  type FinanceExecutionResearchLineage,
+  type FinanceExecutionTargetWeightAuthorization,
   type FinanceExecutionReceipt,
   type FinanceRiskBudget,
 } from "./finance-execution-adapter.js";
-import type { FinanceExecutionSafetyContextFactory } from "./finance-execution-safety.js";
+import type {
+  FinanceExecutionSafetyContextFactory,
+  FinanceExecutionSafetyFailure,
+} from "./finance-execution-safety.js";
 import {
   compileExecutionIntent,
+  type FinanceIntentCompilationResult,
   type FinanceResearchConclusion,
 } from "./finance-intent-compiler.js";
 import type { FinanceStrategyClass } from "./finance-mandate.js";
@@ -266,6 +272,10 @@ export type FinanceAlpacaRunRequest = Readonly<{
   credentialStateDirectory?: string;
   createSafetyContext?: FinanceExecutionSafetyContextFactory;
   conclusion: FinanceResearchConclusion;
+  /** Controller-only audit ancestry; it does not change the compiled order or authorize it. */
+  researchLineage?: FinanceExecutionResearchLineage;
+  /** Controller-only capital boundary; never accepted from model output. */
+  targetWeightAuthorization?: FinanceExecutionTargetWeightAuthorization;
   signal?: AbortSignal;
   /** Observed price and the time it belongs to. "Now" is never assumed. */
   market: { referencePrice: number; referencePriceAt: string };
@@ -304,8 +314,52 @@ export type FinanceAlpacaRunRequest = Readonly<{
 
 export type FinanceAlpacaRunResult = Readonly<
   | { ok: true; receipt: FinanceExecutionReceipt; notes: readonly string[] }
-  | { ok: false; stage: "compile" | "place"; refusals: readonly string[] }
+  | {
+      ok: false;
+      stage: "compile" | "place";
+      refusals: readonly string[];
+      safetyFailure?: FinanceExecutionSafetyFailure;
+    }
 >;
+
+/** Pure preflight: no provider calls, safety reservations, or execution authority. */
+export function compileFinanceAlpacaOrderIntent(
+  request: FinanceAlpacaRunRequest,
+): FinanceIntentCompilationResult {
+  const committed = request.committedInstrumentNotional ?? 0;
+  const orderCap = request.budget.maxOrderNotional;
+  const instrumentCap = request.budget.maxInstrumentNotional;
+  const sizeWithinPaperCaps =
+    (request.mode ?? "paper") === "paper" &&
+    request.conclusion.direction === "buy" &&
+    request.quantityOverride === undefined &&
+    typeof orderCap === "number" &&
+    Number.isFinite(orderCap) &&
+    orderCap > 0 &&
+    typeof instrumentCap === "number" &&
+    Number.isFinite(instrumentCap) &&
+    instrumentCap > 0 &&
+    Number.isFinite(committed) &&
+    committed >= 0;
+  const entryHeadroom = sizeWithinPaperCaps
+    ? Math.max(0, Math.min(orderCap, instrumentCap - committed))
+    : undefined;
+  return compileExecutionIntent({
+    conclusion: request.conclusion,
+    market: request.market,
+    equity: request.equity,
+    ...(entryHeadroom === undefined ? {} : { maxEntryNotional: entryHeadroom }),
+    ...(request.targetWeightAuthorization === undefined
+      ? {}
+      : { maxAuthorizedNotional: request.targetWeightAuthorization.maxOrderNotional }),
+    runAuthorizationId: request.runAuthorizationId,
+    ...(request.strategyClass === undefined ? {} : { strategyClass: request.strategyClass }),
+    ...(request.minConviction === undefined ? {} : { minConviction: request.minConviction }),
+    ...(request.quantityOverride === undefined
+      ? {}
+      : { quantityOverride: request.quantityOverride }),
+  });
+}
 
 export async function runFinanceAlpacaOrder(
   request: FinanceAlpacaRunRequest,
@@ -326,47 +380,21 @@ export async function runFinanceAlpacaOrder(
     };
   }
 
-  const committed = request.committedInstrumentNotional ?? 0;
-  const orderCap = request.budget.maxOrderNotional;
-  const instrumentCap = request.budget.maxInstrumentNotional;
-  const sizeWithinPaperCaps =
-    (request.mode ?? "paper") === "paper" &&
-    request.conclusion.direction === "buy" &&
-    request.quantityOverride === undefined &&
-    typeof orderCap === "number" &&
-    Number.isFinite(orderCap) &&
-    orderCap > 0 &&
-    typeof instrumentCap === "number" &&
-    Number.isFinite(instrumentCap) &&
-    instrumentCap > 0 &&
-    Number.isFinite(committed) &&
-    committed >= 0;
-  const entryHeadroom = sizeWithinPaperCaps
-    ? Math.max(0, Math.min(orderCap, instrumentCap - committed))
-    : undefined;
-  const compiled = compileExecutionIntent({
-    conclusion: request.conclusion,
-    market: request.market,
-    equity: request.equity,
-    ...(entryHeadroom === undefined ? {} : { maxEntryNotional: entryHeadroom }),
-    runAuthorizationId: request.runAuthorizationId,
-    ...(request.strategyClass === undefined ? {} : { strategyClass: request.strategyClass }),
-    ...(request.minConviction === undefined ? {} : { minConviction: request.minConviction }),
-    ...(request.quantityOverride === undefined
-      ? {}
-      : { quantityOverride: request.quantityOverride }),
-  });
+  const compiled = compileFinanceAlpacaOrderIntent(request);
   if (!compiled.ok) {
     return Object.freeze({ ok: false, stage: "compile", refusals: compiled.refusals });
   }
 
-  const intent =
-    request.protectionLimitPrice === undefined
-      ? compiled.intent
-      : Object.freeze({
-          ...compiled.intent,
-          protectionLimitPrice: request.protectionLimitPrice,
-        });
+  const intent = Object.freeze({
+    ...compiled.intent,
+    ...(request.protectionLimitPrice === undefined
+      ? {}
+      : { protectionLimitPrice: request.protectionLimitPrice }),
+    ...(request.researchLineage === undefined ? {} : { researchLineage: request.researchLineage }),
+    ...(request.targetWeightAuthorization === undefined
+      ? {}
+      : { targetWeightAuthorization: Object.freeze({ ...request.targetWeightAuthorization }) }),
+  });
 
   const fillPoll =
     request.fillPoll === false ? undefined : (request.fillPoll ?? DEFAULT_ALPACA_FILL_POLL);
@@ -418,7 +446,12 @@ export async function runFinanceAlpacaOrder(
   });
 
   if (placed.status !== "placed" || placed.receipt === undefined) {
-    return Object.freeze({ ok: false, stage: "place", refusals: placed.refusalReasons });
+    return Object.freeze({
+      ok: false,
+      stage: "place",
+      refusals: placed.refusalReasons,
+      ...(placed.safetyFailure ? { safetyFailure: placed.safetyFailure } : {}),
+    });
   }
 
   return Object.freeze({ ok: true, receipt: placed.receipt, notes: compiled.notes });

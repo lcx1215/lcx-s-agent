@@ -110,6 +110,25 @@ describe("compileExecutionIntent", () => {
     expect(compileExecutionIntent({ ...base, maxEntryNotional: 0 }).ok).toBe(false);
     expect(compileExecutionIntent({ ...base, maxEntryNotional: NaN }).ok).toBe(false);
   });
+
+  it("caps controller-authorized notional for buys and sells", () => {
+    const buy = compileExecutionIntent({
+      conclusion: equityConclusion,
+      market,
+      equity,
+      runAuthorizationId: "auth-1",
+      maxAuthorizedNotional: 350,
+    });
+    const sell = compileExecutionIntent({
+      conclusion: { ...equityConclusion, direction: "sell", invalidationPrice: 105 },
+      market,
+      equity,
+      runAuthorizationId: "auth-1",
+      maxAuthorizedNotional: 350,
+    });
+    expect(buy.ok && buy.intent.quantity).toBe(3);
+    expect(sell.ok && sell.intent.quantity).toBe(3);
+  });
   it("uses a trusted exact quantity when closing an observed position", () => {
     const result = compileExecutionIntent({
       conclusion: { ...equityConclusion, direction: "sell", invalidationPrice: undefined },

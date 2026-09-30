@@ -55,6 +55,69 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 describe("configured research model transport", () => {
+  it("uses the bounded role-specific output budget in the provider request", async () => {
+    const outputBudgets: unknown[] = [];
+    const http = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (typeof init?.body !== "string") {
+        throw new Error("expected JSON request body");
+      }
+      const requestBody = JSON.parse(init.body) as Record<string, unknown>;
+      outputBudgets.push(requestBody.max_tokens);
+      return new Response(
+        JSON.stringify({
+          id: "role-budget-response",
+          choices: [
+            {
+              finish_reason: "stop",
+              message: { content: '{"kind":"plan","requirements":["e1"],"missingEvidence":[]}' },
+            },
+          ],
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", http);
+    const adapter = createConfiguredFinanceModelAdapter(cfg, {
+      maxCalls: 3,
+      maxTokens: 8_192,
+      maxTokensByRole: {
+        formatting: 16_384,
+        portfolio_exposure: 16_384,
+        research_draft: 16_384,
+      },
+    });
+    await adapter.invoke(request, new AbortController().signal);
+    await adapter.invoke({ ...request, role: "portfolio_exposure" }, new AbortController().signal);
+    await adapter.invoke({ ...request, role: "formatting" }, new AbortController().signal);
+    expect(outputBudgets).toEqual([16_384, 16_384, 16_384]);
+  });
+
+  it("rejects oversized local prompts without consuming a provider call", async () => {
+    const http = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            id: "after-preflight",
+            choices: [{ finish_reason: "stop", message: { content: "{}" } }],
+          }),
+        ),
+    );
+    vi.stubGlobal("fetch", http);
+    const adapter = createConfiguredFinanceModelAdapter(cfg, { maxCalls: 1 });
+    const oversized = {
+      ...request,
+      payload: {
+        ...(request.payload as Record<string, unknown>),
+        sharedContext: { portfolioAllocationContract: { padding: "x".repeat(6000) } },
+      },
+    };
+    await expect(adapter.invoke(oversized, new AbortController().signal)).rejects.toMatchObject({
+      code: "prompt_budget_exceeded",
+    });
+    expect(http).not.toHaveBeenCalled();
+    await adapter.invoke(request, new AbortController().signal);
+    expect(http).toHaveBeenCalledTimes(1);
+  });
+
   it("reads static auth profiles and environment references without modifying the store", async () => {
     const profileCfg = structuredClone(cfg);
     delete profileCfg.models!.providers!.fixture.apiKey;
@@ -286,5 +349,17 @@ describe("configured research model transport", () => {
         "output_invalid",
       );
     }
+  });
+});
+
+it("distinguishes payment-required transport failure without retaining the provider body", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response("private billing detail", { status: 402 })),
+  );
+  const adapter = createConfiguredFinanceModelAdapter(cfg);
+  await expect(adapter.invoke(request, new AbortController().signal)).rejects.toMatchObject({
+    code: "provider_payment_required",
+    message: "model adapter provider_payment_required",
   });
 });

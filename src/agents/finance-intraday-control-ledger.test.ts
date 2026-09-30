@@ -2,13 +2,16 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { requireNodeSqlite } from "../memory/sqlite.js";
 import {
   appendFinanceIntradayDecision,
   appendFinanceIntradayOutcome,
   readFinanceIntradayExecutionCoverage,
   readFinanceIntradayDecisions,
+  readFinanceIntradayOutcome,
   type FinanceIntradayDecisionInput,
 } from "./finance-intraday-control-ledger.js";
+import { financeIntradayControlLedgerPath } from "./finance-state-dir.js";
 
 const temporary: string[] = [];
 afterEach(async () => {
@@ -107,6 +110,15 @@ it("reads signal coverage without creating a database and distinguishes no fills
         signalId,
         status,
         reasons: status === "refused" ? ["specific risk"] : [],
+        ...(signalId === "refusal"
+          ? {
+              executionSafetyFailure: {
+                stage: "facts",
+                category: "cash_changed",
+                operation: "read_account_safety_facts",
+              } as const,
+            }
+          : {}),
         ...(status === "placed" ? { receiptId: "receipt-one" } : {}),
       });
     }
@@ -123,6 +135,7 @@ it("reads signal coverage without creating a database and distinguishes no fills
     allRecordedCandidatesUnexecuted: false,
     needsExecutionInspection: true,
     topReasons: [{ reason: "specific risk", count: 1 }],
+    topExecutionSafetyFailures: [{ stage: "facts", category: "cash_changed", count: 1 }],
   });
   // SQLite may create WAL reader sidecars; no new logical ledger is created.
   expect(
@@ -130,6 +143,94 @@ it("reads signal coverage without creating a database and distinguishes no fills
       .filter((name) => !name.endsWith("-wal") && !name.endsWith("-shm"))
       .toSorted(),
   ).toEqual(before.filter((name) => !name.endsWith("-wal") && !name.endsWith("-shm")));
+});
+
+it("requires complete new diagnostics while reading legacy diagnostic records", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-safety-diagnostic-"));
+  temporary.push(directory);
+  await appendFinanceIntradayDecision(directory, input);
+  const result = await appendFinanceIntradayOutcome(directory, {
+    signalId: input.signalId,
+    status: "refused",
+    reasons: ["execution_safety_facts_inconsistent:account_arithmetic"],
+    executionSafetyFailure: {
+      stage: "facts",
+      category: "account_snapshot_unavailable",
+      operation: "read_account_safety_facts",
+      provider: {
+        reason: "alpaca_safety_facts_inconsistent",
+        stage: "account_arithmetic",
+      },
+    },
+  });
+  expect(result.input.executionSafetyFailure).toEqual({
+    stage: "facts",
+    category: "account_snapshot_unavailable",
+    operation: "read_account_safety_facts",
+    provider: { reason: "alpaca_safety_facts_inconsistent", stage: "account_arithmetic" },
+  });
+  expect(await readFinanceIntradayExecutionCoverage(directory)).toMatchObject({
+    topExecutionSafetyFailures: [
+      {
+        stage: "facts",
+        category: "account_snapshot_unavailable",
+        operation: "read_account_safety_facts",
+        provider: { reason: "alpaca_safety_facts_inconsistent", stage: "account_arithmetic" },
+        count: 1,
+      },
+    ],
+  });
+  await expect(
+    appendFinanceIntradayOutcome(directory, {
+      signalId: "incomplete-diagnostic",
+      status: "refused",
+      reasons: ["incomplete diagnostic"],
+      executionSafetyFailure: { stage: "facts", category: "cash_changed" } as never,
+    }),
+  ).rejects.toThrow();
+  await expect(
+    appendFinanceIntradayOutcome(directory, {
+      signalId: "invalid-diagnostic",
+      status: "refused",
+      reasons: ["bad diagnostic"],
+      executionSafetyFailure: {
+        stage: "facts",
+        category: "raw secret",
+        operation: "raw secret",
+      } as never,
+    }),
+  ).rejects.toThrow();
+
+  const legacyDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-safety-legacy-"));
+  temporary.push(legacyDirectory);
+  await appendFinanceIntradayDecision(legacyDirectory, input);
+  const { DatabaseSync } = requireNodeSqlite();
+  const db = new DatabaseSync(financeIntradayControlLedgerPath(legacyDirectory));
+  try {
+    db.prepare(
+      "INSERT INTO finance_intraday_outcomes(signal_id,recorded_at,body) VALUES (?,?,?)",
+    ).run(
+      input.signalId,
+      new Date().toISOString(),
+      JSON.stringify({
+        signalId: input.signalId,
+        status: "refused",
+        reasons: ["legacy refusal"],
+        executionSafetyFailure: { stage: "facts", category: "cash_changed" },
+      }),
+    );
+  } finally {
+    db.close();
+  }
+  expect(await readFinanceIntradayOutcome(legacyDirectory, input.signalId)).toMatchObject({
+    status: "refused",
+    executionSafetyFailure: { stage: "facts", category: "cash_changed" },
+  });
+  expect(await readFinanceIntradayExecutionCoverage(legacyDirectory)).toMatchObject({
+    status: "present",
+    refused: 1,
+    topExecutionSafetyFailures: [{ stage: "facts", category: "cash_changed", count: 1 }],
+  });
 });
 it("does not treat an all-refused history as successful execution", async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-refused-"));

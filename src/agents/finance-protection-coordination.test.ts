@@ -37,6 +37,45 @@ it("recognizes protective reservations without treating them as pending entries"
     requiresTerminalCancellationAndFreshPosition: true,
   });
 });
+it("recognizes stop-limit protection with its exact limit price", () => {
+  const result = classifyFinanceProtectionOrders(
+    [{ ...stop, type: "stop_limit", limit_price: "89" }],
+    new Map([["SPY", 1]]),
+  );
+  expect(result.unresolved).toEqual([]);
+  expect(result.protective).toEqual([
+    {
+      id: "protect",
+      instrument: "SPY",
+      quantity: 1,
+      stopPrice: 90,
+      orderType: "stop_limit",
+      limitPrice: 89,
+    },
+  ]);
+});
+it.each([undefined, "NaN", "0", "-1", "91"])(
+  "does not recognize stop-limit protection with invalid limit price %s",
+  (limit_price) => {
+    const result = classifyFinanceProtectionOrders(
+      [{ ...stop, type: "stop_limit", limit_price }],
+      new Map([["SPY", 1]]),
+    );
+    expect(result.unresolved).toEqual(["protect"]);
+    expect(result.protective).toEqual([]);
+  },
+);
+it.each([true, false, {}, []])(
+  "does not coerce non-numeric stop-limit price values: %j",
+  (limit_price) => {
+    const result = classifyFinanceProtectionOrders(
+      [{ ...stop, type: "stop_limit", limit_price }],
+      new Map([["SPY", 1]]),
+    );
+    expect(result.unresolved).toEqual(["protect"]);
+    expect(result.protective).toEqual([]);
+  },
+);
 it.each([
   { status: "pending_cancel" },
   { status: "partially_filled", filled_qty: "0.1" },
@@ -64,6 +103,15 @@ it("rejects duplicate protection IDs and cumulative over-reservation", () => {
       new Map([["SPY", 2]]),
     ).unresolved,
   ).toEqual(["second"]);
+});
+it("rejects a legacy stop record that carries a limit price", () => {
+  expect(() =>
+    planFinanceProtectedReduction({
+      positionQuantity: 1,
+      sellQuantity: 1,
+      protective: [{ id: "old-stop", quantity: 1, stopPrice: 90, limitPrice: 89 }],
+    }),
+  ).toThrow("invalid protected reduction");
 });
 it("waits for terminal cancellation, re-reads inventory and protects only the remaining position", async () => {
   const { executeFinanceProtectedReduction } = await import("./finance-protection-coordination.js");
@@ -118,6 +166,88 @@ it("waits for terminal cancellation, re-reads inventory and protects only the re
     "read-position",
     "protect",
   ]);
+});
+it("preserves stop-limit type and price through cancellation and restoration", async () => {
+  const { executeFinanceProtectedReduction } = await import("./finance-protection-coordination.js");
+  let canceled = false,
+    sold = false;
+  const restoreProtection = vi.fn(async () => {});
+  const result = await executeFinanceProtectedReduction({
+    instrument: "BTC/USD",
+    positionQuantity: 2,
+    sellQuantity: 1,
+    protection: {
+      id: "stop-limit",
+      quantity: 2,
+      stopPrice: 90,
+      orderType: "stop_limit",
+      limitPrice: 89,
+    },
+    signal: AbortSignal.timeout(1000),
+    readStop: async () => ({
+      id: "stop-limit",
+      instrument: "BTC/USD",
+      quantity: 2,
+      stopPrice: 90,
+      orderType: "stop_limit",
+      limitPrice: 89,
+      filledQuantity: 0,
+      status: canceled ? "canceled" : "new",
+    }),
+    cancelStop: async () => {
+      canceled = true;
+    },
+    readPosition: async () => (sold ? 1 : 2),
+    execute: async () => {
+      sold = true;
+      return { filledQuantity: 1 };
+    },
+    restoreProtection,
+  });
+  expect(result.filledQuantity).toBe(1);
+  expect(restoreProtection).toHaveBeenCalledWith(1, 90, "stop_limit", 89);
+});
+it("refuses a type or limit-price change after cancellation starts", async () => {
+  const { executeFinanceProtectedReduction } = await import("./finance-protection-coordination.js");
+  let reads = 0,
+    executed = false,
+    restored = false;
+  await expect(
+    executeFinanceProtectedReduction({
+      instrument: "BTC/USD",
+      positionQuantity: 1,
+      sellQuantity: 1,
+      protection: {
+        id: "stop-limit",
+        quantity: 1,
+        stopPrice: 90,
+        orderType: "stop_limit",
+        limitPrice: 89,
+      },
+      signal: AbortSignal.timeout(1000),
+      readStop: async () => ({
+        id: "stop-limit",
+        instrument: "BTC/USD",
+        quantity: 1,
+        stopPrice: 90,
+        orderType: reads++ === 0 ? "stop_limit" : "stop",
+        ...(reads === 1 ? { limitPrice: 89 } : {}),
+        filledQuantity: 0,
+        status: reads === 1 ? "new" : "canceled",
+      }),
+      cancelStop: async () => {},
+      readPosition: async () => 1,
+      execute: async () => {
+        executed = true;
+        return { filledQuantity: 1 };
+      },
+      restoreProtection: async () => {
+        restored = true;
+      },
+    }),
+  ).rejects.toThrow("protection changed or filled");
+  expect(executed).toBe(false);
+  expect(restored).toBe(false);
 });
 it("does not sell when the protective stop fills during cancellation", async () => {
   const { executeFinanceProtectedReduction } = await import("./finance-protection-coordination.js");

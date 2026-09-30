@@ -26,15 +26,15 @@ it("caps noisy output without preventing the child from exiting", async () => {
   const result = await runFinanceCycleProcess({
     argv: [
       "-e",
-      "process.stdout.write('x'.repeat(200000)); process.stderr.write('y'.repeat(200000));",
+      "process.stdout.write('x'.repeat(2000000)); process.stderr.write('y'.repeat(2000000));",
     ],
     cwd,
     timeoutMs: 3000,
   });
   expect(result.ok).toBe(true);
   expect(result.outputTruncated).toBe(true);
-  expect(result.stdout).toHaveLength(65536);
-  expect(result.stderr).toHaveLength(65536);
+  expect(result.stdout).toHaveLength(1024 * 1024);
+  expect(result.stderr).toHaveLength(1024 * 1024);
 });
 
 it("reports a spawn error for an inaccessible working directory", async () => {
@@ -115,3 +115,16 @@ it.each([0, -1, 0.5, Infinity, 2_147_483_648])(
     );
   },
 );
+
+it("passes an explicit child environment without modifying the parent", async () => {
+  const before = process.env.LCX_FINANCE_HTTP_PROXY;
+  const result = await runFinanceCycleProcess({
+    argv: ["-e", "console.log(process.env.LCX_FINANCE_HTTP_PROXY)"],
+    cwd,
+    timeoutMs: 3000,
+    env: { ...process.env, LCX_FINANCE_HTTP_PROXY: "http://127.0.0.1:7897" },
+  });
+  expect(result.ok).toBe(true);
+  expect(result.stdout.trim()).toBe("http://127.0.0.1:7897");
+  expect(process.env.LCX_FINANCE_HTTP_PROXY).toBe(before);
+});

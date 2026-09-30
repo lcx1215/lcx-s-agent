@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
+  financeResearchProcessEnv,
+  financeResearchPreflightRetryDue,
   inspectFinanceSchedulerStatus,
   inspectFinanceResearchReceiptPersistence,
   describeFinanceCycleExecution,
@@ -25,10 +27,12 @@ import {
 import type { FinanceCycleProcessResult } from "../../src/agents/finance-scheduler-process.js";
 import {
   readFinanceSchedulerState,
+  inspectFinanceSchedulerProgress,
   writeFinanceSchedulerState,
 } from "../../src/agents/finance-scheduler-state.js";
 import {
   activateFinanceStrategyRule,
+  retireFinanceStrategyRule,
   declareFinanceStrategyRule,
 } from "../../src/agents/finance-strategy-rule-ledger.js";
 import type {
@@ -50,7 +54,10 @@ const mocks = vi.hoisted(() => ({
     degradedCount: 0,
     unhealthyCount: 0,
   })),
-  createIntradayController: vi.fn(() => ({ accountId: "paper-account" })),
+  createIntradayController: vi.fn(() => ({
+    accountId: "paper-account",
+    executionPolicyExpiresAt: "2026-09-30T23:00:00.000Z",
+  })),
   runIntradayMonitorTick: vi.fn(),
   executeIntradayDecision: vi.fn(),
   createTradeDecisionReviewer: vi.fn(),
@@ -104,6 +111,26 @@ const success: FinanceCycleProcessResult = {
   stderr: "",
   outputTruncated: false,
 };
+const REQUIRED_RESEARCH_GATES = ["source", "committee", "quality", "module_execution"] as const;
+
+function acceptedResearchCandidate(planPath: string, asOf: string) {
+  return {
+    status: "candidate",
+    plan: { asOf },
+    gates: REQUIRED_RESEARCH_GATES.map((id) => ({ id, passed: true })),
+    portfolioPlanWritten: planPath,
+  };
+}
+
+function researchAsOfFromArgs(argv: readonly string[]): string {
+  const index = argv.indexOf("--as-of");
+  const asOf = index < 0 ? undefined : argv[index + 1];
+  if (!asOf) {
+    throw new Error("research preflight is missing --as-of");
+  }
+  return asOf;
+}
+
 let directory: string;
 let originalTermListeners: number;
 let originalIntListeners: number;
@@ -194,7 +221,10 @@ beforeEach(() => {
   stderrMessages = [];
   mocks.runCycle.mockResolvedValue(success);
   mocks.loadConfig.mockReturnValue({});
-  mocks.createIntradayController.mockReturnValue({ accountId: "paper-account" });
+  mocks.createIntradayController.mockReturnValue({
+    accountId: "paper-account",
+    executionPolicyExpiresAt: "2026-09-30T23:00:00.000Z",
+  });
   mocks.syncAlpacaHistory.mockResolvedValue({
     accountId: "paper-account",
     accountReconciliation: { status: "reconciled" },
@@ -1040,7 +1070,13 @@ it("rebinds a long-lived monitor to the universe written by a successful night r
   await activateIntradayRule({
     measuredResult: { status: "paper_contract_only", executionAuthority: "none" },
   });
-  fs.writeFileSync(path.join(directory, "alpaca-policy.json"), "{}\n");
+  const policyPath = path.join(directory, "alpaca-policy.json");
+  const loadedPolicyExpiry = "2026-09-22T23:00:00.000Z";
+  fs.writeFileSync(policyPath, JSON.stringify({ expiresAt: loadedPolicyExpiry }));
+  mocks.createIntradayController.mockReturnValue({
+    accountId: "paper-account",
+    executionPolicyExpiresAt: loadedPolicyExpiry,
+  });
   writeFinanceSchedulerState(directory, {
     lastFired: { day: "2026-09-22" },
     lastSucceeded: {},
@@ -1081,12 +1117,13 @@ it("rebinds a long-lived monitor to the universe written by a successful night r
   mocks.runIntradayMonitorTick.mockResolvedValue({ status: "no_signal" });
   let progressAtStop: Record<string, unknown> | undefined;
   mocks.delay
-    .mockImplementationOnce(async () => {})
     .mockImplementationOnce(async () => {
-      const progress = JSON.parse(
+      fs.writeFileSync(policyPath, JSON.stringify({ expiresAt: "2026-09-23T00:00:00.000Z" }));
+    })
+    .mockImplementationOnce(async () => {
+      progressAtStop = JSON.parse(
         fs.readFileSync(path.join(directory, FINANCE_SCHEDULER_LOCK, "progress.json"), "utf8"),
-      ) as { intraday?: Record<string, unknown> };
-      progressAtStop = progress.intraday;
+      ) as Record<string, unknown>;
       process.emit("SIGTERM");
     });
 
@@ -1137,11 +1174,15 @@ it("rebinds a long-lived monitor to the universe written by a successful night r
   expect(mocks.createIntradayController).toHaveBeenCalledOnce();
   expect(mocks.executeIntradayDecision).not.toHaveBeenCalled();
   expect(progressAtStop).toMatchObject({
-    placementEnabled: true,
-    placementEligibility: "paper_contract_only",
-    universeStatus: "validated",
-    instruments: ["SPY", "NEW"],
-    executionInstruments: ["SPY"],
+    executionPolicyExpiresAt: "2026-09-23T00:00:00.000Z",
+    intradayControllerPolicyExpiresAt: loadedPolicyExpiry,
+    intraday: {
+      placementEnabled: true,
+      placementEligibility: "paper_contract_only",
+      universeStatus: "validated",
+      instruments: ["SPY", "NEW"],
+      executionInstruments: ["SPY"],
+    },
   });
 });
 
@@ -1790,14 +1831,16 @@ it("routes the exact portfolio plan to the cycle with a cwd-independent path", a
 });
 
 it("refreshes a grounded research plan before the unique day cycle", async () => {
+  vi.stubEnv("LCX_FINANCE_RESEARCH_HTTP_PROXY", "http://127.0.0.1:7897");
+  vi.stubEnv("LCX_FINANCE_HTTP_PROXY", "");
   const context = path.join(directory, "portfolio-context.json");
   const plan = path.join(directory, "research-portfolio-plan-latest.json");
   fs.writeFileSync(context, "{}");
   mocks.runCycle
-    .mockResolvedValueOnce({
+    .mockImplementationOnce(async ({ argv }: { argv: readonly string[] }) => ({
       ...success,
-      stdout: JSON.stringify({ status: "candidate", portfolioPlanWritten: plan }),
-    })
+      stdout: JSON.stringify(acceptedResearchCandidate(plan, researchAsOfFromArgs(argv))),
+    }))
     .mockResolvedValueOnce(success);
 
   await expect(
@@ -1814,6 +1857,9 @@ it("refreshes a grounded research plan before the unique day cycle", async () =>
   ).resolves.toBe(0);
 
   expect(mocks.runCycle).toHaveBeenCalledTimes(2);
+  expect(mocks.runCycle.mock.calls[0][0].env.LCX_FINANCE_HTTP_PROXY).toBe("http://127.0.0.1:7897");
+  expect(mocks.runCycle.mock.calls[1][0].env).toBeUndefined();
+  expect(process.env.LCX_FINANCE_HTTP_PROXY).toBe("");
   expect(mocks.runCycle.mock.calls[0][0].argv).toEqual(
     expect.arrayContaining([
       expect.stringContaining("lcx-finance-research-run.ts"),
@@ -1834,92 +1880,189 @@ it("refreshes a grounded research plan before the unique day cycle", async () =>
   );
 });
 
-it("routes night settlement, ledgers and news through the same module research owner", async () => {
-  vi.useFakeTimers({ toFake: ["Date"] });
-  vi.setSystemTime(new Date("2026-09-22T22:00:00.000Z"));
-  const context = path.join(directory, "portfolio-context.json");
-  fs.writeFileSync(context, "{}");
-  mocks.runCycle
-    .mockResolvedValueOnce({
-      ...success,
-      stdout: JSON.stringify({
-        ok: true,
-        scoredFiled: { appended: 1, skipped: 0 },
-        reflection: { lesson: "review invalidation" },
-        pending: [],
-        declined: [],
-        issues: [],
-      }),
-    })
-    .mockResolvedValueOnce({
-      ...success,
-      stdout: JSON.stringify({
-        snapshotPersisted: true,
-        generatedAt: "2026-09-22T22:00:00.000Z",
-        selected: ["AAA", "BBB"],
-      }),
-    })
-    .mockResolvedValueOnce({ ...success, stdout: JSON.stringify({ status: "candidate" }) });
-  mocks.readUniverse.mockReturnValue({
-    generatedAt: "2026-09-22T22:00:00.000Z",
-    selected: ["AAA", "BBB"],
-  } as never);
+it.each([
+  "failed_gate",
+  "failed_source",
+  "failed_committee",
+  "stale",
+  "missing_quality",
+  "missing_module",
+  "missing_source",
+  "missing_committee",
+] as const)(
+  "refuses an allocation plan whose research preflight is not fully authorized: %s",
+  async (variant) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const firedAt = "2026-09-29T19:35:00.000Z";
+    vi.setSystemTime(new Date(firedAt));
+    const context = path.join(directory, "portfolio-context.json");
+    const planPath = path.join(directory, "research-portfolio-plan-latest.json");
+    fs.writeFileSync(context, "{}");
+    fs.writeFileSync(planPath, "existing-plan-must-not-be-executed");
+    const accepted = acceptedResearchCandidate(planPath, firedAt);
+    const failedGateId =
+      variant === "failed_gate"
+        ? "quality"
+        : variant === "failed_source"
+          ? "source"
+          : variant === "failed_committee"
+            ? "committee"
+            : undefined;
+    const missingGateId =
+      variant === "missing_quality"
+        ? "quality"
+        : variant === "missing_module"
+          ? "module_execution"
+          : variant === "missing_source"
+            ? "source"
+            : variant === "missing_committee"
+              ? "committee"
+              : undefined;
+    const gates = accepted.gates
+      .filter((gate) => gate.id !== missingGateId)
+      .map((gate) => (gate.id === failedGateId ? { ...gate, passed: false } : gate));
+    const payload = {
+      ...accepted,
+      plan: { asOf: variant === "stale" ? "2026-09-28T19:35:00.000Z" : firedAt },
+      gates,
+    };
+    mocks.runCycle.mockResolvedValueOnce({ ...success, stdout: JSON.stringify(payload) });
 
-  await expect(
-    runFinanceScheduler([
-      "--once",
-      "night",
-      "--dir",
-      directory,
-      "--research-portfolio-context",
-      context,
-      "--research-ask",
-      "review active strategy budgets",
-    ]),
-  ).resolves.toBe(0);
+    await expect(
+      runFinanceScheduler([
+        "--once",
+        "day",
+        "--dir",
+        directory,
+        "--research-portfolio-context",
+        context,
+        "--research-ask",
+        "review active strategy budgets",
+      ]),
+    ).resolves.toBe(1);
 
-  expect(mocks.runCycle).toHaveBeenCalledTimes(3);
-  const evidencePath = path.join(directory, "night-review-evidence-2026-09-22.json");
-  expect(mocks.runCycle.mock.calls[1][0].argv).toEqual(
-    expect.arrayContaining([
-      expect.stringContaining("lcx-finance-universe-select.ts"),
-      "--json",
-      "--write-snapshot",
-      "--dir",
-      directory,
-    ]),
-  );
-  expect(mocks.runCycle.mock.calls[2][0].argv).toEqual(
-    expect.arrayContaining([
-      expect.stringContaining("lcx-finance-research-run.ts"),
-      "--execute-modules",
-      "--decision-mode",
-      "research_only",
-      "--controller-evidence",
-      evidencePath,
-      "--persist-theses",
-      "--finance-state-dir",
-      directory,
-    ]),
-  );
-  expect(JSON.parse(fs.readFileSync(evidencePath, "utf8"))).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({ source: "finance-night-settlement" }),
-      expect.objectContaining({ source: "finance-position-ledger" }),
-      expect.objectContaining({ source: "finance-strategy-rule-ledger" }),
-      expect.objectContaining({ source: "finance-intraday-control-ledger" }),
-    ]),
-  );
-  const universeReceipt = JSON.parse(
-    fs
-      .readFileSync(path.join(directory, "finance-universe-selection-runs.jsonl"), "utf8")
-      .trim()
-      .split("\n")
-      .at(-1)!,
-  );
-  expect(universeReceipt).toMatchObject({ status: "selected", selectedCount: 2 });
-  expect(readFinanceSchedulerState(directory).lastSucceeded.night).toBe("2026-09-22");
-});
+    expect(mocks.runCycle).toHaveBeenCalledOnce();
+    expect(readFinanceSchedulerState(directory).lastRun).toMatchObject({
+      ok: false,
+      execution: { outcome: "not_run", blockReason: "research_plan_not_accepted" },
+      researchPlanRefresh: { ok: false, planPath: null },
+    });
+    expect(fs.readFileSync(planPath, "utf8")).toBe("existing-plan-must-not-be-executed");
+  },
+);
+
+it.each(["candidate", "needs_review"])(
+  "routes night research and reports aggregate acceptance: %s",
+  async (reviewStatus) => {
+    vi.stubEnv("LCX_FINANCE_RESEARCH_HTTP_PROXY", "http://127.0.0.1:7897");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-22T22:00:00.000Z"));
+    await activateIntradayRule();
+    const context = path.join(directory, "portfolio-context.json");
+    fs.writeFileSync(context, "{}");
+    mocks.runCycle
+      .mockResolvedValueOnce({
+        ...success,
+        stdout: JSON.stringify({
+          ok: true,
+          scoredFiled: { appended: 1, skipped: 0 },
+          reflection: { lesson: "review invalidation" },
+          pending: [],
+          declined: [],
+          issues: [],
+        }),
+      })
+      .mockImplementationOnce(async () => {
+        vi.setSystemTime(new Date("2026-09-22T22:05:00.000Z"));
+        return {
+          ...success,
+          stdout: JSON.stringify({
+            snapshotPersisted: true,
+            generatedAt: "2026-09-22T22:00:00.000Z",
+            selected: ["AAA", "BBB"],
+          }),
+        };
+      })
+      .mockResolvedValueOnce({ ...success, stdout: JSON.stringify({ status: reviewStatus }) });
+    mocks.readUniverse.mockReturnValue({
+      generatedAt: "2026-09-22T22:00:00.000Z",
+      selected: ["AAA", "BBB"],
+    } as never);
+
+    await expect(
+      runFinanceScheduler([
+        "--once",
+        "night",
+        "--dir",
+        directory,
+        "--research-portfolio-context",
+        context,
+        "--research-ask",
+        "review active strategy budgets",
+      ]),
+    ).resolves.toBe(reviewStatus === "candidate" ? 0 : 1);
+
+    expect(mocks.runCycle).toHaveBeenCalledTimes(3);
+    expect(mocks.runCycle.mock.calls[0][0].env).toBeUndefined();
+    expect(mocks.runCycle.mock.calls[1][0].env).toBeUndefined();
+    expect(mocks.runCycle.mock.calls[2][0].env.LCX_FINANCE_HTTP_PROXY).toBe(
+      "http://127.0.0.1:7897",
+    );
+    const evidencePath = path.join(directory, "night-review-evidence-2026-09-22.json");
+    expect(mocks.runCycle.mock.calls[1][0].argv).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("lcx-finance-universe-select.ts"),
+        "--json",
+        "--write-snapshot",
+        "--dir",
+        directory,
+      ]),
+    );
+    expect(mocks.runCycle.mock.calls[2][0].argv).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("lcx-finance-research-run.ts"),
+        "--execute-modules",
+        "--decision-mode",
+        "research_only",
+        "--as-of",
+        "2026-09-22T22:05:00.000Z",
+        "--controller-research-scope",
+        "--max-api-calls",
+        "160",
+        "--controller-evidence",
+        evidencePath,
+        "--persist-theses",
+        "--finance-state-dir",
+        directory,
+      ]),
+    );
+    expect(JSON.parse(fs.readFileSync(evidencePath, "utf8"))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source: "finance-night-settlement" }),
+        expect.objectContaining({ source: "finance-position-ledger" }),
+        expect.objectContaining({ source: "finance-strategy-rule-ledger" }),
+        expect.objectContaining({ source: "finance-intraday-control-ledger" }),
+      ]),
+    );
+    const universeReceipt = JSON.parse(
+      fs
+        .readFileSync(path.join(directory, "finance-universe-selection-runs.jsonl"), "utf8")
+        .trim()
+        .split("\n")
+        .at(-1)!,
+    );
+    expect(universeReceipt).toMatchObject({ status: "selected", selectedCount: 2 });
+    expect(readFinanceSchedulerState(directory).lastSucceeded.night).toBe(
+      reviewStatus === "candidate" ? "2026-09-22" : undefined,
+    );
+    expect(readFinanceSchedulerState(directory).lastRun).toMatchObject({
+      ok: reviewStatus === "candidate",
+      cycleExitCode: 0,
+      exitCode: reviewStatus === "candidate" ? 0 : 2,
+      nightReview: { exitCode: 0, ok: reviewStatus === "candidate" },
+    });
+  },
+);
 
 it("does not enter the day cycle when research plan refresh is unverified", async () => {
   mocks.runCycle.mockResolvedValueOnce({
@@ -2191,4 +2334,459 @@ it("checks the actual research receipt independently of candidate acceptance", (
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+it("keeps research proxy opt-in, child-local and free of embedded credentials", () => {
+  expect(financeResearchProcessEnv({ LCX_FINANCE_HTTP_PROXY: "" })).toBeUndefined();
+  expect(financeResearchProcessEnv({ LCX_FINANCE_RESEARCH_HTTP_PROXY: "" })).toMatchObject({
+    LCX_FINANCE_HTTP_PROXY: "",
+  });
+  for (const proxy of ["socks5://localhost:1", "http://user:secret@localhost:1", "not-a-url"]) {
+    expect(() => financeResearchProcessEnv({ LCX_FINANCE_RESEARCH_HTTP_PROXY: proxy })).toThrow();
+  }
+});
+
+it.each([false, true])(
+  "refreshes a late active rule, retries controller failure=%s, and stops retired entries",
+  async (failFirstController) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-21T15:00:00Z"));
+    const policy = path.join(directory, "alpaca-policy.json");
+    fs.writeFileSync(policy, "{}");
+    if (failFirstController) {
+      mocks.createIntradayController.mockImplementationOnce(() => {
+        throw new Error("temporary controller failure");
+      });
+    }
+    mocks.runIntradayMonitorTick.mockResolvedValue({
+      status: "decision_recorded",
+      signal: { action: "buy", reason: "fixture", signalId: "fixture" },
+      decision: { input: { action: "buy", signalId: "fixture" } },
+    });
+    mocks.executeIntradayDecision.mockResolvedValue({ status: "blocked" });
+    let ticks = 0;
+    mocks.delay.mockImplementation(async () => {
+      ticks++;
+      if (ticks === 1) {
+        expect(mocks.runIntradayMonitorTick).not.toHaveBeenCalled();
+        await activateIntradayRule({ paperExecutionEligibility: "paper_execution_eligible" });
+      } else if (ticks === 2) {
+        expect(mocks.executeIntradayDecision).toHaveBeenCalledTimes(failFirstController ? 0 : 1);
+      } else if (ticks === 3) {
+        expect(mocks.executeIntradayDecision).toHaveBeenCalledTimes(failFirstController ? 1 : 2);
+        await retireFinanceStrategyRule(directory, {
+          kind: "retired",
+          ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+          observedAt: "2026-09-21T15:00:00Z",
+        });
+      } else {
+        expect(mocks.runIntradayMonitorTick).toHaveBeenCalledTimes(2);
+        expect(mocks.executeIntradayDecision).toHaveBeenCalledTimes(failFirstController ? 1 : 2);
+        process.emit("SIGTERM");
+      }
+    });
+    await expect(
+      runFinanceScheduler([
+        "--loop",
+        "--dir",
+        directory,
+        "--intraday-monitor",
+        "--intraday-active-rule",
+        "--intraday-place",
+        "--place",
+        "--venue",
+        "alpaca",
+        "--execution-policy",
+        policy,
+        "--execution-quote-feed",
+        "iex",
+        "--execution-max-age-ms",
+        "30000",
+        "--max-order-notional",
+        "1000",
+        "--max-instrument-notional",
+        "5000",
+        "--max-orders",
+        "8",
+      ]),
+    ).resolves.toBe(143);
+    expect(mocks.createIntradayController).toHaveBeenCalledTimes(failFirstController ? 2 : 1);
+    expect(mocks.runCycle).not.toHaveBeenCalled();
+  },
+);
+
+it("starts a fresh progress deadline when long research hands off to execution", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  const started = new Date("2026-09-21T15:00:00Z").getTime();
+  vi.setSystemTime(started);
+  const context = path.join(directory, "portfolio-context.json");
+  fs.writeFileSync(context, "{}");
+  mocks.runCycle
+    .mockImplementationOnce(async ({ argv }: { argv: readonly string[] }) => {
+      expect(
+        inspectFinanceSchedulerProgress(directory, process.pid, true, Date.now()),
+      ).toMatchObject({ status: "responsive", cycleStage: "research_preflight" });
+      vi.setSystemTime(started + 14 * 60_000);
+      return {
+        ...success,
+        stdout: JSON.stringify(
+          acceptedResearchCandidate(
+            path.join(directory, "research-portfolio-plan-latest.json"),
+            researchAsOfFromArgs(argv),
+          ),
+        ),
+      };
+    })
+    .mockImplementationOnce(async () => {
+      vi.setSystemTime(started + 28 * 60_000);
+      expect(
+        inspectFinanceSchedulerProgress(directory, process.pid, true, Date.now()),
+      ).toMatchObject({ status: "responsive", cycleStage: "execution", ageMs: 14 * 60_000 });
+      expect(
+        inspectFinanceSchedulerProgress(directory, process.pid, true, started + 32 * 60_000),
+      ).toMatchObject({ status: "stalled", cycleStage: "execution" });
+      return success;
+    });
+  await expect(
+    runFinanceScheduler([
+      "--once",
+      "day",
+      "--dir",
+      directory,
+      "--research-portfolio-context",
+      context,
+      "--research-ask",
+      "fixture",
+    ]),
+  ).resolves.toBe(0);
+  expect(mocks.runCycle).toHaveBeenCalledTimes(2);
+});
+
+it.each([false, true])(
+  "keeps research monitoring single-flight and joins it before handoff or shutdown (cancel=%s)",
+  async (cancel) => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    vi.setSystemTime(new Date("2026-09-21T19:30:00Z"));
+    await activateIntradayRule({ paperExecutionEligibility: "paper_execution_eligible" });
+    const policy = path.join(directory, "policy.json");
+    const context = path.join(directory, "context.json");
+    fs.writeFileSync(policy, "{}");
+    fs.writeFileSync(context, "{}");
+    let finishResearch!: (result: FinanceCycleProcessResult) => void;
+    let researchStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      researchStarted = resolve;
+    });
+    let finishIntraday!: () => void;
+    let intradayStarted!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      intradayStarted = resolve;
+    });
+    mocks.runCycle
+      .mockImplementationOnce(() => {
+        researchStarted();
+        return new Promise<FinanceCycleProcessResult>((resolve) => {
+          finishResearch = resolve;
+        });
+      })
+      .mockResolvedValueOnce(success);
+    mocks.runIntradayMonitorTick.mockResolvedValueOnce({ status: "no_signal" }).mockResolvedValue({
+      status: "decision_recorded",
+      signal: { action: "buy", reason: "fixture", signalId: "fixture" },
+      decision: { input: { action: "buy", signalId: "fixture" } },
+    });
+    mocks.executeIntradayDecision.mockImplementation(() => {
+      intradayStarted();
+      return new Promise((resolve) => {
+        finishIntraday = () => resolve({ status: "blocked" });
+      });
+    });
+    mocks.delay.mockImplementation(async () => {
+      process.emit("SIGTERM");
+    });
+    const running = runFinanceScheduler([
+      "--loop",
+      "--dir",
+      directory,
+      "--no-source-heartbeat",
+      "--intraday-monitor",
+      "--intraday-active-rule",
+      "--intraday-place",
+      "--place",
+      "--venue",
+      "alpaca",
+      "--execution-policy",
+      policy,
+      "--execution-quote-feed",
+      "iex",
+      "--execution-max-age-ms",
+      "30000",
+      "--max-order-notional",
+      "1000",
+      "--max-instrument-notional",
+      "5000",
+      "--max-orders",
+      "8",
+      "--research-portfolio-context",
+      context,
+      "--research-ask",
+      "fixture",
+    ]);
+    try {
+      await started;
+      await vi.advanceTimersByTimeAsync(60_000);
+      await entered;
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(mocks.runIntradayMonitorTick).toHaveBeenCalledTimes(2);
+      expect(mocks.executeIntradayDecision).toHaveBeenCalledTimes(1);
+      expect(mocks.runCycle).toHaveBeenCalledTimes(1);
+      if (cancel) {
+        process.emit("SIGTERM");
+      }
+      finishResearch(
+        cancel
+          ? { ...success, ok: false, status: "cancelled", exitCode: null, stdout: "" }
+          : {
+              ...success,
+              stdout: JSON.stringify(
+                acceptedResearchCandidate(
+                  path.join(directory, "research-portfolio-plan-latest.json"),
+                  researchAsOfFromArgs(mocks.runCycle.mock.calls[0][0].argv),
+                ),
+              ),
+            },
+      );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      // The child has finished, but an in-flight trade still owns execution and the process lock.
+      expect(mocks.runCycle).toHaveBeenCalledTimes(1);
+      expect(fs.existsSync(path.join(directory, FINANCE_SCHEDULER_LOCK))).toBe(true);
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(mocks.executeIntradayDecision).toHaveBeenCalledTimes(1);
+      finishIntraday();
+      await expect(running).resolves.toBe(143);
+      expect(mocks.runCycle).toHaveBeenCalledTimes(cancel ? 1 : 2);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      process.emit("SIGTERM");
+      finishResearch?.({ ...success, ok: false, status: "cancelled", stdout: "" });
+      finishIntraday?.();
+      await running;
+      vi.clearAllTimers();
+    }
+  },
+);
+
+it("allows one delayed preflight retry only with a durable no-execution receipt", () => {
+  const state = {
+    lastFired: { day: "2026-09-29" },
+    lastSucceeded: {},
+    lastStatus: { day: "failed" },
+    lastRun: {
+      mode: "day",
+      etDate: "2026-09-29",
+      status: "failed",
+      ok: false,
+      researchAttempt: 1,
+      completedAt: "2026-09-29T19:35:00Z",
+      execution: { outcome: "not_run", blockReason: "research_plan_not_accepted" },
+      researchPlanRefresh: { ok: false },
+    },
+  };
+  const at = new Date("2026-09-29T19:45:00Z");
+  expect(financeResearchPreflightRetryDue(state, at)).toBe(true);
+  expect(financeResearchPreflightRetryDue(state, new Date("2026-09-29T19:44:59Z"))).toBe(false);
+  expect(financeResearchPreflightRetryDue(state, new Date("2026-09-29T20:00:00Z"))).toBe(false);
+  expect(financeResearchPreflightRetryDue(state, new Date("2026-09-30T19:45:00Z"))).toBe(false);
+  for (const patch of [
+    { researchAttempt: 2 },
+    { researchAttempt: undefined },
+    { completedAt: "invalid" },
+    { completedAt: "2026-09-29T19:55:00Z" },
+    { status: "running" },
+    { mode: "night" },
+    { execution: { outcome: "unknown", blockReason: "research_plan_not_accepted" } },
+    { execution: { outcome: "not_run", blockReason: "execution_gate_blocked" } },
+    { researchPlanRefresh: { ok: true } },
+  ]) {
+    expect(
+      financeResearchPreflightRetryDue({ ...state, lastRun: { ...state.lastRun, ...patch } }, at),
+    ).toBe(false);
+  }
+  expect(
+    financeResearchPreflightRetryDue({ ...state, lastSucceeded: { day: "2026-09-29" } }, at),
+  ).toBe(false);
+  expect(financeResearchPreflightRetryDue({ ...state, lastStatus: { day: "running" } }, at)).toBe(
+    false,
+  );
+});
+
+it("persists the preflight retry count and never replays execution or a third attempt", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-29T19:30:00Z"));
+  const context = path.join(directory, "portfolio-context.json");
+  fs.writeFileSync(context, "{}");
+  mocks.runCycle.mockResolvedValue({
+    ...success,
+    ok: false,
+    status: "failed",
+    exitCode: 2,
+    stdout: '{"status":"needs_review"}',
+  });
+  const args = [
+    "--once",
+    "day",
+    "--dir",
+    directory,
+    "--research-portfolio-context",
+    context,
+    "--research-ask",
+    "review active strategies",
+  ];
+  await expect(runFinanceScheduler(args)).resolves.toBe(1);
+  expect(readFinanceSchedulerState(directory).lastRun).toMatchObject({
+    researchAttempt: 1,
+    execution: { outcome: "not_run" },
+  });
+  await expect(runFinanceScheduler(args)).resolves.toBe(1);
+  expect(mocks.runCycle).toHaveBeenCalledTimes(1);
+  vi.setSystemTime(new Date("2026-09-29T19:40:00Z"));
+  await expect(runFinanceScheduler(args)).resolves.toBe(1);
+  expect(readFinanceSchedulerState(directory).lastRun).toMatchObject({
+    researchAttempt: 2,
+    execution: { outcome: "not_run" },
+  });
+  vi.setSystemTime(new Date("2026-09-29T19:50:00Z"));
+  await expect(runFinanceScheduler(args)).resolves.toBe(1);
+  expect(mocks.runCycle).toHaveBeenCalledTimes(2);
+  expect(
+    mocks.runCycle.mock.calls.every(([call]) =>
+      call.argv.some((arg: string) => arg.endsWith("lcx-finance-research-run.ts")),
+    ),
+  ).toBe(true);
+});
+
+it("automatically wakes the single preflight retry after backoff in the resident loop", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-29T19:30:00Z"));
+  const context = path.join(directory, "portfolio-context.json");
+  fs.writeFileSync(context, "{}");
+  mocks.runCycle.mockResolvedValue({
+    ...success,
+    ok: false,
+    status: "failed",
+    exitCode: 2,
+    stdout: '{"status":"needs_review"}',
+  });
+  for (const time of ["19:35", "19:40", "19:50"]) {
+    mocks.delay.mockImplementationOnce(async () => {
+      vi.setSystemTime(new Date(`2026-09-29T${time}:00Z`));
+    });
+  }
+  mocks.delay.mockImplementationOnce(async () => {
+    process.emit("SIGTERM");
+  });
+  await expect(
+    runFinanceScheduler([
+      "--loop",
+      "--dir",
+      directory,
+      "--research-portfolio-context",
+      context,
+      "--research-ask",
+      "review active strategies",
+    ]),
+  ).resolves.toBe(143);
+  expect(mocks.runCycle).toHaveBeenCalledTimes(2);
+  for (const [call] of mocks.runCycle.mock.calls) {
+    expect(call.argv).toEqual(
+      expect.arrayContaining(["--include-yahoo-public-sources", "--max-api-calls", "160"]),
+    );
+  }
+  expect(readFinanceSchedulerState(directory).lastRun).toMatchObject({
+    researchAttempt: 2,
+    execution: { outcome: "not_run" },
+  });
+});
+
+it.each([
+  "valid",
+  "failed_gate",
+  "failed_source",
+  "failed_committee",
+  "stale",
+  "mixed_plan",
+  "missing_reason",
+  "missing_source",
+  "missing_committee",
+  "missing_quality",
+  "missing_module",
+  "inline_plan",
+])("handles reviewed no-allocation without executing a stale plan: %s", async (variant) => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  const at = "2026-09-29T19:35:00.000Z";
+  vi.setSystemTime(new Date(at));
+  const context = path.join(directory, "portfolio-context.json");
+  const oldPlan = path.join(directory, "research-portfolio-plan-latest.json");
+  fs.writeFileSync(context, "{}");
+  fs.writeFileSync(oldPlan, "old-plan-must-not-be-executed");
+  const failedGateId =
+    variant === "failed_gate"
+      ? "quality"
+      : variant === "failed_source"
+        ? "source"
+        : variant === "failed_committee"
+          ? "committee"
+          : undefined;
+  const missingGateId =
+    variant === "missing_source"
+      ? "source"
+      : variant === "missing_committee"
+        ? "committee"
+        : variant === "missing_quality"
+          ? "quality"
+          : variant === "missing_module"
+            ? "module_execution"
+            : undefined;
+  const payload = {
+    status: "candidate",
+    plan: { asOf: variant === "stale" ? "2026-09-28T19:00:00.000Z" : at },
+    gates: REQUIRED_RESEARCH_GATES.filter((id) => id !== missingGateId).map((id) => ({
+      id,
+      passed: id !== failedGateId,
+    })),
+    portfolioAbstention: {
+      reason:
+        variant === "missing_reason" ? "" : "Evidence does not support a positive allocation.",
+      evidenceIds: ["controller:rule"],
+    },
+    ...(variant === "mixed_plan" ? { portfolioPlanWritten: oldPlan } : {}),
+    ...(variant === "inline_plan" ? { portfolioPlan: { allocations: [] } } : {}),
+  };
+  mocks.runCycle.mockResolvedValueOnce({ ...success, stdout: JSON.stringify(payload) });
+  await expect(
+    runFinanceScheduler([
+      "--once",
+      "day",
+      "--dir",
+      directory,
+      "--research-portfolio-context",
+      context,
+      "--research-ask",
+      "review active strategy budgets",
+    ]),
+  ).resolves.toBe(variant === "valid" ? 0 : 1);
+  expect(mocks.runCycle).toHaveBeenCalledTimes(1);
+  const state = readFinanceSchedulerState(directory);
+  expect(state.lastRun).toMatchObject({
+    ok: variant === "valid",
+    execution: {
+      outcome: "not_run",
+      blockReason: variant === "valid" ? "research_no_allocation" : "research_plan_not_accepted",
+    },
+    researchPlanRefresh: { ok: variant === "valid", planPath: null },
+  });
+  expect(fs.readFileSync(oldPlan, "utf8")).toBe("old-plan-must-not-be-executed");
+  expect(financeResearchPreflightRetryDue(state, new Date("2026-09-29T19:45:00.000Z"))).toBe(
+    variant !== "valid",
+  );
 });

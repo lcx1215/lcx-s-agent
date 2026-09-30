@@ -8,9 +8,14 @@ import {
   createFinanceModelCallBudget,
 } from "./configured-finance-model-adapter.js";
 import type { FinanceBrainOrchestrationPlan } from "./finance-brain-orchestration.js";
-import { parseFinanceDomainProducerInputs } from "./finance-module-producer-input.js";
-import { findUncitedFinanceInstruments } from "./finance-research-evidence.js";
 import {
+  describeFinanceProducerInputError,
+  parseFinanceDomainProducerInputs,
+} from "./finance-module-producer-input.js";
+import { findUncitedFinanceInstruments } from "./finance-research-evidence.js";
+import { qualityHarnessAllowedEvidenceIds } from "./local-text-model-adapter.js";
+import {
+  ModelAdapterError,
   type LogicalAgentModelAdapter,
   type LogicalAgentModelRouting,
   type LogicalAgentRoleModelPolicy,
@@ -31,6 +36,9 @@ function financeRoleExecutionContract(
   timeoutMs?: number,
 ): Pick<LogicalAgentRoleModelPolicy, "timeoutMs" | "excludeModelsUsedBy" | "sameModelAsRole"> {
   const slot = LCX_FINANCE_WORKFLOW_ROLE_CONTRACTS[role].slot;
+  const defaultTimeoutMs =
+    slot === "reasoning" || slot === "review" || role === "formatting" ? 180_000 : 90_000;
+  const configuredTimeoutMs = timeoutMs ?? defaultTimeoutMs;
   const excludeModelsUsedBy: readonly LogicalAgentId[] =
     role === "adversarial_challenge"
       ? ["research_draft"]
@@ -38,9 +46,12 @@ function financeRoleExecutionContract(
         ? ["research_draft", "formatting"]
         : [];
   return {
+    // Preserve the review role's existing 180-second budget when a caller supplies
+    // a shorter shared timeout for the faster workflow roles.
     timeoutMs:
-      timeoutMs ??
-      (slot === "reasoning" || slot === "review" || role === "formatting" ? 180_000 : 90_000),
+      role === "adversarial_challenge" || role === "final_precheck"
+        ? Math.max(configuredTimeoutMs, 180_000)
+        : configuredTimeoutMs,
     ...(excludeModelsUsedBy.length ? { excludeModelsUsedBy } : {}),
     ...(role === "formatting" ? { sameModelAsRole: "research_draft" as const } : {}),
   };
@@ -77,7 +88,7 @@ export function inspectFinanceModelWorkflow(
     reasoning;
   const slots = { deterministic: "deterministic-intake", fast: primary, reasoning, review };
   return {
-    revision: LCX_FINANCE_MODEL_WORKFLOW_VERSION,
+    revision: `${LCX_FINANCE_MODEL_WORKFLOW_VERSION}:bounded-recovery-v7`,
     reasoningPolicy: options.reasoningPolicy ?? "bounded_workflow",
     selectionBasis: "configured_order_candidates_not_quality_qualification",
     models,
@@ -123,6 +134,58 @@ function checkProducerArtifact(
   });
 }
 
+function evidenceBatchReviewScopeProblem(
+  request: QualityHarnessModelRequest,
+  review: {
+    notes: readonly string[];
+    criticalFindings: readonly string[];
+    evidenceGaps: readonly string[];
+  },
+): "out_of_scope" | "incomplete" | undefined {
+  const scopedIds = new Set(request.evidence.map((entry) => entry.id));
+  const mentionedIds = [
+    ...review.notes,
+    ...review.criticalFindings,
+    ...review.evidenceGaps,
+  ].flatMap((note) => [...note.matchAll(/\[([^\]]+)\]/gu)].map((match) => match[1]));
+  const notedIds = review.notes.flatMap((note) =>
+    [...note.matchAll(/\[([^\]]+)\]/gu)].map((match) => match[1]),
+  );
+  const counts = new Map<string, number>();
+  for (const id of notedIds) {
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  const allReviewText = [...review.notes, ...review.criticalFindings, ...review.evidenceGaps];
+  const globalIds = request.evidenceCoverage?.selectedEvidenceIds ?? [];
+  const mentionsOutsidePacket = globalIds.some((id) => {
+    if (scopedIds.has(id)) {
+      return false;
+    }
+    return allReviewText.some((text) => {
+      let offset = 0;
+      while (offset < text.length) {
+        const index = text.indexOf(id, offset);
+        if (index < 0) {
+          return false;
+        }
+        const before = text[index - 1];
+        const after = text[index + id.length];
+        const beforeIsIdChar = before !== undefined && /[\p{L}\p{N}_.:-]/u.test(before);
+        const afterIsIdChar = after !== undefined && /[\p{L}\p{N}_.:-]/u.test(after);
+        if (!beforeIsIdChar && !afterIsIdChar) {
+          return true;
+        }
+        offset = index + 1;
+      }
+      return false;
+    });
+  });
+  if (mentionedIds.some((id) => !scopedIds.has(id)) || mentionsOutsidePacket) {
+    return "out_of_scope";
+  }
+  return [...scopedIds].some((id) => counts.get(id) !== 1) ? "incomplete" : undefined;
+}
+
 export function validateFinanceWorkflowOutput(
   role: LogicalAgentId,
   output: unknown,
@@ -133,7 +196,12 @@ export function validateFinanceWorkflowOutput(
   if (
     !request ||
     request.agentId !== role ||
-    request.stage !== contract.stage ||
+    (request.stage !== contract.stage &&
+      !(
+        role === "evidence_integrity" &&
+        request.stage === "extraction" &&
+        request.evidenceBatchMode === "context_extraction"
+      )) ||
     !Array.isArray(request.evidence)
   ) {
     return false;
@@ -147,6 +215,11 @@ export function validateFinanceWorkflowOutput(
       return parsed.requirements.length > 0;
     }
     if (parsed.kind === "review") {
+      if (role === "evidence_integrity" && request.evidenceBatchMode === "final_artifact_audit") {
+        if (evidenceBatchReviewScopeProblem(request, parsed.review)) {
+          return false;
+        }
+      }
       if (role === "final_precheck" && request.findingPacket?.findings.length) {
         const packet = request.findingPacket;
         const closure = parsed.review.findingClosure;
@@ -176,7 +249,7 @@ export function validateFinanceWorkflowOutput(
       role === "research_draft" &&
       constraints?.financeProducerPreparationOnly === true &&
       Boolean(constraints.financeFrameworkProducerContract && constraints.financeOrchestration);
-    const ids = new Set(request.evidence.map((item) => item.id));
+    const ids = new Set(qualityHarnessAllowedEvidenceIds(request));
     return (
       parsed.artifact.claims.every((claim) => claim.evidenceIds.every((id) => ids.has(id))) &&
       (preparationOnly ||
@@ -194,13 +267,55 @@ function contractRepairFeedback(
 ): string {
   try {
     const parsed = parseStageOutput(LCX_FINANCE_WORKFLOW_ROLE_CONTRACTS[role].stage, output);
+    if (parsed.kind === "review") {
+      if (role === "evidence_integrity" && request.evidenceBatchMode === "final_artifact_audit") {
+        const scopeProblem = evidenceBatchReviewScopeProblem(request, parsed.review);
+        if (scopeProblem === "out_of_scope") {
+          return "Previous attempt rejected: final artifact audit notes referenced IDs outside this packet. Return exactly one note for every supplied evidence ID and no other bracketed IDs.";
+        }
+        if (scopeProblem === "incomplete") {
+          return "Previous attempt rejected: final artifact audit must return exactly one note for each supplied evidence ID. Do not add IDs from another packet.";
+        }
+      }
+      if (role === "final_precheck" && request.findingPacket?.findings.length) {
+        const packet = request.findingPacket;
+        const closure = parsed.review.findingClosure;
+        if (!closure) {
+          return "Previous attempt rejected: review.findingClosure is missing. Copy both hashes from finding_packet and supply one resolution for EVERY findingId. Mark unresolved when unsure; do not omit the closure on revise/fail.";
+        }
+        if (
+          closure.artifactSha256 !== packet.artifactSha256 ||
+          closure.evidenceSha256 !== packet.evidenceSha256
+        ) {
+          return "Previous attempt rejected: findingClosure hashes do not match finding_packet. Copy artifactSha256 and evidenceSha256 exactly; never compute or invent hashes.";
+        }
+        const expected = new Set(packet.findings.map((finding) => finding.id));
+        const actual = closure.resolutions.map((entry) => entry.findingId);
+        if (
+          actual.length !== expected.size ||
+          new Set(actual).size !== expected.size ||
+          actual.some((id) => !expected.has(id))
+        ) {
+          return "Previous attempt rejected: findingClosure must cover every finding_packet findingId exactly once, without missing, duplicate or invented IDs. Retain unresolved findings explicitly.";
+        }
+      }
+      if (parsed.review.notes.length === 0) {
+        return "Previous attempt rejected: review.notes must contain a substantive review note.";
+      }
+      if (
+        parsed.review.verdict === "pass" &&
+        (parsed.review.criticalFindings.length || parsed.review.evidenceGaps.length)
+      ) {
+        return "Previous attempt rejected: verdict=pass contradicts nonempty criticalFindings or evidenceGaps. Retain real findings and use revise or fail.";
+      }
+    }
     if (parsed.kind === "artifact") {
       try {
         checkProducerArtifact(role, parsed.artifact, request);
-      } catch {
-        return "Previous attempt rejected: financeFrameworkProducerInputs must be keyed by ALL selectedModuleIds, each value an object with matching domain. Follow producer_input_contract.jsonSchema types and required fields. Use listed sourceArtifactIds and enum values; no flat object or array.";
+      } catch (error) {
+        return `Previous attempt rejected: ${describeFinanceProducerInputError(error)}. Follow producer_input_contract.jsonSchema types and required fields; retain missing evidence.`;
       }
-      const ids = new Set(request.evidence.map((item) => item.id));
+      const ids = new Set(qualityHarnessAllowedEvidenceIds(request));
       if (parsed.artifact.claims.some((claim) => claim.evidenceIds.some((id) => !ids.has(id)))) {
         return "Previous attempt rejected: a claim cited a nonexistent evidence ID. Use only allowed_evidence_ids; retain uncertainty rather than invent support.";
       }
@@ -250,27 +365,45 @@ export function createFinanceModelWorkflow(
   // Carry a bounded validator hint to the existing fallback, not a new retry loop.
   // Keys keep roles, tasks and runs isolated; the original evidence packet is unchanged.
   const rejected = new Map<string, string>();
+  const adapterTimeoutMs = Math.max(options.timeoutMs ?? 180_000, 180_000);
   const cloud = manifest.models.map((modelRef) => {
     const adapter = factory(cfg, {
       modelRef,
       callBudget,
       maxCalls: options.maxCalls ?? 48,
       maxTokens: options.maxTokens,
-      timeoutMs: options.timeoutMs ?? 180_000,
+      timeoutMs: adapterTimeoutMs,
       ...(manifest.reasoningPolicy === "bounded_workflow"
         ? {
             reasoningEffortByRole: {
               financial_extraction: "low",
+              evidence_integrity: "low",
               news_classification: "low",
               research_draft: "low",
               formatting: "low",
               final_precheck: "low",
             } as const,
+            maxTokensByRole: {
+              evidence_integrity: 16_384,
+              adversarial_challenge: 16_384,
+              final_precheck: 16_384,
+              formatting: 16_384,
+              portfolio_exposure: 16_384,
+              research_draft: 16_384,
+            },
           }
         : {}),
     });
+    // A workflow instance is one bounded research run, shared by preparation and
+    // review. Do not repeatedly spend that run's calls on a rate-limited credential.
+    let unavailable:
+      | "provider_rate_limit"
+      | "provider_auth"
+      | "provider_payment_required"
+      | undefined;
     return {
       ...adapter,
+      unavailableReason: () => unavailable ?? adapter.unavailableReason?.(),
       invoke: async (call, signal) => {
         const key = JSON.stringify([call.correlationId, call.taskId, call.role]);
         const prior = rejected.get(key);
@@ -278,7 +411,61 @@ export function createFinanceModelWorkflow(
         const payload = prior
           ? { ...original, repairFeedback: [prior, ...(original.repairFeedback ?? []).slice(0, 7)] }
           : original;
-        const output = await adapter.invoke({ ...call, payload }, signal);
+        let output: unknown;
+        try {
+          output = await adapter.invoke({ ...call, payload }, signal);
+        } catch (error) {
+          if (
+            error instanceof ModelAdapterError &&
+            (error.code === "provider_rate_limit" ||
+              error.code === "provider_auth" ||
+              error.code === "provider_payment_required")
+          ) {
+            unavailable = error.code;
+          }
+          if (
+            call.role === "formatting" &&
+            error instanceof ModelAdapterError &&
+            error.code === "output_truncated"
+          ) {
+            rejected.set(
+              key,
+              "Previous formatting response was truncated. Return a smaller complete JSON object matching the existing schema; preserve all evidence IDs, claims, uncertainty, and required fields. Add no text outside JSON.",
+            );
+          }
+          if (
+            call.role === "evidence_integrity" &&
+            original.evidenceBatchMode === "final_artifact_audit" &&
+            error instanceof ModelAdapterError &&
+            error.code === "output_truncated"
+          ) {
+            rejected.set(
+              key,
+              "Previous batch audit was truncated. Return concise JSON with exactly one note for every evidence ID in this packet and no IDs from another batch. Preserve genuine critical findings and evidence gaps; never pass by omission.",
+            );
+          }
+          if (
+            call.role === "adversarial_challenge" &&
+            error instanceof ModelAdapterError &&
+            error.code === "output_truncated"
+          ) {
+            rejected.set(
+              key,
+              "Previous adversarial review response was truncated. Re-review the supplied artifact and evidence, then return concise complete JSON. Preserve every actionable critical finding, evidence gap, and unresolved uncertainty; do not omit issues or change a revise/reject judgment merely to shorten the response.",
+            );
+          }
+          if (
+            call.role === "final_precheck" &&
+            error instanceof ModelAdapterError &&
+            error.code === "output_truncated"
+          ) {
+            rejected.set(
+              key,
+              "Previous final review was truncated. Re-review the supplied artifact and evidence, then return concise complete JSON without reproducing them. Preserve every actionable critical finding, evidence gap, and required version-bound findingClosure resolution. Never pass by omission or change the judgment merely to shorten the response.",
+            );
+          }
+          throw error;
+        }
         if (validateFinanceWorkflowOutput(call.role, output, payload)) {
           rejected.delete(key);
         } else {
@@ -333,6 +520,13 @@ export function createFinanceModelWorkflow(
         requiredCapabilities: ["quality_harness"],
         maxInputBytes: 256_000,
         workload: contract.slot,
+        ...(["research_draft", "formatting", "final_precheck", "evidence_integrity"].includes(role)
+          ? { retryOutputContractOnce: true }
+          : {}),
+        ...(["evidence_integrity", "adversarial_challenge", "final_precheck"].includes(role)
+          ? { retryTruncatedOutputOnce: true }
+          : {}),
+        ...(role === "formatting" ? { retryAffinityTruncationOnce: true } : {}),
         outputContract: {
           revision: `${manifest.revision}:${role}`,
           validate: (output, input) => validateFinanceWorkflowOutput(role, output, input),

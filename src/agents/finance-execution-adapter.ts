@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { z } from "zod";
 /**
  * Declared execution adapter seam for `finance_live_execution_waterflow`.
  *
@@ -31,6 +32,7 @@ import type { FinanceDecisionMode } from "./finance-decision-policy.js";
 import {
   withFinanceExecutionSafety,
   type FinanceExecutionSafetyContext,
+  type FinanceExecutionSafetyFailure,
   type FinanceExecutionSafetyFacts,
 } from "./finance-execution-safety.js";
 
@@ -51,11 +53,66 @@ export type FinanceDecisionReference = Readonly<{
   id: string;
 }>;
 
+/** Audit-only lineage from a research allocation to the target that produced this order. */
+export const financeExecutionResearchLineageSchema = z
+  .object({
+    portfolioPlan: z
+      .object({
+        asOf: z.string().datetime(),
+        validUntil: z.string().datetime(),
+        accountId: z.string().min(1),
+        venue: z.enum(["paper", "alpaca"]),
+        provenance: z
+          .object({
+            kind: z.literal("finance_research_allocation"),
+            receiptId: z.string().min(1),
+            evidenceIds: z.array(z.string().min(1)).min(1),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict(),
+    targetWeight: z.number().finite().min(0).max(1),
+    contributions: z
+      .array(
+        z
+          .object({
+            strategyId: z.string().min(1),
+            evidenceReceiptId: z.string().min(1),
+            stance: z.enum(["accumulate", "reduce", "neutral"]),
+            sleeveWeight: z.number().finite().min(0).max(1),
+            accountWeight: z.number().finite().min(0).max(1),
+            evidenceIds: z.array(z.string().min(1)).min(1).optional(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(100),
+  })
+  .strict();
+export type FinanceExecutionResearchLineage = z.infer<typeof financeExecutionResearchLineageSchema>;
+
+/** Controller-issued rebalance boundary, rechecked against fresh locked account facts. */
+export const financeExecutionTargetWeightAuthorizationSchema = z
+  .object({
+    targetWeight: z.number().finite().min(0).max(1),
+    driftBandFraction: z.number().finite().min(0).max(1),
+    maxOrderNotional: z.number().finite().nonnegative(),
+  })
+  .strict();
+export type FinanceExecutionTargetWeightAuthorization = z.infer<
+  typeof financeExecutionTargetWeightAuthorizationSchema
+>;
+
 /** The `execution_intent` node. Every field is required: an order path is never inferred. */
 export type FinanceExecutionIntent = Readonly<{
   intentId: string;
   /** Points to the upstream candidate/signal record; it is not a strategy-performance claim. */
   decisionRef?: FinanceDecisionReference;
+  /** Non-authorizing provenance only; the controller supplies it, never model JSON. */
+  researchLineage?: FinanceExecutionResearchLineage;
+  /** Controller-only capital boundary; never supplied by model output. */
+  targetWeightAuthorization?: FinanceExecutionTargetWeightAuthorization;
   instrument: string;
   side: FinanceOrderSide;
   orderType: FinanceOrderType;
@@ -223,6 +280,10 @@ export type FinanceExecutionReceipt = Readonly<{
   intentId: string;
   /** Optional for legacy/manual intents; never infer missing decision lineage from an instrument. */
   decisionRef?: FinanceDecisionReference;
+  /** Optional for legacy receipts; records research ancestry without granting order authority. */
+  researchLineage?: FinanceExecutionResearchLineage;
+  /** Present on controller target-rebalance orders and persisted for audit. */
+  targetWeightAuthorization?: FinanceExecutionTargetWeightAuthorization;
   runAuthorizationId: string;
   adapterId: string;
   adapterKind: FinanceExecutionAdapter["kind"];
@@ -261,6 +322,7 @@ export type FinanceOrderPlacementRequest = Readonly<{
 export type FinanceOrderPlacementResult = Readonly<{
   status: "placed" | "refused";
   refusalReasons: readonly string[];
+  safetyFailure?: FinanceExecutionSafetyFailure;
   receipt?: FinanceExecutionReceipt;
 }>;
 
@@ -365,6 +427,27 @@ function collectRefusalReasons(request: FinanceOrderPlacementRequest): string[] 
   }
   if (intent.decisionRef !== undefined && !isFinanceDecisionReference(intent.decisionRef)) {
     reasons.push("execution_intent_decision_reference_invalid");
+  }
+  const researchLineage =
+    intent.researchLineage === undefined
+      ? undefined
+      : financeExecutionResearchLineageSchema.safeParse(intent.researchLineage);
+  if (researchLineage !== undefined && !researchLineage.success) {
+    reasons.push("execution_intent_research_lineage_invalid");
+  }
+  const targetWeightAuthorization =
+    intent.targetWeightAuthorization === undefined
+      ? undefined
+      : financeExecutionTargetWeightAuthorizationSchema.safeParse(intent.targetWeightAuthorization);
+  if (targetWeightAuthorization !== undefined && !targetWeightAuthorization.success) {
+    reasons.push("execution_intent_target_weight_authorization_invalid");
+  }
+  if (
+    researchLineage?.success &&
+    targetWeightAuthorization?.success &&
+    researchLineage.data.targetWeight !== targetWeightAuthorization.data.targetWeight
+  ) {
+    reasons.push("execution_intent_target_weight_lineage_mismatch");
   }
   if (intent.rationale.trim().length === 0) {
     reasons.push("execution_intent_rationale_required");
@@ -546,6 +629,10 @@ export function buildFinanceExecutionReceipt(params: {
     ...(accountId === undefined ? {} : { accountId }),
     intentId: intent.intentId,
     ...(intent.decisionRef === undefined ? {} : { decisionRef: intent.decisionRef }),
+    ...(intent.researchLineage === undefined ? {} : { researchLineage: intent.researchLineage }),
+    ...(intent.targetWeightAuthorization === undefined
+      ? {}
+      : { targetWeightAuthorization: intent.targetWeightAuthorization }),
     runAuthorizationId: intent.runAuthorizationId,
     adapterId: adapter.id,
     adapterKind: adapter.kind,
@@ -625,6 +712,7 @@ export async function placeFinanceOrder(
     return Object.freeze({
       status: "refused" as const,
       refusalReasons: Object.freeze(safety.reasons),
+      ...(safety.failure ? { safetyFailure: safety.failure } : {}),
     });
   }
   return Object.freeze({

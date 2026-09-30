@@ -86,7 +86,7 @@ function usage(): never {
       "  [--workspace DIR] [--route-agent-id ID] [--profile balanced|aggressive]",
       "  [--focus TEXT] [--max-fresh-minutes N] [--timeout-ms N]",
       "",
-      "Plans or runs one bounded Kimi/MiniMax/DeepSeek learning-council acceleration pass.",
+      "Plans or runs one bounded configured-model learning-council acceleration pass.",
       "Default is dry-run. --write calls providers only when active eval/MLX is idle, git is clean,",
       "and no fresh complete three-role learning council already exists.",
     ].join("\n"),
@@ -476,7 +476,7 @@ function buildFocusPrompt(params: {
     params.options.focus ??
     [
       "LCX Agent provider-council acceleration review.",
-      "目标：多花 Kimi/DeepSeek token 来加速本体进化，但只能产出可验证的 SOP 小改动、eval case、teacher curriculum 和 rejected edit buffer。",
+      "目标：使用已配置互审模型 来加速本体进化，但只能产出可验证的 SOP 小改动、eval case、teacher curriculum 和 rejected edit buffer。",
       "重点失败族：single_stock_curve_technical_timing_preflight、external knowledge/module absorption、finance data provenance、review panel、direct buy/sell refusal。",
       "不要给交易建议，不要改 provider config，不要碰 external channel sender，不要碰 protected memory。",
     ].join(" ");
@@ -495,8 +495,8 @@ function buildFocusPrompt(params: {
     `- latest_council: ${params.latestCouncil?.path ?? "none"}`,
     "",
     params.minimaxDisabled ? "两模型分工：" : "三模型分工：",
-    "- Kimi：把失败样本压缩成一个可执行 SOP 小改动和验证集题目。",
-    "- DeepSeek：挑 source_registry、data_provenance_quality、eval_absorbed、direct_buy_sell_answer、technical_timing_as_standalone_alpha 的漏洞。",
+    "- 综合角色：把失败样本压缩成一个可执行 SOP 小改动和验证集题目。",
+    "- 提取角色：挑 source_registry、data_provenance_quality、eval_absorbed、direct_buy_sell_answer、technical_timing_as_standalone_alpha 的漏洞。",
     ...(params.minimaxDisabled
       ? [
           "- 注意：MiniMax provider 已从运行时配置停用，本 council 只有两个角色；不要等待或假设有 MiniMax 反例审查。",
@@ -515,9 +515,6 @@ async function runCouncil(
   options: CliOptions,
   minimaxDisabled: boolean,
 ): Promise<string> {
-  process.env.OPENCLAW_LEARNING_COUNCIL_KIMI_MODEL = "moonshot/kimi-k2.6";
-  process.env.OPENCLAW_LEARNING_COUNCIL_DEEPSEEK_MODEL =
-    "custom-api-deepseek-com/deepseek-v4-flash";
   if (!minimaxDisabled) {
     process.env.OPENCLAW_LEARNING_COUNCIL_MINIMAX_MODEL = "minimax-portal/MiniMax-M2.7";
   }

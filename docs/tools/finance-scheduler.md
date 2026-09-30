@@ -18,16 +18,67 @@ and every cycle. Without it, config/environment/workspace resolution uses the
 same finance-state resolver as the agent tools. A config read failure blocks
 execution rather than selecting an uncertain book; `--status` remains available.
 
+## Research-only network routing
+
+Set `LCX_FINANCE_RESEARCH_HTTP_PROXY` in the scheduler's service environment to
+an explicitly authorized HTTP(S) proxy URL when research sources need a separate
+route. The scheduler maps it to `LCX_FINANCE_HTTP_PROXY` only in the day research
+preflight and night research review child processes. Trading, reconciliation,
+and other cycle processes retain their original environment. Embedded proxy
+credentials are rejected. An empty value explicitly selects direct research
+access; omitting it preserves the existing route.
+
+This setting does not change source quotas, credentials, freshness requirements,
+source coverage, or execution authority. Verify source records and the final
+research receipt after changing it; a successful proxy request alone does not
+prove an accepted portfolio plan. Research children emit a compact scheduler
+summary while retaining full evidence in the referenced durable receipt.
+
+Scheduled research enables the existing public-source adapters alongside configured
+sources. Day allocation collection declares a 160-call source reservation ceiling:
+the current eight-instrument composition can plan 37 jobs, reserving up to four
+HTTP calls each. Model calls, model deadlines, source verification and trading risk
+limits are unchanged. This is a per-run ceiling, not a guarantee that all sources
+will succeed; oversized or unavailable evidence remains a failed gate.
+
+Portfolio-context research selects only instruments from the exact declared active
+strategy IDs in the controller ledger. A missing or retired strategy blocks the
+run before provider calls. Ordinary broad research continues to use the discovered
+universe and must be separately bounded; an allocation ask does not turn into an
+implicit full-universe scan.
+
+### Bounded research recovery
+
+One research workflow shares its model availability across producer and review
+phases. After an authentication, payment-required (HTTP 402), or rate-limit response, that adapter is rejected
+before dispatch for the remainder of the run; eligible configured fallbacks must
+still satisfy model separation and author affinity. Skips retain rejection
+receipts and consume no additional provider calls. A new scheduled run creates a
+fresh workflow; this does not change credentials, provider configuration or quotas.
+
+An automatic portfolio run skips further quality calls when mandatory producer or
+module preparation has already failed; its failed gate remains explicit. Ordinary
+partial research can still be reviewed. A failed final check may reuse only completed, side-effect-free preparation with
+no evidence gaps or critical findings. Drafting and substantive review still run
+again within the original attempt, call and time limits. Controller allocation
+contracts are transmitted separately from clipped general context. Deadline and
+cancellation failures emit a failed machine summary pointing to the durable
+checkpoint; they never advertise an accepted portfolio plan.
+
 ## Lifecycle and execution boundaries
 
 - `--cycle-timeout-ms N` bounds each cycle; the default is 900000 (15 minutes).
   Timeout or SIGINT/SIGTERM terminates the owned child process tree, escalating
   after a grace period. The scheduler waits for child closure before releasing
-  ownership. Process output retained in each receipt is capped at 64 Ki characters
-  per stream, with an explicit truncation flag.
+  ownership. Process output retained in each receipt is capped at 1,048,576
+  JavaScript UTF-16 code units per stream, with an explicit truncation flag.
 - `--once` exits nonzero on failure, cancellation or timeout. The loop records a
-  cycle failure and continues to other due slots without retrying the failed slot
-  on the same market date. SIGINT and SIGTERM exit with 130 and 143 respectively.
+  cycle failure and continues to other due slots. A day preflight failure may retry
+  once after 10 minutes, only between 15:30 and 16:00 ET, when the persisted record
+  explicitly proves execution was never dispatched. The controller writes attempt
+  1/2 before dispatch; old untagged, running and uncertain records cannot retry.
+  Execution failures never automatically replay. SIGINT and SIGTERM exit with 130
+  and 143 respectively.
 - One scheduler writer may own a book at a time, including manual `--once` runs.
   `--status` is read-only. A live legacy PID also prevents a new writer.
 - `--detach` reports readiness only after the child has acquired ownership and
@@ -131,6 +182,21 @@ explicitly authorized operation. Afterward, verify ownership and the next
 scheduled run's receipt independently; a successful start is not a successful
 financial cycle.
 
+### Controller evidence at the research boundary
+
+A research run with `--portfolio-context` reads active rule bodies and historical
+closes from the same finance state directory as the controller. Generic research
+method examples must not replace the declared rule parameters. The bounded
+history projection reports its date window, omitted rows, repeated-close
+collapse and divergent observations. Stored closes are not current execution
+quotes or independent verification of adjusted total returns.
+
+Controller evidence is supplied first to the existing multi-pass review. Global
+review roles receive the cross-batch extraction outputs, while batch audits
+retain their own raw evidence. Evidence IDs, content coverage, quality gates and
+portfolio-plan validation still apply; connecting inputs does not imply an
+accepted plan or permission to place an order.
+
 ### Strategy identity at the daily executor
 
 The daily operator binds one active `cross_asset_trend` version `1` rule emitting
@@ -188,11 +254,17 @@ The daily operator accepts `--portfolio-plan PATH`, a bounded run input with:
 - `candidates`: reviewed research targets, each with its evidence receipt and sleeve weights.
 
 Active declared trend rules still come from the existing strategy ledger. With a plan,
-each rule executes its own declared lookback; their market bars are collected once.
-Each active rule and supplied candidate needs exactly one budget. Missing inputs do not
-redistribute another strategy's capital. Each target is multiplied by its sleeve budget;
-unused equity remains cash. Existing holdings outside the target set and positions held
-because of conflict remain part of the funding check.
+funded rules execute their declared lookbacks; their market bars are collected once.
+A reviewed zero budget withholds capital from one strategy, requires supported evidence,
+and creates no liquidation target or stance conflict. Funded strategies still require a
+current candidate. All-zero research proposals use the explicit `no_allocation` outcome.
+The daily operator defers budgets for declared intraday rules to their resident controller;
+it does not invent their candidates or renormalize the remaining budget fractions. This
+projection grants no intraday execution authority: that controller retains its own Paper
+policy and shared execution gates. Missing funded inputs do not redistribute capital.
+Each target is multiplied by its sleeve budget; unused equity remains cash. Existing
+holdings outside the target set and positions held because of conflict remain part of
+the funding check.
 
 `block` freezes a symbol when an accumulation thesis conflicts with a reduction thesis;
 it does not turn a blocked buy into a sell. `budget_weighted` explicitly permits weighted
@@ -315,13 +387,121 @@ whether a cycle is due. A responsive placement loop still does not prove a broke
 fill. Offline research books and legacy processes retain a visible warning rather
 than being mistaken for a verified autonomous trading service.
 
-Progress also publishes the configured venue and policy expiry, re-read each tick.
-The shared reader recalculates expiry against observation time even while the
-heartbeat remains fresh. Missing, malformed, expired or legacy-unknown Alpaca
-policy metadata cannot report execution readiness. This is a diagnostic expiry
-check; the account controller still validates the full policy at execution. It
-never renews a policy or changes its risk limits automatically.
+Progress publishes the configured policy-file expiry, re-read each tick, and
+separately publishes `intradayControllerPolicyExpiresAt`, the policy snapshot
+loaded into the resident intraday controller. Rewriting the file does not refresh
+that in-memory controller; restart it to load the new policy. The status fields
+`executionPolicyStatus` and `intradayControllerPolicyStatus` describe those two
+different expiries. Missing, malformed, expired or legacy-unknown metadata cannot
+report execution readiness. These are diagnostic expiry checks; the account
+controller still validates the full policy at execution. They never renew a
+policy or change its risk limits automatically.
 
 `--core-weight N` is forwarded unchanged to the daily operator, including the
 endpoints 0 and 1. Values must be finite and between 0 and 1. Omitting it retains
 the daily operator's default; scheduling does not choose a different allocation.
+
+### Replaceable model routing and bounded contract repair
+
+Provider implementations remain optional adapters. Select configured models through
+`agents.defaults.model.primary`, `fallbacks`, and the model allowlist; changing the
+current selection does not retire the provider implementation. Finance draft and
+review must use distinct models, while formatting stays with the draft author.
+Two models from one provider are model separation, not vendor independence.
+
+The learning council accepts `OPENCLAW_LEARNING_COUNCIL_KIMI_MODEL` and
+`OPENCLAW_LEARNING_COUNCIL_DEEPSEEK_MODEL` overrides (including config `env.vars`).
+These are compatibility role keys, not restrictions to those vendors. The acceleration
+operator respects the configured selection. Receipts name the actual requested and
+observed models. A replacement needs a supported adapter, authentication, required
+capabilities and successful runtime verification; a configured name alone is insufficient.
+Search is a separate capability: a chat-completions endpoint does not substitute for
+a search adapter. An unavailable search adapter can stay disabled until configured.
+
+Draft, formatting and final-precheck output contract failures receive at most one
+same-model repair before normal fallback. It consumes the existing call budget and
+deadline and preserves model-separation and author-affinity checks. Semantic review
+failures are not converted into approvals. Producer schema diagnostics identify fixed
+field names without echoing untrusted model values.
+
+With `--intraday-active-rule`, each resident tick re-resolves the active rule before
+new entry candidates. A missing, retired, ambiguous or incompatible rule disables
+entry monitoring and placement; a later valid rule can recover without restarting
+the service. Changed bindings rebuild the scoped controller, and controller assembly
+failure disables placement until a later successful refresh. Unchanged bindings reuse
+the controller. Existing retired-position exits remain on their independent path.
+This does not activate strategies, alter CLI strategy parameters or grant placement.
+
+Before discretionary intraday review, the resident executor runs the same pure
+order compiler used by the venue path. A breached stop, invalid target, or zero
+entry headroom refuses before a model call. This preflight makes no safety claim
+and grants no execution authority; the venue path recompiles with the final quote
+and retains account, reconciliation, risk, deduplication and reservation checks.
+Typed controller failures during initial account reads retain their fixed category
+and provider diagnostic stage in the intraday outcome; raw exception text stays private.
+
+Cycle progress identifies `research_preflight`, `execution`, `universe_selection`
+and `night_review`. Each bounded child refreshes the progress timestamp on entry,
+so time spent in completed stages cannot make the next healthy stage appear stalled.
+The existing child timeout and two-tick grace remain unchanged. A fresh stage marker
+is liveness evidence only; completion, accepted plans and fills require their receipts.
+
+During resident research preflight, universe selection and night review, the same
+trading tick continues at the normal interval. Only one trading tick may be in
+flight; slow ticks skip intervening timer firings. This covers reconciliation,
+retired-position exits and active-rule monitoring without starting another daily
+cycle. Before handing off from the child stage, the scheduler clears its timer and
+joins the in-flight trading tick, including on failure or cancellation. Daily
+execution therefore cannot overlap the tick's venue actions. Shutdown retains the
+process lock until this work has settled. Manual `--once` behavior is unchanged.
+Execution, model review, freshness and deduplication gates still apply to every
+candidate; overlapping research does not approve its plan or authorize a trade.
+
+The role task timeout includes the opted-in single structural repair as well as
+configured fallbacks; the whole research deadline and call budget remain the cap.
+When external EOD history is unavailable, the quant module can consume the supplied
+controller close-history projection. It keeps the instrument and evidence reference,
+rejects conflicting, repeated, invalid or future observations, and labels results as
+stored close history rather than adjusted total returns or execution quotes.
+
+Live research with `--write` and an explicit `--finance-state-dir` reuses macro
+series through the existing fundamental store. A snapshot must match the one
+eligible source, series, provider and request shape, and have been captured no
+later than the requested `asOf`. Its capture age is capped at one hour and the
+job freshness limit. Stored evidence keeps its original capture and source-period
+timestamps, source URL and freshness warnings; the receipt labels the reuse and
+records no new API calls. It does not supply an execution quote, bypass source
+comparison, replace a frozen checkpoint, or replenish provider quotas.
+
+Night research uses its actual post-settlement start as its as-of cutoff, so a
+universe refreshed earlier in the same cycle is not incorrectly future-dated.
+Its explicit `--controller-research-scope` binds targets to nonzero position-ledger
+holdings and active strategy instruments in a unique controller-evidence entry.
+The research CLI verifies the same cutoff against those ledgers before model calls.
+The scope retains supported equity/crypto identities, rejects empty or unsupported
+scopes and more than 14 instruments, and never substitutes a broad universe.
+Night positions exclude both fills and receipts recorded after that cutoff.
+This is a local-ledger research scope, not proof of current broker holdings.
+Night source collection uses the same 160-call batch cap as day research; provider
+quotas and the 48-call, 14-minute model limits remain unchanged.
+
+Aggregate cycle failures report a nonzero exit code even when settlement succeeded;
+`cycleExitCode` retains the cycle child's original code, and nested research results
+retain their own process results. Failure does not authorize an order replay.
+
+The research runner's shared quality-review entry can review an already captured
+packet without source collection or module execution. Historical validation must
+retain its original as-of and isolate any plan or thesis outputs from live state.
+Final artifact audits receive the full formatted artifact, including tail claims;
+prompt limits still fail closed rather than silently clipping the review object.
+
+A reviewed portfolio abstention uses the explicit research proposal
+`{decision: "no_allocation", reason, evidenceIds}`. The reason and supported-claim
+citations must pass the same source, committee, quality, and module gates; missing,
+all-zero allocation, malformed, or unsupported proposals remain failures. This result may
+persist independently validated theses through the existing thesis ledger, but it
+never creates a portfolio plan or an order. The scheduler records
+`execution.outcome=not_run` with `research_no_allocation`, requires the current
+preflight timestamp and passed gates, and skips the execution child even if an older
+plan file exists. A successful abstention is a completed research decision, not a
+fill or proof of profitability; independent position monitoring remains active.

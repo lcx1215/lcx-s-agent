@@ -148,6 +148,63 @@ export type FinanceResearchBridgeInput = Readonly<{
 }>;
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 
+export function matchesFinanceResearchRecoveryProtection(input: {
+  instrument: string;
+  protection: {
+    id: string;
+    quantity: number;
+    stopPrice: number;
+    orderType?: "stop" | "stop_limit";
+    limitPrice?: number;
+  };
+  brokerOrder: Record<string, unknown>;
+}): boolean {
+  const { protection, brokerOrder } = input;
+  const orderType = protection.orderType ?? "stop";
+  if (
+    ![brokerOrder.qty, brokerOrder.stop_price, brokerOrder.filled_qty].every(
+      (value) =>
+        (typeof value === "number" || (typeof value === "string" && value.trim() !== "")) &&
+        Number.isFinite(Number(value)),
+    ) ||
+    !protection.id.trim() ||
+    (orderType !== "stop" && orderType !== "stop_limit") ||
+    !Number.isFinite(protection.quantity) ||
+    protection.quantity <= 0 ||
+    !Number.isFinite(protection.stopPrice) ||
+    protection.stopPrice <= 0 ||
+    (orderType === "stop" && protection.limitPrice !== undefined) ||
+    (orderType === "stop_limit" &&
+      (!Number.isFinite(protection.limitPrice) ||
+        protection.limitPrice! <= 0 ||
+        protection.limitPrice! > protection.stopPrice))
+  ) {
+    return false;
+  }
+  const rawLimitPrice = brokerOrder.limit_price;
+  const validRawLimitPrice =
+    typeof rawLimitPrice === "number" ||
+    (typeof rawLimitPrice === "string" && rawLimitPrice.trim() !== "");
+  const limitMatches =
+    orderType === "stop_limit"
+      ? validRawLimitPrice &&
+        Number.isFinite(Number(rawLimitPrice)) &&
+        Number(rawLimitPrice) === protection.limitPrice
+      : rawLimitPrice === undefined || rawLimitPrice === null;
+  return (
+    brokerOrder.id === protection.id &&
+    brokerOrder.symbol === input.instrument &&
+    brokerOrder.side === "sell" &&
+    brokerOrder.type === orderType &&
+    brokerOrder.time_in_force === "gtc" &&
+    Number(brokerOrder.qty) === protection.quantity &&
+    Number(brokerOrder.stop_price) === protection.stopPrice &&
+    limitMatches &&
+    brokerOrder.status === "canceled" &&
+    Number(brokerOrder.filled_qty) === 0
+  );
+}
+
 function parseObservation(raw: unknown): ReturnType<typeof parseResearchConclusion> {
   if (
     typeof raw !== "object" ||
@@ -247,6 +304,7 @@ export async function recoverFinanceResearchHistory(control: FinanceResearchExec
           intent.quantity > originalQuantity - protection[0].quantity
         ) {
           const remaining = originalQuantity - fill.filledQuantity;
+          const protectionType = protection[0].orderType ?? "stop";
           const headers = {
             "APCA-API-KEY-ID": env.ALPACA_API_KEY_ID,
             "APCA-API-SECRET-KEY": env.ALPACA_API_SECRET_KEY,
@@ -261,14 +319,11 @@ export async function recoverFinanceResearchHistory(control: FinanceResearchExec
           }
           const prior = JSON.parse(old.body) as Record<string, unknown>;
           if (
-            prior.id !== protection[0].id ||
-            prior.symbol !== intent.instrument ||
-            prior.side !== "sell" ||
-            prior.type !== "stop" ||
-            Number(prior.qty) !== protection[0].quantity ||
-            Number(prior.stop_price) !== protection[0].stopPrice ||
-            prior.status !== "canceled" ||
-            Number(prior.filled_qty) !== 0
+            !matchesFinanceResearchRecoveryProtection({
+              instrument: intent.instrument,
+              protection: protection[0],
+              brokerOrder: prior,
+            })
           ) {
             throw new Error("old protection unsettled");
           }
@@ -295,6 +350,10 @@ export async function recoverFinanceResearchHistory(control: FinanceResearchExec
               intent,
               quantity: remaining,
               stopPrice: protection[0].stopPrice,
+              orderType: protectionType,
+              ...(protection[0].limitPrice === undefined
+                ? {}
+                : { limitPrice: protection[0].limitPrice }),
               headers,
               signal,
               read,

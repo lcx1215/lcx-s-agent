@@ -10,6 +10,13 @@ import { FINANCE_SCHEDULER_LOCK } from "./finance-scheduler-lock.js";
 import { FINANCE_DAILY_CYCLE_RUNS_FILENAME } from "./finance-state-dir.js";
 
 export const FINANCE_SCHEDULER_TICK_MS = 60_000;
+export const FINANCE_SCHEDULER_CYCLE_STAGES = [
+  "research_preflight",
+  "execution",
+  "universe_selection",
+  "night_review",
+] as const;
+export type FinanceSchedulerCycleStage = (typeof FINANCE_SCHEDULER_CYCLE_STAGES)[number];
 
 const STATE_FILE = "daily-cycle-scheduler.json";
 
@@ -191,18 +198,91 @@ export function inspectFinanceSchedulerProgress(
             : expires <= now
               ? "expired"
               : "current";
+    const intradayControllerPolicyExpiry =
+      typeof progress.intradayControllerPolicyExpiresAt === "string"
+        ? Date.parse(progress.intradayControllerPolicyExpiresAt)
+        : NaN;
+    const intradayControllerPolicyStatus =
+      venue !== "alpaca" || !isObject(progress.intraday) || progress.intraday.enabled !== true
+        ? "not_applicable"
+        : !Number.isFinite(intradayControllerPolicyExpiry)
+          ? "not_loaded"
+          : intradayControllerPolicyExpiry <= now
+            ? "expired"
+            : "current";
     const deadline =
       2 * FINANCE_SCHEDULER_TICK_MS + (progress.phase === "cycle" ? progress.timeoutMs : 0);
+    const intradayConfig = isObject(progress.intraday) ? progress.intraday : undefined;
+    const symbolList = (value: unknown): value is string[] =>
+      Array.isArray(value) &&
+      value.every(
+        (symbol) =>
+          typeof symbol === "string" &&
+          symbol.length > 0 &&
+          symbol.length <= 32 &&
+          symbol === symbol.toUpperCase() &&
+          /^[A-Z0-9./:_-]+$/.test(symbol),
+      );
+    const intraday =
+      intradayConfig && typeof intradayConfig.enabled === "boolean"
+        ? {
+            enabled: intradayConfig.enabled,
+            placementEnabled:
+              typeof intradayConfig.placementEnabled === "boolean"
+                ? intradayConfig.placementEnabled
+                : null,
+            placementRequested:
+              typeof intradayConfig.placementRequested === "boolean"
+                ? intradayConfig.placementRequested
+                : null,
+            placementEligibility:
+              typeof intradayConfig.placementEligibility === "string" &&
+              /^[a-z0-9_]{1,64}$/.test(intradayConfig.placementEligibility)
+                ? intradayConfig.placementEligibility
+                : null,
+            instrumentSource:
+              intradayConfig.instrumentSource === "active_rule" ||
+              intradayConfig.instrumentSource === "explicit" ||
+              intradayConfig.instrumentSource === "system_universe"
+                ? intradayConfig.instrumentSource
+                : "unknown",
+            instruments: symbolList(intradayConfig.instruments) ? intradayConfig.instruments : [],
+            executionInstruments: symbolList(intradayConfig.executionInstruments)
+              ? intradayConfig.executionInstruments
+              : [],
+            intervalSeconds:
+              intradayConfig.intervalSeconds === 60 ||
+              intradayConfig.intervalSeconds === 300 ||
+              intradayConfig.intervalSeconds === 900
+                ? intradayConfig.intervalSeconds
+                : null,
+            feed:
+              intradayConfig.feed === "iex" || intradayConfig.feed === "sip"
+                ? intradayConfig.feed
+                : null,
+          }
+        : null;
     return {
       status: !present ? "owner_missing" : age > deadline ? "stalled" : "responsive",
       observedAt: progress.observedAt,
       phase: progress.phase,
+      cycleStage:
+        progress.phase === "cycle" &&
+        typeof progress.cycleStage === "string" &&
+        FINANCE_SCHEDULER_CYCLE_STAGES.some((stage) => stage === progress.cycleStage)
+          ? progress.cycleStage
+          : undefined,
       ageMs: age,
       deadlineMs: deadline,
       placementEnabled: progress.placementEnabled,
       venue,
       executionPolicyStatus,
       executionPolicyExpiresAt: Number.isFinite(expires) ? new Date(expires).toISOString() : null,
+      intradayControllerPolicyStatus,
+      intradayControllerPolicyExpiresAt: Number.isFinite(intradayControllerPolicyExpiry)
+        ? new Date(intradayControllerPolicyExpiry).toISOString()
+        : null,
+      intraday,
     };
   } catch (error) {
     return {

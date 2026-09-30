@@ -1,4 +1,11 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import {
+  createFinanceExecutionSafetyContext,
+  FinanceExecutionSafetyFactsError,
+} from "./finance-execution-safety.js";
 import { syntheticSafetyContextForAsset } from "./finance-execution-safety.test-support.js";
 vi.mock("./finance-credential-env.js", () => ({
   resolveFinanceCredentialEnv: () => ({
@@ -12,6 +19,7 @@ beforeEach(() => {
 });
 import {
   DEFAULT_ALPACA_FILL_POLL,
+  compileFinanceAlpacaOrderIntent,
   fetchAlpacaAccountSnapshot,
   fetchAlpacaVenueState,
   runFinanceAlpacaOrder,
@@ -285,6 +293,30 @@ describe("runFinanceAlpacaOrder fill handling", () => {
     const result = await runFinanceAlpacaOrder(
       request({
         read,
+        researchLineage: {
+          portfolioPlan: {
+            asOf: "2026-09-20T00:00:00.000Z",
+            validUntil: "2026-09-21T00:00:00.000Z",
+            accountId: "paper-account",
+            venue: "alpaca",
+            provenance: {
+              kind: "finance_research_allocation",
+              receiptId: "quality:research-run",
+              evidenceIds: ["source:market"],
+            },
+          },
+          targetWeight: 0.25,
+          contributions: [
+            {
+              strategyId: "broad-index",
+              evidenceReceiptId: "candidate:index",
+              stance: "accumulate",
+              sleeveWeight: 0.5,
+              accountWeight: 0.25,
+              evidenceIds: ["source:market"],
+            },
+          ],
+        },
         transport: async (init) => {
           orderedQty = Number(JSON.parse(init.body).qty);
           return acceptingTransport("ord-fill")(init);
@@ -297,6 +329,9 @@ describe("runFinanceAlpacaOrder fill handling", () => {
     }
     expect(result.receipt.fill.filledQuantity).toBe(orderedQty);
     expect(result.receipt.fill.fillPrice).toBeCloseTo(100.5, 2);
+    expect(result.receipt.researchLineage?.portfolioPlan.provenance?.receiptId).toBe(
+      "quality:research-run",
+    );
     expect(polls).toBeGreaterThan(1);
   });
 
@@ -380,6 +415,115 @@ it("refuses direct Alpaca placement without controller facts before transport", 
     request({ createSafetyContext: undefined, transport }),
   );
   expect(result.ok).toBe(false);
+  expect(transport).not.toHaveBeenCalled();
+});
+
+it("preserves typed safety failure classifications without persisting provider text", async () => {
+  const transport = vi.fn();
+  const stateDir = mkdtempSync(join(tmpdir(), "finance-safety-failure-wrapper-"));
+  let result: Awaited<ReturnType<typeof runFinanceAlpacaOrder>>;
+  try {
+    result = await runFinanceAlpacaOrder(
+      request({
+        createSafetyContext: (binding) =>
+          createFinanceExecutionSafetyContext({
+            ...binding,
+            stateDir,
+            accountId: "paper-account",
+            policy: {
+              planId: "allowlist-check",
+              revision: "1",
+              riskModel: "fully_funded_unhedged_spot",
+              authorizedSide: binding.intent.side,
+              authorizedQuantity: binding.intent.quantity,
+              expiresAt: new Date(Date.now() + 60_000).toISOString(),
+              maxPortfolioDrawdownFraction: 0.1,
+              maxGrossExposure: 1_000_000,
+              maxAccountAgeMs: 60_000,
+              maxQuoteAgeMs: 60_000,
+              maxInstrumentEvidenceAgeMs: 60_000,
+            },
+            readFacts: async () => {
+              throw new FinanceExecutionSafetyFactsError("account_snapshot_unavailable", {
+                reason: "alpaca_safety_snapshot_read_unavailable",
+                stage: "account_snapshot",
+              });
+            },
+          }),
+        transport,
+      }),
+    );
+  } finally {
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+
+  expect(result).toEqual({
+    ok: false,
+    stage: "place",
+    refusals: [
+      "execution_safety_account_snapshot_unavailable:alpaca_safety_snapshot_read_unavailable:account_snapshot",
+    ],
+    safetyFailure: {
+      stage: "facts",
+      category: "account_snapshot_unavailable",
+      operation: "read_account_safety_facts",
+      provider: {
+        reason: "alpaca_safety_snapshot_read_unavailable",
+        stage: "account_snapshot",
+      },
+    },
+  });
+  expect(JSON.stringify(result)).not.toContain("raw provider response");
+  expect(transport).not.toHaveBeenCalled();
+});
+
+it("bounds unexpected safety errors and excludes their raw text from the run result", async () => {
+  const transport = vi.fn();
+  const stateDir = mkdtempSync(join(tmpdir(), "finance-safety-unexpected-wrapper-"));
+  let result: Awaited<ReturnType<typeof runFinanceAlpacaOrder>>;
+  try {
+    result = await runFinanceAlpacaOrder(
+      request({
+        createSafetyContext: (binding) =>
+          createFinanceExecutionSafetyContext({
+            ...binding,
+            stateDir,
+            accountId: "paper-account-unexpected-error",
+            policy: {
+              planId: "unexpected-error-check",
+              revision: "1",
+              riskModel: "fully_funded_unhedged_spot",
+              authorizedSide: binding.intent.side,
+              authorizedQuantity: binding.intent.quantity,
+              expiresAt: new Date(Date.now() + 60_000).toISOString(),
+              maxPortfolioDrawdownFraction: 0.1,
+              maxGrossExposure: 1_000_000,
+              maxAccountAgeMs: 60_000,
+              maxQuoteAgeMs: 60_000,
+              maxInstrumentEvidenceAgeMs: 60_000,
+            },
+            readFacts: async () => {
+              throw new Error("secret provider body must not escape");
+            },
+          }),
+        transport,
+      }),
+    );
+  } finally {
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+
+  expect(result).toEqual({
+    ok: false,
+    stage: "place",
+    refusals: ["execution_safety_facts_unavailable"],
+    safetyFailure: {
+      stage: "facts",
+      category: "unexpected",
+      operation: "read_account_safety_facts",
+    },
+  });
+  expect(JSON.stringify(result)).not.toContain("secret provider body");
   expect(transport).not.toHaveBeenCalled();
 });
 
@@ -505,6 +649,32 @@ it("carries an explicit crypto protection limit through the run entry and receip
       limitPrice: 89,
     });
   }
+});
+
+it("preflights the same Paper sizing without reading or claiming execution state", () => {
+  const createSafetyContext = vi.fn();
+  const transport = vi.fn();
+  const read = vi.fn();
+  const compiled = compileFinanceAlpacaOrderIntent(
+    request({
+      strategyClass: "A",
+      committedInstrumentNotional: 4500,
+      budget: {
+        automation: "unattended",
+        allowedInstruments: ["SPY"],
+        maxOrderNotional: 1000,
+        maxInstrumentNotional: 5000,
+        maxOrdersPerRun: 8,
+      },
+      createSafetyContext,
+      transport,
+      read,
+    }),
+  );
+  expect(compiled).toMatchObject({ ok: true, intent: { quantity: 5, referencePrice: 100 } });
+  expect(createSafetyContext).not.toHaveBeenCalled();
+  expect(transport).not.toHaveBeenCalled();
+  expect(read).not.toHaveBeenCalled();
 });
 
 it("fits a Paper entry inside order and remaining instrument caps before placement", async () => {

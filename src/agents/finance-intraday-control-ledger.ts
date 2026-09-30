@@ -3,7 +3,16 @@ import fs from "node:fs/promises";
 import { z } from "zod";
 import { applySqliteMigrations, type SqliteMigration } from "../memory/sqlite-migrations.js";
 import { requireNodeSqlite } from "../memory/sqlite.js";
+import {
+  ALPACA_SAFETY_DIAGNOSTIC_STAGES,
+  ALPACA_SAFETY_FAILURE_CODES,
+} from "./finance-alpaca-safety-provider.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
+import {
+  FINANCE_EXECUTION_SAFETY_FAILURE_CATEGORIES,
+  FINANCE_EXECUTION_SAFETY_FAILURE_OPERATIONS,
+  FINANCE_EXECUTION_SAFETY_FAILURE_STAGES,
+} from "./finance-execution-safety.js";
 import { FinanceExpectationGapSchema } from "./finance-expectation-gap.js";
 import { financeIntradayControlLedgerPath } from "./finance-state-dir.js";
 import { FinanceThesisDecisionContextSchema } from "./finance-thesis-decision-context.js";
@@ -11,6 +20,24 @@ import { FinanceThesisDecisionContextSchema } from "./finance-thesis-decision-co
 const Hash = z.string().regex(/^[a-f0-9]{64}$/u);
 const Text = z.string().trim().min(1);
 const Iso = z.string().datetime();
+const FinanceIntradayExecutionSafetyFailureRecord = z
+  .object({
+    stage: z.enum(FINANCE_EXECUTION_SAFETY_FAILURE_STAGES),
+    category: z.enum(FINANCE_EXECUTION_SAFETY_FAILURE_CATEGORIES),
+    operation: z.enum(FINANCE_EXECUTION_SAFETY_FAILURE_OPERATIONS).optional(),
+    provider: z
+      .object({
+        reason: z.enum(ALPACA_SAFETY_FAILURE_CODES),
+        stage: z.enum(ALPACA_SAFETY_DIAGNOSTIC_STAGES).optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+const FinanceIntradayExecutionSafetyFailureInput =
+  FinanceIntradayExecutionSafetyFailureRecord.extend({
+    operation: z.enum(FINANCE_EXECUTION_SAFETY_FAILURE_OPERATIONS),
+  });
 const StrategyBinding = z
   .object({
     declarationRef: Hash,
@@ -96,6 +123,7 @@ const ReviewFailureCode = z.enum([
   "output_invalid",
   "output_truncated",
   "provider_auth",
+  "provider_payment_required",
   "provider_rate_limit",
   "process_error",
   "output_limit",
@@ -263,7 +291,7 @@ const MIGRATIONS: readonly SqliteMigration[] = [
   },
 ];
 
-export const FinanceIntradayOutcomeInput = z
+const FinanceIntradayOutcomeBase = z
   .object({
     signalId: Text,
     status: z.enum(["placed", "refused", "uncertain"]),
@@ -272,12 +300,23 @@ export const FinanceIntradayOutcomeInput = z
     tradeDecisionReview: FinanceIntradayDecisionReviewReceiptSchema.optional(),
   })
   .strict();
+
+/** Current writes require a concrete operation for every safety failure. */
+export const FinanceIntradayOutcomeInput = FinanceIntradayOutcomeBase.extend({
+  executionSafetyFailure: FinanceIntradayExecutionSafetyFailureInput.optional(),
+}).strict();
 export type FinanceIntradayOutcomeInput = z.infer<typeof FinanceIntradayOutcomeInput>;
+
+/** Reads remain compatible with older outcomes that stored only stage and category. */
+const FinanceIntradayOutcomeRecord = FinanceIntradayOutcomeBase.extend({
+  executionSafetyFailure: FinanceIntradayExecutionSafetyFailureRecord.optional(),
+}).strict();
+export type FinanceIntradayOutcomeRecord = z.infer<typeof FinanceIntradayOutcomeRecord>;
 
 export async function appendFinanceIntradayOutcome(
   directory: string,
   rawInput: FinanceIntradayOutcomeInput,
-): Promise<Readonly<{ input: FinanceIntradayOutcomeInput; appended: boolean }>> {
+): Promise<Readonly<{ input: FinanceIntradayOutcomeRecord; appended: boolean }>> {
   const input = FinanceIntradayOutcomeInput.parse(rawInput);
   if ((input.status === "placed") !== Boolean(input.receiptId)) {
     throw new Error("placed intraday outcome requires one receiptId and non-placed forbids it");
@@ -291,7 +330,7 @@ export async function appendFinanceIntradayOutcome(
       if (typeof existing.body !== "string") {
         throw new Error("invalid intraday outcome record");
       }
-      const stored = FinanceIntradayOutcomeInput.parse(JSON.parse(existing.body));
+      const stored = FinanceIntradayOutcomeRecord.parse(JSON.parse(existing.body));
       if (caseflowFingerprint(stored) !== caseflowFingerprint(input)) {
         throw new Error("intraday outcome conflict");
       }
@@ -309,7 +348,7 @@ export async function appendFinanceIntradayOutcome(
 export async function readFinanceIntradayOutcome(
   directory: string,
   signalId: string,
-): Promise<FinanceIntradayOutcomeInput | null> {
+): Promise<FinanceIntradayOutcomeRecord | null> {
   try {
     await fs.stat(financeIntradayControlLedgerPath(directory));
   } catch {
@@ -326,7 +365,7 @@ export async function readFinanceIntradayOutcome(
     if (typeof row.body !== "string") {
       throw new Error("invalid intraday outcome record");
     }
-    return FinanceIntradayOutcomeInput.parse(JSON.parse(row.body));
+    return FinanceIntradayOutcomeRecord.parse(JSON.parse(row.body));
   } finally {
     db.close();
   }
@@ -462,6 +501,10 @@ export async function readFinanceIntradayExecutionCoverage(directory: string) {
       missingOutcome: 0,
     };
     const reasons = new Map<string, number>();
+    const safetyFailures = new Map<
+      string,
+      z.infer<typeof FinanceIntradayExecutionSafetyFailureRecord> & { count: number }
+    >();
     const unresolved: { signalId: string; action: string; reason: string; status: string }[] = [];
     const signalTimes: string[] = [];
     for (const row of rows) {
@@ -477,7 +520,7 @@ export async function readFinanceIntradayExecutionCoverage(directory: string) {
       const outcome =
         row.outcome === null
           ? null
-          : FinanceIntradayOutcomeInput.parse(JSON.parse(String(row.outcome)));
+          : FinanceIntradayOutcomeRecord.parse(JSON.parse(String(row.outcome)));
       if (outcome && outcome.signalId !== record.input.signalId) {
         throw new Error("intraday coverage outcome binding mismatch");
       }
@@ -491,6 +534,21 @@ export async function readFinanceIntradayExecutionCoverage(directory: string) {
       }
       for (const reason of new Set(outcome?.reasons ?? [])) {
         reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
+      }
+      if (outcome?.executionSafetyFailure) {
+        const failure = outcome.executionSafetyFailure;
+        const key = [
+          failure.stage,
+          failure.category,
+          failure.operation ?? "",
+          failure.provider?.reason ?? "",
+          failure.provider?.stage ?? "",
+        ].join(":");
+        const current = safetyFailures.get(key);
+        safetyFailures.set(key, {
+          ...failure,
+          count: (current?.count ?? 0) + 1,
+        });
       }
       if (outcome?.status !== "placed" && unresolved.length < 4) {
         unresolved.push({
@@ -517,6 +575,9 @@ export async function readFinanceIntradayExecutionCoverage(directory: string) {
         .toSorted((a, b) => b[1] - a[1])
         .slice(0, 4)
         .map(([reason, count]) => ({ reason: reason.slice(0, 240), count })),
+      topExecutionSafetyFailures: [...safetyFailures.values()]
+        .toSorted((a, b) => b.count - a.count)
+        .slice(0, 4),
       recentUnexecuted: unresolved,
       interpretation:
         "Historical signal coverage, not current market readiness. Placed is not filled. Refusal can be correct; missed-opportunity PnL is not assessed. Never replay an unresolved signal automatically.",

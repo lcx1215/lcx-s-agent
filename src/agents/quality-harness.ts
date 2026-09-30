@@ -75,6 +75,80 @@ function summarizeTask(task: string): { sha256: string; length: number } {
   };
 }
 
+const EVIDENCE_BATCH_FAILURE_REASONS = new Set<NonNullable<ModelCallReceipt["reason"]>>([
+  "input_constraint",
+  "capability_constraint",
+  "role_scope_constraint",
+  "model_separation_constraint",
+  "model_separation_unproven",
+  "model_affinity_constraint",
+  "model_affinity_unproven",
+  "adapter_input_constraint",
+  "output_contract",
+  "adapter_error",
+  "prompt_input_invalid",
+  "prompt_budget_exceeded",
+  "output_invalid",
+  "output_truncated",
+  "process_error",
+  "output_limit",
+  "runtime_timeout",
+  "provider_auth",
+  "provider_payment_required",
+  "provider_rate_limit",
+  "call_budget_exhausted",
+  "cancelled",
+  "deadline",
+]);
+
+function safeEvidenceBatchFailureReason(reason: ModelCallReceipt["reason"]): string {
+  return reason && EVIDENCE_BATCH_FAILURE_REASONS.has(reason) ? reason : "adapter_error";
+}
+
+function projectArtifactForEvidenceBatchAudit(
+  context: Parameters<typeof createQualityHarnessStageExecutor>[0],
+): Parameters<typeof createQualityHarnessStageExecutor>[0] {
+  if (context.input.evidenceBatchMode !== "final_artifact_audit") {
+    return context;
+  }
+  const formatting = context.dependencyResults.formatting;
+  const artifact = formatting?.output;
+  if (formatting?.status !== "completed" || artifact?.kind !== "artifact") {
+    return context;
+  }
+  const fullArtifactJson = JSON.stringify(artifact.artifact);
+  const artifactSha256 = crypto.createHash("sha256").update(fullArtifactJson, "utf8").digest("hex");
+  const answerSha256 = crypto
+    .createHash("sha256")
+    .update(artifact.artifact.answer, "utf8")
+    .digest("hex");
+  const batchEvidenceIds = new Set(context.input.request.evidence.map((entry) => entry.id));
+  const relevantClaims = artifact.artifact.claims.filter((claim) =>
+    claim.evidenceIds.some((id) => batchEvidenceIds.has(id)),
+  );
+  const projectedOutput = {
+    auditProjection: {
+      schema: "lcx_quality_final_artifact_batch_projection_v1",
+      artifactSha256,
+      answerSha256,
+      fullArtifactClaimCount: artifact.artifact.claims.length,
+      includedClaimIds: relevantClaims.map((claim) => claim.id),
+    },
+    kind: "artifact" as const,
+    artifact: {
+      answer: `[Full formatted artifact bound by SHA-256 ${artifactSha256}; answer omitted from this batch view.]`,
+      claims: relevantClaims,
+    },
+  };
+  return {
+    ...context,
+    dependencyResults: {
+      ...context.dependencyResults,
+      formatting: { ...formatting, output: projectedOutput },
+    },
+  } as typeof context;
+}
+
 function createQualityReceipt(params: {
   runId: string;
   request: QualityHarnessRequest;
@@ -224,10 +298,11 @@ function verifyEvidenceCoverage(params: {
     if (!expectedIds) {
       return [];
     }
-    const taskCalls = (task.modelCalls ?? []).filter(
-      (call) =>
-        call.mode !== "deterministic" && call.adapterInvoked && call.outcome === "completed",
+    const recordedCalls = task.modelCalls ?? [];
+    const attemptedCalls = recordedCalls.filter(
+      (call) => call.mode !== "deterministic" && call.adapterInvoked,
     );
+    const taskCalls = attemptedCalls.filter((call) => call.outcome === "completed");
     if (
       taskCalls.length === 0 &&
       params.reusedStageIds?.includes(task.taskId) &&
@@ -236,7 +311,17 @@ function verifyEvidenceCoverage(params: {
       return [];
     }
     if (/^evidence_batch_(?:extract|review)_\d+$/u.test(task.taskId) && taskCalls.length === 0) {
-      issues.push(`evidence_batch_model_call_missing:${task.taskId}`);
+      if (attemptedCalls.length > 0) {
+        for (const call of attemptedCalls) {
+          issues.push(
+            `evidence_batch_model_call_attempt_failed:${task.taskId}:${call.attempt}:${safeEvidenceBatchFailureReason(call.reason)}`,
+          );
+        }
+      } else if (task.status === "blocked") {
+        issues.push(`evidence_batch_model_call_blocked:${task.taskId}`);
+      } else {
+        issues.push(`evidence_batch_model_call_no_attempt:${task.taskId}`);
+      }
     }
     return taskCalls.map((call) => ({ call, expectedIds, taskId: task.taskId }));
   });
@@ -433,7 +518,7 @@ export async function runQualityHarness(
           reusedStageIds.push(context.task.id);
           return Promise.resolve({ output: cached, sideEffects: [] as const });
         }
-        return createQualityHarnessStageExecutor(context);
+        return createQualityHarnessStageExecutor(projectArtifactForEvidenceBatchAudit(context));
       },
       sharedContext: request.sharedContext ?? {},
     });
@@ -530,7 +615,7 @@ export async function runQualityHarness(
         request,
         pool: pool.status,
         attempts,
-        ...(quality.artifact ? { artifact: quality.artifact } : {}),
+        ...(finalArtifact ? { artifact: finalArtifact } : {}),
         verification,
         status: "quality-failed",
         maxAttempts,
@@ -546,13 +631,36 @@ export async function runQualityHarness(
           : {}),
       });
     }
-    reusable.clear();
-    const downstreamFailed = plan.tasks.some(
+    // A new artifact cannot repair provider availability or replenish this run's
+    // call budget. Allow a successful router fallback, but never restart a DAG
+    // whose required stage still failed for one of these terminal causes.
+    const terminalModelFailure = plan.tasks.some(
       (task) =>
-        (task.agentId === "research_draft" || task.agentId === "formatting") &&
-        task.status === "failed",
+        task.status !== "completed" &&
+        task.modelCalls?.some(
+          (call) =>
+            call.reason === "provider_payment_required" ||
+            call.reason === "provider_auth" ||
+            call.reason === "provider_rate_limit" ||
+            call.reason === "call_budget_exhausted",
+        ),
     );
-    if (downstreamFailed && !options.signal?.aborted) {
+    if (terminalModelFailure) {
+      break;
+    }
+    reusable.clear();
+    const downstreamNeedsRepair =
+      quality.artifact !== undefined ||
+      plan.tasks.some(
+        (task) =>
+          (task.agentId === "research_draft" ||
+            task.agentId === "formatting" ||
+            task.agentId === "final_precheck") &&
+          task.status === "failed",
+      );
+    // Clean source preparation remains valid when the artifact's judgment fails.
+    // Drafting and every artifact-dependent review still run again with feedback.
+    if (downstreamNeedsRepair && !options.signal?.aborted) {
       const preparationIds = new Set([
         "data_cleaning",
         "financial_extraction",

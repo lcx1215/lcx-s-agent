@@ -53,11 +53,18 @@ function digest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
+export function qualityFindingReviewRole(task: { taskId: string; agentId: string }): string {
+  return /^evidence_batch_extract_\d+$/u.test(task.taskId) ? task.taskId : task.agentId;
+}
+
 export function collectQualityFindings(
   reviews: readonly { role: string; review: QualityHarnessReview }[],
 ): QualityFinding[] {
   return reviews.flatMap(({ role, review }) => {
-    if (!(RECONCILABLE_REVIEW_ROLES as readonly string[]).includes(role)) {
+    if (
+      !(RECONCILABLE_REVIEW_ROLES as readonly string[]).includes(role) &&
+      !/^evidence_batch_extract_\d+$/u.test(role)
+    ) {
       return [];
     }
     const entries: { category: QualityFinding["category"]; text: string }[] = [
@@ -91,7 +98,7 @@ export function reconcileQualityFindings(
 ): QualityFindingReceipt[] {
   const reviews = tasks.flatMap((task) =>
     task.status === "completed" && task.output?.kind === "review"
-      ? [{ role: task.agentId, review: task.output.review }]
+      ? [{ role: qualityFindingReviewRole(task), review: task.output.review }]
       : [],
   );
   const findings = collectQualityFindings(reviews);

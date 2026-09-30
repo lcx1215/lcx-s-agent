@@ -65,7 +65,7 @@ export type FinanceModuleExecutionReceipt = Readonly<{
   allNodesSucceeded: boolean;
   /** Mandatory lanes only; optional failures remain visible in nodes and feedback. */
   requiredNodesSucceeded?: boolean;
-  /** Set by the research runner after final quality review and evidence inclusion. */
+  /** Set by the research runner from mandatory-node success and evidence inclusion. */
   requiredEvidenceReady?: boolean;
   moduleToolsDispatched: boolean;
   compositionNodeIds: readonly string[];
@@ -173,7 +173,16 @@ function recordsForJobs(batch: FinanceResearchBatchEvidencePacket): Readonly<{
   summary: string;
 }> {
   const jobs = batch.jobs.filter((job) => job.status === "ready" && job.receipt !== undefined);
-  const inputEvidenceIds = jobs.map((job) => job.jobId);
+  const visibleEvidenceIds = new Set(batch.committeeEvidence.map((item) => item.id));
+  // Raw job IDs remain in the batch receipt. Modules cite the instrument summary
+  // actually supplied to the committee, which binds those source receipts.
+  const inputEvidenceIds = [
+    ...new Set(
+      jobs
+        .map((job) => `finance-model:${encodeURIComponent(job.request.instrument)}`)
+        .filter((id) => visibleEvidenceIds.has(id)),
+    ),
+  ];
   const levels: number[] = [];
   const collections = new Map<string, number>();
   let selectedHistory: FinanceResearchBatchJob | undefined;
@@ -218,6 +227,64 @@ function recordsForJobs(batch: FinanceResearchBatchEvidencePacket): Readonly<{
       .map(([collection, count]) => `${collection}=${count}`)
       .join(", "),
   };
+}
+
+/** Accept only the controller's bounded, unambiguous close projection; never mix instruments. */
+function controllerCloseHistory(evidence: readonly FinanceCommitteeEvidence[], asOf: string) {
+  for (const item of evidence) {
+    if (
+      item.source !== "finance-bar-ledger" ||
+      !item.id.startsWith("finance-controller:eod:") ||
+      !Number.isFinite(Date.parse(item.timestamp)) ||
+      Date.parse(item.timestamp) > Date.parse(asOf)
+    ) {
+      continue;
+    }
+    try {
+      const value = JSON.parse(item.text) as Record<string, unknown>;
+      if (
+        typeof value.instrument !== "string" ||
+        item.id !== `finance-controller:eod:${value.instrument}` ||
+        !Array.isArray(value.divergentDates) ||
+        value.divergentDates.length > 0 ||
+        !Array.isArray(value.closes) ||
+        value.closes.length < 2 ||
+        value.closes.length > 400 ||
+        value.suppliedBarCount !== value.closes.length ||
+        typeof value.fromDate !== "string" ||
+        typeof value.toDate !== "string"
+      ) {
+        continue;
+      }
+      let previous = "";
+      const levels: number[] = [];
+      for (const row of value.closes) {
+        if (
+          !Array.isArray(row) ||
+          row.length !== 2 ||
+          typeof row[0] !== "string" ||
+          !/^\d{4}-\d{2}-\d{2}$/.test(row[0]) ||
+          !Number.isFinite(Date.parse(row[0])) ||
+          new Date(row[0]).toISOString().slice(0, 10) !== row[0] ||
+          row[0] <= previous ||
+          row[0] < value.fromDate ||
+          row[0] > value.toDate ||
+          Date.parse(row[0]) >= Date.parse(asOf) ||
+          typeof row[1] !== "number" ||
+          !Number.isFinite(row[1]) ||
+          row[1] <= 0
+        ) {
+          throw new Error("invalid controller close projection");
+        }
+        previous = row[0];
+        levels.push(row[1]);
+      }
+      return { levels, evidenceId: item.id, instrument: value.instrument };
+    } catch {
+      // Missing or conflicting history remains a module evidence gap.
+    }
+  }
+  return undefined;
 }
 
 function toolResultDetails(result: unknown): ToolDetails {
@@ -395,6 +462,7 @@ export async function executeFinanceModuleComposition(
     plan: FinanceBrainOrchestrationPlan;
     batch: FinanceResearchBatchEvidencePacket;
     workspaceDir: string;
+    controllerEvidence?: readonly FinanceCommitteeEvidence[];
     /** Structured, source-backed model output for an explicitly selected domain producer. */
     domainProducerInputs?: Readonly<
       Partial<Record<FinanceBrainModuleId, Readonly<Record<string, unknown>>>>
@@ -407,7 +475,18 @@ export async function executeFinanceModuleComposition(
     evidence: readonly FinanceCommitteeEvidence[];
   }>
 > {
-  const source = recordsForJobs(params.batch);
+  const batchSource = recordsForJobs(params.batch);
+  const history =
+    batchSource.levels.length < 2
+      ? controllerCloseHistory(params.controllerEvidence ?? [], params.asOf)
+      : undefined;
+  const source = history
+    ? {
+        ...batchSource,
+        levels: history.levels,
+        inputEvidenceIds: [...batchSource.inputEvidenceIds, history.evidenceId],
+      }
+    : batchSource;
   const quantTool = createQuantMathTool();
   const learningTool = createFinanceLearningCapabilityApplyTool({
     workspaceDir: params.workspaceDir,
@@ -480,6 +559,8 @@ export async function executeFinanceModuleComposition(
       if (moduleId === "quant_math") {
         if (source.levels.length < 2) {
           missingEvidence.push("ready_eod_history_with_at_least_two_positive_levels");
+        } else if (source.inputEvidenceIds.length === 0) {
+          missingEvidence.push("citeable_source_history_evidence_packet");
         } else {
           const result = await callTool(
             quantTool,
@@ -489,7 +570,18 @@ export async function executeFinanceModuleComposition(
             params.signal,
           );
           toolCalls.push(result.call);
-          details = result.details ?? {};
+          details = {
+            ...result.details,
+            ...(history
+              ? {
+                  historySource: {
+                    instrument: history.instrument,
+                    evidenceId: history.evidenceId,
+                    basis: "stored_close_history_not_adjusted_total_return",
+                  },
+                }
+              : {}),
+          };
           status = statusFromToolCall(result.call.status, "failed");
         }
       } else if (moduleId === "finance_learning_memory") {

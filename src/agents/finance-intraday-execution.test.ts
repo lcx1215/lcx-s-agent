@@ -9,6 +9,7 @@ import {
 import type { runFinanceAlpacaOrder } from "./finance-alpaca-run.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import { buildFinanceExecutionReceipt } from "./finance-execution-adapter.js";
+import { FinanceExecutionSafetyFactsError } from "./finance-execution-safety.js";
 import {
   appendFinanceIntradayDecision,
   readFinanceIntradayOutcome,
@@ -370,7 +371,156 @@ describe("intraday decision execution bridge", () => {
     },
   );
 
-  it.each(["unavailable", "output_truncated", "veto", "invalid"] as const)(
+  it.each([
+    new FinanceExecutionSafetyFactsError("broker_reconciliation_blocked"),
+    new FinanceExecutionSafetyFactsError("account_snapshot_unavailable", {
+      reason: "alpaca_safety_facts_inconsistent",
+      stage: "account_arithmetic",
+    }),
+  ])("preserves a typed controller failure before review (%s)", async (error) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-facts-failure-"));
+    temporary.push(directory);
+    const strategyBinding = await activeRuleBinding(directory);
+    const decision = (
+      await appendFinanceIntradayDecision(directory, {
+        signalId: `facts-failure-${error.category}`,
+        instrument: "SPY",
+        sessionDate: "2026-09-18",
+        action: "buy",
+        reason: "opening_range_breakout",
+        referencePrice: 500,
+        referencePriceAt: "2026-09-18T15:00:00.000Z",
+        stopPrice: 498,
+        targetPrice: 504,
+        datasetHeadRef: "d".repeat(64),
+        strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+        strategyBinding,
+      })
+    ).record;
+    const reviewer = approvingReviewer();
+    const executionQuoteProvider = vi.fn();
+    const runOrder = vi.fn();
+    const result = await executeFinanceIntradayDecision({
+      directory,
+      decision,
+      controller: {
+        accountId: "paper-account",
+        accountBookProvider: async () => {
+          throw error;
+        },
+        executionQuoteProvider,
+        createSafetyContext: vi.fn(),
+      },
+      caps: { maxOrderNotional: 1000, maxInstrumentNotional: 5000, maxOrdersPerRun: 1 },
+      tradeDecisionReviewer: reviewer,
+      now: () => Date.parse("2026-09-18T15:00:02.000Z"),
+      runOrder: runOrder as never,
+    });
+    expect(result.status).toBe("refused");
+    expect(executionQuoteProvider).not.toHaveBeenCalled();
+    expect(reviewer).not.toHaveBeenCalled();
+    expect(runOrder).not.toHaveBeenCalled();
+    const outcome = await readFinanceIntradayOutcome(directory, decision.input.signalId);
+    expect(outcome).toMatchObject({
+      reasons: [`execution_safety_${error.category}`],
+      executionSafetyFailure: {
+        stage: "facts",
+        category: error.category,
+        operation: "read_account_safety_facts",
+        ...(error.provider ? { provider: error.provider } : {}),
+      },
+    });
+  });
+
+  it.each([
+    {
+      invalid: "stop",
+      stopPrice: 502,
+      targetPrice: 504,
+      brokerHeld: 0,
+      refusal: "already breached",
+    },
+    { invalid: "target", stopPrice: 498, targetPrice: 499, brokerHeld: 0, refusal: "wrong side" },
+    {
+      invalid: "headroom",
+      stopPrice: 498,
+      targetPrice: 504,
+      brokerHeld: 10,
+      refusal: "rounds to zero",
+    },
+  ])("rejects a known compilation failure before paid review ($invalid)", async (fixture) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-precompile-"));
+    temporary.push(directory);
+    const strategyBinding = await activeRuleBinding(directory);
+    const decision = (
+      await appendFinanceIntradayDecision(directory, {
+        signalId: `precompile-${fixture.invalid}`,
+        instrument: "SPY",
+        sessionDate: "2026-09-18",
+        action: "buy",
+        reason: "opening_range_breakout",
+        referencePrice: 500,
+        referencePriceAt: "2026-09-18T15:00:00.000Z",
+        stopPrice: fixture.stopPrice,
+        targetPrice: fixture.targetPrice,
+        datasetHeadRef: "d".repeat(64),
+        strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+        strategyBinding,
+      })
+    ).record;
+    const reviewer = approvingReviewer();
+    const runOrder = vi.fn(async () => ({
+      ok: false as const,
+      stage: "place" as const,
+      refusals: ["later gate refusal"],
+    }));
+    const createSafetyContext = vi.fn();
+    const result = await executeFinanceIntradayDecision({
+      directory,
+      decision,
+      controller: {
+        accountId: "paper-account",
+        accountBookProvider: async () => ({
+          accountId: "paper-account",
+          venue: "alpaca:paper",
+          observedAt: "2026-09-18T15:00:01.000Z",
+          expiresAt: "2026-09-18T15:01:01.000Z",
+          equity: 100_000,
+          positions: fixture.brokerHeld
+            ? [{ instrument: "SPY", quantity: fixture.brokerHeld, marketValue: 5000 }]
+            : [],
+        }),
+        executionQuoteProvider: async () => ({
+          referencePrice: 500,
+          bidPrice: 499.9,
+          askPrice: 500,
+          referencePriceAt: "2026-09-18T15:00:01.000Z",
+          sourceUrlOrArtifact: "fixture://quote",
+          maxAgeMs: 30_000,
+        }),
+        createSafetyContext,
+      },
+      caps: { maxOrderNotional: 1000, maxInstrumentNotional: 5000, maxOrdersPerRun: 1 },
+      tradeDecisionReviewer: reviewer,
+      now: () => Date.parse("2026-09-18T15:00:02.000Z"),
+      runOrder: runOrder as never,
+    });
+    expect(result.status).toBe("refused");
+    expect(reviewer).not.toHaveBeenCalled();
+    expect(runOrder).not.toHaveBeenCalled();
+    expect(createSafetyContext).not.toHaveBeenCalled();
+    const outcome = await readFinanceIntradayOutcome(directory, decision.input.signalId);
+    expect(outcome?.reasons.join()).toContain(fixture.refusal);
+    expect(outcome?.tradeDecisionReview).toBeUndefined();
+  });
+
+  it.each([
+    "unavailable",
+    "output_truncated",
+    "provider_payment_required",
+    "veto",
+    "invalid",
+  ] as const)(
     "keeps review failure advisory but preserves valid veto and contract gates (%s)",
     async (reviewMode) => {
       const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-review-gate-"));
@@ -411,7 +561,7 @@ describe("intraday decision execution bridge", () => {
                 },
               ],
             })
-          : reviewMode === "output_truncated"
+          : reviewMode === "output_truncated" || reviewMode === "provider_payment_required"
             ? async () => ({
                 status: "failed",
                 attempted: true,
@@ -420,7 +570,7 @@ describe("intraday decision execution bridge", () => {
                 latencyMs: 3,
                 providerCallObserved: true,
                 adapterAttested: true,
-                failureCode: "output_truncated",
+                failureCode: reviewMode,
               })
             : reviewMode === "invalid"
               ? ((async () => ({
@@ -438,7 +588,15 @@ describe("intraday decision execution bridge", () => {
         ok: false as const,
         stage: "place" as const,
         refusals: ["shared execution gate refusal"],
+        safetyFailure: {
+          stage: "facts" as const,
+          category: "cash_changed" as const,
+          operation: "read_account_safety_facts" as const,
+        },
       }));
+      if (reviewMode === "unavailable") {
+        runOrder.mockRejectedValueOnce(new Error("secret provider body must not persist"));
+      }
 
       const result = await executeFinanceIntradayDecision({
         directory,
@@ -479,7 +637,10 @@ describe("intraday decision execution bridge", () => {
       });
 
       expect(result).toMatchObject({ status: "refused" });
-      const reviewFailed = reviewMode === "unavailable" || reviewMode === "output_truncated";
+      const reviewFailed =
+        reviewMode === "unavailable" ||
+        reviewMode === "output_truncated" ||
+        reviewMode === "provider_payment_required";
       expect(runOrder).toHaveBeenCalledTimes(reviewFailed ? 1 : 0);
       const outcome = await readFinanceIntradayOutcome(directory, signalId);
       expect(outcome).toMatchObject({
@@ -487,8 +648,8 @@ describe("intraday decision execution bridge", () => {
         tradeDecisionReview:
           reviewMode === "unavailable"
             ? { status: "failed", failureCode: "reviewer_unavailable" }
-            : reviewMode === "output_truncated"
-              ? { status: "failed", failureCode: "output_truncated" }
+            : reviewMode === "output_truncated" || reviewMode === "provider_payment_required"
+              ? { status: "failed", failureCode: reviewMode }
               : reviewMode === "invalid"
                 ? { status: "failed", failureCode: "output_invalid" }
                 : {
@@ -496,10 +657,20 @@ describe("intraday decision execution bridge", () => {
                     decision: { candidateId: signalId, decision: "veto" },
                   },
       });
-      if (reviewFailed) {
+      if (reviewMode === "unavailable") {
+        expect(outcome?.reasons).toEqual(["intraday_execution_unexpected_error"]);
+        expect(outcome?.executionSafetyFailure).toBeUndefined();
+        expect(JSON.stringify(outcome)).not.toContain("secret provider body");
+      } else if (reviewFailed) {
         expect(outcome?.reasons).toEqual(["shared execution gate refusal"]);
+        expect(outcome?.executionSafetyFailure).toEqual({
+          stage: "facts",
+          category: "cash_changed",
+          operation: "read_account_safety_facts",
+        });
       } else {
         expect(outcome?.reasons.join()).toMatch(/model veto|violated candidate binding/u);
+        expect(outcome?.executionSafetyFailure).toBeUndefined();
       }
     },
   );
@@ -520,6 +691,8 @@ describe("intraday decision execution bridge", () => {
           reason: "opening_range_breakout",
           referencePrice: 500,
           referencePriceAt: "2026-09-18T15:00:00.000Z",
+          stopPrice: 498,
+          targetPrice: 504,
           datasetHeadRef: "d".repeat(64),
           strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE,
           strategyBinding,

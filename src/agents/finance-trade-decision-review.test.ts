@@ -307,9 +307,14 @@ describe("configured finance trade decision reviewer", () => {
     expect(adapterFactory).toHaveBeenCalledTimes(2);
   });
 
-  it("does not retry provider errors other than explicit output truncation", async () => {
+  it.each([
+    "provider_rate_limit",
+    "provider_payment_required",
+    "prompt_input_invalid",
+    "prompt_budget_exceeded",
+  ] as const)("does not retry provider error %s", async (failureCode) => {
     const model = adapter(null);
-    vi.mocked(model.invoke).mockRejectedValueOnce(new ModelAdapterError("provider_rate_limit"));
+    vi.mocked(model.invoke).mockRejectedValueOnce(new ModelAdapterError(failureCode));
     const adapterFactory = vi.fn(() => model);
     const reviewer = createFinanceTradeDecisionReviewer({} as OpenClawConfig, { adapterFactory });
 
@@ -317,7 +322,7 @@ describe("configured finance trade decision reviewer", () => {
 
     expect(result).toMatchObject({
       status: "failed",
-      failureCode: "provider_rate_limit",
+      failureCode,
       modelCalls: 1,
     });
     expect(adapterFactory).toHaveBeenCalledOnce();

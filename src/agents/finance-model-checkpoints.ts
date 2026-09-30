@@ -4,6 +4,7 @@ import {
   openFinanceRunCheckpoints,
   type FinanceCheckpointOptions,
 } from "./finance-run-checkpoints.js";
+import { ModelAdapterError } from "./logical-agent-model-router.js";
 import type { LogicalAgentModelInvoker, LogicalAgentModelRouting } from "./logical-agent-pool.js";
 
 export type FinanceModelCheckpointOptions = FinanceCheckpointOptions & { maxModelCalls: number };
@@ -85,6 +86,7 @@ export function openFinanceModelCheckpoints(
       const finish = (
         transportOutcome: string,
         contractCheck?: { passed: boolean; detail?: string },
+        failureCode?: string,
       ) => {
         if (!closed) {
           store.complete(key, reservation.token, {
@@ -94,6 +96,7 @@ export function openFinanceModelCheckpoints(
             // Transport return is not output-contract acceptance or stage success.
             contractAcceptance: "not_assessed",
             ...(contractCheck ? { contractCheck } : {}),
+            ...(failureCode ? { failureCode } : {}),
           });
         }
       };
@@ -101,7 +104,11 @@ export function openFinanceModelCheckpoints(
       try {
         result = await call();
       } catch (error) {
-        finish(signal.aborted ? "aborted" : "threw");
+        finish(
+          signal.aborted ? "aborted" : "threw",
+          undefined,
+          error instanceof ModelAdapterError ? error.code : "adapter_error",
+        );
         throw error;
       }
       let contractCheck: { passed: boolean; detail?: string } | undefined;

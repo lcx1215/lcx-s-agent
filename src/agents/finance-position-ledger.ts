@@ -45,6 +45,8 @@ import type { FinanceExecutionReceipt } from "./finance-execution-adapter.js";
 import {
   FINANCE_DECISION_REFERENCE_SOURCES,
   FINANCE_EXECUTION_RECEIPT_SCHEMA,
+  financeExecutionResearchLineageSchema,
+  financeExecutionTargetWeightAuthorizationSchema,
   fingerprintFinanceExecutionReceipts,
 } from "./finance-execution-adapter.js";
 import { financePositionLedgerPath } from "./finance-state-dir.js";
@@ -290,6 +292,8 @@ const FinanceExecutionReceiptRecordSchema = z
       })
       .strict()
       .optional(),
+    researchLineage: financeExecutionResearchLineageSchema.optional(),
+    targetWeightAuthorization: financeExecutionTargetWeightAuthorizationSchema.optional(),
     runAuthorizationId: z.string(),
     adapterId: Text,
     adapterKind: z.enum(["paper", "venue"]),

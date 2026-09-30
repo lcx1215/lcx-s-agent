@@ -450,16 +450,43 @@ requesting a retained method, or declaring a dependency on it preserves that
 requirement. Default dependencies connect mandatory lanes; explicit DAG edges
 are preserved. Portfolio, arithmetic and causal requirements are not removed.
 
-`requiredEvidenceReady` reports whether mandatory module outputs survived full
-quality review and remain in the evidence packet. `allNodesSucceeded` and
-`moduleToolsDispatched` still report complete module coverage; they stay false
-when an optional lens is missing. The receipt retains every optional failure and
-its source gap. The soft-replan budget governs further attempts, not permission to
-claim unavailable methods succeeded. Candidate status remains separate from
-execution authority.
+`requiredEvidenceReady` reports whether mandatory module outputs are present in
+the evidence packet; it is independent of the separate quality gate.
+`allNodesSucceeded` and `moduleToolsDispatched` report complete module coverage
+and remain false when an optional lens is missing. The receipt retains every
+optional failure and its source gap. The soft-replan budget governs further
+attempts, not permission to claim unavailable methods succeeded. Candidate status remains separate from
+execution authority, and the source and quality gates still apply independently.
 
 Domain module evidence places a bounded analytical summary, confidence, risk and
 invalidation before repeated tool-call metadata, so prompt clipping does not hide
 the useful result behind execution bookkeeping. The summary remains model analysis,
 not independent source verification; full tool output and source references remain
 in the receipt. Clipped text does not count as fully reviewed evidence.
+
+Quality repairs retain clean source preparation and rerun drafting and all
+artifact-dependent reviews. A truncated independent final review gets one retry
+with the same eligible reviewer, within the existing call and cancellation budgets.
+Batch extraction findings join the version-bound final finding packet; early
+revision no longer vetoes a correction that an independent reviewer has explicitly
+closed. Missing batch coverage and unresolved findings still block admission.
+
+Packet-local preparation does not demand raw evidence assigned to other packets;
+global completeness remains the responsibility of the final batch audits and
+independent precheck. Evidence relations describe their relationship to the claim,
+so a source showing conflicting values supports a claim describing that conflict.
+Payment, authentication, rate-limit and exhausted-call-budget failures stop a
+whole-workflow repair when a required stage remains unavailable. A successful
+model fallback still permits ordinary artifact repair. Failed later attempts
+retain the earlier unapproved artifact for offline diagnosis, never execution.
+
+Controller history stays compact for model context. The controller supplies its
+daily rows privately to the existing numerical engine and appends citeable trend
+and volatility results. The history window includes the complete prior anchor
+month; conflicting observations remain visible and are not used for derivation.
+
+Allocation proposals may explicitly withhold a strategy's capital with a supported
+zero fraction while funding another active strategy. All-zero proposals retain the
+separate `no_allocation` contract. Zero fractions create no liquidation targets or
+stance conflicts. The daily consumer defers declared intraday budgets to their own
+controller and preserves remaining fractions, evidence lineage and account checks.

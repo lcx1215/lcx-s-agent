@@ -121,9 +121,9 @@ type GatewayAgentResponse = {
 };
 
 const LEARNING_COUNCIL_HEADINGS: Record<LearningCouncilRole, string> = {
-  kimi: "Kimi synthesis",
-  minimax: "MiniMax challenge",
-  deepseek: "DeepSeek extraction",
+  kimi: "Synthesis",
+  minimax: "Challenge",
+  deepseek: "Extraction",
 };
 
 const LEARNING_COUNCIL_CAPABILITIES: Record<LearningCouncilRole, LearningCouncilCapability> = {
@@ -1485,7 +1485,7 @@ async function runLearningCouncilRole(params: {
   const model = resolveLearningCouncilModel(params.role, params.cfg);
   const capability = LEARNING_COUNCIL_CAPABILITIES[params.role];
   const providerFamily = resolveLearningCouncilProviderFamily(model);
-  const heading = LEARNING_COUNCIL_HEADINGS[params.role];
+  const heading = `${LEARNING_COUNCIL_HEADINGS[params.role]} (${model})`;
   const transport = params.transport ?? resolveLearningCouncilTransport();
   const sessionKey = `${params.baseSessionKey}:${params.role}`;
   try {

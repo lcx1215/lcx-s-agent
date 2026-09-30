@@ -290,9 +290,16 @@ const HORIZON_PATTERN =
  * 成交 alone is deliberately NOT matched: "成交额" (turnover) and "成交量" (volume) are market
  * commentary, not claims about a fill. Only the completed-claim constructions are matched, and
  * 已执行 is bound to a trade verb so that "该策略已执行回测" is not read as a fill.
+ * Schedule wording and a descriptor such as "executed monthly signal" do not assert a broker
+ * fill. Other `executed at ...` and all `filled at ...` claims remain execution claims.
  */
 const EXECUTION_CLAIM_PATTERN =
-  /已下单|下单成功|已经买入|已经卖出|已开仓|已平仓|交易已完成|转账成功|已(?:成交|建仓|加仓|减仓|清仓|交割|报单)|已委托[^。！？?\n]{0,6}(?:买入|卖出|下单|成交|交易)|(?:已|已经)[^。！？?\n]{0,8}成交(?!额|量)|已执行(?:买入|卖出|下单|交易|委托)|(?:交易|委托|订单|指令)已执行|(?:委托|订单|报单)已成交|成交完成|order filled|order placed|position opened|position closed|funds transferred|(?:\b(?:your|the|an?)\s+)?[A-Z][A-Z0-9.-]{1,9}\s+order\b.{0,24}\b(?:executed|filled|placed|completed)\b|\b(?:filled|executed)\b\s+(?:\d+|[A-Z][A-Z0-9.-]{1,9}\b)|\b(?:i|we)\s+(?:bought|sold|purchased|opened|closed|exited)\b/iu;
+  /已下单|下单成功|已经买入|已经卖出|已开仓|已平仓|交易已完成|转账成功|已(?:成交|建仓|加仓|减仓|清仓|交割|报单)|已委托[^。！？?\n]{0,6}(?:买入|卖出|下单|成交|交易)|(?:已|已经)[^。！？?\n]{0,8}成交(?!额|量)|已执行(?:买入|卖出|下单|交易|委托)|(?:交易|委托|订单|指令)已执行|(?:委托|订单|报单)已成交|成交完成|order filled|order placed|position opened|position closed|funds transferred|(?:\b(?:your|the|an?)\s+)?[A-Z][A-Z0-9.-]{1,9}\s+order\b.{0,24}\b(?:executed|filled|placed|completed)\b|\bfilled\b\s+(?:\d+|[A-Z][A-Z0-9.-]{1,9}\b)|\bexecuted\b\s+(?!at\s+the\s+next\s+tradable\s+point\b|(?:monthly|daily|weekly|intraday)\s+signal\b)(?:\d+|[A-Z][A-Z0-9.-]{1,9}\b)|\b(?:i|we)\s+(?:bought|sold|purchased|opened|closed|exited)\b/iu;
+
+/** Shared by mode admission and final quality review so the two gates cannot drift. */
+export function hasFinanceExecutionClaim(answer: string): boolean {
+  return EXECUTION_CLAIM_PATTERN.test(answer);
+}
 
 function hasCitedSupportingEvidence(context: FinanceDecisionCandidateContext): boolean {
   const evidenceIds = new Set(
@@ -380,7 +387,7 @@ export function evaluateFinanceDecisionPolicy(params: {
   const failedReasons: string[] = [];
   const requiredEvidence: string[] = [];
 
-  if (EXECUTION_CLAIM_PATTERN.test(answer) && mode !== "live_execution") {
+  if (hasFinanceExecutionClaim(answer) && mode !== "live_execution") {
     failedReasons.push("finance_execution_claim_forbidden");
   }
 

@@ -1,17 +1,167 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { FinanceCommitteeEvidence } from "./finance-agent-committee.js";
+import { readFinanceBarLedger } from "./finance-bar-ledger.js";
 import { readFinanceBrokerProfitFeedback } from "./finance-broker-profit-feedback.js";
-import { financeEtClock } from "./finance-cycle-schedule.js";
+import { financeEtClock, latestCompletedWeekdaySessionDate } from "./finance-cycle-schedule.js";
 import {
   readFinanceIntradayDecisions,
   readFinanceIntradayOutcome,
 } from "./finance-intraday-control-ledger.js";
-import { readFinancePositionLedger } from "./finance-position-ledger.js";
+import { projectFinancePositions, readFinancePositionLedger } from "./finance-position-ledger.js";
+import { buildFinanceMonthlyTrendDerivedEvidence } from "./finance-research-evidence.js";
 import { readFinanceStrategyRuleLedger } from "./finance-strategy-rule-ledger.js";
 
 export const FINANCE_NIGHT_REVIEW_CONTEXT_SCHEMA_VERSION =
   "lcx_finance_night_review_context_v1" as const;
+export const FINANCE_NIGHT_RESEARCH_SCOPE_SCHEMA_VERSION =
+  "lcx_finance_night_research_scope_v1" as const;
+export const FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_ID = "finance-night:research-scope" as const;
+export const FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_SOURCE = "finance-night-research-scope" as const;
+export const FINANCE_NIGHT_RESEARCH_SCOPE_MAX_INSTRUMENTS = 14;
+
+function financeControllerHistoryMonths(
+  activeRules: readonly Readonly<{
+    body?: unknown;
+  }>[],
+): number {
+  return Math.max(
+    12,
+    ...activeRules.map((rule) => {
+      const frozen =
+        rule.body && typeof rule.body === "object" && "frozenRule" in rule.body
+          ? rule.body.frozenRule
+          : undefined;
+      const lookback =
+        frozen && typeof frozen === "object" && "lookbackMonths" in frozen
+          ? frozen.lookbackMonths
+          : undefined;
+      return typeof lookback === "number" &&
+        Number.isInteger(lookback) &&
+        lookback > 0 &&
+        lookback <= 120
+        ? lookback
+        : 0;
+    }),
+  );
+}
+
+export type FinanceNightResearchInstrument = Readonly<{
+  instrument: string;
+  assetClass: "us_equity" | "crypto";
+  reasons: readonly ("held_position" | "active_strategy")[];
+}>;
+
+export type FinanceNightResearchScope = Readonly<{
+  schemaVersion: typeof FINANCE_NIGHT_RESEARCH_SCOPE_SCHEMA_VERSION;
+  asOf: string;
+  activeStrategyIds: readonly string[];
+  instruments: readonly FinanceNightResearchInstrument[];
+}>;
+
+function financeNightResearchAssetClass(instrument: string): "us_equity" | "crypto" {
+  const normalized = instrument.trim().toUpperCase();
+  if (/^[A-Z0-9]{2,12}\/USD$/u.test(normalized)) {
+    return "crypto";
+  }
+  if (/^[A-Z]{1,5}(?:\.[A-Z])?$/u.test(normalized)) {
+    return "us_equity";
+  }
+  throw new Error(`night research scope contains unsupported instrument identity: ${instrument}`);
+}
+
+function buildFinanceNightResearchScope(params: {
+  asOf: string;
+  positions: Awaited<ReturnType<typeof readFinancePositionLedger>>["ledger"]["positions"];
+  activeRules: readonly Readonly<{ ruleId: string; instruments: readonly string[] }>[];
+}): FinanceNightResearchScope {
+  const instruments = new Map<
+    string,
+    {
+      instrument: string;
+      assetClass: "us_equity" | "crypto";
+      reasons: Set<"held_position" | "active_strategy">;
+    }
+  >();
+  const add = (rawInstrument: string, reason: "held_position" | "active_strategy") => {
+    const instrument = rawInstrument.trim().toUpperCase();
+    const assetClass = financeNightResearchAssetClass(instrument);
+    const key = `${assetClass}:${instrument}`;
+    const existing = instruments.get(key) ?? { instrument, assetClass, reasons: new Set() };
+    existing.reasons.add(reason);
+    instruments.set(key, existing);
+  };
+  for (const position of params.positions) {
+    if (position.quantity !== 0) {
+      add(position.instrument, "held_position");
+    }
+  }
+  for (const rule of params.activeRules) {
+    for (const instrument of rule.instruments) {
+      add(instrument, "active_strategy");
+    }
+  }
+  if (instruments.size === 0) {
+    throw new Error("night research scope has no held positions or active strategy instruments");
+  }
+  if (instruments.size > FINANCE_NIGHT_RESEARCH_SCOPE_MAX_INSTRUMENTS) {
+    throw new Error(
+      `night research scope exceeds ${FINANCE_NIGHT_RESEARCH_SCOPE_MAX_INSTRUMENTS} instruments`,
+    );
+  }
+  return Object.freeze({
+    schemaVersion: FINANCE_NIGHT_RESEARCH_SCOPE_SCHEMA_VERSION,
+    asOf: params.asOf,
+    activeStrategyIds: Object.freeze(params.activeRules.map((rule) => rule.ruleId)),
+    instruments: Object.freeze(
+      [...instruments.values()].map((item) =>
+        Object.freeze({
+          instrument: item.instrument,
+          assetClass: item.assetClass,
+          reasons: Object.freeze([...item.reasons].toSorted()),
+        }),
+      ),
+    ),
+  });
+}
+
+function projectFinanceNightPositionsAtAsOf(params: {
+  positionRead: Awaited<ReturnType<typeof readFinancePositionLedger>>;
+  asOf: string;
+}) {
+  const cutoff = Date.parse(params.asOf);
+  const receipts = params.positionRead.receipts.filter(
+    (receipt) =>
+      Date.parse(receipt.recordedAt) <= cutoff && Date.parse(receipt.fill.filledAt) <= cutoff,
+  );
+  return Object.freeze({
+    receipts,
+    ledger: projectFinancePositions({ receipts, marks: params.positionRead.marks }),
+  });
+}
+
+/** Rebuild the exact night scope from the current controller ledgers at the supplied cutoff. */
+export async function readFinanceNightReviewResearchScope(params: {
+  directory: string;
+  asOf: string;
+}): Promise<FinanceNightResearchScope> {
+  const [positions, strategyRules] = await Promise.all([
+    readFinancePositionLedger(params.directory, { asOf: params.asOf }),
+    readFinanceStrategyRuleLedger(params.directory, { asOf: params.asOf }),
+  ]);
+  const activeRules = strategyRules.ledger.rules
+    .filter((rule) => rule.state === "active")
+    .map((rule) => ({ ruleId: rule.ruleId, instruments: rule.instruments }));
+  const positionsAtAsOf = projectFinanceNightPositionsAtAsOf({
+    positionRead: positions,
+    asOf: params.asOf,
+  });
+  return buildFinanceNightResearchScope({
+    asOf: params.asOf,
+    positions: positionsAtAsOf.ledger.positions,
+    activeRules,
+  });
+}
 
 export type FinanceNightSettlementSummary = Readonly<{
   scoredFiled: Readonly<{ appended: number; skipped: number }>;
@@ -38,7 +188,228 @@ function compactReceipt(
     referencePriceAt: receipt.referencePriceAt,
     recordedAt: receipt.recordedAt,
     fill: receipt.fill ?? null,
+    ...(receipt.researchLineage === undefined
+      ? {}
+      : {
+          researchLineageSummary: {
+            planReceiptId: receipt.researchLineage.portfolioPlan.provenance?.receiptId ?? null,
+            planAsOf: receipt.researchLineage.portfolioPlan.asOf,
+            targetWeight: receipt.researchLineage.targetWeight,
+            contributions: receipt.researchLineage.contributions.map((contribution) => ({
+              strategyId: contribution.strategyId,
+              evidenceReceiptId: contribution.evidenceReceiptId,
+              stance: contribution.stance,
+              accountWeight: contribution.accountWeight,
+            })),
+          },
+        }),
   };
+}
+
+/** Read the same controller book used by execution; never infer activation from an ID. */
+export async function buildFinanceActiveStrategyResearchEvidence(params: {
+  directory: string;
+  asOf: string;
+  /** When supplied, every requested id must name a rule active at `asOf`. */
+  strategyIds?: readonly string[];
+}): Promise<readonly FinanceCommitteeEvidence[]> {
+  const snapshot = await readFinanceStrategyRuleLedger(params.directory, { asOf: params.asOf });
+  const allActiveRules = snapshot.ledger.rules.filter((rule) => rule.state === "active");
+  const requestedIds = params.strategyIds;
+  if (requestedIds) {
+    const requested = new Set(requestedIds);
+    if (requested.size !== requestedIds.length || requestedIds.some((id) => !id.trim())) {
+      throw new Error("portfolio activeStrategyIds must be unique nonempty controller rule ids");
+    }
+    const activeById = new Map(allActiveRules.map((rule) => [rule.ruleId, rule]));
+    const unavailable = requestedIds.filter((id) => !activeById.has(id));
+    if (unavailable.length > 0) {
+      throw new Error(
+        `portfolio strategies are not active in the controller ledger at asOf: ${unavailable.join(", ")}`,
+      );
+    }
+  }
+  const activeRules = requestedIds
+    ? requestedIds.map((id) => allActiveRules.find((rule) => rule.ruleId === id)!)
+    : allActiveRules;
+  const instruments = [...new Set(activeRules.flatMap((rule) => rule.instruments))];
+  if (requestedIds && instruments.length === 0) {
+    throw new Error("controller active strategies declare no research instruments");
+  }
+  if (instruments.length > 14) {
+    throw new Error("active strategy history exceeds controller evidence budget");
+  }
+  const months = financeControllerHistoryMonths(activeRules);
+  const start = new Date(params.asOf);
+  // The prior anchor can close before today's day-of-month. Retain its whole
+  // calendar month rather than silently dropping a valid 12-month comparison.
+  start.setUTCDate(1);
+  start.setUTCMonth(start.getUTCMonth() - months - 1);
+  const fromDate = start.toISOString().slice(0, 10);
+  const toDate = latestCompletedWeekdaySessionDate(params.asOf);
+  const histories = await Promise.all(
+    instruments.map(async (instrument) => {
+      const book = await readFinanceBarLedger(params.directory, { instrument, asOf: params.asOf });
+      const rawWindow = book.bars.filter((bar) => bar.date >= fromDate && bar.date <= toDate);
+      // This is a close-only projection: differing OHLC records with the same close
+      // must not manufacture extra return observations. Conflicting closes remain.
+      const window = [
+        ...new Map(rawWindow.map((bar) => [JSON.stringify([bar.date, bar.close]), bar])).values(),
+      ];
+      const bars = window.slice(-400);
+      const monthEndDates = new Map<string, string>();
+      for (const bar of bars) {
+        const month = bar.date.slice(0, 7);
+        const prior = monthEndDates.get(month);
+        if (!prior || bar.date > prior) {
+          monthEndDates.set(month, bar.date);
+        }
+      }
+      const monthlyCloseObservations = [...monthEndDates.entries()]
+        .toSorted(([left], [right]) => left.localeCompare(right))
+        .map(([month, sessionDate]) => ({
+          month,
+          sessionDate,
+          closeValues: [
+            ...new Set(bars.filter((bar) => bar.date === sessionDate).map((bar) => bar.close)),
+          ].toSorted((left, right) => left - right),
+        }));
+      const divergentDates = book.divergentDates.filter((key) => {
+        const date = key.slice(key.lastIndexOf("@") + 1);
+        return date >= fromDate && date <= toDate;
+      });
+      const evidence: FinanceCommitteeEvidence = {
+        id: `finance-controller:eod:${instrument}`,
+        source: "finance-bar-ledger",
+        timestamp: params.asOf,
+        text: JSON.stringify({
+          instrument,
+          headRef: book.headRef,
+          fromDate,
+          toDate,
+          windowBarCount: window.length,
+          rawBarCount: rawWindow.length,
+          collapsedRepeatedCloses: rawWindow.length - window.length,
+          uniqueSessionDates: new Set(window.map((bar) => bar.date)).size,
+          suppliedBarCount: bars.length,
+          omittedByLimit: window.length - bars.length,
+          divergentDates,
+          divergentCloseObservations: divergentDates.map((key) => {
+            const sessionDate = key.slice(key.lastIndexOf("@") + 1);
+            return {
+              sessionDate,
+              closeValues: [
+                ...new Set(
+                  window.filter((bar) => bar.date === sessionDate).map((bar) => bar.close),
+                ),
+              ].toSorted((left, right) => left - right),
+            };
+          }),
+          boundary:
+            "stored historical observations summarized to the last supplied session per calendar month; conflicts remain explicit; not a daily-volatility input, execution quote or independently verified adjusted total return series",
+          columns: ["month", "sessionDate", "closeValues"],
+          monthlyCloseObservations,
+        }),
+      };
+      return {
+        evidence,
+        // Keep daily rows out of model context while the existing numerical engine
+        // still receives its actual inputs. The durable book and headRef retain them.
+        calculationInput: {
+          ...evidence,
+          text: JSON.stringify({
+            instrument,
+            divergentDates,
+            suppliedBarCount: bars.length,
+            closes: bars.map((bar) => [bar.date, bar.close]),
+          }),
+        },
+      };
+    }),
+  );
+  const activeStrategyEvidence: FinanceCommitteeEvidence = {
+    id: "finance-controller:active-strategies",
+    source: "finance-strategy-rule-ledger",
+    timestamp: params.asOf,
+    text: JSON.stringify({
+      boundary:
+        "controller state only; activation does not prove readiness, performance or Live authority",
+      ruleScope:
+        "Review these declared rule bodies; generic method-kit examples do not replace the active rule parameters.",
+      activeRules: activeRules.map((rule) => ({
+        ruleId: rule.ruleId,
+        form: rule.form,
+        formVersion: rule.formVersion,
+        instruments: rule.instruments,
+        emits: rule.emits,
+        schedule: rule.schedule,
+        declaredAt: rule.declaredAt,
+        body: rule.body,
+        declarationClaimBoundary:
+          "body (including openRisks) contains owner claims as of declaredAt; it is not current runtime policy or readiness",
+        currentRuntimePolicyAndReadiness: "unknown_without_separately_timestamped_current_evidence",
+        activeObservedAt: rule.activeObservedAt,
+        provenance: rule.provenance,
+      })),
+    }),
+  };
+  return [
+    activeStrategyEvidence,
+    ...histories.map((history) => history.evidence),
+    ...buildFinanceMonthlyTrendDerivedEvidence(
+      [activeStrategyEvidence, ...histories.map((history) => history.calculationInput)],
+      params.asOf,
+    ),
+  ];
+}
+
+/** Resolve exact active rule instruments together with their controller evidence. */
+export async function readFinanceActiveStrategyResearchScope(params: {
+  directory: string;
+  asOf: string;
+  strategyIds: readonly string[];
+}): Promise<
+  Readonly<{
+    instruments: readonly string[];
+    intradayInstruments: readonly string[];
+    historyMonths: number;
+    evidence: readonly FinanceCommitteeEvidence[];
+  }>
+> {
+  const evidence = await buildFinanceActiveStrategyResearchEvidence(params);
+  const activeStrategyEvidence = evidence.find(
+    (item) => item.id === "finance-controller:active-strategies",
+  );
+  if (!activeStrategyEvidence) {
+    throw new Error("controller active strategy evidence is missing");
+  }
+  const payload = JSON.parse(activeStrategyEvidence.text) as {
+    activeRules?: readonly {
+      instruments?: readonly unknown[];
+      schedule?: { kind?: unknown };
+      body?: unknown;
+    }[];
+  };
+  const normalizeRuleInstruments = (rule: { instruments?: readonly unknown[] }) =>
+    (rule.instruments ?? []).flatMap((instrument) =>
+      typeof instrument === "string" && instrument.trim() ? [instrument.trim().toUpperCase()] : [],
+    );
+  const activeRules = payload.activeRules ?? [];
+  const instruments = [...new Set(activeRules.flatMap(normalizeRuleInstruments))];
+  const intradayInstruments = [
+    ...new Set(
+      activeRules.flatMap((rule) =>
+        rule.schedule?.kind === "intraday" ? normalizeRuleInstruments(rule) : [],
+      ),
+    ),
+  ];
+  const historyMonths = financeControllerHistoryMonths(activeRules);
+  return Object.freeze({
+    instruments: Object.freeze(instruments),
+    intradayInstruments: Object.freeze(intradayInstruments),
+    historyMonths,
+    evidence,
+  });
 }
 
 export async function buildFinanceNightReviewEvidence(params: {
@@ -46,6 +417,8 @@ export async function buildFinanceNightReviewEvidence(params: {
   asOf: string;
   etDate: string;
   settlement: FinanceNightSettlementSummary;
+  /** Include a fail-closed typed scope only for scheduler night research runs. */
+  includeResearchScope?: boolean;
 }): Promise<readonly FinanceCommitteeEvidence[]> {
   const [positions, strategyRules, decisions, brokerProfit] = await Promise.all([
     readFinancePositionLedger(params.directory, { asOf: params.asOf }),
@@ -73,13 +446,41 @@ export async function buildFinanceNightReviewEvidence(params: {
       instruments: rule.instruments,
       emits: rule.emits,
       schedule: rule.schedule,
+      declaredAt: rule.declaredAt,
+      body: rule.body,
+      declarationClaimBoundary:
+        "body (including openRisks) contains owner claims as of declaredAt; it is not current runtime policy or readiness",
+      currentRuntimePolicyAndReadiness: "unknown_without_separately_timestamped_current_evidence",
       activeObservedAt: rule.activeObservedAt,
       provenance: rule.provenance,
     }));
+  const positionsAtAsOf = projectFinanceNightPositionsAtAsOf({
+    positionRead: positions,
+    asOf: params.asOf,
+  });
+  const researchScope = params.includeResearchScope
+    ? buildFinanceNightResearchScope({
+        asOf: params.asOf,
+        positions: positionsAtAsOf.ledger.positions,
+        activeRules,
+      })
+    : undefined;
+  const controllerEodEvidence =
+    params.includeResearchScope && activeRules.length > 0
+      ? (
+          await buildFinanceActiveStrategyResearchEvidence({
+            directory: params.directory,
+            asOf: params.asOf,
+            strategyIds: activeRules.map((rule) => rule.ruleId),
+          })
+        ).filter((item) => item.id.startsWith("finance-controller:eod:"))
+      : [];
+  const asOfMs = Date.parse(params.asOf);
   const dayReceipts = positions.receipts
     .filter(
       (receipt) =>
-        receipt.recordedAt <= params.asOf &&
+        Date.parse(receipt.recordedAt) <= asOfMs &&
+        Date.parse(receipt.fill.filledAt) <= asOfMs &&
         financeEtClock(new Date(receipt.recordedAt)).date === params.etDate,
     )
     .slice(-100)
@@ -110,6 +511,7 @@ export async function buildFinanceNightReviewEvidence(params: {
                     unallocatedFeeActivityCount: account.unallocatedFeeActivityCount,
                     attributedFillCount: account.strategyAttribution.attributedFillCount,
                     unattributedFillCount: account.strategyAttribution.unattributedFillCount,
+                    decisionSourceLineage: account.strategyAttribution.decisionSourceLineage,
                     observedAt: account.observedAt,
                     freshness: account.freshness,
                   }
@@ -164,14 +566,14 @@ export async function buildFinanceNightReviewEvidence(params: {
       timestamp: params.asOf,
       text: JSON.stringify({
         headRef: positions.headRef,
-        receiptCount: positions.receiptRecordCount,
-        positions: positions.ledger.positions,
+        receiptCount: positionsAtAsOf.receipts.length,
+        positions: positionsAtAsOf.ledger.positions,
         pnlBasis: "ledger_projection_not_broker_reconciled_net_profit",
         costsReconciled: false,
         brokerProfit,
-        realizedPnl: positions.ledger.realizedPnl,
-        unrealizedPnl: positions.ledger.unrealizedPnl,
-        instrumentsWithoutMark: positions.ledger.instrumentsWithoutMark,
+        realizedPnl: positionsAtAsOf.ledger.realizedPnl,
+        unrealizedPnl: positionsAtAsOf.ledger.unrealizedPnl,
+        instrumentsWithoutMark: positionsAtAsOf.ledger.instrumentsWithoutMark,
         dayReceipts,
       }),
     }),
@@ -187,6 +589,17 @@ export async function buildFinanceNightReviewEvidence(params: {
       timestamp: params.asOf,
       text: JSON.stringify({ decisions: outcomes }),
     }),
+    ...(researchScope
+      ? [
+          Object.freeze({
+            id: FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_ID,
+            source: FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_SOURCE,
+            timestamp: params.asOf,
+            text: JSON.stringify(researchScope),
+          }),
+        ]
+      : []),
+    ...controllerEodEvidence,
   ]);
 }
 

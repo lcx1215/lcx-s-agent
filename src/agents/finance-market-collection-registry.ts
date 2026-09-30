@@ -49,6 +49,8 @@ import { createRegisteredCapabilityAdapters } from "./finance-registered-capabil
 const SEC_USER_AGENT = "LCX Agent research-only contact=local";
 
 export const FINANCE_MARKET_COLLECTION_SCHEMA_VERSION = "lcx_finance_market_collection_v1" as const;
+export const FINANCE_MARKET_COLLECTION_MAX_RECORDS = 260;
+export const FINANCE_EOD_HISTORY_MAX_RECORDS = 280;
 
 export const FINANCE_MARKET_COLLECTION_KINDS = [
   "news",
@@ -224,8 +226,12 @@ function assertIsoDate(value: string | undefined, label: string): string | undef
 
 function normalizeRequest(request: FinanceMarketCollectionRequest): FinanceMarketCollectionRequest {
   const limit = request.limit ?? 20;
-  if (!Number.isInteger(limit) || limit <= 0 || limit > 250) {
-    throw new Error("limit must be an integer between 1 and 250");
+  const maxRecords =
+    request.collection === "eod_history"
+      ? FINANCE_EOD_HISTORY_MAX_RECORDS
+      : FINANCE_MARKET_COLLECTION_MAX_RECORDS;
+  if (!Number.isInteger(limit) || limit <= 0 || limit > maxRecords) {
+    throw new Error(`limit must be an integer between 1 and ${maxRecords}`);
   }
   return {
     instrument: requiredText(request.instrument, "instrument"),

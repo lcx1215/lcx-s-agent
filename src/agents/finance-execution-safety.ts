@@ -2,6 +2,14 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { acquireFileLock } from "../plugin-sdk/file-lock.js";
+import {
+  ALPACA_SAFETY_DIAGNOSTIC_STAGES,
+  ALPACA_SAFETY_FAILURE_CODES,
+} from "./finance-alpaca-safety-provider.js";
+import type {
+  AlpacaSafetyFailureCode,
+  AlpacaSafetyDiagnosticStage,
+} from "./finance-alpaca-safety-provider.js";
 import type {
   FinanceExecutionReconciliation,
   FinanceQuantityDifferenceIsolation,
@@ -14,6 +22,58 @@ import type {
   FinanceRiskBudget,
 } from "./finance-execution-adapter.js";
 import { stableStringify } from "./stable-stringify.js";
+
+export const FINANCE_EXECUTION_SAFETY_FAILURE_STAGES = [
+  "state",
+  "lock",
+  "journal",
+  "facts",
+  "reservation",
+] as const;
+export const FINANCE_EXECUTION_SAFETY_CONTROLLER_FAILURE_CATEGORIES = [
+  "quote_binding_missing",
+  "account_snapshot_unavailable",
+  "execution_recovery_incomplete",
+  "unresolved_execution_claims",
+  "terminal_order_mismatch",
+  "broker_reconciliation_blocked",
+  "broker_reconciliation_unavailable",
+  "positions_changed",
+  "cash_changed",
+] as const;
+export const FINANCE_EXECUTION_SAFETY_FAILURE_CATEGORIES = [
+  ...FINANCE_EXECUTION_SAFETY_CONTROLLER_FAILURE_CATEGORIES,
+  "unexpected",
+  "cancelled_or_expired",
+] as const;
+export const FINANCE_EXECUTION_SAFETY_FAILURE_OPERATIONS = [
+  "create_state_directory",
+  "resolve_state_directory",
+  "wait_for_account_queue",
+  "acquire_account_lock",
+  "read_execution_journal",
+  "read_account_safety_facts",
+  "reserve_execution_claim",
+] as const;
+
+export type FinanceExecutionSafetyFailure = Readonly<{
+  stage: (typeof FINANCE_EXECUTION_SAFETY_FAILURE_STAGES)[number];
+  category: (typeof FINANCE_EXECUTION_SAFETY_FAILURE_CATEGORIES)[number];
+  operation: (typeof FINANCE_EXECUTION_SAFETY_FAILURE_OPERATIONS)[number];
+  provider?: Readonly<{
+    reason: AlpacaSafetyFailureCode;
+    stage?: AlpacaSafetyDiagnosticStage;
+  }>;
+}>;
+
+type FinanceExecutionProtectiveOrderClaim = Readonly<{
+  id: string;
+  quantity: number;
+  stopPrice: number;
+  /** Omitted only by legacy stop claims. */
+  orderType?: "stop" | "stop_limit";
+  limitPrice?: number;
+}>;
 
 export type FinanceExecutionSafetyFacts = Readonly<{
   reconciliation?: FinanceExecutionReconciliation;
@@ -38,7 +98,7 @@ export type FinanceExecutionSafetyFacts = Readonly<{
   positionQuantity: number;
   reservedSellQuantity?: number;
   protectiveOrderIds?: readonly string[];
-  protectiveOrders?: readonly { id: string; quantity: number; stopPrice: number }[];
+  protectiveOrders?: readonly FinanceExecutionProtectiveOrderClaim[];
   openOrderIds: readonly string[];
   unresolvedOrderIds: readonly string[];
   account: Readonly<{
@@ -121,6 +181,43 @@ export function createFinanceExecutionSafetyContext(
   return token;
 }
 
+/** Fixed controller categories only; never persist raw exception text or credentials. */
+export class FinanceExecutionSafetyFactsError extends Error {
+  readonly category: (typeof FINANCE_EXECUTION_SAFETY_CONTROLLER_FAILURE_CATEGORIES)[number];
+  readonly provider?: Readonly<{
+    reason: AlpacaSafetyFailureCode;
+    stage?: AlpacaSafetyDiagnosticStage;
+  }>;
+
+  constructor(
+    category: (typeof FINANCE_EXECUTION_SAFETY_CONTROLLER_FAILURE_CATEGORIES)[number],
+    provider?: { reason: AlpacaSafetyFailureCode; stage?: AlpacaSafetyDiagnosticStage },
+  ) {
+    if (
+      !FINANCE_EXECUTION_SAFETY_CONTROLLER_FAILURE_CATEGORIES.some((item) => item === category) ||
+      (provider &&
+        (!ALPACA_SAFETY_FAILURE_CODES.some((item) => item === provider.reason) ||
+          (provider.stage !== undefined &&
+            !ALPACA_SAFETY_DIAGNOSTIC_STAGES.some((item) => item === provider.stage))))
+    ) {
+      throw new Error("invalid finance execution safety failure classification");
+    }
+    super(
+      provider
+        ? `${category}:${provider.reason}${provider.stage ? `:${provider.stage}` : ""}`
+        : category,
+    );
+    this.name = "FinanceExecutionSafetyFactsError";
+    this.category = category;
+    this.provider = provider
+      ? Object.freeze({
+          reason: provider.reason,
+          ...(provider.stage === undefined ? {} : { stage: provider.stage }),
+        })
+      : undefined;
+  }
+}
+
 export class FinanceExecutionSafetyUncertainError extends Error {
   readonly code = "finance_execution_safety_unknown";
   constructor(
@@ -150,7 +247,7 @@ export type FinanceExecutionSafetyClaim = {
     policy: FinanceExecutionSafetyPolicy;
     budget: FinanceRiskBudget;
     reconciliation?: FinanceExecutionReconciliation;
-    protectiveOrders?: readonly { id: string; quantity: number; stopPrice: number }[];
+    protectiveOrders?: readonly FinanceExecutionProtectiveOrderClaim[];
     positionQuantity?: number;
   }>;
   fill?: FinanceExecutionFill;
@@ -249,9 +346,13 @@ export async function withFinanceExecutionSafety(params: {
   ) => Promise<FinanceExecutionFill>;
 }): Promise<
   | { ok: true; fill: FinanceExecutionFill; receipt: FinanceExecutionReceipt }
-  | { ok: false; reasons: string[] }
+  | { ok: false; reasons: string[]; failure?: FinanceExecutionSafetyFailure }
 > {
-  const refuse = (reason: string) => ({ ok: false as const, reasons: [reason] });
+  const refuse = (reason: string, failure?: FinanceExecutionSafetyFailure) => ({
+    ok: false as const,
+    reasons: [reason],
+    ...(failure ? { failure: Object.freeze({ ...failure }) } : {}),
+  });
   const binding = params.context && issued.get(params.context);
   if (!binding) {
     return refuse("controller_execution_safety_context_required");
@@ -299,9 +400,13 @@ export async function withFinanceExecutionSafety(params: {
   let releaseQueue: (() => void) | undefined;
   let key: string | undefined;
   let tail: Promise<void> | undefined;
+  let failureStage: "state" | "lock" | "journal" | "facts" | "reservation" = "state";
+  let failureOperation: (typeof FINANCE_EXECUTION_SAFETY_FAILURE_OPERATIONS)[number] =
+    "create_state_directory";
   try {
     signal.throwIfAborted();
     await fs.mkdir(binding.stateDir, { recursive: true, mode: 0o700 });
+    failureOperation = "resolve_state_directory";
     const root = await fs.realpath(binding.stateDir);
     const accountKey = digest([binding.venue, binding.accountId]);
     const registeredRoot = accountRoots.get(accountKey);
@@ -317,14 +422,19 @@ export async function withFinanceExecutionSafety(params: {
     tail = prior.then(() => own);
     queues.set(key, tail);
     // Wait for the prior owner even after cancellation; then refuse before acquiring/dispatching.
+    failureOperation = "wait_for_account_queue";
     await bounded(prior, signal);
     signal.throwIfAborted();
+    failureStage = "lock";
+    failureOperation = "acquire_account_lock";
     const lock = await acquireFileLock(key, {
       stale: Infinity,
       retries: { retries: 20, factor: 1, minTimeout: 25, maxTimeout: 25 },
     });
     try {
       signal.throwIfAborted();
+      failureStage = "journal";
+      failureOperation = "read_execution_journal";
       const journal = await readJournal(key);
       const latest = new Map(journal.map((claim) => [claim.id, claim]));
       if ([...latest.values()].some((claim) => claim.status !== "confirmed")) {
@@ -339,6 +449,8 @@ export async function withFinanceExecutionSafety(params: {
       if (latest.has(id)) {
         return refuse("execution_safety_intent_already_claimed");
       }
+      failureStage = "facts";
+      failureOperation = "read_account_safety_facts";
       const observed = await bounded(
         Promise.resolve().then(() => binding.readFacts(signal)),
         signal,
@@ -476,6 +588,45 @@ export async function withFinanceExecutionSafety(params: {
       const notional =
         intent.quantity *
         Math.max(intent.referencePrice, intent.limitPrice ?? intent.referencePrice);
+      const targetAuthorization = intent.targetWeightAuthorization;
+      if (targetAuthorization !== undefined) {
+        if (
+          !Number.isFinite(targetAuthorization.targetWeight) ||
+          targetAuthorization.targetWeight < 0 ||
+          targetAuthorization.targetWeight > 1 ||
+          !Number.isFinite(targetAuthorization.driftBandFraction) ||
+          targetAuthorization.driftBandFraction < 0 ||
+          targetAuthorization.driftBandFraction > 1 ||
+          !Number.isFinite(targetAuthorization.maxOrderNotional) ||
+          targetAuthorization.maxOrderNotional < 0 ||
+          !positive(facts.account.equity) ||
+          !positive(facts.quote.price)
+        ) {
+          return refuse("execution_safety_target_weight_authorization_invalid");
+        }
+        const targetValue = targetAuthorization.targetWeight * facts.account.equity;
+        const currentValue = facts.positionQuantity * facts.quote.price;
+        const signedGap = targetValue - currentValue;
+        if (
+          !Number.isFinite(targetValue) ||
+          !Number.isFinite(currentValue) ||
+          !Number.isFinite(signedGap)
+        ) {
+          return refuse("execution_safety_target_weight_authorization_invalid");
+        }
+        const expectedSide = signedGap > 0 ? "buy" : signedGap < 0 ? "sell" : undefined;
+        const outsideBand = Math.max(
+          0,
+          Math.abs(signedGap) - targetAuthorization.driftBandFraction * facts.account.equity,
+        );
+        const freshNotionalCeiling = Math.min(outsideBand, targetAuthorization.maxOrderNotional);
+        if (expectedSide !== intent.side || freshNotionalCeiling <= 0) {
+          return refuse("execution_safety_target_weight_drift_no_longer_authorizes_side");
+        }
+        if (notional > freshNotionalCeiling + 0.01) {
+          return refuse("execution_safety_target_weight_drift_authorization_exceeded");
+        }
+      }
       if (
         !Number.isFinite(facts.account.grossExposure) ||
         facts.account.grossExposure < 0 ||
@@ -560,6 +711,8 @@ export async function withFinanceExecutionSafety(params: {
             : {}),
         },
       };
+      failureStage = "reservation";
+      failureOperation = "reserve_execution_claim";
       await appendJournal(key, claim);
       try {
         signal.throwIfAborted();
@@ -610,11 +763,29 @@ export async function withFinanceExecutionSafety(params: {
     if (error instanceof FinanceExecutionSafetyUncertainError) {
       throw error;
     }
-    return refuse(
-      signal.aborted
-        ? "execution_safety_cancelled_or_expired"
-        : "execution_safety_state_unavailable",
-    );
+    if (signal.aborted) {
+      return refuse("execution_safety_cancelled_or_expired", {
+        stage: failureStage,
+        category: "cancelled_or_expired",
+        operation: failureOperation,
+      });
+    }
+    if (error instanceof FinanceExecutionSafetyFactsError) {
+      return refuse(
+        `execution_safety_${error.category}${error.provider ? `:${error.provider.reason}${error.provider.stage ? `:${error.provider.stage}` : ""}` : ""}`,
+        {
+          stage: failureStage,
+          category: error.category,
+          operation: failureOperation,
+          ...(error.provider ? { provider: { ...error.provider } } : {}),
+        },
+      );
+    }
+    return refuse(`execution_safety_${failureStage}_unavailable`, {
+      stage: failureStage,
+      category: "unexpected",
+      operation: failureOperation,
+    });
   } finally {
     clearTimeout(timer);
     releaseQueue?.();

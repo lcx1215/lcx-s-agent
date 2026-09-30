@@ -78,6 +78,8 @@ export type CompileExecutionIntentParams = Readonly<{
   quantityOverride?: number;
   /** Trusted entry notional headroom; never resizes an exact closing quantity. */
   maxEntryNotional?: number;
+  /** Trusted controller notional ceiling for either order side. */
+  maxAuthorizedNotional?: number;
 }>;
 
 const DEFAULT_MIN_CONVICTION: Record<FinanceStrategyClass, number> = {
@@ -284,6 +286,31 @@ export function compileExecutionIntent(
           "note: an invalidation price was supplied, but this class stops on its stated condition; it is not carried as a stop price",
         );
       }
+    }
+  }
+
+  if (params.maxAuthorizedNotional !== undefined && params.quantityOverride === undefined) {
+    if (!Number.isFinite(params.maxAuthorizedNotional) || params.maxAuthorizedNotional < 0) {
+      refusals.push("refuse: authorized order notional must be finite and nonnegative");
+    } else if (Number.isFinite(market.referencePrice) && market.referencePrice > 0) {
+      const bounded = Math.min(
+        quantity,
+        Math.floor(params.maxAuthorizedNotional / market.referencePrice),
+      );
+      if (bounded < quantity) {
+        notes.push(
+          `order size reduced from ${quantity} to ${bounded} within controller authorization ${params.maxAuthorizedNotional}`,
+        );
+      }
+      quantity = bounded;
+    }
+  } else if (params.maxAuthorizedNotional !== undefined) {
+    if (
+      !Number.isFinite(params.maxAuthorizedNotional) ||
+      params.maxAuthorizedNotional < 0 ||
+      quantity * market.referencePrice > params.maxAuthorizedNotional
+    ) {
+      refusals.push("refuse: exact quantity exceeds controller authorized order notional");
     }
   }
 

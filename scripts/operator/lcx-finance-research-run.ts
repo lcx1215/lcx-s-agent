@@ -11,9 +11,22 @@ import {
 import type { FinanceDecisionMode } from "../../src/agents/finance-decision-policy.ts";
 import { resolveFinanceMarketCollectionRegistryOptionsFromEnv } from "../../src/agents/finance-market-collection-registry.ts";
 import { createFinanceModelWorkflow } from "../../src/agents/finance-model-workflow.ts";
+import {
+  FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_ID,
+  FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_SOURCE,
+  FINANCE_NIGHT_RESEARCH_SCOPE_MAX_INSTRUMENTS,
+  FINANCE_NIGHT_RESEARCH_SCOPE_SCHEMA_VERSION,
+  readFinanceActiveStrategyResearchScope,
+  readFinanceNightReviewResearchScope,
+  type FinanceNightResearchInstrument,
+  type FinanceNightResearchScope,
+} from "../../src/agents/finance-night-review-context.ts";
 import { resolveFinanceRealtimeSourceRegistryOptionsFromEnv } from "../../src/agents/finance-realtime-source-registry.ts";
 import {
+  buildDefaultFinanceResearchTargets,
+  financeResearchPortfolioContextSchema,
   runFinanceResearchRun,
+  readFinanceResearchEquityUniverseSnapshot,
   type FinanceResearchRunInput,
   type FinanceResearchRunReceipt,
 } from "../../src/agents/finance-research-runner.ts";
@@ -30,7 +43,10 @@ import {
 import type { LogicalAgentModelRouting } from "../../src/agents/logical-agent-model-router.ts";
 import { QUALITY_HARNESS_MAX_EVIDENCE_ITEMS } from "../../src/agents/quality-harness-contract.ts";
 import { loadConfig } from "../../src/config/config.ts";
-import { runCheckpointedFinanceResearch } from "./lcx-finance-research-checkpoint-run.ts";
+import {
+  FinanceResearchRunFailure,
+  runCheckpointedFinanceResearch,
+} from "./lcx-finance-research-checkpoint-run.ts";
 import { DEFAULT_WORKSPACE_DIR } from "./lcx-local-paths.ts";
 
 const execFileAsync = promisify(execFile);
@@ -78,7 +94,9 @@ type Options = {
   portfolioContextPath?: string;
   portfolioPlanOut?: string;
   controllerEvidencePath?: string;
+  controllerResearchScope: boolean;
   json: boolean;
+  schedulerSummary?: boolean;
 };
 
 class HelpRequestedError extends Error {
@@ -123,10 +141,12 @@ function usage(): string {
     "  --portfolio-context FILE           controller-owned active-strategy/account envelope",
     "  --portfolio-plan-out FILE          atomically write a verified portfolio plan",
     "  --controller-evidence FILE         timestamped controller-owned local evidence packet",
+    "  --controller-research-scope        target only the unique typed night scope in controller evidence (research_only)",
     "  --persist-theses                   store only fully gated, source-linked research thesis candidates",
     "  --finance-state-dir DIR            exact existing finance state root (required with --persist-theses)",
     "  --write                            write the full receipt to workspace state",
-    "  --json                             emit a bounded JSON summary",
+    "  --json                             emit a JSON summary",
+    "  --scheduler-summary                emit compact status and persisted receipt paths",
   ].join("\n");
 }
 
@@ -170,6 +190,7 @@ export function parseArgs(args: readonly string[]): Options {
     quality: true,
     write: false,
     persistTheses: false,
+    controllerResearchScope: false,
     modelId: DEFAULT_MODEL_ID,
     maxTokens: 8_192,
     timeoutMs: 120_000,
@@ -275,6 +296,8 @@ export function parseArgs(args: readonly string[]): Options {
     } else if (arg === "--controller-evidence") {
       options.controllerEvidencePath = path.resolve(readValue(args, index, arg));
       index += 1;
+    } else if (arg === "--controller-research-scope") {
+      options.controllerResearchScope = true;
     } else if (arg === "--persist-theses") {
       options.persistTheses = true;
     } else if (arg === "--finance-state-dir") {
@@ -282,6 +305,9 @@ export function parseArgs(args: readonly string[]): Options {
       index += 1;
     } else if (arg === "--write") {
       options.write = true;
+    } else if (arg === "--scheduler-summary") {
+      options.schedulerSummary = true;
+      options.json = true;
     } else if (arg === "--json") {
       options.json = true;
     } else if (arg === "--help" || arg === "-h") {
@@ -319,6 +345,18 @@ export function parseArgs(args: readonly string[]): Options {
   ) {
     throw new Error("--controller-evidence requires --live --workflow-models --write");
   }
+  if (options.controllerResearchScope && !options.controllerEvidencePath) {
+    throw new Error("--controller-research-scope requires --controller-evidence");
+  }
+  if (options.controllerResearchScope && !options.financeStateDir) {
+    throw new Error("--controller-research-scope requires --finance-state-dir");
+  }
+  if (options.controllerResearchScope && options.decisionMode !== "research_only") {
+    throw new Error("--controller-research-scope requires --decision-mode research_only");
+  }
+  if (options.controllerResearchScope && options.portfolioContextPath) {
+    throw new Error("--controller-research-scope cannot be combined with --portfolio-context");
+  }
   if (
     options.persistTheses &&
     (!options.live || !options.workflowModels || !options.write || !options.quality)
@@ -329,9 +367,6 @@ export function parseArgs(args: readonly string[]): Options {
   }
   if (options.persistTheses && !options.financeStateDir) {
     throw new Error("--persist-theses requires an exact --finance-state-dir");
-  }
-  if (!options.persistTheses && options.financeStateDir) {
-    throw new Error("--finance-state-dir is only valid with --persist-theses");
   }
   return options;
 }
@@ -345,6 +380,103 @@ export function assertResearchAsk(value: string): string {
     throw new Error(`--ask must be <= ${MAX_RESEARCH_ASK_BYTES} UTF-8 bytes`);
   }
   return normalized;
+}
+
+export function parseControllerResearchScope(
+  evidence: NonNullable<FinanceResearchRunInput["controllerEvidence"]>,
+  asOf: string,
+): FinanceNightResearchScope {
+  const matching = evidence.filter(
+    (item) =>
+      item.id === FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_ID ||
+      item.source === FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_SOURCE,
+  );
+  if (
+    matching.length !== 1 ||
+    matching[0]?.id !== FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_ID ||
+    matching[0]?.source !== FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_SOURCE
+  ) {
+    throw new Error("--controller-research-scope requires exactly one canonical night scope item");
+  }
+  if (matching[0].timestamp !== asOf) {
+    throw new Error("controller night research scope evidence timestamp does not match --as-of");
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(matching[0].text);
+  } catch {
+    throw new Error("controller night research scope is not valid JSON");
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new Error("controller night research scope must be an object");
+  }
+  const scope = raw as Record<string, unknown>;
+  if (
+    scope.schemaVersion !== FINANCE_NIGHT_RESEARCH_SCOPE_SCHEMA_VERSION ||
+    scope.asOf !== asOf ||
+    !Array.isArray(scope.activeStrategyIds) ||
+    scope.activeStrategyIds.some((id) => typeof id !== "string" || !id.trim()) ||
+    new Set(scope.activeStrategyIds).size !== scope.activeStrategyIds.length ||
+    !Array.isArray(scope.instruments) ||
+    scope.instruments.length === 0 ||
+    scope.instruments.length > FINANCE_NIGHT_RESEARCH_SCOPE_MAX_INSTRUMENTS
+  ) {
+    throw new Error("controller night research scope is invalid or does not match --as-of");
+  }
+  const seen = new Set<string>();
+  const instruments = scope.instruments.map((value, index) => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      throw new Error(`controller night research scope instrument ${index} must be an object`);
+    }
+    const item = value as Record<string, unknown>;
+    if (
+      typeof item.instrument !== "string" ||
+      typeof item.assetClass !== "string" ||
+      (item.assetClass !== "us_equity" && item.assetClass !== "crypto") ||
+      !Array.isArray(item.reasons) ||
+      item.reasons.length === 0 ||
+      item.reasons.some((reason) => reason !== "held_position" && reason !== "active_strategy")
+    ) {
+      throw new Error(`controller night research scope instrument ${index} is malformed`);
+    }
+    const instrument = item.instrument.trim().toUpperCase();
+    const key = `${item.assetClass}:${instrument}`;
+    if (!instrument || seen.has(key)) {
+      throw new Error(
+        `controller night research scope has empty or duplicate instrument: ${instrument}`,
+      );
+    }
+    seen.add(key);
+    return Object.freeze({
+      instrument,
+      assetClass: item.assetClass,
+      reasons: Object.freeze(
+        [...item.reasons].toSorted((left, right) => (left < right ? -1 : left > right ? 1 : 0)),
+      ) as FinanceNightResearchInstrument["reasons"],
+    }) as FinanceNightResearchInstrument;
+  });
+  return Object.freeze({
+    schemaVersion: FINANCE_NIGHT_RESEARCH_SCOPE_SCHEMA_VERSION,
+    asOf,
+    activeStrategyIds: Object.freeze([...(scope.activeStrategyIds as string[])]),
+    instruments: Object.freeze(instruments),
+  });
+}
+
+export function buildControllerNightResearchTargets(params: {
+  ask: string;
+  asOf: string;
+  horizonMonths: number;
+  instruments: readonly FinanceNightResearchInstrument[];
+}) {
+  return buildDefaultFinanceResearchTargets(
+    params.ask,
+    params.horizonMonths,
+    params.asOf,
+    undefined,
+    undefined,
+    params.instruments,
+  );
 }
 
 const ISO_TIMESTAMP_PATTERN =
@@ -429,7 +561,9 @@ function summarizeReceipt(receipt: FinanceResearchRunReceipt, options: Options) 
     },
     status: receipt.status,
     answerDecision: receipt.answerDecision,
+    ...(receipt.portfolioAbstention ? { portfolioAbstention: receipt.portfolioAbstention } : {}),
     plan: {
+      asOf: receipt.plan.asOf,
       expectedJobCount: receipt.plan.expectedJobCount,
       targetIds: receipt.plan.targets.map((target) => target.id),
       orchestration: receipt.plan.orchestration,
@@ -665,10 +799,62 @@ export async function run(options: Options): Promise<{
   if (options.live) {
     await preflightFinanceResearchReceiptDestination(asOf);
   }
-  if (options.persistTheses && options.financeStateDir) {
+  if (options.financeStateDir) {
     const stateDirectory = await fs.stat(options.financeStateDir).catch(() => undefined);
     if (!stateDirectory?.isDirectory()) {
       throw new Error("--finance-state-dir must name an existing finance state directory");
+    }
+  }
+  const suppliedControllerEvidence: NonNullable<FinanceResearchRunInput["controllerEvidence"]> =
+    options.controllerEvidencePath
+      ? JSON.parse(await fs.readFile(options.controllerEvidencePath, "utf8"))
+      : [];
+  const controllerResearchScope = options.controllerResearchScope
+    ? parseControllerResearchScope(suppliedControllerEvidence, asOf)
+    : undefined;
+  if (controllerResearchScope) {
+    const ledgerScope = await readFinanceNightReviewResearchScope({
+      directory: resolveFinanceStateDir({ directory: options.financeStateDir }).directory,
+      asOf,
+    });
+    if (JSON.stringify(ledgerScope) !== JSON.stringify(controllerResearchScope)) {
+      throw new Error(
+        "controller night research scope does not match the finance ledgers at --as-of",
+      );
+    }
+  }
+  const portfolioContext = options.portfolioContextPath
+    ? financeResearchPortfolioContextSchema.parse(
+        JSON.parse(await fs.readFile(options.portfolioContextPath, "utf8")),
+      )
+    : undefined;
+  const strategyScope =
+    options.portfolioContextPath && portfolioContext
+      ? await readFinanceActiveStrategyResearchScope({
+          directory: resolveFinanceStateDir({ directory: options.financeStateDir }).directory,
+          asOf,
+          strategyIds: portfolioContext.activeStrategyIds,
+        })
+      : undefined;
+  const controllerPortfolioContext =
+    portfolioContext && strategyScope
+      ? financeResearchPortfolioContextSchema.parse({
+          ...portfolioContext,
+          requiredInstruments: strategyScope.instruments,
+        })
+      : portfolioContext;
+  let equityUniverseSnapshot: FinanceResearchRunInput["equityUniverseSnapshot"];
+  if (options.financeStateDir) {
+    try {
+      equityUniverseSnapshot = readFinanceResearchEquityUniverseSnapshot(
+        options.financeStateDir,
+        asOf,
+      );
+    } catch {
+      // Preserve the planner's explicit missing-universe limitation; never substitute tickers.
+      process.stderr.write(
+        "controller equity universe unavailable or invalid; broad research remains scope-limited\n",
+      );
     }
   }
   const input: FinanceResearchRunInput = {
@@ -677,19 +863,36 @@ export async function run(options: Options): Promise<{
     horizonMonths: options.horizonMonths,
     decisionMode: options.decisionMode,
     ...(options.executeModules ? { executeModules: true } : {}),
-    ...(options.controllerEvidencePath
+    controllerEvidence: [...(strategyScope?.evidence ?? []), ...suppliedControllerEvidence],
+    ...(strategyScope
       ? {
-          controllerEvidence: JSON.parse(
-            await fs.readFile(options.controllerEvidencePath, "utf8"),
-          ) as FinanceResearchRunInput["controllerEvidence"],
+          targets: buildDefaultFinanceResearchTargets(
+            ask,
+            options.horizonMonths,
+            asOf,
+            equityUniverseSnapshot,
+            strategyScope.instruments,
+            undefined,
+            strategyScope.intradayInstruments,
+            strategyScope.historyMonths,
+          ),
         }
       : {}),
-    ...(asOfMode === undefined ? {} : { asOfMode }),
-    ...(options.portfolioContextPath
+    ...(controllerResearchScope
       ? {
-          portfolioContext: JSON.parse(
-            await fs.readFile(options.portfolioContextPath, "utf8"),
-          ) as FinanceResearchRunInput["portfolioContext"],
+          targets: buildControllerNightResearchTargets({
+            ask,
+            horizonMonths: options.horizonMonths,
+            asOf,
+            instruments: controllerResearchScope.instruments,
+          }),
+        }
+      : {}),
+    ...(equityUniverseSnapshot ? { equityUniverseSnapshot } : {}),
+    ...(asOfMode === undefined ? {} : { asOfMode }),
+    ...(controllerPortfolioContext
+      ? {
+          portfolioContext: controllerPortfolioContext,
           strategyStage: "research_candidate" as const,
         }
       : {}),
@@ -705,6 +908,13 @@ export async function run(options: Options): Promise<{
     retry: { attempts: options.retryAttempts },
     realtimeRegistryOptions,
     collectionRegistryOptions,
+    ...(options.live && options.write && options.financeStateDir
+      ? {
+          macroSnapshotDirectory: resolveFinanceStateDir({
+            directory: options.financeStateDir,
+          }).directory,
+        }
+      : {}),
   } as const;
   if (!options.live) {
     const receipt = await runFinanceResearchRun({
@@ -795,6 +1005,47 @@ export async function run(options: Options): Promise<{
   };
 }
 
+/** Machine protocol stays small; full evidence remains in the written receipt. */
+export function compactFinanceResearchSummary(
+  summary: Pick<
+    ReturnType<typeof summarizeReceipt>,
+    "schemaVersion" | "boundary" | "status" | "answerDecision" | "gates"
+  > & {
+    plan: { asOf: string };
+    written?: unknown;
+    portfolioPlanWritten?: string;
+    portfolioAbstention?: FinanceResearchRunReceipt["portfolioAbstention"];
+  },
+) {
+  return {
+    schemaVersion: summary.schemaVersion,
+    boundary: summary.boundary,
+    status: summary.status,
+    answerDecision: summary.answerDecision,
+    plan: { asOf: summary.plan.asOf },
+    gates: summary.gates.map((gate) => ({ id: gate.id, passed: gate.passed })),
+    written: summary.written,
+    portfolioPlanWritten: summary.portfolioPlanWritten,
+    ...(summary.portfolioAbstention ? { portfolioAbstention: summary.portfolioAbstention } : {}),
+  };
+}
+
+export function compactFinanceResearchFailure(error: FinanceResearchRunFailure) {
+  return {
+    schemaVersion: "lcx_finance_research_operator_v1",
+    boundary: "local_finance_research_run_only",
+    status: "failed",
+    answerDecision: "return_failed_reason",
+    failure: {
+      reason: error.reason,
+      runId: error.runId,
+      checkpointPath: error.checkpointPath,
+      startedAt: error.startedAt,
+    },
+    gates: [],
+  };
+}
+
 async function main(): Promise<number> {
   const options = parseArgs(process.argv.slice(2));
   const result = await run(options);
@@ -807,7 +1058,9 @@ async function main(): Promise<number> {
     ...(result.thesisLearning === undefined ? {} : { thesisLearning: result.thesisLearning }),
   };
   if (options.json) {
-    process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+    process.stdout.write(
+      `${JSON.stringify(options.schedulerSummary ? compactFinanceResearchSummary(summary) : summary, null, 2)}\n`,
+    );
   } else {
     process.stdout.write(
       [
@@ -833,6 +1086,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       process.stdout.write(`${usage()}\n`);
       process.exitCode = 0;
     } else {
+      if (
+        error instanceof FinanceResearchRunFailure &&
+        (process.argv.includes("--scheduler-summary") || process.argv.includes("--json"))
+      ) {
+        process.stdout.write(`${JSON.stringify(compactFinanceResearchFailure(error))}\n`);
+      }
       process.stderr.write(
         `lcx finance research run failed: ${error instanceof Error ? error.message : String(error)}\n`,
       );

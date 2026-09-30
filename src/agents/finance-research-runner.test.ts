@@ -13,6 +13,7 @@ import type { FinanceRealtimeSourceAdapter } from "./finance-realtime-source-reg
 import {
   buildDefaultFinanceResearchTargets,
   readFinanceResearchEquityUniverseSnapshot,
+  runFinanceResearchQualityReview,
   runFinanceResearchRun,
   validateFinanceResearchEquityUniverseSnapshot,
   type FinanceResearchEquityUniverseSnapshot,
@@ -299,6 +300,128 @@ const BATCH_OPTIONS = {
 } as const;
 
 describe("finance research runner", () => {
+  it("accepts the bounded night packet with all active close-history evidence", async () => {
+    const controllerEvidence = Array.from({ length: 20 }, (_, index) => ({
+      id: `controller-evidence-${index}`,
+      source: "finance-controller-test",
+      timestamp: AS_OF,
+      text: JSON.stringify({ index }),
+    }));
+    const result = await runFinanceResearchRun({
+      input: {
+        ask: "Review bounded controller evidence.",
+        asOf: AS_OF,
+        controllerEvidence,
+      },
+      batchOptions: BATCH_OPTIONS,
+    });
+    expect(result.status).toBe("planned");
+  });
+
+  it("supplies deterministic prior-month observed-close evidence to the existing quality path", async () => {
+    const requests: QualityHarnessModelRequest[] = [];
+    const capture = async (request: unknown) => {
+      requests.push(request as QualityHarnessModelRequest);
+      return modelInvoker(request);
+    };
+    const closes: [string, number][] = [];
+    for (
+      let date = new Date("2025-08-01T00:00:00.000Z");
+      date < new Date(AS_OF.slice(0, 10));
+      date.setUTCDate(date.getUTCDate() + 1)
+    ) {
+      if (date.getUTCDay() === 0 || date.getUTCDay() === 6) {
+        continue;
+      }
+      closes.push([date.toISOString().slice(0, 10), 100 + closes.length * 0.02]);
+    }
+    const closesByDate = new Map(closes);
+    closesByDate.set("2026-07-31", 100);
+    closesByDate.set("2026-08-31", 110);
+    closesByDate.set("2026-09-07", 999);
+    const controllerCloses = [...closesByDate.entries()].toSorted(([left], [right]) =>
+      left.localeCompare(right),
+    );
+    const controllerEvidence = [
+      {
+        id: "finance-controller:active-strategies",
+        source: "finance-strategy-rule-ledger",
+        timestamp: AS_OF,
+        text: JSON.stringify({
+          activeRules: [
+            {
+              ruleId: "monthly-trend",
+              form: "cross_asset_trend",
+              formVersion: "1",
+              emits: "target_weights",
+              instruments: ["SPY"],
+              schedule: { kind: "monthly", at: "last_trading_day", timezone: "America/New_York" },
+              body: { frozenRule: { lookbackMonths: 1 } },
+              activeObservedAt: "2026-08-01T00:00:00.000Z",
+            },
+          ],
+        }),
+      },
+      {
+        id: "finance-controller:eod:SPY",
+        source: "finance-bar-ledger",
+        timestamp: AS_OF,
+        text: JSON.stringify({
+          instrument: "SPY",
+          divergentDates: [],
+          omittedByLimit: 0,
+          suppliedBarCount: controllerCloses.length,
+          closes: controllerCloses,
+        }),
+      },
+    ];
+    const result = await runFinanceResearchRun({
+      input: {
+        ask: "Review SPY monthly trend using supplied evidence.",
+        asOf: AS_OF,
+        controllerEvidence,
+        targets: [
+          {
+            id: "derived-path",
+            instrument: "SPY",
+            assetClass: "us_equity",
+            realtime: false,
+            collections: [{ collection: "eod_history", limit: 2, freshnessMaxMinutes: 60 }],
+          },
+        ],
+      },
+      liveFetch: true,
+      modelInvoker,
+      qualityModelRouting: mockQualityPromptRouting(capture),
+      batchOptions: BATCH_OPTIONS,
+    });
+    const derived = result.batch?.committeeEvidence.find(
+      (entry) => entry.id === "finance-derived:monthly-close-change:monthly-trend:SPY",
+    );
+    const volatility = result.batch?.committeeEvidence.find(
+      (entry) => entry.id === "finance-derived:annualised-volatility:monthly-trend:SPY",
+    );
+    expect(derived).toBeDefined();
+    expect(volatility).toBeDefined();
+    expect(derived?.text).toContain("2026-08-31");
+    expect(derived?.text).not.toContain("999");
+    expect(derived?.text).toContain("month-end session coverage is unverified");
+    expect(derived?.text).toContain("not a validated strategy signal");
+    expect(volatility?.text).toContain("253 supplied closes and 252 daily-return intervals");
+    expect(
+      requests.some((request) =>
+        request.evidence.some((entry) => entry.id === derived?.id && entry.text === derived.text),
+      ),
+    ).toBe(true);
+    expect(
+      requests.some((request) =>
+        request.evidence.some(
+          (entry) => entry.id === volatility?.id && entry.text === volatility.text,
+        ),
+      ),
+    ).toBe(true);
+  });
+
   it("separates explicit slow research from executable/current quote requirements", () => {
     const target = (ask: string) =>
       buildDefaultFinanceResearchTargets(ask, 6, AS_OF).find((row) => row.id === "us-equity-spy");
@@ -360,6 +483,98 @@ describe("finance research runner", () => {
       "NVDA",
     );
     expect(targets.some((target) => target.instrument === "SPY")).toBe(false);
+  });
+
+  it("uses exact controller instruments for portfolio research despite broad wording or a universe snapshot", () => {
+    const snapshot = universeSnapshot();
+    const targets = buildDefaultFinanceResearchTargets(
+      "Review portfolio risk and allocation across the broad market",
+      6,
+      "2026-09-10T12:00:00.000Z",
+      snapshot,
+      ["SPY", "QQQ", "IWM"],
+    );
+    expect(
+      targets
+        .filter((target) => target.id.startsWith("us-equity-"))
+        .map((target) => target.instrument),
+    ).toEqual(["SPY", "QQQ", "IWM"]);
+    expect(targets.some((target) => snapshot.selected.includes(target.instrument))).toBe(false);
+  });
+
+  it("limits live quote collection to selected controller strategies with intraday schedules", () => {
+    const ask =
+      "Review active strategies, evaluate intraday only for instruments covered by an active intraday rule, and keep strategic horizons separate.";
+    const targets = buildDefaultFinanceResearchTargets(
+      ask,
+      6,
+      AS_OF,
+      undefined,
+      ["SPY", "QQQ"],
+      undefined,
+      ["SPY"],
+    );
+    expect(targets.find((target) => target.instrument === "SPY")?.realtime).not.toBe(false);
+    expect(targets.find((target) => target.instrument === "QQQ")?.realtime).toBe(false);
+
+    const monthlyOnly = buildDefaultFinanceResearchTargets(
+      ask,
+      6,
+      AS_OF,
+      undefined,
+      ["SPY", "QQQ"],
+      undefined,
+      [],
+    );
+    expect(monthlyOnly.find((target) => target.instrument === "SPY")?.realtime).toBe(false);
+    expect(monthlyOnly.find((target) => target.instrument === "QQQ")?.realtime).toBe(false);
+  });
+
+  it("adds a bounded daily-risk warmup to controller history without changing the research horizon", () => {
+    const targets = buildDefaultFinanceResearchTargets(
+      "Review the active strategy portfolio over six months",
+      6,
+      "2026-09-30T12:00:00.000Z",
+      undefined,
+      ["SPY"],
+      undefined,
+      [],
+      12,
+    );
+    const history = targets
+      .flatMap((target) => target.collections ?? [])
+      .find((collection) => collection.collection === "eod_history");
+
+    expect(history).toMatchObject({
+      fromDate: "2025-08-30",
+      limit: 280,
+    });
+  });
+
+  it("rejects controller instruments whose syntax is outside the US equity scope", () => {
+    expect(() =>
+      buildDefaultFinanceResearchTargets(
+        "Review the active strategy portfolio",
+        6,
+        AS_OF,
+        undefined,
+        ["BTC/USD"],
+      ),
+    ).toThrow("supported US equity ticker symbols");
+  });
+
+  it("rejects controller live-quote instruments outside its equity research scope", () => {
+    expect(() =>
+      buildDefaultFinanceResearchTargets(
+        "Review active strategy portfolio",
+        6,
+        AS_OF,
+        undefined,
+        ["QQQ"],
+        undefined,
+        ["SPY"],
+      ),
+    ).toThrow("controller realtime scope must be a subset");
   });
 
   it("rejects a universe snapshot whose unreadable count exceeds the screened candidates", () => {
@@ -544,7 +759,7 @@ describe("finance research runner", () => {
 
     expect(history.length).toBeGreaterThan(0);
     expect(history.every((collection) => collection.fromDate === "2025-03-31")).toBe(true);
-    expect(history.every((collection) => collection.limit === 250)).toBe(true);
+    expect(history.every((collection) => collection.limit === 260)).toBe(true);
   });
 
   it("runs a dry plan without invoking a source or model", async () => {
@@ -879,52 +1094,261 @@ describe("finance research runner", () => {
     expect(result.quality?.verification.details.join(" ")).toMatch(/declared universe/);
   });
 
+  it("uses the shared quality review path for production and captured evidence", async () => {
+    const productionRequests: QualityHarnessModelRequest[] = [];
+    const captureProduction = async (request: unknown) => {
+      if (
+        typeof request === "object" &&
+        request !== null &&
+        "sharedContext" in request &&
+        typeof (request as { sharedContext?: Record<string, unknown> }).sharedContext
+          ?.strategyMethodKit === "object"
+      ) {
+        productionRequests.push(request as QualityHarnessModelRequest);
+      }
+      return modelInvoker(request);
+    };
+    const receipt = await runFinanceResearchRun({
+      input: {
+        ask: "Review SPY market evidence with its source timestamps.",
+        asOf: AS_OF,
+        targets: [
+          {
+            id: "quality-helper-parity",
+            instrument: "SPY",
+            assetClass: "us_equity",
+            realtime: false,
+            collections: [{ collection: "eod_history", limit: 2, freshnessMaxMinutes: 60 }],
+          },
+        ],
+      },
+      liveFetch: true,
+      modelInvoker: captureProduction,
+      qualityModelRouting: mockQualityPromptRouting(captureProduction),
+      batchOptions: BATCH_OPTIONS,
+    });
+    expect(receipt.batch).toBeDefined();
+    expect(receipt.moduleExecution).toBeDefined();
+    expect(productionRequests.length).toBeGreaterThan(0);
+
+    const replayRequests: QualityHarnessModelRequest[] = [];
+    const captureReplay = async (request: unknown) => {
+      replayRequests.push(request as QualityHarnessModelRequest);
+      return modelInvoker(request);
+    };
+    await runFinanceResearchQualityReview({
+      batch: receipt.batch!,
+      committeeGatePassed: receipt.gates.find((gate) => gate.id === "committee")!.passed,
+      evidence: receipt.batch!.committeeEvidence,
+      modelId: "Qwen/Qwen3-0.6B",
+      moduleExecution: receipt.moduleExecution!,
+      plan: receipt.plan,
+      qualityModelRouting: mockQualityPromptRouting(captureReplay),
+    });
+    expect(replayRequests.length).toBeGreaterThan(0);
+    expect(replayRequests[0]).toMatchObject({
+      task: productionRequests[0].task,
+      evidence: productionRequests[0].evidence,
+      sharedContext: productionRequests[0].sharedContext,
+    });
+  });
+
   it("compiles a grounded dynamic allocation into the existing portfolio plan contract", async () => {
-    const allocationModel = async (request: unknown): Promise<unknown> => {
-      const prompt = (request as { task: string }).task;
-      expect(prompt).toContain("Decision mode: strategy_candidate");
-      expect(prompt).toContain("exposure direction, trigger, horizon, invalidation");
-      expect(prompt).not.toContain("Keep research-only and do not provide execution instructions");
+    const runAllocation = async (
+      contextEvidenceRelation: "supports" | "context",
+      withholdIntraday = false,
+    ) => {
+      const allocationModel = async (request: unknown): Promise<unknown> => {
+        const prompt = (request as { task: string }).task;
+        expect(prompt).toContain("Decision mode: strategy_candidate");
+        expect(prompt).toContain("with each fraction between 0 and 1 inclusive");
+        expect(prompt).toContain('{decision:"no_allocation",reason,evidenceIds}');
+        expect(prompt).toContain("exposure direction, trigger, horizon, invalidation");
+        expect(prompt).not.toContain(
+          "Keep research-only and do not provide execution instructions",
+        );
+        const output = await modelInvoker(request);
+        if (
+          typeof output === "object" &&
+          output !== null &&
+          "kind" in output &&
+          output.kind === "artifact" &&
+          "artifact" in output &&
+          typeof output.artifact === "object" &&
+          output.artifact !== null
+        ) {
+          const artifact = output.artifact as {
+            supportingAnalysis?: Record<string, unknown>;
+            claims: readonly Record<string, unknown>[];
+          };
+          const requestEvidence =
+            (request as { evidence?: readonly { id: string }[] }).evidence ?? [];
+          const controllerEvidenceIds = requestEvidence
+            .filter((entry) => entry.id.startsWith("allocation-fixture:"))
+            .map((entry) => entry.id);
+          const [supportingEvidenceId, contextEvidenceId] = controllerEvidenceIds;
+          if (!supportingEvidenceId || !contextEvidenceId || !artifact.claims[0]) {
+            throw new Error("fixture artifact is missing its two controller evidence items");
+          }
+          const proposalEvidenceId =
+            contextEvidenceRelation === "context" ? contextEvidenceId : supportingEvidenceId;
+          return {
+            ...output,
+            artifact: {
+              ...output.artifact,
+              claims: [
+                {
+                  ...artifact.claims[0],
+                  evidenceIds: [supportingEvidenceId, contextEvidenceId],
+                  evidenceRelations: [
+                    { evidenceId: supportingEvidenceId, relation: "supports" },
+                    { evidenceId: contextEvidenceId, relation: contextEvidenceRelation },
+                  ],
+                },
+              ],
+              supportingAnalysis: {
+                ...artifact.supportingAnalysis,
+                portfolioAllocationProposal: {
+                  allocations: [
+                    {
+                      strategyId: "trend",
+                      budgetFraction: 0.41,
+                      evidenceIds: [proposalEvidenceId],
+                    },
+                    ...(withholdIntraday
+                      ? [
+                          {
+                            strategyId: "intraday",
+                            budgetFraction: 0,
+                            evidenceIds: [proposalEvidenceId],
+                          },
+                        ]
+                      : []),
+                  ],
+                },
+              },
+              answer:
+                "Strategy candidate using timestamped evidence as of 2026-09-08: if the base scenario persists, retain a bounded allocation. Risk and invalidation are tied to the stated scenario over a six-month horizon.",
+            },
+          };
+        }
+        return output;
+      };
+      return runFinanceResearchRun({
+        input: {
+          ask: "分析未来半年美股市场情绪并形成可审阅的策略候选配置。",
+          asOf: AS_OF,
+          horizonMonths: 6,
+          decisionMode: "strategy_candidate",
+          strategyStage: "research_candidate",
+          portfolioContext: {
+            accountId: "paper-account",
+            venue: "alpaca",
+            validityMinutes: 1_440,
+            conflictPolicy: "block",
+            activeStrategyIds: withholdIntraday ? ["trend", "intraday"] : ["trend"],
+          },
+          controllerEvidence: [
+            {
+              id: "allocation-fixture:supporting",
+              source: "fixture",
+              timestamp: AS_OF,
+              text: "A bounded controller evidence item that supports the candidate allocation.",
+            },
+            {
+              id: "allocation-fixture:context",
+              source: "fixture",
+              timestamp: AS_OF,
+              text: "A separate controller evidence item available only as context.",
+            },
+          ],
+          targets: [
+            {
+              id: "allocation-fixture",
+              instrument: "SPY",
+              assetClass: "us_equity",
+              realtime: { requireOfficialReference: false },
+            },
+          ],
+        },
+        liveFetch: true,
+        modelInvoker,
+        qualityModelRouting: mockQualityPromptRouting(allocationModel),
+        batchOptions: BATCH_OPTIONS,
+      });
+    };
+
+    const accepted = await runAllocation("supports");
+    expect(accepted.status).toBe("candidate");
+    expect(accepted.portfolioPlan).toMatchObject({
+      accountId: "paper-account",
+      venue: "alpaca",
+      allocations: [{ strategyId: "trend", budgetFraction: 0.41 }],
+      candidates: [],
+      provenance: {
+        kind: "finance_research_allocation",
+        receiptId: expect.stringMatching(/^quality:/u),
+      },
+    });
+    const partial = await runAllocation("supports", true);
+    expect(partial.status).toBe("candidate");
+    expect(
+      partial.portfolioPlan?.allocations.map(({ strategyId, budgetFraction }) => ({
+        strategyId,
+        budgetFraction,
+      })),
+    ).toEqual([
+      { strategyId: "trend", budgetFraction: 0.41 },
+      { strategyId: "intraday", budgetFraction: 0 },
+    ]);
+
+    const rejected = await runAllocation("context");
+    expect(rejected.status).toBe("needs_review");
+    expect(rejected.gates.find((gate) => gate.id === "quality")?.passed).toBe(false);
+    expect(rejected.quality?.verification.details).toContain(
+      "allocation proposal cites unsupported evidence: allocation-fixture:context",
+    );
+    expect(rejected.portfolioPlan).toBeUndefined();
+  });
+
+  it("accepts a grounded no-allocation research outcome without producing a portfolio plan", async () => {
+    const abstentionModel = async (request: unknown): Promise<unknown> => {
       const output = await modelInvoker(request);
       if (
-        typeof output === "object" &&
-        output !== null &&
-        "kind" in output &&
-        output.kind === "artifact" &&
-        "artifact" in output &&
-        typeof output.artifact === "object" &&
-        output.artifact !== null
+        typeof output !== "object" ||
+        output === null ||
+        !("kind" in output) ||
+        output.kind !== "artifact" ||
+        !("artifact" in output) ||
+        typeof output.artifact !== "object" ||
+        output.artifact === null
       ) {
-        const artifact = output.artifact as {
-          supportingAnalysis?: Record<string, unknown>;
-          claims: readonly { evidenceIds: readonly string[] }[];
-        };
-        const evidenceId = artifact.claims[0]?.evidenceIds[0];
-        if (!evidenceId) {
-          throw new Error("fixture artifact has no grounded evidence id");
-        }
-        return {
-          ...output,
-          artifact: {
-            ...output.artifact,
-            supportingAnalysis: {
-              ...artifact.supportingAnalysis,
-              portfolioAllocationProposal: {
-                allocations: [
-                  {
-                    strategyId: "trend",
-                    budgetFraction: 0.41,
-                    evidenceIds: [evidenceId],
-                  },
-                ],
-              },
-            },
-            answer:
-              "Strategy candidate using timestamped evidence as of 2026-09-08: if the base scenario persists, retain a bounded allocation. Risk and invalidation are tied to the stated scenario over a six-month horizon.",
-          },
-        };
+        return output;
       }
-      return output;
+      const artifact = output.artifact as {
+        supportingAnalysis?: Record<string, unknown>;
+        claims: readonly { evidenceIds: readonly string[] }[];
+      };
+      const evidenceId = artifact.claims[0]?.evidenceIds[0];
+      if (!evidenceId) {
+        throw new Error("fixture artifact has no grounded evidence id");
+      }
+      return {
+        ...output,
+        artifact: {
+          ...output.artifact,
+          answer:
+            "The supplied evidence does not support a positive budget for the active strategy, so this research outcome declines allocation over the six-month horizon. Reassess only if the stated earnings-breadth trigger is confirmed; invalidate this no-allocation view if the trigger fails or the evidence changes.",
+          supportingAnalysis: {
+            ...artifact.supportingAnalysis,
+            portfolioAllocationProposal: {
+              decision: "no_allocation",
+              reason: "The supplied evidence does not establish a supported positive exposure.",
+              evidenceIds: [evidenceId],
+            },
+          },
+        },
+      };
     };
     const result = await runFinanceResearchRun({
       input: {
@@ -942,7 +1366,7 @@ describe("finance research runner", () => {
         },
         targets: [
           {
-            id: "allocation-fixture",
+            id: "abstention-fixture",
             instrument: "SPY",
             assetClass: "us_equity",
             realtime: { requireOfficialReference: false },
@@ -951,20 +1375,17 @@ describe("finance research runner", () => {
       },
       liveFetch: true,
       modelInvoker,
-      qualityModelRouting: mockQualityPromptRouting(allocationModel),
+      qualityModelRouting: mockQualityPromptRouting(abstentionModel),
       batchOptions: BATCH_OPTIONS,
     });
 
     expect(result.status).toBe("candidate");
-    expect(result.portfolioPlan).toMatchObject({
-      accountId: "paper-account",
-      venue: "alpaca",
-      allocations: [{ strategyId: "trend", budgetFraction: 0.41 }],
-      candidates: [],
-      provenance: {
-        kind: "finance_research_allocation",
-        receiptId: expect.stringMatching(/^quality:/u),
-      },
+    expect(result.gates.every((gate) => gate.passed)).toBe(true);
+    expect(result.gates.map((gate) => gate.id)).not.toContain("quarterly_output");
+    expect(result.portfolioPlan).toBeUndefined();
+    expect(result.portfolioAbstention).toEqual({
+      reason: "The supplied evidence does not establish a supported positive exposure.",
+      evidenceIds: [expect.any(String)],
     });
   });
 
@@ -1866,138 +2287,161 @@ describe("research module composition reaches actual model request boundaries", 
     }
   });
 
-  it.each(["all", "optional_missing", "required_missing", "receipt_missing"] as const)(
-    "checks module evidence after full quality review: %s",
-    async (outcome) => {
-      let captured: unknown;
-      const producerAwareInvoker = async (request: unknown) => {
-        const output = await modelInvoker(request);
-        const payload = request as { stage?: string; evidence?: Array<{ id?: string }> };
-        if (payload.stage !== "draft") {
-          return output;
-        }
-        const evidenceId = payload.evidence?.[0]?.id ?? "finance-batch-summary";
-        const artifact = (output as { artifact: { supportingAnalysis: Record<string, unknown> } })
-          .artifact;
-        artifact.supportingAnalysis.financeFrameworkProducerInputs = {
-          causal_map: {
-            domain: "causal_map",
-            sourceArtifacts: [evidenceId],
-            evidenceCategories: ["causal_chain_evidence"],
-            evidenceSummary:
-              "Timestamped evidence supports a bounded causal-chain hypothesis with an explicit alternative.",
-            baseCase: "the observed transmission remains conditional",
-            bullCase: "supportive transmission persists",
-            bearCase: "the transmission reverses",
-            keyCausalChain: "observed input -> transmission mechanism -> conditional repricing",
-            upstreamDrivers: ["cited observed input"],
-            downstreamAssetImpacts: ["conditional repricing"],
-            confidenceOrConviction: "medium",
-            whatChangesMyMind: "a cited counter-observation breaks the mechanism",
-            noActionReason: "research evidence grants no order authority",
-            riskGateNotes: "portfolio and execution gates remain required",
-            allowedActionAuthority: "research_only",
-          },
-        };
+  it.each([
+    "all",
+    "optional_missing",
+    "required_missing",
+    "receipt_missing",
+    "upstream_quality_failed",
+  ] as const)("reports module execution and evidence admission separately: %s", async (outcome) => {
+    let captured: unknown;
+    const producerAwareInvoker = async (request: unknown) => {
+      const output = await modelInvoker(request);
+      const payload = request as { stage?: string; evidence?: Array<{ id?: string }> };
+      if (payload.stage !== "draft") {
         return output;
+      }
+      const evidenceId = payload.evidence?.[0]?.id ?? "finance-batch-summary";
+      const artifact = (output as { artifact: { supportingAnalysis: Record<string, unknown> } })
+        .artifact;
+      artifact.supportingAnalysis.financeFrameworkProducerInputs = {
+        causal_map: {
+          domain: "causal_map",
+          sourceArtifacts: [evidenceId],
+          evidenceCategories: ["causal_chain_evidence"],
+          evidenceSummary:
+            "Timestamped evidence supports a bounded causal-chain hypothesis with an explicit alternative.",
+          baseCase: "the observed transmission remains conditional",
+          bullCase: "supportive transmission persists",
+          bearCase: "the transmission reverses",
+          keyCausalChain: "observed input -> transmission mechanism -> conditional repricing",
+          upstreamDrivers: ["cited observed input"],
+          downstreamAssetImpacts: ["conditional repricing"],
+          confidenceOrConviction: "medium",
+          whatChangesMyMind: "a cited counter-observation breaks the mechanism",
+          noActionReason: "research evidence grants no order authority",
+          riskGateNotes: "portfolio and execution gates remain required",
+          allowedActionAuthority: "research_only",
+        },
       };
-      const result = await runFinanceResearchRun({
-        input: {
-          ask: "Review technical timing",
-          asOf: AS_OF,
-          targets,
-          executeModules: true,
-          moduleSelection: {
-            moduleIds: ["technical_timing"],
-            rationale: "Use the registered timing lens.",
+      return output;
+    };
+    const result = await runFinanceResearchRun({
+      input: {
+        ask: "Review technical timing",
+        asOf: AS_OF,
+        targets,
+        executeModules: true,
+        moduleSelection: {
+          moduleIds: ["technical_timing"],
+          rationale: "Use the registered timing lens.",
+        },
+      },
+      liveFetch: true,
+      qualityEnabled: outcome !== "upstream_quality_failed",
+      batchOptions: BATCH_OPTIONS,
+      modelInvoker: producerAwareInvoker,
+      qualityModelRouting: mockQualityPromptRouting(producerAwareInvoker),
+      moduleExecutor: async ({ plan, domainProducerInputs, asOf }) => {
+        captured = domainProducerInputs;
+        const failedNode =
+          outcome === "optional_missing"
+            ? plan.composition.control.softNodeIds[0]
+            : outcome === "required_missing"
+              ? plan.composition.control.hardNodeIds[0]
+              : undefined;
+        const nodes = plan.composition.nodes.map((node) => ({
+          nodeId: node.id,
+          moduleId: node.moduleId,
+          requiredToolNames: [],
+          dependsOn: node.dependsOn,
+          status:
+            node.id === failedNode ? ("blocked_missing_evidence" as const) : ("succeeded" as const),
+          inputEvidenceIds: ["fixture"],
+          outputEvidenceIds: node.id === failedNode ? [] : [`finance-module:${node.id}`],
+          toolCalls: [],
+          missingEvidence: node.id === failedNode ? ["unavailable_fixture_input"] : [],
+        }));
+        return {
+          receipt: {
+            schemaVersion: "lcx_finance_module_execution_v1" as const,
+            boundary: "finance_module_execution_research_only" as const,
+            requested: true,
+            allNodesSucceeded: failedNode === undefined,
+            requiredNodesSucceeded: outcome !== "required_missing",
+            moduleToolsDispatched: failedNode === undefined,
+            compositionNodeIds: plan.composition.topologicalOrder,
+            outputEvidenceIds: nodes.flatMap((node) => node.outputEvidenceIds),
+            nodes,
+            replanFeedback: deriveFinanceModuleReplanFeedback(plan.composition, nodes, true),
+            notTouched: [
+              "provider_config",
+              "external_channel_sender",
+              "trading_execution",
+              "wallet_or_order_authority",
+            ],
           },
-        },
-        liveFetch: true,
-        batchOptions: BATCH_OPTIONS,
-        modelInvoker: producerAwareInvoker,
-        qualityModelRouting: mockQualityPromptRouting(producerAwareInvoker),
-        moduleExecutor: async ({ plan, domainProducerInputs, asOf }) => {
-          captured = domainProducerInputs;
-          const failedNode =
-            outcome === "optional_missing"
-              ? plan.composition.control.softNodeIds[0]
-              : outcome === "required_missing"
-                ? plan.composition.control.hardNodeIds[0]
-                : undefined;
-          const nodes = plan.composition.nodes.map((node) => ({
-            nodeId: node.id,
-            moduleId: node.moduleId,
-            requiredToolNames: [],
-            dependsOn: node.dependsOn,
-            status:
-              node.id === failedNode
-                ? ("blocked_missing_evidence" as const)
-                : ("succeeded" as const),
-            inputEvidenceIds: ["fixture"],
-            outputEvidenceIds: node.id === failedNode ? [] : [`finance-module:${node.id}`],
-            toolCalls: [],
-            missingEvidence: node.id === failedNode ? ["unavailable_fixture_input"] : [],
-          }));
-          return {
-            receipt: {
-              schemaVersion: "lcx_finance_module_execution_v1" as const,
-              boundary: "finance_module_execution_research_only" as const,
-              requested: true,
-              allNodesSucceeded: failedNode === undefined,
-              requiredNodesSucceeded: outcome !== "required_missing",
-              moduleToolsDispatched: failedNode === undefined,
-              compositionNodeIds: plan.composition.topologicalOrder,
-              outputEvidenceIds: nodes.flatMap((node) => node.outputEvidenceIds),
-              nodes,
-              replanFeedback: deriveFinanceModuleReplanFeedback(plan.composition, nodes, true),
-              notTouched: [
-                "provider_config",
-                "external_channel_sender",
-                "trading_execution",
-                "wallet_or_order_authority",
-              ],
-            },
-            evidence:
-              outcome === "receipt_missing"
-                ? []
-                : nodes
-                    .filter((node) => node.status === "succeeded")
-                    .map((node) => ({
-                      id: node.outputEvidenceIds[0],
-                      source: "finance-module-execution",
-                      timestamp: asOf,
-                      text: JSON.stringify({ moduleId: node.moduleId, status: node.status }),
-                    })),
-          };
-        },
-      });
-      expect(captured).toMatchObject({ causal_map: { allowedActionAuthority: "research_only" } });
+          evidence:
+            outcome === "receipt_missing"
+              ? []
+              : nodes
+                  .filter((node) => node.status === "succeeded")
+                  .map((node) => ({
+                    id: node.outputEvidenceIds[0],
+                    source: "finance-module-execution",
+                    timestamp: asOf,
+                    text: JSON.stringify({ moduleId: node.moduleId, status: node.status }),
+                  })),
+        };
+      },
+    });
+    expect(captured).toMatchObject({ causal_map: { allowedActionAuthority: "research_only" } });
+    if (outcome === "upstream_quality_failed") {
+      expect(result.committee?.model.purpose).toBe("full_review");
+    } else {
       expect(result.committee?.model.purpose).toBe("producer_preparation");
       expect(result.committee?.model.roleCount).toBe(2);
       expect(result.committee?.coverage.equivalenceStatus).toBe("not_ready");
+    }
+    if (outcome === "upstream_quality_failed") {
+      expect(result.quality).toBeUndefined();
+    } else {
       expect(result.quality?.status).toBe("verified");
       expect(result.quality?.attempts[0]?.stages.map((stage) => stage.agentId)).toEqual(
         expect.arrayContaining(["adversarial_challenge", "formatting", "final_precheck"]),
       );
-      const accepted = outcome === "all" || outcome === "optional_missing";
-      expect(result.status).toBe(accepted ? "candidate" : "needs_review");
-      expect(result.gates).toContainEqual(
-        expect.objectContaining({ id: "module_execution", passed: accepted }),
+    }
+    const accepted = outcome === "all" || outcome === "optional_missing";
+    expect(result.status).toBe(accepted ? "candidate" : "needs_review");
+    const moduleGatePassed = accepted || outcome === "upstream_quality_failed";
+    expect(result.gates).toContainEqual(
+      expect.objectContaining({ id: "module_execution", passed: moduleGatePassed }),
+    );
+    if (outcome === "upstream_quality_failed") {
+      expect(result.moduleExecution).toMatchObject({
+        allNodesSucceeded: true,
+        requiredNodesSucceeded: true,
+        moduleToolsDispatched: false,
+        requiredEvidenceReady: true,
+      });
+      expect(result.gates.find((gate) => gate.id === "module_execution")?.reason).toMatch(
+        /required module evidence ready/u,
       );
-      if (outcome === "optional_missing") {
-        expect(result.moduleExecution).toMatchObject({
-          allNodesSucceeded: false,
-          moduleToolsDispatched: false,
-          requiredEvidenceReady: true,
-        });
-        expect(
-          result.moduleExecution?.nodes.some((node) =>
-            node.missingEvidence.includes("unavailable_fixture_input"),
-          ),
-        ).toBe(true);
-      }
-    },
-  );
+      expect(result.gates.find((gate) => gate.id === "quality")?.passed).toBe(false);
+    }
+    if (outcome === "optional_missing") {
+      expect(result.moduleExecution).toMatchObject({
+        allNodesSucceeded: false,
+        moduleToolsDispatched: false,
+        requiredEvidenceReady: true,
+      });
+      expect(
+        result.moduleExecution?.nodes.some((node) =>
+          node.missingEvidence.includes("unavailable_fixture_input"),
+        ),
+      ).toBe(true);
+    }
+  });
 });
 
 describe("partial research input boundaries", () => {
@@ -2122,4 +2566,226 @@ it("does not admit future observations as historical opportunity evidence", asyn
   expect(invoke).not.toHaveBeenCalled();
   expect(result.quarterlyOutput.adopted).toBe(false);
   expect(result.missingEvidence).toContain("source_evidence_unavailable");
+});
+
+it("carries controller portfolio context into the scheduler module plan", async () => {
+  const ask =
+    "Review all controller-declared active strategies against current source evidence for their declared instruments and schedules. Keep strategic horizons separate; evaluate intraday only for instruments covered by an active intraday rule and fresh intraday evidence. Allocate only among controller-declared active strategies; never activate or promote candidates. Use source application evaluations as partial evidence and retain counterevidence. If required evidence is missing or stale, record the exact gap and abstain.";
+  let plannedFinanceTask = false;
+  const result = await runFinanceResearchRun({
+    input: {
+      ask,
+      asOf: AS_OF,
+      decisionMode: "strategy_candidate",
+      strategyStage: "research_candidate",
+      executeModules: true,
+      portfolioContext: {
+        accountId: "paper-account",
+        venue: "alpaca",
+        validityMinutes: 60,
+        conflictPolicy: "block",
+        activeStrategyIds: ["trend"],
+      },
+      targets: [
+        {
+          id: "scheduler-spy",
+          instrument: "SPY",
+          assetClass: "us_equity",
+          realtime: { requireOfficialReference: false },
+        },
+      ],
+    },
+    liveFetch: true,
+    qualityEnabled: false,
+    batchOptions: BATCH_OPTIONS,
+    modelInvoker,
+    moduleExecutor: async ({ plan }) => {
+      plannedFinanceTask = plan.selectionTrace.financeTask;
+      const nodes = plan.composition.nodes.map((node) => ({
+        nodeId: node.id,
+        moduleId: node.moduleId,
+        requiredToolNames: [],
+        dependsOn: node.dependsOn,
+        status: "blocked_missing_evidence" as const,
+        inputEvidenceIds: [],
+        outputEvidenceIds: [],
+        toolCalls: [],
+        missingEvidence: ["fixture_module_not_executed"],
+      }));
+      return {
+        receipt: {
+          schemaVersion: "lcx_finance_module_execution_v1" as const,
+          boundary: "finance_module_execution_research_only" as const,
+          requested: true,
+          allNodesSucceeded: false,
+          requiredNodesSucceeded: false,
+          moduleToolsDispatched: false,
+          compositionNodeIds: plan.composition.topologicalOrder,
+          outputEvidenceIds: nodes.flatMap((node) => node.outputEvidenceIds),
+          nodes,
+          replanFeedback: deriveFinanceModuleReplanFeedback(plan.composition, nodes, true),
+          notTouched: [
+            "provider_config",
+            "external_channel_sender",
+            "trading_execution",
+            "wallet_or_order_authority",
+          ],
+        },
+        evidence: [],
+      };
+    },
+  });
+
+  expect(plannedFinanceTask).toBe(true);
+  expect(result.plan.orchestration.primaryModules).toEqual(
+    expect.arrayContaining(["causal_map", "portfolio_risk_gates", "quant_math"]),
+  );
+  expect(result.plan.orchestration.requiredTools).toContain("finance_data_gateway_snapshot");
+});
+
+it("does not spend quality calls after mandatory allocation preparation has failed", async () => {
+  const qualityModel = vi.fn(modelInvoker);
+  const result = await runFinanceResearchRun({
+    input: {
+      ask: "Review an active strategy allocation",
+      asOf: AS_OF,
+      decisionMode: "strategy_candidate",
+      strategyStage: "research_candidate",
+      portfolioContext: {
+        accountId: "paper-account",
+        venue: "alpaca",
+        validityMinutes: 60,
+        conflictPolicy: "block",
+        activeStrategyIds: ["trend"],
+      },
+      targets: [
+        {
+          id: "allocation-failed-preparation",
+          instrument: "SPY",
+          assetClass: "us_equity",
+          realtime: { requireOfficialReference: false },
+        },
+      ],
+    },
+    liveFetch: true,
+    batchOptions: BATCH_OPTIONS,
+    modelInvoker: async () => {
+      throw new Error("mandatory preparation unavailable");
+    },
+    qualityModelRouting: mockQualityPromptRouting(qualityModel),
+  });
+  expect(qualityModel).not.toHaveBeenCalled();
+  expect(result.portfolioPlan).toBeUndefined();
+  expect(result.gates).toContainEqual({
+    id: "quality",
+    passed: false,
+    reason: "not_run:portfolio_prerequisites_failed",
+  });
+  expect(result.quarterlyOutput.adopted).toBe(false);
+});
+
+it("stops allocation model calls when only part of the declared scope has evidence", async () => {
+  const invoke = vi.fn(modelInvoker);
+  const result = await runFinanceResearchRun({
+    input: {
+      ask: "Review active strategy allocations",
+      asOf: AS_OF,
+      decisionMode: "strategy_candidate",
+      portfolioContext: {
+        accountId: "paper-account",
+        venue: "alpaca",
+        validityMinutes: 60,
+        conflictPolicy: "block",
+        activeStrategyIds: ["trend"],
+        requiredInstruments: ["SPY", "QQQ"],
+      },
+      targets: ["SPY", "QQQ"].map((instrument) => ({
+        id: instrument,
+        instrument,
+        assetClass: "us_equity" as const,
+        realtime: { requireOfficialReference: false },
+      })),
+    },
+    liveFetch: true,
+    batchOptions: {
+      ...BATCH_OPTIONS,
+      realtimeAdapters: ["primary_market_data", "cross_check_market_data"].map((role) => ({
+        ...realtimeAdapter(role, role as FinanceRealtimeSourceAdapter["providerRole"]),
+        supports: (request) => request.instrument === "SPY",
+      })),
+    },
+    modelInvoker: invoke,
+    qualityModelRouting: mockQualityPromptRouting(invoke),
+  });
+  expect(result.batch?.committeeEvidence.some((item) => item.id === "finance-model:SPY")).toBe(
+    true,
+  );
+  expect(invoke).not.toHaveBeenCalled();
+  expect(result.missingEvidence).toContain("portfolio_source_coverage_incomplete");
+  expect(result.portfolioPlan).toBeUndefined();
+  expect(result.committee).toBeUndefined();
+  expect(result.quarterlyOutput.adopted).toBe(false);
+});
+
+it("keeps auxiliary macro gaps visible without blocking covered active strategy instruments", async () => {
+  const result = await runFinanceResearchRun({
+    input: {
+      ask: "Review the active strategy with the available evidence",
+      asOf: AS_OF,
+      decisionMode: "strategy_candidate",
+      portfolioContext: {
+        accountId: "paper-account",
+        venue: "alpaca",
+        validityMinutes: 60,
+        conflictPolicy: "block",
+        activeStrategyIds: ["intraday-spy"],
+        requiredInstruments: ["SPY"],
+      },
+      targets: [
+        {
+          id: "active-spy",
+          instrument: "SPY",
+          assetClass: "us_equity",
+          realtime: { requireOfficialReference: false },
+        },
+        {
+          id: "macro-cpi",
+          instrument: "CUUR0000SA0",
+          assetClass: "macro_series",
+          realtime: false,
+          collections: [
+            {
+              collection: "macro_series",
+              seriesId: "CUUR0000SA0",
+              limit: 12,
+              freshnessMaxMinutes: 31 * 24 * 60,
+            },
+          ],
+        },
+      ],
+    },
+    liveFetch: true,
+    qualityEnabled: false,
+    modelInvoker,
+    batchOptions: {
+      ...BATCH_OPTIONS,
+      collectionAdapters: [
+        {
+          ...collectionAdapter(),
+          id: "fixture_macro_unavailable",
+          collect: async () => {
+            throw new Error("fixture macro source unavailable");
+          },
+        },
+      ],
+    },
+  });
+
+  expect(result.batch?.committeeEvidence.some((item) => item.id === "finance-model:SPY")).toBe(
+    true,
+  );
+  expect(result.gates.find((gate) => gate.id === "source")).toMatchObject({ passed: true });
+  expect(result.missingEvidence.some((item) => item.startsWith("macro-cpi:"))).toBe(true);
+  expect(result.portfolioPlan).toBeUndefined();
+  expect(result.quarterlyOutput.adopted).toBe(false);
 });

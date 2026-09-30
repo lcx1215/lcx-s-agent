@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { requireNodeSqlite } from "../memory/sqlite.js";
 import { openFinanceModelCheckpoints } from "./finance-model-checkpoints.js";
+import { ModelAdapterError } from "./logical-agent-model-router.js";
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -188,6 +189,31 @@ describe("finance model checkpoints", () => {
       db.close();
     }
   });
+
+  it.each([new ModelAdapterError("output_truncated"), new Error("private provider text")])(
+    "records fixed failure codes without provider text",
+    async (error) => {
+      const opts = await options();
+      const store = openFinanceModelCheckpoints(opts, {});
+      await expect(
+        store.invoker(async () => {
+          throw error;
+        })!({}, new AbortController().signal),
+      ).rejects.toBe(error);
+      store.close();
+      const { DatabaseSync } = requireNodeSqlite();
+      const db = new DatabaseSync(opts.path);
+      try {
+        const row = db.prepare("SELECT result FROM finance_checkpoint_nodes WHERE cost=1").get()!;
+        expect(JSON.parse(String(row.result)).failureCode).toBe(
+          error instanceof ModelAdapterError ? "output_truncated" : "adapter_error",
+        );
+        expect(String(row.result)).not.toContain("private provider text");
+      } finally {
+        db.close();
+      }
+    },
+  );
 
   it("does not write late transport results into a closed checkpoint", async () => {
     const opts = await options();

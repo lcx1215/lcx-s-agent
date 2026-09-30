@@ -63,6 +63,16 @@ vi.mock("./finance-strategy-rule-ledger.js", () => ({
         },
         { state: "draft", instruments: ["DRAFT"], ruleId: "draft" },
         { state: "retired", instruments: ["RETIRED"], ruleId: "retired" },
+        {
+          state: "active",
+          instruments: ["AAPL"],
+          ruleId: "intraday",
+          form: "opening_range",
+          formVersion: "1",
+          emits: "trade_signals",
+          schedule: { kind: "intraday", timezone: "America/New_York" },
+          body: {},
+        },
       ],
     },
   })),
@@ -224,6 +234,79 @@ describe("account gate before unattended placement", () => {
     expect(mocks.account).not.toHaveBeenCalled();
     expect(mocks.cycle).not.toHaveBeenCalled();
   });
+  it.each([
+    { monthly: 0.3, intraday: 0.2, executes: true },
+    { monthly: 0.3, intraday: 0, executes: true },
+    { monthly: 0, intraday: 0.2, executes: false },
+  ])(
+    "routes controller budgets to their declared executor: %j",
+    async ({ monthly, intraday, executes }) => {
+      const fs = await import("node:fs/promises");
+      const os = await import("node:os");
+      const path = await import("node:path");
+      const directory = await fs.mkdtemp(path.join(os.tmpdir(), "daily-budget-routing-"));
+      try {
+        const filename = path.join(directory, "plan.json");
+        const asOf = new Date().toISOString();
+        await fs.writeFile(
+          filename,
+          JSON.stringify({
+            asOf,
+            validUntil: new Date(Date.now() + 60_000).toISOString(),
+            venue: "paper",
+            accountId: "synthetic",
+            conflictPolicy: "block",
+            allocations: [
+              { strategyId: "fixture", budgetFraction: monthly },
+              { strategyId: "intraday", budgetFraction: intraday },
+            ],
+            candidates: [
+              {
+                strategyId: "intraday",
+                basis: "price_strategy",
+                evidenceReceiptId: "intraday-evidence",
+                targets: [{ instrument: "AAPL", weight: 0.5, stance: "accumulate" }],
+              },
+            ],
+          }),
+        );
+        const result = await runFinanceDailyCycleOperator([
+          "--json",
+          "--dir",
+          "/synthetic/finance",
+          "--as-of",
+          asOf,
+          "--portfolio-plan",
+          filename,
+        ]);
+        expect(result.ok).toBe(true);
+        if (executes) {
+          expect(mocks.cycle).toHaveBeenCalledWith(
+            expect.objectContaining({
+              portfolioPlan: expect.objectContaining({
+                allocations: [{ strategyId: "fixture", budgetFraction: monthly }],
+                candidates: [],
+              }),
+              trendStrategies: [expect.objectContaining({ ruleId: "fixture" })],
+            }),
+          );
+          expect(mocks.ruleReadiness).toHaveBeenCalledWith(
+            expect.objectContaining({ rules: [expect.objectContaining({ ruleId: "fixture" })] }),
+          );
+        } else {
+          expect(result).toMatchObject({
+            boundary: "portfolio_no_daily_capital_allocated",
+            ordersSubmitted: 0,
+          });
+          expect(mocks.cycle).not.toHaveBeenCalled();
+          expect(mocks.ruleReadiness).not.toHaveBeenCalled();
+        }
+      } finally {
+        await fs.rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("rejects a research portfolio plan that escapes the selected universe", async () => {
     mocks.account.mockResolvedValue({ ok: true, account });
     const fs = await import("node:fs/promises");
@@ -621,6 +704,7 @@ it("installs the account controller from the explicit execution policy at the da
     const createSafetyContext = vi.fn();
     const createController = vi.fn(() => ({
       accountId: "bound-account",
+      executionPolicyExpiresAt: "2026-09-22T00:00:00.000Z",
       inspectReconciliation: vi.fn(),
       accountBookProvider,
       executionQuoteProvider,
@@ -674,6 +758,7 @@ it("checks reconciliation without collecting quotes or entering the trading cycl
     const executionQuoteProvider = vi.fn();
     const createController = vi.fn(() => ({
       accountId: "synthetic",
+      executionPolicyExpiresAt: "2026-09-22T00:00:00.000Z",
       inspectReconciliation,
       executionQuoteProvider,
       accountBookProvider: vi.fn(),

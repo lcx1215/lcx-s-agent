@@ -733,116 +733,240 @@ it("restores a remaining stop idempotently after a lost response", async () => {
   expect(posts).toBe(1);
   expect(stored?.qty).toBe("1");
 });
-it("coordinates a protected partial exit through the declared Alpaca adapter", async () => {
-  const now = new Date().toISOString(),
-    expires = new Date(Date.now() + 60000).toISOString();
-  let canceled = false,
-    position = 2;
-  const sent: Record<string, unknown>[] = [];
-  const adapter = createAlpacaExecutionAdapter({
-    instruments: ["AAPL"],
-    fillPoll: { timeoutMs: 1000, intervalMs: 0 },
-    cancelOrder: async (url) => {
-      expect(url).toContain("/orders/old-stop");
-      canceled = true;
-      return { status: 204, body: "" };
+it("restores stop-limit type and price idempotently after a lost response", async () => {
+  const { restoreAlpacaPaperProtection } = await import("./finance-alpaca-execution-adapter.js");
+  let stored: Record<string, unknown> | undefined;
+  let posted: Record<string, unknown> | undefined;
+  let posts = 0;
+  const options = {
+    intent: { ...baseIntent, instrument: "BTC/USD", side: "sell" as const },
+    quantity: 0.5,
+    stopPrice: 90,
+    orderType: "stop_limit" as const,
+    limitPrice: 89,
+    headers: {},
+    signal: AbortSignal.timeout(1000),
+    read: async () => ({ status: stored ? 200 : 404, body: JSON.stringify(stored ?? {}) }),
+    postJson: async (_url: string, init: { body: string }) => {
+      posts++;
+      posted = JSON.parse(init.body) as Record<string, unknown>;
+      stored = { ...posted, id: "remaining-limit", status: "new", filled_qty: "0" };
+      throw new Error("response lost");
     },
-    postJson: async (_url, init) => {
-      const body = JSON.parse(init.body) as Record<string, unknown>;
-      sent.push(body);
-      if (body.type === "market") {
-        position = 1;
-        return {
-          status: 200,
-          body: JSON.stringify({ id: "sale", status: "new", filled_qty: "0" }),
-        };
-      }
-      return {
-        status: 200,
-        body: JSON.stringify({ ...body, id: "remaining", status: "new", filled_qty: "0" }),
+  };
+  await restoreAlpacaPaperProtection(options);
+  await restoreAlpacaPaperProtection(options);
+  expect(posts).toBe(1);
+  expect(posted).toMatchObject({
+    symbol: "BTC/USD",
+    side: "sell",
+    type: "stop_limit",
+    qty: "0.5",
+    stop_price: "90",
+    limit_price: "89",
+  });
+  expect(stored?.id).toBe("remaining-limit");
+});
+it("rejects a stop-limit lost-response lookup with a different limit price", async () => {
+  const { restoreAlpacaPaperProtection } = await import("./finance-alpaca-execution-adapter.js");
+  let stored: Record<string, unknown> | undefined;
+  const options = {
+    intent: { ...baseIntent, instrument: "BTC/USD", side: "sell" as const },
+    quantity: 0.5,
+    stopPrice: 90,
+    orderType: "stop_limit" as const,
+    limitPrice: 89,
+    headers: {},
+    signal: AbortSignal.timeout(1000),
+    read: async () => ({ status: stored ? 200 : 404, body: JSON.stringify(stored ?? {}) }),
+    postJson: async (_url: string, init: { body: string }) => {
+      stored = {
+        ...JSON.parse(init.body),
+        id: "wrong-limit",
+        limit_price: "88",
+        status: "new",
+        filled_qty: "0",
       };
+      throw new Error("response lost");
     },
-    statusFetch: async (url) => {
-      if (url.endsWith("/account")) {
-        return { status: 200, body: JSON.stringify({ id: "account" }) };
-      }
-      if (url.includes("/positions/")) {
+  };
+  await expect(restoreAlpacaPaperProtection(options)).rejects.toThrow(
+    "remaining protection identity or state mismatch",
+  );
+});
+it.each([
+  { orderType: "stop_limit" as const },
+  { orderType: "stop_limit" as const, limitPrice: 0 },
+  { orderType: "stop_limit" as const, limitPrice: Number.NaN },
+  { orderType: "stop_limit" as const, limitPrice: 91 },
+  { orderType: "stop" as const, limitPrice: 89 },
+])("refuses invalid protection restoration intent: %j", async (protection) => {
+  const { restoreAlpacaPaperProtection } = await import("./finance-alpaca-execution-adapter.js");
+  const postJson = vi.fn(async () => ({ status: 200, body: "{}" }));
+  await expect(
+    restoreAlpacaPaperProtection({
+      intent: { ...baseIntent, side: "sell" },
+      quantity: 1,
+      stopPrice: 90,
+      headers: {},
+      signal: AbortSignal.timeout(1000),
+      read: async () => ({ status: 404, body: "{}" }),
+      postJson,
+      ...protection,
+    }),
+  ).rejects.toThrow("invalid protective order restoration intent");
+  expect(postJson).not.toHaveBeenCalled();
+});
+it.each([
+  {
+    label: "legacy stop",
+    instrument: "AAPL",
+    assetType: "spot_equity" as const,
+    orderType: "stop" as const,
+    limitPrice: undefined,
+  },
+  {
+    label: "BTC/USD stop-limit",
+    instrument: "BTC/USD",
+    assetType: "spot_crypto" as const,
+    orderType: "stop_limit" as const,
+    limitPrice: 89,
+  },
+])(
+  "coordinates a protected partial exit through Alpaca ($label)",
+  async ({ instrument, assetType, orderType, limitPrice }) => {
+    const now = new Date().toISOString(),
+      expires = new Date(Date.now() + 60000).toISOString();
+    let canceled = false,
+      position = 2;
+    const sent: Record<string, unknown>[] = [];
+    const adapter = createAlpacaExecutionAdapter({
+      instruments: [instrument],
+      fillPoll: { timeoutMs: 1000, intervalMs: 0 },
+      cancelOrder: async (url) => {
+        expect(url).toContain("/orders/old-stop");
+        canceled = true;
+        return { status: 204, body: "" };
+      },
+      postJson: async (_url, init) => {
+        const body = JSON.parse(init.body) as Record<string, unknown>;
+        sent.push(body);
+        if (body.type === "market") {
+          position = 1;
+          return {
+            status: 200,
+            body: JSON.stringify({ id: "sale", status: "new", filled_qty: "0" }),
+          };
+        }
         return {
           status: 200,
-          body: JSON.stringify({ symbol: "AAPL", side: "long", qty: String(position) }),
+          body: JSON.stringify({ ...body, id: "remaining", status: "new", filled_qty: "0" }),
         };
-      }
-      if (url.includes("by_client_order_id")) {
-        return { status: 404, body: "{}" };
-      }
-      if (url.endsWith("/old-stop")) {
+      },
+      statusFetch: async (url) => {
+        if (url.endsWith("/account")) {
+          return { status: 200, body: JSON.stringify({ id: "account" }) };
+        }
+        if (url.includes("/positions/")) {
+          return {
+            status: 200,
+            body: JSON.stringify({ symbol: instrument, side: "long", qty: String(position) }),
+          };
+        }
+        if (url.includes("by_client_order_id")) {
+          return { status: 404, body: "{}" };
+        }
+        if (url.endsWith("/old-stop")) {
+          return {
+            status: 200,
+            body: JSON.stringify({
+              id: "old-stop",
+              symbol: instrument,
+              qty: "2",
+              filled_qty: "0",
+              stop_price: "90",
+              type: orderType,
+              ...(limitPrice === undefined ? {} : { limit_price: String(limitPrice) }),
+              side: "sell",
+              time_in_force: "gtc",
+              status: canceled ? "canceled" : "new",
+            }),
+          };
+        }
         return {
           status: 200,
           body: JSON.stringify({
-            id: "old-stop",
-            symbol: "AAPL",
-            qty: "2",
-            filled_qty: "0",
-            stop_price: "90",
-            type: "stop",
-            side: "sell",
-            time_in_force: "gtc",
-            status: canceled ? "canceled" : "new",
+            id: "sale",
+            status: "filled",
+            filled_qty: "1",
+            filled_avg_price: "100",
+            filled_at: now,
           }),
         };
-      }
-      return {
-        status: 200,
-        body: JSON.stringify({
-          id: "sale",
-          status: "filled",
-          filled_qty: "1",
-          filled_avg_price: "100",
-          filled_at: now,
-        }),
-      };
-    },
-  });
-  const fill = await adapter.execute({ ...baseIntent, side: "sell" }, AbortSignal.timeout(1000), {
-    accountId: "account",
-    adapterId: "alpaca-venue",
-    venue: "alpaca:paper",
-    instrument: "AAPL",
-    snapshotId: "snapshot",
-    source: "fixture",
-    observedAt: now,
-    expiresAt: expires,
-    positionQuantity: 2,
-    reservedSellQuantity: 2,
-    protectiveOrders: [{ id: "old-stop", quantity: 2, stopPrice: 90 }],
-    openOrderIds: [],
-    unresolvedOrderIds: [],
-    instrumentEvidence: {
-      source: "fixture",
-      observedAt: now,
-      assetType: "spot_equity",
-      fullyPaid: true,
-      marginEnabled: false,
-      hedged: false,
-    },
-    account: {
-      status: "ACTIVE",
-      tradingBlocked: false,
-      equity: 1000,
-      availableCash: 800,
-      peakEquity: 1000,
-      currency: "USD",
-      grossExposure: 200,
-    },
-    quote: { source: "fixture", price: 100, observedAt: now, expiresAt: expires, currency: "USD" },
-  });
-  expect(fill.filledQuantity).toBe(1);
-  expect(sent.map((body) => [body.type, body.qty])).toEqual([
-    ["market", "1"],
-    ["stop", "1"],
-  ]);
-  expect(canceled).toBe(true);
-});
+      },
+    });
+    const fill = await adapter.execute(
+      { ...baseIntent, instrument, side: "sell" },
+      AbortSignal.timeout(1000),
+      {
+        accountId: "account",
+        adapterId: "alpaca-venue",
+        venue: "alpaca:paper",
+        instrument,
+        snapshotId: "snapshot",
+        source: "fixture",
+        observedAt: now,
+        expiresAt: expires,
+        positionQuantity: 2,
+        reservedSellQuantity: 2,
+        protectiveOrders: [
+          {
+            id: "old-stop",
+            quantity: 2,
+            stopPrice: 90,
+            orderType,
+            ...(limitPrice === undefined ? {} : { limitPrice }),
+          },
+        ],
+        openOrderIds: [],
+        unresolvedOrderIds: [],
+        instrumentEvidence: {
+          source: "fixture",
+          observedAt: now,
+          assetType,
+          fullyPaid: true,
+          marginEnabled: false,
+          hedged: false,
+        },
+        account: {
+          status: "ACTIVE",
+          tradingBlocked: false,
+          equity: 1000,
+          availableCash: 800,
+          peakEquity: 1000,
+          currency: "USD",
+          grossExposure: 200,
+        },
+        quote: {
+          source: "fixture",
+          price: 100,
+          observedAt: now,
+          expiresAt: expires,
+          currency: "USD",
+        },
+      },
+    );
+    expect(fill.filledQuantity).toBe(1);
+    expect(sent.map((body) => [body.type, body.qty])).toEqual([
+      ["market", "1"],
+      [orderType, "1"],
+    ]);
+    if (orderType === "stop_limit") {
+      expect(sent[1]).toMatchObject({ symbol: "BTC/USD", stop_price: "90", limit_price: "89" });
+    }
+    expect(canceled).toBe(true);
+  },
+);
 
 it("checks the credential account against controller facts before sending a normal order", async () => {
   const postJson = vi.fn(async () => ({ status: 200, body: "{}" }));
@@ -889,3 +1013,32 @@ it("checks the credential account against controller facts before sending a norm
   expect(postJson).not.toHaveBeenCalled();
   expect(statusFetch).toHaveBeenCalledOnce();
 });
+
+it.each([{ qty: true }, { stop_price: true }, { filled_qty: false }])(
+  "refuses malformed numeric fields in a protection restoration response: %j",
+  async (patch) => {
+    const { restoreAlpacaPaperProtection } = await import("./finance-alpaca-execution-adapter.js");
+    await expect(
+      restoreAlpacaPaperProtection({
+        intent: { ...baseIntent, side: "sell" },
+        quantity: 1,
+        stopPrice: 1,
+        orderType: "stop_limit",
+        limitPrice: 1,
+        headers: {},
+        signal: AbortSignal.timeout(1000),
+        read: async () => ({ status: 404, body: "{}" }),
+        postJson: async (_url, init) => ({
+          status: 200,
+          body: JSON.stringify({
+            ...JSON.parse(init.body),
+            id: "restored",
+            status: "new",
+            filled_qty: "0",
+            ...patch,
+          }),
+        }),
+      }),
+    ).rejects.toThrow("remaining protection identity or state mismatch");
+  },
+);

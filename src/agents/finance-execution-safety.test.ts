@@ -9,6 +9,7 @@ import {
 } from "./finance-execution-adapter.js";
 import {
   createFinanceExecutionSafetyContext,
+  FinanceExecutionSafetyFactsError,
   FinanceExecutionSafetyUncertainError,
   type FinanceExecutionSafetyContextInput,
   type FinanceExecutionSafetyFacts,
@@ -146,6 +147,64 @@ it("allows a declared spot plan and durably consumes its intent once", async () 
   expect(journal).toContain('"status":"confirmed"');
   expect(journal).toContain('"binding"');
   expect(journal).toContain('"fill"');
+});
+it("rechecks target-weight drift against the fresh locked position before dispatch", async () => {
+  const f = await fixture();
+  const intent = {
+    ...f.request.intent,
+    targetWeightAuthorization: {
+      targetWeight: 0.1,
+      driftBandFraction: 0.02,
+      maxOrderNotional: 300,
+    },
+  };
+  const freshFacts = { ...f.facts, positionQuantity: 9 };
+  const context = createFinanceExecutionSafetyContext({
+    ...f.input,
+    intent,
+    readFacts: async () => freshFacts,
+  });
+  const result = await placeFinanceOrder({ ...f.request, intent, safetyContext: context });
+  expect(result.status).toBe("refused");
+  expect(result.refusalReasons).toContain(
+    "execution_safety_target_weight_drift_no_longer_authorizes_side",
+  );
+});
+it("allows a rebalance only within the fresh drift band and controller notional cap", async () => {
+  const f = await fixture();
+  const intent = {
+    ...f.request.intent,
+    targetWeightAuthorization: {
+      targetWeight: 0.1,
+      driftBandFraction: 0.02,
+      maxOrderNotional: 300,
+    },
+  };
+  const context = createFinanceExecutionSafetyContext({ ...f.input, intent });
+  const result = await placeFinanceOrder({ ...f.request, intent, safetyContext: context });
+  expect(result.status).toBe("placed");
+});
+it("rejects a target-rebalance intent that exceeds its controller notional cap", async () => {
+  const f = await fixture();
+  const intent = {
+    ...f.request.intent,
+    quantity: 4,
+    targetWeightAuthorization: {
+      targetWeight: 0.5,
+      driftBandFraction: 0.02,
+      maxOrderNotional: 300,
+    },
+  };
+  const context = createFinanceExecutionSafetyContext({
+    ...f.input,
+    intent,
+    policy: { ...f.input.policy, authorizedQuantity: 4 },
+  });
+  const result = await placeFinanceOrder({ ...f.request, intent, safetyContext: context });
+  expect(result.status).toBe("refused");
+  expect(result.refusalReasons).toContain(
+    "execution_safety_target_weight_drift_authorization_exceeded",
+  );
 });
 it.each([
   "account",
@@ -530,7 +589,15 @@ it.each([0, 4, 5])(
 it("passes a protected reduction plan only to its declared capable paper venue and journals it", async () => {
   const f = await fixture();
   const intent = { ...f.input.intent, side: "sell" as const, quantity: 2 };
-  const protection = [{ id: "old-stop", quantity: 5, stopPrice: 90 }];
+  const protection = [
+    {
+      id: "old-stop-limit",
+      quantity: 5,
+      stopPrice: 90,
+      orderType: "stop_limit" as const,
+      limitPrice: 89,
+    },
+  ];
   const execute = vi.fn(async () => ({
     filledQuantity: 2,
     fillPrice: 100,
@@ -660,4 +727,94 @@ it("persists the actual restricted scope without changing native cash or equity 
     venue: f.input.venue,
   });
   expect(claims[0].binding?.reconciliation).toEqual(reconciliation);
+});
+
+it("persists classified controller failures without dispatching or leaking exception text", async () => {
+  const f = await fixture();
+  const { FinanceExecutionSafetyFactsError } = await import("./finance-execution-safety.js");
+  const execute = vi.fn(f.adapter.execute);
+  for (const [error, expected, failure] of [
+    [
+      new FinanceExecutionSafetyFactsError("cash_changed"),
+      "execution_safety_cash_changed",
+      { stage: "facts", category: "cash_changed", operation: "read_account_safety_facts" },
+    ],
+    [
+      new FinanceExecutionSafetyFactsError("account_snapshot_unavailable", {
+        reason: "alpaca_safety_quote_expired",
+        stage: "quote_binding",
+      }),
+      "execution_safety_account_snapshot_unavailable:alpaca_safety_quote_expired:quote_binding",
+      {
+        stage: "facts",
+        category: "account_snapshot_unavailable",
+        operation: "read_account_safety_facts",
+        provider: { reason: "alpaca_safety_quote_expired", stage: "quote_binding" },
+      },
+    ],
+    [
+      new Error("secret token must not be stored"),
+      "execution_safety_facts_unavailable",
+      { stage: "facts", category: "unexpected", operation: "read_account_safety_facts" },
+    ],
+  ] as const) {
+    const result = await placeFinanceOrder({
+      ...f.request,
+      adapters: [{ ...f.adapter, execute }],
+      safetyContext: createFinanceExecutionSafetyContext({
+        ...f.input,
+        readFacts: async () => {
+          throw error;
+        },
+      }),
+    });
+    expect(result.status).toBe("refused");
+    expect(result.refusalReasons).toContain(expected);
+    expect(result.safetyFailure).toEqual(failure);
+    expect(JSON.stringify(result)).not.toContain("secret token");
+  }
+  expect(execute).not.toHaveBeenCalled();
+});
+
+it("classifies state-root failures without storing raw filesystem errors", async () => {
+  const f = await fixture();
+  const blockedStateDir = `${f.input.stateDir}-file`;
+  await fs.writeFile(blockedStateDir, "not a directory");
+  directories.push(blockedStateDir);
+  const result = await placeFinanceOrder({
+    ...f.request,
+    safetyContext: createFinanceExecutionSafetyContext({
+      ...f.input,
+      stateDir: blockedStateDir,
+    }),
+  });
+
+  expect(result.status).toBe("refused");
+  expect(result.refusalReasons).toContain("execution_safety_state_unavailable");
+  expect(result.safetyFailure).toEqual({
+    stage: "state",
+    category: "unexpected",
+    operation: "create_state_directory",
+  });
+  expect(JSON.stringify(result)).not.toMatch(/EEXIST|not a directory|blockedStateDir/u);
+});
+
+it("rejects unsafe runtime safety-failure classifications", () => {
+  expect(
+    () =>
+      new FinanceExecutionSafetyFactsError("cash_changed", {
+        reason: "secret" as never,
+      }),
+  ).toThrow("invalid finance execution safety failure classification");
+
+  const withUnknownFields = new FinanceExecutionSafetyFactsError("cash_changed", {
+    reason: "alpaca_safety_facts_inconsistent",
+    stage: "account_arithmetic",
+    extra: "secret provider detail",
+  } as never);
+  expect(withUnknownFields.provider).toEqual({
+    reason: "alpaca_safety_facts_inconsistent",
+    stage: "account_arithmetic",
+  });
+  expect(JSON.stringify(withUnknownFields.provider)).not.toContain("secret provider detail");
 });

@@ -1,7 +1,11 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApiSourceGovernanceRegistry } from "./api-call-contract.js";
 import { buildFinanceCommitteeContext } from "./finance-agent-committee.js";
 import type { FinanceDataGatewayObservationInput } from "./finance-data-gateway.js";
+import { appendFinanceFundamentalSnapshot } from "./finance-fundamental-store.js";
 import { resolveFinanceFetch, type FetchImpl } from "./finance-live-market-source.js";
 import {
   createFinanceMarketCollectionRegistry,
@@ -138,7 +142,13 @@ function options(fetchImpl: FetchImpl = fixtureFetch): FinanceResearchBatchOptio
   };
 }
 
-afterEach(() => vi.useRealTimers());
+const snapshotDirectories: string[] = [];
+afterEach(() => {
+  vi.useRealTimers();
+  snapshotDirectories
+    .splice(0)
+    .forEach((directory) => fs.rmSync(directory, { recursive: true, force: true }));
+});
 
 describe("finance research batch runner", () => {
   it("propagates the live-now mode to every source request", async () => {
@@ -370,6 +380,38 @@ describe("finance research batch runner", () => {
     expect(packet.jobs[0].receipt?.status).toBe("ready");
     expect(packet.jobs[0].status).toBe("needs_review");
     expect(JSON.stringify(packet)).not.toContain("private upstream diagnostic");
+  });
+
+  it("admits a ready collection when only an unused secondary source fails", async () => {
+    const base = options();
+    const primary = base.collectionAdapters![0];
+    const failedSecondary: FinanceMarketCollectionAdapter = {
+      ...primary,
+      id: "failed-cross-check",
+      providerName: "failed-cross-check",
+      providerRole: "cross_check_market_data",
+      priority: 1,
+      collect: async () => {
+        throw new Error("private upstream diagnostic");
+      },
+    };
+    const packet = await runFinanceResearchBatch({
+      ...base,
+      realtimeAdapters: [],
+      collectionAdapters: [primary, failedSecondary],
+      targets: [{ ...base.targets[0], realtime: false }],
+    });
+
+    const job = packet.jobs[0];
+    expect(job.receipt?.status).toBe("ready");
+    expect(job.status).toBe("ready");
+    expect(job.receipt?.requiredNextSteps).toContain("inspect_source_attempt_failures");
+    expect(job.receipt?.sourceAttempts).toEqual(
+      expect.arrayContaining([expect.objectContaining({ status: "failed" })]),
+    );
+    const evidence = JSON.parse(packet.committeeEvidence[1].text);
+    expect(evidence.usableAsCurrentEvidence).toBe(true);
+    expect(evidence.data).toBeDefined();
   });
 
   it("reports unsupported requests as blocked without making network calls", async () => {
@@ -623,4 +665,216 @@ it("keeps single-source observations available for review without promoting thei
   expect(evidence.reviewData.snapshot.normalizedFields.length).toBeGreaterThan(0);
   expect(evidence.reviewBoundary).toContain("not_verified_current_evidence");
   expect(result.jobs[0].status).toBe("blocked");
+});
+
+const MACRO_SOURCE_ID = "bls_public_macro_series";
+const MACRO_SERIES_ID = "CUUR0000SA0";
+const macroDirectory = () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "finance-macro-cache-"));
+  snapshotDirectories.push(directory);
+  return directory;
+};
+const macroReceiptParts = (capturedAt: string, asOf = new Date().toISOString()) => {
+  return {
+    request: {
+      collection: "macro_series" as const,
+      instrument: MACRO_SERIES_ID,
+      assetClass: "macro_series",
+      asOf,
+      asOfMode: "live_now" as const,
+      seriesId: MACRO_SERIES_ID,
+      limit: 12,
+    },
+    receipt: {
+      schemaVersion: "lcx_finance_market_collection_v1" as const,
+      refreshId: `macro_series:${MACRO_SERIES_ID}:${asOf}`,
+      boundary: "finance_market_collection_research_only" as const,
+      request: {
+        collection: "macro_series" as const,
+        instrument: MACRO_SERIES_ID,
+        assetClass: "macro_series",
+        asOf,
+        asOfMode: "live_now" as const,
+        seriesId: MACRO_SERIES_ID,
+        limit: 12,
+      },
+      status: "ready" as const,
+      records: [
+        {
+          itemId: `${MACRO_SERIES_ID}-2026-M08`,
+          collection: "macro_series" as const,
+          providerName: "bls-public-macro-series",
+          providerRole: "official_or_issuer_reference" as const,
+          sourceFamily: "official_macro_data" as const,
+          sourceTimestamp: new Date(Date.now() - 24 * 60 * 60_000).toISOString(),
+          observedAt: capturedAt,
+          delayStatus: "official_lagged" as const,
+          sourceUrlOrArtifact: `https://api.bls.gov/publicAPI/v2/timeseries/data/${MACRO_SERIES_ID}`,
+          data: { seriesId: MACRO_SERIES_ID, year: "2026", period: "M08", value: "334.980" },
+        },
+      ],
+      sourceAttempts: [
+        {
+          adapterId: MACRO_SOURCE_ID,
+          providerName: "bls-public-macro-series",
+          providerRole: "official_or_issuer_reference" as const,
+          priority: 0,
+          status: "succeeded" as const,
+          recordCount: 1,
+          latencyMs: 10,
+        },
+      ],
+      selectedSourceIds: [MACRO_SOURCE_ID],
+      missingEvidence: [],
+      requiredNextSteps: [],
+      adaptersCalled: true,
+      notTouched: ["trading"],
+    },
+  };
+};
+function macroAdapter(collect?: () => void): FinanceMarketCollectionAdapter {
+  return {
+    id: MACRO_SOURCE_ID,
+    providerName: "bls-public-macro-series",
+    providerRole: "official_or_issuer_reference",
+    priority: 0,
+    supports: (request) =>
+      request.collection === "macro_series" && request.seriesId === MACRO_SERIES_ID,
+    collect: async (_request) => {
+      const observedAt = new Date().toISOString();
+      if (collect) {
+        collect();
+      }
+      const record = macroReceiptParts(observedAt).receipt.records[0];
+      return [record];
+    },
+  };
+}
+function macroBatchOptions(input: {
+  directory: string;
+  adapter: FinanceMarketCollectionAdapter;
+  asOf?: string;
+  asOfMode?: "live_now";
+}): FinanceResearchBatchOptions {
+  const asOf = input.asOf ?? new Date().toISOString();
+  return {
+    asOf,
+    ...(input.asOfMode ? { asOfMode: input.asOfMode } : {}),
+    useCase: "macro-snapshot-reuse",
+    macroSnapshotDirectory: input.directory,
+    targets: [
+      {
+        id: "cpi",
+        instrument: MACRO_SERIES_ID,
+        assetClass: "macro_series",
+        realtime: false,
+        sourceAdapterIds: [MACRO_SOURCE_ID],
+        collections: [
+          {
+            collection: "macro_series",
+            seriesId: MACRO_SERIES_ID,
+            limit: 12,
+            freshnessMaxMinutes: 31 * 24 * 60,
+          },
+        ],
+      },
+    ],
+    collectionAdapters: [input.adapter],
+  };
+}
+
+describe("durable macro collection reuse", () => {
+  it("persists successful macro evidence and reuses it in a later batch without a fetch", async () => {
+    const directory = macroDirectory();
+    const firstCollect = vi.fn();
+    const first = await runFinanceResearchBatch(
+      macroBatchOptions({
+        directory,
+        adapter: macroAdapter(firstCollect),
+        asOfMode: "live_now",
+      }),
+    );
+    expect(first.jobs[0]?.status).toBe("ready");
+    expect(firstCollect).toHaveBeenCalledOnce();
+
+    const secondCollect = vi.fn();
+    const second = await runFinanceResearchBatch(
+      macroBatchOptions({ directory, adapter: macroAdapter(secondCollect) }),
+    );
+    expect(second.jobs[0]?.status).toBe("ready");
+    expect(secondCollect).not.toHaveBeenCalled();
+    expect(second.jobs[0]?.apiCalls).toEqual([]);
+    expect(second.jobs[0]?.sourceReuse).toMatchObject({
+      kind: "durable_collection_snapshot",
+      sourceId: MACRO_SOURCE_ID,
+    });
+    const cachedReceipt = second.jobs[0]?.receipt;
+    const cachedRecord =
+      cachedReceipt && "records" in cachedReceipt ? cachedReceipt.records[0] : undefined;
+    expect(second.jobs[0]?.sourceReuse?.capturedAt).toBe(cachedRecord?.observedAt);
+    expect(Date.parse(cachedRecord?.sourceTimestamp ?? "")).toBeLessThanOrEqual(Date.now());
+    expect(cachedRecord?.sourceUrlOrArtifact).toContain("api.bls.gov");
+  });
+
+  it("supports scheduler as-of reads and misses when capture happened after the requested as-of", async () => {
+    const directory = macroDirectory();
+    const capturedAt = new Date(Date.now() - 60_000).toISOString();
+    const seeded = macroReceiptParts(capturedAt);
+    appendFinanceFundamentalSnapshot({
+      directory,
+      sourceId: MACRO_SOURCE_ID,
+      capturedAt,
+      receipt: seeded.receipt,
+    });
+    const schedulerCollect = vi.fn();
+    const schedulerResult = await runFinanceResearchBatch(
+      macroBatchOptions({ directory, adapter: macroAdapter(schedulerCollect) }),
+    );
+    expect(schedulerCollect).not.toHaveBeenCalled();
+    expect(schedulerResult.jobs[0]?.sourceReuse?.sourceId).toBe(MACRO_SOURCE_ID);
+
+    const historicalDirectory = macroDirectory();
+    const beforeCapture = new Date(Date.parse(capturedAt) - 1).toISOString();
+    const historicalSeed = macroReceiptParts(capturedAt, beforeCapture);
+    appendFinanceFundamentalSnapshot({
+      directory: historicalDirectory,
+      sourceId: MACRO_SOURCE_ID,
+      capturedAt,
+      receipt: historicalSeed.receipt,
+    });
+    const historicalCollect = vi.fn();
+    const historicalResult = await runFinanceResearchBatch(
+      macroBatchOptions({
+        directory: historicalDirectory,
+        adapter: macroAdapter(historicalCollect),
+        asOf: beforeCapture,
+      }),
+    );
+    expect(historicalCollect).toHaveBeenCalledOnce();
+    expect(historicalResult.jobs[0]?.sourceReuse).toBeUndefined();
+  });
+
+  it.each([
+    ["stale capture", 2 * 60 * 60_000, MACRO_SOURCE_ID],
+    ["future capture", 60_000, MACRO_SOURCE_ID],
+    ["different source identity", 60_000, "different_macro_adapter"],
+  ])("misses an incompatible %s snapshot", async (label, ageMs, sourceId) => {
+    const directory = macroDirectory();
+    const capturedAt = new Date(
+      Date.now() + (label === "future capture" ? 60_000 : -ageMs),
+    ).toISOString();
+    const snapshot = macroReceiptParts(capturedAt);
+    appendFinanceFundamentalSnapshot({
+      directory,
+      sourceId,
+      capturedAt,
+      receipt: snapshot.receipt,
+    });
+    const collect = vi.fn();
+    const result = await runFinanceResearchBatch(
+      macroBatchOptions({ directory, adapter: macroAdapter(collect) }),
+    );
+    expect(collect).toHaveBeenCalledOnce();
+    expect(result.jobs[0]?.sourceReuse).toBeUndefined();
+  });
 });

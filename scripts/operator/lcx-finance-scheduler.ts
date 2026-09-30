@@ -10,7 +10,8 @@
  * forwarded unchanged. Scheduling does not grant additional execution authority.
  *
  * lastFired is an attempt marker, not success. A failed/interrupted attempt is
- * never automatically replayed; reconcile its effects before a manual --once.
+ * never automatically replayed after execution starts. A proven preflight-only failure
+ * gets one delayed retry inside the day window; unknown outcomes require reconciliation.
  */
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -46,6 +47,7 @@ import {
   writeFinanceNightReviewEvidence,
   type FinanceNightSettlementSummary,
 } from "../../src/agents/finance-night-review-context.js";
+import { financeResearchPortfolioAbstentionSchema } from "../../src/agents/finance-research-portfolio-plan.js";
 import {
   readFinanceResearchEquityUniverseSnapshot,
   type FinanceResearchEquityUniverseSnapshot,
@@ -63,10 +65,12 @@ import {
 } from "../../src/agents/finance-scheduler-process.js";
 import {
   FINANCE_SCHEDULER_TICK_MS,
+  type FinanceSchedulerCycleStage,
   inspectFinanceSchedulerProgress,
   readFinanceSchedulerPolicyExpiry,
   readFinanceSchedulerState,
   writeFinanceSchedulerState,
+  type SchedulerState,
   initializeFinanceSchedulerDatabase,
 } from "../../src/agents/finance-scheduler-state.js";
 import { runFinanceSourceHeartbeat } from "../../src/agents/finance-source-heartbeat.js";
@@ -116,7 +120,8 @@ type IntradayMonitorConfig = Readonly<{
     | "explicit_diagnostic_only"
     | "instrument_scope_mismatch"
     | "universe_unavailable"
-    | "active_rule_unavailable";
+    | "active_rule_unavailable"
+    | "controller_unavailable";
   instrumentSource: "explicit" | "active_rule" | "system_universe";
   instruments: readonly string[];
   executionInstruments: readonly string[];
@@ -466,39 +471,63 @@ function parseNightSettlement(stdout: string): FinanceNightSettlementSummary {
   });
 }
 
+/** Research egress is child-local; trading retains its independently configured route. */
+export function financeResearchProcessEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv | undefined {
+  const declared = env.LCX_FINANCE_RESEARCH_HTTP_PROXY;
+  if (declared === undefined) {
+    return undefined;
+  }
+  const proxy = declared.trim();
+  if (proxy) {
+    const parsed = new URL(proxy);
+    if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) {
+      throw new Error("research proxy must be an HTTP(S) URL without credentials");
+    }
+  }
+  return { ...env, LCX_FINANCE_HTTP_PROXY: proxy };
+}
+
 async function runNightResearchReview(params: {
   context: CycleContext;
   attempt: { firedAt: string; etDate: string };
   settlement: FinanceNightSettlementSummary;
 }): Promise<FinanceCycleProcessResult> {
   try {
+    const reviewAsOf = new Date().toISOString();
     const evidencePath = path.join(
       params.context.root.directory,
       `night-review-evidence-${params.attempt.etDate}.json`,
     );
     const evidence = await buildFinanceNightReviewEvidence({
       directory: params.context.root.directory,
-      asOf: params.attempt.firedAt,
+      asOf: reviewAsOf,
       etDate: params.attempt.etDate,
       settlement: params.settlement,
+      includeResearchScope: true,
     });
     await writeFinanceNightReviewEvidence(evidencePath, evidence);
-    return runFinanceCycleProcess({
+    return runScheduledCycleProcess(params.context, "night_review", {
       argv: [
         "--import",
         "tsx",
         RESEARCH_SCRIPT,
         "--live",
         "--workflow-models",
+        "--include-yahoo-public-sources",
+        "--max-api-calls",
+        "160",
         "--execute-modules",
         "--write",
-        "--json",
+        "--scheduler-summary",
         "--decision-mode",
         "research_only",
         "--as-of",
-        params.attempt.firedAt,
+        reviewAsOf,
         "--ask",
         `Night review of net profit, missed opportunities, premature exits, winner retention, portfolio risk and fresh news. Follow the profitReview questions and evidence boundaries in controller evidence. Propose validated experiments, never silently change execution authority or risk limits. Reassess the active evidence and invalidations for: ${params.context.options.researchPlan!.ask}`,
+        "--controller-research-scope",
         "--controller-evidence",
         evidencePath,
         "--persist-theses",
@@ -506,6 +535,7 @@ async function runNightResearchReview(params: {
         params.context.root.directory,
       ],
       cwd: REPO_ROOT,
+      env: financeResearchProcessEnv(),
       timeoutMs: params.context.options.timeoutMs,
       signal: params.context.signal,
     });
@@ -903,7 +933,7 @@ async function refreshFinanceUniverseSelection(params: {
     );
     startedReceiptPersisted = true;
     preserveUniverseSnapshot(params.context.root.directory, params.attempt.runId, "previous");
-    processResult = await runFinanceCycleProcess({
+    processResult = await runScheduledCycleProcess(params.context, "universe_selection", {
       argv: [
         "--import",
         "tsx",
@@ -1068,7 +1098,11 @@ function createIntradayTradeDecisionReviewer() {
   }
 }
 
-function writeSchedulerProgress(context: CycleContext, phase: "idle" | "cycle") {
+function writeSchedulerProgress(
+  context: CycleContext,
+  phase: "idle" | "cycle",
+  cycleStage?: FinanceSchedulerCycleStage,
+) {
   const filename = path.join(context.root.directory, FINANCE_SCHEDULER_LOCK, "progress.json");
   const temporary = `${filename}.tmp`;
   const args = context.options.extraArgs;
@@ -1081,6 +1115,7 @@ function writeSchedulerProgress(context: CycleContext, phase: "idle" | "cycle") 
       pid: process.pid,
       observedAt: new Date().toISOString(),
       phase,
+      ...(cycleStage ? { cycleStage } : {}),
       timeoutMs: context.options.timeoutMs,
       placementEnabled: args.includes("--place"),
       venue,
@@ -1088,6 +1123,8 @@ function writeSchedulerProgress(context: CycleContext, phase: "idle" | "cycle") 
         venue === "alpaca"
           ? readFinanceSchedulerPolicyExpiry(policyIndex < 0 ? undefined : args[policyIndex + 1])
           : null,
+      intradayControllerPolicyExpiresAt:
+        context.intradayController?.executionPolicyExpiresAt ?? null,
       intraday: context.options.intraday
         ? {
             enabled: true,
@@ -1117,6 +1154,42 @@ function writeSchedulerProgress(context: CycleContext, phase: "idle" | "cycle") 
     }),
   );
   fs.renameSync(temporary, filename);
+}
+
+/** Each bounded child owns a fresh progress deadline; elapsed prior stages do not count as a stall. */
+async function runScheduledCycleProcess(
+  context: CycleContext,
+  stage: FinanceSchedulerCycleStage,
+  options: Parameters<typeof runFinanceCycleProcess>[0],
+): Promise<FinanceCycleProcessResult> {
+  writeSchedulerProgress(context, "cycle", stage);
+  if (context.options.command !== "loop" || !context.options.intraday || stage === "execution") {
+    return runFinanceCycleProcess(options);
+  }
+  // Research has no placement authority. Keep the existing resident trading tick
+  // alive while it waits, with at most one trading tick in flight. Before handing
+  // off to any next stage (especially daily execution), join that tick completely.
+  let tradingTick: Promise<void> | undefined;
+  const timer = setInterval(() => {
+    if (tradingTick || context.signal.aborted) {
+      return;
+    }
+    tradingTick = runTradingTick(context)
+      .catch((error: unknown) => {
+        process.stderr.write(
+          `intraday tick during ${stage} failed: ${error instanceof Error ? error.message : String(error)}\n`,
+        );
+      })
+      .finally(() => {
+        tradingTick = undefined;
+      });
+  }, FINANCE_SCHEDULER_TICK_MS);
+  try {
+    return await runFinanceCycleProcess(options);
+  } finally {
+    clearInterval(timer);
+    await tradingTick;
+  }
 }
 
 /**
@@ -1150,13 +1223,51 @@ async function heartbeat(context: CycleContext): Promise<void> {
   }
 }
 
+/** Retry only a terminal, controller-recorded preflight failure with no execution dispatch. */
+export function financeResearchPreflightRetryDue(state: SchedulerState, at: Date): boolean {
+  const clock = financeEtClock(at);
+  const run = state.lastRun;
+  if (
+    !FINANCE_TRADING_WEEKDAYS.includes(clock.weekday) ||
+    clock.minutes < 15 * 60 + 30 ||
+    clock.minutes >= 16 * 60 ||
+    state.lastFired.day !== clock.date ||
+    state.lastSucceeded.day === clock.date ||
+    state.lastStatus.day !== "failed" ||
+    !run ||
+    run.mode !== "day" ||
+    run.etDate !== clock.date ||
+    run.status !== "failed" ||
+    run.researchAttempt !== 1 ||
+    run.ok !== false ||
+    !isObjectRecord(run.execution) ||
+    run.execution.outcome !== "not_run" ||
+    run.execution.blockReason !== "research_plan_not_accepted" ||
+    !isObjectRecord(run.researchPlanRefresh) ||
+    run.researchPlanRefresh.ok !== false ||
+    typeof run.completedAt !== "string"
+  ) {
+    return false;
+  }
+  const completedAt = Date.parse(run.completedAt);
+  return Number.isFinite(completedAt) && at.getTime() - completedAt >= 10 * 60_000;
+}
+
 async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
   if (context.signal.aborted) {
     return false;
   }
   const directory = context.root.directory;
   const startedAt = Date.now();
+  const state = readFinanceSchedulerState(directory);
+  const retryDue =
+    mode === "day" &&
+    Boolean(context.options.researchPlan) &&
+    financeResearchPreflightRetryDue(state, new Date(startedAt));
   const attempt = {
+    ...(mode === "day" && context.options.researchPlan
+      ? { researchAttempt: retryDue ? 2 : 1 }
+      : {}),
     runId: randomUUID(),
     firedAt: new Date(startedAt).toISOString(),
     etDate: financeEtClock(new Date(startedAt)).date,
@@ -1165,11 +1276,10 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
     rootSource: context.root.source,
     timeoutMs: context.options.timeoutMs,
   };
-  const state = readFinanceSchedulerState(directory);
   const legacyClaim = path.join(directory, `daily-cycle-${attempt.etDate}-${mode}.json`);
   if (
     fs.existsSync(legacyClaim) ||
-    state.lastFired[mode] === attempt.etDate ||
+    (state.lastFired[mode] === attempt.etDate && !retryDue) ||
     state.lastStatus[mode] === "running"
   ) {
     process.stderr.write("cycle blocked: existing attempt requires reconciliation before replay\n");
@@ -1185,16 +1295,19 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
   const portfolioPlanPath = path.join(directory, "research-portfolio-plan-latest.json");
   const research =
     mode === "day" && context.options.researchPlan
-      ? await runFinanceCycleProcess({
+      ? await runScheduledCycleProcess(context, "research_preflight", {
           argv: [
             "--import",
             "tsx",
             RESEARCH_SCRIPT,
             "--live",
             "--workflow-models",
+            "--include-yahoo-public-sources",
+            "--max-api-calls",
+            "160",
             "--execute-modules",
             "--write",
-            "--json",
+            "--scheduler-summary",
             "--decision-mode",
             "strategy_candidate",
             "--as-of",
@@ -1210,25 +1323,62 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
             directory,
           ],
           cwd: REPO_ROOT,
+          env: financeResearchProcessEnv(),
           timeoutMs: context.options.timeoutMs,
           signal: context.signal,
         })
       : undefined;
+  const researchPayload = (() => {
+    if (!research?.ok) {
+      return undefined;
+    }
+    try {
+      const payload = JSON.parse(research.stdout) as {
+        status?: unknown;
+        portfolioPlanWritten?: unknown;
+        portfolioPlan?: unknown;
+        portfolioAbstention?: unknown;
+        plan?: { asOf?: unknown };
+        gates?: { id?: unknown; passed?: unknown }[];
+      };
+      if (
+        payload.status !== "candidate" ||
+        payload.plan?.asOf !== attempt.firedAt ||
+        !Array.isArray(payload.gates) ||
+        !payload.gates.every((gate) => gate?.passed === true) ||
+        !["source", "committee", "quality", "module_execution"].every((id) =>
+          payload.gates?.some((gate) => gate.id === id && gate.passed === true),
+        )
+      ) {
+        return undefined;
+      }
+      return payload;
+    } catch {
+      return undefined;
+    }
+  })();
+  const researchAbstention = (() => {
+    if (
+      !researchPayload ||
+      researchPayload.portfolioPlanWritten !== undefined ||
+      researchPayload.portfolioPlan !== undefined
+    ) {
+      return undefined;
+    }
+    try {
+      return financeResearchPortfolioAbstentionSchema.parse(researchPayload.portfolioAbstention);
+    } catch {
+      return undefined;
+    }
+  })();
   const researchAccepted =
     research === undefined ||
-    (research.ok &&
-      (() => {
-        try {
-          const payload = JSON.parse(research.stdout) as Record<string, unknown>;
-          return (
-            payload.status === "candidate" && payload.portfolioPlanWritten === portfolioPlanPath
-          );
-        } catch {
-          return false;
-        }
-      })());
+    (researchPayload !== undefined &&
+      researchPayload.portfolioAbstention === undefined &&
+      researchPayload.portfolioPlan === undefined &&
+      researchPayload.portfolioPlanWritten === portfolioPlanPath);
   const result = researchAccepted
-    ? await runFinanceCycleProcess({
+    ? await runScheduledCycleProcess(context, "execution", {
         argv: [
           "--import",
           "tsx",
@@ -1275,27 +1425,33 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
           return false;
         }
       })());
-  const accepted = cycleAccepted && (tuningLifecycle?.ok ?? true) && nightReviewAccepted;
+  const accepted =
+    researchAbstention !== undefined ||
+    (cycleAccepted && (tuningLifecycle?.ok ?? true) && nightReviewAccepted);
   const record = {
     ...attempt,
     ...result,
     ok: accepted,
+    cycleExitCode: result.exitCode,
+    exitCode: !accepted && result.exitCode === 0 ? 2 : result.exitCode,
     status: result.ok && !accepted ? ("failed" as const) : result.status,
     durationMs: Date.now() - startedAt,
+    completedAt: new Date().toISOString(),
     execution: researchAccepted
       ? describeFinanceCycleExecution(result.stdout, context.options.extraArgs, mode)
       : {
           ...describeFinanceCycleExecution("", context.options.extraArgs, mode),
           outcome: "not_run",
-          blockReason: "research_plan_not_accepted",
+          blockReason: researchAbstention ? "research_no_allocation" : "research_plan_not_accepted",
         },
     ...(research
       ? {
           researchPlanRefresh: {
-            ok: researchAccepted,
+            ok: researchAccepted || researchAbstention !== undefined,
             status: research.status,
             exitCode: research.exitCode,
             planPath: researchAccepted ? portfolioPlanPath : null,
+            ...(researchAbstention ? { abstention: researchAbstention } : {}),
             processResult: research,
           },
         }
@@ -1408,7 +1564,146 @@ export async function runFinanceRetiredIntradayExitTick(context: CycleContext): 
   }
 }
 
-async function tick(context: CycleContext): Promise<void> {
+async function resolveIntradayRuntimeOptions(
+  directory: string,
+  options: SchedulerOptions,
+): Promise<SchedulerOptions> {
+  let runtimeOptions = options;
+  if (options.command === "loop" && options.intraday) {
+    let strategyContract: FinanceIntradayActiveRuleContract | undefined;
+    try {
+      strategyContract = await resolveActiveIntradayRule(directory, options.intraday);
+    } catch (error) {
+      process.stderr.write(
+        `intraday strategy resolution unavailable; monitoring and placement disabled: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
+      runtimeOptions = {
+        ...options,
+        intraday: {
+          ...options.intraday,
+          instruments: [],
+          executionInstruments: [],
+          place: false,
+          placementEligibility: "active_rule_unavailable",
+          strategyContract: undefined,
+          scope: undefined,
+        },
+      };
+    }
+    if (strategyContract) {
+      let instruments: readonly string[] = [];
+      let executionInstruments: readonly string[] = [];
+      let scope: FinanceIntradayMonitorScope | undefined;
+      let universeUnavailable = false;
+      if (options.intraday.instrumentSource === "active_rule") {
+        instruments = strategyContract.instruments;
+        executionInstruments = strategyContract.instruments;
+        scope = { kind: "strategy_universe" };
+      } else if (options.intraday.instrumentSource === "explicit") {
+        instruments = options.intraday.instruments;
+        scope = { kind: "explicit_diagnostic" };
+      } else {
+        try {
+          const snapshot = readFinanceResearchEquityUniverseSnapshot(
+            directory,
+            new Date().toISOString(),
+          );
+          assertUniverseSnapshotNotSupersededByFailure(directory, snapshot);
+          instruments = snapshot.selected;
+          executionInstruments = strategyContract.instruments.filter((instrument) =>
+            snapshot.selected.includes(instrument),
+          );
+          scope = {
+            kind: "system_universe",
+            universeSnapshotRef: caseflowFingerprint(snapshot),
+            selectedInstruments: snapshot.selected,
+          };
+        } catch (error) {
+          universeUnavailable = true;
+          process.stderr.write(
+            `intraday system universe unavailable; no static fallback candidates: ${error instanceof Error ? error.message : String(error)}\n`,
+          );
+        }
+      }
+      const placementEligibility = !options.intraday.placementRequested
+        ? "not_requested"
+        : options.intraday.instrumentSource === "explicit"
+          ? "explicit_diagnostic_only"
+          : universeUnavailable
+            ? "universe_unavailable"
+            : options.intraday.instrumentSource === "system_universe" &&
+                executionInstruments.length === 0
+              ? "instrument_scope_mismatch"
+              : strategyContract.eligibility.status;
+      const place =
+        options.intraday.placementRequested &&
+        options.intraday.instrumentSource !== "explicit" &&
+        !universeUnavailable &&
+        executionInstruments.length > 0 &&
+        strategyContract.eligibility.automatedPaperPlacementAllowed;
+      runtimeOptions = {
+        ...options,
+        intraday: {
+          ...options.intraday,
+          instruments,
+          executionInstruments: place ? executionInstruments : [],
+          place,
+          placementEligibility,
+          strategyContract,
+          ...(scope ? { scope } : {}),
+        },
+      };
+    }
+  }
+  return runtimeOptions;
+}
+
+function createIntradayControllerForOptions(directory: string, options: SchedulerOptions) {
+  if (options.command !== "loop" || !options.intraday?.place) {
+    return undefined;
+  }
+  const args = options.extraArgs;
+  return createFinanceAlpacaCycleController({
+    directory,
+    instruments: options.intraday.executionInstruments,
+    feed: args[args.indexOf("--execution-quote-feed") + 1] as "iex" | "sip",
+    maxAgeMs: numericExtra(args, "--execution-max-age-ms"),
+    policy: JSON.parse(fs.readFileSync(args[args.indexOf("--execution-policy") + 1], "utf8")),
+  });
+}
+
+/** Refresh the active binding before admitting this tick's new entry candidates. */
+async function refreshActiveIntradayBinding(context: CycleContext): Promise<void> {
+  if (context.options.intraday?.instrumentSource !== "active_rule") {
+    return;
+  }
+  const next = await resolveIntradayRuntimeOptions(context.root.directory, context.options);
+  if (JSON.stringify(next.intraday) === JSON.stringify(context.options.intraday)) {
+    return;
+  }
+  // Drop the old controller before assembling the replacement: a failed refresh
+  // must never keep the retired universe executable.
+  context.intradayController = undefined;
+  context.options = next;
+  try {
+    context.intradayController = createIntradayControllerForOptions(context.root.directory, next);
+  } catch (error) {
+    context.options = {
+      ...next,
+      intraday: {
+        ...next.intraday!,
+        place: false,
+        executionInstruments: [],
+        placementEligibility: "controller_unavailable",
+      },
+    };
+    process.stderr.write(
+      `intraday controller refresh failed: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+  }
+}
+
+async function runTradingTick(context: CycleContext): Promise<void> {
   const args = context.options.extraArgs;
   const venueIndex = args.indexOf("--venue");
   const idleReconciliationEnabled =
@@ -1441,6 +1736,7 @@ async function tick(context: CycleContext): Promise<void> {
     }
   }
   await runFinanceRetiredIntradayExitTick(context);
+  await refreshActiveIntradayBinding(context);
   if (context.options.intraday) {
     const executionInstruments = new Set(context.options.intraday.executionInstruments);
     // Process executable instruments before spending this tick on research monitoring.
@@ -1516,6 +1812,10 @@ async function tick(context: CycleContext): Promise<void> {
       }
     }
   }
+}
+
+async function tick(context: CycleContext): Promise<void> {
+  await runTradingTick(context);
   for (const slot of DEFAULT_FINANCE_CYCLE_SLOTS) {
     if (context.signal.aborted) {
       break;
@@ -1523,7 +1823,12 @@ async function tick(context: CycleContext): Promise<void> {
     // Re-read time and state after each cycle; a long day cycle can cross midnight.
     const clock = financeEtClock(new Date());
     const state = readFinanceSchedulerState(context.root.directory);
-    if (isFinanceCycleSlotDue(slot, clock, state.lastFired)) {
+    if (
+      isFinanceCycleSlotDue(slot, clock, state.lastFired) ||
+      (slot.mode === "day" &&
+        context.options.researchPlan &&
+        financeResearchPreflightRetryDue(state, new Date()))
+    ) {
       await fire(context, slot.mode);
     }
   }
@@ -1686,6 +1991,7 @@ export function inspectFinanceSchedulerStatus(root: FinanceStateDir, at = new Da
               : isFinanceCycleSlotDue(slot, clock, state.lastFired)
                 ? "due_unattempted"
                 : "not_due",
+      researchRetryDue: slot.mode === "day" && financeResearchPreflightRetryDue(state, at),
       attemptedDate: state.lastFired[slot.mode] ?? null,
       succeededDate: state.lastSucceeded[slot.mode] ?? null,
     })),
@@ -1752,91 +2058,7 @@ export async function runFinanceScheduler(
     await detach(root, options);
     return 0;
   }
-  let runtimeOptions = options;
-  if (options.command === "loop" && options.intraday) {
-    let strategyContract: FinanceIntradayActiveRuleContract | undefined;
-    try {
-      strategyContract = await resolveActiveIntradayRule(root.directory, options.intraday);
-    } catch (error) {
-      process.stderr.write(
-        `intraday strategy resolution unavailable; monitoring and placement disabled: ${error instanceof Error ? error.message : String(error)}\n`,
-      );
-      runtimeOptions = {
-        ...options,
-        intraday: {
-          ...options.intraday,
-          instruments: [],
-          executionInstruments: [],
-          place: false,
-          placementEligibility: "active_rule_unavailable",
-        },
-      };
-    }
-    if (strategyContract) {
-      let instruments: readonly string[] = [];
-      let executionInstruments: readonly string[] = [];
-      let scope: FinanceIntradayMonitorScope | undefined;
-      let universeUnavailable = false;
-      if (options.intraday.instrumentSource === "active_rule") {
-        instruments = strategyContract.instruments;
-        executionInstruments = strategyContract.instruments;
-        scope = { kind: "strategy_universe" };
-      } else if (options.intraday.instrumentSource === "explicit") {
-        instruments = options.intraday.instruments;
-        scope = { kind: "explicit_diagnostic" };
-      } else {
-        try {
-          const snapshot = readFinanceResearchEquityUniverseSnapshot(
-            root.directory,
-            new Date().toISOString(),
-          );
-          assertUniverseSnapshotNotSupersededByFailure(root.directory, snapshot);
-          instruments = snapshot.selected;
-          executionInstruments = strategyContract.instruments.filter((instrument) =>
-            snapshot.selected.includes(instrument),
-          );
-          scope = {
-            kind: "system_universe",
-            universeSnapshotRef: caseflowFingerprint(snapshot),
-            selectedInstruments: snapshot.selected,
-          };
-        } catch (error) {
-          universeUnavailable = true;
-          process.stderr.write(
-            `intraday system universe unavailable; no static fallback candidates: ${error instanceof Error ? error.message : String(error)}\n`,
-          );
-        }
-      }
-      const placementEligibility = !options.intraday.placementRequested
-        ? "not_requested"
-        : options.intraday.instrumentSource === "explicit"
-          ? "explicit_diagnostic_only"
-          : universeUnavailable
-            ? "universe_unavailable"
-            : options.intraday.instrumentSource === "system_universe" &&
-                executionInstruments.length === 0
-              ? "instrument_scope_mismatch"
-              : strategyContract.eligibility.status;
-      const place =
-        options.intraday.placementRequested &&
-        options.intraday.instrumentSource !== "explicit" &&
-        !universeUnavailable &&
-        executionInstruments.length > 0 &&
-        strategyContract.eligibility.automatedPaperPlacementAllowed;
-      runtimeOptions = {
-        ...options,
-        intraday: {
-          ...options.intraday,
-          instruments,
-          executionInstruments: place ? executionInstruments : [],
-          place,
-          placementEligibility,
-          strategyContract,
-          ...(scope ? { scope } : {}),
-        },
-      };
-    }
-  }
+  const runtimeOptions = await resolveIntradayRuntimeOptions(root.directory, options);
   const controller = new AbortController();
   let signalExitCode = 0;
   const onTerm = () => {
@@ -1853,25 +2075,7 @@ export async function runFinanceScheduler(
   try {
     release = acquireFinanceSchedulerLock(root.directory);
     initializeFinanceSchedulerDatabase(root.directory);
-    const intradayController =
-      runtimeOptions.command === "loop" && runtimeOptions.intraday?.place
-        ? createFinanceAlpacaCycleController({
-            directory: root.directory,
-            instruments: runtimeOptions.intraday.executionInstruments,
-            feed: runtimeOptions.extraArgs[
-              runtimeOptions.extraArgs.indexOf("--execution-quote-feed") + 1
-            ] as "iex" | "sip",
-            maxAgeMs: numericExtra(runtimeOptions.extraArgs, "--execution-max-age-ms"),
-            policy: JSON.parse(
-              fs.readFileSync(
-                runtimeOptions.extraArgs[
-                  runtimeOptions.extraArgs.indexOf("--execution-policy") + 1
-                ],
-                "utf8",
-              ),
-            ),
-          })
-        : undefined;
+    const intradayController = createIntradayControllerForOptions(root.directory, runtimeOptions);
     const resolveMarketSession =
       runtimeOptions.command === "loop" && runtimeOptions.intraday
         ? createFinanceAlpacaMarketSessionResolver({ directory: root.directory })

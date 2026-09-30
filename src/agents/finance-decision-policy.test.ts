@@ -15,6 +15,45 @@ const candidateContext = {
 };
 
 describe("finance decision policy", () => {
+  it("distinguishes a schedule timestamp from an actual execution claim", () => {
+    const scheduled = evaluateFinanceDecisionPolicy({
+      ask: "Review the strategy schedule.",
+      answer: "The strategy is executed at the next tradable point.",
+    });
+    expect(scheduled.failedReasons).not.toContain("finance_execution_claim_forbidden");
+    const description =
+      "The trend sign is provisional and is not the rule's executed monthly signal.";
+    expect(
+      evaluateFinanceDecisionPolicy({ ask: "Review the strategy schedule.", answer: description })
+        .failedReasons,
+    ).not.toContain("finance_execution_claim_forbidden");
+
+    for (const answer of [
+      "Filled NVDA at the open.",
+      "fIlLeD NVDA at the open.",
+      "Filled at $100.",
+      "Filled 100 shares at the open.",
+      "Executed at $100.",
+      "Executed NVDA at the open.",
+      "executed nvda at the open.",
+      "已成交 NVDA。",
+      "该笔交易已执行。",
+      `${description} Executed NVDA at the open.`,
+    ]) {
+      expect(
+        evaluateFinanceDecisionPolicy({ ask: "Review SPY fills.", answer }).failedReasons,
+        answer,
+      ).toContain("finance_execution_claim_forbidden");
+    }
+
+    expect(
+      evaluateFinanceDecisionPolicy({
+        ask: "Review SPY fills.",
+        answer: "The report discusses成交额 and 成交量 as market statistics.",
+      }).failedReasons,
+    ).not.toContain("finance_execution_claim_forbidden");
+  });
+
   it("distinguishes counted broker fills from a new trade instruction", () => {
     const summary = "Broker summary shows 3 buy fills, 0 sell fills and 2 unallocated fees.";
     expect(

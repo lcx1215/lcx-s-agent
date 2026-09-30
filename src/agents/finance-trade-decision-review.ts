@@ -141,9 +141,12 @@ export type FinanceTradeDecision = Readonly<{
 export type FinanceTradeDecisionReviewFailureCode =
   | "output_contract"
   | "reviewer_unavailable"
+  | "prompt_input_invalid"
+  | "prompt_budget_exceeded"
   | "output_invalid"
   | "output_truncated"
   | "provider_auth"
+  | "provider_payment_required"
   | "provider_rate_limit"
   | "process_error"
   | "output_limit"
@@ -283,9 +286,12 @@ export function isValidFinanceTradeDecisionReviewResult(
     const failureCodes: readonly unknown[] = [
       "output_contract",
       "reviewer_unavailable",
+      "prompt_input_invalid",
+      "prompt_budget_exceeded",
       "output_invalid",
       "output_truncated",
       "provider_auth",
+      "provider_payment_required",
       "provider_rate_limit",
       "process_error",
       "output_limit",

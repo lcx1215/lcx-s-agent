@@ -94,6 +94,7 @@ beforeEach(() => {
         providerName: "fixture",
         sourceUrlOrArtifact: "fixture://bars",
         sourceTimestamp: `${date}T20:00:00Z`,
+        observedAt: asOf,
         data: { date, open: close, high: close + 1, low: close - 1, close, volume: 1000 },
       };
     }),
@@ -329,7 +330,10 @@ describe("daily cycle execution data boundary", () => {
       }),
     });
 
-    expect(report.ok).toBe(true);
+    expect(
+      report.ok,
+      JSON.stringify({ dataIssues: report.dataIssues, refusals: report.refusals }),
+    ).toBe(true);
     expect(report.refusals).toHaveLength(2);
     expect(report.refusals.join()).toContain("model vetoed");
     expect(report.placed).toHaveLength(0);

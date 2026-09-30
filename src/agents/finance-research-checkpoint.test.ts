@@ -162,3 +162,30 @@ describe("finance batch restart", () => {
     expect(resumed.status).toBe("partial");
   });
 });
+
+it("allocates bounded calls across targets before their additional collection jobs", async () => {
+  const { options, calls } = await fixture();
+  const bounded = {
+    ...options,
+    targets: options.targets.map((target) => ({
+      ...target,
+      collections: [
+        { collection: "news" as const, freshnessMaxMinutes: 60 },
+        { collection: "news" as const, freshnessMaxMinutes: 120 },
+      ],
+    })),
+  };
+  const result = await runFinanceResearchBatch(bounded);
+  expect(calls).toEqual(["SPY", "QQQ", "IWM"]);
+  expect(result.jobs.filter((job) => job.status === "ready").map((job) => job.targetId)).toEqual([
+    "SPY",
+    "QQQ",
+    "IWM",
+  ]);
+  expect(result.jobs.filter((job) => job.error === "api_call_budget_exhausted")).toHaveLength(3);
+  expect(result.budget.reservedCallBudget).toBe(3);
+  const resumed = await runFinanceResearchBatch(bounded);
+  expect(calls).toHaveLength(3);
+  expect(resumed.checkpoint?.reusedJobIds).toHaveLength(3);
+  expect(resumed.budget.reservedCallBudget).toBe(3);
+});

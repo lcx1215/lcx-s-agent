@@ -1,12 +1,17 @@
 import { withTimeout } from "../utils/with-timeout.js";
 import { financeAlpacaMarketSessionIssue } from "./finance-alpaca-market-calendar.js";
-import { runFinanceAlpacaOrder } from "./finance-alpaca-run.js";
+import {
+  compileFinanceAlpacaOrderIntent,
+  runFinanceAlpacaOrder,
+  type FinanceAlpacaRunRequest,
+} from "./finance-alpaca-run.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import {
   executionQuoteIssue,
   recordCycleFill,
   type FinanceDailyCycleParams,
 } from "./finance-daily-cycle.js";
+import { FinanceExecutionSafetyFactsError } from "./finance-execution-safety.js";
 import {
   appendFinanceIntradayOutcome,
   FinanceIntradayDecisionReviewReceiptSchema,
@@ -263,6 +268,58 @@ export async function executeFinanceIntradayDecision(params: {
       });
       return Object.freeze({ status: "refused" as const, outcome: outcome.input });
     }
+    const orderRequest = (price: number): FinanceAlpacaRunRequest => ({
+      credentialStateDirectory: params.directory,
+      createSafetyContext: params.controller.createSafetyContext,
+      conclusion: {
+        conclusionId: input.signalId,
+        decisionRef: { source: "intraday_signal", id: input.signalId },
+        instrument: input.instrument,
+        direction: input.action,
+        conviction: 1,
+        assetClass: "us_equity",
+        horizonDays: 1,
+        thesis: `${input.strategyRule}: ${input.reason}; dataset ${input.datasetHeadRef}`,
+        ...(input.action === "buy" && input.stopPrice !== undefined
+          ? { invalidationPrice: input.stopPrice, targetPrice: input.targetPrice }
+          : {}),
+      },
+      market: { referencePrice: price, referencePriceAt: quote.referencePriceAt },
+      equity: account.equity,
+      ...(input.action === "buy"
+        ? {
+            committedInstrumentNotional: Math.max(
+              Math.abs(
+                account.positions.find((position) => position.instrument === input.instrument)
+                  ?.marketValue ?? 0,
+              ),
+              Math.abs(brokerHeld * price),
+            ),
+          }
+        : {}),
+      runAuthorizationId: `intraday-paper:${input.sessionDate}:${input.signalId}`,
+      budget: {
+        automation: "unattended",
+        allowedInstruments: [input.instrument],
+        ...params.caps,
+      },
+      instruments: [input.instrument],
+      strategyClass: "A",
+      ...(input.action === "sell" ? { quantityOverride: owned } : {}),
+      mode: "paper",
+      signal,
+    });
+    // Reject known sizing/price contradictions before spending on discretionary review.
+    // The venue path recompiles with the final quote and still owns all safety reservations.
+    const preflight = compileFinanceAlpacaOrderIntent(orderRequest(referencePrice));
+    if (!preflight.ok) {
+      const outcome = await appendFinanceIntradayOutcome(params.directory, {
+        signalId: input.signalId,
+        status: "refused",
+        reasons: [...preflight.refusals],
+      });
+      return Object.freeze({ status: "refused" as const, outcome: outcome.input });
+    }
     // Only strategy-bound, owned-position reductions bypass discretionary model review.
     const protectiveExit =
       input.action === "sell" &&
@@ -473,52 +530,13 @@ export async function executeFinanceIntradayDecision(params: {
         tradeDecisionReview,
       });
     }
-    const result = await (params.runOrder ?? runFinanceAlpacaOrder)({
-      credentialStateDirectory: params.directory,
-      createSafetyContext: params.controller.createSafetyContext,
-      conclusion: {
-        conclusionId: input.signalId,
-        decisionRef: { source: "intraday_signal", id: input.signalId },
-        instrument: input.instrument,
-        direction: input.action,
-        conviction: 1,
-        assetClass: "us_equity",
-        horizonDays: 1,
-        thesis: `${input.strategyRule}: ${input.reason}; dataset ${input.datasetHeadRef}`,
-        ...(input.action === "buy" && input.stopPrice !== undefined
-          ? { invalidationPrice: input.stopPrice, targetPrice: input.targetPrice }
-          : {}),
-      },
-      market: { referencePrice, referencePriceAt: quote.referencePriceAt },
-      equity: account.equity,
-      ...(input.action === "buy"
-        ? {
-            committedInstrumentNotional: Math.max(
-              Math.abs(
-                account.positions.find((position) => position.instrument === input.instrument)
-                  ?.marketValue ?? 0,
-              ),
-              Math.abs(brokerHeld * referencePrice),
-            ),
-          }
-        : {}),
-      runAuthorizationId: `intraday-paper:${input.sessionDate}:${input.signalId}`,
-      budget: {
-        automation: "unattended",
-        allowedInstruments: [input.instrument],
-        ...params.caps,
-      },
-      instruments: [input.instrument],
-      strategyClass: "A",
-      ...(input.action === "sell" ? { quantityOverride: owned } : {}),
-      mode: "paper",
-      signal,
-    });
+    const result = await (params.runOrder ?? runFinanceAlpacaOrder)(orderRequest(referencePrice));
     if (!result.ok) {
       const outcome = await appendFinanceIntradayOutcome(params.directory, {
         signalId: input.signalId,
         status: "refused",
         reasons: [...result.refusals],
+        ...(result.safetyFailure ? { executionSafetyFailure: result.safetyFailure } : {}),
         tradeDecisionReview,
       });
       return Object.freeze({
@@ -565,10 +583,26 @@ export async function executeFinanceIntradayDecision(params: {
       error instanceof Error &&
       "code" in error &&
       error.code === "finance_execution_safety_unknown";
+    const factsFailure =
+      error instanceof FinanceExecutionSafetyFactsError
+        ? {
+            stage: "facts" as const,
+            category: error.category,
+            operation: "read_account_safety_facts" as const,
+            ...(error.provider ? { provider: { ...error.provider } } : {}),
+          }
+        : undefined;
     const outcome = await appendFinanceIntradayOutcome(params.directory, {
       signalId: input.signalId,
       status: uncertain ? "uncertain" : "refused",
-      reasons: [error instanceof Error ? error.message : String(error)],
+      reasons: [
+        uncertain
+          ? "execution_outcome_unresolved"
+          : factsFailure
+            ? `execution_safety_${factsFailure.category}`
+            : "intraday_execution_unexpected_error",
+      ],
+      ...(factsFailure ? { executionSafetyFailure: factsFailure } : {}),
       ...(tradeDecisionReview ? { tradeDecisionReview } : {}),
     });
     return Object.freeze({

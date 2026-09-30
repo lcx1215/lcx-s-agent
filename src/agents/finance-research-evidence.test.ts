@@ -1,14 +1,234 @@
 import { describe, expect, it } from "vitest";
+import type { FinanceCommitteeEvidence } from "./finance-agent-committee.js";
+import {
+  annualisedVol,
+  FINANCE_DAILY_VOLATILITY_LOOKBACK_CLOSES,
+} from "./finance-daily-strategy.js";
 import type { FinanceMarketCollectionItem } from "./finance-market-collection-registry.js";
 import { summarizeFinanceOptionsChain } from "./finance-options-evidence.js";
 import type { FinanceResearchBatchEvidencePacket } from "./finance-research-batch-runner.js";
 import {
+  buildFinanceMonthlyTrendDerivedEvidence,
   buildFinanceResearchModelEvidence,
   summarizeFinancePriceHistory,
   findUncitedFinanceInstruments,
   findUnsupportedFinanceClaimScope,
   rankFinanceWindowDrawdowns,
 } from "./finance-research-evidence.js";
+
+const monthlyTrendAsOf = "2026-09-29T17:00:00.000Z";
+const monthlyTrendRule = (ruleId = "trend-rule") => ({
+  ruleId,
+  form: "cross_asset_trend",
+  formVersion: "1",
+  emits: "target_weights",
+  instruments: ["SPY"],
+  schedule: { kind: "monthly", at: "last_trading_day", timezone: "America/New_York" },
+  body: { frozenRule: { lookbackMonths: 12 } },
+  activeObservedAt: "2026-01-01T00:00:00.000Z",
+});
+const monthlyTrendEvidence = (
+  closes: readonly (readonly [string, number])[],
+  options: { divergentDates?: readonly string[]; instrument?: string; timestamp?: string } = {},
+): readonly [FinanceCommitteeEvidence, FinanceCommitteeEvidence] => [
+  {
+    id: "finance-controller:active-strategies",
+    source: "finance-strategy-rule-ledger",
+    timestamp: monthlyTrendAsOf,
+    text: JSON.stringify({ activeRules: [monthlyTrendRule()] }),
+  },
+  {
+    id: `finance-controller:eod:${options.instrument ?? "SPY"}`,
+    source: "finance-bar-ledger",
+    timestamp: options.timestamp ?? monthlyTrendAsOf,
+    text: JSON.stringify({
+      instrument: options.instrument ?? "SPY",
+      divergentDates: options.divergentDates ?? [],
+      closes,
+      suppliedBarCount: closes.length,
+    }),
+  },
+];
+
+describe("deterministic monthly trend evidence", () => {
+  it("uses the prior-calendar-month observation and excludes the partial current month", () => {
+    const evidence = monthlyTrendEvidence([
+      ["2025-08-29", 100],
+      ["2025-09-30", 105],
+      ["2026-08-31", 110],
+      ["2026-09-28", 125],
+    ]);
+
+    const [derived] = buildFinanceMonthlyTrendDerivedEvidence(evidence, monthlyTrendAsOf);
+
+    expect(derived).toMatchObject({
+      id: "finance-derived:monthly-close-change:trend-rule:SPY",
+      source: "finance-bar-ledger; deterministic monthly trend arithmetic",
+      timestamp: monthlyTrendAsOf,
+    });
+    expect(derived?.text).toContain("anchor close 110 on 2026-08-31");
+    expect(derived?.text).toContain("prior close 100 on 2025-08-29");
+    expect(derived?.text).toContain("formula (anchor/prior - 1) * 100 = +10.0%");
+    expect(derived?.text).toContain("month-end session coverage is unverified");
+    expect(derived?.text).toContain("not a validated strategy signal");
+    expect(derived?.text).toContain("not dividend-reinvested total return");
+    expect(derived?.text).toContain(
+      "finance-controller:active-strategies,finance-controller:eod:SPY",
+    );
+  });
+
+  it("allows one supported monthly strategy alongside a different intraday rule", () => {
+    const [activeRulesEvidence, eodEvidence] = monthlyTrendEvidence([
+      ["2025-08-29", 100],
+      ["2026-08-31", 110],
+    ]);
+    const payload = JSON.parse(activeRulesEvidence.text) as { activeRules: unknown[] };
+    payload.activeRules.push({
+      ruleId: "opening-range-rule",
+      form: "opening_range_breakout",
+      instruments: ["SPY"],
+    });
+
+    expect(
+      buildFinanceMonthlyTrendDerivedEvidence(
+        [{ ...activeRulesEvidence, text: JSON.stringify(payload) }, eodEvidence],
+        monthlyTrendAsOf,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("refuses duplicate supported monthly rules as ambiguous", () => {
+    const [activeRulesEvidence, eodEvidence] = monthlyTrendEvidence([
+      ["2025-08-29", 100],
+      ["2026-08-31", 110],
+    ]);
+    const payload = JSON.parse(activeRulesEvidence.text) as { activeRules: unknown[] };
+    payload.activeRules.push(monthlyTrendRule("another-trend-rule"));
+
+    expect(
+      buildFinanceMonthlyTrendDerivedEvidence(
+        [{ ...activeRulesEvidence, text: JSON.stringify(payload) }, eodEvidence],
+        monthlyTrendAsOf,
+      ),
+    ).toEqual([]);
+  });
+
+  it("fails closed when source closes conflict, the required month is missing, or a future close exists", () => {
+    const goodCloses: readonly (readonly [string, number])[] = [
+      ["2025-08-29", 100],
+      ["2026-08-31", 110],
+    ];
+    expect(
+      buildFinanceMonthlyTrendDerivedEvidence(
+        monthlyTrendEvidence(goodCloses, { divergentDates: ["SPY@2026-08-31"] }),
+        monthlyTrendAsOf,
+      ),
+    ).toEqual([]);
+    expect(
+      buildFinanceMonthlyTrendDerivedEvidence(
+        monthlyTrendEvidence([["2026-08-31", 110]]),
+        monthlyTrendAsOf,
+      ),
+    ).toEqual([]);
+    expect(
+      buildFinanceMonthlyTrendDerivedEvidence(
+        monthlyTrendEvidence([...goodCloses, ["2026-09-30", 111]]),
+        monthlyTrendAsOf,
+      ),
+    ).toEqual([]);
+    expect(
+      buildFinanceMonthlyTrendDerivedEvidence(
+        monthlyTrendEvidence(goodCloses, { timestamp: "2026-09-29T18:00:00.000Z" }),
+        monthlyTrendAsOf,
+      ),
+    ).toEqual([]);
+    expect(
+      buildFinanceMonthlyTrendDerivedEvidence(
+        monthlyTrendEvidence([
+          ["2025-08-29", Number.MIN_VALUE],
+          ["2026-08-31", Number.MAX_VALUE],
+        ]),
+        monthlyTrendAsOf,
+      ),
+    ).toEqual([]);
+    expect(
+      buildFinanceMonthlyTrendDerivedEvidence(
+        monthlyTrendEvidence([
+          ["2025-08-29", 100],
+          ["2026-08-31", 110],
+          ["2026-09-29", 111],
+        ]),
+        monthlyTrendAsOf,
+      ),
+    ).toEqual([]);
+  });
+
+  it("labels a mid-month stored observation without claiming a month-end signal", () => {
+    const [ruleEvidence, closeEvidence] = monthlyTrendEvidence([
+      ["2025-08-14", 100],
+      ["2026-08-14", 110],
+    ]);
+    const [derived] = buildFinanceMonthlyTrendDerivedEvidence(
+      [ruleEvidence, closeEvidence],
+      monthlyTrendAsOf,
+    );
+
+    expect(derived?.text).toContain("anchor close 110 on 2026-08-14");
+    expect(derived?.text).toContain("month-end session coverage is unverified");
+    expect(derived?.text).toContain("not a validated strategy signal");
+  });
+
+  it("exposes the daily engine volatility with its actual close window and provenance", () => {
+    const closes: [string, number][] = [];
+    for (
+      let date = new Date("2025-09-29T00:00:00.000Z");
+      date < new Date("2026-09-29T00:00:00.000Z");
+      date.setUTCDate(date.getUTCDate() + 1)
+    ) {
+      if (date.getUTCDay() === 0 || date.getUTCDay() === 6) {
+        continue;
+      }
+      const offset = closes.length;
+      closes.push([date.toISOString().slice(0, 10), 100 + offset * 0.02 + (offset % 5) * 0.1]);
+    }
+    const evidence = monthlyTrendEvidence(closes);
+    const derived = buildFinanceMonthlyTrendDerivedEvidence(evidence, monthlyTrendAsOf);
+    const volatility = derived.find((item) =>
+      item.id.startsWith("finance-derived:annualised-volatility:trend-rule:SPY"),
+    );
+    const expected = annualisedVol(
+      closes.slice(-FINANCE_DAILY_VOLATILITY_LOOKBACK_CLOSES).map(([, close]) => close),
+    );
+
+    expect(volatility).toMatchObject({
+      source: "finance-bar-ledger; deterministic daily-return risk-normalisation",
+      timestamp: monthlyTrendAsOf,
+    });
+    expect(volatility?.text).toContain(
+      "method=log(close_t/close_t-1), sample variance (n-1), sqrt(variance*252)",
+    );
+    expect(volatility?.text).toContain(
+      `${FINANCE_DAILY_VOLATILITY_LOOKBACK_CLOSES} supplied closes and ${FINANCE_DAILY_VOLATILITY_LOOKBACK_CLOSES - 1} daily-return intervals`,
+    );
+    expect(volatility?.text).toContain(
+      "the value matches the daytime engine calculation over the same latest 253 closes",
+    );
+    expect(volatility?.text).toContain(`annualisedVol=${expected.toFixed(8)}`);
+    expect(volatility?.text).toContain("from 2025-10-09 to 2026-09-28");
+    expect(volatility?.text).toContain(
+      "raw evidence IDs=finance-controller:active-strategies,finance-controller:eod:SPY",
+    );
+
+    const tooShort = buildFinanceMonthlyTrendDerivedEvidence(
+      monthlyTrendEvidence(closes.slice(-FINANCE_DAILY_VOLATILITY_LOOKBACK_CLOSES + 1)),
+      monthlyTrendAsOf,
+    );
+    expect(
+      tooShort.some((item) => item.id.startsWith("finance-derived:annualised-volatility:")),
+    ).toBe(false);
+  });
+});
+
 const row = (
   date: string,
   close: number,
@@ -581,6 +801,70 @@ describe("finance price arithmetic before model prompting", () => {
     });
     expect(result.summaries[0]?.observationWindows[21]).toBeNull();
   });
+  it("derives citeable daily volatility from clean batch closes and keeps the short-window gap explicit", () => {
+    const asOf = "2026-09-10T00:00:00.000Z";
+    const buildRows = (count: number) => {
+      const dates: string[] = [];
+      const date = new Date("2026-09-09T00:00:00.000Z");
+      while (dates.length < count) {
+        if (date.getUTCDay() !== 0 && date.getUTCDay() !== 6) {
+          dates.push(date.toISOString().slice(0, 10));
+        }
+        date.setUTCDate(date.getUTCDate() - 1);
+      }
+      return dates
+        .toReversed()
+        .map((value, index) => row(value, 100 + index * 0.03 + (index % 7) * 0.2));
+    };
+    const makePacket = (records: readonly FinanceMarketCollectionItem[]) =>
+      ({
+        schemaVersion: "lcx_finance_research_batch_v1",
+        boundary: "finance_research_batch_research_only",
+        decisionMode: "research_only",
+        correlationId: "daily-volatility-batch",
+        asOf,
+        useCase: "test",
+        status: "completed",
+        committeeEvidence: [],
+        budget: {},
+        jobs: [
+          {
+            jobId: "finance-batch:spy-eod",
+            request: {
+              instrument: "SPY",
+              assetClass: "us_equity",
+              collection: "eod_history",
+              asOf,
+            },
+            status: "ready",
+            receipt: { records },
+          },
+        ],
+      }) as unknown as FinanceResearchBatchEvidencePacket;
+
+    const closes = buildRows(FINANCE_DAILY_VOLATILITY_LOOKBACK_CLOSES);
+    const evidence = buildFinanceResearchModelEvidence(makePacket(closes));
+    const spy = evidence.find((item) => item.id === "finance-model:SPY");
+    const expectedVolatility = annualisedVol(closes.map((item) => item.data.close as number));
+    const firstDate = closes[0]?.data.date;
+    const lastDate = closes.at(-1)?.data.date;
+
+    expect(spy?.text).toContain(`annualisedDailyVol=${expectedVolatility.toFixed(8)}`);
+    expect(spy?.text).toContain(
+      `volatilityWindow=253 closes/252 returns ${String(firstDate)}..${String(lastDate)}`,
+    );
+    expect(spy?.text).toContain(
+      "audit receipt ID only=finance-batch:spy-eod; cite this observation as finance-model:SPY",
+    );
+    expect(spy?.text).toContain("finance-batch:spy-eod");
+
+    const shortSpy = buildFinanceResearchModelEvidence(makePacket(buildRows(252))).find(
+      (item) => item.id === "finance-model:SPY",
+    );
+    expect(shortSpy?.text).toContain(
+      "annualisedDailyVol=unavailable; requires 253 clean unique daily closes",
+    );
+  });
   it("deduplicates same dates but rejects a conflicting source series", () => {
     const base = row("2026-09-01", 100);
     const result = summarizeFinancePriceHistory(
@@ -660,6 +944,22 @@ describe("finance price arithmetic before model prompting", () => {
     expect(buildFinanceResearchModelEvidence(packet).at(-1)?.text).toContain(
       "latest tot_pub_debt_out_amt=100",
     );
+    const reused = buildFinanceResearchModelEvidence({
+      ...packet,
+      jobs: packet.jobs.map((job) => ({
+        ...job,
+        sourceReuse: {
+          kind: "durable_collection_snapshot" as const,
+          sourceId: "treasury-source",
+          snapshotId: "stored-snapshot-ref",
+          capturedAt: "2026-09-09T23:30:00Z",
+          reusedAt: packet.asOf,
+        },
+      })),
+    }).at(-1)?.text;
+    expect(reused).toContain("originally capturedAt=2026-09-09T23:30:00Z");
+    expect(reused).toContain("no new source fetch");
+    expect(reused).toContain("latest tot_pub_debt_out_amt=100");
   });
 
   it("turns an options chain into source-bound Black-Scholes evidence in the model packet", () => {

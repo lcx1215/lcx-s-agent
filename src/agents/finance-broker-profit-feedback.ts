@@ -170,6 +170,8 @@ export function attributeFinanceBrokerFills(
     activities.filter((row) => row.activity_type === "FILL").map((row) => [row.id, row]),
   );
   let attributed = 0;
+  let dailyCycleSourceBound = 0;
+  let dailyCycleSourceUnknown = 0;
   const rules = new Map<string, number>();
   for (const fill of fills.values()) {
     const matching = receipts.filter(
@@ -192,6 +194,14 @@ export function attributeFinanceBrokerFills(
           .map((decision) => decision.input.strategyRule),
       ),
     );
+    // Daily-cycle candidates have no intraday decision row. Preserve their
+    // decision-reference lineage separately; this is source bookkeeping, not
+    // strategy ownership or performance attribution.
+    if (matching.length === 1 && matching[0]?.decisionRef?.source === "daily_cycle_candidate") {
+      dailyCycleSourceBound++;
+    } else if (candidates.size !== 1 && (matching.length !== 0 || candidates.size === 0)) {
+      dailyCycleSourceUnknown++;
+    }
     if (candidates.size === 1) {
       attributed++;
       const rule = [...candidates][0];
@@ -203,6 +213,12 @@ export function attributeFinanceBrokerFills(
     unattributedFillCount: fills.size - attributed,
     strategies: [...rules].map(([strategyRule, fillCount]) => ({ strategyRule, fillCount })),
     boundary: "receipt_and_decision_binding_not_strategy_pnl_or_position_ownership_transfer",
+    decisionSourceLineage: {
+      dailyCycleCandidateFillCount: dailyCycleSourceBound,
+      unknownOrAmbiguousSourceFillCount: dailyCycleSourceUnknown,
+      boundary:
+        "decision_source_receipt_lineage_only_not_research_alpha_execution_alpha_or_strategy_pnl",
+    },
   };
 }
 

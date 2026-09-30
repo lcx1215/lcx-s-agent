@@ -553,24 +553,32 @@ export function extendedFinanceCapabilities(options: Options): Capability[] {
         endpoint(`https://data.alpaca.markets/v2/stocks/${encodeURIComponent(r.instrument)}/bars`, {
           timeframe: "1Day",
           start: `${dates(r).from}T00:00:00Z`,
-          end: `${dates(r).to}T00:00:00Z`,
+          end: `${dates(r).to}T23:59:59.999Z`,
           limit: count(r),
           sort: "desc",
           adjustment: "all",
           feed: options.alpacaDataFeed ?? "iex",
         }),
       parse: (body) =>
-        rows(body.bars).map((data) => ({
-          data: {
-            ...data,
-            close: data.c,
-            volume: data.v,
-            feed: options.alpacaDataFeed ?? "iex",
-            adjusted: true,
-            continuationRequired: Boolean(body.next_page_token),
-          },
-          time: iso(data.t),
-        })),
+        rows(body.bars).map((data) => {
+          const time = iso(data.t);
+          return {
+            data: {
+              ...data,
+              ...(time ? { date: time.slice(0, 10) } : {}),
+              ...(data.o === undefined ? {} : { open: data.o }),
+              ...(data.h === undefined ? {} : { high: data.h }),
+              ...(data.l === undefined ? {} : { low: data.l }),
+              close: data.c,
+              volume: data.v,
+              feed: options.alpacaDataFeed ?? "iex",
+              adjusted: true,
+              continuationRequired: Boolean(body.next_page_token),
+            },
+            // Alpaca daily-bar timestamps label the New York session date; they are not close times.
+            time,
+          };
+        }),
     });
   }
   for (const path of ["tickers", "tickers/{ticker}"] as const) {

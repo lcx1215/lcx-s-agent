@@ -25,9 +25,14 @@ import {
   readFinancePositionLedger,
 } from "./finance-position-ledger.js";
 
-const refreshCollect = vi.hoisted(() => vi.fn());
-vi.mock("./finance-free-market-collection-adapters.js", () => ({
-  createChinaReachableUsEodHistoryCollectionAdapter: () => ({ collect: refreshCollect }),
+const refreshAlpacaCollect = vi.hoisted(() => vi.fn());
+const refreshChinaCollect = vi.hoisted(() => vi.fn());
+vi.mock("./finance-market-collection-registry.js", () => ({
+  createFinanceMarketCollectionRegistry: () => [
+    { id: "alpaca_daily_history", collect: refreshAlpacaCollect },
+    { id: "china_reachable_us_eod_history", collect: refreshChinaCollect },
+  ],
+  resolveFinanceMarketCollectionRegistryOptionsFromEnv: () => ({}),
 }));
 
 const bar = (date: string, close: number) => ({ date, close });
@@ -135,6 +140,10 @@ describe("solveInvalidationPrice", () => {
     expect(solveInvalidationPrice(200, 10_000, 100_000)).toBeCloseTo(180, 2);
   });
 
+  it("places sell-side invalidation above the reference price", () => {
+    expect(solveInvalidationPrice(200, 10_000, 100_000, "sell")).toBeCloseTo(220, 2);
+  });
+
   it("gives different stops to different notionals instead of one flat stop", () => {
     // This is the regression the fix addresses: a fixed 15% stop made every
     // instrument size the same, flattening the inverse-volatility allocation.
@@ -226,6 +235,7 @@ function cycleReceipt(overrides: Partial<FinanceExecutionReceipt> = {}): Finance
 const tempDirs: string[] = [];
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+  vi.clearAllMocks();
 });
 async function storeDirectory(): Promise<string> {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-cycle-"));
@@ -429,11 +439,16 @@ describe("annualisedVol", () => {
 });
 
 describe("refreshFinanceEodBarsAndMarks", () => {
-  const collectionRow = (date: string, close: number) => ({
-    providerName: "sina-us-eod-history",
+  const collectionRow = (
+    date: string,
+    close: number,
+    providerName = "Alpaca",
+    sourceUrlOrArtifact = "https://data.alpaca.markets/v2/stocks/SPY/bars?feed=iex",
+  ) => ({
+    providerName,
     sourceTimestamp: `${date}T20:00:00.000Z`,
-    sourceUrlOrArtifact:
-      "https://stock.finance.sina.com.cn/usstock/api/jsonp_v2.php/var%20_lcx/US_MinKService.getDailyK?symbol=SPY&___qn=3",
+    observedAt: `${date}T20:01:00.000Z`,
+    sourceUrlOrArtifact,
     data: { date, open: close, high: close + 1, low: close - 1, close, volume: 1000 },
   });
 
@@ -447,7 +462,7 @@ describe("refreshFinanceEodBarsAndMarks", () => {
   }
 
   it("files the newest completed session and re-prices an open position with its close", async () => {
-    refreshCollect.mockResolvedValueOnce([
+    refreshAlpacaCollect.mockResolvedValueOnce([
       collectionRow("2026-09-17", 700),
       collectionRow("2026-09-18", 710),
       {
@@ -467,8 +482,8 @@ describe("refreshFinanceEodBarsAndMarks", () => {
       {
         instrument: "SPY",
         marketDate: "2026-09-18",
-        providerName: "sina-us-eod-history",
-        sourceObservedAt: "2026-09-18T20:00:00.000Z",
+        providerName: "Alpaca",
+        sourceObservedAt: "2026-09-18T20:01:00.000Z",
         barCount: 1,
         newBarCount: 1,
         appended: true,
@@ -497,14 +512,23 @@ describe("refreshFinanceEodBarsAndMarks", () => {
       (
         await readFinanceBarLedger(directory, {
           instrument: "SPY",
-          asOf: "2026-09-18T20:00:00.000Z",
+          asOf: "2026-09-18T20:00:59.999Z",
+        })
+      ).bars,
+    ).toEqual([]);
+    expect(
+      (
+        await readFinanceBarLedger(directory, {
+          instrument: "SPY",
+          asOf: "2026-09-18T20:01:00.000Z",
         })
       ).bars,
     ).toEqual([expect.objectContaining({ date: "2026-09-18", close: 710 })]);
   });
 
   it("fails open when the source returns nothing, without touching marks", async () => {
-    refreshCollect.mockResolvedValueOnce([]);
+    refreshAlpacaCollect.mockResolvedValueOnce([]);
+    refreshChinaCollect.mockResolvedValueOnce([]);
     const directory = await storeDirectory();
     await openPosition(directory);
     const result = await refreshFinanceEodBarsAndMarks({
@@ -516,9 +540,37 @@ describe("refreshFinanceEodBarsAndMarks", () => {
     expect(result.barsFiled).toEqual([]);
     expect(result.marksFiled).toEqual([]);
     expect(result.unpricedHoldings).toEqual(["SPY"]);
-    expect(refreshCollect).toHaveBeenCalledWith(
+    expect(refreshAlpacaCollect).toHaveBeenCalledWith(
       expect.objectContaining({ instrument: "SPY", collection: "eod_history", limit: 1 }),
       expect.any(AbortSignal),
     );
+  });
+
+  it("falls back to the existing regional EOD source when Alpaca history is unavailable", async () => {
+    refreshAlpacaCollect.mockRejectedValueOnce(new Error("provider unavailable"));
+    refreshChinaCollect.mockResolvedValueOnce([
+      collectionRow(
+        "2026-09-18",
+        710,
+        "sina-us-eod-history",
+        "https://stock.finance.sina.com.cn/usstock/api/jsonp_v2.php/var%20_lcx/US_MinKService.getDailyK?symbol=SPY&___qn=3",
+      ),
+    ]);
+    const directory = await storeDirectory();
+    const result = await refreshFinanceEodBarsAndMarks({
+      directory,
+      asOf: "2026-09-20T00:00:00.000Z",
+      instruments: ["SPY"],
+    });
+
+    expect(result.barsFiled).toEqual([
+      expect.objectContaining({
+        instrument: "SPY",
+        marketDate: "2026-09-18",
+        providerName: "sina-us-eod-history",
+      }),
+    ]);
+    expect(refreshAlpacaCollect).toHaveBeenCalledTimes(1);
+    expect(refreshChinaCollect).toHaveBeenCalledTimes(1);
   });
 });

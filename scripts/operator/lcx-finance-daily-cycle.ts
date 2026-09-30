@@ -513,9 +513,10 @@ export async function runFinanceDailyCycleOperator(
     let strategy: ReturnType<typeof bindFinanceDailyStrategy> | undefined;
     let strategies: ReturnType<typeof bindFinanceDailyStrategy>[] = [];
     let strategyReadiness: FinanceRuleReadinessState | undefined;
+    let deferredStrategyIds: string[] = [];
     let dayEodRefresh: Awaited<ReturnType<typeof refreshFinanceEodBarsAndMarks>> | undefined;
     const dayEodRefreshWarnings: string[] = [];
-    const portfolioPlan =
+    let portfolioPlan =
       options.mode === "day" && options.portfolioPlanPath
         ? financePortfolioPlanSchema.parse(
             JSON.parse(await readPortfolioFile(options.portfolioPlanPath, "utf8")),
@@ -523,20 +524,6 @@ export async function runFinanceDailyCycleOperator(
         : undefined;
     if (portfolioPlan) {
       validateFinancePortfolioPlan(portfolioPlan, options.asOf, options.venue);
-      const selected = new Set(universeSnapshot?.selected ?? []);
-      const outsideUniverse = [
-        ...new Set(
-          portfolioPlan.candidates
-            .flatMap((candidate) => candidate.targets.map((target) => target.instrument))
-            .map((instrument) => instrument.toUpperCase())
-            .filter((instrument) => !selected.has(instrument)),
-        ),
-      ];
-      if (outsideUniverse.length > 0) {
-        throw new Error(
-          `portfolio plan contains symbols outside the validated selected universe: ${outsideUniverse.join(", ")}`,
-        );
-      }
     }
     // Night settlement consumes recorded samples, not today's active strategy.
     if (options.mode === "day") {
@@ -548,13 +535,69 @@ export async function runFinanceDailyCycleOperator(
       const activeDailyTrendRules = activeRules.filter(
         (rule) => rule.schedule.kind === "monthly" && rule.emits === "target_weights",
       );
+      if (portfolioPlan) {
+        const intradayIds = new Set(
+          activeRules
+            .filter((rule) => rule.schedule.kind === "intraday")
+            .map((rule) => rule.ruleId),
+        );
+        const allocations = portfolioPlan.allocations.filter(
+          (allocation) => !intradayIds.has(allocation.strategyId),
+        );
+        deferredStrategyIds = portfolioPlan.allocations
+          .filter((allocation) => intradayIds.has(allocation.strategyId))
+          .map((allocation) => allocation.strategyId);
+        // The resident intraday controller owns those signals. Do not require
+        // this monthly engine to invent its candidates or consume its reserve.
+        if (allocations.every((allocation) => allocation.budgetFraction === 0)) {
+          return {
+            ...base,
+            ok: true,
+            boundary: "portfolio_no_daily_capital_allocated",
+            deferredStrategyIds: portfolioPlan.allocations.map(
+              (allocation) => allocation.strategyId,
+            ),
+            ordersSubmitted: 0,
+          };
+        }
+        portfolioPlan = financePortfolioPlanSchema.parse({
+          ...portfolioPlan,
+          allocations,
+          candidates: portfolioPlan.candidates.filter(
+            (candidate) => !intradayIds.has(candidate.strategyId),
+          ),
+        });
+        const selected = new Set(universeSnapshot?.selected ?? []);
+        const outsideUniverse = [
+          ...new Set(
+            portfolioPlan.candidates
+              .flatMap((candidate) => candidate.targets.map((target) => target.instrument))
+              .map((instrument) => instrument.toUpperCase())
+              .filter((instrument) => !selected.has(instrument)),
+          ),
+        ];
+        if (outsideUniverse.length > 0) {
+          throw new Error(
+            `portfolio plan contains symbols outside the validated selected universe: ${outsideUniverse.join(", ")}`,
+          );
+        }
+      }
       if (!universeSnapshot) {
         throw new Error("day strategy requires a validated equity universe snapshot");
       }
-      const universeBoundDailyTrendRules = activeDailyTrendRules.map((rule) => ({
-        ...rule,
-        instruments: [...universeSnapshot.selected],
-      }));
+      const universeBoundDailyTrendRules = activeDailyTrendRules
+        .filter(
+          (rule) =>
+            !portfolioPlan ||
+            portfolioPlan.allocations.some(
+              (allocation) =>
+                allocation.strategyId === rule.ruleId && allocation.budgetFraction > 0,
+            ),
+        )
+        .map((rule) => ({
+          ...rule,
+          instruments: [...universeSnapshot.selected],
+        }));
       strategies = portfolioPlan
         ? universeBoundDailyTrendRules.map((rule) => bindFinanceDailyStrategy([rule]))
         : [bindFinanceDailyStrategy(universeBoundDailyTrendRules)];
@@ -753,6 +796,7 @@ export async function runFinanceDailyCycleOperator(
         ok: report.ok,
         ruleIds,
         strategyExecution: portfolioPlan ? strategies : strategy,
+        ...(deferredStrategyIds.length > 0 ? { deferredStrategyIds } : {}),
         ...(strategyReadiness ? financeRuleReadinessSection(strategyReadiness) : {}),
         ...(report.portfolio ? { portfolio: report.portfolio } : {}),
         modelCalls: report.modelCalls,

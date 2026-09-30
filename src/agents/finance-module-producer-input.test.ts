@@ -1,10 +1,27 @@
 import { describe, expect, it } from "vitest";
 import { planFinanceBrainOrchestration } from "./finance-brain-orchestration.js";
+import type { FinanceBrainModuleId } from "./finance-brain-orchestration.js";
 import { validateFinanceWorkflowOutput } from "./finance-model-workflow.js";
 import {
   financeProducerInputContract,
+  describeFinanceProducerInputError,
   parseFinanceDomainProducerInputs,
+  selectedFinanceProducerModuleIds,
 } from "./finance-module-producer-input.js";
+import { FINANCE_FRAMEWORK_DOMAIN_PRODUCER_SPECS } from "./tools/finance-framework-domain-producer-tools.js";
+
+const validCategoriesByDomain: Record<string, string[]> = {
+  macro_rates_inflation: ["macro_rates_evidence", "inflation_evidence"],
+  etf_regime: ["equity_market_evidence", "liquidity_evidence"],
+  options_volatility: ["options_volatility_evidence"],
+  company_fundamentals_value: ["fundamentals_evidence", "valuation_evidence"],
+  commodities_oil_gold: ["commodity_evidence"],
+  fx_dollar: ["fx_dollar_evidence", "macro_rates_evidence"],
+  credit_liquidity: ["credit_evidence", "liquidity_evidence"],
+  event_driven: ["event_catalyst_evidence", "portfolio_risk_evidence"],
+  portfolio_risk_gates: ["portfolio_risk_evidence", "implementation_evidence"],
+  causal_map: ["causal_chain_evidence"],
+};
 
 function plan() {
   return planFinanceBrainOrchestration({
@@ -35,11 +52,48 @@ function input(sourceArtifacts = ["evidence-1"]) {
   };
 }
 
+type TestProducerInput = ReturnType<typeof input> & { domain: string };
+
+function planForDomain(domain: FinanceBrainModuleId) {
+  return planFinanceBrainOrchestration({
+    text: `review ${domain} finance evidence`,
+    highStakesConclusion: true,
+    moduleSelection: { moduleIds: [domain], rationale: `${domain} producer contract test` },
+  });
+}
+
+function validInputsForPlan(
+  planValue: ReturnType<typeof planFinanceBrainOrchestration>,
+): Record<string, TestProducerInput> {
+  return Object.fromEntries(
+    selectedFinanceProducerModuleIds(planValue).map((domain) => [
+      domain,
+      {
+        ...input(),
+        domain,
+        evidenceCategories: validCategoriesByDomain[domain],
+        evidenceSummary: `${domain} evidence has concrete, source-backed details for its domain-specific review.`,
+      },
+    ]),
+  ) as Record<string, TestProducerInput>;
+}
+
 describe("finance module producer input", () => {
   it("publishes a bounded contract for selected producer-backed modules", () => {
-    expect(financeProducerInputContract(plan(), ["evidence-1"])).toMatchObject({
+    const contract = financeProducerInputContract(plan(), ["evidence-1"]);
+    expect(contract).toMatchObject({
       selectedModuleIds: ["event_driven", "causal_map"],
       sourceArtifactIds: ["evidence-1"],
+      evidenceGateByModule: {
+        event_driven: {
+          requiredAllCategories: ["event_catalyst_evidence", "portfolio_risk_evidence"],
+          requiredAnyCategoryGroups: [],
+        },
+        causal_map: {
+          requiredAllCategories: ["causal_chain_evidence"],
+          causalLinks: expect.stringContaining("mechanism"),
+        },
+      },
       allowedActionAuthority: "research_only",
       jsonSchema: {
         type: "object",
@@ -55,6 +109,25 @@ describe("finance module producer input", () => {
         },
       },
     });
+    expect(contract.jsonSchema.properties.causal_map?.allOf).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            evidenceCategories: expect.objectContaining({
+              items: expect.objectContaining({
+                enum: expect.arrayContaining(["causal_chain_evidence"]),
+              }),
+              allOf: expect.arrayContaining([
+                expect.objectContaining({
+                  contains: { const: "causal_chain_evidence" },
+                  minContains: 1,
+                }),
+              ]),
+            }),
+          }),
+        }),
+      ]),
+    );
   });
 
   it("accepts exact selected modules with grounded evidence", () => {
@@ -152,4 +225,85 @@ describe("finance module producer input", () => {
       }),
     ).toThrow("unknown evidence");
   });
+
+  it.each(FINANCE_FRAMEWORK_DOMAIN_PRODUCER_SPECS.map((spec) => spec.domain))(
+    "applies the shared domain evidence gate before producer execution for %s",
+    (domain) => {
+      const planValue = planForDomain(domain);
+      const value = validInputsForPlan(planValue);
+      expect(() =>
+        parseFinanceDomainProducerInputs({
+          value,
+          plan: planValue,
+          evidenceIds: new Set(["evidence-1"]),
+        }),
+      ).not.toThrow();
+
+      const validInput = value[domain];
+      if (!validInput) {
+        throw new Error(`test plan did not select ${domain}`);
+      }
+      const invalid = {
+        ...value,
+        [domain]: { ...validInput, evidenceCategories: ["sentiment_evidence"] },
+      };
+      expect(() =>
+        parseFinanceDomainProducerInputs({
+          value: invalid,
+          plan: planValue,
+          evidenceIds: new Set(["evidence-1"]),
+        }),
+      ).toThrow("selected domain evidence gate");
+    },
+  );
+
+  it("rejects generic evidence summaries and unsupported causal structure before tool execution", () => {
+    const planValue = plan();
+    const value = validInputsForPlan(planValue);
+    const causal = value.causal_map;
+    if (!causal) {
+      throw new Error("test plan must select causal_map");
+    }
+    expect(() =>
+      parseFinanceDomainProducerInputs({
+        value: {
+          ...value,
+          causal_map: { ...causal, evidenceSummary: "market evidence" },
+        },
+        plan: planValue,
+        evidenceIds: new Set(["evidence-1"]),
+      }),
+    ).toThrow("selected domain evidence gate");
+    expect(() =>
+      parseFinanceDomainProducerInputs({
+        value: {
+          ...value,
+          causal_map: { ...causal, keyCausalChain: "valuation changes after the report" },
+        },
+        plan: planValue,
+        evidenceIds: new Set(["evidence-1"]),
+      }),
+    ).toThrow("selected domain evidence gate");
+  });
+});
+
+it("describes schema fields without echoing model-authored values or unknown keys", () => {
+  let failure: unknown;
+  try {
+    parseFinanceDomainProducerInputs({
+      value: {
+        event_driven: { ...input(), upstreamDrivers: 42, secret_untrusted_key: "private text" },
+        causal_map: input(),
+      },
+      plan: plan(),
+      evidenceIds: new Set(["evidence-1"]),
+    });
+  } catch (error) {
+    failure = error;
+  }
+  const detail = describeFinanceProducerInputError(failure);
+  expect(detail).toContain("upstreamDrivers:invalid_type");
+  expect(detail).toContain("unexpected_fields");
+  expect(detail).not.toContain("secret_untrusted_key");
+  expect(detail).not.toContain("private text");
 });

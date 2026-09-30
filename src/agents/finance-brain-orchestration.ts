@@ -392,6 +392,7 @@ export function planFinanceBrainOrchestration(
   );
   const financeTask =
     moduleSelection !== undefined ||
+    input.hasHoldingsOrPortfolioContext === true ||
     hasFinanceTaskSignal(text) ||
     rawMatched.some(
       (id) =>

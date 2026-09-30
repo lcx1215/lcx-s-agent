@@ -40,17 +40,33 @@ import { appendFinanceBars } from "./finance-bar-ledger.js";
  */
 import type { FinanceExecutionReconciliation } from "./finance-broker-reconciliation.js";
 import { financeUsEquityRegularCloseInstant } from "./finance-cycle-schedule.js";
-import { financeMonthlyTrendReturn } from "./finance-daily-strategy.js";
+import {
+  annualisedVol,
+  FINANCE_DAILY_VOLATILITY_LOOKBACK_CLOSES,
+  financeMonthlyTrendReturn,
+} from "./finance-daily-strategy.js";
+export { annualisedVol } from "./finance-daily-strategy.js";
+import {
+  financeExecutionResearchLineageSchema,
+  financeExecutionTargetWeightAuthorizationSchema,
+  type FinanceExecutionResearchLineage,
+} from "./finance-execution-adapter.js";
 import type {
   FinanceExecutionIntent,
   FinanceExecutionReceipt,
 } from "./finance-execution-adapter.js";
 import {
   FinanceExecutionSafetyUncertainError,
+  type FinanceExecutionSafetyFailure,
   type FinanceExecutionSafetyContextFactory,
 } from "./finance-execution-safety.js";
 import { createChinaReachableUsEodHistoryCollectionAdapter } from "./finance-free-market-collection-adapters.js";
-import type { FinanceMarketCollectionItem } from "./finance-market-collection-registry.js";
+import {
+  createFinanceMarketCollectionRegistry,
+  resolveFinanceMarketCollectionRegistryOptionsFromEnv,
+  type FinanceMarketCollectionAdapter,
+  type FinanceMarketCollectionItem,
+} from "./finance-market-collection-registry.js";
 import { runFinancePaperOrder } from "./finance-paper-run.js";
 import {
   composeFinancePortfolioTargets,
@@ -263,6 +279,12 @@ export type FinanceDailyCycleReport = Readonly<{
   dataIssues: readonly string[];
   placed: readonly { instrument: string; quantity: number; notional: number }[];
   refusals: readonly string[];
+  executionFailures: readonly {
+    instrument: string;
+    orderStage: "compile" | "place";
+    refusalReasons: readonly string[];
+    safetyFailure?: FinanceExecutionSafetyFailure;
+  }[];
   /**
    * What this run filed into the bar book.
    *
@@ -393,34 +415,18 @@ function monthEnds(series: readonly Bar[]): Bar[] {
  * trend strategy can actually survive. Inside the band the sizing is exact; outside it the cap
  * still binds and the residual is carried to the next session.
  */
-export function solveInvalidationPrice(close: number, notional: number, equity: number): number {
+export function solveInvalidationPrice(
+  close: number,
+  notional: number,
+  equity: number,
+  side: "buy" | "sell" = "buy",
+): number {
   const RISK_FRACTION = 0.01;
   const MIN_STOP = 0.05;
   const MAX_STOP = 0.3;
   const raw = notional > 0 && equity > 0 ? (equity * RISK_FRACTION) / notional : MAX_STOP;
   const stop = Math.min(Math.max(raw, MIN_STOP), MAX_STOP);
-  return Number((close * (1 - stop)).toFixed(2));
-}
-
-export function annualisedVol(dailyCloses: readonly number[]): number {
-  if (dailyCloses.length < 30) {
-    return Number.NaN;
-  }
-  const returns: number[] = [];
-  for (let index = 1; index < dailyCloses.length; index += 1) {
-    const previous = dailyCloses[index - 1];
-    const current = dailyCloses[index];
-    if (previous && current && previous > 0) {
-      returns.push(Math.log(current / previous));
-    }
-  }
-  if (returns.length < 30) {
-    return Number.NaN;
-  }
-  const mean = returns.reduce((sum, value) => sum + value, 0) / returns.length;
-  const variance =
-    returns.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (returns.length - 1);
-  return Math.sqrt(variance * 252);
+  return Number((close * (side === "buy" ? 1 - stop : 1 + stop)).toFixed(2));
 }
 
 /**
@@ -677,7 +683,11 @@ function toOhlcvBatch(rows: readonly FinanceMarketCollectionItem[]): {
     const low = Number(row.data.low);
     const close = Number(row.data.close);
     const volume = Number(row.data.volume);
-    if (!/^\d{4}-\d{2}-\d{2}$/u.test(date) || !Number.isFinite(Date.parse(row.sourceTimestamp))) {
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/u.test(date) ||
+      !Number.isFinite(Date.parse(row.sourceTimestamp)) ||
+      !Number.isFinite(Date.parse(row.observedAt))
+    ) {
       continue;
     }
     if (![open, high, low, close].every((value) => Number.isFinite(value) && value > 0)) {
@@ -700,12 +710,12 @@ function toOhlcvBatch(rows: readonly FinanceMarketCollectionItem[]): {
     return null;
   }
   bars.sort((left, right) => left.date.localeCompare(right.date));
-  // The batch's clock is the newest observation it carries, not the moment this run happened:
-  // a replay to an earlier `asOf` must still see the history, or "no bars in the window" gets
-  // read as "no history existed".
+  // Preserve when the source was actually observed. Alpaca timestamps label the New York session
+  // date rather than the close instant, so using sourceTimestamp here would backdate a completed
+  // bar to midnight and let an earlier as-of read see data that had not yet been collected.
   const observedAt = acceptedRows.reduce(
-    (latest, row) => (row.sourceTimestamp > latest ? row.sourceTimestamp : latest),
-    acceptedRows[0]?.sourceTimestamp ?? "",
+    (latest, row) => (row.observedAt > latest ? row.observedAt : latest),
+    acceptedRows[0]?.observedAt ?? "",
   );
   return {
     bars,
@@ -743,11 +753,22 @@ export async function runFinanceDailyCycle(
         "portfolio Alpaca placement requires account-bound controller integration; preview only",
       );
     }
+    if (
+      params.place &&
+      params.venue === "alpaca" &&
+      params.portfolioPlan.accountId !== params.accountId
+    ) {
+      throw new Error("portfolio plan account does not match Alpaca execution account");
+    }
   }
   const band = params.rebalanceBand ?? 0.05;
+  if (!Number.isFinite(band) || band < 0 || band > 1) {
+    throw new Error("rebalanceBand must be between 0 and 1");
+  }
   const instruments = params.instruments.map((item) => item.toUpperCase());
   const dataIssues: string[] = [];
   const refusals: string[] = [];
+  const executionFailures: FinanceDailyCycleReport["executionFailures"][number][] = [];
   let modelVetoCount = 0;
   const placed: { instrument: string; quantity: number; notional: number }[] = [];
 
@@ -836,7 +857,7 @@ export async function runFinanceDailyCycle(
       monthSeries.set(instrument, monthEnds(series));
       closes.set(
         instrument,
-        series.slice(-253).map((row) => row.close),
+        series.slice(-FINANCE_DAILY_VOLATILITY_LOOKBACK_CLOSES).map((row) => row.close),
       );
       lastBar.set(instrument, series[series.length - 1]);
     } catch (error) {
@@ -980,6 +1001,14 @@ export async function runFinanceDailyCycle(
   const candidates: FinancePortfolioCandidate[] = [];
   const metadata = new Map<string, FinanceDailyCycleTarget>();
   for (const strategy of strategyDefinitions) {
+    if (
+      params.portfolioPlan?.allocations.some(
+        (allocation) =>
+          allocation.strategyId === strategy.ruleId && allocation.budgetFraction === 0,
+      )
+    ) {
+      continue;
+    }
     const raw: { instrument: string; signal: "hold" | "cash"; inverseVol: number; vol: number }[] =
       [];
     for (const instrument of strategy.instruments) {
@@ -1531,6 +1560,37 @@ export async function runFinanceDailyCycle(
         );
         continue;
       }
+      const portfolioTarget = portfolio?.targets.find(
+        (portfolioCandidate) => portfolioCandidate.instrument === item.instrument,
+      );
+      const researchLineage: FinanceExecutionResearchLineage | undefined =
+        portfolio && portfolioTarget
+          ? financeExecutionResearchLineageSchema.parse({
+              portfolioPlan: {
+                asOf: portfolio.asOf,
+                validUntil: portfolio.validUntil,
+                accountId: portfolio.accountId,
+                venue: portfolio.venue,
+                ...(portfolio.provenance === undefined ? {} : { provenance: portfolio.provenance }),
+              },
+              targetWeight: portfolioTarget.weight,
+              contributions: portfolioTarget.contributions.map((contribution) => ({
+                strategyId: contribution.strategyId,
+                evidenceReceiptId: contribution.evidenceReceiptId,
+                stance: contribution.stance,
+                sleeveWeight: contribution.sleeveWeight,
+                accountWeight: contribution.accountWeight,
+                ...(contribution.evidenceIds === undefined
+                  ? {}
+                  : { evidenceIds: contribution.evidenceIds }),
+              })),
+            })
+          : undefined;
+      const targetWeightAuthorization = financeExecutionTargetWeightAuthorizationSchema.parse({
+        targetWeight: target.weight,
+        driftBandFraction: band,
+        maxOrderNotional: item.notional,
+      });
       const shared = {
         credentialStateDirectory: directory,
         createSafetyContext: params.createSafetyContext,
@@ -1545,7 +1605,12 @@ export async function runFinanceDailyCycle(
           conviction: 1,
           assetClass: "us_equity",
           horizonDays: 30,
-          invalidationPrice: solveInvalidationPrice(referencePrice, item.notional, equity),
+          invalidationPrice: solveInvalidationPrice(
+            referencePrice,
+            item.notional,
+            equity,
+            item.action,
+          ),
           thesis:
             `Daily drift rebalance against frozen monthly target (anchor ${signalAnchor}). ` +
             `target=${item.target} current=${item.current} band=${band}.` +
@@ -1560,6 +1625,8 @@ export async function runFinanceDailyCycle(
         },
         equity,
         runAuthorizationId: params.runAuthorizationId,
+        ...(researchLineage === undefined ? {} : { researchLineage }),
+        targetWeightAuthorization,
         budget: {
           automation: "unattended",
           allowedInstruments: instruments,
@@ -1585,6 +1652,14 @@ export async function runFinanceDailyCycle(
       );
       if (!result.ok) {
         refusals.push(`${item.instrument}: ${result.refusals.join("; ")}`);
+        executionFailures.push({
+          instrument: item.instrument,
+          orderStage: result.stage,
+          refusalReasons: [...result.refusals],
+          ...("safetyFailure" in result && result.safetyFailure
+            ? { safetyFailure: result.safetyFailure }
+            : {}),
+        });
         if ("uncertain" in result && result.uncertain) {
           dataIssues.push(
             "execution outcome uncertain; stopped remaining orders pending reconciliation",
@@ -1635,6 +1710,7 @@ export async function runFinanceDailyCycle(
     dataIssues,
     placed,
     refusals,
+    executionFailures,
     barsFiled,
     marksFiled,
     unpricedHoldings,
@@ -1672,7 +1748,16 @@ export async function refreshFinanceEodBarsAndMarks(params: {
   instruments: readonly string[];
 }): Promise<FinanceEodRefreshResult> {
   const directory = params.directory;
-  const adapter = createChinaReachableUsEodHistoryCollectionAdapter();
+  const collectionAdapters = createFinanceMarketCollectionRegistry(
+    resolveFinanceMarketCollectionRegistryOptionsFromEnv(),
+  );
+  const eodAdapters: FinanceMarketCollectionAdapter[] = [
+    "alpaca_daily_history",
+    "china_reachable_us_eod_history",
+  ].flatMap((id) => {
+    const adapter = collectionAdapters.find((candidate) => candidate.id === id);
+    return adapter ? [adapter] : [];
+  });
   const barsFiled: {
     instrument: string;
     barCount: number;
@@ -1686,22 +1771,31 @@ export async function refreshFinanceEodBarsAndMarks(params: {
   const lastBar = new Map<string, Bar>();
   for (const instrument of params.instruments) {
     try {
-      const rows = await adapter.collect(
-        {
-          instrument,
-          assetClass: "us_equity",
-          collection: "eod_history",
-          asOf: params.asOf,
-          // This post-close pass only needs the newest completed session to refresh open marks.
-          // Historical bars are owned by the daytime research cycle; refetching thousands here
-          // needlessly imports cross-provider revisions when the adapter has to use its fallback.
-          limit: 1,
-        },
-        AbortSignal.timeout(60_000),
-      );
-      const batch = toOhlcvBatch(rows);
+      const request = {
+        instrument,
+        assetClass: "us_equity",
+        collection: "eod_history",
+        asOf: params.asOf,
+        // This post-close pass only needs the newest completed session to refresh open marks.
+        // Historical bars are owned by the daytime research cycle; refetching thousands here
+        // needlessly imports cross-provider revisions when the adapter has to use its fallback.
+        limit: 1,
+      } as const;
+      let batch: ReturnType<typeof toOhlcvBatch> = null;
+      for (const adapter of eodAdapters) {
+        try {
+          const rows = await adapter.collect(request, AbortSignal.timeout(60_000));
+          const candidate = toOhlcvBatch(rows);
+          if (candidate !== null) {
+            batch = candidate;
+            break;
+          }
+        } catch {
+          // Try the existing regional source when the configured broker history feed is unavailable.
+        }
+      }
       if (batch === null) {
-        dataIssues.push(`${instrument}: no complete OHLC row to file in the bar book`);
+        dataIssues.push(`${instrument}: no complete OHLC row from configured EOD sources`);
         continue;
       }
       const latest = batch.bars.at(-1);

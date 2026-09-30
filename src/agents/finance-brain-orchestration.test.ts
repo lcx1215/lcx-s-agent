@@ -308,6 +308,21 @@ describe("planFinanceBrainOrchestration", () => {
     expect(plan.selectionTrace.dataGatewayReason).toBe("holdings_or_portfolio_context");
   });
 
+  it("uses controller portfolio context when a scheduler prompt omits finance keywords", () => {
+    const plan = planFinanceBrainOrchestration({
+      text: "Review all controller-declared active strategies against current source evidence for their declared instruments and schedules. Keep strategic horizons separate; evaluate intraday only for instruments covered by an active intraday rule and fresh intraday evidence. Allocate only among controller-declared active strategies; never activate or promote candidates. Use source application evaluations as partial evidence and retain counterevidence. If required evidence is missing or stale, record the exact gap and abstain.",
+      hasHoldingsOrPortfolioContext: true,
+      highStakesConclusion: true,
+      decisionMode: "strategy_candidate",
+    });
+
+    expect(plan.selectionTrace.financeTask).toBe(true);
+    expect(plan.primaryModules).toEqual(
+      expect.arrayContaining(["causal_map", "portfolio_risk_gates", "quant_math"]),
+    );
+    expect(plan.requiredTools).toContain("finance_data_gateway_snapshot");
+  });
+
   it("does not invent a heavy finance plan for non-finance text", () => {
     const plan = planFinanceBrainOrchestration({
       text: "帮我整理一下今天的 marketing meeting 标题和 security risk 待办。",

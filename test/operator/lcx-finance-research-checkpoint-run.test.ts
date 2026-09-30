@@ -2,8 +2,14 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runCheckpointedFinanceResearch } from "../../scripts/operator/lcx-finance-research-checkpoint-run.ts";
-import { parseArgs } from "../../scripts/operator/lcx-finance-research-run.ts";
+import {
+  FinanceResearchRunFailure,
+  runCheckpointedFinanceResearch,
+} from "../../scripts/operator/lcx-finance-research-checkpoint-run.ts";
+import {
+  compactFinanceResearchFailure,
+  parseArgs,
+} from "../../scripts/operator/lcx-finance-research-run.ts";
 import { runFinanceResearchRun } from "../../src/agents/finance-research-runner.ts";
 
 let directory: string;
@@ -84,4 +90,25 @@ describe("research CLI checkpoint budget", () => {
     expect(await status()).toMatchObject({ status: "failed", reason: "research_run_failed" });
     expect(JSON.stringify(await status())).not.toContain("secret-provider-detail");
   });
+});
+
+it("exposes a failed scheduler summary with the durable checkpoint, never a candidate", () => {
+  const summary = compactFinanceResearchFailure(
+    new FinanceResearchRunFailure(
+      "research_run_deadline_exceeded",
+      "run-1",
+      "/book/checkpoints.sqlite",
+      "2026-09-29T00:00:00Z",
+    ),
+  );
+  expect(summary).toMatchObject({
+    status: "failed",
+    answerDecision: "return_failed_reason",
+    failure: {
+      reason: "research_run_deadline_exceeded",
+      checkpointPath: "/book/checkpoints.sqlite",
+    },
+  });
+  expect(summary).not.toHaveProperty("portfolioPlanWritten");
+  expect(summary).not.toHaveProperty("written");
 });

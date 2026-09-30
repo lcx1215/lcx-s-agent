@@ -171,3 +171,62 @@ it("requires matching account, order receipt and decision before attributing a f
     1,
   );
 });
+
+it("records daily-cycle decision lineage only for one exact account/order/instrument/side receipt", () => {
+  const row = { ...fill("1", "buy", "1", "100"), order_id: "order-1" };
+  const receipt: FinanceExecutionReceipt = {
+    schemaVersion: "lcx_finance_execution_receipt_v1",
+    receiptId: "daily-r1",
+    intentId: "intent:daily-cycle:2026-09-30:SPY",
+    decisionRef: { source: "daily_cycle_candidate", id: "paper-run:2026-09-30:SPY:buy" },
+    runAuthorizationId: "paper-run",
+    adapterId: "alpaca",
+    adapterKind: "venue",
+    venue: "alpaca",
+    accountId: "account-a",
+    instrument: "SPY",
+    side: "buy",
+    orderType: "market",
+    quantity: 1,
+    referencePrice: 100,
+    referencePriceAt: row.transaction_time,
+    notional: 100,
+    fill: {
+      filledQuantity: 1,
+      fillPrice: 100,
+      filledAt: row.transaction_time,
+      venueRef: "alpaca:paper:order-1",
+    },
+    executionAuthority: "declared_execution_adapter_required",
+    recordedAt: row.transaction_time,
+  };
+  const result = (receipts: FinanceExecutionReceipt[], account = "account-a") =>
+    attributeFinanceBrokerFills([row], receipts, [], account).decisionSourceLineage;
+
+  expect(result([receipt])).toMatchObject({
+    dailyCycleCandidateFillCount: 1,
+    unknownOrAmbiguousSourceFillCount: 0,
+  });
+  expect(result([{ ...receipt, accountId: "account-b" }])).toMatchObject({
+    dailyCycleCandidateFillCount: 0,
+    unknownOrAmbiguousSourceFillCount: 1,
+  });
+  expect(
+    result([{ ...receipt, fill: { ...receipt.fill, venueRef: "alpaca:paper:other" } }]),
+  ).toMatchObject({
+    dailyCycleCandidateFillCount: 0,
+    unknownOrAmbiguousSourceFillCount: 1,
+  });
+  expect(result([{ ...receipt, side: "sell" }])).toMatchObject({
+    dailyCycleCandidateFillCount: 0,
+    unknownOrAmbiguousSourceFillCount: 1,
+  });
+  expect(result([receipt, { ...receipt, receiptId: "daily-r2" }])).toMatchObject({
+    dailyCycleCandidateFillCount: 0,
+    unknownOrAmbiguousSourceFillCount: 1,
+  });
+  expect(result([receipt], "account-b")).toMatchObject({
+    dailyCycleCandidateFillCount: 0,
+    unknownOrAmbiguousSourceFillCount: 1,
+  });
+});

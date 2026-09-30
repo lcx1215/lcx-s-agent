@@ -124,6 +124,7 @@ export function createConfiguredFinanceModelAdapter(
   cfg: OpenClawConfig,
   options: {
     maxTokens?: number;
+    maxTokensByRole?: Partial<Record<LogicalAgentId, number>>;
     buildPrompt?: (payload: unknown) => string;
     reasoningEffortByRole?: Partial<Record<LogicalAgentId, "low" | "high" | "max">>;
     timeoutMs?: number;
@@ -171,6 +172,13 @@ export function createConfiguredFinanceModelAdapter(
   ) {
     throw new Error("configured finance model requires bounded tokens and timeout");
   }
+  if (
+    Object.values(options.maxTokensByRole ?? {}).some(
+      (value) => !Number.isSafeInteger(value) || value < 1 || value > 16_384,
+    )
+  ) {
+    throw new Error("configured finance model requires bounded role token limits");
+  }
   const supportsReasoningEffort =
     model.compat?.supportsReasoningEffort === true ||
     (new URL(model.baseUrl).hostname === "api.deepseek.com" && modelId.startsWith("deepseek-v4-"));
@@ -200,6 +208,27 @@ export function createConfiguredFinanceModelAdapter(
       const reasoningEffort = supportsReasoningEffort
         ? options.reasoningEffortByRole?.[request.role]
         : undefined;
+      let promptText: string;
+      let evidenceCoverage: ModelCallObservation["evidenceCoverage"];
+      try {
+        if (options.buildPrompt) {
+          promptText = options.buildPrompt(request.payload);
+        } else {
+          const built = buildQualityHarnessModelPromptWithCoverage(
+            request.payload as QualityHarnessModelRequest,
+          );
+          promptText = built.prompt;
+          evidenceCoverage = built.evidenceCoverage;
+        }
+      } catch (error) {
+        // Request assembly is local: preserve a safe category without charging a
+        // provider call or replaying the unchanged invalid packet on another model.
+        throw new ModelAdapterError(
+          error instanceof Error && /prompt budget/u.test(error.message)
+            ? "prompt_budget_exceeded"
+            : "prompt_input_invalid",
+        );
+      }
       const auth = await resolveConfiguredFinanceAuth(cfg, provider);
       // Auth resolution may yield; recheck before the synchronous reservation.
       if (calls >= maxCalls) {
@@ -210,17 +239,6 @@ export function createConfiguredFinanceModelAdapter(
       }
       options.callBudget?.reserve();
       calls += 1;
-      let promptText: string;
-      let evidenceCoverage: ModelCallObservation["evidenceCoverage"];
-      if (options.buildPrompt) {
-        promptText = options.buildPrompt(request.payload);
-      } else {
-        const built = buildQualityHarnessModelPromptWithCoverage(
-          request.payload as QualityHarnessModelRequest,
-        );
-        promptText = built.prompt;
-        evidenceCoverage = built.evidenceCoverage;
-      }
       const trajectoryTicket = recordModelRequestStart({
         source: options.trajectorySource ?? "finance_engine",
         provider,
@@ -229,6 +247,7 @@ export function createConfiguredFinanceModelAdapter(
         inputBytes: Buffer.byteLength(promptText, "utf8"),
         messageCount: 1,
       });
+      const requestMaxTokens = options.maxTokensByRole?.[request.role] ?? maxTokens;
       let response: {
         id?: string;
         choices?: { finish_reason?: string; message?: { content?: string } }[];
@@ -247,7 +266,7 @@ export function createConfiguredFinanceModelAdapter(
           body: JSON.stringify({
             model: modelId,
             messages: [{ role: "user", content: promptText }],
-            max_tokens: maxTokens,
+            max_tokens: requestMaxTokens,
             ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
             response_format: { type: "json_object" },
             stream: false,
@@ -263,9 +282,11 @@ export function createConfiguredFinanceModelAdapter(
           throw new ModelAdapterError(
             [401, 403].includes(http.status)
               ? "provider_auth"
-              : http.status === 429
-                ? "provider_rate_limit"
-                : "process_error",
+              : http.status === 402
+                ? "provider_payment_required"
+                : http.status === 429
+                  ? "provider_rate_limit"
+                  : "process_error",
           );
         }
         response = (await http.json()) as typeof response;

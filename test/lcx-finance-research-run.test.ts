@@ -30,7 +30,7 @@ async function runResearch(args: string[], env: NodeJS.ProcessEnv = {}) {
 }
 
 describe("lcx-finance-research-run", () => {
-  it("executes a dry plan for the natural finance ask without network or model resolution", async () => {
+  it("does not invent instruments for a broad dry plan without a validated universe", async () => {
     const payload = await runResearch([
       "--ask",
       "分析过去六个月加密货币和美股的市场情绪，并考虑美国中期选举。",
@@ -54,18 +54,12 @@ describe("lcx-finance-research-run", () => {
     );
     expect(payload.batch).toBeUndefined();
     const plan = payload.plan as Record<string, unknown>;
-    expect(plan.expectedJobCount).toBe(13);
-    expect(plan.targetIds).toEqual(
-      expect.arrayContaining([
-        "crypto-btc",
-        "us-equity-spy",
-        "us-equity-qqq",
-        // The directed daily brief's index-options task requires implied
-        // volatility, term structure, and skew, so the prioritized default set
-        // must collect an options chain instead of leaving it to all_registered.
-        "us-index-options-chain",
-      ]),
-    );
+    expect(plan.expectedJobCount).toBe(3);
+    expect(plan.targetIds).toEqual([
+      "macro-debt-to-penny",
+      "macro-average-interest-rates",
+      "macro-cpi",
+    ]);
     expect((plan.orchestration as Record<string, unknown>).primaryModules).toEqual(
       expect.arrayContaining(["event_driven", "cross_asset_liquidity"]),
     );

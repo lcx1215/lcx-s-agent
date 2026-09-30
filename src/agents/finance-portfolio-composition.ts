@@ -32,7 +32,11 @@ export const financePortfolioPlanSchema = z
     allocations: z
       .array(
         z
-          .object({ strategyId: z.string().min(1), budgetFraction: z.number().positive().max(1) })
+          .object({
+            strategyId: z.string().min(1),
+            budgetFraction: z.number().min(0).max(1),
+            evidenceIds: z.array(z.string().min(1)).min(1).optional(),
+          })
           .strict(),
       )
       .min(1)
@@ -47,7 +51,32 @@ export const financePortfolioPlanSchema = z
       .strict()
       .optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((plan, context) => {
+    const planEvidenceIds = new Set(plan.provenance?.evidenceIds ?? []);
+    for (const [index, allocation] of plan.allocations.entries()) {
+      if (allocation.evidenceIds === undefined) {
+        continue;
+      }
+      if (new Set(allocation.evidenceIds).size !== allocation.evidenceIds.length) {
+        context.addIssue({
+          code: "custom",
+          path: ["allocations", index, "evidenceIds"],
+          message: "allocation evidence IDs must be unique",
+        });
+      }
+      if (
+        !plan.provenance ||
+        allocation.evidenceIds.some((evidenceId) => !planEvidenceIds.has(evidenceId))
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["allocations", index, "evidenceIds"],
+          message: "allocation evidence IDs must be included in plan provenance",
+        });
+      }
+    }
+  });
 export type FinancePortfolioPlan = z.infer<typeof financePortfolioPlanSchema>;
 
 export function validateFinancePortfolioPlan(
@@ -79,13 +108,14 @@ export function composeFinancePortfolioTargets(
 ) {
   validateFinancePortfolioPlan(plan, plan.asOf, plan.venue);
   const ids = candidates.map((c) => c.strategyId);
+  const funded = plan.allocations.filter((allocation) => allocation.budgetFraction > 0);
   if (
     new Set(ids).size !== ids.length ||
-    ids.length !== plan.allocations.length ||
-    plan.allocations.some((a) => !ids.includes(a.strategyId))
+    ids.some((id) => !plan.allocations.some((allocation) => allocation.strategyId === id)) ||
+    funded.some((allocation) => !ids.includes(allocation.strategyId))
   ) {
     throw new Error(
-      "every budget needs exactly one current candidate; missing/duplicate strategy cannot silently redistribute capital",
+      "every budget with positive capital needs exactly one current candidate; missing/duplicate strategy cannot silently redistribute capital",
     );
   }
   const byInstrument = new Map<
@@ -97,10 +127,17 @@ export function composeFinancePortfolioTargets(
       accountWeight: number;
       stance: string;
       evidenceReceiptId: string;
+      evidenceIds?: readonly string[];
     }[]
   >();
   for (const candidate of candidates) {
     candidateSchema.parse(candidate);
+    const allocation = plan.allocations.find((a) => a.strategyId === candidate.strategyId)!;
+    // Withholding capital does not create a zero-weight liquidation target or a
+    // conflicting stance. Existing holdings remain subject to account risk checks.
+    if (allocation.budgetFraction === 0) {
+      continue;
+    }
     if (
       candidate.basis === "business_value" &&
       (!isReadyFinanceValueAssessment(candidate.valueAssessment) ||
@@ -121,9 +158,7 @@ export function composeFinancePortfolioTargets(
         `strategy ${candidate.strategyId}: duplicate targets or leverage not supported`,
       );
     }
-    const budgetFraction = plan.allocations.find(
-      (a) => a.strategyId === candidate.strategyId,
-    )!.budgetFraction;
+    const budgetFraction = allocation.budgetFraction;
     for (const target of candidate.targets) {
       const entries = byInstrument.get(target.instrument) ?? [];
       entries.push({
@@ -133,6 +168,7 @@ export function composeFinancePortfolioTargets(
         accountWeight: budgetFraction * target.weight,
         stance: target.stance,
         evidenceReceiptId: candidate.evidenceReceiptId,
+        ...(allocation.evidenceIds === undefined ? {} : { evidenceIds: allocation.evidenceIds }),
       });
       byInstrument.set(target.instrument, entries);
     }
@@ -154,7 +190,10 @@ export function composeFinancePortfolioTargets(
     accountId: plan.accountId,
     venue: plan.venue,
     asOf: plan.asOf,
+    validUntil: plan.validUntil,
     conflictPolicy: plan.conflictPolicy,
+    ...(plan.provenance === undefined ? {} : { provenance: plan.provenance }),
+    withheldStrategies: plan.allocations.filter((allocation) => allocation.budgetFraction === 0),
     targets,
     unallocatedCashWeight: 1 - targets.reduce((sum, t) => sum + t.weight, 0),
   };

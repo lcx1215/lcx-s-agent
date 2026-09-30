@@ -90,6 +90,18 @@ it("re-reads policy expiry and keeps missing or malformed metadata unavailable",
       placementEnabled: true,
       venue: "alpaca",
       executionPolicyExpiresAt: readFinanceSchedulerPolicyExpiry(filename),
+      intradayControllerPolicyExpiresAt: expiry,
+      intraday: {
+        enabled: true,
+        placementEnabled: true,
+        placementRequested: true,
+        placementEligibility: "paper_contract_only",
+        instrumentSource: "active_rule",
+        instruments: ["SPY"],
+        executionInstruments: ["SPY"],
+        intervalSeconds: 300,
+        feed: "iex",
+      },
     }),
   );
   expect(
@@ -98,12 +110,30 @@ it("re-reads policy expiry and keeps missing or malformed metadata unavailable",
   expect(inspectFinanceSchedulerProgress(directory, 1, true, at.getTime() + 1000)).toMatchObject({
     status: "responsive",
     executionPolicyStatus: "expired",
+    executionPolicyExpiresAt: expiry,
+    intradayControllerPolicyStatus: "expired",
+    intradayControllerPolicyExpiresAt: expiry,
+    intraday: {
+      enabled: true,
+      placementEnabled: true,
+      placementRequested: true,
+      placementEligibility: "paper_contract_only",
+      instrumentSource: "active_rule",
+      instruments: ["SPY"],
+      executionInstruments: ["SPY"],
+      intervalSeconds: 300,
+      feed: "iex",
+    },
   });
   fs.writeFileSync(
     filename,
     JSON.stringify({ expiresAt: new Date(at.getTime() + 5000).toISOString() }),
   );
   expect(readFinanceSchedulerPolicyExpiry(filename)).not.toBe(expiry);
+  expect(inspectFinanceSchedulerProgress(directory, 1, true, at.getTime() + 1000)).toMatchObject({
+    executionPolicyExpiresAt: expiry,
+    intradayControllerPolicyExpiresAt: expiry,
+  });
 });
 
 it("keeps fresh status reads read-only", () => {
