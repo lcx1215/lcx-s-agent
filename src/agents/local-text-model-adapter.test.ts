@@ -91,6 +91,7 @@ describe("local text model adapter contract", () => {
     expect(prompt).toContain("stage=intake");
     expect(prompt).toContain("evidence=");
     expect(prompt).not.toContain("lcx_model_call_v1");
+    expect(prompt).not.toContain("Autonomous PAPER portfolio research mission");
   });
 
   it("bounds dependency expansion and repeats the exact output contract", () => {
@@ -843,6 +844,9 @@ it("keeps the allocation contract intact after a large general context", () => {
   expect(prompt).toContain("unallocated capital remains cash");
   expect(prompt).toContain("greater than 0 and at most 1");
   expect(prompt).toContain("not mandatory holdings or orders");
+  expect(prompt).toContain("SPY is not a permanent system whitelist");
+  expect(prompt).toContain("a raw order is not a fill");
+  expect(prompt).toContain("You cannot call tools by naming them in the answer");
   expect(prompt).toContain('{decision:"no_allocation",reason,evidenceIds}');
   expect(prompt).toContain(
     "Never combine shapes or use zero/tiny allocations to imitate abstention",

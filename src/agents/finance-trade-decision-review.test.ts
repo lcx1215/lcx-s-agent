@@ -140,6 +140,12 @@ describe("configured finance trade decision reviewer", () => {
         }
         const body = JSON.parse(init.body) as Record<string, unknown>;
         expect(body.reasoning_effort).toBe(reasoning ? "low" : undefined);
+        const messages = body.messages as { content: string }[];
+        expect(messages[0].content).toContain("SPY has no privileged status");
+        expect(messages[0].content).toContain("does not need per-order human confirmation");
+        expect(messages[0].content).toContain(
+          "last evidence-based challenge of this exact candidate",
+        );
         return new Response(
           JSON.stringify({
             id: "fixture-trade-review-reasoning",

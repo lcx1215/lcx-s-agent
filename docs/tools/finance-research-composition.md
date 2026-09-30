@@ -532,3 +532,19 @@ backlog; superseded or clipped fields are named. This reader-specific context bu
 does not increase the total perception budget. The existing ledger owners still
 validate the underlying stored chains, so model-context pagination is not a claim
 that database reads themselves have become incremental.
+
+The production Central, controller-bound portfolio-research and exact-candidate
+review prompts describe one continuous autonomous Paper mission. Central discovers
+only registered capabilities and plans focused evidence work; research synthesizes
+source-bound module outputs into the existing thesis/allocation contracts; review
+challenges the exact candidate without rewriting it. The deterministic portfolio
+controller and shared execution gate retain capital authority, and broker receipts
+provide feedback. A stored preference or a prompt never substitutes for that chain.
+
+The prompts prioritize owned-position invalidation/protection, compare opportunities
+with existing exposure and cash, preserve counterevidence, and assess costs,
+liquidity and horizon. SPY has no permanent system privilege. Each call still follows
+its current declared universe and supported execution path. Unchanged cycles reuse
+evidence and calculations; material changes or explicit gaps justify focused reads
+and complementary modules. This is prompt guidance, not a measured guarantee of
+lower API cost, superior decisions or profit.

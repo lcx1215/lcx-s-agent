@@ -255,6 +255,11 @@ describe("central agent harness gate", () => {
         }
         const body = JSON.parse(init.body) as Record<string, unknown>;
         expect(body.reasoning_effort).toBe(reasoning ? "low" : undefined);
+        const messages = body.messages as { content: string }[];
+        expect(messages[0].content).toContain(
+          "SPY is an instrument, not the system's permanent universe",
+        );
+        expect(messages[0].content).toContain("market/account/position");
         return new Response(
           JSON.stringify({
             id: "fixture-central-reasoning",
