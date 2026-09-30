@@ -213,6 +213,8 @@ export type FinanceResearchRunOptions = Readonly<{
   /** Test/embedding seam; production uses the canonical module executor. */
   moduleExecutor?: typeof executeFinanceModuleComposition;
   workspaceDir?: string;
+  /** Explicit finance state root for controller-owned module fallback inputs. */
+  financeStateDir?: string;
   sourceGovernance?: ApiSourceGovernanceRegistry;
   batchOptions?: Omit<FinanceResearchBatchOptions, "targets" | "asOf" | "useCase">;
 }>;
@@ -2439,6 +2441,7 @@ export async function runFinanceResearchRun(
         plan: plan.orchestration,
         batch,
         workspaceDir: resolveWorkspaceRoot(options.workspaceDir),
+        ...(options.financeStateDir ? { financeStateDir: options.financeStateDir } : {}),
         controllerEvidence,
         ...(domainProducerInputs === undefined ? {} : { domainProducerInputs }),
         signal: options.signal,

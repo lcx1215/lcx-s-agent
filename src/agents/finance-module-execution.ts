@@ -1,14 +1,17 @@
+import { existsSync } from "node:fs";
 import type { FinanceCommitteeEvidence } from "./finance-agent-committee.js";
 import {
   FINANCE_BRAIN_MODULES,
   type FinanceBrainModuleId,
   type FinanceBrainOrchestrationPlan,
 } from "./finance-brain-orchestration.js";
+import { buildFinanceActiveStrategyResearchEvidence } from "./finance-night-review-context.js";
 import type {
   FinanceResearchBatchEvidencePacket,
   FinanceResearchBatchJob,
 } from "./finance-research-batch-runner.js";
 import { summarizeFinancePriceHistory } from "./finance-research-evidence.js";
+import { financeBarLedgerPath } from "./finance-state-dir.js";
 import type { AnyAgentTool } from "./tools/common.js";
 import { createFinanceFrameworkCoreInspectTool } from "./tools/finance-framework-core-inspect-tool.js";
 import { createFinanceFrameworkDomainProducerTools } from "./tools/finance-framework-domain-producer-tools.js";
@@ -305,16 +308,19 @@ function recordsForJobs(
   };
 }
 
-/** Accept only bounded controller close projections and retain every instrument independently. */
-function controllerCloseHistories(
+/** Accept bounded controller closes; hydrate the model-facing monthly projection from its ledger. */
+async function controllerCloseHistories(
   evidence: readonly FinanceCommitteeEvidence[],
   asOf: string,
   ask: string,
-): Readonly<{
-  histories: readonly QuantHistory[];
-  issues: readonly string[];
-  hasControllerHistory: boolean;
-}> {
+  financeStateDir?: string,
+): Promise<
+  Readonly<{
+    histories: readonly QuantHistory[];
+    issues: readonly string[];
+    hasControllerHistory: boolean;
+  }>
+> {
   const visible = evidence.filter(
     (item) =>
       item.source === "finance-bar-ledger" &&
@@ -324,7 +330,140 @@ function controllerCloseHistories(
   );
   const historiesByInstrument = new Map<string, QuantHistory[]>();
   const issues: string[] = [];
+  const instrumentLabel = (record: Record<string, unknown>) =>
+    typeof record.instrument === "string" ? record.instrument : "unknown";
+  const monthlyItems: Array<{ item: FinanceCommitteeEvidence; record: Record<string, unknown> }> =
+    [];
+  const resolvedItems: FinanceCommitteeEvidence[] = [];
   for (const item of visible) {
+    try {
+      const value: unknown = JSON.parse(item.text);
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new Error("invalid controller close projection");
+      }
+      const record = value as Record<string, unknown>;
+      if (Array.isArray(record.monthlyCloseObservations)) {
+        monthlyItems.push({ item, record });
+      } else {
+        resolvedItems.push(item);
+      }
+    } catch {
+      resolvedItems.push(item);
+    }
+  }
+  if (monthlyItems.length > 0) {
+    if (!financeStateDir || !existsSync(financeBarLedgerPath(financeStateDir))) {
+      for (const { record } of monthlyItems) {
+        issues.push(`controller_bar_ledger_unavailable:${instrumentLabel(record)}`);
+      }
+      return {
+        histories: Object.freeze([]),
+        issues: Object.freeze(issues),
+        hasControllerHistory: true,
+      };
+    }
+    const instruments = monthlyItems.map(({ record }) => record.instrument);
+    if (
+      instruments.some((instrument) => typeof instrument !== "string") ||
+      new Set(instruments).size !== instruments.length
+    ) {
+      for (const { record } of monthlyItems) {
+        issues.push(`valid_controller_close_history:${instrumentLabel(record)}`);
+      }
+      return {
+        histories: Object.freeze([]),
+        issues: Object.freeze(issues),
+        hasControllerHistory: true,
+      };
+    }
+    const projectionAsOf = monthlyItems.map(({ item }) => item.timestamp);
+    if (new Set(projectionAsOf).size !== 1) {
+      for (const { record } of monthlyItems) {
+        issues.push(`controller_history_snapshot_mismatch:${instrumentLabel(record)}`);
+      }
+      return {
+        histories: Object.freeze([]),
+        issues: Object.freeze(issues),
+        hasControllerHistory: true,
+      };
+    }
+    try {
+      const scopeEvidence = evidence.find(
+        (item) =>
+          item.source === "finance-strategy-rule-ledger" &&
+          (item.id === "finance-controller:active-strategies" ||
+            item.id.startsWith("finance-night:rules:")) &&
+          Date.parse(item.timestamp) === Date.parse(projectionAsOf[0]),
+      );
+      let strategyIds: string[] | undefined;
+      if (scopeEvidence) {
+        const activeRules = asRecord(JSON.parse(scopeEvidence.text)).activeRules;
+        if (!Array.isArray(activeRules)) {
+          throw new Error("invalid controller history strategy scope");
+        }
+        strategyIds = activeRules.map((rule: unknown) => {
+          const ruleId = asRecord(rule).ruleId;
+          if (typeof ruleId !== "string") {
+            throw new Error("invalid controller history strategy id");
+          }
+          return ruleId;
+        });
+      }
+      const dailyEvidence = await buildFinanceActiveStrategyResearchEvidence({
+        directory: financeStateDir,
+        asOf: projectionAsOf[0],
+        ...(strategyIds === undefined ? {} : { strategyIds }),
+        instrumentIds: instruments as string[],
+        historyFormat: "daily_calculation",
+      });
+      const dailyById = new Map(
+        dailyEvidence
+          .filter(
+            (item) =>
+              item.id.startsWith("finance-controller:eod:") && item.source === "finance-bar-ledger",
+          )
+          .map((item) => [item.id, item]),
+      );
+      for (const { item, record } of monthlyItems) {
+        const instrument = record.instrument;
+        const daily = dailyById.get(item.id);
+        let projection: Record<string, unknown> | undefined;
+        try {
+          projection = daily ? (JSON.parse(daily.text) as Record<string, unknown>) : undefined;
+        } catch {
+          projection = undefined;
+        }
+        const sameSnapshot =
+          projection &&
+          projection.instrument === instrument &&
+          projection.headRef === record.headRef &&
+          projection.fromDate === record.fromDate &&
+          projection.toDate === record.toDate &&
+          projection.windowBarCount === record.windowBarCount &&
+          projection.rawBarCount === record.rawBarCount &&
+          projection.collapsedRepeatedCloses === record.collapsedRepeatedCloses &&
+          projection.suppliedBarCount === record.suppliedBarCount &&
+          projection.omittedByLimit === record.omittedByLimit &&
+          JSON.stringify(projection.divergentDates) === JSON.stringify(record.divergentDates) &&
+          JSON.stringify(projection.monthlyCloseObservations) ===
+            JSON.stringify(record.monthlyCloseObservations) &&
+          Array.isArray(record.divergentDates) &&
+          record.divergentDates.length === 0 &&
+          Array.isArray(projection.closes) &&
+          projection.closes.length === record.suppliedBarCount;
+        if (!sameSnapshot) {
+          issues.push(`controller_history_snapshot_mismatch:${String(instrument)}`);
+          continue;
+        }
+        resolvedItems.push({ ...item, text: JSON.stringify(projection) });
+      }
+    } catch {
+      for (const { record } of monthlyItems) {
+        issues.push(`controller_history_snapshot_mismatch:${instrumentLabel(record)}`);
+      }
+    }
+  }
+  for (const item of resolvedItems) {
     let instrument = item.id.slice("finance-controller:eod:".length);
     try {
       const value: unknown = JSON.parse(item.text);
@@ -587,6 +726,8 @@ export async function executeFinanceModuleComposition(
     plan: FinanceBrainOrchestrationPlan;
     batch: FinanceResearchBatchEvidencePacket;
     workspaceDir: string;
+    /** Explicit controller-owned finance state root used only for bounded fallback hydration. */
+    financeStateDir?: string;
     controllerEvidence?: readonly FinanceCommitteeEvidence[];
     /** Structured, source-backed model output for an explicitly selected domain producer. */
     domainProducerInputs?: Readonly<
@@ -601,9 +742,16 @@ export async function executeFinanceModuleComposition(
   }>
 > {
   const batchSource = recordsForJobs(params.batch, params.asOf, params.ask);
-  const controllerSource = !batchSource.hasEodHistory
-    ? controllerCloseHistories(params.controllerEvidence ?? [], params.asOf, params.ask)
-    : undefined;
+  const controllerSource =
+    params.plan.composition.nodes.some((node) => node.moduleId === "quant_math") &&
+    !batchSource.hasEodHistory
+      ? await controllerCloseHistories(
+          params.controllerEvidence ?? [],
+          params.asOf,
+          params.ask,
+          params.financeStateDir,
+        )
+      : undefined;
   const source = controllerSource
     ? {
         ...batchSource,

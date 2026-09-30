@@ -2,6 +2,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import type { FinanceCommitteeEvidence } from "./finance-agent-committee.js";
+import { appendFinanceBars } from "./finance-bar-ledger.js";
 import {
   FINANCE_BRAIN_MODULES,
   planFinanceBrainOrchestration,
@@ -13,7 +15,15 @@ import {
   financeModuleExecutionRegistryIds,
 } from "./finance-module-execution.js";
 import type { FinanceModuleExecutionNode } from "./finance-module-execution.js";
+import {
+  buildFinanceActiveStrategyResearchEvidence,
+  buildFinanceNightReviewEvidence,
+} from "./finance-night-review-context.js";
 import type { FinanceResearchBatchEvidencePacket } from "./finance-research-batch-runner.js";
+import {
+  activateFinanceStrategyRule,
+  declareFinanceStrategyRule,
+} from "./finance-strategy-rule-ledger.js";
 import { buildQualityHarnessModelPrompt } from "./local-text-model-adapter.js";
 
 function emptyBatch(): FinanceResearchBatchEvidencePacket {
@@ -775,6 +785,205 @@ it.each(["valid", "conflict", "duplicate", "future", "count", "invalid_price"])(
     }
   },
 );
+
+it("hydrates public controller summaries only from the matching explicit bar ledger", async () => {
+  const financeStateDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-controller-hydrate-state-"));
+  const workspaceDir = await fs.mkdtemp(
+    path.join(os.tmpdir(), "lcx-controller-hydrate-workspace-"),
+  );
+  const missingStateDir = await fs.mkdtemp(
+    path.join(os.tmpdir(), "lcx-controller-hydrate-missing-"),
+  );
+  const conflictStateDir = await fs.mkdtemp(
+    path.join(os.tmpdir(), "lcx-controller-hydrate-conflict-"),
+  );
+  const asOf = "2026-09-11T00:00:00.000Z";
+  const declare = async (directory: string) => {
+    await declareFinanceStrategyRule(directory, {
+      kind: "declared",
+      ruleId: "trend",
+      form: "cross_asset_trend",
+      formVersion: "1",
+      instruments: ["SPY"],
+      emits: "target_weights",
+      schedule: { kind: "monthly", at: "last_trading_day", timezone: "America/New_York" },
+      body: { frozenRule: { lookbackMonths: 12 } },
+      observedAt: "2026-09-01T00:00:00.000Z",
+    });
+    await activateFinanceStrategyRule(directory, {
+      kind: "activated",
+      ruleId: "trend",
+      reason: "bounded fixture",
+      observedAt: "2026-09-02T00:00:00.000Z",
+    });
+  };
+  const addBars = async (directory: string, conflict = false) => {
+    await appendFinanceBars(directory, {
+      instrument: "SPY",
+      derivation: "ohlcv",
+      provenance: { origin: "bounded-controller-fallback-fixture" },
+      observedAt: "2026-09-10T12:00:00.000Z",
+      bars: [
+        { date: "2026-09-08", open: 100, high: 100, low: 100, close: 100 },
+        { date: "2026-09-09", open: 95, high: 95, low: 95, close: 95 },
+        { date: "2026-09-10", open: 97, high: 97, low: 97, close: 97 },
+      ],
+    });
+    if (conflict) {
+      await appendFinanceBars(directory, {
+        instrument: "SPY",
+        derivation: "ohlcv",
+        provenance: { origin: "conflicting-controller-fixture" },
+        observedAt: "2026-09-10T13:00:00.000Z",
+        bars: [{ date: "2026-09-09", open: 95, high: 96, low: 95, close: 96 }],
+      });
+    }
+  };
+  const plan = planFinanceBrainOrchestration({
+    text: "SPY historical drawdown",
+    moduleSelection: {
+      moduleIds: ["quant_math"],
+      rationale: "exercise controller ledger fallback",
+      composition: {
+        nodes: [{ id: "math", moduleId: "quant_math", dependsOn: [] }],
+        maxReplans: 0,
+      },
+    },
+  });
+  const execute = (controllerEvidence: FinanceCommitteeEvidence[], stateDir: string) =>
+    executeFinanceModuleComposition({
+      ask: "SPY historical drawdown",
+      asOf,
+      plan,
+      batch: emptyBatch(),
+      workspaceDir,
+      financeStateDir: stateDir,
+      controllerEvidence,
+    });
+  try {
+    await declare(financeStateDir);
+    await addBars(financeStateDir);
+    const controllerEvidence = await buildFinanceNightReviewEvidence({
+      directory: financeStateDir,
+      asOf,
+      etDate: "2026-09-10",
+      includeResearchScope: true,
+      settlement: {
+        scoredFiled: { appended: 0, skipped: 0 },
+        reflection: null,
+        pending: [],
+        declined: [],
+        issues: [],
+      },
+    });
+    const publicHistory = controllerEvidence.find(
+      (item) => item.id === "finance-controller:eod:SPY",
+    )!;
+    const publicPayload = JSON.parse(publicHistory.text);
+    expect(publicPayload).toHaveProperty("monthlyCloseObservations");
+    expect(publicPayload).not.toHaveProperty("closes");
+    expect(publicPayload).not.toHaveProperty("dailyRows");
+
+    const hydrated = await execute([...controllerEvidence], financeStateDir);
+    const quant = hydrated.receipt.nodes.find((node) => node.moduleId === "quant_math");
+    expect(quant?.status).toBe("succeeded");
+    expect(quant?.inputEvidenceIds).toEqual(["finance-controller:eod:SPY"]);
+    expect(hydrated.evidence[0]?.text).toContain("finance-controller:eod:SPY");
+
+    const tampered = controllerEvidence.map((item) =>
+      item.id === publicHistory.id
+        ? { ...item, text: JSON.stringify({ ...publicPayload, headRef: "f".repeat(64) }) }
+        : item,
+    );
+    expect((await execute(tampered, financeStateDir)).receipt.nodes[0]?.status).toBe(
+      "blocked_missing_evidence",
+    );
+    expect((await execute([...controllerEvidence], missingStateDir)).receipt.nodes[0]?.status).toBe(
+      "blocked_missing_evidence",
+    );
+
+    await declare(conflictStateDir);
+    await addBars(conflictStateDir, true);
+    const conflictingEvidence = await buildFinanceNightReviewEvidence({
+      directory: conflictStateDir,
+      asOf,
+      etDate: "2026-09-10",
+      includeResearchScope: true,
+      settlement: {
+        scoredFiled: { appended: 0, skipped: 0 },
+        reflection: null,
+        pending: [],
+        declined: [],
+        issues: [],
+      },
+    });
+    expect(
+      (await execute([...conflictingEvidence], conflictStateDir)).receipt.nodes[0]?.status,
+    ).toBe("blocked_missing_evidence");
+
+    const ignoredStateDir = path.join(missingStateDir, "unused");
+    const batchRun = await executeFinanceModuleComposition({
+      ask: "SPY historical drawdown",
+      asOf,
+      plan,
+      workspaceDir,
+      financeStateDir: ignoredStateDir,
+      controllerEvidence: [],
+      batch: {
+        ...emptyBatch(),
+        committeeEvidence: [
+          {
+            id: "finance-model:SPY",
+            source: "finance-research-batch-runner",
+            timestamp: asOf,
+            text: "batch EOD fixture",
+          },
+        ],
+        jobs: [
+          {
+            jobId: "finance-batch:spy-eod",
+            status: "ready",
+            request: { collection: "eod_history", instrument: "SPY", assetClass: "us_equity" },
+            receipt: { records: [eodRecord("2026-09-08", 100), eodRecord("2026-09-09", 95)] },
+          },
+        ],
+      } as unknown as FinanceResearchBatchEvidencePacket,
+    });
+    expect(batchRun.receipt.nodes[0]?.status).toBe("succeeded");
+    await expect(fs.stat(path.join(ignoredStateDir, "bar-ledger_1.sqlite"))).rejects.toThrow();
+
+    await declareFinanceStrategyRule(financeStateDir, {
+      kind: "declared",
+      ruleId: "longer-lookback",
+      form: "cross_asset_trend",
+      formVersion: "1",
+      instruments: ["SPY"],
+      emits: "target_weights",
+      schedule: { kind: "monthly", at: "last_trading_day", timezone: "America/New_York" },
+      body: { frozenRule: { lookbackMonths: 24 } },
+      observedAt: "2026-09-03T00:00:00.000Z",
+    });
+    await activateFinanceStrategyRule(financeStateDir, {
+      kind: "activated",
+      ruleId: "longer-lookback",
+      reason: "independent active strategy with a different window",
+      observedAt: "2026-09-04T00:00:00.000Z",
+    });
+    const daySubset = await buildFinanceActiveStrategyResearchEvidence({
+      directory: financeStateDir,
+      asOf,
+      strategyIds: ["trend"],
+    });
+    expect((await execute([...daySubset], financeStateDir)).receipt.nodes[0]?.status).toBe(
+      "succeeded",
+    );
+  } finally {
+    await fs.rm(financeStateDir, { recursive: true, force: true });
+    await fs.rm(workspaceDir, { recursive: true, force: true });
+    await fs.rm(missingStateDir, { recursive: true, force: true });
+    await fs.rm(conflictStateDir, { recursive: true, force: true });
+  }
+});
 
 it("keeps every controller fallback instrument distinct", async () => {
   const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-controller-portfolio-quant-"));

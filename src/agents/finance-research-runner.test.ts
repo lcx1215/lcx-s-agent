@@ -2294,7 +2294,7 @@ describe("research module composition reaches actual model request boundaries", 
     "receipt_missing",
     "upstream_quality_failed",
   ] as const)("reports module execution and evidence admission separately: %s", async (outcome) => {
-    let captured: unknown;
+    let captured: { producerInputs?: unknown; financeStateDir?: string } = {};
     const producerAwareInvoker = async (request: unknown) => {
       const output = await modelInvoker(request);
       const payload = request as { stage?: string; evidence?: Array<{ id?: string }> };
@@ -2337,13 +2337,14 @@ describe("research module composition reaches actual model request boundaries", 
           rationale: "Use the registered timing lens.",
         },
       },
+      financeStateDir: "/explicit/finance-state-fixture",
       liveFetch: true,
       qualityEnabled: outcome !== "upstream_quality_failed",
       batchOptions: BATCH_OPTIONS,
       modelInvoker: producerAwareInvoker,
       qualityModelRouting: mockQualityPromptRouting(producerAwareInvoker),
-      moduleExecutor: async ({ plan, domainProducerInputs, asOf }) => {
-        captured = domainProducerInputs;
+      moduleExecutor: async ({ plan, domainProducerInputs, asOf, financeStateDir }) => {
+        captured = { producerInputs: domainProducerInputs, financeStateDir };
         const failedNode =
           outcome === "optional_missing"
             ? plan.composition.control.softNodeIds[0]
@@ -2395,7 +2396,10 @@ describe("research module composition reaches actual model request boundaries", 
         };
       },
     });
-    expect(captured).toMatchObject({ causal_map: { allowedActionAuthority: "research_only" } });
+    expect(captured).toMatchObject({
+      financeStateDir: "/explicit/finance-state-fixture",
+      producerInputs: { causal_map: { allowedActionAuthority: "research_only" } },
+    });
     if (outcome === "upstream_quality_failed") {
       expect(result.committee?.model.purpose).toBe("full_review");
     } else {

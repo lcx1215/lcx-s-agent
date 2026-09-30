@@ -920,6 +920,12 @@ export async function run(options: Options): Promise<{
     const receipt = await runFinanceResearchRun({
       input,
       workspaceDir: WORKSPACE_DIR(),
+      ...(options.financeStateDir
+        ? {
+            financeStateDir: resolveFinanceStateDir({ directory: options.financeStateDir })
+              .directory,
+          }
+        : {}),
       liveFetch: false,
       batchOptions,
     });
@@ -942,6 +948,12 @@ export async function run(options: Options): Promise<{
     {
       input,
       workspaceDir: WORKSPACE_DIR(),
+      ...(options.financeStateDir
+        ? {
+            financeStateDir: resolveFinanceStateDir({ directory: options.financeStateDir })
+              .directory,
+          }
+        : {}),
       liveFetch: true,
       qualityEnabled: options.quality,
       allowProviderCalls: true,

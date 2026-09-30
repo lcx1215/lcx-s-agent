@@ -212,6 +212,10 @@ export async function buildFinanceActiveStrategyResearchEvidence(params: {
   asOf: string;
   /** When supplied, every requested id must name a rule active at `asOf`. */
   strategyIds?: readonly string[];
+  /** Internal calculation projection. The default remains the bounded model-facing summary. */
+  historyFormat?: "model_summary" | "daily_calculation";
+  /** Internal subset used when hydrating an already supplied controller evidence packet. */
+  instrumentIds?: readonly string[];
 }): Promise<readonly FinanceCommitteeEvidence[]> {
   const snapshot = await readFinanceStrategyRuleLedger(params.directory, { asOf: params.asOf });
   const allActiveRules = snapshot.ledger.rules.filter((rule) => rule.state === "active");
@@ -232,7 +236,16 @@ export async function buildFinanceActiveStrategyResearchEvidence(params: {
   const activeRules = requestedIds
     ? requestedIds.map((id) => allActiveRules.find((rule) => rule.ruleId === id)!)
     : allActiveRules;
-  const instruments = [...new Set(activeRules.flatMap((rule) => rule.instruments))];
+  const declaredInstruments = [...new Set(activeRules.flatMap((rule) => rule.instruments))];
+  const instruments = params.instrumentIds
+    ? [...new Set(params.instrumentIds)]
+    : declaredInstruments;
+  if (
+    params.instrumentIds &&
+    instruments.some((instrument) => !declaredInstruments.includes(instrument))
+  ) {
+    throw new Error("controller history instrument subset is outside the active strategy scope");
+  }
   if (requestedIds && instruments.length === 0) {
     throw new Error("controller active strategies declare no research instruments");
   }
@@ -278,38 +291,55 @@ export async function buildFinanceActiveStrategyResearchEvidence(params: {
         const date = key.slice(key.lastIndexOf("@") + 1);
         return date >= fromDate && date <= toDate;
       });
+      const historyPayload =
+        params.historyFormat === "daily_calculation"
+          ? {
+              instrument,
+              headRef: book.headRef,
+              fromDate,
+              toDate,
+              windowBarCount: window.length,
+              rawBarCount: rawWindow.length,
+              collapsedRepeatedCloses: rawWindow.length - window.length,
+              suppliedBarCount: bars.length,
+              omittedByLimit: window.length - bars.length,
+              divergentDates,
+              closes: bars.map((bar) => [bar.date, bar.close]),
+              monthlyCloseObservations,
+            }
+          : {
+              instrument,
+              headRef: book.headRef,
+              fromDate,
+              toDate,
+              windowBarCount: window.length,
+              rawBarCount: rawWindow.length,
+              collapsedRepeatedCloses: rawWindow.length - window.length,
+              uniqueSessionDates: new Set(window.map((bar) => bar.date)).size,
+              suppliedBarCount: bars.length,
+              omittedByLimit: window.length - bars.length,
+              divergentDates,
+              divergentCloseObservations: divergentDates.map((key) => {
+                const sessionDate = key.slice(key.lastIndexOf("@") + 1);
+                return {
+                  sessionDate,
+                  closeValues: [
+                    ...new Set(
+                      window.filter((bar) => bar.date === sessionDate).map((bar) => bar.close),
+                    ),
+                  ].toSorted((left, right) => left - right),
+                };
+              }),
+              boundary:
+                "stored historical observations summarized to the last supplied session per calendar month; conflicts remain explicit; not a daily-volatility input, execution quote or independently verified adjusted total return series",
+              columns: ["month", "sessionDate", "closeValues"],
+              monthlyCloseObservations,
+            };
       const evidence: FinanceCommitteeEvidence = {
         id: `finance-controller:eod:${instrument}`,
         source: "finance-bar-ledger",
         timestamp: params.asOf,
-        text: JSON.stringify({
-          instrument,
-          headRef: book.headRef,
-          fromDate,
-          toDate,
-          windowBarCount: window.length,
-          rawBarCount: rawWindow.length,
-          collapsedRepeatedCloses: rawWindow.length - window.length,
-          uniqueSessionDates: new Set(window.map((bar) => bar.date)).size,
-          suppliedBarCount: bars.length,
-          omittedByLimit: window.length - bars.length,
-          divergentDates,
-          divergentCloseObservations: divergentDates.map((key) => {
-            const sessionDate = key.slice(key.lastIndexOf("@") + 1);
-            return {
-              sessionDate,
-              closeValues: [
-                ...new Set(
-                  window.filter((bar) => bar.date === sessionDate).map((bar) => bar.close),
-                ),
-              ].toSorted((left, right) => left - right),
-            };
-          }),
-          boundary:
-            "stored historical observations summarized to the last supplied session per calendar month; conflicts remain explicit; not a daily-volatility input, execution quote or independently verified adjusted total return series",
-          columns: ["month", "sessionDate", "closeValues"],
-          monthlyCloseObservations,
-        }),
+        text: JSON.stringify(historyPayload),
       };
       return {
         evidence,
