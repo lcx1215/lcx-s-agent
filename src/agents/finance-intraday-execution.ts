@@ -316,26 +316,12 @@ export async function executeFinanceIntradayDecision(params: {
   const now = params.now ?? Date.now;
   let tradeDecisionReview: FinanceIntradayDecisionReviewReceipt | undefined;
   try {
-    const safetyClaims = await readFinanceExecutionSafetyClaims({
-      stateDir: params.directory,
-      accountId: params.controller.accountId,
-      venue: "alpaca:paper",
-      signal,
-    });
-    if (safetyClaims.some((claim) => claim.status === "reserved" || claim.status === "unknown")) {
-      const outcome = await appendFinanceIntradayOutcome(params.directory, {
-        signalId: input.signalId,
-        status: "refused",
-        reasons: ["account_execution_safety_claim_pending_before_model_review"],
-      });
-      return Object.freeze({ status: "refused" as const, outcome: outcome.input });
-    }
     const positionRecords = await readFinancePositionRecords(params.directory);
     const recoveredReceipt = positionRecords.receipts.find(
       (receipt) =>
         receipt.intentId === `intent:${input.signalId}` &&
         receipt.adapterKind === "venue" &&
-        receipt.venue.startsWith("alpaca") &&
+        receipt.venue === "alpaca:paper" &&
         receipt.accountId === params.controller.accountId,
     );
     if (recoveredReceipt) {
@@ -350,6 +336,20 @@ export async function executeFinanceIntradayDecision(params: {
         outcome: outcome.input,
         receipt: recoveredReceipt,
       });
+    }
+    const safetyClaims = await readFinanceExecutionSafetyClaims({
+      stateDir: params.directory,
+      accountId: params.controller.accountId,
+      venue: "alpaca:paper",
+      signal,
+    });
+    if (safetyClaims.some((claim) => claim.status === "reserved" || claim.status === "unknown")) {
+      const outcome = await appendFinanceIntradayOutcome(params.directory, {
+        signalId: input.signalId,
+        status: "refused",
+        reasons: ["account_execution_safety_claim_pending_before_model_review"],
+      });
+      return Object.freeze({ status: "refused" as const, outcome: outcome.input });
     }
     const strategyIssue = await strategyBindingIssue(
       params.directory,

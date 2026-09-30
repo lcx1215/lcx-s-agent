@@ -156,7 +156,7 @@ async function activeRuleBinding(
 }
 
 describe("intraday decision execution bridge", () => {
-  it("blocks an unknown account claim before quote or discretionary review without retrying", async () => {
+  it("recovers a durable same-signal Paper receipt before checking another pending account claim", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-pending-claim-"));
     temporary.push(directory);
     const strategyBinding = await activeRuleBinding(directory);
@@ -288,6 +288,24 @@ describe("intraday decision execution bridge", () => {
       ).some((claim) => claim.status === "unknown"),
     ).toBe(true);
 
+    const recoveredReceipt = buildFinanceExecutionReceipt({
+      intent: {
+        ...intent,
+        intentId: `intent:${decision.input.signalId}`,
+      },
+      adapter: { id: "alpaca-venue", venue: "alpaca:paper", kind: "venue" },
+      fill: {
+        filledQuantity: 1,
+        fillPrice: 100,
+        filledAt: now,
+        venueRef: "alpaca:paper:recovered-same-signal",
+        terminalOrderIdentity: { orderId: "recovered-same-signal", terminal: true },
+      },
+      recordedAt: now,
+      accountId: "paper-account",
+    });
+    await appendFinanceExecutionReceipt(directory, recoveredReceipt);
+
     const reviewer = approvingReviewer();
     const accountBookProvider = vi.fn();
     const executionQuoteProvider = vi.fn();
@@ -306,8 +324,47 @@ describe("intraday decision execution bridge", () => {
       now: () => Date.parse("2026-09-18T15:00:02.000Z"),
       runOrder: runOrder as never,
     });
-    expect(result).toMatchObject({ status: "refused", outcome: { status: "refused" } });
-    expect(result.outcome.reasons).toEqual([
+    expect(result).toMatchObject({
+      status: "recovered_placed",
+      outcome: { status: "placed", receiptId: recoveredReceipt.receiptId },
+    });
+    expect(accountBookProvider).not.toHaveBeenCalled();
+    expect(executionQuoteProvider).not.toHaveBeenCalled();
+    expect(reviewer).not.toHaveBeenCalled();
+    expect(runOrder).not.toHaveBeenCalled();
+
+    const noReceiptDecision = (
+      await appendFinanceIntradayDecision(directory, {
+        signalId: "intraday-pending-claim-no-receipt",
+        instrument: "SPY",
+        sessionDate: "2026-09-18",
+        action: "buy",
+        reason: "opening_range_breakout",
+        referencePrice: 100,
+        referencePriceAt: "2026-09-18T15:00:00.000Z",
+        stopPrice: 99,
+        targetPrice: 102,
+        datasetHeadRef: "b".repeat(64),
+        strategyRule: "opening_range_breakout_long_next_bar_v1",
+        strategyBinding,
+      })
+    ).record;
+    const refused = await executeFinanceIntradayDecision({
+      directory,
+      decision: noReceiptDecision,
+      controller: {
+        accountId: "paper-account",
+        accountBookProvider,
+        executionQuoteProvider,
+        createSafetyContext: vi.fn(),
+      },
+      caps: { maxOrderNotional: 1_000, maxInstrumentNotional: 2_000, maxOrdersPerRun: 1 },
+      tradeDecisionReviewer: reviewer,
+      now: () => Date.parse("2026-09-18T15:00:02.000Z"),
+      runOrder: runOrder as never,
+    });
+    expect(refused).toMatchObject({ status: "refused", outcome: { status: "refused" } });
+    expect(refused.outcome.reasons).toEqual([
       "account_execution_safety_claim_pending_before_model_review",
     ]);
     expect(accountBookProvider).not.toHaveBeenCalled();
