@@ -29,7 +29,10 @@ import type {
   FinanceExecutionProtection,
   FinanceOrderType,
 } from "./finance-execution-adapter.js";
-import type { FinanceExecutionSafetyFacts } from "./finance-execution-safety.js";
+import {
+  FinanceExecutionSafetyDispatchError,
+  type FinanceExecutionSafetyFacts,
+} from "./finance-execution-safety.js";
 import type { FetchImpl } from "./finance-live-market-source.js";
 import { executeFinanceProtectedReduction } from "./finance-protection-coordination.js";
 import {
@@ -82,6 +85,7 @@ type AlpacaOrderResponse = {
   filled_avg_price?: unknown;
   symbol?: unknown;
   message?: unknown;
+  code?: unknown;
   client_order_id?: unknown;
   time_in_force?: unknown;
   order_class?: unknown;
@@ -140,7 +144,21 @@ function asFiniteNumber(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-export class AlpacaOrderRejectedError extends Error {}
+export class AlpacaOrderRejectedError extends FinanceExecutionSafetyDispatchError {
+  constructor(
+    params:
+      | string
+      | {
+          executionStage: "pre_dispatch" | "venue_response" | "unclassified";
+          httpStatus?: number;
+          brokerCode?: number;
+          cause?: unknown;
+        },
+  ) {
+    super(typeof params === "string" ? { executionStage: "unclassified" } : params);
+    this.name = "AlpacaOrderRejectedError";
+  }
+}
 
 export class AlpacaOrderUncertainError extends Error {
   readonly code = "alpaca_order_uncertain";
@@ -532,7 +550,7 @@ export function createAlpacaExecutionAdapter(
               Date.parse(facts.expiresAt) <= Date.now() ||
               Date.parse(facts.quote.expiresAt) <= Date.now()
             ) {
-              throw new AlpacaOrderRejectedError("facts expired before protected sell dispatch");
+              throw new AlpacaOrderRejectedError({ executionStage: "pre_dispatch" });
             }
             return createAlpacaExecutionAdapter({
               ...options,
@@ -960,9 +978,13 @@ export function createAlpacaExecutionAdapter(
             payload = await recover(new Error(`Alpaca submission http ${response.status}`));
           } else {
             submitted = false;
-            throw new AlpacaOrderRejectedError(
-              `Alpaca order rejected (http ${response.status}): ${message}`,
-            );
+            throw new AlpacaOrderRejectedError({
+              executionStage: "venue_response",
+              httpStatus: response.status,
+              ...(typeof payload.code === "number" && Number.isSafeInteger(payload.code)
+                ? { brokerCode: payload.code }
+                : {}),
+            });
           }
         }
         const orderId = typeof payload.id === "string" && payload.id ? payload.id : undefined;

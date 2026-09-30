@@ -484,6 +484,23 @@ and retains account, reconciliation, risk, deduplication and reservation checks.
 Typed controller failures during initial account reads retain their fixed category
 and provider diagnostic stage in the intraday outcome; raw exception text stays private.
 
+Failures after claim reservation also retain a bounded `attempt` diagnostic in the
+claim journal and intraday outcome. It distinguishes a call that did not start,
+a typed venue rejection, and an unresolved execution or receipt write. A venue
+rejection requires a received non-ambiguous HTTP 4xx response; only the numeric
+HTTP status and broker code are retained. Free-form errors, response bodies and
+credentials are excluded. Receipt-stage failures remain unresolved even if the
+exception resembles a dispatch rejection.
+
+These diagnostics do not release a claim or grant retry authority. The existing
+`unknown` claim and `uncertain` intraday state retain their conservative recovery
+semantics; inspect `executionSafetyFailure.attempt` for the failure classification.
+The displayed reasons distinguish `execution_dispatch_not_started`,
+`execution_venue_rejected`, and `execution_outcome_unresolved` without changing
+that recovery state.
+Legacy claims without diagnostics remain readable and unresolved. A client-order
+lookup returning 404 or an empty bounded order list is insufficient to clear one.
+
 Cycle progress identifies `research_preflight`, `execution`, `universe_selection`
 and `night_review`. Each bounded child refreshes the progress timestamp on entry,
 so time spent in completed stages cannot make the next healthy stage appear stalled.

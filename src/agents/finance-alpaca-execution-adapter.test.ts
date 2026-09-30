@@ -13,6 +13,7 @@ import {
   createAlpacaExecutionAdapter,
   readAlpacaPaperTerminalOrder,
   AlpacaOrderUncertainError,
+  AlpacaOrderRejectedError,
   type AlpacaExecutionAdapterOptions,
 } from "./finance-alpaca-execution-adapter.js";
 import type { FinanceExecutionIntent } from "./finance-execution-adapter.js";
@@ -62,6 +63,27 @@ function stubCredentials(keyId: string) {
 }
 
 describe("createAlpacaExecutionAdapter", () => {
+  it("keeps legacy rejection construction unclassified instead of inferring venue evidence", () => {
+    expect(new AlpacaOrderRejectedError("free text")).toMatchObject({
+      executionStage: "unclassified",
+      message: "execution dispatch failed",
+    });
+  });
+
+  it("marks a received ordinary venue rejection with numeric diagnostics only", async () => {
+    stubCredentials(PAPER);
+    const t = transport({ message: "secret raw response", code: 40310000 }, 422);
+    const adapter = createAlpacaExecutionAdapter({ instruments: ["AAPL"], postJson: t.fn });
+    await expect(adapter.execute(baseIntent, new AbortController().signal)).rejects.toMatchObject({
+      name: "AlpacaOrderRejectedError",
+      executionStage: "venue_response",
+      httpStatus: 422,
+      brokerCode: 40310000,
+      message: "execution dispatch failed",
+    });
+    expect(t.calls).toHaveLength(1);
+  });
+
   it("defaults to the paper host", async () => {
     stubCredentials(PAPER);
     const t = transport({ id: "ord-1", status: "new", filled_qty: "0" });

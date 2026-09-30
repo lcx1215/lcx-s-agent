@@ -9,7 +9,10 @@ import {
 import type { runFinanceAlpacaOrder } from "./finance-alpaca-run.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import { buildFinanceExecutionReceipt } from "./finance-execution-adapter.js";
-import { FinanceExecutionSafetyFactsError } from "./finance-execution-safety.js";
+import {
+  FinanceExecutionSafetyFactsError,
+  FinanceExecutionSafetyUncertainError,
+} from "./finance-execution-safety.js";
 import {
   appendFinanceIntradayDecision,
   readFinanceIntradayOutcome,
@@ -520,6 +523,9 @@ describe("intraday decision execution bridge", () => {
     "provider_payment_required",
     "veto",
     "invalid",
+    "uncertain_execution",
+    "definite_rejection",
+    "not_started",
   ] as const)(
     "keeps review failure advisory but preserves valid veto and contract gates (%s)",
     async (reviewMode) => {
@@ -543,8 +549,23 @@ describe("intraday decision execution bridge", () => {
           strategyBinding,
         })
       ).record;
-      const tradeDecisionReviewer: FinanceTradeDecisionReviewer | undefined =
-        reviewMode === "veto"
+      const attemptMode =
+        reviewMode === "uncertain_execution" ||
+        reviewMode === "definite_rejection" ||
+        reviewMode === "not_started";
+      const disposition = reviewMode === "uncertain_execution" ? "outcome_unresolved" : reviewMode;
+      const attempt = attemptMode
+        ? {
+            phase: reviewMode === "not_started" ? ("not_started" as const) : ("execute" as const),
+            disposition: disposition as "not_started" | "definite_rejection" | "outcome_unresolved",
+            ...(reviewMode === "definite_rejection"
+              ? { venueResponse: { httpStatus: 422, brokerCode: 42210000 } }
+              : {}),
+          }
+        : undefined;
+      const tradeDecisionReviewer: FinanceTradeDecisionReviewer | undefined = attemptMode
+        ? approvingReviewer()
+        : reviewMode === "veto"
           ? async (request) => ({
               status: "completed",
               attempted: true,
@@ -596,6 +617,14 @@ describe("intraday decision execution bridge", () => {
       }));
       if (reviewMode === "unavailable") {
         runOrder.mockRejectedValueOnce(new Error("secret provider body must not persist"));
+      } else if (attempt) {
+        runOrder.mockRejectedValueOnce(
+          new FinanceExecutionSafetyUncertainError(
+            "claim",
+            new Error("private transport detail"),
+            attempt,
+          ),
+        );
       }
 
       const result = await executeFinanceIntradayDecision({
@@ -636,15 +665,17 @@ describe("intraday decision execution bridge", () => {
         runOrder: runOrder as never,
       });
 
-      expect(result).toMatchObject({ status: "refused" });
+      expect(result).toMatchObject({
+        status: attemptMode ? "uncertain" : "refused",
+      });
       const reviewFailed =
         reviewMode === "unavailable" ||
         reviewMode === "output_truncated" ||
         reviewMode === "provider_payment_required";
-      expect(runOrder).toHaveBeenCalledTimes(reviewFailed ? 1 : 0);
+      expect(runOrder).toHaveBeenCalledTimes(reviewFailed || attemptMode ? 1 : 0);
       const outcome = await readFinanceIntradayOutcome(directory, signalId);
       expect(outcome).toMatchObject({
-        status: "refused",
+        status: attemptMode ? "uncertain" : "refused",
         tradeDecisionReview:
           reviewMode === "unavailable"
             ? { status: "failed", failureCode: "reviewer_unavailable" }
@@ -654,10 +685,28 @@ describe("intraday decision execution bridge", () => {
                 ? { status: "failed", failureCode: "output_invalid" }
                 : {
                     status: "completed",
-                    decision: { candidateId: signalId, decision: "veto" },
+                    decision: {
+                      candidateId: signalId,
+                      decision: attemptMode ? "approve" : "veto",
+                    },
                   },
       });
-      if (reviewMode === "unavailable") {
+      if (attempt) {
+        expect(outcome?.reasons).toEqual([
+          reviewMode === "not_started"
+            ? "execution_dispatch_not_started"
+            : reviewMode === "definite_rejection"
+              ? "execution_venue_rejected"
+              : "execution_outcome_unresolved",
+        ]);
+        expect(outcome?.executionSafetyFailure).toEqual({
+          stage: reviewMode === "not_started" ? "reservation" : "execution",
+          category: "unexpected",
+          operation: reviewMode === "not_started" ? "reserve_execution_claim" : "execute_order",
+          attempt,
+        });
+        expect(JSON.stringify(outcome)).not.toContain("private transport detail");
+      } else if (reviewMode === "unavailable") {
         expect(outcome?.reasons).toEqual(["intraday_execution_unexpected_error"]);
         expect(outcome?.executionSafetyFailure).toBeUndefined();
         expect(JSON.stringify(outcome)).not.toContain("secret provider body");

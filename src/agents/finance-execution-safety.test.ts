@@ -10,9 +10,11 @@ import {
 import {
   createFinanceExecutionSafetyContext,
   FinanceExecutionSafetyFactsError,
+  FinanceExecutionSafetyDispatchError,
   FinanceExecutionSafetyUncertainError,
   type FinanceExecutionSafetyContextInput,
   type FinanceExecutionSafetyFacts,
+  withFinanceExecutionSafety,
 } from "./finance-execution-safety.js";
 const directories: string[] = [];
 afterEach(async () => {
@@ -331,7 +333,111 @@ it("retains unknown submission across a fresh issuer and never retries automatic
       })
     ).refusalReasons,
   ).toContain("execution_safety_account_requires_reconciliation");
+  const journal = (await fs.readdir(f.input.stateDir)).find((name) => name.endsWith(".jsonl"))!;
+  const entries = (await fs.readFile(path.join(f.input.stateDir, journal), "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as { status: string; failure?: unknown });
+  expect(entries.at(-1)).toMatchObject({
+    status: "unknown",
+    failure: { phase: "execute", disposition: "outcome_unresolved" },
+  });
 });
+
+it("persists only typed venue rejection fields and preserves unknown status", async () => {
+  expect(
+    () =>
+      new FinanceExecutionSafetyDispatchError({
+        executionStage: "venue_response",
+        httpStatus: 503,
+      }),
+  ).toThrow();
+  expect(
+    () => new FinanceExecutionSafetyDispatchError({ executionStage: "venue_response" }),
+  ).toThrow();
+  const f = await fixture();
+  const execute = vi.fn(async () => {
+    throw new FinanceExecutionSafetyDispatchError({
+      executionStage: "venue_response",
+      httpStatus: 422,
+      brokerCode: 1234,
+      cause: new Error("secret broker response body"),
+    });
+  });
+  await expect(
+    placeFinanceOrder({
+      ...f.request,
+      adapters: [{ ...f.adapter, execute }],
+      safetyContext: createFinanceExecutionSafetyContext(f.input),
+    }),
+  ).rejects.toMatchObject({
+    attempt: {
+      phase: "execute",
+      disposition: "definite_rejection",
+      venueResponse: { httpStatus: 422, brokerCode: 1234 },
+    },
+  });
+  expect(execute).toHaveBeenCalledTimes(1);
+  const journal = (await fs.readdir(f.input.stateDir)).find((name) => name.endsWith(".jsonl"))!;
+  const raw = await fs.readFile(path.join(f.input.stateDir, journal), "utf8");
+  expect(raw).toContain('"status":"unknown"');
+  expect(raw).toContain('"disposition":"definite_rejection"');
+  expect(raw).toContain('"httpStatus":422');
+  expect(raw).not.toContain("secret broker response body");
+});
+
+it("records a typed pre-dispatch refusal without permitting another automatic attempt", async () => {
+  const f = await fixture();
+  const execute = vi.fn(async () => {
+    throw new FinanceExecutionSafetyDispatchError({ executionStage: "pre_dispatch" });
+  });
+  const request = {
+    ...f.request,
+    adapters: [{ ...f.adapter, execute }],
+    safetyContext: createFinanceExecutionSafetyContext(f.input),
+  };
+  await expect(placeFinanceOrder(request)).rejects.toMatchObject({
+    attempt: { phase: "not_started", disposition: "not_started" },
+  });
+  const retry = await placeFinanceOrder({
+    ...request,
+    safetyContext: createFinanceExecutionSafetyContext(f.input),
+  });
+  expect(retry.status).toBe("refused");
+  expect(execute).toHaveBeenCalledTimes(1);
+});
+
+it.each(["ordinary", "dispatch_shaped"] as const)(
+  "keeps a receipt-stage error unresolved even if its type claims rejection (%s)",
+  async (errorKind) => {
+    const f = await fixture();
+    await expect(
+      withFinanceExecutionSafety({
+        context: createFinanceExecutionSafetyContext(f.input),
+        intent: f.input.intent,
+        budget: f.input.budget,
+        adapterId: f.input.adapterId,
+        venue: f.input.venue,
+        adapterKind: "paper",
+        execute: (signal) => f.adapter.execute(f.input.intent, signal),
+        buildReceipt: () => {
+          throw errorKind === "dispatch_shaped"
+            ? new FinanceExecutionSafetyDispatchError({
+                executionStage: "venue_response",
+                httpStatus: 422,
+              })
+            : new Error("secret receipt detail");
+        },
+      }),
+    ).rejects.toMatchObject({ attempt: { phase: "receipt", disposition: "outcome_unresolved" } });
+    const journal = (await fs.readdir(f.input.stateDir)).find((name) => name.endsWith(".jsonl"))!;
+    const raw = await fs.readFile(path.join(f.input.stateDir, journal), "utf8");
+    expect(raw).toContain('"phase":"receipt"');
+    expect(raw).not.toContain("definite_rejection");
+    expect(raw).not.toContain("secret receipt detail");
+  },
+);
+
 it("serializes different issuers, cancels queued calls promptly, and never reuses stale position facts", async () => {
   const f = await fixture();
   let release!: () => void;

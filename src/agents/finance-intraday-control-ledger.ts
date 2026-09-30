@@ -12,6 +12,8 @@ import {
   FINANCE_EXECUTION_SAFETY_FAILURE_CATEGORIES,
   FINANCE_EXECUTION_SAFETY_FAILURE_OPERATIONS,
   FINANCE_EXECUTION_SAFETY_FAILURE_STAGES,
+  FINANCE_EXECUTION_SAFETY_ATTEMPT_DISPOSITIONS,
+  FINANCE_EXECUTION_SAFETY_ATTEMPT_PHASES,
 } from "./finance-execution-safety.js";
 import { FinanceExpectationGapSchema } from "./finance-expectation-gap.js";
 import { financeIntradayControlLedgerPath } from "./finance-state-dir.js";
@@ -29,6 +31,20 @@ const FinanceIntradayExecutionSafetyFailureRecord = z
       .object({
         reason: z.enum(ALPACA_SAFETY_FAILURE_CODES),
         stage: z.enum(ALPACA_SAFETY_DIAGNOSTIC_STAGES).optional(),
+      })
+      .strict()
+      .optional(),
+    attempt: z
+      .object({
+        phase: z.enum(FINANCE_EXECUTION_SAFETY_ATTEMPT_PHASES),
+        disposition: z.enum(FINANCE_EXECUTION_SAFETY_ATTEMPT_DISPOSITIONS),
+        venueResponse: z
+          .object({
+            httpStatus: z.number().int().min(100).max(599).optional(),
+            brokerCode: z.number().int().nonnegative().safe().optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .optional(),

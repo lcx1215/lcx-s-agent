@@ -161,6 +161,11 @@ it("requires complete new diagnostics while reading legacy diagnostic records", 
         reason: "alpaca_safety_facts_inconsistent",
         stage: "account_arithmetic",
       },
+      attempt: {
+        phase: "execute",
+        disposition: "definite_rejection",
+        venueResponse: { httpStatus: 422, brokerCode: 40310000 },
+      },
     },
   });
   expect(result.input.executionSafetyFailure).toEqual({
@@ -168,6 +173,11 @@ it("requires complete new diagnostics while reading legacy diagnostic records", 
     category: "account_snapshot_unavailable",
     operation: "read_account_safety_facts",
     provider: { reason: "alpaca_safety_facts_inconsistent", stage: "account_arithmetic" },
+    attempt: {
+      phase: "execute",
+      disposition: "definite_rejection",
+      venueResponse: { httpStatus: 422, brokerCode: 40310000 },
+    },
   });
   expect(await readFinanceIntradayExecutionCoverage(directory)).toMatchObject({
     topExecutionSafetyFailures: [

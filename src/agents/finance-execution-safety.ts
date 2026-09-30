@@ -29,6 +29,18 @@ export const FINANCE_EXECUTION_SAFETY_FAILURE_STAGES = [
   "journal",
   "facts",
   "reservation",
+  "execution",
+  "receipt",
+] as const;
+export const FINANCE_EXECUTION_SAFETY_ATTEMPT_PHASES = [
+  "not_started",
+  "execute",
+  "receipt",
+] as const;
+export const FINANCE_EXECUTION_SAFETY_ATTEMPT_DISPOSITIONS = [
+  "not_started",
+  "definite_rejection",
+  "outcome_unresolved",
 ] as const;
 export const FINANCE_EXECUTION_SAFETY_CONTROLLER_FAILURE_CATEGORIES = [
   "quote_binding_missing",
@@ -54,7 +66,52 @@ export const FINANCE_EXECUTION_SAFETY_FAILURE_OPERATIONS = [
   "read_execution_journal",
   "read_account_safety_facts",
   "reserve_execution_claim",
+  "execute_order",
+  "record_execution_receipt",
 ] as const;
+
+export type FinanceExecutionSafetyAttempt = Readonly<{
+  phase: (typeof FINANCE_EXECUTION_SAFETY_ATTEMPT_PHASES)[number];
+  disposition: (typeof FINANCE_EXECUTION_SAFETY_ATTEMPT_DISPOSITIONS)[number];
+  venueResponse?: Readonly<{ httpStatus?: number; brokerCode?: number }>;
+}>;
+
+/** Typed adapter diagnostic. Only allowlisted numeric fields cross the persistence boundary. */
+export class FinanceExecutionSafetyDispatchError extends Error {
+  readonly executionStage: "pre_dispatch" | "venue_response" | "unclassified";
+  readonly httpStatus?: number;
+  readonly brokerCode?: number;
+
+  constructor(params: {
+    executionStage: "pre_dispatch" | "venue_response" | "unclassified";
+    httpStatus?: number;
+    brokerCode?: number;
+    cause?: unknown;
+  }) {
+    if (
+      (params.httpStatus !== undefined &&
+        (!Number.isInteger(params.httpStatus) ||
+          params.httpStatus < 100 ||
+          params.httpStatus > 599)) ||
+      (params.brokerCode !== undefined &&
+        (!Number.isSafeInteger(params.brokerCode) || params.brokerCode < 0)) ||
+      (params.executionStage !== "venue_response" &&
+        (params.httpStatus !== undefined || params.brokerCode !== undefined)) ||
+      (params.executionStage === "venue_response" &&
+        (params.httpStatus === undefined || params.httpStatus < 400 || params.httpStatus >= 500))
+    ) {
+      throw new Error("invalid execution dispatch diagnostic");
+    }
+    super(
+      "execution dispatch failed",
+      params.cause === undefined ? undefined : { cause: params.cause },
+    );
+    this.name = "FinanceExecutionSafetyDispatchError";
+    this.executionStage = params.executionStage;
+    this.httpStatus = params.httpStatus;
+    this.brokerCode = params.brokerCode;
+  }
+}
 
 export type FinanceExecutionSafetyFailure = Readonly<{
   stage: (typeof FINANCE_EXECUTION_SAFETY_FAILURE_STAGES)[number];
@@ -64,6 +121,7 @@ export type FinanceExecutionSafetyFailure = Readonly<{
     reason: AlpacaSafetyFailureCode;
     stage?: AlpacaSafetyDiagnosticStage;
   }>;
+  attempt?: FinanceExecutionSafetyAttempt;
 }>;
 
 type FinanceExecutionProtectiveOrderClaim = Readonly<{
@@ -223,6 +281,10 @@ export class FinanceExecutionSafetyUncertainError extends Error {
   constructor(
     readonly claimId: string,
     cause: unknown,
+    readonly attempt: FinanceExecutionSafetyAttempt = Object.freeze({
+      phase: "execute",
+      disposition: "outcome_unresolved",
+    }),
   ) {
     super("execution outcome unresolved; account safety claim retained until reconciliation", {
       cause,
@@ -239,6 +301,7 @@ export type FinanceExecutionSafetyClaim = {
   snapshotId: string;
   at: string;
   status: "reserved" | "confirmed" | "unknown";
+  failure?: FinanceExecutionSafetyAttempt;
   binding?: Readonly<{
     accountId: string;
     adapterId: string;
@@ -400,9 +463,10 @@ export async function withFinanceExecutionSafety(params: {
   let releaseQueue: (() => void) | undefined;
   let key: string | undefined;
   let tail: Promise<void> | undefined;
-  let failureStage: "state" | "lock" | "journal" | "facts" | "reservation" = "state";
+  let failureStage: (typeof FINANCE_EXECUTION_SAFETY_FAILURE_STAGES)[number] = "state";
   let failureOperation: (typeof FINANCE_EXECUTION_SAFETY_FAILURE_OPERATIONS)[number] =
     "create_state_directory";
+  let attemptPhase: FinanceExecutionSafetyAttempt["phase"] = "not_started";
   try {
     signal.throwIfAborted();
     await fs.mkdir(binding.stateDir, { recursive: true, mode: 0o700 });
@@ -729,6 +793,9 @@ export async function withFinanceExecutionSafety(params: {
             ) {
               throw new Error("execution safety facts expired before dispatch");
             }
+            attemptPhase = "execute";
+            failureStage = "execution";
+            failureOperation = "execute_order";
             return params.execute(signal, facts);
           }),
           signal,
@@ -736,6 +803,9 @@ export async function withFinanceExecutionSafety(params: {
         if (params.adapterKind === "venue" && !fill.terminalOrderIdentity?.terminal) {
           throw new Error("venue terminal order identity not observed");
         }
+        attemptPhase = "receipt";
+        failureStage = "receipt";
+        failureOperation = "record_execution_receipt";
         const recordedAt = params.recordedAt ?? new Date().toISOString();
         const receipt = structuredClone(params.buildReceipt(fill, recordedAt, binding.accountId));
         await appendJournal(key, {
@@ -749,12 +819,48 @@ export async function withFinanceExecutionSafety(params: {
         });
         return { ok: true, fill, receipt };
       } catch (error) {
+        const attempt: FinanceExecutionSafetyAttempt =
+          attemptPhase !== "receipt" && error instanceof FinanceExecutionSafetyDispatchError
+            ? Object.freeze({
+                phase: error.executionStage === "pre_dispatch" ? "not_started" : "execute",
+                disposition:
+                  error.executionStage === "pre_dispatch"
+                    ? "not_started"
+                    : error.executionStage === "venue_response"
+                      ? "definite_rejection"
+                      : "outcome_unresolved",
+                ...(error.executionStage === "venue_response"
+                  ? {
+                      venueResponse: Object.freeze({
+                        ...(error.httpStatus === undefined ? {} : { httpStatus: error.httpStatus }),
+                        ...(error.brokerCode === undefined ? {} : { brokerCode: error.brokerCode }),
+                      }),
+                    }
+                  : {}),
+              })
+            : Object.freeze({
+                phase: attemptPhase,
+                disposition: attemptPhase === "not_started" ? "not_started" : "outcome_unresolved",
+              });
+        failureStage =
+          attempt.phase === "not_started"
+            ? "reservation"
+            : attempt.phase === "receipt"
+              ? "receipt"
+              : "execution";
+        failureOperation =
+          attempt.phase === "not_started"
+            ? "reserve_execution_claim"
+            : attempt.phase === "receipt"
+              ? "record_execution_receipt"
+              : "execute_order";
         await appendJournal(key, {
           ...claim,
           at: new Date().toISOString(),
           status: "unknown",
+          failure: attempt,
         }).catch(() => undefined);
-        throw new FinanceExecutionSafetyUncertainError(id, error);
+        throw new FinanceExecutionSafetyUncertainError(id, error, attempt);
       }
     } finally {
       await lock.release();

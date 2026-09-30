@@ -11,7 +11,10 @@ import {
   recordCycleFill,
   type FinanceDailyCycleParams,
 } from "./finance-daily-cycle.js";
-import { FinanceExecutionSafetyFactsError } from "./finance-execution-safety.js";
+import {
+  FinanceExecutionSafetyFactsError,
+  FinanceExecutionSafetyUncertainError,
+} from "./finance-execution-safety.js";
 import {
   appendFinanceIntradayOutcome,
   FinanceIntradayDecisionReviewReceiptSchema,
@@ -579,10 +582,7 @@ export async function executeFinanceIntradayDecision(params: {
       tradeDecisionReview,
     });
   } catch (error) {
-    const uncertain =
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "finance_execution_safety_unknown";
+    const uncertain = error instanceof FinanceExecutionSafetyUncertainError;
     const factsFailure =
       error instanceof FinanceExecutionSafetyFactsError
         ? {
@@ -597,12 +597,36 @@ export async function executeFinanceIntradayDecision(params: {
       status: uncertain ? "uncertain" : "refused",
       reasons: [
         uncertain
-          ? "execution_outcome_unresolved"
+          ? error.attempt.disposition === "not_started"
+            ? "execution_dispatch_not_started"
+            : error.attempt.disposition === "definite_rejection"
+              ? "execution_venue_rejected"
+              : "execution_outcome_unresolved"
           : factsFailure
             ? `execution_safety_${factsFailure.category}`
             : "intraday_execution_unexpected_error",
       ],
       ...(factsFailure ? { executionSafetyFailure: factsFailure } : {}),
+      ...(uncertain
+        ? {
+            executionSafetyFailure: {
+              stage:
+                error.attempt.phase === "not_started"
+                  ? ("reservation" as const)
+                  : error.attempt.phase === "receipt"
+                    ? ("receipt" as const)
+                    : ("execution" as const),
+              category: "unexpected" as const,
+              operation:
+                error.attempt.phase === "not_started"
+                  ? ("reserve_execution_claim" as const)
+                  : error.attempt.phase === "receipt"
+                    ? ("record_execution_receipt" as const)
+                    : ("execute_order" as const),
+              attempt: error.attempt,
+            },
+          }
+        : {}),
       ...(tradeDecisionReview ? { tradeDecisionReview } : {}),
     });
     return Object.freeze({
