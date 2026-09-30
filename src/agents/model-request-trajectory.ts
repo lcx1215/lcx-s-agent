@@ -14,6 +14,7 @@ export type ModelRequestSource = "agent_session" | "finance_engine" | "central_b
 export type ModelRequestStage =
   | "attempt_started"
   | "response_received"
+  | "usage_received"
   | "request_error"
   | "request_aborted";
 export type ModelRequestErrorKind =
@@ -31,8 +32,22 @@ export type ModelRequestRecord = Readonly<{
   provider: string;
   modelId: string;
   modelApi?: string;
+  callId?: string;
+  correlationId?: string;
+  taskId?: string;
+  role?: string;
+  attempt?: number;
   inputBytes?: number;
   messageCount?: number;
+  /** Provider-reported input; upstream adapters may have already excluded cached tokens. */
+  inputTokens?: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  cachedInputTokens?: number;
+  cacheHitTokens?: number;
+  cacheMissTokens?: number;
+  reasoningTokens?: number;
   durationMs?: number;
   httpStatus?: number;
   errorKind?: ModelRequestErrorKind;
@@ -56,6 +71,11 @@ export type ModelRequestStartInput = {
   provider: string;
   modelId: string;
   modelApi?: string;
+  callId?: string;
+  correlationId?: string;
+  taskId?: string;
+  role?: string;
+  attempt?: number;
   inputBytes?: number;
   messageCount?: number;
 };
@@ -67,12 +87,82 @@ export type ModelRequestTicket = Readonly<{
   provider: string;
   modelId: string;
   modelApi?: string;
+  callId?: string;
+  correlationId?: string;
+  taskId?: string;
+  role?: string;
+  attempt?: number;
+}>;
+
+export type ModelRequestUsage = Readonly<{
+  inputTokens?: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  cachedInputTokens?: number;
+  cacheHitTokens?: number;
+  cacheMissTokens?: number;
+  reasoningTokens?: number;
 }>;
 
 export type ModelRequestUpdate =
   | { stage: "response_received"; httpStatus?: number }
+  | ({ stage: "usage_received" } & ModelRequestUsage)
   | { stage: "request_error"; errorKind: ModelRequestErrorKind }
   | { stage: "request_aborted" };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Extracts numeric usage from common provider shapes without retaining raw response data. */
+export function normalizeModelRequestUsage(value: unknown): ModelRequestUsage | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const promptDetails = isRecord(value.prompt_tokens_details)
+    ? value.prompt_tokens_details
+    : isRecord(value.input_tokens_details)
+      ? value.input_tokens_details
+      : {};
+  const completionDetails = isRecord(value.completion_tokens_details)
+    ? value.completion_tokens_details
+    : {};
+  const count = (...values: unknown[]): number | undefined =>
+    values.find(
+      (candidate): candidate is number =>
+        typeof candidate === "number" && Number.isSafeInteger(candidate) && candidate >= 0,
+    );
+  const inputTokens = count(value.input_tokens, value.input);
+  const promptTokens = count(value.prompt_tokens, value.promptTokens);
+  const completionTokens = count(value.completion_tokens, value.output_tokens, value.output);
+  const totalTokens = count(value.total_tokens, value.total);
+  const cachedInputTokens = count(
+    promptDetails.cached_tokens,
+    value.cached_input_tokens,
+    value.cache_read_input_tokens,
+    value.prompt_cache_hit_tokens,
+    value.cacheRead,
+  );
+  const cacheHitTokens = count(
+    value.cache_hit_tokens,
+    value.prompt_cache_hit_tokens,
+    value.cacheRead,
+  );
+  const cacheMissTokens = count(value.cache_miss_tokens, value.prompt_cache_miss_tokens);
+  const reasoningTokens = count(completionDetails.reasoning_tokens, value.reasoning_tokens);
+  const usage: ModelRequestUsage = {
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(promptTokens !== undefined ? { promptTokens } : {}),
+    ...(completionTokens !== undefined ? { completionTokens } : {}),
+    ...(totalTokens !== undefined ? { totalTokens } : {}),
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+    ...(cacheHitTokens !== undefined ? { cacheHitTokens } : {}),
+    ...(cacheMissTokens !== undefined ? { cacheMissTokens } : {}),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+  };
+  return Object.keys(usage).length > 0 ? usage : undefined;
+}
 
 const writers = new Map<string, QueuedFileWriter>();
 
@@ -132,6 +222,13 @@ export function recordModelRequestStart(
     provider: input.provider,
     modelId: input.modelId,
     ...(input.modelApi ? { modelApi: input.modelApi } : {}),
+    ...(input.callId ? { callId: input.callId } : {}),
+    ...(input.correlationId ? { correlationId: input.correlationId } : {}),
+    ...(input.taskId ? { taskId: input.taskId } : {}),
+    ...(input.role ? { role: input.role } : {}),
+    ...(Number.isSafeInteger(input.attempt) && input.attempt! >= 0
+      ? { attempt: input.attempt }
+      : {}),
   };
   const record: ModelRequestRecord = {
     schema: MODEL_REQUEST_TRAJECTORY_SCHEMA,
@@ -142,6 +239,13 @@ export function recordModelRequestStart(
     provider: input.provider,
     modelId: input.modelId,
     ...(input.modelApi ? { modelApi: input.modelApi } : {}),
+    ...(input.callId ? { callId: input.callId } : {}),
+    ...(input.correlationId ? { correlationId: input.correlationId } : {}),
+    ...(input.taskId ? { taskId: input.taskId } : {}),
+    ...(input.role ? { role: input.role } : {}),
+    ...(Number.isSafeInteger(input.attempt) && input.attempt! >= 0
+      ? { attempt: input.attempt }
+      : {}),
     ...(Number.isSafeInteger(input.inputBytes) && input.inputBytes! >= 0
       ? { inputBytes: input.inputBytes }
       : {}),
@@ -170,12 +274,38 @@ export function recordModelRequestUpdate(
     provider: ticket.provider,
     modelId: ticket.modelId,
     ...(ticket.modelApi ? { modelApi: ticket.modelApi } : {}),
+    ...(ticket.callId ? { callId: ticket.callId } : {}),
+    ...(ticket.correlationId ? { correlationId: ticket.correlationId } : {}),
+    ...(ticket.taskId ? { taskId: ticket.taskId } : {}),
+    ...(ticket.role ? { role: ticket.role } : {}),
+    ...(Number.isSafeInteger(ticket.attempt) && ticket.attempt! >= 0
+      ? { attempt: ticket.attempt }
+      : {}),
     durationMs: Math.max(0, Math.round(now - ticket.startedAtMs)),
     ...(update.stage === "response_received" &&
     Number.isSafeInteger(update.httpStatus) &&
     update.httpStatus! >= 100 &&
     update.httpStatus! <= 599
       ? { httpStatus: update.httpStatus }
+      : {}),
+    ...(update.stage === "usage_received"
+      ? Object.fromEntries(
+          Object.entries(update).filter(
+            ([key, value]) =>
+              [
+                "promptTokens",
+                "inputTokens",
+                "completionTokens",
+                "totalTokens",
+                "cachedInputTokens",
+                "cacheHitTokens",
+                "cacheMissTokens",
+                "reasoningTokens",
+              ].includes(key) &&
+              Number.isSafeInteger(value) &&
+              Number(value) >= 0,
+          ),
+        )
       : {}),
     ...(update.stage === "request_error" ? { errorKind: update.errorKind } : {}),
   };
@@ -219,6 +349,14 @@ export function wrapStreamFnForTrajectory(
           (message) => {
             if (!outcomeRecorded) {
               outcomeRecorded = true;
+              const usage = normalizeModelRequestUsage(message.usage);
+              if (usage) {
+                recordModelRequestUpdate(
+                  ticket,
+                  { stage: "usage_received", ...usage },
+                  dependencies,
+                );
+              }
               if (message.stopReason === "aborted") {
                 recordModelRequestUpdate(ticket, { stage: "request_aborted" }, dependencies);
               } else if (message.stopReason === "error") {
@@ -272,14 +410,11 @@ export function wrapStreamFnForTrajectory(
   };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
 const SOURCES: readonly ModelRequestSource[] = ["agent_session", "finance_engine", "central_brain"];
 const STAGES: ReadonlySet<ModelRequestStage> = new Set([
   "attempt_started",
   "response_received",
+  "usage_received",
   "request_error",
   "request_aborted",
 ]);
@@ -309,6 +444,13 @@ function parseRecord(value: unknown): ModelRequestRecord | undefined {
     provider: value.provider,
     modelId: value.modelId,
     ...(typeof value.modelApi === "string" ? { modelApi: value.modelApi } : {}),
+    ...(typeof value.callId === "string" ? { callId: value.callId } : {}),
+    ...(typeof value.correlationId === "string" ? { correlationId: value.correlationId } : {}),
+    ...(typeof value.taskId === "string" ? { taskId: value.taskId } : {}),
+    ...(typeof value.role === "string" ? { role: value.role } : {}),
+    ...(Number.isSafeInteger(value.attempt) && Number(value.attempt) >= 0
+      ? { attempt: Number(value.attempt) }
+      : {}),
     ...(Number.isSafeInteger(value.inputBytes) && Number(value.inputBytes) >= 0
       ? { inputBytes: Number(value.inputBytes) }
       : {}),
@@ -329,6 +471,24 @@ function parseRecord(value: unknown): ModelRequestRecord | undefined {
       value.errorKind === "stream_response" ||
       value.errorKind === "stream_result")
       ? { errorKind: value.errorKind }
+      : {}),
+    ...(stage === "usage_received"
+      ? Object.fromEntries(
+          [
+            "promptTokens",
+            "inputTokens",
+            "completionTokens",
+            "totalTokens",
+            "cachedInputTokens",
+            "cacheHitTokens",
+            "cacheMissTokens",
+            "reasoningTokens",
+          ].flatMap((key) =>
+            Number.isSafeInteger(value[key]) && Number(value[key]) >= 0
+              ? [[key, Number(value[key])]]
+              : [],
+          ),
+        )
       : {}),
   };
 }
@@ -386,7 +546,7 @@ function addRecordToTrajectorySummary(
   } else if (record.stage === "request_error") {
     summary.errors += 1;
     count.errors += 1;
-  } else {
+  } else if (record.stage === "request_aborted") {
     summary.aborted += 1;
     count.aborted += 1;
   }

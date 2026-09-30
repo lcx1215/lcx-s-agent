@@ -12,6 +12,10 @@ import {
   resolveConfiguredFinanceAuth,
 } from "./configured-finance-model-adapter.js";
 import type { ModelCallRequest } from "./logical-agent-model-router.js";
+import {
+  readModelRequestTrajectory,
+  summarizeModelRequestTrajectory,
+} from "./model-request-trajectory.js";
 const cfg: OpenClawConfig = {
   agents: { defaults: { model: { primary: "fixture/selected" } } },
   models: {
@@ -547,6 +551,70 @@ describe("configured research model transport", () => {
       "output_truncated",
     );
     expect(adapter.observe?.(request)?.kind).toBe("provider_call");
+  });
+
+  it("records attributed usage before rejecting a truncated model response", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "finance-usage-trajectory-"));
+    const trajectoryPath = path.join(directory, "requests.jsonl");
+    try {
+      vi.stubEnv("LCX_MODEL_TRAJECTORY", "true");
+      vi.stubEnv("LCX_MODEL_TRAJECTORY_FILE", trajectoryPath);
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          async () =>
+            new Response(
+              JSON.stringify({
+                id: "fixture-response-id",
+                usage: {
+                  prompt_tokens: 120,
+                  completion_tokens: 25,
+                  total_tokens: 145,
+                  prompt_tokens_details: { cached_tokens: 60 },
+                  completion_tokens_details: { reasoning_tokens: 7 },
+                },
+                choices: [{ finish_reason: "length", message: { content: "PRIVATE_BODY" } }],
+              }),
+            ),
+        ),
+      );
+      await expect(
+        createConfiguredFinanceModelAdapter(cfg).invoke(request, new AbortController().signal),
+      ).rejects.toThrow("output_truncated");
+
+      let records = await readModelRequestTrajectory({ filePath: trajectoryPath });
+      await vi.waitFor(async () => {
+        records = await readModelRequestTrajectory({ filePath: trajectoryPath });
+        expect(records).toHaveLength(3);
+      });
+      expect(records).toHaveLength(3);
+      expect(records[0]).toMatchObject({
+        stage: "attempt_started",
+        callId: "call",
+        correlationId: "run",
+        taskId: "research_draft",
+        role: "research_draft",
+        attempt: 1,
+      });
+      expect(records[1]).toMatchObject({ stage: "response_received", httpStatus: 200 });
+      expect(records[2]).toMatchObject({
+        stage: "usage_received",
+        promptTokens: 120,
+        completionTokens: 25,
+        totalTokens: 145,
+        cachedInputTokens: 60,
+        reasoningTokens: 7,
+      });
+      expect(JSON.stringify(records)).not.toContain("PRIVATE_BODY");
+      expect(summarizeModelRequestTrajectory(records)).toMatchObject({
+        attempts: 1,
+        responses: 1,
+        errors: 0,
+        aborted: 0,
+      });
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
   it("requires an explicit existing provider/model instead of choosing one", () => {
     expect(() => createConfiguredFinanceModelAdapter({})).toThrow("explicit provider/model");

@@ -20,6 +20,7 @@ import { getCustomProviderApiKey, resolveEnvApiKey } from "./model-auth.js";
 import {
   recordModelRequestStart,
   recordModelRequestUpdate,
+  normalizeModelRequestUsage,
   type ModelRequestSource,
 } from "./model-request-trajectory.js";
 import { buildInlineProviderModels } from "./pi-embedded-runner/model.js";
@@ -328,12 +329,18 @@ export function createConfiguredFinanceModelAdapter(
         provider,
         modelId,
         modelApi: model.api,
+        callId: request.callId,
+        correlationId: request.correlationId,
+        taskId: request.taskId,
+        role: request.role,
+        attempt: request.attempt,
         inputBytes: Buffer.byteLength(promptText, "utf8"),
         messageCount: 1,
       });
       const requestMaxTokens = options.maxTokensByRole?.[request.role] ?? maxTokens;
       let response: {
         id?: string;
+        usage?: unknown;
         choices?: { finish_reason?: string; message?: { content?: string } }[];
       };
       let receivedHttpResponse = false;
@@ -377,6 +384,10 @@ export function createConfiguredFinanceModelAdapter(
           );
         }
         response = (await http.json()) as typeof response;
+        const usage = normalizeModelRequestUsage(response.usage);
+        if (usage) {
+          recordModelRequestUpdate(trajectoryTicket, { stage: "usage_received", ...usage });
+        }
       } catch (error) {
         if (!receivedHttpResponse) {
           recordModelRequestUpdate(trajectoryTicket, {

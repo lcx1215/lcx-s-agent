@@ -6,16 +6,103 @@ import { AssistantMessageEventStream } from "@mariozechner/pi-ai/dist/utils/even
 import { describe, expect, it, vi } from "vitest";
 import {
   modelRequestTrajectoryPath,
+  normalizeModelRequestUsage,
   readModelRequestTrajectory,
   recordModelRequestStart,
   recordModelRequestUpdate,
   summarizeModelRequestTrajectory,
   wrapStreamFnForTrajectory,
 } from "./model-request-trajectory.js";
+import type { ModelRequestRecord } from "./model-request-trajectory.js";
 
 const testEnv = { NODE_ENV: "test", LCX_MODEL_TRAJECTORY: "true" };
 
 describe("model request metadata trajectory", () => {
+  it("normalizes actual token fields and separates upstream input from full prompt counts", () => {
+    const openAiUsage = normalizeModelRequestUsage({
+      prompt_tokens: 100,
+      completion_tokens: 22,
+      total_tokens: 122,
+      prompt_tokens_details: { cached_tokens: 30 },
+      completion_tokens_details: { reasoning_tokens: 4 },
+      privateBody: "PRIVATE_BODY_SENTINEL",
+      authorization: "AUTH_SENTINEL",
+    });
+    expect(openAiUsage).toEqual({
+      promptTokens: 100,
+      completionTokens: 22,
+      totalTokens: 122,
+      cachedInputTokens: 30,
+      reasoningTokens: 4,
+    });
+
+    expect(
+      normalizeModelRequestUsage({
+        prompt_tokens: 100,
+        completion_tokens: 20,
+        total_tokens: 120,
+        prompt_cache_hit_tokens: 30,
+        prompt_cache_miss_tokens: 70,
+      }),
+    ).toEqual({
+      promptTokens: 100,
+      completionTokens: 20,
+      totalTokens: 120,
+      cachedInputTokens: 30,
+      cacheHitTokens: 30,
+      cacheMissTokens: 70,
+    });
+
+    const piAiUsage = normalizeModelRequestUsage({
+      input: 70,
+      output: 10,
+      cacheRead: 30,
+      cacheWrite: 0,
+      total: 110,
+    });
+    expect(piAiUsage).toEqual({
+      inputTokens: 70,
+      completionTokens: 10,
+      totalTokens: 110,
+      cachedInputTokens: 30,
+      cacheHitTokens: 30,
+    });
+    expect(piAiUsage).not.toHaveProperty("promptTokens");
+
+    expect(normalizeModelRequestUsage(undefined)).toBeUndefined();
+    expect(
+      normalizeModelRequestUsage({
+        prompt_tokens: -1,
+        input: Infinity,
+        completion_tokens: "8",
+        total_tokens: Number.MAX_SAFE_INTEGER + 1,
+        prompt_tokens_details: { cached_tokens: "30" },
+        prompt_cache_hit_tokens: -2,
+        prompt_cache_miss_tokens: null,
+        reasoning_tokens: Number.MAX_SAFE_INTEGER + 1,
+      }),
+    ).toBeUndefined();
+
+    const lines: string[] = [];
+    const ticket = recordModelRequestStart(
+      { source: "finance_engine", provider: "p", modelId: "m" },
+      { env: testEnv, writer: { write: (line) => lines.push(line) }, now: () => 1_000 },
+    );
+    if (openAiUsage) {
+      recordModelRequestUpdate(
+        ticket,
+        { stage: "usage_received", ...openAiUsage },
+        {
+          env: testEnv,
+          writer: { write: (line) => lines.push(line) },
+          now: () => 1_001,
+        },
+      );
+    }
+    expect(lines.join("\n")).not.toContain("PRIVATE_BODY_SENTINEL");
+    expect(lines.join("\n")).not.toContain("AUTH_SENTINEL");
+  });
+
   it("stores only allowlisted metadata and never prompt or credential text", async () => {
     const lines: string[] = [];
     const writer = { write: (line: string) => lines.push(line) };
@@ -172,6 +259,69 @@ describe("model request metadata trajectory", () => {
     });
   });
 
+  it("stores caller IDs and safe integer usage without counting usage as a request outcome", () => {
+    const lines: string[] = [];
+    const dependencies = {
+      env: testEnv,
+      writer: { write: (line: string) => lines.push(line) },
+      now: () => 1_000,
+    };
+    const ticket = recordModelRequestStart(
+      {
+        source: "finance_engine",
+        provider: "provider-x",
+        modelId: "model-y",
+        callId: "call-17",
+        correlationId: "run-4",
+        taskId: "research_draft",
+        role: "research_draft",
+        attempt: 2,
+      },
+      dependencies,
+    );
+    recordModelRequestUpdate(
+      ticket,
+      {
+        stage: "usage_received",
+        promptTokens: 120,
+        completionTokens: 25,
+        totalTokens: 145,
+        cachedInputTokens: 60,
+        cacheHitTokens: -1,
+        reasoningTokens: Number.MAX_SAFE_INTEGER + 1,
+      },
+      dependencies,
+    );
+    recordModelRequestUpdate(ticket, { stage: "response_received", httpStatus: 200 }, dependencies);
+
+    const records = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(records[0]).toMatchObject({
+      callId: "call-17",
+      correlationId: "run-4",
+      taskId: "research_draft",
+      role: "research_draft",
+      attempt: 2,
+    });
+    expect(records[1]).toMatchObject({
+      stage: "usage_received",
+      promptTokens: 120,
+      completionTokens: 25,
+      totalTokens: 145,
+      cachedInputTokens: 60,
+    });
+    expect(records[1]).not.toHaveProperty("cacheHitTokens");
+    expect(records[1]).not.toHaveProperty("reasoningTokens");
+    expect(
+      summarizeModelRequestTrajectory(records as unknown as ModelRequestRecord[]),
+    ).toMatchObject({
+      events: 3,
+      attempts: 1,
+      responses: 1,
+      errors: 0,
+      aborted: 0,
+    });
+  });
+
   it("records streamed completion and failure without copying response text", async () => {
     const lines: string[] = [];
     const dependencies = {
@@ -207,11 +357,18 @@ describe("model request metadata trajectory", () => {
     stream.push({ type: "done", reason: "stop", message: message as never });
 
     await expect(finalResult).resolves.toMatchObject({ stopReason: "stop" });
-    expect(lines).toHaveLength(2);
+    expect(lines).toHaveLength(3);
     expect(lines.join("\n")).not.toContain("PRIVATE_RESPONSE_SENTINEL");
     expect(JSON.parse(lines[1] ?? "{}")).toMatchObject({
+      stage: "usage_received",
+      inputTokens: 1,
+      completionTokens: 1,
+      totalTokens: 2,
+      cachedInputTokens: 0,
+    });
+    expect(JSON.parse(lines[2] ?? "{}")).toMatchObject({
       stage: "response_received",
-      durationMs: 25,
+      durationMs: 50,
     });
   });
 
@@ -259,11 +416,11 @@ describe("model request metadata trajectory", () => {
       asyncFailure(model, {} as Parameters<StreamFn>[1], {} as Parameters<StreamFn>[2]),
     ).rejects.toBe(failure);
 
-    expect(lines).toHaveLength(4);
+    expect(lines).toHaveLength(5);
     expect(lines.join("\n")).not.toContain("PRIVATE_STREAM_ERROR_SENTINEL");
     expect(lines.join("\n")).not.toContain("PRIVATE_SETUP_ERROR_SENTINEL");
-    expect(JSON.parse(lines[1] ?? "{}")).toMatchObject({ stage: "request_aborted" });
-    expect(JSON.parse(lines[3] ?? "{}")).toMatchObject({
+    expect(JSON.parse(lines[2] ?? "{}")).toMatchObject({ stage: "request_aborted" });
+    expect(JSON.parse(lines[4] ?? "{}")).toMatchObject({
       stage: "request_error",
       errorKind: "stream_setup",
     });
