@@ -490,3 +490,29 @@ zero fraction while funding another active strategy. All-zero proposals retain t
 separate `no_allocation` contract. Zero fractions create no liquidation targets or
 stance conflicts. The daily consumer defers declared intraday budgets to their own
 controller and preserves remaining fractions, evidence lineage and account checks.
+
+### Model workload and decision authority
+
+The central brain chooses from the host's registered tools and analytical modules
+to address changed evidence or a specific decision gap. Existing ledgers and local
+calculations should precede new research. A new cycle alone is not a reason to
+repeat a full-system inspection. Large stored datasets should be retrieved and
+aggregated for the question before relevant rows enter model context; a catalog
+entry or a stored MCP name does not establish a callable database binding.
+
+For finance, model judgment concentrates on thesis-changing events, contradictory
+evidence, invalidation and horizon, owned-position protection, and cost/liquidity.
+Central planning and exact-candidate trade review request low reasoning effort
+only on transports that explicitly support it. This does not reduce research
+artifact budgets, remove required reviews, or prove a particular monetary saving.
+The central `moduleSelection` planning receipt does not, by itself, prove that a
+resident scheduler research run consumed that selection.
+
+Models may propose research and approve or veto an exact trade candidate. They
+cannot modify that candidate's side, size, stop, authorized target or capital
+limits. The portfolio controller compiles positions from the canonical account
+state; the shared execution gate decides whether an authorized venue order can be
+sent. An unavailable discretionary intraday reviewer stays advisory; a completed
+veto or a completed review with invalid candidate binding refuses. Required research-plan admission remains
+a separate gate. Broker receipts, rather than model conclusions, update executed
+positions and feed the next cycle.

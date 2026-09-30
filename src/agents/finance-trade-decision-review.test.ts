@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import { buildFinanceOpportunityContext } from "./finance-expectation-gap.js";
 import {
@@ -108,6 +108,10 @@ const intradayRequest: FinanceIntradayTradeDecisionReviewRequest = {
   ],
 };
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 function adapter(output: unknown): LogicalAgentModelAdapter {
   return {
     id: "fixture",
@@ -127,6 +131,79 @@ function adapter(output: unknown): LogicalAgentModelAdapter {
 }
 
 describe("configured finance trade decision reviewer", () => {
+  it.each([true, false])(
+    "uses low reasoning only when supported and preserves exact-candidate veto binding (reasoning=%s)",
+    async (reasoning) => {
+      const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (typeof init?.body !== "string") {
+          throw new Error("expected serialized model request");
+        }
+        const body = JSON.parse(init.body) as Record<string, unknown>;
+        expect(body.reasoning_effort).toBe(reasoning ? "low" : undefined);
+        return new Response(
+          JSON.stringify({
+            id: "fixture-trade-review-reasoning",
+            choices: [
+              {
+                finish_reason: "stop",
+                message: {
+                  content: JSON.stringify({
+                    schemaVersion: FINANCE_TRADE_DECISION_REVIEW_SCHEMA,
+                    decisions: [
+                      {
+                        candidateId: request.candidates[0].candidateId,
+                        decision: "veto",
+                        rationale: "The supplied evidence contradicts this exact candidate.",
+                      },
+                    ],
+                  }),
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const cfg = {
+        agents: { defaults: { model: { primary: "fixture/selected" } } },
+        models: {
+          providers: {
+            fixture: {
+              api: "openai-completions",
+              baseUrl: "https://fixture.invalid/v1",
+              apiKey: "fixture-credential",
+              models: [
+                {
+                  id: "selected",
+                  name: "Selected",
+                  reasoning,
+                  compat: { supportsReasoningEffort: reasoning },
+                  input: ["text"],
+                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                  contextWindow: 32_000,
+                  maxTokens: 8_192,
+                },
+              ],
+            },
+          },
+        },
+      } as OpenClawConfig;
+      const reviewer = createFinanceTradeDecisionReviewer(cfg);
+
+      const result = await reviewer(request, AbortSignal.timeout(1000));
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(result).toMatchObject({
+        status: "completed",
+        attempted: true,
+        modelId: "selected",
+        decisions: [{ candidateId: request.candidates[0].candidateId, decision: "veto" }],
+      });
+      expect(result.modelCalls).toBe(1);
+    },
+  );
+
   it("does not impose an all-evidence-complete veto on daily or intraday candidates", () => {
     const prompts: string[] = [];
     createFinanceTradeDecisionReviewer({} as OpenClawConfig, {

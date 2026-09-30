@@ -244,6 +244,73 @@ describe("central agent harness gate", () => {
     expect(receipt.actionsProposed).toBe(0);
   });
 
+  it.each([true, false])(
+    "sends low reasoning only for a reasoning-capable model and still gates its exact proposal (reasoning=%s)",
+    async (reasoning) => {
+      const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (typeof init?.body !== "string") {
+          throw new Error("expected serialized model request");
+        }
+        const body = JSON.parse(init.body) as Record<string, unknown>;
+        expect(body.reasoning_effort).toBe(reasoning ? "low" : undefined);
+        return new Response(
+          JSON.stringify({
+            id: "fixture-central-reasoning",
+            choices: [
+              {
+                finish_reason: "stop",
+                message: {
+                  content: JSON.stringify({
+                    actions: [{ ownerId: "problemRadar", args: {}, reasoning: "inspect" }],
+                    note: "bounded proposal",
+                  }),
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const brain = createCentralBrain(
+        {
+          agents: { defaults: { model: { primary: "fixture/selected" } } },
+          models: {
+            providers: {
+              fixture: {
+                api: "openai-completions",
+                baseUrl: "https://fixture.invalid/v1",
+                apiKey: "fixture-credential",
+                models: [
+                  {
+                    id: "selected",
+                    name: "Selected",
+                    reasoning,
+                    compat: { supportsReasoningEffort: reasoning },
+                    input: ["text"],
+                    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                    contextWindow: 32_000,
+                    maxTokens: 8_192,
+                  },
+                ],
+              },
+            },
+          },
+        } as never,
+        { maxTokens: 4_096 },
+      );
+
+      const receipt = await runCentralHarnessCycle({ perception: perception(), brain, registry });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(receipt.brainCall).toMatchObject({ outcome: "completed", modelId: "selected" });
+      expect(receipt.brainCall.modelCall?.reasoningEffort).toBe(reasoning ? "low" : undefined);
+      expect(receipt.steps[0]).toMatchObject({ ownerId: "problemRadar", status: "ran_ok" });
+      expect(receipt.actionsApproved).toBe(1);
+      expect(receipt.actionsBlockedByGate).toBe(0);
+    },
+  );
+
   it("names the real adapter error instead of claiming configuration is absent", async () => {
     // A config with no resolvable provider/model: the adapter throws, and that
     // throw is the only evidence of why the cycle decided nothing.
