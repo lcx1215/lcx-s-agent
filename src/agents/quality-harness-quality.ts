@@ -182,7 +182,13 @@ const ISO_DATE_PATTERN =
 const CHINESE_DATE_PATTERN = /\b20\d{2}年\d{1,2}月\d{1,2}日?/u;
 
 function extractDataNumbers(text: string): string[] {
-  const withoutDateLiterals = text
+  // A complete standalone UUID is an identity, not a financial quantity. Keep
+  // malformed/embedded tokens and unit-bearing values under the numeric gate.
+  const withoutIdentifiers = text.replace(
+    /(?<![\p{L}\p{N}_$€£¥])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![\p{L}\p{N}_]|\.\d|\s*%)/giu,
+    " ",
+  );
+  const withoutDateLiterals = withoutIdentifiers
     .replace(new RegExp(ISO_DATE_PATTERN.source, "giu"), " ")
     .replace(new RegExp(CHINESE_DATE_PATTERN.source, "gu"), " ");
   const withoutNameNumbers = withoutDateLiterals

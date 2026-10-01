@@ -1575,6 +1575,50 @@ describe("quality harness", () => {
     }
   });
 
+  it("treats complete UUIDs as identities while retaining nearby financial values", async () => {
+    const id = "123e4567-e89b-42d3-a456-426614174000";
+    const run = (answer: string) =>
+      runQualityHarness({
+        request: financeRequest,
+        maxAttempts: 1,
+        modelInvoker: demoInvoker({ answer }),
+        verify: async () => ({ status: "passed", summary: "verified", details: [] }),
+      });
+    for (const identity of [id, id.toUpperCase(), `{${id}}`]) {
+      const result = await run(
+        `Account ${identity} has no current cash or position receipt; exposure is unknown.`,
+      );
+      expect(
+        result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
+      ).toMatchObject({ passed: true });
+    }
+    for (const value of ["$479", "37%", "-12.5%", "0.05%", "912 dollars"]) {
+      const result = await run(`Account ${id} has current exposure of ${value}.`);
+      expect(
+        result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
+        value,
+      ).toMatchObject({ passed: false, reason: expect.stringContaining("current-data numbers") });
+    }
+  });
+
+  it("does not exempt malformed, embedded or unit-bearing UUID-like numbers", async () => {
+    const id = "123e4567-e89b-42d3-a456-426614174000";
+    for (const token of [id.slice(0, -1), `prefix${id}`, `${id}x`, `${id}%`, `$${id}`]) {
+      const result = await runQualityHarness({
+        request: financeRequest,
+        maxAttempts: 1,
+        modelInvoker: demoInvoker({
+          answer: `Current account marker is ${token}; exposure is unknown.`,
+        }),
+        verify: async () => ({ status: "passed", summary: "verified", details: [] }),
+      });
+      expect(
+        result.attempts[0]?.gates.find((gate) => gate.id === "finance_answer_safety"),
+        token,
+      ).toMatchObject({ passed: false, reason: expect.stringContaining("current-data numbers") });
+    }
+  });
+
   it("distinguishes a volatility window label from an uncited market value", async () => {
     const run = async (answer: string) =>
       runQualityHarness({
