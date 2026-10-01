@@ -22,7 +22,16 @@ export function classifyFinanceProtectionOrders(
   const seen = new Set<string>();
   for (const order of orders) {
     const id = typeof order.id === "string" ? order.id : "";
-    const instrument = typeof order.symbol === "string" ? order.symbol : "";
+    const rawInstrument = typeof order.symbol === "string" ? order.symbol : "";
+    // Broker crypto orders may use BTCUSD while the position owner supplies BTC/USD.
+    // An exact holding wins; resolve an alias only against an existing position.
+    const cryptoInstrument = /^[A-Z0-9]+USD$/.test(rawInstrument)
+      ? `${rawInstrument.slice(0, -3)}/USD`
+      : "";
+    const instrument =
+      !positions.has(rawInstrument) && positions.has(cryptoInstrument)
+        ? cryptoInstrument
+        : rawInstrument;
     const qty = Number(order.qty),
       filled = Number(order.filled_qty),
       stop = Number(order.stop_price),

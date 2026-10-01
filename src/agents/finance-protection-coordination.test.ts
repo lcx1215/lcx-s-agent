@@ -54,6 +54,65 @@ it("recognizes stop-limit protection with its exact limit price", () => {
     },
   ]);
 });
+it("matches broker crypto stop symbols to the position owner's canonical identity", () => {
+  const result = classifyFinanceProtectionOrders(
+    [
+      {
+        ...stop,
+        symbol: "BTCUSD",
+        qty: "0.000399",
+        type: "stop_limit",
+        stop_price: "90000",
+        limit_price: "89000",
+      },
+    ],
+    new Map([["BTC/USD", 0.000399]]),
+  );
+  expect(result.unresolved).toEqual([]);
+  expect(result.reserved.get("BTC/USD")).toBe(0.000399);
+  expect(result.protective[0]).toMatchObject({
+    instrument: "BTC/USD",
+    quantity: 0.000399,
+    stopPrice: 90000,
+    limitPrice: 89000,
+  });
+  expect(result.coverage[0]).toMatchObject({ status: "covered", uncoveredQuantity: 0 });
+});
+it("does not invent a crypto holding or rewrite an exact USD-suffixed identity", () => {
+  expect(
+    classifyFinanceProtectionOrders([{ ...stop, symbol: "BTCUSD" }], new Map()).unresolved,
+  ).toEqual(["protect"]);
+  const result = classifyFinanceProtectionOrders(
+    [{ ...stop, symbol: "PUSD" }],
+    new Map([
+      ["PUSD", 1],
+      ["P/USD", 2],
+    ]),
+  );
+  expect(result.protective[0]?.instrument).toBe("PUSD");
+  expect(result.reserved.has("P/USD")).toBe(false);
+});
+it("keeps an aliased crypto stop unresolved while cancellation is pending", () => {
+  const result = classifyFinanceProtectionOrders(
+    [
+      {
+        ...stop,
+        symbol: "BTCUSD",
+        qty: "0.000399",
+        type: "stop_limit",
+        limit_price: "89",
+        status: "pending_cancel",
+      },
+    ],
+    new Map([["BTC/USD", 0.000399]]),
+  );
+  expect(result.unresolved).toEqual(["protect"]);
+  expect(result.protective).toEqual([]);
+  expect(result.coverage[0]).toMatchObject({
+    status: "no_recognized_stop",
+    uncoveredQuantity: 0.000399,
+  });
+});
 it.each([undefined, "NaN", "0", "-1", "91"])(
   "does not recognize stop-limit protection with invalid limit price %s",
   (limit_price) => {
