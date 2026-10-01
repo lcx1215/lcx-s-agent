@@ -82,6 +82,25 @@ export const ALPACA_SAFETY_DIAGNOSTIC_STAGES = [
 ] as const;
 export type AlpacaSafetyDiagnosticStage = (typeof ALPACA_SAFETY_DIAGNOSTIC_STAGES)[number];
 
+export type AlpacaSafetyAccountArithmeticDiagnostic = {
+  failedConditions: readonly string[];
+  values: Record<
+    | "equity"
+    | "cash"
+    | "shortMarketValue"
+    | "positionGross"
+    | "longMarketValue"
+    | "accountGross"
+    | "grossDrift"
+    | "grossDriftTolerance"
+    | "cashEquityResidual"
+    | "cashEquityTolerance"
+    | "controllerPeakEquity",
+    number | null
+  >;
+  trackNewHigh: boolean;
+};
+
 export function isAlpacaSafetyFailureCode(value: unknown): value is AlpacaSafetyFailureCode {
   return (
     typeof value === "string" &&
@@ -333,7 +352,12 @@ export async function readAlpacaPaperSafetyFacts(
       askPrice: number;
       positions: readonly { instrument: string; quantity: number; marketValue: number }[];
     }
-  | { ok: false; reason: AlpacaSafetyFailureCode; diagnostic?: AlpacaSafetyDiagnosticStage }
+  | {
+      ok: false;
+      reason: AlpacaSafetyFailureCode;
+      diagnostic?: AlpacaSafetyDiagnosticStage;
+      accountArithmetic?: AlpacaSafetyAccountArithmeticDiagnostic;
+    }
 > {
   options = { ...options, credentials: { ...options.credentials } };
   const start = Date.now();
@@ -373,6 +397,7 @@ export async function readAlpacaPaperSafetyFacts(
   const headers = safetyHeaders(options.credentials);
   const get = (url: string) => readJson(options.read, url, headers, signal);
   let failureStage: AlpacaSafetyDiagnosticStage = "account_snapshot";
+  let accountArithmetic: AlpacaSafetyAccountArithmeticDiagnostic | undefined;
   const run = async () => {
     failureStage = "account_snapshot";
     const account = record(await get(`${PAPER}/v2/account`));
@@ -479,6 +504,36 @@ export async function readAlpacaPaperSafetyFacts(
       Math.abs(cash + longValue - equity) > 0.01 ||
       (!evidence.trackNewHigh && evidence.peakEquity < equity)
     ) {
+      if (options.diagnostics) {
+        const finite = (value: number): number | null => (Number.isFinite(value) ? value : null);
+        accountArithmetic = {
+          failedConditions: [
+            ...(equity <= 0 ? ["equity_non_positive"] : []),
+            ...(cash < 0 ? ["negative_cash"] : []),
+            ...(shortValue !== 0 ? ["nonzero_short_value"] : []),
+            ...(accountGross > equity ? ["gross_above_equity"] : []),
+            ...(Math.abs(gross - longValue) > grossDriftTolerance ? ["gross_valuation_drift"] : []),
+            ...(Math.abs(cash + longValue - equity) > 0.01 ? ["cash_equity_mismatch"] : []),
+            ...(!evidence.trackNewHigh && evidence.peakEquity < equity
+              ? ["untracked_equity_high"]
+              : []),
+          ],
+          values: {
+            equity,
+            cash,
+            shortMarketValue: shortValue,
+            positionGross: finite(gross),
+            longMarketValue: longValue,
+            accountGross: finite(accountGross),
+            grossDrift: finite(Math.abs(gross - longValue)),
+            grossDriftTolerance,
+            cashEquityResidual: finite(cash + longValue - equity),
+            cashEquityTolerance: 0.01,
+            controllerPeakEquity: evidence.peakEquity,
+          },
+          trackNewHigh: evidence.trackNewHigh === true,
+        };
+      }
       refuse("alpaca_safety_facts_inconsistent");
     }
     let quote: Record<string, unknown>;
@@ -618,6 +673,7 @@ export async function readAlpacaPaperSafetyFacts(
           ? error.code
           : "alpaca_safety_facts_inconsistent",
       ...(options.diagnostics ? { diagnostic: failureStage } : {}),
+      ...(options.diagnostics && accountArithmetic ? { accountArithmetic } : {}),
     };
   } finally {
     if (abort) {

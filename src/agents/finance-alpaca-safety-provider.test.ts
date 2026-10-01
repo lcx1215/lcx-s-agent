@@ -151,6 +151,23 @@ it("refuses account valuation drift above the bounded tolerance", async () => {
     ok: false,
     reason: "alpaca_safety_facts_inconsistent",
     diagnostic: "account_arithmetic",
+    accountArithmetic: {
+      failedConditions: ["gross_valuation_drift"],
+      values: {
+        equity: 1000,
+        cash: 199.7,
+        shortMarketValue: 0,
+        positionGross: 800.2455,
+        longMarketValue: 800.3,
+        accountGross: 800.3,
+        grossDrift: expect.closeTo(0.0545, 8),
+        grossDriftTolerance: expect.closeTo(0.040015, 8),
+        cashEquityResidual: 0,
+        cashEquityTolerance: 0.01,
+        controllerPeakEquity: 1100,
+      },
+      trackNewHigh: false,
+    },
   });
 });
 it.each([
@@ -490,4 +507,64 @@ it("classifies a standing protective stop and preserves its reserved inventory",
     expect(result.facts.reservedSellQuantity).toBe(1);
     expect(result.facts.protectiveOrderIds).toEqual(["stop"]);
   }
+});
+
+it.each([
+  ["equity_non_positive", { equity: "0" }],
+  ["negative_cash", { cash: "-1" }],
+  ["nonzero_short_value", { short_market_value: "1" }],
+  ["gross_above_equity", { equity: "99", cash: "0" }],
+  ["cash_equity_mismatch", { cash: "899" }],
+  ["untracked_equity_high", {}],
+])(
+  "reports arithmetic subcondition %s without identity or credentials",
+  async (condition, patch) => {
+    const f = fixture();
+    Object.assign(f.account, patch);
+    f.options.diagnostics = true;
+    if (condition === "untracked_equity_high") {
+      f.options.evidence.peakEquity = 999;
+    }
+    const result = await readAlpacaPaperSafetyFacts(f.options);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.diagnostic).toBe("account_arithmetic");
+    expect(result.accountArithmetic?.failedConditions).toContain(condition);
+    expect(result.accountArithmetic?.values.equity).toBe(Number(f.account.equity));
+    expect(JSON.stringify(result)).not.toMatch(
+      /paper-account|FAKE|authorized-session|controller-ledger/,
+    );
+    f.options.diagnostics = false;
+    expect(await readAlpacaPaperSafetyFacts(f.options)).toEqual({
+      ok: false,
+      reason: "alpaca_safety_facts_inconsistent",
+    });
+  },
+);
+it("keeps tracked equity highs admissible with diagnostics enabled", async () => {
+  const f = fixture();
+  f.options.diagnostics = true;
+  f.options.evidence.peakEquity = 999;
+  f.options.evidence.trackNewHigh = true;
+  expect((await readAlpacaPaperSafetyFacts(f.options)).ok).toBe(true);
+});
+it("reports overflowed aggregate values explicitly as null", async () => {
+  const f = fixture();
+  f.options.diagnostics = true;
+  f.account.equity = "1e308";
+  f.account.cash = "0";
+  f.account.long_market_value = "1e308";
+  f.options.evidence.peakEquity = 1e308;
+  f.positions[0].market_value = "1e308";
+  f.positions.push({ ...f.positions[0], symbol: "QQQ" });
+  const result = await readAlpacaPaperSafetyFacts(f.options);
+  expect(result.ok).toBe(false);
+  if (result.ok) {
+    return;
+  }
+  expect(result.accountArithmetic?.values.positionGross).toBeNull();
+  expect(result.accountArithmetic?.values.accountGross).toBeNull();
+  expect(result.accountArithmetic?.failedConditions).toContain("gross_above_equity");
 });
