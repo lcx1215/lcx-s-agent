@@ -730,6 +730,7 @@ type CycleContext = {
   reconciliationWake?: ReturnType<typeof createFinanceSchedulerReconciliationWake>;
   sourceHeartbeatInFlight?: boolean;
   lastIntradayTick?: FinanceSchedulerIntradayLastTick | null;
+  progressPhase?: "idle" | "cycle";
 };
 
 type UniverseSelectionReceipt = Readonly<{
@@ -1209,6 +1210,7 @@ function writeSchedulerProgress(
     }),
   );
   fs.renameSync(temporary, filename);
+  context.progressPhase = phase;
 }
 
 /** Each bounded child owns a fresh progress deadline; elapsed prior stages do not count as a stall. */
@@ -2005,6 +2007,13 @@ async function runTradingTickOnAccountLane(context: CycleContext): Promise<void>
         process.stderr.write(
           `[${new Date().toISOString()}] intraday ${instrument} tick failed: ${error instanceof Error ? error.message : String(error)}\n`,
         );
+      } finally {
+        // A many-symbol sweep can exceed the idle progress deadline. Publish only
+        // after a symbol finishes; an in-flight monitor or order must still stall
+        // if it hangs. Concurrent research keeps its own cycle-stage deadline.
+        if (context.progressPhase === "idle" && !context.signal.aborted) {
+          writeSchedulerProgress(context, "idle");
+        }
       }
     }
   }

@@ -2348,6 +2348,47 @@ it("publishes a no-signal monitor result through the existing progress status", 
   expect(mocks.runIntradayMonitorTick).toHaveBeenCalledOnce();
 });
 
+it("refreshes completed-symbol progress without masking a hung monitor", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-21T14:30:00.000Z"));
+  await activateIntradayRule();
+  const snapshot = {
+    generatedAt: "2026-09-21T14:00:00.000Z",
+    selected: ["AAA", "BBB", "CCC"],
+  };
+  seedSelectedUniverse(snapshot);
+  mocks.readUniverse.mockReturnValue(snapshot);
+  const root = { directory, source: "explicit" as const };
+  mocks.runIntradayMonitorTick.mockImplementation(async ({ instrument }) => {
+    if (instrument === "AAA") {
+      vi.setSystemTime(new Date(Date.now() + 121_000));
+      expect(inspectFinanceSchedulerStatus(root).progress.status).toBe("stalled");
+    } else if (instrument === "CCC") {
+      expect(inspectFinanceSchedulerStatus(root).progress.status).toBe("responsive");
+    } else {
+      expect(inspectFinanceSchedulerStatus(root).progress.status).toBe("responsive");
+      vi.setSystemTime(new Date(Date.now() + 65_000));
+    }
+    return { status: "no_signal" };
+  });
+  mocks.delay.mockImplementationOnce(async () => process.emit("SIGTERM"));
+
+  await expect(
+    runFinanceScheduler([
+      "--loop",
+      "--dir",
+      directory,
+      "--intraday-monitor",
+      "--no-source-heartbeat",
+    ]),
+  ).resolves.toBe(143);
+  expect(mocks.runIntradayMonitorTick.mock.calls.map(([call]) => call.instrument)).toEqual([
+    "AAA",
+    "BBB",
+    "CCC",
+  ]);
+});
+
 it("publishes the actual outcome of an already-terminal monitor decision", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-09-21T15:00:00.000Z"));
