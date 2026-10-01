@@ -54,6 +54,17 @@ describe("broker profit feedback", () => {
       "invalid activity number",
     );
   });
+  it("counts REST partial-fill executions with the same canonical type contract", () => {
+    const partial = { ...fill("1", "buy", "1", "100"), type: "partial_fill" };
+    expect(summarizeFinanceBrokerFills([partial], true)).toMatchObject({
+      buyFills: 1,
+      status: "no_closed_matches",
+      netMatchedPnl: null,
+    });
+    expect(() => summarizeFinanceBrokerFills([{ ...partial, type: "trade_bust" }], true)).toThrow(
+      "unsupported fill correction or short side",
+    );
+  });
 });
 
 it("does not invent ordering between opposing fills at the same timestamp", () => {

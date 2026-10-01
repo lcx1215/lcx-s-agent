@@ -54,6 +54,7 @@ describe("Alpaca broker history reconciliation", () => {
         {
           id: "fill-spy",
           activity_type: "FILL",
+          type: "fill",
           order_id: "order-spy",
           symbol: "SPY",
           side: "buy",
@@ -73,6 +74,7 @@ describe("Alpaca broker history reconciliation", () => {
         {
           id: "fill-btc",
           activity_type: "FILL",
+          type: "partial_fill",
           order_id: "order-btc",
           symbol: "BTCUSD",
           side: "sell",
@@ -148,6 +150,10 @@ describe("Alpaca broker history reconciliation", () => {
         { currency: "BTC", amount: 0.001 },
         { currency: "USD", amount: 1.5 },
       ],
+    });
+    expect(result.fills.find((fill) => fill.activityId === "fill-btc")).toMatchObject({
+      executionType: "partial_fill",
+      quantity: 0.5,
     });
     expect(result.positions).toEqual([
       {
@@ -231,6 +237,7 @@ describe("Alpaca broker history reconciliation", () => {
         {
           id: "fill-btc",
           activity_type: "FILL",
+          type: "fill",
           order_id: "order-btc",
           symbol: "BTCUSD",
           side: "buy",

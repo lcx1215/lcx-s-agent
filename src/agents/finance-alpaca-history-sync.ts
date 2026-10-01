@@ -1,3 +1,4 @@
+import { isAlpacaTradeExecutionType } from "./finance-alpaca-activity-contract.js";
 import { createAlpacaSafetyReadTransport } from "./finance-alpaca-safety-transport.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import {
@@ -16,6 +17,7 @@ export type AlpacaHistoryOptions = {
   signal?: AbortSignal;
   maxPages?: number;
 };
+
 const host = "https://paper-api.alpaca.markets";
 function instant(value: string) {
   if (!/(Z|[+-]\d{2}:\d{2})$/.test(value) || !Number.isFinite(Date.parse(value))) {
@@ -112,6 +114,9 @@ export async function syncAlpacaPaperHistory(options: AlpacaHistoryOptions) {
           } else {
             if (typeof row.activity_type !== "string" || !row.activity_type.trim()) {
               throw new Error("activity type unavailable");
+            }
+            if (row.activity_type === "FILL" && !isAlpacaTradeExecutionType(row.type)) {
+              throw new Error("trade execution type unavailable");
             }
             if (typeof row.transaction_time === "string") {
               instant(row.transaction_time);

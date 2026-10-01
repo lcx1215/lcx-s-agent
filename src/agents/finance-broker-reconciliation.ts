@@ -1,3 +1,4 @@
+import { isAlpacaTradeExecutionType } from "./finance-alpaca-activity-contract.js";
 import {
   syncAlpacaPaperHistory,
   type AlpacaHistoryOptions,
@@ -59,10 +60,7 @@ export function reconcileFinanceBrokerActivities(input: {
       }
       identities.set(row.id, fingerprint);
       if (row.activity_type === "FILL") {
-        if (
-          !["fill", "partial_fill"].includes(String(row.type)) ||
-          !["buy", "sell"].includes(String(row.side))
-        ) {
+        if (!isAlpacaTradeExecutionType(row.type) || !["buy", "sell"].includes(String(row.side))) {
           throw new Error("unsupported fill correction or side");
         }
         const qty = number(row.qty),

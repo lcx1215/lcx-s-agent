@@ -1,3 +1,4 @@
+import { isAlpacaTradeExecutionType } from "./finance-alpaca-activity-contract.js";
 import { brokerSymbol } from "./finance-broker-reconciliation.js";
 import type { FinanceExecutionReceipt } from "./finance-execution-adapter.js";
 import { readFinanceIntradayDecisions } from "./finance-intraday-control-ledger.js";
@@ -98,7 +99,7 @@ export function summarizeFinanceBrokerFills(
       issues.add("ambiguous_same_time_fill_order");
     }
     timestamps.set(key, String(row.side));
-    if (row.type !== "fill" || !["buy", "sell"].includes(String(row.side))) {
+    if (!isAlpacaTradeExecutionType(row.type) || !["buy", "sell"].includes(String(row.side))) {
       throw new Error("unsupported fill correction or short side");
     }
     const instrument = brokerSymbol(row.symbol),
@@ -167,7 +168,9 @@ export function attributeFinanceBrokerFills(
   accountId: string,
 ) {
   const fills = new Map(
-    activities.filter((row) => row.activity_type === "FILL").map((row) => [row.id, row]),
+    activities
+      .filter((row) => row.activity_type === "FILL" && isAlpacaTradeExecutionType(row.type))
+      .map((row) => [row.id, row]),
   );
   let attributed = 0;
   let dailyCycleSourceBound = 0;

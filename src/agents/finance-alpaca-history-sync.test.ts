@@ -239,6 +239,7 @@ describe("Alpaca raw history sync", () => {
             : Array.from({ length: 100 }, (_, i) => ({
                 id: `activity-${i}`,
                 activity_type: "FILL",
+                type: "partial_fill",
                 transaction_time: "2025-01-02T00:00:00Z",
               })),
         );
@@ -281,7 +282,21 @@ describe("Alpaca raw history sync", () => {
     recovered = true;
     expect((await syncAlpacaPaperHistory(options)).status).toBe("raw_history_synced");
   });
-  it.each([{}, { id: "invalid" }])("rejects malformed short-page facts %j", async (row) => {
+  it.each([
+    {},
+    { id: "invalid" },
+    {
+      id: "fill-without-execution-type",
+      activity_type: "FILL",
+      transaction_time: "2025-01-02T00:00:00Z",
+    },
+    {
+      id: "unsupported-fill-execution-type",
+      activity_type: "FILL",
+      type: "trade_bust",
+      transaction_time: "2025-01-02T00:00:00Z",
+    },
+  ])("rejects malformed short-page facts %j", async (row) => {
     const options = await setup(async (url) =>
       url.endsWith("/account") ? reply({ id: "synthetic-account" }) : reply([row]),
     );

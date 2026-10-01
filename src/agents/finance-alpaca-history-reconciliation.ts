@@ -1,3 +1,7 @@
+import {
+  isAlpacaTradeExecutionType,
+  type AlpacaTradeExecutionType,
+} from "./finance-alpaca-activity-contract.js";
 import { readFinanceBrokerHistory } from "./finance-alpaca-history-sync.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
 import type { FinanceExecutionReceipt } from "./finance-execution-adapter.js";
@@ -54,6 +58,7 @@ function timestamp(fact: Record<string, unknown>, allowDate: boolean): string | 
 export type FinanceBrokerFillObservation = Readonly<{
   activityId: string;
   orderId: string;
+  executionType: AlpacaTradeExecutionType;
   instrument: string;
   side: "buy" | "sell";
   quantity: number;
@@ -170,23 +175,28 @@ function parseFill(fact: Record<string, unknown>): FinanceBrokerFillObservation 
   const orderId = text(fact.order_id);
   const instrument = text(fact.symbol);
   const side = text(fact.side);
+  const executionType = fact.type;
   const quantity = positive(fact.qty);
   const price = positive(fact.price);
   const occurredAt = timestamp(fact, false);
   if (
     !activityId ||
     !orderId ||
+    !isAlpacaTradeExecutionType(executionType) ||
     !instrument ||
     (side !== "buy" && side !== "sell") ||
     quantity === undefined ||
     price === undefined ||
     !occurredAt
   ) {
-    throw new Error("FILL requires id, order_id, symbol, side, qty, price and transaction_time");
+    throw new Error(
+      "FILL requires id, order_id, execution type, symbol, side, qty, price and transaction_time",
+    );
   }
   return {
     activityId,
     orderId,
+    executionType,
     instrument: normalizeInstrument(instrument),
     side,
     quantity,
