@@ -433,9 +433,22 @@ economic differences remains visible without preventing night settlement; it blo
 For Alpaca placement the daily operator and scheduler accept `--execution-policy PATH`
 alongside the explicit quote feed, freshness window and risk caps. The local policy
 uses schema `lcx_alpaca_cycle_policy_v1` and declares `accountId`, `planId`, `revision`,
-`expiresAt`, `peakEquity`, `peakScope`, `unhedged: true`,
+`authorizationMode`, `peakEquity`, `peakScope`, `unhedged: true`,
 `maxPortfolioDrawdownFraction` and `maxGrossExposure`. The policy is control-layer
 configuration, not strategy/model output; reading it does not enable `--place`.
+Finite authorization remains compatible with the legacy `expiresAt` field; it may
+also explicitly set `authorizationMode: "until_expiry"` with a valid expiry.
+Standing authorization requires an explicit
+`authorizationMode: "until_revoked"` and no `expiresAt`, reflecting the user's
+authorization to continue on the same Paper account until revoked. Missing,
+malformed or mixed mode/expiry values are invalid. This standing authorization
+does not extend an individual intent's fixed 120-second capability lease, or
+change quote and account-fact freshness limits.
+
+To stop new order dispatch, disable `--place` or stop the existing scheduler
+service. This does not cancel orders already sent to the broker. Keep reconciliation
+running to establish their actual terminal state and preserve protection for any
+remaining position.
 
 The controller restores confirmed journal receipts to the existing SQLite ledger,
 requires complete history and an acceptable reconciliation scope, and calculates weights from the bound
@@ -494,15 +507,19 @@ whether a cycle is due. A responsive placement loop still does not prove a broke
 fill. Offline research books and legacy processes retain a visible warning rather
 than being mistaken for a verified autonomous trading service.
 
-Progress publishes the configured policy-file expiry, re-read each tick, and
-separately publishes `intradayControllerPolicyExpiresAt`, the policy snapshot
-loaded into the resident intraday controller. Rewriting the file does not refresh
-that in-memory controller; restart it to load the new policy. The status fields
-`executionPolicyStatus` and `intradayControllerPolicyStatus` describe those two
-different expiries. Missing, malformed, expired or legacy-unknown metadata cannot
-report execution readiness. These are diagnostic expiry checks; the account
-controller still validates the full policy at execution. They never renew a
-policy or change its risk limits automatically.
+Progress publishes the configured policy-file authorization, re-read each tick,
+and separately publishes `intradayControllerPolicyAuthorizationMode` and
+`intradayControllerPolicyExpiresAt` for the policy snapshot loaded into the
+resident intraday controller. `executionPolicyAuthorizationMode` describes the
+file; `executionPolicyStatus` and `intradayControllerPolicyStatus` describe the
+file and resident snapshot separately. Finite policies report `until_expiry`
+with their expiry. A policy reports `until_revoked` only when it explicitly sets
+`authorizationMode: "until_revoked"` and omits `expiresAt`; malformed or mixed
+fields remain unavailable. Legacy policies with a valid `expiresAt` remain finite.
+Rewriting the file does not refresh the resident controller; restart it to load
+the new policy. These are diagnostic metadata checks; the account controller
+still validates the full policy at execution. They never renew a policy or
+change its risk limits automatically.
 
 `--core-weight N` is forwarded unchanged to the daily operator, including the
 endpoints 0 and 1. Values must be finite and between 0 and 1. Omitting it retains

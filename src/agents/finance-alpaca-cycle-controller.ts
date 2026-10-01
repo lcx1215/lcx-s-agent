@@ -28,13 +28,12 @@ import {
 } from "./finance-write-transport.js";
 
 /** Local controller configuration, never accepted from a strategy or model response. */
-export const financeAlpacaCyclePolicySchema = z
+const financeAlpacaCyclePolicyFieldsSchema = z
   .object({
     schemaVersion: z.literal("lcx_alpaca_cycle_policy_v1"),
     accountId: z.string().trim().min(1),
     planId: z.string().trim().min(1),
     revision: z.string().trim().min(1),
-    expiresAt: z.string().datetime({ offset: true }),
     peakEquity: z.number().positive().finite(),
     peakScope: z.string().trim().min(1),
     unhedged: z.literal(true),
@@ -50,6 +49,20 @@ export const financeAlpacaCyclePolicySchema = z
   })
   .strict();
 
+export const financeAlpacaCyclePolicySchema = z.union([
+  financeAlpacaCyclePolicyFieldsSchema
+    .extend({
+      authorizationMode: z.literal("until_expiry").default("until_expiry"),
+      expiresAt: z.string().datetime({ offset: true }),
+    })
+    .strict(),
+  financeAlpacaCyclePolicyFieldsSchema
+    .extend({ authorizationMode: z.literal("until_revoked") })
+    .strict(),
+]);
+
+const STANDING_PAPER_OPERATION_AUTHORITY_MS = 120_000;
+
 export type FinanceAlpacaCyclePolicy = z.infer<typeof financeAlpacaCyclePolicySchema>;
 type Controller = Required<
   Pick<
@@ -58,7 +71,8 @@ type Controller = Required<
   >
 > & {
   /** Expiry of the policy snapshot validated when this controller was created. */
-  executionPolicyExpiresAt: string;
+  executionPolicyExpiresAt: string | null;
+  executionPolicyAuthorizationMode: "until_expiry" | "until_revoked";
   inspectReconciliation: (signal: AbortSignal) => Promise<{
     readiness: FinanceExecutionReconciliation;
     observedAt: string;
@@ -76,6 +90,7 @@ export function createFinanceAlpacaCycleController(options: {
 }): Controller {
   options = { ...options, instruments: [...options.instruments] };
   const policy = financeAlpacaCyclePolicySchema.parse(options.policy);
+  const policyExpiresAt = policy.authorizationMode === "until_revoked" ? null : policy.expiresAt;
   const instruments = new Set(options.instruments);
   if (
     !instruments.size ||
@@ -83,7 +98,7 @@ export function createFinanceAlpacaCycleController(options: {
     !Number.isFinite(options.maxAgeMs) ||
     options.maxAgeMs <= 0 ||
     options.maxAgeMs > 120000 ||
-    Date.parse(policy.expiresAt) <= Date.now()
+    (policyExpiresAt !== null && Date.parse(policyExpiresAt) <= Date.now())
   ) {
     throw new Error("invalid or expired Alpaca daily controller configuration");
   }
@@ -111,6 +126,10 @@ export function createFinanceAlpacaCycleController(options: {
       .digest("hex")}.jsonl`,
   );
   const quoteBindings = new Map<string, AlpacaSafetyQuoteBinding>();
+
+  // Standing Paper permission never becomes an unlimited order capability.
+  const operationExpiresAt = () =>
+    policyExpiresAt ?? new Date(Date.now() + STANDING_PAPER_OPERATION_AUTHORITY_MS).toISOString();
 
   async function readPeak() {
     try {
@@ -151,6 +170,7 @@ export function createFinanceAlpacaCycleController(options: {
     signal: AbortSignal,
     boundQuote?: AlpacaSafetyQuoteBinding,
     reconciledThroughClaimId?: string,
+    authorityExpiresAt = operationExpiresAt(),
   ) {
     if (!instruments.has(instrument)) {
       throw new Error("instrument outside controller universe");
@@ -173,7 +193,7 @@ export function createFinanceAlpacaCycleController(options: {
           currency: "USD",
           source: `daily-controller:${policy.planId}:${policy.revision}`,
           observedAt: new Date().toISOString(),
-          expiresAt: policy.expiresAt,
+          expiresAt: authorityExpiresAt,
           peakEquity: peak,
           peakScope: policy.peakScope,
           trackNewHigh: true,
@@ -347,7 +367,8 @@ export function createFinanceAlpacaCycleController(options: {
       return { readiness, observedAt: snapshot.observedAt, protection: snapshot.protection };
     },
     accountId: policy.accountId,
-    executionPolicyExpiresAt: policy.expiresAt,
+    executionPolicyExpiresAt: policyExpiresAt,
+    executionPolicyAuthorizationMode: policy.authorizationMode,
     accountBookProvider: async (signal) => {
       const { snapshot } = await reconcile(signal);
       const observed = await facts(options.instruments[0], "buy", signal);
@@ -409,6 +430,7 @@ export function createFinanceAlpacaCycleController(options: {
       }
       const quote = quoteBindings.get(`${binding.intent.instrument}:${binding.intent.side}`);
       quoteBindings.delete(`${binding.intent.instrument}:${binding.intent.side}`);
+      const authorityExpiresAt = operationExpiresAt();
       return createFinanceExecutionSafetyContext({
         ...binding,
         ...account,
@@ -418,7 +440,7 @@ export function createFinanceAlpacaCycleController(options: {
           riskModel: "fully_funded_unhedged_spot",
           authorizedSide: binding.intent.side,
           authorizedQuantity: binding.intent.quantity,
-          expiresAt: policy.expiresAt,
+          expiresAt: authorityExpiresAt,
           maxGrossExposure: policy.maxGrossExposure,
           quantityDifferenceIsolation: policy.quantityDifferenceIsolation,
           maxPortfolioDrawdownFraction: policy.maxPortfolioDrawdownFraction,
@@ -446,6 +468,7 @@ export function createFinanceAlpacaCycleController(options: {
             signal,
             quote,
             latestClaim?.id,
+            authorityExpiresAt,
           );
           assertSamePositions(observed.positions, snapshot.positions);
           if (Math.abs(observed.facts.account.availableCash - snapshot.brokerCash) > 0.01) {

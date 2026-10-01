@@ -108,9 +108,25 @@ function readSchedulerRuntime(directory: string, observedAt: string) {
     ...(typeof fields.executionPolicyStatus === "string"
       ? { executionPolicyStatus: fields.executionPolicyStatus }
       : {}),
+    ...(typeof fields.executionPolicyAuthorizationMode === "string"
+      ? { executionPolicyAuthorizationMode: fields.executionPolicyAuthorizationMode }
+      : {}),
     ...(typeof fields.executionPolicyExpiresAt === "string" ||
     fields.executionPolicyExpiresAt === null
       ? { executionPolicyExpiresAt: fields.executionPolicyExpiresAt }
+      : {}),
+    ...(typeof fields.intradayControllerPolicyStatus === "string"
+      ? { intradayControllerPolicyStatus: fields.intradayControllerPolicyStatus }
+      : {}),
+    ...(typeof fields.intradayControllerPolicyAuthorizationMode === "string"
+      ? {
+          intradayControllerPolicyAuthorizationMode:
+            fields.intradayControllerPolicyAuthorizationMode,
+        }
+      : {}),
+    ...(typeof fields.intradayControllerPolicyExpiresAt === "string" ||
+    fields.intradayControllerPolicyExpiresAt === null
+      ? { intradayControllerPolicyExpiresAt: fields.intradayControllerPolicyExpiresAt }
       : {}),
   };
 }
@@ -437,13 +453,24 @@ export async function buildFinanceAutomaticLifecycleFeedback(
       "executionPolicyStatus" in schedulerRuntime
         ? schedulerRuntime.executionPolicyStatus
         : undefined;
+    const runtimeIntradayPolicyStatus =
+      "intradayControllerPolicyStatus" in schedulerRuntime
+        ? schedulerRuntime.intradayControllerPolicyStatus
+        : undefined;
+    const runtimeEffectivePolicyStatus =
+      typeof runtimeIntradayPolicyStatus === "string" &&
+      runtimeIntradayPolicyStatus !== "not_applicable"
+        ? runtimeIntradayPolicyStatus
+        : runtimePolicyStatus;
     const runtimeVenue = "venue" in schedulerRuntime ? schedulerRuntime.venue : undefined;
     const schedulerRuntimeNeedsInspection = schedulerRuntime.pidPresent
       ? schedulerRuntime.status !== "responsive" ||
         runtimePlacementEnabled !== true ||
         (runtimeVenue === "paper"
           ? false
-          : runtimeVenue !== "alpaca" || runtimePolicyStatus !== "current")
+          : runtimeVenue !== "alpaca" ||
+            (runtimeEffectivePolicyStatus !== "current" &&
+              runtimeEffectivePolicyStatus !== "until_revoked"))
       : schedulerHasHistory;
     const nextTask = positionManagement.needsInspection
       ? "inspect_finance_position_management"

@@ -570,9 +570,18 @@ export async function readFinanceLinkHealth(
     );
     const responsive = progress.status === "responsive";
     const placementEnabled = responsive ? progress.placementEnabled : undefined;
+    const intradayEnabled =
+      progress.intraday !== null &&
+      typeof progress.intraday === "object" &&
+      "enabled" in progress.intraday &&
+      progress.intraday.enabled;
+    const policyStatus = intradayEnabled
+      ? progress.intradayControllerPolicyStatus
+      : progress.executionPolicyStatus;
     const policyCurrent =
-      progress.executionPolicyStatus === "current" ||
-      progress.executionPolicyStatus === "not_required";
+      policyStatus === "current" ||
+      policyStatus === "until_revoked" ||
+      policyStatus === "not_required";
     checks.push({
       id: "scheduler_execution_loop",
       severity: responsive && placementEnabled === true && policyCurrent ? "info" : "warn",
@@ -582,7 +591,7 @@ export async function readFinanceLinkHealth(
         : !placementEnabled
           ? "resident scheduler responsive in preview mode; placement is disabled"
           : !policyCurrent
-            ? `resident scheduler responsive but execution policy ${progress.executionPolicyStatus}; placement readiness unverified`
+            ? `resident scheduler responsive but ${intradayEnabled ? "intraday controller" : "execution"} policy ${policyStatus}; placement readiness unverified`
             : "resident scheduler responsive with placement enabled; this does not verify a broker fill",
       detail: { pid, processPresent: present, progress, executionHealthVerified: false },
     });

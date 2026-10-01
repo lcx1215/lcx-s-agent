@@ -7,6 +7,7 @@ import {
   appendFinanceIntradayDecision,
   appendFinanceIntradayOutcome,
 } from "./finance-intraday-control-ledger.js";
+import { FINANCE_SCHEDULER_LOCK, FINANCE_SCHEDULER_PID } from "./finance-scheduler-lock.js";
 import { writeFinanceSchedulerState } from "./finance-scheduler-state.js";
 import { financeResearchScoredPath } from "./finance-state-dir.js";
 import { runFinanceTuningLifecycle } from "./finance-tuning-lifecycle.js";
@@ -18,6 +19,74 @@ beforeEach(() => {
 });
 
 afterEach(() => fs.rmSync(directory, { recursive: true, force: true }));
+
+it("preserves file and resident until-revoked authorization metadata in lifecycle feedback", async () => {
+  const observedAt = "2026-09-23T12:00:00.000Z";
+  fs.writeFileSync(path.join(directory, FINANCE_SCHEDULER_PID), String(process.pid));
+  const lock = path.join(directory, FINANCE_SCHEDULER_LOCK);
+  fs.mkdirSync(lock);
+  fs.writeFileSync(
+    path.join(lock, "progress.json"),
+    JSON.stringify({
+      pid: process.pid,
+      observedAt,
+      phase: "idle",
+      timeoutMs: 900000,
+      placementEnabled: true,
+      venue: "alpaca",
+      executionPolicyAuthorizationMode: "until_revoked",
+      executionPolicyExpiresAt: null,
+      intradayControllerPolicyAuthorizationMode: "until_revoked",
+      intradayControllerPolicyExpiresAt: null,
+      intraday: { enabled: true },
+    }),
+  );
+  const feedback = await buildFinanceAutomaticLifecycleFeedback({ directory, observedAt });
+  if (feedback.status !== "present") {
+    throw new Error(`expected lifecycle feedback to be present; got ${feedback.status}`);
+  }
+  expect(feedback.scheduler.runtime).toMatchObject({
+    status: "responsive",
+    executionPolicyStatus: "until_revoked",
+    executionPolicyAuthorizationMode: "until_revoked",
+    intradayControllerPolicyStatus: "until_revoked",
+    intradayControllerPolicyAuthorizationMode: "until_revoked",
+    intradayControllerPolicyExpiresAt: null,
+  });
+  expect(feedback.nextTask).not.toBe("inspect_finance_scheduler_runtime");
+});
+
+it("requests runtime inspection when file authorization is standing but resident intraday policy expired", async () => {
+  const observedAt = "2026-09-23T12:00:00.000Z";
+  fs.writeFileSync(path.join(directory, FINANCE_SCHEDULER_PID), String(process.pid));
+  const lock = path.join(directory, FINANCE_SCHEDULER_LOCK);
+  fs.mkdirSync(lock);
+  fs.writeFileSync(
+    path.join(lock, "progress.json"),
+    JSON.stringify({
+      pid: process.pid,
+      observedAt,
+      phase: "idle",
+      timeoutMs: 900000,
+      placementEnabled: true,
+      venue: "alpaca",
+      executionPolicyAuthorizationMode: "until_revoked",
+      executionPolicyExpiresAt: null,
+      intradayControllerPolicyAuthorizationMode: "until_expiry",
+      intradayControllerPolicyExpiresAt: "2026-09-23T11:59:00.000Z",
+      intraday: { enabled: true },
+    }),
+  );
+  const feedback = await buildFinanceAutomaticLifecycleFeedback({ directory, observedAt });
+  if (feedback.status !== "present") {
+    throw new Error(`expected lifecycle feedback to be present; got ${feedback.status}`);
+  }
+  expect(feedback.scheduler.runtime).toMatchObject({
+    executionPolicyStatus: "until_revoked",
+    intradayControllerPolicyStatus: "expired",
+  });
+  expect(feedback.nextTask).toBe("inspect_finance_scheduler_runtime");
+});
 
 it("projects directional calibration separately from blocked paper execution promotion", async () => {
   fs.writeFileSync(

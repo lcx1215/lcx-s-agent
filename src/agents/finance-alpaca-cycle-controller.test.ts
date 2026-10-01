@@ -27,7 +27,7 @@ afterEach(async () => {
   );
 });
 
-async function fixture() {
+async function fixture(standing = false) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "cycle-controller-"));
   directories.push(directory);
   vi.stubEnv("ALPACA_API_KEY_ID", "PK_SYNTHETIC");
@@ -105,7 +105,9 @@ async function fixture() {
     accountId,
     planId: "test",
     revision: "1",
-    expiresAt: new Date(Date.now() + 600000).toISOString(),
+    ...(standing
+      ? { authorizationMode: "until_revoked" }
+      : { expiresAt: new Date(Date.now() + 600000).toISOString() }),
     peakEquity: 1000,
     peakScope: "test-account",
     unhedged: true,
@@ -240,6 +242,81 @@ async function fixture() {
     accountId,
   };
 }
+
+it("keeps standing Paper permission after multiple days but issues a finite order capability", async () => {
+  const f = await fixture(true);
+  expect(f.controller.executionPolicyAuthorizationMode).toBe("until_revoked");
+  expect(f.controller.executionPolicyExpiresAt).toBeNull();
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(Date.now() + 2 * 86400000);
+  const issuedAt = Date.now();
+
+  expect((await f.place("standing-after-days")).status).toBe("placed");
+  const claims = await readFinanceExecutionSafetyClaims({
+    stateDir: f.directory,
+    accountId: f.accountId,
+    venue: "alpaca:paper",
+  });
+  expect(claims[0].binding?.policy.expiresAt).toBe(new Date(issuedAt + 120000).toISOString());
+  expect(claims[0].binding?.policy.maxGrossExposure).toBe(f.policy.maxGrossExposure);
+  expect(claims[0].binding?.venue).toBe("alpaca:paper");
+});
+
+it("refuses an expired standing order capability and requires a newly issued context", async () => {
+  const f = await fixture(true);
+  vi.useFakeTimers({ toFake: ["Date"] });
+  const expiredContextController = {
+    ...f.controller,
+    createSafetyContext: (...args: Parameters<typeof f.controller.createSafetyContext>) => {
+      const context = f.controller.createSafetyContext(...args);
+      vi.setSystemTime(Date.now() + 120001);
+      return context;
+    },
+  };
+  await expect(f.place("standing-expired-token", expiredContextController)).rejects.toThrow(
+    "execution_safety_authorized_plan_exceeded_or_expired",
+  );
+  expect(f.execute).not.toHaveBeenCalled();
+  expect((await f.place("standing-fresh-token")).status).toBe("placed");
+  expect(f.execute).toHaveBeenCalledTimes(1);
+});
+
+it("rejects ambiguous standing/expiry policies and preserves legacy expiry refusal", async () => {
+  const f = await fixture();
+  if (!("expiresAt" in f.policy)) {
+    throw new Error("finite fixture required");
+  }
+  const { expiresAt, ...fields } = f.policy;
+  for (const policy of [
+    fields,
+    { ...fields, authorizationMode: "until_revoked", expiresAt },
+    { ...fields, authorizationMode: "unlimited" },
+  ]) {
+    expect(() => createFinanceAlpacaCycleController({ ...f.options, policy })).toThrow();
+  }
+  expect(() =>
+    createFinanceAlpacaCycleController({
+      ...f.options,
+      policy: { ...f.policy, expiresAt: new Date(Date.now() - 1).toISOString() },
+    }),
+  ).toThrow("invalid or expired");
+  expect(f.controller.executionPolicyAuthorizationMode).toBe("until_expiry");
+  expect(f.controller.executionPolicyExpiresAt).toBe(expiresAt);
+});
+
+it("does not let standing permission bypass portfolio exposure limits or Paper credentials", async () => {
+  const f = await fixture(true);
+  const limited = createFinanceAlpacaCycleController({
+    ...f.options,
+    policy: { ...f.policy, maxGrossExposure: 150 },
+  });
+  await expect(f.place("standing-exposure", limited)).rejects.toThrow("exposure");
+  expect(f.execute).not.toHaveBeenCalled();
+  vi.stubEnv("ALPACA_API_KEY_ID", "AK_LIVE_SYNTHETIC");
+  expect(() => createFinanceAlpacaCycleController(f.options)).toThrow(
+    "requires configured paper credentials",
+  );
+});
 
 it("reads one quote before review and re-reads broker facts at the final safety gate", async () => {
   const f = await fixture();

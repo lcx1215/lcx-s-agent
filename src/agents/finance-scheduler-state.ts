@@ -384,6 +384,10 @@ export function inspectFinanceSchedulerProgress(
     }
     const venue =
       progress.venue === "paper" || progress.venue === "alpaca" ? progress.venue : "unknown";
+    const executionPolicyAuthorizationMode = resolveProgressAuthorizationMode(
+      progress.executionPolicyAuthorizationMode,
+      progress.executionPolicyExpiresAt,
+    );
     const expires =
       typeof progress.executionPolicyExpiresAt === "string"
         ? Date.parse(progress.executionPolicyExpiresAt)
@@ -393,11 +397,17 @@ export function inspectFinanceSchedulerProgress(
         ? "not_required"
         : venue !== "alpaca"
           ? "unknown"
-          : !Number.isFinite(expires)
-            ? "unavailable"
-            : expires <= now
-              ? "expired"
-              : "current";
+          : executionPolicyAuthorizationMode === "until_revoked"
+            ? "until_revoked"
+            : executionPolicyAuthorizationMode !== "until_expiry" || !Number.isFinite(expires)
+              ? "unavailable"
+              : expires <= now
+                ? "expired"
+                : "current";
+    const intradayControllerPolicyAuthorizationMode = resolveProgressAuthorizationMode(
+      progress.intradayControllerPolicyAuthorizationMode,
+      progress.intradayControllerPolicyExpiresAt,
+    );
     const intradayControllerPolicyExpiry =
       typeof progress.intradayControllerPolicyExpiresAt === "string"
         ? Date.parse(progress.intradayControllerPolicyExpiresAt)
@@ -405,11 +415,14 @@ export function inspectFinanceSchedulerProgress(
     const intradayControllerPolicyStatus =
       venue !== "alpaca" || !isObject(progress.intraday) || progress.intraday.enabled !== true
         ? "not_applicable"
-        : !Number.isFinite(intradayControllerPolicyExpiry)
-          ? "not_loaded"
-          : intradayControllerPolicyExpiry <= now
-            ? "expired"
-            : "current";
+        : intradayControllerPolicyAuthorizationMode === "until_revoked"
+          ? "until_revoked"
+          : intradayControllerPolicyAuthorizationMode !== "until_expiry" ||
+              !Number.isFinite(intradayControllerPolicyExpiry)
+            ? "not_loaded"
+            : intradayControllerPolicyExpiry <= now
+              ? "expired"
+              : "current";
     const deadline =
       2 * FINANCE_SCHEDULER_TICK_MS + (progress.phase === "cycle" ? progress.timeoutMs : 0);
     const intradayConfig = isObject(progress.intraday) ? progress.intraday : undefined;
@@ -487,8 +500,13 @@ export function inspectFinanceSchedulerProgress(
       placementEnabled: progress.placementEnabled,
       venue,
       executionPolicyStatus,
+      executionPolicyAuthorizationMode: venue === "paper" ? null : executionPolicyAuthorizationMode,
       executionPolicyExpiresAt: Number.isFinite(expires) ? new Date(expires).toISOString() : null,
       intradayControllerPolicyStatus,
+      intradayControllerPolicyAuthorizationMode:
+        intradayControllerPolicyAuthorizationMode === "unknown"
+          ? null
+          : intradayControllerPolicyAuthorizationMode,
       intradayControllerPolicyExpiresAt: Number.isFinite(intradayControllerPolicyExpiry)
         ? new Date(intradayControllerPolicyExpiry).toISOString()
         : null,
@@ -503,17 +521,53 @@ export function inspectFinanceSchedulerProgress(
 
 /** Diagnostic metadata only. The account controller still validates the complete policy. */
 export function readFinanceSchedulerPolicyExpiry(filename: string | undefined): string | null {
+  const authorization = readFinanceSchedulerPolicyAuthorization(filename);
+  return authorization.authorizationMode === "until_expiry" ? authorization.expiresAt : null;
+}
+
+export type FinanceSchedulerPolicyAuthorizationMode = "until_expiry" | "until_revoked" | "unknown";
+
+export function readFinanceSchedulerPolicyAuthorization(filename: string | undefined): {
+  authorizationMode: FinanceSchedulerPolicyAuthorizationMode;
+  expiresAt: string | null;
+} {
   if (!filename) {
-    return null;
+    return { authorizationMode: "unknown", expiresAt: null };
   }
   try {
     const policy: unknown = JSON.parse(fs.readFileSync(filename, "utf8"));
-    return isObject(policy) &&
+    if (!isObject(policy)) {
+      return { authorizationMode: "unknown", expiresAt: null };
+    }
+    if (policy.authorizationMode === "until_revoked" && !("expiresAt" in policy)) {
+      return { authorizationMode: "until_revoked", expiresAt: null };
+    }
+    if (
+      (policy.authorizationMode === undefined || policy.authorizationMode === "until_expiry") &&
       typeof policy.expiresAt === "string" &&
       Number.isFinite(Date.parse(policy.expiresAt))
-      ? policy.expiresAt
-      : null;
+    ) {
+      return { authorizationMode: "until_expiry", expiresAt: policy.expiresAt };
+    }
+    return { authorizationMode: "unknown", expiresAt: null };
   } catch {
-    return null;
+    return { authorizationMode: "unknown", expiresAt: null };
   }
+}
+
+function resolveProgressAuthorizationMode(
+  mode: unknown,
+  expiresAt: unknown,
+): FinanceSchedulerPolicyAuthorizationMode {
+  if (mode === "until_revoked" && expiresAt === null) {
+    return "until_revoked";
+  }
+  if (
+    (mode === "until_expiry" || mode === undefined) &&
+    typeof expiresAt === "string" &&
+    Number.isFinite(Date.parse(expiresAt))
+  ) {
+    return "until_expiry";
+  }
+  return "unknown";
 }

@@ -461,3 +461,59 @@ it("does not call an expired Alpaca policy ready just because its loop is respon
   expect(current.ok).toBe(false);
   expect(current.summary).toContain("expired");
 });
+
+it("accepts only explicit until-revoked progress and keeps mixed policy metadata unverified", async () => {
+  const at = new Date("2026-09-21T13:00:00.000Z");
+  await fs.writeFile(path.join(dir, "daily-cycle-scheduler.pid"), String(process.pid));
+  const lock = path.join(dir, "daily-cycle-scheduler.lock");
+  await fs.mkdir(lock);
+  const filename = path.join(lock, "progress.json");
+  const progress = {
+    pid: process.pid,
+    observedAt: at.toISOString(),
+    phase: "idle",
+    timeoutMs: 900000,
+    placementEnabled: true,
+    venue: "alpaca",
+    executionPolicyAuthorizationMode: "until_revoked",
+    executionPolicyExpiresAt: null,
+  };
+  await fs.writeFile(filename, JSON.stringify(progress));
+  const standing = await checkFor("scheduler_execution_loop", at);
+  expect(standing.ok).toBe(true);
+  expect(standing.summary).toContain("does not verify a broker fill");
+
+  await fs.writeFile(
+    filename,
+    JSON.stringify({ ...progress, executionPolicyExpiresAt: "2026-09-22T13:00:00.000Z" }),
+  );
+  const mixed = await checkFor("scheduler_execution_loop", at);
+  expect(mixed.ok).toBe(false);
+  expect(mixed.summary).toContain("unavailable");
+});
+
+it("requires the resident intraday policy to be current when the file is until-revoked", async () => {
+  const at = new Date("2026-09-21T13:00:00.000Z");
+  await fs.writeFile(path.join(dir, "daily-cycle-scheduler.pid"), String(process.pid));
+  const lock = path.join(dir, "daily-cycle-scheduler.lock");
+  await fs.mkdir(lock);
+  await fs.writeFile(
+    path.join(lock, "progress.json"),
+    JSON.stringify({
+      pid: process.pid,
+      observedAt: at.toISOString(),
+      phase: "idle",
+      timeoutMs: 900000,
+      placementEnabled: true,
+      venue: "alpaca",
+      executionPolicyAuthorizationMode: "until_revoked",
+      executionPolicyExpiresAt: null,
+      intradayControllerPolicyAuthorizationMode: "until_expiry",
+      intradayControllerPolicyExpiresAt: "2026-09-21T12:59:00.000Z",
+      intraday: { enabled: true },
+    }),
+  );
+  const report = await checkFor("scheduler_execution_loop", at);
+  expect(report.ok).toBe(false);
+  expect(report.summary).toContain("intraday controller policy expired");
+});

@@ -80,7 +80,7 @@ import {
   type FinanceSchedulerCycleStage,
   type FinanceSchedulerIntradayLastTick,
   inspectFinanceSchedulerProgress,
-  readFinanceSchedulerPolicyExpiry,
+  readFinanceSchedulerPolicyAuthorization,
   readFinanceSchedulerState,
   writeFinanceSchedulerState,
   type SchedulerState,
@@ -1149,6 +1149,10 @@ function writeSchedulerProgress(
   const venueIndex = args.indexOf("--venue");
   const venue = venueIndex < 0 ? "paper" : args[venueIndex + 1];
   const policyIndex = args.indexOf("--execution-policy");
+  const executionPolicyAuthorization =
+    venue === "alpaca"
+      ? readFinanceSchedulerPolicyAuthorization(policyIndex < 0 ? undefined : args[policyIndex + 1])
+      : { authorizationMode: "unknown" as const, expiresAt: null };
   const intradayLastTick = context.options.intraday
     ? normalizeFinanceSchedulerIntradayLastTick(context.lastIntradayTick, {
         instruments: context.options.intraday.instruments,
@@ -1166,10 +1170,13 @@ function writeSchedulerProgress(
       timeoutMs: context.options.timeoutMs,
       placementEnabled: args.includes("--place"),
       venue,
-      executionPolicyExpiresAt:
-        venue === "alpaca"
-          ? readFinanceSchedulerPolicyExpiry(policyIndex < 0 ? undefined : args[policyIndex + 1])
-          : null,
+      executionPolicyAuthorizationMode:
+        executionPolicyAuthorization.authorizationMode === "unknown"
+          ? null
+          : executionPolicyAuthorization.authorizationMode,
+      executionPolicyExpiresAt: executionPolicyAuthorization.expiresAt,
+      intradayControllerPolicyAuthorizationMode:
+        context.intradayController?.executionPolicyAuthorizationMode ?? null,
       intradayControllerPolicyExpiresAt:
         context.intradayController?.executionPolicyExpiresAt ?? null,
       intraday: context.options.intraday

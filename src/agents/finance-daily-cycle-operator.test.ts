@@ -705,6 +705,7 @@ it("installs the account controller from the explicit execution policy at the da
     const createController = vi.fn(() => ({
       accountId: "bound-account",
       executionPolicyExpiresAt: "2026-09-22T00:00:00.000Z",
+      executionPolicyAuthorizationMode: "until_expiry" as const,
       inspectReconciliation: vi.fn(),
       accountBookProvider,
       executionQuoteProvider,
@@ -759,6 +760,7 @@ it("checks reconciliation without collecting quotes or entering the trading cycl
     const createController = vi.fn(() => ({
       accountId: "synthetic",
       executionPolicyExpiresAt: "2026-09-22T00:00:00.000Z",
+      executionPolicyAuthorizationMode: "until_expiry" as const,
       inspectReconciliation,
       executionQuoteProvider,
       accountBookProvider: vi.fn(),

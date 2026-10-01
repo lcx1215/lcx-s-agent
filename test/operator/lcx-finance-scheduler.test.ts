@@ -58,6 +58,7 @@ const mocks = vi.hoisted(() => ({
   })),
   createIntradayController: vi.fn(() => ({
     accountId: "paper-account",
+    executionPolicyAuthorizationMode: "until_expiry",
     executionPolicyExpiresAt: "2026-09-30T23:00:00.000Z",
     inspectReconciliation: vi.fn(async () => ({
       readiness: { status: "reconciled" },
@@ -231,6 +232,7 @@ beforeEach(() => {
   mocks.loadConfig.mockReturnValue({});
   mocks.createIntradayController.mockReturnValue({
     accountId: "paper-account",
+    executionPolicyAuthorizationMode: "until_expiry",
     executionPolicyExpiresAt: "2026-09-30T23:00:00.000Z",
     inspectReconciliation: vi.fn(async () => ({
       readiness: { status: "reconciled" },
@@ -277,6 +279,7 @@ it("rebinds dynamic v3 controller candidates to the refreshed selected universe"
   fs.writeFileSync(policyPath, JSON.stringify({ expiresAt: "2026-09-22T23:00:00.000Z" }));
   mocks.createIntradayController.mockReturnValue({
     accountId: "paper-account",
+    executionPolicyAuthorizationMode: "until_expiry",
     executionPolicyExpiresAt: "2026-09-22T23:00:00.000Z",
     inspectReconciliation: vi.fn(async () => ({
       readiness: { status: "reconciled" },
@@ -1193,6 +1196,7 @@ it("rebinds a long-lived monitor to the universe written by a successful night r
   fs.writeFileSync(policyPath, JSON.stringify({ expiresAt: loadedPolicyExpiry }));
   mocks.createIntradayController.mockReturnValue({
     accountId: "paper-account",
+    executionPolicyAuthorizationMode: "until_expiry",
     executionPolicyExpiresAt: loadedPolicyExpiry,
     inspectReconciliation: vi.fn(async () => ({
       readiness: { status: "reconciled" },
@@ -1244,7 +1248,7 @@ it("rebinds a long-lived monitor to the universe written by a successful night r
   let progressAtStop: Record<string, unknown> | undefined;
   mocks.delay
     .mockImplementationOnce(async () => {
-      fs.writeFileSync(policyPath, JSON.stringify({ expiresAt: "2026-09-23T00:00:00.000Z" }));
+      fs.writeFileSync(policyPath, JSON.stringify({ authorizationMode: "until_revoked" }));
     })
     .mockImplementationOnce(async () => {
       progressAtStop = JSON.parse(
@@ -1300,7 +1304,9 @@ it("rebinds a long-lived monitor to the universe written by a successful night r
   expect(mocks.createIntradayController).toHaveBeenCalledTimes(2);
   expect(mocks.executeIntradayDecision).not.toHaveBeenCalled();
   expect(progressAtStop).toMatchObject({
-    executionPolicyExpiresAt: "2026-09-23T00:00:00.000Z",
+    executionPolicyAuthorizationMode: "until_revoked",
+    executionPolicyExpiresAt: null,
+    intradayControllerPolicyAuthorizationMode: "until_expiry",
     intradayControllerPolicyExpiresAt: loadedPolicyExpiry,
     intraday: {
       placementEnabled: true,
@@ -2499,6 +2505,7 @@ it("uses the live intraday controller for bounded idle recovery before monitorin
   }));
   mocks.createIntradayController.mockReturnValue({
     accountId: "paper-account",
+    executionPolicyAuthorizationMode: "until_expiry",
     executionPolicyExpiresAt: "2026-09-30T23:00:00.000Z",
     inspectReconciliation,
   });
@@ -2551,6 +2558,7 @@ it("continues monitor-only ticks after bounded idle recovery fails", async () =>
   });
   mocks.createIntradayController.mockReturnValue({
     accountId: "paper-account",
+    executionPolicyAuthorizationMode: "until_expiry",
     executionPolicyExpiresAt: "2026-09-30T23:00:00.000Z",
     inspectReconciliation,
   });

@@ -11,6 +11,7 @@ import { FINANCE_SCHEDULER_LOCK } from "./finance-scheduler-lock.js";
 import {
   readFinanceSchedulerState,
   readFinanceSchedulerPolicyExpiry,
+  readFinanceSchedulerPolicyAuthorization,
   inspectFinanceSchedulerProgress,
   writeFinanceSchedulerState,
   initializeFinanceSchedulerDatabase,
@@ -134,6 +135,87 @@ it("re-reads policy expiry and keeps missing or malformed metadata unavailable",
   expect(inspectFinanceSchedulerProgress(directory, 1, true, at.getTime() + 1000)).toMatchObject({
     executionPolicyExpiresAt: expiry,
     intradayControllerPolicyExpiresAt: expiry,
+  });
+});
+
+it("reports explicit until-revoked authorization separately from expiry and rejects mixed metadata", () => {
+  const filename = path.join(directory, "policy.json");
+  fs.writeFileSync(filename, JSON.stringify({ authorizationMode: "until_revoked" }));
+  expect(readFinanceSchedulerPolicyAuthorization(filename)).toEqual({
+    authorizationMode: "until_revoked",
+    expiresAt: null,
+  });
+  expect(readFinanceSchedulerPolicyExpiry(filename)).toBeNull();
+  fs.writeFileSync(
+    filename,
+    JSON.stringify({ authorizationMode: "until_expiry", expiresAt: "2026-09-22T12:00:00Z" }),
+  );
+  expect(readFinanceSchedulerPolicyAuthorization(filename)).toEqual({
+    authorizationMode: "until_expiry",
+    expiresAt: "2026-09-22T12:00:00Z",
+  });
+  fs.writeFileSync(
+    filename,
+    JSON.stringify({ authorizationMode: "until_revoked", expiresAt: "2026-09-22T12:00:00Z" }),
+  );
+  expect(readFinanceSchedulerPolicyAuthorization(filename)).toEqual({
+    authorizationMode: "unknown",
+    expiresAt: null,
+  });
+  fs.writeFileSync(filename, JSON.stringify({ authorizationMode: "other" }));
+  expect(readFinanceSchedulerPolicyAuthorization(filename).authorizationMode).toBe("unknown");
+});
+
+it("distinguishes resident until-revoked policy from malformed and legacy expiry progress", () => {
+  const lock = path.join(directory, FINANCE_SCHEDULER_LOCK);
+  fs.mkdirSync(lock);
+  const filename = path.join(lock, "progress.json");
+  const at = new Date("2026-09-22T12:00:00Z");
+  const progress = {
+    pid: 1,
+    observedAt: at.toISOString(),
+    phase: "idle",
+    timeoutMs: 900000,
+    placementEnabled: true,
+    venue: "alpaca",
+    executionPolicyAuthorizationMode: "until_revoked",
+    executionPolicyExpiresAt: null,
+    intradayControllerPolicyAuthorizationMode: "until_revoked",
+    intradayControllerPolicyExpiresAt: null,
+    intraday: { enabled: true },
+  };
+  fs.writeFileSync(filename, JSON.stringify(progress));
+  expect(inspectFinanceSchedulerProgress(directory, 1, true, at.getTime())).toMatchObject({
+    executionPolicyStatus: "until_revoked",
+    executionPolicyAuthorizationMode: "until_revoked",
+    intradayControllerPolicyStatus: "until_revoked",
+    intradayControllerPolicyAuthorizationMode: "until_revoked",
+  });
+  fs.writeFileSync(
+    filename,
+    JSON.stringify({
+      ...progress,
+      executionPolicyExpiresAt: "2026-09-22T13:00:00Z",
+      intradayControllerPolicyExpiresAt: "2026-09-22T13:00:00Z",
+    }),
+  );
+  expect(inspectFinanceSchedulerProgress(directory, 1, true, at.getTime())).toMatchObject({
+    executionPolicyStatus: "unavailable",
+    executionPolicyAuthorizationMode: "unknown",
+    intradayControllerPolicyStatus: "not_loaded",
+    intradayControllerPolicyAuthorizationMode: null,
+  });
+  fs.writeFileSync(
+    filename,
+    JSON.stringify({
+      ...progress,
+      executionPolicyAuthorizationMode: undefined,
+      executionPolicyExpiresAt: "2026-09-22T13:00:00Z",
+    }),
+  );
+  expect(inspectFinanceSchedulerProgress(directory, 1, true, at.getTime())).toMatchObject({
+    executionPolicyStatus: "current",
+    executionPolicyAuthorizationMode: "until_expiry",
   });
 });
 
