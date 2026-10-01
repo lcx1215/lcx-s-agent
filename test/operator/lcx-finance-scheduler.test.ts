@@ -2099,8 +2099,8 @@ it("fails day preflight before research when the account context is invalid", as
   expect(mocks.runCycle).not.toHaveBeenCalled();
   expect(readFinanceSchedulerState(directory).lastRun).toMatchObject({
     ok: false,
-    execution: { outcome: "not_run", blockReason: "controller_evidence_unavailable" },
-    researchPlanRefresh: { ok: false, controllerEvidenceStatus: "unavailable" },
+    execution: { outcome: "not_run", blockReason: "controller_evidence_invalid_scope" },
+    researchPlanRefresh: { ok: false, controllerEvidenceStatus: "invalid_scope" },
   });
   expect(
     financeResearchPreflightRetryDue(
@@ -2108,6 +2108,134 @@ it("fails day preflight before research when the account context is invalid", as
       new Date("2026-09-29T19:40:00Z"),
     ),
   ).toBe(false);
+});
+
+it.each(["context_read", "progress_write"] as const)(
+  "records %s errors before dispatch as retryable local failures",
+  async (fault) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-29T19:30:00Z"));
+    const context = path.join(directory, "portfolio-context.json");
+    writePortfolioContext(context);
+    const originalRead = fs.readFileSync;
+    const originalRename = fs.renameSync;
+    const spy =
+      fault === "context_read"
+        ? vi.spyOn(fs, "readFileSync").mockImplementation((file, options) => {
+            if (String(file) === context) {
+              throw new Error("transient EIO");
+            }
+            return originalRead(file, options);
+          })
+        : vi.spyOn(fs, "renameSync").mockImplementation((from, to) => {
+            if (String(to).endsWith("/progress.json")) {
+              throw new Error("transient EIO");
+            }
+            return originalRename(from, to);
+          });
+    try {
+      await expect(
+        runFinanceScheduler([
+          "--once",
+          "day",
+          "--dir",
+          directory,
+          "--research-portfolio-context",
+          context,
+          "--research-ask",
+          "review active strategy budgets",
+        ]),
+      ).resolves.toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(mocks.runCycle).not.toHaveBeenCalled();
+    expect(readFinanceSchedulerState(directory).lastRun).toMatchObject({
+      status: "failed",
+      execution: { outcome: "not_run", blockReason: "controller_evidence_read_failed" },
+      researchPlanRefresh: { controllerEvidenceStatus: "read_failed" },
+    });
+    expect(
+      financeResearchPreflightRetryDue(
+        readFinanceSchedulerState(directory),
+        new Date("2026-09-29T19:40:00Z"),
+      ),
+    ).toBe(true);
+  },
+);
+
+it("records invalid research proxy configuration before child dispatch", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-29T19:30:00Z"));
+  vi.stubEnv("LCX_FINANCE_RESEARCH_HTTP_PROXY", "socks5://invalid");
+  const context = path.join(directory, "portfolio-context.json");
+  writePortfolioContext(context);
+  await expect(
+    runFinanceScheduler([
+      "--once",
+      "day",
+      "--dir",
+      directory,
+      "--research-portfolio-context",
+      context,
+      "--research-ask",
+      "review active strategy budgets",
+    ]),
+  ).resolves.toBe(1);
+  expect(mocks.runCycle).not.toHaveBeenCalled();
+  expect(readFinanceSchedulerState(directory).lastRun).toMatchObject({
+    status: "failed",
+    execution: { outcome: "not_run", blockReason: "controller_evidence_invalid_config" },
+    researchPlanRefresh: { controllerEvidenceStatus: "invalid_config" },
+  });
+});
+
+it("retries one transient local evidence write failure without replaying execution", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-29T19:30:00Z"));
+  const context = path.join(directory, "portfolio-context.json");
+  writePortfolioContext(context);
+  const originalWrite = fs.writeFileSync;
+  const spy = vi.spyOn(fs, "writeFileSync").mockImplementation((file, data, options) => {
+    if (String(file).includes("day-research-portfolio-context-")) {
+      throw new Error("transient EIO");
+    }
+    return originalWrite(file, data, options);
+  });
+  const args = [
+    "--once",
+    "day",
+    "--dir",
+    directory,
+    "--research-portfolio-context",
+    context,
+    "--research-ask",
+    "review active strategy budgets",
+  ];
+  try {
+    await expect(runFinanceScheduler(args)).resolves.toBe(1);
+  } finally {
+    spy.mockRestore();
+  }
+  expect(mocks.runCycle).not.toHaveBeenCalled();
+  expect(readFinanceSchedulerState(directory).lastRun).toMatchObject({
+    researchAttempt: 1,
+    execution: { outcome: "not_run", blockReason: "controller_evidence_read_failed" },
+    researchPlanRefresh: { ok: false, controllerEvidenceStatus: "read_failed" },
+  });
+  expect(
+    financeResearchPreflightRetryDue(
+      readFinanceSchedulerState(directory),
+      new Date("2026-09-29T19:40:00Z"),
+    ),
+  ).toBe(true);
+  vi.setSystemTime(new Date("2026-09-29T19:40:00Z"));
+  await expect(runFinanceScheduler(args)).resolves.toBe(1);
+  expect(mocks.runCycle).toHaveBeenCalledOnce();
+  expect(readFinanceSchedulerState(directory).lastRun).toMatchObject({
+    researchAttempt: 2,
+    execution: { outcome: "not_run" },
+  });
 });
 
 it.each([

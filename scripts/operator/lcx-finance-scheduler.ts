@@ -569,23 +569,52 @@ async function runNightResearchReview(params: {
   }
 }
 
+type DayResearchPreflightResult = FinanceCycleProcessResult & {
+  controllerEvidenceStatus?: "invalid_scope" | "invalid_config" | "read_failed";
+};
+
+function failedDayResearchPreflight(
+  controllerEvidenceStatus: "invalid_scope" | "invalid_config" | "read_failed",
+  error: unknown,
+): DayResearchPreflightResult {
+  return {
+    exitCode: null,
+    signal: null,
+    status: "failed",
+    ok: false,
+    stdout: "",
+    stderr: `day controller evidence ${controllerEvidenceStatus}: ${error instanceof Error ? error.message : String(error)}`,
+    outputTruncated: false,
+    controllerEvidenceStatus,
+  };
+}
+
 async function runDayResearchPreflight(params: {
   context: CycleContext;
   attempt: { firedAt: string; etDate: string; runId: string };
   portfolioPlanPath: string;
-}): Promise<FinanceCycleProcessResult & { controllerEvidenceStatus?: "unavailable" }> {
+}): Promise<DayResearchPreflightResult> {
+  let contextContents: string;
   try {
-    const portfolioContext = financeResearchPortfolioContextSchema.parse(
-      JSON.parse(fs.readFileSync(params.context.options.researchPlan!.contextPath, "utf8")),
-    );
-    const evidencePath = path.join(
-      params.context.root.directory,
-      `day-research-controller-evidence-${params.attempt.etDate}-${params.attempt.runId}.json`,
-    );
-    const frozenContextPath = path.join(
-      params.context.root.directory,
-      `day-research-portfolio-context-${params.attempt.etDate}-${params.attempt.runId}.json`,
-    );
+    contextContents = fs.readFileSync(params.context.options.researchPlan!.contextPath, "utf8");
+  } catch (error) {
+    return failedDayResearchPreflight("read_failed", error);
+  }
+  let portfolioContext: ReturnType<typeof financeResearchPortfolioContextSchema.parse>;
+  try {
+    portfolioContext = financeResearchPortfolioContextSchema.parse(JSON.parse(contextContents));
+  } catch (error) {
+    return failedDayResearchPreflight("invalid_scope", error);
+  }
+  const evidencePath = path.join(
+    params.context.root.directory,
+    `day-research-controller-evidence-${params.attempt.etDate}-${params.attempt.runId}.json`,
+  );
+  const frozenContextPath = path.join(
+    params.context.root.directory,
+    `day-research-portfolio-context-${params.attempt.etDate}-${params.attempt.runId}.json`,
+  );
+  try {
     const accountEvidence = await buildFinanceBrokerAccountResearchEvidence({
       directory: params.context.root.directory,
       asOf: params.attempt.firedAt,
@@ -599,7 +628,17 @@ async function runDayResearchPreflight(params: {
       mode: 0o600,
       flag: "wx",
     });
-    return runScheduledCycleProcess(params.context, "research_preflight", {
+  } catch (error) {
+    return failedDayResearchPreflight("read_failed", error);
+  }
+  let researchEnv: NodeJS.ProcessEnv | undefined;
+  try {
+    researchEnv = financeResearchProcessEnv();
+  } catch (error) {
+    return failedDayResearchPreflight("invalid_config", error);
+  }
+  try {
+    return await runScheduledCycleProcess(params.context, "research_preflight", {
       argv: [
         "--import",
         "tsx",
@@ -629,21 +668,15 @@ async function runDayResearchPreflight(params: {
         params.context.root.directory,
       ],
       cwd: REPO_ROOT,
-      env: financeResearchProcessEnv(),
+      env: researchEnv,
       timeoutMs: params.context.options.timeoutMs,
       signal: params.context.signal,
     });
   } catch (error) {
-    return {
-      exitCode: null,
-      signal: null,
-      status: "failed",
-      ok: false,
-      stdout: "",
-      stderr: `day controller evidence unavailable: ${error instanceof Error ? error.message : String(error)}`,
-      outputTruncated: false,
-      controllerEvidenceStatus: "unavailable",
-    };
+    if (error instanceof SchedulerProgressBeforeDispatchError) {
+      return failedDayResearchPreflight("read_failed", error);
+    }
+    throw error;
   }
 }
 
@@ -1296,12 +1329,24 @@ function writeSchedulerProgress(
 }
 
 /** Each bounded child owns a fresh progress deadline; elapsed prior stages do not count as a stall. */
+class SchedulerProgressBeforeDispatchError extends Error {
+  constructor(error: unknown) {
+    super(
+      `scheduler progress before dispatch failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 async function runScheduledCycleProcess(
   context: CycleContext,
   stage: FinanceSchedulerCycleStage,
   options: Parameters<typeof runFinanceCycleProcess>[0],
 ): Promise<FinanceCycleProcessResult> {
-  writeSchedulerProgress(context, "cycle", stage);
+  try {
+    writeSchedulerProgress(context, "cycle", stage);
+  } catch (error) {
+    throw new SchedulerProgressBeforeDispatchError(error);
+  }
   if (context.options.command !== "loop" || !context.options.intraday || stage === "execution") {
     const work = () => runFinanceCycleProcess(options);
     return stage === "execution" && context.reconciliationWake
@@ -1384,7 +1429,9 @@ export function financeResearchPreflightRetryDue(state: SchedulerState, at: Date
     run.ok !== false ||
     !isObjectRecord(run.execution) ||
     run.execution.outcome !== "not_run" ||
-    run.execution.blockReason !== "research_plan_not_accepted" ||
+    !["research_plan_not_accepted", "controller_evidence_read_failed"].includes(
+      String(run.execution.blockReason),
+    ) ||
     !isObjectRecord(run.researchPlanRefresh) ||
     run.researchPlanRefresh.ok !== false ||
     typeof run.completedAt !== "string"
@@ -1433,15 +1480,25 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
   state.lastStatus[mode] = "running";
   state.lastRun = { ...attempt, status: "running" };
   writeFinanceSchedulerState(directory, state);
-  writeSchedulerProgress(context, "cycle");
+  let dayPreflightProgressFailure: { error: unknown } | undefined;
+  try {
+    writeSchedulerProgress(context, "cycle");
+  } catch (error) {
+    if (mode !== "day" || !context.options.researchPlan) {
+      throw error;
+    }
+    dayPreflightProgressFailure = { error };
+  }
   const portfolioPlanPath = path.join(directory, "research-portfolio-plan-latest.json");
   const research =
     mode === "day" && context.options.researchPlan
-      ? await runDayResearchPreflight({
-          context,
-          attempt,
-          portfolioPlanPath,
-        })
+      ? dayPreflightProgressFailure
+        ? failedDayResearchPreflight("read_failed", dayPreflightProgressFailure.error)
+        : await runDayResearchPreflight({
+            context,
+            attempt,
+            portfolioPlanPath,
+          })
       : undefined;
   const researchPayload = (() => {
     if (!research?.ok) {
@@ -1559,9 +1616,13 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
           outcome: "not_run",
           blockReason: researchAbstention
             ? "research_no_allocation"
-            : research?.controllerEvidenceStatus === "unavailable"
-              ? "controller_evidence_unavailable"
-              : "research_plan_not_accepted",
+            : research?.controllerEvidenceStatus === "invalid_scope"
+              ? "controller_evidence_invalid_scope"
+              : research?.controllerEvidenceStatus === "invalid_config"
+                ? "controller_evidence_invalid_config"
+                : research?.controllerEvidenceStatus === "read_failed"
+                  ? "controller_evidence_read_failed"
+                  : "research_plan_not_accepted",
         },
     ...(research
       ? {
