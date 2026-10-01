@@ -1821,21 +1821,23 @@ async function resolveLedgerReadPaperAccount(params: {
   if (!params.financeStateDir) {
     return { ok: false, reason: "host_finance_state_unavailable" };
   }
-  if (params.portfolioContext) {
-    return params.portfolioContext.venue === "paper"
-      ? {
-          ok: true,
-          accountId: params.portfolioContext.accountId,
-          observedAt: "portfolio_context",
-          snapshotStatus: "portfolio_context",
-          ageMsAtAsOf: null,
-        }
-      : { ok: false, reason: "portfolio_context_is_not_paper" };
+  if (params.portfolioContext?.venue === "paper") {
+    return {
+      ok: true,
+      accountId: params.portfolioContext.accountId,
+      observedAt: "portfolio_context",
+      snapshotStatus: "portfolio_context",
+      ageMsAtAsOf: null,
+    };
   }
   try {
     const books = await readFinanceLatestBrokerReconciliations(params.financeStateDir);
-    const paper = books.records.filter((record) => record.venue === "alpaca:paper");
-    if (books.omittedAccounts !== 0 || paper.length !== 1) {
+    const paper = books.records.filter(
+      (record) =>
+        record.venue === "alpaca:paper" &&
+        (!params.portfolioContext || record.accountId === params.portfolioContext.accountId),
+    );
+    if ((!params.portfolioContext && books.omittedAccounts !== 0) || paper.length !== 1) {
       return { ok: false, reason: "paper_account_not_unique" };
     }
     const selected = paper[0];
@@ -1843,7 +1845,7 @@ async function resolveLedgerReadPaperAccount(params: {
     if (
       typeof snapshot?.observedAt !== "string" ||
       !Number.isFinite(Date.parse(snapshot.observedAt)) ||
-      Date.parse(snapshot.observedAt) > Date.parse(params.asOf)
+      (!params.portfolioContext && Date.parse(snapshot.observedAt) > Date.parse(params.asOf))
     ) {
       return { ok: false, reason: "paper_account_snapshot_unusable_at_as_of" };
     }
@@ -1851,7 +1853,14 @@ async function resolveLedgerReadPaperAccount(params: {
       ok: true,
       accountId: selected.accountId,
       observedAt: snapshot.observedAt,
-      snapshotStatus: typeof snapshot.status === "string" ? snapshot.status : "unknown",
+      // An explicit adapter context binds an identity, not historical account state.
+      // Only the tool's history page supplies facts, with historyThrough=asOf.
+      snapshotStatus:
+        Date.parse(snapshot.observedAt) > Date.parse(params.asOf)
+          ? "identity_only_observed_after_cutoff"
+          : typeof snapshot.status === "string"
+            ? snapshot.status
+            : "unknown",
       ageMsAtAsOf: Date.parse(params.asOf) - Date.parse(snapshot.observedAt),
     };
   } catch {
