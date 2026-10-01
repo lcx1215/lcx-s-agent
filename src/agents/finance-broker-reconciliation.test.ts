@@ -1,5 +1,16 @@
-import { describe, expect, it } from "vitest";
-import { reconcileFinanceBrokerActivities } from "./finance-broker-reconciliation.js";
+import { describe, expect, it, vi } from "vitest";
+const syncMocks = vi.hoisted(() => ({ append: vi.fn(), history: vi.fn(), readHistory: vi.fn() }));
+vi.mock("./finance-alpaca-history-sync.js", () => ({
+  syncAlpacaPaperHistory: syncMocks.history,
+}));
+vi.mock("./finance-position-ledger.js", () => ({
+  appendFinanceBrokerHistory: syncMocks.append,
+  readFinanceBrokerHistoryRecords: syncMocks.readHistory,
+}));
+import {
+  reconcileFinanceBrokerActivities,
+  syncFinanceBrokerReconciliation,
+} from "./finance-broker-reconciliation.js";
 const activities = [
   { id: "cash", activity_type: "JNLC", status: "executed", currency: "USD", net_amount: "100" },
   {
@@ -149,4 +160,107 @@ describe("bounded historical quantity isolation", () => {
     expect(result.status).toBe("unresolved");
     expect(result.issues).toContain("unsupported_activity:cash");
   });
+});
+
+describe("canonical account observation", () => {
+  async function reconcile(extra: Record<string, unknown> = {}) {
+    syncMocks.append.mockReset();
+    syncMocks.history.mockResolvedValue({ status: "raw_history_synced" });
+    syncMocks.readHistory.mockResolvedValue({ records: [], headRef: "history-head" });
+    let accountReads = 0;
+    const read = vi.fn(async (url: string) => {
+      const pathname = new URL(url).pathname;
+      if (pathname === "/v2/account") {
+        accountReads++;
+      }
+      const account = {
+        id: "account",
+        currency: "USD",
+        created_at: "2000-01-01T00:00:00Z",
+        cash: "0",
+        equity: "1",
+        buying_power: "2",
+        portfolio_value: "3",
+        secret_extra: "never-copy",
+        ...(accountReads === 2 ? extra : {}),
+      };
+      return { status: 200, body: JSON.stringify(pathname === "/v2/account" ? account : []) };
+    });
+    const snapshot = await syncFinanceBrokerReconciliation({
+      directory: "fixture",
+      accountId: "account",
+      after: "1999-01-01T00:00:00Z",
+      until: "2020-01-01T00:00:00Z",
+      credentials: { keyId: "fixture", secretKey: "fixture" },
+      read,
+    });
+    return { snapshot, read };
+  }
+  it("persists only validated final-account values with no additional GET", async () => {
+    const { snapshot, read } = await reconcile({
+      equity: "123.45",
+      buying_power: "999",
+      portfolio_value: 123.45,
+    });
+    expect(read.mock.calls.map(([url]) => new URL(url).pathname)).toEqual([
+      "/v2/account",
+      "/v2/account/activities/CFEE",
+      "/v2/account/activities/FEE",
+      "/v2/positions",
+      "/v2/orders",
+      "/v2/account",
+    ]);
+    expect(snapshot.accountObservation).toMatchObject({
+      accountId: "account",
+      currency: "USD",
+      equity: 123.45,
+      buyingPower: 999,
+      cash: 0,
+      portfolioValue: 123.45,
+      source: "https://paper-api.alpaca.markets/v2/account",
+    });
+    expect(Number.isFinite(Date.parse(snapshot.accountObservation?.observedAt ?? ""))).toBe(true);
+    expect(JSON.stringify(snapshot)).not.toContain("never-copy");
+    expect(snapshot.brokerCash).toBe(0);
+    expect(syncMocks.append.mock.calls.at(-1)?.[1].payload[0].accountObservation).toEqual(
+      snapshot.accountObservation,
+    );
+  });
+  it.each([undefined, null, "", " ", "NaN", "Infinity", "0x10", "1,000", false, {}])(
+    "keeps missing or invalid optional values unknown: %j",
+    async (value) => {
+      const { snapshot } = await reconcile({
+        equity: value,
+        buying_power: value,
+        portfolio_value: value,
+      });
+      expect(snapshot.accountObservation).toMatchObject({
+        equity: null,
+        buyingPower: null,
+        portfolioValue: null,
+        unknownValueMeaning: "missing_or_invalid",
+      });
+    },
+  );
+  it("retains finite signed account observations without treating them as buying authority", async () => {
+    const { snapshot } = await reconcile({
+      cash: "-12.5",
+      equity: "-2",
+      buying_power: "-1",
+      portfolio_value: "-2",
+    });
+    expect(snapshot.accountObservation).toMatchObject({
+      cash: -12.5,
+      equity: -2,
+      buyingPower: -1,
+      portfolioValue: -2,
+      boundary: "observed_account_values_not_execution_authority; buying_power_is_not_cash",
+    });
+  });
+  it.each([{ id: "other" }, { currency: "EUR" }])(
+    "retains account identity refusal",
+    async (extra) => {
+      await expect(reconcile(extra)).rejects.toThrow("invalid broker snapshot");
+    },
+  );
 });

@@ -327,6 +327,7 @@ export async function syncFinanceBrokerReconciliation(
   const positions = await get("/v2/positions");
   const orders = await get("/v2/orders?status=open&limit=500&nested=true");
   const last = (await get("/v2/account")) as Record<string, unknown>;
+  const accountObservedAt = new Date().toISOString();
   if (
     last.id !== options.accountId ||
     last.currency !== "USD" ||
@@ -357,8 +358,34 @@ export async function syncFinanceBrokerReconciliation(
     orders,
     new Map(positions.map((row) => [brokerSymbol(row.symbol), number(row.qty)])),
   );
+  const optionalAccountNumber = (value: unknown): number | null => {
+    if (typeof value !== "number" && typeof value !== "string") {
+      return null;
+    }
+    if (
+      typeof value === "string" &&
+      !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/u.test(value.trim())
+    ) {
+      return null;
+    }
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const accountObservation = {
+    accountId: options.accountId,
+    currency: "USD" as const,
+    source: `${host}/v2/account`,
+    observedAt: accountObservedAt,
+    equity: optionalAccountNumber(last.equity),
+    cash: optionalAccountNumber(last.cash),
+    buyingPower: optionalAccountNumber(last.buying_power),
+    portfolioValue: optionalAccountNumber(last.portfolio_value),
+    boundary: "observed_account_values_not_execution_authority; buying_power_is_not_cash" as const,
+    unknownValueMeaning: "missing_or_invalid" as const,
+  };
   const snapshot = {
     ...result,
+    accountObservation,
     protection: {
       protective: protection.protective,
       unresolved: protection.unresolved,
