@@ -1387,6 +1387,11 @@ describe("intraday decision execution bridge", () => {
       expect(runOrder).toHaveBeenCalledTimes(
         mode === "stale" || mode === "abort" || mode === "prepared_changed" ? 0 : 1,
       );
+      if (mode === "prepared_changed") {
+        expect("outcome" in result ? result.outcome.reasons : []).toEqual([
+          "intraday reviewed execution prices changed; a new model review is required",
+        ]);
+      }
       if (mode === "fresh" || mode === "timeout" || mode === "prepared_same") {
         expect(runOrder).toHaveBeenCalledWith(
           expect.objectContaining({

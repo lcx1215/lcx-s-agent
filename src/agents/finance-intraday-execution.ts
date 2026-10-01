@@ -681,7 +681,17 @@ export async function executeFinanceIntradayDecision(params: {
       !protectiveExit &&
       (quote.bidPrice !== reviewedQuote.bidPrice || quote.askPrice !== reviewedQuote.askPrice)
     ) {
-      throw new Error("intraday reviewed execution prices changed; a new model review is required");
+      const outcome = await appendFinanceIntradayOutcome(params.directory, {
+        signalId: input.signalId,
+        status: "refused",
+        reasons: ["intraday reviewed execution prices changed; a new model review is required"],
+        tradeDecisionReview,
+      });
+      return Object.freeze({
+        status: "refused" as const,
+        outcome: outcome.input,
+        tradeDecisionReview,
+      });
     }
     const finalCalendarIssue = await strategyBindingIssue(
       params.directory,
