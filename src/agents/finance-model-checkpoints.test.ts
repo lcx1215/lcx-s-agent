@@ -100,6 +100,41 @@ describe("finance model checkpoints", () => {
       resumed.close();
     }
   });
+  it("binds quality-stage reuse to an optional external evidence fingerprint", async () => {
+    const opts = await options();
+    const first = openFinanceModelCheckpoints(opts, { evidence: "frozen" });
+    expect(await first.stage("quality", async () => "old review", "ledger-head-a")).toBe(
+      "old review",
+    );
+    first.close();
+
+    const resumed = openFinanceModelCheckpoints(opts, { evidence: "frozen" });
+    try {
+      expect(
+        await resumed.stage("quality", async () => "review for new head", "ledger-head-b"),
+      ).toBe("review for new head");
+      expect(await resumed.stage("quality", async () => "must not run", "ledger-head-a")).toBe(
+        "old review",
+      );
+    } finally {
+      resumed.close();
+    }
+  });
+  it("keeps the existing quality checkpoint key when no ledger query was requested", async () => {
+    const opts = await options();
+    const first = openFinanceModelCheckpoints(opts, { evidence: "frozen" });
+    await first.stage("quality", async () => "original no-query review");
+    first.close();
+    const resumed = openFinanceModelCheckpoints(opts, { evidence: "frozen" });
+    try {
+      expect(await resumed.stage("quality", async () => "must not rerun", undefined)).toBe(
+        "original no-query review",
+      );
+      expect(resumed.summary().newModelCalls).toBe(0);
+    } finally {
+      resumed.close();
+    }
+  });
   it("blocks changed evidence before model dispatch", async () => {
     const opts = await options();
     openFinanceModelCheckpoints(opts, { evidence: "old" }).close();

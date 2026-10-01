@@ -633,6 +633,8 @@ The evidence lists every deferred instrument and the total scope size; a batch
 does not claim full-universe coverage. The CLI verifies this selection and its
 coverage metadata against the same ledgers and cutoff. Close-history collection
 uses only the selected active-strategy subset and never substitutes a broad universe.
+The independent intraday monitor uses its validated active universe throughout
+its existing trading session.
 Night positions exclude both fills and receipts recorded after that cutoff.
 This is a local-ledger research scope, not proof of current broker holdings.
 Local simulation and venue receipt counts are labelled separately. Broker position
@@ -641,6 +643,22 @@ coverage; snapshots beyond the cutoff do not expose positions, and stale snapsho
 remain labelled stale.
 Night source collection uses the same 160-call batch cap as day research; provider
 quotas and the 48-call, 14-minute model limits remain unchanged.
+
+Research drafts may optionally request at most two local ledger
+reads in `artifact.supportingAnalysis.financeLedgerReadRequests`. The existing
+position reader serves one history page of one to five receipts, orders, fills or
+fees; the thesis reader serves one named thesis without its transition history.
+The host fixes the state directory, Paper account, venue and observation cutoff.
+The model cannot supply those fields, a cursor or a different tool. Missing or
+ambiguous account identity and invalid requests become explicit unavailable or
+failed evidence, without creating a new mandatory module gate.
+
+These tools run after the selected modules and before the existing quality review,
+with no additional model round. Bounded results retain their source status, head
+reference and hash, label truncation, and enter review as untrusted data. Query
+results bind quality checkpoint reuse to their evidence fingerprint; research
+without a query retains its existing checkpoint key. Model-call and cancellation
+budgets, source requirements and all capital authorization gates remain unchanged.
 
 Aggregate cycle failures report a nonzero exit code even when settlement succeeded;
 `cycleExitCode` retains the cycle child's original code, and nested research results

@@ -161,8 +161,16 @@ export function openFinanceModelCheckpoints(
           }
         : undefined;
     },
-    async stage<T>(name: "committee" | "quality", execute: () => Promise<T>): Promise<T> {
-      const reservation = store.reserve(`stage:${name}`, 0);
+    async stage<T>(
+      name: "committee" | "quality",
+      execute: () => Promise<T>,
+      inputFingerprint?: string,
+    ): Promise<T> {
+      const stageKey =
+        name === "quality" && inputFingerprint
+          ? `stage:${name}:${caseflowFingerprint(inputFingerprint)}`
+          : `stage:${name}`;
+      const reservation = store.reserve(stageKey, 0);
       if (reservation.status === "completed") {
         reusedStages.push(name);
         return reservation.result as T;
@@ -171,7 +179,7 @@ export function openFinanceModelCheckpoints(
         throw new FinanceModelStageUncertainError(name);
       }
       const result = await execute();
-      store.complete(`stage:${name}`, reservation.token, result);
+      store.complete(stageKey, reservation.token, result);
       return result;
     },
     summary() {
