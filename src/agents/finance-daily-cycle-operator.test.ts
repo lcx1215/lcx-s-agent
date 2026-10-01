@@ -506,6 +506,19 @@ describe("explicit history sync before daily business", () => {
     differences: [],
     issues: [],
     feesInterpreted: true,
+    accountObservation: {
+      accountId: "synthetic",
+      currency: "USD" as const,
+      source: "https://paper-api.alpaca.markets/v2/account",
+      observedAt: "2025-02-01T00:00:00Z",
+      equity: null,
+      cash: 0,
+      buyingPower: null,
+      portfolioValue: null,
+      boundary:
+        "observed_account_values_not_execution_authority; buying_power_is_not_cash" as const,
+      unknownValueMeaning: "missing_or_invalid" as const,
+    },
     protection: {
       protective: [],
       unresolved: [],
@@ -709,6 +722,7 @@ it("installs the account controller from the explicit execution policy at the da
       inspectReconciliation: vi.fn(),
       accountBookProvider,
       executionQuoteProvider,
+      prepareExecutionQuote: vi.fn(),
       createSafetyContext,
     }));
     const result = await runFinanceDailyCycleOperator([...args, "--execution-policy", filename], {
@@ -763,6 +777,7 @@ it("checks reconciliation without collecting quotes or entering the trading cycl
       executionPolicyAuthorizationMode: "until_expiry" as const,
       inspectReconciliation,
       executionQuoteProvider,
+      prepareExecutionQuote: vi.fn(),
       accountBookProvider: vi.fn(),
       createSafetyContext: vi.fn(),
     }));
