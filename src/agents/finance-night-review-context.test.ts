@@ -125,12 +125,41 @@ describe("finance night review context", () => {
       });
       await appendFinanceBrokerHistory(directory, {
         kind: "broker_history",
+        accountId: "future-account",
+        venue: "alpaca:paper",
+        query: "reconciliation:future",
+        cursor: "",
+        payload: [
+          {
+            observedAt: "2026-09-22T22:00:01.000Z",
+            positions: [{ symbol: "SECRET-FUTURE", qty: "999" }],
+          },
+        ],
+      });
+      await appendFinanceBrokerHistory(directory, {
+        kind: "broker_history",
         accountId: "test-account",
         venue: "alpaca:paper",
         query: "reconciliation:window",
         cursor: "",
         payload: [
-          { observedAt: "2026-09-22T21:59:00.000Z", status: "reconciled", feesInterpreted: true },
+          {
+            observedAt: "2026-09-22T21:59:00.000Z",
+            status: "reconciled",
+            feesInterpreted: true,
+            positions: [{ symbol: "SPY", qty: "1" }],
+            protection: {
+              coverage: [
+                {
+                  instrument: "SPY",
+                  positionQuantity: 1,
+                  recognizedStopQuantity: 1,
+                  uncoveredQuantity: 0,
+                  status: "covered",
+                },
+              ],
+            },
+          },
         ],
       });
       const evidence = await buildFinanceNightReviewEvidence({
@@ -160,6 +189,25 @@ describe("finance night review context", () => {
       expect(review.boundaries.join(" ")).toContain("do not invent missed profits");
       const portfolio = JSON.parse(evidence[2].text);
       expect(portfolio.costsReconciled).toBe(false);
+      expect(portfolio).toMatchObject({
+        positionMeaning: "combined local execution ledger projection, not broker account holdings",
+        paperFillCount: 1,
+        venueFillCount: 1,
+        positions: [expect.objectContaining({ instrument: "SPY", quantity: 2 })],
+      });
+      const brokerSummary = JSON.parse(evidence[1].text);
+      expect(brokerSummary.positionSnapshots).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            accountId: "test-account",
+            venue: "alpaca:paper",
+            positions: [{ symbol: "SPY", quantity: 1 }],
+            protectionCoverage: [expect.objectContaining({ status: "covered" })],
+          }),
+          expect.objectContaining({ accountId: "future-account", freshness: "outside_cutoff" }),
+        ]),
+      );
+      expect(JSON.stringify(brokerSummary.positionSnapshots)).not.toContain("SECRET-FUTURE");
       // Exercise the real model prompt compactor, including a noisy portfolio entry.
       const prompt = buildQualityHarnessModelPrompt({
         schemaVersion: 1,
@@ -730,6 +778,265 @@ it("preserves held crypto identity and unions it with active strategy instrument
       { instrument: "BTC/USD", assetClass: "crypto", reasons: ["held_position"] },
       { instrument: "SPY", assetClass: "us_equity", reasons: ["active_strategy"] },
     ]);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("rotates overflow active instruments by ET date with stable same-date selection and coverage", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-night-scope-rotation-"));
+  try {
+    const instruments = Array.from(
+      { length: 18 },
+      (_, index) => `A${String.fromCharCode(65 + index)}`,
+    );
+    await declareFinanceStrategyRule(directory, {
+      kind: "declared",
+      ruleId: "wide-rule",
+      form: "trend",
+      instruments,
+      emits: "weights",
+      schedule: { kind: "daily" },
+      body: { frozenRule: { lookbackMonths: 6 } },
+      observedAt: "2026-09-01T00:00:00.000Z",
+    });
+    await activateFinanceStrategyRule(directory, {
+      kind: "activated",
+      ruleId: "wide-rule",
+      reason: "scope rotation fixture",
+      observedAt: "2026-09-02T00:00:00.000Z",
+    });
+    const asOf = "2026-09-29T21:00:00.000Z";
+    const [first, repeated, nextDate] = await Promise.all([
+      readFinanceNightReviewResearchScope({ directory, asOf }),
+      readFinanceNightReviewResearchScope({ directory, asOf }),
+      readFinanceNightReviewResearchScope({
+        directory,
+        asOf: "2026-09-30T21:00:00.000Z",
+      }),
+    ]);
+    expect(first).toEqual(repeated);
+    expect(first.instruments).toHaveLength(14);
+    expect(first.coverage).toMatchObject({
+      totalInstrumentCount: 18,
+      selectionMethod: "held_priority_et_date_rotation_v1",
+    });
+    expect(first.coverage?.deferredInstruments).toHaveLength(4);
+    expect(new Set(first.instruments.map((item) => item.instrument))).not.toEqual(
+      new Set(nextDate.instruments.map((item) => item.instrument)),
+    );
+    expect(
+      new Set([...first.instruments, ...nextDate.instruments].map((item) => item.instrument)).size,
+    ).toBe(18);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("prioritizes held local projections and rotates held overflow when it alone exceeds the cap", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-night-held-rotation-"));
+  try {
+    for (let index = 0; index < 17; index += 1) {
+      const instrument = `B${String.fromCharCode(65 + index)}`;
+      await appendFinanceExecutionReceipt(directory, {
+        schemaVersion: FINANCE_EXECUTION_RECEIPT_SCHEMA,
+        receiptId: `held-${index}`,
+        intentId: `held-intent-${index}`,
+        runAuthorizationId: "paper-run",
+        adapterId: "paper",
+        adapterKind: "paper",
+        venue: "paper",
+        instrument,
+        side: "buy",
+        orderType: "market",
+        quantity: 1,
+        referencePrice: 10,
+        referencePriceAt: "2026-09-29T20:00:00.000Z",
+        notional: 10,
+        executionAuthority: "declared_execution_adapter_required",
+        recordedAt: `2026-09-29T20:00:${String(index).padStart(2, "0")}.000Z`,
+        fill: {
+          filledQuantity: 1,
+          fillPrice: 10,
+          filledAt: `2026-09-29T20:00:${String(index).padStart(2, "0")}.000Z`,
+          venueRef: "paper",
+        },
+      });
+    }
+    const first = await readFinanceNightReviewResearchScope({
+      directory,
+      asOf: "2026-09-29T21:00:00.000Z",
+    });
+    const nextDate = await readFinanceNightReviewResearchScope({
+      directory,
+      asOf: "2026-09-30T21:00:00.000Z",
+    });
+    expect(first.instruments).toHaveLength(14);
+    expect(first.instruments.every((item) => item.reasons.includes("held_position"))).toBe(true);
+    expect(first.coverage?.totalInstrumentCount).toBe(17);
+    expect(first.coverage?.deferredInstruments).toHaveLength(3);
+    expect(new Set(first.instruments.map((item) => item.instrument))).not.toEqual(
+      new Set(nextDate.instruments.map((item) => item.instrument)),
+    );
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+it.each([14, 16])(
+  "reserves one rotating slot for active-only rules with %i held instruments",
+  async (heldCount) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-night-mixed-rotation-"));
+    try {
+      const heldSymbols = Array.from(
+        { length: heldCount },
+        (_, index) => `D${String.fromCharCode(65 + index)}`,
+      );
+      for (const [index, instrument] of heldSymbols.entries()) {
+        const at = `2026-09-29T20:00:${String(index).padStart(2, "0")}.000Z`;
+        await appendFinanceExecutionReceipt(directory, {
+          schemaVersion: FINANCE_EXECUTION_RECEIPT_SCHEMA,
+          receiptId: `mixed-held-${index}`,
+          intentId: `mixed-held-intent-${index}`,
+          runAuthorizationId: "paper-run",
+          adapterId: "paper",
+          adapterKind: "paper",
+          venue: "paper",
+          instrument,
+          side: "buy",
+          orderType: "market",
+          quantity: 1,
+          referencePrice: 10,
+          referencePriceAt: at,
+          notional: 10,
+          executionAuthority: "declared_execution_adapter_required",
+          recordedAt: at,
+          fill: { filledQuantity: 1, fillPrice: 10, filledAt: at, venueRef: "paper" },
+        });
+      }
+      await declareFinanceStrategyRule(directory, {
+        kind: "declared",
+        ruleId: "mixed-active-rule",
+        form: "trend",
+        instruments: ["VA", "VB"],
+        emits: "weights",
+        schedule: { kind: "daily" },
+        body: { frozenRule: { lookbackMonths: 6 } },
+        observedAt: "2026-09-01T00:00:00.000Z",
+      });
+      await activateFinanceStrategyRule(directory, {
+        kind: "activated",
+        ruleId: "mixed-active-rule",
+        reason: "mixed scope rotation fixture",
+        observedAt: "2026-09-02T00:00:00.000Z",
+      });
+      const first = await readFinanceNightReviewResearchScope({
+        directory,
+        asOf: "2026-09-29T21:00:00.000Z",
+      });
+      const nextDate = await readFinanceNightReviewResearchScope({
+        directory,
+        asOf: "2026-09-30T21:00:00.000Z",
+      });
+      for (const scope of [first, nextDate]) {
+        expect(scope.instruments).toHaveLength(14);
+        expect(
+          scope.instruments.filter((item) => item.reasons.includes("held_position")),
+        ).toHaveLength(13);
+        expect(scope.instruments.filter((item) => item.instrument.startsWith("V"))).toHaveLength(1);
+      }
+      expect(
+        new Set([...first.instruments, ...nextDate.instruments].map((item) => item.instrument))
+          .size,
+      ).toBe(heldCount + 2);
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+it("rejects future scope cutoffs and active symbols the scope cannot explain", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-night-invalid-scope-"));
+  try {
+    await declareFinanceStrategyRule(directory, {
+      kind: "declared",
+      ruleId: "invalid-symbol-rule",
+      form: "trend",
+      instruments: ["BAD_SYMBOL"],
+      emits: "weights",
+      schedule: { kind: "daily" },
+      body: { frozenRule: { lookbackMonths: 6 } },
+      observedAt: "2026-09-01T00:00:00.000Z",
+    });
+    await activateFinanceStrategyRule(directory, {
+      kind: "activated",
+      ruleId: "invalid-symbol-rule",
+      reason: "invalid identity fixture",
+      observedAt: "2026-09-02T00:00:00.000Z",
+    });
+    await expect(
+      readFinanceNightReviewResearchScope({
+        directory,
+        asOf: "2026-09-29T21:00:00.000Z",
+      }),
+    ).rejects.toThrow(/unsupported instrument identity/);
+    await expect(
+      readFinanceNightReviewResearchScope({
+        directory,
+        asOf: "2030-09-29T21:00:00.000Z",
+      }),
+    ).rejects.toThrow(/non-future asOf/);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("keeps close evidence bounded to selected active instruments while retaining all active rules", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-night-selected-eod-"));
+  try {
+    const instruments = Array.from(
+      { length: 18 },
+      (_, index) => `C${String.fromCharCode(65 + index)}`,
+    );
+    await declareFinanceStrategyRule(directory, {
+      kind: "declared",
+      ruleId: "wide-eod-rule",
+      form: "trend",
+      instruments,
+      emits: "weights",
+      schedule: { kind: "daily" },
+      body: { frozenRule: { lookbackMonths: 6 } },
+      observedAt: "2026-09-01T00:00:00.000Z",
+    });
+    await activateFinanceStrategyRule(directory, {
+      kind: "activated",
+      ruleId: "wide-eod-rule",
+      reason: "scope rotation fixture",
+      observedAt: "2026-09-02T00:00:00.000Z",
+    });
+    const evidence = await buildFinanceNightReviewEvidence({
+      directory,
+      asOf: "2026-09-29T21:00:00.000Z",
+      etDate: "2026-09-29",
+      includeResearchScope: true,
+      settlement: {
+        scoredFiled: { appended: 0, skipped: 0 },
+        reflection: null,
+        pending: [],
+        declined: [],
+        issues: [],
+      },
+    });
+    const scopeItem = evidence.find((item) => item.id === "finance-night:research-scope");
+    const scope = JSON.parse(scopeItem?.text ?? "{}") as {
+      instruments?: readonly { instrument: string; reasons: readonly string[] }[];
+    };
+    const rules = evidence.find((item) => item.id === "finance-night:rules:2026-09-29");
+    expect(JSON.parse(rules?.text ?? "{}").activeRules).toHaveLength(1);
+    expect(evidence.filter((item) => item.id.startsWith("finance-controller:eod:"))).toHaveLength(
+      14,
+    );
+    expect(scope.instruments).toHaveLength(14);
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }

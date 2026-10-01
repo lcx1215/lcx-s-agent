@@ -625,10 +625,20 @@ universe refreshed earlier in the same cycle is not incorrectly future-dated.
 Its explicit `--controller-research-scope` binds targets to nonzero position-ledger
 holdings and active strategy instruments in a unique controller-evidence entry.
 The research CLI verifies the same cutoff against those ledgers before model calls.
-The scope retains supported equity/crypto identities, rejects empty or unsupported
-scopes and more than 14 instruments, and never substitutes a broad universe.
+The scope retains supported equity/crypto identities and rejects empty or unsupported
+scopes. When the declared scope exceeds 14 instruments, a deterministic ET-date
+rotation selects at most 14, prioritizing positions while reserving one rotating
+slot for other active-strategy instruments if positions would fill the batch.
+The evidence lists every deferred instrument and the total scope size; a batch
+does not claim full-universe coverage. The CLI verifies this selection and its
+coverage metadata against the same ledgers and cutoff. Close-history collection
+uses only the selected active-strategy subset and never substitutes a broad universe.
 Night positions exclude both fills and receipts recorded after that cutoff.
 This is a local-ledger research scope, not proof of current broker holdings.
+Local simulation and venue receipt counts are labelled separately. Broker position
+snapshots retain their account, venue, reference, observation time and protection
+coverage; snapshots beyond the cutoff do not expose positions, and stale snapshots
+remain labelled stale.
 Night source collection uses the same 160-call batch cap as day research; provider
 quotas and the 48-call, 14-minute model limits remain unchanged.
 

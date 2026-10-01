@@ -8,7 +8,11 @@ import {
   readFinanceIntradayDecisions,
   readFinanceIntradayOutcome,
 } from "./finance-intraday-control-ledger.js";
-import { projectFinancePositions, readFinancePositionLedger } from "./finance-position-ledger.js";
+import {
+  projectFinancePositions,
+  readFinanceLatestBrokerReconciliations,
+  readFinancePositionLedger,
+} from "./finance-position-ledger.js";
 import { buildFinanceMonthlyTrendDerivedEvidence } from "./finance-research-evidence.js";
 import { readFinanceStrategyRuleLedger } from "./finance-strategy-rule-ledger.js";
 
@@ -57,7 +61,29 @@ export type FinanceNightResearchScope = Readonly<{
   asOf: string;
   activeStrategyIds: readonly string[];
   instruments: readonly FinanceNightResearchInstrument[];
+  coverage?: Readonly<{
+    totalInstrumentCount: number;
+    deferredInstruments: readonly FinanceNightResearchInstrument[];
+    selectionMethod: "held_priority_et_date_rotation_v1";
+  }>;
 }>;
+
+export function assertFinanceNightResearchAsOf(asOf: string): void {
+  const asOfMs = Date.parse(asOf);
+  if (!Number.isFinite(asOfMs) || asOfMs > Date.now()) {
+    throw new Error("night research scope requires a valid non-future asOf");
+  }
+}
+
+function rotateByEtDate<T>(items: readonly T[], asOf: string, pageSize: number): T[] {
+  if (items.length < 2) {
+    return [...items];
+  }
+  const etDate = financeEtClock(new Date(asOf)).date;
+  const dateOrdinal = Math.floor(Date.parse(`${etDate}T00:00:00.000Z`) / 86_400_000);
+  const offset = (((dateOrdinal * pageSize) % items.length) + items.length) % items.length;
+  return [...items.slice(offset), ...items.slice(0, offset)];
+}
 
 function financeNightResearchAssetClass(instrument: string): "us_equity" | "crypto" {
   const normalized = instrument.trim().toUpperCase();
@@ -75,6 +101,7 @@ function buildFinanceNightResearchScope(params: {
   positions: Awaited<ReturnType<typeof readFinancePositionLedger>>["ledger"]["positions"];
   activeRules: readonly Readonly<{ ruleId: string; instruments: readonly string[] }>[];
 }): FinanceNightResearchScope {
+  assertFinanceNightResearchAsOf(params.asOf);
   const instruments = new Map<
     string,
     {
@@ -104,24 +131,54 @@ function buildFinanceNightResearchScope(params: {
   if (instruments.size === 0) {
     throw new Error("night research scope has no held positions or active strategy instruments");
   }
-  if (instruments.size > FINANCE_NIGHT_RESEARCH_SCOPE_MAX_INSTRUMENTS) {
-    throw new Error(
-      `night research scope exceeds ${FINANCE_NIGHT_RESEARCH_SCOPE_MAX_INSTRUMENTS} instruments`,
-    );
-  }
+  const allInstruments = [...instruments.values()].map((item) =>
+    Object.freeze({
+      instrument: item.instrument,
+      assetClass: item.assetClass,
+      reasons: Object.freeze([...item.reasons].toSorted()),
+    }),
+  );
+  const selected =
+    allInstruments.length <= FINANCE_NIGHT_RESEARCH_SCOPE_MAX_INSTRUMENTS
+      ? allInstruments
+      : (() => {
+          const held = allInstruments.filter((item) => item.reasons.includes("held_position"));
+          const activeOnly = allInstruments
+            .filter((item) => !item.reasons.includes("held_position"))
+            .toSorted((left, right) => left.instrument.localeCompare(right.instrument));
+          const heldBudget =
+            FINANCE_NIGHT_RESEARCH_SCOPE_MAX_INSTRUMENTS - (activeOnly.length > 0 ? 1 : 0);
+          const heldPageSize = Math.min(held.length, heldBudget);
+          const selectedHeld = rotateByEtDate(
+            held.toSorted((left, right) => left.instrument.localeCompare(right.instrument)),
+            params.asOf,
+            heldPageSize,
+          ).slice(0, heldPageSize);
+          const remaining = FINANCE_NIGHT_RESEARCH_SCOPE_MAX_INSTRUMENTS - selectedHeld.length;
+          const selectedActive = rotateByEtDate(activeOnly, params.asOf, remaining).slice(
+            0,
+            remaining,
+          );
+          return [...selectedHeld, ...selectedActive];
+        })();
+  const selectedKeys = new Set(selected.map((item) => `${item.assetClass}:${item.instrument}`));
+  const deferredInstruments = allInstruments.filter(
+    (item) => !selectedKeys.has(`${item.assetClass}:${item.instrument}`),
+  );
   return Object.freeze({
     schemaVersion: FINANCE_NIGHT_RESEARCH_SCOPE_SCHEMA_VERSION,
     asOf: params.asOf,
     activeStrategyIds: Object.freeze(params.activeRules.map((rule) => rule.ruleId)),
-    instruments: Object.freeze(
-      [...instruments.values()].map((item) =>
-        Object.freeze({
-          instrument: item.instrument,
-          assetClass: item.assetClass,
-          reasons: Object.freeze([...item.reasons].toSorted()),
-        }),
-      ),
-    ),
+    instruments: Object.freeze(selected),
+    ...(deferredInstruments.length > 0
+      ? {
+          coverage: Object.freeze({
+            totalInstrumentCount: allInstruments.length,
+            deferredInstruments: Object.freeze(deferredInstruments),
+            selectionMethod: "held_priority_et_date_rotation_v1" as const,
+          }),
+        }
+      : {}),
   });
 }
 
@@ -236,7 +293,11 @@ export async function buildFinanceActiveStrategyResearchEvidence(params: {
   const activeRules = requestedIds
     ? requestedIds.map((id) => allActiveRules.find((rule) => rule.ruleId === id)!)
     : allActiveRules;
-  const declaredInstruments = [...new Set(activeRules.flatMap((rule) => rule.instruments))];
+  const declaredInstruments = [
+    ...new Set(
+      activeRules.flatMap((rule) => rule.instruments.map((item) => item.trim().toUpperCase())),
+    ),
+  ];
   const instruments = params.instrumentIds
     ? [...new Set(params.instrumentIds)]
     : declaredInstruments;
@@ -456,12 +517,14 @@ export async function buildFinanceNightReviewEvidence(params: {
   /** Include a fail-closed typed scope only for scheduler night research runs. */
   includeResearchScope?: boolean;
 }): Promise<readonly FinanceCommitteeEvidence[]> {
-  const [positions, strategyRules, decisions, brokerProfit] = await Promise.all([
-    readFinancePositionLedger(params.directory, { asOf: params.asOf }),
-    readFinanceStrategyRuleLedger(params.directory, { asOf: params.asOf }),
-    readFinanceIntradayDecisions(params.directory, { sessionDate: params.etDate }),
-    readFinanceBrokerProfitFeedback(params.directory, params.asOf),
-  ]);
+  const [positions, strategyRules, decisions, brokerProfit, brokerReconciliations] =
+    await Promise.all([
+      readFinancePositionLedger(params.directory, { asOf: params.asOf }),
+      readFinanceStrategyRuleLedger(params.directory, { asOf: params.asOf }),
+      readFinanceIntradayDecisions(params.directory, { sessionDate: params.etDate }),
+      readFinanceBrokerProfitFeedback(params.directory, params.asOf),
+      readFinanceLatestBrokerReconciliations(params.directory),
+    ]);
   const outcomes = await Promise.all(
     decisions.map(async (decision) => ({
       signalId: decision.input.signalId,
@@ -508,6 +571,13 @@ export async function buildFinanceNightReviewEvidence(params: {
             directory: params.directory,
             asOf: params.asOf,
             strategyIds: activeRules.map((rule) => rule.ruleId),
+            ...(researchScope
+              ? {
+                  instrumentIds: researchScope.instruments
+                    .filter((item) => item.reasons.includes("active_strategy"))
+                    .map((item) => item.instrument),
+                }
+              : {}),
           })
         ).filter((item) => item.id.startsWith("finance-controller:eod:"))
       : [];
@@ -531,6 +601,87 @@ export async function buildFinanceNightReviewEvidence(params: {
         "not_provided; do not assign account fill counts or fees to the requested instrument",
       boundary:
         "broker_paper_not_local_simulation; net excludes tax/fx; fill ownership is not strategy PnL",
+      positionSnapshots: brokerReconciliations.records.map((record) => {
+        const snapshot: unknown = record.snapshot;
+        const snapshotObject =
+          typeof snapshot === "object" && snapshot !== null && !Array.isArray(snapshot)
+            ? (snapshot as Record<string, unknown>)
+            : undefined;
+        const observedAt =
+          typeof snapshotObject?.observedAt === "string" ? snapshotObject.observedAt : undefined;
+        const observedAtMs = observedAt ? Date.parse(observedAt) : Number.NaN;
+        if (!snapshotObject || !observedAt || !Number.isFinite(observedAtMs)) {
+          return {
+            accountId: record.accountId,
+            venue: record.venue,
+            snapshotRef: record.ref,
+            freshness: "invalid_timestamp",
+          };
+        }
+        if (observedAtMs > Date.parse(params.asOf)) {
+          return {
+            accountId: record.accountId,
+            venue: record.venue,
+            snapshotRef: record.ref,
+            freshness: "outside_cutoff",
+          };
+        }
+        const snapshotPositions = Array.isArray(snapshotObject.positions)
+          ? snapshotObject.positions.flatMap((value) => {
+              if (typeof value !== "object" || value === null || Array.isArray(value)) {
+                return [];
+              }
+              const position = value as Record<string, unknown>;
+              const rawQuantity = position.qty;
+              const quantity =
+                typeof rawQuantity === "number"
+                  ? rawQuantity
+                  : typeof rawQuantity === "string" && rawQuantity.trim()
+                    ? Number(rawQuantity)
+                    : Number.NaN;
+              return typeof position.symbol === "string" && Number.isFinite(quantity)
+                ? [{ symbol: position.symbol, quantity }]
+                : [];
+            })
+          : [];
+        const protection =
+          typeof snapshotObject.protection === "object" &&
+          snapshotObject.protection !== null &&
+          !Array.isArray(snapshotObject.protection)
+            ? (snapshotObject.protection as Record<string, unknown>)
+            : undefined;
+        return {
+          accountId: record.accountId,
+          venue: record.venue,
+          snapshotRef: record.ref,
+          observedAt,
+          freshness:
+            !record.superseded && Date.parse(params.asOf) - observedAtMs <= 300_000
+              ? "fresh"
+              : "stale",
+          positions: snapshotPositions,
+          protectionCoverage: Array.isArray(protection?.coverage)
+            ? protection.coverage.flatMap((value) => {
+                if (typeof value !== "object" || value === null || Array.isArray(value)) {
+                  return [];
+                }
+                const item = value as Record<string, unknown>;
+                return typeof item.instrument === "string"
+                  ? [
+                      {
+                        instrument: item.instrument,
+                        positionQuantity: item.positionQuantity,
+                        recognizedStopQuantity: item.recognizedStopQuantity,
+                        uncoveredQuantity: item.uncoveredQuantity,
+                        status: item.status,
+                      },
+                    ]
+                  : [];
+              })
+            : [],
+        };
+      }),
+      omittedPositionSnapshotAccounts: brokerReconciliations.omittedAccounts,
       status: brokerProfit.status,
       ...(brokerProfit.status === "unavailable" ? { reason: brokerProfit.reason } : {}),
       accounts:
@@ -604,6 +755,13 @@ export async function buildFinanceNightReviewEvidence(params: {
         headRef: positions.headRef,
         receiptCount: positionsAtAsOf.receipts.length,
         positions: positionsAtAsOf.ledger.positions,
+        positionMeaning: "combined local execution ledger projection, not broker account holdings",
+        paperFillCount: positionsAtAsOf.receipts.filter(
+          (receipt) => receipt.adapterKind === "paper",
+        ).length,
+        venueFillCount: positionsAtAsOf.receipts.filter(
+          (receipt) => receipt.adapterKind === "venue",
+        ).length,
         pnlBasis: "ledger_projection_not_broker_reconciled_net_profit",
         costsReconciled: false,
         brokerProfit,

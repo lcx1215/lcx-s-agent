@@ -164,15 +164,79 @@ describe("controller-owned night research scope", () => {
         ],
       }),
     };
-    const invalidScope = parseControllerResearchScope([invalid], asOf);
-    expect(() =>
-      buildControllerNightResearchTargets({
-        ask: "night review",
+    expect(() => parseControllerResearchScope([invalid], asOf)).toThrow(
+      /unsupported instrument identity/,
+    );
+    expect(() => parseControllerResearchScope([evidence], "2030-09-29T00:00:00.000Z")).toThrow(
+      /non-future asOf/,
+    );
+  });
+
+  it("validates overflow coverage metadata and rejects tampering or unsupported identities", () => {
+    const asOf = "2026-09-29T00:00:00.000Z";
+    const selected = Array.from({ length: 14 }, (_, index) => ({
+      instrument: `A${String.fromCharCode(65 + index)}`,
+      assetClass: "us_equity",
+      reasons: ["active_strategy"],
+    }));
+    const deferred = ["ZZ", "ZY"].map((instrument) => ({
+      instrument,
+      assetClass: "us_equity",
+      reasons: ["active_strategy"],
+    }));
+    const evidence = {
+      id: FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_ID,
+      source: FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_SOURCE,
+      timestamp: asOf,
+      text: JSON.stringify({
+        schemaVersion: FINANCE_NIGHT_RESEARCH_SCOPE_SCHEMA_VERSION,
         asOf,
-        horizonMonths: 6,
-        instruments: invalidScope.instruments,
+        activeStrategyIds: ["daily-trend"],
+        instruments: selected,
+        coverage: {
+          totalInstrumentCount: 16,
+          deferredInstruments: deferred,
+          selectionMethod: "held_priority_et_date_rotation_v1",
+        },
       }),
-    ).toThrow(/unsupported us_equity instrument/);
+    };
+    expect(parseControllerResearchScope([evidence], asOf).coverage).toMatchObject({
+      totalInstrumentCount: 16,
+      deferredInstruments: deferred,
+    });
+    const malformed = (coverage: unknown) => ({
+      ...evidence,
+      text: JSON.stringify({ ...JSON.parse(evidence.text), coverage }),
+    });
+    expect(() =>
+      parseControllerResearchScope(
+        [malformed({ ...JSON.parse(evidence.text).coverage, totalInstrumentCount: 17 })],
+        asOf,
+      ),
+    ).toThrow(/coverage is invalid/);
+    expect(() =>
+      parseControllerResearchScope(
+        [
+          malformed({
+            ...JSON.parse(evidence.text).coverage,
+            deferredInstruments: [deferred[0], selected[0]],
+          }),
+        ],
+        asOf,
+      ),
+    ).toThrow(/duplicate instrument/);
+    expect(() =>
+      parseControllerResearchScope(
+        [
+          malformed({
+            ...JSON.parse(evidence.text).coverage,
+            totalInstrumentCount: 15,
+            deferredInstruments: [{ ...deferred[0], instrument: "BTC/USD" }],
+          }),
+        ],
+        asOf,
+      ),
+    ).toThrow(/unsupported instrument identity/);
   });
 
   it("fails closed for conflicting, invalid, duplicate, or oversized typed scope", () => {

@@ -16,6 +16,7 @@ import {
   FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_SOURCE,
   FINANCE_NIGHT_RESEARCH_SCOPE_MAX_INSTRUMENTS,
   FINANCE_NIGHT_RESEARCH_SCOPE_SCHEMA_VERSION,
+  assertFinanceNightResearchAsOf,
   readFinanceActiveStrategyResearchScope,
   readFinanceNightReviewResearchScope,
   type FinanceNightResearchInstrument,
@@ -386,6 +387,7 @@ export function parseControllerResearchScope(
   evidence: NonNullable<FinanceResearchRunInput["controllerEvidence"]>,
   asOf: string,
 ): FinanceNightResearchScope {
+  assertFinanceNightResearchAsOf(asOf);
   const matching = evidence.filter(
     (item) =>
       item.id === FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_ID ||
@@ -424,6 +426,12 @@ export function parseControllerResearchScope(
     throw new Error("controller night research scope is invalid or does not match --as-of");
   }
   const seen = new Set<string>();
+  const isSupportedIdentity = (instrument: string, assetClass: unknown) =>
+    assetClass === "crypto"
+      ? /^[A-Z0-9]{2,12}\/USD$/u.test(instrument)
+      : assetClass === "us_equity"
+        ? /^[A-Z]{1,5}(?:\.[A-Z])?$/u.test(instrument)
+        : false;
   const instruments = scope.instruments.map((value, index) => {
     if (typeof value !== "object" || value === null || Array.isArray(value)) {
       throw new Error(`controller night research scope instrument ${index} must be an object`);
@@ -440,6 +448,11 @@ export function parseControllerResearchScope(
       throw new Error(`controller night research scope instrument ${index} is malformed`);
     }
     const instrument = item.instrument.trim().toUpperCase();
+    if (!isSupportedIdentity(instrument, item.assetClass)) {
+      throw new Error(
+        `controller night research scope has unsupported instrument identity: ${instrument}`,
+      );
+    }
     const key = `${item.assetClass}:${instrument}`;
     if (!instrument || seen.has(key)) {
       throw new Error(
@@ -455,11 +468,80 @@ export function parseControllerResearchScope(
       ) as FinanceNightResearchInstrument["reasons"],
     }) as FinanceNightResearchInstrument;
   });
+  let coverage: FinanceNightResearchScope["coverage"];
+  if (scope.coverage !== undefined) {
+    if (
+      typeof scope.coverage !== "object" ||
+      scope.coverage === null ||
+      Array.isArray(scope.coverage)
+    ) {
+      throw new Error("controller night research scope coverage is malformed");
+    }
+    const rawCoverage = scope.coverage as Record<string, unknown>;
+    if (
+      !Number.isSafeInteger(rawCoverage.totalInstrumentCount) ||
+      (rawCoverage.totalInstrumentCount as number) <= instruments.length ||
+      rawCoverage.selectionMethod !== "held_priority_et_date_rotation_v1" ||
+      !Array.isArray(rawCoverage.deferredInstruments) ||
+      rawCoverage.deferredInstruments.length === 0 ||
+      (rawCoverage.totalInstrumentCount as number) !==
+        instruments.length + rawCoverage.deferredInstruments.length
+    ) {
+      throw new Error("controller night research scope coverage is invalid");
+    }
+    const deferredInstruments = rawCoverage.deferredInstruments.map((value, index) => {
+      if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        throw new Error(
+          `controller night research scope deferred instrument ${index} is malformed`,
+        );
+      }
+      const item = value as Record<string, unknown>;
+      if (
+        typeof item.instrument !== "string" ||
+        typeof item.assetClass !== "string" ||
+        (item.assetClass !== "us_equity" && item.assetClass !== "crypto") ||
+        !Array.isArray(item.reasons) ||
+        item.reasons.length === 0 ||
+        item.reasons.some((reason) => reason !== "held_position" && reason !== "active_strategy") ||
+        new Set(item.reasons).size !== item.reasons.length
+      ) {
+        throw new Error(
+          `controller night research scope deferred instrument ${index} is malformed`,
+        );
+      }
+      const instrument = item.instrument.trim().toUpperCase();
+      if (!isSupportedIdentity(instrument, item.assetClass)) {
+        throw new Error(
+          `controller night research scope has unsupported instrument identity: ${instrument}`,
+        );
+      }
+      const key = `${item.assetClass}:${instrument}`;
+      if (!instrument || seen.has(key)) {
+        throw new Error(
+          `controller night research scope has empty or duplicate instrument: ${instrument}`,
+        );
+      }
+      seen.add(key);
+      return Object.freeze({
+        instrument,
+        assetClass: item.assetClass,
+        reasons: Object.freeze(
+          [...item.reasons].toSorted((left, right) => (left < right ? -1 : left > right ? 1 : 0)),
+        ) as FinanceNightResearchInstrument["reasons"],
+      }) as FinanceNightResearchInstrument;
+    });
+    coverage = Object.freeze({
+      totalInstrumentCount: rawCoverage.totalInstrumentCount as number,
+      deferredInstruments: Object.freeze(deferredInstruments),
+      selectionMethod: "held_priority_et_date_rotation_v1",
+    });
+  }
   return Object.freeze({
     schemaVersion: FINANCE_NIGHT_RESEARCH_SCOPE_SCHEMA_VERSION,
     asOf,
     activeStrategyIds: Object.freeze([...(scope.activeStrategyIds as string[])]),
     instruments: Object.freeze(instruments),
+    ...(coverage ? { coverage } : {}),
   });
 }
 
