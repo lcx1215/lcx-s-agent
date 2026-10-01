@@ -82,8 +82,18 @@ export const ALPACA_SAFETY_DIAGNOSTIC_STAGES = [
 ] as const;
 export type AlpacaSafetyDiagnosticStage = (typeof ALPACA_SAFETY_DIAGNOSTIC_STAGES)[number];
 
+export const ALPACA_SAFETY_ACCOUNT_ARITHMETIC_CONDITIONS = [
+  "equity_non_positive",
+  "negative_cash",
+  "nonzero_short_value",
+  "gross_above_equity",
+  "gross_valuation_drift",
+  "cash_equity_mismatch",
+  "untracked_equity_high",
+] as const;
+
 export type AlpacaSafetyAccountArithmeticDiagnostic = {
-  failedConditions: readonly string[];
+  failedConditions: (typeof ALPACA_SAFETY_ACCOUNT_ARITHMETIC_CONDITIONS)[number][];
   values: Record<
     | "equity"
     | "cash"
@@ -506,18 +516,30 @@ export async function readAlpacaPaperSafetyFacts(
     ) {
       if (options.diagnostics) {
         const finite = (value: number): number | null => (Number.isFinite(value) ? value : null);
+        const failedConditions: AlpacaSafetyAccountArithmeticDiagnostic["failedConditions"] = [];
+        if (equity <= 0) {
+          failedConditions.push("equity_non_positive");
+        }
+        if (cash < 0) {
+          failedConditions.push("negative_cash");
+        }
+        if (shortValue !== 0) {
+          failedConditions.push("nonzero_short_value");
+        }
+        if (accountGross > equity) {
+          failedConditions.push("gross_above_equity");
+        }
+        if (Math.abs(gross - longValue) > grossDriftTolerance) {
+          failedConditions.push("gross_valuation_drift");
+        }
+        if (Math.abs(cash + longValue - equity) > 0.01) {
+          failedConditions.push("cash_equity_mismatch");
+        }
+        if (!evidence.trackNewHigh && evidence.peakEquity < equity) {
+          failedConditions.push("untracked_equity_high");
+        }
         accountArithmetic = {
-          failedConditions: [
-            ...(equity <= 0 ? ["equity_non_positive"] : []),
-            ...(cash < 0 ? ["negative_cash"] : []),
-            ...(shortValue !== 0 ? ["nonzero_short_value"] : []),
-            ...(accountGross > equity ? ["gross_above_equity"] : []),
-            ...(Math.abs(gross - longValue) > grossDriftTolerance ? ["gross_valuation_drift"] : []),
-            ...(Math.abs(cash + longValue - equity) > 0.01 ? ["cash_equity_mismatch"] : []),
-            ...(!evidence.trackNewHigh && evidence.peakEquity < equity
-              ? ["untracked_equity_high"]
-              : []),
-          ],
+          failedConditions,
           values: {
             equity,
             cash,

@@ -3,10 +3,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { acquireFileLock } from "../plugin-sdk/file-lock.js";
 import {
+  ALPACA_SAFETY_ACCOUNT_ARITHMETIC_CONDITIONS,
   ALPACA_SAFETY_DIAGNOSTIC_STAGES,
   ALPACA_SAFETY_FAILURE_CODES,
 } from "./finance-alpaca-safety-provider.js";
 import type {
+  AlpacaSafetyAccountArithmeticDiagnostic,
   AlpacaSafetyFailureCode,
   AlpacaSafetyDiagnosticStage,
 } from "./finance-alpaca-safety-provider.js";
@@ -124,6 +126,7 @@ export type FinanceExecutionSafetyFailure = Readonly<{
   provider?: Readonly<{
     reason: AlpacaSafetyFailureCode;
     stage?: AlpacaSafetyDiagnosticStage;
+    accountArithmetic?: AlpacaSafetyAccountArithmeticDiagnostic;
   }>;
   attempt?: FinanceExecutionSafetyAttempt;
 }>;
@@ -249,18 +252,53 @@ export class FinanceExecutionSafetyFactsError extends Error {
   readonly provider?: Readonly<{
     reason: AlpacaSafetyFailureCode;
     stage?: AlpacaSafetyDiagnosticStage;
+    accountArithmetic?: AlpacaSafetyAccountArithmeticDiagnostic;
   }>;
 
   constructor(
     category: (typeof FINANCE_EXECUTION_SAFETY_CONTROLLER_FAILURE_CATEGORIES)[number],
-    provider?: { reason: AlpacaSafetyFailureCode; stage?: AlpacaSafetyDiagnosticStage },
+    provider?: {
+      reason: AlpacaSafetyFailureCode;
+      stage?: AlpacaSafetyDiagnosticStage;
+      accountArithmetic?: AlpacaSafetyAccountArithmeticDiagnostic;
+    },
   ) {
+    const accountArithmetic = provider?.accountArithmetic;
+    const arithmeticValues = accountArithmetic?.values;
+    const arithmeticKeys = [
+      "equity",
+      "cash",
+      "shortMarketValue",
+      "positionGross",
+      "longMarketValue",
+      "accountGross",
+      "grossDrift",
+      "grossDriftTolerance",
+      "cashEquityResidual",
+      "cashEquityTolerance",
+      "controllerPeakEquity",
+    ] as const;
     if (
       !FINANCE_EXECUTION_SAFETY_CONTROLLER_FAILURE_CATEGORIES.some((item) => item === category) ||
       (provider &&
         (!ALPACA_SAFETY_FAILURE_CODES.some((item) => item === provider.reason) ||
           (provider.stage !== undefined &&
-            !ALPACA_SAFETY_DIAGNOSTIC_STAGES.some((item) => item === provider.stage))))
+            !ALPACA_SAFETY_DIAGNOSTIC_STAGES.some((item) => item === provider.stage)))) ||
+      (accountArithmetic !== undefined &&
+        (provider?.reason !== "alpaca_safety_facts_inconsistent" ||
+          provider.stage !== "account_arithmetic" ||
+          !Array.isArray(accountArithmetic.failedConditions) ||
+          accountArithmetic.failedConditions.length === 0 ||
+          accountArithmetic.failedConditions.some(
+            (item) => !ALPACA_SAFETY_ACCOUNT_ARITHMETIC_CONDITIONS.includes(item),
+          ) ||
+          typeof accountArithmetic.trackNewHigh !== "boolean" ||
+          !arithmeticValues ||
+          Object.keys(arithmeticValues).length !== arithmeticKeys.length ||
+          arithmeticKeys.some((key) => {
+            const value = arithmeticValues[key];
+            return value !== null && (typeof value !== "number" || !Number.isFinite(value));
+          })))
     ) {
       throw new Error("invalid finance execution safety failure classification");
     }
@@ -275,6 +313,17 @@ export class FinanceExecutionSafetyFactsError extends Error {
       ? Object.freeze({
           reason: provider.reason,
           ...(provider.stage === undefined ? {} : { stage: provider.stage }),
+          ...(accountArithmetic === undefined
+            ? {}
+            : {
+                accountArithmetic: {
+                  failedConditions: [...accountArithmetic.failedConditions],
+                  values: Object.fromEntries(
+                    arithmeticKeys.map((key) => [key, arithmeticValues?.[key] ?? null]),
+                  ) as AlpacaSafetyAccountArithmeticDiagnostic["values"],
+                  trackNewHigh: accountArithmetic.trackNewHigh,
+                },
+              }),
         })
       : undefined;
   }

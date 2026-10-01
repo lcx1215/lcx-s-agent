@@ -860,6 +860,27 @@ describe("intraday decision execution bridge", () => {
       reason: "alpaca_safety_facts_inconsistent",
       stage: "account_arithmetic",
     }),
+    new FinanceExecutionSafetyFactsError("account_snapshot_unavailable", {
+      reason: "alpaca_safety_facts_inconsistent",
+      stage: "account_arithmetic",
+      accountArithmetic: {
+        failedConditions: ["cash_equity_mismatch"],
+        values: {
+          equity: 100,
+          cash: 90,
+          shortMarketValue: 0,
+          positionGross: 0,
+          longMarketValue: 9,
+          accountGross: 9,
+          grossDrift: 0,
+          grossDriftTolerance: 0.05,
+          cashEquityResidual: -1,
+          cashEquityTolerance: 0.01,
+          controllerPeakEquity: 100,
+        },
+        trackNewHigh: true,
+      },
+    }),
   ])("preserves a typed controller failure before review (%s)", async (error) => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-facts-failure-"));
     temporary.push(directory);

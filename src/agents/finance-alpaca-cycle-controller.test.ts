@@ -341,6 +341,73 @@ it("reads one quote before review and re-reads broker facts at the final safety 
   expect(finalReads.some((url) => url.pathname.includes("/quotes/"))).toBe(false);
 });
 
+it("persists the exact account arithmetic refusal from final broker facts", async () => {
+  const f = await fixture();
+  const quote = await f.controller.prepareExecutionQuote(
+    { instrument: "SPY", side: "buy", assetClass: "us_equity" },
+    AbortSignal.timeout(5000),
+  );
+  // The reconciled snapshot was valid; the final account GET must catch this change.
+  f.account.cash = "899";
+  const intent: FinanceExecutionIntent = {
+    intentId: "arithmetic-refusal",
+    instrument: "SPY",
+    side: "buy",
+    quantity: 1,
+    orderType: "market",
+    referencePrice: quote.referencePrice,
+    referencePriceAt: quote.referencePriceAt,
+    runAuthorizationId: "test-run",
+    rationale: "synthetic",
+  };
+  const budget = {
+    automation: "unattended" as const,
+    allowedInstruments: ["SPY"],
+    maxOrderNotional: 200,
+    maxInstrumentNotional: 500,
+    maxOrdersPerRun: 3,
+  };
+  const result = await placeFinanceOrder({
+    mode: "live_execution",
+    committedInstrumentNotional: 0,
+    ordersPlacedThisRun: 0,
+    executionAdapterId: "alpaca-venue",
+    adapters: [
+      {
+        id: "alpaca-venue",
+        venue: "alpaca:paper",
+        kind: "venue",
+        instruments: ["SPY"],
+        orderTypes: ["market"],
+        credentialsAuthority: "external",
+        execute: f.execute,
+      },
+    ],
+    intent,
+    budget,
+    safetyContext: f.controller.createSafetyContext({
+      intent,
+      budget,
+      adapterId: "alpaca-venue",
+      venue: "alpaca:paper",
+    }),
+  });
+  expect(result).toMatchObject({
+    status: "refused",
+    safetyFailure: {
+      provider: {
+        reason: "alpaca_safety_facts_inconsistent",
+        stage: "account_arithmetic",
+        accountArithmetic: {
+          failedConditions: ["cash_equity_mismatch"],
+          values: { cashEquityResidual: -1, cashEquityTolerance: 0.01 },
+        },
+      },
+    },
+  });
+  expect(f.execute).not.toHaveBeenCalled();
+});
+
 it("classifies a broker reconciliation transport failure without dispatch or raw error leakage", async () => {
   const f = await fixture();
   const quote = await f.controller.executionQuoteProvider(

@@ -219,6 +219,7 @@ export function createFinanceAlpacaCycleController(options: {
       throw new FinanceExecutionSafetyFactsError("account_snapshot_unavailable", {
         reason: result.reason,
         stage: result.diagnostic,
+        ...(result.accountArithmetic ? { accountArithmetic: result.accountArithmetic } : {}),
       });
     }
     signal.throwIfAborted();

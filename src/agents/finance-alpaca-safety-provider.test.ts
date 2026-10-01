@@ -521,11 +521,15 @@ it.each([
   async (condition, patch) => {
     const f = fixture();
     Object.assign(f.account, patch);
-    f.options.diagnostics = true;
-    if (condition === "untracked_equity_high") {
-      f.options.evidence.peakEquity = 999;
-    }
-    const result = await readAlpacaPaperSafetyFacts(f.options);
+    const options = {
+      ...f.options,
+      diagnostics: true,
+      evidence: {
+        ...f.options.evidence,
+        peakEquity: condition === "untracked_equity_high" ? 999 : f.options.evidence.peakEquity,
+      },
+    };
+    const result = await readAlpacaPaperSafetyFacts(options);
     expect(result.ok).toBe(false);
     if (result.ok) {
       return;
@@ -536,8 +540,7 @@ it.each([
     expect(JSON.stringify(result)).not.toMatch(
       /paper-account|FAKE|authorized-session|controller-ledger/,
     );
-    f.options.diagnostics = false;
-    expect(await readAlpacaPaperSafetyFacts(f.options)).toEqual({
+    expect(await readAlpacaPaperSafetyFacts({ ...options, diagnostics: false })).toEqual({
       ok: false,
       reason: "alpaca_safety_facts_inconsistent",
     });
@@ -545,21 +548,28 @@ it.each([
 );
 it("keeps tracked equity highs admissible with diagnostics enabled", async () => {
   const f = fixture();
-  f.options.diagnostics = true;
-  f.options.evidence.peakEquity = 999;
-  f.options.evidence.trackNewHigh = true;
-  expect((await readAlpacaPaperSafetyFacts(f.options)).ok).toBe(true);
+  expect(
+    (
+      await readAlpacaPaperSafetyFacts({
+        ...f.options,
+        diagnostics: true,
+        evidence: { ...f.options.evidence, peakEquity: 999, trackNewHigh: true },
+      })
+    ).ok,
+  ).toBe(true);
 });
 it("reports overflowed aggregate values explicitly as null", async () => {
   const f = fixture();
-  f.options.diagnostics = true;
   f.account.equity = "1e308";
   f.account.cash = "0";
   f.account.long_market_value = "1e308";
-  f.options.evidence.peakEquity = 1e308;
   f.positions[0].market_value = "1e308";
   f.positions.push({ ...f.positions[0], symbol: "QQQ" });
-  const result = await readAlpacaPaperSafetyFacts(f.options);
+  const result = await readAlpacaPaperSafetyFacts({
+    ...f.options,
+    diagnostics: true,
+    evidence: { ...f.options.evidence, peakEquity: 1e308 },
+  });
   expect(result.ok).toBe(false);
   if (result.ok) {
     return;

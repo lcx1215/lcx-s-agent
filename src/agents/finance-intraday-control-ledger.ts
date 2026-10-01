@@ -4,6 +4,7 @@ import { z } from "zod";
 import { applySqliteMigrations, type SqliteMigration } from "../memory/sqlite-migrations.js";
 import { requireNodeSqlite } from "../memory/sqlite.js";
 import {
+  ALPACA_SAFETY_ACCOUNT_ARITHMETIC_CONDITIONS,
   ALPACA_SAFETY_DIAGNOSTIC_STAGES,
   ALPACA_SAFETY_FAILURE_CODES,
 } from "./finance-alpaca-safety-provider.js";
@@ -31,6 +32,28 @@ const FinanceIntradayExecutionSafetyFailureRecord = z
       .object({
         reason: z.enum(ALPACA_SAFETY_FAILURE_CODES),
         stage: z.enum(ALPACA_SAFETY_DIAGNOSTIC_STAGES).optional(),
+        accountArithmetic: z
+          .object({
+            failedConditions: z.array(z.enum(ALPACA_SAFETY_ACCOUNT_ARITHMETIC_CONDITIONS)).min(1),
+            values: z
+              .object({
+                equity: z.number().finite().nullable(),
+                cash: z.number().finite().nullable(),
+                shortMarketValue: z.number().finite().nullable(),
+                positionGross: z.number().finite().nullable(),
+                longMarketValue: z.number().finite().nullable(),
+                accountGross: z.number().finite().nullable(),
+                grossDrift: z.number().finite().nullable(),
+                grossDriftTolerance: z.number().finite().nullable(),
+                cashEquityResidual: z.number().finite().nullable(),
+                cashEquityTolerance: z.number().finite().nullable(),
+                controllerPeakEquity: z.number().finite().nullable(),
+              })
+              .strict(),
+            trackNewHigh: z.boolean(),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .optional(),
