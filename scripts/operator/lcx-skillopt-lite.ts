@@ -1,5 +1,8 @@
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import { DEFAULT_WORKSPACE_DIR, GOVERNANCE_AUTOPILOT_LATEST_PATH } from "./lcx-local-paths.ts";
 
 type CliOptions = {
@@ -795,18 +798,61 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-function targetedEvalCommand(
-  adapterPath: string | undefined,
-  caseIds: string[],
-  regressionCaseIds: string[],
-  receiptPath: string,
-): string {
-  const adapterArg = adapterPath ? `--adapter ${shellQuote(adapterPath)}` : "--contract-only";
-  const receiptArg = `--receipt ${shellQuote(receiptPath)}`;
-  if (caseIds.length > 0) {
-    return `node --import tsx scripts/operator/local-brain-distill-eval.ts ${adapterArg} --hardened --case-id ${caseIds.join(",")} --summary-only --json --timeout-ms 180000 ${receiptArg}`;
+async function validateEvalCases(caseIds: string[]) {
+  const scriptPath = path.join(import.meta.dirname, "local-brain-distill-eval.ts");
+  const source = await fs.readFile(scriptPath);
+  const command = `node --import tsx scripts/operator/local-brain-distill-eval.ts --contract-only --case-id ${shellQuote(caseIds.join(","))} --summary-only --json`;
+  if (caseIds.length === 0) {
+    return {
+      ok: false,
+      caseIds,
+      command: null,
+      reason: "no_eval_cases",
+      registrySha256: createHash("sha256").update(source).digest("hex"),
+    };
   }
-  return `node --import tsx scripts/operator/local-brain-distill-eval.ts ${adapterArg} --contract-only --case-id ${regressionCaseIds.join(",")} --json ${receiptArg}`;
+  // Use the evaluator's own registry expansion, with no model, receipt or workspace writes.
+  try {
+    const result = await promisify(execFile)(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        scriptPath,
+        "--contract-only",
+        "--case-id",
+        caseIds.join(","),
+        "--summary-only",
+        "--json",
+      ],
+      { timeout: 30000, maxBuffer: 2 * 1024 * 1024 },
+    );
+    const parsed = JSON.parse(result.stdout) as {
+      contractOnly?: boolean;
+      summary?: { passed?: number; total?: number };
+    };
+    const ok =
+      parsed.contractOnly === true &&
+      typeof parsed.summary?.total === "number" &&
+      parsed.summary.total > 0 &&
+      parsed.summary.passed === parsed.summary.total;
+    return {
+      ok,
+      caseIds,
+      command,
+      reason: ok ? null : "contract_validation_failed_or_incomplete",
+      registrySha256: createHash("sha256").update(source).digest("hex"),
+    };
+  } catch (error) {
+    const diagnostic = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      caseIds,
+      command: null,
+      reason: diagnostic,
+      registrySha256: createHash("sha256").update(source).digest("hex"),
+    };
+  }
 }
 
 function buildInstantPreflight(params: {
@@ -848,15 +894,12 @@ function buildProofChain(params: {
   truth: LatestAutopilotTruth;
   adapterPath?: string;
   trainCases: string[];
+  validationCases: string[];
   regressionCases: string[];
+  registryValidation: Awaited<ReturnType<typeof validateEvalCases>>;
+  candidateIdentities: { skillId: string; path: string; sha256: string; materialized: boolean }[];
   receiptPath: string;
 }) {
-  const targetedCommand = targetedEvalCommand(
-    params.adapterPath,
-    params.trainCases,
-    params.regressionCases,
-    params.receiptPath,
-  );
   return {
     boundary: "local_skillopt_proof_chain_only",
     immediateUse: {
@@ -866,14 +909,28 @@ function buildProofChain(params: {
       externalChannelApplied: false,
     },
     targetedEval: {
-      status:
-        params.truth.activeProcessCount > 0
-          ? "blocked_by_active_training_or_eval"
-          : "ready_when_idle",
-      command: targetedCommand,
+      status: params.registryValidation.ok
+        ? "blocked_candidate_injection_unsupported"
+        : params.registryValidation.reason?.includes("unknown eval case id(s)")
+          ? "blocked_invalid_eval_cases"
+          : "blocked_contract_validation_failed",
+      command: null,
+      contractDiagnosticCommand: params.registryValidation.command,
+      registryValidation: params.registryValidation,
+      caseGroups: {
+        train: params.trainCases,
+        validation: params.validationCases,
+        regression: params.regressionCases,
+      },
+      candidateIdentities: params.candidateIdentities,
+      candidateInjectionSupported: false,
+      behaviorAccepted: false,
+      reason:
+        "The current evaluator does not load candidate Skill text or compare baseline and candidate; contract-only diagnostics cannot establish Skill improvement.",
       adapterPath: params.adapterPath,
       receiptPath: params.receiptPath,
-      acceptanceGate: "targeted cases improve and regression cases stay clean",
+      acceptanceGate:
+        "candidate identity verified, paired baseline/candidate validation improves and all regression cases stay clean",
     },
     modelWeightAbsorption: {
       status: "not_absorbed_until_training_and_promotion_truth",
@@ -990,11 +1047,23 @@ async function main() {
   const skillPathMap = Object.fromEntries(
     skillPackets.map((packet) => [packet.spec.id, packet.relativeBestSkillPath]),
   );
+  const registryValidation = await validateEvalCases(
+    unique([...unionTrainCases, ...unionValidationCases, ...unionRegressionCases]),
+  );
+  const candidateIdentities = skillPackets.map((packet) => ({
+    skillId: packet.spec.id,
+    path: packet.candidatePath,
+    sha256: createHash("sha256").update(packet.outputMarkdown).digest("hex"),
+    materialized: false,
+  }));
   const proofChain = buildProofChain({
     truth,
     adapterPath: truth.latestCandidateAdapter ?? truth.selectedCleanAdapter,
     trainCases: unionTrainCases,
+    validationCases: unionValidationCases,
     regressionCases: unionRegressionCases,
+    registryValidation,
+    candidateIdentities,
     receiptPath: path.join(workspaceDir, "state", "lcx-skillopt-targeted-eval-receipt-latest.json"),
   });
   const instantPreflight = buildInstantPreflight({
@@ -1073,7 +1142,11 @@ async function main() {
     proofChain,
     absorptionPlan: proofChain.modelWeightAbsorption,
     externalChannelProofPlan: proofChain.externalChannelBinding,
-    nextIdleAction: "run_targeted_eval_then_accept_or_reject_skill_edit",
+    nextIdleAction: registryValidation.ok
+      ? "add_candidate_injection_and_paired_behavior_eval_before_acceptance"
+      : registryValidation.reason?.includes("unknown eval case id(s)")
+        ? "migrate_or_remove_invalid_eval_cases_with_semantic_review"
+        : "inspect_contract_validation_failure_before_model_eval",
     nextIdleCommand: proofChain.targetedEval.command,
     liveTouched: false,
     providerConfigTouched: false,
@@ -1105,6 +1178,10 @@ async function main() {
       if (options.phase === "candidate-edit") {
         await fs.mkdir(path.dirname(packet.candidatePath), { recursive: true });
         await fs.writeFile(packet.candidatePath, packet.outputMarkdown, "utf8");
+        const identity = candidateIdentities.find((entry) => entry.skillId === packet.spec.id);
+        if (identity) {
+          identity.materialized = true;
+        }
       }
       if (packet.accepted) {
         await fs.writeFile(packet.bestSkillPath, packet.outputMarkdown, "utf8");

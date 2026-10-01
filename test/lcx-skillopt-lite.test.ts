@@ -1,8 +1,24 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+
+type SkillOptResult = Record<string, unknown> & {
+  trainCases: string[];
+  validationCases: string[];
+  regressionCases: string[];
+  proofChain: {
+    targetedEval: {
+      status: string;
+      contractDiagnosticCommand: string | null;
+      caseGroups: { train: string[]; validation: string[]; regression: string[] };
+      registryValidation: { ok: boolean; reason: string | null; caseIds: string[] };
+      candidateIdentities: { path: string; sha256: string; materialized: boolean }[];
+    };
+  };
+};
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const scriptPath = path.join(repoRoot, "scripts/operator/lcx-skillopt-lite.ts");
@@ -65,6 +81,65 @@ describe("lcx-skillopt-lite CLI", () => {
     }
   });
 
+  it("blocks behavior attribution even when every case is registered", async () => {
+    workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-skillopt-lite-"));
+    await seedAutopilot(workspaceDir);
+    const statePath = path.join(workspaceDir, "state", "lcx-governance-autopilot-latest.json");
+    const snapshot = JSON.parse(await fs.readFile(statePath, "utf8"));
+    snapshot.owners.trainingPlan.latestCandidateEval.parseRecoveredCaseIds = [
+      "single_stock_curve_technical_timing_preflight",
+    ];
+    await fs.writeFile(statePath, JSON.stringify(snapshot));
+    const result = runCli(
+      [
+        "--skill",
+        "single_stock_curve_technical_timing_preflight",
+        "--candidate-edit",
+        "--no-write",
+        "--json",
+      ],
+      workspaceDir,
+    );
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as SkillOptResult;
+    expect(parsed.proofChain.targetedEval).toMatchObject({
+      status: "blocked_candidate_injection_unsupported",
+      behaviorAccepted: false,
+      registryValidation: { ok: true },
+    });
+    expect(parsed.proofChain.targetedEval.contractDiagnosticCommand).toContain("--contract-only");
+    expect(parsed.nextIdleCommand).toBeNull();
+  });
+
+  it("rejects historical case IDs before offering a model eval command", async () => {
+    workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-skillopt-lite-"));
+    await seedAutopilot(workspaceDir);
+    const statePath = path.join(workspaceDir, "state", "lcx-governance-autopilot-latest.json");
+    const snapshot = JSON.parse(await fs.readFile(statePath, "utf8"));
+    snapshot.owners.trainingPlan.latestCandidateEval.parseRecoveredCaseIds = [
+      "short_lark_commodity_scope_01",
+    ];
+    await fs.writeFile(statePath, JSON.stringify(snapshot));
+    const result = runCli(
+      [
+        "--skill",
+        "external_channel_boundary_preflight",
+        "--candidate-edit",
+        "--no-write",
+        "--json",
+      ],
+      workspaceDir,
+    );
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as SkillOptResult;
+    expect(parsed.proofChain.targetedEval.status).toBe("blocked_invalid_eval_cases");
+    expect(parsed.proofChain.targetedEval.registryValidation.reason).toContain(
+      "unknown eval case id",
+    );
+    expect(parsed.nextIdleCommand).toBeNull();
+    expect(parsed.proofChain.targetedEval.candidateIdentities[0].materialized).toBe(false);
+  });
+
   it("builds a dry-run SkillOpt-lite split from latest governance truth", async () => {
     workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-skillopt-lite-"));
     await seedAutopilot(workspaceDir);
@@ -81,7 +156,7 @@ describe("lcx-skillopt-lite CLI", () => {
       workspaceDir,
     );
     expect(result.status).toBe(0);
-    const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
+    const parsed = JSON.parse(result.stdout) as SkillOptResult;
 
     expect(parsed).toEqual(
       expect.objectContaining({
@@ -122,7 +197,7 @@ describe("lcx-skillopt-lite CLI", () => {
 
     const result = runCli(["--json"], workspaceDir);
     expect(result.status).toBe(0);
-    const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
+    const parsed = JSON.parse(result.stdout) as SkillOptResult;
 
     expect(parsed).toEqual(
       expect.objectContaining({
@@ -179,7 +254,7 @@ describe("lcx-skillopt-lite CLI", () => {
       workspaceDir,
     );
     expect(result.status).toBe(0);
-    const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
+    const parsed = JSON.parse(result.stdout) as SkillOptResult;
 
     expect(parsed).toEqual(
       expect.objectContaining({
@@ -204,10 +279,26 @@ describe("lcx-skillopt-lite CLI", () => {
         boundary: "local_skillopt_proof_chain_only",
       }),
     );
-    expect(parsed.nextIdleCommand).toContain("--adapter '/adapters/candidate-r6'");
-    expect(parsed.nextIdleCommand).not.toContain("--adapter latest-passing");
-    expect(parsed.nextIdleCommand).toContain("--hardened");
-    expect(parsed.nextIdleCommand).toContain("--receipt");
+    expect(parsed.nextIdleCommand).toBeNull();
+    expect(parsed.proofChain.targetedEval).toMatchObject({
+      command: null,
+      candidateInjectionSupported: false,
+      behaviorAccepted: false,
+    });
+    expect(parsed.proofChain.targetedEval.caseGroups).toEqual({
+      train: parsed.trainCases,
+      validation: parsed.validationCases,
+      regression: parsed.regressionCases,
+    });
+    const requestedIds = parsed.proofChain.targetedEval.registryValidation.caseIds;
+    for (const id of [...parsed.trainCases, ...parsed.validationCases, ...parsed.regressionCases]) {
+      expect(requestedIds).toContain(id);
+    }
+    for (const identity of parsed.proofChain.targetedEval.candidateIdentities) {
+      const bytes = await fs.readFile(identity.path);
+      expect(createHash("sha256").update(bytes).digest("hex")).toBe(identity.sha256);
+      expect(identity.materialized).toBe(true);
+    }
     expect(parsed.absorptionPlan).toEqual(
       expect.objectContaining({
         status: "not_absorbed_until_training_and_promotion_truth",
@@ -264,7 +355,7 @@ describe("lcx-skillopt-lite CLI", () => {
       workspaceDir,
     );
     expect(result.status).toBe(0);
-    const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
+    const parsed = JSON.parse(result.stdout) as SkillOptResult;
 
     expect(parsed).toEqual(
       expect.objectContaining({
@@ -298,7 +389,7 @@ describe("lcx-skillopt-lite CLI", () => {
       workspaceDir,
     );
     expect(result.status).toBe(0);
-    const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
+    const parsed = JSON.parse(result.stdout) as SkillOptResult;
     const instantPreflight = parsed.instantPreflight as Record<string, unknown>;
 
     expect(instantPreflight).toEqual(
