@@ -839,7 +839,10 @@ export async function buildFinanceNightReviewEvidence(params: {
     await Promise.all([
       readFinancePositionLedger(params.directory, { asOf: params.asOf }),
       readFinanceStrategyRuleLedger(params.directory, { asOf: params.asOf }),
-      readFinanceIntradayDecisions(params.directory, { sessionDate: params.etDate }),
+      readFinanceIntradayDecisions(params.directory, {
+        sessionDate: params.etDate,
+        asOf: params.asOf,
+      }),
       readFinanceBrokerProfitFeedback(params.directory, params.asOf),
       readFinanceLatestBrokerReconciliations(params.directory),
     ]);
@@ -851,7 +854,9 @@ export async function buildFinanceNightReviewEvidence(params: {
       reason: decision.input.reason,
       referencePrice: decision.input.referencePrice,
       referencePriceAt: decision.input.referencePriceAt,
-      outcome: await readFinanceIntradayOutcome(params.directory, decision.input.signalId),
+      outcome: await readFinanceIntradayOutcome(params.directory, decision.input.signalId, {
+        asOf: params.asOf,
+      }),
     })),
   );
   const activeRules = strategyRules.ledger.rules

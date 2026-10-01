@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { appendFinanceBars } from "./finance-bar-ledger.js";
 import {
   annualisedVol,
@@ -31,6 +31,8 @@ import { buildQualityHarnessModelPrompt } from "./local-text-model-adapter.js";
 
 describe("finance night review context", () => {
   it("projects settlement and durable intraday refusals into bounded evidence", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-22T22:00:00.000Z"));
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-night-context-"));
     try {
       const decision = await appendFinanceIntradayDecision(directory, {
@@ -272,9 +274,78 @@ describe("finance night review context", () => {
         ],
       });
     } finally {
+      vi.useRealTimers();
       await fs.rm(directory, { recursive: true, force: true });
     }
   });
+});
+
+it("excludes later decisions and account diagnostics from historical night evidence", async () => {
+  vi.useFakeTimers();
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-night-asof-"));
+  try {
+    const settlement = {
+      scoredFiled: { appended: 0, skipped: 0 },
+      reflection: {},
+      pending: [],
+      declined: [],
+      issues: [],
+    };
+    const readDecisions = async (asOf: string) => {
+      const evidence = await buildFinanceNightReviewEvidence({
+        directory,
+        asOf,
+        etDate: "2026-09-22",
+        settlement,
+      });
+      return JSON.parse(
+        evidence.find((item) => item.source === "finance-intraday-control-ledger")!.text,
+      ).decisions as { signalId: string; outcome: unknown }[];
+    };
+    vi.setSystemTime(new Date("2026-09-22T21:59:00.000Z"));
+    await appendFinanceIntradayDecision(directory, {
+      signalId: "late-outcome",
+      instrument: "SPY",
+      sessionDate: "2026-09-22",
+      action: "buy",
+      reason: "opening_range_breakout",
+      referencePrice: 500,
+      referencePriceAt: "2026-09-22T15:00:00.000Z",
+      stopPrice: 495,
+      targetPrice: 510,
+      datasetHeadRef: "a".repeat(64),
+      strategyRule: "opening_range_breakout_long_next_bar_v1",
+    });
+    expect(await readDecisions("2026-09-22T21:58:00.000Z")).toEqual([]);
+    expect(await readDecisions("2026-09-22T22:00:00.000Z")).toMatchObject([
+      { signalId: "late-outcome", outcome: null },
+    ]);
+    vi.setSystemTime(new Date("2026-09-22T22:01:00.000Z"));
+    await appendFinanceIntradayOutcome(directory, {
+      signalId: "late-outcome",
+      status: "refused",
+      reasons: ["execution_safety_account_snapshot_unavailable"],
+      executionSafetyFailure: {
+        stage: "facts",
+        category: "account_snapshot_unavailable",
+        operation: "read_account_safety_facts",
+        provider: { reason: "alpaca_safety_facts_inconsistent", stage: "account_arithmetic" },
+      },
+    });
+    expect(await readDecisions("2026-09-22T22:00:00.000Z")).toMatchObject([
+      { signalId: "late-outcome", outcome: null },
+    ]);
+    vi.setSystemTime(new Date("2026-09-22T22:02:00.000Z"));
+    expect(await readDecisions("2026-09-22T22:02:00.000Z")).toMatchObject([
+      {
+        signalId: "late-outcome",
+        outcome: { executionSafetyFailure: { provider: { stage: "account_arithmetic" } } },
+      },
+    ]);
+  } finally {
+    vi.useRealTimers();
+    await fs.rm(directory, { recursive: true, force: true });
+  }
 });
 
 it("keeps compact research references in night review and preserves legacy receipts", async () => {

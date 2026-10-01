@@ -424,7 +424,10 @@ export async function appendFinanceIntradayOutcome(
 export async function readFinanceIntradayOutcome(
   directory: string,
   signalId: string,
+  options: { asOf?: string } = {},
 ): Promise<FinanceIntradayOutcomeRecord | null> {
+  const asOf =
+    options.asOf === undefined ? undefined : new Date(Iso.parse(options.asOf)).toISOString();
   try {
     await fs.stat(financeIntradayControlLedgerPath(directory));
   } catch {
@@ -433,8 +436,14 @@ export async function readFinanceIntradayOutcome(
   const db = open(directory);
   try {
     const row = db
-      .prepare("SELECT body FROM finance_intraday_outcomes WHERE signal_id=?")
-      .get(signalId) as { body?: unknown } | undefined;
+      .prepare(
+        asOf === undefined
+          ? "SELECT body FROM finance_intraday_outcomes WHERE signal_id=?"
+          : "SELECT body FROM finance_intraday_outcomes WHERE signal_id=? AND recorded_at<=?",
+      )
+      .get(...(asOf === undefined ? [signalId] : [signalId, asOf])) as
+      | { body?: unknown }
+      | undefined;
     if (!row) {
       return null;
     }
@@ -529,8 +538,10 @@ export async function appendFinanceIntradayDecision(
 
 export async function readFinanceIntradayDecisions(
   directory: string,
-  options: { instrument?: string; sessionDate?: string } = {},
+  options: { instrument?: string; sessionDate?: string; asOf?: string } = {},
 ): Promise<readonly FinanceIntradayDecisionRecord[]> {
+  const asOf =
+    options.asOf === undefined ? undefined : new Date(Iso.parse(options.asOf)).toISOString();
   try {
     await fs.stat(financeIntradayControlLedgerPath(directory));
   } catch {
@@ -542,7 +553,8 @@ export async function readFinanceIntradayDecisions(
       readRows(db).filter(
         (record) =>
           (!options.instrument || record.input.instrument === options.instrument) &&
-          (!options.sessionDate || record.input.sessionDate === options.sessionDate),
+          (!options.sessionDate || record.input.sessionDate === options.sessionDate) &&
+          (asOf === undefined || record.recordedAt <= asOf),
       ),
     );
   } finally {
