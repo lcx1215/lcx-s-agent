@@ -594,11 +594,41 @@ function projectFinanceBrokerAccountResearchSummary(params: {
           : typeof rawCash === "string" && rawCash.trim()
             ? Number(rawCash)
             : Number.NaN;
+      const rawObservation = snapshotObject.accountObservation;
+      const observation =
+        typeof rawObservation === "object" &&
+        rawObservation !== null &&
+        !Array.isArray(rawObservation)
+          ? (rawObservation as Record<string, unknown>)
+          : undefined;
+      const accountObservedAtMs =
+        typeof observation?.observedAt === "string"
+          ? Date.parse(observation.observedAt)
+          : Number.NaN;
+      const accountObservationValid =
+        record.venue === "alpaca:paper" &&
+        observation?.accountId === record.accountId &&
+        observation.currency === "USD" &&
+        observation.source === "https://paper-api.alpaca.markets/v2/account" &&
+        Number.isFinite(accountObservedAtMs) &&
+        accountObservedAtMs <= observedAtMs &&
+        accountObservedAtMs <= Date.parse(params.asOf) &&
+        Date.parse(params.asOf) - accountObservedAtMs <= 300_000 &&
+        typeof observation.cash === "number" &&
+        Number.isFinite(observation.cash) &&
+        observation.cash === cash;
+      const observedNumber = (value: unknown): number | null =>
+        accountObservationValid && typeof value === "number" && Number.isFinite(value)
+          ? value
+          : null;
+      const equity = observedNumber(observation?.equity);
+      const buyingPower = observedNumber(observation?.buyingPower);
+      const portfolioValue = observedNumber(observation?.portfolioValue);
       const missingFields = [
         ...(!Number.isFinite(cash) ? ["brokerCash"] : []),
-        // These reconciliation records do not provide account equity or buying power.
-        "equity",
-        "buyingPower",
+        ...(equity === null ? ["equity"] : []),
+        ...(buyingPower === null ? ["buyingPower"] : []),
+        ...(portfolioValue === null ? ["portfolioValue"] : []),
         ...(!Array.isArray(snapshotObject.positions) ? ["positions"] : []),
         ...(Array.isArray(snapshotObject.positions) &&
         snapshotPositions.length !== snapshotObject.positions.length
@@ -614,8 +644,14 @@ function projectFinanceBrokerAccountResearchSummary(params: {
         ...(params.includeAccountFields
           ? {
               brokerCash: Number.isFinite(cash) ? cash : null,
-              equity: null,
-              buyingPower: null,
+              equity,
+              buyingPower,
+              portfolioValue,
+              accountObservationSource: accountObservationValid ? observation.source : null,
+              accountObservationObservedAt:
+                accountObservationValid && typeof observation.observedAt === "string"
+                  ? observation.observedAt
+                  : null,
               missingFields,
             }
           : {}),
@@ -768,6 +804,9 @@ export async function buildFinanceBrokerAccountResearchEvidence(params: {
                 brokerCash: null,
                 equity: null,
                 buyingPower: null,
+                portfolioValue: null,
+                accountObservationSource: null,
+                accountObservationObservedAt: null,
                 positions: null,
                 protectionCoverage: null,
               },

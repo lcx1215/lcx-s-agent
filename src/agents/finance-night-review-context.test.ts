@@ -1122,6 +1122,91 @@ it("passes active close history to night research using the latest completed mar
 
 describe("shared broker account research evidence", () => {
   const asOf = "2026-09-22T22:00:00.000Z";
+  it.each([
+    [
+      "valid",
+      "https://paper-api.alpaca.markets/v2/account",
+      "2026-09-22T21:58:59.000Z",
+      "selected",
+    ],
+    [
+      "wrong source",
+      "https://api.alpaca.markets/v2/account",
+      "2026-09-22T21:58:59.000Z",
+      "selected",
+    ],
+    [
+      "future",
+      "https://paper-api.alpaca.markets/v2/account",
+      "2026-09-22T22:00:01.000Z",
+      "selected",
+    ],
+    [
+      "wrong account",
+      "https://paper-api.alpaca.markets/v2/account",
+      "2026-09-22T21:58:59.000Z",
+      "other",
+    ],
+  ])(
+    "uses only a matching fresh account observation: %s",
+    async (_case, source, observedAt, accountId) => {
+      const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-account-observation-"));
+      try {
+        await appendFinanceBrokerHistory(directory, {
+          kind: "broker_history",
+          accountId: "selected",
+          venue: "alpaca:paper",
+          query: "reconciliation:observation",
+          cursor: "",
+          payload: [
+            {
+              observedAt: "2026-09-22T21:59:00.000Z",
+              brokerCash: 100,
+              positions: [{ symbol: "SPY", qty: "1" }],
+              protection: { coverage: [] },
+              accountObservation: {
+                accountId,
+                currency: "USD",
+                source,
+                observedAt,
+                cash: 100,
+                equity: 200,
+                buyingPower: 300,
+                portfolioValue: 200,
+              },
+            },
+          ],
+        });
+        const evidence = await buildFinanceBrokerAccountResearchEvidence({
+          directory,
+          asOf,
+          accountId: "selected",
+          venue: "alpaca:paper",
+        });
+        const snapshot = JSON.parse(evidence.text).positionSnapshots[0];
+        if (_case === "valid") {
+          expect(snapshot).toMatchObject({
+            equity: 200,
+            buyingPower: 300,
+            portfolioValue: 200,
+            accountObservationSource: source,
+            accountObservationObservedAt: observedAt,
+            missingFields: [],
+          });
+        } else {
+          expect(snapshot).toMatchObject({
+            equity: null,
+            buyingPower: null,
+            portfolioValue: null,
+            accountObservationSource: null,
+            missingFields: ["equity", "buyingPower", "portfolioValue"],
+          });
+        }
+      } finally {
+        await fs.rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
   it("reads the exact account and venue even outside the aggregate's latest three books", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-account-context-"));
     try {
@@ -1179,7 +1264,7 @@ describe("shared broker account research evidence", () => {
             brokerCash: 100,
             equity: null,
             buyingPower: null,
-            missingFields: ["equity", "buyingPower"],
+            missingFields: ["equity", "buyingPower", "portfolioValue"],
             positions: [{ symbol: "SPY", quantity: 1 }],
           },
         ],
@@ -1267,6 +1352,7 @@ describe("shared broker account research evidence", () => {
           "brokerCash",
           "equity",
           "buyingPower",
+          "portfolioValue",
           "positions",
           "protectionCoverage",
           "usable_current_account_facts",
