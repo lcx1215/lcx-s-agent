@@ -20,12 +20,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { appendFinanceBars, type FinanceBarAppend } from "../../src/agents/finance-bar-ledger.js";
 import { resolveFinanceCredentialEnv } from "../../src/agents/finance-credential-env.js";
 import {
   isFinanceUsEquityDailyBarComplete,
   latestCompletedWeekdaySessionDate,
+  financeUsEquityRegularCloseInstant,
 } from "../../src/agents/finance-cycle-schedule.js";
 import { createChinaReachableUsEodHistoryCollectionAdapter } from "../../src/agents/finance-free-market-collection-adapters.js";
+import type { FinanceMarketCollectionItem } from "../../src/agents/finance-market-collection-registry.js";
 import { resolveFinanceStateDir } from "../../src/agents/finance-state-dir.js";
 import {
   DEFAULT_UNIVERSE_THRESHOLDS,
@@ -54,6 +57,252 @@ const SNAPSHOT_BATCH = 500;
 const HISTORY_LIMIT = 1200;
 const MAX_ASSET_AGE_DAYS = 7;
 const CONCURRENCY = 6;
+
+export type ValidatedUniverseEodBatch = Readonly<{
+  instrument: string;
+  bars: readonly Readonly<{
+    date: string;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume?: number;
+  }>[];
+  observedAt: string;
+  providerName: string;
+  sourceUrlOrArtifact: string;
+}>;
+
+type ValidatedUniverseEodHistory = Readonly<{
+  seriesBars: readonly UniverseBar[];
+  batches: readonly ValidatedUniverseEodBatch[];
+  issues: readonly string[];
+}>;
+
+type FiledUniverseEodBatch = Readonly<{
+  symbol: string;
+  providerName: string;
+  sourceUrlOrArtifact: string;
+  observedAt: string;
+  barCount: number;
+  newBarCount: number;
+  headRef: string | null;
+}>;
+
+function finiteNumericValue(value: unknown): number | undefined {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : undefined;
+  }
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/** Keep usable close observations while separately preparing the complete OHLC subset to file. */
+export function validateUniverseEodBatch(
+  instrument: string,
+  rows: readonly FinanceMarketCollectionItem[],
+  asOf: string,
+): ValidatedUniverseEodHistory {
+  const expectedSymbol = instrument.toUpperCase();
+  type OhlcvBar = ValidatedUniverseEodBatch["bars"][number];
+  type SourceGroup = {
+    providerName: string;
+    sourceUrlOrArtifact: string;
+    observedAt: string;
+    observedAtMs: number;
+    barsByDate: Map<string, OhlcvBar>;
+  };
+  const closeObservations = new Map<string, Set<string>>();
+  const ohlcvObservations = new Map<string, Set<string>>();
+  const sourceGroups = new Map<string, SourceGroup>();
+  const issues: string[] = [];
+  let additionalIssueCount = 0;
+  const addIssue = (message: string): void => {
+    if (issues.length < 20) {
+      issues.push(message);
+    } else {
+      additionalIssueCount += 1;
+    }
+  };
+
+  for (const row of rows) {
+    const date = row.data.date;
+    if (
+      row.collection !== "eod_history" ||
+      typeof date !== "string" ||
+      !/^\d{4}-\d{2}-\d{2}$/u.test(date)
+    ) {
+      addIssue(`${expectedSymbol}: skipped EOD row with invalid identity or date`);
+      continue;
+    }
+    if (row.data.symbol !== expectedSymbol) {
+      addIssue(`${expectedSymbol}@${date}: skipped EOD row with symbol mismatch`);
+      continue;
+    }
+    const close = finiteNumericValue(row.data.close);
+    const closeInstant = financeUsEquityRegularCloseInstant(date);
+    if (
+      closeInstant === undefined ||
+      !isFinanceUsEquityDailyBarComplete(date, asOf) ||
+      close === undefined ||
+      close <= 0
+    ) {
+      addIssue(`${expectedSymbol}@${date}: skipped invalid, future, or incomplete close row`);
+      continue;
+    }
+    const volumeValue = row.data.volume;
+    const volume = finiteNumericValue(volumeValue);
+    const usableVolume = volume !== undefined && volume >= 0 ? volume : undefined;
+    if (volumeValue !== undefined && usableVolume === undefined) {
+      addIssue(`${expectedSymbol}@${date}: ignored invalid volume for close-based selection`);
+    }
+    const closeKey = JSON.stringify([close, usableVolume ?? null]);
+    const closeValues = closeObservations.get(date) ?? new Set<string>();
+    closeValues.add(closeKey);
+    closeObservations.set(date, closeValues);
+
+    const sourceTimestampMs = Date.parse(row.sourceTimestamp);
+    const observedAtMs = Date.parse(row.observedAt);
+    if (
+      closeInstant === undefined ||
+      !Number.isFinite(sourceTimestampMs) ||
+      sourceTimestampMs !== Date.parse(closeInstant) ||
+      sourceTimestampMs > Date.parse(asOf) ||
+      !Number.isFinite(observedAtMs) ||
+      typeof row.providerName !== "string" ||
+      row.providerName.trim().length === 0 ||
+      typeof row.sourceUrlOrArtifact !== "string" ||
+      row.sourceUrlOrArtifact.trim().length === 0
+    ) {
+      addIssue(`${expectedSymbol}@${date}: close usable, but source attribution is incomplete`);
+      continue;
+    }
+
+    const { open, high, low } = row.data;
+    const typedVolume = typeof volumeValue === "number" ? volumeValue : undefined;
+    const volumeIsValid =
+      volumeValue === undefined ||
+      (typedVolume !== undefined && Number.isFinite(typedVolume) && typedVolume >= 0);
+    if (
+      typeof open !== "number" ||
+      !Number.isFinite(open) ||
+      open <= 0 ||
+      typeof high !== "number" ||
+      !Number.isFinite(high) ||
+      high <= 0 ||
+      typeof low !== "number" ||
+      !Number.isFinite(low) ||
+      low <= 0 ||
+      typeof row.data.close !== "number" ||
+      !Number.isFinite(row.data.close) ||
+      !volumeIsValid
+    ) {
+      addIssue(`${expectedSymbol}@${date}: close usable, but incomplete OHLCV was not filed`);
+      continue;
+    }
+    if (low > Math.min(open, close) || high < Math.max(open, close)) {
+      addIssue(`${expectedSymbol}@${date}: close usable, but contradictory OHLC was not filed`);
+      continue;
+    }
+    const bar: OhlcvBar = {
+      date,
+      open,
+      high,
+      low,
+      close: row.data.close,
+      ...(typedVolume === undefined ? {} : { volume: typedVolume }),
+    };
+    const ohlcvValues = ohlcvObservations.get(date) ?? new Set<string>();
+    ohlcvValues.add(JSON.stringify(bar));
+    ohlcvObservations.set(date, ohlcvValues);
+    const sourceKey = JSON.stringify([row.providerName, row.sourceUrlOrArtifact]);
+    const group = sourceGroups.get(sourceKey) ?? {
+      providerName: row.providerName,
+      sourceUrlOrArtifact: row.sourceUrlOrArtifact,
+      observedAt: row.observedAt,
+      observedAtMs,
+      barsByDate: new Map<string, OhlcvBar>(),
+    };
+    if (observedAtMs > group.observedAtMs) {
+      group.observedAt = row.observedAt;
+      group.observedAtMs = observedAtMs;
+    }
+    group.barsByDate.set(date, bar);
+    sourceGroups.set(sourceKey, group);
+  }
+
+  const conflictedCloseDates = new Set<string>();
+  const conflictedOhlcvDates = new Set<string>();
+  for (const [date, values] of closeObservations) {
+    if (values.size > 1) {
+      conflictedCloseDates.add(date);
+      addIssue(`${expectedSymbol}@${date}: conflicting close observations were excluded`);
+    }
+  }
+  for (const [date, values] of ohlcvObservations) {
+    if (values.size > 1) {
+      conflictedOhlcvDates.add(date);
+      addIssue(`${expectedSymbol}@${date}: conflicting OHLC observations were not filed`);
+    }
+  }
+
+  const seriesBars = [...closeObservations]
+    .filter(([date, values]) => !conflictedCloseDates.has(date) && values.size === 1)
+    .map(([date, values]) => {
+      const key = values.values().next().value as string;
+      const [close, volume] = JSON.parse(key) as [number, number | null];
+      return { date, close, ...(volume === null ? {} : { volume }) };
+    })
+    .toSorted((left, right) => left.date.localeCompare(right.date));
+  const batches = [...sourceGroups.values()]
+    .map((group) => ({
+      instrument: expectedSymbol,
+      bars: [...group.barsByDate]
+        .filter(([date]) => !conflictedCloseDates.has(date) && !conflictedOhlcvDates.has(date))
+        .map(([, bar]) => bar)
+        .toSorted((left, right) => left.date.localeCompare(right.date)),
+      observedAt: group.observedAt,
+      providerName: group.providerName,
+      sourceUrlOrArtifact: group.sourceUrlOrArtifact,
+    }))
+    .filter((batch) => batch.bars.length > 0);
+  if (rows.length === 0) {
+    addIssue(`${expectedSymbol}: no EOD rows were collected`);
+  } else if (batches.length === 0) {
+    addIssue(`${expectedSymbol}: no complete OHLCV rows were available to file`);
+  }
+  if (additionalIssueCount > 0) {
+    issues.push(`${additionalIssueCount} additional EOD row issues omitted`);
+  }
+  return Object.freeze({
+    seriesBars: Object.freeze(seriesBars),
+    batches: Object.freeze(batches),
+    issues: Object.freeze(issues),
+  });
+}
+
+/** Append an already validated collection batch using the canonical bar ledger contract. */
+export function appendUniverseEodBatch(
+  directory: string,
+  batch: ValidatedUniverseEodBatch,
+): Promise<FinanceBarAppend> {
+  return appendFinanceBars(directory, {
+    instrument: batch.instrument,
+    derivation: "ohlcv",
+    provenance: {
+      origin: batch.providerName,
+      sourceUrlOrArtifact: batch.sourceUrlOrArtifact,
+      note:
+        `${String(batch.bars.length)} daily bars collected by the unattended universe selector; ` +
+        "end-of-day, research-only, not execution-grade; already-recorded identical bars are not filed again",
+    },
+    observedAt: batch.observedAt,
+    bars: [...batch.bars],
+  });
+}
 
 export type UniverseSelectOptions = Readonly<{
   json: boolean;
@@ -309,7 +558,12 @@ export async function runUniverseSelect(argv: readonly string[] = process.argv.s
 
   const adapter = createChinaReachableUsEodHistoryCollectionAdapter();
   const series = new Map<string, UniverseBar[]>();
+  const validatedHistory = new Map<string, readonly ValidatedUniverseEodBatch[]>();
   const unreadable: string[] = [];
+  const historyCollectionFailures: { symbol: string; error: string }[] = [];
+  const historyWriteFailures: { symbol: string; error: string }[] = [];
+  const filedHistoryBatches: FiledUniverseEodBatch[] = [];
+  let filedBarCount = 0;
 
   await mapWithConcurrency(screened, CONCURRENCY, async (symbol) => {
     try {
@@ -323,23 +577,19 @@ export async function runUniverseSelect(argv: readonly string[] = process.argv.s
         },
         AbortSignal.timeout(60_000),
       );
-      const bars: UniverseBar[] = [];
-      for (const row of rows) {
-        const date = typeof row.data?.date === "string" ? row.data.date : "";
-        const close = Number(row.data?.close);
-        if (!/^\d{4}-\d{2}-\d{2}$/u.test(date) || !Number.isFinite(close) || close <= 0) {
-          continue;
-        }
-        const volume = Number(row.data?.volume);
-        bars.push({
-          date,
-          close,
-          ...(Number.isFinite(volume) ? { volume } : {}),
-        });
+      const history = validateUniverseEodBatch(symbol, rows, asOf);
+      validatedHistory.set(symbol, history.batches);
+      series.set(symbol, [...history.seriesBars]);
+      historyCollectionFailures.push(...history.issues.map((error) => ({ symbol, error })));
+      if (history.seriesBars.length === 0) {
+        unreadable.push(symbol);
       }
-      series.set(symbol, bars);
-    } catch {
+    } catch (failure) {
       unreadable.push(symbol);
+      historyCollectionFailures.push({
+        symbol,
+        error: failure instanceof Error ? failure.message : String(failure),
+      });
     }
   });
 
@@ -378,6 +628,32 @@ export async function runUniverseSelect(argv: readonly string[] = process.argv.s
     );
   }
 
+  if (options.writeSnapshot) {
+    for (const symbol of selected) {
+      for (const batch of validatedHistory.get(symbol) ?? []) {
+        try {
+          const filed = await appendUniverseEodBatch(directory, batch);
+          const newBarCount = batch.bars.length - filed.repeatsSkipped;
+          filedBarCount += newBarCount;
+          filedHistoryBatches.push({
+            symbol,
+            providerName: batch.providerName,
+            sourceUrlOrArtifact: batch.sourceUrlOrArtifact,
+            observedAt: batch.observedAt,
+            barCount: batch.bars.length,
+            newBarCount,
+            headRef: filed.headRef,
+          });
+        } catch (failure) {
+          historyWriteFailures.push({
+            symbol,
+            error: failure instanceof Error ? failure.message : String(failure),
+          });
+        }
+      }
+    }
+  }
+
   const result = {
     schemaVersion: FINANCE_UNIVERSE_SELECTION_SCHEMA,
     asOf,
@@ -398,6 +674,7 @@ export async function runUniverseSelect(argv: readonly string[] = process.argv.s
       excludedOlderCandidateCount,
     },
     unreadableCount: unreadable.length,
+    historyCollectionFailures,
     eligibleCount: ordered.length,
     selected,
     selectionEvidence: {
@@ -411,9 +688,25 @@ export async function runUniverseSelect(argv: readonly string[] = process.argv.s
     selectedMetrics: orderSelectedUniverseMetrics(selected, ordered),
     thresholds: DEFAULT_UNIVERSE_THRESHOLDS,
     rejected,
+    canonicalBarPersistence: {
+      status: options.writeSnapshot
+        ? historyWriteFailures.length > 0
+          ? filedHistoryBatches.length > 0
+            ? "partial"
+            : "failed"
+          : historyCollectionFailures.length > 0
+            ? "partial"
+            : "complete"
+        : "not_requested",
+      instrumentCount: new Set(filedHistoryBatches.map((batch) => batch.symbol)).size,
+      barCount: filedBarCount,
+      instruments: filedHistoryBatches,
+      failures: historyWriteFailures,
+    },
   };
 
-  if (options.writeSnapshot) {
+  const snapshotPersisted = options.writeSnapshot;
+  if (snapshotPersisted) {
     saveJsonFile(path.join(directory, FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME), result);
   }
 
@@ -464,9 +757,7 @@ export async function runUniverseSelect(argv: readonly string[] = process.argv.s
   }
 
   if (options.json) {
-    process.stdout.write(
-      `${JSON.stringify({ ...result, snapshotPersisted: options.writeSnapshot }, null, 2)}\n`,
-    );
+    process.stdout.write(`${JSON.stringify({ ...result, snapshotPersisted }, null, 2)}\n`);
     return;
   }
   process.stdout.write(
@@ -474,7 +765,10 @@ export async function runUniverseSelect(argv: readonly string[] = process.argv.s
       `assets=${result.assetCount} candidates=${result.candidateCount} screened=${result.screenedCount}`,
       `unreadable=${result.unreadableCount} eligible=${result.eligibleCount}`,
       `selected (${selected.length}): ${selected.join(", ")}`,
-      ...(options.writeSnapshot ? ["current universe snapshot persisted atomically"] : []),
+      ...(snapshotPersisted ? ["current universe snapshot persisted atomically"] : []),
+      ...(options.writeSnapshot && !snapshotPersisted
+        ? ["universe snapshot withheld because canonical bar filing failed"]
+        : []),
       "",
       ...result.selectedMetrics.map(
         (m) =>

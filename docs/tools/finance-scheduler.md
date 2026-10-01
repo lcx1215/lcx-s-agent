@@ -125,6 +125,16 @@ instrument intersection, and explicit ticker overrides remain diagnostic only.
 Do not use `--intraday-active-rule` when requesting the dynamic system universe:
 that option selects the rule's static declaration list.
 
+With `--write-snapshot`, the selector also files usable selected EOD bars through
+the existing canonical bar ledger, retaining their source and observation time.
+Incomplete or invalid rows are reported without discarding usable rows. A
+close-only series can still serve close-based selection; missing OHLC values are
+never invented to file a complete bar. Canonical filing failures are reported
+separately and do not veto an otherwise eligible selection snapshot. Read-only
+selection does not write bars. These daily research inputs are not execution
+quotes; each strategy retains its own minimum inputs and order placement still
+requires current account, funding, quote and reconciliation facts.
+
 Each tick refreshes the active binding, so a valid selection change can replace
 the controller safely. Held lots leaving the entry universe retain an exit-only
 path backed by their same-account entry decision, terminal receipt and current
@@ -163,10 +173,10 @@ The execution response feeds the caller immediately after confirmation. The
 shared safety journal durably records the outcome before the position ledger
 projects its receipt, and recovery can finish that delivery after a crash without
 placing another order. An accepted submission is distinct from a fill; subsequent
-status reads resolve it. The current resident path uses REST responses and polling,
-with broker-history reads for reconciliation. Alpaca's
+status reads resolve it. The resident Paper path also subscribes to Alpaca's
 [order event stream](https://docs.alpaca.markets/us/docs/websocket-streaming)
-is an available transport, not a claim that this scheduler subscribes to it.
+to wake the existing reconciliation owner. REST responses and broker-history
+reads remain the source of account facts, with polling as a fallback.
 
 ## 24-hour resident operation
 
