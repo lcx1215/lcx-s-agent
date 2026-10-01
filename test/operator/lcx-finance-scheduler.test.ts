@@ -130,6 +130,19 @@ function acceptedResearchCandidate(planPath: string, asOf: string) {
   };
 }
 
+function writePortfolioContext(filename: string): void {
+  fs.writeFileSync(
+    filename,
+    JSON.stringify({
+      accountId: "paper-account",
+      venue: "alpaca",
+      validityMinutes: 30,
+      conflictPolicy: "block",
+      activeStrategyIds: ["fixture-strategy"],
+    }),
+  );
+}
+
 function researchAsOfFromArgs(argv: readonly string[]): string {
   const index = argv.indexOf("--as-of");
   const asOf = index < 0 ? undefined : argv[index + 1];
@@ -1982,12 +1995,20 @@ it("refreshes a grounded research plan before the unique day cycle", async () =>
   vi.stubEnv("LCX_FINANCE_HTTP_PROXY", "");
   const context = path.join(directory, "portfolio-context.json");
   const plan = path.join(directory, "research-portfolio-plan-latest.json");
-  fs.writeFileSync(context, "{}");
+  writePortfolioContext(context);
   mocks.runCycle
-    .mockImplementationOnce(async ({ argv }: { argv: readonly string[] }) => ({
-      ...success,
-      stdout: JSON.stringify(acceptedResearchCandidate(plan, researchAsOfFromArgs(argv))),
-    }))
+    .mockImplementationOnce(async ({ argv }: { argv: readonly string[] }) => {
+      fs.writeFileSync(context, JSON.stringify({ accountId: "different-account", venue: "paper" }));
+      const frozenPath = argv[argv.indexOf("--portfolio-context") + 1];
+      expect(JSON.parse(fs.readFileSync(frozenPath, "utf8"))).toMatchObject({
+        accountId: "paper-account",
+        venue: "alpaca",
+      });
+      return {
+        ...success,
+        stdout: JSON.stringify(acceptedResearchCandidate(plan, researchAsOfFromArgs(argv))),
+      };
+    })
     .mockResolvedValueOnce(success);
 
   await expect(
@@ -2007,14 +2028,26 @@ it("refreshes a grounded research plan before the unique day cycle", async () =>
   expect(mocks.runCycle.mock.calls[0][0].env.LCX_FINANCE_HTTP_PROXY).toBe("http://127.0.0.1:7897");
   expect(mocks.runCycle.mock.calls[1][0].env).toBeUndefined();
   expect(process.env.LCX_FINANCE_HTTP_PROXY).toBe("");
+  const researchArgv = mocks.runCycle.mock.calls[0][0].argv as string[];
+  const evidencePath = researchArgv[researchArgv.indexOf("--controller-evidence") + 1];
+  const frozenContextPath = researchArgv[researchArgv.indexOf("--portfolio-context") + 1];
+  expect(evidencePath).toMatch(
+    /^.*\/day-research-controller-evidence-\d{4}-\d{2}-\d{2}-[0-9a-f-]{36}\.json$/u,
+  );
+  expect(frozenContextPath).toMatch(
+    /^.*\/day-research-portfolio-context-\d{4}-\d{2}-\d{2}-[0-9a-f-]{36}\.json$/u,
+  );
+  expect(frozenContextPath).not.toBe(context);
   expect(mocks.runCycle.mock.calls[0][0].argv).toEqual(
     expect.arrayContaining([
       expect.stringContaining("lcx-finance-research-run.ts"),
       "--execute-modules",
       "--decision-mode",
       "strategy_candidate",
+      "--controller-evidence",
+      evidencePath,
       "--portfolio-context",
-      context,
+      frozenContextPath,
       "--portfolio-plan-out",
       plan,
       "--persist-theses",
@@ -2022,9 +2055,59 @@ it("refreshes a grounded research plan before the unique day cycle", async () =>
       directory,
     ]),
   );
+  expect(mocks.runCycle.mock.calls[0][0].argv).not.toContain("--controller-research-scope");
+  expect(JSON.parse(fs.readFileSync(evidencePath, "utf8"))).toEqual([
+    expect.objectContaining({
+      id: "finance-controller:broker-account-summary",
+      source: "finance-broker-profit-summary",
+      text: expect.any(String),
+    }),
+  ]);
+  expect(JSON.parse(JSON.parse(fs.readFileSync(evidencePath, "utf8"))[0].text)).toMatchObject({
+    accountScope: { accountId: "paper-account", venue: "alpaca:paper" },
+    currentAccountFactsStatus: "unknown",
+    missingFields: expect.arrayContaining(["positionSnapshots"]),
+  });
+  const frozenContext = fs.readFileSync(frozenContextPath, "utf8");
+  expect(JSON.parse(frozenContext)).toMatchObject({ accountId: "paper-account", venue: "alpaca" });
+  expect(JSON.parse(fs.readFileSync(context, "utf8"))).toMatchObject({
+    accountId: "different-account",
+  });
+  expect(fs.readFileSync(frozenContextPath, "utf8")).toBe(frozenContext);
   expect(mocks.runCycle.mock.calls[1][0].argv).toEqual(
     expect.arrayContaining(["--portfolio-plan", plan]),
   );
+});
+
+it("fails day preflight before research when the account context is invalid", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-29T19:30:00Z"));
+  const context = path.join(directory, "portfolio-context.json");
+  fs.writeFileSync(context, "{}");
+  await expect(
+    runFinanceScheduler([
+      "--once",
+      "day",
+      "--dir",
+      directory,
+      "--research-portfolio-context",
+      context,
+      "--research-ask",
+      "review active strategy budgets",
+    ]),
+  ).resolves.toBe(1);
+  expect(mocks.runCycle).not.toHaveBeenCalled();
+  expect(readFinanceSchedulerState(directory).lastRun).toMatchObject({
+    ok: false,
+    execution: { outcome: "not_run", blockReason: "controller_evidence_unavailable" },
+    researchPlanRefresh: { ok: false, controllerEvidenceStatus: "unavailable" },
+  });
+  expect(
+    financeResearchPreflightRetryDue(
+      readFinanceSchedulerState(directory),
+      new Date("2026-09-29T19:40:00Z"),
+    ),
+  ).toBe(false);
 });
 
 it.each([
@@ -2044,7 +2127,7 @@ it.each([
     vi.setSystemTime(new Date(firedAt));
     const context = path.join(directory, "portfolio-context.json");
     const planPath = path.join(directory, "research-portfolio-plan-latest.json");
-    fs.writeFileSync(context, "{}");
+    writePortfolioContext(context);
     fs.writeFileSync(planPath, "existing-plan-must-not-be-executed");
     const accepted = acceptedResearchCandidate(planPath, firedAt);
     const failedGateId =
@@ -2106,7 +2189,7 @@ it.each(["candidate", "needs_review"])(
     vi.setSystemTime(new Date("2026-09-22T22:00:00.000Z"));
     await activateIntradayRule();
     const context = path.join(directory, "portfolio-context.json");
-    fs.writeFileSync(context, "{}");
+    writePortfolioContext(context);
     mocks.runCycle
       .mockResolvedValueOnce({
         ...success,
@@ -2212,6 +2295,7 @@ it.each(["candidate", "needs_review"])(
 );
 
 it("does not enter the day cycle when research plan refresh is unverified", async () => {
+  writePortfolioContext(path.join(directory, "context.json"));
   mocks.runCycle.mockResolvedValueOnce({
     ...success,
     stdout: JSON.stringify({ status: "needs_review" }),
@@ -2882,7 +2966,7 @@ it("starts a fresh progress deadline when long research hands off to execution",
   const started = new Date("2026-09-21T15:00:00Z").getTime();
   vi.setSystemTime(started);
   const context = path.join(directory, "portfolio-context.json");
-  fs.writeFileSync(context, "{}");
+  writePortfolioContext(context);
   mocks.runCycle
     .mockImplementationOnce(async ({ argv }: { argv: readonly string[] }) => {
       expect(
@@ -2933,7 +3017,7 @@ it.each([false, true])(
     const policy = path.join(directory, "policy.json");
     const context = path.join(directory, "context.json");
     fs.writeFileSync(policy, "{}");
-    fs.writeFileSync(context, "{}");
+    writePortfolioContext(context);
     let finishResearch!: (result: FinanceCycleProcessResult) => void;
     let researchStarted!: () => void;
     const started = new Promise<void>((resolve) => {
@@ -3086,7 +3170,7 @@ it("persists the preflight retry count and never replays execution or a third at
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-09-29T19:30:00Z"));
   const context = path.join(directory, "portfolio-context.json");
-  fs.writeFileSync(context, "{}");
+  writePortfolioContext(context);
   mocks.runCycle.mockResolvedValue({
     ...success,
     ok: false,
@@ -3109,6 +3193,10 @@ it("persists the preflight retry count and never replays execution or a third at
     researchAttempt: 1,
     execution: { outcome: "not_run" },
   });
+  const firstResearchArgv = mocks.runCycle.mock.calls[0][0].argv as string[];
+  const firstEvidencePath =
+    firstResearchArgv[firstResearchArgv.indexOf("--controller-evidence") + 1];
+  const firstEvidence = fs.readFileSync(firstEvidencePath, "utf8");
   await expect(runFinanceScheduler(args)).resolves.toBe(1);
   expect(mocks.runCycle).toHaveBeenCalledTimes(1);
   vi.setSystemTime(new Date("2026-09-29T19:40:00Z"));
@@ -3117,6 +3205,11 @@ it("persists the preflight retry count and never replays execution or a third at
     researchAttempt: 2,
     execution: { outcome: "not_run" },
   });
+  const retryResearchArgv = mocks.runCycle.mock.calls[1][0].argv as string[];
+  const retryEvidencePath =
+    retryResearchArgv[retryResearchArgv.indexOf("--controller-evidence") + 1];
+  expect(retryEvidencePath).not.toBe(firstEvidencePath);
+  expect(fs.readFileSync(firstEvidencePath, "utf8")).toBe(firstEvidence);
   vi.setSystemTime(new Date("2026-09-29T19:50:00Z"));
   await expect(runFinanceScheduler(args)).resolves.toBe(1);
   expect(mocks.runCycle).toHaveBeenCalledTimes(2);
@@ -3131,7 +3224,7 @@ it("automatically wakes the single preflight retry after backoff in the resident
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-09-29T19:30:00Z"));
   const context = path.join(directory, "portfolio-context.json");
-  fs.writeFileSync(context, "{}");
+  writePortfolioContext(context);
   mocks.runCycle.mockResolvedValue({
     ...success,
     ok: false,
@@ -3189,7 +3282,7 @@ it.each([
   vi.setSystemTime(new Date(at));
   const context = path.join(directory, "portfolio-context.json");
   const oldPlan = path.join(directory, "research-portfolio-plan-latest.json");
-  fs.writeFileSync(context, "{}");
+  writePortfolioContext(context);
   fs.writeFileSync(oldPlan, "old-plan-must-not-be-executed");
   const failedGateId =
     variant === "failed_gate"

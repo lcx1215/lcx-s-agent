@@ -52,11 +52,15 @@ import {
   readFinanceRetiredIntradayExitTargets,
 } from "../../src/agents/finance-intraday-position.js";
 import {
+  buildFinanceBrokerAccountResearchEvidence,
   buildFinanceNightReviewEvidence,
   writeFinanceNightReviewEvidence,
   type FinanceNightSettlementSummary,
 } from "../../src/agents/finance-night-review-context.js";
-import { financeResearchPortfolioAbstentionSchema } from "../../src/agents/finance-research-portfolio-plan.js";
+import {
+  financeResearchPortfolioAbstentionSchema,
+  financeResearchPortfolioContextSchema,
+} from "../../src/agents/finance-research-portfolio-plan.js";
 import {
   readFinanceResearchEquityUniverseSnapshot,
   type FinanceResearchEquityUniverseSnapshot,
@@ -561,6 +565,84 @@ async function runNightResearchReview(params: {
       stdout: "",
       stderr: error instanceof Error ? error.message : String(error),
       outputTruncated: false,
+    };
+  }
+}
+
+async function runDayResearchPreflight(params: {
+  context: CycleContext;
+  attempt: { firedAt: string; etDate: string; runId: string };
+  portfolioPlanPath: string;
+}): Promise<FinanceCycleProcessResult & { controllerEvidenceStatus?: "unavailable" }> {
+  try {
+    const portfolioContext = financeResearchPortfolioContextSchema.parse(
+      JSON.parse(fs.readFileSync(params.context.options.researchPlan!.contextPath, "utf8")),
+    );
+    const evidencePath = path.join(
+      params.context.root.directory,
+      `day-research-controller-evidence-${params.attempt.etDate}-${params.attempt.runId}.json`,
+    );
+    const frozenContextPath = path.join(
+      params.context.root.directory,
+      `day-research-portfolio-context-${params.attempt.etDate}-${params.attempt.runId}.json`,
+    );
+    const accountEvidence = await buildFinanceBrokerAccountResearchEvidence({
+      directory: params.context.root.directory,
+      asOf: params.attempt.firedAt,
+      accountId: portfolioContext.accountId,
+      venue: portfolioContext.venue === "alpaca" ? "alpaca:paper" : "paper",
+    });
+    await writeFinanceNightReviewEvidence(evidencePath, [accountEvidence]);
+    // Bind the child to the same parsed account scope used for its evidence.
+    // The operator's source file may change while evidence is being assembled.
+    fs.writeFileSync(frozenContextPath, `${JSON.stringify(portfolioContext)}\n`, {
+      mode: 0o600,
+      flag: "wx",
+    });
+    return runScheduledCycleProcess(params.context, "research_preflight", {
+      argv: [
+        "--import",
+        "tsx",
+        RESEARCH_SCRIPT,
+        "--live",
+        "--workflow-models",
+        "--include-yahoo-public-sources",
+        "--max-api-calls",
+        "160",
+        "--execute-modules",
+        "--write",
+        "--scheduler-summary",
+        "--decision-mode",
+        "strategy_candidate",
+        "--as-of",
+        params.attempt.firedAt,
+        "--ask",
+        params.context.options.researchPlan!.ask,
+        "--controller-evidence",
+        evidencePath,
+        "--portfolio-context",
+        frozenContextPath,
+        "--portfolio-plan-out",
+        params.portfolioPlanPath,
+        "--persist-theses",
+        "--finance-state-dir",
+        params.context.root.directory,
+      ],
+      cwd: REPO_ROOT,
+      env: financeResearchProcessEnv(),
+      timeoutMs: params.context.options.timeoutMs,
+      signal: params.context.signal,
+    });
+  } catch (error) {
+    return {
+      exitCode: null,
+      signal: null,
+      status: "failed",
+      ok: false,
+      stdout: "",
+      stderr: `day controller evidence unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      outputTruncated: false,
+      controllerEvidenceStatus: "unavailable",
     };
   }
 }
@@ -1355,37 +1437,10 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
   const portfolioPlanPath = path.join(directory, "research-portfolio-plan-latest.json");
   const research =
     mode === "day" && context.options.researchPlan
-      ? await runScheduledCycleProcess(context, "research_preflight", {
-          argv: [
-            "--import",
-            "tsx",
-            RESEARCH_SCRIPT,
-            "--live",
-            "--workflow-models",
-            "--include-yahoo-public-sources",
-            "--max-api-calls",
-            "160",
-            "--execute-modules",
-            "--write",
-            "--scheduler-summary",
-            "--decision-mode",
-            "strategy_candidate",
-            "--as-of",
-            attempt.firedAt,
-            "--ask",
-            context.options.researchPlan.ask,
-            "--portfolio-context",
-            context.options.researchPlan.contextPath,
-            "--portfolio-plan-out",
-            portfolioPlanPath,
-            "--persist-theses",
-            "--finance-state-dir",
-            directory,
-          ],
-          cwd: REPO_ROOT,
-          env: financeResearchProcessEnv(),
-          timeoutMs: context.options.timeoutMs,
-          signal: context.signal,
+      ? await runDayResearchPreflight({
+          context,
+          attempt,
+          portfolioPlanPath,
         })
       : undefined;
   const researchPayload = (() => {
@@ -1502,7 +1557,11 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
       : {
           ...describeFinanceCycleExecution("", context.options.extraArgs, mode),
           outcome: "not_run",
-          blockReason: researchAbstention ? "research_no_allocation" : "research_plan_not_accepted",
+          blockReason: researchAbstention
+            ? "research_no_allocation"
+            : research?.controllerEvidenceStatus === "unavailable"
+              ? "controller_evidence_unavailable"
+              : "research_plan_not_accepted",
         },
     ...(research
       ? {
@@ -1511,6 +1570,9 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
             status: research.status,
             exitCode: research.exitCode,
             planPath: researchAccepted ? portfolioPlanPath : null,
+            ...(research.controllerEvidenceStatus
+              ? { controllerEvidenceStatus: research.controllerEvidenceStatus }
+              : {}),
             ...(researchAbstention ? { abstention: researchAbstention } : {}),
             processResult: research,
           },
