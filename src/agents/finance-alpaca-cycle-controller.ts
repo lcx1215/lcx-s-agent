@@ -70,6 +70,7 @@ type Controller = Required<
     "accountId" | "accountBookProvider" | "executionQuoteProvider" | "createSafetyContext"
   >
 > & {
+  prepareExecutionQuote: Controller["executionQuoteProvider"];
   /** Expiry of the policy snapshot validated when this controller was created. */
   executionPolicyExpiresAt: string | null;
   executionPolicyAuthorizationMode: "until_expiry" | "until_revoked";
@@ -126,6 +127,16 @@ export function createFinanceAlpacaCycleController(options: {
       .digest("hex")}.jsonl`,
   );
   const quoteBindings = new Map<string, AlpacaSafetyQuoteBinding>();
+  const preparedQuotes = new Map<
+    AlpacaSafetyQuoteBinding,
+    {
+      snapshot: Awaited<ReturnType<typeof syncFinanceBrokerReconciliation>>;
+      claimFingerprint: string;
+      latestClaimId?: string;
+    }
+  >();
+  const claimFingerprint = (claims: Awaited<ReturnType<typeof readFinanceExecutionSafetyClaims>>) =>
+    createHash("sha256").update(JSON.stringify(claims)).digest("hex");
 
   // Standing Paper permission never becomes an unlimited order capability.
   const operationExpiresAt = () =>
@@ -361,6 +372,45 @@ export function createFinanceAlpacaCycleController(options: {
     }
   }
 
+  const executionQuoteProvider: Controller["executionQuoteProvider"] = async (request, signal) => {
+    if (request.assetClass !== "us_equity") {
+      throw new Error("daily controller supports US equities only");
+    }
+    if (!instruments.has(request.instrument)) {
+      throw new Error("instrument outside controller universe");
+    }
+    const observed = await readAlpacaPaperSafetyQuote(
+      {
+        instrument: request.instrument,
+        side: request.side,
+        stockFeed: options.feed,
+        credentials,
+        read,
+        timeoutMs: 20000,
+        maxAgeMs: options.maxAgeMs,
+      },
+      signal,
+    );
+    if (!observed.ok) {
+      throw new Error(observed.reason);
+    }
+    const key = `${request.instrument}:${request.side}`;
+    const previous = quoteBindings.get(key);
+    if (previous) {
+      preparedQuotes.delete(previous);
+    }
+    quoteBindings.set(key, observed.boundQuote);
+    return {
+      referencePrice: observed.referencePrice,
+      referencePriceAt: observed.observedAt,
+      sourceUrlOrArtifact: observed.source,
+      bidPrice: observed.bidPrice,
+      askPrice: observed.askPrice,
+      feed: options.feed,
+      maxAgeMs: options.maxAgeMs,
+    };
+  };
+
   return {
     inspectReconciliation: async (signal) => {
       const { snapshot, readiness } = await reconcile(signal, { inspectOnly: true });
@@ -387,38 +437,22 @@ export function createFinanceAlpacaCycleController(options: {
         positions: observed.positions,
       };
     },
-    executionQuoteProvider: async (request, signal) => {
-      if (request.assetClass !== "us_equity") {
-        throw new Error("daily controller supports US equities only");
+    executionQuoteProvider,
+    prepareExecutionQuote: async (request, signal) => {
+      // Finish expensive history reads before starting the short execution-quote lease.
+      const { snapshot, latestClaim } = await reconcile(signal, { recoverPending: false });
+      const claims = await readFinanceExecutionSafetyClaims({ ...account, signal });
+      const quote = await executionQuoteProvider(request, signal);
+      const bound = quoteBindings.get(`${request.instrument}:${request.side}`);
+      if (!bound) {
+        throw new FinanceExecutionSafetyFactsError("quote_binding_missing");
       }
-      if (!instruments.has(request.instrument)) {
-        throw new Error("instrument outside controller universe");
-      }
-      const observed = await readAlpacaPaperSafetyQuote(
-        {
-          instrument: request.instrument,
-          side: request.side,
-          stockFeed: options.feed,
-          credentials,
-          read,
-          timeoutMs: 20000,
-          maxAgeMs: options.maxAgeMs,
-        },
-        signal,
-      );
-      if (!observed.ok) {
-        throw new Error(observed.reason);
-      }
-      quoteBindings.set(`${request.instrument}:${request.side}`, observed.boundQuote);
-      return {
-        referencePrice: observed.referencePrice,
-        referencePriceAt: observed.observedAt,
-        sourceUrlOrArtifact: observed.source,
-        bidPrice: observed.bidPrice,
-        askPrice: observed.askPrice,
-        feed: options.feed,
-        maxAgeMs: options.maxAgeMs,
-      };
+      preparedQuotes.set(bound, {
+        snapshot,
+        claimFingerprint: claimFingerprint(claims),
+        latestClaimId: latestClaim?.id,
+      });
+      return quote;
     },
     createSafetyContext: (binding) => {
       if (
@@ -430,6 +464,10 @@ export function createFinanceAlpacaCycleController(options: {
       }
       const quote = quoteBindings.get(`${binding.intent.instrument}:${binding.intent.side}`);
       quoteBindings.delete(`${binding.intent.instrument}:${binding.intent.side}`);
+      const prepared = quote ? preparedQuotes.get(quote) : undefined;
+      if (quote) {
+        preparedQuotes.delete(quote);
+      }
       const authorityExpiresAt = operationExpiresAt();
       return createFinanceExecutionSafetyContext({
         ...binding,
@@ -454,14 +492,28 @@ export function createFinanceAlpacaCycleController(options: {
           }
           // The execution gate already owns the account dispatch lock and has
           // rejected pending claims. Do not reacquire that lock during facts reads.
-          const { snapshot, latestClaim } = await reconcile(signal, {
-            recoverPending: false,
-          }).catch((error: unknown) => {
-            if (error instanceof FinanceExecutionSafetyFactsError) {
-              throw error;
-            }
-            throw new FinanceExecutionSafetyFactsError("broker_reconciliation_unavailable");
-          });
+          const reconciled = prepared
+            ? await (async () => {
+                const age = Date.now() - Date.parse(prepared.snapshot.observedAt);
+                const claims = await readFinanceExecutionSafetyClaims({ ...account, signal });
+                if (!Number.isFinite(age) || age < 0 || age > options.maxAgeMs) {
+                  throw new FinanceExecutionSafetyFactsError("account_snapshot_unavailable", {
+                    reason: "alpaca_safety_quote_expired",
+                    stage: "quote_binding",
+                  });
+                }
+                if (claimFingerprint(claims) !== prepared.claimFingerprint) {
+                  throw new FinanceExecutionSafetyFactsError("broker_reconciliation_unavailable");
+                }
+                return { snapshot: prepared.snapshot, latestClaim: { id: prepared.latestClaimId } };
+              })()
+            : await reconcile(signal, { recoverPending: false }).catch((error: unknown) => {
+                if (error instanceof FinanceExecutionSafetyFactsError) {
+                  throw error;
+                }
+                throw new FinanceExecutionSafetyFactsError("broker_reconciliation_unavailable");
+              });
+          const { snapshot, latestClaim } = reconciled;
           const observed = await facts(
             binding.intent.instrument,
             binding.intent.side,

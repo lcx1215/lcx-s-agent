@@ -49,7 +49,7 @@ type Controller = Required<
     FinanceDailyCycleParams,
     "accountId" | "accountBookProvider" | "executionQuoteProvider" | "createSafetyContext"
   >
->;
+> & { prepareExecutionQuote?: Controller["executionQuoteProvider"] };
 
 async function managedDynamicExitProofIssue(
   directory: string,
@@ -657,12 +657,12 @@ export async function executeFinanceIntradayDecision(params: {
     if (signal.aborted) {
       throw new Error("intraday decision was cancelled before execution");
     }
+    const reviewedQuote = quote;
     // Model review and ledger reads can outlive the quote; refresh once, then fail closed.
-    if (executionQuoteIssue(quote, now()) !== null) {
-      quote = await params.controller.executionQuoteProvider(
-        { instrument: input.instrument, assetClass: "us_equity", side: input.action },
-        signal,
-      );
+    if (params.controller.prepareExecutionQuote || executionQuoteIssue(quote, now()) !== null) {
+      quote = await (
+        params.controller.prepareExecutionQuote ?? params.controller.executionQuoteProvider
+      )({ instrument: input.instrument, assetClass: "us_equity", side: input.action }, signal);
     }
     const finalQuoteIssue = executionQuoteIssue(quote, now());
     referencePrice = input.action === "buy" ? quote.askPrice : quote.bidPrice;
@@ -675,6 +675,13 @@ export async function executeFinanceIntradayDecision(params: {
       throw new Error(
         `intraday execution quote refused: ${finalQuoteIssue ?? "missing side price"}`,
       );
+    }
+    if (
+      params.controller.prepareExecutionQuote &&
+      !protectiveExit &&
+      (quote.bidPrice !== reviewedQuote.bidPrice || quote.askPrice !== reviewedQuote.askPrice)
+    ) {
+      throw new Error("intraday reviewed execution prices changed; a new model review is required");
     }
     const finalCalendarIssue = await strategyBindingIssue(
       params.directory,

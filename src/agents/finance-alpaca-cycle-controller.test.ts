@@ -933,3 +933,75 @@ it("quarantines the affected execution instrument even inside the isolation budg
   );
   expect(f.execute).not.toHaveBeenCalled();
 });
+
+it("prepares slow history before binding the 30-second execution quote", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-09-22T19:30:00.000Z"));
+  const f = await fixture();
+  const original = f.read.getMockImplementation()!;
+  f.read.mockImplementation(async (...args) => {
+    if (new URL(args[0]).pathname === "/v2/account/activities") {
+      vi.setSystemTime(Date.now() + 40_000);
+    }
+    return original(...args);
+  });
+  const controller = createFinanceAlpacaCycleController({ ...f.options, maxAgeMs: 30_000 });
+  const quote = await controller.prepareExecutionQuote(
+    { instrument: "SPY", side: "buy", assetClass: "us_equity" },
+    AbortSignal.timeout(120000),
+  );
+  const historyReads = f.read.mock.calls.filter(
+    ([url]) => new URL(url).pathname === "/v2/account/activities",
+  ).length;
+  expect(Date.parse(quote.referencePriceAt)).toBe(Date.now());
+  expect((await f.place("prepared-slow-history", controller, quote)).status).toBe("placed");
+  expect(
+    f.read.mock.calls.filter(([url]) => new URL(url).pathname === "/v2/account/activities"),
+  ).toHaveLength(historyReads);
+});
+
+it("refuses an expired prepared quote without dispatch or a history retry", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-09-22T19:30:00.000Z"));
+  const f = await fixture();
+  const controller = createFinanceAlpacaCycleController({ ...f.options, maxAgeMs: 30_000 });
+  const quote = await controller.prepareExecutionQuote(
+    { instrument: "SPY", side: "buy", assetClass: "us_equity" },
+    AbortSignal.timeout(120000),
+  );
+  vi.setSystemTime(Date.now() + 30_001);
+  await expect(f.place("expired-prepared", controller, quote)).rejects.toThrow(
+    "alpaca_safety_quote_expired",
+  );
+  expect(f.execute).not.toHaveBeenCalled();
+});
+
+it("refuses a changed execution journal after preparation even when quotes remain fresh", async () => {
+  const f = await fixture();
+  const quote = await f.controller.prepareExecutionQuote(
+    { instrument: "SPY", side: "buy", assetClass: "us_equity" },
+    AbortSignal.timeout(5000),
+  );
+  const file = path.join(
+    f.directory,
+    `execution-safety-${createHash("sha256")
+      .update(JSON.stringify(["alpaca:paper", f.accountId]))
+      .digest("hex")}.jsonl`,
+  );
+  await fs.appendFile(
+    file,
+    JSON.stringify({
+      id: "new-terminal-claim",
+      run: "other-run",
+      instrument: "SPY",
+      notional: 100,
+      snapshotId: "other",
+      at: new Date().toISOString(),
+      status: "confirmed",
+    }) + "\n",
+  );
+  await expect(f.place("changed-prepared", f.controller, quote)).rejects.toThrow(
+    "broker_reconciliation_unavailable",
+  );
+  expect(f.execute).not.toHaveBeenCalled();
+});

@@ -1290,7 +1290,7 @@ describe("intraday decision execution bridge", () => {
     },
   );
 
-  it.each(["fresh", "stale", "timeout", "abort"] as const)(
+  it.each(["fresh", "stale", "timeout", "abort", "prepared_same", "prepared_changed"] as const)(
     "revalidates quotes after review and records actual fallback time (%s)",
     async (mode) => {
       const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-refresh-"));
@@ -1317,7 +1317,7 @@ describe("intraday decision execution bridge", () => {
       const quoteProvider = vi.fn(async () => ({
         referencePrice: 500,
         bidPrice: 499,
-        askPrice: 501,
+        askPrice: mode === "prepared_changed" && quoteProvider.mock.calls.length > 1 ? 502 : 501,
         maxAgeMs: 30_000,
         referencePriceAt:
           mode === "stale" ? "2026-09-18T15:00:01.000Z" : new Date(clock).toISOString(),
@@ -1352,6 +1352,7 @@ describe("intraday decision execution bridge", () => {
             positions: [],
           }),
           executionQuoteProvider: quoteProvider,
+          ...(mode.startsWith("prepared_") ? { prepareExecutionQuote: quoteProvider } : {}),
           createSafetyContext: vi.fn(),
         },
         caps: { maxOrderNotional: 1000, maxInstrumentNotional: 5000, maxOrdersPerRun: 1 },
@@ -1362,8 +1363,10 @@ describe("intraday decision execution bridge", () => {
       });
       expect(result.status).toBe("refused");
       expect(quoteProvider).toHaveBeenCalledTimes(mode === "abort" ? 1 : 2);
-      expect(runOrder).toHaveBeenCalledTimes(mode === "stale" || mode === "abort" ? 0 : 1);
-      if (mode === "fresh" || mode === "timeout") {
+      expect(runOrder).toHaveBeenCalledTimes(
+        mode === "stale" || mode === "abort" || mode === "prepared_changed" ? 0 : 1,
+      );
+      if (mode === "fresh" || mode === "timeout" || mode === "prepared_same") {
         expect(runOrder).toHaveBeenCalledWith(
           expect.objectContaining({
             market: {
