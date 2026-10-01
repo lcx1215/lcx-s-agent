@@ -185,7 +185,7 @@ function extractDataNumbers(text: string): string[] {
   // A complete standalone UUID is an identity, not a financial quantity. Keep
   // malformed/embedded tokens and unit-bearing values under the numeric gate.
   const withoutIdentifiers = text.replace(
-    /(?<![\p{L}\p{N}_$€£¥])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![\p{L}\p{N}_]|\.\d|\s*%)/giu,
+    /(?<![\p{L}\p{N}_$€£¥])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![\p{L}\p{N}_]|\.\d|\s*(?:%|USD|EUR|GBP|CNY|JPY|HKD|dollars?|euros?|pounds?|yen|yuan|美元|欧元|英镑|人民币|日元|港元|港币|元))/giu,
     " ",
   );
   const withoutDateLiterals = withoutIdentifiers

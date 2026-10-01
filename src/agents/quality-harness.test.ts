@@ -1603,7 +1603,34 @@ describe("quality harness", () => {
 
   it("does not exempt malformed, embedded or unit-bearing UUID-like numbers", async () => {
     const id = "123e4567-e89b-42d3-a456-426614174000";
-    for (const token of [id.slice(0, -1), `prefix${id}`, `${id}x`, `${id}%`, `$${id}`]) {
+    for (const token of [
+      id.slice(0, -1),
+      `prefix${id}`,
+      `${id}x`,
+      `${id}%`,
+      `$${id}`,
+      ...[
+        "USD",
+        "EUR",
+        "GBP",
+        "CNY",
+        "JPY",
+        "HKD",
+        "dollars",
+        "euros",
+        "pounds",
+        "yen",
+        "yuan",
+        "美元",
+        "欧元",
+        "英镑",
+        "人民币",
+        "日元",
+        "港元",
+        "港币",
+        "元",
+      ].map((unit) => `${id} ${unit}`),
+    ]) {
       const result = await runQualityHarness({
         request: financeRequest,
         maxAttempts: 1,
