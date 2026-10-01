@@ -571,8 +571,31 @@ process lock until this work has settled. Manual `--once` behavior is unchanged.
 Execution, model review, freshness and deduplication gates still apply to every
 candidate; overlapping research does not approve its plan or authorize a trade.
 
+With resident `--loop --venue alpaca --sync-alpaca-history`, the scheduler also
+subscribes to Paper `trade_updates` on the broker's WebSocket stream. It requires
+both authentication and the `trade_updates` listening acknowledgement, decodes
+binary JSON frames, monitors heartbeat and reconnects with bounded backoff.
+Order events and reconnects request a coalesced REST readback through the existing
+controller recovery/history reconciliation. They never directly update holdings,
+confirm a journal claim or authorize another order. The shared account task lane
+serializes these readbacks with trading ticks and daily execution children;
+research children leave this lane available. Bursts have a five-second minimum
+readback interval. Existing periodic reconciliation remains enabled when the
+stream is unavailable or silent. Live sockets are not supported by this companion.
+
+`alpaca-order-stream-latest.json` reports process/subscription/heartbeat health
+separately from REST readback readiness. A successful subscription is not an
+accepted plan, reconciled account or fill. Failed or blocked readbacks preserve
+their status and do not gain a successful reconciliation timestamp. Shutdown
+closes the socket and drains owned account tasks before releasing the process lock.
+
 The role task timeout includes the opted-in single structural repair as well as
 configured fallbacks; the whole research deadline and call budget remain the cap.
+When the final finance answer check is the only failed gate after a completed
+quality plan, its repair attempt reuses that run's upstream analytical outputs.
+It reruns the adversarial challenge, final formatting, evidence reviews and original
+verifier. Other failed gates retain the full repair path. Reuse does not cross
+runs or change the evidence, risk, quality, model-call or timeout boundaries.
 When external EOD history is unavailable, the quant module can consume the supplied
 controller close-history projection. It keeps the instrument and evidence reference,
 rejects conflicting, repeated, invalid or future observations, and labels results as

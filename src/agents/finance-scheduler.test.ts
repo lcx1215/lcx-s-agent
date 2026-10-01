@@ -109,6 +109,11 @@ describe("durable scheduler claims on the unified lifecycle", () => {
       ok: true,
       stdout: JSON.stringify({
         status: "candidate",
+        plan: { asOf: "2026-09-22T19:30:00.000Z" },
+        gates: ["source", "committee", "quality", "module_execution"].map((id) => ({
+          id,
+          passed: true,
+        })),
         portfolioPlanWritten: path.join(root, "research-portfolio-plan-latest.json"),
       }),
       stderr: "",

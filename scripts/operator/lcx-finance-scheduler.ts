@@ -25,7 +25,12 @@ import {
 } from "../../src/agents/finance-alpaca-cycle-controller.js";
 import { syncConfiguredAlpacaPaperHistory } from "../../src/agents/finance-alpaca-history-sync.js";
 import { createFinanceAlpacaMarketSessionResolver } from "../../src/agents/finance-alpaca-market-calendar.js";
+import {
+  createAlpacaPaperOrderStream,
+  type AlpacaPaperOrderStreamStatus,
+} from "../../src/agents/finance-alpaca-order-stream.js";
 import { caseflowFingerprint } from "../../src/agents/finance-caseflow.js";
+import { resolveFinanceCredentialEnv } from "../../src/agents/finance-credential-env.js";
 import {
   DEFAULT_FINANCE_CYCLE_SLOTS,
   FINANCE_MARKET_TZ,
@@ -67,6 +72,7 @@ import {
   runFinanceCycleProcess,
   type FinanceCycleProcessResult,
 } from "../../src/agents/finance-scheduler-process.js";
+import { createFinanceSchedulerReconciliationWake } from "../../src/agents/finance-scheduler-reconciliation-wake.js";
 import {
   FINANCE_SCHEDULER_TICK_MS,
   FINANCE_SCHEDULER_INTRADAY_MONITOR_STATUSES,
@@ -721,6 +727,7 @@ type CycleContext = {
   intradayController?: ReturnType<typeof createFinanceAlpacaCycleController>;
   resolveMarketSession?: ReturnType<typeof createFinanceAlpacaMarketSessionResolver>;
   lastIdleReconciliationAtMs?: number;
+  reconciliationWake?: ReturnType<typeof createFinanceSchedulerReconciliationWake>;
   sourceHeartbeatInFlight?: boolean;
   lastIntradayTick?: FinanceSchedulerIntradayLastTick | null;
 };
@@ -1205,7 +1212,10 @@ async function runScheduledCycleProcess(
 ): Promise<FinanceCycleProcessResult> {
   writeSchedulerProgress(context, "cycle", stage);
   if (context.options.command !== "loop" || !context.options.intraday || stage === "execution") {
-    return runFinanceCycleProcess(options);
+    const work = () => runFinanceCycleProcess(options);
+    return stage === "execution" && context.reconciliationWake
+      ? context.reconciliationWake.run(work)
+      : work();
   }
   // Research has no placement authority. Keep the existing resident trading tick
   // alive while it waits, with at most one trading tick in flight. Before handing
@@ -1807,7 +1817,32 @@ function buildIntradayLastTickCandidate(
   };
 }
 
+async function reconcileResidentAlpacaAccount(context: CycleContext, source: "idle" | "stream") {
+  context.lastIdleReconciliationAtMs = Date.now();
+  if (context.intradayController) {
+    const refreshed = await context.intradayController.inspectReconciliation(context.signal);
+    process.stdout.write(
+      `[${new Date().toISOString()}] ${source} broker reconciliation=${refreshed.readiness.status} account=${context.intradayController.accountId}\n`,
+    );
+    return refreshed.readiness.status;
+  } else {
+    const refreshed = await syncConfiguredAlpacaPaperHistory({
+      directory: context.root.directory,
+      signal: context.signal,
+    });
+    process.stdout.write(
+      `[${new Date().toISOString()}] ${source} broker reconciliation=${refreshed.accountReconciliation.status} account=${refreshed.accountId}\n`,
+    );
+    return refreshed.accountReconciliation.status;
+  }
+}
+
 async function runTradingTick(context: CycleContext): Promise<void> {
+  const work = () => runTradingTickOnAccountLane(context);
+  return context.reconciliationWake ? context.reconciliationWake.run(work) : work();
+}
+
+async function runTradingTickOnAccountLane(context: CycleContext): Promise<void> {
   const args = context.options.extraArgs;
   await refreshActiveIntradayBinding(context);
   const venueIndex = args.indexOf("--venue");
@@ -1823,22 +1858,8 @@ async function runTradingTick(context: CycleContext): Promise<void> {
     // one-minute scheduler heartbeat into an unbounded retry loop. The next
     // bounded attempt happens after the same interval; placement still performs
     // its own fresh reconciliation immediately before any order.
-    context.lastIdleReconciliationAtMs = now;
     try {
-      if (context.intradayController) {
-        const refreshed = await context.intradayController.inspectReconciliation(context.signal);
-        process.stdout.write(
-          `[${new Date().toISOString()}] idle broker reconciliation=${refreshed.readiness.status} account=${context.intradayController.accountId}\n`,
-        );
-      } else {
-        const refreshed = await syncConfiguredAlpacaPaperHistory({
-          directory: context.root.directory,
-          signal: context.signal,
-        });
-        process.stdout.write(
-          `[${new Date().toISOString()}] idle broker reconciliation=${refreshed.accountReconciliation.status} account=${refreshed.accountId}\n`,
-        );
-      }
+      await reconcileResidentAlpacaAccount(context, "idle");
     } catch (error) {
       if (!context.signal.aborted) {
         process.stderr.write(
@@ -2240,6 +2261,8 @@ export async function runFinanceScheduler(
   process.on("SIGTERM", onTerm);
   process.on("SIGINT", onInt);
   let release: (() => void) | undefined;
+  let orderStream: ReturnType<typeof createAlpacaPaperOrderStream> | undefined;
+  let reconciliationWake: ReturnType<typeof createFinanceSchedulerReconciliationWake> | undefined;
   try {
     release = acquireFinanceSchedulerLock(root.directory);
     initializeFinanceSchedulerDatabase(root.directory);
@@ -2248,13 +2271,97 @@ export async function runFinanceScheduler(
       runtimeOptions.command === "loop" && runtimeOptions.intraday
         ? createFinanceAlpacaMarketSessionResolver({ directory: root.directory })
         : undefined;
-    const context = {
+    const context: CycleContext = {
       root,
       options: runtimeOptions,
       signal: controller.signal,
       intradayController,
       resolveMarketSession,
     };
+    const venueIndex = runtimeOptions.extraArgs.indexOf("--venue");
+    if (
+      runtimeOptions.command === "loop" &&
+      runtimeOptions.extraArgs.includes("--sync-alpaca-history") &&
+      venueIndex >= 0 &&
+      runtimeOptions.extraArgs[venueIndex + 1] === "alpaca"
+    ) {
+      let streamStatus: AlpacaPaperOrderStreamStatus | undefined;
+      const reconciliation = {
+        lastAttemptAt: null as string | null,
+        lastReadbackAt: null as string | null,
+        lastSucceededAt: null as string | null,
+        lastReadinessStatus: null as string | null,
+        lastErrorCode: null as string | null,
+      };
+      const writeStreamStatus = () => {
+        const filename = path.join(root.directory, "alpaca-order-stream-latest.json");
+        const temporary = `${filename}.tmp`;
+        try {
+          fs.writeFileSync(
+            temporary,
+            JSON.stringify({
+              schemaVersion: "lcx_alpaca_order_stream_observation_v1",
+              pid: process.pid,
+              observedAt: new Date().toISOString(),
+              venue: "alpaca:paper",
+              boundary: "event_hint_only_rest_reconciliation_owns_account_facts",
+              stream: streamStatus ?? { state: "unavailable" },
+              reconciliation,
+            }),
+            { mode: 0o600 },
+          );
+          fs.renameSync(temporary, filename);
+        } catch {
+          process.stderr.write("Alpaca stream observation persistence failed\n");
+        }
+      };
+      context.reconciliationWake = reconciliationWake = createFinanceSchedulerReconciliationWake({
+        signal: controller.signal,
+        reconcile: async () => {
+          reconciliation.lastAttemptAt = new Date().toISOString();
+          writeStreamStatus();
+          const readiness = await reconcileResidentAlpacaAccount(context, "stream");
+          reconciliation.lastReadbackAt = new Date().toISOString();
+          reconciliation.lastReadinessStatus = readiness;
+          if (readiness === "ready" || readiness === "reconciled") {
+            reconciliation.lastSucceededAt = reconciliation.lastReadbackAt;
+          }
+          reconciliation.lastErrorCode = null;
+          writeStreamStatus();
+        },
+        onError: () => {
+          reconciliation.lastErrorCode = "reconciliation_failed";
+          reconciliation.lastReadinessStatus = "unavailable";
+          writeStreamStatus();
+          process.stderr.write(
+            "Alpaca stream reconciliation failed; periodic readback remains enabled\n",
+          );
+        },
+      });
+      try {
+        const env = resolveFinanceCredentialEnv({
+          ...process.env,
+          LCX_FINANCE_STATE_DIR: root.directory,
+        });
+        orderStream = createAlpacaPaperOrderStream({
+          credentials: {
+            keyId: env.ALPACA_API_KEY_ID ?? "",
+            secret: env.ALPACA_API_SECRET_KEY ?? "",
+          },
+          signal: controller.signal,
+          onWake: () => context.reconciliationWake?.request(),
+          onStatus: (status) => {
+            streamStatus = status;
+            writeStreamStatus();
+          },
+        });
+        orderStream.start();
+      } catch {
+        reconciliation.lastErrorCode = "stream_unavailable";
+        writeStreamStatus();
+        process.stderr.write("Alpaca stream unavailable; periodic readback remains enabled\n");
+      }
+    }
     if (options.command === "once") {
       const ok = await fire(context, options.mode!);
       return signalExitCode || (ok ? 0 : 1);
@@ -2267,7 +2374,17 @@ export async function runFinanceScheduler(
     }
     while (!controller.signal.aborted) {
       writeSchedulerProgress(context, "idle");
-      await tick(context);
+      try {
+        await tick(context);
+      } catch (error) {
+        if (controller.signal.aborted) {
+          break;
+        }
+        throw error;
+      }
+      if (controller.signal.aborted) {
+        break;
+      }
       writeSchedulerProgress(context, "idle");
       try {
         await delay(FINANCE_SCHEDULER_TICK_MS, undefined, { signal: controller.signal });
@@ -2280,10 +2397,16 @@ export async function runFinanceScheduler(
     return signalExitCode;
   } finally {
     try {
-      release?.();
+      controller.abort();
+      await orderStream?.close();
+      await reconciliationWake?.flush();
     } finally {
-      process.removeListener("SIGTERM", onTerm);
-      process.removeListener("SIGINT", onInt);
+      try {
+        release?.();
+      } finally {
+        process.removeListener("SIGTERM", onTerm);
+        process.removeListener("SIGINT", onInt);
+      }
     }
   }
 }
