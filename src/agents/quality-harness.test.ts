@@ -139,6 +139,7 @@ function coveredEvidenceRouting(
     canonicalAuditPrompts?: string[];
     canonicalPrecheckPrompts?: string[];
     formatArtifact?: QualityHarnessArtifact;
+    formatArtifactsByAttempt?: Readonly<Record<number, QualityHarnessArtifact>>;
     omitFinalAuditNoteId?: string;
     longExtractionNotes?: boolean;
     longAdversarialNotes?: boolean;
@@ -146,6 +147,7 @@ function coveredEvidenceRouting(
     failDraftAttempt?: number;
     failFinalAuditBudget?: boolean;
     revisePrecheckAttempt?: number;
+    adversarialFindingAttempt?: number;
   } = {},
 ): LogicalAgentModelRouting {
   const observations = new Map<string, ModelCallObservation>();
@@ -192,6 +194,13 @@ function coveredEvidenceRouting(
         };
       }
       if (current.stage === "draft" || current.stage === "format") {
+        const attemptArtifact =
+          current.stage === "format"
+            ? params.formatArtifactsByAttempt?.[current.attempt]
+            : undefined;
+        if (attemptArtifact) {
+          return { kind: "artifact", artifact: attemptArtifact };
+        }
         if (current.stage === "format" && params.formatArtifact) {
           return { kind: "artifact", artifact: params.formatArtifact };
         }
@@ -242,6 +251,17 @@ function coveredEvidenceRouting(
         };
         params.batchResponses?.push({ request: current, response });
         return response;
+      }
+      if (current.stage === "adversarial" && current.attempt === params.adversarialFindingAttempt) {
+        return {
+          kind: "review",
+          review: {
+            verdict: "revise",
+            criticalFindings: ["The previous artifact challenge remains unresolved."],
+            evidenceGaps: [],
+            notes: [],
+          },
+        };
       }
       if (current.stage === "adversarial" && params.longAdversarialNotes) {
         return {
@@ -1182,6 +1202,223 @@ describe("quality harness", () => {
     expect(
       requests.filter((entry) => entry.attempt === 2)[0]?.repairFeedback.length,
     ).toBeGreaterThan(0);
+  });
+
+  it("repairs a sole finance answer safety failure by reusing upstream stages and reauditing the final artifact", async () => {
+    const requests: QualityHarnessModelRequest[] = [];
+    const verifyAnswers: string[] = [];
+    const invalidArtifact: QualityHarnessArtifact = {
+      answer: "NVDA 的价格变化为 0.05%。",
+      claims: [
+        {
+          id: "market-price",
+          text: "截至 2026-09-06，NVDA 的价格为 480 美元。",
+          status: "supported",
+          evidenceIds: ["market"],
+        },
+      ],
+    };
+    const repairedArtifact: QualityHarnessArtifact = {
+      answer: "截至 2026-09-06，公开行情材料记录 NVDA 的价格为 480 美元。",
+      claims: [
+        {
+          id: "market-price",
+          text: "截至 2026-09-06，NVDA 的价格为 480 美元。",
+          status: "supported",
+          evidenceIds: ["market"],
+        },
+      ],
+    };
+    const result = await runQualityHarness({
+      request: financeRequest,
+      maxAttempts: 2,
+      requireEvidenceCoverage: true,
+      evidenceCoverage: {
+        sourceEvidenceIds: ["market"],
+        selectedEvidenceIds: ["market"],
+        runnerOmittedEvidenceIds: [],
+        runnerClippedEvidenceIds: [],
+      },
+      modelRouting: coveredEvidenceRouting({
+        requests,
+        formatArtifactsByAttempt: { 1: invalidArtifact, 2: repairedArtifact },
+      }),
+      verify: async ({ artifact: checked }) => {
+        verifyAnswers.push(checked.answer);
+        return {
+          status: "passed",
+          summary: "unchanged deterministic verifier passed",
+          details: [],
+        };
+      },
+    });
+
+    expect(result.status).toBe("verified");
+    expect(result.attempts.map((attempt) => attempt.status)).toEqual([
+      "quality-failed",
+      "quality-passed",
+    ]);
+    expect(result.attempts[0]?.gates.filter((gate) => !gate.passed).map((gate) => gate.id)).toEqual(
+      ["finance_answer_safety"],
+    );
+    expect(result.attempts[1]?.reusedStageIds?.toSorted()).toEqual([
+      "data_cleaning",
+      "evidence_integrity",
+      "financial_extraction",
+      "news_classification",
+      "portfolio_exposure",
+      "research_draft",
+      "risk_check",
+    ]);
+    const retryRequests = requests.filter((entry) => entry.attempt === 2);
+    expect(retryRequests.filter((entry) => entry.stage === "format")).toHaveLength(1);
+    expect(
+      retryRequests.filter((entry) => entry.evidenceBatchMode === "final_artifact_audit"),
+    ).toHaveLength(1);
+    expect(retryRequests.filter((entry) => entry.stage === "precheck")).toHaveLength(1);
+    expect(retryRequests.filter((entry) => entry.stage === "adversarial")).toHaveLength(1);
+    expect(retryRequests.some((entry) => entry.stage === "risk")).toBe(false);
+    expect(retryRequests.some((entry) => entry.stage === "draft")).toBe(false);
+    expect(verifyAnswers).toEqual([repairedArtifact.answer]);
+    expect(result.evidenceCoverage?.passed).toBe(true);
+  });
+
+  it("reruns adversarial review on the repaired artifact and remains failed when the prior finding persists", async () => {
+    const requests: QualityHarnessModelRequest[] = [];
+    const invalidArtifact: QualityHarnessArtifact = {
+      answer: "NVDA 的价格变化为 0.05%。",
+      claims: [
+        {
+          id: "market-price",
+          text: "截至 2026-09-06，NVDA 的价格为 480 美元。",
+          status: "supported",
+          evidenceIds: ["market"],
+        },
+      ],
+    };
+    const repairedArtifact: QualityHarnessArtifact = {
+      answer: "截至 2026-09-06，公开行情材料记录 NVDA 的价格为 480 美元。",
+      claims: [
+        {
+          id: "market-price",
+          text: "截至 2026-09-06，NVDA 的价格为 480 美元。",
+          status: "supported",
+          evidenceIds: ["market"],
+        },
+      ],
+    };
+    const verify = vi.fn(async () => ({
+      status: "passed" as const,
+      summary: "must not run while adversarial finding remains",
+      details: [],
+    }));
+    const result = await runQualityHarness({
+      request: financeRequest,
+      maxAttempts: 2,
+      requireEvidenceCoverage: true,
+      evidenceCoverage: {
+        sourceEvidenceIds: ["market"],
+        selectedEvidenceIds: ["market"],
+        runnerOmittedEvidenceIds: [],
+        runnerClippedEvidenceIds: [],
+      },
+      modelRouting: coveredEvidenceRouting({
+        requests,
+        formatArtifactsByAttempt: { 1: invalidArtifact, 2: repairedArtifact },
+        adversarialFindingAttempt: 2,
+      }),
+      verify,
+    });
+
+    expect(result.status).toBe("quality-failed");
+    expect(result.attempts[0]?.gates.filter((gate) => !gate.passed).map((gate) => gate.id)).toEqual(
+      ["finance_answer_safety"],
+    );
+    expect(
+      result.attempts[1]?.gates.filter((gate) => !gate.passed).map((gate) => gate.id),
+    ).toContain("adversarial_review");
+    expect(
+      requests.filter((entry) => entry.attempt === 2 && entry.stage === "adversarial"),
+    ).toHaveLength(1);
+    expect(verify).not.toHaveBeenCalled();
+  });
+
+  it("keeps the full repair path when finance answer safety is not the only failed gate", async () => {
+    const requests: QualityHarnessModelRequest[] = [];
+    const result = await runQualityHarness({
+      request: financeRequest,
+      maxAttempts: 2,
+      modelInvoker: demoInvoker({
+        answer: "NVDA 的价格变化为 0.05%。",
+        adversarialFinding: true,
+        requests,
+      }),
+    });
+    expect(result.attempts[0]?.gates.filter((gate) => !gate.passed).map((gate) => gate.id)).toEqual(
+      expect.arrayContaining(["finance_answer_safety", "adversarial_review"]),
+    );
+    expect(result.attempts[1]?.reusedStageIds?.toSorted()).toEqual([
+      "data_cleaning",
+      "financial_extraction",
+      "news_classification",
+    ]);
+    expect(requests.filter((entry) => entry.attempt === 2 && entry.stage === "draft")).toHaveLength(
+      1,
+    );
+    expect(
+      requests.filter((entry) => entry.attempt === 2 && entry.stage === "adversarial"),
+    ).toHaveLength(1);
+  });
+
+  it("does not let the scoped repair bypass finance answer safety when the revised artifact remains unsafe", async () => {
+    const requests: QualityHarnessModelRequest[] = [];
+    const verify = vi.fn(async () => ({
+      status: "passed" as const,
+      summary: "must not run for unsafe answer",
+      details: [],
+    }));
+    const unsafeArtifact: QualityHarnessArtifact = {
+      answer: "NVDA 的价格变化为 0.05%。",
+      claims: [
+        {
+          id: "market-price",
+          text: "截至 2026-09-06，NVDA 的价格为 480 美元。",
+          status: "supported",
+          evidenceIds: ["market"],
+        },
+      ],
+    };
+    const result = await runQualityHarness({
+      request: financeRequest,
+      maxAttempts: 2,
+      requireEvidenceCoverage: true,
+      evidenceCoverage: {
+        sourceEvidenceIds: ["market"],
+        selectedEvidenceIds: ["market"],
+        runnerOmittedEvidenceIds: [],
+        runnerClippedEvidenceIds: [],
+      },
+      modelRouting: coveredEvidenceRouting({
+        requests,
+        formatArtifactsByAttempt: { 1: unsafeArtifact, 2: unsafeArtifact },
+      }),
+      verify,
+    });
+
+    expect(result.status).toBe("quality-failed");
+    expect(result.attempts).toHaveLength(2);
+    expect(
+      result.attempts.map(
+        (attempt) => attempt.gates.find((gate) => gate.id === "finance_answer_safety")?.passed,
+      ),
+    ).toEqual([false, false]);
+    expect(verify).not.toHaveBeenCalled();
+    expect(requests.some((entry) => entry.attempt === 2 && entry.stage === "precheck")).toBe(true);
+    expect(
+      requests.some(
+        (entry) => entry.attempt === 2 && entry.evidenceBatchMode === "final_artifact_audit",
+      ),
+    ).toBe(true);
   });
 
   it("does not let the adversarial role self-approve a critical finding", async () => {

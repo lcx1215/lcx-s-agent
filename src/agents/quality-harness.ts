@@ -658,6 +658,16 @@ export async function runQualityHarness(
             task.agentId === "final_precheck") &&
           task.status === "failed",
       );
+    const failedGateIds = quality.gates.filter((gate) => !gate.passed).map((gate) => gate.id);
+    const finalArtifactOnlyRepair =
+      plan.status === "completed" &&
+      quality.artifact !== undefined &&
+      failedGateIds.length === 1 &&
+      failedGateIds[0] === "finance_answer_safety" &&
+      plan.tasks.every(
+        (task) =>
+          task.status === "completed" && task.sideEffects.length === 0 && task.output !== undefined,
+      );
     // Clean source preparation remains valid when the artifact's judgment fails.
     // Drafting and every artifact-dependent review still run again with feedback.
     if (downstreamNeedsRepair && !options.signal?.aborted) {
@@ -667,30 +677,46 @@ export async function runQualityHarness(
         "news_classification",
         ...evidenceBatches.slice(1).map((_, index) => `evidence_batch_extract_${index + 2}`),
       ]);
-      const preparation = plan.tasks.filter((task) => preparationIds.has(task.taskId));
-      if (
-        preparation.length === preparationIds.size &&
-        preparation.every(
-          (task) =>
-            task.status === "completed" &&
-            task.sideEffects.length === 0 &&
-            (task.output?.kind === "plan" ||
-              (task.output?.kind === "review" &&
-                task.output.review.verdict === "pass" &&
-                task.output.review.criticalFindings.length === 0 &&
-                task.output.review.evidenceGaps.length === 0 &&
-                (task.taskId.startsWith("evidence_batch_extract_")
-                  ? evidenceBatches[
-                      Number(task.taskId.slice("evidence_batch_extract_".length)) - 1
-                    ]?.every(
-                      (entry) =>
-                        task.output?.kind === "review" &&
-                        task.output.review.notes.some((note) => note.includes(`[${entry.id}]`)),
-                    )
-                  : true))),
-        )
-      ) {
-        for (const task of preparation) {
+      // A single deterministic final-answer gate can be repaired locally: the original
+      // same-run draft and its upstream reviews remain valid, while formatting and every
+      // final-artifact audit/precheck must run again against the revised artifact.
+      const reuseCandidates = finalArtifactOnlyRepair
+        ? plan.tasks.filter(
+            (task) =>
+              task.taskId !== "formatting" &&
+              task.taskId !== "adversarial_challenge" &&
+              task.taskId !== "final_precheck" &&
+              !task.taskId.startsWith("evidence_batch_review_"),
+          )
+        : plan.tasks.filter((task) => preparationIds.has(task.taskId));
+      const reusableTasks = reuseCandidates.filter((task) =>
+        finalArtifactOnlyRepair ? true : preparationIds.has(task.taskId),
+      );
+      const reuseSetComplete = finalArtifactOnlyRepair
+        ? reusableTasks.length > 0
+        : reusableTasks.length === preparationIds.size;
+      const reusableOutputsValid = reusableTasks.every(
+        (task) =>
+          task.status === "completed" &&
+          task.sideEffects.length === 0 &&
+          (finalArtifactOnlyRepair ||
+            task.output?.kind === "plan" ||
+            (task.output?.kind === "review" &&
+              task.output.review.verdict === "pass" &&
+              task.output.review.criticalFindings.length === 0 &&
+              task.output.review.evidenceGaps.length === 0 &&
+              (task.taskId.startsWith("evidence_batch_extract_")
+                ? evidenceBatches[
+                    Number(task.taskId.slice("evidence_batch_extract_".length)) - 1
+                  ]?.every(
+                    (entry) =>
+                      task.output?.kind === "review" &&
+                      task.output.review.notes.some((note) => note.includes(`[${entry.id}]`)),
+                  )
+                : true))),
+      );
+      if (reuseSetComplete && reusableOutputsValid) {
+        for (const task of reusableTasks) {
           if (task.output) {
             reusable.set(task.taskId, task.output);
             if (coverageIssues.length === 0) {
