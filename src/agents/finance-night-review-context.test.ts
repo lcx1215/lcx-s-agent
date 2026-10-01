@@ -14,6 +14,7 @@ import {
 } from "./finance-intraday-control-ledger.js";
 import {
   buildFinanceActiveStrategyResearchEvidence,
+  buildFinanceBrokerAccountResearchEvidence,
   buildFinanceNightReviewEvidence,
   readFinanceNightReviewResearchScope,
   readFinanceActiveStrategyResearchScope,
@@ -196,6 +197,15 @@ describe("finance night review context", () => {
         positions: [expect.objectContaining({ instrument: "SPY", quantity: 2 })],
       });
       const brokerSummary = JSON.parse(evidence[1].text);
+      const sharedBrokerSummary = await buildFinanceBrokerAccountResearchEvidence({
+        directory,
+        asOf: "2026-09-22T22:00:00.000Z",
+      });
+      expect(sharedBrokerSummary.id).toBe("finance-controller:broker-account-summary");
+      expect(sharedBrokerSummary.source).toBe(evidence[1].source);
+      expect(JSON.parse(sharedBrokerSummary.text)).toMatchObject(brokerSummary);
+      expect(brokerSummary).not.toHaveProperty("executionAuthority");
+      expect(brokerSummary.positionSnapshots[0]).not.toHaveProperty("brokerCash");
       expect(brokerSummary.positionSnapshots).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -1108,4 +1118,190 @@ it("passes active close history to night research using the latest completed mar
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }
+});
+
+describe("shared broker account research evidence", () => {
+  const asOf = "2026-09-22T22:00:00.000Z";
+  it("reads the exact account and venue even outside the aggregate's latest three books", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-account-context-"));
+    try {
+      await appendFinanceBrokerHistory(directory, {
+        kind: "broker_history",
+        accountId: "selected",
+        venue: "alpaca:paper",
+        query: "reconciliation:selected",
+        cursor: "",
+        payload: [
+          {
+            observedAt: "2026-09-22T21:59:00.000Z",
+            brokerCash: 100,
+            positions: [{ symbol: "SPY", qty: "1" }],
+            protection: { coverage: [] },
+          },
+        ],
+      });
+      for (const [accountId, venue] of [
+        ["selected", "paper"],
+        ["other", "alpaca:paper"],
+        ["third", "alpaca:paper"],
+      ]) {
+        await appendFinanceBrokerHistory(directory, {
+          kind: "broker_history",
+          accountId,
+          venue,
+          query: "reconciliation:other",
+          cursor: "",
+          payload: [
+            {
+              observedAt: "2026-09-22T21:59:00.000Z",
+              brokerCash: 999,
+              positions: [{ symbol: "OTHER-ACCOUNT-SECRET", qty: "9" }],
+            },
+          ],
+        });
+      }
+      const evidence = await buildFinanceBrokerAccountResearchEvidence({
+        directory,
+        asOf,
+        accountId: "selected",
+        venue: "alpaca:paper",
+      });
+      const summary = JSON.parse(evidence.text);
+      expect(summary).toMatchObject({
+        accountScope: { accountId: "selected", venue: "alpaca:paper" },
+        currentAccountFactsStatus: "observed",
+        executionAuthority: "none",
+        positionSnapshots: [
+          {
+            accountId: "selected",
+            venue: "alpaca:paper",
+            freshness: "fresh",
+            brokerCash: 100,
+            equity: null,
+            buyingPower: null,
+            missingFields: ["equity", "buyingPower"],
+            positions: [{ symbol: "SPY", quantity: 1 }],
+          },
+        ],
+        missingFields: ["profit_summary_for_account"],
+        accounts: [],
+      });
+      expect(evidence.text).not.toContain("OTHER-ACCOUNT-SECRET");
+      const localPaper = JSON.parse(
+        (
+          await buildFinanceBrokerAccountResearchEvidence({
+            directory,
+            asOf,
+            accountId: "selected",
+            venue: "paper",
+          })
+        ).text,
+      );
+      expect(localPaper.positionSnapshots[0].venue).toBe("paper");
+      expect(localPaper.positionSnapshots[0].brokerCash).toBe(999);
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
+  it.each([
+    ["2026-09-22T21:50:00.000Z", "stale"],
+    ["2026-09-22T22:00:01.000Z", "outside_cutoff"],
+    ["invalid", "invalid_timestamp"],
+  ])("marks current account facts unknown for %s", async (observedAt, freshness) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-account-cutoff-"));
+    try {
+      await appendFinanceBrokerHistory(directory, {
+        kind: "broker_history",
+        accountId: "selected",
+        venue: "alpaca:paper",
+        query: "reconciliation:cutoff",
+        cursor: "",
+        payload: [
+          { observedAt, brokerCash: 100, positions: [{ symbol: "CUTOFF-CONTENT", qty: "1" }] },
+        ],
+      });
+      const evidence = await buildFinanceBrokerAccountResearchEvidence({
+        directory,
+        asOf,
+        accountId: "selected",
+        venue: "alpaca:paper",
+      });
+      const summary = JSON.parse(evidence.text);
+      expect(summary.currentAccountFactsStatus).toBe("unknown");
+      expect(summary.positionSnapshots[0].freshness).toBe(freshness);
+      expect(evidence.text).not.toContain("CUTOFF-CONTENT");
+      expect(summary.positionSnapshots[0].brokerCash).toBeNull();
+      expect(summary.positionSnapshots[0].positions).toBeNull();
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
+  it("does not interpret a missing book or partial snapshot as zero cash or empty holdings", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-account-missing-"));
+    try {
+      const read = () =>
+        buildFinanceBrokerAccountResearchEvidence({
+          directory,
+          asOf,
+          accountId: "selected",
+          venue: "alpaca:paper",
+        });
+      const missing = JSON.parse((await read()).text);
+      expect(missing.currentAccountFactsStatus).toBe("unknown");
+      expect(missing.positionSnapshots).toEqual([]);
+      expect(missing.missingFields).toContain("positionSnapshots");
+      await appendFinanceBrokerHistory(directory, {
+        kind: "broker_history",
+        accountId: "selected",
+        venue: "alpaca:paper",
+        query: "reconciliation:partial",
+        cursor: "",
+        payload: [{ observedAt: "2026-09-22T21:59:00.000Z" }],
+      });
+      const partial = JSON.parse((await read()).text);
+      expect(partial.currentAccountFactsStatus).toBe("unknown");
+      expect(partial.positionSnapshots[0]).toMatchObject({
+        brokerCash: null,
+        equity: null,
+        missingFields: [
+          "brokerCash",
+          "equity",
+          "buyingPower",
+          "positions",
+          "protectionCoverage",
+          "usable_current_account_facts",
+        ],
+      });
+      await appendFinanceBrokerHistory(directory, {
+        kind: "broker_history",
+        accountId: "selected",
+        venue: "alpaca:paper",
+        query: "reconciliation:invalid-position",
+        cursor: "",
+        payload: [
+          {
+            observedAt: "2026-09-22T21:59:00.000Z",
+            brokerCash: 100,
+            positions: [
+              { symbol: "SPY", qty: "1" },
+              { symbol: "BTCUSD", qty: "invalid" },
+            ],
+          },
+        ],
+      });
+      const invalidPosition = JSON.parse((await read()).text);
+      expect(invalidPosition.currentAccountFactsStatus).toBe("unknown");
+      expect(invalidPosition.positionSnapshots[0].missingFields).toContain(
+        "positions.invalid_entries",
+      );
+      await expect(
+        buildFinanceBrokerAccountResearchEvidence({ directory, asOf, accountId: "selected" }),
+      ).rejects.toThrow("both accountId and venue");
+      await expect(
+        buildFinanceBrokerAccountResearchEvidence({ directory, asOf: "invalid" }),
+      ).rejects.toThrow("valid non-future asOf");
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
 });

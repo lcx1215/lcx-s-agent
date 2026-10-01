@@ -11,6 +11,7 @@ import {
 import {
   projectFinancePositions,
   readFinanceLatestBrokerReconciliations,
+  readFinanceBrokerHistoryRecords,
   readFinancePositionLedger,
 } from "./finance-position-ledger.js";
 import { buildFinanceMonthlyTrendDerivedEvidence } from "./finance-research-evidence.js";
@@ -509,6 +510,284 @@ export async function readFinanceActiveStrategyResearchScope(params: {
   });
 }
 
+type BrokerProfitFeedback = Awaited<ReturnType<typeof readFinanceBrokerProfitFeedback>>;
+type BrokerReconciliationRead = Awaited<ReturnType<typeof readFinanceLatestBrokerReconciliations>>;
+
+function projectFinanceBrokerAccountResearchSummary(params: {
+  asOf: string;
+  brokerProfit: BrokerProfitFeedback;
+  brokerReconciliations: BrokerReconciliationRead;
+  includeAccountFields?: boolean;
+}) {
+  return {
+    ...(params.includeAccountFields
+      ? {
+          executionAuthority: "none",
+          dataBasis: "canonical_local_broker_reconciliation_snapshots",
+          missingFields: params.brokerReconciliations.records.length ? [] : ["positionSnapshots"],
+        }
+      : {}),
+    attributionScope: "account_totals_not_instrument_or_strategy_totals",
+    instrumentAttribution:
+      "not_provided; do not assign account fill counts or fees to the requested instrument",
+    boundary:
+      "broker_paper_not_local_simulation; net excludes tax/fx; fill ownership is not strategy PnL",
+    positionSnapshots: params.brokerReconciliations.records.map((record) => {
+      const snapshot: unknown = record.snapshot;
+      const snapshotObject =
+        typeof snapshot === "object" && snapshot !== null && !Array.isArray(snapshot)
+          ? (snapshot as Record<string, unknown>)
+          : undefined;
+      const observedAt =
+        typeof snapshotObject?.observedAt === "string" ? snapshotObject.observedAt : undefined;
+      const observedAtMs = observedAt ? Date.parse(observedAt) : Number.NaN;
+      if (!snapshotObject || !observedAt || !Number.isFinite(observedAtMs)) {
+        return {
+          accountId: record.accountId,
+          venue: record.venue,
+          snapshotRef: record.ref,
+          freshness: "invalid_timestamp",
+          ...(params.includeAccountFields
+            ? { missingFields: ["observedAt", "usable_account_snapshot"] }
+            : {}),
+        };
+      }
+      if (observedAtMs > Date.parse(params.asOf)) {
+        return {
+          accountId: record.accountId,
+          venue: record.venue,
+          snapshotRef: record.ref,
+          freshness: "outside_cutoff",
+          ...(params.includeAccountFields
+            ? { missingFields: ["usable_account_snapshot_at_asOf"] }
+            : {}),
+        };
+      }
+      const snapshotPositions = Array.isArray(snapshotObject.positions)
+        ? snapshotObject.positions.flatMap((value) => {
+            if (typeof value !== "object" || value === null || Array.isArray(value)) {
+              return [];
+            }
+            const position = value as Record<string, unknown>;
+            const rawQuantity = position.qty;
+            const quantity =
+              typeof rawQuantity === "number"
+                ? rawQuantity
+                : typeof rawQuantity === "string" && rawQuantity.trim()
+                  ? Number(rawQuantity)
+                  : Number.NaN;
+            return typeof position.symbol === "string" && Number.isFinite(quantity)
+              ? [{ symbol: position.symbol, quantity }]
+              : [];
+          })
+        : [];
+      const protection =
+        typeof snapshotObject.protection === "object" &&
+        snapshotObject.protection !== null &&
+        !Array.isArray(snapshotObject.protection)
+          ? (snapshotObject.protection as Record<string, unknown>)
+          : undefined;
+      const rawCash = snapshotObject.brokerCash;
+      const cash =
+        typeof rawCash === "number"
+          ? rawCash
+          : typeof rawCash === "string" && rawCash.trim()
+            ? Number(rawCash)
+            : Number.NaN;
+      const missingFields = [
+        ...(!Number.isFinite(cash) ? ["brokerCash"] : []),
+        // These reconciliation records do not provide account equity or buying power.
+        "equity",
+        "buyingPower",
+        ...(!Array.isArray(snapshotObject.positions) ? ["positions"] : []),
+        ...(Array.isArray(snapshotObject.positions) &&
+        snapshotPositions.length !== snapshotObject.positions.length
+          ? ["positions.invalid_entries"]
+          : []),
+        ...(!Array.isArray(protection?.coverage) ? ["protectionCoverage"] : []),
+      ];
+      return {
+        accountId: record.accountId,
+        venue: record.venue,
+        snapshotRef: record.ref,
+        observedAt,
+        ...(params.includeAccountFields
+          ? {
+              brokerCash: Number.isFinite(cash) ? cash : null,
+              equity: null,
+              buyingPower: null,
+              missingFields,
+            }
+          : {}),
+        freshness:
+          !record.superseded && Date.parse(params.asOf) - observedAtMs <= 300_000
+            ? "fresh"
+            : "stale",
+        positions: snapshotPositions,
+        protectionCoverage: Array.isArray(protection?.coverage)
+          ? protection.coverage.flatMap((value) => {
+              if (typeof value !== "object" || value === null || Array.isArray(value)) {
+                return [];
+              }
+              const item = value as Record<string, unknown>;
+              return typeof item.instrument === "string"
+                ? [
+                    {
+                      instrument: item.instrument,
+                      positionQuantity: item.positionQuantity,
+                      recognizedStopQuantity: item.recognizedStopQuantity,
+                      uncoveredQuantity: item.uncoveredQuantity,
+                      status: item.status,
+                    },
+                  ]
+                : [];
+            })
+          : [],
+      };
+    }),
+    omittedPositionSnapshotAccounts: params.brokerReconciliations.omittedAccounts,
+    status: params.brokerProfit.status,
+    ...(params.brokerProfit.status === "unavailable" ? { reason: params.brokerProfit.reason } : {}),
+    accounts:
+      "accounts" in params.brokerProfit
+        ? params.brokerProfit.accounts?.map((account) => ({
+            ...(params.includeAccountFields
+              ? {
+                  accountId: params.brokerReconciliations.records.find(
+                    (record) => record.ref === account.snapshotRef,
+                  )?.accountId,
+                  venue: params.brokerReconciliations.records.find(
+                    (record) => record.ref === account.snapshotRef,
+                  )?.venue,
+                  snapshotRef: account.snapshotRef,
+                }
+              : {}),
+            status: account.status,
+            ...("netMatchedPnl" in account
+              ? {
+                  netMatchedPnl: account.netMatchedPnl,
+                  buyFills: account.buyFills,
+                  sellFills: account.sellFills,
+                  matchedLotCount: account.matchedLotCount,
+                  feeActivityCount: account.feeActivityCount,
+                  unallocatedFeeActivityCount: account.unallocatedFeeActivityCount,
+                  attributedFillCount: account.strategyAttribution.attributedFillCount,
+                  unattributedFillCount: account.strategyAttribution.unattributedFillCount,
+                  decisionSourceLineage: account.strategyAttribution.decisionSourceLineage,
+                  observedAt: account.observedAt,
+                  freshness: account.freshness,
+                }
+              : {}),
+          }))
+        : [],
+  };
+}
+
+/** Local canonical observations only: no broker call, allocation or execution authority. */
+export async function buildFinanceBrokerAccountResearchEvidence(params: {
+  directory: string;
+  asOf: string;
+  /** Both fields select one canonical book; omit both for the legacy night aggregate. */
+  accountId?: string;
+  /** Canonical ledger venue, e.g. alpaca:paper. No alias or Paper/Live fallback is applied. */
+  venue?: string;
+  /** Callers may retain an existing evidence identity, including the night review identity. */
+  evidenceId?: string;
+}): Promise<FinanceCommitteeEvidence> {
+  if (!Number.isFinite(Date.parse(params.asOf)) || Date.parse(params.asOf) > Date.now()) {
+    throw new Error("account research evidence requires a valid non-future asOf");
+  }
+  const scoped = params.accountId !== undefined || params.venue !== undefined;
+  if (scoped && (!params.accountId?.trim() || !params.venue?.trim())) {
+    throw new Error("account research evidence requires both accountId and venue");
+  }
+  const readReconciliations = async (): Promise<BrokerReconciliationRead> => {
+    if (!scoped) {
+      return readFinanceLatestBrokerReconciliations(params.directory);
+    }
+    const history = await readFinanceBrokerHistoryRecords(
+      params.directory,
+      params.accountId ?? "",
+      params.venue ?? "",
+    );
+    const latest = history.records.findLast((record) =>
+      record.body.query.startsWith("reconciliation:"),
+    );
+    return {
+      records: latest
+        ? [
+            {
+              ref: latest.ref,
+              accountId: latest.body.accountId,
+              sequence: latest.sequence,
+              venue: latest.body.venue,
+              superseded: history.headRef !== latest.ref,
+              snapshot: latest.body.payload[0],
+            },
+          ]
+        : [],
+      omittedAccounts: 0,
+    };
+  };
+  const [brokerProfit, brokerReconciliations] = await Promise.all([
+    readFinanceBrokerProfitFeedback(params.directory, params.asOf),
+    readReconciliations(),
+  ]);
+  const projected = projectFinanceBrokerAccountResearchSummary({
+    asOf: params.asOf,
+    brokerProfit,
+    brokerReconciliations,
+    includeAccountFields: true,
+  });
+  const accountProfit =
+    projected.accounts?.filter(
+      (account) => account.accountId === params.accountId && account.venue === params.venue,
+    ) ?? [];
+  const accountSnapshot = projected.positionSnapshots[0];
+  const usableCurrentAccountFacts =
+    accountSnapshot?.freshness === "fresh" &&
+    accountSnapshot.missingFields !== undefined &&
+    !accountSnapshot.missingFields.some((field) =>
+      ["brokerCash", "positions", "positions.invalid_entries"].includes(field),
+    );
+  const summary = scoped
+    ? {
+        ...projected,
+        accountScope: { accountId: params.accountId, venue: params.venue },
+        currentAccountFactsStatus: usableCurrentAccountFacts ? "observed" : "unknown",
+        positionSnapshots: projected.positionSnapshots.map((snapshot) =>
+          usableCurrentAccountFacts
+            ? snapshot
+            : {
+                accountId: snapshot.accountId,
+                venue: snapshot.venue,
+                snapshotRef: snapshot.snapshotRef,
+                observedAt: "observedAt" in snapshot ? snapshot.observedAt : undefined,
+                freshness: snapshot.freshness,
+                missingFields: [...(snapshot.missingFields ?? []), "usable_current_account_facts"],
+                brokerCash: null,
+                equity: null,
+                buyingPower: null,
+                positions: null,
+                protectionCoverage: null,
+              },
+        ),
+        accounts: accountProfit,
+        status: accountProfit.length ? "present" : "unavailable",
+        missingFields: [
+          ...(projected.missingFields ?? []),
+          ...(accountProfit.length ? [] : ["profit_summary_for_account"]),
+        ],
+      }
+    : projected;
+  return Object.freeze({
+    id: params.evidenceId ?? "finance-controller:broker-account-summary",
+    source: "finance-broker-profit-summary",
+    timestamp: params.asOf,
+    text: JSON.stringify(summary),
+  });
+}
+
 export async function buildFinanceNightReviewEvidence(params: {
   directory: string;
   asOf: string;
@@ -595,117 +874,13 @@ export async function buildFinanceNightReviewEvidence(params: {
     id: `finance-night:broker-profit:${params.etDate}`,
     source: "finance-broker-profit-summary",
     timestamp: params.asOf,
-    text: JSON.stringify({
-      attributionScope: "account_totals_not_instrument_or_strategy_totals",
-      instrumentAttribution:
-        "not_provided; do not assign account fill counts or fees to the requested instrument",
-      boundary:
-        "broker_paper_not_local_simulation; net excludes tax/fx; fill ownership is not strategy PnL",
-      positionSnapshots: brokerReconciliations.records.map((record) => {
-        const snapshot: unknown = record.snapshot;
-        const snapshotObject =
-          typeof snapshot === "object" && snapshot !== null && !Array.isArray(snapshot)
-            ? (snapshot as Record<string, unknown>)
-            : undefined;
-        const observedAt =
-          typeof snapshotObject?.observedAt === "string" ? snapshotObject.observedAt : undefined;
-        const observedAtMs = observedAt ? Date.parse(observedAt) : Number.NaN;
-        if (!snapshotObject || !observedAt || !Number.isFinite(observedAtMs)) {
-          return {
-            accountId: record.accountId,
-            venue: record.venue,
-            snapshotRef: record.ref,
-            freshness: "invalid_timestamp",
-          };
-        }
-        if (observedAtMs > Date.parse(params.asOf)) {
-          return {
-            accountId: record.accountId,
-            venue: record.venue,
-            snapshotRef: record.ref,
-            freshness: "outside_cutoff",
-          };
-        }
-        const snapshotPositions = Array.isArray(snapshotObject.positions)
-          ? snapshotObject.positions.flatMap((value) => {
-              if (typeof value !== "object" || value === null || Array.isArray(value)) {
-                return [];
-              }
-              const position = value as Record<string, unknown>;
-              const rawQuantity = position.qty;
-              const quantity =
-                typeof rawQuantity === "number"
-                  ? rawQuantity
-                  : typeof rawQuantity === "string" && rawQuantity.trim()
-                    ? Number(rawQuantity)
-                    : Number.NaN;
-              return typeof position.symbol === "string" && Number.isFinite(quantity)
-                ? [{ symbol: position.symbol, quantity }]
-                : [];
-            })
-          : [];
-        const protection =
-          typeof snapshotObject.protection === "object" &&
-          snapshotObject.protection !== null &&
-          !Array.isArray(snapshotObject.protection)
-            ? (snapshotObject.protection as Record<string, unknown>)
-            : undefined;
-        return {
-          accountId: record.accountId,
-          venue: record.venue,
-          snapshotRef: record.ref,
-          observedAt,
-          freshness:
-            !record.superseded && Date.parse(params.asOf) - observedAtMs <= 300_000
-              ? "fresh"
-              : "stale",
-          positions: snapshotPositions,
-          protectionCoverage: Array.isArray(protection?.coverage)
-            ? protection.coverage.flatMap((value) => {
-                if (typeof value !== "object" || value === null || Array.isArray(value)) {
-                  return [];
-                }
-                const item = value as Record<string, unknown>;
-                return typeof item.instrument === "string"
-                  ? [
-                      {
-                        instrument: item.instrument,
-                        positionQuantity: item.positionQuantity,
-                        recognizedStopQuantity: item.recognizedStopQuantity,
-                        uncoveredQuantity: item.uncoveredQuantity,
-                        status: item.status,
-                      },
-                    ]
-                  : [];
-              })
-            : [],
-        };
+    text: JSON.stringify(
+      projectFinanceBrokerAccountResearchSummary({
+        asOf: params.asOf,
+        brokerProfit,
+        brokerReconciliations,
       }),
-      omittedPositionSnapshotAccounts: brokerReconciliations.omittedAccounts,
-      status: brokerProfit.status,
-      ...(brokerProfit.status === "unavailable" ? { reason: brokerProfit.reason } : {}),
-      accounts:
-        "accounts" in brokerProfit
-          ? brokerProfit.accounts?.map((account) => ({
-              status: account.status,
-              ...("netMatchedPnl" in account
-                ? {
-                    netMatchedPnl: account.netMatchedPnl,
-                    buyFills: account.buyFills,
-                    sellFills: account.sellFills,
-                    matchedLotCount: account.matchedLotCount,
-                    feeActivityCount: account.feeActivityCount,
-                    unallocatedFeeActivityCount: account.unallocatedFeeActivityCount,
-                    attributedFillCount: account.strategyAttribution.attributedFillCount,
-                    unattributedFillCount: account.strategyAttribution.unattributedFillCount,
-                    decisionSourceLineage: account.strategyAttribution.decisionSourceLineage,
-                    observedAt: account.observedAt,
-                    freshness: account.freshness,
-                  }
-                : {}),
-            }))
-          : [],
-    }),
+    ),
   };
   return Object.freeze([
     Object.freeze({
