@@ -44,6 +44,40 @@ describe("broker economic reconciliation", () => {
     expect(result.cashFromActivities).toBe(90);
     expect(result.differences).toEqual([]);
   });
+  it("reconciles Alpaca partial-fill activities using the executed quantity", () => {
+    const result = reconcileFinanceBrokerActivities({
+      activities: [
+        {
+          id: "partial-fill-cash",
+          activity_type: "JNLC",
+          status: "executed",
+          currency: "USD",
+          net_amount: "1000",
+        },
+        {
+          id: "partial-fill",
+          activity_type: "FILL",
+          type: "partial_fill",
+          order_status: "partially_filled",
+          side: "buy",
+          symbol: "BITO",
+          qty: "54",
+          cum_qty: "54",
+          leaves_qty: "34",
+          price: "11.26",
+          transaction_time: "2026-10-01T14:33:00.883144Z",
+        },
+      ],
+      positions: [{ symbol: "BITO", qty: "54" }],
+      cash: 391.96,
+      completeFromInception: true,
+    });
+    expect(result.status).toBe("reconciled");
+    expect(result.cashFromActivities).toBeCloseTo(391.96, 8);
+    expect(result.cashDifference).toBeCloseTo(0, 8);
+    expect(result.quantities).toEqual([{ instrument: "BITO", quantity: 54 }]);
+    expect(result.differences).toEqual([]);
+  });
   it("does not invent crypto fees from a matching quantity gap", () => {
     const result = reconcileFinanceBrokerActivities({
       activities: activities.slice(0, 2),
