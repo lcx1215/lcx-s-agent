@@ -90,6 +90,27 @@ describe("research CLI checkpoint budget", () => {
     expect(await status()).toMatchObject({ status: "failed", reason: "research_run_failed" });
     expect(JSON.stringify(await status())).not.toContain("secret-provider-detail");
   });
+  it("classifies provider quota failures without persisting the provider message", async () => {
+    const budget = await fixture();
+    await expect(
+      runCheckpointedFinanceResearch(input, budget, async () => {
+        throw new Error("API budget_exhausted Authorization: Bearer sk-test-secret-value");
+      }),
+    ).rejects.toThrow();
+    const saved = await status();
+    expect(saved).toMatchObject({ status: "failed", failureClass: "provider_quota" });
+    expect(JSON.stringify(saved)).not.toContain("budget_exhausted");
+    expect(JSON.stringify(saved)).not.toContain("sk-test-secret-value");
+  });
+  it("classifies an upstream timeout separately from a quota failure", async () => {
+    const budget = await fixture();
+    await expect(
+      runCheckpointedFinanceResearch(input, budget, async () => {
+        throw new Error("ETIMEDOUT while waiting for provider response");
+      }),
+    ).rejects.toThrow();
+    expect(await status()).toMatchObject({ status: "failed", failureClass: "timeout" });
+  });
 });
 
 it("exposes a failed scheduler summary with the durable checkpoint, never a candidate", () => {
@@ -106,6 +127,7 @@ it("exposes a failed scheduler summary with the durable checkpoint, never a cand
     answerDecision: "return_failed_reason",
     failure: {
       reason: "research_run_deadline_exceeded",
+      failureClass: "deadline",
       checkpointPath: "/book/checkpoints.sqlite",
     },
   });

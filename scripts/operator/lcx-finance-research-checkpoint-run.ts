@@ -4,6 +4,8 @@ import path from "node:path";
 import { runFinanceResearchRun } from "../../src/agents/finance-research-runner.ts";
 
 export class FinanceResearchRunFailure extends Error {
+  readonly failureClass: FinanceResearchFailureClass;
+
   constructor(
     readonly reason:
       | "research_run_deadline_exceeded"
@@ -16,7 +18,65 @@ export class FinanceResearchRunFailure extends Error {
   ) {
     super(reason, { cause });
     this.name = "FinanceResearchRunFailure";
+    this.failureClass = classifyFinanceResearchFailure(reason, cause);
   }
+}
+
+export type FinanceResearchFailureClass =
+  | "deadline"
+  | "cancelled"
+  | "provider_quota"
+  | "provider_billing"
+  | "provider_access"
+  | "network"
+  | "timeout"
+  | "persistence"
+  | "model_response"
+  | "unknown";
+
+function classifyFinanceResearchFailure(
+  reason: FinanceResearchRunFailure["reason"],
+  cause: unknown,
+): FinanceResearchFailureClass {
+  if (reason === "research_run_deadline_exceeded") {
+    return "deadline";
+  }
+  if (reason === "research_run_cancelled") {
+    return "cancelled";
+  }
+
+  const message =
+    cause instanceof Error
+      ? `${cause.name} ${cause.message}`
+      : typeof cause === "string"
+        ? cause
+        : "";
+  if (/\b429\b|rate[- ]?limit|quota|budget[_ -]?exhausted|insufficient[_ -]?quota/i.test(message)) {
+    return "provider_quota";
+  }
+  if (/\b402\b|payment required|billing/i.test(message)) {
+    return "provider_billing";
+  }
+  if (/\b(?:401|403)\b|unauthori[sz]ed|forbidden|permission denied/i.test(message)) {
+    return "provider_access";
+  }
+  if (/timeout|timed out|etimedout|deadline exceeded|operation was aborted/i.test(message)) {
+    return "timeout";
+  }
+  if (
+    /fetch failed|econnreset|econnrefused|enotfound|eai_again|network error|socket hang up/i.test(
+      message,
+    )
+  ) {
+    return "network";
+  }
+  if (/sqlite|database|eacces|eperm|enoent|read-only|disk full/i.test(message)) {
+    return "persistence";
+  }
+  if (/model|inference|completion|invalid response|schema validation/i.test(message)) {
+    return "model_response";
+  }
+  return "unknown";
 }
 
 /** The scheduler remains the hard process deadline owner; this deadline cancels the DAG. */
@@ -44,7 +104,7 @@ export async function runCheckpointedFinanceResearch(
     executionFingerprint: `cli-research-v1:${runId}`,
   };
   const startedAt = new Date().toISOString();
-  const record = (status: string, reason?: string) => {
+  const record = (status: string, reason?: string, failureClass?: FinanceResearchFailureClass) => {
     const temporary = path.join(directory, "run.json.tmp");
     writeFileSync(
       temporary,
@@ -55,6 +115,7 @@ export async function runCheckpointedFinanceResearch(
           observedAt: new Date().toISOString(),
           status,
           reason,
+          ...(failureClass ? { failureClass } : {}),
           checkpointPath: checkpoint.path,
           runTimeoutMs: budget.runTimeoutMs,
           maxModelCalls: budget.maxModelCalls,
@@ -75,7 +136,7 @@ export async function runCheckpointedFinanceResearch(
   let checkpointWriteError: unknown;
   const timer = setTimeout(() => {
     try {
-      record("cancelling", "research_run_deadline_exceeded");
+      record("cancelling", "research_run_deadline_exceeded", "deadline");
     } catch (error) {
       checkpointWriteError = error;
     } finally {
@@ -102,8 +163,9 @@ export async function runCheckpointedFinanceResearch(
       : signal.aborted
         ? "research_run_cancelled"
         : "research_run_failed";
-    record(signal.aborted ? "aborted" : "failed", reason);
-    throw new FinanceResearchRunFailure(reason, runId, checkpoint.path, startedAt, error);
+    const failure = new FinanceResearchRunFailure(reason, runId, checkpoint.path, startedAt, error);
+    record(signal.aborted ? "aborted" : "failed", reason, failure.failureClass);
+    throw failure;
   } finally {
     clearTimeout(timer);
   }
