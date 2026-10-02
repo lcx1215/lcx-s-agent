@@ -916,7 +916,10 @@ export async function executeFinanceModuleComposition(
         } else if (producerName) {
           missingEvidence.push(`domain_producer_input:${producerName}`);
         }
-        if (toolCalls.every((call) => call.status === "succeeded")) {
+        const producerSucceeded =
+          !producerName ||
+          toolCalls.some((call) => call.toolName === producerName && call.status === "succeeded");
+        if (producerSucceeded && toolCalls.every((call) => call.status === "succeeded")) {
           const inspected = await callTool(
             inspectTool,
             toolName,

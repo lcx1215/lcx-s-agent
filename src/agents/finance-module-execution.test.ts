@@ -671,9 +671,7 @@ describe("finance module execution", () => {
         (item) => item.moduleId === "company_fundamentals_value",
       );
       expect(node?.status).toBe("blocked_missing_evidence");
-      expect(node?.toolCalls.map((call) => call.toolName)).toEqual([
-        "finance_framework_core_inspect",
-      ]);
+      expect(node?.toolCalls).toEqual([]);
       expect(node?.missingEvidence).toContain(
         "domain_producer_input:finance_framework_company_fundamentals_value_producer",
       );
