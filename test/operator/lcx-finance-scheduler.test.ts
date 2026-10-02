@@ -3381,9 +3381,8 @@ it("automatically wakes the single preflight retry after backoff in the resident
   ).resolves.toBe(143);
   expect(mocks.runCycle).toHaveBeenCalledTimes(2);
   for (const [call] of mocks.runCycle.mock.calls) {
-    expect(call.argv).toEqual(
-      expect.arrayContaining(["--include-yahoo-public-sources", "--max-api-calls", "160"]),
-    );
+    expect(call.argv).toEqual(expect.arrayContaining(["--max-api-calls", "160"]));
+    expect(call.argv).not.toContain("--include-yahoo-public-sources");
   }
   expect(readFinanceSchedulerState(directory).lastRun).toMatchObject({
     researchAttempt: 2,

@@ -111,6 +111,17 @@ describe("research CLI checkpoint budget", () => {
     ).rejects.toThrow();
     expect(await status()).toMatchObject({ status: "failed", failureClass: "timeout" });
   });
+  it("classifies an oversized controller evidence packet without persisting its detail", async () => {
+    const budget = await fixture();
+    await expect(
+      runCheckpointedFinanceResearch(input, budget, async () => {
+        throw new Error("controllerEvidence text must be <= 256000 UTF-8 bytes");
+      }),
+    ).rejects.toThrow();
+    const saved = await status();
+    expect(saved).toMatchObject({ status: "failed", failureClass: "evidence_contract" });
+    expect(JSON.stringify(saved)).not.toContain("controllerEvidence text");
+  });
 });
 
 it("exposes a failed scheduler summary with the durable checkpoint, never a candidate", () => {

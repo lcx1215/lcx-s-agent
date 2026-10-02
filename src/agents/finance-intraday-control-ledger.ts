@@ -456,6 +456,60 @@ export async function readFinanceIntradayOutcome(
   }
 }
 
+/** Read a bounded set of outcomes with one SQLite connection for a research evidence packet. */
+export async function readFinanceIntradayOutcomes(
+  directory: string,
+  signalIds: readonly string[],
+  options: { asOf?: string } = {},
+): Promise<ReadonlyMap<string, FinanceIntradayOutcomeRecord>> {
+  const asOf =
+    options.asOf === undefined ? undefined : new Date(Iso.parse(options.asOf)).toISOString();
+  const uniqueSignalIds = [...new Set(signalIds.map((signalId) => Text.parse(signalId)))];
+  const outcomes = new Map<string, FinanceIntradayOutcomeRecord>();
+  if (uniqueSignalIds.length === 0) {
+    return outcomes;
+  }
+  try {
+    await fs.stat(financeIntradayControlLedgerPath(directory));
+  } catch {
+    return outcomes;
+  }
+  const db = open(directory);
+  try {
+    // Stay below older SQLite builds' bind-parameter limit while still avoiding one
+    // connection and query per intraday signal.
+    for (let offset = 0; offset < uniqueSignalIds.length; offset += 500) {
+      const ids = uniqueSignalIds.slice(offset, offset + 500);
+      const placeholders = ids.map(() => "?").join(",");
+      const rows = db
+        .prepare(
+          `SELECT signal_id, body FROM finance_intraday_outcomes
+           WHERE signal_id IN (${placeholders})${asOf === undefined ? "" : " AND recorded_at<=?"}`,
+        )
+        .all(...ids, ...(asOf === undefined ? [] : [asOf])) as Array<{
+        signal_id?: unknown;
+        body?: unknown;
+      }>;
+      for (const row of rows) {
+        if (typeof row.signal_id !== "string" || typeof row.body !== "string") {
+          throw new Error("invalid intraday outcome record");
+        }
+        const outcome = FinanceIntradayOutcomeRecord.parse(JSON.parse(row.body));
+        if (outcome.signalId !== row.signal_id) {
+          throw new Error("intraday outcome signal binding mismatch");
+        }
+        if ((outcome.status === "placed") !== Boolean(outcome.receiptId)) {
+          throw new Error("intraday outcome receipt binding mismatch");
+        }
+        outcomes.set(row.signal_id, outcome);
+      }
+    }
+    return outcomes;
+  } finally {
+    db.close();
+  }
+}
+
 type Database = InstanceType<ReturnType<typeof requireNodeSqlite>["DatabaseSync"]>;
 
 function open(directory: string): Database {

@@ -6,7 +6,8 @@ import { readFinanceBrokerProfitFeedback } from "./finance-broker-profit-feedbac
 import { financeEtClock, latestCompletedWeekdaySessionDate } from "./finance-cycle-schedule.js";
 import {
   readFinanceIntradayDecisions,
-  readFinanceIntradayOutcome,
+  readFinanceIntradayOutcomes,
+  type FinanceIntradayOutcomeRecord,
 } from "./finance-intraday-control-ledger.js";
 import {
   projectFinancePositions,
@@ -219,6 +220,162 @@ export async function readFinanceNightReviewResearchScope(params: {
     positions: positionsAtAsOf.ledger.positions,
     activeRules,
   });
+}
+
+type FinanceNightIntradayDecisionEvidence = Readonly<{
+  recordedAt: string;
+  signalId: string;
+  instrument: string;
+  action: string;
+  reason: string;
+  referencePrice: number;
+  referencePriceAt: string;
+  outcome: FinanceIntradayOutcomeRecord | null;
+}>;
+
+function boundedEvidenceText(value: string, maxCharacters: number): string {
+  const normalized = value.replace(/\s+/gu, " ").trim();
+  const characters = Array.from(normalized);
+  return characters.length <= maxCharacters
+    ? normalized
+    : `${characters.slice(0, maxCharacters).join("")}…`;
+}
+
+function countEvidenceLabels(values: readonly string[], limit = 24) {
+  const counts = new Map<string, number>();
+  for (const value of values) {
+    const label = boundedEvidenceText(value, 80) || "unknown";
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  const sorted = [...counts].toSorted(
+    (left, right) => right[1] - left[1] || left[0].localeCompare(right[0]),
+  );
+  return {
+    values: sorted.slice(0, limit).map(([value, count]) => ({ value, count })),
+    omittedCategoryCount: Math.max(0, sorted.length - limit),
+  };
+}
+
+function compactFinanceNightIntradayDecision(decision: FinanceNightIntradayDecisionEvidence) {
+  const outcome = decision.outcome;
+  const review = outcome?.tradeDecisionReview;
+  const reviewedDecision = review?.decision;
+  return {
+    recordedAt: decision.recordedAt,
+    signalId: boundedEvidenceText(decision.signalId, 128),
+    instrument: boundedEvidenceText(decision.instrument, 24),
+    action: boundedEvidenceText(decision.action, 24),
+    reason: boundedEvidenceText(decision.reason, 80),
+    referencePrice: decision.referencePrice,
+    referencePriceAt: decision.referencePriceAt,
+    outcome: outcome
+      ? {
+          status: outcome.status,
+          ...(outcome.receiptId === undefined
+            ? {}
+            : { receiptId: boundedEvidenceText(outcome.receiptId, 128) }),
+          reasons: outcome.reasons.slice(0, 8).map((reason) => boundedEvidenceText(reason, 120)),
+          omittedReasonCount: Math.max(0, outcome.reasons.length - 8),
+          ...(outcome.executionSafetyFailure
+            ? { executionSafetyFailure: outcome.executionSafetyFailure }
+            : {}),
+          ...(review
+            ? {
+                tradeDecisionReview: {
+                  status: review.status,
+                  attempted: review.attempted,
+                  ...(review.modelCalls === undefined ? {} : { modelCalls: review.modelCalls }),
+                  provider: boundedEvidenceText(review.provider, 80),
+                  modelId: boundedEvidenceText(review.modelId, 120),
+                  latencyMs: review.latencyMs,
+                  providerCallObserved: review.providerCallObserved,
+                  adapterAttested: review.adapterAttested,
+                  ...(review.failureCode ? { failureCode: review.failureCode } : {}),
+                  ...(reviewedDecision
+                    ? {
+                        decision: {
+                          candidateId: boundedEvidenceText(reviewedDecision.candidateId, 128),
+                          decision: reviewedDecision.decision,
+                          rationale: boundedEvidenceText(reviewedDecision.rationale, 240),
+                          expectationGapPresent: reviewedDecision.expectationGap !== undefined,
+                        },
+                      }
+                    : {}),
+                },
+              }
+            : {}),
+        }
+      : null,
+  };
+}
+
+/** Preserve whole-session counts and a bounded latest sample without embedding repeated account requests. */
+export function summarizeFinanceNightIntradayEvidence(
+  params: {
+    asOf: string;
+    sessionDate: string;
+    decisions: readonly FinanceNightIntradayDecisionEvidence[];
+  },
+  maxTextBytes: number,
+): string {
+  if (!Number.isSafeInteger(maxTextBytes) || maxTextBytes <= 0) {
+    throw new Error("night intraday evidence budget must be a positive integer");
+  }
+  const decisions = params.decisions;
+  const outcomeReasons = decisions.flatMap((decision) => decision.outcome?.reasons ?? []);
+  const safetyFailures = decisions.flatMap((decision) => {
+    const failure = decision.outcome?.executionSafetyFailure;
+    return failure
+      ? [
+          [
+            failure.stage,
+            failure.category,
+            failure.operation ?? "",
+            failure.provider?.reason ?? "",
+            failure.provider?.stage ?? "",
+          ].join(":"),
+        ]
+      : [];
+  });
+  const reviewStatuses = decisions.map(
+    (decision) => decision.outcome?.tradeDecisionReview?.status ?? "not_reviewed",
+  );
+  const distributions = {
+    byInstrument: countEvidenceLabels(decisions.map((decision) => decision.instrument)),
+    byAction: countEvidenceLabels(decisions.map((decision) => decision.action)),
+    byDecisionReason: countEvidenceLabels(decisions.map((decision) => decision.reason)),
+    byOutcomeStatus: countEvidenceLabels(
+      decisions.map((decision) => decision.outcome?.status ?? "missing_outcome"),
+    ),
+    byOutcomeReason: countEvidenceLabels(outcomeReasons),
+    bySafetyFailure: countEvidenceLabels(safetyFailures),
+    byReviewStatus: countEvidenceLabels(reviewStatuses),
+  };
+
+  let includedCount = Math.min(100, decisions.length);
+  while (true) {
+    const recent = includedCount === 0 ? [] : decisions.slice(-includedCount);
+    const text = JSON.stringify({
+      schemaVersion: "lcx_finance_night_intraday_evidence_v1",
+      sessionDate: params.sessionDate,
+      asOf: params.asOf,
+      coverage: {
+        totalDecisionCount: decisions.length,
+        includedDecisionCount: recent.length,
+        omittedDecisionCount: decisions.length - recent.length,
+        samplePolicy: "latest_append_sequence_up_to_100",
+      },
+      distributions,
+      decisions: recent.map(compactFinanceNightIntradayDecision),
+    });
+    if (Buffer.byteLength(text, "utf8") <= maxTextBytes) {
+      return text;
+    }
+    if (includedCount === 0) {
+      throw new Error("night intraday evidence summary exceeds its assigned byte budget");
+    }
+    includedCount = Math.floor(includedCount / 2);
+  }
 }
 
 export type FinanceNightSettlementSummary = Readonly<{
@@ -846,19 +1003,21 @@ export async function buildFinanceNightReviewEvidence(params: {
       readFinanceBrokerProfitFeedback(params.directory, params.asOf),
       readFinanceLatestBrokerReconciliations(params.directory),
     ]);
-  const outcomes = await Promise.all(
-    decisions.map(async (decision) => ({
-      signalId: decision.input.signalId,
-      instrument: decision.input.instrument,
-      action: decision.input.action,
-      reason: decision.input.reason,
-      referencePrice: decision.input.referencePrice,
-      referencePriceAt: decision.input.referencePriceAt,
-      outcome: await readFinanceIntradayOutcome(params.directory, decision.input.signalId, {
-        asOf: params.asOf,
-      }),
-    })),
+  const outcomesBySignal = await readFinanceIntradayOutcomes(
+    params.directory,
+    decisions.map((decision) => decision.input.signalId),
+    { asOf: params.asOf },
   );
+  const outcomes = decisions.map((decision) => ({
+    recordedAt: decision.recordedAt,
+    signalId: decision.input.signalId,
+    instrument: decision.input.instrument,
+    action: decision.input.action,
+    reason: decision.input.reason,
+    referencePrice: decision.input.referencePrice,
+    referencePriceAt: decision.input.referencePriceAt,
+    outcome: outcomesBySignal.get(decision.input.signalId) ?? null,
+  }));
   const activeRules = strategyRules.ledger.rules
     .filter((rule) => rule.state === "active")
     .map((rule) => ({
@@ -926,7 +1085,7 @@ export async function buildFinanceNightReviewEvidence(params: {
       }),
     ),
   };
-  return Object.freeze([
+  const evidence = Object.freeze([
     Object.freeze({
       id: `finance-night:settlement:${params.etDate}`,
       source: "finance-night-settlement",
@@ -1000,7 +1159,7 @@ export async function buildFinanceNightReviewEvidence(params: {
       id: `finance-night:intraday:${params.etDate}`,
       source: "finance-intraday-control-ledger",
       timestamp: params.asOf,
-      text: JSON.stringify({ decisions: outcomes }),
+      text: "",
     }),
     ...(researchScope
       ? [
@@ -1014,6 +1173,34 @@ export async function buildFinanceNightReviewEvidence(params: {
       : []),
     ...controllerEodEvidence,
   ]);
+  const intradayIndex = evidence.findIndex(
+    (item) => item.id === `finance-night:intraday:${params.etDate}`,
+  );
+  const otherEvidenceBytes = evidence.reduce(
+    (total, item, index) =>
+      total + (index === intradayIndex ? 0 : Buffer.byteLength(item.text, "utf8")),
+    0,
+  );
+  const totalBudgetBytes = 250_000;
+  const intradayBudgetBytes = totalBudgetBytes - otherEvidenceBytes;
+  if (intradayIndex < 0 || intradayBudgetBytes <= 0) {
+    throw new Error("night review evidence exceeds the bounded controller packet budget");
+  }
+  const intradayText = summarizeFinanceNightIntradayEvidence(
+    { asOf: params.asOf, sessionDate: params.etDate, decisions: outcomes },
+    intradayBudgetBytes,
+  );
+  const boundedEvidence = evidence.map((item, index) =>
+    index === intradayIndex ? Object.freeze({ ...item, text: intradayText }) : item,
+  );
+  const totalEvidenceBytes = boundedEvidence.reduce(
+    (total, item) => total + Buffer.byteLength(item.text, "utf8"),
+    0,
+  );
+  if (totalEvidenceBytes > totalBudgetBytes) {
+    throw new Error("night review evidence exceeds the bounded controller packet budget");
+  }
+  return Object.freeze(boundedEvidence);
 }
 
 export async function writeFinanceNightReviewEvidence(

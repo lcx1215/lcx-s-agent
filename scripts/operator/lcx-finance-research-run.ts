@@ -9,7 +9,11 @@ import {
   type ApiCallReceipt,
 } from "../../src/agents/api-call-contract.ts";
 import type { FinanceDecisionMode } from "../../src/agents/finance-decision-policy.ts";
-import { resolveFinanceMarketCollectionRegistryOptionsFromEnv } from "../../src/agents/finance-market-collection-registry.ts";
+import {
+  createFinanceMarketCollectionRegistry,
+  resolveFinanceMarketCollectionRegistryOptionsFromEnv,
+  type FinanceMarketCollectionAdapter,
+} from "../../src/agents/finance-market-collection-registry.ts";
 import { createFinanceModelWorkflow } from "../../src/agents/finance-model-workflow.ts";
 import {
   FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_ID,
@@ -22,7 +26,11 @@ import {
   type FinanceNightResearchInstrument,
   type FinanceNightResearchScope,
 } from "../../src/agents/finance-night-review-context.ts";
-import { resolveFinanceRealtimeSourceRegistryOptionsFromEnv } from "../../src/agents/finance-realtime-source-registry.ts";
+import {
+  createFinanceRealtimeSourceRegistry,
+  resolveFinanceRealtimeSourceRegistryOptionsFromEnv,
+  type FinanceRealtimeSourceAdapter,
+} from "../../src/agents/finance-realtime-source-registry.ts";
 import {
   buildDefaultFinanceResearchTargets,
   financeResearchPortfolioContextSchema,
@@ -36,6 +44,10 @@ import {
   validateFinanceResearchThesisProposals,
   type FinanceResearchThesisLearningResult,
 } from "../../src/agents/finance-research-thesis-learning.ts";
+import {
+  readFinanceSourceHeartbeat,
+  type FinanceSourceHeartbeatRecord,
+} from "../../src/agents/finance-source-heartbeat.ts";
 import { resolveFinanceStateDir } from "../../src/agents/finance-state-dir.ts";
 import {
   createLocalQualityHarnessAdapter,
@@ -63,6 +75,7 @@ const MAX_MODEL_TIMEOUT_MS = 2_147_483_647;
 // The local adapter compacts evidence and dependency output before prompting; allow the
 // router to receive the contract's bounded 64-item quality packet before that compaction.
 export const QUALITY_ROUTER_MAX_INPUT_BYTES = 1_000_000;
+const FINANCE_SOURCE_HEALTH_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
 
 type Options = {
   ask: string;
@@ -841,6 +854,90 @@ export function buildFinanceResearchRegistryOptions(
   } as const;
 }
 
+/** Rank healthy providers first without allowing health to override evidence roles. */
+export function prioritizeFinanceResearchAdaptersByHeartbeat<
+  T extends { id: string; priority: number; providerRole: string },
+>(
+  adapters: readonly T[],
+  endpointRecords: Readonly<
+    Record<string, Pick<FinanceSourceHeartbeatRecord, "checkedAt" | "status">>
+  >,
+  observedAt: string,
+): T[] {
+  const observedAtMs = Date.parse(observedAt);
+  const healthRank = (adapterId: string) => {
+    const record = endpointRecords[adapterId];
+    const checkedAtMs = record ? Date.parse(record.checkedAt) : Number.NaN;
+    const ageMs = observedAtMs - checkedAtMs;
+    if (
+      !record ||
+      !Number.isFinite(ageMs) ||
+      ageMs < 0 ||
+      ageMs > FINANCE_SOURCE_HEALTH_MAX_AGE_MS
+    ) {
+      return 1;
+    }
+    if (record.status === "healthy") {
+      return 0;
+    }
+    return record.status === "unknown" ? 1 : 2;
+  };
+  const roleRank = (role: string) =>
+    role === "primary_market_data" ? 0 : role === "cross_check_market_data" ? 1 : 2;
+  const orderedIds = adapters
+    .toSorted(
+      (left, right) =>
+        roleRank(left.providerRole) - roleRank(right.providerRole) ||
+        healthRank(left.id) - healthRank(right.id) ||
+        left.priority - right.priority ||
+        left.id.localeCompare(right.id),
+    )
+    .map((adapter) => adapter.id);
+  const priorityById = new Map(orderedIds.map((id, index) => [id, index]));
+  return adapters.map((adapter) => ({
+    ...adapter,
+    priority: priorityById.get(adapter.id) ?? adapter.priority,
+  }));
+}
+
+async function financeResearchAdaptersWithFreshHealth(params: {
+  includeYahooPublicSources: boolean;
+  financeStateDir?: string;
+  workspaceDir: string;
+  observedAt: string;
+}): Promise<{
+  realtimeAdapters: FinanceRealtimeSourceAdapter[];
+  collectionAdapters: FinanceMarketCollectionAdapter[];
+}> {
+  const { realtimeRegistryOptions, collectionRegistryOptions } =
+    buildFinanceResearchRegistryOptions(params.includeYahooPublicSources);
+  const stateDirectory = resolveFinanceStateDir({
+    ...(params.financeStateDir ? { directory: params.financeStateDir } : {}),
+    workspaceDir: params.workspaceDir,
+  }).directory;
+  let endpointRecords: Readonly<
+    Record<string, Pick<FinanceSourceHeartbeatRecord, "checkedAt" | "status">>
+  > = {};
+  try {
+    const heartbeat = await readFinanceSourceHeartbeat({ directory: stateDirectory });
+    endpointRecords = heartbeat.endpointRecords ?? {};
+  } catch {
+    // Unavailable health history preserves the configured source priority.
+  }
+  return {
+    realtimeAdapters: prioritizeFinanceResearchAdaptersByHeartbeat(
+      createFinanceRealtimeSourceRegistry(realtimeRegistryOptions),
+      endpointRecords,
+      params.observedAt,
+    ),
+    collectionAdapters: prioritizeFinanceResearchAdaptersByHeartbeat(
+      createFinanceMarketCollectionRegistry(collectionRegistryOptions),
+      endpointRecords,
+      params.observedAt,
+    ),
+  };
+}
+
 async function writeVerifiedPortfolioPlan(filePath: string, plan: unknown): Promise<string> {
   const { financePortfolioPlanSchema } =
     await import("../../src/agents/finance-portfolio-composition.ts");
@@ -981,6 +1078,14 @@ export async function run(options: Options): Promise<{
   };
   const { realtimeRegistryOptions, collectionRegistryOptions } =
     buildFinanceResearchRegistryOptions(options.includeYahooPublicSources);
+  const healthPrioritizedAdapters = options.live
+    ? await financeResearchAdaptersWithFreshHealth({
+        includeYahooPublicSources: options.includeYahooPublicSources,
+        ...(options.financeStateDir ? { financeStateDir: options.financeStateDir } : {}),
+        workspaceDir: WORKSPACE_DIR(),
+        observedAt: new Date().toISOString(),
+      })
+    : undefined;
   const batchOptions = {
     maxApiCalls: options.maxApiCalls,
     maxConcurrency: options.maxConcurrency,
@@ -990,6 +1095,7 @@ export async function run(options: Options): Promise<{
     retry: { attempts: options.retryAttempts },
     realtimeRegistryOptions,
     collectionRegistryOptions,
+    ...healthPrioritizedAdapters,
     ...(options.live && options.write && options.financeStateDir
       ? {
           macroSnapshotDirectory: resolveFinanceStateDir({

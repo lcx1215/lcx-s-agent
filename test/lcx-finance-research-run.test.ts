@@ -11,6 +11,7 @@ import {
   buildFinanceResearchRegistryOptions,
   preflightFinanceResearchReceiptDestination,
   preflightLocalModelPythonRuntime,
+  prioritizeFinanceResearchAdaptersByHeartbeat,
 } from "../scripts/operator/lcx-finance-research-run.ts";
 
 const execFileAsync = promisify(execFile);
@@ -131,6 +132,43 @@ describe("lcx-finance-research-run", () => {
     } finally {
       await fs.rm(workspaceDir, { recursive: true, force: true });
     }
+  });
+
+  it("prioritizes recently healthy source adapters and preserves stale health as unknown", () => {
+    const adapters = [
+      { id: "massive", priority: 0, providerRole: "primary_market_data" },
+      { id: "yahoo", priority: 1, providerRole: "primary_market_data" },
+      { id: "unverified", priority: 2, providerRole: "primary_market_data" },
+      { id: "alpaca", priority: 3, providerRole: "cross_check_market_data" },
+      { id: "eastmoney", priority: 4, providerRole: "primary_market_data" },
+    ];
+    const observedAt = "2026-10-02T09:00:00.000Z";
+    const endpointRecords = {
+      massive: { checkedAt: "2026-10-02T08:50:00.000Z", status: "degraded" as const },
+      yahoo: { checkedAt: "2026-10-02T08:50:00.000Z", status: "unhealthy" as const },
+      alpaca: { checkedAt: "2026-10-02T08:50:00.000Z", status: "healthy" as const },
+      eastmoney: { checkedAt: "2026-10-02T08:50:00.000Z", status: "healthy" as const },
+    };
+    const prioritized = prioritizeFinanceResearchAdaptersByHeartbeat(
+      adapters,
+      endpointRecords,
+      observedAt,
+    );
+    expect(
+      prioritized.toSorted((left, right) => left.priority - right.priority).map((item) => item.id),
+    ).toEqual(["eastmoney", "unverified", "massive", "yahoo", "alpaca"]);
+
+    const stale = prioritizeFinanceResearchAdaptersByHeartbeat(
+      adapters,
+      {
+        massive: { checkedAt: "2026-09-01T08:50:00.000Z", status: "degraded" },
+        alpaca: { checkedAt: "2026-09-01T08:50:00.000Z", status: "healthy" },
+      },
+      observedAt,
+    );
+    expect(
+      stale.toSorted((left, right) => left.priority - right.priority).map((item) => item.id),
+    ).toEqual(["massive", "yahoo", "unverified", "eastmoney", "alpaca"]);
   });
 
   it("rejects oversized plan and live model bounds before execution", async () => {

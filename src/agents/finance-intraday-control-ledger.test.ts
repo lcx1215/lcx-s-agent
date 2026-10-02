@@ -9,6 +9,7 @@ import {
   readFinanceIntradayExecutionCoverage,
   readFinanceIntradayDecisions,
   readFinanceIntradayOutcome,
+  readFinanceIntradayOutcomes,
   type FinanceIntradayDecisionInput,
 } from "./finance-intraday-control-ledger.js";
 import { financeIntradayControlLedgerPath } from "./finance-state-dir.js";
@@ -46,6 +47,34 @@ describe("finance intraday control ledger", () => {
     });
     expect(records).toHaveLength(1);
     expect(records[0]?.input).toEqual(input);
+  });
+
+  it("reads a set of outcomes from one historical cutoff", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-outcomes-"));
+    temporary.push(directory);
+    for (const signalId of ["intraday-one", "intraday-two"]) {
+      await appendFinanceIntradayDecision(directory, { ...input, signalId });
+      await appendFinanceIntradayOutcome(directory, {
+        signalId,
+        status: "refused",
+        reasons: ["risk_gate_blocked"],
+      });
+    }
+    const outcomes = await readFinanceIntradayOutcomes(directory, [
+      "intraday-one",
+      "intraday-two",
+      "intraday-one",
+    ]);
+    expect([...outcomes.keys()].toSorted()).toEqual(["intraday-one", "intraday-two"]);
+    expect(outcomes.get("intraday-one")).toMatchObject({
+      status: "refused",
+      reasons: ["risk_gate_blocked"],
+    });
+    expect(
+      await readFinanceIntradayOutcomes(directory, ["intraday-one"], {
+        asOf: "2000-01-01T00:00:00.000Z",
+      }),
+    ).toEqual(new Map());
   });
 
   it("refuses conflicting content under one signal id", async () => {

@@ -31,6 +31,7 @@ export type FinanceResearchFailureClass =
   | "network"
   | "timeout"
   | "persistence"
+  | "evidence_contract"
   | "model_response"
   | "unknown";
 
@@ -72,6 +73,9 @@ function classifyFinanceResearchFailure(
   }
   if (/sqlite|database|eacces|eperm|enoent|read-only|disk full/i.test(message)) {
     return "persistence";
+  }
+  if (/controller\s*evidence|evidence.{0,40}(?:byte|size|limit|budget)/i.test(message)) {
+    return "evidence_contract";
   }
   if (/model|inference|completion|invalid response|schema validation/i.test(message)) {
     return "model_response";

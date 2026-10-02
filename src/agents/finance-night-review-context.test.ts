@@ -11,11 +11,13 @@ import { FINANCE_EXECUTION_RECEIPT_SCHEMA } from "./finance-execution-adapter.js
 import {
   appendFinanceIntradayDecision,
   appendFinanceIntradayOutcome,
+  type FinanceIntradayOutcomeRecord,
 } from "./finance-intraday-control-ledger.js";
 import {
   buildFinanceActiveStrategyResearchEvidence,
   buildFinanceBrokerAccountResearchEvidence,
   buildFinanceNightReviewEvidence,
+  summarizeFinanceNightIntradayEvidence,
   readFinanceNightReviewResearchScope,
   readFinanceActiveStrategyResearchScope,
 } from "./finance-night-review-context.js";
@@ -187,6 +189,14 @@ describe("finance night review context", () => {
         "finance-night-research-scope",
       ]);
       expect(evidence[4].text).toContain("risk_gate_blocked");
+      expect(
+        evidence.reduce((total, item) => total + Buffer.byteLength(item.text, "utf8"), 0),
+      ).toBeLessThanOrEqual(250_000);
+      expect(JSON.parse(evidence[4].text).coverage).toMatchObject({
+        totalDecisionCount: 1,
+        includedDecisionCount: 1,
+        omittedDecisionCount: 0,
+      });
       const review = JSON.parse(evidence[0].text).profitReview;
       expect(review.questions).toHaveLength(5);
       expect(review.boundaries.join(" ")).toContain("do not invent missed profits");
@@ -277,6 +287,59 @@ describe("finance night review context", () => {
       vi.useRealTimers();
       await fs.rm(directory, { recursive: true, force: true });
     }
+  });
+
+  it("bounds a large intraday history while retaining full-session counts and recent decisions", () => {
+    const oversizedReview = {
+      status: "completed",
+      attempted: true,
+      provider: "test-provider",
+      modelId: "test-model",
+      latencyMs: 12,
+      providerCallObserved: true,
+      adapterAttested: true,
+      request: { repeatedAccountContext: "private-request-marker".repeat(400) },
+      decision: {
+        candidateId: "candidate-1",
+        decision: "approve",
+        rationale: "R".repeat(1_000),
+      },
+    } as unknown as NonNullable<FinanceIntradayOutcomeRecord["tradeDecisionReview"]>;
+    const decisions = Array.from({ length: 337 }, (_, index) => ({
+      recordedAt: `2026-10-01T${String(13 + Math.floor(index / 60)).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}:00.000Z`,
+      signalId: `signal-${index}`,
+      instrument: index % 2 === 0 ? "SPY" : "QQQ",
+      action: "buy",
+      reason: "opening_range_breakout",
+      referencePrice: 500,
+      referencePriceAt: "2026-10-01T14:00:00.000Z",
+      outcome: {
+        signalId: `signal-${index}`,
+        status: "refused",
+        reasons: ["risk_gate_blocked"],
+        tradeDecisionReview: oversizedReview,
+      } as unknown as FinanceIntradayOutcomeRecord,
+    }));
+
+    const text = summarizeFinanceNightIntradayEvidence(
+      { asOf: "2026-10-01T21:38:58.214Z", sessionDate: "2026-10-01", decisions },
+      150_000,
+    );
+    const summary = JSON.parse(text);
+    expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(150_000);
+    expect(summary.coverage).toMatchObject({
+      totalDecisionCount: 337,
+      includedDecisionCount: 100,
+      omittedDecisionCount: 237,
+    });
+    expect(summary.distributions.byInstrument.values).toEqual([
+      { value: "SPY", count: 169 },
+      { value: "QQQ", count: 168 },
+    ]);
+    expect(summary.decisions[0].outcome.tradeDecisionReview.decision.rationale).toBe(
+      `${"R".repeat(240)}…`,
+    );
+    expect(text).not.toContain("private-request-marker");
   });
 });
 
