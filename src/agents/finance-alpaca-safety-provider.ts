@@ -257,7 +257,18 @@ function recent(at: string, now: number, age: number): boolean {
   return Number.isFinite(time) && time <= now && now - time <= age;
 }
 
-/** Reads and binds a fresh stock quote without reading any account or instrument facts. */
+function latestQuoteUrl(instrument: string, stockFeed: "iex" | "sip"): string {
+  return instrument.includes("/")
+    ? `${DATA}/v1beta3/crypto/us/latest/quotes?symbols=${encodeURIComponent(instrument)}`
+    : `${DATA}/v2/stocks/${encodeURIComponent(instrument)}/quotes/latest?feed=${stockFeed}`;
+}
+
+function latestQuote(value: unknown, instrument: string): Record<string, unknown> {
+  const envelope = record(value);
+  return record(instrument.includes("/") ? record(envelope.quotes)[instrument] : envelope.quote);
+}
+
+/** Reads and binds a fresh spot quote without reading any account or instrument facts. */
 export async function readAlpacaPaperSafetyQuote(
   options: Pick<
     AlpacaSafetyProviderOptions,
@@ -282,6 +293,7 @@ export async function readAlpacaPaperSafetyQuote(
     !["buy", "sell"].includes(options.side) ||
     !["iex", "sip"].includes(options.stockFeed) ||
     !/^[A-Z0-9.]+(?:\/[A-Z0-9]+)?$/.test(options.instrument) ||
+    (options.instrument.includes("/") && !options.instrument.endsWith("/USD")) ||
     !Number.isFinite(options.timeoutMs) ||
     options.timeoutMs <= 0 ||
     options.timeoutMs > 120000 ||
@@ -299,15 +311,15 @@ export async function readAlpacaPaperSafetyQuote(
   ]);
   const headers = safetyHeaders(options.credentials);
   const run = async () => {
-    const quoteEnvelope = record(
+    const quote = latestQuote(
       await readJson(
         options.read,
-        `${DATA}/v2/stocks/${encodeURIComponent(options.instrument)}/quotes/latest?feed=${options.stockFeed}`,
+        latestQuoteUrl(options.instrument, options.stockFeed),
         headers,
         signal,
       ),
+      options.instrument,
     );
-    const quote = record(quoteEnvelope.quote);
     const bidPrice = numeric(quote.bp);
     const askPrice = numeric(quote.ap);
     const observedAt = string(quote.t);
@@ -329,7 +341,7 @@ export async function readAlpacaPaperSafetyQuote(
       askPrice,
       referencePrice: options.side === "buy" ? askPrice : bidPrice,
       observedAt,
-      source: `${DATA};feed=${options.stockFeed};latest-quote-${options.side === "buy" ? "ask" : "bid"}`,
+      source: `${DATA};feed=${options.instrument.includes("/") ? "crypto-us" : options.stockFeed};latest-quote-${options.side === "buy" ? "ask" : "bid"}`,
     };
   };
 
@@ -703,15 +715,9 @@ export async function readAlpacaPaperSafetyFacts(
       quote = bound;
     } else {
       failureStage = "quote_snapshot";
-      const quoteEnvelope = record(
-        await get(
-          crypto
-            ? `${DATA}/v1beta3/crypto/us/latest/quotes?symbols=${encodeURIComponent(options.instrument)}`
-            : `${DATA}/v2/stocks/${encodeURIComponent(options.instrument)}/quotes/latest?feed=${options.stockFeed}`,
-        ),
-      );
-      quote = record(
-        crypto ? record(quoteEnvelope.quotes)[options.instrument] : quoteEnvelope.quote,
+      quote = latestQuote(
+        await get(latestQuoteUrl(options.instrument, options.stockFeed)),
+        options.instrument,
       );
     }
     failureStage = "quote_values";

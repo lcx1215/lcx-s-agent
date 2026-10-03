@@ -458,42 +458,57 @@ it("reuses only bound quote and re-reads account facts, never claiming reconcili
     ).ok,
   ).toBe(false);
 });
-it("reads only the stock quote endpoint and reuses its opaque binding for final safety facts", async () => {
-  const f = fixture();
-  const quote = await readAlpacaPaperSafetyQuote({
-    instrument: f.options.instrument,
-    side: "sell",
-    stockFeed: "sip",
-    credentials: f.options.credentials,
-    read: f.options.read,
-    timeoutMs: f.options.timeoutMs,
-    maxAgeMs: f.options.maxAgeMs,
-  });
-  expect(quote.ok).toBe(true);
-  if (!quote.ok) {
-    return;
-  }
-  expect(quote).toMatchObject({ bidPrice: 99, askPrice: 100, referencePrice: 99 });
-  expect(f.read).toHaveBeenCalledTimes(1);
-  const quoteUrl = new URL(f.read.mock.calls[0][0]);
-  expect(quoteUrl.hostname).toBe("data.alpaca.markets");
-  expect(quoteUrl.pathname).toBe("/v2/stocks/SPY/quotes/latest");
-  expect(quoteUrl.searchParams.get("feed")).toBe("sip");
+it.each([false, true])(
+  "routes spot crypto=%s quotes and reuses the binding for final safety facts",
+  async (crypto) => {
+    const f = fixture(crypto);
+    const quote = await readAlpacaPaperSafetyQuote({
+      instrument: f.options.instrument,
+      side: "sell",
+      stockFeed: "sip",
+      credentials: f.options.credentials,
+      read: f.options.read,
+      timeoutMs: f.options.timeoutMs,
+      maxAgeMs: f.options.maxAgeMs,
+    });
+    expect(quote.ok).toBe(true);
+    if (!quote.ok) {
+      return;
+    }
+    expect(quote).toMatchObject({ bidPrice: 99, askPrice: 100, referencePrice: 99 });
+    expect(f.read).toHaveBeenCalledTimes(1);
+    const quoteUrl = new URL(f.read.mock.calls[0][0]);
+    expect(quoteUrl.hostname).toBe("data.alpaca.markets");
+    expect(quoteUrl.pathname).toBe(
+      crypto ? "/v1beta3/crypto/us/latest/quotes" : "/v2/stocks/SPY/quotes/latest",
+    );
+    expect(quoteUrl.searchParams.get(crypto ? "symbols" : "feed")).toBe(crypto ? "BTC/USD" : "sip");
+    expect(quote.source).toContain(crypto ? "feed=crypto-us" : "feed=sip");
 
-  const final = await readAlpacaPaperSafetyFacts({
-    ...f.options,
-    side: "sell",
-    stockFeed: "sip",
-    boundQuote: quote.boundQuote,
+    const final = await readAlpacaPaperSafetyFacts({
+      ...f.options,
+      side: "sell",
+      stockFeed: "sip",
+      boundQuote: quote.boundQuote,
+    });
+    expect(final.ok).toBe(true);
+    const finalUrls = f.read.mock.calls.slice(1).map(([url]) => new URL(url));
+    expect(finalUrls.map((url) => url.pathname)).toEqual([
+      "/v2/account",
+      "/v2/positions",
+      "/v2/orders",
+      crypto ? "/v2/assets/BTC%2FUSD" : "/v2/assets/SPY",
+    ]);
+  },
+);
+
+it("refuses a non-USD crypto quote before reading a provider", async () => {
+  const f = fixture(true);
+  expect(await readAlpacaPaperSafetyQuote({ ...f.options, instrument: "BTC/EUR" })).toEqual({
+    ok: false,
+    reason: "alpaca_safety_quote_parameters_invalid",
   });
-  expect(final.ok).toBe(true);
-  const finalUrls = f.read.mock.calls.slice(1).map(([url]) => new URL(url));
-  expect(finalUrls.map((url) => url.pathname)).toEqual([
-    "/v2/account",
-    "/v2/positions",
-    "/v2/orders",
-    "/v2/assets/SPY",
-  ]);
+  expect(f.read).not.toHaveBeenCalled();
 });
 
 it("rejects expired and mismatched opaque quote bindings", async () => {
