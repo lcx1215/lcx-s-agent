@@ -198,7 +198,7 @@ describe("finance night review context", () => {
         omittedDecisionCount: 0,
       });
       const review = JSON.parse(evidence[0].text).profitReview;
-      expect(review.questions).toHaveLength(5);
+      expect(review.questions).toHaveLength(6);
       expect(review.boundaries.join(" ")).toContain("do not invent missed profits");
       const portfolio = JSON.parse(evidence[2].text);
       expect(portfolio.costsReconciled).toBe(false);
@@ -1525,3 +1525,105 @@ describe("shared broker account research evidence", () => {
     }
   });
 });
+
+it.each(["reconciled", "stale", "differences", "invalid_quantity", "live"])(
+  "uses only usable Paper broker inventory for night targets: %s",
+  async (kind) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "night-broker-holdings-"));
+    const asOf = new Date().toISOString();
+    try {
+      await appendFinanceExecutionReceipt(directory, {
+        schemaVersion: FINANCE_EXECUTION_RECEIPT_SCHEMA,
+        receiptId: "old-entry",
+        intentId: "old-entry",
+        accountId: "paper-account",
+        runAuthorizationId: "paper-run",
+        adapterId: "alpaca-venue",
+        adapterKind: "venue",
+        venue: "alpaca:paper",
+        instrument: "UTHR",
+        side: "buy",
+        orderType: "market",
+        quantity: 1,
+        referencePrice: 100,
+        referencePriceAt: asOf,
+        notional: 100,
+        fill: { filledQuantity: 1, fillPrice: 100, filledAt: asOf, venueRef: "alpaca:paper:entry" },
+        executionAuthority: "declared_execution_adapter_required",
+        recordedAt: asOf,
+      });
+      await appendFinanceBrokerHistory(directory, {
+        kind: "broker_history",
+        accountId: "paper-account",
+        venue: kind === "live" ? "alpaca:live" : "alpaca:paper",
+        query: "reconciliation:test",
+        cursor: "",
+        payload: [
+          {
+            observedAt: kind === "stale" ? new Date(Date.parse(asOf) - 300001).toISOString() : asOf,
+            status: "reconciled",
+            differences: kind === "differences" ? ["quantity_difference"] : [],
+            positions: [
+              {
+                symbol: "BTCUSD",
+                qty: kind === "invalid_quantity" ? "invalid" : "0.000399",
+                asset_class: "crypto",
+              },
+            ],
+          },
+        ],
+      });
+      const scope = await readFinanceNightReviewResearchScope({ directory, asOf });
+      const evidence = await buildFinanceNightReviewEvidence({
+        directory,
+        asOf,
+        etDate: asOf.slice(0, 10),
+        includeResearchScope: true,
+        settlement: {
+          scoredFiled: { appended: 0, skipped: 0 },
+          reflection: {},
+          pending: [],
+          declined: [],
+          issues: [],
+        },
+      });
+      expect(
+        JSON.parse(evidence.find((item) => item.source === "finance-night-research-scope")!.text),
+      ).toEqual(scope);
+      if (kind === "reconciled") {
+        expect(scope.instruments).toEqual([
+          { instrument: "BTC/USD", assetClass: "crypto", reasons: ["held_position"] },
+        ]);
+        expect(scope.holdingBasis).toMatchObject({
+          source: "broker_reconciliation",
+          issues: [],
+          executionAuthority: "none",
+        });
+        // A later broker update must not invalidate the original controller cutoff.
+        await appendFinanceBrokerHistory(directory, {
+          kind: "broker_history",
+          accountId: "paper-account",
+          venue: "alpaca:paper",
+          query: "reconciliation:later",
+          cursor: "",
+          payload: [
+            {
+              observedAt: new Date(Date.parse(asOf) + 1000).toISOString(),
+              status: "reconciled",
+              differences: [],
+              positions: [],
+            },
+          ],
+        });
+        expect(await readFinanceNightReviewResearchScope({ directory, asOf })).toEqual(scope);
+      } else {
+        expect(scope.instruments.map((item) => item.instrument)).toEqual(["UTHR"]);
+        if (kind !== "live") {
+          expect(scope.holdingBasis?.issues.length).toBeGreaterThan(0);
+        }
+      }
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  },
+);

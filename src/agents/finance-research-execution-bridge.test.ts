@@ -1,5 +1,10 @@
-import { expect, it } from "vitest";
-import { matchesFinanceResearchRecoveryProtection } from "./finance-research-execution-bridge.js";
+import { expect, it, vi } from "vitest";
+import * as alpacaRun from "./finance-alpaca-run.js";
+import * as executionRecovery from "./finance-execution-recovery.js";
+import {
+  matchesFinanceResearchRecoveryProtection,
+  runFinanceResearchExecutionBridge,
+} from "./finance-research-execution-bridge.js";
 
 const stopLimitProtection = {
   id: "protection-1",
@@ -114,3 +119,111 @@ it.each([{ qty: true }, { stop_price: true }, { filled_qty: false }])(
     ).toBe(false);
   },
 );
+
+it("uses controller exact quantity in both the research mandate and placement compiler", async () => {
+  const recover = vi
+    .spyOn(executionRecovery, "recoverConfirmedFinanceExecutions")
+    .mockResolvedValue({
+      replayed: [],
+      alreadyRecorded: [],
+      pendingReconciliation: [],
+      legacyUnsupported: [],
+      noFill: [],
+      failures: [],
+    });
+  const place = vi
+    .spyOn(alpacaRun, "runFinanceAlpacaOrder")
+    .mockResolvedValue({ ok: false, stage: "place", refusals: ["offline placement sentinel"] });
+  const input = {
+    instrument: "BTC/USD",
+    assetClass: "crypto" as const,
+    modelText: JSON.stringify({
+      conclusionId: "exact-reduction",
+      instrument: "BTC/USD",
+      assetClass: "crypto",
+      direction: "sell",
+      conviction: 0.9,
+      thesis: "sourced reduction",
+      invalidationPrice: 110,
+      horizonDays: 30,
+      evidence: [{ sourceId: "a" }, { sourceId: "b" }],
+      quantityOverride: 999,
+    }),
+    evidence: ["a", "b"].map((sourceId) => ({
+      sourceId,
+      description: "fixture",
+      detail: "offline evidence",
+      sourceUrlOrArtifact: `fixture:${sourceId}`,
+    })),
+    market: { referencePrice: 100, referencePriceAt: "2026-09-22T00:00:00Z" },
+    equity: 100000,
+    runAuthorizationId: "offline-input",
+  };
+  const control = {
+    mode: "alpaca_paper" as const,
+    stateDirectory: "offline-only",
+    recovery: {
+      safetyStateDir: "offline-only",
+      accountId: "fixture-account",
+      venue: "alpaca:paper",
+    },
+    riskContext: {
+      drawdownFraction: 0,
+      averagingDown: false,
+      revengeSizing: false,
+      hasSignificantAutocorrelation: true,
+    },
+    execution: {
+      market: input.market,
+      equity: input.equity,
+      runAuthorizationId: "controller-run",
+      budget: {
+        automation: "unattended" as const,
+        allowedInstruments: ["BTC/USD"],
+        maxOrderNotional: 1000,
+        maxInstrumentNotional: 5000,
+        maxOrdersPerRun: 8,
+      },
+      instruments: ["BTC/USD"],
+      quantityOverride: 0.000399,
+      createSafetyContext: () => ({ kind: "controller_execution_safety" as const }),
+    },
+  };
+  try {
+    const exact = await runFinanceResearchExecutionBridge(input, control);
+    expect(exact).toMatchObject({
+      status: "refused",
+      decision: { passed: true, intent: { quantity: 0.000399 } },
+      placement: { refusals: ["offline placement sentinel"] },
+    });
+    expect(place).toHaveBeenCalledWith(
+      expect.objectContaining({
+        quantityOverride: 0.000399,
+        mode: "paper",
+        runAuthorizationId: "controller-run",
+      }),
+    );
+    place.mockClear();
+    const oversized = await runFinanceResearchExecutionBridge(input, {
+      ...control,
+      execution: { ...control.execution, quantityOverride: 51 },
+    });
+    expect(oversized).toMatchObject({
+      status: "refused",
+      decision: { passed: false, intent: undefined },
+    });
+    expect(place).not.toHaveBeenCalled();
+    const wrongAsset = await runFinanceResearchExecutionBridge(
+      { ...input, assetClass: "us_equity" },
+      control,
+    );
+    expect(wrongAsset).toMatchObject({
+      status: "refused",
+      refusals: ["model conclusion changed the authorized instrument or asset class"],
+    });
+    expect(place).not.toHaveBeenCalled();
+  } finally {
+    recover.mockRestore();
+    place.mockRestore();
+  }
+});

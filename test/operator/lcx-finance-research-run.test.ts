@@ -172,6 +172,46 @@ describe("controller-owned night research scope", () => {
     );
   });
 
+  it("preserves broker holding provenance for exact scope matching and refuses execution authority", () => {
+    const asOf = "2026-09-29T00:00:00.000Z";
+    const scope = {
+      schemaVersion: FINANCE_NIGHT_RESEARCH_SCOPE_SCHEMA_VERSION,
+      asOf,
+      activeStrategyIds: [],
+      instruments: [{ instrument: "BTC/USD", assetClass: "crypto", reasons: ["held_position"] }],
+      holdingBasis: {
+        source: "broker_reconciliation",
+        snapshotRefs: ["a".repeat(64)],
+        issues: [],
+        omittedAccounts: 0,
+        executionAuthority: "none",
+      },
+    };
+    const evidence = (holdingBasis = scope.holdingBasis) => [
+      {
+        id: FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_ID,
+        source: FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_SOURCE,
+        timestamp: asOf,
+        text: JSON.stringify({ ...scope, holdingBasis }),
+      },
+    ];
+    expect(JSON.stringify(parseControllerResearchScope(evidence(), asOf))).toBe(
+      JSON.stringify(scope),
+    );
+    expect(() =>
+      parseControllerResearchScope(
+        evidence({ ...scope.holdingBasis, executionAuthority: "alpaca:paper" }),
+        asOf,
+      ),
+    ).toThrow();
+    expect(() =>
+      parseControllerResearchScope(
+        evidence({ ...scope.holdingBasis, snapshotRefs: ["unverified"] }),
+        asOf,
+      ),
+    ).toThrow();
+  });
+
   it("validates overflow coverage metadata and rejects tampering or unsupported identities", () => {
     const asOf = "2026-09-29T00:00:00.000Z";
     const selected = Array.from({ length: 14 }, (_, index) => ({

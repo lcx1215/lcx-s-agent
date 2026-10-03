@@ -21,6 +21,7 @@ import {
   createFinanceExecutionSafetyContext,
   FinanceExecutionSafetyFactsError,
   readFinanceExecutionSafetyClaims,
+  type FinanceExecutionSafetyFacts,
 } from "./finance-execution-safety.js";
 import {
   createFinanceUncachedFetch,
@@ -87,6 +88,10 @@ export function createFinanceAlpacaCycleController(options: {
   instruments: readonly string[];
   feed: "iex" | "sip";
   maxAgeMs: number;
+  /** Explicit spot-crypto maintenance capability; legacy daily universes stay equities-only. */
+  allowCrypto?: boolean;
+  /** Controller-only additional ownership guard, called inside the shared dispatch lock. */
+  validateFacts?: (facts: FinanceExecutionSafetyFacts, signal: AbortSignal) => Promise<void>;
   read?: FinanceUncachedFetch;
 }): Controller {
   options = { ...options, instruments: [...options.instruments] };
@@ -95,7 +100,11 @@ export function createFinanceAlpacaCycleController(options: {
   const instruments = new Set(options.instruments);
   if (
     !instruments.size ||
-    [...instruments].some((s) => !/^[A-Z][A-Z0-9.]{0,14}$/.test(s)) ||
+    [...instruments].some(
+      (s) =>
+        !/^[A-Z][A-Z0-9.]{0,14}$/.test(s) &&
+        !(options.allowCrypto === true && /^[A-Z][A-Z0-9]{0,14}\/USD$/.test(s)),
+    ) ||
     !Number.isFinite(options.maxAgeMs) ||
     options.maxAgeMs <= 0 ||
     options.maxAgeMs > 120000 ||
@@ -374,8 +383,12 @@ export function createFinanceAlpacaCycleController(options: {
   }
 
   const executionQuoteProvider: Controller["executionQuoteProvider"] = async (request, signal) => {
-    if (request.assetClass !== "us_equity") {
-      throw new Error("daily controller supports US equities only");
+    const crypto = request.instrument.includes("/");
+    if (
+      request.assetClass !== (crypto ? "crypto" : "us_equity") ||
+      (crypto && options.allowCrypto !== true)
+    ) {
+      throw new Error("daily controller asset class outside explicit capability");
     }
     if (!instruments.has(request.instrument)) {
       throw new Error("instrument outside controller universe");
@@ -527,7 +540,12 @@ export function createFinanceAlpacaCycleController(options: {
           if (Math.abs(observed.facts.account.availableCash - snapshot.brokerCash) > 0.01) {
             throw new FinanceExecutionSafetyFactsError("cash_changed");
           }
-          return { ...observed.facts, reconciliation: readinessFor(snapshot, observed.positions) };
+          const lockedFacts = {
+            ...observed.facts,
+            reconciliation: readinessFor(snapshot, observed.positions),
+          };
+          await options.validateFacts?.(lockedFacts, signal);
+          return lockedFacts;
         },
       });
     },

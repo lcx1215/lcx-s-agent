@@ -21,6 +21,7 @@ import {
   FINANCE_NIGHT_RESEARCH_SCOPE_MAX_INSTRUMENTS,
   FINANCE_NIGHT_RESEARCH_SCOPE_SCHEMA_VERSION,
   assertFinanceNightResearchAsOf,
+  financeNightResearchHoldingBasisSchema,
   readFinanceActiveStrategyResearchScope,
   readFinanceNightReviewResearchScope,
   type FinanceNightResearchInstrument,
@@ -554,6 +555,9 @@ export function parseControllerResearchScope(
     asOf,
     activeStrategyIds: Object.freeze([...(scope.activeStrategyIds as string[])]),
     instruments: Object.freeze(instruments),
+    ...(scope.holdingBasis === undefined
+      ? {}
+      : { holdingBasis: financeNightResearchHoldingBasisSchema.parse(scope.holdingBasis) }),
     ...(coverage ? { coverage } : {}),
   });
 }

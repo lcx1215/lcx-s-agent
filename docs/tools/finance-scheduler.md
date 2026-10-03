@@ -207,6 +207,24 @@ still allow broker account and position snapshots to refresh; they never grant
 placement authority. Placement requires its own fresh account and execution
 checks.
 
+Successful idle and stream reconciliation also feed historical-position maintenance
+on the same account lane, at most once every four minutes. It requires the existing
+Paper placement authorization and explicit order caps. Only reconciled historical
+long inventory without an LCX entry receipt, active strategy, recognized protection
+or working order can qualify. The deterministic decision reduces that unmanaged
+exposure through the shared execution gate; it does not invent entry ownership or
+request a model to choose a stop price. Stocks require an open venue calendar session;
+USD spot crypto uses the controller's explicit maintenance capability.
+
+Every maintenance decision is filed under `historical-position-maintenance/` before
+dispatch. The account lock guards a final ownership, quantity and protection check.
+Stable historical buy lineage defines one capped run: terminal rejections and confirmed
+partial reductions may use a new journal-derived attempt, while reserved or unknown
+outcomes require reconciliation. Confirmed sells produce actual venue receipts labelled
+`account_position_maintenance`. They do not create a fictional LCX short or entry-cost
+profit; historical economics still require broker history. A partial fill is not full
+inventory closure. `progress.historicalMaintenance` reports the latest bounded result.
+
 A recovered partial sell receipt also feeds the existing strategy-owned position
 projection. When inventory remains, a matching account-bound receipt lets the
 monitor reconsider its exit on a later closed bar, even if the original signal's
@@ -463,8 +481,10 @@ Newly observed equity highs are appended to an account/scope-specific peak histo
 recreating the controller cannot reset a recorded peak. A corrupt peak history refuses
 facts. Read and write transports use the selected finance root, and the execution
 adapter verifies the credential account against controller facts before submission.
-This path currently trades US equities only. Held crypto remains part of account-wide
-exposure and reconciliation; this controller does not add crypto execution support.
+Daily research and US-session strategy controllers remain US-equity paths. Held
+crypto remains part of account-wide exposure and reconciliation. Historical-position
+maintenance opts into USD spot crypto explicitly; it cannot open crypto entries or
+expand the daily strategy universe.
 
 ### Bounded historical quantity isolation
 
@@ -639,8 +659,12 @@ comparison, replace a frozen checkpoint, or replenish provider quotas.
 
 Night research uses its actual post-settlement start as its as-of cutoff, so a
 universe refreshed earlier in the same cycle is not incorrectly future-dated.
-Its explicit `--controller-research-scope` binds targets to nonzero position-ledger
-holdings and active strategy instruments in a unique controller-evidence entry.
+Its explicit `--controller-research-scope` binds targets to nonzero holdings and active
+strategy instruments in a unique controller-evidence entry. Fresh, reconciled Paper
+broker snapshots at the cutoff replace receipt-only inventory for their exact account,
+including historical holdings and native exits. Invalid or unavailable snapshots retain
+the receipt projection with explicit missing-fact issues. `holdingBasis` records snapshot
+references and grants no execution authority.
 The research CLI verifies the same cutoff against those ledgers before model calls.
 The scope retains supported equity/crypto identities and rejects empty or unsupported
 scopes. When the declared scope exceeds 14 instruments, a deterministic ET-date
@@ -653,7 +677,7 @@ uses only the selected active-strategy subset and never substitutes a broad univ
 The independent intraday monitor uses its validated active universe throughout
 its existing trading session.
 Night positions exclude both fills and receipts recorded after that cutoff.
-This is a local-ledger research scope, not proof of current broker holdings.
+Historical snapshots do not prove the account's current holdings at execution time.
 Local simulation and venue receipt counts are labelled separately. Broker position
 snapshots retain their account, venue, reference, observation time and protection
 coverage; snapshots beyond the cutoff do not expose positions, and stale snapshots

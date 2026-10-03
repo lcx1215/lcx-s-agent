@@ -565,6 +565,9 @@ export async function runFinanceResearchExecutionBridge(
     referencePriceAt: execution?.market.referencePriceAt ?? input.market.referencePriceAt,
     equity: execution?.equity ?? input.equity,
     runAuthorizationId: execution?.runAuthorizationId ?? input.runAuthorizationId,
+    ...(execution?.quantityOverride === undefined
+      ? {}
+      : { quantityOverride: execution.quantityOverride }),
     riskContext: control.riskContext,
     ...(input.regime === undefined ? {} : { regime: input.regime }),
   });

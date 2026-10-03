@@ -82,6 +82,9 @@ export type FinancePositionLedger = Readonly<{
   /** Paper and venue fills are counted apart so a simulated ledger is never read as real. */
   paperFillCount: number;
   venueFillCount: number;
+  /** Real account-maintenance fills whose historic entry cost is outside this receipt book. */
+  unattributedMaintenanceReceiptIds?: readonly string[];
+  maintenancePnlStatus?: "unknown_requires_broker_history";
   /** Gross fill-price PnL only; this ledger does not establish net profitability. */
   pnlBasis: "gross_fill_price_only";
   positions: readonly FinancePosition[];
@@ -162,8 +165,24 @@ export function projectFinancePositions(params: {
   const byInstrument = new Map<string, MutablePosition>();
   let paperFillCount = 0;
   let venueFillCount = 0;
+  const unattributedMaintenanceReceiptIds: string[] = [];
 
   for (const receipt of ordered) {
+    if (receipt.decisionRef?.source === "account_position_maintenance") {
+      if (
+        receipt.side !== "sell" ||
+        receipt.adapterKind !== "venue" ||
+        receipt.venue !== "alpaca:paper" ||
+        !receipt.accountId?.trim()
+      ) {
+        throw new Error("invalid account position maintenance receipt");
+      }
+      // This sell consumes a reconciled broker-history baseline, not an LCX entry
+      // lot. Count the actual fill without manufacturing a short or entry cost.
+      venueFillCount += 1;
+      unattributedMaintenanceReceiptIds.push(receipt.receiptId);
+      continue;
+    }
     const instrument = normalizeInstrument(receipt.instrument);
     const position = byInstrument.get(instrument) ?? {
       instrument,
@@ -253,6 +272,12 @@ export function projectFinancePositions(params: {
     receiptCount: ordered.length,
     paperFillCount,
     venueFillCount,
+    ...(unattributedMaintenanceReceiptIds.length
+      ? {
+          unattributedMaintenanceReceiptIds: Object.freeze(unattributedMaintenanceReceiptIds),
+          maintenancePnlStatus: "unknown_requires_broker_history" as const,
+        }
+      : {}),
     pnlBasis: "gross_fill_price_only",
     positions: Object.freeze(positions),
     instrumentsWithoutMark: Object.freeze(instrumentsWithoutMark),
@@ -959,7 +984,14 @@ export async function readFinanceBrokerHistoryRecords(
 }
 
 /** Latest reconciliations per book, with chain validation and no migration or writes. */
-export async function readFinanceLatestBrokerReconciliations(directory: string) {
+export async function readFinanceLatestBrokerReconciliations(
+  directory: string,
+  options: { asOf?: string } = {},
+) {
+  const cutoff = options.asOf === undefined ? undefined : Date.parse(options.asOf);
+  if (cutoff !== undefined && !Number.isFinite(cutoff)) {
+    throw new Error("invalid broker reconciliation cutoff");
+  }
   const db = await openReadOnly(directory);
   if (!db) {
     return { records: [], omittedAccounts: 0 };
@@ -972,6 +1004,14 @@ export async function readFinanceLatestBrokerReconciliations(directory: string) 
       const key = JSON.stringify([row.body.venue, row.body.accountId]);
       heads.set(key, row.ref);
       if (row.body.query.startsWith("reconciliation:")) {
+        const observedAt = row.body.payload[0]?.observedAt;
+        if (
+          cutoff !== undefined &&
+          typeof observedAt === "string" &&
+          Date.parse(observedAt) > cutoff
+        ) {
+          continue;
+        }
         latest.set(key, row);
       }
     }
@@ -982,7 +1022,9 @@ export async function readFinanceLatestBrokerReconciliations(directory: string) 
         accountId: row.body.accountId,
         sequence: row.sequence,
         venue: row.body.venue,
-        superseded: heads.get(key) !== row.ref,
+        // A research cutoff reads the sealed snapshot at that time. Later raw
+        // pages do not replace it; current execution readers retain head checks.
+        superseded: cutoff === undefined && heads.get(key) !== row.ref,
         snapshot: row.body.payload[0],
       })),
       omittedAccounts: Math.max(0, selected.length - 3),

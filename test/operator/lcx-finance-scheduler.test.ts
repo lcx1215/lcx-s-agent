@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
+  reconcileResidentAlpacaAccount,
   financeResearchProcessEnv,
   financeResearchPreflightRetryDue,
   inspectFinanceSchedulerStatus,
@@ -50,6 +51,7 @@ const mocks = vi.hoisted(() => ({
   killTree: vi.fn(),
   loadConfig: vi.fn(() => ({})),
   syncAlpacaHistory: vi.fn(),
+  historicalMaintenance: vi.fn(),
   runSourceHeartbeat: vi.fn(async () => ({
     checkedProviders: [] as string[],
     healthyCount: 0,
@@ -88,6 +90,9 @@ vi.mock("../../src/agents/finance-source-heartbeat.js", () => ({
 vi.mock("../../src/config/config.js", () => ({ loadConfig: mocks.loadConfig }));
 vi.mock("../../src/config/env-vars.js", () => ({ applyConfigEnvVars: vi.fn() }));
 vi.mock("../../src/cli/serve-detach.js", () => ({ buildDetachedServeEnv: () => ({}) }));
+vi.mock("../../src/agents/finance-historical-position-maintenance.js", () => ({
+  runFinanceHistoricalPositionMaintenance: mocks.historicalMaintenance,
+}));
 vi.mock("../../src/agents/finance-alpaca-history-sync.js", () => ({
   syncConfiguredAlpacaPaperHistory: mocks.syncAlpacaHistory,
 }));
@@ -243,6 +248,11 @@ beforeEach(() => {
   stderrMessages = [];
   mocks.runCycle.mockResolvedValue(success);
   mocks.loadConfig.mockReturnValue({});
+  mocks.historicalMaintenance.mockResolvedValue({
+    status: "idle",
+    observedAt: new Date().toISOString(),
+    decisions: [],
+  });
   mocks.createIntradayController.mockReturnValue({
     accountId: "paper-account",
     executionPolicyAuthorizationMode: "until_expiry",
@@ -2744,6 +2754,187 @@ it("refreshes broker reconciliation while an Alpaca history loop is idle", async
   );
   expect(mocks.runCycle).not.toHaveBeenCalled();
 });
+
+it.each(["reconciled", "differences"])(
+  "runs authorized historical maintenance only after idle reconciliation=%s",
+  async (readiness) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-22T17:00:00Z"));
+    const policy = path.join(directory, "maintenance-policy.json");
+    fs.writeFileSync(
+      policy,
+      JSON.stringify({ authorizationMode: "until_revoked", accountId: "paper-account" }),
+    );
+    mocks.syncAlpacaHistory.mockResolvedValue({
+      accountId: "paper-account",
+      accountReconciliation: { status: readiness },
+    });
+    mocks.historicalMaintenance.mockImplementation(async () => {
+      expect(mocks.syncAlpacaHistory).toHaveBeenCalledOnce();
+      return {
+        status: "completed",
+        observedAt: new Date().toISOString(),
+        decisions: [{ status: "unknown" }],
+      };
+    });
+    mocks.delay
+      .mockImplementationOnce(async () => {
+        if (readiness === "reconciled") {
+          const progress = JSON.parse(
+            fs.readFileSync(path.join(directory, FINANCE_SCHEDULER_LOCK, "progress.json"), "utf8"),
+          );
+          expect(progress.historicalMaintenance).toMatchObject({
+            status: "completed",
+            decisionCount: 1,
+            unknownCount: 1,
+          });
+        }
+      })
+      .mockImplementationOnce(async () => process.emit("SIGTERM"));
+    await expect(
+      runFinanceScheduler([
+        "--loop",
+        "--dir",
+        directory,
+        "--sync-alpaca-history",
+        "--place",
+        "--venue",
+        "alpaca",
+        "--execution-policy",
+        policy,
+        "--execution-quote-feed",
+        "iex",
+        "--execution-max-age-ms",
+        "30000",
+        "--max-order-notional",
+        "1000",
+        "--max-instrument-notional",
+        "5000",
+        "--max-orders",
+        "8",
+        "--no-source-heartbeat",
+      ]),
+    ).resolves.toBe(143);
+    expect(mocks.syncAlpacaHistory).toHaveBeenCalledOnce();
+    if (readiness === "reconciled") {
+      expect(mocks.historicalMaintenance).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          directory,
+          policy: { authorizationMode: "until_revoked", accountId: "paper-account" },
+          budget: {
+            automation: "unattended",
+            allowedInstruments: ["*"],
+            maxOrderNotional: 1000,
+            maxInstrumentNotional: 5000,
+            maxOrdersPerRun: 8,
+          },
+          feed: "iex",
+          maxAgeMs: 30000,
+          signal: expect.any(AbortSignal),
+        }),
+      );
+    } else {
+      expect(mocks.historicalMaintenance).not.toHaveBeenCalled();
+    }
+    expect(mocks.runCycle).not.toHaveBeenCalled();
+  },
+);
+
+it.each([false, true])(
+  "keeps stream maintenance independent of idle timing and throttles failed=%s attempts",
+  async (failed) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const start = Date.parse("2026-09-22T17:00:00Z");
+    vi.setSystemTime(start);
+    const policy = path.join(directory, "maintenance-policy.json");
+    fs.writeFileSync(policy, JSON.stringify({ authorizationMode: "until_revoked" }));
+    if (failed) {
+      mocks.historicalMaintenance.mockRejectedValue(new Error("private-provider-error"));
+    }
+    const context = {
+      root: { directory, source: "explicit" as const },
+      options: parseFinanceSchedulerArgs([
+        "--loop",
+        "--dir",
+        directory,
+        "--sync-alpaca-history",
+        "--place",
+        "--venue",
+        "alpaca",
+        "--execution-policy",
+        policy,
+        "--execution-quote-feed",
+        "iex",
+        "--execution-max-age-ms",
+        "30000",
+        "--max-order-notional",
+        "1000",
+        "--max-instrument-notional",
+        "5000",
+        "--max-orders",
+        "8",
+        "--no-source-heartbeat",
+      ]),
+      signal: new AbortController().signal,
+    };
+    for (const seconds of [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300]) {
+      vi.setSystemTime(start + seconds * 1000);
+      await reconcileResidentAlpacaAccount(context, "stream");
+    }
+    expect(mocks.syncAlpacaHistory).toHaveBeenCalledTimes(11);
+    expect(mocks.historicalMaintenance).toHaveBeenCalledTimes(2);
+    await reconcileResidentAlpacaAccount(context, "idle");
+    expect(mocks.historicalMaintenance).toHaveBeenCalledTimes(2);
+    expect(stderrMessages.join("\n")).not.toContain("private-provider-error");
+  },
+);
+
+it.each(["missing_caps", "expired_policy", "unknown_policy", "no_place"])(
+  "does not dispatch historical maintenance for %s",
+  async (boundary) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-22T17:00:00Z"));
+    const policy = path.join(directory, "maintenance-policy.json");
+    fs.writeFileSync(
+      policy,
+      JSON.stringify(
+        boundary === "unknown_policy"
+          ? {}
+          : boundary === "expired_policy"
+            ? { expiresAt: "2026-09-21T00:00:00Z" }
+            : { authorizationMode: "until_revoked" },
+      ),
+    );
+    mocks.delay.mockImplementationOnce(async () => process.emit("SIGTERM"));
+    await runFinanceScheduler([
+      "--loop",
+      "--dir",
+      directory,
+      "--sync-alpaca-history",
+      "--venue",
+      "alpaca",
+      ...(boundary === "no_place" ? [] : ["--place"]),
+      "--execution-policy",
+      policy,
+      "--execution-quote-feed",
+      "iex",
+      "--execution-max-age-ms",
+      "30000",
+      ...(boundary === "missing_caps"
+        ? []
+        : [
+            "--max-order-notional",
+            "1000",
+            "--max-instrument-notional",
+            "5000",
+            "--max-orders",
+            "8",
+          ]),
+      "--no-source-heartbeat",
+    ]);
+    expect(mocks.historicalMaintenance).not.toHaveBeenCalled();
+  },
+);
 
 it("uses the live intraday controller for bounded idle recovery before monitoring", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });

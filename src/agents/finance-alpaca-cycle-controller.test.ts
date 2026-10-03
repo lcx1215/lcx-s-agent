@@ -1072,3 +1072,56 @@ it("refuses a changed execution journal after preparation even when quotes remai
   );
   expect(f.execute).not.toHaveBeenCalled();
 });
+
+it("requires explicit crypto capability while preserving the default equities-only universe", async () => {
+  const f = await fixture(true);
+  expect(() =>
+    createFinanceAlpacaCycleController({ ...f.options, instruments: ["BTC/USD"] }),
+  ).toThrow("invalid or expired Alpaca daily controller configuration");
+  const read: FinanceUncachedFetch = async (url, init) => {
+    if (new URL(url).pathname === "/v1beta3/crypto/us/latest/quotes") {
+      return {
+        status: 200,
+        body: JSON.stringify({
+          quotes: { "BTC/USD": { bp: 80000, ap: 80001, t: new Date().toISOString() } },
+        }),
+      };
+    }
+    return f.read(url, init);
+  };
+  const controller = createFinanceAlpacaCycleController({
+    ...f.options,
+    instruments: ["BTC/USD"],
+    allowCrypto: true,
+    read,
+  });
+  await expect(
+    controller.executionQuoteProvider(
+      { instrument: "BTC/USD", assetClass: "crypto", side: "sell" },
+      AbortSignal.timeout(5000),
+    ),
+  ).resolves.toMatchObject({ referencePrice: 80000, bidPrice: 80000, askPrice: 80001 });
+  await expect(
+    controller.executionQuoteProvider(
+      { instrument: "BTC/USD", assetClass: "us_equity", side: "sell" },
+      AbortSignal.timeout(5000),
+    ),
+  ).rejects.toThrow("daily controller asset class outside explicit capability");
+});
+
+it("runs the controller ownership guard inside the shared safety facts path before dispatch", async () => {
+  const f = await fixture(true);
+  const validateFacts = vi.fn(async () => {
+    const locks = await fs.readdir(f.directory);
+    expect(
+      locks.some((name) => name.startsWith("execution-safety-") && name.endsWith(".jsonl.lock")),
+    ).toBe(true);
+    throw new Error("ownership changed before dispatch");
+  });
+  const controller = createFinanceAlpacaCycleController({ ...f.options, validateFacts });
+  await expect(f.place("ownership-guard", controller)).rejects.toThrow(
+    "execution_safety_facts_unavailable",
+  );
+  expect(validateFacts).toHaveBeenCalledOnce();
+  expect(f.execute).not.toHaveBeenCalled();
+});

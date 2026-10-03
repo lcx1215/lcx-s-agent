@@ -66,6 +66,8 @@ export function evaluateConclusionToMandate(params: {
   equity: number;
   /** The explicit authorization that admitted this run. Empty is refused downstream. */
   runAuthorizationId: string;
+  /** Trusted controller-only exact quantity; model conclusion fields never supply this. */
+  quantityOverride?: number;
   /**
    * Omitted means the base rules. A regime only ever tightens them, so omitting
    * it is the looser judgement - callers that know the regime should pass it.
@@ -118,6 +120,7 @@ export function evaluateConclusionToMandate(params: {
     market: { referencePrice: params.referencePrice, referencePriceAt: params.referencePriceAt },
     equity: params.equity,
     runAuthorizationId: params.runAuthorizationId,
+    ...(params.quantityOverride === undefined ? {} : { quantityOverride: params.quantityOverride }),
     ...(strategyClass !== "unknown" ? { strategyClass } : {}),
     ...(params.baseFloor === undefined ? {} : { minConviction: params.baseFloor }),
   });

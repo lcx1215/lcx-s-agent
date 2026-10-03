@@ -38,6 +38,8 @@ import {
   financeEtClock,
   isFinanceCycleSlotDue,
 } from "../../src/agents/finance-cycle-schedule.js";
+import { FINANCE_RISK_BUDGET_ANY_INSTRUMENT } from "../../src/agents/finance-execution-adapter.js";
+import { runFinanceHistoricalPositionMaintenance } from "../../src/agents/finance-historical-position-maintenance.js";
 import { executeFinanceIntradayDecision } from "../../src/agents/finance-intraday-execution.js";
 import { runFinanceIntradayMonitorTick } from "../../src/agents/finance-intraday-monitor.js";
 import {
@@ -840,6 +842,13 @@ type CycleContext = {
   intradayController?: ReturnType<typeof createFinanceAlpacaCycleController>;
   resolveMarketSession?: ReturnType<typeof createFinanceAlpacaMarketSessionResolver>;
   lastIdleReconciliationAtMs?: number;
+  lastHistoricalMaintenanceAtMs?: number;
+  historicalMaintenance?: {
+    observedAt: string;
+    status: string;
+    decisionCount: number;
+    unknownCount: number;
+  };
   reconciliationWake?: ReturnType<typeof createFinanceSchedulerReconciliationWake>;
   sourceHeartbeatInFlight?: boolean;
   lastIntradayTick?: FinanceSchedulerIntradayLastTick | null;
@@ -1282,6 +1291,7 @@ function writeSchedulerProgress(
       phase,
       ...(cycleStage ? { cycleStage } : {}),
       timeoutMs: context.options.timeoutMs,
+      historicalMaintenance: context.historicalMaintenance ?? null,
       placementEnabled: args.includes("--place"),
       venue,
       executionPolicyAuthorizationMode:
@@ -1947,13 +1957,17 @@ function buildIntradayLastTickCandidate(
   };
 }
 
-async function reconcileResidentAlpacaAccount(context: CycleContext, source: "idle" | "stream") {
+export async function reconcileResidentAlpacaAccount(
+  context: CycleContext,
+  source: "idle" | "stream",
+) {
   context.lastIdleReconciliationAtMs = Date.now();
   if (context.intradayController) {
     const refreshed = await context.intradayController.inspectReconciliation(context.signal);
     process.stdout.write(
       `[${new Date().toISOString()}] ${source} broker reconciliation=${refreshed.readiness.status} account=${context.intradayController.accountId}\n`,
     );
+    await maintainAfterSuccessfulReconciliation(context, refreshed.readiness.status);
     return refreshed.readiness.status;
   } else {
     const refreshed = await syncConfiguredAlpacaPaperHistory({
@@ -1963,8 +1977,96 @@ async function reconcileResidentAlpacaAccount(context: CycleContext, source: "id
     process.stdout.write(
       `[${new Date().toISOString()}] ${source} broker reconciliation=${refreshed.accountReconciliation.status} account=${refreshed.accountId}\n`,
     );
+    await maintainAfterSuccessfulReconciliation(context, refreshed.accountReconciliation.status);
     return refreshed.accountReconciliation.status;
   }
+}
+
+async function maintainAfterSuccessfulReconciliation(context: CycleContext, readiness: string) {
+  const now = Date.now();
+  if (
+    readiness !== "reconciled" ||
+    context.signal.aborted ||
+    (context.lastHistoricalMaintenanceAtMs !== undefined &&
+      now - context.lastHistoricalMaintenanceAtMs < FINANCE_IDLE_RECONCILIATION_INTERVAL_MS)
+  ) {
+    return;
+  }
+  // Both stream and idle readbacks share the account lane. Mark before awaiting
+  // so failed maintenance cannot become a hot loop on frequent stream events.
+  context.lastHistoricalMaintenanceAtMs = now;
+  try {
+    await runHistoricalMaintenanceAfterReconciliation(context);
+  } catch {
+    context.historicalMaintenance = {
+      observedAt: new Date().toISOString(),
+      status: context.signal.aborted ? "cancelled" : "unavailable",
+      decisionCount: 0,
+      unknownCount: 0,
+    };
+    if (!context.signal.aborted) {
+      process.stderr.write(
+        "historical position maintenance unavailable; durable recovery remains owned by maintenance\n",
+      );
+    }
+  }
+}
+
+async function runHistoricalMaintenanceAfterReconciliation(context: CycleContext): Promise<void> {
+  const args = context.options.extraArgs;
+  const value = (flag: string) => {
+    const index = args.indexOf(flag);
+    return index < 0 ? undefined : args[index + 1];
+  };
+  const policyPath = value("--execution-policy");
+  const authorization = readFinanceSchedulerPolicyAuthorization(policyPath);
+  const maxOrderNotional = numericExtra(args, "--max-order-notional");
+  const maxInstrumentNotional = numericExtra(args, "--max-instrument-notional");
+  const maxOrdersPerRun = numericExtra(args, "--max-orders");
+  const maxAgeMs = numericExtra(args, "--execution-max-age-ms");
+  const feed = value("--execution-quote-feed");
+  if (
+    context.signal.aborted ||
+    !args.includes("--place") ||
+    value("--venue") !== "alpaca" ||
+    !policyPath ||
+    authorization.authorizationMode === "unknown" ||
+    (authorization.expiresAt !== null && Date.parse(authorization.expiresAt) <= Date.now()) ||
+    ![maxOrderNotional, maxInstrumentNotional, maxOrdersPerRun, maxAgeMs].every(
+      (cap) => Number.isFinite(cap) && cap > 0,
+    ) ||
+    !Number.isSafeInteger(maxOrdersPerRun) ||
+    (feed !== "iex" && feed !== "sip")
+  ) {
+    context.historicalMaintenance = {
+      observedAt: new Date().toISOString(),
+      status: "not_authorized",
+      decisionCount: 0,
+      unknownCount: 0,
+    };
+    return;
+  }
+  const policy: unknown = JSON.parse(fs.readFileSync(policyPath, "utf8"));
+  const result = await runFinanceHistoricalPositionMaintenance({
+    directory: context.root.directory,
+    policy,
+    budget: {
+      automation: "unattended",
+      allowedInstruments: [FINANCE_RISK_BUDGET_ANY_INSTRUMENT],
+      maxOrderNotional,
+      maxInstrumentNotional,
+      maxOrdersPerRun,
+    },
+    feed,
+    maxAgeMs,
+    signal: context.signal,
+  });
+  context.historicalMaintenance = {
+    observedAt: result.observedAt,
+    status: result.status,
+    decisionCount: result.decisions.length,
+    unknownCount: result.decisions.filter((decision) => decision.status === "unknown").length,
+  };
 }
 
 async function runTradingTick(context: CycleContext): Promise<void> {

@@ -46,6 +46,7 @@ export const FINANCE_DECISION_REFERENCE_SOURCES = [
   "daily_cycle_candidate",
   "intraday_signal",
   "research_receipt",
+  "account_position_maintenance",
 ] as const;
 
 /** A durable pointer back to the decision evidence that originated an order. */

@@ -16,12 +16,14 @@ import {
   advanceFinancePositionProjection,
   appendFinanceExecutionReceipt,
   appendFinancePositionMark,
+  appendFinanceBrokerHistory,
   FINANCE_POSITION_LEDGER_PROJECTION,
   FINANCE_POSITION_LEDGER_SCHEMA,
   projectFinancePositions,
   readFinancePositionLedger,
   readFinancePositionProjectionStatus,
   readFinancePositionRecords,
+  readFinanceLatestBrokerReconciliations,
 } from "./finance-position-ledger.js";
 import { financePositionLedgerPath } from "./finance-state-dir.js";
 
@@ -79,6 +81,43 @@ function positionOf(receipts: readonly FinanceExecutionReceipt[], instrument = "
 }
 
 describe("finance position ledger", () => {
+  it("counts historical maintenance fills without manufacturing an LCX short or entry PnL", () => {
+    const maintenance = receipt({
+      side: "sell",
+      adapterKind: "venue",
+      venue: "alpaca:paper",
+      accountId: "paper-account",
+      decisionRef: { source: "account_position_maintenance", id: "maintenance-1" },
+    });
+    const ledger = projectFinancePositions({ receipts: [maintenance] });
+    expect(ledger.receiptCount).toBe(1);
+    expect(ledger.venueFillCount).toBe(1);
+    expect(ledger.positions).toEqual([]);
+    expect(ledger.unattributedMaintenanceReceiptIds).toEqual([maintenance.receiptId]);
+    expect(ledger.maintenancePnlStatus).toBe("unknown_requires_broker_history");
+  });
+  it.each([
+    { side: "buy" as const },
+    { adapterKind: "paper" as const },
+    { venue: "alpaca:live" },
+    { accountId: undefined },
+    { accountId: " " },
+  ])("refuses unsupported maintenance attribution: %j", (override) => {
+    expect(() =>
+      projectFinancePositions({
+        receipts: [
+          receipt({
+            side: "sell",
+            adapterKind: "venue",
+            venue: "alpaca:paper",
+            accountId: "paper-account",
+            decisionRef: { source: "account_position_maintenance", id: "maintenance-1" },
+            ...override,
+          }),
+        ],
+      }),
+    ).toThrow("invalid account position maintenance receipt");
+  });
   it("opens a long position at the fill price and marks it unrealized against a supplied mark", () => {
     const { ledger, position } = positionOf(
       [fill("buy", 10, 100, "2026-09-18T01:00:00Z")],
@@ -713,4 +752,40 @@ it("replays terminal venue receipt once but rejects changed economic fields or v
       fill: { ...first.fill, filledAt: "2026-09-11T00:00:00Z" },
     }),
   ).rejects.toThrow("different content");
+});
+
+it("freezes research reconciliation cutoffs while current readers retain superseded checks", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "broker-cutoff-"));
+  try {
+    const append = (query: string, observedAt: string) =>
+      appendFinanceBrokerHistory(directory, {
+        kind: "broker_history",
+        accountId: "paper-account",
+        venue: "alpaca:paper",
+        query,
+        cursor: "",
+        payload: [{ observedAt, status: "reconciled", differences: [], positions: [] }],
+      });
+    await append("reconciliation:before", "2026-10-03T00:00:00Z");
+    const before = await readFinanceLatestBrokerReconciliations(directory, {
+      asOf: "2026-10-03T00:00:01Z",
+    });
+    await append("reconciliation:after", "2026-10-03T00:00:02Z");
+    expect(
+      await readFinanceLatestBrokerReconciliations(directory, { asOf: "2026-10-03T00:00:01Z" }),
+    ).toEqual(before);
+    await append("orders:after", "2026-10-03T00:00:03Z");
+    expect((await readFinanceLatestBrokerReconciliations(directory)).records[0].superseded).toBe(
+      true,
+    );
+    expect(
+      (await readFinanceLatestBrokerReconciliations(directory, { asOf: "2026-10-03T00:00:01Z" }))
+        .records[0].superseded,
+    ).toBe(false);
+    await expect(
+      readFinanceLatestBrokerReconciliations(directory, { asOf: "invalid" }),
+    ).rejects.toThrow("invalid broker reconciliation cutoff");
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
 });

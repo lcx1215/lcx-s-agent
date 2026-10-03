@@ -135,3 +135,70 @@ it("measures whole-position risk when class C compiler does not attach the model
   }
   expect(tightened.mandate.reasons.join()).toContain("risk 3.00% exceeds the 1.50% cap");
 });
+
+describe("controller-owned exact quantity preflight", () => {
+  const crypto = {
+    ...params,
+    raw: {
+      ...raw,
+      instrument: "BTC/USD",
+      assetClass: "crypto",
+      direction: "sell",
+      invalidationPrice: 110,
+    },
+    riskContext: risk,
+  };
+  it("measures a small exact crypto reduction instead of a synthetic risk-sized position", () => {
+    const result = evaluateConclusionToMandate({ ...crypto, quantityOverride: 0.000399 });
+    expect(result).toMatchObject({
+      ok: true,
+      passed: true,
+      strategyClass: "B",
+      intent: { quantity: 0.000399, side: "sell" },
+    });
+  });
+  it("still refuses an exact quantity that exceeds the class risk ceiling", () => {
+    expect(evaluateConclusionToMandate({ ...crypto, quantityOverride: 51 })).toMatchObject({
+      ok: true,
+      passed: false,
+      intent: undefined,
+    });
+  });
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+    "rejects invalid controller quantity %s",
+    (quantityOverride) => {
+      expect(evaluateConclusionToMandate({ ...crypto, quantityOverride })).toMatchObject({
+        ok: false,
+        stage: "compile",
+      });
+    },
+  );
+  it("does not accept a model-authored exact quantity", () => {
+    const result = evaluateConclusionToMandate({
+      ...crypto,
+      raw: { ...crypto.raw, quantityOverride: 0.000399 },
+    });
+    expect(result).toMatchObject({ ok: true, passed: true, intent: { quantity: 50 } });
+  });
+  it("preserves caller risk and predictive structure requirements with exact quantity", () => {
+    expect(
+      evaluateConclusionToMandate({
+        ...crypto,
+        quantityOverride: 0.000399,
+        riskContext: undefined,
+      }),
+    ).toMatchObject({ ok: false, stage: "risk_context" });
+    expect(
+      evaluateConclusionToMandate({
+        ...crypto,
+        quantityOverride: 0.000399,
+        riskContext: { ...risk, hasSignificantAutocorrelation: undefined },
+      }),
+    ).toMatchObject({ ok: true, passed: false, intent: undefined });
+  });
+  it("retains the risk ceiling for controller-sized buys", () => {
+    expect(
+      evaluateConclusionToMandate({ ...params, quantityOverride: 201, riskContext: risk }),
+    ).toMatchObject({ ok: true, passed: false, intent: undefined });
+  });
+});

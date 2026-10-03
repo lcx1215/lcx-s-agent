@@ -1,8 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { z } from "zod";
 import type { FinanceCommitteeEvidence } from "./finance-agent-committee.js";
 import { readFinanceBarLedger } from "./finance-bar-ledger.js";
 import { readFinanceBrokerProfitFeedback } from "./finance-broker-profit-feedback.js";
+import { brokerSymbol } from "./finance-broker-reconciliation.js";
 import { financeEtClock, latestCompletedWeekdaySessionDate } from "./finance-cycle-schedule.js";
 import {
   readFinanceIntradayDecisions,
@@ -63,12 +65,26 @@ export type FinanceNightResearchScope = Readonly<{
   asOf: string;
   activeStrategyIds: readonly string[];
   instruments: readonly FinanceNightResearchInstrument[];
+  holdingBasis?: FinanceNightResearchHoldingBasis;
   coverage?: Readonly<{
     totalInstrumentCount: number;
     deferredInstruments: readonly FinanceNightResearchInstrument[];
     selectionMethod: "held_priority_et_date_rotation_v1";
   }>;
 }>;
+
+export const financeNightResearchHoldingBasisSchema = z
+  .object({
+    source: z.enum(["broker_reconciliation", "execution_receipts"]),
+    snapshotRefs: z.array(z.string().regex(/^[a-f0-9]{64}$/)).max(3),
+    issues: z.array(z.string().min(1).max(256)).max(8),
+    omittedAccounts: z.number().int().nonnegative(),
+    executionAuthority: z.literal("none"),
+  })
+  .strict();
+export type FinanceNightResearchHoldingBasis = z.infer<
+  typeof financeNightResearchHoldingBasisSchema
+>;
 
 export function assertFinanceNightResearchAsOf(asOf: string): void {
   const asOfMs = Date.parse(asOf);
@@ -100,8 +116,9 @@ function financeNightResearchAssetClass(instrument: string): "us_equity" | "cryp
 
 function buildFinanceNightResearchScope(params: {
   asOf: string;
-  positions: Awaited<ReturnType<typeof readFinancePositionLedger>>["ledger"]["positions"];
+  positions: readonly Readonly<{ instrument: string; quantity: number }>[];
   activeRules: readonly Readonly<{ ruleId: string; instruments: readonly string[] }>[];
+  holdingBasis?: FinanceNightResearchHoldingBasis;
 }): FinanceNightResearchScope {
   assertFinanceNightResearchAsOf(params.asOf);
   const instruments = new Map<
@@ -172,6 +189,7 @@ function buildFinanceNightResearchScope(params: {
     asOf: params.asOf,
     activeStrategyIds: Object.freeze(params.activeRules.map((rule) => rule.ruleId)),
     instruments: Object.freeze(selected),
+    ...(params.holdingBasis ? { holdingBasis: params.holdingBasis } : {}),
     ...(deferredInstruments.length > 0
       ? {
           coverage: Object.freeze({
@@ -199,25 +217,113 @@ function projectFinanceNightPositionsAtAsOf(params: {
   });
 }
 
+/** Broker holdings define research inventory; receipt lots still define LCX attribution. */
+function projectFinanceNightResearchHoldings(params: {
+  positionRead: Awaited<ReturnType<typeof readFinancePositionLedger>>;
+  brokerRead: Awaited<ReturnType<typeof readFinanceLatestBrokerReconciliations>>;
+  asOf: string;
+}) {
+  const records = params.brokerRead.records.filter((record) => record.venue === "alpaca:paper");
+  if (!records.length && params.brokerRead.omittedAccounts === 0) {
+    return { positions: projectFinanceNightPositionsAtAsOf(params).ledger.positions };
+  }
+  const replacedAccounts = new Set<string>();
+  const brokerPositions: { instrument: string; quantity: number }[] = [];
+  const issues: string[] = [];
+  const snapshotRefs: string[] = [];
+  for (const record of records) {
+    const snapshot = record.snapshot as Record<string, unknown> | undefined;
+    const age =
+      snapshot && typeof snapshot.observedAt === "string"
+        ? Date.parse(params.asOf) - Date.parse(snapshot.observedAt)
+        : Number.NaN;
+    if (
+      !snapshot ||
+      record.superseded ||
+      !Number.isFinite(age) ||
+      age < 0 ||
+      age > 300_000 ||
+      snapshot.status !== "reconciled" ||
+      !Array.isArray(snapshot.differences) ||
+      snapshot.differences.length ||
+      !Array.isArray(snapshot.positions)
+    ) {
+      issues.push(`broker_holdings_unavailable:${record.accountId}`);
+      continue;
+    }
+    try {
+      const seen = new Set<string>();
+      const positions = snapshot.positions.map((value: unknown) => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) {
+          throw new Error("invalid position");
+        }
+        const raw = value as Record<string, unknown>;
+        const instrument = brokerSymbol(raw.symbol);
+        financeNightResearchAssetClass(instrument);
+        const quantity =
+          typeof raw.qty === "number"
+            ? raw.qty
+            : typeof raw.qty === "string" && raw.qty.trim()
+              ? Number(raw.qty)
+              : Number.NaN;
+        if (!Number.isFinite(quantity) || quantity < 0 || seen.has(instrument)) {
+          throw new Error("invalid quantity");
+        }
+        seen.add(instrument);
+        return { instrument, quantity };
+      });
+      replacedAccounts.add(record.accountId);
+      snapshotRefs.push(record.ref);
+      brokerPositions.push(...positions);
+    } catch {
+      issues.push(`broker_holdings_invalid:${record.accountId}`);
+    }
+  }
+  const receiptFallback = params.positionRead.receipts.filter(
+    (receipt) =>
+      !(
+        receipt.venue === "alpaca:paper" &&
+        receipt.accountId &&
+        replacedAccounts.has(receipt.accountId)
+      ),
+  );
+  const remaining = projectFinanceNightPositionsAtAsOf({
+    positionRead: { ...params.positionRead, receipts: receiptFallback },
+    asOf: params.asOf,
+  }).ledger.positions;
+  return {
+    positions: [...brokerPositions, ...remaining],
+    holdingBasis: financeNightResearchHoldingBasisSchema.parse({
+      source: replacedAccounts.size ? "broker_reconciliation" : "execution_receipts",
+      snapshotRefs,
+      issues,
+      omittedAccounts: params.brokerRead.omittedAccounts,
+      executionAuthority: "none",
+    }),
+  };
+}
+
 /** Rebuild the exact night scope from the current controller ledgers at the supplied cutoff. */
 export async function readFinanceNightReviewResearchScope(params: {
   directory: string;
   asOf: string;
 }): Promise<FinanceNightResearchScope> {
-  const [positions, strategyRules] = await Promise.all([
+  const [positions, strategyRules, brokerRead] = await Promise.all([
     readFinancePositionLedger(params.directory, { asOf: params.asOf }),
     readFinanceStrategyRuleLedger(params.directory, { asOf: params.asOf }),
+    readFinanceLatestBrokerReconciliations(params.directory, { asOf: params.asOf }),
   ]);
   const activeRules = strategyRules.ledger.rules
     .filter((rule) => rule.state === "active")
     .map((rule) => ({ ruleId: rule.ruleId, instruments: rule.instruments }));
-  const positionsAtAsOf = projectFinanceNightPositionsAtAsOf({
+  const holdings = projectFinanceNightResearchHoldings({
     positionRead: positions,
+    brokerRead,
     asOf: params.asOf,
   });
   return buildFinanceNightResearchScope({
     asOf: params.asOf,
-    positions: positionsAtAsOf.ledger.positions,
+    ...holdings,
     activeRules,
   });
 }
@@ -992,7 +1098,7 @@ export async function buildFinanceNightReviewEvidence(params: {
   /** Include a fail-closed typed scope only for scheduler night research runs. */
   includeResearchScope?: boolean;
 }): Promise<readonly FinanceCommitteeEvidence[]> {
-  const [positions, strategyRules, decisions, brokerProfit, brokerReconciliations] =
+  const [positions, strategyRules, decisions, brokerProfit, brokerReconciliations, scopedHoldings] =
     await Promise.all([
       readFinancePositionLedger(params.directory, { asOf: params.asOf }),
       readFinanceStrategyRuleLedger(params.directory, { asOf: params.asOf }),
@@ -1002,6 +1108,9 @@ export async function buildFinanceNightReviewEvidence(params: {
       }),
       readFinanceBrokerProfitFeedback(params.directory, params.asOf),
       readFinanceLatestBrokerReconciliations(params.directory),
+      params.includeResearchScope
+        ? readFinanceLatestBrokerReconciliations(params.directory, { asOf: params.asOf })
+        : undefined,
     ]);
   const outcomesBySignal = await readFinanceIntradayOutcomes(
     params.directory,
@@ -1042,7 +1151,11 @@ export async function buildFinanceNightReviewEvidence(params: {
   const researchScope = params.includeResearchScope
     ? buildFinanceNightResearchScope({
         asOf: params.asOf,
-        positions: positionsAtAsOf.ledger.positions,
+        ...projectFinanceNightResearchHoldings({
+          positionRead: positions,
+          brokerRead: scopedHoldings ?? brokerReconciliations,
+          asOf: params.asOf,
+        }),
         activeRules,
       })
     : undefined;
@@ -1097,6 +1210,7 @@ export async function buildFinanceNightReviewEvidence(params: {
           objective:
             "Improve realized profit after costs within the existing strategy and risk budget.",
           questions: [
+            "Which reconciled account holdings lack an active strategy or protective coverage? Review their management autonomously from current evidence; historical ownership gaps must not remove an instrument from research or be fabricated as an LCX entry.",
             "Which executed opportunities made or lost money after costs? Separate gross gains, net gains and unrealized marks.",
             "Were profitable opportunities refused or delayed? Use subsequent market data and the original executable constraints; a refusal alone proves no missed profit.",
             "Did exits truncate winners? Compare the declared exit with a pre-specified alternative over the same horizon, including adverse excursion and costs.",
@@ -1132,6 +1246,14 @@ export async function buildFinanceNightReviewEvidence(params: {
       text: JSON.stringify({
         headRef: positions.headRef,
         receiptCount: positionsAtAsOf.receipts.length,
+        ...(positionsAtAsOf.ledger.maintenancePnlStatus
+          ? {
+              maintenancePnlStatus: positionsAtAsOf.ledger.maintenancePnlStatus,
+              unattributedMaintenanceReceiptIds:
+                positionsAtAsOf.ledger.unattributedMaintenanceReceiptIds,
+              realizedPnlScope: "LCX_entry_lots_only_excludes_historical_position_maintenance",
+            }
+          : {}),
         positions: positionsAtAsOf.ledger.positions,
         positionMeaning: "combined local execution ledger projection, not broker account holdings",
         paperFillCount: positionsAtAsOf.receipts.filter(
