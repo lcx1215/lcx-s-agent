@@ -318,6 +318,7 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
   const intradayBook = await readFinanceIntradayOwnedPositions({
     directory: options.directory,
     accountId: options.accountId,
+    instrument,
     receipts: positionRecords.receipts,
   });
   const position = intradayBook.positions.find(

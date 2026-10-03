@@ -120,9 +120,12 @@ export function projectFinanceIntradayOwnedPositions(
 export async function readFinanceIntradayOwnedPositions(params: {
   directory: string;
   accountId?: string;
+  instrument?: string;
   receipts: readonly FinanceExecutionReceipt[];
 }) {
-  const receipts = receiptsForIntradayStrategy(params.receipts, params.accountId);
+  const receipts = receiptsForIntradayStrategy(params.receipts, params.accountId).filter(
+    (receipt) => params.instrument === undefined || receipt.instrument === params.instrument,
+  );
   const protectionExits = params.accountId
     ? await readFinanceOwnedProtectionExitFacts({
         directory: params.directory,

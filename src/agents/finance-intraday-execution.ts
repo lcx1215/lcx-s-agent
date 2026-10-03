@@ -396,6 +396,7 @@ export async function executeFinanceIntradayDecision(params: {
     const ownedBook = await readFinanceIntradayOwnedPositions({
       directory: params.directory,
       accountId: params.controller.accountId,
+      instrument: input.instrument,
       receipts: positionRecords.receipts,
     });
     const owned =
