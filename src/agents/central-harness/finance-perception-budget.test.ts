@@ -1,5 +1,10 @@
 import { expect, it } from "vitest";
-import { boundPerception, projectFinancePerceptionEvidence } from "./harness-loop.js";
+import {
+  boundPerception,
+  projectFinancePerceptionEvidence,
+  runCentralHarnessCycle,
+} from "./harness-loop.js";
+import { buildCentralBrainPrompt } from "./model-brain.js";
 it("retains finance execution coverage above the former 3KB cap within the total budget", () => {
   const financeAutomaticLifecycle = {
     scheduler: { history: "x".repeat(3200) },
@@ -106,4 +111,56 @@ it("does not let a large finance value displace small decision projections", () 
   expect(bounded.perception.controlRoom.learningWorkflow).toBeDefined();
   expect(projectFinancePerceptionEvidence(bounded).status).toBe("omitted_by_budget");
   expect(bounded.report.overBudget).toBe(false);
+});
+
+it("delivers account-bound unknown economics into the actual finance brain prompt within the shared budget", async () => {
+  const economicFeedback = {
+    asOf: "2026-10-03T00:00:00Z",
+    accounts: [
+      {
+        accountId: "paper-a",
+        venue: "alpaca:paper",
+        snapshotRef: "snapshot-a",
+        netMatchedPnl: null,
+        issues: ["fees_not_allocated_to_closed_lots"],
+        basis: "FIFO not account return",
+      },
+    ],
+    omittedAccounts: 1,
+  };
+  const bounded = boundPerception({
+    observedAt: economicFeedback.asOf,
+    ownerTotals: {},
+    backlog: [],
+    boundaries: [],
+    controlRoom: { financeAutomaticLifecycle: { economicFeedback } },
+  });
+  const prompt = buildCentralBrainPrompt(bounded.perception);
+  expect(prompt).toContain("paper-a");
+  expect(prompt).toContain("fees_not_allocated_to_closed_lots");
+  expect(prompt).toContain("snapshot-a");
+  expect(prompt).toContain("grow PAPER net wealth after costs");
+  expect(bounded.report.overBudget).toBe(false);
+  let observed = false;
+  await runCentralHarnessCycle({
+    perception: bounded.perception,
+    registry: new Map(),
+    planOnly: true,
+    brain: {
+      propose: async (perception) => {
+        observed = true;
+        const actualPrompt = buildCentralBrainPrompt(perception);
+        expect(actualPrompt).toContain("snapshot-a");
+        expect(actualPrompt).toContain("fees_not_allocated_to_closed_lots");
+        expect(actualPrompt).toContain('"netMatchedPnl":null');
+        return {
+          kind: "proposed",
+          provider: "offline-scripted",
+          modelId: "fixture",
+          plan: { note: "unknown is not return", actions: [] },
+        };
+      },
+    },
+  });
+  expect(observed).toBe(true);
 });

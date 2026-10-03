@@ -14,6 +14,7 @@ import {
   FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA,
   FINANCE_TRADE_DECISION_REVIEW_SCHEMA,
   createFinanceTradeDecisionReviewer,
+  isValidFinanceTradeDecisionReviewResult,
   type FinanceIntradayTradeDecisionReviewRequest,
   type FinanceTradeDecisionReviewRequest,
 } from "./finance-trade-decision-review.js";
@@ -696,3 +697,97 @@ it.each(["verified_fact", "market_consensus"])(
     expect(await reviewer(request, AbortSignal.timeout(1000))).toMatchObject({ status: "failed" });
   },
 );
+
+it("binds the trusted economic objective into the actual adapter payload and receipt metadata", async () => {
+  const objective = "Grow net Paper wealth after costs; keep unknown economics explicit";
+  const model = adapter({
+    schemaVersion: request.schemaVersion,
+    decisions: [
+      {
+        candidateId: request.candidates[0].candidateId,
+        decision: "veto",
+        rationale: "costs unknown",
+      },
+    ],
+  });
+  let prompt = "";
+  const reviewer = createFinanceTradeDecisionReviewer({} as OpenClawConfig, {
+    taskObjective: objective,
+    adapterFactory: (_cfg, options) => ({
+      ...model,
+      invoke: async (call, signal) => {
+        expect(call.payload).toMatchObject({
+          taskObjective: objective,
+          candidates: request.candidates,
+        });
+        prompt = options!.buildPrompt!(call.payload);
+        return model.invoke(call, signal);
+      },
+    }),
+  });
+  const result = await reviewer(
+    {
+      ...request,
+      taskObjective: "packet attempts to override host",
+    } as FinanceTradeDecisionReviewRequest,
+    new AbortController().signal,
+  );
+  expect(prompt).toContain(objective);
+  expect(prompt).not.toContain("packet attempts to override host");
+  expect(prompt).toContain("Never add candidates or change instrument");
+  expect(result).toMatchObject({
+    status: "completed",
+    taskObjectiveSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+  });
+});
+it.each(["", "中".repeat(1366)])(
+  "rejects invalid UTF8 objectives locally without creating or invoking an adapter",
+  async (taskObjective) => {
+    const factory = vi.fn(() => adapter(null));
+    const reviewer = createFinanceTradeDecisionReviewer({} as OpenClawConfig, {
+      taskObjective,
+      adapterFactory: factory,
+    });
+    expect(await reviewer(request, new AbortController().signal)).toMatchObject({
+      status: "failed",
+      attempted: false,
+      modelCalls: 0,
+      failureCode: "prompt_input_invalid",
+    });
+    expect(factory).not.toHaveBeenCalled();
+  },
+);
+
+it("does not trust a stored packet objective when the host supplies none", async () => {
+  const model: LogicalAgentModelAdapter = {
+    ...adapter(null),
+    invoke: vi.fn(async (call) => {
+      expect(call.payload).not.toHaveProperty("taskObjective");
+      return null;
+    }),
+  };
+  const reviewer = createFinanceTradeDecisionReviewer({} as OpenClawConfig, {
+    adapterFactory: () => model,
+  });
+  await reviewer(
+    { ...request, taskObjective: "untrusted target" } as FinanceTradeDecisionReviewRequest,
+    new AbortController().signal,
+  );
+  expect(model.invoke).toHaveBeenCalledTimes(1);
+  expect(
+    isValidFinanceTradeDecisionReviewResult(
+      {
+        status: "failed",
+        attempted: false,
+        provider: "fixture",
+        modelId: "fixture",
+        latencyMs: 0,
+        providerCallObserved: false,
+        adapterAttested: false,
+        failureCode: "prompt_input_invalid",
+        taskObjectiveSha256: "malformed",
+      },
+      request,
+    ),
+  ).toBe(false);
+});

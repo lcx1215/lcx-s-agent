@@ -623,6 +623,9 @@ export async function executeFinanceIntradayDecision(params: {
         providerCallObserved: reviewResult.providerCallObserved,
         adapterAttested: reviewResult.adapterAttested,
         ...(reviewResult.requestIdSha256 ? { requestIdSha256: reviewResult.requestIdSha256 } : {}),
+        ...(reviewResult.taskObjectiveSha256
+          ? { taskObjectiveSha256: reviewResult.taskObjectiveSha256 }
+          : {}),
         ...(reviewedDecision ? { decision: reviewedDecision } : {}),
         ...(reviewResult.status === "failed"
           ? { failureCode: reviewResult.failureCode ?? "output_invalid" }

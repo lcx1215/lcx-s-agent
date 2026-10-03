@@ -274,7 +274,12 @@ export async function readFinanceBrokerProfitFeedback(directory: string, asOf: s
         const at = typeof snapshot?.observedAt === "string" ? snapshot.observedAt : "";
         const age = Date.parse(asOf) - Date.parse(at);
         if (!Number.isFinite(age) || age < 0) {
-          return { snapshotRef: record.ref, status: "snapshot_outside_cutoff" };
+          return {
+            accountId: record.accountId,
+            venue: record.venue,
+            snapshotRef: record.ref,
+            status: "snapshot_outside_cutoff",
+          };
         }
         const history = await readFinanceBrokerHistoryRecords(
           directory,
@@ -287,6 +292,7 @@ export async function readFinanceBrokerProfitFeedback(directory: string, asOf: s
           )
           .flatMap((row) => row.body.payload);
         return {
+          accountId: record.accountId,
           venue: record.venue,
           snapshotRef: record.ref,
           observedAt: at,

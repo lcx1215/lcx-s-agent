@@ -314,6 +314,7 @@ export const FinanceIntradayDecisionReviewReceiptSchema = z
     providerCallObserved: z.boolean(),
     adapterAttested: z.boolean(),
     requestIdSha256: Hash.optional(),
+    taskObjectiveSha256: Hash.optional(),
     decision: IntradayReviewDecisionSchema.optional(),
     failureCode: ReviewFailureCode.optional(),
   })

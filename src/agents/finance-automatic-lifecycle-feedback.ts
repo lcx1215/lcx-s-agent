@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { readFinanceBrokerProfitFeedback } from "./finance-broker-profit-feedback.js";
 import { readFinanceIntradayExecutionCoverage } from "./finance-intraday-control-ledger.js";
 import {
   FINANCE_DIRECTIONAL_CALIBRATION_BLOCK_REASON,
@@ -438,6 +439,57 @@ export async function buildFinanceAutomaticLifecycleFeedback(
       observedAt,
       rules: rules.ledger.rules,
     });
+    const profitFeedback = await readFinanceBrokerProfitFeedback(state.directory, observedAt);
+    const economicFeedback =
+      profitFeedback.accounts !== undefined
+        ? {
+            status: profitFeedback.status,
+            asOf: observedAt,
+            executionAuthority: "none",
+            boundary:
+              "FIFO closed-lot diagnostic, not account return, unrealized wealth or strategy PnL; accounts are never aggregated",
+            accounts: profitFeedback.accounts.slice(0, 2).map((account) => {
+              if (!("basis" in account)) {
+                return account;
+              }
+              const { instruments, strategyAttribution, issues, ...summary } = account;
+              return {
+                ...summary,
+                positionManagementMatched: (positionManagement.accounts ?? []).some(
+                  (position) =>
+                    position.accountId === account.accountId &&
+                    position.venue === account.venue &&
+                    position.snapshotRef === account.snapshotRef,
+                ),
+                issues: issues.slice(0, 4),
+                omittedIssues: Math.max(0, issues.length - 4),
+                omittedInstruments: instruments.length,
+                strategyAttribution: {
+                  ...strategyAttribution,
+                  strategies: strategyAttribution.strategies.slice(0, 3),
+                  omittedStrategies: Math.max(0, strategyAttribution.strategies.length - 3),
+                },
+              };
+            }),
+            omittedAccounts:
+              (profitFeedback.omittedAccounts ?? 0) +
+              Math.max(0, profitFeedback.accounts.length - 2),
+          }
+        : {
+            status: "unavailable",
+            asOf: observedAt,
+            executionAuthority: "none",
+            reason: boundedText(profitFeedback.reason, 160),
+          };
+    if (economicFeedback.accounts !== undefined) {
+      while (
+        Buffer.byteLength(JSON.stringify(economicFeedback), "utf8") > 2000 &&
+        economicFeedback.accounts.length > 0
+      ) {
+        economicFeedback.accounts.pop();
+        economicFeedback.omittedAccounts = (economicFeedback.omittedAccounts ?? 0) + 1;
+      }
+    }
     const latestProposal = proposals.at(-1) ?? null;
     const latestPromotion = promotions.at(-1) ?? null;
     const failedCycleModes = ["day", "night"].filter((mode) =>
@@ -502,6 +554,7 @@ export async function buildFinanceAutomaticLifecycleFeedback(
       currentReadiness,
       intradayExecution,
       positionManagement,
+      economicFeedback,
       scoredOutcomeCount: samples.length,
       tuning: {
         proposalCount: proposals.length,

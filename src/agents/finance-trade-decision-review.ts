@@ -164,6 +164,7 @@ export type FinanceTradeDecisionReviewResult = Readonly<{
   /** Number of configured model-adapter invocations, including one bounded truncation retry. */
   modelCalls?: number;
   requestIdSha256?: string;
+  taskObjectiveSha256?: string;
   decisions?: readonly FinanceTradeDecision[];
   failureCode?: FinanceTradeDecisionReviewFailureCode;
 }>;
@@ -181,6 +182,7 @@ export type FinanceTradeDecisionReviewReceipt = Readonly<{
   providerCallObserved?: boolean;
   adapterAttested?: boolean;
   requestIdSha256?: string;
+  taskObjectiveSha256?: string;
   decisions?: readonly FinanceTradeDecision[];
   failureCode?: FinanceTradeDecisionReviewFailureCode;
 }>;
@@ -193,6 +195,7 @@ export type FinanceTradeDecisionReviewer = (
 type ReviewerDependencies = Readonly<{
   adapterFactory?: typeof createConfiguredFinanceModelAdapter;
   now?: () => number;
+  taskObjective?: string;
 }>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -277,6 +280,9 @@ export function isValidFinanceTradeDecisionReviewResult(
         !Number.isSafeInteger(value.modelCalls) ||
         value.modelCalls < 0 ||
         value.modelCalls > 2)) ||
+    (value.taskObjectiveSha256 !== undefined &&
+      (typeof value.taskObjectiveSha256 !== "string" ||
+        !/^[a-f\d]{64}$/u.test(value.taskObjectiveSha256))) ||
     (value.requestIdSha256 !== undefined &&
       (typeof value.requestIdSha256 !== "string" || !/^[a-f\d]{64}$/u.test(value.requestIdSha256)))
   ) {
@@ -324,6 +330,7 @@ function reviewPrompt(payload: unknown): string {
     intraday
       ? "For this intraday operation, the registered price signal, current liquidity, execution costs, stop and remaining session dominate timing. Long-term fundamentals modify supported event/solvency risk; a favorable valuation cannot waive a stop or turn an intraday position into an unplanned long-term holding."
       : "For this operation, follow the declared strategy and existing portfolio budget. Daily scheduling does not by itself mean value investing. Long-term business value governs a value sleeve; price and liquidity govern implementation. Do not invent a short-term/long-term percentage or silently redistribute capital. Opposing horizons can coexist in separately budgeted sleeves; judge this exact candidate's purpose and risk.",
+    "The trusted host taskObjective, when present, states the economic goal, not execution authority or an achieved return. Compare this exact candidate with holding or cash using supported after-cost economics; missing evidence is unknown, not profit or loss. Never force activity to satisfy a target.",
     "Use only the supplied decision packet. Do not use external or unstated market facts.",
     "Focus on decision-changing evidence: a supported catalyst or contradiction, thesis/stop invalidation, horizon mismatch, and execution cost or liquidity risk. Do not repeat broad market research, recompute bookkeeping, or invent numerical gates; deterministic controllers own calculations and capital authorization. Keep the rationale concise and cite the relevant packet facts.",
     "Your role in the whole autonomous Paper system is the last evidence-based challenge of this exact candidate, not another full research cycle. SPY has no privileged status; apply the declared strategy, instrument, portfolio context and horizon supplied in this packet. An explicitly authorized autonomous Paper controller does not need per-order human confirmation. Judge the supported mechanism and strongest contrary fact, whether the thesis remains valid, and whether costs/liquidity or existing exposure erase the proposed advantage; state unmeasured costs as unknown, never as invented numbers or guaranteed profit. Broker/account facts and capital limits decide whether an approved candidate can actually execute.",
@@ -360,6 +367,29 @@ export function createFinanceTradeDecisionReviewer(
   cfg: OpenClawConfig,
   dependencies: ReviewerDependencies = {},
 ): FinanceTradeDecisionReviewer {
+  const taskObjective = dependencies.taskObjective;
+  const invalidObjective =
+    taskObjective !== undefined &&
+    (typeof taskObjective !== "string" ||
+      !taskObjective.trim() ||
+      Buffer.byteLength(taskObjective, "utf8") > 4096);
+  if (invalidObjective) {
+    return async () => ({
+      status: "failed",
+      attempted: false,
+      provider: "unavailable",
+      modelId: "unavailable",
+      latencyMs: 0,
+      providerCallObserved: false,
+      adapterAttested: false,
+      modelCalls: 0,
+      failureCode: "prompt_input_invalid",
+    });
+  }
+  const objectiveMetadata =
+    taskObjective === undefined
+      ? {}
+      : { taskObjectiveSha256: createHash("sha256").update(taskObjective).digest("hex") };
   const factory = dependencies.adapterFactory ?? createConfiguredFinanceModelAdapter;
   const createAdapter = (maxTokens: number) =>
     factory(cfg, {
@@ -373,6 +403,8 @@ export function createFinanceTradeDecisionReviewer(
   const now = dependencies.now ?? Date.now;
 
   return async (reviewRequest, signal) => {
+    const { taskObjective: _untrustedObjective, ...trustedPacket } =
+      reviewRequest as FinanceTradeDecisionReviewRequest & { taskObjective?: unknown };
     const startedAt = now();
     let activeAdapter = adapter;
     let modelCalls = 0;
@@ -419,6 +451,7 @@ export function createFinanceTradeDecisionReviewer(
       const deadlineExpired =
         signal.aborted && signal.reason instanceof Error && signal.reason.name === "TimeoutError";
       return {
+        ...objectiveMetadata,
         status: "failed",
         attempted: modelCalls > 0,
         provider: activeAdapter.provider,
@@ -455,7 +488,7 @@ export function createFinanceTradeDecisionReviewer(
         attempt,
         provider: activeAdapter.provider,
         modelId: activeAdapter.modelId,
-        payload: reviewRequest,
+        payload: taskObjective === undefined ? trustedPacket : { ...trustedPacket, taskObjective },
       };
       let output: unknown;
       modelCalls += 1;
@@ -472,6 +505,7 @@ export function createFinanceTradeDecisionReviewer(
       const decisions = parseFinanceTradeDecisionReviewOutput(output, reviewRequest);
       if (!decisions) {
         return {
+          ...objectiveMetadata,
           status: "failed",
           attempted: true,
           provider: activeAdapter.provider,
@@ -485,6 +519,7 @@ export function createFinanceTradeDecisionReviewer(
         };
       }
       return {
+        ...objectiveMetadata,
         status: "completed",
         attempted: true,
         provider: activeAdapter.provider,

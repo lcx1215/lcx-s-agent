@@ -1255,10 +1255,10 @@ function numericExtra(args: readonly string[], flag: string): number {
   return index < 0 ? Number.NaN : Number(args[index + 1]);
 }
 
-function createIntradayTradeDecisionReviewer() {
+function createIntradayTradeDecisionReviewer(taskObjective?: string) {
   try {
     // Each reviewer owns a single-call model adapter, so scope it to one decision.
-    return createFinanceTradeDecisionReviewer(loadConfig());
+    return createFinanceTradeDecisionReviewer(loadConfig(), { taskObjective });
   } catch {
     return undefined;
   }
@@ -2187,7 +2187,9 @@ async function runTradingTickOnAccountLane(context: CycleContext): Promise<void>
                 ),
                 maxOrdersPerRun: numericExtra(context.options.extraArgs, "--max-orders"),
               },
-              tradeDecisionReviewer: createIntradayTradeDecisionReviewer(),
+              tradeDecisionReviewer: createIntradayTradeDecisionReviewer(
+                context.options.researchPlan?.ask,
+              ),
               signal: context.signal,
             });
             context.lastIntradayTick = normalizeFinanceSchedulerIntradayLastTick(
