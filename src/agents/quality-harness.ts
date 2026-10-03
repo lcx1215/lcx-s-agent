@@ -513,6 +513,7 @@ export async function runQualityHarness(
         repairFeedback: feedback,
       }),
       finalTaskId: "final_precheck",
+      checkpointStore: options.checkpointStore,
       executor: (context) => {
         const cached = reusable.get(context.task.id);
         if (cached) {

@@ -7,6 +7,7 @@ import type {
   ModelCallObservation,
 } from "./logical-agent-model-router.js";
 import { ModelAdapterError } from "./logical-agent-model-router.js";
+import { createInMemoryLogicalAgentCheckpointStore } from "./logical-agent-pool.js";
 import { supportingEvidenceIds } from "./quality-harness-quality.js";
 import {
   buildQualityHarnessPlan,
@@ -1076,6 +1077,33 @@ describe("quality harness", () => {
     expect(receipt.attempts[0]?.stages).toEqual([]);
     expect(requests).toEqual([]);
     expect(verify).not.toHaveBeenCalled();
+  });
+
+  it("preserves completed stage outputs after downstream failure without enabling resume", async () => {
+    const store = createInMemoryLogicalAgentCheckpointStore<QualityHarnessStageOutput>();
+    const load = vi.spyOn(store, "load");
+    const { request: evidenceRequest, evidenceCoverage } = coverageRequest(20);
+    const receipt = await runQualityHarness({
+      request: evidenceRequest,
+      maxAttempts: 1,
+      modelRouting: coveredEvidenceRouting({ failDraft: true }),
+      requireEvidenceCoverage: true,
+      evidenceCoverage,
+      checkpointStore: store,
+    });
+    expect(receipt.status).toBe("quality-failed");
+    expect(load).not.toHaveBeenCalled();
+    const checkpoint = store.load(`${receipt.runId}:attempt:1`)!;
+    const prepared = checkpoint.results.find((item) => item.taskId === "evidence_batch_extract_2");
+    expect(prepared?.status).toBe("completed");
+    expect(prepared?.output?.kind).toBe("review");
+    if (prepared?.output?.kind === "review") {
+      expect(prepared.output.review.notes).toContain(
+        "[e-019] reviewed against the formatted artifact.",
+      );
+    }
+    expect(prepared?.modelCalls?.[0]?.evidenceCoverage?.promptSha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(checkpoint.planFingerprint).toMatch(/^[a-f0-9]{64}$/u);
   });
 
   it.each([

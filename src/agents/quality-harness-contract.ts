@@ -9,6 +9,7 @@ import {
   type LogicalAgentExecutionContext,
   type LogicalAgentModelInvoker,
   type LogicalAgentModelRouting,
+  type LogicalAgentCheckpointStore,
   type ModelCallReceipt,
   type LogicalAgentPlanResult,
   type LogicalAgentPoolStatus,
@@ -167,6 +168,8 @@ export type QualityHarnessOptions = Readonly<{
   evidenceCoverage?: QualityHarnessEvidenceCoverage;
   /** Default four; callers may declare up to six without relaxing item or prompt limits. */
   maxEvidenceBatches?: number;
+  /** Caller-owned persistence of complete stage outputs; injection does not enable resume. */
+  checkpointStore?: LogicalAgentCheckpointStore<QualityHarnessStageOutput>;
   modelInvoker?: LogicalAgentModelInvoker;
   modelRouting?: LogicalAgentModelRouting;
   signal?: AbortSignal;

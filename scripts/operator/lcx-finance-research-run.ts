@@ -55,6 +55,7 @@ import {
   type LocalTextModelRuntimeConfig,
 } from "../../src/agents/local-text-model-adapter.ts";
 import type { LogicalAgentModelRouting } from "../../src/agents/logical-agent-model-router.ts";
+import { createCanonicalStateRootLogicalAgentCheckpointStore } from "../../src/agents/logical-agent-pool-checkpoint-store.ts";
 import { QUALITY_HARNESS_MAX_EVIDENCE_ITEMS } from "../../src/agents/quality-harness-contract.ts";
 import { loadConfig } from "../../src/config/config.ts";
 import {
@@ -1152,6 +1153,9 @@ export async function run(options: Options): Promise<{
       maxModelConcurrency: options.maxModelConcurrency,
       modelRouting: workflow.routing,
       ...(options.quality ? { qualityModelRouting: workflow.routing } : {}),
+      ...(options.write && options.quality
+        ? { qualityCheckpointStore: createCanonicalStateRootLogicalAgentCheckpointStore() }
+        : {}),
       sourceGovernance: governance,
       batchOptions,
     },

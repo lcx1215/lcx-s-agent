@@ -285,6 +285,46 @@ describe("local text model adapter contract", () => {
     expect(prompt).toContain("values_may_be_clipped:false");
   });
 
+  it("keeps all nine multi-batch draft dependencies between 20k and 44k and still refuses excess", () => {
+    const dependencyOutputs = Object.fromEntries(
+      Array.from({ length: 9 }, (_, index) => [
+        index < 4 ? `review_${index}` : `evidence_batch_extract_${index - 2}`,
+        {
+          status: "completed",
+          output: { note: `risk and contrary evidence ${"x".repeat(3_000)}` },
+        },
+      ]),
+    );
+    const request = {
+      schemaVersion: 1 as const,
+      runId: "complete-six-batch-draft",
+      attempt: 1,
+      stage: "draft" as const,
+      agentId: "research_draft",
+      task: "draft from all reviews",
+      evidence: [{ id: "fact", text: "bounded observation" }],
+      sharedContext: {},
+      repairFeedback: [],
+      instructions: "retain every risk and contrary observation",
+      dependencyOutputs,
+    };
+    const serialized = JSON.stringify(dependencyOutputs);
+    expect(serialized.length).toBeGreaterThan(20_000);
+    expect(serialized.length).toBeLessThan(44_000);
+    const prompt = buildQualityHarnessModelPrompt(request);
+    expect(prompt).toContain(`previous=${serialized}`);
+    expect(prompt).toContain("values_may_be_clipped:false");
+    expect(() =>
+      buildQualityHarnessModelPrompt({
+        ...request,
+        dependencyOutputs: {
+          ...dependencyOutputs,
+          evidence_batch_extract_6: { status: "completed", output: { note: "x".repeat(44_001) } },
+        },
+      }),
+    ).toThrow("quality evidence batch dependencies exceed the review prompt budget");
+  });
+
   it("preserves every precheck dependency, including interleaved batch outputs, within the larger cap", () => {
     const dependencyOutputs: Record<string, unknown> = Object.fromEntries(
       Array.from({ length: 15 }, (_, index) => [

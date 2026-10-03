@@ -112,6 +112,7 @@ import {
   type LogicalAgentExecutionContext,
   type LogicalAgentModelInvoker,
   type LogicalAgentModelRouting,
+  type LogicalAgentCheckpointStore,
   type LogicalAgentRequest,
   type LogicalAgentTaskResult,
   type LogicalAgentExecutor,
@@ -120,6 +121,7 @@ import {
   QUALITY_HARNESS_EVIDENCE_BATCH_LIMIT,
   QUALITY_HARNESS_MAX_EVIDENCE_ITEMS,
   QUALITY_HARNESS_MAX_EVIDENCE_TEXT_LENGTH,
+  type QualityHarnessStageOutput,
   parseStageOutput,
   stageInstructions,
   STAGE_BY_AGENT_ID,
@@ -213,6 +215,7 @@ export type FinanceResearchRunOptions = Readonly<{
   modelRouting?: LogicalAgentModelRouting;
   modelInvoker?: LogicalAgentModelInvoker;
   qualityModelRouting?: LogicalAgentModelRouting;
+  qualityCheckpointStore?: LogicalAgentCheckpointStore<QualityHarnessStageOutput>;
   qualityModelInvoker?: LogicalAgentModelInvoker;
   /** Test/embedding seam; production uses the canonical module executor. */
   moduleExecutor?: typeof executeFinanceModuleComposition;
@@ -2143,6 +2146,7 @@ export type FinanceResearchQualityReviewOptions = Pick<
   | "maxModelConcurrency"
   | "qualityModelInvoker"
   | "qualityModelRouting"
+  | "qualityCheckpointStore"
   | "signal"
 > & {
   batch: FinanceResearchBatchEvidencePacket;
@@ -2242,6 +2246,7 @@ export async function runFinanceResearchQualityReview(
       // The controller's bounded multi-asset scope can need more than four whole-source batches.
       // Six admits at most 21 stages per attempt within the existing shared 48-call ceiling.
       maxEvidenceBatches: QUALITY_HARNESS_EVIDENCE_BATCH_LIMIT,
+      checkpointStore: options.qualityCheckpointStore,
       evidenceCoverage: qualityEvidenceSelection.coverage,
       modelId: options.modelId,
       ...(options.qualityModelRouting === undefined

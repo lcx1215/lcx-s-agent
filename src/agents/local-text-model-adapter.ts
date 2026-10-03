@@ -461,7 +461,9 @@ export function buildQualityHarnessModelPromptWithCoverage(request: QualityHarne
     request.stage === "precheck" || request.evidenceBatchMode === "final_artifact_audit"
       ? 44_000
       : request.stage === "draft" && hasBatchDependencies
-        ? 20_000
+        ? batchDependencyEntries.length > QUALITY_HARNESS_MAX_EVIDENCE_BATCHES - 1
+          ? 44_000
+          : 20_000
         : 16_000;
   const completeHandoffRequired =
     request.stage === "precheck" || (request.stage === "draft" && hasBatchDependencies);

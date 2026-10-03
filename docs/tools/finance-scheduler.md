@@ -711,6 +711,10 @@ retain its original as-of and isolate any plan or thesis outputs from live state
 Multi-asset finance review may use up to six complete evidence batches within the
 existing 48-call workflow ceiling. Other quality callers default to four; the
 64-item selection, individual prompt limits and complete-coverage checks remain.
+Five- or six-batch drafting retains complete review handoffs within the same 44k character
+ceiling as final review. With `--write`, quality stages also save complete outputs
+and call attestations in the existing canonical logical-agent checkpoint store;
+recording them does not enable automatic resume or accept a failed review.
 Final artifact audits receive the full formatted artifact, including tail claims;
 prompt limits still fail closed rather than silently clipping the review object.
 
