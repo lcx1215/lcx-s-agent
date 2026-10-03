@@ -497,6 +497,7 @@ export class LogicalAgentPool<TInput, TResult> {
   #queue: Array<QueueJob<TInput, TResult>> = [];
   #modelInvocationQueue: ModelInvocationJob[] = [];
   #activeRuns = 0;
+  #unconfirmedRuns = 0;
   #maxObservedConcurrency = 0;
   #activeModelInvocations = 0;
   #maxObservedModelConcurrency = 0;
@@ -614,7 +615,7 @@ export class LogicalAgentPool<TInput, TResult> {
           failedTaskResult<TResult>(
             taskSnapshot,
             this.#modelRouter ? "not-executed" : this.#config.modelId,
-            Date.now(),
+            undefined,
             new Error("logical-agent task cancelled before start"),
           ),
         );
@@ -626,7 +627,7 @@ export class LogicalAgentPool<TInput, TResult> {
           failedTaskResult<TResult>(
             taskSnapshot,
             this.#modelRouter ? "not-executed" : this.#config.modelId,
-            Date.now(),
+            undefined,
             new Error("logical-agent task cancelled before start"),
           ),
         );
@@ -639,6 +640,20 @@ export class LogicalAgentPool<TInput, TResult> {
   }
 
   #pump() {
+    if (this.#unconfirmedRuns > 0) {
+      for (const job of this.#queue.splice(0)) {
+        job.onStart?.();
+        job.resolve(
+          failedTaskResult<TResult>(
+            job.task,
+            this.#modelRouter ? "not-executed" : this.#config.modelId,
+            undefined,
+            new Error("logical-agent execution_not_started: prior_cleanup_unconfirmed"),
+          ),
+        );
+      }
+      return;
+    }
     while (this.#activeRuns < this.#config.maxConcurrency && this.#queue.length > 0) {
       const job = this.#queue.shift();
       if (!job) {
@@ -672,6 +687,7 @@ export class LogicalAgentPool<TInput, TResult> {
       };
       const modelCalls: ModelCallReceipt[] = [];
 
+      let cleanupUnconfirmed = false;
       const attempt = executeWithTimeout(
         async (signal) => {
           const modelSlot = this.#createTaskModelSlot(
@@ -717,6 +733,14 @@ export class LogicalAgentPool<TInput, TResult> {
         },
         this.#config.taskTimeoutMs,
         job.signal,
+        () => {
+          if (!cleanupUnconfirmed) {
+            cleanupUnconfirmed = true;
+            modelScope.closed = true;
+            this.#unconfirmedRuns += 1;
+            this.#pump();
+          }
+        },
       );
       void attempt.outcome
         .then(
@@ -753,6 +777,9 @@ export class LogicalAgentPool<TInput, TResult> {
           );
         });
       void attempt.termination.then(() => {
+        if (cleanupUnconfirmed) {
+          this.#unconfirmedRuns -= 1;
+        }
         this.#activeRuns -= 1;
         this.#pump();
       });
@@ -1102,7 +1129,7 @@ function readCapabilityViolation(error: unknown): CapabilityViolation | undefine
 function failedTaskResult<TResult>(
   task: LogicalAgentTask<unknown>,
   modelId: string,
-  startedAt: number,
+  startedAt: number | undefined,
   error: unknown,
 ): LogicalAgentTaskResult<TResult> {
   const capabilityViolation = readCapabilityViolation(error);
@@ -1111,7 +1138,7 @@ function failedTaskResult<TResult>(
     agentId: task.agentId,
     status: "failed",
     modelId,
-    startedAt,
+    ...(startedAt === undefined ? { modelCalls: [] } : { startedAt }),
     completedAt: Date.now(),
     sideEffects: capabilityViolation?.sideEffects ?? [],
     error: formatUnknownError(error),
@@ -1178,6 +1205,7 @@ function executeWithTimeout<TResult>(
   executor: (signal: AbortSignal) => TResult | Promise<TResult>,
   timeoutMs: number,
   parentSignal?: AbortSignal,
+  onCleanupUnconfirmed?: () => void,
 ): { outcome: Promise<TResult>; termination: Promise<void> } {
   const controller = new AbortController();
   const cancellationErrors: unknown[] = [];
@@ -1187,6 +1215,7 @@ function executeWithTimeout<TResult>(
   let outcomeSettled = false;
   let rejectOutcome: ((reason?: unknown) => void) | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
   const rejectIfPending = (reason: unknown) => {
     if (outcomeSettled) {
       return;
@@ -1194,6 +1223,9 @@ function executeWithTimeout<TResult>(
     outcomeSettled = true;
     if (timer !== undefined) {
       clearTimeout(timer);
+    }
+    if (cleanupTimer !== undefined) {
+      clearTimeout(cleanupTimer);
     }
     rejectOutcome?.(reason);
   };
@@ -1204,8 +1236,14 @@ function executeWithTimeout<TResult>(
     } catch (error: unknown) {
       cancellationErrors.push(error);
     }
-    if (!timedOut) {
-      rejectIfPending(new Error("logical-agent task cancelled"));
+    if (timedOut) {
+      onCleanupUnconfirmed?.();
+      rejectIfPending(
+        new Error("logical-agent task timed out; parent cancelled; cleanup_unconfirmed"),
+      );
+    } else {
+      onCleanupUnconfirmed?.();
+      rejectIfPending(new Error("logical-agent task cancelled; cleanup_unconfirmed"));
     }
   };
   parentSignal?.addEventListener("abort", cancel, { once: true });
@@ -1237,6 +1275,12 @@ function executeWithTimeout<TResult>(
       const timeoutError = new Error(
         `logical-agent task timed out after ${timeoutMs}ms${cancellationDetail}`,
       );
+      cleanupTimer = setTimeout(() => {
+        if (!outcomeSettled) {
+          onCleanupUnconfirmed?.();
+          rejectIfPending(new Error(`${timeoutError.message}; cleanup_unconfirmed`));
+        }
+      }, 2_000);
       void termination.then(() => rejectIfPending(timeoutError));
     }, timeoutMs);
     execution.then(

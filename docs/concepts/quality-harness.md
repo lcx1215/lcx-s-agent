@@ -70,3 +70,9 @@ deterministic demo 不会被包装成真实推理证据。
 `completed-unverified`。结构化输出或模型调用失败是 `failed`，审查/grounding
 失败是 `quality-failed`，verifier 失败是 `verification-failed`，verifier 明确
 无法执行是 `blocked`。这些状态不能互相升级。
+
+逻辑任务超时后先请求取消，并最多等待两秒确认清理；执行器仍未结束时，
+失败回执标记 `cleanup_unconfirmed`。池会阻断尚未开始的工作，这些回执没有
+`startedAt`，依赖任务按现有 DAG 合同传播失败。真实执行槽位和正在使用的
+模型槽位继续占用，直到执行器实际结束才恢复队列。失败回执已经结算不等于
+底层工作已经停止，不能靠新建池或提前释放资源掩盖这个缺口。
