@@ -19,6 +19,7 @@ import {
 } from "./finance-position-ledger.js";
 import { buildFinanceMonthlyTrendDerivedEvidence } from "./finance-research-evidence.js";
 import { readFinanceStrategyRuleLedger } from "./finance-strategy-rule-ledger.js";
+import { QUALITY_HARNESS_MAX_EVIDENCE_TEXT_LENGTH } from "./quality-harness-contract.js";
 
 export const FINANCE_NIGHT_REVIEW_CONTEXT_SCHEMA_VERSION =
   "lcx_finance_night_review_context_v1" as const;
@@ -1319,7 +1320,8 @@ export async function buildFinanceNightReviewEvidence(params: {
   }
   const intradayText = summarizeFinanceNightIntradayEvidence(
     { asOf: params.asOf, sessionDate: params.etDate, decisions: outcomes },
-    intradayBudgetBytes,
+    // A byte ceiling is also safe for the downstream character ceiling, including Unicode.
+    Math.min(intradayBudgetBytes, QUALITY_HARNESS_MAX_EVIDENCE_TEXT_LENGTH),
   );
   const boundedEvidence = evidence.map((item, index) =>
     index === intradayIndex ? Object.freeze({ ...item, text: intradayText }) : item,

@@ -30,6 +30,7 @@ import {
   activateFinanceStrategyRule,
 } from "./finance-strategy-rule-ledger.js";
 import { buildQualityHarnessModelPrompt } from "./local-text-model-adapter.js";
+import { QUALITY_HARNESS_MAX_EVIDENCE_TEXT_LENGTH } from "./quality-harness-contract.js";
 
 describe("finance night review context", () => {
   it("projects settlement and durable intraday refusals into bounded evidence", async () => {
@@ -341,6 +342,129 @@ describe("finance night review context", () => {
     );
     expect(text).not.toContain("private-request-marker");
   });
+
+  it.each(["R", "风险"])(
+    "keeps night packet intraday JSON within the quality input limit with %s text",
+    async (rationaleText) => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-10-01T22:00:00.000Z"));
+      const directory = await fs.mkdtemp(path.join(os.tmpdir(), "finance-night-quality-budget-"));
+      try {
+        for (let index = 0; index < 315; index++) {
+          await appendFinanceIntradayDecision(directory, {
+            signalId: `signal-${index}`,
+            instrument: index % 2 === 0 ? "SPY" : "QQQ",
+            sessionDate: "2026-10-01",
+            action: "buy",
+            reason: "opening_range_breakout",
+            referencePrice: 500,
+            referencePriceAt: "2026-10-01T14:00:00.000Z",
+            stopPrice: 495,
+            targetPrice: 510,
+            datasetHeadRef: "a".repeat(64),
+            strategyRule: "opening_range_breakout_long_next_bar_v1",
+          });
+          await appendFinanceIntradayOutcome(directory, {
+            signalId: `signal-${index}`,
+            status: "refused",
+            reasons: ["risk_gate_blocked"],
+            tradeDecisionReview: {
+              status: "completed",
+              attempted: true,
+              provider: "test-provider",
+              modelId: "test-model",
+              latencyMs: 12,
+              providerCallObserved: true,
+              adapterAttested: true,
+              request: {
+                schemaVersion: "lcx_finance_intraday_trade_decision_review_v1",
+                venue: "alpaca:paper",
+                asOf: "2026-10-01T22:00:00.000Z",
+                signalAnchor: `signal-${index}`,
+                ruleIds: ["opening_range_breakout_long_next_bar_v1"],
+                equity: 100_000,
+                caps: { maxOrderNotional: 500, maxInstrumentNotional: 1_000, maxOrdersPerRun: 1 },
+                positionBookObservedAt: "2026-10-01T22:00:00.000Z",
+                reconciliation: { status: "unresolved" },
+                positions: [],
+                candidates: [
+                  {
+                    candidateId: `candidate-${index}`,
+                    instrument: index % 2 === 0 ? "SPY" : "QQQ",
+                    side: "buy",
+                    strategyRule: "opening_range_breakout_long_next_bar_v1",
+                    signalReason: "opening_range_breakout",
+                    signalReferencePrice: 500,
+                    signalReferencePriceAt: "2026-10-01T14:00:00.000Z",
+                    datasetHeadRef: "a".repeat(64),
+                    intradayOwnedQuantity: 0,
+                    brokerPositionQuantity: 0,
+                    executionQuote: {
+                      referencePrice: 500,
+                      referencePriceAt: "2026-10-01T14:00:00.000Z",
+                      sourceUrlOrArtifact: "fixture",
+                      ageMs: 0,
+                      maxAgeMs: 30_000,
+                    },
+                  },
+                ],
+              },
+              decision: {
+                candidateId: `candidate-${index}`,
+                decision: "approve",
+                rationale: rationaleText.repeat(300),
+              },
+            },
+            executionSafetyFailure: {
+              stage: "facts",
+              category: "account_snapshot_unavailable",
+              operation: "read_account_safety_facts",
+              provider: { reason: "alpaca_safety_facts_inconsistent", stage: "account_arithmetic" },
+            },
+          });
+        }
+        const evidence = await buildFinanceNightReviewEvidence({
+          directory,
+          asOf: "2026-10-01T22:00:00.000Z",
+          etDate: "2026-10-01",
+          settlement: {
+            scoredFiled: { appended: 0, skipped: 0 },
+            reflection: {},
+            pending: [],
+            declined: [],
+            issues: [],
+          },
+        });
+        const text = evidence.find(
+          (item) => item.source === "finance-intraday-control-ledger",
+        )!.text;
+        expect(text.length).toBeLessThanOrEqual(QUALITY_HARNESS_MAX_EVIDENCE_TEXT_LENGTH);
+        expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(
+          QUALITY_HARNESS_MAX_EVIDENCE_TEXT_LENGTH,
+        );
+        const summary = JSON.parse(text);
+        expect(summary.coverage.totalDecisionCount).toBe(315);
+        expect(summary.coverage.includedDecisionCount).toBeGreaterThan(0);
+        expect(summary.coverage.includedDecisionCount).toBeLessThan(100);
+        expect(summary.coverage.omittedDecisionCount).toBe(315 - summary.decisions.length);
+        expect(summary.decisions.at(-1).signalId).toBe("signal-314");
+        expect(summary.decisions.at(-1).outcome.executionSafetyFailure.provider.stage).toBe(
+          "account_arithmetic",
+        );
+        expect(summary.distributions.byInstrument.values).toEqual([
+          { value: "SPY", count: 158 },
+          { value: "QQQ", count: 157 },
+        ]);
+        expect(summary.distributions.byOutcomeStatus.values).toEqual([
+          { value: "refused", count: 315 },
+        ]);
+        expect(evidence.some((item) => item.source === "finance-night-settlement")).toBe(true);
+      } finally {
+        vi.useRealTimers();
+        await fs.rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 it("excludes later decisions and account diagnostics from historical night evidence", async () => {
