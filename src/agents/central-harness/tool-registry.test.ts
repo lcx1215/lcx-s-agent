@@ -5,7 +5,36 @@ import { setTimeout as delay } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
 import { runCentralHarnessCycle } from "./harness-loop.js";
 import { executeOwnedProcess } from "./owned-process.js";
+import { createCentralToolRegistry } from "./tool-registry.js";
 import type { CentralToolSpec } from "./types.js";
+
+it("binds declared workspace inputs to the trusted host while refusing model-selected roots", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "central-recall-host-"));
+  try {
+    const runDir = path.join(root, "state", "finance-research-runs", "host-only-run");
+    await fs.mkdir(runDir, { recursive: true });
+    await fs.writeFile(path.join(runDir, "runtime.json"), JSON.stringify({ source: "host-root" }));
+    const registry = createCentralToolRegistry({ workspaceDir: root });
+    const reader = registry.get("finance_research_runs_read")!;
+    expect(reader.approve({ action: "list" })).toEqual({ ok: true });
+    expect(reader.approve({ action: "list", workspaceDir: os.tmpdir() }).ok).toBe(false);
+    expect(reader.inputKeys).not.toContain("workspaceDir");
+    const signal = new AbortController().signal;
+    const listing = await reader.execute({ action: "list" }, signal);
+    expect(listing).toMatchObject({ available: true, runs: [{ id: "host-only-run" }] });
+    expect(await reader.execute({ action: "read", run: "host-only-run" }, signal)).toMatchObject({
+      available: true,
+      json: { source: "host-root" },
+    });
+    expect(
+      await registry
+        .get("quant_math")!
+        .execute({ action: "beta", series: [2, 4, 6], benchmark: [1, 2, 3] }, signal),
+    ).toMatchObject({ beta: 2 });
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
 
 it.skipIf(process.platform === "win32")(
   "cleans an owner and TERM-resistant grandchild before settlement, without another dispatch",

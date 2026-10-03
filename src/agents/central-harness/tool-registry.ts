@@ -444,7 +444,12 @@ function createCapabilityTools(
       return escalation ? { ok: false, reason: `capability gate: ${escalation}` } : { ok: true };
     },
     execute: async (args, signal) => {
-      const result = await tool.execute(`central-capability-${randomUUID()}`, args, signal);
+      const properties = (tool.parameters as { properties?: Record<string, unknown> }).properties;
+      const hostArgs =
+        workspaceDir !== undefined && properties && Object.hasOwn(properties, "workspaceDir")
+          ? { ...args, workspaceDir }
+          : args;
+      const result = await tool.execute(`central-capability-${randomUUID()}`, hostArgs, signal);
       const details = (result as { details?: unknown } | undefined)?.details;
       return details !== null && typeof details === "object" && !Array.isArray(details)
         ? (details as Record<string, unknown>)
