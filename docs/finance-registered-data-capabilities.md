@@ -140,6 +140,25 @@ Use raw artifacts for subsequent extraction, receipts for provenance/failures,
 and existing research quality gates for freshness and cross-source comparison.
 Local acquisition does not prove a model used the evidence or delivered an answer.
 
+### Reusing historical computation across strategies
+
+Daily price consumers share `readFinanceBarLedger`: it verifies the entire
+append-only chain before returning, including records outside an instrument or
+observation-time filter. Reads stream records and retain the requested bars;
+full content signatures are computed only when an instrument-day repeats.
+Exact replays collapse, conflicting closes remain visible, and filtered reads
+still report the full book's record count and head. Agent tools and rule readiness
+use this same reader without a separate provider-specific implementation.
+
+Reuse this daily-bar contract for a new data adapter only when its instrument
+identity, calendar-day meaning, price units and adjustment basis are compatible.
+Keep source/feed and observation timing explicit. Point observations remain
+`point_derived`, and intraday periods need their existing separate contract.
+This computational reuse does not establish support for trading on a new venue
+or in a new asset class: those paths still need their strategy, calendar,
+account, funding, precision and execution-risk contracts. Execution facts and
+quotes retain the shared gate's fresh account-scoped checks.
+
 Official contracts: [FMP](https://site.financialmodelingprep.com/developer/docs),
 [Alpha Vantage](https://www.alphavantage.co/documentation/),
 [Finnhub SDK](https://github.com/Finnhub-Stock-API/finnhub-python),

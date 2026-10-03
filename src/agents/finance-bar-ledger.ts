@@ -363,7 +363,7 @@ export async function appendFinanceBars(
   try {
     db.exec("BEGIN IMMEDIATE");
     try {
-      const records = readStoredRecords(db);
+      const records = Array.from(readStoredRecords(db));
 
       // Content, not batch identity, decides what is new: see `repeatsSkipped`.
       const known = new Set<string>();
@@ -432,7 +432,7 @@ export async function appendFinanceBars(
         "INSERT INTO finance_bar_records (ref, sequence, previous_ref, recorded_at, body) VALUES (?, ?, ?, ?, ?)",
       ).run(ref, record.sequence, record.previousRef, record.recordedAt, JSON.stringify(record));
       db.exec("COMMIT");
-      const after = readStoredRecords(db);
+      const after = Array.from(readStoredRecords(db));
       return Object.freeze({
         record: { ...record, ref },
         appended: true,
@@ -455,12 +455,13 @@ export async function appendFinanceBars(
  * error rather than a silent skip: a book that quietly drops rows would report "no bars were
  * recorded", which reads the same as "nothing happened".
  */
-function readStoredRecords(db: BarDatabase): FinanceBarRecord[] {
+function* readStoredRecords(db: BarDatabase): Generator<FinanceBarRecord> {
   const rows = db
     .prepare("SELECT ref, body FROM finance_bar_records ORDER BY sequence")
-    .all() as ReadonlyArray<{ ref?: unknown; body?: unknown }>;
+    .iterate() as Iterable<{ ref?: unknown; body?: unknown }>;
   let previousRef: string | null = null;
-  return rows.map((row, index) => {
+  let sequence = 0;
+  for (const row of rows) {
     if (typeof row.body !== "string" || typeof row.ref !== "string") {
       throw new Error("invalid bar record");
     }
@@ -469,12 +470,12 @@ function readStoredRecords(db: BarDatabase): FinanceBarRecord[] {
       throw new Error("bar record integrity mismatch");
     }
     const record = StoredRecordSchema.parse(raw);
-    if (record.sequence !== index + 1 || record.previousRef !== previousRef) {
+    if (record.sequence !== ++sequence || record.previousRef !== previousRef) {
       throw new Error("bar record chain mismatch");
     }
     previousRef = row.ref;
-    return { ...record, ref: row.ref };
-  });
+    yield { ...record, ref: row.ref };
+  }
 }
 
 /**
@@ -550,37 +551,55 @@ export async function readFinanceBarLedger(
         headRef: null,
       });
     }
-    const stored = readStoredRecords(db);
     const asOf = options.asOf;
-    const scoped = stored.filter((record) => {
+    let recordCount = 0;
+    let headRef: string | null = null;
+    const firstBarByKey = new Map<string, FinanceBar>();
+    const divergentKeys = new Set<string>();
+    const signaturesByKey = new Map<string, Set<string>>();
+    const bars: FinanceBar[] = [];
+    let collapsedRepeats = 0;
+    // Consume the entire verified chain even for a narrow read. Only the requested
+    // projection is retained; a filtered-out or trailing corruption still rejects it.
+    for (const record of readStoredRecords(db)) {
+      recordCount += 1;
+      headRef = record.ref;
       if (asOf !== undefined && asOf.length > 0 && record.body.observedAt.localeCompare(asOf) > 0) {
-        return false;
+        continue;
       }
       if (options.instrument !== undefined && record.body.instrument !== options.instrument) {
-        return false;
+        continue;
       }
-      return true;
-    });
-
-    const byKey = new Map<string, Set<number>>();
-    const bars: FinanceBar[] = [];
-    for (const record of scoped) {
       for (const bar of record.body.bars) {
         const key = `${bar.instrument}@${bar.date}`;
-        const closes = byKey.get(key) ?? new Set<number>();
-        closes.add(bar.close);
-        byKey.set(key, closes);
+        const first = firstBarByKey.get(key);
+        if (first === undefined) {
+          firstBarByKey.set(key, bar);
+        } else {
+          if (first.close !== bar.close) {
+            divergentKeys.add(key);
+          }
+          // The validated instrument/date fields cannot contain the key separators.
+          // Full content signatures are only needed when that same day is seen again.
+          let signatures = signaturesByKey.get(key);
+          if (signatures === undefined) {
+            signatures = new Set([barSignature(first)]);
+            signaturesByKey.set(key, signatures);
+          }
+          const signature = barSignature(bar);
+          if (signatures.has(signature)) {
+            collapsedRepeats += 1;
+            continue;
+          }
+          signatures.add(signature);
+        }
         bars.push(bar);
       }
     }
     // Divergence is computed before collapsing: which source said what is a fact about the
     // sources, and it must survive the removal of replays.
-    const divergentDates = [...byKey.entries()]
-      .filter(([, closes]) => closes.size > 1)
-      .map(([key]) => key)
-      .toSorted();
-    const collapsed = collapseRepeatedBars(bars);
-    const ordered = collapsed.bars.toSorted(
+    const divergentDates = [...divergentKeys].toSorted();
+    const ordered = bars.toSorted(
       (left, right) =>
         left.instrument.localeCompare(right.instrument) || left.date.localeCompare(right.date),
     );
@@ -588,9 +607,9 @@ export async function readFinanceBarLedger(
     return Object.freeze({
       bars: Object.freeze(ordered),
       divergentDates: Object.freeze(divergentDates),
-      collapsedRepeats: collapsed.collapsedRepeats,
-      recordCount: stored.length,
-      headRef: stored.at(-1)?.ref ?? null,
+      collapsedRepeats,
+      recordCount,
+      headRef,
     });
   } finally {
     db.close();
