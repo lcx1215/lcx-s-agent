@@ -3172,3 +3172,128 @@ it("keeps auxiliary macro gaps visible without blocking covered active strategy 
   expect(result.portfolioPlan).toBeUndefined();
   expect(result.quarterlyOutput.adopted).toBe(false);
 });
+
+// Scripted local adapter fixtures validate the production quality seam, not real model judgment.
+describe("finance quality objective preserves claim-dependent uncertainty (offline scripted adapter)", () => {
+  it.each([false, true])(
+    "keeps bounded unknowns but refuses an unsupported net-profit assertion=%s",
+    async (assertNetProfit) => {
+      const ask = assertNetProfit
+        ? "Establish whether the recorded strategy has positive net profit after fees and cash flows."
+        : "Describe the supplied observations and keep unknown fees explicit; do not estimate net profit.";
+      const producer = await runFinanceResearchRun({
+        input: {
+          ask,
+          asOf: AS_OF,
+          executeModules: false,
+          targets: [
+            {
+              id: "objective-fixture",
+              instrument: "SPY",
+              assetClass: "us_equity",
+              realtime: false,
+              collections: [{ collection: "eod_history", limit: 2, freshnessMaxMinutes: 60 }],
+            },
+          ],
+        },
+        liveFetch: true,
+        qualityEnabled: false,
+        modelInvoker,
+        batchOptions: BATCH_OPTIONS,
+      });
+      expect(producer.batch).toBeDefined();
+      expect(producer.moduleExecution).toBeDefined();
+      const captured: QualityHarnessModelRequest[] = [];
+      const offlineScripted = async (raw: unknown): Promise<unknown> => {
+        const request = raw as QualityHarnessModelRequest;
+        captured.push(request);
+        expect(request.task.startsWith(ask)).toBe(true);
+        expect(request.task).toContain("required deliverable or asserted claim");
+        expect(request.task).toContain("strategy capital");
+        expect(request.task).toContain("matched-lot trade PnL");
+        expect(request.sharedContext.noExecutionAuthority).toBe(true);
+        expect(request.sharedContext.financeQualityObjective).toMatchObject({
+          goalSource: "controller plan.ask, preserved at start of request.task",
+          acceptanceBoundary: "quality admission is not economic success or execution authority",
+        });
+        const original = await modelInvoker(raw);
+        if (request.stage === "draft" || request.stage === "format") {
+          const output = original as {
+            kind: string;
+            artifact: { answer: string; claims: Array<Record<string, unknown>> };
+          };
+          output.artifact.answer = assertNetProfit
+            ? "The strategy has positive net profit."
+            : "The supplied observations are bounded by their source timestamps. Fees and matched-lot returns remain unknown; no profitability or execution result is claimed.";
+          output.artifact.claims.push({
+            id: "net-profit",
+            text: assertNetProfit
+              ? "The strategy has positive net profit."
+              : "Net profit is unknown because fees and cash-flow attribution are unavailable.",
+            status: assertNetProfit ? "supported" : "uncertain",
+            evidenceIds: assertNetProfit ? [request.evidence[0].id] : [],
+            epistemicClass: "inference",
+            basis:
+              "The packet has no fee or cash-flow attribution; security aggregates are not matched-lot profit.",
+            ...(assertNetProfit
+              ? {
+                  evidenceRelations: [{ evidenceId: request.evidence[0].id, relation: "supports" }],
+                }
+              : {
+                  evidenceRelations: [],
+                  uncertainty:
+                    "No net-return inference is made; this field is not required by the descriptive objective.",
+                }),
+          });
+          return output;
+        }
+        if (assertNetProfit && request.stage === "risk") {
+          return {
+            kind: "review",
+            review: {
+              verdict: "reject",
+              criticalFindings: [
+                "Claim net-profit requires fees and cash-flow attribution; minimal repair: provide scoped costs and capital-flow evidence or withdraw the assertion.",
+              ],
+              evidenceGaps: ["Required net-profit deliverable cannot be supported without fees."],
+              notes: ["offline scripted review; user-required conclusion remains unsupported"],
+            },
+          };
+        }
+        return original;
+      };
+      const quality = await runFinanceResearchQualityReview({
+        batch: producer.batch!,
+        plan: producer.plan,
+        moduleExecution: producer.moduleExecution!,
+        evidence: producer.batch!.committeeEvidence,
+        committeeGatePassed:
+          producer.gates.find((gate) => gate.id === "committee")?.passed ?? false,
+        modelId: "quality-fixture",
+        qualityModelRouting: mockQualityPromptRouting(offlineScripted),
+      });
+      expect(captured.length).toBeGreaterThan(0);
+      expect(quality.execution.providerCallsMade).toBe("not-observed");
+      if (assertNetProfit) {
+        expect(quality.quality.passed).toBe(false);
+        expect(quality.status).toBe("quality-failed");
+        expect(
+          quality.attempts.flatMap((attempt) => attempt.gates.filter((gate) => !gate.passed))
+            .length,
+        ).toBeGreaterThan(0);
+      } else {
+        expect(quality.quality.passed).toBe(true);
+        expect(quality.status, JSON.stringify(quality.verification)).toBe("verified");
+        expect(
+          quality.finalArtifact?.claims.find((claim) => claim.id === "net-profit"),
+        ).toMatchObject({
+          status: "uncertain",
+          evidenceIds: [],
+        });
+        expect(producer.plan.decisionMode).toBe("research_only");
+        expect(producer.portfolioPlan).toBeUndefined();
+        expect(producer.quarterlyOutput.adopted).toBe(false);
+      }
+    },
+  );
+});

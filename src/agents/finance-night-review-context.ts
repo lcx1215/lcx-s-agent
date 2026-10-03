@@ -1247,7 +1247,7 @@ export async function buildFinanceNightReviewEvidence(params: {
         etDate: params.etDate,
         profitReview: {
           objective:
-            "Improve realized profit after costs within the existing strategy and risk budget.",
+            "Improve net wealth growth after costs over the declared horizon and capital scope within the existing strategy and risk budget. Report realized and unrealized results separately; internal evaluation checks decision quality, not achieved profit.",
           questions: [
             "Which reconciled account holdings lack an active strategy or protective coverage? Review their management autonomously from current evidence; historical ownership gaps must not remove an instrument from research or be fabricated as an LCX entry.",
             "Which executed opportunities made or lost money after costs? Separate gross gains, net gains and unrealized marks.",
@@ -1266,6 +1266,7 @@ export async function buildFinanceNightReviewEvidence(params: {
             "Zero trades is not success; trade count and gross win rate are not profit objectives.",
             "Use actual fills for execution analysis. Reference quotes are not fills; local simulation and broker Paper are separate evidence.",
             "No known costs means net profit is unknown, not zero-cost profit. Per-trade return ratios are not currency PnL.",
+            "Per-instrument aggregate PnL is not a per-trade loss or win distribution. Round-trip or matched-lot evidence is required for those statistics; otherwise keep them unknown.",
             "Missing counterfactual prices or fills must remain unknown; do not invent missed profits or claim an exit was premature.",
             "Propose testable candidates only; this review cannot change execution permissions, stops, leverage or risk budgets.",
           ],
