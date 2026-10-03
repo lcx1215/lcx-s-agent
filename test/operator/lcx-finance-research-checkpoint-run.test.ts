@@ -11,6 +11,7 @@ import {
   parseArgs,
 } from "../../scripts/operator/lcx-finance-research-run.ts";
 import { runFinanceResearchRun } from "../../src/agents/finance-research-runner.ts";
+import { ModelAdapterError } from "../../src/agents/logical-agent-model-router.ts";
 
 let directory: string;
 afterEach(async () => {
@@ -32,6 +33,33 @@ async function status() {
   return JSON.parse(await fs.readFile(path.join(directory, id, "run.json"), "utf8"));
 }
 describe("research CLI checkpoint budget", () => {
+  it.each([
+    ["provider_payment_required", "provider_billing"],
+    ["provider_auth", "provider_access"],
+    ["provider_rate_limit", "provider_quota"],
+  ] as const)(
+    "preserves the %s adapter failure class in the durable checkpoint",
+    async (code, failureClass) => {
+      const budget = await fixture();
+      await expect(
+        runCheckpointedFinanceResearch(input, budget, async () => {
+          throw new ModelAdapterError(code);
+        }),
+      ).rejects.toThrow();
+      expect(await status()).toMatchObject({ status: "failed", failureClass });
+      const summary = compactFinanceResearchFailure(
+        new FinanceResearchRunFailure(
+          "research_run_failed",
+          "run-1",
+          "checkpoint.sqlite",
+          "2026-10-03T00:00:00Z",
+          new ModelAdapterError(code),
+        ),
+      );
+      expect(summary.failure.failureClass).toBe(failureClass);
+      expect(summary).not.toHaveProperty("portfolioPlanWritten");
+    },
+  );
   it("distinguishes batch, model and whole-run limits", () => {
     expect(parseArgs([])).toMatchObject({
       timeoutMs: 120000,
@@ -59,6 +87,54 @@ describe("research CLI checkpoint budget", () => {
     };
     await runCheckpointedFinanceResearch(input, budget, execute);
     expect(await status()).toMatchObject({ status: "completed", reason: "planned" });
+  });
+  it("records provider-blocked returned research and permits a fresh run to recover", async () => {
+    const budget = { ...(await fixture()), runTimeoutMs: 10000 };
+    const planned = await runFinanceResearchRun(input);
+    const blocked = await runCheckpointedFinanceResearch(input, budget, async () => ({
+      ...planned,
+      status: "needs_review",
+      answerDecision: "return_failed_reason",
+      committee: {
+        coverage: {},
+        model: {
+          status: "failed",
+          modelId: "fixture",
+          roleCount: 1,
+          completedRoleCount: 0,
+          modelCallCount: 1,
+          realModelInferenceObserved: false,
+          allModelCallsAttested: false,
+          evidenceMode: "none",
+          roleStatuses: [
+            {
+              taskId: "draft",
+              agentId: "research_draft",
+              status: "failed",
+              error: "model routing failed: provider_payment_required secret-provider-detail",
+            },
+          ],
+        },
+      },
+    }));
+    expect(blocked.answerDecision).toBe("return_failed_reason");
+    const saved = await status();
+    expect(saved).toMatchObject({
+      status: "completed",
+      reason: "needs_review",
+      failureClass: "provider_billing",
+    });
+    expect(JSON.stringify(saved)).not.toContain("secret-provider-detail");
+    await runCheckpointedFinanceResearch(input, budget, async () => planned);
+    const records = await Promise.all(
+      (await fs.readdir(directory)).map(async (id) =>
+        JSON.parse(await fs.readFile(path.join(directory, id, "run.json"), "utf8")),
+      ),
+    );
+    expect(new Set(records.map((record) => record.runId)).size).toBe(2);
+    expect(records.find((record) => record.reason === "planned")).not.toHaveProperty(
+      "failureClass",
+    );
   });
   it("persists cancellation while pending and refuses a late result", async () => {
     const budget = await fixture();

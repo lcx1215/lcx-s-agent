@@ -52,13 +52,15 @@ function classifyFinanceResearchFailure(
       : typeof cause === "string"
         ? cause
         : "";
-  if (/\b429\b|rate[- ]?limit|quota|budget[_ -]?exhausted|insufficient[_ -]?quota/i.test(message)) {
+  if (
+    /\b429\b|rate[_ -]?limit|quota|budget[_ -]?exhausted|insufficient[_ -]?quota/i.test(message)
+  ) {
     return "provider_quota";
   }
-  if (/\b402\b|payment required|billing/i.test(message)) {
+  if (/\b402\b|payment[_ -]?required|billing/i.test(message)) {
     return "provider_billing";
   }
-  if (/\b(?:401|403)\b|unauthori[sz]ed|forbidden|permission denied/i.test(message)) {
+  if (/\b(?:401|403)\b|provider_auth|unauthori[sz]ed|forbidden|permission denied/i.test(message)) {
     return "provider_access";
   }
   if (/timeout|timed out|etimedout|deadline exceeded|operation was aborted/i.test(message)) {
@@ -159,7 +161,21 @@ export async function runCheckpointedFinanceResearch(
     if (checkpointWriteError) {
       throw checkpointWriteError;
     }
-    record("completed", receipt.status);
+    // A returned receipt can still contain a provider-blocked DAG. Preserve the
+    // bounded cause without persisting raw role errors or calling it an admission.
+    const providerFailure =
+      receipt.answerDecision === "return_failed_reason"
+        ? receipt.committee?.model.roleStatuses
+            .filter((role) => role.status !== "completed" && role.error)
+            .map((role) => classifyFinanceResearchFailure("research_run_failed", role.error))
+            .find(
+              (failure) =>
+                failure === "provider_billing" ||
+                failure === "provider_access" ||
+                failure === "provider_quota",
+            )
+        : undefined;
+    record("completed", receipt.status, providerFailure);
     return receipt;
   } catch (error) {
     const reason = controller.signal.aborted
