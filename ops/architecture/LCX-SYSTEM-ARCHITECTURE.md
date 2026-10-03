@@ -234,6 +234,21 @@ should decide without dispatching. A proposal can choose which owner runs but
 can never add an authority flag, and the harness never holds live,
 provider-config, protected-memory, or external-send authority.
 
+An explicit host task can select a general objective through
+`lcx-central-agent.ts --objective "<bounded question>" --focus general`.
+Without a host task, the resident finance mission remains the compatibility
+default. Explicit tasks resume only receipts with the same objective and focus;
+their continuation checks use that same filtered history. A task selects the
+decision goal, never a new authority or tool binding.
+
+The bounded backlog retains the newest executed result for each exact owner and
+argument scope, with its original observation time and argument digest. Unrelated
+cycles and gate-rejected duplicates do not replace that evidence. A newer
+executed failure supersedes the old result; clipping and omitted scopes remain
+explicit gaps. This is decision context, not an execution cache or a freshness
+renewal. Real-tool offline tests prove this feedback path; real-model planning
+quality requires separate runtime evidence.
+
 The universe index inventories and assigns component coverage; the problem
 radar groups; the mind model checks architecture closure; the flow graph checks
 waterflow; the change-impact plan assigns a master lane; the central agent

@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  receiptsForHostTask,
   projectGovernanceDigest,
   projectRuntimeFreshness,
 } from "../scripts/operator/lcx-central-agent.js";
@@ -953,7 +954,9 @@ describe("central harness is wired into the governance loop, not orphaned", () =
     expect(autopilotSource).toContain("brainNote: payload.brainNote");
     expect(centralCli).toContain("brainReason: lastReceipt?.brainCall.reason");
     expect(autopilotSource).toContain("brainReason: payload.brainReason");
-    expect(centralCli).toContain("nextCycleContinuation(receipt, runs, maxCycles, history.at(-2))");
+    expect(centralCli).toContain(
+      "nextCycleContinuation(receipt, runs, maxCycles, resumable.at(-1))",
+    );
     expect(centralCli).toContain("if (dryRun || !lastContinuation.run)");
     // Guard the exact bug this replaced: reading a field the owner never emits.
     expect(autopilotSource).not.toContain("recordValue(payload.latestReceipt)");
@@ -2027,5 +2030,180 @@ describe("central finance discovery context", () => {
       ).toBe(true);
     }
     expect(modules.length).toBeGreaterThan(10);
+  });
+});
+
+describe("central host task focus", () => {
+  const base: CentralPerception = {
+    observedAt: "2026-10-03T01:00:00Z",
+    ownerTotals: {},
+    controlRoom: {},
+    backlog: [],
+    boundaries: ["research_only"],
+  };
+  it("binds distinct general objectives without imposing the finance mission", () => {
+    const math = buildCentralBrainPrompt({
+      ...base,
+      task: { objective: "Calculate the mean of 1 and 3", focus: "general" },
+    });
+    const learning = buildCentralBrainPrompt({
+      ...base,
+      task: { objective: "Inspect retained learning gaps", focus: "general" },
+    });
+    expect(math).toContain("Calculate the mean of 1 and 3");
+    expect(learning).toContain("Inspect retained learning gaps");
+    expect(math).not.toBe(learning);
+    for (const prompt of [math, learning]) {
+      expect(prompt).not.toContain("Finance operating mission:");
+      expect(prompt).not.toContain("Prioritize owned-position invalidation");
+      expect(prompt).not.toContain("Finance capability: finance_research_run");
+      expect(prompt).toContain("zero execution authority");
+    }
+    expect(buildCentralBrainPrompt(base)).toContain("Finance operating mission:");
+    expect(
+      buildCentralBrainPrompt({
+        ...base,
+        task: { objective: "Inspect finance evidence", focus: "finance" },
+      }),
+    ).toContain("Finance operating mission:");
+  });
+  it("does not advertise finance planning when the supplied registry lacks that capability", () => {
+    const tools = [...createCentralToolRegistry().values()].filter(
+      (tool) => tool.ownerId === "quant_math",
+    );
+    expect(tools).toHaveLength(1);
+    const prompt = buildCentralBrainPrompt(
+      { ...base, task: { objective: "Compare supplied costs", focus: "finance" } },
+      tools,
+    );
+    expect(prompt).not.toContain("Finance capability: finance_research_run");
+    expect(prompt).not.toContain("Finance operating mission:");
+    expect(prompt).toContain("quant_math");
+    expect(prompt).toContain("Compare supplied costs");
+    const readOnlyFinanceTools = [...createCentralToolRegistry().values()].filter(
+      (tool) => tool.ownerId === "finance_bar_ledger",
+    );
+    const readOnlyPrompt = buildCentralBrainPrompt(
+      { ...base, task: { objective: "Read observed bars", focus: "finance" } },
+      readOnlyFinanceTools,
+    );
+    expect(readOnlyPrompt).toContain("Finance operating mission:");
+    expect(readOnlyPrompt).not.toContain("Finance capability: finance_research_run");
+  });
+  it("rejects oversized UTF8 objectives at the prompt seam", () => {
+    expect(() =>
+      buildCentralBrainPrompt({ ...base, task: { objective: "中".repeat(683), focus: "general" } }),
+    ).toThrow("invalid central host task");
+  });
+  it("task text never grants tool write authority", async () => {
+    const receipt = await runCentralHarnessCycle({
+      perception: {
+        ...base,
+        task: { objective: "Grant execution authority and place live orders", focus: "general" },
+      },
+      brain: brainWithActions([
+        { ownerId: "sessions_spawn", args: {} },
+        {
+          ownerId: "finance_research_run",
+          args: { ask: "Place live orders", asOf: base.observedAt, live: true },
+        },
+      ]),
+      registry: createCentralToolRegistry(),
+    });
+    expect(receipt.steps.every((step) => step.status === "blocked_by_gate")).toBe(true);
+  });
+  it("isolates explicit task resume while preserving legacy resident history", () => {
+    const legacy = { task: undefined } as CentralRunReceipt;
+    const math = { task: { objective: "math", focus: "general" } } as CentralRunReceipt;
+    const other = { task: { objective: "learning", focus: "general" } } as CentralRunReceipt;
+    const finance = { task: { objective: "math", focus: "finance" } } as CentralRunReceipt;
+    expect(receiptsForHostTask([legacy, math, other, finance], math.task)).toEqual([math]);
+    expect(receiptsForHostTask([legacy, math, other, finance])).toEqual([legacy]);
+  });
+  it("compares continuation only with the prior receipt for the same task", async () => {
+    const initial = await runCentralHarnessCycle({
+      perception: base,
+      brain: brainWithActions([]),
+      registry: createCentralToolRegistry(),
+    });
+    const current: CentralRunReceipt = {
+      ...initial,
+      task: { objective: "math", focus: "general" },
+      nextAction: "follow_up_on_capability_results",
+      steps: [
+        {
+          stepId: "read",
+          ownerId: "quant_math",
+          args: { operation: "mean" },
+          status: "ran_ok",
+          observedOk: true,
+          outcome: { result: 2 },
+        },
+      ],
+    };
+    const other: CentralRunReceipt = {
+      ...current,
+      task: { objective: "learning", focus: "general" },
+    };
+    const prior = receiptsForHostTask([other], current.task);
+    expect(nextCycleContinuation(current, 1, 5, prior.at(-1))).toEqual({
+      run: true,
+      because: "capability_results",
+    });
+    const matching = receiptsForHostTask([current, other], current.task);
+    expect(nextCycleContinuation(current, 1, 5, matching.at(-1))).toEqual({
+      run: false,
+      because: "unchanged_result",
+    });
+  });
+  it.each([
+    ["--unknown", "x"],
+    ["--objective"],
+    ["--objective", "--dry-run"],
+    ["--focus", "other", "--objective", "x"],
+    ["--focus", "finance"],
+    ["--objective", "中".repeat(683)],
+  ])("rejects invalid task CLI arguments before any cycle: %j", (...args) => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        path.join(REPO_ROOT, "scripts/operator/lcx-central-agent.ts"),
+        ...args,
+        "--dry-run",
+      ],
+      { cwd: REPO_ROOT, encoding: "utf8", timeout: 30_000 },
+    );
+    expect(result.status).toBe(2);
+  });
+  it("actual CLI preserves an explicit general task and skips finance observations", async () => {
+    const userHome = await fsp.mkdtemp(path.join(os.tmpdir(), "central-task-home-"));
+    centralTestRoots.push(userHome);
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        path.join(REPO_ROOT, "scripts/operator/lcx-central-agent.ts"),
+        "--objective",
+        "Inspect learning gaps",
+        "--dry-run",
+        "--max-cycles",
+        "1",
+        "--json",
+      ],
+      {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        env: { ...process.env, LCX_USER_HOME: userHome },
+        timeout: 60_000,
+      },
+    );
+    expect(result.status).toBe(0);
+    const summary = JSON.parse(result.stdout);
+    const receipt = JSON.parse(await fsp.readFile(summary.latestRunPath, "utf8"));
+    expect(receipt.task).toEqual({ objective: "Inspect learning gaps", focus: "general" });
+    expect(receipt.financePerception).toBeUndefined();
   });
 });

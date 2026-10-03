@@ -95,8 +95,15 @@ export type CentralToolSpec = Readonly<{
   ) => Promise<Readonly<Record<string, unknown>>>;
 }>;
 
+/** Host-selected decision objective. Task text never grants execution authority. */
+export type CentralHostTask = Readonly<{
+  objective: string;
+  focus: "general" | "finance";
+}>;
+
 /** Perceived snapshot fed to the LLM brain so it can decide what to run next. */
 export type CentralPerception = Readonly<{
+  task?: CentralHostTask;
   observedAt: string;
   ownerTotals: Readonly<Record<string, unknown>>;
   controlRoom: Readonly<Record<string, unknown>>;
@@ -163,6 +170,7 @@ export type CentralBrainCallEvidence = Readonly<{
 }>;
 
 export type CentralRunReceipt = Readonly<{
+  task?: CentralHostTask;
   schemaVersion: "lcx_central_agent_v1";
   runId: string;
   observedAt: string;

@@ -27,6 +27,7 @@ import {
   CENTRAL_GOVERNANCE_OWNER_IDS,
 } from "../../src/agents/central-harness/tool-registry.js";
 import type {
+  CentralHostTask,
   CentralPerception,
   CentralRunReceipt,
 } from "../../src/agents/central-harness/types.js";
@@ -75,6 +76,13 @@ function parseArgs(args: string[]): Record<string, string | boolean | number> {
     } else if (arg === "--max-cycles") {
       out.maxCycles = Number(args[i + 1]);
       i += 1;
+    } else if (arg === "--objective" || arg === "--focus") {
+      const value = args[i + 1];
+      if (value === undefined || value.startsWith("--") || !value.trim()) {
+        throw new ParseError(`${arg} requires a value`);
+      }
+      out[arg === "--objective" ? "objective" : "focus"] = value.trim();
+      i += 1;
     } else if (arg === "--dry-run") {
       out.dryRun = true;
     } else if (arg === "--plan-only") {
@@ -87,8 +95,10 @@ function parseArgs(args: string[]): Record<string, string | boolean | number> {
       out.json = true;
     } else if (arg === "--help" || arg === "-h") {
       throw new ParseError(
-        "Usage: node --import tsx scripts/operator/lcx-central-agent.ts [--duration-minutes N] [--max-cycles N] [--plan-only] [--dry-run] [--json]",
+        "Usage: node --import tsx scripts/operator/lcx-central-agent.ts [--duration-minutes N] [--max-cycles N] [--plan-only] [--dry-run] [--json] [--objective TEXT] [--focus general|finance]",
       );
+    } else {
+      throw new ParseError(`unknown argument: ${arg}`);
     }
   }
   if (
@@ -100,6 +110,15 @@ function parseArgs(args: string[]): Record<string, string | boolean | number> {
     Number(out.maxCycles) > 100
   ) {
     throw new ParseError("duration must be finite in (0, 60] minutes; max cycles must be 1..100");
+  }
+  if (out.focus !== undefined && out.focus !== "general" && out.focus !== "finance") {
+    throw new ParseError("focus must be general or finance");
+  }
+  if (out.focus !== undefined && out.objective === undefined) {
+    throw new ParseError("focus requires an objective");
+  }
+  if (typeof out.objective === "string" && Buffer.byteLength(out.objective, "utf8") > 2048) {
+    throw new ParseError("objective must be at most 2048 UTF8 bytes");
   }
   return out;
 }
@@ -133,6 +152,7 @@ function extractOwnerTotals(state: Record<string, unknown>): Record<string, unkn
 
 async function buildPerception(
   backlog: readonly CompactBacklogEntry[],
+  task?: CentralHostTask,
 ): Promise<CentralPerception> {
   const controlRoom = await readLatest<Record<string, unknown>>("lcx-control-room-latest.json", {});
   const governance = await readLatest<Record<string, unknown>>(
@@ -144,7 +164,10 @@ async function buildPerception(
     {},
   );
   const observedAt = new Date().toISOString();
-  const financeAutomaticLifecycle = await buildFinanceAutomaticLifecycleFeedback({ observedAt });
+  const financeAutomaticLifecycle =
+    task?.focus === "general"
+      ? undefined
+      : await buildFinanceAutomaticLifecycleFeedback({ observedAt });
   const controlRoomProjection: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(controlRoom)) {
     if (key !== "financeAutomaticLifecycle") {
@@ -154,6 +177,7 @@ async function buildPerception(
   const ownerTotals = extractOwnerTotals(governance);
   return {
     observedAt,
+    ...(task ? { task } : {}),
     ownerTotals,
     // The learning-workflow and governance surfaces ride in the flexible
     // control-room section so the existing byte budget bounds them like any other
@@ -162,7 +186,7 @@ async function buildPerception(
     // the latest pointers.
     controlRoom: {
       // Prioritize finance's actionable state within the bounded control-room section.
-      financeAutomaticLifecycle,
+      ...(financeAutomaticLifecycle ? { financeAutomaticLifecycle } : {}),
       ...controlRoomProjection,
       runtimeFreshness: projectRuntimeFreshness(
         { controlRoom, governance, learningWorkflow },
@@ -337,6 +361,18 @@ function projectLearningWorkflow(
 }
 
 /** Thread-store: read the persisted JSONL tail so a restart resumes prior decisions. */
+/** A different explicit objective is a different decision context, not inherited evidence. */
+export function receiptsForHostTask(
+  receipts: readonly CentralRunReceipt[],
+  task?: CentralHostTask,
+): CentralRunReceipt[] {
+  return receipts.filter((receipt) =>
+    task
+      ? receipt.task?.objective === task.objective && receipt.task?.focus === task.focus
+      : receipt.task === undefined,
+  );
+}
+
 async function loadPersistedReceipts(): Promise<CentralRunReceipt[]> {
   try {
     const raw = await fs.readFile(LOG_PATH, "utf8");
@@ -396,6 +432,7 @@ function failedCycleReceipt(
     schemaVersion: "lcx_central_agent_v1",
     runId: `central-${index}-${Date.now()}-failed`,
     observedAt: perception.observedAt,
+    ...(perception.task ? { task: perception.task } : {}),
     actionsProposed: 0,
     actionsApproved: 0,
     actionsBlockedByGate: 0,
@@ -412,7 +449,9 @@ function failedCycleReceipt(
     // was in force rather than claiming an injection happened. The receipt's own
     // brainCall.outcome is what tells a reader no injection occurred.
     contextBudget: bounded.report,
-    financePerception: projectFinancePerceptionEvidence(bounded),
+    ...(perception.task?.focus === "general"
+      ? {}
+      : { financePerception: projectFinancePerceptionEvidence(bounded) }),
     stageDurationsMs: {
       perceptionBuildMs,
       brainProposalMs: null,
@@ -496,6 +535,13 @@ async function settle(receipt: unknown): Promise<void> {
 
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
+  const task: CentralHostTask | undefined =
+    typeof options.objective === "string"
+      ? {
+          objective: options.objective,
+          focus: options.focus === "finance" ? "finance" : "general",
+        }
+      : undefined;
   const durationMinutes = Number(options.durationMinutes);
   const dryRun = options.dryRun === true;
   const planOnly = options.planOnly === true;
@@ -532,11 +578,13 @@ async function main(): Promise<void> {
     // context compaction: only the compacted tail reaches the brain, never raw history.
     // Terminal cycles are dropped first: a cycle whose brain call did not complete
     // carries no decision, so inheriting it would let an outage read as precedent.
-    const resumable = resumableReceipts(history);
-    droppedNonDecisionCycles = history.length - resumable.length;
+    const completed = resumableReceipts(history);
+    droppedNonDecisionCycles = history.length - completed.length;
+    const resumable = receiptsForHostTask(completed, task);
     const perceptionBuildStartedAt = performance.now();
     const perception = await buildPerception(
       compactReceipts(resumable, 10, CENTRAL_CAPABILITY_IDS),
+      task,
     );
     const perceptionBuildMs = Math.max(0, Math.round(performance.now() - perceptionBuildStartedAt));
     let receipt: CentralRunReceipt;
@@ -582,7 +630,7 @@ async function main(): Promise<void> {
     lastReceipt = receipt;
     history = history.concat(receipt).slice(-200);
     runs += 1;
-    lastContinuation = nextCycleContinuation(receipt, runs, maxCycles, history.at(-2));
+    lastContinuation = nextCycleContinuation(receipt, runs, maxCycles, resumable.at(-1));
     if (dryRun || !lastContinuation.run) {
       break;
     }

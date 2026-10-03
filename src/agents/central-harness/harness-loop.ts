@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { CentralBrain, CentralBrainOutcome } from "./model-brain.js";
 import type {
   CentralBrainCallEvidence,
@@ -168,17 +168,26 @@ async function runCycle(
   // honestly rather than crashing and leaving its owner with no parseable output.
   let proposal: CentralBrainOutcome | undefined;
   const brainProposalStartedAt = performance.now();
-  try {
-    proposal = await observeUntilAborted(signal, () =>
-      options.brain.propose(bounded.perception, signal),
-    );
-  } catch (error) {
+  if (bounded.report.overBudget) {
     brainCall = {
       provider: "",
       modelId: "",
-      outcome: "failed",
-      reason: `brain call failed: ${String(error).slice(0, 300)}`,
+      outcome: "blocked",
+      reason: "context_budget_exceeded",
     };
+  } else {
+    try {
+      proposal = await observeUntilAborted(signal, () =>
+        options.brain.propose(bounded.perception, signal),
+      );
+    } catch (error) {
+      brainCall = {
+        provider: "",
+        modelId: "",
+        outcome: "failed",
+        reason: `brain call failed: ${String(error).slice(0, 300)}`,
+      };
+    }
   }
   const brainProposalMs = Math.max(0, Math.round(performance.now() - brainProposalStartedAt));
   const gateStartedAt = performance.now();
@@ -335,33 +344,35 @@ async function runCycle(
 
   // The next action is computed here, by TypeScript, and never by the brain: it
   // is a bounded enum the following cycle can trust, not self-authored guidance.
-  const nextAction = signal.aborted
-    ? "halt_and_report"
-    : brainCall.outcome === "completed"
-      ? steps.some((step) => step.status === "ran_failed")
-        ? "follow_up_on_failed_dispatch"
-        : actionsBlockedByGate > 0
-          ? "review_blocked_proposals"
-          : steps.some((step) => step.observedOk === false)
-            ? "follow_up_on_owners_reporting_not_ok"
-            : steps.some(
-                  (step) =>
-                    step.status === "ran_ok" &&
-                    step.outcome !== undefined &&
-                    options.capabilityOwnerIds?.has(step.ownerId),
-                )
-              ? "follow_up_on_capability_results"
-              : "continue"
-      : brainCall.outcome === "failed"
-        ? "halt_and_report"
-        : brainCall.outcome === "blocked"
-          ? "restore_brain_provider_then_retry"
-          : "continue";
+  const nextAction =
+    signal.aborted || bounded.report.overBudget
+      ? "halt_and_report"
+      : brainCall.outcome === "completed"
+        ? steps.some((step) => step.status === "ran_failed")
+          ? "follow_up_on_failed_dispatch"
+          : actionsBlockedByGate > 0
+            ? "review_blocked_proposals"
+            : steps.some((step) => step.observedOk === false)
+              ? "follow_up_on_owners_reporting_not_ok"
+              : steps.some(
+                    (step) =>
+                      step.status === "ran_ok" &&
+                      step.outcome !== undefined &&
+                      options.capabilityOwnerIds?.has(step.ownerId),
+                  )
+                ? "follow_up_on_capability_results"
+                : "continue"
+        : brainCall.outcome === "failed"
+          ? "halt_and_report"
+          : brainCall.outcome === "blocked"
+            ? "restore_brain_provider_then_retry"
+            : "continue";
 
   const receipt: CentralRunReceipt = {
     schemaVersion: "lcx_central_agent_v1",
     runId,
     observedAt: options.perception.observedAt,
+    ...(bounded.perception.task ? { task: bounded.perception.task } : {}),
     actionsProposed: actionsProposed,
     actionsApproved: actionsApproved,
     actionsBlockedByGate: actionsBlockedByGate,
@@ -370,7 +381,9 @@ async function runCycle(
     brainCall,
     nextAction,
     contextBudget: bounded.report,
-    financePerception: projectFinancePerceptionEvidence(bounded),
+    ...(bounded.perception.task?.focus === "general"
+      ? {}
+      : { financePerception: projectFinancePerceptionEvidence(bounded) }),
     ...(isPlainRecord(bounded.perception.controlRoom.runtimeFreshness)
       ? { runtimeFreshness: bounded.perception.controlRoom.runtimeFreshness }
       : {}),
@@ -427,8 +440,8 @@ export type CompactBacklogEntry = Readonly<{
    * the shape of the gap: `commercialAcceptance` ran and reported not-ok, and the
    * next cycle saw only its name.
    *
-   * The bounded tool digest rides on the newest entry only; older entries keep the
-   * reason. See `compactReceipts` for why.
+   * The newest attempt for each exact owner/argument scope retains its bounded
+   * digest. Superseded and omitted evidence is named, never a passing result.
    */
   outcomes: readonly Readonly<{
     ownerId: string;
@@ -436,6 +449,12 @@ export type CompactBacklogEntry = Readonly<{
     reason?: string;
     outcome?: Readonly<Record<string, unknown>>;
     outcomeDroppedKeys?: readonly string[];
+    /** Original observation time; carrying a result does not refresh its evidence. */
+    sourceObservedAt?: string;
+    /** Whole argument values that fit; the digest identifies the full original scope. */
+    args?: Readonly<Record<string, unknown>>;
+    argsSha256?: string;
+    argsDroppedKeys?: readonly string[];
   }>[];
   /** Steps that had a reason worth carrying but did not fit the cap. */
   outcomesOmitted?: number;
@@ -591,20 +610,45 @@ export function compactReceipts(
   const isLargeReadPage = (step: CentralStep): boolean =>
     step.ownerId === "finance_bar_ledger" ||
     (step.ownerId === "finance_position_ledger_read" && isPlainRecord(step.outcome?.history));
-  const newestIndex = tail.length - 1;
+  const argumentIdentity = (step: CentralStep) =>
+    JSON.stringify([step.ownerId, canonicalContinuationValue(step.args)]);
+  const latestAttempts = new Map<string, CentralStep>();
+  for (const receipt of tail) {
+    for (const step of receipt.steps) {
+      // A rejected proposal did not read the source and cannot replace its evidence.
+      // A green governance check can supersede a failure without carrying a digest.
+      if (step.status === "ran_ok" || step.status === "ran_failed") {
+        latestAttempts.set(argumentIdentity(step), step);
+      }
+    }
+  }
+  const isCurrentHistoryPage = (step: CentralStep): boolean =>
+    isLargeReadPage(step) && latestAttempts.get(argumentIdentity(step)) === step;
   const newestHistoryReceiptIndex = tail.findLastIndex((receipt) =>
-    receipt.steps.some(isLargeReadPage),
+    receipt.steps.some(isCurrentHistoryPage),
   );
-  const newestHistoryStep = tail[newestHistoryReceiptIndex]?.steps.filter(isLargeReadPage).at(-1);
+  const newestHistoryStep = tail[newestHistoryReceiptIndex]?.steps
+    .filter(isCurrentHistoryPage)
+    .at(-1);
   const mapped: CompactBacklogEntry[] = tail.map((receipt, index) => {
-    // The digest rides on the newest entry only. A reason for an older cycle is
-    // either still failing — and so reappears here — or already handled, while
-    // the bytes it costs are shared with the control room. Older entries keep the
-    // reason and the ids, which is what compaction is for.
-    const carriesDigest = index === newestIndex;
+    // An unrelated action or a no-op does not consume another tool's evidence.
+    // Keep only its newest attempt, with the original scope and observation clock.
     const carriesHistory = index === newestHistoryReceiptIndex;
     const interesting = stepsToCarry(receipt, carrySuccessfulOutcomeOwnerIds);
-    const kept = interesting.slice(0, CENTRAL_BACKLOG_MAX_OUTCOMES);
+    const relevant = interesting.filter(
+      (step) =>
+        step.status === "blocked_by_gate" ||
+        (latestAttempts.get(argumentIdentity(step)) === step &&
+          (!isLargeReadPage(step) || (carriesHistory && step === newestHistoryStep))),
+    );
+    // Prefer current evidence over obsolete markers when a receipt exceeds the cap.
+    const selected = new Set(
+      [...relevant, ...interesting.filter((step) => !relevant.includes(step))].slice(
+        0,
+        CENTRAL_BACKLOG_MAX_OUTCOMES,
+      ),
+    );
+    const kept = interesting.filter((step) => selected.has(step));
     return {
       atMs: Date.parse(receipt.observedAt) || 0,
       brainOutcome: receipt.brainCall.outcome,
@@ -619,28 +663,28 @@ export function compactReceipts(
       nextAction: receipt.nextAction,
       outcomes: kept.map((step) => {
         const reason = step.gateReason ?? step.failureReason;
+        const carriesDigest = relevant.includes(step);
+        const scopedArgs = boundObjectSection(step.args, 256, 256);
+        const supersededKey = isLargeReadPage(step)
+          ? "read_page_superseded_in_backlog"
+          : "outcome_superseded_in_backlog";
+        const outcomeDroppedKeys = carriesDigest
+          ? (step.outcomeDroppedKeys ?? [])
+          : [...(step.outcomeDroppedKeys ?? []), supersededKey];
         return {
           ownerId: step.ownerId,
           status: step.status,
+          sourceObservedAt: receipt.observedAt,
+          args: scopedArgs.value,
+          argsSha256: createHash("sha256")
+            .update(JSON.stringify(canonicalContinuationValue(step.args)))
+            .digest("hex"),
+          ...(scopedArgs.dropped.length > 0
+            ? { argsDroppedKeys: scopedArgs.dropped.map(({ key }) => key) }
+            : {}),
           ...(reason ? { reason: reason.slice(0, CENTRAL_STEP_REASON_CHARS) } : {}),
-          ...(step.outcome &&
-          (isLargeReadPage(step) ? carriesHistory && step === newestHistoryStep : carriesDigest)
-            ? { outcome: step.outcome }
-            : {}),
-          ...((isLargeReadPage(step) && step !== newestHistoryStep) ||
-          ((carriesDigest || (carriesHistory && step === newestHistoryStep)) &&
-            step.outcomeDroppedKeys)
-            ? {
-                outcomeDroppedKeys: [
-                  ...(carriesDigest || (carriesHistory && step === newestHistoryStep)
-                    ? (step.outcomeDroppedKeys ?? [])
-                    : []),
-                  ...(isLargeReadPage(step) && step !== newestHistoryStep
-                    ? ["read_page_superseded_in_backlog"]
-                    : []),
-                ],
-              }
-            : {}),
+          ...(step.outcome && carriesDigest ? { outcome: step.outcome } : {}),
+          ...(outcomeDroppedKeys.length > 0 ? { outcomeDroppedKeys } : {}),
         };
       }),
       ...(interesting.length > kept.length
@@ -650,15 +694,15 @@ export function compactReceipts(
   });
   const byteLimit = 8_500;
   let omitted = 0;
-  const carriesFocusPage = (entry: CompactBacklogEntry): boolean =>
-    entry.outcomes.some((outcome) =>
-      Boolean(
-        outcome.outcome &&
-        (outcome.ownerId === "finance_bar_ledger" ||
-          (outcome.ownerId === "finance_position_ledger_read" &&
-            isPlainRecord(outcome.outcome.history))),
-      ),
+  const isFocusPage = (outcome: CompactBacklogEntry["outcomes"][number]): boolean =>
+    Boolean(
+      outcome.outcome &&
+      (outcome.ownerId === "finance_bar_ledger" ||
+        (outcome.ownerId === "finance_position_ledger_read" &&
+          isPlainRecord(outcome.outcome.history))),
     );
+  const carriesFocusPage = (entry: CompactBacklogEntry): boolean =>
+    entry.outcomes.some(isFocusPage);
   while (mapped.length > 1 && jsonBytes(mapped) + (omitted > 0 ? 60 : 0) > byteLimit) {
     const removeIndex = mapped.findIndex((entry) => !carriesFocusPage(entry));
     if (removeIndex < 0) {
@@ -669,6 +713,35 @@ export function compactReceipts(
   }
   if (omitted > 0 && mapped.length > 0) {
     mapped[0] = { ...mapped[0], backlogEntriesOmitted: omitted };
+  }
+  // A single multi-step receipt can also overflow. Remove whole outcomes, keeping
+  // the focused page and its scope intact when possible; count every omitted item.
+  while (mapped.length > 0 && jsonBytes(mapped) > byteLimit) {
+    const index = mapped.findIndex((entry) => entry.outcomes.length > 0);
+    if (index < 0) {
+      // Exceptional oversized headers stay explicit instead of bypassing the cap.
+      const newest = mapped.at(-1)!;
+      return [
+        {
+          atMs: newest.atMs,
+          brainOutcome: newest.brainOutcome,
+          approved: [],
+          blocked: [],
+          notOk: [],
+          nextAction: "recover_omitted_backlog",
+          outcomes: [],
+          backlogEntriesOmitted: omitted + mapped.length,
+        },
+      ];
+    }
+    const entry = mapped[index];
+    const removeIndex = entry.outcomes.findLastIndex((outcome) => !isFocusPage(outcome));
+    const removed = removeIndex >= 0 ? removeIndex : entry.outcomes.length - 1;
+    mapped[index] = {
+      ...entry,
+      outcomes: entry.outcomes.filter((_, outcomeIndex) => outcomeIndex !== removed),
+      outcomesOmitted: (entry.outcomesOmitted ?? 0) + 1,
+    };
   }
   return mapped;
 }
