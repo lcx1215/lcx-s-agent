@@ -6,6 +6,8 @@ metadata: { "openclaw": { "emoji": "🧪" } }
 
 # ml-research-loop
 
+Read the [current runtime contract](../_shared/lcx-runtime-contract.md). Select the active experiment/capability owner and its declared evaluation profile; local training, an external provider or a particular model is not a default prerequisite. Plans, actual experiments and weight-learning results are separate evidence.
+
 Use this skill when the user asks LCX Agent to learn or reproduce a machine-learning method, post-training idea, model-evaluation workflow, or research-engineering pattern.
 
 This is a local adaptation inspired by Hugging Face `ml-intern`. It is not a vendored copy, runtime integration, or permission to install and execute that project.

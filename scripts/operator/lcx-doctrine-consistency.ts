@@ -11,8 +11,9 @@ type DoctrineCheck = {
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(SCRIPT_DIR, "..", "..");
-const home = process.env.HOME ?? "";
-const codexSkillsRoot = process.env.LCX_CODEX_SKILLS_ROOT ?? path.join(home, ".codex", "skills");
+// LCX Skills are repository-owned; retain the old override for isolated callers.
+const codexSkillsRoot =
+  process.env.LCX_SKILLS_ROOT ?? process.env.LCX_CODEX_SKILLS_ROOT ?? path.join(repoRoot, "skills");
 
 function usage(): never {
   throw new Error(
@@ -378,7 +379,7 @@ async function main() {
   checks.push({
     id: "l5_skill_script_installed",
     ok: l5ScriptInstalled,
-    summary: "local Codex L5 regression skill should be installed for future windows",
+    summary: "repository L5 regression package should be available to project and runtime loaders",
     evidence: l5ScriptInstalled ? [] : [`missing: ${l5ScriptPath}`],
   });
 
@@ -409,6 +410,7 @@ async function main() {
   const failed = checks.filter((check) => !check.ok);
   const result = {
     ok: failed.length === 0,
+    skillRoot: codexSkillsRoot,
     boundary: "local_doctrine_consistency_only",
     checkedAt: new Date().toISOString(),
     summary: {

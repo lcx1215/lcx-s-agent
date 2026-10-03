@@ -1,28 +1,17 @@
 ---
 name: lcx-evolution-loop
-description: Run a realistic LCX self-improvement loop from a natural user-style request through evidence, repair, eval, and promotion gates.
-metadata: { "openclaw": { "emoji": "🔁" } }
+description: "Improve LCX from a verified natural-request failure through its current Harness or workflow owner, bounded repair and evaluation; training is profile-specific."
+metadata: { "openclaw": { "emoji": "🧩" } }
 ---
 
 # LCX Evolution Loop
 
-Use this when improving LCX from a verified failure or realistic user request;
-it is an owner-routed workflow, not a general model-training command.
+Read the [runtime contract](../_shared/lcx-runtime-contract.md). Evolution is an owner-routed repair workflow, not a permanent Qwen training loop.
 
-## Workflow
+1. Freeze one realistic request, failed behavior and observable acceptance condition.
+2. Read the existing lane's fresh receipt and `scripts/operator/lcx-problem-cluster-radar.ts --json` when a cross-lane view is needed. For Central Agent Harness behavior, inspect the declared perception, proposal, TypeScript gate, action and feedback receipts.
+3. Reuse the owner, contracts and tests that match the current implementation. Make one bounded repair and evaluate an adjacent case.
+4. Consult `scripts/operator/local-brain-training-plan.ts` only for a declared local-model training lane. Do not start overlapping training/heavy eval or treat an unsupported old plan as eligibility.
+5. Record code/test, runtime use, candidate, challenger, promotion, external-channel and user-visible evidence separately. Stop on the declared terminal condition and budget.
 
-1. Start with `node --import tsx scripts/operator/lcx-problem-cluster-radar.ts --json`
-   and `node --import tsx scripts/operator/local-brain-training-plan.ts --json`.
-2. Select one owner lane and one failure family; reuse existing receipts,
-   evals, modules, or learned workflow patterns only after verifying they still
-   apply to the active implementation.
-3. Repair the shared contract, test an adjacent case, and run the matching
-   eval/doctor proof.
-4. Keep candidate, challenger, promotion, external-channel, and user-visible
-   evidence separate in the final receipt.
-
-## Boundaries
-
-- Do not start overlapping training or heavy evaluation; follow the current
-  owner plan's idle/eligibility state.
-- Evolution evidence is not model-weight learning, promotion, or live proof.
+The Harness proposes decisions but has no trading, provider, protected-memory or external-sending authority. Skill use and workflow improvement are not model-weight learning; no promotion or live proof follows automatically.

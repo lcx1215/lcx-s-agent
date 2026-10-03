@@ -9,6 +9,29 @@ const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
 
 describe("LCX doctrine consistency doctor", () => {
+  it("uses repository Skills without a personal Skill installation", async () => {
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    delete env.LCX_SKILLS_ROOT;
+    delete env.LCX_CODEX_SKILLS_ROOT;
+    {
+      const { stdout } = await execFileAsync(
+        process.execPath,
+        ["--import", "tsx", "scripts/operator/lcx-doctrine-consistency.ts", "--json"],
+        { cwd: repoRoot, env },
+      );
+      const result = JSON.parse(stdout) as {
+        ok: boolean;
+        skillRoot: string;
+        checks: Array<{ id: string; ok: boolean }>;
+      };
+      expect(result.ok).toBe(true);
+      expect(result.skillRoot).toBe(path.join(repoRoot, "skills"));
+      expect(result.checks.find((check) => check.id === "l5_skill_script_installed")?.ok).toBe(
+        true,
+      );
+    }
+  });
+
   it("is wired into the main system doctor", async () => {
     const source = await fs.readFile(
       path.join(repoRoot, "scripts/operator/lcx-system-doctor.ts"),

@@ -1,29 +1,16 @@
 ---
 name: lcx-qwen-training-operator
-description: Inspect local-model training status when the active profile uses Qwen/MLX, and distinguish current adapter truth from stale receipts; never start overlapping work.
-metadata: { "openclaw": { "emoji": "🧭" } }
+description: "Inspect LCX local-model training and adapter evidence only when the active profile uses that lane; the Qwen name is compatibility, not a mandatory system brain."
+metadata: { "openclaw": { "emoji": "🧩" } }
 ---
 
-# Qwen Training Operator
+# LCX Qwen Training Operator
 
-Use this for Qwen/local-model training status, guard/teacher supervision, or
-adapter-selection questions when the current profile uses those components.
+Read the [runtime contract](../_shared/lcx-runtime-contract.md). The retained name supports existing routing; it does not prescribe Qwen, MLX or a particular model size.
 
-## Workflow
+1. Resolve the current model/adapter and training owner from the active profile and runbook. If no local training lane is selected, report not-applicable.
+2. For a supported local-brain lane, run `node --import tsx scripts/operator/local-brain-training-plan.ts --json` with its documented current paths/options. Inspect its declared model and prerequisites before applying its decision to this profile.
+3. Treat its activeProcesses, heavy-eval counts, decision and owner action as evidence for that lane. If it describes an older profile only, report unsupported instead of reusing old model arguments.
+4. Keep selected-clean/latest-passing, latest-promoted, parseRecovered and active guard adapter distinct. If training_already_active or a relevant process is present, do not start another run.
 
-1. Resolve the current repository and run
-   `node --import tsx scripts/operator/local-brain-training-plan.ts --json` first.
-2. Treat its `activeProcesses`, heavy-eval counts, decision, and owner action as
-   current process/training truth; do not duplicate the process check unless
-   the owner is unavailable, and report that degradation if it is.
-3. If `training_already_active` is present or a relevant training/eval process
-   is active, do not start another run.
-4. Keep selected-clean/latest-passing, latest-promoted, parseRecovered cases,
-   active guard adapter, and the owner action distinct in the report.
-
-## Boundaries
-
-- Mention Qwen, MLX, teacher, or adapter details only when current owner output
-  supports them; file names and old receipts do not establish the active model.
-- Do not start overlapping training/evaluation, manually promote an adapter,
-  or change provider config, protected memory, or the external-channel sender.
+Do not train, manually promote, change providers/protected memory or restart a sender merely to obtain a green report. Central Harness and remote/finance model workflows have their own owners and are not validated by a local Qwen plan.

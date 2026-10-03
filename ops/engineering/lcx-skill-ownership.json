@@ -1,0 +1,76 @@
+{
+  "schema": "lcx_skill_ownership_v1",
+  "canonicalRoot": "skills",
+  "projectBridgeRoot": ".agents/skills",
+  "projectSkills": [
+    "agent-brain-eval",
+    "agent-runtime-drift-auditor",
+    "external-skills-registry",
+    "finance-data-methodology",
+    "frontier-research",
+    "github-skill-supply-chain-audit",
+    "hf-dataset-inspector",
+    "hf-paper-intake",
+    "l5-regression-batterer",
+    "lark-live-loop-debugger",
+    "lcx-baseline-hardening",
+    "lcx-commercial-answer-pipeline-operator",
+    "lcx-evolution-loop",
+    "lcx-module-learning-absorption-operator",
+    "lcx-promotion-and-adapter-truth-operator",
+    "lcx-qwen-training-operator",
+    "lcx-workflow-waterflow-auditor",
+    "local-agent-skill-distiller",
+    "math-reasoning",
+    "ml-research-loop",
+    "semantic-routing",
+    "skill-quality-audit"
+  ],
+  "portableSkills": [
+    "cli-anything-harvester",
+    "cli-system-doctor",
+    "finance-learning-researcher",
+    "lark-post-migration-probe",
+    "live-sidecar-sync-doctor",
+    "skill-harvester",
+    "trader-strategy-lab"
+  ],
+  "preserveSeparatePackages": ["darwin-skill", "capability-evolver"],
+  "historicalNames": [
+    {
+      "name": "l4-regression-batterer",
+      "replacement": "l5-regression-batterer",
+      "status": "removed"
+    },
+    {
+      "name": "semantic-family-miner",
+      "replacement": "semantic-routing",
+      "status": "absent_historical"
+    },
+    {
+      "name": "repo-migration-cleaner",
+      "replacement": "lcx-baseline-hardening",
+      "status": "absent_historical"
+    },
+    {
+      "name": "lark-understanding",
+      "replacement": "lark-live-loop-debugger",
+      "status": "absent_historical"
+    },
+    {
+      "name": "lark-routing-evals",
+      "replacement": "lark-live-loop-debugger",
+      "status": "absent_historical"
+    },
+    {
+      "name": "lcx-live-loop-debugger",
+      "replacement": "lark-live-loop-debugger",
+      "status": "absent_read_attempt"
+    },
+    {
+      "name": "lcx-operator-digest-readonly",
+      "replacement": "lcx-workflow-waterflow-auditor",
+      "status": "absent_read_attempt"
+    }
+  ]
+}
