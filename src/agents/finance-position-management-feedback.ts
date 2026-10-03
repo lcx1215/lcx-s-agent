@@ -49,6 +49,7 @@ export async function readFinancePositionManagementFeedback(params: {
       const needsReview = (position: (typeof holdings)[number]) =>
         position.status !== "covered" || position.activeRuleIds.length === 0;
       return {
+        accountId: record.accountId,
         venue: record.venue,
         snapshotRef: record.ref,
         observedAt: snapshot.observedAt,

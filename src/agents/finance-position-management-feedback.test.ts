@@ -52,6 +52,8 @@ it("brings uncovered and out-of-scope holdings into Harness feedback without gra
     needsInspection: true,
     accounts: [
       {
+        accountId: "synthetic",
+        venue: "alpaca:paper",
         uncoveredCount: 1,
         outsideActiveRuleCount: 1,
         holdings: [
@@ -65,9 +67,31 @@ it("brings uncovered and out-of-scope holdings into Harness feedback without gra
     {
       status: "present",
       nextTask: "inspect_finance_position_management",
-      positionManagement: { needsInspection: true },
+      positionManagement: {
+        needsInspection: true,
+        accounts: [{ accountId: "synthetic", venue: "alpaca:paper" }],
+      },
     },
   );
+});
+it("keeps the exact account scope when two accounts hold the same instrument", async () => {
+  await snapshot([{ symbol: "SPY", qty: "1" }], "account-a");
+  await snapshot([{ symbol: "SPY", qty: "2" }], "account-b");
+  const result = await readFinancePositionManagementFeedback({ directory, observedAt: at, rules });
+  if (!("accounts" in result) || !result.accounts) {
+    throw new Error("missing accounts");
+  }
+  expect(result.accounts).toHaveLength(2);
+  for (const [accountId, positionQuantity] of [
+    ["account-a", 1],
+    ["account-b", 2],
+  ] as const) {
+    expect(result.accounts.find((account) => account.accountId === accountId)).toMatchObject({
+      accountId,
+      venue: "alpaca:paper",
+      holdings: [{ instrument: "SPY", positionQuantity }],
+    });
+  }
 });
 it("keeps stale and future observations visible without treating them as current action evidence", async () => {
   await snapshot();
