@@ -987,8 +987,22 @@ it("creates and calls a fresh single-use reviewer for each actionable intraday d
     ]),
   ).resolves.toBe(143);
   expect(mocks.createTradeDecisionReviewer).toHaveBeenCalledTimes(2);
-  expect(mocks.createTradeDecisionReviewer).toHaveBeenNthCalledWith(1, {});
-  expect(mocks.createTradeDecisionReviewer).toHaveBeenNthCalledWith(2, {});
+  expect(mocks.createTradeDecisionReviewer).toHaveBeenNthCalledWith(
+    1,
+    {},
+    {
+      taskObjective: undefined,
+      evidenceScope: { directory, accountId: "paper-account", instruments: ["SPY"] },
+    },
+  );
+  expect(mocks.createTradeDecisionReviewer).toHaveBeenNthCalledWith(
+    2,
+    {},
+    {
+      taskObjective: undefined,
+      evidenceScope: { directory, accountId: "paper-account", instruments: ["SPY"] },
+    },
+  );
   expect(mocks.executeIntradayDecision).toHaveBeenCalledTimes(2);
   expect(usedReviewers).toEqual(reviewers);
   expect(reviewedSignalIds).toEqual(["intraday-signal-1", "intraday-signal-2"]);

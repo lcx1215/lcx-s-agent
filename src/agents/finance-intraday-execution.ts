@@ -623,6 +623,7 @@ export async function executeFinanceIntradayDecision(params: {
         providerCallObserved: reviewResult.providerCallObserved,
         adapterAttested: reviewResult.adapterAttested,
         ...(reviewResult.requestIdSha256 ? { requestIdSha256: reviewResult.requestIdSha256 } : {}),
+        ...(reviewResult.toolEvidence ? { toolEvidence: reviewResult.toolEvidence } : {}),
         ...(reviewResult.taskObjectiveSha256
           ? { taskObjectiveSha256: reviewResult.taskObjectiveSha256 }
           : {}),

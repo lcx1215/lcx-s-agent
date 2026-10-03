@@ -10,6 +10,13 @@ import {
   type FinanceExpectationGap,
 } from "./finance-expectation-gap.js";
 import type { FinanceThesisDecisionContext } from "./finance-thesis-decision-context.js";
+import {
+  FinanceTradeReviewEvidenceRequestSchema,
+  FinanceTradeReviewToolEvidenceSchema,
+  createFinanceTradeReviewEvidenceExecutor,
+  type FinanceTradeReviewEvidenceScope,
+  type FinanceTradeReviewToolEvidence,
+} from "./finance-trade-review-evidence.js";
 import { ModelAdapterError, type ModelCallRequest } from "./logical-agent-model-router.js";
 
 export const FINANCE_TRADE_DECISION_REVIEW_SCHEMA = "lcx_finance_trade_decision_review_v1" as const;
@@ -165,6 +172,7 @@ export type FinanceTradeDecisionReviewResult = Readonly<{
   modelCalls?: number;
   requestIdSha256?: string;
   taskObjectiveSha256?: string;
+  toolEvidence?: readonly FinanceTradeReviewToolEvidence[];
   decisions?: readonly FinanceTradeDecision[];
   failureCode?: FinanceTradeDecisionReviewFailureCode;
 }>;
@@ -183,6 +191,7 @@ export type FinanceTradeDecisionReviewReceipt = Readonly<{
   adapterAttested?: boolean;
   requestIdSha256?: string;
   taskObjectiveSha256?: string;
+  toolEvidence?: readonly FinanceTradeReviewToolEvidence[];
   decisions?: readonly FinanceTradeDecision[];
   failureCode?: FinanceTradeDecisionReviewFailureCode;
 }>;
@@ -196,6 +205,7 @@ type ReviewerDependencies = Readonly<{
   adapterFactory?: typeof createConfiguredFinanceModelAdapter;
   now?: () => number;
   taskObjective?: string;
+  evidenceScope?: FinanceTradeReviewEvidenceScope;
 }>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -280,6 +290,8 @@ export function isValidFinanceTradeDecisionReviewResult(
         !Number.isSafeInteger(value.modelCalls) ||
         value.modelCalls < 0 ||
         value.modelCalls > 2)) ||
+    (value.toolEvidence !== undefined &&
+      !FinanceTradeReviewToolEvidenceSchema.array().max(2).safeParse(value.toolEvidence).success) ||
     (value.taskObjectiveSha256 !== undefined &&
       (typeof value.taskObjectiveSha256 !== "string" ||
         !/^[a-f\d]{64}$/u.test(value.taskObjectiveSha256))) ||
@@ -331,6 +343,11 @@ function reviewPrompt(payload: unknown): string {
       ? "For this intraday operation, the registered price signal, current liquidity, execution costs, stop and remaining session dominate timing. Long-term fundamentals modify supported event/solvency risk; a favorable valuation cannot waive a stop or turn an intraday position into an unplanned long-term holding."
       : "For this operation, follow the declared strategy and existing portfolio budget. Daily scheduling does not by itself mean value investing. Long-term business value governs a value sleeve; price and liquidity govern implementation. Do not invent a short-term/long-term percentage or silently redistribute capital. Opposing horizons can coexist in separately budgeted sleeves; judge this exact candidate's purpose and risk.",
     "The trusted host taskObjective, when present, states the economic goal, not execution authority or an achieved return. Compare this exact candidate with holding or cash using supported after-cost economics; missing evidence is unknown, not profit or loss. Never force activity to satisfy a target.",
+    ...(isRecord(payload) && payload.evidenceToolsAvailable === true
+      ? [
+          "Investigate a testable economic-opportunity hypothesis, including suspected mispricing, expectation gaps or rule/liquidity mismatches, only with supported costs, evidence and current executability. Pair spread is one descriptive method, not the definition of arbitrage or a trading permission. Unavailable methods are explicit capability gaps. Optional first-call evidence loop: instead of decisions, return exactly {schemaVersion,evidenceRequests:[{candidateId,action}],hypothesis}. One or two unique requests only. Actions: daily_closes, max_drawdown, z_score, returns_from_levels, pair_spread_diagnostics. Pair requests also require instrumentB from evidenceInstrumentScope, construction=fixed_spread|price_ratio, relationshipRationale (max240); fixed_spread requires hedgeRatio>0<=100; price_ratio forbids hedgeRatio; optional lookbackWindow20..100. No other keys or supplied series/account/path/cutoff. Hypothesis max240 characters. All recorded daily histories are research only, not fresh quotes; pair statistics do not prove arbitrage or authorize either leg. After toolEvidence arrives return ONLY the existing exact decisions contract; never request more evidence.",
+        ]
+      : []),
     "Use only the supplied decision packet. Do not use external or unstated market facts.",
     "Focus on decision-changing evidence: a supported catalyst or contradiction, thesis/stop invalidation, horizon mismatch, and execution cost or liquidity risk. Do not repeat broad market research, recompute bookkeeping, or invent numerical gates; deterministic controllers own calculations and capital authorization. Keep the rationale concise and cite the relevant packet facts.",
     "Your role in the whole autonomous Paper system is the last evidence-based challenge of this exact candidate, not another full research cycle. SPY has no privileged status; apply the declared strategy, instrument, portfolio context and horizon supplied in this packet. An explicitly authorized autonomous Paper controller does not need per-order human confirmation. Judge the supported mechanism and strongest contrary fact, whether the thesis remains valid, and whether costs/liquidity or existing exposure erase the proposed advantage; state unmeasured costs as unknown, never as invented numbers or guaranteed profit. Broker/account facts and capital limits decide whether an approved candidate can actually execute.",
@@ -390,6 +407,9 @@ export function createFinanceTradeDecisionReviewer(
     taskObjective === undefined
       ? {}
       : { taskObjectiveSha256: createHash("sha256").update(taskObjective).digest("hex") };
+  const evidenceExecutor = dependencies.evidenceScope
+    ? createFinanceTradeReviewEvidenceExecutor(dependencies.evidenceScope)
+    : undefined;
   const factory = dependencies.adapterFactory ?? createConfiguredFinanceModelAdapter;
   const createAdapter = (maxTokens: number) =>
     factory(cfg, {
@@ -403,9 +423,34 @@ export function createFinanceTradeDecisionReviewer(
   const now = dependencies.now ?? Date.now;
 
   return async (reviewRequest, signal) => {
-    const { taskObjective: _untrustedObjective, ...trustedPacket } =
-      reviewRequest as FinanceTradeDecisionReviewRequest & { taskObjective?: unknown };
+    const {
+      evidenceResults: _untrustedResults,
+      evidenceTools: _untrustedCatalog,
+      evidenceScope: _untrustedHostScope,
+      evidenceRequests: _untrustedRequests,
+      taskObjective: _untrustedObjective,
+      toolEvidence: _untrustedEvidence,
+      evidenceToolsAvailable: _untrustedTools,
+      evidenceInstrumentScope: _untrustedScope,
+      evidenceHypothesis: _untrustedHypothesis,
+      ...trustedPacket
+    } = reviewRequest as FinanceTradeDecisionReviewRequest & {
+      evidenceResults?: unknown;
+      evidenceTools?: unknown;
+      evidenceScope?: unknown;
+      evidenceRequests?: unknown;
+      taskObjective?: unknown;
+      toolEvidence?: unknown;
+      evidenceToolsAvailable?: unknown;
+      evidenceInstrumentScope?: unknown;
+      evidenceHypothesis?: unknown;
+    };
+    const allowEvidence =
+      evidenceExecutor !== undefined &&
+      reviewRequest.schemaVersion === FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA;
     const startedAt = now();
+    let toolEvidence: readonly FinanceTradeReviewToolEvidence[] | undefined;
+    let evidenceHypothesis: string | undefined;
     let activeAdapter = adapter;
     let modelCalls = 0;
     let providerCallObserved = false;
@@ -452,6 +497,7 @@ export function createFinanceTradeDecisionReviewer(
         signal.aborted && signal.reason instanceof Error && signal.reason.name === "TimeoutError";
       return {
         ...objectiveMetadata,
+        ...(toolEvidence ? { toolEvidence } : {}),
         status: "failed",
         attempted: modelCalls > 0,
         provider: activeAdapter.provider,
@@ -488,7 +534,17 @@ export function createFinanceTradeDecisionReviewer(
         attempt,
         provider: activeAdapter.provider,
         modelId: activeAdapter.modelId,
-        payload: taskObjective === undefined ? trustedPacket : { ...trustedPacket, taskObjective },
+        payload: {
+          ...trustedPacket,
+          ...(taskObjective !== undefined ? { taskObjective } : {}),
+          ...(allowEvidence && attempt === 1
+            ? {
+                evidenceToolsAvailable: true,
+                evidenceInstrumentScope: dependencies.evidenceScope!.instruments,
+              }
+            : {}),
+          ...(toolEvidence ? { toolEvidence, evidenceHypothesis } : {}),
+        },
       };
       let output: unknown;
       modelCalls += 1;
@@ -502,10 +558,43 @@ export function createFinanceTradeDecisionReviewer(
         return failureResult(error);
       }
       recordObservation(observe(activeAdapter, call));
+      if (isRecord(output) && "evidenceRequests" in output) {
+        if (
+          !allowEvidence ||
+          !evidenceExecutor ||
+          attempt !== 1 ||
+          toolEvidence ||
+          Object.keys(output).toSorted().join(",") !==
+            "evidenceRequests,hypothesis,schemaVersion" ||
+          output.schemaVersion !== reviewRequest.schemaVersion ||
+          typeof output.hypothesis !== "string" ||
+          !output.hypothesis.trim() ||
+          Buffer.byteLength(output.hypothesis, "utf8") > 240 ||
+          !Array.isArray(output.evidenceRequests) ||
+          output.evidenceRequests.length < 1 ||
+          output.evidenceRequests.length > 2
+        ) {
+          return failureResult(new ModelAdapterError("output_invalid"));
+        }
+        const parsed = FinanceTradeReviewEvidenceRequestSchema.array()
+          .max(2)
+          .safeParse(output.evidenceRequests);
+        if (!parsed.success) {
+          return failureResult(new ModelAdapterError("output_invalid"));
+        }
+        try {
+          toolEvidence = await evidenceExecutor(parsed.data, reviewRequest, signal);
+          evidenceHypothesis = output.hypothesis;
+        } catch {
+          return failureResult(new ModelAdapterError("output_invalid"));
+        }
+        continue;
+      }
       const decisions = parseFinanceTradeDecisionReviewOutput(output, reviewRequest);
       if (!decisions) {
         return {
           ...objectiveMetadata,
+          ...(toolEvidence ? { toolEvidence } : {}),
           status: "failed",
           attempted: true,
           provider: activeAdapter.provider,
@@ -520,6 +609,7 @@ export function createFinanceTradeDecisionReviewer(
       }
       return {
         ...objectiveMetadata,
+        ...(toolEvidence ? { toolEvidence } : {}),
         status: "completed",
         attempted: true,
         provider: activeAdapter.provider,

@@ -103,6 +103,7 @@ import {
 } from "../../src/agents/finance-state-dir.js";
 import { readFinanceStrategyRuleLedger } from "../../src/agents/finance-strategy-rule-ledger.js";
 import { createFinanceTradeDecisionReviewer } from "../../src/agents/finance-trade-decision-review.js";
+import type { FinanceTradeReviewEvidenceScope } from "../../src/agents/finance-trade-review-evidence.js";
 import { runFinanceTuningLifecycle } from "../../src/agents/finance-tuning-lifecycle.js";
 import { FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME } from "../../src/agents/finance-universe-selection.js";
 import { buildDetachedServeEnv } from "../../src/cli/serve-detach.js";
@@ -1255,10 +1256,13 @@ function numericExtra(args: readonly string[], flag: string): number {
   return index < 0 ? Number.NaN : Number(args[index + 1]);
 }
 
-function createIntradayTradeDecisionReviewer(taskObjective?: string) {
+function createIntradayTradeDecisionReviewer(
+  taskObjective?: string,
+  evidenceScope?: FinanceTradeReviewEvidenceScope,
+) {
   try {
     // Each reviewer owns a single-call model adapter, so scope it to one decision.
-    return createFinanceTradeDecisionReviewer(loadConfig(), { taskObjective });
+    return createFinanceTradeDecisionReviewer(loadConfig(), { taskObjective, evidenceScope });
   } catch {
     return undefined;
   }
@@ -2189,6 +2193,11 @@ async function runTradingTickOnAccountLane(context: CycleContext): Promise<void>
               },
               tradeDecisionReviewer: createIntradayTradeDecisionReviewer(
                 context.options.researchPlan?.ask,
+                {
+                  directory: context.root.directory,
+                  accountId: context.intradayController.accountId,
+                  instruments: context.options.intraday.executionInstruments,
+                },
               ),
               signal: context.signal,
             });
