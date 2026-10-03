@@ -131,6 +131,24 @@ function refuse(code: AlpacaSafetyFailureCode): never {
 
 const PAPER = "https://paper-api.alpaca.markets";
 const DATA = "https://data.alpaca.markets";
+const MAX_GROSS_VALUATION_DRIFT_USD = 0.05;
+const GROSS_VALUATION_DRIFT_RATE = 0.00005;
+const MAX_COHERENT_GROSS_SKEW_USD = 0.6;
+const COHERENT_GROSS_SKEW_RATE = 0.00006;
+
+function sameCashToCent(left: number, right: number): boolean {
+  return Math.round(left * 100) === Math.round(right * 100);
+}
+
+function samePositionQuantities(
+  left: ReadonlyMap<string, number>,
+  right: ReadonlyMap<string, number>,
+) {
+  return (
+    left.size === right.size &&
+    [...left].every(([instrument, quantity]) => right.get(instrument) === quantity)
+  );
+}
 
 function safetyHeaders(credentials: Readonly<{ keyId: string; secret: string }>) {
   return {
@@ -409,24 +427,233 @@ export async function readAlpacaPaperSafetyFacts(
   let failureStage: AlpacaSafetyDiagnosticStage = "account_snapshot";
   let accountArithmetic: AlpacaSafetyAccountArithmeticDiagnostic | undefined;
   const run = async () => {
-    failureStage = "account_snapshot";
-    const account = record(await get(`${PAPER}/v2/account`));
-    failureStage = "position_snapshot";
-    const positions = array(await get(`${PAPER}/v2/positions`));
+    const readAccountPositionSnapshot = async () => {
+      // Start independent endpoints together to minimize sampling skew; this still is not
+      // an atomic broker snapshot, so arithmetic is checked below and may get one retry.
+      failureStage = "account_snapshot";
+      const accountRead = get(`${PAPER}/v2/account`);
+      failureStage = "position_snapshot";
+      const positionsRead = get(`${PAPER}/v2/positions`);
+      const [accountResult, positionsResult] = await Promise.allSettled([
+        accountRead,
+        positionsRead,
+      ]);
+      if (accountResult.status === "rejected") {
+        failureStage = "account_snapshot";
+        throw accountResult.reason;
+      }
+      if (positionsResult.status === "rejected") {
+        failureStage = "position_snapshot";
+        throw positionsResult.reason;
+      }
+      failureStage = "account_snapshot";
+      const account = record(accountResult.value);
+      failureStage = "position_snapshot";
+      const positions = array(positionsResult.value);
+      return { account, positions };
+    };
+    let { account, positions } = await readAccountPositionSnapshot();
+    type AccountPositionSnapshot = {
+      currency: string;
+      equity: number;
+      cash: number;
+      longValue: number;
+      shortValue: number;
+      gross: number;
+      quantity: number;
+      quantities: Map<string, number>;
+      accountPositions: { instrument: string; quantity: number; marketValue: number }[];
+      accountGross: number;
+      grossDriftTolerance: number;
+      coherentDriftTolerance: number;
+      cashEquityResidual: number;
+      failedConditions: AlpacaSafetyAccountArithmeticDiagnostic["failedConditions"];
+    };
+    const inspectAccountPositionSnapshot = (): AccountPositionSnapshot => {
+      failureStage = "account_status";
+      if (
+        account.id !== options.accountId ||
+        account.status !== "ACTIVE" ||
+        account.trading_blocked !== false ||
+        account.account_blocked !== false ||
+        account.trade_suspended_by_user !== false
+      ) {
+        refuse("alpaca_safety_facts_inconsistent");
+      }
+      failureStage = "account_currency";
+      const currency = string(account.currency);
+      if (currency !== "USD" || currency !== evidence.currency) {
+        refuse("alpaca_safety_facts_inconsistent");
+      }
+      failureStage = "account_values";
+      const equity = numeric(account.equity),
+        cash = numeric(account.cash);
+      const longValue = numeric(account.long_market_value),
+        shortValue = numeric(account.short_market_value);
+      let gross = 0,
+        quantity = 0;
+      const seen = new Set<string>();
+      const quantities = new Map<string, number>();
+      const accountPositions: { instrument: string; quantity: number; marketValue: number }[] = [];
+      for (const value of positions) {
+        failureStage = "position_values";
+        const position = record(value);
+        const rawSymbol = string(position.symbol);
+        const symbol =
+          position.asset_class === "crypto" && /^[A-Z0-9]+USD$/.test(rawSymbol)
+            ? `${rawSymbol.slice(0, -3)}/USD`
+            : rawSymbol;
+        const qty = numeric(position.qty),
+          marketValue = numeric(position.market_value);
+        if (
+          seen.has(symbol) ||
+          position.side !== "long" ||
+          !["us_equity", "crypto"].includes(string(position.asset_class)) ||
+          qty <= 0 ||
+          marketValue < 0
+        ) {
+          refuse("alpaca_safety_facts_inconsistent");
+        }
+        seen.add(symbol);
+        quantities.set(symbol, qty);
+        accountPositions.push({ instrument: symbol, quantity: qty, marketValue });
+        gross += marketValue;
+        if (symbol === options.instrument) {
+          quantity = qty;
+        }
+      }
+      failureStage = "account_arithmetic";
+      // Endpoint snapshots are independent. The original cent-scale tolerance applies
+      // to each read; a bounded coherent-skew tolerance is considered only after a
+      // stable second snapshot proves cash and holdings stayed fixed.
+      const accountGross = Math.max(gross, longValue);
+      const grossDriftTolerance = Math.min(
+        MAX_GROSS_VALUATION_DRIFT_USD,
+        Math.max(0.01, accountGross * GROSS_VALUATION_DRIFT_RATE),
+      );
+      const coherentDriftTolerance = Math.min(
+        MAX_COHERENT_GROSS_SKEW_USD,
+        Math.max(0.01, accountGross * COHERENT_GROSS_SKEW_RATE),
+      );
+      const cashEquityResidual = cash + longValue - equity;
+      const failedConditions: AlpacaSafetyAccountArithmeticDiagnostic["failedConditions"] = [];
+      if (equity <= 0) {
+        failedConditions.push("equity_non_positive");
+      }
+      if (cash < 0) {
+        failedConditions.push("negative_cash");
+      }
+      if (shortValue !== 0) {
+        failedConditions.push("nonzero_short_value");
+      }
+      if (accountGross > equity) {
+        failedConditions.push("gross_above_equity");
+      }
+      if (Math.abs(gross - longValue) > grossDriftTolerance) {
+        failedConditions.push("gross_valuation_drift");
+      }
+      if (Math.abs(cashEquityResidual) > 0.01) {
+        failedConditions.push("cash_equity_mismatch");
+      }
+      if (!evidence.trackNewHigh && evidence.peakEquity < equity) {
+        failedConditions.push("untracked_equity_high");
+      }
+      return {
+        currency,
+        equity,
+        cash,
+        longValue,
+        shortValue,
+        gross,
+        quantity,
+        quantities,
+        accountPositions,
+        accountGross,
+        grossDriftTolerance,
+        coherentDriftTolerance,
+        cashEquityResidual,
+        failedConditions,
+      };
+    };
+    let snapshot = inspectAccountPositionSnapshot();
+    let conservativeAccountGross = snapshot.accountGross;
+    if (
+      snapshot.failedConditions.length === 1 &&
+      snapshot.failedConditions[0] === "gross_valuation_drift"
+    ) {
+      const firstSnapshot = snapshot;
+      ({ account, positions } = await readAccountPositionSnapshot());
+      let retrySnapshot = inspectAccountPositionSnapshot();
+      conservativeAccountGross = Math.max(firstSnapshot.accountGross, retrySnapshot.accountGross);
+      const firstHasOnlyDrift =
+        firstSnapshot.failedConditions.length === 1 &&
+        firstSnapshot.failedConditions[0] === "gross_valuation_drift";
+      const retryHasOnlyDrift =
+        retrySnapshot.failedConditions.length === 1 &&
+        retrySnapshot.failedConditions[0] === "gross_valuation_drift";
+      if (firstHasOnlyDrift && retryHasOnlyDrift) {
+        const firstGrossDrift = Math.abs(firstSnapshot.gross - firstSnapshot.longValue);
+        const retryGrossDrift = Math.abs(retrySnapshot.gross - retrySnapshot.longValue);
+        const coherentPair =
+          sameCashToCent(firstSnapshot.cash, retrySnapshot.cash) &&
+          samePositionQuantities(firstSnapshot.quantities, retrySnapshot.quantities);
+        if (coherentPair) {
+          retrySnapshot = {
+            ...retrySnapshot,
+            grossDriftTolerance: retrySnapshot.coherentDriftTolerance,
+          };
+          if (
+            firstGrossDrift <= firstSnapshot.coherentDriftTolerance &&
+            retryGrossDrift <= retrySnapshot.coherentDriftTolerance
+          ) {
+            retrySnapshot = {
+              ...retrySnapshot,
+              failedConditions: retrySnapshot.failedConditions.filter(
+                (condition) => condition !== "gross_valuation_drift",
+              ),
+            };
+          }
+        }
+      }
+      snapshot = retrySnapshot;
+      if (
+        conservativeAccountGross > snapshot.equity &&
+        !snapshot.failedConditions.includes("gross_above_equity")
+      ) {
+        snapshot = {
+          ...snapshot,
+          failedConditions: [...snapshot.failedConditions, "gross_above_equity"],
+        };
+      }
+    }
+    const { currency, equity, cash, longValue, shortValue, gross, quantity, quantities } = snapshot;
+    if (snapshot.failedConditions.length > 0) {
+      if (options.diagnostics) {
+        const finite = (value: number): number | null => (Number.isFinite(value) ? value : null);
+        accountArithmetic = {
+          failedConditions: snapshot.failedConditions,
+          values: {
+            equity,
+            cash,
+            shortMarketValue: shortValue,
+            positionGross: finite(snapshot.gross),
+            longMarketValue: longValue,
+            accountGross: finite(conservativeAccountGross),
+            grossDrift: finite(Math.abs(gross - longValue)),
+            grossDriftTolerance: snapshot.grossDriftTolerance,
+            cashEquityResidual: finite(snapshot.cashEquityResidual),
+            cashEquityTolerance: 0.01,
+            controllerPeakEquity: evidence.peakEquity,
+          },
+          trackNewHigh: evidence.trackNewHigh === true,
+        };
+      }
+      refuse("alpaca_safety_facts_inconsistent");
+    }
     failureStage = "open_order_snapshot";
     const orders = array(await get(`${PAPER}/v2/orders?status=open&limit=500&nested=true`));
     failureStage = "instrument_asset_snapshot";
     const asset = record(await get(`${PAPER}/v2/assets/${encodeURIComponent(options.instrument)}`));
-    failureStage = "account_status";
-    if (
-      account.id !== options.accountId ||
-      account.status !== "ACTIVE" ||
-      account.trading_blocked !== false ||
-      account.account_blocked !== false ||
-      account.trade_suspended_by_user !== false
-    ) {
-      refuse("alpaca_safety_facts_inconsistent");
-    }
     failureStage = "open_order_limit";
     if (orders.length >= 500) {
       refuse("alpaca_safety_facts_inconsistent");
@@ -448,114 +675,13 @@ export async function readAlpacaPaperSafetyFacts(
     if (crypto !== options.instrument.includes("/")) {
       refuse("alpaca_safety_facts_inconsistent");
     }
-    failureStage = "account_currency";
-    const currency = string(account.currency);
-    if (
-      currency !== "USD" ||
-      currency !== evidence.currency ||
-      (crypto && !options.instrument.endsWith("/USD"))
-    ) {
+    if (crypto && !options.instrument.endsWith("/USD")) {
+      failureStage = "instrument_asset_identity";
       refuse("alpaca_safety_facts_inconsistent");
-    }
-    failureStage = "account_values";
-    const equity = numeric(account.equity),
-      cash = numeric(account.cash);
-    const longValue = numeric(account.long_market_value),
-      shortValue = numeric(account.short_market_value);
-    let gross = 0,
-      quantity = 0;
-    const seen = new Set<string>();
-    const quantities = new Map<string, number>();
-    const accountPositions: { instrument: string; quantity: number; marketValue: number }[] = [];
-    for (const value of positions) {
-      failureStage = "position_values";
-      const position = record(value);
-      const rawSymbol = string(position.symbol);
-      const symbol =
-        position.asset_class === "crypto" && /^[A-Z0-9]+USD$/.test(rawSymbol)
-          ? `${rawSymbol.slice(0, -3)}/USD`
-          : rawSymbol;
-      const qty = numeric(position.qty),
-        marketValue = numeric(position.market_value);
-      if (
-        seen.has(symbol) ||
-        position.side !== "long" ||
-        !["us_equity", "crypto"].includes(string(position.asset_class)) ||
-        qty <= 0 ||
-        marketValue < 0
-      ) {
-        refuse("alpaca_safety_facts_inconsistent");
-      }
-      seen.add(symbol);
-      quantities.set(symbol, qty);
-      accountPositions.push({ instrument: symbol, quantity: qty, marketValue });
-      gross += marketValue;
-      if (symbol === options.instrument) {
-        quantity = qty;
-      }
     }
     failureStage = "protective_order_classification";
     const protection = classifyFinanceProtectionOrders(orders.map(record), quantities);
     if (protection.unresolved.length) {
-      refuse("alpaca_safety_facts_inconsistent");
-    }
-    // Margin capability/buying_power is deliberately unused. These facts prove no current borrowing.
-    failureStage = "account_arithmetic";
-    // Account and position valuations come from separate Alpaca snapshots. Accept only
-    // cents-scale drift, bounded at $0.05, and use the higher gross for exposure caps.
-    const accountGross = Math.max(gross, longValue);
-    const grossDriftTolerance = Math.min(0.05, Math.max(0.01, accountGross * 0.00005));
-    if (
-      equity <= 0 ||
-      cash < 0 ||
-      shortValue !== 0 ||
-      accountGross > equity ||
-      Math.abs(gross - longValue) > grossDriftTolerance ||
-      Math.abs(cash + longValue - equity) > 0.01 ||
-      (!evidence.trackNewHigh && evidence.peakEquity < equity)
-    ) {
-      if (options.diagnostics) {
-        const finite = (value: number): number | null => (Number.isFinite(value) ? value : null);
-        const failedConditions: AlpacaSafetyAccountArithmeticDiagnostic["failedConditions"] = [];
-        if (equity <= 0) {
-          failedConditions.push("equity_non_positive");
-        }
-        if (cash < 0) {
-          failedConditions.push("negative_cash");
-        }
-        if (shortValue !== 0) {
-          failedConditions.push("nonzero_short_value");
-        }
-        if (accountGross > equity) {
-          failedConditions.push("gross_above_equity");
-        }
-        if (Math.abs(gross - longValue) > grossDriftTolerance) {
-          failedConditions.push("gross_valuation_drift");
-        }
-        if (Math.abs(cash + longValue - equity) > 0.01) {
-          failedConditions.push("cash_equity_mismatch");
-        }
-        if (!evidence.trackNewHigh && evidence.peakEquity < equity) {
-          failedConditions.push("untracked_equity_high");
-        }
-        accountArithmetic = {
-          failedConditions,
-          values: {
-            equity,
-            cash,
-            shortMarketValue: shortValue,
-            positionGross: finite(gross),
-            longMarketValue: longValue,
-            accountGross: finite(accountGross),
-            grossDrift: finite(Math.abs(gross - longValue)),
-            grossDriftTolerance,
-            cashEquityResidual: finite(cash + longValue - equity),
-            cashEquityTolerance: 0.01,
-            controllerPeakEquity: evidence.peakEquity,
-          },
-          trackNewHigh: evidence.trackNewHigh === true,
-        };
-      }
       refuse("alpaca_safety_facts_inconsistent");
     }
     let quote: Record<string, unknown>;
@@ -622,7 +748,7 @@ export async function readAlpacaPaperSafetyFacts(
       boundQuote,
       bidPrice: bid,
       askPrice: ask,
-      positions: accountPositions,
+      positions: snapshot.accountPositions,
       facts: {
         accountId: options.accountId,
         adapterId: "alpaca-venue",
@@ -660,7 +786,7 @@ export async function readAlpacaPaperSafetyFacts(
           availableCash: cash,
           peakEquity: Math.max(evidence.peakEquity, equity),
           currency,
-          grossExposure: accountGross,
+          grossExposure: conservativeAccountGross,
         },
         quote: {
           source: `${DATA};feed=${crypto ? "crypto-us" : options.stockFeed};latest-quote-${options.side === "buy" ? "ask" : "bid"}`,

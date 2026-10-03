@@ -124,6 +124,114 @@ it("accepts bounded cross-snapshot valuation drift and budgets against the highe
     expect(result.facts.account.grossExposure).toBe(800.27);
   }
 });
+it("accepts the observed bounded skew only after a stable second account-position pair", async () => {
+  const f = fixture();
+  f.account.equity = "10000";
+  f.account.cash = "340";
+  f.account.long_market_value = "9660";
+  f.options = {
+    ...f.options,
+    evidence: { ...f.options.evidence, peakEquity: 10000 },
+  };
+  f.positions.splice(
+    0,
+    1,
+    {
+      symbol: "BTCUSD",
+      side: "long",
+      qty: "0.000399",
+      market_value: "33.3555",
+      asset_class: "crypto",
+    },
+    {
+      symbol: "SPY",
+      side: "long",
+      qty: "1",
+      market_value: "9626.0986",
+      asset_class: "us_equity",
+    },
+  );
+
+  const result = await readAlpacaPaperSafetyFacts(f.options);
+  expect(result.ok).toBe(true);
+  if (result.ok) {
+    expect(result.facts.account.grossExposure).toBe(9660);
+    expect(f.read.mock.calls.filter(([url]) => url.includes("/account"))).toHaveLength(2);
+    expect(f.read.mock.calls.filter(([url]) => url.includes("/positions"))).toHaveLength(2);
+  }
+});
+it("retries one valuation-only skew and keeps the maximum sampled gross", async () => {
+  const f = fixture();
+  f.orders.push({
+    id: "latest-protective-stop",
+    symbol: "SPY",
+    qty: "1",
+    filled_qty: "0",
+    stop_price: "90",
+    type: "stop",
+    side: "sell",
+    status: "new",
+    time_in_force: "gtc",
+  });
+  const firstAccount = { ...f.account, cash: "199.7", long_market_value: "800.3" };
+  const secondAccount = { ...f.account, cash: "199.75", long_market_value: "800.25" };
+  const firstPositions = [
+    {
+      symbol: "BTCUSD",
+      side: "long",
+      qty: "0.000399",
+      market_value: "33.3555",
+      asset_class: "crypto",
+    },
+    {
+      symbol: "SPY",
+      side: "long",
+      qty: "1",
+      market_value: "766.89",
+      asset_class: "us_equity",
+    },
+  ];
+  const secondPositions = [firstPositions[0], { ...firstPositions[1], market_value: "766.8945" }];
+  let accountReads = 0;
+  let positionReads = 0;
+  let orderReads = 0;
+  f.read.mockImplementation(async (url) => {
+    const body = url.includes("/account")
+      ? [firstAccount, secondAccount][Math.min(accountReads++, 1)]
+      : url.includes("/positions")
+        ? [firstPositions, secondPositions][Math.min(positionReads++, 1)]
+        : url.includes("/orders?")
+          ? (() => {
+              expect(accountReads).toBe(2);
+              expect(positionReads).toBe(2);
+              orderReads += 1;
+              return f.orders;
+            })()
+          : url.includes("/assets/")
+            ? {
+                symbol: "SPY",
+                class: "us_equity",
+                status: "active",
+                tradable: true,
+                marginable: true,
+              }
+            : { quote: f.quote };
+    return { status: 200, body: JSON.stringify(body) };
+  });
+
+  const result = await readAlpacaPaperSafetyFacts(f.options);
+  expect(result.ok).toBe(true);
+  expect(accountReads).toBe(2);
+  expect(positionReads).toBe(2);
+  expect(orderReads).toBe(1);
+  if (result.ok) {
+    expect(result.facts.account.grossExposure).toBe(800.3);
+    expect(result.facts.reservedSellQuantity).toBe(1);
+    expect(
+      result.positions.reduce((total, position) => total + position.marketValue, 0),
+    ).toBeCloseTo(800.25, 8);
+  }
+});
 it("refuses account valuation drift above the bounded tolerance", async () => {
   const f = fixture();
   f.options = { ...f.options, diagnostics: true };
@@ -161,12 +269,110 @@ it("refuses account valuation drift above the bounded tolerance", async () => {
         longMarketValue: 800.3,
         accountGross: 800.3,
         grossDrift: expect.closeTo(0.0545, 8),
-        grossDriftTolerance: expect.closeTo(0.040015, 8),
+        grossDriftTolerance: expect.closeTo(0.048018, 8),
         cashEquityResidual: 0,
         cashEquityTolerance: 0.01,
         controllerPeakEquity: 1100,
       },
       trackNewHigh: false,
+    },
+  });
+  expect(f.read.mock.calls.filter(([url]) => url.includes("/account"))).toHaveLength(2);
+  expect(f.read.mock.calls.filter(([url]) => url.includes("/positions"))).toHaveLength(2);
+});
+it("refuses persistent soft-bounded skew when position quantity changes", async () => {
+  const f = fixture();
+  f.account.cash = "199.7";
+  f.account.long_market_value = "800.3";
+  const firstPositions = [
+    {
+      symbol: "BTCUSD",
+      side: "long",
+      qty: "0.000399",
+      market_value: "33.3555",
+      asset_class: "crypto",
+    },
+    {
+      symbol: "SPY",
+      side: "long",
+      qty: "1",
+      market_value: "766.8995",
+      asset_class: "us_equity",
+    },
+  ];
+  const changedPositions = [firstPositions[0], { ...firstPositions[1], qty: "1.001" }];
+  let positionReads = 0;
+  f.read.mockImplementation(async (url) => {
+    const body = url.includes("/account")
+      ? f.account
+      : url.includes("/positions")
+        ? [firstPositions, changedPositions][Math.min(positionReads++, 1)]
+        : url.includes("/orders?")
+          ? f.orders
+          : url.includes("/assets/")
+            ? {
+                symbol: "SPY",
+                class: "us_equity",
+                status: "active",
+                tradable: true,
+                marginable: true,
+              }
+            : { quote: f.quote };
+    return { status: 200, body: JSON.stringify(body) };
+  });
+
+  const result = await readAlpacaPaperSafetyFacts({ ...f.options, diagnostics: true });
+  expect(result).toMatchObject({
+    ok: false,
+    reason: "alpaca_safety_facts_inconsistent",
+    diagnostic: "account_arithmetic",
+    accountArithmetic: {
+      failedConditions: ["gross_valuation_drift"],
+      values: { grossDriftTolerance: expect.closeTo(0.040015, 8) },
+    },
+  });
+  expect(positionReads).toBe(2);
+});
+it("keeps the absolute gross-drift ceiling at sixty cents", async () => {
+  const f = fixture();
+  f.account.equity = "30000";
+  f.account.cash = "10000";
+  f.account.long_market_value = "20000";
+  f.options = {
+    ...f.options,
+    diagnostics: true,
+    evidence: { ...f.options.evidence, peakEquity: 30000 },
+  };
+  f.positions.splice(
+    0,
+    1,
+    {
+      symbol: "BTCUSD",
+      side: "long",
+      qty: "0.000399",
+      market_value: "33.3555",
+      asset_class: "crypto",
+    },
+    {
+      symbol: "SPY",
+      side: "long",
+      qty: "1",
+      market_value: "19965.9945",
+      asset_class: "us_equity",
+    },
+  );
+
+  const result = await readAlpacaPaperSafetyFacts(f.options);
+  expect(result).toMatchObject({
+    ok: false,
+    reason: "alpaca_safety_facts_inconsistent",
+    diagnostic: "account_arithmetic",
+    accountArithmetic: {
+      failedConditions: ["gross_valuation_drift"],
+      values: {
+        grossDrift: expect.closeTo(0.65, 8),
+        grossDriftTolerance: 0.6,
+      },
     },
   });
 });
