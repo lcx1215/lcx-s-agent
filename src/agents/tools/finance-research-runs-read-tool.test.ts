@@ -32,6 +32,7 @@ type Payload = {
   reason?: string;
   totalRuns?: number;
   runs?: Array<{ id: string; files: number; revision?: string }>;
+  files?: string[];
   hits?: Array<{ file: string; stage?: string; snippet: string }>;
 };
 
@@ -60,6 +61,28 @@ it("lists stored runs with their manifest revision", async () => {
   expect(payload.runs?.[0]?.id).toBe("2026-09-20/morning");
   expect(payload.runs?.[0]?.revision).toBe("test_v1");
   expect(payload.runs?.[0]?.files).toBe(2);
+});
+
+it("returns a readable root run ID and lets a caller consume its file index", async () => {
+  const root = await workspace();
+  try {
+    await seedRun(root);
+    const saved = { status: "captured", source: "root-receipt" };
+    await fs.writeFile(
+      path.join(root, "state", "finance-research-runs", "saved-result.json"),
+      JSON.stringify(saved),
+    );
+    const listing = await call({ workspaceDir: root, action: "list" });
+    expect(listing.runs?.map((run) => run.id)).toEqual([".", "2026-09-20/morning"]);
+    const run = listing.runs?.[0]?.id;
+    const index = await call({ workspaceDir: root, action: "read", run });
+    expect(index).toMatchObject({ ok: true, available: true, files: ["saved-result.json"] });
+    expect(
+      await call({ workspaceDir: root, action: "read", run, file: index.files?.[0] }),
+    ).toMatchObject({ ok: true, available: true, run: ".", json: saved });
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });
 
 it("searches stored run text and reports the containing run and file", async () => {

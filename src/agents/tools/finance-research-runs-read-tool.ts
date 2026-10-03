@@ -108,7 +108,7 @@ async function collectRuns(dir: string): Promise<string[]> {
     }
     const jsonHere = entries.some((entry) => entry.isFile() && entry.name.endsWith(".json"));
     if (jsonHere) {
-      runs.push(path.relative(dir, current));
+      runs.push(path.relative(dir, current) || ".");
     }
     if (depth <= 0) {
       return;
