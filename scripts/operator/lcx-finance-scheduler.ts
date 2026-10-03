@@ -14,7 +14,7 @@
  * gets one delayed retry inside the day window; unknown outcomes require reconciliation.
  */
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -62,6 +62,7 @@ import {
   writeFinanceNightReviewEvidence,
   type FinanceNightSettlementSummary,
 } from "../../src/agents/finance-night-review-context.js";
+import { buildFinanceHistoricalResearchFeedback } from "../../src/agents/finance-research-evidence.js";
 import {
   financeResearchPortfolioAbstentionSchema,
   financeResearchPortfolioContextSchema,
@@ -70,6 +71,7 @@ import {
   readFinanceResearchEquityUniverseSnapshot,
   type FinanceResearchEquityUniverseSnapshot,
 } from "../../src/agents/finance-research-runner.js";
+import { readFinanceSchedulerDatabaseRuns } from "../../src/agents/finance-scheduler-ledger.js";
 import {
   acquireFinanceSchedulerLock,
   FINANCE_SCHEDULER_LOCK,
@@ -110,6 +112,7 @@ import { buildDetachedServeEnv } from "../../src/cli/serve-detach.js";
 import { loadConfig } from "../../src/config/config.js";
 import { applyConfigEnvVars } from "../../src/config/env-vars.js";
 import { killProcessTree } from "../../src/process/kill-tree.js";
+import { DEFAULT_WORKSPACE_DIR } from "./lcx-local-paths.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const CYCLE_SCRIPT = path.join(REPO_ROOT, "scripts", "operator", "lcx-finance-daily-cycle.ts");
@@ -576,6 +579,7 @@ async function runNightResearchReview(params: {
 
 type DayResearchPreflightResult = FinanceCycleProcessResult & {
   controllerEvidenceStatus?: "invalid_scope" | "invalid_config" | "read_failed";
+  feedback?: Record<string, unknown>;
 };
 
 function failedDayResearchPreflight(
@@ -592,6 +596,122 @@ function failedDayResearchPreflight(
     outputTruncated: false,
     controllerEvidenceStatus,
   };
+}
+
+/** Consume only the indexed latest day diagnostic; malformed optional input never replays old runs. */
+export function readFinanceScheduledResearchFeedback(params: {
+  directory: string;
+  asOf: string;
+  ask: string;
+  portfolioContext: unknown;
+  signal: AbortSignal;
+}) {
+  params.signal.throwIfAborted();
+  const omitted = (reason: string) => ({
+    status: "omitted",
+    reason,
+    boundary: "historical_research_diagnostic_only_no_authority",
+  });
+  const hash = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
+  try {
+    const day = readFinanceSchedulerDatabaseRuns(params.directory)?.day;
+    if (!isObjectRecord(day)) {
+      return omitted("no_prior_day_receipt");
+    }
+    const refresh = isObjectRecord(day.researchPlanRefresh) ? day.researchPlanRefresh : {};
+    const processResult = isObjectRecord(refresh.processResult) ? refresh.processResult : {};
+    if (
+      typeof processResult.stdout !== "string" ||
+      Buffer.byteLength(processResult.stdout, "utf8") > 2_097_152
+    ) {
+      return omitted("prior_summary_missing_or_oversize");
+    }
+    const summary: unknown = JSON.parse(processResult.stdout);
+    const written =
+      isObjectRecord(summary) && isObjectRecord(summary.written) ? summary.written : {};
+    if (
+      typeof written.datedPath !== "string" ||
+      typeof written.sha256 !== "string" ||
+      !/^[a-f0-9]{64}$/u.test(written.sha256)
+    ) {
+      return omitted("prior_receipt_missing_hash");
+    }
+    const hostRoot = fs.realpathSync(
+      path.join(
+        process.env.OPENCLAW_WORKSPACE_DIR?.trim() || DEFAULT_WORKSPACE_DIR,
+        "state",
+        "finance-research-runs",
+      ),
+    );
+    const filename = fs.realpathSync(written.datedPath);
+    const relative = path.relative(hostRoot, filename);
+    if (
+      !relative ||
+      relative.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relative) ||
+      !/^\d{4}-\d{2}-\d{2}[/\\]\d{4}-\d{2}-\d{2}T[\d-]+Z__finance-research-run\.json$/u.test(
+        relative,
+      )
+    ) {
+      return omitted("prior_receipt_outside_host_archive");
+    }
+    let bytes: Buffer;
+    const descriptor = fs.openSync(filename, "r");
+    try {
+      const stat = fs.fstatSync(descriptor);
+      if (!stat.isFile() || stat.size > 8_388_608) {
+        return omitted("prior_receipt_oversize_or_not_file");
+      }
+      const buffer = Buffer.alloc(8_388_609);
+      let length = 0;
+      while (length < buffer.length) {
+        params.signal.throwIfAborted();
+        const count = fs.readSync(descriptor, buffer, length, buffer.length - length, null);
+        if (count === 0) {
+          break;
+        }
+        length += count;
+      }
+      bytes = buffer.subarray(0, length);
+    } finally {
+      fs.closeSync(descriptor);
+    }
+    if (bytes.length > 8_388_608 || hash(bytes) !== written.sha256) {
+      return omitted("prior_receipt_hash_mismatch");
+    }
+    const receipt: unknown = JSON.parse(bytes.toString("utf8"));
+    if (!isObjectRecord(receipt) || !isObjectRecord(receipt.plan)) {
+      return omitted("prior_receipt_invalid_plan");
+    }
+    const plan = receipt.plan;
+    const sourceAt = typeof plan.asOf === "string" ? Date.parse(plan.asOf) : NaN;
+    const currentAt = Date.parse(params.asOf);
+    if (
+      plan.asOf !== day.firedAt ||
+      !Number.isFinite(sourceAt) ||
+      !Number.isFinite(currentAt) ||
+      sourceAt > currentAt ||
+      currentAt - sourceAt > 96 * 60 * 60_000
+    ) {
+      return omitted("prior_receipt_time_mismatch_or_stale");
+    }
+    if (
+      typeof plan.ask !== "string" ||
+      hash(plan.ask.trim()) !== hash(params.ask.trim()) ||
+      caseflowFingerprint(plan.portfolioContext) !== caseflowFingerprint(params.portfolioContext)
+    ) {
+      return omitted("prior_receipt_task_or_portfolio_scope_mismatch");
+    }
+    params.signal.throwIfAborted();
+    return buildFinanceHistoricalResearchFeedback({
+      receipt,
+      sourceRef: relative,
+      sourceSha256: written.sha256,
+    });
+  } catch {
+    params.signal.throwIfAborted();
+    return omitted("prior_receipt_unavailable_or_invalid");
+  }
 }
 
 async function runDayResearchPreflight(params: {
@@ -619,6 +739,7 @@ async function runDayResearchPreflight(params: {
     params.context.root.directory,
     `day-research-portfolio-context-${params.attempt.etDate}-${params.attempt.runId}.json`,
   );
+  let historicalFeedback: Record<string, unknown> | undefined;
   try {
     const accountEvidence = await buildFinanceBrokerAccountResearchEvidence({
       directory: params.context.root.directory,
@@ -626,7 +747,25 @@ async function runDayResearchPreflight(params: {
       accountId: portfolioContext.accountId,
       venue: portfolioContext.venue === "alpaca" ? "alpaca:paper" : "paper",
     });
-    await writeFinanceNightReviewEvidence(evidencePath, [accountEvidence]);
+    historicalFeedback = readFinanceScheduledResearchFeedback({
+      directory: params.context.root.directory,
+      asOf: params.attempt.firedAt,
+      ask: params.context.options.researchPlan!.ask,
+      portfolioContext,
+      signal: params.context.signal,
+    });
+    const feedbackEvidence = {
+      id: `finance-research-feedback:${params.attempt.runId}`,
+      source: "finance-historical-research-feedback",
+      timestamp: params.attempt.firedAt,
+      text: JSON.stringify(historicalFeedback),
+    };
+    await writeFinanceNightReviewEvidence(
+      evidencePath,
+      historicalFeedback.status === "present"
+        ? [accountEvidence, feedbackEvidence]
+        : [accountEvidence],
+    );
     // Bind the child to the same parsed account scope used for its evidence.
     // The operator's source file may change while evidence is being assembled.
     fs.writeFileSync(frozenContextPath, `${JSON.stringify(portfolioContext)}\n`, {
@@ -634,6 +773,7 @@ async function runDayResearchPreflight(params: {
       flag: "wx",
     });
   } catch (error) {
+    params.context.signal.throwIfAborted();
     return failedDayResearchPreflight("read_failed", error);
   }
   let researchEnv: NodeJS.ProcessEnv | undefined;
@@ -643,7 +783,7 @@ async function runDayResearchPreflight(params: {
     return failedDayResearchPreflight("invalid_config", error);
   }
   try {
-    return await runScheduledCycleProcess(params.context, "research_preflight", {
+    const result = await runScheduledCycleProcess(params.context, "research_preflight", {
       argv: [
         "--import",
         "tsx",
@@ -676,6 +816,7 @@ async function runDayResearchPreflight(params: {
       timeoutMs: params.context.options.timeoutMs,
       signal: params.context.signal,
     });
+    return { ...result, feedback: historicalFeedback };
   } catch (error) {
     if (error instanceof SchedulerProgressBeforeDispatchError) {
       return failedDayResearchPreflight("read_failed", error);
@@ -1650,6 +1791,7 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
               ? { controllerEvidenceStatus: research.controllerEvidenceStatus }
               : {}),
             ...(researchAbstention ? { abstention: researchAbstention } : {}),
+            ...(research.feedback ? { feedback: research.feedback } : {}),
             processResult: research,
           },
         }

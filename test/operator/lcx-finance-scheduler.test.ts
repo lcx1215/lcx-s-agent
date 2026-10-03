@@ -1,9 +1,11 @@
+import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
+  readFinanceScheduledResearchFeedback,
   reconcileResidentAlpacaAccount,
   financeResearchProcessEnv,
   financeResearchPreflightRetryDue,
@@ -24,6 +26,7 @@ import {
   FINANCE_INTRADAY_OPENING_RANGE_RULE_V3,
   FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V3,
 } from "../../src/agents/finance-intraday-paper.js";
+import { commitFinanceSchedulerDatabaseState } from "../../src/agents/finance-scheduler-ledger.js";
 import {
   FINANCE_SCHEDULER_LOCK,
   FINANCE_SCHEDULER_PID,
@@ -3748,4 +3751,148 @@ it.each([
   expect(financeResearchPreflightRetryDue(state, new Date("2026-09-29T19:45:00.000Z"))).toBe(
     variant !== "valid",
   );
+});
+
+it("consumes the indexed latest day archive under the writer host root, including a legitimate 5MB receipt", () => {
+  const workspace = path.join(directory, "workspace");
+  vi.stubEnv("OPENCLAW_WORKSPACE_DIR", workspace);
+  const archive = path.join(workspace, "state", "finance-research-runs", "2026-10-03");
+  fs.mkdirSync(archive, { recursive: true });
+  const filename = path.join(archive, "2026-10-03T01-00-00-000Z__finance-research-run.json");
+  const scope = {
+    accountId: "account-a",
+    venue: "alpaca",
+    activeStrategyIds: ["trend"],
+    requiredInstruments: ["SPY"],
+  };
+  const sourceAt = "2026-10-03T01:00:00.000Z";
+  const receipt = {
+    plan: { asOf: sourceAt, ask: "profit objective", portfolioContext: scope },
+    moduleExecution: { nodes: [], replanFeedback: { status: "completed", nextAction: "none" } },
+    gates: [{ id: "quality", passed: false, reason: "fees_unknown" }],
+    padding: "x".repeat(5_000_000),
+  };
+  const bytes = JSON.stringify(receipt) + "\n";
+  fs.writeFileSync(filename, bytes);
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const day = {
+    runId: "day-feedback",
+    mode: "day",
+    firedAt: sourceAt,
+    researchPlanRefresh: {
+      processResult: { stdout: JSON.stringify({ written: { datedPath: filename, sha256 } }) },
+    },
+  };
+  commitFinanceSchedulerDatabaseState(directory, "{}", [
+    day,
+    { runId: "night-later", mode: "night", firedAt: "2026-10-03T22:00:00Z" },
+  ]);
+  const request = {
+    directory,
+    asOf: "2026-10-04T01:00:00Z",
+    ask: "profit objective",
+    portfolioContext: scope,
+    signal: new AbortController().signal,
+  };
+  expect(readFinanceScheduledResearchFeedback(request)).toMatchObject({
+    status: "present",
+    replanStatus: "completed",
+    nextAction: "none",
+    failedGates: [{ id: "quality", reason: "fees_unknown" }],
+    sourceSha256: sha256,
+  });
+  expect(
+    readFinanceScheduledResearchFeedback({
+      ...request,
+      portfolioContext: { ...scope, accountId: "account-b" },
+    }),
+  ).toMatchObject({ status: "omitted", reason: "prior_receipt_task_or_portfolio_scope_mismatch" });
+  expect(
+    readFinanceScheduledResearchFeedback({ ...request, asOf: "2026-10-10T00:00:00Z" }),
+  ).toMatchObject({ status: "omitted", reason: "prior_receipt_time_mismatch_or_stale" });
+  fs.appendFileSync(filename, " ");
+  expect(readFinanceScheduledResearchFeedback(request)).toMatchObject({
+    status: "omitted",
+    reason: "prior_receipt_hash_mismatch",
+  });
+  const abort = new AbortController();
+  abort.abort();
+  expect(() =>
+    readFinanceScheduledResearchFeedback({ ...request, signal: abort.signal }),
+  ).toThrow();
+});
+
+it("passes validated prior-day feedback through the actual scheduled controller evidence file", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-10-05T19:30:00Z"));
+  const workspace = path.join(directory, "workspace");
+  vi.stubEnv("OPENCLAW_WORKSPACE_DIR", workspace);
+  const context = path.join(directory, "portfolio-context.json");
+  writePortfolioContext(context);
+  const scope = JSON.parse(fs.readFileSync(context, "utf8"));
+  const ask = "review active strategy budgets";
+  const sourceAt = "2026-10-02T19:30:00Z";
+  const archive = path.join(workspace, "state", "finance-research-runs", "2026-10-02");
+  fs.mkdirSync(archive, { recursive: true });
+  const filename = path.join(archive, "2026-10-02T19-30-00-000Z__finance-research-run.json");
+  const bytes =
+    JSON.stringify({
+      plan: { ask, asOf: sourceAt, portfolioContext: scope },
+      moduleExecution: { nodes: [], replanFeedback: { status: "completed", nextAction: "none" } },
+      gates: [{ id: "quality", passed: false, reason: "fees_unknown" }],
+    }) + "\n";
+  fs.writeFileSync(filename, bytes);
+  const sourceSha256 = createHash("sha256").update(bytes).digest("hex");
+  const day = {
+    runId: "prior-day",
+    mode: "day",
+    firedAt: sourceAt,
+    researchPlanRefresh: {
+      processResult: {
+        stdout: JSON.stringify({ written: { datedPath: filename, sha256: sourceSha256 } }),
+      },
+    },
+  };
+  commitFinanceSchedulerDatabaseState(
+    directory,
+    JSON.stringify(readFinanceSchedulerState(directory)),
+    [day],
+  );
+  mocks.runCycle
+    .mockImplementationOnce(async ({ argv }: { argv: string[] }) => {
+      const evidencePath = argv[argv.indexOf("--controller-evidence") + 1];
+      const evidence = JSON.parse(fs.readFileSync(evidencePath, "utf8"));
+      expect(evidence).toHaveLength(2);
+      expect(JSON.parse(evidence[1].text)).toMatchObject({
+        sourceSha256,
+        replanStatus: "completed",
+        failedGates: [{ id: "quality", reason: "fees_unknown" }],
+      });
+      return {
+        ...success,
+        stdout: JSON.stringify(
+          acceptedResearchCandidate(
+            path.join(directory, "research-portfolio-plan-latest.json"),
+            researchAsOfFromArgs(argv),
+          ),
+        ),
+      };
+    })
+    .mockResolvedValueOnce(success);
+  await expect(
+    runFinanceScheduler([
+      "--once",
+      "day",
+      "--dir",
+      directory,
+      "--research-portfolio-context",
+      context,
+      "--research-ask",
+      ask,
+    ]),
+  ).resolves.toBe(0);
+  expect(mocks.runCycle).toHaveBeenCalledTimes(2);
+  expect(readFinanceSchedulerState(directory).lastRun?.researchPlanRefresh).toMatchObject({
+    feedback: { status: "present", sourceSha256 },
+  });
 });

@@ -8,6 +8,7 @@ import type { FinanceMarketCollectionItem } from "./finance-market-collection-re
 import { summarizeFinanceOptionsChain } from "./finance-options-evidence.js";
 import type { FinanceResearchBatchEvidencePacket } from "./finance-research-batch-runner.js";
 import {
+  buildFinanceHistoricalResearchFeedback,
   buildFinanceMonthlyTrendDerivedEvidence,
   buildFinanceResearchModelEvidence,
   summarizeFinancePriceHistory,
@@ -1266,4 +1267,99 @@ describe("finance price arithmetic before model prompting", () => {
     expect(summary.eligibleContracts).toBe(0);
     expect(summary.warnings.join(" ")).toContain("no contract passed liquidity gates");
   });
+});
+
+it("projects quality failure without fabricating a soft-module replan and preserves bounded omissions", () => {
+  const receipt = {
+    plan: { asOf: "2026-10-04T00:00:00Z" },
+    moduleExecution: {
+      nodes: [{ nodeId: "math", moduleId: "quant", status: "succeeded" }],
+      replanFeedback: { status: "completed", nextAction: "none", remainingSoftReplans: 1 },
+    },
+    gates: [{ id: "quality", passed: false, reason: "claim:fees_unknown" }],
+    missingEvidence: [],
+  };
+  expect(
+    buildFinanceHistoricalResearchFeedback({
+      receipt,
+      sourceRef: "dated.json",
+      sourceSha256: "a".repeat(64),
+    }),
+  ).toMatchObject({
+    status: "present",
+    replanStatus: "completed",
+    nextAction: "none",
+    failures: [],
+    failedGates: [{ id: "quality", reason: "claim:fees_unknown" }],
+  });
+  const result = buildFinanceHistoricalResearchFeedback({
+    receipt: {
+      ...receipt,
+      moduleExecution: {
+        ...receipt.moduleExecution,
+        nodes: Array.from({ length: 20 }, (_, i) => ({
+          nodeId: `n${i}`,
+          moduleId: "quant",
+          status: "failed",
+          missingEvidence: Array.from({ length: 10 }, () => "中".repeat(120)),
+        })),
+      },
+    },
+    sourceRef: "dated.json",
+    sourceSha256: "a".repeat(64),
+  });
+  expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThanOrEqual(2048);
+  expect(Number(result.omittedFailures)).toBeGreaterThan(0);
+  expect(
+    buildFinanceHistoricalResearchFeedback({
+      receipt: { ...receipt, gates: [] },
+      sourceRef: "dated.json",
+      sourceSha256: "a".repeat(64),
+    }).status,
+  ).toBe("no_gap");
+});
+
+it("keeps the primary failed node and critical quality reason ahead of generic source gaps under UTF8 pressure", () => {
+  const receipt = {
+    status: "needs_review",
+    plan: { asOf: "2026-10-04T00:00:00Z" },
+    moduleExecution: {
+      nodes: Array.from({ length: 4 }, (_, i) => ({
+        nodeId: `primary${i}`,
+        moduleId: "technical_timing",
+        status: "failed",
+        missingEvidence: Array.from({ length: 4 }, (_, j) => `missing-${j}:` + "中".repeat(30)),
+      })),
+      replanFeedback: {
+        status: "replan_soft",
+        nextAction: "revise_soft_modules",
+        remainingSoftReplans: 1,
+      },
+    },
+    quality: {
+      attempts: [
+        {
+          feedback: [
+            "critical_quality_claim_fees_unknown",
+            ...Array.from({ length: 3 }, () => "中".repeat(120)),
+          ],
+        },
+      ],
+    },
+    gates: [{ id: "quality", passed: false, reason: "claim_fees_unknown" }],
+    missingEvidence: Array.from({ length: 4 }, (_, i) => `generic-${i}:` + "中".repeat(30)),
+  };
+  const result = buildFinanceHistoricalResearchFeedback({
+    receipt,
+    sourceRef: "dated.json",
+    sourceSha256: "a".repeat(64),
+  });
+  expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThanOrEqual(2048);
+  expect(result).toMatchObject({
+    status: "present",
+    failures: expect.arrayContaining([expect.objectContaining({ nodeId: "primary0" })]),
+    qualityFeedback: expect.arrayContaining(["critical_quality_claim_fees_unknown"]),
+    failedGates: [{ id: "quality", reason: "claim_fees_unknown" }],
+  });
+  expect(Number(result.omittedSourceGaps)).toBeGreaterThan(0);
 });

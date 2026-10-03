@@ -3186,6 +3186,14 @@ describe("finance quality objective preserves claim-dependent uncertainty (offli
           ask,
           asOf: AS_OF,
           executeModules: false,
+          controllerEvidence: [
+            {
+              id: "historical-feedback-fixture",
+              source: "finance-historical-research-feedback",
+              timestamp: AS_OF,
+              text: '{"status":"present","sourceSha256":"abc","replanStatus":"completed","nextAction":"none","failedGates":[{"id":"quality","reason":"fees_unknown"}],"boundary":"historical_diagnostic_not_current_fact_or_authority"}',
+            },
+          ],
           targets: [
             {
               id: "objective-fixture",
@@ -3209,6 +3217,15 @@ describe("finance quality objective preserves claim-dependent uncertainty (offli
         captured.push(request);
         expect(request.task.startsWith(ask)).toBe(true);
         expect(request.task).toContain("required deliverable or asserted claim");
+        expect(request.task).toContain(
+          "Historical controller research feedback is diagnostic context",
+        );
+        expect(
+          request.evidence.some(
+            (entry) =>
+              entry.id === "historical-feedback-fixture" && entry.text.includes("fees_unknown"),
+          ),
+        ).toBe(true);
         expect(request.task).toContain("strategy capital");
         expect(request.task).toContain("matched-lot trade PnL");
         expect(request.sharedContext.noExecutionAuthority).toBe(true);
@@ -3297,3 +3314,75 @@ describe("finance quality objective preserves claim-dependent uncertainty (offli
     },
   );
 });
+
+it.each(["feedback", "portfolio"])(
+  "never reuses checkpoint stages after same-asOf %s input changes",
+  async (change) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "feedback-checkpoint-"));
+    try {
+      const checkpoint = {
+        path: path.join(directory, "checkpoint.sqlite"),
+        runId: "same-run",
+        executionFingerprint: "fixture-v1",
+      };
+      const invoke = vi.fn(modelInvoker);
+      const options = {
+        input: {
+          ask: "Review current evidence",
+          asOf: AS_OF,
+          decisionMode: "strategy_candidate" as const,
+          targets: [
+            {
+              id: "spy",
+              instrument: "SPY",
+              assetClass: "us_equity",
+              realtime: { requireOfficialReference: false },
+            },
+          ],
+          portfolioContext: {
+            accountId: "paper-a",
+            venue: "alpaca" as const,
+            validityMinutes: 60,
+            conflictPolicy: "block" as const,
+            activeStrategyIds: ["trend"],
+          },
+          controllerEvidence: [
+            {
+              id: "prior-feedback",
+              source: "finance-historical-research-feedback",
+              timestamp: AS_OF,
+              text: '{"gap":"fees_unknown"}',
+            },
+          ],
+        },
+        liveFetch: true,
+        qualityEnabled: false,
+        batchOptions: { ...BATCH_OPTIONS, checkpoint },
+        modelCheckpoint: { ...checkpoint, maxModelCalls: 32 },
+        modelInvoker: invoke,
+      };
+      await runFinanceResearchRun(options);
+      const calls = invoke.mock.calls.length;
+      await runFinanceResearchRun(options);
+      expect(invoke).toHaveBeenCalledTimes(calls);
+      const input =
+        change === "feedback"
+          ? {
+              ...options.input,
+              controllerEvidence: [
+                { ...options.input.controllerEvidence[0], text: '{"gap":"source_unknown"}' },
+              ],
+            }
+          : {
+              ...options.input,
+              portfolioContext: { ...options.input.portfolioContext, accountId: "paper-b" },
+            };
+      await expect(runFinanceResearchRun({ ...options, input })).rejects.toThrow(
+        "checkpoint input/config mismatch",
+      );
+      expect(invoke).toHaveBeenCalledTimes(calls);
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  },
+);

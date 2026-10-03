@@ -1320,3 +1320,120 @@ export function buildFinanceResearchModelEvidence(
   }
   return result;
 }
+
+/** Historical workflow diagnostics only; not market facts, readiness or execution authority. */
+export function buildFinanceHistoricalResearchFeedback(params: {
+  receipt: unknown;
+  sourceRef: string;
+  sourceSha256: string;
+}): Record<string, unknown> {
+  const receipt = isEvidenceRecord(params.receipt) ? params.receipt : {};
+  const execution = isEvidenceRecord(receipt.moduleExecution) ? receipt.moduleExecution : {};
+  const feedback = isEvidenceRecord(execution.replanFeedback) ? execution.replanFeedback : {};
+  const nodes = Array.isArray(execution.nodes)
+    ? execution.nodes.filter(isEvidenceRecord).filter((node) => node.status !== "succeeded")
+    : [];
+  const gates = Array.isArray(receipt.gates)
+    ? receipt.gates.filter(isEvidenceRecord).filter((gate) => gate.passed === false)
+    : [];
+  const text = (value: unknown) =>
+    typeof value === "string"
+      ? value.length > 120
+        ? `${value.slice(0, 96)} [truncated]`
+        : value
+      : "unknown";
+  const failures = nodes.slice(0, 4).map((node) => {
+    const missing = Array.isArray(node.missingEvidence)
+      ? node.missingEvidence.filter((value): value is string => typeof value === "string")
+      : [];
+    return {
+      nodeId: text(node.nodeId),
+      moduleId: text(node.moduleId),
+      status: text(node.status),
+      missingEvidence: missing.filter((item) => Buffer.byteLength(item, "utf8") <= 120).slice(0, 4),
+      omittedMissingEvidence:
+        missing.length -
+        missing.filter((item) => Buffer.byteLength(item, "utf8") <= 120).slice(0, 4).length,
+    };
+  });
+  const gaps = Array.isArray(receipt.missingEvidence)
+    ? receipt.missingEvidence.filter((value): value is string => typeof value === "string")
+    : [];
+  const quality = isEvidenceRecord(receipt.quality) ? receipt.quality : {};
+  const attempts = Array.isArray(quality.attempts) ? quality.attempts.filter(isEvidenceRecord) : [];
+  const lastAttempt = attempts.at(-1);
+  const qualityFeedback =
+    gates.some((gate) => gate.id === "quality") && Array.isArray(lastAttempt?.feedback)
+      ? lastAttempt.feedback.filter((value): value is string => typeof value === "string")
+      : [];
+  const actionableSourceGaps = receipt.status === "needs_review" || receipt.status === "blocked";
+  const result = {
+    status:
+      failures.length || gates.length || (actionableSourceGaps && gaps.length)
+        ? "present"
+        : "no_gap",
+    boundary:
+      "historical_research_diagnostic_not_current_market_fact_readiness_profit_quote_or_authority",
+    guidance:
+      "Consume only decision-dependent gaps in the existing research plan. Preserve actual module status; successful modules do not become failed because quality failed. Hard failures and all current evidence/execution gates remain strict. No extra retry, model budget, activation or order authority.",
+    sourceRef: params.sourceRef,
+    sourceSha256: params.sourceSha256,
+    sourceAsOf: isEvidenceRecord(receipt.plan) ? receipt.plan.asOf : null,
+    replanStatus: [
+      "not_requested",
+      "completed",
+      "replan_soft",
+      "blocked_hard",
+      "soft_replan_budget_exhausted",
+    ].includes(typeof feedback.status === "string" ? feedback.status : "")
+      ? feedback.status
+      : "unknown",
+    nextAction: ["none", "revise_soft_modules", "stop"].includes(
+      typeof feedback.nextAction === "string" ? feedback.nextAction : "",
+    )
+      ? feedback.nextAction
+      : "unknown",
+    remainingSoftReplans:
+      typeof feedback.remainingSoftReplans === "number" &&
+      Number.isSafeInteger(feedback.remainingSoftReplans) &&
+      feedback.remainingSoftReplans >= 0 &&
+      feedback.remainingSoftReplans <= 2
+        ? feedback.remainingSoftReplans
+        : 0,
+    failures,
+    omittedFailures: Math.max(0, nodes.length - failures.length),
+    failedGates: gates
+      .slice(0, 4)
+      .map((gate) => ({ id: text(gate.id), reason: text(gate.reason) })),
+    omittedFailedGates: Math.max(0, gates.length - 4),
+    qualityFeedback: qualityFeedback.slice(0, 4).map(text),
+    omittedQualityFeedback: Math.max(0, qualityFeedback.length - 4),
+    sourceGaps: gaps.filter((item) => Buffer.byteLength(item, "utf8") <= 120).slice(0, 4),
+    omittedSourceGaps:
+      gaps.length -
+      gaps.filter((item) => Buffer.byteLength(item, "utf8") <= 120).slice(0, 4).length,
+  };
+  // Remove whole details with explicit counts; never cut a serialized target or hide truncation.
+  while (Buffer.byteLength(JSON.stringify(result), "utf8") > 2048) {
+    if (result.sourceGaps.length) {
+      result.sourceGaps.pop();
+      result.omittedSourceGaps += 1;
+    } else if (result.failures.length > 1) {
+      result.failures.pop();
+      result.omittedFailures += 1;
+    } else if (result.qualityFeedback.length > 1) {
+      result.qualityFeedback.pop();
+      result.omittedQualityFeedback += 1;
+    } else if (result.failedGates.length > 1) {
+      result.failedGates.pop();
+      result.omittedFailedGates += 1;
+    } else {
+      return {
+        status: "omitted",
+        reason: "historical_feedback_header_or_primary_gap_exceeds_budget",
+        boundary: result.boundary,
+      };
+    }
+  }
+  return result;
+}

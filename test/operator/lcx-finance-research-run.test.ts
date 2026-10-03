@@ -1,8 +1,10 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
+  writeReceipt,
   parseArgs,
   parseControllerResearchScope,
   compactFinanceResearchSummary,
@@ -14,6 +16,7 @@ import {
   FINANCE_NIGHT_RESEARCH_SCOPE_EVIDENCE_SOURCE,
   FINANCE_NIGHT_RESEARCH_SCOPE_SCHEMA_VERSION,
 } from "../../src/agents/finance-night-review-context.ts";
+import type { FinanceResearchRunReceipt } from "../../src/agents/finance-research-runner.js";
 
 describe("finance research thesis persistence option", () => {
   it("requires a live, quality-verified workflow and an explicit state root", () => {
@@ -393,4 +396,34 @@ it("preserves reviewed portfolio abstention in the scheduler protocol without a 
   });
   expect(compact.portfolioAbstention).toEqual(portfolioAbstention);
   expect(compact.portfolioPlanWritten).toBeUndefined();
+});
+
+it("writes the exact archived bytes including newline and preserves their digest in compact protocol", async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "receipt-hash-"));
+  vi.stubEnv("OPENCLAW_WORKSPACE_DIR", workspace);
+  try {
+    const receipt = {
+      plan: { asOf: "2026-10-04T00:00:00Z", ask: "diagnostic" },
+      status: "needs_review",
+    } as FinanceResearchRunReceipt;
+    const written = await writeReceipt(receipt, receipt.plan.asOf);
+    const bytes = await fs.readFile(written.datedPath);
+    expect(bytes.at(-1)).toBe(10);
+    expect(written.sha256).toBe(createHash("sha256").update(bytes).digest("hex"));
+    expect(await fs.readFile(written.latestPath)).toEqual(bytes);
+    expect(
+      compactFinanceResearchSummary({
+        schemaVersion: "fixture",
+        boundary: "fixture",
+        status: "needs_review",
+        answerDecision: "return_failed_reason",
+        gates: [],
+        plan: { asOf: receipt.plan.asOf },
+        written,
+      } as Parameters<typeof compactFinanceResearchSummary>[0]).written,
+    ).toEqual(written);
+  } finally {
+    vi.unstubAllEnvs();
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
 });

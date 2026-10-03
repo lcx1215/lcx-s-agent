@@ -824,7 +824,7 @@ export async function preflightLocalModelPythonRuntime(pythonPath: string): Prom
   }
 }
 
-async function writeReceipt(receipt: FinanceResearchRunReceipt, asOf: string) {
+export async function writeReceipt(receipt: FinanceResearchRunReceipt, asOf: string) {
   const root = WORKSPACE_DIR();
   const stateDir = path.join(root, "state");
   // `state/` is git-ignored and is where the agent-side research tool writes its own runs;
@@ -838,7 +838,11 @@ async function writeReceipt(receipt: FinanceResearchRunReceipt, asOf: string) {
   const serialized = `${JSON.stringify(receipt, null, 2)}\n`;
   await writePrivateReceipt(datedPath, serialized);
   await writePrivateReceipt(latestPath, serialized);
-  return { datedPath, latestPath };
+  return {
+    datedPath,
+    latestPath,
+    sha256: createHash("sha256").update(serialized, "utf8").digest("hex"),
+  };
 }
 
 export function buildFinanceResearchRegistryOptions(
