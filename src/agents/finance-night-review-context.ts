@@ -1118,9 +1118,7 @@ export async function buildFinanceNightReviewEvidence(params: {
       }),
       readFinanceBrokerProfitFeedback(params.directory, params.asOf),
       readFinanceLatestBrokerReconciliations(params.directory),
-      params.includeResearchScope
-        ? readFinanceLatestBrokerReconciliations(params.directory, { asOf: params.asOf })
-        : undefined,
+      readFinanceLatestBrokerReconciliations(params.directory, { asOf: params.asOf }),
     ]);
   const outcomesBySignal = await readFinanceIntradayOutcomes(
     params.directory,
@@ -1158,6 +1156,37 @@ export async function buildFinanceNightReviewEvidence(params: {
     positionRead: positions,
     asOf: params.asOf,
   });
+  // Risk inventory belongs to a broker account, never to the combined simulation ledger.
+  const accountInventories = scopedHoldings.records
+    .filter((record) => record.venue === "alpaca:paper")
+    .map((record) => {
+      const inventory = projectFinanceNightResearchHoldings({
+        positionRead: { ...positions, receipts: [] },
+        brokerRead: { ...scopedHoldings, records: [record] },
+        asOf: params.asOf,
+      });
+      const usable = inventory.holdingBasis?.source === "broker_reconciliation";
+      return {
+        accountId: record.accountId,
+        venue: record.venue,
+        snapshotRef: record.ref,
+        status: usable ? "observed" : "unknown",
+        positions: usable ? inventory.positions : null,
+        issues: inventory.holdingBasis?.issues ?? [],
+      };
+    });
+  const projectionGroups = new Map<string, typeof positionsAtAsOf.receipts>();
+  for (const receipt of positionsAtAsOf.receipts) {
+    const key = JSON.stringify([receipt.adapterKind, receipt.venue, receipt.accountId ?? null]);
+    projectionGroups.set(key, [...(projectionGroups.get(key) ?? []), receipt]);
+  }
+  const localExecutionProjections = [...projectionGroups.values()].map((receipts) => ({
+    adapterKind: receipts[0].adapterKind,
+    venue: receipts[0].venue,
+    accountId: receipts[0].accountId ?? null,
+    basis: "receipt_lots_not_broker_account_inventory",
+    ...projectFinancePositions({ receipts, marks: positions.marks }),
+  }));
   const researchScope = params.includeResearchScope
     ? buildFinanceNightResearchScope({
         asOf: params.asOf,
@@ -1264,20 +1293,28 @@ export async function buildFinanceNightReviewEvidence(params: {
               realizedPnlScope: "LCX_entry_lots_only_excludes_historical_position_maintenance",
             }
           : {}),
-        positions: positionsAtAsOf.ledger.positions,
-        positionMeaning: "combined local execution ledger projection, not broker account holdings",
+        positions: accountInventories.length === 1 ? accountInventories[0].positions : null,
+        positionMeaning:
+          "broker_account_inventory_only; see accountInventories for exact account and venue",
+        currentAccountInventoryStatus:
+          accountInventories.length === 1 ? accountInventories[0].status : "unknown",
+        accountInventories,
+        localExecutionProjections,
+        localProjectionMeaning: "simulation and LCX attribution lots are not account risk exposure",
         paperFillCount: positionsAtAsOf.receipts.filter(
           (receipt) => receipt.adapterKind === "paper",
         ).length,
         venueFillCount: positionsAtAsOf.receipts.filter(
           (receipt) => receipt.adapterKind === "venue",
         ).length,
-        pnlBasis: "ledger_projection_not_broker_reconciled_net_profit",
+        pnlBasis: "account_pnl_unavailable; local_execution_projections_are_attribution_only",
         costsReconciled: false,
         brokerProfit,
-        realizedPnl: positionsAtAsOf.ledger.realizedPnl,
-        unrealizedPnl: positionsAtAsOf.ledger.unrealizedPnl,
+        realizedPnl: null,
+        unrealizedPnl: null,
+        accountPnlStatus: "unknown_requires_broker_cost_and_account_reconciliation",
         instrumentsWithoutMark: positionsAtAsOf.ledger.instrumentsWithoutMark,
+        instrumentsWithoutMarkScope: "local_execution_projections_only",
         dayReceipts,
       }),
     }),

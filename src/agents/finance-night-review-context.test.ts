@@ -204,10 +204,12 @@ describe("finance night review context", () => {
       const portfolio = JSON.parse(evidence[2].text);
       expect(portfolio.costsReconciled).toBe(false);
       expect(portfolio).toMatchObject({
-        positionMeaning: "combined local execution ledger projection, not broker account holdings",
+        positionMeaning:
+          "broker_account_inventory_only; see accountInventories for exact account and venue",
         paperFillCount: 1,
         venueFillCount: 1,
-        positions: [expect.objectContaining({ instrument: "SPY", quantity: 2 })],
+        positions: null,
+        currentAccountInventoryStatus: "unknown",
       });
       const brokerSummary = JSON.parse(evidence[1].text);
       const sharedBrokerSummary = await buildFinanceBrokerAccountResearchEvidence({
@@ -1788,6 +1790,104 @@ it.each(brokerInventoryCases)(
         if (kind !== "live") {
           expect(scope.holdingBasis?.issues.length).toBeGreaterThan(0);
         }
+      }
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+it.each(["cash_difference", "stale", "multiple_accounts", "no_broker"])(
+  "keeps simulation TLT400 separate from actual TLT12: %s",
+  async (kind) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "night-risk-inventory-"));
+    const asOf = new Date().toISOString();
+    try {
+      for (const [adapterKind, venue, quantity] of [
+        ["paper", "paper", 400],
+        ["venue", "alpaca:paper", 12],
+      ] as const) {
+        await appendFinanceExecutionReceipt(directory, {
+          schemaVersion: FINANCE_EXECUTION_RECEIPT_SCHEMA,
+          receiptId: `TLT-${adapterKind}`,
+          intentId: `TLT-${adapterKind}`,
+          accountId: "selected",
+          runAuthorizationId: "run",
+          adapterId: adapterKind,
+          adapterKind,
+          venue,
+          instrument: "TLT",
+          side: "buy",
+          orderType: "market",
+          quantity,
+          referencePrice: 100,
+          referencePriceAt: asOf,
+          notional: quantity * 100,
+          fill: { filledQuantity: quantity, fillPrice: 100, filledAt: asOf, venueRef: venue },
+          executionAuthority: "declared_execution_adapter_required",
+          recordedAt: asOf,
+        });
+      }
+      if (kind !== "no_broker") {
+        for (const accountId of kind === "multiple_accounts"
+          ? ["selected", "other"]
+          : ["selected"]) {
+          await appendFinanceBrokerHistory(directory, {
+            kind: "broker_history",
+            accountId,
+            venue: "alpaca:paper",
+            query: "reconciliation:test",
+            cursor: "",
+            payload: [
+              {
+                observedAt:
+                  kind === "stale" ? new Date(Date.parse(asOf) - 300001).toISOString() : asOf,
+                status: "unresolved",
+                issues: ["cash_difference"],
+                differences: [],
+                positions: [{ symbol: "TLT", qty: accountId === "selected" ? "12" : "5" }],
+              },
+            ],
+          });
+        }
+      }
+      const evidence = await buildFinanceNightReviewEvidence({
+        directory,
+        asOf,
+        etDate: asOf.slice(0, 10),
+        settlement: {
+          scoredFiled: { appended: 0, skipped: 0 },
+          reflection: {},
+          pending: [],
+          declined: [],
+          issues: [],
+        },
+      });
+      const portfolio = JSON.parse(
+        evidence.find((item) => item.id.startsWith("finance-night:portfolio:"))!.text,
+      );
+      expect(
+        portfolio.localExecutionProjections.map(
+          (p: { positions: { quantity: number }[] }) => p.positions[0].quantity,
+        ),
+      ).toEqual([400, 12]);
+      expect(portfolio.realizedPnl).toBeNull();
+      expect(portfolio.unrealizedPnl).toBeNull();
+      if (kind === "cash_difference") {
+        expect(portfolio.positions).toEqual([{ instrument: "TLT", quantity: 12 }]);
+        expect(portfolio.accountInventories[0].issues).toEqual([
+          "broker_cash_unreconciled:selected",
+        ]);
+      } else {
+        expect(portfolio.positions).toBeNull();
+        expect(portfolio.currentAccountInventoryStatus).toBe("unknown");
+      }
+      if (kind === "multiple_accounts") {
+        expect(
+          portfolio.accountInventories.map(
+            (p: { positions: { quantity: number }[] }) => p.positions[0].quantity,
+          ),
+        ).toEqual(expect.arrayContaining([12, 5]));
       }
     } finally {
       await fs.rm(directory, { recursive: true, force: true });
