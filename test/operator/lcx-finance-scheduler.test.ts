@@ -14,6 +14,7 @@ import {
   resolveActiveIntradayRule,
   runFinanceScheduler,
 } from "../../scripts/operator/lcx-finance-scheduler.js";
+import { createFinanceAlpacaCycleController } from "../../src/agents/finance-alpaca-cycle-controller.js";
 import { caseflowFingerprint } from "../../src/agents/finance-caseflow.js";
 import {
   FINANCE_INTRADAY_OPENING_RANGE_EMITS,
@@ -2755,7 +2756,7 @@ it("refreshes broker reconciliation while an Alpaca history loop is idle", async
   expect(mocks.runCycle).not.toHaveBeenCalled();
 });
 
-it.each(["reconciled", "differences"])(
+it.each(["reconciled", "ready", "differences", "restricted", "blocked"])(
   "runs authorized historical maintenance only after idle reconciliation=%s",
   async (readiness) => {
     vi.useFakeTimers({ toFake: ["Date"] });
@@ -2779,7 +2780,7 @@ it.each(["reconciled", "differences"])(
     });
     mocks.delay
       .mockImplementationOnce(async () => {
-        if (readiness === "reconciled") {
+        if (readiness === "reconciled" || readiness === "ready") {
           const progress = JSON.parse(
             fs.readFileSync(path.join(directory, FINANCE_SCHEDULER_LOCK, "progress.json"), "utf8"),
           );
@@ -2816,7 +2817,7 @@ it.each(["reconciled", "differences"])(
       ]),
     ).resolves.toBe(143);
     expect(mocks.syncAlpacaHistory).toHaveBeenCalledOnce();
-    if (readiness === "reconciled") {
+    if (readiness === "reconciled" || readiness === "ready") {
       expect(mocks.historicalMaintenance).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({
           directory,
@@ -2886,6 +2887,76 @@ it.each([false, true])(
     await reconcileResidentAlpacaAccount(context, "idle");
     expect(mocks.historicalMaintenance).toHaveBeenCalledTimes(2);
     expect(stderrMessages.join("\n")).not.toContain("private-provider-error");
+  },
+);
+
+it.each(["ready", "blocked", "restricted"] as const)(
+  "dispatches maintenance for real controller readiness=%s only when ready",
+  async (readiness) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-22T17:00:00Z"));
+    const policy = path.join(directory, "maintenance-policy.json");
+    fs.writeFileSync(policy, JSON.stringify({ authorizationMode: "until_revoked" }));
+    const intradayController = createFinanceAlpacaCycleController({
+      directory,
+      policy: {},
+      instruments: ["SPY"],
+      feed: "iex",
+      maxAgeMs: 30000,
+    });
+    const inspectReconciliation = vi
+      .spyOn(intradayController, "inspectReconciliation")
+      .mockResolvedValue({
+        readiness: {
+          status: readiness,
+          historyStatus: "reconciled",
+          quarantinedInstruments: [],
+          uncertaintyReserve: 0,
+          reasons: [],
+        },
+        observedAt: new Date().toISOString(),
+        protection: {
+          protective: [],
+          unresolved: [],
+          coverage: [],
+          coverageBasis: "recognized_working_sell_stops",
+        },
+      });
+    const context = {
+      root: { directory, source: "explicit" as const },
+      options: parseFinanceSchedulerArgs([
+        "--loop",
+        "--dir",
+        directory,
+        "--sync-alpaca-history",
+        "--place",
+        "--venue",
+        "alpaca",
+        "--execution-policy",
+        policy,
+        "--execution-quote-feed",
+        "iex",
+        "--execution-max-age-ms",
+        "30000",
+        "--max-order-notional",
+        "1000",
+        "--max-instrument-notional",
+        "5000",
+        "--max-orders",
+        "8",
+        "--no-source-heartbeat",
+      ]),
+      signal: new AbortController().signal,
+      intradayController,
+    };
+    await reconcileResidentAlpacaAccount(context, "stream");
+    expect(inspectReconciliation).toHaveBeenCalledOnce();
+    expect(mocks.syncAlpacaHistory).not.toHaveBeenCalled();
+    if (readiness === "ready") {
+      expect(mocks.historicalMaintenance).toHaveBeenCalledOnce();
+    } else {
+      expect(mocks.historicalMaintenance).not.toHaveBeenCalled();
+    }
   },
 );
 

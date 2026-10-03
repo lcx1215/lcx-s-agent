@@ -1985,7 +1985,7 @@ export async function reconcileResidentAlpacaAccount(
 async function maintainAfterSuccessfulReconciliation(context: CycleContext, readiness: string) {
   const now = Date.now();
   if (
-    readiness !== "reconciled" ||
+    (readiness !== "reconciled" && readiness !== "ready") ||
     context.signal.aborted ||
     (context.lastHistoricalMaintenanceAtMs !== undefined &&
       now - context.lastHistoricalMaintenanceAtMs < FINANCE_IDLE_RECONCILIATION_INTERVAL_MS)
