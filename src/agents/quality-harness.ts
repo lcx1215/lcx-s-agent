@@ -423,6 +423,7 @@ export async function runQualityHarness(
         task: request.task,
         evidence: request.evidence,
         sharedContext: request.sharedContext ?? {},
+        maxEvidenceBatches: options.maxEvidenceBatches,
       });
       evidenceBatches = plan.batches;
       batchPlanningIssues.push(...plan.issues);

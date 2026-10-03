@@ -117,6 +117,7 @@ import {
   type LogicalAgentExecutor,
 } from "./logical-agent-pool.js";
 import {
+  QUALITY_HARNESS_EVIDENCE_BATCH_LIMIT,
   QUALITY_HARNESS_MAX_EVIDENCE_ITEMS,
   QUALITY_HARNESS_MAX_EVIDENCE_TEXT_LENGTH,
   parseStageOutput,
@@ -2238,6 +2239,9 @@ export async function runFinanceResearchQualityReview(
       allowProviderCalls: options.allowProviderCalls,
       request: qualityRequest,
       requireEvidenceCoverage: true,
+      // The controller's bounded multi-asset scope can need more than four whole-source batches.
+      // Six admits at most 21 stages per attempt within the existing shared 48-call ceiling.
+      maxEvidenceBatches: QUALITY_HARNESS_EVIDENCE_BATCH_LIMIT,
       evidenceCoverage: qualityEvidenceSelection.coverage,
       modelId: options.modelId,
       ...(options.qualityModelRouting === undefined

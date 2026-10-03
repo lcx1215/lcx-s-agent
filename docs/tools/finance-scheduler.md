@@ -708,6 +708,9 @@ retain their own process results. Failure does not authorize an order replay.
 The research runner's shared quality-review entry can review an already captured
 packet without source collection or module execution. Historical validation must
 retain its original as-of and isolate any plan or thesis outputs from live state.
+Multi-asset finance review may use up to six complete evidence batches within the
+existing 48-call workflow ceiling. Other quality callers default to four; the
+64-item selection, individual prompt limits and complete-coverage checks remain.
 Final artifact audits receive the full formatted artifact, including tail claims;
 prompt limits still fail closed rather than silently clipping the review object.
 

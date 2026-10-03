@@ -20,6 +20,7 @@ import type {
   QualityHarnessModelRequest,
 } from "./quality-harness-contract.js";
 import {
+  QUALITY_HARNESS_EVIDENCE_BATCH_LIMIT,
   QUALITY_HARNESS_MAX_EVIDENCE_BATCHES,
   QUALITY_HARNESS_MAX_EVIDENCE_TEXT_LENGTH,
   QUALITY_HARNESS_MAX_EVIDENCE_ITEMS_PER_BATCH,
@@ -304,7 +305,14 @@ function compactQualityDependencies(
   const entries = Object.entries(request.dependencyOutputs);
   const batchEntries = entries.filter(([taskId]) => taskId.startsWith("evidence_batch_"));
   const otherEntries = entries.filter(([taskId]) => !taskId.startsWith("evidence_batch_"));
-  const maxEntries = request.stage === "precheck" ? 16 : 12;
+  // Final review depends on eight ordinary stages plus extraction/audit for every batch.
+  const maxEntries =
+    request.stage === "precheck"
+      ? Math.max(
+          16,
+          Math.min(8 + 2 * QUALITY_HARNESS_EVIDENCE_BATCH_LIMIT - 1, 8 + batchEntries.length),
+        )
+      : 12;
   return Object.fromEntries(
     [
       ...otherEntries.slice(0, Math.max(0, maxEntries - batchEntries.length)),
@@ -629,10 +637,19 @@ export function planQualityHarnessEvidenceBatches(params: {
   task: string;
   evidence: readonly QualityHarnessEvidence[];
   sharedContext: Readonly<Record<string, unknown>>;
+  maxEvidenceBatches?: number;
 }): Readonly<{
   batches: readonly (readonly QualityHarnessEvidence[])[];
   issues: readonly string[];
 }> {
+  const maximumBatches = params.maxEvidenceBatches ?? QUALITY_HARNESS_MAX_EVIDENCE_BATCHES;
+  if (
+    !Number.isSafeInteger(maximumBatches) ||
+    maximumBatches < 1 ||
+    maximumBatches > QUALITY_HARNESS_EVIDENCE_BATCH_LIMIT
+  ) {
+    throw new Error("quality evidence batch limit must be an integer from 1 to 6");
+  }
   const batches: QualityHarnessEvidence[][] = [];
   const issues: string[] = [];
   let current: QualityHarnessEvidence[] = [];
@@ -681,7 +698,7 @@ export function planQualityHarnessEvidenceBatches(params: {
 
   // Backfill unused space before rejecting the packet. Keep every source whole
   // and retain the normal ordered plan whenever it already fits the budget.
-  if (batches.length > QUALITY_HARNESS_MAX_EVIDENCE_BATCHES) {
+  if (batches.length > maximumBatches) {
     const packed: QualityHarnessEvidence[][] = [];
     for (const entry of batches.flat()) {
       const target = packed.find(
@@ -699,19 +716,15 @@ export function planQualityHarnessEvidenceBatches(params: {
     }
   }
 
-  if (batches.length > QUALITY_HARNESS_MAX_EVIDENCE_BATCHES) {
+  if (batches.length > maximumBatches) {
     const excessIds = batches
-      .slice(QUALITY_HARNESS_MAX_EVIDENCE_BATCHES)
+      .slice(maximumBatches)
       .flatMap((batch) => batch.map((entry) => entry.id));
-    issues.push(
-      `evidence_batch_limit_exceeded:${QUALITY_HARNESS_MAX_EVIDENCE_BATCHES}:${excessIds.join(",")}`,
-    );
+    issues.push(`evidence_batch_limit_exceeded:${maximumBatches}:${excessIds.join(",")}`);
   }
   return Object.freeze({
     batches: Object.freeze(
-      batches
-        .slice(0, QUALITY_HARNESS_MAX_EVIDENCE_BATCHES)
-        .map((batch) => Object.freeze([...batch])),
+      batches.slice(0, maximumBatches).map((batch) => Object.freeze([...batch])),
     ),
     issues: Object.freeze(issues),
   });

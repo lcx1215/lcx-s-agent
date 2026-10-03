@@ -61,6 +61,8 @@ export type QualityHarnessEvidence = Readonly<{
 
 /** At most 17 model stages per attempt, before the shared workflow call budget. */
 export const QUALITY_HARNESS_MAX_EVIDENCE_BATCHES = 4;
+/** Explicit bounded callers may use up to 21 stages per attempt; model-call budgets still apply. */
+export const QUALITY_HARNESS_EVIDENCE_BATCH_LIMIT = 6;
 export const QUALITY_HARNESS_MAX_EVIDENCE_ITEMS_PER_BATCH = 16;
 export const QUALITY_HARNESS_MAX_EVIDENCE_ITEMS =
   QUALITY_HARNESS_MAX_EVIDENCE_BATCHES * QUALITY_HARNESS_MAX_EVIDENCE_ITEMS_PER_BATCH;
@@ -163,6 +165,8 @@ export type QualityHarnessOptions = Readonly<{
   request: QualityHarnessRequest;
   requireEvidenceCoverage?: boolean;
   evidenceCoverage?: QualityHarnessEvidenceCoverage;
+  /** Default four; callers may declare up to six without relaxing item or prompt limits. */
+  maxEvidenceBatches?: number;
   modelInvoker?: LogicalAgentModelInvoker;
   modelRouting?: LogicalAgentModelRouting;
   signal?: AbortSignal;

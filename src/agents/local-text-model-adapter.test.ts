@@ -818,6 +818,21 @@ it("backfills batch space without dropping later evidence or increasing the four
   }
 });
 
+it.each([0, 7, 1.5, Number.NaN])(
+  "refuses an invalid explicit evidence batch limit %s",
+  async (maxEvidenceBatches) => {
+    const { planQualityHarnessEvidenceBatches } = await import("./local-text-model-adapter.js");
+    expect(() =>
+      planQualityHarnessEvidenceBatches({
+        task: "review",
+        evidence: [{ id: "fact", text: "observation" }],
+        sharedContext: {},
+        maxEvidenceBatches,
+      }),
+    ).toThrow("quality evidence batch limit must be an integer from 1 to 6");
+  },
+);
+
 it("keeps the allocation contract intact after a large general context", () => {
   const contract = {
     activeStrategyIds: ["controller-rule"],

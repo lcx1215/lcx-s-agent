@@ -1078,6 +1078,45 @@ describe("quality harness", () => {
     expect(verify).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { size: 6_000, batches: 5 },
+    { size: 7_200, batches: 6 },
+  ])(
+    "reviews all evidence and final dependencies in $batches explicitly bounded batches",
+    async ({ size, batches }) => {
+      const { request: evidenceRequest, evidenceCoverage } = coverageRequest(44);
+      const requests: QualityHarnessModelRequest[] = [];
+      const canonicalPrecheckPrompts: string[] = [];
+      const receipt = await runQualityHarness({
+        request: {
+          ...evidenceRequest,
+          evidence: evidenceRequest.evidence.map((item) => ({
+            ...item,
+            text: "x".repeat(size - 20) + "COUNTEREVIDENCE-END",
+          })),
+        },
+        maxAttempts: 1,
+        maxEvidenceBatches: 6,
+        modelRouting: coveredEvidenceRouting({ requests, canonicalPrecheckPrompts }),
+        requireEvidenceCoverage: true,
+        evidenceCoverage,
+      });
+      expect(receipt.status).toBe("completed-unverified");
+      expect(receipt.evidenceCoverage?.passed).toBe(true);
+      expect(receipt.evidenceCoverage?.batches).toHaveLength(batches);
+      expect(
+        receipt.evidenceCoverage?.batches?.flatMap((batch) => batch.evidenceIds).toSorted(),
+      ).toEqual(evidenceCoverage.sourceEvidenceIds.toSorted());
+      const precheck = requests.find((item) => item.stage === "precheck")!;
+      expect(Object.keys(precheck.dependencyOutputs)).toHaveLength(8 + 2 * batches - 1);
+      expect(canonicalPrecheckPrompts[0]).toContain(`evidence_batch_review_${batches}`);
+      for (const key of Object.keys(precheck.dependencyOutputs)) {
+        expect(canonicalPrecheckPrompts[0]).toContain(key);
+      }
+      expect(receipt.attempts[0]?.stages.length).toBeLessThanOrEqual(21);
+    },
+  );
+
   it("passes one shared fact packet to every specialist and reviewer", async () => {
     const requests: QualityHarnessModelRequest[] = [];
     await runQualityHarness({
