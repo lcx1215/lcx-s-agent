@@ -448,7 +448,7 @@ const GOVERNANCE_COMPONENT_RULES: GovernanceComponentRule[] = [
   },
   {
     id: "documentation_surface",
-    patterns: [/^(?:docs|skills)\//u],
+    patterns: [/^(?:docs|skills)\//u, /^\.agents\/skills\//u],
     category: "documentation_and_instruction",
     routeOwner: "scripts/operator/lcx-doctrine-consistency.ts",
     proofSurface: "doctrine consistency, head-tail, and lcx-change-impact-plan",

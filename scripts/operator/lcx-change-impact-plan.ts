@@ -487,7 +487,7 @@ const PATH_RULES: PathRule[] = [
   {
     id: "runtime_skill_package",
     lane: "skill_runtime",
-    patterns: [/^skills\//u],
+    patterns: [/^skills\//u, /^\.agents\/skills\//u],
     requiredChecks: ["skill-autocue-tests", "git-diff-check"],
     commands: [
       "pnpm vitest run src/auto-reply/reply/skill-autocue.test.ts src/agents/skills.test.ts",

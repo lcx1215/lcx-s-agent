@@ -45,6 +45,18 @@ async function runPlan(changedFile: string) {
 }
 
 describe("lcx-change-impact-plan", () => {
+  it("routes project Skill pointers through the canonical Skill lane", async () => {
+    const result = await runPlanArgs([
+      "--files",
+      ".agents/skills/agent-brain-eval",
+      "skills/agent-brain-eval/SKILL.md",
+    ]);
+    expect(result.ok).toBe(true);
+    expect(result.unmatchedFiles).toEqual([]);
+    expect(result.affectedLanes).toEqual(["skill_runtime"]);
+    expect(result.recommendedFastCommands.join(" ")).toContain("skills.test.ts");
+  });
+
   it("assigns resident workers and host lifecycle to existing owners", async () => {
     const files = [
       "src/agents/local-text-worker.ts",

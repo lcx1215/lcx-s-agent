@@ -168,6 +168,16 @@ describe("LCX universe index", () => {
     expect(payload.ownerCoverage.governanceCoverage.unknownComponents).toEqual([]);
     expect(
       payload.ownerCoverage.governanceCoverage.components.find(
+        (component) => component.path === ".agents/skills/agent-brain-eval",
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        routeOwner: "scripts/operator/lcx-doctrine-consistency.ts",
+        disposition: "governed_source",
+      }),
+    );
+    expect(
+      payload.ownerCoverage.governanceCoverage.components.find(
         (component) => component.path === "dist/protocol.schema.json",
       ),
     ).toEqual(
