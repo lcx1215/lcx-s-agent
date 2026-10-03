@@ -233,6 +233,12 @@ function projectFinanceNightResearchHoldings(params: {
   const snapshotRefs: string[] = [];
   for (const record of records) {
     const snapshot = record.snapshot as Record<string, unknown> | undefined;
+    // A cash-only mismatch does not invalidate observed quantities or authorize execution.
+    const cashOnlyMismatch =
+      snapshot?.status === "unresolved" &&
+      Array.isArray(snapshot.issues) &&
+      snapshot.issues.length === 1 &&
+      snapshot.issues[0] === "cash_difference";
     const age =
       snapshot && typeof snapshot.observedAt === "string"
         ? Date.parse(params.asOf) - Date.parse(snapshot.observedAt)
@@ -243,7 +249,7 @@ function projectFinanceNightResearchHoldings(params: {
       !Number.isFinite(age) ||
       age < 0 ||
       age > 300_000 ||
-      snapshot.status !== "reconciled" ||
+      (snapshot.status !== "reconciled" && !cashOnlyMismatch) ||
       !Array.isArray(snapshot.differences) ||
       snapshot.differences.length ||
       !Array.isArray(snapshot.positions)
@@ -275,6 +281,9 @@ function projectFinanceNightResearchHoldings(params: {
       replacedAccounts.add(record.accountId);
       snapshotRefs.push(record.ref);
       brokerPositions.push(...positions);
+      if (cashOnlyMismatch) {
+        issues.push(`broker_cash_unreconciled:${record.accountId}`);
+      }
     } catch {
       issues.push(`broker_holdings_invalid:${record.accountId}`);
     }

@@ -1526,7 +1526,17 @@ describe("shared broker account research evidence", () => {
   });
 });
 
-it.each(["reconciled", "stale", "differences", "invalid_quantity", "live"])(
+const brokerInventoryCases = [
+  "reconciled",
+  "cash_difference",
+  "other_issue",
+  "cash_with_other_issue",
+  "stale",
+  "differences",
+  "invalid_quantity",
+  "live",
+];
+it.each(brokerInventoryCases)(
   "uses only usable Paper broker inventory for night targets: %s",
   async (kind) => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "night-broker-holdings-"));
@@ -1561,7 +1571,20 @@ it.each(["reconciled", "stale", "differences", "invalid_quantity", "live"])(
         payload: [
           {
             observedAt: kind === "stale" ? new Date(Date.parse(asOf) - 300001).toISOString() : asOf,
-            status: "reconciled",
+            status:
+              kind === "cash_difference" ||
+              kind === "other_issue" ||
+              kind === "cash_with_other_issue"
+                ? "unresolved"
+                : "reconciled",
+            issues:
+              kind === "cash_difference"
+                ? ["cash_difference"]
+                : kind === "other_issue"
+                  ? ["broker_history_invalid"]
+                  : kind === "cash_with_other_issue"
+                    ? ["cash_difference", "broker_history_invalid"]
+                    : [],
             differences: kind === "differences" ? ["quantity_difference"] : [],
             positions: [
               {
@@ -1590,13 +1613,13 @@ it.each(["reconciled", "stale", "differences", "invalid_quantity", "live"])(
       expect(
         JSON.parse(evidence.find((item) => item.source === "finance-night-research-scope")!.text),
       ).toEqual(scope);
-      if (kind === "reconciled") {
+      if (kind === "reconciled" || kind === "cash_difference") {
         expect(scope.instruments).toEqual([
           { instrument: "BTC/USD", assetClass: "crypto", reasons: ["held_position"] },
         ]);
         expect(scope.holdingBasis).toMatchObject({
           source: "broker_reconciliation",
-          issues: [],
+          issues: kind === "cash_difference" ? ["broker_cash_unreconciled:paper-account"] : [],
           executionAuthority: "none",
         });
         // A later broker update must not invalidate the original controller cutoff.
@@ -1616,6 +1639,26 @@ it.each(["reconciled", "stale", "differences", "invalid_quantity", "live"])(
           ],
         });
         expect(await readFinanceNightReviewResearchScope({ directory, asOf })).toEqual(scope);
+        // A confirmed flat inventory must remove old receipt holdings even while cash is pending.
+        await appendFinanceBrokerHistory(directory, {
+          kind: "broker_history",
+          accountId: "paper-account",
+          venue: "alpaca:paper",
+          query: "reconciliation:flat",
+          cursor: "",
+          payload: [
+            {
+              observedAt: asOf,
+              status: kind === "cash_difference" ? "unresolved" : "reconciled",
+              issues: kind === "cash_difference" ? ["cash_difference"] : [],
+              differences: [],
+              positions: [],
+            },
+          ],
+        });
+        await expect(readFinanceNightReviewResearchScope({ directory, asOf })).rejects.toThrow(
+          "night research scope has no held positions or active strategy instruments",
+        );
       } else {
         expect(scope.instruments.map((item) => item.instrument)).toEqual(["UTHR"]);
         if (kind !== "live") {
