@@ -935,7 +935,17 @@ export async function appendFinanceBrokerHistory(directory: string, body: Broker
     try {
       const records = readBrokerHistoryRows(db);
       const fingerprint = caseflowFingerprint(validated);
-      const existing = records.find((record) => caseflowFingerprint(record.body) === fingerprint);
+      // The chain above is fully validated. Different observation keys cannot be
+      // duplicate bodies; avoid canonicalizing their potentially large payloads again.
+      const existing = records.find(
+        (record) =>
+          record.body.accountId === validated.accountId &&
+          record.body.venue === validated.venue &&
+          record.body.query === validated.query &&
+          record.body.cursor === validated.cursor &&
+          record.body.payload.length === validated.payload.length &&
+          caseflowFingerprint(record.body) === fingerprint,
+      );
       if (existing) {
         db.exec("COMMIT");
         return { record: existing, appended: false };

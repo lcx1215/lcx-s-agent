@@ -197,10 +197,24 @@ describe("bounded historical quantity isolation", () => {
 });
 
 describe("canonical account observation", () => {
-  async function reconcile(extra: Record<string, unknown> = {}) {
+  async function reconcile(
+    extra: Record<string, unknown> = {},
+    latency?: { historyMs: number; appendMs: number },
+  ) {
     syncMocks.append.mockReset();
     syncMocks.history.mockResolvedValue({ status: "raw_history_synced" });
     syncMocks.readHistory.mockResolvedValue({ records: [], headRef: "history-head" });
+    if (latency) {
+      syncMocks.readHistory.mockImplementation(async () => {
+        vi.setSystemTime(Date.now() + latency.historyMs);
+        return { records: [], headRef: "history-head" };
+      });
+      syncMocks.append.mockImplementation(async (_directory, body) => {
+        if (body.query.startsWith("reconciliation:")) {
+          vi.setSystemTime(Date.now() + latency.appendMs);
+        }
+      });
+    }
     let accountReads = 0;
     const read = vi.fn(async (url: string) => {
       const pathname = new URL(url).pathname;
@@ -260,6 +274,32 @@ describe("canonical account observation", () => {
       snapshot.accountObservation,
     );
   });
+  it("validates history before final broker reads and never refreshes capture time after a slow append", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const start = Date.parse("2026-10-03T04:00:00Z");
+    vi.setSystemTime(start);
+    try {
+      const { snapshot, read } = await reconcile({}, { historyMs: 60000, appendMs: 45000 });
+      const paths = read.mock.calls.map(([url]) => new URL(url).pathname);
+      const finalPositions = paths.indexOf("/v2/positions");
+      const feeRead = paths.indexOf("/v2/account/activities/FEE");
+      const historyOrder = syncMocks.readHistory.mock.invocationCallOrder.at(-1)!;
+      expect(historyOrder).toBeGreaterThan(read.mock.invocationCallOrder[feeRead]);
+      expect(historyOrder).toBeLessThan(read.mock.invocationCallOrder[finalPositions]);
+      expect(snapshot.accountObservation.observedAt).toBe(new Date(start + 60000).toISOString());
+      expect(snapshot.observedAt).toBe(snapshot.accountObservation.observedAt);
+      expect(Date.now() - Date.parse(snapshot.observedAt)).toBe(45000);
+      expect(syncMocks.append.mock.calls.at(-1)?.[1].payload[0].observedAt).toBe(
+        snapshot.observedAt,
+      );
+      expect(snapshot.status).toBe("reconciled");
+      expect(snapshot.historyHeadRef).toBe("history-head");
+      expect(snapshot.protection.coverage).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each([undefined, null, "", " ", "NaN", "Infinity", "0x10", "1,000", false, {}])(
     "keeps missing or invalid optional values unknown: %j",
     async (value) => {

@@ -6,6 +6,7 @@ import { runFinanceHistoricalPositionMaintenance } from "./finance-historical-po
 
 const mocks = vi.hoisted(() => ({
   book: vi.fn(),
+  receiptBook: vi.fn(),
   strategies: vi.fn(),
   reconciliation: vi.fn(),
   controller: vi.fn(),
@@ -41,7 +42,10 @@ vi.mock("./finance-execution-adapter.js", async (original) => ({
   ...(await original<typeof import("./finance-execution-adapter.js")>()),
   placeFinanceOrder: mocks.place,
 }));
-vi.mock("./finance-position-ledger.js", () => ({ appendFinanceExecutionReceipt: mocks.append }));
+vi.mock("./finance-position-ledger.js", () => ({
+  appendFinanceExecutionReceipt: mocks.append,
+  readFinanceAccountPositionLedger: mocks.receiptBook,
+}));
 const directories: string[] = [];
 const policy = {
   schemaVersion: "lcx_alpaca_cycle_policy_v1",
@@ -107,6 +111,7 @@ beforeEach(() => {
   mocks.calendar.mockResolvedValue(null);
   mocks.calendarIssue.mockReturnValue(undefined);
   mocks.book.mockResolvedValue(book());
+  mocks.receiptBook.mockResolvedValue({ receipts: [] });
   mocks.strategies.mockResolvedValue({ ledger: { rules: [] } });
   mocks.reconciliation.mockResolvedValue({ ok: true, snapshot: snapshot() });
   mocks.claims.mockResolvedValue([]);
@@ -285,14 +290,30 @@ it.each(["unreconciled", "stale", "wrong_account", "live", "unresolved", "unusab
     expect(mocks.place).not.toHaveBeenCalled();
   },
 );
-it("blocks when inventory changes during account recovery", async () => {
-  mocks.controller().accountBookProvider.mockResolvedValue({
-    reconciliation: { status: "ready" },
-    positions: [{ instrument: "BTC/USD", quantity: 0.000398 }],
+it("blocks changed inventory in the final locked facts guard without a redundant account sync", async () => {
+  mocks.place.mockImplementation(async () => {
+    const options = mocks.controller.mock.calls[0][0];
+    await options.validateFacts(
+      {
+        reconciliation: { status: "ready" },
+        positionQuantity: 0.000398,
+        reservedSellQuantity: 0,
+        protectiveOrders: [],
+        openOrderIds: [],
+        unresolvedOrderIds: [],
+      },
+      new AbortController().signal,
+    );
+    throw new Error("must not reach dispatch");
   });
-  expect((await run()).result.status).toBe("blocked");
-  expect(mocks.place).not.toHaveBeenCalled();
+  expect((await run()).result).toMatchObject({
+    status: "blocked",
+    decisions: [{ reasons: ["historical_inventory_changed_under_account_lock"] }],
+  });
+  expect(mocks.controller().accountBookProvider).not.toHaveBeenCalled();
+  expect(mocks.append).not.toHaveBeenCalled();
 });
+
 it("preserves shared gate cap refusals and never records an invented fill", async () => {
   mocks.place.mockResolvedValue({
     status: "refused",
@@ -481,3 +502,78 @@ it.each(["open", "closed", "unknown"])(
     }
   },
 );
+
+it("finishes expensive quote preparation before small verified ownership reads and does not rescan broker history under lock", async () => {
+  const events: string[] = [];
+  mocks.book.mockImplementation(async () => {
+    events.push("historical_book");
+    return book();
+  });
+  mocks.controller().prepareExecutionQuote.mockImplementation(async () => {
+    events.push("prepared_quote");
+    return { bidPrice: 80000, referencePrice: 80000, referencePriceAt: new Date().toISOString() };
+  });
+  mocks.receiptBook.mockImplementation(async () => {
+    events.push("receipt_table");
+    return { receipts: [] };
+  });
+  mocks.place.mockImplementation(async () => {
+    await mocks.controller.mock.calls[0][0].validateFacts(
+      {
+        reconciliation: { status: "ready" },
+        positionQuantity: 0.000399,
+        reservedSellQuantity: 0,
+        protectiveOrders: [],
+        openOrderIds: [],
+        unresolvedOrderIds: [],
+      },
+      new AbortController().signal,
+    );
+    return {
+      status: "placed",
+      refusalReasons: [],
+      receipt: { receiptId: "true-venue-sell", fill: { filledQuantity: 0.000399 } },
+    };
+  });
+  mocks.controller.mockClear();
+  const { directory, result } = await run();
+  expect(result.status).toBe("completed");
+  expect(events).toEqual(["historical_book", "prepared_quote", "receipt_table", "receipt_table"]);
+  expect(mocks.book).toHaveBeenCalledOnce();
+  expect(mocks.receiptBook).toHaveBeenCalledWith(directory, {
+    accountId: "fixture",
+    venue: "alpaca:paper",
+  });
+  expect(mocks.controller).toHaveBeenCalledWith(
+    expect.objectContaining({ recoverPendingBeforeQuote: true }),
+  );
+  expect(mocks.controller().accountBookProvider).not.toHaveBeenCalled();
+});
+it("rejects newly acquired LCX ownership from the account-scoped receipt table after preparation", async () => {
+  mocks.receiptBook.mockResolvedValue({
+    receipts: [{ instrument: "BTC/USD", side: "buy", fill: { filledQuantity: 1 } }],
+  });
+  expect((await run()).result).toMatchObject({
+    status: "blocked",
+    decisions: [{ status: "blocked", reasons: ["historical_inventory_ownership_changed"] }],
+  });
+  expect(mocks.place).not.toHaveBeenCalled();
+});
+it("preserves receipt-chain verification failures and records the bounded failure phase", async () => {
+  mocks.receiptBook.mockRejectedValue(new Error("offline corrupted receipt chain"));
+  const { directory, result } = await run();
+  expect(result.status).toBe("blocked");
+  expect(mocks.place).not.toHaveBeenCalled();
+  const files = await fs.readdir(path.join(directory, "historical-position-maintenance"));
+  const records = (
+    await fs.readFile(path.join(directory, "historical-position-maintenance", files[0]), "utf8")
+  )
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  expect(records.at(-1)).toMatchObject({
+    phase: "result",
+    stoppedAtPhase: "ownership_preflight",
+    status: "blocked",
+  });
+});

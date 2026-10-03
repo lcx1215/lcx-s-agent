@@ -90,6 +90,8 @@ export function createFinanceAlpacaCycleController(options: {
   maxAgeMs: number;
   /** Explicit spot-crypto maintenance capability; legacy daily universes stay equities-only. */
   allowCrypto?: boolean;
+  /** Trusted maintenance opt-in: resolve unknown execution before minting a short quote lease. */
+  recoverPendingBeforeQuote?: boolean;
   /** Controller-only additional ownership guard, called inside the shared dispatch lock. */
   validateFacts?: (facts: FinanceExecutionSafetyFacts, signal: AbortSignal) => Promise<void>;
   read?: FinanceUncachedFetch;
@@ -454,7 +456,9 @@ export function createFinanceAlpacaCycleController(options: {
     executionQuoteProvider,
     prepareExecutionQuote: async (request, signal) => {
       // Finish expensive history reads before starting the short execution-quote lease.
-      const { snapshot, latestClaim } = await reconcile(signal, { recoverPending: false });
+      const { snapshot, latestClaim } = await reconcile(signal, {
+        recoverPending: options.recoverPendingBeforeQuote === true,
+      });
       const claims = await readFinanceExecutionSafetyClaims({ ...account, signal });
       const quote = await executionQuoteProvider(request, signal);
       const bound = quoteBindings.get(`${request.instrument}:${request.side}`);

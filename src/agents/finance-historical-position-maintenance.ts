@@ -19,7 +19,10 @@ import {
   type FinanceRiskBudget,
 } from "./finance-execution-adapter.js";
 import { readFinanceExecutionSafetyClaims } from "./finance-execution-safety.js";
-import { appendFinanceExecutionReceipt } from "./finance-position-ledger.js";
+import {
+  appendFinanceExecutionReceipt,
+  readFinanceAccountPositionLedger,
+} from "./finance-position-ledger.js";
 import { readFinanceStrategyRuleLedger } from "./finance-strategy-rule-ledger.js";
 import {
   createFinanceWriteTransport,
@@ -243,6 +246,12 @@ export async function runFinanceHistoricalPositionMaintenance(options: {
   const runAuthorizationId = `historical-maintenance:${policy.planId}:${id}`;
   let intentId = `historical-maintenance:${id}:attempt:0`;
   let venueReceiptAvailable = false;
+  let phase:
+    | "calendar"
+    | "prepare_quote"
+    | "ownership_preflight"
+    | "shared_gate"
+    | "receipt_delivery" = "calendar";
   try {
     let session: FinanceAlpacaMarketSession | null = null;
     if (!instrument.includes("/")) {
@@ -271,24 +280,24 @@ export async function runFinanceHistoricalPositionMaintenance(options: {
       feed: options.feed,
       maxAgeMs: options.maxAgeMs,
       allowCrypto: true,
+      recoverPendingBeforeQuote: true,
       validateFacts: async (facts, signal) => {
         signal.throwIfAborted();
         if (!instrument.includes("/") && !cashSessionOpen(session)) {
           throw new Error("historical_maintenance_outside_cash_session");
         }
-        const [lockedBook, lockedStrategies] = await Promise.all([
-          readFinanceAccountTradingBook({ directory: options.directory, ...account }),
+        const [lockedReceipts, lockedStrategies] = await Promise.all([
+          readFinanceAccountPositionLedger(options.directory, account),
           readFinanceStrategyRuleLedger(options.directory),
         ]);
         if (
-          !lockedBook.brokerBaselineUsable ||
           facts.reconciliation?.status !== "ready" ||
           facts.positionQuantity !== candidate.quantity ||
           (facts.reservedSellQuantity ?? 0) !== 0 ||
           (facts.protectiveOrders?.length ?? 0) !== 0 ||
           facts.openOrderIds.length !== 0 ||
           facts.unresolvedOrderIds.length !== 0 ||
-          lockedBook.execution.receipts.some(
+          lockedReceipts.receipts.some(
             (receipt) =>
               receipt.instrument === instrument &&
               receipt.side === "buy" &&
@@ -305,18 +314,22 @@ export async function runFinanceHistoricalPositionMaintenance(options: {
       },
       read: options.read,
     });
-    const freshBook = await controller.accountBookProvider(options.signal);
-    const freshPosition = freshBook.positions.find(
-      (position) => position.instrument === instrument,
+    phase = "prepare_quote";
+    await persist({ at: new Date().toISOString(), phase });
+    // Expensive recovery/history reconciliation finishes before the controller creates the
+    // 30-second quote lease. Only the small, hash-verified receipt table is read after this.
+    const assetClass = instrument.includes("/") ? "crypto" : "us_equity";
+    const quote = await controller.prepareExecutionQuote(
+      { instrument, assetClass, side: "sell" },
+      options.signal,
     );
-    if (
-      freshBook.reconciliation?.status !== "ready" ||
-      freshPosition?.quantity !== candidate.quantity
-    ) {
-      throw new Error("historical_inventory_changed");
+    if (!quote.bidPrice || quote.referencePrice !== quote.bidPrice) {
+      throw new Error("historical_exit_bid_required");
     }
-    const [latestBook, latestStrategies, claims] = await Promise.all([
-      readFinanceAccountTradingBook({ directory: options.directory, ...account }),
+    phase = "ownership_preflight";
+    await persist({ at: new Date().toISOString(), phase });
+    const [latestReceipts, latestStrategies, claims] = await Promise.all([
+      readFinanceAccountPositionLedger(options.directory, account),
       readFinanceStrategyRuleLedger(options.directory),
       readFinanceExecutionSafetyClaims({
         stateDir: options.directory,
@@ -325,8 +338,7 @@ export async function runFinanceHistoricalPositionMaintenance(options: {
       }),
     ]);
     if (
-      !latestBook.brokerBaselineUsable ||
-      latestBook.execution.receipts.some(
+      latestReceipts.receipts.some(
         (receipt) =>
           receipt.instrument === instrument &&
           receipt.side === "buy" &&
@@ -354,14 +366,6 @@ export async function runFinanceHistoricalPositionMaintenance(options: {
     // Terminal rejection/non-start and confirmed partial reductions may retry only with a
     // journal-derived attempt ordinal inside the same capped run. Unknown claims never advance.
     intentId = `historical-maintenance:${id}:attempt:${runClaims.length}`;
-    const assetClass = instrument.includes("/") ? "crypto" : "us_equity";
-    const quote = await controller.prepareExecutionQuote(
-      { instrument, assetClass, side: "sell" },
-      options.signal,
-    );
-    if (!quote.bidPrice || quote.referencePrice !== quote.bidPrice) {
-      throw new Error("historical_exit_bid_required");
-    }
     const intent: FinanceExecutionIntent = {
       intentId,
       decisionRef: { source: "account_position_maintenance", id },
@@ -389,6 +393,7 @@ export async function runFinanceHistoricalPositionMaintenance(options: {
       fillPoll: { timeoutMs: 60000, intervalMs: 1000 },
       postJson: (url, init) => transport({ url, ...init }),
     });
+    phase = "shared_gate";
     const placement = await placeFinanceOrder({
       mode: "live_execution",
       intent,
@@ -408,6 +413,7 @@ export async function runFinanceHistoricalPositionMaintenance(options: {
       signal: options.signal,
     });
     if (placement.status === "placed" && placement.receipt) {
+      phase = "receipt_delivery";
       venueReceiptAvailable = true;
       await appendFinanceExecutionReceipt(options.directory, placement.receipt);
       decision.status = "placed";
@@ -468,6 +474,11 @@ export async function runFinanceHistoricalPositionMaintenance(options: {
       decision.reasons = ["historical_maintenance_journal_unavailable"];
     }
   }
-  await persist({ at: new Date().toISOString(), phase: "result", ...decision });
+  await persist({
+    at: new Date().toISOString(),
+    phase: "result",
+    stoppedAtPhase: phase,
+    ...decision,
+  });
   return result;
 }

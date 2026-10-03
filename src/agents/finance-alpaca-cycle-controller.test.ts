@@ -601,9 +601,11 @@ it("anchors snapshots to the latest rejected claim while verifying only confirme
 it.each([
   { status: "filled", quantity: "1", expectedReceipts: 1 },
   { status: "canceled", quantity: "0", expectedReceipts: 0 },
+  { status: "filled", quantity: "1", expectedReceipts: 1, prepare: true },
+  { status: "canceled", quantity: "0", expectedReceipts: 0, prepare: true },
 ])(
   "reconciles a broker-terminal unknown $status claim without resubmitting",
-  async ({ status, quantity, expectedReceipts }) => {
+  async ({ status, quantity, expectedReceipts, prepare = false }) => {
     const f = await fixture();
     f.execute.mockImplementationOnce(async (intent) => {
       const clientOrderId = `lcx-${createHash("sha256")
@@ -650,10 +652,36 @@ it.each([
     const executeCalls = f.execute.mock.calls.length;
     f.read.mockClear();
 
-    const restart = createFinanceAlpacaCycleController(f.options);
-    const inspection = await restart.inspectReconciliation(AbortSignal.timeout(5000));
-
-    expect(inspection.readiness.status).toBe("ready");
+    if (prepare) {
+      const defaultController = createFinanceAlpacaCycleController(f.options);
+      await expect(
+        defaultController.prepareExecutionQuote(
+          { instrument: "SPY", assetClass: "us_equity", side: "sell" },
+          AbortSignal.timeout(5000),
+        ),
+      ).rejects.toThrow("execution_recovery_incomplete");
+      expect(
+        f.read.mock.calls.some(([url]) => new URL(url).pathname === "/v2/stocks/SPY/quotes/latest"),
+      ).toBe(false);
+      f.read.mockClear();
+      const restart = createFinanceAlpacaCycleController({
+        ...f.options,
+        recoverPendingBeforeQuote: true,
+      });
+      const quote = await restart.prepareExecutionQuote(
+        { instrument: "SPY", assetClass: "us_equity", side: "sell" },
+        AbortSignal.timeout(5000),
+      );
+      expect(quote).toMatchObject({ referencePrice: 100, bidPrice: 100 });
+      const paths = f.read.mock.calls.map(([url]) => new URL(url).pathname);
+      expect(paths.indexOf("/v2/orders:by_client_order_id")).toBeLessThan(
+        paths.lastIndexOf("/v2/stocks/SPY/quotes/latest"),
+      );
+    } else {
+      const restart = createFinanceAlpacaCycleController(f.options);
+      const inspection = await restart.inspectReconciliation(AbortSignal.timeout(5000));
+      expect(inspection.readiness.status).toBe("ready");
+    }
     expect(
       f.read.mock.calls.some(([url]) => new URL(url).pathname === "/v2/orders:by_client_order_id"),
     ).toBe(true);

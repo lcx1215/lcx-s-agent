@@ -789,3 +789,53 @@ it("freezes research reconciliation cutoffs while current readers retain superse
     await fs.rm(directory, { recursive: true, force: true });
   }
 });
+
+it("retains exact broker-observation deduplication and detects tampered predecessors", async () => {
+  const directory = await storeDirectory();
+  const body = {
+    kind: "broker_history" as const,
+    accountId: "paper-account",
+    venue: "alpaca:paper",
+    query: "activities:window-a",
+    cursor: "",
+    payload: [{ id: "fill-1", quantity: 1 }],
+  };
+  const first = await appendFinanceBrokerHistory(directory, body);
+  expect((await appendFinanceBrokerHistory(directory, body)).appended).toBe(false);
+  for (const changed of [
+    { accountId: "other-account" },
+    { venue: "alpaca:live" },
+    { query: "activities:window-b" },
+    { cursor: "page-2" },
+    { payload: [{ id: "fill-1", quantity: 2 }] },
+    {
+      payload: [
+        { id: "fill-1", quantity: 1 },
+        { id: "fill-2", quantity: 1 },
+      ],
+    },
+  ]) {
+    expect((await appendFinanceBrokerHistory(directory, { ...body, ...changed })).appended).toBe(
+      true,
+    );
+  }
+  expect((await appendFinanceBrokerHistory(directory, body)).record.ref).toBe(first.record.ref);
+  const db = openDatabase(directory);
+  try {
+    db.exec("DROP TRIGGER finance_broker_history_no_update");
+    const row = db.prepare("SELECT body FROM finance_broker_history WHERE sequence=1").get();
+    if (typeof row?.body !== "string") {
+      throw new Error("missing broker fixture");
+    }
+    const corrupted = JSON.parse(row.body);
+    corrupted.body.payload[0].quantity = 99;
+    db.prepare("UPDATE finance_broker_history SET body=? WHERE sequence=1").run(
+      JSON.stringify(corrupted),
+    );
+  } finally {
+    db.close();
+  }
+  await expect(
+    appendFinanceBrokerHistory(directory, { ...body, query: "different-window" }),
+  ).rejects.toThrow("broker history chain mismatch");
+});

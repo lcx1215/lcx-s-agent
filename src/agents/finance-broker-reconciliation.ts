@@ -325,6 +325,13 @@ export async function syncFinanceBrokerReconciliation(
     }
     feesComplete &&= complete;
   }
+  // Validate the durable history before sampling the final account snapshot so
+  // local replay work does not consume the short account-fact freshness lease.
+  const rawHistory = await readFinanceBrokerHistoryRecords(
+    options.directory,
+    options.accountId,
+    "alpaca:paper",
+  );
   const positions = await get("/v2/positions");
   const orders = await get("/v2/orders?status=open&limit=500&nested=true");
   const last = (await get("/v2/account")) as Record<string, unknown>;
@@ -337,11 +344,6 @@ export async function syncFinanceBrokerReconciliation(
   ) {
     throw new Error("invalid broker snapshot");
   }
-  const rawHistory = await readFinanceBrokerHistoryRecords(
-    options.directory,
-    options.accountId,
-    "alpaca:paper",
-  );
   const result = reconcileFinanceBrokerActivities({
     activities: rawHistory.records
       .filter((record) => record.body.query.startsWith("activities:"))
