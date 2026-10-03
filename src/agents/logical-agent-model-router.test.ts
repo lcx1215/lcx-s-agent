@@ -70,6 +70,43 @@ const execute = async ({
 });
 
 describe("role model execution receipts", () => {
+  it("restores original receipts only into the next same-run attempt and rejects invalid lineage", async () => {
+    const pool = new LogicalAgentPool<string, unknown>({ modelRouting: routing() });
+    const result = await pool.submit(task, execute, {}, {}, "repair:attempt:1");
+    const original = structuredClone(result.modelCalls);
+    const router = new LogicalAgentModelRouter(routing());
+    router.restoreCompletedModelCalls(
+      "repair:attempt:2",
+      result.modelCalls ?? [],
+      "repair:attempt:1",
+    );
+    expect(result.modelCalls).toEqual(original);
+    expect(() =>
+      router.restoreCompletedModelCalls(
+        "other:attempt:2",
+        result.modelCalls ?? [],
+        "repair:attempt:1",
+      ),
+    ).toThrow("next attempt of the same run");
+    expect(() =>
+      router.restoreCompletedModelCalls(
+        "repair:attempt:3",
+        result.modelCalls ?? [],
+        "repair:attempt:1",
+      ),
+    ).toThrow("next attempt of the same run");
+    expect(() =>
+      router.restoreCompletedModelCalls("repair:attempt:2", result.modelCalls ?? []),
+    ).toThrow("correlation mismatch");
+    expect(() =>
+      router.restoreCompletedModelCalls(
+        "repair:attempt:2",
+        (result.modelCalls ?? []).map((call) => ({ ...call, adapterId: "unknown" })),
+        "repair:attempt:1",
+      ),
+    ).toThrow("invalid completed model receipt");
+  });
+
   it.each(["prompt_input_invalid", "prompt_budget_exceeded"] as const)(
     "does not repeat an unchanged %s request on a fallback model",
     async (code) => {

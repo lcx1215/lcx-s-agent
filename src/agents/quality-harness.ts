@@ -8,6 +8,7 @@ import {
   summarizeExecutedModelIdentity,
   type LogicalAgentPlanResult,
   type LogicalAgentPoolStatus,
+  type LogicalAgentTaskResult,
 } from "./logical-agent-pool.js";
 import {
   buildQualityHarnessPlan,
@@ -458,6 +459,8 @@ export async function runQualityHarness(
   // Never reuse draft-dependent reviews or carry a receipt across runs/evidence packets.
   const reusable = new Map<string, QualityHarnessStageOutput>();
   const attestedReusableStageIds = new Set<string>();
+  let reusableModelResults: readonly LogicalAgentTaskResult<QualityHarnessStageOutput>[] = [];
+  let reusableSourceCorrelationId: string | undefined;
   const preflightIssues = [...controllerPlanningIssues, ...batchPlanningIssues];
   if (preflightIssues.length > 0) {
     const verification = normalizeQualityVerification({
@@ -499,6 +502,15 @@ export async function runQualityHarness(
   }
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const reusedStageIds: string[] = [];
+    if (reusableSourceCorrelationId) {
+      // Carry original same-run call receipts into the next attempt identity registry.
+      // No new generation or rewritten receipt is attributed to cached work.
+      pool.restoreCompletedModelCalls(
+        `${runId}:attempt:${attempt}`,
+        reusableModelResults,
+        reusableSourceCorrelationId,
+      );
+    }
     const plan = await runLogicalAgentPlan({
       pool,
       runId: `${runId}:attempt:${attempt}`,
@@ -651,6 +663,8 @@ export async function runQualityHarness(
       break;
     }
     reusable.clear();
+    reusableModelResults = [];
+    reusableSourceCorrelationId = undefined;
     const downstreamNeedsRepair =
       quality.artifact !== undefined ||
       plan.tasks.some(
@@ -718,6 +732,8 @@ export async function runQualityHarness(
                 : true))),
       );
       if (reuseSetComplete && reusableOutputsValid) {
+        reusableModelResults = reusableTasks;
+        reusableSourceCorrelationId = `${runId}:attempt:${attempt}`;
         for (const task of reusableTasks) {
           if (task.output) {
             reusable.set(task.taskId, task.output);

@@ -284,13 +284,26 @@ export class LogicalAgentModelRouter {
     return this.#adapters.get(this.#policy(role).primary)!.modelId;
   }
 
-  restoreCompletedModelCalls(correlationId: string, receipts: readonly ModelCallReceipt[]): void {
+  restoreCompletedModelCalls(
+    correlationId: string,
+    receipts: readonly ModelCallReceipt[],
+    sourceCorrelationId: string = correlationId,
+  ): void {
     if (!correlationId.trim()) {
       throw new Error("model routing restore requires a correlation ID");
     }
+    if (sourceCorrelationId !== correlationId) {
+      const sourceAttempt = /^(.*):attempt:(\d+)$/u.exec(sourceCorrelationId);
+      if (
+        !sourceAttempt ||
+        correlationId !== `${sourceAttempt[1]}:attempt:${Number(sourceAttempt[2]) + 1}`
+      ) {
+        throw new Error("model routing restore requires the next attempt of the same run");
+      }
+    }
     const completed = new Map<LogicalAgentId, Set<string>>();
     for (const receipt of receipts) {
-      if (receipt.correlationId !== correlationId) {
+      if (receipt.correlationId !== sourceCorrelationId) {
         throw new Error("model routing checkpoint receipt correlation mismatch");
       }
       if (receipt.outcome !== "completed") {

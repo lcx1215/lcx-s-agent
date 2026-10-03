@@ -147,6 +147,7 @@ function coveredEvidenceRouting(
     failDraft?: boolean;
     failDraftAttempt?: number;
     failFinalAuditBudget?: boolean;
+    extractionGap?: string;
     revisePrecheckAttempt?: number;
     adversarialFindingAttempt?: number;
   } = {},
@@ -192,6 +193,17 @@ function coveredEvidenceRouting(
           kind: "plan",
           requirements: ["review all supplied evidence"],
           missingEvidence: [],
+        };
+      }
+      if (current.agentId === "financial_extraction" && params.extractionGap) {
+        return {
+          kind: "review",
+          review: {
+            verdict: "revise",
+            criticalFindings: [],
+            evidenceGaps: [params.extractionGap],
+            notes: [],
+          },
         };
       }
       if (current.stage === "draft" || current.stage === "format") {
@@ -1196,6 +1208,53 @@ describe("quality harness", () => {
     ]);
     expect(plan.find((task) => task.id === "data_cleaning")?.dependsOn).toBeUndefined();
   });
+
+  it.each([1, 20])("states the primary extraction scope for %i evidence items", async (count) => {
+    const { request: evidenceRequest, evidenceCoverage } = coverageRequest(count);
+    const requests: QualityHarnessModelRequest[] = [];
+    await runQualityHarness({
+      request: evidenceRequest,
+      maxAttempts: 1,
+      modelRouting: coveredEvidenceRouting({ requests }),
+      requireEvidenceCoverage: true,
+      evidenceCoverage,
+    });
+
+    const extraction = requests.find((entry) => entry.agentId === "financial_extraction")!;
+    expect(extraction.instructions).toContain("flag missing fields instead of filling them");
+    if (count > 16) {
+      expect(extraction.evidence.length).toBeLessThan(count);
+      expect(extraction.instructions).toContain("only the primary raw evidence packet");
+      expect(extraction.instructions).toContain("not an evidence gap");
+      expect(extraction.instructions).toContain("flag actual conflicts");
+      expect(extraction.instructions).toContain("full final_precheck");
+      expect(requests.find((entry) => entry.stage === "precheck")?.findingPacket).toBeDefined();
+    } else {
+      expect(extraction.evidence).toHaveLength(count);
+      expect(extraction.instructions).not.toContain("only the primary raw evidence packet");
+    }
+  });
+
+  it("keeps a genuine extraction gap blocking despite the primary-packet scope", async () => {
+    const { request: evidenceRequest, evidenceCoverage } = coverageRequest(20);
+    const result = await runQualityHarness({
+      request: evidenceRequest,
+      maxAttempts: 1,
+      modelRouting: coveredEvidenceRouting({
+        extractionGap: "Settlement costs remain unreconciled; net profit is unknown.",
+      }),
+      requireEvidenceCoverage: true,
+      evidenceCoverage,
+    });
+
+    expect(result.status).toBe("quality-failed");
+    expect(
+      result.attempts[0]?.gates.find((gate) => gate.id === "supporting_role_reviews"),
+    ).toMatchObject({
+      passed: false,
+    });
+    expect(result.attempts[0]?.feedback.join(" ")).toContain("net profit is unknown");
+  });
   it("derives its ten-stage plan from the existing default logical-agent DAG", () => {
     const plan = buildQualityHarnessPlan({ runId: "run-1", attempt: 1, request });
     expect(plan).toHaveLength(10);
@@ -1296,6 +1355,40 @@ describe("quality harness", () => {
         },
       ],
     };
+    const baseRouting = coveredEvidenceRouting({
+      requests,
+      formatArtifactsByAttempt: { 1: invalidArtifact, 2: repairedArtifact },
+    });
+    const original = baseRouting.adapters[0];
+    const adapters = ["pro", "flash", "independent"].map((id) => ({
+      ...original,
+      id,
+      modelId: id,
+      observe: (call: Parameters<NonNullable<LogicalAgentModelAdapter["observe"]>>[0]) => {
+        const observation = original.observe?.(call);
+        return observation ? { ...observation, modelId: id } : undefined;
+      },
+    }));
+    const policy = { ...baseRouting.defaultPolicy, primary: "pro" };
+    const modelRouting: LogicalAgentModelRouting = {
+      ...baseRouting,
+      adapters,
+      defaultPolicy: policy,
+      roles: {
+        research_draft: policy,
+        formatting: { ...policy, sameModelAsRole: "research_draft" },
+        adversarial_challenge: {
+          ...policy,
+          primary: "flash",
+          excludeModelsUsedBy: ["research_draft"],
+        },
+        final_precheck: {
+          ...policy,
+          primary: "independent",
+          excludeModelsUsedBy: ["research_draft", "formatting"],
+        },
+      },
+    };
     const result = await runQualityHarness({
       request: financeRequest,
       maxAttempts: 2,
@@ -1306,10 +1399,7 @@ describe("quality harness", () => {
         runnerOmittedEvidenceIds: [],
         runnerClippedEvidenceIds: [],
       },
-      modelRouting: coveredEvidenceRouting({
-        requests,
-        formatArtifactsByAttempt: { 1: invalidArtifact, 2: repairedArtifact },
-      }),
+      modelRouting,
       verify: async ({ artifact: checked }) => {
         verifyAnswers.push(checked.answer);
         return {
@@ -1321,6 +1411,28 @@ describe("quality harness", () => {
     });
 
     expect(result.status).toBe("verified");
+    const draftCalls = result.execution.modelCalls.filter((call) => call.role === "research_draft");
+    expect(draftCalls).toHaveLength(1);
+    expect(draftCalls[0]).toMatchObject({
+      modelId: "pro",
+      attempt: 1,
+      evidence: "adapter-attested",
+    });
+    expect(
+      result.execution.modelCalls
+        .filter((call) => call.role === "adversarial_challenge")
+        .map((call) => call.modelId),
+    ).toEqual(["flash", "flash"]);
+    expect(
+      result.execution.modelCalls
+        .filter((call) => call.role === "formatting")
+        .map((call) => call.modelId),
+    ).toEqual(["pro", "pro"]);
+    expect(
+      result.execution.modelCalls
+        .filter((call) => call.role === "final_precheck")
+        .map((call) => call.modelId),
+    ).toEqual(["independent", "independent"]);
     expect(result.attempts.map((attempt) => attempt.status)).toEqual([
       "quality-failed",
       "quality-passed",

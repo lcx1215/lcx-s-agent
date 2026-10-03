@@ -563,10 +563,12 @@ export class LogicalAgentPool<TInput, TResult> {
   restoreCompletedModelCalls(
     correlationId: string,
     results: readonly LogicalAgentTaskResult<TResult>[],
+    sourceCorrelationId: string = correlationId,
   ): void {
     this.#modelRouter?.restoreCompletedModelCalls(
       correlationId,
       results.flatMap((result) => result.modelCalls ?? []),
+      sourceCorrelationId,
     );
   }
 

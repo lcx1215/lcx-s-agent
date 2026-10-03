@@ -715,8 +715,25 @@ Five- or six-batch drafting retains complete review handoffs within the same 44k
 ceiling as final review. With `--write`, quality stages also save complete outputs
 and call attestations in the existing canonical logical-agent checkpoint store;
 recording them does not enable automatic resume or accept a failed review.
+Same-run repair restores validated original author call receipts to the next
+attempt's routing context. Original call IDs and attestations remain unchanged;
+author affinity and independent-review model separation still apply. Restoration
+does not permit cross-run or skipped-attempt reuse.
+The primary extraction stage sees only its assigned raw packet, so evidence routed
+to another batch is not a local absence. Source conflicts and genuine missing
+fields still require review, and final precheck reconciles the complete packet.
 Final artifact audits receive the full formatted artifact, including tail claims;
 prompt limits still fail closed rather than silently clipping the review object.
+
+Night portfolio risk uses a valid broker inventory bound to its account, venue and
+as-of time. Multiple accounts stay separate; without a usable snapshot the risk
+inventory is unknown. Simulation and LCX receipt lots remain separate attribution
+projections, never a combined broker exposure or reconciled account profit.
+Unresolved cash or costs retain their original execution blocks.
+Formatting keeps supported source observations separate from uncertain inference
+and preserves the source's units and time scope. A mark time is not a cumulative
+PnL window, and a historical status count is not a claim that this run placed an
+order. Missing units or account scope cannot be supplied by the formatter.
 
 A reviewed portfolio abstention uses the explicit research proposal
 `{decision: "no_allocation", reason, evidenceIds}`. The reason and supported-claim
