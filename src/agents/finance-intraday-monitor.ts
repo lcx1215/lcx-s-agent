@@ -10,7 +10,6 @@ import {
   financeUsEquityLocalTimeInstant,
   FINANCE_TRADING_WEEKDAYS,
 } from "./finance-cycle-schedule.js";
-import type { FinanceExecutionReceipt } from "./finance-execution-adapter.js";
 import {
   appendFinanceIntradayDecision,
   readFinanceIntradayDecisions,
@@ -26,9 +25,12 @@ import {
   type FinanceIntradayActiveRuleContract,
   type FinanceIntradayMonitorScope,
 } from "./finance-intraday-paper.js";
-import { receiptsForIntradayStrategy } from "./finance-intraday-position.js";
+import {
+  readFinanceIntradayOwnedPositions,
+  receiptsForIntradayStrategy,
+} from "./finance-intraday-position.js";
 import { evaluateFinanceIntradaySignal } from "./finance-intraday-signal.js";
-import { projectFinancePositions, readFinancePositionLedger } from "./finance-position-ledger.js";
+import { readFinancePositionRecords } from "./finance-position-ledger.js";
 import { readFinanceResearchEquityUniverseSnapshot } from "./finance-research-runner.js";
 import { readFinanceStrategyRuleLedger } from "./finance-strategy-rule-ledger.js";
 import {
@@ -38,45 +40,20 @@ import {
 
 function decisionForOpenIntradayPosition(params: {
   decisions: Awaited<ReturnType<typeof readFinanceIntradayDecisions>>;
-  receipts: readonly FinanceExecutionReceipt[];
+  openLots: Awaited<ReturnType<typeof readFinanceIntradayOwnedPositions>>["openLots"];
   instrument: string;
   quantity: number;
 }) {
-  const lots: Array<{ intentId: string; quantity: number }> = [];
-  const receipts = params.receipts
-    .filter((receipt) => receipt.instrument.toUpperCase() === params.instrument)
-    .toSorted((left, right) =>
-      left.recordedAt === right.recordedAt
-        ? left.receiptId.localeCompare(right.receiptId)
-        : left.recordedAt.localeCompare(right.recordedAt),
-    );
-
-  for (const receipt of receipts) {
-    if (receipt.side === "buy") {
-      const existing = lots.find((lot) => lot.intentId === receipt.intentId);
-      if (existing) {
-        existing.quantity += receipt.fill.filledQuantity;
-      } else {
-        lots.push({ intentId: receipt.intentId, quantity: receipt.fill.filledQuantity });
-      }
+  const byIntent = new Map<string, { intentId: string; quantity: number }>();
+  for (const lot of params.openLots) {
+    if (lot.instrument !== params.instrument || lot.quantity <= 1e-6) {
       continue;
     }
-    let toClose = receipt.fill.filledQuantity;
-    while (toClose > 1e-6 && lots.length > 0) {
-      const lot = lots[0];
-      const closed = Math.min(toClose, lot.quantity);
-      lot.quantity -= closed;
-      toClose -= closed;
-      if (lot.quantity <= 1e-6) {
-        lots.shift();
-      }
-    }
-    if (toClose > 1e-6) {
-      return null;
-    }
+    const current = byIntent.get(lot.intentId) ?? { intentId: lot.intentId, quantity: 0 };
+    current.quantity += lot.quantity;
+    byIntent.set(lot.intentId, current);
   }
-
-  const openLots = lots.filter((lot) => lot.quantity > 1e-6);
+  const openLots = [...byIntent.values()];
   if (
     openLots.length !== 1 ||
     Math.abs(openLots[0].quantity - params.quantity) > 1e-6 ||
@@ -337,10 +314,11 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
       executionAuthority: "none" as const,
     });
   }
-  const positionRecords = await readFinancePositionLedger(options.directory);
-  const intradayBook = projectFinancePositions({
-    receipts: receiptsForIntradayStrategy(positionRecords.receipts, options.accountId),
-    marks: positionRecords.marks,
+  const positionRecords = await readFinancePositionRecords(options.directory);
+  const intradayBook = await readFinanceIntradayOwnedPositions({
+    directory: options.directory,
+    accountId: options.accountId,
+    receipts: positionRecords.receipts,
   });
   const position = intradayBook.positions.find(
     (item) => item.instrument === instrument && item.quantity !== 0,
@@ -373,7 +351,7 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
     );
     entryDecision = decisionForOpenIntradayPosition({
       decisions,
-      receipts: strategyReceipts,
+      openLots: intradayBook.openLots,
       instrument,
       quantity: position.quantity,
     });

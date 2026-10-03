@@ -38,6 +38,64 @@ function reply(value: unknown) {
   return { status: 200, body: JSON.stringify(value) };
 }
 describe("Alpaca raw history sync", () => {
+  it("retains native parent legs and child facts without counting legs as pagination rows", async () => {
+    const urls: URL[] = [];
+    const options = await setup(async (raw) => {
+      const url = new URL(raw);
+      urls.push(url);
+      return url.pathname === "/v2/account"
+        ? reply({ id: "synthetic-account" })
+        : url.pathname.endsWith("activities")
+          ? reply([])
+          : reply(
+              Array.from({ length: 250 }, (_, i) => ({
+                id: `entry-${i}`,
+                submitted_at: "2025-01-02T00:00:00Z",
+                order_class: "oto",
+                legs: [{ id: `stop-${i}`, submitted_at: null, type: "stop", status: "held" }],
+              })),
+            );
+    });
+    const synced = await syncAlpacaPaperHistory(options);
+    expect(synced.status).toBe("raw_history_synced");
+    expect(synced.streams[0].pages).toBe(1);
+    expect(urls.filter((url) => url.pathname === "/v2/orders")).toHaveLength(1);
+    expect(urls.find((url) => url.pathname === "/v2/orders")?.searchParams.get("nested")).toBe(
+      "true",
+    );
+    const history = await readFinanceBrokerHistory(options.directory, options.accountId);
+    const orders = history.facts.filter(({ stream }) => stream === "orders");
+    expect(orders).toHaveLength(500);
+    expect(orders.find(({ fact }) => fact.id === "entry-0")?.fact.legs).toEqual([
+      { id: "stop-0", submitted_at: null, type: "stop", status: "held" },
+    ]);
+    expect(orders.find(({ fact }) => fact.id === "stop-0")?.fact.status).toBe("held");
+    expect((await readFinancePositionRecords(options.directory)).receipts).toHaveLength(0);
+    await syncAlpacaPaperHistory(options);
+    expect((await readFinanceBrokerHistory(options.directory, options.accountId)).facts).toEqual(
+      history.facts,
+    );
+  });
+
+  it.each([{ legs: [null] }, { legs: [{ type: "stop" }] }, { legs: "invalid" }])(
+    "refuses malformed native child orders %j",
+    async ({ legs }) => {
+      const options = await setup(async (url) =>
+        url.endsWith("/account")
+          ? reply({ id: "synthetic-account" })
+          : url.includes("/activities")
+            ? reply([])
+            : reply([{ id: "entry", submitted_at: "2025-01-02T00:00:00Z", legs }]),
+      );
+      expect((await syncAlpacaPaperHistory(options)).status).toBe("incomplete");
+      expect(
+        (await readFinanceBrokerHistory(options.directory, options.accountId)).facts.filter(
+          ({ stream }) => stream === "orders",
+        ),
+      ).toEqual([]);
+    },
+  );
+
   it("projects the newest order revision without losing raw history or merging activity IDs", async () => {
     const options = await setup(async () => reply([]));
     const append = (query: string, fact: Record<string, unknown>) =>

@@ -41,6 +41,7 @@ async function fixture() {
       {
         id: "fill-spy",
         activity_type: "FILL",
+        type: "fill",
         order_id: "order-spy",
         symbol: "SPY",
         side: "buy",
@@ -51,6 +52,7 @@ async function fixture() {
       {
         id: "fill-btc",
         activity_type: "FILL",
+        type: "fill",
         order_id: "order-btc",
         symbol: "BTCUSD",
         side: "buy",

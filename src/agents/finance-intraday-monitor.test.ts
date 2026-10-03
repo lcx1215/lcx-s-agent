@@ -35,7 +35,10 @@ import {
   readFinanceDynamicIntradayExitTargets,
   readFinanceRetiredIntradayExitTargets,
 } from "./finance-intraday-position.js";
-import { appendFinanceExecutionReceipt } from "./finance-position-ledger.js";
+import {
+  appendFinanceBrokerHistory,
+  appendFinanceExecutionReceipt,
+} from "./finance-position-ledger.js";
 import {
   activateFinanceStrategyRule,
   declareFinanceStrategyRule,
@@ -536,109 +539,186 @@ describe("resident intraday monitor tick", () => {
     ]);
   });
 
-  it("binds an out-of-selection exit to the original dynamic entry decision and same-account terminal fill", async () => {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-dynamic-managed-exit-"));
-    temporary.push(directory);
-    const contract = await activeContract(
-      directory,
-      { paperUniverseScope: "fresh_us_equity_selection_v1" },
-      {
-        ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE_V3,
-        formVersion: FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V3,
-      },
-    );
-    const priorSnapshotRef = caseflowFingerprint({ selected: ["QQQ"] });
-    const entry = await appendFinanceIntradayDecision(directory, {
-      signalId: "intraday-dynamic-exit-entry",
-      instrument: "QQQ",
-      sessionDate: "2026-09-18",
-      action: "buy",
-      reason: "opening_range_breakout",
-      referencePrice: 100,
-      referencePriceAt: "2026-09-18T13:55:00.000Z",
-      stopPrice: 99,
-      targetPrice: 102,
-      datasetHeadRef: "d".repeat(64),
-      strategyRule: contract.ruleId,
-      strategyBinding: {
-        declarationRef: contract.declarationRef,
-        activationRef: contract.activationRef,
-        declaredInstruments: [...contract.instruments],
-        parameters: {
-          openingRangeBars: contract.openingRangeBars,
-          rewardRisk: contract.rewardRisk,
-          intervalSeconds: contract.intervalSeconds,
-          feed: contract.feed,
+  it.each([0, 1, 2])(
+    "updates managed exits after a native stop fills %s of 2 owned shares",
+    async (stoppedQuantity) => {
+      const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-dynamic-managed-exit-"));
+      temporary.push(directory);
+      const contract = await activeContract(
+        directory,
+        { paperUniverseScope: "fresh_us_equity_selection_v1" },
+        {
+          ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE_V3,
+          formVersion: FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V3,
         },
-        scope: "system_universe",
-        universeSnapshotRef: priorSnapshotRef,
-      },
-    });
-    const entryReceipt = buildFinanceExecutionReceipt({
-      intent: {
-        intentId: `intent:${entry.record.input.signalId}`,
+      );
+      const priorSnapshotRef = caseflowFingerprint({ selected: ["QQQ"] });
+      const entry = await appendFinanceIntradayDecision(directory, {
+        signalId: "intraday-dynamic-exit-entry",
         instrument: "QQQ",
-        side: "buy",
-        orderType: "market",
-        quantity: 2,
+        sessionDate: "2026-09-18",
+        action: "buy",
+        reason: "opening_range_breakout",
         referencePrice: 100,
         referencePriceAt: "2026-09-18T13:55:00.000Z",
-        runAuthorizationId: "dynamic-exit-entry",
-        rationale: "fixture entry",
-      },
-      adapter: { id: "alpaca-venue", venue: "alpaca:paper", kind: "venue" },
-      fill: {
-        filledQuantity: 2,
-        fillPrice: 100,
-        filledAt: "2026-09-18T13:56:00.000Z",
-        venueRef: "alpaca:paper:dynamic-exit-entry",
-        terminalOrderIdentity: { orderId: "dynamic-exit-entry", terminal: true },
-      },
-      recordedAt: "2026-09-18T13:56:00.000Z",
-      accountId: "paper-account",
-    });
-    await appendFinanceExecutionReceipt(directory, entryReceipt);
-    const bars = regularSessionBars("2026-09-18", 7, { lastLow: 98 });
-    const observedAt = new Date(Date.parse(bars.at(-1)!.startAt) + 300_000).toISOString();
-    await appendFinanceIntradayBars(directory, {
-      instrument: "QQQ",
-      intervalSeconds: 300,
-      observedAt,
-      provenance: { origin: "dynamic managed-exit fixture", feed: "iex" },
-      bars,
-    });
-    const result = await monitorTickWithFixtureCalendar({
-      directory,
-      instrument: "QQQ",
-      intervalSeconds: 300,
-      feed: "iex",
-      openingRangeBars: 6,
-      rewardRisk: 2,
-      strategyContract: contract,
-      scope: { kind: "managed_position_exit" },
-      accountId: "paper-account",
-      exitOnly: true,
-      now: new Date("2026-09-18T15:00:00.000Z"),
-      sync: vi.fn(async () => ({}) as never),
-    });
-    expect(result).toMatchObject({
-      status: "decision_recorded",
-      signal: { action: "sell", reason: "opening_range_stop" },
-      decision: {
-        input: {
+        stopPrice: 99,
+        targetPrice: 102,
+        datasetHeadRef: "d".repeat(64),
+        strategyRule: contract.ruleId,
+        strategyBinding: {
+          declarationRef: contract.declarationRef,
+          activationRef: contract.activationRef,
+          declaredInstruments: [...contract.instruments],
+          parameters: {
+            openingRangeBars: contract.openingRangeBars,
+            rewardRisk: contract.rewardRisk,
+            intervalSeconds: contract.intervalSeconds,
+            feed: contract.feed,
+          },
+          scope: "system_universe",
+          universeSnapshotRef: priorSnapshotRef,
+        },
+      });
+      const entryReceipt = buildFinanceExecutionReceipt({
+        intent: {
+          intentId: `intent:${entry.record.input.signalId}`,
           instrument: "QQQ",
-          strategyBinding: {
-            managedExitProof: {
-              accountId: "paper-account",
-              entryDecisionRef: entry.record.ref,
-              entryReceiptId: entryReceipt.receiptId,
-              positionQuantity: 2,
+          side: "buy",
+          orderType: "market",
+          quantity: 2,
+          referencePrice: 100,
+          referencePriceAt: "2026-09-18T13:55:00.000Z",
+          runAuthorizationId: "dynamic-exit-entry",
+          rationale: "fixture entry",
+        },
+        adapter: { id: "alpaca-venue", venue: "alpaca:paper", kind: "venue" },
+        fill: {
+          filledQuantity: 2,
+          fillPrice: 100,
+          filledAt: "2026-09-18T13:56:00.000Z",
+          venueRef: "alpaca:paper:dynamic-exit-entry",
+          terminalOrderIdentity: { orderId: "dynamic-exit-entry", terminal: true },
+        },
+        recordedAt: "2026-09-18T13:56:00.000Z",
+        accountId: "paper-account",
+      });
+      await appendFinanceExecutionReceipt(directory, entryReceipt);
+      if (stoppedQuantity > 0) {
+        const child = {
+          id: "dynamic-native-stop",
+          symbol: "QQQ",
+          side: "sell",
+          type: "stop",
+          order_class: "oto",
+          status: stoppedQuantity === 2 ? "filled" : "partially_filled",
+          qty: "2",
+          filled_qty: String(stoppedQuantity),
+          filled_at: "2026-09-18T14:00:00.000Z",
+          updated_at: "2026-09-18T14:00:00.000Z",
+        };
+        await appendFinanceBrokerHistory(directory, {
+          kind: "broker_history",
+          accountId: "paper-account",
+          venue: "alpaca:paper",
+          query: "orders:native-stop-fixture",
+          cursor: "",
+          payload: [
+            {
+              id: "dynamic-exit-entry",
+              symbol: "QQQ",
+              side: "buy",
+              type: "market",
+              order_class: "oto",
+              status: "filled",
+              qty: "2",
+              filled_qty: "2",
+              filled_at: entryReceipt.fill.filledAt,
+              updated_at: entryReceipt.fill.filledAt,
+              legs: [child],
+            },
+            child,
+          ],
+        });
+        await appendFinanceBrokerHistory(directory, {
+          kind: "broker_history",
+          accountId: "paper-account",
+          venue: "alpaca:paper",
+          query: "activities:native-stop-fixture",
+          cursor: "",
+          payload: [
+            {
+              id: "dynamic-stop-fill",
+              activity_type: "FILL",
+              type: stoppedQuantity === 2 ? "fill" : "partial_fill",
+              order_id: child.id,
+              symbol: "QQQ",
+              side: "sell",
+              qty: String(stoppedQuantity),
+              price: "98",
+              transaction_time: child.filled_at,
+            },
+          ],
+        });
+      }
+      const bars = regularSessionBars("2026-09-18", 7, { lastLow: 98 });
+      const observedAt = new Date(Date.parse(bars.at(-1)!.startAt) + 300_000).toISOString();
+      await appendFinanceIntradayBars(directory, {
+        instrument: "QQQ",
+        intervalSeconds: 300,
+        observedAt,
+        provenance: { origin: "dynamic managed-exit fixture", feed: "iex" },
+        bars,
+      });
+      const result = await monitorTickWithFixtureCalendar({
+        directory,
+        instrument: "QQQ",
+        intervalSeconds: 300,
+        feed: "iex",
+        openingRangeBars: 6,
+        rewardRisk: 2,
+        strategyContract: contract,
+        scope: { kind: "managed_position_exit" },
+        accountId: "paper-account",
+        exitOnly: true,
+        now: new Date("2026-09-18T15:00:00.000Z"),
+        sync: vi.fn(async () => ({}) as never),
+      });
+      if (stoppedQuantity === 2) {
+        expect(result.status).toBe("exit_only_no_owned_position");
+        expect(await readFinanceDynamicIntradayExitTargets(directory, "paper-account", [])).toEqual(
+          [],
+        );
+        await retireFinanceStrategyRule(directory, {
+          kind: "retired",
+          ruleId: contract.ruleId,
+          observedAt: "2026-09-18T15:01:00.000Z",
+          reason: "fixture terminal native stop already closed owned position",
+        });
+        expect(await readFinanceRetiredIntradayExitTargets(directory, "paper-account")).toEqual([]);
+        return;
+      }
+      expect(await readFinanceDynamicIntradayExitTargets(directory, "paper-account", [])).toEqual([
+        { instrument: "QQQ", quantity: 2 - stoppedQuantity, contract },
+      ]);
+      expect(result).toMatchObject({
+        status: "decision_recorded",
+        signal: { action: "sell", reason: "opening_range_stop" },
+        decision: {
+          input: {
+            instrument: "QQQ",
+            strategyBinding: {
+              managedExitProof: {
+                accountId: "paper-account",
+                entryDecisionRef: entry.record.ref,
+                entryReceiptId: entryReceipt.receiptId,
+                positionQuantity: 2 - stoppedQuantity,
+              },
             },
           },
         },
-      },
-    });
-  });
+      });
+    },
+  );
 
   it("uses the post-resolution time for an unpinned live clock", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-calendar-clock-race-"));

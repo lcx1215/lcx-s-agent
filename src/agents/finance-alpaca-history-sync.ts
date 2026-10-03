@@ -87,7 +87,7 @@ export async function syncAlpacaPaperHistory(options: AlpacaHistoryOptions) {
         if (stream === "orders") {
           url.searchParams.set("status", "all");
           url.searchParams.set("limit", "500");
-          url.searchParams.set("nested", "false");
+          url.searchParams.set("nested", "true");
         } else {
           url.searchParams.set("page_size", "100");
           if (cursor) {
@@ -101,16 +101,38 @@ export async function syncAlpacaPaperHistory(options: AlpacaHistoryOptions) {
         ) {
           throw new Error("unsupported history page schema");
         }
-        const payload = raw as Record<string, unknown>[];
-        for (const row of payload) {
+        const roots = raw as Record<string, unknown>[];
+        const payload = [...roots];
+        // Retain the broker's parent/leg relationship and each raw child observation.
+        // Pagination still belongs to the endpoint's root rows, never the flattened legs.
+        if (stream === "orders") {
+          for (let index = 0; index < payload.length; index++) {
+            const legs: unknown = payload[index].legs;
+            if (legs === undefined || legs === null) {
+              continue;
+            }
+            if (
+              !Array.isArray(legs) ||
+              legs.some((leg) => !leg || typeof leg !== "object" || Array.isArray(leg)) ||
+              payload.length + legs.length > 5_000
+            ) {
+              throw new Error("unsupported nested order schema");
+            }
+            payload.push(...(legs as Record<string, unknown>[]));
+          }
+        }
+        for (const [index, row] of payload.entries()) {
           if (typeof row.id !== "string" || !row.id.trim()) {
             throw new Error("history row identity unavailable");
           }
           if (stream === "orders") {
-            if (typeof row.submitted_at !== "string") {
+            // Held child orders need not yet have a submission timestamp.
+            if (index < roots.length && typeof row.submitted_at !== "string") {
               throw new Error("order timestamp unavailable");
             }
-            instant(row.submitted_at);
+            if (typeof row.submitted_at === "string") {
+              instant(row.submitted_at);
+            }
           } else {
             if (typeof row.activity_type !== "string" || !row.activity_type.trim()) {
               throw new Error("activity type unavailable");
@@ -146,11 +168,11 @@ export async function syncAlpacaPaperHistory(options: AlpacaHistoryOptions) {
         if (saved.appended) {
           appended++;
         }
-        if (payload.length < (stream === "orders" ? 500 : 100)) {
+        if (roots.length < (stream === "orders" ? 500 : 100)) {
           complete = true;
           break;
         }
-        const last = payload.at(-1)!;
+        const last = roots.at(-1)!;
         if (stream === "activities") {
           if (typeof last.id !== "string" || !last.id) {
             throw new Error("activity cursor unavailable");

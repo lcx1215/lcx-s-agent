@@ -32,7 +32,10 @@ import {
   FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V3,
   resolveFinanceIntradayActiveRuleContract,
 } from "./finance-intraday-paper.js";
-import { appendFinanceExecutionReceipt } from "./finance-position-ledger.js";
+import {
+  appendFinanceBrokerHistory,
+  appendFinanceExecutionReceipt,
+} from "./finance-position-ledger.js";
 import {
   activateFinanceStrategyRule,
   declareFinanceStrategyRule,
@@ -473,155 +476,215 @@ describe("intraday decision execution bridge", () => {
     expect(runOrder).not.toHaveBeenCalled();
   });
 
-  it("allows a retired dynamic rule to exit only its proven Paper position without a current selector snapshot", async () => {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-retired-dynamic-exit-"));
-    temporary.push(directory);
-    const strategyBinding = await activeRuleBinding(directory, "paper_execution_eligible", true);
-    const entry = (
-      await appendFinanceIntradayDecision(directory, {
-        signalId: "intraday-retired-dynamic-entry",
-        instrument: "AAPL",
-        sessionDate: "2026-09-18",
-        action: "buy",
-        reason: "opening_range_breakout",
-        referencePrice: 100,
-        referencePriceAt: "2026-09-18T14:00:00.000Z",
-        stopPrice: 99,
-        targetPrice: 102,
-        datasetHeadRef: "a".repeat(64),
-        strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE_V3,
-        strategyBinding: {
-          ...strategyBinding,
-          scope: "system_universe",
-          universeSnapshotRef: caseflowFingerprint({ selected: ["AAPL"] }),
+  it.each([0, 1.5])(
+    "allows a retired dynamic rule to exit its remainder after a native stop fills %s of 3 shares",
+    async (stoppedQuantity) => {
+      const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-retired-dynamic-exit-"));
+      temporary.push(directory);
+      const strategyBinding = await activeRuleBinding(directory, "paper_execution_eligible", true);
+      const entry = (
+        await appendFinanceIntradayDecision(directory, {
+          signalId: "intraday-retired-dynamic-entry",
+          instrument: "AAPL",
+          sessionDate: "2026-09-18",
+          action: "buy",
+          reason: "opening_range_breakout",
+          referencePrice: 100,
+          referencePriceAt: "2026-09-18T14:00:00.000Z",
+          stopPrice: 99,
+          targetPrice: 102,
+          datasetHeadRef: "a".repeat(64),
+          strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE_V3,
+          strategyBinding: {
+            ...strategyBinding,
+            scope: "system_universe",
+            universeSnapshotRef: caseflowFingerprint({ selected: ["AAPL"] }),
+          },
+        })
+      ).record;
+      const entryReceipt = buildFinanceExecutionReceipt({
+        intent: {
+          intentId: `intent:${entry.input.signalId}`,
+          instrument: "AAPL",
+          side: "buy",
+          orderType: "market",
+          quantity: 3,
+          referencePrice: 100,
+          referencePriceAt: entry.input.referencePriceAt,
+          runAuthorizationId: "retired-dynamic-entry",
+          rationale: "fixture terminal entry",
         },
-      })
-    ).record;
-    const entryReceipt = buildFinanceExecutionReceipt({
-      intent: {
-        intentId: `intent:${entry.input.signalId}`,
-        instrument: "AAPL",
-        side: "buy",
-        orderType: "market",
-        quantity: 3,
-        referencePrice: 100,
-        referencePriceAt: entry.input.referencePriceAt,
-        runAuthorizationId: "retired-dynamic-entry",
-        rationale: "fixture terminal entry",
-      },
-      adapter: { id: "alpaca-venue", venue: "alpaca:paper", kind: "venue" },
-      fill: {
-        filledQuantity: 3,
-        fillPrice: 100,
-        filledAt: "2026-09-18T14:00:01.000Z",
-        venueRef: "alpaca:paper:retired-dynamic-entry",
-        terminalOrderIdentity: { orderId: "retired-dynamic-entry", terminal: true },
-      },
-      recordedAt: "2026-09-18T14:00:01.000Z",
-      accountId: "paper-account",
-    });
-    await appendFinanceExecutionReceipt(directory, entryReceipt);
-    await retireFinanceStrategyRule(directory, {
-      kind: "retired",
-      ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE_V3,
-      observedAt: "2026-09-18T14:30:00.000Z",
-      reason: "fixture replacement",
-    });
-    const exitBinding = {
-      ...strategyBinding,
-      scope: "managed_position_exit" as const,
-      managedExitProof: {
+        adapter: { id: "alpaca-venue", venue: "alpaca:paper", kind: "venue" },
+        fill: {
+          filledQuantity: 3,
+          fillPrice: 100,
+          filledAt: "2026-09-18T14:00:01.000Z",
+          venueRef: "alpaca:paper:retired-dynamic-entry",
+          terminalOrderIdentity: { orderId: "retired-dynamic-entry", terminal: true },
+        },
+        recordedAt: "2026-09-18T14:00:01.000Z",
         accountId: "paper-account",
-        entryDecisionRef: entry.ref,
-        entryReceiptId: entryReceipt.receiptId,
-        positionQuantity: 3,
-      },
-    };
-    const decision = (
-      await appendFinanceIntradayDecision(directory, {
-        signalId: "intraday-retired-dynamic-exit",
-        instrument: "AAPL",
-        sessionDate: "2026-09-18",
-        action: "sell",
-        reason: "opening_range_stop",
-        referencePrice: 98,
-        referencePriceAt: "2026-09-18T15:00:00.000Z",
-        datasetHeadRef: "b".repeat(64),
-        strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE_V3,
-        strategyBinding: exitBinding,
-      })
-    ).record;
-    const reviewer = approvingReviewer();
-    const runOrder = vi.fn(async () => ({
-      ok: false as const,
-      stage: "place" as const,
-      refusals: ["fixture stops before dispatch"],
-    }));
-    const controller = {
-      accountId: "paper-account",
-      accountBookProvider: vi.fn(async () => ({
+      });
+      await appendFinanceExecutionReceipt(directory, entryReceipt);
+      if (stoppedQuantity > 0) {
+        const child = {
+          id: "retired-dynamic-stop",
+          symbol: "AAPL",
+          side: "sell",
+          type: "stop",
+          order_class: "oto",
+          status: "partially_filled",
+          qty: "3",
+          filled_qty: String(stoppedQuantity),
+          filled_at: "2026-09-18T14:15:00.000Z",
+          updated_at: "2026-09-18T14:15:00.000Z",
+        };
+        await appendFinanceBrokerHistory(directory, {
+          kind: "broker_history",
+          accountId: "paper-account",
+          venue: "alpaca:paper",
+          query: "orders:retired-native-stop",
+          cursor: "",
+          payload: [
+            {
+              id: "retired-dynamic-entry",
+              symbol: "AAPL",
+              side: "buy",
+              type: "market",
+              order_class: "oto",
+              status: "filled",
+              qty: "3",
+              filled_qty: "3",
+              filled_at: entryReceipt.fill.filledAt,
+              updated_at: entryReceipt.fill.filledAt,
+              legs: [child],
+            },
+            child,
+          ],
+        });
+        await appendFinanceBrokerHistory(directory, {
+          kind: "broker_history",
+          accountId: "paper-account",
+          venue: "alpaca:paper",
+          query: "activities:retired-native-stop",
+          cursor: "",
+          payload: [
+            {
+              id: "retired-stop-fill",
+              activity_type: "FILL",
+              type: "partial_fill",
+              order_id: child.id,
+              symbol: "AAPL",
+              side: "sell",
+              qty: String(stoppedQuantity),
+              price: "98",
+              transaction_time: child.filled_at,
+            },
+          ],
+        });
+      }
+      await retireFinanceStrategyRule(directory, {
+        kind: "retired",
+        ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE_V3,
+        observedAt: "2026-09-18T14:30:00.000Z",
+        reason: "fixture replacement",
+      });
+      const exitBinding = {
+        ...strategyBinding,
+        scope: "managed_position_exit" as const,
+        managedExitProof: {
+          accountId: "paper-account",
+          entryDecisionRef: entry.ref,
+          entryReceiptId: entryReceipt.receiptId,
+          positionQuantity: 3 - stoppedQuantity,
+        },
+      };
+      const decision = (
+        await appendFinanceIntradayDecision(directory, {
+          signalId: "intraday-retired-dynamic-exit",
+          instrument: "AAPL",
+          sessionDate: "2026-09-18",
+          action: "sell",
+          reason: "opening_range_stop",
+          referencePrice: 98,
+          referencePriceAt: "2026-09-18T15:00:00.000Z",
+          datasetHeadRef: "b".repeat(64),
+          strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE_V3,
+          strategyBinding: exitBinding,
+        })
+      ).record;
+      const reviewer = approvingReviewer();
+      const runOrder = vi.fn(async () => ({
+        ok: false as const,
+        stage: "place" as const,
+        refusals: ["fixture stops before dispatch"],
+      }));
+      const controller = {
         accountId: "paper-account",
-        venue: "alpaca:paper" as const,
-        observedAt: "2026-09-18T15:00:01.000Z",
-        expiresAt: "2026-09-18T15:01:01.000Z",
-        equity: 100_000,
-        positions: [{ instrument: "AAPL", quantity: 3, marketValue: 300 }],
-      })),
-      executionQuoteProvider: vi.fn(async () => ({
-        referencePrice: 98,
-        bidPrice: 98,
-        askPrice: 98.1,
-        referencePriceAt: "2026-09-18T15:00:01.000Z",
-        sourceUrlOrArtifact: "fixture://quote",
-        maxAgeMs: 30_000,
-      })),
-      createSafetyContext: vi.fn(),
-    };
-    const result = await executeFinanceIntradayDecision({
-      directory,
-      decision,
-      controller,
-      caps: { maxOrderNotional: 1_000, maxInstrumentNotional: 2_000, maxOrdersPerRun: 1 },
-      tradeDecisionReviewer: reviewer,
-      now: () => Date.parse("2026-09-18T15:00:02.000Z"),
-      runOrder: runOrder as never,
-    });
-    expect(result).toMatchObject({ status: "refused", outcome: { status: "refused" } });
-    expect(runOrder).toHaveBeenCalledOnce();
-    const recordedOrderCalls = runOrder.mock.calls as unknown as Array<
-      [{ quantityOverride: number; conclusion: { instrument: string; direction: string } }]
-    >;
-    expect(recordedOrderCalls[0]?.[0]).toMatchObject({
-      quantityOverride: 3,
-      conclusion: { instrument: "AAPL", direction: "sell" },
-    });
-    expect(reviewer).not.toHaveBeenCalled();
+        accountBookProvider: vi.fn(async () => ({
+          accountId: "paper-account",
+          venue: "alpaca:paper" as const,
+          observedAt: "2026-09-18T15:00:01.000Z",
+          expiresAt: "2026-09-18T15:01:01.000Z",
+          equity: 100_000,
+          positions: [{ instrument: "AAPL", quantity: 3 - stoppedQuantity, marketValue: 300 }],
+        })),
+        executionQuoteProvider: vi.fn(async () => ({
+          referencePrice: 98,
+          bidPrice: 98,
+          askPrice: 98.1,
+          referencePriceAt: "2026-09-18T15:00:01.000Z",
+          sourceUrlOrArtifact: "fixture://quote",
+          maxAgeMs: 30_000,
+        })),
+        createSafetyContext: vi.fn(),
+      };
+      const result = await executeFinanceIntradayDecision({
+        directory,
+        decision,
+        controller,
+        caps: { maxOrderNotional: 1_000, maxInstrumentNotional: 2_000, maxOrdersPerRun: 1 },
+        tradeDecisionReviewer: reviewer,
+        now: () => Date.parse("2026-09-18T15:00:02.000Z"),
+        runOrder: runOrder as never,
+      });
+      expect(result).toMatchObject({ status: "refused", outcome: { status: "refused" } });
+      expect(runOrder).toHaveBeenCalledOnce();
+      const recordedOrderCalls = runOrder.mock.calls as unknown as Array<
+        [{ quantityOverride: number; conclusion: { instrument: string; direction: string } }]
+      >;
+      expect(recordedOrderCalls[0]?.[0]).toMatchObject({
+        quantityOverride: 3 - stoppedQuantity,
+        conclusion: { instrument: "AAPL", direction: "sell" },
+      });
+      expect(reviewer).not.toHaveBeenCalled();
 
-    const wrongAccountDecision = (
-      await appendFinanceIntradayDecision(directory, {
-        ...decision.input,
-        signalId: "intraday-retired-dynamic-wrong-account",
-        strategyBinding: {
-          ...exitBinding,
-          managedExitProof: { ...exitBinding.managedExitProof, accountId: "other-account" },
-        },
-      })
-    ).record;
-    const wrongAccountRun = vi.fn();
-    const wrongAccountReview = approvingReviewer();
-    const wrongAccount = await executeFinanceIntradayDecision({
-      directory,
-      decision: wrongAccountDecision,
-      controller,
-      caps: { maxOrderNotional: 1_000, maxInstrumentNotional: 2_000, maxOrdersPerRun: 1 },
-      tradeDecisionReviewer: wrongAccountReview,
-      now: () => Date.parse("2026-09-18T15:00:02.000Z"),
-      runOrder: wrongAccountRun as never,
-    });
-    expect(wrongAccount).toMatchObject({ status: "refused" });
-    expect(wrongAccountRun).not.toHaveBeenCalled();
-    expect(wrongAccountReview).not.toHaveBeenCalled();
-  });
+      const wrongAccountDecision = (
+        await appendFinanceIntradayDecision(directory, {
+          ...decision.input,
+          signalId: "intraday-retired-dynamic-wrong-account",
+          strategyBinding: {
+            ...exitBinding,
+            managedExitProof: { ...exitBinding.managedExitProof, accountId: "other-account" },
+          },
+        })
+      ).record;
+      const wrongAccountRun = vi.fn();
+      const wrongAccountReview = approvingReviewer();
+      const wrongAccount = await executeFinanceIntradayDecision({
+        directory,
+        decision: wrongAccountDecision,
+        controller,
+        caps: { maxOrderNotional: 1_000, maxInstrumentNotional: 2_000, maxOrdersPerRun: 1 },
+        tradeDecisionReviewer: wrongAccountReview,
+        now: () => Date.parse("2026-09-18T15:00:02.000Z"),
+        runOrder: wrongAccountRun as never,
+      });
+      expect(wrongAccount).toMatchObject({ status: "refused" });
+      expect(wrongAccountRun).not.toHaveBeenCalled();
+      expect(wrongAccountReview).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     { reason: "opening_range_stop", retired: false },

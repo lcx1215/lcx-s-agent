@@ -30,8 +30,11 @@ import {
   type FinanceIntradayActiveRuleContract,
   resolveFinanceIntradayActiveRuleContract,
 } from "./finance-intraday-paper.js";
-import { receiptsForIntradayStrategy } from "./finance-intraday-position.js";
-import { projectFinancePositions, readFinancePositionRecords } from "./finance-position-ledger.js";
+import {
+  readFinanceIntradayOwnedPositions,
+  receiptsForIntradayStrategy,
+} from "./finance-intraday-position.js";
+import { readFinancePositionRecords } from "./finance-position-ledger.js";
 import { readFinanceResearchEquityUniverseSnapshot } from "./finance-research-runner.js";
 import { readFinanceStrategyRuleLedger } from "./finance-strategy-rule-ledger.js";
 import { buildFinanceThesisDecisionContext } from "./finance-thesis-decision-context.js";
@@ -114,22 +117,25 @@ async function managedDynamicExitProofIssue(
       )
       .map((record) => [record.input.signalId, record.input.action] as const),
   );
-  const currentQuantity = positionRecords.receipts
-    .filter(
-      (receipt) =>
-        receipt.adapterKind === "venue" &&
-        receipt.venue === "alpaca:paper" &&
-        receipt.accountId === accountId &&
-        receipt.instrument === decision.input.instrument &&
-        receipt.intentId.startsWith("intent:") &&
-        receipt.fill.filledQuantity > 0 &&
-        receipt.fill.terminalOrderIdentity?.terminal === true &&
-        ownedActions.get(receipt.intentId.slice("intent:".length)) === receipt.side,
-    )
-    .reduce(
-      (sum, receipt) => sum + (receipt.side === "buy" ? 1 : -1) * receipt.fill.filledQuantity,
-      0,
-    );
+  const boundReceipts = positionRecords.receipts.filter(
+    (receipt) =>
+      receipt.adapterKind === "venue" &&
+      receipt.venue === "alpaca:paper" &&
+      receipt.accountId === accountId &&
+      receipt.instrument === decision.input.instrument &&
+      receipt.intentId.startsWith("intent:") &&
+      receipt.fill.filledQuantity > 0 &&
+      receipt.fill.terminalOrderIdentity?.terminal === true &&
+      ownedActions.get(receipt.intentId.slice("intent:".length)) === receipt.side,
+  );
+  const book = await readFinanceIntradayOwnedPositions({
+    directory,
+    accountId,
+    receipts: boundReceipts,
+  });
+  const currentQuantity =
+    book.positions.find((position) => position.instrument === decision.input.instrument)
+      ?.quantity ?? 0;
   if (
     !Number.isFinite(currentQuantity) ||
     currentQuantity <= 0 ||
@@ -262,12 +268,13 @@ async function strategyBindingIssue(
           record.input.strategyBinding?.scope !== "explicit_diagnostic",
       ),
     );
-    const net = (items: typeof receipts) =>
-      projectFinancePositions({ receipts: items }).positions.find(
-        (position) => position.instrument === decision.input.instrument,
-      )?.quantity ?? 0;
-    const owned = net(boundReceipts);
-    if (owned <= 0 || owned !== net(receipts)) {
+    const net = async (items: typeof receipts) =>
+      (
+        await readFinanceIntradayOwnedPositions({ directory, accountId, receipts: items })
+      ).positions.find((position) => position.instrument === decision.input.instrument)?.quantity ??
+      0;
+    const owned = await net(boundReceipts);
+    if (owned <= 0 || owned !== (await net(receipts))) {
       return "retired strategy exit lacks unambiguous account-bound entry ownership";
     }
     // Retirement removes entry authority, not the obligation to close proven inventory.
@@ -386,13 +393,14 @@ export async function executeFinanceIntradayDecision(params: {
     }
     const brokerHeld =
       account.positions.find((position) => position.instrument === input.instrument)?.quantity ?? 0;
+    const ownedBook = await readFinanceIntradayOwnedPositions({
+      directory: params.directory,
+      accountId: params.controller.accountId,
+      receipts: positionRecords.receipts,
+    });
     const owned =
-      projectFinancePositions({
-        receipts: receiptsForIntradayStrategy(
-          positionRecords.receipts,
-          params.controller.accountId,
-        ),
-      }).positions.find((position) => position.instrument === input.instrument)?.quantity ?? 0;
+      ownedBook.positions.find((position) => position.instrument === input.instrument)?.quantity ??
+      0;
     const sellQuantity = input.strategyBinding?.managedExitProof?.positionQuantity ?? owned;
     const positionRefused =
       (input.action === "buy" && owned !== 0) ||
