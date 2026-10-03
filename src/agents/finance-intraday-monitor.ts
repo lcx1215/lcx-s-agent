@@ -82,7 +82,10 @@ export type FinanceIntradayMonitorOptions = Readonly<{
   resolveMarketSession?: FinanceAlpacaMarketSessionResolver;
 }>;
 
-export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMonitorOptions) {
+/** Resolve the existing cash-session gate before constructing expensive stock targets. */
+export async function resolveFinanceIntradayCashSession(
+  options: Pick<FinanceIntradayMonitorOptions, "now" | "signal" | "resolveMarketSession">,
+) {
   let now = options.now ?? new Date();
   let clock = financeEtClock(now);
   if (!FINANCE_TRADING_WEEKDAYS.includes(clock.weekday)) {
@@ -119,6 +122,17 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
   if (now.getTime() < marketOpenAt || now.getTime() >= marketCloseAt) {
     return Object.freeze({ status: "outside_cash_session" as const, clock });
   }
+  return Object.freeze({ status: "cash_session_open" as const, now, clock, marketSession });
+}
+
+export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMonitorOptions) {
+  const session = await resolveFinanceIntradayCashSession(options);
+  if (session.status !== "cash_session_open") {
+    return session;
+  }
+  const { now, clock, marketSession } = session;
+  const marketOpenAt = Date.parse(marketSession.openAt);
+  const marketCloseAt = Date.parse(marketSession.closeAt);
   if (!options.strategyContract || !options.scope) {
     return Object.freeze({ status: "blocked_missing_strategy_binding" as const, clock });
   }

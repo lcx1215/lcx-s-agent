@@ -41,7 +41,10 @@ import {
 import { FINANCE_RISK_BUDGET_ANY_INSTRUMENT } from "../../src/agents/finance-execution-adapter.js";
 import { runFinanceHistoricalPositionMaintenance } from "../../src/agents/finance-historical-position-maintenance.js";
 import { executeFinanceIntradayDecision } from "../../src/agents/finance-intraday-execution.js";
-import { runFinanceIntradayMonitorTick } from "../../src/agents/finance-intraday-monitor.js";
+import {
+  resolveFinanceIntradayCashSession,
+  runFinanceIntradayMonitorTick,
+} from "../../src/agents/finance-intraday-monitor.js";
 import {
   FINANCE_INTRADAY_OPENING_RANGE_FORM,
   financeIntradayExecutionUniverse,
@@ -1687,6 +1690,17 @@ export async function runFinanceRetiredIntradayExitTick(context: CycleContext): 
     context.resolveMarketSession
   ) {
     try {
+      // Only stock target discovery is skipped; the account/maintenance lanes run separately.
+      const session = await resolveFinanceIntradayCashSession({
+        resolveMarketSession: context.resolveMarketSession,
+        signal: context.signal,
+      });
+      if (session.status !== "cash_session_open") {
+        process.stdout.write(
+          `[${new Date().toISOString()}] retired intraday monitor=${session.status}\n`,
+        );
+        return;
+      }
       const policyIndex = args.indexOf("--execution-policy");
       if (policyIndex < 0 || !args[policyIndex + 1]) {
         throw new Error("retired exits require an execution policy");

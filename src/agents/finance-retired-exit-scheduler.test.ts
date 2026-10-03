@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   targets: vi.fn(),
+  session: vi.fn(),
   monitor: vi.fn(),
   execute: vi.fn(),
   controller: vi.fn(),
@@ -11,7 +12,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock("./finance-intraday-position.js", () => ({
   readFinanceRetiredIntradayExitTargets: mocks.targets,
 }));
-vi.mock("./finance-intraday-monitor.js", () => ({ runFinanceIntradayMonitorTick: mocks.monitor }));
+vi.mock("./finance-intraday-monitor.js", () => ({
+  runFinanceIntradayMonitorTick: mocks.monitor,
+  resolveFinanceIntradayCashSession: mocks.session,
+}));
 vi.mock("./finance-intraday-execution.js", () => ({
   executeFinanceIntradayDecision: mocks.execute,
 }));
@@ -34,6 +38,7 @@ afterEach(() => {
 it.each(["sell", "buy"] as const)(
   "continues with no active strategy but only dispatches sells (%s)",
   async (action) => {
+    mocks.session.mockResolvedValue({ status: "cash_session_open" });
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "retired-scheduler-"));
     directories.push(directory);
     const policyFile = path.join(directory, "policy.json");
@@ -117,6 +122,56 @@ it.each(["sell", "buy"] as const)(
     mocks.execute.mockClear();
     options.intraday = { ...options.intraday, placementRequested: false };
     await runFinanceRetiredIntradayExitTick(context);
+    expect(mocks.monitor).not.toHaveBeenCalled();
+    expect(mocks.execute).not.toHaveBeenCalled();
+  },
+);
+
+it.each([
+  "outside_cash_session",
+  "market_closed",
+  "blocked_market_calendar_unavailable",
+  "blocked_invalid_market_calendar",
+] as const)(
+  "skips target and policy reads when the shared session gate returns %s",
+  async (status) => {
+    mocks.session.mockResolvedValue({ status });
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const options = parseFinanceSchedulerArgs([
+      "--loop",
+      "--intraday-monitor",
+      "--place",
+      "--venue",
+      "alpaca",
+      "--execution-policy",
+      "/missing-policy.json",
+      "--execution-quote-feed",
+      "iex",
+      "--execution-max-age-ms",
+      "30000",
+      "--max-order-notional",
+      "1000",
+      "--max-instrument-notional",
+      "5000",
+      "--max-orders",
+      "8",
+    ]);
+    if (!options.intraday) {
+      throw new Error("missing intraday config");
+    }
+    options.intraday = { ...options.intraday, instrumentSource: "active_rule" };
+    const resolver = vi.fn(async () => null);
+    await runFinanceRetiredIntradayExitTick({
+      root: { directory: "/unused-book", source: "explicit" },
+      options,
+      signal: AbortSignal.timeout(5000),
+      resolveMarketSession: resolver,
+    });
+    expect(mocks.session).toHaveBeenCalledWith(
+      expect.objectContaining({ resolveMarketSession: resolver }),
+    );
+    expect(mocks.targets).not.toHaveBeenCalled();
+    expect(mocks.controller).not.toHaveBeenCalled();
     expect(mocks.monitor).not.toHaveBeenCalled();
     expect(mocks.execute).not.toHaveBeenCalled();
   },

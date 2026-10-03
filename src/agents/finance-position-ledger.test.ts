@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { requireNodeSqlite } from "../memory/sqlite.js";
+import { caseflowFingerprint } from "./finance-caseflow.js";
 import {
   createPaperExecutionAdapter,
   DEFAULT_FINANCE_RISK_BUDGET,
@@ -24,6 +25,7 @@ import {
   readFinancePositionProjectionStatus,
   readFinancePositionRecords,
   readFinanceLatestBrokerReconciliations,
+  readFinanceBrokerHistoryRecords,
 } from "./finance-position-ledger.js";
 import { financePositionLedgerPath } from "./finance-state-dir.js";
 
@@ -838,4 +840,103 @@ it("retains exact broker-observation deduplication and detects tampered predeces
   await expect(
     appendFinanceBrokerHistory(directory, { ...body, query: "different-window" }),
   ).rejects.toThrow("broker history chain mismatch");
+});
+
+it.each(["body", "sequence", "previousRef", "tail"] as const)(
+  "validates foreign-account predecessors and tails before returning a duplicate: %s",
+  async (corruption) => {
+    const directory = await storeDirectory();
+    const body = {
+      kind: "broker_history" as const,
+      accountId: "account-a",
+      venue: "alpaca:paper",
+      query: "reconciliation:first",
+      cursor: "",
+      payload: [{ observedAt: "2026-10-03T00:00:00Z" }],
+    };
+    await appendFinanceBrokerHistory(directory, body);
+    await appendFinanceBrokerHistory(directory, { ...body, accountId: "account-b" });
+    await appendFinanceBrokerHistory(directory, { ...body, query: "tail" });
+    const db = openDatabase(directory);
+    try {
+      db.exec("DROP TRIGGER finance_broker_history_no_update");
+      const sequence = corruption === "tail" ? 3 : 2;
+      const row = db
+        .prepare("SELECT body FROM finance_broker_history WHERE sequence=?")
+        .get(sequence);
+      if (typeof row?.body !== "string") {
+        throw new Error("missing broker fixture");
+      }
+      const record = JSON.parse(row.body);
+      if (corruption === "sequence") {
+        record.sequence = 99;
+      } else if (corruption === "previousRef") {
+        record.previousRef = null;
+      } else {
+        record.body.payload[0].changed = true;
+      }
+      db.prepare("UPDATE finance_broker_history SET body=?,ref=? WHERE sequence=?").run(
+        JSON.stringify(record),
+        corruption === "sequence" || corruption === "previousRef"
+          ? caseflowFingerprint(record)
+          : "0".repeat(64),
+        sequence,
+      );
+    } finally {
+      db.close();
+    }
+    await expect(
+      readFinanceBrokerHistoryRecords(directory, "account-a", "alpaca:paper"),
+    ).rejects.toThrow("broker history chain mismatch");
+    await expect(readFinanceLatestBrokerReconciliations(directory)).rejects.toThrow(
+      "broker history chain mismatch",
+    );
+    await expect(appendFinanceBrokerHistory(directory, body)).rejects.toThrow(
+      "broker history chain mismatch",
+    );
+    await expect(appendFinanceBrokerHistory(directory, { ...body, query: "new" })).rejects.toThrow(
+      "broker history chain mismatch",
+    );
+    const after = openDatabase(directory);
+    try {
+      expect(
+        after.prepare("SELECT count(*) AS count FROM finance_broker_history").get()?.count,
+      ).toBe(3);
+    } finally {
+      after.close();
+    }
+  },
+);
+
+it("streams scoped observations and latest snapshots without losing global tail or dedup identity", async () => {
+  const directory = await storeDirectory();
+  const body = {
+    kind: "broker_history" as const,
+    accountId: "account-a",
+    venue: "alpaca:paper",
+    query: "reconciliation:first",
+    cursor: "",
+    payload: [{ observedAt: "2026-10-03T00:00:00Z" }],
+  };
+  const first = await appendFinanceBrokerHistory(directory, body);
+  await appendFinanceBrokerHistory(directory, { ...body, accountId: "account-b" });
+  const tail = await appendFinanceBrokerHistory(directory, {
+    ...body,
+    accountId: "account-b",
+    query: "orders:tail",
+  });
+  expect(await appendFinanceBrokerHistory(directory, body)).toEqual({
+    record: first.record,
+    appended: false,
+  });
+  const scoped = await readFinanceBrokerHistoryRecords(directory, "account-a", "alpaca:paper");
+  expect(scoped).toEqual({ records: [first.record], headRef: first.record.ref });
+  const latest = await readFinanceLatestBrokerReconciliations(directory);
+  expect(latest.records.map((record) => [record.accountId, record.superseded])).toEqual([
+    ["account-b", true],
+    ["account-a", false],
+  ]);
+  const appended = await appendFinanceBrokerHistory(directory, { ...body, query: "new" });
+  expect(appended.record.sequence).toBe(4);
+  expect(appended.record.previousRef).toBe(tail.record.ref);
 });

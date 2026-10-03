@@ -102,6 +102,7 @@ vi.mock("../../src/agents/finance-alpaca-cycle-controller.js", () => ({
 }));
 vi.mock("../../src/agents/finance-intraday-monitor.js", () => ({
   runFinanceIntradayMonitorTick: mocks.runIntradayMonitorTick,
+  resolveFinanceIntradayCashSession: vi.fn(async () => ({ status: "cash_session_open" })),
 }));
 vi.mock("../../src/agents/finance-intraday-execution.js", () => ({
   executeFinanceIntradayDecision: mocks.executeIntradayDecision,

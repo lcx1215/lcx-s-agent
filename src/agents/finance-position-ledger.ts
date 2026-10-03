@@ -891,30 +891,33 @@ const BrokerHistoryRecordSchema = z
     body: BrokerHistoryBodySchema,
   })
   .strict();
-function readBrokerHistoryRows(db: PositionDatabase) {
+type BrokerHistoryRecord = z.infer<typeof BrokerHistoryRecordSchema> & { ref: string };
+
+/** Validate every account's chain while retaining only the caller's selected rows. */
+function* readBrokerHistoryRows(db: PositionDatabase): Generator<BrokerHistoryRecord> {
   if (!hasTable(db, "finance_broker_history")) {
-    return [];
+    return;
   }
   let previousRef: string | null = null;
-  return db
+  let sequence = 0;
+  for (const row of db
     .prepare("SELECT ref,body FROM finance_broker_history ORDER BY sequence")
-    .all()
-    .map((row, index) => {
-      if (typeof row.body !== "string" || typeof row.ref !== "string") {
-        throw new Error("invalid broker history row");
-      }
-      const raw: unknown = JSON.parse(row.body);
-      const record = BrokerHistoryRecordSchema.parse(raw);
-      if (
-        caseflowFingerprint(raw) !== row.ref ||
-        record.previousRef !== previousRef ||
-        record.sequence !== index + 1
-      ) {
-        throw new Error("broker history chain mismatch");
-      }
-      previousRef = row.ref;
-      return { ...record, ref: row.ref };
-    });
+    .iterate()) {
+    if (typeof row.body !== "string" || typeof row.ref !== "string") {
+      throw new Error("invalid broker history row");
+    }
+    const raw: unknown = JSON.parse(row.body);
+    const record = BrokerHistoryRecordSchema.parse(raw);
+    if (
+      caseflowFingerprint(raw) !== row.ref ||
+      record.previousRef !== previousRef ||
+      record.sequence !== ++sequence
+    ) {
+      throw new Error("broker history chain mismatch");
+    }
+    previousRef = row.ref;
+    yield { ...record, ref: row.ref };
+  }
 }
 
 /** Additive table in the existing database; never appends to the position chain. */
@@ -933,26 +936,32 @@ export async function appendFinanceBrokerHistory(directory: string, body: Broker
     });
     db.exec("BEGIN IMMEDIATE");
     try {
-      const records = readBrokerHistoryRows(db);
       const fingerprint = caseflowFingerprint(validated);
-      // The chain above is fully validated. Different observation keys cannot be
-      // duplicate bodies; avoid canonicalizing their potentially large payloads again.
-      const existing = records.find(
-        (record) =>
+      let last: BrokerHistoryRecord | undefined;
+      let existing: BrokerHistoryRecord | undefined;
+      // Finding a duplicate never ends validation: corrupt tails and other accounts
+      // must still fail before returning the first matching observation.
+      for (const record of readBrokerHistoryRows(db)) {
+        last = record;
+        if (
+          !existing &&
           record.body.accountId === validated.accountId &&
           record.body.venue === validated.venue &&
           record.body.query === validated.query &&
           record.body.cursor === validated.cursor &&
           record.body.payload.length === validated.payload.length &&
-          caseflowFingerprint(record.body) === fingerprint,
-      );
+          caseflowFingerprint(record.body) === fingerprint
+        ) {
+          existing = record;
+        }
+      }
       if (existing) {
         db.exec("COMMIT");
         return { record: existing, appended: false };
       }
       const record = {
-        sequence: records.length + 1,
-        previousRef: records.at(-1)?.ref ?? null,
+        sequence: (last?.sequence ?? 0) + 1,
+        previousRef: last?.ref ?? null,
         body: validated,
       };
       const ref = caseflowFingerprint(record);
@@ -984,9 +993,12 @@ export async function readFinanceBrokerHistoryRecords(
     return { records: [], headRef: null };
   }
   try {
-    const records = readBrokerHistoryRows(db).filter(
-      (record) => record.body.accountId === accountId && record.body.venue === venue,
-    );
+    const records: BrokerHistoryRecord[] = [];
+    for (const record of readBrokerHistoryRows(db)) {
+      if (record.body.accountId === accountId && record.body.venue === venue) {
+        records.push(record);
+      }
+    }
     return { records, headRef: records.at(-1)?.ref ?? null };
   } finally {
     db.close();
@@ -1007,10 +1019,9 @@ export async function readFinanceLatestBrokerReconciliations(
     return { records: [], omittedAccounts: 0 };
   }
   try {
-    const rows = readBrokerHistoryRows(db);
-    const latest = new Map<string, (typeof rows)[number]>();
+    const latest = new Map<string, BrokerHistoryRecord>();
     const heads = new Map<string, string>();
-    for (const row of rows) {
+    for (const row of readBrokerHistoryRows(db)) {
       const key = JSON.stringify([row.body.venue, row.body.accountId]);
       heads.set(key, row.ref);
       if (row.body.query.startsWith("reconciliation:")) {
