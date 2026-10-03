@@ -371,6 +371,7 @@ describe("finance_position_ledger_read", () => {
         {
           id: "fill-1",
           activity_type: "FILL",
+          type: "fill",
           order_id: "o-1",
           symbol: "AAPL",
           side: "buy",
@@ -381,6 +382,7 @@ describe("finance_position_ledger_read", () => {
         {
           id: "fill-2",
           activity_type: "FILL",
+          type: "fill",
           order_id: "o-2",
           symbol: "AAPL",
           side: "buy",
@@ -432,6 +434,7 @@ describe("finance_position_ledger_read", () => {
         {
           id: "fill-3",
           activity_type: "FILL",
+          type: "fill",
           order_id: "o-3",
           symbol: "AAPL",
           side: "buy",

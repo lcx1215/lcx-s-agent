@@ -1755,6 +1755,7 @@ describe("the loop feeds the owner's own output back to the next decision", () =
         {
           id: "fill-central-1",
           activity_type: "FILL",
+          type: "fill",
           order_id: "order-1",
           symbol: "AAPL",
           side: "buy",
@@ -1765,6 +1766,7 @@ describe("the loop feeds the owner's own output back to the next decision", () =
         {
           id: "fill-central-2",
           activity_type: "FILL",
+          type: "fill",
           order_id: "order-2",
           symbol: "AAPL",
           side: "buy",

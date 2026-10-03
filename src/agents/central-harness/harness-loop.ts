@@ -182,6 +182,7 @@ async function runCycle(
   }
   const brainProposalMs = Math.max(0, Math.round(performance.now() - brainProposalStartedAt));
   const gateStartedAt = performance.now();
+  const approvedActions = new Set<string>();
   if (proposal?.kind === "proposed") {
     brainCall = {
       provider: proposal.provider,
@@ -222,6 +223,24 @@ async function runCycle(
         });
         continue;
       }
+      const identity = JSON.stringify([
+        action.ownerId,
+        canonicalContinuationValue(action.args ?? {}),
+      ]);
+      if (approvedActions.has(identity)) {
+        actionsBlockedByGate += 1;
+        steps.push({
+          stepId: randomUUID(),
+          ownerId: action.ownerId,
+          args: action.args ?? {},
+          status: "blocked_by_gate",
+          gateReason: "duplicate_action",
+          boundary: spec.boundary,
+          startedAtMs: Date.now(),
+        });
+        continue;
+      }
+      approvedActions.add(identity);
       actionsApproved += 1;
       steps.push(makeStepStep(action.ownerId, action.args ?? {}));
     }
@@ -325,7 +344,14 @@ async function runCycle(
           ? "review_blocked_proposals"
           : steps.some((step) => step.observedOk === false)
             ? "follow_up_on_owners_reporting_not_ok"
-            : "continue"
+            : steps.some(
+                  (step) =>
+                    step.status === "ran_ok" &&
+                    step.outcome !== undefined &&
+                    options.capabilityOwnerIds?.has(step.ownerId),
+                )
+              ? "follow_up_on_capability_results"
+              : "continue"
       : brainCall.outcome === "failed"
         ? "halt_and_report"
         : brainCall.outcome === "blocked"
@@ -438,7 +464,11 @@ export function resumableReceipts(
 export type CentralCycleContinuation =
   | {
       run: true;
-      because: "dispatch_failed" | "proposals_blocked_by_gate" | "owners_reported_not_ok";
+      because:
+        | "dispatch_failed"
+        | "proposals_blocked_by_gate"
+        | "owners_reported_not_ok"
+        | "capability_results";
     }
   | {
       run: false;
@@ -446,12 +476,20 @@ export type CentralCycleContinuation =
         | "max_cycles_reached"
         | "brain_made_no_decision"
         | "nothing_left_to_follow_up"
-        | "unchanged_failure";
+        | "unchanged_failure"
+        | "unchanged_result";
     };
 
 const FOLLOW_UP_VERDICTS: Readonly<
-  Record<string, "dispatch_failed" | "proposals_blocked_by_gate" | "owners_reported_not_ok">
+  Record<
+    string,
+    | "dispatch_failed"
+    | "proposals_blocked_by_gate"
+    | "owners_reported_not_ok"
+    | "capability_results"
+  >
 > = {
+  follow_up_on_capability_results: "capability_results",
   follow_up_on_failed_dispatch: "dispatch_failed",
   review_blocked_proposals: "proposals_blocked_by_gate",
   follow_up_on_owners_reporting_not_ok: "owners_reported_not_ok",
@@ -495,7 +533,13 @@ export function nextCycleContinuation(
     previous.nextAction === receipt.nextAction &&
     signature(previous) === signature(receipt)
   ) {
-    return { run: false, because: "unchanged_failure" };
+    return {
+      run: false,
+      because:
+        receipt.nextAction === "follow_up_on_capability_results"
+          ? "unchanged_result"
+          : "unchanged_failure",
+    };
   }
   return { run: true, because };
 }
@@ -643,7 +687,8 @@ export function compactReceipts(
  */
 export const CENTRAL_PERCEPTION_BUDGET_BYTES = 12_000;
 export const CENTRAL_PERCEPTION_KEY_BUDGET_BYTES = 2_048;
-// Finance includes bounded execution coverage so refused candidates remain visible.
+// Compatibility export for the former finance key allowance; finance now uses
+// the remaining total budget after small decision projections are reserved.
 export const CENTRAL_FINANCE_PERCEPTION_KEY_BUDGET_BYTES = 6_144;
 /**
  * Caps on the tool-result digest carried back to the next decision, and on how
@@ -830,18 +875,34 @@ export function boundPerception(
       : CENTRAL_PERCEPTION_BUDGET_BYTES;
   const controlRoom = perception.controlRoom ?? {};
   const originalBytes = jsonBytes(controlRoom);
-  const fixedBytes = jsonBytes({
-    observedAt: perception.observedAt,
-    ownerTotals: perception.ownerTotals,
-    backlog: perception.backlog,
-    boundaries: perception.boundaries,
-  });
-  const { value, dropped } = boundObjectSection(
-    controlRoom,
-    Math.max(0, budget - fixedBytes),
-    CENTRAL_PERCEPTION_KEY_BUDGET_BYTES,
-    { financeAutomaticLifecycle: CENTRAL_FINANCE_PERCEPTION_KEY_BUDGET_BYTES },
-  );
+  const value: Record<string, unknown> = {};
+  const dropped: { key: string; bytes: number }[] = [];
+  // Small decision projections are reserved before finance uses the remaining
+  // flexible budget. Keep whole values, including UTF-8 and enclosing JSON costs.
+  const priorityKeys = [
+    "runtimeFreshness",
+    "governanceDigest",
+    "learningWorkflow",
+    "financeAutomaticLifecycle",
+  ];
+  const entries = [
+    ...priorityKeys
+      .filter((key) => Object.hasOwn(controlRoom, key))
+      .map((key) => [key, controlRoom[key]] as const),
+    ...Object.entries(controlRoom).filter(([key]) => !priorityKeys.includes(key)),
+  ];
+  for (const [key, item] of entries) {
+    const bytes = jsonBytes(item);
+    const candidate = { ...value, [key]: item };
+    if (
+      (key !== "financeAutomaticLifecycle" && bytes > CENTRAL_PERCEPTION_KEY_BUDGET_BYTES) ||
+      jsonBytes({ ...perception, controlRoom: candidate }) > budget
+    ) {
+      dropped.push({ key, bytes });
+    } else {
+      value[key] = item;
+    }
+  }
   const boundedPerception: CentralPerception = { ...perception, controlRoom: value };
   const injectedBytes = jsonBytes(boundedPerception);
   return {
