@@ -63,6 +63,15 @@ function stop(
 }
 
 describe("intraday inventory with owned native protection fills", () => {
+  it("refuses an excess ordinary sell even when a later buy makes the aggregate positive", () => {
+    const entry = receipt("entry", "buy", 2, 100, "2026-10-02T14:00:00Z");
+    const excessSell = receipt("excess-sell", "sell", 3, 102, "2026-10-02T14:30:00Z");
+    const newEntry = receipt("new-entry", "buy", 2, 120, "2026-10-02T15:00:00Z");
+    expect(() => projectFinanceIntradayOwnedPositions([entry, excessSell, newEntry], [])).toThrow(
+      "intraday sell fill exceeds its existing owned lots",
+    );
+  });
+
   it("keeps a later same-symbol entry bound to its own cost and intent after the old stop closes", () => {
     const oldEntry = receipt("old", "buy", 2, 100, "2026-10-01T14:00:00Z");
     const newEntry = receipt("new", "buy", 3, 120, "2026-10-02T14:00:00Z");

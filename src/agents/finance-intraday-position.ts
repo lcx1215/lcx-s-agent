@@ -96,6 +96,9 @@ export function projectFinanceIntradayOwnedPositions(
       lot.quantity -= closed;
       toClose -= closed;
     }
+    if (toClose > 1e-6) {
+      throw new Error("intraday sell fill exceeds its existing owned lots");
+    }
   }
   const openLots = lots.filter((lot) => lot.quantity > 1e-6);
   const positions = projectFinancePositions({ receipts }).positions.map((position) => {
