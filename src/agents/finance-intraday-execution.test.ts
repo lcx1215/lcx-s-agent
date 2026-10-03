@@ -1311,7 +1311,16 @@ describe("intraday decision execution bridge", () => {
     },
   );
 
-  it.each(["fresh", "stale", "timeout", "abort", "prepared_same", "prepared_changed"] as const)(
+  it.each([
+    "fresh",
+    "stale",
+    "timeout",
+    "abort",
+    "prepared_same",
+    "prepared_changed",
+    "prepared_failed_changed",
+    "prepared_failed_stale",
+  ] as const)(
     "revalidates quotes after review and records actual fallback time (%s)",
     async (mode) => {
       const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-refresh-"));
@@ -1338,10 +1347,11 @@ describe("intraday decision execution bridge", () => {
       const quoteProvider = vi.fn(async () => ({
         referencePrice: 500,
         bidPrice: 499,
-        askPrice: mode === "prepared_changed" && quoteProvider.mock.calls.length > 1 ? 502 : 501,
+        askPrice: mode.endsWith("changed") && quoteProvider.mock.calls.length > 1 ? 502 : 501,
         maxAgeMs: 30_000,
-        referencePriceAt:
-          mode === "stale" ? "2026-09-18T15:00:01.000Z" : new Date(clock).toISOString(),
+        referencePriceAt: mode.endsWith("stale")
+          ? "2026-09-18T15:00:01.000Z"
+          : new Date(clock).toISOString(),
         sourceUrlOrArtifact: "fixture://quote",
       }));
       const runOrder = vi.fn(async () => ({
@@ -1356,6 +1366,18 @@ describe("intraday decision execution bridge", () => {
         }
         if (mode === "abort") {
           cancellation.abort();
+        }
+        if (mode.startsWith("prepared_failed")) {
+          return {
+            status: "failed",
+            attempted: true,
+            provider: "fixture",
+            modelId: "fixture",
+            latencyMs: 65_000,
+            providerCallObserved: true,
+            adapterAttested: false,
+            failureCode: "provider_payment_required",
+          };
         }
         return approvingReviewer()(request);
       };
@@ -1385,7 +1407,7 @@ describe("intraday decision execution bridge", () => {
       expect(result.status).toBe("refused");
       expect(quoteProvider).toHaveBeenCalledTimes(mode === "abort" ? 1 : 2);
       expect(runOrder).toHaveBeenCalledTimes(
-        mode === "stale" || mode === "abort" || mode === "prepared_changed" ? 0 : 1,
+        mode.endsWith("stale") || mode === "abort" || mode === "prepared_changed" ? 0 : 1,
       );
       if (mode === "prepared_changed") {
         expect("outcome" in result ? result.outcome.reasons : []).toEqual([
@@ -1409,6 +1431,20 @@ describe("intraday decision execution bridge", () => {
           failureCode: "runtime_timeout",
           latencyMs: 65_000,
         });
+      }
+      if (mode === "prepared_failed_changed") {
+        expect(runOrder).toHaveBeenCalledWith(
+          expect.objectContaining({
+            market: {
+              referencePrice: 502,
+              referencePriceAt: new Date(clock).toISOString(),
+            },
+          }),
+        );
+        expect(
+          "tradeDecisionReview" in result ? result.tradeDecisionReview : undefined,
+        ).toMatchObject({ status: "failed", failureCode: "provider_payment_required" });
+        expect("outcome" in result ? result.outcome.reasons : []).toEqual(["fixture shared gate"]);
       }
     },
   );

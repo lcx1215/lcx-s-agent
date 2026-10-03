@@ -679,6 +679,7 @@ export async function executeFinanceIntradayDecision(params: {
     if (
       params.controller.prepareExecutionQuote &&
       !protectiveExit &&
+      tradeDecisionReview?.status === "completed" &&
       (quote.bidPrice !== reviewedQuote.bidPrice || quote.askPrice !== reviewedQuote.askPrice)
     ) {
       const outcome = await appendFinanceIntradayOutcome(params.directory, {
