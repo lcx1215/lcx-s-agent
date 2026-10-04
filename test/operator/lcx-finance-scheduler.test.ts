@@ -46,6 +46,7 @@ import type {
   FinanceTradeDecisionReviewer,
   FinanceTradeDecisionReviewRequest,
 } from "../../src/agents/finance-trade-decision-review.js";
+import * as tradeReviewEvidence from "../../src/agents/finance-trade-review-evidence.js";
 import { FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME } from "../../src/agents/finance-universe-selection.js";
 
 const mocks = vi.hoisted(() => ({
@@ -859,6 +860,12 @@ it("requires shared authorization and explicit caps for intraday paper placement
 });
 
 it("creates and calls a fresh single-use reviewer for each actionable intraday decision", async () => {
+  const knowledgeWorkspace = path.join(directory, "original-research-workspace");
+  vi.stubEnv("OPENCLAW_WORKSPACE_DIR", knowledgeWorkspace);
+  const capabilityFactory = vi.spyOn(
+    tradeReviewEvidence,
+    "createFinanceTradeReviewFinancialCapabilities",
+  );
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-09-21T15:00:00Z"));
   await activateIntradayRule({ paperExecutionEligibility: "paper_execution_eligible" });
@@ -995,7 +1002,21 @@ it("creates and calls a fresh single-use reviewer for each actionable intraday d
     {},
     {
       taskObjective: undefined,
-      evidenceScope: { directory, accountId: "paper-account", instruments: ["SPY"] },
+      evidenceScope: {
+        directory,
+        accountId: "paper-account",
+        instruments: ["SPY"],
+        financialCapabilities: [
+          expect.objectContaining({
+            toolName: "finance_framework_core_inspect",
+            execute: expect.any(Function),
+          }),
+          expect.objectContaining({
+            toolName: "finance_learning_capability_apply",
+            execute: expect.any(Function),
+          }),
+        ],
+      },
     },
   );
   expect(mocks.createTradeDecisionReviewer).toHaveBeenNthCalledWith(
@@ -1003,10 +1024,27 @@ it("creates and calls a fresh single-use reviewer for each actionable intraday d
     {},
     {
       taskObjective: undefined,
-      evidenceScope: { directory, accountId: "paper-account", instruments: ["SPY"] },
+      evidenceScope: {
+        directory,
+        accountId: "paper-account",
+        instruments: ["SPY"],
+        financialCapabilities: [
+          expect.objectContaining({
+            toolName: "finance_framework_core_inspect",
+            execute: expect.any(Function),
+          }),
+          expect.objectContaining({
+            toolName: "finance_learning_capability_apply",
+            execute: expect.any(Function),
+          }),
+        ],
+      },
     },
   );
   expect(mocks.executeIntradayDecision).toHaveBeenCalledTimes(2);
+  expect(capabilityFactory).toHaveBeenCalledTimes(2);
+  expect(capabilityFactory).toHaveBeenNthCalledWith(1, { workspaceDir: knowledgeWorkspace });
+  expect(capabilityFactory).toHaveBeenNthCalledWith(2, { workspaceDir: knowledgeWorkspace });
   expect(usedReviewers).toEqual(reviewers);
   expect(reviewedSignalIds).toEqual(["intraday-signal-1", "intraday-signal-2"]);
   expect(reviewedCandidateIds).toEqual(reviewedSignalIds);

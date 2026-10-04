@@ -3,6 +3,12 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import {
+  buildFinanceFrameworkCoreContractPath,
+  buildFinanceLearningCapabilityCandidatesPath,
+  renderFinanceFrameworkCoreContractArtifact,
+  renderFinanceLearningCapabilityCandidateArtifact,
+} from "../hooks/bundled/lobster-brain-registry.js";
 import { appendFinanceBars } from "./finance-bar-ledger.js";
 import {
   FinanceIntradayDecisionReviewReceiptSchema,
@@ -17,7 +23,10 @@ import {
 } from "./finance-trade-decision-review.js";
 import {
   createFinanceTradeReviewEvidenceExecutor,
+  createFinanceTradeReviewFinancialCapabilities,
+  describeFinanceTradeReviewFinancialCapabilities,
   FinanceTradeReviewEvidenceRequestSchema,
+  type FinanceTradeReviewFinancialCapability,
 } from "./finance-trade-review-evidence.js";
 import { ModelAdapterError, type LogicalAgentModelAdapter } from "./logical-agent-model-router.js";
 const dirs: string[] = [];
@@ -641,3 +650,512 @@ it("uses actual price endpoints rather than rounded minus-one return products fo
   expect(result[0].status).toBe("completed");
   expect(JSON.parse(result[0].summary).result.returnSummary.cumulativePriceReturn).toBe(0);
 });
+
+const financialRequest = {
+  candidateId: "signal",
+  action: "financial_capability" as const,
+  toolName: "finance_framework_core_inspect",
+  moduleId: "credit_liquidity" as const,
+  question: "Which funding risk would invalidate this candidate?",
+};
+async function seedKnowledge(directory: string, updatedAt = "2026-09-01T00:00:00.000Z") {
+  const contractPath = path.join(directory, buildFinanceFrameworkCoreContractPath());
+  await fs.mkdir(path.dirname(contractPath), { recursive: true });
+  await fs.writeFile(
+    contractPath,
+    renderFinanceFrameworkCoreContractArtifact({
+      updatedAt,
+      entries: [
+        {
+          domain: "credit_liquidity",
+          sourceArtifacts: ["memory/articles/funding.md"],
+          evidenceCategories: ["credit_evidence", "liquidity_evidence"],
+          evidenceSummary: "Recorded funding and credit evidence, requiring current verification.",
+          baseCase: "Credit pressure can weaken liquidity.",
+          bullCase: "Funding stress recedes.",
+          bearCase: "Funding pressure worsens.",
+          keyCausalChain: "Funding pressure -> liquidity loss -> weaker prices.",
+          upstreamDrivers: ["funding"],
+          downstreamAssetImpacts: ["AAA liquidity"],
+          confidenceOrConviction: "low",
+          whatChangesMyMind: "Reject this hypothesis if fresh funding evidence contradicts it.",
+          noActionReason: "Recorded knowledge alone cannot approve a trade.",
+          riskGateNotes: "Preserve the exact stop and verify costs.",
+          allowedActionAuthority: "research_only",
+        },
+      ],
+    }),
+  );
+  const learningPath = path.join(directory, buildFinanceLearningCapabilityCandidatesPath());
+  await fs.writeFile(
+    learningPath,
+    renderFinanceLearningCapabilityCandidateArtifact({
+      updatedAt,
+      frameworkContractPath: buildFinanceFrameworkCoreContractPath(),
+      candidates: Array.from({ length: 3 }, (_, index) => ({
+        candidateId: `funding-${index}`,
+        sourceArticlePath: "memory/articles/funding.md",
+        title: "Credit liquidity framework",
+        sourceType: "public_web_article" as const,
+        collectionMethod: "public_article_capture" as const,
+        extractionSummary: "Use credit liquidity and funding data to test a bounded hypothesis.",
+        rawNotes: "Stored method, requiring current evidence.",
+        capabilityName: `Credit funding risk ${index}`,
+        capabilityType: "research_framework" as const,
+        relatedFinanceDomains: ["credit_liquidity" as const],
+        capabilityTags: ["causal_mapping" as const],
+        evidenceCategories: ["credit_evidence" as const, "liquidity_evidence" as const],
+        evidenceSummary: "Credit spreads and funding pressure provide the required evidence.",
+        methodSummary: "Evaluate funding pressure and credit liquidity.",
+        requiredDataSources: ["funding pressure", "credit spreads"],
+        causalOrMechanisticClaim: "Funding pressure may reduce liquidity.",
+        evidenceLevel: "hypothesis" as const,
+        implementationRequirements: "Check fresh funding data before applying.",
+        riskAndFailureModes: "Reject unsupported timing and preserve stops.",
+        overfittingOrSpuriousRisk: "A small sample cannot prove persistent edge.",
+        complianceOrCollectionNotes: "Public source only.",
+        suggestedAttachmentPoint: "finance_framework_domain:credit_liquidity",
+        allowedActionAuthority: "research_only" as const,
+      })),
+    }),
+  );
+  return { contractPath, learningPath };
+}
+
+it("selects real registered math and stored financial knowledge, consumes both on call2 and preserves raw hash and original receipt", async () => {
+  const scope = await fixture();
+  const { contractPath } = await seedKnowledge(scope.directory);
+  const before = await fs.readFile(contractPath);
+  const financialCapabilities = createFinanceTradeReviewFinancialCapabilities({
+    workspaceDir: scope.directory,
+  });
+  const catalog = describeFinanceTradeReviewFinancialCapabilities({
+    ...scope,
+    financialCapabilities,
+  });
+  expect(catalog.map((item) => item.toolName)).toEqual([
+    "finance_framework_core_inspect",
+    "finance_learning_capability_apply",
+  ]);
+  expect(catalog[0].moduleIds).toContain("credit_liquidity");
+  expect(catalog[0].moduleIds).not.toContain("quant_math");
+  const payloads: unknown[] = [];
+  const fixtureModel = scripted(
+    [
+      {
+        schemaVersion: packet.schemaVersion,
+        evidenceRequests: [requests[0], financialRequest],
+        hypothesis: "Check mathematical risk and stored funding falsifier",
+      },
+      decision,
+    ],
+    payloads,
+  );
+  const result = await createFinanceTradeDecisionReviewer(
+    {},
+    { adapterFactory: fixtureModel.factory, evidenceScope: { ...scope, financialCapabilities } },
+  )(packet, new AbortController().signal);
+  expect(result).toMatchObject({
+    status: "completed",
+    modelCalls: 2,
+    toolEvidence: [
+      { action: "max_drawdown", status: "completed" },
+      {
+        action: "financial_capability",
+        status: "completed",
+        accountId: "paper-a",
+        asOf,
+        boundary: "recorded_financial_knowledge_research_only_not_market_or_account_facts",
+      },
+    ],
+  });
+  const evidence = result.toolEvidence![1];
+  expect(JSON.stringify(payloads[1])).toContain(
+    "Reject this hypothesis if fresh funding evidence contradicts it.",
+  );
+  expect(JSON.stringify(payloads[1])).toContain(
+    "stored_knowledge_not_current_market_account_or_point_in_time_facts",
+  );
+  const raw = await financialCapabilities[0].execute(
+    {
+      moduleId: financialRequest.moduleId,
+      candidate: packet.candidates[0],
+      question: financialRequest.question,
+    },
+    new AbortController().signal,
+  );
+  expect(evidence.resultSha256).toBe(
+    createHash("sha256").update(JSON.stringify(raw)).digest("hex"),
+  );
+  expect(evidence.requestSha256).toBe(
+    createHash("sha256")
+      .update(JSON.stringify(FinanceTradeReviewEvidenceRequestSchema.parse(financialRequest)))
+      .digest("hex"),
+  );
+  expect(Buffer.byteLength(JSON.stringify(evidence))).toBeLessThanOrEqual(2048);
+  expect(await fs.readFile(contractPath)).toEqual(before);
+  const { decisions: _decisions, ...metadata } = result;
+  await appendFinanceIntradayDecision(scope.directory, {
+    signalId: "signal",
+    instrument: "AAA",
+    sessionDate: "2026-09-30",
+    action: "buy",
+    reason: "opening_range_breakout",
+    referencePrice: 100,
+    referencePriceAt: asOf,
+    datasetHeadRef: "a".repeat(64),
+    strategyRule: "opening_range_breakout_long_next_bar_v1",
+  });
+  const receipt = FinanceIntradayDecisionReviewReceiptSchema.parse({
+    ...metadata,
+    request: packet,
+    decision: result.decisions![0],
+  });
+  await appendFinanceIntradayOutcome(scope.directory, {
+    signalId: "signal",
+    status: "refused",
+    reasons: ["model veto"],
+    tradeDecisionReview: receipt,
+  });
+  expect(
+    (await readFinanceIntradayOutcome(scope.directory, "signal"))?.tradeDecisionReview
+      ?.toolEvidence,
+  ).toEqual(result.toolEvidence);
+});
+
+it("queries native retained guidance without any bar book or usage writes and caps actual retrieved cards", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "review-knowledge-"));
+  dirs.push(directory);
+  const { learningPath } = await seedKnowledge(directory);
+  const before = await fs.readFile(learningPath);
+  const scope = {
+    directory,
+    accountId: "paper-a",
+    instruments: ["AAA"],
+    financialCapabilities: createFinanceTradeReviewFinancialCapabilities({
+      workspaceDir: directory,
+    }),
+  };
+  const request = {
+    ...financialRequest,
+    toolName: "finance_learning_capability_apply",
+    question: "credit liquidity funding risk",
+  };
+  const [result] = await createFinanceTradeReviewEvidenceExecutor(scope)(
+    [request],
+    packet,
+    new AbortController().signal,
+  );
+  expect(result.status, result.summary).toBe("completed");
+  const summary = JSON.parse(result.summary);
+  expect(summary.result.candidateCount).toBe(2);
+  expect(result.summary).toContain("Credit funding risk");
+  expect(summary.omittedKeys).toContain("answerSkeleton");
+  expect(summary.result.sourceTime).toBe(
+    "recorded_metadata_at_or_before_cutoff_not_market_freshness",
+  );
+  expect(await fs.readFile(learningPath)).toEqual(before);
+  await expect(
+    fs.access(path.join(directory, "memory", "finance-learning-apply-usage-receipts")),
+  ).rejects.toThrow();
+  await expect(
+    fs.access(path.join(directory, "memory", "finance-learning-apply-usage-reviews")),
+  ).rejects.toThrow();
+  await expect(fs.access(path.join(directory, "finance-bars.sqlite"))).rejects.toThrow();
+  expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(2048);
+});
+
+it.each([
+  "directory",
+  "accountId",
+  "asOf",
+  "series",
+  "instrumentB",
+  "hedgeRatio",
+  "construction",
+  "lookbackWindow",
+])("rejects injected or mixed financial %s before any host execution", async (key) => {
+  const execute = vi.fn(async () => ({ ok: true }));
+  const scope = {
+    directory: "unused",
+    accountId: "paper-a",
+    instruments: ["AAA"],
+    financialCapabilities: [
+      {
+        toolName: financialRequest.toolName,
+        moduleIds: [financialRequest.moduleId],
+        description: "Offline host read",
+        execute,
+      },
+    ],
+  };
+  await expect(
+    createFinanceTradeReviewEvidenceExecutor(scope)(
+      [financialRequest, { ...financialRequest, [key]: "bad" }],
+      packet,
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow();
+  expect(execute).not.toHaveBeenCalled();
+});
+
+it("prevalidates all tools, modules, candidates, registration identities and UTF8 questions before dispatch", async () => {
+  const execute = vi.fn(async () => ({ ok: true }));
+  const capability: FinanceTradeReviewFinancialCapability = {
+    toolName: financialRequest.toolName,
+    moduleIds: [financialRequest.moduleId],
+    description: "Offline host read",
+    execute,
+  };
+  const scope = {
+    directory: "unused",
+    accountId: "paper-a",
+    instruments: ["AAA"],
+    financialCapabilities: [capability],
+  };
+  for (const invalid of [
+    { ...financialRequest, toolName: "unregistered" },
+    { ...financialRequest, moduleId: "quant_math" as const },
+    { ...financialRequest, candidateId: "other" },
+    { ...financialRequest, question: "中".repeat(81) },
+    financialRequest,
+  ]) {
+    await expect(
+      createFinanceTradeReviewEvidenceExecutor(scope)(
+        [financialRequest, invalid],
+        packet,
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow();
+  }
+  expect(execute).not.toHaveBeenCalled();
+  expect(
+    FinanceTradeReviewEvidenceRequestSchema.safeParse({
+      ...financialRequest,
+      question: "中".repeat(80),
+    }).success,
+  ).toBe(true);
+  expect(() =>
+    describeFinanceTradeReviewFinancialCapabilities({
+      ...scope,
+      financialCapabilities: [capability, capability],
+    }),
+  ).toThrow();
+  expect(() =>
+    describeFinanceTradeReviewFinancialCapabilities({
+      ...scope,
+      financialCapabilities: [
+        { ...capability, moduleIds: [financialRequest.moduleId, financialRequest.moduleId] },
+      ],
+    }),
+  ).toThrow();
+  await expect(
+    createFinanceTradeReviewEvidenceExecutor({ ...scope, instruments: ["BBB"] })(
+      [financialRequest],
+      packet,
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow();
+  expect(execute).not.toHaveBeenCalled();
+});
+
+it("returns absent or future stored knowledge as actual unknown for call2 and propagates cancellation after await", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "review-unknown-"));
+  dirs.push(directory);
+  const financialCapabilities = createFinanceTradeReviewFinancialCapabilities({
+    workspaceDir: directory,
+  });
+  const scope = { directory, accountId: "paper-a", instruments: ["AAA"], financialCapabilities };
+  for (const future of [false, true]) {
+    if (future) {
+      await seedKnowledge(directory, "2026-10-01T00:00:00.000Z");
+    }
+    const payloads: unknown[] = [];
+    const fixtureModel = scripted(
+      [
+        {
+          schemaVersion: packet.schemaVersion,
+          evidenceRequests: [financialRequest],
+          hypothesis: "Check recorded funding frame",
+        },
+        decision,
+      ],
+      payloads,
+    );
+    const result = await createFinanceTradeDecisionReviewer(
+      {},
+      { adapterFactory: fixtureModel.factory, evidenceScope: scope },
+    )(packet, new AbortController().signal);
+    expect(result).toMatchObject({
+      status: "completed",
+      modelCalls: 2,
+      toolEvidence: [{ status: "unavailable" }],
+    });
+    expect(JSON.stringify(payloads[1])).toContain(
+      future ? "after review cutoff" : "finance_framework_core_contract_missing",
+    );
+    if (future) {
+      expect(JSON.stringify(payloads[1])).not.toContain("Funding pressure worsens.");
+    }
+  }
+  const controller = new AbortController();
+  const custom: FinanceTradeReviewFinancialCapability = {
+    toolName: "host_local_read",
+    moduleIds: ["credit_liquidity"],
+    description: "Host read only",
+    execute: async () => {
+      await Promise.resolve();
+      controller.abort();
+      return { ok: true };
+    },
+  };
+  await expect(
+    createFinanceTradeReviewEvidenceExecutor({ ...scope, financialCapabilities: [custom] })(
+      [{ ...financialRequest, toolName: custom.toolName }],
+      packet,
+      controller.signal,
+    ),
+  ).rejects.toThrow();
+});
+
+it("does not expose an arbitrary capability handler exception or label nonfinite results successful", async () => {
+  for (const output of [new Error("synthetic provider secret"), { risk: Infinity }]) {
+    const capability: FinanceTradeReviewFinancialCapability = {
+      toolName: "host_local_read",
+      moduleIds: ["credit_liquidity"],
+      description: "Host read only",
+      execute: async () => {
+        if (output instanceof Error) {
+          throw output;
+        }
+        return output;
+      },
+    };
+    const [result] = await createFinanceTradeReviewEvidenceExecutor({
+      directory: "unused",
+      accountId: "paper-a",
+      instruments: ["AAA"],
+      financialCapabilities: [capability],
+    })(
+      [{ ...financialRequest, toolName: capability.toolName }],
+      packet,
+      new AbortController().signal,
+    );
+    expect(result.status).toBe("unavailable");
+    expect(result.summary).not.toContain("synthetic provider secret");
+    expect(result.summary).toContain(
+      output instanceof Error
+        ? "financial_capability_unavailable"
+        : "nonfinite mathematical result",
+    );
+  }
+});
+
+it("preserves scoped custom read values with unknown source time and whole-field UTF8 omissions", async () => {
+  const raw = { ok: true, value: 42, untrustedText: "中".repeat(1000) };
+  const execute = vi.fn(
+    async ({
+      candidate,
+      question,
+    }: Parameters<FinanceTradeReviewFinancialCapability["execute"]>[0]) => {
+      expect(candidate.instrument).toBe("AAA");
+      expect(question).toBe("What is recorded?");
+      return raw;
+    },
+  );
+  const capability: FinanceTradeReviewFinancialCapability = {
+    toolName: "host_local_read",
+    moduleIds: ["credit_liquidity"],
+    description: "Actual host read",
+    execute,
+  };
+  const scope = {
+    directory: "unused",
+    accountId: "paper-a",
+    instruments: ["AAA"],
+    financialCapabilities: [capability],
+  };
+  expect(describeFinanceTradeReviewFinancialCapabilities(scope)).toEqual([
+    {
+      toolName: capability.toolName,
+      moduleIds: ["credit_liquidity"],
+      description: "Actual host read",
+      boundary: "recorded_financial_knowledge_research_only_not_market_or_account_facts",
+    },
+  ]);
+  const [result] = await createFinanceTradeReviewEvidenceExecutor(scope)(
+    [{ ...financialRequest, toolName: capability.toolName, question: "What is recorded?" }],
+    packet,
+    new AbortController().signal,
+  );
+  const summary = JSON.parse(result.summary);
+  expect(summary.result.value).toBe(42);
+  expect(summary.result.sourceTime).toBe("source_time_unverified");
+  expect(summary.omittedKeys).toContain("untrustedText");
+  expect(summary.result).not.toHaveProperty("untrustedText");
+  expect(result.resultSha256).toBe(createHash("sha256").update(JSON.stringify(raw)).digest("hex"));
+  expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(2048);
+  const controller = new AbortController();
+  controller.abort();
+  await expect(
+    createFinanceTradeReviewEvidenceExecutor(scope)(
+      [{ ...financialRequest, toolName: capability.toolName }],
+      packet,
+      controller.signal,
+    ),
+  ).rejects.toThrow();
+  expect(execute).toHaveBeenCalledTimes(1);
+});
+
+it("degrades an oversized financial projection to named unknown while keeping full raw SHA and scope within 2048 bytes", async () => {
+  const raw = Object.fromEntries(
+    Array.from({ length: 200 }, (_, i) => [`field_${i}`, "中".repeat(300)]),
+  );
+  const capability: FinanceTradeReviewFinancialCapability = {
+    toolName: "host_local_read",
+    moduleIds: ["credit_liquidity"],
+    description: "Actual host read",
+    execute: async () => raw,
+  };
+  const [result] = await createFinanceTradeReviewEvidenceExecutor({
+    directory: "unused",
+    accountId: "a".repeat(240),
+    instruments: ["AAA"],
+    financialCapabilities: [capability],
+  })(
+    [{ ...financialRequest, toolName: capability.toolName }],
+    packet,
+    new AbortController().signal,
+  );
+  expect(result).toMatchObject({ status: "unavailable", accountId: "a".repeat(240), asOf });
+  expect(JSON.parse(result.summary).result.reason).toBe(
+    "financial_capability_result_omitted_by_budget",
+  );
+  expect(JSON.parse(result.summary).omittedKeys).toEqual(["result"]);
+  expect(result.resultSha256).toBe(createHash("sha256").update(JSON.stringify(raw)).digest("hex"));
+  expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(2048);
+});
+
+it.each(["unknown", "failed", "absent"])(
+  "preserves a registered reader's %s result as unavailable rather than fabricated completion",
+  async (status) => {
+    const capability: FinanceTradeReviewFinancialCapability = {
+      toolName: "host_local_read",
+      moduleIds: ["credit_liquidity"],
+      description: "Host read only",
+      execute: async () => ({ status, reason: "Recorded knowledge missing" }),
+    };
+    const [result] = await createFinanceTradeReviewEvidenceExecutor({
+      directory: "unused",
+      accountId: "paper-a",
+      instruments: ["AAA"],
+      financialCapabilities: [capability],
+    })(
+      [{ ...financialRequest, toolName: capability.toolName }],
+      packet,
+      new AbortController().signal,
+    );
+    expect(result.status).toBe("unavailable");
+    expect(JSON.parse(result.summary).result.status).toBe(status);
+  },
+);

@@ -18,6 +18,7 @@ import {
   type FinanceIntradayTradeDecisionReviewRequest,
   type FinanceTradeDecisionReviewRequest,
 } from "./finance-trade-decision-review.js";
+import type { FinanceTradeReviewFinancialCapability } from "./finance-trade-review-evidence.js";
 import { ModelAdapterError } from "./logical-agent-model-router.js";
 import type { LogicalAgentModelAdapter } from "./logical-agent-model-router.js";
 
@@ -112,6 +113,151 @@ const intradayRequest: FinanceIntradayTradeDecisionReviewRequest = {
 afterEach(() => {
   vi.unstubAllGlobals();
 });
+
+it("uses the host financial catalog, consumes a non-math result, and keeps the exact candidate", async () => {
+  const execute = vi.fn<FinanceTradeReviewFinancialCapability["execute"]>(async (input) => {
+    expect(input.moduleId).toBe("company_fundamentals_value");
+    expect(input.candidate).toEqual(intradayRequest.candidates[0]);
+    expect(Object.keys(input).toSorted()).toEqual(["candidate", "moduleId", "question"]);
+    return {
+      ok: true,
+      sourceUpdatedAt: "2026-09-22T12:00:00.000Z",
+      requiredInputs: [
+        "Issuer evidence is required for company valuation; an ETF is not an issuer.",
+      ],
+      reuseGuidance: "A long-term value frame cannot override the supplied intraday stop.",
+    };
+  });
+  const capability: FinanceTradeReviewFinancialCapability = {
+    toolName: "finance_learning_capability_apply",
+    moduleIds: ["company_fundamentals_value"],
+    description: "Read retained value-investing guidance; no new market facts or execution.",
+    execute,
+  };
+  const first = adapter({
+    schemaVersion: intradayRequest.schemaVersion,
+    evidenceRequests: [
+      {
+        candidateId: intradayRequest.candidates[0].candidateId,
+        action: "financial_capability",
+        toolName: capability.toolName,
+        moduleId: "company_fundamentals_value",
+        question: "Does company valuation support overriding this ETF intraday stop?",
+      },
+    ],
+    hypothesis: "Check the value framework's horizon before applying it to the intraday candidate.",
+  });
+  const second = adapter({
+    schemaVersion: intradayRequest.schemaVersion,
+    decisions: [
+      {
+        candidateId: intradayRequest.candidates[0].candidateId,
+        decision: "approve",
+        rationale:
+          "Retained value guidance adds no evidenced stop contradiction; preserve the supplied intraday strategy and stop.",
+      },
+    ],
+  });
+  const factory = vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second);
+  const reviewer = createFinanceTradeDecisionReviewer(
+    {},
+    {
+      adapterFactory: factory,
+      evidenceScope: {
+        directory: "/fixture-no-daily-ledger-required",
+        accountId: "paper-fixture",
+        instruments: ["SPY"],
+        financialCapabilities: [capability],
+      },
+    },
+  );
+  const spoofed = {
+    ...intradayRequest,
+    evidenceFinancialCapabilities: [{ toolName: "place_live_order", moduleIds: ["unknown"] }],
+  } as FinanceIntradayTradeDecisionReviewRequest;
+  const result = await reviewer(spoofed, AbortSignal.timeout(1000));
+  expect(result).toMatchObject({
+    status: "completed",
+    modelCalls: 2,
+    decisions: [{ decision: "approve" }],
+  });
+  expect(execute).toHaveBeenCalledTimes(1);
+  const firstPayload = vi.mocked(first.invoke).mock.calls[0][0].payload;
+  expect(firstPayload).toMatchObject({
+    evidenceFinancialCapabilities: [
+      { toolName: capability.toolName, moduleIds: ["company_fundamentals_value"] },
+    ],
+    candidates: intradayRequest.candidates,
+  });
+  expect(JSON.stringify(firstPayload)).not.toContain("place_live_order");
+  const secondPayload = vi.mocked(second.invoke).mock.calls[0][0].payload;
+  expect(secondPayload).toMatchObject({
+    candidates: intradayRequest.candidates,
+    toolEvidence: [{ status: "completed" }],
+  });
+  expect(JSON.stringify(secondPayload)).toContain("intraday stop");
+  expect(isValidFinanceTradeDecisionReviewResult(result, intradayRequest)).toBe(true);
+  expect(result.toolEvidence?.[0].accountId).toBe("paper-fixture");
+  expect(result.toolEvidence?.[0].asOf).toBe(intradayRequest.asOf);
+  expect(result.toolEvidence?.[0].boundary).not.toBe(
+    "recorded_daily_history_research_only_no_execution_or_fresh_quote",
+  );
+});
+
+it.each([
+  { toolName: "finance_research_run", moduleId: "company_fundamentals_value" },
+  { toolName: "finance_learning_capability_apply", moduleId: "options_volatility" },
+  {
+    toolName: "finance_learning_capability_apply",
+    moduleId: "company_fundamentals_value",
+    directory: "/untrusted",
+  },
+])(
+  "rejects unregistered tools, out-of-scope modules and model-owned paths before dispatch: %j",
+  async (fields) => {
+    const execute = vi.fn<FinanceTradeReviewFinancialCapability["execute"]>(async () => ({
+      ok: true,
+    }));
+    const first = adapter({
+      schemaVersion: intradayRequest.schemaVersion,
+      evidenceRequests: [
+        {
+          candidateId: intradayRequest.candidates[0].candidateId,
+          action: "financial_capability",
+          question: "Check the candidate horizon",
+          ...fields,
+        },
+      ],
+      hypothesis: "candidate-specific check",
+    });
+    const factory = vi.fn(() => first);
+    const reviewer = createFinanceTradeDecisionReviewer(
+      {},
+      {
+        adapterFactory: factory,
+        evidenceScope: {
+          directory: "/fixture-no-daily-ledger-required",
+          accountId: "paper-fixture",
+          instruments: ["SPY"],
+          financialCapabilities: [
+            {
+              toolName: "finance_learning_capability_apply",
+              moduleIds: ["company_fundamentals_value"],
+              description: "read-only",
+              execute,
+            },
+          ],
+        },
+      },
+    );
+    expect(await reviewer(intradayRequest, AbortSignal.timeout(1000))).toMatchObject({
+      status: "failed",
+      modelCalls: 1,
+    });
+    expect(execute).not.toHaveBeenCalled();
+    expect(factory).toHaveBeenCalledTimes(1);
+  },
+);
 
 function adapter(output: unknown): LogicalAgentModelAdapter {
   return {

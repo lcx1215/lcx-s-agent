@@ -1,13 +1,22 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { FINANCE_FRAMEWORK_CORE_DOMAINS } from "../hooks/bundled/lobster-brain-registry.js";
+import {
+  financeBrainModuleCatalog,
+  type FinanceBrainModuleId,
+} from "./finance-brain-orchestration.js";
 import { createCalculationLedger } from "./finance-calculation-ledger.js";
 import type { FinanceTradeDecisionReviewRequest } from "./finance-trade-decision-review.js";
+import type { AnyAgentTool } from "./tools/common.js";
 import { createFinanceBarLedgerTool } from "./tools/finance-bar-ledger-tool.js";
+import { createFinanceFrameworkCoreInspectTool } from "./tools/finance-framework-core-inspect-tool.js";
+import { createFinanceLearningCapabilityApplyTool } from "./tools/finance-learning-capability-apply-tool.js";
+import { createFinanceLearningCapabilityInspectTool } from "./tools/finance-learning-capability-inspect-tool.js";
 import { createQuantLabTool } from "./tools/quant-lab-tool.js";
 import { createQuantMathTool } from "./tools/quant-math-tool.js";
 
 const Text = z.string().min(1).max(120);
-export const FinanceTradeReviewEvidenceRequestSchema = z
+const MathEvidenceRequestSchema = z
   .object({
     candidateId: Text,
     action: z.enum([
@@ -53,6 +62,29 @@ export const FinanceTradeReviewEvidenceRequestSchema = z
       });
     }
   });
+const moduleCatalog = financeBrainModuleCatalog();
+const moduleIds = moduleCatalog.map(({ id }) => id) as [
+  FinanceBrainModuleId,
+  ...FinanceBrainModuleId[],
+];
+const financialBoundary =
+  "recorded_financial_knowledge_research_only_not_market_or_account_facts" as const;
+export const FinanceTradeReviewEvidenceRequestSchema = z.union([
+  MathEvidenceRequestSchema,
+  z
+    .object({
+      candidateId: Text,
+      action: z.literal("financial_capability"),
+      toolName: Text,
+      moduleId: z.enum(moduleIds),
+      question: z
+        .string()
+        .trim()
+        .min(1)
+        .refine((value) => Buffer.byteLength(value, "utf8") <= 240),
+    })
+    .strict(),
+]);
 export type FinanceTradeReviewEvidenceRequest = z.infer<
   typeof FinanceTradeReviewEvidenceRequestSchema
 >;
@@ -67,7 +99,10 @@ export const FinanceTradeReviewToolEvidenceSchema = z
     requestSha256: z.string().regex(/^[a-f\d]{64}$/u),
     resultSha256: z.string().regex(/^[a-f\d]{64}$/u),
     summary: z.string().max(1600),
-    boundary: z.literal("recorded_daily_history_research_only_no_execution_or_fresh_quote"),
+    boundary: z.enum([
+      "recorded_daily_history_research_only_no_execution_or_fresh_quote",
+      financialBoundary,
+    ]),
   })
   .strict()
   .refine(
@@ -79,7 +114,119 @@ export type FinanceTradeReviewEvidenceScope = Readonly<{
   directory: string;
   accountId: string;
   instruments: readonly string[];
+  financialCapabilities?: readonly FinanceTradeReviewFinancialCapability[];
 }>;
+export type FinanceTradeReviewFinancialCapability = Readonly<{
+  toolName: string;
+  moduleIds: readonly FinanceBrainModuleId[];
+  description: string;
+  execute: (
+    input: Readonly<{
+      moduleId: FinanceBrainModuleId;
+      candidate: FinanceTradeDecisionReviewRequest["candidates"][number];
+      question: string;
+    }>,
+    signal: AbortSignal,
+  ) => Promise<unknown>;
+}>;
+
+function financialCapabilities(scope: FinanceTradeReviewEvidenceScope) {
+  const capabilities = scope.financialCapabilities ?? [];
+  const names = new Set<string>();
+  for (const capability of capabilities) {
+    if (
+      !Text.safeParse(capability.toolName).success ||
+      names.has(capability.toolName) ||
+      !capability.description.trim() ||
+      Buffer.byteLength(capability.description, "utf8") > 600 ||
+      typeof capability.execute !== "function" ||
+      capability.moduleIds.length === 0 ||
+      new Set(capability.moduleIds).size !== capability.moduleIds.length ||
+      capability.moduleIds.some((id) => !moduleIds.includes(id))
+    ) {
+      throw new Error("invalid host financial capability registration");
+    }
+    names.add(capability.toolName);
+  }
+  return capabilities;
+}
+
+export function describeFinanceTradeReviewFinancialCapabilities(
+  scope: FinanceTradeReviewEvidenceScope,
+) {
+  return financialCapabilities(scope).map(({ toolName, moduleIds, description }) => ({
+    toolName,
+    moduleIds: [...moduleIds],
+    description,
+    boundary: financialBoundary,
+  }));
+}
+
+/** Existing read-only tools; no producer, provider call or usage-receipt writer is exposed. */
+export function createFinanceTradeReviewFinancialCapabilities(options: {
+  workspaceDir: string;
+}): readonly FinanceTradeReviewFinancialCapability[] {
+  const framework = createFinanceFrameworkCoreInspectTool(options);
+  const domains = new Map<FinanceBrainModuleId, (typeof FINANCE_FRAMEWORK_CORE_DOMAINS)[number]>(
+    moduleCatalog.flatMap(({ id, requiredTools }) => {
+      const domain = FINANCE_FRAMEWORK_CORE_DOMAINS.find((domain) =>
+        requiredTools.some((toolName) => toolName === `finance_framework_${domain}_producer`),
+      );
+      return domain ? [[id, domain] as const] : [];
+    }),
+  );
+  const inspect = createFinanceLearningCapabilityInspectTool(options);
+  const execute = async (
+    tool: AnyAgentTool,
+    args: Record<string, unknown>,
+    signal: AbortSignal,
+  ) => {
+    signal.throwIfAborted();
+    const result = await tool.execute("trade-review-financial-knowledge", args, signal);
+    signal.throwIfAborted();
+    return result.details;
+  };
+  return [
+    {
+      toolName: framework.name,
+      moduleIds: [...domains.keys()],
+      description:
+        "Read an existing module's stored framework domain. This queries recorded cognition, not its producer, current market data or account facts.",
+      execute: ({ moduleId }, signal) =>
+        execute(framework, { domain: domains.get(moduleId) }, signal),
+    },
+    {
+      toolName: "finance_learning_capability_apply",
+      moduleIds,
+      description:
+        "Query retained finance capability reuse guidance for a module/question. At most two stored cards; no receipt write, new research, current data or account facts.",
+      execute: async ({ moduleId, candidate, question }, signal) => {
+        let sourceUpdatedAt: unknown;
+        const inspectTool: AnyAgentTool = {
+          ...inspect,
+          execute: async (callId, args) => {
+            signal.throwIfAborted();
+            const result = await inspect.execute(callId, args, signal);
+            signal.throwIfAborted();
+            sourceUpdatedAt = (result.details as { updatedAt?: unknown }).updatedAt;
+            return result;
+          },
+        };
+        const apply = createFinanceLearningCapabilityApplyTool({ ...options, inspectTool });
+        const result = await execute(
+          apply,
+          {
+            queryText: `${moduleId} ${candidate.instrument} ${question}`,
+            maxCandidates: 2,
+            writeUsageReceipt: false,
+          },
+          signal,
+        );
+        return { ...(result as Record<string, unknown>), sourceUpdatedAt };
+      },
+    },
+  ];
+}
 const Bar = z
   .object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u), close: z.number().positive().finite() })
   .passthrough();
@@ -95,6 +242,114 @@ function requireFiniteResult(value: unknown): void {
   }
 }
 
+function knowledgeTimes(value: unknown, cutoff: number): number {
+  if (!value || typeof value !== "object") {
+    return 0;
+  }
+  let count = 0;
+  for (const [key, child] of Object.entries(value)) {
+    if (
+      ["updatedAt", "sourceUpdatedAt", "observedAt", "evidenceAsOf", "sourceTimestamp"].includes(
+        key,
+      )
+    ) {
+      if (child !== undefined && child !== null) {
+        if (
+          typeof child !== "string" ||
+          !Number.isFinite(Date.parse(child)) ||
+          Date.parse(child) > cutoff
+        ) {
+          throw new Error("stored knowledge timestamp invalid or after review cutoff");
+        }
+        count++;
+      }
+    } else {
+      count += knowledgeTimes(child, cutoff);
+    }
+  }
+  return count;
+}
+
+function summarizeEvidence(output: unknown, priority: Record<string, unknown>) {
+  const outputRecord =
+    output && typeof output === "object" ? (output as Record<string, unknown>) : { value: output };
+  const summary: Record<string, unknown> = { ...priority };
+  if (Buffer.byteLength(JSON.stringify(summary), "utf8") > 1200) {
+    throw new Error("required evidence summary exceeds budget");
+  }
+  const omittedKeys: string[] = [];
+  for (const [key, value] of Object.entries(outputRecord)) {
+    if (Buffer.byteLength(JSON.stringify({ ...summary, [key]: value }), "utf8") <= 1200) {
+      summary[key] = value;
+    } else {
+      omittedKeys.push(key);
+    }
+  }
+  const summaryText = JSON.stringify({
+    result: summary,
+    omittedKeys,
+    ...(omittedKeys.includes("returns") && Array.isArray(outputRecord.returns)
+      ? { omittedReturnCount: outputRecord.returns.length }
+      : {}),
+  });
+  if (Buffer.byteLength(summaryText, "utf8") > 1600) {
+    throw new Error("evidence summary exceeds budget");
+  }
+  return summaryText;
+}
+
+function knowledgeProjection(output: Record<string, unknown>, priority: Record<string, unknown>) {
+  const omitted: string[] = [];
+  const records: [string, Record<string, unknown>][] = [];
+  if (output.entry && typeof output.entry === "object") {
+    records.push(["entry", output.entry as Record<string, unknown>]);
+  }
+  if (Array.isArray(output.appliedCapabilities)) {
+    output.appliedCapabilities.slice(0, 2).forEach((item, index) => {
+      if (item && typeof item === "object") {
+        records.push([`appliedCapabilities.${index}`, item as Record<string, unknown>]);
+      }
+    });
+  }
+  const selected: Record<string, unknown> = {};
+  for (const [prefix, record] of records) {
+    for (const key of [
+      "capabilityName",
+      "whatChangesMyMind",
+      "doNotUseFor",
+      "riskGateNotes",
+      "riskChecks",
+      "requiredInputs",
+      "evidenceSummary",
+      "baseCase",
+      "bearCase",
+      "keyCausalChain",
+      "applicationBoundary",
+      "sourceArticlePath",
+    ]) {
+      if (record[key] === undefined) {
+        continue;
+      }
+      const qualified = `${prefix}.${key}`;
+      if (
+        Buffer.byteLength(
+          JSON.stringify({ ...priority, knowledge: { ...selected, [qualified]: record[key] } }),
+          "utf8",
+        ) <= 1000
+      ) {
+        selected[qualified] = record[key];
+      } else {
+        omitted.push(qualified);
+      }
+    }
+  }
+  return {
+    ...priority,
+    ...(Object.keys(selected).length ? { knowledge: selected } : {}),
+    ...(omitted.length ? { omittedKnowledgeFieldCount: omitted.length } : {}),
+  };
+}
+
 /** One review-local calculation ledger; all data and identity come from the trusted host. */
 export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeReviewEvidenceScope) {
   return async (
@@ -102,10 +357,15 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
     packet: FinanceTradeDecisionReviewRequest,
     signal: AbortSignal,
   ): Promise<readonly FinanceTradeReviewToolEvidence[]> => {
+    if (requests.length < 1 || requests.length > 2) {
+      throw new Error("invalid evidence request count or duplicate");
+    }
+    const parsedRequests = requests.map((request) =>
+      FinanceTradeReviewEvidenceRequestSchema.parse(request),
+    );
     if (
-      requests.length < 1 ||
-      requests.length > 2 ||
-      new Set(requests.map((request) => JSON.stringify(request))).size !== requests.length
+      new Set(parsedRequests.map((request) => JSON.stringify(request))).size !==
+      parsedRequests.length
     ) {
       throw new Error("invalid evidence request count or duplicate");
     }
@@ -117,17 +377,26 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
     ) {
       throw new Error("invalid host evidence scope");
     }
-    for (const raw of requests) {
-      const request = FinanceTradeReviewEvidenceRequestSchema.parse(raw);
+    const capabilities = new Map(
+      financialCapabilities(scope).map((capability) => [capability.toolName, capability]),
+    );
+    for (const request of parsedRequests) {
       const candidate = packet.candidates.find((item) => item.candidateId === request.candidateId);
       if (
         !candidate ||
         !scope.instruments.includes(candidate.instrument) ||
-        (request.instrumentB &&
+        (request.action !== "financial_capability" &&
+          request.instrumentB &&
           (request.instrumentB === candidate.instrument ||
             !scope.instruments.includes(request.instrumentB)))
       ) {
         throw new Error("evidence request outside host candidate/instrument scope");
+      }
+      if (
+        request.action === "financial_capability" &&
+        !capabilities.get(request.toolName)?.moduleIds.includes(request.moduleId)
+      ) {
+        throw new Error("financial capability outside host tool/module scope");
       }
     }
     const ledger = createCalculationLedger({ maxEntries: 2 });
@@ -136,20 +405,117 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
     const lab = createQuantLabTool({ ledger });
     const results: FinanceTradeReviewToolEvidence[] = [];
     try {
-      for (const raw of requests) {
+      for (const request of parsedRequests) {
         signal.throwIfAborted();
-        const request = FinanceTradeReviewEvidenceRequestSchema.parse(raw);
         const candidate = packet.candidates.find(
           (item) => item.candidateId === request.candidateId,
-        );
-        if (
-          !candidate ||
-          !scope.instruments.includes(candidate.instrument) ||
-          (request.instrumentB &&
-            (request.instrumentB === candidate.instrument ||
-              !scope.instruments.includes(request.instrumentB)))
-        ) {
-          throw new Error("evidence request outside host candidate/instrument scope");
+        )!;
+        if (request.action === "financial_capability") {
+          let output: unknown;
+          let resultSha256: string | undefined;
+          let provenance: Record<string, unknown> = {};
+          let status: FinanceTradeReviewToolEvidence["status"] = "completed";
+          let priority: Record<string, unknown> = {
+            toolName: request.toolName,
+            moduleId: request.moduleId,
+            interpretation: "stored_knowledge_not_current_market_account_or_point_in_time_facts",
+          };
+          try {
+            output = await capabilities
+              .get(request.toolName)!
+              .execute(
+                { moduleId: request.moduleId, candidate, question: request.question },
+                signal,
+              );
+            signal.throwIfAborted();
+            requireFiniteResult(output);
+            if (!output || typeof output !== "object" || Array.isArray(output)) {
+              throw new Error("stored knowledge result missing");
+            }
+            const record = output as Record<string, unknown>;
+            resultSha256 = digest(output);
+            provenance = Object.fromEntries(
+              ["sourceUpdatedAt", "updatedAt", "artifactPath", "contractPath", "sourceRef"]
+                .filter((key) => record[key] !== undefined)
+                .map((key) => [key, record[key]]),
+            );
+            const timeCount = knowledgeTimes(record, Date.parse(packet.asOf));
+            priority.sourceTime = timeCount
+              ? "recorded_metadata_at_or_before_cutoff_not_market_freshness"
+              : "source_time_unverified";
+            for (const key of [
+              "sourceUpdatedAt",
+              "updatedAt",
+              "candidateCount",
+              "applicationStatus",
+            ]) {
+              if (record[key] !== undefined) {
+                priority[key] = record[key];
+              }
+            }
+            if (
+              record.ok === false ||
+              (typeof record.status === "string" &&
+                !["completed", "ready", "succeeded", "success", "ok"].includes(record.status))
+            ) {
+              status = "unavailable";
+            }
+            priority = knowledgeProjection(record, priority);
+          } catch (error) {
+            signal.throwIfAborted();
+            status = "unavailable";
+            const reason =
+              error instanceof Error &&
+              [
+                "nonfinite mathematical result",
+                "stored knowledge result missing",
+                "stored knowledge timestamp invalid or after review cutoff",
+              ].includes(error.message)
+                ? error.message
+                : "financial_capability_unavailable";
+            output = { reason };
+          }
+          const evidence = {
+            action: request.action,
+            candidateId: request.candidateId,
+            accountId: scope.accountId,
+            asOf: packet.asOf,
+            status,
+            sourceRef: digest({
+              toolName: request.toolName,
+              moduleId: request.moduleId,
+              candidateId: candidate.candidateId,
+              instrument: candidate.instrument,
+              accountId: scope.accountId,
+              asOf: packet.asOf,
+              provenance,
+            }),
+            requestSha256: digest(request),
+            resultSha256: resultSha256 ?? digest(output),
+            summary: "",
+            boundary: financialBoundary,
+          };
+          try {
+            evidence.summary = summarizeEvidence(output, priority);
+            if (Buffer.byteLength(JSON.stringify(evidence), "utf8") > 2048) {
+              throw new Error("financial knowledge projection exceeds budget");
+            }
+          } catch {
+            evidence.status = "unavailable";
+            evidence.summary = JSON.stringify({
+              result: {
+                toolName: request.toolName,
+                moduleId: request.moduleId,
+                interpretation:
+                  "stored_knowledge_not_current_market_account_or_point_in_time_facts",
+                sourceTime: priority.sourceTime ?? "source_time_unverified",
+                reason: "financial_capability_result_omitted_by_budget",
+              },
+              omittedKeys: ["result"],
+            });
+          }
+          results.push(FinanceTradeReviewToolEvidenceSchema.parse(evidence));
+          continue;
         }
         const refs: string[] = [];
         const read = async (instrument: string) => {
@@ -285,32 +651,7 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
           };
         }
         sourceRef ||= digest({ refs, asOf: packet.asOf, instrument: candidate.instrument });
-        const outputRecord =
-          output && typeof output === "object"
-            ? (output as Record<string, unknown>)
-            : { value: output };
-        const summary: Record<string, unknown> = { ...priority };
-        if (Buffer.byteLength(JSON.stringify(summary), "utf8") > 1200) {
-          throw new Error("required math summary exceeds budget");
-        }
-        const omittedKeys: string[] = [];
-        for (const [key, value] of Object.entries(outputRecord)) {
-          if (Buffer.byteLength(JSON.stringify({ ...summary, [key]: value }), "utf8") <= 1200) {
-            summary[key] = value;
-          } else {
-            omittedKeys.push(key);
-          }
-        }
-        const summaryText = JSON.stringify({
-          result: summary,
-          omittedKeys,
-          ...(omittedKeys.includes("returns") && Array.isArray(outputRecord.returns)
-            ? { omittedReturnCount: outputRecord.returns.length }
-            : {}),
-        });
-        if (Buffer.byteLength(summaryText, "utf8") > 1600) {
-          throw new Error("evidence summary exceeds budget");
-        }
+        const summaryText = summarizeEvidence(output, priority);
         results.push(
           FinanceTradeReviewToolEvidenceSchema.parse({
             action: request.action,

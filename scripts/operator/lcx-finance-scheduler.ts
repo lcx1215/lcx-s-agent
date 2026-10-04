@@ -105,7 +105,10 @@ import {
 } from "../../src/agents/finance-state-dir.js";
 import { readFinanceStrategyRuleLedger } from "../../src/agents/finance-strategy-rule-ledger.js";
 import { createFinanceTradeDecisionReviewer } from "../../src/agents/finance-trade-decision-review.js";
-import type { FinanceTradeReviewEvidenceScope } from "../../src/agents/finance-trade-review-evidence.js";
+import {
+  createFinanceTradeReviewFinancialCapabilities,
+  type FinanceTradeReviewEvidenceScope,
+} from "../../src/agents/finance-trade-review-evidence.js";
 import { runFinanceTuningLifecycle } from "../../src/agents/finance-tuning-lifecycle.js";
 import { FINANCE_UNIVERSE_SELECTION_SNAPSHOT_FILENAME } from "../../src/agents/finance-universe-selection.js";
 import { buildDetachedServeEnv } from "../../src/cli/serve-detach.js";
@@ -2339,6 +2342,10 @@ async function runTradingTickOnAccountLane(context: CycleContext): Promise<void>
                   directory: context.root.directory,
                   accountId: context.intradayController.accountId,
                   instruments: context.options.intraday.executionInstruments,
+                  financialCapabilities: createFinanceTradeReviewFinancialCapabilities({
+                    workspaceDir:
+                      process.env.OPENCLAW_WORKSPACE_DIR?.trim() || DEFAULT_WORKSPACE_DIR,
+                  }),
                 },
               ),
               signal: context.signal,
