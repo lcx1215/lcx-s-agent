@@ -1169,6 +1169,8 @@ async function brokerFixture(
     scope?: Awaited<ReturnType<typeof fixture>>;
     unknownFee?: boolean;
     unknownFeeQty?: string;
+    instrument?: string;
+    additionalFees?: Record<string, unknown>[];
     observedAt?: string;
     accountId?: string;
   } = {},
@@ -1181,7 +1183,7 @@ async function brokerFixture(
   const scope = options.scope ?? {
     directory,
     accountId: options.accountId ?? "paper-a",
-    instruments: ["AAA"],
+    instruments: [options.instrument ?? "AAA"],
   };
   const append = (query: string, payload: Record<string, unknown>[], accountId = scope.accountId) =>
     appendFinanceBrokerHistory(directory, {
@@ -1197,7 +1199,7 @@ async function brokerFixture(
       id: side,
       activity_type: "FILL",
       type: "fill",
-      symbol: "AAA",
+      symbol: options.instrument ?? "AAA",
       side,
       qty: side === "buy" ? "2" : "1",
       price: side === "buy" ? "100" : "110",
@@ -1226,6 +1228,7 @@ async function brokerFixture(
           },
         ]
       : []),
+    ...(options.additionalFees ?? []),
   ]);
   await append(
     "activities:other-account",
@@ -1234,7 +1237,7 @@ async function brokerFixture(
         id: "foreign-buy",
         activity_type: "FILL",
         type: "fill",
-        symbol: "AAA",
+        symbol: options.instrument ?? "AAA",
         side: "buy",
         qty: "100",
         price: "900",
@@ -1535,3 +1538,141 @@ it.each([
     expect(await fs.readFile(financePositionLedgerPath(scope.directory))).toEqual(databaseBefore);
   },
 );
+
+it("consumes asset fee source valuation and persists its boundary without inventing closed costs", async () => {
+  const scope = await brokerFixture({
+    instrument: "BTC/USD",
+    unknownFee: true,
+    additionalFees: ["80537.6", "80519.3"].map((price, i) => ({
+      id: `asset-fee-${i}`,
+      activity_type: "CFEE",
+      symbol: "BTCUSD",
+      qty: "-0.0000005",
+      price,
+      currency: "USD",
+      net_amount: "0",
+      status: "executed",
+      created_at: `2026-09-30T13:0${i}:01.000Z`,
+    })),
+  });
+  const request: FinanceIntradayTradeDecisionReviewRequest = {
+    ...structuredClone(packet),
+    candidates: [{ ...packet.candidates[0], instrument: "BTC/USD" }],
+  };
+  const originalPacket = structuredClone(request);
+  const before = await fs.readFile(financePositionLedgerPath(scope.directory));
+  const feedback = await readFinanceBrokerInstrumentFeedback({
+    directory: scope.directory,
+    accountId: scope.accountId,
+    instrument: "BTC/USD",
+    asOf,
+  });
+  expect(feedback.status).toBe("present");
+  const payloads: unknown[] = [];
+  const models: LogicalAgentModelAdapter[] = [
+    scripted([
+      {
+        schemaVersion: request.schemaVersion,
+        evidenceRequests: [brokerRequest],
+        hypothesis: "What source valuation exists for the recorded asset fee debit?",
+      },
+    ]).model,
+    {
+      ...scripted([]).model,
+      invoke: async (call) => {
+        payloads.push(call.payload);
+        const payload = call.payload as {
+          candidates: unknown;
+          toolEvidence: { summary: string; status: string }[];
+        };
+        expect(payload.candidates).toEqual(request.candidates);
+        expect(payload.toolEvidence[0].status).toBe("completed");
+        const result = JSON.parse(payload.toolEvidence[0].summary).result;
+        const valuation = result.economics.reportedAssetFeeValuation;
+        expect(valuation.usdValue).toBeCloseTo(0.08052845, 12);
+        expect(valuation.activityCount).toBe(2);
+        expect(valuation.basis).toBe("broker_qty_x_price_not_cash_or_closed_lot_cost");
+        expect(result.economics.netMatchedPnl).toBeNull();
+        expect(result.economics.recordedCashFeePnlBounds).toBeNull();
+        expect(result.economics.unpricedFeeActivityCount).toBe(2);
+        expect(result.economics.unallocatedCashFeeAmount).toBeCloseTo(0.1, 12);
+        return {
+          schemaVersion: request.schemaVersion,
+          decisions: [
+            {
+              candidateId: "signal",
+              decision: "approve",
+              rationale: `Broker-reported asset fee valuation=${valuation.usdValue} USD from ${valuation.activityCount} activities; exact closed costs remain unknown. It is not a cash charge or predictive edge.`,
+            },
+          ],
+        };
+      },
+    },
+  ];
+  let finalPrompt = "";
+  const reviewer = createFinanceTradeDecisionReviewer(
+    {},
+    {
+      evidenceScope: scope,
+      adapterFactory: (_cfg, options) => {
+        const model = models.shift()!;
+        return {
+          ...model,
+          invoke: (call, signal) => {
+            finalPrompt = options!.buildPrompt!(call.payload);
+            return model.invoke(call, signal);
+          },
+        };
+      },
+    },
+  );
+  const result = await reviewer(request, AbortSignal.timeout(5000));
+  expect(result, JSON.stringify(result)).toMatchObject({
+    status: "completed",
+    modelCalls: 2,
+    providerCallObserved: false,
+    adapterAttested: false,
+  });
+  expect(payloads).toHaveLength(1);
+  expect(request).toEqual(originalPacket);
+  expect(finalPrompt).toContain("reportedAssetFeeValuation");
+  expect(finalPrompt).toContain("never subtract it again");
+  const evidence = result.toolEvidence![0];
+  expect(Buffer.byteLength(JSON.stringify(evidence), "utf8")).toBeLessThanOrEqual(2048);
+  expect(evidence.resultSha256).toBe(
+    createHash("sha256").update(JSON.stringify(feedback)).digest("hex"),
+  );
+  expect(await fs.readFile(financePositionLedgerPath(scope.directory))).toEqual(before);
+  await appendFinanceIntradayDecision(scope.directory, {
+    signalId: "signal",
+    instrument: "BTC/USD",
+    sessionDate: "2026-09-30",
+    action: "buy",
+    reason: "opening_range_breakout",
+    referencePrice: 100,
+    referencePriceAt: asOf,
+    datasetHeadRef: "a".repeat(64),
+    strategyRule: "opening_range_breakout_long_next_bar_v1",
+  });
+  const receipt = FinanceIntradayDecisionReviewReceiptSchema.parse({
+    request,
+    status: result.status,
+    attempted: result.attempted,
+    modelCalls: result.modelCalls,
+    provider: result.provider,
+    modelId: result.modelId,
+    latencyMs: result.latencyMs,
+    providerCallObserved: false,
+    adapterAttested: false,
+    toolEvidence: result.toolEvidence,
+    decision: result.decisions![0],
+  });
+  const outcome = {
+    signalId: "signal",
+    status: "refused" as const,
+    reasons: ["deterministic test only, no order"],
+    tradeDecisionReview: receipt,
+  };
+  await appendFinanceIntradayOutcome(scope.directory, outcome);
+  expect(await readFinanceIntradayOutcome(scope.directory, "signal")).toEqual(outcome);
+});

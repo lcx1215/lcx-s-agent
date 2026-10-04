@@ -46,7 +46,79 @@ function brokerFillOrderScopes(activities: readonly Record<string, unknown>[]) {
     }
     orders.set(row.order_id, { instrument, side: row.side });
   }
+  for (const row of activities) {
+    if (row.activity_type !== "CFEE" && row.activity_type !== "FEE") {
+      continue;
+    }
+    const linked = typeof row.order_id === "string" ? orders.get(row.order_id) : undefined;
+    if (
+      linked &&
+      typeof row.symbol === "string" &&
+      row.symbol !== "USD" &&
+      brokerSymbol(row.symbol) !== linked.instrument
+    ) {
+      throw new Error("conflicting fee order instrument");
+    }
+  }
   return orders;
+}
+
+function reportedAssetFeeValuation(activities: readonly Record<string, unknown>[]) {
+  const finite = (value: unknown) => {
+    const number =
+      typeof value === "number" || (typeof value === "string" && value.trim().length > 0)
+        ? Number(value)
+        : NaN;
+    return Number.isFinite(number) ? number : NaN;
+  };
+  let usdValue = 0;
+  let activityCount = 0;
+  for (const row of activities) {
+    if (row.activity_type !== "CFEE" && row.activity_type !== "FEE") {
+      continue;
+    }
+    const quantity = row.qty === undefined ? 0 : finite(row.qty);
+    const cash = finite(row.net_amount);
+    const executedUsd = row.status === "executed" && row.currency === "USD";
+    if (executedUsd && quantity === 0 && Number.isFinite(cash) && cash <= 0) {
+      continue;
+    }
+    if (row.activity_type !== "CFEE" && quantity === 0) {
+      continue;
+    }
+    if (row.activity_type !== "CFEE") {
+      return null;
+    }
+    const price = finite(row.price);
+    if (!executedUsd || !(quantity < 0) || !(price > 0) || cash !== 0) {
+      return null;
+    }
+    let instrument: string;
+    try {
+      instrument = brokerSymbol(row.symbol);
+    } catch {
+      return null;
+    }
+    if (!instrument.split("/")[0] || !instrument.endsWith("/USD")) {
+      return null;
+    }
+    const value = -quantity * price;
+    if (!Number.isFinite(value) || value <= 0) {
+      return null;
+    }
+    usdValue += value;
+    if (!Number.isFinite(usdValue)) {
+      return null;
+    }
+    activityCount++;
+  }
+  return activityCount
+    ? {
+        usdValue,
+        activityCount,
+        basis: "broker_qty_x_price_not_cash_or_closed_lot_cost" as const,
+      }
+    : null;
 }
 
 /** FIFO accounting diagnostic; never a strategy attribution or an execution gate. */
@@ -130,13 +202,6 @@ export function summarizeFinanceBrokerFills(
       unallocatedFees++;
       unallocatedCashFeeAmount -= cash;
       continue;
-    }
-    if (
-      typeof row.symbol === "string" &&
-      row.symbol !== "USD" &&
-      brokerSymbol(row.symbol) !== orderScopes.get(order)?.instrument
-    ) {
-      throw new Error("conflicting fee order instrument");
     }
     orderFees.set(order, (orderFees.get(order) ?? 0) - cash);
   }
@@ -225,6 +290,8 @@ export function summarizeFinanceBrokerFills(
     unallocatedFeeActivityCount: unallocatedFees,
     unallocatedCashFeeAmount,
     unpricedFeeActivityCount,
+    // Source valuation does not allocate these asset fees into closed FIFO lots.
+    reportedAssetFeeValuation: reportedAssetFeeValuation(unique),
     recordedCashFeePnlBounds,
     cashFeeAllocationBoundary:
       "recorded_cash_fees_only_not_exact_net_nonadditive_across_instruments",

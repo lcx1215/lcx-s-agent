@@ -132,6 +132,154 @@ const cashFee = (id: string, net_amount: string, extra: Record<string, unknown> 
   net_amount,
   ...extra,
 });
+// Original captured fee quantities/prices, with fixture-only identities.
+const assetFees = [80537.6, 80519.3].map((price, index) => ({
+  id: `asset-fee-${index}`,
+  activity_type: "CFEE",
+  status: "executed",
+  symbol: "BTCUSD",
+  currency: "USD",
+  qty: "-0.0000005",
+  price: String(price),
+  net_amount: "0",
+  created_at: "2026-09-20T05:52:39.076409Z",
+}));
+it("reports complete source-priced asset fees once while preserving cash-only CFEE and all existing FIFO economics", () => {
+  const rows = [
+    { ...fill("1", "buy", "2", "100"), symbol: "BTCUSD" },
+    { ...fill("2", "sell", "1", "110"), symbol: "BTC/USD" },
+    ...assetFees,
+    assetFees[0],
+    ...["-0.01", "-0.03", "-0.03", "-0.03"].map((cash, i) =>
+      cashFee(`cash-crypto-${i}`, cash, { activity_type: "CFEE" }),
+    ),
+    cashFee("other-cash", "-0.11"),
+  ];
+  const result = summarizeFinanceBrokerFills(rows, true);
+  expect(result.reportedAssetFeeValuation).toMatchObject({
+    activityCount: 2,
+    basis: "broker_qty_x_price_not_cash_or_closed_lot_cost",
+  });
+  expect(result.reportedAssetFeeValuation!.usdValue).toBeCloseTo(0.08052845, 12);
+  expect(result).toMatchObject({
+    grossMatchedPnl: 10,
+    netMatchedPnl: null,
+    allocatedClosedCashFees: 0,
+    unpricedFeeActivityCount: 2,
+    unallocatedFeeActivityCount: 7,
+    recordedCashFeePnlBounds: null,
+    status: "net_profit_unverified",
+    matchedLotCount: 1,
+    openLotCount: 1,
+  });
+  expect(result.unallocatedCashFeeAmount).toBeCloseTo(0.21, 12);
+  const { reportedAssetFeeValuation: _valuation, ...economics } = result;
+  const { reportedAssetFeeValuation: absentValuation, ...withoutPrices } =
+    summarizeFinanceBrokerFills(
+      rows.map((row) =>
+        row.activity_type === "CFEE" && "price" in row && "qty" in row
+          ? { ...row, price: undefined }
+          : row,
+      ),
+      true,
+    );
+  expect(absentValuation).toBeNull();
+  expect(economics).toEqual(withoutPrices);
+  expect(summarizeFinanceBrokerFills([assetFees[0]], false)).toMatchObject({
+    netMatchedPnl: null,
+    status: "no_closed_matches",
+    recordedCashFeePnlBounds: null,
+    reportedAssetFeeValuation: { activityCount: 1, usdValue: expect.closeTo(0.0402688, 12) },
+  });
+});
+it.each([
+  ["missing price", { price: undefined }],
+  ["zero price", { price: "0" }],
+  ["unknown quantity", { qty: "bad" }],
+  ["unknown cash-only shape", { qty: undefined, net_amount: undefined }],
+  ["positive quantity", { qty: "0.0000005" }],
+  ["mixed cash debit", { net_amount: "-0.01" }],
+  ["rebate", { net_amount: "0.01" }],
+  ["pending", { status: "pending" }],
+  ["nonUSD currency", { currency: "BTC" }],
+  ["missing currency", { currency: undefined }],
+  ["foreign quote unit", { symbol: "ETH/BTC" }],
+  ["currency token", { symbol: "USD" }],
+  ["unsupported asset fee type", { activity_type: "FEE" }],
+])(
+  "withholds the entire asset valuation for %s instead of reporting a partial fee",
+  (_kind, extra) => {
+    const rows = [assetFees[0], { ...assetFees[1], ...(extra as Record<string, unknown>) }];
+    expect(summarizeFinanceBrokerFills(rows, true).reportedAssetFeeValuation).toBeNull();
+  },
+);
+it("keeps absent asset fees null and refuses overflow or underflow rather than inventing a zero valuation", () => {
+  for (const rows of [
+    [],
+    [cashFee("cash", "-1")],
+    [cashFee("cash", "-1", { activity_type: "CFEE", qty: "0" })],
+    [{ ...assetFees[0], qty: "-1e308", price: "10" }],
+    [
+      { ...assetFees[0], qty: "-1e308", price: "1" },
+      { ...assetFees[1], qty: "-1e308", price: "1" },
+    ],
+    [{ ...assetFees[0], qty: "-1e-320", price: "1e-10" }],
+  ]) {
+    expect(summarizeFinanceBrokerFills(rows, true).reportedAssetFeeValuation).toBeNull();
+  }
+  expect(
+    summarizeFinanceBrokerFills(
+      [fill("1", "buy", "1", "100"), fill("2", "sell", "1", "110")],
+      true,
+    ),
+  ).toMatchObject({
+    reportedAssetFeeValuation: null,
+    netMatchedPnl: 10,
+    recordedCashFeePnlBounds: { lower: 10, upper: 10 },
+  });
+});
+it("retains instrument filtering and source identity conflicts for valued asset fees", () => {
+  const equity = [fill("1", "buy", "1", "100"), fill("2", "sell", "1", "110")];
+  expect(summarizeFinanceBrokerFillsByInstrument([...equity, ...assetFees], true)).toMatchObject([
+    { instrument: "SPY", reportedAssetFeeValuation: null, netMatchedPnl: 10 },
+  ]);
+  expect(() =>
+    summarizeFinanceBrokerFills([assetFees[0], { ...assetFees[0], price: "1" }], true),
+  ).toThrow("conflicting activity identity");
+});
+it("rejects asset fee order-symbol conflicts before unsupported fee handling or instrument filtering", () => {
+  const buy = { ...fill("1", "buy", "1", "100"), order_id: "buy" };
+  const wrongFee = { ...assetFees[0], order_id: "buy" };
+  for (const summarize of [summarizeFinanceBrokerFills, summarizeFinanceBrokerFillsByInstrument]) {
+    expect(() => summarize([buy, wrongFee], true)).toThrow("conflicting fee order instrument");
+    expect(() =>
+      summarize(
+        [buy, { ...wrongFee, qty: undefined, price: undefined, net_amount: "-0.01" }],
+        true,
+      ),
+    ).toThrow("conflicting fee order instrument");
+  }
+  const rows = [
+    { ...buy, symbol: "BTCUSD" },
+    { ...fill("2", "sell", "1", "110"), symbol: "BTC/USD", order_id: "sell" },
+    wrongFee,
+  ];
+  const result = summarizeFinanceBrokerFills(rows, true);
+  expect(result).toMatchObject({
+    grossMatchedPnl: 10,
+    netMatchedPnl: null,
+    allocatedClosedCashFees: 0,
+    unpricedFeeActivityCount: 1,
+    recordedCashFeePnlBounds: null,
+    reportedAssetFeeValuation: {
+      activityCount: 1,
+      usdValue: expect.closeTo(0.0402688, 12),
+    },
+  });
+  expect(summarizeFinanceBrokerFillsByInstrument(rows, true)).toEqual([
+    { instrument: "BTC/USD", ...result },
+  ]);
+});
 it.each([
   ["positive", "110", 9, 10],
   ["negative", "95", -6, -5],
@@ -459,6 +607,41 @@ describe("sealed readonly instrument economics", () => {
       instrument: "SPY",
       asOf,
     });
+  it("reads original price-times-quantity asset fee evidence only through the sealed cutoff", async () =>
+    fixture(async (directory, append) => {
+      await append("activities:main", [
+        { ...rows[0], symbol: "BTCUSD" },
+        { ...rows[1], symbol: "BTCUSD" },
+        ...assetFees,
+        assetFees[0],
+        cashFee("cash-crypto", "-0.1", {
+          activity_type: "CFEE",
+          created_at: "2026-10-03T00:00:00Z",
+        }),
+      ]);
+      await append("reconciliation:sealed", [snapshot]);
+      await append("activities:after-seal", [
+        { ...assetFees[0], id: "after-seal", price: undefined },
+      ]);
+      const result = await readFinanceBrokerInstrumentFeedback({
+        directory,
+        accountId: "paper-a",
+        instrument: "BTC/USD",
+        asOf: "2026-10-04T10:04:00Z",
+      });
+      expect(result.status).toBe("present");
+      if (result.status !== "present") {
+        throw new Error(result.reason);
+      }
+      expect(result.economics.reportedAssetFeeValuation!.usdValue).toBeCloseTo(0.08052845, 12);
+      expect(result.economics.reportedAssetFeeValuation?.activityCount).toBe(2);
+      expect(result.economics).toMatchObject({
+        unpricedFeeActivityCount: 2,
+        netMatchedPnl: null,
+        recordedCashFeePnlBounds: null,
+      });
+      expect(result.economics.unallocatedCashFeeAmount).toBeCloseTo(0.1, 12);
+    }));
   it("uses only sealed account activities and ignores later fees and future snapshots", async () =>
     fixture(async (directory, append) => {
       await append("activities:main", [...rows, rows[0]]);
