@@ -262,12 +262,19 @@ describe("finance night review context", () => {
           "decision_source_receipt_lineage_only_not_research_alpha_execution_alpha_or_strategy_pnl",
       });
       expect(portfolio.brokerProfit.accounts[0]).toMatchObject({
+        accountId: "test-account",
+        venue: "alpaca:paper",
         buyFills: 1,
         sellFills: 0,
         status: "no_closed_matches",
         netMatchedPnl: null,
       });
-      expect(JSON.stringify(portfolio.brokerProfit)).not.toContain("test-account");
+      expect(portfolio.brokerProfit.executionAuthority).toBe("none");
+      expect(portfolio.brokerProfit.accounts[1]).toMatchObject({
+        accountId: "future-account",
+        status: "snapshot_outside_cutoff",
+      });
+      expect(JSON.stringify(portfolio.brokerProfit)).not.toContain("SECRET-FUTURE");
       expect(portfolio.dayReceipts[0]).toMatchObject({
         quantity: 2,
         referencePrice: 500,
@@ -343,6 +350,10 @@ describe("finance night review context", () => {
       `${"R".repeat(240)}…`,
     );
     expect(text).not.toContain("private-request-marker");
+    expect(summary.decisions[0].outcome.tradeDecisionReview).not.toHaveProperty("toolEvidence");
+    expect(summary.decisions[0].outcome.tradeDecisionReview).not.toHaveProperty(
+      "modelCallEvidence",
+    );
   });
 
   it.each(["R", "风险"])(
@@ -378,6 +389,44 @@ describe("finance night review context", () => {
               latencyMs: 12,
               providerCallObserved: true,
               adapterAttested: true,
+              modelCalls: 2,
+              toolEvidence: [
+                {
+                  action: "max_drawdown",
+                  candidateId: `candidate-${index}`,
+                  accountId: "private-tool-account-marker",
+                  asOf: "2026-10-01T22:00:00.000Z",
+                  status: "completed",
+                  sourceRef: "a".repeat(64),
+                  requestSha256: "b".repeat(64),
+                  resultSha256: "c".repeat(64),
+                  summary: JSON.stringify({
+                    result: { maxDrawdown: -0.183, note: rationaleText.repeat(180) },
+                  }),
+                  boundary: "recorded_daily_history_research_only_no_execution_or_fresh_quote",
+                },
+              ],
+              modelCallEvidence: [
+                {
+                  attempt: 1,
+                  callId: "fixture-first",
+                  payloadSha256: "d".repeat(64),
+                  outputSha256: "e".repeat(64),
+                  resultKind: "evidence_request",
+                  attestation: { status: "unattested" },
+                  evidenceRequests: [{ action: "max_drawdown", candidateId: `candidate-${index}` }],
+                  hypothesis: rationaleText.repeat(30),
+                },
+                {
+                  attempt: 2,
+                  callId: "fixture-second",
+                  payloadSha256: "f".repeat(64),
+                  outputSha256: "a".repeat(64),
+                  resultKind: "decision",
+                  toolEvidenceSha256: "b".repeat(64),
+                  attestation: { status: "unattested" },
+                },
+              ],
               request: {
                 schemaVersion: "lcx_finance_intraday_trade_decision_review_v1",
                 venue: "alpaca:paper",
@@ -450,6 +499,26 @@ describe("finance night review context", () => {
         expect(summary.coverage.includedDecisionCount).toBeLessThan(100);
         expect(summary.coverage.omittedDecisionCount).toBe(315 - summary.decisions.length);
         expect(summary.decisions.at(-1).signalId).toBe("signal-314");
+        const projectedReview = summary.decisions.at(-1).outcome.tradeDecisionReview;
+        expect(projectedReview.toolEvidence).toHaveLength(1);
+        expect(JSON.parse(projectedReview.toolEvidence[0].summary).result.maxDrawdown).toBe(-0.183);
+        expect(
+          projectedReview.modelCallEvidence.map((call: { resultKind: string }) => call.resultKind),
+        ).toEqual(["evidence_request", "decision"]);
+        expect(projectedReview.omittedToolEvidenceCount).toBe(0);
+        expect(projectedReview.omittedModelCallEvidenceCount).toBe(0);
+        expect(summary.coverage.recordedReviewEvidence).toEqual({
+          reviewsWithToolEvidence: 315,
+          completedToolEvidenceCount: 315,
+          unavailableToolEvidenceCount: 0,
+          reviewsWithModelCallEvidence: 315,
+          modelCallEvidenceCount: 630,
+        });
+        expect(text).not.toContain("private-tool-account-marker");
+        expect(text).not.toContain('"request":');
+        expect(
+          evidence.reduce((bytes, item) => bytes + Buffer.byteLength(item.text, "utf8"), 0),
+        ).toBeLessThanOrEqual(250_000);
         expect(summary.decisions.at(-1).outcome.executionSafetyFailure.provider.stage).toBe(
           "account_arithmetic",
         );
@@ -467,6 +536,107 @@ describe("finance night review context", () => {
       }
     },
   );
+
+  it("retains recorded whole-session evidence counts when the latest sample omits the only tool review", () => {
+    const tool = {
+      action: "max_drawdown",
+      candidateId: "candidate-proof",
+      accountId: "private-account-marker",
+      asOf: "2026-10-01T14:00:00.000Z",
+      status: "completed" as const,
+      sourceRef: "a".repeat(64),
+      requestSha256: "b".repeat(64),
+      resultSha256: "c".repeat(64),
+      summary: '{"result":{"maxDrawdown":-0.183}}',
+      boundary: "recorded_daily_history_research_only_no_execution_or_fresh_quote" as const,
+    };
+    const call = {
+      attempt: 1 as const,
+      callId: "fixture-first",
+      payloadSha256: "d".repeat(64),
+      resultKind: "evidence_request" as const,
+      attestation: { status: "unattested" as const },
+    };
+    const reviewed = {
+      status: "completed",
+      attempted: true,
+      provider: "fixture",
+      modelId: "fixture",
+      latencyMs: 1,
+      providerCallObserved: false,
+      adapterAttested: false,
+      request: { repeatedAccountContext: "private-request-marker" },
+      toolEvidence: [tool, { ...tool, status: "unavailable" }, tool],
+      modelCallEvidence: [call, call, call],
+    } as unknown as NonNullable<FinanceIntradayOutcomeRecord["tradeDecisionReview"]>;
+    const first = {
+      recordedAt: "2026-10-01T14:00:00.000Z",
+      signalId: "signal-proof",
+      instrument: "SPY",
+      action: "buy",
+      reason: "opening_range_breakout",
+      referencePrice: 500,
+      referencePriceAt: "2026-10-01T14:00:00.000Z",
+      outcome: {
+        signalId: "signal-proof",
+        status: "refused",
+        reasons: [],
+        tradeDecisionReview: reviewed,
+      } as unknown as FinanceIntradayOutcomeRecord,
+    };
+    const direct = JSON.parse(
+      summarizeFinanceNightIntradayEvidence(
+        {
+          asOf: "2026-10-01T22:00:00.000Z",
+          sessionDate: "2026-10-01",
+          decisions: [first],
+        },
+        60_000,
+      ),
+    );
+    expect(direct.decisions[0].outcome.tradeDecisionReview.toolEvidence).toHaveLength(2);
+    expect(direct.decisions[0].outcome.tradeDecisionReview.modelCallEvidence).toHaveLength(2);
+    expect(direct.decisions[0].outcome.tradeDecisionReview.omittedToolEvidenceCount).toBe(1);
+    expect(direct.decisions[0].outcome.tradeDecisionReview.omittedModelCallEvidenceCount).toBe(1);
+    const decisions = [
+      first,
+      ...Array.from({ length: 100 }, (_, index) => ({
+        ...first,
+        signalId: `legacy-${index}`,
+        outcome: {
+          signalId: `legacy-${index}`,
+          status: "refused",
+          reasons: [],
+        } as unknown as FinanceIntradayOutcomeRecord,
+      })),
+    ];
+    const bounded = JSON.parse(
+      summarizeFinanceNightIntradayEvidence(
+        {
+          asOf: "2026-10-01T22:00:00.000Z",
+          sessionDate: "2026-10-01",
+          decisions,
+        },
+        60_000,
+      ),
+    );
+    expect(bounded.coverage).toMatchObject({
+      totalDecisionCount: 101,
+      omittedDecisionCount: 1,
+      recordedReviewEvidence: {
+        reviewsWithToolEvidence: 1,
+        completedToolEvidenceCount: 2,
+        unavailableToolEvidenceCount: 1,
+        reviewsWithModelCallEvidence: 1,
+        modelCallEvidenceCount: 3,
+      },
+    });
+    expect(
+      bounded.decisions.some((item: { signalId: string }) => item.signalId === "signal-proof"),
+    ).toBe(false);
+    expect(JSON.stringify(direct)).not.toContain("private-account-marker");
+    expect(JSON.stringify(direct)).not.toContain("private-request-marker");
+  });
 });
 
 it("excludes later decisions and account diagnostics from historical night evidence", async () => {

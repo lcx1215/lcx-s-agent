@@ -7,6 +7,7 @@ import {
 } from "./finance-brain-orchestration.js";
 import { createCalculationLedger } from "./finance-calculation-ledger.js";
 import type { FinanceTradeDecisionReviewRequest } from "./finance-trade-decision-review.js";
+import type { PairSpreadDiagnostics } from "./quant-math-pair-spread.js";
 import type { AnyAgentTool } from "./tools/common.js";
 import { createFinanceBarLedgerTool } from "./tools/finance-bar-ledger-tool.js";
 import { createFinanceFrameworkCoreInspectTool } from "./tools/finance-framework-core-inspect-tool.js";
@@ -309,7 +310,11 @@ function knowledgeTimes(value: unknown, cutoff: number): number {
   return count;
 }
 
-function summarizeEvidence(output: unknown, priority: Record<string, unknown>) {
+function summarizeEvidence(
+  output: unknown,
+  priority: Record<string, unknown>,
+  excludedKeys: readonly string[] = [],
+) {
   const outputRecord =
     output && typeof output === "object" ? (output as Record<string, unknown>) : { value: output };
   const summary: Record<string, unknown> = { ...priority };
@@ -318,6 +323,13 @@ function summarizeEvidence(output: unknown, priority: Record<string, unknown>) {
   }
   const omittedKeys: string[] = [];
   for (const [key, value] of Object.entries(outputRecord)) {
+    if (excludedKeys.includes(key)) {
+      omittedKeys.push(key);
+      continue;
+    }
+    if (Object.hasOwn(priority, key)) {
+      continue;
+    }
     if (Buffer.byteLength(JSON.stringify({ ...summary, [key]: value }), "utf8") <= 1200) {
       summary[key] = value;
     } else {
@@ -696,6 +708,7 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
         let output: unknown;
         let priority: Record<string, unknown> = {};
         let status: FinanceTradeReviewToolEvidence["status"] = "completed";
+        let excludedSummaryKeys: readonly string[] = [];
         try {
           const bars = await read(candidate.instrument);
           priority.historyWindow = {
@@ -745,6 +758,40 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
               observations,
             });
             output = result.details;
+            const diagnostics = output as PairSpreadDiagnostics;
+            const stationarity = diagnostics.stationarityTest;
+            // Preserve the formula and both legs alongside its diagnostics; the
+            // next judgment receives this summary, not the first model's request.
+            priority = {
+              ...priority,
+              instrumentA: diagnostics.instrumentA,
+              instrumentB: diagnostics.instrumentB,
+              construction: diagnostics.construction,
+              latestSpread: diagnostics.latestSpread,
+              latestObservationZScore: diagnostics.latestObservationZScore,
+              zScoreBaseline: diagnostics.zScoreBaseline,
+              stationarityTest:
+                stationarity.status === "assessed"
+                  ? {
+                      status: stationarity.status,
+                      result: {
+                        observations: stationarity.result.observations,
+                        effectiveObservations: stationarity.result.effectiveObservations,
+                        regression: stationarity.result.regression,
+                        lagsUsed: stationarity.result.lagsUsed,
+                        statistic: stationarity.result.statistic,
+                        criticalValues: stationarity.result.criticalValues,
+                        verdict: stationarity.result.verdict,
+                      },
+                    }
+                  : stationarity,
+              researchMode: diagnostics.researchMode,
+              signalProduced: diagnostics.signalProduced,
+              executionAuthority: diagnostics.executionAuthority,
+              statisticalBoundary:
+                "in_sample_descriptors_asymptotic_ADF_not_cointegration_future_convergence_or_cost_adjusted_profit",
+            };
+            excludedSummaryKeys = ["relationshipRationale"];
           } else {
             const result = await math.execute("trade-review-math", {
               action: request.action,
@@ -785,7 +832,7 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
           };
         }
         sourceRef ||= digest({ refs, asOf: packet.asOf, instrument: candidate.instrument });
-        const summaryText = summarizeEvidence(output, priority);
+        const summaryText = summarizeEvidence(output, priority, excludedSummaryKeys);
         results.push(
           FinanceTradeReviewToolEvidenceSchema.parse({
             action: request.action,

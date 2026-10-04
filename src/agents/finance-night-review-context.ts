@@ -407,6 +407,47 @@ function compactFinanceNightIntradayDecision(decision: FinanceNightIntradayDecis
                   providerCallObserved: review.providerCallObserved,
                   adapterAttested: review.adapterAttested,
                   ...(review.failureCode ? { failureCode: review.failureCode } : {}),
+                  ...(review.toolEvidence === undefined
+                    ? {}
+                    : {
+                        toolEvidence: review.toolEvidence.slice(0, 2).map((item) => ({
+                          action: item.action,
+                          candidateId: item.candidateId,
+                          asOf: item.asOf,
+                          status: item.status,
+                          sourceRef: item.sourceRef,
+                          requestSha256: item.requestSha256,
+                          resultSha256: item.resultSha256,
+                          summary: item.summary,
+                          boundary: item.boundary,
+                        })),
+                        omittedToolEvidenceCount: Math.max(0, review.toolEvidence.length - 2),
+                      }),
+                  ...(review.modelCallEvidence === undefined
+                    ? {}
+                    : {
+                        modelCallEvidence: review.modelCallEvidence.slice(0, 2).map((call) => ({
+                          attempt: call.attempt,
+                          callId: call.callId,
+                          payloadSha256: call.payloadSha256,
+                          ...(call.outputSha256 === undefined
+                            ? {}
+                            : { outputSha256: call.outputSha256 }),
+                          resultKind: call.resultKind,
+                          attestation: call.attestation,
+                          ...(call.toolEvidenceSha256 === undefined
+                            ? {}
+                            : { toolEvidenceSha256: call.toolEvidenceSha256 }),
+                          ...(call.evidenceRequests === undefined
+                            ? {}
+                            : { evidenceRequests: call.evidenceRequests }),
+                          ...(call.hypothesis === undefined ? {} : { hypothesis: call.hypothesis }),
+                        })),
+                        omittedModelCallEvidenceCount: Math.max(
+                          0,
+                          review.modelCallEvidence.length - 2,
+                        ),
+                      }),
                   ...(reviewedDecision
                     ? {
                         decision: {
@@ -456,6 +497,30 @@ export function summarizeFinanceNightIntradayEvidence(
   const reviewStatuses = decisions.map(
     (decision) => decision.outcome?.tradeDecisionReview?.status ?? "not_reviewed",
   );
+  const reviews = decisions.flatMap((decision) =>
+    decision.outcome?.tradeDecisionReview ? [decision.outcome.tradeDecisionReview] : [],
+  );
+  const recordedReviewEvidence = {
+    reviewsWithToolEvidence: reviews.filter((review) => (review.toolEvidence?.length ?? 0) > 0)
+      .length,
+    completedToolEvidenceCount: reviews.reduce(
+      (count, review) =>
+        count + (review.toolEvidence?.filter((item) => item.status === "completed").length ?? 0),
+      0,
+    ),
+    unavailableToolEvidenceCount: reviews.reduce(
+      (count, review) =>
+        count + (review.toolEvidence?.filter((item) => item.status === "unavailable").length ?? 0),
+      0,
+    ),
+    reviewsWithModelCallEvidence: reviews.filter(
+      (review) => (review.modelCallEvidence?.length ?? 0) > 0,
+    ).length,
+    modelCallEvidenceCount: reviews.reduce(
+      (count, review) => count + (review.modelCallEvidence?.length ?? 0),
+      0,
+    ),
+  };
   const distributions = {
     byInstrument: countEvidenceLabels(decisions.map((decision) => decision.instrument)),
     byAction: countEvidenceLabels(decisions.map((decision) => decision.action)),
@@ -480,6 +545,7 @@ export function summarizeFinanceNightIntradayEvidence(
         includedDecisionCount: recent.length,
         omittedDecisionCount: decisions.length - recent.length,
         samplePolicy: "latest_append_sequence_up_to_100",
+        recordedReviewEvidence,
       },
       distributions,
       decisions: recent.map(compactFinanceNightIntradayDecision),

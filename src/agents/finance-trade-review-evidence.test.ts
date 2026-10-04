@@ -17,6 +17,7 @@ import {
   appendFinanceIntradayOutcome,
   readFinanceIntradayOutcome,
 } from "./finance-intraday-control-ledger.js";
+import { buildFinanceNightReviewEvidence } from "./finance-night-review-context.js";
 import { appendFinanceBrokerHistory } from "./finance-position-ledger.js";
 import { financePositionLedgerPath } from "./finance-state-dir.js";
 import {
@@ -83,12 +84,15 @@ const decision = {
     },
   ],
 };
-async function fixture() {
+async function fixture(pairVariation = false) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "review-evidence-"));
   dirs.push(directory);
   for (const instrument of ["AAA", "BBB"]) {
     const bars = Array.from({ length: 29 }, (_, i) => {
-      const close = (instrument === "AAA" ? 100 : 50) + i + Math.sin(i);
+      const close =
+        (instrument === "AAA" ? 100 : 50) +
+        i +
+        (pairVariation && instrument === "BBB" ? Math.sin(i * i * 29.123) : Math.sin(i));
       return {
         date: `2026-09-${String(i + 1).padStart(2, "0")}`,
         open: close,
@@ -139,70 +143,155 @@ const requests = [
     relationshipRationale: "Caller hypothesis about a recorded relationship",
   },
 ];
-it("runs real recorded math and pair diagnostics, consumes results on call2, and persists them without execution authority", async () => {
-  const scope = await fixture();
-  const payloads: unknown[] = [];
-  const fixtureModel = scripted(
-    [
-      {
-        schemaVersion: packet.schemaVersion,
-        evidenceRequests: requests,
-        hypothesis: "Test daily risk and relationship before exact candidate decision",
+it.each(["Caller hypothesis about a recorded relationship", "关系".repeat(120)])(
+  "keeps real pair diagnostics on call2 and in the original DB/night projection with bounded rationale %s",
+  async (relationshipRationale) => {
+    const scope = await fixture();
+    const payloads: unknown[] = [];
+    const fixtureModel = scripted(
+      [
+        {
+          schemaVersion: packet.schemaVersion,
+          evidenceRequests: [requests[0], { ...requests[1], relationshipRationale }],
+          hypothesis: "Test daily risk and relationship before exact candidate decision",
+        },
+        decision,
+      ],
+      payloads,
+    );
+    const reviewer = createFinanceTradeDecisionReviewer(
+      {},
+      { adapterFactory: fixtureModel.factory, evidenceScope: scope },
+    );
+    const result = await reviewer(packet, new AbortController().signal);
+    expect(result).toMatchObject({
+      status: "completed",
+      modelCalls: 2,
+      toolEvidence: [
+        { action: "max_drawdown", status: "completed" },
+        { action: "pair_spread_diagnostics", status: "completed" },
+      ],
+    });
+    expect(JSON.stringify(payloads[1])).toContain(
+      "recorded_daily_history_research_only_no_execution_or_fresh_quote",
+    );
+    expect(JSON.stringify(payloads[1])).toContain("calculationId");
+    expect(JSON.parse(result.toolEvidence![1].summary).result.historyWindow).toEqual({
+      firstDate: "2026-09-01",
+      lastDate: "2026-09-29",
+      count: 29,
+    });
+    const pairSummary = JSON.parse(result.toolEvidence![1].summary);
+    expect(pairSummary.result).toMatchObject({
+      instrumentA: "AAA",
+      instrumentB: "BBB",
+      construction: {
+        kind: "fixed_spread",
+        formula: "priceA - hedgeRatio * priceB",
+        hedgeRatio: 2,
       },
-      decision,
-    ],
-    payloads,
+      latestObservationZScore: expect.any(Number),
+      latestSpread: expect.any(Number),
+      zScoreBaseline: { observations: 20, excludesLatestObservation: true },
+      stationarityTest: { status: "not_assessed", reason: expect.any(String) },
+      researchMode: "research_only",
+      signalProduced: false,
+      executionAuthority: "none",
+      statisticalBoundary: expect.stringContaining("not_cointegration"),
+    });
+    expect(pairSummary.omittedKeys).toContain("relationshipRationale");
+    expect(Buffer.byteLength(JSON.stringify(pairSummary.result), "utf8")).toBeLessThanOrEqual(1200);
+    expect(Buffer.byteLength(result.toolEvidence![1].summary, "utf8")).toBeLessThanOrEqual(1600);
+    expect(
+      JSON.parse((payloads[1] as { toolEvidence: { summary: string }[] }).toolEvidence[1].summary),
+    ).toEqual(pairSummary);
+    expect(JSON.stringify(payloads[1])).not.toContain('"observations":[');
+    await appendFinanceIntradayDecision(scope.directory, {
+      signalId: "signal",
+      instrument: "AAA",
+      sessionDate: "2026-09-30",
+      action: "buy",
+      reason: "opening_range_breakout",
+      referencePrice: 100,
+      referencePriceAt: asOf,
+      datasetHeadRef: "a".repeat(64),
+      strategyRule: "opening_range_breakout_long_next_bar_v1",
+    });
+    const { decisions: _decisions, ...resultMetadata } = result;
+    const receipt = FinanceIntradayDecisionReviewReceiptSchema.parse({
+      ...resultMetadata,
+      request: packet,
+      decision: result.decisions?.[0],
+    });
+    await appendFinanceIntradayOutcome(scope.directory, {
+      signalId: "signal",
+      status: "refused",
+      reasons: ["model veto"],
+      tradeDecisionReview: receipt,
+    });
+    expect(
+      (await readFinanceIntradayOutcome(scope.directory, "signal"))?.tradeDecisionReview
+        ?.toolEvidence,
+    ).toEqual(result.toolEvidence);
+    const night = await buildFinanceNightReviewEvidence({
+      directory: scope.directory,
+      asOf: new Date().toISOString(),
+      etDate: "2026-09-30",
+      settlement: {
+        scoredFiled: { appended: 0, skipped: 0 },
+        reflection: {},
+        pending: [],
+        declined: [],
+        issues: [],
+      },
+    });
+    const nightText = night.find((item) => item.source === "finance-intraday-control-ledger")!.text;
+    const projected = JSON.parse(nightText).decisions[0].outcome.tradeDecisionReview;
+    const { accountId: _accountId, ...projectedPair } = result.toolEvidence![1];
+    expect(projected.toolEvidence[1]).toEqual(projectedPair);
+    expect(projected.modelCallEvidence).toEqual(result.modelCallEvidence);
+    expect(projected.omittedToolEvidenceCount).toBe(0);
+    expect(projected.omittedModelCallEvidenceCount).toBe(0);
+    expect(nightText).not.toContain(scope.accountId);
+    expect(nightText).not.toContain('"equity"');
+    expect(nightText).not.toContain('"request":');
+  },
+);
+it("preserves assessed ADF statistics and calibration boundaries before a long pair rationale", async () => {
+  const scope = await fixture(true);
+  const result = await createFinanceTradeReviewEvidenceExecutor(scope)(
+    [{ ...requests[1], relationshipRationale: "关系".repeat(120) }],
+    packet,
+    new AbortController().signal,
   );
-  const reviewer = createFinanceTradeDecisionReviewer(
-    {},
-    { adapterFactory: fixtureModel.factory, evidenceScope: scope },
-  );
-  const result = await reviewer(packet, new AbortController().signal);
-  expect(result).toMatchObject({
-    status: "completed",
-    modelCalls: 2,
-    toolEvidence: [
-      { action: "max_drawdown", status: "completed" },
-      { action: "pair_spread_diagnostics", status: "completed" },
-    ],
+  expect(result[0].status).toBe("completed");
+  const summary = JSON.parse(result[0].summary);
+  expect(summary.result.stationarityTest).toMatchObject({
+    status: "assessed",
+    result: {
+      observations: 29,
+      effectiveObservations: expect.any(Number),
+      regression: "drift",
+      lagsUsed: expect.any(Number),
+      statistic: expect.any(Number),
+      criticalValues: [
+        { level: "1%", value: expect.any(Number) },
+        { level: "5%", value: expect.any(Number) },
+        { level: "10%", value: expect.any(Number) },
+      ],
+      verdict: expect.any(String),
+    },
   });
-  expect(JSON.stringify(payloads[1])).toContain(
-    "recorded_daily_history_research_only_no_execution_or_fresh_quote",
-  );
-  expect(JSON.stringify(payloads[1])).toContain("calculationId");
-  expect(JSON.parse(result.toolEvidence![1].summary).result.historyWindow).toEqual({
-    firstDate: "2026-09-01",
-    lastDate: "2026-09-29",
-    count: 29,
+  expect(summary.result.statisticalBoundary).toContain("asymptotic_ADF_not_cointegration");
+  expect(summary.result).toMatchObject({
+    instrumentA: "AAA",
+    instrumentB: "BBB",
+    construction: { kind: "fixed_spread", formula: "priceA - hedgeRatio * priceB", hedgeRatio: 2 },
+    signalProduced: false,
+    executionAuthority: "none",
   });
-  expect(JSON.stringify(payloads[1])).not.toContain('"observations":[');
-  await appendFinanceIntradayDecision(scope.directory, {
-    signalId: "signal",
-    instrument: "AAA",
-    sessionDate: "2026-09-30",
-    action: "buy",
-    reason: "opening_range_breakout",
-    referencePrice: 100,
-    referencePriceAt: asOf,
-    datasetHeadRef: "a".repeat(64),
-    strategyRule: "opening_range_breakout_long_next_bar_v1",
-  });
-  const { decisions: _decisions, ...resultMetadata } = result;
-  const receipt = FinanceIntradayDecisionReviewReceiptSchema.parse({
-    ...resultMetadata,
-    request: packet,
-    decision: result.decisions?.[0],
-  });
-  await appendFinanceIntradayOutcome(scope.directory, {
-    signalId: "signal",
-    status: "refused",
-    reasons: ["model veto"],
-    tradeDecisionReview: receipt,
-  });
-  expect(
-    (await readFinanceIntradayOutcome(scope.directory, "signal"))?.tradeDecisionReview
-      ?.toolEvidence,
-  ).toEqual(result.toolEvidence);
+  expect(Buffer.byteLength(JSON.stringify(summary.result), "utf8")).toBeLessThanOrEqual(1200);
+  expect(Buffer.byteLength(result[0].summary, "utf8")).toBeLessThanOrEqual(1600);
 });
 it.each(["directory", "accountId", "series", "asOf", "unknownTool"])(
   "rejects model-controlled %s and mixed output before evidence execution",
