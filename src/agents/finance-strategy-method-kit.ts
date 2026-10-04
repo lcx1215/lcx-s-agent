@@ -68,6 +68,17 @@ const M12_RULES = Object.freeze([
   "Surface concentration, liquidity, financing, borrow, gap, and exit-day limits even when the test is long-only and unlevered.",
 ] as const);
 
+const M11_RULES = Object.freeze([
+  "For Gamma Scalping, study a long-gamma option position with a mechanical delta hedge. Target hedge shares = -option delta times contracts times contract multiplier; rebalance the residual portfolio delta using a predeclared share band, lot size and inventory limit, not a forecast of tops or bottoms.",
+  "An at-the-money long straddle is not exactly delta-neutral, and gamma peaks near, not necessarily exactly at, the strike. Compute both option legs and the initial hedge rather than assuming zero delta.",
+  "Continuous delta hedging does not eliminate gamma P&L. Under zero rates/dividends and fixed implied volatility, local long-option hedged P&L is approximately 0.5 * Gamma * (dS)^2 + Theta * dt, or 0.5 * Gamma * S^2 * (realized variance - implied variance) * dt; this is an approximation, not a profit guarantee.",
+  "Use a gamma-weighted variance comparison with a matching horizon; a low IV percentile or an unweighted realized volatility greater than IV is not sufficient evidence of a net edge. Separate gamma/theta, residual delta, vega repricing, financing/borrow, transaction costs and approximation error.",
+  "Keep option mark change, hedge cash flows and hedge mark-to-market in one self-financing ledger. Hedge-account gains alone are not gamma gains; losses on a short stock hedge in a trend must be evaluated together with the long options.",
+  "Freeze hedge policy before testing. Include both option entry/exit spreads, commissions, contract multipliers, stock spread/slippage, borrowing and financing, lot rounding and inventory limits. Stress flat, oscillating, trending, gap and IV-crush paths, and compare the same straddle without hedging under the same costs.",
+  "Use docs/experiments/research/gamma-scalping/README.md and replayGammaScalping in src/agents/finance-gamma-scalping-replay.ts for an explicitly synthetic European, non-dividend teaching replay only. It is not a broker capability or a market backtest; do not infer American exercise, dividends, quote freshness, borrow availability or execution permission from it.",
+  "Without synchronous option/underlying quotes, Greeks, IV history, expiry/style/multiplier, fresh borrow and funding evidence, and an authorized options-plus-hedge adapter, retain research_only. Existing equity Paper authority does not authorize option legs, short stock, or Live execution.",
+] as const);
+
 const M13_RULES = Object.freeze([
   "Treat a commodity pair as a testable relative-value hypothesis, not an arbitrage: state the physical or market mechanism that could repair the spread and what could permanently change it.",
   "Separate same-underlying calendar spreads from cross-commodity pairs; map each exchange, contract month, unit, multiplier, expiry, and roll before comparing prices.",
@@ -137,7 +148,8 @@ const METHOD_MATCHERS: readonly Readonly<{
   },
   {
     method: "M11",
-    pattern: /波动率|隐含波动|波动率曲面|Greeks|希腊值|动态对冲|volatility|implied vol|surface/iu,
+    pattern:
+      /波动率|隐含波动|波动率曲面|Greeks|希腊值|动态对冲|波动收割|伽马|跨式|gamma[\s-]*scalp(?:ing)?|delta[\s-]*(?:hedg(?:e|ing)|neutral)|long[\s-]*straddle|volatility|implied vol|surface/iu,
   },
   {
     method: "M12",
@@ -154,6 +166,7 @@ const METHOD_MATCHERS: readonly Readonly<{
 const BASE_RULES: Partial<Record<StrategyMethodId, readonly string[]>> = Object.freeze({
   M01: M01_RULES,
   M02: M02_RULES,
+  M11: M11_RULES,
   M12: M12_RULES,
   M13: M13_RULES,
 });
