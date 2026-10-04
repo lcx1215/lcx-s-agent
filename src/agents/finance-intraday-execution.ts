@@ -741,9 +741,17 @@ export async function executeFinanceIntradayDecision(params: {
       !Number.isFinite(referencePrice) ||
       referencePrice <= 0
     ) {
-      throw new Error(
-        `intraday execution quote refused: ${finalQuoteIssue ?? "missing side price"}`,
-      );
+      const outcome = await appendFinanceIntradayOutcome(params.directory, {
+        signalId: input.signalId,
+        status: "refused",
+        reasons: [`intraday execution quote refused: ${finalQuoteIssue ?? "missing side price"}`],
+        ...(tradeDecisionReview ? { tradeDecisionReview } : {}),
+      });
+      return Object.freeze({
+        status: "refused" as const,
+        outcome: outcome.input,
+        ...(tradeDecisionReview ? { tradeDecisionReview } : {}),
+      });
     }
     if (!protectiveExit && tradeDecisionReview?.status === "completed") {
       const comparison = reviewedQuoteComparison(tradeDecisionReview, quote);

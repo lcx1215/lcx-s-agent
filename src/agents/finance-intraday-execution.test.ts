@@ -1808,6 +1808,18 @@ describe("intraday decision execution bridge", () => {
           quote: { bidPrice: fixture.bid, askPrice: fixture.ask },
         });
       }
+      if (
+        ["crossed quote", "missing bid", "missing ask", "future quote", "stale quote"].includes(
+          fixture.name,
+        )
+      ) {
+        expect(stored?.reasons).toEqual([
+          expect.stringContaining("intraday execution quote refused:"),
+        ]);
+        expect(stored?.reasons.join()).not.toContain("unexpected_error");
+        expect(stored?.tradeDecisionReview?.status).toBe("completed");
+        expect(stored?.tradeDecisionReview?.executionQuoteValidation).toBeUndefined();
+      }
       if (fixture.name === "improvement crosses stop") {
         expect(stored?.reasons.join()).toContain("stop price");
         expect(stored?.tradeDecisionReview?.executionQuoteValidation?.status).toBe(
