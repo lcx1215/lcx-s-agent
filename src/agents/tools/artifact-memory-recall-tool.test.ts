@@ -4,6 +4,8 @@ import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
 import { ArtifactStore } from "../../memory/artifact-store.js";
+import { runCentralHarnessCycle } from "../central-harness/harness-loop.js";
+import type { CentralToolSpec } from "../central-harness/types.js";
 import { createArtifactMemoryRecallTool } from "./artifact-memory-recall-tool.js";
 
 let root: string;
@@ -302,4 +304,151 @@ it("does not replace a named gap with a cleanup error", async () => {
       })
     ).details,
   ).toMatchObject({ gap: "artifact_not_registered" });
+});
+
+it("allows bounded first-user browsing and exposes page continuation before large records", async () => {
+  await seed();
+  const store = ArtifactStore.open({ dbPath, workspaceDir: root });
+  try {
+    for (let n = 0; n < 3; n++) {
+      await store.register({
+        id: `extra_${n}`,
+        owner: "browse-owner",
+        runId: `run${n}`,
+        observedAt: "2026-10-04T10:00:00Z",
+        relativePath: "state/runs/result.json",
+        mimeType: "application/json",
+        summary: "browse marker",
+      });
+    }
+  } finally {
+    store.close();
+  }
+  const tool = createArtifactMemoryRecallTool({ config: cfg, workspaceDir: root });
+  const first = (
+    await tool.execute("browse", { action: "search", owner: "browse-owner", limit: 1 })
+  ).details as { hasMore: boolean; nextCursor: string; count: number; artifacts: { id: string }[] };
+  expect(first).toMatchObject({ hasMore: true, count: 1 });
+  expect(JSON.stringify(first).indexOf("nextCursor")).toBeLessThan(
+    JSON.stringify(first).indexOf('"artifacts"'),
+  );
+  const second = (
+    await tool.execute("next", {
+      action: "search",
+      owner: "browse-owner",
+      limit: 1,
+      cursor: first.nextCursor,
+    })
+  ).details as { artifacts: { id: string }[] };
+  expect(second.artifacts[0].id).not.toBe(first.artifacts[0].id);
+  expect(
+    (await tool.execute("empty", { action: "search", query: "", owner: "browse-owner" })).details,
+  ).toMatchObject({
+    available: true,
+    count: 3,
+    backend: "browse",
+    hasMore: false,
+    nextCursor: null,
+  });
+  expect(
+    (await tool.execute("bad", { action: "search", query: "x".repeat(1001) })).details,
+  ).toMatchObject({ gap: "artifact_query_invalid" });
+  expect(
+    (await tool.execute("badcursor", { action: "search", cursor: "forged" })).details,
+  ).toMatchObject({ gap: "artifact_cursor_invalid" });
+  expect((await tool.execute("querytype", { action: "search", query: 42 })).details).toMatchObject({
+    gap: "artifact_query_invalid",
+  });
+});
+
+async function digestRecallTool(
+  tool: ReturnType<typeof createArtifactMemoryRecallTool>,
+  args: Record<string, unknown>,
+) {
+  const ownerId = "artifact_memory_recall";
+  const spec: CentralToolSpec = {
+    ownerId,
+    name: ownerId,
+    label: ownerId,
+    description: "original readonly recall",
+    allowedSideEffects: ["local_read"],
+    boundary: [],
+    approve: () => ({ ok: true }),
+    execute: async (args, signal) =>
+      (await tool.execute("digest", args, signal)).details as Record<string, unknown>,
+  };
+  return runCentralHarnessCycle({
+    perception: {
+      observedAt: "2026-10-04T10:00:00Z",
+      ownerTotals: {},
+      controlRoom: {},
+      backlog: [],
+      boundaries: [],
+    },
+    registry: new Map([[ownerId, spec]]),
+    brain: {
+      propose: async () => ({
+        kind: "proposed" as const,
+        provider: "fixture",
+        modelId: "fixture",
+        plan: { actions: [{ ownerId, args }], note: "scripted proof" },
+      }),
+    },
+  });
+}
+it("keeps a scoped compact cursor in the original 512 byte decision digest even with a long query", async () => {
+  await seed();
+  const query = "q".repeat(1000);
+  const store = ArtifactStore.open({ dbPath, workspaceDir: root });
+  try {
+    for (const hash of ["a", "b"]) {
+      await store.register({
+        id: `artifact-${hash.repeat(64)}`,
+        owner: "digest",
+        runId: "r",
+        observedAt: "2026-10-04T10:00:00Z",
+        relativePath: "state/runs/result.json",
+        mimeType: "application/json",
+        summary: query,
+      });
+    }
+  } finally {
+    store.close();
+  }
+  const receipt = await digestRecallTool(
+    createArtifactMemoryRecallTool({ config: cfg, workspaceDir: root }),
+    { action: "search", query, owner: "digest", limit: 1 },
+  );
+  const step = receipt.steps[0];
+  expect(step.status).toBe("ran_ok");
+  expect(step.outcome?.hasMore).toBe(true);
+  expect(step.outcome?.nextCursor).toBeTypeOf("string");
+  expect(Buffer.byteLength(JSON.stringify(step.outcome))).toBeLessThanOrEqual(512);
+  expect(step.outcomeDroppedKeys).not.toContain("nextCursor");
+});
+it("names a cursor omitted by the original decision budget rather than truncating its identity", async () => {
+  await seed();
+  const store = ArtifactStore.open({ dbPath, workspaceDir: root });
+  try {
+    for (const part of ["超", "长"]) {
+      await store.register({
+        id: part.repeat(240),
+        owner: "large-id",
+        runId: "r",
+        observedAt: "2026-10-04T10:00:00Z",
+        relativePath: "state/runs/result.json",
+        mimeType: "application/json",
+        summary: "largeids",
+      });
+    }
+  } finally {
+    store.close();
+  }
+  const receipt = await digestRecallTool(
+    createArtifactMemoryRecallTool({ config: cfg, workspaceDir: root }),
+    { action: "search", query: "largeids", owner: "large-id", limit: 1 },
+  );
+  expect(receipt.steps[0].outcome?.hasMore).toBe(true);
+  expect(receipt.steps[0].outcome).not.toHaveProperty("nextCursor");
+  expect(receipt.steps[0].outcomeDroppedKeys).toContain("nextCursor");
 });

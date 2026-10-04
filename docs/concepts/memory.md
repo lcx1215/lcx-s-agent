@@ -749,10 +749,21 @@ Registration uses local SQLite and FTS without an embedding or model request.
 
 `artifact_memory_recall` provides read-only access:
 
-- `action=search`, `query`, optional `owner`, `asOf`, and `limit` find registered results.
+- `action=search`, optional `query`, `owner`, `asOf`, and `limit` find registered results.
+  An absent or empty query browses the current workspace. Each page defaults to
+  20 results and is capped at 100. When `hasMore=true`, copy `nextCursor` into
+  `cursor` with the same query, owner and asOf to continue, including results
+  sharing one timestamp. Cursors cannot select another database or workspace.
+  Page reads are not an immutable database snapshot; use an explicit `asOf` for
+  historical evidence. CJK queries use escaped substring matching because the
+  default FTS tokenizer does not segment continuous CJK text.
 - `action=read`, `id` verifies the original bytes and source reference. Optional
   `field` selects a JSON Pointer such as `/value/details/beta`; optional `asOf`
   rejects a result observed after the requested window.
+
+The tool belongs to the coding profile and `group:memory`; explicit deny policies
+still apply. It searches retained result artifacts, while `memory_search` searches
+Markdown memory. Neither search surface proves complete historical coverage.
 
 The registry preserves owner, run, source time, MIME, byte size, SHA256, and an
 original reference. Text, JSON, tables, and opaque image, audio, PDF, or other

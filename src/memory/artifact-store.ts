@@ -105,6 +105,48 @@ async function rejectSymlinkComponents(workspaceDir: string, relativePath: strin
   }
 }
 
+function encodeCursor(scope: string, observedAt: string, id: string): string {
+  const payload = Buffer.from(JSON.stringify([1, scope, observedAt, id])).toString("base64url");
+  return `${payload}.${createHash("sha256").update(payload).digest("base64url")}`;
+}
+function decodeCursor(cursor: string, scope: string): { observedAt: string; id: string } {
+  if (
+    typeof cursor !== "string" ||
+    cursor.length > 2048 ||
+    !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u.test(cursor)
+  ) {
+    throw new ArtifactStoreError("artifact_cursor_invalid");
+  }
+  const [payload, checksum] = cursor.split(".");
+  if (createHash("sha256").update(payload).digest("base64url") !== checksum) {
+    throw new ArtifactStoreError("artifact_cursor_invalid");
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(
+      new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(payload, "base64url")),
+    );
+  } catch {
+    throw new ArtifactStoreError("artifact_cursor_invalid");
+  }
+  if (
+    !Array.isArray(value) ||
+    value.length !== 4 ||
+    value[0] !== 1 ||
+    value[1] !== scope ||
+    typeof value[2] !== "string" ||
+    !Number.isFinite(Date.parse(value[2])) ||
+    new Date(value[2]).toISOString() !== value[2] ||
+    typeof value[3] !== "string" ||
+    !value[3].trim() ||
+    value[3].length > 240 ||
+    Buffer.from(JSON.stringify(value)).toString("base64url") !== payload
+  ) {
+    throw new ArtifactStoreError("artifact_cursor_invalid");
+  }
+  return { observedAt: value[2], id: value[3] };
+}
+
 function textMime(mime: string): boolean {
   const type = mime.split(";")[0].toLowerCase();
   return (
@@ -399,43 +441,89 @@ export class ArtifactStore {
     }
   }
 
-  search(params: { query: string; owner?: string; asOf?: string; limit?: number }): {
+  search(params: {
+    query?: string;
+    owner?: string;
+    asOf?: string;
+    limit?: number;
+    cursor?: string;
+  }): {
     artifacts: ArtifactRecord[];
-    backend: "fts" | "like";
+    backend: "fts" | "like" | "browse";
     limitation?: string;
+    hasMore: boolean;
+    nextCursor: string | null;
   } {
-    const query = bounded(params.query, 1000).trim();
+    if (
+      params.query !== undefined &&
+      (typeof params.query !== "string" || params.query.length > 1000)
+    ) {
+      throw new ArtifactStoreError("artifact_query_invalid");
+    }
+    const query = params.query?.trim() ?? "";
     const limit = Math.min(
       100,
       Math.max(1, Number.isFinite(params.limit) ? Math.trunc(params.limit!) : 20),
     );
     const asOf = params.asOf === undefined ? null : timestamp(params.asOf);
     const owner = params.owner === undefined ? null : bounded(params.owner, 128);
+    // CJK phrases are not segmented by unicode61. Pick a stable substring backend,
+    // rather than switching only after a zero-result FTS page.
+    const substring =
+      /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(query) ||
+      !/[\p{L}\p{N}]/u.test(query);
+    const backend = !query ? "browse" : !substring && this.ftsAvailable ? "fts" : "like";
+    const scope = createHash("sha256")
+      .update(JSON.stringify([this.workspaceDir, query, owner, asOf, backend]))
+      .digest("base64url");
+    const cursor = params.cursor === undefined ? undefined : decodeCursor(params.cursor, scope);
     const filters =
-      "a.workspace_root=? AND (? IS NULL OR a.owner=?) AND (? IS NULL OR (a.observed_at<=? AND (a.cutoff IS NULL OR a.cutoff<=?)))";
-    const values = [this.workspaceDir, owner, owner, asOf, asOf, asOf];
-    if (this.ftsAvailable) {
+      "a.workspace_root=? AND (? IS NULL OR a.owner=?) AND (? IS NULL OR (a.observed_at<=? AND (a.cutoff IS NULL OR a.cutoff<=?)))" +
+      (cursor ? " AND (a.observed_at<? OR (a.observed_at=? AND a.id>?))" : "");
+    const values = [
+      this.workspaceDir,
+      owner,
+      owner,
+      asOf,
+      asOf,
+      asOf,
+      ...(cursor ? [cursor.observedAt, cursor.observedAt, cursor.id] : []),
+    ];
+    const select = "SELECT a.id,a.observed_at,a.record_json FROM owner_artifacts a";
+    const tail = " ORDER BY a.observed_at DESC,a.id ASC LIMIT ?";
+    let rows: { id: string; observed_at: string; record_json: string }[];
+    if (backend === "fts") {
       const phrase = '"' + query.replaceAll('"', '""') + '"';
-      const rows = this.db
+      rows = this.db
         .prepare(
-          `SELECT a.record_json FROM owner_artifacts a JOIN owner_artifacts_fts f ON f.id=a.id WHERE owner_artifacts_fts MATCH ? AND ${filters} ORDER BY a.observed_at DESC,a.id LIMIT ?`,
+          `${select} JOIN owner_artifacts_fts f ON f.id=a.id WHERE owner_artifacts_fts MATCH ? AND ${filters}${tail}`,
         )
-        .all(phrase, ...values, limit) as { record_json: string }[];
-      return {
-        artifacts: rows.map((row) => JSON.parse(row.record_json) as ArtifactRecord),
-        backend: "fts",
-      };
+        .all(phrase, ...values, limit + 1) as typeof rows;
+    } else if (backend === "like") {
+      const escaped = query.replace(/[\\%_]/gu, (value) => `\\${value}`);
+      rows = this.db
+        .prepare(`${select} WHERE ${filters} AND a.search_text LIKE ? ESCAPE '\\'${tail}`)
+        .all(...values, `%${escaped}%`, limit + 1) as typeof rows;
+    } else {
+      rows = this.db
+        .prepare(`${select} WHERE ${filters}${tail}`)
+        .all(...values, limit + 1) as typeof rows;
     }
-    const escaped = query.replace(/[\\%_]/gu, (value) => `\\${value}`);
-    const rows = this.db
-      .prepare(
-        `SELECT a.record_json FROM owner_artifacts a WHERE ${filters} AND a.search_text LIKE ? ESCAPE '\\' ORDER BY a.observed_at DESC,a.id LIMIT ?`,
-      )
-      .all(...values, `%${escaped}%`, limit) as { record_json: string }[];
+    const hasMore = rows.length > limit;
+    const page = rows.slice(0, limit);
+    const last = page.at(-1);
     return {
-      artifacts: rows.map((row) => JSON.parse(row.record_json) as ArtifactRecord),
-      backend: "like",
-      limitation: "artifact_fts_unavailable_bounded_like",
+      artifacts: page.map((row) => JSON.parse(row.record_json) as ArtifactRecord),
+      backend,
+      hasMore,
+      nextCursor: hasMore && last ? encodeCursor(scope, last.observed_at, last.id) : null,
+      ...(backend === "like"
+        ? {
+            limitation: substring
+              ? "artifact_substring_search"
+              : "artifact_fts_unavailable_bounded_like",
+          }
+        : {}),
     };
   }
 

@@ -336,3 +336,111 @@ it("removes nested data URLs only inside declared media blocks", async () => {
   expect(read.text).toContain("regularcashvalue");
   expect(read.text).toContain("https://math-source");
 });
+
+it("retrieves Chinese fragments deterministically and treats LIKE wildcards literally", async () => {
+  const rows = [
+    { id: "cash", text: "现金对账差额已查明" },
+    { id: "literal", text: "现金%_差额literal" },
+    { id: "wildcard", text: "现金AB差额other" },
+    { id: "english", text: "english alpha beta" },
+  ];
+  for (const row of rows) {
+    const relativePath = `state/runs/${row.id}.json`;
+    await write(relativePath, JSON.stringify({ result: row.text }));
+    await store.register({ ...base, id: row.id, relativePath, summary: row.text });
+  }
+  expect(store.search({ query: "现金对账" })).toMatchObject({
+    backend: "like",
+    limitation: "artifact_substring_search",
+    hasMore: false,
+    artifacts: [{ id: "cash" }],
+  });
+  expect(store.search({ query: "现金%_差额" }).artifacts.map((a) => a.id)).toEqual(["literal"]);
+  expect(store.search({ query: "alpha beta" })).toMatchObject({
+    backend: "fts",
+    artifacts: [{ id: "english" }],
+  });
+  expect(store.search({ query: "beta alpha" }).artifacts).toEqual([]);
+  expect(store.search({ query: "%_" }).artifacts.map((a) => a.id)).toEqual(["literal"]);
+});
+
+it("discovers more than 100 tied-time results through bounded stable pages", async () => {
+  for (let n = 0; n < 125; n++) {
+    const id = `batch_${String(n).padStart(3, "0")}`;
+    const relativePath = `state/runs/${id}.json`;
+    await write(relativePath, JSON.stringify({ value: n }));
+    await store.register({ ...base, id, relativePath, summary: "batchmarker" });
+  }
+  const first = store.search({ query: "batchmarker" });
+  expect(first.artifacts).toHaveLength(20);
+  expect(first.hasMore).toBe(true);
+  expect(first.nextCursor).toBeTypeOf("string");
+  const seen = first.artifacts.map((a) => a.id);
+  let cursor = first.nextCursor;
+  while (cursor) {
+    const page = store.search({ query: "batchmarker", cursor, limit: 100 });
+    expect(page.artifacts.length).toBeLessThanOrEqual(100);
+    seen.push(...page.artifacts.map((a) => a.id));
+    cursor = page.nextCursor;
+  }
+  expect(seen).toHaveLength(125);
+  expect(new Set(seen).size).toBe(125);
+  expect(seen.at(-1)).toBe("batch_124");
+  expect(store.search({ query: "batchmarker", limit: 10000 }).artifacts).toHaveLength(100);
+  const browse = store.search({ owner: base.owner });
+  expect(browse.backend).toBe("browse");
+  expect(browse.hasMore).toBe(true);
+  expect(browse.artifacts).toHaveLength(20);
+  expect(store.search({ query: "   ", owner: base.owner }).artifacts).toEqual(browse.artifacts);
+});
+
+it("scopes cursors to query, owner, asOf and workspace and rejects invalid payloads", async () => {
+  for (const id of ["a", "b", "c"]) {
+    const relativePath = `state/runs/${id}.json`;
+    await write(relativePath, "cursorproof");
+    await store.register({ ...base, id, relativePath, summary: "cursorproof 中文证据" });
+  }
+  const args = { query: "cursorproof", owner: base.owner, asOf: "2026-10-04T10:00:00Z", limit: 1 };
+  const page = store.search(args);
+  const cursor = page.nextCursor!;
+  expect(store.search({ ...args, cursor }).artifacts[0].id).toBe("b");
+  for (const changed of [
+    { query: "中文证据" },
+    { owner: "another" },
+    { asOf: "2026-10-05T00:00:00Z" },
+  ]) {
+    expect(() => store.search({ ...args, ...changed, cursor })).toThrowError(
+      "artifact_cursor_invalid",
+    );
+  }
+  for (const bad of ["", "invalid", `${cursor}x`, cursor.replace(/^./u, "!"), "x".repeat(2049)]) {
+    expect(() => store.search({ ...args, cursor: bad })).toThrowError("artifact_cursor_invalid");
+  }
+  const other = path.join(root, "other");
+  await fs.mkdir(other);
+  const reader = ArtifactStore.open({ dbPath, workspaceDir: other, readOnly: true });
+  try {
+    expect(() => reader.search({ ...args, cursor })).toThrowError("artifact_cursor_invalid");
+  } finally {
+    reader.close();
+  }
+  expect(store.search({ query: "cursorproof", asOf: "2026-10-04T09:59:59Z" })).toMatchObject({
+    hasMore: false,
+    nextCursor: null,
+    artifacts: [],
+  });
+  expect(() => store.search({ query: "x".repeat(1001) })).toThrowError("artifact_query_invalid");
+});
+
+it("keeps CJK page continuation on LIKE even when FTS is available", async () => {
+  for (const id of ["a", "b", "c"]) {
+    const relativePath = `state/runs/${id}.json`;
+    await write(relativePath, "中文查询完整结论");
+    await store.register({ ...base, id, relativePath, summary: "中文查询完整结论" });
+  }
+  const first = store.search({ query: "中文查询", limit: 1 });
+  expect(first.backend).toBe("like");
+  const second = store.search({ query: "中文查询", limit: 1, cursor: first.nextCursor! });
+  expect(second.backend).toBe("like");
+  expect(second.artifacts[0].id).toBe("b");
+});

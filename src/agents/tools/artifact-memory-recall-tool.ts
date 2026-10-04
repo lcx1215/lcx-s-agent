@@ -9,7 +9,18 @@ import { jsonResult, readNumberParam, readStringParam } from "./common.js";
 const ArtifactRecallSchema = Type.Object(
   {
     action: Type.Union([Type.Literal("search"), Type.Literal("read")]),
-    query: Type.Optional(Type.String()),
+    query: Type.Optional(
+      Type.String({
+        description:
+          "Search text; omit or use an empty query to browse this workspace's registered results.",
+      }),
+    ),
+    cursor: Type.Optional(
+      Type.String({
+        description:
+          "Copy nextCursor from the previous page; keep query, owner and asOf unchanged.",
+      }),
+    ),
     id: Type.Optional(Type.String()),
     field: Type.Optional(
       Type.String({
@@ -111,10 +122,17 @@ export function createArtifactMemoryRecallTool(options: {
           workspaceDir: options.workspaceDir ?? resolveAgentWorkspaceDir(cfg, agentId),
           readOnly: true,
         });
+        if (action === "search" && args.query !== undefined && typeof args.query !== "string") {
+          throw new ArtifactStoreError("artifact_query_invalid");
+        }
+        if (action === "search" && args.cursor !== undefined && typeof args.cursor !== "string") {
+          throw new ArtifactStoreError("artifact_cursor_invalid");
+        }
         const result =
           action === "search"
             ? store.search({
-                query: readStringParam(args, "query", { required: true }),
+                query: readStringParam(args, "query", { allowEmpty: true }),
+                cursor: readStringParam(args, "cursor", { allowEmpty: true, trim: false }),
                 owner: readStringParam(args, "owner"),
                 asOf: readStringParam(args, "asOf"),
                 limit: readNumberParam(args, "limit"),
@@ -124,13 +142,16 @@ export function createArtifactMemoryRecallTool(options: {
           throw new ArtifactStoreError("artifact_recall_cancelled");
         }
         if ("artifacts" in result) {
+          const { hasMore, nextCursor, ...searchResult } = result;
           return jsonResult({
             available: true,
             authority: "local_read",
             action,
+            hasMore,
+            nextCursor,
             latestArtifactId: result.artifacts[0]?.id ?? null,
             count: result.artifacts.length,
-            ...result,
+            ...searchResult,
           });
         }
         const asOf = readStringParam(args, "asOf");
