@@ -158,6 +158,15 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     includeInOpenClawGroup: true,
   },
   {
+    id: "artifact_memory_recall",
+    label: "artifact_memory_recall",
+    description:
+      "Find retained tool results and conclusions; verify original content, source time and SHA",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
     id: "session_history",
     label: "session_history",
     description: "Read-only recall over archived session transcripts",

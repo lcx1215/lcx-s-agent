@@ -1,7 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { resolveCoreToolProfilePolicy } from "./tool-catalog.js";
+import { filterToolsByPolicy } from "./pi-tools.policy.js";
+import {
+  isKnownCoreToolId,
+  listCoreToolSections,
+  resolveCoreToolProfilePolicy,
+} from "./tool-catalog.js";
+import type { AnyAgentTool } from "./tools/common.js";
 
 describe("core tool profiles", () => {
+  it("keeps original-result recall discoverable and reachable through the memory policies", () => {
+    const name = "artifact_memory_recall";
+    const tool = { name } as AnyAgentTool;
+    expect(isKnownCoreToolId(name)).toBe(true);
+    expect(listCoreToolSections().find((section) => section.id === "memory")?.tools).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: name })]),
+    );
+    for (const policy of [resolveCoreToolProfilePolicy("coding"), { allow: ["group:memory"] }]) {
+      expect(filterToolsByPolicy([tool], policy)).toEqual([tool]);
+    }
+    expect(filterToolsByPolicy([tool], { allow: ["group:memory"], deny: [name] })).toEqual([]);
+    for (const profile of ["minimal", "messaging"]) {
+      expect(filterToolsByPolicy([tool], resolveCoreToolProfilePolicy(profile))).toEqual([]);
+    }
+  });
   it("keeps web + browser tools reachable under a named profile", () => {
     // These used to declare `profiles: []`. An empty profile list is not
     // "available everywhere" — every profile policy is an allowlist, so the
