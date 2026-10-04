@@ -19,7 +19,10 @@ import {
 import { FinanceExpectationGapSchema } from "./finance-expectation-gap.js";
 import { financeIntradayControlLedgerPath } from "./finance-state-dir.js";
 import { FinanceThesisDecisionContextSchema } from "./finance-thesis-decision-context.js";
-import { FinanceTradeReviewToolEvidenceSchema } from "./finance-trade-review-evidence.js";
+import {
+  FinanceTradeReviewModelCallEvidenceSchema,
+  FinanceTradeReviewToolEvidenceSchema,
+} from "./finance-trade-review-evidence.js";
 
 const Hash = z.string().regex(/^[a-f0-9]{64}$/u);
 const Text = z.string().trim().min(1);
@@ -317,6 +320,7 @@ export const FinanceIntradayDecisionReviewReceiptSchema = z
     requestIdSha256: Hash.optional(),
     taskObjectiveSha256: Hash.optional(),
     toolEvidence: FinanceTradeReviewToolEvidenceSchema.array().max(2).optional(),
+    modelCallEvidence: FinanceTradeReviewModelCallEvidenceSchema.array().max(2).optional(),
     decision: IntradayReviewDecisionSchema.optional(),
     failureCode: ReviewFailureCode.optional(),
   })

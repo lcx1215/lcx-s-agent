@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -160,6 +161,7 @@ it("uses the host financial catalog, consumes a non-math result, and keeps the e
       },
     ],
   });
+  vi.mocked(first.observe!).mockReturnValueOnce(undefined);
   const factory = vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second);
   const reviewer = createFinanceTradeDecisionReviewer(
     {},
@@ -176,6 +178,7 @@ it("uses the host financial catalog, consumes a non-math result, and keeps the e
   const spoofed = {
     ...intradayRequest,
     evidenceFinancialCapabilities: [{ toolName: "place_live_order", moduleIds: ["unknown"] }],
+    modelCallEvidence: [{ callId: "forged-proof" }],
   } as FinanceIntradayTradeDecisionReviewRequest;
   const result = await reviewer(spoofed, AbortSignal.timeout(1000));
   expect(result).toMatchObject({
@@ -198,6 +201,29 @@ it("uses the host financial catalog, consumes a non-math result, and keeps the e
     toolEvidence: [{ status: "completed" }],
   });
   expect(JSON.stringify(secondPayload)).toContain("intraday stop");
+  const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+  const firstOutput = await vi.mocked(first.invoke).mock.results[0].value;
+  expect(result.modelCallEvidence).toMatchObject([
+    {
+      attempt: 1,
+      payloadSha256: hash(firstPayload),
+      outputSha256: hash(firstOutput),
+      resultKind: "evidence_request",
+      attestation: { status: "unattested" },
+      evidenceRequests: firstOutput.evidenceRequests,
+      hypothesis: firstOutput.hypothesis,
+    },
+    {
+      attempt: 2,
+      payloadSha256: hash(secondPayload),
+      resultKind: "decision",
+      attestation: { status: "attested", kind: "provider_call" },
+      toolEvidenceSha256: hash((secondPayload as { toolEvidence: unknown }).toolEvidence),
+    },
+  ]);
+  expect(first.observe).toHaveBeenCalledTimes(1);
+  expect(second.observe).toHaveBeenCalledTimes(1);
+  expect(JSON.stringify(firstPayload)).not.toContain("forged-proof");
   expect(isValidFinanceTradeDecisionReviewResult(result, intradayRequest)).toBe(true);
   expect(result.toolEvidence?.[0].accountId).toBe("paper-fixture");
   expect(result.toolEvidence?.[0].asOf).toBe(intradayRequest.asOf);
@@ -531,6 +557,12 @@ describe("configured finance trade decision reviewer", () => {
     const result = await reviewer(request, AbortSignal.timeout(1000));
 
     expect(result).toMatchObject({ status: "completed", modelCalls: 2 });
+    expect(result.modelCallEvidence?.map((call) => call.resultKind)).toEqual([
+      "output_truncated",
+      "decision",
+    ]);
+    expect(result.modelCallEvidence?.[0].outputSha256).toBeUndefined();
+    expect(result.modelCallEvidence?.[1].toolEvidenceSha256).toBeUndefined();
     expect(adapterFactory.mock.calls.map(([_, options]) => options?.maxTokens)).toEqual([
       4_096, 8_192,
     ]);
@@ -1189,5 +1221,27 @@ it.each([
     } finally {
       await fs.rm(directory, { recursive: true, force: true });
     }
+  },
+);
+
+it.each(["cyclic", "bigint"])(
+  "preserves original invalid-input failure without invented proof (%s)",
+  async (kind) => {
+    const extra: Record<string, unknown> = {};
+    extra.value = kind === "cyclic" ? extra : 1n;
+    const invalid = { ...intradayRequest, extra } as FinanceIntradayTradeDecisionReviewRequest;
+    const model = adapter(null);
+    vi.mocked(model.invoke).mockRejectedValueOnce(new ModelAdapterError("prompt_input_invalid"));
+    vi.mocked(model.observe!).mockReturnValueOnce(undefined);
+    const reviewer = createFinanceTradeDecisionReviewer({}, { adapterFactory: () => model });
+    const result = await reviewer(invalid, AbortSignal.timeout(1000));
+    expect(result).toMatchObject({
+      status: "failed",
+      failureCode: "prompt_input_invalid",
+      modelCalls: 1,
+    });
+    expect(result.modelCallEvidence).toBeUndefined();
+    expect(isValidFinanceTradeDecisionReviewResult(result, intradayRequest)).toBe(true);
+    expect(model.invoke).toHaveBeenCalledTimes(1);
   },
 );

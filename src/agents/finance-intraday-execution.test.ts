@@ -1422,6 +1422,23 @@ describe("intraday decision execution bridge", () => {
         stage: "place" as const,
         refusals: ["fixture shared gate"],
       }));
+      const callProof = [
+        {
+          attempt: 1 as const,
+          callId: "fixture-truncated-call",
+          payloadSha256: "a".repeat(64),
+          resultKind: "output_truncated" as const,
+          attestation: { status: "unattested" as const },
+        },
+        {
+          attempt: 2 as const,
+          callId: "fixture-direct-retry",
+          payloadSha256: "a".repeat(64),
+          outputSha256: "b".repeat(64),
+          resultKind: "decision" as const,
+          attestation: { status: "unattested" as const },
+        },
+      ];
       const reviewer: FinanceTradeDecisionReviewer = async (request) => {
         clock += 65_000;
         if (mode === "timeout") {
@@ -1442,7 +1459,16 @@ describe("intraday decision execution bridge", () => {
             failureCode: "provider_payment_required",
           };
         }
-        return approvingReviewer()(request);
+        const approved = await approvingReviewer()(request);
+        return mode === "fresh"
+          ? {
+              ...approved,
+              modelCalls: 2,
+              modelCallEvidence: callProof,
+              providerCallObserved: false,
+              adapterAttested: false,
+            }
+          : approved;
       };
       const result = await executeFinanceIntradayDecision({
         directory,
@@ -1468,6 +1494,14 @@ describe("intraday decision execution bridge", () => {
         runOrder,
       });
       expect(result.status).toBe("refused");
+      if (mode === "fresh" || mode === "prepared_same") {
+        const stored = await readFinanceIntradayOutcome(directory, decision.input.signalId);
+        expect(stored?.tradeDecisionReview?.modelCallEvidence).toEqual(
+          mode === "fresh" ? callProof : undefined,
+        );
+        // A synthetic truncation retry stays unattested and is not a tool loop; old receipts stay compatible.
+        expect(stored?.tradeDecisionReview?.decision?.decision).toBe("approve");
+      }
       expect(quoteProvider).toHaveBeenCalledTimes(mode === "abort" ? 1 : 2);
       expect(runOrder).toHaveBeenCalledTimes(
         mode.endsWith("stale") || mode === "abort" || mode === "prepared_changed" ? 0 : 1,

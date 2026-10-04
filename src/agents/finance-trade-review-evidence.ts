@@ -91,6 +91,41 @@ export const FinanceTradeReviewEvidenceRequestSchema = z.union([
 export type FinanceTradeReviewEvidenceRequest = z.infer<
   typeof FinanceTradeReviewEvidenceRequestSchema
 >;
+export const FinanceTradeReviewModelCallEvidenceSchema = z
+  .object({
+    attempt: z.union([z.literal(1), z.literal(2)]),
+    callId: z.string().min(1).max(240),
+    payloadSha256: z.string().regex(/^[a-f\d]{64}$/u),
+    outputSha256: z
+      .string()
+      .regex(/^[a-f\d]{64}$/u)
+      .optional(),
+    resultKind: z.enum(["evidence_request", "decision", "output_truncated", "invalid", "failed"]),
+    attestation: z.union([
+      z
+        .object({
+          status: z.literal("attested"),
+          kind: z.enum(["provider_call", "model_inference"]),
+          transportRequestIdSha256: z.string().regex(/^[a-f\d]{64}$/u),
+        })
+        .strict(),
+      z.object({ status: z.literal("unattested") }).strict(),
+    ]),
+    toolEvidenceSha256: z
+      .string()
+      .regex(/^[a-f\d]{64}$/u)
+      .optional(),
+    evidenceRequests: FinanceTradeReviewEvidenceRequestSchema.array().min(1).max(2).optional(),
+    hypothesis: z
+      .string()
+      .min(1)
+      .refine((value) => Buffer.byteLength(value, "utf8") <= 240)
+      .optional(),
+  })
+  .strict();
+export type FinanceTradeReviewModelCallEvidence = z.infer<
+  typeof FinanceTradeReviewModelCallEvidenceSchema
+>;
 export const FinanceTradeReviewToolEvidenceSchema = z
   .object({
     action: Text,

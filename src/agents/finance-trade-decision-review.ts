@@ -12,6 +12,8 @@ import {
 import type { FinanceThesisDecisionContext } from "./finance-thesis-decision-context.js";
 import {
   FinanceTradeReviewEvidenceRequestSchema,
+  FinanceTradeReviewModelCallEvidenceSchema,
+  type FinanceTradeReviewModelCallEvidence,
   FinanceTradeReviewToolEvidenceSchema,
   createFinanceTradeReviewEvidenceExecutor,
   describeFinanceTradeReviewFinancialCapabilities,
@@ -174,6 +176,7 @@ export type FinanceTradeDecisionReviewResult = Readonly<{
   requestIdSha256?: string;
   taskObjectiveSha256?: string;
   toolEvidence?: readonly FinanceTradeReviewToolEvidence[];
+  modelCallEvidence?: readonly FinanceTradeReviewModelCallEvidence[];
   decisions?: readonly FinanceTradeDecision[];
   failureCode?: FinanceTradeDecisionReviewFailureCode;
 }>;
@@ -291,6 +294,9 @@ export function isValidFinanceTradeDecisionReviewResult(
         !Number.isSafeInteger(value.modelCalls) ||
         value.modelCalls < 0 ||
         value.modelCalls > 2)) ||
+    (value.modelCallEvidence !== undefined &&
+      !FinanceTradeReviewModelCallEvidenceSchema.array().max(2).safeParse(value.modelCallEvidence)
+        .success) ||
     (value.toolEvidence !== undefined &&
       !FinanceTradeReviewToolEvidenceSchema.array().max(2).safeParse(value.toolEvidence).success) ||
     (value.taskObjectiveSha256 !== undefined &&
@@ -445,6 +451,7 @@ export function createFinanceTradeDecisionReviewer(
       evidenceRequests: _untrustedRequests,
       taskObjective: _untrustedObjective,
       toolEvidence: _untrustedEvidence,
+      modelCallEvidence: _untrustedCallEvidence,
       evidenceToolsAvailable: _untrustedTools,
       evidenceInstrumentScope: _untrustedScope,
       evidenceHypothesis: _untrustedHypothesis,
@@ -457,6 +464,7 @@ export function createFinanceTradeDecisionReviewer(
       evidenceRequests?: unknown;
       taskObjective?: unknown;
       toolEvidence?: unknown;
+      modelCallEvidence?: unknown;
       evidenceToolsAvailable?: unknown;
       evidenceInstrumentScope?: unknown;
       evidenceHypothesis?: unknown;
@@ -470,6 +478,15 @@ export function createFinanceTradeDecisionReviewer(
     let evidenceHypothesis: string | undefined;
     let activeAdapter = adapter;
     let modelCalls = 0;
+    const modelCallEvidence: FinanceTradeReviewModelCallEvidence[] = [];
+    const jsonHash = (value: unknown): string | undefined => {
+      try {
+        const json = JSON.stringify(value);
+        return json === undefined ? undefined : createHash("sha256").update(json).digest("hex");
+      } catch {
+        return undefined;
+      }
+    };
     let providerCallObserved = false;
     let adapterAttested = false;
     let requestIdSha256: string | undefined;
@@ -514,6 +531,7 @@ export function createFinanceTradeDecisionReviewer(
         signal.aborted && signal.reason instanceof Error && signal.reason.name === "TimeoutError";
       return {
         ...objectiveMetadata,
+        ...(modelCallEvidence.length ? { modelCallEvidence } : {}),
         ...(toolEvidence ? { toolEvidence } : {}),
         status: "failed",
         attempted: modelCalls > 0,
@@ -566,18 +584,53 @@ export function createFinanceTradeDecisionReviewer(
           ...(toolEvidence ? { toolEvidence, evidenceHypothesis } : {}),
         },
       };
+      const payloadSha256 = jsonHash(call.payload);
+      const toolEvidenceSha256 = toolEvidence ? jsonHash(toolEvidence) : undefined;
       let output: unknown;
+      let callEvidence: FinanceTradeReviewModelCallEvidence | undefined;
+      const completeCall = (
+        resultKind: FinanceTradeReviewModelCallEvidence["resultKind"],
+        value?: unknown,
+      ) => {
+        const observation = observe(activeAdapter, call);
+        recordObservation(observation);
+        // Invalid non-JSON inputs retain their original failure classification, without fake proof.
+        if (!payloadSha256) {
+          return;
+        }
+        const outputSha256 = jsonHash(value);
+        callEvidence = {
+          attempt: attempt as 1 | 2,
+          callId: call.callId,
+          payloadSha256,
+          ...(outputSha256 ? { outputSha256 } : {}),
+          resultKind,
+          attestation: observation
+            ? {
+                status: "attested",
+                kind: observation.kind,
+                transportRequestIdSha256: createHash("sha256")
+                  .update(observation.transportRequestId)
+                  .digest("hex"),
+              }
+            : { status: "unattested" },
+          ...(toolEvidenceSha256 ? { toolEvidenceSha256 } : {}),
+        };
+        modelCallEvidence.push(callEvidence);
+      };
       modelCalls += 1;
       try {
         output = await activeAdapter.invoke(call, signal);
       } catch (error) {
-        recordObservation(observe(activeAdapter, call));
+        completeCall(
+          modelFailureCode(error) === "output_truncated" ? "output_truncated" : "failed",
+        );
         if (attempt === 1 && modelFailureCode(error) === "output_truncated" && !signal.aborted) {
           continue;
         }
         return failureResult(error);
       }
-      recordObservation(observe(activeAdapter, call));
+      completeCall("invalid", output);
       if (isRecord(output) && "evidenceRequests" in output) {
         if (
           !allowEvidence ||
@@ -602,6 +655,11 @@ export function createFinanceTradeDecisionReviewer(
         if (!parsed.success) {
           return failureResult(new ModelAdapterError("output_invalid"));
         }
+        if (callEvidence) {
+          callEvidence.resultKind = "evidence_request";
+          callEvidence.evidenceRequests = parsed.data;
+          callEvidence.hypothesis = output.hypothesis;
+        }
         try {
           toolEvidence = await evidenceExecutor(parsed.data, reviewRequest, signal);
           evidenceHypothesis = output.hypothesis;
@@ -625,10 +683,15 @@ export function createFinanceTradeDecisionReviewer(
           modelCalls,
           ...(requestIdSha256 ? { requestIdSha256 } : {}),
           failureCode: "output_contract",
+          ...(modelCallEvidence.length ? { modelCallEvidence } : {}),
         };
+      }
+      if (callEvidence) {
+        callEvidence.resultKind = "decision";
       }
       return {
         ...objectiveMetadata,
+        ...(modelCallEvidence.length ? { modelCallEvidence } : {}),
         ...(toolEvidence ? { toolEvidence } : {}),
         status: "completed",
         attempted: true,
