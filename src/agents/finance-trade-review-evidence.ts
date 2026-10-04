@@ -69,8 +69,11 @@ const moduleIds = moduleCatalog.map(({ id }) => id) as [
 ];
 const financialBoundary =
   "recorded_financial_knowledge_research_only_not_market_or_account_facts" as const;
+const brokerFeedbackBoundary =
+  "recorded_broker_fill_feedback_not_strategy_edge_or_expected_return" as const;
 export const FinanceTradeReviewEvidenceRequestSchema = z.union([
   MathEvidenceRequestSchema,
+  z.object({ candidateId: Text, action: z.literal("broker_fill_feedback") }).strict(),
   z
     .object({
       candidateId: Text,
@@ -102,6 +105,7 @@ export const FinanceTradeReviewToolEvidenceSchema = z
     boundary: z.enum([
       "recorded_daily_history_research_only_no_execution_or_fresh_quote",
       financialBoundary,
+      brokerFeedbackBoundary,
     ]),
   })
   .strict()
@@ -385,7 +389,7 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
       if (
         !candidate ||
         !scope.instruments.includes(candidate.instrument) ||
-        (request.action !== "financial_capability" &&
+        (request.action === "pair_spread_diagnostics" &&
           request.instrumentB &&
           (request.instrumentB === candidate.instrument ||
             !scope.instruments.includes(request.instrumentB)))
@@ -510,6 +514,101 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
                   "stored_knowledge_not_current_market_account_or_point_in_time_facts",
                 sourceTime: priority.sourceTime ?? "source_time_unverified",
                 reason: "financial_capability_result_omitted_by_budget",
+              },
+              omittedKeys: ["result"],
+            });
+          }
+          results.push(FinanceTradeReviewToolEvidenceSchema.parse(evidence));
+          continue;
+        }
+        if (request.action === "broker_fill_feedback") {
+          let output: unknown;
+          let resultSha256: string | undefined;
+          let status: FinanceTradeReviewToolEvidence["status"] = "unavailable";
+          let priority: Record<string, unknown> = {
+            interpretation: "recorded_instrument_fifo_not_strategy_edge_or_expected_return",
+          };
+          let provenance: Record<string, unknown> = {};
+          try {
+            // The composite feedback owner imports control-ledger schemas; load only at use.
+            const { readFinanceBrokerInstrumentFeedback } =
+              await import("./finance-broker-profit-feedback.js");
+            signal.throwIfAborted();
+            const feedback = await readFinanceBrokerInstrumentFeedback({
+              directory: scope.directory,
+              accountId: scope.accountId,
+              instrument: candidate.instrument,
+              asOf: packet.asOf,
+            });
+            signal.throwIfAborted();
+            requireFiniteResult(feedback);
+            output = feedback;
+            resultSha256 = digest(feedback);
+            if (
+              feedback.scope.accountId !== scope.accountId ||
+              feedback.scope.venue !== packet.venue ||
+              feedback.scope.instrument !== candidate.instrument ||
+              feedback.asOf !== packet.asOf
+            ) {
+              throw new Error("broker feedback outside host scope");
+            }
+            provenance = {
+              historyHeadRef: feedback.historyHeadRef,
+              ...(feedback.status === "present"
+                ? {
+                    snapshotRef: feedback.snapshotRef,
+                    observedAt: feedback.observedAt,
+                    sealedSequence: feedback.sealedSequence,
+                  }
+                : {}),
+            };
+            priority = {
+              ...priority,
+              ...(feedback.status === "present" ? { economics: feedback.economics } : {}),
+              ...provenance,
+              freshness: feedback.freshness,
+              ...(feedback.status === "present"
+                ? { observationBoundary: feedback.observationBoundary }
+                : { reason: feedback.reason }),
+            };
+            status = feedback.status === "present" ? "completed" : "unavailable";
+          } catch (error) {
+            signal.throwIfAborted();
+            const reason =
+              error instanceof Error && error.message === "nonfinite mathematical result"
+                ? "nonfinite_broker_feedback"
+                : "broker_fill_feedback_unavailable";
+            output = { reason };
+            priority = { ...priority, reason };
+          }
+          const evidence = {
+            action: request.action,
+            candidateId: request.candidateId,
+            accountId: scope.accountId,
+            asOf: packet.asOf,
+            status,
+            sourceRef: digest({
+              accountId: scope.accountId,
+              instrument: candidate.instrument,
+              asOf: packet.asOf,
+              provenance,
+            }),
+            requestSha256: digest(request),
+            resultSha256: resultSha256 ?? digest(output),
+            summary: "",
+            boundary: brokerFeedbackBoundary,
+          };
+          try {
+            evidence.summary = summarizeEvidence(output, priority);
+            if (Buffer.byteLength(JSON.stringify(evidence), "utf8") > 2048) {
+              throw new Error("broker feedback projection exceeds budget");
+            }
+          } catch {
+            evidence.status = "unavailable";
+            evidence.summary = JSON.stringify({
+              result: {
+                interpretation: priority.interpretation,
+                reason: "broker_fill_feedback_result_omitted_by_budget",
               },
               omittedKeys: ["result"],
             });

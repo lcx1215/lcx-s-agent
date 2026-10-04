@@ -10,12 +10,15 @@ import {
   renderFinanceLearningCapabilityCandidateArtifact,
 } from "../hooks/bundled/lobster-brain-registry.js";
 import { appendFinanceBars } from "./finance-bar-ledger.js";
+import { readFinanceBrokerInstrumentFeedback } from "./finance-broker-profit-feedback.js";
 import {
   FinanceIntradayDecisionReviewReceiptSchema,
   appendFinanceIntradayDecision,
   appendFinanceIntradayOutcome,
   readFinanceIntradayOutcome,
 } from "./finance-intraday-control-ledger.js";
+import { appendFinanceBrokerHistory } from "./finance-position-ledger.js";
+import { financePositionLedgerPath } from "./finance-state-dir.js";
 import {
   createFinanceTradeDecisionReviewer,
   FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA,
@@ -1159,3 +1162,335 @@ it.each(["unknown", "failed", "absent"])(
     expect(JSON.parse(result.summary).result.status).toBe(status);
   },
 );
+
+const brokerRequest = { candidateId: "signal", action: "broker_fill_feedback" as const };
+async function brokerFixture(
+  options: {
+    scope?: Awaited<ReturnType<typeof fixture>>;
+    unknownFee?: boolean;
+    observedAt?: string;
+    accountId?: string;
+  } = {},
+) {
+  const directory =
+    options.scope?.directory ?? (await fs.mkdtemp(path.join(os.tmpdir(), "review-broker-")));
+  if (!options.scope) {
+    dirs.push(directory);
+  }
+  const scope = options.scope ?? {
+    directory,
+    accountId: options.accountId ?? "paper-a",
+    instruments: ["AAA"],
+  };
+  const append = (query: string, payload: Record<string, unknown>[], accountId = scope.accountId) =>
+    appendFinanceBrokerHistory(directory, {
+      kind: "broker_history",
+      accountId,
+      venue: "alpaca:paper",
+      query,
+      cursor: "",
+      payload,
+    });
+  await append("activities:offline-fixture", [
+    ...(["buy", "sell"] as const).map((side, i) => ({
+      id: side,
+      activity_type: "FILL",
+      type: "fill",
+      symbol: "AAA",
+      side,
+      qty: side === "buy" ? "2" : "1",
+      price: side === "buy" ? "100" : "110",
+      order_id: side,
+      transaction_time: `2026-09-30T13:0${i}:00.000Z`,
+    })),
+    ...(["buy", "sell"] as const).map((order, i) => ({
+      id: `${order}-fee`,
+      activity_type: "FEE",
+      status: "executed",
+      currency: "USD",
+      net_amount: order === "buy" ? "-2" : "-0.5",
+      order_id: order,
+      transaction_time: `2026-09-30T13:0${i}:00.000Z`,
+    })),
+    ...(options.unknownFee
+      ? [
+          {
+            id: "unallocated-fee",
+            activity_type: "CFEE",
+            status: "executed",
+            currency: "USD",
+            net_amount: "-0.1",
+            transaction_time: "2026-09-30T13:02:00.000Z",
+          },
+        ]
+      : []),
+  ]);
+  await append(
+    "activities:other-account",
+    [
+      {
+        id: "foreign-buy",
+        activity_type: "FILL",
+        type: "fill",
+        symbol: "AAA",
+        side: "buy",
+        qty: "100",
+        price: "900",
+        transaction_time: "2026-09-30T13:00:00.000Z",
+      },
+    ],
+    "paper-other",
+  );
+  await append("reconciliation:offline-sealed", [
+    {
+      observedAt: options.observedAt ?? asOf,
+      status: "reconciled",
+      feesInterpreted: true,
+      issues: [],
+      differences: [],
+      cashDifference: 0,
+    },
+  ]);
+  return scope;
+}
+
+it("consumes real sealed FIFO and math together on call2 and persists additive broker evidence", async () => {
+  const scope = await brokerFixture({ scope: await fixture() });
+  const databaseBefore = await fs.readFile(financePositionLedgerPath(scope.directory));
+  const raw = await readFinanceBrokerInstrumentFeedback({ ...scope, instrument: "AAA", asOf });
+  const payloads: unknown[] = [];
+  const fixtureModel = scripted(
+    [
+      {
+        schemaVersion: packet.schemaVersion,
+        evidenceRequests: [brokerRequest, requests[0]],
+        hypothesis: "Inspect recorded costs and historical risk",
+      },
+      decision,
+    ],
+    payloads,
+  );
+  const result = await createFinanceTradeDecisionReviewer(
+    {},
+    {
+      adapterFactory: fixtureModel.factory,
+      evidenceScope: scope,
+    },
+  )(packet, new AbortController().signal);
+  expect(result).toMatchObject({
+    status: "completed",
+    modelCalls: 2,
+    toolEvidence: [
+      {
+        action: "broker_fill_feedback",
+        status: "completed",
+        accountId: scope.accountId,
+        asOf,
+        boundary: "recorded_broker_fill_feedback_not_strategy_edge_or_expected_return",
+      },
+      { action: "max_drawdown", status: "completed" },
+    ],
+  });
+  const evidence = result.toolEvidence![0];
+  const summary = JSON.parse(evidence.summary);
+  expect(summary.result.economics).toMatchObject({
+    basis: "broker_fill_fifo_usd_not_strategy_attribution",
+    buyFills: 1,
+    sellFills: 1,
+    matchedLotCount: 1,
+    openLotCount: 1,
+    grossMatchedPnl: 10,
+    netMatchedPnl: 8.5,
+    allocatedClosedCashFees: 1.5,
+    unallocatedFeeActivityCount: 0,
+    feeActivityCount: 2,
+  });
+  expect(summary.result).toMatchObject({
+    freshness: "fresh",
+    observedAt: asOf,
+    sealedSequence: 3,
+    observationBoundary: "snapshot_observedAt_and_sequence_only_no_per_record_capture_time",
+  });
+  expect(summary.result.snapshotRef).toMatch(/^[a-f\d]{64}$/u);
+  expect(evidence.resultSha256).toBe(
+    createHash("sha256").update(JSON.stringify(raw)).digest("hex"),
+  );
+  expect(evidence.requestSha256).toBe(
+    createHash("sha256").update(JSON.stringify(brokerRequest)).digest("hex"),
+  );
+  expect(JSON.stringify(payloads[1])).toContain('\\"netMatchedPnl\\":8.5');
+  expect(
+    result.toolEvidence!.every((item) => Buffer.byteLength(JSON.stringify(item)) <= 2048),
+  ).toBe(true);
+  expect(await fs.readFile(financePositionLedgerPath(scope.directory))).toEqual(databaseBefore);
+  await appendFinanceIntradayDecision(scope.directory, {
+    signalId: "signal",
+    instrument: "AAA",
+    sessionDate: "2026-09-30",
+    action: "buy",
+    reason: "opening_range_breakout",
+    referencePrice: 100,
+    referencePriceAt: asOf,
+    datasetHeadRef: "a".repeat(64),
+    strategyRule: "opening_range_breakout_long_next_bar_v1",
+  });
+  const { decisions: _decisions, ...metadata } = result;
+  await appendFinanceIntradayOutcome(scope.directory, {
+    signalId: "signal",
+    status: "refused",
+    reasons: ["offline-scripted veto"],
+    tradeDecisionReview: FinanceIntradayDecisionReviewReceiptSchema.parse({
+      ...metadata,
+      request: packet,
+      decision: result.decisions![0],
+    }),
+  });
+  expect(
+    (await readFinanceIntradayOutcome(scope.directory, "signal"))?.tradeDecisionReview
+      ?.toolEvidence,
+  ).toEqual(result.toolEvidence);
+});
+
+it("keeps unknown fees and absent closed samples explicit without reading a bar ledger or granting authority", async () => {
+  const scope = await brokerFixture({ unknownFee: true });
+  const execute = createFinanceTradeReviewEvidenceExecutor({
+    ...scope,
+    instruments: ["AAA", "BBB"],
+  });
+  const [evidence] = await execute([brokerRequest], packet, new AbortController().signal);
+  expect(evidence.status).toBe("completed");
+  expect(JSON.parse(evidence.summary).result.economics).toMatchObject({
+    grossMatchedPnl: 10,
+    netMatchedPnl: null,
+    unallocatedFeeActivityCount: 1,
+    issues: ["fees_not_allocated_to_closed_lots"],
+    status: "net_profit_unverified",
+  });
+  const otherPacket: FinanceIntradayTradeDecisionReviewRequest = {
+    ...packet,
+    candidates: [{ ...packet.candidates[0], instrument: "BBB" }],
+  };
+  const [other] = await execute([brokerRequest], otherPacket, new AbortController().signal);
+  expect(JSON.parse(other.summary).result.economics).toMatchObject({
+    instrument: "BBB",
+    matchedLotCount: 0,
+    netMatchedPnl: null,
+    status: "no_closed_matches",
+  });
+  expect(other.sourceRef).not.toBe(evidence.sourceRef);
+  expect(evidence).not.toHaveProperty("executionAuthority");
+});
+
+it.each([
+  ["stale", "2026-09-30T13:54:59.999Z", "snapshot_stale"],
+  ["future", "2026-09-30T14:00:00.001Z", "missing_snapshot_at_cutoff"],
+])(
+  "passes %s native snapshot limitations to call2 without fabricating net economics",
+  async (_kind, observedAt, reason) => {
+    const scope = await brokerFixture({ observedAt });
+    const payloads: unknown[] = [];
+    const fixtureModel = scripted(
+      [
+        {
+          schemaVersion: packet.schemaVersion,
+          evidenceRequests: [brokerRequest],
+          hypothesis: "Use only recorded accounting within cutoff",
+        },
+        decision,
+      ],
+      payloads,
+    );
+    const result = await createFinanceTradeDecisionReviewer(
+      {},
+      { adapterFactory: fixtureModel.factory, evidenceScope: scope },
+    )(packet, new AbortController().signal);
+    expect(result).toMatchObject({
+      status: "completed",
+      modelCalls: 2,
+      toolEvidence: [{ status: "unavailable" }],
+    });
+    expect(JSON.parse(result.toolEvidence![0].summary).result.reason).toBe(reason);
+    expect(JSON.stringify(payloads[1])).toContain(reason);
+    expect(JSON.parse(result.toolEvidence![0].summary).result).not.toHaveProperty("economics");
+  },
+);
+
+it.each([
+  "directory",
+  "accountId",
+  "asOf",
+  "instrument",
+  "toolName",
+  "moduleId",
+  "lookbackWindow",
+  "question",
+])("rejects broker %s overrides rather than accepting financial or math fields", (key) => {
+  expect(
+    FinanceTradeReviewEvidenceRequestSchema.safeParse({ ...brokerRequest, [key]: "injected" })
+      .success,
+  ).toBe(false);
+});
+
+it("keeps full broker raw hash and explicit unknown when a UTF8 account scope exhausts the envelope budget", async () => {
+  const scope = await brokerFixture({ accountId: "户".repeat(240) });
+  const raw = await readFinanceBrokerInstrumentFeedback({ ...scope, instrument: "AAA", asOf });
+  expect(raw.status).toBe("present");
+  const [evidence] = await createFinanceTradeReviewEvidenceExecutor(scope)(
+    [brokerRequest],
+    packet,
+    new AbortController().signal,
+  );
+  expect(evidence.status).toBe("unavailable");
+  expect(JSON.parse(evidence.summary)).toMatchObject({
+    result: { reason: "broker_fill_feedback_result_omitted_by_budget" },
+    omittedKeys: ["result"],
+  });
+  expect(evidence.resultSha256).toBe(
+    createHash("sha256").update(JSON.stringify(raw)).digest("hex"),
+  );
+  expect(evidence.accountId).toBe(scope.accountId);
+  expect(Buffer.byteLength(JSON.stringify(evidence))).toBeLessThanOrEqual(2048);
+});
+
+it("validates the whole mixed batch before a reader starts, retains the shared request bound and propagates abort", async () => {
+  const scope = await brokerFixture();
+  const execute = vi.fn(async () => ({ value: "not reached" }));
+  const executor = createFinanceTradeReviewEvidenceExecutor({
+    ...scope,
+    financialCapabilities: [
+      {
+        toolName: "host_read",
+        moduleIds: ["credit_liquidity"],
+        description: "Offline registered read",
+        execute,
+      },
+    ],
+  });
+  await expect(
+    executor(
+      [
+        { ...financialRequest, toolName: "host_read", moduleId: "credit_liquidity" },
+        { ...brokerRequest, candidateId: "outside" },
+      ],
+      packet,
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow("outside host candidate/instrument scope");
+  expect(execute).not.toHaveBeenCalled();
+  await expect(
+    executor([brokerRequest, brokerRequest], packet, new AbortController().signal),
+  ).rejects.toThrow("duplicate");
+  await expect(
+    executor([brokerRequest, requests[0], requests[1]], packet, new AbortController().signal),
+  ).rejects.toThrow("count");
+  const controller = new AbortController();
+  const pending = executor([brokerRequest], packet, controller.signal);
+  controller.abort();
+  await expect(pending).rejects.toThrow();
+  const [wrongAccount] = await createFinanceTradeReviewEvidenceExecutor({
+    ...scope,
+    accountId: "unknown-paper",
+  })([brokerRequest], packet, new AbortController().signal);
+  expect(wrongAccount.status).toBe("unavailable");
+  expect(JSON.parse(wrongAccount.summary).result.reason).toBe("missing_snapshot_at_cutoff");
+});

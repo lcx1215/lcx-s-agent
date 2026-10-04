@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
+import type { createConfiguredFinanceModelAdapter } from "./configured-finance-model-adapter.js";
 import { buildFinanceOpportunityContext } from "./finance-expectation-gap.js";
 import {
   FinanceIntradayDecisionReviewReceiptSchema,
@@ -10,6 +11,7 @@ import {
   appendFinanceIntradayOutcome,
   readFinanceIntradayOutcome,
 } from "./finance-intraday-control-ledger.js";
+import { appendFinanceBrokerHistory } from "./finance-position-ledger.js";
 import {
   FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA,
   FINANCE_TRADE_DECISION_REVIEW_SCHEMA,
@@ -961,3 +963,189 @@ it("does not trust a stored packet objective when the host supplies none", async
     ),
   ).toBe(false);
 });
+
+it.each([
+  { buyFee: "-2", net: 8.5, decision: "approve" },
+  { buyFee: "-20", net: -0.5, decision: "veto" },
+])(
+  "consumes recorded net accounting, preserves the candidate and persists the result: %j",
+  async ({ buyFee, net, decision }) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "review-fill-feedback-"));
+    try {
+      await appendFinanceBrokerHistory(directory, {
+        kind: "broker_history",
+        accountId: "paper-fixture",
+        venue: "alpaca:paper",
+        query: "activities:fixture",
+        cursor: "",
+        payload: [
+          {
+            id: "buy",
+            order_id: "buy-order",
+            activity_type: "FILL",
+            type: "fill",
+            symbol: "SPY",
+            side: "buy",
+            qty: "2",
+            price: "100",
+            transaction_time: "2026-09-23T19:00:00Z",
+          },
+          {
+            id: "sell",
+            order_id: "sell-order",
+            activity_type: "FILL",
+            type: "fill",
+            symbol: "SPY",
+            side: "sell",
+            qty: "1",
+            price: "110",
+            transaction_time: "2026-09-23T19:10:00Z",
+          },
+          {
+            id: "buy-fee",
+            order_id: "buy-order",
+            activity_type: "FEE",
+            status: "executed",
+            currency: "USD",
+            net_amount: buyFee,
+            transaction_time: "2026-09-23T19:00:01Z",
+          },
+          {
+            id: "sell-fee",
+            order_id: "sell-order",
+            activity_type: "FEE",
+            status: "executed",
+            currency: "USD",
+            net_amount: "-0.5",
+            transaction_time: "2026-09-23T19:10:01Z",
+          },
+        ],
+      });
+      await appendFinanceBrokerHistory(directory, {
+        kind: "broker_history",
+        accountId: "paper-fixture",
+        venue: "alpaca:paper",
+        query: "reconciliation:2026-09-23T19:29:59.000Z",
+        cursor: "",
+        payload: [
+          {
+            observedAt: "2026-09-23T19:29:59.000Z",
+            status: "reconciled",
+            feesInterpreted: true,
+            cashDifference: 0,
+            issues: [],
+            differences: [],
+            positions: [],
+          },
+        ],
+      });
+      const first = adapter({
+        schemaVersion: intradayRequest.schemaVersion,
+        evidenceRequests: [
+          {
+            candidateId: intradayRequest.candidates[0].candidateId,
+            action: "broker_fill_feedback",
+          },
+        ],
+        hypothesis: "Does the recorded gross profit remain positive after allocated fees?",
+      });
+      // A deterministic consumer verifies transport and causality, not a real model's tool choice.
+      const second: LogicalAgentModelAdapter = {
+        ...adapter(null),
+        invoke: vi.fn(async (call) => {
+          const payload = call.payload as {
+            candidates: unknown;
+            toolEvidence: readonly { status: string; summary: string; boundary: string }[];
+          };
+          expect(payload.candidates).toEqual(intradayRequest.candidates);
+          expect(payload.toolEvidence).toHaveLength(1);
+          expect(payload.toolEvidence[0].status).toBe("completed");
+          expect(payload.toolEvidence[0].boundary).toBe(
+            "recorded_broker_fill_feedback_not_strategy_edge_or_expected_return",
+          );
+          const facts = (
+            JSON.parse(payload.toolEvidence[0].summary) as {
+              result: { economics: Record<string, unknown> };
+            }
+          ).result.economics;
+          expect(facts.grossMatchedPnl).toBe(10);
+          expect(facts.netMatchedPnl).toBe(net);
+          expect(facts.openLotCount).toBe(1);
+          const consumedNet = facts.netMatchedPnl as number;
+          return {
+            schemaVersion: intradayRequest.schemaVersion,
+            decisions: [
+              {
+                candidateId: intradayRequest.candidates[0].candidateId,
+                decision: consumedNet > 0 ? "approve" : "veto",
+                rationale: `Recorded FIFO gross=10; allocated costs yield net=${consumedNet}. This does not establish this strategy's edge.`,
+              },
+            ],
+          };
+        }),
+      };
+      let prompt = "";
+      const models = [first, second];
+      const factory = vi.fn<typeof createConfiguredFinanceModelAdapter>((_cfg, options) => {
+        const model = models.shift()!;
+        return {
+          ...model,
+          invoke: async (call, signal) => {
+            prompt = options!.buildPrompt!(call.payload);
+            return model.invoke(call, signal);
+          },
+        };
+      });
+      const reviewer = createFinanceTradeDecisionReviewer(
+        {},
+        {
+          adapterFactory: factory,
+          evidenceScope: { directory, accountId: "paper-fixture", instruments: ["SPY"] },
+        },
+      );
+      const result = await reviewer(intradayRequest, AbortSignal.timeout(5000));
+      expect(result).toMatchObject({
+        status: "completed",
+        modelCalls: 2,
+        decisions: [{ decision }],
+      });
+      expect(isValidFinanceTradeDecisionReviewResult(result, intradayRequest)).toBe(true);
+      expect(prompt).toContain("Cash reconciliation does not prove fee allocation");
+      expect(second.invoke).toHaveBeenCalledTimes(1);
+      await appendFinanceIntradayDecision(directory, {
+        signalId: intradayRequest.signalAnchor,
+        instrument: "SPY",
+        sessionDate: "2026-09-23",
+        action: "buy",
+        reason: "opening_range_breakout",
+        referencePrice: 500,
+        referencePriceAt: "2026-09-23T19:29:55.000Z",
+        datasetHeadRef: "c".repeat(64),
+        strategyRule: "opening_range_breakout_long_next_bar_v1",
+      });
+      const receipt = FinanceIntradayDecisionReviewReceiptSchema.parse({
+        request: intradayRequest,
+        status: result.status,
+        attempted: result.attempted,
+        modelCalls: result.modelCalls,
+        provider: result.provider,
+        modelId: result.modelId,
+        latencyMs: result.latencyMs,
+        providerCallObserved: result.providerCallObserved,
+        adapterAttested: result.adapterAttested,
+        toolEvidence: result.toolEvidence,
+        decision: result.decisions?.[0],
+      });
+      await appendFinanceIntradayOutcome(directory, {
+        signalId: intradayRequest.signalAnchor,
+        status: "refused",
+        reasons: ["Synthetic acceptance only"],
+        tradeDecisionReview: receipt,
+      });
+      const stored = await readFinanceIntradayOutcome(directory, intradayRequest.signalAnchor);
+      expect(stored?.tradeDecisionReview).toEqual(receipt);
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  },
+);

@@ -1,5 +1,6 @@
 import { isAlpacaTradeExecutionType } from "./finance-alpaca-activity-contract.js";
 import { brokerSymbol } from "./finance-broker-reconciliation.js";
+import { caseflowFingerprint } from "./finance-caseflow.js";
 import type { FinanceExecutionReceipt } from "./finance-execution-adapter.js";
 import { readFinanceIntradayDecisions } from "./finance-intraday-control-ledger.js";
 import {
@@ -326,5 +327,155 @@ export async function readFinanceBrokerProfitFeedback(directory: string, asOf: s
       reason: error instanceof Error ? error.message : String(error),
       executionAuthority: "none",
     };
+  }
+}
+
+/** Sealed, account-bound FIFO research evidence; never strategy performance or authority. */
+export async function readFinanceBrokerInstrumentFeedback(options: {
+  directory: string;
+  accountId: string;
+  instrument: string;
+  asOf: string;
+}) {
+  const scope = {
+    accountId: options.accountId,
+    venue: "alpaca:paper" as const,
+    instrument: options.instrument,
+  };
+  const base = {
+    scope,
+    asOf: options.asOf,
+    boundary: "broker_fifo_instrument_not_strategy_pnl_or_account_return" as const,
+    executionAuthority: "none" as const,
+  };
+  let historyHeadRef: string | null = null;
+  const unavailable = (reason: string) => ({
+    ...base,
+    status: "unavailable" as const,
+    freshness: "unknown" as const,
+    historyHeadRef,
+    reason,
+  });
+  const time = (value: unknown): number => {
+    if (typeof value !== "string") {
+      return NaN;
+    }
+    const date = value.slice(0, 10);
+    const day = /^\d{4}-\d{2}-\d{2}$/u.test(date) ? Date.parse(`${date}T00:00:00Z`) : NaN;
+    if (!Number.isFinite(day) || new Date(day).toISOString().slice(0, 10) !== date) {
+      return NaN;
+    }
+    return value === date
+      ? day
+      : /^\d{4}-\d{2}-\d{2}T.+(?:Z|[+-]\d{2}:\d{2})$/u.test(value)
+        ? Date.parse(value)
+        : NaN;
+  };
+  try {
+    const cutoff = time(options.asOf);
+    if (
+      !options.accountId.trim() ||
+      !/^[A-Z0-9][A-Z0-9./-]{0,31}$/u.test(options.instrument) ||
+      !Number.isFinite(cutoff) ||
+      options.asOf.length <= 10
+    ) {
+      return unavailable("invalid_scope_or_cutoff");
+    }
+    const history = await readFinanceBrokerHistoryRecords(
+      options.directory,
+      options.accountId,
+      scope.venue,
+    );
+    historyHeadRef = history.headRef;
+    const snapshots = history.records.filter((record) =>
+      record.body.query.startsWith("reconciliation:"),
+    );
+    let selected: (typeof snapshots)[number] | undefined;
+    for (const record of snapshots) {
+      const at = time(record.body.payload[0]?.observedAt);
+      if (!Number.isFinite(at)) {
+        return unavailable("snapshot_time_unverified");
+      }
+      if (at <= cutoff) {
+        selected = record;
+      }
+    }
+    if (!selected) {
+      return unavailable("missing_snapshot_at_cutoff");
+    }
+    const snapshot = selected.body.payload[0];
+    const observedAt = snapshot.observedAt as string;
+    if (cutoff - time(observedAt) > 300_000) {
+      return unavailable("snapshot_stale");
+    }
+    if (
+      snapshot.status !== "reconciled" ||
+      snapshot.feesInterpreted !== true ||
+      !Array.isArray(snapshot.issues) ||
+      snapshot.issues.length ||
+      !Array.isArray(snapshot.differences) ||
+      snapshot.differences.length ||
+      typeof snapshot.cashDifference !== "number" ||
+      !Number.isFinite(snapshot.cashDifference) ||
+      Math.abs(snapshot.cashDifference) > 0.01
+    ) {
+      return unavailable("snapshot_reconciliation_unverified");
+    }
+    const identities = new Map<string, string>();
+    const activities: Record<string, unknown>[] = [];
+    for (const record of history.records) {
+      if (record.sequence > selected.sequence || !record.body.query.startsWith("activities:")) {
+        continue;
+      }
+      for (const row of record.body.payload) {
+        if (typeof row.id !== "string" || !row.id) {
+          return unavailable("activity_identity_unverified");
+        }
+        const fingerprint = caseflowFingerprint(row);
+        const previous = identities.get(row.id);
+        if (previous !== undefined) {
+          if (previous !== fingerprint) {
+            return unavailable("conflicting_activity_identity");
+          }
+          continue;
+        }
+        identities.set(row.id, fingerprint);
+        const occurred = row.transaction_time ?? row.created_at ?? row.date;
+        if (
+          row.activity_type === "FILL" ||
+          row.activity_type === "CFEE" ||
+          row.activity_type === "FEE" ||
+          occurred !== undefined
+        ) {
+          const at = time(occurred);
+          if (!Number.isFinite(at) || at > time(observedAt) || at > cutoff) {
+            return unavailable("activity_time_unverified_or_future");
+          }
+        }
+        activities.push(row);
+      }
+    }
+    const economics = summarizeFinanceBrokerFillsByInstrument(activities, true).find(
+      (row) => row.instrument === options.instrument,
+    ) ?? { instrument: options.instrument, ...summarizeFinanceBrokerFills([], true) };
+    if (
+      Object.values(economics).some((value) => typeof value === "number" && !Number.isFinite(value))
+    ) {
+      return unavailable("nonfinite_economics");
+    }
+    return {
+      ...base,
+      status: "present" as const,
+      freshness: "fresh" as const,
+      observedAt,
+      snapshotRef: selected.ref,
+      historyHeadRef,
+      sealedSequence: selected.sequence,
+      observationBoundary:
+        "snapshot_observedAt_and_sequence_only_no_per_record_capture_time" as const,
+      economics,
+    };
+  } catch {
+    return unavailable("broker_history_or_economics_unavailable");
   }
 }

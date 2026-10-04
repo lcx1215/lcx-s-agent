@@ -1,10 +1,15 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, it, expect } from "vitest";
 import {
+  readFinanceBrokerInstrumentFeedback,
   summarizeFinanceBrokerFills,
   summarizeFinanceBrokerFillsByInstrument,
   attributeFinanceBrokerFills,
 } from "./finance-broker-profit-feedback.js";
 import type { FinanceExecutionReceipt } from "./finance-execution-adapter.js";
+import { appendFinanceBrokerHistory } from "./finance-position-ledger.js";
 const fill = (id: string, side: string, qty: string, price: string) => ({
   id,
   activity_type: "FILL",
@@ -240,4 +245,132 @@ it("records daily-cycle decision lineage only for one exact account/order/instru
     dailyCycleCandidateFillCount: 0,
     unknownOrAmbiguousSourceFillCount: 1,
   });
+});
+
+describe("sealed readonly instrument economics", () => {
+  async function fixture(
+    run: (
+      directory: string,
+      append: (
+        query: string,
+        payload: Record<string, unknown>[],
+        accountId?: string,
+      ) => Promise<unknown>,
+    ) => Promise<void>,
+  ) {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "broker-economics-"));
+    const append = (query: string, payload: Record<string, unknown>[], accountId = "paper-a") =>
+      appendFinanceBrokerHistory(directory, {
+        kind: "broker_history",
+        accountId,
+        venue: "alpaca:paper",
+        query,
+        cursor: "",
+        payload,
+      });
+    try {
+      await run(directory, append);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+  const snapshot = {
+    observedAt: "2026-10-04T10:03:00Z",
+    status: "reconciled",
+    feesInterpreted: true,
+    issues: [],
+    differences: [],
+    cashDifference: 0,
+  };
+  const rows = [
+    { ...fill("1", "buy", "1", "100"), order_id: "buy" },
+    { ...fill("2", "sell", "1", "110"), order_id: "sell" },
+  ];
+  const read = (directory: string, asOf = "2026-10-04T10:04:00Z") =>
+    readFinanceBrokerInstrumentFeedback({
+      directory,
+      accountId: "paper-a",
+      instrument: "SPY",
+      asOf,
+    });
+  it("uses only sealed account activities and ignores later fees and future snapshots", async () =>
+    fixture(async (directory, append) => {
+      await append("activities:main", [...rows, rows[0]]);
+      await append("activities:main", [{ ...rows[1], price: "900" }], "other-account");
+      await append("reconciliation:sealed", [snapshot]);
+      await append("activities:later", [
+        {
+          id: "late",
+          activity_type: "FEE",
+          status: "executed",
+          currency: "USD",
+          net_amount: "-8",
+          order_id: "sell",
+          created_at: "2026-10-04T10:05:00Z",
+        },
+      ]);
+      await append("reconciliation:future", [{ ...snapshot, observedAt: "2026-10-04T10:06:00Z" }]);
+      const result = await read(directory);
+      expect(result.status).toBe("present");
+      if (result.status !== "present") {
+        throw new Error(result.reason);
+      }
+      expect(result.economics.grossMatchedPnl).toBe(10);
+      expect(result.economics.netMatchedPnl).toBe(10);
+      expect(result.sealedSequence).toBe(3);
+      expect(result.observationBoundary).toContain("no_per_record_capture_time");
+    }));
+  it("does not convert unallocated fees or zero closed samples into net performance", async () =>
+    fixture(async (directory, append) => {
+      await append("activities:main", [
+        ...rows,
+        {
+          id: "fee",
+          activity_type: "CFEE",
+          status: "executed",
+          currency: "USD",
+          net_amount: "-0.1",
+          date: "2026-10-05",
+          created_at: "2026-10-03T00:00:00Z",
+        },
+      ]);
+      await append("reconciliation:sealed", [snapshot]);
+      const result = await read(directory);
+      expect(result.status).toBe("present");
+      if (result.status !== "present") {
+        throw new Error(result.reason);
+      }
+      expect(result.economics.netMatchedPnl).toBeNull();
+      expect(result.economics.issues).toContain("fees_not_allocated_to_closed_lots");
+      const zero = await readFinanceBrokerInstrumentFeedback({
+        directory,
+        accountId: "paper-a",
+        instrument: "NKE",
+        asOf: "2026-10-04T10:04:00Z",
+      });
+      expect(zero.status === "present" && zero.economics.status).toBe("no_closed_matches");
+      expect((await read(directory, "2026-10-04T10:09:00Z")).status).toBe("unavailable");
+    }));
+  it.each(["conflict", "future", "unknown"])(
+    "rejects %s source evidence before FIFO calculation",
+    async (kind) =>
+      fixture(async (directory, append) => {
+        const extra =
+          kind === "conflict"
+            ? { ...rows[0], price: "101" }
+            : {
+                id: "fee",
+                activity_type: "FEE",
+                status: "executed",
+                currency: "USD",
+                net_amount: "-0.1",
+                ...(kind === "future"
+                  ? { created_at: "2026-10-04T11:00:00Z" }
+                  : { date: "2026-10-05" }),
+              };
+        await append("activities:main", [...rows, extra]);
+        await append("reconciliation:sealed", [snapshot]);
+        expect((await read(directory)).status).toBe("unavailable");
+      }),
+  );
 });
