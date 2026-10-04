@@ -84,6 +84,16 @@ const Bar = z
   .object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u), close: z.number().positive().finite() })
   .passthrough();
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+function requireFiniteResult(value: unknown): void {
+  if (typeof value === "number" && !Number.isFinite(value)) {
+    throw new Error("nonfinite mathematical result");
+  }
+  if (Array.isArray(value)) {
+    value.forEach(requireFiniteResult);
+  } else if (value && typeof value === "object") {
+    Object.values(value).forEach(requireFiniteResult);
+  }
+}
 
 /** One review-local calculation ledger; all data and identity come from the trusted host. */
 export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeReviewEvidenceScope) {
@@ -184,9 +194,17 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
         };
         let sourceRef = "";
         let output: unknown;
+        let priority: Record<string, unknown> = {};
         let status: FinanceTradeReviewToolEvidence["status"] = "completed";
         try {
           const bars = await read(candidate.instrument);
+          priority.historyWindow = {
+            firstDate: bars[0].date,
+            lastDate: bars.at(-1)!.date,
+            count: bars.length,
+          };
+          priority.interpretation =
+            "completed_history_not_current_quote_account_drawdown_or_net_profit";
           if (request.action === "daily_closes") {
             output = {
               count: bars.length,
@@ -208,6 +226,11 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
             if (observations.length < Math.max(21, (request.lookbackWindow ?? 20) + 1)) {
               throw new Error("insufficient synchronized daily history");
             }
+            priority.historyWindow = {
+              firstDate: observations[0].timestamp.slice(0, 10),
+              lastDate: observations.at(-1)!.timestamp.slice(0, 10),
+              count: observations.length,
+            };
             sourceRef = digest({ refs, observations, asOf: packet.asOf });
             const result = await lab.execute("trade-review-pair", {
               action: request.action,
@@ -230,11 +253,33 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
               returnMode: "simple",
             });
             output = result.details;
+            if (request.action === "returns_from_levels") {
+              const returns = z
+                .array(z.number().finite())
+                .min(1)
+                .parse((output as Record<string, unknown>).returns);
+              const cumulativePriceReturn = bars.at(-1)!.close / bars[0].close - 1;
+              const mean = returns.reduce((value, item) => value + item, 0) / returns.length;
+              if (![cumulativePriceReturn, mean].every(Number.isFinite)) {
+                throw new Error("nonfinite return summary");
+              }
+              priority.returnSummary = {
+                count: returns.length,
+                latest: returns.at(-1)!,
+                min: Math.min(...returns),
+                max: Math.max(...returns),
+                cumulativePriceReturn,
+                mean,
+                basis: "recorded_daily_simple_price_returns_not_net_profit",
+              };
+            }
           }
+          requireFiniteResult(output);
           signal.throwIfAborted();
         } catch (error) {
           signal.throwIfAborted();
           status = "unavailable";
+          priority = {};
           output = {
             reason: error instanceof Error ? error.message.slice(0, 160) : "evidence unavailable",
           };
@@ -244,7 +289,10 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
           output && typeof output === "object"
             ? (output as Record<string, unknown>)
             : { value: output };
-        const summary: Record<string, unknown> = {};
+        const summary: Record<string, unknown> = { ...priority };
+        if (Buffer.byteLength(JSON.stringify(summary), "utf8") > 1200) {
+          throw new Error("required math summary exceeds budget");
+        }
         const omittedKeys: string[] = [];
         for (const [key, value] of Object.entries(outputRecord)) {
           if (Buffer.byteLength(JSON.stringify({ ...summary, [key]: value }), "utf8") <= 1200) {
@@ -253,7 +301,13 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
             omittedKeys.push(key);
           }
         }
-        const summaryText = JSON.stringify({ result: summary, omittedKeys });
+        const summaryText = JSON.stringify({
+          result: summary,
+          omittedKeys,
+          ...(omittedKeys.includes("returns") && Array.isArray(outputRecord.returns)
+            ? { omittedReturnCount: outputRecord.returns.length }
+            : {}),
+        });
         if (Buffer.byteLength(summaryText, "utf8") > 1600) {
           throw new Error("evidence summary exceeds budget");
         }

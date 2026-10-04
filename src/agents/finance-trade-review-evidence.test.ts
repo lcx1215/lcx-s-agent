@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -157,6 +158,11 @@ it("runs real recorded math and pair diagnostics, consumes results on call2, and
     "recorded_daily_history_research_only_no_execution_or_fresh_quote",
   );
   expect(JSON.stringify(payloads[1])).toContain("calculationId");
+  expect(JSON.parse(result.toolEvidence![1].summary).result.historyWindow).toEqual({
+    firstDate: "2026-09-01",
+    lastDate: "2026-09-29",
+    count: 29,
+  });
   expect(JSON.stringify(payloads[1])).not.toContain('"observations":[');
   await appendFinanceIntradayDecision(scope.directory, {
     signalId: "signal",
@@ -420,4 +426,218 @@ it("returns actual point-derived observations as unknown and lets the final mode
     "point observations are not completed daily closes",
   );
   expect(JSON.stringify(payloads[1])).not.toContain("calculationId");
+});
+
+it.each([21, 120])(
+  "delivers actual %s-close price-return numbers and historical dates to call2 and durable receipt",
+  async (count) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "math-consumption-"));
+    dirs.push(directory);
+    const levels = Array.from({ length: count }, (_, i) => 100 + i * 0.3 + Math.sin(i));
+    const bars = levels.map((close, i) => ({
+      date: new Date(Date.UTC(2026, 4, 1 + i)).toISOString().slice(0, 10),
+      open: close,
+      high: close + 1,
+      low: close - 1,
+      close,
+    }));
+    await appendFinanceBars(directory, {
+      instrument: "AAA",
+      derivation: "ohlcv",
+      observedAt: "2026-09-01T00:00:00Z",
+      provenance: { origin: "offline-真实日线" },
+      bars,
+    });
+    const payloads: unknown[] = [];
+    const model = scripted(
+      [
+        {
+          schemaVersion: packet.schemaVersion,
+          evidenceRequests: [
+            { candidateId: packet.candidates[0].candidateId, action: "returns_from_levels" },
+          ],
+          hypothesis: "核实收益路径是否改变当前候选判断",
+        },
+        decision,
+      ],
+      payloads,
+    );
+    const result = await createFinanceTradeDecisionReviewer(
+      {},
+      {
+        adapterFactory: model.factory,
+        evidenceScope: { directory, accountId: "paper-a", instruments: ["AAA"] },
+      },
+    )(packet, new AbortController().signal);
+    expect(result).toMatchObject({ status: "completed", modelCalls: 2 });
+    const evidence = result.toolEvidence![0];
+    const summary = JSON.parse(evidence.summary);
+    const returns = levels.slice(1).map((level, i) => level / levels[i] - 1);
+    expect(summary.result.historyWindow).toEqual({
+      firstDate: bars[0].date,
+      lastDate: bars.at(-1)!.date,
+      count,
+    });
+    expect(summary.result.returnSummary.cumulativePriceReturn).toBeCloseTo(
+      levels.at(-1)! / levels[0] - 1,
+      12,
+    );
+    expect(summary.result.returnSummary.mean).toBeCloseTo(
+      returns.reduce((a, b) => a + b, 0) / returns.length,
+      12,
+    );
+    expect(evidence.resultSha256).toBe(
+      createHash("sha256")
+        .update(
+          JSON.stringify({
+            action: "returns_from_levels",
+            returnMode: "simple",
+            observations: count,
+            returns,
+          }),
+        )
+        .digest("hex"),
+    );
+    expect(summary.result.returnSummary.latest).toBe(returns.at(-1));
+    expect(summary.result.returnSummary.min).toBe(Math.min(...returns));
+    expect(summary.result.returnSummary.max).toBe(Math.max(...returns));
+    if (count === 120) {
+      expect(summary.omittedKeys).toContain("returns");
+      expect(summary.omittedReturnCount).toBe(119);
+    } else {
+      expect(summary.result.returns).toEqual(returns);
+    }
+    expect(JSON.stringify(payloads[1])).toContain(evidence.summary.replace(/"/g, '\\"'));
+    expect(Buffer.byteLength(JSON.stringify(evidence))).toBeLessThanOrEqual(2048);
+    await appendFinanceIntradayDecision(directory, {
+      signalId: "math-signal",
+      instrument: "AAA",
+      sessionDate: "2026-09-30",
+      action: "buy",
+      reason: "opening_range_breakout",
+      referencePrice: 100,
+      referencePriceAt: asOf,
+      datasetHeadRef: "a".repeat(64),
+      strategyRule: "opening_range_breakout_long_next_bar_v1",
+    });
+    const { decisions: _decisions, ...metadata } = result;
+    const receipt = FinanceIntradayDecisionReviewReceiptSchema.parse({
+      ...metadata,
+      request: packet,
+      decision: result.decisions?.[0],
+    });
+    await appendFinanceIntradayOutcome(directory, {
+      signalId: "math-signal",
+      status: "refused",
+      reasons: ["offline veto"],
+      tradeDecisionReview: receipt,
+    });
+    expect(
+      (await readFinanceIntradayOutcome(directory, "math-signal"))?.tradeDecisionReview
+        ?.toolEvidence,
+    ).toEqual(result.toolEvidence);
+  },
+);
+
+it("distinguishes old and recent historical windows even when all numerical z-score inputs are identical", async () => {
+  const recent = await fixture();
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "old-math-window-"));
+  dirs.push(directory);
+  const bars = Array.from({ length: 29 }, (_, i) => {
+    const close = 100 + i + Math.sin(i);
+    return {
+      date: `2026-08-${String(i + 1).padStart(2, "0")}`,
+      open: close,
+      high: close + 1,
+      low: close - 1,
+      close,
+    };
+  });
+  await appendFinanceBars(directory, {
+    instrument: "AAA",
+    derivation: "ohlcv",
+    observedAt: "2026-08-30T00:00:00Z",
+    provenance: { origin: "offline" },
+    bars,
+  });
+  const request = [{ candidateId: packet.candidates[0].candidateId, action: "z_score" as const }];
+  const [oldResult, newResult] = await Promise.all([
+    createFinanceTradeReviewEvidenceExecutor({ ...recent, directory })(
+      request,
+      packet,
+      new AbortController().signal,
+    ),
+    createFinanceTradeReviewEvidenceExecutor(recent)(request, packet, new AbortController().signal),
+  ]);
+  const oldSummary = JSON.parse(oldResult[0].summary).result;
+  const newSummary = JSON.parse(newResult[0].summary).result;
+  expect(oldSummary.zScore).toBe(newSummary.zScore);
+  expect(oldSummary.historyWindow.lastDate).toBe("2026-08-29");
+  expect(newSummary.historyWindow.lastDate).toBe("2026-09-29");
+  expect(oldResult[0].asOf).toBe(newResult[0].asOf);
+});
+
+it("rejects nonfinite derived returns before hashing or successful JSON serialization", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "nonfinite-math-"));
+  dirs.push(directory);
+  await appendFinanceBars(directory, {
+    instrument: "AAA",
+    derivation: "ohlcv",
+    observedAt: "2026-09-29T23:00:00Z",
+    provenance: { origin: "offline" },
+    bars: Array.from({ length: 21 }, (_, i) => {
+      const close = i % 2 ? Number("1e300") : Number("1e-300");
+      return {
+        date: `2026-09-${String(i + 1).padStart(2, "0")}`,
+        open: close,
+        high: close,
+        low: close,
+        close,
+      };
+    }),
+  });
+  const result = await createFinanceTradeReviewEvidenceExecutor({
+    directory,
+    accountId: "paper-a",
+    instruments: ["AAA"],
+  })(
+    [{ candidateId: packet.candidates[0].candidateId, action: "returns_from_levels" }],
+    packet,
+    new AbortController().signal,
+  );
+  expect(result[0].status).toBe("unavailable");
+  expect(JSON.parse(result[0].summary).result).toHaveProperty("reason");
+  expect(result[0].summary).not.toContain('"returns"');
+});
+
+it("uses actual price endpoints rather than rounded minus-one return products for cumulative price change", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "endpoint-math-"));
+  dirs.push(directory);
+  await appendFinanceBars(directory, {
+    instrument: "AAA",
+    derivation: "ohlcv",
+    observedAt: "2026-09-29T23:00:00Z",
+    provenance: { origin: "offline" },
+    bars: Array.from({ length: 21 }, (_, i) => {
+      const close = i % 2 ? Number("1e-150") : Number("1e150");
+      return {
+        date: `2026-09-${String(i + 1).padStart(2, "0")}`,
+        open: close,
+        high: close,
+        low: close,
+        close,
+      };
+    }),
+  });
+  const result = await createFinanceTradeReviewEvidenceExecutor({
+    directory,
+    accountId: "paper-a",
+    instruments: ["AAA"],
+  })(
+    [{ candidateId: packet.candidates[0].candidateId, action: "returns_from_levels" }],
+    packet,
+    new AbortController().signal,
+  );
+  expect(result[0].status).toBe("completed");
+  expect(JSON.parse(result[0].summary).result.returnSummary.cumulativePriceReturn).toBe(0);
 });
