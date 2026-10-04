@@ -1168,6 +1168,7 @@ async function brokerFixture(
   options: {
     scope?: Awaited<ReturnType<typeof fixture>>;
     unknownFee?: boolean;
+    unknownFeeQty?: string;
     observedAt?: string;
     accountId?: string;
   } = {},
@@ -1220,6 +1221,7 @@ async function brokerFixture(
             status: "executed",
             currency: "USD",
             net_amount: "-0.1",
+            ...(options.unknownFeeQty === undefined ? {} : { qty: options.unknownFeeQty }),
             transaction_time: "2026-09-30T13:02:00.000Z",
           },
         ]
@@ -1494,3 +1496,42 @@ it("validates the whole mixed batch before a reader starts, retains the shared r
   expect(wrongAccount.status).toBe("unavailable");
   expect(JSON.parse(wrongAccount.summary).result.reason).toBe("missing_snapshot_at_cutoff");
 });
+
+it.each([
+  { qty: undefined, unpriced: 0, bounds: { lower: 8.4, upper: 8.5 } },
+  { qty: "-0.01", unpriced: 1, bounds: null },
+])(
+  "preserves bounded fee allocation and its unknowns inside the original byte budget: %j",
+  async ({ qty, unpriced, bounds }) => {
+    const scope = await brokerFixture({ unknownFee: true, unknownFeeQty: qty });
+    const raw = await readFinanceBrokerInstrumentFeedback({ ...scope, instrument: "AAA", asOf });
+    const databaseBefore = await fs.readFile(financePositionLedgerPath(scope.directory));
+    const [evidence] = await createFinanceTradeReviewEvidenceExecutor(scope)(
+      [brokerRequest],
+      packet,
+      new AbortController().signal,
+    );
+    expect(evidence.status).toBe("completed");
+    const summary = JSON.parse(evidence.summary);
+    expect(summary.result.economics).toMatchObject({
+      grossMatchedPnl: 10,
+      netMatchedPnl: null,
+      unallocatedCashFeeAmount: unpriced ? 0 : 0.1,
+      unpricedFeeActivityCount: unpriced,
+      recordedCashFeePnlBounds: bounds,
+      cashFeeAllocationBoundary:
+        "recorded_cash_fees_only_not_exact_net_nonadditive_across_instruments",
+      costScope: "broker_reported_activities_only_excludes_tax_fx_and_external_costs",
+      status: "net_profit_unverified",
+    });
+    expect(summary.result.snapshotRef).toMatch(/^[a-f\d]{64}$/u);
+    expect(summary.result.observationBoundary).toBe(
+      "snapshot_observedAt_and_sequence_only_no_per_record_capture_time",
+    );
+    expect(evidence.resultSha256).toBe(
+      createHash("sha256").update(JSON.stringify(raw)).digest("hex"),
+    );
+    expect(Buffer.byteLength(JSON.stringify(evidence))).toBeLessThanOrEqual(2048);
+    expect(await fs.readFile(financePositionLedgerPath(scope.directory))).toEqual(databaseBefore);
+  },
+);

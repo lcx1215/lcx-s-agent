@@ -965,11 +965,37 @@ it("does not trust a stored packet objective when the host supplies none", async
 });
 
 it.each([
-  { buyFee: "-2", net: 8.5, decision: "approve" },
-  { buyFee: "-20", net: -0.5, decision: "veto" },
+  {
+    buyFee: "-2",
+    net: 8.5,
+    decision: "approve",
+    unknownFee: undefined,
+    bounds: { lower: 8.5, upper: 8.5 },
+  },
+  {
+    buyFee: "-20",
+    net: -0.5,
+    decision: "veto",
+    unknownFee: undefined,
+    bounds: { lower: -0.5, upper: -0.5 },
+  },
+  {
+    buyFee: "-2",
+    net: null,
+    decision: "approve",
+    unknownFee: "-0.5",
+    bounds: { lower: 8, upper: 8.5 },
+  },
+  {
+    buyFee: "-2",
+    net: null,
+    decision: "approve",
+    unknownFee: "-10",
+    bounds: { lower: -1.5, upper: 8.5 },
+  },
 ])(
   "consumes recorded net accounting, preserves the candidate and persists the result: %j",
-  async ({ buyFee, net, decision }) => {
+  async ({ buyFee, net, decision, unknownFee, bounds }) => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "review-fill-feedback-"));
     try {
       await appendFinanceBrokerHistory(directory, {
@@ -1019,6 +1045,18 @@ it.each([
             net_amount: "-0.5",
             transaction_time: "2026-09-23T19:10:01Z",
           },
+          ...(unknownFee === undefined
+            ? []
+            : [
+                {
+                  id: "unlinked-fee",
+                  activity_type: "FEE",
+                  status: "executed",
+                  currency: "USD",
+                  net_amount: unknownFee,
+                  transaction_time: "2026-09-23T19:10:02Z",
+                },
+              ]),
         ],
       });
       await appendFinanceBrokerHistory(directory, {
@@ -1071,14 +1109,16 @@ it.each([
           expect(facts.grossMatchedPnl).toBe(10);
           expect(facts.netMatchedPnl).toBe(net);
           expect(facts.openLotCount).toBe(1);
-          const consumedNet = facts.netMatchedPnl as number;
+          expect(facts.recordedCashFeePnlBounds).toEqual(bounds);
+          const consumedNet = facts.netMatchedPnl as number | null;
+          const consumedBounds = facts.recordedCashFeePnlBounds as { lower: number; upper: number };
           return {
             schemaVersion: intradayRequest.schemaVersion,
             decisions: [
               {
                 candidateId: intradayRequest.candidates[0].candidateId,
-                decision: consumedNet > 0 ? "approve" : "veto",
-                rationale: `Recorded FIFO gross=10; allocated costs yield net=${consumedNet}. This does not establish this strategy's edge.`,
+                decision: consumedNet === null || consumedNet > 0 ? "approve" : "veto",
+                rationale: `Recorded FIFO gross=10; net=${consumedNet}; possible recorded cash-fee allocation is [${consumedBounds.lower},${consumedBounds.upper}]. Unknown allocation does not create a mandatory veto or establish this strategy's edge.`,
               },
             ],
           };
@@ -1111,6 +1151,8 @@ it.each([
       });
       expect(isValidFinanceTradeDecisionReviewResult(result, intradayRequest)).toBe(true);
       expect(prompt).toContain("Cash reconciliation does not prove fee allocation");
+      expect(prompt).toContain("never substitute them for exact or full-cost net profit");
+      expect(result.decisions?.[0].rationale).toContain(`[${bounds.lower},${bounds.upper}]`);
       expect(second.invoke).toHaveBeenCalledTimes(1);
       await appendFinanceIntradayDecision(directory, {
         signalId: intradayRequest.signalAnchor,

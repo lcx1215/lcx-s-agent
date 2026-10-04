@@ -9,18 +9,53 @@ import {
   readFinancePositionLedger,
 } from "./finance-position-ledger.js";
 
-/** FIFO accounting diagnostic; never a strategy attribution or an execution gate. */
-export function summarizeFinanceBrokerFills(
-  activities: readonly Record<string, unknown>[],
-  costsVerified: boolean,
-) {
+function uniqueBrokerActivities(activities: readonly Record<string, unknown>[]) {
   const identities = new Map<string, Record<string, unknown>>();
   for (const row of activities) {
     if (typeof row.id !== "string" || !row.id) {
       throw new Error("missing activity identity");
     }
+    const previous = identities.get(row.id);
+    if (previous && caseflowFingerprint(previous) !== caseflowFingerprint(row)) {
+      throw new Error("conflicting activity identity");
+    }
     identities.set(row.id, row);
   }
+  return [...identities.values()];
+}
+
+function brokerFillOrderScopes(activities: readonly Record<string, unknown>[]) {
+  const orders = new Map<string, { instrument: string; side: unknown }>();
+  for (const row of activities) {
+    if (row.activity_type !== "FILL") {
+      continue;
+    }
+    const instrument = brokerSymbol(row.symbol);
+    if (
+      (instrument.includes("/") && (!instrument.split("/")[0] || !instrument.endsWith("/USD"))) ||
+      (row.currency !== undefined && row.currency !== "USD")
+    ) {
+      throw new Error("unsupported non-USD fill price unit");
+    }
+    if (typeof row.order_id !== "string" || !row.order_id.trim()) {
+      continue;
+    }
+    const previous = orders.get(row.order_id);
+    if (previous && (previous.instrument !== instrument || previous.side !== row.side)) {
+      throw new Error("conflicting order instrument or side");
+    }
+    orders.set(row.order_id, { instrument, side: row.side });
+  }
+  return orders;
+}
+
+/** FIFO accounting diagnostic; never a strategy attribution or an execution gate. */
+export function summarizeFinanceBrokerFills(
+  activities: readonly Record<string, unknown>[],
+  costsVerified: boolean,
+) {
+  const unique = uniqueBrokerActivities(activities);
+  const orderScopes = brokerFillOrderScopes(unique);
   const lots = new Map<string, { quantity: number; price: number; feePerUnit: number }[]>();
   let buys = 0,
     sells = 0,
@@ -39,7 +74,7 @@ export function summarizeFinanceBrokerFills(
     }
     return Number(v);
   };
-  const fills = [...identities.values()].filter((row) => {
+  const fills = unique.filter((row) => {
     if (row.activity_type === "CFEE" || row.activity_type === "FEE") {
       fees++;
     }
@@ -56,7 +91,7 @@ export function summarizeFinanceBrokerFills(
   }
   const orderQuantities = new Map<string, number>();
   for (const row of fills) {
-    if (typeof row.order_id === "string") {
+    if (typeof row.order_id === "string" && orderScopes.has(row.order_id)) {
       orderQuantities.set(
         row.order_id,
         (orderQuantities.get(row.order_id) ?? 0) + numeric(row.qty),
@@ -65,27 +100,51 @@ export function summarizeFinanceBrokerFills(
   }
   const orderFees = new Map<string, number>();
   let unallocatedFees = 0;
-  for (const row of identities.values()) {
+  let unallocatedCashFeeAmount = 0;
+  let unpricedFeeActivityCount = 0;
+  for (const row of unique) {
     if (row.activity_type !== "CFEE" && row.activity_type !== "FEE") {
       continue;
     }
     const order = typeof row.order_id === "string" ? row.order_id : "";
-    const cash =
-      typeof row.net_amount === "string" || typeof row.net_amount === "number"
-        ? numeric(row.net_amount)
-        : NaN;
+    const feeNumber = (value: unknown) => {
+      try {
+        return numeric(value);
+      } catch {
+        return NaN;
+      }
+    };
+    const cash = feeNumber(row.net_amount);
     if (
       row.status !== "executed" ||
       row.currency !== "USD" ||
       !Number.isFinite(cash) ||
       cash > 0 ||
-      (row.qty !== undefined && numeric(row.qty) !== 0) ||
-      !orderQuantities.has(order)
+      (row.qty !== undefined && feeNumber(row.qty) !== 0)
     ) {
       unallocatedFees++;
+      unpricedFeeActivityCount++;
       continue;
     }
+    if (!orderQuantities.has(order)) {
+      unallocatedFees++;
+      unallocatedCashFeeAmount -= cash;
+      continue;
+    }
+    if (
+      typeof row.symbol === "string" &&
+      row.symbol !== "USD" &&
+      brokerSymbol(row.symbol) !== orderScopes.get(order)?.instrument
+    ) {
+      throw new Error("conflicting fee order instrument");
+    }
     orderFees.set(order, (orderFees.get(order) ?? 0) - cash);
+  }
+  if (
+    !Number.isFinite(unallocatedCashFeeAmount) ||
+    [...orderQuantities.values(), ...orderFees.values()].some((value) => !Number.isFinite(value))
+  ) {
+    throw new Error("nonfinite fee pool or order quantity");
   }
   fills.sort(
     (a, b) =>
@@ -94,7 +153,7 @@ export function summarizeFinanceBrokerFills(
   );
   const timestamps = new Map<string, string>();
   for (const row of fills) {
-    const key = `${String(row.symbol)}:${String(row.transaction_time)}`;
+    const key = `${brokerSymbol(row.symbol)}:${Date.parse(String(row.transaction_time))}`;
     const previousSide = timestamps.get(key);
     if (previousSide && previousSide !== row.side) {
       issues.add("ambiguous_same_time_fill_order");
@@ -142,6 +201,18 @@ export function summarizeFinanceBrokerFills(
   if (unallocatedFees) {
     issues.add("fees_not_allocated_to_closed_lots");
   }
+  const upper = gross - allocatedFees;
+  const lower = upper - unallocatedCashFeeAmount;
+  const recordedCashFeePnlBounds =
+    matches > 0 &&
+    costsVerified &&
+    unpricedFeeActivityCount === 0 &&
+    [...issues].every((issue) => issue === "fees_not_allocated_to_closed_lots") &&
+    Number.isFinite(lower) &&
+    Number.isFinite(upper) &&
+    lower <= upper
+      ? { lower, upper }
+      : null;
   return {
     basis: "broker_fill_fifo_usd_not_strategy_attribution",
     buyFills: buys,
@@ -152,6 +223,11 @@ export function summarizeFinanceBrokerFills(
     netMatchedPnl: matches > 0 && issues.size === 0 ? gross - allocatedFees : null,
     allocatedClosedCashFees: allocatedFees,
     unallocatedFeeActivityCount: unallocatedFees,
+    unallocatedCashFeeAmount,
+    unpricedFeeActivityCount,
+    recordedCashFeePnlBounds,
+    cashFeeAllocationBoundary:
+      "recorded_cash_fees_only_not_exact_net_nonadditive_across_instruments",
     feeActivityCount: fees,
     status: matches === 0 ? "no_closed_matches" : issues.size ? "net_profit_unverified" : "matched",
     issues: [...issues],
@@ -230,17 +306,13 @@ export function summarizeFinanceBrokerFillsByInstrument(
   activities: readonly Record<string, unknown>[],
   costsVerified: boolean,
 ) {
-  const unique = [...new Map(activities.map((row) => [row.id, row])).values()];
+  const unique = uniqueBrokerActivities(activities);
   const symbols = [
     ...new Set(
       unique.filter((row) => row.activity_type === "FILL").map((row) => brokerSymbol(row.symbol)),
     ),
   ];
-  const orders = new Map(
-    unique
-      .filter((row) => row.activity_type === "FILL" && typeof row.order_id === "string")
-      .map((row) => [row.order_id, brokerSymbol(row.symbol)]),
-  );
+  const orders = brokerFillOrderScopes(unique);
   return symbols.map((instrument) => ({
     instrument,
     ...summarizeFinanceBrokerFills(
@@ -251,11 +323,13 @@ export function summarizeFinanceBrokerFillsByInstrument(
         if (row.activity_type !== "CFEE" && row.activity_type !== "FEE") {
           return false;
         }
-        const linked = orders.get(row.order_id);
+        const linked = typeof row.order_id === "string" ? orders.get(row.order_id) : undefined;
         // A symbol-less, unlinked fee remains an uncertainty for every instrument.
         return linked
-          ? linked === instrument
-          : typeof row.symbol !== "string" || brokerSymbol(row.symbol) === instrument;
+          ? linked.instrument === instrument
+          : typeof row.symbol !== "string" ||
+              (row.symbol === "USD" && (row.qty === undefined || Number(row.qty) === 0)) ||
+              brokerSymbol(row.symbol) === instrument;
       }),
       costsVerified,
     ),

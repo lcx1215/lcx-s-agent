@@ -79,6 +79,16 @@ it("does not invent ordering between opposing fills at the same timestamp", () =
     netMatchedPnl: null,
     issues: ["ambiguous_same_time_fill_order"],
   });
+  expect(
+    summarizeFinanceBrokerFills(
+      [buy, { ...sell, transaction_time: "2026-09-20T11:01:00+01:00" }],
+      true,
+    ),
+  ).toMatchObject({
+    netMatchedPnl: null,
+    recordedCashFeePnlBounds: null,
+    issues: ["ambiguous_same_time_fill_order"],
+  });
 });
 
 it("allocates explicit cash fees proportionally across partial fills without double counting", () => {
@@ -108,7 +118,163 @@ it("allocates explicit cash fees proportionally across partial fills without dou
     allocatedClosedCashFees: 1.5,
     feeActivityCount: 2,
     openLotCount: 1,
+    unallocatedCashFeeAmount: 0,
+    unpricedFeeActivityCount: 0,
+    recordedCashFeePnlBounds: { lower: 8.5, upper: 8.5 },
   });
+});
+
+const cashFee = (id: string, net_amount: string, extra: Record<string, unknown> = {}) => ({
+  id,
+  activity_type: "FEE",
+  status: "executed",
+  currency: "USD",
+  net_amount,
+  ...extra,
+});
+it.each([
+  ["positive", "110", 9, 10],
+  ["negative", "95", -6, -5],
+  ["straddles zero", "100.5", -0.5, 0.5],
+])(
+  "bounds %s recorded cash-fee outcomes without asserting an exact net",
+  (_kind, price, lower, upper) => {
+    const fee = cashFee("pool", "-1");
+    const result = summarizeFinanceBrokerFills(
+      [fill("1", "buy", "2", "100"), fill("2", "sell", "1", String(price)), fee, fee],
+      true,
+    );
+    expect(result).toMatchObject({
+      netMatchedPnl: null,
+      status: "net_profit_unverified",
+      unallocatedCashFeeAmount: 1,
+      unpricedFeeActivityCount: 0,
+      unallocatedFeeActivityCount: 1,
+      recordedCashFeePnlBounds: { lower, upper },
+      openLotCount: 1,
+      cashFeeAllocationBoundary:
+        "recorded_cash_fees_only_not_exact_net_nonadditive_across_instruments",
+    });
+  },
+);
+
+it("uses the same unknown cash pool conservatively for each instrument and never sums instrument lower bounds", () => {
+  const rows = [
+    fill("1", "buy", "1", "100"),
+    fill("2", "sell", "1", "110"),
+    { ...fill("3", "buy", "1", "100"), symbol: "QQQ" },
+    { ...fill("4", "sell", "1", "110"), symbol: "QQQ" },
+    cashFee("bare-currency", "-1", { symbol: "USD", qty: "0" }),
+  ];
+  const instruments = summarizeFinanceBrokerFillsByInstrument(rows, true);
+  expect(instruments).toHaveLength(2);
+  for (const result of instruments) {
+    expect(result).toMatchObject({
+      netMatchedPnl: null,
+      unallocatedCashFeeAmount: 1,
+      recordedCashFeePnlBounds: { lower: 9, upper: 10 },
+      cashFeeAllocationBoundary:
+        "recorded_cash_fees_only_not_exact_net_nonadditive_across_instruments",
+    });
+  }
+  expect(summarizeFinanceBrokerFills(rows, true).recordedCashFeePnlBounds).toEqual({
+    lower: 19,
+    upper: 20,
+  });
+  expect(instruments.reduce((sum, result) => sum + result.recordedCashFeePnlBounds!.lower, 0)).toBe(
+    18,
+  );
+});
+
+it.each([
+  ["nonUSD", { currency: "BTC" }],
+  ["in-kind", { qty: "-0.001", net_amount: "0" }],
+  ["rebate", { net_amount: "1" }],
+  ["pending", { status: "pending" }],
+  ["missing currency", { currency: undefined }],
+  ["invalid amount", { net_amount: "NaN" }],
+])("keeps %s fees unpriced instead of turning them into zero cost", (_kind, extra) => {
+  const result = summarizeFinanceBrokerFills(
+    [
+      fill("1", "buy", "1", "100"),
+      fill("2", "sell", "1", "110"),
+      cashFee("fee", "-1", extra as Record<string, unknown>),
+    ],
+    true,
+  );
+  expect(result).toMatchObject({
+    netMatchedPnl: null,
+    unallocatedCashFeeAmount: 0,
+    unpricedFeeActivityCount: 1,
+    recordedCashFeePnlBounds: null,
+  });
+});
+
+it("withholds bounds for no closes, missing cost evidence, unmatched sells and ambiguous time ordering", () => {
+  const buy = fill("1", "buy", "1", "100"),
+    sell = fill("2", "sell", "1", "110"),
+    fee = cashFee("fee", "-1");
+  for (const [rows, verified] of [
+    [[buy, fee], true],
+    [[buy, sell, fee], false],
+    [[sell, fee], true],
+    [[buy, { ...sell, transaction_time: buy.transaction_time }, fee], true],
+  ] as const) {
+    expect(summarizeFinanceBrokerFills(rows, verified).recordedCashFeePnlBounds).toBeNull();
+  }
+});
+
+it("treats an empty order ID as an unallocated cash fee and preserves normalized USD crypto prices", () => {
+  const rows = [
+    { ...fill("1", "buy", "1", "100"), order_id: "" },
+    { ...fill("2", "sell", "1", "110"), order_id: "" },
+    cashFee("fee", "-1", { order_id: "" }),
+  ];
+  expect(summarizeFinanceBrokerFills(rows, true)).toMatchObject({
+    netMatchedPnl: null,
+    unallocatedCashFeeAmount: 1,
+    recordedCashFeePnlBounds: { lower: 9, upper: 10 },
+  });
+  const crypto = [
+    { ...fill("1", "buy", "1", "100"), symbol: "BTCUSD", order_id: "buy", currency: "USD" },
+    { ...fill("2", "sell", "1", "110"), symbol: "BTC/USD", order_id: "sell", currency: "USD" },
+  ];
+  expect(summarizeFinanceBrokerFillsByInstrument(crypto, true)).toMatchObject([
+    {
+      instrument: "BTC/USD",
+      netMatchedPnl: 10,
+      recordedCashFeePnlBounds: { lower: 10, upper: 10 },
+    },
+  ]);
+  expect(
+    summarizeFinanceBrokerFills(
+      [crypto[0], { ...crypto[1], transaction_time: crypto[0].transaction_time }],
+      true,
+    ),
+  ).toMatchObject({
+    netMatchedPnl: null,
+    recordedCashFeePnlBounds: null,
+    issues: ["ambiguous_same_time_fill_order"],
+  });
+});
+
+it.each(["ETH/BTC", "ETH/EUR"])("rejects %s quote units instead of labeling them USD", (symbol) => {
+  expect(() =>
+    summarizeFinanceBrokerFillsByInstrument([{ ...fill("1", "buy", "1", "100"), symbol }], true),
+  ).toThrow("non-USD fill price unit");
+});
+it("rejects explicit foreign fill currency, conflicting IDs and ambiguous order/fee bindings before splitting instruments", () => {
+  const buy = { ...fill("1", "buy", "1", "100"), order_id: "order" };
+  for (const rows of [
+    [{ ...buy, currency: "EUR" }],
+    [buy, { ...buy, price: "101" }],
+    [buy, { ...fill("2", "sell", "1", "110"), order_id: "order" }],
+    [buy, { ...fill("2", "buy", "1", "100"), symbol: "QQQ", order_id: "order" }],
+    [buy, cashFee("fee", "-1", { order_id: "order", symbol: "QQQ" })],
+  ]) {
+    expect(() => summarizeFinanceBrokerFills(rows, true)).toThrow();
+    expect(() => summarizeFinanceBrokerFillsByInstrument(rows, true)).toThrow();
+  }
 });
 
 it("isolates coin fees from equities but retains unlinked account fee uncertainty", () => {
