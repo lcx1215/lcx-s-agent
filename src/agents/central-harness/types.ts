@@ -68,6 +68,8 @@ export type CentralStep = {
    */
   outcome?: Readonly<Record<string, unknown>>;
   outcomeDroppedKeys?: readonly string[];
+  /** Host-computed original business result identity before archive annotations. */
+  semanticOutcomeSha256?: string;
   startedAtMs?: number;
   finishedAtMs?: number;
 };

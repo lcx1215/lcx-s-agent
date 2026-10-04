@@ -10,6 +10,17 @@ import type {
   CentralToolSpec,
 } from "./types.js";
 
+// Only the host registry can associate an enriched object with its business result.
+// JSON fields with these names never establish provenance.
+const hostArtifactBusinessOutcomes = new WeakMap<object, Readonly<Record<string, unknown>>>();
+export function markCentralArtifactOutcome(
+  enriched: Readonly<Record<string, unknown>>,
+  business: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> {
+  hostArtifactBusinessOutcomes.set(enriched, business);
+  return enriched;
+}
+
 export type HarnessSettle = Readonly<{
   runId: string;
   observedAt: string;
@@ -314,6 +325,15 @@ async function runCycle(
           ? observation
           : undefined;
       if (digestSource !== undefined) {
+        const business = isPlainRecord(observation)
+          ? hostArtifactBusinessOutcomes.get(observation)
+          : undefined;
+        if (business !== undefined) {
+          const businessDigest = isPlainRecord(business.receipt) ? business.receipt : business;
+          step.semanticOutcomeSha256 = createHash("sha256")
+            .update(JSON.stringify(canonicalContinuationValue(businessDigest)))
+            .digest("hex");
+        }
         const decisionDigest = compactCentralStepOutcome(step.ownerId, digestSource);
         const outcomeBudget =
           step.ownerId === "finance_bar_ledger" ||
@@ -535,22 +555,29 @@ export function nextCycleContinuation(
     return { run: false, because: "max_cycles_reached" };
   }
   // Ignore model prose and wall-clock timings: they do not resolve a blocked action.
-  const signature = (value: CentralRunReceipt) =>
+  const signature = (value: CentralRunReceipt, peer: CentralRunReceipt) =>
     JSON.stringify(
-      value.steps.map((step) => ({
+      value.steps.map((step, index) => ({
         ownerId: step.ownerId,
         args: canonicalContinuationValue(step.args),
         status: step.status,
         observedOk: step.observedOk,
         reason: step.gateReason ?? step.failureReason,
-        outcome: canonicalContinuationValue(step.outcome),
+        outcome:
+          typeof step.semanticOutcomeSha256 === "string" &&
+          /^[a-f0-9]{64}$/u.test(step.semanticOutcomeSha256) &&
+          typeof peer.steps[index]?.semanticOutcomeSha256 === "string" &&
+          /^[a-f0-9]{64}$/u.test(peer.steps[index].semanticOutcomeSha256)
+            ? { semanticOutcomeSha256: step.semanticOutcomeSha256 }
+            : canonicalContinuationValue(step.outcome),
+        outcomeDroppedKeys: step.outcomeDroppedKeys,
       })),
     );
   if (
     previous &&
     receipt.steps.length > 0 &&
     previous.nextAction === receipt.nextAction &&
-    signature(previous) === signature(receipt)
+    signature(previous, receipt) === signature(receipt, previous)
   ) {
     return {
       run: false,

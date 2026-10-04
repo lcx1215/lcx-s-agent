@@ -19,6 +19,7 @@ import { createFinanceStrategyRuleLedgerReadTool } from "../tools/finance-strate
 import { createFinanceThesisLedgerReadTool } from "../tools/finance-thesis-ledger-read-tool.js";
 import { createLearningDistillTool } from "../tools/learning-distill-tool.js";
 import { createQuantMathTool } from "../tools/quant-math-tool.js";
+import { markCentralArtifactOutcome } from "./harness-loop.js";
 import { executeOwnedProcess } from "./owned-process.js";
 import type { CentralToolSpec } from "./types.js";
 import { CENTRAL_FORBIDDEN_SIDE_EFFECTS } from "./types.js";
@@ -674,19 +675,23 @@ export function createCentralToolRegistry(
                 value: outcome,
                 signal,
               });
-              return Object.hasOwn(outcome, "artifactEvidence")
-                ? outcome
-                : {
-                    ...(artifactEvidence.status !== "unavailable" &&
-                    Buffer.byteLength(JSON.stringify(outcome)) > 512
-                      ? {
-                          artifactId: artifactEvidence.id,
-                          artifactIndexStatus: artifactEvidence.status,
-                        }
-                      : {}),
-                    ...outcome,
-                    artifactEvidence,
-                  };
+              if (Object.hasOwn(outcome, "artifactEvidence")) {
+                return outcome;
+              }
+              return markCentralArtifactOutcome(
+                {
+                  ...(artifactEvidence.status !== "unavailable" &&
+                  Buffer.byteLength(JSON.stringify(outcome)) > 512
+                    ? {
+                        artifactId: artifactEvidence.id,
+                        artifactIndexStatus: artifactEvidence.status,
+                      }
+                    : {}),
+                  ...outcome,
+                  artifactEvidence,
+                },
+                outcome,
+              );
             },
           },
     ]),
