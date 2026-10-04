@@ -8,6 +8,7 @@ import { isSubagentSessionKey } from "../routing/session-key.js";
 import { resolveGatewayMessageChannel } from "../utils/message-channel.js";
 import { resolveAgentConfig } from "./agent-scope.js";
 import { createApplyPatchTool } from "./apply-patch.js";
+import { withArtifactResultRecording } from "./artifact-result-recording.js";
 import {
   createExecTool,
   createProcessTool,
@@ -462,6 +463,7 @@ export function createOpenClawCodingTools(options?: {
     // Channel docking: include channel-defined agent tools (login, etc.).
     ...listChannelAgentTools({ cfg: options?.config }),
     ...createOpenClawTools({
+      recordArtifacts: false,
       sandboxBrowserBridgeUrl: sandbox?.browser?.bridgeUrl,
       allowHostBrowserControl: sandbox ? sandbox.browserAllowHostControl : true,
       agentSessionKey: options?.sessionKey,
@@ -551,9 +553,20 @@ export function createOpenClawCodingTools(options?: {
       loopDetection: resolveToolLoopDetectionConfig({ cfg: options?.config, agentId }),
     }),
   );
+  const config = options?.config;
+  const withArtifacts =
+    config && !sandbox
+      ? withHooks.map((tool) =>
+          withArtifactResultRecording(tool, {
+            config,
+            agentId: agentId ?? "main",
+            workspaceDir: options?.workspaceDir ?? process.cwd(),
+          }),
+        )
+      : withHooks;
   const withAbort = options?.abortSignal
-    ? withHooks.map((tool) => wrapToolWithAbortSignal(tool, options.abortSignal))
-    : withHooks;
+    ? withArtifacts.map((tool) => wrapToolWithAbortSignal(tool, options.abortSignal))
+    : withArtifacts;
 
   // NOTE: Keep canonical (lowercase) tool names here.
   // pi-ai's Anthropic OAuth transport remaps tool names to Claude Code-style names

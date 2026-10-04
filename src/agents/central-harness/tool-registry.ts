@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { OpenClawConfig } from "../../config/config.js";
+import { recordAgentArtifact } from "../artifact-result-recording.js";
 import { parseFinanceModuleSelection } from "../finance-brain-orchestration.js";
+import { createArtifactMemoryRecallTool } from "../tools/artifact-memory-recall-tool.js";
 import type { AnyAgentTool } from "../tools/common.js";
 import { createFinanceBarLedgerTool } from "../tools/finance-bar-ledger-tool.js";
 import { createFinanceCalibrationReadTool } from "../tools/finance-calibration-read-tool.js";
@@ -181,6 +184,7 @@ export const CENTRAL_CAPABILITY_OWNER_IDS = [
   "finance_thesis_ledger_read",
   "quant_math",
   "learning_distill",
+  "artifact_memory_recall",
 ] as const;
 
 export const CENTRAL_GOVERNANCE_OWNER_IDS: readonly string[] = READ_ONLY_OWNERS.map(
@@ -389,6 +393,8 @@ async function runOwner(
 function createCapabilityTools(
   workspaceDir?: string,
   financeLedgerDirectories: readonly string[] = [],
+  config?: OpenClawConfig,
+  agentId = "main",
 ): readonly CentralToolSpec[] {
   const financeResearch = createFinanceResearchRunTool({ workspaceDir });
   const financeBarLedger = createFinanceBarLedgerTool({ workspaceDir });
@@ -403,6 +409,7 @@ function createCapabilityTools(
     createFinanceStrategyRuleLedgerReadTool(),
     createFinanceThesisLedgerReadTool({ workspaceDir }),
     createQuantMathTool(),
+    createArtifactMemoryRecallTool({ config, agentId, workspaceDir }),
   ];
   // Directory selection is an operator/host authority, not model reasoning. The
   // ordinary agent tool keeps its explicit-directory support, while the central
@@ -579,7 +586,7 @@ function createCapabilityTools(
       ownerId: "learning_distill",
       name: learningDistill.name,
       label: learningDistill.label,
-      description: `${learningDistill.description} Central-harness scope: local learning distillation only; the gate refuses any arg that would turn the read into a memory edit, provider call, or external send.`,
+      description: `${learningDistill.description} Central-harness scope: local distillation or exact retained-card field read only; read preserves source evidence and grants no skill promotion. The gate refuses any memory edit, provider call, or external send.`,
       inputKeys: inputKeys(
         learningDistill,
         new Set([...hostOwnedPathKeys, "memoryDir", "stateDir"]),
@@ -617,6 +624,8 @@ export function createCentralToolRegistry(
   options: {
     execute?: typeof runOwner;
     workspaceDir?: string;
+    config?: OpenClawConfig;
+    agentId?: string;
     /** Exact host-owned ledger roots the model may select (synthetic/eval use only). */
     financeLedgerDirectories?: readonly string[];
   } = {},
@@ -638,8 +647,50 @@ export function createCentralToolRegistry(
   const capabilitySpecs = createCapabilityTools(
     options.workspaceDir,
     options.financeLedgerDirectories,
+    options.config,
+    options.agentId,
   ).map((spec) => [spec.ownerId, spec] as const);
-  return new Map([...ownerSpecs, ...capabilitySpecs]);
+  const specs = [...ownerSpecs, ...capabilitySpecs];
+  const config = options.config;
+  const workspaceDir = options.workspaceDir;
+  if (!config || !workspaceDir) {
+    return new Map(specs);
+  }
+  return new Map(
+    specs.map(([ownerId, spec]) => [
+      ownerId,
+      ownerId === "artifact_memory_recall"
+        ? spec
+        : {
+            ...spec,
+            execute: async (args: Readonly<Record<string, unknown>>, signal: AbortSignal) => {
+              const outcome = await spec.execute(args, signal);
+              const artifactEvidence = await recordAgentArtifact({
+                config,
+                agentId: options.agentId ?? "main",
+                workspaceDir,
+                owner: ownerId,
+                runId: `central-tool-${randomUUID()}`,
+                value: outcome,
+                signal,
+              });
+              return Object.hasOwn(outcome, "artifactEvidence")
+                ? outcome
+                : {
+                    ...(artifactEvidence.status !== "unavailable" &&
+                    Buffer.byteLength(JSON.stringify(outcome)) > 512
+                      ? {
+                          artifactId: artifactEvidence.id,
+                          artifactIndexStatus: artifactEvidence.status,
+                        }
+                      : {}),
+                    ...outcome,
+                    artifactEvidence,
+                  };
+            },
+          },
+    ]),
+  );
 }
 
 export { approveOwner, escalationReason, CENTRAL_FORBIDDEN_SIDE_EFFECTS };

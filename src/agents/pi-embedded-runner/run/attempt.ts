@@ -30,6 +30,7 @@ import { isReasoningTagProvider } from "../../../utils/provider-utils.js";
 import { resolveOpenClawAgentDir } from "../../agent-paths.js";
 import { resolveSessionAgentIds } from "../../agent-scope.js";
 import { createAnthropicPayloadLogger } from "../../anthropic-payload-log.js";
+import { recordAgentArtifact } from "../../artifact-result-recording.js";
 import {
   analyzeBootstrapBudget,
   buildBootstrapPromptWarning,
@@ -1839,6 +1840,27 @@ export async function runEmbeddedAttempt(
           .catch((err) => {
             log.warn(`llm_output hook failed: ${String(err)}`);
           });
+      }
+
+      if (!native && !sandbox?.enabled && params.config && lastAssistant) {
+        const indexed = await recordAgentArtifact({
+          config: params.config,
+          agentId: sessionAgentId,
+          workspaceDir: resolvedWorkspace,
+          owner: "assistant_conclusion",
+          runId: params.runId,
+          value: {
+            lastAssistant,
+            assistantTexts,
+            aborted,
+            timedOut,
+            promptCompleted,
+            usage: getUsageTotals(),
+          },
+        });
+        if (indexed.status === "unavailable") {
+          log.warn(`assistant conclusion index unavailable: ${indexed.reason}`);
+        }
       }
 
       return {

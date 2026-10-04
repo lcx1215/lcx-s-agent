@@ -35,6 +35,7 @@ import {
   runWithConcurrency,
 } from "./internal.js";
 import { type MemoryFileEntry } from "./internal.js";
+import { publishMemoryIndex } from "./memory-index-publication.js";
 import { ensureMemoryIndexSchema } from "./memory-schema.js";
 import type { SessionFileEntry } from "./session-files.js";
 import {
@@ -334,33 +335,6 @@ export abstract class MemoryManagerSyncOps {
         this.db.exec("ROLLBACK");
       } catch {}
       throw err;
-    }
-  }
-
-  private async swapIndexFiles(targetPath: string, tempPath: string): Promise<void> {
-    const backupPath = `${targetPath}.backup-${randomUUID()}`;
-    await this.moveIndexFiles(targetPath, backupPath);
-    try {
-      await this.moveIndexFiles(tempPath, targetPath);
-    } catch (err) {
-      await this.moveIndexFiles(backupPath, targetPath);
-      throw err;
-    }
-    await this.removeIndexFiles(backupPath);
-  }
-
-  private async moveIndexFiles(sourceBase: string, targetBase: string): Promise<void> {
-    const suffixes = ["", "-wal", "-shm"];
-    for (const suffix of suffixes) {
-      const source = `${sourceBase}${suffix}`;
-      const target = `${targetBase}${suffix}`;
-      try {
-        await fs.rename(source, target);
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-          throw err;
-        }
-      }
     }
   }
 
@@ -1053,8 +1027,8 @@ export abstract class MemoryManagerSyncOps {
     const tempDb = this.openDatabaseAtPath(tempDbPath);
 
     const originalDb = this.db;
-    let originalDbClosed = false;
     const originalState = {
+      lastMetaSerialized: this.lastMetaSerialized,
       ftsAvailable: this.fts.available,
       ftsError: this.fts.loadError,
       vectorAvailable: this.vector.available,
@@ -1064,17 +1038,14 @@ export abstract class MemoryManagerSyncOps {
     };
 
     const restoreOriginalState = () => {
-      if (originalDbClosed) {
-        this.db = this.openDatabaseAtPath(dbPath);
-      } else {
-        this.db = originalDb;
-      }
+      this.db = originalDb;
+      this.lastMetaSerialized = originalState.lastMetaSerialized;
       this.fts.available = originalState.ftsAvailable;
       this.fts.loadError = originalState.ftsError;
-      this.vector.available = originalDbClosed ? null : originalState.vectorAvailable;
+      this.vector.available = originalState.vectorAvailable;
       this.vector.loadError = originalState.vectorLoadError;
       this.vector.dims = originalState.vectorDims;
-      this.vectorReady = originalDbClosed ? null : originalState.vectorReady;
+      this.vectorReady = originalState.vectorReady;
     };
 
     this.db = tempDb;
@@ -1084,11 +1055,10 @@ export abstract class MemoryManagerSyncOps {
     this.vector.dims = undefined;
     this.fts.available = false;
     this.fts.loadError = undefined;
-    this.ensureSchema();
-
     let nextMeta: MemoryIndexMeta | null = null;
 
     try {
+      this.ensureSchema();
       this.seedEmbeddingCache(originalDb);
       const shouldSyncMemory = this.sources.has("memory");
       const shouldSyncSessions = this.shouldSyncSessions(
@@ -1130,25 +1100,36 @@ export abstract class MemoryManagerSyncOps {
       this.writeMeta(nextMeta);
       this.pruneEmbeddingCacheIfNeeded?.();
 
-      this.db.close();
-      originalDb.close();
-      originalDbClosed = true;
-
-      await this.swapIndexFiles(dbPath, tempDbPath);
-
-      this.db = this.openDatabaseAtPath(dbPath);
+      const hasVectorTable = (db: DatabaseSync) =>
+        db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='chunks_vec'").get() !==
+        undefined;
+      if (hasVectorTable(tempDb) || hasVectorTable(originalDb)) {
+        // Extension loading can await; the short publication transaction below cannot.
+        const loaded = await loadSqliteVecExtension({
+          db: originalDb,
+          extensionPath: this.vector.extensionPath,
+        });
+        if (!loaded.ok) {
+          throw new Error(
+            `Memory index publication requires sqlite-vec: ${loaded.error ?? "extension unavailable"}`,
+          );
+        }
+      }
+      tempDb.close();
+      this.db = originalDb;
+      publishMemoryIndex({ db: originalDb, preparedPath: tempDbPath });
       this.vectorReady = null;
       this.vector.available = null;
       this.vector.loadError = undefined;
-      this.ensureSchema();
       this.vector.dims = nextMeta?.vectorDims;
     } catch (err) {
-      try {
-        this.db.close();
-      } catch {}
-      await this.removeIndexFiles(tempDbPath);
       restoreOriginalState();
       throw err;
+    } finally {
+      try {
+        tempDb.close();
+      } catch {}
+      await this.removeIndexFiles(tempDbPath);
     }
   }
 

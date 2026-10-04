@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { recordAgentArtifact } from "../../src/agents/artifact-result-recording.js";
 import {
   boundPerception,
   compactReceipts,
@@ -33,6 +34,10 @@ import type {
 } from "../../src/agents/central-harness/types.js";
 import { buildFinanceAutomaticLifecycleFeedback } from "../../src/agents/finance-automatic-lifecycle-feedback.js";
 import { loadConfig } from "../../src/config/io.js";
+import {
+  backfillOwnerArtifacts,
+  type OwnerArtifactBackfillReceipt,
+} from "../../src/memory/artifact-owner-backfill.js";
 import {
   CENTRAL_AGENT_LATEST_PATH,
   CENTRAL_AGENT_LOG_JSONL_PATH,
@@ -477,6 +482,7 @@ async function writeLatest(
     capabilityDrain: readonly string[];
     receiptPersistenceDurationMs: number | null;
     continuation?: CentralCycleContinuation;
+    artifactBackfill: OwnerArtifactBackfillReceipt;
   },
 ): Promise<void> {
   // The pointer is resolved against what is already on disk, so a run that observed
@@ -517,6 +523,7 @@ async function writeLatest(
     /** Evidence-write honesty: a completed cycle whose record could not be persisted. */
     evidenceComplete: meta.evidenceWriteFailures.length === 0,
     evidenceWriteFailures: meta.evidenceWriteFailures,
+    artifactBackfill: meta.artifactBackfill,
     liveTouched: false,
     providerConfigTouched: false,
     protectedMemoryTouched: false,
@@ -546,12 +553,14 @@ async function main(): Promise<void> {
   const dryRun = options.dryRun === true;
   const planOnly = options.planOnly === true;
   const maxCycles = Number(options.maxCycles);
-  const registry = createCentralToolRegistry();
+  const config = loadConfig();
+  const workspaceDir = path.dirname(STATE_DIR);
+  const registry = createCentralToolRegistry({ config, workspaceDir });
   const brain: CentralBrain = dryRun
     ? {
         propose: async () => ({ kind: "blocked_no_provider" as const, reason: "dry_run_no_llm" }),
       }
-    : createCentralBrain(loadConfig(), { tools: [...registry.values()], maxTokens: 8_192 });
+    : createCentralBrain(config, { tools: [...registry.values()], maxTokens: 8_192 });
 
   const deadline = Date.now() + durationMinutes * 60_000;
   let runs = 0;
@@ -572,6 +581,16 @@ async function main(): Promise<void> {
   const recordEvidenceFailure = (target: string, error: unknown): void => {
     evidenceWriteFailures.push({ target, reason: String(error).slice(0, 300) });
   };
+  // Reuse the resident owner's cadence to recover previously persisted results after index failure.
+  const artifactBackfill = await backfillOwnerArtifacts({ config, agentId: "main", workspaceDir });
+  if (artifactBackfill.status !== "complete") {
+    recordEvidenceFailure(
+      "artifact_backfill",
+      new Error(
+        `status=${artifactBackfill.status}; gaps=${artifactBackfill.gapCount}; truncated=${artifactBackfill.truncated}`,
+      ),
+    );
+  }
   // thread-store resume: recover prior cycles so the brain inherits context.
   let history = await loadPersistedReceipts();
   while (Date.now() < deadline && runs < maxCycles) {
@@ -616,6 +635,19 @@ async function main(): Promise<void> {
     }
     try {
       lastRunSnapshotPath = await writeRunSnapshot(RUNS_DIR, receipt);
+      const indexed = await recordAgentArtifact({
+        config,
+        agentId: "main",
+        workspaceDir,
+        owner: "central_harness",
+        runId: receipt.runId,
+        observedAt: receipt.observedAt,
+        value: receipt,
+        sourceReceiptRefs: [lastRunSnapshotPath],
+      });
+      if (indexed.status === "unavailable") {
+        recordEvidenceFailure("artifact_index", new Error(indexed.reason));
+      }
     } catch (error) {
       // The per-cycle snapshot is an extra copy of a receipt that is already in the
       // jsonl. Losing it must not cost the invocation its summary, so this stays
@@ -650,6 +682,7 @@ async function main(): Promise<void> {
       ...(lastRunSnapshotPath !== undefined ? { runSnapshotPath: lastRunSnapshotPath } : {}),
       droppedNonDecisionCycles,
       evidenceWriteFailures,
+      artifactBackfill,
       capabilityDrain: dispatchedCapabilities(lastReceipt, CENTRAL_CAPABILITY_IDS),
       receiptPersistenceDurationMs: lastReceiptPersistenceDurationMs,
       ...(lastContinuation ? { continuation: lastContinuation } : {}),
@@ -714,6 +747,7 @@ async function main(): Promise<void> {
     /** False when a cycle's evidence could not be persisted; the run still succeeded. */
     evidenceComplete: evidenceWriteFailures.length === 0,
     evidenceWriteFailures,
+    artifactBackfill,
     liveTouched: false,
     providerConfigTouched: false,
     protectedMemoryTouched: false,

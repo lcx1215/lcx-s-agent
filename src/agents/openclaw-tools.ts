@@ -2,6 +2,7 @@ import type { OpenClawConfig } from "../config/config.js";
 import { resolvePluginTools } from "../plugins/tools.js";
 import type { GatewayMessageChannel } from "../utils/message-channel.js";
 import { resolveSessionAgentId } from "./agent-scope.js";
+import { withArtifactResultRecording } from "./artifact-result-recording.js";
 import type { FinanceWorkflowSlotModels } from "./finance-model-workflow.js";
 import { resolveFinanceRealtimeSourceRegistryOptionsFromEnv } from "./finance-realtime-source-registry.js";
 import type { SandboxFsBridge } from "./sandbox/fs-bridge.js";
@@ -9,6 +10,7 @@ import type { ToolFsPolicy } from "./tool-fs-policy.js";
 import { createAgentsListTool } from "./tools/agents-list-tool.js";
 import { createAiderTool } from "./tools/aider-tool.js";
 import { createApiCapabilityHealthReadTool } from "./tools/api-capability-health-read-tool.js";
+import { createArtifactMemoryRecallTool } from "./tools/artifact-memory-recall-tool.js";
 import { createBrowserTool } from "./tools/browser-tool.js";
 import { createCanvasTool } from "./tools/canvas-tool.js";
 import { createCodexCodingHarnessTool } from "./tools/codex-coding-harness-tool.js";
@@ -142,6 +144,8 @@ export function createOpenClawTools(options?: {
   workspaceDir?: string;
   sandboxed?: boolean;
   config?: OpenClawConfig;
+  /** The full coding-tool assembly records once after policy and hook wrapping. */
+  recordArtifacts?: boolean;
   pluginToolAllowlist?: string[];
   /** Current channel ID for auto-threading (Slack). */
   currentChannelId?: string;
@@ -472,6 +476,11 @@ export function createOpenClawTools(options?: {
     ...(pdfTool ? [pdfTool] : []),
   ];
 
+  const config = options?.config;
+  const agentId = resolveSessionAgentId({ sessionKey: options?.agentSessionKey, config });
+  if (!options?.sandboxed) {
+    tools.push(createArtifactMemoryRecallTool({ config, agentId, workspaceDir }));
+  }
   const pluginTools = resolvePluginTools({
     context: {
       config: options?.config,
@@ -493,5 +502,8 @@ export function createOpenClawTools(options?: {
     toolAllowlist: options?.pluginToolAllowlist,
   });
 
-  return [...tools, ...pluginTools];
+  const allTools = [...tools, ...pluginTools];
+  return config && !options?.sandboxed && options?.recordArtifacts !== false
+    ? allTools.map((tool) => withArtifactResultRecording(tool, { config, agentId, workspaceDir }))
+    : allTools;
 }
