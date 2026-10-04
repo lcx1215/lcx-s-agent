@@ -382,6 +382,25 @@ background model calls or activate research candidates automatically.
 
 The output compares cash and fixed allocation, scores probabilities, and applies additional cost scenarios. Previously inspected data remains retrospective, not an untouched holdout. Outputs always have no execution authority and cannot promote or change the active trading strategy. A zero allocation is an abstention, not proof of profitable skill.
 
+The same operator supports `--paired <candidate-manifest.json> --policy
+<paired-protocol.json> --output <new-output.json>` for a prospective selection
+diagnostic. The protocol freezes model and configuration fingerprints, both
+prompt fingerprints, shared call/tool/time ceilings, USD notional and holding
+horizon. Retain every eligible candidate, including failed or missing reviews;
+registration must precede both decisions, and both decisions must precede the
+common entry. Each arm pays its recorded inference cost even when it vetoes.
+Unknown inference or trading costs remain unknown. Incomplete coverage reports
+only the covered subset and leaves the full-manifest increment null.
+
+This mode reads supplied files and never calls a model or broker. Its common
+quote replay isolates candidate selection, not actual fills or account returns.
+It checks declarations and timing but does not authenticate receipt references
+or prove the manifest covers the source population; the operator must reconcile
+that manifest with the original candidate ledger. Equal budget ceilings do not
+mean equal actual costs. Do not compound overlapping candidate outcomes or
+promote a strategy from this diagnostic. Previously inspected candidates remain
+retrospective and cannot satisfy the prospective cutoff.
+
 Central-agent loops default to five cycles, reject non-finite duration/cycle inputs, and stop when consecutive failed owner actions repeat with identical arguments and outcomes. Changed arguments or outcomes remain eligible for bounded follow-up.
 
 ### Verifying local learning evaluations

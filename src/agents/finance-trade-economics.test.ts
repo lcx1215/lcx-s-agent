@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   estimateFinanceTradeEconomics,
   evaluateFinanceTradeEconomics,
+  evaluateFinancePairedEconomics,
 } from "./finance-trade-economics.js";
 const policy = {
   minObservations: 4,
@@ -102,5 +103,186 @@ describe("net profit diagnostics", () => {
       evaluate([-0.01]).netEconomics.allOpportunities.averageWinsErasedByLargestLoss,
     ).toBeNull();
     expect(evaluate([0]).netEconomics.allOpportunities.netBreakevens).toBe(1);
+  });
+});
+
+describe("same-model prospective paired selection diagnostics", () => {
+  const hash = "a".repeat(64);
+  const protocol = {
+    schemaVersion: "lcx_finance_paired_economics_protocol_v1" as const,
+    frozenAt: "2026-10-05T00:00:00Z",
+    sourceSha: "b".repeat(40),
+    modelRef: "configured/model",
+    modelConfigRef: hash,
+    promptRefs: { system: hash, baseline: "c".repeat(64) },
+    maxModelCalls: 2,
+    maxToolCalls: 2,
+    timeoutMs: 60_000,
+    notionalUsd: 100,
+    horizonSeconds: 3_600,
+  };
+  const candidate = () => ({
+    id: "candidate-1",
+    candidateAt: "2026-10-06T14:00:00Z",
+    registeredAt: "2026-10-06T14:00:01Z",
+    requestRef: hash,
+    system: {
+      modelRef: protocol.modelRef,
+      modelConfigRef: hash,
+      promptRef: protocol.promptRefs.system,
+      decidedAt: "2026-10-06T14:00:20Z",
+      decision: "approve" as "approve" | "veto" | "failed",
+      modelCalls: 1,
+      toolCalls: 0,
+      latencyMs: 19_000,
+      inferenceCostUsd: 0.02 as number | null,
+      receiptRef: hash,
+    },
+    baseline: {
+      modelRef: protocol.modelRef,
+      modelConfigRef: hash,
+      promptRef: protocol.promptRefs.baseline,
+      decidedAt: "2026-10-06T14:00:25Z",
+      decision: "veto" as "approve" | "veto" | "failed",
+      modelCalls: 1,
+      toolCalls: 0,
+      latencyMs: 24_000,
+      inferenceCostUsd: 0.01 as number | null,
+      receiptRef: hash,
+    },
+    outcome: {
+      basis: "common_quote_replay" as const,
+      entryAt: "2026-10-06T14:01:00Z",
+      exitAt: "2026-10-06T15:01:00Z",
+      grossPnlUsd: 2,
+      tradingCostUsd: 0.1 as number | null,
+      notionalUsd: 100,
+      receiptRef: hash,
+    },
+  });
+  const evaluate = (
+    rows: Parameters<typeof evaluateFinancePairedEconomics>[0]["candidates"],
+    asOf = "2026-10-06T16:00:00Z",
+  ) => evaluateFinancePairedEconomics({ protocol, candidates: rows, asOf });
+  it("charges both inference bills, including abstention, without calling replay broker profit", () => {
+    const result = evaluate([candidate()]);
+    expect(result.rows[0].systemNetPnlUsd).toBeCloseTo(1.88);
+    expect(result.rows[0].baselineNetPnlUsd).toBe(-0.01);
+    expect(result.fullManifestIncrementalNetPnlUsd).toBeCloseTo(1.89);
+    expect(result.promotionAllowed).toBe(false);
+    expect(result.executionAuthority).toBe("none");
+  });
+  it("shows losing approvals and cost differences when both arms abstain", () => {
+    const row = candidate();
+    row.outcome.grossPnlUsd = -2;
+    expect(evaluate([row]).fullManifestIncrementalNetPnlUsd).toBeCloseTo(-2.11);
+    row.system.decision = "veto";
+    expect(evaluate([row]).fullManifestIncrementalNetPnlUsd).toBeCloseTo(-0.01);
+  });
+  it("retains missing/failed candidates and refuses an aggregate winner from incomplete coverage", () => {
+    const row = candidate();
+    row.id = "candidate-2";
+    const result = evaluate([candidate(), { ...row, baseline: null }]);
+    expect(result.totalCandidates).toBe(2);
+    expect(result.coverage).toBe(0.5);
+    expect(result.coveredPairs.incrementalNetPnlUsd).toBeCloseTo(1.89);
+    expect(result.fullManifestIncrementalNetPnlUsd).toBeNull();
+    row.system.decision = "failed";
+    expect(evaluate([row]).rows[0].issues).toContain("system_decision_failed");
+  });
+  it.each(["inference", "trading", "outcome"])("preserves unknown %s costs or outcomes", (kind) => {
+    const row = candidate();
+    if (kind === "inference") {
+      row.baseline.inferenceCostUsd = null;
+    }
+    if (kind === "trading") {
+      row.outcome.tradingCostUsd = null;
+    }
+    const result = evaluate([{ ...row, ...(kind === "outcome" ? { outcome: null } : {}) }]);
+    expect(result.scoredCandidates).toBe(0);
+    expect(result.coveredPairs.incrementalNetPnlUsd).toBeNull();
+  });
+  it.each(["model", "capacity", "prompt", "calls", "tools", "latency", "notional"])(
+    "rejects %s mismatch instead of silently normalizing it",
+    (kind) => {
+      const row = candidate();
+      if (kind === "model") {
+        row.baseline.modelRef = "different/model";
+      }
+      if (kind === "capacity") {
+        row.baseline.modelConfigRef = "d".repeat(64);
+      }
+      if (kind === "prompt") {
+        row.baseline.promptRef = hash;
+      }
+      if (kind === "calls") {
+        row.baseline.modelCalls = 3;
+      }
+      if (kind === "tools") {
+        row.baseline.toolCalls = 3;
+      }
+      if (kind === "latency") {
+        row.baseline.latencyMs = 60_001;
+      }
+      if (kind === "notional") {
+        row.outcome.notionalUsd = 101;
+      }
+      expect(evaluate([row]).scoredCandidates).toBe(0);
+    },
+  );
+  it.each([
+    "historical",
+    "late_registration",
+    "future_decision",
+    "late_decision",
+    "horizon",
+    "future_outcome",
+  ])("rejects %s timing leakage", (kind) => {
+    const row = candidate();
+    if (kind === "historical") {
+      row.candidateAt = "2026-10-04T14:00:00Z";
+    }
+    if (kind === "late_registration") {
+      row.registeredAt = "2026-10-06T14:00:30Z";
+    }
+    if (kind === "future_decision") {
+      row.system.decidedAt = "2026-10-07T14:00:00Z";
+    }
+    if (kind === "late_decision") {
+      row.system.decidedAt = "2026-10-06T14:01:01Z";
+    }
+    if (kind === "horizon") {
+      row.outcome.exitAt = "2026-10-06T15:02:00Z";
+    }
+    if (kind === "future_outcome") {
+      row.outcome.exitAt = "2026-10-07T15:01:00Z";
+    }
+    expect(evaluate([row]).scoredCandidates).toBe(0);
+  });
+  it("requires strict temporal precedence rather than ties without sequence authority", () => {
+    const row = candidate();
+    row.system.decidedAt = row.registeredAt;
+    expect(evaluate([row]).rows[0].issues).toContain("system_decision_time_invalid");
+    row.system.decidedAt = row.outcome.entryAt;
+    expect(evaluate([row]).rows[0].issues).toContain("outcome_time_invalid_or_not_yet_available");
+  });
+  it("does not serialize derived or aggregate overflow as a completed comparison", () => {
+    const row = candidate();
+    row.outcome.grossPnlUsd = -1e308;
+    row.outcome.tradingCostUsd = 1e308;
+    expect(evaluate([row]).rows[0].issues).toContain("nonfinite_derived_economics");
+    row.outcome.grossPnlUsd = 1e308;
+    row.outcome.tradingCostUsd = 0;
+    const result = evaluate([row, { ...row, id: "candidate-2" }]);
+    expect(result.evaluationIssues).toContain("nonfinite_aggregate_economics");
+    expect(result.status).toBe("incomplete_evidence");
+    expect(result.fullManifestIncrementalNetPnlUsd).toBeNull();
+    expect(result.coveredPairs.incrementalNetPnlUsd).toBeNull();
+  });
+  it("does not rank empty samples, duplicate candidates or an unfrozen policy", () => {
+    expect(evaluate([]).coverage).toBeNull();
+    expect(evaluate([]).fullManifestIncrementalNetPnlUsd).toBeNull();
+    expect(() => evaluate([candidate(), candidate()])).toThrow("duplicate");
+    expect(() => evaluate([], "2026-10-04T23:59:59Z")).toThrow("not frozen");
   });
 });

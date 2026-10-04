@@ -198,3 +198,219 @@ export function evaluateFinanceTradeEconomics(params: {
     evaluationKind: "retrospective_walk_forward_not_untouched_holdout",
   };
 }
+
+const PairedHash = z.string().regex(/^[a-f\d]{64}$/u);
+const PairedTime = z.string().datetime({ offset: true });
+const PairedArm = z
+  .object({
+    modelRef: z.string().min(1),
+    modelConfigRef: PairedHash,
+    promptRef: PairedHash,
+    decidedAt: PairedTime,
+    decision: z.enum(["approve", "veto", "failed"]),
+    modelCalls: z.number().int().nonnegative(),
+    toolCalls: z.number().int().nonnegative(),
+    latencyMs: z.number().finite().nonnegative(),
+    inferenceCostUsd: z.number().finite().nonnegative().nullable(),
+    receiptRef: PairedHash,
+  })
+  .strict();
+export const FinancePairedEconomicsProtocolSchema = z
+  .object({
+    schemaVersion: z.literal("lcx_finance_paired_economics_protocol_v1"),
+    frozenAt: PairedTime,
+    sourceSha: z.string().regex(/^[a-f\d]{40}$/u),
+    modelRef: z.string().min(1),
+    modelConfigRef: PairedHash,
+    promptRefs: z.object({ system: PairedHash, baseline: PairedHash }).strict(),
+    maxModelCalls: z.number().int().positive(),
+    maxToolCalls: z.number().int().nonnegative(),
+    timeoutMs: z.number().int().positive(),
+    notionalUsd: z.number().finite().positive(),
+    horizonSeconds: z.number().int().positive(),
+  })
+  .strict();
+export const FinancePairedEconomicsCandidateSchema = z
+  .object({
+    id: z.string().min(1),
+    candidateAt: PairedTime,
+    registeredAt: PairedTime,
+    requestRef: PairedHash,
+    system: PairedArm.nullable(),
+    baseline: PairedArm.nullable(),
+    outcome: z
+      .object({
+        basis: z.literal("common_quote_replay"),
+        entryAt: PairedTime,
+        exitAt: PairedTime,
+        grossPnlUsd: z.number().finite(),
+        tradingCostUsd: z.number().finite().nonnegative().nullable(),
+        notionalUsd: z.number().finite().positive(),
+        receiptRef: PairedHash,
+      })
+      .strict()
+      .nullable(),
+  })
+  .strict();
+
+/** Paired selection diagnostic over a caller-supplied complete candidate manifest.
+ * Common quote replay isolates selection; it does not manufacture a second broker fill.
+ */
+export function evaluateFinancePairedEconomics(params: {
+  protocol: z.infer<typeof FinancePairedEconomicsProtocolSchema>;
+  candidates: readonly z.infer<typeof FinancePairedEconomicsCandidateSchema>[];
+  asOf: string;
+}) {
+  const protocol = FinancePairedEconomicsProtocolSchema.parse(params.protocol);
+  const asOf = PairedTime.parse(params.asOf);
+  const cutoff = Date.parse(asOf);
+  if (Date.parse(protocol.frozenAt) > cutoff) {
+    throw new Error("paired protocol is not frozen as of evaluation");
+  }
+  const candidates = params.candidates.map((row) =>
+    FinancePairedEconomicsCandidateSchema.parse(row),
+  );
+  if (new Set(candidates.map((row) => row.id)).size !== candidates.length) {
+    throw new Error("duplicate paired candidate identities");
+  }
+  const rows = candidates.map((row) => {
+    const issues: string[] = [];
+    const candidateAt = Date.parse(row.candidateAt);
+    const registeredAt = Date.parse(row.registeredAt);
+    if (
+      candidateAt < Date.parse(protocol.frozenAt) ||
+      registeredAt < candidateAt ||
+      registeredAt > cutoff
+    ) {
+      issues.push("candidate_not_registered_prospectively");
+    }
+    for (const key of ["system", "baseline"] as const) {
+      const arm = row[key];
+      if (!arm) {
+        issues.push(`${key}_decision_missing`);
+        continue;
+      }
+      if (
+        arm.modelRef !== protocol.modelRef ||
+        arm.modelConfigRef !== protocol.modelConfigRef ||
+        arm.promptRef !== protocol.promptRefs[key]
+      ) {
+        issues.push(`${key}_model_or_prompt_mismatch`);
+      }
+      if (
+        arm.modelCalls > protocol.maxModelCalls ||
+        arm.toolCalls > protocol.maxToolCalls ||
+        arm.latencyMs > protocol.timeoutMs ||
+        (arm.decision !== "failed" && arm.modelCalls === 0)
+      ) {
+        issues.push(`${key}_budget_violation`);
+      }
+      if (Date.parse(arm.decidedAt) <= registeredAt || Date.parse(arm.decidedAt) > cutoff) {
+        issues.push(`${key}_decision_time_invalid`);
+      }
+      if (arm.decision === "failed") {
+        issues.push(`${key}_decision_failed`);
+      }
+      if (arm.inferenceCostUsd === null) {
+        issues.push(`${key}_inference_cost_unknown`);
+      }
+    }
+    const outcome = row.outcome;
+    if (!outcome) {
+      issues.push("outcome_pending");
+    } else {
+      const entryAt = Date.parse(outcome.entryAt);
+      const exitAt = Date.parse(outcome.exitAt);
+      if (
+        entryAt < registeredAt ||
+        exitAt > cutoff ||
+        exitAt - entryAt !== protocol.horizonSeconds * 1_000 ||
+        [row.system, row.baseline].some((arm) => arm && Date.parse(arm.decidedAt) >= entryAt)
+      ) {
+        issues.push("outcome_time_invalid_or_not_yet_available");
+      }
+      if (outcome.notionalUsd !== protocol.notionalUsd) {
+        issues.push("common_notional_mismatch");
+      }
+      if (outcome.tradingCostUsd === null) {
+        issues.push("trading_cost_unknown");
+      }
+    }
+    // Missing cost is unknown, never a free trade or a free model call.
+    const score = (arm: z.infer<typeof PairedArm> | null) =>
+      issues.length ||
+      !arm ||
+      !outcome ||
+      arm.inferenceCostUsd === null ||
+      outcome.tradingCostUsd === null
+        ? null
+        : (arm.decision === "approve" ? outcome.grossPnlUsd - outcome.tradingCostUsd : 0) -
+          arm.inferenceCostUsd;
+    let systemNetPnlUsd = score(row.system);
+    let baselineNetPnlUsd = score(row.baseline);
+    let incrementalNetPnlUsd =
+      systemNetPnlUsd === null || baselineNetPnlUsd === null
+        ? null
+        : systemNetPnlUsd - baselineNetPnlUsd;
+    if (
+      [systemNetPnlUsd, baselineNetPnlUsd, incrementalNetPnlUsd].some(
+        (value) => value !== null && !Number.isFinite(value),
+      )
+    ) {
+      issues.push("nonfinite_derived_economics");
+      systemNetPnlUsd = baselineNetPnlUsd = incrementalNetPnlUsd = null;
+    }
+    return {
+      id: row.id,
+      requestRef: row.requestRef,
+      issues,
+      systemNetPnlUsd,
+      baselineNetPnlUsd,
+      incrementalNetPnlUsd,
+    };
+  });
+  const scored = rows.filter((row) => row.incrementalNetPnlUsd !== null);
+  const complete = rows.length > 0 && scored.length === rows.length;
+  const sum = (key: "systemNetPnlUsd" | "baselineNetPnlUsd" | "incrementalNetPnlUsd") =>
+    scored.length ? scored.reduce((total, row) => total + (row[key] ?? 0), 0) : null;
+  const sums = {
+    systemNetPnlUsd: sum("systemNetPnlUsd"),
+    baselineNetPnlUsd: sum("baselineNetPnlUsd"),
+    incrementalNetPnlUsd: sum("incrementalNetPnlUsd"),
+  };
+  const aggregateArithmeticValid = Object.values(sums).every(
+    (value) => value === null || Number.isFinite(value),
+  );
+  return {
+    schemaVersion: "lcx_finance_paired_economics_eval_v1" as const,
+    executionAuthority: "none" as const,
+    promotionAllowed: false,
+    asOf,
+    protocolRef: caseflowFingerprint(protocol),
+    datasetRef: caseflowFingerprint(candidates),
+    status:
+      complete && aggregateArithmeticValid
+        ? "paired_quote_diagnostic_complete"
+        : "incomplete_evidence",
+    evaluationIssues: aggregateArithmeticValid ? [] : ["nonfinite_aggregate_economics"],
+    totalCandidates: rows.length,
+    scoredCandidates: scored.length,
+    missingOrInvalidCandidates: rows.length - scored.length,
+    coverage: rows.length ? scored.length / rows.length : null,
+    coveredPairs: Object.fromEntries(
+      Object.entries(sums).map(([key, value]) => [
+        key,
+        value !== null && !Number.isFinite(value) ? null : value,
+      ]),
+    ),
+    fullManifestIncrementalNetPnlUsd:
+      complete && aggregateArithmeticValid ? sums.incrementalNetPnlUsd : null,
+    rows,
+    limitations: [
+      "Caller supplies the complete candidate manifest and receipt references; this function does not authenticate recording times or verify source hashes against a database.",
+      "Same model, prompt bindings and budget ceilings are checked; actual paid usage can differ and inference costs remain required for vetoes.",
+      "Common quote replay is counterfactual selection evidence, not actual broker fills or portfolio P&L; no compounding, drawdown, confidence interval or profitability claim.",
+      "A positive covered-pair sum does not establish value when candidate coverage is incomplete or market outcomes are dependent.",
+    ],
+  };
+}
