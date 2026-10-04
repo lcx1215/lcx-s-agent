@@ -664,8 +664,8 @@ export async function readFinancePositionRecords(
 }
 
 /**
- * Re-derive positions and PnL from the stored stream, optionally as of an instant. Marks
- * after `asOf` are excluded, so a historical view is reproducible instead of "latest wins".
+ * Re-derive positions and PnL from the stored stream, optionally as of an instant. Fills and
+ * marks after `asOf` are excluded, so a historical view is reproducible instead of "latest wins".
  */
 export async function readFinancePositionLedger(
   directory: string,
@@ -676,17 +676,20 @@ export async function readFinancePositionLedger(
   if (asOf.length > 0 && !Number.isFinite(Date.parse(asOf))) {
     throw new Error("asOf must be an ISO datetime");
   }
-  const considered =
-    asOf.length === 0
-      ? read.marks
-      : read.marks.filter((mark) => Date.parse(mark.at) <= Date.parse(asOf));
+  const cutoff = asOf.length === 0 ? undefined : Date.parse(asOf);
+  const consideredReceipts =
+    cutoff === undefined
+      ? read.receipts
+      : read.receipts.filter((receipt) => Date.parse(receipt.fill.filledAt) <= cutoff);
+  const consideredMarks =
+    cutoff === undefined ? read.marks : read.marks.filter((mark) => Date.parse(mark.at) <= cutoff);
   // The projection lets the last mark per instrument win, so sorting by time makes "last"
   // mean "latest"; a stable sort keeps append order as the tie-break.
-  const ordered = considered.toSorted((left, right) => left.at.localeCompare(right.at));
+  const orderedMarks = consideredMarks.toSorted((left, right) => left.at.localeCompare(right.at));
   return Object.freeze({
-    ledger: projectFinancePositions({ receipts: read.receipts, marks: ordered }),
-    receipts: Object.freeze([...read.receipts]),
-    marks: Object.freeze([...ordered]),
+    ledger: projectFinancePositions({ receipts: consideredReceipts, marks: orderedMarks }),
+    receipts: Object.freeze([...consideredReceipts]),
+    marks: Object.freeze([...orderedMarks]),
     recordCount: read.records.length,
     receiptRecordCount: read.receipts.length,
     markRecordCount: read.marks.length,

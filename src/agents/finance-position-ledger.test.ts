@@ -518,9 +518,19 @@ describe("finance position ledger store", () => {
     expect(read.headRef).toBeNull();
   });
 
-  it("excludes marks after the requested instant so a historical view is reproducible", async () => {
+  it("excludes fills and marks after the requested instant in a historical view", async () => {
     const directory = await storeDirectory();
     await appendFinanceExecutionReceipt(directory, pastReceipt({ quantity: 10 }));
+    const futureFill = pastReceipt({
+      quantity: 5,
+      fill: {
+        filledQuantity: 5,
+        fillPrice: 120,
+        filledAt: "2026-09-12T00:00:00Z",
+        venueRef: "paper",
+      },
+    });
+    await appendFinanceExecutionReceipt(directory, futureFill);
     await appendFinancePositionMark(directory, {
       instrument: "AAPL",
       price: 110,
@@ -536,12 +546,17 @@ describe("finance position ledger store", () => {
       asOf: "2026-09-11T12:00:00Z",
     });
     expect(historical.markRecordCount).toBe(2);
+    expect(historical.receipts).toHaveLength(1);
+    expect(historical.ledger.receiptCount).toBe(1);
+    expect(historical.ledger.positions[0]?.quantity).toBe(10);
     expect(historical.ledger.positions[0]?.markPrice).toBe(110);
     expect(historical.ledger.unrealizedPnl).toBe(100);
 
     const latest = await readFinancePositionLedger(directory);
+    expect(latest.receipts).toHaveLength(2);
+    expect(latest.ledger.positions[0]?.quantity).toBe(15);
     expect(latest.ledger.positions[0]?.markPrice).toBe(130);
-    expect(latest.ledger.unrealizedPnl).toBe(300);
+    expect(latest.ledger.unrealizedPnl).toBe(350);
   });
 
   it("re-derives exactly what the same receipts and marks project to directly", async () => {
