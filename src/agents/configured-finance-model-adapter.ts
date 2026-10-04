@@ -226,7 +226,11 @@ export function createConfiguredFinanceModelAdapter(
       "configured finance analysis requires an existing openai-completions model definition",
     );
   }
-  const maxTokens = options.maxTokens ?? 8_192;
+  // Read the raw declaration: inline model normalization inserts a fallback capacity.
+  const declaredMaxTokens = cfg.models?.providers?.[provider]?.models.find(
+    (candidate) => candidate.id === modelId,
+  )?.maxTokens;
+  const maxTokens = options.maxTokens ?? declaredMaxTokens;
   const timeoutMs = options.timeoutMs ?? 120_000;
   const maxCalls = options.maxCalls ?? 48;
   if (!Number.isSafeInteger(maxCalls) || maxCalls < 1 || maxCalls > 100) {
@@ -234,21 +238,21 @@ export function createConfiguredFinanceModelAdapter(
   }
   let calls = 0;
   if (
-    !Number.isSafeInteger(maxTokens) ||
-    maxTokens < 1 ||
-    maxTokens > 16_384 ||
+    (maxTokens !== undefined && (!Number.isSafeInteger(maxTokens) || maxTokens < 1)) ||
     !Number.isSafeInteger(timeoutMs) ||
     timeoutMs < 1 ||
     timeoutMs > 300_000
   ) {
-    throw new Error("configured finance model requires bounded tokens and timeout");
+    throw new Error(
+      "configured finance model requires positive safe-integer tokens and bounded timeout",
+    );
   }
   if (
     Object.values(options.maxTokensByRole ?? {}).some(
-      (value) => !Number.isSafeInteger(value) || value < 1 || value > 16_384,
+      (value) => !Number.isSafeInteger(value) || value < 1,
     )
   ) {
-    throw new Error("configured finance model requires bounded role token limits");
+    throw new Error("configured finance model requires positive safe-integer role token limits");
   }
   const supportsReasoningEffort =
     model.compat?.supportsReasoningEffort === true ||
@@ -357,7 +361,7 @@ export function createConfiguredFinanceModelAdapter(
           body: JSON.stringify({
             model: modelId,
             messages: [{ role: "user", content: promptText }],
-            max_tokens: requestMaxTokens,
+            ...(requestMaxTokens !== undefined ? { max_tokens: requestMaxTokens } : {}),
             ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
             response_format: { type: "json_object" },
             stream: false,

@@ -329,7 +329,7 @@ it("rejects duplicate, overflow and outside pair scope before reading; abort pro
   controller.abort();
   await expect(execute([requests[0]], packet, controller.signal)).rejects.toThrow();
 });
-it("retains the original two-call budget for truncation and refuses late evidence requests", async () => {
+it("does not spend the optional evidence call retrying provider truncation", async () => {
   const scope = await fixture();
   const fixtureModel = scripted([
     new ModelAdapterError("output_truncated"),
@@ -339,7 +339,11 @@ it("retains the original two-call budget for truncation and refuses late evidenc
     {},
     { adapterFactory: fixtureModel.factory, evidenceScope: scope },
   )(packet, new AbortController().signal);
-  expect(result).toMatchObject({ status: "failed", modelCalls: 2 });
+  expect(result).toMatchObject({
+    status: "failed",
+    failureCode: "output_truncated",
+    modelCalls: 1,
+  });
   expect(result.toolEvidence).toBeUndefined();
 });
 it("returns missing data as unknown to the final model, never fabricates economics or a third call", async () => {

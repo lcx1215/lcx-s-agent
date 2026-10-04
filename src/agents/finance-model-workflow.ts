@@ -383,14 +383,6 @@ export function createFinanceModelWorkflow(
               formatting: "low",
               final_precheck: "low",
             } as const,
-            maxTokensByRole: {
-              evidence_integrity: 16_384,
-              adversarial_challenge: 16_384,
-              final_precheck: 16_384,
-              formatting: 16_384,
-              portfolio_exposure: 16_384,
-              research_draft: 16_384,
-            },
           }
         : {}),
     });

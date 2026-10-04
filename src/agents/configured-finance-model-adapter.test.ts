@@ -329,6 +329,42 @@ describe("configured research model transport", () => {
     expect(outputBudgets).toEqual([16_384, 16_384, 16_384]);
   });
 
+  it("uses only raw declared capacity by default and allows larger explicit limits", async () => {
+    const config = structuredClone(cfg);
+    config.models!.providers!.fixture.models[0].maxTokens = 384_000;
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (typeof init?.body !== "string") {
+          throw new Error("expected serialized JSON body");
+        }
+        bodies.push(JSON.parse(init.body) as Record<string, unknown>);
+        return new Response(
+          JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "{}" } }] }),
+        );
+      }),
+    );
+    const signal = new AbortController().signal;
+    await createConfiguredFinanceModelAdapter(config).invoke(request, signal);
+    await createConfiguredFinanceModelAdapter(config, { maxTokens: 65_536 }).invoke(
+      request,
+      signal,
+    );
+    await createConfiguredFinanceModelAdapter(config, {
+      maxTokensByRole: { research_draft: 90_000 },
+    }).invoke(request, signal);
+    Reflect.deleteProperty(config.models!.providers!.fixture.models[0], "maxTokens");
+    await createConfiguredFinanceModelAdapter(config).invoke(request, signal);
+    expect(bodies.map((body) => body.max_tokens)).toEqual([384_000, 65_536, 90_000, undefined]);
+    expect(bodies[3]).not.toHaveProperty("max_tokens");
+    for (const invalid of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() => createConfiguredFinanceModelAdapter(config, { maxTokens: invalid })).toThrow(
+        "positive safe-integer",
+      );
+    }
+  });
+
   it("rejects oversized local prompts without consuming a provider call", async () => {
     const http = vi.fn(
       async () =>

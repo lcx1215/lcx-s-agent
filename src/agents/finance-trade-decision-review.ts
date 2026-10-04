@@ -25,8 +25,7 @@ import { ModelAdapterError, type ModelCallRequest } from "./logical-agent-model-
 export const FINANCE_TRADE_DECISION_REVIEW_SCHEMA = "lcx_finance_trade_decision_review_v1" as const;
 export const FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA =
   "lcx_finance_intraday_trade_decision_review_v1" as const;
-export const FINANCE_TRADE_DECISION_REVIEW_MAX_TOKENS = 4_096;
-const FINANCE_TRADE_DECISION_REVIEW_RETRY_MAX_TOKENS = FINANCE_TRADE_DECISION_REVIEW_MAX_TOKENS * 2;
+export const FINANCE_INTRADAY_QUOTE_APPROVAL_POLICY = "within_reviewed_bid_ask_v1" as const;
 export const FINANCE_TRADE_DECISION_REVIEW_TIMEOUT_MS = 60_000;
 
 export type FinanceTradeDecisionCandidate = Readonly<{
@@ -171,13 +170,14 @@ export type FinanceTradeDecisionReviewResult = Readonly<{
   latencyMs: number;
   providerCallObserved: boolean;
   adapterAttested: boolean;
-  /** Number of configured model-adapter invocations, including one bounded truncation retry. */
+  /** Number of configured model-adapter invocations, including an optional evidence follow-up. */
   modelCalls?: number;
   requestIdSha256?: string;
   taskObjectiveSha256?: string;
   toolEvidence?: readonly FinanceTradeReviewToolEvidence[];
   modelCallEvidence?: readonly FinanceTradeReviewModelCallEvidence[];
   decisions?: readonly FinanceTradeDecision[];
+  quoteApprovalPolicy?: typeof FINANCE_INTRADAY_QUOTE_APPROVAL_POLICY;
   failureCode?: FinanceTradeDecisionReviewFailureCode;
 }>;
 
@@ -289,6 +289,8 @@ export function isValidFinanceTradeDecisionReviewResult(
     value.latencyMs < 0 ||
     typeof value.providerCallObserved !== "boolean" ||
     typeof value.adapterAttested !== "boolean" ||
+    (value.quoteApprovalPolicy !== undefined &&
+      value.quoteApprovalPolicy !== FINANCE_INTRADAY_QUOTE_APPROVAL_POLICY) ||
     (value.modelCalls !== undefined &&
       (typeof value.modelCalls !== "number" ||
         !Number.isSafeInteger(value.modelCalls) ||
@@ -364,6 +366,11 @@ function reviewPrompt(payload: unknown): string {
           "Consume broker_fill_feedback as historical instrument FIFO accounting only. Cash reconciliation does not prove fee allocation; netMatchedPnl=null and zero closed matches do not establish profitable trading. recordedCashFeePnlBounds bound only possible allocation of recorded cash fees; never substitute them for exact or full-cost net profit, add instrument ranges, or make a new trading gate from them. reportedAssetFeeValuation is broker qty-times-price source valuation, not a cash charge or allocated closed-lot cost; never subtract it again or infer a fee order link. These results are not strategy attribution, account return or expected return for the candidate. State how the supported result or limitation affects your judgment without inventing a veto requirement.",
         ]
       : []),
+    ...(intraday
+      ? [
+          "An approve decision may be reused only for a later fresh quote from the same source, feed, price basis and maximum age, with nondecreasing quote time, bid >= reviewed bid and ask <= reviewed ask. All other quote changes require a new review. This host policy does not change instrument, size, stop, target, timing, risk limits or execution authority; do not return policy fields in the model output.",
+        ]
+      : []),
     "Use only the supplied decision packet. Do not use external or unstated market facts.",
     "Separate observed inputs from hypotheses in rationale and expectationGap. An observed volume change or measured slippage needs an exact supplied packet field or completed tool result. When those inputs are absent, describe them as conditions to verify or leave them null; origin=model_hypothesis does not establish that they occurred. A narrow bid/ask spread does not measure fill slippage or establish a continuation probability.",
     "Focus on decision-changing evidence: a supported catalyst or contradiction, thesis/stop invalidation, horizon mismatch, and execution cost or liquidity risk. Do not repeat broad market research, recompute bookkeeping, or invent numerical gates; deterministic controllers own calculations and capital authorization. Keep the rationale concise and cite the relevant packet facts.",
@@ -432,15 +439,14 @@ export function createFinanceTradeDecisionReviewer(
     ? describeFinanceTradeReviewFinancialCapabilities(dependencies.evidenceScope)
     : [];
   const factory = dependencies.adapterFactory ?? createConfiguredFinanceModelAdapter;
-  const createAdapter = (maxTokens: number) =>
+  const createAdapter = () =>
     factory(cfg, {
       maxCalls: 1,
-      maxTokens,
       reasoningEffortByRole: { risk_check: "low" },
       timeoutMs: FINANCE_TRADE_DECISION_REVIEW_TIMEOUT_MS,
       buildPrompt: reviewPrompt,
     });
-  const adapter = createAdapter(FINANCE_TRADE_DECISION_REVIEW_MAX_TOKENS);
+  const adapter = createAdapter();
   const now = dependencies.now ?? Date.now;
 
   return async (reviewRequest, signal) => {
@@ -549,7 +555,7 @@ export function createFinanceTradeDecisionReviewer(
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       if (attempt === 2) {
         try {
-          const retryAdapter = createAdapter(FINANCE_TRADE_DECISION_REVIEW_RETRY_MAX_TOKENS);
+          const retryAdapter = createAdapter();
           if (
             retryAdapter.provider !== adapter.provider ||
             retryAdapter.modelId !== adapter.modelId
@@ -625,9 +631,6 @@ export function createFinanceTradeDecisionReviewer(
         completeCall(
           modelFailureCode(error) === "output_truncated" ? "output_truncated" : "failed",
         );
-        if (attempt === 1 && modelFailureCode(error) === "output_truncated" && !signal.aborted) {
-          continue;
-        }
         return failureResult(error);
       }
       completeCall("invalid", output);
@@ -703,6 +706,9 @@ export function createFinanceTradeDecisionReviewer(
         modelCalls,
         ...(requestIdSha256 ? { requestIdSha256 } : {}),
         decisions,
+        ...(reviewRequest.schemaVersion === FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA
+          ? { quoteApprovalPolicy: FINANCE_INTRADAY_QUOTE_APPROVAL_POLICY }
+          : {}),
       };
     }
     return failureResult(new ModelAdapterError("output_truncated"));

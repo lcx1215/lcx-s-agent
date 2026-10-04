@@ -319,6 +319,17 @@ export const FinanceIntradayDecisionReviewReceiptSchema = z
     adapterAttested: z.boolean(),
     requestIdSha256: Hash.optional(),
     taskObjectiveSha256: Hash.optional(),
+    quoteApprovalPolicy: z.literal("within_reviewed_bid_ask_v1").optional(),
+    executionQuoteValidation: z
+      .object({
+        policy: z.enum(["exact", "within_reviewed_bid_ask_v1"]),
+        checkedAt: Iso,
+        status: z.enum(["unchanged", "inside_reviewed_bid_ask", "refused"]),
+        reason: Text.optional(),
+        quote: IntradayReviewCandidateSchema.shape.executionQuote,
+      })
+      .strict()
+      .optional(),
     toolEvidence: FinanceTradeReviewToolEvidenceSchema.array().max(2).optional(),
     modelCallEvidence: FinanceTradeReviewModelCallEvidenceSchema.array().max(2).optional(),
     decision: IntradayReviewDecisionSchema.optional(),

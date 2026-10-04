@@ -15,6 +15,7 @@ import {
 import { appendFinanceBrokerHistory } from "./finance-position-ledger.js";
 import {
   FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA,
+  FINANCE_INTRADAY_QUOTE_APPROVAL_POLICY,
   FINANCE_TRADE_DECISION_REVIEW_SCHEMA,
   createFinanceTradeDecisionReviewer,
   isValidFinanceTradeDecisionReviewResult,
@@ -362,8 +363,8 @@ describe("configured finance trade decision reviewer", () => {
                   compat: { supportsReasoningEffort: reasoning },
                   input: ["text"],
                   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-                  contextWindow: 32_000,
-                  maxTokens: 8_192,
+                  contextWindow: 1_000_000,
+                  maxTokens: 384_000,
                 },
               ],
             },
@@ -375,6 +376,11 @@ describe("configured finance trade decision reviewer", () => {
       const result = await reviewer(request, AbortSignal.timeout(1000));
 
       expect(fetchMock).toHaveBeenCalledTimes(1);
+      const requestBody = fetchMock.mock.calls[0]?.[1]?.body;
+      if (typeof requestBody !== "string") {
+        throw new Error("expected serialized JSON body");
+      }
+      expect(JSON.parse(requestBody).max_tokens).toBe(384_000);
       expect(result).toMatchObject({
         status: "completed",
         attempted: true,
@@ -429,16 +435,17 @@ describe("configured finance trade decision reviewer", () => {
     expect(prompt).toContain("if the packet already suffices, decide directly");
   });
 
-  it("uses a bounded output and timeout budget for a complete structured review", () => {
+  it("uses model capacity while retaining call and timeout budgets", () => {
     const model = adapter(null);
-    const adapterFactory = vi.fn(() => model);
+    const adapterFactory = vi.fn<typeof createConfiguredFinanceModelAdapter>(() => model);
 
     createFinanceTradeDecisionReviewer({} as OpenClawConfig, { adapterFactory });
 
     expect(adapterFactory).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ maxCalls: 1, maxTokens: 4_096, timeoutMs: 60_000 }),
+      expect.objectContaining({ maxCalls: 1, timeoutMs: 60_000 }),
     );
+    expect(adapterFactory.mock.calls[0]?.[1]).not.toHaveProperty("maxTokens");
   });
 
   it("returns only exact candidate-bound approve/veto decisions and hashes transport identity", async () => {
@@ -538,61 +545,68 @@ describe("configured finance trade decision reviewer", () => {
     expect(result.requestIdSha256).toMatch(/^[a-f\d]{64}$/u);
   });
 
-  it("retries once with a larger budget only after explicit truncation", async () => {
+  it("reports provider truncation without spending a second call", async () => {
     const truncated = adapter(null);
     vi.mocked(truncated.invoke).mockRejectedValueOnce(new ModelAdapterError("output_truncated"));
-    const completed = adapter({
-      schemaVersion: FINANCE_TRADE_DECISION_REVIEW_SCHEMA,
-      decisions: [
-        {
-          candidateId: request.candidates[0].candidateId,
-          decision: "approve",
-          rationale: "The supplied evidence supports this exact candidate.",
-        },
-      ],
-    });
-    const adapterFactory = vi.fn().mockReturnValueOnce(truncated).mockReturnValueOnce(completed);
+    const adapterFactory = vi.fn(() => truncated);
     const reviewer = createFinanceTradeDecisionReviewer({} as OpenClawConfig, { adapterFactory });
-
     const result = await reviewer(request, AbortSignal.timeout(1000));
-
-    expect(result).toMatchObject({ status: "completed", modelCalls: 2 });
-    expect(result.modelCallEvidence?.map((call) => call.resultKind)).toEqual([
-      "output_truncated",
-      "decision",
-    ]);
-    expect(result.modelCallEvidence?.[0].outputSha256).toBeUndefined();
-    expect(result.modelCallEvidence?.[1].toolEvidenceSha256).toBeUndefined();
-    expect(adapterFactory.mock.calls.map(([_, options]) => options?.maxTokens)).toEqual([
-      4_096, 8_192,
-    ]);
-    expect(completed.invoke).toHaveBeenCalledWith(
-      expect.objectContaining({
-        attempt: 2,
-        provider: "fixture-provider",
-        modelId: "fixture-model",
-      }),
-      expect.any(AbortSignal),
-    );
-  });
-
-  it("stays fail-closed when the single truncation retry is also truncated", async () => {
-    const first = adapter(null);
-    const second = adapter(null);
-    vi.mocked(first.invoke).mockRejectedValueOnce(new ModelAdapterError("output_truncated"));
-    vi.mocked(second.invoke).mockRejectedValueOnce(new ModelAdapterError("output_truncated"));
-    const adapterFactory = vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second);
-    const reviewer = createFinanceTradeDecisionReviewer({} as OpenClawConfig, { adapterFactory });
-
-    const result = await reviewer(request, AbortSignal.timeout(1000));
-
     expect(result).toMatchObject({
       status: "failed",
       failureCode: "output_truncated",
-      attempted: true,
-      modelCalls: 2,
+      modelCalls: 1,
     });
-    expect(adapterFactory).toHaveBeenCalledTimes(2);
+    expect(result.modelCallEvidence?.map((call) => call.resultKind)).toEqual(["output_truncated"]);
+    expect(adapterFactory).toHaveBeenCalledTimes(1);
+    expect(truncated.invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it("adds the quote policy only to successful host intraday results", async () => {
+    const output = (packet: FinanceTradeDecisionReviewRequest) => ({
+      schemaVersion: packet.schemaVersion,
+      decisions: [
+        {
+          candidateId: packet.candidates[0].candidateId,
+          decision: "approve",
+          rationale: "Supported exact candidate.",
+        },
+      ],
+    });
+    const intraday = await createFinanceTradeDecisionReviewer(
+      {},
+      { adapterFactory: () => adapter(output(intradayRequest)) },
+    )(intradayRequest, new AbortController().signal);
+    expect(intraday.quoteApprovalPolicy).toBe(FINANCE_INTRADAY_QUOTE_APPROVAL_POLICY);
+    expect(isValidFinanceTradeDecisionReviewResult(intraday, intradayRequest)).toBe(true);
+    expect(
+      isValidFinanceTradeDecisionReviewResult(
+        { ...intraday, quoteApprovalPolicy: "ignore_quote" },
+        intradayRequest,
+      ),
+    ).toBe(false);
+    expect(
+      isValidFinanceTradeDecisionReviewResult(
+        { ...intraday, quoteApprovalPolicy: undefined },
+        intradayRequest,
+      ),
+    ).toBe(true);
+    const daily = await createFinanceTradeDecisionReviewer(
+      {},
+      { adapterFactory: () => adapter(output(request)) },
+    )(request, new AbortController().signal);
+    expect(daily).not.toHaveProperty("quoteApprovalPolicy");
+    const forged = await createFinanceTradeDecisionReviewer(
+      {},
+      {
+        adapterFactory: () =>
+          adapter({
+            ...output(intradayRequest),
+            quoteApprovalPolicy: FINANCE_INTRADAY_QUOTE_APPROVAL_POLICY,
+          }),
+      },
+    )(intradayRequest, new AbortController().signal);
+    expect(forged).toMatchObject({ status: "failed", failureCode: "output_contract" });
+    expect(forged).not.toHaveProperty("quoteApprovalPolicy");
   });
 
   it.each([

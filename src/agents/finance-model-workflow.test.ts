@@ -85,22 +85,35 @@ describe("ontology backed finance workflow", () => {
     }
     const boundedTokens = roleTokenBudgets.get("bounded_workflow") ?? [];
     expect(boundedTokens.length).toBeGreaterThan(0);
-    expect(
-      boundedTokens.every((tokens) => {
-        const values = tokens as Record<string, unknown> | undefined;
-        return (
-          values?.evidence_integrity === 16_384 &&
-          values.adversarial_challenge === 16_384 &&
-          values.final_precheck === 16_384 &&
-          values.formatting === 16_384 &&
-          values.portfolio_exposure === 16_384 &&
-          values.research_draft === 16_384
-        );
-      }),
-    ).toBe(true);
+    expect(boundedTokens.every((tokens) => tokens === undefined)).toBe(true);
     expect(roleTokenBudgets.get("provider_default")?.every((tokens) => tokens === undefined)).toBe(
       true,
     );
+  });
+  it("preserves an explicit large token limit without injecting role overrides", () => {
+    const seen: Array<{ maxTokens?: number; maxTokensByRole?: unknown }> = [];
+    createFinanceModelWorkflow(cfg, {
+      maxTokens: 65_536,
+      adapterFactory: (_cfg, options) => {
+        seen.push({ maxTokens: options?.maxTokens, maxTokensByRole: options?.maxTokensByRole });
+        return {
+          id: "fixture",
+          provider: "fixture",
+          modelId: options!.modelRef!,
+          mode: "adapter",
+          capabilities: ["quality_harness"],
+          requiredTools: [],
+          requiredSideEffects: [],
+          invoke: async () => review,
+        };
+      },
+    });
+    expect(seen.length).toBeGreaterThan(0);
+    expect(
+      seen.every(
+        (options) => options.maxTokens === 65_536 && options.maxTokensByRole === undefined,
+      ),
+    ).toBe(true);
   });
   it("preserves independent review deadlines when faster workflow roles use a shorter timeout", () => {
     const adapterTimeouts: number[] = [];

@@ -178,8 +178,8 @@ describe("lcx-finance-research-run", () => {
     await expect(runResearch(["--horizon-months", "121"])).rejects.toThrow(
       "--horizon-months must be a positive integer <= 120",
     );
-    await expect(runResearch(["--max-tokens", "16385"])).rejects.toThrow(
-      "--max-tokens must be a positive integer <= 16384",
+    await expect(runResearch(["--max-tokens", "9007199254740992"])).rejects.toThrow(
+      "--max-tokens must be a positive integer <= 9007199254740991",
     );
     await expect(runResearch(["--live", "--timeout-ms", "2147483648"])).rejects.toThrow(
       "--timeout-ms must be a positive integer <= 2147483647",

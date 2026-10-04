@@ -236,7 +236,7 @@ export function createCentralBrain(
     try {
       adapter = createConfiguredFinanceModelAdapter(cfg, {
         trajectorySource: "central_brain",
-        maxTokens: options.maxTokens ?? 4_096,
+        maxTokens: options.maxTokens,
         timeoutMs: options.timeoutMs ?? 120_000,
         maxCalls: options.maxCalls ?? 12,
         reasoningEffortByRole: { final_precheck: "low" },

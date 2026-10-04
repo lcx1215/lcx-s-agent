@@ -10,6 +10,7 @@ import {
   executionQuoteIssue,
   recordCycleFill,
   type FinanceDailyCycleParams,
+  type FinanceDailyCycleExecutionQuote,
 } from "./finance-daily-cycle.js";
 import {
   FinanceExecutionSafetyFactsError,
@@ -40,6 +41,7 @@ import { readFinanceStrategyRuleLedger } from "./finance-strategy-rule-ledger.js
 import { buildFinanceThesisDecisionContext } from "./finance-thesis-decision-context.js";
 import {
   FINANCE_INTRADAY_TRADE_DECISION_REVIEW_SCHEMA,
+  FINANCE_INTRADAY_QUOTE_APPROVAL_POLICY,
   FINANCE_TRADE_DECISION_REVIEW_TIMEOUT_MS,
   isValidFinanceTradeDecisionReviewResult,
   type FinanceIntradayTradeDecisionReviewRequest,
@@ -53,6 +55,59 @@ type Controller = Required<
     "accountId" | "accountBookProvider" | "executionQuoteProvider" | "createSafetyContext"
   >
 > & { prepareExecutionQuote?: Controller["executionQuoteProvider"] };
+
+function reviewedQuoteComparison(
+  review: FinanceIntradayDecisionReviewReceipt,
+  quote: FinanceDailyCycleExecutionQuote,
+): { status: "unchanged" | "inside_reviewed_bid_ask" } | { status: "refused"; reason: string } {
+  const reviewed = review.request.candidates[0].executionQuote;
+  if (
+    quote.sourceUrlOrArtifact !== reviewed.sourceUrlOrArtifact ||
+    quote.feed !== reviewed.feed ||
+    quote.priceBasis !== reviewed.priceBasis ||
+    quote.maxAgeMs !== reviewed.maxAgeMs ||
+    Date.parse(quote.referencePriceAt) < Date.parse(reviewed.referencePriceAt)
+  ) {
+    return {
+      status: "refused",
+      reason: "intraday reviewed quote provenance or age policy changed",
+    };
+  }
+  if (quote.bidPrice === reviewed.bidPrice && quote.askPrice === reviewed.askPrice) {
+    return { status: "unchanged" };
+  }
+  // Only a reviewer that declared this scope can approve an improved refresh.
+  // No price tolerance or authority is inferred for legacy review receipts.
+  if (
+    review.quoteApprovalPolicy === FINANCE_INTRADAY_QUOTE_APPROVAL_POLICY &&
+    reviewed.bidPrice !== undefined &&
+    reviewed.askPrice !== undefined &&
+    quote.bidPrice !== undefined &&
+    quote.askPrice !== undefined &&
+    quote.bidPrice >= reviewed.bidPrice &&
+    quote.askPrice <= reviewed.askPrice
+  ) {
+    return { status: "inside_reviewed_bid_ask" };
+  }
+  return {
+    status: "refused",
+    reason: "intraday reviewed execution prices changed; a new model review is required",
+  };
+}
+
+function reviewQuoteSnapshot(quote: FinanceDailyCycleExecutionQuote, asOfMs: number) {
+  return {
+    referencePrice: quote.referencePrice,
+    referencePriceAt: quote.referencePriceAt,
+    ...(quote.bidPrice === undefined ? {} : { bidPrice: quote.bidPrice }),
+    ...(quote.askPrice === undefined ? {} : { askPrice: quote.askPrice }),
+    ...(quote.feed === undefined ? {} : { feed: quote.feed }),
+    ...(quote.priceBasis === undefined ? {} : { priceBasis: quote.priceBasis }),
+    sourceUrlOrArtifact: quote.sourceUrlOrArtifact,
+    ageMs: asOfMs - Date.parse(quote.referencePriceAt),
+    maxAgeMs: quote.maxAgeMs,
+  };
+}
 
 async function managedDynamicExitProofIssue(
   directory: string,
@@ -418,10 +473,12 @@ export async function executeFinanceIntradayDecision(params: {
       });
       return Object.freeze({ status: "refused" as const, outcome: outcome.input });
     }
-    let quote = await params.controller.executionQuoteProvider(
-      { instrument: input.instrument, assetClass: "us_equity", side: input.action },
-      signal,
-    );
+    let quote = {
+      ...(await params.controller.executionQuoteProvider(
+        { instrument: input.instrument, assetClass: "us_equity", side: input.action },
+        signal,
+      )),
+    };
     let referencePrice = input.action === "buy" ? quote.askPrice : quote.bidPrice;
     if (referencePrice === undefined || !Number.isFinite(referencePrice) || referencePrice <= 0) {
       throw new Error("intraday execution requires a side-specific live quote");
@@ -542,17 +599,7 @@ export async function executeFinanceIntradayDecision(params: {
             marketSession: input.strategyBinding!.marketSession!,
             intradayOwnedQuantity: owned,
             brokerPositionQuantity: brokerHeld,
-            executionQuote: {
-              referencePrice: quote.referencePrice,
-              referencePriceAt: quote.referencePriceAt,
-              ...(quote.bidPrice === undefined ? {} : { bidPrice: quote.bidPrice }),
-              ...(quote.askPrice === undefined ? {} : { askPrice: quote.askPrice }),
-              ...(quote.feed === undefined ? {} : { feed: quote.feed }),
-              ...(quote.priceBasis === undefined ? {} : { priceBasis: quote.priceBasis }),
-              sourceUrlOrArtifact: quote.sourceUrlOrArtifact,
-              ageMs: observedAtMs - Date.parse(quote.referencePriceAt),
-              maxAgeMs: quote.maxAgeMs,
-            },
+            executionQuote: reviewQuoteSnapshot(quote, observedAtMs),
           },
         ],
       };
@@ -622,6 +669,9 @@ export async function executeFinanceIntradayDecision(params: {
         latencyMs: reviewResult.latencyMs,
         providerCallObserved: reviewResult.providerCallObserved,
         adapterAttested: reviewResult.adapterAttested,
+        ...(reviewResult.quoteApprovalPolicy
+          ? { quoteApprovalPolicy: reviewResult.quoteApprovalPolicy }
+          : {}),
         ...(reviewResult.requestIdSha256 ? { requestIdSha256: reviewResult.requestIdSha256 } : {}),
         ...(reviewResult.toolEvidence ? { toolEvidence: reviewResult.toolEvidence } : {}),
         ...(reviewResult.modelCallEvidence
@@ -676,11 +726,14 @@ export async function executeFinanceIntradayDecision(params: {
     const reviewedQuote = quote;
     // Model review and ledger reads can outlive the quote; refresh once, then fail closed.
     if (params.controller.prepareExecutionQuote || executionQuoteIssue(quote, now()) !== null) {
-      quote = await (
-        params.controller.prepareExecutionQuote ?? params.controller.executionQuoteProvider
-      )({ instrument: input.instrument, assetClass: "us_equity", side: input.action }, signal);
+      quote = {
+        ...(await (
+          params.controller.prepareExecutionQuote ?? params.controller.executionQuoteProvider
+        )({ instrument: input.instrument, assetClass: "us_equity", side: input.action }, signal)),
+      };
     }
-    const finalQuoteIssue = executionQuoteIssue(quote, now());
+    const checkedAtMs = now();
+    const finalQuoteIssue = executionQuoteIssue(quote, checkedAtMs);
     referencePrice = input.action === "buy" ? quote.askPrice : quote.bidPrice;
     if (
       finalQuoteIssue !== null ||
@@ -692,23 +745,48 @@ export async function executeFinanceIntradayDecision(params: {
         `intraday execution quote refused: ${finalQuoteIssue ?? "missing side price"}`,
       );
     }
+    if (!protectiveExit && tradeDecisionReview?.status === "completed") {
+      const comparison = reviewedQuoteComparison(tradeDecisionReview, quote);
+      tradeDecisionReview = FinanceIntradayDecisionReviewReceiptSchema.parse({
+        ...tradeDecisionReview,
+        executionQuoteValidation: {
+          policy: tradeDecisionReview.quoteApprovalPolicy ?? "exact",
+          checkedAt: new Date(checkedAtMs).toISOString(),
+          ...comparison,
+          quote: reviewQuoteSnapshot(quote, checkedAtMs),
+        },
+      });
+      if (comparison.status === "refused") {
+        const outcome = await appendFinanceIntradayOutcome(params.directory, {
+          signalId: input.signalId,
+          status: "refused",
+          reasons: [comparison.reason],
+          tradeDecisionReview,
+        });
+        return Object.freeze({
+          status: "refused" as const,
+          outcome: outcome.input,
+          tradeDecisionReview,
+        });
+      }
+    }
     if (
-      params.controller.prepareExecutionQuote &&
-      !protectiveExit &&
-      tradeDecisionReview?.status === "completed" &&
-      (quote.bidPrice !== reviewedQuote.bidPrice || quote.askPrice !== reviewedQuote.askPrice)
+      referencePrice !== (input.action === "buy" ? reviewedQuote.askPrice : reviewedQuote.bidPrice)
     ) {
-      const outcome = await appendFinanceIntradayOutcome(params.directory, {
-        signalId: input.signalId,
-        status: "refused",
-        reasons: ["intraday reviewed execution prices changed; a new model review is required"],
-        tradeDecisionReview,
-      });
-      return Object.freeze({
-        status: "refused" as const,
-        outcome: outcome.input,
-        tradeDecisionReview,
-      });
+      const finalPreflight = compileFinanceAlpacaOrderIntent(orderRequest(referencePrice));
+      if (!finalPreflight.ok) {
+        const outcome = await appendFinanceIntradayOutcome(params.directory, {
+          signalId: input.signalId,
+          status: "refused",
+          reasons: [...finalPreflight.refusals],
+          tradeDecisionReview,
+        });
+        return Object.freeze({
+          status: "refused" as const,
+          outcome: outcome.input,
+          tradeDecisionReview,
+        });
+      }
     }
     const finalCalendarIssue = await strategyBindingIssue(
       params.directory,

@@ -330,9 +330,9 @@ export async function runFinanceResearchCli(
     values["max-model-tokens"] === undefined ? undefined : Number(values["max-model-tokens"]);
   if (
     maxModelTokens !== undefined &&
-    (!Number.isSafeInteger(maxModelTokens) || maxModelTokens < 1 || maxModelTokens > 16_384)
+    (!Number.isSafeInteger(maxModelTokens) || maxModelTokens < 1)
   ) {
-    throw new Error("--max-model-tokens must be an integer from 1 to 16384");
+    throw new Error("--max-model-tokens must be a positive safe integer");
   }
   const maxApiCalls = Number(values["max-api-calls"]);
   if (!Number.isSafeInteger(maxApiCalls) || maxApiCalls <= 0) {
@@ -465,7 +465,7 @@ export async function runFinanceResearchCli(
         maxTokens: maxModelTokens,
       })
     : undefined;
-  const runtime = { timeoutMs: 120_000, maxTokens: maxModelTokens ?? 8_192 };
+  const runtime = { timeoutMs: 120_000, maxTokens: maxModelTokens };
   execution.runtime = { ...runtime };
   const role =
     workflow?.routing.adapters[1] ??

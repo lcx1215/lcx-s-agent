@@ -19,6 +19,14 @@ import {
 import type { FinanceResearchRunReceipt } from "../../src/agents/finance-research-runner.js";
 
 describe("finance research thesis persistence option", () => {
+  it("defaults to declared model capacity and accepts positive safe-integer token overrides", () => {
+    expect(parseArgs([]).maxTokens).toBeUndefined();
+    expect(parseArgs(["--max-tokens", "384000"]).maxTokens).toBe(384_000);
+    for (const invalid of ["0", "-1", "1.5", "9007199254740992"]) {
+      expect(() => parseArgs(["--max-tokens", invalid])).toThrow();
+    }
+  });
+
   it("requires a live, quality-verified workflow and an explicit state root", () => {
     expect(() => parseArgs(["--persist-theses"])).toThrow(
       /requires --live --workflow-models --write/,

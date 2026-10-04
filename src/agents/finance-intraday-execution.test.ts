@@ -43,9 +43,10 @@ import {
   retireFinanceStrategyRule,
 } from "./finance-strategy-rule-ledger.js";
 import { openFinanceThesis } from "./finance-thesis-ledger.js";
-import type {
-  FinanceTradeDecisionReviewRequest,
-  FinanceTradeDecisionReviewer,
+import {
+  FINANCE_INTRADAY_QUOTE_APPROVAL_POLICY,
+  type FinanceTradeDecisionReviewRequest,
+  type FinanceTradeDecisionReviewer,
 } from "./finance-trade-decision-review.js";
 
 const readerMocks = vi.hoisted(() => ({ readUniverse: vi.fn() }));
@@ -1615,6 +1616,224 @@ describe("intraday decision execution bridge", () => {
     });
     expect(runOrderMock).not.toHaveBeenCalled();
   });
+
+  it.each([
+    { name: "same prices, newer observation", bid: 499, ask: 501, reachesGate: true },
+    { name: "both sides improve", bid: 499.2, ask: 500.8, reachesGate: true },
+    { name: "ask only improves", bid: 499, ask: 500.8, reachesGate: true },
+    { name: "bid only improves", bid: 499.2, ask: 501, reachesGate: true },
+    {
+      name: "provider fallback also binds",
+      bid: 499.2,
+      ask: 500.8,
+      fallback: true,
+      reachesGate: true,
+    },
+    {
+      name: "legacy approval stays exact",
+      bid: 499.2,
+      ask: 500.8,
+      legacy: true,
+      reachesGate: false,
+    },
+    {
+      name: "fallback legacy approval stays exact",
+      bid: 499.2,
+      ask: 500.8,
+      legacy: true,
+      fallback: true,
+      reachesGate: false,
+    },
+    { name: "ask worsens by any amount", bid: 499.2, ask: 501.000001, reachesGate: false },
+    { name: "bid worsens by any amount", bid: 498.999999, ask: 500.8, reachesGate: false },
+    { name: "upward shift is outside reviewed range", bid: 499.2, ask: 501.2, reachesGate: false },
+    {
+      name: "downward shift is outside reviewed range",
+      bid: 498.8,
+      ask: 500.8,
+      reachesGate: false,
+    },
+    { name: "crossed quote", bid: 501, ask: 500.8, reachesGate: false },
+    { name: "missing bid", bid: undefined, ask: 500.8, reachesGate: false },
+    { name: "missing ask", bid: 499.2, ask: undefined, reachesGate: false },
+    {
+      name: "different source",
+      bid: 499.2,
+      ask: 500.8,
+      source: "fixture://other",
+      reachesGate: false,
+    },
+    { name: "different feed", bid: 499.2, ask: 500.8, feed: "sip", reachesGate: false },
+    { name: "different basis", bid: 499.2, ask: 500.8, basis: "bid" as const, reachesGate: false },
+    {
+      name: "expanded freshness allowance",
+      bid: 499.2,
+      ask: 500.8,
+      maxAge: 60_000,
+      reachesGate: false,
+    },
+    {
+      name: "future quote",
+      bid: 499.2,
+      ask: 500.8,
+      time: "2026-09-18T15:00:38.000Z",
+      reachesGate: false,
+    },
+    {
+      name: "stale quote",
+      bid: 499.2,
+      ask: 500.8,
+      time: "2026-09-18T15:00:01.000Z",
+      reachesGate: false,
+    },
+    {
+      name: "fresh timestamp rolls backward",
+      bid: 499.2,
+      ask: 500.8,
+      shortReview: true,
+      time: "2026-09-18T15:00:00.000Z",
+      reachesGate: false,
+    },
+    {
+      name: "improvement crosses stop",
+      bid: 497,
+      ask: 497.5,
+      wideInitial: true,
+      reachesGate: false,
+    },
+  ])(
+    "revalidates explicit quote approval without relaxing the shared gate ($name)",
+    async (fixture) => {
+      const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-quote-scope-"));
+      temporary.push(directory);
+      const strategyBinding = await activeRuleBinding(directory);
+      const decision = (
+        await appendFinanceIntradayDecision(directory, {
+          signalId: `quote-scope-${fixture.name}`,
+          instrument: "SPY",
+          sessionDate: "2026-09-18",
+          action: "buy",
+          reason: "opening_range_breakout",
+          referencePrice: 500,
+          referencePriceAt: "2026-09-18T15:00:00.000Z",
+          stopPrice: 498,
+          targetPrice: 504,
+          datasetHeadRef: "a".repeat(64),
+          strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+          strategyBinding,
+        })
+      ).record;
+      let clock = Date.parse("2026-09-18T15:00:02.000Z");
+      const firstQuote = {
+        referencePrice: 501,
+        bidPrice: fixture.wideInitial ? 496 : 499,
+        askPrice: 501,
+        referencePriceAt: "2026-09-18T15:00:01.000Z",
+        sourceUrlOrArtifact: "fixture://quote",
+        feed: "iex",
+        priceBasis: "ask" as const,
+        maxAgeMs: 30_000,
+      };
+      const finalQuote = () => ({
+        referencePrice: fixture.ask ?? 500.8,
+        bidPrice: fixture.bid,
+        askPrice: fixture.ask,
+        referencePriceAt: fixture.time ?? new Date(clock).toISOString(),
+        sourceUrlOrArtifact: fixture.source ?? firstQuote.sourceUrlOrArtifact,
+        feed: fixture.feed ?? firstQuote.feed,
+        priceBasis: fixture.basis ?? firstQuote.priceBasis,
+        maxAgeMs: fixture.maxAge ?? firstQuote.maxAgeMs,
+      });
+      const quoteProvider = vi
+        .fn()
+        .mockResolvedValueOnce(firstQuote)
+        .mockImplementation(async () => finalQuote());
+      const reviewer = vi.fn(async (request: FinanceTradeDecisionReviewRequest) => {
+        clock += fixture.shortReview ? 1_000 : 35_000;
+        return {
+          ...(await approvingReviewer()(request)),
+          ...(fixture.legacy
+            ? {}
+            : { quoteApprovalPolicy: FINANCE_INTRADAY_QUOTE_APPROVAL_POLICY }),
+        };
+      });
+      const runOrder = vi.fn(async () => ({
+        ok: false as const,
+        stage: "place" as const,
+        refusals: ["fixture final fresh-account gate refuses"],
+      }));
+      const result = await executeFinanceIntradayDecision({
+        directory,
+        decision,
+        controller: {
+          accountId: "paper-account",
+          accountBookProvider: async () => ({
+            accountId: "paper-account",
+            venue: "alpaca:paper",
+            observedAt: "2026-09-18T15:00:01.000Z",
+            expiresAt: "2026-09-18T15:02:00.000Z",
+            equity: 100_000,
+            positions: [],
+          }),
+          executionQuoteProvider: quoteProvider,
+          ...(fixture.fallback ? {} : { prepareExecutionQuote: quoteProvider }),
+          createSafetyContext: vi.fn(),
+        },
+        caps: { maxOrderNotional: 1000, maxInstrumentNotional: 5000, maxOrdersPerRun: 1 },
+        tradeDecisionReviewer: reviewer,
+        now: () => clock,
+        runOrder,
+      });
+      expect(result.status).toBe("refused");
+      expect(reviewer).toHaveBeenCalledTimes(1);
+      expect(quoteProvider).toHaveBeenCalledTimes(2);
+      expect(runOrder).toHaveBeenCalledTimes(fixture.reachesGate ? 1 : 0);
+      const stored = await readFinanceIntradayOutcome(directory, decision.input.signalId);
+      expect(stored?.tradeDecisionReview?.quoteApprovalPolicy).toBe(
+        fixture.legacy ? undefined : FINANCE_INTRADAY_QUOTE_APPROVAL_POLICY,
+      );
+      if (fixture.reachesGate) {
+        expect(runOrder).toHaveBeenCalledWith(
+          expect.objectContaining({
+            market: {
+              referencePrice: fixture.ask,
+              referencePriceAt: finalQuote().referencePriceAt,
+            },
+          }),
+        );
+        expect(stored?.reasons).toEqual(["fixture final fresh-account gate refuses"]);
+        expect(stored?.tradeDecisionReview?.executionQuoteValidation).toMatchObject({
+          status: fixture.name.startsWith("same") ? "unchanged" : "inside_reviewed_bid_ask",
+          policy: FINANCE_INTRADAY_QUOTE_APPROVAL_POLICY,
+          quote: { bidPrice: fixture.bid, askPrice: fixture.ask },
+        });
+      }
+      if (fixture.name === "improvement crosses stop") {
+        expect(stored?.reasons.join()).toContain("stop price");
+        expect(stored?.tradeDecisionReview?.executionQuoteValidation?.status).toBe(
+          "inside_reviewed_bid_ask",
+        );
+      }
+      // Final gate refusal is terminal and cannot spend another review or submit again.
+      const repeat = await executeFinanceIntradayDecision({
+        directory,
+        decision,
+        controller: {
+          accountId: "paper-account",
+          accountBookProvider: vi.fn(),
+          executionQuoteProvider: quoteProvider,
+          createSafetyContext: vi.fn(),
+        },
+        caps: { maxOrderNotional: 1000, maxInstrumentNotional: 5000, maxOrdersPerRun: 1 },
+        tradeDecisionReviewer: reviewer,
+        now: () => clock,
+        runOrder,
+      });
+      expect(repeat.status).toBe("already_terminal");
+      expect(reviewer).toHaveBeenCalledTimes(1);
+      expect(runOrder).toHaveBeenCalledTimes(fixture.reachesGate ? 1 : 0);
+    },
+  );
 
   it("refuses a legacy pending decision without strategy provenance before any venue adapter call", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-legacy-pending-"));

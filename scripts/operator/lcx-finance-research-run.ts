@@ -72,7 +72,7 @@ const DEFAULT_ASK =
 const DEFAULT_MODEL_ID = "Qwen/Qwen3-0.6B";
 const MAX_HORIZON_MONTHS = 120;
 const MAX_RESEARCH_ASK_BYTES = 32_768;
-const MAX_MODEL_TOKENS = 16_384;
+const MAX_MODEL_TOKENS = Number.MAX_SAFE_INTEGER;
 const MAX_MODEL_TIMEOUT_MS = 2_147_483_647;
 // The local adapter compacts evidence and dependency output before prompting; allow the
 // router to receive the contract's bounded 64-item quality packet before that compaction.
@@ -94,7 +94,7 @@ type Options = {
   adapterPath?: string;
   modelId: string;
   pythonPath?: string;
-  maxTokens: number;
+  maxTokens?: number;
   timeoutMs: number;
   runTimeoutMs: number;
   maxModelCalls: number;
@@ -141,7 +141,7 @@ function usage(): string {
     "  --adapter DIR                      retired local override (not valid with workflow models)",
     "  --model MODEL                      retired local model override",
     "  --python PATH                      retired local Python override",
-    `  --max-tokens N                     bounded workflow output tokens (default: 8192, max: ${MAX_MODEL_TOKENS})`,
+    `  --max-tokens N                     explicit workflow output tokens (default: declared model capacity)`,
     `  --timeout-ms N                     bounded workflow model timeout (max: ${MAX_MODEL_TIMEOUT_MS})`,
     "  --run-timeout-ms N                 source + model cancellation deadline (default: 840000)",
     "  --max-model-concurrency N          model DAG slots, 1 or 2 (default: 2)",
@@ -208,7 +208,6 @@ export function parseArgs(args: readonly string[]): Options {
     persistTheses: false,
     controllerResearchScope: false,
     modelId: DEFAULT_MODEL_ID,
-    maxTokens: 8_192,
     timeoutMs: 120_000,
     runTimeoutMs: 840_000,
     maxModelCalls: 48,
