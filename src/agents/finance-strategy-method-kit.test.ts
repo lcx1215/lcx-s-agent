@@ -6,6 +6,25 @@ import {
 } from "./finance-strategy-method-kit.js";
 
 describe("finance strategy method kit", () => {
+  it.each([
+    "Gamma Scalping",
+    "gamma-scalping",
+    "long straddle",
+    "delta hedging",
+    "波动收割机",
+    "伽马跨式研究",
+  ])("routes %s to the existing M11 method", (ask) => {
+    const kit = buildFinanceStrategyMethodKit(ask);
+    expect(kit.selectedModules).toEqual(["M01", "M11"]);
+    expect(kit.rules.M11?.join(" ")).toContain(
+      "Continuous delta hedging does not eliminate gamma P&L",
+    );
+    expect(kit.rules.M11?.join(" ")).toContain("self-financing ledger");
+    expect(kit.rules.M11?.join(" ")).toContain(
+      "equity Paper authority does not authorize option legs",
+    );
+    expect(kit.prompt).toContain("executionAuthority=none");
+  });
   it("exposes the frozen M01/M02/M12 contract used by model requests", () => {
     const kit = buildFinanceStrategyMethodKit("回测三年美股表现");
     expect(kit.schemaVersion).toBe(FINANCE_STRATEGY_METHOD_KIT_SCHEMA_VERSION);

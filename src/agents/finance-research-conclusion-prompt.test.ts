@@ -14,6 +14,23 @@ const sources = [
 ];
 
 describe("buildFinanceConclusionPrompt", () => {
+  it("delivers corrected Gamma Scalping rules through the existing conclusion consumer", () => {
+    const prompt = buildFinanceConclusionPrompt({
+      instrument: "SPY",
+      assetClass: "us_equity_options",
+      question: "Gamma Scalping",
+      availableSources: sources,
+    });
+    const foreground = prompt.split("Foreground method contracts for this task:")[1];
+    expect(foreground).toContain("M11 波动率相对价值");
+    expect(foreground).toContain("realized variance - implied variance");
+    expect(foreground).toContain("Theta * dt");
+    expect(foreground).toContain("hedge cash flows and hedge mark-to-market");
+    expect(foreground).toContain("IV-crush");
+    expect(foreground).not.toContain("M02 中低频跨资产趋势:");
+    expect(prompt).toContain("at least two DISTINCT sourceId");
+    expect(prompt).toContain("executionAuthority=none");
+  });
   it("exposes the complete existing method catalog while retaining authority and exposing the opportunity hypothesis", () => {
     const prompt = buildFinanceConclusionPrompt({
       instrument: "SPY",
