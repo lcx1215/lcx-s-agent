@@ -37,12 +37,15 @@ export function reconcileFinanceBrokerActivities(input: {
   positions: readonly Record<string, unknown>[];
   cash: number;
   completeFromInception: boolean;
+  asOf?: string;
 }) {
   const quantities = new Map<string, number>();
   const identities = new Map<string, string>();
   const issues: string[] = [];
   const fees: { id: string; instrument?: string; quantity: number; cash: number }[] = [];
   let cash = 0;
+  // Diagnostic decomposition of recognized cash flows; it grants no reconciliation authority.
+  const cashComponents = { fillCash: 0, feeCash: 0, otherCash: 0 };
   const add = (symbol: string, qty: number) =>
     quantities.set(symbol, (quantities.get(symbol) ?? 0) + qty);
   for (const row of input.activities) {
@@ -71,7 +74,33 @@ export function reconcileFinanceBrokerActivities(input: {
         const signed = row.side === "buy" ? qty : -qty;
         add(brokerSymbol(row.symbol), signed);
         cash -= signed * price;
+        cashComponents.fillCash -= signed * price;
       } else if (row.activity_type === "CFEE" || row.activity_type === "FEE") {
+        if (input.asOf !== undefined) {
+          // Settlement dates may be future-dated even when the fee has already occurred.
+          const occurredAt = row.transaction_time ?? row.created_at ?? row.date;
+          const timestamp = (value: unknown, allowDate: boolean): number => {
+            if (typeof value !== "string") {
+              return NaN;
+            }
+            const date = value.slice(0, 10);
+            const day = /^\d{4}-\d{2}-\d{2}$/u.test(date) ? Date.parse(`${date}T00:00:00Z`) : NaN;
+            if (!Number.isFinite(day) || new Date(day).toISOString().slice(0, 10) !== date) {
+              return NaN;
+            }
+            if (allowDate && value === date) {
+              return day;
+            }
+            return /^\d{4}-\d{2}-\d{2}T.+(?:Z|[+-]\d{2}:\d{2})$/u.test(value)
+              ? Date.parse(value)
+              : NaN;
+          };
+          const cutoff = timestamp(input.asOf, false);
+          const occurred = timestamp(occurredAt, true);
+          if (!Number.isFinite(cutoff) || !Number.isFinite(occurred) || occurred > cutoff) {
+            throw new Error("fee occurrence outside cutoff or unknown");
+          }
+        }
         if (row.status !== "executed") {
           throw new Error("fee not executed");
         }
@@ -88,6 +117,7 @@ export function reconcileFinanceBrokerActivities(input: {
           throw new Error("unsupported fee currency");
         }
         cash += amount;
+        cashComponents.feeCash += amount;
         fees.push({ id: row.id, instrument, quantity, cash: amount });
       } else if (["JNLC", "CSD", "CSW", "DIV", "INT"].includes(String(row.activity_type))) {
         if (
@@ -97,7 +127,9 @@ export function reconcileFinanceBrokerActivities(input: {
         ) {
           throw new Error("unsupported cash activity");
         }
-        cash += number(row.net_amount);
+        const amount = number(row.net_amount);
+        cash += amount;
+        cashComponents.otherCash += amount;
       } else {
         throw new Error("unsupported activity type");
       }
@@ -136,6 +168,7 @@ export function reconcileFinanceBrokerActivities(input: {
     quantities: [...quantities].map(([instrument, quantity]) => ({ instrument, quantity })),
     fees,
     cashFromActivities: cash,
+    cashComponents,
     brokerCash: input.cash,
     cashDifference,
     differences,
@@ -287,8 +320,6 @@ export async function syncFinanceBrokerReconciliation(
       const query = new URLSearchParams({
         direction: "asc",
         page_size: "100",
-        after: options.after,
-        until: options.until,
         ...(cursor ? { page_token: cursor } : {}),
       });
       const raw = await get(`/v2/account/activities/${type}?${query}`);
@@ -308,7 +339,7 @@ export async function syncFinanceBrokerReconciliation(
         kind: "broker_history",
         accountId: options.accountId,
         venue: "alpaca:paper",
-        query: `activities:${type}:${options.after}:${options.until}`,
+        query: `activities:${type}:observed_fee:${new Date().toISOString()}`,
         cursor,
         payload: raw,
       });
@@ -349,6 +380,7 @@ export async function syncFinanceBrokerReconciliation(
       .filter((record) => record.body.query.startsWith("activities:"))
       .flatMap((record) => record.body.payload),
     positions,
+    asOf: options.until,
     cash: number(last.cash),
     completeFromInception:
       synced.status === "raw_history_synced" &&

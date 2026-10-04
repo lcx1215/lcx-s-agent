@@ -501,6 +501,7 @@ describe("explicit history sync before daily business", () => {
     quantities: [],
     fees: [],
     cashFromActivities: 0,
+    cashComponents: { fillCash: 0, feeCash: 0, otherCash: 0 },
     brokerCash: 0,
     cashDifference: 0,
     differences: [],

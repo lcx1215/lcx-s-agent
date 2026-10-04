@@ -377,6 +377,30 @@ describe("configured finance trade decision reviewer", () => {
       expect(prompt).not.toContain("If evidence is incomplete, contradictory, or not sufficient");
     }
   });
+
+  it("exposes conditional geometry to the original reviewer without treating close as a target deadline", () => {
+    let prompt = "";
+    const packet: FinanceIntradayTradeDecisionReviewRequest = {
+      ...intradayRequest,
+      candidates: [{ ...intradayRequest.candidates[0], targetPrice: 557 }],
+    };
+    createFinanceTradeDecisionReviewer({} as OpenClawConfig, {
+      adapterFactory: (_cfg, options) => {
+        prompt = options!.buildPrompt!(packet);
+        return adapter(null);
+      },
+    });
+    const start = prompt.indexOf("Deterministic opportunity context");
+    const context = JSON.parse(prompt.slice(start).split("\n")[1]);
+    expect(context).toEqual(buildFinanceOpportunityContext(packet));
+    expect(context[0].conditionalUpsideFraction).toBeCloseTo(56 / 501, 12);
+    expect(context[0].plannedHoldingHorizonMinutes).toBeNull();
+    expect(prompt).toContain("session close is not a declared holding deadline");
+    expect(prompt).toContain("frame a testable question");
+    expect(prompt).toContain("Daily history can describe historical scale");
+    expect(prompt).toContain("if the packet already suffices, decide directly");
+  });
+
   it("uses a bounded output and timeout budget for a complete structured review", () => {
     const model = adapter(null);
     const adapterFactory = vi.fn(() => model);
