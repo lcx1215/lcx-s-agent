@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -291,5 +292,251 @@ describe("learning_distill path boundary", () => {
       fs.access(path.join(stateDir, LEARNING_WORKFLOW_LATEST_FILENAME)),
     ).resolves.toBeUndefined();
     expect(await fs.readdir(memoryDir)).toEqual([]);
+  });
+});
+
+describe("learning_distill scoped retained-card read", () => {
+  it("retains a lesson across an empty pending pass and a new instance without writing or reinterpreting it", async () => {
+    const { memoryDir, stateDir } = await storeRoot();
+    const name = "2026-09-10-review-topic-a.md";
+    await writeNote(memoryDir, "2026-09-10", "review-topic-a");
+    const tool = createLearningDistillTool({ workspaceDir: path.dirname(stateDir) });
+    await run(tool, memoryDir, stateDir);
+    const notePath = path.join(memoryDir, name);
+    await fs.writeFile(
+      notePath,
+      reviewNote("2026-09-10").replace("a principle", "changed principle"),
+    );
+    expect((await run(tool, memoryDir, stateDir)).cards).toEqual([]);
+    const latest = path.join(stateDir, LEARNING_WORKFLOW_LATEST_FILENAME);
+    const bytes = await fs.readFile(latest);
+    const names = await fs.readdir(path.join(stateDir, "learning-workflow", "runs"));
+    const noteBytes = await fs.readFile(notePath);
+    const reader = createLearningDistillTool({ workspaceDir: path.dirname(stateDir) });
+    const result = await reader.execute("read", { action: "read", cardName: name });
+    expect(result.details).toMatchObject({
+      ok: true,
+      status: "read",
+      corePrinciple: "a principle",
+      cardDate: "2026-09-10",
+      sourceSha256: createHash("sha256").update(bytes).digest("hex"),
+    });
+    expect(await fs.readFile(latest)).toEqual(bytes);
+    expect(await fs.readFile(notePath)).toEqual(noteBytes);
+    expect(await fs.readdir(path.join(stateDir, "learning-workflow", "runs"))).toEqual(names);
+  });
+
+  it("retains distinct literal session methods, their source hashes, and explicit UTF-8 truncation", async () => {
+    const { memoryDir, stateDir } = await storeRoot();
+    const tool = createLearningDistillTool({ workspaceDir: path.dirname(stateDir) });
+    const sourceA = reviewNote("2026-09-10").replace(
+      "- a working answer",
+      "- Divide measured latency by requests; use beta, never task labels.",
+    );
+    const sourceB = reviewNote("2026-09-11").replace(
+      "- a working answer",
+      "- Reject data beyond cutoff; compare only matched inputs.",
+    );
+    await fs.writeFile(path.join(memoryDir, "2026-09-10-review-a.md"), sourceA);
+    await fs.writeFile(path.join(memoryDir, "2026-09-11-review-b.md"), sourceB);
+    await run(tool, memoryDir, stateDir);
+    await run(tool, memoryDir, stateDir);
+    const state = JSON.parse(
+      await fs.readFile(path.join(stateDir, LEARNING_WORKFLOW_LATEST_FILENAME), "utf8"),
+    ) as LearningWorkflowState;
+    expect(state.retainedCards?.[0].sourceNoteSha256).toBe(
+      createHash("sha256").update(sourceA).digest("hex"),
+    );
+    expect(state.retainedCards?.[0].problem).toBe("- a study-heavy session");
+    const reader = createLearningDistillTool({ workspaceDir: path.dirname(stateDir) });
+    const a = await reader.execute("read-a", {
+      action: "read",
+      cardName: "2026-09-10-review-a.md",
+      field: "workingAnswer",
+    });
+    const b = await reader.execute("read-b", {
+      action: "read",
+      cardName: "2026-09-11-review-b.md",
+      field: "workingAnswer",
+    });
+    expect(a.details).toMatchObject({
+      workingAnswer: "- Divide measured latency by requests; use beta, never task labels.",
+      truncated: false,
+      retained_source_not_validated_skill: true,
+    });
+    expect(b.details).toMatchObject({
+      workingAnswer: "- Reject data beyond cutoff; compare only matched inputs.",
+      truncated: false,
+    });
+    const long = reviewNote("2026-09-12").replace("- a working answer", "数".repeat(800));
+    await fs.writeFile(path.join(memoryDir, "2026-09-12-review-long.md"), long);
+    await run(tool, memoryDir, stateDir);
+    const clipped = (
+      await reader.execute("read", {
+        action: "read",
+        cardName: "2026-09-12-review-long.md",
+        field: "workingAnswer",
+      })
+    ).details as Record<string, unknown>;
+    expect(clipped.truncated).toBe(true);
+    expect(Buffer.byteLength(String(clipped.workingAnswer))).toBeLessThanOrEqual(160);
+    expect(String(clipped.workingAnswer)).not.toContain("�");
+  });
+
+  it("reads legacy current cards but names a missing legacy card rather than reconstructing memory", async () => {
+    const { memoryDir, stateDir } = await storeRoot();
+    await writeNote(memoryDir, "2026-09-10", "review-topic-a");
+    const tool = createLearningDistillTool({ workspaceDir: path.dirname(stateDir) });
+    await run(tool, memoryDir, stateDir);
+    const latest = path.join(stateDir, LEARNING_WORKFLOW_LATEST_FILENAME);
+    const state = JSON.parse(await fs.readFile(latest, "utf8"));
+    delete state.retainedCards;
+    await fs.writeFile(latest, JSON.stringify(state));
+    expect(
+      (await tool.execute("read", { action: "read", cardName: state.cards[0].name })).details,
+    ).toMatchObject({ ok: true });
+    await expect(
+      tool.execute("read", {
+        action: "read",
+        cardName: state.cards[0].name,
+        field: "workingAnswer",
+      }),
+    ).resolves.toMatchObject({ details: { ok: true } });
+    delete state.cards[0].workingAnswer;
+    await fs.writeFile(latest, JSON.stringify(state));
+    expect(
+      (
+        await tool.execute("read", {
+          action: "read",
+          cardName: state.cards[0].name,
+          field: "workingAnswer",
+        })
+      ).details,
+    ).toMatchObject({ ok: false, status: "unknown", reason: "learning_card_field_not_retained" });
+    state.cards = [];
+    await fs.writeFile(latest, JSON.stringify(state));
+    expect(
+      (await tool.execute("read", { action: "read", cardName: state.processed[0].name })).details,
+    ).toMatchObject({ ok: false, status: "unknown", reason: "learning_card_not_retained" });
+  });
+
+  it.each(["../2026-09-10-review-x.md", "2026-09-10-review-/x.md", "anything.md", ""])(
+    "rejects non-exact card name %s without creating state",
+    async (cardName) => {
+      const { stateDir } = await storeRoot();
+      const tool = createLearningDistillTool({ workspaceDir: path.dirname(stateDir) });
+      expect((await tool.execute("read", { action: "read", cardName })).details).toMatchObject({
+        ok: false,
+        reason: "learning_card_name_invalid",
+      });
+      expect(await fs.readdir(stateDir)).toEqual([]);
+    },
+  );
+
+  it.each(["absent", "invalid", "oversized"])(
+    "reports %s surface as unknown without writes",
+    async (kind) => {
+      const { stateDir } = await storeRoot();
+      const latest = path.join(stateDir, LEARNING_WORKFLOW_LATEST_FILENAME);
+      if (kind !== "absent") {
+        await fs.writeFile(
+          latest,
+          kind === "invalid"
+            ? '{"schemaVersion":"lcx_learning_workflow_v1","processed":[null]}'
+            : "x".repeat(4 * 1024 * 1024 + 1),
+        );
+      }
+      const before = kind !== "absent" ? await fs.readFile(latest) : undefined;
+      const tool = createLearningDistillTool({ workspaceDir: path.dirname(stateDir) });
+      expect(
+        (await tool.execute("read", { action: "read", cardName: "2026-09-10-review-x.md" }))
+          .details,
+      ).toMatchObject({ ok: false, status: "unknown" });
+      if (before) {
+        expect(await fs.readFile(latest)).toEqual(before);
+      } else {
+        expect(await fs.readdir(stateDir)).toEqual([]);
+      }
+    },
+  );
+
+  it("rejects read pointer alias escapes and cancelled reads", async () => {
+    const { stateDir } = await storeRoot();
+    const outside = await storeRoot();
+    const sentinel = path.join(outside.stateDir, "sentinel.json");
+    await fs.writeFile(sentinel, "unchanged");
+    await fs.symlink(sentinel, path.join(stateDir, LEARNING_WORKFLOW_LATEST_FILENAME));
+    const tool = createLearningDistillTool({ workspaceDir: path.dirname(stateDir) });
+    await expect(
+      tool.execute("read", { action: "read", cardName: "2026-09-10-review-x.md" }),
+    ).rejects.toThrow(/escape|outside/);
+    const controller = new AbortController();
+    controller.abort(new Error("read cancelled"));
+    await expect(
+      tool.execute(
+        "read",
+        { action: "read", cardName: "2026-09-10-review-x.md" },
+        controller.signal,
+      ),
+    ).rejects.toThrow("read cancelled");
+    expect(await fs.readFile(sentinel, "utf8")).toBe("unchanged");
+  });
+});
+
+describe("learning_distill writer-reader contract", () => {
+  it("names an oversized card before it can enter the pending queue", async () => {
+    const { memoryDir, stateDir } = await storeRoot();
+    const name = "2026-09-10-review-oversized-field.md";
+    const source = reviewNote("2026-09-10").replace("a principle", "x".repeat(16385));
+    await fs.writeFile(path.join(memoryDir, name), source);
+    const tool = createLearningDistillTool({ workspaceDir: path.dirname(stateDir) });
+    const result = await run(tool, memoryDir, stateDir);
+    expect(result).toMatchObject({
+      ok: true,
+      status: "no_pending_learning_items",
+      cards: [],
+      unparsed: [{ name, reason: "learning_distill_card_invalid" }],
+    });
+    const state = JSON.parse(
+      await fs.readFile(path.join(stateDir, LEARNING_WORKFLOW_LATEST_FILENAME), "utf8"),
+    ) as LearningWorkflowState;
+    expect(state.processed).toEqual([]);
+    expect(state.retainedCards).toEqual([]);
+    expect(await fs.readFile(path.join(memoryDir, name), "utf8")).toBe(source);
+  });
+
+  it("refuses an aggregate surface over the reader limit before either snapshot write", async () => {
+    const { memoryDir, stateDir } = await storeRoot();
+    await writeNote(memoryDir, "2026-09-10", "review-prior");
+    const tool = createLearningDistillTool({ workspaceDir: path.dirname(stateDir) });
+    await run(tool, memoryDir, stateDir);
+    const latest = path.join(stateDir, LEARNING_WORKFLOW_LATEST_FILENAME);
+    const before = await fs.readFile(latest);
+    const runsDir = path.join(stateDir, "learning-workflow", "runs");
+    const beforeRuns = await fs.readdir(runsDir);
+    const source = reviewNote("2026-09-11").replace("a principle", "x".repeat(16384));
+    await Promise.all(
+      Array.from({ length: 130 }, (_, index) =>
+        fs.writeFile(path.join(memoryDir, `2026-09-11-review-budget-${index}.md`), source),
+      ),
+    );
+    const result = await run(tool, memoryDir, stateDir);
+    expect(result).toMatchObject({
+      ok: false,
+      status: "not_written",
+      reason: "learning_workflow_state_too_large",
+      unparsed: [
+        { name: LEARNING_WORKFLOW_LATEST_FILENAME, reason: "learning_workflow_state_too_large" },
+      ],
+    });
+    expect(await fs.readFile(latest)).toEqual(before);
+    expect(await fs.readdir(runsDir)).toEqual(beforeRuns);
+    expect(
+      (await tool.execute("read", { action: "read", cardName: "2026-09-10-review-prior.md" }))
+        .details,
+    ).toMatchObject({ ok: true, corePrinciple: "a principle" });
+    expect(await fs.readFile(path.join(memoryDir, "2026-09-11-review-budget-0.md"), "utf8")).toBe(
+      source,
+    );
   });
 });

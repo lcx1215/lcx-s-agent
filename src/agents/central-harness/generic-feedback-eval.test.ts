@@ -26,6 +26,11 @@ const reviewNote = [
   "- **Session Key**: generic-feedback-fixture",
   "- **Session ID**: generic-feedback-fixture",
   "- **Topic**: coding-and-systems",
+  "## Problem",
+  "Dispatch was mistaken for a consumed latency experiment.",
+  "## Working Answer",
+  "Preserve the original measured series and benchmark for follow-up regression; task labels cannot replace inputs.",
+  "## Review Note",
   "- mistake_pattern: Counting a successful dispatch as completion without consuming its facts.",
   "- core_principle: Keep the evidence and exact input scope until the dependent decision is made.",
   "- micro_drill: Compare measured request latency slopes rather than guessing from task labels.",
@@ -223,59 +228,78 @@ describe("generic capability feedback through the production loop (offline scrip
     ).toBe(true);
   });
 
-  it("keeps an omitted learning card unknown after another tool and stops at the exact unsupported read gap", async () => {
+  it("reads an omitted learning lesson through its existing owner and consumes it in the next scoped calculation", async () => {
     const run = await fixture();
     const learning = await run.act({
       ownerId: "learning_distill",
       args: { since: "2026-10-01T00:00:00.000Z" },
     });
-    expect(learning.steps[0]).toMatchObject({
-      status: "ran_ok",
-      outcome: { status: "distilled", pending: 1 },
-    });
     expect(learning.steps[0].outcomeDroppedKeys).toContain("cards");
+    await run.act({ ownerId: "learning_distill", args: { since: "2026-10-01T00:00:00.000Z" } });
     const statePath = path.join(run.workspaceDir, "state", "lcx-learning-workflow-latest.json");
-    const durable = JSON.parse(await fs.readFile(statePath, "utf8")) as {
-      cards: Array<{ corePrinciple: string }>;
-    };
-    expect(durable.cards[0]?.corePrinciple).toContain("exact input scope");
+    const bytes = await fs.readFile(statePath);
     const calculation = await run.act({ ownerId: "quant_math", args: regressionArgs(5) });
-    expect(nextCycleContinuation(calculation, 2, 3, learning).run).toBe(true);
-
-    const final = await run.cycle((perception) => {
-      const [evidence] = retained(perception, "learning_distill");
-      expect(evidence?.outcomeDroppedKeys).toContain("cards");
-      expect(evidence?.outcome).not.toHaveProperty("cards");
-      expect(evidence?.sourceObservedAt).toBe(learning.observedAt);
-      // The registry has no scoped learning-card reader; a filesystem path is not a binding.
+    const scopedRead = await run.cycle((perception) => {
+      const learningSteps = (perception.backlog as readonly CompactBacklogEntry[])
+        .flatMap((entry) => entry.outcomes)
+        .filter((entry) => entry.ownerId === "learning_distill");
+      expect(learningSteps.some((step) => step.outcomeDroppedKeys?.includes("cards"))).toBe(true);
+      const discoverable = learningSteps.find((entry) => entry.outcome?.latestRetainedCardName);
+      const cardName = discoverable?.outcome?.latestRetainedCardName;
+      expect(cardName).toBe("2026-10-02-review-feedback.md");
+      expect(discoverable?.outcome?.retainedCardCount).toBe(1);
       return {
-        actions: [],
+        actions: [
+          {
+            ownerId: "learning_distill",
+            args: { action: "read", cardName, field: "workingAnswer" },
+          },
+        ],
+        note: "The card body was omitted; read the exact declared fixture lesson through its owner.",
+      };
+    });
+    expect(scopedRead.steps[0]).toMatchObject({
+      status: "ran_ok",
+      outcome: {
+        status: "read",
+        workingAnswer: expect.stringContaining("original measured series"),
+      },
+    });
+    expect(await fs.readFile(statePath)).toEqual(bytes);
+    const next = await run.cycle((perception) => {
+      const lesson = retained(perception, "learning_distill").find(
+        (entry) => entry.args?.action === "read",
+      );
+      expect(lesson?.outcome?.workingAnswer).toContain("original measured series");
+      expect(lesson?.outcome?.sourceSha256).toMatch(/^[a-f0-9]{64}$/u);
+      const original = retained(perception, "quant_math").find(
+        (entry) => entry.sourceObservedAt === calculation.observedAt,
+      );
+      expect(original?.args).toEqual(regressionArgs(5));
+      const scope = String(lesson?.outcome?.workingAnswer).includes(
+        "Preserve the original measured series",
+      )
+        ? original?.args
+        : undefined;
+      return {
+        actions: scope ? [{ ownerId: "quant_math", args: scope }] : [],
         note: JSON.stringify({
-          status: "unresolved",
-          reason: "learning_card_reader_not_registered",
-          missingFields: evidence?.outcomeDroppedKeys?.filter((key) => key === "cards"),
-          sourceObservedAt: evidence?.sourceObservedAt,
-          inputRef: evidence?.argsSha256,
-          corePrinciple: "unknown",
+          status: scope ? "lesson_applied" : "unresolved",
+          workingAnswer: lesson?.outcome?.workingAnswer,
+          lessonSourceSha256: lesson?.outcome?.sourceSha256,
+          inputRef: original?.argsSha256,
           evidenceKind: "offline_scripted_replay",
         }),
       };
     });
-    expect(JSON.parse(final.brainCall.note ?? "{}")).toMatchObject({
-      status: "unresolved",
-      missingFields: ["cards"],
-      corePrinciple: "unknown",
-      reason: "learning_card_reader_not_registered",
+    expect(JSON.parse(next.brainCall.note ?? "{}")).toMatchObject({
+      status: "lesson_applied",
+      workingAnswer: expect.stringContaining("original measured series"),
       evidenceKind: "offline_scripted_replay",
     });
-    expect(nextCycleContinuation(final, 3, 3, calculation)).toEqual({
-      run: false,
-      because: "nothing_left_to_follow_up",
-    });
-    expect(run.receipts.flatMap((receipt) => receipt.steps).map((step) => step.ownerId)).toEqual([
-      "learning_distill",
-      "quant_math",
-    ]);
+    expect(next.steps[0].args).toEqual(regressionArgs(5));
+    expect(next.steps[0].outcome).toMatchObject({ beta: 5 });
     expect(await fs.readFile(run.notePath, "utf8")).toBe(reviewNote);
+    expect(await fs.readFile(statePath)).toEqual(bytes);
   });
 });

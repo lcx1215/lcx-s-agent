@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
@@ -24,8 +24,30 @@ export const LEARNING_WORKFLOW_LATEST_FILENAME = "lcx-learning-workflow-latest.j
 export const LEARNING_WORKFLOW_RUNS_RELATIVE_DIR = path.join("learning-workflow", "runs");
 /** How many processed entries the latest pointer retains before pruning old ones. */
 const PROCESSED_RETAIN_LIMIT = 200;
+/** Reader and writer must agree on the maximum durable surface size. */
+const WORKFLOW_STATE_MAX_BYTES = 4 * 1024 * 1024;
 
 const LearningDistillSchema = Type.Object({
+  action: Type.Optional(
+    Type.Union([Type.Literal("distill"), Type.Literal("read")], {
+      description: "Default distill; read returns one retained card without any write.",
+    }),
+  ),
+  cardName: Type.Optional(
+    Type.String({
+      maxLength: 240,
+      description: "Exact learning-review filename required for action=read; not a path.",
+    }),
+  ),
+  field: Type.Optional(
+    Type.Union(
+      [Type.Literal("corePrinciple"), Type.Literal("problem"), Type.Literal("workingAnswer")],
+      {
+        description:
+          "Exact retained field to read, default corePrinciple. Returned excerpts have a named UTF-8 truncation bound.",
+      },
+    ),
+  ),
   memoryDir: Type.Optional(
     Type.String({
       description:
@@ -69,6 +91,11 @@ export type LearningDistillCard = {
   replay: boolean;
   /** The micro-drill the next session should evaluate, from the topic's own hints. */
   nextEval: string;
+  /** Literal source-session sections, retained evidence rather than validated skills. */
+  problem?: string;
+  workingAnswer?: string;
+  sourceNoteSha256?: string;
+  sourceSectionsTruncated?: readonly string[];
 };
 
 /** A review note that could not be distilled, with the named reason. */
@@ -94,6 +121,8 @@ export type LearningWorkflowState = Readonly<{
   alreadyProcessed: number;
   unparsed: readonly LearningDistillGap[];
   cards: readonly LearningDistillCard[];
+  /** Bounded durable cards, separate from this run's pending cards. */
+  retainedCards?: readonly LearningDistillCard[];
   /** Review-note names distilled by this run (the queue worked). */
   queue: readonly string[];
   /** Review-note names already folded into a durable card. */
@@ -110,6 +139,48 @@ export type LearningWorkflowState = Readonly<{
     nextEval: readonly string[];
   }>;
 }>;
+
+function utf8Excerpt(value: string, maxBytes: number): { value: string; truncated: boolean } {
+  const bytes = Buffer.from(value);
+  if (bytes.length <= maxBytes) {
+    return { value, truncated: false };
+  }
+  let end = maxBytes;
+  while (end > 0 && (bytes[end] & 0xc0) === 0x80) {
+    end--;
+  }
+  return { value: bytes.subarray(0, end).toString("utf8"), truncated: true };
+}
+
+function sourceSections(content: string) {
+  const sections: {
+    problem?: string;
+    workingAnswer?: string;
+    sourceSectionsTruncated?: string[];
+    sourceNoteSha256: string;
+  } = { sourceNoteSha256: createHash("sha256").update(content).digest("hex") };
+  const truncated: string[] = [];
+  for (const [title, key] of [
+    ["Problem", "problem"],
+    ["Working Answer", "workingAnswer"],
+  ] as const) {
+    const raw = content
+      .match(new RegExp(`^## ${title}\\r?\\n([\\s\\S]*?)(?=^## |$(?![\\s\\S]))`, "m"))?.[1]
+      ?.trim();
+    if (!raw) {
+      continue;
+    }
+    const excerpt = utf8Excerpt(raw, 1024);
+    sections[key] = excerpt.value;
+    if (excerpt.truncated) {
+      truncated.push(key);
+    }
+  }
+  if (truncated.length > 0) {
+    sections.sourceSectionsTruncated = truncated;
+  }
+  return sections;
+}
 
 function parseReviewSnapshot(
   name: string,
@@ -135,6 +206,7 @@ function parseReviewSnapshot(
     ok: true,
     parsed: {
       name,
+      ...sourceSections(content),
       date: fileMatch[1],
       sessionKey: extraction(/- \*\*Session Key\*\*:\s*([^\n]+)/u) || "unknown",
       sessionId: extraction(/- \*\*Session ID\*\*:\s*([^\n]+)/u) || "unknown",
@@ -148,22 +220,97 @@ function parseReviewSnapshot(
   };
 }
 
+function isCard(value: unknown): value is LearningDistillCard {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const card = value as Record<string, unknown>;
+  return (
+    [
+      "name",
+      "date",
+      "sessionKey",
+      "sessionId",
+      "topic",
+      "corePrinciple",
+      "mistakePattern",
+      "microDrill",
+      "transferHint",
+      "foundationTemplate",
+      "nextEval",
+    ].every((key) => typeof card[key] === "string" && card[key].length <= 16384) &&
+    typeof card.replay === "boolean" &&
+    typeof card.name === "string" &&
+    validCardName(card.name) &&
+    card.date === card.name.slice(0, 10) &&
+    ["problem", "workingAnswer"].every(
+      (key) =>
+        card[key] === undefined ||
+        (typeof card[key] === "string" && Buffer.byteLength(card[key]) <= 1024),
+    ) &&
+    (card.sourceNoteSha256 === undefined ||
+      (typeof card.sourceNoteSha256 === "string" &&
+        /^[a-f0-9]{64}$/u.test(card.sourceNoteSha256))) &&
+    (card.sourceSectionsTruncated === undefined ||
+      (Array.isArray(card.sourceSectionsTruncated) &&
+        card.sourceSectionsTruncated.every((key) => key === "problem" || key === "workingAnswer")))
+  );
+}
+
+function validCardName(name: string): boolean {
+  return (
+    name.length <= 240 &&
+    LEARNING_FILE_RE.test(name) &&
+    !/[\\/]/u.test(name) &&
+    !name.includes(String.fromCharCode(0)) &&
+    path.basename(name) === name
+  );
+}
+
 async function readPriorState(
   stateDir: string,
-): Promise<{ state?: LearningWorkflowState; gap?: LearningDistillGap }> {
+): Promise<{ state?: LearningWorkflowState; sourceSha256?: string; gap?: LearningDistillGap }> {
   try {
-    const raw = await fs.readFile(path.join(stateDir, LEARNING_WORKFLOW_LATEST_FILENAME), "utf8");
-    const parsed = JSON.parse(raw) as Partial<LearningWorkflowState>;
-    if (typeof parsed.schemaVersion !== "string") {
+    const { buffer } = await readFileWithinRoot({
+      rootDir: stateDir,
+      relativePath: LEARNING_WORKFLOW_LATEST_FILENAME,
+      maxBytes: WORKFLOW_STATE_MAX_BYTES,
+    });
+    const parsed = JSON.parse(buffer.toString("utf8")) as Partial<LearningWorkflowState>;
+    if (
+      parsed === null ||
+      parsed.schemaVersion !== LEARNING_DISTILL_SCHEMA_VERSION ||
+      typeof parsed.updatedAt !== "string" ||
+      parsed.updatedAt.length > 32 ||
+      !Number.isFinite(Date.parse(parsed.updatedAt)) ||
+      !Array.isArray(parsed.processed) ||
+      parsed.processed.length > PROCESSED_RETAIN_LIMIT ||
+      !parsed.processed.every(
+        (entry) =>
+          entry !== null &&
+          typeof entry === "object" &&
+          typeof entry.name === "string" &&
+          validCardName(entry.name) &&
+          typeof entry.topic === "string" &&
+          typeof entry.distilledAt === "string",
+      ) ||
+      !Array.isArray(parsed.cards) ||
+      !parsed.cards.every(isCard) ||
+      (parsed.retainedCards !== undefined &&
+        (!Array.isArray(parsed.retainedCards) ||
+          parsed.retainedCards.length > PROCESSED_RETAIN_LIMIT ||
+          !parsed.retainedCards.every(isCard)))
+    ) {
       return {
         gap: { name: LEARNING_WORKFLOW_LATEST_FILENAME, reason: "learning_workflow_state_invalid" },
       };
     }
-    return { state: parsed as LearningWorkflowState };
+    return {
+      state: parsed as LearningWorkflowState,
+      sourceSha256: createHash("sha256").update(buffer).digest("hex"),
+    };
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") {
-      // First run: no prior surface is a normal start, not a failure.
+    if (["ENOENT", "not-found"].includes((error as NodeJS.ErrnoException).code ?? "")) {
       return {};
     }
     return {
@@ -217,7 +364,7 @@ export function createLearningDistillTool(options?: { workspaceDir?: string }): 
     name: "learning_distill",
     label: "Learning Distill",
     description:
-      "Distill pending learning-review notes (written by the learning-review hook) into durable keep cards: topic, core principle, mistake pattern, micro-drill, transfer hint, foundation template, replay flag, and the next-eval drill. Read-only over the workspace memory directory; it writes only its own local workflow state under <workspace>/state (learning-workflow). It never edits a review note, never invents a verdict, and reports an absent memory tree as a named failure rather than an empty queue.",
+      "Distill pending learning-review notes (written by the learning-review hook) into durable keep cards: topic, core principle, mistake pattern, micro-drill, transfer hint, foundation template, replay flag, and the next-eval drill. Use action=read and an exact cardName to read one retained lesson without writes. Read-only over the workspace memory directory; it writes only its own local workflow state under <workspace>/state (learning-workflow). It never edits a review note, never invents a verdict, and reports an absent memory tree as a named failure rather than an empty queue.",
     parameters: LearningDistillSchema,
     execute: async (_toolCallId, args, callerSignal) => {
       callerSignal?.throwIfAborted();
@@ -233,9 +380,77 @@ export function createLearningDistillTool(options?: { workspaceDir?: string }): 
           path.resolve(canonicalWorkspace, relative),
         );
       };
-      const memoryDir = await resolveDirectory("memory", readStringParam(params, "memoryDir"));
+      const action = readStringParam(params, "action") ?? "distill";
+      if (action !== "distill" && action !== "read") {
+        return jsonResult({ ok: false, reason: "learning_distill_action_invalid" });
+      }
       const stateDir = await resolveDirectory("state", readStringParam(params, "stateDir"));
       const latestPath = path.join(stateDir, LEARNING_WORKFLOW_LATEST_FILENAME);
+      if (action === "read") {
+        const cardName = readStringParam(params, "cardName");
+        if (!cardName || !validCardName(cardName)) {
+          return jsonResult({ ok: false, status: "unknown", reason: "learning_card_name_invalid" });
+        }
+        await resolveLearningPath(canonicalWorkspace, "state", latestPath);
+        callerSignal?.throwIfAborted();
+        const prior = await readPriorState(stateDir);
+        callerSignal?.throwIfAborted();
+        if (!prior.state) {
+          return jsonResult({
+            ok: false,
+            status: "unknown",
+            cardName,
+            reason: prior.gap?.reason ?? "learning_workflow_state_absent",
+          });
+        }
+        const processed = prior.state.processed.some((entry) => entry.name === cardName);
+        const card = processed
+          ? [...(prior.state.retainedCards ?? []), ...prior.state.cards].find(
+              (entry) => entry.name === cardName,
+            )
+          : undefined;
+        if (!card) {
+          return jsonResult({
+            ok: false,
+            status: "unknown",
+            cardName,
+            reason: "learning_card_not_retained",
+            sourceSha256: prior.sourceSha256,
+            updatedAt: prior.state.updatedAt,
+          });
+        }
+        const field = readStringParam(params, "field") ?? "corePrinciple";
+        if (field !== "corePrinciple" && field !== "problem" && field !== "workingAnswer") {
+          return jsonResult({
+            ok: false,
+            status: "unknown",
+            reason: "learning_card_field_invalid",
+          });
+        }
+        const raw = card[field];
+        if (raw === undefined) {
+          return jsonResult({
+            ok: false,
+            status: "unknown",
+            reason: "learning_card_field_not_retained",
+            sourceSha256: prior.sourceSha256,
+            updatedAt: prior.state.updatedAt,
+          });
+        }
+        const excerpt = utf8Excerpt(raw, 160);
+        return jsonResult({
+          ok: true,
+          status: "read",
+          [field]: excerpt.value,
+          cardDate: card.date,
+          ...(card.sourceNoteSha256 ? { sourceNoteSha256: card.sourceNoteSha256 } : {}),
+          sourceSha256: prior.sourceSha256,
+          updatedAt: prior.state.updatedAt,
+          truncated: excerpt.truncated || (card.sourceSectionsTruncated?.includes(field) ?? false),
+          retained_source_not_validated_skill: true,
+        });
+      }
+      const memoryDir = await resolveDirectory("memory", readStringParam(params, "memoryDir"));
       // Check every output branch before creating either file or its directories.
       await resolveLearningPath(canonicalWorkspace, "state", latestPath);
       await resolveLearningPath(
@@ -315,12 +530,17 @@ export function createLearningDistillTool(options?: { workspaceDir?: string }): 
           const foundationTemplate =
             (entry.content.match(/^- foundation_template:\s*(.+)$/mu)?.[1] ?? "").trim() ||
             foundationTemplateForTopic(result.parsed.topic);
-          parsedCards.push({
+          const card: LearningDistillCard = {
             ...result.parsed,
             foundationTemplate,
             replay: false,
             nextEval: hints.drill,
-          });
+          };
+          if (!isCard(card)) {
+            unparsed.push({ name: entry.name, reason: "learning_distill_card_invalid" });
+            continue;
+          }
+          parsedCards.push(card);
         }
       } catch {
         callerSignal?.throwIfAborted();
@@ -371,6 +591,22 @@ export function createLearningDistillTool(options?: { workspaceDir?: string }): 
       const processedPruned = Math.max(0, processed.length - PROCESSED_RETAIN_LIMIT);
       const processedRetained = processed.slice(-PROCESSED_RETAIN_LIMIT);
 
+      // Keep prior cards exactly as distilled; do not re-interpret changed source notes.
+      const cardsByName = new Map<string, LearningDistillCard>();
+      for (const card of [
+        ...(prior.state?.retainedCards ?? []),
+        ...(prior.state?.cards ?? []),
+        ...pending,
+      ]) {
+        if (!cardsByName.has(card.name)) {
+          cardsByName.set(card.name, card);
+        }
+      }
+      const retainedCards = processedRetained.flatMap((entry) => {
+        const card = cardsByName.get(entry.name);
+        return card ? [card] : [];
+      });
+
       const runId = `learning-distill-${Date.now()}-${randomUUID().slice(0, 4)}`;
       const runsDir = path.join(stateDir, LEARNING_WORKFLOW_RUNS_RELATIVE_DIR);
       const runPath = path.join(runsDir, `${runId}.json`);
@@ -384,6 +620,7 @@ export function createLearningDistillTool(options?: { workspaceDir?: string }): 
         alreadyProcessed,
         unparsed,
         cards: pending,
+        retainedCards,
         queue: pending.map((card) => card.name),
         done: processedRetained.map((entry) => entry.name),
         processed: processedRetained,
@@ -394,6 +631,23 @@ export function createLearningDistillTool(options?: { workspaceDir?: string }): 
       // Both copies of the surface are atomic; the per-run file is written before
       // the pointer, so a crashed run leaves the prior pointer untouched.
       const data = `${JSON.stringify(state, null, 2)}\n`;
+      if (Buffer.byteLength(data) > WORKFLOW_STATE_MAX_BYTES) {
+        callerSignal?.throwIfAborted();
+        return jsonResult({
+          ok: false,
+          status: "not_written",
+          reason: "learning_workflow_state_too_large",
+          unparsed: [
+            ...unparsed,
+            {
+              name: LEARNING_WORKFLOW_LATEST_FILENAME,
+              reason: "learning_workflow_state_too_large",
+            },
+          ],
+          maxBytes: WORKFLOW_STATE_MAX_BYTES,
+          serializedBytes: Buffer.byteLength(data),
+        });
+      }
       for (const target of [runPath, latestPath]) {
         callerSignal?.throwIfAborted();
         const destination = await resolveLearningPath(canonicalWorkspace, "state", target);
@@ -417,6 +671,8 @@ export function createLearningDistillTool(options?: { workspaceDir?: string }): 
         alreadyProcessed,
         unparsed,
         cards: pending,
+        retainedCardCount: retainedCards.length,
+        latestRetainedCardName: retainedCards.at(-1)?.name,
         replayCount: replay,
         lastDistilledAt: nowIso,
         latestPath: path.join(stateDir, LEARNING_WORKFLOW_LATEST_FILENAME),
