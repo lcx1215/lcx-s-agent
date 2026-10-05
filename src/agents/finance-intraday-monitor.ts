@@ -323,6 +323,7 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
         bars: sessionBars,
         openingRangeBars: options.openingRangeBars,
         rewardRisk: options.rewardRisk,
+        ...(activeContract.preCloseExitEnabled ? { marketOpenAt: marketSession.openAt } : {}),
       }),
       datasetHeadRef: intraday.headRef,
       executionAuthority: "none" as const,
@@ -547,6 +548,7 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
     bars: sessionBars,
     openingRangeBars: options.openingRangeBars,
     rewardRisk: options.rewardRisk,
+    ...(activeContract.preCloseExitEnabled ? { marketOpenAt: marketSession.openAt } : {}),
     ...(position && entryDecision
       ? {
           position: {
@@ -589,6 +591,14 @@ export async function runFinanceIntradayMonitorTick(options: FinanceIntradayMoni
     };
   }
   if (signal.action === "hold") {
+    if (signal.openingRangeGap) {
+      return Object.freeze({
+        status: "blocked_incomplete_opening_range" as const,
+        clock,
+        syncReceipt,
+        signal,
+      });
+    }
     if (positionPreCloseDue && !preCloseBarAvailable) {
       return Object.freeze({
         status:

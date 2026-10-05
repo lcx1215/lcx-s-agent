@@ -1000,6 +1000,80 @@ describe("resident intraday monitor tick", () => {
     expect(await readFinanceIntradayDecisions(directory)).toEqual([]);
   });
 
+  it.each([false, true])(
+    "blocks incomplete fixed opening evidence for calendar-bound dynamic=$0",
+    async (dynamic) => {
+      const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-opening-gap-"));
+      temporary.push(directory);
+      const contract = await activeContract(
+        directory,
+        dynamic ? { paperUniverseScope: "fresh_us_equity_selection_v1" } : undefined,
+        dynamic
+          ? {
+              ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE_V3,
+              formVersion: FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V3,
+            }
+          : {
+              ruleId: FINANCE_INTRADAY_OPENING_RANGE_RULE_V2,
+              formVersion: FINANCE_INTRADAY_OPENING_RANGE_FORM_VERSION_V2,
+            },
+      );
+      await appendSession(
+        directory,
+        "2026-09-18",
+        regularSessionBars("2026-09-18", 8, { breakout: true }).filter((_, index) => index !== 5),
+      );
+      const snapshot = { selected: ["SPY"] } as never;
+      readerMocks.readUniverse.mockReturnValue(snapshot);
+      const result = await monitorTickWithFixtureCalendar({
+        directory,
+        instrument: "SPY",
+        intervalSeconds: 300,
+        feed: "iex",
+        openingRangeBars: 6,
+        rewardRisk: 2,
+        strategyContract: contract,
+        scope: dynamic
+          ? {
+              kind: "system_universe",
+              universeSnapshotRef: caseflowFingerprint(snapshot),
+              selectedInstruments: ["SPY"],
+            }
+          : { kind: "strategy_universe" },
+        now: new Date("2026-09-18T14:10:00.000Z"),
+        sync: vi.fn(async () => ({}) as never),
+      });
+      expect(result).toMatchObject({
+        status: "blocked_incomplete_opening_range",
+        signal: {
+          action: "hold",
+          openingRangeGap: { missingBarStarts: ["2026-09-18T13:55:00.000Z"] },
+        },
+      });
+      expect(await readFinanceIntradayDecisions(directory)).toHaveLength(0);
+    },
+  );
+
+  it("keeps a calendar-bound owned-position stop actionable with a missing opening slot", async () => {
+    const fixture = await seedUncertainPartialSell("paper-account");
+    await appendSession(
+      fixture.directory,
+      "2026-09-21",
+      regularSessionBars("2026-09-21", 8, { lastLow: 98 }).filter((_, index) => index !== 5),
+    );
+    const result = await monitorTickWithFixtureCalendar({
+      ...fixture.baseOptions,
+      now: new Date("2026-09-21T14:10:00.000Z"),
+    });
+    expect(result).toMatchObject({
+      status: "decision_recorded",
+      signal: { action: "sell", reason: "opening_range_stop" },
+    });
+    if ("signal" in result) {
+      expect(result.signal.openingRangeGap).toBeUndefined();
+    }
+  });
+
   it("keeps v1 unchanged and blocks v2 entries once the pre-close window starts", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-monitor-v2-cutoff-"));
     temporary.push(directory);

@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
+  captureFinanceIntradayCloseBars,
   readFinanceScheduledResearchFeedback,
   reconcileResidentAlpacaAccount,
   financeResearchProcessEnv,
@@ -17,7 +18,12 @@ import {
   runFinanceScheduler,
 } from "../../scripts/operator/lcx-finance-scheduler.js";
 import { createFinanceAlpacaCycleController } from "../../src/agents/finance-alpaca-cycle-controller.js";
+import { syncAlpacaIntradayBars } from "../../src/agents/finance-alpaca-intraday.js";
 import { caseflowFingerprint } from "../../src/agents/finance-caseflow.js";
+import {
+  appendFinanceIntradayBars,
+  readFinanceIntradayLedger,
+} from "../../src/agents/finance-intraday-ledger.js";
 import {
   FINANCE_INTRADAY_OPENING_RANGE_EMITS,
   FINANCE_INTRADAY_OPENING_RANGE_FORM,
@@ -82,6 +88,7 @@ const mocks = vi.hoisted(() => ({
   createTradeDecisionReviewer: vi.fn(),
   tradeDecisionReviewer: vi.fn(),
   readUniverse: vi.fn(),
+  resolveCalendar: vi.fn(async () => null),
 }));
 vi.mock("../../src/process/kill-tree.js", () => ({ killProcessTree: mocks.killTree }));
 vi.mock("node:timers/promises", () => ({ setTimeout: mocks.delay }));
@@ -102,6 +109,11 @@ vi.mock("../../src/cli/serve-detach.js", () => ({ buildDetachedServeEnv: () => (
 vi.mock("../../src/agents/finance-historical-position-maintenance.js", () => ({
   runFinanceHistoricalPositionMaintenance: mocks.historicalMaintenance,
 }));
+vi.mock("../../src/agents/finance-alpaca-market-calendar.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../src/agents/finance-alpaca-market-calendar.js")>();
+  return { ...actual, createFinanceAlpacaMarketSessionResolver: () => mocks.resolveCalendar };
+});
 vi.mock("../../src/agents/finance-alpaca-history-sync.js", () => ({
   syncConfiguredAlpacaPaperHistory: mocks.syncAlpacaHistory,
 }));
@@ -260,6 +272,8 @@ beforeEach(() => {
   directory = fs.mkdtempSync(path.join(os.tmpdir(), "finance-scheduler-test-"));
   stderrMessages = [];
   mocks.runCycle.mockResolvedValue(success);
+  mocks.resolveCalendar.mockReset();
+  mocks.resolveCalendar.mockResolvedValue(null);
   mocks.loadConfig.mockReturnValue({});
   mocks.historicalMaintenance.mockResolvedValue({
     status: "idle",
@@ -3298,6 +3312,7 @@ it("keeps night settlement success independent from a failed universe refresh", 
     ok: true,
     status: "succeeded",
     universeSelection: { status: "failed" },
+    intradayCloseCapture: { status: "skipped", reason: "intraday_not_configured" },
   });
   expect(selection).toMatchObject({ status: "failed" });
   expect(readFinanceSchedulerState(directory).lastSucceeded.night).toBeDefined();
@@ -3956,4 +3971,229 @@ it("passes validated prior-day feedback through the actual scheduled controller 
   expect(readFinanceSchedulerState(directory).lastRun?.researchPlanRefresh).toMatchObject({
     feedback: { status: "present", sourceSha256 },
   });
+});
+
+function closeCaptureSession(closeAt = "2026-10-01T20:00:00.000Z") {
+  const sourceUrlOrArtifact =
+    "https://paper-api.alpaca.markets/v2/calendar?start=2026-10-01&end=2026-10-01&date_type=TRADING";
+  const bound = {
+    source: "alpaca_paper_market_calendar",
+    sourceUrlOrArtifact,
+    date: "2026-10-01",
+    openAt: "2026-10-01T13:30:00.000Z",
+    closeAt,
+  };
+  return {
+    ...bound,
+    openMinute: 570,
+    closeMinute: closeAt.includes("17:00") ? 780 : 960,
+    observedAt: closeAt,
+    calendarRef: caseflowFingerprint(bound),
+  };
+}
+
+async function seedCloseCaptureBar(
+  instrument: string,
+  startAt: string,
+  feed: "iex" | "sip" = "iex",
+) {
+  await appendFinanceIntradayBars(directory, {
+    instrument,
+    intervalSeconds: 300,
+    observedAt: "2026-10-01T22:00:00.000Z",
+    provenance: { origin: "stub native feed", sourceUrlOrArtifact: "fixture:bars", feed },
+    bars: [{ startAt, open: 10, high: 11, low: 9, close: 10, volume: 1 }],
+  });
+}
+
+it("captures the last closed bar for original ledger targets with stub transport and is idempotent", async () => {
+  await seedCloseCaptureBar("REMOVED", "2026-10-01T13:30:00.000Z");
+  await seedCloseCaptureBar("COMPLETE", "2026-10-01T19:55:00.000Z");
+  const read = vi.fn(async () => ({
+    status: 200,
+    body: JSON.stringify({
+      bars: [{ t: "2026-10-01T19:55:00.000Z", o: 10, h: 11, l: 9, c: 10.5, v: 2 }],
+    }),
+  }));
+  const sync = vi.fn((options: Parameters<typeof syncAlpacaIntradayBars>[0]) =>
+    syncAlpacaIntradayBars({
+      ...options,
+      credentials: { apiKeyId: "stub", apiSecretKey: "stub" },
+      read,
+    }),
+  );
+  const now = () => new Date("2026-10-01T22:00:00.000Z");
+  const options = {
+    directory,
+    sessionDate: "2026-10-01",
+    intraday: { feed: "iex" as const, intervalSeconds: 300 as const },
+    resolveMarketSession: vi.fn(async () => closeCaptureSession()),
+    signal: new AbortController().signal,
+    now,
+    sync,
+  };
+  expect(await captureFinanceIntradayCloseBars(options)).toMatchObject({
+    status: "completed",
+    results: [
+      { instrument: "COMPLETE", status: "already_complete" },
+      { instrument: "REMOVED", status: "captured" },
+    ],
+  });
+  expect(sync).toHaveBeenCalledOnce();
+  expect(sync.mock.calls[0][0]).toMatchObject({
+    instrument: "REMOVED",
+    start: "2026-10-01T19:55:00.000Z",
+    end: "2026-10-01T20:00:00.000Z",
+    feed: "iex",
+    intervalSeconds: 300,
+  });
+  const ledger = await readFinanceIntradayLedger(directory, { instrument: "REMOVED", feed: "iex" });
+  expect(ledger.bars.at(-1)).toMatchObject({ startAt: "2026-10-01T19:55:00.000Z", close: 10.5 });
+  expect(await captureFinanceIntradayCloseBars(options)).toMatchObject({ status: "completed" });
+  expect(sync).toHaveBeenCalledOnce();
+  expect(mocks.executeIntradayDecision).not.toHaveBeenCalled();
+});
+
+it.each(["unconfigured", "before_close", "holiday", "cancelled"])(
+  "skips night close capture: %s",
+  async (reason) => {
+    const controller = new AbortController();
+    if (reason === "cancelled") {
+      controller.abort();
+    }
+    const readLedger = vi.fn();
+    const sync = vi.fn();
+    const result = await captureFinanceIntradayCloseBars({
+      directory,
+      sessionDate: "2026-10-01",
+      intraday: reason === "unconfigured" ? undefined : { feed: "iex", intervalSeconds: 300 },
+      resolveMarketSession: vi.fn(async () =>
+        reason === "holiday"
+          ? null
+          : { ...closeCaptureSession(), observedAt: "2026-10-01T19:50:00.000Z" },
+      ),
+      signal: controller.signal,
+      now: () =>
+        new Date(
+          reason === "before_close" ? "2026-10-01T19:59:59.000Z" : "2026-10-01T22:00:00.000Z",
+        ),
+      readLedger,
+      sync,
+    });
+    expect(result.status).toBe("skipped");
+    expect(readLedger).not.toHaveBeenCalled();
+    expect(sync).not.toHaveBeenCalled();
+  },
+);
+
+it("keeps failed and provider-missing close bars visible without throwing", async () => {
+  await seedCloseCaptureBar("FAILED", "2026-10-01T13:30:00.000Z");
+  await seedCloseCaptureBar("MISSING", "2026-10-01T13:30:00.000Z");
+  const sync = vi.fn(async (options: Parameters<typeof syncAlpacaIntradayBars>[0]) => {
+    if (options.instrument === "FAILED") {
+      throw new Error("provider failure");
+    }
+    return { instrument: options.instrument } as Awaited<ReturnType<typeof syncAlpacaIntradayBars>>;
+  });
+  expect(
+    await captureFinanceIntradayCloseBars({
+      directory,
+      sessionDate: "2026-10-01",
+      intraday: { feed: "iex", intervalSeconds: 300 },
+      resolveMarketSession: async () => closeCaptureSession(),
+      signal: new AbortController().signal,
+      now: () => new Date("2026-10-01T22:00:00.000Z"),
+      sync,
+    }),
+  ).toMatchObject({
+    status: "partial",
+    results: [
+      { instrument: "FAILED", status: "unavailable", reason: "last_bar_sync_failed" },
+      { instrument: "MISSING", status: "unavailable", reason: "last_bar_missing_after_sync" },
+    ],
+  });
+});
+
+it("uses the original early-close calendar and excludes another day or feed", async () => {
+  await seedCloseCaptureBar("EARLY", "2026-10-01T13:30:00.000Z");
+  await seedCloseCaptureBar("YESTERDAY", "2026-09-30T13:30:00.000Z");
+  await seedCloseCaptureBar("OTHERFEED", "2026-10-01T13:30:00.000Z", "sip");
+  const sync = vi.fn(async (options: Parameters<typeof syncAlpacaIntradayBars>[0]) => {
+    await seedCloseCaptureBar(options.instrument, options.start);
+    return {} as Awaited<ReturnType<typeof syncAlpacaIntradayBars>>;
+  });
+  const result = await captureFinanceIntradayCloseBars({
+    directory,
+    sessionDate: "2026-10-01",
+    intraday: { feed: "iex", intervalSeconds: 300 },
+    resolveMarketSession: async () => closeCaptureSession("2026-10-01T17:00:00.000Z"),
+    signal: new AbortController().signal,
+    now: () => new Date("2026-10-01T22:00:00.000Z"),
+    sync,
+  });
+  expect(result).toMatchObject({
+    status: "completed",
+    results: [{ instrument: "EARLY", status: "captured" }],
+  });
+  expect(sync).toHaveBeenCalledOnce();
+  expect(sync.mock.calls[0][0]).toMatchObject({
+    start: "2026-10-01T16:55:00.000Z",
+    end: "2026-10-01T17:00:00.000Z",
+  });
+});
+
+it("records failed close capture without failing the original night settlement", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-10-01T22:00:00.000Z"));
+  mocks.resolveCalendar.mockRejectedValueOnce(new Error("stub calendar failure"));
+  await runFinanceScheduler([
+    "--once",
+    "night",
+    "--dir",
+    directory,
+    "--intraday-monitor",
+    "--intraday-instruments",
+    "AAA",
+  ]);
+  expect(readFinanceSchedulerState(directory).lastRun).toMatchObject({
+    ok: true,
+    intradayCloseCapture: {
+      status: "unavailable",
+      reason: "close_capture_read_failed",
+      boundary: "market_data_only_no_execution",
+    },
+  });
+});
+
+it("keeps calendar and ledger failures named without throwing from close capture", async () => {
+  const options = {
+    directory,
+    sessionDate: "2026-10-01",
+    intraday: { feed: "iex" as const, intervalSeconds: 300 as const },
+    signal: new AbortController().signal,
+    now: () => new Date("2026-10-01T22:00:00.000Z"),
+  };
+  expect(
+    await captureFinanceIntradayCloseBars({
+      ...options,
+      resolveMarketSession: async () => {
+        throw new Error("calendar failed");
+      },
+    }),
+  ).toMatchObject({ status: "unavailable", reason: "close_capture_read_failed" });
+  expect(
+    await captureFinanceIntradayCloseBars({
+      ...options,
+      resolveMarketSession: async () => ({ ...closeCaptureSession(), calendarRef: "0".repeat(64) }),
+    }),
+  ).toMatchObject({ status: "unavailable", reason: "invalid_market_calendar" });
+  expect(
+    await captureFinanceIntradayCloseBars({
+      ...options,
+      resolveMarketSession: async () => closeCaptureSession(),
+      readLedger: async () => {
+        throw new Error("ledger failed");
+      },
+    }),
+  ).toMatchObject({ status: "unavailable", reason: "close_capture_read_failed" });
 });

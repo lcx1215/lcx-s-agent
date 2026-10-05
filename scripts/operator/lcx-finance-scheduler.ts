@@ -24,7 +24,11 @@ import {
   financeAlpacaCyclePolicySchema,
 } from "../../src/agents/finance-alpaca-cycle-controller.js";
 import { syncConfiguredAlpacaPaperHistory } from "../../src/agents/finance-alpaca-history-sync.js";
-import { createFinanceAlpacaMarketSessionResolver } from "../../src/agents/finance-alpaca-market-calendar.js";
+import { syncAlpacaIntradayBars } from "../../src/agents/finance-alpaca-intraday.js";
+import {
+  createFinanceAlpacaMarketSessionResolver,
+  financeAlpacaMarketSessionIssue,
+} from "../../src/agents/finance-alpaca-market-calendar.js";
 import {
   createAlpacaPaperOrderStream,
   type AlpacaPaperOrderStreamStatus,
@@ -41,6 +45,7 @@ import {
 import { FINANCE_RISK_BUDGET_ANY_INSTRUMENT } from "../../src/agents/finance-execution-adapter.js";
 import { runFinanceHistoricalPositionMaintenance } from "../../src/agents/finance-historical-position-maintenance.js";
 import { executeFinanceIntradayDecision } from "../../src/agents/finance-intraday-execution.js";
+import { readFinanceIntradayLedger } from "../../src/agents/finance-intraday-ledger.js";
 import {
   resolveFinanceIntradayCashSession,
   runFinanceIntradayMonitorTick,
@@ -1613,6 +1618,149 @@ export function financeResearchPreflightRetryDue(state: SchedulerState, at: Date
   return Number.isFinite(completedAt) && at.getTime() - completedAt >= 10 * 60_000;
 }
 
+/** Night settlement owns this bounded data-only catch-up; trading stays session-gated. */
+export async function captureFinanceIntradayCloseBars(options: {
+  directory: string;
+  sessionDate: string;
+  intraday?: { feed: "iex" | "sip"; intervalSeconds: 60 | 300 | 900 };
+  resolveMarketSession?: ReturnType<typeof createFinanceAlpacaMarketSessionResolver>;
+  signal: AbortSignal;
+  now?: () => Date;
+  readLedger?: typeof readFinanceIntradayLedger;
+  sync?: typeof syncAlpacaIntradayBars;
+}) {
+  const now = options.now ?? (() => new Date());
+  const results: { instrument: string; status: string; reason?: string }[] = [];
+  let targetCount = 0;
+  let scope:
+    | { feed: string; intervalSeconds: number; calendarRef: string; closeAt: string }
+    | undefined;
+  const receipt = (status: string, reason?: string) => ({
+    schemaVersion: "lcx_finance_intraday_close_capture_v1" as const,
+    observedAt: now().toISOString(),
+    sessionDate: options.sessionDate,
+    boundary: "market_data_only_no_execution" as const,
+    ...(scope ? { scope } : {}),
+    targetCount,
+    unprocessedCount: Math.max(0, targetCount - results.length),
+    status,
+    ...(reason ? { reason } : {}),
+    results,
+  });
+  if (!options.intraday) {
+    return receipt("skipped", "intraday_not_configured");
+  }
+  if (options.signal.aborted) {
+    return receipt("skipped", "cancelled");
+  }
+  if (!options.resolveMarketSession) {
+    return receipt("unavailable", "market_calendar_unavailable");
+  }
+  const signal = AbortSignal.any([options.signal, AbortSignal.timeout(30_000)]);
+  const read = options.readLedger ?? readFinanceIntradayLedger;
+  try {
+    const session = await options.resolveMarketSession(options.sessionDate, signal);
+    if (signal.aborted) {
+      return receipt("unavailable", "cancelled_or_timeout");
+    }
+    if (!session) {
+      return receipt("skipped", "market_closed");
+    }
+    if (
+      session.date !== options.sessionDate ||
+      financeAlpacaMarketSessionIssue(session, { asOf: now().toISOString() }) !== null
+    ) {
+      return receipt("unavailable", "invalid_market_calendar");
+    }
+    if (now().getTime() < Date.parse(session.closeAt)) {
+      return receipt("skipped", "session_not_closed");
+    }
+    const { feed, intervalSeconds } = options.intraday;
+    scope = { feed, intervalSeconds, calendarRef: session.calendarRef, closeAt: session.closeAt };
+    const lastStart = new Date(Date.parse(session.closeAt) - intervalSeconds * 1000).toISOString();
+    const prior = await read(options.directory, { feed });
+    if (signal.aborted) {
+      return receipt("unavailable", "cancelled_or_timeout");
+    }
+    // Ledger membership survives the night universe refresh; never infer targets from its replacement.
+    const original = prior.bars.filter(
+      (bar) =>
+        bar.intervalSeconds === intervalSeconds &&
+        bar.startAt >= session.openAt &&
+        bar.startAt < session.closeAt,
+    );
+    const instruments = [...new Set(original.map((bar) => bar.instrument))].toSorted();
+    targetCount = instruments.length;
+    const present = new Set(
+      original.filter((bar) => bar.startAt === lastStart).map((bar) => bar.instrument),
+    );
+    for (const instrument of instruments.slice(0, 128)) {
+      if (signal.aborted) {
+        break;
+      }
+      if (present.has(instrument)) {
+        results.push({ instrument, status: "already_complete" });
+        continue;
+      }
+      try {
+        await (options.sync ?? syncAlpacaIntradayBars)({
+          directory: options.directory,
+          instrument,
+          start: lastStart,
+          end: session.closeAt,
+          intervalSeconds,
+          feed,
+          signal,
+          now,
+        });
+        results.push({ instrument, status: "pending_readback" });
+      } catch {
+        results.push({
+          instrument,
+          status: "unavailable",
+          reason: signal.aborted ? "cancelled_or_timeout" : "last_bar_sync_failed",
+        });
+      }
+    }
+    if (results.some((result) => result.status === "pending_readback")) {
+      const after = await read(options.directory, { feed });
+      const accepted = new Set(
+        after.bars
+          .filter(
+            (bar) =>
+              bar.intervalSeconds === intervalSeconds &&
+              bar.startAt === lastStart &&
+              bar.endAt === session.closeAt,
+          )
+          .map((bar) => bar.instrument),
+      );
+      for (const result of results) {
+        if (result.status === "pending_readback") {
+          result.status = accepted.has(result.instrument) ? "captured" : "unavailable";
+          if (result.status === "unavailable") {
+            result.reason = "last_bar_missing_after_sync";
+          }
+        }
+      }
+    }
+    const incomplete =
+      signal.aborted || instruments.length > 128 || results.some((r) => r.status === "unavailable");
+    return receipt(
+      incomplete ? "partial" : "completed",
+      signal.aborted
+        ? "cancelled_or_timeout"
+        : instruments.length > 128
+          ? "instrument_limit_128"
+          : undefined,
+    );
+  } catch {
+    return receipt(
+      "unavailable",
+      signal.aborted ? "cancelled_or_timeout" : "close_capture_read_failed",
+    );
+  }
+}
+
 async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
   if (context.signal.aborted) {
     return false;
@@ -1744,6 +1892,15 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
   const cycleAccepted = researchAccepted && result.ok && cycleOutputSucceeded(result.stdout);
   const settlement =
     mode === "night" && cycleAccepted ? parseNightSettlement(result.stdout) : undefined;
+  const intradayCloseCapture = settlement
+    ? await captureFinanceIntradayCloseBars({
+        directory,
+        sessionDate: attempt.etDate,
+        intraday: context.options.intraday,
+        resolveMarketSession: context.resolveMarketSession,
+        signal: context.signal,
+      })
+    : undefined;
   const universeSelection = settlement
     ? await refreshFinanceUniverseSelection({ context, attempt })
     : undefined;
@@ -1823,6 +1980,7 @@ async function fire(context: CycleContext, mode: Mode): Promise<boolean> {
           },
         }
       : {}),
+    ...(intradayCloseCapture ? { intradayCloseCapture } : {}),
     ...(universeSelection ? { universeSelection } : {}),
     ...(tuningLifecycle ? { tuningLifecycle } : {}),
   };
@@ -2717,7 +2875,9 @@ export async function runFinanceScheduler(
     initializeFinanceSchedulerDatabase(root.directory);
     const intradayController = createIntradayControllerForOptions(root.directory, runtimeOptions);
     const resolveMarketSession =
-      runtimeOptions.command === "loop" && runtimeOptions.intraday
+      runtimeOptions.intraday &&
+      (runtimeOptions.command === "loop" ||
+        (runtimeOptions.command === "once" && runtimeOptions.mode === "night"))
         ? createFinanceAlpacaMarketSessionResolver({ directory: root.directory })
         : undefined;
     const context: CycleContext = {

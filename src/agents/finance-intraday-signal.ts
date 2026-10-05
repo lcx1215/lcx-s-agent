@@ -25,6 +25,13 @@ export type FinanceIntradaySignal = Readonly<{
   referencePriceAt: string;
   stopPrice?: number;
   targetPrice?: number;
+  openingRangeGap?: Readonly<{
+    expectedStartAt: string;
+    expectedEndAt: string;
+    missingBarStarts: readonly string[];
+    duplicateBarStarts: readonly string[];
+    invalidBarStarts: readonly string[];
+  }>;
   executionAuthority: "none";
 }>;
 
@@ -38,6 +45,8 @@ export function evaluateFinanceIntradaySignal(params: {
   rewardRisk?: number;
   position?: FinanceIntradayPositionState;
   preCloseExit?: boolean;
+  /** Host calendar binding; legacy callers retain their observed-bar contract. */
+  marketOpenAt?: string;
 }): FinanceIntradaySignal {
   const openingRangeBars = params.openingRangeBars ?? 6;
   const rewardRisk = params.rewardRisk ?? 2;
@@ -67,6 +76,7 @@ export function evaluateFinanceIntradaySignal(params: {
   let referencePrice = latest.close;
   let stopPrice: number | undefined;
   let targetPrice: number | undefined;
+  let openingRangeGap: FinanceIntradaySignal["openingRangeGap"];
 
   if (params.position) {
     if (params.position.instrument !== instrument) {
@@ -84,15 +94,54 @@ export function evaluateFinanceIntradaySignal(params: {
       action = "sell";
       reason = "pre_close";
     }
-  } else if (bars.length > openingRangeBars) {
-    const opening = bars.slice(0, openingRangeBars);
-    const openingHigh = Math.max(...opening.map((bar) => bar.high));
-    const openingLow = Math.min(...opening.map((bar) => bar.low));
-    if (latest.close > openingHigh) {
-      action = "buy";
-      reason = "opening_range_breakout";
-      stopPrice = openingLow;
-      targetPrice = latest.close + (latest.close - openingLow) * rewardRisk;
+  } else {
+    let opening = bars.slice(0, openingRangeBars);
+    if (params.marketOpenAt !== undefined) {
+      const start = Date.parse(params.marketOpenAt);
+      const interval = latest.intervalSeconds * 1_000;
+      const end = start + openingRangeBars * interval;
+      if (!Number.isFinite(start) || !Number.isFinite(end)) {
+        throw new Error("invalid intraday opening window");
+      }
+      opening = bars.filter((bar) => {
+        const at = Date.parse(bar.startAt);
+        return at >= start && at < end;
+      });
+      // An unfinished window is waiting, not missing evidence. Never let later bars fill its slots.
+      if (Date.parse(latest.endAt) >= end) {
+        const expected = Array.from({ length: openingRangeBars }, (_, index) =>
+          new Date(start + index * interval).toISOString(),
+        );
+        const counts = new Map<string, number>();
+        const invalid = opening.filter((bar) => {
+          counts.set(bar.startAt, (counts.get(bar.startAt) ?? 0) + 1);
+          return (
+            !expected.includes(bar.startAt) ||
+            Date.parse(bar.endAt) !== Date.parse(bar.startAt) + interval
+          );
+        });
+        const missing = expected.filter((at) => !counts.has(at));
+        const duplicates = expected.filter((at) => (counts.get(at) ?? 0) > 1);
+        if (missing.length || duplicates.length || invalid.length) {
+          openingRangeGap = {
+            expectedStartAt: new Date(start).toISOString(),
+            expectedEndAt: new Date(end).toISOString(),
+            missingBarStarts: missing,
+            duplicateBarStarts: duplicates,
+            invalidBarStarts: invalid.map((bar) => bar.startAt),
+          };
+        }
+      }
+    }
+    if (!openingRangeGap && opening.length === openingRangeBars && bars.length > openingRangeBars) {
+      const openingHigh = Math.max(...opening.map((bar) => bar.high));
+      const openingLow = Math.min(...opening.map((bar) => bar.low));
+      if (latest.close > openingHigh) {
+        action = "buy";
+        reason = "opening_range_breakout";
+        stopPrice = openingLow;
+        targetPrice = latest.close + (latest.close - openingLow) * rewardRisk;
+      }
     }
   }
 
@@ -105,6 +154,7 @@ export function evaluateFinanceIntradaySignal(params: {
     referencePriceAt: latest.endAt,
     ...(stopPrice === undefined ? {} : { stopPrice }),
     ...(targetPrice === undefined ? {} : { targetPrice }),
+    ...(openingRangeGap ? { openingRangeGap } : {}),
     executionAuthority: "none" as const,
   };
   return Object.freeze({ ...body, signalId: `intraday-${caseflowFingerprint(body)}` });
