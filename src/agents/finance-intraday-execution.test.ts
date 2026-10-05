@@ -58,6 +58,7 @@ vi.mock("./finance-research-runner.js", async (importOriginal) => {
 const temporary: string[] = [];
 afterEach(async () => {
   readerMocks.readUniverse.mockReset();
+  vi.restoreAllMocks();
   await Promise.all(
     temporary.splice(0).map((item) => fs.rm(item, { recursive: true, force: true })),
   );
@@ -161,6 +162,209 @@ async function activeRuleBinding(
 }
 
 describe("intraday decision execution bridge", () => {
+  it.each([
+    "deadline_account",
+    "caller_account",
+    "deadline_quote",
+    "caller_quote",
+    "deadline_refresh",
+    "caller_review",
+    "deadline_review",
+    "pre_aborted",
+    "provider_error",
+    "late_rejection",
+    "dispatch_uncertain",
+  ] as const)("bounds preparation without racing dispatch (%s)", async (mode) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-deadline-"));
+    temporary.push(directory);
+    const strategyBinding = await activeRuleBinding(directory);
+    const decision = (
+      await appendFinanceIntradayDecision(directory, {
+        signalId: `preparation-${mode}`,
+        instrument: "SPY",
+        sessionDate: "2026-09-18",
+        action: "buy",
+        reason: "opening_range_breakout",
+        referencePrice: 100,
+        referencePriceAt: "2026-09-18T15:00:00.000Z",
+        stopPrice: 99,
+        targetPrice: 102,
+        datasetHeadRef: "c".repeat(64),
+        strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+        strategyBinding,
+      })
+    ).record;
+    const caller = new AbortController();
+    const deadline = new AbortController();
+    const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+    const timeoutSpy = vi
+      .spyOn(AbortSignal, "timeout")
+      .mockImplementation((ms) => (ms === 120_000 ? deadline.signal : originalTimeout(ms)));
+    const account = {
+      accountId: "paper-account",
+      venue: "alpaca:paper" as const,
+      observedAt: "2026-09-18T15:00:01.000Z",
+      expiresAt: "2026-09-18T15:01:01.000Z",
+      equity: 100_000,
+      positions: [],
+    };
+    const quote = {
+      referencePrice: 100,
+      referencePriceAt: "2026-09-18T15:00:01.000Z",
+      sourceUrlOrArtifact: "fixture://quote",
+      bidPrice: 99.9,
+      askPrice: 100,
+      maxAgeMs: 30_000,
+    };
+    let entered!: () => void;
+    const reached = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let finish!: () => void;
+    let fail!: (error: unknown) => void;
+    const stalled = new Promise<void>((resolve, reject) => {
+      finish = resolve;
+      fail = reject;
+    });
+    let combinedSignal: AbortSignal | undefined;
+    let listenerWasRemoved = () => false;
+    const stall = async (signal: AbortSignal) => {
+      combinedSignal = signal;
+      const removeListener = vi.spyOn(signal, "removeEventListener");
+      listenerWasRemoved = () => removeListener.mock.calls.some(([event]) => event === "abort");
+      entered();
+      await stalled; // Deliberately ignores cancellation, like a broken provider.
+    };
+    const accountBookProvider = vi.fn(async (signal: AbortSignal) => {
+      if (mode.includes("account") || mode === "late_rejection") {
+        await stall(signal);
+      }
+      if (mode === "provider_error") {
+        throw new Error("private-key-and-secret-response-body");
+      }
+      return account;
+    });
+    const executionQuoteProvider = vi.fn(async (_request: unknown, signal: AbortSignal) => {
+      if (mode.endsWith("quote")) {
+        await stall(signal);
+      }
+      return quote;
+    });
+    const prepareExecutionQuote = vi.fn(async (_request: unknown, signal: AbortSignal) => {
+      await stall(signal);
+      return quote;
+    });
+    const runOrder = vi.fn(async () => {
+      entered();
+      await stalled;
+      throw new FinanceExecutionSafetyUncertainError(
+        "fixture-claim",
+        new Error("private dispatch body"),
+        {
+          phase: "execute",
+          disposition: "outcome_unresolved",
+        },
+      );
+    });
+    if (mode === "pre_aborted") {
+      caller.abort(new Error("private caller reason"));
+    }
+    let settled = false;
+    const pending = executeFinanceIntradayDecision({
+      directory,
+      decision,
+      controller: {
+        accountId: "paper-account",
+        accountBookProvider,
+        executionQuoteProvider,
+        ...(mode === "deadline_refresh" ? { prepareExecutionQuote } : {}),
+        createSafetyContext: vi.fn(),
+      },
+      caps: { maxOrderNotional: 5_000, maxInstrumentNotional: 10_000, maxOrdersPerRun: 1 },
+      tradeDecisionReviewer: mode.endsWith("review")
+        ? async (request, signal) => {
+            await stall(signal);
+            return approvingReviewer()(request);
+          }
+        : approvingReviewer(),
+      signal: caller.signal,
+      now: () => Date.parse("2026-09-18T15:00:02.000Z"),
+      runOrder: runOrder as never,
+    }).then((result) => {
+      settled = true;
+      return result;
+    });
+    if (mode !== "pre_aborted" && mode !== "provider_error") {
+      await reached;
+      if (mode.startsWith("caller") || mode === "late_rejection") {
+        caller.abort(new Error("private caller reason"));
+      } else {
+        deadline.abort(new Error("private deadline reason"));
+      }
+      if (mode === "dispatch_uncertain") {
+        // The venue owner, not the preparation deadline, determines an in-flight outcome.
+        await Promise.resolve();
+        expect(settled).toBe(false);
+        finish();
+      }
+    }
+    const result = await pending;
+    expect(timeoutSpy).toHaveBeenCalledWith(120_000);
+    expect(result.status).toBe(mode === "dispatch_uncertain" ? "uncertain" : "refused");
+    const stored = await readFinanceIntradayOutcome(directory, decision.input.signalId);
+    if (mode === "dispatch_uncertain") {
+      expect(stored?.executionFailure).toBeUndefined();
+      expect(stored?.executionSafetyFailure?.attempt?.disposition).toBe("outcome_unresolved");
+      expect(stored?.reasons).toEqual(["execution_outcome_unresolved"]);
+    } else {
+      expect(stored?.reasons).toEqual([
+        mode.endsWith("review")
+          ? "intraday decision was cancelled before execution"
+          : "intraday_execution_unexpected_error",
+      ]);
+      expect(stored?.executionFailure).toMatchObject({
+        stage:
+          mode === "pre_aborted"
+            ? "safety_claims"
+            : mode === "deadline_refresh"
+              ? "refresh_quote"
+              : mode.endsWith("review")
+                ? "model_review"
+                : mode.endsWith("quote")
+                  ? "initial_quote"
+                  : "account_book",
+        category:
+          mode === "provider_error"
+            ? "unexpected"
+            : mode.startsWith("caller") || mode === "pre_aborted" || mode === "late_rejection"
+              ? "cancelled"
+              : "deadline_exceeded",
+        elapsedMs: expect.any(Number),
+      });
+      expect(runOrder).not.toHaveBeenCalled();
+    }
+    expect(JSON.stringify(stored)).not.toContain("private");
+    expect(JSON.stringify(stored)).not.toContain("secret-response");
+    if (mode === "pre_aborted") {
+      expect(accountBookProvider).not.toHaveBeenCalled();
+      expect(executionQuoteProvider).not.toHaveBeenCalled();
+    }
+    if (combinedSignal) {
+      expect(combinedSignal).not.toBe(caller.signal);
+      expect(combinedSignal.aborted).toBe(true);
+      expect(listenerWasRemoved()).toBe(true);
+      if (mode === "late_rejection") {
+        fail(new Error("private late rejected provider"));
+      } else {
+        finish();
+      }
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(runOrder).not.toHaveBeenCalled();
+      expect(await readFinanceIntradayOutcome(directory, decision.input.signalId)).toEqual(stored);
+    }
+  });
+
   it("recovers a durable same-signal Paper receipt before checking another pending account claim", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-pending-claim-"));
     temporary.push(directory);
@@ -311,6 +515,8 @@ describe("intraday decision execution bridge", () => {
     });
     await appendFinanceExecutionReceipt(directory, recoveredReceipt);
 
+    const recoveryCancellation = new AbortController();
+    recoveryCancellation.abort();
     const reviewer = approvingReviewer();
     const accountBookProvider = vi.fn();
     const executionQuoteProvider = vi.fn();
@@ -326,6 +532,7 @@ describe("intraday decision execution bridge", () => {
       },
       caps: { maxOrderNotional: 1_000, maxInstrumentNotional: 2_000, maxOrdersPerRun: 1 },
       tradeDecisionReviewer: reviewer,
+      signal: recoveryCancellation.signal,
       now: () => Date.parse("2026-09-18T15:00:02.000Z"),
       runOrder: runOrder as never,
     });

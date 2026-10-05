@@ -310,3 +310,34 @@ it("bounds coverage to the latest hundred signals and does not mix older placeme
     allRecordedCandidatesUnexecuted: true,
   });
 });
+
+it("accepts safe optional preparation diagnostics and rejects arbitrary provider content", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-failure-diagnostic-"));
+  temporary.push(directory);
+  const outcome = {
+    signalId: "safe-diagnostic",
+    status: "refused" as const,
+    reasons: ["intraday_execution_unexpected_error"],
+    executionFailure: {
+      stage: "account_book" as const,
+      category: "deadline_exceeded" as const,
+      elapsedMs: 120_001,
+    },
+  };
+  await appendFinanceIntradayOutcome(directory, outcome);
+  expect(await readFinanceIntradayOutcome(directory, outcome.signalId)).toEqual(outcome);
+  await expect(
+    appendFinanceIntradayOutcome(directory, {
+      ...outcome,
+      signalId: "unsafe-diagnostic",
+      executionFailure: { ...outcome.executionFailure, message: "private provider content" },
+    } as never),
+  ).rejects.toThrow();
+  await expect(
+    appendFinanceIntradayOutcome(directory, {
+      ...outcome,
+      signalId: "unknown-phase",
+      executionFailure: { ...outcome.executionFailure, stage: "provider-url" },
+    } as never),
+  ).rejects.toThrow();
+});

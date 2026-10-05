@@ -392,6 +392,27 @@ const FinanceIntradayOutcomeBase = z
     receiptId: Text.optional(),
     reasons: z.array(Text),
     tradeDecisionReview: FinanceIntradayDecisionReviewReceiptSchema.optional(),
+    executionFailure: z
+      .object({
+        stage: z.enum([
+          "position_receipts",
+          "safety_claims",
+          "strategy_binding",
+          "account_book",
+          "owned_positions",
+          "initial_quote",
+          "decision_context",
+          "model_review",
+          "refresh_quote",
+          "final_strategy_binding",
+          "order_dispatch",
+          "fill_projection",
+        ]),
+        category: z.enum(["deadline_exceeded", "cancelled", "unexpected"]),
+        elapsedMs: z.number().int().nonnegative(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
