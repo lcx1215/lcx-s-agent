@@ -58,11 +58,27 @@ type Controller = Required<
 
 // Race only preparation reads, never a venue dispatch or its durable receipt.
 // Providers that ignore cancellation may finish later; their result cannot resume execution.
-function waitForPreparation<T>(signal: AbortSignal, read: () => Promise<T>): Promise<T> {
+class PreparationDeadlineError extends Error {
+  constructor() {
+    super("intraday preparation deadline exceeded");
+  }
+}
+
+function waitForPreparation<T>(
+  caller: AbortSignal,
+  read: (signal: AbortSignal) => Promise<T>,
+  timeoutMs = 120_000,
+): Promise<T> {
+  const deadline = AbortSignal.timeout(timeoutMs);
+  const signal = AbortSignal.any([caller, deadline]);
   return new Promise<T>((resolve, reject) => {
     const onAbort = () => {
       signal.removeEventListener("abort", onAbort);
-      reject(new Error("intraday preparation cancelled"));
+      reject(
+        caller.aborted
+          ? new Error("intraday preparation cancelled")
+          : new PreparationDeadlineError(),
+      );
     };
     if (signal.aborted) {
       onAbort();
@@ -70,7 +86,7 @@ function waitForPreparation<T>(signal: AbortSignal, read: () => Promise<T>): Pro
     }
     signal.addEventListener("abort", onAbort, { once: true });
     try {
-      void read().then(
+      void read(signal).then(
         (value) => {
           signal.removeEventListener("abort", onAbort);
           if (signal.aborted) {
@@ -410,16 +426,18 @@ export async function executeFinanceIntradayDecision(params: {
     return Object.freeze({ status: "already_terminal" as const, outcome: prior });
   }
   const input = params.decision.input;
-  const deadline = AbortSignal.timeout(120_000);
-  const signal = params.signal ? AbortSignal.any([params.signal, deadline]) : deadline;
+  // A supplied caller owns the total budget. Only the legacy default is a total deadline.
+  const signal = params.signal ?? AbortSignal.timeout(120_000);
   const startedAt = performance.now();
   let stage: NonNullable<FinanceIntradayOutcomeInput["executionFailure"]>["stage"] =
     "position_receipts";
-  const executionFailure = (): NonNullable<FinanceIntradayOutcomeInput["executionFailure"]> => ({
+  const executionFailure = (
+    error?: unknown,
+  ): NonNullable<FinanceIntradayOutcomeInput["executionFailure"]> => ({
     stage,
     category: params.signal?.aborted
       ? "cancelled"
-      : deadline.aborted
+      : signal.aborted || error instanceof PreparationDeadlineError
         ? "deadline_exceeded"
         : "unexpected",
     elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)),
@@ -450,7 +468,7 @@ export async function executeFinanceIntradayDecision(params: {
       });
     }
     stage = "safety_claims";
-    const safetyClaims = await waitForPreparation(signal, () =>
+    const safetyClaims = await waitForPreparation(signal, (signal) =>
       readFinanceExecutionSafetyClaims({
         stateDir: params.directory,
         accountId: params.controller.accountId,
@@ -484,7 +502,7 @@ export async function executeFinanceIntradayDecision(params: {
       return Object.freeze({ status: "refused" as const, outcome: outcome.input });
     }
     stage = "account_book";
-    const account = await waitForPreparation(signal, () =>
+    const account = await waitForPreparation(signal, (signal) =>
       params.controller.accountBookProvider(signal),
     );
     const reconciliation = account.reconciliation;
@@ -536,7 +554,7 @@ export async function executeFinanceIntradayDecision(params: {
     }
     stage = "initial_quote";
     let quote = {
-      ...(await waitForPreparation(signal, () =>
+      ...(await waitForPreparation(signal, (signal) =>
         params.controller.executionQuoteProvider(
           { instrument: input.instrument, assetClass: "us_equity", side: input.action },
           signal,
@@ -693,21 +711,26 @@ export async function executeFinanceIntradayDecision(params: {
       if (!params.tradeDecisionReviewer) {
         rawReview = failedReview("reviewer_unavailable", false);
       } else {
-        const reviewSignal = AbortSignal.any([
-          signal,
-          AbortSignal.timeout(FINANCE_TRADE_DECISION_REVIEW_TIMEOUT_MS),
-        ]);
         try {
-          rawReview = await waitForPreparation(reviewSignal, () =>
-            params.tradeDecisionReviewer!(reviewRequest, reviewSignal),
+          rawReview = await waitForPreparation(
+            signal,
+            (reviewSignal) =>
+              params.tradeDecisionReviewer!(
+                reviewRequest,
+                AbortSignal.any([
+                  reviewSignal,
+                  AbortSignal.timeout(FINANCE_TRADE_DECISION_REVIEW_TIMEOUT_MS),
+                ]),
+              ),
+            FINANCE_TRADE_DECISION_REVIEW_TIMEOUT_MS + 5_000,
           );
         } catch (error) {
           rawReview = failedReview(
-            error instanceof Error && error.message === "timeout"
+            error instanceof PreparationDeadlineError ||
+              signal.aborted ||
+              (error instanceof Error && error.message === "timeout")
               ? "runtime_timeout"
-              : reviewSignal.aborted
-                ? "runtime_timeout"
-                : "process_error",
+              : "process_error",
             true,
           );
         }
@@ -796,7 +819,7 @@ export async function executeFinanceIntradayDecision(params: {
     if (params.controller.prepareExecutionQuote || executionQuoteIssue(quote, now()) !== null) {
       stage = "refresh_quote";
       quote = {
-        ...(await waitForPreparation(signal, () =>
+        ...(await waitForPreparation(signal, (signal) =>
           (params.controller.prepareExecutionQuote ?? params.controller.executionQuoteProvider)(
             { instrument: input.instrument, assetClass: "us_equity", side: input.action },
             signal,
@@ -968,7 +991,7 @@ export async function executeFinanceIntradayDecision(params: {
             ? `execution_safety_${factsFailure.category}`
             : "intraday_execution_unexpected_error",
       ],
-      ...(!factsFailure && !attempt ? { executionFailure: executionFailure() } : {}),
+      ...(!factsFailure && !attempt ? { executionFailure: executionFailure(error) } : {}),
       ...(factsFailure ? { executionSafetyFailure: factsFailure } : {}),
       ...(attempt
         ? {

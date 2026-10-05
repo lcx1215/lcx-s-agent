@@ -59,6 +59,7 @@ const temporary: string[] = [];
 afterEach(async () => {
   readerMocks.readUniverse.mockReset();
   vi.restoreAllMocks();
+  vi.useRealTimers();
   await Promise.all(
     temporary.splice(0).map((item) => fs.rm(item, { recursive: true, force: true })),
   );
@@ -169,7 +170,9 @@ describe("intraday decision execution bridge", () => {
     "caller_quote",
     "deadline_refresh",
     "caller_review",
-    "deadline_review",
+    "model_deadline",
+    "default_account",
+    "caller_timeout_account",
     "pre_aborted",
     "provider_error",
     "late_rejection",
@@ -196,10 +199,20 @@ describe("intraday decision execution bridge", () => {
     ).record;
     const caller = new AbortController();
     const deadline = new AbortController();
+    const modelDeadline = new AbortController();
+    const reviewWaitDeadline = new AbortController();
     const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
     const timeoutSpy = vi
       .spyOn(AbortSignal, "timeout")
-      .mockImplementation((ms) => (ms === 120_000 ? deadline.signal : originalTimeout(ms)));
+      .mockImplementation((ms) =>
+        ms === 120_000
+          ? deadline.signal
+          : ms === 60_000
+            ? modelDeadline.signal
+            : ms === 65_000
+              ? reviewWaitDeadline.signal
+              : originalTimeout(ms),
+      );
     const account = {
       accountId: "paper-account",
       venue: "alpaca:paper" as const,
@@ -255,6 +268,9 @@ describe("intraday decision execution bridge", () => {
       return quote;
     });
     const runOrder = vi.fn(async () => {
+      if (mode === "model_deadline") {
+        return { ok: false as const, refusals: ["fixture shared gate refusal"] };
+      }
       entered();
       await stalled;
       throw new FinanceExecutionSafetyUncertainError(
@@ -281,13 +297,14 @@ describe("intraday decision execution bridge", () => {
         createSafetyContext: vi.fn(),
       },
       caps: { maxOrderNotional: 5_000, maxInstrumentNotional: 10_000, maxOrdersPerRun: 1 },
-      tradeDecisionReviewer: mode.endsWith("review")
-        ? async (request, signal) => {
-            await stall(signal);
-            return approvingReviewer()(request);
-          }
-        : approvingReviewer(),
-      signal: caller.signal,
+      tradeDecisionReviewer:
+        mode.endsWith("review") || mode === "model_deadline"
+          ? async (request, signal) => {
+              await stall(signal);
+              return approvingReviewer()(request);
+            }
+          : approvingReviewer(),
+      ...(mode === "default_account" ? {} : { signal: caller.signal }),
       now: () => Date.parse("2026-09-18T15:00:02.000Z"),
       runOrder: runOrder as never,
     }).then((result) => {
@@ -297,7 +314,14 @@ describe("intraday decision execution bridge", () => {
     if (mode !== "pre_aborted" && mode !== "provider_error") {
       await reached;
       if (mode.startsWith("caller") || mode === "late_rejection") {
-        caller.abort(new Error("private caller reason"));
+        caller.abort(
+          mode === "caller_timeout_account"
+            ? new DOMException("private timeout reason", "TimeoutError")
+            : new Error("private caller reason"),
+        );
+      } else if (mode === "model_deadline") {
+        modelDeadline.abort();
+        reviewWaitDeadline.abort();
       } else {
         deadline.abort(new Error("private deadline reason"));
       }
@@ -316,6 +340,14 @@ describe("intraday decision execution bridge", () => {
       expect(stored?.executionFailure).toBeUndefined();
       expect(stored?.executionSafetyFailure?.attempt?.disposition).toBe("outcome_unresolved");
       expect(stored?.reasons).toEqual(["execution_outcome_unresolved"]);
+    } else if (mode === "model_deadline") {
+      expect(stored?.executionFailure).toBeUndefined();
+      expect(stored?.tradeDecisionReview).toMatchObject({
+        status: "failed",
+        failureCode: "runtime_timeout",
+      });
+      expect(stored?.reasons).toEqual(["fixture shared gate refusal"]);
+      expect(runOrder).toHaveBeenCalledTimes(1);
     } else {
       expect(stored?.reasons).toEqual([
         mode.endsWith("review")
@@ -352,7 +384,9 @@ describe("intraday decision execution bridge", () => {
     if (combinedSignal) {
       expect(combinedSignal).not.toBe(caller.signal);
       expect(combinedSignal.aborted).toBe(true);
-      expect(listenerWasRemoved()).toBe(true);
+      if (mode !== "caller_review" && mode !== "model_deadline") {
+        expect(listenerWasRemoved()).toBe(true);
+      }
       if (mode === "late_rejection") {
         fail(new Error("private late rejected provider"));
       } else {
@@ -360,10 +394,192 @@ describe("intraday decision execution bridge", () => {
       }
       await Promise.resolve();
       await Promise.resolve();
-      expect(runOrder).not.toHaveBeenCalled();
+      expect(runOrder).toHaveBeenCalledTimes(mode === "model_deadline" ? 1 : 0);
       expect(await readFinanceIntradayOutcome(directory, decision.input.signalId)).toEqual(stored);
     }
   });
+
+  // Native WBD measured only the total and dispatch timestamps; phase durations below
+  // are a representative controlled decomposition, not observed native phase latencies.
+  it.each(["caller", "default", "stalled_stage", "late_veto", "ignored_review"] as const)(
+    "preserves caller budgets and bounds physical preparation timers (%s)",
+    async (mode) => {
+      const withCaller = mode !== "default";
+      const reviewMarginCase = mode === "late_veto" || mode === "ignored_review";
+      const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-wbd-timing-"));
+      temporary.push(directory);
+      const strategyBinding = await activeRuleBinding(directory);
+      const started = Date.parse("2026-09-18T15:08:42.350Z");
+      strategyBinding.marketSession = {
+        ...strategyBinding.marketSession!,
+        observedAt: new Date(started).toISOString(),
+      };
+      const decision = (
+        await appendFinanceIntradayDecision(directory, {
+          signalId: `wbd-timing-${mode}`,
+          instrument: "SPY",
+          sessionDate: "2026-09-18",
+          action: "buy",
+          reason: "opening_range_breakout",
+          referencePrice: 100,
+          referencePriceAt: new Date(started).toISOString(),
+          stopPrice: 99,
+          targetPrice: 102,
+          datasetHeadRef: "c".repeat(64),
+          strategyRule: FINANCE_INTRADAY_OPENING_RANGE_RULE,
+          strategyBinding,
+        })
+      ).record;
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date", "performance"] });
+      vi.setSystemTime(started);
+      const deadlines: number[] = [];
+      vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+        deadlines.push(ms);
+        const deadline = new AbortController();
+        setTimeout(
+          () => deadline.abort(new DOMException("fixture stage timeout", "TimeoutError")),
+          ms,
+        );
+        return deadline.signal;
+      });
+      const caller = new AbortController();
+      const accountBookProvider = vi.fn(async (signal: AbortSignal) => {
+        expect(signal).not.toBe(caller.signal);
+        await vi.advanceTimersByTimeAsync(
+          mode === "stalled_stage" ? 120_001 : reviewMarginCase ? 0 : 80_000,
+        );
+        return {
+          accountId: "paper-account",
+          venue: "alpaca:paper" as const,
+          observedAt: new Date(Date.now()).toISOString(),
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          equity: 100_000,
+          positions: [],
+        };
+      });
+      const executionQuoteProvider = vi.fn(async (_request: unknown, signal: AbortSignal) => {
+        expect(signal).not.toBe(caller.signal);
+        await vi.advanceTimersByTimeAsync(reviewMarginCase ? 0 : 8_000);
+        return {
+          referencePrice: 100,
+          bidPrice: 99.9,
+          askPrice: 100,
+          referencePriceAt: new Date(Date.now()).toISOString(),
+          sourceUrlOrArtifact: "fixture://quote",
+          maxAgeMs: 30_000,
+        };
+      });
+      const prepareExecutionQuote = vi.fn(async (_request: unknown, signal: AbortSignal) => {
+        expect(signal).not.toBe(caller.signal);
+        return {
+          referencePrice: 100,
+          bidPrice: 99.9,
+          askPrice: 100,
+          referencePriceAt: new Date(Date.now()).toISOString(),
+          sourceUrlOrArtifact: "fixture://quote",
+          maxAgeMs: 30_000,
+        };
+      });
+      const reviewer: FinanceTradeDecisionReviewer = async (request, signal) => {
+        expect(signal).not.toBe(caller.signal);
+        await vi.advanceTimersByTimeAsync(
+          mode === "late_veto" ? 61_000 : mode === "ignored_review" ? 66_000 : 45_789,
+        );
+        if (reviewMarginCase) {
+          expect(signal.aborted).toBe(true); // Provider cancellation still happens at 60 seconds.
+        }
+        const approved = {
+          ...(await approvingReviewer()(request)),
+          latencyMs: mode === "late_veto" ? 61_000 : mode === "ignored_review" ? 66_000 : 45_789,
+        };
+        return mode === "late_veto"
+          ? {
+              ...approved,
+              decisions: [
+                {
+                  candidateId: request.candidates[0].candidateId,
+                  decision: "veto" as const,
+                  rationale: "fixture late veto",
+                },
+              ],
+            }
+          : approved;
+      };
+      let dispatchAt: number | undefined;
+      const runOrder = vi.fn(async (request: Parameters<typeof runFinanceAlpacaOrder>[0]) => {
+        dispatchAt = Date.now();
+        expect(request.signal).toBe(caller.signal);
+        await vi.advanceTimersByTimeAsync(reviewMarginCase ? 0 : 7_945);
+        return { ok: false as const, refusals: ["fixture shared execution gate refusal"] };
+      });
+      const result = await executeFinanceIntradayDecision({
+        directory,
+        decision,
+        controller: {
+          accountId: "paper-account",
+          accountBookProvider,
+          executionQuoteProvider,
+          prepareExecutionQuote,
+          createSafetyContext: vi.fn(),
+        },
+        caps: { maxOrderNotional: 5_000, maxInstrumentNotional: 10_000, maxOrdersPerRun: 1 },
+        tradeDecisionReviewer: reviewer,
+        ...(withCaller ? { signal: caller.signal } : {}),
+        now: Date.now,
+        runOrder: runOrder as never,
+      });
+      if (mode === "stalled_stage") {
+        expect(runOrder).not.toHaveBeenCalled();
+        expect(executionQuoteProvider).not.toHaveBeenCalled();
+        expect(caller.signal.aborted).toBe(false);
+        expect(result.outcome.executionFailure).toMatchObject({
+          stage: "account_book",
+          category: "deadline_exceeded",
+        });
+        expect(result.outcome.executionFailure!.elapsedMs).toBeGreaterThanOrEqual(120_000);
+        expect(result.outcome.reasons).toEqual(["intraday_execution_unexpected_error"]);
+      } else if (mode === "late_veto") {
+        expect(runOrder).not.toHaveBeenCalled();
+        expect(result.outcome.tradeDecisionReview).toMatchObject({
+          status: "completed",
+          latencyMs: 61_000,
+          decision: { decision: "veto" },
+        });
+        expect(result.outcome.reasons).toEqual(["intraday model veto: fixture late veto"]);
+      } else if (mode === "ignored_review") {
+        expect(runOrder).toHaveBeenCalledTimes(1);
+        expect(result.outcome.tradeDecisionReview).toMatchObject({
+          status: "failed",
+          failureCode: "runtime_timeout",
+          latencyMs: 65_000,
+        });
+        expect(result.outcome.reasons).toEqual(["fixture shared execution gate refusal"]);
+        await Promise.resolve();
+        expect(runOrder).toHaveBeenCalledTimes(1);
+      } else if (withCaller) {
+        expect(runOrder).toHaveBeenCalledTimes(1);
+        expect(dispatchAt! - started).toBe(133_789);
+        expect(Date.now() - started).toBe(141_734);
+        expect(result.outcome.reasons).toEqual(["fixture shared execution gate refusal"]);
+        expect(caller.signal.aborted).toBe(false);
+        expect(result.outcome.executionFailure).toBeUndefined();
+      } else {
+        expect(runOrder).not.toHaveBeenCalled();
+        expect(result.outcome.executionFailure).toMatchObject({
+          stage: "model_review",
+          category: "deadline_exceeded",
+        });
+        expect(result.outcome.reasons).toEqual([
+          "intraday decision was cancelled before execution",
+        ]);
+      }
+      expect(deadlines).toContain(120_000);
+      if (mode !== "stalled_stage") {
+        expect(deadlines).toContain(60_000);
+        expect(deadlines).toContain(65_000);
+      }
+    },
+  );
 
   it("recovers a durable same-signal Paper receipt before checking another pending account claim", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-pending-claim-"));
