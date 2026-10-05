@@ -19,12 +19,22 @@ it("binds declared workspace inputs to the trusted host while refusing model-sel
     expect(reader.approve({ action: "list" })).toEqual({ ok: true });
     expect(reader.approve({ action: "list", workspaceDir: os.tmpdir() }).ok).toBe(false);
     expect(reader.inputKeys).not.toContain("workspaceDir");
+    expect(reader.inputKeys).toContain("field");
     const signal = new AbortController().signal;
     const listing = await reader.execute({ action: "list" }, signal);
     expect(listing).toMatchObject({ available: true, runs: [{ id: "host-only-run" }] });
     expect(await reader.execute({ action: "read", run: "host-only-run" }, signal)).toMatchObject({
       available: true,
       json: { source: "host-root" },
+    });
+    expect(
+      await reader.execute({ action: "read", run: "host-only-run", field: "/source" }, signal),
+    ).toMatchObject({
+      available: true,
+      selectedValue: "host-root",
+      selectionComplete: true,
+      truncated: false,
+      sourceBytes: Buffer.byteLength(JSON.stringify({ source: "host-root" })),
     });
     expect(
       await registry
