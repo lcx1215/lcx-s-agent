@@ -419,6 +419,10 @@ describe("configured finance trade decision reviewer", () => {
         "Incomplete or conflicting auxiliary evidence alone is not a mandatory veto",
       );
       expect(prompt).toContain("label that as model judgment");
+      expect(prompt).toContain("economic decision reviewer");
+      expect(prompt).toContain("consumed their results");
+      expect(prompt).toContain("no profit forecast or proof is a prerequisite");
+      expect(prompt).toContain("Never force activity to satisfy a target");
       expect(prompt).toContain("Never add candidates or change instrument");
       expect(prompt).not.toContain("If evidence is incomplete, contradictory, or not sufficient");
     }

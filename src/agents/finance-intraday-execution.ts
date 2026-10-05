@@ -9,9 +9,11 @@ import {
   executionQuoteIssue,
   recordCycleFill,
   type FinanceDailyCycleParams,
+  type FinanceDailyAccountBook,
   type FinanceDailyCycleExecutionQuote,
 } from "./finance-daily-cycle.js";
 import {
+  financeExecutionGrossExposureIssue,
   FinanceExecutionSafetyFactsError,
   FinanceExecutionSafetyTerminalFailureError,
   FinanceExecutionSafetyUncertainError,
@@ -105,6 +107,54 @@ function waitForPreparation<T>(
       reject(error);
     }
   });
+}
+
+function freshExecutionCapacity(
+  account: FinanceDailyAccountBook,
+  accountId: string,
+  asOfMs: number,
+): NonNullable<FinanceDailyAccountBook["executionCapacity"]> | undefined {
+  const capacity = account.executionCapacity;
+  const reconciliation = account.reconciliation;
+  if (
+    !capacity ||
+    !reconciliation ||
+    !Number.isFinite(asOfMs) ||
+    !Array.isArray(reconciliation.quarantinedInstruments) ||
+    capacity.source !== "controller_account_safety_facts" ||
+    capacity.accountId !== accountId ||
+    account.accountId !== accountId ||
+    capacity.venue !== account.venue ||
+    account.venue !== "alpaca:paper" ||
+    capacity.observedAt !== account.observedAt ||
+    capacity.expiresAt !== account.expiresAt ||
+    !Number.isFinite(Date.parse(account.observedAt)) ||
+    !Number.isFinite(Date.parse(account.expiresAt)) ||
+    Date.parse(account.observedAt) > asOfMs ||
+    Date.parse(account.expiresAt) <= asOfMs ||
+    typeof capacity.policyPlanId !== "string" ||
+    !capacity.policyPlanId.trim() ||
+    typeof capacity.policyRevision !== "string" ||
+    !capacity.policyRevision.trim() ||
+    !Number.isFinite(capacity.grossExposure) ||
+    capacity.grossExposure < 0 ||
+    !Number.isFinite(capacity.maxGrossExposure) ||
+    capacity.maxGrossExposure <= 0 ||
+    !Number.isFinite(capacity.uncertaintyReserve) ||
+    capacity.uncertaintyReserve < 0 ||
+    capacity.uncertaintyReserve !== reconciliation.uncertaintyReserve ||
+    (reconciliation.status === "ready"
+      ? reconciliation.historyStatus !== "reconciled" ||
+        capacity.uncertaintyReserve !== 0 ||
+        reconciliation.quarantinedInstruments.length !== 0
+      : reconciliation.status !== "restricted" ||
+        reconciliation.historyStatus !== "unresolved" ||
+        capacity.uncertaintyReserve <= 0 ||
+        reconciliation.quarantinedInstruments.length === 0)
+  ) {
+    return undefined;
+  }
+  return capacity;
 }
 
 function reviewedQuoteComparison(
@@ -632,6 +682,35 @@ export async function executeFinanceIntradayDecision(params: {
         reasons: [...preflight.refusals],
       });
       return Object.freeze({ status: "refused" as const, outcome: outcome.input });
+    }
+    if (input.action === "buy") {
+      const capacity = freshExecutionCapacity(account, params.controller.accountId, now());
+      if (capacity) {
+        const intent = preflight.intent;
+        const notional =
+          intent.quantity *
+          Math.max(intent.referencePrice, intent.limitPrice ?? intent.referencePrice);
+        const issue = financeExecutionGrossExposureIssue({
+          grossExposure: capacity.grossExposure,
+          maxGrossExposure: capacity.maxGrossExposure,
+          notional,
+          uncertaintyReserve: capacity.uncertaintyReserve,
+          reducing: false,
+        });
+        if (issue) {
+          const outcome = await appendFinanceIntradayOutcome(params.directory, {
+            signalId: input.signalId,
+            status: "refused",
+            reasons: [
+              "account_capacity_precheck_before_model_review",
+              issue,
+              `observedAt=${capacity.observedAt};expiresAt=${capacity.expiresAt};` +
+                `gross=${capacity.grossExposure};notional=${notional};reserve=${capacity.uncertaintyReserve};limit=${capacity.maxGrossExposure}`,
+            ],
+          });
+          return Object.freeze({ status: "refused" as const, outcome: outcome.input });
+        }
+      }
     }
     // Only strategy-bound, owned-position reductions bypass discretionary model review.
     const protectiveExit =

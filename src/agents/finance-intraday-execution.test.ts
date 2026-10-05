@@ -6,8 +6,12 @@ import {
   FINANCE_ALPACA_MARKET_CALENDAR_SOURCE,
   FINANCE_ALPACA_MARKET_CALENDAR_URL,
 } from "./finance-alpaca-market-calendar.js";
-import type { runFinanceAlpacaOrder } from "./finance-alpaca-run.js";
+import {
+  compileFinanceAlpacaOrderIntent,
+  type runFinanceAlpacaOrder,
+} from "./finance-alpaca-run.js";
 import { caseflowFingerprint } from "./finance-caseflow.js";
+import type { FinanceDailyAccountBook } from "./finance-daily-cycle.js";
 import { buildFinanceExecutionReceipt } from "./finance-execution-adapter.js";
 import {
   createFinanceExecutionSafetyContext,
@@ -163,6 +167,266 @@ async function activeRuleBinding(
 }
 
 describe("intraday decision execution bridge", () => {
+  it.each([
+    { mode: "full", refused: true },
+    { mode: "available", refused: false },
+    { mode: "equality", refused: false },
+    { mode: "reserve", refused: true },
+    { mode: "reserve_equality", refused: false },
+    { mode: "missing", refused: false },
+    { mode: "stale", refused: false },
+    { mode: "future", refused: false },
+    { mode: "mismatched_source", refused: false },
+    { mode: "mismatched_account", refused: false },
+    { mode: "mismatched_time", refused: false },
+    { mode: "invalid_gross", refused: false },
+    { mode: "invalid_limit", refused: false },
+    { mode: "invalid_reserve", refused: false },
+    { mode: "mismatched_reserve", refused: false },
+    { mode: "missing_readiness", refused: false },
+    { mode: "malformed_readiness", refused: false },
+    { mode: "final_capacity_changed", refused: false },
+  ] as const)(
+    "screens only trusted buy capacity before paid review ($mode)",
+    async ({ mode, refused }) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-09-18T15:00:02.000Z"));
+      const directory = await fs.mkdtemp(path.join(os.tmpdir(), "intraday-capacity-"));
+      temporary.push(directory);
+      const accountId = path.basename(directory);
+      const strategyBinding = await activeRuleBinding(directory);
+      const decision = (
+        await appendFinanceIntradayDecision(directory, {
+          signalId: `capacity-${mode}`,
+          instrument: "SPY",
+          sessionDate: "2026-09-18",
+          action: "buy",
+          reason: "opening_range_breakout",
+          referencePrice: 100,
+          referencePriceAt: "2026-09-18T15:00:01.000Z",
+          stopPrice: 99,
+          targetPrice: 102,
+          datasetHeadRef: "c".repeat(64),
+          strategyRule: "opening_range_breakout_long_next_bar_v1",
+          strategyBinding,
+        })
+      ).record;
+      const observedAt = "2026-09-18T15:00:01.000Z";
+      const expiresAt = "2026-09-18T15:01:01.000Z";
+      const reserve = mode === "reserve" ? 600 : mode === "reserve_equality" ? 500 : 0;
+      const account: FinanceDailyAccountBook = {
+        accountId,
+        venue: "alpaca:paper",
+        observedAt,
+        expiresAt,
+        equity: 100_000,
+        positions: [],
+        reconciliation: {
+          status: reserve ? "restricted" : "ready",
+          historyStatus: reserve ? "unresolved" : "reconciled",
+          uncertaintyReserve: reserve,
+          quarantinedInstruments: reserve ? ["BTC/USD"] : [],
+          reasons: [],
+        },
+        executionCapacity: {
+          source: "controller_account_safety_facts",
+          accountId,
+          venue: "alpaca:paper",
+          observedAt,
+          expiresAt,
+          policyPlanId: "capacity-test",
+          policyRevision: "current",
+          maxGrossExposure: 10_000,
+          grossExposure:
+            mode === "available" || mode === "final_capacity_changed"
+              ? 4_000
+              : mode === "equality"
+                ? 5_000
+                : reserve
+                  ? 4_500
+                  : 10_000,
+          uncertaintyReserve: reserve,
+        },
+      };
+      const capacity = account.executionCapacity!;
+      const override: Partial<NonNullable<FinanceDailyAccountBook["executionCapacity"]>> =
+        mode === "stale"
+          ? { expiresAt: "2026-09-18T15:00:02.000Z" }
+          : mode === "future"
+            ? { observedAt: "2026-09-18T15:00:03.000Z" }
+            : mode === "mismatched_source"
+              ? { source: "foreign" as never }
+              : mode === "mismatched_account"
+                ? { accountId: "other-account" }
+                : mode === "mismatched_time"
+                  ? { observedAt: "2026-09-18T15:00:00.000Z" }
+                  : mode === "invalid_gross"
+                    ? { grossExposure: Number.NaN }
+                    : mode === "invalid_limit"
+                      ? { maxGrossExposure: 0 }
+                      : mode === "invalid_reserve"
+                        ? { uncertaintyReserve: -1 }
+                        : mode === "mismatched_reserve"
+                          ? { uncertaintyReserve: 10 }
+                          : {};
+      const book = {
+        ...account,
+        executionCapacity: mode === "missing" ? undefined : { ...capacity, ...override },
+        ...(mode === "stale" ? { expiresAt: override.expiresAt! } : {}),
+        ...(mode === "future" ? { observedAt: override.observedAt! } : {}),
+        ...(mode === "missing_readiness" ? { reconciliation: undefined } : {}),
+        ...(mode === "malformed_readiness"
+          ? {
+              reconciliation: {
+                ...account.reconciliation!,
+                quarantinedInstruments: undefined as never,
+              },
+            }
+          : {}),
+      };
+      const reviewer = approvingReviewer();
+      const venueExecute = vi.fn(async () => {
+        throw new Error("must not dispatch beyond capacity");
+      });
+      const runOrder = vi.fn<typeof runFinanceAlpacaOrder>(async (request) => {
+        if (mode !== "final_capacity_changed") {
+          return { ok: false, stage: "place", refusals: ["fixture final gate"] };
+        }
+        const compiled = compileFinanceAlpacaOrderIntent(request);
+        if (!compiled.ok) {
+          throw new Error("fixture candidate must compile");
+        }
+        const context = createFinanceExecutionSafetyContext({
+          stateDir: directory,
+          accountId,
+          adapterId: "alpaca-venue",
+          venue: "alpaca:paper",
+          intent: compiled.intent,
+          budget: request.budget,
+          policy: {
+            planId: "capacity-test",
+            revision: "current",
+            riskModel: "fully_funded_unhedged_spot",
+            authorizedSide: "buy",
+            authorizedQuantity: compiled.intent.quantity,
+            expiresAt,
+            maxPortfolioDrawdownFraction: 0.2,
+            maxGrossExposure: 10_000,
+            maxAccountAgeMs: 60_000,
+            maxQuoteAgeMs: 60_000,
+            maxInstrumentEvidenceAgeMs: 60_000,
+          },
+          readFacts: async () => ({
+            accountId,
+            adapterId: "alpaca-venue",
+            venue: "alpaca:paper",
+            instrument: "SPY",
+            snapshotId: "concurrent-current",
+            source: "fixture",
+            observedAt,
+            expiresAt,
+            positionQuantity: 0,
+            openOrderIds: [],
+            unresolvedOrderIds: [],
+            account: {
+              status: "ACTIVE",
+              tradingBlocked: false,
+              equity: 100_000,
+              availableCash: 100_000,
+              peakEquity: 100_000,
+              currency: "USD",
+              grossExposure: 10_000,
+            },
+            quote: { source: "fixture", price: 100, observedAt, expiresAt, currency: "USD" },
+            instrumentEvidence: {
+              source: "fixture",
+              observedAt,
+              assetType: "spot_equity",
+              fullyPaid: true,
+              marginEnabled: false,
+              hedged: false,
+            },
+          }),
+        });
+        const guarded = await withFinanceExecutionSafety({
+          context,
+          intent: compiled.intent,
+          budget: request.budget,
+          adapterId: "alpaca-venue",
+          venue: "alpaca:paper",
+          adapterKind: "venue",
+          recordedAt: new Date().toISOString(),
+          buildReceipt: (fill, recordedAt, ownerAccountId) =>
+            buildFinanceExecutionReceipt({
+              intent: compiled.intent,
+              adapter: { id: "alpaca-venue", venue: "alpaca:paper", kind: "venue" },
+              fill,
+              recordedAt,
+              accountId: ownerAccountId,
+            }),
+          execute: venueExecute,
+        });
+        if (guarded.ok) {
+          throw new Error("final capacity must refuse");
+        }
+        return { ok: false, stage: "place", refusals: guarded.reasons };
+      });
+      const createSafetyContext = vi.fn(() => ({ kind: "controller_execution_safety" as const }));
+      const quoteProvider = vi.fn(async () => ({
+        referencePrice: 100,
+        referencePriceAt: observedAt,
+        bidPrice: 99.9,
+        askPrice: 100,
+        maxAgeMs: 30_000,
+        sourceUrlOrArtifact: "fixture://quote",
+      }));
+      const result = await executeFinanceIntradayDecision({
+        directory,
+        decision,
+        controller: {
+          accountId,
+          accountBookProvider: async () => book,
+          executionQuoteProvider: quoteProvider,
+          createSafetyContext,
+        },
+        caps: { maxOrderNotional: 5_000, maxInstrumentNotional: 10_000, maxOrdersPerRun: 1 },
+        tradeDecisionReviewer: reviewer,
+        now: Date.now,
+        runOrder,
+      });
+      expect(reviewer).toHaveBeenCalledTimes(refused ? 0 : 1);
+      expect(runOrder).toHaveBeenCalledTimes(refused ? 0 : 1);
+      expect(createSafetyContext).not.toHaveBeenCalled();
+      expect(venueExecute).not.toHaveBeenCalled();
+      if (refused) {
+        expect(result.outcome.reasons).toEqual([
+          "account_capacity_precheck_before_model_review",
+          "execution_safety_portfolio_exposure_exceeded",
+          `observedAt=${observedAt};expiresAt=${expiresAt};gross=${capacity.grossExposure};notional=5000;reserve=${reserve};limit=10000`,
+        ]);
+        expect(result.outcome.tradeDecisionReview).toBeUndefined();
+        expect(quoteProvider).toHaveBeenCalledTimes(1);
+      } else {
+        expect(result.outcome.reasons).toEqual([
+          mode === "final_capacity_changed"
+            ? "execution_safety_portfolio_exposure_exceeded"
+            : "fixture final gate",
+        ]);
+        expect(quoteProvider).toHaveBeenCalledTimes(1);
+      }
+      expect(
+        (await readFinanceIntradayOutcome(directory, decision.input.signalId))?.reasons,
+      ).toEqual(result.outcome.reasons);
+      expect(
+        await readFinanceExecutionSafetyClaims({
+          stateDir: directory,
+          accountId,
+          venue: "alpaca:paper",
+        }),
+      ).toHaveLength(0);
+    },
+  );
+
   it.each([
     "deadline_account",
     "caller_account",
@@ -1226,6 +1490,25 @@ describe("intraday decision execution bridge", () => {
           expiresAt: "2026-09-18T15:01:01.000Z",
           equity: 100_000,
           positions: [{ instrument: "SPY", quantity: 67.5, marketValue: 7_290 }],
+          reconciliation: {
+            status: "ready" as const,
+            historyStatus: "reconciled" as const,
+            uncertaintyReserve: 0,
+            quarantinedInstruments: [],
+            reasons: [],
+          },
+          executionCapacity: {
+            source: "controller_account_safety_facts" as const,
+            accountId: "paper-account",
+            venue: "alpaca:paper" as const,
+            observedAt: "2026-09-18T15:00:01.000Z",
+            expiresAt: "2026-09-18T15:01:01.000Z",
+            policyPlanId: "capacity-test",
+            policyRevision: "current",
+            grossExposure: 20_000,
+            maxGrossExposure: 10_000,
+            uncertaintyReserve: 0,
+          },
         })),
         executionQuoteProvider: vi.fn(async () => ({
           referencePrice: 107.9,

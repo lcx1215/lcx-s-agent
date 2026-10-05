@@ -451,6 +451,18 @@ export function createFinanceAlpacaCycleController(options: {
         expiresAt: observed.facts.expiresAt,
         equity: observed.facts.account.equity,
         positions: observed.positions,
+        executionCapacity: Object.freeze({
+          source: "controller_account_safety_facts" as const,
+          accountId: policy.accountId,
+          venue: "alpaca:paper" as const,
+          observedAt: observed.facts.observedAt,
+          expiresAt: observed.facts.expiresAt,
+          policyPlanId: policy.planId,
+          policyRevision: policy.revision,
+          grossExposure: observed.facts.account.grossExposure,
+          maxGrossExposure: policy.maxGrossExposure,
+          uncertaintyReserve: reconciliation.uncertaintyReserve,
+        }),
       };
     },
     executionQuoteProvider,

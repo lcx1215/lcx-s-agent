@@ -13,6 +13,7 @@ import {
 import { recoverConfirmedFinanceExecutions } from "./finance-execution-recovery.js";
 import {
   createFinanceExecutionSafetyContext,
+  financeExecutionGrossExposureIssue,
   FinanceExecutionSafetyFactsError,
   FinanceExecutionSafetyDispatchError,
   FinanceExecutionSafetyUncertainError,
@@ -1532,3 +1533,54 @@ it("rejects unsafe runtime safety-failure classifications", () => {
   });
   expect(JSON.stringify(withUnknownFields.provider)).not.toContain("secret provider detail");
 });
+
+it.each([
+  { gross: 500, notional: 500, reserve: 0, limit: 1000, reducing: false, issue: null },
+  {
+    gross: 500,
+    notional: 500,
+    reserve: 1,
+    limit: 1000,
+    reducing: false,
+    issue: "execution_safety_portfolio_exposure_exceeded",
+  },
+  { gross: 1100, notional: 100, reserve: 0, limit: 1000, reducing: true, issue: null },
+  { gross: 0, notional: 0, reserve: 0, limit: 1000, reducing: false, issue: null },
+  {
+    gross: -1,
+    notional: 100,
+    reserve: 0,
+    limit: 1000,
+    reducing: false,
+    issue: "execution_safety_portfolio_exposure_required",
+  },
+  {
+    gross: Number.NaN,
+    notional: 100,
+    reserve: 0,
+    limit: 1000,
+    reducing: true,
+    issue: "execution_safety_portfolio_exposure_required",
+  },
+  {
+    gross: 0,
+    notional: 100,
+    reserve: 0,
+    limit: 0,
+    reducing: true,
+    issue: "execution_safety_portfolio_exposure_required",
+  },
+])(
+  "preserves canonical gross-capacity boundaries (%j)",
+  ({ gross, notional, reserve, limit, reducing, issue }) => {
+    expect(
+      financeExecutionGrossExposureIssue({
+        grossExposure: gross,
+        maxGrossExposure: limit,
+        notional,
+        uncertaintyReserve: reserve,
+        reducing,
+      }),
+    ).toBe(issue);
+  },
+);

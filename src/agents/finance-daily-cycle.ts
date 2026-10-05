@@ -192,6 +192,19 @@ export type FinanceDailyAccountBook = Readonly<{
   expiresAt: string;
   equity: number;
   positions: readonly { instrument: string; quantity: number; marketValue: number }[];
+  /** Read-only early screening evidence, never execution authority or a reserved claim. */
+  executionCapacity?: Readonly<{
+    source: "controller_account_safety_facts";
+    accountId: string;
+    venue: "alpaca:paper";
+    observedAt: string;
+    expiresAt: string;
+    policyPlanId: string;
+    policyRevision: string;
+    grossExposure: number;
+    maxGrossExposure: number;
+    uncertaintyReserve: number;
+  }>;
 }>;
 
 export type FinanceDailyCycleParams = Readonly<{

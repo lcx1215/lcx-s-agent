@@ -447,6 +447,20 @@ it("sizes from native positions, executes twice through the shared gate and reco
   const f = await fixture();
   const book = await f.controller.accountBookProvider(AbortSignal.timeout(5000));
   expect(book.positions).toEqual([{ instrument: "SPY", quantity: 1, marketValue: 100 }]);
+  expect(book.executionCapacity).toEqual({
+    source: "controller_account_safety_facts",
+    accountId: f.accountId,
+    venue: "alpaca:paper",
+    observedAt: book.observedAt,
+    expiresAt: book.expiresAt,
+    policyPlanId: "test",
+    policyRevision: "1",
+    grossExposure: 100,
+    maxGrossExposure: f.options.policy.maxGrossExposure,
+    uncertaintyReserve: 0,
+  });
+  expect(Object.isFrozen(book.executionCapacity)).toBe(true);
+
   expect((await f.place("first")).status).toBe("placed");
   expect((await f.place("second")).status).toBe("placed");
   expect(f.execute).toHaveBeenCalledTimes(2);
@@ -997,6 +1011,13 @@ it("isolates a bounded BTC gap while unrelated executions and recovery retain un
   expect(f.read.mock.calls.some(([url]) => new URL(url).pathname.includes("quotes"))).toBe(false);
   const book = await controller.accountBookProvider(AbortSignal.timeout(5000));
   expect(book.reconciliation).toEqual(inspection.readiness);
+  expect(book.executionCapacity).toMatchObject({
+    grossExposure: 140,
+    maxGrossExposure: f.policy.maxGrossExposure,
+    uncertaintyReserve: inspection.readiness.uncertaintyReserve,
+    observedAt: book.observedAt,
+    expiresAt: book.expiresAt,
+  });
   expect((await f.place("first", controller)).status).toBe("placed");
   expect((await f.place("second", controller)).status).toBe("placed");
   expect(

@@ -533,6 +533,33 @@ function bounded<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
+/** Canonical gross-capacity predicate; callers supply already validated notional and reserve. */
+export function financeExecutionGrossExposureIssue(params: {
+  grossExposure: number;
+  maxGrossExposure: number;
+  notional: number;
+  uncertaintyReserve: number;
+  reducing: boolean;
+}):
+  | "execution_safety_portfolio_exposure_required"
+  | "execution_safety_portfolio_exposure_exceeded"
+  | null {
+  if (
+    !Number.isFinite(params.grossExposure) ||
+    params.grossExposure < 0 ||
+    !positive(params.maxGrossExposure)
+  ) {
+    return "execution_safety_portfolio_exposure_required";
+  }
+  if (
+    !params.reducing &&
+    params.grossExposure + params.notional + params.uncertaintyReserve > params.maxGrossExposure
+  ) {
+    return "execution_safety_portfolio_exposure_exceeded";
+  }
+  return null;
+}
+
 export async function withFinanceExecutionSafety(params: {
   context: FinanceExecutionSafetyContext | undefined;
   intent: FinanceExecutionIntent;
@@ -840,18 +867,15 @@ export async function withFinanceExecutionSafety(params: {
           return refuse("execution_safety_target_weight_drift_authorization_exceeded");
         }
       }
-      if (
-        !Number.isFinite(facts.account.grossExposure) ||
-        facts.account.grossExposure < 0 ||
-        !positive(policy.maxGrossExposure)
-      ) {
-        return refuse("execution_safety_portfolio_exposure_required");
-      }
-      if (
-        !reducing &&
-        facts.account.grossExposure + notional + uncertaintyReserve > policy.maxGrossExposure
-      ) {
-        return refuse("execution_safety_portfolio_exposure_exceeded");
+      const exposureIssue = financeExecutionGrossExposureIssue({
+        grossExposure: facts.account.grossExposure,
+        maxGrossExposure: policy.maxGrossExposure,
+        notional,
+        uncertaintyReserve,
+        reducing,
+      });
+      if (exposureIssue) {
+        return refuse(exposureIssue);
       }
       if (!reducing) {
         if (
