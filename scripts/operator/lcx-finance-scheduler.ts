@@ -71,6 +71,7 @@ import {
   readFinanceResearchEquityUniverseSnapshot,
   type FinanceResearchEquityUniverseSnapshot,
 } from "../../src/agents/finance-research-runner.js";
+import { recordFinanceIntradayResult } from "../../src/agents/finance-result-recording.js";
 import { readFinanceSchedulerDatabaseRuns } from "../../src/agents/finance-scheduler-ledger.js";
 import {
   acquireFinanceSchedulerLock,
@@ -1406,7 +1407,18 @@ function createIntradayTradeDecisionReviewer(
 ) {
   try {
     // Each reviewer owns a single-call model adapter, so scope it to one decision.
-    return createFinanceTradeDecisionReviewer(loadConfig(), { taskObjective, evidenceScope });
+    const config = loadConfig();
+    const financialCapabilities = evidenceScope
+      ? createFinanceTradeReviewFinancialCapabilities({
+          workspaceDir: process.env.OPENCLAW_WORKSPACE_DIR?.trim() || DEFAULT_WORKSPACE_DIR,
+          config,
+          agentId: "main",
+        })
+      : undefined;
+    return createFinanceTradeDecisionReviewer(config, {
+      taskObjective,
+      evidenceScope: evidenceScope ? { ...evidenceScope, financialCapabilities } : undefined,
+    });
   } catch {
     return undefined;
   }
@@ -1917,6 +1929,20 @@ export async function runFinanceRetiredIntradayExitTick(context: CycleContext): 
             },
             signal: context.signal,
           });
+          if (execution.status !== "already_terminal") {
+            const artifactEvidence = await recordFinanceIntradayResult({
+              workspaceDir: process.env.OPENCLAW_WORKSPACE_DIR?.trim() || DEFAULT_WORKSPACE_DIR,
+              directory: context.root.directory,
+              accountId: exitController.accountId,
+              venue: "alpaca:paper",
+              decision: result.decision,
+              outcome: execution.outcome,
+              signal: context.signal,
+            });
+            if (artifactEvidence.status === "unavailable") {
+              process.stderr.write(`finance result recording gap: ${artifactEvidence.reason}\n`);
+            }
+          }
           process.stdout.write(
             `[${new Date().toISOString()}] retired intraday ${target.instrument} execution=${execution.status}\n`,
           );
@@ -2342,14 +2368,24 @@ async function runTradingTickOnAccountLane(context: CycleContext): Promise<void>
                   directory: context.root.directory,
                   accountId: context.intradayController.accountId,
                   instruments: context.options.intraday.executionInstruments,
-                  financialCapabilities: createFinanceTradeReviewFinancialCapabilities({
-                    workspaceDir:
-                      process.env.OPENCLAW_WORKSPACE_DIR?.trim() || DEFAULT_WORKSPACE_DIR,
-                  }),
                 },
               ),
               signal: context.signal,
             });
+            if (execution.status !== "already_terminal") {
+              const artifactEvidence = await recordFinanceIntradayResult({
+                workspaceDir: process.env.OPENCLAW_WORKSPACE_DIR?.trim() || DEFAULT_WORKSPACE_DIR,
+                directory: context.root.directory,
+                accountId: context.intradayController.accountId,
+                venue: "alpaca:paper",
+                decision: result.decision,
+                outcome: execution.outcome,
+                signal: context.signal,
+              });
+              if (artifactEvidence.status === "unavailable") {
+                process.stderr.write(`finance result recording gap: ${artifactEvidence.reason}\n`);
+              }
+            }
             context.lastIntradayTick = normalizeFinanceSchedulerIntradayLastTick(
               {
                 ...progressCandidate,

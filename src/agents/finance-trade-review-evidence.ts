@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import type { OpenClawConfig } from "../config/config.js";
 import { FINANCE_FRAMEWORK_CORE_DOMAINS } from "../hooks/bundled/lobster-brain-registry.js";
 import {
   financeBrainModuleCatalog,
@@ -7,6 +8,7 @@ import {
 } from "./finance-brain-orchestration.js";
 import { createCalculationLedger } from "./finance-calculation-ledger.js";
 import type { FinanceTradeDecisionReviewRequest } from "./finance-trade-decision-review.js";
+import { createFinanceTradeResultRecallCapability } from "./finance-trade-result-recall.js";
 import type { PairSpreadDiagnostics } from "./quant-math-pair-spread.js";
 import type { AnyAgentTool } from "./tools/common.js";
 import { createFinanceBarLedgerTool } from "./tools/finance-bar-ledger-tool.js";
@@ -165,6 +167,9 @@ export type FinanceTradeReviewFinancialCapability = Readonly<{
       moduleId: FinanceBrainModuleId;
       candidate: FinanceTradeDecisionReviewRequest["candidates"][number];
       question: string;
+      asOf?: string;
+      accountId?: string;
+      venue?: FinanceTradeDecisionReviewRequest["venue"];
     }>,
     signal: AbortSignal,
   ) => Promise<unknown>;
@@ -205,6 +210,8 @@ export function describeFinanceTradeReviewFinancialCapabilities(
 /** Existing read-only tools; no producer, provider call or usage-receipt writer is exposed. */
 export function createFinanceTradeReviewFinancialCapabilities(options: {
   workspaceDir: string;
+  config?: OpenClawConfig;
+  agentId?: string;
 }): readonly FinanceTradeReviewFinancialCapability[] {
   const framework = createFinanceFrameworkCoreInspectTool(options);
   const domains = new Map<FinanceBrainModuleId, (typeof FINANCE_FRAMEWORK_CORE_DOMAINS)[number]>(
@@ -265,6 +272,7 @@ export function createFinanceTradeReviewFinancialCapabilities(options: {
         return { ...(result as Record<string, unknown>), sourceUpdatedAt };
       },
     },
+    createFinanceTradeResultRecallCapability(options),
   ];
 }
 const Bar = z
@@ -289,9 +297,15 @@ function knowledgeTimes(value: unknown, cutoff: number): number {
   let count = 0;
   for (const [key, child] of Object.entries(value)) {
     if (
-      ["updatedAt", "sourceUpdatedAt", "observedAt", "evidenceAsOf", "sourceTimestamp"].includes(
-        key,
-      )
+      [
+        "updatedAt",
+        "sourceUpdatedAt",
+        "observedAt",
+        "evidenceAsOf",
+        "sourceTimestamp",
+        "sourceObservedAt",
+        "sourceCutoff",
+      ].includes(key)
     ) {
       if (child !== undefined && child !== null) {
         if (
@@ -472,12 +486,17 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
             interpretation: "stored_knowledge_not_current_market_account_or_point_in_time_facts",
           };
           try {
-            output = await capabilities
-              .get(request.toolName)!
-              .execute(
-                { moduleId: request.moduleId, candidate, question: request.question },
-                signal,
-              );
+            output = await capabilities.get(request.toolName)!.execute(
+              {
+                moduleId: request.moduleId,
+                candidate,
+                question: request.question,
+                asOf: packet.asOf,
+                accountId: scope.accountId,
+                venue: packet.venue,
+              },
+              signal,
+            );
             signal.throwIfAborted();
             requireFiniteResult(output);
             if (!output || typeof output !== "object" || Array.isArray(output)) {
@@ -486,7 +505,17 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
             const record = output as Record<string, unknown>;
             resultSha256 = digest(output);
             provenance = Object.fromEntries(
-              ["sourceUpdatedAt", "updatedAt", "artifactPath", "contractPath", "sourceRef"]
+              [
+                "sourceUpdatedAt",
+                "updatedAt",
+                "artifactPath",
+                "contractPath",
+                "sourceRef",
+                "sourceArtifactId",
+                "sourceSha256",
+                "sourceObservedAt",
+                "sourceCutoff",
+              ]
                 .filter((key) => record[key] !== undefined)
                 .map((key) => [key, record[key]]),
             );
@@ -499,6 +528,11 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
               "updatedAt",
               "candidateCount",
               "applicationStatus",
+              "sourceArtifactId",
+              "sourceSha256",
+              "sourceObservedAt",
+              "sourceCutoff",
+              "recordedResult",
             ]) {
               if (record[key] !== undefined) {
                 priority[key] = record[key];
@@ -506,6 +540,7 @@ export function createFinanceTradeReviewEvidenceExecutor(scope: FinanceTradeRevi
             }
             if (
               record.ok === false ||
+              record.available === false ||
               (typeof record.status === "string" &&
                 !["completed", "ready", "succeeded", "success", "ok"].includes(record.status))
             ) {

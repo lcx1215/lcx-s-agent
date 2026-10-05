@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   session: vi.fn(),
   monitor: vi.fn(),
   execute: vi.fn(),
+  record: vi.fn(),
   controller: vi.fn(),
 }));
 vi.mock("./finance-intraday-position.js", () => ({
@@ -16,6 +17,7 @@ vi.mock("./finance-intraday-monitor.js", () => ({
   runFinanceIntradayMonitorTick: mocks.monitor,
   resolveFinanceIntradayCashSession: mocks.session,
 }));
+vi.mock("./finance-result-recording.js", () => ({ recordFinanceIntradayResult: mocks.record }));
 vi.mock("./finance-intraday-execution.js", () => ({
   executeFinanceIntradayDecision: mocks.execute,
 }));
@@ -100,7 +102,13 @@ it.each(["sell", "buy"] as const)(
       status: "decision_pending_execution",
       decision: { input: { action } },
     });
-    mocks.execute.mockResolvedValue({ status: "placed" });
+    const outcome = { signalId: "retired-signal", status: "placed", receiptId: "r", reasons: [] };
+    mocks.execute.mockResolvedValue({ status: "placed", outcome });
+    mocks.record.mockResolvedValue({
+      status: "unavailable",
+      reason: "artifact_recording_disabled",
+    });
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     const context = {
       root: { directory, source: "explicit" as const },
@@ -118,6 +126,26 @@ it.each(["sell", "buy"] as const)(
       }),
     );
     expect(mocks.execute).toHaveBeenCalledTimes(action === "sell" ? 1 : 0);
+    expect(mocks.record).toHaveBeenCalledTimes(action === "sell" ? 1 : 0);
+    if (action === "sell") {
+      expect(mocks.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          accountId: "paper",
+          venue: "alpaca:paper",
+          directory,
+          outcome,
+        }),
+      );
+      expect(stderr).toHaveBeenCalledWith(expect.stringContaining("artifact_recording_disabled"));
+    }
+
+    if (action === "sell") {
+      mocks.record.mockClear();
+      mocks.execute.mockResolvedValue({ status: "already_terminal", outcome });
+      await runFinanceRetiredIntradayExitTick(context);
+      expect(mocks.record).not.toHaveBeenCalled();
+    }
+
     mocks.monitor.mockClear();
     mocks.execute.mockClear();
     options.intraday = { ...options.intraday, placementRequested: false };

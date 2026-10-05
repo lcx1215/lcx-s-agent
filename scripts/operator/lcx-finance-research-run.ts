@@ -46,6 +46,10 @@ import {
   type FinanceResearchThesisLearningResult,
 } from "../../src/agents/finance-research-thesis-learning.ts";
 import {
+  recordFinanceResearchResult,
+  type FinanceResultRecordingHost,
+} from "../../src/agents/finance-result-recording.ts";
+import {
   readFinanceSourceHeartbeat,
   type FinanceSourceHeartbeatRecord,
 } from "../../src/agents/finance-source-heartbeat.ts";
@@ -823,8 +827,12 @@ export async function preflightLocalModelPythonRuntime(pythonPath: string): Prom
   }
 }
 
-export async function writeReceipt(receipt: FinanceResearchRunReceipt, asOf: string) {
-  const root = WORKSPACE_DIR();
+export async function writeReceipt(
+  receipt: FinanceResearchRunReceipt,
+  asOf: string,
+  host?: FinanceResultRecordingHost,
+) {
+  const root = host?.workspaceDir ?? WORKSPACE_DIR();
   const stateDir = path.join(root, "state");
   // `state/` is git-ignored and is where the agent-side research tool writes its own runs;
   // `memory/` is tracked, so a run archive dropped there becomes repository content.
@@ -837,11 +845,15 @@ export async function writeReceipt(receipt: FinanceResearchRunReceipt, asOf: str
   const serialized = `${JSON.stringify(receipt, null, 2)}\n`;
   await writePrivateReceipt(datedPath, serialized);
   await writePrivateReceipt(latestPath, serialized);
-  return {
+  const sha256 = createHash("sha256").update(serialized, "utf8").digest("hex");
+  const artifactEvidence = await recordFinanceResearchResult({
+    workspaceDir: root,
+    receipt,
     datedPath,
-    latestPath,
-    sha256: createHash("sha256").update(serialized, "utf8").digest("hex"),
-  };
+    sourceSha256: sha256,
+    host,
+  });
+  return { datedPath, latestPath, sha256, artifactEvidence };
 }
 
 export function buildFinanceResearchRegistryOptions(

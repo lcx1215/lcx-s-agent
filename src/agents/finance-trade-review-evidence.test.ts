@@ -832,6 +832,7 @@ it("selects real registered math and stored financial knowledge, consumes both o
   expect(catalog.map((item) => item.toolName)).toEqual([
     "finance_framework_core_inspect",
     "finance_learning_capability_apply",
+    "finance_trade_result_recall",
   ]);
   expect(catalog[0].moduleIds).toContain("credit_liquidity");
   expect(catalog[0].moduleIds).not.toContain("quant_math");

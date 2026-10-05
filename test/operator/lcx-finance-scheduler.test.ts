@@ -75,6 +75,10 @@ const mocks = vi.hoisted(() => ({
   })),
   runIntradayMonitorTick: vi.fn(),
   executeIntradayDecision: vi.fn(),
+  recordFinanceResult: vi.fn(async () => ({
+    status: "unavailable",
+    reason: "artifact_recording_disabled",
+  })),
   createTradeDecisionReviewer: vi.fn(),
   tradeDecisionReviewer: vi.fn(),
   readUniverse: vi.fn(),
@@ -107,6 +111,9 @@ vi.mock("../../src/agents/finance-alpaca-cycle-controller.js", () => ({
 vi.mock("../../src/agents/finance-intraday-monitor.js", () => ({
   runFinanceIntradayMonitorTick: mocks.runIntradayMonitorTick,
   resolveFinanceIntradayCashSession: vi.fn(async () => ({ status: "cash_session_open" })),
+}));
+vi.mock("../../src/agents/finance-result-recording.js", () => ({
+  recordFinanceIntradayResult: mocks.recordFinanceResult,
 }));
 vi.mock("../../src/agents/finance-intraday-execution.js", () => ({
   executeFinanceIntradayDecision: mocks.executeIntradayDecision,
@@ -1015,6 +1022,10 @@ it("creates and calls a fresh single-use reviewer for each actionable intraday d
             toolName: "finance_learning_capability_apply",
             execute: expect.any(Function),
           }),
+          expect.objectContaining({
+            toolName: "finance_trade_result_recall",
+            execute: expect.any(Function),
+          }),
         ],
       },
     },
@@ -1037,14 +1048,26 @@ it("creates and calls a fresh single-use reviewer for each actionable intraday d
             toolName: "finance_learning_capability_apply",
             execute: expect.any(Function),
           }),
+          expect.objectContaining({
+            toolName: "finance_trade_result_recall",
+            execute: expect.any(Function),
+          }),
         ],
       },
     },
   );
   expect(mocks.executeIntradayDecision).toHaveBeenCalledTimes(2);
   expect(capabilityFactory).toHaveBeenCalledTimes(2);
-  expect(capabilityFactory).toHaveBeenNthCalledWith(1, { workspaceDir: knowledgeWorkspace });
-  expect(capabilityFactory).toHaveBeenNthCalledWith(2, { workspaceDir: knowledgeWorkspace });
+  expect(capabilityFactory).toHaveBeenNthCalledWith(1, {
+    workspaceDir: knowledgeWorkspace,
+    config: {},
+    agentId: "main",
+  });
+  expect(capabilityFactory).toHaveBeenNthCalledWith(2, {
+    workspaceDir: knowledgeWorkspace,
+    config: {},
+    agentId: "main",
+  });
   expect(usedReviewers).toEqual(reviewers);
   expect(reviewedSignalIds).toEqual(["intraday-signal-1", "intraday-signal-2"]);
   expect(reviewedCandidateIds).toEqual(reviewedSignalIds);

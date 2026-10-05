@@ -122,7 +122,19 @@ it("uses the host financial catalog, consumes a non-math result, and keeps the e
   const execute = vi.fn<FinanceTradeReviewFinancialCapability["execute"]>(async (input) => {
     expect(input.moduleId).toBe("company_fundamentals_value");
     expect(input.candidate).toEqual(intradayRequest.candidates[0]);
-    expect(Object.keys(input).toSorted()).toEqual(["candidate", "moduleId", "question"]);
+    expect(Object.keys(input).toSorted()).toEqual([
+      "accountId",
+      "asOf",
+      "candidate",
+      "moduleId",
+      "question",
+      "venue",
+    ]);
+    expect(input).toMatchObject({
+      accountId: "paper-fixture",
+      asOf: intradayRequest.asOf,
+      venue: "alpaca:paper",
+    });
     return {
       ok: true,
       sourceUpdatedAt: "2026-09-22T12:00:00.000Z",

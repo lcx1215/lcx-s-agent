@@ -414,7 +414,12 @@ it("writes the exact archived bytes including newline and preserves their digest
       plan: { asOf: "2026-10-04T00:00:00Z", ask: "diagnostic" },
       status: "needs_review",
     } as FinanceResearchRunReceipt;
-    const written = await writeReceipt(receipt, receipt.plan.asOf);
+    const written = await writeReceipt(receipt, receipt.plan.asOf, {
+      workspaceDir: workspace,
+      config: {
+        agents: { defaults: { memorySearch: { enabled: false } } },
+      },
+    });
     const bytes = await fs.readFile(written.datedPath);
     expect(bytes.at(-1)).toBe(10);
     expect(written.sha256).toBe(createHash("sha256").update(bytes).digest("hex"));
@@ -433,5 +438,48 @@ it("writes the exact archived bytes including newline and preserves their digest
   } finally {
     vi.unstubAllEnvs();
     await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+it("registers the complete written research and keeps disabled indexing separate from storage", async () => {
+  const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "research-result-index-"));
+  try {
+    const { runFinanceResearchRun } = await import("../../src/agents/finance-research-runner.js");
+    const receipt = await runFinanceResearchRun({
+      input: { ask: "Offline risk review", asOf: "2026-10-01T00:00:00.000Z" },
+    });
+    const written = await writeReceipt(receipt, receipt.plan.asOf, {
+      workspaceDir,
+      config: {
+        agents: {
+          defaults: {
+            memorySearch: {
+              enabled: true,
+              store: { path: path.join(workspaceDir, "memory.sqlite") },
+            },
+          },
+        },
+      },
+    });
+    expect(written.artifactEvidence.status).toBe("registered");
+    const envelope = JSON.parse(
+      await fs.readFile(path.join(workspaceDir, written.artifactEvidence.relativePath!), "utf8"),
+    );
+    expect(envelope.value.details.receipt).toEqual(receipt);
+    expect(envelope.sourceReceiptRefs).toEqual([written.datedPath, `sha256:${written.sha256}`]);
+    expect(JSON.parse(await fs.readFile(written.datedPath, "utf8"))).toEqual(receipt);
+    const disabled = await writeReceipt(receipt, receipt.plan.asOf, {
+      workspaceDir,
+      config: {
+        agents: { defaults: { memorySearch: { enabled: false } } },
+      },
+    });
+    expect(disabled.artifactEvidence).toMatchObject({
+      status: "unavailable",
+      reason: "artifact_recording_disabled",
+    });
+    expect(JSON.parse(await fs.readFile(disabled.datedPath, "utf8"))).toEqual(receipt);
+  } finally {
+    await fs.rm(workspaceDir, { recursive: true, force: true });
   }
 });
